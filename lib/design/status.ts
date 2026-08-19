@@ -17,12 +17,15 @@ import type { ComponentType, SVGProps } from "react";
 
 import { BuildingSlash } from "@/components/shared/icons/building-slash";
 
-// Fonte unica dos status do produto (brief de telas, secao 3.5).
+// Fonte unica dos status do produto.
 // Regra das 3 camadas: todo estado e comunicado por forma do icone, rotulo em
 // texto e cor, simultaneamente. Nunca o mesmo icone em cores diferentes.
+// Semantica de cor do handoff Conduzza: violeta e RESERVADO para IA; azul e
+// informativo; verde confirmado/sucesso; ambar aguardando/atencao; vermelho
+// falta/erro; neutro para concluido.
 
 export type StatusTone =
-  "primary" | "success" | "warning" | "alert" | "neutral" | "highlight";
+  "ai" | "info" | "success" | "warning" | "alert" | "neutral";
 
 export type StatusIcon =
   | LucideIcon
@@ -49,7 +52,7 @@ export type AppointmentStatus =
   | "faltou";
 
 export const APPOINTMENT_STATUS: Record<AppointmentStatus, StatusDefinition> = {
-  agendado: { label: "Agendado", tone: "neutral", icon: Calendar },
+  agendado: { label: "Agendado", tone: "info", icon: Calendar },
   aguardando_confirmacao: {
     label: "Aguardando",
     tone: "warning",
@@ -65,13 +68,13 @@ export const APPOINTMENT_STATUS: Record<AppointmentStatus, StatusDefinition> = {
     tone: "success",
     icon: UserCheck,
   },
-  na_recepcao: { label: "Na recepção", tone: "primary", icon: Armchair },
+  na_recepcao: { label: "Na recepção", tone: "warning", icon: Armchair },
   em_atendimento: {
     label: "Em atendimento",
-    tone: "primary",
+    tone: "info",
     icon: Stethoscope,
   },
-  compareceu: { label: "Compareceu", tone: "success", icon: CheckCheck },
+  compareceu: { label: "Compareceu", tone: "neutral", icon: CheckCheck },
   cancelado_paciente: {
     label: "Cancelado pelo paciente",
     tone: "alert",
@@ -91,7 +94,7 @@ export type ConversationStatus =
 
 export const CONVERSATION_STATUS: Record<ConversationStatus, StatusDefinition> =
   {
-    ia_atendendo: { label: "IA", tone: "primary", icon: Sparkles },
+    ia_atendendo: { label: "IA atendendo", tone: "ai", icon: Sparkles },
     aguardando_humano: {
       label: "Aguardando você",
       tone: "warning",
@@ -99,20 +102,40 @@ export const CONVERSATION_STATUS: Record<ConversationStatus, StatusDefinition> =
     },
     // A camada de forma deste status e o avatar do atendente, com o nome como
     // rotulo. O StatusChip aceita avatar no lugar do icone.
-    em_atendimento: { label: "Em atendimento", tone: "neutral", icon: null },
+    em_atendimento: { label: "Em atendimento", tone: "info", icon: null },
     resolvida: { label: "Resolvida", tone: "success", icon: CircleCheck },
   };
 
-// base: cor semantica plena, usada na tinta de fundo do chip.
-// strong: variante para texto e icone sobre fundo tingido (no escuro, a propria base).
+// marker: cor plena (pontos, bordas de evento). text/bg: par do chip, com
+// contraste AA garantido pelo teste de design.
 export const STATUS_TONE_VARS: Record<
   StatusTone,
-  { base: string; strong: string }
+  { marker: string; text: string; bg: string }
 > = {
-  primary: { base: "var(--primary)", strong: "var(--primary-strong)" },
-  success: { base: "var(--success)", strong: "var(--success-strong)" },
-  warning: { base: "var(--warning)", strong: "var(--warning-strong)" },
-  alert: { base: "var(--alert)", strong: "var(--alert-strong)" },
-  neutral: { base: "var(--neutral)", strong: "var(--neutral-strong)" },
-  highlight: { base: "var(--highlight)", strong: "var(--highlight-strong)" },
+  ai: { marker: "var(--ai)", text: "var(--ai-text)", bg: "var(--ai-bg)" },
+  info: {
+    marker: "var(--info)",
+    text: "var(--info-text)",
+    bg: "var(--info-bg)",
+  },
+  success: {
+    marker: "var(--success)",
+    text: "var(--success-text)",
+    bg: "var(--success-bg)",
+  },
+  warning: {
+    marker: "var(--warning)",
+    text: "var(--warning-text)",
+    bg: "var(--warning-bg)",
+  },
+  alert: {
+    marker: "var(--alert)",
+    text: "var(--alert-text)",
+    bg: "var(--alert-bg)",
+  },
+  neutral: {
+    marker: "var(--neutral)",
+    text: "var(--neutral-text)",
+    bg: "var(--neutral-bg)",
+  },
 };

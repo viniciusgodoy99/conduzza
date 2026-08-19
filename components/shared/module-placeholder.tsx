@@ -35,7 +35,7 @@ const DESCRIPTIONS: Record<string, { header: string; empty: string }> = {
     empty: "A fila aparece quando o primeiro paciente entrar na espera.",
   },
   "/relatorios": {
-    header: "Resultados da clínica por período",
+    header: "Qual canal traz paciente que comparece",
     empty: "Os relatórios aparecem quando houver dados de atendimento.",
   },
   "/agente": {

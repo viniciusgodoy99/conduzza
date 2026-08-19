@@ -1,20 +1,22 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { IBM_Plex_Mono, Inter_Tight } from "next/font/google";
 import "./globals.css";
 
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 
-// Duas fontes no maximo (brief secao 3.6): Inter para interface,
-// JetBrains Mono apenas para numeros tabulares e valores monetarios.
-const inter = Inter({
-  variable: "--font-inter",
+// Tipografia do handoff: Inter Tight para a interface, IBM Plex Mono para
+// numeros, telefones, horas e valores (alinha colunas e evita erro de leitura).
+const interTight = Inter_Tight({
+  variable: "--font-app-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-app-mono",
   subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
@@ -30,7 +32,7 @@ export default function RootLayout({
   return (
     <html
       lang="pt-BR"
-      className={`${inter.variable} ${jetbrainsMono.variable}`}
+      className={`${interTight.variable} ${ibmPlexMono.variable}`}
       suppressHydrationWarning
     >
       <body className="antialiased">

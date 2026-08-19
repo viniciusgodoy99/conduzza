@@ -37,7 +37,9 @@ create table public.clinic (
 create table public.clinic_branding (
   clinic_id uuid primary key references public.clinic (id) on delete cascade,
   product_name text not null default 'Conduzza Clínicas',
-  primary_color text not null default '#5B9CFF',
+  -- Identidade Conduzza como marca padrao do tenant (decisao de 19/08/2026);
+  -- white-label continua valendo, cada clinica pode trocar.
+  primary_color text not null default '#A8D318',
   logo_wide_light text,
   logo_wide_dark text,
   logo_icon_light text,

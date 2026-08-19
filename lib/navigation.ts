@@ -16,13 +16,13 @@ import {
 
 import type { ModuleKey } from "@/lib/domain/permissions";
 
-// Navegacao declarativa do rail (brief secao 4): dois grupos, Operacao e
-// Ajustes. Cada item aponta o modulo da matriz de permissao que o governa;
+// Navegacao declarativa do rail, grupos do handoff Conduzza: Operacao e
+// Inteligencia. Cada item aponta o modulo da matriz de permissao que o governa;
 // moduleKey null significa visivel para todos (caso do Inicio, que nao esta
 // na matriz da secao 5).
 // TODO(0.7): rotulos que usam os 4 termos parametrizaveis passam por t().
 
-export type NavGroup = "operacao" | "ajustes";
+export type NavGroup = "operacao" | "inteligencia";
 
 export type NavItem = {
   href: string;
@@ -36,7 +36,7 @@ export type NavItem = {
 
 export const NAV_GROUPS: Record<NavGroup, string> = {
   operacao: "Operação",
-  ajustes: "Ajustes",
+  inteligencia: "Inteligência",
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -56,18 +56,18 @@ export const NAV_ITEMS: NavItem[] = [
     badge: "conversas",
   },
   {
-    href: "/agenda",
-    label: "Agenda",
-    icon: Calendar,
-    group: "operacao",
-    moduleKey: "agenda",
-  },
-  {
     href: "/leads",
     label: "Leads",
     icon: UserRoundPlus,
     group: "operacao",
     moduleKey: "leads_pacientes",
+  },
+  {
+    href: "/agenda",
+    label: "Agenda",
+    icon: Calendar,
+    group: "operacao",
+    moduleKey: "agenda",
   },
   {
     href: "/pacientes",
@@ -93,37 +93,37 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     href: "/relatorios",
-    label: "Relatórios",
+    label: "Resultados",
     icon: ChartNoAxesColumn,
-    group: "operacao",
+    group: "inteligencia",
     moduleKey: "relatorios",
   },
   {
     href: "/agente",
     label: "Agente de IA",
     icon: Sparkles,
-    group: "ajustes",
+    group: "inteligencia",
     moduleKey: "agente",
   },
   {
     href: "/automacoes",
     label: "Automações",
     icon: Workflow,
-    group: "ajustes",
+    group: "inteligencia",
     moduleKey: "automacoes",
   },
   {
     href: "/cadastros",
     label: "Cadastros",
     icon: ClipboardList,
-    group: "ajustes",
+    group: "inteligencia",
     moduleKey: "cadastros",
   },
   {
     href: "/configuracoes",
     label: "Configurações",
     icon: Settings,
-    group: "ajustes",
+    group: "inteligencia",
     moduleKey: "configuracoes",
   },
 ];

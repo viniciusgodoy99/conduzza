@@ -23,12 +23,15 @@ import {
 
 const SURFACE_TOKENS = [
   { name: "--background", label: "Fundo da aplicação" },
-  { name: "--surface-1", label: "Superfície 1 (painel)" },
+  { name: "--surface-1", label: "Superfície 1" },
   { name: "--surface-2", label: "Superfície 2 (card)" },
-  { name: "--surface-3", label: "Superfície 3 (popover)" },
-  { name: "--surface-4", label: "Superfície 4 (modal)" },
+  { name: "--surface-3", label: "Superfície 3" },
+  { name: "--surface-4", label: "Superfície 4" },
+  { name: "--surface-5", label: "Superfície 5 (seleção)" },
+  { name: "--surface-6", label: "Superfície 6" },
   { name: "--border", label: "Divisor decorativo" },
   { name: "--input", label: "Borda de campo e controle" },
+  { name: "--sidebar", label: "Sidebar (fixa nos 2 temas)" },
 ];
 
 const TEXT_TOKENS = [
@@ -38,12 +41,13 @@ const TEXT_TOKENS = [
 ];
 
 const SEMANTIC_TOKENS = [
-  { name: "--primary", label: "Primária (marca, IA)" },
-  { name: "--success", label: "Sucesso" },
-  { name: "--warning", label: "Atenção" },
-  { name: "--alert", label: "Alerta" },
+  { name: "--primary", label: "Ação primária (lime da marca)" },
+  { name: "--ai", label: "IA (violeta, reservado)" },
+  { name: "--info", label: "Informativo (azul)" },
+  { name: "--success", label: "Confirmado (verde)" },
+  { name: "--warning", label: "Atenção (âmbar)" },
+  { name: "--alert", label: "Falta e erro (vermelho)" },
   { name: "--neutral", label: "Neutro" },
-  { name: "--highlight", label: "Destaque" },
 ];
 
 type DemoRow = { item: string; quantidade: number; valor: string };

@@ -7,9 +7,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter);
-  --font-mono: var(--font-jetbrains-mono);
-  --font-heading: var(--font-inter);
+  --font-sans: var(--font-app-sans);
+  --font-mono: var(--font-app-mono);
+  --font-heading: var(--font-app-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,13 +39,16 @@
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
   --color-surface-4: var(--surface-4);
+  --color-surface-5: var(--surface-5);
+  --color-surface-6: var(--surface-6);
   --color-text-secondary: var(--text-secondary);
   --color-text-tertiary: var(--text-tertiary);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-alert: var(--alert);
+  --color-info: var(--info);
+  --color-ai: var(--ai);
   --color-neutral: var(--neutral);
-  --color-highlight: var(--highlight);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -53,120 +56,143 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
-  /* Breakpoint do colapso do rail: abaixo de 1600px ele fica em 64px (brief secao 6) */
-  --breakpoint-wide: 1600px;
 }
 
 /*
- * Tokens do design system, brief de telas (docs/02) secoes 3.2 a 3.4.
- * Tema claro em :root, tema escuro em .dark. Escuro e o padrao da aplicacao
- * (next-themes com defaultTheme dark). Nunca usar hex solto em componente.
+ * Tokens do design system, identidade do handoff Conduzza
+ * (design_handoff_conduzza_atendimento_ia/README.md, "Tokens do app").
+ * Tema claro em :root (o app abre no claro, como no handoff), tema escuro
+ * em .dark. Nunca usar hex solto em componente.
+ *
+ * Desvios registrados, exigidos pela regra WCAG AA do CLAUDE.md:
+ * - Primaria clara usa #5F7C06 (o limeText do proprio handoff): o lime puro
+ *   nao passa contraste sobre claro, como o handoff mesmo avisa.
+ * - Borda de campo (--input) usa cinza com 3:1 sobre a superficie, mais forte
+ *   que a line3 do handoff, que fica em ~2.7:1.
+ * Familias semanticas: cada uma tem cor plena (marcador), texto de chip e
+ * fundo de chip, copiadas do handoff. Violeta e reservado para IA.
  */
 :root {
-  /* Superficies e texto, tema claro (brief 3.3) */
-  --background: #eef0f4;
-  --foreground: #14181d;
+  --background: #fbfbfa;
+  --foreground: #111311;
   --surface-1: #ffffff;
   --surface-2: #ffffff;
-  --surface-3: #ffffff;
-  --surface-4: #ffffff;
-  --text-secondary: #5a6472;
-  --text-tertiary: #6e7787;
+  --surface-3: #f4f5f2;
+  --surface-4: #edeeea;
+  --surface-5: #e3e5df;
+  --surface-6: #d6d9d2;
+  --text-secondary: #565c55;
+  /* Desvio AA: o t3 do handoff (#767C74) fica em ~4.3:1 sobre claro */
+  --text-tertiary: #6a706a;
   --card: var(--surface-2);
   --card-foreground: var(--foreground);
-  --popover: var(--surface-3);
+  --popover: var(--surface-1);
   --popover-foreground: var(--foreground);
-  /* Semanticas, tema claro (brief 3.4) */
-  --primary: #2563eb;
+  /* Acento lime da marca, escurecido para passar AA no claro */
+  --primary: #5f7c06;
+  --primary-hover: #5a7504;
   --primary-foreground: #ffffff;
-  --success: #15803d;
-  --warning: #b45309;
-  --alert: #dc2626;
-  --neutral: #5a6472;
-  --highlight: #8a5a00;
-  --destructive: var(--alert);
-  --destructive-foreground: #ffffff;
-  /* Tinta de fundo do chip de status. O brief pede 12%, mas no tema claro 12%
-     derruba o contraste do texto abaixo de 4.5:1 (regra WCAG AA do CLAUDE.md,
-     que prevalece). 8% mantem a intencao e passa AA. */
-  --chip-tint: 8%;
-  /* Variante forte de cada semantica: texto e icone sobre fundo tingido.
-     No claro e um tom mais escuro para garantir 4.5:1; no escuro e a propria cor. */
-  --primary-strong: #1d4ed8;
-  --success-strong: #0f6b31;
-  --warning-strong: #92430a;
-  --alert-strong: #b91c1c;
-  --neutral-strong: #4b5563;
-  --highlight-strong: #744b00;
-  --secondary: #e2e6ec;
+  --secondary: var(--surface-4);
   --secondary-foreground: var(--foreground);
-  --muted: #e2e6ec;
+  --muted: var(--surface-3);
   --muted-foreground: var(--text-secondary);
-  --accent: #eef0f4;
+  --accent: var(--surface-3);
   --accent-foreground: var(--foreground);
-  /* Divisor decorativo e borda de campo/controle sao tokens distintos de proposito */
-  --border: #e2e6ec;
-  --input: #8a929e;
+  --border: rgba(0, 0, 0, 0.06);
+  --border-strong: rgba(0, 0, 0, 0.11);
+  --input: #8a8f88;
   --ring: var(--primary);
-  --radius: 0.5rem;
-  --sidebar: var(--surface-1);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
+  --radius: 0.625rem;
+  /* Familias semanticas do handoff (claro) */
+  --success: #0e9b72;
+  --success-text: #0b7a59;
+  --success-bg: #e8f6f0;
+  --warning: #b77800;
+  --warning-text: #8a5a00;
+  --warning-bg: #fcf3e1;
+  --alert: #c63f2c;
+  --alert-text: #a93524;
+  --alert-bg: #fcedea;
+  --on-alert: #ffffff;
+  --info: #2f6fd0;
+  --info-text: #20539f;
+  --info-bg: #ebf2fc;
+  --ai: #6b49de;
+  --ai-text: #5133be;
+  --ai-bg: #f1edfe;
+  --neutral: #767c74;
+  --neutral-text: #565c55;
+  --neutral-bg: #edeeea;
+  --destructive: var(--alert);
+  --destructive-foreground: var(--on-alert);
+  /* Sidebar fixa escura nos dois temas (handoff: e onde o logo branco funciona) */
+  --sidebar: #0c110f;
+  --sidebar-foreground: rgba(255, 255, 255, 0.78);
+  --sidebar-muted: rgba(255, 255, 255, 0.55);
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-active-bg: rgba(168, 211, 24, 0.14);
+  --sidebar-active-text: #d8f07e;
+  --sidebar-active-bar: #a8d318;
+  --sidebar-primary: #a8d318;
+  --sidebar-primary-foreground: #10160a;
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
+  --sidebar-accent-foreground: rgba(255, 255, 255, 0.92);
+  --sidebar-ring: #a8d318;
+  --sidebar-badge: #ef7e70;
+  --sidebar-badge-text: #1a0805;
 }
 
 .dark {
-  /* Superficies e texto, tema escuro (brief 3.2). Base nao e preto puro. */
-  --background: #0f1113;
-  --foreground: #eceff3;
-  --surface-1: #16191c;
-  --surface-2: #1d2126;
-  --surface-3: #242930;
-  --surface-4: #2b3138;
-  --text-secondary: #9ba5b2;
-  --text-tertiary: #949da9;
+  --background: #121212;
+  --foreground: rgba(255, 255, 255, 0.92);
+  --surface-1: #161616;
+  --surface-2: #181818;
+  --surface-3: #1f1f1f;
+  --surface-4: #242424;
+  --surface-5: #2e2e2e;
+  --surface-6: #3a3a3a;
+  --text-secondary: rgba(255, 255, 255, 0.66);
+  --text-tertiary: rgba(255, 255, 255, 0.55);
   --card: var(--surface-2);
   --card-foreground: var(--foreground);
   --popover: var(--surface-3);
   --popover-foreground: var(--foreground);
-  /* Semanticas, tema escuro (brief 3.4) */
-  --primary: #5b9cff;
-  --primary-foreground: #0f1113;
-  --success: #3fd68c;
-  --warning: #f5b14c;
-  --alert: #ff6369;
-  --neutral: #9ba5b2;
-  --highlight: #e5c07b;
-  --destructive: var(--alert);
-  --destructive-foreground: #0f1113;
-  --chip-tint: 12%;
-  --primary-strong: var(--primary);
-  --success-strong: var(--success);
-  --warning-strong: var(--warning);
-  --alert-strong: var(--alert);
-  --neutral-strong: var(--neutral);
-  --highlight-strong: var(--highlight);
-  --secondary: #242930;
+  /* Acento lime pleno da marca sobre escuro */
+  --primary: #a8d318;
+  --primary-hover: #c2e84a;
+  --primary-foreground: #10160a;
+  --secondary: var(--surface-4);
   --secondary-foreground: var(--foreground);
-  --muted: #242930;
+  --muted: var(--surface-3);
   --muted-foreground: var(--text-secondary);
-  --accent: #242930;
+  --accent: var(--surface-4);
   --accent-foreground: var(--foreground);
-  --border: #262b31;
-  --input: #5e6773;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --input: #6f6f6f;
   --ring: var(--primary);
-  --sidebar: var(--surface-1);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
+  /* Familias semanticas do handoff (escuro) */
+  --success: #3fd3a3;
+  --success-text: #8ae3c2;
+  --success-bg: #1c2d26;
+  --warning: #e8b44c;
+  --warning-text: #f0ce84;
+  --warning-bg: #33291c;
+  --alert: #ef7e70;
+  --alert-text: #ffaea3;
+  --alert-bg: #33231f;
+  --on-alert: #1a0805;
+  --info: #6ea8fe;
+  --info-text: #a8c9ff;
+  --info-bg: #1f2a33;
+  --ai: #9b8cf7;
+  --ai-text: #c6bcff;
+  --ai-bg: #262433;
+  --neutral: rgba(255, 255, 255, 0.55);
+  --neutral-text: rgba(255, 255, 255, 0.66);
+  --neutral-bg: #242424;
+  --destructive: var(--alert);
+  --destructive-foreground: var(--on-alert);
 }
 
 @layer base {

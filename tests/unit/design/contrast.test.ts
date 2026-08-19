@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Verificacao automatizada de contraste (aceite da tarefa 0.3).
-// Parseia os tokens de app/globals.css e afirma os pares que o proprio brief
-// de telas (docs/02 secao 3) anota: texto >= 4.5:1, semanticas >= 4.5:1 e
-// borda de campo/controle >= 3.0:1, nos dois temas. Se um token mudar e
+// Verificacao automatizada de contraste (aceite da tarefa 0.3, WCAG AA do
+// CLAUDE.md). Parseia os tokens de app/globals.css, compoe cores rgba sobre a
+// superficie de base e afirma: texto >= 4.5:1, pares de chip >= 4.5:1, borda
+// de campo >= 3.0:1, sidebar >= 4.5:1, nos dois temas. Se um token mudar e
 // quebrar contraste, este teste quebra.
+//
+// Regras de uso que o teste codifica:
+// - Texto primario e secundario valem ate a Superficie 5 (linha selecionada).
+// - Texto terciario so pode aparecer ate a Superficie 3.
 
 type TokenMap = Record<string, string>;
+type Rgba = { r: number; g: number; b: number; a: number };
 
 function parseBlock(css: string, selector: string): TokenMap {
   const blockMatch = css.match(
@@ -43,32 +48,80 @@ function resolveToken(tokens: TokenMap, name: string, depth = 0): string {
   return value;
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-  const clean = hex.replace("#", "");
-  if (!/^[0-9a-fA-F]{6}$/.test(clean)) {
-    throw new Error(`Valor não é hex de 6 dígitos: ${hex}`);
+function parseColor(value: string): Rgba {
+  const hex = value.match(/^#([0-9a-fA-F]{6})$/);
+  if (hex?.[1]) {
+    return {
+      r: parseInt(hex[1].slice(0, 2), 16),
+      g: parseInt(hex[1].slice(2, 4), 16),
+      b: parseInt(hex[1].slice(4, 6), 16),
+      a: 1,
+    };
   }
-  return [
-    parseInt(clean.slice(0, 2), 16),
-    parseInt(clean.slice(2, 4), 16),
-    parseInt(clean.slice(4, 6), 16),
-  ];
+  const rgba = value.match(
+    /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/,
+  );
+  if (rgba?.[1] && rgba[2] && rgba[3]) {
+    return {
+      r: Number(rgba[1]),
+      g: Number(rgba[2]),
+      b: Number(rgba[3]),
+      a: rgba[4] === undefined ? 1 : Number(rgba[4]),
+    };
+  }
+  throw new Error(`Cor não reconhecida: ${value}`);
+}
+
+function over(fg: Rgba, bg: Rgba): Rgba {
+  if (fg.a >= 1) {
+    return fg;
+  }
+  const mix = (f: number, b: number) => f * fg.a + b * (1 - fg.a);
+  return { r: mix(fg.r, bg.r), g: mix(fg.g, bg.g), b: mix(fg.b, bg.b), a: 1 };
+}
+
+// Resolve um token para cor opaca, compondo rgba sobre a cadeia de base.
+function opaque(tokens: TokenMap, name: string, baseNames: string[]): Rgba {
+  const color = parseColor(resolveToken(tokens, name));
+  if (color.a >= 1) {
+    return color;
+  }
+  const [base, ...rest] = baseNames;
+  if (!base) {
+    throw new Error(`--${name} é translúcido e não há base para compor`);
+  }
+  return over(color, opaque(tokens, base, rest));
 }
 
 // Luminancia relativa, formula da WCAG 2.2
-function luminance(hex: string): number {
-  const [r, g, b] = hexToRgb(hex).map((channel) => {
-    const srgb = channel / 255;
+function luminance(color: Rgba): number {
+  const channel = (value: number) => {
+    const srgb = value / 255;
     return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
-  }) as [number, number, number];
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  return (
+    0.2126 * channel(color.r) +
+    0.7152 * channel(color.g) +
+    0.0722 * channel(color.b)
+  );
 }
 
-function contrastRatio(foreground: string, background: string): number {
-  const l1 = luminance(foreground);
-  const l2 = luminance(background);
+function ratioOf(fg: Rgba, bg: Rgba): number {
+  const l1 = luminance(over(fg, bg));
+  const l2 = luminance(bg);
   const [lighter, darker] = l1 >= l2 ? [l1, l2] : [l2, l1];
   return (lighter + 0.05) / (darker + 0.05);
+}
+
+function contrast(
+  tokens: TokenMap,
+  fgName: string,
+  bgName: string,
+  bgBase: string[] = ["background"],
+): number {
+  const bg = opaque(tokens, bgName, bgBase);
+  const fg = parseColor(resolveToken(tokens, fgName));
+  return ratioOf(fg, bg);
 }
 
 const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf-8");
@@ -76,94 +129,72 @@ const themes = {
   claro: parseBlock(css, ":root"),
   escuro: parseBlock(css, ".dark"),
 };
+// Sidebar e fixa nos dois temas e definida so no :root
+const sidebarTokens = themes.claro;
 
-const TEXT_TOKENS = ["foreground", "text-secondary", "text-tertiary"];
-const SEMANTIC_TOKENS = [
-  "primary",
-  "success",
-  "warning",
-  "alert",
-  "neutral",
-  "highlight",
-];
-// A pior superficie de leitura de cada tema: no escuro o texto aparece ate
-// sobre a Superficie 4 (modal); no claro as superficies sao brancas.
-const WORST_TEXT_SURFACE = { claro: "surface-2", escuro: "surface-4" } as const;
-const SEMANTIC_SURFACE = { claro: "surface-2", escuro: "surface-2" } as const;
-// Base validada pelo brief para a borda de controle: no escuro contra o fundo
-// da aplicacao (3,30:1 anotado na secao 3.2), no claro contra a superficie
-// branca onde os campos vivem.
-const CONTROL_SURFACE = { claro: "surface-1", escuro: "background" } as const;
+const TONES = ["ai", "info", "success", "warning", "alert", "neutral"];
 
-describe.each(Object.entries(themes))("tema %s", (themeName, tokens) => {
-  const theme = themeName as keyof typeof WORST_TEXT_SURFACE;
-
-  it.each(TEXT_TOKENS)("texto --%s tem 4.5:1 na pior superfície", (token) => {
-    const ratio = contrastRatio(
-      resolveToken(tokens, token),
-      resolveToken(tokens, WORST_TEXT_SURFACE[theme]),
-    );
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
-  });
-
-  it.each(SEMANTIC_TOKENS)(
-    "semântica --%s tem 4.5:1 sobre a superfície de card",
+describe.each(Object.entries(themes))("tema %s", (_themeName, tokens) => {
+  it.each(["foreground", "text-secondary"])(
+    "texto --%s tem 4.5:1 até a Superfície 5",
     (token) => {
-      const ratio = contrastRatio(
-        resolveToken(tokens, token),
-        resolveToken(tokens, SEMANTIC_SURFACE[theme]),
-      );
-      expect(ratio).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(tokens, token, "surface-5")).toBeGreaterThanOrEqual(4.5);
     },
   );
 
-  it("borda de campo (--input) tem 3.0:1 sobre a base validada no brief", () => {
-    const ratio = contrastRatio(
-      resolveToken(tokens, "input"),
-      resolveToken(tokens, CONTROL_SURFACE[theme]),
-    );
-    expect(ratio).toBeGreaterThanOrEqual(3.0);
+  it("texto terciário tem 4.5:1 até a Superfície 3", () => {
+    expect(
+      contrast(tokens, "text-tertiary", "surface-3"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(TONES)("chip de --%s: texto tem 4.5:1 sobre o fundo", (toneName) => {
+    expect(
+      contrast(tokens, `${toneName}-text`, `${toneName}-bg`),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 
   it("texto sobre a primária (--primary-foreground) tem 4.5:1", () => {
-    const ratio = contrastRatio(
-      resolveToken(tokens, "primary-foreground"),
-      resolveToken(tokens, "primary"),
-    );
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrast(tokens, "primary-foreground", "primary"),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 
-  // A formula exata do StatusChip: fundo = tinta da cor base sobre o card
-  // (color-mix in srgb com --chip-tint), texto e icone na variante forte.
-  it.each(SEMANTIC_TOKENS)(
-    "chip de --%s: variante forte tem 4.5:1 sobre o fundo tingido",
-    (token) => {
-      const tintValue = resolveToken(tokens, "chip-tint");
-      const tint = Number(tintValue.replace("%", "")) / 100;
-      expect(tint).toBeGreaterThan(0);
-      const base = hexToRgb(resolveToken(tokens, token));
-      const card = hexToRgb(resolveToken(tokens, "card"));
-      const mixed = `#${base
-        .map((channel, index) => {
-          const cardChannel = card[index] ?? 0;
-          return Math.round(channel * tint + cardChannel * (1 - tint))
-            .toString(16)
-            .padStart(2, "0");
-        })
-        .join("")}`;
-      const ratio = contrastRatio(
-        resolveToken(tokens, `${token}-strong`),
-        mixed,
-      );
-      expect(ratio).toBeGreaterThanOrEqual(4.5);
-    },
-  );
+  it("texto sobre a destrutiva tem 4.5:1", () => {
+    expect(
+      contrast(tokens, "destructive-foreground", "destructive"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
 
-  it("texto sobre a destrutiva (--destructive-foreground) tem 4.5:1", () => {
-    const ratio = contrastRatio(
-      resolveToken(tokens, "destructive-foreground"),
-      resolveToken(tokens, "destructive"),
-    );
-    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  it("borda de campo (--input) tem 3.0:1 sobre a superfície de card", () => {
+    expect(contrast(tokens, "input", "surface-2")).toBeGreaterThanOrEqual(3.0);
+  });
+});
+
+describe("sidebar fixa (os dois temas)", () => {
+  it("texto da sidebar tem 4.5:1", () => {
+    expect(
+      contrast(sidebarTokens, "sidebar-foreground", "sidebar"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("rótulo de grupo tem 4.5:1", () => {
+    expect(
+      contrast(sidebarTokens, "sidebar-muted", "sidebar"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("item ativo tem 4.5:1 sobre o fundo ativo", () => {
+    expect(
+      contrast(sidebarTokens, "sidebar-active-text", "sidebar-active-bg", [
+        "sidebar",
+      ]),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("badge de não lidas tem 4.5:1", () => {
+    expect(
+      contrast(sidebarTokens, "sidebar-badge-text", "sidebar-badge"),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 });

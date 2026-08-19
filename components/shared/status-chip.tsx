@@ -10,9 +10,9 @@ type StatusChipProps = {
   className?: string;
 };
 
-// Anatomia do chip (brief secao 3.5): 24px de altura, raio 6px, icone de 14px
-// com traco 1,5px, rotulo 12px semibold, fundo com 12% de opacidade da cor
-// semantica e texto na cor cheia. As 3 camadas sao obrigatorias.
+// Chip de status no estilo do handoff: pilula com fundo da familia semantica
+// e texto na variante de texto da mesma familia (par validado pelo teste de
+// contraste). As 3 camadas sao obrigatorias: icone, rotulo e cor.
 export function StatusChip({
   definition,
   label,
@@ -26,16 +26,10 @@ export function StatusChip({
   return (
     <span
       className={cn(
-        "inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs font-semibold whitespace-nowrap",
+        "inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-semibold whitespace-nowrap",
         className,
       )}
-      style={{
-        color: tone.strong,
-        // Tinta da cor semantica sobre a superficie de card (brief 3.5), com o
-        // percentual por tema em --chip-tint. A mistura com var(--card), e nao
-        // com transparente, torna o fundo opaco e o contraste deterministico.
-        backgroundColor: `color-mix(in srgb, ${tone.base} var(--chip-tint), var(--card))`,
-      }}
+      style={{ color: tone.text, backgroundColor: tone.bg }}
     >
       {Icon ? (
         <Icon strokeWidth={1.5} className="size-3.5 shrink-0" />
@@ -44,7 +38,7 @@ export function StatusChip({
           aria-hidden
           className="flex size-3.5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-foreground"
           style={{
-            backgroundColor: `color-mix(in srgb, ${tone.base} 24%, var(--card))`,
+            backgroundColor: `color-mix(in srgb, ${tone.marker} 30%, ${tone.bg})`,
           }}
         >
           {avatarInitials ?? "?"}
