@@ -45,15 +45,18 @@ export function seedClient(): SupabaseClient {
 }
 
 // Cria o usuario se nao existir e devolve o id. Idempotente por e-mail.
+// O nome vai em user_metadata.name e e atualizado tambem para quem ja existe.
 export async function ensureUser(
   admin: SupabaseClient,
   email: string,
   password: string,
+  name: string,
 ): Promise<string> {
   const created = await admin.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
+    user_metadata: { name },
   });
   if (created.data.user) {
     return created.data.user.id;
@@ -71,6 +74,9 @@ export async function ensureUser(
       (user) => user.email?.toLowerCase() === email.toLowerCase(),
     );
     if (found) {
+      await admin.auth.admin.updateUserById(found.id, {
+        user_metadata: { name },
+      });
       return found.id;
     }
     if (data.users.length < 100) {

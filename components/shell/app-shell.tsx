@@ -1,10 +1,12 @@
 "use client";
 
-import { Bell, LogOut, Menu, Search } from "lucide-react";
+import { ArrowLeftRight, Bell, LogOut, Menu, Search } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+
+import { signOutAction } from "@/app/(auth)/actions";
 
 import { NavBadge } from "@/components/shell/nav-badge";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
@@ -182,10 +184,12 @@ function SidebarBody({
 export function AppShell({
   viewer,
   counts = {},
+  canSwitchClinic = false,
   children,
 }: {
   viewer: Viewer;
   counts?: Counts;
+  canSwitchClinic?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -300,9 +304,23 @@ export function AppShell({
                     </span>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem disabled>
-                    <LogOut strokeWidth={1.5} className="size-4" />
-                    Sair (disponível com o login)
+                  {canSwitchClinic ? (
+                    <DropdownMenuItem asChild>
+                      <Link href="/selecionar-clinica">
+                        <ArrowLeftRight strokeWidth={1.5} className="size-4" />
+                        Trocar de clínica
+                      </Link>
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem asChild>
+                    <button
+                      type="button"
+                      className="w-full"
+                      onClick={() => signOutAction()}
+                    >
+                      <LogOut strokeWidth={1.5} className="size-4" />
+                      Sair
+                    </button>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

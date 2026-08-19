@@ -38,28 +38,52 @@ const UNITS = [
 
 type SeedMember = {
   email: string;
+  name: string;
   role: "admin" | "gestor" | "recepcao" | "profissional" | "leitura";
   clinics: string[];
 };
 
 const MEMBERS: SeedMember[] = [
-  { email: "admin@vitalis.dev", role: "admin", clinics: [CLINIC_VITALIS] },
-  { email: "gestor@vitalis.dev", role: "gestor", clinics: [CLINIC_VITALIS] },
+  {
+    email: "admin@vitalis.dev",
+    name: "Ana Almeida",
+    role: "admin",
+    clinics: [CLINIC_VITALIS],
+  },
+  {
+    email: "gestor@vitalis.dev",
+    name: "Gustavo Gomes",
+    role: "gestor",
+    clinics: [CLINIC_VITALIS],
+  },
   {
     email: "recepcao@vitalis.dev",
+    name: "Marina Rocha",
     role: "recepcao",
     clinics: [CLINIC_VITALIS],
   },
   {
     email: "profissional@vitalis.dev",
+    name: "Paulo Prado",
     role: "profissional",
     clinics: [CLINIC_VITALIS],
   },
-  { email: "leitura@vitalis.dev", role: "leitura", clinics: [CLINIC_VITALIS] },
-  { email: "admin@belezapura.dev", role: "admin", clinics: [CLINIC_BELEZA] },
+  {
+    email: "leitura@vitalis.dev",
+    name: "Lia Luz",
+    role: "leitura",
+    clinics: [CLINIC_VITALIS],
+  },
+  {
+    email: "admin@belezapura.dev",
+    name: "Bruna Braga",
+    role: "admin",
+    clinics: [CLINIC_BELEZA],
+  },
   // Persona agencia: admin nas duas clinicas, exercita o seletor de clinica.
   {
     email: "agencia@conduzza.dev",
+    name: "Carla Costa",
     role: "admin",
     clinics: [CLINIC_VITALIS, CLINIC_BELEZA],
   },
@@ -117,7 +141,12 @@ export async function seedNucleo(admin: SupabaseClient): Promise<string[]> {
     role: SeedMember["role"];
   }[] = [];
   for (const member of MEMBERS) {
-    const userId = await ensureUser(admin, member.email, SEED_PASSWORD);
+    const userId = await ensureUser(
+      admin,
+      member.email,
+      SEED_PASSWORD,
+      member.name,
+    );
     for (const clinicId of member.clinics) {
       memberRows.push({
         clinic_id: clinicId,
@@ -134,7 +163,12 @@ export async function seedNucleo(admin: SupabaseClient): Promise<string[]> {
   }
   log.push(`${MEMBERS.length} usuários com papéis`);
 
-  const donoId = await ensureUser(admin, PRODUCT_ADMIN_EMAIL, SEED_PASSWORD);
+  const donoId = await ensureUser(
+    admin,
+    PRODUCT_ADMIN_EMAIL,
+    SEED_PASSWORD,
+    "Otávio Nunes",
+  );
   const { error: productAdminError } = await admin
     .from("product_admin")
     .upsert([{ user_id: donoId }], { onConflict: "user_id" });

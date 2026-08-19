@@ -37,7 +37,27 @@ export async function updateSession(request: NextRequest) {
   );
 
   // Importante: manter a chamada para o token nao expirar em navegacao longa.
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // Protecao de rota (tarefa 0.5): area logada exige sessao. A checagem de
+  // papel NAO vive aqui: fica nos layouts e nas Server Actions, e o isolamento
+  // de dados e da RLS.
+  const { pathname } = request.nextUrl;
+  const isPublic =
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/recuperar-senha") ||
+    pathname.startsWith("/confirm") ||
+    pathname.startsWith("/dev") ||
+    pathname.startsWith("/brand");
+
+  if (!user && !isPublic) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
 
   return response;
 }
