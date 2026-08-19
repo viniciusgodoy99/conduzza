@@ -1,0 +1,11 @@
+.next
+node_modules
+package-lock.json
+docs/
+design_handoff_conduzza_atendimento_ia/
+CLAUDE.md
+PROMPT_INICIAL.md
+README.md
+supabase/.temp
+test-results
+playwright-report
