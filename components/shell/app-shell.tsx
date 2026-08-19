@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { signOutAction } from "@/app/(auth)/actions";
+import { createT, type Labels, type Translate } from "@/lib/branding/labels";
 
 import { NavBadge } from "@/components/shell/nav-badge";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
@@ -78,10 +79,12 @@ function NavList({
   items,
   pathname,
   counts,
+  t,
 }: {
   items: NavItem[];
   pathname: string;
   counts: Counts;
+  t: Translate;
 }) {
   const groups: NavGroup[] = ["operacao", "inteligencia"];
   return (
@@ -119,7 +122,11 @@ function NavList({
                     strokeWidth={active ? 2 : 1.5}
                     className="size-4 shrink-0"
                   />
-                  <span>{item.label}</span>
+                  <span>
+                    {item.labelKey
+                      ? t(item.labelKey, { plural: true, capitalize: true })
+                      : item.label}
+                  </span>
                   <NavBadge count={item.badge ? counts[item.badge] : null} />
                 </Link>
               );
@@ -150,17 +157,19 @@ function SidebarBody({
   items,
   pathname,
   counts,
+  t,
 }: {
   viewer: Viewer;
   items: NavItem[];
   pathname: string;
   counts: Counts;
+  t: Translate;
 }) {
   return (
     <>
       <Brand productName={viewer.productName} />
       <div className="flex-1 overflow-y-auto pb-4">
-        <NavList items={items} pathname={pathname} counts={counts} />
+        <NavList items={items} pathname={pathname} counts={counts} t={t} />
       </div>
       <div className="border-t [border-color:var(--sidebar-border)] px-4 py-3">
         <div className="flex items-center gap-3">
@@ -185,16 +194,19 @@ export function AppShell({
   viewer,
   counts = {},
   canSwitchClinic = false,
+  labels = null,
   children,
 }: {
   viewer: Viewer;
   counts?: Counts;
   canSwitchClinic?: boolean;
+  labels?: Partial<Labels> | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const items = itemsForRole(viewer.role);
+  const t = createT(labels);
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -206,6 +218,7 @@ export function AppShell({
             items={items}
             pathname={pathname}
             counts={counts}
+            t={t}
           />
         </aside>
 
@@ -237,6 +250,7 @@ export function AppShell({
                     items={items}
                     pathname={pathname}
                     counts={counts}
+                    t={t}
                   />
                 </div>
               </SheetContent>

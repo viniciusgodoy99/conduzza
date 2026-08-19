@@ -4,7 +4,10 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "tests/e2e",
   testMatch: "**/*.spec.ts",
-  fullyParallel: true,
+  // 1 worker: o teste de white-label muda o branding no banco compartilhado;
+  // paralelismo entre arquivos criaria corrida entre os specs.
+  fullyParallel: false,
+  workers: 1,
   retries: 0,
   use: {
     baseURL: "http://localhost:3000",

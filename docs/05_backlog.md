@@ -9,35 +9,35 @@ Legenda de tamanho: `P` até meio dia, `M` 1 a 2 dias, `G` 3 a 5 dias. Estimativ
 
 ## FASE 0. Fundação
 
-### [ ] 0.1 Bootstrap do projeto `M`
+### [x] 0.1 Bootstrap do projeto `M`
 Next.js 15 com App Router, TypeScript strict, Tailwind v4, shadcn/ui, ESLint, Prettier, Vitest, Playwright. Scripts `dev`, `build`, `typecheck`, `lint`, `test`. Estrutura de pastas conforme `docs/03_arquitetura.md` seção 2.
 **Aceite:** `npm run build`, `npm run typecheck` e `npm run lint` passam limpos em projeto vazio.
 
-### [ ] 0.2 Projeto Supabase e conexão `P`
+### [x] 0.2 Projeto Supabase e conexão `P`
 Criar projeto **na região `sa-east-1` (São Paulo)**, ver `docs/03` seção 1. Configurar cliente de browser, de servidor e middleware. `.env.example` versionado.
 **Aceite:** página server-side lê uma tabela de teste. Região confirmada no painel.
 
-### [ ] 0.3 Design system em código `M`
+### [x] 0.3 Design system em código `M`
 Tokens de cor (claro e escuro) da seção 3 do brief de telas, como CSS custom properties. Tipografia (Inter e JetBrains Mono). Chave de tema com persistência. Componente `StatusChip` implementando a regra das 3 camadas (ícone com forma distinta, rótulo, cor) para os 10 status de agendamento e os 4 de conversa. Componentes compartilhados: `PageHeader`, `EmptyState`, `LoadingSkeleton`, `DataTable`.
 **Aceite:** página `/dev/tokens` mostrando toda a paleta e todos os chips nos dois temas. Contraste conferido com ferramenta automatizada.
 
-### [ ] 0.4 Núcleo do banco e RLS `G`
+### [x] 0.4 Núcleo do banco e RLS `G`
 Migration com `clinic`, `clinic_branding`, `clinic_member`, `unit`, `audit_log`. Função `user_clinic_ids()`. RLS habilitada com policy em todas.
 **Aceite:** **teste automatizado** provando que usuário da clínica A recebe zero linhas ao consultar dado da clínica B. Sem esse teste a tarefa não está pronta.
 
-### [ ] 0.5 Auth e seleção de clínica `M`
+### [x] 0.5 Auth e seleção de clínica `M`
 Login, convite por e-mail, recuperação de senha. Middleware protegendo `(app)`. Seletor de clínica para quem pertence a mais de uma. Papéis aplicados conforme a matriz da seção 5 do brief.
 **Aceite:** usuário `recepcao` não acessa `/configuracoes`. Ação sem permissão aparece desabilitada com dica, não escondida.
 
-### [ ] 0.6 Layout e navegação `M`
+### [x] 0.6 Layout e navegação `M`
 Rail de 240px com os dois grupos (Operação e Ajustes), barra superior, badges de contagem, colapso automático em 1366px, breakpoints da seção 6 do brief.
 **Aceite:** conferido em 1600px, 1366px, 1024px e 768px.
 
-### [ ] 0.7 White-label `M`
+### [x] 0.7 White-label `M`
 `clinic_branding` aplicado: logo em 4 versões, cor primária via CSS custom property vinda do servidor, `labels jsonb` e helper `t(chave)` para a nomenclatura parametrizável.
 **Aceite:** trocar `labels.profissional` para "advogado" muda a interface inteira sem recompilar nem alterar código.
 
-### [ ] 0.8 Seeds `M`
+### [x] 0.8 Seeds `M`
 Dados fictícios conforme a seção 10 de `docs/04_modelo_dados.md`.
 **Aceite:** `npm run seed` popula tudo e a aplicação fica navegável e realista.
 

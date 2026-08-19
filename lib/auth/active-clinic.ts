@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { cache } from "react";
 
 import { createClient } from "@/lib/supabase/server";
+import type { Labels } from "@/lib/branding/labels";
 import type { Role } from "@/lib/domain/permissions";
 
 // Contexto de sessao e clinica ativa da area logada.
@@ -19,6 +20,7 @@ export type Membership = {
   role: Role;
   productName: string;
   primaryColor: string;
+  labels: Partial<Labels> | null;
 };
 
 export type SessionContext = {
@@ -34,6 +36,7 @@ export type SessionContext = {
 type BrandingEmbed = {
   product_name: string;
   primary_color: string;
+  labels: Partial<Labels> | null;
 };
 
 type ClinicEmbed = {
@@ -61,7 +64,7 @@ export const getSessionContext = cache(
     const { data: memberRows } = await supabase
       .from("clinic_member")
       .select(
-        "role, clinic:clinic_id (id, name, slug, clinic_branding (product_name, primary_color))",
+        "role, clinic:clinic_id (id, name, slug, clinic_branding (product_name, primary_color, labels))",
       )
       .eq("user_id", user.id);
 
@@ -87,6 +90,7 @@ export const getSessionContext = cache(
           role: row.role,
           productName: branding?.product_name ?? "Conduzza Clínicas",
           primaryColor: branding?.primary_color ?? "#A8D318",
+          labels: branding?.labels ?? null,
         };
       })
       .filter((m): m is Membership => m !== null)

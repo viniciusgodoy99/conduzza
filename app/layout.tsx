@@ -4,6 +4,8 @@ import "./globals.css";
 
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { getSessionContext } from "@/lib/auth/active-clinic";
+import { brandStyleFor } from "@/lib/branding/brand-style";
 
 // Tipografia do handoff: Inter Tight para a interface, IBM Plex Mono para
 // numeros, telefones, horas e valores (alinha colunas e evita erro de leitura).
@@ -24,15 +26,22 @@ export const metadata: Metadata = {
   description: "Recepcionista de IA no WhatsApp da sua clínica",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // White-label (tarefa 0.7): a cor primaria da clinica ativa entra como CSS
+  // custom property no <html>, direto do servidor. Sem sessao ou com a marca
+  // padrao, o globals.css manda.
+  const context = await getSessionContext();
+  const brandStyle = brandStyleFor(context?.active?.primaryColor);
+
   return (
     <html
       lang="pt-BR"
       className={`${interTight.variable} ${ibmPlexMono.variable}`}
+      style={brandStyle}
       suppressHydrationWarning
     >
       <body className="antialiased">

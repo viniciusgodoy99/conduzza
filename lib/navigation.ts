@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import type { LabelKey } from "@/lib/branding/labels";
 import type { ModuleKey } from "@/lib/domain/permissions";
 
 // Navegacao declarativa do rail, grupos do handoff Conduzza: Operacao e
@@ -30,6 +31,8 @@ export type NavItem = {
   icon: LucideIcon;
   group: NavGroup;
   moduleKey: ModuleKey | null;
+  /** Rotulo parametrizavel do white-label: quando presente, passa por t() */
+  labelKey?: LabelKey;
   /** Chave do badge de contagem; a fonte de dados chega nas Fases 1 e 4 */
   badge?: "conversas" | "confirmacoes";
 };
@@ -75,6 +78,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Users,
     group: "operacao",
     moduleKey: "leads_pacientes",
+    labelKey: "paciente",
   },
   {
     href: "/confirmacoes",

@@ -61,6 +61,7 @@ export default async function AppLayout({
         productName: active.productName,
       }}
       canSwitchClinic={context.memberships.length > 1}
+      labels={active.labels}
     >
       {children}
     </AppShell>
