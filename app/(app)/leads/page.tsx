@@ -1,3 +1,5 @@
+import { ModulePlaceholder } from "@/components/shared/module-placeholder";
+
 export default function Page() {
-  return <h1 className="p-6 text-xl font-semibold">Leads</h1>;
+  return <ModulePlaceholder href="/leads" />;
 }

@@ -1,3 +1,5 @@
+import { ModulePlaceholder } from "@/components/shared/module-placeholder";
+
 export default function Page() {
-  return <h1 className="p-6 text-xl font-semibold">Atendimento</h1>;
+  return <ModulePlaceholder href="/atendimento" />;
 }
