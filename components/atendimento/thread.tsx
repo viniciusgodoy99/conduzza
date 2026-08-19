@@ -1,0 +1,197 @@
+"use client";
+
+import { format, isSameDay } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { ArrowLeft, Info } from "lucide-react";
+import { Fragment, useEffect, useRef } from "react";
+
+import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import {
+  ComplianceBlockCard,
+  MessageBubble,
+} from "@/components/atendimento/message-bubble";
+import { ListSkeleton } from "@/components/shared/loading-skeleton";
+import { StatusChip } from "@/components/shared/status-chip";
+import { Button } from "@/components/ui/button";
+import { CONVERSATION_STATUS } from "@/lib/design/status";
+import type {
+  ComplianceDecision,
+  ConversationListItem,
+  MessageItem,
+} from "@/lib/queries/conversations";
+
+// Fio da conversa (handoff): cabecalho de 64px com avatar, nome e estado;
+// mensagens com separador de dia; cartoes de evento e de bloqueio de
+// conformidade no meio do fio. O compositor entra como slot (tarefa 1.6).
+
+type ThreadItem =
+  | { type: "message"; message: MessageItem }
+  | { type: "decision"; decision: ComplianceDecision };
+
+function mergeItems(
+  messages: MessageItem[],
+  decisions: ComplianceDecision[],
+): ThreadItem[] {
+  const items: ThreadItem[] = [
+    ...messages.map((message) => ({ type: "message" as const, message })),
+    ...decisions.map((decision) => ({ type: "decision" as const, decision })),
+  ];
+  return items.sort((a, b) => {
+    const ta =
+      a.type === "message" ? a.message.created_at : a.decision.created_at;
+    const tb =
+      b.type === "message" ? b.message.created_at : b.decision.created_at;
+    return ta.localeCompare(tb);
+  });
+}
+
+export function Thread({
+  conversation,
+  messages,
+  decisions,
+  isLoading,
+  authorNames,
+  onBack,
+  onToggleContext,
+  footer,
+}: {
+  conversation: ConversationListItem;
+  messages: MessageItem[];
+  decisions: ComplianceDecision[];
+  isLoading: boolean;
+  authorNames: Record<string, string>;
+  onBack: () => void;
+  onToggleContext: () => void;
+  footer: React.ReactNode;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages.length, conversation.id]);
+
+  const items = mergeItems(messages, decisions);
+  const definition = CONVERSATION_STATUS[conversation.status];
+  const assigneeName = conversation.assignee_user_id
+    ? (authorNames[conversation.assignee_user_id] ?? "Atendente")
+    : null;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-surface-1 px-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-9 lg:hidden"
+          onClick={onBack}
+          aria-label="Voltar para a lista"
+        >
+          <ArrowLeft strokeWidth={1.5} className="size-4" />
+        </Button>
+        <ContactAvatar
+          name={conversation.contact.name}
+          phone={conversation.contact.phone_e164}
+          size={32}
+        />
+        <div className="grid min-w-0">
+          <span className="truncate text-sm font-semibold">
+            {conversation.contact.name ?? conversation.contact.phone_e164}
+          </span>
+          <span className="truncate font-mono text-[11px] text-text-tertiary tabular-nums">
+            {conversation.contact.phone_e164}
+          </span>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <StatusChip
+            definition={definition}
+            label={
+              conversation.status === "em_atendimento" && assigneeName
+                ? assigneeName
+                : undefined
+            }
+            avatarInitials={assigneeName
+              ?.split(/\s+/)
+              .slice(0, 2)
+              .map((part) => part[0] ?? "")
+              .join("")
+              .toUpperCase()}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-9 xl:hidden"
+            onClick={onToggleContext}
+            aria-label="Abrir contexto do contato"
+          >
+            <Info strokeWidth={1.5} className="size-4" />
+          </Button>
+        </div>
+      </header>
+
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-4"
+      >
+        {isLoading ? (
+          <ListSkeleton rows={5} />
+        ) : (
+          <div className="mx-auto grid max-w-3xl gap-2.5">
+            {items.map((item, index) => {
+              const previous = items[index - 1];
+              const currentDate =
+                item.type === "message"
+                  ? item.message.created_at
+                  : item.decision.created_at;
+              const previousDate = previous
+                ? previous.type === "message"
+                  ? previous.message.created_at
+                  : previous.decision.created_at
+                : null;
+              const showDay =
+                !previousDate ||
+                !isSameDay(new Date(currentDate), new Date(previousDate));
+              return (
+                <Fragment
+                  key={
+                    item.type === "message" ? item.message.id : item.decision.id
+                  }
+                >
+                  {showDay ? (
+                    <div className="flex justify-center py-1">
+                      <span className="text-[11px] font-medium tracking-wide text-text-tertiary uppercase">
+                        {format(new Date(currentDate), "EEEE, d 'de' MMMM", {
+                          locale: ptBR,
+                        })}
+                      </span>
+                    </div>
+                  ) : null}
+                  {item.type === "message" ? (
+                    <MessageBubble
+                      message={item.message}
+                      authorName={
+                        item.message.author === "ia"
+                          ? "Assistente"
+                          : item.message.author_user_id
+                            ? (authorNames[item.message.author_user_id] ?? null)
+                            : null
+                      }
+                    />
+                  ) : (
+                    <ComplianceBlockCard decision={item.decision} />
+                  )}
+                </Fragment>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-border bg-surface-1">
+        {footer}
+      </div>
+    </div>
+  );
+}

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { QueryProvider } from "@/components/providers/query-provider";
 import { AppShell } from "@/components/shell/app-shell";
 import { WhatsappBanner } from "@/components/shell/whatsapp-banner";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
@@ -66,6 +67,13 @@ export default async function AppLayout({
       <WhatsappBanner />
     ) : null;
 
+  // Badge do rail: conversas aguardando um humano (fonte real, sem inventar).
+  const { count: aguardandoHumano } = await supabase
+    .from("conversation")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", active.clinicId)
+    .eq("status", "aguardando_humano");
+
   return (
     <AppShell
       viewer={{
@@ -78,8 +86,9 @@ export default async function AppLayout({
       canSwitchClinic={context.memberships.length > 1}
       labels={active.labels}
       banner={banner}
+      counts={{ conversas: aguardandoHumano ?? 0 }}
     >
-      {children}
+      <QueryProvider>{children}</QueryProvider>
     </AppShell>
   );
 }
