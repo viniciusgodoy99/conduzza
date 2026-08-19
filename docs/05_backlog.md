@@ -47,31 +47,31 @@ Dados fictícios conforme a seção 10 de `docs/04_modelo_dados.md`.
 
 > **Mudança de rumo (19/08/2026):** canal inicial via **uazapi** (não oficial) com camada adaptadora; migração futura para a Cloud API oficial vira configuração. Ver CLAUDE.md 3.3. A tarefa 1.2 muda de "onboarding Meta" para "camada de canal + conexão por QR"; janela de 24h e templates ficam atrás de `isOfficialChannel`.
 
-### [ ] 1.1 Schema de conversa `M`
+### [x] 1.1 Schema de conversa `M`
 `conversation`, `message`, `ai_decision_log`, `whatsapp_account`, `message_template`, `message_pricing`, com RLS.
 **Aceite:** RLS testada. `wa_message_id` com constraint unique.
 
-### [ ] 1.2 Onboarding do WhatsApp (Tela 13) `G`
+### [x] 1.2 Onboarding do WhatsApp (Tela 13) `G`
 Assistente de 4 etapas: conectar número, verificar empresa na Meta, criar modelos, testar. Token guardado como segredo, nunca em texto na tabela.
 **Aceite:** número de teste conectado ponta a ponta. A tela explica em linguagem simples por que a verificação importa (250 contra 6.000 templates).
 
-### [ ] 1.3 Webhook de entrada `G`
+### [x] 1.3 Webhook de entrada `G`
 Edge Function `whatsapp-webhook`: valida `X-Hub-Signature-256`, responde 200 em menos de 5 segundos, insere mensagem de forma idempotente, atualiza `window_expires_at`, enfileira `process_inbound`.
 **Aceite:** reenviar o mesmo evento 3 vezes cria **1** mensagem. Teste de carga com 50 eventos simultâneos sem duplicata.
 
-### [ ] 1.4 Envio de mensagem `M`
+### [x] 1.4 Envio de mensagem `M`
 `lib/integrations/whatsapp/send.ts` com texto livre e template, retry com backoff, timeout, gravação de `pricing_category`, `billable` e `cost_cents`. **Bloqueio quando não há consentimento ativo.**
 **Aceite:** teste unitário provando que envio para contato sem `consent.active` é recusado e registrado.
 
-### [ ] 1.5 Inbox, tela (Tela 1) `G`
+### [x] 1.5 Inbox, tela (Tela 1) `G`
 As 4 regiões. Abas de posse com contador, chips de filtro, cartão de conversa de 76px com linha de posse sempre presente, fluxo de mensagens com selo `✦ IA` e borda esquerda na cor primária, nota interna, cartão de evento do sistema, cartão de bloqueio de conformidade, transcrição de áudio.
 **Aceite:** todos os estados da seção 8 do brief. Faixa vermelha fixa quando o WhatsApp está desconectado.
 
-### [ ] 1.6 Compositor com janela de 24h `M`
+### [x] 1.6 Compositor com janela de 24h `M`
 Três estados: IA atendendo (campo desabilitado + faixa âmbar + botão Assumir), humano dentro da janela (contador regressivo, âmbar abaixo de 4h, alerta abaixo de 1h), janela expirada (campo some, vira seletor de modelo).
 **Aceite:** o contador muda de cor nos limites certos. Fora da janela é impossível enviar texto livre pela interface.
 
-### [ ] 1.7 Takeover e tempo real `M`
+### [x] 1.7 Takeover e tempo real `M`
 Botão Assumir para a IA imediatamente e trava até devolução explícita. Realtime propaga mudança de status e mensagem nova para todas as sessões abertas.
 **Aceite:** duas abas abertas, uma assume, a outra reflete em menos de 2 segundos. A IA não volta sozinha.
 

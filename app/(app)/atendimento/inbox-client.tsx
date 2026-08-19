@@ -18,6 +18,7 @@ import {
   fetchMessages,
   type ConversationListItem,
 } from "@/lib/queries/conversations";
+import { useInboxChannel } from "@/lib/realtime/use-inbox-channel";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +45,8 @@ export function InboxClient({
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
+
+  useInboxChannel(supabase, clinicId);
 
   const conversationsQuery = useQuery({
     queryKey: conversationKeys.list(clinicId),
