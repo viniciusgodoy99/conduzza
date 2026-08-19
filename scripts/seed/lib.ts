@@ -87,3 +87,26 @@ export async function ensureUser(
     `Não foi possível criar nem localizar o usuário ${email}: ${created.error?.message}`,
   );
 }
+
+// Localiza o id de um usuario ja semeado pelo e-mail (base de dev e pequena).
+export async function userIdByEmail(
+  admin: SupabaseClient,
+  email: string,
+): Promise<string> {
+  const { data, error } = await admin.auth.admin.listUsers({
+    page: 1,
+    perPage: 100,
+  });
+  if (error) {
+    throw new Error(`Falha ao listar usuários: ${error.message}`);
+  }
+  const found = data.users.find(
+    (user) => user.email?.toLowerCase() === email.toLowerCase(),
+  );
+  if (!found) {
+    throw new Error(
+      `Usuário ${email} não encontrado. Rode o incremento núcleo.`,
+    );
+  }
+  return found.id;
+}

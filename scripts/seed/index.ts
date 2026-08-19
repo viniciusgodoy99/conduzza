@@ -1,16 +1,17 @@
 import { seedClient } from "./lib";
 import { seedNucleo } from "./000-nucleo";
+import { seedConversas } from "./010-conversas";
 
 // Orquestrador do seed (npm run seed). Estrategia incremental registrada no
 // plano da Fase 0: cada fase do backlog estende o seed no proprio aceite, ate
 // cobrir a secao 10 de docs/04 por completo.
 //
 // Incrementos futuros (nao criar arquivo antes da fase):
-// - 010-conversas.ts   (Fase 1, tarefa 1.1: conversation, message)
 // - 020-catalogo.ts    (Fase 2, tarefa 2.1: profissionais, procedimentos,
 //                       convenios, vinculos, pacotes, recursos)
 // - 030-agenda.ts      (Fase 2, tarefa 2.3: 40 agendamentos nos 10 status)
-// - 040-contatos.ts    (Fase 4, tarefa 4.1: 60 contatos nas 6 etapas, consentimento)
+// - 040-contatos.ts    (Fase 4, tarefa 4.1: completar 60 contatos nas 6
+//                       etapas e package_balance)
 // - 050-reguas.ts      (Fase 4, tarefa 4.6: regua de confirmacao ativa)
 
 async function main() {
@@ -25,10 +26,15 @@ async function main() {
   }
 
   console.log("Semeando o núcleo...");
-  const done = await seedNucleo(admin);
-  for (const line of done) {
+  for (const line of await seedNucleo(admin)) {
     console.log(`  ✔ ${line}`);
   }
+
+  console.log("Semeando conversas...");
+  for (const line of await seedConversas(admin)) {
+    console.log(`  ✔ ${line}`);
+  }
+
   console.log("Seed concluído. Rodar de novo não duplica nada.");
 }
 
