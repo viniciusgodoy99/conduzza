@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
-import { adminClient, anonClient } from "./local-stack";
+import { adminClient, anonClient } from "./stack";
 
 // Aceite da tarefa 0.4: teste automatizado provando que um usuario da clinica
 // A recebe ZERO linhas ao consultar dado da clinica B, com JWTs reais emitidos
