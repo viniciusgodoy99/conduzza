@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/shell/app-shell";
+import { WhatsappBanner } from "@/components/shell/whatsapp-banner";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
+import { createClient } from "@/lib/supabase/server";
 
 // Layout da area logada: exige sessao e clinica ativa validada em
 // clinic_member (tarefa 0.5). O isolamento de dados e da RLS; aqui so se
@@ -51,6 +53,19 @@ export default async function AppLayout({
     redirect("/selecionar-clinica");
   }
 
+  // Faixa de WhatsApp desconectado (estado 5 da secao 8 do brief): so quando
+  // a clinica tem conta e ela nao esta conectada.
+  const supabase = await createClient();
+  const { data: whatsappAccount } = await supabase
+    .from("whatsapp_account")
+    .select("connection_status")
+    .eq("clinic_id", active.clinicId)
+    .maybeSingle();
+  const banner =
+    whatsappAccount && whatsappAccount.connection_status !== "conectado" ? (
+      <WhatsappBanner />
+    ) : null;
+
   return (
     <AppShell
       viewer={{
@@ -62,6 +77,7 @@ export default async function AppLayout({
       }}
       canSwitchClinic={context.memberships.length > 1}
       labels={active.labels}
+      banner={banner}
     >
       {children}
     </AppShell>

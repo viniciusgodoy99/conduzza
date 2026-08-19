@@ -195,12 +195,14 @@ export function AppShell({
   counts = {},
   canSwitchClinic = false,
   labels = null,
+  banner = null,
   children,
 }: {
   viewer: Viewer;
   counts?: Counts;
   canSwitchClinic?: boolean;
   labels?: Partial<Labels> | null;
+  banner?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -223,123 +225,129 @@ export function AppShell({
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* Barra superior de 56px */}
-          <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-surface-1 px-4">
-            <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-              <SheetTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-10 lg:hidden"
-                  aria-label="Abrir menu"
+          {/* Faixas fixas + barra superior de 56px */}
+          <div className="sticky top-0 z-10">
+            {banner}
+            <header className="flex h-14 items-center gap-2 border-b border-border bg-surface-1 px-4">
+              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+                <SheetTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-10 lg:hidden"
+                    aria-label="Abrir menu"
+                  >
+                    <Menu strokeWidth={1.5} className="size-4" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent
+                  side="left"
+                  className="flex w-64 flex-col gap-0 border-0 p-0 [background:var(--sidebar)]"
                 >
-                  <Menu strokeWidth={1.5} className="size-4" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent
-                side="left"
-                className="flex w-64 flex-col gap-0 border-0 p-0 [background:var(--sidebar)]"
-              >
-                <SheetTitle className="sr-only">Menu</SheetTitle>
-                <div
-                  className="flex min-h-0 flex-1 flex-col"
-                  onClick={() => setDrawerOpen(false)}
-                >
-                  <SidebarBody
-                    viewer={viewer}
-                    items={items}
-                    pathname={pathname}
-                    counts={counts}
-                    t={t}
-                  />
-                </div>
-              </SheetContent>
-            </Sheet>
+                  <SheetTitle className="sr-only">Menu</SheetTitle>
+                  <div
+                    className="flex min-h-0 flex-1 flex-col"
+                    onClick={() => setDrawerOpen(false)}
+                  >
+                    <SidebarBody
+                      viewer={viewer}
+                      items={items}
+                      pathname={pathname}
+                      counts={counts}
+                      t={t}
+                    />
+                  </div>
+                </SheetContent>
+              </Sheet>
 
-            <p className="truncate text-sm text-text-secondary">
-              {viewer.clinicName}
-            </p>
+              <p className="truncate text-sm text-text-secondary">
+                {viewer.clinicName}
+              </p>
 
-            <div className="ml-auto flex items-center gap-1">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={0} className="inline-flex">
+              <div className="ml-auto flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={0} className="inline-flex">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-10"
+                        disabled
+                        aria-label="Busca global"
+                      >
+                        <Search strokeWidth={1.5} className="size-4" />
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>Busca disponível em breve</TooltipContent>
+                </Tooltip>
+
+                <ThemeToggle />
+
+                <Popover>
+                  <PopoverTrigger asChild>
                     <Button
                       variant="ghost"
                       size="icon"
                       className="size-10"
-                      disabled
-                      aria-label="Busca global"
+                      aria-label="Notificações"
                     >
-                      <Search strokeWidth={1.5} className="size-4" />
+                      <Bell strokeWidth={1.5} className="size-4" />
                     </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>Busca disponível em breve</TooltipContent>
-              </Tooltip>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-64">
+                    <p className="text-sm text-text-secondary">
+                      Nenhuma notificação por enquanto.
+                    </p>
+                  </PopoverContent>
+                </Popover>
 
-              <ThemeToggle />
-
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-10"
-                    aria-label="Notificações"
-                  >
-                    <Bell strokeWidth={1.5} className="size-4" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent align="end" className="w-64">
-                  <p className="text-sm text-text-secondary">
-                    Nenhuma notificação por enquanto.
-                  </p>
-                </PopoverContent>
-              </Popover>
-
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    className="size-10 rounded-full p-0"
-                    aria-label="Menu do usuário"
-                  >
-                    <span className="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-semibold">
-                      {initialsOf(viewer.name)}
-                    </span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel className="grid">
-                    <span className="truncate">{viewer.name}</span>
-                    <span className="text-xs font-normal text-text-tertiary">
-                      {viewer.roleLabel} · {viewer.clinicName}
-                    </span>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {canSwitchClinic ? (
-                    <DropdownMenuItem asChild>
-                      <Link href="/selecionar-clinica">
-                        <ArrowLeftRight strokeWidth={1.5} className="size-4" />
-                        Trocar de clínica
-                      </Link>
-                    </DropdownMenuItem>
-                  ) : null}
-                  <DropdownMenuItem asChild>
-                    <button
-                      type="button"
-                      className="w-full"
-                      onClick={() => signOutAction()}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      className="size-10 rounded-full p-0"
+                      aria-label="Menu do usuário"
                     >
-                      <LogOut strokeWidth={1.5} className="size-4" />
-                      Sair
-                    </button>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </header>
+                      <span className="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-semibold">
+                        {initialsOf(viewer.name)}
+                      </span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuLabel className="grid">
+                      <span className="truncate">{viewer.name}</span>
+                      <span className="text-xs font-normal text-text-tertiary">
+                        {viewer.roleLabel} · {viewer.clinicName}
+                      </span>
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {canSwitchClinic ? (
+                      <DropdownMenuItem asChild>
+                        <Link href="/selecionar-clinica">
+                          <ArrowLeftRight
+                            strokeWidth={1.5}
+                            className="size-4"
+                          />
+                          Trocar de clínica
+                        </Link>
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem asChild>
+                      <button
+                        type="button"
+                        className="w-full"
+                        onClick={() => signOutAction()}
+                      >
+                        <LogOut strokeWidth={1.5} className="size-4" />
+                        Sair
+                      </button>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </header>
+          </div>
 
           <main className="flex-1">{children}</main>
         </div>

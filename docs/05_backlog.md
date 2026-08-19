@@ -45,6 +45,8 @@ Dados fictícios conforme a seção 10 de `docs/04_modelo_dados.md`.
 
 ## FASE 1. WhatsApp e Inbox
 
+> **Mudança de rumo (19/08/2026):** canal inicial via **uazapi** (não oficial) com camada adaptadora; migração futura para a Cloud API oficial vira configuração. Ver CLAUDE.md 3.3. A tarefa 1.2 muda de "onboarding Meta" para "camada de canal + conexão por QR"; janela de 24h e templates ficam atrás de `isOfficialChannel`.
+
 ### [ ] 1.1 Schema de conversa `M`
 `conversation`, `message`, `ai_decision_log`, `whatsapp_account`, `message_template`, `message_pricing`, com RLS.
 **Aceite:** RLS testada. `wa_message_id` com constraint unique.

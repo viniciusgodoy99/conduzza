@@ -63,13 +63,18 @@ O agente de IA **não pode**, em hipótese alguma:
 
 Isso é implementado como **filtro na saída**, rodando depois do LLM e antes do envio, não como instrução de prompt. Prompt não é garantia. Ao bloquear: não envia, escala para humano, grava em `ai_decision_log`.
 
-### 3.3 WhatsApp Cloud API
+### 3.3 Canal WhatsApp
 
-- Só API oficial. Nunca biblioteca não oficial. Número banido é dano ao cliente.
-- **Janela de 24 horas:** fora dela, só template aprovado. A UI precisa deixar isso explícito, nunca descobrir por erro.
-- **Cobrança é por mensagem desde 01/07/2025**, não por conversa. Toda mensagem enviada grava `cost_estimate`.
-- **Nunca disparar para contato sem `consent.active = true`.** Isso derruba o quality rating do número e trava os envios da clínica inteira.
-- Webhook precisa ser **idempotente**: `wa_message_id` da Meta é chave única.
+**Decisão do dono do produto em 19/08/2026, revisando a regra original ("só API oficial"):** o canal inicial é o **uazapi** (API não oficial, pareamento por QR), na modalidade "uazapi agora, oficial depois". Todo código de canal passa pela **camada adaptadora** em `lib/integrations/whatsapp/provider.ts` (provedores `fake`, `uazapi` e, no futuro, `cloud_api`): migrar para a Cloud API oficial é trocar configuração, nunca reescrever. Riscos informados e aceitos para o período de validação: possibilidade de banimento do número por automação não oficial (agravada por disparo em massa), ausência de quality rating (monitorar desconexões como proxy) e botões interativos sem garantia (fallback automático em texto numerado).
+
+O que **não** mudou com essa decisão:
+
+- **Nunca disparar para contato sem `consent.active = true`.** No canal não oficial isso importa ainda mais: denúncia de spam acelera banimento.
+- Webhook **idempotente**: `wa_message_id` é chave única, venha de onde vier.
+- Toda mensagem enviada grava custo (`cost_cents`): 0 e `billable = false` no uazapi; a tabela `message_pricing` alimenta o cálculo quando o canal oficial existir.
+- Disparo em massa (réguas) passa obrigatoriamente pela `job_queue` com rate limit por instância. O atraso anti-ban do provider vale só para resposta 1:1.
+- **Janela de 24 horas e templates aprovados são conceitos do canal oficial:** o código fica atrás de `isOfficialChannel` e não aparece na UI com uazapi/fake.
+- Nenhum dado de paciente em log, em nenhum canal.
 
 ### 3.4 Agenda
 
