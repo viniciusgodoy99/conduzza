@@ -223,6 +223,9 @@ function FormCodigo({ onVoltar }: { onVoltar: () => void }) {
     codigo: string;
     nome: string;
   } | null>(null);
+  // Falha de rede na conferencia nao pode prender a pessoa: sem isto o botao
+  // ficava desabilitado para sempre e a tela acusava o codigo de invalido.
+  const [falhouConferencia, setFalhouConferencia] = useState(false);
   const [conferindo, startConferencia] = useTransition();
   // Descarta respostas fora de ordem: sem isto, um código antigo pode
   // sobrescrever a conferência do código atual.
@@ -237,11 +240,24 @@ function FormCodigo({ onVoltar }: { onVoltar: () => void }) {
     const versao = ++consulta.current;
     const timer = setTimeout(() => {
       startConferencia(async () => {
-        const encontrada = await conferirCodigoAction(alvo);
-        if (versao !== consulta.current) {
-          return;
+        try {
+          const encontrada = await conferirCodigoAction(alvo);
+          if (versao !== consulta.current) {
+            return;
+          }
+          setFalhouConferencia(false);
+          setClinica(
+            encontrada ? { codigo: alvo, nome: encontrada.nome } : null,
+          );
+        } catch {
+          if (versao !== consulta.current) {
+            return;
+          }
+          // Nao da para dizer se o codigo e valido: deixa seguir e o gatilho
+          // do banco decide, com mensagem propria.
+          setFalhouConferencia(true);
+          setClinica(null);
         }
-        setClinica(encontrada ? { codigo: alvo, nome: encontrada.nome } : null);
       });
     }, 400);
     return () => clearTimeout(timer);
@@ -287,6 +303,11 @@ function FormCodigo({ onVoltar }: { onVoltar: () => void }) {
             <CircleCheck strokeWidth={1.5} className="size-3.5" />
             Você vai pedir entrada em: <strong>{clinica.nome}</strong>
           </p>
+        ) : falhouConferencia ? (
+          <p className="text-xs [color:var(--warning-text)]">
+            Não conseguimos conferir o código agora. Você pode continuar: nós
+            validamos ao criar a conta.
+          </p>
         ) : codigo.trim().length >= 4 ? (
           <p className="text-xs [color:var(--alert-text)]">
             Código não encontrado ou desativado.
@@ -301,7 +322,7 @@ function FormCodigo({ onVoltar }: { onVoltar: () => void }) {
       ) : null}
       <Button
         type="submit"
-        disabled={pending || !codigoConferido}
+        disabled={pending || (!codigoConferido && !falhouConferencia)}
         className="h-11"
       >
         {pending ? "Enviando..." : "Pedir entrada na clínica"}

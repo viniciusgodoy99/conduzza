@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.redirect(
-    `${origin}/login?erro=link-invalido-ou-expirado`,
-  );
+  // Link vencido ou ja usado: explica na tela de login em vez de devolver a
+  // pessoa sem dizer nada.
+  return NextResponse.redirect(`${origin}/login?erro=link_expirado`);
 }

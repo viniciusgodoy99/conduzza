@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useActionState } from "react";
 
 import { signInAction, type ActionState } from "@/app/(auth)/actions";
@@ -15,6 +16,11 @@ export function LoginForm() {
     signInAction,
     initialState,
   );
+  const parametros = useSearchParams();
+  const avisoDeLink =
+    parametros.get("erro") === "link_expirado"
+      ? "O link do e-mail venceu ou já foi usado. Peça um novo pela recuperação de senha."
+      : null;
 
   return (
     <form action={formAction} className="grid gap-4">
@@ -47,6 +53,14 @@ export function LoginForm() {
           className="h-11"
         />
       </div>
+      {avisoDeLink ? (
+        <p
+          role="status"
+          className="rounded-lg border [border-color:var(--warning)] p-3 text-[12.5px] [color:var(--warning-text)] [background:var(--warning-bg)]"
+        >
+          {avisoDeLink}
+        </p>
+      ) : null}
       {state.error ? (
         <p role="alert" className="text-alert-text text-sm">
           {state.error}
