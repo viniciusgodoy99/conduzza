@@ -16,10 +16,17 @@ export default async function SelecionarClinicaPage() {
   if (!context) {
     redirect("/login");
   }
-  if (context.memberships.length === 0) {
-    redirect("/login");
-  }
-  if (context.memberships.length === 1) {
+
+  // SO vinculos ativos entram na escolha: oferecer uma clinica pendente
+  // levaria a pessoa para uma tela de espera sem explicacao.
+  const ativos = context.memberships.filter(
+    (membership) => membership.status === "ativo",
+  );
+
+  // Com menos de duas clinicas ativas nao ha o que escolher. Mandar de volta
+  // para /login criaria laco (o login devolve para ca quando ha sessao sem
+  // clinica ativa); quem decide o que mostrar e o layout da area logada.
+  if (ativos.length < 2) {
     redirect("/inicio");
   }
 
@@ -32,7 +39,7 @@ export default async function SelecionarClinicaPage() {
         </p>
       </div>
       <div className="grid gap-2">
-        {context.memberships.map((membership) => (
+        {ativos.map((membership) => (
           <form key={membership.clinicId} action={pickClinicAction}>
             <input type="hidden" name="clinicId" value={membership.clinicId} />
             <button

@@ -50,6 +50,7 @@ type ClinicEmbed = {
 };
 
 type MemberRow = {
+  clinic_id: string;
   role: Role;
   status: "ativo" | "pendente";
   clinic: ClinicEmbed | ClinicEmbed[] | null;
@@ -68,9 +69,28 @@ export const getSessionContext = cache(
     const { data: memberRows } = await supabase
       .from("clinic_member")
       .select(
-        "role, status, clinic:clinic_id (id, name, slug, clinic_branding (product_name, primary_color, labels))",
+        "clinic_id, role, status, clinic:clinic_id (id, name, slug, clinic_branding (product_name, primary_color, labels))",
       )
       .eq("user_id", user.id);
+
+    // Quem esta PENDENTE nao le a tabela clinic (a policy exige vinculo ativo,
+    // para o codigo de acesso nao vazar antes da aprovacao), entao o embed vem
+    // nulo. O nome vem por uma funcao que devolve so id e nome.
+    const temPendenteSemNome = (
+      (memberRows ?? []) as { status?: string; clinic?: unknown }[]
+    ).some((row) => row.status === "pendente" && !row.clinic);
+    const nomesPendentes = new Map<string, string>();
+    if (temPendenteSemNome) {
+      const { data: pendentes } = await supabase.rpc(
+        "minhas_clinicas_pendentes",
+      );
+      for (const linha of (pendentes ?? []) as {
+        clinic_id: string;
+        clinic_name: string;
+      }[]) {
+        nomesPendentes.set(linha.clinic_id, linha.clinic_name);
+      }
+    }
 
     // Sem tipos gerados do banco (pendencia registrada), a inferencia do
     // supabase-js trata os embeds como array; em runtime clinic e branding
@@ -82,6 +102,20 @@ export const getSessionContext = cache(
           ? (row.clinic[0] ?? null)
           : row.clinic;
         if (!clinic) {
+          // Vinculo pendente: sem acesso a clinica, so o nome pela funcao.
+          const nome = nomesPendentes.get(row.clinic_id);
+          if (row.status === "pendente" && nome) {
+            return {
+              clinicId: row.clinic_id,
+              clinicName: nome,
+              slug: "",
+              role: row.role,
+              status: "pendente" as const,
+              productName: "Conduzza Clínicas",
+              primaryColor: "#A8D318",
+              labels: null,
+            };
+          }
           return null;
         }
         const branding = Array.isArray(clinic.clinic_branding)

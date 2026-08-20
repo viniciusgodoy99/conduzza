@@ -3,6 +3,7 @@
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { canEdit } from "@/lib/domain/permissions";
 import { sendWhatsAppText } from "@/lib/integrations/whatsapp/send";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -10,6 +11,11 @@ import { createClient } from "@/lib/supabase/server";
 // Acoes do Inbox. Verificacao de visibilidade e posse SEMPRE com a sessao do
 // usuario (RLS aplica); o service role entra apenas no envio (send.ts precisa
 // do segredo da instancia) e depois de a sessao ter validado a conversa.
+//
+// A matriz de papeis (brief secao 5) e conferida aqui, alem da RLS: os papeis
+// 'leitura' e 'profissional' tem acesso de leitura ao Atendimento, e sem esta
+// checagem um usuario 'leitura' assumiria conversa e dispararia mensagem real
+// para o paciente pela Server Action, mesmo com o botao escondido na tela.
 
 const idSchema = z.uuid();
 const bodySchema = z.string().trim().min(1).max(4096);
@@ -23,10 +29,19 @@ type ConversationRow = {
   assignee_user_id: string | null;
 };
 
-async function loadVisibleConversation(conversationId: string) {
+async function loadVisibleConversation(
+  conversationId: string,
+  { exigeEdicao = false }: { exigeEdicao?: boolean } = {},
+) {
   const context = await getSessionContext();
   if (!context?.active) {
     return { error: "Sessão expirada. Entre de novo." as const };
+  }
+  if (exigeEdicao && !canEdit(context.active.role, "atendimento")) {
+    return {
+      error:
+        "Seu perfil pode acompanhar o atendimento, mas não responder." as const,
+    };
   }
   const parsed = idSchema.safeParse(conversationId);
   if (!parsed.success) {
@@ -87,7 +102,9 @@ export async function sendMessageAction(
   if (!parsedBody.success) {
     return { ok: false, error: "Escreva a mensagem antes de enviar." };
   }
-  const loaded = await loadVisibleConversation(conversationId);
+  const loaded = await loadVisibleConversation(conversationId, {
+    exigeEdicao: true,
+  });
   if ("error" in loaded) {
     return { ok: false, error: loaded.error };
   }
@@ -123,7 +140,9 @@ export async function addInternalNoteAction(
   if (!parsedBody.success) {
     return { ok: false, error: "Escreva a nota antes de salvar." };
   }
-  const loaded = await loadVisibleConversation(conversationId);
+  const loaded = await loadVisibleConversation(conversationId, {
+    exigeEdicao: true,
+  });
   if ("error" in loaded) {
     return { ok: false, error: loaded.error };
   }
@@ -147,7 +166,9 @@ export async function addInternalNoteAction(
 export async function assumirConversaAction(
   conversationId: string,
 ): Promise<InboxActionResult> {
-  const loaded = await loadVisibleConversation(conversationId);
+  const loaded = await loadVisibleConversation(conversationId, {
+    exigeEdicao: true,
+  });
   if ("error" in loaded) {
     return { ok: false, error: loaded.error };
   }
@@ -195,7 +216,9 @@ export async function assumirConversaAction(
 export async function devolverParaIaAction(
   conversationId: string,
 ): Promise<InboxActionResult> {
-  const loaded = await loadVisibleConversation(conversationId);
+  const loaded = await loadVisibleConversation(conversationId, {
+    exigeEdicao: true,
+  });
   if ("error" in loaded) {
     return { ok: false, error: loaded.error };
   }
@@ -224,7 +247,9 @@ export async function devolverParaIaAction(
 export async function resolverConversaAction(
   conversationId: string,
 ): Promise<InboxActionResult> {
-  const loaded = await loadVisibleConversation(conversationId);
+  const loaded = await loadVisibleConversation(conversationId, {
+    exigeEdicao: true,
+  });
   if ("error" in loaded) {
     return { ok: false, error: loaded.error };
   }
@@ -250,7 +275,9 @@ export async function resolverConversaAction(
 export async function reabrirConversaAction(
   conversationId: string,
 ): Promise<InboxActionResult> {
-  const loaded = await loadVisibleConversation(conversationId);
+  const loaded = await loadVisibleConversation(conversationId, {
+    exigeEdicao: true,
+  });
   if ("error" in loaded) {
     return { ok: false, error: loaded.error };
   }

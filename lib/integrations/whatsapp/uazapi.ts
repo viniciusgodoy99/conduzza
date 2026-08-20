@@ -257,7 +257,7 @@ function toSendResult(
     // messageid e o id do WhatsApp, o que casa com os recibos de entrega.
     // id e interno (formato dono:messageid) e serve de reserva.
     const id =
-      pickString(body, ["messageid", "id"]) ?? `uazapi:${crypto.randomUUID()}`;
+      pickString(body, ["id", "messageid"]) ?? `uazapi:${crypto.randomUUID()}`;
     return { ok: true, waMessageId: id };
   }
   // Erro 463 do WhatsApp: restricao por volume ou qualidade da conta, o

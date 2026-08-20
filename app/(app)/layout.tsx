@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { QueryProvider } from "@/components/providers/query-provider";
 import { AppShell } from "@/components/shell/app-shell";
+import { CriarClinica } from "@/components/shell/criar-clinica";
 import { WhatsappBanner } from "@/components/shell/whatsapp-banner";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import { createClient } from "@/lib/supabase/server";
@@ -24,22 +25,27 @@ export default async function AppLayout({
     (membership) => membership.status === "pendente",
   );
 
+  const ativos = context.memberships.filter(
+    (membership) => membership.status === "ativo",
+  );
+
   if (!context.active) {
-    // Dono do produto sem vinculo de clinica: shell minimo ate a Tela 14 (5.5).
-    if (context.isProductAdmin && context.memberships.length === 0) {
+    // Dono do produto sem clinica ativa: precisa poder CRIAR uma, senao entra
+    // no sistema e nao consegue fazer nada. A tela completa de administracao
+    // e a Tela 14 (tarefa 5.5).
+    if (context.isProductAdmin && ativos.length === 0) {
       return (
-        <AppShell
-          viewer={{
-            name: context.userName,
-            role: "admin",
-            roleLabel: "Dono do produto",
-            clinicName: "Administração do produto",
-            productName: "Conduzza Clínicas",
-          }}
-        >
-          <QueryProvider>{children}</QueryProvider>
-        </AppShell>
+        <main className="grid min-h-dvh place-items-center p-8">
+          <CriarClinica primeira />
+        </main>
       );
+    }
+
+    // Tem clinica ativa (mais de uma) e talvez um pedido pendente em outra:
+    // a escolha entre as ativas vem ANTES da tela de espera, senao a pessoa
+    // perde o acesso as clinicas onde ja trabalha.
+    if (ativos.length > 1) {
+      redirect("/selecionar-clinica");
     }
 
     // Entrou por codigo e aguarda aprovacao: entra no sistema, mas sem
@@ -66,10 +72,6 @@ export default async function AppLayout({
           </div>
         </main>
       );
-    }
-
-    if (context.memberships.length > 1) {
-      redirect("/selecionar-clinica");
     }
 
     return (

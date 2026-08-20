@@ -41,12 +41,13 @@ async function main() {
     .eq("id", clinicId)
     .single();
 
-  await admin
-    .from("whatsapp_account")
-    .upsert(
-      { clinic_id: clinicId, provider: process.env.WHATSAPP_PROVIDER ?? "fake" },
-      { onConflict: "clinic_id", ignoreDuplicates: true },
-    );
+  await admin.from("whatsapp_account").upsert(
+    {
+      clinic_id: clinicId,
+      provider: process.env.WHATSAPP_PROVIDER ?? "fake",
+    },
+    { onConflict: "clinic_id", ignoreDuplicates: true },
+  );
   await admin
     .from("whatsapp_account_secret")
     .upsert(

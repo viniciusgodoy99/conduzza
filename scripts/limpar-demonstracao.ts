@@ -1,10 +1,15 @@
 import { seedClient } from "./seed/lib";
 
 // Apaga os dados de demonstracao e deixa o sistema pronto para operacao real.
-// DESTRUTIVO: exige a flag --confirmar. Sem ela, so mostra o que seria apagado.
 //
-//   npx tsx scripts/limpar-demonstracao.ts             (simulacao)
-//   npx tsx scripts/limpar-demonstracao.ts --confirmar (executa)
+// PERIGO: este script apaga TODAS as clinicas, sem filtro. Ele foi escrito
+// para um banco que so tinha ficcao. Depois de 20/08/2026 o banco passou a
+// receber clinica de verdade, entao alem do --confirmar ele agora exige a
+// palavra de seguranca --sei-que-apaga-tudo e mostra o nome de cada clinica
+// que sera destruida.
+//
+//   npx tsx scripts/limpar-demonstracao.ts                                    (simulacao)
+//   npx tsx scripts/limpar-demonstracao.ts --confirmar --sei-que-apaga-tudo   (executa)
 //
 // Preserva: nada de clinica. Cria o dono do produto informado em DONO_EMAIL.
 
@@ -15,7 +20,9 @@ const DOMINIOS_DEMO = ["@vitalis.dev", "@belezapura.dev", "@conduzza.dev"];
 // Usuarios criados pelas suites de teste.
 const PADROES_TESTE = ["@teste.dev"];
 
-const confirmar = process.argv.includes("--confirmar");
+const confirmar =
+  process.argv.includes("--confirmar") &&
+  process.argv.includes("--sei-que-apaga-tudo");
 
 async function main() {
   const admin = seedClient();
@@ -75,9 +82,20 @@ async function main() {
     }
   }
 
+  // Mostra NOMINALMENTE cada clinica que sera destruida: numa base com
+  // clinica real, ver o nome na tela e a ultima chance de perceber o engano.
+  const { data: clinicas } = await admin
+    .from("clinic")
+    .select("name, slug, created_at")
+    .order("created_at", { ascending: true });
+  console.log(`\nClínicas que serão APAGADAS (${clinicas?.length ?? 0}):`);
+  for (const clinica of clinicas ?? []) {
+    console.log(`  ${clinica.name} (${clinica.slug})`);
+  }
+
   if (!confirmar) {
     console.log(
-      "\nSimulação: nada foi apagado. Rode de novo com --confirmar para executar.",
+      "\nSimulação: nada foi apagado. Para executar de verdade, rode com as duas flags:\n  npx tsx scripts/limpar-demonstracao.ts --confirmar --sei-que-apaga-tudo",
     );
     return;
   }

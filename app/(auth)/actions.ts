@@ -49,20 +49,9 @@ export async function signInAction(
     return { error: "E-mail ou senha incorretos" };
   }
 
-  const context = await getSessionContext();
-  if (!context || context.memberships.length === 0) {
-    if (context?.isProductAdmin) {
-      redirect("/inicio");
-    }
-    await supabase.auth.signOut();
-    return {
-      error:
-        "Seu usuário ainda não pertence a nenhuma clínica. Fale com o administrador.",
-    };
-  }
-  if (context.memberships.length > 1 && !context.active) {
-    redirect("/selecionar-clinica");
-  }
+  // O layout da area logada decide o que mostrar a partir dos vinculos
+  // (clinica ativa, escolha entre varias, espera de aprovacao, sem clinica).
+  // Concentrar essa decisao num lugar so evita divergencia e laco.
   redirect("/inicio");
 }
 
@@ -84,8 +73,10 @@ export async function pickClinicAction(formData: FormData): Promise<void> {
     redirect("/selecionar-clinica");
   }
   const context = await getSessionContext();
+  // Somente vinculo ATIVO: escolher uma clinica pendente deixaria a pessoa
+  // numa tela de espera sem entender por que.
   const membership = context?.memberships.find(
-    (m) => m.clinicId === parsed.data.clinicId,
+    (m) => m.clinicId === parsed.data.clinicId && m.status === "ativo",
   );
   if (!context || !membership) {
     redirect("/selecionar-clinica");
