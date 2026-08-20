@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { dados } from "./dados";
 import { login } from "./helpers";
 
 // Aceites da tarefa 0.5 contra o banco real com os usuarios do seed:
@@ -21,7 +22,7 @@ test("sem sessão, a área logada redireciona para o login", async ({ page }) =>
 });
 
 test("recepção não vê nem acessa Configurações", async ({ page }) => {
-  await login(page, "recepcao@vitalis.dev");
+  await login(page, dados().emails.recepcao);
   const nav = page.getByRole("navigation", { name: "Navegação principal" });
   await expect(nav.getByRole("link", { name: "Atendimento" })).toBeVisible();
   await expect(nav.getByRole("link", { name: "Configurações" })).toHaveCount(0);
@@ -31,7 +32,7 @@ test("recepção não vê nem acessa Configurações", async ({ page }) => {
 });
 
 test("gestor vê Configurações com edição travada e dica", async ({ page }) => {
-  await login(page, "gestor@vitalis.dev");
+  await login(page, dados().emails.gestor);
   await page.goto("/configuracoes");
   await expect(
     page.getByRole("heading", { name: "Configurações" }),
@@ -50,23 +51,21 @@ test("gestor vê Configurações com edição travada e dica", async ({ page }) 
 });
 
 test("admin vê o convite habilitado e o time listado", async ({ page }) => {
-  await login(page, "admin@vitalis.dev");
+  await login(page, dados().emails.admin);
   await page.goto("/configuracoes");
   await expect(
     page.getByRole("button", { name: "Convidar por e-mail" }),
   ).toBeEnabled();
-  await expect(page.getByText("recepcao@vitalis.dev")).toBeVisible();
+  await expect(page.getByText(dados().emails.recepcao)).toBeVisible();
 });
 
 test("quem pertence a duas clínicas escolhe qual abrir", async ({ page }) => {
-  await login(page, "agencia@conduzza.dev");
+  await login(page, dados().emails.duasClinicas);
   await page.waitForURL(/\/selecionar-clinica/);
-  await expect(page.getByText("Clínica Vitalis")).toBeVisible();
-  await expect(page.getByText("Espaço Beleza Pura")).toBeVisible();
+  await expect(page.getByText("Clínica E2E")).toBeVisible();
+  await expect(page.getByText("Espaço E2E Offline")).toBeVisible();
 
-  await page.getByRole("button", { name: /Clínica Vitalis/ }).click();
+  await page.getByRole("button", { name: /Clínica E2E/ }).click();
   await page.waitForURL(/\/inicio/);
-  await expect(
-    page.getByRole("banner").getByText("Clínica Vitalis"),
-  ).toBeVisible();
+  await expect(page.getByRole("banner").getByText("Clínica E2E")).toBeVisible();
 });

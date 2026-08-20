@@ -3,6 +3,8 @@ import { defineConfig } from "@playwright/test";
 // Viewports do aceite da tarefa 0.6: 1600, 1366, 1024 e 768 (seção 6 do brief de telas).
 export default defineConfig({
   testDir: "tests/e2e",
+  globalSetup: "./tests/e2e/global-setup.ts",
+  globalTeardown: "./tests/e2e/global-teardown.ts",
   testMatch: "**/*.spec.ts",
   // 1 worker: o teste de white-label muda o branding no banco compartilhado;
   // paralelismo entre arquivos criaria corrida entre os specs.

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { dados } from "./dados";
 import { login } from "./helpers";
 
 // Aceite da tarefa 1.5 sobre o seed: lista com segmentos e chips, fio com
@@ -16,23 +17,23 @@ test.beforeEach(() => {
 test("lista com segmentos de posse e chips de status contados", async ({
   page,
 }) => {
-  await login(page, "recepcao@vitalis.dev");
+  await login(page, dados().emails.recepcao);
   await page.goto("/atendimento");
-  await expect(page.getByRole("button", { name: /Todas 15/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Todas 4/ })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /IA atendendo 5/ }),
+    page.getByRole("button", { name: /IA atendendo 1/ }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /Aguardando você 3/ }),
+    page.getByRole("button", { name: /Aguardando você 1/ }),
   ).toBeVisible();
 });
 
 test("bloqueio de conformidade aparece no fio com o rascunho auditável", async ({
   page,
 }) => {
-  await login(page, "recepcao@vitalis.dev");
+  await login(page, dados().emails.recepcao);
   await page.goto("/atendimento");
-  await page.getByText("Patrícia Nogueira").click();
+  await page.getByText("Patrícia Sintoma").click();
   await expect(
     page.getByText("Resposta da IA bloqueada pela conformidade"),
   ).toBeVisible();
@@ -46,11 +47,11 @@ test("bloqueio de conformidade aparece no fio com o rascunho auditável", async 
 });
 
 test("bolha da IA carrega selo textual, nunca só cor", async ({ page }) => {
-  await login(page, "recepcao@vitalis.dev");
+  await login(page, dados().emails.recepcao);
   await page.goto("/atendimento");
-  await page.getByText("Juliana Freitas").click();
+  await page.getByText("Juliana Dermato").click();
   await expect(
-    page.getByText("Atendemos sim. A consulta dermatológica", { exact: false }),
+    page.getByText("Atendemos sim!", { exact: false }),
   ).toBeVisible();
   const bolhaIa = page
     .locator("div", { hasText: "Quer ver os próximos horários?" })
@@ -59,28 +60,28 @@ test("bolha da IA carrega selo textual, nunca só cor", async ({ page }) => {
 });
 
 test("nota interna é âmbar e avisa que o paciente não vê", async ({ page }) => {
-  await login(page, "recepcao@vitalis.dev");
+  await login(page, dados().emails.recepcao);
   await page.goto("/atendimento");
-  await page.getByText("Roberto Lima").click();
+  await page.getByText("Roberto Recibo").click();
   await expect(
     page.getByText("Nota interna, o paciente não vê", { exact: false }),
   ).toBeVisible();
-  await expect(page.getByText(/recibo sai com o CNPJ novo/)).toBeVisible();
+  await expect(page.getByText(/CNPJ novo/)).toBeVisible();
 });
 
 test("áudio mostra a transcrição colapsada", async ({ page }) => {
-  await login(page, "recepcao@vitalis.dev");
+  await login(page, dados().emails.recepcao);
   await page.goto("/atendimento");
-  await page.getByText("Camila Duarte").click();
+  await page.getByText("Camila Áudio").click();
   await expect(page.getByText("Transcrição:", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "ver mais" }).click();
-  await expect(page.getByText(/vou viajar na quarta/)).toBeVisible();
+  await expect(page.getByText(/viajar na quarta/)).toBeVisible();
 });
 
 test("clínica com WhatsApp desconectado vê a faixa vermelha fixa", async ({
   page,
 }) => {
-  await login(page, "admin@belezapura.dev");
+  await login(page, dados().emails.offline);
   await expect(
     page.getByText("WhatsApp desconectado", { exact: false }),
   ).toBeVisible();

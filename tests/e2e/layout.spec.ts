@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+import { dados } from "./dados";
 import { login } from "./helpers";
 
 // Aceite da tarefa 0.6 nos 4 viewports do config: sidebar fixa de 236px em
 // 1024 ou mais (layout do handoff) e gaveta abaixo disso.
 test("sidebar conforme o viewport", async ({ page }) => {
-  await login(page, "admin@vitalis.dev");
+  await login(page, dados().emails.admin);
   await page.goto("/agenda");
   await expect(page.getByRole("heading", { name: "Agenda" })).toBeVisible();
 
