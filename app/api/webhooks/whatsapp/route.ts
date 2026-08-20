@@ -58,14 +58,19 @@ export async function POST(request: NextRequest) {
   }
 
   // Segunda camada de autenticacao: o uazapi nao assina a chamada, mas todo
-  // evento carrega o token da instancia. Se ele veio e nao bate com o
-  // guardado, o evento e de outra instancia (ou forjado).
-  if (
-    event.instanceToken &&
-    secretRow.instance_token &&
-    !secretsMatch(secretRow.instance_token, event.instanceToken)
-  ) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // evento carrega o token da instancia.
+  //
+  // A conferencia NAO pode ser opcional: antes ela so rodava se o evento
+  // trouxesse o campo, entao bastava omitir `token` do corpo para pular a
+  // camada inteira. Agora, se a clinica tem token guardado, o evento e
+  // obrigado a trazer o token certo.
+  if (secretRow.instance_token) {
+    if (
+      !event.instanceToken ||
+      !secretsMatch(secretRow.instance_token, event.instanceToken)
+    ) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
   }
 
   if (event.kind === "message_received") {

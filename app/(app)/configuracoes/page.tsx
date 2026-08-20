@@ -28,7 +28,7 @@ export default async function ConfiguracoesPage() {
   }
 
   const supabase = await createClient();
-  const [memberResult, clinicResult] = await Promise.all([
+  const [memberResult, clinicResult, codigoResult] = await Promise.all([
     supabase
       .from("clinic_member")
       .select("user_id, role, status, created_at")
@@ -36,9 +36,15 @@ export default async function ConfiguracoesPage() {
       .order("created_at", { ascending: true }),
     supabase
       .from("clinic")
-      .select("access_code, allow_code_signup")
+      .select("allow_code_signup")
       .eq("id", active.clinicId)
       .single(),
+    // O codigo mora em tabela propria, legivel so por administrador.
+    supabase
+      .from("clinic_access_code")
+      .select("code")
+      .eq("clinic_id", active.clinicId)
+      .maybeSingle(),
   ]);
 
   // E-mails e nomes vivem no GoTrue, nao em tabela exposta: leitura pontual
@@ -138,7 +144,7 @@ export default async function ConfiguracoesPage() {
           </div>
 
           <CodigoAcesso
-            codigo={clinicResult.data?.access_code ?? ""}
+            codigo={codigoResult.data?.code ?? ""}
             ativo={clinicResult.data?.allow_code_signup ?? false}
             podeGerenciar={canInvite}
           />

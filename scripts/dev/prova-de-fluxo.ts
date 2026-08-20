@@ -42,10 +42,28 @@ async function main() {
       .eq("user_id", dona.user.id)
       .single();
     clinicId = membro!.clinic_id as string;
-    const { data: clinica } = await admin
+    // Entrada por codigo nasce DESLIGADA (padrao seguro apos a auditoria):
+    // a clinica liga de propria vontade na tela.
+    const { data: antesDeLigar } = await admin
       .from("clinic")
-      .select("name, access_code, allow_code_signup")
+      .select("allow_code_signup")
       .eq("id", clinicId)
+      .single();
+    if (
+      !ok(
+        antesDeLigar!.allow_code_signup === false,
+        "entrada por código nasce desligada",
+      )
+    )
+      falhas++;
+    await admin
+      .from("clinic")
+      .update({ allow_code_signup: true })
+      .eq("id", clinicId);
+    const { data: clinica } = await admin
+      .from("clinic_access_code")
+      .select("code")
+      .eq("clinic_id", clinicId)
       .single();
     const { data: branding } = await admin
       .from("clinic_branding")
@@ -55,12 +73,7 @@ async function main() {
     if (!ok(membro!.role === "admin", "quem criou é administrador")) falhas++;
     if (!ok(membro!.status === "ativo", "vínculo já nasce ativo")) falhas++;
     if (!ok(branding !== null, "marca criada na mesma transação")) falhas++;
-    if (
-      !ok(
-        (clinica!.access_code as string).length === 8,
-        "código de acesso gerado",
-      )
-    )
+    if (!ok((clinica!.code as string).length >= 8, "código de acesso gerado"))
       falhas++;
 
     console.log("2. Cadastro por código");
@@ -71,7 +84,7 @@ async function main() {
       user_metadata: {
         tipo: "codigo",
         nome: "Marina",
-        codigo: clinica!.access_code,
+        codigo: clinica!.code,
         name: "Marina",
       },
     });
@@ -125,9 +138,9 @@ async function main() {
       .select("id")
       .eq("clinic_id", clinicId);
     const { data: clinicaPendente } = await clientePendente
-      .from("clinic")
-      .select("access_code")
-      .eq("id", clinicId);
+      .from("clinic_access_code")
+      .select("code")
+      .eq("clinic_id", clinicId);
     if (!ok((conversasPendente ?? []).length === 0, "não lê conversa"))
       falhas++;
     if (!ok((contatosPendente ?? []).length === 0, "não lê contato")) falhas++;
@@ -240,6 +253,55 @@ async function main() {
     )
       falhas++;
     void eReativar;
+
+    console.log("9. Descadastro não é contornado inserindo consentimento novo");
+    // Vetor encontrado na auditoria: o gatilho impedia REATIVAR a linha
+    // revogada, mas nada impedia inserir uma linha nova, e a checagem de
+    // envio perguntava "existe alguma ativa".
+    const { error: eInsercao } = await clienteDona
+      .from("contact_consent")
+      .insert({
+        clinic_id: clinicId,
+        contact_id: contato!.id,
+        source: "recepcao",
+        channel: "whatsapp",
+      });
+    if (
+      !ok(
+        eInsercao !== null,
+        "inserir consentimento sem evidência é recusado após descadastro",
+      )
+    )
+      falhas++;
+
+    const { data: vigente } = await admin.rpc("consentimento_vigente", {
+      p_clinic_id: clinicId,
+      p_contact_id: contato!.id,
+      p_channel: "whatsapp",
+    });
+    if (!ok(vigente === false, "consentimento vigente continua negativo")) {
+      falhas++;
+    }
+
+    // Com evidencia declarada, o reconsentimento e aceito e passa a valer.
+    const { error: eComEvidencia } = await clienteDona
+      .from("contact_consent")
+      .insert({
+        clinic_id: clinicId,
+        contact_id: contato!.id,
+        source: "recepcao",
+        channel: "whatsapp",
+        evidence: "Paciente autorizou de novo por telefone em 20/08",
+      });
+    if (!ok(eComEvidencia === null, "com evidência declarada, é aceito")) {
+      falhas++;
+    }
+    const { data: vigenteDepois } = await admin.rpc("consentimento_vigente", {
+      p_clinic_id: clinicId,
+      p_contact_id: contato!.id,
+      p_channel: "whatsapp",
+    });
+    if (!ok(vigenteDepois === true, "e volta a valer")) falhas++;
   } finally {
     if (clinicId) {
       await admin.from("clinic").delete().eq("id", clinicId);

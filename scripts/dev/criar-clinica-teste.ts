@@ -37,8 +37,18 @@ async function main() {
 
   const { data: clinica } = await admin
     .from("clinic")
-    .select("name, access_code")
+    .select("name")
     .eq("id", clinicId)
+    .single();
+  // Entrada por codigo nasce desligada (padrao seguro): liga para o teste.
+  await admin
+    .from("clinic")
+    .update({ allow_code_signup: true })
+    .eq("id", clinicId);
+  const { data: acesso } = await admin
+    .from("clinic_access_code")
+    .select("code")
+    .eq("clinic_id", clinicId)
     .single();
 
   await admin.from("whatsapp_account").upsert(
@@ -64,7 +74,7 @@ async function main() {
   console.log("Clínica criada:");
   console.log(`  Nome:     ${clinica?.name}`);
   console.log(`  Id:       ${clinicId}`);
-  console.log(`  Código:   ${clinica?.access_code}`);
+  console.log(`  Código:   ${acesso?.code}`);
   console.log(`  Login:    ${email}`);
   console.log(`  Senha:    ${senha}`);
   console.log(

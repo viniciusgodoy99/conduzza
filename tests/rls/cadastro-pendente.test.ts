@@ -98,16 +98,21 @@ beforeAll(async () => {
   });
 
   // 2. Cadastro por codigo, na mesma clinica.
-  const { data: clinica } = await admin
+  // O codigo mora em tabela propria desde a auditoria: so administrador le.
+  await admin
     .from("clinic")
-    .select("access_code")
-    .eq("id", clinicId)
+    .update({ allow_code_signup: true })
+    .eq("id", clinicId);
+  const { data: codigo } = await admin
+    .from("clinic_access_code")
+    .select("code")
+    .eq("clinic_id", clinicId)
     .single();
   const emailPendente = `pendente-${suffix}@teste.dev`;
   const userPendente = await signUp(emailPendente, {
     tipo: "codigo",
     nome: "Pessoa Pendente",
-    codigo: clinica!.access_code,
+    codigo: codigo!.code,
     name: "Pessoa Pendente",
   });
 
@@ -128,12 +133,16 @@ describe("cadastro criando clínica", () => {
   it("cria clínica, branding e vínculo de administrador ativo", async () => {
     const { data: clinica } = await admin
       .from("clinic")
-      .select("name, access_code, allow_code_signup")
+      .select("name")
       .eq("id", clinicId)
       .single();
     expect(clinica?.name).toBe(`Clínica Cadastro ${suffix}`);
-    expect(clinica?.access_code).toHaveLength(8);
-    expect(clinica?.allow_code_signup).toBe(true);
+    const { data: acesso } = await admin
+      .from("clinic_access_code")
+      .select("code")
+      .eq("clinic_id", clinicId)
+      .single();
+    expect((acesso?.code as string).length).toBeGreaterThanOrEqual(8);
 
     const { data: branding } = await admin
       .from("clinic_branding")

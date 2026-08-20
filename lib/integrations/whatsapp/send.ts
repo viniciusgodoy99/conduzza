@@ -32,15 +32,17 @@ export async function sendWhatsAppText(
   supabase: SupabaseClient,
   input: SendTextInput,
 ): Promise<SendTextResult> {
-  const { data: consent } = await supabase
-    .from("contact_consent")
-    .select("id")
-    .eq("clinic_id", input.clinicId)
-    .eq("contact_id", input.contactId)
-    .eq("channel", "whatsapp")
-    .eq("active", true)
-    .limit(1)
-    .maybeSingle();
+  // Consentimento VIGENTE: o registro mais recente manda. Perguntar "existe
+  // alguma linha ativa" deixava o paciente que pediu descadastro voltar a
+  // receber, bastando alguem inserir uma linha nova.
+  const { data: consentimentoVigente } = await supabase.rpc(
+    "consentimento_vigente",
+    {
+      p_clinic_id: input.clinicId,
+      p_contact_id: input.contactId,
+      p_channel: "whatsapp",
+    },
+  );
 
   const { data: account } = await supabase
     .from("whatsapp_account")
@@ -49,7 +51,7 @@ export async function sendWhatsAppText(
     .maybeSingle();
 
   const decision = canSendDecision({
-    consentActive: consent !== null,
+    consentActive: consentimentoVigente === true,
     accountStatus: account?.connection_status ?? null,
   });
 
