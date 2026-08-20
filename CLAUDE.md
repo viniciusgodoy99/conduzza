@@ -76,13 +76,25 @@ O que **não** mudou com essa decisão:
 - **Janela de 24 horas e templates aprovados são conceitos do canal oficial:** o código fica atrás de `isOfficialChannel` e não aparece na UI com uazapi/fake.
 - Nenhum dado de paciente em log, em nenhum canal.
 
-### 3.4 Agenda
+### 3.4 Cadastro e acesso (escopo acrescentado em 20/08/2026)
+
+Decisão do dono do produto, fora do backlog original: o sistema tem **cadastro público**. A pessoa se cadastra criando a clínica (e vira administradora dela) ou pedindo entrada numa clínica existente com o código dela. O convite nominal por e-mail continua existindo.
+
+- **Quem entra por código nasce `pendente`** e a RLS bloqueia todo dado de paciente até um administrador liberar escolhendo o papel. Um código vazado não vira acesso a conversa de paciente.
+- O código é rotacionável e desligável pela clínica.
+- Convite por e-mail entra ativo, porque já é nominal.
+- Criação de clínica, marca e vínculo acontece **numa transação só**, no gatilho `handle_new_user`.
+- Ninguém altera o próprio papel nem se autoaprova (gatilho `impedir_auto_aprovacao`).
+- Papel `leitura` **não escreve** dado de paciente: a checagem vive na policy (`user_can_write`) e também nas Server Actions, porque esconder botão não protege nada.
+- Consentimento revogado **não pode ser reativado**: o descadastro do paciente é definitivo até ele autorizar de novo.
+
+### 3.5 Agenda
 
 - **Conflito de horário é impedido pelo banco**, com exclusion constraint (`btree_gist`), não por checagem no código. Duas requisições simultâneas não podem marcar o mesmo slot.
 - Reserva temporária (`slot_hold`) expira sozinha. A IA oferece horário, o slot trava por 10 minutos.
 - Falta (`no_show`) é sempre ação explícita de alguém. Nunca inferida por passagem de tempo.
 
-### 3.5 Datas e fuso
+### 3.6 Datas e fuso
 
 - Guardar sempre em `timestamptz` (UTC no banco).
 - Exibir sempre no fuso da clínica (`clinic.timezone`, padrão `America/Fortaleza`).
@@ -104,9 +116,11 @@ O que **não** mudou com essa decisão:
 
 ## 5. Regras de interface
 
-Leia `docs/02_brief_telas_claude_design.md` antes de criar tela. Resumo do que mais se erra:
+**Fonte da verdade visual (decisão de 19/08/2026):** a identidade é a do `design_handoff_conduzza_atendimento_ia/` (verde-limão da marca, Inter Tight e IBM Plex Mono, sidebar escura fixa, **claro por padrão**). O `docs/02_brief_telas_claude_design.md` continua valendo para **comportamento e conteúdo** das telas (os 12 módulos, os 10 status, a matriz de papéis, os estados obrigatórios). Onde os dois divergem em aparência, vale o handoff; onde divergem em regra, vale o brief.
 
-- Escuro por padrão, claro obrigatório. Use os tokens da seção 3 do brief, nunca hex solto no componente.
+Resumo do que mais se erra:
+
+- Claro por padrão, escuro obrigatório. Use os tokens de `app/globals.css`, nunca hex solto no componente.
 - **Todo status é comunicado por 3 camadas: ícone com forma distinta, rótulo em texto e cor.** Nunca só cor. Nunca o mesmo ícone em cores diferentes.
 - Proibido: gráfico de pizza, rosca, barra empilhada, medidor, treemap e 3D. Barras horizontais ou linha com marcadores.
 - Proibido: gradiente decorativo, vidro fosco, sombra colorida, ilustração 3D.

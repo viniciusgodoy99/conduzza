@@ -77,6 +77,19 @@ Botão Assumir para a IA imediatamente e trava até devolução explícita. Real
 
 ---
 
+---
+
+## ESCOPO ACRESCENTADO (fora do backlog original)
+
+### [x] Cadastro self-service de clínicas `G`
+Decisão do dono em 20/08/2026, no modelo do projeto `mdrepresentacoes`. Cadastro público com bifurcação: criar a clínica (vira administradora) ou pedir entrada com o código da clínica. Gatilho no banco cria clínica, marca e vínculo numa transação. Quem entra por código nasce **pendente** e não vê dado de paciente até a liberação. Código rotacionável e desligável; convite por e-mail mantido.
+**Aceite:** provado por `npx tsx scripts/dev/prova-de-fluxo.ts` (17 verificações contra o banco real) e por 12 testes de RLS.
+
+### [x] Criação de clínica pelo dono do produto `P`
+O super administrador precisava poder criar a primeira clínica, senão o produto era inutilizável para ele. Versão mínima da Tela 14 (tarefa 5.5).
+
+---
+
 ## FASE 2. Cadastro e Agenda
 
 ### [ ] 2.1 Schema do catálogo `M`
