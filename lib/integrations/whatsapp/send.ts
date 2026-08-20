@@ -108,11 +108,37 @@ export async function sendWhatsAppText(
       contact.phone_e164,
       input.body,
     )
-    .catch(() => ({
-      ok: false as const,
-      errorCode: "provider_indisponivel",
-      message: "Falha ao falar com o provedor",
-    }));
+    .catch((erro: unknown) => {
+      // Distinguir causas: antes tudo virava "provider_indisponivel", entao
+      // "instancia sem token" (a clinica nunca conectou) e "servidor fora do
+      // ar" ficavam indistinguiveis para quem precisa resolver.
+      const texto = erro instanceof Error ? erro.message : "";
+      if (texto.includes("Instância sem token")) {
+        return {
+          ok: false as const,
+          errorCode: "sem_instancia",
+          message:
+            "O WhatsApp desta clínica ainda não foi conectado. Conecte em Conexão do WhatsApp.",
+        };
+      }
+      if (
+        texto.includes("UAZAPI_SERVER_URL") ||
+        texto.includes("ADMIN_TOKEN")
+      ) {
+        return {
+          ok: false as const,
+          errorCode: "configuracao_ausente",
+          message:
+            "O canal de WhatsApp não está configurado no sistema. Fale com o suporte.",
+        };
+      }
+      return {
+        ok: false as const,
+        errorCode: "provider_indisponivel",
+        message:
+          "Não conseguimos falar com o servidor do WhatsApp. A mensagem ficou marcada para reenviar.",
+      };
+    });
 
   const { data: messageRow, error: messageError } = await supabase
     .from("message")
@@ -147,10 +173,13 @@ export async function sendWhatsAppText(
     .eq("id", input.conversationId);
 
   if (!result.ok) {
+    // A causa vem do provider e ja esta em linguagem de quem atende. O
+    // error_code fica gravado na mensagem para diagnostico, sem nenhum
+    // conteudo de paciente sair daqui.
     return {
       ok: false,
       reason: "falha_envio",
-      message: "O envio falhou. A mensagem ficou marcada para reenviar.",
+      message: result.message,
     };
   }
   return { ok: true, messageId: messageRow.id };
