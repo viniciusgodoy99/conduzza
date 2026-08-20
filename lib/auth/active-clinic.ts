@@ -18,6 +18,8 @@ export type Membership = {
   clinicName: string;
   slug: string;
   role: Role;
+  /** pendente = entrou por codigo e aguarda aprovacao; nao le dado de paciente */
+  status: "ativo" | "pendente";
   productName: string;
   primaryColor: string;
   labels: Partial<Labels> | null;
@@ -27,6 +29,7 @@ export type SessionContext = {
   userId: string;
   userName: string;
   userEmail: string;
+  /** todos os vinculos, inclusive os pendentes */
   memberships: Membership[];
   /** null quando o usuario pertence a mais de uma clinica e ainda nao escolheu */
   active: Membership | null;
@@ -48,6 +51,7 @@ type ClinicEmbed = {
 
 type MemberRow = {
   role: Role;
+  status: "ativo" | "pendente";
   clinic: ClinicEmbed | ClinicEmbed[] | null;
 };
 
@@ -64,7 +68,7 @@ export const getSessionContext = cache(
     const { data: memberRows } = await supabase
       .from("clinic_member")
       .select(
-        "role, clinic:clinic_id (id, name, slug, clinic_branding (product_name, primary_color, labels))",
+        "role, status, clinic:clinic_id (id, name, slug, clinic_branding (product_name, primary_color, labels))",
       )
       .eq("user_id", user.id);
 
@@ -88,6 +92,7 @@ export const getSessionContext = cache(
           clinicName: clinic.name,
           slug: clinic.slug,
           role: row.role,
+          status: row.status ?? "ativo",
           productName: branding?.product_name ?? "Conduzza Clínicas",
           primaryColor: branding?.primary_color ?? "#A8D318",
           labels: branding?.labels ?? null,
@@ -102,14 +107,16 @@ export const getSessionContext = cache(
       .eq("user_id", user.id)
       .maybeSingle();
 
+    // Vinculo pendente nao pode virar clinica ativa: a pessoa entra no
+    // sistema, ve que esta aguardando aprovacao, e nada mais.
+    const ativos = memberships.filter((m) => m.status === "ativo");
     const cookieStore = await cookies();
     const wanted = cookieStore.get(ACTIVE_CLINIC_COOKIE)?.value;
     const fromCookie = wanted
-      ? (memberships.find((m) => m.clinicId === wanted) ?? null)
+      ? (ativos.find((m) => m.clinicId === wanted) ?? null)
       : null;
     const active =
-      fromCookie ??
-      (memberships.length === 1 ? (memberships[0] ?? null) : null);
+      fromCookie ?? (ativos.length === 1 ? (ativos[0] ?? null) : null);
 
     const metadata = user.user_metadata as Record<string, unknown> | null;
     const userName =

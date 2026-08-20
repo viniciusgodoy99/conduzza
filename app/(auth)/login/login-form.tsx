@@ -61,6 +61,12 @@ export function LoginForm() {
       >
         Esqueci minha senha
       </Link>
+      <p className="text-sm text-text-secondary">
+        Ainda não tem conta?{" "}
+        <Link href="/cadastro" className="underline-offset-4 hover:underline">
+          Criar conta
+        </Link>
+      </p>
     </form>
   );
 }

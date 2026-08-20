@@ -188,10 +188,13 @@ export async function inviteMemberAction(
   // O vinculo e criado com a sessao do proprio admin: a policy de
   // clinic_member autoriza, e o uso de service role fica restrito ao GoTrue.
   const supabase = await createClient();
+  // Convite por e-mail e nominal: o administrador escolheu a pessoa e o papel,
+  // entao o vinculo ja nasce ativo (diferente da entrada por codigo).
   const { error: memberError } = await supabase.from("clinic_member").insert({
     clinic_id: context.active.clinicId,
     user_id: invited.data.user.id,
     role: parsed.data.role,
+    status: "ativo",
   });
   if (memberError) {
     return { error: "Convite enviado, mas o vínculo falhou. Tente de novo." };

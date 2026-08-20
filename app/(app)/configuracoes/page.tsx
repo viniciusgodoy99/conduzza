@@ -10,15 +10,16 @@ import {
 } from "@/components/ui/card";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import { can, permissionHint } from "@/lib/domain/permissions";
+import type { Role } from "@/lib/domain/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import type { Role } from "@/lib/domain/permissions";
 
+import { CodigoAcesso, PendentesList, type Pendente } from "./equipe-client";
 import { InviteForm } from "./invite-form";
 
 // Configuracoes, bloco de Usuarios (o restante da Tela 12 chega na tarefa
-// 5.3). Aceite da 0.5: gestor ve tudo com edicao travada e dica; a recepcao
-// nem chega aqui (guarda no layout).
+// 5.3): equipe ativa, pedidos de entrada por codigo aguardando liberacao,
+// convite por e-mail e o codigo da clinica.
 export default async function ConfiguracoesPage() {
   const context = await getSessionContext();
   const active = context?.active;
@@ -27,18 +28,25 @@ export default async function ConfiguracoesPage() {
   }
 
   const supabase = await createClient();
-  const { data: memberRows } = await supabase
-    .from("clinic_member")
-    .select("user_id, role, created_at")
-    .eq("clinic_id", active.clinicId)
-    .order("created_at", { ascending: true });
+  const [memberResult, clinicResult] = await Promise.all([
+    supabase
+      .from("clinic_member")
+      .select("user_id, role, status, created_at")
+      .eq("clinic_id", active.clinicId)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("clinic")
+      .select("access_code, allow_code_signup")
+      .eq("id", active.clinicId)
+      .single(),
+  ]);
 
   // E-mails e nomes vivem no GoTrue, nao em tabela exposta: leitura pontual
   // via admin no servidor. Nenhum dado de paciente envolvido.
   const admin = createAdminClient();
   const { data: usersPage } = await admin.auth.admin.listUsers({
     page: 1,
-    perPage: 100,
+    perPage: 200,
   });
   const userById = new Map(
     (usersPage?.users ?? []).map((user) => [
@@ -53,14 +61,27 @@ export default async function ConfiguracoesPage() {
     ]),
   );
 
-  const members = (memberRows ?? []).map(
-    (row: { user_id: string; role: Role }) => ({
+  type MemberRow = {
+    user_id: string;
+    role: Role;
+    status: "ativo" | "pendente";
+  };
+  const rows = (memberResult.data ?? []) as MemberRow[];
+  const membros = rows
+    .filter((row) => row.status === "ativo")
+    .map((row) => ({
       userId: row.user_id,
       role: row.role,
       name: userById.get(row.user_id)?.name ?? "Usuário",
       email: userById.get(row.user_id)?.email ?? "",
-    }),
-  );
+    }));
+  const pendentes: Pendente[] = rows
+    .filter((row) => row.status === "pendente")
+    .map((row) => ({
+      userId: row.user_id,
+      nome: userById.get(row.user_id)?.name ?? "Usuário",
+      email: userById.get(row.user_id)?.email ?? "",
+    }));
 
   const canInvite = can(active.role, "configuracoes") === "tudo";
   const hint = permissionHint(active.role, "configuracoes");
@@ -80,8 +101,10 @@ export default async function ConfiguracoesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-6">
+          <PendentesList pendentes={pendentes} podeGerenciar={canInvite} />
+
           <ul className="grid gap-1">
-            {members.map((member) => (
+            {membros.map((member) => (
               <li
                 key={member.userId}
                 className="flex flex-wrap items-center gap-3 rounded-md px-2 py-2"
@@ -110,9 +133,15 @@ export default async function ConfiguracoesPage() {
           </ul>
 
           <div className="border-t pt-6">
-            <h3 className="mb-4 text-sm font-semibold">Convidar usuário</h3>
+            <h3 className="mb-4 text-sm font-semibold">Convidar por e-mail</h3>
             <InviteForm canInvite={canInvite} hint={hint} />
           </div>
+
+          <CodigoAcesso
+            codigo={clinicResult.data?.access_code ?? ""}
+            ativo={clinicResult.data?.allow_code_signup ?? false}
+            podeGerenciar={canInvite}
+          />
         </CardContent>
       </Card>
 
