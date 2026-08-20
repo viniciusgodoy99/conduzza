@@ -8,12 +8,14 @@ import type {
   InstanceRef,
   InstanceStatus,
 } from "@/lib/integrations/whatsapp/provider";
+import { UazapiProvider } from "@/lib/integrations/whatsapp/uazapi";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Acoes da conexao do WhatsApp (Tela 13, reformulada para o canal uazapi/fake:
-// pareamento por QR, sem o assistente da Meta). Escrita em whatsapp_account e
-// whatsapp_account_secret e sempre via service role (tabelas sem policy de
-// escrita), com papel checado aqui.
+// Conexao do WhatsApp por clinica (Tela 13). Cada clinica ganha a PROPRIA
+// instancia no uazapi, criada no primeiro acesso com o token administrativo:
+// e isso que torna o cadastro de clientes escalavel, sem intervencao tecnica.
+// Escrita em whatsapp_account e whatsapp_account_secret e sempre por service
+// role (tabelas sem policy de escrita), com papel conferido aqui.
 
 export type ConnectState = {
   status: "desconectado" | "aguardando_qr" | "conectando" | "conectado";
@@ -30,6 +32,11 @@ type AccountRow = {
   connection_status: ConnectState["status"];
 };
 
+type SecretRow = {
+  instance_token: string | null;
+  webhook_secret: string;
+};
+
 async function requireAdminContext() {
   const context = await getSessionContext();
   if (!context?.active) {
@@ -38,32 +45,22 @@ async function requireAdminContext() {
   if (context.active.role !== "admin") {
     return { error: "Somente administradores conectam o WhatsApp" as const };
   }
-  return { clinicId: context.active.clinicId };
+  return {
+    clinicId: context.active.clinicId,
+    clinicName: context.active.clinicName,
+  };
 }
 
 async function loadAccount(clinicId: string) {
   const admin = createAdminClient();
 
-  const { data: account } = await admin
-    .from("whatsapp_account")
-    .upsert(
-      {
-        clinic_id: clinicId,
-        provider: process.env.WHATSAPP_PROVIDER ?? "fake",
-      },
-      { onConflict: "clinic_id", ignoreDuplicates: true },
-    )
-    .select()
-    .maybeSingle();
-
-  const { data: existing } = await admin
-    .from("whatsapp_account")
-    .select(
-      "provider, server_url, instance_id, display_phone, connection_status",
-    )
-    .eq("clinic_id", clinicId)
-    .single();
-
+  await admin.from("whatsapp_account").upsert(
+    {
+      clinic_id: clinicId,
+      provider: process.env.WHATSAPP_PROVIDER ?? "fake",
+    },
+    { onConflict: "clinic_id", ignoreDuplicates: true },
+  );
   await admin
     .from("whatsapp_account_secret")
     .upsert(
@@ -71,16 +68,25 @@ async function loadAccount(clinicId: string) {
       { onConflict: "clinic_id", ignoreDuplicates: true },
     );
 
-  const { data: secret } = await admin
-    .from("whatsapp_account_secret")
-    .select("instance_token, webhook_secret")
-    .eq("clinic_id", clinicId)
-    .single();
+  const [{ data: account }, { data: secret }] = await Promise.all([
+    admin
+      .from("whatsapp_account")
+      .select(
+        "provider, server_url, instance_id, display_phone, connection_status",
+      )
+      .eq("clinic_id", clinicId)
+      .single(),
+    admin
+      .from("whatsapp_account_secret")
+      .select("instance_token, webhook_secret")
+      .eq("clinic_id", clinicId)
+      .single(),
+  ]);
 
   return {
     admin,
-    account: (account ?? existing) as AccountRow,
-    secret: secret as { instance_token: string | null; webhook_secret: string },
+    account: account as AccountRow,
+    secret: secret as SecretRow,
   };
 }
 
@@ -113,12 +119,41 @@ async function persistStatus(
     .eq("clinic_id", clinicId);
 }
 
+/**
+ * Endereco publico do sistema, para o provedor conseguir chamar o webhook de
+ * volta. Em desenvolvimento com tunel, PUBLIC_APP_URL tem precedencia sobre a
+ * origem da requisicao (que seria localhost e o uazapi nao alcanca).
+ */
+async function publicOrigin(): Promise<string> {
+  const configurada = process.env.PUBLIC_APP_URL?.replace(/\/$/, "");
+  if (configurada) {
+    return configurada;
+  }
+  const headerStore = await headers();
+  return (
+    headerStore.get("origin") ??
+    `http://${headerStore.get("host") ?? "localhost:3000"}`
+  );
+}
+
 function toState(status: InstanceStatus, phone: string | null): ConnectState {
   return {
     status: status.status,
     qrCode: status.qrCode ?? null,
     displayPhone: status.displayPhone ?? phone,
   };
+}
+
+function mensagemDeErro(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.message.includes("limite de instâncias")) {
+      return error.message;
+    }
+    if (error.message.includes("UAZAPI_SERVER_URL")) {
+      return "O servidor do WhatsApp não está configurado. Fale com o suporte.";
+    }
+  }
+  return "Não foi possível falar com o servidor do WhatsApp. Tente de novo em instantes.";
 }
 
 export async function connectWhatsAppAction(): Promise<ConnectState> {
@@ -133,7 +168,7 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
   }
   const { admin, account, secret } = await loadAccount(guard.clinicId);
   const provider = getWhatsAppProvider(account.provider);
-  const ref: InstanceRef = {
+  let ref: InstanceRef = {
     clinicId: guard.clinicId,
     serverUrl: account.server_url,
     instanceToken: secret.instance_token,
@@ -141,32 +176,48 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
   };
 
   try {
-    const status = await provider.connectInstance(ref);
-    await persistStatus(admin, guard.clinicId, status);
+    // 1. A clinica ainda nao tem instancia? Cria uma, com o token
+    // administrativo, e guarda o token proprio dela.
+    if (!ref.instanceToken && provider instanceof UazapiProvider) {
+      const nome = `conduzza-${guard.clinicId.slice(0, 8)}`;
+      const criada = await provider.createInstance(ref, nome);
+      await admin
+        .from("whatsapp_account_secret")
+        .update({ instance_token: criada.instanceToken })
+        .eq("clinic_id", guard.clinicId);
+      await admin
+        .from("whatsapp_account")
+        .update({ instance_id: criada.instanceId ?? nome })
+        .eq("clinic_id", guard.clinicId);
+      ref = {
+        ...ref,
+        instanceToken: criada.instanceToken,
+        instanceId: criada.instanceId ?? nome,
+      };
+    }
 
-    const headerStore = await headers();
-    const origin =
-      headerStore.get("origin") ??
-      `http://${headerStore.get("host") ?? "localhost:3000"}`;
+    // 2. Configura o webhook ANTES de conectar, para nao perder a primeira
+    // mensagem nem o evento de conexao.
+    const origin = await publicOrigin();
     try {
       await provider.configureWebhook(
-        { ...ref, instanceToken: status.instanceToken ?? ref.instanceToken },
+        ref,
         `${origin}/api/webhooks/whatsapp?clinic=${guard.clinicId}&secret=${secret.webhook_secret}`,
       );
     } catch {
       // Configuracao de webhook e reexecutavel; falha aqui nao derruba o QR.
     }
 
+    // 3. Dispara o pareamento e devolve o QR.
+    const status = await provider.connectInstance(ref);
+    await persistStatus(admin, guard.clinicId, status);
     return toState(status, account.display_phone);
   } catch (error) {
     return {
       status: account.connection_status,
       qrCode: null,
       displayPhone: account.display_phone,
-      error:
-        error instanceof Error
-          ? "Não foi possível falar com o servidor do WhatsApp. Confira a configuração."
-          : "Falha inesperada na conexão.",
+      error: mensagemDeErro(error),
     };
   }
 }

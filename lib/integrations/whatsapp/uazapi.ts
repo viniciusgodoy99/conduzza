@@ -8,25 +8,28 @@ import type {
 
 // Cliente uazapi (API nao oficial; decisao registrada no CLAUDE.md 3.3).
 //
-// ATENCAO: os caminhos abaixo seguem a superficie publica conhecida do uazapi
-// e DEVEM ser validados contra docs.uazapi.com quando a conta real chegar.
-// Ficam centralizados aqui de proposito: corrigir formato e mexer num arquivo.
+// Escrito contra a especificacao oficial em
+// https://docs.uazapi.com/openapi-bundled.json (OpenAPI 3.1, versao 2.1.1).
+// A documentacao renderizada e uma aplicacao de pagina unica; a especificacao
+// legivel por maquina e o contrato autoritativo.
 const PATHS = {
-  sendText: "/send/text",
-  sendMenu: "/send/menu",
-  instanceConnect: "/instance/connect",
-  instanceStatus: "/instance/status",
+  instanceCreate: "/instance/create", // admintoken
+  instanceConnect: "/instance/connect", // token da instancia
+  instanceStatus: "/instance/status", // GET, token da instancia
   instanceDisconnect: "/instance/disconnect",
   webhook: "/webhook",
+  sendText: "/send/text",
+  sendMenu: "/send/menu",
 } as const;
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 2;
 
 // Anti-ban: atraso aleatorio entre envios POR INSTANCIA. Suficiente para a
-// resposta humana 1:1 da Fase 1. Disparo em massa (reguas, Fase 4) DEVE
-// passar pela job_queue com rate limit por instancia, NUNCA por aqui: esta
-// fila vive em memoria e nao sobrevive a multiplas instancias serverless.
+// resposta humana 1:1 desta fase. Disparo em massa (reguas, Fase 4) DEVE
+// passar pela job_queue com limite por instancia, NUNCA por aqui: esta fila
+// vive em memoria e nao sobrevive a multiplas instancias serverless. A
+// especificacao sugere 10 a 30 segundos para disparo em massa.
 const sendQueues = new Map<string, Promise<void>>();
 
 type UazapiOptions = {
@@ -53,15 +56,20 @@ export class UazapiProvider implements WhatsAppProvider {
         "UAZAPI_SERVER_URL ausente: configure o servidor uazapi no ambiente.",
       );
     }
-    return url.replace(/\/$/, "");
+    const comProtocolo = /^https?:\/\//.test(url) ? url : `https://${url}`;
+    return comProtocolo.replace(/\/$/, "");
   }
 
   private async request(
     ref: InstanceRef,
     path: string,
-    payload: Record<string, unknown>,
-    tokenKind: "instance" | "admin" = "instance",
+    options: {
+      method?: "GET" | "POST";
+      payload?: Record<string, unknown>;
+      tokenKind?: "instance" | "admin";
+    } = {},
   ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const { method = "POST", payload, tokenKind = "instance" } = options;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -88,16 +96,17 @@ export class UazapiProvider implements WhatsAppProvider {
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
         const response = await this.fetchFn(`${this.baseUrl(ref)}${path}`, {
-          method: "POST",
+          method,
           headers,
-          body: JSON.stringify(payload),
+          body: method === "GET" ? undefined : JSON.stringify(payload ?? {}),
           signal: controller.signal,
         });
         const body = (await response.json().catch(() => ({}))) as Record<
           string,
           unknown
         >;
-        // 4xx nao ganha retry: e erro nosso ou de recurso, repetir nao ajuda.
+        // 4xx nao ganha nova tentativa: e erro nosso ou de recurso, repetir
+        // nao ajuda. 429 (teto de instancias) tambem nao.
         if (response.status >= 500) {
           lastError = new Error(`uazapi ${response.status}`);
           continue;
@@ -141,7 +150,7 @@ export class UazapiProvider implements WhatsAppProvider {
       const { status, body: response } = await this.request(
         ref,
         PATHS.sendText,
-        { number: to, text: body },
+        { payload: { number: to, text: body } },
       );
       return toSendResult(status, response);
     });
@@ -154,15 +163,12 @@ export class UazapiProvider implements WhatsAppProvider {
     options: MenuOption[],
   ): Promise<SendResult> {
     return this.enqueue(ref.clinicId, async () => {
+      // Codificacao da especificacao: "texto|id" para botao de resposta.
+      const choices = options.map((option) => `${option.text}|${option.id}`);
       const { status, body: response } = await this.request(
         ref,
         PATHS.sendMenu,
-        {
-          number: to,
-          type: "button",
-          text: body,
-          choices: options.map((option) => option.text),
-        },
+        { payload: { number: to, type: "button", text: body, choices } },
       );
       if (status >= 200 && status < 300) {
         return toSendResult(status, response);
@@ -173,37 +179,73 @@ export class UazapiProvider implements WhatsAppProvider {
         .map((option, index) => `${index + 1}. ${option.text}`)
         .join("\n")}\n\nResponda com o número da opção.`;
       const fallback = await this.request(ref, PATHS.sendText, {
-        number: to,
-        text: numbered,
+        payload: { number: to, text: numbered },
       });
       return toSendResult(fallback.status, fallback.body);
     });
   }
 
+  /**
+   * Cria a instancia daquela clinica (token administrativo) e devolve o token
+   * proprio dela. Cada clinica tem a sua: e isso que torna a conexao escalavel.
+   */
+  async createInstance(
+    ref: InstanceRef,
+    name: string,
+  ): Promise<{ instanceToken: string; instanceId: string | null }> {
+    const { status, body } = await this.request(ref, PATHS.instanceCreate, {
+      payload: { name },
+      tokenKind: "admin",
+    });
+    if (status === 429) {
+      throw new Error(
+        "O servidor uazapi atingiu o limite de instâncias conectadas.",
+      );
+    }
+    const token = pickString(body, ["token", "instance.token"]);
+    if (!token) {
+      throw new Error(
+        pickString(body, ["error", "message"]) ??
+          "O uazapi não devolveu o token da instância.",
+      );
+    }
+    return {
+      instanceToken: token,
+      instanceId:
+        pickString(body, ["name", "instance.id", "instance.name"]) ?? null,
+    };
+  }
+
   async connectInstance(ref: InstanceRef): Promise<InstanceStatus> {
-    const { body } = await this.request(
-      ref,
-      PATHS.instanceConnect,
-      { instance: ref.instanceId ?? undefined },
-      ref.instanceToken ? "instance" : "admin",
-    );
+    const { body } = await this.request(ref, PATHS.instanceConnect, {
+      payload: {},
+    });
     return parseInstanceStatus(body);
   }
 
   async getStatus(ref: InstanceRef): Promise<InstanceStatus> {
-    const { body } = await this.request(ref, PATHS.instanceStatus, {});
+    // GET, conforme a especificacao.
+    const { body } = await this.request(ref, PATHS.instanceStatus, {
+      method: "GET",
+    });
     return parseInstanceStatus(body);
   }
 
   async configureWebhook(ref: InstanceRef, url: string): Promise<void> {
     await this.request(ref, PATHS.webhook, {
-      url,
-      events: ["messages", "messages_update", "connection"],
+      payload: {
+        enabled: true,
+        url,
+        events: ["messages", "messages_update", "connection"],
+        // OBRIGATORIO: sem isto, toda mensagem que enviamos volta como
+        // recebida e vira laco infinito. A especificacao alerta duas vezes.
+        excludeMessages: ["wasSentByApi"],
+      },
     });
   }
 
   async disconnect(ref: InstanceRef): Promise<void> {
-    await this.request(ref, PATHS.instanceDisconnect, {});
+    await this.request(ref, PATHS.instanceDisconnect, { payload: {} });
   }
 }
 
@@ -212,38 +254,58 @@ function toSendResult(
   body: Record<string, unknown>,
 ): SendResult {
   if (status >= 200 && status < 300) {
+    // messageid e o id do WhatsApp, o que casa com os recibos de entrega.
+    // id e interno (formato dono:messageid) e serve de reserva.
     const id =
-      pickString(body, ["id", "messageid", "messageId", "key.id"]) ??
-      `uazapi:${crypto.randomUUID()}`;
+      pickString(body, ["messageid", "id"]) ?? `uazapi:${crypto.randomUUID()}`;
     return { ok: true, waMessageId: id };
+  }
+  // Erro 463 do WhatsApp: restricao por volume ou qualidade da conta, o
+  // vizinho do banimento. Diagnostico em GET /instance/wa_messages_limits.
+  const provedor = body["provider_code"];
+  if (provedor === 463) {
+    return {
+      ok: false,
+      errorCode: "whatsapp_463",
+      message:
+        "O WhatsApp restringiu temporariamente este número para iniciar conversas.",
+    };
   }
   return {
     ok: false,
     errorCode: `uazapi_${status}`,
-    message: pickString(body, ["error", "message"]) ?? "Falha no envio",
+    message:
+      pickString(body, ["message_ptbr", "error", "message"]) ??
+      "Falha no envio",
   };
 }
 
 function parseInstanceStatus(body: Record<string, unknown>): InstanceStatus {
+  // Enum oficial: disconnected, connecting, connected, hibernated.
   const raw = (
-    pickString(body, ["status", "state", "instance.status"]) ?? ""
+    pickString(body, ["instance.status", "status", "state"]) ?? ""
   ).toLowerCase();
-  // Ordem importa: "disconnected" contem "connected" como substring.
-  const status = raw.includes("disconnect")
-    ? "desconectado"
-    : raw.includes("connected") || raw.includes("open")
+  const status =
+    raw === "connected"
       ? "conectado"
-      : raw.includes("qr")
-        ? "aguardando_qr"
-        : raw.includes("connecting") || raw.includes("loading")
-          ? "conectando"
+      : raw === "connecting"
+        ? "conectando"
+        : raw === "hibernated"
+          ? "desconectado"
           : "desconectado";
+
+  const qrCode = pickString(body, ["instance.qrcode", "qrcode"]);
+  const paircode = pickString(body, ["instance.paircode", "paircode"]);
+
   return {
-    status,
-    qrCode: pickString(body, ["qrcode", "qrCode", "instance.qrcode"]),
-    displayPhone: pickString(body, ["phone", "number", "instance.phone"]),
-    instanceId: pickString(body, ["instance", "instanceId", "instance.id"]),
-    instanceToken: pickString(body, ["token", "instance.token"]),
+    // Enquanto ha QR na resposta, o pareamento esta aberto esperando leitura.
+    status: qrCode && status !== "conectado" ? "aguardando_qr" : status,
+    qrCode: qrCode ?? paircode,
+    displayPhone:
+      pickString(body, ["instance.profileName", "status.jid.user", "owner"]) ??
+      null,
+    instanceId: pickString(body, ["instance.name", "instance.id"]),
+    instanceToken: pickString(body, ["instance.token", "token"]),
   };
 }
 

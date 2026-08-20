@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   const admin = createAdminClient();
   const { data: secretRow } = await admin
     .from("whatsapp_account_secret")
-    .select("webhook_secret")
+    .select("webhook_secret, instance_token")
     .eq("clinic_id", clinicId)
     .maybeSingle();
   if (!secretRow || !secretsMatch(secretRow.webhook_secret, secret)) {
@@ -55,6 +55,17 @@ export async function POST(request: NextRequest) {
     // Evento que nao interessa (ou formato desconhecido): 200 para o
     // provedor nao reenviar em loop.
     return NextResponse.json({ ignored: true });
+  }
+
+  // Segunda camada de autenticacao: o uazapi nao assina a chamada, mas todo
+  // evento carrega o token da instancia. Se ele veio e nao bate com o
+  // guardado, o evento e de outra instancia (ou forjado).
+  if (
+    event.instanceToken &&
+    secretRow.instance_token &&
+    !secretsMatch(secretRow.instance_token, event.instanceToken)
+  ) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   if (event.kind === "message_received") {
@@ -76,6 +87,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (event.kind === "message_status") {
+    // O recibo do uazapi traz uma LISTA de ids por evento.
     await admin
       .from("message")
       .update({
@@ -83,7 +95,7 @@ export async function POST(request: NextRequest) {
         ...(event.errorCode ? { error_code: event.errorCode } : {}),
       })
       .eq("clinic_id", clinicId)
-      .eq("wa_message_id", event.waMessageId);
+      .in("wa_message_id", event.waMessageIds);
     return NextResponse.json({ ok: true });
   }
 
