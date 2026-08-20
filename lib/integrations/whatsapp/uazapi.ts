@@ -67,9 +67,22 @@ export class UazapiProvider implements WhatsAppProvider {
       method?: "GET" | "POST";
       payload?: Record<string, unknown>;
       tokenKind?: "instance" | "admin";
+      /**
+       * Envio de mensagem NAO pode ser repetido: se a primeira tentativa
+       * chegou ao WhatsApp e a resposta se perdeu, repetir manda a mesma
+       * mensagem duas vezes para o paciente. Falha de envio e melhor que
+       * mensagem duplicada, porque a interface deixa reenviar de proposito.
+       */
+      semRetry?: boolean;
     } = {},
   ): Promise<{ status: number; body: Record<string, unknown> }> {
-    const { method = "POST", payload, tokenKind = "instance" } = options;
+    const {
+      method = "POST",
+      payload,
+      tokenKind = "instance",
+      semRetry = false,
+    } = options;
+    const tentativas = semRetry ? 0 : MAX_RETRIES;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -87,7 +100,7 @@ export class UazapiProvider implements WhatsAppProvider {
     }
 
     let lastError: unknown;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= tentativas; attempt++) {
       if (attempt > 0) {
         const backoff = 500 * 2 ** (attempt - 1) + Math.random() * 250;
         await sleep(backoff);
@@ -107,7 +120,10 @@ export class UazapiProvider implements WhatsAppProvider {
         >;
         // 4xx nao ganha nova tentativa: e erro nosso ou de recurso, repetir
         // nao ajuda. 429 (teto de instancias) tambem nao.
-        if (response.status >= 500) {
+        // 500 que carrega provider_code NAO e falha de infraestrutura: e o
+        // WhatsApp recusando a mensagem (ex.: 463, restricao por qualidade).
+        // Repetir agrava a restricao do numero, entao devolve na hora.
+        if (response.status >= 500 && body["provider_code"] === undefined) {
           lastError = new Error(`uazapi ${response.status}`);
           continue;
         }
@@ -147,12 +163,24 @@ export class UazapiProvider implements WhatsAppProvider {
     body: string,
   ): Promise<SendResult> {
     return this.enqueue(ref.clinicId, async () => {
-      const { status, body: response } = await this.request(
-        ref,
-        PATHS.sendText,
-        { payload: { number: to, text: body } },
-      );
-      return toSendResult(status, response);
+      try {
+        const { status, body: response } = await this.request(
+          ref,
+          PATHS.sendText,
+          { payload: { number: to, text: body }, semRetry: true },
+        );
+        return toSendResult(status, response);
+      } catch {
+        // Sem repeticao no envio: a mensagem pode ter chegado ao WhatsApp e
+        // so a resposta ter se perdido. Devolve falha para a interface
+        // oferecer reenvio consciente, em vez de duplicar sozinho.
+        return {
+          ok: false as const,
+          errorCode: "envio_incerto",
+          message:
+            "Não foi possível confirmar o envio. Confira a conversa antes de reenviar.",
+        };
+      }
     });
   }
 
@@ -168,7 +196,10 @@ export class UazapiProvider implements WhatsAppProvider {
       const { status, body: response } = await this.request(
         ref,
         PATHS.sendMenu,
-        { payload: { number: to, type: "button", text: body, choices } },
+        {
+          payload: { number: to, type: "button", text: body, choices },
+          semRetry: true,
+        },
       );
       if (status >= 200 && status < 300) {
         return toSendResult(status, response);
@@ -180,6 +211,7 @@ export class UazapiProvider implements WhatsAppProvider {
         .join("\n")}\n\nResponda com o número da opção.`;
       const fallback = await this.request(ref, PATHS.sendText, {
         payload: { number: to, text: numbered },
+        semRetry: true,
       });
       return toSendResult(fallback.status, fallback.body);
     });
@@ -257,7 +289,7 @@ function toSendResult(
     // messageid e o id do WhatsApp, o que casa com os recibos de entrega.
     // id e interno (formato dono:messageid) e serve de reserva.
     const id =
-      pickString(body, ["id", "messageid"]) ?? `uazapi:${crypto.randomUUID()}`;
+      pickString(body, ["messageid", "id"]) ?? `uazapi:${crypto.randomUUID()}`;
     return { ok: true, waMessageId: id };
   }
   // Erro 463 do WhatsApp: restricao por volume ou qualidade da conta, o
