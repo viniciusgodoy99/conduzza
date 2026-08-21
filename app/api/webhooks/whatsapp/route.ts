@@ -94,6 +94,32 @@ export async function POST(request: NextRequest) {
       });
       return NextResponse.json({ error: "ingest_failed" }, { status: 500 });
     }
+
+    // Midia NUNCA e baixada aqui: a URL do provedor e criptografada e o
+    // download demora segundos, o que estouraria o timeout do webhook e
+    // provocaria reenvio. Vira job; o worker baixa e guarda no Storage.
+    const resultado = data as {
+      inserted?: boolean;
+      message_id?: string | null;
+    } | null;
+    if (event.mediaUrl && resultado?.inserted && resultado.message_id) {
+      const { error: erroJob } = await admin.from("job_queue").insert({
+        clinic_id: clinicId,
+        kind: "baixar_midia",
+        payload: {
+          message_id: resultado.message_id,
+          wa_message_id: event.waMessageId,
+        },
+      });
+      if (erroJob) {
+        // A mensagem ja esta salva; so o arquivo fica pendente. Log e segue.
+        log.error("webhook_enfileirar_midia_falhou", {
+          clinic_id: clinicId,
+          message_id: resultado.message_id,
+          error_code: erroJob.code ?? null,
+        });
+      }
+    }
     // TODO(3.4): enfileirar process_inbound quando o agente existir.
     return NextResponse.json(data);
   }

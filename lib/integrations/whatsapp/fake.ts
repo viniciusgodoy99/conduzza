@@ -1,6 +1,7 @@
 import type {
   InstanceRef,
   InstanceStatus,
+  MediaDownloadResult,
   MenuOption,
   SendResult,
   WhatsAppProvider,
@@ -79,5 +80,22 @@ export class FakeProvider implements WhatsAppProvider {
 
   async disconnect(): Promise<void> {
     // Sem estado remoto para derrubar.
+  }
+
+  async downloadMedia(
+    _ref: InstanceRef,
+    waMessageId: string,
+    options: { transcribe?: boolean } = {},
+  ): Promise<MediaDownloadResult> {
+    // Conteudo deterministico para os testes: um "arquivo" pequeno cujo texto
+    // carrega o id, e transcricao quando pedida.
+    return {
+      ok: true,
+      base64: Buffer.from(`fake-midia:${waMessageId}`).toString("base64"),
+      mimetype: "audio/mpeg",
+      transcript: options.transcribe
+        ? `Transcrição de teste da mensagem ${waMessageId}`
+        : null,
+    };
   }
 }

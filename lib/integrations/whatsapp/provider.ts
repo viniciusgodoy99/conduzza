@@ -18,6 +18,17 @@ export type SendResult =
 
 export type MenuOption = { id: string; text: string };
 
+export type MediaDownloadResult =
+  | {
+      ok: true;
+      /** conteudo do arquivo; vai para o NOSSO Storage, nunca fica em URL do provedor */
+      base64: string;
+      mimetype: string;
+      /** transcricao quando for audio e o provedor transcrever */
+      transcript: string | null;
+    }
+  | { ok: false; errorCode: string; message: string };
+
 export type ConnectionStatus =
   "desconectado" | "aguardando_qr" | "conectando" | "conectado";
 
@@ -47,6 +58,16 @@ export interface WhatsAppProvider {
   getStatus(ref: InstanceRef): Promise<InstanceStatus>;
   configureWebhook(ref: InstanceRef, url: string): Promise<void>;
   disconnect(ref: InstanceRef): Promise<void>;
+  /**
+   * Baixa a midia de uma mensagem recebida. No uazapi a URL do webhook vem
+   * criptografada (.enc) e expira: o arquivo real so existe via download, que
+   * roda como JOB (nunca no caminho do webhook).
+   */
+  downloadMedia(
+    ref: InstanceRef,
+    waMessageId: string,
+    options?: { transcribe?: boolean },
+  ): Promise<MediaDownloadResult>;
 }
 
 import { FakeProvider } from "./fake";

@@ -1,6 +1,7 @@
 import type {
   InstanceRef,
   InstanceStatus,
+  MediaDownloadResult,
   MenuOption,
   SendResult,
   WhatsAppProvider,
@@ -20,42 +21,37 @@ const PATHS = {
   webhook: "/webhook",
   sendText: "/send/text",
   sendMenu: "/send/menu",
+  messageDownload: "/message/download",
 } as const;
 
 const REQUEST_TIMEOUT_MS = 10_000;
+// Download de midia e maior e mais lento que os demais; roda em job, nao no
+// caminho de request de usuario, entao pode esperar mais.
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+// Teto do corpo aceito no download: o base64 inteiro passa pela memoria do
+// worker. O WhatsApp limita audio/video a ~16MB; 40MB de corpo cobre o
+// base64 disso com folga, e um documento maior falha com codigo claro em vez
+// de derrubar o processo.
+const MAX_DOWNLOAD_BYTES = 40 * 1024 * 1024;
 const MAX_RETRIES = 2;
 
-// Anti-ban: espacamento aleatorio entre envios POR INSTANCIA. Suficiente para
-// a resposta humana 1:1 desta fase. Disparo em massa (reguas, confirmacao de
-// atendimento) DEVE passar pela job_queue com limite por instancia, NUNCA por
-// aqui. A especificacao sugere 10 a 30 segundos para disparo em massa.
-//
-// LIMITE CONHECIDO (auditoria de escala, 21/08/2026): este estado vive na
-// memoria de UM processo. Vale para o servidor 24/7 de replica unica que e o
-// alvo atual; deixa de valer com segunda replica ou com o worker da
-// job_queue rodando ao lado. Nesse momento a reserva de slot vai para o
-// banco (next_send_at em whatsapp_account), Etapa B.
-const sendQueues = new Map<string, Promise<void>>();
-// Momento do ultimo envio por clinica: um envio ISOLADO (o caso dominante no
-// atendimento 1:1) sai na hora; o espacamento so e pago quando houve envio
-// recente. Antes, TODO envio dormia 1,5 a 4s, punindo a latencia do
-// atendente sem proteger nada.
-const lastSendAt = new Map<string, number>();
+// ANTI-BAN: o espacamento entre envios NAO vive mais aqui. Ele e um slot
+// reservado no banco (reservar_slot_envio em whatsapp_account.next_send_at),
+// compartilhado entre o servidor web e o worker de disparo, que sao processos
+// separados: estado em memoria de um nao protege o outro. Quem orquestra o
+// envio (lib/integrations/whatsapp/send.ts e o worker) reserva o slot ANTES
+// de chamar este cliente. Este arquivo so fala HTTP com o uazapi.
 
 type UazapiOptions = {
-  /** Faixa do atraso anti-ban em ms; testes injetam valores minimos */
-  sendDelayRangeMs?: [number, number];
   fetchFn?: typeof fetch;
 };
 
 export class UazapiProvider implements WhatsAppProvider {
   readonly name = "uazapi" as const;
   readonly isOfficialChannel = false;
-  private readonly delayRange: [number, number];
   private readonly fetchFn: typeof fetch;
 
   constructor(options: UazapiOptions = {}) {
-    this.delayRange = options.sendDelayRangeMs ?? [1_500, 4_000];
     this.fetchFn = options.fetchFn ?? fetch;
   }
 
@@ -84,6 +80,9 @@ export class UazapiProvider implements WhatsAppProvider {
        * mensagem duplicada, porque a interface deixa reenviar de proposito.
        */
       semRetry?: boolean;
+      timeoutMs?: number;
+      /** teto do corpo da resposta; acima disso a chamada falha com 413 local */
+      maxBodyBytes?: number;
     } = {},
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     const {
@@ -91,6 +90,8 @@ export class UazapiProvider implements WhatsAppProvider {
       payload,
       tokenKind = "instance",
       semRetry = false,
+      timeoutMs = REQUEST_TIMEOUT_MS,
+      maxBodyBytes,
     } = options;
     const tentativas = semRetry ? 0 : MAX_RETRIES;
     const headers: Record<string, string> = {
@@ -116,7 +117,7 @@ export class UazapiProvider implements WhatsAppProvider {
         await sleep(backoff);
       }
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await this.fetchFn(`${this.baseUrl(ref)}${path}`, {
           method,
@@ -124,6 +125,12 @@ export class UazapiProvider implements WhatsAppProvider {
           body: method === "GET" ? undefined : JSON.stringify(payload ?? {}),
           signal: controller.signal,
         });
+        if (maxBodyBytes !== undefined) {
+          const tamanho = Number(response.headers.get("content-length") ?? 0);
+          if (tamanho > maxBodyBytes) {
+            return { status: 413, body: { error: "corpo_grande_demais" } };
+          }
+        }
         const body = (await response.json().catch(() => ({}))) as Record<
           string,
           unknown
@@ -149,58 +156,29 @@ export class UazapiProvider implements WhatsAppProvider {
       : new Error("Falha de rede ao falar com o uazapi");
   }
 
-  /** Enfileira o envio da instancia com espacamento aleatorio (anti-ban). */
-  private enqueue<T>(clinicId: string, task: () => Promise<T>): Promise<T> {
-    const previous = sendQueues.get(clinicId) ?? Promise.resolve();
-    const [min, max] = this.delayRange;
-    const run = previous
-      .catch(() => undefined)
-      .then(async () => {
-        // Dorme so o que falta para completar o intervalo desde o ULTIMO
-        // envio. Envio isolado (nada recente) sai imediatamente.
-        const alvo = min + Math.random() * (max - min);
-        const decorrido = Date.now() - (lastSendAt.get(clinicId) ?? 0);
-        if (decorrido < alvo) {
-          await sleep(alvo - decorrido);
-        }
-        lastSendAt.set(clinicId, Date.now());
-        return task();
-      });
-    sendQueues.set(
-      clinicId,
-      run.then(
-        () => undefined,
-        () => undefined,
-      ),
-    );
-    return run;
-  }
-
   async sendText(
     ref: InstanceRef,
     to: string,
     body: string,
   ): Promise<SendResult> {
-    return this.enqueue(ref.clinicId, async () => {
-      try {
-        const { status, body: response } = await this.request(
-          ref,
-          PATHS.sendText,
-          { payload: { number: to, text: body }, semRetry: true },
-        );
-        return toSendResult(status, response);
-      } catch {
-        // Sem repeticao no envio: a mensagem pode ter chegado ao WhatsApp e
-        // so a resposta ter se perdido. Devolve falha para a interface
-        // oferecer reenvio consciente, em vez de duplicar sozinho.
-        return {
-          ok: false as const,
-          errorCode: "envio_incerto",
-          message:
-            "Não foi possível confirmar o envio. Confira a conversa antes de reenviar.",
-        };
-      }
-    });
+    try {
+      const { status, body: response } = await this.request(
+        ref,
+        PATHS.sendText,
+        { payload: { number: to, text: body }, semRetry: true },
+      );
+      return toSendResult(status, response);
+    } catch {
+      // Sem repeticao no envio: a mensagem pode ter chegado ao WhatsApp e
+      // so a resposta ter se perdido. Devolve falha para a interface
+      // oferecer reenvio consciente, em vez de duplicar sozinho.
+      return {
+        ok: false as const,
+        errorCode: "envio_incerto",
+        message:
+          "Não foi possível confirmar o envio. Confira a conversa antes de reenviar.",
+      };
+    }
   }
 
   async sendMenu(
@@ -209,31 +187,75 @@ export class UazapiProvider implements WhatsAppProvider {
     body: string,
     options: MenuOption[],
   ): Promise<SendResult> {
-    return this.enqueue(ref.clinicId, async () => {
-      // Codificacao da especificacao: "texto|id" para botao de resposta.
-      const choices = options.map((option) => `${option.text}|${option.id}`);
-      const { status, body: response } = await this.request(
-        ref,
-        PATHS.sendMenu,
-        {
-          payload: { number: to, type: "button", text: body, choices },
-          semRetry: true,
-        },
-      );
-      if (status >= 200 && status < 300) {
-        return toSendResult(status, response);
-      }
-      // Botao interativo e incerto em API nao oficial: degrada para texto
-      // numerado, que funciona em qualquer aparelho.
-      const numbered = `${body}\n\n${options
-        .map((option, index) => `${index + 1}. ${option.text}`)
-        .join("\n")}\n\nResponda com o número da opção.`;
-      const fallback = await this.request(ref, PATHS.sendText, {
-        payload: { number: to, text: numbered },
-        semRetry: true,
-      });
-      return toSendResult(fallback.status, fallback.body);
+    // Codificacao da especificacao: "texto|id" para botao de resposta.
+    const choices = options.map((option) => `${option.text}|${option.id}`);
+    const { status, body: response } = await this.request(ref, PATHS.sendMenu, {
+      payload: { number: to, type: "button", text: body, choices },
+      semRetry: true,
     });
+    if (status >= 200 && status < 300) {
+      return toSendResult(status, response);
+    }
+    // Botao interativo e incerto em API nao oficial: degrada para texto
+    // numerado, que funciona em qualquer aparelho.
+    const numbered = `${body}\n\n${options
+      .map((option, index) => `${index + 1}. ${option.text}`)
+      .join("\n")}\n\nResponda com o número da opção.`;
+    const fallback = await this.request(ref, PATHS.sendText, {
+      payload: { number: to, text: numbered },
+      semRetry: true,
+    });
+    return toSendResult(fallback.status, fallback.body);
+  }
+
+  async downloadMedia(
+    ref: InstanceRef,
+    waMessageId: string,
+    options: { transcribe?: boolean } = {},
+  ): Promise<MediaDownloadResult> {
+    // Contrato confirmado na especificacao (POST /message/download):
+    // pedido {id, return_base64, return_link, transcribe, openai_apikey};
+    // resposta {mimetype, base64Data?, transcription?, fileURL?}.
+    // return_base64 e return_link=false de proposito: midia de paciente vai
+    // para o NOSSO Storage, nunca fica numa URL publica do provedor.
+    const payload: Record<string, unknown> = {
+      id: waMessageId,
+      return_base64: true,
+      return_link: false,
+      generate_mp3: true,
+      transcribe: options.transcribe === true,
+    };
+    // Transcricao envia AUDIO DE PACIENTE para a OpenAI via servidor uazapi.
+    // Isso so acontece com decisao explicita do operador: a chave e a env
+    // DEDICADA UAZAPI_OPENAI_KEY (nunca reaproveitamos OPENAI_API_KEY em
+    // silencio). Sem a chave, o servidor uazapi usa a dele se tiver; senao a
+    // resposta vem sem transcricao e o audio fica sem texto, que e o
+    // comportamento seguro por padrao.
+    if (options.transcribe && process.env.UAZAPI_OPENAI_KEY) {
+      payload.openai_apikey = process.env.UAZAPI_OPENAI_KEY;
+    }
+    const { status, body } = await this.request(ref, PATHS.messageDownload, {
+      payload,
+      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      maxBodyBytes: MAX_DOWNLOAD_BYTES,
+    });
+    const base64 = pickString(body, ["base64Data"]);
+    const mimetype = pickString(body, ["mimetype"]);
+    if (status >= 200 && status < 300 && base64 && mimetype) {
+      return {
+        ok: true,
+        base64,
+        mimetype,
+        transcript: pickString(body, ["transcription"]),
+      };
+    }
+    return {
+      ok: false,
+      errorCode: `uazapi_download_${status}`,
+      message:
+        pickString(body, ["message_ptbr", "error", "message"]) ??
+        "Não foi possível baixar o arquivo.",
+    };
   }
 
   /**

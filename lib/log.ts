@@ -30,6 +30,8 @@ const CAMPOS_PERMITIDOS = new Set([
   "duration_ms",
   "count",
   "attempt",
+  "job_id",
+  "kind",
 ]);
 
 export type CamposDeLog = Record<
