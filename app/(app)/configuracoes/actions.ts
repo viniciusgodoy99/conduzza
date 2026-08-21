@@ -105,15 +105,21 @@ export async function gerarNovoCodigoAction(): Promise<TeamActionResult> {
     return { ok: false, error: guard.error };
   }
   const supabase = await createClient();
-  // Codigo novo gerado no cliente e conferido pelo unique do banco: o valor
-  // antigo para de funcionar na hora, que e o objetivo da rotacao.
-  const novo = Array.from({ length: 8 }, () =>
-    "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".charAt(Math.floor(Math.random() * 32)),
+  // Codigo e segredo de acesso: gerador criptografico (randomBytes), nunca
+  // Math.random, que e previsivel. 10 caracteres de alfabeto sem ambiguidade.
+  // O unique do banco confere; o valor antigo para de funcionar na hora, que
+  // e o objetivo da rotacao. A tabela clinic_access_code e legivel e
+  // atualizavel so por administrador (policy propria).
+  const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = randomBytes(10);
+  const novo = Array.from(
+    bytes,
+    (byte) => alfabeto[byte % alfabeto.length],
   ).join("");
   const { error } = await supabase
-    .from("clinic")
-    .update({ access_code: novo })
-    .eq("id", guard.clinicId);
+    .from("clinic_access_code")
+    .update({ code: novo })
+    .eq("clinic_id", guard.clinicId);
   if (error) {
     return { ok: false, error: "Não foi possível gerar um código novo." };
   }

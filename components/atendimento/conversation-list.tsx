@@ -32,17 +32,31 @@ export function ConversationList({
   viewerId,
   selectedId,
   onSelect,
+  onResolvedRequested,
+  resolvedLoading = false,
 }: {
   conversations: ConversationListItem[];
   viewerId: string;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  // Resolvidas sao arquivo carregado sob demanda: avisa o container quando o
+  // usuario abre ou fecha o filtro de resolvidas.
+  onResolvedRequested?: (open: boolean) => void;
+  resolvedLoading?: boolean;
 }) {
   const [own, setOwn] = useState<OwnFilter>("todas");
   const [statusFilter, setStatusFilter] = useState<ConversationStatus | null>(
     null,
   );
   const [search, setSearch] = useState("");
+
+  const handleStatusFilter = (status: ConversationStatus) => {
+    const proximo = statusFilter === status ? null : status;
+    setStatusFilter(proximo);
+    if (status === "resolvida") {
+      onResolvedRequested?.(proximo === "resolvida");
+    }
+  };
 
   const counts = useMemo(() => {
     const mine = conversations.filter(
@@ -125,7 +139,7 @@ export function ConversationList({
             <button
               key={status}
               type="button"
-              onClick={() => setStatusFilter(active ? null : status)}
+              onClick={() => handleStatusFilter(status)}
               aria-pressed={active}
               className={cn(
                 "h-7 rounded-full border px-2.5 text-[11.5px] font-semibold transition-colors",
@@ -137,7 +151,10 @@ export function ConversationList({
                   : { color: tone.text }
               }
             >
-              {definition.label} {counts.byStatus[status]}
+              {definition.label}{" "}
+              {status === "resolvida" && resolvedLoading
+                ? "..."
+                : counts.byStatus[status]}
             </button>
           );
         })}

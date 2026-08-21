@@ -50,6 +50,9 @@ export function Thread({
   messages,
   decisions,
   isLoading,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
   authorNames,
   onBack,
   onToggleContext,
@@ -59,19 +62,25 @@ export function Thread({
   messages: MessageItem[];
   decisions: ComplianceDecision[];
   isLoading: boolean;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   authorNames: Record<string, string>;
   onBack: () => void;
   onToggleContext: () => void;
   footer: React.ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // So rola para o fim quando chega mensagem NOVA (a mais recente muda), nao
+  // ao carregar historico antigo, que deve manter a posicao de leitura.
+  const ultimaId = messages[messages.length - 1]?.id;
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages.length, conversation.id]);
+  }, [ultimaId, conversation.id]);
 
   const items = mergeItems(messages, decisions);
   const definition = CONVERSATION_STATUS[conversation.status];
@@ -139,6 +148,21 @@ export function Thread({
           <ListSkeleton rows={5} />
         ) : (
           <div className="mx-auto grid max-w-3xl gap-2.5">
+            {hasOlder ? (
+              <div className="flex justify-center pb-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onLoadOlder}
+                  disabled={loadingOlder}
+                  className="text-[12.5px] text-text-secondary"
+                >
+                  {loadingOlder
+                    ? "Carregando..."
+                    : "Carregar mensagens anteriores"}
+                </Button>
+              </div>
+            ) : null}
             {items.map((item, index) => {
               const previous = items[index - 1];
               const currentDate =

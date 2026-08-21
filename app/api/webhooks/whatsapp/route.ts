@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { parseInboundEvent } from "@/lib/integrations/whatsapp/inbound";
+import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // Webhook de entrada do WhatsApp (tarefa 1.3). O uazapi nao assina as
@@ -85,6 +86,12 @@ export async function POST(request: NextRequest) {
       p_transcript: null,
     });
     if (error) {
+      // So ids e codigo de erro: nenhum conteudo de mensagem sai daqui.
+      log.error("webhook_ingestao_falhou", {
+        clinic_id: clinicId,
+        wa_message_id: event.waMessageId,
+        error_code: error.code ?? null,
+      });
       return NextResponse.json({ error: "ingest_failed" }, { status: 500 });
     }
     // TODO(3.4): enfileirar process_inbound quando o agente existir.
@@ -104,7 +111,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  await admin
+  // So escreve quando o status MUDOU: o provedor reenvia o mesmo evento de
+  // conexao varias vezes, e cada escrita gera evento de Realtime e linha
+  // morta a toa. O filtro .neq faz o update afetar zero linhas no repeteco.
+  const { data: mudou } = await admin
     .from("whatsapp_account")
     .update({
       connection_status: event.status,
@@ -115,6 +125,24 @@ export async function POST(request: NextRequest) {
         ? { disconnected_at: new Date().toISOString() }
         : {}),
     })
-    .eq("clinic_id", clinicId);
+    .eq("clinic_id", clinicId)
+    .neq("connection_status", event.status)
+    .select("clinic_id");
+
+  if (mudou && mudou.length > 0) {
+    // Desconexao e o proxy de qualidade neste canal (CLAUDE.md 3.3): o alerta
+    // operacional nasce desta linha estruturada. Nenhum dado de paciente.
+    if (event.status === "desconectado") {
+      log.warn("whatsapp_desconectou", {
+        clinic_id: clinicId,
+        connection_status: event.status,
+      });
+    } else {
+      log.info("whatsapp_conexao_mudou", {
+        clinic_id: clinicId,
+        connection_status: event.status,
+      });
+    }
+  }
   return NextResponse.json({ ok: true });
 }

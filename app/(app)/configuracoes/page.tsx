@@ -11,6 +11,7 @@ import {
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import { can, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
+import { fetchProfileNames } from "@/lib/queries/profiles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -47,32 +48,38 @@ export default async function ConfiguracoesPage() {
       .maybeSingle(),
   ]);
 
-  // E-mails e nomes vivem no GoTrue, nao em tabela exposta: leitura pontual
-  // via admin no servidor. Nenhum dado de paciente envolvido.
-  const admin = createAdminClient();
-  const { data: usersPage } = await admin.auth.admin.listUsers({
-    page: 1,
-    perPage: 200,
-  });
-  const userById = new Map(
-    (usersPage?.users ?? []).map((user) => [
-      user.id,
-      {
-        email: user.email ?? "",
-        name:
-          typeof user.user_metadata?.name === "string"
-            ? (user.user_metadata.name as string)
-            : (user.email ?? ""),
-      },
-    ]),
-  );
-
   type MemberRow = {
     user_id: string;
     role: Role;
     status: "ativo" | "pendente";
   };
   const rows = (memberResult.data ?? []) as MemberRow[];
+
+  // Nome vem da tabela profile (uma consulta indexada). E-mail so existe no
+  // GoTrue: busca por id APENAS dos membros desta clinica, o que escala com o
+  // tamanho da equipe, nao com o total de usuarios do sistema (antes era
+  // listUsers do projeto inteiro, que perdia quem ficasse fora da 1a pagina).
+  const admin = createAdminClient();
+  const memberIds = rows.map((row) => row.user_id);
+  const [nameById, emailEntries] = await Promise.all([
+    fetchProfileNames(supabase, memberIds),
+    Promise.all(
+      memberIds.map(async (id) => {
+        const { data } = await admin.auth.admin.getUserById(id);
+        return [id, data.user?.email ?? ""] as const;
+      }),
+    ),
+  ]);
+  const emailById = new Map(emailEntries);
+  const userById = new Map(
+    memberIds.map((id) => [
+      id,
+      {
+        name: nameById[id] ?? emailById.get(id) ?? "Usuário",
+        email: emailById.get(id) ?? "",
+      },
+    ]),
+  );
   const membros = rows
     .filter((row) => row.status === "ativo")
     .map((row) => ({

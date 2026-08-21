@@ -74,6 +74,13 @@ function normalizeConversation(
   return { ...row, contact } as ConversationListItem;
 }
 
+// Teto da lista ativa. O Inbox mostra conversas em andamento; resolvida e
+// arquivo, carregado sob demanda (fetchResolvedConversations). Sem esse teto,
+// uma clinica movimentada traria milhares de linhas em toda carga da tela.
+export const CONVERSATIONS_ATIVAS_LIMIT = 300;
+
+// Lista ativa: tudo que NAO esta resolvida. Ordenada e limitada, batendo com
+// o indice conversation(clinic_id, status, last_message_at desc).
 export async function fetchConversations(
   supabase: SupabaseClient,
   clinicId: string,
@@ -82,29 +89,75 @@ export async function fetchConversations(
     .from("conversation")
     .select(CONVERSATION_SELECT)
     .eq("clinic_id", clinicId)
-    .order("last_message_at", { ascending: false, nullsFirst: false });
+    .neq("status", "resolvida")
+    .order("last_message_at", { ascending: false, nullsFirst: false })
+    .limit(CONVERSATIONS_ATIVAS_LIMIT);
   if (error) {
     throw new Error(error.message);
   }
   return ((data ?? []) as Record<string, unknown>[]).map(normalizeConversation);
 }
 
-export async function fetchMessages(
+// Conversas resolvidas, sob demanda (quando o usuario abre o filtro).
+export async function fetchResolvedConversations(
   supabase: SupabaseClient,
-  conversationId: string,
-): Promise<MessageItem[]> {
+  clinicId: string,
+  limit = 100,
+): Promise<ConversationListItem[]> {
   const { data, error } = await supabase
-    .from("message")
-    .select(
-      "id, direction, author, author_user_id, content_type, body, media_url, transcript, is_internal_note, delivery_status, error_code, created_at",
-    )
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
-    .limit(200);
+    .from("conversation")
+    .select(CONVERSATION_SELECT)
+    .eq("clinic_id", clinicId)
+    .eq("status", "resolvida")
+    .order("last_message_at", { ascending: false, nullsFirst: false })
+    .limit(limit);
   if (error) {
     throw new Error(error.message);
   }
-  return (data ?? []) as MessageItem[];
+  return ((data ?? []) as Record<string, unknown>[]).map(normalizeConversation);
+}
+
+const MESSAGE_SELECT =
+  "id, direction, author, author_user_id, content_type, body, media_url, transcript, is_internal_note, delivery_status, error_code, created_at";
+
+export const MESSAGES_PAGE_SIZE = 50;
+
+export type MessagePage = {
+  items: MessageItem[];
+  /** created_at da mensagem mais antiga desta pagina; null quando acabou */
+  nextCursor: string | null;
+};
+
+// Pagina de mensagens, do MAIS NOVO para tras. Sem cursor, traz as ultimas 50
+// (o que corrige o bug silencioso: antes trazia as 200 MAIS ANTIGAS e a
+// conversa parava de mostrar mensagem nova depois disso). O historico e
+// carregado sob demanda com o cursor. Ordena desc no banco (usa o indice
+// message(conversation_id, created_at desc)) e inverte para exibir asc.
+export async function fetchMessagesPage(
+  supabase: SupabaseClient,
+  conversationId: string,
+  cursor?: string,
+): Promise<MessagePage> {
+  let query = supabase
+    .from("message")
+    .select(MESSAGE_SELECT)
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(MESSAGES_PAGE_SIZE);
+  if (cursor) {
+    query = query.lt("created_at", cursor);
+  }
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(error.message);
+  }
+  const rows = (data ?? []) as MessageItem[];
+  const nextCursor =
+    rows.length === MESSAGES_PAGE_SIZE
+      ? (rows[rows.length - 1]?.created_at ?? null)
+      : null;
+  return { items: rows.reverse(), nextCursor };
 }
 
 export async function fetchComplianceDecisions(

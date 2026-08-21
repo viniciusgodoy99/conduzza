@@ -25,12 +25,22 @@ const PATHS = {
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 2;
 
-// Anti-ban: atraso aleatorio entre envios POR INSTANCIA. Suficiente para a
-// resposta humana 1:1 desta fase. Disparo em massa (reguas, Fase 4) DEVE
-// passar pela job_queue com limite por instancia, NUNCA por aqui: esta fila
-// vive em memoria e nao sobrevive a multiplas instancias serverless. A
-// especificacao sugere 10 a 30 segundos para disparo em massa.
+// Anti-ban: espacamento aleatorio entre envios POR INSTANCIA. Suficiente para
+// a resposta humana 1:1 desta fase. Disparo em massa (reguas, confirmacao de
+// atendimento) DEVE passar pela job_queue com limite por instancia, NUNCA por
+// aqui. A especificacao sugere 10 a 30 segundos para disparo em massa.
+//
+// LIMITE CONHECIDO (auditoria de escala, 21/08/2026): este estado vive na
+// memoria de UM processo. Vale para o servidor 24/7 de replica unica que e o
+// alvo atual; deixa de valer com segunda replica ou com o worker da
+// job_queue rodando ao lado. Nesse momento a reserva de slot vai para o
+// banco (next_send_at em whatsapp_account), Etapa B.
 const sendQueues = new Map<string, Promise<void>>();
+// Momento do ultimo envio por clinica: um envio ISOLADO (o caso dominante no
+// atendimento 1:1) sai na hora; o espacamento so e pago quando houve envio
+// recente. Antes, TODO envio dormia 1,5 a 4s, punindo a latencia do
+// atendente sem proteger nada.
+const lastSendAt = new Map<string, number>();
 
 type UazapiOptions = {
   /** Faixa do atraso anti-ban em ms; testes injetam valores minimos */
@@ -139,14 +149,23 @@ export class UazapiProvider implements WhatsAppProvider {
       : new Error("Falha de rede ao falar com o uazapi");
   }
 
-  /** Enfileira o envio da instancia com atraso aleatorio (anti-ban). */
+  /** Enfileira o envio da instancia com espacamento aleatorio (anti-ban). */
   private enqueue<T>(clinicId: string, task: () => Promise<T>): Promise<T> {
     const previous = sendQueues.get(clinicId) ?? Promise.resolve();
     const [min, max] = this.delayRange;
     const run = previous
       .catch(() => undefined)
-      .then(() => sleep(min + Math.random() * (max - min)))
-      .then(task);
+      .then(async () => {
+        // Dorme so o que falta para completar o intervalo desde o ULTIMO
+        // envio. Envio isolado (nada recente) sai imediatamente.
+        const alvo = min + Math.random() * (max - min);
+        const decorrido = Date.now() - (lastSendAt.get(clinicId) ?? 0);
+        if (decorrido < alvo) {
+          await sleep(alvo - decorrido);
+        }
+        lastSendAt.set(clinicId, Date.now());
+        return task();
+      });
     sendQueues.set(
       clinicId,
       run.then(

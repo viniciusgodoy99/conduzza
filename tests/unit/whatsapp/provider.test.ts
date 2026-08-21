@@ -215,3 +215,39 @@ describe("blindagem contra defeitos conhecidos", () => {
     ).rejects.toThrow(/limite de instâncias/);
   });
 });
+
+describe("espaçamento anti-ban", () => {
+  it("envio isolado sai imediatamente, sem pagar o atraso", async () => {
+    const { fn } = fetchStub([{ status: 200, body: { messageid: "a" } }]);
+    const provider = new UazapiProvider({
+      sendDelayRangeMs: [400, 401],
+      fetchFn: fn,
+    });
+    const inicio = Date.now();
+    await provider.sendText(
+      { ...REF, clinicId: `isolado-${Date.now()}` },
+      "+5584",
+      "oi",
+    );
+    expect(Date.now() - inicio).toBeLessThan(300);
+  });
+
+  it("dois envios seguidos pagam o espaçamento entre eles", async () => {
+    const { fn } = fetchStub([
+      { status: 200, body: { messageid: "a" } },
+      { status: 200, body: { messageid: "b" } },
+    ]);
+    const provider = new UazapiProvider({
+      sendDelayRangeMs: [120, 121],
+      fetchFn: fn,
+    });
+    const ref = { ...REF, clinicId: `rajada-${Date.now()}` };
+    const inicio = Date.now();
+    await Promise.all([
+      provider.sendText(ref, "+5584", "um"),
+      provider.sendText(ref, "+5584", "dois"),
+    ]);
+    // O primeiro sai na hora; o segundo espera o intervalo desde o primeiro.
+    expect(Date.now() - inicio).toBeGreaterThanOrEqual(110);
+  });
+});
