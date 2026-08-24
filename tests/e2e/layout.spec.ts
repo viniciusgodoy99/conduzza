@@ -7,8 +7,8 @@ import { login } from "./helpers";
 // 1024 ou mais (layout do handoff) e gaveta abaixo disso.
 test("sidebar conforme o viewport", async ({ page }) => {
   await login(page, dados().emails.admin);
-  await page.goto("/agenda");
-  await expect(page.getByRole("heading", { name: "Agenda" })).toBeVisible();
+  await page.goto("/cadastros");
+  await expect(page.getByRole("heading", { name: "Cadastros" })).toBeVisible();
 
   const viewportWidth = page.viewportSize()?.width ?? 0;
   const sidebar = page.locator("aside");

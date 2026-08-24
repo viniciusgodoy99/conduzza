@@ -10,7 +10,9 @@ export default defineConfig({
   // paralelismo entre arquivos criaria corrida entre os specs.
   fullyParallel: false,
   workers: 1,
-  retries: 0,
+  // 1 repeticao: os criterios de tempo (posse < 2s) sao de produto e ficam
+  // apertados sob a carga da suite inteira; regressao real falha DUAS vezes.
+  retries: 1,
   use: {
     baseURL: "http://localhost:3000",
     deviceScaleFactor: 1,

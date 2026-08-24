@@ -33,6 +33,15 @@ export type DadosE2E = {
     comAudio: string;
     comIa: string;
   };
+  /** Fase 2: catalogo e agenda da Clinica E2E */
+  agenda: {
+    diaISO: string;
+    profJoaoId: string;
+    profAnaId: string;
+    consultaAgendadaId: string;
+    consultaConfirmadaWhatsId: string;
+    encaixePendenteId: string;
+  };
 };
 
 const sufixo = "fixo";
@@ -362,6 +371,242 @@ export async function provisionar(): Promise<DadosE2E> {
     })
     .throwOnError();
 
+  // -------------------------------------------------------------------------
+  // Fase 2: catalogo (caso do Dr. Joao) e agenda no DIA DO TESTE
+  // -------------------------------------------------------------------------
+  const { data: unidadeE2e } = await admin
+    .from("unit")
+    .insert({ clinic_id: clinica.id, name: "Unidade E2E" })
+    .select("id")
+    .single()
+    .throwOnError();
+  const { data: profsE2e } = await admin
+    .from("professional")
+    .insert([
+      {
+        clinic_id: clinica.id,
+        name: "Dr. João Pereira",
+        council_type: "CRM",
+        council_number: "12345",
+        specialties: ["Endocrinologia", "Nutrologia"],
+      },
+      {
+        clinic_id: clinica.id,
+        name: "Dra. Ana Costa",
+        council_type: "CRM",
+        council_number: "67890",
+        specialties: ["Dermatologia"],
+      },
+    ])
+    .select("id, name")
+    .throwOnError();
+  const profJoaoId = profsE2e!.find((p) => p.name.includes("João"))!
+    .id as string;
+  const profAnaId = profsE2e!.find((p) => p.name.includes("Ana"))!.id as string;
+
+  // Jornada cobrindo TODOS os dias (o teste roda em qualquer dia da semana).
+  const faixasE2e = [];
+  for (const professionalId of [profJoaoId, profAnaId]) {
+    for (let weekday = 0; weekday <= 6; weekday++) {
+      faixasE2e.push({
+        clinic_id: clinica.id,
+        professional_id: professionalId,
+        unit_id: unidadeE2e!.id,
+        weekday,
+        starts_at: "07:00",
+        ends_at: "20:00",
+      });
+    }
+  }
+  await admin.from("professional_schedule").insert(faixasE2e).throwOnError();
+
+  const { data: procsE2e } = await admin
+    .from("procedure")
+    .insert([
+      {
+        clinic_id: clinica.id,
+        name: "Consulta endocrinologia",
+        default_duration_min: 40,
+        base_price_cents: 40000,
+      },
+      {
+        clinic_id: clinica.id,
+        name: "Consulta dermatologia",
+        default_duration_min: 30,
+        base_price_cents: 35000,
+      },
+      {
+        clinic_id: clinica.id,
+        name: "Avaliação gratuita",
+        default_duration_min: 20,
+        base_price_cents: 0,
+      },
+    ])
+    .select("id, name")
+    .throwOnError();
+  const procEndoId = procsE2e!.find((p) => p.name.includes("endocrino"))!
+    .id as string;
+  const procDermatoId = procsE2e!.find((p) => p.name.includes("dermato"))!
+    .id as string;
+  const procGratisId = procsE2e!.find((p) => p.name.includes("gratuita"))!
+    .id as string;
+
+  const { data: convsE2e } = await admin
+    .from("insurance")
+    .insert([
+      { clinic_id: clinica.id, name: "Unimed" },
+      { clinic_id: clinica.id, name: "Bradesco Saúde" },
+    ])
+    .select("id, name")
+    .throwOnError();
+  const unimedId = convsE2e!.find((c) => c.name === "Unimed")!.id as string;
+
+  const { data: vinculosE2e } = await admin
+    .from("service_link")
+    .insert([
+      {
+        clinic_id: clinica.id,
+        professional_id: profJoaoId,
+        procedure_id: procEndoId,
+        insurance_id: null,
+        price_cents: 40000,
+        covered_by_insurance: false,
+        duration_min: 40,
+      },
+      {
+        clinic_id: clinica.id,
+        professional_id: profJoaoId,
+        procedure_id: procEndoId,
+        insurance_id: unimedId,
+        price_cents: null,
+        covered_by_insurance: true,
+        duration_min: 40,
+      },
+      {
+        clinic_id: clinica.id,
+        professional_id: profJoaoId,
+        procedure_id: procGratisId,
+        insurance_id: null,
+        price_cents: 0,
+        covered_by_insurance: false,
+        duration_min: 20,
+      },
+      {
+        clinic_id: clinica.id,
+        professional_id: profAnaId,
+        procedure_id: procDermatoId,
+        insurance_id: null,
+        price_cents: 35000,
+        covered_by_insurance: false,
+        duration_min: 30,
+      },
+      {
+        clinic_id: clinica.id,
+        professional_id: profAnaId,
+        procedure_id: procDermatoId,
+        insurance_id: unimedId,
+        price_cents: null,
+        covered_by_insurance: true,
+        duration_min: 30,
+      },
+    ])
+    .select("id, professional_id, procedure_id, insurance_id")
+    .throwOnError();
+  const vinculoEndoParticular = vinculosE2e!.find(
+    (v) =>
+      v.professional_id === profJoaoId &&
+      v.insurance_id === null &&
+      v.procedure_id === procEndoId,
+  )!.id as string;
+  const vinculoDermatoUnimed = vinculosE2e!.find(
+    (v) => v.professional_id === profAnaId && v.insurance_id === unimedId,
+  )!.id as string;
+
+  // Consultas no DIA DO TESTE (hoje, fuso da clinica default America/Fortaleza),
+  // em horarios fixos que nao colidem com o clique dos testes.
+  const hoje = new Date();
+  const diaISO = [
+    hoje.getFullYear(),
+    String(hoje.getMonth() + 1).padStart(2, "0"),
+    String(hoje.getDate()).padStart(2, "0"),
+  ].join("-");
+  const consultaBase = {
+    clinic_id: clinica.id,
+    status: "agendado",
+    confirmation_channel: null,
+    is_overbooking: false,
+    created_by: "usuario",
+    approval_status: null,
+  };
+  const { data: consultasE2e } = await admin
+    .from("appointment")
+    .insert([
+      {
+        ...consultaBase,
+        contact_id: contatos.find((c) => c.name === "Roberto Recibo")!.id,
+        professional_id: profJoaoId,
+        service_link_id: vinculoEndoParticular,
+        starts_at: `${diaISO}T08:00:00-03:00`,
+        ends_at: `${diaISO}T08:40:00-03:00`,
+      },
+      {
+        ...consultaBase,
+        contact_id: contatos.find((c) => c.name === "Camila Áudio")!.id,
+        professional_id: profAnaId,
+        service_link_id: vinculoDermatoUnimed,
+        starts_at: `${diaISO}T09:00:00-03:00`,
+        ends_at: `${diaISO}T09:30:00-03:00`,
+        status: "confirmado_paciente",
+        confirmation_channel: "whatsapp",
+      },
+      {
+        ...consultaBase,
+        contact_id: contatos.find((c) => c.name === "Juliana Dermato")!.id,
+        professional_id: profAnaId,
+        service_link_id: vinculoDermatoUnimed,
+        starts_at: `${diaISO}T10:00:00-03:00`,
+        ends_at: `${diaISO}T10:30:00-03:00`,
+        is_overbooking: true,
+        created_by: "ia",
+        approval_status: "pendente",
+      },
+    ])
+    .select("id, status, approval_status")
+    .throwOnError();
+  const consultaAgendadaId = consultasE2e!.find(
+    (c) => c.status === "agendado" && !c.approval_status,
+  )!.id as string;
+  const consultaConfirmadaWhatsId = consultasE2e!.find(
+    (c) => c.status === "confirmado_paciente",
+  )!.id as string;
+  const encaixePendenteId = consultasE2e!.find(
+    (c) => c.approval_status === "pendente",
+  )!.id as string;
+
+  await admin
+    .from("professional_block")
+    .insert({
+      clinic_id: clinica.id,
+      professional_id: profJoaoId,
+      starts_at: `${diaISO}T12:00:00-03:00`,
+      ends_at: `${diaISO}T13:00:00-03:00`,
+      reason: "Almoço estendido",
+      blocks_overbooking: true,
+    })
+    .throwOnError();
+  await admin
+    .from("slot_hold")
+    .insert({
+      clinic_id: clinica.id,
+      professional_id: profAnaId,
+      contact_id: contatos.find((c) => c.name === "Juliana Dermato")!.id,
+      starts_at: `${diaISO}T11:00:00-03:00`,
+      ends_at: `${diaISO}T11:30:00-03:00`,
+      expires_at: new Date(Date.now() + 8 * 60_000).toISOString(),
+      created_by: "ia",
+    })
+    .throwOnError();
+
   return {
     clinicId: clinica.id,
     clinicIdDesconectada: clinicaDesconectada.id,
@@ -385,6 +630,14 @@ export async function provisionar(): Promise<DadosE2E> {
       comNotaInterna: porNome("Roberto Recibo"),
       comAudio: porNome("Camila Áudio"),
       comIa: porNome("Juliana Dermato"),
+    },
+    agenda: {
+      diaISO,
+      profJoaoId,
+      profAnaId,
+      consultaAgendadaId,
+      consultaConfirmadaWhatsId,
+      encaixePendenteId,
     },
   };
 }

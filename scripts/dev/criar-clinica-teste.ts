@@ -1,3 +1,4 @@
+import { provisionarDemonstracaoClinica } from "./demo-catalogo";
 import { seedClient } from "../seed/lib";
 
 // Cria uma clinica de teste com administrador, exercitando o mesmo gatilho do
@@ -5,6 +6,9 @@ import { seedClient } from "../seed/lib";
 // depender de envio de e-mail.
 //
 //   npx tsx scripts/dev/criar-clinica-teste.ts "Nome da Clínica" email@dominio
+//   npx tsx scripts/dev/criar-clinica-teste.ts "Nome" email --com-demonstracao
+//     (tambem provisiona o catalogo do Dr. Joao, agenda de amanha, encaixe da
+//      IA pendente e hold, para ver as Telas 3 e 8 com dados)
 
 async function main() {
   const nomeClinica = process.argv[2] ?? `Clínica Teste ${Date.now()}`;
@@ -69,6 +73,13 @@ async function main() {
     .select("webhook_secret")
     .eq("clinic_id", clinicId)
     .single();
+
+  if (process.argv.includes("--com-demonstracao")) {
+    console.log("Provisionando a demonstração do catálogo e da agenda...");
+    for (const linha of await provisionarDemonstracaoClinica(admin, clinicId)) {
+      console.log(`  ✔ ${linha}`);
+    }
+  }
 
   const base = process.env.PUBLIC_APP_URL ?? "http://localhost:3000";
   console.log("Clínica criada:");

@@ -14,10 +14,6 @@ const DESCRIPTIONS: Record<string, { header: string; empty: string }> = {
     header: "As conversas do WhatsApp da clínica",
     empty: "As conversas aparecem quando o WhatsApp estiver conectado.",
   },
-  "/agenda": {
-    header: "A agenda por profissional",
-    empty: "Os horários aparecem quando os profissionais forem cadastrados.",
-  },
   "/leads": {
     header: "Quem chegou e ainda não agendou",
     empty: "Os leads aparecem quando as primeiras conversas chegarem.",

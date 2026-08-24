@@ -85,6 +85,9 @@ Botão Assumir para a IA imediatamente e trava até devolução explícita. Real
 Decisão do dono em 20/08/2026, no modelo do projeto `mdrepresentacoes`. Cadastro público com bifurcação: criar a clínica (vira administradora) ou pedir entrada com o código da clínica. Gatilho no banco cria clínica, marca e vínculo numa transação. Quem entra por código nasce **pendente** e não vê dado de paciente até a liberação. Código rotacionável e desligável; convite por e-mail mantido.
 **Aceite:** provado por `npx tsx scripts/dev/prova-de-fluxo.ts` (17 verificações contra o banco real) e por 12 testes de RLS.
 
+### [x] Painel de aprovação de encaixe da IA `P`
+Decisão do dono em 24/08/2026, resolvendo a contradição entre o handoff (que desenhava o fluxo) e a spec (que não o previa): `appointment` ganhou `created_by` e `approval_status`, e a Agenda ganhou o painel "Pendente de você" com Aprovar/Recusar. Nasce funcional (vazio) e a Fase 3 passa a criar encaixes por ele.
+
 ### [x] Criação de clínica pelo dono do produto `P`
 O super administrador precisava poder criar a primeira clínica, senão o produto era inutilizável para ele. Versão mínima da Tela 14 (tarefa 5.5).
 
@@ -92,31 +95,31 @@ O super administrador precisava poder criar a primeira clínica, senão o produt
 
 ## FASE 2. Cadastro e Agenda
 
-### [ ] 2.1 Schema do catálogo `M`
+### [x] 2.1 Schema do catálogo `M`
 `professional`, `professional_schedule`, `professional_block`, `resource`, `procedure`, `insurance`, `service_link`, `package`, com RLS.
 **Aceite:** `service_link` com unique em (profissional, procedimento, convênio) e os três estados de preço distinguíveis.
 
-### [ ] 2.2 Cadastros, telas (Tela 8) `G`
+### [x] 2.2 Cadastros, telas (Tela 8) `G`
 Abas de Profissionais, Procedimentos, Convênios, **Vínculos**, Pacotes, Recursos, Unidades, Bloqueios. Vínculos em acordeão por profissional com edição inline e botão Duplicar para outro profissional. Conselho de classe em **campo livre**.
 **Aceite:** cadastrar o caso do Dr. João da spec (2 procedimentos, preços diferentes, convênios diferentes) sem gambiarra. "Coberto" aparece como rótulo, não como R$ 0,00.
 
-### [ ] 2.3 Schema da agenda e travas `G`
+### [x] 2.3 Schema da agenda e travas `G`
 `appointment`, `appointment_status_history`, `slot_hold`. Extensão `btree_gist` e as duas exclusion constraints (profissional e recurso).
 **Aceite:** **teste de concorrência**: duas inserções simultâneas no mesmo slot, uma passa e a outra falha com erro de constraint. Sem esse teste a tarefa não está pronta.
 
-### [ ] 2.4 Motor de disponibilidade `G`
+### [x] 2.4 Motor de disponibilidade `G`
 `lib/domain/scheduling.ts` puro e testável: calcula horários livres considerando jornada, bloqueio, agendamento existente, hold ativo, duração do vínculo e disponibilidade de recurso.
 **Aceite:** suíte de testes cobrindo virada de dia, intervalo de almoço, bloqueio parcial, hold expirado e recurso ocupado.
 
-### [ ] 2.5 Agenda, tela (Tela 3) `G`
+### [x] 2.5 Agenda, tela (Tela 3) `G`
 Visão Dia com coluna por profissional (mínimo 180px), visão Semana individual. **Filtros na ordem certa: unidade, especialidade, convênio, procedimento e o profissional por último.** Linha do horário atual, bloqueio com hachura, encaixe tracejado, hold semitransparente com contador, arrastar e soltar.
 **Aceite:** a recepcionista responde "quem está livre para dermato pela Unimed" sem saber o nome de nenhum profissional.
 
-### [ ] 2.6 Modal de agendamento `M`
+### [x] 2.6 Modal de agendamento `M`
 Uma tela só, nunca assistente de várias etapas. Ordem: paciente, unidade, convênio, procedimento, profissional (com preço e duração ao lado), data e horário com os 3 primeiros livres em botões grandes, aviso de recurso ocupado, observação, chave de confirmação automática.
 **Aceite:** marcar uma consulta em menos de 20 segundos.
 
-### [ ] 2.7 Ciclo de status `M`
+### [x] 2.7 Ciclo de status `M`
 Os 10 status com autoria e canal, `appointment_status_history`, tela de histórico de alterações, impressão e exportação da agenda do dia.
 **Aceite:** o chip diferencia "Confirmado por WhatsApp" de "Confirmado pela recepção". Falta só é marcada por ação explícita.
 

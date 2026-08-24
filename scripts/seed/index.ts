@@ -1,6 +1,7 @@
 import { seedClient } from "./lib";
 import { seedNucleo } from "./000-nucleo";
 import { seedConversas } from "./010-conversas";
+import { seedCatalogoEAgenda } from "./020-catalogo";
 
 // Orquestrador do seed (npm run seed).
 //
@@ -16,8 +17,6 @@ import { seedConversas } from "./010-conversas";
 // projeto remoto era o ambiente de desenvolvimento e continua ligada.
 //
 // Incrementos futuros (nao criar arquivo antes da fase):
-// - 020-catalogo.ts    (Fase 2, tarefa 2.1)
-// - 030-agenda.ts      (Fase 2, tarefa 2.3)
 // - 040-contatos.ts    (Fase 4, tarefa 4.1)
 // - 050-reguas.ts      (Fase 4, tarefa 4.6)
 
@@ -72,6 +71,11 @@ async function main() {
 
   console.log("Semeando conversas de demonstração...");
   for (const line of await seedConversas(admin)) {
+    console.log(`  ✔ ${line}`);
+  }
+
+  console.log("Semeando catálogo e agenda de demonstração...");
+  for (const line of await seedCatalogoEAgenda(admin)) {
     console.log(`  ✔ ${line}`);
   }
 
