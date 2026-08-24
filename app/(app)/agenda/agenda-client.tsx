@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CalendarX2 } from "lucide-react";
+import { CalendarX2, UserRoundX } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { AgendamentoModal } from "@/components/agenda/agendamento-modal";
@@ -50,6 +50,7 @@ export function AgendaClient({
   podeEditar,
   dica,
   ownProfessionalId,
+  papelProfissionalSemVinculo = false,
 }: {
   clinicId: string;
   timezone: string;
@@ -61,6 +62,7 @@ export function AgendaClient({
   podeEditar: boolean;
   dica: string;
   ownProfessionalId: string | null;
+  papelProfissionalSemVinculo?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [dia, setDia] = useState(diaInicial);
@@ -171,6 +173,21 @@ export function AgendaClient({
     setModal({ aberto: true, prePreenchido: pre });
 
   const semProfissionais = catalogo.profissionais.filter((p) => p.active);
+
+  // Papel 'profissional' cujo usuario ainda nao foi vinculado a um cadastro
+  // de profissional: a RLS barraria todo insert com erro generico. Em vez de
+  // abrir a grade e a barra de acoes, mostramos um estado dedicado.
+  if (papelProfissionalSemVinculo) {
+    return (
+      <div className="grid h-full place-items-center p-6">
+        <EmptyState
+          icon={UserRoundX}
+          title="Seu cadastro de profissional ainda não foi vinculado"
+          description="Peça ao administrador para vincular seu usuário ao seu cadastro de profissional para ver sua agenda."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">

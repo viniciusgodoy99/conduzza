@@ -225,9 +225,6 @@ function RemarcarDialog({
     return null;
   }
   const { consulta, novoInicio, novoProfissionalId } = remarcacao;
-  const duracaoMs =
-    new Date(consulta.ends_at).getTime() -
-    new Date(consulta.starts_at).getTime();
   const horaNova = novoInicio.toLocaleTimeString("pt-BR", {
     timeZone: contexto.timezone,
     hour: "2-digit",
@@ -244,7 +241,6 @@ function RemarcarDialog({
       id: consulta.id,
       starts_at_esperado: consulta.starts_at,
       novo_starts_at: novoInicio.toISOString(),
-      novo_ends_at: new Date(novoInicio.getTime() + duracaoMs).toISOString(),
       novo_professional_id: novoProfissionalId,
       avisar_paciente: avisar,
     });

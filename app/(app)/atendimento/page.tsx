@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { fetchClinicAuthorNames } from "@/lib/queries/profiles";
 import { fetchConversations } from "@/lib/queries/conversations";
 import { createClient } from "@/lib/supabase/server";
@@ -19,6 +20,13 @@ export default async function AtendimentoPage() {
   }
 
   const supabase = await createClient();
+  // Regra 3.1: o Inbox mostra conversa de paciente (dado de saude); registra
+  // a leitura na trilha (throttle no helper), sem atrasar a tela.
+  void auditarLeituraDePaciente(supabase, {
+    clinicId: active.clinicId,
+    userId: context.userId,
+    entity: "inbox",
+  });
   const [conversations, accountResult, authorNames] = await Promise.all([
     fetchConversations(supabase, active.clinicId),
     supabase

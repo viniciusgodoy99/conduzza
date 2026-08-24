@@ -1,7 +1,5 @@
 "use client";
 
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import { CalendarOff, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -13,6 +11,7 @@ import {
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
 import { BotaoProtegido } from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -32,6 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { instanteLocal } from "@/lib/domain/horarios";
 import type { Bloqueio } from "@/lib/queries/catalogo";
 
 // Aba de Bloqueios pontuais (ferias, congresso, imprevisto). Almoco nao e
@@ -54,8 +54,18 @@ const FORM_VAZIO: FormBloqueio = {
   impedirEncaixe: true,
 };
 
-function formatarMomento(iso: string): string {
-  return format(new Date(iso), "dd/MM 'às' HH:mm", { locale: ptBR });
+function formatarMomento(iso: string, timezone: string): string {
+  const data = new Date(iso).toLocaleDateString("pt-BR", {
+    timeZone: timezone,
+    day: "2-digit",
+    month: "2-digit",
+  });
+  const hora = new Date(iso).toLocaleTimeString("pt-BR", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${data} às ${hora}`;
 }
 
 export function BloqueiosTab({
@@ -63,6 +73,7 @@ export function BloqueiosTab({
   podeEditar,
   dica,
   aoMudar,
+  timezone,
 }: TabProps) {
   const [criarAberto, setCriarAberto] = useState(false);
   const [form, setForm] = useState<FormBloqueio>(FORM_VAZIO);
@@ -118,10 +129,15 @@ export function BloqueiosTab({
     }
     setSalvando(true);
     setErro(null);
+    // O input datetime-local devolve "aaaa-mm-ddTHH:MM" no relogio de quem
+    // digita. Interpretamos essa data e hora no FUSO DA CLINICA (regra 3.6),
+    // nunca no fuso do navegador.
+    const [inicioDia, inicioHora] = form.inicio.split("T");
+    const [fimDia, fimHora] = form.fim.split("T");
     const resultado = await criarBloqueiosEmLoteAction({
       professional_ids: form.professionalIds,
-      starts_at: new Date(form.inicio).toISOString(),
-      ends_at: new Date(form.fim).toISOString(),
+      starts_at: instanteLocal(timezone, inicioDia!, inicioHora!).toISOString(),
+      ends_at: instanteLocal(timezone, fimDia!, fimHora!).toISOString(),
       reason: form.motivo.trim(),
       blocks_overbooking: form.impedirEncaixe,
     });
@@ -196,10 +212,10 @@ export function BloqueiosTab({
                     {nomeProfissional(bloqueio.professional_id)}
                   </TableCell>
                   <TableCell className="font-mono text-[12px] tabular-nums">
-                    {formatarMomento(bloqueio.starts_at)}
+                    {formatarMomento(bloqueio.starts_at, timezone)}
                   </TableCell>
                   <TableCell className="font-mono text-[12px] tabular-nums">
-                    {formatarMomento(bloqueio.ends_at)}
+                    {formatarMomento(bloqueio.ends_at, timezone)}
                   </TableCell>
                   <TableCell className="text-text-secondary">
                     {bloqueio.reason}
@@ -229,7 +245,19 @@ export function BloqueiosTab({
                       >
                         <Trash2 strokeWidth={1.5} className="size-4" />
                       </Button>
-                    ) : null}
+                    ) : (
+                      <DisabledWithHint hint={dica}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-9"
+                          disabled
+                          aria-label={`Remover bloqueio de ${nomeProfissional(bloqueio.professional_id)}`}
+                        >
+                          <Trash2 strokeWidth={1.5} className="size-4" />
+                        </Button>
+                      </DisabledWithHint>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -349,9 +377,9 @@ export function BloqueiosTab({
           {paraExcluir ? (
             <p className="text-sm text-text-secondary">
               O bloqueio de {nomeProfissional(paraExcluir.professional_id)} (
-              {formatarMomento(paraExcluir.starts_at)} até{" "}
-              {formatarMomento(paraExcluir.ends_at)}) será removido e os
-              horários voltam para a oferta.
+              {formatarMomento(paraExcluir.starts_at, timezone)} até{" "}
+              {formatarMomento(paraExcluir.ends_at, timezone)}) será removido e
+              os horários voltam para a oferta.
             </p>
           ) : null}
           {erroExclusao ? (

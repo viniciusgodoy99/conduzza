@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { History, MoreVertical } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -73,8 +74,14 @@ export function AgendaActionsMenu({
   });
 
   const [imprimindo, setImprimindo] = useState(false);
-  const imprimir = () => {
-    void registrarExportacaoAction(dia, "impressao");
+  const imprimir = async () => {
+    // A trilha vai ANTES de o dado sair da tela (regra 3.1): sem gravar a
+    // auditoria, nao imprime.
+    const auditoria = await registrarExportacaoAction(dia, "impressao");
+    if (!auditoria.ok) {
+      toast.error("Não foi possível registrar a impressão. Tente de novo.");
+      return;
+    }
     // Monta o layout de impressao SO agora: mante-lo sempre no DOM duplicava
     // os textos da grade para leitores de tela e testes. afterprint desmonta.
     setImprimindo(true);
@@ -88,8 +95,12 @@ export function AgendaActionsMenu({
     }, 80);
   };
 
-  const exportarCsv = () => {
-    void registrarExportacaoAction(dia, "csv");
+  const exportarCsv = async () => {
+    const auditoria = await registrarExportacaoAction(dia, "csv");
+    if (!auditoria.ok) {
+      toast.error("Não foi possível registrar a exportação. Tente de novo.");
+      return;
+    }
     const nomeDoProfissional = new Map(
       contexto.catalogo.profissionais.map((p) => [p.id, p.name]),
     );
@@ -146,10 +157,10 @@ export function AgendaActionsMenu({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={imprimir}>
+          <DropdownMenuItem onSelect={() => void imprimir()}>
             Imprimir agenda do dia
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={exportarCsv}>
+          <DropdownMenuItem onSelect={() => void exportarCsv()}>
             Exportar CSV
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setHistoricoAberto(true)}>

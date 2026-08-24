@@ -1,12 +1,14 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, History } from "lucide-react";
+import { CalendarClock, Check, History, X } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import {
+  aprovarEncaixeAction,
   mudarStatusAction,
+  recusarEncaixeAction,
   remarcarAgendamentoAction,
 } from "@/app/(app)/agenda/actions";
 import { StatusHistorySheet } from "@/components/agenda/status-history-sheet";
@@ -126,6 +128,23 @@ export function AppointmentMenu({
     aplicarStatus(novoStatus, null);
   };
 
+  const tratarEncaixe = (decisao: "aprovar" | "recusar") => {
+    iniciarTransicao(async () => {
+      const resultado =
+        decisao === "aprovar"
+          ? await aprovarEncaixeAction(consulta.id)
+          : await recusarEncaixeAction(consulta.id);
+      if (resultado.ok) {
+        toast.success(
+          decisao === "aprovar" ? "Encaixe aprovado." : "Encaixe recusado.",
+        );
+        await atualizarAgenda();
+      } else {
+        toast.error(resultado.error ?? "Não foi possível tratar o encaixe.");
+      }
+    });
+  };
+
   return (
     <>
       <DropdownMenu>
@@ -150,6 +169,41 @@ export function AppointmentMenu({
             </span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+
+          {consulta.approval_status === "pendente" ? (
+            <>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="text-xs font-medium text-text-tertiary">
+                  Encaixe pendente
+                </DropdownMenuLabel>
+                <DropdownMenuItem
+                  disabled={!contexto.podeEditar || pendente}
+                  className="h-10"
+                  onSelect={() => tratarEncaixe("aprovar")}
+                >
+                  <Check
+                    strokeWidth={1.5}
+                    className="size-4 shrink-0"
+                    aria-hidden
+                  />
+                  <span>Aprovar encaixe</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!contexto.podeEditar || pendente}
+                  className="h-10"
+                  onSelect={() => tratarEncaixe("recusar")}
+                >
+                  <X
+                    strokeWidth={1.5}
+                    className="size-4 shrink-0"
+                    aria-hidden
+                  />
+                  <span>Recusar encaixe</span>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
 
           {transicoes.length > 0 ? (
             <DropdownMenuGroup>
@@ -333,16 +387,13 @@ function RemarcarDialog({
     }
     setErro(null);
     iniciarTransicao(async () => {
-      const duracaoMs =
-        new Date(consulta.ends_at).getTime() -
-        new Date(consulta.starts_at).getTime();
+      // A duracao e preservada pelo servidor a partir da consulta; a tela so
+      // manda o novo inicio.
       const novoInicio = instanteLocal(contexto.timezone, dia, hora);
-      const novoFim = new Date(novoInicio.getTime() + duracaoMs);
       const resultado = await remarcarAgendamentoAction({
         id: consulta.id,
         starts_at_esperado: consulta.starts_at,
         novo_starts_at: novoInicio.toISOString(),
-        novo_ends_at: novoFim.toISOString(),
         novo_professional_id: profissionalId,
         avisar_paciente: avisarPaciente,
       });

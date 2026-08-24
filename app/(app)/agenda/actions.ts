@@ -18,7 +18,7 @@ import { createClient } from "@/lib/supabase/server";
 export type AgendaActionResult = {
   ok: boolean;
   error?: string;
-  code?: "conflito" | "ja_tratado";
+  code?: "conflito" | "conflito_recurso" | "ja_tratado";
   id?: string;
 };
 
@@ -104,6 +104,13 @@ export async function criarPacienteRapidoAction(
   if (error || !data) {
     return { ok: false, error: "Não foi possível criar o cadastro." };
   }
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "criou",
+    entity: "contact",
+    entity_id: data.id,
+  });
   return { ok: true, id: data.id };
 }
 
@@ -116,13 +123,35 @@ const criarSchema = z.object({
   professional_id: idSchema,
   service_link_id: idSchema,
   unit_id: idSchema.nullable(),
+  // resource_id vem do cliente por conveniencia, mas o servidor confia SO no
+  // recurso do procedimento (resolvido abaixo).
   resource_id: idSchema.nullable(),
   starts_at: instanteSchema,
-  ends_at: instanteSchema,
   is_overbooking: z.boolean(),
   send_confirmation: z.boolean(),
   notes: z.string().trim().max(2000).nullable(),
 });
+
+// A mensagem certa para cada trava: a exclusion do PROFISSIONAL e a do RECURSO
+// tem o mesmo codigo (23P01), mas o usuario precisa saber qual foi para
+// decidir (encaixe resolve conflito de profissional, nunca de recurso).
+function mensagemDeConflito(mensagemDoBanco: string | undefined): {
+  code: "conflito" | "conflito_recurso";
+  error: string;
+} {
+  if ((mensagemDoBanco ?? "").includes("sem_sobreposicao_recurso")) {
+    return {
+      code: "conflito_recurso",
+      error:
+        "O recurso deste procedimento (sala ou equipamento) está ocupado neste horário. Escolha outro horário.",
+    };
+  }
+  return {
+    code: "conflito",
+    error:
+      "Este horário acabou de ser ocupado. Escolha outro ou marque como encaixe.",
+  };
+}
 
 export async function criarAgendamentoAction(
   input: unknown,
@@ -135,11 +164,29 @@ export async function criarAgendamentoAction(
   if (!parsed.success) {
     return { ok: false, error: "Confira os campos do agendamento." };
   }
-  if (new Date(parsed.data.ends_at) <= new Date(parsed.data.starts_at)) {
-    return { ok: false, error: "O fim precisa ser depois do início." };
-  }
 
   const supabase = await createClient();
+
+  // O SERVIDOR nao confia na duracao nem no recurso do cliente: le o vinculo e
+  // o procedimento e recalcula. Sem isto, um payload forjado (ends_at curto)
+  // furaria a exclusion constraint, que so avalia o range declarado.
+  const { data: vinculo } = await supabase
+    .from("service_link")
+    .select("duration_min, procedure:procedure_id (resource_id)")
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsed.data.service_link_id)
+    .maybeSingle();
+  if (!vinculo) {
+    return { ok: false, error: "Vínculo de atendimento inválido." };
+  }
+  const procedure = Array.isArray(vinculo.procedure)
+    ? vinculo.procedure[0]
+    : vinculo.procedure;
+  const resourceId = (procedure?.resource_id as string | null) ?? null;
+  const ends_at = new Date(
+    new Date(parsed.data.starts_at).getTime() +
+      (vinculo.duration_min as number) * 60_000,
+  ).toISOString();
 
   // Encaixe sob bloqueio que impede encaixe: recusar antes do insert (o
   // bloqueio nao e constraint; e regra de negocio do blocks_overbooking).
@@ -150,7 +197,7 @@ export async function criarAgendamentoAction(
       .eq("clinic_id", guard.clinicId)
       .eq("professional_id", parsed.data.professional_id)
       .eq("blocks_overbooking", true)
-      .lt("starts_at", parsed.data.ends_at)
+      .lt("starts_at", ends_at)
       .gt("ends_at", parsed.data.starts_at)
       .limit(1);
     if (bloqueios && bloqueios.length > 0) {
@@ -165,7 +212,16 @@ export async function criarAgendamentoAction(
     .from("appointment")
     .insert({
       clinic_id: guard.clinicId,
-      ...parsed.data,
+      contact_id: parsed.data.contact_id,
+      professional_id: parsed.data.professional_id,
+      service_link_id: parsed.data.service_link_id,
+      unit_id: parsed.data.unit_id,
+      resource_id: resourceId,
+      starts_at: parsed.data.starts_at,
+      ends_at,
+      is_overbooking: parsed.data.is_overbooking,
+      send_confirmation: parsed.data.send_confirmation,
+      notes: parsed.data.notes,
       status: "agendado",
       created_by: "usuario",
     })
@@ -173,12 +229,7 @@ export async function criarAgendamentoAction(
     .single();
   if (error) {
     if (error.code === EXCLUSION_VIOLATION) {
-      return {
-        ok: false,
-        code: "conflito",
-        error:
-          "Este horário acabou de ser ocupado. Escolha outro ou marque como encaixe.",
-      };
+      return { ok: false, ...mensagemDeConflito(error.message) };
     }
     return { ok: false, error: "Não foi possível marcar a consulta." };
   }
@@ -202,7 +253,6 @@ const remarcarSchema = z.object({
   id: idSchema,
   starts_at_esperado: instanteSchema,
   novo_starts_at: instanteSchema,
-  novo_ends_at: instanteSchema,
   novo_professional_id: idSchema,
   avisar_paciente: z.boolean(),
 });
@@ -220,13 +270,31 @@ export async function remarcarAgendamentoAction(
   }
 
   const supabase = await createClient();
+  // A DURACAO nao vem do cliente: le a consulta e preserva o intervalo real,
+  // senao o range que a exclusion constraint avalia poderia ser forjado.
+  const { data: atual } = await supabase
+    .from("appointment")
+    .select("starts_at, ends_at")
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsed.data.id)
+    .maybeSingle();
+  if (!atual) {
+    return { ok: false, error: "Consulta não encontrada." };
+  }
+  const duracaoMs =
+    new Date(atual.ends_at as string).getTime() -
+    new Date(atual.starts_at as string).getTime();
+  const novo_ends_at = new Date(
+    new Date(parsed.data.novo_starts_at).getTime() + duracaoMs,
+  ).toISOString();
+
   // Update condicional no horario que a tela viu: se alguem mexeu antes,
   // zero linhas voltam e a tela avisa em vez de sobrescrever.
   const { data, error } = await supabase
     .from("appointment")
     .update({
       starts_at: parsed.data.novo_starts_at,
-      ends_at: parsed.data.novo_ends_at,
+      ends_at: novo_ends_at,
       professional_id: parsed.data.novo_professional_id,
     })
     .eq("clinic_id", guard.clinicId)
@@ -331,7 +399,6 @@ export async function mudarStatusAction(
             confirmation_channel: canal,
           }
         : {}),
-      ...(novo_status === "faltou" ? {} : {}),
     })
     .eq("clinic_id", guard.clinicId)
     .eq("id", id)
@@ -357,20 +424,12 @@ export async function mudarStatusAction(
   );
 
   // Falta e SEMPRE explicita, e alimenta o contador do paciente (etiqueta de
-  // risco e regua reforcada na Fase 4).
+  // risco e regua reforcada na Fase 4). Incremento ATOMICO no banco: dois
+  // "faltou" quase juntos nao perdem contagem.
   if (novo_status === "faltou") {
     const contactId = data[0]?.contact_id as string | undefined;
     if (contactId) {
-      const { data: contato } = await supabase
-        .from("contact")
-        .select("no_show_count")
-        .eq("id", contactId)
-        .single();
-      await supabase
-        .from("contact")
-        .update({ no_show_count: (contato?.no_show_count ?? 0) + 1 })
-        .eq("clinic_id", guard.clinicId)
-        .eq("id", contactId);
+      await supabase.rpc("incrementar_no_show", { p_contact_id: contactId });
     }
   }
 
@@ -477,10 +536,10 @@ export async function recusarEncaixeAction(
 export async function registrarExportacaoAction(
   diaISO: unknown,
   formato: unknown,
-): Promise<void> {
+): Promise<{ ok: boolean }> {
   const context = await getSessionContext();
   if (!context?.active) {
-    return;
+    return { ok: false };
   }
   const parsedDia = z
     .string()
@@ -488,14 +547,17 @@ export async function registrarExportacaoAction(
     .safeParse(diaISO);
   const parsedFormato = z.enum(["impressao", "csv"]).safeParse(formato);
   if (!parsedDia.success || !parsedFormato.success) {
-    return;
+    return { ok: false };
   }
   const supabase = await createClient();
-  await supabase.from("audit_log").insert({
+  // A trilha vai ANTES de o dado sair da tela (regra 3.1): a exportacao so
+  // acontece se este insert gravar.
+  const { error } = await supabase.from("audit_log").insert({
     clinic_id: context.active.clinicId,
     user_id: context.userId,
     action: parsedFormato.data === "csv" ? "exportou" : "imprimiu",
     entity: "agenda_dia",
     entity_id: null,
   });
+  return { ok: !error };
 }

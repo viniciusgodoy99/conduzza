@@ -11,6 +11,7 @@ import {
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
 import { BotaoProtegido } from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -238,7 +239,32 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                           <Trash2 strokeWidth={1.5} className="size-4" />
                         </Button>
                       </div>
-                    ) : null}
+                    ) : (
+                      <div className="flex justify-end gap-1">
+                        <DisabledWithHint hint={dica}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-9"
+                            disabled
+                            aria-label={`Editar pacote de ${nomeProcedimento(pacote.procedure_id)}`}
+                          >
+                            <Pencil strokeWidth={1.5} className="size-4" />
+                          </Button>
+                        </DisabledWithHint>
+                        <DisabledWithHint hint={dica}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-9"
+                            disabled
+                            aria-label={`Remover pacote de ${nomeProcedimento(pacote.procedure_id)}`}
+                          >
+                            <Trash2 strokeWidth={1.5} className="size-4" />
+                          </Button>
+                        </DisabledWithHint>
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

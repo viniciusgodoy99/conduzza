@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { somarDias } from "@/lib/domain/horarios";
+import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { cn } from "@/lib/utils";
 
 // Barra de filtros da Agenda. A ORDEM e regra de produto (brief Tela 3):
@@ -114,13 +114,10 @@ export function FilterBar({
   }, [dia]);
 
   const hoje = () => {
-    // O "hoje" do fuso da clinica vem do servidor na carga; aqui basta o dia
-    // local do navegador da recepcao, que trabalha no fuso da clinica.
-    const agora = new Date();
-    const ano = agora.getFullYear();
-    const mes = String(agora.getMonth() + 1).padStart(2, "0");
-    const diaN = String(agora.getDate()).padStart(2, "0");
-    onDia(`${ano}-${mes}-${diaN}`);
+    // O "hoje" e sempre o dia civil no FUSO DA CLINICA, nao no fuso do
+    // navegador: perto da virada do dia os dois divergem e "Hoje" cairia no
+    // dia errado.
+    onDia(diaCivil(contexto.timezone, new Date()));
     setDataAberta(false);
   };
 

@@ -42,6 +42,7 @@ export type TabProps = {
   podeEditar: boolean;
   dica: string;
   aoMudar: () => void;
+  timezone: string;
 };
 
 export function CadastrosClient({
@@ -50,12 +51,14 @@ export function CadastrosClient({
   abaInicial,
   podeEditar,
   dica,
+  timezone,
 }: {
   clinicId: string;
   catalogoInicial: Catalogo;
   abaInicial?: string;
   podeEditar: boolean;
   dica: string;
+  timezone: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
@@ -87,7 +90,7 @@ export function CadastrosClient({
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
-  const tabProps: TabProps = { catalogo, podeEditar, dica, aoMudar };
+  const tabProps: TabProps = { catalogo, podeEditar, dica, aoMudar, timezone };
 
   return (
     <Tabs value={abaAtiva} onValueChange={trocarAba} className="gap-4">

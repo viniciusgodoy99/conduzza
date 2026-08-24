@@ -41,6 +41,7 @@ export default async function CadastrosPage({
         abaInicial={aba}
         podeEditar={podeEditar}
         dica={dica ?? "Seu perfil não altera os cadastros"}
+        timezone={active.timezone}
       />
     </div>
   );

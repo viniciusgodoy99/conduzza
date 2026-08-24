@@ -158,28 +158,20 @@ export async function salvarJornadaAction(
   }
 
   const supabase = await createClient();
-  const { error: erroLimpa } = await supabase
-    .from("professional_schedule")
-    .delete()
-    .eq("clinic_id", guard.clinicId)
-    .eq("professional_id", parsedId.data);
-  if (erroLimpa) {
+  // Substituicao ATOMICA (delete + insert numa transacao no banco): sem isto,
+  // uma falha no insert depois do delete deixava o profissional sem jornada.
+  const { error } = await supabase.rpc("substituir_jornada", {
+    p_clinic_id: guard.clinicId,
+    p_professional_id: parsedId.data,
+    p_faixas: parsedFaixas.data.map((faixa) => ({
+      weekday: faixa.weekday,
+      starts_at: faixa.starts_at,
+      ends_at: faixa.ends_at,
+      unit_id: faixa.unit_id,
+    })),
+  });
+  if (error) {
     return { ok: false, error: "Não foi possível salvar a jornada." };
-  }
-  if (parsedFaixas.data.length > 0) {
-    const { error } = await supabase.from("professional_schedule").insert(
-      parsedFaixas.data.map((faixa) => ({
-        clinic_id: guard.clinicId,
-        professional_id: parsedId.data,
-        weekday: faixa.weekday,
-        starts_at: faixa.starts_at,
-        ends_at: faixa.ends_at,
-        unit_id: faixa.unit_id,
-      })),
-    );
-    if (error) {
-      return { ok: false, error: "Não foi possível salvar a jornada." };
-    }
   }
   await auditar(
     supabase,
@@ -476,6 +468,14 @@ export async function alternarVinculoIaAction(
   if (!data || data.length === 0) {
     return { ok: false, error: "Não foi possível alterar a chave da IA." };
   }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "editou",
+    "service_link",
+    parsed.data,
+  );
   revalidatePath("/cadastros");
   return { ok: true };
 }

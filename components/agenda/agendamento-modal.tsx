@@ -34,7 +34,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { diaCivil, instanteLocal } from "@/lib/domain/horarios";
+import { diaCivil, instanteLocal, somarDias } from "@/lib/domain/horarios";
 import { exibirPrecoVinculo } from "@/lib/domain/pricing";
 import {
   availableSlots,
@@ -268,10 +268,18 @@ export function AgendamentoModal({
     }
     const profId = vinculo.profissional.id;
     const agora = new Date();
+    // Recurso exigido pelo procedimento: se houver, o motor precisa da
+    // ocupacao dele por QUALQUER profissional, senao oferece um horario que
+    // a exclusion constraint sem_sobreposicao_recurso recusaria (23P01).
+    const recursoId = procedimento?.resource_id ?? null;
+    const naoCancelada = (status: string) =>
+      status !== "cancelado_paciente" && status !== "cancelado_clinica";
     return {
       timezone,
       rangeStart: instanteLocal(timezone, dataEscolhida, "00:00"),
-      rangeEnd: instanteLocal(timezone, dataEscolhida, "23:59"),
+      // Meia-noite do dia seguinte: '23:59' descartava o ultimo minuto e
+      // perdia o slot que encosta na virada.
+      rangeEnd: instanteLocal(timezone, somarDias(dataEscolhida, 1), "00:00"),
       durationMin: vinculo.vinculo.duration_min,
       schedule: catalogo.jornadas
         .filter((j) => j.professional_id === profId)
@@ -287,12 +295,7 @@ export function AgendamentoModal({
           endsAt: new Date(b.ends_at),
         })),
       appointments: dadosDaData.consultas
-        .filter(
-          (c) =>
-            c.professional_id === profId &&
-            c.status !== "cancelado_paciente" &&
-            c.status !== "cancelado_clinica",
-        )
+        .filter((c) => c.professional_id === profId && naoCancelada(c.status))
         .map((c) => ({
           startsAt: new Date(c.starts_at),
           endsAt: new Date(c.ends_at),
@@ -307,9 +310,26 @@ export function AgendamentoModal({
           startsAt: new Date(h.starts_at),
           endsAt: new Date(h.ends_at),
         })),
+      resourceBusy: recursoId
+        ? dadosDaData.consultas
+            .filter(
+              (c) => c.resource_id === recursoId && naoCancelada(c.status),
+            )
+            .map((c) => ({
+              startsAt: new Date(c.starts_at),
+              endsAt: new Date(c.ends_at),
+            }))
+        : undefined,
       now: agora,
     };
-  }, [vinculo, dadosDaData, timezone, dataEscolhida, catalogo.jornadas]);
+  }, [
+    vinculo,
+    procedimento,
+    dadosDaData,
+    timezone,
+    dataEscolhida,
+    catalogo.jornadas,
+  ]);
 
   const primeirosSlots = useMemo(
     () => (entradaSlots ? firstAvailableSlots(entradaSlots, 3) : []),

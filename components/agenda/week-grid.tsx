@@ -180,6 +180,19 @@ function ColunaDoDia({
       ),
     [dados?.bloqueios, profissional.id],
   );
+  // Holds da IA: so os do profissional deste dia que ainda nao expiraram.
+  // Sem contador vivo aqui (densidade menor), os minutos sao calculados uma
+  // vez na renderizacao.
+  const agora = Date.now();
+  const holds = useMemo(
+    () =>
+      (dados?.holds ?? []).filter(
+        (h) =>
+          h.professional_id === profissional.id &&
+          new Date(h.expires_at).getTime() > agora,
+      ),
+    [dados?.holds, profissional.id, agora],
+  );
 
   const blocos = useMemo(
     () =>
@@ -294,6 +307,45 @@ function ColunaDoDia({
               >
                 <span className="truncate text-[10px] font-medium text-text-secondary">
                   {bloqueio.reason}
+                </span>
+              </div>
+            );
+          })}
+
+          {/* Holds da IA: bloco semitransparente com os minutos restantes */}
+          {holds.map((hold) => {
+            const top = minutoParaY(
+              (new Date(hold.starts_at).getTime() - inicioVisivel.getTime()) /
+                60_000,
+              ALTURA_HORA_SEMANA_PX,
+            );
+            const height = minutoParaY(
+              (new Date(hold.ends_at).getTime() -
+                new Date(hold.starts_at).getTime()) /
+                60_000,
+              ALTURA_HORA_SEMANA_PX,
+            );
+            const restanteMin = Math.max(
+              0,
+              Math.ceil((new Date(hold.expires_at).getTime() - agora) / 60_000),
+            );
+            return (
+              <div
+                key={hold.id}
+                className="pointer-events-none absolute inset-x-0.5 z-[2] overflow-hidden rounded-[6px] border border-dashed px-1.5 py-0.5 opacity-70"
+                style={{
+                  top,
+                  height,
+                  borderColor: "var(--ai)",
+                  backgroundColor:
+                    "color-mix(in srgb, var(--ai) 12%, transparent)",
+                }}
+              >
+                <span
+                  className="truncate text-[10px] font-medium"
+                  style={{ color: "var(--ai)" }}
+                >
+                  Reservado pela IA, {restanteMin} min
                 </span>
               </div>
             );

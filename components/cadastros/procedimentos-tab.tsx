@@ -8,6 +8,7 @@ import { salvarProcedimentoAction } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
 import { BotaoProtegido, chipAtivo } from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -238,7 +239,19 @@ export function ProcedimentosTab({
                         >
                           <Pencil strokeWidth={1.5} className="size-4" />
                         </Button>
-                      ) : null}
+                      ) : (
+                        <DisabledWithHint hint={dica}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-9"
+                            disabled
+                            aria-label={`Editar ${procedimento.name}`}
+                          >
+                            <Pencil strokeWidth={1.5} className="size-4" />
+                          </Button>
+                        </DisabledWithHint>
+                      )}
                     </TableCell>
                   </TableRow>
                 );

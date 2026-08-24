@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { diaCivil } from "@/lib/domain/horarios";
 import { fetchAgendaDia, fetchPendencias } from "@/lib/queries/agenda";
@@ -22,6 +23,15 @@ export default async function AgendaPage() {
 
   const supabase = await createClient();
   const hoje = diaCivil(active.timezone, new Date());
+
+  // Regra 3.1: abrir a agenda mostra nome de paciente (dado de saude); a
+  // leitura vai para a trilha (com throttle no helper). Sem await: nao
+  // atrasa a tela.
+  void auditarLeituraDePaciente(supabase, {
+    clinicId: active.clinicId,
+    userId: context.userId,
+    entity: "agenda_dia",
+  });
 
   const [catalogo, dia, pendencias, membroProfissional] = await Promise.all([
     fetchCatalogo(supabase, active.clinicId),
@@ -54,6 +64,10 @@ export default async function AgendaPage() {
         }
         ownProfessionalId={
           (membroProfissional.data?.professional_id as string | null) ?? null
+        }
+        papelProfissionalSemVinculo={
+          active.role === "profissional" &&
+          !((membroProfissional.data?.professional_id as string | null) ?? null)
         }
       />
     </div>

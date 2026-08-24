@@ -628,7 +628,22 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                         className="size-4"
                                       />
                                     </Button>
-                                  ) : null}
+                                  ) : (
+                                    <DisabledWithHint hint={dica}>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-10"
+                                        disabled
+                                        aria-label="Editar vínculo"
+                                      >
+                                        <Pencil
+                                          strokeWidth={1.5}
+                                          className="size-4"
+                                        />
+                                      </Button>
+                                    </DisabledWithHint>
+                                  )}
                                 </TableCell>
                               </TableRow>
                             );
