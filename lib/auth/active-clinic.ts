@@ -17,6 +17,8 @@ export type Membership = {
   clinicId: string;
   clinicName: string;
   slug: string;
+  /** fuso IANA da clinica; toda logica de agenda converte por ele */
+  timezone: string;
   role: Role;
   /** pendente = entrou por codigo e aguarda aprovacao; nao le dado de paciente */
   status: "ativo" | "pendente";
@@ -46,6 +48,7 @@ type ClinicEmbed = {
   id: string;
   name: string;
   slug: string;
+  timezone: string | null;
   clinic_branding: BrandingEmbed | BrandingEmbed[] | null;
 };
 
@@ -69,7 +72,7 @@ export const getSessionContext = cache(
     const { data: memberRows } = await supabase
       .from("clinic_member")
       .select(
-        "clinic_id, role, status, clinic:clinic_id (id, name, slug, clinic_branding (product_name, primary_color, labels))",
+        "clinic_id, role, status, clinic:clinic_id (id, name, slug, timezone, clinic_branding (product_name, primary_color, labels))",
       )
       .eq("user_id", user.id);
 
@@ -109,6 +112,7 @@ export const getSessionContext = cache(
               clinicId: row.clinic_id,
               clinicName: nome,
               slug: "",
+              timezone: "America/Fortaleza",
               role: row.role,
               status: "pendente" as const,
               productName: "Conduzza Clínicas",
@@ -125,6 +129,7 @@ export const getSessionContext = cache(
           clinicId: clinic.id,
           clinicName: clinic.name,
           slug: clinic.slug,
+          timezone: clinic.timezone ?? "America/Fortaleza",
           role: row.role,
           status: row.status ?? "ativo",
           productName: branding?.product_name ?? "Conduzza Clínicas",

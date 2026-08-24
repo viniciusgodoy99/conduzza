@@ -66,6 +66,11 @@ async function main() {
   const workerId = `${hostname()}:${process.pid}`;
   log.info("worker_iniciou", { path: workerId });
 
+  // Higiene da agenda: apaga holds vencidos com folga de ~60s. A expiracao
+  // LOGICA nao depende disto (toda leitura filtra expires_at > agora); isto
+  // so evita acumulo fisico.
+  let ultimaLimpezaDeHolds = 0;
+
   let ativo = true;
   process.on("SIGINT", () => {
     ativo = false;
@@ -75,6 +80,15 @@ async function main() {
   });
 
   while (ativo) {
+    if (Date.now() - ultimaLimpezaDeHolds > 60_000) {
+      ultimaLimpezaDeHolds = Date.now();
+      const { error: erroHolds } = await admin.rpc("limpar_holds_vencidos");
+      if (erroHolds) {
+        log.warn("limpeza_de_holds_falhou", {
+          error_code: erroHolds.code ?? null,
+        });
+      }
+    }
     let processados = 0;
     try {
       processados = await processarLote(admin, workerId, {
