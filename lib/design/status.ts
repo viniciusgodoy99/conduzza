@@ -52,7 +52,12 @@ export type AppointmentStatus =
   | "faltou";
 
 export const APPOINTMENT_STATUS: Record<AppointmentStatus, StatusDefinition> = {
-  agendado: { label: "Agendado", tone: "info", icon: Calendar },
+  // Brief 3.5: Agendado e NEUTRO ("agendado, sem status") e Compareceu e
+  // SUCESSO. Excecao consciente: na_recepcao e em_atendimento ficam em
+  // warning/info em vez da "Primaria" do brief, porque a primaria e variavel
+  // por clinica (white-label) e o handoff (que vence em aparencia) usa
+  // ambar/azul nesses dois.
+  agendado: { label: "Agendado", tone: "neutral", icon: Calendar },
   aguardando_confirmacao: {
     label: "Aguardando",
     tone: "warning",
@@ -74,7 +79,7 @@ export const APPOINTMENT_STATUS: Record<AppointmentStatus, StatusDefinition> = {
     tone: "info",
     icon: Stethoscope,
   },
-  compareceu: { label: "Compareceu", tone: "neutral", icon: CheckCheck },
+  compareceu: { label: "Compareceu", tone: "success", icon: CheckCheck },
   cancelado_paciente: {
     label: "Cancelado pelo paciente",
     tone: "alert",

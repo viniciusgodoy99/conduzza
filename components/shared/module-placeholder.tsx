@@ -46,10 +46,6 @@ const DESCRIPTIONS: Record<string, { header: string; empty: string }> = {
     header: "As réguas automáticas de mensagem",
     empty: "As automações chegam na fase de réguas.",
   },
-  "/cadastros": {
-    header: "Profissionais, procedimentos, convênios e vínculos",
-    empty: "Os cadastros chegam na fase de cadastro e agenda.",
-  },
   "/configuracoes": {
     header: "Clínica, marca, usuários e privacidade",
     empty: "As configurações chegam junto com o login e os papéis.",
