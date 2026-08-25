@@ -4,8 +4,9 @@ import { dados } from "./dados";
 import { login } from "./helpers";
 
 // Aceites da tarefa 0.5 contra o banco real com os usuarios do seed:
-// recepcao nao acessa /configuracoes; gestor ve com edicao travada e dica;
-// quem pertence a 2 clinicas escolhe qual abrir; sem sessao nao entra.
+// recepcao nao acessa /configuracoes; gestor gerencia a equipe mas nao encosta
+// em administrador; quem pertence a 2 clinicas escolhe qual abrir; sem sessao
+// nao entra.
 // Roda so no projeto desktop-1600: o que se testa aqui nao depende de viewport.
 
 test.beforeEach(() => {
@@ -31,22 +32,37 @@ test("recepção não vê nem acessa Configurações", async ({ page }) => {
   await page.waitForURL(/\/inicio/);
 });
 
-test("gestor vê Configurações com edição travada e dica", async ({ page }) => {
+test("gestor gerencia a equipe, menos quem é administrador", async ({
+  page,
+}) => {
   await login(page, dados().emails.gestor);
   await page.goto("/configuracoes");
   await expect(
     page.getByRole("heading", { name: "Configurações" }),
   ).toBeVisible();
 
-  const inviteButton = page.getByRole("button", {
-    name: "Convidar por e-mail",
-  });
-  await expect(inviteButton).toBeVisible();
-  await expect(inviteButton).toBeDisabled();
-
-  await inviteButton.locator("..").focus();
+  // Decisao do dono em 25/08/2026: administrador E gestor gerenciam a equipe,
+  // os papeis e a conexao do WhatsApp. O gestor edita de verdade.
   await expect(
-    page.getByText("Somente administradores alteram as configurações"),
+    page.getByRole("button", { name: "Convidar por e-mail" }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("combobox", { name: "Papel de Marina Recepção" }),
+  ).toBeEnabled();
+
+  // A linha de um administrador continua travada para ele: visivel e
+  // desabilitada, com a dica explicando por que.
+  const seletorDoAdmin = page.getByRole("combobox", {
+    name: "Papel de Ana Admin",
+  });
+  await expect(seletorDoAdmin).toBeVisible();
+  await expect(seletorDoAdmin).toBeDisabled();
+
+  await seletorDoAdmin.locator("..").focus();
+  await expect(
+    page.getByText(
+      "Somente um administrador altera o acesso de outro administrador",
+    ),
   ).toBeVisible();
 });
 

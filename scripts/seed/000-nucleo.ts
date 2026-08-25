@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { Role } from "@/lib/domain/permissions";
+
 import { ensureUser } from "./lib";
 
 // Incremento nucleo do seed (Fase 0): clinicas, branding, unidades, usuarios
@@ -36,10 +38,11 @@ const UNITS = [
   },
 ];
 
+// Papel vem da fonte unica em lib/domain/permissions.ts.
 type SeedMember = {
   email: string;
   name: string;
-  role: "admin" | "gestor" | "recepcao" | "profissional" | "leitura";
+  role: Role;
   clinics: string[];
 };
 

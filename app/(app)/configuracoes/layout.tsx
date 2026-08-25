@@ -5,8 +5,8 @@ import { can } from "@/lib/domain/permissions";
 
 // Guarda de modulo (matriz da secao 5 do brief): recepcao, profissional e
 // leitura tem acesso "nada" em Configuracoes, entao o modulo nem abre (e ja
-// nao aparece no rail). Gestor entra em modo somente leitura, tratado na
-// propria pagina.
+// nao aparece no rail). Gestor entra e edita, menos o que envolve
+// administrador (decisao do dono em 25/08/2026).
 export default async function ConfiguracoesLayout({
   children,
 }: {

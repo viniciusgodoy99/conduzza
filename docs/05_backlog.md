@@ -91,6 +91,10 @@ Decisão do dono em 24/08/2026, resolvendo a contradição entre o handoff (que 
 ### [x] Criação de clínica pelo dono do produto `P`
 O super administrador precisava poder criar a primeira clínica, senão o produto era inutilizável para ele. Versão mínima da Tela 14 (tarefa 5.5).
 
+### [x] Equipe, papéis e WhatsApp em Configurações `M`
+Decisão do dono em 25/08/2026: as abas de **WhatsApp** e **Papéis** foram antecipadas da tarefa 5.3, porque conectar o número e ajustar quem faz o quê não podia esperar a Fase 5. Junto vieram três mudanças de regra: (1) **gestor** passa a gerenciar equipe, papéis e conexão do WhatsApp, divergência consciente do brief `docs/02` seção 5, onde a célula Configurações/Gestor era somente ver; (2) **tirar acesso desativa o vínculo** (`status = 'inativo'`), reversível, em vez de apagar, para preservar o histórico; (3) travas novas no banco, não só na tela: gestor não cria, altera, remove nem desativa quem tem papel de administrador, e a clínica nunca fica sem administrador ativo.
+**Aceite:** o gestor não consegue se promover por triangulação e o último administrador não consegue se remover, provado contra o banco, não por inspeção da tela.
+
 ---
 
 ## FASE 2. Cadastro e Agenda

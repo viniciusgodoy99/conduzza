@@ -14,16 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ROLE_OPTIONS } from "@/lib/domain/permissions";
 
 const initialState: ActionState = {};
-
-const ROLE_OPTIONS = [
-  { value: "admin", label: "Administrador" },
-  { value: "gestor", label: "Gestor" },
-  { value: "recepcao", label: "Recepção" },
-  { value: "profissional", label: "Profissional" },
-  { value: "leitura", label: "Somente leitura" },
-];
 
 export function InviteForm({
   canInvite,

@@ -1,8 +1,10 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { getWhatsAppProvider } from "@/lib/integrations/whatsapp/provider";
 import type {
   InstanceRef,
@@ -19,6 +21,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // e isso que torna o cadastro de clientes escalavel, sem intervencao tecnica.
 // Escrita em whatsapp_account e whatsapp_account_secret e sempre por service
 // role (tabelas sem policy de escrita), com papel conferido aqui.
+//
+// Fica em lib/actions porque as mesmas acoes servem duas telas: o onboarding
+// de primeiro acesso (/whatsapp) e a aba de conexao das Configuracoes.
+
+const DICA_SEM_PERMISSAO =
+  "Somente administradores e gestores conectam o WhatsApp";
 
 export type ConnectState = {
   status: "desconectado" | "aguardando_qr" | "conectando" | "conectado";
@@ -40,19 +48,33 @@ type SecretRow = {
   webhook_secret: string;
 };
 
-async function requireAdminContext() {
+// Quem edita Configuracoes conecta o numero (administrador e gestor). A
+// checagem vale para as tres acoes, inclusive a consulta de status: o QR e o
+// token da instancia sao segredo da clinica.
+async function requireManageContext() {
   const context = await getSessionContext();
   if (!context?.active) {
-    return { error: "Sessão expirada. Entre de novo." as const };
+    return { error: "Sessão expirada. Entre de novo." };
   }
-  if (context.active.role !== "admin") {
-    return { error: "Somente administradores conectam o WhatsApp" as const };
+  const { role } = context.active;
+  if (!canEdit(role, "configuracoes")) {
+    return {
+      error: permissionHint(role, "configuracoes") ?? DICA_SEM_PERMISSAO,
+    };
   }
   return {
     clinicId: context.active.clinicId,
     clinicName: context.active.clinicName,
     slug: context.active.slug,
   };
+}
+
+// A conexao alimenta a faixa vermelha do shell e o checklist do Inicio; sem
+// revalidar, as duas telas continuam mostrando o estado anterior. Fora do
+// poll, que roda a cada 2,5s.
+function revalidarTelasDeConexao(): void {
+  revalidatePath("/configuracoes");
+  revalidatePath("/inicio");
 }
 
 async function loadAccount(clinicId: string) {
@@ -161,7 +183,7 @@ function mensagemDeErro(error: unknown): string {
 }
 
 export async function connectWhatsAppAction(): Promise<ConnectState> {
-  const guard = await requireAdminContext();
+  const guard = await requireManageContext();
   if ("error" in guard) {
     return {
       status: "desconectado",
@@ -215,6 +237,7 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
     // 3. Dispara o pareamento e devolve o QR.
     const status = await provider.connectInstance(ref);
     await persistStatus(admin, guard.clinicId, status);
+    revalidarTelasDeConexao();
     return toState(status, account.display_phone);
   } catch (error) {
     return {
@@ -227,7 +250,7 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
 }
 
 export async function pollWhatsAppStatusAction(): Promise<ConnectState> {
-  const guard = await requireAdminContext();
+  const guard = await requireManageContext();
   if ("error" in guard) {
     return {
       status: "desconectado",
@@ -257,7 +280,7 @@ export async function pollWhatsAppStatusAction(): Promise<ConnectState> {
 }
 
 export async function disconnectWhatsAppAction(): Promise<ConnectState> {
-  const guard = await requireAdminContext();
+  const guard = await requireManageContext();
   if ("error" in guard) {
     return {
       status: "desconectado",
@@ -279,6 +302,7 @@ export async function disconnectWhatsAppAction(): Promise<ConnectState> {
     // Mesmo sem alcance ao servidor, o estado local vira desconectado.
   }
   await persistStatus(admin, guard.clinicId, { status: "desconectado" });
+  revalidarTelasDeConexao();
   return {
     status: "desconectado",
     qrCode: null,

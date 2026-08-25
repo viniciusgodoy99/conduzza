@@ -28,6 +28,9 @@ const eslintConfig = [
     ignores: [
       "node_modules/**",
       ".next/**",
+      // O servidor de desenvolvimento grava aqui (NEXT_DIST_DIR no script dev),
+      // para nao disputar a pasta .next com o build de producao.
+      ".next-dev/**",
       "out/**",
       "build/**",
       "next-env.d.ts",

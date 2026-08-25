@@ -149,7 +149,10 @@ export function InboxClient({
             icon={Plug}
             title="Conecte o WhatsApp da clínica"
             description="O Atendimento começa quando o número da clínica estiver conectado."
-            action={{ label: "Conectar WhatsApp", href: "/whatsapp" }}
+            action={{
+              label: "Conectar WhatsApp",
+              href: "/configuracoes?aba=whatsapp",
+            }}
           />
         )}
       </div>

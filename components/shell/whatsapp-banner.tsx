@@ -14,7 +14,7 @@ export function WhatsappBanner() {
       <TriangleAlert strokeWidth={1.5} className="size-4 shrink-0" />
       <span>WhatsApp desconectado: os pacientes não estão sendo atendidos</span>
       <Link
-        href="/whatsapp"
+        href="/configuracoes?aba=whatsapp"
         className="rounded-md bg-black/15 px-2.5 py-1 text-xs font-semibold underline-offset-2 hover:underline"
       >
         Reconectar

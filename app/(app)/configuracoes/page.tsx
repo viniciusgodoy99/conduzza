@@ -1,27 +1,28 @@
 import { redirect } from "next/navigation";
 
+import type { MembroEquipe } from "@/components/configuracoes/lista-equipe";
 import { PageHeader } from "@/components/shared/page-header";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
-import { can, permissionHint } from "@/lib/domain/permissions";
+import type { ConnectState } from "@/lib/actions/whatsapp-connect";
+import { getSessionContext } from "@/lib/auth/active-clinic";
+import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import { fetchProfileNames } from "@/lib/queries/profiles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-import { CodigoAcesso, PendentesList, type Pendente } from "./equipe-client";
-import { InviteForm } from "./invite-form";
+import { ConfiguracoesClient } from "./configuracoes-client";
+import type { Pendente } from "./equipe-client";
 
-// Configuracoes, bloco de Usuarios (o restante da Tela 12 chega na tarefa
-// 5.3): equipe ativa, pedidos de entrada por codigo aguardando liberacao,
-// convite por e-mail e o codigo da clinica.
-export default async function ConfiguracoesPage() {
+// Tela 12, Configuracoes, em duas abas: equipe e permissoes (liberacao de
+// pedidos, papeis, convite, codigo da clinica e a tabela do que cada papel
+// faz) e conexao do WhatsApp, o mesmo painel do primeiro acesso.
+// Administrador e gestor editam; os demais papeis nem chegam aqui (o layout
+// redireciona pela matriz do brief).
+export default async function ConfiguracoesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ aba?: string }>;
+}) {
   const context = await getSessionContext();
   const active = context?.active;
   if (!context || !active) {
@@ -29,29 +30,35 @@ export default async function ConfiguracoesPage() {
   }
 
   const supabase = await createClient();
-  const [memberResult, clinicResult, codigoResult] = await Promise.all([
-    supabase
-      .from("clinic_member")
-      .select("user_id, role, status, created_at")
-      .eq("clinic_id", active.clinicId)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("clinic")
-      .select("allow_code_signup")
-      .eq("id", active.clinicId)
-      .single(),
-    // O codigo mora em tabela propria, legivel so por administrador.
-    supabase
-      .from("clinic_access_code")
-      .select("code")
-      .eq("clinic_id", active.clinicId)
-      .maybeSingle(),
-  ]);
+  const [memberResult, clinicResult, codigoResult, whatsappResult] =
+    await Promise.all([
+      supabase
+        .from("clinic_member")
+        .select("user_id, role, status, created_at")
+        .eq("clinic_id", active.clinicId)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("clinic")
+        .select("allow_code_signup")
+        .eq("id", active.clinicId)
+        .single(),
+      // O codigo mora em tabela propria, legivel so por quem gerencia.
+      supabase
+        .from("clinic_access_code")
+        .select("code")
+        .eq("clinic_id", active.clinicId)
+        .maybeSingle(),
+      supabase
+        .from("whatsapp_account")
+        .select("connection_status, display_phone, connected_at, provider")
+        .eq("clinic_id", active.clinicId)
+        .maybeSingle(),
+    ]);
 
   type MemberRow = {
     user_id: string;
     role: Role;
-    status: "ativo" | "pendente";
+    status: "ativo" | "pendente" | "inativo";
   };
   const rows = (memberResult.data ?? []) as MemberRow[];
 
@@ -80,14 +87,21 @@ export default async function ConfiguracoesPage() {
       },
     ]),
   );
-  const membros = rows
-    .filter((row) => row.status === "ativo")
+
+  // Quem esta na equipe (com acesso ou sem) entra numa lista so; quem perdeu
+  // o acesso vai para o fim, esmaecido. O sort e estavel, entao dentro de cada
+  // grupo a ordem de entrada na clinica se mantem.
+  const equipe: MembroEquipe[] = rows
+    .filter((row) => row.status !== "pendente")
     .map((row) => ({
       userId: row.user_id,
-      role: row.role,
-      name: userById.get(row.user_id)?.name ?? "Usuário",
+      nome: userById.get(row.user_id)?.name ?? "Usuário",
       email: userById.get(row.user_id)?.email ?? "",
-    }));
+      papel: row.role,
+      ativo: row.status === "ativo",
+    }))
+    .sort((a, b) => Number(b.ativo) - Number(a.ativo));
+
   const pendentes: Pendente[] = rows
     .filter((row) => row.status === "pendente")
     .map((row) => ({
@@ -96,72 +110,48 @@ export default async function ConfiguracoesPage() {
       email: userById.get(row.user_id)?.email ?? "",
     }));
 
-  const canInvite = can(active.role, "configuracoes") === "tudo";
-  const hint = permissionHint(active.role, "configuracoes");
+  const podeGerenciar = canEdit(active.role, "configuracoes");
+  const ehAdmin = active.role === "admin";
+  const dica = permissionHint(active.role, "configuracoes");
+
+  const whatsapp = whatsappResult.data;
+  const initial: ConnectState = {
+    status:
+      (whatsapp?.connection_status as ConnectState["status"]) ?? "desconectado",
+    qrCode: null,
+    displayPhone: whatsapp?.display_phone ?? null,
+  };
+  // Sem linha de whatsapp_account ainda, o provedor e o do ambiente: assumir
+  // "fake" faria a clinica em producao ver o aviso de demonstracao.
+  const providerName =
+    (whatsapp?.provider as string | undefined) ??
+    process.env.WHATSAPP_PROVIDER ??
+    "fake";
+
+  const { aba } = await searchParams;
 
   return (
     <div className="grid gap-6 p-6">
       <PageHeader
         title="Configurações"
-        description={`Clínica, usuários e permissões de ${active.clinicName}`}
+        description={`Equipe, permissões e WhatsApp de ${active.clinicName}`}
       />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Usuários e permissões</CardTitle>
-          <CardDescription>
-            Quem tem acesso a esta clínica e com qual papel.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-6">
-          <PendentesList pendentes={pendentes} podeGerenciar={canInvite} />
-
-          <ul className="grid gap-1">
-            {membros.map((member) => (
-              <li
-                key={member.userId}
-                className="flex flex-wrap items-center gap-3 rounded-md px-2 py-2"
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
-                  {member.name
-                    .split(/\s+/)
-                    .slice(0, 2)
-                    .map((part) => part[0] ?? "")
-                    .join("")
-                    .toUpperCase()}
-                </span>
-                <span className="grid min-w-0 flex-1">
-                  <span className="truncate text-sm font-medium">
-                    {member.name}
-                  </span>
-                  <span className="truncate text-xs text-text-tertiary">
-                    {member.email}
-                  </span>
-                </span>
-                <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-text-secondary">
-                  {ROLE_LABELS[member.role]}
-                </span>
-              </li>
-            ))}
-          </ul>
-
-          <div className="border-t pt-6">
-            <h3 className="mb-4 text-sm font-semibold">Convidar por e-mail</h3>
-            <InviteForm canInvite={canInvite} hint={hint} />
-          </div>
-
-          <CodigoAcesso
-            codigo={codigoResult.data?.code ?? ""}
-            ativo={clinicResult.data?.allow_code_signup ?? false}
-            podeGerenciar={canInvite}
-          />
-        </CardContent>
-      </Card>
-
-      <p className="text-sm text-text-tertiary">
-        As demais seções de Configurações (clínica, marca, modelos, limite de
-        gastos, privacidade) chegam nas próximas fases.
-      </p>
+      <ConfiguracoesClient
+        abaInicial={aba}
+        equipe={equipe}
+        pendentes={pendentes}
+        meuUserId={context.userId}
+        podeGerenciar={podeGerenciar}
+        ehAdmin={ehAdmin}
+        dica={dica ?? "Seu perfil não altera as configurações"}
+        codigo={codigoResult.data?.code ?? ""}
+        codigoAtivo={clinicResult.data?.allow_code_signup ?? false}
+        whatsapp={{
+          initial,
+          connectedAt: whatsapp?.connected_at ?? null,
+          providerName,
+        }}
+      />
     </div>
   );
 }

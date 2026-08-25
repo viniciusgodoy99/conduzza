@@ -1,13 +1,16 @@
 import { PageHeader } from "@/components/shared/page-header";
+import { ConnectClient } from "@/components/whatsapp/connect-client";
+import type { ConnectState } from "@/lib/actions/whatsapp-connect";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { createClient } from "@/lib/supabase/server";
-
-import { ConnectClient } from "./connect-client";
-import type { ConnectState } from "./actions";
 
 // Tela 13 reformulada para o canal atual: conexao do numero por pareamento
 // (QR code), status ao vivo e desconexao. O assistente da Meta (verificacao
 // de empresa, templates) volta quando o canal oficial for ativado.
+//
+// Esta rota e o onboarding de primeiro acesso; o mesmo painel aparece na aba
+// de WhatsApp das Configuracoes, pelo componente compartilhado.
 export default async function WhatsAppOnboardingPage() {
   const context = await getSessionContext();
   const active = context?.active;
@@ -26,7 +29,15 @@ export default async function WhatsAppOnboardingPage() {
     displayPhone: account?.display_phone ?? null,
   };
 
-  const isAdmin = active?.role === "admin";
+  const podeConectar = active ? canEdit(active.role, "configuracoes") : false;
+  const dica = active ? permissionHint(active.role, "configuracoes") : null;
+
+  // Sem linha de whatsapp_account ainda, o provedor e o do ambiente: assumir
+  // "fake" faria a clinica em producao ver o aviso de demonstracao.
+  const providerName =
+    (account?.provider as string | undefined) ??
+    process.env.WHATSAPP_PROVIDER ??
+    "fake";
 
   return (
     <div className="grid gap-6">
@@ -37,8 +48,9 @@ export default async function WhatsAppOnboardingPage() {
       <ConnectClient
         initial={initial}
         connectedAt={account?.connected_at ?? null}
-        canManage={isAdmin}
-        providerName={(account?.provider as string) ?? "fake"}
+        canManage={podeConectar}
+        hint={dica}
+        providerName={providerName}
       />
     </div>
   );

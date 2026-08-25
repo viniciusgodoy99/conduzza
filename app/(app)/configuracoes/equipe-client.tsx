@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { ROLE_OPTIONS } from "@/lib/domain/permissions";
 
 import {
   alternarCodigoAction,
@@ -20,14 +21,6 @@ import {
   gerarNovoCodigoAction,
   recusarMembroAction,
 } from "./actions";
-
-const PAPEIS = [
-  { value: "recepcao", label: "Recepção" },
-  { value: "gestor", label: "Gestor" },
-  { value: "profissional", label: "Profissional" },
-  { value: "leitura", label: "Somente leitura" },
-  { value: "admin", label: "Administrador" },
-];
 
 export type Pendente = {
   userId: string;
@@ -38,9 +31,12 @@ export type Pendente = {
 export function PendentesList({
   pendentes,
   podeGerenciar,
+  ehAdmin,
 }: {
   pendentes: Pendente[];
   podeGerenciar: boolean;
+  /** gestor libera colega, mas nao consegue liberar ninguem como administrador */
+  ehAdmin: boolean;
 }) {
   const [erro, setErro] = useState<string | null>(null);
   const [papeis, setPapeis] = useState<Record<string, string>>({});
@@ -94,15 +90,24 @@ export function PendentesList({
               }
               disabled={!podeGerenciar || pending}
             >
-              <SelectTrigger className="w-40" aria-label="Papel">
+              <SelectTrigger className="h-10 w-40" aria-label="Papel">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PAPEIS.map((papel) => (
-                  <SelectItem key={papel.value} value={papel.value}>
-                    {papel.label}
-                  </SelectItem>
-                ))}
+                {ROLE_OPTIONS.map((papel) => {
+                  const soAdmin = papel.value === "admin" && !ehAdmin;
+                  return (
+                    <SelectItem
+                      key={papel.value}
+                      value={papel.value}
+                      disabled={soAdmin}
+                    >
+                      {soAdmin
+                        ? `${papel.label} (só um administrador libera)`
+                        : papel.label}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             <Button

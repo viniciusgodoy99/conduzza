@@ -9,7 +9,7 @@ import {
   ACTIVE_CLINIC_COOKIE,
   getSessionContext,
 } from "@/lib/auth/active-clinic";
-import { can } from "@/lib/domain/permissions";
+import { ROLES, can } from "@/lib/domain/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -139,9 +139,10 @@ export async function updatePasswordAction(
   redirect("/inicio");
 }
 
+// Papeis vem da fonte unica em lib/domain/permissions.ts.
 const inviteSchema = z.object({
   email: z.email("Informe um e-mail válido"),
-  role: z.enum(["admin", "gestor", "recepcao", "profissional", "leitura"]),
+  role: z.enum(ROLES),
 });
 
 export async function inviteMemberAction(
@@ -161,7 +162,7 @@ export async function inviteMemberAction(
     return { error: "Sessão expirada. Entre de novo." };
   }
   if (can(context.active.role, "configuracoes") !== "tudo") {
-    return { error: "Somente administradores convidam usuários" };
+    return { error: "Somente administradores e gestores convidam usuários" };
   }
 
   const admin = createAdminClient();

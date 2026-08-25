@@ -55,7 +55,8 @@ type ClinicEmbed = {
 type MemberRow = {
   clinic_id: string;
   role: Role;
-  status: "ativo" | "pendente";
+  /** 'inativo' (acesso tirado, reversivel) existe no banco e nunca vira Membership */
+  status: "ativo" | "pendente" | "inativo";
   clinic: ClinicEmbed | ClinicEmbed[] | null;
 };
 
@@ -101,6 +102,12 @@ export const getSessionContext = cache(
     const rows = (memberRows ?? []) as unknown as MemberRow[];
     const memberships: Membership[] = rows
       .map((row) => {
+        // Acesso desativado: some da lista, como se o vinculo nao existisse.
+        // A RLS ja nega tudo (toda checagem exige status = 'ativo'); isto so
+        // evita mostrar a clinica numa lista de onde a pessoa nao entra mais.
+        if (row.status === "inativo") {
+          return null;
+        }
         const clinic = Array.isArray(row.clinic)
           ? (row.clinic[0] ?? null)
           : row.clinic;
@@ -174,10 +181,6 @@ export const getSessionContext = cache(
   },
 );
 
-export const ROLE_LABELS: Record<Role, string> = {
-  admin: "Administrador",
-  gestor: "Gestor",
-  recepcao: "Recepção",
-  profissional: "Profissional",
-  leitura: "Somente leitura",
-};
+// Rotulo de papel mora em lib/domain/permissions.ts (fonte unica, sem
+// "server-only"); reexportado aqui para nao quebrar quem ja importava daqui.
+export { ROLE_LABELS } from "@/lib/domain/permissions";

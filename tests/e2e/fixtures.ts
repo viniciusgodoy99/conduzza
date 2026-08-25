@@ -92,7 +92,14 @@ function minutosAtras(minutos: number): string {
 
 export async function provisionar(): Promise<DadosE2E> {
   const admin = adminClient();
-  await limpar();
+  if (!(await limpar())) {
+    throw new Error(
+      "As clínicas de teste da execução anterior continuam no banco, então os slugs e2e- estão ocupados. " +
+        "Causa: o gatilho exigir_admin_ativo (migration 20260825160000) recusa o cascade que tira o último " +
+        "administrador ativo, e nenhuma clínica sai do banco. Aplique a migration " +
+        "20260825170000_apagar_clinica.sql e rode de novo.",
+    );
+  }
 
   const clinicasCriadas = (
     await admin
@@ -736,13 +743,21 @@ export async function provisionar(): Promise<DadosE2E> {
   };
 }
 
-export async function limpar(): Promise<void> {
+// Devolve false quando as clinicas de teste sobreviveram. O teardown ignora o
+// retorno (nao adianta derrubar uma execucao que ja terminou), mas o
+// provisionamento da execucao seguinte para com uma mensagem que explica o
+// motivo, em vez do "duplicate key" cru do slug repetido.
+export async function limpar(): Promise<boolean> {
   const admin = adminClient();
-  await admin.from("clinic").delete().like("slug", `${E2E_PREFIXO}-%`);
+  const { error } = await admin
+    .from("clinic")
+    .delete()
+    .like("slug", `${E2E_PREFIXO}-%`);
   const { data } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
   for (const usuario of data?.users ?? []) {
     if ((usuario.email ?? "").startsWith(`${E2E_PREFIXO}-`)) {
       await admin.auth.admin.deleteUser(usuario.id);
     }
   }
+  return !error;
 }

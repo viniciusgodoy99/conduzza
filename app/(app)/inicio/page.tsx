@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { canEdit } from "@/lib/domain/permissions";
 import { createClient } from "@/lib/supabase/server";
 
 // Inicio. O painel completo (Tela 5, com indicadores) e a tarefa 5.1. Ate la,
@@ -48,7 +49,9 @@ export default async function InicioPage() {
   const conectado = conta.data?.connection_status === "conectado";
   const totalConversas = conversas.count ?? 0;
   const totalEquipe = equipe.count ?? 0;
-  const ehAdmin = active.role === "admin";
+  // Conexao do WhatsApp e equipe sao acoes de quem edita Configuracoes
+  // (administrador e gestor), nao so do administrador.
+  const podeConfigurar = canEdit(active.role, "configuracoes");
 
   const passos: Passo[] = [
     {
@@ -58,8 +61,8 @@ export default async function InicioPage() {
         ? "O número está conectado e recebendo mensagens."
         : "Sem isso, nenhuma mensagem de paciente chega até aqui.",
       acao:
-        ehAdmin && !conectado
-          ? { rotulo: "Conectar agora", href: "/whatsapp" }
+        podeConfigurar && !conectado
+          ? { rotulo: "Conectar agora", href: "/configuracoes?aba=whatsapp" }
           : undefined,
       icone: Plug,
     },
@@ -70,7 +73,7 @@ export default async function InicioPage() {
         totalEquipe > 1
           ? `${totalEquipe} pessoas com acesso à clínica.`
           : "Convide a recepção por e-mail ou passe o código da clínica.",
-      acao: ehAdmin
+      acao: podeConfigurar
         ? { rotulo: "Gerenciar equipe", href: "/configuracoes" }
         : undefined,
       icone: UserPlus,
