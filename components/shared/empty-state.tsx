@@ -11,6 +11,8 @@ type EmptyStateProps = {
   action?: { label: string; onClick?: () => void; href?: string };
   /** Vazio por filtro: botao de limpar filtros (estado 2 da secao 8 do brief) */
   onClearFilters?: () => void;
+  /** Acoes customizadas (ex.: botoes protegidos por permissao) no lugar de action */
+  children?: React.ReactNode;
   className?: string;
 };
 
@@ -20,6 +22,7 @@ export function EmptyState({
   description,
   action,
   onClearFilters,
+  children,
   className,
 }: EmptyStateProps) {
   return (
@@ -52,6 +55,7 @@ export function EmptyState({
           Limpar filtros
         </Button>
       ) : null}
+      {children}
     </div>
   );
 }

@@ -42,6 +42,13 @@ export type DadosE2E = {
     consultaConfirmadaWhatsId: string;
     encaixePendenteId: string;
   };
+  /** Fase 4: leads do funil (Tela 4) com origem, perda e autorizacao variadas */
+  leads: {
+    comOrigemId: string;
+    semOrigemId: string;
+    perdidoId: string;
+    semAutorizacaoId: string;
+  };
 };
 
 const sufixo = "fixo";
@@ -607,6 +614,87 @@ export async function provisionar(): Promise<DadosE2E> {
     })
     .throwOnError();
 
+  // -------------------------------------------------------------------------
+  // Fase 4: leads do funil (Tela 4). Quatro cartoes com etapa, origem,
+  // recencia e autorizacao variadas para os aceites da 4.3:
+  // - com origem: novo, trafego pago, campanha, autorizado, contato ha 1h
+  // - sem origem e SEM nome: em contato, so telefone, contato ha 12h
+  // - perdido: motivo "preco" (check do banco exige), autorizado, ha 3 dias
+  // - sem autorizacao: aguardando resposta, sem NENHUMA linha de consent,
+  //   nunca contatado (last_contact_at null)
+  // -------------------------------------------------------------------------
+  const leadsE2e = (
+    await admin
+      .from("contact")
+      .insert([
+        {
+          clinic_id: clinica.id,
+          phone_e164: "+5584970000021",
+          name: "Otávio Origem",
+          kind: "lead",
+          funnel_stage: "novo",
+          source_channel: "trafego_pago",
+          source_campaign: "Campanha E2E",
+          source_captured_at: minutosAtras(60),
+          source_method: "manual",
+          last_contact_at: minutosAtras(60),
+        },
+        {
+          clinic_id: clinica.id,
+          phone_e164: "+5584970000022",
+          name: null,
+          kind: "lead",
+          funnel_stage: "em_contato",
+          last_contact_at: minutosAtras(12 * 60),
+        },
+        {
+          clinic_id: clinica.id,
+          phone_e164: "+5584970000023",
+          name: "Larissa Perdida",
+          kind: "lead",
+          funnel_stage: "perdido",
+          lost_reason: "preco",
+          last_contact_at: minutosAtras(3 * 24 * 60),
+        },
+        {
+          clinic_id: clinica.id,
+          phone_e164: "+5584970000024",
+          name: "Sandro Silêncio",
+          kind: "lead",
+          funnel_stage: "aguardando_resposta",
+          last_contact_at: null,
+        },
+      ])
+      .select("id, phone_e164")
+      .throwOnError()
+  ).data as { id: string; phone_e164: string }[];
+  const leadPorFone = (fone: string) =>
+    leadsE2e.find((lead) => lead.phone_e164 === fone)!.id as string;
+  const leadComOrigemId = leadPorFone("+5584970000021");
+  const leadSemOrigemId = leadPorFone("+5584970000022");
+  const leadPerdidoId = leadPorFone("+5584970000023");
+  const leadSemAutorizacaoId = leadPorFone("+5584970000024");
+
+  // Autorizacao ativa so para o lead com origem e o perdido. O de
+  // aguardando_resposta fica sem linha nenhuma, de proposito.
+  await admin
+    .from("contact_consent")
+    .insert([
+      {
+        clinic_id: clinica.id,
+        contact_id: leadComOrigemId,
+        source: "recepcao",
+        evidence: "Autorização registrada no cadastro E2E",
+      },
+      {
+        clinic_id: clinica.id,
+        contact_id: leadPerdidoId,
+        source: "recepcao",
+        evidence: "Autorização registrada no cadastro E2E",
+      },
+    ])
+    .throwOnError();
+
   return {
     clinicId: clinica.id,
     clinicIdDesconectada: clinicaDesconectada.id,
@@ -638,6 +726,12 @@ export async function provisionar(): Promise<DadosE2E> {
       consultaAgendadaId,
       consultaConfirmadaWhatsId,
       encaixePendenteId,
+    },
+    leads: {
+      comOrigemId: leadComOrigemId,
+      semOrigemId: leadSemOrigemId,
+      perdidoId: leadPerdidoId,
+      semAutorizacaoId: leadSemAutorizacaoId,
     },
   };
 }

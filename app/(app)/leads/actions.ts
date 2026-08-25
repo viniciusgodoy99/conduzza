@@ -7,6 +7,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { gerarToken, SOURCE_CHANNELS } from "@/lib/domain/attribution";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import { importarContatos } from "@/lib/integrations/importar-contatos";
 import { createClient } from "@/lib/supabase/server";
 
 // Server Actions das Telas de Leads (4.2 e 4.3). Escrita de lead e de
@@ -695,4 +696,83 @@ export async function desativarCampanhaAction(
   );
   revalidatePath("/leads");
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Importacao de planilha (Tela 4, tarefa 4.4)
+// ---------------------------------------------------------------------------
+// A action e casca fina: guard de escrita + Zod + auditoria. O miolo vive em
+// lib/integrations/importar-contatos.ts (testado com o banco real em
+// tests/integration/importacao.test.ts). Um lote por chamada, ate 500 linhas;
+// quem divide a planilha e mostra o progresso e a tela.
+
+const declaracaoDeConsentimentoSchema = z
+  .object({
+    opcao: z.enum(["formulario_site", "anuncio_ctwa", "recepcao", "outra"]),
+    observacao: z.string().trim().max(300).optional(),
+  })
+  .refine(
+    (declaracao) =>
+      declaracao.opcao !== "outra" ||
+      (declaracao.observacao != null && declaracao.observacao.length >= 2),
+    { message: "Descreva como os contatos autorizaram receber mensagens." },
+  );
+
+const linhaImportadaSchema = z.object({
+  name: z.string().trim().min(1).max(120).nullable(),
+  phone_e164: z.string().regex(/^\+[1-9]\d{7,14}$/),
+  email: z.string().trim().min(3).max(160).nullable(),
+  insurance_name: z.string().trim().min(1).max(120).nullable(),
+  source_campaign: z.string().trim().min(1).max(120).nullable(),
+});
+
+const importarContatosSchema = z.object({
+  declaracao: declaracaoDeConsentimentoSchema,
+  lote: z.array(linhaImportadaSchema).min(1).max(500),
+});
+
+export type ImportarContatosActionResult =
+  | {
+      ok: true;
+      importados: number;
+      atualizados: number;
+      reautorizados: number;
+      pulados: number;
+    }
+  | { ok: false; error?: string };
+
+export async function importarContatosAction(
+  input: unknown,
+): Promise<ImportarContatosActionResult> {
+  const guard = await requireLeadsWriter();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = importarContatosSchema.safeParse(input);
+  if (!parsed.success) {
+    const refinado = parsed.error.issues.find((i) => i.code === "custom");
+    return {
+      ok: false,
+      error: refinado?.message ?? "Confira os contatos do lote.",
+    };
+  }
+
+  const supabase = await createClient();
+  const resultado = await importarContatos(supabase, guard.clinicId, {
+    declaracao: parsed.data.declaracao,
+    lote: parsed.data.lote,
+  });
+  if (!resultado.ok) {
+    return resultado;
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "importou_planilha",
+    "contact",
+    null,
+  );
+  revalidatePath("/leads");
+  return resultado;
 }
