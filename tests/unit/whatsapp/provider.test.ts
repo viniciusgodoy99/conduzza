@@ -5,7 +5,10 @@ import {
   fakeSentMessages,
   resetFakeProvider,
 } from "@/lib/integrations/whatsapp/fake";
-import { UazapiProvider } from "@/lib/integrations/whatsapp/uazapi";
+import {
+  nomeDaInstancia,
+  UazapiProvider,
+} from "@/lib/integrations/whatsapp/uazapi";
 import type { InstanceRef } from "@/lib/integrations/whatsapp/provider";
 
 const REF: InstanceRef = {
@@ -214,5 +217,33 @@ describe("blindagem contra defeitos conhecidos", () => {
     await expect(
       testProvider(fn).createInstance(REF, "conduzza-y"),
     ).rejects.toThrow(/limite de instâncias/);
+  });
+});
+
+// O servidor uazapi e compartilhado com outros produtos do grupo: o rotulo da
+// instancia precisa dizer, numa olhada no painel, que e da Conduzza e de qual
+// clinica.
+describe("nome da instância no painel do uazapi", () => {
+  it("usa o prefixo do produto e o slug da clínica", () => {
+    expect(nomeDaInstancia("clinica-conduzza-teste", "6180eafd-0000")).toBe(
+      "conduzza_clinica_conduzza_teste",
+    );
+  });
+
+  it("normaliza acento, maiúscula e pontuação do slug", () => {
+    expect(nomeDaInstancia("Clínica São Paulo!", "abcd1234-0000")).toBe(
+      "conduzza_clinica_sao_paulo",
+    );
+  });
+
+  it("slug vazio ou sem letras cai no início do id da clínica", () => {
+    expect(nomeDaInstancia("", "6180eafd-1111")).toBe("conduzza_6180eafd");
+    expect(nomeDaInstancia("---", "6180eafd-1111")).toBe("conduzza_6180eafd");
+  });
+
+  it("corta slug muito longo sem deixar separador solto na ponta", () => {
+    const nome = nomeDaInstancia("a".repeat(60), "abcd1234-0000");
+    expect(nome.length).toBeLessThanOrEqual("conduzza_".length + 40);
+    expect(nome.endsWith("_")).toBe(false);
   });
 });

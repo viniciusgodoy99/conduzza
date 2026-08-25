@@ -261,6 +261,8 @@ export class UazapiProvider implements WhatsAppProvider {
   /**
    * Cria a instancia daquela clinica (token administrativo) e devolve o token
    * proprio dela. Cada clinica tem a sua: e isso que torna a conexao escalavel.
+   * O nome vem de nomeDaInstancia e e apenas o rotulo do painel: toda chamada
+   * seguinte autentica pelo TOKEN da instancia, nunca pelo nome.
    */
   async createInstance(
     ref: InstanceRef,
@@ -405,4 +407,26 @@ function pickString(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Rotulo da instancia no painel do uazapi: `conduzza_` mais o slug da clinica.
+ *
+ * O servidor uazapi e COMPARTILHADO com outros produtos, entao o prefixo diz
+ * de quem e a instancia numa olhada, e o slug (unico por clinica no banco)
+ * diz de QUAL clinica. O nome e so rotulo: toda operacao seguinte autentica
+ * pelo token da instancia, entao dois nomes iguais nao quebrariam nada, mas
+ * o slug unico evita confusao no painel. Clinica sem slug utilizavel cai no
+ * inicio do id, que sempre existe.
+ */
+export function nomeDaInstancia(slug: string, clinicId: string): string {
+  const base = slug
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40)
+    .replace(/_+$/g, "");
+  return `conduzza_${base.length > 0 ? base : clinicId.slice(0, 8)}`;
 }

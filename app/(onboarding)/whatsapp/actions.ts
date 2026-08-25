@@ -8,7 +8,10 @@ import type {
   InstanceRef,
   InstanceStatus,
 } from "@/lib/integrations/whatsapp/provider";
-import { UazapiProvider } from "@/lib/integrations/whatsapp/uazapi";
+import {
+  nomeDaInstancia,
+  UazapiProvider,
+} from "@/lib/integrations/whatsapp/uazapi";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // Conexao do WhatsApp por clinica (Tela 13). Cada clinica ganha a PROPRIA
@@ -48,6 +51,7 @@ async function requireAdminContext() {
   return {
     clinicId: context.active.clinicId,
     clinicName: context.active.clinicName,
+    slug: context.active.slug,
   };
 }
 
@@ -179,7 +183,7 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
     // 1. A clinica ainda nao tem instancia? Cria uma, com o token
     // administrativo, e guarda o token proprio dela.
     if (!ref.instanceToken && provider instanceof UazapiProvider) {
-      const nome = `conduzza-${guard.clinicId.slice(0, 8)}`;
+      const nome = nomeDaInstancia(guard.slug, guard.clinicId);
       const criada = await provider.createInstance(ref, nome);
       await admin
         .from("whatsapp_account_secret")
