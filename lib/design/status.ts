@@ -1,16 +1,26 @@
 import {
+  AlarmClock,
   Armchair,
+  BadgePlus,
   Calendar,
+  CalendarPlus,
   CheckCheck,
   CircleCheck,
   CircleX,
   Clock,
+  Gauge,
   Hand,
   MessageCircleCheck,
+  MessageSquareText,
+  MoonStar,
+  ShieldAlert,
   Sparkles,
   Stethoscope,
+  Timer,
   TriangleAlert,
   UserCheck,
+  UserRoundX,
+  Watch,
   type LucideIcon,
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
@@ -110,6 +120,56 @@ export const CONVERSATION_STATUS: Record<ConversationStatus, StatusDefinition> =
     em_atendimento: { label: "Em atendimento", tone: "info", icon: null },
     resolvida: { label: "Resolvida", tone: "success", icon: CircleCheck },
   };
+
+// As 6 etapas do funil de leads, strings identicas ao check de contact.
+// Compareceu usa o MESMO icone e o MESMO tom do status de agendamento de
+// proposito: mesma semantica, mesma forma (a proibicao e mesmo icone em
+// cores DIFERENTES).
+export type FunnelStage =
+  | "novo"
+  | "em_contato"
+  | "aguardando_resposta"
+  | "agendou"
+  | "compareceu"
+  | "perdido";
+
+export const FUNNEL_STAGE: Record<FunnelStage, StatusDefinition> = {
+  novo: { label: "Novo", tone: "neutral", icon: BadgePlus },
+  em_contato: { label: "Em contato", tone: "info", icon: MessageSquareText },
+  aguardando_resposta: {
+    label: "Aguardando resposta",
+    tone: "warning",
+    icon: Timer,
+  },
+  agendou: { label: "Agendou", tone: "success", icon: CalendarPlus },
+  compareceu: { label: "Compareceu", tone: "success", icon: CheckCheck },
+  perdido: { label: "Perdido", tone: "alert", icon: UserRoundX },
+};
+
+// Badge de tempo desde o ultimo contato (cartao de lead, brief Tela 4):
+// verde ate 4h, ambar de 4h a 24h, vermelho acima de 24h. O rotulo exibido
+// no chip e o relativo ("ha 2 h"); a definicao da tom e icone.
+export type ContactRecency = "em_dia" | "esfriando" | "frio";
+
+export const CONTACT_RECENCY: Record<ContactRecency, StatusDefinition> = {
+  em_dia: { label: "Contato recente", tone: "success", icon: Gauge },
+  esfriando: { label: "Esfriando", tone: "warning", icon: Watch },
+  frio: { label: "Sem contato", tone: "alert", icon: AlarmClock },
+};
+
+// Etiquetas DERIVADAS do paciente (ficha e lista da Tela 9). Nada disto e
+// persistido: risco vem de no_show_count >= 2 e inativo da ausencia de
+// consulta recente (lib/domain/etiquetas.ts).
+export type PatientTag = "risco_de_falta" | "inativo";
+
+export const PATIENT_TAG: Record<PatientTag, StatusDefinition> = {
+  risco_de_falta: {
+    label: "Risco de falta",
+    tone: "alert",
+    icon: ShieldAlert,
+  },
+  inativo: { label: "Inativo", tone: "neutral", icon: MoonStar },
+};
 
 // marker: cor plena (pontos, bordas de evento). text/bg: par do chip, com
 // contraste AA garantido pelo teste de design.

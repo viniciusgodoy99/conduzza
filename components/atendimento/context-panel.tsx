@@ -5,6 +5,7 @@ import { ptBR } from "date-fns/locale";
 import { CalendarClock, History, ShieldCheck, ShieldOff } from "lucide-react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { FUNNEL_STAGE } from "@/lib/design/status";
 import type { ConsentInfo, ContactSummary } from "@/lib/queries/conversations";
 
 // Painel de contexto (handoff): dados do contato, estado da autorizacao de
@@ -19,14 +20,9 @@ const CONSENT_SOURCE_LABEL: Record<string, string> = {
   conversa: "Iniciou a conversa",
 };
 
-const STAGE_LABEL: Record<string, string> = {
-  novo: "Novo",
-  em_contato: "Em contato",
-  aguardando_resposta: "Aguardando resposta",
-  agendou: "Agendou",
-  compareceu: "Compareceu",
-  perdido: "Perdido",
-};
+const STAGE_LABEL: Record<string, string> = Object.fromEntries(
+  Object.entries(FUNNEL_STAGE).map(([stage, def]) => [stage, def.label]),
+);
 
 function Section({
   title,

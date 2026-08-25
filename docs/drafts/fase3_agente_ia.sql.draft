@@ -1,0 +1,499 @@
+-- Fase 3, tarefa 3.1: schema do agente de IA (docs/04 secoes 5 e 6).
+--
+-- Quatro tabelas novas (config versionada do agente, base de conhecimento,
+-- lista de espera minima para a ferramenta entrar_lista_espera), o kind
+-- process_inbound na fila, custo por turno no ai_decision_log, o status
+-- inicial configuravel da conversa (resolve o TODO(3.4) da Fase 0) e as RPCs
+-- atomicas que as ferramentas de agenda da IA usam (o worker via supabase-js
+-- nao faz transacao multi-statement).
+
+-- ---------------------------------------------------------------------------
+-- Configuracao do agente, versionada
+-- ---------------------------------------------------------------------------
+-- Estados por linha (contrato com a Tela 6):
+--   rascunho: published = false e published_at is null (no maximo UM por
+--             clinica, sempre a maior version, editavel in place)
+--   no ar:    published = true (exatamente um por clinica)
+--   anterior: published = false e published_at is not null (congelada)
+-- Publicar e SEMPRE a RPC publicar_versao_agente (transacao: despublica a
+-- vigente, publica o rascunho). Linha ja publicada alguma vez nunca e editada.
+
+create table public.ai_agent_config (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinic (id) on delete cascade,
+  version integer not null default 1,
+  published boolean not null default false,
+  agent_name text not null default 'Assistente',
+  tone text not null default 'cordial'
+    check (tone in ('formal', 'cordial', 'proximo')),
+  use_emoji boolean not null default false,
+  greeting text,
+  closing text,
+  skills jsonb not null default '{}'::jsonb,
+  operating_mode text not null default '24h'
+    check (operating_mode in ('24h', 'fora_expediente', 'fallback')),
+  fallback_minutes integer default 5
+    check (fallback_minutes between 1 and 120),
+  operating_hours jsonb,
+  escalation_rules jsonb not null default '{}'::jsonb,
+  published_at timestamptz,
+  published_by uuid references auth.users (id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (clinic_id, version)
+);
+
+comment on column public.ai_agent_config.operating_hours is
+  'Grade de MODO por dia da semana: { "0".."6": { "mode": "24h" | "fora_expediente" | "fallback", "fallback_minutes"?: number } } (0 = domingo, mesma convencao de professional_schedule.weekday). Dia ausente herda operating_mode e fallback_minutes das colunas. O expediente do modo fora_expediente NAO vive aqui: deriva da uniao das jornadas ativas em professional_schedule.';
+
+comment on column public.ai_agent_config.escalation_rules is
+  'Regras editaveis de escalonamento: { "palavras_chave": string[] } (palavras que sempre escalam para humano). Os 6 gatilhos obrigatorios da arquitetura sao fixos no codigo, nunca configuraveis.';
+
+-- Invariantes do versionamento, a prova de corrida:
+create unique index ai_agent_config_publicada_unica
+  on public.ai_agent_config (clinic_id) where published;
+create unique index ai_agent_config_rascunho_unico
+  on public.ai_agent_config (clinic_id)
+  where (not published and published_at is null);
+
+create index on public.ai_agent_config (clinic_id, version desc);
+create index on public.ai_agent_config (published_by);
+
+create trigger set_updated_at before update on public.ai_agent_config
+  for each row execute function public.set_updated_at();
+
+-- Publica o rascunho da clinica numa transacao so: a vigente sai do ar (mas
+-- preserva published_at/by, e o que a marca como "anterior") e o rascunho
+-- entra. O indice unico parcial torna a corrida de duas publicacoes impossivel.
+create or replace function public.publicar_versao_agente(p_clinic_id uuid)
+returns jsonb
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  v_rascunho record;
+begin
+  if not public.user_has_role(p_clinic_id, array['admin', 'gestor']) then
+    return jsonb_build_object('ok', false, 'erro', 'sem_permissao');
+  end if;
+
+  select id, version into v_rascunho
+  from ai_agent_config
+  where clinic_id = p_clinic_id and not published and published_at is null
+  for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'erro', 'sem_rascunho');
+  end if;
+
+  update ai_agent_config
+    set published = false
+    where clinic_id = p_clinic_id and published;
+
+  update ai_agent_config
+    set published = true,
+        published_at = now(),
+        published_by = auth.uid()
+    where id = v_rascunho.id;
+
+  return jsonb_build_object('ok', true, 'version', v_rascunho.version);
+end;
+$$;
+
+revoke execute on function public.publicar_versao_agente(uuid)
+  from public, anon;
+grant execute on function public.publicar_versao_agente(uuid)
+  to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- Base de conhecimento (P&R da clinica; NAO versionada, vale imediatamente)
+-- ---------------------------------------------------------------------------
+
+create table public.knowledge_item (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinic (id) on delete cascade,
+  question text not null,
+  answer text not null,
+  source text not null default 'manual'
+    check (source in ('manual', 'correcao_humano', 'documento')),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index on public.knowledge_item (clinic_id) where active;
+
+create trigger set_updated_at before update on public.knowledge_item
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- Lista de espera (docs/04 secao 5): schema minimo AGORA porque a ferramenta
+-- entrar_lista_espera (3.3) escreve nela. A reoferta automatica (consumo de
+-- waitlist_offer) e a tarefa 4.9; aqui so nasce a estrutura.
+-- ---------------------------------------------------------------------------
+
+create table public.waitlist (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinic (id) on delete cascade,
+  contact_id uuid not null references public.contact (id) on delete cascade,
+  procedure_id uuid references public.procedure (id),
+  professional_id uuid references public.professional (id),
+  preferred_shifts text[] not null default '{}',      -- manha | tarde | noite
+  preferred_weekdays smallint[] not null default '{}',
+  priority integer not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Um contato nao entra duas vezes na fila ativa do MESMO pedido (procedimento
+-- e profissional, nulos contando como iguais). A ferramenta trata conflito
+-- como sucesso idempotente.
+create unique index waitlist_ativa_unica
+  on public.waitlist (
+    clinic_id,
+    contact_id,
+    coalesce(procedure_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    coalesce(professional_id, '00000000-0000-0000-0000-000000000000'::uuid)
+  )
+  where active;
+
+create index on public.waitlist (clinic_id) where active;
+create index on public.waitlist (contact_id);
+create index on public.waitlist (procedure_id);
+create index on public.waitlist (professional_id);
+
+create trigger set_updated_at before update on public.waitlist
+  for each row execute function public.set_updated_at();
+
+create table public.waitlist_offer (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references public.clinic (id) on delete cascade,
+  slot_starts_at timestamptz not null,
+  professional_id uuid not null references public.professional (id),
+  offered_to uuid[] not null,
+  responded_by uuid references public.contact (id),
+  expires_at timestamptz not null,
+  status text not null default 'aberta'
+    check (status in ('aberta', 'preenchida', 'expirada', 'cancelada')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index on public.waitlist_offer (clinic_id, status);
+create index on public.waitlist_offer (professional_id);
+create index on public.waitlist_offer (responded_by);
+
+create trigger set_updated_at before update on public.waitlist_offer
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- Fila: o turno da IA vira job (claim/lease/backoff ficam intocados)
+-- ---------------------------------------------------------------------------
+
+alter table public.job_queue drop constraint job_queue_kind_check;
+alter table public.job_queue add constraint job_queue_kind_check
+  check (kind in ('enviar_mensagem_ativa', 'baixar_midia', 'process_inbound'));
+
+-- ---------------------------------------------------------------------------
+-- ai_decision_log: custo por turno e as 7 categorias de conformidade
+-- ---------------------------------------------------------------------------
+
+alter table public.ai_decision_log
+  add column input_tokens integer,
+  add column output_tokens integer,
+  add column model text;
+
+alter table public.ai_decision_log add constraint ai_decision_log_compliance_rule_check
+  check (compliance_rule is null or compliance_rule in
+    ('triagem', 'orientacao_clinica', 'promessa_resultado', 'medicamento',
+     'dosagem', 'diagnostico', 'oferta_casada'));
+
+-- Protecao de custo e um count indexado na janela de 24h, por conversa e por
+-- clinica, ANTES de chamar o LLM.
+create index on public.ai_decision_log (conversation_id, created_at desc);
+create index on public.ai_decision_log (clinic_id, created_at desc);
+
+-- ---------------------------------------------------------------------------
+-- Status inicial da conversa configuravel (resolve o TODO(3.4) da Fase 0)
+-- ---------------------------------------------------------------------------
+-- O status so pode ser decidido NO NASCIMENTO da conversa: se o handler
+-- "promovesse" aguardando_humano para ia_atendendo depois, nao saberia
+-- distinguir conversa que NASCEU aguardando de conversa que a IA ESCALOU
+-- (escalada e pegajosa: a IA nunca volta sozinha, so devolverParaIaAction).
+-- O parametro e opcional com default fail-safe: na duvida, humano atende.
+-- Conversa EXISTENTE nunca muda de status aqui.
+--
+-- Assinatura muda (parametro novo): drop antes do create para nao virar
+-- sobrecarga ambigua no Postgres.
+
+drop function public.ingest_inbound_message(
+  uuid, text, text, text, text, text, text, text);
+
+create function public.ingest_inbound_message(
+  p_clinic_id uuid,
+  p_phone_e164 text,
+  p_name text,
+  p_wa_message_id text,
+  p_content_type text default 'texto',
+  p_body text default null,
+  p_media_url text default null,
+  p_transcript text default null,
+  p_status_inicial text default 'aguardando_humano'
+) returns jsonb
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  v_contact_id uuid;
+  v_conversation_id uuid;
+  v_conversation_status text;
+  v_message_id uuid;
+begin
+  insert into contact (clinic_id, phone_e164, name, last_contact_at)
+  values (p_clinic_id, p_phone_e164, nullif(trim(p_name), ''), now())
+  on conflict (clinic_id, phone_e164) do update
+    set last_contact_at = now(),
+        name = coalesce(contact.name, excluded.name)
+  returning id into v_contact_id;
+
+  -- Consentimento automatico source='conversa': quem escreve para a clinica
+  -- autoriza a resposta. Disparo proativo continua exigindo consent ativo.
+  if not exists (
+    select 1 from contact_consent
+    where contact_id = v_contact_id and channel = 'whatsapp' and active
+  ) then
+    insert into contact_consent (clinic_id, contact_id, channel, source, evidence)
+    values (p_clinic_id, v_contact_id, 'whatsapp', 'conversa',
+            'Primeira mensagem recebida do contato');
+  end if;
+
+  -- Uma conversa aberta por contato; corrida resolvida pelo indice unico parcial.
+  insert into conversation (clinic_id, contact_id, status, last_message_at)
+  values (p_clinic_id, v_contact_id,
+          case when p_status_inicial = 'ia_atendendo'
+               then 'ia_atendendo' else 'aguardando_humano' end,
+          now())
+  on conflict (clinic_id, contact_id) where status <> 'resolvida' do nothing;
+
+  select id, status into v_conversation_id, v_conversation_status
+  from conversation
+  where clinic_id = p_clinic_id and contact_id = v_contact_id
+    and status <> 'resolvida'
+  limit 1;
+
+  insert into message (
+    clinic_id, conversation_id, wa_message_id, direction, author,
+    content_type, body, media_url, transcript, billable, cost_cents
+  ) values (
+    p_clinic_id, v_conversation_id, p_wa_message_id, 'entrada', 'paciente',
+    coalesce(p_content_type, 'texto'), p_body, p_media_url, p_transcript,
+    false, 0
+  )
+  on conflict (wa_message_id) do nothing
+  returning id into v_message_id;
+
+  if v_message_id is not null then
+    update conversation
+      set last_message_at = now(),
+          unread_count = unread_count + 1
+      where id = v_conversation_id;
+  end if;
+
+  return jsonb_build_object(
+    'inserted', v_message_id is not null,
+    'contact_id', v_contact_id,
+    'conversation_id', v_conversation_id,
+    'conversation_status', v_conversation_status,
+    'message_id', v_message_id
+  );
+end;
+$$;
+
+revoke execute on function public.ingest_inbound_message from public, anon, authenticated;
+grant execute on function public.ingest_inbound_message to service_role;
+
+-- ---------------------------------------------------------------------------
+-- RPCs atomicas das ferramentas de agenda da IA (service role only)
+-- ---------------------------------------------------------------------------
+-- ENCAIXE FICA FORA DA FASE 3: a IA so marca slot livre (is_overbooking =
+-- false, approval_status nulo). O fluxo created_by='ia' + approval_status=
+-- 'pendente' (painel "Pendente de voce") e reservado para a reoferta da
+-- lista de espera (4.9).
+
+-- Converte um hold vigente em consulta, atomicamente. Hold expirado (ou ja
+-- limpo pelo worker) e erro da ferramenta, nunca agendamento cego. O 23P01
+-- da exclusion constraint e A TRAVA REAL: vira erro 'conflito'.
+create function public.agendar_do_hold(
+  p_clinic_id uuid,
+  p_hold_id uuid,
+  p_contact_id uuid,
+  p_service_link_id uuid,
+  p_unit_id uuid default null,
+  p_resource_id uuid default null,
+  p_notes text default null
+) returns jsonb
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  v_hold record;
+  v_appointment_id uuid;
+begin
+  select id, professional_id, contact_id, starts_at, ends_at
+    into v_hold
+  from slot_hold
+  where id = p_hold_id and clinic_id = p_clinic_id
+    and expires_at > now()
+  for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'erro', 'hold_expirado');
+  end if;
+
+  if v_hold.contact_id is not null and v_hold.contact_id <> p_contact_id then
+    return jsonb_build_object('ok', false, 'erro', 'hold_de_outro_contato');
+  end if;
+
+  insert into appointment (
+    clinic_id, contact_id, professional_id, service_link_id,
+    unit_id, resource_id, starts_at, ends_at,
+    status, created_by, is_overbooking, notes
+  ) values (
+    p_clinic_id, p_contact_id, v_hold.professional_id, p_service_link_id,
+    p_unit_id, p_resource_id, v_hold.starts_at, v_hold.ends_at,
+    'agendado', 'ia', false, p_notes
+  )
+  returning id into v_appointment_id;
+
+  delete from slot_hold where id = p_hold_id;
+
+  return jsonb_build_object(
+    'ok', true,
+    'appointment_id', v_appointment_id,
+    'starts_at', v_hold.starts_at,
+    'ends_at', v_hold.ends_at,
+    'professional_id', v_hold.professional_id
+  );
+exception
+  when exclusion_violation then
+    return jsonb_build_object('ok', false, 'erro', 'conflito');
+end;
+$$;
+
+revoke execute on function public.agendar_do_hold(uuid, uuid, uuid, uuid, uuid, uuid, text)
+  from public, anon, authenticated;
+grant execute on function public.agendar_do_hold(uuid, uuid, uuid, uuid, uuid, uuid, text)
+  to service_role;
+
+-- Remarca uma consulta futura do contato para o horario de um hold vigente,
+-- atomicamente. Mantem o status (remarcar nao e mudanca de status; a regua de
+-- reconfirmacao e a Fase 4) e o recurso (vem do procedimento, nao do slot).
+create function public.remarcar_do_hold(
+  p_clinic_id uuid,
+  p_hold_id uuid,
+  p_appointment_id uuid,
+  p_contact_id uuid
+) returns jsonb
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  v_hold record;
+  v_appointment record;
+begin
+  select id, professional_id, contact_id, starts_at, ends_at
+    into v_hold
+  from slot_hold
+  where id = p_hold_id and clinic_id = p_clinic_id
+    and expires_at > now()
+  for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'erro', 'hold_expirado');
+  end if;
+
+  if v_hold.contact_id is not null and v_hold.contact_id <> p_contact_id then
+    return jsonb_build_object('ok', false, 'erro', 'hold_de_outro_contato');
+  end if;
+
+  select id, status, starts_at into v_appointment
+  from appointment
+  where id = p_appointment_id and clinic_id = p_clinic_id
+    and contact_id = p_contact_id
+  for update;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'erro', 'consulta_nao_encontrada');
+  end if;
+
+  if v_appointment.status not in
+      ('agendado', 'aguardando_confirmacao',
+       'confirmado_paciente', 'confirmado_recepcao')
+     or v_appointment.starts_at <= now() then
+    return jsonb_build_object('ok', false, 'erro', 'consulta_nao_remarcavel');
+  end if;
+
+  update appointment
+    set professional_id = v_hold.professional_id,
+        starts_at = v_hold.starts_at,
+        ends_at = v_hold.ends_at
+    where id = p_appointment_id;
+
+  delete from slot_hold where id = p_hold_id;
+
+  return jsonb_build_object(
+    'ok', true,
+    'appointment_id', p_appointment_id,
+    'starts_at', v_hold.starts_at,
+    'ends_at', v_hold.ends_at,
+    'professional_id', v_hold.professional_id
+  );
+exception
+  when exclusion_violation then
+    return jsonb_build_object('ok', false, 'erro', 'conflito');
+end;
+$$;
+
+revoke execute on function public.remarcar_do_hold(uuid, uuid, uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function public.remarcar_do_hold(uuid, uuid, uuid, uuid)
+  to service_role;
+
+-- ---------------------------------------------------------------------------
+-- RLS (padrao do catalogo: membro ativo le; escrita conforme o modulo)
+-- ---------------------------------------------------------------------------
+
+alter table public.ai_agent_config enable row level security;
+alter table public.knowledge_item enable row level security;
+alter table public.waitlist enable row level security;
+alter table public.waitlist_offer enable row level security;
+
+-- Config e conhecimento: modulo "agente" da matriz de papeis (so admin e
+-- gestor alteram; recepcao ve; profissional e leitura nao acessam a tela,
+-- mas a leitura por RLS segue o padrao membro ativo, o guard de tela e da UI).
+create policy "membro ativo le config do agente" on public.ai_agent_config
+  for select using (clinic_id in (select public.user_active_clinic_ids()));
+create policy "admin e gestor escrevem config do agente" on public.ai_agent_config
+  for all using (public.user_has_role(clinic_id, array['admin', 'gestor']))
+  with check (public.user_has_role(clinic_id, array['admin', 'gestor']));
+
+create policy "membro ativo le conhecimento" on public.knowledge_item
+  for select using (clinic_id in (select public.user_active_clinic_ids()));
+create policy "admin e gestor escrevem conhecimento" on public.knowledge_item
+  for all using (public.user_has_role(clinic_id, array['admin', 'gestor']))
+  with check (public.user_has_role(clinic_id, array['admin', 'gestor']));
+
+-- Lista de espera: a recepcao opera a fila (user_can_write exclui o papel
+-- leitura); a IA escreve por service role, que ignora RLS.
+create policy "membro ativo le lista de espera" on public.waitlist
+  for select using (clinic_id in (select public.user_active_clinic_ids()));
+create policy "membro com escrita mexe na lista de espera" on public.waitlist
+  for all using (public.user_can_write(clinic_id))
+  with check (public.user_can_write(clinic_id));
+
+create policy "membro ativo le ofertas da lista" on public.waitlist_offer
+  for select using (clinic_id in (select public.user_active_clinic_ids()));
+create policy "membro com escrita mexe nas ofertas" on public.waitlist_offer
+  for all using (public.user_can_write(clinic_id))
+  with check (public.user_can_write(clinic_id));

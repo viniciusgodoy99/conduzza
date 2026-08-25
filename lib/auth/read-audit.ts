@@ -19,7 +19,15 @@ export async function auditarLeituraDePaciente(
   params: {
     clinicId: string;
     userId: string;
-    entity: "agenda_dia" | "inbox" | "historico_agenda";
+    entity:
+      | "agenda_dia"
+      | "inbox"
+      | "historico_agenda"
+      | "leads"
+      | "pacientes"
+      | "ficha_paciente"
+      | "confirmacoes"
+      | "lista_espera";
     entityId?: string | null;
   },
 ): Promise<void> {
