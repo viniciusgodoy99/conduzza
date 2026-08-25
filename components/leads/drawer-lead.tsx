@@ -3,8 +3,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarPlus, MessageSquareText, UserRoundX } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
+import { abrirDetalheDoContatoAction } from "@/app/(app)/leads/actions";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
 import {
   dataLocal,
@@ -28,17 +29,17 @@ import {
 } from "@/lib/design/status";
 import { recencyDe } from "@/lib/domain/leads-ui";
 import {
-  fetchLeadDetalhe,
   leadsKeys,
   type LeadResumo,
   type MensagemDoLead,
 } from "@/lib/queries/leads";
-import { createClient } from "@/lib/supabase/client";
 
 // Drawer da ficha rapida do lead: resumo, dados de origem e as ultimas 3
-// mensagens da conversa aberta (fetchLeadDetalhe, query propria que so roda
-// com o drawer aberto). A leitura da tela ja esta na trilha de auditoria da
-// page; o conteudo de mensagem aparece aqui e nunca em log.
+// mensagens da conversa aberta. O detalhe vem da
+// abrirDetalheDoContatoAction, nao de uma consulta do navegador: a conversa e
+// dado de paciente, entao a leitura precisa deixar rastro de QUEM abriu a
+// ficha de QUEM (regra 3.1). O conteudo de mensagem aparece aqui e nunca em
+// log.
 
 const AUTOR_LABEL: Record<MensagemDoLead["author"], string> = {
   paciente: "Paciente",
@@ -76,13 +77,18 @@ export function DrawerLead({
   dica: string;
   onFechar: () => void;
 }) {
-  const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
   const [perdaIds, setPerdaIds] = useState<string[] | null>(null);
 
   const detalheQuery = useQuery({
     queryKey: leadsKeys.detalhe(lead?.id ?? "nenhum"),
-    queryFn: () => fetchLeadDetalhe(supabase, lead?.id ?? ""),
+    queryFn: async () => {
+      const resultado = await abrirDetalheDoContatoAction(lead?.id ?? "");
+      if (!resultado.ok) {
+        throw new Error(resultado.error);
+      }
+      return resultado.detalhe;
+    },
     enabled: lead !== null,
     staleTime: 30_000,
   });

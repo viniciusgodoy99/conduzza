@@ -37,9 +37,10 @@ export const ROTULO_DA_DECLARACAO: Record<OpcaoDeclaracao, string> = {
 
 /**
  * Evidencia gravada em contact_consent: o rotulo da declaracao escolhida na
- * tela, com a observacao quando houver. Nunca vazia, entao o insert passa
- * pelo gatilho exigir_evidencia_de_reconsentimento mesmo para contato que ja
- * revogou (reconsentimento declarado e exatamente o que o gatilho pede).
+ * tela, com a observacao quando houver. E uma declaracao de LOTE, a mesma
+ * string para as 500 linhas, entao vale so para quem nunca pediu descadastro:
+ * texto generico nao prova que uma pessoa especifica autorizou de novo (regra
+ * 3.4). Quem revogou e pulado pela importacao e segue sem autorizacao.
  */
 export function evidenciaDaDeclaracao(
   declaracao: DeclaracaoDeConsentimento,
@@ -56,8 +57,11 @@ export type ResultadoDaImportacao =
       importados: number;
       /** Contatos que ja existiam (dados completados quando faltavam). */
       atualizados: number;
-      /** Consentimentos registrados de novo apos uma revogacao. */
-      reautorizados: number;
+      /**
+       * Contatos que ja tinham pedido descadastro: os dados entraram, mas a
+       * autorizacao NAO voltou e nenhuma regua os alcanca.
+       */
+      mantidos_sem_autorizacao: number;
       /** Contatos com consentimento ja vigente: nenhuma linha nova empilhada. */
       pulados: number;
     }
@@ -228,10 +232,20 @@ export async function importarContatos(
 
   // Consentimento: a regra vigente e a da linha MAIS RECENTE por granted_at
   // (consentimentoVigenteDeLinhas, mesma regra da RPC consentimento_vigente).
-  // Vigente ativo e pulado (nao empilha linha). Quem nao esta vigente ganha
-  // uma linha source "importacao_planilha" com a evidencia da declaracao;
-  // quando havia revogacao, isso e reconsentimento declarado e conta como
-  // reautorizado (a evidencia nunca vazia satisfaz o gatilho do banco).
+  // Tres caminhos, nesta ordem:
+  //
+  // 1. Vigente ativo: pulado, nao empilha linha nova.
+  // 2. Ja pediu descadastro (linha whatsapp com revoked_at): tambem pulado. Os
+  //    dados entram na base, mas a autorizacao NAO volta e nenhuma regua o
+  //    alcanca. Regra 3.4: a revogacao vale ate a pessoa autorizar de novo, e
+  //    a declaracao generica do lote nao e autorizacao de ninguem em
+  //    particular. Para voltar a enviar, alguem registra na ficha como AQUELA
+  //    pessoa autorizou de novo (concederConsentimentoAction, com evidencia
+  //    especifica). O gatilho exigir_evidencia_de_reconsentimento so cobra
+  //    texto nao vazio: seguir por ele com a string do lote passaria pelo
+  //    banco e devolveria o descadastrado para o disparo.
+  // 3. Sem linha nenhuma: ganha uma linha source "importacao_planilha" com a
+  //    evidencia da declaracao.
   const linhasDeConsent = new Map<string, LinhaConsent[]>();
   for (const pedaco of dividirEmLotes(idsDoLote, PEDACO_DE_CONSULTA)) {
     const { data, error } = await supabase
@@ -251,7 +265,7 @@ export async function importarContatos(
 
   const evidencia = evidenciaDaDeclaracao(payload.declaracao);
   let pulados = 0;
-  let reautorizados = 0;
+  let mantidosSemAutorizacao = 0;
   const consentimentosNovos: {
     clinic_id: string;
     contact_id: string;
@@ -270,7 +284,8 @@ export async function importarContatos(
         (linha) => linha.channel === "whatsapp" && linha.revoked_at !== null,
       )
     ) {
-      reautorizados += 1;
+      mantidosSemAutorizacao += 1;
+      continue;
     }
     consentimentosNovos.push({
       clinic_id: clinicId,
@@ -296,7 +311,7 @@ export async function importarContatos(
     ok: true,
     importados: novas.length,
     atualizados,
-    reautorizados,
+    mantidos_sem_autorizacao: mantidosSemAutorizacao,
     pulados,
   };
 }

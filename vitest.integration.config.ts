@@ -14,6 +14,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "."),
+      // O marcador "server-only" lanca erro fora do React Server Components:
+      // trocado por um modulo vazio para testar o codigo de servidor real
+      // (trilha de leitura) sem tirar o marcador da aplicacao.
+      "server-only": path.resolve(__dirname, "tests/stubs/server-only.ts"),
     },
   },
 });

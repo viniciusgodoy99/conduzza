@@ -7,13 +7,18 @@ import {
   type LinhaConsent,
 } from "@/lib/domain/leads-ui";
 
-// Tipos e fetchers da Tela 4 (Leads). Isomorficos como catalogo.ts: recebem o
-// SupabaseClient e rodam no servidor (carga inicial) e no browser (TanStack).
-// Decisao central, igual a da Agenda: UMA query da clinica, filtros aplicados
-// no cliente e uma chave so para o tempo real mesclar. Sem filtro de kind:
-// o funil existe em todo contato (paciente que agendou continua no Kanban em
-// "agendou" e "compareceu"). A RLS garante isolamento e papel; a leitura
-// humana da tela passa por auditarLeituraDePaciente na page.
+// Tipos e fetchers da Tela 4 (Leads). Os da LISTA sao isomorficos como
+// catalogo.ts: recebem o SupabaseClient e rodam no servidor (carga inicial) e
+// no browser (TanStack). Decisao central, igual a da Agenda: UMA query da
+// clinica, filtros aplicados no cliente e uma chave so para o tempo real
+// mesclar. Sem filtro de kind: o funil existe em todo contato (paciente que
+// agendou continua no Kanban em "agendou" e "compareceu"). A RLS garante
+// isolamento e papel; a leitura humana da tela passa por
+// auditarLeituraDePaciente na page.
+//
+// fetchLeadDetalhe e a excecao: le conversa de paciente e por isso roda SO no
+// servidor, atras da abrirDetalheDoContatoAction, que grava quem leu a ficha
+// de quem antes de devolver o dado.
 
 export type LeadResumo = {
   id: string;
@@ -42,19 +47,6 @@ export type MensagemDoLead = {
 };
 
 export type LeadDetalhe = {
-  lead: LeadResumo & {
-    cpf: string | null;
-    email: string | null;
-    birth_date: string | null;
-    insurance_card: string | null;
-    kind: "lead" | "paciente";
-    source_origin: string | null;
-    source_medium: string | null;
-    source_captured_at: string | null;
-    source_method: string | null;
-    no_show_count: number;
-    created_at: string;
-  };
   /** Conversa nao resolvida mais recente; null sem conversa aberta. */
   conversation_id: string | null;
   /** Ultimas 3 mensagens da conversa aberta, em ordem cronologica. */
@@ -139,21 +131,27 @@ export async function fetchLead(
   return normalizarLead(data as Record<string, unknown>);
 }
 
-const DETALHE_SELECT =
-  "id, clinic_id, name, phone_e164, cpf, email, birth_date, insurance_card, kind, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_origin, source_medium, source_campaign, source_captured_at, source_method, first_contact_at, last_contact_at, no_show_count, created_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
+// So o que a tela desenha: o drawer ja recebe o resumo do lead por prop e o
+// resto do cadastro (cpf, e-mail, nascimento, carteirinha) nao aparece em
+// lugar nenhum. Dado sensivel que ninguem renderiza nao viaja para o
+// navegador.
+const DETALHE_SELECT = "id, source_campaign";
 
 /**
- * Ficha do drawer da Tela 4: contato completo, ultimas 3 mensagens da
- * conversa NAO resolvida (o texto aparece mesmo, a tela e autorizada e a
- * leitura vai para audit_log) e o nome amigavel da campanha de origem.
+ * Detalhe do drawer da Tela 4: ultimas 3 mensagens da conversa NAO resolvida
+ * (o texto aparece mesmo, a tela e autorizada) e o nome amigavel da campanha
+ * de origem. Roda SO no servidor, chamada pela abrirDetalheDoContatoAction,
+ * que grava a trilha de leitura antes de o dado sair.
  */
 export async function fetchLeadDetalhe(
   supabase: SupabaseClient,
+  clinicId: string,
   contactId: string,
 ): Promise<LeadDetalhe | null> {
   const { data, error } = await supabase
     .from("contact")
     .select(DETALHE_SELECT)
+    .eq("clinic_id", clinicId)
     .eq("id", contactId)
     .maybeSingle();
   if (error) {
@@ -163,14 +161,13 @@ export async function fetchLeadDetalhe(
     return null;
   }
   const row = data as Record<string, unknown>;
-  const resumo = normalizarLead(row);
-  const clinicId = row.clinic_id as string;
-  const sourceCampaign = resumo.source_campaign;
+  const sourceCampaign = (row.source_campaign as string | null) ?? null;
 
   const [conversa, campanha] = await Promise.all([
     supabase
       .from("conversation")
       .select("id")
+      .eq("clinic_id", clinicId)
       .eq("contact_id", contactId)
       .neq("status", "resolvida")
       .order("last_message_at", { ascending: false, nullsFirst: false })
@@ -207,20 +204,6 @@ export async function fetchLeadDetalhe(
   }
 
   return {
-    lead: {
-      ...resumo,
-      cpf: (row.cpf as string | null) ?? null,
-      email: (row.email as string | null) ?? null,
-      birth_date: (row.birth_date as string | null) ?? null,
-      insurance_card: (row.insurance_card as string | null) ?? null,
-      kind: row.kind as "lead" | "paciente",
-      source_origin: (row.source_origin as string | null) ?? null,
-      source_medium: (row.source_medium as string | null) ?? null,
-      source_captured_at: (row.source_captured_at as string | null) ?? null,
-      source_method: (row.source_method as string | null) ?? null,
-      no_show_count: (row.no_show_count as number | null) ?? 0,
-      created_at: row.created_at as string,
-    },
     conversation_id: conversationId,
     mensagens,
     campanha_nome: (campanha.data as { name: string } | null)?.name ?? null,

@@ -1,6 +1,13 @@
 "use client";
 
-import { CircleCheck, CircleX, Download, RotateCcw, Upload } from "lucide-react";
+import {
+  CircleCheck,
+  CircleX,
+  Download,
+  RotateCcw,
+  TriangleAlert,
+  Upload,
+} from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { importarContatosAction } from "@/app/(app)/leads/actions";
@@ -36,14 +43,14 @@ type LinhaInvalida = { numeroDaLinha: number; colunas: string[]; motivo: string 
 type Totais = {
   importados: number;
   atualizados: number;
-  reautorizados: number;
+  mantidos_sem_autorizacao: number;
   pulados: number;
 };
 
 const TOTAIS_ZERADOS: Totais = {
   importados: 0,
   atualizados: 0,
-  reautorizados: 0,
+  mantidos_sem_autorizacao: 0,
   pulados: 0,
 };
 
@@ -139,8 +146,9 @@ export function PassoPrevia({
       totaisRef.current = {
         importados: totaisRef.current.importados + resultado.importados,
         atualizados: totaisRef.current.atualizados + resultado.atualizados,
-        reautorizados:
-          totaisRef.current.reautorizados + resultado.reautorizados,
+        mantidos_sem_autorizacao:
+          totaisRef.current.mantidos_sem_autorizacao +
+          resultado.mantidos_sem_autorizacao,
         pulados: totaisRef.current.pulados + resultado.pulados,
       };
       aoGravarLote();
@@ -191,14 +199,6 @@ export function PassoPrevia({
               </dd>
             </div>
             <div className="flex items-center justify-between gap-4">
-              <dt className="text-text-secondary">
-                Autorizações registradas de novo
-              </dt>
-              <dd className="font-medium">
-                {numero.format(fase.totais.reautorizados)}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-4">
               <dt className="text-text-secondary">Linhas inválidas</dt>
               <dd className="font-medium">{numero.format(invalidas.length)}</dd>
             </div>
@@ -211,6 +211,34 @@ export function PassoPrevia({
                 : "contatos já tinham autorização e foram mantidos"}{" "}
               como estava.
             </p>
+          ) : null}
+          {fase.totais.mantidos_sem_autorizacao > 0 ? (
+            <div
+              role="note"
+              className="grid gap-1 rounded-lg border px-3 py-2.5"
+              style={{
+                borderColor: "var(--warning)",
+                backgroundColor: "var(--warning-bg)",
+                color: "var(--warning-text)",
+              }}
+            >
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <TriangleAlert
+                  strokeWidth={1.5}
+                  className="size-4 shrink-0"
+                  aria-hidden
+                />
+                {numero.format(fase.totais.mantidos_sem_autorizacao)}{" "}
+                {fase.totais.mantidos_sem_autorizacao === 1
+                  ? "pessoa pediu para não receber mensagens"
+                  : "pessoas pediram para não receber mensagens"}
+              </p>
+              <p className="text-xs">
+                Os dados entraram, mas elas continuam sem autorização e nenhum
+                envio automático as alcança. Para voltar a enviar, abra a ficha
+                e registre como a pessoa autorizou de novo.
+              </p>
+            </div>
           ) : null}
         </div>
         {invalidas.length > 0 ? (

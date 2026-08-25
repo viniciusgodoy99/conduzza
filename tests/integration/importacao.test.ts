@@ -11,10 +11,11 @@ import { adminClient } from "../rls/stack";
 // Fase 4, tarefa 4.4, contra o banco REAL: o miolo da importacao
 // (lib/integrations/importar-contatos.ts, o mesmo que a
 // importarContatosAction chama por baixo do guard de sessao). Cobre as regras
-// criticas: reconsentimento apos revogacao passa porque a evidencia da
-// declaracao vai junto (e sem evidencia o gatilho do banco barra), nome
-// preenchido nunca e sobrescrito pela planilha, consentimento vigente nao
-// empilha linha nova e a campanha da planilha entra sem canal inventado.
+// criticas: quem ja pediu descadastro entra na base com os dados mas continua
+// SEM autorizacao (regra 3.4, e a declaracao generica do lote nao reautoriza
+// ninguem), nome preenchido nunca e sobrescrito pela planilha, consentimento
+// vigente nao empilha linha nova e a campanha da planilha entra sem canal
+// inventado.
 
 const admin = adminClient();
 const sufixo = Date.now().toString(36);
@@ -106,7 +107,7 @@ describe("importação de planilha: contatos novos", () => {
       ok: true,
       importados: 2,
       atualizados: 0,
-      reautorizados: 0,
+      mantidos_sem_autorizacao: 0,
       pulados: 0,
     });
 
@@ -220,15 +221,15 @@ describe("importação de planilha: contatos que já existem", () => {
     expect(resultado).toMatchObject({
       ok: true,
       atualizados: 1,
-      reautorizados: 0,
+      mantidos_sem_autorizacao: 0,
       pulados: 1,
     });
     expect(await consentimentosDe(clinicId, contatoId)).toHaveLength(1);
   });
 });
 
-describe("importação de planilha: reconsentimento após revogação", () => {
-  it("sem evidência o banco barra; com a evidência da declaração o reconsentimento passa", async () => {
+describe("importação de planilha: quem pediu descadastro", () => {
+  it("continua sem autorização: os dados entram e nenhuma linha nova nasce", async () => {
     const clinicId = await criarClinica("revog");
     const { data: contato } = await admin
       .from("contact")
@@ -270,29 +271,34 @@ describe("importação de planilha: reconsentimento após revogação", () => {
     expect(semEvidencia).not.toBeNull();
     expect(semEvidencia?.message).toContain("evidência");
 
-    // A importacao passa porque a evidencia da declaracao vai junto.
+    // A importacao NAO reautoriza: a evidencia da declaracao e generica do
+    // lote (a mesma para as 500 linhas) e nao prova que ESTA pessoa autorizou
+    // de novo. Os dados entram, a autorizacao nao volta (regra 3.4).
     const resultado = await importarContatos(admin, clinicId, {
       declaracao: DECLARACAO,
-      lote: [linha("+5584981500001")],
+      lote: [linha("+5584981500001", { name: "Rosa Descadastrada" })],
     });
     expect(resultado).toMatchObject({
       ok: true,
       atualizados: 1,
-      reautorizados: 1,
+      mantidos_sem_autorizacao: 1,
       pulados: 0,
     });
-    expect(await vigente(clinicId, contatoId)).toBe(true);
+    expect(await vigente(clinicId, contatoId)).toBe(false);
 
+    // Os dados da planilha entraram mesmo assim.
+    const atualizado = await contatoPorTelefone(clinicId, "+5584981500001");
+    expect(atualizado.name).toBe("Rosa Descadastrada");
+
+    // Uma linha so, a revogada: nada foi empilhado por cima do descadastro.
     const consentimentos = await consentimentosDe(clinicId, contatoId);
-    expect(consentimentos).toHaveLength(2);
-    expect(consentimentos[1]).toMatchObject({
-      source: "importacao_planilha",
-      evidence: evidenciaDaDeclaracao(DECLARACAO),
-      revoked_at: null,
-    });
+    expect(consentimentos).toHaveLength(1);
+    expect(consentimentos[0]!.revoked_at).not.toBeNull();
   });
+});
 
-  it("telefone repetido no lote não duplica contato nem consentimento", async () => {
+describe("importação de planilha: telefone repetido no lote", () => {
+  it("não duplica contato nem consentimento", async () => {
     const clinicId = await criarClinica("dup");
 
     const resultado = await importarContatos(admin, clinicId, {

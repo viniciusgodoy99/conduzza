@@ -49,6 +49,13 @@ export type DadosE2E = {
     perdidoId: string;
     semAutorizacaoId: string;
   };
+  /** Fase 4: fichas da Tela 9 (Pacientes) */
+  pacientes: {
+    comFaltasId: string;
+    comPacoteId: string;
+    inativoId: string;
+    descadastradoId: string;
+  };
 };
 
 const sufixo = "fixo";
@@ -88,6 +95,17 @@ async function garantirUsuario(
 
 function minutosAtras(minutos: number): string {
   return new Date(Date.now() - minutos * 60_000).toISOString();
+}
+
+// Dia civil (aaaa-mm-dd) a N dias de hoje: negativo para o passado, positivo
+// para o futuro.
+function diaEm(dias: number): string {
+  const data = new Date(Date.now() + dias * 24 * 60 * 60_000);
+  return [
+    data.getFullYear(),
+    String(data.getMonth() + 1).padStart(2, "0"),
+    String(data.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 export async function provisionar(): Promise<DadosE2E> {
@@ -702,6 +720,186 @@ export async function provisionar(): Promise<DadosE2E> {
     ])
     .throwOnError();
 
+  // -------------------------------------------------------------------------
+  // Fase 4: fichas da Tela 9 (Pacientes). Quatro pacientes, um por regra que a
+  // tela precisa provar:
+  // - com faltas: duas consultas "faltou" (mais uma "compareceu", para a taxa
+  //   de comparecimento existir) e no_show_count coerente, porque a Tela 9 usa
+  //   o total das CONSULTAS e a agenda usa o contador do contato
+  // - com pacote: 10 sessoes contratadas, 3 usadas, validade no futuro
+  // - inativo: consulta unica ha mais de 120 dias e nenhuma futura
+  // - descadastrado: autorizacao antiga e revogada
+  // Todos nascem em 'compareceu': paciente nao ocupa coluna de lead no Kanban.
+  // -------------------------------------------------------------------------
+  // no_show_count em TODAS as linhas: no insert em lote o PostgREST usa a
+  // uniao das chaves e manda null onde a chave falta, e a coluna e not null.
+  const fichasE2e = (
+    await admin
+      .from("contact")
+      .insert([
+        {
+          clinic_id: clinica.id,
+          phone_e164: "+5584970000031",
+          name: "Fátima Faltas",
+          kind: "paciente",
+          funnel_stage: "compareceu",
+          no_show_count: 2,
+          insurance_id: null,
+          notes: null,
+        },
+        {
+          clinic_id: clinica.id,
+          phone_e164: "+5584970000032",
+          name: "Paulo Pacote",
+          kind: "paciente",
+          funnel_stage: "compareceu",
+          no_show_count: 0,
+          insurance_id: unimedId,
+          notes: "Prefere o turno da manhã.",
+        },
+        {
+          clinic_id: clinica.id,
+          phone_e164: "+5584970000033",
+          name: "Inês Sumida",
+          kind: "paciente",
+          funnel_stage: "compareceu",
+          no_show_count: 0,
+          insurance_id: null,
+          notes: null,
+        },
+        {
+          clinic_id: clinica.id,
+          phone_e164: "+5584970000034",
+          name: "Dalva Descadastrada",
+          kind: "paciente",
+          funnel_stage: "compareceu",
+          no_show_count: 0,
+          insurance_id: null,
+          notes: null,
+        },
+      ])
+      .select("id, phone_e164")
+      .throwOnError()
+  ).data as { id: string; phone_e164: string }[];
+  const fichaPorFone = (fone: string) =>
+    fichasE2e.find((paciente) => paciente.phone_e164 === fone)!.id as string;
+  const pacienteComFaltasId = fichaPorFone("+5584970000031");
+  const pacienteComPacoteId = fichaPorFone("+5584970000032");
+  const pacienteInativoId = fichaPorFone("+5584970000033");
+  const pacienteDescadastradoId = fichaPorFone("+5584970000034");
+
+  const { data: pacoteE2e } = await admin
+    .from("package")
+    .insert({
+      clinic_id: clinica.id,
+      procedure_id: procDermatoId,
+      sessions: 10,
+      price_cents: 300000,
+      validity_days: 180,
+    })
+    .select("id")
+    .single()
+    .throwOnError();
+  await admin
+    .from("package_balance")
+    .insert({
+      clinic_id: clinica.id,
+      contact_id: pacienteComPacoteId,
+      package_id: pacoteE2e!.id,
+      sessions_total: 10,
+      sessions_used: 3,
+      expires_at: diaEm(180),
+    })
+    .throwOnError();
+
+  // O status final vai direto no INSERT: consumir_sessao_de_pacote e
+  // avancar_funil_ao_comparecer sao gatilhos de UPDATE de status, entao semear
+  // "compareceu" aqui nao debita sessao de pacote nenhuma. Dias passados
+  // distintos e horario da tarde: nada encosta na trava de sobreposicao das
+  // consultas de hoje.
+  await admin
+    .from("appointment")
+    .insert(
+      [
+        {
+          contato: pacienteComFaltasId,
+          profissional: profJoaoId,
+          vinculo: vinculoEndoParticular,
+          dia: diaEm(-40),
+          inicio: "14:00",
+          fim: "14:40",
+          status: "faltou",
+        },
+        {
+          contato: pacienteComFaltasId,
+          profissional: profJoaoId,
+          vinculo: vinculoEndoParticular,
+          dia: diaEm(-20),
+          inicio: "14:00",
+          fim: "14:40",
+          status: "faltou",
+        },
+        {
+          contato: pacienteComFaltasId,
+          profissional: profJoaoId,
+          vinculo: vinculoEndoParticular,
+          dia: diaEm(-10),
+          inicio: "14:00",
+          fim: "14:40",
+          status: "compareceu",
+        },
+        {
+          contato: pacienteInativoId,
+          profissional: profJoaoId,
+          vinculo: vinculoEndoParticular,
+          dia: diaEm(-130),
+          inicio: "15:00",
+          fim: "15:40",
+          status: "compareceu",
+        },
+        {
+          contato: pacienteDescadastradoId,
+          profissional: profAnaId,
+          vinculo: vinculoDermatoUnimed,
+          dia: diaEm(-5),
+          inicio: "16:00",
+          fim: "16:30",
+          status: "compareceu",
+        },
+      ].map((linha) => ({
+        ...consultaBase,
+        contact_id: linha.contato,
+        professional_id: linha.profissional,
+        service_link_id: linha.vinculo,
+        starts_at: `${linha.dia}T${linha.inicio}:00-03:00`,
+        ends_at: `${linha.dia}T${linha.fim}:00-03:00`,
+        status: linha.status,
+      })),
+    )
+    .throwOnError();
+
+  // Autorizacao ativa nos tres primeiros; a quarta nasce revogada, para a
+  // ficha separar "nunca autorizou" de "autorizou e depois cancelou". As datas
+  // sao explicitas em todas as linhas pelo mesmo motivo do bloco de contatos.
+  await admin
+    .from("contact_consent")
+    .insert(
+      [
+        { contato: pacienteComFaltasId, revogada: false },
+        { contato: pacienteComPacoteId, revogada: false },
+        { contato: pacienteInativoId, revogada: false },
+        { contato: pacienteDescadastradoId, revogada: true },
+      ].map((linha) => ({
+        clinic_id: clinica.id,
+        contact_id: linha.contato,
+        source: "recepcao",
+        evidence: "Autorização registrada no cadastro E2E",
+        granted_at: minutosAtras(90 * 24 * 60),
+        revoked_at: linha.revogada ? minutosAtras(3 * 24 * 60) : null,
+      })),
+    )
+    .throwOnError();
+
   return {
     clinicId: clinica.id,
     clinicIdDesconectada: clinicaDesconectada.id,
@@ -739,6 +937,12 @@ export async function provisionar(): Promise<DadosE2E> {
       semOrigemId: leadSemOrigemId,
       perdidoId: leadPerdidoId,
       semAutorizacaoId: leadSemAutorizacaoId,
+    },
+    pacientes: {
+      comFaltasId: pacienteComFaltasId,
+      comPacoteId: pacienteComPacoteId,
+      inativoId: pacienteInativoId,
+      descadastradoId: pacienteDescadastradoId,
     },
   };
 }

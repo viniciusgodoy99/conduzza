@@ -3,14 +3,19 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Trilha de LEITURA de dado de paciente (regra 3.1 do CLAUDE.md: toda leitura
-// de dado de paciente por usuario humano vai para audit_log). Granularidade
-// por ABERTURA DE TELA: uma linha quando um humano abre a agenda do dia ou o
-// inbox, com throttle para nao inundar a trilha em navegacao rapida (uma
-// linha a cada 5 min por usuario+entidade). Nunca grava conteudo, so o que a
-// LGPD pede: quem, quando, que superficie.
+// de dado de paciente por usuario humano vai para audit_log). Duas
+// granularidades: por ABERTURA DE TELA (agenda do dia, inbox, lista de leads),
+// sem id, e por ABERTURA DE FICHA, com o id do contato lido. Nunca grava
+// conteudo, so o que a LGPD pede: quem, quando, que superficie, de quem.
 //
-// Nao bloqueia a renderizacao: e chamada sem await na carga da pagina; um
-// erro de auditoria nao pode derrubar a tela, mas e logado.
+// O throttle (5 min) dedupica por usuario + entidade + ID: sem o id na chave,
+// abrir trinta fichas seguidas gravaria uma linha so e a trilha nao diria de
+// quem foi a leitura. Tela de lista nao tem id e segue deduplicada so por
+// entidade, como antes.
+//
+// Na carga de pagina nao bloqueia a renderizacao (chamada sem await); na
+// abertura de ficha e aguardada, para a linha existir antes de o dado sair do
+// servidor. Um erro de auditoria nunca derruba a tela.
 
 const JANELA_MS = 5 * 60_000;
 
@@ -32,19 +37,24 @@ export async function auditarLeituraDePaciente(
   },
 ): Promise<void> {
   try {
-    // Nao repete a leitura da MESMA superficie pelo MESMO usuario dentro da
-    // janela: a recepcao que troca de dia o tempo todo nao gera uma linha por
-    // clique.
+    // Nao repete a leitura do MESMO alvo pelo MESMO usuario dentro da janela:
+    // a recepcao que troca de dia o tempo todo nao gera uma linha por clique.
+    const entityId = params.entityId ?? null;
     const desde = new Date(Date.now() - JANELA_MS).toISOString();
-    const { data: recente } = await supabase
+    let consulta = supabase
       .from("audit_log")
       .select("id")
       .eq("clinic_id", params.clinicId)
       .eq("user_id", params.userId)
       .eq("action", "leu")
       .eq("entity", params.entity)
-      .gte("created_at", desde)
-      .limit(1);
+      .gte("created_at", desde);
+    // Com id, a janela e por ficha: a segunda ficha aberta no mesmo minuto
+    // tem a propria linha. Sem id (telas de lista) fica como sempre foi.
+    if (entityId !== null) {
+      consulta = consulta.eq("entity_id", entityId);
+    }
+    const { data: recente } = await consulta.limit(1);
     if (recente && recente.length > 0) {
       return;
     }
@@ -53,7 +63,7 @@ export async function auditarLeituraDePaciente(
       user_id: params.userId,
       action: "leu",
       entity: params.entity,
-      entity_id: params.entityId ?? null,
+      entity_id: entityId,
     });
   } catch {
     // Auditoria nunca derruba a tela; o proprio audit_log e best-effort aqui.

@@ -4,10 +4,12 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { gerarToken, SOURCE_CHANNELS } from "@/lib/domain/attribution";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { importarContatos } from "@/lib/integrations/importar-contatos";
+import { fetchLeadDetalhe, type LeadDetalhe } from "@/lib/queries/leads";
 import { createClient } from "@/lib/supabase/server";
 
 // Server Actions das Telas de Leads (4.2 e 4.3). Escrita de lead e de
@@ -98,6 +100,55 @@ async function auditar(
     entity,
     entity_id: entityId,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Abertura da ficha de um contato: trilha antes do dado sair do servidor
+// ---------------------------------------------------------------------------
+// Regra 3.1: toda leitura de dado de paciente por humano vai para audit_log.
+// O drawer NAO consulta o banco pelo navegador: pede o detalhe aqui, e a
+// linha "leu ficha_paciente" com o id do contato e gravada ANTES de a
+// conversa voltar para a tela. Sem isto, a trilha diria que alguem abriu a
+// tela de Leads, nunca de quem foi a conversa que ele leu.
+//
+// Nao tem guard de escrita: ler a ficha e direito de qualquer papel (a RLS de
+// contact, conversation e message recorta clinica e papel). O que muda aqui e
+// que a leitura deixa rastro.
+
+export type DetalheDoContatoResult =
+  | { ok: true; detalhe: LeadDetalhe }
+  | { ok: false; error: string };
+
+export async function abrirDetalheDoContatoAction(
+  contactId: unknown,
+): Promise<DetalheDoContatoResult> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: "Sessão expirada. Entre de novo." };
+  }
+  const parsed = idSchema.safeParse(contactId);
+  if (!parsed.success) {
+    return { ok: false, error: "Contato inválido." };
+  }
+
+  const clinicId = context.active.clinicId;
+  const supabase = await createClient();
+  await auditarLeituraDePaciente(supabase, {
+    clinicId,
+    userId: context.userId,
+    entity: "ficha_paciente",
+    entityId: parsed.data,
+  });
+
+  try {
+    const detalhe = await fetchLeadDetalhe(supabase, clinicId, parsed.data);
+    if (!detalhe) {
+      return { ok: false, error: "Contato não encontrado nesta clínica." };
+    }
+    return { ok: true, detalhe };
+  } catch {
+    return { ok: false, error: "Não foi possível carregar a conversa." };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -736,7 +787,7 @@ export type ImportarContatosActionResult =
       ok: true;
       importados: number;
       atualizados: number;
-      reautorizados: number;
+      mantidos_sem_autorizacao: number;
       pulados: number;
     }
   | { ok: false; error?: string };
