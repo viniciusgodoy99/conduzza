@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { parseInboundEvent } from "@/lib/integrations/whatsapp/inbound";
+import { ingerirMensagemRecebida } from "@/lib/integrations/whatsapp/ingest";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -75,16 +76,11 @@ export async function POST(request: NextRequest) {
   }
 
   if (event.kind === "message_received") {
-    const { data, error } = await admin.rpc("ingest_inbound_message", {
-      p_clinic_id: clinicId,
-      p_phone_e164: event.phone,
-      p_name: event.name,
-      p_wa_message_id: event.waMessageId,
-      p_content_type: event.contentType,
-      p_body: event.body,
-      p_media_url: event.mediaUrl,
-      p_transcript: null,
-    });
+    const { data, error } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      event,
+    );
     if (error) {
       // So ids e codigo de erro: nenhum conteudo de mensagem sai daqui.
       log.error("webhook_ingestao_falhou", {
@@ -98,16 +94,12 @@ export async function POST(request: NextRequest) {
     // Midia NUNCA e baixada aqui: a URL do provedor e criptografada e o
     // download demora segundos, o que estouraria o timeout do webhook e
     // provocaria reenvio. Vira job; o worker baixa e guarda no Storage.
-    const resultado = data as {
-      inserted?: boolean;
-      message_id?: string | null;
-    } | null;
-    if (event.mediaUrl && resultado?.inserted && resultado.message_id) {
+    if (event.mediaUrl && data?.inserted && data.message_id) {
       const { error: erroJob } = await admin.from("job_queue").insert({
         clinic_id: clinicId,
         kind: "baixar_midia",
         payload: {
-          message_id: resultado.message_id,
+          message_id: data.message_id,
           wa_message_id: event.waMessageId,
         },
       });
@@ -115,12 +107,12 @@ export async function POST(request: NextRequest) {
         // A mensagem ja esta salva; so o arquivo fica pendente. Log e segue.
         log.error("webhook_enfileirar_midia_falhou", {
           clinic_id: clinicId,
-          message_id: resultado.message_id,
+          message_id: data.message_id,
           error_code: erroJob.code ?? null,
         });
       }
     }
-    // TODO(3.4): enfileirar process_inbound quando o agente existir.
+    // A resposta do paciente (confirmacao/oferta) sera interceptada aqui na 4.7.
     return NextResponse.json(data);
   }
 
