@@ -20,6 +20,7 @@ let profAna = "";
 let vinculoJoao = "";
 let vinculoAna = "";
 let contato = "";
+let contatoOutraClinica = "";
 let consultaJoao = "";
 let consultaAna = "";
 
@@ -104,6 +105,19 @@ beforeAll(async () => {
     .single()
     .throwOnError();
   contato = ct!.id as string;
+
+  // Alvo do teste de recorte da RPC de falta, que e security definer.
+  const { data: ctOutra } = await admin
+    .from("contact")
+    .insert({
+      clinic_id: clinicaB,
+      phone_e164: "+5584988800001",
+      name: "Paciente da Outra Clínica",
+    })
+    .select("id")
+    .single()
+    .throwOnError();
+  contatoOutraClinica = ctOutra!.id as string;
 
   // Usuarios: Dr. Joao (papel profissional, vinculado ao professional Joao),
   // recepcao da clinica A, e admin da clinica B.
@@ -270,5 +284,51 @@ describe("recepção e isolamento entre clínicas", () => {
     ]);
     expect(consultas).toHaveLength(0);
     expect(holds).toHaveLength(0);
+  });
+});
+
+// Regressao da migration 20260825220000: fechar o update de contact para o
+// papel profissional nao podia tirar dele o ato de marcar falta na propria
+// agenda. incrementar_no_show virou security definer, e por isso o recorte de
+// clinica precisa viver DENTRO da funcao.
+describe("marcar falta continua sendo ato do profissional", () => {
+  it("Dr. João incrementa a falta na própria clínica", async () => {
+    const joao = await logado(`agr-joao-${sufixo}@teste.dev`);
+    const { data: antes } = await admin
+      .from("contact")
+      .select("no_show_count")
+      .eq("id", contato)
+      .single()
+      .throwOnError();
+
+    const { error } = await joao.rpc("incrementar_no_show", {
+      p_contact_id: contato,
+    });
+    expect(error).toBeNull();
+
+    const { data: depois } = await admin
+      .from("contact")
+      .select("no_show_count")
+      .eq("id", contato)
+      .single()
+      .throwOnError();
+    expect(depois!.no_show_count).toBe(antes!.no_show_count + 1);
+  });
+
+  it("a mesma chamada com contato de outra clínica não muda nada", async () => {
+    const joao = await logado(`agr-joao-${sufixo}@teste.dev`);
+    const { error } = await joao.rpc("incrementar_no_show", {
+      p_contact_id: contatoOutraClinica,
+    });
+    // Definer nao levanta erro de RLS: a prova e o contador intacto.
+    expect(error).toBeNull();
+
+    const { data: intacto } = await admin
+      .from("contact")
+      .select("no_show_count")
+      .eq("id", contatoOutraClinica)
+      .single()
+      .throwOnError();
+    expect(intacto!.no_show_count).toBe(0);
   });
 });

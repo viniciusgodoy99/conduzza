@@ -19,6 +19,7 @@ import {
   agregadosDeConsultas,
   etiquetasDoPaciente,
   indicadoresDe,
+  saldoDeSessoes,
 } from "@/lib/domain/pacientes-ui";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { formatarCentavos } from "@/lib/utils/moeda";
@@ -73,14 +74,8 @@ export default async function FichaPacientePage({
   const hojeNaClinica = diaCivil(active.timezone, agora);
   const agregados = agregadosDeConsultas(ficha.consultas, agora);
   // O saldo conta so pacote dentro da validade, no DIA CIVIL da clinica, do
-  // mesmo jeito que a RPC da lista conta.
-  const saldoSessoes = ficha.pacotes.reduce(
-    (soma, pacote) =>
-      pacote.expires_at === null || pacote.expires_at >= hojeNaClinica
-        ? soma + Math.max(pacote.sessions_total - pacote.sessions_used, 0)
-        : soma,
-    0,
-  );
+  // mesmo jeito que a RPC da lista conta e que o bloco de pacotes mostra.
+  const saldoSessoes = saldoDeSessoes(ficha.pacotes, hojeNaClinica);
 
   const etiquetas = etiquetasDoPaciente(
     {

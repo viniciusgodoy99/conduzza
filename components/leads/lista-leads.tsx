@@ -14,10 +14,17 @@ import { StatusChip } from "@/components/shared/status-chip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FUNNEL_STAGE } from "@/lib/design/status";
 import type { LeadResumo } from "@/lib/queries/leads";
+import { cn } from "@/lib/utils";
 
 // Visao em lista da Tela 4: tabela densa com selecao multipla para as acoes
 // em massa. Autorizacao segue as 3 camadas (icone, rotulo, cor), no padrao
 // do chipAtivo: nunca so cor.
+//
+// O NOME e um botao de verdade, do mesmo jeito que o cartao do Kanban: abaixo
+// de 1024px a tela forca a lista, e sem ele o drawer so abriria com o mouse. O
+// clique na linha continua valendo, e o botao segura o evento (o
+// stopPropagation) para o drawer nao abrir duas vezes. Botao, e nao link,
+// porque o drawer nao tem URL propria.
 
 export function ListaLeads({
   leads,
@@ -71,12 +78,25 @@ export function ListaLeads({
       {
         accessorKey: "name",
         header: "Nome",
-        cell: ({ row }) =>
-          row.original.name ? (
-            <span className="font-medium">{row.original.name}</span>
-          ) : (
-            <span className="text-text-tertiary">Sem nome</span>
-          ),
+        cell: ({ row }) => {
+          const lead = row.original;
+          return (
+            <button
+              type="button"
+              aria-label={`Abrir ${lead.name ?? `Sem nome, ${lead.phone_e164}`}`}
+              onClick={(evento) => {
+                evento.stopPropagation();
+                onAbrirLead(lead);
+              }}
+              className={cn(
+                "flex h-10 items-center rounded-md text-left underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+                lead.name ? "font-medium" : "text-text-tertiary",
+              )}
+            >
+              {lead.name ?? "Sem nome"}
+            </button>
+          );
+        },
       },
       {
         accessorKey: "phone_e164",
@@ -169,7 +189,15 @@ export function ListaLeads({
           ),
       },
     ];
-  }, [leads, membros, timezone, selecionados, onSelecionar, onSelecionarTodos]);
+  }, [
+    leads,
+    membros,
+    timezone,
+    selecionados,
+    onSelecionar,
+    onSelecionarTodos,
+    onAbrirLead,
+  ]);
 
   return (
     <DataTable

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import Link from "next/link";
 import { useMemo } from "react";
 
 import { dataLocal } from "@/components/leads/rotulos";
@@ -13,11 +14,17 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { etiquetasDoPaciente, indicadoresDe } from "@/lib/domain/pacientes-ui";
 import type { PacienteResumo } from "@/lib/queries/pacientes";
+import { cn } from "@/lib/utils";
 
 // Lista da Tela 9: as 8 colunas do brief. Abaixo de 1024px a tabela perde as
 // colunas de apoio (convenio, ultima consulta e saldo) em vez de rolar sem
 // fim: o essencial e quem e a pessoa, quando ela volta e o que a agenda
 // precisa saber dela.
+//
+// O NOME e um link de verdade para a ficha: e o unico caminho que existe por
+// teclado e por leitor de tela, e ainda da abrir em outra aba. O clique na
+// linha continua valendo para o mouse, e o link segura o evento (o
+// stopPropagation) para a navegacao acontecer uma vez so.
 
 export function ListaPacientes({
   pacientes,
@@ -36,12 +43,22 @@ export function ListaPacientes({
     const nome: ColumnDef<PacienteResumo> = {
       accessorKey: "name",
       header: "Nome",
-      cell: ({ row }) =>
-        row.original.name ? (
-          <span className="font-medium">{row.original.name}</span>
-        ) : (
-          <span className="text-text-tertiary">Sem nome</span>
-        ),
+      cell: ({ row }) => {
+        const paciente = row.original;
+        return (
+          <Link
+            href={`/pacientes/${paciente.contact_id}`}
+            aria-label={`Abrir a ficha de ${paciente.name ?? `Sem nome, ${paciente.phone_e164}`}`}
+            onClick={(evento) => evento.stopPropagation()}
+            className={cn(
+              "flex h-10 items-center rounded-md underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+              paciente.name ? "font-medium" : "text-text-tertiary",
+            )}
+          >
+            {paciente.name ?? "Sem nome"}
+          </Link>
+        );
+      },
     };
     const telefone: ColumnDef<PacienteResumo> = {
       accessorKey: "phone_e164",

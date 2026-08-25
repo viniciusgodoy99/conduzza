@@ -34,11 +34,15 @@ export function filtrarPacientes<T extends PacienteFiltravel>(
   agora: Date,
 ): T[] {
   return pacientes.filter((paciente) => {
-    // Risco de falta pelo total_faltou das CONSULTAS, nao pelo
+    // "Com falta" e "Risco de falta" sao coisas DIFERENTES: o filtro da lista
+    // pega quem ja faltou ao menos uma vez (brief da Tela 9) e a etiqueta so
+    // nasce com 2 faltas ou mais (temRiscoDeFalta, spec 6.4). Quem tem 1 falta
+    // entra no filtro e NAO recebe etiqueta.
+    // A contagem sai do total_faltou das CONSULTAS, nao do
     // contact.no_show_count: o contador denormalizado so cresce quando alguem
     // marca falta pela agenda e diverge em base importada. A RPC conta a
     // fonte que nao mente, e a nota da migration 20260825200000 diz o mesmo.
-    if (filtros.comFalta && !temRiscoDeFalta(paciente.total_faltou)) {
+    if (filtros.comFalta && paciente.total_faltou < 1) {
       return false;
     }
     if (
@@ -177,6 +181,49 @@ export function agregadosDeConsultas(
     }
   }
   return { total_compareceu, total_faltou, ultima_consulta, proxima_consulta };
+}
+
+/** O minimo de um saldo de pacote para as contas da ficha. */
+export type PacoteComValidade = {
+  sessions_total: number;
+  sessions_used: number;
+  /** Dia civil (aaaa-mm-dd), ou null quando o pacote nao vence. */
+  expires_at: string | null;
+};
+
+/**
+ * Vencido = tem validade e ela ficou para tras no DIA CIVIL DA CLINICA
+ * (regra 3.6). `hojeNaClinica` vem de diaCivil(clinic.timezone, agora), nunca
+ * do dia do servidor: e assim que a RPC pacientes_resumo compara, e a ficha
+ * precisa contar igual a lista.
+ */
+export function pacoteVencido(
+  pacote: PacoteComValidade,
+  hojeNaClinica: string,
+): boolean {
+  return pacote.expires_at !== null && pacote.expires_at < hojeNaClinica;
+}
+
+/** Sessoes que ainda dao para usar. Pacote vencido nao vale nada: zero. */
+export function sessoesRestantes(
+  pacote: PacoteComValidade,
+  hojeNaClinica: string,
+): number {
+  if (pacoteVencido(pacote, hojeNaClinica)) {
+    return 0;
+  }
+  return Math.max(pacote.sessions_total - pacote.sessions_used, 0);
+}
+
+/** Saldo total da ficha, a mesma conta do saldo_sessoes da RPC. */
+export function saldoDeSessoes(
+  pacotes: readonly PacoteComValidade[],
+  hojeNaClinica: string,
+): number {
+  return pacotes.reduce(
+    (soma, pacote) => soma + sessoesRestantes(pacote, hojeNaClinica),
+    0,
+  );
 }
 
 /** "82%" para a taxa, ou vazio quando ela nao existe (a UI poe traco). */

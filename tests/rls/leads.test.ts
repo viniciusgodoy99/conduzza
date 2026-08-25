@@ -391,3 +391,141 @@ describe("etiquetar_contatos (security invoker: a RLS de contact manda)", () => 
     expect(contatoDaB?.tags).toEqual(["importado"]);
   });
 });
+
+// Regressao do achado ALTO da revisao de 25/08/2026 (migration
+// 20260825220000): as policies de escrita de contact e contact_consent usavam
+// user_can_write, que inclui o papel profissional. A tela recusava, o PostgREST
+// aceitava, e um profissional com o proprio token devolvia a autorizacao a quem
+// tinha pedido descadastro e editava a ficha de qualquer paciente da clinica.
+describe("escrita de dado de paciente por papel", () => {
+  // O paciente PEDIU descadastro: e esse o estado que o vetor desfazia.
+  beforeAll(async () => {
+    await admin
+      .from("contact_consent")
+      .insert({
+        clinic_id: clinicaA,
+        contact_id: contatoA,
+        channel: "whatsapp",
+        source: "recepcao",
+        revoked_at: new Date().toISOString(),
+        evidence: "Pediu descadastro pelo WhatsApp",
+      })
+      .throwOnError();
+  });
+
+  async function vigente(): Promise<boolean> {
+    const { data } = await admin
+      .rpc("consentimento_vigente", {
+        p_clinic_id: clinicaA,
+        p_contact_id: contatoA,
+        p_channel: "whatsapp",
+      })
+      .throwOnError();
+    return data as boolean;
+  }
+
+  it("profissional NÃO registra consentimento: 42501 e o descadastro fica de pé", async () => {
+    expect(await vigente()).toBe(false);
+
+    const profissional = await logado(`leads-profissional-${sufixo}@teste.dev`);
+    const { error } = await profissional.from("contact_consent").insert({
+      clinic_id: clinicaA,
+      contact_id: contatoA,
+      channel: "whatsapp",
+      source: "recepcao",
+      evidence: "Disse que pode mandar",
+    });
+    expect(error?.code).toBe(RLS_VIOLATION);
+
+    // O que importa nao e o erro, e o estado: o paciente continua descadastrado.
+    expect(await vigente()).toBe(false);
+  });
+
+  it("profissional NÃO edita a ficha: nome, CPF e observações ficam como estavam", async () => {
+    const { data: antes } = await admin
+      .from("contact")
+      .select("name, cpf, notes")
+      .eq("id", contatoA)
+      .single()
+      .throwOnError();
+
+    const profissional = await logado(`leads-profissional-${sufixo}@teste.dev`);
+    const { data: alteradas, error } = await profissional
+      .from("contact")
+      .update({
+        name: "Nome Trocado",
+        cpf: "00000000191",
+        notes: "Observação de quem não pode editar",
+      })
+      .eq("id", contatoA)
+      .select("id");
+    // Update barrado pela clausula USING afeta zero linhas e nao levanta erro.
+    if (error) {
+      expect(error.code).toBe(RLS_VIOLATION);
+    } else {
+      expect(alteradas ?? []).toHaveLength(0);
+    }
+
+    const { data: depois } = await admin
+      .from("contact")
+      .select("name, cpf, notes")
+      .eq("id", contatoA)
+      .single()
+      .throwOnError();
+    expect(depois).toEqual(antes);
+  });
+
+  it("profissional AINDA cria paciente: o INSERT é ato de agenda, não de cadastro", async () => {
+    const profissional = await logado(`leads-profissional-${sufixo}@teste.dev`);
+    const { data: criado, error } = await profissional
+      .from("contact")
+      .insert({
+        clinic_id: clinicaA,
+        phone_e164: "+5584970000003",
+        name: "Paciente do Profissional",
+        kind: "paciente",
+      })
+      .select("id")
+      .single();
+    expect(error).toBeNull();
+
+    const { data: gravado } = await admin
+      .from("contact")
+      .select("name")
+      .eq("id", criado!.id)
+      .single()
+      .throwOnError();
+    expect(gravado?.name).toBe("Paciente do Profissional");
+  });
+
+  it("recepção AINDA registra consentimento e edita a ficha", async () => {
+    const recepcao = await logado(`leads-recepcao-${sufixo}@teste.dev`);
+    const { error: erroConsent } = await recepcao
+      .from("contact_consent")
+      .insert({
+        clinic_id: clinicaA,
+        contact_id: contatoA,
+        channel: "whatsapp",
+        source: "recepcao",
+        evidence: "Autorizou de novo na recepção, por escrito",
+      });
+    expect(erroConsent).toBeNull();
+    expect(await vigente()).toBe(true);
+
+    const { data: alteradas, error: erroUpdate } = await recepcao
+      .from("contact")
+      .update({ notes: "Prefere horário pela manhã" })
+      .eq("id", contatoA)
+      .select("id");
+    expect(erroUpdate).toBeNull();
+    expect(alteradas).toHaveLength(1);
+
+    const { data: gravado } = await admin
+      .from("contact")
+      .select("notes")
+      .eq("id", contatoA)
+      .single()
+      .throwOnError();
+    expect(gravado?.notes).toBe("Prefere horário pela manhã");
+  });
+});

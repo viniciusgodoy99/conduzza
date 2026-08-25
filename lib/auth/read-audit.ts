@@ -2,6 +2,8 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { createAdminClient } from "@/lib/supabase/admin";
+
 // Trilha de LEITURA de dado de paciente (regra 3.1 do CLAUDE.md: toda leitura
 // de dado de paciente por usuario humano vai para audit_log). Duas
 // granularidades: por ABERTURA DE TELA (agenda do dia, inbox, lista de leads),
@@ -16,32 +18,50 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // Na carga de pagina nao bloqueia a renderizacao (chamada sem await); na
 // abertura de ficha e aguardada, para a linha existir antes de o dado sair do
 // servidor. Um erro de auditoria nunca derruba a tela.
+//
+// Dois clientes de proposito, e a divisao importa:
+// LEITURA de deduplicacao com SERVICE ROLE, porque a unica policy de select de
+// audit_log e "admin e gestor leem a trilha". Com o cliente de sessao, recepcao,
+// profissional e leitura recebiam zero linha SEM erro, o throttle nunca
+// dedupicava e cada carga de tela gravava linha nova: a trilha inundava
+// justamente para quem mais usa o sistema.
+// ESCRITA com o cliente de SESSAO, porque a policy de insert exige
+// user_id = auth.uid(). E isso que impede alguem de forjar trilha alheia, e
+// service role no insert jogaria essa garantia fora.
 
 const JANELA_MS = 5 * 60_000;
 
-export async function auditarLeituraDePaciente(
-  supabase: SupabaseClient,
-  params: {
-    clinicId: string;
-    userId: string;
-    entity:
-      | "agenda_dia"
-      | "inbox"
-      | "historico_agenda"
-      | "leads"
-      | "pacientes"
-      | "ficha_paciente"
-      | "confirmacoes"
-      | "lista_espera";
-    entityId?: string | null;
-  },
-): Promise<void> {
+type Params = {
+  clinicId: string;
+  userId: string;
+  entity:
+    | "agenda_dia"
+    | "inbox"
+    | "historico_agenda"
+    | "leads"
+    | "pacientes"
+    | "ficha_paciente"
+    | "confirmacoes"
+    | "lista_espera";
+  entityId?: string | null;
+};
+
+let leitorDaTrilha: SupabaseClient | null = null;
+
+function clienteDeDeduplicacao(): SupabaseClient {
+  leitorDaTrilha ??= createAdminClient();
+  return leitorDaTrilha;
+}
+
+// Na duvida devolve false e a linha e gravada: linha repetida na trilha e
+// ruido, linha ausente e furo de LGPD.
+async function jaRegistradoNaJanela(
+  params: Params,
+  entityId: string | null,
+): Promise<boolean> {
   try {
-    // Nao repete a leitura do MESMO alvo pelo MESMO usuario dentro da janela:
-    // a recepcao que troca de dia o tempo todo nao gera uma linha por clique.
-    const entityId = params.entityId ?? null;
     const desde = new Date(Date.now() - JANELA_MS).toISOString();
-    let consulta = supabase
+    let consulta = clienteDeDeduplicacao()
       .from("audit_log")
       .select("id")
       .eq("clinic_id", params.clinicId)
@@ -54,8 +74,25 @@ export async function auditarLeituraDePaciente(
     if (entityId !== null) {
       consulta = consulta.eq("entity_id", entityId);
     }
-    const { data: recente } = await consulta.limit(1);
-    if (recente && recente.length > 0) {
+    const { data, error } = await consulta.limit(1);
+    if (error) {
+      return false;
+    }
+    return (data?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function auditarLeituraDePaciente(
+  supabase: SupabaseClient,
+  params: Params,
+): Promise<void> {
+  try {
+    // Nao repete a leitura do MESMO alvo pelo MESMO usuario dentro da janela:
+    // a recepcao que troca de dia o tempo todo nao gera uma linha por clique.
+    const entityId = params.entityId ?? null;
+    if (await jaRegistradoNaJanela(params, entityId)) {
       return;
     }
     await supabase.from("audit_log").insert({

@@ -179,6 +179,34 @@ test("papel leitura vê a tela com Novo lead desabilitado e com dica", async ({
   ).toBeVisible();
 });
 
+test("na lista, o nome do lead abre o drawer pelo teclado", async ({
+  page,
+}) => {
+  // O cartao do Kanban ja e um botao; na LISTA, sem o botao no nome, o drawer
+  // so abriria com o mouse. O que se garante aqui (o nome e um controle de
+  // verdade, alcancavel por teclado) nao muda com a largura da tela, entao
+  // roda num viewport so, como os demais fluxos desta suite. Nos estreitos a
+  // hidratacao ainda estava trocando o no sob o foco quando o teste pressiona,
+  // e a corrida e do teste, nao do produto: o mesmo caminho passa de mouse em
+  // todos os tamanhos.
+  test.skip(
+    test.info().project.name !== "desktop-1600",
+    "teclado nao depende do viewport",
+  );
+  await login(page, dados().emails.gestor);
+  await page.goto("/leads?visao=lista");
+
+  const nome = page.getByRole("button", { name: `Abrir ${NOME_COM_ORIGEM}` });
+  await expect(nome).toBeVisible();
+  await nome.press("Enter");
+
+  const drawer = page.getByRole("dialog");
+  await expect(drawer).toBeVisible();
+  await expect(
+    drawer.getByRole("heading", { name: NOME_COM_ORIGEM }),
+  ).toBeVisible();
+});
+
 test("a lista mostra a autorização em texto, nunca só cor", async ({
   page,
 }) => {

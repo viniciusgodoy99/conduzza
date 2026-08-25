@@ -101,19 +101,30 @@ export function BarraComparecimento({
   );
 }
 
-/** Barra de sessoes de um pacote: usadas contra contratadas. */
+/**
+ * Barra de sessoes de um pacote: usadas contra contratadas. Pacote fora da
+ * validade nao tem saldo para desenhar, entao a barra fica no trilho vazio e
+ * quem le em voz alta ouve que venceu; o historico de uso continua em texto
+ * na linha de baixo.
+ */
 export function BarraSessoes({
   usadas,
   total,
+  vencida = false,
 }: {
   usadas: number;
   total: number;
+  vencida?: boolean;
 }) {
-  const proporcao = total > 0 ? Math.min(usadas / total, 1) : 0;
+  const proporcao = vencida || total <= 0 ? 0 : Math.min(usadas / total, 1);
   return (
     <span
       role="img"
-      aria-label={`${usadas} de ${total} ${plural(total, "sessão usada", "sessões usadas")}`}
+      aria-label={
+        vencida
+          ? "Pacote vencido, sem sessões para usar"
+          : `${usadas} de ${total} ${plural(total, "sessão usada", "sessões usadas")}`
+      }
       className="block h-1.5 overflow-hidden rounded-full bg-surface-4"
     >
       <span

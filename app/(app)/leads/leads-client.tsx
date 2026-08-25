@@ -191,7 +191,10 @@ export function LeadsClient({
           aoLimpar={limparFiltros}
         />
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {telaEstreita ? null : (
+          {/* Some por CSS, nao por estado: o estado de tela estreita so fica
+              pronto DEPOIS da montagem, e trocar o DOM naquele instante
+              derrubava o foco de quem navega por teclado. */}
+          <div className="hidden lg:contents">
             <div
               role="group"
               aria-label="Modo de exibição"
@@ -220,7 +223,7 @@ export function LeadsClient({
                 </button>
               ))}
             </div>
-          )}
+          </div>
           <BotaoProtegido
             podeEditar={podeEditar}
             dica={dica}

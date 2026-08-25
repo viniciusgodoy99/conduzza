@@ -5,13 +5,17 @@ import {
   etiquetasDoPaciente,
   filtrarPacientes,
   indicadoresDe,
+  pacoteVencido,
   porcentagemDeComparecimento,
+  saldoDeSessoes,
+  sessoesRestantes,
   type ConsultaAgregavel,
   type PacienteFiltravel,
 } from "@/lib/domain/pacientes-ui";
 
-// Aceite da Tela 9: filtros da barra, indicadores dos cartoes e etiquetas
-// derivadas. As fronteiras (2 faltas, 90 dias) sao as de etiquetas.ts.
+// Aceite da Tela 9: filtros da barra, indicadores dos cartoes, etiquetas
+// derivadas e saldo de pacote. O filtro "Com falta" comeca em 1 falta; a
+// etiqueta "Risco de falta" so em 2 (etiquetas.ts). Sao regras diferentes.
 
 const DIA_MS = 24 * 60 * 60 * 1000;
 const agora = new Date("2026-08-25T12:00:00Z");
@@ -39,28 +43,33 @@ describe("filtrarPacientes", () => {
   });
 
   it("comFalta usa total_faltou, nao no_show_count", () => {
-    const uma = paciente({ total_faltou: 1 });
+    const semFalta = paciente({ total_faltou: 0 });
     const duas = paciente({ total_faltou: 2 });
-    expect(filtrarPacientes([uma, duas], { comFalta: true }, agora)).toEqual([
-      duas,
-    ]);
+    expect(
+      filtrarPacientes([semFalta, duas], { comFalta: true }, agora),
+    ).toEqual([duas]);
   });
 
-  it("fronteira exata de 2 faltas entra no filtro; 1 falta fica de fora", () => {
+  it("uma falta entra no filtro, mas nao ganha a etiqueta de risco", () => {
+    const uma = paciente({ total_faltou: 1 });
+    expect(filtrarPacientes([uma], { comFalta: true }, agora)).toEqual([uma]);
+    expect(etiquetasDoPaciente(uma, agora)).toEqual([]);
+  });
+
+  it("duas faltas entram no filtro e ganham a etiqueta de risco", () => {
+    const duas = paciente({ total_faltou: 2 });
+    expect(filtrarPacientes([duas], { comFalta: true }, agora)).toEqual([duas]);
+    expect(etiquetasDoPaciente(duas, agora)).toEqual(["risco_de_falta"]);
+  });
+
+  it("zero falta fica de fora do filtro", () => {
     expect(
       filtrarPacientes(
-        [paciente({ total_faltou: 1 })],
+        [paciente({ total_faltou: 0 })],
         { comFalta: true },
         agora,
       ),
     ).toEqual([]);
-    expect(
-      filtrarPacientes(
-        [paciente({ total_faltou: 2 })],
-        { comFalta: true },
-        agora,
-      ),
-    ).toHaveLength(1);
   });
 
   it("inativos: exatos 90 dias NAO entra, um ms alem entra", () => {
@@ -296,6 +305,74 @@ describe("etiquetasDoPaciente", () => {
         agora,
       ),
     ).toEqual(["risco_de_falta"]);
+  });
+});
+
+describe("saldo de pacote", () => {
+  const HOJE = "2026-08-25";
+  const pacote = (parcial: {
+    sessions_total?: number;
+    sessions_used?: number;
+    expires_at?: string | null;
+  }) => ({
+    sessions_total: 10,
+    sessions_used: 4,
+    expires_at: null as string | null,
+    ...parcial,
+  });
+
+  it("pacote sem validade nunca vence", () => {
+    const semValidade = pacote({ expires_at: null });
+    expect(pacoteVencido(semValidade, HOJE)).toBe(false);
+    expect(sessoesRestantes(semValidade, HOJE)).toBe(6);
+  });
+
+  it("vence no dia seguinte ao da validade: o proprio dia ainda vale", () => {
+    const hoje = pacote({ expires_at: HOJE });
+    expect(pacoteVencido(hoje, HOJE)).toBe(false);
+    expect(sessoesRestantes(hoje, HOJE)).toBe(6);
+
+    const ontem = pacote({ expires_at: "2026-08-24" });
+    expect(pacoteVencido(ontem, HOJE)).toBe(true);
+  });
+
+  it("pacote vencido nao tem sessao restante, mesmo sem nenhuma usada", () => {
+    const vencido = pacote({ sessions_used: 0, expires_at: "2026-08-24" });
+    expect(sessoesRestantes(vencido, HOJE)).toBe(0);
+  });
+
+  it("pacote gasto alem do total nao devolve numero negativo", () => {
+    expect(
+      sessoesRestantes(pacote({ sessions_total: 3, sessions_used: 5 }), HOJE),
+    ).toBe(0);
+  });
+
+  it("o saldo da ficha soma so o que esta na validade", () => {
+    const lista = [
+      pacote({
+        sessions_total: 10,
+        sessions_used: 4,
+        expires_at: "2026-12-31",
+      }),
+      pacote({ sessions_total: 5, sessions_used: 0, expires_at: "2026-08-24" }),
+      pacote({ sessions_total: 2, sessions_used: 0, expires_at: null }),
+    ];
+    expect(saldoDeSessoes(lista, HOJE)).toBe(8);
+  });
+
+  it("so pacote vencido: a ficha diz zero, igual a lista", () => {
+    expect(
+      saldoDeSessoes(
+        [pacote({ sessions_used: 0, expires_at: "2026-01-01" })],
+        HOJE,
+      ),
+    ).toBe(0);
+  });
+
+  it("o dia civil da clinica manda: a virada muda o resultado", () => {
+    const pacoteDoDia = pacote({ expires_at: "2026-08-25" });
+    expect(pacoteVencido(pacoteDoDia, "2026-08-25")).toBe(false);
+    expect(pacoteVencido(pacoteDoDia, "2026-08-26")).toBe(true);
   });
 });
 

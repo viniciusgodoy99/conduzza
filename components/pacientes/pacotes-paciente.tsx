@@ -29,17 +29,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { pacoteVencido, sessoesRestantes } from "@/lib/domain/pacientes-ui";
 import type { SaldoDePacote } from "@/lib/queries/pacientes";
 
 // Saldo de pacote do paciente. A validade e comparada em DIA CIVIL da clinica
 // (regra 3.6), do mesmo jeito que a RPC pacientes_resumo compara: pacote
 // vendido com 90 dias vence no dia local certo, nao no dia UTC do servidor.
-// Vencido aparece com icone, rotulo e cor, nunca so cor.
+// Vencido aparece com icone, rotulo e cor, nunca so cor, e conta ZERO sessao
+// restante: a lista e a ficha nao podem dizer coisas diferentes sobre o mesmo
+// pacote.
 
 export type PacoteVendavel = { id: string; rotulo: string };
 
-function Vencimento({ dia, hoje }: { dia: string; hoje: string }) {
-  const vencido = dia < hoje;
+function Vencimento({ dia, vencido }: { dia: string; vencido: boolean }) {
   return (
     <span
       className="flex items-center gap-1.5 text-xs"
@@ -133,17 +135,20 @@ export function PacotesPaciente({
       ) : (
         <ul className="grid gap-3">
           {pacotes.map((pacote) => {
-            const restantes = Math.max(
-              pacote.sessions_total - pacote.sessions_used,
-              0,
-            );
+            const vencido = pacoteVencido(pacote, hojeNaClinica);
+            const restantes = sessoesRestantes(pacote, hojeNaClinica);
             return (
               <li key={pacote.id} className="grid gap-1.5">
                 <span className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-sm font-medium">
                     {pacote.procedure_name ?? "Pacote"}
                   </span>
-                  <span className="font-mono text-[13px] tabular-nums">
+                  <span
+                    className="font-mono text-[13px] tabular-nums"
+                    style={
+                      vencido ? { color: "var(--text-tertiary)" } : undefined
+                    }
+                  >
                     {restantes} {plural(restantes, "sessão", "sessões")}{" "}
                     {plural(restantes, "restante", "restantes")}
                   </span>
@@ -151,6 +156,7 @@ export function PacotesPaciente({
                 <BarraSessoes
                   usadas={pacote.sessions_used}
                   total={pacote.sessions_total}
+                  vencida={vencido}
                 />
                 <span className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-secondary">
                   <span>
@@ -162,7 +168,7 @@ export function PacotesPaciente({
                     )}
                   </span>
                   {pacote.expires_at ? (
-                    <Vencimento dia={pacote.expires_at} hoje={hojeNaClinica} />
+                    <Vencimento dia={pacote.expires_at} vencido={vencido} />
                   ) : null}
                 </span>
               </li>

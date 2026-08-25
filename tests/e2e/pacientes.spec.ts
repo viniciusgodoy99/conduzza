@@ -48,6 +48,35 @@ test("paciente com 2 faltas recebe a etiqueta sozinho", async ({ page }) => {
   await expect(cartao(page, "Faltas")).toContainText("2");
 });
 
+test("a ficha abre pelo teclado: o nome do paciente é um link", async ({
+  page,
+}) => {
+  // Sem isto a ficha so abriria com o mouse (clique na linha da tabela), e
+  // quem navega por teclado ou usa leitor de tela nao chegaria nela.
+  const d = dados();
+  await login(page, d.emails.gestor);
+  await page.goto("/pacientes");
+
+  const link = page.getByRole("link", {
+    name: `Abrir a ficha de ${NOME_COM_FALTAS}`,
+  });
+  await expect(link).toHaveAttribute(
+    "href",
+    `/pacientes/${d.pacientes.comFaltasId}`,
+  );
+
+  await link.focus();
+  await expect(link).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL(
+    new RegExp(`/pacientes/${d.pacientes.comFaltasId}`),
+  );
+  await expect(
+    page.getByRole("heading", { name: NOME_COM_FALTAS, level: 1 }),
+  ).toBeVisible();
+});
+
 test("a ficha mostra os três indicadores e a linha do tempo das consultas", async ({
   page,
 }) => {
