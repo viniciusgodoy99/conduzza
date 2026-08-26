@@ -29,7 +29,10 @@ const DECLARACAO: DeclaracaoDeConsentimento = {
 async function criarClinica(nome: string): Promise<string> {
   const { data } = await admin
     .from("clinic")
-    .insert({ name: `Importa ${nome} ${sufixo}`, slug: `imp-${nome}-${sufixo}` })
+    .insert({
+      name: `Importa ${nome} ${sufixo}`,
+      slug: `imp-${nome}-${sufixo}`,
+    })
     .select("id")
     .single()
     .throwOnError();

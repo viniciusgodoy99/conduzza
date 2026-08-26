@@ -140,7 +140,11 @@ function Linha({
       <span className="w-12 shrink-0 font-mono text-[13px] tabular-nums">
         {horaLocal(consulta.starts_at, timezone)}
       </span>
-      <ContactAvatar name={consulta.contact?.name ?? null} phone={telefone ?? ""} size={32} />
+      <ContactAvatar
+        name={consulta.contact?.name ?? null}
+        phone={telefone ?? ""}
+        size={32}
+      />
       <span className="flex min-w-0 flex-1 basis-40 items-center gap-1.5">
         {temRiscoDeFalta(faltas) && IconeDeRisco ? (
           <Tooltip>

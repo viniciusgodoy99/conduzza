@@ -19,7 +19,9 @@ describe("parseCsv", () => {
   });
 
   it("detecta vírgula quando é o delimitador dominante", () => {
-    const { delimitador, linhas } = parseCsv("name,phone\nAna,+5585999990002\n");
+    const { delimitador, linhas } = parseCsv(
+      "name,phone\nAna,+5585999990002\n",
+    );
     expect(delimitador).toBe(",");
     expect(linhas[1]).toEqual(["Ana", "+5585999990002"]);
   });

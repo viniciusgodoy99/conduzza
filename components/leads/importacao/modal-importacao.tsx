@@ -183,9 +183,7 @@ export function ModalImportacao({
               <span
                 className={cn(
                   "text-sm",
-                  indice === passo
-                    ? "font-medium"
-                    : "text-text-secondary",
+                  indice === passo ? "font-medium" : "text-text-secondary",
                 )}
               >
                 {rotulo}

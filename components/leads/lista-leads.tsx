@@ -45,8 +45,7 @@ export function ListaLeads({
 }) {
   const columns = useMemo<ColumnDef<LeadResumo>[]>(() => {
     const todosMarcados =
-      leads.length > 0 &&
-      leads.every((lead) => selecionados.includes(lead.id));
+      leads.length > 0 && leads.every((lead) => selecionados.includes(lead.id));
     return [
       {
         id: "selecao",
@@ -63,10 +62,7 @@ export function ListaLeads({
           />
         ),
         cell: ({ row }) => (
-          <span
-            className="flex"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <span className="flex" onClick={(e) => e.stopPropagation()}>
             <Checkbox
               aria-label={`Selecionar ${row.original.name ?? row.original.phone_e164}`}
               checked={selecionados.includes(row.original.id)}

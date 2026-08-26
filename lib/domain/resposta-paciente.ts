@@ -14,10 +14,7 @@
 // 'nao_reconhecida'.
 
 export type IntencaoDoPaciente =
-  | "confirmar"
-  | "remarcar"
-  | "cancelar"
-  | "nao_reconhecida";
+  "confirmar" | "remarcar" | "cancelar" | "nao_reconhecida";
 
 // Joinha e sinais de certo. Sozinhos valem confirmacao; acompanhados de texto,
 // quem decide e o texto.

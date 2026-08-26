@@ -52,8 +52,8 @@ export function PassoConsentimento({
   return (
     <div className="grid gap-4">
       <p className="text-sm text-text-secondary">
-        Como estas pessoas autorizaram receber mensagens da clínica no
-        WhatsApp? A declaração fica registrada junto de cada contato.
+        Como estas pessoas autorizaram receber mensagens da clínica no WhatsApp?
+        A declaração fica registrada junto de cada contato.
       </p>
 
       <div
@@ -118,8 +118,8 @@ export function PassoConsentimento({
           aria-hidden
         />
         <p className="text-sm">
-          Disparar mensagem para quem não autorizou derruba a nota do seu
-          número no WhatsApp e pode travar os envios da clínica inteira.
+          Disparar mensagem para quem não autorizou derruba a nota do seu número
+          no WhatsApp e pode travar os envios da clínica inteira.
         </p>
       </div>
     </div>

@@ -75,7 +75,9 @@ export function ModalNovoLead({
     }
     const telefoneE164 = normalizarTelefone(telefone);
     if (!telefoneE164) {
-      setErro("Informe um telefone válido com DDD, por exemplo (85) 99999-0000.");
+      setErro(
+        "Informe um telefone válido com DDD, por exemplo (85) 99999-0000.",
+      );
       return;
     }
     setSalvando(true);

@@ -121,7 +121,5 @@ test("o alerta sobre a nota do número aparece no passo da declaração", async 
 
   const aviso = dialogo.getByRole("note");
   await expect(aviso).toBeVisible();
-  await expect(aviso).toContainText(
-    "derruba a nota do seu número no WhatsApp",
-  );
+  await expect(aviso).toContainText("derruba a nota do seu número no WhatsApp");
 });

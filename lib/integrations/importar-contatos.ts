@@ -18,10 +18,7 @@ import {
 // (nome apenas quando o cadastro esta sem nome).
 
 export type OpcaoDeclaracao =
-  | "formulario_site"
-  | "anuncio_ctwa"
-  | "recepcao"
-  | "outra";
+  "formulario_site" | "anuncio_ctwa" | "recepcao" | "outra";
 
 export type DeclaracaoDeConsentimento = {
   opcao: OpcaoDeclaracao;

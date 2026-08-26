@@ -81,8 +81,11 @@ export function FiltrosLeads({
     .map(([id, nome]) => ({ value: id, label: nome }))
     .sort((a, b) => a.label.localeCompare(b.label));
   const temAtivo = Boolean(
-    valores.etapa || valores.origem || valores.resp || valores.de ||
-      valores.ate,
+    valores.etapa ||
+    valores.origem ||
+    valores.resp ||
+    valores.de ||
+    valores.ate,
   );
 
   return (

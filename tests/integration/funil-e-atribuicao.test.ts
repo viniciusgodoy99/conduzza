@@ -492,7 +492,11 @@ describe("correções da revisão: descadastro, coerência de clínica e token t
     const segunda = await ingerirMensagemRecebida(
       admin,
       clinicId,
-      evento(telefone, `fun:${sufixo}:r2`, "Por que voces pararam de responder?"),
+      evento(
+        telefone,
+        `fun:${sufixo}:r2`,
+        "Por que voces pararam de responder?",
+      ),
     );
     expect(segunda.error).toBeNull();
     expect(segunda.data?.inserted).toBe(true);
@@ -569,7 +573,11 @@ describe("correções da revisão: descadastro, coerência de clínica e token t
     await ingerirMensagemRecebida(
       admin,
       clinicId,
-      evento("+5584971500003", `fun:${sufixo}:t3`, "Vim pelo anuncio [#H5N7P2]"),
+      evento(
+        "+5584971500003",
+        `fun:${sufixo}:t3`,
+        "Vim pelo anuncio [#H5N7P2]",
+      ),
     );
     const origem = await origemDe(contatoId);
     expect(origem.source_channel).toBe("trafego_pago");

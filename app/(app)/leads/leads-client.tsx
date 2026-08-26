@@ -86,9 +86,8 @@ export function LeadsClient({
     staleTime: 30_000,
   });
 
-  const visao: Visao = searchParams.get("visao") === "lista"
-    ? "lista"
-    : "kanban";
+  const visao: Visao =
+    searchParams.get("visao") === "lista" ? "lista" : "kanban";
   const visaoEfetiva: Visao = telaEstreita ? "lista" : visao;
 
   const valores: ValoresFiltros = {

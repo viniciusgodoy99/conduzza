@@ -60,7 +60,8 @@ export function preMapearColunas(cabecalho: string[]): MapeamentoDeColunas {
   const ocupadas = new Set<number>();
   for (const { campo, padrao } of PALPITES) {
     const indice = cabecalho.findIndex(
-      (titulo, i) => !ocupadas.has(i) && padrao.test(normalizarCabecalho(titulo)),
+      (titulo, i) =>
+        !ocupadas.has(i) && padrao.test(normalizarCabecalho(titulo)),
     );
     if (indice >= 0) {
       mapeamento[campo] = indice;

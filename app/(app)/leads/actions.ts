@@ -116,8 +116,7 @@ async function auditar(
 // que a leitura deixa rastro.
 
 export type DetalheDoContatoResult =
-  | { ok: true; detalhe: LeadDetalhe }
-  | { ok: false; error: string };
+  { ok: true; detalhe: LeadDetalhe } | { ok: false; error: string };
 
 export async function abrirDetalheDoContatoAction(
   contactId: unknown,
@@ -567,7 +566,10 @@ export async function venderPacoteAction(
   if (!pacoteRow) {
     return { ok: false, error: "Pacote não encontrado." };
   }
-  const pacote = pacoteRow as { sessions: number; validity_days: number | null };
+  const pacote = pacoteRow as {
+    sessions: number;
+    validity_days: number | null;
+  };
 
   // Validade em DIA CIVIL do fuso da clinica (regra 3.6): vendido hoje com 90
   // dias vence no dia local correto, nao no dia UTC.

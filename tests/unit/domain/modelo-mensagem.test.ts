@@ -21,9 +21,9 @@ const VALORES = {
 
 describe("renderizarModelo", () => {
   it("substitui as chaves conhecidas", () => {
-    expect(renderizarModelo("Olá, {{nome}}! Aqui é da {{clinica}}.", VALORES)).toBe(
-      "Olá, Ana! Aqui é da Clínica Sorriso.",
-    );
+    expect(
+      renderizarModelo("Olá, {{nome}}! Aqui é da {{clinica}}.", VALORES),
+    ).toBe("Olá, Ana! Aqui é da Clínica Sorriso.");
   });
 
   it("aceita espaco em volta da chave", () => {
@@ -64,8 +64,7 @@ describe("renderizarModelo", () => {
   });
 
   it("nunca deixa chave sobrando no texto que vai ao paciente", () => {
-    const modelo =
-      "Oi, {{nome}}. Valor: {{desconhecido}} e um {{ meio aberto.";
+    const modelo = "Oi, {{nome}}. Valor: {{desconhecido}} e um {{ meio aberto.";
     const texto = renderizarModelo(modelo, VALORES);
     expect(texto).not.toContain("{{");
     expect(texto).not.toContain("}}");

@@ -52,10 +52,7 @@ export type Attribution = {
 export const TOKEN_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 export const TOKEN_LENGTH = 6;
 
-const TOKEN_REGEX = new RegExp(
-  `#([${TOKEN_ALPHABET}]{${TOKEN_LENGTH}})`,
-  "i",
-);
+const TOKEN_REGEX = new RegExp(`#([${TOKEN_ALPHABET}]{${TOKEN_LENGTH}})`, "i");
 
 /** Minusculas, sem acentos (NFD), espacos colapsados e trim. */
 export function normalizarTexto(texto: string): string {

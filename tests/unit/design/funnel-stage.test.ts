@@ -38,8 +38,12 @@ describe("as 6 etapas do funil", () => {
 
   it("compareceu do funil usa o MESMO ícone e tom do compareceu da agenda", () => {
     // Mesma semantica, mesma forma, mesma cor: consistencia intencional.
-    expect(FUNNEL_STAGE.compareceu.icon).toBe(APPOINTMENT_STATUS.compareceu.icon);
-    expect(FUNNEL_STAGE.compareceu.tone).toBe(APPOINTMENT_STATUS.compareceu.tone);
+    expect(FUNNEL_STAGE.compareceu.icon).toBe(
+      APPOINTMENT_STATUS.compareceu.icon,
+    );
+    expect(FUNNEL_STAGE.compareceu.tone).toBe(
+      APPOINTMENT_STATUS.compareceu.tone,
+    );
   });
 });
 

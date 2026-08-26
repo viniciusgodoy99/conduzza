@@ -136,7 +136,10 @@ export function ListaFaltas({
                     className="size-10"
                     asChild
                   >
-                    <a href={`tel:${telefone}`} aria-label={`Ligar para ${nome}`}>
+                    <a
+                      href={`tel:${telefone}`}
+                      aria-label={`Ligar para ${nome}`}
+                    >
                       <Phone strokeWidth={1.5} className="size-4" aria-hidden />
                     </a>
                   </Button>
@@ -157,7 +160,12 @@ export function ListaFaltas({
                   </Button>
                 ) : (
                   <DisabledWithHint hint={dicaSemPermissao}>
-                    <Button variant="outline" size="sm" className="h-10" disabled>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10"
+                      disabled
+                    >
                       <CalendarClock
                         strokeWidth={1.5}
                         className="size-4"
@@ -175,8 +183,8 @@ export function ListaFaltas({
       {/* Honestidade: a regua de recuperacao existe no banco (D+0 e D+2) mas
           so pode ser ligada na tela de Automacoes, que ainda nao chegou. */}
       <p className="border-t px-3 py-2 text-xs text-text-secondary">
-        O contato automático depois da falta é a régua de recuperação (no dia
-        da falta e dois dias depois). Ela é ligada na tela de Automações.
+        O contato automático depois da falta é a régua de recuperação (no dia da
+        falta e dois dias depois). Ela é ligada na tela de Automações.
       </p>
     </div>
   );

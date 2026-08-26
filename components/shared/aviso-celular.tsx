@@ -9,7 +9,7 @@ export function AvisoCelular() {
   return (
     <div
       role="note"
-      className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 md:hidden"
+      className="bg-surface flex items-center gap-2 rounded-lg border border-border px-3 py-2 md:hidden"
     >
       <MonitorSmartphone
         strokeWidth={1.5}

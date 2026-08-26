@@ -220,7 +220,9 @@ describe("a clínica nova já nasce com as réguas padrão", () => {
   it("confirmação e pós falta existem, desligadas e sem janela de envio", async () => {
     const { data, error } = await sessoes.admin
       .from("cadence")
-      .select("kind, name, active, send_window_start, send_window_end, send_weekdays")
+      .select(
+        "kind, name, active, send_window_start, send_window_end, send_weekdays",
+      )
       .eq("clinic_id", clinicaA)
       .order("kind", { ascending: true });
     expect(error).toBeNull();
@@ -241,9 +243,12 @@ describe("a clínica nova já nasce com as réguas padrão", () => {
       .from("cadence_step")
       .select("cadence_id, offset_minutes")
       .eq("clinic_id", clinicaA);
-    const daConfirmacao = (data ?? []).filter((p) => p.cadence_id === cadenciaA);
-    expect(daConfirmacao.map((p) => p.offset_minutes).sort((a, b) => a - b))
-      .toEqual([-4320, -1440, -180]);
+    const daConfirmacao = (data ?? []).filter(
+      (p) => p.cadence_id === cadenciaA,
+    );
+    expect(
+      daConfirmacao.map((p) => p.offset_minutes).sort((a, b) => a - b),
+    ).toEqual([-4320, -1440, -180]);
     expect(data).toHaveLength(5);
   });
 });

@@ -160,7 +160,11 @@ describe("atribuirOrigem: palavra-chave", () => {
 
 describe("atribuirOrigem: precedencia num corpo que casa os tres", () => {
   const corpo = "Quero saber sobre botox [#AB2CDE]";
-  const regraToken = regra({ id: "t", token: "AB2CDE", channel: "trafego_pago" });
+  const regraToken = regra({
+    id: "t",
+    token: "AB2CDE",
+    channel: "trafego_pago",
+  });
   const regraMensagem = regra({
     id: "m",
     channel: "redes_sociais",

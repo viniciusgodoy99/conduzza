@@ -48,7 +48,10 @@ const AUTOR_LABEL: Record<MensagemDoLead["author"], string> = {
   sistema: "Sistema",
 };
 
-function Linha({ rotulo, children }: {
+function Linha({
+  rotulo,
+  children,
+}: {
   rotulo: string;
   children: React.ReactNode;
 }) {

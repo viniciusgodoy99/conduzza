@@ -38,7 +38,11 @@ const LINHAS_NA_PREVIA = 20;
 
 const numero = new Intl.NumberFormat("pt-BR");
 
-type LinhaInvalida = { numeroDaLinha: number; colunas: string[]; motivo: string };
+type LinhaInvalida = {
+  numeroDaLinha: number;
+  colunas: string[];
+  motivo: string;
+};
 
 type Totais = {
   importados: number;
@@ -320,7 +324,11 @@ export function PassoPrevia({
       ) : null}
 
       {validas.length === 0 ? (
-        <p role="alert" className="text-sm" style={{ color: "var(--alert-text)" }}>
+        <p
+          role="alert"
+          className="text-sm"
+          style={{ color: "var(--alert-text)" }}
+        >
           Nenhuma linha válida para importar. Volte e confira se a coluna de
           telefone está certa.
         </p>
@@ -380,7 +388,11 @@ export function PassoPrevia({
           }}
         >
           <p className="flex items-center gap-2 text-sm font-medium">
-            <CircleX strokeWidth={1.5} className="size-4 shrink-0" aria-hidden />
+            <CircleX
+              strokeWidth={1.5}
+              className="size-4 shrink-0"
+              aria-hidden
+            />
             {fase.mensagem}
           </p>
           <p className="text-xs">
