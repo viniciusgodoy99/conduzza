@@ -154,30 +154,37 @@ Abas Persona, Habilidades, Conhecimento, Regras e Limites, Versões. Simulador a
 
 ## FASE 4. Leads, Pacientes e Réguas
 
-### [ ] 4.1 Schema de contato e consentimento `M`
+**Mudança de rumo (25/08/2026).** A Fase 3 (agente de IA) foi **adiada** por decisão do dono, que precisava liberar o sistema para clínicas testarem antes do agente existir. A Fase 4 foi construída sem ele, com estes degrades registrados:
+
+- **Atribuição de origem (4.2):** três mecanismos determinísticos (código no link, mensagem padrão do anúncio, palavra-chave). O quarto mecanismo previsto na spec 10.1, a pergunta da IA, fica para a fase do agente. O aceite não depende dele.
+- **Resposta do paciente (4.7):** interpretada por regra determinística em português, aceitando tanto o botão quanto o número do texto de reserva. Resposta que não se reconhece vai para a recepção, que é o comportamento seguro.
+- **Texto escrito pela IA (4.8):** `cadence_step.use_ai` existe no schema mas o banco **recusa** o valor verdadeiro, porque texto de modelo de linguagem sem o filtro de conformidade violaria a regra 3.2 do CLAUDE.md. O cartão aparece na tela desabilitado, com a dica de que chega com o agente.
+- **Lista de espera conversada pela IA (4.9):** a entrada na fila é da recepção ou do paciente respondendo, e a reoferta é mecânica de fila, com autoria `sistema`.
+
+### [x] 4.1 Schema de contato e consentimento `M`
 `contact`, `contact_consent`, `package_balance`, com RLS e atribuição de origem.
 
-### [ ] 4.2 Captura de origem `M`
+### [x] 4.2 Captura de origem `M`
 `lib/domain/attribution.ts`: parâmetro de link click-to-WhatsApp, mensagem padrão do anúncio, palavra-chave, e pergunta da IA como último recurso. Taxonomia de 8 canais no padrão HubSpot.
 **Aceite:** lead vindo de anúncio com parâmetro chega com campanha preenchida sem ninguém digitar nada.
 
-### [ ] 4.3 Leads (Tela 4) `G`
+### [x] 4.3 Leads (Tela 4) `G`
 Lista e Kanban com toggle preservando filtro. 6 etapas incluindo Compareceu. Cartão com **exatamente 5 elementos**. Badge de tempo com cor, ícone e rótulo. Ordenação por próxima ação. Motivo de perda obrigatório. Ações em massa.
 **Aceite:** arrastar para Perdido exige motivo. Cartão não mostra rótulo de campo vazio.
 
-### [ ] 4.4 Importação com consentimento `M`
+### [x] 4.4 Importação com consentimento `M`
 Upload, mapeamento de colunas, pré-visualização e **passo obrigatório de declaração de consentimento** com aviso sobre quality rating. Botão desabilitado sem essa declaração.
 **Aceite:** é impossível importar base sem declarar a origem da autorização.
 
-### [ ] 4.5 Pacientes e ficha (Tela 9) `M`
+### [x] 4.5 Pacientes e ficha (Tela 9) `M`
 Lista, ficha com linha do tempo, indicadores, etiqueta automática de risco (2 ou mais faltas), etiqueta de inativo, saldo de pacote, estado do consentimento com botão de descadastro.
 **Aceite:** paciente com 2 faltas recebe a etiqueta sozinho.
 
-### [ ] 4.6 Motor de réguas `G`
+### [x] 4.6 Motor de réguas `G`
 `cadence`, `cadence_step`, `cadence_run`, `job_queue`, `pg_cron`, Edge Function `job-worker` com `FOR UPDATE SKIP LOCKED`. Os 6 passos de verificação da seção 5 de `docs/03`.
 **Aceite:** régua não duplica envio, respeita janela de envio, pula quem não tem consentimento e para na condição de parada. Teste com dois workers simultâneos.
 
-### [ ] 4.7 Confirmação de consulta (Tela 2) `G`
+### [x] 4.7 Confirmação de consulta (Tela 2) `G`
 Régua padrão de 72h, 24h e 3h. **Template com botões de resposta rápida.** Exceção por procedimento. Régua reforçada para quem tem histórico de falta. Painel do dia seguinte com bento, o card de Pendentes como herói. Aba de Faltas de hoje.
 **Aceite:** o paciente toca em Confirmar e o status da agenda muda sozinho, com autoria registrada.
 
