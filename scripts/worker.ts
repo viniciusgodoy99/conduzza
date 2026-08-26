@@ -71,6 +71,11 @@ async function main() {
   // so evita acumulo fisico.
   let ultimaLimpezaDeHolds = 0;
 
+  // Planner das reguas (Fase 4.6): materializa os toques devidos e enfileira,
+  // numa transacao so. Carimbo PROPRIO, separado do carimbo dos holds: com um
+  // so, uma passagem lenta atrasaria a outra tarefa.
+  let ultimoPlanejamentoDeReguas = 0;
+
   let ativo = true;
   process.on("SIGINT", () => {
     ativo = false;
@@ -87,6 +92,29 @@ async function main() {
         log.warn("limpeza_de_holds_falhou", {
           error_code: erroHolds.code ?? null,
         });
+      }
+    }
+    if (Date.now() - ultimoPlanejamentoDeReguas > 60_000) {
+      ultimoPlanejamentoDeReguas = Date.now();
+      const { data: plano, error: erroPlano } =
+        await admin.rpc("planejar_reguas");
+      if (erroPlano) {
+        // Falha aqui nao derruba o laco: o proximo minuto tenta de novo e o
+        // horizonte do planner (30 minutos atras) recupera o que ficou.
+        log.warn("planejamento_de_reguas_falhou", {
+          error_code: erroPlano.code ?? null,
+        });
+      } else {
+        const contas = (plano ?? {}) as {
+          confirmacao?: number;
+          pos_falta?: number;
+        };
+        for (const kind of ["confirmacao", "pos_falta"] as const) {
+          const count = contas[kind] ?? 0;
+          if (count > 0) {
+            log.info("reguas_planejadas", { kind, count });
+          }
+        }
       }
     }
     let processados = 0;

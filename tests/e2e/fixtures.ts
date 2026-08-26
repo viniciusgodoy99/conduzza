@@ -56,6 +56,14 @@ export type DadosE2E = {
     inativoId: string;
     descadastradoId: string;
   };
+  /** Fase 4: painel da Tela 2 (Confirmações), com o dia padrão em amanhã */
+  confirmacoes: {
+    pendenteId: string;
+    porWhatsappId: string;
+    pelaRecepcaoId: string;
+    canceladaId: string;
+    faltaDeHojeId: string;
+  };
 };
 
 const sufixo = "fixo";
@@ -878,6 +886,93 @@ export async function provisionar(): Promise<DadosE2E> {
     )
     .throwOnError();
 
+  // Tela 2 (Confirmacoes): o dia PADRAO da tela e amanha, entao as quatro
+  // situacoes do painel vivem em amanha. A pendente e da paciente com duas
+  // faltas, que e o que faz aparecer o alerta antes do nome. A falta de HOJE
+  // alimenta a aba secundaria. Horarios escolhidos para nao colidir com a
+  // exclusion constraint por profissional das consultas ja semeadas.
+  const amanhaISO = diaEm(1);
+  const { data: consultasAmanha } = await admin
+    .from("appointment")
+    .insert(
+      [
+        {
+          contato: pacienteComFaltasId,
+          profissional: profJoaoId,
+          vinculo: vinculoEndoParticular,
+          dia: amanhaISO,
+          inicio: "08:00",
+          fim: "08:40",
+          status: "agendado",
+          canal: null,
+        },
+        {
+          contato: contatos.find((c) => c.name === "Roberto Recibo")!.id,
+          profissional: profJoaoId,
+          vinculo: vinculoEndoParticular,
+          dia: amanhaISO,
+          inicio: "09:00",
+          fim: "09:40",
+          status: "confirmado_paciente",
+          canal: "whatsapp",
+        },
+        {
+          contato: contatos.find((c) => c.name === "Camila Áudio")!.id,
+          profissional: profAnaId,
+          vinculo: vinculoDermatoUnimed,
+          dia: amanhaISO,
+          inicio: "10:00",
+          fim: "10:30",
+          status: "confirmado_recepcao",
+          canal: "telefone",
+        },
+        {
+          contato: contatos.find((c) => c.name === "Juliana Dermato")!.id,
+          profissional: profAnaId,
+          vinculo: vinculoDermatoUnimed,
+          dia: amanhaISO,
+          inicio: "11:00",
+          fim: "11:30",
+          status: "cancelado_paciente",
+          canal: null,
+        },
+        {
+          contato: pacienteComPacoteId,
+          profissional: profJoaoId,
+          vinculo: vinculoEndoParticular,
+          dia: diaISO,
+          inicio: "17:00",
+          fim: "17:40",
+          status: "faltou",
+          canal: null,
+        },
+      ].map((linha) => ({
+        ...consultaBase,
+        contact_id: linha.contato,
+        professional_id: linha.profissional,
+        service_link_id: linha.vinculo,
+        starts_at: `${linha.dia}T${linha.inicio}:00-03:00`,
+        ends_at: `${linha.dia}T${linha.fim}:00-03:00`,
+        status: linha.status,
+        confirmation_channel: linha.canal,
+      })),
+    )
+    .select("id, status, starts_at")
+    .throwOnError();
+
+  const consultaDeAmanha = (status: string): string =>
+    consultasAmanha!.find(
+      (c) =>
+        c.status === status && String(c.starts_at).startsWith(amanhaISO),
+    )!.id as string;
+  const confirmacoesPendenteId = consultaDeAmanha("agendado");
+  const confirmacoesPorWhatsappId = consultaDeAmanha("confirmado_paciente");
+  const confirmacoesPelaRecepcaoId = consultaDeAmanha("confirmado_recepcao");
+  const confirmacoesCanceladaId = consultaDeAmanha("cancelado_paciente");
+  const confirmacoesFaltaDeHojeId = consultasAmanha!.find(
+    (c) => c.status === "faltou",
+  )!.id as string;
+
   // Autorizacao ativa nos tres primeiros; a quarta nasce revogada, para a
   // ficha separar "nunca autorizou" de "autorizou e depois cancelou". As datas
   // sao explicitas em todas as linhas pelo mesmo motivo do bloco de contatos.
@@ -943,6 +1038,13 @@ export async function provisionar(): Promise<DadosE2E> {
       comPacoteId: pacienteComPacoteId,
       inativoId: pacienteInativoId,
       descadastradoId: pacienteDescadastradoId,
+    },
+    confirmacoes: {
+      pendenteId: confirmacoesPendenteId,
+      porWhatsappId: confirmacoesPorWhatsappId,
+      pelaRecepcaoId: confirmacoesPelaRecepcaoId,
+      canceladaId: confirmacoesCanceladaId,
+      faltaDeHojeId: confirmacoesFaltaDeHojeId,
     },
   };
 }

@@ -6,6 +6,8 @@ import {
   sendWhatsAppText,
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
+import { espacamentoDeMassaMs } from "./espacamento";
+import { executarPassoDeRegua } from "./regua";
 
 // Worker da job_queue (Etapa B da auditoria de escala). Executa disparo ativo
 // (confirmacao de atendimento, reguas da Fase 4) e download de midia, fora do
@@ -34,19 +36,22 @@ const MIMETYPES_ACEITOS = /^(audio|image|video)\/[\w.+-]+$|^application\/pdf$/;
 export type Job = {
   id: string;
   clinic_id: string;
-  kind: "enviar_mensagem_ativa" | "baixar_midia";
+  kind: "enviar_mensagem_ativa" | "baixar_midia" | "executar_passo_de_regua";
   payload: Record<string, unknown>;
   attempts: number;
   max_attempts: number;
 };
 
-type ResultadoDeJob =
-  { ok: true } | { ok: false; erro: string; definitivo?: boolean };
-
-function espacamentoDeMassaMs(): number {
-  // Especificacao do canal: 10 a 30 segundos entre envios de disparo ativo.
-  return 10_000 + Math.floor(Math.random() * 20_000);
-}
+/**
+ * Resultado de um job. O terceiro braco e o "ainda nao": o toque de regua caiu
+ * FORA da janela de envio da clinica, o que nao e sucesso nem falha. O worker
+ * chama reagendar_job com a data ISO devolvida, e a tentativa NAO e queimada
+ * (fora da janela um toque de 72h morreria em 5 passagens do backoff).
+ */
+export type ResultadoDeJob =
+  | { ok: true }
+  | { ok: false; erro: string; definitivo?: boolean }
+  | { reagendar: string };
 
 async function executarEnvioAtivo(
   admin: SupabaseClient,
@@ -220,6 +225,8 @@ async function executarJob(
       return executarEnvioAtivo(admin, job);
     case "baixar_midia":
       return executarDownloadDeMidia(admin, job);
+    case "executar_passo_de_regua":
+      return executarPassoDeRegua(admin, job);
     default:
       return { ok: false, erro: "tipo_desconhecido", definitivo: true };
   }
@@ -275,6 +282,29 @@ export async function processarLote(
       resultado = await executarJob(admin, job);
     } catch {
       resultado = { ok: false, erro: "excecao_no_worker" };
+    }
+
+    if ("reagendar" in resultado) {
+      // Fora da janela de envio: devolve o job para depois SEM contar como
+      // tentativa e SEM concluir (o toque ainda nao aconteceu).
+      const { data: reagendou, error: erroReagendar } = await admin.rpc(
+        "reagendar_job",
+        { p_id: job.id, p_worker: workerId, p_run_at: resultado.reagendar },
+      );
+      if (erroReagendar || reagendou !== true) {
+        log.warn("job_reagendar_falhou", {
+          job_id: job.id,
+          kind: job.kind,
+          error_code: erroReagendar?.code ?? null,
+        });
+        continue;
+      }
+      log.info("job_reagendado", {
+        job_id: job.id,
+        kind: job.kind,
+        clinic_id: job.clinic_id,
+      });
+      continue;
     }
 
     if (resultado.ok) {

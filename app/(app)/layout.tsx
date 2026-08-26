@@ -6,6 +6,8 @@ import { AppShell } from "@/components/shell/app-shell";
 import { CriarClinica } from "@/components/shell/criar-clinica";
 import { WhatsappBanner } from "@/components/shell/whatsapp-banner";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
+import { diaCivil, limitesDoDia, somarDias } from "@/lib/domain/horarios";
+import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/server";
 
 // Layout da area logada: exige sessao e clinica ativa validada em
@@ -102,12 +104,26 @@ export default async function AppLayout({
       <WhatsappBanner />
     ) : null;
 
-  // Badge do rail: conversas aguardando um humano (fonte real, sem inventar).
-  const { count: aguardandoHumano } = await supabase
-    .from("conversation")
-    .select("id", { count: "exact", head: true })
-    .eq("clinic_id", active.clinicId)
-    .eq("status", "aguardando_humano");
+  // Badges do rail: conversas aguardando um humano e confirmacoes pendentes
+  // de amanha (fonte real, sem inventar). "Amanha" e o dia civil NO FUSO DA
+  // CLINICA, o mesmo recorte que a Tela 2 abre por padrao.
+  const amanha = somarDias(diaCivil(active.timezone, new Date()), 1);
+  const janelaDeAmanha = limitesDoDia(active.timezone, amanha);
+  const [{ count: aguardandoHumano }, { count: confirmacoesPendentes }] =
+    await Promise.all([
+      supabase
+        .from("conversation")
+        .select("id", { count: "exact", head: true })
+        .eq("clinic_id", active.clinicId)
+        .eq("status", "aguardando_humano"),
+      supabase
+        .from("appointment")
+        .select("id", { count: "exact", head: true })
+        .eq("clinic_id", active.clinicId)
+        .in("status", STATUS_PENDENTES)
+        .gte("starts_at", janelaDeAmanha.inicio.toISOString())
+        .lt("starts_at", janelaDeAmanha.fim.toISOString()),
+    ]);
 
   return (
     <AppShell
@@ -123,7 +139,10 @@ export default async function AppLayout({
       }
       labels={active.labels}
       banner={banner}
-      counts={{ conversas: aguardandoHumano ?? 0 }}
+      counts={{
+        conversas: aguardandoHumano ?? 0,
+        confirmacoes: confirmacoesPendentes ?? 0,
+      }}
     >
       <QueryProvider>{children}</QueryProvider>
     </AppShell>

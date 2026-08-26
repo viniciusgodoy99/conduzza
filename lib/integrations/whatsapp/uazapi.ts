@@ -1,3 +1,4 @@
+import { textoNumerado } from "./menu-texto";
 import type {
   InstanceRef,
   InstanceStatus,
@@ -187,25 +188,40 @@ export class UazapiProvider implements WhatsAppProvider {
     body: string,
     options: MenuOption[],
   ): Promise<SendResult> {
-    // Codificacao da especificacao: "texto|id" para botao de resposta.
-    const choices = options.map((option) => `${option.text}|${option.id}`);
-    const { status, body: response } = await this.request(ref, PATHS.sendMenu, {
-      payload: { number: to, type: "button", text: body, choices },
-      semRetry: true,
-    });
-    if (status >= 200 && status < 300) {
-      return toSendResult(status, response);
+    try {
+      // Codificacao da especificacao: "texto|id" para botao de resposta.
+      const choices = options.map((option) => `${option.text}|${option.id}`);
+      const { status, body: response } = await this.request(
+        ref,
+        PATHS.sendMenu,
+        {
+          payload: { number: to, type: "button", text: body, choices },
+          semRetry: true,
+        },
+      );
+      if (status >= 200 && status < 300) {
+        return toSendResult(status, response);
+      }
+      // Botao interativo e incerto em API nao oficial: degrada para texto
+      // numerado, que funciona em qualquer aparelho.
+      const fallback = await this.request(ref, PATHS.sendText, {
+        payload: { number: to, text: textoNumerado(body, options) },
+        semRetry: true,
+      });
+      return toSendResult(fallback.status, fallback.body);
+    } catch {
+      // MESMA regra do sendText, e ela faltava aqui. Sem este catch, falha de
+      // rede virava excecao, o orquestrador a classificava como
+      // 'provider_indisponivel' (que ESTA em FALHAS_SEM_ENVIO) e o retry
+      // reenviava um toque que pode ter chegado: o paciente receberia a
+      // confirmacao duas vezes. 'envio_incerto' e definitivo.
+      return {
+        ok: false as const,
+        errorCode: "envio_incerto",
+        message:
+          "Não foi possível confirmar o envio. Confira a conversa antes de reenviar.",
+      };
     }
-    // Botao interativo e incerto em API nao oficial: degrada para texto
-    // numerado, que funciona em qualquer aparelho.
-    const numbered = `${body}\n\n${options
-      .map((option, index) => `${index + 1}. ${option.text}`)
-      .join("\n")}\n\nResponda com o número da opção.`;
-    const fallback = await this.request(ref, PATHS.sendText, {
-      payload: { number: to, text: numbered },
-      semRetry: true,
-    });
-    return toSendResult(fallback.status, fallback.body);
   }
 
   async downloadMedia(

@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { parseInboundEvent } from "@/lib/integrations/whatsapp/inbound";
 import { ingerirMensagemRecebida } from "@/lib/integrations/whatsapp/ingest";
+import { interceptarRespostaDePaciente } from "@/lib/integrations/whatsapp/interceptar-resposta";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -112,7 +113,27 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-    // A resposta do paciente (confirmacao/oferta) sera interceptada aqui na 4.7.
+    // Resposta ao toque de confirmacao (tarefa 4.7): "1", "Confirmar" ou um
+    // joinha mudam o status da agenda sozinhos. Guardado por data.inserted
+    // porque o provedor reentrega o mesmo evento, e reentrega nao pode
+    // confirmar duas vezes. Nunca derruba o 200: a mensagem ja esta salva e
+    // um erro aqui viraria reenvio em loop.
+    if (data?.inserted && data.contact_id && data.conversation_id) {
+      try {
+        await interceptarRespostaDePaciente(admin, {
+          clinicId,
+          contactId: data.contact_id,
+          conversationId: data.conversation_id,
+          body: event.body,
+          contentType: event.contentType,
+        });
+      } catch {
+        log.error("webhook_interceptar_resposta_falhou", {
+          clinic_id: clinicId,
+          wa_message_id: event.waMessageId,
+        });
+      }
+    }
     return NextResponse.json(data);
   }
 

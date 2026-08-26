@@ -2,7 +2,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { canSendDecision } from "@/lib/domain/messaging";
 import { log } from "@/lib/log";
+import { textoNumerado } from "./menu-texto";
 import { getWhatsAppProvider } from "./provider";
+import type {
+  InstanceRef,
+  MenuOption,
+  SendResult,
+  WhatsAppProvider,
+} from "./provider";
 
 // Orquestrador de envio (tarefa 1.4; endurecido na revisao da Etapa B).
 // Recebe o client por injecao: as Server Actions passam o admin client
@@ -21,6 +28,10 @@ import { getWhatsAppProvider } from "./provider";
 //
 // Custo no uazapi/fake e 0 e billable false; o calculo por message_pricing
 // entra com o canal oficial (isOfficialChannel).
+//
+// Ha duas portas de entrada, sendWhatsAppText e sendWhatsAppMenu, e as duas
+// passam pelo MESMO enviarPeloCanal: as garantias acima nao podem existir em
+// duas copias, senao uma delas envelhece e vira mensagem duplicada.
 
 export type SendTextInput = {
   clinicId: string;
@@ -94,9 +105,58 @@ async function marcarFalha(
     .eq("id", messageId);
 }
 
+export type SendMenuInput = SendTextInput & {
+  /** as opcoes do menu; o id e o que volta na resposta do botao */
+  options: MenuOption[];
+};
+
+// O que muda entre um envio de texto e um envio de menu. As sete garantias
+// acima sao IDENTICAS nos dois: so o corpo gravado e a chamada ao provedor
+// mudam, e e exatamente isso que este tipo isola.
+type Despacho = {
+  /** o texto que fica em message.body, para o Inbox */
+  bodyRegistrado: string;
+  enviar(
+    provider: WhatsAppProvider,
+    ref: InstanceRef,
+    to: string,
+  ): Promise<SendResult>;
+};
+
+/** Envio simples de texto. */
 export async function sendWhatsAppText(
   supabase: SupabaseClient,
   input: SendTextInput,
+): Promise<SendTextResult> {
+  return enviarPeloCanal(supabase, input, {
+    bodyRegistrado: input.body,
+    enviar: (provider, ref, to) => provider.sendText(ref, to, input.body),
+  });
+}
+
+/**
+ * Envio com opcoes de resposta (o toque de confirmacao da regua).
+ *
+ * As mesmas sete garantias do texto, com uma diferenca deliberada: o
+ * message.body gravado carrega o corpo MAIS as opcoes numeradas. O uazapi
+ * pode ter degradado o botao para lista numerada sem nos avisar, e quem le a
+ * conversa depois precisa entender por que o paciente respondeu "1".
+ */
+export async function sendWhatsAppMenu(
+  supabase: SupabaseClient,
+  input: SendMenuInput,
+): Promise<SendTextResult> {
+  return enviarPeloCanal(supabase, input, {
+    bodyRegistrado: textoNumerado(input.body, input.options),
+    enviar: (provider, ref, to) =>
+      provider.sendMenu(ref, to, input.body, input.options),
+  });
+}
+
+async function enviarPeloCanal(
+  supabase: SupabaseClient,
+  input: SendTextInput,
+  despacho: Despacho,
 ): Promise<SendTextResult> {
   // Consentimento VIGENTE: o registro mais recente manda. Perguntar "existe
   // alguma linha ativa" deixava o paciente que pediu descadastro voltar a
@@ -203,7 +263,7 @@ export async function sendWhatsAppText(
         author: input.author ?? "usuario",
         author_user_id: input.authorUserId,
         content_type: "texto",
-        body: input.body,
+        body: despacho.bodyRegistrado,
         billable: false,
         cost_cents: 0,
         delivery_status: "enviando",
@@ -289,24 +349,19 @@ export async function sendWhatsAppText(
   }
 
   const provider = getWhatsAppProvider(account?.provider);
-  const result = await provider
-    .sendText(
-      {
-        clinicId: input.clinicId,
-        serverUrl: account?.server_url ?? null,
-        instanceToken:
-          (
-            await supabase
-              .from("whatsapp_account_secret")
-              .select("instance_token")
-              .eq("clinic_id", input.clinicId)
-              .maybeSingle()
-          ).data?.instance_token ?? null,
-        instanceId: account?.instance_id ?? null,
-      },
-      contact.phone_e164,
-      input.body,
-    )
+  const { data: segredo } = await supabase
+    .from("whatsapp_account_secret")
+    .select("instance_token")
+    .eq("clinic_id", input.clinicId)
+    .maybeSingle();
+  const ref: InstanceRef = {
+    clinicId: input.clinicId,
+    serverUrl: account?.server_url ?? null,
+    instanceToken: segredo?.instance_token ?? null,
+    instanceId: account?.instance_id ?? null,
+  };
+  const result = await despacho
+    .enviar(provider, ref, contact.phone_e164)
     .catch((erro: unknown) => {
       const texto = erro instanceof Error ? erro.message : "";
       if (texto.includes("Instância sem token")) {

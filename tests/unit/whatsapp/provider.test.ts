@@ -10,6 +10,9 @@ import {
   UazapiProvider,
 } from "@/lib/integrations/whatsapp/uazapi";
 import type { InstanceRef } from "@/lib/integrations/whatsapp/provider";
+import { textoNumerado } from "@/lib/integrations/whatsapp/menu-texto";
+import { falhaPermiteRetry } from "@/lib/integrations/whatsapp/send";
+import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
 
 const REF: InstanceRef = {
   clinicId: "clinica-teste",
@@ -95,13 +98,24 @@ describe("UazapiProvider", () => {
       { status: 400, body: { error: "buttons not supported" } },
       { status: 200, body: { id: "wamid-fallback" } },
     ]);
-    const result = await testProvider(fn).sendMenu(REF, "+5584", "Confirma?", [
+    const opcoes = [
       { id: "sim", text: "Confirmar" },
       { id: "remarcar", text: "Remarcar" },
-    ]);
+    ];
+    const result = await testProvider(fn).sendMenu(
+      REF,
+      "+5584",
+      "Confirma?",
+      opcoes,
+    );
     expect(result).toEqual({ ok: true, waMessageId: "wamid-fallback" });
     expect(calls).toHaveLength(2);
     expect(calls[1]?.url).toContain("/send/text");
+    // O texto enviado tem que ser IGUAL ao que sendWhatsAppMenu grava em
+    // message.body: e isso que faz a conversa no Inbox explicar a resposta "1".
+    expect(String((calls[1]?.body as { text: string }).text)).toBe(
+      textoNumerado("Confirma?", opcoes),
+    );
     expect(String((calls[1]?.body as { text: string }).text)).toContain(
       "1. Confirmar",
     );
@@ -156,6 +170,62 @@ describe("blindagem contra defeitos conhecidos", () => {
     expect(resultado.ok).toBe(false);
     if (!resultado.ok) {
       expect(resultado.errorCode).toBe("envio_incerto");
+    }
+  });
+
+  // Defeito real: sendMenu nao tinha try/catch. Falha de rede virava exceção,
+  // o orquestrador a classificava como 'provider_indisponivel' (que PERMITE
+  // retry) e o paciente podia receber o toque de confirmação duas vezes.
+  it("falha de rede no sendMenu vira envio_incerto, que NÃO permite retry", async () => {
+    const chamadas: string[] = [];
+    const fn = (async (url: RequestInfo | URL) => {
+      chamadas.push(String(url));
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+
+    const resultado = await testProvider(fn).sendMenu(
+      REF,
+      "+5584",
+      "Podemos confirmar?",
+      MENU_CONFIRMACAO,
+    );
+
+    expect(resultado.ok).toBe(false);
+    if (!resultado.ok) {
+      expect(resultado.errorCode).toBe("envio_incerto");
+      // A prova que importa: este código não entra na fila de reenvio.
+      expect(falhaPermiteRetry(resultado.errorCode)).toBe(false);
+    }
+    // Envio nunca repete sozinho: uma tentativa, e só.
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0]).toContain("/send/menu");
+  });
+
+  it("falha de rede no fallback numerado também vira envio_incerto", async () => {
+    let chamada = 0;
+    const fn = (async () => {
+      chamada++;
+      if (chamada === 1) {
+        // Servidor recusa o botão: o cliente degrada para texto numerado.
+        return new Response(JSON.stringify({ error: "no buttons" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+
+    const resultado = await testProvider(fn).sendMenu(
+      REF,
+      "+5584",
+      "Podemos confirmar?",
+      MENU_CONFIRMACAO,
+    );
+
+    expect(resultado.ok).toBe(false);
+    if (!resultado.ok) {
+      expect(resultado.errorCode).toBe("envio_incerto");
+      expect(falhaPermiteRetry(resultado.errorCode)).toBe(false);
     }
   });
 
