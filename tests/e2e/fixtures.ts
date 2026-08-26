@@ -281,6 +281,13 @@ export async function provisionar(): Promise<DadosE2E> {
           status: "aguardando_humano",
           assignee_user_id: null,
           unread_count: 2,
+          // A paciente escreveu e ninguém respondeu: é o que awaiting_reply
+          // guarda, e é dele que saem o badge de Atendimento e o chip
+          // "Aguardando você". O seed insere direto na tabela, então precisa
+          // dizer o que o ingest diria. Todas as linhas do lote trazem o
+          // campo: num insert em lote o PostgREST usa a união das chaves e
+          // manda NULL onde falta, e a coluna é not null.
+          awaiting_reply: true,
           last_message_at: minutosAtras(10),
         },
         {
@@ -289,6 +296,7 @@ export async function provisionar(): Promise<DadosE2E> {
           status: "em_atendimento",
           assignee_user_id: ids.recepcao,
           unread_count: 0,
+          awaiting_reply: false,
           last_message_at: minutosAtras(20),
         },
         {
@@ -297,6 +305,7 @@ export async function provisionar(): Promise<DadosE2E> {
           status: "em_atendimento",
           assignee_user_id: ids.recepcao,
           unread_count: 0,
+          awaiting_reply: false,
           last_message_at: minutosAtras(30),
         },
         {
@@ -305,6 +314,7 @@ export async function provisionar(): Promise<DadosE2E> {
           status: "ia_atendendo",
           assignee_user_id: null,
           unread_count: 0,
+          awaiting_reply: false,
           last_message_at: minutosAtras(40),
         },
       ])
@@ -962,8 +972,7 @@ export async function provisionar(): Promise<DadosE2E> {
 
   const consultaDeAmanha = (status: string): string =>
     consultasAmanha!.find(
-      (c) =>
-        c.status === status && String(c.starts_at).startsWith(amanhaISO),
+      (c) => c.status === status && String(c.starts_at).startsWith(amanhaISO),
     )!.id as string;
   const confirmacoesPendenteId = consultaDeAmanha("agendado");
   const confirmacoesPorWhatsappId = consultaDeAmanha("confirmado_paciente");

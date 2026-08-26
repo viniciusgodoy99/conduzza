@@ -30,6 +30,7 @@ type ConversationRow = {
   status: string;
   assignee_user_id: string | null;
   unread_count: number;
+  awaiting_reply?: boolean;
   last_message_at: string | null;
   tags: string[] | null;
 };
@@ -74,6 +75,10 @@ export function useInboxChannel(
         status: row.status as ConversationListItem["status"],
         assignee_user_id: row.assignee_user_id,
         unread_count: row.unread_count,
+        // ?? em vez de atribuicao direta: se o evento vier sem a coluna, o
+        // valor que ja esta na tela vale mais do que apagar o sinal de
+        // espera e sumir com a conversa do contador.
+        awaiting_reply: row.awaiting_reply ?? existente.awaiting_reply,
         last_message_at: row.last_message_at,
         tags: row.tags ?? existente.tags,
       };

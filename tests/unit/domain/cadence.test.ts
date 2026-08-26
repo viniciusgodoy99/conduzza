@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   dentroDaJanela,
   passoCondizComAgenda,
-  passoMaisProximoDoEvento,
+  passoDoToqueManual,
   proximaAbertura,
   type JanelaDeEnvio,
 } from "@/lib/domain/cadence";
@@ -67,10 +67,18 @@ describe("dentroDaJanela", () => {
   it("comeco entra, fim nao: 18:00 em ponto ja esta fora", () => {
     // Terca, 11:00Z = 08:00 local; 21:00Z = 18:00 local.
     expect(
-      dentroDaJanela(COMERCIAL, new Date("2026-09-01T11:00:00.000Z"), FORTALEZA),
+      dentroDaJanela(
+        COMERCIAL,
+        new Date("2026-09-01T11:00:00.000Z"),
+        FORTALEZA,
+      ),
     ).toBe(true);
     expect(
-      dentroDaJanela(COMERCIAL, new Date("2026-09-01T21:00:00.000Z"), FORTALEZA),
+      dentroDaJanela(
+        COMERCIAL,
+        new Date("2026-09-01T21:00:00.000Z"),
+        FORTALEZA,
+      ),
     ).toBe(false);
     expect(
       dentroDaJanela(
@@ -108,7 +116,11 @@ describe("dentroDaJanela", () => {
   it("dia da semana fora da lista bloqueia mesmo em horario bom", () => {
     // 2026-09-05 e sabado; 15:00Z = 12:00 local.
     expect(
-      dentroDaJanela(COMERCIAL, new Date("2026-09-05T15:00:00.000Z"), FORTALEZA),
+      dentroDaJanela(
+        COMERCIAL,
+        new Date("2026-09-05T15:00:00.000Z"),
+        FORTALEZA,
+      ),
     ).toBe(false);
     expect(
       dentroDaJanela(
@@ -263,34 +275,84 @@ describe("passoCondizComAgenda", () => {
   });
 });
 
-// A escolha do passo no toque MANUAL ("Cobrar agora", Tela 2). Um numero
-// errado aqui manda a mensagem de "amanha" para quem tem consulta hoje.
-describe("passoMaisProximoDoEvento", () => {
+// A escolha do passo no toque MANUAL ("Cobrar agora", Tela 2). Um passo errado
+// aqui manda "hoje" para consulta de amanhã ou "amanhã" para consulta de hoje.
+// As duas coisas já aconteceram: a escolha por proximidade errava a primeira e
+// a escolha pelo menor passo que cobre errava a segunda.
+describe("passoDoToqueManual", () => {
   const PASSOS = [
     { id: "72h", offsetMinutes: -4320 },
     { id: "24h", offsetMinutes: -1440 },
     { id: "3h", offsetMinutes: -180 },
   ];
+  const TZ = "America/Fortaleza";
 
-  it("consulta daqui a 2 horas escolhe o passo de 3 horas antes", () => {
-    expect(passoMaisProximoDoEvento(PASSOS, 120)?.id).toBe("3h");
+  /** Instante em Fortaleza (UTC-3), escrito como o relógio da clínica mostra. */
+  const em = (iso: string) => new Date(`${iso}-03:00`);
+
+  const escolher = (agoraISO: string, consultaISO: string) =>
+    passoDoToqueManual(PASSOS, {
+      agora: em(agoraISO),
+      startsAt: em(consultaISO),
+      timezone: TZ,
+    })?.id;
+
+  it("consulta de HOJE usa o texto de hoje, perto ou longe", () => {
+    expect(escolher("2026-08-26T12:00:00", "2026-08-26T14:00:00")).toBe("3h");
+    // 210 minutos: não cabem no passo de 3 horas, mas continua sendo hoje.
+    expect(escolher("2026-08-26T10:30:00", "2026-08-26T14:00:00")).toBe("3h");
+    // Quase o dia inteiro à frente, ainda hoje.
+    expect(escolher("2026-08-26T08:00:00", "2026-08-26T22:00:00")).toBe("3h");
   });
 
-  it("consulta amanha escolhe o passo de 24 horas antes", () => {
-    expect(passoMaisProximoDoEvento(PASSOS, 20 * 60)?.id).toBe("24h");
+  it("consulta de AMANHÃ usa o texto de amanhã, perto ou longe", () => {
+    expect(escolher("2026-08-26T19:10:00", "2026-08-27T08:00:00")).toBe("24h");
+    expect(escolher("2026-08-26T08:00:00", "2026-08-27T18:00:00")).toBe("24h");
+    // Virada da meia-noite: 40 minutos de distância, mas é outro dia civil.
+    expect(escolher("2026-08-26T23:50:00", "2026-08-27T00:30:00")).toBe("24h");
   });
 
-  it("consulta daqui a tres dias escolhe o passo de 72 horas antes", () => {
-    expect(passoMaisProximoDoEvento(PASSOS, 70 * 60)?.id).toBe("72h");
+  it("consulta de daqui a três dias usa o texto com a data por extenso", () => {
+    expect(escolher("2026-08-26T09:00:00", "2026-08-29T09:00:00")).toBe("72h");
   });
 
-  it("passo de pos falta (offset positivo) nunca e escolhido", () => {
+  it("dia sem passo próprio cai no texto que diz a data, nunca em hoje ou amanhã", () => {
+    // Depois de amanhã: nenhum passo é "2 dias", então vale o de data por
+    // extenso. Dizer "amanhã" seria mentira.
+    expect(escolher("2026-08-26T09:00:00", "2026-08-28T09:00:00")).toBe("72h");
+    // Muito mais distante que qualquer passo.
+    expect(escolher("2026-08-26T09:00:00", "2026-09-15T09:00:00")).toBe("72h");
+  });
+
+  it("o fuso da clínica é que manda, não o do servidor", () => {
+    // 23:30 em Fortaleza é 02:30 do dia seguinte em UTC. A consulta é no dia
+    // seguinte PARA A CLÍNICA, e é isso que o paciente lê.
     expect(
-      passoMaisProximoDoEvento([{ id: "d2", offsetMinutes: 2880 }], 60),
+      passoDoToqueManual(PASSOS, {
+        agora: new Date("2026-08-27T02:30:00Z"),
+        startsAt: new Date("2026-08-27T13:00:00Z"),
+        timezone: TZ,
+      })?.id,
+    ).toBe("24h");
+  });
+
+  it("passo de pós falta (offset positivo) nunca é escolhido", () => {
+    expect(
+      passoDoToqueManual([{ id: "d2", offsetMinutes: 2880 }], {
+        agora: em("2026-08-26T09:00:00"),
+        startsAt: em("2026-08-26T15:00:00"),
+        timezone: TZ,
+      }),
     ).toBeNull();
   });
 
   it("sem passo nenhum devolve null", () => {
-    expect(passoMaisProximoDoEvento([], 60)).toBeNull();
+    expect(
+      passoDoToqueManual([], {
+        agora: em("2026-08-26T09:00:00"),
+        startsAt: em("2026-08-26T15:00:00"),
+        timezone: TZ,
+      }),
+    ).toBeNull();
   });
 });

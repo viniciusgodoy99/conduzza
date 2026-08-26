@@ -10,7 +10,7 @@ import {
   type JanelaDeEnvio,
 } from "@/lib/domain/cadence";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
-import type { MenuOption } from "@/lib/integrations/whatsapp/provider";
+import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
 import { getWhatsAppProvider } from "@/lib/integrations/whatsapp/provider";
 import {
   falhaPermiteRetry,
@@ -47,15 +47,13 @@ import type { Job, ResultadoDeJob } from "./worker";
 // Regra 3.1 do CLAUDE.md: nada de dado de paciente em log nem em last_error.
 // Este arquivo nao loga; devolve codigos curtos para o worker.
 
-/**
- * Botoes da confirmacao (spec 4.7). Os ids sao o contrato com o webhook: e
- * por eles que a resposta do paciente vira confirmar_pelo_paciente ou
- * cancelar_pelo_paciente. O fallback em texto numerado e do provider.
- */
-export const MENU_CONFIRMACAO: MenuOption[] = [
-  { id: "confirmar", text: "Confirmar presença" },
-  { id: "cancelar", text: "Preciso cancelar" },
-];
+// MENU_CONFIRMACAO vive em lib/domain/textos-padrao.ts, ao lado do que o
+// paciente le, e e FONTE UNICA. Existia uma copia aqui com DUAS opcoes
+// enquanto o interpretador da resposta esperava TRES: quando o uazapi degrada
+// o botao para texto numerado, o paciente que respondia "2" para cancelar era
+// lido como "remarcar", a consulta nunca era cancelada e o horario nunca era
+// liberado. A ordem desta lista e o contrato do numero: 1 confirmar,
+// 2 remarcar, 3 cancelar, igual a lib/domain/resposta-paciente.ts.
 
 // Consulta futura que ainda vale: e o que prova que o paciente ja remarcou
 // depois da falta, e por isso a regua de recuperacao deve parar.
@@ -309,20 +307,32 @@ export async function executarPassoDeRegua(
     return { ok: true };
   }
 
+  // Consulta remarcada: SO este toque ficou obsoleto (ele aponta para o
+  // horario antigo). A cadeia NAO para, senao os toques que o planner acabou
+  // de materializar para o horario novo morreriam junto e o paciente que
+  // remarcou nunca mais receberia confirmacao. A run manual nao passa por
+  // aqui: ela nasceu agora, ja com o horario que a tela mostrou.
+  const obsoleta =
+    regua.kind === "confirmacao" &&
+    !manual &&
+    !passoCondizComAgenda({
+      startsAt: new Date(consulta.starts_at),
+      offsetMinutes: passo.offset_minutes,
+      scheduledFor: new Date(run.scheduled_for),
+    });
+  if (obsoleta) {
+    await pularRun(admin, run, "condicao_parada");
+    return { ok: true };
+  }
+
+  // Parada de verdade: a consulta saiu do jogo (cancelada, ja aconteceu, com
+  // a confirmacao automatica desligada) ou o paciente ja remarcou depois da
+  // falta. Ai sim a cadeia inteira para.
   const parou =
     regua.kind === "confirmacao"
       ? !STATUS_A_CONFIRMAR.includes(consulta.status) ||
         new Date(consulta.starts_at).getTime() <= agora.getTime() ||
-        !consulta.send_confirmation ||
-        // Consulta remarcada: o toque velho aponta para o horario antigo. A
-        // run manual nao passa por aqui: ela nasceu agora, ja com o horario
-        // que a tela mostrou.
-        (!manual &&
-          !passoCondizComAgenda({
-            startsAt: new Date(consulta.starts_at),
-            offsetMinutes: passo.offset_minutes,
-            scheduledFor: new Date(run.scheduled_for),
-          }))
+        !consulta.send_confirmation
       : consulta.status !== "faltou" ||
         (await remarcouDepoisDaFalta(admin, run, consulta));
   if (parou) {

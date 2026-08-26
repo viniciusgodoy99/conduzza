@@ -22,6 +22,7 @@ export type ConversationListItem = {
   status: ConversationStatus;
   assignee_user_id: string | null;
   unread_count: number;
+  awaiting_reply: boolean;
   last_message_at: string | null;
   tags: string[];
   contact: ContactSummary;
@@ -58,7 +59,7 @@ export type ConsentInfo = {
 } | null;
 
 const CONVERSATION_SELECT =
-  "id, status, assignee_user_id, unread_count, last_message_at, tags, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
+  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, tags, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,
@@ -81,6 +82,12 @@ export const CONVERSATIONS_ATIVAS_LIMIT = 300;
 
 // Lista ativa: tudo que NAO esta resolvida. Ordenada e limitada, batendo com
 // o indice conversation(clinic_id, status, last_message_at desc).
+//
+// A ordem do SERVIDOR continua sendo por recencia: e ela que decide QUAIS 300
+// conversas chegam ao browser, e trocar o criterio faria uma clinica com
+// centenas de leads antigos por ler empurrar para fora do lote as conversas
+// que a equipe esta trabalhando hoje. Quem espera resposta vem primeiro DENTRO
+// do lote, no cliente.
 export async function fetchConversations(
   supabase: SupabaseClient,
   clinicId: string,

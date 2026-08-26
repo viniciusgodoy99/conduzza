@@ -64,6 +64,21 @@ export type EntradaDaResposta = {
   contentType: string;
 };
 
+/** O embed aninhado do PostgREST chega como objeto ou array, conforme o caso. */
+function kindDoToque(linha: unknown): string | null {
+  const um = <T>(v: T | T[] | null | undefined): T | null =>
+    Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
+  const passo = um(
+    (linha as { cadence_step?: unknown } | null)?.cadence_step as
+      { cadence?: unknown } | { cadence?: unknown }[] | null,
+  );
+  const regua = um(
+    (passo as { cadence?: unknown } | null)?.cadence as
+      { kind?: string } | { kind?: string }[] | null,
+  );
+  return regua?.kind ?? null;
+}
+
 /**
  * A consulta a que esta resposta se refere, ou null quando o contato nao foi
  * perguntado. Tres passos curtos em vez de um filtro aninhado: o recorte por
@@ -75,6 +90,25 @@ async function acharConsultaPerguntada(
   clinicId: string,
   contactId: string,
 ): Promise<string | null> {
+  // O ULTIMO toque que saiu para este contato manda. Se foi o de recuperacao
+  // depois da falta ("Ainda da tempo de remarcar?"), o "sim" do paciente e
+  // resposta AQUELA pergunta, e nao confirmacao da proxima consulta: sem esta
+  // guarda, quem tem uma consulta futura teria essa consulta confirmada
+  // sozinha por causa de uma conversa sobre outra coisa. Nao reconhecer manda
+  // para a recepcao, que e o comportamento seguro.
+  const { data: ultimo } = await admin
+    .from("cadence_run")
+    .select("cadence_step:cadence_step_id ( cadence:cadence_id ( kind ) )")
+    .eq("clinic_id", clinicId)
+    .eq("contact_id", contactId)
+    .not("sent_at", "is", null)
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (ultimo && kindDoToque(ultimo) !== "confirmacao") {
+    return null;
+  }
+
   const { data: reguas } = await admin
     .from("cadence")
     .select("id")
@@ -200,6 +234,18 @@ export async function interceptarRespostaDePaciente(
     entrada,
     intencao === "confirmar" ? RESPOSTA_CONFIRMADA : RESPOSTA_CANCELADA,
   );
+
+  // O sistema resolveu sozinho: mudou o status da consulta e respondeu ao
+  // paciente. Ninguem da clinica precisa fazer nada, entao a conversa sai do
+  // contador de Atendimento. Sem isto, uma manha em que 30 pacientes tocam
+  // "Confirmar" mostra badge 31 e enterra a unica conversa que precisa de
+  // gente. Nao vale para "remarcar", que termina em "nossa recepcao vai falar
+  // com voce": ali alguem TEM de agir, e a espera continua de pe.
+  await admin
+    .from("conversation")
+    .update({ awaiting_reply: false })
+    .eq("clinic_id", entrada.clinicId)
+    .eq("id", entrada.conversationId);
 
   // TODO(4.9): o cancelamento libera um horario e e aqui que a lista de espera
   // entra para reofertar. A reoferta nao existe ainda e nada e prometido ao

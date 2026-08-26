@@ -18,9 +18,13 @@ export const CONFIRMACAO_24H =
 export const CONFIRMACAO_3H =
   "{{nome}}, sua consulta é hoje às {{hora}} com {{profissional}}. Está tudo certo para você vir?";
 
-/** No instante em que a falta foi marcada: offset_minutes 0. */
+/**
+ * No instante em que a falta foi marcada: offset_minutes 0. O texto cita a
+ * DATA DA CONSULTA, nunca "hoje": quem marca a falta e uma pessoa (regra 3.5)
+ * e ela pode fechar o dia dias depois, quando "hoje" ja seria mentira.
+ */
 export const POS_FALTA_D0 =
-  "Oi, {{nome}}. Sentimos sua falta hoje na {{clinica}}. Aconteceu algum imprevisto? Se quiser remarcar, é só responder esta mensagem.";
+  "Oi, {{nome}}. Sentimos sua falta na {{clinica}}, no seu horário de {{data}}. Aconteceu algum imprevisto? Se quiser remarcar, é só responder esta mensagem.";
 
 /** Dois dias depois da falta: offset_minutes 2880. */
 export const POS_FALTA_D2 =
@@ -54,8 +58,7 @@ export const NOME_REGUA_POS_FALTA = "Recuperação depois da falta";
 // proposito, sem dado da consulta: quem responde ja sabe qual e.
 
 /** Depois de confirmar_pelo_paciente. */
-export const RESPOSTA_CONFIRMADA =
-  "Presença confirmada, obrigado! Até lá.";
+export const RESPOSTA_CONFIRMADA = "Presença confirmada, obrigado! Até lá.";
 
 /** Depois de cancelar_pelo_paciente. */
 export const RESPOSTA_CANCELADA =

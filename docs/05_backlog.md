@@ -189,8 +189,10 @@ Régua padrão de 72h, 24h e 3h. **Template com botões de resposta rápida.** E
 **Aceite:** o paciente toca em Confirmar e o status da agenda muda sozinho, com autoria registrada.
 
 ### [ ] 4.8 Follow-up e pós falta (Tela 7) `M`
-Editor em linha do tempo horizontal com pré-visualização em balão de WhatsApp. Escolha entre mensagem fixa e deixar a IA escrever. Régua pós falta em D+0 e D+2. Estimativa de custo na tela.
+Editor em linha do tempo horizontal com pré-visualização em balão de WhatsApp. Escolha entre mensagem fixa e deixar a IA escrever. Estimativa de custo na tela.
 **Aceite:** o dev consegue trocar a régua de uma clínica sem tocar em código.
+
+**Antecipado na 4.7:** a régua pós falta (D+0 e D+2) já existe inteira, com motor, planejamento, executor e o interruptor próprio na aba "Depois da falta" do painel de Mensagens automáticas da Tela 2. Ela foi trazida para cá porque o motor já a executava e deixá-la sem tela de ativação seria construir código que nunca poderia rodar. O que falta para a 4.8 é a **edição** dos textos, não a ativação. Escolher a IA para escrever continua desabilitado enquanto a Fase 3 não existir (regra 3.2).
 
 ### [ ] 4.9 Lista de espera (Tela 10) `M`
 Fila, reoferta automática ao cancelar, janela de resposta de 30 minutos, primeiro que responder leva.

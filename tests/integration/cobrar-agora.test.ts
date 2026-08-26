@@ -5,7 +5,12 @@ import {
   fakeSentMessages,
   resetFakeProvider,
 } from "@/lib/integrations/whatsapp/fake";
+import {
+  planejarCobrancaManual,
+  type CobrancaManual,
+} from "@/lib/jobs/cobranca-manual";
 import { processarLote } from "@/lib/jobs/worker";
+import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
 import { adminClient } from "../rls/stack";
 
 // "Cobrar agora" da Tela 2 (tarefa 4.7): o toque pedido POR UMA PESSOA usa a
@@ -23,6 +28,7 @@ const admin = adminClient();
 const sufixo = Date.now().toString(36);
 const clinicasCriadas: string[] = [];
 
+const TIMEZONE = "America/Fortaleza";
 const MINUTO = 60_000;
 const HORA = 60 * MINUTO;
 
@@ -31,6 +37,8 @@ type Cenario = {
   contactId: string;
   appointmentId: string;
   stepId: string;
+  professionalId: string;
+  serviceLinkId: string;
   telefone: string;
 };
 
@@ -165,48 +173,49 @@ async function montarCenario(
     contactId,
     appointmentId: consulta!.id as string,
     stepId: passo!.id as string,
+    professionalId: profissional!.id as string,
+    serviceLinkId: vinculo!.id as string,
     telefone,
   };
 }
 
-/** Repete o que cobrarAgoraAction faz depois dos guards: run + job manual. */
-async function cobrarAgora(cenario: Cenario): Promise<number> {
-  const minutoAtual = new Date(
-    Math.floor(Date.now() / 60_000) * 60_000,
-  ).toISOString();
-  const { data: criadas } = await admin
-    .from("cadence_run")
-    .upsert(
-      [
-        {
-          clinic_id: cenario.clinicId,
-          cadence_step_id: cenario.stepId,
-          contact_id: cenario.contactId,
-          appointment_id: cenario.appointmentId,
-          scheduled_for: minutoAtual,
-        },
-      ],
-      {
-        onConflict: "cadence_step_id,contact_id,scheduled_for",
-        ignoreDuplicates: true,
-      },
-    )
+/**
+ * O MESMO codigo que a Server Action roda depois dos guards. Chamar a action
+ * daqui nao da (ela depende de sessao, cookies e revalidatePath), mas o miolo
+ * dela vive fora e e este: enquanto o teste reimplementava as escritas em SQL,
+ * ele passava mesmo quando a producao divergia, e passou.
+ */
+async function cobrarAgora(
+  clinicId: string,
+  appointmentIds: string[],
+): Promise<CobrancaManual> {
+  return planejarCobrancaManual(admin, admin, {
+    clinicId,
+    timezone: TIMEZONE,
+    appointmentIds,
+  });
+}
+
+/** Mais uma consulta do MESMO contato, para provar que nenhuma se perde. */
+async function outraConsulta(
+  cenario: Cenario,
+  horasAFrente: number,
+): Promise<string> {
+  const inicio = new Date(Date.now() + horasAFrente * HORA);
+  const { data } = await admin
+    .from("appointment")
+    .insert({
+      clinic_id: cenario.clinicId,
+      contact_id: cenario.contactId,
+      professional_id: cenario.professionalId,
+      service_link_id: cenario.serviceLinkId,
+      starts_at: inicio.toISOString(),
+      ends_at: new Date(inicio.getTime() + 30 * MINUTO).toISOString(),
+    })
     .select("id")
+    .single()
     .throwOnError();
-  const novas = (criadas ?? []) as { id: string }[];
-  if (novas.length > 0) {
-    await admin
-      .from("job_queue")
-      .insert(
-        novas.map((run) => ({
-          clinic_id: cenario.clinicId,
-          kind: "executar_passo_de_regua",
-          payload: { cadence_run_id: run.id, manual: true },
-        })),
-      )
-      .throwOnError();
-  }
-  return novas.length;
+  return data!.id as string;
 }
 
 async function processar(clinicId: string, worker: string): Promise<void> {
@@ -231,7 +240,10 @@ describe("toque manual da Tela 2", () => {
     resetFakeProvider();
     const cenario = await montarCenario("manual", "+5584963000001");
 
-    expect(await cobrarAgora(cenario)).toBe(1);
+    const resultado = await cobrarAgora(cenario.clinicId, [
+      cenario.appointmentId,
+    ]);
+    expect(resultado.enfileirados).toBe(1);
     await processar(cenario.clinicId, "worker-cobranca");
 
     const enviadas = fakeSentMessages().filter(
@@ -240,7 +252,13 @@ describe("toque manual da Tela 2", () => {
     expect(enviadas).toHaveLength(1);
     expect(enviadas[0]?.body).toContain("Paciente Cobrança");
     expect(enviadas[0]?.body).not.toContain("{{");
-    expect(enviadas[0]?.menuOptions ?? []).toHaveLength(2);
+    // Amarrado a FONTE UNICA, nao a um numero: era exatamente a divergencia
+    // entre o menu enviado e o menu que interpretarResposta esperava que este
+    // teste deixou passar (o paciente que respondia "2" para cancelar era lido
+    // como "remarcar" e a consulta nunca era cancelada).
+    expect((enviadas[0]?.menuOptions ?? []).map((o) => o.id)).toEqual(
+      MENU_CONFIRMACAO.map((o) => o.id),
+    );
 
     // A consulta entra em aguardando_confirmação, como no toque automático.
     const { data: consulta } = await admin
@@ -249,22 +267,20 @@ describe("toque manual da Tela 2", () => {
       .eq("id", cenario.appointmentId)
       .single();
     expect(consulta?.status).toBe("aguardando_confirmacao");
-
-    const { data: runs } = await admin
-      .from("cadence_run")
-      .select("sent_at, skipped_reason, message_id")
-      .eq("clinic_id", cenario.clinicId);
-    expect(runs).toHaveLength(1);
-    expect(runs?.[0]?.sent_at).not.toBeNull();
-    expect(runs?.[0]?.message_id).not.toBeNull();
   });
 
   it("dois cliques no mesmo minuto viram UMA cobrança", async () => {
     resetFakeProvider();
     const cenario = await montarCenario("duplo", "+5584963000002");
 
-    expect(await cobrarAgora(cenario)).toBe(1);
-    expect(await cobrarAgora(cenario)).toBe(0);
+    expect(
+      (await cobrarAgora(cenario.clinicId, [cenario.appointmentId]))
+        .enfileirados,
+    ).toBe(1);
+    expect(
+      (await cobrarAgora(cenario.clinicId, [cenario.appointmentId]))
+        .enfileirados,
+    ).toBe(0);
 
     const { data: runs } = await admin
       .from("cadence_run")
@@ -284,26 +300,254 @@ describe("toque manual da Tela 2", () => {
       .eq("clinic_id", cenario.clinicId);
   });
 
-  it("sem autorização o toque manual também não sai", async () => {
+  it("duas consultas do mesmo paciente: nenhuma se perde", async () => {
+    resetFakeProvider();
+    const cenario = await montarCenario("duasconsultas", "+5584963000005");
+    // As duas caem no MESMO passo (24 horas antes) do MESMO contato. A chave
+    // única de cadence_run passou a incluir appointment_id justamente por isto:
+    // antes a segunda colidia e sumia em silêncio, com a recepção vendo
+    // "cobrado".
+    const segunda = await outraConsulta(cenario, 22);
+
+    const resultado = await cobrarAgora(cenario.clinicId, [
+      cenario.appointmentId,
+      segunda,
+    ]);
+    expect(resultado.enfileirados).toBe(2);
+    expect(new Set(resultado.cobrados)).toEqual(
+      new Set([cenario.appointmentId, segunda]),
+    );
+
+    const { data: runs } = await admin
+      .from("cadence_run")
+      .select("appointment_id")
+      .eq("clinic_id", cenario.clinicId);
+    expect(new Set((runs ?? []).map((r) => r.appointment_id))).toEqual(
+      new Set([cenario.appointmentId, segunda]),
+    );
+
+    await admin
+      .from("job_queue")
+      .update({ status: "cancelado" })
+      .eq("clinic_id", cenario.clinicId);
+  });
+
+  it("as mesmas duas consultas em CLIQUES separados, no mesmo minuto", async () => {
+    resetFakeProvider();
+    const cenario = await montarCenario("cliquesseparados", "+5584963000007");
+    const segunda = await outraConsulta(cenario, 22);
+
+    // Este é o caso que o desempate por posição na lista não cobria: em cada
+    // clique a consulta é a primeira do laço, então as duas recebiam a mesma
+    // chave e a segunda sumia. Com appointment_id na chave, cada uma tem a
+    // sua.
+    expect(
+      (await cobrarAgora(cenario.clinicId, [cenario.appointmentId]))
+        .enfileirados,
+    ).toBe(1);
+    expect((await cobrarAgora(cenario.clinicId, [segunda])).enfileirados).toBe(
+      1,
+    );
+
+    const { data: runs } = await admin
+      .from("cadence_run")
+      .select("appointment_id, skipped_reason")
+      .eq("clinic_id", cenario.clinicId);
+    expect(runs).toHaveLength(2);
+    // E nenhuma das duas foi cancelada pela outra.
+    expect((runs ?? []).every((r) => r.skipped_reason === null)).toBe(true);
+
+    await admin
+      .from("job_queue")
+      .update({ status: "cancelado" })
+      .eq("clinic_id", cenario.clinicId);
+  });
+
+  it("cobrar de novo incluindo a mesma consulta não mata a cobrança anterior", async () => {
+    resetFakeProvider();
+    const cenario = await montarCenario("naomata", "+5584963000008");
+    const segunda = await outraConsulta(cenario, 22);
+
+    // Clique 1: só a primeira consulta.
+    expect(
+      (await cobrarAgora(cenario.clinicId, [cenario.appointmentId]))
+        .enfileirados,
+    ).toBe(1);
+    const { data: primeira } = await admin
+      .from("cadence_run")
+      .select("id")
+      .eq("clinic_id", cenario.clinicId)
+      .eq("appointment_id", cenario.appointmentId)
+      .single();
+
+    // Clique 2, no mesmo minuto, com as duas selecionadas. A primeira colide
+    // na chave (nada a fazer, já está a caminho) e a segunda é nova. O
+    // cancelamento do toque substituído não pode alcançar a run do clique 1:
+    // a recepção já viu aquela cobrança dar certo.
+    const segundoClique = await cobrarAgora(cenario.clinicId, [
+      cenario.appointmentId,
+      segunda,
+    ]);
+    expect(segundoClique.enfileirados).toBe(1);
+    expect(segundoClique.cobrados).toEqual([segunda]);
+
+    const { data: depois } = await admin
+      .from("cadence_run")
+      .select("skipped_reason")
+      .eq("id", primeira!.id)
+      .single();
+    expect(depois?.skipped_reason).toBeNull();
+
+    await admin
+      .from("job_queue")
+      .update({ status: "cancelado" })
+      .eq("clinic_id", cenario.clinicId);
+  });
+
+  it("cobrar na mão cancela o toque automático pendente do mesmo passo", async () => {
+    resetFakeProvider();
+    const cenario = await montarCenario("substitui", "+5584963000006");
+
+    // Toque automático já planejado para daqui a pouco, como o planner faria.
+    const { data: automatica } = await admin
+      .from("cadence_run")
+      .insert({
+        clinic_id: cenario.clinicId,
+        cadence_step_id: cenario.stepId,
+        contact_id: cenario.contactId,
+        appointment_id: cenario.appointmentId,
+        scheduled_for: new Date(Date.now() + 30 * MINUTO).toISOString(),
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+
+    expect(
+      (await cobrarAgora(cenario.clinicId, [cenario.appointmentId]))
+        .enfileirados,
+    ).toBe(1);
+
+    // Sem isto o paciente receberia o MESMO texto duas vezes: agora pela
+    // recepção e daqui a pouco pela régua.
+    const { data: depois } = await admin
+      .from("cadence_run")
+      .select("skipped_reason")
+      .eq("id", automatica!.id)
+      .single();
+    expect(depois?.skipped_reason).toBe("condicao_parada");
+
+    await admin
+      .from("job_queue")
+      .update({ status: "cancelado" })
+      .eq("clinic_id", cenario.clinicId);
+  });
+
+  it("cobrar duas consultas em passos DIFERENTES não mata o toque de terceiro", async () => {
+    resetFakeProvider();
+    const cenario = await montarCenario("cruzado", "+5584963000009");
+    // Três dias à frente: cai num passo diferente do da consulta de amanhã,
+    // que é o que faz a seleção usar dois passos ao mesmo tempo.
+    const distante = await outraConsulta(cenario, 3 * 24);
+
+    const { data: passos } = await admin
+      .from("cadence_step")
+      .select("id")
+      .eq("clinic_id", cenario.clinicId)
+      .lt("offset_minutes", 0)
+      .throwOnError();
+
+    // Um toque automático pendente da consulta DISTANTE em CADA passo. Só o do
+    // passo que a cobrança manual usar para ela deve ser substituído; os
+    // outros não têm nada a ver com este clique.
+    const automaticas = (
+      await admin
+        .from("cadence_run")
+        .insert(
+          (passos ?? []).map((passo, i) => ({
+            clinic_id: cenario.clinicId,
+            cadence_step_id: passo.id,
+            contact_id: cenario.contactId,
+            appointment_id: distante,
+            scheduled_for: new Date(
+              Date.now() + (2 * 24 + i) * HORA,
+            ).toISOString(),
+          })),
+        )
+        .select("id, cadence_step_id")
+        .throwOnError()
+    ).data as { id: string; cadence_step_id: string }[];
+
+    const resultado = await cobrarAgora(cenario.clinicId, [
+      cenario.appointmentId,
+      distante,
+    ]);
+    expect(resultado.enfileirados).toBe(2);
+
+    // Qual passo a cobrança usou para a consulta distante.
+    const { data: manual } = await admin
+      .from("cadence_run")
+      .select("cadence_step_id")
+      .eq("clinic_id", cenario.clinicId)
+      .eq("appointment_id", distante)
+      .not("id", "in", `(${automaticas.map((a) => a.id).join(",")})`)
+      .single()
+      .throwOnError();
+
+    const { data: depois } = await admin
+      .from("cadence_run")
+      .select("id, cadence_step_id, skipped_reason")
+      .in(
+        "id",
+        automaticas.map((a) => a.id),
+      )
+      .throwOnError();
+
+    for (const linha of depois ?? []) {
+      const mesmoPasso = linha.cadence_step_id === manual!.cadence_step_id;
+      // Com dois filtros `in` cruzados, o par (consulta distante, passo da
+      // OUTRA consulta) também casava e este toque morria calado.
+      expect(
+        linha.skipped_reason,
+        mesmoPasso
+          ? "o toque do mesmo passo é substituído pela cobrança manual"
+          : "toque de outro passo não pode ser cancelado por esta cobrança",
+      ).toBe(mesmoPasso ? "condicao_parada" : null);
+    }
+
+    await admin
+      .from("job_queue")
+      .update({ status: "cancelado" })
+      .eq("clinic_id", cenario.clinicId);
+  });
+
+  it("sem autorização a cobrança nem chega a ser enfileirada", async () => {
     resetFakeProvider();
     const cenario = await montarCenario("semauth", "+5584963000003", {
       consentimento: "nenhum",
     });
 
-    await cobrarAgora(cenario);
-    await processar(cenario.clinicId, "worker-cobranca-semauth");
+    // A recusa acontece no PLANEJAMENTO, não no worker: quem revogou não entra
+    // na fila (regra 3.3). A recepção recebe a contagem para saber o porquê.
+    const resultado = await cobrarAgora(cenario.clinicId, [
+      cenario.appointmentId,
+    ]);
+    expect(resultado.ok).toBe(true);
+    expect(resultado.enfileirados).toBe(0);
+    expect(resultado.pulados_sem_autorizacao).toBe(1);
 
+    const { data: runs } = await admin
+      .from("cadence_run")
+      .select("id")
+      .eq("clinic_id", cenario.clinicId);
+    expect(runs).toHaveLength(0);
+
+    await processar(cenario.clinicId, "worker-cobranca-semauth");
     expect(
       fakeSentMessages().filter((m) => m.to === cenario.telefone),
     ).toHaveLength(0);
-    const { data: runs } = await admin
-      .from("cadence_run")
-      .select("skipped_reason")
-      .eq("clinic_id", cenario.clinicId);
-    expect(runs?.[0]?.skipped_reason).toBe("sem_consentimento");
   });
 
-  it("consulta já cancelada: a condição de parada continua valendo", async () => {
+  it("consulta já cancelada não é cobrável", async () => {
     resetFakeProvider();
     const cenario = await montarCenario("parada", "+5584963000004");
     await admin
@@ -312,16 +556,21 @@ describe("toque manual da Tela 2", () => {
       .eq("id", cenario.appointmentId)
       .throwOnError();
 
-    await cobrarAgora(cenario);
-    await processar(cenario.clinicId, "worker-cobranca-parada");
+    const resultado = await cobrarAgora(cenario.clinicId, [
+      cenario.appointmentId,
+    ]);
+    expect(resultado.ok).toBe(false);
+    expect(resultado.error).toContain("esperando confirmação");
 
+    const { data: runs } = await admin
+      .from("cadence_run")
+      .select("id")
+      .eq("clinic_id", cenario.clinicId);
+    expect(runs).toHaveLength(0);
+
+    await processar(cenario.clinicId, "worker-cobranca-parada");
     expect(
       fakeSentMessages().filter((m) => m.to === cenario.telefone),
     ).toHaveLength(0);
-    const { data: runs } = await admin
-      .from("cadence_run")
-      .select("skipped_reason")
-      .eq("clinic_id", cenario.clinicId);
-    expect(runs?.[0]?.skipped_reason).toBe("condicao_parada");
   });
 });

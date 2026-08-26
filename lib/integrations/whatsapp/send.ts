@@ -416,9 +416,18 @@ async function enviarPeloCanal(
     });
   }
 
+  // awaiting_reply so cai quando quem escreveu foi GENTE. Toque automatico de
+  // regua sai com author 'sistema' e nao pode apagar a pergunta que o paciente
+  // fez e ninguem respondeu: seria a recepcao perdendo a conversa justamente
+  // porque a maquina falou por cima.
   await supabase
     .from("conversation")
-    .update({ last_message_at: new Date().toISOString() })
+    .update({
+      last_message_at: new Date().toISOString(),
+      ...((input.author ?? "usuario") === "usuario"
+        ? { awaiting_reply: false }
+        : {}),
+    })
     .eq("clinic_id", input.clinicId)
     .eq("id", input.conversationId);
 

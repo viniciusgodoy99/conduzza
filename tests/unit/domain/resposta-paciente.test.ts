@@ -17,6 +17,20 @@ describe("interpretarResposta", () => {
     expect(interpretarResposta("3")).toBe("cancelar");
   });
 
+  // ESTE e o contrato que quebrou de verdade: o uazapi nao garante botao, e
+  // degrada o menu para "1. Confirmar / 2. Remarcar / 3. Cancelar" (menuTexto).
+  // O paciente responde o NUMERO DA POSICAO, entao a posicao na lista tem de
+  // casar com o que interpretarResposta devolve para aquele numero. Enquanto a
+  // producao mandava um menu de duas opcoes e o interpretador esperava tres,
+  // quem digitava "2" para cancelar era lido como "remarcar" e a consulta
+  // ficava de pe. Nenhum teste pegava isso porque nenhum comparava as duas
+  // pontas: comparar o menu com ele mesmo e tautologia.
+  it("a posicao no menu casa com o numero que o paciente digita", () => {
+    MENU_CONFIRMACAO.forEach((opcao, indice) => {
+      expect(interpretarResposta(String(indice + 1))).toBe(opcao.id);
+    });
+  });
+
   it("confirma nas formas comuns de dizer sim", () => {
     for (const texto of [
       "sim",

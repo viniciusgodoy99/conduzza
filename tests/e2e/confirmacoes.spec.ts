@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { adminClient } from "../rls/stack";
 import { dados } from "./dados";
@@ -22,7 +22,9 @@ function apenasDesktop(): void {
   );
 }
 
-async function desligarRegua(): Promise<void> {
+async function desligarRegua(
+  kind: "confirmacao" | "pos_falta" = "confirmacao",
+): Promise<void> {
   const admin = adminClient();
   await admin
     .from("cadence")
@@ -33,7 +35,35 @@ async function desligarRegua(): Promise<void> {
       send_weekdays: null,
     })
     .eq("clinic_id", dados().clinicId)
-    .eq("kind", "confirmacao");
+    .eq("kind", kind);
+}
+
+async function reguaAtiva(kind: "confirmacao" | "pos_falta"): Promise<boolean> {
+  const { data } = await adminClient()
+    .from("cadence")
+    .select("active")
+    .eq("clinic_id", dados().clinicId)
+    .eq("kind", kind)
+    .is("procedure_id", null)
+    .eq("for_no_show_history", false)
+    .single();
+  return Boolean(data?.active);
+}
+
+/** Preenche a janela de envio e salva. O interruptor só libera depois disto. */
+async function preencherJanela(page: Page): Promise<void> {
+  await page.getByLabel("Começa às").fill("08:00");
+  await page.getByLabel("Termina às").fill("20:00");
+  for (const dia of [
+    "segunda-feira",
+    "terça-feira",
+    "quarta-feira",
+    "quinta-feira",
+    "sexta-feira",
+  ]) {
+    await page.getByRole("button", { name: dia }).click();
+  }
+  await page.getByRole("button", { name: "Salvar horário" }).click();
 }
 
 test("abre no dia seguinte e o painel mostra as situações do dia", async ({
@@ -71,9 +101,7 @@ test("o chip diferencia quem confirmou pelo WhatsApp de quem confirmou na recep�
   await page.goto("/confirmacoes");
 
   // Duas coisas diferentes precisam parecer diferentes (brief da Tela 2).
-  await expect(
-    page.getByText("Confirmado por WhatsApp").first(),
-  ).toBeVisible();
+  await expect(page.getByText("Confirmado por WhatsApp").first()).toBeVisible();
   await expect(
     page.getByText("Confirmado pela recepção").first(),
   ).toBeVisible();
@@ -94,9 +122,7 @@ test("a aba de faltas de hoje lista quem faltou", async ({ page }) => {
   await login(page, dados().emails.gestor);
   await page.goto("/confirmacoes?aba=faltas");
 
-  await expect(
-    page.getByRole("tab", { name: /Faltas de hoje/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Faltas de hoje/ })).toBeVisible();
   await expect(page.getByText("Paulo Pacote")).toBeVisible();
 });
 
@@ -108,7 +134,7 @@ test("a régua não liga sem a clínica informar o horário, e liga depois", asy
 
   await login(page, dados().emails.admin);
   await page.goto("/confirmacoes");
-  await page.getByRole("button", { name: "Régua de confirmação" }).click();
+  await page.getByRole("button", { name: "Mensagens automáticas" }).click();
 
   const interruptor = page.getByRole("switch", {
     name: "Ligar a régua de confirmação",
@@ -123,27 +149,74 @@ test("a régua não liga sem a clínica informar o horário, e liga depois", asy
   ).toBeVisible();
 
   // Com a janela preenchida e salva, o interruptor libera.
-  await page.getByLabel("Começa às").fill("08:00");
-  await page.getByLabel("Termina às").fill("20:00");
-  for (const dia of [
-    "segunda-feira",
-    "terça-feira",
-    "quarta-feira",
-    "quinta-feira",
-    "sexta-feira",
-  ]) {
-    await page.getByRole("button", { name: dia }).click();
-  }
-  await page.getByRole("button", { name: "Salvar horário" }).click();
+  await preencherJanela(page);
   await expect(interruptor).toBeEnabled({ timeout: 10_000 });
 
-  // A primeira ativacao da clinica avisa sobre a linha de base.
-  await interruptor.click();
-  await expect(
-    page.getByText("Antes de ligar, anote a taxa de falta"),
-  ).toBeVisible();
+  try {
+    // A primeira ativação da clínica avisa sobre a linha de base.
+    await interruptor.click();
+    await expect(
+      page.getByText("Antes de ligar, anote a taxa de falta"),
+    ).toBeVisible();
+    expect(await reguaAtiva("confirmacao")).toBe(false);
 
-  await desligarRegua();
+    // E o aviso não é decoração: confirmar LIGA a régua de verdade. Enquanto
+    // este teste parava no aviso, alternarReguaAction com ativar: true nunca
+    // rodava em teste nenhum.
+    await page.getByRole("button", { name: "Anotei, pode ligar" }).click();
+    await expect(interruptor).toBeChecked({ timeout: 10_000 });
+    // exact: true separa o rótulo do painel do aviso momentâneo ("Régua
+    // ligada."), que diz quase a mesma coisa.
+    await expect(page.getByText("Régua ligada", { exact: true })).toBeVisible();
+    expect(await reguaAtiva("confirmacao")).toBe(true);
+
+    // Desligar pela tela também precisa funcionar.
+    await interruptor.click();
+    await expect(interruptor).not.toBeChecked({ timeout: 10_000 });
+    expect(await reguaAtiva("confirmacao")).toBe(false);
+  } finally {
+    // O canal desta máquina é real: nenhuma régua fica ligada ao fim.
+    await desligarRegua();
+  }
+});
+
+test("a recuperação depois da falta tem caminho de ativação própria", async ({
+  page,
+}) => {
+  apenasDesktop();
+  await desligarRegua("pos_falta");
+
+  await login(page, dados().emails.admin);
+  await page.goto("/confirmacoes");
+  await page.getByRole("button", { name: "Mensagens automáticas" }).click();
+
+  // O motor executa as duas réguas; sem esta aba a de pós falta era código
+  // que nunca podia rodar.
+  await page.getByRole("button", { name: "Depois da falta" }).click();
+
+  const interruptor = page.getByRole("switch", {
+    name: "Ligar a régua de recuperação depois da falta",
+  });
+  await expect(interruptor).toBeVisible();
+  await expect(interruptor).toBeDisabled();
+  await expect(page.getByText("Recuperação desligada")).toBeVisible();
+
+  await preencherJanela(page);
+  await expect(interruptor).toBeEnabled({ timeout: 10_000 });
+
+  try {
+    await interruptor.click();
+    // Já houve primeira ativação nesta clínica ou não: o aviso da linha de
+    // base só aparece antes do primeiro envio, então aceita os dois caminhos.
+    const aviso = page.getByRole("button", { name: "Anotei, pode ligar" });
+    if (await aviso.isVisible().catch(() => false)) {
+      await aviso.click();
+    }
+    await expect(interruptor).toBeChecked({ timeout: 10_000 });
+    expect(await reguaAtiva("pos_falta")).toBe(true);
+  } finally {
+    await desligarRegua("pos_falta");
+  }
 });
 
 test("recepção opera a tela, mas não mexe na régua", async ({ page }) => {
@@ -153,7 +226,7 @@ test("recepção opera a tela, mas não mexe na régua", async ({ page }) => {
 
   await expect(page.getByText(NOME_PENDENTE)).toBeVisible();
 
-  await page.getByRole("button", { name: "Régua de confirmação" }).click();
+  await page.getByRole("button", { name: "Mensagens automáticas" }).click();
   const interruptor = page.getByRole("switch", {
     name: "Ligar a régua de confirmação",
   });

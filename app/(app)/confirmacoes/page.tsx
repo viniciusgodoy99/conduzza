@@ -9,7 +9,7 @@ import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   fetchConfirmacoesDia,
   fetchFaltasDeHoje,
-  fetchReguaDeConfirmacao,
+  fetchReguasDaClinica,
 } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/server";
 
@@ -51,10 +51,10 @@ export default async function ConfirmacoesPage({
     entity: "confirmacoes",
   });
 
-  const [consultas, faltas, regua] = await Promise.all([
+  const [consultas, faltas, reguas] = await Promise.all([
     fetchConfirmacoesDia(supabase, active.clinicId, dia, active.timezone),
     fetchFaltasDeHoje(supabase, active.clinicId, hoje, active.timezone),
-    fetchReguaDeConfirmacao(supabase, active.clinicId),
+    fetchReguasDaClinica(supabase, active.clinicId),
   ]);
 
   return (
@@ -73,7 +73,7 @@ export default async function ConfirmacoesPage({
         diaInicial={dia}
         consultasIniciais={consultas}
         faltasIniciais={faltas}
-        reguaInicial={regua}
+        reguasIniciais={reguas}
         podeConfirmar={canEdit(active.role, "confirmacoes_espera")}
         dicaConfirmar={
           permissionHint(active.role, "confirmacoes_espera") ??

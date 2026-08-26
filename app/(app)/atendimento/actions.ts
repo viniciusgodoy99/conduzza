@@ -256,7 +256,9 @@ export async function resolverConversaAction(
   const { context, supabase, conversation } = loaded;
   const { data: updated } = await supabase
     .from("conversation")
-    .update({ status: "resolvida" })
+    // Resolver encerra a espera junto: alguem decidiu que nao ha nada
+    // pendente. Se o paciente voltar a escrever, o ingest religa.
+    .update({ status: "resolvida", awaiting_reply: false })
     .eq("id", conversation.id)
     .neq("status", "resolvida")
     .select("id");

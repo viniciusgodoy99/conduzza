@@ -89,16 +89,27 @@ test("a ficha mostra os três indicadores e a linha do tempo das consultas", asy
   await expect(cartao(page, "Faltas")).toContainText("2");
   await expect(cartao(page, "Taxa de comparecimento")).toContainText("33%");
 
+  // A linha do tempo mostra TUDO, inclusive o que ainda vai acontecer: além
+  // das 3 realizadas, esta paciente é a pendente de amanhã da Tela 2. O cartão
+  // acima conta só as realizadas, por isso os dois números diferem de
+  // propósito.
   const consultas = bloco(page, "Consultas").getByRole("listitem");
-  await expect(consultas).toHaveCount(3);
+  await expect(consultas).toHaveCount(4);
+  // Da mais recente para a mais antiga: a primeira é a de amanhã, a única que
+  // ainda não aconteceu. Provado pelo que ela NÃO é, para não depender do
+  // rótulo exato do status.
+  await expect(consultas.first()).not.toContainText("Compareceu");
+  await expect(consultas.first()).not.toContainText("Faltou");
 
-  const maisRecente = consultas.first();
-  await expect(maisRecente).toContainText(/\d{2}\/\d{2}\/\d{4}/);
-  await expect(maisRecente).toContainText("Consulta endocrinologia");
-  await expect(maisRecente).toContainText("Dr. João Pereira");
-  await expect(maisRecente).toContainText("Compareceu");
+  // A linha é buscada pelo estado, não pela posição: consulta nova no seed não
+  // pode quebrar a asserção do que a ficha mostra de uma consulta realizada.
+  const compareceu = consultas.filter({ hasText: "Compareceu" });
+  await expect(compareceu).toHaveCount(1);
+  await expect(compareceu).toContainText(/\d{2}\/\d{2}\/\d{4}/);
+  await expect(compareceu).toContainText("Consulta endocrinologia");
+  await expect(compareceu).toContainText("Dr. João Pereira");
   // Valor do vinculo ATUAL, nunca preco inventado.
-  await expect(maisRecente).toContainText(/R\$\s?400,00/u);
+  await expect(compareceu).toContainText(/R\$\s?400,00/u);
   await expect(consultas.filter({ hasText: "Faltou" })).toHaveCount(2);
 });
 
@@ -198,7 +209,9 @@ test("papel leitura abre a ficha inteira com as ações desabilitadas e com dica
   ).toBeVisible();
   await expect(page.getByText("Risco de falta")).toBeVisible();
   await expect(cartao(page, "Total de consultas")).toContainText("3");
-  await expect(bloco(page, "Consultas").getByRole("listitem")).toHaveCount(3);
+  // 3 realizadas no cartão, 4 na linha do tempo: a de amanhã aparece na lista
+  // e não entra na conta de realizadas.
+  await expect(bloco(page, "Consultas").getByRole("listitem")).toHaveCount(4);
 
   const vender = page.getByRole("button", { name: "Vender pacote" });
   await expect(vender).toBeVisible();

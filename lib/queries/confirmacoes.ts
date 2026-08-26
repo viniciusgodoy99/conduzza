@@ -280,7 +280,11 @@ export async function fetchFaltasDeHoje(
     const regua = passo
       ? primeiro(passo.cadence as { kind?: string } | { kind?: string }[])
       : null;
-    if (regua?.kind !== "pos_falta" || !linha.appointment_id || !linha.sent_at) {
+    if (
+      regua?.kind !== "pos_falta" ||
+      !linha.appointment_id ||
+      !linha.sent_at
+    ) {
       continue;
     }
     if (!ultimoToque.has(linha.appointment_id)) {
@@ -295,13 +299,14 @@ export async function fetchFaltasDeHoje(
 }
 
 /**
- * A regua de confirmacao PADRAO da clinica (sem excecao por procedimento e
- * sem reforco por historico de falta), com os passos em ordem de disparo. As
+ * A regua PADRAO da clinica para um tipo (sem excecao por procedimento e sem
+ * reforco por historico de falta), com os passos em ordem de disparo. As
  * excecoes sao a Tela 7 (tarefa 4.8); aqui a recepcao liga a regua principal.
  */
-export async function fetchReguaDeConfirmacao(
+export async function fetchReguaPadrao(
   supabase: SupabaseClient,
   clinicId: string,
+  kind: "confirmacao" | "pos_falta",
 ): Promise<ReguaDeConfirmacao | null> {
   const { data: regua, error } = await supabase
     .from("cadence")
@@ -309,7 +314,7 @@ export async function fetchReguaDeConfirmacao(
       "id, name, active, send_window_start, send_window_end, send_weekdays",
     )
     .eq("clinic_id", clinicId)
-    .eq("kind", "confirmacao")
+    .eq("kind", kind)
     .is("procedure_id", null)
     .eq("for_no_show_history", false)
     .maybeSingle();
@@ -344,4 +349,21 @@ export async function fetchReguaDeConfirmacao(
     passos: (passos.data ?? []) as PassoDaReguaDaTela[],
     primeira_ativacao: (jaEnviou.count ?? 0) === 0,
   };
+}
+
+/** As duas reguas que o painel da Tela 2 liga: confirmacao e pos falta. */
+export type ReguasDaClinica = {
+  confirmacao: ReguaDeConfirmacao | null;
+  pos_falta: ReguaDeConfirmacao | null;
+};
+
+export async function fetchReguasDaClinica(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<ReguasDaClinica> {
+  const [confirmacao, posFalta] = await Promise.all([
+    fetchReguaPadrao(supabase, clinicId, "confirmacao"),
+    fetchReguaPadrao(supabase, clinicId, "pos_falta"),
+  ]);
+  return { confirmacao, pos_falta: posFalta };
 }

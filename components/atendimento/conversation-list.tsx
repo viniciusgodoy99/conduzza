@@ -58,6 +58,14 @@ export function ConversationList({
     }
   };
 
+  // "Aguardando você" conta quem ESPERA RESPOSTA, não quem tem o status. A
+  // régua abre conversa em aguardando_humano só para enviar a confirmação, e
+  // pelo status um disparo de 40 confirmações mostraria "Aguardando você 41"
+  // numa manhã em que um paciente só escreveu. Os outros três chips continuam
+  // contando por status puro, que é o que eles significam.
+  const espera = (c: ConversationListItem) =>
+    c.status === "aguardando_humano" ? c.awaiting_reply : true;
+
   const counts = useMemo(() => {
     const mine = conversations.filter(
       (c) => c.assignee_user_id === viewerId,
@@ -68,7 +76,7 @@ export function ConversationList({
     const byStatus = Object.fromEntries(
       STATUS_ORDER.map((status) => [
         status,
-        conversations.filter((c) => c.status === status).length,
+        conversations.filter((c) => c.status === status && espera(c)).length,
       ]),
     ) as Record<ConversationStatus, number>;
     return { mine, unassigned, all: conversations.length, byStatus };
@@ -76,29 +84,47 @@ export function ConversationList({
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return conversations.filter((conversation) => {
-      if (own === "minhas" && conversation.assignee_user_id !== viewerId) {
-        return false;
-      }
-      if (
-        own === "sem_atendente" &&
-        (conversation.assignee_user_id !== null ||
-          conversation.status === "resolvida")
-      ) {
-        return false;
-      }
-      if (statusFilter && conversation.status !== statusFilter) {
-        return false;
-      }
-      if (term) {
-        const haystack =
-          `${conversation.contact.name ?? ""} ${conversation.contact.phone_e164}`.toLowerCase();
-        if (!haystack.includes(term)) {
-          return false;
-        }
-      }
-      return true;
-    });
+    const recencia = (item: ConversationListItem) =>
+      item.last_message_at ? new Date(item.last_message_at).getTime() : 0;
+    return (
+      conversations
+        .filter((conversation) => {
+          if (own === "minhas" && conversation.assignee_user_id !== viewerId) {
+            return false;
+          }
+          if (
+            own === "sem_atendente" &&
+            (conversation.assignee_user_id !== null ||
+              conversation.status === "resolvida")
+          ) {
+            return false;
+          }
+          // O chip filtra o mesmo conjunto que ele conta: número e lista têm
+          // de dizer a mesma coisa.
+          if (
+            statusFilter &&
+            (conversation.status !== statusFilter || !espera(conversation))
+          ) {
+            return false;
+          }
+          if (term) {
+            const haystack =
+              `${conversation.contact.name ?? ""} ${conversation.contact.phone_e164}`.toLowerCase();
+            if (!haystack.includes(term)) {
+              return false;
+            }
+          }
+          return true;
+        })
+        // Quem espera resposta no topo, e dentro de cada grupo a mais recente
+        // primeiro. A régua abre conversa para enviar a confirmação, e sem
+        // este recorte um disparo de 40 confirmações esconde a conversa em que
+        // o paciente escreveu.
+        .sort((a, b) => {
+          const esperando = Number(b.awaiting_reply) - Number(a.awaiting_reply);
+          return esperando !== 0 ? esperando : recencia(b) - recencia(a);
+        })
+    );
   }, [conversations, own, statusFilter, search, viewerId]);
 
   const hasActiveFilter =

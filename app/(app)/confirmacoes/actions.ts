@@ -4,14 +4,9 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
-import { passoMaisProximoDoEvento } from "@/lib/domain/cadence";
 import { horaParaMinutos } from "@/lib/domain/horarios";
-import {
-  consentimentoVigenteDeLinhas,
-  type LinhaConsent,
-} from "@/lib/domain/leads-ui";
 import { canEdit } from "@/lib/domain/permissions";
-import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
+import { planejarCobrancaManual } from "@/lib/jobs/cobranca-manual";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -55,7 +50,11 @@ async function requireAutomacoes() {
         "Somente administradores e gestores alteram as automações." as const,
     };
   }
-  return { context, clinicId: context.active.clinicId };
+  return {
+    context,
+    clinicId: context.active.clinicId,
+    timezone: context.active.timezone,
+  };
 }
 
 async function requireConfirmacoes() {
@@ -66,7 +65,11 @@ async function requireConfirmacoes() {
   if (!canEdit(context.active.role, "confirmacoes_espera")) {
     return { error: "Seu perfil não pode alterar confirmações." as const };
   }
-  return { context, clinicId: context.active.clinicId };
+  return {
+    context,
+    clinicId: context.active.clinicId,
+    timezone: context.active.timezone,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +101,10 @@ export async function salvarJanelaDaReguaAction(
   const { cadence_id, send_window_start, send_window_end } = parsed.data;
   // Espelha o check janela_coerente: a janela nao atravessa a meia-noite.
   if (horaParaMinutos(send_window_end) <= horaParaMinutos(send_window_start)) {
-    return { ok: false, error: "A hora de fim precisa ser depois da de início." };
+    return {
+      ok: false,
+      error: "A hora de fim precisa ser depois da de início.",
+    };
   }
 
   const supabase = await createClient();
@@ -191,12 +197,6 @@ const cobrarSchema = z.object({
   appointment_ids: z.array(idSchema).min(1).max(200),
 });
 
-type ConsultaCobravel = {
-  id: string;
-  contact_id: string;
-  starts_at: string;
-};
-
 /**
  * Toque de confirmacao pedido POR UMA PESSOA, agora. Nao envia daqui: cria a
  * cadence_run e o job, e o worker faz o resto (consentimento reconferido,
@@ -216,151 +216,37 @@ export async function cobrarAgoraAction(
   }
 
   const supabase = await createClient();
-  const agora = new Date();
-
-  // Leitura pela SESSAO: a RLS confere a clinica e o papel. O service role so
-  // aparece depois, para escrever no que so o worker escreve.
-  const { data: consultas } = await supabase
-    .from("appointment")
-    .select("id, contact_id, starts_at")
-    .eq("clinic_id", guard.clinicId)
-    .in("id", parsed.data.appointment_ids)
-    .in("status", STATUS_PENDENTES)
-    .eq("send_confirmation", true)
-    .gt("starts_at", agora.toISOString());
-  const cobraveis = (consultas ?? []) as ConsultaCobravel[];
-  if (cobraveis.length === 0) {
-    return {
-      ok: false,
-      error: "Nenhuma dessas consultas está esperando confirmação.",
-    };
-  }
-
-  // A regua PADRAO da clinica: e dela que sai o texto do toque. Excecao por
-  // procedimento e regua reforcada sao a Tela 7 (tarefa 4.8).
-  const { data: regua } = await supabase
-    .from("cadence")
-    .select("id")
-    .eq("clinic_id", guard.clinicId)
-    .eq("kind", "confirmacao")
-    .is("procedure_id", null)
-    .eq("for_no_show_history", false)
-    .maybeSingle();
-  if (!regua) {
-    return { ok: false, error: "A régua de confirmação não está configurada." };
-  }
-  const { data: passos } = await supabase
-    .from("cadence_step")
-    .select("id, offset_minutes")
-    .eq("clinic_id", guard.clinicId)
-    .eq("cadence_id", regua.id as string);
-  const passosDaRegua = ((passos ?? []) as {
-    id: string;
-    offset_minutes: number;
-  }[]).map((passo) => ({
-    id: passo.id,
-    offsetMinutes: passo.offset_minutes,
-  }));
-  if (passosDaRegua.length === 0) {
-    return { ok: false, error: "A régua de confirmação não tem mensagens." };
-  }
-
-  // Autorizacao vigente numa consulta so (mesma regra da RPC
-  // consentimento_vigente). Quem revogou nao entra na fila: regra 3.3.
-  const contactIds = [...new Set(cobraveis.map((c) => c.contact_id))];
-  const { data: consentimentos } = await supabase
-    .from("contact_consent")
-    .select("contact_id, channel, granted_at, revoked_at")
-    .eq("clinic_id", guard.clinicId)
-    .in("contact_id", contactIds);
-  const porContato = new Map<string, LinhaConsent[]>();
-  for (const linha of (consentimentos ?? []) as (LinhaConsent & {
-    contact_id: string;
-  })[]) {
-    const lista = porContato.get(linha.contact_id) ?? [];
-    lista.push(linha);
-    porContato.set(linha.contact_id, lista);
-  }
-
-  // Truncado ao minuto de proposito: dois cliques seguidos caem na MESMA
-  // chave (cadence_step_id, contact_id, scheduled_for) e o segundo nao cria
-  // run nenhuma. E a trava do banco fazendo o trabalho, nao um controle de
-  // tela. Contato com duas consultas no mesmo passo colapsa na mesma chave, e
-  // por isso 'enfileirados' conta as runs CRIADAS, nunca as pedidas.
-  const minutoAtual = new Date(
-    Math.floor(agora.getTime() / 60_000) * 60_000,
-  ).toISOString();
-
-  const linhas: Record<string, unknown>[] = [];
-  const cobrados: string[] = [];
-  let puladosSemAutorizacao = 0;
-  for (const consulta of cobraveis) {
-    if (!consentimentoVigenteDeLinhas(porContato.get(consulta.contact_id) ?? [])) {
-      puladosSemAutorizacao += 1;
-      continue;
-    }
-    const minutosAte =
-      (new Date(consulta.starts_at).getTime() - agora.getTime()) / 60_000;
-    const passo = passoMaisProximoDoEvento(passosDaRegua, minutosAte);
-    if (!passo) {
-      continue;
-    }
-    linhas.push({
-      clinic_id: guard.clinicId,
-      cadence_step_id: passo.id,
-      contact_id: consulta.contact_id,
-      appointment_id: consulta.id,
-      scheduled_for: minutoAtual,
-    });
-    cobrados.push(consulta.id);
-  }
-
-  if (linhas.length === 0) {
-    return {
-      ok: true,
-      enfileirados: 0,
-      pulados_sem_autorizacao: puladosSemAutorizacao,
-    };
-  }
-
   const admin = createAdminClient();
-  const { data: criadas, error: erroRun } = await admin
-    .from("cadence_run")
-    .upsert(linhas, {
-      onConflict: "cadence_step_id,contact_id,scheduled_for",
-      ignoreDuplicates: true,
-    })
-    .select("id");
-  if (erroRun) {
-    return { ok: false, error: "Não foi possível enfileirar as cobranças." };
+
+  // A logica vive em lib/jobs/cobranca-manual.ts: e o mesmo codigo que o teste
+  // de integracao exercita. Aqui ficam so os guards da sessao, a trilha e o
+  // revalidate, que nao existem fora de uma requisicao.
+  const resultado = await planejarCobrancaManual(supabase, admin, {
+    clinicId: guard.clinicId,
+    // O fuso da clinica decide se o texto diz "hoje" ou "amanha": o do
+    // servidor nao tem nada a ver com o calendario do paciente (regra 3.6).
+    timezone: guard.timezone,
+    appointmentIds: parsed.data.appointment_ids,
+  });
+  if (!resultado.ok) {
+    return { ok: false, error: resultado.error };
   }
-  const novas = (criadas ?? []) as { id: string }[];
-  if (novas.length > 0) {
-    const { error: erroJob } = await admin.from("job_queue").insert(
-      novas.map((run) => ({
+
+  if (resultado.cobrados.length > 0) {
+    await supabase.from("audit_log").insert(
+      resultado.cobrados.map((appointmentId) => ({
         clinic_id: guard.clinicId,
-        kind: "executar_passo_de_regua",
-        payload: { cadence_run_id: run.id, manual: true },
+        user_id: guard.context.userId,
+        action: "cobrou_confirmacao",
+        entity: "appointment",
+        entity_id: appointmentId,
       })),
     );
-    if (erroJob) {
-      return { ok: false, error: "Não foi possível enfileirar as cobranças." };
-    }
   }
-
-  await supabase.from("audit_log").insert(
-    cobrados.map((appointmentId) => ({
-      clinic_id: guard.clinicId,
-      user_id: guard.context.userId,
-      action: "cobrou_confirmacao",
-      entity: "appointment",
-      entity_id: appointmentId,
-    })),
-  );
   revalidatePath("/confirmacoes");
   return {
     ok: true,
-    enfileirados: novas.length,
-    pulados_sem_autorizacao: puladosSemAutorizacao,
+    enfileirados: resultado.enfileirados,
+    pulados_sem_autorizacao: resultado.pulados_sem_autorizacao,
   };
 }

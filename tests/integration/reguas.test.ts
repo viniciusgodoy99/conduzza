@@ -8,6 +8,7 @@ import {
   resetFakeProvider,
 } from "@/lib/integrations/whatsapp/fake";
 import { processarLote } from "@/lib/jobs/worker";
+import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
 import { adminClient } from "../rls/stack";
 
 // Aceite da tarefa 4.6 contra o banco REAL: a regua nao duplica envio,
@@ -314,7 +315,13 @@ describe("planner das réguas", () => {
     const enviadas = fakeSentMessages().filter((m) => m.to === telefone);
     expect(enviadas).toHaveLength(1);
     // Confirmação sai com opções de resposta, e o modelo foi preenchido.
-    expect(enviadas[0]?.menuOptions ?? []).toHaveLength(2);
+    // Amarrado a FONTE UNICA, nao a um numero: era exatamente a divergencia
+    // entre o menu enviado e o menu que interpretarResposta esperava que este
+    // teste deixou passar (o paciente que respondia "2" para cancelar era lido
+    // como "remarcar" e a consulta nunca era cancelada).
+    expect((enviadas[0]?.menuOptions ?? []).map((o) => o.id)).toEqual(
+      MENU_CONFIRMACAO.map((o) => o.id),
+    );
     expect(enviadas[0]?.body).toContain("Paciente Régua");
     expect(enviadas[0]?.body).not.toContain("{{");
 

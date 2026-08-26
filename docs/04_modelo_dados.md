@@ -211,12 +211,25 @@ create table conversation (
     check (status in ('ia_atendendo','aguardando_humano','em_atendimento','resolvida')),
   assignee_user_id uuid references auth.users(id),
   window_expires_at timestamptz,           -- janela de 24h da Meta
-  unread_count integer not null default 0,
+  unread_count integer not null default 0, -- por LER; zera ao abrir a conversa
+  awaiting_reply boolean not null default false, -- ver nota abaixo
   last_message_at timestamptz,
   tags text[] not null default '{}',
   created_at timestamptz not null default now()
 );
+```
 
+**`awaiting_reply` não é o mesmo que `unread_count > 0`, e não é o mesmo que `status = 'aguardando_humano'`.** As três respondem perguntas diferentes, e confundi-las já custou dois defeitos:
+
+| Coluna | Pergunta que responde | Por que não serve de contador |
+|---|---|---|
+| `status` | quem é o dono da conversa agora | a régua abre conversa em `aguardando_humano` só para enviar a confirmação: 40 disparos viram badge 40 |
+| `unread_count` | tem mensagem por ler | zera quando alguém apenas ABRE para ler, e o lembrete some sem ninguém ter respondido |
+| `awaiting_reply` | a última mensagem veio do paciente e ninguém respondeu | é este que o badge de Atendimento e a ordem do Inbox usam |
+
+Sobe em `ingest_inbound_message` (mensagem de entrada). Desce **só** em envio com `author = 'usuario'` e ao resolver a conversa: toque automático de régua (`author = 'sistema'`) não apaga pergunta de paciente.
+
+```sql
 create table message (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references clinic(id) on delete cascade,
@@ -421,7 +434,12 @@ create table cadence_run (
   sent_at timestamptz,
   skipped_reason text,                      -- sem_consentimento | fora_janela | teto_gasto | condicao_parada
   message_id uuid references message(id),
-  unique (cadence_step_id, contact_id, scheduled_for)   -- não duplica envio
+  -- Não duplica envio. appointment_id ENTRA na chave: sem ele, duas consultas
+  -- do mesmo paciente no mesmo passo colidiam no toque manual ("Cobrar agora",
+  -- que usa o minuto corrente como scheduled_for) e a segunda sumia em
+  -- silêncio. nulls not distinct preserva a trava para régua sem consulta.
+  unique nulls not distinct
+    (cadence_step_id, contact_id, appointment_id, scheduled_for)
 );
 
 create table job_queue (

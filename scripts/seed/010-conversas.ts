@@ -682,6 +682,11 @@ export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
         ? (userIds.get(c.assigneeEmail) ?? null)
         : null,
       unread_count: c.unread,
+      // O seed insere direto na tabela, entao precisa dizer o que o ingest
+      // diria: quem esta esperando humano com mensagem por ler e, por
+      // construcao, quem escreveu e nao foi respondido. E dai que saem o badge
+      // de Atendimento e a ordem do Inbox.
+      awaiting_reply: c.status === "aguardando_humano" && c.unread > 0,
       last_message_at: minutesAgo(c.ageMinutes),
       tags: c.tags ?? [],
       created_at: minutesAgo(c.ageMinutes + 120),

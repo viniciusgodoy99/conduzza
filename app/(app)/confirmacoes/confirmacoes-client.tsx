@@ -39,13 +39,13 @@ import {
   confirmacoesKeys,
   fetchConfirmacoesDia,
   fetchFaltasDeHoje,
-  fetchReguaDeConfirmacao,
+  fetchReguasDaClinica,
   STATUS_CANCELADOS,
   STATUS_CONFIRMADOS,
   STATUS_PENDENTES,
   type ConsultaDaConfirmacao,
   type FaltaDoDia,
-  type ReguaDeConfirmacao,
+  type ReguasDaClinica,
 } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/client";
 
@@ -67,7 +67,7 @@ export function ConfirmacoesClient({
   diaInicial,
   consultasIniciais,
   faltasIniciais,
-  reguaInicial,
+  reguasIniciais,
   podeConfirmar,
   dicaConfirmar,
   podeAgendar,
@@ -83,7 +83,7 @@ export function ConfirmacoesClient({
   diaInicial: string;
   consultasIniciais: ConsultaDaConfirmacao[];
   faltasIniciais: FaltaDoDia[];
-  reguaInicial: ReguaDeConfirmacao | null;
+  reguasIniciais: ReguasDaClinica;
   podeConfirmar: boolean;
   dicaConfirmar: string;
   podeAgendar: boolean;
@@ -135,8 +135,8 @@ export function ConfirmacoesClient({
 
   const reguaQuery = useQuery({
     queryKey: confirmacoesKeys.regua(clinicId),
-    queryFn: () => fetchReguaDeConfirmacao(supabase, clinicId),
-    initialData: reguaInicial,
+    queryFn: () => fetchReguasDaClinica(supabase, clinicId),
+    initialData: reguasIniciais,
     staleTime: 60_000,
   });
 
@@ -280,7 +280,7 @@ export function ConfirmacoesClient({
             onClick={() => setPainelAberto(true)}
           >
             <Workflow strokeWidth={1.5} className="size-4" aria-hidden />
-            Régua de confirmação
+            Mensagens automáticas
           </Button>
         </div>
 
@@ -435,7 +435,7 @@ export function ConfirmacoesClient({
 
       <PainelRegua
         clinicId={clinicId}
-        regua={reguaQuery.data ?? null}
+        reguas={reguaQuery.data ?? null}
         aberto={painelAberto}
         onFechar={() => setPainelAberto(false)}
         podeEditar={podeAutomatizar}

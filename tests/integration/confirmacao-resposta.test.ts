@@ -294,6 +294,45 @@ describe("resposta do paciente ao toque de confirmação", () => {
     expect(await ecosDaClinica(cenario.clinicId)).toHaveLength(0);
   });
 
+  // O achado mais perigoso da revisão: o paciente responde ao toque de
+  // RECUPERAÇÃO DEPOIS DA FALTA ("Ainda dá tempo de remarcar?") e, como ele
+  // também tem uma consulta futura com confirmação enviada na semana, o "sim"
+  // era lido como confirmação daquela outra consulta. A pessoa nunca disse que
+  // vem, e a agenda passava a contar com ela.
+  it("resposta ao toque de pós falta não confirma a consulta futura", async () => {
+    const cenario = await montarCenario("posfalta", "+5584964000090");
+
+    // O toque de recuperação sai DEPOIS do de confirmação: é o último que o
+    // paciente leu, então é a ele que a resposta se refere.
+    const { data: passoPosFalta } = await admin
+      .from("cadence_step")
+      .select("id, cadence:cadence_id!inner ( kind )")
+      .eq("clinic_id", cenario.clinicId)
+      .eq("offset_minutes", 2880)
+      .single()
+      .throwOnError();
+    await admin
+      .from("cadence_run")
+      .insert({
+        clinic_id: cenario.clinicId,
+        cadence_step_id: passoPosFalta!.id,
+        contact_id: cenario.contactId,
+        appointment_id: null,
+        scheduled_for: new Date().toISOString(),
+        sent_at: new Date(Date.now() + MINUTO).toISOString(),
+      })
+      .throwOnError();
+
+    await responder(cenario, "sim");
+
+    const consulta = await statusDaConsulta(cenario);
+    expect(consulta.status).toBe("aguardando_confirmacao");
+    expect(consulta.confirmation_channel).toBeNull();
+    // Nada de eco automático: a conversa fica com a recepção, que é o
+    // comportamento seguro quando o sistema não sabe do que se fala.
+    expect(await ecosDaClinica(cenario.clinicId)).toHaveLength(0);
+  });
+
   it("áudio nunca vira decisão automática", async () => {
     const cenario = await montarCenario("audio", "+5584962000007");
 

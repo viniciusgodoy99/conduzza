@@ -1,5 +1,6 @@
 import {
   diaCivil,
+  diasEntre,
   horaParaMinutos,
   instanteLocal,
   minutosLocais,
@@ -126,6 +127,8 @@ export function proximaAbertura(
 // timestamp entre o banco e o worker.
 const TOLERANCIA_MS = 60_000;
 
+const MINUTOS_POR_DIA = 1440;
+
 /**
  * O passo agendado ainda corresponde ao horario atual da consulta?
  * Falso significa consulta remarcada (ou movida) depois do planejamento.
@@ -135,35 +138,60 @@ export function passoCondizComAgenda(entrada: {
   offsetMinutes: number;
   scheduledFor: Date;
 }): boolean {
-  const esperado =
-    entrada.startsAt.getTime() + entrada.offsetMinutes * 60_000;
+  const esperado = entrada.startsAt.getTime() + entrada.offsetMinutes * 60_000;
   return Math.abs(esperado - entrada.scheduledFor.getTime()) <= TOLERANCIA_MS;
 }
 
 /**
- * Qual passo usar num toque MANUAL ("Cobrar agora", Tela 2): o de antecedencia
- * mais proxima do tempo que ainda falta para a consulta. E o que faz o texto
- * combinar com a realidade, porque o passo de 24h diz "amanha" e o de 3h diz
- * "hoje": mandar o texto errado confunde mais do que nao mandar.
+ * Qual passo usar num toque MANUAL ("Cobrar agora", Tela 2).
  *
- * So entra passo ANTES do evento (offset negativo). Empate fica com a maior
- * antecedencia, para a escolha ser estavel independente da ordem da lista.
+ * A escolha e por DIA CIVIL, nao por distancia em minutos, porque e isso que
+ * o texto de cada passo afirma. O de 3h diz "sua consulta e hoje", o de 24h diz
+ * "amanha" e o de 72h diz a data por extenso. Duas tentativas anteriores
+ * erraram justamente aqui:
+ *
+ * - escolher o passo MAIS PROXIMO mandava "hoje" as 19h para uma consulta das
+ *   8h do dia seguinte (13 horas fica mais perto de 3h do que de 24h);
+ * - escolher o MENOR PASSO QUE COBRE o tempo restante mandava "amanha" as
+ *   10h30 para uma consulta das 14h do MESMO dia (210 minutos nao cabem no
+ *   passo de 3h, entao caia no de 24h).
+ *
+ * Contando dias civis os dois casos ficam certos, e o problema da virada da
+ * meia-noite desaparece junto: consulta 00h30 cobrada as 23h50 esta a 40
+ * minutos, mas e AMANHA, e e o texto de amanha que sai.
+ *
+ * O "dia" de um passo e floor(|offset| / 1440): -180 e hoje, -1440 e amanha,
+ * -4320 e "daqui a tres dias". Sem passo do dia exato, vale o passo de maior
+ * antecedencia entre os que alcancam o dia da consulta, que e justamente o que
+ * escreve a data por extenso e nunca mente. Consulta mais distante que
+ * qualquer passo tambem usa esse.
+ *
+ * So entra passo ANTES do evento (offset negativo).
  */
-export function passoMaisProximoDoEvento<T extends { offsetMinutes: number }>(
+export function passoDoToqueManual<T extends { offsetMinutes: number }>(
   passos: readonly T[],
-  minutosAteOEvento: number,
+  entrada: { agora: Date; startsAt: Date; timezone: string },
 ): T | null {
-  const anteriores = passos
-    .filter((passo) => passo.offsetMinutes < 0)
-    .sort((a, b) => a.offsetMinutes - b.offsetMinutes);
-  let escolhido: T | null = null;
-  let menorDistancia = Number.POSITIVE_INFINITY;
-  for (const passo of anteriores) {
-    const distancia = Math.abs(-passo.offsetMinutes - minutosAteOEvento);
-    if (distancia < menorDistancia) {
-      menorDistancia = distancia;
-      escolhido = passo;
-    }
+  const anteriores = passos.filter((passo) => passo.offsetMinutes < 0);
+  if (anteriores.length === 0) {
+    return null;
   }
-  return escolhido;
+  const diaDoPasso = (passo: T) =>
+    Math.floor(-passo.offsetMinutes / MINUTOS_POR_DIA);
+  // Da maior antecedencia para a menor: -4320, -1440, -180.
+  const ordenados = [...anteriores].sort(
+    (a, b) => a.offsetMinutes - b.offsetMinutes,
+  );
+
+  const diasAte = diasEntre(
+    diaCivil(entrada.timezone, entrada.agora),
+    diaCivil(entrada.timezone, entrada.startsAt),
+  );
+
+  const exato = ordenados.find((passo) => diaDoPasso(passo) === diasAte);
+  if (exato) {
+    return exato;
+  }
+  const alcanca = ordenados.filter((passo) => diaDoPasso(passo) >= diasAte);
+  return alcanca[0] ?? ordenados[0]!;
 }

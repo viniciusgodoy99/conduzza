@@ -111,11 +111,17 @@ export default async function AppLayout({
   const janelaDeAmanha = limitesDoDia(active.timezone, amanha);
   const [{ count: aguardandoHumano }, { count: confirmacoesPendentes }] =
     await Promise.all([
+      // awaiting_reply, nao status e nao unread_count. Status sozinho contaria
+      // as conversas que a REGUA abriu para enviar confirmacao (40 disparos =
+      // badge 40, com a mensagem de paciente de verdade enterrada). E
+      // unread_count zera quando alguem so ABRE a conversa para ler, o que
+      // faria o lembrete sumir sem ninguem ter respondido.
       supabase
         .from("conversation")
         .select("id", { count: "exact", head: true })
         .eq("clinic_id", active.clinicId)
-        .eq("status", "aguardando_humano"),
+        .eq("status", "aguardando_humano")
+        .eq("awaiting_reply", true),
       supabase
         .from("appointment")
         .select("id", { count: "exact", head: true })

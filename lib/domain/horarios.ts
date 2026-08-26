@@ -71,6 +71,15 @@ export function somarDias(diaLocal: string, dias: number): string {
   return `${a}-${m}-${d}`;
 }
 
+/** Quantos dias civis separam dois dias no formato aaaa-mm-dd (b menos a). */
+export function diasEntre(diaA: string, diaB: string): number {
+  const emUTC = (dia: string) => {
+    const [ano, mes, d] = dia.split("-").map(Number);
+    return Date.UTC(ano!, (mes ?? 1) - 1, d ?? 1);
+  };
+  return Math.round((emUTC(diaB) - emUTC(diaA)) / 86_400_000);
+}
+
 /**
  * Todos os dias civis (no fuso da clinica) tocados pelo intervalo
  * [rangeStart, rangeEnd), em ordem. Inclui o dia ANTERIOR ao primeiro,
