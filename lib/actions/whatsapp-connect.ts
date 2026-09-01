@@ -225,20 +225,34 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
     // 2. Configura o webhook ANTES de conectar, para nao perder a primeira
     // mensagem nem o evento de conexao.
     const origin = await publicOrigin();
+    let avisoDoWebhook: string | null = null;
+    if (origin.includes("localhost") || origin.startsWith("http://")) {
+      // O provedor chama de FORA: um endereco local nunca vai ser alcancado, e
+      // conectar assim entrega metade do produto (a clinica envia e nunca
+      // recebe resposta nenhuma) parecendo sucesso.
+      avisoDoWebhook =
+        "O endereço público do sistema não está configurado, então as respostas dos pacientes não vão chegar. Configure PUBLIC_APP_URL antes de usar com paciente de verdade.";
+    }
     try {
       await provider.configureWebhook(
         ref,
         `${origin}/api/webhooks/whatsapp?clinic=${guard.clinicId}&secret=${secret.webhook_secret}`,
       );
     } catch {
-      // Configuracao de webhook e reexecutavel; falha aqui nao derruba o QR.
+      // Falha aqui NAO pode ser silenciosa. Sem webhook o numero conecta e
+      // envia, mas nada volta: resposta de paciente, recibo de entrega e ate o
+      // aviso de desconexao se perdem, e a tela continua dizendo "conectado".
+      // Antes isto era engolido e o produto ia para o ar pela metade.
+      avisoDoWebhook =
+        "O número conectou, mas não foi possível configurar o recebimento de mensagens. As respostas dos pacientes não vão chegar até isso ser resolvido.";
     }
 
     // 3. Dispara o pareamento e devolve o QR.
     const status = await provider.connectInstance(ref);
     await persistStatus(admin, guard.clinicId, status);
     revalidarTelasDeConexao();
-    return toState(status, account.display_phone);
+    const estado = toState(status, account.display_phone);
+    return avisoDoWebhook ? { ...estado, error: avisoDoWebhook } : estado;
   } catch (error) {
     return {
       status: account.connection_status,

@@ -133,7 +133,17 @@ test("editar o cadastro persiste depois de recarregar", async ({ page }) => {
 
   const observacoes = page.getByLabel("Observações");
   await expect(observacoes).toHaveValue("Prefere o turno da manhã.");
-  await observacoes.fill("Prefere o fim da tarde, depois das 17h.");
+
+  // Preencher e CONFERIR, repetindo até pegar. O textarea vem do servidor já
+  // com o texto dentro, então ele tem valor antes de a página hidratar: um
+  // fill que chegue nessa janela é desfeito quando o react-hook-form assume o
+  // campo com o valor inicial, e o resultado era o texto novo grudado no
+  // antigo. Esperar o valor "colar" é esperar o campo ser de verdade nosso.
+  const TEXTO_NOVO = "Prefere o fim da tarde, depois das 17h.";
+  await expect(async () => {
+    await observacoes.fill(TEXTO_NOVO);
+    await expect(observacoes).toHaveValue(TEXTO_NOVO);
+  }).toPass({ timeout: 15_000 });
   await page.getByRole("button", { name: "Salvar cadastro" }).click();
   // Prazo folgado so aqui: esta e a primeira chamada da Server Action na
   // suite, e o servidor de desenvolvimento compila a rota na hora.
@@ -142,10 +152,9 @@ test("editar o cadastro persiste depois de recarregar", async ({ page }) => {
   });
 
   await page.reload();
-  await expect(page.getByLabel("Observações")).toHaveValue(
-    "Prefere o fim da tarde, depois das 17h.",
-    { timeout: 20_000 },
-  );
+  await expect(page.getByLabel("Observações")).toHaveValue(TEXTO_NOVO, {
+    timeout: 20_000,
+  });
 });
 
 test("paciente descadastrado mostra o pedido, e a nova autorização exige evidência", async ({

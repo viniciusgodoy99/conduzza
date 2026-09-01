@@ -11,7 +11,7 @@
 | Banco | **Supabase Postgres** | RLS resolve isolamento multi-tenant no nível do banco, que é o que a LGPD art. 11 exige. Postgres dá exclusion constraint para conflito de agenda, que é a trava mais importante do produto |
 | Auth | **Supabase Auth** | Integra com RLS via JWT. Convite por e-mail pronto |
 | Tempo real | **Supabase Realtime** | Inbox e Agenda precisam atualizar sozinhos. Sem isso, duas recepcionistas se atropelam |
-| Filas | **`job_queue` + `pg_cron` + Edge Function** | Mantém tudo dentro do Supabase no V1. Régua de mensagem é trabalho agendado, não requisição HTTP |
+| Filas | **`job_queue` + worker Node** (`npm run worker`) | Régua de mensagem é trabalho agendado, não requisição HTTP. O desenho original era `pg_cron` + Edge Function, mas **a extensão não está disponível neste projeto** (degrade de 31/08/2026, registrado em `docs/05_backlog.md` 4.6). O contrato de concorrência continua no banco (`claim_jobs` com `FOR UPDATE SKIP LOCKED`); só o hospedeiro mudou. Consequência: o deploy tem dois processos, o worker precisa de supervisão, e `worker_heartbeat` alimenta a faixa "as mensagens automáticas estão paradas" |
 | Webhook WhatsApp | **Edge Function (Deno)** | Precisa responder em menos de 5 segundos para a Meta não reenviar. Function isolada, sem cold start de Next |
 
 ### Alerta de residência de dado
@@ -66,7 +66,7 @@ supabase/
 ├── migrations/                   SQL versionado, uma migration por mudança
 └── functions/
     ├── whatsapp-webhook/         recebe da Meta
-    ├── job-worker/               processa job_queue, chamado por pg_cron
+    ├── job-worker/               PREVISTO, não construído: hoje quem processa job_queue é scripts/worker.ts
     └── ai-agent/                 orquestra o agente
 
 docs/                             esta documentação
@@ -171,7 +171,7 @@ Implementar como combinação de regras determinísticas (lista de padrões) **e
 ## 5. Fluxo de mensagem enviada (réguas)
 
 ```
-pg_cron a cada minuto
+worker Node a cada minuto (era pg_cron no desenho original)
         |
         v
 Edge Function `job-worker` faz SELECT ... FOR UPDATE SKIP LOCKED em `job_queue`

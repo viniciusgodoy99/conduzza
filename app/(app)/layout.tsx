@@ -4,9 +4,11 @@ import { redirect } from "next/navigation";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { AppShell } from "@/components/shell/app-shell";
 import { CriarClinica } from "@/components/shell/criar-clinica";
+import { MotorBanner } from "@/components/shell/motor-banner";
 import { WhatsappBanner } from "@/components/shell/whatsapp-banner";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import { diaCivil, limitesDoDia, somarDias } from "@/lib/domain/horarios";
+import { motorParado } from "@/lib/domain/motor";
 import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/server";
 
@@ -91,45 +93,84 @@ export default async function AppLayout({
 
   const active = context.active;
 
-  // Faixa de WhatsApp desconectado (estado 5 da secao 8 do brief): so quando
-  // a clinica tem conta e ela nao esta conectada.
+  // TUDO que o shell precisa do banco, numa rodada so. Em serie eram quatro
+  // idas ao Postgres remoto em CADA renderizacao de pagina, e isso aparece:
+  // a suite de navegador ficou minutos mais lenta e os testes de tempo real
+  // comecaram a estourar o limite de 2 segundos. O shell e o caminho mais
+  // quente do sistema; latencia aqui e paga por toda tela.
   const supabase = await createClient();
-  const { data: whatsappAccount } = await supabase
-    .from("whatsapp_account")
-    .select("connection_status")
-    .eq("clinic_id", active.clinicId)
-    .maybeSingle();
-  const banner =
-    whatsappAccount && whatsappAccount.connection_status !== "conectado" ? (
-      <WhatsappBanner />
-    ) : null;
-
-  // Badges do rail: conversas aguardando um humano e confirmacoes pendentes
-  // de amanha (fonte real, sem inventar). "Amanha" e o dia civil NO FUSO DA
-  // CLINICA, o mesmo recorte que a Tela 2 abre por padrao.
   const amanha = somarDias(diaCivil(active.timezone, new Date()), 1);
   const janelaDeAmanha = limitesDoDia(active.timezone, amanha);
-  const [{ count: aguardandoHumano }, { count: confirmacoesPendentes }] =
-    await Promise.all([
-      // awaiting_reply, nao status e nao unread_count. Status sozinho contaria
-      // as conversas que a REGUA abriu para enviar confirmacao (40 disparos =
-      // badge 40, com a mensagem de paciente de verdade enterrada). E
-      // unread_count zera quando alguem so ABRE a conversa para ler, o que
-      // faria o lembrete sumir sem ninguem ter respondido.
-      supabase
-        .from("conversation")
-        .select("id", { count: "exact", head: true })
-        .eq("clinic_id", active.clinicId)
-        .eq("status", "aguardando_humano")
-        .eq("awaiting_reply", true),
-      supabase
-        .from("appointment")
-        .select("id", { count: "exact", head: true })
-        .eq("clinic_id", active.clinicId)
-        .in("status", STATUS_PENDENTES)
-        .gte("starts_at", janelaDeAmanha.inicio.toISOString())
-        .lt("starts_at", janelaDeAmanha.fim.toISOString()),
-    ]);
+
+  const [
+    { data: whatsappAccount },
+    { data: batidas },
+    { count: aguardandoHumano },
+    { count: confirmacoesPendentes },
+  ] = await Promise.all([
+    // Faixa de WhatsApp desconectado (estado 5 da secao 8 do brief): so quando
+    // a clinica tem conta e ela nao esta conectada.
+    supabase
+      .from("whatsapp_account")
+      .select("connection_status")
+      .eq("clinic_id", active.clinicId)
+      .maybeSingle(),
+    // Prova de vida do motor de automacao.
+    supabase
+      .from("worker_heartbeat")
+      .select("batida_em")
+      .order("batida_em", { ascending: false })
+      .limit(1),
+    // awaiting_reply, nao status e nao unread_count. Status sozinho contaria
+    // as conversas que a REGUA abriu para enviar confirmacao (40 disparos =
+    // badge 40, com a mensagem de paciente de verdade enterrada). E
+    // unread_count zera quando alguem so ABRE a conversa para ler, o que
+    // faria o lembrete sumir sem ninguem ter respondido.
+    supabase
+      .from("conversation")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", active.clinicId)
+      .eq("status", "aguardando_humano")
+      .eq("awaiting_reply", true),
+    // Confirmacoes pendentes de amanha, no fuso da CLINICA: o mesmo recorte
+    // que a Tela 2 abre por padrao.
+    supabase
+      .from("appointment")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", active.clinicId)
+      .in("status", STATUS_PENDENTES)
+      .gte("starts_at", janelaDeAmanha.inicio.toISOString())
+      .lt("starts_at", janelaDeAmanha.fim.toISOString()),
+  ]);
+
+  // Motor parado tem precedencia sobre WhatsApp desconectado: com ele fora do
+  // ar nem reconectar adianta, porque nada seria enviado mesmo com o canal de
+  // pe. Duas faixas ao mesmo tempo seriam ruido; a mais grave manda.
+  //
+  // 3 minutos de folga: o worker bate ponto a cada 30 segundos, entao a faixa
+  // so aparece depois de seis batidas perdidas. Isso evita alarme por uma
+  // reinicializacao rapida e ainda avisa muito antes de a clinica perder o
+  // toque do dia.
+  const ultimaBatida = (batidas ?? [])[0]?.batida_em as string | undefined;
+  const parado = motorParado(ultimaBatida, new Date());
+
+  const banner = parado ? (
+    <MotorBanner
+      desde={
+        ultimaBatida
+          ? new Date(ultimaBatida).toLocaleString("pt-BR", {
+              timeZone: active.timezone,
+              day: "2-digit",
+              month: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : null
+      }
+    />
+  ) : whatsappAccount && whatsappAccount.connection_status !== "conectado" ? (
+    <WhatsappBanner />
+  ) : null;
 
   return (
     <AppShell

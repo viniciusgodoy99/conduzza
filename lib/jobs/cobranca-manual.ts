@@ -50,6 +50,31 @@ export async function planejarCobrancaManual(
   const agora = params.agora ?? new Date();
   const vazio = { enfileirados: 0, pulados_sem_autorizacao: 0, cobrados: [] };
 
+  // Canal fora do ar: recusar ANTES de enfileirar. Enfileirar aqui devolveria
+  // "cobranca na fila de envio" para a recepcao e o toque morreria depois, sem
+  // rastro nenhum na tela: ela cobraria de novo as cegas ou concluiria que o
+  // paciente ignorou. Melhor dizer a verdade na hora do clique.
+  const { data: conta } = await leitura
+    .from("whatsapp_account")
+    .select("connection_status")
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if (!conta) {
+    return {
+      ok: false,
+      error: "Esta clínica ainda não tem WhatsApp conectado.",
+      ...vazio,
+    };
+  }
+  if (conta.connection_status !== "conectado") {
+    return {
+      ok: false,
+      error:
+        "O WhatsApp está desconectado, então a mensagem não sairia. Reconecte em Configurações e cobre de novo.",
+      ...vazio,
+    };
+  }
+
   const { data: consultas } = await leitura
     .from("appointment")
     .select("id, contact_id, starts_at")

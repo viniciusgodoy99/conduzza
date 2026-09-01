@@ -15,6 +15,18 @@ import {
 // Uma consulta por bloco de dado, sem filtro aninhado de embed: o recorte que
 // importa (o dia civil NO FUSO DA CLINICA) vem de limitesDoDia.
 
+/**
+ * O que aconteceu com o toque automatico desta consulta. E o que faltava para
+ * a recepcao parar de trabalhar as cegas: sem isto, "toque enviado", "toque na
+ * fila", "toque pulado por falta de autorizacao" e "motor parado, nada foi
+ * planejado" apareciam todos como a mesma linha pendente.
+ */
+export type EstadoDoToque =
+  | { situacao: "enviado"; em: string }
+  | { situacao: "na_fila"; para: string }
+  | { situacao: "pulado"; motivo: string }
+  | { situacao: "nenhum" };
+
 export type ConsultaDaConfirmacao = {
   id: string;
   contact_id: string;
@@ -40,6 +52,8 @@ export type ConsultaDaConfirmacao = {
   consent_ativo: boolean;
   /** Conversa aberta do contato, para o atalho "Abrir conversa". */
   conversation_id: string | null;
+  /** O que a regua fez (ou nao fez) por esta consulta ate agora. */
+  toque: EstadoDoToque;
 };
 
 /** Falta de hoje, com o toque de recuperacao que ja saiu (se saiu). */
@@ -68,6 +82,13 @@ export type ReguaDeConfirmacao = {
    * a primeira mensagem sair.
    */
   primeira_ativacao: boolean;
+  /**
+   * Quantos toques DESTA regua sairam nas ultimas 24 horas e quantos foram
+   * pulados. Sem isto, "Regua ligada" era a unica informacao da tela, e uma
+   * regua ligada com o motor parado ficava identica a uma regua trabalhando.
+   */
+  enviados_24h: number;
+  pulados_24h: number;
 };
 
 // Os tres baldes do bento. Ficam aqui porque a contagem da tela, o badge do
@@ -107,6 +128,7 @@ function normalizarConsulta(
   row: Record<string, unknown>,
   consentPorContato: Map<string, boolean>,
   conversaPorContato: Map<string, string>,
+  toquePorConsulta?: Map<string, EstadoDoToque>,
 ): ConsultaDaConfirmacao {
   const vinculoBruto = primeiro(
     row.service_link as Record<string, unknown> | Record<string, unknown>[],
@@ -125,6 +147,7 @@ function normalizarConsulta(
     service_link,
     consent_ativo: consentPorContato.get(row.contact_id as string) ?? false,
     conversation_id: conversaPorContato.get(row.contact_id as string) ?? null,
+    toque: toquePorConsulta?.get(row.id as string) ?? { situacao: "nenhum" },
   } as ConsultaDaConfirmacao;
 }
 
@@ -190,6 +213,73 @@ async function consentimentoDosContatos(
 }
 
 /**
+ * O ultimo toque de cada consulta, com o que aconteceu com ele. Uma consulta
+ * so por lote: a lista do dia tem dezenas de linhas e uma consulta por linha
+ * seria N+1.
+ *
+ * A run mais recente manda. "Mais recente" e por scheduled_for: enviada,
+ * pulada e na fila convivem quando a regua tem tres toques, e o que a recepcao
+ * precisa ver e o ultimo estado, nao o primeiro.
+ */
+async function toquesDasConsultas(
+  supabase: SupabaseClient,
+  clinicId: string,
+  appointmentIds: string[],
+  kind: "confirmacao" | "pos_falta",
+): Promise<Map<string, EstadoDoToque>> {
+  const mapa = new Map<string, EstadoDoToque>();
+  if (appointmentIds.length === 0) {
+    return mapa;
+  }
+  const { data } = await supabase
+    .from("cadence_run")
+    .select(
+      "appointment_id, scheduled_for, sent_at, skipped_reason, cadence_step:cadence_step_id ( cadence:cadence_id ( kind ) )",
+    )
+    .eq("clinic_id", clinicId)
+    .in("appointment_id", appointmentIds)
+    .order("scheduled_for", { ascending: false });
+
+  for (const linha of (data ?? []) as {
+    appointment_id: string | null;
+    scheduled_for: string | null;
+    sent_at: string | null;
+    skipped_reason: string | null;
+    cadence_step: unknown;
+  }[]) {
+    if (!linha.appointment_id || mapa.has(linha.appointment_id)) {
+      continue;
+    }
+    const passo = primeiro(
+      linha.cadence_step as Record<string, unknown> | Record<string, unknown>[],
+    );
+    const regua = passo
+      ? primeiro(passo.cadence as { kind?: string } | { kind?: string }[])
+      : null;
+    if (regua?.kind !== kind) {
+      continue;
+    }
+    if (linha.sent_at) {
+      mapa.set(linha.appointment_id, {
+        situacao: "enviado",
+        em: linha.sent_at,
+      });
+    } else if (linha.skipped_reason) {
+      mapa.set(linha.appointment_id, {
+        situacao: "pulado",
+        motivo: linha.skipped_reason,
+      });
+    } else if (linha.scheduled_for) {
+      mapa.set(linha.appointment_id, {
+        situacao: "na_fila",
+        para: linha.scheduled_for,
+      });
+    }
+  }
+  return mapa;
+}
+
+/**
  * As consultas que COMECAM no dia civil da clinica, em ordem de horario.
  * Diferente da Agenda de proposito: confirmacao olha o inicio da consulta,
  * nao a ocupacao do dia, entao consulta que atravessa a meia-noite conta uma
@@ -216,11 +306,19 @@ export async function fetchConfirmacoesDia(
   const contactIds = [
     ...new Set(linhas.map((linha) => linha.contact_id as string)),
   ];
-  const [consent, conversas] = await Promise.all([
+  const [consent, conversas, toques] = await Promise.all([
     consentimentoDosContatos(supabase, clinicId, contactIds),
     conversasDosContatos(supabase, clinicId, contactIds),
+    toquesDasConsultas(
+      supabase,
+      clinicId,
+      linhas.map((linha) => linha.id as string),
+      "confirmacao",
+    ),
   ]);
-  return linhas.map((linha) => normalizarConsulta(linha, consent, conversas));
+  return linhas.map((linha) =>
+    normalizarConsulta(linha, consent, conversas, toques),
+  );
 }
 
 /**
@@ -257,45 +355,18 @@ export async function fetchFaltasDeHoje(
   const [consent, conversas, toques] = await Promise.all([
     consentimentoDosContatos(supabase, clinicId, contactIds),
     conversasDosContatos(supabase, clinicId, contactIds),
-    supabase
-      .from("cadence_run")
-      .select(
-        "appointment_id, sent_at, cadence_step:cadence_step_id ( cadence:cadence_id ( kind ) )",
-      )
-      .eq("clinic_id", clinicId)
-      .in("appointment_id", ids)
-      .not("sent_at", "is", null)
-      .order("sent_at", { ascending: false }),
+    toquesDasConsultas(supabase, clinicId, ids, "pos_falta"),
   ]);
 
-  const ultimoToque = new Map<string, string>();
-  for (const linha of (toques.data ?? []) as {
-    appointment_id: string | null;
-    sent_at: string | null;
-    cadence_step: unknown;
-  }[]) {
-    const passo = primeiro(
-      linha.cadence_step as Record<string, unknown> | Record<string, unknown>[],
-    );
-    const regua = passo
-      ? primeiro(passo.cadence as { kind?: string } | { kind?: string }[])
-      : null;
-    if (
-      regua?.kind !== "pos_falta" ||
-      !linha.appointment_id ||
-      !linha.sent_at
-    ) {
-      continue;
-    }
-    if (!ultimoToque.has(linha.appointment_id)) {
-      ultimoToque.set(linha.appointment_id, linha.sent_at);
-    }
-  }
-
-  return linhas.map((linha) => ({
-    ...normalizarConsulta(linha, consent, conversas),
-    toque_pos_falta_em: ultimoToque.get(linha.id as string) ?? null,
-  }));
+  return linhas.map((linha) => {
+    const toque = toques.get(linha.id as string) ?? {
+      situacao: "nenhum" as const,
+    };
+    return {
+      ...normalizarConsulta(linha, consent, conversas, toques),
+      toque_pos_falta_em: toque.situacao === "enviado" ? toque.em : null,
+    };
+  });
 }
 
 /**
@@ -325,7 +396,8 @@ export async function fetchReguaPadrao(
     return null;
   }
 
-  const [passos, jaEnviou] = await Promise.all([
+  const desde24h = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const [passos, jaEnviou, enviados, pulados] = await Promise.all([
     supabase
       .from("cadence_step")
       .select("id, offset_minutes, fixed_body")
@@ -337,6 +409,25 @@ export async function fetchReguaPadrao(
       .select("id", { count: "exact", head: true })
       .eq("clinic_id", clinicId)
       .not("sent_at", "is", null),
+    supabase
+      .from("cadence_run")
+      .select("id, cadence_step!inner(cadence_id)", {
+        count: "exact",
+        head: true,
+      })
+      .eq("clinic_id", clinicId)
+      .eq("cadence_step.cadence_id", regua.id as string)
+      .gte("sent_at", desde24h),
+    supabase
+      .from("cadence_run")
+      .select("id, cadence_step!inner(cadence_id)", {
+        count: "exact",
+        head: true,
+      })
+      .eq("clinic_id", clinicId)
+      .eq("cadence_step.cadence_id", regua.id as string)
+      .not("skipped_reason", "is", null)
+      .gte("scheduled_for", desde24h),
   ]);
 
   return {
@@ -348,6 +439,8 @@ export async function fetchReguaPadrao(
     send_weekdays: (regua.send_weekdays as number[] | null) ?? null,
     passos: (passos.data ?? []) as PassoDaReguaDaTela[],
     primeira_ativacao: (jaEnviou.count ?? 0) === 0,
+    enviados_24h: enviados.count ?? 0,
+    pulados_24h: pulados.count ?? 0,
   };
 }
 

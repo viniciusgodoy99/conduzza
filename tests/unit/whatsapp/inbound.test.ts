@@ -228,3 +228,102 @@ describe("payloads que devem ser ignorados", () => {
     expect(parseInboundEvent(payload)).toBeNull();
   });
 });
+
+// O canal REAL: os testes de integração usam o provedor fake, que emite o
+// formato canônico. Estes casos cobrem o que só existe no uazapi.
+describe("canal real", () => {
+  const base = {
+    EventType: "messages",
+    token: "tok-1",
+    message: {
+      messageid: "wa-1",
+      chatid: "5584970000001@s.whatsapp.net",
+      sender_pn: "5584970000001@s.whatsapp.net",
+      senderName: "Paula",
+    },
+  };
+
+  it("reação de joinha NÃO vira mensagem", () => {
+    // Sem isto, o paciente que reage com joinha a QUALQUER mensagem da
+    // clínica confirmava sozinho a consulta pendente: interpretarResposta
+    // aceita joinha sozinho como "confirmar", e a clínica passava a contar
+    // com quem nunca disse que vem.
+    expect(
+      parseInboundEvent({
+        ...base,
+        message: { ...base.message, messageType: "reaction", text: "👍" },
+      }),
+    ).toBeNull();
+    expect(
+      parseInboundEvent({
+        ...base,
+        message: { ...base.message, text: "👍", reaction: { text: "👍" } },
+      }),
+    ).toBeNull();
+  });
+
+  it("resposta de botão chega mesmo sem texto", () => {
+    // O toque em "Confirmar" pode vir com text vazio e a escolha em outro
+    // campo. Sem ler esses campos, o body ficava nulo, o interceptador
+    // ignorava e a consulta ficava aguardando para sempre, com o paciente
+    // convencido de que já tinha respondido.
+    const evento = parseInboundEvent({
+      ...base,
+      message: { ...base.message, text: "", buttonOrListid: "confirmar" },
+    });
+    expect(evento?.kind).toBe("message_received");
+    expect(evento && "body" in evento ? evento.body : null).toBe("confirmar");
+
+    const cru = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        content: { selectedDisplayText: "Cancelar" },
+      },
+    });
+    expect(cru && "body" in cru ? cru.body : null).toBe("Cancelar");
+  });
+
+  it("texto de verdade continua tendo precedência sobre a escolha de botão", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        text: "quero remarcar",
+        buttonOrListid: "confirmar",
+      },
+    });
+    expect(evento && "body" in evento ? evento.body : null).toBe(
+      "quero remarcar",
+    );
+  });
+
+  it("resposta pelo celular da clínica vira evento próprio, não é descartada", () => {
+    // Antes isto era jogado fora igual ao eco da API, e a conversa continuava
+    // marcada como esperando resposta: outra atendente respondia de novo e o
+    // paciente recebia duas respostas para a mesma pergunta.
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        fromMe: true,
+        sender_pn: "5584911112222@s.whatsapp.net",
+        text: "Oi! O retorno fica em R$ 150.",
+      },
+    });
+    expect(evento?.kind).toBe("clinic_device_reply");
+    // O telefone é o do PACIENTE (chatid), não o da clínica.
+    expect(evento && "phone" in evento ? evento.phone : null).toBe(
+      "+5584970000001",
+    );
+  });
+
+  it("eco da nossa própria API continua descartado", () => {
+    expect(
+      parseInboundEvent({
+        ...base,
+        message: { ...base.message, fromMe: true, wasSentByApi: true },
+      }),
+    ).toBeNull();
+  });
+});

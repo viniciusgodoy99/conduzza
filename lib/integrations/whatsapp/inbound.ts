@@ -26,6 +26,19 @@ export type InboundEvent =
       instanceToken: string | null;
     }
   | {
+      /**
+       * A clinica respondeu pelo PROPRIO CELULAR pareado, fora do sistema.
+       * Nao e mensagem recebida (nao entra na conversa como fala do paciente)
+       * e nao e eco do nosso envio: e alguem de carne e osso atendendo por
+       * fora. O sistema precisa saber para nao continuar dizendo que aquela
+       * conversa espera resposta.
+       */
+      kind: "clinic_device_reply";
+      phone: string;
+      waMessageId: string;
+      instanceToken: string | null;
+    }
+  | {
       kind: "message_status";
       waMessageIds: string[];
       status: "entregue" | "lida" | "falhou";
@@ -94,6 +107,8 @@ const uazapiSchema = z
         mediaType: z.string().optional(),
         text: z.string().optional(),
         wasSentByApi: z.boolean().optional(),
+        buttonOrListid: z.string().optional(),
+        reaction: z.unknown().optional(),
         content: z.unknown().optional(),
       })
       .loose()
@@ -227,14 +242,35 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
     if (!waMessageId) {
       return null;
     }
-    // Eco da nossa propria mensagem: o excludeMessages do webhook ja deveria
-    // filtrar, mas a defesa aqui evita laco se a configuracao se perder.
-    if (mensagem.fromMe === true || mensagem.wasSentByApi === true) {
+    // Eco da NOSSA propria mensagem (enviada pela API): descarta, senao vira
+    // laco. O excludeMessages do webhook ja deveria filtrar; a defesa aqui
+    // vale se a configuracao se perder.
+    if (mensagem.wasSentByApi === true) {
       return null;
     }
     // Conversa em grupo nao e atendimento de paciente: ignorar por ora.
     if (mensagem.isGroup === true) {
       return null;
+    }
+    // Mensagem SAINDO do numero da clinica sem ter passado pela API: alguem
+    // respondeu pelo celular pareado. Antes isto era descartado igual ao eco,
+    // e a conversa continuava marcada como esperando resposta: outra atendente
+    // abria o Inbox, via a pergunta "sem resposta" e respondia de novo. O
+    // paciente recebia duas respostas para a mesma pergunta.
+    //
+    // Para mensagem de saida, o telefone do PACIENTE esta no chatid (o
+    // sender_pn e o numero da propria clinica).
+    if (mensagem.fromMe === true) {
+      const destino = phoneFromJid(mensagem.chatid as string | undefined);
+      if (!destino) {
+        return null;
+      }
+      return {
+        kind: "clinic_device_reply",
+        phone: destino,
+        waMessageId,
+        instanceToken,
+      };
     }
     // sender pode ser @lid (identificador interno), que NAO e telefone.
     const phone =
@@ -244,7 +280,39 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
     if (!phone) {
       return null;
     }
+    // REACAO (o joinha que o paciente coloca EM CIMA de uma mensagem) nao e
+    // resposta: ela nao diz a que pergunta se refere e o WhatsApp a entrega
+    // como mensagem comum, com o emoji no texto. Sem este descarte, o paciente
+    // que reagia com joinha a QUALQUER mensagem da clinica (inclusive uma
+    // resposta de preco) confirmava sozinho a consulta pendente, porque
+    // interpretarResposta aceita joinha sozinho como "confirmar". Confirmar
+    // por engano faz a clinica contar com quem nao vem.
+    const tipoBruto = [
+      mensagem.messageType as string | undefined,
+      mensagem.type as string | undefined,
+      mensagem.mediaType as string | undefined,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (tipoBruto.includes("reaction") || mensagem.reaction) {
+      return null;
+    }
+
     const conteudo = (mensagem.content ?? {}) as Record<string, unknown>;
+    // Resposta de BOTAO: o texto que o paciente tocou nao vem em `text` em
+    // todo formato. O uazapi devolve o id escolhido em buttonOrListid, e o
+    // whatsmeow cru traz selectedButtonId/selectedDisplayText dentro de
+    // content. Sem ler esses campos, tocar em "Confirmar" chegaria com body
+    // nulo, o interceptador ignoraria e a consulta ficaria aguardando para
+    // sempre, com o paciente convencido de que ja respondeu.
+    const escolhaDeBotao =
+      (mensagem.buttonOrListid as string | undefined) ??
+      (conteudo.selectedButtonId as string | undefined) ??
+      (conteudo.selectedDisplayText as string | undefined) ??
+      (conteudo.selectedRowId as string | undefined) ??
+      null;
+
     return {
       kind: "message_received",
       phone,
@@ -255,7 +323,8 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
         mensagem.messageType as string | undefined,
         mensagem.type as string | undefined,
       ),
-      body: (mensagem.text as string | undefined) ?? null,
+      body:
+        (mensagem.text as string | undefined)?.trim() || escolhaDeBotao || null,
       // A URL vem criptografada (.enc): baixar exige POST /message/download.
       // Guardamos a referencia; o download entra quando houver midia de fato.
       mediaUrl: (conteudo.URL as string | undefined) ?? null,

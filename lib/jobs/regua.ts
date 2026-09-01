@@ -66,6 +66,14 @@ const STATUS_VIVOS = [
 
 // Confirmar so faz sentido enquanto a consulta espera resposta. Confirmada,
 // cancelada ou ja atendida, a regua para.
+/**
+ * Quanto esperar antes de tentar de novo quando o WhatsApp esta desconectado.
+ * Cinco minutos: rapido o bastante para o toque sair logo depois de a recepcao
+ * reconectar, devagar o bastante para nao martelar a fila enquanto o celular
+ * esta fora do ar.
+ */
+const ESPERA_DE_RECONEXAO_MS = 5 * 60_000;
+
 const STATUS_A_CONFIRMAR = ["agendado", "aguardando_confirmacao"];
 
 type ReguaDaRun = {
@@ -464,16 +472,38 @@ export async function executarPassoDeRegua(
     };
   }
 
+  // WhatsApp fora do ar nao e falha do toque, e "ainda nao": reagendar em vez
+  // de falhar, do mesmo jeito que a janela de envio faz. Antes isto queimava
+  // tentativa, e uma queda de celular de 20 minutos matava para sempre os
+  // toques da manha inteira, sem reagendar nada quando a clinica reconectava e
+  // sem contar em lugar nenhum o que deixou de sair.
+  //
+  // A desistencia e por PRAZO, nao por contagem: para a confirmacao, faz
+  // sentido esperar enquanto a consulta nao chegou; depois dela o toque perdeu
+  // o sentido. Para o pos falta, algumas horas.
+  if (resultado.reason === "desconectado") {
+    const consultaDaEspera = await carregarConsulta(
+      admin,
+      job.clinic_id,
+      run.appointment_id,
+    );
+    const limite =
+      regua.kind === "confirmacao" && consultaDaEspera
+        ? new Date(consultaDaEspera.starts_at).getTime()
+        : Date.now() + 12 * 60 * 60_000;
+    const proxima = Date.now() + ESPERA_DE_RECONEXAO_MS;
+    if (proxima < limite) {
+      return { reagendar: new Date(proxima).toISOString() };
+    }
+    await pularRun(admin, run, "desconectado");
+    return { ok: false, erro: "desconectado", definitivo: true };
+  }
+
   // So entra em retry o que COM CERTEZA nao chegou ao paciente. Na ultima
   // tentativa a run tambem fecha, para nao ficar pendurada para sempre.
-  const podeRepetir =
-    resultado.reason === "desconectado" || falhaPermiteRetry(resultado.code);
+  const podeRepetir = falhaPermiteRetry(resultado.code);
   if (!podeRepetir || job.attempts >= job.max_attempts) {
-    await pularRun(
-      admin,
-      run,
-      resultado.reason === "desconectado" ? "desconectado" : "falha_envio",
-    );
+    await pularRun(admin, run, "falha_envio");
   }
   return {
     ok: false,

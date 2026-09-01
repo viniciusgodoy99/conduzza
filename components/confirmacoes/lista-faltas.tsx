@@ -1,8 +1,9 @@
 "use client";
 
-import { CalendarClock, MailCheck, MailX, Phone } from "lucide-react";
+import { CalendarClock, Phone } from "lucide-react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { ChipDoToque } from "@/components/confirmacoes/chip-do-toque";
 import { horaLocal } from "@/components/confirmacoes/lista-confirmacoes";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
@@ -21,41 +22,6 @@ import type { FaltaDoDia } from "@/lib/queries/confirmacoes";
 //
 // O toque pos falta tem as 3 camadas: forma (envelope com certo ou com xis),
 // rotulo em texto e cor.
-
-function ToqueDoPosFalta({
-  enviadoEm,
-  timezone,
-}: {
-  enviadoEm: string | null;
-  timezone: string;
-}) {
-  if (!enviadoEm) {
-    return (
-      <span
-        className="inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-semibold whitespace-nowrap"
-        style={{
-          color: "var(--neutral-text)",
-          backgroundColor: "var(--neutral-bg)",
-        }}
-      >
-        <MailX strokeWidth={1.5} className="size-3.5 shrink-0" aria-hidden />
-        Sem contato ainda
-      </span>
-    );
-  }
-  return (
-    <span
-      className="inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-semibold whitespace-nowrap"
-      style={{
-        color: "var(--success-text)",
-        backgroundColor: "var(--success-bg)",
-      }}
-    >
-      <MailCheck strokeWidth={1.5} className="size-3.5 shrink-0" aria-hidden />
-      Contato feito às {horaLocal(enviadoEm, timezone)}
-    </span>
-  );
-}
 
 export function ListaFaltas({
   faltas,
@@ -124,9 +90,10 @@ export function ListaFaltas({
               <span className="min-w-0 basis-40 truncate text-[13px] text-text-secondary">
                 {falta.service_link?.procedure?.name ?? "Procedimento"}
               </span>
-              <ToqueDoPosFalta
-                enviadoEm={falta.toque_pos_falta_em}
-                timezone={timezone}
+              <ChipDoToque
+                toque={falta.toque}
+                horaLocal={(iso) => horaLocal(iso, timezone)}
+                vazio="Sem contato ainda"
               />
               <span className="ml-auto flex items-center gap-1">
                 {telefone ? (
@@ -180,11 +147,15 @@ export function ListaFaltas({
           );
         })}
       </ul>
-      {/* Honestidade: a regua de recuperacao existe no banco (D+0 e D+2) mas
-          so pode ser ligada na tela de Automacoes, que ainda nao chegou. */}
+      {/* O caminho REAL de ativação. Este rodapé mandava para a tela de
+          Automações, que é um placeholder: a recepção ia lá, via "módulo em
+          construção" e concluía que o recurso não existia, quando o
+          interruptor estava a um clique daqui. */}
       <p className="border-t px-3 py-2 text-xs text-text-secondary">
         O contato automático depois da falta é a régua de recuperação (no dia da
-        falta e dois dias depois). Ela é ligada na tela de Automações.
+        falta e dois dias depois). Ligue no botão{" "}
+        <strong>Mensagens automáticas</strong>, aba{" "}
+        <strong>Depois da falta</strong>.
       </p>
     </div>
   );

@@ -181,8 +181,10 @@ Lista, ficha com linha do tempo, indicadores, etiqueta automática de risco (2 o
 **Aceite:** paciente com 2 faltas recebe a etiqueta sozinho.
 
 ### [x] 4.6 Motor de réguas `G`
-`cadence`, `cadence_step`, `cadence_run`, `job_queue`, `pg_cron`, Edge Function `job-worker` com `FOR UPDATE SKIP LOCKED`. Os 6 passos de verificação da seção 5 de `docs/03`.
+`cadence`, `cadence_step`, `cadence_run`, `job_queue`. Os 6 passos de verificação da seção 5 de `docs/03`.
 **Aceite:** régua não duplica envio, respeita janela de envio, pula quem não tem consentimento e para na condição de parada. Teste com dois workers simultâneos.
+
+**Degrade de infraestrutura (31/08/2026):** a extensão `pg_cron` **não está disponível** neste projeto Supabase, e não existe Edge Function `job-worker`. O executor é um **processo Node** (`npm run worker`), e a exclusão mútua entre workers vive no banco, na RPC `claim_jobs` com `FOR UPDATE SKIP LOCKED` (o contrato do aceite está cumprido, o hospedeiro é que mudou). Consequências que o time precisa conhecer: o deploy tem **dois processos** e o worker precisa de supervisão com reinício automático; a tabela `worker_heartbeat` e a faixa "as mensagens automáticas estão paradas" existem porque, sem elas, um worker morto era indistinguível de operação normal. Migrar para `pg_cron` + Edge Function continua desejável e vira tarefa própria quando a extensão estiver disponível.
 
 ### [x] 4.7 Confirmação de consulta (Tela 2) `G`
 Régua padrão de 72h, 24h e 3h. **Template com botões de resposta rápida.** Exceção por procedimento. Régua reforçada para quem tem histórico de falta. Painel do dia seguinte com bento, o card de Pendentes como herói. Aba de Faltas de hoje.

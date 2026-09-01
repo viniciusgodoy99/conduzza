@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { ChipDoToque } from "@/components/confirmacoes/chip-do-toque";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
@@ -177,6 +178,12 @@ function Linha({
         {consulta.service_link?.insurance?.name ?? "Particular"}
       </span>
       <StatusChip definition={APPOINTMENT_STATUS[consulta.status]} />
+      {/* O que a régua já fez por esta consulta. Sem isto, a recepção decidia
+          cobrar sem saber se a mensagem já tinha saído. */}
+      <ChipDoToque
+        toque={consulta.toque}
+        horaLocal={(iso) => horaLocal(iso, timezone)}
+      />
       <span className="ml-auto flex items-center gap-0.5">
         {pendente ? (
           motivoSemCobranca ? (

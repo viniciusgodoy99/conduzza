@@ -358,6 +358,34 @@ function BlocoDaRegua({
           )}
         </div>
 
+        {/* Prova de trabalho. "Régua ligada" sozinho não diz nada: uma régua
+            ligada com o motor parado fica idêntica a uma régua trabalhando, e
+            a clínica só descobria pelo paciente que faltou. */}
+        {regua.active ? (
+          <p className="rounded-lg border px-3 py-2 text-xs text-text-secondary">
+            {regua.enviados_24h > 0 ? (
+              <>
+                <strong>{regua.enviados_24h}</strong>{" "}
+                {regua.enviados_24h === 1
+                  ? "mensagem enviada"
+                  : "mensagens enviadas"}{" "}
+                nas últimas 24 horas
+              </>
+            ) : (
+              "Nenhuma mensagem enviada nas últimas 24 horas. Se havia consultas no período, confira o aviso no topo da tela."
+            )}
+            {regua.pulados_24h > 0 ? (
+              <>
+                {". "}
+                <strong>{regua.pulados_24h}</strong>{" "}
+                {regua.pulados_24h === 1 ? "não saiu" : "não saíram"} (sem
+                autorização, fora do horário ou WhatsApp fora do ar). O motivo
+                de cada uma aparece na lista do dia.
+              </>
+            ) : null}
+          </p>
+        ) : null}
+
         {/* Janela de envio: a clinica informa */}
         <section className="grid gap-3">
           <div className="grid gap-1">

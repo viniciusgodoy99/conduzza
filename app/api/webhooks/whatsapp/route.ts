@@ -137,6 +137,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(data);
   }
 
+  // A clinica respondeu pelo celular pareado, por fora do sistema. Nao vira
+  // mensagem na conversa (nao temos o corpo de forma confiavel e ele nao passou
+  // por aqui), mas a conversa PRECISA sair do contador de espera: senao outra
+  // atendente ve a pergunta como "sem resposta" e responde de novo, e o
+  // paciente recebe duas respostas para a mesma coisa.
+  if (event.kind === "clinic_device_reply") {
+    const { data: contato } = await admin
+      .from("contact")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("phone_e164", event.phone)
+      .maybeSingle();
+    if (contato) {
+      await admin
+        .from("conversation")
+        .update({ awaiting_reply: false })
+        .eq("clinic_id", clinicId)
+        .eq("contact_id", contato.id)
+        .neq("status", "resolvida");
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   if (event.kind === "message_status") {
     // O recibo do uazapi traz uma LISTA de ids por evento.
     await admin

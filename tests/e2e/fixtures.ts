@@ -454,7 +454,11 @@ export async function provisionar(): Promise<DadosE2E> {
     .id as string;
   const profAnaId = profsE2e!.find((p) => p.name.includes("Ana"))!.id as string;
 
-  // Jornada cobrindo TODOS os dias (o teste roda em qualquer dia da semana).
+  // Jornada cobrindo TODOS os dias E o dia inteiro. O dia inteiro importa
+  // tanto quanto a semana inteira: o gerador de horários nunca oferece slot no
+  // passado (lib/domain/scheduling.ts), então uma jornada que terminasse às
+  // 20:00 deixava a suíte sem nenhum horário livre quando ela rodasse à noite,
+  // e os testes de agendamento falhavam por hora do relógio, não por defeito.
   const faixasE2e = [];
   for (const professionalId of [profJoaoId, profAnaId]) {
     for (let weekday = 0; weekday <= 6; weekday++) {
@@ -463,8 +467,8 @@ export async function provisionar(): Promise<DadosE2E> {
         professional_id: professionalId,
         unit_id: unidadeE2e!.id,
         weekday,
-        starts_at: "07:00",
-        ends_at: "20:00",
+        starts_at: "00:00",
+        ends_at: "23:59",
       });
     }
   }

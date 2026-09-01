@@ -18,7 +18,8 @@
     "db:types": "supabase gen types typescript --local > lib/supabase/database.types.ts",
     "seed": "tsx scripts/seed/index.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "worker": "tsx scripts/worker.ts"
+    "worker": "tsx scripts/worker.ts",
+    "prova:motor": "tsx scripts/dev/prova-do-motor.mts"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",

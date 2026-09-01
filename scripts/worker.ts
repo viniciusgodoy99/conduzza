@@ -76,6 +76,14 @@ async function main() {
   // so, uma passagem lenta atrasaria a outra tarefa.
   let ultimoPlanejamentoDeReguas = 0;
 
+  // Prova de vida. Sem pg_cron neste projeto, ESTE processo e o unico executor
+  // de tudo que e automatico. Se ele nao esta de pe, a tela da clinica fica
+  // identica a de uma clinica saudavel (regua "ligada", consultas "pendentes",
+  // "Cobrar agora" respondendo sucesso) e ninguem fica sabendo. O carimbo e o
+  // que permite a interface avisar "as mensagens automaticas estao paradas".
+  let ultimaBatida = 0;
+
+  let ultimoLote = 0;
   let ativo = true;
   process.on("SIGINT", () => {
     ativo = false;
@@ -94,8 +102,33 @@ async function main() {
         });
       }
     }
+    if (Date.now() - ultimaBatida > 30_000) {
+      ultimaBatida = Date.now();
+      const { error: erroBatida } = await admin.rpc("bater_ponto_do_worker", {
+        p_worker_id: workerId,
+        p_ultimo_lote: ultimoLote,
+      });
+      if (erroBatida) {
+        log.warn("batida_do_worker_falhou", {
+          error_code: erroBatida.code ?? null,
+        });
+      }
+    }
     if (Date.now() - ultimoPlanejamentoDeReguas > 60_000) {
       ultimoPlanejamentoDeReguas = Date.now();
+      // Toque cujo job morreu de vez ficava pendurado sem sent_at e sem
+      // skipped_reason, indistinguivel de um toque que ainda vai sair, e nunca
+      // mais era tentado (o planner usa on conflict do nothing).
+      const { data: orfas, error: erroOrfas } =
+        await admin.rpc("fechar_runs_orfas");
+      if (erroOrfas) {
+        log.warn("fechamento_de_runs_orfas_falhou", {
+          error_code: erroOrfas.code ?? null,
+        });
+      } else if (typeof orfas === "number" && orfas > 0) {
+        log.warn("runs_orfas_fechadas", { count: orfas });
+      }
+
       const { data: plano, error: erroPlano } =
         await admin.rpc("planejar_reguas");
       if (erroPlano) {
@@ -122,6 +155,7 @@ async function main() {
       processados = await processarLote(admin, workerId, {
         deveParar: () => !ativo,
       });
+      ultimoLote = processados;
     } catch {
       log.error("worker_lote_falhou");
       await sleep(5_000);

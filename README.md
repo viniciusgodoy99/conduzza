@@ -12,6 +12,29 @@ Documentação de produto e handoff de engenharia do V1.
 
 ---
 
+## Como rodar: são dois processos
+
+```bash
+npm run dev      # a aplicação
+npm run worker   # o motor de automação, em outro terminal
+```
+
+Em produção, `npm run build && npm start` mais `npm run worker`, este último **com supervisão e reinício automático** (systemd, pm2 ou equivalente).
+
+**Não existe `pg_cron` neste projeto.** O worker é o único executor de tudo que é automático: planejamento e envio das réguas de confirmação e pós falta, o botão "Cobrar agora", o download de mídia que o paciente manda e a limpeza das reservas de horário. Com ele fora do ar a aplicação abre, a agenda funciona e **nenhuma mensagem sai nem entra na automação**. Quando isso acontece, o sistema mostra a faixa "as mensagens automáticas estão paradas" no topo de todas as telas.
+
+Para conferir que a corrente inteira está funcionando (planejamento, envio, webhook, resposta do paciente, pós falta), com os dois processos de pé:
+
+```bash
+npm run prova:motor
+```
+
+Ele cria uma clínica descartável com canal de mentira, exercita o caminho completo contra o banco e o webhook reais, e apaga tudo no fim. Nenhum paciente de verdade é tocado.
+
+O canal WhatsApp precisa de um endereço público estável em `PUBLIC_APP_URL`: é ele que o provedor chama de volta com as respostas dos pacientes, e ele fica **gravado no momento da conexão**. Trocar a variável não basta, é preciso reconectar o número. Detalhes em `.env.example`.
+
+---
+
 ## Estrutura
 
 ```
@@ -57,7 +80,7 @@ conduzza/
 | Stack | Next.js 15 + TypeScript + Tailwind + shadcn/ui + Supabase |
 | Região do banco | `sa-east-1` (São Paulo), para remover a discussão de transferência internacional |
 | Preço | R$ 597 (Essencial) e R$ 897 (Completo), por clínica, usuários ilimitados |
-| Visual | Escuro por padrão, claro obrigatório |
+| Visual | Claro por padrão, escuro obrigatório (decisão de 19/08/2026, revisando o brief) |
 | Arquitetura | Nasce clínicas, com white-label e nomenclatura parametrizados desde o dia 1 |
 | Ordem de integração (V2) | Feegow, depois Ninsaúde e Shosp, iClinic por último e só com acordo com a Afya |
 | Prazo estimado | 21 semanas do design ao piloto medido, com 1 dev em tempo integral |
