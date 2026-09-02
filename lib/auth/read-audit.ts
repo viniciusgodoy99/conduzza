@@ -31,6 +31,20 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const JANELA_MS = 5 * 60_000;
 
+// Dedupe em MEMORIA na frente do SELECT: o deploy e um servidor Node
+// persistente, entao o caso comum (a mesma pessoa reabrindo a mesma tela
+// dentro da janela) resolve sem nenhuma ida ao banco, que e remoto e paga
+// latencia em toda navegacao. O SELECT continua existindo para o primeiro
+// acesso apos reinicio ou vindo de outro processo: linha repetida na trilha e
+// ruido, linha ausente e furo de LGPD, e o mapa sozinho nao sobrevive a
+// reinicio.
+const vistoEmMemoria = new Map<string, number>();
+const MAPA_MAX = 10_000;
+
+function chaveDeDedupe(params: Params, entityId: string | null): string {
+  return `${params.clinicId}|${params.userId}|${params.entity}|${entityId ?? ""}`;
+}
+
 type Params = {
   clinicId: string;
   userId: string;
@@ -92,16 +106,38 @@ export async function auditarLeituraDePaciente(
     // Nao repete a leitura do MESMO alvo pelo MESMO usuario dentro da janela:
     // a recepcao que troca de dia o tempo todo nao gera uma linha por clique.
     const entityId = params.entityId ?? null;
+    const chave = chaveDeDedupe(params, entityId);
+    const agora = Date.now();
+    const visto = vistoEmMemoria.get(chave);
+    if (visto !== undefined && agora - visto < JANELA_MS) {
+      return;
+    }
+    // Acerto do SELECT NAO alimenta o mapa: a linha encontrada pode ser do
+    // comeco da janela (gravada antes de um reinicio), e carimbar "agora"
+    // esticaria a janela para quase o dobro, engolindo uma leitura que o
+    // contrato (uma linha por 5 minutos) mandava registrar. O mapa so
+    // aprende quando ESTE processo insere e sabe a hora exata da linha.
     if (await jaRegistradoNaJanela(params, entityId)) {
       return;
     }
-    await supabase.from("audit_log").insert({
+    const { error } = await supabase.from("audit_log").insert({
       clinic_id: params.clinicId,
       user_id: params.userId,
       action: "leu",
       entity: params.entity,
       entity_id: entityId,
     });
+    if (!error) {
+      if (vistoEmMemoria.size >= MAPA_MAX) {
+        // Poda simples quando o mapa cresce: solta as entradas vencidas.
+        for (const [k, v] of vistoEmMemoria) {
+          if (agora - v >= JANELA_MS) {
+            vistoEmMemoria.delete(k);
+          }
+        }
+      }
+      vistoEmMemoria.set(chave, agora);
+    }
   } catch {
     // Auditoria nunca derruba a tela; o proprio audit_log e best-effort aqui.
   }

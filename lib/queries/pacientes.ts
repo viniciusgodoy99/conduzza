@@ -67,14 +67,22 @@ function normalizarPaciente(row: Record<string, unknown>): PacienteResumo {
   };
 }
 
+// Teto de seguranca, mesmo padrao do Inbox (CONVERSATIONS_ATIVAS_LIMIT): sem
+// limite, o payload de /pacientes cresce com a clinica inteira. A RPC ja
+// ordena por nome (nulls last), entao o corte e deterministico; acima do
+// teto a tela passa a precisar de busca no servidor.
+export const PACIENTES_LIMIT = 1000;
+
 /** Lista da Tela 9, ja em ordem alfabetica de pt-BR. */
 export async function fetchPacientes(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<PacienteResumo[]> {
-  const { data, error } = await supabase.rpc("pacientes_resumo", {
-    p_clinic_id: clinicId,
-  });
+  const { data, error } = await supabase
+    .rpc("pacientes_resumo", {
+      p_clinic_id: clinicId,
+    })
+    .limit(PACIENTES_LIMIT);
   if (error) {
     throw new Error(error.message);
   }

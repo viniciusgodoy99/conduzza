@@ -124,7 +124,15 @@ export function useLeadsChannel(
         },
         aoReceber,
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Catch-up: contato criado entre a busca do servidor e o canal ficar
+        // de pe (ou durante uma queda) nao gerou evento para esta aba.
+        if (status === "SUBSCRIBED") {
+          void queryClient.invalidateQueries({
+            queryKey: leadsKeys.lista(clinicId),
+          });
+        }
+      });
 
     return () => {
       void supabase.removeChannel(channel);

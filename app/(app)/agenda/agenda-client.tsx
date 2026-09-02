@@ -30,6 +30,7 @@ import {
   fetchCatalogo,
   type Catalogo,
 } from "@/lib/queries/catalogo";
+import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { useAgendaChannel } from "@/lib/realtime/use-agenda-channel";
 import { createClient } from "@/lib/supabase/client";
 
@@ -78,11 +79,19 @@ export function AgendaClient({
 
   useAgendaChannel(supabase, clinicId, timezone);
 
+  // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
+  // da visita anterior (initialData so vale na criacao da entrada).
+  useDadosDoServidor(catalogoKeys.tudo(clinicId), catalogoInicial);
+  useDadosDoServidor(agendaKeys.dia(clinicId, diaInicial), diaInicialDados);
+  useDadosDoServidor(agendaKeys.pendencias(clinicId), pendenciasIniciais);
+
   const catalogoQuery = useQuery({
     queryKey: catalogoKeys.tudo(clinicId),
     queryFn: () => fetchCatalogo(supabase, clinicId),
     initialData: catalogoInicial,
-    staleTime: 60_000,
+    // Catalogo muda raramente e cada refetch sao 9 queries: sem motivo para
+    // refazer a cada alt-tab.
+    staleTime: 5 * 60_000,
   });
   const catalogo = catalogoQuery.data;
 
@@ -92,6 +101,9 @@ export function AgendaClient({
     initialData: dia === diaInicial ? diaInicialDados : undefined,
     staleTime: 30_000,
     gcTime: 5 * 60_000, // navegar muitos dias nao acumula cache para sempre
+    // O canal Realtime mescla consulta e hold na hora; refetch por foco
+    // so duplicava a carga.
+    refetchOnWindowFocus: false,
   });
 
   const pendenciasQuery = useQuery({
@@ -270,17 +282,22 @@ export function AgendaClient({
         />
       </div>
 
-      <AgendamentoModal
-        contexto={contexto}
-        aberto={modal.aberto}
-        onFechar={() => setModal({ aberto: false, prePreenchido: {} })}
-        prePreenchido={modal.prePreenchido}
-        dia={dia}
-        dadosDoDia={
-          diaQuery.data ?? { consultas: [], bloqueios: [], holds: [] }
-        }
-        filtros={filtros}
-      />
+      {/* Montado so quando aberto: e o maior componente do projeto e nao
+          precisa hidratar em toda visita a Agenda (mesmo padrao do modal de
+          remarcacao em Confirmacoes). */}
+      {modal.aberto ? (
+        <AgendamentoModal
+          contexto={contexto}
+          aberto={modal.aberto}
+          onFechar={() => setModal({ aberto: false, prePreenchido: {} })}
+          prePreenchido={modal.prePreenchido}
+          dia={dia}
+          dadosDoDia={
+            diaQuery.data ?? { consultas: [], bloqueios: [], holds: [] }
+          }
+          filtros={filtros}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,0 +1,68 @@
+# Motor de automacao do Conduzza (worker).
+#
+# Instalar em /etc/systemd/system/conduzza-worker.service.
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now conduzza-worker
+#   journalctl -u conduzza-worker -f
+#
+# POR QUE ISTO E CRITICO: nao existe pg_cron neste projeto Supabase. Este
+# processo e o UNICO executor de tudo que e automatico: confirmacao de
+# consulta, lembrete, pos falta, reoferta de horario e disparo em massa. Com
+# ele parado, o sistema continua bonito e nada sai. A clinica so descobriria
+# pelo paciente que faltou, por isso existe a faixa de aviso na tela, que
+# aparece depois de 3 minutos sem sinal de vida.
+#
+# O worker NAO se reinicia sozinho: em erro ele encerra o processo. O
+# Restart=always abaixo e o que o mantem de pe, nao e opcional.
+#
+# Rodar duas instancias e seguro (a exclusao mutua vive no banco, com
+# claim_jobs e FOR UPDATE SKIP LOCKED), mas uma basta para a escala atual.
+
+[Unit]
+Description=Conduzza, motor de automacao (confirmacoes, lembretes e disparos)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=conduzza
+Group=conduzza
+
+# OBRIGATORIO estar na raiz do projeto: o worker tem leitor proprio de
+# ambiente, que procura o .env.local a partir da pasta de trabalho. Fora
+# dela ele sobe sem as chaves e morre na primeira linha.
+WorkingDirectory=/opt/conduzza
+
+Environment=NODE_ENV=production
+
+ExecStart=/usr/bin/npm run worker
+
+Restart=always
+RestartSec=10
+# Ele tambem encerra no boot se nao conseguir confirmar o balde de midia no
+# Storage (falta de rede ou chave errada). O reinicio cobre a oscilacao;
+# se ficar em laco de reinicio, o problema e de configuracao, ver o log.
+StartLimitIntervalSec=0
+
+# Parada limpa: o worker responde ao sinal ENTRE um trabalho e outro, nunca
+# no meio. Um envio pode segurar ate 35 segundos e um download de midia ate
+# 60, entao a margem precisa ser generosa para nao matar no meio de um envio
+# (o que deixaria a linha da fila presa ate o arrendamento vencer).
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=conduzza-worker
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

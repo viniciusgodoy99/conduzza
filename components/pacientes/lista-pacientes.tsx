@@ -48,6 +48,10 @@ export function ListaPacientes({
         return (
           <Link
             href={`/pacientes/${paciente.contact_id}`}
+            // Um link POR LINHA da tabela: com prefetch, cada linha que entra
+            // no viewport viraria um request de servidor (middleware + render
+            // da ficha ate o loading.tsx). A ficha carrega no clique.
+            prefetch={false}
             aria-label={`Abrir a ficha de ${paciente.name ?? `Sem nome, ${paciente.phone_e164}`}`}
             onClick={(evento) => evento.stopPropagation()}
             className={cn(

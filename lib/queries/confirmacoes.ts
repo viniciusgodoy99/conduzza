@@ -404,11 +404,14 @@ export async function fetchReguaPadrao(
       .eq("clinic_id", clinicId)
       .eq("cadence_id", regua.id as string)
       .order("offset_minutes"),
+    // So responde um booleano (primeira ativacao): basta existir UMA linha.
+    // O count exact varria todas as cadence_run da clinica, que so crescem.
     supabase
       .from("cadence_run")
-      .select("id", { count: "exact", head: true })
+      .select("id")
       .eq("clinic_id", clinicId)
-      .not("sent_at", "is", null),
+      .not("sent_at", "is", null)
+      .limit(1),
     supabase
       .from("cadence_run")
       .select("id, cadence_step!inner(cadence_id)", {
@@ -438,7 +441,7 @@ export async function fetchReguaPadrao(
     send_window_end: (regua.send_window_end as string | null) ?? null,
     send_weekdays: (regua.send_weekdays as number[] | null) ?? null,
     passos: (passos.data ?? []) as PassoDaReguaDaTela[],
-    primeira_ativacao: (jaEnviou.count ?? 0) === 0,
+    primeira_ativacao: (jaEnviou.data ?? []).length === 0,
     enviados_24h: enviados.count ?? 0,
     pulados_24h: pulados.count ?? 0,
   };

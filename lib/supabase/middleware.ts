@@ -15,6 +15,34 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
 
+  // Protecao de rota (tarefa 0.5): area logada exige sessao. A checagem de
+  // papel NAO vive aqui: fica nos layouts e nas Server Actions, e o isolamento
+  // de dados e da RLS.
+  const { pathname } = request.nextUrl;
+  const isPublic =
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/cadastro") ||
+    pathname.startsWith("/recuperar-senha") ||
+    pathname.startsWith("/confirm") ||
+    pathname.startsWith("/dev") ||
+    pathname.startsWith("/brand");
+
+  // Sem cookie de sessao nao ha token para validar nem renovar: decide o
+  // redirect sem tocar na rede. Anonimo em /login parava de carregar por
+  // causa de uma ida ao Auth remoto que sempre voltava vazia.
+  const temCookieDeSessao = request.cookies
+    .getAll()
+    .some((cookie) => cookie.name.startsWith("sb-"));
+  if (!temCookieDeSessao) {
+    if (isPublic) {
+      return response;
+    }
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -36,24 +64,16 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  // Importante: manter a chamada para o token nao expirar em navegacao longa.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims valida a assinatura do JWT localmente (o projeto usa chave
+  // ES256, conferida no JWKS publico), em vez do round-trip de rede que o
+  // getUser fazia em TODO request. Token expirado ainda renova aqui (o
+  // getClaims carrega a sessao e dispara o refresh), entao a navegacao longa
+  // continua sem deslogar. Se um dia a chave voltar a HS256, o getClaims
+  // degrada sozinho para a validacao remota, sem mudanca de codigo.
+  const { data } = await supabase.auth.getClaims();
+  const claims = data?.claims;
 
-  // Protecao de rota (tarefa 0.5): area logada exige sessao. A checagem de
-  // papel NAO vive aqui: fica nos layouts e nas Server Actions, e o isolamento
-  // de dados e da RLS.
-  const { pathname } = request.nextUrl;
-  const isPublic =
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/cadastro") ||
-    pathname.startsWith("/recuperar-senha") ||
-    pathname.startsWith("/confirm") ||
-    pathname.startsWith("/dev") ||
-    pathname.startsWith("/brand");
-
-  if (!user && !isPublic) {
+  if (!claims && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = "";

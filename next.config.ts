@@ -6,6 +6,9 @@ import type { NextConfig } from "next";
 // dev usar pasta propria: o script "dev" ja passa .next-dev.
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
+  // Nao anunciar a plataforma e a versao para o mundo: e informacao que so
+  // serve para quem procura alvo com falha conhecida.
+  poweredByHeader: false,
 };
 
 export default nextConfig;

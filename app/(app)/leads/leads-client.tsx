@@ -31,6 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { instanteLocal } from "@/lib/domain/horarios";
 import { filtrarLeads, type FiltrosDeLeads } from "@/lib/domain/leads-ui";
 import { fetchLeads, leadsKeys, type LeadResumo } from "@/lib/queries/leads";
+import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { useLeadsChannel } from "@/lib/realtime/use-leads-channel";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -79,11 +80,18 @@ export function LeadsClient({
 
   useLeadsChannel(supabase, clinicId);
 
+  // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
+  // da visita anterior (initialData so vale na criacao da entrada).
+  useDadosDoServidor(leadsKeys.lista(clinicId), leadsIniciais);
+
   const leadsQuery = useQuery({
     queryKey: leadsKeys.lista(clinicId),
     queryFn: () => fetchLeads(supabase, clinicId),
     initialData: leadsIniciais,
     staleTime: 30_000,
+    // O canal Realtime mescla contato a contato; refetch por foco refazia a
+    // lista inteira sem necessidade.
+    refetchOnWindowFocus: false,
   });
 
   const visao: Visao =

@@ -4,11 +4,10 @@ import { redirect } from "next/navigation";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { AppShell } from "@/components/shell/app-shell";
 import { CriarClinica } from "@/components/shell/criar-clinica";
-import { MotorBanner } from "@/components/shell/motor-banner";
+import { MotorStatus } from "@/components/shell/motor-status";
 import { WhatsappBanner } from "@/components/shell/whatsapp-banner";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import { diaCivil, limitesDoDia, somarDias } from "@/lib/domain/horarios";
-import { motorParado } from "@/lib/domain/motor";
 import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/server";
 
@@ -143,34 +142,26 @@ export default async function AppLayout({
       .lt("starts_at", janelaDeAmanha.fim.toISOString()),
   ]);
 
-  // Motor parado tem precedencia sobre WhatsApp desconectado: com ele fora do
-  // ar nem reconectar adianta, porque nada seria enviado mesmo com o canal de
-  // pe. Duas faixas ao mesmo tempo seriam ruido; a mais grave manda.
-  //
-  // 3 minutos de folga: o worker bate ponto a cada 30 segundos, entao a faixa
-  // so aparece depois de seis batidas perdidas. Isso evita alarme por uma
-  // reinicializacao rapida e ainda avisa muito antes de a clinica perder o
-  // toque do dia.
-  const ultimaBatida = (batidas ?? [])[0]?.batida_em as string | undefined;
-  const parado = motorParado(ultimaBatida, new Date());
+  // A decisao motor x WhatsApp (e a precedencia entre as duas faixas) vive no
+  // MotorStatus, no cliente: este layout e preservado em navegacao suave,
+  // entao a versao do servidor so mudaria em carga dura ou revalidate, e um
+  // motor que morre com a aba aberta ficava invisivel ate alguem dar F5. A
+  // batida buscada aqui garante o primeiro paint certo; o polling do
+  // componente mantem a faixa honesta depois.
+  const ultimaBatida =
+    ((batidas ?? [])[0]?.batida_em as string | undefined) ?? null;
 
-  const banner = parado ? (
-    <MotorBanner
-      desde={
-        ultimaBatida
-          ? new Date(ultimaBatida).toLocaleString("pt-BR", {
-              timeZone: active.timezone,
-              day: "2-digit",
-              month: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : null
+  const banner = (
+    <MotorStatus
+      ultimaBatidaInicial={ultimaBatida}
+      timezone={active.timezone}
+      fallback={
+        whatsappAccount && whatsappAccount.connection_status !== "conectado" ? (
+          <WhatsappBanner />
+        ) : null
       }
     />
-  ) : whatsappAccount && whatsappAccount.connection_status !== "conectado" ? (
-    <WhatsappBanner />
-  ) : null;
+  );
 
   return (
     <AppShell

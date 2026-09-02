@@ -63,21 +63,20 @@ export default async function ConfiguracoesPage({
   const rows = (memberResult.data ?? []) as MemberRow[];
 
   // Nome vem da tabela profile (uma consulta indexada). E-mail so existe no
-  // GoTrue: busca por id APENAS dos membros desta clinica, o que escala com o
-  // tamanho da equipe, nao com o total de usuarios do sistema (antes era
-  // listUsers do projeto inteiro, que perdia quem ficasse fora da 1a pagina).
+  // GoTrue: a RPC emails_da_equipe (restrita ao service role) devolve os da
+  // clinica numa consulta so, no lugar de uma chamada HTTP a API admin POR
+  // membro (equipe de 15 pessoas eram 15 requests antes de renderizar).
   const admin = createAdminClient();
   const memberIds = rows.map((row) => row.user_id);
-  const [nameById, emailEntries] = await Promise.all([
+  const [nameById, emailsResult] = await Promise.all([
     fetchProfileNames(supabase, memberIds),
-    Promise.all(
-      memberIds.map(async (id) => {
-        const { data } = await admin.auth.admin.getUserById(id);
-        return [id, data.user?.email ?? ""] as const;
-      }),
-    ),
+    admin.rpc("emails_da_equipe", { p_clinic_id: active.clinicId }),
   ]);
-  const emailById = new Map(emailEntries);
+  const emailById = new Map(
+    ((emailsResult.data ?? []) as { user_id: string; email: string }[]).map(
+      (linha) => [linha.user_id, linha.email] as const,
+    ),
+  );
   const userById = new Map(
     memberIds.map((id) => [
       id,

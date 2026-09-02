@@ -1,0 +1,55 @@
+# Proxy reverso do Conduzza, com HTTPS automatico.
+#
+# Instalar em /etc/caddy/Caddyfile, trocar SEU-DOMINIO e recarregar:
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# O Caddy emite e renova o certificado sozinho, desde que o dominio ja
+# aponte para o IP da VPS e as portas 80 e 443 estejam abertas.
+
+SEU-DOMINIO.com.br {
+	encode zstd gzip
+
+	# O SEGREDO DO WEBHOOK VIAJA NA QUERY STRING. Sem esta excecao ele cairia
+	# no log de acesso em texto puro, e quem lesse o log poderia forjar
+	# evento de mensagem para qualquer clinica. Este bloco nao registra
+	# nada desta rota; o proprio sistema ja grava o que a auditoria precisa.
+	@webhook path /api/webhooks/whatsapp*
+	log_skip @webhook
+
+	log {
+		output file /var/log/caddy/conduzza.log {
+			roll_size 50MiB
+			roll_keep 10
+		}
+		# Conteudo de mensagem de paciente nunca passa por aqui em URL, mas
+		# mantemos o formato enxuto para nao guardar cabecalho a toa.
+		format json
+	}
+
+	reverse_proxy 127.0.0.1:3000 {
+		# Sem estes cabecalhos, os links de e-mail (convite, recuperacao de
+		# senha, confirmacao de cadastro) quebram: a rota /confirm monta os
+		# redirecionamentos a partir do endereco que recebe.
+		header_up Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+
+		# Uma resposta manual no Atendimento pode segurar a requisicao ate 8
+		# segundos por causa do espacamento anti-banimento do WhatsApp. O
+		# padrao do Caddy ja tolera, mas deixamos explicito para quem revisar.
+		transport http {
+			read_timeout 120s
+		}
+	}
+
+	header {
+		# Endurecimento basico. HSTS so depois de confirmar que o dominio
+		# inteiro funciona em HTTPS, senao voce se tranca do lado de fora.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

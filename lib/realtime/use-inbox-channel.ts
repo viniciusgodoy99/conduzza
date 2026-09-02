@@ -142,7 +142,18 @@ export function useInboxChannel(
           router.refresh();
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Catch-up: o que chegou entre a busca do servidor e o canal ficar de
+        // pe (ou durante uma queda de conexao) nao gerou evento para esta
+        // aba. Ao (re)conectar, refaz a lista e o fio aberto; sem isto, a
+        // mensagem da janela do handshake so aparecia no proximo gatilho.
+        if (status === "SUBSCRIBED") {
+          void queryClient.invalidateQueries({
+            queryKey: conversationKeys.list(clinicId),
+          });
+          void queryClient.invalidateQueries({ queryKey: ["messages"] });
+        }
+      });
 
     return () => {
       void supabase.removeChannel(channel);

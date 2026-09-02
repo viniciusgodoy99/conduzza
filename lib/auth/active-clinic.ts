@@ -70,12 +70,23 @@ export const getSessionContext = cache(
       return null;
     }
 
-    const { data: memberRows } = await supabase
-      .from("clinic_member")
-      .select(
-        "clinic_id, role, status, clinic:clinic_id (id, name, slug, timezone, clinic_branding (product_name, primary_color, labels))",
-      )
-      .eq("user_id", user.id);
+    // As duas so dependem de user.id: em serie eram duas idas ao Postgres
+    // remoto pagas por TODA navegacao, dentro do caminho mais quente do app.
+    const [{ data: memberRows }, { data: productAdminRow }] = await Promise.all(
+      [
+        supabase
+          .from("clinic_member")
+          .select(
+            "clinic_id, role, status, clinic:clinic_id (id, name, slug, timezone, clinic_branding (product_name, primary_color, labels))",
+          )
+          .eq("user_id", user.id),
+        supabase
+          .from("product_admin")
+          .select("user_id")
+          .eq("user_id", user.id)
+          .maybeSingle(),
+      ],
+    );
 
     // Quem esta PENDENTE nao le a tabela clinic (a policy exige vinculo ativo,
     // para o codigo de acesso nao vazar antes da aprovacao), entao o embed vem
@@ -146,12 +157,6 @@ export const getSessionContext = cache(
       })
       .filter((m): m is Membership => m !== null)
       .sort((a, b) => a.clinicName.localeCompare(b.clinicName));
-
-    const { data: productAdminRow } = await supabase
-      .from("product_admin")
-      .select("user_id")
-      .eq("user_id", user.id)
-      .maybeSingle();
 
     // Vinculo pendente nao pode virar clinica ativa: a pessoa entra no
     // sistema, ve que esta aguardando aprovacao, e nada mais.

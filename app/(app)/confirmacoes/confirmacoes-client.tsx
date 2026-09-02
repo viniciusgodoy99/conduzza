@@ -47,6 +47,7 @@ import {
   type FaltaDoDia,
   type ReguasDaClinica,
 } from "@/lib/queries/confirmacoes";
+import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { createClient } from "@/lib/supabase/client";
 
 // Tela 2 no cliente: aba e dia vivem na URL (link direto para "as
@@ -118,6 +119,15 @@ export function ConfirmacoesClient({
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
+
+  // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
+  // da visita anterior (initialData so vale na criacao da entrada).
+  useDadosDoServidor(
+    confirmacoesKeys.dia(clinicId, diaInicial),
+    consultasIniciais,
+  );
+  useDadosDoServidor(confirmacoesKeys.faltas(clinicId, hoje), faltasIniciais);
+  useDadosDoServidor(confirmacoesKeys.regua(clinicId), reguasIniciais);
 
   const diaQuery = useQuery({
     queryKey: confirmacoesKeys.dia(clinicId, dia),

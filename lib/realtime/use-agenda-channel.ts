@@ -174,7 +174,16 @@ export function useAgendaChannel(
           }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Catch-up: consulta marcada entre a busca do servidor e o canal
+        // ficar de pe (ou durante uma queda) nao gerou evento para esta aba.
+        // O prefixo cobre dia e pendencias; so as queries ativas refazem.
+        if (status === "SUBSCRIBED") {
+          void queryClient.invalidateQueries({
+            queryKey: ["agenda", clinicId],
+          });
+        }
+      });
 
     return () => {
       void supabase.removeChannel(channel);

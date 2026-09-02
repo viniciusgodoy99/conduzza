@@ -1,0 +1,119 @@
+# Conduzza como servico do Docker Swarm, publicado pelo Traefik que ja existe
+# nesta VPS.
+#
+# POR QUE ASSIM, e nao pelo systemd: o Traefik desta maquina foi configurado
+# SO com descoberta por Docker Swarm (--providers.docker.swarmMode=true), sem
+# provedor de arquivo. Um processo solto no servidor seria invisivel para ele.
+# Ligar o provedor de arquivo exigiria reiniciar o Traefik, o que derrubaria
+# por alguns segundos o n8n, a Evolution API e o Supabase auto-hospedado.
+# Subindo como servico do Swarm, o Traefik descobre sozinho e nada mais e
+# tocado.
+#
+# Nao ha imagem propria para construir: os dois servicos usam a imagem oficial
+# do Node e montam a pasta do projeto, que ja foi compilada no servidor. Isso
+# evita construir imagem numa maquina de 1 nucleo com a memoria no limite.
+#
+# ---------------------------------------------------------------------------
+# COMO SUBIR
+# ---------------------------------------------------------------------------
+#   1. Trocar SEU-DOMINIO abaixo pelo dominio real.
+#   2. Garantir que /opt/conduzza ja tem o codigo, o .env.local e o build
+#      pronto (npm ci && npm run build).
+#   3. docker stack deploy -c /opt/conduzza/deploy/conduzza-stack.yml conduzza
+#   4. docker service ls | grep conduzza
+#      docker service logs conduzza_app -f
+#      docker service logs conduzza_worker -f
+#
+# Para atualizar depois de um git pull + npm run build:
+#   docker service update --force conduzza_app
+#   docker service update --force conduzza_worker
+# ---------------------------------------------------------------------------
+
+version: "3.8"
+
+services:
+  app:
+    image: node:24-slim
+    working_dir: /app
+    command: npm start
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Dentro do conteiner precisa escutar em todas as interfaces, senao o
+      # Traefik nao alcanca. Quem protege e a rede do Docker: a porta NAO e
+      # publicada para fora.
+      HOSTNAME: "0.0.0.0"
+      # NEXT_DIST_DIR nao entra aqui de proposito: ela so serve ao modo de
+      # desenvolvimento e faria o servidor procurar o build na pasta errada.
+      #
+      # As chaves (Supabase, uazapi) NAO ficam neste arquivo: o Next le o
+      # .env.local da propria pasta montada, que tem permissao restrita.
+    volumes:
+      - /opt/conduzza:/app
+    networks:
+      - Conduzza
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          # Ajustar para cima depois de migrar para o KVM 2. Hoje a maquina
+          # tem ~350 MB livres, entao o teto evita que o Conduzza derrube os
+          # outros servicos ao inves de so ele mesmo falhar.
+          memory: 1G
+        reservations:
+          memory: 256M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.conduzza.rule=Host(`SEU-DOMINIO.com.br`)"
+        - "traefik.http.routers.conduzza.entrypoints=websecure"
+        - "traefik.http.routers.conduzza.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.conduzza.loadbalancer.server.port=3000"
+        # Sem o protocolo original, os links de e-mail (convite, recuperacao
+        # de senha, confirmacao de cadastro) quebram: a rota /confirm monta os
+        # redirecionamentos a partir do endereco que recebe.
+        - "traefik.http.middlewares.conduzza-proto.headers.customrequestheaders.X-Forwarded-Proto=https"
+        - "traefik.http.routers.conduzza.middlewares=conduzza-proto"
+
+  worker:
+    image: node:24-slim
+    working_dir: /app
+    command: npm run worker
+    environment:
+      NODE_ENV: production
+    volumes:
+      - /opt/conduzza:/app
+    networks:
+      - Conduzza
+    deploy:
+      replicas: 1
+      restart_policy:
+        # ISTO NAO E OPCIONAL. Nao existe pg_cron neste projeto Supabase: este
+        # processo e o UNICO executor de confirmacao de consulta, lembrete,
+        # pos falta, reoferta e disparo em massa. Ele nao se reinicia sozinho
+        # (em erro, encerra), e com ele parado o sistema continua bonito e
+        # nenhuma mensagem sai.
+        condition: any
+        delay: 10s
+      # O worker responde ao sinal de parada ENTRE um trabalho e outro, nunca
+      # no meio. Um envio pode segurar ate 35 segundos e um download de midia
+      # ate 60: matar antes disso deixaria a linha da fila presa ate o
+      # arrendamento vencer.
+      update_config:
+        order: stop-first
+      resources:
+        limits:
+          # Baixar midia de paciente faz o consumo subir ~150 MB por um
+          # instante, sobre uma base de ~100 MB.
+          memory: 640M
+        reservations:
+          memory: 128M
+      labels:
+        # Nao publica nada: o worker nao atende requisicao.
+        - "traefik.enable=false"
+
+networks:
+  Conduzza:
+    external: true

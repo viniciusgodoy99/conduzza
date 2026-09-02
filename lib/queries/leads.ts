@@ -95,8 +95,16 @@ function normalizarLead(row: Record<string, unknown>): LeadResumo {
   };
 }
 
+// Teto de seguranca, mesmo padrao do Inbox (CONVERSATIONS_ATIVAS_LIMIT): sem
+// limite, uma clinica grande serializava TODOS os contatos com embeds no
+// payload de cada navegacao para /leads. O corte segue a MESMA ordem da tela
+// (nunca contatado primeiro, depois o contato mais antigo), entao o que sai
+// e o lead ja trabalhado mais recentemente. Acima do teto a tela passa a
+// precisar de busca no servidor.
+export const LEADS_LIMIT = 1000;
+
 /**
- * Todos os contatos da clinica com os embeds, ja ordenados por proxima acao
+ * Os contatos da clinica com os embeds, ja ordenados por proxima acao
  * (nunca contatado primeiro, depois o contato mais antigo).
  */
 export async function fetchLeads(
@@ -106,7 +114,9 @@ export async function fetchLeads(
   const { data, error } = await supabase
     .from("contact")
     .select(LEAD_SELECT)
-    .eq("clinic_id", clinicId);
+    .eq("clinic_id", clinicId)
+    .order("last_contact_at", { ascending: true, nullsFirst: true })
+    .limit(LEADS_LIMIT);
   if (error) {
     throw new Error(error.message);
   }

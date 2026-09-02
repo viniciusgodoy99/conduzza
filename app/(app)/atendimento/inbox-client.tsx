@@ -24,6 +24,7 @@ import {
   type ConversationListItem,
   type MessageItem,
 } from "@/lib/queries/conversations";
+import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { useInboxChannel } from "@/lib/realtime/use-inbox-channel";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -55,10 +56,17 @@ export function InboxClient({
 
   useInboxChannel(supabase, clinicId);
 
+  // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
+  // da visita anterior (initialData so vale na criacao da entrada).
+  useDadosDoServidor(conversationKeys.list(clinicId), initialConversations);
+
   const conversationsQuery = useQuery({
     queryKey: conversationKeys.list(clinicId),
     queryFn: () => fetchConversations(supabase, clinicId),
     initialData: initialConversations,
+    // O canal Realtime mantem a lista viva; o refetch por foco so duplicava
+    // a carga a cada volta do WhatsApp Web.
+    refetchOnWindowFocus: false,
   });
   const activeConversations = useMemo(
     () => conversationsQuery.data ?? [],
@@ -90,6 +98,9 @@ export function InboxClient({
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: selected !== null,
+    // Mensagem nova chega pelo canal (que invalida o fio); o refetch por foco
+    // refazia todas as paginas carregadas sem necessidade.
+    refetchOnWindowFocus: false,
   });
 
   // Paginas vem do mais novo para o mais antigo; para exibir em ordem

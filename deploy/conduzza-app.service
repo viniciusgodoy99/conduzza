@@ -1,0 +1,61 @@
+# Aplicacao web do Conduzza (Next.js).
+#
+# Instalar em /etc/systemd/system/conduzza-app.service, ajustando User,
+# WorkingDirectory e o caminho do Node se o seu for outro.
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now conduzza-app
+#   sudo systemctl status conduzza-app
+#   journalctl -u conduzza-app -f
+#
+# Este e UM dos DOIS processos. O outro e o conduzza-worker, e sem ele
+# nenhuma mensagem automatica sai. Os dois precisam estar habilitados.
+
+[Unit]
+Description=Conduzza, aplicacao web
+Documentation=https://github.com/SEU-USUARIO/conduzza
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=conduzza
+Group=conduzza
+WorkingDirectory=/opt/conduzza
+
+# O ambiente vem do .env.local, que o Next le sozinho a partir do
+# WorkingDirectory. NAO defina NEXT_DIST_DIR aqui: ela so serve ao modo de
+# desenvolvimento e faria o servidor procurar o build na pasta errada.
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# O Traefik alcanca o servidor pelo endereco do Docker (172.17.0.1), entao
+# escutar so em 127.0.0.1 o deixaria invisivel. Com 0.0.0.0 o firewall e que
+# protege: a porta 3000 NAO pode estar liberada no ufw.
+Environment=HOSTNAME=0.0.0.0
+
+ExecStart=/usr/bin/npm start
+
+Restart=always
+RestartSec=5
+# Parada limpa: o Next encerra rapido, mas damos margem para as requisicoes
+# em curso (uma resposta manual pode segurar ate 8 segundos por causa do
+# espacamento anti-banimento).
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=conduzza-app
+
+# Endurecimento: o processo nao precisa de mais nada do sistema.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/conduzza/.next
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

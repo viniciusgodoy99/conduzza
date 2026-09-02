@@ -18,6 +18,7 @@ import {
   fetchCatalogo,
   type Catalogo,
 } from "@/lib/queries/catalogo";
+import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { createClient } from "@/lib/supabase/client";
 
 // Tela 8: as oito abas do catalogo. A aba vive na URL (?aba=vinculos) para
@@ -69,6 +70,10 @@ export function CadastrosClient({
   const abaAtiva: AbaKey = ABAS.some(([key]) => key === abaInicial)
     ? (abaInicial as AbaKey)
     : "profissionais";
+
+  // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
+  // da visita anterior (initialData so vale na criacao da entrada).
+  useDadosDoServidor(catalogoKeys.tudo(clinicId), catalogoInicial);
 
   const catalogoQuery = useQuery({
     queryKey: catalogoKeys.tudo(clinicId),

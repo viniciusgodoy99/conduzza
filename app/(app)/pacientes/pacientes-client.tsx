@@ -22,6 +22,7 @@ import {
   pacientesKeys,
   type PacienteResumo,
 } from "@/lib/queries/pacientes";
+import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { createClient } from "@/lib/supabase/client";
 
 // Tela 9: UMA query da clinica (a RPC pacientes_resumo) com initialData do
@@ -61,6 +62,10 @@ export function PacientesClient({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const telaEstreita = useTelaEstreita();
+
+  // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
+  // da visita anterior (initialData so vale na criacao da entrada).
+  useDadosDoServidor(pacientesKeys.lista(clinicId), pacientesIniciais);
 
   const pacientesQuery = useQuery({
     queryKey: pacientesKeys.lista(clinicId),
