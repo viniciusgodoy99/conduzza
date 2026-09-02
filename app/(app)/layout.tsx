@@ -8,6 +8,7 @@ import { MotorStatus } from "@/components/shell/motor-status";
 import { WhatsappBanner } from "@/components/shell/whatsapp-banner";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import { diaCivil, limitesDoDia, somarDias } from "@/lib/domain/horarios";
+import type { SaudeDoMotor } from "@/lib/domain/motor";
 import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/server";
 
@@ -103,7 +104,7 @@ export default async function AppLayout({
 
   const [
     { data: whatsappAccount },
-    { data: batidas },
+    { data: saude },
     { count: aguardandoHumano },
     { count: confirmacoesPendentes },
   ] = await Promise.all([
@@ -114,12 +115,11 @@ export default async function AppLayout({
       .select("connection_status")
       .eq("clinic_id", active.clinicId)
       .maybeSingle(),
-    // Prova de vida do motor de automacao.
-    supabase
-      .from("worker_heartbeat")
-      .select("batida_em")
-      .order("batida_em", { ascending: false })
-      .limit(1),
+    // Prova de vida do motor: os DOIS papeis (fila e planner) mais a
+    // contagem de tarefas atrasadas, numa chamada so. Ler worker_heartbeat
+    // cru pegaria "a batida mais recente de qualquer executor", e o planner
+    // vivo esconderia a fila morta.
+    supabase.rpc("saude_do_motor"),
     // awaiting_reply, nao status e nao unread_count. Status sozinho contaria
     // as conversas que a REGUA abriu para enviar confirmacao (40 disparos =
     // badge 40, com a mensagem de paciente de verdade enterrada). E
@@ -148,12 +148,11 @@ export default async function AppLayout({
   // motor que morre com a aba aberta ficava invisivel ate alguem dar F5. A
   // batida buscada aqui garante o primeiro paint certo; o polling do
   // componente mantem a faixa honesta depois.
-  const ultimaBatida =
-    ((batidas ?? [])[0]?.batida_em as string | undefined) ?? null;
+  const saudeInicial = (saude ?? null) as SaudeDoMotor | null;
 
   const banner = (
     <MotorStatus
-      ultimaBatidaInicial={ultimaBatida}
+      saudeInicial={saudeInicial}
       timezone={active.timezone}
       fallback={
         whatsappAccount && whatsappAccount.connection_status !== "conectado" ? (

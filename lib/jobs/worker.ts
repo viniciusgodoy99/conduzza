@@ -51,7 +51,10 @@ export type Job = {
 export type ResultadoDeJob =
   | { ok: true }
   | { ok: false; erro: string; definitivo?: boolean }
-  | { reagendar: string };
+  // `motivo` alimenta job_queue.ultimo_motivo_devolucao: sem ele, um job que
+  // vai e volta sem nunca executar fica indistinguivel de um job saudavel
+  // esperando a hora.
+  | { reagendar: string; motivo?: string };
 
 async function executarEnvioAtivo(
   admin: SupabaseClient,
@@ -101,14 +104,24 @@ async function executarEnvioAtivo(
     authorUserId: null,
     author: "sistema",
     espacamentoMs: espacamentoDeMassaMs(),
-    // A espera pelo slot E o trabalho do worker; o teto so protege o lease
-    // (renovado a cada job, ver confirmar_posse_job em processarLote).
-    esperaMaximaMs: 35_000,
+    // Teto CURTO de proposito. O piso do espacamento de massa e 10 segundos,
+    // entao quase todo job concorrente cai em adiamento e nao em espera. Os 3
+    // segundos cobrem so a poeira. Esperar de verdade nao cabe num ambiente
+    // sem servidor, e o adiamento nao custa nada (nada e reservado).
+    esperaMaximaMs: 3_000,
     jobId: job.id,
   });
 
   if (resultado.ok) {
     return { ok: true };
+  }
+  // Canal ocupado: devolve o job para quando o canal abre. Nao e falha e nao
+  // queima tentativa; nenhuma reserva foi feita.
+  if (resultado.reason === "slot_adiado") {
+    return {
+      reagendar: resultado.livreEm ?? new Date(Date.now() + 20_000).toISOString(),
+      motivo: "canal_ocupado",
+    };
   }
   // Retry de envio ja processado: nada a fazer, o job conclui.
   if (resultado.reason === "ja_enviado") {
@@ -260,89 +273,116 @@ export async function processarLote(
       break;
     }
 
-    // POSSE + HEARTBEAT: renova o lease e confirma que este worker ainda e o
-    // dono. Se o lease venceu no meio do lote e outro worker assumiu, PULAR:
-    // executar aqui seria a execucao dupla que duplica mensagem ao paciente.
-    const { data: possui } = await admin.rpc("confirmar_posse_job", {
+    await executarJobComPosse(admin, workerId, job);
+  }
+  return lote.length;
+}
+
+/** O que aconteceu com um job depois de reivindicado. */
+export type DesfechoDoJob =
+  | "concluido"
+  | "falhou"
+  | "reagendado"
+  | "sem_posse";
+
+/**
+ * Executa UM job ja reivindicado: confere a posse, roda, e fecha no banco.
+ *
+ * Vive separado do laco porque agora tem dois chamadores: o laco local
+ * (processarLote) e a passagem do motor sem servidor (lib/jobs/motor.ts).
+ * Duplicar isto seria duplicar a decisao de concluir, falhar ou devolver, que
+ * e onde mora o risco de mandar a mesma mensagem duas vezes ao paciente.
+ */
+export async function executarJobComPosse(
+  admin: SupabaseClient,
+  workerId: string,
+  job: Job,
+): Promise<DesfechoDoJob> {
+  // POSSE + HEARTBEAT: renova o lease e confirma que este worker ainda e o
+  // dono. Se o lease venceu no meio do lote e outro worker assumiu, PULAR:
+  // executar aqui seria a execucao dupla que duplica mensagem ao paciente.
+  const { data: possui } = await admin.rpc("confirmar_posse_job", {
+    p_id: job.id,
+    p_worker: workerId,
+  });
+  if (possui !== true) {
+    log.warn("job_pulado_sem_posse", {
+      job_id: job.id,
+      kind: job.kind,
+      clinic_id: job.clinic_id,
+    });
+    return "sem_posse";
+  }
+
+  const inicio = Date.now();
+  let resultado: ResultadoDeJob;
+  try {
+    resultado = await executarJob(admin, job);
+  } catch {
+    resultado = { ok: false, erro: "excecao_no_worker" };
+  }
+
+  if ("reagendar" in resultado) {
+    // Fora da janela de envio, ou canal ocupado: devolve o job para depois SEM
+    // contar como tentativa e SEM concluir (o toque ainda nao aconteceu).
+    const { error: erroReagendar } = await admin.rpc("reagendar_job", {
+      p_id: job.id,
+      p_worker: workerId,
+      p_run_at: resultado.reagendar,
+      p_motivo: resultado.motivo ?? null,
+    });
+    if (erroReagendar) {
+      log.warn("job_reagendar_falhou", {
+        job_id: job.id,
+        kind: job.kind,
+        error_code: erroReagendar.code ?? null,
+      });
+      return "falhou";
+    }
+    log.info("job_reagendado", {
+      job_id: job.id,
+      kind: job.kind,
+      clinic_id: job.clinic_id,
+    });
+    return "reagendado";
+  }
+
+  if (resultado.ok) {
+    const { error: erroConcluir } = await admin.rpc("concluir_job", {
       p_id: job.id,
       p_worker: workerId,
     });
-    if (possui !== true) {
-      log.warn("job_pulado_sem_posse", {
+    if (erroConcluir) {
+      // Nao seguir calado: um conclude perdido deixaria o job elegivel de
+      // novo. A idempotencia por job_id segura o reenvio, mas o log avisa.
+      log.error("worker_concluir_falhou", {
         job_id: job.id,
-        kind: job.kind,
-        clinic_id: job.clinic_id,
-      });
-      continue;
-    }
-
-    const inicio = Date.now();
-    let resultado: ResultadoDeJob;
-    try {
-      resultado = await executarJob(admin, job);
-    } catch {
-      resultado = { ok: false, erro: "excecao_no_worker" };
-    }
-
-    if ("reagendar" in resultado) {
-      // Fora da janela de envio: devolve o job para depois SEM contar como
-      // tentativa e SEM concluir (o toque ainda nao aconteceu).
-      const { data: reagendou, error: erroReagendar } = await admin.rpc(
-        "reagendar_job",
-        { p_id: job.id, p_worker: workerId, p_run_at: resultado.reagendar },
-      );
-      if (erroReagendar || reagendou !== true) {
-        log.warn("job_reagendar_falhou", {
-          job_id: job.id,
-          kind: job.kind,
-          error_code: erroReagendar?.code ?? null,
-        });
-        continue;
-      }
-      log.info("job_reagendado", {
-        job_id: job.id,
-        kind: job.kind,
-        clinic_id: job.clinic_id,
-      });
-      continue;
-    }
-
-    if (resultado.ok) {
-      const { error: erroConcluir } = await admin.rpc("concluir_job", {
-        p_id: job.id,
-        p_worker: workerId,
-      });
-      if (erroConcluir) {
-        // Nao seguir calado: um conclude perdido deixaria o job elegivel de
-        // novo. A idempotencia por job_id segura o reenvio, mas o log avisa.
-        log.error("worker_concluir_falhou", {
-          job_id: job.id,
-          error_code: erroConcluir.code ?? null,
-        });
-      }
-      log.info("job_concluido", {
-        job_id: job.id,
-        kind: job.kind,
-        clinic_id: job.clinic_id,
-        duration_ms: Date.now() - inicio,
-      });
-    } else {
-      await admin.rpc("falhar_job", {
-        p_id: job.id,
-        p_erro: resultado.erro,
-        p_definitivo: resultado.definitivo ?? false,
-        p_worker: workerId,
-      });
-      log.warn("job_falhou", {
-        job_id: job.id,
-        kind: job.kind,
-        clinic_id: job.clinic_id,
-        error_code: resultado.erro,
-        attempt: job.attempts,
+        error_code: erroConcluir.code ?? null,
       });
     }
+    log.info("job_concluido", {
+      job_id: job.id,
+      kind: job.kind,
+      clinic_id: job.clinic_id,
+      duration_ms: Date.now() - inicio,
+    });
+    return "concluido";
   }
-  return lote.length;
+
+  await admin.rpc("falhar_job", {
+    p_id: job.id,
+    p_erro: resultado.erro,
+    p_definitivo: resultado.definitivo ?? false,
+    p_worker: workerId,
+  });
+  log.warn("job_falhou", {
+    job_id: job.id,
+    kind: job.kind,
+    clinic_id: job.clinic_id,
+    error_code: resultado.erro,
+    attempt: job.attempts,
+  });
+  return "falhou";
 }
 
 /** Garante o bucket privado de midia (idempotente; roda na subida do worker). */

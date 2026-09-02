@@ -119,7 +119,10 @@ type MotivoDePulo =
   | "fora_janela"
   | "condicao_parada"
   | "falha_envio"
-  | "desconectado";
+  | "desconectado"
+  // Canal da clinica ocupado ate depois da hora da consulta: o toque perdeu o
+  // sentido. So acontece com fila muito longa da mesma clinica.
+  | "canal_ocupado";
 
 /** Fecha ESTA run, sem tocar em run ja enviada ou ja pulada. */
 async function pularRun(
@@ -420,8 +423,10 @@ export async function executarPassoDeRegua(
     authorUserId: null,
     author: "sistema" as const,
     espacamentoMs: espacamentoDeMassaMs(),
-    // A espera pelo slot E o trabalho do worker; o teto so protege o lease.
-    esperaMaximaMs: 35_000,
+    // Teto CURTO: o piso do espacamento de massa e 10 segundos, entao quase
+    // todo toque concorrente cai em adiamento e nao em espera. Esperar de
+    // verdade nao cabe num ambiente sem servidor, e adiar nao custa nada.
+    esperaMaximaMs: 3_000,
     // Chave de idempotencia: um retry encontra a message e nao reenvia.
     jobId: job.id,
   };
@@ -481,6 +486,33 @@ export async function executarPassoDeRegua(
   // A desistencia e por PRAZO, nao por contagem: para a confirmacao, faz
   // sentido esperar enquanto a consulta nao chegou; depois dela o toque perdeu
   // o sentido. Para o pos falta, algumas horas.
+  // Canal ocupado: devolve para quando o slot da clinica abre. Mesma regra de
+  // prazo do desconectado, e pelo mesmo motivo: um toque de confirmacao que so
+  // sairia depois da consulta perdeu o sentido, e ficar indo e voltando para
+  // sempre esconderia o problema numa fila que parece saudavel.
+  if (resultado.reason === "slot_adiado") {
+    const consultaDaEspera = await carregarConsulta(
+      admin,
+      job.clinic_id,
+      run.appointment_id,
+    );
+    const limite =
+      regua.kind === "confirmacao" && consultaDaEspera
+        ? new Date(consultaDaEspera.starts_at).getTime()
+        : Date.now() + 12 * 60 * 60_000;
+    const proxima = resultado.livreEm
+      ? new Date(resultado.livreEm).getTime()
+      : Date.now() + 20_000;
+    if (proxima < limite) {
+      return {
+        reagendar: new Date(proxima).toISOString(),
+        motivo: "canal_ocupado",
+      };
+    }
+    await pularRun(admin, run, "canal_ocupado");
+    return { ok: false, erro: "canal_ocupado", definitivo: true };
+  }
+
   if (resultado.reason === "desconectado") {
     const consultaDaEspera = await carregarConsulta(
       admin,

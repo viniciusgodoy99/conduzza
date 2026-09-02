@@ -72,9 +72,20 @@ export type SendTextResult =
   | {
       ok: false;
       reason:
-        "sem_consentimento" | "desconectado" | "falha_envio" | "ja_enviado";
+        | "sem_consentimento"
+        | "desconectado"
+        | "falha_envio"
+        | "ja_enviado"
+        /**
+         * O canal da clinica esta ocupado e a espera nao cabe. NAO e falha:
+         * nada foi reservado, nada foi gravado, nenhuma tentativa foi
+         * queimada. O chamador reagenda o job para `livreEm`.
+         */
+        | "slot_adiado";
       /** codigo curto para o worker decidir retry; sem conteudo de paciente */
       code?: string;
+      /** so em slot_adiado: quando o canal da clinica abre */
+      livreEm?: string;
       message: string;
     };
 
@@ -251,6 +262,61 @@ async function enviarPeloCanal(
     }
   }
 
+  // ANTI-BAN, ANTES DE CRIAR A LINHA. A ordem importa: se o adiamento
+  // acontecesse depois do insert, a linha ficaria em 'enviando' com job_id
+  // preenchido, e no retry a checagem de idempotencia acima nao a consideraria
+  // reutilizavel (so reaproveita 'falhou' com codigo retentavel). O resultado
+  // seria 'ja_enviado', que a regua trata como SUCESSO: a run fecharia com o
+  // paciente nunca tendo recebido nada.
+  //
+  // A v2 tem tres saidas e a diferenca esta no que ELA NAO FAZ: no ramo
+  // 'adiado' nenhuma reserva e gravada. A v1 avancava next_send_at antes da
+  // espera e nao devolvia, entao cada tentativa frustrada empurrava o proximo
+  // envio da clinica em 10 a 30 segundos, cumulativamente, sem ninguem ter
+  // enviado.
+  const teto = input.esperaMaximaMs ?? 8_000;
+  const { data: slot, error: erroSlot } = await supabase.rpc(
+    "reservar_slot_envio_v2",
+    {
+      p_clinic_id: input.clinicId,
+      p_espaco_ms: input.espacamentoMs ?? espacamentoPadraoMs(),
+      p_espera_maxima_ms: teto,
+    },
+  );
+  const estado = (slot as { estado?: string } | null)?.estado;
+  if (erroSlot || !estado) {
+    return {
+      ok: false,
+      reason: "falha_envio",
+      code: "slot_indisponivel",
+      message: "Não foi possível reservar o envio. Tente de novo.",
+    };
+  }
+  if (estado === "sem_conta") {
+    // Falha FECHADA. A v1 devolvia nulo aqui, o cliente convertia em espera 0
+    // e a mensagem saia SEM ESPACAMENTO NENHUM.
+    return {
+      ok: false,
+      reason: "falha_envio",
+      code: "slot_indisponivel",
+      message: "Este número não está configurado para envio.",
+    };
+  }
+  if (estado === "adiado") {
+    // Nada foi reservado e nada foi gravado: o chamador reagenda o job para o
+    // instante em que o canal abre. Ninguem fica esperando segurando uma
+    // requisicao, que e o que nao cabe num ambiente sem servidor.
+    return {
+      ok: false,
+      reason: "slot_adiado",
+      code: "canal_ocupado",
+      livreEm: (slot as { livre_em: string }).livre_em,
+      message:
+        "O número está enviando outras mensagens agora. O envio foi remarcado.",
+    };
+  }
+  const espera = Number((slot as { espera_ms?: number }).espera_ms ?? 0);
+
   // A linha nasce ANTES do envio: se o processo morrer no meio, o registro
   // existe e um retry sabe que nao deve repetir.
   if (!messageId) {
@@ -282,40 +348,8 @@ async function enviarPeloCanal(
     messageId = nova.id as string;
   }
 
-  // ANTI-BAN: reserva atomica do slot deste numero, compartilhada entre o
-  // servidor web e o worker (processos separados). A funcao devolve a ESPERA
-  // em ms calculada no relogio do banco (imune a desvio de relogio local).
-  // Falha FECHADA: sem reserva confirmada, nao ha envio sem espacamento.
-  const { data: esperaMs, error: erroSlot } = await supabase.rpc(
-    "reservar_slot_envio",
-    {
-      p_clinic_id: input.clinicId,
-      p_espaco_ms: input.espacamentoMs ?? espacamentoPadraoMs(),
-    },
-  );
-  if (erroSlot) {
-    await marcarFalha(supabase, messageId, "slot_indisponivel");
-    return {
-      ok: false,
-      reason: "falha_envio",
-      code: "slot_indisponivel",
-      message: "Não foi possível reservar o envio. Tente de novo.",
-    };
-  }
-  const espera = typeof esperaMs === "number" ? esperaMs : 0;
-  const teto = input.esperaMaximaMs ?? 8_000;
-  if (espera > teto) {
-    // O slot reservado fica sem uso (o proximo envio espera um pouco mais),
-    // que e o preco certo por nao segurar um atendente por um minuto.
-    await marcarFalha(supabase, messageId, "canal_ocupado");
-    return {
-      ok: false,
-      reason: "falha_envio",
-      code: "canal_ocupado",
-      message:
-        "O número está enviando outras mensagens agora. Tente de novo em instantes.",
-    };
-  }
+  // A espera que sobra aqui e curta por construcao: o teto ja foi aplicado na
+  // consulta do slot, e o que passava dele virou adiamento sem reserva.
   if (espera > 0) {
     await sleep(espera);
   }

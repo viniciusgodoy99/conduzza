@@ -12,7 +12,7 @@ Documentação de produto e handoff de engenharia do V1.
 
 ---
 
-## Como rodar: são dois processos
+## Como rodar: o motor roda sozinho (ver supabase/operacao/motor-por-cron.md)
 
 ```bash
 npm run dev      # a aplicação
