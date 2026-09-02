@@ -18,6 +18,22 @@ export type SendResult =
 
 export type MenuOption = { id: string; text: string };
 
+/**
+ * O que acompanha qualquer envio, independente do tipo.
+ *
+ * Existe como parametro proprio, e nao dentro de cada payload, porque o
+ * `replyid` do uazapi vale igual para texto, midia e menu: um conceito so,
+ * declarado uma vez. Espalha-lo pelos tres tipos garantiria que um deles
+ * ficasse para tras na proxima mudanca.
+ */
+export type EnvioExtra = {
+  /** id NO WHATSAPP da mensagem citada; vira `replyid` no provedor */
+  replyToWaMessageId?: string | null;
+};
+
+export type DeleteResult =
+  { ok: true } | { ok: false; errorCode: string; message: string };
+
 /** Tipos que o uazapi aceita no campo `type` de /send/media. */
 export type TipoDeMidia = "image" | "audio" | "ptt" | "video" | "document";
 
@@ -61,7 +77,12 @@ export interface WhatsAppProvider {
    * templates aprovados. uazapi e fake NAO tem nada disso.
    */
   readonly isOfficialChannel: boolean;
-  sendText(ref: InstanceRef, to: string, body: string): Promise<SendResult>;
+  sendText(
+    ref: InstanceRef,
+    to: string,
+    body: string,
+    extra?: EnvioExtra,
+  ): Promise<SendResult>;
   /**
    * Envia um arquivo (foto, audio, documento ou video).
    *
@@ -75,13 +96,24 @@ export interface WhatsAppProvider {
     ref: InstanceRef,
     to: string,
     midia: MidiaParaEnviar,
+    extra?: EnvioExtra,
   ): Promise<SendResult>;
   sendMenu(
     ref: InstanceRef,
     to: string,
     body: string,
     options: MenuOption[],
+    extra?: EnvioExtra,
   ): Promise<SendResult>;
+  /**
+   * Revoga uma mensagem no WhatsApp do paciente ("apagar para todos").
+   *
+   * O WhatsApp so aceita a revogacao dentro do prazo dele (60 horas para quem
+   * enviou) e apenas para mensagem propria. O prazo e conferido ANTES, no
+   * banco (pode_apagar_mensagem): chegar aqui com prazo vencido significaria
+   * dizer a clinica que apagou algo que continua na tela do paciente.
+   */
+  deleteMessage(ref: InstanceRef, waMessageId: string): Promise<DeleteResult>;
   connectInstance(ref: InstanceRef): Promise<InstanceStatus>;
   getStatus(ref: InstanceRef): Promise<InstanceStatus>;
   configureWebhook(ref: InstanceRef, url: string): Promise<void>;

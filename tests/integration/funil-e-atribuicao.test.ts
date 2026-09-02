@@ -168,6 +168,7 @@ function evento(
     contentType: "texto",
     body,
     mediaUrl: null,
+    quotedWaMessageId: null,
     instanceToken: null,
   };
 }

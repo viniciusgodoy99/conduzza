@@ -42,6 +42,7 @@ export default async function AtendimentoPage() {
       <InboxClient
         clinicId={active.clinicId}
         viewerId={context.userId}
+        viewerRole={active.role}
         authorNames={authorNames}
         initialConversations={conversations}
         hasWhatsappAccount={accountResult.data !== null}

@@ -1,5 +1,7 @@
 import { textoNumerado } from "./menu-texto";
 import type {
+  DeleteResult,
+  EnvioExtra,
   InstanceRef,
   InstanceStatus,
   MediaDownloadResult,
@@ -25,6 +27,7 @@ const PATHS = {
   sendMenu: "/send/menu",
   sendMedia: "/send/media",
   messageDownload: "/message/download",
+  messageDelete: "/message/delete",
 } as const;
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -166,12 +169,16 @@ export class UazapiProvider implements WhatsAppProvider {
     ref: InstanceRef,
     to: string,
     body: string,
+    extra: EnvioExtra = {},
   ): Promise<SendResult> {
     try {
       const { status, body: response } = await this.request(
         ref,
         PATHS.sendText,
-        { payload: { number: to, text: body }, semRetry: true },
+        {
+          payload: { number: to, text: body, ...comCitacao(extra) },
+          semRetry: true,
+        },
       );
       return toSendResult(status, response);
     } catch {
@@ -191,6 +198,7 @@ export class UazapiProvider implements WhatsAppProvider {
     ref: InstanceRef,
     to: string,
     midia: MidiaParaEnviar,
+    extra: EnvioExtra = {},
   ): Promise<SendResult> {
     try {
       // Contrato conferido contra a instancia real (03/09/2026), porque a
@@ -205,6 +213,7 @@ export class UazapiProvider implements WhatsAppProvider {
         type: midia.tipo,
         file: midia.base64,
         mimetype: midia.mimetype,
+        ...comCitacao(extra),
       };
       if (midia.legenda) {
         payload.text = midia.legenda;
@@ -235,6 +244,7 @@ export class UazapiProvider implements WhatsAppProvider {
     to: string,
     body: string,
     options: MenuOption[],
+    extra: EnvioExtra = {},
   ): Promise<SendResult> {
     try {
       // Codificacao da especificacao: "texto|id" para botao de resposta.
@@ -243,7 +253,13 @@ export class UazapiProvider implements WhatsAppProvider {
         ref,
         PATHS.sendMenu,
         {
-          payload: { number: to, type: "button", text: body, choices },
+          payload: {
+            number: to,
+            type: "button",
+            text: body,
+            choices,
+            ...comCitacao(extra),
+          },
           semRetry: true,
         },
       );
@@ -253,7 +269,11 @@ export class UazapiProvider implements WhatsAppProvider {
       // Botao interativo e incerto em API nao oficial: degrada para texto
       // numerado, que funciona em qualquer aparelho.
       const fallback = await this.request(ref, PATHS.sendText, {
-        payload: { number: to, text: textoNumerado(body, options) },
+        payload: {
+          number: to,
+          text: textoNumerado(body, options),
+          ...comCitacao(extra),
+        },
         semRetry: true,
       });
       return toSendResult(fallback.status, fallback.body);
@@ -322,6 +342,43 @@ export class UazapiProvider implements WhatsAppProvider {
     };
   }
 
+  async deleteMessage(
+    ref: InstanceRef,
+    waMessageId: string,
+  ): Promise<DeleteResult> {
+    // Contrato da especificacao (POST /message/delete): pedido {id}, resposta
+    // 200 {timestamp, id}. O provedor tambem emite um messages_update com
+    // Type 'Deleted', que o nosso webhook ignora quando ja apagamos aqui (a
+    // linha ja tem deleted_at e a funcao do banco nao acha nada para apagar).
+    //
+    // COM retry, ao contrario do envio: repetir um apagamento nao pode causar
+    // dano nenhum (a mensagem ja esta revogada), enquanto desistir na primeira
+    // falha de rede deixa no celular do paciente algo que a clinica ja
+    // considera apagado.
+    try {
+      const { status, body } = await this.request(ref, PATHS.messageDelete, {
+        payload: { id: waMessageId },
+      });
+      if (status >= 200 && status < 300) {
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        errorCode: `uazapi_delete_${status}`,
+        message:
+          pickString(body, ["message_ptbr", "error", "message"]) ??
+          "O WhatsApp não aceitou apagar esta mensagem.",
+      };
+    } catch {
+      return {
+        ok: false,
+        errorCode: "provider_indisponivel",
+        message:
+          "Não conseguimos falar com o servidor do WhatsApp. A mensagem não foi apagada.",
+      };
+    }
+  }
+
   /**
    * Cria a instancia daquela clinica (token administrativo) e devolve o token
    * proprio dela. Cada clinica tem a sua: e isso que torna a conexao escalavel.
@@ -386,6 +443,17 @@ export class UazapiProvider implements WhatsAppProvider {
   async disconnect(ref: InstanceRef): Promise<void> {
     await this.request(ref, PATHS.instanceDisconnect, { payload: {} });
   }
+}
+
+/**
+ * O trecho `replyid` do corpo, quando ha citacao.
+ *
+ * Devolve objeto VAZIO quando nao ha, em vez de `replyid: null`: o provedor
+ * trata campo presente com valor vazio como pedido de citar a mensagem "",
+ * e o envio inteiro falha por id invalido.
+ */
+function comCitacao(extra: EnvioExtra): Record<string, string> {
+  return extra.replyToWaMessageId ? { replyid: extra.replyToWaMessageId } : {};
 }
 
 function toSendResult(

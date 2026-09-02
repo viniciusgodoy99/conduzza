@@ -6,11 +6,12 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { MessagesSquare, Plug } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { Composer } from "@/components/atendimento/composer";
 import { ContextPanel } from "@/components/atendimento/context-panel";
 import { ConversationList } from "@/components/atendimento/conversation-list";
+import { DialogoApagar } from "@/components/atendimento/dialogo-apagar";
 import { Thread } from "@/components/atendimento/thread";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -24,12 +25,13 @@ import {
   type ConversationListItem,
   type MessageItem,
 } from "@/lib/queries/conversations";
+import { canEdit, type Role } from "@/lib/domain/permissions";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { useInboxChannel } from "@/lib/realtime/use-inbox-channel";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
-import { markConversationReadAction } from "./actions";
+import { apagarMensagemAction, markConversationReadAction } from "./actions";
 
 // Tela 1, Atendimento (layout do handoff): lista 322px, fio flexivel,
 // contexto 320px (colapsa em overlay abaixo de 1280px; abaixo de 1024px a
@@ -38,12 +40,14 @@ import { markConversationReadAction } from "./actions";
 export function InboxClient({
   clinicId,
   viewerId,
+  viewerRole,
   authorNames,
   initialConversations,
   hasWhatsappAccount,
 }: {
   clinicId: string;
   viewerId: string;
+  viewerRole: Role;
   authorNames: Record<string, string>;
   initialConversations: ConversationListItem[];
   hasWhatsappAccount: boolean;
@@ -53,6 +57,16 @@ export function InboxClient({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [showResolved, setShowResolved] = useState(false);
+  // Mensagem que está sendo respondida, e mensagem que está sendo apagada.
+  // Moram AQUI, e não no compositor ou na bolha, porque a ação nasce numa
+  // bolha e é consumida pelo compositor: são dois filhos irmãos.
+  const [citando, setCitando] = useState<MessageItem | null>(null);
+  const [apagando, setApagando] = useState<MessageItem | null>(null);
+  const [erroAoApagar, setErroAoApagar] = useState<string | null>(null);
+  const [apagandoPendente, startApagar] = useTransition();
+
+  const podeEditar = canEdit(viewerRole, "atendimento");
+  const ehChefia = viewerRole === "admin" || viewerRole === "gestor";
 
   useInboxChannel(supabase, clinicId);
 
@@ -134,6 +148,11 @@ export function InboxClient({
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
+    // Pela MESMA razão que o compositor é recriado com key: a citação carrega
+    // um trecho da mensagem de um paciente, e ela não pode aparecer na tela de
+    // outro. A Server Action recusaria o envio, mas a prévia já teria sido
+    // mostrada na conversa errada.
+    setCitando(null);
     queryClient.setQueryData<ConversationListItem[]>(
       conversationKeys.list(clinicId),
       (current) =>
@@ -144,6 +163,33 @@ export function InboxClient({
         ),
     );
     void markConversationReadAction(id);
+  };
+
+  const confirmarApagar = (escopo: "todos" | "local") => {
+    const alvo = apagando;
+    if (!alvo) {
+      return;
+    }
+    setErroAoApagar(null);
+    startApagar(async () => {
+      const resultado = await apagarMensagemAction(alvo.id, escopo);
+      if (!resultado.ok) {
+        setErroAoApagar(resultado.error ?? "Não foi possível apagar.");
+        return;
+      }
+      setApagando(null);
+      // Citar uma mensagem recém-apagada seria enviar uma resposta a algo que
+      // já não existe: a Server Action recusa, e a prévia ficaria mentindo.
+      setCitando((atual) => (atual?.id === alvo.id ? null : atual));
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.messages(alvo.id),
+      });
+      if (selected) {
+        void queryClient.invalidateQueries({
+          queryKey: conversationKeys.messages(selected.id),
+        });
+      }
+    });
   };
 
   if (activeConversations.length === 0) {
@@ -211,6 +257,14 @@ export function InboxClient({
             authorNames={authorNames}
             onBack={() => setSelectedId(null)}
             onToggleContext={() => setContextOpen(true)}
+            viewerId={viewerId}
+            podeEditar={podeEditar}
+            ehChefia={ehChefia}
+            onResponder={setCitando}
+            onApagar={(mensagem) => {
+              setErroAoApagar(null);
+              setApagando(mensagem);
+            }}
             footer={
                   // key OBRIGATORIA: sem ela o React so troca a prop e o
                   // compositor mantem o estado. Com anexo, isso significa a
@@ -221,6 +275,9 @@ export function InboxClient({
                     key={selected.id}
                     conversation={selected}
                     viewerId={viewerId}
+                    citando={citando}
+                    aoCancelarCitacao={() => setCitando(null)}
+                    authorNames={authorNames}
                   />
                 }
           />
@@ -248,6 +305,18 @@ export function InboxClient({
           </div>
         )}
       </aside>
+
+      <DialogoApagar
+        message={apagando}
+        aberto={apagando !== null}
+        aoFechar={() => {
+          setApagando(null);
+          setErroAoApagar(null);
+        }}
+        aoApagar={confirmarApagar}
+        pendente={apagandoPendente}
+        erro={erroAoApagar}
+      />
 
       <Sheet open={contextOpen} onOpenChange={setContextOpen}>
         <SheetContent side="right" className="w-[360px] p-0">

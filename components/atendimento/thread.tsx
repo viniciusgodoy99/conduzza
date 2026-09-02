@@ -57,6 +57,11 @@ export function Thread({
   onBack,
   onToggleContext,
   footer,
+  viewerId,
+  podeEditar,
+  ehChefia,
+  onResponder,
+  onApagar,
 }: {
   conversation: ConversationListItem;
   messages: MessageItem[];
@@ -69,6 +74,11 @@ export function Thread({
   onBack: () => void;
   onToggleContext: () => void;
   footer: React.ReactNode;
+  viewerId: string;
+  podeEditar: boolean;
+  ehChefia: boolean;
+  onResponder: (message: MessageItem) => void;
+  onApagar: (message: MessageItem) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // So rola para o fim quando chega mensagem NOVA (a mais recente muda), nao
@@ -81,6 +91,20 @@ export function Thread({
       el.scrollTop = el.scrollHeight;
     }
   }, [ultimaId, conversation.id]);
+
+  // Rola ate a mensagem citada e a destaca por um instante. Sem o realce, a
+  // pessoa chega la e nao sabe qual das bolhas era a procurada.
+  const irParaCitada = (id: string) => {
+    const alvo = document.getElementById(`mensagem-${id}`);
+    if (!alvo) {
+      return;
+    }
+    alvo.scrollIntoView({ behavior: "smooth", block: "center" });
+    alvo.classList.add("ring-2", "ring-ring/60", "rounded-2xl");
+    window.setTimeout(() => {
+      alvo.classList.remove("ring-2", "ring-ring/60", "rounded-2xl");
+    }, 1400);
+  };
 
   const items = mergeItems(messages, decisions);
   const definition = CONVERSATION_STATUS[conversation.status];
@@ -202,6 +226,22 @@ export function Thread({
                             ? (authorNames[item.message.author_user_id] ?? null)
                             : null
                       }
+                      authorNames={authorNames}
+                      contato={
+                        conversation.contact.name ??
+                        conversation.contact.phone_e164
+                      }
+                      viewerId={viewerId}
+                      podeEditar={podeEditar}
+                      podeResponder={
+                        podeEditar &&
+                        conversation.status === "em_atendimento" &&
+                        conversation.assignee_user_id === viewerId
+                      }
+                      ehChefia={ehChefia}
+                      onResponder={onResponder}
+                      onApagar={onApagar}
+                      onIrParaCitada={irParaCitada}
                     />
                   ) : (
                     <ComplianceBlockCard decision={item.decision} />

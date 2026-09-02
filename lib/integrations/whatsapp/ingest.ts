@@ -131,6 +131,31 @@ export async function ingerirMensagemRecebida(
 
   const resultado = (data ?? null) as IngestResultado | null;
 
+  // CITACAO, num passo separado da ingestao de proposito.
+  //
+  // Resolver a citada dentro de ingest_inbound_message obrigaria a reescrever
+  // aquela funcao, que e a mais delicada do sistema (cria contato, consentimento
+  // e conversa numa transacao so). Aqui e um update depois, com a mensagem ja
+  // salva: se falhar, a conversa perde a marca de "respondendo a", nao a
+  // mensagem.
+  if (event.quotedWaMessageId && resultado?.inserted && resultado.message_id) {
+    const { error: erroCitacao } = await admin.rpc(
+      "vincular_citacao_recebida",
+      {
+        p_clinic_id: clinicId,
+        p_message_id: resultado.message_id,
+        p_quoted_wa_id: event.quotedWaMessageId,
+      },
+    );
+    if (erroCitacao) {
+      log.error("citacao_recebida_falhou", {
+        clinic_id: clinicId,
+        message_id: resultado.message_id,
+        error_code: erroCitacao.code ?? null,
+      });
+    }
+  }
+
   // Atribuicao roda no nascimento do contato (os 3 mecanismos) OU quando uma
   // mensagem posterior traz token de campanha (contato pre-existente sem
   // origem; o update e guardado por source_channel is null, entao e barato e

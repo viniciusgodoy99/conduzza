@@ -31,6 +31,17 @@ export type ConversationListItem = {
   contact: ContactSummary;
 };
 
+/** O pouco que a previa da citacao precisa mostrar dentro da bolha. */
+export type QuotedMessage = {
+  id: string;
+  author: "paciente" | "ia" | "usuario" | "sistema";
+  author_user_id: string | null;
+  content_type: string;
+  body: string | null;
+  is_internal_note: boolean;
+  deleted_at: string | null;
+};
+
 export type MessageItem = {
   id: string;
   direction: "entrada" | "saida";
@@ -45,6 +56,23 @@ export type MessageItem = {
   delivery_status: string | null;
   error_code: string | null;
   created_at: string;
+  /** quando apagada, o corpo acima ja vem nulo: o conteudo foi para o cofre */
+  deleted_at: string | null;
+  deleted_by: string | null;
+  /** quem apagou: a clinica ou o proprio paciente, do aparelho dele */
+  deleted_source: "clinica" | "paciente" | null;
+  /** todos: revogada no WhatsApp do paciente. local: some so daqui. */
+  deleted_escopo: "todos" | "local" | null;
+  reply_to_message_id: string | null;
+  reply_to_wa_message_id: string | null;
+  /**
+   * A citada, embutida na mesma consulta.
+   *
+   * Vem nula em dois casos diferentes que a tela distingue: a citada nunca foi
+   * linha nossa (reply_to_wa_message_id preenchido, este nulo) ou ela foi
+   * apagada depois (o ON DELETE SET NULL zera o vinculo).
+   */
+  reply_to: QuotedMessage | null;
 };
 
 export type ComplianceDecision = {
@@ -131,7 +159,13 @@ export async function fetchResolvedConversations(
 }
 
 const MESSAGE_SELECT =
-  "id, direction, author, author_user_id, content_type, body, media_url, transcript, is_internal_note, delivery_status, error_code, created_at";
+  "id, direction, author, author_user_id, content_type, body, media_url, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, " +
+  // Auto-juncao: a citada e outra linha da MESMA tabela. O apelido aponta para
+  // a COLUNA, nao para o nome da chave estrangeira: numa relacao de uma tabela
+  // com ela mesma, o nome da chave nao diz qual ponta seguir, e o PostgREST
+  // devolve a lista das mensagens que citam esta, que e o contrario do que a
+  // bolha precisa. Conferido contra o banco em 02/09/2026.
+  "reply_to:reply_to_message_id(id, author, author_user_id, content_type, body, is_internal_note, deleted_at)";
 
 export const MESSAGES_PAGE_SIZE = 50;
 
@@ -165,7 +199,16 @@ export async function fetchMessagesPage(
   if (error) {
     throw new Error(error.message);
   }
-  const rows = (data ?? []) as MessageItem[];
+  const rows = ((data ?? []) as unknown as Record<string, unknown>[]).map(
+    (linha) => ({
+      ...linha,
+      // O PostgREST devolve a juncao como lista quando nao consegue provar que
+      // e um para um; a tela quer um objeto ou nada.
+      reply_to: Array.isArray(linha.reply_to)
+        ? ((linha.reply_to[0] as QuotedMessage) ?? null)
+        : ((linha.reply_to as QuotedMessage | null) ?? null),
+    }),
+  ) as MessageItem[];
   const nextCursor =
     rows.length === MESSAGES_PAGE_SIZE
       ? (rows[rows.length - 1]?.created_at ?? null)

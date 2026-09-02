@@ -22,6 +22,12 @@ export type InboundEvent =
       contentType: "texto" | "audio" | "imagem" | "documento";
       body: string | null;
       mediaUrl: string | null;
+      /**
+       * Id NO WHATSAPP da mensagem que o paciente citou ao responder.
+       * O campo chegava desde sempre e era descartado em silencio, entao o
+       * "respondendo a" que o paciente fez sumia da conversa da clinica.
+       */
+      quotedWaMessageId: string | null;
       /** token da instancia que recebeu; confere contra o guardado */
       instanceToken: string | null;
     }
@@ -36,6 +42,17 @@ export type InboundEvent =
       kind: "clinic_device_reply";
       phone: string;
       waMessageId: string;
+      instanceToken: string | null;
+    }
+  | {
+      /**
+       * O PACIENTE apagou uma mensagem para todos. Chega como messages_update
+       * com Type 'Deleted'. Antes era descartado junto com os demais estados
+       * que nao mudam entrega, e a clinica continuava lendo um texto que ja
+       * havia sumido do celular de quem escreveu.
+       */
+      kind: "message_deleted";
+      waMessageIds: string[];
       instanceToken: string | null;
     }
   | {
@@ -63,6 +80,11 @@ const canonicalSchema = z.discriminatedUnion("kind", [
       .default("texto"),
     body: z.string().nullish(),
     mediaUrl: z.string().nullish(),
+    quotedWaMessageId: z.string().nullish(),
+  }),
+  z.object({
+    kind: z.literal("message_deleted"),
+    waMessageId: z.string().min(1),
   }),
   z.object({
     kind: z.literal("message_status"),
@@ -110,6 +132,7 @@ const uazapiSchema = z
         buttonOrListid: z.string().optional(),
         reaction: z.unknown().optional(),
         content: z.unknown().optional(),
+        quoted: z.string().optional(),
       })
       .loose()
       .optional(),
@@ -167,6 +190,14 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
         contentType: evento.contentType,
         body: evento.body ?? null,
         mediaUrl: evento.mediaUrl ?? null,
+        quotedWaMessageId: evento.quotedWaMessageId ?? null,
+        instanceToken: null,
+      };
+    }
+    if (evento.kind === "message_deleted") {
+      return {
+        kind: "message_deleted",
+        waMessageIds: [evento.waMessageId],
         instanceToken: null,
       };
     }
@@ -219,10 +250,13 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
       return null;
     }
     const estado = String(bruto.Type ?? dados.state ?? dados.type ?? "");
+    if (estado === "Deleted") {
+      return { kind: "message_deleted", waMessageIds: ids, instanceToken };
+    }
     const status =
       estado === "Read" ? "lida" : estado === "Delivered" ? "entregue" : null;
     if (!status) {
-      // Deleted e outros estados nao mudam entrega: ignorar.
+      // Os demais estados nao mudam entrega nem visibilidade: ignorar.
       return null;
     }
     return {
@@ -328,6 +362,9 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
       // A URL vem criptografada (.enc): baixar exige POST /message/download.
       // Guardamos a referencia; o download entra quando houver midia de fato.
       mediaUrl: (conteudo.URL as string | undefined) ?? null,
+      // Na especificacao, `quoted` e simplesmente o id da mensagem citada.
+      // Vem string vazia quando nao ha citacao, e "" nao pode virar busca.
+      quotedWaMessageId: (mensagem.quoted as string | undefined) || null,
       instanceToken,
     };
   }

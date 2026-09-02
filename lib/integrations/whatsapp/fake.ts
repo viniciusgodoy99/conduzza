@@ -1,4 +1,6 @@
 import type {
+  DeleteResult,
+  EnvioExtra,
   InstanceRef,
   InstanceStatus,
   MediaDownloadResult,
@@ -26,7 +28,16 @@ export type FakeSentMessage = {
   body: string;
   menuOptions?: MenuOption[];
   waMessageId: string;
+  /** id da mensagem citada; os testes conferem que o replyid foi adiante */
+  replyToWaMessageId?: string | null;
 };
+
+/** Ids revogados por deleteMessage, na ordem, para os testes conferirem. */
+const apagadas: string[] = [];
+
+export function fakeDeletedMessages(): readonly string[] {
+  return apagadas;
+}
 
 const sent: FakeSentMessage[] = [];
 
@@ -36,6 +47,7 @@ export function fakeSentMessages(): readonly FakeSentMessage[] {
 
 export function resetFakeProvider(): void {
   sent.length = 0;
+  apagadas.length = 0;
 }
 
 export class FakeProvider implements WhatsAppProvider {
@@ -46,9 +58,16 @@ export class FakeProvider implements WhatsAppProvider {
     ref: InstanceRef,
     to: string,
     body: string,
+    extra: EnvioExtra = {},
   ): Promise<SendResult> {
     const waMessageId = `fake:${crypto.randomUUID()}`;
-    sent.push({ clinicId: ref.clinicId, to, body, waMessageId });
+    sent.push({
+      clinicId: ref.clinicId,
+      to,
+      body,
+      waMessageId,
+      replyToWaMessageId: extra.replyToWaMessageId ?? null,
+    });
     return { ok: true, waMessageId };
   }
 
@@ -56,6 +75,7 @@ export class FakeProvider implements WhatsAppProvider {
     ref: InstanceRef,
     to: string,
     midia: MidiaParaEnviar,
+    extra: EnvioExtra = {},
   ): Promise<SendResult> {
     const waMessageId = `fake:${crypto.randomUUID()}`;
     sent.push({
@@ -69,6 +89,7 @@ export class FakeProvider implements WhatsAppProvider {
         bytes: Math.floor((midia.base64.length * 3) / 4),
       },
       waMessageId,
+      replyToWaMessageId: extra.replyToWaMessageId ?? null,
     });
     return { ok: true, waMessageId };
   }
@@ -78,6 +99,7 @@ export class FakeProvider implements WhatsAppProvider {
     to: string,
     body: string,
     options: MenuOption[],
+    extra: EnvioExtra = {},
   ): Promise<SendResult> {
     const waMessageId = `fake:${crypto.randomUUID()}`;
     sent.push({
@@ -86,8 +108,17 @@ export class FakeProvider implements WhatsAppProvider {
       body,
       menuOptions: options,
       waMessageId,
+      replyToWaMessageId: extra.replyToWaMessageId ?? null,
     });
     return { ok: true, waMessageId };
+  }
+
+  async deleteMessage(
+    _ref: InstanceRef,
+    waMessageId: string,
+  ): Promise<DeleteResult> {
+    apagadas.push(waMessageId);
+    return { ok: true };
   }
 
   async connectInstance(ref: InstanceRef): Promise<InstanceStatus> {

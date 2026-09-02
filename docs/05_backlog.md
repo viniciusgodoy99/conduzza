@@ -95,6 +95,24 @@ O super administrador precisava poder criar a primeira clínica, senão o produt
 Decisão do dono em 25/08/2026: as abas de **WhatsApp** e **Papéis** foram antecipadas da tarefa 5.3, porque conectar o número e ajustar quem faz o quê não podia esperar a Fase 5. Junto vieram três mudanças de regra: (1) **gestor** passa a gerenciar equipe, papéis e conexão do WhatsApp, divergência consciente do brief `docs/02` seção 5, onde a célula Configurações/Gestor era somente ver; (2) **tirar acesso desativa o vínculo** (`status = 'inativo'`), reversível, em vez de apagar, para preservar o histórico; (3) travas novas no banco, não só na tela: gestor não cria, altera, remove nem desativa quem tem papel de administrador, e a clínica nunca fica sem administrador ativo.
 **Aceite:** o gestor não consegue se promover por triangulação e o último administrador não consegue se remover, provado contra o banco, não por inspeção da tela.
 
+### [x] Atendimento: mídia, ordem da fila, citar e apagar `G`
+Pedido do dono em 01/09/2026, em cinco partes. O mapeamento revelou que uma delas era mais grave do que parecia: **quando um paciente mandava foto ou documento, a clínica via uma bolha vazia.** O arquivo era baixado e guardado certo, mas nada no sistema sabia transformá-lo em algo exibível. Responder citando e apagar não existiam de forma alguma (sem coluna, sem método no provedor, sem policy).
+
+Entregue em oito fases, cada uma um commit fechado:
+
+1. **Balde fechado.** Policy em `storage.objects` amarrando o caminho `clinic_id/message_id` à mensagem que o usuário pode ler. Assinar a URL com service role seria filtrar a clínica no `if` do TypeScript, o que a regra 3.1 proíbe: a rota assina com o **cliente de sessão**, e quem decide é o Postgres. O recorte do papel `profissional` vale de graça, porque a policy do balde consulta `message`.
+2. **Bolha honesta.** Imagem, documento e vídeo passam a dizer o que são, com ícone, rótulo e cor.
+3. **Ordem da fila.** Coluna `last_inbound_at`, escrita só no recebimento. `last_message_at` sobe também quando a clínica responde, e era isso que jogava a conversa respondida para o topo.
+4. **Metadados da mídia**, que chegavam e eram descartados.
+5. **Ver de verdade.** Rota de mídia com auditoria **bloqueante** (arquivo de paciente sem registro de quem abriu é pior que arquivo indisponível), miniatura, player de áudio e cartão de documento.
+6. **Enviar mídia**, incluindo arrastar e soltar e gravação de nota de voz. O `/send/media` do uazapi quer **base64, não URL pública**, o que foi descoberto contra a instância real: a alternativa obrigaria a expor foto de paciente publicamente.
+7. **Responder citando.** Duas colunas, porque existe caso em que a citada nunca virou linha nossa (mensagem anterior à conexão, ou perdida pelo webhook).
+8. **Apagar**, em dois escopos. Prazo de 60 horas, que é o do WhatsApp. Apaga quem escreveu, mais administrador e gestor, nunca `leitura`. O conteúdo vai para a tabela cofre `message_apagada` e a linha viva fica com o corpo **anulado**: `message` está publicada no tempo real, e deixar o texto faria o apagamento empurrar por websocket para todas as abas o que alguém acabou de apagar.
+
+**Fica em aberto:** a prévia da última mensagem no cartão da conversa (o cartão ainda repete "Lead, Novo contato" em vez do trecho, como o brief pede).
+
+**Aceite:** 6 testes de isolamento do acervo de mídia e 14 das regras de apagar, todos chamando a RPC pela sessão, sem passar pela tela. O canal real foi provado por `npx tsx scripts/dev/prova-de-midia.mts` e `prova-de-citar-e-apagar.mts`, que mandam para o próprio número da instância.
+
 ---
 
 ## FASE 2. Cadastro e Agenda

@@ -5,6 +5,7 @@ import { log } from "@/lib/log";
 import { textoNumerado } from "./menu-texto";
 import { getWhatsAppProvider } from "./provider";
 import type {
+  EnvioExtra,
   InstanceRef,
   MenuOption,
   SendResult,
@@ -78,6 +79,23 @@ export type SendTextInput = {
     /** caminho no balde, ja gravado; vira media_url da linha */
     caminhoNoStorage: string;
   };
+  /**
+   * Mensagem que esta sendo respondida.
+   *
+   * Os dois ids viajam juntos de proposito: `messageId` e o que a nossa tela
+   * usa para desenhar a previa da citacao, e `waMessageId` e o que o WhatsApp
+   * precisa para o paciente ver a citacao no celular dele. Citada que nunca
+   * saiu (nota interna, envio que falhou) tem o segundo nulo: a citacao vale
+   * so do nosso lado, e o provedor nao recebe replyid nenhum.
+   *
+   * A POSSE nao e conferida aqui: quem chama ja provou que a citada e da mesma
+   * conversa. Este arquivo recebe o admin client e nao teria como reconferir
+   * sem refazer o trabalho da Server Action.
+   */
+  replyTo?: {
+    messageId: string;
+    waMessageId: string | null;
+  } | null;
 };
 
 /** Traduz o tipo do provedor para o content_type do banco. */
@@ -165,6 +183,7 @@ type Despacho = {
     provider: WhatsAppProvider,
     ref: InstanceRef,
     to: string,
+    extra: EnvioExtra,
   ): Promise<SendResult>;
 };
 
@@ -175,7 +194,8 @@ export async function sendWhatsAppText(
 ): Promise<SendTextResult> {
   return enviarPeloCanal(supabase, input, {
     bodyRegistrado: input.body,
-    enviar: (provider, ref, to) => provider.sendText(ref, to, input.body),
+    enviar: (provider, ref, to, extra) =>
+      provider.sendText(ref, to, input.body, extra),
   });
 }
 
@@ -196,14 +216,19 @@ export async function sendWhatsAppMedia(
 ): Promise<SendTextResult> {
   return enviarPeloCanal(supabase, input, {
     bodyRegistrado: input.body,
-    enviar: (provider, ref, to) =>
-      provider.sendMedia(ref, to, {
-        tipo: input.midia.tipo,
-        base64: input.midia.base64,
-        mimetype: input.midia.mimetype,
-        legenda: input.body || null,
-        nomeDoArquivo: input.midia.nomeDoArquivo ?? null,
-      }),
+    enviar: (provider, ref, to, extra) =>
+      provider.sendMedia(
+        ref,
+        to,
+        {
+          tipo: input.midia.tipo,
+          base64: input.midia.base64,
+          mimetype: input.midia.mimetype,
+          legenda: input.body || null,
+          nomeDoArquivo: input.midia.nomeDoArquivo ?? null,
+        },
+        extra,
+      ),
   });
 }
 
@@ -221,9 +246,41 @@ export async function sendWhatsAppMenu(
 ): Promise<SendTextResult> {
   return enviarPeloCanal(supabase, input, {
     bodyRegistrado: textoNumerado(input.body, input.options),
-    enviar: (provider, ref, to) =>
-      provider.sendMenu(ref, to, input.body, input.options),
+    enviar: (provider, ref, to, extra) =>
+      provider.sendMenu(ref, to, input.body, input.options, extra),
   });
+}
+
+/**
+ * Monta o provedor e a referencia da instancia daquela clinica.
+ *
+ * Exportada porque apagar mensagem tambem precisa falar com o provedor, e a
+ * alternativa seria uma terceira copia da leitura do segredo. O segredo mora
+ * em whatsapp_account_secret, que nenhuma sessao le: exige o admin client.
+ */
+export async function carregarInstancia(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<{ provider: WhatsAppProvider; ref: InstanceRef }> {
+  const { data: account } = await supabase
+    .from("whatsapp_account")
+    .select("provider, server_url, instance_id")
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  const { data: segredo } = await supabase
+    .from("whatsapp_account_secret")
+    .select("instance_token")
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  return {
+    provider: getWhatsAppProvider(account?.provider),
+    ref: {
+      clinicId,
+      serverUrl: account?.server_url ?? null,
+      instanceToken: segredo?.instance_token ?? null,
+      instanceId: account?.instance_id ?? null,
+    },
+  };
 }
 
 async function enviarPeloCanal(
@@ -399,6 +456,12 @@ async function enviarPeloCanal(
             }
           : {}),
         body: despacho.bodyRegistrado,
+        ...(input.replyTo
+          ? {
+              reply_to_message_id: input.replyTo.messageId,
+              reply_to_wa_message_id: input.replyTo.waMessageId,
+            }
+          : {}),
         billable: false,
         cost_cents: 0,
         delivery_status: "enviando",
@@ -465,7 +528,9 @@ async function enviarPeloCanal(
     instanceId: account?.instance_id ?? null,
   };
   const result = await despacho
-    .enviar(provider, ref, contact.phone_e164)
+    .enviar(provider, ref, contact.phone_e164, {
+      replyToWaMessageId: input.replyTo?.waMessageId ?? null,
+    })
     .catch((erro: unknown) => {
       const texto = erro instanceof Error ? erro.message : "";
       if (texto.includes("Instância sem token")) {

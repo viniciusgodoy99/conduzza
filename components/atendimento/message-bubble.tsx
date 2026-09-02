@@ -4,11 +4,15 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   AudioLines,
+  CircleSlash,
+  CornerUpLeft,
   FileText,
   Image as ImageIcon,
   Lock,
+  MoreVertical,
   ShieldAlert,
   Sparkles,
+  Trash2,
   Video,
 } from "lucide-react";
 import { useState } from "react";
@@ -22,7 +26,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { CartaoDeDocumento } from "@/components/atendimento/media/cartao-de-documento";
+import { CitacaoDaBolha } from "@/components/atendimento/citacao";
 import { FotoDaConversa } from "@/components/atendimento/media/foto-da-conversa";
 import { PlayerDeAudio } from "@/components/atendimento/media/player-de-audio";
 import type {
@@ -155,12 +166,15 @@ function AudioBody({ message }: { message: MessageItem }) {
  *
  * Precisa olhar `media_url` e nao so `content_type`, por um motivo concreto:
  * o parser de entrada mapeia VIDEO para 'texto' (lib/integrations/whatsapp/
- * inbound.ts:138-146 nao tem caso para video, e o enum do banco tambem nao o
- * preve). Sem esta checagem, todo video recebido continuaria como bolha vazia,
- * que e exatamente o defeito que este componente esta corrigindo.
+ * inbound.ts nao tem caso para video, e o enum do banco tambem nao o preve).
+ * Sem esta checagem, todo video recebido continuaria como bolha vazia, que e
+ * exatamente o defeito que este componente esta corrigindo.
  */
 function ehMidia(message: MessageItem): boolean {
-  if (message.content_type === "imagem" || message.content_type === "documento") {
+  if (
+    message.content_type === "imagem" ||
+    message.content_type === "documento"
+  ) {
     return true;
   }
   return message.content_type === "texto" && Boolean(message.media_url);
@@ -184,7 +198,10 @@ function MidiaBody({ message }: { message: MessageItem }) {
   if (arquivoPronto(message)) {
     if (message.content_type === "documento") {
       return (
-        <CartaoDeDocumento messageId={message.id} nomeDoArquivo={message.body} />
+        <CartaoDeDocumento
+          messageId={message.id}
+          nomeDoArquivo={message.body}
+        />
       );
     }
     // Video chega como content_type 'texto' com media_url, porque o enum do
@@ -246,12 +263,142 @@ function MidiaBody({ message }: { message: MessageItem }) {
   );
 }
 
+/**
+ * A lapide de uma mensagem apagada.
+ *
+ * NUNCA some da conversa. Sumir por completo faria uma atendente conseguir
+ * tirar uma mensagem da tela sem deixar rastro nenhum para a colega, e este e
+ * um sistema onde varias pessoas atendem o mesmo paciente. O conteudo foi para
+ * o cofre; o que fica aqui e o fato de que existiu e quem apagou.
+ *
+ * O escopo importa muito na redacao: "apagada so aqui" significa que o
+ * paciente CONTINUA VENDO a mensagem no celular dele. Uma atendente que leia
+ * "apagada" e conclua que sumiu de todo lugar pode escrever a proxima mensagem
+ * contando com um contexto que o paciente nao tem.
+ */
+function Lapide({
+  message,
+  authorNames,
+  viewerId,
+}: {
+  message: MessageItem;
+  authorNames: Record<string, string>;
+  viewerId: string;
+}) {
+  const soAqui = message.deleted_escopo === "local";
+  const quem =
+    message.deleted_source === "paciente"
+      ? "O paciente apagou"
+      : message.deleted_by === viewerId
+        ? "Você apagou"
+        : message.deleted_by
+          ? `${authorNames[message.deleted_by] ?? "A clínica"} apagou`
+          : "A clínica apagou";
+  return (
+    <span className="flex items-center gap-1.5 text-[12.5px] text-text-tertiary italic">
+      <CircleSlash strokeWidth={1.5} className="size-4 shrink-0" />
+      {soAqui
+        ? `${quem} esta mensagem só aqui. O paciente ainda vê.`
+        : `${quem} esta mensagem.`}
+    </span>
+  );
+}
+
+/** O menu de ações da bolha: responder e apagar. */
+function AcoesDaBolha({
+  podeResponder,
+  podeApagar,
+  motivoSemPermissao,
+  onResponder,
+  onApagar,
+}: {
+  podeResponder: boolean;
+  podeApagar: boolean;
+  motivoSemPermissao: string;
+  onResponder: () => void;
+  onApagar: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Ações da mensagem"
+          // Aparece no toque desde sempre (celular nao tem passar o mouse) e
+          // no computador quando o cursor ou o teclado chegam na bolha.
+          className={cn(
+            "grid size-10 shrink-0 place-items-center rounded-full text-text-tertiary",
+            "hover:bg-surface-3 hover:text-text-secondary",
+            "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+            "sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100",
+            "data-[state=open]:opacity-100",
+          )}
+        >
+          <MoreVertical strokeWidth={1.5} className="size-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem
+          onSelect={onResponder}
+          disabled={!podeResponder}
+          title={podeResponder ? undefined : motivoSemPermissao}
+        >
+          <CornerUpLeft strokeWidth={1.5} className="size-4" />
+          Responder
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={onApagar}
+          disabled={!podeApagar}
+          title={
+            podeApagar
+              ? undefined
+              : "Só quem escreveu a mensagem pode apagar. Um administrador ou gestor também pode."
+          }
+        >
+          <Trash2 strokeWidth={1.5} className="size-4" />
+          Apagar
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function MessageBubble({
   message,
   authorName,
+  authorNames = {},
+  contato = "Paciente",
+  viewerId = "",
+  podeEditar = false,
+  podeResponder = false,
+  ehChefia = false,
+  onResponder,
+  onApagar,
+  onIrParaCitada,
 }: {
   message: MessageItem;
   authorName: string | null;
+  authorNames?: Record<string, string>;
+  /** nome do paciente, para nomear a citação de uma mensagem dele */
+  contato?: string;
+  viewerId?: string;
+  /** o papel permite escrever (a matriz de papéis) */
+  podeEditar?: boolean;
+  /**
+   * Dá para responder AGORA: o papel permite e a conversa é sua.
+   *
+   * Separado de podeEditar porque as duas ações têm donos diferentes. Apagar
+   * é sobre a mensagem (quem escreveu, mais a chefia) e vale mesmo com a
+   * conversa na mão de outra pessoa: uma mensagem errada precisa sair. Já
+   * responder exige a posse, senão duas atendentes escrevem por cima uma da
+   * outra.
+   */
+  podeResponder?: boolean;
+  /** administrador ou gestor: apaga mensagem de qualquer pessoa */
+  ehChefia?: boolean;
+  onResponder?: (message: MessageItem) => void;
+  onApagar?: (message: MessageItem) => void;
+  onIrParaCitada?: (id: string) => void;
 }) {
   if (message.content_type === "evento") {
     return <SystemEventCard message={message} />;
@@ -260,9 +407,43 @@ export function MessageBubble({
   const fromPatient = message.direction === "entrada";
   const fromIa = message.author === "ia";
   const note = message.is_internal_note;
+  const apagada = message.deleted_at !== null;
+
+  // Espelha pode_apagar_mensagem no banco. Espelhar NAO e duplicar a regra: o
+  // banco continua sendo quem decide, e esta copia existe só para a tela não
+  // oferecer um botão que vai falhar. Se as duas divergirem, quem vale é o
+  // banco, e o usuário vê a recusa em texto.
+  const podeApagar =
+    podeEditar &&
+    !apagada &&
+    (ehChefia ||
+      (message.author_user_id !== null && message.author_user_id === viewerId));
+  const mostrarAcoes = Boolean(onResponder && onApagar) && !apagada;
 
   return (
-    <div className={cn("flex", fromPatient ? "justify-start" : "justify-end")}>
+    <div
+      id={`mensagem-${message.id}`}
+      className={cn(
+        "group flex scroll-mt-4 items-center gap-1",
+        fromPatient ? "justify-start" : "justify-end",
+      )}
+    >
+      {/* O menu fica do lado de FORA da bolha, e no lado oposto ao dono da
+          mensagem, para não cobrir o texto nem empurrar a hora. */}
+      {!fromPatient && mostrarAcoes ? (
+        <AcoesDaBolha
+          podeResponder={podeResponder}
+          podeApagar={podeApagar}
+          motivoSemPermissao={
+            podeEditar
+              ? "Assuma a conversa antes de responder."
+              : "Seu perfil pode acompanhar o atendimento, mas não responder."
+          }
+          onResponder={() => onResponder?.(message)}
+          onApagar={() => onApagar?.(message)}
+        />
+      ) : null}
+
       <div
         className={cn(
           "grid max-w-[74%] gap-1 border px-3 py-2",
@@ -276,9 +457,12 @@ export function MessageBubble({
               : "border-transparent bg-surface-4"),
           note &&
             "[border-color:var(--warning)] [background:var(--warning-bg)]",
+          // Mensagem apagada perde a cor de autoria: ela não é mais fala de
+          // ninguém, é o registro de que houve uma.
+          apagada && "border-border-strong border-dashed bg-transparent",
         )}
       >
-        {fromIa ? (
+        {fromIa && !apagada ? (
           <span className="flex items-center gap-1 text-[11px] font-semibold [color:var(--ai-text)]">
             <Sparkles strokeWidth={1.5} className="size-3" />
             {authorName ?? "Assistente"}
@@ -287,7 +471,7 @@ export function MessageBubble({
             </span>
           </span>
         ) : null}
-        {!fromPatient && !fromIa && authorName ? (
+        {!fromPatient && !fromIa && authorName && !apagada ? (
           <span
             className={cn(
               "flex items-center gap-1 text-[11px] font-semibold",
@@ -300,14 +484,30 @@ export function MessageBubble({
           </span>
         ) : null}
 
-        {message.content_type === "audio" ? (
-          <AudioBody message={message} />
-        ) : ehMidia(message) ? (
-          <MidiaBody message={message} />
+        {apagada ? (
+          <Lapide
+            message={message}
+            authorNames={authorNames}
+            viewerId={viewerId}
+          />
         ) : (
-          <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
-            {message.body}
-          </p>
+          <>
+            <CitacaoDaBolha
+              message={message}
+              contato={contato}
+              nomes={authorNames}
+              aoIrParaCitada={onIrParaCitada}
+            />
+            {message.content_type === "audio" ? (
+              <AudioBody message={message} />
+            ) : ehMidia(message) ? (
+              <MidiaBody message={message} />
+            ) : (
+              <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
+                {message.body}
+              </p>
+            )}
+          </>
         )}
 
         <span
@@ -317,11 +517,25 @@ export function MessageBubble({
           )}
         >
           {hour(message.created_at)}
-          {message.delivery_status === "falhou" ? (
+          {message.delivery_status === "falhou" && !apagada ? (
             <span className="[color:var(--alert-text)]"> · falhou</span>
           ) : null}
         </span>
       </div>
+
+      {fromPatient && mostrarAcoes ? (
+        <AcoesDaBolha
+          podeResponder={podeResponder}
+          podeApagar={podeApagar}
+          motivoSemPermissao={
+            podeEditar
+              ? "Assuma a conversa antes de responder."
+              : "Seu perfil pode acompanhar o atendimento, mas não responder."
+          }
+          onResponder={() => onResponder?.(message)}
+          onApagar={() => onApagar?.(message)}
+        />
+      ) : null}
     </div>
   );
 }

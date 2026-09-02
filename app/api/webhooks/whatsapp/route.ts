@@ -160,6 +160,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // O paciente apagou uma mensagem para todos. A conversa da clinica precisa
+  // acompanhar: continuar exibindo o texto faria a recepcao responder a algo
+  // que, para quem escreveu, ja nao existe.
+  //
+  // Este evento tambem chega quando fomos NOS que apagamos (o provedor avisa
+  // todo mundo). Nesse caso a funcao nao encontra nada, porque a linha ja tem
+  // deleted_at, e o segundo apagamento nao sobrescreve a autoria do primeiro.
+  if (event.kind === "message_deleted") {
+    for (const waMessageId of event.waMessageIds) {
+      const { data: apagada, error } = await admin.rpc(
+        "apagar_mensagem_do_paciente",
+        { p_clinic_id: clinicId, p_wa_message_id: waMessageId },
+      );
+      if (error) {
+        log.error("webhook_apagar_do_paciente_falhou", {
+          clinic_id: clinicId,
+          wa_message_id: waMessageId,
+          error_code: error.code ?? null,
+        });
+        continue;
+      }
+      // O arquivo sai do acervo junto. A policy de leitura ja o bloqueia
+      // (ela exige deleted_at nulo), entao guardar os bytes seria manter foto
+      // de paciente que ninguem mais consegue abrir nem auditar.
+      const caminho = (apagada as { media_url?: string | null } | null)
+        ?.media_url;
+      const prefixo = "storage://midia-conversas/";
+      if (caminho?.startsWith(prefixo)) {
+        await admin.storage
+          .from("midia-conversas")
+          .remove([caminho.slice(prefixo.length)]);
+      }
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   if (event.kind === "message_status") {
     // O recibo do uazapi traz uma LISTA de ids por evento.
     await admin

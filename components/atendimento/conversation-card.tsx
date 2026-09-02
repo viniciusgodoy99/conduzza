@@ -84,7 +84,9 @@ export function ConversationCard({
         <span className="font-mono text-[11px] text-text-tertiary tabular-nums">
           {/* A hora exibida e a MESMA que ordena a lista. Mostrar a atividade
               e ordenar pelo recebimento faria a coluna parecer embaralhada. */}
-          {timeLabel(conversation.last_inbound_at ?? conversation.last_message_at)}
+          {timeLabel(
+            conversation.last_inbound_at ?? conversation.last_message_at,
+          )}
         </span>
         <span className="flex items-center gap-1">
           <StatusChip

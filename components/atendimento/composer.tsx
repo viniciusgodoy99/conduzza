@@ -9,6 +9,7 @@ import {
   Send,
   Sparkles,
   Undo2,
+  X,
 } from "lucide-react";
 import { useState, useTransition } from "react";
 
@@ -25,9 +26,16 @@ import {
   BarraDeAnexo,
   useArquivoSolto,
 } from "@/components/atendimento/media/barra-de-anexo";
+import {
+  autorDaCitacao,
+  BlocoDeCitacao,
+} from "@/components/atendimento/citacao";
 import { Button } from "@/components/ui/button";
 import { conversationKeys } from "@/lib/queries/conversations";
-import type { ConversationListItem } from "@/lib/queries/conversations";
+import type {
+  ConversationListItem,
+  MessageItem,
+} from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
 // Compositor (tarefa 1.6), estados do handoff:
@@ -43,9 +51,16 @@ type Mode = "responder" | "nota";
 export function Composer({
   conversation,
   viewerId,
+  citando,
+  aoCancelarCitacao,
+  authorNames,
 }: {
   conversation: ConversationListItem;
   viewerId: string;
+  /** mensagem que está sendo respondida, quando houver */
+  citando: MessageItem | null;
+  aoCancelarCitacao: () => void;
+  authorNames: Record<string, string>;
 }) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<Mode>("responder");
@@ -59,12 +74,16 @@ export function Composer({
   const [arquivoSolto, setArquivoSolto] = useState<File | null>(null);
   // Muda a cada envio de arquivo bem-sucedido, para a barra limpar a previa.
   const [enviadoEm, setEnviadoEm] = useState(0);
+  // Que plano está ativo, derivado e não guardado.
+  //
+  // Uma citação MANDA no plano: responder a uma nota interna é escrever outra
+  // nota, e responder ao paciente é falar com ele. Guardar isso num segundo
+  // estado criaria o momento em que os dois discordam, e a pessoa escreveria
+  // uma nota interna achando que está respondendo ao paciente.
+  const isNote = citando ? citando.is_internal_note : mode === "nota";
   // O compositor tem retornos antecipados por estado da conversa (resolvida,
   // com a IA, de outra pessoa), entao o hook precisa vir ANTES de todos eles.
-  const solto = useArquivoSolto(
-    (arquivo) => setArquivoSolto(arquivo),
-    mode !== "nota",
-  );
+  const solto = useArquivoSolto((arquivo) => setArquivoSolto(arquivo), !isNote);
 
   const refresh = () => {
     void queryClient.invalidateQueries({
@@ -82,8 +101,21 @@ export function Composer({
         return;
       }
       setText("");
+      aoCancelarCitacao();
       refresh();
     });
+  };
+
+  // Trocar de aba com uma citação incompatível pendurada.
+  //
+  // Nota interna e resposta ao paciente são planos separados (a Server Action
+  // recusa o cruzamento). Em vez de deixar a pessoa escrever a mensagem inteira
+  // para só então ver a recusa, a citação sai junto com a troca de aba.
+  const trocarModo = (novo: Mode) => {
+    setMode(novo);
+    if (citando && citando.is_internal_note !== (novo === "nota")) {
+      aoCancelarCitacao();
+    }
   };
 
   const isMine =
@@ -160,8 +192,6 @@ export function Composer({
     );
   }
 
-  const isNote = mode === "nota";
-
   return (
     <div
       {...solto.props}
@@ -180,7 +210,7 @@ export function Composer({
         <div className="flex rounded-lg bg-surface-3 p-0.5 text-[12px] font-medium">
           <button
             type="button"
-            onClick={() => setMode("responder")}
+            onClick={() => trocarModo("responder")}
             className={cn(
               "h-7 rounded-md px-3",
               !isNote ? "bg-surface-5" : "text-text-secondary",
@@ -190,7 +220,7 @@ export function Composer({
           </button>
           <button
             type="button"
-            onClick={() => setMode("nota")}
+            onClick={() => trocarModo("nota")}
             className={cn(
               "flex h-7 items-center gap-1 rounded-md px-3",
               isNote
@@ -245,8 +275,14 @@ export function Composer({
             dados.set("arquivo", arquivo);
             dados.set("legenda", legenda);
             dados.set("nota_de_voz", notaDeVoz ? "1" : "0");
+            if (citando) {
+              dados.set("citando", citando.id);
+            }
             run(async () => {
-              const resultado = await enviarArquivoAction(conversation.id, dados);
+              const resultado = await enviarArquivoAction(
+                conversation.id,
+                dados,
+              );
               if (resultado.ok) {
                 setEnviadoEm(Date.now());
               }
@@ -256,14 +292,40 @@ export function Composer({
         />
       ) : null}
 
+      {citando ? (
+        <div className="flex items-center gap-2">
+          <BlocoDeCitacao
+            autor={autorDaCitacao(
+              citando,
+              conversation.contact.name ?? conversation.contact.phone_e164,
+              authorNames,
+            )}
+            mensagem={citando}
+            className="min-w-0 flex-1"
+          />
+          <button
+            type="button"
+            onClick={aoCancelarCitacao}
+            aria-label="Cancelar a resposta a esta mensagem"
+            className="grid size-10 shrink-0 place-items-center rounded-full text-text-tertiary hover:bg-surface-3 hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+          >
+            <X strokeWidth={1.5} className="size-4" />
+          </button>
+        </div>
+      ) : null}
+
       <form
         className="flex items-end gap-2"
         onSubmit={(event) => {
           event.preventDefault();
           run(() =>
             isNote
-              ? addInternalNoteAction(conversation.id, text)
-              : sendMessageAction(conversation.id, text),
+              ? addInternalNoteAction(
+                  conversation.id,
+                  text,
+                  citando?.id ?? null,
+                )
+              : sendMessageAction(conversation.id, text, citando?.id ?? null),
           );
         }}
       >
@@ -272,7 +334,11 @@ export function Composer({
           onChange={(event) => setText(event.target.value)}
           rows={2}
           placeholder={
-            isNote ? "Escreva a nota para o time" : "Escreva a resposta"
+            citando
+              ? "Escreva a resposta a esta mensagem"
+              : isNote
+                ? "Escreva a nota para o time"
+                : "Escreva a resposta"
           }
           aria-label={isNote ? "Nota interna" : "Resposta ao paciente"}
           className={cn(
@@ -280,12 +346,25 @@ export function Composer({
             isNote && "[border-color:var(--warning)]",
           )}
           onKeyDown={(event) => {
+            if (event.key === "Escape" && citando) {
+              event.preventDefault();
+              aoCancelarCitacao();
+              return;
+            }
             if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
               run(() =>
                 isNote
-                  ? addInternalNoteAction(conversation.id, text)
-                  : sendMessageAction(conversation.id, text),
+                  ? addInternalNoteAction(
+                      conversation.id,
+                      text,
+                      citando?.id ?? null,
+                    )
+                  : sendMessageAction(
+                      conversation.id,
+                      text,
+                      citando?.id ?? null,
+                    ),
               );
             }
           }}

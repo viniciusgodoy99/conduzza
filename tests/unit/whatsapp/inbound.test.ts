@@ -23,6 +23,7 @@ describe("formato canônico (simulador de desenvolvimento)", () => {
       contentType: "texto",
       body: "Oi, quero agendar",
       mediaUrl: null,
+      quotedWaMessageId: null,
       instanceToken: null,
     });
   });
@@ -63,8 +64,44 @@ describe("formato uazapi: mensagens", () => {
       contentType: "texto",
       body: "Bom dia",
       mediaUrl: null,
+      quotedWaMessageId: null,
       instanceToken: "token-da-instancia",
     });
+  });
+
+  it("lê a citação que o paciente fez ao responder", () => {
+    // O campo chegava desde sempre e era jogado fora, entao o "respondendo a"
+    // do paciente sumia da conversa da clinica.
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "NOVA",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "pode ser as 15h",
+        quoted: "ANTERIOR-DA-CLINICA",
+      },
+    });
+    expect(evento).toMatchObject({
+      waMessageId: "NOVA",
+      quotedWaMessageId: "ANTERIOR-DA-CLINICA",
+    });
+  });
+
+  it("citação vazia não vira busca por id vazio", () => {
+    // O provedor manda `quoted: ""` quando nao ha citacao. Passar "" adiante
+    // faria o banco procurar uma mensagem de id vazio em toda a clinica.
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "NOVA",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "oi",
+        quoted: "",
+      },
+    });
+    expect(evento).toMatchObject({ quotedWaMessageId: null });
   });
 
   it("prefere messageid (id do WhatsApp) ao id interno", () => {
@@ -170,11 +207,29 @@ describe("formato uazapi: recibos de entrega (maiúsculas)", () => {
     ).toMatchObject({ status: "lida" });
   });
 
-  it("mensagem apagada não altera entrega", () => {
+  // Este teste TROCOU DE LADO de proposito. Antes ele travava o descarte do
+  // evento de apagamento, decidido quando o Atendimento ainda nao sabia apagar
+  // mensagem. Agora o paciente pode apagar do celular dele, e continuar
+  // descartando faria a clinica ler um texto que sumiu da tela de quem
+  // escreveu, e responder a uma mensagem que, para ele, nao existe mais.
+  it("mensagem apagada pelo paciente vira apagamento, não recibo de entrega", () => {
     expect(
       parseInboundEvent({
         EventType: "messages_update",
-        event: { MessageIDs: ["X"], Type: "Deleted" },
+        event: { MessageIDs: ["X", "Y"], Type: "Deleted" },
+      }),
+    ).toEqual({
+      kind: "message_deleted",
+      waMessageIds: ["X", "Y"],
+      instanceToken: null,
+    });
+  });
+
+  it("estado desconhecido continua sendo ignorado", () => {
+    expect(
+      parseInboundEvent({
+        EventType: "messages_update",
+        event: { MessageIDs: ["X"], Type: "Starred" },
       }),
     ).toBeNull();
   });

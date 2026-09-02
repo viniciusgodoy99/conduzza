@@ -5,9 +5,11 @@ import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit } from "@/lib/domain/permissions";
 import {
+  carregarInstancia,
   sendWhatsAppMedia,
   sendWhatsAppText,
 } from "@/lib/integrations/whatsapp/send";
+import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -67,6 +69,66 @@ async function loadVisibleConversation(
   };
 }
 
+type CitacaoResolvida =
+  | { ok: true; replyTo: { messageId: string; waMessageId: string | null } | null }
+  | { ok: false; error: string };
+
+/**
+ * Confere que a mensagem citada pode mesmo ser citada aqui.
+ *
+ * Duas regras, e as duas importam por motivos concretos:
+ *
+ * 1. MESMA CONVERSA. Sem isso, bastaria mandar o id de uma mensagem de outro
+ *    paciente para que a previa da citacao renderizasse o texto dele dentro
+ *    desta conversa. A RLS impede pegar mensagem de OUTRA CLINICA, mas dentro
+ *    da mesma clinica ela nao separa conversa de conversa, e conversa de
+ *    paciente e dado de saude.
+ *
+ * 2. MESMO PLANO. Nota interna nao cita mensagem do paciente e vice-versa. Uma
+ *    resposta ao paciente citando uma nota interna mostraria a previa da nota
+ *    para a equipe e nada para o paciente, que receberia a mensagem solta: a
+ *    atendente acharia que ele esta vendo um contexto que nunca chegou la.
+ */
+async function resolverCitacao(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  conversationId: string,
+  replyToMessageId: string | null | undefined,
+  comoNota: boolean,
+): Promise<CitacaoResolvida> {
+  if (!replyToMessageId) {
+    return { ok: true, replyTo: null };
+  }
+  if (!idSchema.safeParse(replyToMessageId).success) {
+    return { ok: false, error: "Mensagem citada inválida." };
+  }
+  const { data } = await supabase
+    .from("message")
+    .select("id, wa_message_id, conversation_id, is_internal_note, deleted_at")
+    .eq("id", replyToMessageId)
+    .maybeSingle();
+  if (!data || data.conversation_id !== conversationId) {
+    return { ok: false, error: "A mensagem citada não é desta conversa." };
+  }
+  if (data.deleted_at) {
+    return { ok: false, error: "Esta mensagem foi apagada e não pode ser citada." };
+  }
+  if (Boolean(data.is_internal_note) !== comoNota) {
+    return {
+      ok: false,
+      error: comoNota
+        ? "Uma nota interna só cita outra nota interna."
+        : "Nota interna não pode ser citada numa resposta ao paciente.",
+    };
+  }
+  return {
+    ok: true,
+    replyTo: {
+      messageId: data.id as string,
+      waMessageId: (data.wa_message_id as string | null) ?? null,
+    },
+  };
+}
+
 async function addSystemEvent(
   supabase: Awaited<ReturnType<typeof createClient>>,
   clinicId: string,
@@ -100,6 +162,7 @@ export async function markConversationReadAction(
 export async function sendMessageAction(
   conversationId: string,
   body: string,
+  replyToMessageId?: string | null,
 ): Promise<InboxActionResult> {
   const parsedBody = bodySchema.safeParse(body);
   if (!parsedBody.success) {
@@ -111,7 +174,7 @@ export async function sendMessageAction(
   if ("error" in loaded) {
     return { ok: false, error: loaded.error };
   }
-  const { context, conversation } = loaded;
+  const { context, supabase, conversation } = loaded;
   if (
     conversation.status !== "em_atendimento" ||
     conversation.assignee_user_id !== context.userId
@@ -122,12 +185,25 @@ export async function sendMessageAction(
     };
   }
 
+  // Resolvida com a SESSAO, antes de o service role entrar: e a RLS que prova
+  // que a citada e visivel para quem esta citando.
+  const citacao = await resolverCitacao(
+    supabase,
+    conversation.id,
+    replyToMessageId,
+    false,
+  );
+  if (!citacao.ok) {
+    return { ok: false, error: citacao.error };
+  }
+
   const result = await sendWhatsAppText(createAdminClient(), {
     clinicId: context.active!.clinicId,
     conversationId: conversation.id,
     contactId: conversation.contact_id,
     body: parsedBody.data,
     authorUserId: context.userId,
+    replyTo: citacao.replyTo,
   });
   if (!result.ok) {
     return { ok: false, error: result.message };
@@ -175,6 +251,7 @@ export async function enviarArquivoAction(
   const arquivo = formulario.get("arquivo");
   const legenda = String(formulario.get("legenda") ?? "").trim();
   const comoNotaDeVoz = formulario.get("nota_de_voz") === "1";
+  const citadaId = String(formulario.get("citando") ?? "") || null;
 
   if (!(arquivo instanceof File) || arquivo.size === 0) {
     return { ok: false, error: "Escolha um arquivo para enviar." };
@@ -203,12 +280,22 @@ export async function enviarArquivoAction(
   if ("error" in loaded) {
     return { ok: false, error: loaded.error };
   }
-  const { context, conversation } = loaded;
+  const { context, supabase, conversation } = loaded;
   if (
     conversation.status !== "em_atendimento" ||
     conversation.assignee_user_id !== context.userId
   ) {
     return { ok: false, error: "Assuma a conversa antes de responder." };
+  }
+
+  const citacao = await resolverCitacao(
+    supabase,
+    conversation.id,
+    citadaId,
+    false,
+  );
+  if (!citacao.ok) {
+    return { ok: false, error: citacao.error };
   }
 
   const clinicId = context.active!.clinicId;
@@ -242,6 +329,7 @@ export async function enviarArquivoAction(
     body: legenda,
     authorUserId: context.userId,
     messageId,
+    replyTo: citacao.replyTo,
     midia: {
       // Nota de voz vai como 'ptt' para chegar como audio tocavel no celular
       // do paciente, e nao como arquivo anexado.
@@ -267,6 +355,7 @@ export async function enviarArquivoAction(
 export async function addInternalNoteAction(
   conversationId: string,
   body: string,
+  replyToMessageId?: string | null,
 ): Promise<InboxActionResult> {
   const parsedBody = bodySchema.safeParse(body);
   if (!parsedBody.success) {
@@ -279,6 +368,15 @@ export async function addInternalNoteAction(
     return { ok: false, error: loaded.error };
   }
   const { context, supabase, conversation } = loaded;
+  const citacao = await resolverCitacao(
+    supabase,
+    conversation.id,
+    replyToMessageId,
+    true,
+  );
+  if (!citacao.ok) {
+    return { ok: false, error: citacao.error };
+  }
   const { error } = await supabase.from("message").insert({
     clinic_id: context.active!.clinicId,
     conversation_id: conversation.id,
@@ -288,10 +386,150 @@ export async function addInternalNoteAction(
     content_type: "texto",
     body: parsedBody.data,
     is_internal_note: true,
+    reply_to_message_id: citacao.replyTo?.messageId ?? null,
   });
   if (error) {
     return { ok: false, error: "Não foi possível salvar a nota." };
   }
+  return { ok: true };
+}
+
+// Por que cada recusa aconteceu, na lingua de quem atende. Os codigos vem de
+// pode_apagar_mensagem, no banco: a regra mora la, e nao aqui, porque esta
+// Server Action nao pode ser o unico guardiao de conteudo de paciente.
+const MOTIVO_DE_NAO_APAGAR: Record<string, string> = {
+  sem_sessao: "Sessão expirada. Entre de novo.",
+  escopo_invalido: "Não entendemos o tipo de exclusão pedido.",
+  nao_encontrada: "Esta mensagem não existe mais.",
+  sem_permissao: "Seu perfil pode acompanhar o atendimento, mas não apagar.",
+  nao_e_sua:
+    "Só quem escreveu a mensagem pode apagar. Um administrador ou gestor também pode.",
+  ja_apagada: "Esta mensagem já foi apagada.",
+  nota_e_local:
+    "Nota interna nunca saiu da clínica, então ela só pode ser apagada aqui.",
+  do_paciente:
+    "O WhatsApp não deixa apagar a mensagem do paciente no aparelho dele. Você pode apagar só aqui.",
+  nunca_saiu:
+    "Esta mensagem não chegou a sair, então não há o que apagar no WhatsApp do paciente.",
+  prazo_vencido:
+    "O WhatsApp só deixa apagar para todos até 60 horas depois do envio. Você ainda pode apagar só aqui.",
+};
+
+type Veredito = {
+  ok: boolean;
+  motivo?: string;
+  clinic_id?: string;
+  wa_message_id?: string | null;
+  media_url?: string | null;
+  nota_interna?: boolean;
+};
+
+/**
+ * Apaga uma mensagem, em um de dois escopos.
+ *
+ * 'todos' revoga tambem no WhatsApp do paciente; 'local' tira so da conversa
+ * da clinica. Quem pode, e ate quando, e decidido pelo banco
+ * (pode_apagar_mensagem), nao aqui: esta funcao orquestra a ORDEM, que e o que
+ * ela tem de proprio.
+ *
+ * A ORDEM e o ponto delicado. Conferir, revogar no WhatsApp, e SO ENTAO
+ * gravar. Se gravassemos antes de falar com o provedor, uma recusa dele
+ * deixaria a conversa marcada como apagada aqui e a mensagem viva no celular
+ * do paciente: a clinica acreditaria ter apagado algo que continua la. O
+ * inverso (revogar e falhar ao gravar) erra para o lado seguro, porque
+ * mostramos a mais, nunca a menos.
+ */
+export async function apagarMensagemAction(
+  messageId: string,
+  escopo: "todos" | "local",
+): Promise<InboxActionResult> {
+  if (!idSchema.safeParse(messageId).success) {
+    return { ok: false, error: "Mensagem inválida." };
+  }
+  if (escopo !== "todos" && escopo !== "local") {
+    return { ok: false, error: "Não entendemos o tipo de exclusão pedido." };
+  }
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: "Sessão expirada. Entre de novo." };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("pode_apagar_mensagem", {
+    p_message_id: messageId,
+    p_escopo: escopo,
+  });
+  if (error) {
+    return { ok: false, error: "Não foi possível apagar agora. Tente de novo." };
+  }
+  const veredito = (data ?? {}) as Veredito;
+  if (!veredito.ok) {
+    return {
+      ok: false,
+      error:
+        MOTIVO_DE_NAO_APAGAR[veredito.motivo ?? ""] ??
+        "Esta mensagem não pode ser apagada.",
+    };
+  }
+
+  const admin = createAdminClient();
+
+  // Nota interna nunca saiu do prédio: nao ha o que revogar no WhatsApp.
+  const precisaRevogar =
+    escopo === "todos" && !veredito.nota_interna && veredito.wa_message_id;
+  if (precisaRevogar) {
+    const { provider, ref } = await carregarInstancia(
+      admin,
+      veredito.clinic_id!,
+    );
+    const revogado = await provider
+      .deleteMessage(ref, veredito.wa_message_id!)
+      .catch(() => ({
+        ok: false as const,
+        errorCode: "provider_indisponivel",
+        message:
+          "Não conseguimos falar com o servidor do WhatsApp. A mensagem não foi apagada.",
+      }));
+    if (!revogado.ok) {
+      return { ok: false, error: revogado.message };
+    }
+  }
+
+  // Reconfere tudo por dentro: entre a conferencia acima e agora, o papel de
+  // quem pediu pode ter mudado ou o prazo pode ter vencido.
+  const { data: gravado, error: erroGravar } = await supabase.rpc(
+    "apagar_mensagem",
+    { p_message_id: messageId, p_escopo: escopo },
+  );
+  if (erroGravar || !(gravado as Veredito | null)?.ok) {
+    if (precisaRevogar) {
+      // Ja sumiu do celular do paciente e a nossa linha ficou. Erra para o
+      // lado de mostrar demais, e nao de esconder sem registro, mas alguem
+      // precisa saber. Nenhum conteudo de mensagem no log.
+      log.error("apagou_no_whatsapp_mas_nao_gravou", {
+        clinic_id: veredito.clinic_id ?? null,
+        message_id: messageId,
+      });
+    }
+    return { ok: false, error: "Não foi possível apagar agora. Tente de novo." };
+  }
+
+  // O arquivo sai do acervo junto. A policy de leitura ja o bloqueia (ela
+  // exige deleted_at nulo), entao manter os bytes seria guardar foto de
+  // paciente que ninguem consegue abrir nem auditar.
+  const prefixo = "storage://midia-conversas/";
+  if (veredito.media_url?.startsWith(prefixo)) {
+    const { error: erroArquivo } = await admin.storage
+      .from("midia-conversas")
+      .remove([veredito.media_url.slice(prefixo.length)]);
+    if (erroArquivo) {
+      log.error("apagou_mensagem_mas_arquivo_ficou", {
+        clinic_id: veredito.clinic_id ?? null,
+        message_id: messageId,
+      });
+    }
+  }
+
   return { ok: true };
 }
 
