@@ -253,6 +253,12 @@ export async function enviarArquivoAction(
     },
   });
   if (!result.ok) {
+    // O arquivo subiu ANTES do envio (de proposito: se subisse depois, um
+    // envio bem-sucedido cuja gravacao falhasse deixaria o paciente com uma
+    // mensagem que a clinica nao ve). Quando o envio nao acontece, o objeto
+    // precisa sair: arquivo de paciente parado no acervo sem nenhuma linha de
+    // mensagem apontando para ele e dado guardado sem motivo e sem trilha.
+    await admin.storage.from("midia-conversas").remove([caminho]);
     return { ok: false, error: result.message };
   }
   return { ok: true };

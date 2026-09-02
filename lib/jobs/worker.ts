@@ -209,6 +209,12 @@ async function executarDownloadDeMidia(
     .upload(caminho, Buffer.from(baixado.base64, "base64"), {
       contentType,
       upsert: true,
+      // Sem isto o padrao do Supabase e uma hora, e foto ou audio de PACIENTE
+      // ficaria no cache de disco do computador compartilhado da recepcao
+      // mesmo depois de a pessoa sair do sistema. O no-store da rota de midia
+      // so alcanca o redirecionamento, nao os bytes, que vem do Storage com o
+      // cabecalho gravado aqui.
+      cacheControl: "0",
     });
   if (erroUpload) {
     return { ok: false, erro: "storage_falhou" };

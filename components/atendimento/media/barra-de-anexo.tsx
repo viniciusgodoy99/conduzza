@@ -80,6 +80,7 @@ export function BarraDeAnexo({
   desabilitado,
   arquivoDeFora,
   aoConsumirArquivoDeFora,
+  enviadoEm,
 }: {
   aoEnviar: (arquivo: File, legenda: string, notaDeVoz: boolean) => void;
   pendente: boolean;
@@ -87,12 +88,20 @@ export function BarraDeAnexo({
   /** arquivo vindo de arrastar e soltar ou de colar, tratado no compositor */
   arquivoDeFora?: File | null;
   aoConsumirArquivoDeFora?: () => void;
+  /**
+   * Carimbo que muda a cada envio BEM-SUCEDIDO. Sem isto a previa continua na
+   * tela com o botao ativo depois do envio, e o reflexo de clicar de novo
+   * manda o MESMO arquivo outra vez ao paciente (nao ha idempotencia neste
+   * caminho, cada clique gera um id novo).
+   */
+  enviadoEm?: number;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [escolhido, setEscolhido] = useState<File | null>(null);
   const [legenda, setLegenda] = useState("");
   const [notaDeVoz, setNotaDeVoz] = useState(false);
   const [gravando, setGravando] = useState(false);
+  const [erroLocal, setErroLocal] = useState<string | null>(null);
   const [segundos, setSegundos] = useState(0);
   const gravadorRef = useRef<MediaRecorder | null>(null);
   const pedacosRef = useRef<Blob[]>([]);
@@ -105,6 +114,33 @@ export function BarraDeAnexo({
     return () => clearInterval(timer);
   }, [gravando]);
 
+  // Envio concluiu: limpa a previa. Sem isto o botao volta a ficar ativo com o
+  // mesmo arquivo e o segundo clique reenvia ao paciente.
+  const primeiroCarimbo = useRef(enviadoEm);
+  useEffect(() => {
+    if (enviadoEm && enviadoEm !== primeiroCarimbo.current) {
+      primeiroCarimbo.current = enviadoEm;
+      setEscolhido(null);
+      setLegenda("");
+      setNotaDeVoz(false);
+      setErroLocal(null);
+    }
+  }, [enviadoEm]);
+
+  // O microfone precisa ser solto quando o componente sai da tela. Sem isto,
+  // trocar para a aba de nota interna no meio de uma gravacao deixa o
+  // indicador do navegador aceso e o microfone da recepcao aberto, ouvindo a
+  // sala, sem nada na tela dizendo isso.
+  useEffect(() => {
+    return () => {
+      const g = gravadorRef.current;
+      if (g && g.state !== "inactive") {
+        g.stream.getTracks().forEach((t) => t.stop());
+        g.stop();
+      }
+    };
+  }, []);
+
   // Arrastar e colar entram por aqui: o estado do arquivo escolhido e um so,
   // senao a previa mostraria um arquivo e o envio mandaria outro.
   useEffect(() => {
@@ -112,15 +148,24 @@ export function BarraDeAnexo({
       return;
     }
     void (async () => {
-      const pronto = await reduzirImagem(arquivoDeFora);
-      setEscolhido(pronto);
-      setNotaDeVoz(false);
+      await receber(arquivoDeFora);
       aoConsumirArquivoDeFora?.();
     })();
   }, [arquivoDeFora, aoConsumirArquivoDeFora]);
 
   const receber = async (arquivo: File) => {
     const pronto = await reduzirImagem(arquivo);
+    // O teto existe no servidor, mas o corpo da requisicao e cortado pela
+    // plataforma ANTES de chegar la: sem esta guarda, um PDF grande falha sem
+    // nenhuma mensagem util na tela.
+    if (pronto.size > TETO_BYTES) {
+      setErroLocal(
+        `O arquivo tem ${tamanhoLegivel(pronto.size)} e o limite é de 3,8 MB.`,
+      );
+      setEscolhido(null);
+      return;
+    }
+    setErroLocal(null);
     setEscolhido(pronto);
     setNotaDeVoz(false);
   };
@@ -128,6 +173,9 @@ export function BarraDeAnexo({
   const iniciarGravacao = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // O formato NAO pode ser fixado no codigo: o Safari grava audio/mp4 e o
+      // Firefox audio/ogg. Rotular tudo como webm faria o arquivo mentir sobre
+      // o proprio conteudo, e o WhatsApp recusaria ou entregaria mudo.
       const gravador = new MediaRecorder(stream);
       pedacosRef.current = [];
       gravador.ondataavailable = (evento) => {
@@ -136,9 +184,15 @@ export function BarraDeAnexo({
         }
       };
       gravador.onstop = () => {
-        const blob = new Blob(pedacosRef.current, { type: "audio/webm" });
+        const formato = (gravador.mimeType || "audio/webm").split(";")[0]!;
+        const extensao = formato.includes("mp4")
+          ? "m4a"
+          : formato.includes("ogg")
+            ? "ogg"
+            : "webm";
+        const blob = new Blob(pedacosRef.current, { type: formato });
         setEscolhido(
-          new File([blob], "nota-de-voz.webm", { type: "audio/webm" }),
+          new File([blob], `nota-de-voz.${extensao}`, { type: formato }),
         );
         setNotaDeVoz(true);
         stream.getTracks().forEach((t) => t.stop());
@@ -221,7 +275,13 @@ export function BarraDeAnexo({
   }
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="grid gap-1">
+      {erroLocal ? (
+        <p role="alert" className="text-[12px] [color:var(--alert-text)]">
+          {erroLocal}
+        </p>
+      ) : null}
+      <div className="flex items-center gap-1">
       <input
         ref={inputRef}
         type="file"
@@ -266,6 +326,7 @@ export function BarraDeAnexo({
           </span>
         ) : null}
       </Button>
+      </div>
     </div>
   );
 }

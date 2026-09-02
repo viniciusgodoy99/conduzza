@@ -171,7 +171,15 @@ export function InboxClient({
   }
 
   return (
-    <div className="flex h-full min-h-0">
+    <div
+      className="flex h-full min-h-0"
+      // Soltar um arquivo em QUALQUER outro ponto da tela faz o navegador
+      // abrir o arquivo e trocar de pagina, tirando a atendente do sistema no
+      // meio do atendimento. O compositor trata o que cai nele; aqui a gente
+      // so impede o comportamento padrao no resto.
+      onDragOver={(evento) => evento.preventDefault()}
+      onDrop={(evento) => evento.preventDefault()}
+    >
       <aside
         className={cn(
           "w-full shrink-0 border-r border-border lg:w-[322px]",
@@ -203,7 +211,18 @@ export function InboxClient({
             authorNames={authorNames}
             onBack={() => setSelectedId(null)}
             onToggleContext={() => setContextOpen(true)}
-            footer={<Composer conversation={selected} viewerId={viewerId} />}
+            footer={
+                  // key OBRIGATORIA: sem ela o React so troca a prop e o
+                  // compositor mantem o estado. Com anexo, isso significa a
+                  // foto de um paciente ficar carregada ao abrir a conversa de
+                  // outro, e o proximo clique em Enviar manda o arquivo errado
+                  // para o WhatsApp errado.
+                  <Composer
+                    key={selected.id}
+                    conversation={selected}
+                    viewerId={viewerId}
+                  />
+                }
           />
         ) : (
           <div className="grid h-full place-items-center p-6">

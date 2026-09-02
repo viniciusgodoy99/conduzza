@@ -38,7 +38,29 @@ type LinhaDaMensagem = {
   content_type: string;
   media_url: string | null;
   deleted_at: string | null;
+  body: string | null;
 };
+
+/**
+ * Nome com que o arquivo chega ao computador de quem baixa.
+ *
+ * `download: true` faria o Storage usar o NOME DO OBJETO, que e um uuid sem
+ * extensao: o PDF do paciente chegaria como um arquivo sem tipo que o sistema
+ * operacional nao sabe abrir. Passar o nome resolve.
+ */
+function nomeParaBaixar(mensagem: LinhaDaMensagem): string {
+  const limpo = (mensagem.body ?? "").trim().replace(/[\\/:*?"<>|]/g, "");
+  if (limpo && /\.\w{2,5}$/.test(limpo)) {
+    return limpo;
+  }
+  const extensao =
+    mensagem.content_type === "documento"
+      ? "pdf"
+      : mensagem.content_type === "imagem"
+        ? "jpg"
+        : "bin";
+  return `conduzza-${mensagem.content_type}.${extensao}`;
+}
 
 /** `storage://midia-conversas/<clinic>/<message>` vira `<clinic>/<message>`. */
 function caminhoDoObjeto(mediaUrl: string | null): string | null {
@@ -67,7 +89,7 @@ export async function GET(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("message")
-    .select("clinic_id, content_type, media_url, deleted_at")
+    .select("clinic_id, content_type, media_url, deleted_at, body")
     .eq("id", messageId)
     .maybeSingle();
 
@@ -111,7 +133,11 @@ export async function GET(
 
   const { data: assinada, error: erroAssinatura } = await supabase.storage
     .from(BUCKET)
-    .createSignedUrl(caminho, VALIDADE_SEGUNDOS, baixar ? { download: true } : undefined);
+    .createSignedUrl(
+      caminho,
+      VALIDADE_SEGUNDOS,
+      baixar ? { download: nomeParaBaixar(mensagem) } : undefined,
+    );
 
   if (erroAssinatura || !assinada?.signedUrl) {
     // A policy do Postgres recusou, ou o objeto sumiu do balde.

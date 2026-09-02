@@ -57,6 +57,8 @@ export function Composer({
   // so o botao aceitasse, soltar a foto "no lugar errado" nao faria nada e a
   // pessoa concluiria que o sistema nao aceita arquivo.
   const [arquivoSolto, setArquivoSolto] = useState<File | null>(null);
+  // Muda a cada envio de arquivo bem-sucedido, para a barra limpar a previa.
+  const [enviadoEm, setEnviadoEm] = useState(0);
   // O compositor tem retornos antecipados por estado da conversa (resolvida,
   // com a IA, de outra pessoa), entao o hook precisa vir ANTES de todos eles.
   const solto = useArquivoSolto(
@@ -237,12 +239,19 @@ export function Composer({
           desabilitado={pending}
           arquivoDeFora={arquivoSolto}
           aoConsumirArquivoDeFora={() => setArquivoSolto(null)}
+          enviadoEm={enviadoEm}
           aoEnviar={(arquivo, legenda, notaDeVoz) => {
             const dados = new FormData();
             dados.set("arquivo", arquivo);
             dados.set("legenda", legenda);
             dados.set("nota_de_voz", notaDeVoz ? "1" : "0");
-            run(() => enviarArquivoAction(conversation.id, dados));
+            run(async () => {
+              const resultado = await enviarArquivoAction(conversation.id, dados);
+              if (resultado.ok) {
+                setEnviadoEm(Date.now());
+              }
+              return resultado;
+            });
           }}
         />
       ) : null}

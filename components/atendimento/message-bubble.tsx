@@ -119,6 +119,13 @@ function AudioBody({ message }: { message: MessageItem }) {
             : "(baixando)"}
         </span>
       )}
+      {/* A legenda que a atendente escreveu junto com o audio: ela FOI para o
+          paciente, entao precisa aparecer aqui tambem. */}
+      {message.body ? (
+        <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
+          {message.body}
+        </p>
+      ) : null}
       {message.transcript ? (
         <div className="grid gap-1">
           <p
@@ -178,6 +185,26 @@ function MidiaBody({ message }: { message: MessageItem }) {
     if (message.content_type === "documento") {
       return (
         <CartaoDeDocumento messageId={message.id} nomeDoArquivo={message.body} />
+      );
+    }
+    // Video chega como content_type 'texto' com media_url, porque o enum do
+    // banco nao preve 'video'. Sem este ramo, ele ficava para sempre em
+    // "Baixando o arquivo" mesmo com o arquivo pronto no balde.
+    if (message.content_type === "texto") {
+      return (
+        <div className="grid gap-1.5">
+          <video
+            src={`/api/atendimento/midia/${message.id}`}
+            controls
+            preload="metadata"
+            className="max-h-[280px] w-[240px] rounded-md bg-surface-3"
+          />
+          {message.body ? (
+            <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
+              {message.body}
+            </p>
+          ) : null}
+        </div>
       );
     }
     if (message.content_type === "imagem") {
