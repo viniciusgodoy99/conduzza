@@ -6,6 +6,7 @@ import type {
   MenuOption,
   SendResult,
   WhatsAppProvider,
+  MidiaParaEnviar,
 } from "./provider";
 
 // Cliente uazapi (API nao oficial; decisao registrada no CLAUDE.md 3.3).
@@ -22,10 +23,14 @@ const PATHS = {
   webhook: "/webhook",
   sendText: "/send/text",
   sendMenu: "/send/menu",
+  sendMedia: "/send/media",
   messageDownload: "/message/download",
 } as const;
 
 const REQUEST_TIMEOUT_MS = 10_000;
+// Subir arquivo demora mais que mandar texto: o corpo carrega o base64 inteiro
+// e o servidor ainda converte (uma PNG enviada como image volta como JPEG).
+const UPLOAD_TIMEOUT_MS = 45_000;
 // Download de midia e maior e mais lento que os demais; roda em job, nao no
 // caminho de request de usuario, entao pode esperar mais.
 const DOWNLOAD_TIMEOUT_MS = 60_000;
@@ -178,6 +183,49 @@ export class UazapiProvider implements WhatsAppProvider {
         errorCode: "envio_incerto",
         message:
           "Não foi possível confirmar o envio. Confira a conversa antes de reenviar.",
+      };
+    }
+  }
+
+  async sendMedia(
+    ref: InstanceRef,
+    to: string,
+    midia: MidiaParaEnviar,
+  ): Promise<SendResult> {
+    try {
+      // Contrato conferido contra a instancia real (03/09/2026), porque a
+      // documentacao e uma aplicacao de pagina unica que nao da para ler
+      // automaticamente:
+      //   file     base64 puro, sem o prefixo data:
+      //   text     e a LEGENDA (nao existe campo "caption" na entrada)
+      //   docName  e o nome exibido do arquivo, so em document
+      // A resposta traz messageid e id, que e o par que toSendResult ja le.
+      const payload: Record<string, unknown> = {
+        number: to,
+        type: midia.tipo,
+        file: midia.base64,
+        mimetype: midia.mimetype,
+      };
+      if (midia.legenda) {
+        payload.text = midia.legenda;
+      }
+      if (midia.nomeDoArquivo) {
+        payload.docName = midia.nomeDoArquivo;
+      }
+      const { status, body: response } = await this.request(
+        ref,
+        PATHS.sendMedia,
+        { payload, semRetry: true, timeoutMs: UPLOAD_TIMEOUT_MS },
+      );
+      return toSendResult(status, response);
+    } catch {
+      // Mesma razao do sendText: a midia pode ter chegado e so a resposta ter
+      // se perdido. Repetir sozinho duplicaria o arquivo na conversa.
+      return {
+        ok: false as const,
+        errorCode: "envio_incerto",
+        message:
+          "Não foi possível confirmar o envio do arquivo. Confira a conversa antes de reenviar.",
       };
     }
   }

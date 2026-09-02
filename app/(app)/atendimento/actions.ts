@@ -4,7 +4,10 @@ import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit } from "@/lib/domain/permissions";
-import { sendWhatsAppText } from "@/lib/integrations/whatsapp/send";
+import {
+  sendWhatsAppMedia,
+  sendWhatsAppText,
+} from "@/lib/integrations/whatsapp/send";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -125,6 +128,129 @@ export async function sendMessageAction(
     contactId: conversation.contact_id,
     body: parsedBody.data,
     authorUserId: context.userId,
+  });
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+  return { ok: true };
+}
+
+// Tipos que a clinica pode mandar ao paciente, e o teto de cada um.
+//
+// O teto NAO e preferencia: o corpo da Server Action e limitado pela
+// plataforma, e um arquivo acima disso e recusado ANTES de chegar aqui, sem
+// mensagem de erro util. Barrar no cliente e aqui deixa o motivo explicito.
+const TETO_BYTES = 3_800_000;
+
+const MIMES_ACEITOS: Record<string, "image" | "audio" | "document" | "video"> = {
+  "image/jpeg": "image",
+  "image/png": "image",
+  "image/webp": "image",
+  "image/gif": "image",
+  "audio/mpeg": "audio",
+  "audio/mp4": "audio",
+  "audio/ogg": "audio",
+  "audio/webm": "audio",
+  "video/mp4": "video",
+  "application/pdf": "document",
+};
+
+/**
+ * Envia um arquivo ao paciente.
+ *
+ * O arquivo sobe pela Server Action e nao direto do navegador para o balde:
+ * assim a sessao, a clinica, o papel e a posse da conversa sao conferidos
+ * ANTES de qualquer byte tocar o armazenamento, e o navegador nunca precisa de
+ * permissao de escrita no acervo de midia de paciente.
+ *
+ * A ordem tambem importa: o arquivo e guardado ANTES de sair para o WhatsApp.
+ * Se guardasse depois, um envio bem-sucedido cuja gravacao falhasse deixaria a
+ * conversa com uma mensagem que o paciente recebeu e a clinica nao consegue
+ * ver.
+ */
+export async function enviarArquivoAction(
+  conversationId: string,
+  formulario: FormData,
+): Promise<InboxActionResult> {
+  const arquivo = formulario.get("arquivo");
+  const legenda = String(formulario.get("legenda") ?? "").trim();
+  const comoNotaDeVoz = formulario.get("nota_de_voz") === "1";
+
+  if (!(arquivo instanceof File) || arquivo.size === 0) {
+    return { ok: false, error: "Escolha um arquivo para enviar." };
+  }
+  if (arquivo.size > TETO_BYTES) {
+    const mb = (arquivo.size / 1_000_000).toFixed(1);
+    return {
+      ok: false,
+      error: `O arquivo tem ${mb} MB e o limite é de 3,8 MB. Reduza o tamanho e tente de novo.`,
+    };
+  }
+  const tipoBase = MIMES_ACEITOS[arquivo.type];
+  if (!tipoBase) {
+    return {
+      ok: false,
+      error: "Este tipo de arquivo não pode ser enviado pelo WhatsApp.",
+    };
+  }
+  if (legenda.length > 1024) {
+    return { ok: false, error: "A legenda ficou longa demais." };
+  }
+
+  const loaded = await loadVisibleConversation(conversationId, {
+    exigeEdicao: true,
+  });
+  if ("error" in loaded) {
+    return { ok: false, error: loaded.error };
+  }
+  const { context, conversation } = loaded;
+  if (
+    conversation.status !== "em_atendimento" ||
+    conversation.assignee_user_id !== context.userId
+  ) {
+    return { ok: false, error: "Assuma a conversa antes de responder." };
+  }
+
+  const clinicId = context.active!.clinicId;
+  const admin = createAdminClient();
+  // O id da futura linha de message nasce aqui porque ele E o caminho do
+  // arquivo no balde: a policy de leitura casa o segundo segmento do caminho
+  // com message.id, e sem isso a foto enviada pela clinica seria a unica que
+  // ninguem conseguiria abrir depois.
+  const messageId = crypto.randomUUID();
+  const caminho = `${clinicId}/${messageId}`;
+
+  const bytes = Buffer.from(await arquivo.arrayBuffer());
+  const { error: erroUpload } = await admin.storage
+    .from("midia-conversas")
+    .upload(caminho, bytes, {
+      contentType: arquivo.type,
+      upsert: true,
+      cacheControl: "0",
+    });
+  if (erroUpload) {
+    return {
+      ok: false,
+      error: "Não foi possível guardar o arquivo. Tente de novo.",
+    };
+  }
+
+  const result = await sendWhatsAppMedia(admin, {
+    clinicId,
+    conversationId: conversation.id,
+    contactId: conversation.contact_id,
+    body: legenda,
+    authorUserId: context.userId,
+    messageId,
+    midia: {
+      // Nota de voz vai como 'ptt' para chegar como audio tocavel no celular
+      // do paciente, e nao como arquivo anexado.
+      tipo: comoNotaDeVoz && tipoBase === "audio" ? "ptt" : tipoBase,
+      base64: bytes.toString("base64"),
+      mimetype: arquivo.type,
+      nomeDoArquivo: tipoBase === "document" ? arquivo.name : null,
+      caminhoNoStorage: caminho,
+    },
   });
   if (!result.ok) {
     return { ok: false, error: result.message };

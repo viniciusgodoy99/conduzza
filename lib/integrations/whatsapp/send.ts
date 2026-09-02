@@ -56,7 +56,41 @@ export type SendTextInput = {
   esperaMaximaMs?: number;
   /** id do job da fila, quando o envio vem do worker (chave de idempotencia) */
   jobId?: string;
+  /**
+   * Id a usar na linha de message, em vez de deixar o banco gerar.
+   *
+   * Existe por causa da midia: o caminho do arquivo no balde e
+   * `clinic_id/message_id`, e a policy de leitura casa o segundo segmento com
+   * message.id. Sem poder fixar o id, o arquivo enviado pela clinica seria o
+   * unico que ninguem conseguiria abrir depois.
+   */
+  messageId?: string;
+  /**
+   * Arquivo a enviar. Presente, o envio vira /send/media e `body` passa a ser
+   * a LEGENDA (pode ser vazia). A linha de message nasce com o content_type
+   * correspondente, em vez do 'texto' que era fixo.
+   */
+  midia?: {
+    tipo: "image" | "audio" | "ptt" | "video" | "document";
+    base64: string;
+    mimetype: string;
+    nomeDoArquivo?: string | null;
+    /** caminho no balde, ja gravado; vira media_url da linha */
+    caminhoNoStorage: string;
+  };
 };
+
+/** Traduz o tipo do provedor para o content_type do banco. */
+function contentTypeDaMidia(
+  tipo: "image" | "audio" | "ptt" | "video" | "document",
+): "imagem" | "audio" | "documento" | "texto" {
+  if (tipo === "image") return "imagem";
+  if (tipo === "audio" || tipo === "ptt") return "audio";
+  if (tipo === "document") return "documento";
+  // O enum do banco nao preve 'video'; cai em texto com media_url, que e
+  // exatamente como o video RECEBIDO ja e guardado hoje.
+  return "texto";
+}
 
 // Espacamento padrao da resposta humana 1:1.
 function espacamentoPadraoMs(): number {
@@ -142,6 +176,34 @@ export async function sendWhatsAppText(
   return enviarPeloCanal(supabase, input, {
     bodyRegistrado: input.body,
     enviar: (provider, ref, to) => provider.sendText(ref, to, input.body),
+  });
+}
+
+/**
+ * Envio de ARQUIVO (foto, audio, documento, video).
+ *
+ * Passa pelo MESMO enviarPeloCanal que o texto, e isso e o ponto: as
+ * garantias que impedem mensagem duplicada e envio sem consentimento vivem
+ * num lugar so. Duplicar esse fluxo para midia seria criar uma segunda copia
+ * que envelhece e volta a mandar mensagem para quem pediu descadastro.
+ *
+ * O `body` gravado e a LEGENDA (pode ser vazia); o arquivo em si mora no
+ * balde e a linha guarda o caminho.
+ */
+export async function sendWhatsAppMedia(
+  supabase: SupabaseClient,
+  input: SendTextInput & { midia: NonNullable<SendTextInput["midia"]> },
+): Promise<SendTextResult> {
+  return enviarPeloCanal(supabase, input, {
+    bodyRegistrado: input.body,
+    enviar: (provider, ref, to) =>
+      provider.sendMedia(ref, to, {
+        tipo: input.midia.tipo,
+        base64: input.midia.base64,
+        mimetype: input.midia.mimetype,
+        legenda: input.body || null,
+        nomeDoArquivo: input.midia.nomeDoArquivo ?? null,
+      }),
   });
 }
 
@@ -328,11 +390,19 @@ async function enviarPeloCanal(
         direction: "saida",
         author: input.author ?? "usuario",
         author_user_id: input.authorUserId,
-        content_type: "texto",
+        content_type: input.midia
+          ? contentTypeDaMidia(input.midia.tipo)
+          : "texto",
+        ...(input.midia
+          ? {
+              media_url: `storage://midia-conversas/${input.midia.caminhoNoStorage}`,
+            }
+          : {}),
         body: despacho.bodyRegistrado,
         billable: false,
         cost_cents: 0,
         delivery_status: "enviando",
+        ...(input.messageId ? { id: input.messageId } : {}),
         ...(input.jobId ? { job_id: input.jobId } : {}),
       })
       .select("id")

@@ -9,6 +9,20 @@ const nextConfig: NextConfig = {
   // Nao anunciar a plataforma e a versao para o mundo: e informacao que so
   // serve para quem procura alvo com falha conhecida.
   poweredByHeader: false,
+  experimental: {
+    serverActions: {
+      // O padrao e 1 MB, que barra qualquer foto de celular. O arquivo sobe
+      // pela Server Action (e nao direto do navegador para o balde) porque
+      // assim a permissao, a clinica e o consentimento sao conferidos ANTES
+      // de qualquer byte tocar o armazenamento, e o navegador nunca precisa
+      // de acesso de escrita ao acervo de midia de paciente.
+      //
+      // 4 MB e o teto pratico: a plataforma recusa corpo acima de 4,5 MB. A
+      // interface reduz foto antes de enviar, entao o limite so aparece em
+      // documento grande, e ai a mensagem de erro diz o tamanho.
+      bodySizeLimit: "4mb",
+    },
+  },
 };
 
 export default nextConfig;

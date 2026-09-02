@@ -18,6 +18,20 @@ export type SendResult =
 
 export type MenuOption = { id: string; text: string };
 
+/** Tipos que o uazapi aceita no campo `type` de /send/media. */
+export type TipoDeMidia = "image" | "audio" | "ptt" | "video" | "document";
+
+export type MidiaParaEnviar = {
+  tipo: TipoDeMidia;
+  /** conteudo em base64, SEM o prefixo `data:` */
+  base64: string;
+  mimetype: string;
+  /** legenda; vai no campo `text` do provedor */
+  legenda?: string | null;
+  /** nome exibido do arquivo, so faz sentido em documento */
+  nomeDoArquivo?: string | null;
+};
+
 export type MediaDownloadResult =
   | {
       ok: true;
@@ -48,6 +62,20 @@ export interface WhatsAppProvider {
    */
   readonly isOfficialChannel: boolean;
   sendText(ref: InstanceRef, to: string, body: string): Promise<SendResult>;
+  /**
+   * Envia um arquivo (foto, audio, documento ou video).
+   *
+   * O conteudo vai como BASE64, nao como URL. Isso foi confirmado contra a
+   * instancia real: o campo `file` responde "failed to decode base64 file"
+   * quando recebe outra coisa. A diferenca importa para dado de saude: uma
+   * API que exigisse URL obrigaria a expor a foto do paciente publicamente,
+   * ainda que por instantes.
+   */
+  sendMedia(
+    ref: InstanceRef,
+    to: string,
+    midia: MidiaParaEnviar,
+  ): Promise<SendResult>;
   sendMenu(
     ref: InstanceRef,
     to: string,

@@ -5,6 +5,7 @@ import type {
   MenuOption,
   SendResult,
   WhatsAppProvider,
+  MidiaParaEnviar,
 } from "./provider";
 
 // Provedor falso: o dublê de desenvolvimento e teste. Conecta na hora, sem
@@ -13,6 +14,13 @@ import type {
 // chama o webhook igual ao uazapi chamaria.
 
 export type FakeSentMessage = {
+  /** presente so quando o envio carregava arquivo */
+  midia?: {
+    tipo: string;
+    mimetype: string;
+    nomeDoArquivo: string | null;
+    bytes: number;
+  };
   clinicId: string;
   to: string;
   body: string;
@@ -41,6 +49,27 @@ export class FakeProvider implements WhatsAppProvider {
   ): Promise<SendResult> {
     const waMessageId = `fake:${crypto.randomUUID()}`;
     sent.push({ clinicId: ref.clinicId, to, body, waMessageId });
+    return { ok: true, waMessageId };
+  }
+
+  async sendMedia(
+    ref: InstanceRef,
+    to: string,
+    midia: MidiaParaEnviar,
+  ): Promise<SendResult> {
+    const waMessageId = `fake:${crypto.randomUUID()}`;
+    sent.push({
+      clinicId: ref.clinicId,
+      to,
+      body: midia.legenda ?? "",
+      midia: {
+        tipo: midia.tipo,
+        mimetype: midia.mimetype,
+        nomeDoArquivo: midia.nomeDoArquivo ?? null,
+        bytes: Math.floor((midia.base64.length * 3) / 4),
+      },
+      waMessageId,
+    });
     return { ok: true, waMessageId };
   }
 

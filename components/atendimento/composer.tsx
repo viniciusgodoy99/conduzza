@@ -13,6 +13,7 @@ import {
 import { useState, useTransition } from "react";
 
 import {
+  enviarArquivoAction,
   addInternalNoteAction,
   assumirConversaAction,
   devolverParaIaAction,
@@ -20,6 +21,10 @@ import {
   resolverConversaAction,
   sendMessageAction,
 } from "@/app/(app)/atendimento/actions";
+import {
+  BarraDeAnexo,
+  useArquivoSolto,
+} from "@/components/atendimento/media/barra-de-anexo";
 import { Button } from "@/components/ui/button";
 import { conversationKeys } from "@/lib/queries/conversations";
 import type { ConversationListItem } from "@/lib/queries/conversations";
@@ -47,6 +52,17 @@ export function Composer({
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Arquivo que chegou por arrastar e soltar ou por colar. Fica aqui e nao na
+  // barra porque os eventos precisam cobrir a area inteira do compositor: se
+  // so o botao aceitasse, soltar a foto "no lugar errado" nao faria nada e a
+  // pessoa concluiria que o sistema nao aceita arquivo.
+  const [arquivoSolto, setArquivoSolto] = useState<File | null>(null);
+  // O compositor tem retornos antecipados por estado da conversa (resolvida,
+  // com a IA, de outra pessoa), entao o hook precisa vir ANTES de todos eles.
+  const solto = useArquivoSolto(
+    (arquivo) => setArquivoSolto(arquivo),
+    mode !== "nota",
+  );
 
   const refresh = () => {
     void queryClient.invalidateQueries({
@@ -146,11 +162,18 @@ export function Composer({
 
   return (
     <div
+      {...solto.props}
       className={cn(
         "grid gap-2 px-4 py-3",
         isNote && "[background:var(--warning-bg)]",
+        solto.classes,
       )}
     >
+      {solto.sobrevoando ? (
+        <p className="rounded-md border border-dashed px-3 py-2 text-center text-[12.5px] text-text-secondary">
+          Solte o arquivo para anexar
+        </p>
+      ) : null}
       <div className="flex items-center gap-2">
         <div className="flex rounded-lg bg-surface-3 p-0.5 text-[12px] font-medium">
           <button
@@ -204,6 +227,24 @@ export function Composer({
           <Lock strokeWidth={1.5} className="size-3" />
           Nota interna: o paciente não vê.
         </p>
+      ) : null}
+
+      {/* Anexo só na aba de resposta: nota interna nunca sai da clínica, então
+          arquivo nela não teria para onde ir. */}
+      {!isNote ? (
+        <BarraDeAnexo
+          pendente={pending}
+          desabilitado={pending}
+          arquivoDeFora={arquivoSolto}
+          aoConsumirArquivoDeFora={() => setArquivoSolto(null)}
+          aoEnviar={(arquivo, legenda, notaDeVoz) => {
+            const dados = new FormData();
+            dados.set("arquivo", arquivo);
+            dados.set("legenda", legenda);
+            dados.set("nota_de_voz", notaDeVoz ? "1" : "0");
+            run(() => enviarArquivoAction(conversation.id, dados));
+          }}
+        />
       ) : null}
 
       <form
