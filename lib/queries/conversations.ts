@@ -23,7 +23,10 @@ export type ConversationListItem = {
   assignee_user_id: string | null;
   unread_count: number;
   awaiting_reply: boolean;
+  /** ultima atividade, inclui envio da clinica; alimenta Leads e Pacientes */
   last_message_at: string | null;
+  /** quando o PACIENTE falou por ultimo; e a chave de ordenacao do Inbox */
+  last_inbound_at: string | null;
   tags: string[];
   contact: ContactSummary;
 };
@@ -59,7 +62,7 @@ export type ConsentInfo = {
 } | null;
 
 const CONVERSATION_SELECT =
-  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, tags, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
+  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, tags, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,
@@ -97,7 +100,10 @@ export async function fetchConversations(
     .select(CONVERSATION_SELECT)
     .eq("clinic_id", clinicId)
     .neq("status", "resolvida")
-    .order("last_message_at", { ascending: false, nullsFirst: false })
+    // Ordem de RECEBIMENTO, nao de atividade: last_message_at sobe tambem
+    // quando a clinica responde (send.ts:457-466), o que jogava a conversa
+    // respondida para o topo e embaralhava a coluna de horarios.
+    .order("last_inbound_at", { ascending: false, nullsFirst: false })
     .limit(CONVERSATIONS_ATIVAS_LIMIT);
   if (error) {
     throw new Error(error.message);
@@ -116,7 +122,7 @@ export async function fetchResolvedConversations(
     .select(CONVERSATION_SELECT)
     .eq("clinic_id", clinicId)
     .eq("status", "resolvida")
-    .order("last_message_at", { ascending: false, nullsFirst: false })
+    .order("last_inbound_at", { ascending: false, nullsFirst: false })
     .limit(limit);
   if (error) {
     throw new Error(error.message);

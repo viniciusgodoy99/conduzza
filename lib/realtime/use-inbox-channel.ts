@@ -32,6 +32,7 @@ type ConversationRow = {
   unread_count: number;
   awaiting_reply?: boolean;
   last_message_at: string | null;
+  last_inbound_at: string | null;
   tags: string[] | null;
 };
 
@@ -69,7 +70,7 @@ export function useInboxChannel(
       }
 
       // Caso comum: mescla as colunas novas mantendo o contato ja carregado, e
-      // reordena por last_message_at desc.
+      // reordena por last_inbound_at desc (ordem de recebimento).
       const atualizada: ConversationListItem = {
         ...existente,
         status: row.status as ConversationListItem["status"],
@@ -80,12 +81,13 @@ export function useInboxChannel(
         // espera e sumir com a conversa do contador.
         awaiting_reply: row.awaiting_reply ?? existente.awaiting_reply,
         last_message_at: row.last_message_at,
+        last_inbound_at: row.last_inbound_at,
         tags: row.tags ?? existente.tags,
       };
       const proxima = atual
         .map((c) => (c.id === row.id ? atualizada : c))
         .sort((a, b) =>
-          (b.last_message_at ?? "").localeCompare(a.last_message_at ?? ""),
+          (b.last_inbound_at ?? "").localeCompare(a.last_inbound_at ?? ""),
         );
       queryClient.setQueryData<ConversationListItem[]>(listKey, proxima);
     };

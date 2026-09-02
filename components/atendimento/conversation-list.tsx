@@ -84,8 +84,13 @@ export function ConversationList({
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const recencia = (item: ConversationListItem) =>
-      item.last_message_at ? new Date(item.last_message_at).getTime() : 0;
+    // A mesma chave que o servidor usa no order by e que o cartão exibe como
+    // horário. Três lugares, um critério: sem isso a lista chega ordenada de
+    // um jeito e é reordenada de outro na tela.
+    const recencia = (item: ConversationListItem) => {
+      const quando = item.last_inbound_at ?? item.last_message_at;
+      return quando ? new Date(quando).getTime() : 0;
+    };
     return (
       conversations
         .filter((conversation) => {
@@ -116,14 +121,16 @@ export function ConversationList({
           }
           return true;
         })
-        // Quem espera resposta no topo, e dentro de cada grupo a mais recente
-        // primeiro. A régua abre conversa para enviar a confirmação, e sem
-        // este recorte um disparo de 40 confirmações esconde a conversa em que
-        // o paciente escreveu.
-        .sort((a, b) => {
-          const esperando = Number(b.awaiting_reply) - Number(a.awaiting_reply);
-          return esperando !== 0 ? esperando : recencia(b) - recencia(a);
-        })
+        // ORDEM DE RECEBIMENTO, uma regra só: a fala mais recente do paciente
+        // primeiro. Antes a chave primária era o booleano "esperando
+        // resposta", o que empilhava a lista em dois blocos e fazia a coluna
+        // de horários parecer embaralhada sem motivo visível.
+        //
+        // O sinal que aquele critério carregava não se perdeu: ele vive no
+        // chip "Aguardando você", que é filtro, e é o lugar certo dele. Assim
+        // um disparo de 40 confirmações continua não escondendo a conversa em
+        // que o paciente escreveu, e quem quer ver só quem espera, filtra.
+        .sort((a, b) => recencia(b) - recencia(a))
     );
   }, [conversations, own, statusFilter, search, viewerId]);
 

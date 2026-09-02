@@ -289,6 +289,7 @@ export async function provisionar(): Promise<DadosE2E> {
           // manda NULL onde falta, e a coluna é not null.
           awaiting_reply: true,
           last_message_at: minutosAtras(10),
+          last_inbound_at: minutosAtras(10),
         },
         {
           clinic_id: clinica.id,
@@ -298,6 +299,7 @@ export async function provisionar(): Promise<DadosE2E> {
           unread_count: 0,
           awaiting_reply: false,
           last_message_at: minutosAtras(20),
+          last_inbound_at: minutosAtras(20),
         },
         {
           clinic_id: clinica.id,
@@ -307,6 +309,7 @@ export async function provisionar(): Promise<DadosE2E> {
           unread_count: 0,
           awaiting_reply: false,
           last_message_at: minutosAtras(30),
+          last_inbound_at: minutosAtras(30),
         },
         {
           clinic_id: clinica.id,
@@ -316,6 +319,7 @@ export async function provisionar(): Promise<DadosE2E> {
           unread_count: 0,
           awaiting_reply: false,
           last_message_at: minutosAtras(40),
+          last_inbound_at: minutosAtras(40),
         },
       ])
       .select("id, contact_id")

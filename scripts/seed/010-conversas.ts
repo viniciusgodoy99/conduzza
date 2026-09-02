@@ -688,6 +688,8 @@ export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
       // de Atendimento e a ordem do Inbox.
       awaiting_reply: c.status === "aguardando_humano" && c.unread > 0,
       last_message_at: minutesAgo(c.ageMinutes),
+      // Mesma hora: no seed nao ha resposta da clinica depois do recebimento.
+      last_inbound_at: minutesAgo(c.ageMinutes),
       tags: c.tags ?? [],
       created_at: minutesAgo(c.ageMinutes + 120),
     })),
