@@ -2,7 +2,15 @@
 
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { AudioLines, Lock, ShieldAlert, Sparkles } from "lucide-react";
+import {
+  AudioLines,
+  FileText,
+  Image as ImageIcon,
+  Lock,
+  ShieldAlert,
+  Sparkles,
+  Video,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -127,6 +135,62 @@ function AudioBody({ message }: { message: MessageItem }) {
   );
 }
 
+/**
+ * A mensagem carrega arquivo?
+ *
+ * Precisa olhar `media_url` e nao so `content_type`, por um motivo concreto:
+ * o parser de entrada mapeia VIDEO para 'texto' (lib/integrations/whatsapp/
+ * inbound.ts:138-146 nao tem caso para video, e o enum do banco tambem nao o
+ * preve). Sem esta checagem, todo video recebido continuaria como bolha vazia,
+ * que e exatamente o defeito que este componente esta corrigindo.
+ */
+function ehMidia(message: MessageItem): boolean {
+  if (message.content_type === "imagem" || message.content_type === "documento") {
+    return true;
+  }
+  return message.content_type === "texto" && Boolean(message.media_url);
+}
+
+/**
+ * Bolha de arquivo recebido, ANTES de existir o visualizador.
+ *
+ * Ate agora imagem e documento caiam no caminho de texto e renderizavam
+ * `body`, que e NULO para midia: a clinica via uma bolha vazia com um horario,
+ * sem nenhuma pista de que o paciente tinha mandado uma foto de exame. O
+ * arquivo estava guardado o tempo todo.
+ *
+ * Tres camadas como manda a secao 5 do CLAUDE.md: icone com forma distinta,
+ * rotulo em texto e cor. Nunca so cor.
+ */
+function MidiaBody({ message }: { message: MessageItem }) {
+  const demonstracao = message.media_url?.startsWith("seed://") ?? false;
+  const { Icone, rotulo } =
+    message.content_type === "imagem"
+      ? { Icone: ImageIcon, rotulo: "Foto recebida" }
+      : message.content_type === "documento"
+        ? { Icone: FileText, rotulo: "Documento recebido" }
+        : { Icone: Video, rotulo: "Vídeo recebido" };
+
+  return (
+    <div className="grid gap-1">
+      <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-text-secondary">
+        <Icone strokeWidth={1.5} className="size-4 shrink-0" />
+        {rotulo}
+      </span>
+      {message.body ? (
+        <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
+          {message.body}
+        </p>
+      ) : null}
+      <span className="text-[11.5px] text-text-tertiary">
+        {demonstracao
+          ? "Indisponível na demonstração"
+          : "Abra no WhatsApp por enquanto"}
+      </span>
+    </div>
+  );
+}
+
 export function MessageBubble({
   message,
   authorName,
@@ -183,6 +247,8 @@ export function MessageBubble({
 
         {message.content_type === "audio" ? (
           <AudioBody message={message} />
+        ) : ehMidia(message) ? (
+          <MidiaBody message={message} />
         ) : (
           <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
             {message.body}
