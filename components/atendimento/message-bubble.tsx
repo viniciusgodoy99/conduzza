@@ -22,6 +22,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { CartaoDeDocumento } from "@/components/atendimento/media/cartao-de-documento";
+import { FotoDaConversa } from "@/components/atendimento/media/foto-da-conversa";
+import { PlayerDeAudio } from "@/components/atendimento/media/player-de-audio";
 import type {
   ComplianceDecision,
   MessageItem,
@@ -102,15 +105,20 @@ export function ComplianceBlockCard({
 
 function AudioBody({ message }: { message: MessageItem }) {
   const [expanded, setExpanded] = useState(false);
+  const pronto = arquivoPronto(message);
   return (
     <div className="grid gap-1.5">
-      <span className="flex items-center gap-1.5 text-[12.5px] text-text-secondary">
-        <AudioLines strokeWidth={1.5} className="size-4" />
-        Áudio{" "}
-        {message.media_url?.startsWith("seed://")
-          ? "(indisponível na demonstração)"
-          : ""}
-      </span>
+      {pronto ? (
+        <PlayerDeAudio messageId={message.id} />
+      ) : (
+        <span className="flex items-center gap-1.5 text-[12.5px] text-text-secondary">
+          <AudioLines strokeWidth={1.5} className="size-4" />
+          Áudio{" "}
+          {message.media_url?.startsWith("seed://")
+            ? "(indisponível na demonstração)"
+            : "(baixando)"}
+        </span>
+      )}
       {message.transcript ? (
         <div className="grid gap-1">
           <p
@@ -152,18 +160,40 @@ function ehMidia(message: MessageItem): boolean {
 }
 
 /**
- * Bolha de arquivo recebido, ANTES de existir o visualizador.
+ * O arquivo esta guardado e servivel?
  *
- * Ate agora imagem e documento caiam no caminho de texto e renderizavam
- * `body`, que e NULO para midia: a clinica via uma bolha vazia com um horario,
- * sem nenhuma pista de que o paciente tinha mandado uma foto de exame. O
- * arquivo estava guardado o tempo todo.
- *
- * Tres camadas como manda a secao 5 do CLAUDE.md: icone com forma distinta,
- * rotulo em texto e cor. Nunca so cor.
+ * media_url passa por tres estados: a URL criptografada do provedor (assim que
+ * a mensagem chega), `storage://...` (depois que o job de download rodou) e
+ * `seed://...` (dado de demonstracao). So o segundo tem arquivo nosso para
+ * entregar.
  */
+function arquivoPronto(message: MessageItem): boolean {
+  return message.media_url?.startsWith("storage://") ?? false;
+}
+
 function MidiaBody({ message }: { message: MessageItem }) {
   const demonstracao = message.media_url?.startsWith("seed://") ?? false;
+
+  if (arquivoPronto(message)) {
+    if (message.content_type === "documento") {
+      return (
+        <CartaoDeDocumento messageId={message.id} nomeDoArquivo={message.body} />
+      );
+    }
+    if (message.content_type === "imagem") {
+      return (
+        <div className="grid gap-1.5">
+          <FotoDaConversa messageId={message.id} legenda={message.body} />
+          {message.body ? (
+            <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
+              {message.body}
+            </p>
+          ) : null}
+        </div>
+      );
+    }
+  }
+
   const { Icone, rotulo } =
     message.content_type === "imagem"
       ? { Icone: ImageIcon, rotulo: "Foto recebida" }
@@ -183,9 +213,7 @@ function MidiaBody({ message }: { message: MessageItem }) {
         </p>
       ) : null}
       <span className="text-[11.5px] text-text-tertiary">
-        {demonstracao
-          ? "Indisponível na demonstração"
-          : "Abra no WhatsApp por enquanto"}
+        {demonstracao ? "Indisponível na demonstração" : "Baixando o arquivo"}
       </span>
     </div>
   );

@@ -56,7 +56,10 @@ type Params = {
     | "pacientes"
     | "ficha_paciente"
     | "confirmacoes"
-    | "lista_espera";
+    | "lista_espera"
+    // Abertura de ARQUIVO de paciente (foto, audio, documento). Diferente das
+    // demais: a trilha desta e BLOQUEANTE, ver auditarAberturaDeMidia.
+    | "midia_conversa";
   entityId?: string | null;
 };
 
@@ -140,5 +143,62 @@ export async function auditarLeituraDePaciente(
     }
   } catch {
     // Auditoria nunca derruba a tela; o proprio audit_log e best-effort aqui.
+  }
+}
+
+/**
+ * Trilha de abertura de ARQUIVO de paciente, BLOQUEANTE.
+ *
+ * Diferente de `auditarLeituraDePaciente`, que engole a falha porque auditoria
+ * nunca deve derrubar uma tela: aqui a falha IMPEDE a entrega do arquivo.
+ *
+ * O motivo e a natureza do que sai. As telas mostram texto que a RLS ja
+ * autorizou e que a trilha registra em granularidade de tela. Um arquivo e
+ * outra coisa: e a foto do exame, o audio do paciente, o documento que ele
+ * mandou. Entregar isso sem saber quem abriu e pior do que dizer "tente de
+ * novo". Dado de saude sem trilha e o cenario que a regra 3.1 existe para
+ * impedir.
+ *
+ * O clinic_id vem da MENSAGEM, nunca do cookie de clinica ativa: a RLS de
+ * message autoriza qualquer clinica ativa do usuario, entao usar o cookie
+ * gravaria a leitura na clinica errada.
+ *
+ * Devolve true quando a trilha existe (gravada agora ou ja registrada na
+ * janela) e false quando nao foi possivel garantir.
+ */
+export async function auditarAberturaDeMidia(
+  supabase: SupabaseClient,
+  params: { clinicId: string; userId: string; messageId: string },
+): Promise<boolean> {
+  const alvo: Params = {
+    clinicId: params.clinicId,
+    userId: params.userId,
+    entity: "midia_conversa",
+    entityId: params.messageId,
+  };
+  try {
+    const chave = chaveDeDedupe(alvo, params.messageId);
+    const agora = Date.now();
+    const visto = vistoEmMemoria.get(chave);
+    if (visto !== undefined && agora - visto < JANELA_MS) {
+      return true;
+    }
+    if (await jaRegistradoNaJanela(alvo, params.messageId)) {
+      return true;
+    }
+    const { error } = await supabase.from("audit_log").insert({
+      clinic_id: params.clinicId,
+      user_id: params.userId,
+      action: "leu",
+      entity: "midia_conversa",
+      entity_id: params.messageId,
+    });
+    if (error) {
+      return false;
+    }
+    vistoEmMemoria.set(chave, agora);
+    return true;
+  } catch {
+    return false;
   }
 }
