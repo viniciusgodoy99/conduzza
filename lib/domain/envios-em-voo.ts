@@ -71,6 +71,22 @@ export function conciliarEnvios(
   mensagens: readonly MessageItem[],
   emVoo: readonly EnvioEmVoo[],
   viewerId: string,
+  /**
+   * A conversa a que `mensagens` pertence.
+   *
+   * OBRIGATORIO, e a razao e um defeito real: sem ele, um envio da conversa A
+   * era consumido por uma mensagem QUALQUER da conversa B com o mesmo texto.
+   * O `idsAntes` do envio foi montado com as mensagens da A, entao toda
+   * mensagem da B conta como "nova" e casa. Mandar "ok" para a Maria e abrir a
+   * conversa do Joao, que tem um "ok" meu de ontem, fazia a bolha da Maria
+   * sumir com o envio ainda em voo; se ele tivesse falhado, o cartao "Nao
+   * enviada" sumia junto e o texto se perdia em silencio, que e exatamente o
+   * que aquele cartao existe para impedir.
+   *
+   * Envio de OUTRA conversa nunca e conciliado aqui: nao ha evidencia sobre
+   * ele nesta tela, e ausencia de evidencia nao e evidencia de chegada.
+   */
+  conversationId: string | null,
 ): EnvioEmVoo[] {
   if (emVoo.length === 0) {
     return [];
@@ -79,6 +95,10 @@ export function conciliarEnvios(
   const pendentes: EnvioEmVoo[] = [];
 
   for (const envio of emVoo) {
+    if (envio.conversationId !== conversationId) {
+      pendentes.push(envio);
+      continue;
+    }
     const casada = mensagens.find(
       (mensagem) =>
         !consumidas.has(mensagem.id) &&

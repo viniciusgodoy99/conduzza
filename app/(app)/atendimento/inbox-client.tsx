@@ -198,7 +198,12 @@ export function InboxClient({
 
   // Some da lista assim que a linha real aparece no fio. A conciliação é por
   // conteúdo, um para um, e vive num módulo puro justamente para ser testável.
-  const emVooPendentes = conciliarEnvios(messages, emVoo, viewerId);
+  const emVooPendentes = conciliarEnvios(
+    messages,
+    emVoo,
+    viewerId,
+    selected?.id ?? null,
+  );
   const emVooDaConversa = selected
     ? enviosDaConversa(emVooPendentes, selected.id)
     : [];

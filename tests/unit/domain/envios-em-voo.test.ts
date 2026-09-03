@@ -55,12 +55,16 @@ function envio(over: Partial<EnvioEmVoo> = {}): EnvioEmVoo {
 describe("conciliarEnvios", () => {
   it("some quando a linha real chega", () => {
     const emVoo = [envio()];
-    expect(conciliarEnvios([mensagem()], emVoo, EU)).toHaveLength(0);
+    expect(conciliarEnvios([mensagem()], emVoo, EU, "conversa-1")).toHaveLength(
+      0,
+    );
   });
 
   it("continua enquanto a linha real não chegou", () => {
     const emVoo = [envio({ corpo: "boa tarde" })];
-    expect(conciliarEnvios([mensagem()], emVoo, EU)).toHaveLength(1);
+    expect(conciliarEnvios([mensagem()], emVoo, EU, "conversa-1")).toHaveLength(
+      1,
+    );
   });
 
   it("compara o corpo APARADO", () => {
@@ -68,7 +72,7 @@ describe("conciliarEnvios", () => {
     // texto cru nunca casaria e a bolha ficaria em "enviando" para sempre.
     const emVoo = [envio({ corpo: "bom dia" })];
     const real = mensagem({ body: "bom dia" });
-    expect(conciliarEnvios([real], emVoo, EU)).toHaveLength(0);
+    expect(conciliarEnvios([real], emVoo, EU, "conversa-1")).toHaveLength(0);
   });
 
   it("mensagem que JÁ estava na tela não conta", () => {
@@ -77,31 +81,47 @@ describe("conciliarEnvios", () => {
     // mensagem velha e sumiria antes de a nova existir.
     const antiga = mensagem();
     const emVoo = [envio({ idsAntes: new Set([antiga.id]) })];
-    expect(conciliarEnvios([antiga], emVoo, EU)).toHaveLength(1);
+    expect(conciliarEnvios([antiga], emVoo, EU, "conversa-1")).toHaveLength(1);
   });
 
   it("dois envios idênticos consomem duas linhas distintas", () => {
     // Sem a atribuição um para um, a primeira linha real casaria com os dois
     // envios e as duas bolhas sumiriam, deixando uma mensagem só na tela.
     const emVoo = [envio(), envio()];
-    expect(conciliarEnvios([mensagem()], emVoo, EU)).toHaveLength(1);
-    expect(conciliarEnvios([mensagem(), mensagem()], emVoo, EU)).toHaveLength(0);
+    expect(conciliarEnvios([mensagem()], emVoo, EU, "conversa-1")).toHaveLength(
+      1,
+    );
+    expect(
+      conciliarEnvios([mensagem(), mensagem()], emVoo, EU, "conversa-1"),
+    ).toHaveLength(0);
   });
 
   it("nota interna não casa com resposta ao paciente", () => {
     // Os dois planos podem ter o mesmo texto. Confundi-los faria a bolha da
     // nota sumir porque uma resposta ao paciente chegou, e vice-versa.
     const emVoo = [envio({ ehNota: true })];
-    expect(conciliarEnvios([mensagem()], emVoo, EU)).toHaveLength(1);
+    expect(conciliarEnvios([mensagem()], emVoo, EU, "conversa-1")).toHaveLength(
+      1,
+    );
     expect(
-      conciliarEnvios([mensagem({ is_internal_note: true })], emVoo, EU),
+      conciliarEnvios(
+        [mensagem({ is_internal_note: true })],
+        emVoo,
+        EU,
+        "conversa-1",
+      ),
     ).toHaveLength(0);
   });
 
   it("mensagem de outra pessoa não casa", () => {
     const emVoo = [envio()];
     expect(
-      conciliarEnvios([mensagem({ author_user_id: "outra-pessoa" })], emVoo, EU),
+      conciliarEnvios(
+        [mensagem({ author_user_id: "outra-pessoa" })],
+        emVoo,
+        EU,
+        "conversa-1",
+      ),
     ).toHaveLength(1);
   });
 
@@ -112,7 +132,9 @@ describe("conciliarEnvios", () => {
       author: "paciente",
       author_user_id: null,
     });
-    expect(conciliarEnvios([doPaciente], emVoo, EU)).toHaveLength(1);
+    expect(conciliarEnvios([doPaciente], emVoo, EU, "conversa-1")).toHaveLength(
+      1,
+    );
   });
 
   it("envio que falhou some quando a linha falhada chega", () => {
@@ -121,17 +143,40 @@ describe("conciliarEnvios", () => {
     // vezes, uma no cartão e outra na bolha.
     const emVoo = [envio({ estado: "falhou", erro: "desconectado" })];
     const real = mensagem({ delivery_status: "falhou" });
-    expect(conciliarEnvios([real], emVoo, EU)).toHaveLength(0);
+    expect(conciliarEnvios([real], emVoo, EU, "conversa-1")).toHaveLength(0);
   });
 
   it("linha apagada não serve de par", () => {
     const emVoo = [envio()];
-    const apagada = mensagem({ body: null, deleted_at: "2026-09-03T10:01:00Z" });
-    expect(conciliarEnvios([apagada], emVoo, EU)).toHaveLength(1);
+    const apagada = mensagem({
+      body: null,
+      deleted_at: "2026-09-03T10:01:00Z",
+    });
+    expect(conciliarEnvios([apagada], emVoo, EU, "conversa-1")).toHaveLength(1);
+  });
+
+  // O defeito que foi para produção no commit 8343d82 e voltou nesta revisão.
+  it("envio de OUTRA conversa nunca é conciliado aqui", () => {
+    // Mandei "bom dia" para a Maria (conversa-1) e abri a conversa do João
+    // (conversa-2), que tem um "bom dia" meu de ontem. Sem o recorte por
+    // conversa, o idsAntes (montado com as mensagens da Maria) não protege
+    // nada: toda mensagem do João conta como nova e casa. A bolha da Maria
+    // sumia com o envio ainda em voo, e o cartão "Não enviada" dela sumia
+    // junto, levando o texto embora sem avisar ninguém.
+    const emVoo = [envio({ conversationId: "conversa-1" })];
+    const doOutroPaciente = [mensagem({ body: "bom dia" })];
+    expect(
+      conciliarEnvios(doOutroPaciente, emVoo, EU, "conversa-2"),
+    ).toHaveLength(1);
+  });
+
+  it("sem conversa aberta, nada é conciliado", () => {
+    const emVoo = [envio()];
+    expect(conciliarEnvios([mensagem()], emVoo, EU, null)).toHaveLength(1);
   });
 
   it("sem envios em voo não faz trabalho nenhum", () => {
-    expect(conciliarEnvios([mensagem()], [], EU)).toEqual([]);
+    expect(conciliarEnvios([mensagem()], [], EU, "conversa-1")).toEqual([]);
   });
 });
 
