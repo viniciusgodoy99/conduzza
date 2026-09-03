@@ -1,0 +1,148 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  conciliarEnvios,
+  enviosDaConversa,
+  type EnvioEmVoo,
+} from "@/lib/domain/envios-em-voo";
+import type { MessageItem } from "@/lib/queries/conversations";
+
+// A conciliacao decide QUANDO a bolha otimista some. Errar para um lado deixa
+// a mensagem duplicada na tela por segundos; errar para o outro deixa um
+// "enviando" eterno. Por isso ela e uma funcao pura, e por isso estes testes
+// existem.
+
+const EU = "user-atendente";
+
+function mensagem(over: Partial<MessageItem> = {}): MessageItem {
+  return {
+    id: crypto.randomUUID(),
+    direction: "saida",
+    author: "usuario",
+    author_user_id: EU,
+    content_type: "texto",
+    body: "bom dia",
+    media_url: null,
+    transcript: null,
+    is_internal_note: false,
+    delivery_status: "enviada",
+    error_code: null,
+    created_at: "2026-09-03T10:00:00Z",
+    deleted_at: null,
+    deleted_by: null,
+    deleted_source: null,
+    deleted_escopo: null,
+    reply_to_message_id: null,
+    reply_to_wa_message_id: null,
+    reply_to: null,
+    ...over,
+  };
+}
+
+function envio(over: Partial<EnvioEmVoo> = {}): EnvioEmVoo {
+  return {
+    chave: crypto.randomUUID(),
+    conversationId: "conversa-1",
+    corpo: "bom dia",
+    ehNota: false,
+    citandoId: null,
+    idsAntes: new Set<string>(),
+    estado: "enviando",
+    ...over,
+  };
+}
+
+describe("conciliarEnvios", () => {
+  it("some quando a linha real chega", () => {
+    const emVoo = [envio()];
+    expect(conciliarEnvios([mensagem()], emVoo, EU)).toHaveLength(0);
+  });
+
+  it("continua enquanto a linha real não chegou", () => {
+    const emVoo = [envio({ corpo: "boa tarde" })];
+    expect(conciliarEnvios([mensagem()], emVoo, EU)).toHaveLength(1);
+  });
+
+  it("compara o corpo APARADO", () => {
+    // O Zod da Server Action grava o corpo com .trim(), então comparar com o
+    // texto cru nunca casaria e a bolha ficaria em "enviando" para sempre.
+    const emVoo = [envio({ corpo: "bom dia" })];
+    const real = mensagem({ body: "bom dia" });
+    expect(conciliarEnvios([real], emVoo, EU)).toHaveLength(0);
+  });
+
+  it("mensagem que JÁ estava na tela não conta", () => {
+    // O caso que o horário não resolveria: a atendente manda de novo um texto
+    // que ela já tinha mandado antes. Sem idsAntes, a bolha nova casaria com a
+    // mensagem velha e sumiria antes de a nova existir.
+    const antiga = mensagem();
+    const emVoo = [envio({ idsAntes: new Set([antiga.id]) })];
+    expect(conciliarEnvios([antiga], emVoo, EU)).toHaveLength(1);
+  });
+
+  it("dois envios idênticos consomem duas linhas distintas", () => {
+    // Sem a atribuição um para um, a primeira linha real casaria com os dois
+    // envios e as duas bolhas sumiriam, deixando uma mensagem só na tela.
+    const emVoo = [envio(), envio()];
+    expect(conciliarEnvios([mensagem()], emVoo, EU)).toHaveLength(1);
+    expect(conciliarEnvios([mensagem(), mensagem()], emVoo, EU)).toHaveLength(0);
+  });
+
+  it("nota interna não casa com resposta ao paciente", () => {
+    // Os dois planos podem ter o mesmo texto. Confundi-los faria a bolha da
+    // nota sumir porque uma resposta ao paciente chegou, e vice-versa.
+    const emVoo = [envio({ ehNota: true })];
+    expect(conciliarEnvios([mensagem()], emVoo, EU)).toHaveLength(1);
+    expect(
+      conciliarEnvios([mensagem({ is_internal_note: true })], emVoo, EU),
+    ).toHaveLength(0);
+  });
+
+  it("mensagem de outra pessoa não casa", () => {
+    const emVoo = [envio()];
+    expect(
+      conciliarEnvios([mensagem({ author_user_id: "outra-pessoa" })], emVoo, EU),
+    ).toHaveLength(1);
+  });
+
+  it("mensagem do paciente não casa", () => {
+    const emVoo = [envio()];
+    const doPaciente = mensagem({
+      direction: "entrada",
+      author: "paciente",
+      author_user_id: null,
+    });
+    expect(conciliarEnvios([doPaciente], emVoo, EU)).toHaveLength(1);
+  });
+
+  it("envio que falhou some quando a linha falhada chega", () => {
+    // O provedor pode recusar DEPOIS do insert: a linha real existe marcada
+    // como 'falhou' e a bolha já diz isso. Sem casar, o erro apareceria duas
+    // vezes, uma no cartão e outra na bolha.
+    const emVoo = [envio({ estado: "falhou", erro: "desconectado" })];
+    const real = mensagem({ delivery_status: "falhou" });
+    expect(conciliarEnvios([real], emVoo, EU)).toHaveLength(0);
+  });
+
+  it("linha apagada não serve de par", () => {
+    const emVoo = [envio()];
+    const apagada = mensagem({ body: null, deleted_at: "2026-09-03T10:01:00Z" });
+    expect(conciliarEnvios([apagada], emVoo, EU)).toHaveLength(1);
+  });
+
+  it("sem envios em voo não faz trabalho nenhum", () => {
+    expect(conciliarEnvios([mensagem()], [], EU)).toEqual([]);
+  });
+});
+
+describe("enviosDaConversa", () => {
+  it("separa por conversa e preserva a ordem", () => {
+    // A trava contra o defeito grave já visto neste módulo: o texto de um
+    // paciente não pode aparecer na tela de outro.
+    const a1 = envio({ conversationId: "a", corpo: "1" });
+    const b1 = envio({ conversationId: "b", corpo: "2" });
+    const a2 = envio({ conversationId: "a", corpo: "3" });
+    expect(enviosDaConversa([a1, b1, a2], "a")).toEqual([a1, a2]);
+    expect(enviosDaConversa([a1, b1, a2], "b")).toEqual([b1]);
+  });
+});

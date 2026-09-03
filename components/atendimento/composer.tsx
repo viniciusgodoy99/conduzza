@@ -11,16 +11,15 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import {
   enviarArquivoAction,
-  addInternalNoteAction,
   assumirConversaAction,
   devolverParaIaAction,
   reabrirConversaAction,
   resolverConversaAction,
-  sendMessageAction,
 } from "@/app/(app)/atendimento/actions";
 import {
   BarraDeAnexo,
@@ -56,6 +55,7 @@ export function Composer({
   authorNames,
   modo,
   aoTrocarModo,
+  aoEnviarTexto,
 }: {
   conversation: ConversationListItem;
   viewerId: string;
@@ -80,11 +80,32 @@ export function Composer({
    */
   modo: Mode;
   aoTrocarModo: (modo: Mode) => void;
+  /**
+   * Dispara o envio de texto e devolve o controle NA HORA.
+   *
+   * Quem espera pela resposta é o InboxClient, que mantém a bolha otimista. O
+   * compositor não espera por nada: é isso que torna o envio fluido.
+   */
+  aoEnviarTexto: (envio: {
+    corpo: string;
+    ehNota: boolean;
+    citandoId: string | null;
+  }) => void;
 }) {
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const caixaRef = useRef<HTMLTextAreaElement>(null);
+  // AÇÕES DE CONVERSA (assumir, resolver, devolver, reabrir). Elas mudam a
+  // interface inteira, então esperar é o comportamento certo.
+  //
+  // Antes existia UM `pending` só, que alimentava também a barra de anexo e o
+  // botão de texto: por isso os dois botões diziam "Enviando..." ao mesmo
+  // tempo, mesmo quando só um deles estava trabalhando.
+  const [pendenteAcao, startTransition] = useTransition();
+  // O upload de arquivo é trabalho real de segundos, e a barra não tem trava
+  // de idempotência: o segundo clique reenviaria o mesmo arquivo.
+  const [enviandoArquivo, setEnviandoArquivo] = useState(false);
   // Arquivo que chegou por arrastar e soltar ou por colar. Fica aqui e nao na
   // barra porque os eventos precisam cobrir a area inteira do compositor: se
   // so o botao aceitasse, soltar a foto "no lugar errado" nao faria nada e a
@@ -104,19 +125,58 @@ export function Composer({
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
   };
 
-  const run = (task: () => Promise<{ ok: boolean; error?: string }>) => {
+  /**
+   * Ações que mudam o ESTADO DA CONVERSA.
+   *
+   * Substitui o antigo `run()`, que limpava o texto e a citação em qualquer
+   * sucesso: resolver a conversa, ou enviar um anexo, apagava o rascunho que a
+   * pessoa tinha começado a escrever.
+   */
+  const executarAcaoDeConversa = (
+    tarefa: () => Promise<{ ok: boolean; error?: string }>,
+  ) => {
     setError(null);
     startTransition(async () => {
-      const result = await task();
-      if (!result.ok) {
-        setError(result.error ?? "Algo deu errado. Tente de novo.");
+      const resultado = await tarefa();
+      if (!resultado.ok) {
+        setError(resultado.error ?? "Algo deu errado. Tente de novo.");
         return;
       }
-      setText("");
-      aoCancelarCitacao();
       refresh();
     });
   };
+
+  /**
+   * Manda o texto e devolve a caixa vazia e focada IMEDIATAMENTE.
+   *
+   * É o único lugar onde as guardas de texto vazio moram, porque antes elas
+   * estavam duplicadas entre o submit e o atalho de teclado, e só o botão
+   * tinha a guarda. O que segura o Enter repetido é a caixa ficar vazia, não
+   * um `disabled`: reintroduzir o bloqueio seria recriar o problema.
+   */
+  const enviarTexto = () => {
+    const corpo = text.trim();
+    if (corpo.length === 0) {
+      return;
+    }
+    setError(null);
+    setText("");
+    caixaRef.current?.focus();
+    aoEnviarTexto({ corpo, ehNota: isNote, citandoId: citando?.id ?? null });
+    aoCancelarCitacao();
+  };
+
+  // Clicar em "Responder" numa bolha já deixa a pessoa digitando.
+  //
+  // Sem autoFocus: o compositor remonta a cada troca de conversa (key), então
+  // autoFocus roubaria o foco de quem está navegando pela lista e abriria o
+  // teclado sozinho no celular. Aqui o gesto é explícito.
+  const citandoId = citando?.id ?? null;
+  useEffect(() => {
+    if (citandoId) {
+      caixaRef.current?.focus();
+    }
+  }, [citandoId]);
 
   // Trocar de aba com uma citação incompatível pendurada.
   //
@@ -147,8 +207,10 @@ export function Composer({
         <Button
           size="sm"
           variant="outline"
-          disabled={pending}
-          onClick={() => run(() => reabrirConversaAction(conversation.id))}
+          disabled={pendenteAcao}
+          onClick={() =>
+            executarAcaoDeConversa(() => reabrirConversaAction(conversation.id))
+          }
         >
           <RotateCcw strokeWidth={1.5} className="size-4" />
           Reabrir e responder
@@ -166,8 +228,10 @@ export function Composer({
         error={error}
       >
         <TakeoverButton
-          pending={pending}
-          onClick={() => run(() => assumirConversaAction(conversation.id))}
+          pending={pendenteAcao}
+          onClick={() =>
+            executarAcaoDeConversa(() => assumirConversaAction(conversation.id))
+          }
         />
       </Callout>
     );
@@ -182,8 +246,10 @@ export function Composer({
         error={error}
       >
         <TakeoverButton
-          pending={pending}
-          onClick={() => run(() => assumirConversaAction(conversation.id))}
+          pending={pendenteAcao}
+          onClick={() =>
+            executarAcaoDeConversa(() => assumirConversaAction(conversation.id))
+          }
         />
       </Callout>
     );
@@ -198,9 +264,11 @@ export function Composer({
         error={error}
       >
         <TakeoverButton
-          pending={pending}
+          pending={pendenteAcao}
           label="Assumir do colega"
-          onClick={() => run(() => assumirConversaAction(conversation.id))}
+          onClick={() =>
+            executarAcaoDeConversa(() => assumirConversaAction(conversation.id))
+          }
         />
       </Callout>
     );
@@ -250,8 +318,12 @@ export function Composer({
           <Button
             variant="ghost"
             size="sm"
-            disabled={pending}
-            onClick={() => run(() => devolverParaIaAction(conversation.id))}
+            disabled={pendenteAcao}
+            onClick={() =>
+              executarAcaoDeConversa(() =>
+                devolverParaIaAction(conversation.id),
+              )
+            }
           >
             <Undo2 strokeWidth={1.5} className="size-4" />
             Devolver para a IA
@@ -259,8 +331,12 @@ export function Composer({
           <Button
             variant="ghost"
             size="sm"
-            disabled={pending}
-            onClick={() => run(() => resolverConversaAction(conversation.id))}
+            disabled={pendenteAcao}
+            onClick={() =>
+              executarAcaoDeConversa(() =>
+                resolverConversaAction(conversation.id),
+              )
+            }
           >
             <CheckCircle2 strokeWidth={1.5} className="size-4" />
             Resolver
@@ -284,8 +360,8 @@ export function Composer({
           arquivo intacto quando a pessoa retorna para Responder. */}
       <div className={isNote ? "hidden" : undefined}>
         <BarraDeAnexo
-          pendente={pending}
-          desabilitado={pending}
+          pendente={enviandoArquivo}
+          desabilitado={enviandoArquivo}
           arquivoDeFora={arquivoSolto}
           aoConsumirArquivoDeFora={() => setArquivoSolto(null)}
           enviadoEm={enviadoEm}
@@ -297,16 +373,23 @@ export function Composer({
             if (citando) {
               dados.set("citando", citando.id);
             }
-            run(async () => {
-              const resultado = await enviarArquivoAction(
-                conversation.id,
-                dados,
-              );
-              if (resultado.ok) {
+            // Caminho próprio, sem `useTransition` e sem tocar no texto: o
+            // rascunho que a pessoa tem na caixa não pode sumir porque ela
+            // mandou uma foto.
+            setError(null);
+            setEnviandoArquivo(true);
+            void enviarArquivoAction(conversation.id, dados)
+              .then((resultado) => {
+                if (!resultado.ok) {
+                  setError(resultado.error ?? "Não foi possível enviar.");
+                  return;
+                }
                 setEnviadoEm(Date.now());
-              }
-              return resultado;
-            });
+                aoCancelarCitacao();
+                toast.success("Arquivo enviado.");
+                refresh();
+              })
+              .finally(() => setEnviandoArquivo(false));
           }}
         />
       </div>
@@ -337,18 +420,11 @@ export function Composer({
         className="flex items-end gap-2"
         onSubmit={(event) => {
           event.preventDefault();
-          run(() =>
-            isNote
-              ? addInternalNoteAction(
-                  conversation.id,
-                  text,
-                  citando?.id ?? null,
-                )
-              : sendMessageAction(conversation.id, text, citando?.id ?? null),
-          );
+          enviarTexto();
         }}
       >
         <textarea
+          ref={caixaRef}
           value={text}
           onChange={(event) => setText(event.target.value)}
           rows={2}
@@ -370,27 +446,27 @@ export function Composer({
               aoCancelarCitacao();
               return;
             }
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            // Enter envia, Shift+Enter quebra linha. A condição não olha Ctrl
+            // nem Cmd, então o antigo Ctrl+Enter continua enviando: quem
+            // decorou o atalho não perde nada.
+            //
+            // isComposing é obrigatório: sem ele, teclado com acentuação envia
+            // no meio da palavra, porque o Enter que fecha o acento vira envio.
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
               event.preventDefault();
-              run(() =>
-                isNote
-                  ? addInternalNoteAction(
-                      conversation.id,
-                      text,
-                      citando?.id ?? null,
-                    )
-                  : sendMessageAction(
-                      conversation.id,
-                      text,
-                      citando?.id ?? null,
-                    ),
-              );
+              enviarTexto();
             }
           }}
         />
-        <Button type="submit" disabled={pending || text.trim().length === 0}>
+        {/* Sem "Enviando...": o envio não bloqueia mais nada. O disabled fica
+            só como afordância de que não há o que mandar. */}
+        <Button type="submit" disabled={text.trim().length === 0}>
           <Send strokeWidth={1.5} className="size-4" />
-          {pending ? "Enviando..." : isNote ? "Salvar nota" : "Enviar"}
+          {isNote ? "Salvar nota" : "Enviar"}
         </Button>
       </form>
 

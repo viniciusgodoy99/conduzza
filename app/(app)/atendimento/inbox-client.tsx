@@ -26,12 +26,22 @@ import {
   type MessageItem,
 } from "@/lib/queries/conversations";
 import { canEdit, type Role } from "@/lib/domain/permissions";
+import {
+  conciliarEnvios,
+  enviosDaConversa,
+  type EnvioEmVoo,
+} from "@/lib/domain/envios-em-voo";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { useInboxChannel } from "@/lib/realtime/use-inbox-channel";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
-import { apagarMensagemAction, markConversationReadAction } from "./actions";
+import {
+  addInternalNoteAction,
+  apagarMensagemAction,
+  markConversationReadAction,
+  sendMessageAction,
+} from "./actions";
 
 // Tela 1, Atendimento (layout do handoff): lista 322px, fio flexivel,
 // contexto 320px (colapsa em overlay abaixo de 1280px; abaixo de 1024px a
@@ -65,6 +75,13 @@ export function InboxClient({
   // os dois precisam concordar sempre: escolher uma citação escolhe o plano,
   // no mesmo gesto. Ver a explicação longa na prop `modo` do Composer.
   const [modo, setModo] = useState<Mode>("responder");
+  // Mensagens já mandadas que ainda não viraram linha no banco.
+  //
+  // Moram aqui, e não no cache do TanStack, porque o cache do fio é a verdade
+  // do servidor e é substituído inteiro a cada refetch: uma bolha otimista lá
+  // dentro seria apagada por qualquer invalidação, ou sobreviveria ao lado da
+  // linha real. Ver lib/domain/envios-em-voo.ts.
+  const [emVoo, setEmVoo] = useState<EnvioEmVoo[]>([]);
   const [apagando, setApagando] = useState<MessageItem | null>(null);
   const [erroAoApagar, setErroAoApagar] = useState<string | null>(null);
   const [apagandoPendente, startApagar] = useTransition();
@@ -179,6 +196,111 @@ export function InboxClient({
     ? (messages.find((m) => m.id === citando.id) ?? citando)
     : null;
 
+  // Some da lista assim que a linha real aparece no fio. A conciliação é por
+  // conteúdo, um para um, e vive num módulo puro justamente para ser testável.
+  const emVooPendentes = conciliarEnvios(messages, emVoo, viewerId);
+  const emVooDaConversa = selected
+    ? enviosDaConversa(emVooPendentes, selected.id)
+    : [];
+
+  /**
+   * Manda o texto sem segurar a interface.
+   *
+   * Segue o padrão que já existe em components/leads/kanban-board.tsx: dispara
+   * e esquece, com o erro virando estado visível em vez de travar a tela.
+   *
+   * TUDO que a mensagem precisa é capturado AGORA, no gesto: a conversa e o
+   * plano (nota ou resposta). Reler `selected` ou `modo` quando a ação voltar
+   * é exatamente como nasceram os dois defeitos graves anteriores deste módulo.
+   */
+  const enviarTexto = ({
+    corpo,
+    ehNota,
+    citandoId,
+  }: {
+    corpo: string;
+    ehNota: boolean;
+    citandoId: string | null;
+  }) => {
+    if (!selected) {
+      return;
+    }
+    const envio: EnvioEmVoo = {
+      chave: crypto.randomUUID(),
+      conversationId: selected.id,
+      corpo,
+      ehNota,
+      citandoId,
+      idsAntes: new Set(messages.map((m) => m.id)),
+      estado: "enviando",
+    };
+    setEmVoo((atual) => [...atual, envio]);
+    despachar(envio);
+  };
+
+  const despachar = (envio: EnvioEmVoo) => {
+    const acao = envio.ehNota
+      ? addInternalNoteAction(
+          envio.conversationId,
+          envio.corpo,
+          envio.citandoId,
+        )
+      : sendMessageAction(envio.conversationId, envio.corpo, envio.citandoId);
+    void acao
+      .then(async (resultado) => {
+        if (!resultado.ok) {
+          setEmVoo((atual) =>
+            atual.map((e) =>
+              e.chave === envio.chave
+                ? { ...e, estado: "falhou" as const, erro: resultado.error }
+                : e,
+            ),
+          );
+          return;
+        }
+        // Só tira da lista DEPOIS de a linha real estar na tela. Sem o await,
+        // a bolha some antes de a mensagem aparecer e a conversa pisca vazia.
+        await queryClient.invalidateQueries({
+          queryKey: conversationKeys.messages(envio.conversationId),
+        });
+        setEmVoo((atual) => atual.filter((e) => e.chave !== envio.chave));
+      })
+      .catch(() => {
+        setEmVoo((atual) =>
+          atual.map((e) =>
+            e.chave === envio.chave
+              ? {
+                  ...e,
+                  estado: "falhou" as const,
+                  erro: "Não foi possível falar com o servidor.",
+                }
+              : e,
+          ),
+        );
+      });
+  };
+
+  const tentarDeNovo = (chave: string) => {
+    const envio = emVoo.find((e) => e.chave === chave);
+    if (!envio) {
+      return;
+    }
+    setEmVoo((atual) =>
+      atual.map((e) =>
+        e.chave === chave
+          ? { ...e, estado: "enviando" as const, erro: undefined }
+          : e,
+      ),
+    );
+    // Reenvia com a conversa e o plano GUARDADOS no envio, nunca com os da
+    // tela: a atendente pode ter mudado de conversa ou de aba desde então.
+    despachar({ ...envio, estado: "enviando" });
+  };
+
+  const descartarEnvio = (chave: string) => {
+    setEmVoo((atual) => atual.filter((e) => e.chave !== chave));
+  };
+
   const confirmarApagar = (escopo: "todos" | "local") => {
     const alvo = apagando;
     if (!alvo) {
@@ -274,6 +396,9 @@ export function InboxClient({
             viewerId={viewerId}
             podeEditar={podeEditar}
             ehChefia={ehChefia}
+            emVoo={emVooDaConversa}
+            aoTentarDeNovo={tentarDeNovo}
+            aoDescartarEnvio={descartarEnvio}
             onResponder={(mensagem) => {
               // O plano vai junto: responder a uma nota interna é escrever
               // outra nota, responder ao paciente é falar com ele. Um gesto,
@@ -300,6 +425,7 @@ export function InboxClient({
                 authorNames={authorNames}
                 modo={modo}
                 aoTrocarModo={setModo}
+                aoEnviarTexto={enviarTexto}
               />
             }
           />

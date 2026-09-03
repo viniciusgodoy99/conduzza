@@ -5,6 +5,7 @@ import { ptBR } from "date-fns/locale";
 import { ArrowLeft, Info } from "lucide-react";
 import { Fragment, useEffect, useRef } from "react";
 
+import { BolhaEmVoo } from "@/components/atendimento/bolha-em-voo";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import {
   ComplianceBlockCard,
@@ -14,6 +15,7 @@ import { ListSkeleton } from "@/components/shared/loading-skeleton";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { CONVERSATION_STATUS } from "@/lib/design/status";
+import type { EnvioEmVoo } from "@/lib/domain/envios-em-voo";
 import type {
   ComplianceDecision,
   ConversationListItem,
@@ -62,6 +64,9 @@ export function Thread({
   ehChefia,
   onResponder,
   onApagar,
+  emVoo,
+  aoTentarDeNovo,
+  aoDescartarEnvio,
 }: {
   conversation: ConversationListItem;
   messages: MessageItem[];
@@ -79,18 +84,42 @@ export function Thread({
   ehChefia: boolean;
   onResponder: (message: MessageItem) => void;
   onApagar: (message: MessageItem) => void;
+  /** mensagens já mandadas que ainda não viraram linha no banco */
+  emVoo: EnvioEmVoo[];
+  aoTentarDeNovo: (chave: string) => void;
+  aoDescartarEnvio: (chave: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // So rola para o fim quando chega mensagem NOVA (a mais recente muda), nao
   // ao carregar historico antigo, que deve manter a posicao de leitura.
   const ultimaId = messages[messages.length - 1]?.id;
+  const emVooCount = emVoo.length;
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    // Rola para o fim SÓ quando a pessoa já está lendo o fim.
+    //
+    // Antes rolava sempre, e quem tinha subido para conferir o que foi
+    // combinado semana passada era arrancado de lá por qualquer mensagem que
+    // chegasse. Com a bolha otimista isso passaria a acontecer também a cada
+    // envio, inclusive de colega em outra aba.
+    const distanciaDoFim = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanciaDoFim < 120) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [ultimaId, emVooCount]);
+
+  // Trocar de conversa SEMPRE abre no fim: é uma conversa nova na tela, não
+  // existe posição de leitura a preservar.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [ultimaId, conversation.id]);
+  }, [conversation.id]);
 
   // Rola ate a mensagem citada e a destaca por um instante. Sem o realce, a
   // pessoa chega la e nao sabe qual das bolhas era a procurada.
@@ -258,6 +287,14 @@ export function Thread({
                 </Fragment>
               );
             })}
+            {emVoo.map((envio) => (
+              <BolhaEmVoo
+                key={envio.chave}
+                envio={envio}
+                aoTentarDeNovo={() => aoTentarDeNovo(envio.chave)}
+                aoDescartar={() => aoDescartarEnvio(envio.chave)}
+              />
+            ))}
           </div>
         )}
       </div>
