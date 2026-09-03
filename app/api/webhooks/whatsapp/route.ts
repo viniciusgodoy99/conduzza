@@ -160,25 +160,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // O paciente apagou uma mensagem para todos. A conversa da clinica precisa
-  // acompanhar: continuar exibindo o texto faria a recepcao responder a algo
-  // que, para quem escreveu, ja nao existe.
+  // Uma mensagem foi apagada para todos no WhatsApp. A conversa da clinica
+  // precisa acompanhar: continuar exibindo o texto faria a recepcao responder a
+  // algo que, para quem escreveu, ja nao existe.
   //
-  // Este evento tambem chega quando fomos NOS que apagamos (o provedor avisa
-  // todo mundo). Nesse caso a funcao nao encontra nada, porque a linha ja tem
-  // deleted_at, e o segundo apagamento nao sobrescreve a autoria do primeiro.
+  // Este evento chega para TODO MUNDO, inclusive quando fomos nos que apagamos.
+  // Quem apagou e deduzido no banco a partir da direcao da mensagem, porque o
+  // provedor nao diz: ninguem revoga para todos a mensagem de outra pessoa.
   if (event.kind === "message_deleted") {
+    let houveFalha = false;
     for (const waMessageId of event.waMessageIds) {
       const { data: apagada, error } = await admin.rpc(
-        "apagar_mensagem_do_paciente",
+        "registrar_apagamento_do_whatsapp",
         { p_clinic_id: clinicId, p_wa_message_id: waMessageId },
       );
       if (error) {
-        log.error("webhook_apagar_do_paciente_falhou", {
+        log.error("webhook_apagamento_falhou", {
           clinic_id: clinicId,
           wa_message_id: waMessageId,
           error_code: error.code ?? null,
         });
+        houveFalha = true;
         continue;
       }
       // O arquivo sai do acervo junto. A policy de leitura ja o bloqueia
@@ -192,6 +194,14 @@ export async function POST(request: NextRequest) {
           .from("midia-conversas")
           .remove([caminho.slice(prefixo.length)]);
       }
+    }
+    // 500 PROPOSITAL quando a RPC falhou. Este e o unico momento em que
+    // ficamos sabendo que a mensagem sumiu do celular do paciente: nada mais no
+    // sistema volta a conferir. Responder 200 aqui deixaria o texto revogado
+    // visivel na conversa da clinica para sempre. O reenvio do provedor e
+    // seguro porque a funcao pula linha ja apagada.
+    if (houveFalha) {
+      return NextResponse.json({ error: "apagamento_falhou" }, { status: 500 });
     }
     return NextResponse.json({ ok: true });
   }

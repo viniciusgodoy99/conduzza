@@ -106,6 +106,11 @@ export function Thread({
     }, 1400);
   };
 
+  // Quais mensagens existem no documento agora. O fio pagina de 50 em 50, e
+  // citar algo de semanas atrás é comum: sem este conjunto o bloco de citação
+  // virava um botão que não faz nada.
+  const carregadas = new Set(messages.map((m) => m.id));
+
   const items = mergeItems(messages, decisions);
   const definition = CONVERSATION_STATUS[conversation.status];
   const assigneeName = conversation.assignee_user_id
@@ -242,6 +247,10 @@ export function Thread({
                       onResponder={onResponder}
                       onApagar={onApagar}
                       onIrParaCitada={irParaCitada}
+                      citadaEstaNaTela={
+                        item.message.reply_to !== null &&
+                        carregadas.has(item.message.reply_to.id)
+                      }
                     />
                   ) : (
                     <ComplianceBlockCard decision={item.decision} />

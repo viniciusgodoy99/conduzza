@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CartaoDeDocumento } from "@/components/atendimento/media/cartao-de-documento";
+import { impedimentoParaTodos } from "@/components/atendimento/dialogo-apagar";
 import { CitacaoDaBolha } from "@/components/atendimento/citacao";
 import { FotoDaConversa } from "@/components/atendimento/media/foto-da-conversa";
 import { PlayerDeAudio } from "@/components/atendimento/media/player-de-audio";
@@ -286,6 +287,9 @@ function Lapide({
   viewerId: string;
 }) {
   const soAqui = message.deleted_escopo === "local";
+  // Nota interna nunca saiu da clínica, então "o paciente ainda vê" seria
+  // exatamente o contrário da verdade sobre ela.
+  const nota = message.is_internal_note;
   const quem =
     message.deleted_source === "paciente"
       ? "O paciente apagou"
@@ -297,14 +301,19 @@ function Lapide({
   return (
     <span className="flex items-center gap-1.5 text-[12.5px] text-text-tertiary italic">
       <CircleSlash strokeWidth={1.5} className="size-4 shrink-0" />
-      {soAqui
+      {soAqui && !nota
         ? `${quem} esta mensagem só aqui. O paciente ainda vê.`
-        : `${quem} esta mensagem.`}
+        : nota
+          ? `${quem} esta nota interna.`
+          : `${quem} esta mensagem.`}
     </span>
   );
 }
 
 /** O menu de ações da bolha: responder e apagar. */
+const MOTIVO_SEM_APAGAR =
+  "Só quem escreveu a mensagem pode apagar. Um administrador ou gestor também pode.";
+
 function AcoesDaBolha({
   podeResponder,
   podeApagar,
@@ -337,27 +346,26 @@ function AcoesDaBolha({
           <MoreVertical strokeWidth={1.5} className="size-4" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
-        <DropdownMenuItem
-          onSelect={onResponder}
-          disabled={!podeResponder}
-          title={podeResponder ? undefined : motivoSemPermissao}
-        >
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuItem onSelect={onResponder} disabled={!podeResponder}>
           <CornerUpLeft strokeWidth={1.5} className="size-4" />
           Responder
         </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={onApagar}
-          disabled={!podeApagar}
-          title={
-            podeApagar
-              ? undefined
-              : "Só quem escreveu a mensagem pode apagar. Um administrador ou gestor também pode."
-          }
-        >
+        <DropdownMenuItem onSelect={onApagar} disabled={!podeApagar}>
           <Trash2 strokeWidth={1.5} className="size-4" />
           Apagar
         </DropdownMenuItem>
+        {/* O motivo fica VISÍVEL no menu, e não num title.
+            A regra 5 do CLAUDE.md pede ação desabilitada com dica, e o title
+            não cumpria isso em lugar nenhum: o item desabilitado recebe
+            pointer-events-none (o navegador nunca dispara o tooltip) e o Radix
+            o tira da ordem de foco (o teclado nunca chega nele). O motivo era
+            inalcançável para todo mundo. */}
+        {!podeResponder || !podeApagar ? (
+          <p className="border-t border-border px-2 pt-1.5 pb-1 text-[11.5px] leading-snug text-text-secondary">
+            {!podeResponder ? motivoSemPermissao : MOTIVO_SEM_APAGAR}
+          </p>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -375,6 +383,7 @@ export function MessageBubble({
   onResponder,
   onApagar,
   onIrParaCitada,
+  citadaEstaNaTela = false,
 }: {
   message: MessageItem;
   authorName: string | null;
@@ -399,6 +408,8 @@ export function MessageBubble({
   onResponder?: (message: MessageItem) => void;
   onApagar?: (message: MessageItem) => void;
   onIrParaCitada?: (id: string) => void;
+  /** a mensagem citada já está entre as carregadas no fio */
+  citadaEstaNaTela?: boolean;
 }) {
   if (message.content_type === "evento") {
     return <SystemEventCard message={message} />;
@@ -409,16 +420,27 @@ export function MessageBubble({
   const note = message.is_internal_note;
   const apagada = message.deleted_at !== null;
 
+  // Apagada SÓ AQUI ainda pode ser tirada do celular do paciente.
+  //
+  // Sem isto, apagar "só aqui" por engano virava beco sem saída: a mensagem
+  // seguia no celular do paciente e a tela não oferecia mais ação nenhuma para
+  // tirá-la de lá, mesmo com as 60 horas inteiras pela frente.
+  const podeAmpliar =
+    apagada &&
+    message.deleted_escopo === "local" &&
+    impedimentoParaTodos(message) === null;
+
   // Espelha pode_apagar_mensagem no banco. Espelhar NAO e duplicar a regra: o
   // banco continua sendo quem decide, e esta copia existe só para a tela não
   // oferecer um botão que vai falhar. Se as duas divergirem, quem vale é o
   // banco, e o usuário vê a recusa em texto.
   const podeApagar =
     podeEditar &&
-    !apagada &&
+    (!apagada || podeAmpliar) &&
     (ehChefia ||
       (message.author_user_id !== null && message.author_user_id === viewerId));
-  const mostrarAcoes = Boolean(onResponder && onApagar) && !apagada;
+  const mostrarAcoes =
+    Boolean(onResponder && onApagar) && (!apagada || podeAmpliar);
 
   return (
     <div
@@ -432,12 +454,14 @@ export function MessageBubble({
           mensagem, para não cobrir o texto nem empurrar a hora. */}
       {!fromPatient && mostrarAcoes ? (
         <AcoesDaBolha
-          podeResponder={podeResponder}
+          podeResponder={podeResponder && !apagada}
           podeApagar={podeApagar}
           motivoSemPermissao={
-            podeEditar
-              ? "Assuma a conversa antes de responder."
-              : "Seu perfil pode acompanhar o atendimento, mas não responder."
+            apagada
+              ? "Mensagem apagada não pode ser citada."
+              : podeEditar
+                ? "Assuma a conversa antes de responder."
+                : "Seu perfil pode acompanhar o atendimento, mas não responder."
           }
           onResponder={() => onResponder?.(message)}
           onApagar={() => onApagar?.(message)}
@@ -497,6 +521,7 @@ export function MessageBubble({
               contato={contato}
               nomes={authorNames}
               aoIrParaCitada={onIrParaCitada}
+              citadaEstaNaTela={citadaEstaNaTela}
             />
             {message.content_type === "audio" ? (
               <AudioBody message={message} />
@@ -525,12 +550,14 @@ export function MessageBubble({
 
       {fromPatient && mostrarAcoes ? (
         <AcoesDaBolha
-          podeResponder={podeResponder}
+          podeResponder={podeResponder && !apagada}
           podeApagar={podeApagar}
           motivoSemPermissao={
-            podeEditar
-              ? "Assuma a conversa antes de responder."
-              : "Seu perfil pode acompanhar o atendimento, mas não responder."
+            apagada
+              ? "Mensagem apagada não pode ser citada."
+              : podeEditar
+                ? "Assuma a conversa antes de responder."
+                : "Seu perfil pode acompanhar o atendimento, mas não responder."
           }
           onResponder={() => onResponder?.(message)}
           onApagar={() => onApagar?.(message)}

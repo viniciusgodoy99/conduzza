@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   FakeProvider,
+  fakeDeletedMessages,
   fakeSentMessages,
   resetFakeProvider,
 } from "@/lib/integrations/whatsapp/fake";
@@ -315,5 +316,87 @@ describe("nome da instância no painel do uazapi", () => {
     const nome = nomeDaInstancia("a".repeat(60), "abcd1234-0000");
     expect(nome.length).toBeLessThanOrEqual("conduzza_".length + 40);
     expect(nome.endsWith("_")).toBe(false);
+  });
+});
+
+// Responder citando e apagar, na camada do provedor.
+//
+// O contrato veio da especificacao oficial e foi confirmado contra a instancia
+// real (scripts/dev/prova-de-citar-e-apagar.mts), mas prova manual nao pega
+// regressao: estes testes travam o formato do corpo, que e onde um refactor
+// silencioso quebraria o envio sem ninguem perceber.
+describe("responder citando (replyid)", () => {
+  it("o replyid vai no corpo de texto, midia e menu", async () => {
+    const stub = fetchStub([
+      { status: 200, body: { messageid: "M1" } },
+      { status: 200, body: { messageid: "M2" } },
+      { status: 200, body: { messageid: "M3" } },
+    ]);
+    const provider = testProvider(stub.fn);
+    const extra = { replyToWaMessageId: "CITADA-123" };
+
+    await provider.sendText(REF, "5511999999999", "oi", extra);
+    await provider.sendMedia(
+      REF,
+      "5511999999999",
+      { tipo: "image", base64: "AAAA", mimetype: "image/png" },
+      extra,
+    );
+    await provider.sendMenu(
+      REF,
+      "5511999999999",
+      "confirma?",
+      [{ id: "sim", text: "Confirmar" }],
+      extra,
+    );
+
+    for (const call of stub.calls) {
+      expect((call.body as Record<string, unknown>).replyid).toBe("CITADA-123");
+    }
+  });
+
+  it("SEM citacao o campo nao aparece, em vez de ir vazio", async () => {
+    // `replyid: ""` faria o provedor tentar citar a mensagem de id vazio e
+    // recusar o envio inteiro. Ausente e diferente de vazio.
+    const stub = fetchStub([{ status: 200, body: { messageid: "M1" } }]);
+    await testProvider(stub.fn).sendText(REF, "5511999999999", "oi");
+    expect(stub.calls[0]!.body).not.toHaveProperty("replyid");
+  });
+
+  it("o provedor falso registra a citacao para os testes conferirem", async () => {
+    resetFakeProvider();
+    await new FakeProvider().sendText(REF, "5511999999999", "oi", {
+      replyToWaMessageId: "CITADA-999",
+    });
+    expect(fakeSentMessages()[0]?.replyToWaMessageId).toBe("CITADA-999");
+  });
+});
+
+describe("apagar mensagem no provedor", () => {
+  it("manda o id no corpo e aceita 200", async () => {
+    const stub = fetchStub([{ status: 200, body: { id: "M1" } }]);
+    const resultado = await testProvider(stub.fn).deleteMessage(REF, "M1");
+    expect(resultado.ok).toBe(true);
+    expect(stub.calls[0]!.url).toContain("/message/delete");
+    expect(stub.calls[0]!.body).toEqual({ id: "M1" });
+  });
+
+  it("recusa do WhatsApp vira falha com motivo, nunca sucesso silencioso", async () => {
+    // Devolver ok aqui faria a clinica acreditar que a mensagem sumiu do
+    // celular do paciente quando ela continua la.
+    const stub = fetchStub([
+      { status: 400, body: { message_ptbr: "fora do prazo" } },
+    ]);
+    const resultado = await testProvider(stub.fn).deleteMessage(REF, "M1");
+    expect(resultado.ok).toBe(false);
+    if (!resultado.ok) {
+      expect(resultado.message).toBe("fora do prazo");
+    }
+  });
+
+  it("o provedor falso registra o que foi revogado", async () => {
+    resetFakeProvider();
+    await new FakeProvider().deleteMessage(REF, "M-APAGADA");
+    expect(fakeDeletedMessages()).toEqual(["M-APAGADA"]);
   });
 });

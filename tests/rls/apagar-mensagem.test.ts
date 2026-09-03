@@ -278,7 +278,11 @@ describe("o que acontece com o conteúdo", () => {
     expect(cofre!.apagada_por).toBe(autora.user.id);
   });
 
-  it("apagar duas vezes não sobrescreve quem apagou primeiro", async () => {
+  // Este teste TROCOU DE LADO na revisão de 03/09/2026. Ele travava um beco sem
+  // saída: quem apagasse "só aqui" por engano nunca mais conseguia tirar a
+  // mensagem do celular do paciente, mesmo com as 60 horas inteiras pela
+  // frente, porque a guarda 'ja_apagada' vinha antes de olhar o escopo.
+  it("apagada só aqui ainda pode ser ampliada para todos", async () => {
     const id = await criarMensagem({});
     await autora.client.rpc("apagar_mensagem", {
       p_message_id: id,
@@ -288,15 +292,43 @@ describe("o que acontece com o conteúdo", () => {
       p_message_id: id,
       p_escopo: "todos",
     });
-    expect(data).toMatchObject({ ok: false, motivo: "ja_apagada" });
+    expect(data).toMatchObject({ ok: true, acao: "escalar" });
 
     const { data: viva } = await admin
       .from("message")
       .select("deleted_by, deleted_escopo")
       .eq("id", id)
       .single();
+    expect(viva!.deleted_escopo).toBe("todos");
+    // Quem apagou primeiro apagou mesmo: ampliar o alcance não reescreve a
+    // autoria do ato original.
     expect(viva!.deleted_by).toBe(autora.user.id);
-    expect(viva!.deleted_escopo).toBe("local");
+  });
+
+  it("apagar duas vezes no mesmo escopo é recusado", async () => {
+    const id = await criarMensagem({});
+    await autora.client.rpc("apagar_mensagem", {
+      p_message_id: id,
+      p_escopo: "local",
+    });
+    const { data } = await chefe.client.rpc("apagar_mensagem", {
+      p_message_id: id,
+      p_escopo: "local",
+    });
+    expect(data).toMatchObject({ ok: false, motivo: "ja_apagada" });
+  });
+
+  it("não dá para ampliar para todos depois do prazo", async () => {
+    const id = await criarMensagem({ horasAtras: 61 });
+    await autora.client.rpc("apagar_mensagem", {
+      p_message_id: id,
+      p_escopo: "local",
+    });
+    const { data } = await autora.client.rpc("pode_apagar_mensagem", {
+      p_message_id: id,
+      p_escopo: "todos",
+    });
+    expect(data).toMatchObject({ ok: false, motivo: "prazo_vencido" });
   });
 
   it("recepção não lê o cofre; gestor lê", async () => {
@@ -319,6 +351,78 @@ describe("o que acontece com o conteúdo", () => {
       .select("body")
       .eq("message_id", id);
     expect(paraChefe).toHaveLength(1);
+  });
+
+  // O provedor emite o evento 'Deleted' para TODO MUNDO, inclusive quando quem
+  // apagou foi a própria clínica. Antes a função gravava origem 'paciente'
+  // fixo, e a lápide dizia "O paciente apagou esta mensagem" sobre um ato da
+  // recepção. Ninguém revoga para todos a mensagem de outra pessoa: a direção
+  // é o que diz quem foi.
+  it("evento do WhatsApp numa mensagem NOSSA é registrado como da clínica", async () => {
+    const id = await criarMensagem({});
+    const { data: wa } = await admin
+      .from("message")
+      .select("wa_message_id")
+      .eq("id", id)
+      .single();
+    const { data } = await admin.rpc("registrar_apagamento_do_whatsapp", {
+      p_clinic_id: clinicaA,
+      p_wa_message_id: wa!.wa_message_id,
+    });
+    expect(data).toMatchObject({ ok: true, origem: "clinica" });
+
+    const { data: viva } = await admin
+      .from("message")
+      .select("deleted_source, deleted_by, body")
+      .eq("id", id)
+      .single();
+    expect(viva!.deleted_source).toBe("clinica");
+    expect(viva!.deleted_by).toBeNull();
+    expect(viva!.body).toBeNull();
+  });
+
+  it("evento do WhatsApp numa mensagem DO PACIENTE é registrado como dele", async () => {
+    const id = await criarMensagem({ entrada: true });
+    await admin
+      .from("message")
+      .update({ wa_message_id: `WA-ENTRADA-${suffix}` })
+      .eq("id", id);
+    const { data } = await admin.rpc("registrar_apagamento_do_whatsapp", {
+      p_clinic_id: clinicaA,
+      p_wa_message_id: `WA-ENTRADA-${suffix}`,
+    });
+    expect(data).toMatchObject({ ok: true, origem: "paciente" });
+  });
+
+  // A corrida real: revogamos no provedor, o eco do webhook chega ANTES da
+  // nossa gravação e marca a linha sem autoria. Sem a adoção, a atendente via
+  // "Não foi possível apagar agora" logo depois de uma revogação que funcionou
+  // e não tem volta.
+  it("quando o eco do provedor chega primeiro, a autoria é adotada", async () => {
+    const id = await criarMensagem({});
+    const { data: wa } = await admin
+      .from("message")
+      .select("wa_message_id")
+      .eq("id", id)
+      .single();
+    await admin.rpc("registrar_apagamento_do_whatsapp", {
+      p_clinic_id: clinicaA,
+      p_wa_message_id: wa!.wa_message_id,
+    });
+
+    const { data } = await autora.client.rpc("apagar_mensagem", {
+      p_message_id: id,
+      p_escopo: "todos",
+    });
+    expect(data).toMatchObject({ ok: true, acao: "adotar" });
+
+    const { data: viva } = await admin
+      .from("message")
+      .select("deleted_by, deleted_source, deleted_escopo")
+      .eq("id", id)
+      .single();
+    expect(viva!.deleted_by).toBe(autora.user.id);
+    expect(viva!.deleted_escopo).toBe("todos");
   });
 
   it("ninguém escreve no cofre pela sessão", async () => {

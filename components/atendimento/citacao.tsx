@@ -56,7 +56,11 @@ export function autorDaCitacao(
     return "Assistente";
   }
   if (mensagem.author_user_id) {
-    return nomes[mensagem.author_user_id] ?? "Você";
+    // Nome genérico, e não "Você", quando o mapa não tem a pessoa. O mapa vem
+    // do servidor e não é atualizado numa aba aberta, então uma colega
+    // aprovada depois de a tela carregar cairia aqui: a citação da mensagem
+    // DELA apareceria assinada como se fosse sua.
+    return nomes[mensagem.author_user_id] ?? "Atendente";
   }
   return "Sistema";
 }
@@ -134,11 +138,22 @@ export function CitacaoDaBolha({
   contato,
   nomes,
   aoIrParaCitada,
+  citadaEstaNaTela = false,
 }: {
   message: MessageItem;
   contato: string;
   nomes: Record<string, string>;
   aoIrParaCitada?: (id: string) => void;
+  /**
+   * A mensagem citada está entre as que já foram carregadas?
+   *
+   * O fio pagina de 50 em 50, e citar algo de semanas atrás é comum. Sem esta
+   * conferência o bloco virava um botão com aparência e realce de clicável que
+   * não fazia absolutamente nada: rolar até a citada só funciona se a bolha
+   * existir no documento. Promessa que a tela não cumpre é pior que ausência
+   * de promessa.
+   */
+  citadaEstaNaTela?: boolean;
 }) {
   if (message.reply_to) {
     const citada = message.reply_to;
@@ -146,7 +161,11 @@ export function CitacaoDaBolha({
       <BlocoDeCitacao
         autor={autorDaCitacao(citada, contato, nomes)}
         mensagem={citada}
-        aoClicar={aoIrParaCitada ? () => aoIrParaCitada(citada.id) : undefined}
+        aoClicar={
+          aoIrParaCitada && citadaEstaNaTela
+            ? () => aoIrParaCitada(citada.id)
+            : undefined
+        }
         className="mb-0.5"
       />
     );

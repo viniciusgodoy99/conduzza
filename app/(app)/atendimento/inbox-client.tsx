@@ -8,7 +8,7 @@ import {
 import { MessagesSquare, Plug } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 
-import { Composer } from "@/components/atendimento/composer";
+import { Composer, type Mode } from "@/components/atendimento/composer";
 import { ContextPanel } from "@/components/atendimento/context-panel";
 import { ConversationList } from "@/components/atendimento/conversation-list";
 import { DialogoApagar } from "@/components/atendimento/dialogo-apagar";
@@ -61,6 +61,10 @@ export function InboxClient({
   // Moram AQUI, e não no compositor ou na bolha, porque a ação nasce numa
   // bolha e é consumida pelo compositor: são dois filhos irmãos.
   const [citando, setCitando] = useState<MessageItem | null>(null);
+  // Para quem o texto do compositor vai. Mora AQUI, junto da citação, porque
+  // os dois precisam concordar sempre: escolher uma citação escolhe o plano,
+  // no mesmo gesto. Ver a explicação longa na prop `modo` do Composer.
+  const [modo, setModo] = useState<Mode>("responder");
   const [apagando, setApagando] = useState<MessageItem | null>(null);
   const [erroAoApagar, setErroAoApagar] = useState<string | null>(null);
   const [apagandoPendente, startApagar] = useTransition();
@@ -153,6 +157,7 @@ export function InboxClient({
     // outro. A Server Action recusaria o envio, mas a prévia já teria sido
     // mostrada na conversa errada.
     setCitando(null);
+    setModo("responder");
     queryClient.setQueryData<ConversationListItem[]>(
       conversationKeys.list(clinicId),
       (current) =>
@@ -164,6 +169,15 @@ export function InboxClient({
     );
     void markConversationReadAction(id);
   };
+
+  // A citação guardada é um RETRATO do momento do clique. Se a mensagem citada
+  // for apagada por outra pessoa (ou pelo paciente) enquanto ela está pendurada
+  // no compositor, o retrato continuaria exibindo o texto que acabou de sair da
+  // conversa. Reconciliar com a página carregada faz a prévia virar "Mensagem
+  // apagada" junto com a bolha, e o envio é recusado pelo servidor com motivo.
+  const citandoVivo = citando
+    ? (messages.find((m) => m.id === citando.id) ?? citando)
+    : null;
 
   const confirmarApagar = (escopo: "todos" | "local") => {
     const alvo = apagando;
@@ -260,26 +274,34 @@ export function InboxClient({
             viewerId={viewerId}
             podeEditar={podeEditar}
             ehChefia={ehChefia}
-            onResponder={setCitando}
+            onResponder={(mensagem) => {
+              // O plano vai junto: responder a uma nota interna é escrever
+              // outra nota, responder ao paciente é falar com ele. Um gesto,
+              // os dois estados.
+              setCitando(mensagem);
+              setModo(mensagem.is_internal_note ? "nota" : "responder");
+            }}
             onApagar={(mensagem) => {
               setErroAoApagar(null);
               setApagando(mensagem);
             }}
             footer={
-                  // key OBRIGATORIA: sem ela o React so troca a prop e o
-                  // compositor mantem o estado. Com anexo, isso significa a
-                  // foto de um paciente ficar carregada ao abrir a conversa de
-                  // outro, e o proximo clique em Enviar manda o arquivo errado
-                  // para o WhatsApp errado.
-                  <Composer
-                    key={selected.id}
-                    conversation={selected}
-                    viewerId={viewerId}
-                    citando={citando}
-                    aoCancelarCitacao={() => setCitando(null)}
-                    authorNames={authorNames}
-                  />
-                }
+              // key OBRIGATORIA: sem ela o React so troca a prop e o
+              // compositor mantem o estado. Com anexo, isso significa a
+              // foto de um paciente ficar carregada ao abrir a conversa de
+              // outro, e o proximo clique em Enviar manda o arquivo errado
+              // para o WhatsApp errado.
+              <Composer
+                key={selected.id}
+                conversation={selected}
+                viewerId={viewerId}
+                citando={citandoVivo}
+                aoCancelarCitacao={() => setCitando(null)}
+                authorNames={authorNames}
+                modo={modo}
+                aoTrocarModo={setModo}
+              />
+            }
           />
         ) : (
           <div className="grid h-full place-items-center p-6">

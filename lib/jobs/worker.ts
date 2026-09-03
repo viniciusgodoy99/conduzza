@@ -119,7 +119,8 @@ async function executarEnvioAtivo(
   // queima tentativa; nenhuma reserva foi feita.
   if (resultado.reason === "slot_adiado") {
     return {
-      reagendar: resultado.livreEm ?? new Date(Date.now() + 20_000).toISOString(),
+      reagendar:
+        resultado.livreEm ?? new Date(Date.now() + 20_000).toISOString(),
       motivo: "canal_ocupado",
     };
   }
@@ -157,12 +158,22 @@ async function executarDownloadDeMidia(
 
   const { data: mensagem } = await admin
     .from("message")
-    .select("id, content_type, transcript")
+    .select("id, content_type, transcript, deleted_at")
     .eq("clinic_id", job.clinic_id)
     .eq("id", messageId)
     .maybeSingle();
   if (!mensagem) {
     return { ok: false, erro: "mensagem_nao_encontrada", definitivo: true };
+  }
+  // A mensagem foi apagada entre o enfileiramento e agora.
+  //
+  // Sem esta conferencia o download continuava: o paciente revogava a foto, o
+  // worker a baixava segundos depois, gravava no acervo e devolvia media_url e
+  // transcript para a linha que o apagamento acabara de anular. O resultado era
+  // o contrario exato do pedido, e permanente, porque nada mais volta a olhar
+  // essa linha. Definitivo, nao retry: apagada nao desapaga.
+  if (mensagem.deleted_at) {
+    return { ok: false, erro: "mensagem_apagada", definitivo: true };
   }
 
   const [{ data: account }, { data: secret }] = await Promise.all([
@@ -220,7 +231,10 @@ async function executarDownloadDeMidia(
     return { ok: false, erro: "storage_falhou" };
   }
 
-  const { error: erroUpdate } = await admin
+  // O download demora dezenas de segundos, e alguem pode ter apagado a
+  // mensagem nesse meio tempo. O `is deleted_at null` faz a escrita afetar
+  // zero linhas nesse caso, em vez de repor o conteudo apagado.
+  const { data: atualizadas, error: erroUpdate } = await admin
     .from("message")
     .update({
       media_url: `storage://${MIDIA_BUCKET}/${caminho}`,
@@ -228,9 +242,18 @@ async function executarDownloadDeMidia(
         ? { transcript: baixado.transcript }
         : {}),
     })
-    .eq("id", messageId);
+    .eq("id", messageId)
+    .is("deleted_at", null)
+    .select("id");
   if (erroUpdate) {
     return { ok: false, erro: "atualizacao_falhou" };
+  }
+  if (!atualizadas || atualizadas.length === 0) {
+    // Apagada durante o download: o arquivo que acabou de subir nao tem mais
+    // dono, e arquivo de paciente sem linha apontando para ele e dado guardado
+    // sem motivo e sem trilha.
+    await admin.storage.from(MIDIA_BUCKET).remove([caminho]);
+    return { ok: false, erro: "mensagem_apagada", definitivo: true };
   }
   return { ok: true };
 }
@@ -285,11 +308,7 @@ export async function processarLote(
 }
 
 /** O que aconteceu com um job depois de reivindicado. */
-export type DesfechoDoJob =
-  | "concluido"
-  | "falhou"
-  | "reagendado"
-  | "sem_posse";
+export type DesfechoDoJob = "concluido" | "falhou" | "reagendado" | "sem_posse";
 
 /**
  * Executa UM job ja reivindicado: confere a posse, roda, e fecha no banco.

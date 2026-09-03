@@ -33,8 +33,15 @@ function saiuDaClinica(message: MessageItem): boolean {
   );
 }
 
-/** Por que "apagar para todos" nao cabe nesta mensagem, se nao couber. */
-function impedimentoParaTodos(message: MessageItem): string | null {
+/**
+ * Por que "apagar para todos" nao cabe nesta mensagem, se nao couber.
+ *
+ * Exportada porque a bolha precisa da MESMA resposta para decidir se ainda
+ * oferece o menu numa mensagem apagada so aqui. Duas copias desta regra
+ * divergiriam, e a divergencia apareceria como um botao que abre um dialogo
+ * onde tudo esta desabilitado.
+ */
+export function impedimentoParaTodos(message: MessageItem): string | null {
   if (message.is_internal_note) {
     return "Nota interna nunca saiu da clínica, então só existe aqui.";
   }
@@ -71,6 +78,9 @@ export function DialogoApagar({
     return null;
   }
   const impedimento = impedimentoParaTodos(message);
+  // Já apagada só aqui, e a pessoa voltou para ampliar o alcance. O conteúdo já
+  // foi para o cofre; o que falta é tirar do celular do paciente.
+  const ampliando = message.deleted_at !== null;
 
   return (
     <Dialog
@@ -84,10 +94,15 @@ export function DialogoApagar({
     >
       <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>
-          <DialogTitle>Apagar esta mensagem?</DialogTitle>
+          <DialogTitle>
+            {ampliando
+              ? "Apagar também no WhatsApp do paciente?"
+              : "Apagar esta mensagem?"}
+          </DialogTitle>
           <DialogDescription>
-            O conteúdo sai da conversa e fica guardado no registro da clínica,
-            com a hora e o nome de quem apagou.
+            {ampliando
+              ? "Esta mensagem já saiu da conversa da clínica, mas continua no celular do paciente."
+              : "O conteúdo sai da conversa e fica guardado no registro da clínica, com a hora e o nome de quem apagou."}
           </DialogDescription>
         </DialogHeader>
 
@@ -96,7 +111,6 @@ export function DialogoApagar({
             variant="outline"
             className="h-auto justify-start gap-3 py-3 text-left"
             disabled={pendente || impedimento !== null}
-            title={impedimento ?? undefined}
             onClick={() => {
               setEscolhido("todos");
               aoApagar("todos");
@@ -108,8 +122,8 @@ export function DialogoApagar({
                 Apagar para todos
               </span>
               <span className="text-[11.5px] font-normal text-text-secondary">
-                {impedimento ??
-                  "Some daqui e do WhatsApp do paciente. Ele vê que uma mensagem foi apagada."}
+                Some daqui e do WhatsApp do paciente. Ele vê que uma mensagem
+                foi apagada.
               </span>
             </span>
             {pendente && escolhido === "todos" ? (
@@ -119,30 +133,46 @@ export function DialogoApagar({
             ) : null}
           </Button>
 
-          <Button
-            variant="outline"
-            className="h-auto justify-start gap-3 py-3 text-left"
-            disabled={pendente}
-            onClick={() => {
-              setEscolhido("local");
-              aoApagar("local");
-            }}
-          >
-            <CircleSlash strokeWidth={1.5} className="size-4 shrink-0" />
-            <span className="grid gap-0.5">
-              <span className="text-[13px] font-semibold">Apagar só aqui</span>
-              <span className="text-[11.5px] font-normal text-text-secondary">
-                {message.is_internal_note
-                  ? "Some da conversa da clínica. A nota nunca foi para o paciente."
-                  : "Some da conversa da clínica. O paciente continua vendo no celular dele."}
+          {/* O motivo fica FORA do botão desabilitado.
+              Dentro, ele herdava o disabled:opacity-50 e caía para 2,3:1 de
+              contraste, abaixo do mínimo AA de 4,5:1 da regra 5: a única
+              explicação de por que a ação não cabe era justamente a parte
+              ilegível. O title de reserva também não funcionava, porque botão
+              desabilitado não dispara tooltip. */}
+          {impedimento ? (
+            <p className="px-1 text-[11.5px] leading-snug text-text-secondary">
+              {impedimento}
+            </p>
+          ) : null}
+
+          {!ampliando ? (
+            <Button
+              variant="outline"
+              className="h-auto justify-start gap-3 py-3 text-left"
+              disabled={pendente}
+              onClick={() => {
+                setEscolhido("local");
+                aoApagar("local");
+              }}
+            >
+              <CircleSlash strokeWidth={1.5} className="size-4 shrink-0" />
+              <span className="grid gap-0.5">
+                <span className="text-[13px] font-semibold">
+                  Apagar só aqui
+                </span>
+                <span className="text-[11.5px] font-normal text-text-secondary">
+                  {message.is_internal_note
+                    ? "Some da conversa da clínica. A nota nunca foi para o paciente."
+                    : "Some da conversa da clínica. O paciente continua vendo no celular dele."}
+                </span>
               </span>
-            </span>
-            {pendente && escolhido === "local" ? (
-              <span className="ml-auto text-[11.5px] text-text-tertiary">
-                Apagando...
-              </span>
-            ) : null}
-          </Button>
+              {pendente && escolhido === "local" ? (
+                <span className="ml-auto text-[11.5px] text-text-tertiary">
+                  Apagando...
+                </span>
+              ) : null}
+            </Button>
+          ) : null}
         </div>
 
         {erro ? (

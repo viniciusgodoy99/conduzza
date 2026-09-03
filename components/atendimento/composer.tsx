@@ -46,7 +46,7 @@ import { cn } from "@/lib/utils";
 // A janela de 24h e conceito do canal oficial (isOfficialChannel) e nao
 // renderiza com uazapi/fake; o dominio windowState ja esta pronto e testado.
 
-type Mode = "responder" | "nota";
+export type Mode = "responder" | "nota";
 
 export function Composer({
   conversation,
@@ -54,6 +54,8 @@ export function Composer({
   citando,
   aoCancelarCitacao,
   authorNames,
+  modo,
+  aoTrocarModo,
 }: {
   conversation: ConversationListItem;
   viewerId: string;
@@ -61,9 +63,25 @@ export function Composer({
   citando: MessageItem | null;
   aoCancelarCitacao: () => void;
   authorNames: Record<string, string>;
+  /**
+   * Para quem este texto vai: o paciente, ou o time.
+   *
+   * Mora FORA deste componente, junto da citação, e isso é a correção de um
+   * defeito grave. Antes o plano era derivado da citação enquanto `mode` ficava
+   * parado por baixo: citar uma nota interna ligava o modo âmbar, a pessoa
+   * escrevia "convênio venceu, cobrar particular", cancelava a citação com
+   * Escape, e o compositor voltava para Responder COM O TEXTO INTACTO. O
+   * próximo Enter mandava a nota interna para o WhatsApp do paciente, e nenhuma
+   * camada abaixo tinha como perceber: para a Server Action era uma mensagem
+   * válida, na conversa certa, do dono certo.
+   *
+   * Dois estados que precisam concordar não podem viver em componentes
+   * diferentes. Agora quem escolhe a citação escolhe o plano, no mesmo gesto.
+   */
+  modo: Mode;
+  aoTrocarModo: (modo: Mode) => void;
 }) {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<Mode>("responder");
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -74,13 +92,7 @@ export function Composer({
   const [arquivoSolto, setArquivoSolto] = useState<File | null>(null);
   // Muda a cada envio de arquivo bem-sucedido, para a barra limpar a previa.
   const [enviadoEm, setEnviadoEm] = useState(0);
-  // Que plano está ativo, derivado e não guardado.
-  //
-  // Uma citação MANDA no plano: responder a uma nota interna é escrever outra
-  // nota, e responder ao paciente é falar com ele. Guardar isso num segundo
-  // estado criaria o momento em que os dois discordam, e a pessoa escreveria
-  // uma nota interna achando que está respondendo ao paciente.
-  const isNote = citando ? citando.is_internal_note : mode === "nota";
+  const isNote = modo === "nota";
   // O compositor tem retornos antecipados por estado da conversa (resolvida,
   // com a IA, de outra pessoa), entao o hook precisa vir ANTES de todos eles.
   const solto = useArquivoSolto((arquivo) => setArquivoSolto(arquivo), !isNote);
@@ -110,9 +122,11 @@ export function Composer({
   //
   // Nota interna e resposta ao paciente são planos separados (a Server Action
   // recusa o cruzamento). Em vez de deixar a pessoa escrever a mensagem inteira
-  // para só então ver a recusa, a citação sai junto com a troca de aba.
+  // para só então ver a recusa, a citação sai junto com a troca de aba. Aqui a
+  // troca de plano é EXPLÍCITA: a pessoa clicou na aba, então ela sabe para
+  // onde o texto vai.
   const trocarModo = (novo: Mode) => {
-    setMode(novo);
+    aoTrocarModo(novo);
     if (citando && citando.is_internal_note !== (novo === "nota")) {
       aoCancelarCitacao();
     }
@@ -262,8 +276,13 @@ export function Composer({
       ) : null}
 
       {/* Anexo só na aba de resposta: nota interna nunca sai da clínica, então
-          arquivo nela não teria para onde ir. */}
-      {!isNote ? (
+          arquivo nela não teria para onde ir.
+
+          ESCONDIDA, e não desmontada: o arquivo escolhido mora no estado da
+          barra, então desmontá-la ao trocar de aba jogava fora, sem avisar, a
+          foto que a pessoa acabara de anexar. Escondida, ela volta com o
+          arquivo intacto quando a pessoa retorna para Responder. */}
+      <div className={isNote ? "hidden" : undefined}>
         <BarraDeAnexo
           pendente={pending}
           desabilitado={pending}
@@ -290,7 +309,7 @@ export function Composer({
             });
           }}
         />
-      ) : null}
+      </div>
 
       {citando ? (
         <div className="flex items-center gap-2">

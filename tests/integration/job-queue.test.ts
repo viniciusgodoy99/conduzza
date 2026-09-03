@@ -305,6 +305,78 @@ describe("download de mídia", () => {
     const texto = Buffer.from(await arquivo!.arrayBuffer()).toString();
     expect(texto).toContain("fake-midia:");
   });
+
+  // Achado da revisão adversarial de 03/09/2026, severidade grave.
+  //
+  // O download é enfileirado quando a mensagem chega e roda depois, em outro
+  // processo. Se o paciente revogar a foto nesse meio tempo, o worker baixava
+  // os bytes assim mesmo, gravava no acervo e devolvia media_url e transcript
+  // para a linha que o apagamento acabara de anular. O resultado era o oposto
+  // exato do pedido, e permanente: nada mais volta a olhar aquela linha.
+  it("mídia de mensagem apagada não é baixada nem regravada", async () => {
+    const clinicId = await criarClinica("midia-apagada");
+    const contactId = await criarContato(clinicId, "+5584960000014", {
+      consentimento: "ativo",
+    });
+    const { data: conversa } = await admin
+      .from("conversation")
+      .insert({ clinic_id: clinicId, contact_id: contactId })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: mensagem } = await admin
+      .from("message")
+      .insert({
+        clinic_id: clinicId,
+        conversation_id: conversa!.id,
+        wa_message_id: `job-apagada-${sufixo}`,
+        direction: "entrada",
+        author: "paciente",
+        content_type: "audio",
+        media_url: "https://mmg.whatsapp.net/x/abc.enc",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+
+    await admin
+      .from("job_queue")
+      .insert({
+        clinic_id: clinicId,
+        kind: "baixar_midia",
+        payload: {
+          message_id: mensagem!.id,
+          wa_message_id: `job-apagada-${sufixo}`,
+        },
+      })
+      .throwOnError();
+
+    // O paciente revoga ANTES de o worker chegar no job.
+    await admin
+      .rpc("registrar_apagamento_do_whatsapp", {
+        p_clinic_id: clinicId,
+        p_wa_message_id: `job-apagada-${sufixo}`,
+      })
+      .throwOnError();
+
+    await processarLote(admin, "teste-worker");
+
+    const { data: depois } = await admin
+      .from("message")
+      .select("media_url, transcript, deleted_at")
+      .eq("id", mensagem!.id)
+      .single();
+    expect(depois?.deleted_at).not.toBeNull();
+    // O conteúdo continua apagado: nada foi reposto.
+    expect(depois?.media_url).toBeNull();
+    expect(depois?.transcript).toBeNull();
+
+    // E nenhum arquivo foi parar no acervo.
+    const { error } = await admin.storage
+      .from(MIDIA_BUCKET)
+      .download(`${clinicId}/${mensagem!.id}`);
+    expect(error).toBeTruthy();
+  });
 });
 
 describe("mecânica da fila", () => {

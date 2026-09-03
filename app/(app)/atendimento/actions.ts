@@ -70,7 +70,10 @@ async function loadVisibleConversation(
 }
 
 type CitacaoResolvida =
-  | { ok: true; replyTo: { messageId: string; waMessageId: string | null } | null }
+  | {
+      ok: true;
+      replyTo: { messageId: string; waMessageId: string | null } | null;
+    }
   | { ok: false; error: string };
 
 /**
@@ -110,7 +113,10 @@ async function resolverCitacao(
     return { ok: false, error: "A mensagem citada não é desta conversa." };
   }
   if (data.deleted_at) {
-    return { ok: false, error: "Esta mensagem foi apagada e não pode ser citada." };
+    return {
+      ok: false,
+      error: "Esta mensagem foi apagada e não pode ser citada.",
+    };
   }
   if (Boolean(data.is_internal_note) !== comoNota) {
     return {
@@ -218,18 +224,19 @@ export async function sendMessageAction(
 // mensagem de erro util. Barrar no cliente e aqui deixa o motivo explicito.
 const TETO_BYTES = 3_800_000;
 
-const MIMES_ACEITOS: Record<string, "image" | "audio" | "document" | "video"> = {
-  "image/jpeg": "image",
-  "image/png": "image",
-  "image/webp": "image",
-  "image/gif": "image",
-  "audio/mpeg": "audio",
-  "audio/mp4": "audio",
-  "audio/ogg": "audio",
-  "audio/webm": "audio",
-  "video/mp4": "video",
-  "application/pdf": "document",
-};
+const MIMES_ACEITOS: Record<string, "image" | "audio" | "document" | "video"> =
+  {
+    "image/jpeg": "image",
+    "image/png": "image",
+    "image/webp": "image",
+    "image/gif": "image",
+    "audio/mpeg": "audio",
+    "audio/mp4": "audio",
+    "audio/ogg": "audio",
+    "audio/webm": "audio",
+    "video/mp4": "video",
+    "application/pdf": "document",
+  };
 
 /**
  * Envia um arquivo ao paciente.
@@ -418,6 +425,13 @@ const MOTIVO_DE_NAO_APAGAR: Record<string, string> = {
 type Veredito = {
   ok: boolean;
   motivo?: string;
+  /**
+   * O que cabe fazer com esta mensagem, decidido pelo banco:
+   *   apagar   a linha está viva: arquiva no cofre e limpa.
+   *   escalar  já apagada como 'local': promove o escopo para 'todos'.
+   *   adotar   já apagada pelo eco do provedor: só falta gravar quem foi.
+   */
+  acao?: "apagar" | "escalar" | "adotar";
   clinic_id?: string;
   wa_message_id?: string | null;
   media_url?: string | null;
@@ -460,7 +474,10 @@ export async function apagarMensagemAction(
     p_escopo: escopo,
   });
   if (error) {
-    return { ok: false, error: "Não foi possível apagar agora. Tente de novo." };
+    return {
+      ok: false,
+      error: "Não foi possível apagar agora. Tente de novo.",
+    };
   }
   const veredito = (data ?? {}) as Veredito;
   if (!veredito.ok) {
@@ -474,9 +491,15 @@ export async function apagarMensagemAction(
 
   const admin = createAdminClient();
 
-  // Nota interna nunca saiu do prédio: nao ha o que revogar no WhatsApp.
+  // Nota interna nunca saiu do prédio: não há o que revogar no WhatsApp. E
+  // 'adotar' significa que o provedor JÁ revogou (o eco chegou antes da nossa
+  // gravação): mandar apagar de novo seria pedir ao WhatsApp que apagasse o que
+  // ele acabou de apagar.
   const precisaRevogar =
-    escopo === "todos" && !veredito.nota_interna && veredito.wa_message_id;
+    escopo === "todos" &&
+    !veredito.nota_interna &&
+    Boolean(veredito.wa_message_id) &&
+    veredito.acao !== "adotar";
   if (precisaRevogar) {
     const { provider, ref } = await carregarInstancia(
       admin,
@@ -511,7 +534,10 @@ export async function apagarMensagemAction(
         message_id: messageId,
       });
     }
-    return { ok: false, error: "Não foi possível apagar agora. Tente de novo." };
+    return {
+      ok: false,
+      error: "Não foi possível apagar agora. Tente de novo.",
+    };
   }
 
   // O arquivo sai do acervo junto. A policy de leitura ja o bloqueia (ela
