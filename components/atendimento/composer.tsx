@@ -47,14 +47,39 @@ import { cn } from "@/lib/utils";
 
 export type Mode = "responder" | "nota";
 
+// Igual ao bodySchema das Server Actions (z.string().trim().max(4096)).
+const TETO_DE_CARACTERES = 4096;
+
+/**
+ * Enter envia SÓ onde existe teclado de verdade.
+ *
+ * Em teclado virtual de celular e tablet a tecla de retorno não produz
+ * shiftKey, então "Enter envia, Shift+Enter quebra linha" deixaria a recepção
+ * sem NENHUMA forma de escrever duas linhas: toda quebra viraria mensagem
+ * disparada ao paciente. O Atendimento é explicitamente uma tela de toque
+ * (a alternância entre lista e fio abaixo de 1024px existe para isso).
+ *
+ * `pointer: fine` é a pergunta certa: existe um apontador preciso, logo existe
+ * um teclado físico. No toque, continuam valendo o botão Enviar e o Ctrl+Enter.
+ */
+function temTecladoDeVerdade(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) {
+    return false;
+  }
+  return window.matchMedia("(pointer: fine)").matches;
+}
+
 export function Composer({
   conversation,
   viewerId,
   citando,
   aoCancelarCitacao,
+  aoCancelarCitacaoSeFor,
   authorNames,
   modo,
   aoTrocarModo,
+  texto,
+  aoMudarTexto,
   aoEnviarTexto,
 }: {
   conversation: ConversationListItem;
@@ -62,6 +87,8 @@ export function Composer({
   /** mensagem que está sendo respondida, quando houver */
   citando: MessageItem | null;
   aoCancelarCitacao: () => void;
+  /** cancela SÓ se a citação pendurada ainda for aquela; ver o envio de arquivo */
+  aoCancelarCitacaoSeFor: (id: string) => void;
   authorNames: Record<string, string>;
   /**
    * Para quem este texto vai: o paciente, ou o time.
@@ -81,6 +108,14 @@ export function Composer({
   modo: Mode;
   aoTrocarModo: (modo: Mode) => void;
   /**
+   * O rascunho, que mora no pai junto do plano e da citação.
+   *
+   * As três coisas decidem para onde este texto vai, então mudam juntas ou não
+   * mudam. Ver o comentário longo no InboxClient.
+   */
+  texto: string;
+  aoMudarTexto: (texto: string) => void;
+  /**
    * Dispara o envio de texto e devolve o controle NA HORA.
    *
    * Quem espera pela resposta é o InboxClient, que mantém a bolha otimista. O
@@ -93,7 +128,6 @@ export function Composer({
   }) => void;
 }) {
   const queryClient = useQueryClient();
-  const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const caixaRef = useRef<HTMLTextAreaElement>(null);
   // AÇÕES DE CONVERSA (assumir, resolver, devolver, reabrir). Elas mudam a
@@ -155,12 +189,22 @@ export function Composer({
    * um `disabled`: reintroduzir o bloqueio seria recriar o problema.
    */
   const enviarTexto = () => {
-    const corpo = text.trim();
+    const corpo = texto.trim();
     if (corpo.length === 0) {
       return;
     }
+    if (corpo.length > TETO_DE_CARACTERES) {
+      // Guarda no cliente porque o servidor recusa com uma mensagem que fala de
+      // texto vazio, e agora a caixa esvazia no envio: sem isto, um texto longo
+      // demais iria para o cartão de falha, onde não dá para editá-lo, e o
+      // "Tentar de novo" repetiria a mesma recusa para sempre.
+      setError(
+        `A mensagem tem ${corpo.length} caracteres e o limite é ${TETO_DE_CARACTERES}. Encurte antes de enviar.`,
+      );
+      return;
+    }
     setError(null);
-    setText("");
+    aoMudarTexto("");
     caixaRef.current?.focus();
     aoEnviarTexto({ corpo, ehNota: isNote, citandoId: citando?.id ?? null });
     aoCancelarCitacao();
@@ -171,6 +215,9 @@ export function Composer({
   // Sem autoFocus: o compositor remonta a cada troca de conversa (key), então
   // autoFocus roubaria o foco de quem está navegando pela lista e abriria o
   // teclado sozinho no celular. Aqui o gesto é explícito.
+  // Medido uma vez, e não a cada tecla: matchMedia é barato mas isto roda no
+  // caminho de digitação.
+  const [tecladoFisico] = useState(temTecladoDeVerdade);
   const citandoId = citando?.id ?? null;
   useEffect(() => {
     if (citandoId) {
@@ -378,6 +425,11 @@ export function Composer({
             // mandou uma foto.
             setError(null);
             setEnviandoArquivo(true);
+            // A citação que ESTE envio levou, capturada agora. O upload demora
+            // segundos, e cancelar "a citação" na volta alcançaria a que a
+            // pessoa escolheu enquanto esperava, ou até a de outra conversa,
+            // porque quem guarda a citação é o InboxClient, que não remonta.
+            const citadaDesteEnvio = citando?.id ?? null;
             void enviarArquivoAction(conversation.id, dados)
               .then((resultado) => {
                 if (!resultado.ok) {
@@ -385,9 +437,19 @@ export function Composer({
                   return;
                 }
                 setEnviadoEm(Date.now());
-                aoCancelarCitacao();
+                if (citadaDesteEnvio) {
+                  aoCancelarCitacaoSeFor(citadaDesteEnvio);
+                }
                 toast.success("Arquivo enviado.");
                 refresh();
+              })
+              // Sem isto, uma rejeição (rede caindo no meio do upload) destrava
+              // o botão pelo finally e não avisa nada: a pessoa fica sem erro e
+              // sem arquivo, achando que mandou.
+              .catch(() => {
+                setError(
+                  "Não foi possível falar com o servidor. O arquivo não foi enviado.",
+                );
               })
               .finally(() => setEnviandoArquivo(false));
           }}
@@ -425,8 +487,9 @@ export function Composer({
       >
         <textarea
           ref={caixaRef}
-          value={text}
-          onChange={(event) => setText(event.target.value)}
+          value={texto}
+          onChange={(event) => aoMudarTexto(event.target.value)}
+          maxLength={TETO_DE_CARACTERES}
           rows={2}
           placeholder={
             citando
@@ -452,11 +515,13 @@ export function Composer({
             //
             // isComposing é obrigatório: sem ele, teclado com acentuação envia
             // no meio da palavra, porque o Enter que fecha o acento vira envio.
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) {
+              return;
+            }
+            // Ctrl/Cmd+Enter envia em qualquer aparelho, inclusive no tablet
+            // onde o Enter puro precisa continuar quebrando linha.
+            const atalhoExplicito = event.metaKey || event.ctrlKey;
+            if (atalhoExplicito || (!event.shiftKey && tecladoFisico)) {
               event.preventDefault();
               enviarTexto();
             }
@@ -464,7 +529,7 @@ export function Composer({
         />
         {/* Sem "Enviando...": o envio não bloqueia mais nada. O disabled fica
             só como afordância de que não há o que mandar. */}
-        <Button type="submit" disabled={text.trim().length === 0}>
+        <Button type="submit" disabled={texto.trim().length === 0}>
           <Send strokeWidth={1.5} className="size-4" />
           {isNote ? "Salvar nota" : "Enviar"}
         </Button>

@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { MessagesSquare, Plug } from "lucide-react";
+import { toast } from "sonner";
 import { useMemo, useState, useTransition } from "react";
 
 import { Composer, type Mode } from "@/components/atendimento/composer";
@@ -75,6 +76,16 @@ export function InboxClient({
   // os dois precisam concordar sempre: escolher uma citação escolhe o plano,
   // no mesmo gesto. Ver a explicação longa na prop `modo` do Composer.
   const [modo, setModo] = useState<Mode>("responder");
+  // O TEXTO mora aqui, e não no compositor.
+  //
+  // Terceira correção da mesma família nesta tela, e desta vez estrutural: o
+  // destino de um texto é decidido por TRÊS coisas (a conversa, o plano e a
+  // citação) e elas precisam mudar sempre juntas. Enquanto o texto ficava no
+  // filho, um gesto que mexia só no plano deixava o rascunho para trás: clicar
+  // em "Responder" na bolha do paciente enquanto se escrevia uma nota interna
+  // virava o plano para "responder" COM O TEXTO INTACTO, e o Enter seguinte
+  // mandava a nota pelo WhatsApp do paciente.
+  const [texto, setTexto] = useState("");
   // Mensagens já mandadas que ainda não viraram linha no banco.
   //
   // Moram aqui, e não no cache do TanStack, porque o cache do fio é a verdade
@@ -175,6 +186,7 @@ export function InboxClient({
     // mostrada na conversa errada.
     setCitando(null);
     setModo("responder");
+    setTexto("");
     queryClient.setQueryData<ConversationListItem[]>(
       conversationKeys.list(clinicId),
       (current) =>
@@ -237,10 +249,25 @@ export function InboxClient({
       ehNota,
       citandoId,
       idsAntes: new Set(messages.map((m) => m.id)),
+      // Piso de tempo, do relógio do BANCO. Nulo enquanto o fio não carregou:
+      // sem ele não há como distinguir a linha nova de uma antiga idêntica, e
+      // a conciliação por conteúdo é recusada até a ação responder com o id.
+      apartirDe: messagesQuery.isPending
+        ? null
+        : (messages[messages.length - 1]?.created_at ?? ""),
       estado: "enviando",
     };
     setEmVoo((atual) => [...atual, envio]);
     despachar(envio);
+  };
+
+  // Quem é o paciente daquele envio, para o aviso fora da conversa fazer
+  // sentido. Só nome ou telefone, nunca o conteúdo da mensagem.
+  const nomeDoContato = (envio: EnvioEmVoo): string => {
+    const conversa = conversations.find((c) => c.id === envio.conversationId);
+    return (
+      conversa?.contact.name ?? conversa?.contact.phone_e164 ?? "o contato"
+    );
   };
 
   const despachar = (envio: EnvioEmVoo) => {
@@ -261,10 +288,28 @@ export function InboxClient({
                 : e,
             ),
           );
+          // O aviso PRECISA sair da conversa: o commit inteiro existe para a
+          // pessoa disparar e seguir para o próximo atendimento, então o caso
+          // comum é a falha acontecer com ela olhando outra tela. O cartão
+          // espera na conversa certa; o toast diz que ele existe.
+          toast.error(`Não foi enviada para ${nomeDoContato(envio)}.`, {
+            description: resultado.error,
+          });
           return;
         }
         // Só tira da lista DEPOIS de a linha real estar na tela. Sem o await,
         // a bolha some antes de a mensagem aparecer e a conversa pisca vazia.
+        // Guarda o id real ANTES de esperar: a partir daqui a conciliação é
+        // exata, e não mais por conteúdo.
+        if (resultado.messageId) {
+          setEmVoo((atual) =>
+            atual.map((e) =>
+              e.chave === envio.chave
+                ? { ...e, messageId: resultado.messageId }
+                : e,
+            ),
+          );
+        }
         await queryClient.invalidateQueries({
           queryKey: conversationKeys.messages(envio.conversationId),
         });
@@ -405,11 +450,27 @@ export function InboxClient({
             aoTentarDeNovo={tentarDeNovo}
             aoDescartarEnvio={descartarEnvio}
             onResponder={(mensagem) => {
-              // O plano vai junto: responder a uma nota interna é escrever
-              // outra nota, responder ao paciente é falar com ele. Um gesto,
-              // os dois estados.
+              const planoDaCitada: Mode = mensagem.is_internal_note
+                ? "nota"
+                : "responder";
+              // TROCAR O PLANO COM TEXTO PENDENTE É PROIBIDO.
+              //
+              // Citar uma mensagem do paciente enquanto se escreve uma nota
+              // interna mudaria para onde aquele texto vai, sem tocar nele. O
+              // rascunho pertence ao plano em que foi escrito: aqui a citação é
+              // recusada, e a pessoa decide o que fazer com o que já escreveu.
+              if (planoDaCitada !== modo && texto.trim().length > 0) {
+                toast.warning(
+                  modo === "nota"
+                    ? "Você está escrevendo uma nota interna. Salve ou apague a nota antes de citar uma mensagem do paciente."
+                    : "Você está escrevendo uma resposta ao paciente. Envie ou apague o texto antes de citar uma nota interna.",
+                );
+                return;
+              }
+              // Sem texto pendente não há o que mandar para o lugar errado: o
+              // plano acompanha a citação, num gesto só.
               setCitando(mensagem);
-              setModo(mensagem.is_internal_note ? "nota" : "responder");
+              setModo(planoDaCitada);
             }}
             onApagar={(mensagem) => {
               setErroAoApagar(null);
@@ -427,9 +488,14 @@ export function InboxClient({
                 viewerId={viewerId}
                 citando={citandoVivo}
                 aoCancelarCitacao={() => setCitando(null)}
+                aoCancelarCitacaoSeFor={(id) =>
+                  setCitando((atual) => (atual?.id === id ? null : atual))
+                }
                 authorNames={authorNames}
                 modo={modo}
                 aoTrocarModo={setModo}
+                texto={texto}
+                aoMudarTexto={setTexto}
                 aoEnviarTexto={enviarTexto}
               />
             }

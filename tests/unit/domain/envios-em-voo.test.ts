@@ -47,6 +47,7 @@ function envio(over: Partial<EnvioEmVoo> = {}): EnvioEmVoo {
     ehNota: false,
     citandoId: null,
     idsAntes: new Set<string>(),
+    apartirDe: "2026-09-03T09:00:00Z",
     estado: "enviando",
     ...over,
   };
@@ -173,6 +174,41 @@ describe("conciliarEnvios", () => {
   it("sem conversa aberta, nada é conciliado", () => {
     const emVoo = [envio()];
     expect(conciliarEnvios([mensagem()], emVoo, EU, null)).toHaveLength(1);
+  });
+
+  // Achado da revisão de 03/09/2026: idsAntes é retrato só do que estava
+  // CARREGADO, e o fio pagina de 50 em 50 para trás.
+  it("mensagem antiga que entra depois não é aceita como prova de chegada", () => {
+    // A pessoa manda "bom dia", e só então clica em "Carregar mensagens
+    // anteriores". Chega um "bom dia" dela de duas semanas atrás, que não está
+    // em idsAntes porque não estava na tela. Sem o piso de tempo, ele contava
+    // como a mensagem nova: a bolha sumia com o envio ainda em voo e, se ele
+    // tivesse falhado, o cartão "Não enviada" sumia levando o texto junto.
+    const emVoo = [envio({ apartirDe: "2026-09-03T09:00:00Z" })];
+    const antiga = mensagem({ created_at: "2026-08-20T14:00:00Z" });
+    expect(conciliarEnvios([antiga], emVoo, EU, "conversa-1")).toHaveLength(1);
+  });
+
+  it("sem o fio carregado, nada casa por conteúdo", () => {
+    // apartirDe nulo significa que o compositor foi usado antes de o fio
+    // carregar: não existe piso confiável, então espera o id da ação.
+    const emVoo = [envio({ apartirDe: null })];
+    expect(conciliarEnvios([mensagem()], emVoo, EU, "conversa-1")).toHaveLength(
+      1,
+    );
+  });
+
+  it("com o id real, o casamento é exato e ignora o conteúdo", () => {
+    const real = mensagem({ body: "outra coisa qualquer" });
+    const emVoo = [envio({ messageId: real.id, apartirDe: null })];
+    expect(conciliarEnvios([real], emVoo, EU, "conversa-1")).toHaveLength(0);
+  });
+
+  it("com o id real e a linha ainda ausente, continua pendente", () => {
+    const emVoo = [envio({ messageId: "id-que-nao-chegou" })];
+    expect(conciliarEnvios([mensagem()], emVoo, EU, "conversa-1")).toHaveLength(
+      1,
+    );
   });
 
   it("sem envios em voo não faz trabalho nenhum", () => {

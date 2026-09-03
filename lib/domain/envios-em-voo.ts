@@ -42,13 +42,45 @@ export type EnvioEmVoo = {
   /**
    * Ids que ja estavam na tela quando este envio nasceu.
    *
-   * E o que distingue a linha nova da mensagem antiga de texto identico. Usar
-   * horario aqui seria bug silencioso: o created_at vem do relogio do banco e o
-   * navegador tem outro.
+   * Distingue a linha nova da mensagem antiga de texto identico QUANDO ela ja
+   * estava carregada. Nao basta sozinho: ver `apartirDe`.
    */
   idsAntes: ReadonlySet<string>;
+  /**
+   * created_at da mensagem mais recente do fio no instante do gesto.
+   *
+   * `idsAntes` e um retrato so das paginas CARREGADAS, e o fio pagina de 50 em
+   * 50 para tras. Uma mensagem antiga identica que entrasse depois (por
+   * "Carregar mensagens anteriores") ficava de fora do conjunto e era aceita
+   * como prova de chegada: a bolha sumia com o envio ainda em voo e, se ele
+   * tivesse falhado, o cartao "Nao enviada" sumia levando o texto junto.
+   *
+   * Este piso fecha isso. Os dois lados da comparacao sao carimbos do BANCO,
+   * entao o relogio do navegador nao entra na conta em momento nenhum.
+   *
+   * Nulo significa que o fio ainda nao tinha carregado: nesse caso nao existe
+   * piso confiavel e o casamento por conteudo e recusado por inteiro.
+   */
+  apartirDe: string | null;
+  /**
+   * Id real da linha, quando a Server Action ja respondeu.
+   *
+   * Encerra a conciliacao sem ambiguidade. O casamento por conteudo so existe
+   * para a janela ANTES desta resposta, em que o tempo real ja entregou a
+   * mensagem.
+   */
+  messageId?: string;
   estado: EstadoDoEnvio;
   erro?: string;
+  /**
+   * A resposta se perdeu, mas a mensagem pode ter saido.
+   *
+   * A linha nasce no banco ANTES da espera anti-ban, entao uma falha de rede na
+   * VOLTA nao prova que nada foi enviado. Reenviar as cegas faria o paciente
+   * receber duas vezes, e este canal e nao oficial: mensagem repetida e o tipo
+   * de coisa que acelera banimento do numero.
+   */
+  incerto?: boolean;
 };
 
 /**
@@ -99,10 +131,32 @@ export function conciliarEnvios(
       pendentes.push(envio);
       continue;
     }
+
+    // CAMINHO EXATO: a Server Action ja disse qual e a linha.
+    if (envio.messageId) {
+      const real = mensagens.find((m) => m.id === envio.messageId);
+      if (real) {
+        consumidas.add(real.id);
+      } else {
+        pendentes.push(envio);
+      }
+      continue;
+    }
+
+    // Sem piso nao ha casamento por conteudo: o fio nao estava carregado no
+    // gesto, entao QUALQUER mensagem antiga passaria por nova. Espera a
+    // resposta da acao, que traz o id.
+    if (envio.apartirDe === null) {
+      pendentes.push(envio);
+      continue;
+    }
+
     const casada = mensagens.find(
       (mensagem) =>
         !consumidas.has(mensagem.id) &&
         !envio.idsAntes.has(mensagem.id) &&
+        // Carimbos do banco dos dois lados: nenhum relogio de navegador aqui.
+        mensagem.created_at >= envio.apartirDe! &&
         mensagem.direction === "saida" &&
         mensagem.author_user_id === viewerId &&
         mensagem.is_internal_note === envio.ehNota &&

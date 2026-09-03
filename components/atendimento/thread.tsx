@@ -90,36 +90,64 @@ export function Thread({
   aoDescartarEnvio: (chave: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  // So rola para o fim quando chega mensagem NOVA (a mais recente muda), nao
-  // ao carregar historico antigo, que deve manter a posicao de leitura.
   const ultimaId = messages[messages.length - 1]?.id;
-  const emVooCount = emVoo.length;
+  // A ASSINATURA, e não a contagem: um envio que passa de "enviando" para
+  // "falhou" não muda o tamanho da lista, mas cresce na tela (ganha rótulo,
+  // linha de erro e dois botões). Com a contagem, o efeito não rodava e os
+  // botões de "Tentar de novo" ficavam abaixo da dobra.
+  const assinaturaEmVoo = emVoo.map((e) => e.chave + e.estado).join("|");
+  const totalEmVoo = emVoo.length;
+
+  /**
+   * A pessoa estava lendo o FIM, medido ANTES de o conteúdo novo entrar.
+   *
+   * Esta é a correção do erro central da primeira tentativa: a distância era
+   * calculada dentro do efeito, ou seja, com a bolha nova já no documento. A
+   * altura do que acabava de chegar entrava na conta, então qualquer mensagem
+   * mais alta que o limiar (uma foto, um texto de cinco linhas, o cartão de
+   * falha) desligava o acompanhamento exatamente para quem estava colado no
+   * fim. A pergunta certa é "onde ela estava", e só o evento de rolagem sabe.
+   */
+  const coladoNoFim = useRef(true);
+  const conversaAncorada = useRef<string | null>(null);
+  const quantosEmVoo = useRef(emVoo.length);
+
+  const registrarRolagem = () => {
+    const el = scrollRef.current;
+    if (el) {
+      coladoNoFim.current =
+        el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    }
+  };
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) {
       return;
     }
-    // Rola para o fim SÓ quando a pessoa já está lendo o fim.
-    //
-    // Antes rolava sempre, e quem tinha subido para conferir o que foi
-    // combinado semana passada era arrancado de lá por qualquer mensagem que
-    // chegasse. Com a bolha otimista isso passaria a acontecer também a cada
-    // envio, inclusive de colega em outra aba.
-    const distanciaDoFim = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanciaDoFim < 120) {
+    // PRIMEIRA ÂNCORA desta conversa. Roda quando o conteúdo finalmente existe,
+    // e não quando o id muda: o container só é renderizado depois do esqueleto,
+    // então no instante da troca de conversa a referência ainda é nula e a
+    // âncora se perdia, deixando o fio parado no TOPO das 50 mensagens.
+    if (conversaAncorada.current !== conversation.id) {
+      conversaAncorada.current = conversation.id;
+      coladoNoFim.current = true;
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+    // A pessoa acabou de mandar alguma coisa: querer ver o resultado é o
+    // sentido do gesto, então acompanha mesmo que ela estivesse lendo atrás.
+    // Conta entradas, e não o tamanho da assinatura: um envio que muda de
+    // estado reescreve a assinatura sem ser um envio novo.
+    const euMandei = totalEmVoo > quantosEmVoo.current;
+    quantosEmVoo.current = totalEmVoo;
+    if (euMandei) {
+      coladoNoFim.current = true;
+    }
+    if (coladoNoFim.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [ultimaId, emVooCount]);
-
-  // Trocar de conversa SEMPRE abre no fim: é uma conversa nova na tela, não
-  // existe posição de leitura a preservar.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [conversation.id]);
+  }, [ultimaId, assinaturaEmVoo, totalEmVoo, conversation.id, isLoading]);
 
   // Rola ate a mensagem citada e a destaca por um instante. Sem o realce, a
   // pessoa chega la e nao sabe qual das bolhas era a procurada.
@@ -200,6 +228,7 @@ export function Thread({
 
       <div
         ref={scrollRef}
+        onScroll={registrarRolagem}
         className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-4"
       >
         {isLoading ? (

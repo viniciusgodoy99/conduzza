@@ -25,7 +25,19 @@ import { createClient } from "@/lib/supabase/server";
 const idSchema = z.uuid();
 const bodySchema = z.string().trim().min(1).max(4096);
 
-export type InboxActionResult = { ok: boolean; error?: string };
+export type InboxActionResult = {
+  ok: boolean;
+  error?: string;
+  /**
+   * Id da linha criada, quando houve uma.
+   *
+   * A tela usa para casar a bolha otimista com a mensagem real de forma EXATA,
+   * em vez de por conteúdo. O casamento por conteúdo continua existindo para a
+   * janela em que a linha chega pelo tempo real antes de esta resposta voltar,
+   * mas ele é aproximado: este id o encerra sem dúvida.
+   */
+  messageId?: string;
+};
 
 type ConversationRow = {
   id: string;
@@ -212,9 +224,19 @@ export async function sendMessageAction(
     replyTo: citacao.replyTo,
   });
   if (!result.ok) {
+    // "O envio foi remarcado" é verdade para o worker, que reagenda o job, e
+    // MENTIRA aqui: no caminho da atendente ninguém reagenda nada e a mensagem
+    // nem chegou a nascer.
+    if (result.reason === "slot_adiado") {
+      return {
+        ok: false,
+        error:
+          "O número da clínica está enviando outras mensagens agora. Tente de novo em instantes.",
+      };
+    }
     return { ok: false, error: result.message };
   }
-  return { ok: true };
+  return { ok: true, messageId: result.messageId };
 }
 
 // Tipos que a clinica pode mandar ao paciente, e o teto de cada um.
@@ -384,21 +406,25 @@ export async function addInternalNoteAction(
   if (!citacao.ok) {
     return { ok: false, error: citacao.error };
   }
-  const { error } = await supabase.from("message").insert({
-    clinic_id: context.active!.clinicId,
-    conversation_id: conversation.id,
-    direction: "saida",
-    author: "usuario",
-    author_user_id: context.userId,
-    content_type: "texto",
-    body: parsedBody.data,
-    is_internal_note: true,
-    reply_to_message_id: citacao.replyTo?.messageId ?? null,
-  });
-  if (error) {
+  const { data: nova, error } = await supabase
+    .from("message")
+    .insert({
+      clinic_id: context.active!.clinicId,
+      conversation_id: conversation.id,
+      direction: "saida",
+      author: "usuario",
+      author_user_id: context.userId,
+      content_type: "texto",
+      body: parsedBody.data,
+      is_internal_note: true,
+      reply_to_message_id: citacao.replyTo?.messageId ?? null,
+    })
+    .select("id")
+    .single();
+  if (error || !nova) {
     return { ok: false, error: "Não foi possível salvar a nota." };
   }
-  return { ok: true };
+  return { ok: true, messageId: nova.id as string };
 }
 
 // Por que cada recusa aconteceu, na lingua de quem atende. Os codigos vem de

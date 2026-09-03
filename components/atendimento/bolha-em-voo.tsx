@@ -85,7 +85,7 @@ function CartaoNaoEnviada({
       <div className="grid max-w-[74%] gap-2 rounded-[14px_4px_14px_14px] border [border-color:var(--alert)] px-3 py-2 [background:var(--alert-bg)]">
         <span className="flex items-center gap-1.5 text-[11px] font-semibold [color:var(--alert-text)]">
           <TriangleAlert strokeWidth={1.5} className="size-3 shrink-0" />
-          Não enviada
+          {envio.incerto ? "Envio não confirmado" : "Não enviada"}
         </span>
         <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
           {envio.corpo}
@@ -94,13 +94,22 @@ function CartaoNaoEnviada({
           <p className="text-[11.5px] text-text-secondary">{envio.erro}</p>
         ) : null}
         <div className="flex items-center gap-1.5 justify-self-end">
-          <Button size="sm" variant="outline" onClick={aoTentarDeNovo}>
-            <RotateCcw strokeWidth={1.5} className="size-4" />
-            Tentar de novo
-          </Button>
+          {/* Envio INCERTO não ganha botão de reenviar.
+              A linha nasce no banco antes da espera anti-ban, então uma falha
+              de rede na volta não prova que nada saiu. Um reenvio às cegas faz
+              o paciente receber a mesma coisa duas vezes, e neste canal não
+              oficial mensagem repetida é do tipo que acelera banimento do
+              número da clínica. Quem quiser mandar de novo confere a conversa
+              e escreve, que é um gesto consciente. */}
+          {envio.incerto ? null : (
+            <Button size="sm" variant="outline" onClick={aoTentarDeNovo}>
+              <RotateCcw strokeWidth={1.5} className="size-4" />
+              Tentar de novo
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={aoDescartar}>
             <Trash2 strokeWidth={1.5} className="size-4" />
-            Descartar
+            {envio.incerto ? "Entendi, esconder" : "Descartar"}
           </Button>
         </div>
       </div>
