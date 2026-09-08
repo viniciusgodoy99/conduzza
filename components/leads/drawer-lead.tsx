@@ -22,11 +22,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { CONTACT_RECENCY, STATUS_TONE_VARS } from "@/lib/design/status";
 import {
-  CONTACT_RECENCY,
-  FUNNEL_STAGE,
-  STATUS_TONE_VARS,
-} from "@/lib/design/status";
+  definicaoDaEtapa,
+  porChave,
+  type EtapaDaJornada,
+} from "@/lib/domain/jornada";
 import { recencyDe } from "@/lib/domain/leads-ui";
 import {
   leadsKeys,
@@ -66,6 +67,7 @@ function Linha({
 export function DrawerLead({
   clinicId,
   lead,
+  jornada,
   timezone,
   membros,
   podeEditar,
@@ -74,6 +76,7 @@ export function DrawerLead({
 }: {
   clinicId: string;
   lead: LeadResumo | null;
+  jornada: EtapaDaJornada[];
   timezone: string;
   membros: Record<string, string>;
   podeEditar: boolean;
@@ -100,7 +103,9 @@ export function DrawerLead({
   const recencia = lead ? recencyDe(lead.last_contact_at, new Date()) : null;
   const origem = lead ? rotuloDoCanal(lead.source_channel) : null;
   const neutro = STATUS_TONE_VARS.neutral;
-  const jaPerdido = lead?.funnel_stage === "perdido";
+  const defs = porChave(jornada);
+  const defDoLead = lead ? defs.get(lead.funnel_stage) : undefined;
+  const jaPerdido = defDoLead?.papel === "perdido";
 
   return (
     <Sheet open={lead !== null} onOpenChange={(a) => (!a ? onFechar() : null)}>
@@ -117,7 +122,13 @@ export function DrawerLead({
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center gap-1.5">
-                <StatusChip definition={FUNNEL_STAGE[lead.funnel_stage]} />
+                {defDoLead ? (
+                  <StatusChip definition={definicaoDaEtapa(defDoLead)} />
+                ) : (
+                  <span className="text-sm text-text-secondary">
+                    {lead.funnel_stage}
+                  </span>
+                )}
                 {origem ? (
                   <span
                     className="inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium whitespace-nowrap"
@@ -264,7 +275,7 @@ export function DrawerLead({
                       ids.includes(l.id)
                         ? {
                             ...l,
-                            funnel_stage: "perdido" as const,
+                            funnel_stage: "perdido",
                             lost_reason: motivo,
                             lost_reason_note: nota,
                           }

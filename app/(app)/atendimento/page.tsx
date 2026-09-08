@@ -4,6 +4,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { fetchClinicAuthorNames } from "@/lib/queries/profiles";
 import { fetchConversations } from "@/lib/queries/conversations";
+import { fetchJornada } from "@/lib/queries/jornada";
 import { createClient } from "@/lib/supabase/server";
 
 import { InboxClient } from "./inbox-client";
@@ -27,15 +28,22 @@ export default async function AtendimentoPage() {
     userId: context.userId,
     entity: "inbox",
   });
-  const [conversations, accountResult, authorNames] = await Promise.all([
-    fetchConversations(supabase, active.clinicId),
-    supabase
-      .from("whatsapp_account")
-      .select("connection_status")
-      .eq("clinic_id", active.clinicId)
-      .maybeSingle(),
-    fetchClinicAuthorNames(supabase, active.clinicId),
-  ]);
+  const [conversations, accountResult, authorNames, jornada] =
+    await Promise.all([
+      fetchConversations(supabase, active.clinicId),
+      supabase
+        .from("whatsapp_account")
+        .select("connection_status")
+        .eq("clinic_id", active.clinicId)
+        .maybeSingle(),
+      fetchClinicAuthorNames(supabase, active.clinicId),
+      fetchJornada(supabase, active.clinicId),
+    ]);
+  // A jornada e configuravel por clinica: os rotulos de etapa que o Inbox
+  // mostra vem dela, nao mais de um dicionario fixo.
+  const nomesDeEtapa = Object.fromEntries(
+    jornada.map((etapa) => [etapa.chave, etapa.nome]),
+  );
 
   return (
     <div className="h-[calc(100dvh-3.5rem)] overflow-hidden">
@@ -43,6 +51,7 @@ export default async function AtendimentoPage() {
         clinicId={active.clinicId}
         viewerId={context.userId}
         viewerRole={active.role}
+        nomesDeEtapa={nomesDeEtapa}
         authorNames={authorNames}
         initialConversations={conversations}
         hasWhatsappAccount={accountResult.data !== null}

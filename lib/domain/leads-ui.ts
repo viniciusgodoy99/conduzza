@@ -1,4 +1,4 @@
-import type { ContactRecency, FunnelStage } from "@/lib/design/status";
+import type { ContactRecency } from "@/lib/design/status";
 
 // Regras PURAS da Tela 4 (Leads): recencia de contato, consentimento vigente,
 // ordenacao por "quem espera ha mais tempo" e agrupamento do Kanban. Zero
@@ -97,7 +97,7 @@ export const LOST_REASONS: readonly { codigo: string; rotulo: string }[] = [
 
 /** O minimo que um lead precisa ter para os filtros e o Kanban puros. */
 export type LeadFiltravel = {
-  funnel_stage: FunnelStage;
+  funnel_stage: string;
   source_channel: string | null;
   owner_user_id: string | null;
   first_contact_at: string;
@@ -145,37 +145,4 @@ export function filtrarLeads<T extends LeadFiltravel>(
     }
     return true;
   });
-}
-
-const ETAPAS: readonly FunnelStage[] = [
-  "novo",
-  "em_contato",
-  "aguardando_resposta",
-  "agendou",
-  "compareceu",
-  "perdido",
-];
-
-/**
- * Colunas do Kanban: toda etapa presente (coluna vazia existe, estado de
- * vazio e obrigatorio) e cada grupo ja ordenado por proxima acao.
- */
-export function agruparPorEtapa<T extends LeadFiltravel>(
-  leads: readonly T[],
-): Record<FunnelStage, T[]> {
-  const grupos: Record<FunnelStage, T[]> = {
-    novo: [],
-    em_contato: [],
-    aguardando_resposta: [],
-    agendou: [],
-    compareceu: [],
-    perdido: [],
-  };
-  for (const lead of leads) {
-    grupos[lead.funnel_stage].push(lead);
-  }
-  for (const etapa of ETAPAS) {
-    grupos[etapa].sort(compararPorProximaAcao);
-  }
-  return grupos;
 }

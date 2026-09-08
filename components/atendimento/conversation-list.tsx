@@ -28,6 +28,7 @@ const STATUS_ORDER: ConversationStatus[] = [
 ];
 
 export function ConversationList({
+  nomesDeEtapa,
   conversations,
   viewerId,
   selectedId,
@@ -35,6 +36,7 @@ export function ConversationList({
   onResolvedRequested,
   resolvedLoading = false,
 }: {
+  nomesDeEtapa: Record<string, string>;
   conversations: ConversationListItem[];
   viewerId: string;
   selectedId: string | null;
@@ -238,7 +240,7 @@ export function ConversationList({
               <ConversationCard
                 key={conversation.id}
                 conversation={conversation}
-                preview={previewOf(conversation)}
+                preview={previewOf(conversation, nomesDeEtapa)}
                 selected={conversation.id === selectedId}
                 isMine={conversation.assignee_user_id === viewerId}
                 onSelect={() => onSelect(conversation.id)}
@@ -251,14 +253,14 @@ export function ConversationList({
   );
 }
 
-function previewOf(conversation: ConversationListItem): string {
-  const stage: Record<string, string> = {
-    novo: "Novo contato",
-    em_contato: "Em contato",
-    aguardando_resposta: "Aguardando resposta",
-    agendou: "Agendou",
-    compareceu: "Paciente da casa",
-    perdido: "Perdido",
-  };
-  return `${conversation.contact.kind === "paciente" ? "Paciente" : "Lead"} · ${stage[conversation.contact.funnel_stage] ?? conversation.contact.funnel_stage}`;
+function previewOf(
+  conversation: ConversationListItem,
+  nomesDeEtapa: Record<string, string>,
+): string {
+  // O nome da etapa vem da JORNADA da clinica (configuravel), com a chave
+  // crua de reserva: mostrar a chave e feio, mentir seria pior.
+  const etapa =
+    nomesDeEtapa[conversation.contact.funnel_stage] ??
+    conversation.contact.funnel_stage;
+  return `${conversation.contact.kind === "paciente" ? "Paciente" : "Lead"} · ${etapa}`;
 }

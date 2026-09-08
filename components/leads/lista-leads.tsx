@@ -12,7 +12,11 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FUNNEL_STAGE } from "@/lib/design/status";
+import {
+  definicaoDaEtapa,
+  porChave,
+  type EtapaDaJornada,
+} from "@/lib/domain/jornada";
 import type { LeadResumo } from "@/lib/queries/leads";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +33,7 @@ import { cn } from "@/lib/utils";
 export function ListaLeads({
   leads,
   membros,
+  jornada,
   timezone,
   selecionados,
   onSelecionar,
@@ -37,12 +42,14 @@ export function ListaLeads({
 }: {
   leads: LeadResumo[];
   membros: Record<string, string>;
+  jornada: EtapaDaJornada[];
   timezone: string;
   selecionados: string[];
   onSelecionar: (id: string, marcado: boolean) => void;
   onSelecionarTodos: (ids: string[], marcado: boolean) => void;
   onAbrirLead: (lead: LeadResumo) => void;
 }) {
+  const defs = useMemo(() => porChave(jornada), [jornada]);
   const columns = useMemo<ColumnDef<LeadResumo>[]>(() => {
     const todosMarcados =
       leads.length > 0 && leads.every((lead) => selecionados.includes(lead.id));
@@ -124,9 +131,19 @@ export function ListaLeads({
       {
         accessorKey: "funnel_stage",
         header: "Etapa",
-        cell: ({ row }) => (
-          <StatusChip definition={FUNNEL_STAGE[row.original.funnel_stage]} />
-        ),
+        cell: ({ row }) => {
+          // Etapa fora da jornada nao derruba a linha: mostra a chave crua,
+          // que pelo menos diz a verdade (o banco impede o caso; isto cobre
+          // cache velho na troca de jornada).
+          const def = defs.get(row.original.funnel_stage);
+          return def ? (
+            <StatusChip definition={definicaoDaEtapa(def)} />
+          ) : (
+            <span className="text-sm text-text-secondary">
+              {row.original.funnel_stage}
+            </span>
+          );
+        },
       },
       {
         accessorKey: "owner_user_id",
@@ -193,6 +210,8 @@ export function ListaLeads({
     onSelecionar,
     onSelecionarTodos,
     onAbrirLead,
+    ,
+    defs,
   ]);
 
   return (

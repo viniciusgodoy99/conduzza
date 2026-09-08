@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import { fetchJornada } from "@/lib/queries/jornada";
 import { fetchLeads } from "@/lib/queries/leads";
 import { fetchClinicAuthorNames } from "@/lib/queries/profiles";
 import { createClient } from "@/lib/supabase/server";
@@ -32,9 +33,10 @@ export default async function LeadsPage() {
     entity: "leads",
   });
 
-  const [leads, membros] = await Promise.all([
+  const [leads, membros, jornada] = await Promise.all([
     fetchLeads(supabase, active.clinicId),
     fetchClinicAuthorNames(supabase, active.clinicId),
+    fetchJornada(supabase, active.clinicId),
   ]);
 
   return (
@@ -48,6 +50,7 @@ export default async function LeadsPage() {
         clinicId={active.clinicId}
         timezone={active.timezone}
         leadsIniciais={leads}
+        jornada={jornada}
         membros={membros}
         podeEditar={canEdit(active.role, "leads_pacientes")}
         dica={

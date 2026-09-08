@@ -29,6 +29,7 @@ import { TableSkeleton } from "@/components/shared/loading-skeleton";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { instanteLocal } from "@/lib/domain/horarios";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { filtrarLeads, type FiltrosDeLeads } from "@/lib/domain/leads-ui";
 import { fetchLeads, leadsKeys, type LeadResumo } from "@/lib/queries/leads";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
@@ -60,6 +61,7 @@ export function LeadsClient({
   clinicId,
   timezone,
   leadsIniciais,
+  jornada,
   membros,
   podeEditar,
   dica,
@@ -67,6 +69,7 @@ export function LeadsClient({
   clinicId: string;
   timezone: string;
   leadsIniciais: LeadResumo[];
+  jornada: EtapaDaJornada[];
   membros: Record<string, string>;
   podeEditar: boolean;
   dica: string;
@@ -192,6 +195,7 @@ export function LeadsClient({
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <FiltrosLeads
+          jornada={jornada}
           valores={valores}
           membros={membros}
           aoMudar={(campo, valor) => setParams({ [campo]: valor || null })}
@@ -328,6 +332,7 @@ export function LeadsClient({
         />
       ) : visaoEfetiva === "kanban" ? (
         <KanbanBoard
+          jornada={jornada}
           clinicId={clinicId}
           leads={leadsFiltrados}
           membros={membros}
@@ -336,6 +341,7 @@ export function LeadsClient({
         />
       ) : (
         <ListaLeads
+          jornada={jornada}
           leads={leadsFiltrados}
           membros={membros}
           timezone={timezone}
@@ -348,6 +354,7 @@ export function LeadsClient({
 
       {visaoEfetiva === "lista" && leadsSelecionados.length > 0 ? (
         <BarraAcoesMassa
+          jornada={jornada}
           clinicId={clinicId}
           selecionados={leadsSelecionados}
           membros={membros}
@@ -358,6 +365,7 @@ export function LeadsClient({
       ) : null}
 
       <DrawerLead
+        jornada={jornada}
         clinicId={clinicId}
         lead={leadAberto}
         timezone={timezone}

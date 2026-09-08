@@ -52,6 +52,7 @@ export function InboxClient({
   clinicId,
   viewerId,
   viewerRole,
+  nomesDeEtapa,
   authorNames,
   initialConversations,
   hasWhatsappAccount,
@@ -59,6 +60,7 @@ export function InboxClient({
   clinicId: string;
   viewerId: string;
   viewerRole: Role;
+  nomesDeEtapa: Record<string, string>;
   authorNames: Record<string, string>;
   initialConversations: ConversationListItem[];
   hasWhatsappAccount: boolean;
@@ -419,6 +421,7 @@ export function InboxClient({
         )}
       >
         <ConversationList
+          nomesDeEtapa={nomesDeEtapa}
           conversations={conversations}
           viewerId={viewerId}
           selectedId={selectedId}
@@ -517,6 +520,7 @@ export function InboxClient({
           <ContextPanel
             contact={selected.contact}
             consent={consentQuery.data ?? null}
+            nomesDeEtapa={nomesDeEtapa}
           />
         ) : (
           <div className="p-4 text-[12.5px] text-text-tertiary">
@@ -544,6 +548,7 @@ export function InboxClient({
             <ContextPanel
               contact={selected.contact}
               consent={consentQuery.data ?? null}
+              nomesDeEtapa={nomesDeEtapa}
             />
           ) : null}
         </SheetContent>

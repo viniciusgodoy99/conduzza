@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FUNNEL_STAGE, type FunnelStage } from "@/lib/design/status";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
 
 // Filtros da Tela 4: etapa, origem, responsavel e periodo de entrada. Os
 // valores vivem na URL (o pai grava); aqui e so a barra. O sentinela evita
@@ -65,17 +65,19 @@ function SelectFiltro({
 export function FiltrosLeads({
   valores,
   membros,
+  jornada,
   aoMudar,
   aoLimpar,
 }: {
   valores: ValoresFiltros;
   membros: Record<string, string>;
+  jornada: EtapaDaJornada[];
   aoMudar: (campo: keyof ValoresFiltros, valor: string) => void;
   aoLimpar: () => void;
 }) {
-  const etapas = (Object.keys(FUNNEL_STAGE) as FunnelStage[]).map((etapa) => ({
-    value: etapa,
-    label: FUNNEL_STAGE[etapa].label,
+  const etapas = jornada.map((def) => ({
+    value: def.chave,
+    label: def.nome,
   }));
   const responsaveis = Object.entries(membros)
     .map(([id, nome]) => ({ value: id, label: nome }))

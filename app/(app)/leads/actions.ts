@@ -32,14 +32,18 @@ const nomeSchema = z.string().trim().min(2).max(120);
 const idsSchema = z.array(idSchema).min(1).max(100);
 const canalSchema = z.enum(SOURCE_CHANNELS);
 
-const etapaSchema = z.enum([
-  "novo",
-  "em_contato",
-  "aguardando_resposta",
-  "agendou",
-  "compareceu",
-  "perdido",
-]);
+// A etapa e uma CHAVE da jornada da clinica (funnel_stage_def), nao mais um
+// enum global: cada clinica tem as suas. O formato e validado aqui; a
+// EXISTENCIA na jornada e validada pelo gatilho do banco, que recusa com
+// 23514 (o mesmo contrato do check antigo). As quatro chaves de sistema
+// ('novo', 'agendou', 'compareceu', 'perdido') existem em toda jornada, por
+// garantia de gatilho, entao os literais delas continuam seguros.
+const etapaSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(40)
+  .regex(/^[a-z0-9_]+$/);
 
 const motivoPerdaSchema = z.enum([
   "preco",
@@ -208,6 +212,15 @@ export async function mudarEtapaAction(
     .in("id", parsed.data.contact_ids)
     .select("id");
   if (error || !data || data.length === 0) {
+    // 23514 e o gatilho do banco recusando: etapa fora da jornada, ou perdido
+    // sem motivo. A mensagem do gatilho ja vem em portugues.
+    if (error?.code === "23514") {
+      return {
+        ok: false,
+        error:
+          "Esta etapa não existe mais na jornada da clínica. Recarregue a página.",
+      };
+    }
     return { ok: false, error: "Não foi possível mudar a etapa." };
   }
   await auditar(

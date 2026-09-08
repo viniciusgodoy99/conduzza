@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { FunnelStage } from "@/lib/design/status";
 import {
   compararPorProximaAcao,
   consentimentoVigenteDeLinhas,
@@ -24,7 +23,7 @@ export type LeadResumo = {
   id: string;
   name: string | null;
   phone_e164: string;
-  funnel_stage: FunnelStage;
+  funnel_stage: string;
   lost_reason: string | null;
   lost_reason_note: string | null;
   owner_user_id: string | null;
@@ -81,7 +80,7 @@ function normalizarLead(row: Record<string, unknown>): LeadResumo {
     id: row.id as string,
     name: (row.name as string | null) ?? null,
     phone_e164: row.phone_e164 as string,
-    funnel_stage: row.funnel_stage as FunnelStage,
+    funnel_stage: row.funnel_stage as string,
     lost_reason: (row.lost_reason as string | null) ?? null,
     lost_reason_note: (row.lost_reason_note as string | null) ?? null,
     owner_user_id: (row.owner_user_id as string | null) ?? null,

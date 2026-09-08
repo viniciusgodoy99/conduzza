@@ -26,26 +26,18 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { STATUS_TONE_VARS } from "@/lib/design/status";
 import {
-  FUNNEL_STAGE,
-  STATUS_TONE_VARS,
-  type FunnelStage,
-} from "@/lib/design/status";
+  definicaoDaEtapa,
+  porChave,
+  type EtapaDaJornada,
+} from "@/lib/domain/jornada";
 import { leadsKeys, type LeadResumo } from "@/lib/queries/leads";
 
 // Barra flutuante das acoes em massa da lista. Toda acao usa as Server
 // Actions em lote existentes; Perdido passa pelo mesmo modal de motivo do
 // Kanban. Disparar regua fica visivel e desabilitado ate a fase de
 // Automacoes, com dica explicando por que (nunca escondido).
-
-const ETAPAS: readonly FunnelStage[] = [
-  "novo",
-  "em_contato",
-  "aguardando_resposta",
-  "agendou",
-  "compareceu",
-  "perdido",
-];
 
 // Popover de acao protegida: com permissao abre o popover; sem permissao o
 // botao fica visivel e desabilitado com a dica, sem popover nenhum.
@@ -92,6 +84,7 @@ function AcaoComPopover({
 }
 
 export function BarraAcoesMassa({
+  jornada,
   clinicId,
   selecionados,
   membros,
@@ -99,6 +92,7 @@ export function BarraAcoesMassa({
   dica,
   onLimpar,
 }: {
+  jornada: EtapaDaJornada[];
   clinicId: string;
   selecionados: LeadResumo[];
   membros: Record<string, string>;
@@ -136,8 +130,9 @@ export function BarraAcoesMassa({
     invalidar();
   };
 
-  const mudarEtapa = async (etapa: FunnelStage) => {
-    if (etapa === "perdido") {
+  const defs = porChave(jornada);
+  const mudarEtapa = async (etapa: string) => {
+    if (defs.get(etapa)?.papel === "perdido") {
       setEtapaAberto(false);
       setPerdaIds(ids);
       return;
@@ -151,8 +146,8 @@ export function BarraAcoesMassa({
     }
     toast.success(
       n === 1
-        ? `1 lead movido para ${FUNNEL_STAGE[etapa].label}`
-        : `${n} leads movidos para ${FUNNEL_STAGE[etapa].label}`,
+        ? `1 lead movido para ${defs.get(etapa)?.nome ?? etapa}`
+        : `${n} leads movidos para ${defs.get(etapa)?.nome ?? etapa}`,
     );
     setEtapaAberto(false);
     invalidar();
@@ -235,8 +230,9 @@ export function BarraAcoesMassa({
           onAberto={setEtapaAberto}
         >
           <div className="grid w-56">
-            {ETAPAS.map((etapa) => {
-              const definicao = FUNNEL_STAGE[etapa];
+            {jornada.map((def) => {
+              const etapa = def.chave;
+              const definicao = definicaoDaEtapa(def);
               const tone = STATUS_TONE_VARS[definicao.tone];
               const Icone = definicao.icon;
               return (

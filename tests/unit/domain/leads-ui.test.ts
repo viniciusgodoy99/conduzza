@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  agruparPorEtapa,
+  agruparPorJornada,
+  type EtapaDaJornada,
+  type PapelDeEtapa,
+} from "@/lib/domain/jornada";
+
+import {
   compararPorProximaAcao,
   consentimentoVigenteDeLinhas,
   filtrarLeads,
@@ -157,35 +162,42 @@ function lead(parcial: Partial<LeadFiltravel>): LeadFiltravel {
   };
 }
 
-describe("agruparPorEtapa", () => {
-  it("toda etapa existe no resultado, mesmo vazia", () => {
-    const grupos = agruparPorEtapa([]);
-    expect(Object.keys(grupos).sort()).toEqual(
-      [
-        "novo",
-        "em_contato",
-        "aguardando_resposta",
-        "agendou",
-        "compareceu",
-        "perdido",
-      ].sort(),
-    );
-    expect(grupos.perdido).toEqual([]);
+describe("agruparPorJornada", () => {
+  // O agrupador do Kanban passou a ser o da JORNADA da clinica
+  // (lib/domain/jornada.ts): as colunas sao as etapas que ELA definiu, na
+  // ordem dela, e nao mais uma lista fixa de 6.
+  const jornada = [
+    etapaDef("novo", 10, "entrada"),
+    etapaDef("em_contato", 20, null),
+    etapaDef("comprou_pacote", 55, null),
+    etapaDef("perdido", 60, "perdido"),
+  ];
+
+  it("toda etapa da jornada vira grupo, mesmo vazia, na ordem da clinica", () => {
+    const grupos = agruparPorJornada([], jornada);
+    expect([...grupos.keys()]).toEqual([
+      "novo",
+      "em_contato",
+      "comprou_pacote",
+      "perdido",
+    ]);
+    expect(grupos.get("comprou_pacote")).toEqual([]);
   });
 
-  it("cada grupo sai ordenado por proxima acao", () => {
-    const a = lead({
-      funnel_stage: "em_contato",
-      last_contact_at: "2026-08-25T10:00:00Z",
-    });
-    const b = lead({ funnel_stage: "em_contato", last_contact_at: null });
-    const c = lead({
-      funnel_stage: "em_contato",
-      last_contact_at: "2026-08-20T10:00:00Z",
-    });
-    const grupos = agruparPorEtapa([a, b, c]);
-    expect(grupos.em_contato).toEqual([b, c, a]);
-    expect(grupos.novo).toEqual([]);
+  it("lead de etapa que nao esta na jornada cai na ENTRADA, nunca some", () => {
+    // Cache momentaneamente velho na troca de jornada nao pode sumir com um
+    // lead do Kanban: sumir em silencio e perda de dado aos olhos de quem usa.
+    const orfao = lead({ funnel_stage: "etapa_que_ja_era" });
+    const grupos = agruparPorJornada([orfao], jornada);
+    expect(grupos.get("novo")).toEqual([orfao]);
+  });
+
+  it("agrupa cada lead na propria etapa", () => {
+    const a = lead({ funnel_stage: "em_contato" });
+    const b = lead({ funnel_stage: "comprou_pacote" });
+    const grupos = agruparPorJornada([a, b], jornada);
+    expect(grupos.get("em_contato")).toEqual([a]);
+    expect(grupos.get("comprou_pacote")).toEqual([b]);
   });
 });
 
@@ -237,3 +249,26 @@ describe("LOST_REASONS", () => {
     ]);
   });
 });
+
+function etapaDef(
+  chave: string,
+  posicao: number,
+  papel: PapelDeEtapa | null,
+): EtapaDaJornada {
+  return {
+    id: chave,
+    chave,
+    nome: chave,
+    posicao,
+    tom: "neutral",
+    icone: "circle",
+    papel,
+    termos_chave: [],
+    meta_event_name: null,
+    conversao_ativa: true,
+    is_sale: false,
+    is_first_contact: false,
+    value_source: null,
+    value_cents: null,
+  };
+}

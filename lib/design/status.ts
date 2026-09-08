@@ -125,6 +125,11 @@ export const CONVERSATION_STATUS: Record<ConversationStatus, StatusDefinition> =
 // Compareceu usa o MESMO icone e o MESMO tom do status de agendamento de
 // proposito: mesma semantica, mesma forma (a proibicao e mesmo icone em
 // cores DIFERENTES).
+// ATENCAO (09/09/2026): as etapas do funil viraram CONFIGURAVEIS por clinica
+// (funnel_stage_def, lib/domain/jornada.ts). Este dicionario descreve a
+// JORNADA PADRAO SEMEADA, e sobrevive para: o teste que trava a semente, e a
+// tela do mapa de conversao ate a fase 3 da jornada. Tela de leads e inbox ja
+// leem a jornada do banco: nao acrescente consumidor novo aqui.
 export type FunnelStage =
   | "novo"
   | "em_contato"

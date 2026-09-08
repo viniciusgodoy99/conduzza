@@ -1,7 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { FUNNEL_STAGE, type FunnelStage } from "@/lib/design/status";
-
 // Agregados da tela de Resultados (Modulo 10), calculados NO BANCO pela RPC
 // resultados_da_clinica (migration 20260908170000). A versao anterior somava
 // linhas no servidor de aplicacao e tinha dois defeitos graves, achados na
@@ -23,8 +21,11 @@ export type CanalResumo = { canal: string | null; total: number };
 
 export type ResultadosResumo = {
   totalLeads: number;
-  /** etapa ATUAL de cada contato; alimenta o retrato do funil */
-  porEtapa: Record<FunnelStage, number>;
+  /**
+   * Etapa ATUAL de cada contato, chaveada pela CHAVE da jornada da clinica
+   * (as etapas sao configuraveis; as chaves de sistema existem sempre).
+   */
+  porEtapa: Record<string, number>;
   /** COORTE: quem ja teve agendamento, mesmo que hoje esteja em Perdido */
   agendamentos: number;
   /** COORTE: quem ja compareceu alguma vez */
@@ -34,8 +35,6 @@ export type ResultadosResumo = {
   rastreados: number;
   naoRastreados: number;
 };
-
-const ETAPAS = Object.keys(FUNNEL_STAGE) as FunnelStage[];
 
 type RespostaRpc = {
   total_leads: number;
@@ -57,9 +56,7 @@ export async function fetchResultados(
   }
   const bruto = (data ?? {}) as Partial<RespostaRpc>;
 
-  const porEtapa = Object.fromEntries(
-    ETAPAS.map((etapa) => [etapa, bruto.por_etapa?.[etapa] ?? 0]),
-  ) as Record<FunnelStage, number>;
+  const porEtapa: Record<string, number> = bruto.por_etapa ?? {};
 
   const porCanal: CanalResumo[] = (bruto.por_canal ?? []).map((linha) => ({
     canal: linha.canal,
@@ -75,7 +72,8 @@ export async function fetchResultados(
     porEtapa,
     agendamentos: bruto.agendaram ?? 0,
     comparecimentos: bruto.compareceram ?? 0,
-    perdidos: porEtapa.perdido,
+    // 'perdido' e chave de sistema: existe em toda jornada, por gatilho.
+    perdidos: porEtapa["perdido"] ?? 0,
     porCanal,
     rastreados: totalLeads - naoRastreados,
     naoRastreados,

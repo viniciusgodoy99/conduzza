@@ -5,7 +5,6 @@ import { ptBR } from "date-fns/locale";
 import { CalendarClock, History, ShieldCheck, ShieldOff } from "lucide-react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
-import { FUNNEL_STAGE } from "@/lib/design/status";
 import type { ConsentInfo, ContactSummary } from "@/lib/queries/conversations";
 
 // Painel de contexto (handoff): dados do contato, estado da autorizacao de
@@ -19,10 +18,6 @@ const CONSENT_SOURCE_LABEL: Record<string, string> = {
   importacao_planilha: "Importação de planilha",
   conversa: "Iniciou a conversa",
 };
-
-const STAGE_LABEL: Record<string, string> = Object.fromEntries(
-  Object.entries(FUNNEL_STAGE).map(([stage, def]) => [stage, def.label]),
-);
 
 function Section({
   title,
@@ -54,9 +49,11 @@ function Row({ label, value }: { label: string; value: string | null }) {
 }
 
 export function ContextPanel({
+  nomesDeEtapa,
   contact,
   consent,
 }: {
+  nomesDeEtapa: Record<string, string>;
   contact: ContactSummary;
   consent: ConsentInfo;
 }) {
@@ -80,7 +77,7 @@ export function ContextPanel({
         />
         <Row
           label="Etapa"
-          value={STAGE_LABEL[contact.funnel_stage] ?? contact.funnel_stage}
+          value={nomesDeEtapa[contact.funnel_stage] ?? contact.funnel_stage}
         />
         <Row
           label="Primeiro contato"

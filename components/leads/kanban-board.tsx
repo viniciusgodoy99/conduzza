@@ -14,32 +14,27 @@ import { toast } from "sonner";
 import { mudarEtapaAction } from "@/app/(app)/leads/actions";
 import { KanbanColuna } from "@/components/leads/kanban-coluna";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
-import type { FunnelStage } from "@/lib/design/status";
-import { agruparPorEtapa } from "@/lib/domain/leads-ui";
+import { agruparPorJornada, type EtapaDaJornada } from "@/lib/domain/jornada";
+import { compararPorProximaAcao } from "@/lib/domain/leads-ui";
 import { leadsKeys, type LeadResumo } from "@/lib/queries/leads";
 
-// Kanban da Tela 4: 6 colunas fixas, arrasto com PointerSensor de 8px (o
-// clique continua abrindo o drawer). Soltar em etapa comum e otimista com
-// rollback; soltar em Perdido NAO persiste nada: o modal de motivo decide e
-// cancelar devolve o cartao, porque nada foi gravado.
-
-const ETAPAS: readonly FunnelStage[] = [
-  "novo",
-  "em_contato",
-  "aguardando_resposta",
-  "agendou",
-  "compareceu",
-  "perdido",
-];
+// Kanban da Tela 4: as colunas SAO A JORNADA DA CLINICA (funnel_stage_def),
+// na ordem que ela definiu, nao mais uma lista fixa de 6. Arrasto com
+// PointerSensor de 8px (o clique continua abrindo o drawer). Soltar em etapa
+// comum e otimista com rollback; soltar na etapa de papel PERDIDO nao
+// persiste nada: o modal de motivo decide, e cancelar devolve o cartao,
+// porque nada foi gravado.
 
 export function KanbanBoard({
   clinicId,
+  jornada,
   leads,
   membros,
   podeEditar,
   onAbrirLead,
 }: {
   clinicId: string;
+  jornada: EtapaDaJornada[];
   leads: LeadResumo[];
   membros: Record<string, string>;
   podeEditar: boolean;
@@ -51,16 +46,24 @@ export function KanbanBoard({
   );
   const [perdaIds, setPerdaIds] = useState<string[] | null>(null);
 
-  const grupos = agruparPorEtapa(leads);
+  const grupos = agruparPorJornada(leads, jornada);
+  // Dentro de cada coluna, quem precisa de acao primeiro (mesma regra de
+  // sempre; a ordenacao morava no agrupador antigo e continua obrigatoria).
+  for (const grupo of grupos.values()) {
+    grupo.sort(compararPorProximaAcao);
+  }
   const chave = leadsKeys.lista(clinicId);
 
   const aoSoltar = (event: DragEndEvent) => {
     const lead = event.active.data.current?.lead as LeadResumo | undefined;
-    const destino = event.over?.id as FunnelStage | undefined;
+    const destino = event.over?.id as string | undefined;
     if (!lead || !destino || destino === lead.funnel_stage) {
       return;
     }
-    if (destino === "perdido") {
+    // O desvio para o modal de motivo e pelo PAPEL da etapa, nao pelo nome:
+    // a clinica pode ter renomeado "Perdido" para qualquer coisa.
+    const defDestino = jornada.find((etapa) => etapa.chave === destino);
+    if (defDestino?.papel === "perdido") {
       setPerdaIds([lead.id]);
       return;
     }
@@ -93,11 +96,11 @@ export function KanbanBoard({
   return (
     <DndContext sensors={sensores} onDragEnd={aoSoltar}>
       <div className="flex items-stretch gap-3 overflow-x-auto pb-2">
-        {ETAPAS.map((etapa) => (
+        {jornada.map((etapa) => (
           <KanbanColuna
-            key={etapa}
+            key={etapa.chave}
             etapa={etapa}
-            leads={grupos[etapa]}
+            leads={grupos.get(etapa.chave) ?? []}
             membros={membros}
             podeEditar={podeEditar}
             onAbrirLead={onAbrirLead}
@@ -115,7 +118,7 @@ export function KanbanBoard({
                   ids.includes(l.id)
                     ? {
                         ...l,
-                        funnel_stage: "perdido" as const,
+                        funnel_stage: "perdido",
                         lost_reason: motivo,
                         lost_reason_note: nota,
                       }

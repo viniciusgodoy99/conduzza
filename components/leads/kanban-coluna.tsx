@@ -3,11 +3,8 @@
 import { useDroppable } from "@dnd-kit/core";
 
 import { LeadCard } from "@/components/leads/lead-card";
-import {
-  FUNNEL_STAGE,
-  STATUS_TONE_VARS,
-  type FunnelStage,
-} from "@/lib/design/status";
+import { STATUS_TONE_VARS } from "@/lib/design/status";
+import { definicaoDaEtapa, type EtapaDaJornada } from "@/lib/domain/jornada";
 import type { LeadResumo } from "@/lib/queries/leads";
 import { cn } from "@/lib/utils";
 
@@ -22,14 +19,14 @@ export function KanbanColuna({
   podeEditar,
   onAbrirLead,
 }: {
-  etapa: FunnelStage;
+  etapa: EtapaDaJornada;
   leads: LeadResumo[];
   membros: Record<string, string>;
   podeEditar: boolean;
   onAbrirLead: (lead: LeadResumo) => void;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: etapa });
-  const definicao = FUNNEL_STAGE[etapa];
+  const { setNodeRef, isOver } = useDroppable({ id: etapa.chave });
+  const definicao = definicaoDaEtapa(etapa);
   const tone = STATUS_TONE_VARS[definicao.tone];
   const Icone = definicao.icon;
 
