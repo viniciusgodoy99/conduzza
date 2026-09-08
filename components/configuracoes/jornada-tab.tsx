@@ -482,10 +482,13 @@ function FormularioDaEtapa({
         </div>
       </div>
 
-      <div className="grid gap-1.5">
-        <Label htmlFor={`termo-${id}`}>
-          Termos que movem o contato para cá
-        </Label>
+      {/* A etapa de perda nao recebe termo: palavra solta nao perde ninguem
+          (a decisao pura em lib/domain/jornada.ts ignora termos dela). */}
+      {etapa?.papel === "perdido" ? null : (
+        <div className="grid gap-1.5">
+          <Label htmlFor={`termo-${id}`}>
+            Termos que movem o contato para cá
+          </Label>
         <p className="text-[12px] text-text-tertiary">
           Quando o paciente escrever um destes termos na conversa, o contato
           anda sozinho para esta etapa (só para frente na jornada, nunca para a
@@ -544,9 +547,13 @@ function FormularioDaEtapa({
           >
             Adicionar
           </Button>
+          </div>
         </div>
-      </div>
+      )}
 
+      {/* Perda nunca e conversao: o check perdido_sem_conversao no banco
+          recusa, entao a tela nem oferece. */}
+      {etapa?.papel === "perdido" ? null : (
       <div className="grid gap-3 rounded-lg bg-surface-2 p-3">
         <p className="text-[13px] font-semibold">Conversão para os anúncios</p>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -675,6 +682,7 @@ function FormularioDaEtapa({
           </div>
         ) : null}
       </div>
+      )}
 
       {erro ? (
         <p role="alert" className="text-sm [color:var(--alert-text)]">

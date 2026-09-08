@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 
 import type { StatusDefinition, StatusTone } from "@/lib/design/status";
+import { normalizarTexto } from "@/lib/domain/attribution";
 
 // A jornada configuravel da clinica (migration 20260909100000). Este modulo e
 // puro e serve cliente e servidor: transforma as linhas de funnel_stage_def em
@@ -111,6 +112,68 @@ export function etapaPorPapel(
  * um cache momentaneamente velho na troca de jornada nao pode derrubar o
  * Kanban.)
  */
+/** O que a decisao por termo-chave precisa saber de cada etapa. */
+type EtapaParaTermo = Pick<
+  EtapaDaJornada,
+  "chave" | "posicao" | "papel" | "termos_chave"
+>;
+
+/**
+ * Decide se um corpo de mensagem move o contato de etapa por TERMO-CHAVE
+ * (fase 4 da jornada configuravel). Pura, zero I/O; quem le a jornada e grava
+ * o contato e o ingest.
+ *
+ * Regras, na ordem em que eliminam:
+ * - corpo vazio, jornada vazia ou etapa atual desconhecida: nao move (etapa
+ *   fora da jornada e cache velho; ser conservador aqui nao perde nada).
+ * - contato em etapa de perda NUNCA sai por termo: reativar quem se perdeu e
+ *   decisao de gente (ou do gatilho de agendamento), nao de palavra solta.
+ * - so anda PARA FRENTE (posicao maior que a atual) e nunca PARA a etapa de
+ *   perda: "nao quero mais, era so o valor" nao pode perder ninguem.
+ * - entre os termos que casaram, vence o mais longo (mais especifico), como
+ *   na atribuicao de campanha; empate fica com a etapa mais cedo na jornada.
+ *
+ * Normalizacao identica a da atribuicao: minusculas, sem acento, espacos
+ * colapsados, substring simples.
+ */
+export function etapaPorTermoChave<T extends EtapaParaTermo>(
+  corpo: string | null,
+  etapaAtual: string,
+  jornada: readonly T[],
+): T | null {
+  if (!corpo) {
+    return null;
+  }
+  const corpoNormalizado = normalizarTexto(corpo);
+  if (corpoNormalizado === "") {
+    return null;
+  }
+  const atual = jornada.find((etapa) => etapa.chave === etapaAtual);
+  if (!atual || atual.papel === "perdido") {
+    return null;
+  }
+
+  let vencedora: T | null = null;
+  let maiorComprimento = 0;
+  for (const etapa of [...jornada].sort((a, b) => a.posicao - b.posicao)) {
+    if (etapa.papel === "perdido" || etapa.posicao <= atual.posicao) {
+      continue;
+    }
+    for (const termo of etapa.termos_chave) {
+      const termoNormalizado = normalizarTexto(termo);
+      if (
+        termoNormalizado !== "" &&
+        termoNormalizado.length > maiorComprimento &&
+        corpoNormalizado.includes(termoNormalizado)
+      ) {
+        vencedora = etapa;
+        maiorComprimento = termoNormalizado.length;
+      }
+    }
+  }
+  return vencedora;
+}
+
 export function agruparPorJornada<T extends { funnel_stage: string }>(
   itens: readonly T[],
   jornada: readonly EtapaDaJornada[],

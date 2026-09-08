@@ -6,6 +6,7 @@ import {
   type CampaignRule,
   type SourceChannel,
 } from "@/lib/domain/attribution";
+import { etapaPorTermoChave } from "@/lib/domain/jornada";
 import type { InboundEvent } from "@/lib/integrations/whatsapp/inbound";
 import { log } from "@/lib/log";
 
@@ -110,6 +111,86 @@ async function tentarAtribuirOrigem(
   }
 }
 
+// TERMO-CHAVE da jornada (fase 4): mensagem do paciente contendo um termo de
+// etapa move o contato para ela. A decisao (mais longo vence, so para frente,
+// nunca sai de nem entra em perda) e pura em lib/domain/jornada.ts; aqui e a
+// leitura da jornada + o update guardado pela etapa atual, para duas mensagens
+// simultaneas nao se atropelarem. Melhor esforco: falha vira log so com ids.
+async function tentarMoverPorTermo(
+  admin: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+  corpo: string,
+): Promise<void> {
+  const [jornadaResult, contatoResult] = await Promise.all([
+    admin
+      .from("funnel_stage_def")
+      .select("chave, posicao, papel, termos_chave")
+      .eq("clinic_id", clinicId),
+    admin
+      .from("contact")
+      .select("funnel_stage")
+      .eq("clinic_id", clinicId)
+      .eq("id", contactId)
+      .maybeSingle(),
+  ]);
+  if (jornadaResult.error || contatoResult.error || !contatoResult.data) {
+    log.error("termo_chave_ler_jornada_falhou", {
+      clinic_id: clinicId,
+      contact_id: contactId,
+      error_code:
+        jornadaResult.error?.code ?? contatoResult.error?.code ?? null,
+    });
+    return;
+  }
+
+  const etapaAtual = contatoResult.data.funnel_stage as string;
+  const destino = etapaPorTermoChave(
+    corpo,
+    etapaAtual,
+    (jornadaResult.data ?? []) as {
+      chave: string;
+      posicao: number;
+      papel: "entrada" | "agendou" | "compareceu" | "perdido" | null;
+      termos_chave: string[];
+    }[],
+  );
+  if (!destino) {
+    return;
+  }
+
+  // Guardado pela etapa de origem: se outra mensagem moveu o contato no meio
+  // tempo, este update afeta zero linhas e nada de errado acontece.
+  const { data: movidas, error: erroMover } = await admin
+    .from("contact")
+    .update({ funnel_stage: destino.chave })
+    .eq("clinic_id", clinicId)
+    .eq("id", contactId)
+    .eq("funnel_stage", etapaAtual)
+    .select("id");
+  if (erroMover) {
+    log.error("termo_chave_mover_falhou", {
+      clinic_id: clinicId,
+      contact_id: contactId,
+      error_code: erroMover.code ?? null,
+    });
+    return;
+  }
+  if (!movidas || movidas.length === 0) {
+    return;
+  }
+
+  // Trilha do movimento de SISTEMA (user_id nulo): registra que um termo
+  // moveu o contato, nunca qual termo nem o texto da mensagem (regra 3.1).
+  await admin.from("audit_log").insert({
+    clinic_id: clinicId,
+    user_id: null,
+    action: "termo_chave_moveu_etapa",
+    entity: "contact",
+    entity_id: contactId,
+  });
+}
+
 export async function ingerirMensagemRecebida(
   admin: SupabaseClient,
   clinicId: string,
@@ -183,6 +264,26 @@ export async function ingerirMensagemRecebida(
           error_code: erroAnuncio.code ?? null,
         });
       }
+    }
+  }
+
+  // Termo-chave roda em TODA mensagem recebida com texto (diferente da
+  // atribuicao, que e do nascimento): a jornada avanca ao longo da conversa.
+  // So em mensagem que acabou de ser inserida: reentrega de webhook
+  // (inserted=false) nao pode mover ninguem duas vezes.
+  if (event.body && resultado?.inserted && resultado.contact_id) {
+    try {
+      await tentarMoverPorTermo(
+        admin,
+        clinicId,
+        resultado.contact_id,
+        event.body,
+      );
+    } catch {
+      log.error("termo_chave_falhou", {
+        clinic_id: clinicId,
+        contact_id: resultado.contact_id,
+      });
     }
   }
 
