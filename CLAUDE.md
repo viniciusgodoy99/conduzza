@@ -35,7 +35,7 @@ SaaS multi-tenant que coloca uma recepcionista de IA no WhatsApp de clínicas m�
 | Auth | Supabase Auth |
 | Tempo real | Supabase Realtime (Inbox e Agenda) |
 | Arquivos | Supabase Storage |
-| Jobs e filas | Tabela `job_queue` + **worker Node** (`npm run worker`), com `claim_jobs` usando `FOR UPDATE SKIP LOCKED`. `pg_cron` não existe neste projeto: ver o degrade em `docs/05_backlog.md` 4.6. O deploy tem **dois processos** e o worker precisa de supervisão |
+| Jobs e filas | Tabela `job_queue` executada pelo **motor por pg_cron** (ligado em 02/09/2026): `pg_cron` + `pg_net` chamam `/api/webhooks/motor` na Vercel a cada 20s, que reivindica jobs com `FOR UPDATE SKIP LOCKED`. **Não existe mais worker em servidor nenhum** (`npm run worker` é só ferramenta local de teste). Runbook: `supabase/operacao/motor-por-cron.md` |
 | Webhooks | Supabase Edge Functions (Deno) |
 | Ícones | Lucide, traço 1.5px |
 | Datas | date-fns com locale pt-BR |

@@ -16,7 +16,7 @@ Documento de handoff da parte de **Resultados**: de onde o lead veio, quanto dis
 ## 0. Resumo executivo (leia isto primeiro)
 
 1. **Atribuição já existe no Conduzza**, mas fraca: só por texto (token `#XXXXXX` no link, mensagem padrão ou palavra-chave). Não tem id de campanha da Meta nem `ctwa_clid`.
-2. **A tela de Resultados não existe** (é placeholder). Dashboard (5.1) e Relatórios (5.2) estão pendentes na Fase 5.
+2. **A tela de Resultados não existe** (é placeholder). Dashboard (5.1) e Relatórios (5.2) estão pendentes na Fase 5. *(Retrato de antes de 08/09: a v1 da tela foi construída junto com este documento, e a `funnel_conversion_map` já está aplicada. O que segue pendente é R2 a R6.)*
 3. **Nenhuma integração com a Meta** no código (não há `lib/integrations/meta/`, nem CAPI, nem tabela de eventos). "Retornar conversão para a Meta" é escopo novo, não está em `docs/01` nem `docs/05`.
 4. **Descoberta decisiva:** o **Tintim já resolve a atribuição** (campanha, conjunto, anúncio e o `ctwa_clid`) e **já empurra isso para um webhook do Conduzza** (`webhook.conduzza.tech`), casado por telefone. Esse webhook funcionou agosto inteiro e **quebrou em 02/09**. Ou seja, "pegar a campanha de onde o lead veio" **já é possível hoje, via Tintim**, sem depender da uazapi.
 5. **Decisão tomada (D0):** **replicar e largar o Tintim** (Caminho B). O `webhook.conduzza.tech` é um **n8n** (confirmado). Isso põe a verificação da uazapi (R0, seção 4) como o **gargalo que destrava tudo**: o retorno de qualidade para a Meta depende do `ctwa_clid` vir da uazapi. O payload do n8n/Tintim (seção 2.2) é a **especificação exata dos campos a capturar**, e o n8n serve de **ponte de migração e backfill** enquanto o Conduzza não captura sozinho. **Risco central em destaque na seção 9.**
@@ -44,7 +44,7 @@ Entrei no painel do Tintim ao vivo. O mais importante não estava nos prints: **
 Em **Informações do Cliente > Webhooks** há um webhook apontando para:
 
 ```
-https://webhook.conduzza.tech/webhook/ingridtavares
+https://webhook.conduzza.tech/webhook/<slug-da-cliente>
 ```
 
 com quatro gatilhos: **Criação de Conversa, Alteração de Conversa, Criação de Mensagem, Alteração da Origem da Conversa**. O log (**Disparos de Webhook**) mostra o evento `novo lead` sendo entregue **com sucesso durante agosto inteiro** e **começando a falhar em 02/09/2026**, o que desativou os disparos (é a faixa amarela "webhooks desativados" que aparece em todas as telas).
@@ -139,7 +139,7 @@ Três mecanismos determinísticos, em ordem de precedência: **token do link** (
 - Rota: `app/api/webhooks/whatsapp/route.ts`. Parser: `lib/integrations/whatsapp/inbound.ts`.
 - **Ponto crítico:** o `uazapiSchema` lê texto, mídia, citação, botões e reações. **Não lê nenhum campo de anúncio** (`referral`, `ctwa_clid`, `contextInfo`). O schema é `.loose()`, então esses campos, se vierem, passam mas são ignorados.
 
-### 3.4 Tela de Resultados: não existe `[OK]`
+### 3.4 Tela de Resultados: não existe `[OK]` *(retrato de antes de 08/09; a v1 existe desde o commit que criou este documento)*
 
 `app/(app)/relatorios/page.tsx` é um placeholder (`ModulePlaceholder`); o `loading.tsx` já tem o esqueleto certo (4 cartões, gráfico, tabela). No backlog, a Fase 5 está toda pendente: `5.1 Dashboard`, `5.2 Relatórios`, `5.3 Configurações`. A spec do conteúdo está em `docs/01` Módulo 10; o layout em `docs/02` Telas 5 e 11.
 

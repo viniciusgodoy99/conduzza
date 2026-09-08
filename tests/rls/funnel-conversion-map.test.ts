@@ -93,10 +93,22 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await admin.from("clinic").delete().in("id", [clinicaA, clinicaB]);
-  const { data } = await admin.auth.admin.listUsers({ perPage: 200 });
-  for (const usuario of data?.users ?? []) {
-    if (usuario.email?.includes(`-${sufixo}@teste.dev`)) {
-      await admin.auth.admin.deleteUser(usuario.id);
+  // Paginado: uma unica pagina de 200 deixava usuarios orfaos quando o banco
+  // acumulava sobras de execucoes interrompidas (a revisao de 08/09/2026
+  // encontrou 38 orfaos reais de arquivos irmaos).
+  for (let pagina = 1; pagina <= 10; pagina++) {
+    const { data } = await admin.auth.admin.listUsers({
+      page: pagina,
+      perPage: 200,
+    });
+    const usuarios = data?.users ?? [];
+    for (const usuario of usuarios) {
+      if (usuario.email?.includes(`-${sufixo}@teste.dev`)) {
+        await admin.auth.admin.deleteUser(usuario.id);
+      }
+    }
+    if (usuarios.length < 200) {
+      break;
     }
   }
 });
@@ -153,6 +165,15 @@ describe("escrita do mapa de conversão", () => {
       .update({ meta_event_name: "Lead" })
       .eq("id", criada!.id);
     expect(erroUpdate).toBeNull();
+    // erroUpdate nulo NAO prova nada: update barrado por RLS afeta zero
+    // linhas sem erro (o proprio teste da leitura usa isso). A prova e o
+    // valor ter mudado de verdade.
+    const { data: depois } = await admin
+      .from("funnel_conversion_map")
+      .select("meta_event_name")
+      .eq("id", criada!.id)
+      .single();
+    expect(depois!.meta_event_name).toBe("Lead");
 
     await admin.from("funnel_conversion_map").delete().eq("id", criada!.id);
   });

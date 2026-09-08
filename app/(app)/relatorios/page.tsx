@@ -118,8 +118,12 @@ export default async function ResultadosPage() {
             <h2 className="text-[15px] font-semibold">Funil</h2>
             <div className="grid gap-3">
               {funil.map((etapa) => {
+                // O piso de 4% existe para valor PEQUENO continuar visível.
+                // Valor ZERO não ganha piso: barra desenhada para zero mente
+                // numa tela de decisão de dinheiro (achado da revisão de
+                // 08/09/2026, reproduzível com o dado real).
                 const largura =
-                  dados.totalLeads > 0
+                  dados.totalLeads > 0 && etapa.valor > 0
                     ? Math.max(4, (etapa.valor / dados.totalLeads) * 100)
                     : 0;
                 return (
@@ -165,7 +169,7 @@ export default async function ResultadosPage() {
             <div className="grid gap-2">
               {dados.porCanal.map((canal) => {
                 const largura =
-                  maiorCanal > 0
+                  maiorCanal > 0 && canal.total > 0
                     ? Math.max(3, (canal.total / maiorCanal) * 100)
                     : 0;
                 const rotulo = rotuloDoCanal(canal.canal) ?? "Não rastreada";

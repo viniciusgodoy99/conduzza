@@ -16,7 +16,9 @@ Zero risco de dado de paciente, porque roda num número de teste.
 
 1. Suba uma **instância uazapi de laboratório** e pareie um **número de teste** (não o da clínica).
 2. Configure o webhook dessa instância apontando para um coletor descartável: **webhook.site** (abra o site, copie a URL única) ou um RequestBin.
-3. Suba um **anúncio Click-to-WhatsApp** de teste, com orçamento mínimo, apontando para esse número de teste. (Ou, se tiver um anúncio CTWA já ativo, use o número dele por um instante.)
+3. Suba um **anúncio Click-to-WhatsApp** de teste, com orçamento mínimo, apontando para esse número de teste.
+
+> **PROIBIDO usar o número de uma clínica no laboratório.** O webhook do laboratório encaminha **todo** evento de mensagem, com conteúdo, nome e telefone, para um coletor de terceiro (webhook.site), sem contrato de tratamento de dados. Parear um número que atende paciente mandaria conversa de paciente (dado de saúde, regra 3.1) para fora. O laboratório só existe para chip de teste dedicado, que nunca atendeu ninguém. Uma versão anterior deste runbook sugeria "usar o número de um anúncio ativo por um instante": a sugestão estava errada e foi removida.
 4. Do celular, **clique no anúncio** e mande a primeira mensagem.
 5. Abra o webhook.site e leia o corpo do POST que chegou. Procure, dentro de `message` (e de `message.content` / `contextInfo`), por qualquer um destes:
    - `ctwa_clid`, `ctwaClid`

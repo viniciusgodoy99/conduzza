@@ -198,6 +198,8 @@ async function armar(): Promise<void> {
 function imprimirChecklist(estado: Estado): void {
   console.log(`
 == O que falta, e e com o dono ==
+ATENCAO: chip de TESTE dedicado, que nunca atendeu paciente. NUNCA o numero
+de uma clinica: tudo que chegar ao numero pareado vai para um coletor publico.
 1. Parear o NUMERO DE TESTE: escaneie o QR acima com o WhatsApp dele.
    (rode 'status' para renovar o QR se expirar)
 2. Subir um anuncio Click-to-WhatsApp de orcamento minimo na conta da Meta,
@@ -225,7 +227,17 @@ async function limpar(): Promise<void> {
     method: "DELETE",
     token: estado.instanceToken,
   }).catch(() => ({ status: 0, body: {} as Record<string, unknown> }));
-  console.log(`remocao da instancia: status ${del.status}`);
+  if (del.status < 200 || del.status >= 300) {
+    // NAO apaga o estado local: sem o token, a instancia orfa fica
+    // inalcancavel e ocupando vaga no servidor compartilhado para sempre
+    // (achado da revisao de 08/09/2026). Guardar o token e o unico jeito de
+    // tentar de novo.
+    console.log(
+      `remocao FALHOU (status ${del.status}). O estado local foi MANTIDO para tentar de novo; rode 'limpar' outra vez.`,
+    );
+    return;
+  }
+  console.log("remocao da instancia: ok");
   unlinkSync(ESTADO_PATH);
   console.log("estado local apagado. O coletor do webhook.site expira sozinho.");
 }
@@ -241,6 +253,13 @@ const execucao =
             console.log("Sem laboratorio. Rode sem argumentos para criar.");
             return;
           }
+          // O QR expira em ~1 minuto e so o connect abre um ciclo novo de
+          // pareamento: sem esta chamada, "status" prometia renovar o QR e so
+          // relia o estado velho (achado da revisao de 08/09/2026).
+          await uazapi("/instance/connect", {
+            token: estado.instanceToken,
+            payload: {},
+          }).catch(() => {});
           await imprimirStatus(estado);
           imprimirChecklist(estado);
         })()

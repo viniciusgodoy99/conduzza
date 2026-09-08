@@ -2,21 +2,32 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { FUNNEL_STAGE, type FunnelStage } from "@/lib/design/status";
 
-// Agregados da tela de Resultados (Modulo 10). v1: usa SO dado que ja existe
-// (a etapa do funil e o canal de origem de cada contact), sem depender do
-// retorno para a Meta, que e escopo novo (docs/06, Caminho B). A RLS recorta
-// por clinica; a tela mostra apenas contagens, nunca nome ou telefone de
-// paciente, entao nao passa por trilha de leitura.
+// Agregados da tela de Resultados (Modulo 10), calculados NO BANCO pela RPC
+// resultados_da_clinica (migration 20260908170000). A versao anterior somava
+// linhas no servidor de aplicacao e tinha dois defeitos graves, achados na
+// revisao adversarial de 08/09/2026:
 //
-// Sem filtro de periodo nesta versao: o recorte por data entra junto com o
-// seletor de periodo (proximo passo). Aqui e o total da clinica.
+// 1. O PostgREST corta em 1000 linhas por resposta, entao o ".limit(5000)"
+//    era ilusorio: acima de 1000 contatos TODOS os indicadores ficavam
+//    errados em silencio. Agregado em SQL nao tem teto.
+// 2. "Agendamentos" contava a etapa ATUAL, e quem agendou e depois foi
+//    arrastado para Perdido sumia da conta, inflando a taxa de
+//    comparecimento. Agora a coorte vem da tabela appointment: quem JA
+//    agendou e quem JA compareceu, cada pessoa contada uma vez.
+//
+// A RPC e SECURITY INVOKER: a RLS de contact e appointment decide o que o
+// usuario enxerga (regra 3.1). A tela mostra so contagens, nunca nome ou
+// telefone de paciente.
 
 export type CanalResumo = { canal: string | null; total: number };
 
 export type ResultadosResumo = {
   totalLeads: number;
+  /** etapa ATUAL de cada contato; alimenta o retrato do funil */
   porEtapa: Record<FunnelStage, number>;
+  /** COORTE: quem ja teve agendamento, mesmo que hoje esteja em Perdido */
   agendamentos: number;
+  /** COORTE: quem ja compareceu alguma vez */
   comparecimentos: number;
   perdidos: number;
   porCanal: CanalResumo[];
@@ -24,68 +35,49 @@ export type ResultadosResumo = {
   naoRastreados: number;
 };
 
-// Teto de seguranca, mesmo espirito do LEADS_LIMIT: a agregacao roda no
-// servidor sobre as colunas minimas. Clinicas do produto sao pequenas; acima
-// do teto a conta passa a precisar de uma RPC de agregacao no banco.
-export const RESULTADOS_LIMIT = 5000;
-
 const ETAPAS = Object.keys(FUNNEL_STAGE) as FunnelStage[];
+
+type RespostaRpc = {
+  total_leads: number;
+  por_etapa: Record<string, number>;
+  agendaram: number;
+  compareceram: number;
+  por_canal: { canal: string | null; total: number }[];
+};
 
 export async function fetchResultados(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<ResultadosResumo> {
-  const { data, error } = await supabase
-    .from("contact")
-    .select("funnel_stage, source_channel")
-    .eq("clinic_id", clinicId)
-    .limit(RESULTADOS_LIMIT);
+  const { data, error } = await supabase.rpc("resultados_da_clinica", {
+    p_clinic_id: clinicId,
+  });
   if (error) {
     throw new Error(error.message);
   }
-
-  const linhas = (data ?? []) as {
-    funnel_stage: FunnelStage;
-    source_channel: string | null;
-  }[];
+  const bruto = (data ?? {}) as Partial<RespostaRpc>;
 
   const porEtapa = Object.fromEntries(
-    ETAPAS.map((etapa) => [etapa, 0]),
+    ETAPAS.map((etapa) => [etapa, bruto.por_etapa?.[etapa] ?? 0]),
   ) as Record<FunnelStage, number>;
-  const canalMap = new Map<string | null, number>();
 
-  for (const linha of linhas) {
-    if (linha.funnel_stage in porEtapa) {
-      porEtapa[linha.funnel_stage] += 1;
-    }
-    canalMap.set(
-      linha.source_channel,
-      (canalMap.get(linha.source_channel) ?? 0) + 1,
-    );
-  }
+  const porCanal: CanalResumo[] = (bruto.por_canal ?? []).map((linha) => ({
+    canal: linha.canal,
+    total: linha.total,
+  }));
 
-  const totalLeads = linhas.length;
-  // Quem chegou ao menos em "agendou": compareceu passou por agendar antes
-  // (o funil so avanca), entao entra na contagem de agendamentos tambem.
-  const agendamentos = porEtapa.agendou + porEtapa.compareceu;
-  const comparecimentos = porEtapa.compareceu;
-  const perdidos = porEtapa.perdido;
-
-  const porCanal: CanalResumo[] = [...canalMap.entries()]
-    .map(([canal, total]) => ({ canal, total }))
-    .sort((a, b) => b.total - a.total);
-
-  const naoRastreados = canalMap.get(null) ?? 0;
-  const rastreados = totalLeads - naoRastreados;
+  const totalLeads = bruto.total_leads ?? 0;
+  const naoRastreados =
+    porCanal.find((linha) => linha.canal === null)?.total ?? 0;
 
   return {
     totalLeads,
     porEtapa,
-    agendamentos,
-    comparecimentos,
-    perdidos,
+    agendamentos: bruto.agendaram ?? 0,
+    comparecimentos: bruto.compareceram ?? 0,
+    perdidos: porEtapa.perdido,
     porCanal,
-    rastreados,
+    rastreados: totalLeads - naoRastreados,
     naoRastreados,
   };
 }
