@@ -436,3 +436,142 @@ export async function alternarCodigoAction(
   revalidatePath("/configuracoes");
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Mapa de conversao (R2 da frente de Resultados, docs/06): qual etapa do funil
+// dispara qual evento para a Meta, se conta como venda, e com qual valor.
+// SO CONFIGURACAO: nenhum evento e enviado a Meta por aqui (o disparo e o R4).
+// A tabela nasceu com RLS propria (migration 20260908120000) espelhando
+// campaign_link: membro le, admin/gestor escrevem, e o with_check impede
+// plantar configuracao em outra clinica. As actions usam o cliente de SESSAO
+// justamente para essas policies valerem.
+
+const ETAPAS_MAPEAVEIS = [
+  "novo",
+  "em_contato",
+  "aguardando_resposta",
+  "agendou",
+  "compareceu",
+] as const;
+
+const centavosDeConversaoSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(100_000_000)
+  .nullable();
+
+const mapaDeConversaoSchema = z
+  .object({
+    trigger_stage: z.enum(ETAPAS_MAPEAVEIS),
+    // Texto livre de proposito: evento personalizado nao exige migration.
+    // Sensivel a maiusculas porque a Meta trata "purchase" e "Purchase" como
+    // eventos diferentes.
+    meta_event_name: z.string().trim().min(1).max(100),
+    is_sale: z.boolean(),
+    is_first_contact: z.boolean(),
+    value_source: z.enum(["service_link", "fixo"]).nullable(),
+    value_cents: centavosDeConversaoSchema,
+    active: z.boolean(),
+  })
+  // Espelho da constraint valor_fixo_exige_cents, para a recusa chegar em
+  // portugues antes de o banco recusar em codigo.
+  .refine(
+    (dados) => dados.value_source !== "fixo" || dados.value_cents !== null,
+    { message: "Informe o valor em reais para usar valor fixo." },
+  );
+
+export async function salvarMapaDeConversaoAction(
+  entrada: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = mapaDeConversaoSchema.safeParse(entrada);
+  if (!parsed.success) {
+    const amigavel = parsed.error.issues.find(
+      (issue) => issue.code === "custom",
+    );
+    return { ok: false, error: amigavel?.message ?? "Dados inválidos." };
+  }
+  const dados = parsed.data;
+
+  const supabase = await createClient();
+  const { data: linha, error } = await supabase
+    .from("funnel_conversion_map")
+    .upsert(
+      {
+        clinic_id: guard.clinicId,
+        trigger_stage: dados.trigger_stage,
+        meta_event_name: dados.meta_event_name,
+        is_sale: dados.is_sale,
+        is_first_contact: dados.is_first_contact,
+        value_source: dados.value_source,
+        // Valor so acompanha o modo fixo: guardar centavos junto de
+        // service_link deixaria dois valores concorrentes na mesma linha.
+        value_cents: dados.value_source === "fixo" ? dados.value_cents : null,
+        active: dados.active,
+      },
+      { onConflict: "clinic_id,trigger_stage" },
+    )
+    .select("id")
+    .single();
+  if (error || !linha) {
+    return {
+      ok: false,
+      error: mensagemDeErro(error, "Não foi possível salvar a configuração."),
+    };
+  }
+
+  // O auditar() deste arquivo e amarrado a clinic_member; aqui a entidade e
+  // outra e o id da linha e o uuid que audit_log.entity_id espera.
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "configurou_mapa_de_conversao",
+    entity: "funnel_conversion_map",
+    entity_id: linha.id,
+  });
+  revalidatePath("/configuracoes");
+  return { ok: true };
+}
+
+export async function removerMapaDeConversaoAction(
+  triggerStage: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = z.enum(ETAPAS_MAPEAVEIS).safeParse(triggerStage);
+  if (!parsed.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { data: removidas, error } = await supabase
+    .from("funnel_conversion_map")
+    .delete()
+    .eq("clinic_id", guard.clinicId)
+    .eq("trigger_stage", parsed.data)
+    .select("id");
+  if (error) {
+    return {
+      ok: false,
+      error: mensagemDeErro(error, "Não foi possível remover a configuração."),
+    };
+  }
+
+  if (removidas && removidas.length > 0) {
+    await supabase.from("audit_log").insert({
+      clinic_id: guard.clinicId,
+      user_id: guard.context.userId,
+      action: "removeu_mapa_de_conversao",
+      entity: "funnel_conversion_map",
+      entity_id: removidas[0]!.id,
+    });
+  }
+  revalidatePath("/configuracoes");
+  return { ok: true };
+}

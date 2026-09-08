@@ -18,6 +18,10 @@ import type { ConnectState } from "@/lib/actions/whatsapp-connect";
 
 import { CodigoAcesso, PendentesList } from "./equipe-client";
 import type { Pendente } from "./equipe-client";
+import {
+  MapaDeConversao,
+  type LinhaDoMapa,
+} from "@/components/configuracoes/mapa-de-conversao";
 import { InviteForm } from "./invite-form";
 
 // Tela 12: a aba vive na URL (?aba=whatsapp) para link direto e para a volta
@@ -26,6 +30,7 @@ import { InviteForm } from "./invite-form";
 const ABAS = [
   ["equipe", "Equipe e permissões"],
   ["whatsapp", "WhatsApp"],
+  ["conversoes", "Conversões"],
 ] as const;
 
 type AbaKey = (typeof ABAS)[number][0];
@@ -41,6 +46,7 @@ export function ConfiguracoesClient({
   codigo,
   codigoAtivo,
   whatsapp,
+  mapaDeConversao,
 }: {
   abaInicial?: string;
   equipe: MembroEquipe[];
@@ -56,6 +62,7 @@ export function ConfiguracoesClient({
     connectedAt: string | null;
     providerName: string;
   };
+  mapaDeConversao: LinhaDoMapa[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -144,6 +151,20 @@ export function ConfiguracoesClient({
           canManage={podeGerenciar}
           hint={dica}
           providerName={whatsapp.providerName}
+        />
+      </TabsContent>
+
+      <TabsContent value="conversoes" className="grid gap-4">
+        <p className="text-sm text-text-secondary">
+          Qual etapa do funil conta como conversão para os anúncios: quando um{" "}
+          {/* linguagem de recepção, sem jargão de pixel */}
+          paciente chega na etapa marcada, a clínica registra o evento
+          escolhido, com o valor definido aqui.
+        </p>
+        <MapaDeConversao
+          linhas={mapaDeConversao}
+          podeGerenciar={podeGerenciar}
+          dica={dica}
         />
       </TabsContent>
     </Tabs>

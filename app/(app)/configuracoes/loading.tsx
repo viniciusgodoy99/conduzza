@@ -4,7 +4,7 @@ import {
 } from "@/components/shared/loading-skeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
-// Esqueleto na forma da tela de Configuracoes (cabecalho, as duas abas e os
+// Esqueleto na forma da tela de Configuracoes (cabecalho, as tres abas e os
 // cartoes da aba de equipe: lista de membros, convite e a tabela de papeis),
 // nunca giratorio no meio da tela.
 export default function CarregandoConfiguracoes() {
@@ -16,6 +16,7 @@ export default function CarregandoConfiguracoes() {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Skeleton className="h-9 w-44" />
+        <Skeleton className="h-9 w-28" />
         <Skeleton className="h-9 w-28" />
       </div>
       <div className="grid gap-3 rounded-lg border p-6">
