@@ -169,6 +169,7 @@ function evento(
     body,
     mediaUrl: null,
     quotedWaMessageId: null,
+    anuncio: null,
     instanceToken: null,
   };
 }
@@ -583,5 +584,83 @@ describe("correções da revisão: descadastro, coerência de clínica e token t
     const origem = await origemDe(contatoId);
     expect(origem.source_channel).toBe("trafego_pago");
     expect(origem.source_method).toBe("link_token");
+  });
+});
+
+// Estrutura de captura do anuncio CTWA (R1 sem o teste R0, decisao do dono em
+// 08/09/2026). A regra que importa: PRIMEIRO CLIQUE VENCE. Quem clicou no
+// anuncio A e depois mandou mensagem com vestigio do anuncio B continua
+// atribuido ao A, senao a conversao volta para a campanha errada e o dinheiro
+// da clinica e otimizado no anuncio que nao trouxe o paciente.
+describe("captura do ctwa_clid na ingestão", () => {
+  it("grava o clique no nascimento do contato e não deixa o segundo sobrescrever", async () => {
+    const clinicId = await criarClinica("ctwa");
+    const telefone = "+5584977770001";
+
+    const comAnuncio = {
+      ...evento(telefone, `ctwa-1-${sufixo}`, "vi o anuncio"),
+      anuncio: {
+        ctwaClid: "CLID-PRIMEIRO",
+        adId: "120210000000000001",
+        adsetId: "238500000000000001",
+        campaignId: "6720000000000001",
+        sourceUrl: "https://fb.me/abc",
+      },
+    };
+    const { data, error } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      comAnuncio,
+    );
+    expect(error).toBeNull();
+
+    const { data: contato } = await admin
+      .from("contact")
+      .select("ctwa_clid, source_ad_id, source_adset_id, source_campaign_id")
+      .eq("id", data!.contact_id!)
+      .single();
+    expect(contato).toEqual({
+      ctwa_clid: "CLID-PRIMEIRO",
+      source_ad_id: "120210000000000001",
+      source_adset_id: "238500000000000001",
+      source_campaign_id: "6720000000000001",
+    });
+
+    // Segundo clique, outro anúncio: não pode sobrescrever o primeiro.
+    const segundo = {
+      ...evento(telefone, `ctwa-2-${sufixo}`, "vi outro anuncio"),
+      anuncio: {
+        ctwaClid: "CLID-SEGUNDO",
+        adId: "999999999999999999",
+        adsetId: null,
+        campaignId: null,
+        sourceUrl: null,
+      },
+    };
+    await ingerirMensagemRecebida(admin, clinicId, segundo);
+
+    const { data: depois } = await admin
+      .from("contact")
+      .select("ctwa_clid, source_ad_id")
+      .eq("id", data!.contact_id!)
+      .single();
+    expect(depois!.ctwa_clid).toBe("CLID-PRIMEIRO");
+    expect(depois!.source_ad_id).toBe("120210000000000001");
+  });
+
+  it("mensagem sem anúncio não toca nas colunas de anúncio", async () => {
+    const clinicId = await criarClinica("semctwa");
+    const { data } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      evento("+5584977770002", `semctwa-${sufixo}`, "bom dia"),
+    );
+    const { data: contato } = await admin
+      .from("contact")
+      .select("ctwa_clid, source_ad_id")
+      .eq("id", data!.contact_id!)
+      .single();
+    expect(contato!.ctwa_clid).toBeNull();
+    expect(contato!.source_ad_id).toBeNull();
   });
 });

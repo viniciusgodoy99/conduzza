@@ -156,6 +156,36 @@ export async function ingerirMensagemRecebida(
     }
   }
 
+  // CAPTURA DO ANUNCIO (estrutura do R1, com o R0 dispensado pelo dono em
+  // 08/09/2026): se o canal entregou qualquer vestigio do clique de anuncio,
+  // grava no contato. PRIMEIRO CLIQUE VENCE: o update so acontece enquanto
+  // ctwa_clid esta nulo, no mesmo espirito da origem imutavel. Melhor esforco:
+  // falha vira log sem conteudo de paciente, a mensagem ja esta salva.
+  if (event.anuncio && resultado?.contact_id) {
+    const patch: Record<string, string> = {};
+    if (event.anuncio.ctwaClid) patch.ctwa_clid = event.anuncio.ctwaClid;
+    if (event.anuncio.adId) patch.source_ad_id = event.anuncio.adId;
+    if (event.anuncio.adsetId) patch.source_adset_id = event.anuncio.adsetId;
+    if (event.anuncio.campaignId) {
+      patch.source_campaign_id = event.anuncio.campaignId;
+    }
+    if (Object.keys(patch).length > 0) {
+      const { error: erroAnuncio } = await admin
+        .from("contact")
+        .update(patch)
+        .eq("clinic_id", clinicId)
+        .eq("id", resultado.contact_id)
+        .is("ctwa_clid", null);
+      if (erroAnuncio) {
+        log.error("captura_ctwa_falhou", {
+          clinic_id: clinicId,
+          contact_id: resultado.contact_id,
+          error_code: erroAnuncio.code ?? null,
+        });
+      }
+    }
+  }
+
   // Atribuicao roda no nascimento do contato (os 3 mecanismos) OU quando uma
   // mensagem posterior traz token de campanha (contato pre-existente sem
   // origem; o update e guardado por source_channel is null, entao e barato e

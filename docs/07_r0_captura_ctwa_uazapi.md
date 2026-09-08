@@ -6,6 +6,8 @@ Decisão tomada: **replicar e largar o Tintim** (Caminho B, ver `docs/06`). Para
 
 > **Não desligue o Tintim antes deste teste dar positivo.** Se a uazapi não entregar o `ctwa_clid`, largar o Tintim custa a atribuição em nível de clique, e o retorno à Meta cai para o casamento por telefone (mais fraco).
 
+> **Decisão do dono (08/09/2026): o teste com anúncio de laboratório foi dispensado.** Em vez dele, a estrutura de captura nasceu pronta e defensiva (migration `20260908150000_captura_ctwa.sql` + `extrairAnuncio` em `lib/integrations/whatsapp/inbound.ts` + escrita de primeiro clique em `ingest.ts`): se a uazapi entregar qualquer vestígio de anúncio, ele é gravado em `contact`. **A produção é o próprio teste.** A tabela de leitura abaixo continua valendo, agora aplicada às colunas: enquanto `ctwa_clid` não encher com anúncio real rodando, vale a linha "não aparece nada". O laboratório deste runbook (`scripts/dev/r0-laboratorio.mts`) fica disponível se um dia o teste controlado for desejado; a instância criada em 08/09 foi apagada.
+
 ---
 
 ## Método A (recomendado): webhook de laboratório, sem tocar em produção

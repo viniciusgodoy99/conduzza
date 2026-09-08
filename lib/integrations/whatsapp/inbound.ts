@@ -13,6 +13,23 @@ import { z } from "zod";
 //    (eventos crus do whatsmeow), com `event.MessageIDs` (lista).
 //  - "connection": status em `instance.status`.
 
+/**
+ * O anuncio de onde a mensagem veio, quando o canal entrega o referral.
+ *
+ * A forma exata que a uazapi usaria e DESCONHECIDA (o teste R0 do docs/07 foi
+ * dispensado pelo dono em 08/09/2026: a estrutura nasce pronta e a producao e
+ * o proprio teste). Por isso a extracao e defensiva: varre o objeto atras dos
+ * nomes de campo que as familias conhecidas usam, em vez de apostar num
+ * caminho fixo que talvez nunca exista.
+ */
+export type AnuncioDeOrigem = {
+  ctwaClid: string | null;
+  adId: string | null;
+  adsetId: string | null;
+  campaignId: string | null;
+  sourceUrl: string | null;
+};
+
 export type InboundEvent =
   | {
       kind: "message_received";
@@ -28,6 +45,8 @@ export type InboundEvent =
        * "respondendo a" que o paciente fez sumia da conversa da clinica.
        */
       quotedWaMessageId: string | null;
+      /** referral de anuncio CTWA, quando o canal o repassa; null no comum */
+      anuncio: AnuncioDeOrigem | null;
       /** token da instancia que recebeu; confere contra o guardado */
       instanceToken: string | null;
     }
@@ -81,6 +100,15 @@ const canonicalSchema = z.discriminatedUnion("kind", [
     body: z.string().nullish(),
     mediaUrl: z.string().nullish(),
     quotedWaMessageId: z.string().nullish(),
+    anuncio: z
+      .object({
+        ctwaClid: z.string().nullish(),
+        adId: z.string().nullish(),
+        adsetId: z.string().nullish(),
+        campaignId: z.string().nullish(),
+        sourceUrl: z.string().nullish(),
+      })
+      .nullish(),
   }),
   z.object({
     kind: z.literal("message_deleted"),
@@ -177,6 +205,92 @@ function mapConnectionStatus(
   return "desconectado";
 }
 
+// Nomes de campo que carregam o id do clique, nas familias conhecidas:
+// Cloud API oficial usa referral.ctwa_clid; Baileys/whatsmeow usam
+// contextInfo.externalAdReply e variantes camelCase.
+const CHAVE_CTWA = /^ctwa_?clid$/i;
+// Objetos que embrulham os dados do anuncio. So DENTRO deles um source_id
+// significa "id do anuncio"; fora, source_id pode significar qualquer coisa.
+const CHAVE_REFERRAL = /^(referral|external_?ad_?reply)$/i;
+
+function stringOuNull(valor: unknown): string | null {
+  return typeof valor === "string" && valor.length > 0 ? valor : null;
+}
+
+/** Le os campos de anuncio de um objeto referral/externalAdReply. */
+function lerReferral(obj: Record<string, unknown>): Partial<AnuncioDeOrigem> {
+  const pega = (...nomes: string[]): string | null => {
+    for (const nome of nomes) {
+      const v = stringOuNull(obj[nome]);
+      if (v) return v;
+    }
+    return null;
+  };
+  return {
+    ctwaClid: pega("ctwa_clid", "ctwaClid", "ctwaclid", "CtwaClid"),
+    adId: pega("source_id", "sourceId", "sourceID", "ad_id", "adId"),
+    adsetId: pega("adset_id", "adsetId"),
+    campaignId: pega("campaign_id", "campaignId"),
+    sourceUrl: pega("source_url", "sourceUrl", "sourceURL"),
+  };
+}
+
+/**
+ * Varre a mensagem crua atras de qualquer vestigio de anuncio CTWA.
+ *
+ * Profundidade limitada e sem descer em arrays: o objeto do whatsmeow e fundo,
+ * mas o referral mora perto da raiz ou dentro de content/contextInfo. Melhor
+ * esforco por definicao: achar nada devolve null e a ingestao segue igual.
+ */
+export function extrairAnuncio(
+  mensagem: Record<string, unknown>,
+): AnuncioDeOrigem | null {
+  const achado: AnuncioDeOrigem = {
+    ctwaClid: null,
+    adId: null,
+    adsetId: null,
+    campaignId: null,
+    sourceUrl: null,
+  };
+
+  const visitar = (no: Record<string, unknown>, profundidade: number): void => {
+    if (profundidade > 5) {
+      return;
+    }
+    for (const [chave, valor] of Object.entries(no)) {
+      if (CHAVE_CTWA.test(chave)) {
+        achado.ctwaClid ??= stringOuNull(valor);
+        continue;
+      }
+      if (
+        CHAVE_REFERRAL.test(chave) &&
+        valor &&
+        typeof valor === "object" &&
+        !Array.isArray(valor)
+      ) {
+        const lido = lerReferral(valor as Record<string, unknown>);
+        achado.ctwaClid ??= lido.ctwaClid ?? null;
+        achado.adId ??= lido.adId ?? null;
+        achado.adsetId ??= lido.adsetId ?? null;
+        achado.campaignId ??= lido.campaignId ?? null;
+        achado.sourceUrl ??= lido.sourceUrl ?? null;
+        continue;
+      }
+      if (valor && typeof valor === "object" && !Array.isArray(valor)) {
+        visitar(valor as Record<string, unknown>, profundidade + 1);
+      }
+    }
+  };
+  visitar(mensagem, 0);
+
+  const temAlgo =
+    achado.ctwaClid !== null ||
+    achado.adId !== null ||
+    achado.campaignId !== null ||
+    achado.adsetId !== null;
+  return temAlgo ? achado : null;
+}
+
 export function parseInboundEvent(payload: unknown): InboundEvent | null {
   const canonical = canonicalSchema.safeParse(payload);
   if (canonical.success) {
@@ -191,6 +305,15 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
         body: evento.body ?? null,
         mediaUrl: evento.mediaUrl ?? null,
         quotedWaMessageId: evento.quotedWaMessageId ?? null,
+        anuncio: evento.anuncio
+          ? {
+              ctwaClid: evento.anuncio.ctwaClid ?? null,
+              adId: evento.anuncio.adId ?? null,
+              adsetId: evento.anuncio.adsetId ?? null,
+              campaignId: evento.anuncio.campaignId ?? null,
+              sourceUrl: evento.anuncio.sourceUrl ?? null,
+            }
+          : null,
         instanceToken: null,
       };
     }
@@ -365,6 +488,7 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
       // Na especificacao, `quoted` e simplesmente o id da mensagem citada.
       // Vem string vazia quando nao ha citacao, e "" nao pode virar busca.
       quotedWaMessageId: (mensagem.quoted as string | undefined) || null,
+      anuncio: extrairAnuncio(mensagem),
       instanceToken,
     };
   }

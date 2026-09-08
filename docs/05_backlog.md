@@ -118,6 +118,9 @@ Os demais, resumidos: o eco do nosso próprio apagamento era registrado como "o 
 
 **Fica em aberto:** a prévia da última mensagem no cartão da conversa (o cartão ainda repete "Lead, Novo contato" em vez do trecho, como o brief pede).
 
+### [ ] Resultados: atribuição Meta e retorno de conversão `G` (em andamento)
+Frente nova decidida pelo dono em 08/09/2026 para **substituir o Tintim** (Caminho B do `docs/06_resultados_atribuicao_e_retorno_meta.md`, que é o plano da frente; `docs/07` é o critério de leitura da captura). Feito até aqui: tela de Resultados v1 (indicadores, funil, origem por canal), tabela `funnel_conversion_map` com RLS provada por 7 testes, e a **estrutura de captura do `ctwa_clid`** (colunas em `contact`, extração defensiva no parser, primeiro clique vence, provada por 5 testes de unidade e 2 de integração). O dono dispensou o teste R0 de laboratório: a produção observa se a uazapi entrega o referral. Faltam R2 a R6 (tela do mapa de conversão, adaptador CAPI, disparo nos gatilhos do funil, tela completa, configurações da Meta). **Tintim segue ligado até a captura provar que enche.**
+
 **Aceite:** 6 testes de isolamento do acervo de mídia e 14 das regras de apagar, todos chamando a RPC pela sessão, sem passar pela tela. O canal real foi provado por `npx tsx scripts/dev/prova-de-midia.mts` e `prova-de-citar-e-apagar.mts`, que mandam para o próprio número da instância.
 
 ---

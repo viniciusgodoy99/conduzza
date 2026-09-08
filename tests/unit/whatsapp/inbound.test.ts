@@ -24,6 +24,7 @@ describe("formato canônico (simulador de desenvolvimento)", () => {
       body: "Oi, quero agendar",
       mediaUrl: null,
       quotedWaMessageId: null,
+      anuncio: null,
       instanceToken: null,
     });
   });
@@ -65,6 +66,7 @@ describe("formato uazapi: mensagens", () => {
       body: "Bom dia",
       mediaUrl: null,
       quotedWaMessageId: null,
+      anuncio: null,
       instanceToken: "token-da-instancia",
     });
   });
@@ -380,5 +382,115 @@ describe("canal real", () => {
         message: { ...base.message, fromMe: true, wasSentByApi: true },
       }),
     ).toBeNull();
+  });
+});
+
+// Captura do anuncio CTWA (estrutura do R1; o teste R0 foi dispensado pelo
+// dono em 08/09/2026, entao a extracao precisa ser defensiva: cobre as formas
+// das familias conhecidas sem saber qual delas a uazapi usa, se usar alguma).
+describe("extração do anúncio CTWA", () => {
+  const base = {
+    EventType: "messages",
+    token: "token-da-instancia",
+  };
+
+  it("forma da Cloud API: referral com ctwa_clid e source_id", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "AD-1",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "vi o anuncio de voces",
+        referral: {
+          source_url: "https://fb.me/abc",
+          source_id: "120210000000000001",
+          source_type: "ad",
+          ctwa_clid: "CLID-OFICIAL-123",
+        },
+      },
+    });
+    expect(evento).toMatchObject({
+      anuncio: {
+        ctwaClid: "CLID-OFICIAL-123",
+        adId: "120210000000000001",
+        sourceUrl: "https://fb.me/abc",
+      },
+    });
+  });
+
+  it("forma Baileys/whatsmeow: contextInfo.externalAdReply aninhado", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "AD-2",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "quero saber o preco",
+        content: {
+          contextInfo: {
+            externalAdReply: {
+              title: "Clinica X",
+              sourceId: "120210000000000002",
+              sourceUrl: "https://fb.me/xyz",
+              ctwaClid: "CLID-BAILEYS-456",
+            },
+          },
+        },
+      },
+    });
+    expect(evento).toMatchObject({
+      anuncio: {
+        ctwaClid: "CLID-BAILEYS-456",
+        adId: "120210000000000002",
+      },
+    });
+  });
+
+  it("ctwaClid solto no topo da mensagem também é capturado", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "AD-3",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "oi",
+        ctwaClid: "CLID-TOPO-789",
+      },
+    });
+    expect(evento).toMatchObject({
+      anuncio: { ctwaClid: "CLID-TOPO-789", adId: null },
+    });
+  });
+
+  it("mensagem comum não inventa anúncio", () => {
+    // O oposto importa tanto quanto: source_id FORA de um objeto de referral
+    // não pode virar id de anúncio, senão qualquer campo homônimo do provedor
+    // contaminaria a atribuição.
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "SEM-AD",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "bom dia",
+        content: { source_id: "isto-nao-e-anuncio" },
+      },
+    });
+    expect(evento).toMatchObject({ anuncio: null });
+  });
+
+  it("referral vazio ou com campos vazios vira null, não objeto oco", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "AD-VAZIO",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "oi",
+        referral: { source_url: "", ctwa_clid: "" },
+      },
+    });
+    expect(evento).toMatchObject({ anuncio: null });
   });
 });

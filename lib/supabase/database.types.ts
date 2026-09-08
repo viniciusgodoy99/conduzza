@@ -758,6 +758,10 @@ export type Database = {
           notes: string | null
           owner_user_id: string | null
           phone_e164: string
+          ctwa_clid: string | null
+          source_ad_id: string | null
+          source_adset_id: string | null
+          source_campaign_id: string | null
           source_campaign: string | null
           source_captured_at: string | null
           source_channel: string | null
@@ -788,6 +792,10 @@ export type Database = {
           notes?: string | null
           owner_user_id?: string | null
           phone_e164: string
+          ctwa_clid?: string | null
+          source_ad_id?: string | null
+          source_adset_id?: string | null
+          source_campaign_id?: string | null
           source_campaign?: string | null
           source_captured_at?: string | null
           source_channel?: string | null
@@ -818,6 +826,10 @@ export type Database = {
           notes?: string | null
           owner_user_id?: string | null
           phone_e164?: string
+          ctwa_clid?: string | null
+          source_ad_id?: string | null
+          source_adset_id?: string | null
+          source_campaign_id?: string | null
           source_campaign?: string | null
           source_captured_at?: string | null
           source_channel?: string | null
