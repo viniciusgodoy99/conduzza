@@ -976,52 +976,67 @@ export type Database = {
           },
         ]
       }
-      funnel_conversion_map: {
+      funnel_stage_def: {
         Row: {
-          active: boolean
+          chave: string
           clinic_id: string
+          conversao_ativa: boolean
           created_at: string
+          icone: string
           id: string
           is_first_contact: boolean
           is_sale: boolean
-          meta_event_name: string
-          platform: string
-          trigger_stage: string
+          meta_event_name: string | null
+          nome: string
+          papel: string | null
+          posicao: number
+          termos_chave: string[]
+          tom: string
           updated_at: string
           value_cents: number | null
           value_source: string | null
         }
         Insert: {
-          active?: boolean
+          chave: string
           clinic_id: string
+          conversao_ativa?: boolean
           created_at?: string
+          icone?: string
           id?: string
           is_first_contact?: boolean
           is_sale?: boolean
-          meta_event_name: string
-          platform?: string
-          trigger_stage: string
+          meta_event_name?: string | null
+          nome: string
+          papel?: string | null
+          posicao: number
+          termos_chave?: string[]
+          tom?: string
           updated_at?: string
           value_cents?: number | null
           value_source?: string | null
         }
         Update: {
-          active?: boolean
+          chave?: string
           clinic_id?: string
+          conversao_ativa?: boolean
           created_at?: string
+          icone?: string
           id?: string
           is_first_contact?: boolean
           is_sale?: boolean
-          meta_event_name?: string
-          platform?: string
-          trigger_stage?: string
+          meta_event_name?: string | null
+          nome?: string
+          papel?: string | null
+          posicao?: number
+          termos_chave?: string[]
+          tom?: string
           updated_at?: string
           value_cents?: number | null
           value_source?: string | null
         }
         Relationships: [
           {
-            foreignKeyName: "funnel_conversion_map_clinic_id_fkey"
+            foreignKeyName: "funnel_stage_def_clinic_id_fkey"
             columns: ["clinic_id"]
             isOneToOne: false
             referencedRelation: "clinic"

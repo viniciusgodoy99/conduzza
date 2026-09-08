@@ -18,19 +18,18 @@ import type { ConnectState } from "@/lib/actions/whatsapp-connect";
 
 import { CodigoAcesso, PendentesList } from "./equipe-client";
 import type { Pendente } from "./equipe-client";
-import {
-  MapaDeConversao,
-  type LinhaDoMapa,
-} from "@/components/configuracoes/mapa-de-conversao";
+import { JornadaTab } from "@/components/configuracoes/jornada-tab";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { InviteForm } from "./invite-form";
 
 // Tela 12: a aba vive na URL (?aba=whatsapp) para link direto e para a volta
-// do navegador funcionar, mesmo padrao de Cadastros.
+// do navegador funcionar, mesmo padrao de Cadastros. "?aba=conversoes" segue
+// valendo como link antigo: cai na jornada, que absorveu aquela aba.
 
 const ABAS = [
   ["equipe", "Equipe e permissões"],
   ["whatsapp", "WhatsApp"],
-  ["conversoes", "Conversões"],
+  ["jornada", "Jornada e conversões"],
 ] as const;
 
 type AbaKey = (typeof ABAS)[number][0];
@@ -46,7 +45,7 @@ export function ConfiguracoesClient({
   codigo,
   codigoAtivo,
   whatsapp,
-  mapaDeConversao,
+  jornada,
 }: {
   abaInicial?: string;
   equipe: MembroEquipe[];
@@ -62,7 +61,7 @@ export function ConfiguracoesClient({
     connectedAt: string | null;
     providerName: string;
   };
-  mapaDeConversao: LinhaDoMapa[];
+  jornada: EtapaDaJornada[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -70,7 +69,9 @@ export function ConfiguracoesClient({
 
   const abaAtiva: AbaKey = ABAS.some(([key]) => key === abaInicial)
     ? (abaInicial as AbaKey)
-    : "equipe";
+    : abaInicial === "conversoes" // link antigo, antes de a jornada absorver
+      ? "jornada"
+      : "equipe";
 
   const trocarAba = (aba: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -154,15 +155,14 @@ export function ConfiguracoesClient({
         />
       </TabsContent>
 
-      <TabsContent value="conversoes" className="grid gap-4">
+      <TabsContent value="jornada" className="grid gap-4">
         <p className="text-sm text-text-secondary">
-          Qual etapa do funil conta como conversão para os anúncios: quando um{" "}
-          {/* linguagem de recepção, sem jargão de pixel */}
-          paciente chega na etapa marcada, a clínica registra o evento
-          escolhido, com o valor definido aqui.
+          As etapas que um contato percorre, do primeiro oi até a consulta.
+          Renomeie, reordene, crie etapas próprias e defina em qual delas a
+          clínica registra uma conversão para os anúncios.
         </p>
-        <MapaDeConversao
-          linhas={mapaDeConversao}
+        <JornadaTab
+          jornada={jornada}
           podeGerenciar={podeGerenciar}
           dica={dica}
         />

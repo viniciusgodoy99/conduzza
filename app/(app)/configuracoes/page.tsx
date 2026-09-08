@@ -11,7 +11,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 import { ConfiguracoesClient } from "./configuracoes-client";
-import type { LinhaDoMapa } from "@/components/configuracoes/mapa-de-conversao";
+import { fetchJornada } from "@/lib/queries/jornada";
 import type { Pendente } from "./equipe-client";
 
 // Tela 12, Configuracoes, em duas abas: equipe e permissoes (liberacao de
@@ -31,7 +31,7 @@ export default async function ConfiguracoesPage({
   }
 
   const supabase = await createClient();
-  const [memberResult, clinicResult, codigoResult, whatsappResult, mapaResult] =
+  const [memberResult, clinicResult, codigoResult, whatsappResult, jornada] =
     await Promise.all([
       supabase
         .from("clinic_member")
@@ -54,13 +54,8 @@ export default async function ConfiguracoesPage({
         .select("connection_status, display_phone, connected_at, provider")
         .eq("clinic_id", active.clinicId)
         .maybeSingle(),
-      // Mapa de conversao (R2 de Resultados): a RLS recorta por clinica.
-      supabase
-        .from("funnel_conversion_map")
-        .select(
-          "trigger_stage, meta_event_name, is_sale, is_first_contact, value_source, value_cents, active",
-        )
-        .eq("clinic_id", active.clinicId),
+      // A jornada da clinica (etapas + conversao): a RLS recorta por clinica.
+      fetchJornada(supabase, active.clinicId),
     ]);
 
   type MemberRow = {
@@ -158,7 +153,7 @@ export default async function ConfiguracoesPage({
           connectedAt: whatsapp?.connected_at ?? null,
           providerName,
         }}
-        mapaDeConversao={(mapaResult.data ?? []) as LinhaDoMapa[]}
+        jornada={jornada}
       />
     </div>
   );

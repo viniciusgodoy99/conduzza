@@ -220,6 +220,71 @@ describe("quem escreve", () => {
   });
 });
 
+// A conversao da Meta mora NA etapa (fase 3 absorveu a funnel_conversion_map;
+// estas provas vieram do teste daquela tabela junto com as colunas).
+describe("a conversão da etapa", () => {
+  it("gestor configura o evento com valor fixo, e persiste", async () => {
+    const cliente = await logado(email("gestor-a"));
+    const { error } = await cliente
+      .from("funnel_stage_def")
+      .update({
+        meta_event_name: "Purchase",
+        is_sale: true,
+        value_source: "fixo",
+        value_cents: 25_000,
+      })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "compareceu");
+    expect(error).toBeNull();
+    const { data: prova } = await admin
+      .from("funnel_stage_def")
+      .select("meta_event_name, is_sale, value_cents")
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "compareceu")
+      .single();
+    expect(prova).toEqual({
+      meta_event_name: "Purchase",
+      is_sale: true,
+      value_cents: 25_000,
+    });
+  });
+
+  it("recepção não configura conversão", async () => {
+    const cliente = await logado(email("recepcao-a"));
+    const { error } = await cliente
+      .from("funnel_stage_def")
+      .update({ meta_event_name: "Lead" })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "agendou");
+    expect(error).toBeNull(); // zero linhas afetadas, sem erro
+    const { data: prova } = await admin
+      .from("funnel_stage_def")
+      .select("meta_event_name")
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "agendou")
+      .single();
+    expect(prova!.meta_event_name).toBeNull();
+  });
+
+  it("a etapa de perda não vira conversão (check do banco)", async () => {
+    const { error } = await admin
+      .from("funnel_stage_def")
+      .update({ meta_event_name: "Purchase" })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "perdido");
+    expect(error?.code).toBe("23514");
+  });
+
+  it("valor fixo exige o valor em centavos (check do banco)", async () => {
+    const { error } = await admin
+      .from("funnel_stage_def")
+      .update({ value_source: "fixo", value_cents: null })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "agendou");
+    expect(error?.code).toBe("23514");
+  });
+});
+
 describe("as travas de estrutura (por gatilho, valem até para o service role)", () => {
   it("a chave de uma etapa não muda", async () => {
     const { error } = await admin

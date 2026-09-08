@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { ICONES_DE_ETAPA } from "@/lib/domain/jornada";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -438,57 +439,86 @@ export async function alternarCodigoAction(
 }
 
 // ---------------------------------------------------------------------------
-// Mapa de conversao (R2 da frente de Resultados, docs/06): qual etapa do funil
-// dispara qual evento para a Meta, se conta como venda, e com qual valor.
-// SO CONFIGURACAO: nenhum evento e enviado a Meta por aqui (o disparo e o R4).
-// A tabela nasceu com RLS propria (migration 20260908120000) espelhando
-// campaign_link: membro le, admin/gestor escrevem, e o with_check impede
-// plantar configuracao em outra clinica. As actions usam o cliente de SESSAO
-// justamente para essas policies valerem.
+// Jornada da clinica (funnel_stage_def): as etapas do funil, configuraveis, no
+// modelo da Jornada de Compra do Tintim, com a conversao da Meta morando NA
+// etapa. As protecoes de estrutura (chave e papel imutaveis, etapa de sistema
+// indelevel, etapa ocupada nao se exclui) sao GATILHOS no banco; estas actions
+// so traduzem as recusas para a lingua de quem atende. Cliente de SESSAO
+// sempre: quem autoriza e a policy.
 
-const ETAPAS_MAPEAVEIS = [
-  "novo",
-  "em_contato",
-  "aguardando_resposta",
-  "agendou",
-  "compareceu",
+const TONS_DE_ETAPA = [
+  "neutral",
+  "info",
+  "warning",
+  "success",
+  "alert",
 ] as const;
 
-const centavosDeConversaoSchema = z
-  .number()
-  .int()
-  .min(0)
-  .max(100_000_000)
-  .nullable();
+// O catalogo de icones vem da fonte unica (lib/domain/jornada.ts): o que o
+// app sabe desenhar e o que a action aceita, sem espelho para dessincronizar.
+const NOMES_DE_ICONES = Object.keys(ICONES_DE_ETAPA) as [string, ...string[]];
 
-const mapaDeConversaoSchema = z
+const conversaoDaEtapaSchema = z
   .object({
-    trigger_stage: z.enum(ETAPAS_MAPEAVEIS),
-    // Texto livre de proposito: evento personalizado nao exige migration.
-    // Sensivel a maiusculas porque a Meta trata "purchase" e "Purchase" como
-    // eventos diferentes.
-    meta_event_name: z.string().trim().min(1).max(100),
+    meta_event_name: z.string().trim().min(1).max(100).nullable(),
+    conversao_ativa: z.boolean(),
     is_sale: z.boolean(),
     is_first_contact: z.boolean(),
     value_source: z.enum(["service_link", "fixo"]).nullable(),
-    value_cents: centavosDeConversaoSchema,
-    active: z.boolean(),
+    value_cents: z.number().int().min(0).max(100_000_000).nullable(),
   })
-  // Espelho da constraint valor_fixo_exige_cents, para a recusa chegar em
-  // portugues antes de o banco recusar em codigo.
   .refine(
     (dados) => dados.value_source !== "fixo" || dados.value_cents !== null,
     { message: "Informe o valor em reais para usar valor fixo." },
   );
 
-export async function salvarMapaDeConversaoAction(
+const etapaDaJornadaSchema = z.object({
+  /** ausente = criar etapa nova; presente = editar a existente */
+  chave: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9_]{1,40}$/)
+    .nullable(),
+  nome: z.string().trim().min(2).max(60),
+  tom: z.enum(TONS_DE_ETAPA),
+  icone: z.enum(NOMES_DE_ICONES),
+  // Termos que movem o lead para esta etapa sozinhos (fase 4). Mesmos limites
+  // das palavras-chave de campanha, que sao o molde.
+  termos_chave: z.array(z.string().trim().min(2).max(40)).max(20),
+  conversao: conversaoDaEtapaSchema,
+});
+
+/** Nome vira chave: sem acento, minusculo, underscore. "Comprou pacote" -> comprou_pacote */
+function chaveDoNome(nome: string): string {
+  const base = nome
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 32);
+  return base.length > 0 ? base : "etapa";
+}
+
+function traduzirRecusaDaJornada(message: string | undefined): string | null {
+  const recusas = [
+    "Etapa de sistema não pode ser excluída",
+    "Mova os contatos desta etapa",
+    "A chave de uma etapa não muda",
+    "O papel de sistema de uma etapa não muda",
+  ];
+  if (!message) return null;
+  return recusas.find((recusa) => message.includes(recusa)) ? message : null;
+}
+
+export async function salvarEtapaDaJornadaAction(
   entrada: unknown,
 ): Promise<TeamActionResult> {
   const guard = await requireGestorOuAdmin();
   if ("error" in guard) {
     return { ok: false, error: guard.error };
   }
-  const parsed = mapaDeConversaoSchema.safeParse(entrada);
+  const parsed = etapaDaJornadaSchema.safeParse(entrada);
   if (!parsed.success) {
     const amigavel = parsed.error.issues.find(
       (issue) => issue.code === "custom",
@@ -496,82 +526,193 @@ export async function salvarMapaDeConversaoAction(
     return { ok: false, error: amigavel?.message ?? "Dados inválidos." };
   }
   const dados = parsed.data;
-
   const supabase = await createClient();
-  const { data: linha, error } = await supabase
-    .from("funnel_conversion_map")
-    .upsert(
-      {
+
+  const conversao = {
+    meta_event_name: dados.conversao.meta_event_name,
+    conversao_ativa: dados.conversao.conversao_ativa,
+    is_sale: dados.conversao.is_sale,
+    is_first_contact: dados.conversao.is_first_contact,
+    value_source: dados.conversao.value_source,
+    value_cents:
+      dados.conversao.value_source === "fixo"
+        ? dados.conversao.value_cents
+        : null,
+  };
+
+  if (dados.chave) {
+    const { data: linhas, error } = await supabase
+      .from("funnel_stage_def")
+      .update({
+        nome: dados.nome,
+        tom: dados.tom,
+        icone: dados.icone,
+        termos_chave: dados.termos_chave,
+        ...conversao,
+      })
+      .eq("clinic_id", guard.clinicId)
+      .eq("chave", dados.chave)
+      .select("id");
+    if (error || !linhas || linhas.length === 0) {
+      return {
+        ok: false,
+        error:
+          traduzirRecusaDaJornada(error?.message) ??
+          "Não foi possível salvar a etapa.",
+      };
+    }
+    await supabase.from("audit_log").insert({
+      clinic_id: guard.clinicId,
+      user_id: guard.context.userId,
+      action: "editou_etapa_da_jornada",
+      entity: "funnel_stage_def",
+      entity_id: linhas[0]!.id,
+    });
+  } else {
+    // Criar: a chave nasce do nome, com sufixo se ja existir; a posicao entra
+    // no fim da jornada. Duas leituras + um insert com a sessao do usuario.
+    const { data: existentes } = await supabase
+      .from("funnel_stage_def")
+      .select("chave, posicao")
+      .eq("clinic_id", guard.clinicId);
+    const chaves = new Set((existentes ?? []).map((linha) => linha.chave));
+    let chave = chaveDoNome(dados.nome);
+    let sufixo = 2;
+    while (chaves.has(chave)) {
+      chave = `${chaveDoNome(dados.nome).slice(0, 28)}_${sufixo}`;
+      sufixo += 1;
+    }
+    const maiorPosicao = Math.max(
+      0,
+      ...(existentes ?? []).map((linha) => linha.posicao as number),
+    );
+    const { data: nova, error } = await supabase
+      .from("funnel_stage_def")
+      .insert({
         clinic_id: guard.clinicId,
-        trigger_stage: dados.trigger_stage,
-        meta_event_name: dados.meta_event_name,
-        is_sale: dados.is_sale,
-        is_first_contact: dados.is_first_contact,
-        value_source: dados.value_source,
-        // Valor so acompanha o modo fixo: guardar centavos junto de
-        // service_link deixaria dois valores concorrentes na mesma linha.
-        value_cents: dados.value_source === "fixo" ? dados.value_cents : null,
-        active: dados.active,
-      },
-      { onConflict: "clinic_id,trigger_stage" },
-    )
-    .select("id")
-    .single();
-  if (error || !linha) {
-    return {
-      ok: false,
-      error: mensagemDeErro(error, "Não foi possível salvar a configuração."),
-    };
+        chave,
+        nome: dados.nome,
+        posicao: maiorPosicao + 10,
+        tom: dados.tom,
+        icone: dados.icone,
+        termos_chave: dados.termos_chave,
+        ...conversao,
+      })
+      .select("id")
+      .single();
+    if (error || !nova) {
+      return {
+        ok: false,
+        error: mensagemDeErro(error, "Não foi possível criar a etapa."),
+      };
+    }
+    await supabase.from("audit_log").insert({
+      clinic_id: guard.clinicId,
+      user_id: guard.context.userId,
+      action: "criou_etapa_da_jornada",
+      entity: "funnel_stage_def",
+      entity_id: nova.id,
+    });
   }
 
-  // O auditar() deste arquivo e amarrado a clinic_member; aqui a entidade e
-  // outra e o id da linha e o uuid que audit_log.entity_id espera.
-  await supabase.from("audit_log").insert({
-    clinic_id: guard.clinicId,
-    user_id: guard.context.userId,
-    action: "configurou_mapa_de_conversao",
-    entity: "funnel_conversion_map",
-    entity_id: linha.id,
-  });
   revalidatePath("/configuracoes");
+  revalidatePath("/leads");
   return { ok: true };
 }
 
-export async function removerMapaDeConversaoAction(
-  triggerStage: unknown,
+export async function reordenarEtapaDaJornadaAction(
+  chave: unknown,
+  direcao: unknown,
 ): Promise<TeamActionResult> {
   const guard = await requireGestorOuAdmin();
   if ("error" in guard) {
     return { ok: false, error: guard.error };
   }
-  const parsed = z.enum(ETAPAS_MAPEAVEIS).safeParse(triggerStage);
+  const parsedChave = z
+    .string()
+    .regex(/^[a-z0-9_]{1,40}$/)
+    .safeParse(chave);
+  const parsedDirecao = z.enum(["subir", "descer"]).safeParse(direcao);
+  if (!parsedChave.success || !parsedDirecao.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { data: jornada } = await supabase
+    .from("funnel_stage_def")
+    .select("chave, posicao")
+    .eq("clinic_id", guard.clinicId)
+    .order("posicao");
+  const lista = jornada ?? [];
+  const indice = lista.findIndex((etapa) => etapa.chave === parsedChave.data);
+  const vizinho =
+    parsedDirecao.data === "subir" ? lista[indice - 1] : lista[indice + 1];
+  if (indice < 0 || !vizinho) {
+    return { ok: false, error: "A etapa já está na ponta da jornada." };
+  }
+
+  // Troca as posicoes dos dois. Duas escritas pela sessao; se a segunda
+  // falhar, a jornada fica com duas etapas na mesma posicao ate o proximo
+  // salvar, o desempate por chave mantem a ordem estavel e nada quebra.
+  const atual = lista[indice]!;
+  const { error: erro1 } = await supabase
+    .from("funnel_stage_def")
+    .update({ posicao: vizinho.posicao })
+    .eq("clinic_id", guard.clinicId)
+    .eq("chave", atual.chave);
+  const { error: erro2 } = await supabase
+    .from("funnel_stage_def")
+    .update({ posicao: atual.posicao })
+    .eq("clinic_id", guard.clinicId)
+    .eq("chave", vizinho.chave);
+  if (erro1 || erro2) {
+    return { ok: false, error: "Não foi possível reordenar. Tente de novo." };
+  }
+
+  revalidatePath("/configuracoes");
+  revalidatePath("/leads");
+  return { ok: true };
+}
+
+export async function excluirEtapaDaJornadaAction(
+  chave: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = z
+    .string()
+    .regex(/^[a-z0-9_]{1,40}$/)
+    .safeParse(chave);
   if (!parsed.success) {
     return { ok: false, error: "Dados inválidos." };
   }
 
   const supabase = await createClient();
   const { data: removidas, error } = await supabase
-    .from("funnel_conversion_map")
+    .from("funnel_stage_def")
     .delete()
     .eq("clinic_id", guard.clinicId)
-    .eq("trigger_stage", parsed.data)
+    .eq("chave", parsed.data)
     .select("id");
-  if (error) {
+  if (error || !removidas || removidas.length === 0) {
     return {
       ok: false,
-      error: mensagemDeErro(error, "Não foi possível remover a configuração."),
+      error:
+        traduzirRecusaDaJornada(error?.message) ??
+        "Não foi possível excluir a etapa.",
     };
   }
 
-  if (removidas && removidas.length > 0) {
-    await supabase.from("audit_log").insert({
-      clinic_id: guard.clinicId,
-      user_id: guard.context.userId,
-      action: "removeu_mapa_de_conversao",
-      entity: "funnel_conversion_map",
-      entity_id: removidas[0]!.id,
-    });
-  }
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "excluiu_etapa_da_jornada",
+    entity: "funnel_stage_def",
+    entity_id: removidas[0]!.id,
+  });
   revalidatePath("/configuracoes");
+  revalidatePath("/leads");
   return { ok: true };
 }

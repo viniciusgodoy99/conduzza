@@ -17,7 +17,7 @@ export default function CarregandoConfiguracoes() {
       <div className="flex flex-wrap items-center gap-2">
         <Skeleton className="h-9 w-44" />
         <Skeleton className="h-9 w-28" />
-        <Skeleton className="h-9 w-28" />
+        <Skeleton className="h-9 w-44" />
       </div>
       <div className="grid gap-3 rounded-lg border p-6">
         <Skeleton className="h-5 w-48" />
