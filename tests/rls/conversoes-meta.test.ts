@@ -253,7 +253,8 @@ describe("meta_ads_account", () => {
     });
     expect(porInsert?.message).toContain("decisão de privacidade pendente");
 
-    // E o gestor pela sessao (o caminho do achado da revisao): recusado.
+    // E pela SESSAO de quem gerencia (o caminho do achado da revisao; a
+    // policy trata admin e gestor na mesma clausula): recusado.
     const cliente = await logado(email("admin-a"));
     const { error: porSessao } = await cliente
       .from("meta_ads_account")

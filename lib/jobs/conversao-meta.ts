@@ -91,7 +91,21 @@ export async function executarEnvioDeConversao(
     !conta.modo_user_data ||
     !secret?.capi_access_token
   ) {
-    return descartar(admin, evento.id, "envio_desligado");
+    // Envio desligado NAO e um fato sobre o evento, e estado de configuracao:
+    // descartar aqui destruiria a fila legitima de quem desligou para religar
+    // (o proprio texto de erro da action recomenda isso; achado GRAVE da
+    // revisao das correcoes). O evento volta a 'registrado' e o proximo
+    // religar o repesca; o que envelhecer alem dos 7 dias e descartado LA,
+    // com o codigo da janela.
+    const { error: erroReverter } = await admin
+      .from("conversion_event")
+      .update({ status: "registrado", erro: null })
+      .eq("id", evento.id)
+      .neq("status", "registrado");
+    if (erroReverter) {
+      return { ok: false, erro: "gravar_status_falhou" };
+    }
+    return { ok: true };
   }
   const modo = conta.modo_user_data as ModoUserData;
 
@@ -104,27 +118,43 @@ export async function executarEnvioDeConversao(
   // ENTRADA nasce no INSERT do contato, ANTES de a captura do anuncio gravar
   // o ctwa_clid (achado da revisao adversarial de 09/09/2026): na hora do
   // envio, o clique ja chegou, e primeiro-clique-vence o torna estavel.
-  const { data: contato } = await admin
+  const { data: contato, error: erroContato } = await admin
     .from("contact")
     .select("phone_e164, ctwa_clid")
     .eq("id", evento.contact_id)
     .maybeSingle();
+  if (erroContato || !contato) {
+    // Erro de leitura NAO pode virar descarte definitivo com codigo mentiroso
+    // (achado da revisao das correcoes): um blip aqui anulava o fallback de
+    // ctwa e gravava "sem_identificador" num contato que TEM. Contato nulo de
+    // verdade nao existe (FK com cascade apagaria o evento junto); os dois
+    // casos sao transitorios e o backoff repete.
+    return { ok: false, erro: "contato_indisponivel" };
+  }
   const ctwaClid =
-    evento.ctwa_clid ?? (contato?.ctwa_clid as string | undefined) ?? null;
+    evento.ctwa_clid ?? (contato.ctwa_clid as string | null) ?? null;
 
   let phoneE164: string | null = null;
   if (modo === "telefone_hasheado") {
     // Consentimento na hora do envio, como no envio de mensagem: contato que
     // revogou nao tem dado (nem hasheado) saindo daqui.
-    const { data: vigente } = await admin.rpc("consentimento_vigente", {
-      p_clinic_id: job.clinic_id,
-      p_contact_id: evento.contact_id,
-      p_channel: "whatsapp",
-    });
+    const { data: vigente, error: erroConsent } = await admin.rpc(
+      "consentimento_vigente",
+      {
+        p_clinic_id: job.clinic_id,
+        p_contact_id: evento.contact_id,
+        p_channel: "whatsapp",
+      },
+    );
+    if (erroConsent) {
+      // Mesmo principio: "sem_consentimento" e um FATO verificado, nunca o
+      // desfecho de uma consulta que falhou.
+      return { ok: false, erro: "consentimento_indisponivel" };
+    }
     if (vigente !== true) {
       return descartar(admin, evento.id, "sem_consentimento");
     }
-    phoneE164 = (contato?.phone_e164 as string | undefined) ?? null;
+    phoneE164 = (contato.phone_e164 as string | null) ?? null;
   }
 
   // A regra do send_unmatched vale pelo ctwa RESOLVIDO, nao pelo snapshot.

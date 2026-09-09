@@ -29,9 +29,11 @@ import { Switch } from "@/components/ui/switch";
 //
 // A DECISAO D6 (LGPD) AINDA ESTA EM ABERTO: o dono adiou a escolha de como
 // os dados pessoais saem (so o identificador do anuncio, ou telefone
-// protegido com autorizacao). Enquanto isso, o seletor de modo e o
-// interruptor de envio ficam desabilitados com a explicacao. Quando o dono
-// decidir, vire a constante abaixo para true; nada mais muda de codigo.
+// protegido com autorizacao). A trava DE VERDADE vive no banco (gatilho da
+// migration 20260910150000, que recusa qualquer modo ate para o service
+// role); esta constante so alinha a tela. A liberacao tem dois passos:
+// a migration de liberacao (substitui a funcao do gatilho) e virar esta
+// constante para true.
 const DECISAO_LGPD_TOMADA = false;
 
 export type ContaMeta = {
