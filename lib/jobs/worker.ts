@@ -6,6 +6,7 @@ import {
   sendWhatsAppText,
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
+import { executarEnvioDeConversao } from "./conversao-meta";
 import { espacamentoDeMassaMs } from "./espacamento";
 import { executarPassoDeRegua } from "./regua";
 
@@ -36,7 +37,11 @@ const MIMETYPES_ACEITOS = /^(audio|image|video)\/[\w.+-]+$|^application\/pdf$/;
 export type Job = {
   id: string;
   clinic_id: string;
-  kind: "enviar_mensagem_ativa" | "baixar_midia" | "executar_passo_de_regua";
+  kind:
+    | "enviar_mensagem_ativa"
+    | "baixar_midia"
+    | "executar_passo_de_regua"
+    | "enviar_conversao_meta";
   payload: Record<string, unknown>;
   attempts: number;
   max_attempts: number;
@@ -269,6 +274,8 @@ async function executarJob(
       return executarDownloadDeMidia(admin, job);
     case "executar_passo_de_regua":
       return executarPassoDeRegua(admin, job);
+    case "enviar_conversao_meta":
+      return executarEnvioDeConversao(admin, job);
     default:
       return { ok: false, erro: "tipo_desconhecido", definitivo: true };
   }

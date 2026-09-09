@@ -19,6 +19,10 @@ import type { ConnectState } from "@/lib/actions/whatsapp-connect";
 import { CodigoAcesso, PendentesList } from "./equipe-client";
 import type { Pendente } from "./equipe-client";
 import { JornadaTab } from "@/components/configuracoes/jornada-tab";
+import {
+  MetaAdsTab,
+  type ContaMeta,
+} from "@/components/configuracoes/meta-ads-tab";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { InviteForm } from "./invite-form";
 
@@ -30,6 +34,7 @@ const ABAS = [
   ["equipe", "Equipe e permissões"],
   ["whatsapp", "WhatsApp"],
   ["jornada", "Jornada e conversões"],
+  ["meta", "Anúncios da Meta"],
 ] as const;
 
 type AbaKey = (typeof ABAS)[number][0];
@@ -46,6 +51,8 @@ export function ConfiguracoesClient({
   codigoAtivo,
   whatsapp,
   jornada,
+  contaMeta,
+  temTokenMeta,
 }: {
   abaInicial?: string;
   equipe: MembroEquipe[];
@@ -62,6 +69,8 @@ export function ConfiguracoesClient({
     providerName: string;
   };
   jornada: EtapaDaJornada[];
+  contaMeta: ContaMeta | null;
+  temTokenMeta: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -163,6 +172,20 @@ export function ConfiguracoesClient({
         </p>
         <JornadaTab
           jornada={jornada}
+          podeGerenciar={podeGerenciar}
+          dica={dica}
+        />
+      </TabsContent>
+
+      <TabsContent value="meta" className="grid gap-4">
+        <p className="text-sm text-text-secondary">
+          A conta de anúncios que recebe as conversões de volta: quando um
+          contato chega numa etapa com evento configurado na Jornada, a
+          clínica devolve a conversão para a Meta medir o anúncio.
+        </p>
+        <MetaAdsTab
+          conta={contaMeta}
+          temToken={temTokenMeta}
           podeGerenciar={podeGerenciar}
           dica={dica}
         />

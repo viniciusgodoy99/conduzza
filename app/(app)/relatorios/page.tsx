@@ -1,4 +1,15 @@
-import { Megaphone, Send, TrendingUp } from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import {
+  CircleAlert,
+  CircleOff,
+  ClipboardList,
+  Megaphone,
+  Send,
+  SendHorizonal,
+  Timer,
+  TrendingUp,
+} from "lucide-react";
 import { redirect } from "next/navigation";
 
 import { rotuloDoCanal } from "@/components/leads/rotulos";
@@ -6,8 +17,11 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { createT } from "@/lib/branding/labels";
+import { fetchConversoesDevolvidas } from "@/lib/queries/conversoes-meta";
+import { STATUS_TONE_VARS } from "@/lib/design/status";
 import { fetchResultados } from "@/lib/queries/resultados";
 import { createClient } from "@/lib/supabase/server";
+import { formatarCentavos } from "@/lib/utils/moeda";
 
 // Tela 5/11, Resultados (Modulo 10): de qual canal vem o paciente que
 // comparece. v1 desenha o que ja da para calcular com o dado existente (funil
@@ -52,7 +66,45 @@ export default async function ResultadosPage() {
   }
 
   const supabase = await createClient();
-  const dados = await fetchResultados(supabase, active.clinicId);
+  const [dados, conversoes] = await Promise.all([
+    fetchResultados(supabase, active.clinicId),
+    fetchConversoesDevolvidas(supabase, active.clinicId),
+  ]);
+
+  // As 3 camadas da regra de status (forma distinta, rotulo, cor), nunca so
+  // cor. Registrada = anotada aqui dentro; enviada = ja chegou na Meta.
+  const statusDeConversao = [
+    {
+      rotulo: "Registradas",
+      valor: conversoes.porStatus.registrado,
+      Icone: ClipboardList,
+      cor: STATUS_TONE_VARS.neutral.text,
+    },
+    {
+      rotulo: "Na fila",
+      valor: conversoes.porStatus.enfileirado,
+      Icone: Timer,
+      cor: STATUS_TONE_VARS.info.text,
+    },
+    {
+      rotulo: "Enviadas",
+      valor: conversoes.porStatus.enviado,
+      Icone: SendHorizonal,
+      cor: STATUS_TONE_VARS.success.text,
+    },
+    {
+      rotulo: "Com falha",
+      valor: conversoes.porStatus.falhou,
+      Icone: CircleAlert,
+      cor: STATUS_TONE_VARS.alert.text,
+    },
+    {
+      rotulo: "Descartadas",
+      valor: conversoes.porStatus.descartado,
+      Icone: CircleOff,
+      cor: STATUS_TONE_VARS.neutral.text,
+    },
+  ];
 
   const indicadores = [
     { rotulo: "Leads", valor: String(dados.totalLeads) },
@@ -199,19 +251,60 @@ export default async function ResultadosPage() {
             </div>
           </section>
 
-          <section className="grid gap-2 rounded-lg border border-dashed p-4">
-            <div className="flex items-center gap-2">
-              <Send strokeWidth={1.5} className="size-4 text-text-tertiary" />
+          <section className="grid gap-3 rounded-lg border bg-card p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Send strokeWidth={1.5} className="size-4 text-text-secondary" />
               <h2 className="text-[15px] font-semibold">
                 Conversões devolvidas à Meta
               </h2>
+              {conversoes.ultimoEnvio ? (
+                <span className="text-sm text-text-tertiary">
+                  último envio{" "}
+                  {format(
+                    new Date(conversoes.ultimoEnvio),
+                    "dd/MM 'às' HH:mm",
+                    { locale: ptBR },
+                  )}
+                </span>
+              ) : null}
             </div>
-            <p className="max-w-prose text-sm text-text-secondary">
-              Aqui vão aparecer as conversões enviadas de volta para a conta de
-              anúncios (quem comprou), com quantas casaram pelo identificador do
-              anúncio. Chega junto com a integração de atribuição e o mapa de
-              conversão por etapa.
-            </p>
+            {conversoes.total === 0 ? (
+              <p className="max-w-prose text-sm text-text-secondary">
+                Nenhuma conversão registrada ainda. Escolha em qual etapa da
+                jornada a clínica registra conversão na aba Jornada e
+                conversões, em Configurações. O envio para a conta de anúncios
+                liga depois, na aba de anúncios da Meta.
+              </p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                  {statusDeConversao.map((status) => (
+                    <div key={status.rotulo} className="grid gap-1">
+                      <span className="flex items-center gap-1.5 text-sm text-text-secondary">
+                        <status.Icone
+                          strokeWidth={1.5}
+                          className="size-4"
+                          style={{ color: status.cor }}
+                          aria-hidden
+                        />
+                        {status.rotulo}
+                      </span>
+                      <span className="text-xl font-semibold tabular-nums">
+                        {status.valor}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-sm text-text-secondary">
+                  {conversoes.comCtwa} de {conversoes.total} com identificador
+                  do anúncio
+                  {conversoes.valorEnviadoCents > 0
+                    ? `, ${formatarCentavos(conversoes.valorEnviadoCents)} em valor já enviado`
+                    : ""}
+                  .
+                </p>
+              </>
+            )}
           </section>
         </>
       )}

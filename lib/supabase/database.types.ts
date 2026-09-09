@@ -913,6 +913,72 @@ export type Database = {
           },
         ]
       }
+      conversion_event: {
+        Row: {
+          clinic_id: string
+          contact_id: string
+          created_at: string
+          ctwa_clid: string | null
+          currency: string
+          erro: string | null
+          event_id: string
+          event_name: string
+          id: string
+          sent_at: string | null
+          stage_chave: string
+          status: string
+          updated_at: string
+          value_cents: number | null
+        }
+        Insert: {
+          clinic_id: string
+          contact_id: string
+          created_at?: string
+          ctwa_clid?: string | null
+          currency?: string
+          erro?: string | null
+          event_id?: string
+          event_name: string
+          id?: string
+          sent_at?: string | null
+          stage_chave: string
+          status?: string
+          updated_at?: string
+          value_cents?: number | null
+        }
+        Update: {
+          clinic_id?: string
+          contact_id?: string
+          created_at?: string
+          ctwa_clid?: string | null
+          currency?: string
+          erro?: string | null
+          event_id?: string
+          event_name?: string
+          id?: string
+          sent_at?: string | null
+          stage_chave?: string
+          status?: string
+          updated_at?: string
+          value_cents?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversion_event_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversion_event_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation: {
         Row: {
           assignee_user_id: string | null
@@ -1343,6 +1409,82 @@ export type Database = {
             columns: ["message_id"]
             isOneToOne: true
             referencedRelation: "message"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_ads_account: {
+        Row: {
+          ad_account_id: string | null
+          clinic_id: string
+          created_at: string
+          envio_ativado: boolean
+          modo_user_data: string | null
+          pixel_id: string | null
+          send_unmatched: boolean
+          test_event_code: string | null
+          updated_at: string
+          whatsapp_business_account_id: string | null
+        }
+        Insert: {
+          ad_account_id?: string | null
+          clinic_id: string
+          created_at?: string
+          envio_ativado?: boolean
+          modo_user_data?: string | null
+          pixel_id?: string | null
+          send_unmatched?: boolean
+          test_event_code?: string | null
+          updated_at?: string
+          whatsapp_business_account_id?: string | null
+        }
+        Update: {
+          ad_account_id?: string | null
+          clinic_id?: string
+          created_at?: string
+          envio_ativado?: boolean
+          modo_user_data?: string | null
+          pixel_id?: string | null
+          send_unmatched?: boolean
+          test_event_code?: string | null
+          updated_at?: string
+          whatsapp_business_account_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_ads_account_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_ads_account_secret: {
+        Row: {
+          capi_access_token: string | null
+          clinic_id: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          capi_access_token?: string | null
+          clinic_id: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          capi_access_token?: string | null
+          clinic_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_ads_account_secret_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
         ]
@@ -2247,6 +2389,10 @@ export type Database = {
       consentimento_vigente: {
         Args: { p_channel?: string; p_clinic_id: string; p_contact_id: string }
         Returns: boolean
+      }
+      conversoes_devolvidas_da_clinica: {
+        Args: { p_clinic_id: string }
+        Returns: Json
       }
       disparar_ciclo_do_motor: { Args: never; Returns: undefined }
       emails_da_equipe: {

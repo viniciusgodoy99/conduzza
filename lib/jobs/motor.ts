@@ -25,6 +25,9 @@ import { log } from "@/lib/log";
 const KINDS_DE_ENVIO = ["enviar_mensagem_ativa", "executar_passo_de_regua"];
 /** Mídia nao toca o slot de envio: trilho proprio. */
 const KINDS_DE_MIDIA = ["baixar_midia"];
+/** Integracoes externas (Meta CAPI): nao disputam o slot anti-ban nem
+ * atrasam confirmacao de consulta. */
+const KINDS_DE_INTEGRACAO = ["enviar_conversao_meta"];
 
 /**
  * Quanto tempo um job do tipo pode consumir, no pior caso analitico.
@@ -38,6 +41,8 @@ const CUSTO_ESTIMADO_MS: Record<string, number> = {
   enviar_mensagem_ativa: 25_000,
   executar_passo_de_regua: 25_000,
   baixar_midia: 30_000,
+  // 10s de timeout da CAPI + 2 retries com backoff curto + RPCs.
+  enviar_conversao_meta: 15_000,
 };
 const CUSTO_PADRAO_MS = 25_000;
 
@@ -130,7 +135,7 @@ export async function executarPassagemDoMotor(
   // incidente do provedor.
   await baterPonto(admin, 0);
 
-  const [envios, midias] = await Promise.all([
+  const [envios, midias, integracoes] = await Promise.all([
     reivindicar(
       admin,
       executorId,
@@ -139,9 +144,16 @@ export async function executarPassagemDoMotor(
       incluirClinicasDeTeste,
     ),
     reivindicar(admin, executorId, KINDS_DE_MIDIA, 2, incluirClinicasDeTeste),
+    reivindicar(
+      admin,
+      executorId,
+      KINDS_DE_INTEGRACAO,
+      2,
+      incluirClinicasDeTeste,
+    ),
   ]);
 
-  const todos = [...envios, ...midias];
+  const todos = [...envios, ...midias, ...integracoes];
   const resultado: ResultadoDaPassagem = {
     reivindicados: todos.length,
     concluidos: 0,

@@ -31,8 +31,14 @@ export default async function ConfiguracoesPage({
   }
 
   const supabase = await createClient();
-  const [memberResult, clinicResult, codigoResult, whatsappResult, jornada] =
-    await Promise.all([
+  const [
+    memberResult,
+    clinicResult,
+    codigoResult,
+    whatsappResult,
+    jornada,
+    contaMetaResult,
+  ] = await Promise.all([
       supabase
         .from("clinic_member")
         .select("user_id, role, status, created_at")
@@ -56,6 +62,14 @@ export default async function ConfiguracoesPage({
         .maybeSingle(),
       // A jornada da clinica (etapas + conversao): a RLS recorta por clinica.
       fetchJornada(supabase, active.clinicId),
+      // Conta de anuncios da Meta: a policy so mostra para admin e gestor.
+      supabase
+        .from("meta_ads_account")
+        .select(
+          "pixel_id, ad_account_id, whatsapp_business_account_id, test_event_code, envio_ativado, modo_user_data, send_unmatched",
+        )
+        .eq("clinic_id", active.clinicId)
+        .maybeSingle(),
     ]);
 
   type MemberRow = {
@@ -71,9 +85,17 @@ export default async function ConfiguracoesPage({
   // membro (equipe de 15 pessoas eram 15 requests antes de renderizar).
   const admin = createAdminClient();
   const memberIds = rows.map((row) => row.user_id);
-  const [nameById, emailsResult] = await Promise.all([
+  const [nameById, emailsResult, tokenMetaResult] = await Promise.all([
     fetchProfileNames(supabase, memberIds),
     admin.rpc("emails_da_equipe", { p_clinic_id: active.clinicId }),
+    // A tabela-secret nao tem policy: SO o booleano "existe token" sai daqui,
+    // nunca o valor.
+    admin
+      .from("meta_ads_account_secret")
+      .select("clinic_id")
+      .eq("clinic_id", active.clinicId)
+      .not("capi_access_token", "is", null)
+      .maybeSingle(),
   ]);
   const emailById = new Map(
     ((emailsResult.data ?? []) as { user_id: string; email: string }[]).map(
@@ -154,6 +176,8 @@ export default async function ConfiguracoesPage({
           providerName,
         }}
         jornada={jornada}
+        contaMeta={contaMetaResult.data ?? null}
+        temTokenMeta={tokenMetaResult.data !== null}
       />
     </div>
   );

@@ -9,6 +9,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { ICONES_DE_ETAPA } from "@/lib/domain/jornada";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 // Acoes de equipe: liberar quem pediu entrada por codigo, recusar, mudar o
@@ -721,5 +722,197 @@ export async function excluirEtapaDaJornadaAction(
   });
   revalidatePath("/configuracoes");
   revalidatePath("/leads");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Anuncios da Meta (R6): a conta que recebera as conversoes de volta.
+//
+// A configuracao legivel (pixel, conta, WABA, codigo de teste) vive em
+// meta_ads_account e a policy de gestao autoriza pela SESSAO. O token da
+// CAPI vive em meta_ads_account_secret, que nao tem policy nenhuma: so o
+// admin client escreve, DEPOIS do guard de papel, e o valor nunca volta ao
+// navegador (write-only). Ligar o envio revalida tudo e enfileira os
+// eventos registrados da janela de 7 dias da CAPI; os mais antigos sao
+// descartados com codigo, nunca em silencio.
+
+const contaMetaSchema = z.object({
+  pixel_id: z
+    .string()
+    .trim()
+    .regex(/^\d{5,20}$/)
+    .nullable(),
+  ad_account_id: z
+    .string()
+    .trim()
+    .regex(/^(act_)?\d{5,20}$/)
+    .nullable(),
+  whatsapp_business_account_id: z
+    .string()
+    .trim()
+    .regex(/^\d{5,20}$/)
+    .nullable(),
+  test_event_code: z.string().trim().min(1).max(40).nullable(),
+  send_unmatched: z.boolean(),
+});
+
+export async function salvarContaMetaAction(
+  entrada: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = contaMetaSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "Confira os campos: os identificadores da Meta são só números.",
+    };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("meta_ads_account")
+    .upsert(
+      { clinic_id: guard.clinicId, ...parsed.data },
+      { onConflict: "clinic_id" },
+    );
+  if (error) {
+    return {
+      ok: false,
+      error: mensagemDeErro(error, "Não foi possível salvar a conta."),
+    };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "salvou_conta_meta",
+    entity: "meta_ads_account",
+    entity_id: guard.clinicId,
+  });
+  revalidatePath("/configuracoes");
+  return { ok: true };
+}
+
+export async function salvarTokenMetaAction(
+  entrada: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = z
+    .object({ capi_access_token: z.string().trim().min(20).max(500) })
+    .safeParse(entrada);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "O token parece incompleto. Cole o valor inteiro, sem espaços.",
+    };
+  }
+
+  // Tabela-secret nao tem policy: escrita SO pelo admin client, depois do
+  // guard de papel acima (padrao whatsapp-connect).
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("meta_ads_account_secret")
+    .upsert(
+      {
+        clinic_id: guard.clinicId,
+        capi_access_token: parsed.data.capi_access_token,
+      },
+      { onConflict: "clinic_id" },
+    );
+  if (error) {
+    return { ok: false, error: "Não foi possível salvar o token." };
+  }
+
+  // Auditoria SEM o valor, obvio.
+  const supabase = await createClient();
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "atualizou_token_meta",
+    entity: "meta_ads_account_secret",
+    entity_id: guard.clinicId,
+  });
+  revalidatePath("/configuracoes");
+  return { ok: true };
+}
+
+export async function alternarEnvioMetaAction(
+  entrada: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = z.object({ ligar: z.boolean() }).safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { data: linhas, error } = await supabase
+    .from("meta_ads_account")
+    .update({ envio_ativado: parsed.data.ligar })
+    .eq("clinic_id", guard.clinicId)
+    .select("clinic_id");
+  if (error || !linhas || linhas.length === 0) {
+    const recusa = error?.message.includes("cadastre o token")
+      ? "Para ligar o envio, cadastre o token da API de conversões."
+      : error?.message.includes("envio_exige_configuracao") ||
+          error?.code === "23514"
+        ? "Para ligar o envio, preencha o Pixel e escolha como enviar os dados."
+        : "Não foi possível alterar o envio.";
+    return { ok: false, error: recusa };
+  }
+
+  if (parsed.data.ligar) {
+    // Backfill da janela da CAPI: eventos registrados dos ultimos 7 dias
+    // entram na fila; os mais antigos sao descartados com codigo. Escrita de
+    // sistema (conversion_event e job_queue nao tem policy de escrita).
+    const admin = createAdminClient();
+    const corte = new Date(
+      Date.now() - 7 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    await admin
+      .from("conversion_event")
+      .update({ status: "descartado", erro: "fora_da_janela_capi" })
+      .eq("clinic_id", guard.clinicId)
+      .eq("status", "registrado")
+      .lt("created_at", corte);
+    const { data: recentes } = await admin
+      .from("conversion_event")
+      .select("id")
+      .eq("clinic_id", guard.clinicId)
+      .eq("status", "registrado")
+      .gte("created_at", corte);
+    for (const evento of recentes ?? []) {
+      await admin
+        .from("conversion_event")
+        .update({ status: "enfileirado" })
+        .eq("id", evento.id);
+      await admin.from("job_queue").insert({
+        clinic_id: guard.clinicId,
+        kind: "enviar_conversao_meta",
+        payload: { conversion_event_id: evento.id },
+      });
+    }
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: parsed.data.ligar
+      ? "ligou_envio_de_conversoes"
+      : "desligou_envio_de_conversoes",
+    entity: "meta_ads_account",
+    entity_id: guard.clinicId,
+  });
+  revalidatePath("/configuracoes");
+  revalidatePath("/relatorios");
   return { ok: true };
 }
