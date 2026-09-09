@@ -71,6 +71,17 @@ const PAPEL_EXPLICADO: Record<string, string> = {
 const EVENTO_PERSONALIZADO = "__personalizado__";
 const SEM_EVENTO = "__sem_evento__";
 
+// Sentinela do estado "criando etapa". Os dois pontos nao existem no alfabeto
+// de chave (^[a-z0-9_]+$), entao NENHUMA etapa real pode colidir com ele. A
+// primeira versao usava "nova" e uma etapa chamada "Nova" (chave gerada
+// "nova") abria dois formularios com o mesmo rascunho, um salvando por cima
+// do outro (achado da revisao adversarial de 09/09/2026).
+const CRIANDO = ":nova";
+
+// O mesmo teto do Zod da action (termos_chave max 20): a tela para de aceitar
+// ANTES de o salvar falhar com mensagem generica.
+const MAXIMO_DE_TERMOS = 20;
+
 type Rascunho = {
   nome: string;
   tom: StatusTone;
@@ -133,7 +144,7 @@ export function JornadaTab({
   podeGerenciar: boolean;
   dica: string;
 }) {
-  // "nova" = criando; chave = editando aquela etapa; null = tudo fechado.
+  // CRIANDO = criando; chave = editando aquela etapa; null = tudo fechado.
   const [editando, setEditando] = useState<string | null>(null);
   const [rascunho, setRascunho] = useState<Rascunho>(rascunhoDaEtapa(null));
   const [erro, setErro] = useState<string | null>(null);
@@ -142,7 +153,7 @@ export function JornadaTab({
   const abrir = (etapa: EtapaDaJornada | null) => {
     setErro(null);
     setRascunho(rascunhoDaEtapa(etapa));
-    setEditando(etapa?.chave ?? "nova");
+    setEditando(etapa?.chave ?? CRIANDO);
   };
 
   const fechar = () => {
@@ -178,7 +189,9 @@ export function JornadaTab({
     // significar perder o termo em silencio.
     const termoPendente = rascunho.termoNovo.trim();
     const termos =
-      termoPendente.length >= 2 && !rascunho.termos.includes(termoPendente)
+      termoPendente.length >= 2 &&
+      !rascunho.termos.includes(termoPendente) &&
+      rascunho.termos.length < MAXIMO_DE_TERMOS
         ? [...rascunho.termos, termoPendente]
         : rascunho.termos;
 
@@ -331,7 +344,7 @@ export function JornadaTab({
         );
       })}
 
-      {editando === "nova" ? (
+      {editando === CRIANDO ? (
         <article className="grid gap-3 rounded-lg border bg-card p-4">
           <p className="text-sm font-semibold">Nova etapa</p>
           <FormularioDaEtapa
@@ -394,12 +407,16 @@ function FormularioDaEtapa({
   aoCancelar: () => void;
   aoExcluir: (() => void) | null;
 }) {
-  const id = etapa?.chave ?? "nova";
+  const id = etapa?.chave ?? "criando";
   const temEvento = rascunho.evento !== SEM_EVENTO;
 
   const adicionarTermo = () => {
     const termo = rascunho.termoNovo.trim();
-    if (termo.length < 2 || rascunho.termos.includes(termo)) {
+    if (
+      termo.length < 2 ||
+      rascunho.termos.includes(termo) ||
+      rascunho.termos.length >= MAXIMO_DE_TERMOS
+    ) {
       return;
     }
     setRascunho((atual) => ({
@@ -502,10 +519,12 @@ function FormularioDaEtapa({
                 className="flex items-center gap-1 rounded-full bg-surface-3 px-2.5 py-1 text-[12px]"
               >
                 {termo}
+                {/* O X e pequeno no olho, mas o alvo de toque chega aos 40px
+                    da regra 5 pelo pseudo-elemento expandido. */}
                 <button
                   type="button"
                   aria-label={`Remover o termo ${termo}`}
-                  className="grid size-5 place-items-center rounded-full hover:bg-surface-4"
+                  className="relative grid size-5 place-items-center rounded-full after:absolute after:-inset-2.5 hover:bg-surface-4"
                   onClick={() =>
                     setRascunho((atual) => ({
                       ...atual,
@@ -519,35 +538,42 @@ function FormularioDaEtapa({
             ))}
           </div>
         ) : null}
-        <div className="flex gap-2">
-          <Input
-            id={`termo-${id}`}
-            value={rascunho.termoNovo}
-            onChange={(evento) =>
-              setRascunho((atual) => ({
-                ...atual,
-                termoNovo: evento.target.value,
-              }))
-            }
-            onKeyDown={(evento) => {
-              if (evento.key === "Enter") {
-                evento.preventDefault();
-                adicionarTermo();
+        {rascunho.termos.length >= MAXIMO_DE_TERMOS ? (
+          <p className="text-[12px] text-text-tertiary">
+            Esta etapa chegou ao máximo de {MAXIMO_DE_TERMOS} termos. Remova um
+            para adicionar outro.
+          </p>
+        ) : (
+          <div className="flex gap-2">
+            <Input
+              id={`termo-${id}`}
+              value={rascunho.termoNovo}
+              onChange={(evento) =>
+                setRascunho((atual) => ({
+                  ...atual,
+                  termoNovo: evento.target.value,
+                }))
               }
-            }}
-            placeholder="Digite e aperte Enter para adicionar"
-            maxLength={40}
-            className="h-10 max-w-xs"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={adicionarTermo}
-            disabled={rascunho.termoNovo.trim().length < 2}
-          >
-            Adicionar
-          </Button>
+              onKeyDown={(evento) => {
+                if (evento.key === "Enter") {
+                  evento.preventDefault();
+                  adicionarTermo();
+                }
+              }}
+              placeholder="Digite e aperte Enter para adicionar"
+              maxLength={40}
+              className="h-10 max-w-xs"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={adicionarTermo}
+              disabled={rascunho.termoNovo.trim().length < 2}
+            >
+              Adicionar
+            </Button>
           </div>
+        )}
         </div>
       )}
 

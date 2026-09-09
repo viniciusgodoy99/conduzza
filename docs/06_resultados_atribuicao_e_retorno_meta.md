@@ -301,7 +301,7 @@ Capturar payload real de anúncio CTWA e ver se tem `ctwa_clid`. Sem código de 
 Estender `inbound.ts` + `ingest.ts` para extrair e gravar `ctwa_clid` e ids do anúncio no nascimento do contato.
 
 ### R2. Mapa de conversão por clínica `M` (o "Jornada" configurável, como você pediu)
-Migration `funnel_conversion_map` + tela: por etapa do funil, escolher o evento Meta, marcar "é venda" e "primeiro contato", definir valor (fixo ou preço da consulta). Espelha a edição de etapa do Tintim.
+**FEITO em 09/09/2026, com upgrade de escopo:** virou a tela **Jornada e conversões** (Configurações). As etapas do funil são configuráveis por clínica (`funnel_stage_def`, com papéis de sistema garantidos por gatilho) e a conversão mora NA edição da etapa, exatamente o modelo do Tintim: evento Meta (catálogo de 17 + personalizado), "é venda", "primeiro contato", valor (fixo ou preço da consulta) e termos-chave que movem o contato sozinhos. A `funnel_conversion_map` proposta abaixo existiu por um dia e foi absorvida (migration 20260909130000); onde este documento a cita, leia `funnel_stage_def`.
 
 ### R3. Integração Meta CAPI `G` (só se o retorno for feito no Conduzza)
 `lib/integrations/meta/capi.ts` no padrão adaptador (retry, backoff, timeout, server-only). Payload com `event_name`, `event_time`, `event_id`, `user_data` (telefone SHA-256) e `ctwa_clid` quando houver, `custom_data.value`/`currency` na venda. `test_event_code` para validar no Gerenciador de Eventos. Migrations `meta_ads_account` + secret.

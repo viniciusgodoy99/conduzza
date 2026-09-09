@@ -570,11 +570,18 @@ export async function salvarEtapaDaJornadaAction(
     });
   } else {
     // Criar: a chave nasce do nome, com sufixo se ja existir; a posicao entra
-    // no fim da jornada. Duas leituras + um insert com a sessao do usuario.
-    const { data: existentes } = await supabase
+    // no fim da jornada. Se a leitura das existentes falhar, PARA: seguir com
+    // lista vazia inseriria posicao 10 empatada com a etapa de entrada.
+    const { data: existentes, error: erroLeitura } = await supabase
       .from("funnel_stage_def")
       .select("chave, posicao")
       .eq("clinic_id", guard.clinicId);
+    if (erroLeitura) {
+      return {
+        ok: false,
+        error: "Não foi possível ler a jornada. Tente de novo.",
+      };
+    }
     const chaves = new Set((existentes ?? []).map((linha) => linha.chave));
     let chave = chaveDoNome(dados.nome);
     let sufixo = 2;
@@ -637,37 +644,37 @@ export async function reordenarEtapaDaJornadaAction(
     return { ok: false, error: "Dados inválidos." };
   }
 
+  // A troca vive na RPC reordenar_etapa_da_jornada (migration 20260909150000):
+  // transacao unica com FOR UPDATE e renumeracao completa. A primeira versao
+  // fazia duas escritas soltas daqui e podia deixar duas etapas empatadas na
+  // mesma posicao para sempre, o que desligava o avanco automatico do funil
+  // (achado da revisao adversarial de 09/09/2026). SECURITY INVOKER: a RLS
+  // continua decidindo quem reordena.
   const supabase = await createClient();
-  const { data: jornada } = await supabase
-    .from("funnel_stage_def")
-    .select("chave, posicao")
-    .eq("clinic_id", guard.clinicId)
-    .order("posicao");
-  const lista = jornada ?? [];
-  const indice = lista.findIndex((etapa) => etapa.chave === parsedChave.data);
-  const vizinho =
-    parsedDirecao.data === "subir" ? lista[indice - 1] : lista[indice + 1];
-  if (indice < 0 || !vizinho) {
-    return { ok: false, error: "A etapa já está na ponta da jornada." };
+  const { data: etapaMovida, error } = await supabase.rpc(
+    "reordenar_etapa_da_jornada",
+    {
+      p_clinic_id: guard.clinicId,
+      p_chave: parsedChave.data,
+      p_direcao: parsedDirecao.data,
+    },
+  );
+  if (error || !etapaMovida) {
+    return {
+      ok: false,
+      error: error?.message.includes("ponta da jornada")
+        ? "A etapa já está na ponta da jornada."
+        : "Não foi possível reordenar. Tente de novo.",
+    };
   }
 
-  // Troca as posicoes dos dois. Duas escritas pela sessao; se a segunda
-  // falhar, a jornada fica com duas etapas na mesma posicao ate o proximo
-  // salvar, o desempate por chave mantem a ordem estavel e nada quebra.
-  const atual = lista[indice]!;
-  const { error: erro1 } = await supabase
-    .from("funnel_stage_def")
-    .update({ posicao: vizinho.posicao })
-    .eq("clinic_id", guard.clinicId)
-    .eq("chave", atual.chave);
-  const { error: erro2 } = await supabase
-    .from("funnel_stage_def")
-    .update({ posicao: atual.posicao })
-    .eq("clinic_id", guard.clinicId)
-    .eq("chave", vizinho.chave);
-  if (erro1 || erro2) {
-    return { ok: false, error: "Não foi possível reordenar. Tente de novo." };
-  }
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "reordenou_etapa_da_jornada",
+    entity: "funnel_stage_def",
+    entity_id: etapaMovida as string,
+  });
 
   revalidatePath("/configuracoes");
   revalidatePath("/leads");

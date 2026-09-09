@@ -285,6 +285,84 @@ describe("a conversão da etapa", () => {
   });
 });
 
+// RPC reordenar_etapa_da_jornada (migration 20260909150000): transacao unica
+// com renumeracao completa, SECURITY INVOKER. Correcao da revisao adversarial
+// de 09/09/2026: o swap em duas escritas soltas podia empatar posicoes para
+// sempre e desligar o avanco automatico do funil.
+describe("reordenar pela RPC", () => {
+  it("gestor sobe uma etapa e a jornada inteira sai renumerada", async () => {
+    const cliente = await logado(email("gestor-a"));
+    const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
+      p_clinic_id: clinicaA,
+      p_chave: "aguardando_resposta",
+      p_direcao: "subir",
+    });
+    expect(error).toBeNull();
+    const { data } = await admin
+      .from("funnel_stage_def")
+      .select("chave, posicao")
+      .eq("clinic_id", clinicaA)
+      .order("posicao");
+    const ordem = data!.map((e) => e.chave);
+    expect(ordem.indexOf("aguardando_resposta")).toBeLessThan(
+      ordem.indexOf("em_contato"),
+    );
+    // Renumeracao canonica: posicoes 10, 20, 30... sem buraco nem empate.
+    expect(data!.map((e) => e.posicao)).toEqual(
+      data!.map((_, i) => (i + 1) * 10),
+    );
+  });
+
+  it("recepção não reordena: a RLS esconde as linhas da troca", async () => {
+    const cliente = await logado(email("recepcao-a"));
+    const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
+      p_clinic_id: clinicaA,
+      p_chave: "em_contato",
+      p_direcao: "subir",
+    });
+    expect(error?.message).toContain("Etapa não encontrada");
+  });
+
+  it("subir a primeira etapa avisa que já está na ponta", async () => {
+    const cliente = await logado(email("gestor-a"));
+    const { data: jornada } = await admin
+      .from("funnel_stage_def")
+      .select("chave")
+      .eq("clinic_id", clinicaA)
+      .order("posicao")
+      .limit(1);
+    const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
+      p_clinic_id: clinicaA,
+      p_chave: jornada![0]!.chave,
+      p_direcao: "subir",
+    });
+    expect(error?.message).toContain("ponta da jornada");
+  });
+
+  it("empate histórico de posição é consertado pela próxima reordenação", async () => {
+    // Força o defeito antigo: duas etapas na MESMA posicao.
+    await admin
+      .from("funnel_stage_def")
+      .update({ posicao: 20 })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "aguardando_resposta")
+      .throwOnError();
+    const cliente = await logado(email("gestor-a"));
+    const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
+      p_clinic_id: clinicaA,
+      p_chave: "agendou",
+      p_direcao: "descer",
+    });
+    expect(error).toBeNull();
+    const { data } = await admin
+      .from("funnel_stage_def")
+      .select("posicao")
+      .eq("clinic_id", clinicaA);
+    const posicoes = data!.map((e) => e.posicao);
+    expect(new Set(posicoes).size).toBe(posicoes.length);
+  });
+});
+
 describe("as travas de estrutura (por gatilho, valem até para o service role)", () => {
   it("a chave de uma etapa não muda", async () => {
     const { error } = await admin

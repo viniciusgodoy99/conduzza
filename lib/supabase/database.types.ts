@@ -2336,6 +2336,10 @@ export type Database = {
         }[]
       }
       planejar_reguas: { Args: never; Returns: Json }
+      reordenar_etapa_da_jornada: {
+        Args: { p_chave: string; p_clinic_id: string; p_direcao: string }
+        Returns: string
+      }
       pode_apagar_mensagem: {
         Args: { p_escopo: string; p_message_id: string }
         Returns: Json
