@@ -1,3 +1,4 @@
+import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -260,8 +261,9 @@ export default async function ResultadosPage() {
               {conversoes.ultimoEnvio ? (
                 <span className="text-sm text-text-tertiary">
                   último envio{" "}
+                  {/* Regra 3.6: exibir no fuso da clinica, nunca no do servidor. */}
                   {format(
-                    new Date(conversoes.ultimoEnvio),
+                    new TZDate(conversoes.ultimoEnvio, active.timezone),
                     "dd/MM 'às' HH:mm",
                     { locale: ptBR },
                   )}

@@ -28,10 +28,15 @@ async function descartar(
   eventoId: string,
   codigo: string,
 ): Promise<ResultadoDeJob> {
-  await admin
+  const { error } = await admin
     .from("conversion_event")
     .update({ status: "descartado", erro: codigo })
     .eq("id", eventoId);
+  if (error) {
+    // Sem a gravacao o evento ficaria "na fila" para sempre com o job
+    // concluido: melhor devolver erro e deixar o backoff repetir a escrita.
+    return { ok: false, erro: "gravar_status_falhou" };
+  }
   // Descarte e desfecho do EVENTO; para o job, e trabalho concluido.
   return { ok: true };
 }
@@ -94,11 +99,18 @@ export async function executarEnvioDeConversao(
     return descartar(admin, evento.id, "fora_da_janela_capi");
   }
 
-  // Sem identificador do anuncio, o evento so vale se a clinica aceitou
-  // enviar conversao "sem casamento" (send_unmatched).
-  if (!evento.ctwa_clid && !conta.send_unmatched) {
-    return descartar(admin, evento.id, "sem_identificador");
-  }
+  // O contato entra sempre: alem do telefone (modo permitindo), o ctwa_clid
+  // ATUAL dele cobre o buraco do snapshot congelado. A conversao de etapa de
+  // ENTRADA nasce no INSERT do contato, ANTES de a captura do anuncio gravar
+  // o ctwa_clid (achado da revisao adversarial de 09/09/2026): na hora do
+  // envio, o clique ja chegou, e primeiro-clique-vence o torna estavel.
+  const { data: contato } = await admin
+    .from("contact")
+    .select("phone_e164, ctwa_clid")
+    .eq("id", evento.contact_id)
+    .maybeSingle();
+  const ctwaClid =
+    evento.ctwa_clid ?? (contato?.ctwa_clid as string | undefined) ?? null;
 
   let phoneE164: string | null = null;
   if (modo === "telefone_hasheado") {
@@ -112,19 +124,19 @@ export async function executarEnvioDeConversao(
     if (vigente !== true) {
       return descartar(admin, evento.id, "sem_consentimento");
     }
-    const { data: contato } = await admin
-      .from("contact")
-      .select("phone_e164")
-      .eq("id", evento.contact_id)
-      .maybeSingle();
     phoneE164 = (contato?.phone_e164 as string | undefined) ?? null;
+  }
+
+  // A regra do send_unmatched vale pelo ctwa RESOLVIDO, nao pelo snapshot.
+  if (!ctwaClid && !conta.send_unmatched) {
+    return descartar(admin, evento.id, "sem_identificador");
   }
 
   const montado = montarEventoCapi({
     eventName: evento.event_name,
     eventId: evento.event_id,
     eventTimeUnix: Math.floor(new Date(evento.created_at).getTime() / 1000),
-    ctwaClid: evento.ctwa_clid,
+    ctwaClid,
     wabaId: conta.whatsapp_business_account_id ?? null,
     phoneE164,
     valueCents: evento.value_cents,
@@ -145,19 +157,34 @@ export async function executarEnvioDeConversao(
   );
 
   if (resultado.ok) {
-    await admin
+    // Grava tambem o ctwa resolvido: o snapshot nulo do INSERT precisa virar
+    // o valor enviado, senao o painel conta "sem identificador" o que casou.
+    const { error: erroGravar } = await admin
       .from("conversion_event")
-      .update({ status: "enviado", sent_at: new Date().toISOString(), erro: null })
+      .update({
+        status: "enviado",
+        sent_at: new Date().toISOString(),
+        ctwa_clid: ctwaClid,
+        erro: null,
+      })
       .eq("id", evento.id);
+    if (erroGravar) {
+      // Reenviar e seguro (a Meta deduplica); ficar "na fila" com o job
+      // concluido nao e. O backoff repete e a proxima execucao regrava.
+      return { ok: false, erro: "gravar_status_falhou" };
+    }
     return { ok: true };
   }
 
   if (!resultado.retryable) {
     // Erro nosso (token, pixel, payload): marcar e parar. So codigo em log.
-    await admin
+    const { error: erroGravar } = await admin
       .from("conversion_event")
       .update({ status: "falhou", erro: resultado.errorCode })
       .eq("id", evento.id);
+    if (erroGravar) {
+      return { ok: false, erro: "gravar_status_falhou" };
+    }
     log.error("conversao_meta_recusada", {
       clinic_id: job.clinic_id,
       conversion_event_id: evento.id,
@@ -166,6 +193,14 @@ export async function executarEnvioDeConversao(
     return { ok: false, erro: resultado.errorCode, definitivo: true };
   }
 
-  // Transitorio: o backoff do banco reagenda; o evento segue 'enfileirado'.
+  // Transitorio. Na ULTIMA tentativa do job (attempts ja vem incrementado
+  // pelo claim), o evento nao pode ficar 'enfileirado' orfao de job para
+  // sempre: vira 'falhou' com o codigo, visivel no painel.
+  if (job.attempts >= job.max_attempts) {
+    await admin
+      .from("conversion_event")
+      .update({ status: "falhou", erro: resultado.errorCode })
+      .eq("id", evento.id);
+  }
   return { ok: false, erro: resultado.errorCode };
 }

@@ -73,6 +73,9 @@ export function MetaAdsTab({
   const [semIdentificador, setSemIdentificador] = useState(
     atual.send_unmatched,
   );
+  const [modoEscolhido, setModoEscolhido] = useState(
+    atual.modo_user_data ?? "",
+  );
   const [token, setToken] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [pendente, startTransition] = useTransition();
@@ -86,6 +89,13 @@ export function MetaAdsTab({
         whatsapp_business_account_id: waba.trim() || null,
         test_event_code: codigoTeste.trim() || null,
         send_unmatched: semIdentificador,
+        // O banco embarga qualquer modo ate a decisao D6; ate la o seletor
+        // vive desabilitado e este campo viaja nulo.
+        modo_user_data:
+          modoEscolhido === "ctwa_apenas" ||
+          modoEscolhido === "telefone_hasheado"
+            ? modoEscolhido
+            : null,
       });
       if (!resultado.ok) {
         setErro(resultado.error ?? "Não foi possível salvar.");
@@ -269,7 +279,8 @@ export function MetaAdsTab({
             }
           >
             <Select
-              value={atual.modo_user_data ?? ""}
+              value={modoEscolhido}
+              onValueChange={setModoEscolhido}
               disabled={!DECISAO_LGPD_TOMADA || !controlesLiberados}
             >
               <SelectTrigger id="meta-modo" className="min-h-10 max-w-md">

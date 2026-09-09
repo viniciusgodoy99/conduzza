@@ -210,40 +210,38 @@ describe("registro de conversão no funil, contra o banco real", () => {
     expect(jobs).toHaveLength(0);
   });
 
-  it("com envio_ativado o evento nasce enfileirado e o job de envio existe", async () => {
+  it("o embargo da D6 impede montar envio ligado, então o enfileiramento dorme", async () => {
+    // O caminho "envio_ativado => evento nasce enfileirado + job" foi provado
+    // verde em 09/09/2026 ANTES do embargo entrar (o gatilho v2 nao mudou).
+    // Com o embargo, ligar o envio e IMPOSSIVEL ate a migration de liberacao
+    // da decisao D6, e e exatamente isso que este teste prova; a prova do
+    // enfileiramento volta junto com a liberacao.
     const clinicId = await criarClinica("comjob");
-    await configurarConversao(clinicId, "agendou", {
-      meta_event_name: "Schedule",
-    });
     await admin
       .from("meta_ads_account_secret")
       .insert({ clinic_id: clinicId, capi_access_token: "tok-integ" })
       .throwOnError();
-    await admin
-      .from("meta_ads_account")
-      .insert({
-        clinic_id: clinicId,
-        pixel_id: "123123123123123",
-        modo_user_data: "ctwa_apenas",
-        envio_ativado: true,
-      })
-      .throwOnError();
+    const { error } = await admin.from("meta_ads_account").insert({
+      clinic_id: clinicId,
+      pixel_id: "123123123123123",
+      modo_user_data: "ctwa_apenas",
+      envio_ativado: true,
+    });
+    expect(error?.message).toContain("decisão de privacidade pendente");
 
+    await configurarConversao(clinicId, "agendou", {
+      meta_event_name: "Schedule",
+    });
     const contato = await criarContato(clinicId, "+5584974300006");
     await mover(contato, "agendou");
 
     const eventos = await eventosDe(clinicId);
     expect(eventos).toHaveLength(1);
-    expect(eventos[0]!.status).toBe("enfileirado");
+    expect(eventos[0]!.status).toBe("registrado");
     const { data: jobs } = await admin
       .from("job_queue")
-      .select("kind, payload")
+      .select("id")
       .eq("clinic_id", clinicId);
-    expect(jobs).toHaveLength(1);
-    expect(jobs![0]!.kind).toBe("enviar_conversao_meta");
-    expect(
-      (jobs![0]!.payload as { conversion_event_id?: string })
-        .conversion_event_id,
-    ).toBeTruthy();
+    expect(jobs).toHaveLength(0);
   });
 });

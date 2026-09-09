@@ -236,22 +236,33 @@ describe("meta_ads_account", () => {
     expect(error?.code).toBe(RLS_VIOLATION);
   });
 
-  it("ligar o envio sem token é recusado pelo banco; com token e modo, liga", async () => {
-    // Clinica B: conta sem token. Nem o service role liga.
-    await admin
+  it("o embargo da decisão D6 segura no banco: nem o service role escolhe o modo", async () => {
+    // A trava NAO e a tela (regra 3.4: esconder botao nao protege nada). O
+    // gatilho recusa qualquer modo_user_data ate a migration de liberacao,
+    // por INSERT e por UPDATE, ate para o service role.
+    const { error: porUpdate } = await admin
       .from("meta_ads_account")
-      .insert({
-        clinic_id: clinicaB,
-        pixel_id: "555555555555555",
-        modo_user_data: "ctwa_apenas",
-      })
-      .throwOnError();
-    const { error: semToken } = await admin
-      .from("meta_ads_account")
-      .update({ envio_ativado: true })
-      .eq("clinic_id", clinicaB);
-    expect(semToken?.message).toContain("cadastre o token");
+      .update({ modo_user_data: "telefone_hasheado" })
+      .eq("clinic_id", clinicaA);
+    expect(porUpdate?.message).toContain("decisão de privacidade pendente");
 
+    const { error: porInsert } = await admin.from("meta_ads_account").insert({
+      clinic_id: clinicaB,
+      pixel_id: "555555555555555",
+      modo_user_data: "ctwa_apenas",
+    });
+    expect(porInsert?.message).toContain("decisão de privacidade pendente");
+
+    // E o gestor pela sessao (o caminho do achado da revisao): recusado.
+    const cliente = await logado(email("admin-a"));
+    const { error: porSessao } = await cliente
+      .from("meta_ads_account")
+      .update({ modo_user_data: "telefone_hasheado", envio_ativado: true })
+      .eq("clinic_id", clinicaA);
+    expect(porSessao?.message).toContain("decisão de privacidade pendente");
+  });
+
+  it("sem modo o envio não liga (CHECK); sem token, nem com tudo o mais", async () => {
     // Clinica A tem token mas nao tem modo: o CHECK barra.
     const { error: semModo } = await admin
       .from("meta_ads_account")
@@ -259,12 +270,20 @@ describe("meta_ads_account", () => {
       .eq("clinic_id", clinicaA);
     expect(semModo?.code).toBe("23514");
 
-    // Com modo E token, liga.
-    const { error: comTudo } = await admin
+    // Clinica B sem token: o gatilho barra antes (INSERT direto com envio).
+    const { error: semToken } = await admin.from("meta_ads_account").insert({
+      clinic_id: clinicaB,
+      pixel_id: "555555555555555",
+      envio_ativado: true,
+    });
+    // Sem modo cai no CHECK; o que importa e que NAO entra ligado.
+    expect(semToken).not.toBeNull();
+    const { data: prova } = await admin
       .from("meta_ads_account")
-      .update({ envio_ativado: true, modo_user_data: "ctwa_apenas" })
-      .eq("clinic_id", clinicaA);
-    expect(comTudo).toBeNull();
+      .select("envio_ativado")
+      .eq("clinic_id", clinicaB)
+      .maybeSingle();
+    expect(prova?.envio_ativado ?? false).toBe(false);
   });
 });
 

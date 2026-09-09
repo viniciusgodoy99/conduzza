@@ -754,6 +754,9 @@ const contaMetaSchema = z.object({
     .nullable(),
   test_event_code: z.string().trim().min(1).max(40).nullable(),
   send_unmatched: z.boolean(),
+  // O banco embarga qualquer valor aqui ate a decisao D6 (LGPD) do dono
+  // (gatilho conferir_token_antes_de_ligar_envio); a tela ja explica.
+  modo_user_data: z.enum(["ctwa_apenas", "telefone_hasheado"]).nullable(),
 });
 
 export async function salvarContaMetaAction(
@@ -781,7 +784,9 @@ export async function salvarContaMetaAction(
   if (error) {
     return {
       ok: false,
-      error: mensagemDeErro(error, "Não foi possível salvar a conta."),
+      error: error.message.includes("decisão de privacidade pendente")
+        ? "A forma de envio dos dados ainda está em definição (decisão de privacidade pendente)."
+        : mensagemDeErro(error, "Não foi possível salvar a conta."),
     };
   }
 
@@ -874,32 +879,58 @@ export async function alternarEnvioMetaAction(
     // Backfill da janela da CAPI: eventos registrados dos ultimos 7 dias
     // entram na fila; os mais antigos sao descartados com codigo. Escrita de
     // sistema (conversion_event e job_queue nao tem policy de escrita).
+    //
+    // ORDEM IMPORTA (achado da revisao adversarial de 09/09/2026): o job
+    // nasce ANTES de o status virar 'enfileirado'. Se o insert do job
+    // falhar, o evento continua 'registrado' e o proximo religar o repesca;
+    // 'enfileirado' sem job seria orfao para sempre. O job aceita evento
+    // 'registrado' numa boa (ele so recusa 'enviado'/'descartado'/'falhou').
     const admin = createAdminClient();
     const corte = new Date(
       Date.now() - 7 * 24 * 60 * 60 * 1000,
     ).toISOString();
-    await admin
+    const { error: erroDescarte } = await admin
       .from("conversion_event")
       .update({ status: "descartado", erro: "fora_da_janela_capi" })
       .eq("clinic_id", guard.clinicId)
       .eq("status", "registrado")
       .lt("created_at", corte);
-    const { data: recentes } = await admin
+    const { data: recentes, error: erroLeitura } = await admin
       .from("conversion_event")
       .select("id")
       .eq("clinic_id", guard.clinicId)
       .eq("status", "registrado")
-      .gte("created_at", corte);
+      .gte("created_at", corte)
+      .limit(1000);
+    if (erroDescarte || erroLeitura) {
+      return {
+        ok: false,
+        error:
+          "O envio ligou, mas os registros antigos não entraram na fila. Desligue e ligue de novo para tentar outra vez.",
+      };
+    }
+    let falhas = 0;
     for (const evento of recentes ?? []) {
-      await admin
-        .from("conversion_event")
-        .update({ status: "enfileirado" })
-        .eq("id", evento.id);
-      await admin.from("job_queue").insert({
+      const { error: erroJob } = await admin.from("job_queue").insert({
         clinic_id: guard.clinicId,
         kind: "enviar_conversao_meta",
         payload: { conversion_event_id: evento.id },
       });
+      if (erroJob) {
+        falhas += 1;
+        continue;
+      }
+      await admin
+        .from("conversion_event")
+        .update({ status: "enfileirado" })
+        .eq("id", evento.id)
+        .eq("status", "registrado");
+    }
+    if (falhas > 0) {
+      return {
+        ok: false,
+        error: `O envio ligou, mas ${falhas} ${falhas === 1 ? "registro antigo não entrou" : "registros antigos não entraram"} na fila. Desligue e ligue de novo para tentar outra vez.`,
+      };
     }
   }
 

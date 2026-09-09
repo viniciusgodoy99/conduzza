@@ -27,9 +27,18 @@ export type CapiResult =
   | { ok: true; eventsReceived: number }
   | { ok: false; errorCode: string; retryable: boolean };
 
+// A Graph API devolve erro TRANSITORIO com HTTP 400: limite de requisicoes
+// (4, 17, 32, 613) e indisponibilidade temporaria (1, 2). Tratar esses como
+// definitivos mataria conversao boa por instabilidade passageira (achado da
+// revisao adversarial de 09/09/2026).
+const CODIGOS_TRANSITORIOS = new Set([1, 2, 4, 17, 32, 341, 613]);
+
+function erroDoCorpo(corpo: unknown): { code?: number } | undefined {
+  return (corpo as { error?: { code?: number } } | null)?.error;
+}
+
 function codigoDoErro(status: number, corpo: unknown): string {
-  const erro = (corpo as { error?: { code?: number; type?: string } } | null)
-    ?.error;
+  const erro = erroDoCorpo(corpo);
   if (status === 401 || erro?.code === 190) {
     return "token_invalido";
   }
@@ -82,6 +91,16 @@ export async function enviarEventosCapi(
         return { ok: true, eventsReceived: json?.events_received ?? 0 };
       }
       if (resposta.status >= 400 && resposta.status < 500) {
+        const codigo = erroDoCorpo(json)?.code;
+        if (codigo !== undefined && CODIGOS_TRANSITORIOS.has(codigo)) {
+          // Limite de requisicoes ou indisponibilidade: vale repetir.
+          ultimoErro = {
+            ok: false,
+            errorCode: `transitorio_${codigo}`,
+            retryable: true,
+          };
+          continue;
+        }
         // Erro nosso (token, pixel, payload): repetir nao conserta.
         return {
           ok: false,
