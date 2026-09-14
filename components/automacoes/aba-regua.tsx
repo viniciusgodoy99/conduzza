@@ -15,6 +15,7 @@ import { EditorDePasso } from "@/components/automacoes/editor-de-passo";
 import { LinhaDoTempo } from "@/components/automacoes/linha-do-tempo";
 import { MetricasDaRegua } from "@/components/automacoes/metricas-da-regua";
 import { ControlesDaRegua } from "@/components/confirmacoes/controles-da-regua";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import {
   estimarRegua,
@@ -208,12 +209,20 @@ export function AbaRegua({
               <Plus strokeWidth={1.5} className="size-4" />
               Adicionar mensagem
             </Button>
-          ) : null}
+          ) : (
+            <DisabledWithHint hint={dicaSemPermissao}>
+              <Button variant="outline" className="h-10" disabled>
+                <Plus strokeWidth={1.5} className="size-4" />
+                Adicionar mensagem
+              </Button>
+            </DisabledWithHint>
+          )}
         </div>
         {passoSelecionado ? (
           <>
-            {podeEditar ? (
-              <div className="flex flex-wrap gap-2 border-t pt-3">
+            <div className="flex flex-wrap gap-2 border-t pt-3">
+              {podeEditar ? (
+                <>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -244,14 +253,32 @@ export function AbaRegua({
                   <Trash2 strokeWidth={1.5} className="size-4" />
                   Excluir mensagem
                 </Button>
-                {regua.passos.length <= 1 ? (
-                  <span className="self-center text-xs text-text-tertiary">
-                    A última mensagem não se exclui; desligue a régua para
-                    pausar.
+                  {regua.passos.length <= 1 ? (
+                    <span className="self-center text-xs text-text-tertiary">
+                      A última mensagem não se exclui; desligue a régua para
+                      pausar.
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                <DisabledWithHint hint={dicaSemPermissao}>
+                  <span className="flex flex-wrap gap-2">
+                    <Button variant="ghost" size="sm" className="h-9" disabled>
+                      <CalendarClock strokeWidth={1.5} className="size-4" />
+                      Mudar o momento
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9" disabled>
+                      <SendHorizonal strokeWidth={1.5} className="size-4" />
+                      Testar no WhatsApp da clínica
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9" disabled>
+                      <Trash2 strokeWidth={1.5} className="size-4" />
+                      Excluir mensagem
+                    </Button>
                   </span>
-                ) : null}
-              </div>
-            ) : null}
+                </DisabledWithHint>
+              )}
+            </div>
             <EditorDePasso
               key={passoSelecionado.id}
               passo={passoSelecionado}
@@ -261,6 +288,7 @@ export function AbaRegua({
               placeholders={placeholders}
               podeEditar={podeEditar}
               dicaSemPermissao={dicaSemPermissao}
+              aoMudar={aoMudar}
             />
           </>
         ) : (

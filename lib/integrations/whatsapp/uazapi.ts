@@ -508,12 +508,31 @@ function parseInstanceStatus(body: Record<string, unknown>): InstanceStatus {
     // Enquanto ha QR na resposta, o pareamento esta aberto esperando leitura.
     status: qrCode && status !== "conectado" ? "aguardando_qr" : status,
     qrCode: qrCode ?? paircode,
-    displayPhone:
-      pickString(body, ["instance.profileName", "status.jid.user", "owner"]) ??
-      null,
+    // O NUMERO vem primeiro (owner/jid.user); o nome de perfil e ultimo
+    // recurso. A ordem antiga preferia profileName e display_phone acabava
+    // guardando o NOME, que o teste de envio da Tela 7 usaria como destino
+    // (achado grave da revisao de 14/09/2026): nome sem digito nao chega, e
+    // nome COM digitos viraria numero de terceiro.
+    displayPhone: semSufixoDeJid(
+      pickString(body, [
+        "instance.owner",
+        "owner",
+        "status.jid.user",
+        "instance.profileName",
+      ]),
+    ),
     instanceId: pickString(body, ["instance.name", "instance.id"]),
     instanceToken: pickString(body, ["instance.token", "token"]),
   };
+}
+
+/** "5584...@s.whatsapp.net" vira "5584..."; sem arroba, passa direto. */
+function semSufixoDeJid(valor: string | null): string | null {
+  if (!valor) {
+    return null;
+  }
+  const arroba = valor.indexOf("@");
+  return arroba > 0 ? valor.slice(0, arroba) : valor;
 }
 
 function pickString(

@@ -1,5 +1,7 @@
 "use client";
 
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -16,12 +18,15 @@ import type { PassoDaReguaDaTela } from "@/lib/queries/confirmacoes";
 // clicaveis e a pre-visualizacao ao vivo em balao de WhatsApp, lado a lado.
 // E o coracao do aceite da 4.8: trocar o texto da regua sem tocar em codigo.
 
-/** Valores de amostra da pre-visualizacao, explicitamente FICTICIOS. */
+/** Valores de amostra da pre-visualizacao, explicitamente FICTICIOS. A data
+ *  usa o MESMO formato do envio real (dd/MM/yyyy): preview que mostra um
+ *  formato que nunca sai engana a clinica. */
 export function valoresDeAmostra(nomeDaClinica: string) {
+  const amanha = new Date(Date.now() + 24 * 60 * 60_000);
   return {
     nome: "Maria",
     clinica: nomeDaClinica,
-    data: "quinta-feira, 24 de setembro",
+    data: format(amanha, "dd/MM/yyyy", { locale: ptBR }),
     hora: "14:00",
     profissional: "Dra. Exemplo",
     procedimento: "Consulta",
@@ -37,6 +42,7 @@ export function EditorDePasso({
   placeholders = PLACEHOLDERS,
   podeEditar,
   dicaSemPermissao,
+  aoMudar,
 }: {
   passo: PassoDaReguaDaTela;
   rotulo: string;
@@ -46,6 +52,8 @@ export function EditorDePasso({
   placeholders?: readonly string[];
   podeEditar: boolean;
   dicaSemPermissao: string;
+  /** Invalida o cache das reguas: sem isto o texto salvo sumia da vista. */
+  aoMudar: () => Promise<unknown> | void;
 }) {
   const [texto, setTexto] = useState(passo.fixed_body ?? "");
   const [pendente, iniciarTransicao] = useTransition();
@@ -98,6 +106,7 @@ export function EditorDePasso({
       });
       if (resultado.ok) {
         toast.success("Texto salvo.");
+        await aoMudar();
         return;
       }
       toast.error(resultado.error ?? "Não foi possível salvar o texto.");

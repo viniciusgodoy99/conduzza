@@ -163,6 +163,7 @@ export function AutomacoesClient({
           estimativa={{
             eventos30d: volumes.consultas30d,
             rotuloDoEvento: "consultas marcadas",
+            rotuloDoEventoSingular: "consulta marcada",
             precoCents: volumes.precoCents,
           }}
           sentidoDoPasso="antes"
@@ -204,6 +205,7 @@ export function AutomacoesClient({
           estimativa={{
             eventos30d: volumes.faltas30d,
             rotuloDoEvento: "faltas registradas",
+            rotuloDoEventoSingular: "falta registrada",
             precoCents: volumes.precoCents,
           }}
           sentidoDoPasso="depois"

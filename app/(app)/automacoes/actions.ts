@@ -173,8 +173,10 @@ export async function criarReguaDeExcecaoAction(
     };
   }
 
-  // Copia os passos da padrao. Se uma copia falhar, a regua fica com menos
-  // passos e DESLIGADA: quem edita ve e completa, nada envia sozinho.
+  // Copia os passos da padrao. O insert em lote e ATOMICO no PostgREST:
+  // falhou, nao entrou NENHUM passo. Nesse caso a regua recem-criada e
+  // desfeita e a clinica ouve a verdade, em vez de ganhar uma regua vazia
+  // que parece pronta.
   const { data: passos } = await supabase
     .from("cadence_step")
     .select("offset_minutes, fixed_body")
@@ -182,7 +184,7 @@ export async function criarReguaDeExcecaoAction(
     .eq("cadence_id", padrao.id as string)
     .order("offset_minutes");
   if (passos && passos.length > 0) {
-    await supabase.from("cadence_step").insert(
+    const { error: erroCopia } = await supabase.from("cadence_step").insert(
       passos.map((passo) => ({
         clinic_id: guard.clinicId,
         cadence_id: nova.id as string,
@@ -190,6 +192,18 @@ export async function criarReguaDeExcecaoAction(
         fixed_body: passo.fixed_body as string | null,
       })),
     );
+    if (erroCopia) {
+      await supabase
+        .from("cadence")
+        .delete()
+        .eq("clinic_id", guard.clinicId)
+        .eq("id", nova.id as string);
+      return {
+        ok: false,
+        error:
+          "Não foi possível copiar as mensagens da régua principal. Tente de novo.",
+      };
+    }
   }
 
   await supabase.from("audit_log").insert({
@@ -588,6 +602,18 @@ export async function testarEnvioAction(
         "O WhatsApp da clínica precisa estar conectado para receber o teste. Confira em Configurações.",
     };
   }
+  // O destino precisa SER um numero. Instancias pareadas antes da correcao
+  // do parse guardavam o NOME do perfil em display_phone: mandar isso ao
+  // provedor seria, no pior caso, mensagem para numero de terceiro extraido
+  // dos digitos do nome (achado grave da revisao de 14/09/2026).
+  const destino = (conta.display_phone as string).replace(/\D/g, "");
+  if (destino.length < 8 || destino.length > 15) {
+    return {
+      ok: false,
+      error:
+        "O número da instância está desatualizado. Abra Configurações, aba WhatsApp, e atualize o estado da conexão antes de testar.",
+    };
+  }
 
   const amanha = new TZDate(
     Date.now() + 24 * 60 * 60_000,
@@ -606,13 +632,8 @@ export async function testarEnvioAction(
   const { provider, ref } = await carregarInstancia(adminDb, guard.clinicId);
   const resultado =
     kind === "confirmacao"
-      ? await provider.sendMenu(
-          ref,
-          conta.display_phone as string,
-          corpo,
-          MENU_CONFIRMACAO,
-        )
-      : await provider.sendText(ref, conta.display_phone as string, corpo);
+      ? await provider.sendMenu(ref, destino, corpo, MENU_CONFIRMACAO)
+      : await provider.sendText(ref, destino, corpo);
   if (!resultado.ok) {
     return {
       ok: false,

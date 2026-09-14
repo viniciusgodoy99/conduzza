@@ -201,7 +201,19 @@ export function AbaFollowup({
                     <Trash2 strokeWidth={1.5} className="size-4" />
                     Excluir
                   </Button>
-                ) : null}
+                ) : (
+                  <DisabledWithHint hint={dicaSemPermissao}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 [color:var(--alert-text)]"
+                      disabled
+                    >
+                      <Trash2 strokeWidth={1.5} className="size-4" />
+                      Excluir
+                    </Button>
+                  </DisabledWithHint>
+                )}
               </div>
               {expandida ? (
                 <div className="grid gap-3 border-t p-3">
@@ -233,6 +245,7 @@ export function AbaFollowup({
                     estimativa={{
                       eventos30d: regua.eventos30d,
                       rotuloDoEvento: "leads que entraram na etapa",
+                      rotuloDoEventoSingular: "lead que entrou na etapa",
                       precoCents,
                     }}
                     sentidoDoPasso="depois"

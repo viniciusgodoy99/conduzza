@@ -14,6 +14,8 @@ export type BaseDaEstimativa = {
   passos: number;
   /** "consultas marcadas" | "faltas registradas" | "leads que entraram na etapa" */
   rotuloDoEvento: string;
+  /** "consulta marcada" | "falta registrada" | "lead que entrou na etapa" */
+  rotuloDoEventoSingular: string;
   /** Preco por mensagem em centavos quando message_pricing tiver linha; senao null. */
   precoCents: number | null;
 };
@@ -31,14 +33,17 @@ const formatadorBRL = new Intl.NumberFormat("pt-BR", {
 
 export function estimarRegua(base: BaseDaEstimativa): EstimativaDaRegua {
   const mensagensPorMes = base.eventos30d * base.passos;
+  const rotuloEventos =
+    base.eventos30d === 1 ? base.rotuloDoEventoSingular : base.rotuloDoEvento;
+  const porEvento = base.rotuloDoEventoSingular.split(" ")[0] ?? "evento";
   const frase =
     base.passos === 0
       ? "Esta régua ainda não tem mensagem com texto, então nada é enviado."
       : `Esta régua envia cerca de ${mensagensPorMes} ${
           mensagensPorMes === 1 ? "mensagem" : "mensagens"
-        } por mês, considerando ${base.eventos30d} ${base.rotuloDoEvento} nos últimos 30 dias e ${
+        } por mês, considerando ${base.eventos30d} ${rotuloEventos} nos últimos 30 dias e ${
           base.passos === 1 ? "1 mensagem" : `${base.passos} mensagens`
-        } por ${base.rotuloDoEvento === "faltas registradas" ? "falta" : base.rotuloDoEvento === "consultas marcadas" ? "consulta" : "lead"}.`;
+        } por ${porEvento}.`;
   const fraseDeCusto =
     base.precoCents === null
       ? "No WhatsApp conectado por QR não há custo por mensagem. Quando o canal oficial estiver ativo, o custo estimado em reais aparece aqui."

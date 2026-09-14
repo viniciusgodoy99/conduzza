@@ -123,6 +123,9 @@ export function MetricasDaRegua({
         </p>
       ) : null}
       <p className="text-[11.5px] text-text-tertiary">
+        {data.aproximado
+          ? "Régua com muito volume: os detalhes acima consideram os 1000 toques mais recentes. "
+          : ""}
         Respostas e agendamentos gerados pela régua chegam junto com a
         atribuição de resposta; número sem origem confiável não aparece aqui.
       </p>

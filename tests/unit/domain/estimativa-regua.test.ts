@@ -11,6 +11,7 @@ describe("estimarRegua", () => {
       eventos30d: 440,
       passos: 3,
       rotuloDoEvento: "consultas marcadas",
+      rotuloDoEventoSingular: "consulta marcada",
       precoCents: null,
     });
     expect(r.mensagensPorMes).toBe(1320);
@@ -24,6 +25,7 @@ describe("estimarRegua", () => {
       eventos30d: 10,
       passos: 2,
       rotuloDoEvento: "faltas registradas",
+      rotuloDoEventoSingular: "falta registrada",
       precoCents: null,
     });
     expect(r.fraseDeCusto).toContain("não há custo por mensagem");
@@ -35,6 +37,7 @@ describe("estimarRegua", () => {
       eventos30d: 100,
       passos: 3,
       rotuloDoEvento: "consultas marcadas",
+      rotuloDoEventoSingular: "consulta marcada",
       precoCents: 5,
     });
     // 300 mensagens x 5 centavos = R$ 15,00
@@ -47,6 +50,7 @@ describe("estimarRegua", () => {
       eventos30d: 50,
       passos: 0,
       rotuloDoEvento: "consultas marcadas",
+      rotuloDoEventoSingular: "consulta marcada",
       precoCents: null,
     });
     expect(r.mensagensPorMes).toBe(0);
@@ -58,9 +62,11 @@ describe("estimarRegua", () => {
       eventos30d: 1,
       passos: 1,
       rotuloDoEvento: "faltas registradas",
+      rotuloDoEventoSingular: "falta registrada",
       precoCents: null,
     });
     expect(r.frase).toContain("cerca de 1 mensagem por mês");
+    expect(r.frase).toContain("1 falta registrada nos últimos 30 dias");
     expect(r.frase).toContain("1 mensagem por falta");
   });
 });

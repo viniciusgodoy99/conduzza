@@ -29,11 +29,10 @@ const COPY = {
   confirmacao: {
     aba: "Confirmação",
     descricao:
-      "Três mensagens automáticas antes da consulta, com os botões Confirmar, Remarcar e Cancelar.",
+      "Mensagens automáticas antes da consulta, com os botões Confirmar, Remarcar e Cancelar.",
     ligar: "Ligar a régua de confirmação",
     ligada: "Régua ligada",
     desligada: "Régua desligada",
-    tituloDosPassos: "As três mensagens",
     descricaoDosPassos:
       "Os campos entre chaves são preenchidos com os dados da consulta na hora do envio.",
     vazio: "Esta clínica ainda não tem a régua de confirmação configurada.",
@@ -41,11 +40,10 @@ const COPY = {
   pos_falta: {
     aba: "Depois da falta",
     descricao:
-      "Duas mensagens depois de uma falta, para trazer o paciente de volta à agenda.",
+      "Mensagens depois de uma falta, para trazer o paciente de volta à agenda.",
     ligar: "Ligar a régua de recuperação depois da falta",
     ligada: "Recuperação ligada",
     desligada: "Recuperação desligada",
-    tituloDosPassos: "As duas mensagens",
     descricaoDosPassos:
       "Saem só para quem foi marcado como falta na tela de confirmações.",
     vazio: "Esta clínica ainda não tem a régua de recuperação configurada.",
@@ -141,7 +139,9 @@ export function PainelRegua({
               <div className="grid gap-1">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <h3 className="text-sm font-semibold">
-                    {copy.tituloDosPassos}
+                    {regua.passos.length === 1
+                      ? "A mensagem"
+                      : `As ${regua.passos.length} mensagens`}
                   </h3>
                   <Link
                     href={`/automacoes?aba=${tipo}`}

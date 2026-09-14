@@ -27,19 +27,24 @@ export async function fetchVolumesDaEstimativa(
   clinicId: string,
 ): Promise<VolumesDaEstimativa> {
   const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+  // Janela FECHADA em agora: "nos ultimos 30 dias" com consulta futura na
+  // conta seria mentira (achado da revisao de 14/09/2026).
+  const agora = new Date().toISOString();
   const [consultas, faltas, preco] = await Promise.all([
     supabase
       .from("appointment")
       .select("id", { count: "exact", head: true })
       .eq("clinic_id", clinicId)
       .eq("send_confirmation", true)
-      .gte("starts_at", desde30d),
+      .gte("starts_at", desde30d)
+      .lt("starts_at", agora),
     supabase
       .from("appointment")
       .select("id", { count: "exact", head: true })
       .eq("clinic_id", clinicId)
       .eq("status", "faltou")
-      .gte("starts_at", desde30d),
+      .gte("starts_at", desde30d)
+      .lt("starts_at", agora),
     // Tabela global (sem clinic_id), legivel por autenticado; nasce VAZIA
     // porque o preco em BRL e a pendencia P1 e nao se inventa valor.
     supabase
@@ -82,6 +87,7 @@ export async function fetchExcecoesDeConfirmacao(
 }> {
   const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
   const desde24h = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const agora = new Date().toISOString();
   const [reguas, procedimentos, jaEnviou] = await Promise.all([
     supabase
       .from("cadence")
@@ -138,6 +144,7 @@ export async function fetchExcecoesDeConfirmacao(
               .eq("send_confirmation", true)
               .eq("service_link.procedure_id", procedure.id)
               .gte("starts_at", desde30d)
+              .lt("starts_at", agora)
           : supabase
               .from("appointment")
               .select("id, contact!inner(no_show_count)", {
@@ -150,7 +157,8 @@ export async function fetchExcecoesDeConfirmacao(
                 "contact.no_show_count",
                 (regua.no_show_threshold as number) ?? 2,
               )
-              .gte("starts_at", desde30d),
+              .gte("starts_at", desde30d)
+              .lt("starts_at", agora),
         supabase
           .from("cadence_run")
           .select("id, cadence_step!inner(cadence_id)", {
@@ -337,6 +345,8 @@ export type MetricasDaRegua = {
   entregues30d: number;
   /** Consentimentos revogados ate 24h depois de um envio DESTA regua. */
   descadastros30d: number;
+  /** O detalhamento bateu no teto de 1000 linhas: valores sao aproximados. */
+  aproximado: boolean;
 };
 
 export async function fetchMetricasDaRegua(
@@ -375,8 +385,16 @@ export async function fetchMetricasDaRegua(
       .eq("clinic_id", clinicId)
       .eq("cadence_step.cadence_id", cadenceId)
       .gte("scheduled_for", desde30d)
+      .order("scheduled_for", { ascending: false })
       .limit(1000),
   ]);
+  // Erro de leitura NAO vira zero nos cartoes: numero falso e pior que
+  // estado de erro (o useQuery do componente trata o throw).
+  if (enviadas.error || naFila.error || puladas.error) {
+    throw new Error(
+      (enviadas.error ?? naFila.error ?? puladas.error)!.message,
+    );
+  }
 
   const linhas = (puladas.data ?? []) as {
     skipped_reason: string | null;
@@ -417,18 +435,22 @@ export async function fetchMetricasDaRegua(
   // honesto de mensagem indesejada que temos hoje.
   let descadastros = 0;
   const contatos = [...enviosPorContato.keys()];
-  if (contatos.length > 0) {
+  const revogadosTodos: { contact_id: string; revoked_at: string }[] = [];
+  // Em lotes de 500 (limite pratico do .in), SEM descartar o excedente.
+  for (let i = 0; i < contatos.length; i += 500) {
     const { data: revogados } = await supabase
       .from("contact_consent")
       .select("contact_id, revoked_at")
       .eq("clinic_id", clinicId)
-      .in("contact_id", contatos.slice(0, 500))
+      .in("contact_id", contatos.slice(i, i + 500))
       .not("revoked_at", "is", null)
       .gte("revoked_at", desde30d);
-    for (const linha of (revogados ?? []) as {
-      contact_id: string;
-      revoked_at: string;
-    }[]) {
+    revogadosTodos.push(
+      ...((revogados ?? []) as { contact_id: string; revoked_at: string }[]),
+    );
+  }
+  {
+    for (const linha of revogadosTodos) {
       const envios = enviosPorContato.get(linha.contact_id) ?? [];
       const revogadoEm = new Date(linha.revoked_at).getTime();
       if (
@@ -453,5 +475,6 @@ export async function fetchMetricasDaRegua(
       .sort((a, b) => b.total - a.total),
     entregues30d: entregues,
     descadastros30d: descadastros,
+    aproximado: linhas.length >= 1000,
   };
 }
