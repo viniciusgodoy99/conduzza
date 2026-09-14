@@ -1,11 +1,19 @@
 "use client";
 
-import { Coins } from "lucide-react";
-import { useMemo, useState } from "react";
+import { CalendarClock, Coins, Plus, Trash2 } from "lucide-react";
+import { useMemo, useState, useTransition } from "react";
+import { toast } from "sonner";
 
+import {
+  criarPassoAction,
+  excluirPassoAction,
+  salvarEsperaDoPassoAction,
+} from "@/app/(app)/automacoes/actions";
+import { DialogPasso } from "@/components/automacoes/dialog-passo";
 import { EditorDePasso } from "@/components/automacoes/editor-de-passo";
 import { LinhaDoTempo } from "@/components/automacoes/linha-do-tempo";
 import { ControlesDaRegua } from "@/components/confirmacoes/controles-da-regua";
+import { Button } from "@/components/ui/button";
 import {
   estimarRegua,
   type BaseDaEstimativa,
@@ -23,6 +31,8 @@ export function AbaRegua({
   nomeDaClinica,
   botoesDaPreview,
   estimativa,
+  sentidoDoPasso,
+  eventoRotulo,
   podeEditar,
   dicaSemPermissao,
   aoMudar,
@@ -39,11 +49,17 @@ export function AbaRegua({
   nomeDaClinica: string;
   botoesDaPreview?: string[];
   estimativa: Omit<BaseDaEstimativa, "passos">;
+  /** confirmacao conta ANTES da consulta; pos falta conta DEPOIS do evento. */
+  sentidoDoPasso: "antes" | "depois";
+  /** "a consulta" | "a falta", para os dialogos. */
+  eventoRotulo: string;
   podeEditar: boolean;
   dicaSemPermissao: string;
   aoMudar: () => Promise<unknown> | void;
 }) {
   const [passoAberto, setPassoAberto] = useState<string | null>(null);
+  const [dialogo, setDialogo] = useState<"criar" | "momento" | null>(null);
+  const [pendente, iniciarTransicao] = useTransition();
 
   const passoSelecionado = useMemo(() => {
     if (!regua || regua.passos.length === 0) {
@@ -59,6 +75,61 @@ export function AbaRegua({
   if (!regua) {
     return <p className="text-sm text-text-secondary">{copy.vazio}</p>;
   }
+  const reguaAtual = regua;
+
+  const criarPasso = (offsetMinutes: number, texto: string) => {
+    iniciarTransicao(async () => {
+      const resultado = await criarPassoAction({
+        cadence_id: reguaAtual.id,
+        offset_minutes: offsetMinutes,
+        fixed_body: texto,
+      });
+      if (resultado.ok) {
+        toast.success("Mensagem criada.");
+        setDialogo(null);
+        await aoMudar();
+        return;
+      }
+      toast.error(resultado.error ?? "Não foi possível criar a mensagem.");
+    });
+  };
+
+  const mudarMomento = (offsetMinutes: number) => {
+    if (!passoSelecionado) {
+      return;
+    }
+    iniciarTransicao(async () => {
+      const resultado = await salvarEsperaDoPassoAction({
+        cadence_step_id: passoSelecionado.id,
+        offset_minutes: offsetMinutes,
+      });
+      if (resultado.ok) {
+        toast.success("Momento da mensagem salvo.");
+        setDialogo(null);
+        await aoMudar();
+        return;
+      }
+      toast.error(resultado.error ?? "Não foi possível mudar o momento.");
+    });
+  };
+
+  const excluirPasso = () => {
+    if (!passoSelecionado) {
+      return;
+    }
+    iniciarTransicao(async () => {
+      const resultado = await excluirPassoAction({
+        cadence_step_id: passoSelecionado.id,
+      });
+      if (resultado.ok) {
+        toast.success("Mensagem excluída.");
+        setPassoAberto(null);
+        await aoMudar();
+        return;
+      }
+      toast.error(resultado.error ?? "Não foi possível excluir.");
+    });
+  };
 
   const resultado = estimarRegua({
     ...estimativa,
@@ -87,30 +158,78 @@ export function AbaRegua({
             Toque num ponto da linha para editar a mensagem daquele momento.
           </p>
         </div>
-        <LinhaDoTempo
-          inicioRotulo={copy.inicioDaLinha}
-          fimRotulo={copy.fimDaLinha}
-          pontos={regua.passos.map((passo) => ({
-            id: passo.id,
-            rotulo: rotuloDoPasso(passo.offset_minutes),
-            temTexto: Boolean(passo.fixed_body),
-          }))}
-          selecionadoId={passoSelecionado?.id ?? null}
-          onSelecionar={setPassoAberto}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <LinhaDoTempo
+              inicioRotulo={copy.inicioDaLinha}
+              fimRotulo={copy.fimDaLinha}
+              pontos={regua.passos.map((passo) => ({
+                id: passo.id,
+                rotulo: rotuloDoPasso(passo.offset_minutes),
+                temTexto: Boolean(passo.fixed_body),
+              }))}
+              selecionadoId={passoSelecionado?.id ?? null}
+              onSelecionar={setPassoAberto}
+            />
+          </div>
+          {podeEditar ? (
+            <Button
+              variant="outline"
+              className="h-10"
+              disabled={pendente}
+              onClick={() => setDialogo("criar")}
+            >
+              <Plus strokeWidth={1.5} className="size-4" />
+              Adicionar mensagem
+            </Button>
+          ) : null}
+        </div>
         {passoSelecionado ? (
-          <EditorDePasso
-            key={passoSelecionado.id}
-            passo={passoSelecionado}
-            rotulo={rotuloDoPasso(passoSelecionado.offset_minutes)}
-            nomeDaClinica={nomeDaClinica}
-            botoes={botoesDaPreview}
-            podeEditar={podeEditar}
-            dicaSemPermissao={dicaSemPermissao}
-          />
+          <>
+            {podeEditar ? (
+              <div className="flex flex-wrap gap-2 border-t pt-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9"
+                  disabled={pendente}
+                  onClick={() => setDialogo("momento")}
+                >
+                  <CalendarClock strokeWidth={1.5} className="size-4" />
+                  Mudar o momento
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 [color:var(--alert-text)]"
+                  disabled={pendente || regua.passos.length <= 1}
+                  onClick={excluirPasso}
+                >
+                  <Trash2 strokeWidth={1.5} className="size-4" />
+                  Excluir mensagem
+                </Button>
+                {regua.passos.length <= 1 ? (
+                  <span className="self-center text-xs text-text-tertiary">
+                    A última mensagem não se exclui; desligue a régua para
+                    pausar.
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            <EditorDePasso
+              key={passoSelecionado.id}
+              passo={passoSelecionado}
+              rotulo={rotuloDoPasso(passoSelecionado.offset_minutes)}
+              nomeDaClinica={nomeDaClinica}
+              botoes={botoesDaPreview}
+              podeEditar={podeEditar}
+              dicaSemPermissao={dicaSemPermissao}
+            />
+          </>
         ) : (
           <p className="text-sm text-text-secondary">
-            Esta régua ainda não tem mensagens.
+            Esta régua ainda não tem mensagens. Toque em Adicionar mensagem
+            para criar a primeira.
           </p>
         )}
       </section>
@@ -126,6 +245,28 @@ export function AbaRegua({
           <p className="text-text-secondary">{resultado.fraseDeCusto}</p>
         </div>
       </section>
+      <DialogPasso
+        aberto={dialogo === "criar"}
+        onFechar={() => setDialogo(null)}
+        titulo="Nova mensagem da régua"
+        sentido={sentidoDoPasso}
+        eventoRotulo={eventoRotulo}
+        offsetInicialMin={null}
+        pedirTexto
+        pendente={pendente}
+        aoConfirmar={criarPasso}
+      />
+      <DialogPasso
+        aberto={dialogo === "momento"}
+        onFechar={() => setDialogo(null)}
+        titulo="Mudar o momento da mensagem"
+        sentido={sentidoDoPasso}
+        eventoRotulo={eventoRotulo}
+        offsetInicialMin={passoSelecionado?.offset_minutes ?? null}
+        pedirTexto={false}
+        pendente={pendente}
+        aoConfirmar={(offset) => mudarMomento(offset)}
+      />
     </div>
   );
 }

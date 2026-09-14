@@ -4,11 +4,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { AbaRegua } from "@/components/automacoes/aba-regua";
+import { Excecoes } from "@/components/automacoes/excecoes";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createClient } from "@/lib/supabase/client";
 import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
-import type { VolumesDaEstimativa } from "@/lib/queries/automacoes";
+import {
+  automacoesKeys,
+  fetchExcecoesDeConfirmacao,
+  type ExcecaoDeConfirmacao,
+  type ProcedimentoParaExcecao,
+  type VolumesDaEstimativa,
+} from "@/lib/queries/automacoes";
 import {
   confirmacoesKeys,
   fetchReguasDaClinica,
@@ -43,6 +50,7 @@ export function AutomacoesClient({
   nomeDaClinica,
   abaInicial,
   reguasIniciais,
+  excecoesIniciais,
   volumes,
   podeEditar,
   dicaSemPermissao,
@@ -51,6 +59,10 @@ export function AutomacoesClient({
   nomeDaClinica: string;
   abaInicial?: string;
   reguasIniciais: ReguasDaClinica;
+  excecoesIniciais: {
+    excecoes: ExcecaoDeConfirmacao[];
+    procedimentos: ProcedimentoParaExcecao[];
+  };
   volumes: VolumesDaEstimativa;
   podeEditar: boolean;
   dicaSemPermissao: string;
@@ -76,11 +88,22 @@ export function AutomacoesClient({
     queryFn: () => fetchReguasDaClinica(supabase, clinicId),
     initialData: reguasIniciais,
   });
+  const { data: dadosDeExcecao } = useQuery({
+    queryKey: automacoesKeys.excecoes(clinicId),
+    queryFn: () => fetchExcecoesDeConfirmacao(supabase, clinicId),
+    initialData: excecoesIniciais,
+  });
 
-  const invalidar = () =>
-    queryClient.invalidateQueries({
-      queryKey: confirmacoesKeys.regua(clinicId),
-    });
+  const invalidar = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: confirmacoesKeys.regua(clinicId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: automacoesKeys.excecoes(clinicId),
+      }),
+    ]);
+  };
 
   return (
     <Tabs value={abaAtiva} onValueChange={trocarAba} className="gap-4">
@@ -124,6 +147,17 @@ export function AutomacoesClient({
             rotuloDoEvento: "consultas marcadas",
             precoCents: volumes.precoCents,
           }}
+          sentidoDoPasso="antes"
+          eventoRotulo="a consulta"
+          podeEditar={podeEditar}
+          dicaSemPermissao={dicaSemPermissao}
+          aoMudar={invalidar}
+        />
+        <Excecoes
+          excecoes={dadosDeExcecao.excecoes}
+          procedimentos={dadosDeExcecao.procedimentos}
+          nomeDaClinica={nomeDaClinica}
+          precoCents={volumes.precoCents}
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
           aoMudar={invalidar}
@@ -152,6 +186,8 @@ export function AutomacoesClient({
             rotuloDoEvento: "faltas registradas",
             precoCents: volumes.precoCents,
           }}
+          sentidoDoPasso="depois"
+          eventoRotulo="a falta"
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
           aoMudar={invalidar}

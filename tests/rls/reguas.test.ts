@@ -529,6 +529,70 @@ describe("cadence_run é registro do sistema, não da sessão", () => {
   });
 });
 
+// Excecoes da 4.8: regua propria por procedimento e reforcada. A policy de
+// escrita e a mesma ("gestao escreve reguas"); o que se prova aqui e o insert
+// de gestor, o isolamento entre clinicas no insert e o indice unico que
+// impede duas reguas para o mesmo recorte.
+describe("exceções da régua de confirmação (4.8)", () => {
+  it("gestor cria régua por procedimento, duplicada conflita e ele exclui", async () => {
+    const { data: procedimento } = await admin
+      .from("procedure")
+      .insert({
+        clinic_id: clinicaA,
+        name: `Colono ${sufixo}`,
+        default_duration_min: 40,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const procedureId = procedimento!.id as string;
+
+    const { data: criada, error } = await sessoes.gestor
+      .from("cadence")
+      .insert({
+        clinic_id: clinicaA,
+        kind: "confirmacao",
+        name: `Confirmação: Colono ${sufixo}`,
+        procedure_id: procedureId,
+      })
+      .select("id")
+      .single();
+    expect(error).toBeNull();
+
+    const { error: duplicada } = await sessoes.gestor
+      .from("cadence")
+      .insert({
+        clinic_id: clinicaA,
+        kind: "confirmacao",
+        name: "Duplicada",
+        procedure_id: procedureId,
+      });
+    expect(duplicada?.code).toBe("23505");
+
+    const { error: excluida } = await sessoes.gestor
+      .from("cadence")
+      .delete()
+      .eq("id", criada!.id as string);
+    expect(excluida).toBeNull();
+    const { data: prova } = await admin
+      .from("cadence")
+      .select("id")
+      .eq("id", criada!.id as string);
+    expect(prova).toHaveLength(0);
+    await admin.from("procedure").delete().eq("id", procedureId);
+  });
+
+  it("gestor da clínica B não cria exceção na A", async () => {
+    const { error } = await sessoes.gestorB.from("cadence").insert({
+      clinic_id: clinicaA,
+      kind: "confirmacao",
+      name: "Invasão",
+      for_no_show_history: true,
+    });
+    expect(error?.code).toBe(RLS_VIOLATION);
+  });
+});
+
 describe("a régua não liga sem janela de envio", () => {
   // Rede de seguranca: aconteca o que acontecer nos cenarios abaixo, a regua
   // desta clinica termina desligada. O canal desta maquina e real e nenhuma

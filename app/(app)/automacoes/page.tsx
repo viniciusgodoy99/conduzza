@@ -3,7 +3,10 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
-import { fetchVolumesDaEstimativa } from "@/lib/queries/automacoes";
+import {
+  fetchExcecoesDeConfirmacao,
+  fetchVolumesDaEstimativa,
+} from "@/lib/queries/automacoes";
 import { fetchReguasDaClinica } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/server";
 
@@ -24,9 +27,10 @@ export default async function AutomacoesPage({
   }
 
   const supabase = await createClient();
-  const [reguas, volumes] = await Promise.all([
+  const [reguas, volumes, excecoes] = await Promise.all([
     fetchReguasDaClinica(supabase, active.clinicId),
     fetchVolumesDaEstimativa(supabase, active.clinicId),
+    fetchExcecoesDeConfirmacao(supabase, active.clinicId),
   ]);
   const { aba } = await searchParams;
 
@@ -41,6 +45,7 @@ export default async function AutomacoesPage({
         nomeDaClinica={active.clinicName}
         abaInicial={aba}
         reguasIniciais={reguas}
+        excecoesIniciais={excecoes}
         volumes={volumes}
         podeEditar={canEdit(active.role, "automacoes")}
         dicaSemPermissao={
