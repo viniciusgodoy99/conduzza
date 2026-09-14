@@ -463,3 +463,24 @@ export async function fetchReguasDaClinica(
   ]);
   return { confirmacao, pos_falta: posFalta };
 }
+
+/**
+ * Horarios do dia civil preenchidos pela reoferta da lista de espera (4.9):
+ * o numero do cartao "Recuperadas" da Tela 2.
+ */
+export async function fetchRecuperadasDoDia(
+  supabase: SupabaseClient,
+  clinicId: string,
+  diaISO: string,
+  timezone: string,
+): Promise<number> {
+  const { inicio, fim } = limitesDoDia(timezone, diaISO);
+  const { count } = await supabase
+    .from("waitlist_offer")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", clinicId)
+    .eq("status", "preenchida")
+    .gte("slot_starts_at", inicio.toISOString())
+    .lt("slot_starts_at", fim.toISOString());
+  return count ?? 0;
+}

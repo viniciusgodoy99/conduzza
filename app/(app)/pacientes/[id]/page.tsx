@@ -146,7 +146,7 @@ export default async function FichaPacientePage({
             dica={dica}
           />
           <OrigemPaciente contato={ficha.contato} timezone={active.timezone} />
-          <AcoesPaciente conversationId={ficha.conversationId} />
+          <AcoesPaciente contactId={id} conversationId={ficha.conversationId} />
         </div>
       </div>
     </div>

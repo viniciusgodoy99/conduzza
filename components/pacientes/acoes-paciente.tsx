@@ -7,12 +7,13 @@ import { BlocoFicha } from "@/components/pacientes/comum";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 
-// Acoes rapidas da ficha. A lista de espera ainda nao existe (chega na tarefa
-// 4.9): o botao fica VISIVEL e desabilitado com dica, nunca escondido, para a
-// recepcao saber que o recurso existe e que ainda nao chegou.
+// Acoes rapidas da ficha, incluindo a entrada na lista de espera (4.9): o
+// link abre a Tela 10 com o paciente ja escolhido no modal.
 export function AcoesPaciente({
+  contactId,
   conversationId,
 }: {
+  contactId: string;
   conversationId: string | null;
 }) {
   return (
@@ -40,12 +41,12 @@ export function AcoesPaciente({
             Agendar
           </Link>
         </Button>
-        <DisabledWithHint hint="Chega com a lista de espera">
-          <Button variant="outline" className="h-10 w-full" disabled>
+        <Button variant="outline" className="h-10 w-full" asChild>
+          <Link href={`/espera?adicionar=${contactId}`}>
             <Hourglass strokeWidth={1.5} className="size-4" />
             Adicionar à lista de espera
-          </Button>
-        </DisabledWithHint>
+          </Link>
+        </Button>
       </div>
     </BlocoFicha>
   );

@@ -219,6 +219,61 @@ describe("waitlist", () => {
   });
 });
 
+describe("mover_na_lista_de_espera (RPC de reordenar)", () => {
+  it("recepção reordena; leitura enxerga zero linhas e recebe recusa educada", async () => {
+    // Segunda entrada no mesmo grupo para haver o que reordenar.
+    const { data: contato2 } = await admin
+      .from("contact")
+      .insert({
+        clinic_id: clinicaA,
+        phone_e164: `+5584977${String(Date.now()).slice(-6)}`,
+        name: "Paciente Espera 2",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    await admin
+      .from("waitlist")
+      .insert({
+        clinic_id: clinicaA,
+        contact_id: contato2!.id,
+        professional_id: profissionalA,
+      })
+      .throwOnError();
+    const { data: fila } = await admin
+      .from("waitlist")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("active", true)
+      .order("priority")
+      .order("created_at");
+    const ultima = fila![fila!.length - 1]!.id as string;
+
+    const { error } = await sessoes.recepcaoA.rpc("mover_na_lista_de_espera", {
+      p_clinic_id: clinicaA,
+      p_id: ultima,
+      p_nova_posicao: 1,
+    });
+    expect(error).toBeNull();
+    const { data: depois } = await admin
+      .from("waitlist")
+      .select("id, priority")
+      .eq("clinic_id", clinicaA)
+      .eq("active", true)
+      .order("priority");
+    expect(depois![0]!.id).toBe(ultima);
+    // Renumeracao canonica, sem empate.
+    const prioridades = depois!.map((linha) => linha.priority);
+    expect(new Set(prioridades).size).toBe(prioridades.length);
+
+    const { error: erroLeitura } = await sessoes.leituraA.rpc(
+      "mover_na_lista_de_espera",
+      { p_clinic_id: clinicaA, p_id: ultima, p_nova_posicao: 2 },
+    );
+    expect(erroLeitura?.message).toContain("Entrada não encontrada");
+  });
+});
+
 describe("waitlist_offer", () => {
   it("nenhuma sessão INSERE oferta (nasce só pelo motor); membro lê", async () => {
     const { error } = await sessoes.recepcaoA.from("waitlist_offer").insert({

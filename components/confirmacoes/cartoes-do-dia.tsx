@@ -21,6 +21,8 @@ export type ContagensDoDia = {
   canceladas: number;
   /** Pendentes que a clinica pode cobrar agora (autorizadas e com confirmação ligada). */
   cobraveis: number;
+  /** Horarios do dia preenchidos pela reoferta da lista de espera (4.9). */
+  recuperadas: number;
 };
 
 function percentual(parte: number, total: number): string {
@@ -155,20 +157,14 @@ export function CartoesDoDia({
         valor={String(contagens.canceladas)}
         apoio={percentual(contagens.canceladas, contagens.total)}
       />
-      {/* Numero honesto: a reoferta e a lista de espera (tarefa 4.9). Sem ela
-          nao existe consulta recuperada, e inventar valor aqui seria mentir
-          justamente no cartao que justifica a mensalidade. */}
+      {/* O numero que justifica a mensalidade, agora REAL: horarios do dia
+          preenchidos pela reoferta da lista de espera. */}
       <Cartao
         icone={RotateCcw}
-        tom="neutral"
+        tom={contagens.recuperadas > 0 ? "success" : "neutral"}
         rotulo="Recuperadas"
-        valor={
-          <>
-            <span aria-hidden>-</span>
-            <span className="sr-only">ainda sem número</span>
-          </>
-        }
-        apoio="Chega com a lista de espera"
+        valor={String(contagens.recuperadas)}
+        apoio="pela lista de espera"
       />
     </div>
   );

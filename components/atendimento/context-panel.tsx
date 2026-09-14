@@ -1,8 +1,16 @@
 "use client";
 
+import Link from "next/link";
+
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { CalendarClock, History, ShieldCheck, ShieldOff } from "lucide-react";
+import {
+  CalendarClock,
+  History,
+  Hourglass,
+  ShieldCheck,
+  ShieldOff,
+} from "lucide-react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import type { ConsentInfo, ContactSummary } from "@/lib/queries/conversations";
@@ -140,6 +148,16 @@ export function ContextPanel({
             módulo de leads.
           </p>
         )}
+      </Section>
+
+      <Section title="Ações">
+        <Link
+          href={`/espera?adicionar=${contact.id}`}
+          className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
+        >
+          <Hourglass strokeWidth={1.5} className="size-4" aria-hidden />
+          Adicionar à lista de espera
+        </Link>
       </Section>
 
       <Section title="Agendamentos">

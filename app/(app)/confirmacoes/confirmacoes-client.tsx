@@ -39,6 +39,7 @@ import {
   confirmacoesKeys,
   fetchConfirmacoesDia,
   fetchFaltasDeHoje,
+  fetchRecuperadasDoDia,
   fetchReguasDaClinica,
   STATUS_CANCELADOS,
   STATUS_CONFIRMADOS,
@@ -166,6 +167,11 @@ export function ConfirmacoesClient({
     staleTime: 15_000,
   });
 
+  const recuperadasQuery = useQuery({
+    queryKey: [...confirmacoesKeys.dia(clinicId, dia), "recuperadas"],
+    queryFn: () => fetchRecuperadasDoDia(supabase, clinicId, dia, timezone),
+  });
+
   const consultas = diaQuery.data ?? [];
   const faltas = faltasQuery.data ?? [];
 
@@ -177,6 +183,7 @@ export function ConfirmacoesClient({
   );
   const contagens: ContagensDoDia = {
     total: consultas.length,
+    recuperadas: recuperadasQuery.data ?? 0,
     pendentes: pendentes.length,
     confirmadas: consultas.filter((consulta) =>
       STATUS_CONFIRMADOS.includes(consulta.status),
