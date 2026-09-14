@@ -7,6 +7,7 @@ import {
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
 import { executarEnvioDeConversao } from "./conversao-meta";
+import { executarOfertaDeEspera } from "./lista-espera";
 import { espacamentoDeMassaMs } from "./espacamento";
 import { executarPassoDeRegua } from "./regua";
 
@@ -41,7 +42,8 @@ export type Job = {
     | "enviar_mensagem_ativa"
     | "baixar_midia"
     | "executar_passo_de_regua"
-    | "enviar_conversao_meta";
+    | "enviar_conversao_meta"
+    | "oferecer_lista_espera";
   payload: Record<string, unknown>;
   attempts: number;
   max_attempts: number;
@@ -276,6 +278,8 @@ async function executarJob(
       return executarPassoDeRegua(admin, job);
     case "enviar_conversao_meta":
       return executarEnvioDeConversao(admin, job);
+    case "oferecer_lista_espera":
+      return executarOfertaDeEspera(admin, job);
     default:
       return { ok: false, erro: "tipo_desconhecido", definitivo: true };
   }

@@ -85,7 +85,7 @@ const CANCELAR = new Set([
  * Normaliza para comparacao: sem espaco nas pontas, sem maiuscula, sem
  * acento, sem pontuacao e com espaco unico entre palavras.
  */
-function normalizar(texto: string): string {
+export function normalizar(texto: string): string {
   return texto
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")

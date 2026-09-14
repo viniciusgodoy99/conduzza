@@ -1,9 +1,20 @@
+import { TZDate } from "@date-fns/tz";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  interpretarRespostaDeOferta,
+  REPOUSO_POS_OFERTA_MS,
+} from "@/lib/domain/lista-espera";
+import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import { interpretarResposta } from "@/lib/domain/resposta-paciente";
 import {
   RESPOSTA_CANCELADA,
   RESPOSTA_CONFIRMADA,
+  RESPOSTA_OFERTA_GANHOU,
+  RESPOSTA_OFERTA_PERDIDA,
+  RESPOSTA_OFERTA_RECUSADA,
   RESPOSTA_REMARCAR,
 } from "@/lib/domain/textos-padrao";
 
@@ -176,6 +187,123 @@ async function responder(
   });
 }
 
+type OfertaDoContato = {
+  id: string;
+  status: string;
+  expires_at: string;
+  declined_by: string[];
+};
+
+/**
+ * A oferta de espera mais recente que PERGUNTOU algo a este contato: aberta
+ * (a pergunta esta de pe) ou encerrada ha pouco (o "SIM" atrasado merece a
+ * recusa educada, nao o silencio de quem nunca foi perguntado).
+ */
+async function acharOfertaDoContato(
+  admin: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+): Promise<OfertaDoContato | null> {
+  const desde = new Date(Date.now() - REPOUSO_POS_OFERTA_MS).toISOString();
+  const { data } = await admin
+    .from("waitlist_offer")
+    .select("id, status, expires_at, declined_by, created_at")
+    .eq("clinic_id", clinicId)
+    .contains("offered_to", [contactId])
+    .or(`status.eq.aberta,created_at.gte.${desde}`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as OfertaDoContato | null) ?? null;
+}
+
+async function tratarRespostaDeOferta(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+): Promise<boolean> {
+  const intencao = interpretarRespostaDeOferta(entrada.body);
+  if (intencao === "nao_reconhecida") {
+    return false;
+  }
+  const oferta = await acharOfertaDoContato(
+    admin,
+    entrada.clinicId,
+    entrada.contactId,
+  );
+  if (!oferta) {
+    return false;
+  }
+
+  const aberta =
+    oferta.status === "aberta" &&
+    new Date(oferta.expires_at).getTime() > Date.now() &&
+    !oferta.declined_by.includes(entrada.contactId);
+
+  if (!aberta) {
+    // Respondeu tarde querendo a vaga: recusa educada. Qualquer outra coisa
+    // sobre uma oferta morta segue para o fluxo normal da conversa.
+    if (intencao === "aceitar") {
+      await responder(admin, entrada, RESPOSTA_OFERTA_PERDIDA);
+      await admin
+        .from("conversation")
+        .update({ awaiting_reply: false })
+        .eq("clinic_id", entrada.clinicId)
+        .eq("id", entrada.conversationId);
+      return true;
+    }
+    return false;
+  }
+
+  if (intencao === "recusar") {
+    const { data } = await admin.rpc("recusar_oferta_de_espera", {
+      p_clinic_id: entrada.clinicId,
+      p_offer_id: oferta.id,
+      p_contact_id: entrada.contactId,
+    });
+    if ((data as { ok?: boolean } | null)?.ok === true) {
+      await responder(admin, entrada, RESPOSTA_OFERTA_RECUSADA);
+    }
+  } else {
+    const { data } = await admin.rpc("aceitar_oferta_de_espera", {
+      p_clinic_id: entrada.clinicId,
+      p_offer_id: oferta.id,
+      p_contact_id: entrada.contactId,
+      p_conversation_id: entrada.conversationId,
+    });
+    const resultado = data as {
+      ok?: boolean;
+      starts_at?: string;
+      profissional?: string | null;
+      timezone?: string;
+    } | null;
+    if (resultado?.ok === true && resultado.starts_at) {
+      const inicio = new TZDate(
+        new Date(resultado.starts_at).getTime(),
+        resultado.timezone ?? "America/Fortaleza",
+      );
+      await responder(
+        admin,
+        entrada,
+        renderizarModelo(RESPOSTA_OFERTA_GANHOU, {
+          data: format(inicio, "dd/MM/yyyy", { locale: ptBR }),
+          hora: format(inicio, "HH:mm", { locale: ptBR }),
+          profissional: resultado.profissional ?? null,
+        }),
+      );
+    } else {
+      // O segundo a responder: a recusa educada do aceite da 4.9.
+      await responder(admin, entrada, RESPOSTA_OFERTA_PERDIDA);
+    }
+  }
+
+  await admin
+    .from("conversation")
+    .update({ awaiting_reply: false })
+    .eq("clinic_id", entrada.clinicId)
+    .eq("id", entrada.conversationId);
+  return true;
+}
+
 export async function interceptarRespostaDePaciente(
   admin: SupabaseClient,
   entrada: EntradaDaResposta,
@@ -189,6 +317,17 @@ export async function interceptarRespostaDePaciente(
   // A leitura pura vem ANTES das consultas: mensagem comum ("bom dia") sai
   // daqui sem custo nenhum, e e a maioria esmagadora do trafego.
   const intencao = interpretarResposta(entrada.body);
+  const intencaoDeOferta = interpretarRespostaDeOferta(entrada.body);
+  if (intencao === "nao_reconhecida" && intencaoDeOferta === "nao_reconhecida") {
+    return;
+  }
+
+  // OFERTA DE ESPERA primeiro (4.9): a oferta e a pergunta mais recente e
+  // tem prazo; com uma oferta na mesa, o SIM e dela, nunca da confirmacao
+  // de consulta. Tratou, acabou.
+  if (await tratarRespostaDeOferta(admin, entrada)) {
+    return;
+  }
   if (intencao === "nao_reconhecida") {
     return;
   }
@@ -247,7 +386,7 @@ export async function interceptarRespostaDePaciente(
     .eq("clinic_id", entrada.clinicId)
     .eq("id", entrada.conversationId);
 
-  // TODO(4.9): o cancelamento libera um horario e e aqui que a lista de espera
-  // entra para reofertar. A reoferta nao existe ainda e nada e prometido ao
-  // paciente sobre isso.
+  // O cancelamento libera um horario, e a reoferta da lista de espera parte
+  // SOZINHA: o gatilho oferecer_ao_cancelar (banco) enfileira o job quando o
+  // status vira cancelado, cobrindo este caminho e todos os outros.
 }

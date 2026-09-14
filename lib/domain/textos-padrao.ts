@@ -109,3 +109,22 @@ export const MENU_CONFIRMACAO: MenuOption[] = [
   { id: "remarcar", text: "Remarcar" },
   { id: "cancelar", text: "Cancelar" },
 ];
+
+// Lista de espera (tarefa 4.9): a oferta do horario vago e os retornos. A
+// oferta instrui exatamente o vocabulario que o interceptador entende
+// (interpretarRespostaDeOferta). {{prazo}} e a janela em minutos da clinica.
+
+export const OFERTA_DE_ESPERA =
+  "Oi, {{nome}}! Aqui é da {{clinica}}. Abriu um horário de {{procedimento}} com {{profissional}}: {{data}} às {{hora}}. Você está na nossa lista de espera e pode ficar com ele. Responda SIM em até {{prazo}} minutos e o horário é seu. Se não quiser, responda NÃO QUERO, que você continua na lista.";
+
+/** O vencedor da oferta. */
+export const RESPOSTA_OFERTA_GANHOU =
+  "O horário é seu! Ficou marcado para {{data}} às {{hora}} com {{profissional}}. Até lá!";
+
+/** O segundo a responder (a recusa educada do aceite da 4.9). */
+export const RESPOSTA_OFERTA_PERDIDA =
+  "Poxa, esse horário não está mais disponível. Você continua na nossa lista de espera e a gente avisa quando abrir outra vaga.";
+
+/** Quem respondeu que nao quer ESTA vaga. */
+export const RESPOSTA_OFERTA_RECUSADA =
+  "Tudo bem! Você continua na lista de espera para a próxima vaga.";

@@ -27,7 +27,7 @@ const KINDS_DE_ENVIO = ["enviar_mensagem_ativa", "executar_passo_de_regua"];
 const KINDS_DE_MIDIA = ["baixar_midia"];
 /** Integracoes externas (Meta CAPI): nao disputam o slot anti-ban nem
  * atrasam confirmacao de consulta. */
-const KINDS_DE_INTEGRACAO = ["enviar_conversao_meta"];
+const KINDS_DE_INTEGRACAO = ["enviar_conversao_meta", "oferecer_lista_espera"];
 
 /**
  * Quanto tempo um job do tipo pode consumir, no pior caso analitico.
@@ -43,6 +43,8 @@ const CUSTO_ESTIMADO_MS: Record<string, number> = {
   baixar_midia: 30_000,
   // 10s de timeout da CAPI + 2 retries com backoff curto + RPCs.
   enviar_conversao_meta: 15_000,
+  // Orquestracao: consultas ao banco + 1 RPC; o envio sai por outro job.
+  oferecer_lista_espera: 10_000,
 };
 const CUSTO_PADRAO_MS = 25_000;
 
