@@ -587,6 +587,8 @@ export type Database = {
           spend_cap_action: string
           spend_cap_cents: number | null
           timezone: string
+          waitlist_response_minutes: number
+          waitlist_wave_size: number
           updated_at: string
         }
         Insert: {
@@ -599,6 +601,8 @@ export type Database = {
           spend_cap_action?: string
           spend_cap_cents?: number | null
           timezone?: string
+          waitlist_response_minutes?: number
+          waitlist_wave_size?: number
           updated_at?: string
         }
         Update: {
@@ -611,6 +615,8 @@ export type Database = {
           spend_cap_action?: string
           spend_cap_cents?: number | null
           timezone?: string
+          waitlist_response_minutes?: number
+          waitlist_wave_size?: number
           updated_at?: string
         }
         Relationships: []
@@ -2150,6 +2156,167 @@ export type Database = {
             columns: ["clinic_id"]
             isOneToOne: false
             referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      waitlist: {
+        Row: {
+          active: boolean
+          clinic_id: string
+          contact_id: string
+          created_at: string
+          id: string
+          preferred_shifts: string[]
+          preferred_weekdays: number[]
+          priority: number
+          procedure_id: string | null
+          professional_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          clinic_id: string
+          contact_id: string
+          created_at?: string
+          id?: string
+          preferred_shifts?: string[]
+          preferred_weekdays?: number[]
+          priority?: number
+          procedure_id?: string | null
+          professional_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          clinic_id?: string
+          contact_id?: string
+          created_at?: string
+          id?: string
+          preferred_shifts?: string[]
+          preferred_weekdays?: number[]
+          priority?: number
+          procedure_id?: string | null
+          professional_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "waitlist_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_procedure_id_fkey"
+            columns: ["procedure_id"]
+            isOneToOne: false
+            referencedRelation: "procedure"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_professional_id_fkey"
+            columns: ["professional_id"]
+            isOneToOne: false
+            referencedRelation: "professional"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      waitlist_offer: {
+        Row: {
+          appointment_id: string | null
+          clinic_id: string
+          created_at: string
+          declined_by: string[]
+          expires_at: string
+          id: string
+          offered_to: string[]
+          professional_id: string
+          responded_at: string | null
+          responded_by: string | null
+          slot_ends_at: string
+          slot_starts_at: string
+          source_appointment_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          appointment_id?: string | null
+          clinic_id: string
+          created_at?: string
+          declined_by?: string[]
+          expires_at: string
+          id?: string
+          offered_to: string[]
+          professional_id: string
+          responded_at?: string | null
+          responded_by?: string | null
+          slot_ends_at: string
+          slot_starts_at: string
+          source_appointment_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          appointment_id?: string | null
+          clinic_id?: string
+          created_at?: string
+          declined_by?: string[]
+          expires_at?: string
+          id?: string
+          offered_to?: string[]
+          professional_id?: string
+          responded_at?: string | null
+          responded_by?: string | null
+          slot_ends_at?: string
+          slot_starts_at?: string
+          source_appointment_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "waitlist_offer_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_offer_source_appointment_id_fkey"
+            columns: ["source_appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointment"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_offer_professional_id_fkey"
+            columns: ["professional_id"]
+            isOneToOne: false
+            referencedRelation: "professional"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_offer_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointment"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_offer_responded_by_fkey"
+            columns: ["responded_by"]
+            isOneToOne: false
+            referencedRelation: "contact"
             referencedColumns: ["id"]
           },
         ]
