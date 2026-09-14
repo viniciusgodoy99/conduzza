@@ -1,10 +1,17 @@
 "use server";
 
+import { TZDate } from "@date-fns/tz";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import { canEdit } from "@/lib/domain/permissions";
+import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
+import { carregarInstancia } from "@/lib/integrations/whatsapp/send";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 // Server Actions da Tela 7 (Automacoes). Mesmo guard da regua na Tela 2:
@@ -515,4 +522,117 @@ export async function criarReguaDeFollowupAction(
   });
   revalidatePath("/automacoes");
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Teste de envio (spec 7.7, fase 4 da 4.8): a mensagem renderizada com dados
+// FICTICIOS sai para o PROPRIO numero da clinica, nunca para terceiro.
+//
+// Por que nao passa por job_queue nem cria message/conversa: ha um humano
+// esperando na tela (a fila adicionaria ate 20s sem ganho de idempotencia,
+// nao existe run) e contato/conversa da propria clinica poluiria Leads e
+// Inbox. Consentimento nao se aplica: o destinatario e a clinica e o corpo
+// so tem amostra ficticia, nenhum dado de paciente (regra 3.3 intacta).
+
+export type TesteDeEnvioResult = AutomacoesActionResult & { aviso?: string };
+
+export async function testarEnvioAction(
+  input: unknown,
+): Promise<TesteDeEnvioResult> {
+  const guard = await requireAutomacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = z.object({ cadence_step_id: z.uuid() }).safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { data: passo } = await supabase
+    .from("cadence_step")
+    .select("fixed_body, cadence:cadence_id ( kind )")
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsed.data.cadence_step_id)
+    .maybeSingle();
+  const kind = (
+    (Array.isArray(passo?.cadence) ? passo?.cadence[0] : passo?.cadence) as {
+      kind?: string;
+    } | null
+  )?.kind;
+  if (!passo || !kind) {
+    return { ok: false, error: "Mensagem não encontrada." };
+  }
+  if (!passo.fixed_body || !(passo.fixed_body as string).trim()) {
+    return { ok: false, error: "Escreva e salve o texto antes de testar." };
+  }
+
+  const { data: clinica } = await supabase
+    .from("clinic")
+    .select("name, timezone")
+    .eq("id", guard.clinicId)
+    .single();
+
+  // O numero da instancia e o status vem por admin client (a secret do
+  // provedor nao tem policy), SO depois do guard de papel acima.
+  const adminDb = createAdminClient();
+  const { data: conta } = await adminDb
+    .from("whatsapp_account")
+    .select("connection_status, display_phone")
+    .eq("clinic_id", guard.clinicId)
+    .maybeSingle();
+  if (conta?.connection_status !== "conectado" || !conta.display_phone) {
+    return {
+      ok: false,
+      error:
+        "O WhatsApp da clínica precisa estar conectado para receber o teste. Confira em Configurações.",
+    };
+  }
+
+  const amanha = new TZDate(
+    Date.now() + 24 * 60 * 60_000,
+    (clinica?.timezone as string) ?? "America/Fortaleza",
+  );
+  const corpo = `Teste da régua: ${renderizarModelo(passo.fixed_body as string, {
+    nome: "Maria",
+    clinica: (clinica?.name as string) ?? "sua clínica",
+    data: format(amanha, "dd/MM/yyyy", { locale: ptBR }),
+    hora: "14:00",
+    profissional: "Dra. Exemplo",
+    procedimento: "Consulta",
+    preparo: "",
+  }).trim()}`;
+
+  const { provider, ref } = await carregarInstancia(adminDb, guard.clinicId);
+  const resultado =
+    kind === "confirmacao"
+      ? await provider.sendMenu(
+          ref,
+          conta.display_phone as string,
+          corpo,
+          MENU_CONFIRMACAO,
+        )
+      : await provider.sendText(ref, conta.display_phone as string, corpo);
+  if (!resultado.ok) {
+    return {
+      ok: false,
+      error:
+        "O envio de teste não saiu. Confira a conexão do WhatsApp e tente de novo.",
+    };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "testou_regua",
+    entity: "cadence_step",
+    entity_id: parsed.data.cadence_step_id,
+  });
+  return {
+    ok: true,
+    aviso:
+      provider.name === "fake"
+        ? "Canal de teste: nenhuma mensagem real saiu."
+        : undefined,
+  };
 }

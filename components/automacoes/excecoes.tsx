@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 // mais especifica sozinho; aqui a clinica cria, edita e exclui.
 
 export function Excecoes({
+  clinicId,
   excecoes,
   procedimentos,
   nomeDaClinica,
@@ -49,6 +50,7 @@ export function Excecoes({
   dicaSemPermissao,
   aoMudar,
 }: {
+  clinicId: string;
   excecoes: ExcecaoDeConfirmacao[];
   procedimentos: ProcedimentoParaExcecao[];
   nomeDaClinica: string;
@@ -182,6 +184,7 @@ export function Excecoes({
               {expandida ? (
                 <div className="border-t p-3">
                   <AbaRegua
+                    clinicId={clinicId}
                     regua={regua}
                     copy={{
                       ligar: `Ligar a régua ${regua.name}`,

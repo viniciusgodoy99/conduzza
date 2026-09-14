@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
 export type EtapaParaFollowup = { chave: string; nome: string };
 
 export function AbaFollowup({
+  clinicId,
   followups,
   etapas,
   nomeDaClinica,
@@ -47,6 +48,7 @@ export function AbaFollowup({
   dicaSemPermissao,
   aoMudar,
 }: {
+  clinicId: string;
   followups: ReguaDeFollowup[];
   /** Etapas da jornada que aceitam follow-up (sem a de perda). */
   etapas: EtapaParaFollowup[];
@@ -217,6 +219,7 @@ export function AbaFollowup({
                     </p>
                   ) : null}
                   <AbaRegua
+                    clinicId={clinicId}
                     regua={regua}
                     copy={{
                       ligar: `Ligar a régua ${regua.name}`,

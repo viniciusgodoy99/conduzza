@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, Coins, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Coins, Plus, SendHorizonal, Trash2 } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -8,10 +8,12 @@ import {
   criarPassoAction,
   excluirPassoAction,
   salvarEsperaDoPassoAction,
+  testarEnvioAction,
 } from "@/app/(app)/automacoes/actions";
 import { DialogPasso } from "@/components/automacoes/dialog-passo";
 import { EditorDePasso } from "@/components/automacoes/editor-de-passo";
 import { LinhaDoTempo } from "@/components/automacoes/linha-do-tempo";
+import { MetricasDaRegua } from "@/components/automacoes/metricas-da-regua";
 import { ControlesDaRegua } from "@/components/confirmacoes/controles-da-regua";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +28,7 @@ import type { ReguaDeConfirmacao } from "@/lib/queries/confirmacoes";
 // um editor por passo e a estimativa honesta de volume.
 
 export function AbaRegua({
+  clinicId,
   regua,
   copy,
   nomeDaClinica,
@@ -38,6 +41,7 @@ export function AbaRegua({
   dicaSemPermissao,
   aoMudar,
 }: {
+  clinicId: string;
   regua: ReguaDeConfirmacao | null;
   copy: {
     ligar: string;
@@ -113,6 +117,25 @@ export function AbaRegua({
         return;
       }
       toast.error(resultado.error ?? "Não foi possível mudar o momento.");
+    });
+  };
+
+  const testarEnvio = () => {
+    if (!passoSelecionado) {
+      return;
+    }
+    iniciarTransicao(async () => {
+      const resultado = await testarEnvioAction({
+        cadence_step_id: passoSelecionado.id,
+      });
+      if (resultado.ok) {
+        toast.success(
+          resultado.aviso ??
+            "Teste enviado para o WhatsApp da clínica. Confira lá.",
+        );
+        return;
+      }
+      toast.error(resultado.error ?? "Não foi possível enviar o teste.");
     });
   };
 
@@ -204,6 +227,16 @@ export function AbaRegua({
                 <Button
                   variant="ghost"
                   size="sm"
+                  className="h-9"
+                  disabled={pendente || !passoSelecionado.fixed_body}
+                  onClick={testarEnvio}
+                >
+                  <SendHorizonal strokeWidth={1.5} className="size-4" />
+                  {pendente ? "Enviando..." : "Testar no WhatsApp da clínica"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className="h-9 [color:var(--alert-text)]"
                   disabled={pendente || regua.passos.length <= 1}
                   onClick={excluirPasso}
@@ -236,6 +269,10 @@ export function AbaRegua({
             para criar a primeira.
           </p>
         )}
+      </section>
+
+      <section className="grid gap-3 rounded-lg border bg-card p-4">
+        <MetricasDaRegua clinicId={clinicId} cadenceId={regua.id} />
       </section>
 
       <section className="flex gap-3 rounded-lg border bg-card p-4">

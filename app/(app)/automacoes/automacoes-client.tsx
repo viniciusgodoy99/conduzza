@@ -147,6 +147,7 @@ export function AutomacoesClient({
           sozinha, com autoria registrada.
         </p>
         <AbaRegua
+          clinicId={clinicId}
           regua={reguas.confirmacao}
           copy={{
             ligar: "Ligar a régua de confirmação",
@@ -171,6 +172,7 @@ export function AutomacoesClient({
           aoMudar={invalidar}
         />
         <Excecoes
+          clinicId={clinicId}
           excecoes={dadosDeExcecao.excecoes}
           procedimentos={dadosDeExcecao.procedimentos}
           nomeDaClinica={nomeDaClinica}
@@ -187,6 +189,7 @@ export function AutomacoesClient({
           só para quem foi marcado como falta na tela de Confirmações.
         </p>
         <AbaRegua
+          clinicId={clinicId}
           regua={reguas.pos_falta}
           copy={{
             ligar: "Ligar a régua de recuperação depois da falta",
@@ -219,6 +222,7 @@ export function AutomacoesClient({
           régua na hora.
         </p>
         <AbaFollowup
+          clinicId={clinicId}
           followups={followups}
           etapas={etapasParaFollowup}
           nomeDaClinica={nomeDaClinica}
