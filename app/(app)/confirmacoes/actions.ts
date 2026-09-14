@@ -133,6 +133,7 @@ export async function salvarJanelaDaReguaAction(
     entity_id: cadence_id,
   });
   revalidatePath("/confirmacoes");
+  revalidatePath("/automacoes");
   return { ok: true };
 }
 
@@ -186,6 +187,7 @@ export async function alternarReguaAction(
     entity_id: parsed.data.cadence_id,
   });
   revalidatePath("/confirmacoes");
+  revalidatePath("/automacoes");
   return { ok: true };
 }
 
@@ -244,6 +246,7 @@ export async function cobrarAgoraAction(
     );
   }
   revalidatePath("/confirmacoes");
+  revalidatePath("/automacoes");
   return {
     ok: true,
     enfileirados: resultado.enfileirados,

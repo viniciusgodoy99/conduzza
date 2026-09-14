@@ -48,6 +48,36 @@ export const PASSOS_POS_FALTA: readonly PassoPadrao[] = [
   { offsetMinutes: 2880, rotulo: "Dois dias depois", body: POS_FALTA_D2 },
 ];
 
+const ROTULO_POR_OFFSET = new Map(
+  [...PASSOS_CONFIRMACAO, ...PASSOS_POS_FALTA].map((passo) => [
+    passo.offsetMinutes,
+    passo.rotulo,
+  ]),
+);
+
+/**
+ * "72 horas antes" para os passos padrao; conta horas (ou dias, quando a
+ * conta fecha redonda) para os demais. Compartilhado entre o painel da Tela 2
+ * e o editor da Tela 7.
+ */
+export function rotuloDoPasso(offsetMinutes: number): string {
+  const conhecido = ROTULO_POR_OFFSET.get(offsetMinutes);
+  if (conhecido) {
+    return conhecido;
+  }
+  if (offsetMinutes === 0) {
+    return "Na hora";
+  }
+  const absoluto = Math.abs(offsetMinutes);
+  const sufixo = offsetMinutes < 0 ? "antes" : "depois";
+  if (absoluto % 1440 === 0) {
+    const dias = absoluto / 1440;
+    return dias === 1 ? `1 dia ${sufixo}` : `${dias} dias ${sufixo}`;
+  }
+  const horas = Math.round(absoluto / 60);
+  return horas === 1 ? `1 hora ${sufixo}` : `${horas} horas ${sufixo}`;
+}
+
 /** Nomes das reguas padrao, iguais aos de seed_reguas_padrao. */
 export const NOME_REGUA_CONFIRMACAO = "Confirmação de consulta";
 export const NOME_REGUA_POS_FALTA = "Recuperação depois da falta";

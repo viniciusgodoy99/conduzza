@@ -130,12 +130,19 @@ async function pularRun(
   run: LinhaDaRun,
   motivo: MotivoDePulo,
 ): Promise<void> {
-  await admin
+  const { error } = await admin
     .from("cadence_run")
     .update({ skipped_reason: motivo })
     .eq("id", run.id)
     .is("sent_at", null)
     .is("skipped_reason", null);
+  if (error) {
+    // Motivo que nao grava vira retry do job (o worker converte excecao em
+    // falha com backoff), nunca silencio: foi silencio que escondeu por
+    // semanas o 'canal_ocupado' fora do CHECK (corrigido na migration
+    // 20260914150000).
+    throw new Error(`pular_run_falhou: ${error.code ?? "desconhecido"}`);
+  }
 }
 
 /**

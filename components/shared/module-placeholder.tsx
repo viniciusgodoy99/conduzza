@@ -26,10 +26,6 @@ const DESCRIPTIONS: Record<string, { header: string; empty: string }> = {
     header: "Como a recepcionista de IA se comporta",
     empty: "A configuração do agente chega na fase do agente de IA.",
   },
-  "/automacoes": {
-    header: "As réguas automáticas de mensagem",
-    empty: "As automações chegam na fase de réguas.",
-  },
   "/configuracoes": {
     header: "Clínica, marca, usuários e privacidade",
     empty: "As configurações chegam junto com o login e os papéis.",
