@@ -18,6 +18,8 @@ export const automacoesKeys = {
   volumes: (clinicId: string) => ["automacoes", clinicId, "volumes"] as const,
   excecoes: (clinicId: string) =>
     ["automacoes", clinicId, "excecoes"] as const,
+  followups: (clinicId: string) =>
+    ["automacoes", clinicId, "followups"] as const,
 };
 
 export async function fetchVolumesDaEstimativa(
@@ -191,4 +193,134 @@ export async function fetchExcecoesDeConfirmacao(
     excecoes,
     procedimentos: (procedimentos.data ?? []) as ProcedimentoParaExcecao[],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Reguas de follow-up por etapa da jornada (fase 3 da 4.8).
+
+import {
+  consentimentoVigenteDeLinhas,
+  type LinhaConsent,
+} from "@/lib/domain/leads-ui";
+
+export type ReguaDeFollowup = ReguaDeConfirmacao & {
+  trigger_stage: string;
+  /** Nome da etapa na jornada da clinica (a regua guarda so a chave). */
+  etapa_nome: string;
+  /** Entradas na etapa nos ultimos 30 dias (estimativa de volume). */
+  eventos30d: number;
+  /** Contatos HOJE na etapa sem autorizacao para receber mensagens. */
+  sem_autorizacao: number;
+  total_na_etapa: number;
+};
+
+export async function fetchFollowups(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<ReguaDeFollowup[]> {
+  const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+  const desde24h = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const [reguas, etapas, jaEnviou] = await Promise.all([
+    supabase
+      .from("cadence")
+      .select(
+        "id, name, active, send_window_start, send_window_end, send_weekdays, trigger_stage",
+      )
+      .eq("clinic_id", clinicId)
+      .eq("kind", "followup")
+      .order("name"),
+    supabase
+      .from("funnel_stage_def")
+      .select("chave, nome")
+      .eq("clinic_id", clinicId),
+    supabase
+      .from("cadence_run")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .not("sent_at", "is", null)
+      .limit(1),
+  ]);
+  if (reguas.error) {
+    throw new Error(reguas.error.message);
+  }
+  const nomePorChave = new Map(
+    ((etapas.data ?? []) as { chave: string; nome: string }[]).map((etapa) => [
+      etapa.chave,
+      etapa.nome,
+    ]),
+  );
+  const primeiraAtivacao = (jaEnviou.data ?? []).length === 0;
+
+  return Promise.all(
+    ((reguas.data ?? []) as Record<string, unknown>[]).map(async (regua) => {
+      const chave = regua.trigger_stage as string;
+      const [passos, entradas30d, contatos, enviados, pulados] =
+        await Promise.all([
+          supabase
+            .from("cadence_step")
+            .select("id, offset_minutes, fixed_body")
+            .eq("clinic_id", clinicId)
+            .eq("cadence_id", regua.id as string)
+            .order("offset_minutes"),
+          supabase
+            .from("contact")
+            .select("id", { count: "exact", head: true })
+            .eq("clinic_id", clinicId)
+            .eq("funnel_stage", chave)
+            .gte("funnel_stage_changed_at", desde30d),
+          // Quem esta na etapa HOJE, para a contagem de sem autorizacao
+          // (spec 7.6). Teto de 1000: na escala do projeto uma etapa nao
+          // passa disso; acima, a contagem vira "pelo menos".
+          supabase
+            .from("contact")
+            .select("id, contact_consent (channel, granted_at, revoked_at)")
+            .eq("clinic_id", clinicId)
+            .eq("funnel_stage", chave)
+            .limit(1000),
+          supabase
+            .from("cadence_run")
+            .select("id, cadence_step!inner(cadence_id)", {
+              count: "exact",
+              head: true,
+            })
+            .eq("clinic_id", clinicId)
+            .eq("cadence_step.cadence_id", regua.id as string)
+            .gte("sent_at", desde24h),
+          supabase
+            .from("cadence_run")
+            .select("id, cadence_step!inner(cadence_id)", {
+              count: "exact",
+              head: true,
+            })
+            .eq("clinic_id", clinicId)
+            .eq("cadence_step.cadence_id", regua.id as string)
+            .not("skipped_reason", "is", null)
+            .gte("scheduled_for", desde24h),
+        ]);
+      const linhas = (contatos.data ?? []) as {
+        id: string;
+        contact_consent: LinhaConsent[] | null;
+      }[];
+      const semAutorizacao = linhas.filter(
+        (linha) => !consentimentoVigenteDeLinhas(linha.contact_consent ?? []),
+      ).length;
+      return {
+        id: regua.id as string,
+        name: regua.name as string,
+        active: regua.active as boolean,
+        send_window_start: (regua.send_window_start as string | null) ?? null,
+        send_window_end: (regua.send_window_end as string | null) ?? null,
+        send_weekdays: (regua.send_weekdays as number[] | null) ?? null,
+        passos: (passos.data ?? []) as ReguaDeConfirmacao["passos"],
+        primeira_ativacao: primeiraAtivacao,
+        enviados_24h: enviados.count ?? 0,
+        pulados_24h: pulados.count ?? 0,
+        trigger_stage: chave,
+        etapa_nome: nomePorChave.get(chave) ?? chave,
+        eventos30d: entradas30d.count ?? 0,
+        sem_autorizacao: semAutorizacao,
+        total_na_etapa: linhas.length,
+      } satisfies ReguaDeFollowup;
+    }),
+  );
 }

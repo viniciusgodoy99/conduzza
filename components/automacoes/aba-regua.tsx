@@ -33,6 +33,7 @@ export function AbaRegua({
   estimativa,
   sentidoDoPasso,
   eventoRotulo,
+  placeholders,
   podeEditar,
   dicaSemPermissao,
   aoMudar,
@@ -53,6 +54,8 @@ export function AbaRegua({
   sentidoDoPasso: "antes" | "depois";
   /** "a consulta" | "a falta", para os dialogos. */
   eventoRotulo: string;
+  /** Campos {{...}} que fazem sentido nesta regua; ausente = todos. */
+  placeholders?: readonly string[];
   podeEditar: boolean;
   dicaSemPermissao: string;
   aoMudar: () => Promise<unknown> | void;
@@ -222,6 +225,7 @@ export function AbaRegua({
               rotulo={rotuloDoPasso(passoSelecionado.offset_minutes)}
               nomeDaClinica={nomeDaClinica}
               botoes={botoesDaPreview}
+              placeholders={placeholders}
               podeEditar={podeEditar}
               dicaSemPermissao={dicaSemPermissao}
             />

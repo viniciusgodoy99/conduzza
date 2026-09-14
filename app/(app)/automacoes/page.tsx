@@ -5,8 +5,10 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   fetchExcecoesDeConfirmacao,
+  fetchFollowups,
   fetchVolumesDaEstimativa,
 } from "@/lib/queries/automacoes";
+import { fetchJornada } from "@/lib/queries/jornada";
 import { fetchReguasDaClinica } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,10 +29,12 @@ export default async function AutomacoesPage({
   }
 
   const supabase = await createClient();
-  const [reguas, volumes, excecoes] = await Promise.all([
+  const [reguas, volumes, excecoes, followups, jornada] = await Promise.all([
     fetchReguasDaClinica(supabase, active.clinicId),
     fetchVolumesDaEstimativa(supabase, active.clinicId),
     fetchExcecoesDeConfirmacao(supabase, active.clinicId),
+    fetchFollowups(supabase, active.clinicId),
+    fetchJornada(supabase, active.clinicId),
   ]);
   const { aba } = await searchParams;
 
@@ -46,6 +50,10 @@ export default async function AutomacoesPage({
         abaInicial={aba}
         reguasIniciais={reguas}
         excecoesIniciais={excecoes}
+        followupsIniciais={followups}
+        etapasParaFollowup={jornada
+          .filter((etapa) => etapa.papel !== "perdido")
+          .map((etapa) => ({ chave: etapa.chave, nome: etapa.nome }))}
         volumes={volumes}
         podeEditar={canEdit(active.role, "automacoes")}
         dicaSemPermissao={

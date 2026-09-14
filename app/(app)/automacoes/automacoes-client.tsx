@@ -4,6 +4,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { AbaRegua } from "@/components/automacoes/aba-regua";
+import {
+  AbaFollowup,
+  type EtapaParaFollowup,
+} from "@/components/automacoes/aba-followup";
 import { Excecoes } from "@/components/automacoes/excecoes";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,8 +16,10 @@ import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
 import {
   automacoesKeys,
   fetchExcecoesDeConfirmacao,
+  fetchFollowups,
   type ExcecaoDeConfirmacao,
   type ProcedimentoParaExcecao,
+  type ReguaDeFollowup,
   type VolumesDaEstimativa,
 } from "@/lib/queries/automacoes";
 import {
@@ -38,10 +44,9 @@ const ABAS = [
 ] as const;
 
 type AbaKey = (typeof ABAS)[number][0];
-const ABAS_PRONTAS: AbaKey[] = ["confirmacao", "pos_falta"];
+const ABAS_PRONTAS: AbaKey[] = ["confirmacao", "pos_falta", "followup"];
 
 const DICA_POR_ABA: Partial<Record<AbaKey, string>> = {
-  followup: "Chega na próxima atualização, junto com o motor por etapa.",
   espera: "Chega com a Lista de espera.",
 };
 
@@ -51,6 +56,8 @@ export function AutomacoesClient({
   abaInicial,
   reguasIniciais,
   excecoesIniciais,
+  followupsIniciais,
+  etapasParaFollowup,
   volumes,
   podeEditar,
   dicaSemPermissao,
@@ -63,6 +70,8 @@ export function AutomacoesClient({
     excecoes: ExcecaoDeConfirmacao[];
     procedimentos: ProcedimentoParaExcecao[];
   };
+  followupsIniciais: ReguaDeFollowup[];
+  etapasParaFollowup: EtapaParaFollowup[];
   volumes: VolumesDaEstimativa;
   podeEditar: boolean;
   dicaSemPermissao: string;
@@ -93,6 +102,11 @@ export function AutomacoesClient({
     queryFn: () => fetchExcecoesDeConfirmacao(supabase, clinicId),
     initialData: excecoesIniciais,
   });
+  const { data: followups } = useQuery({
+    queryKey: automacoesKeys.followups(clinicId),
+    queryFn: () => fetchFollowups(supabase, clinicId),
+    initialData: followupsIniciais,
+  });
 
   const invalidar = async () => {
     await Promise.all([
@@ -101,6 +115,9 @@ export function AutomacoesClient({
       }),
       queryClient.invalidateQueries({
         queryKey: automacoesKeys.excecoes(clinicId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: automacoesKeys.followups(clinicId),
       }),
     ]);
   };
@@ -188,6 +205,24 @@ export function AutomacoesClient({
           }}
           sentidoDoPasso="depois"
           eventoRotulo="a falta"
+          podeEditar={podeEditar}
+          dicaSemPermissao={dicaSemPermissao}
+          aoMudar={invalidar}
+        />
+      </TabsContent>
+
+      <TabsContent value="followup" className="grid gap-4">
+        <p className="max-w-prose text-sm text-text-secondary">
+          Mensagens de acompanhamento por etapa da jornada: o lead entrou na
+          etapa, esperou o tempo configurado e ainda não respondeu nem se
+          moveu, a mensagem sai. Quem responde, agenda ou muda de etapa sai da
+          régua na hora.
+        </p>
+        <AbaFollowup
+          followups={followups}
+          etapas={etapasParaFollowup}
+          nomeDaClinica={nomeDaClinica}
+          precoCents={volumes.precoCents}
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
           aoMudar={invalidar}

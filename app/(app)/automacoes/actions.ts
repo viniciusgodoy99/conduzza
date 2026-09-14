@@ -445,3 +445,74 @@ export async function excluirPassoAction(
   revalidatePath("/confirmacoes");
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Follow-up de leads (fase 3 da 4.8): regua por etapa da jornada.
+
+export async function criarReguaDeFollowupAction(
+  input: unknown,
+): Promise<AutomacoesActionResult> {
+  const guard = await requireAutomacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = z
+    .object({ trigger_stage: z.string().regex(/^[a-z0-9_]{1,40}$/) })
+    .safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Escolha a etapa da jornada." };
+  }
+
+  const supabase = await createClient();
+  const { data: etapa } = await supabase
+    .from("funnel_stage_def")
+    .select("nome, papel")
+    .eq("clinic_id", guard.clinicId)
+    .eq("chave", parsed.data.trigger_stage)
+    .maybeSingle();
+  if (!etapa) {
+    return { ok: false, error: "Esta etapa não existe na jornada." };
+  }
+  // Follow-up de quem foi PERDIDO e outra conversa (reativacao, fora do
+  // escopo): mandar mensagem de acompanhamento para quem pediu para parar de
+  // ser acompanhado seria spam.
+  if (etapa.papel === "perdido") {
+    return {
+      ok: false,
+      error: "A etapa de perda não recebe follow-up automático.",
+    };
+  }
+
+  // Nasce DESLIGADA, sem janela e sem mensagens: o texto por etapa e decisao
+  // da clinica, nada se inventa. Regua sem passos nao materializa nada.
+  const { data: nova, error } = await supabase
+    .from("cadence")
+    .insert({
+      clinic_id: guard.clinicId,
+      kind: "followup",
+      name: `Follow-up de ${etapa.nome as string}`,
+      trigger_stage: parsed.data.trigger_stage,
+      active: false,
+    })
+    .select("id")
+    .single();
+  if (error || !nova) {
+    return {
+      ok: false,
+      error:
+        error?.code === "23505"
+          ? "Esta etapa já tem régua de follow-up."
+          : "Não foi possível criar a régua.",
+    };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "criou_regua_de_followup",
+    entity: "cadence",
+    entity_id: nova.id as string,
+  });
+  revalidatePath("/automacoes");
+  return { ok: true };
+}

@@ -83,6 +83,8 @@ type ReguaDaRun = {
   send_window_start: string | null;
   send_window_end: string | null;
   send_weekdays: number[] | null;
+  /** Chave da etapa da jornada; so em kind followup. */
+  trigger_stage: string | null;
 };
 
 type LinhaDaRun = {
@@ -99,7 +101,12 @@ type LinhaDaRun = {
     fixed_body: string | null;
     cadence: ReguaDaRun | null;
   } | null;
-  contact: { name: string | null } | null;
+  contact: {
+    name: string | null;
+    funnel_stage: string;
+    funnel_stage_changed_at: string;
+    last_contact_at: string | null;
+  } | null;
   clinic: { name: string; timezone: string } | null;
 };
 
@@ -167,6 +174,36 @@ async function pararCadeia(
     .is("skipped_reason", null);
 }
 
+/**
+ * Para a cadeia de follow-up de UM contato numa regua: as runs pendentes dos
+ * passos desta cadence morrem juntas. A pararCadeia de agenda filtra por
+ * appointment_id, que aqui e nulo; o recorte do follow-up e contato+regua.
+ */
+async function pararCadeiaDeFollowup(
+  admin: SupabaseClient,
+  run: LinhaDaRun,
+  cadenceId: string,
+): Promise<void> {
+  const { data: passos } = await admin
+    .from("cadence_step")
+    .select("id")
+    .eq("clinic_id", run.clinic_id)
+    .eq("cadence_id", cadenceId);
+  const stepIds = (passos ?? []).map((passo) => passo.id as string);
+  if (stepIds.length === 0) {
+    await pularRun(admin, run, "condicao_parada");
+    return;
+  }
+  await admin
+    .from("cadence_run")
+    .update({ skipped_reason: "condicao_parada" })
+    .eq("clinic_id", run.clinic_id)
+    .eq("contact_id", run.contact_id)
+    .in("cadence_step_id", stepIds)
+    .is("sent_at", null)
+    .is("skipped_reason", null);
+}
+
 async function carregarConsulta(
   admin: SupabaseClient,
   clinicId: string,
@@ -222,6 +259,14 @@ async function remarcouDepoisDaFalta(
   return (count ?? 0) > 0;
 }
 
+/** Follow-up nao tem consulta: so nome e clinica fazem sentido. */
+function valoresDeFollowup(run: LinhaDaRun): Record<string, string | null> {
+  return {
+    nome: run.contact?.name ?? null,
+    clinica: run.clinic?.name ?? null,
+  };
+}
+
 function valoresDoModelo(
   run: LinhaDaRun,
   consulta: LinhaDaConsulta,
@@ -261,10 +306,13 @@ export async function executarPassoDeRegua(
        cadence_step:cadence_step_id (
          id, offset_minutes, fixed_body,
          cadence:cadence_id (
-           id, kind, active, send_window_start, send_window_end, send_weekdays
+           id, kind, active, send_window_start, send_window_end,
+           send_weekdays, trigger_stage
          )
        ),
-       contact:contact_id ( name ),
+       contact:contact_id (
+         name, funnel_stage, funnel_stage_changed_at, last_contact_at
+       ),
        clinic:clinic_id ( name, timezone )`,
     )
     .eq("clinic_id", job.clinic_id)
@@ -282,8 +330,12 @@ export async function executarPassoDeRegua(
   if (run.sent_at || run.skipped_reason) {
     return { ok: true };
   }
-  if (regua.kind !== "confirmacao" && regua.kind !== "pos_falta") {
-    // Fase 4.8 e 4.9 trazem os outros tipos. Falha fechada: nada sai.
+  if (
+    regua.kind !== "confirmacao" &&
+    regua.kind !== "pos_falta" &&
+    regua.kind !== "followup"
+  ) {
+    // A 4.9 traz lista_espera; reativacao e futura. Falha fechada: nada sai.
     return { ok: false, erro: "regua_nao_suportada", definitivo: true };
   }
   // Regua desligada depois de o toque ter sido planejado: nada sai. No toque
@@ -314,15 +366,41 @@ export async function executarPassoDeRegua(
     return { ok: true };
   }
 
-  // 2. CONDICAO DE PARADA.
-  const consulta = await carregarConsulta(
-    admin,
-    job.clinic_id,
-    run.appointment_id,
-  );
-  if (!consulta) {
-    await pararCadeia(admin, run);
-    return { ok: true };
+  // 2. CONDICAO DE PARADA, por tipo de regua.
+  //
+  // FOLLOW-UP (spec 7.2): as paradas sao estruturais. Sair da etapa (agendou,
+  // perdido, qualquer movimento) e responder (last_contact_at depois da
+  // entrada na etapa) matam a cadeia inteira; reentrada na etapa torna SO
+  // esta run obsoleta (as novas ja nasceram na ancora nova, como na
+  // remarcacao de consulta).
+  let consulta: LinhaDaConsulta | null = null;
+  if (regua.kind === "followup") {
+    const contato = run.contact;
+    const respondeu =
+      contato?.last_contact_at != null &&
+      new Date(contato.last_contact_at).getTime() >
+        new Date(contato.funnel_stage_changed_at).getTime();
+    if (!contato || contato.funnel_stage !== regua.trigger_stage || respondeu) {
+      await pararCadeiaDeFollowup(admin, run, regua.id);
+      return { ok: true };
+    }
+    const obsoletaPorReentrada =
+      !manual &&
+      !passoCondizComAgenda({
+        startsAt: new Date(contato.funnel_stage_changed_at),
+        offsetMinutes: passo.offset_minutes,
+        scheduledFor: new Date(run.scheduled_for),
+      });
+    if (obsoletaPorReentrada) {
+      await pularRun(admin, run, "condicao_parada");
+      return { ok: true };
+    }
+  } else {
+    consulta = await carregarConsulta(admin, job.clinic_id, run.appointment_id);
+    if (!consulta) {
+      await pararCadeia(admin, run);
+      return { ok: true };
+    }
   }
 
   // Consulta remarcada: SO este toque ficou obsoleto (ele aponta para o
@@ -330,32 +408,34 @@ export async function executarPassoDeRegua(
   // de materializar para o horario novo morreriam junto e o paciente que
   // remarcou nunca mais receberia confirmacao. A run manual nao passa por
   // aqui: ela nasceu agora, ja com o horario que a tela mostrou.
-  const obsoleta =
-    regua.kind === "confirmacao" &&
-    !manual &&
-    !passoCondizComAgenda({
-      startsAt: new Date(consulta.starts_at),
-      offsetMinutes: passo.offset_minutes,
-      scheduledFor: new Date(run.scheduled_for),
-    });
-  if (obsoleta) {
-    await pularRun(admin, run, "condicao_parada");
-    return { ok: true };
-  }
+  if (consulta) {
+    const obsoleta =
+      regua.kind === "confirmacao" &&
+      !manual &&
+      !passoCondizComAgenda({
+        startsAt: new Date(consulta.starts_at),
+        offsetMinutes: passo.offset_minutes,
+        scheduledFor: new Date(run.scheduled_for),
+      });
+    if (obsoleta) {
+      await pularRun(admin, run, "condicao_parada");
+      return { ok: true };
+    }
 
-  // Parada de verdade: a consulta saiu do jogo (cancelada, ja aconteceu, com
-  // a confirmacao automatica desligada) ou o paciente ja remarcou depois da
-  // falta. Ai sim a cadeia inteira para.
-  const parou =
-    regua.kind === "confirmacao"
-      ? !STATUS_A_CONFIRMAR.includes(consulta.status) ||
-        new Date(consulta.starts_at).getTime() <= agora.getTime() ||
-        !consulta.send_confirmation
-      : consulta.status !== "faltou" ||
-        (await remarcouDepoisDaFalta(admin, run, consulta));
-  if (parou) {
-    await pararCadeia(admin, run);
-    return { ok: true };
+    // Parada de verdade: a consulta saiu do jogo (cancelada, ja aconteceu,
+    // com a confirmacao automatica desligada) ou o paciente ja remarcou
+    // depois da falta. Ai sim a cadeia inteira para.
+    const parou =
+      regua.kind === "confirmacao"
+        ? !STATUS_A_CONFIRMAR.includes(consulta.status) ||
+          new Date(consulta.starts_at).getTime() <= agora.getTime() ||
+          !consulta.send_confirmation
+        : consulta.status !== "faltou" ||
+          (await remarcouDepoisDaFalta(admin, run, consulta));
+    if (parou) {
+      await pararCadeia(admin, run);
+      return { ok: true };
+    }
   }
 
   // 3. JANELA DE ENVIO, no fuso da clinica. Fora dela nao e falha, e "ainda
@@ -374,6 +454,7 @@ export async function executarPassoDeRegua(
     }
     if (
       regua.kind === "confirmacao" &&
+      consulta &&
       abertura.getTime() >= new Date(consulta.starts_at).getTime()
     ) {
       // A janela so reabre depois da consulta: o toque perdeu o sentido.
@@ -408,7 +489,9 @@ export async function executarPassoDeRegua(
   }
   const body = renderizarModelo(
     modelo,
-    valoresDoModelo(run, consulta, timezone),
+    consulta
+      ? valoresDoModelo(run, consulta, timezone)
+      : valoresDeFollowup(run),
   ).trim();
   if (!body) {
     return { ok: false, erro: "mensagem_vazia", definitivo: true };

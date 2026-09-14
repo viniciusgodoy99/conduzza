@@ -745,6 +745,7 @@ export type Database = {
           email: string | null
           first_contact_at: string
           funnel_stage: string
+          funnel_stage_changed_at: string
           id: string
           inactive_since: string | null
           insurance_card: string | null
@@ -779,6 +780,7 @@ export type Database = {
           email?: string | null
           first_contact_at?: string
           funnel_stage?: string
+          funnel_stage_changed_at?: string
           id?: string
           inactive_since?: string | null
           insurance_card?: string | null
@@ -813,6 +815,7 @@ export type Database = {
           email?: string | null
           first_contact_at?: string
           funnel_stage?: string
+          funnel_stage_changed_at?: string
           id?: string
           inactive_since?: string | null
           insurance_card?: string | null
