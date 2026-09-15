@@ -306,11 +306,20 @@ export async function executarOfertaDeEspera(
     if (onda.length >= tamanhoDaOnda) {
       break;
     }
-    const { data: vigente } = await admin.rpc("consentimento_vigente", {
-      p_clinic_id: job.clinic_id,
-      p_contact_id: candidato.contactId,
-      p_channel: "whatsapp",
-    });
+    const { data: vigente, error: erroConsent } = await admin.rpc(
+      "consentimento_vigente",
+      {
+        p_clinic_id: job.clinic_id,
+        p_contact_id: candidato.contactId,
+        p_channel: "whatsapp",
+      },
+    );
+    if (erroConsent) {
+      // Esta leitura DECIDE quem entra na onda: engolir o erro virava onda
+      // vazia com job concluido "com sucesso", e o horario nunca era
+      // oferecido a ninguem (achado da revisao de 15/09/2026).
+      return { ok: false, erro: "leitura_falhou" };
+    }
     if (vigente === true) {
       onda.push(candidato);
     }
@@ -348,6 +357,9 @@ export async function executarOfertaDeEspera(
       : OFERTA_DE_ESPERA.replace("Oi, {{nome}}!", "Olá!");
     return {
       contact_id: entrada.contactId,
+      // A entrada que CASOU com a vaga viaja junto: o aceite usa este id em
+      // vez de adivinhar de novo com regra diferente da do casamento.
+      waitlist_id: entrada.id,
       body: renderizarModelo(modelo, {
         nome,
         clinica: clinica.name as string,

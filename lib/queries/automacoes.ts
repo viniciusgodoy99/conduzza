@@ -438,13 +438,19 @@ export async function fetchMetricasDaRegua(
   const revogadosTodos: { contact_id: string; revoked_at: string }[] = [];
   // Em lotes de 500 (limite pratico do .in), SEM descartar o excedente.
   for (let i = 0; i < contatos.length; i += 500) {
-    const { data: revogados } = await supabase
+    const { data: revogados, error: erroRevogados } = await supabase
       .from("contact_consent")
       .select("contact_id, revoked_at")
       .eq("clinic_id", clinicId)
       .in("contact_id", contatos.slice(i, i + 500))
       .not("revoked_at", "is", null)
       .gte("revoked_at", desde30d);
+    if (erroRevogados) {
+      // Descadastro e o unico sinal de mensagem indesejada que o produto
+      // tem: zero falso aqui e pior que estado de erro (as outras tres
+      // leituras ja lancavam; esta ficou para tras na correcao anterior).
+      throw new Error(erroRevogados.message);
+    }
     revogadosTodos.push(
       ...((revogados ?? []) as { contact_id: string; revoked_at: string }[]),
     );

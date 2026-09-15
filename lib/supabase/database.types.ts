@@ -2239,6 +2239,7 @@ export type Database = {
           declined_by: string[]
           expires_at: string
           id: string
+          matched_waitlist_ids: string[]
           offered_to: string[]
           professional_id: string
           responded_at: string | null
@@ -2256,6 +2257,7 @@ export type Database = {
           declined_by?: string[]
           expires_at: string
           id?: string
+          matched_waitlist_ids?: string[]
           offered_to: string[]
           professional_id: string
           responded_at?: string | null
@@ -2273,6 +2275,7 @@ export type Database = {
           declined_by?: string[]
           expires_at?: string
           id?: string
+          matched_waitlist_ids?: string[]
           offered_to?: string[]
           professional_id?: string
           responded_at?: string | null

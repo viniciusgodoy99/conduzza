@@ -342,6 +342,123 @@ describe("lista de espera de ponta a ponta, contra o banco real", () => {
     expect(ecosDoVencedor).not.toContain(RESPOSTA_OFERTA_PERDIDA);
   });
 
+  it("contato com duas entradas: o aceite usa a que CASOU, não a mais antiga", async () => {
+    const cenario = await montarCenario("duasentradas");
+    // Segundo procedimento e vinculo, ambos atendidos pelo profissional.
+    const { data: proc2 } = await admin
+      .from("procedure")
+      .insert({
+        clinic_id: cenario.clinicId,
+        name: "Avaliação Espera",
+        default_duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: vinculo2 } = await admin
+      .from("service_link")
+      .insert({
+        clinic_id: cenario.clinicId,
+        professional_id: cenario.professionalId,
+        procedure_id: proc2!.id,
+        insurance_id: null,
+        price_cents: 5000,
+        covered_by_insurance: false,
+        duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+
+    contador += 1;
+    const { data: contato } = await admin
+      .from("contact")
+      .insert({
+        clinic_id: cenario.clinicId,
+        phone_e164: `+55849785${String(contador).padStart(5, "0")}`,
+        name: "Dois Pedidos",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const contactId = contato!.id as string;
+    await admin
+      .from("contact_consent")
+      .insert({
+        clinic_id: cenario.clinicId,
+        contact_id: contactId,
+        channel: "whatsapp",
+        source: "recepcao",
+      })
+      .throwOnError();
+
+    // A vaga vai cair num horário específico; a entrada ANTIGA (proc 1) só
+    // aceita um turno que NÃO é o da vaga, então ela é excluída da onda.
+    const { appointmentId, startsAt } = await consultaParaCancelar(cenario);
+    const horaLocal = new Date(startsAt).getUTCHours();
+    // Fortaleza é UTC-3: turno da vaga no fuso da clínica.
+    const horaClinica = (horaLocal - 3 + 24) % 24;
+    const turnoDaVaga =
+      horaClinica < 12 ? "manha" : horaClinica < 18 ? "tarde" : "noite";
+    const turnoOposto = turnoDaVaga === "manha" ? "noite" : "manha";
+
+    await admin
+      .from("waitlist")
+      .insert({
+        clinic_id: cenario.clinicId,
+        contact_id: contactId,
+        procedure_id: cenario.procedureId,
+        preferred_shifts: [turnoOposto],
+        priority: 10,
+      })
+      .throwOnError();
+    await admin
+      .from("waitlist")
+      .insert({
+        clinic_id: cenario.clinicId,
+        contact_id: contactId,
+        procedure_id: proc2!.id,
+        priority: 20,
+      })
+      .throwOnError();
+
+    await cancelar(appointmentId);
+    await executarUltimoJob(cenario.clinicId);
+    const oferta = await ofertaAberta(cenario.clinicId);
+    expect(oferta!.offered_to).toEqual([contactId]);
+    expect(oferta!.matched_waitlist_ids).toHaveLength(1);
+
+    const { data } = await admin.rpc("aceitar_oferta_de_espera", {
+      p_clinic_id: cenario.clinicId,
+      p_offer_id: oferta!.id as string,
+      p_contact_id: contactId,
+    });
+    expect((data as { ok: boolean }).ok).toBe(true);
+
+    // O appointment usa o vínculo do procedimento que CASOU (o segundo),
+    // não o da entrada mais antiga que foi excluída pelo turno.
+    const { data: nova } = await admin
+      .from("appointment")
+      .select("service_link_id")
+      .eq("contact_id", contactId)
+      .eq("status", "agendado")
+      .single();
+    expect(nova!.service_link_id).toBe(vinculo2!.id);
+
+    // E a fila baixa a entrada certa: a que casou sai, a outra continua.
+    const { data: fila } = await admin
+      .from("waitlist")
+      .select("procedure_id, active")
+      .eq("clinic_id", cenario.clinicId)
+      .eq("contact_id", contactId);
+    const casou = fila!.find((linha) => linha.procedure_id === proc2!.id);
+    const outra = fila!.find(
+      (linha) => linha.procedure_id === cenario.procedureId,
+    );
+    expect(casou!.active).toBe(false);
+    expect(outra!.active).toBe(true);
+  });
+
   it("corrida com marcação manual: o banco arbitra e a oferta morre honesta", async () => {
     const cenario = await montarCenario("corrida");
     const naFila = await contatoNaFila(cenario);
@@ -406,8 +523,16 @@ describe("lista de espera de ponta a ponta, contra o banco real", () => {
       .update({ expires_at: new Date(Date.now() - MINUTO).toISOString() })
       .eq("id", primeira!.id as string)
       .throwOnError();
-    const { data: expiradas } = await admin.rpc("expirar_ofertas_de_espera");
-    expect(expiradas).toBeGreaterThanOrEqual(1);
+    // O cron de producao roda expirar_ofertas_de_espera a cada minuto e pode
+    // chegar antes: o que se afirma e o ESTADO (a oferta expirou), nunca a
+    // contagem devolvida por ESTA chamada.
+    await admin.rpc("expirar_ofertas_de_espera");
+    const { data: venceu } = await admin
+      .from("waitlist_offer")
+      .select("status")
+      .eq("id", primeira!.id as string)
+      .single();
+    expect(venceu!.status).toBe("expirada");
 
     await executarUltimoJob(cenario.clinicId);
     const segunda = await ofertaAberta(cenario.clinicId);

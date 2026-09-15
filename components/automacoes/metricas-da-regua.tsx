@@ -58,30 +58,38 @@ export function MetricasDaRegua({
     );
   }
 
+  // Enviadas e Na fila sao CONTAGEM EXATA (count no banco); Entregues e
+  // Descadastros saem do detalhamento, que para de 1000 linhas. Misturar os
+  // quatro sem dizer qual e qual fazia a clinica ler "3000 enviadas, 1000
+  // entregues" e concluir 33% de entrega (achado da revisao de 15/09/2026).
   const cartoes = [
     {
       rotulo: "Enviadas",
       valor: data.enviadas30d,
       Icone: Send,
       cor: "var(--success-text)",
+      exato: true,
     },
     {
       rotulo: "Entregues",
       valor: data.entregues30d,
       Icone: CheckCheck,
       cor: "var(--info-text)",
+      exato: false,
     },
     {
       rotulo: "Na fila",
       valor: data.naFila,
       Icone: Timer,
       cor: "var(--neutral-text)",
+      exato: true,
     },
     {
       rotulo: "Descadastros",
       valor: data.descadastros30d,
       Icone: UserRoundX,
       cor: "var(--alert-text)",
+      exato: false,
     },
   ];
 
@@ -89,22 +97,33 @@ export function MetricasDaRegua({
     <div className="grid gap-3">
       <h4 className="text-[13px] font-semibold">Últimos 30 dias</h4>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {cartoes.map((cartao) => (
-          <div key={cartao.rotulo} className="grid gap-1 rounded-lg border p-3">
-            <span className="flex items-center gap-1.5 text-xs text-text-secondary">
-              <cartao.Icone
-                strokeWidth={1.5}
-                className="size-4"
-                style={{ color: cartao.cor }}
-                aria-hidden
-              />
-              {cartao.rotulo}
-            </span>
-            <span className="text-xl font-semibold tabular-nums">
-              {cartao.valor}
-            </span>
-          </div>
-        ))}
+        {cartoes.map((cartao) => {
+          const amostrado = data.aproximado && !cartao.exato;
+          return (
+            <div
+              key={cartao.rotulo}
+              className="grid gap-1 rounded-lg border p-3"
+            >
+              <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+                <cartao.Icone
+                  strokeWidth={1.5}
+                  className="size-4"
+                  style={{ color: cartao.cor }}
+                  aria-hidden
+                />
+                {cartao.rotulo}
+              </span>
+              <span className="text-xl font-semibold tabular-nums">
+                {cartao.valor}
+              </span>
+              {amostrado ? (
+                <span className="text-[11px] text-text-tertiary">
+                  nos 1000 toques mais recentes
+                </span>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
       {data.puladasPorMotivo.length > 0 ? (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
@@ -124,7 +143,7 @@ export function MetricasDaRegua({
       ) : null}
       <p className="text-[11.5px] text-text-tertiary">
         {data.aproximado
-          ? "Régua com muito volume: os detalhes acima consideram os 1000 toques mais recentes. "
+          ? "Régua com muito volume: Enviadas e Na fila são totais do período; Entregues, Descadastros e os motivos vêm dos 1000 toques mais recentes. "
           : ""}
         Respostas e agendamentos gerados pela régua chegam junto com a
         atribuição de resposta; número sem origem confiável não aparece aqui.
