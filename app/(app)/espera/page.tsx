@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
-import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import { canEdit } from "@/lib/domain/permissions";
 import {
   fetchConfigDaEspera,
   fetchFilaDeEspera,
@@ -84,10 +84,7 @@ export default async function EsperaPage({
         timezone={active.timezone}
         ehAdmin={active.role === "admin"}
         podeEditar={canEdit(active.role, "confirmacoes_espera")}
-        dicaSemPermissao={
-          permissionHint(active.role, "confirmacoes_espera") ??
-          "Seu perfil não altera a lista de espera"
-        }
+        dicaSemPermissao={'Seu perfil vê a lista de espera, sem alterar (quem altera é a recepção e a gestão)'}
         filaInicial={fila}
         ofertaInicial={oferta}
         metricasIniciais={metricas}

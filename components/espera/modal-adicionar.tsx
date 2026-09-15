@@ -162,7 +162,7 @@ export function ModalAdicionar({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-9"
+                  className="h-10"
                   onClick={() => setContato(null)}
                 >
                   Trocar

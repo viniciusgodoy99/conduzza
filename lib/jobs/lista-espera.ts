@@ -39,13 +39,20 @@ type Slot = {
   procedimentoDoSlot: string | null;
 };
 
+// Distinguir "nao existe" (definitivo) de "leitura falhou" (retry): erro
+// engolido aqui virava fila vazia ou exclusao ausente em silencio (achado
+// da revisao de 15/09).
+type SlotCarregado =
+  | { ok: true; slot: Slot | null }
+  | { ok: false };
+
 async function carregarSlot(
   admin: SupabaseClient,
   clinicId: string,
   payload: Record<string, unknown>,
-): Promise<Slot | null> {
+): Promise<SlotCarregado> {
   const carregarDoAppointment = async (appointmentId: string) => {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("appointment")
       .select(
         "id, professional_id, contact_id, starts_at, ends_at, service_link:service_link_id ( procedure:procedure_id ( name ) )",
@@ -53,8 +60,11 @@ async function carregarSlot(
       .eq("clinic_id", clinicId)
       .eq("id", appointmentId)
       .maybeSingle();
+    if (error) {
+      return { ok: false as const };
+    }
     if (!data) {
-      return null;
+      return { ok: true as const, slot: null };
     }
     const vinculo = Array.isArray(data.service_link)
       ? data.service_link[0]
@@ -65,13 +75,16 @@ async function carregarSlot(
         : vinculo.procedure
       : null;
     return {
-      professionalId: data.professional_id as string,
-      startsAt: data.starts_at as string,
-      endsAt: data.ends_at as string,
-      sourceAppointmentId: data.id as string,
-      contatoQueCancelou: (data.contact_id as string | null) ?? null,
-      procedimentoDoSlot:
-        ((procedimento as { name?: string } | null)?.name as string) ?? null,
+      ok: true as const,
+      slot: {
+        professionalId: data.professional_id as string,
+        startsAt: data.starts_at as string,
+        endsAt: data.ends_at as string,
+        sourceAppointmentId: data.id as string,
+        contatoQueCancelou: (data.contact_id as string | null) ?? null,
+        procedimentoDoSlot:
+          ((procedimento as { name?: string } | null)?.name as string) ?? null,
+      },
     };
   };
 
@@ -79,34 +92,45 @@ async function carregarSlot(
     return carregarDoAppointment(payload.appointment_id);
   }
   if (typeof payload.origem_offer_id === "string") {
-    const { data: oferta } = await admin
+    const { data: oferta, error } = await admin
       .from("waitlist_offer")
       .select("source_appointment_id")
       .eq("clinic_id", clinicId)
       .eq("id", payload.origem_offer_id)
       .maybeSingle();
+    if (error) {
+      return { ok: false };
+    }
     if (!oferta) {
-      return null;
+      return { ok: true, slot: null };
     }
     return carregarDoAppointment(oferta.source_appointment_id as string);
   }
-  return null;
+  return { ok: true, slot: null };
 }
 
 export async function executarOfertaDeEspera(
   admin: SupabaseClient,
   job: Job,
 ): Promise<ResultadoDeJob> {
-  const slot = await carregarSlot(admin, job.clinic_id, job.payload);
+  const carregado = await carregarSlot(admin, job.clinic_id, job.payload);
+  if (!carregado.ok) {
+    // Leitura falhou: retry com backoff, nunca desfecho definitivo.
+    return { ok: false, erro: "leitura_falhou" };
+  }
+  const slot = carregado.slot;
   if (!slot) {
     return { ok: false, erro: "payload_invalido", definitivo: true };
   }
 
-  const { data: clinica } = await admin
+  const { data: clinica, error: erroClinica } = await admin
     .from("clinic")
     .select("name, timezone, waitlist_wave_size, waitlist_response_minutes")
     .eq("id", job.clinic_id)
     .maybeSingle();
+  if (erroClinica) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
   if (!clinica) {
     return { ok: false, erro: "clinica_inexistente", definitivo: true };
   }
@@ -122,7 +146,7 @@ export async function executarOfertaDeEspera(
     return { ok: true };
   }
   // O horario continua livre? (a exclusion e por profissional; encaixe fora)
-  const { data: ocupacoes } = await admin
+  const { data: ocupacoes, error: erroOcupacoes } = await admin
     .from("appointment")
     .select("id")
     .eq("clinic_id", job.clinic_id)
@@ -132,11 +156,14 @@ export async function executarOfertaDeEspera(
     .lt("starts_at", slot.endsAt)
     .gt("ends_at", slot.startsAt)
     .limit(1);
+  if (erroOcupacoes) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
   if ((ocupacoes ?? []).length > 0) {
     return { ok: true };
   }
   // Ja existe onda aberta para este horario?
-  const { data: abertaExistente } = await admin
+  const { data: abertaExistente, error: erroAberta } = await admin
     .from("waitlist_offer")
     .select("id")
     .eq("clinic_id", job.clinic_id)
@@ -144,6 +171,9 @@ export async function executarOfertaDeEspera(
     .eq("slot_starts_at", slot.startsAt)
     .eq("status", "aberta")
     .limit(1);
+  if (erroAberta) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
   if ((abertaExistente ?? []).length > 0) {
     return { ok: true };
   }
@@ -154,11 +184,14 @@ export async function executarOfertaDeEspera(
     excluir.add(slot.contatoQueCancelou);
   }
   // Quem ja recebeu QUALQUER onda deste horario (inclusive quem recusou).
-  const { data: ondasDoSlot } = await admin
+  const { data: ondasDoSlot, error: erroOndas } = await admin
     .from("waitlist_offer")
     .select("offered_to")
     .eq("clinic_id", job.clinic_id)
     .eq("source_appointment_id", slot.sourceAppointmentId);
+  if (erroOndas) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
   for (const onda of (ondasDoSlot ?? []) as { offered_to: string[] }[]) {
     for (const contato of onda.offered_to) {
       excluir.add(contato);
@@ -169,30 +202,36 @@ export async function executarOfertaDeEspera(
   const desdeRepouso = new Date(
     Date.now() - REPOUSO_POS_OFERTA_MS,
   ).toISOString();
-  const { data: outrasOndas } = await admin
+  const { data: outrasOndas, error: erroOutras } = await admin
     .from("waitlist_offer")
     .select("offered_to, status, created_at")
     .eq("clinic_id", job.clinic_id)
     .or(`status.eq.aberta,created_at.gte.${desdeRepouso}`);
+  if (erroOutras) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
   for (const onda of (outrasOndas ?? []) as { offered_to: string[] }[]) {
     for (const contato of onda.offered_to) {
       excluir.add(contato);
     }
   }
   // Quem ja tem consulta ATIVA em cima do horario oferecido nao precisa dele.
-  const { data: conflitantes } = await admin
+  const { data: conflitantes, error: erroConflitantes } = await admin
     .from("appointment")
     .select("contact_id")
     .eq("clinic_id", job.clinic_id)
     .not("status", "in", "(cancelado_paciente,cancelado_clinica)")
     .lt("starts_at", slot.endsAt)
     .gt("ends_at", slot.startsAt);
+  if (erroConflitantes) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
   for (const linha of (conflitantes ?? []) as { contact_id: string }[]) {
     excluir.add(linha.contact_id);
   }
 
   // A FILA e o casamento.
-  const [{ data: fila }, { data: vinculos }] = await Promise.all([
+  const [filaResult, vinculosResult] = await Promise.all([
     admin
       .from("waitlist")
       .select(
@@ -210,6 +249,11 @@ export async function executarOfertaDeEspera(
       .eq("professional_id", slot.professionalId)
       .eq("active", true),
   ]);
+  if (filaResult.error || vinculosResult.error) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
+  const fila = filaResult.data;
+  const vinculos = vinculosResult.data;
   const procedimentosDoProfissional = new Set<string>();
   const nomeDoProcedimento = new Map<string, string>();
   for (const linha of (vinculos ?? []) as {
@@ -296,23 +340,30 @@ export async function executarOfertaDeEspera(
     .maybeSingle();
   const inicioLocal = new TZDate(inicio.getTime(), timezone);
 
-  const destinatarios = onda.map((entrada) => ({
-    contact_id: entrada.contactId,
-    body: renderizarModelo(OFERTA_DE_ESPERA, {
-      nome: nomePorContato.get(entrada.contactId) ?? null,
-      clinica: clinica.name as string,
-      procedimento:
-        (entrada.procedureId
-          ? nomeDoProcedimento.get(entrada.procedureId)
-          : null) ??
-        slot.procedimentoDoSlot ??
-        "consulta",
-      profissional: (profissional?.name as string | undefined) ?? null,
-      data: format(inicioLocal, "dd/MM/yyyy", { locale: ptBR }),
-      hora: format(inicioLocal, "HH:mm", { locale: ptBR }),
-      prazo: String(janelaMin),
-    }).trim(),
-  }));
+  const destinatarios = onda.map((entrada) => {
+    const nome = nomePorContato.get(entrada.contactId) ?? null;
+    // Sem nome cadastrado, a saudacao nao pode sair quebrada ("Oi, !").
+    const modelo = nome
+      ? OFERTA_DE_ESPERA
+      : OFERTA_DE_ESPERA.replace("Oi, {{nome}}!", "Olá!");
+    return {
+      contact_id: entrada.contactId,
+      body: renderizarModelo(modelo, {
+        nome,
+        clinica: clinica.name as string,
+        procedimento:
+          (entrada.procedureId
+            ? nomeDoProcedimento.get(entrada.procedureId)
+            : null) ??
+          slot.procedimentoDoSlot ??
+          "consulta",
+        profissional: (profissional?.name as string | undefined) ?? null,
+        data: format(inicioLocal, "dd/MM/yyyy", { locale: ptBR }),
+        hora: format(inicioLocal, "HH:mm", { locale: ptBR }),
+        prazo: String(janelaMin),
+      }).trim(),
+    };
+  });
 
   const { data: offerId, error } = await admin.rpc("criar_oferta_de_espera", {
     p_clinic_id: job.clinic_id,

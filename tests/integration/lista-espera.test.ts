@@ -328,6 +328,18 @@ describe("lista de espera de ponta a ponta, contra o banco real", () => {
       .eq("contact_id", primeiro)
       .single();
     expect(filaDoPrimeiro!.active).toBe(false);
+
+    // O VENCEDOR repete "sim" (ou agradece com "ok"): NUNCA pode ouvir que
+    // perdeu (correcao da revisao de 15/09). Nenhum eco de PERDIDA para ele.
+    await interceptarRespostaDePaciente(admin, {
+      clinicId: cenario.clinicId,
+      contactId: primeiro,
+      conversationId: await conversa(primeiro),
+      body: "ok",
+      contentType: "texto",
+    });
+    const ecosDoVencedor = await ecosDoContato(cenario.clinicId, primeiro);
+    expect(ecosDoVencedor).not.toContain(RESPOSTA_OFERTA_PERDIDA);
   });
 
   it("corrida com marcação manual: o banco arbitra e a oferta morre honesta", async () => {

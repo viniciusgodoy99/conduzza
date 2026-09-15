@@ -222,15 +222,15 @@ Lista, ficha com linha do tempo, indicadores, etiqueta automática de risco (2 o
 Régua padrão de 72h, 24h e 3h. **Template com botões de resposta rápida.** Exceção por procedimento. Régua reforçada para quem tem histórico de falta. Painel do dia seguinte com bento, o card de Pendentes como herói. Aba de Faltas de hoje.
 **Aceite:** o paciente toca em Confirmar e o status da agenda muda sozinho, com autoria registrada.
 
-### [ ] 4.8 Follow-up e pós falta (Tela 7) `M`
-Editor em linha do tempo horizontal com pré-visualização em balão de WhatsApp. Escolha entre mensagem fixa e deixar a IA escrever. Estimativa de custo na tela.
-**Aceite:** o dev consegue trocar a régua de uma clínica sem tocar em código.
+### [x] 4.8 Follow-up e pós falta (Tela 7) `M` (15/09/2026)
+Editor em linha do tempo horizontal com pré-visualização em balão de WhatsApp (botões reais na confirmação), chips de campos com aviso de campo inexistente, CRUD de passos com o sentido do momento travado pelo tipo no servidor, exceções por procedimento e régua reforçada (o planner escolhe a mais específica), e o **follow-up de leads por etapa da jornada configurável**: âncora `contact.funnel_stage_changed_at` carimbada no gatilho de validação, terceiro CTE em `planejar_reguas`, paradas estruturais (mudou de etapa, respondeu, reentrada obsoleta), uma régua por etapa, etapa com régua não se exclui. "Deixar a IA escrever" segue desabilitado com dica (regra 3.2; o CHECK `use_ai = false` fica). Estimativa honesta: volume por janela fechada de 30 dias; custo em reais só quando `message_pricing` tiver preço (pendência P1). Teste de envio para o próprio número da instância (destino validado como número) e métricas por régua sem número inventado. O bloco de ativação virou componente compartilhado com a Tela 2.
+**Aceite:** o dev consegue trocar a régua de uma clínica sem tocar em código. Cumprido pela tela; provas: 24 de RLS das réguas, 6 de integração do follow-up contra o banco real, revisão adversarial com 17 achados corrigidos.
 
 **Antecipado na 4.7:** a régua pós falta (D+0 e D+2) já existe inteira, com motor, planejamento, executor e o interruptor próprio na aba "Depois da falta" do painel de Mensagens automáticas da Tela 2. Ela foi trazida para cá porque o motor já a executava e deixá-la sem tela de ativação seria construir código que nunca poderia rodar. O que falta para a 4.8 é a **edição** dos textos, não a ativação. Escolher a IA para escrever continua desabilitado enquanto a Fase 3 não existir (regra 3.2).
 
-### [ ] 4.9 Lista de espera (Tela 10) `M`
-Fila, reoferta automática ao cancelar, janela de resposta de 30 minutos, primeiro que responder leva.
-**Aceite:** cancelar um agendamento dispara oferta e o segundo a responder recebe recusa educada, não o horário.
+### [x] 4.9 Lista de espera (Tela 10) `M` (15/09/2026)
+Fila por contato com preferências (turno e dias no fuso da clínica), reoferta automática ao cancelar (gatilho no banco cobre todos os caminhos; encaixe e horário passado ficam fora), onda configurável por clínica (padrão 5) com janela configurável (padrão 30 minutos), primeiro que responder leva (RPC com FOR UPDATE; corrida com marcação manual arbitrada pela exclusion constraint), recusa sai só da oferta e a recusa geral adianta a próxima onda, expiração no motor por minuto. Tela 10 completa: métricas (recuperados, receita, tempo até preencher), faixa da reoferta com contagem regressiva e cancelamento, fila com arrasto e botões, adicionar manualmente, entradas pela ficha e pelo Inbox, cartão Recuperadas real na Tela 2.
+**Aceite:** cancelar um agendamento dispara oferta e o segundo a responder recebe recusa educada, não o horário. Provado por teste de integração pelo caminho real do interceptador (mais 5 cenários: onda com prioridade/corte/consentimento, corrida, expiração em cascata, recusa que adianta, encaixe mudo).
 
 ---
 

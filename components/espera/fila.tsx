@@ -9,6 +9,9 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import { TZDate } from "@date-fns/tz";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { ArrowDown, ArrowUp, GripVertical, UserRoundMinus } from "lucide-react";
 import { useTransition } from "react";
 import { toast } from "sonner";
@@ -69,11 +72,13 @@ function agrupar(entradas: EntradaDaEspera[]): Grupo[] {
 
 export function FilaDeEspera({
   entradas,
+  timezone,
   podeEditar,
   dicaSemPermissao,
   aoMudar,
 }: {
   entradas: EntradaDaEspera[];
+  timezone: string;
   podeEditar: boolean;
   dicaSemPermissao: string;
   aoMudar: () => Promise<unknown> | void;
@@ -145,9 +150,11 @@ export function FilaDeEspera({
                 <ItemDaFila
                   key={entrada.id}
                   entrada={entrada}
+                  timezone={timezone}
                   posicao={indice + 1}
                   total={grupo.entradas.length}
-                  podeEditar={podeEditar && !pendente}
+                  podeEditar={podeEditar}
+                  pendente={pendente}
                   dicaSemPermissao={dicaSemPermissao}
                   aoSubir={() => mover(entrada.id, indice)}
                   aoDescer={() => mover(entrada.id, indice + 2)}
@@ -164,18 +171,23 @@ export function FilaDeEspera({
 
 function ItemDaFila({
   entrada,
+  timezone,
   posicao,
   total,
   podeEditar,
+  pendente,
   dicaSemPermissao,
   aoSubir,
   aoDescer,
   aoRemover,
 }: {
   entrada: EntradaDaEspera;
+  timezone: string;
   posicao: number;
   total: number;
   podeEditar: boolean;
+  /** Acao em andamento: desabilita SEM trocar para o ramo de sem permissao. */
+  pendente: boolean;
   dicaSemPermissao: string;
   aoSubir: () => void;
   aoDescer: () => void;
@@ -187,7 +199,7 @@ function ItemDaFila({
     setNodeRef: setDragRef,
     transform,
     isDragging,
-  } = useDraggable({ id: entrada.id, disabled: !podeEditar });
+  } = useDraggable({ id: entrada.id, disabled: !podeEditar || pendente });
   const { setNodeRef: setDropRef, isOver } = useDroppable({ id: entrada.id });
 
   return (
@@ -226,7 +238,11 @@ function ItemDaFila({
           </span>
           <span className="truncate text-xs text-text-secondary">
             {entrada.contact?.phone_e164} · {preferencia(entrada)} · entrou em{" "}
-            {new Date(entrada.created_at).toLocaleDateString("pt-BR")}
+            {format(
+              new TZDate(new Date(entrada.created_at).getTime(), timezone),
+              "dd/MM/yyyy",
+              { locale: ptBR },
+            )}
           </span>
         </div>
         {podeEditar ? (
@@ -236,7 +252,7 @@ function ItemDaFila({
               size="icon"
               className="size-10"
               aria-label="Subir na fila"
-              disabled={posicao === 1}
+              disabled={posicao === 1 || pendente}
               onClick={aoSubir}
             >
               <ArrowUp strokeWidth={1.5} className="size-4" />
@@ -246,7 +262,7 @@ function ItemDaFila({
               size="icon"
               className="size-10"
               aria-label="Descer na fila"
-              disabled={posicao === total}
+              disabled={posicao === total || pendente}
               onClick={aoDescer}
             >
               <ArrowDown strokeWidth={1.5} className="size-4" />
@@ -255,6 +271,7 @@ function ItemDaFila({
               variant="ghost"
               size="sm"
               className="h-10 [color:var(--alert-text)]"
+              disabled={pendente}
               onClick={aoRemover}
             >
               <UserRoundMinus strokeWidth={1.5} className="size-4" />

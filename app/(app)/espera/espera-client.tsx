@@ -60,8 +60,10 @@ export function EsperaClient({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
+  // O deep link (?adicionar=) so abre o modal para quem PODE escrever:
+  // papel de leitura ve a tela normal, com o botao desabilitado e a dica.
   const [modalAberto, setModalAberto] = useState(
-    contatoParaAdicionar !== null,
+    contatoParaAdicionar !== null && podeEditar,
   );
   const [configAberta, setConfigAberta] = useState(false);
 
@@ -142,6 +144,7 @@ export function EsperaClient({
 
       <FilaDeEspera
         entradas={fila}
+        timezone={timezone}
         podeEditar={podeEditar}
         dicaSemPermissao={dicaSemPermissao}
         aoMudar={invalidar}

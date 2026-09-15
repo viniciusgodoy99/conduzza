@@ -192,6 +192,7 @@ type OfertaDoContato = {
   status: string;
   expires_at: string;
   declined_by: string[];
+  responded_by: string | null;
 };
 
 /**
@@ -205,12 +206,15 @@ async function acharOfertaDoContato(
   contactId: string,
 ): Promise<OfertaDoContato | null> {
   const desde = new Date(Date.now() - REPOUSO_POS_OFERTA_MS).toISOString();
+  // A janela do "respondeu tarde" e medida do ENCERRAMENTO (updated_at, que
+  // o fechamento carimba), nao da criacao: com janela de resposta longa, a
+  // oferta encerrada ha pouco ainda merece a recusa educada.
   const { data } = await admin
     .from("waitlist_offer")
-    .select("id, status, expires_at, declined_by, created_at")
+    .select("id, status, expires_at, declined_by, responded_by, updated_at")
     .eq("clinic_id", clinicId)
     .contains("offered_to", [contactId])
-    .or(`status.eq.aberta,created_at.gte.${desde}`)
+    .or(`status.eq.aberta,updated_at.gte.${desde}`)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -240,6 +244,12 @@ async function tratarRespostaDeOferta(
     !oferta.declined_by.includes(entrada.contactId);
 
   if (!aberta) {
+    // O VENCEDOR repetindo "sim" (ou agradecendo com "ok") nunca pode ouvir
+    // que perdeu: o horario E dele. Silencio aqui, e o fluxo normal segue
+    // (o "sim" pode ser a confirmacao da consulta recem-ganhada).
+    if (oferta.responded_by === entrada.contactId) {
+      return false;
+    }
     // Respondeu tarde querendo a vaga: recusa educada. Qualquer outra coisa
     // sobre uma oferta morta segue para o fluxo normal da conversa.
     if (intencao === "aceitar") {
@@ -255,21 +265,32 @@ async function tratarRespostaDeOferta(
   }
 
   if (intencao === "recusar") {
-    const { data } = await admin.rpc("recusar_oferta_de_espera", {
+    const { data, error } = await admin.rpc("recusar_oferta_de_espera", {
       p_clinic_id: entrada.clinicId,
       p_offer_id: oferta.id,
       p_contact_id: entrada.contactId,
     });
+    if (error) {
+      // Erro transitorio NAO vira desfecho: silencio, conversa continua
+      // esperando gente (awaiting_reply fica de pe) e a recepcao ve o "nao".
+      return true;
+    }
     if ((data as { ok?: boolean } | null)?.ok === true) {
       await responder(admin, entrada, RESPOSTA_OFERTA_RECUSADA);
     }
   } else {
-    const { data } = await admin.rpc("aceitar_oferta_de_espera", {
+    const { data, error } = await admin.rpc("aceitar_oferta_de_espera", {
       p_clinic_id: entrada.clinicId,
       p_offer_id: oferta.id,
       p_contact_id: entrada.contactId,
       p_conversation_id: entrada.conversationId,
     });
+    if (error) {
+      // Erro transitorio da RPC nao pode virar "PERDIDA" falsa com a oferta
+      // ainda aberta: silencio, a pessoa segue elegivel e a recepcao ve o
+      // "sim" na conversa (awaiting_reply fica de pe).
+      return true;
+    }
     const resultado = data as {
       ok?: boolean;
       starts_at?: string;
@@ -291,6 +312,18 @@ async function tratarRespostaDeOferta(
         }),
       );
     } else {
+      // ja_tratado: ANTES da recusa educada, confere se o "tratado" foi o
+      // PROPRIO contato vencendo numa resposta anterior (corrida do sim
+      // duplo): vencedor nunca ouve que perdeu.
+      const { data: atual } = await admin
+        .from("waitlist_offer")
+        .select("responded_by")
+        .eq("clinic_id", entrada.clinicId)
+        .eq("id", oferta.id)
+        .maybeSingle();
+      if (atual?.responded_by === entrada.contactId) {
+        return false;
+      }
       // O segundo a responder: a recusa educada do aceite da 4.9.
       await responder(admin, entrada, RESPOSTA_OFERTA_PERDIDA);
     }

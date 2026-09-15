@@ -2556,6 +2556,15 @@ export type Database = {
         Args: { p_id: string; p_worker: string }
         Returns: boolean
       }
+      aceitar_oferta_de_espera: {
+        Args: {
+          p_clinic_id: string
+          p_contact_id: string
+          p_conversation_id?: string
+          p_offer_id: string
+        }
+        Returns: Json
+      }
       consentimento_vigente: {
         Args: { p_channel?: string; p_clinic_id: string; p_contact_id: string }
         Returns: boolean
@@ -2564,6 +2573,19 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: Json
       }
+      criar_oferta_de_espera: {
+        Args: {
+          p_clinic_id: string
+          p_destinatarios: Json
+          p_expires_at: string
+          p_professional_id: string
+          p_slot_ends_at: string
+          p_slot_starts_at: string
+          p_source_appointment_id: string
+        }
+        Returns: string
+      }
+      expirar_ofertas_de_espera: { Args: never; Returns: number }
       disparar_ciclo_do_motor: { Args: never; Returns: undefined }
       emails_da_equipe: {
         Args: { p_clinic_id: string }
@@ -2632,6 +2654,10 @@ export type Database = {
       motor_agendar: { Args: never; Returns: string }
       motor_desagendar: { Args: never; Returns: string }
       motor_manutencao: { Args: never; Returns: Json }
+      mover_na_lista_de_espera: {
+        Args: { p_clinic_id: string; p_id: string; p_nova_posicao: number }
+        Returns: string
+      }
       pacientes_resumo: {
         Args: { p_clinic_id: string }
         Returns: {
@@ -2652,6 +2678,10 @@ export type Database = {
         }[]
       }
       planejar_reguas: { Args: never; Returns: Json }
+      recusar_oferta_de_espera: {
+        Args: { p_clinic_id: string; p_contact_id: string; p_offer_id: string }
+        Returns: Json
+      }
       reordenar_etapa_da_jornada: {
         Args: { p_chave: string; p_clinic_id: string; p_direcao: string }
         Returns: string
