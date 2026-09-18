@@ -16,6 +16,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 
 import { RelatoriosClient } from "./relatorios-client";
+import { VisaoDoProfissional } from "./visao-do-profissional";
 
 // Tela 11, Relatorios (Modulo 10): de qual canal vem o paciente que
 // comparece, agora com periodo livre (?de=&ate=, dias civis da clinica),
@@ -38,29 +39,57 @@ export default async function ResultadosPage({
 
   const t = createT(active.labels);
 
+  // Periodo padrao: ultimos 30 dias civis no fuso da clinica, incluindo hoje.
+  const diaAtePadrao = diaCivil(active.timezone, new Date());
+  const diaDePadrao = somarDias(diaAtePadrao, -29);
+
   // Matriz de papeis (brief secao 5): profissional ve "so os proprios". A
-  // visao propria (aba Agendamentos com recorte explicito) chega no proximo
-  // passo desta entrega; ate la, aviso honesto. As RPCs de agregado ja
-  // recusam o papel no banco de qualquer forma.
+  // visao dele e a dos proprios atendimentos, com recorte explicito; a RPC
+  // no banco recusa qualquer agregado da clinica para o papel.
   if (active.role === "profissional") {
+    const supabaseProfissional = await createClient();
+    const { data: membro } = await supabaseProfissional
+      .from("clinic_member")
+      .select("professional_id")
+      .eq("clinic_id", active.clinicId)
+      .eq("user_id", context.userId)
+      .maybeSingle();
+    const professionalId = membro?.professional_id as string | null;
+
+    if (!professionalId) {
+      return (
+        <div className="grid gap-6 p-6">
+          <PageHeader
+            title="Resultados"
+            description="Os resultados dos seus atendimentos."
+          />
+          <EmptyState
+            icon={TrendingUp}
+            title="Seu perfil ainda não está ligado à agenda"
+            description="Peça para a administração vincular o seu usuário a um profissional da agenda. Depois disso, os seus resultados aparecem aqui."
+          />
+        </div>
+      );
+    }
+
+    const agendaPropria = await fetchAgendaDoPeriodo(
+      supabaseProfissional,
+      active.clinicId,
+      active.timezone,
+      diaDePadrao,
+      diaAtePadrao,
+      { professionalId },
+    );
     return (
       <div className="grid gap-6 p-6">
         <PageHeader
           title="Resultados"
-          description={`De qual canal vem o ${t("paciente")} que comparece.`}
+          description="Os resultados dos seus atendimentos."
         />
-        <EmptyState
-          icon={TrendingUp}
-          title="Em breve, por profissional"
-          description="Os resultados que você vê aqui vão ser os dos seus atendimentos. A visão por profissional chega nesta entrega."
-        />
+        <VisaoDoProfissional agenda={agendaPropria} />
       </div>
     );
   }
-
-  // Periodo padrao: ultimos 30 dias civis no fuso da clinica, incluindo hoje.
-  const diaAtePadrao = diaCivil(active.timezone, new Date());
-  const diaDePadrao = somarDias(diaAtePadrao, -29);
 
   const { aba, de, ate } = await searchParams;
   const recorteValido =
@@ -91,6 +120,7 @@ export default async function ResultadosPage({
       <RelatoriosClient
         clinicId={active.clinicId}
         timezone={active.timezone}
+        ehAdmin={active.role === "admin"}
         abaInicial={aba}
         diaDeInicial={diaDe}
         diaAteInicial={diaAte}
