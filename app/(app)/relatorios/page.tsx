@@ -112,7 +112,7 @@ export default async function ResultadosPage({
     ]);
 
   return (
-    <div className="grid gap-6 p-6">
+    <div className="grid gap-6 p-6 print:hidden">
       <PageHeader
         title="Resultados"
         description={`De qual canal vem o ${t("paciente")} que comparece.`}

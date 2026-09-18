@@ -2,6 +2,7 @@
 
 import { Download, FileText, Printer } from "lucide-react";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
 import { registrarExportacaoDeRelatorioAction } from "@/app/(app)/relatorios/actions";
@@ -96,8 +97,11 @@ export function ExportarRelatorio({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {imprimindo ? (
-        <div className="hidden bg-white text-black print:block">
+      {/* Portal no body: a tela inteira fica print:hidden (pagina e shell),
+          e um bloco filho de ancestral escondido nunca imprimiria. */}
+      {imprimindo
+        ? createPortal(
+            <div className="hidden bg-white text-black print:block">
           <h1 className="mb-1 text-xl font-bold">{imprimindo.titulo}</h1>
           <p className="mb-4 text-sm">{periodoRotulo}</p>
           <table className="w-full border-collapse text-xs">
@@ -125,8 +129,10 @@ export function ExportarRelatorio({
               ))}
             </tbody>
           </table>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

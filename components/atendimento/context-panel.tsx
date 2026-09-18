@@ -16,8 +16,8 @@ import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import type { ConsentInfo, ContactSummary } from "@/lib/queries/conversations";
 
 // Painel de contexto (handoff): dados do contato, estado da autorizacao de
-// mensagens e origem. Agendamento e historico chegam com as Fases 2 e 4:
-// os blocos existem como placeholders honestos.
+// mensagens, origem e os atalhos para a agenda e a ficha (que ja existem;
+// este painel aponta, nao duplica).
 
 const CONSENT_SOURCE_LABEL: Record<string, string> = {
   formulario_site: "Formulário do site",
@@ -144,8 +144,9 @@ export function ContextPanel({
           </div>
         ) : (
           <p className="text-[12.5px] text-text-tertiary">
-            Origem ainda não identificada. A captura automática chega com o
-            módulo de leads.
+            Origem ainda não identificada. Ela é capturada sozinha quando o
+            contato chega por link de campanha, mensagem de anúncio ou
+            palavra-chave.
           </p>
         )}
       </Section>
@@ -160,18 +161,31 @@ export function ContextPanel({
         </Link>
       </Section>
 
-      <Section title="Agendamentos">
-        <p className="flex items-center gap-2 text-[12.5px] text-text-tertiary">
-          <CalendarClock strokeWidth={1.5} className="size-4 shrink-0" />
-          Os agendamentos do contato aparecem aqui quando a agenda entrar no ar.
-        </p>
-      </Section>
-
-      <Section title="Histórico">
-        <p className="flex items-center gap-2 text-[12.5px] text-text-tertiary">
-          <History strokeWidth={1.5} className="size-4 shrink-0" />A linha do
-          tempo completa chega com a ficha do paciente.
-        </p>
+      <Section title="Agendamentos e histórico">
+        {contact.kind === "paciente" ? (
+          <div className="grid gap-1.5">
+            <Link
+              href={`/pacientes/${contact.id}`}
+              className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
+            >
+              <History strokeWidth={1.5} className="size-4" aria-hidden />
+              Abrir a ficha com a linha do tempo
+            </Link>
+            <Link
+              href="/agenda"
+              className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
+            >
+              <CalendarClock strokeWidth={1.5} className="size-4" aria-hidden />
+              Ver a agenda
+            </Link>
+          </div>
+        ) : (
+          <p className="flex items-center gap-2 text-[12.5px] text-text-tertiary">
+            <CalendarClock strokeWidth={1.5} className="size-4 shrink-0" />
+            Quando este lead agendar, a consulta aparece na Agenda e a ficha
+            completa nasce em {"Pacientes"}.
+          </p>
+        )}
       </Section>
     </div>
   );

@@ -48,7 +48,7 @@ export default async function AgendaPage() {
   ]);
 
   return (
-    <div className="h-[calc(100dvh-3.5rem)] overflow-hidden">
+    <div className="h-[calc(100dvh-3.5rem)] overflow-hidden print:hidden">
       <AgendaClient
         clinicId={active.clinicId}
         timezone={active.timezone}

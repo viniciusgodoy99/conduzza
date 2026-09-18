@@ -663,8 +663,9 @@ export function AgendamentoModal({
                 Enviar confirmação automática
               </Label>
               <p className="text-xs text-text-tertiary">
-                A régua de confirmação chega na próxima fase; a escolha já fica
-                registrada.
+                Com a régua de confirmação ligada, as mensagens automáticas
+                desta consulta saem nos horários configurados. Desligar aqui
+                pula só esta consulta.
               </p>
             </div>
             <Switch

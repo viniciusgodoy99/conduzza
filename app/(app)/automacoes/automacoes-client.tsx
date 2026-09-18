@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Hourglass } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { AbaRegua } from "@/components/automacoes/aba-regua";
@@ -9,7 +11,7 @@ import {
   type EtapaParaFollowup,
 } from "@/components/automacoes/aba-followup";
 import { Excecoes } from "@/components/automacoes/excecoes";
-import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createClient } from "@/lib/supabase/client";
 import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
@@ -32,9 +34,9 @@ import {
 // mesmo padrao de Configuracoes. As reguas usam a MESMA chave de cache do
 // painel da Tela 2: mexer aqui atualiza la e vice-versa.
 //
-// Follow-up de leads e Lista de espera aparecem DESABILITADAS com dica, nunca
-// escondidas (regra 5): follow-up chega na fase seguinte desta tarefa, lista
-// de espera e a 4.9.
+// A aba Lista de espera nao tem regua propria: a reoferta e mecanica de
+// fila e mora na Tela 10 (/espera), entao aqui ela vira o cartao que explica
+// e leva para la.
 
 const ABAS = [
   ["confirmacao", "Confirmação"],
@@ -44,11 +46,12 @@ const ABAS = [
 ] as const;
 
 type AbaKey = (typeof ABAS)[number][0];
-const ABAS_PRONTAS: AbaKey[] = ["confirmacao", "pos_falta", "followup"];
-
-const DICA_POR_ABA: Partial<Record<AbaKey, string>> = {
-  espera: "Chega com a Lista de espera.",
-};
+const ABAS_PRONTAS: AbaKey[] = [
+  "confirmacao",
+  "pos_falta",
+  "followup",
+  "espera",
+];
 
 export function AutomacoesClient({
   clinicId,
@@ -125,19 +128,11 @@ export function AutomacoesClient({
   return (
     <Tabs value={abaAtiva} onValueChange={trocarAba} className="gap-4">
       <TabsList className="h-auto flex-wrap justify-start">
-        {ABAS.map(([key, label]) =>
-          ABAS_PRONTAS.includes(key) ? (
-            <TabsTrigger key={key} value={key} className="min-h-9">
-              {label}
-            </TabsTrigger>
-          ) : (
-            <DisabledWithHint key={key} hint={DICA_POR_ABA[key] ?? ""}>
-              <TabsTrigger value={key} disabled className="min-h-9">
-                {label}
-              </TabsTrigger>
-            </DisabledWithHint>
-          ),
-        )}
+        {ABAS.map(([key, label]) => (
+          <TabsTrigger key={key} value={key} className="min-h-9">
+            {label}
+          </TabsTrigger>
+        ))}
       </TabsList>
 
       <TabsContent value="confirmacao" className="grid gap-4">
@@ -233,6 +228,30 @@ export function AutomacoesClient({
           dicaSemPermissao={dicaSemPermissao}
           aoMudar={invalidar}
         />
+      </TabsContent>
+
+      <TabsContent value="espera" className="grid gap-4">
+        <div className="grid max-w-prose gap-3 rounded-lg border bg-card p-4">
+          <div className="flex items-center gap-2">
+            <Hourglass
+              strokeWidth={1.5}
+              className="size-4 text-text-secondary"
+              aria-hidden
+            />
+            <h2 className="text-[15px] font-semibold">
+              A reoferta não é uma régua de texto
+            </h2>
+          </div>
+          <p className="text-sm text-text-secondary">
+            Quando uma consulta é cancelada, o sistema oferece o horário para
+            quem está na lista de espera, em ondas, e o primeiro que responde
+            SIM leva. A fila, a configuração da onda e o acompanhamento das
+            ofertas moram na tela de Lista de espera.
+          </p>
+          <Button asChild variant="outline" className="h-10 w-fit">
+            <Link href="/espera">Abrir a Lista de espera</Link>
+          </Button>
+        </div>
       </TabsContent>
     </Tabs>
   );

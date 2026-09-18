@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { History, MoreVertical } from "lucide-react";
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { PrintDay } from "@/components/agenda/print-day";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
@@ -222,9 +223,14 @@ export function AgendaActionsMenu({
         </SheetContent>
       </Sheet>
 
-      {imprimindo ? (
-        <PrintDay contexto={contexto} dia={dia} dados={dados} />
-      ) : null}
+      {/* Portal no body: com a tela da Agenda print:hidden, um PrintDay
+          filho dela nunca imprimiria. */}
+      {imprimindo
+        ? createPortal(
+            <PrintDay contexto={contexto} dia={dia} dados={dados} />,
+            document.body,
+          )
+        : null}
     </>
   );
 }
