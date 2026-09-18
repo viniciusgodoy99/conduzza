@@ -1575,6 +1575,47 @@ export type Database = {
           },
         ]
       }
+      no_show_baseline: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          measured_from: string
+          measured_to: string
+          note: string | null
+          rate_percent: number
+          registered_by: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          measured_from: string
+          measured_to: string
+          note?: string | null
+          rate_percent: number
+          registered_by: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          measured_from?: string
+          measured_to?: string
+          note?: string | null
+          rate_percent?: number
+          registered_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "no_show_baseline_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       package: {
         Row: {
           clinic_id: string
@@ -2459,6 +2500,25 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      agenda_do_periodo: {
+        Args: {
+          p_ate: string
+          p_clinic_id: string
+          p_de: string
+          p_de_anterior?: string
+          p_professional_id?: string
+        }
+        Returns: Json
+      }
+      atendimento_do_periodo: {
+        Args: {
+          p_ate: string
+          p_clinic_id: string
+          p_de: string
+          p_de_anterior?: string
+        }
+        Returns: Json
+      }
       apagar_mensagem: {
         Args: { p_escopo: string; p_message_id: string }
         Returns: Json
@@ -2616,6 +2676,15 @@ export type Database = {
         Returns: undefined
       }
       fechar_runs_orfas: { Args: never; Returns: number }
+      funil_do_periodo: {
+        Args: {
+          p_ate: string
+          p_clinic_id: string
+          p_de: string
+          p_de_anterior?: string
+        }
+        Returns: Json
+      }
       garantir_conversa_aberta: {
         Args: { p_clinic_id: string; p_contact_id: string }
         Returns: string
