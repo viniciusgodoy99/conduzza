@@ -1,25 +1,31 @@
 import { MessagesSquare, Plug, UserPlus } from "lucide-react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import {
+  Checklist,
+  type PassoDoChecklist,
+} from "@/components/inicio/checklist";
+import { CartaoProximasAcoes, Painel } from "@/components/inicio/painel";
 import { PageHeader } from "@/components/shared/page-header";
-import { Button } from "@/components/ui/button";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { canEdit } from "@/lib/domain/permissions";
+import {
+  fetchAgendaDoPeriodo,
+  fetchAtendimentoDoPeriodo,
+  fetchFunilDoPeriodo,
+  fetchProximasAcoes,
+} from "@/lib/queries/relatorios";
 import { createClient } from "@/lib/supabase/server";
 
-// Inicio. O painel completo (Tela 5, com indicadores) e a tarefa 5.1. Ate la,
-// esta tela cumpre um papel essencial que faltava: dizer a uma clinica recem
-// criada o que fazer primeiro. Sem isto, quem acabava de se cadastrar via
-// "Em construcao" e nao tinha por onde comecar.
+import { VisaoDoProfissional } from "../relatorios/visao-do-profissional";
 
-type Passo = {
-  concluido: boolean;
-  titulo: string;
-  descricao: string;
-  acao?: { rotulo: string; href: string };
-  icone: typeof Plug;
-};
+// Inicio (Tela 5, tarefa 5.1): o resumo do dia da clinica. O checklist de
+// primeiros passos continua aparecendo ACIMA do painel enquanto houver
+// pendencia (ele era a tela inteira antes do painel existir) e some quando
+// tudo esta pronto. Os numeros vem das MESMAS RPCs da tela de Resultados:
+// dois numeros com o mesmo nome contam igual nas duas telas. So agregados,
+// nenhum nome de paciente, entao nao ha leitura a auditar (regra 3.1).
 
 export default async function InicioPage() {
   const context = await getSessionContext();
@@ -29,22 +35,80 @@ export default async function InicioPage() {
   }
 
   const supabase = await createClient();
-  const [conta, conversas, equipe] = await Promise.all([
-    supabase
-      .from("whatsapp_account")
-      .select("connection_status")
-      .eq("clinic_id", active.clinicId)
-      .maybeSingle(),
-    supabase
-      .from("conversation")
-      .select("id", { count: "exact", head: true })
-      .eq("clinic_id", active.clinicId),
-    supabase
+  const diaAte = diaCivil(active.timezone, new Date());
+  const diaDe = somarDias(diaAte, -29);
+
+  // Matriz de papeis: profissional ve "so os proprios". O painel dele sao os
+  // proprios atendimentos + as pendencias que a RLS ja recorta para ele.
+  if (active.role === "profissional") {
+    const { data: membro } = await supabase
       .from("clinic_member")
-      .select("user_id", { count: "exact", head: true })
+      .select("professional_id")
       .eq("clinic_id", active.clinicId)
-      .eq("status", "ativo"),
-  ]);
+      .eq("user_id", context.userId)
+      .maybeSingle();
+    const professionalId = (membro?.professional_id ?? null) as string | null;
+
+    const [proximasAcoes, agendaPropria] = await Promise.all([
+      fetchProximasAcoes(supabase, active.clinicId, active.timezone),
+      professionalId
+        ? fetchAgendaDoPeriodo(
+            supabase,
+            active.clinicId,
+            active.timezone,
+            diaDe,
+            diaAte,
+            { professionalId },
+          )
+        : Promise.resolve(null),
+    ]);
+
+    return (
+      <div className="grid gap-6 p-6">
+        <PageHeader
+          title="Início"
+          description={`O seu dia em ${active.clinicName}`}
+        />
+        <div className="grid gap-4">
+          <CartaoProximasAcoes
+            proximasAcoes={proximasAcoes}
+            rotulo="Suas próximas ações"
+          />
+          {agendaPropria ? (
+            <VisaoDoProfissional agenda={agendaPropria} />
+          ) : (
+            <p className="max-w-prose text-sm text-text-secondary">
+              Seu usuário ainda não está ligado a um profissional da agenda.
+              Peça para a administração vincular, e os seus resultados
+              aparecem aqui.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const [conta, conversas, equipe, funil, agenda, atendimento, proximasAcoes] =
+    await Promise.all([
+      supabase
+        .from("whatsapp_account")
+        .select("connection_status")
+        .eq("clinic_id", active.clinicId)
+        .maybeSingle(),
+      supabase
+        .from("conversation")
+        .select("id", { count: "exact", head: true })
+        .eq("clinic_id", active.clinicId),
+      supabase
+        .from("clinic_member")
+        .select("user_id", { count: "exact", head: true })
+        .eq("clinic_id", active.clinicId)
+        .eq("status", "ativo"),
+      fetchFunilDoPeriodo(supabase, active.clinicId, active.timezone, diaDe, diaAte),
+      fetchAgendaDoPeriodo(supabase, active.clinicId, active.timezone, diaDe, diaAte),
+      fetchAtendimentoDoPeriodo(supabase, active.clinicId, active.timezone, diaDe, diaAte),
+      fetchProximasAcoes(supabase, active.clinicId, active.timezone),
+    ]);
 
   const conectado = conta.data?.connection_status === "conectado";
   const totalConversas = conversas.count ?? 0;
@@ -53,7 +117,7 @@ export default async function InicioPage() {
   // (administrador e gestor), nao so do administrador.
   const podeConfigurar = canEdit(active.role, "configuracoes");
 
-  const passos: Passo[] = [
+  const passos: PassoDoChecklist[] = [
     {
       concluido: conectado,
       titulo: "Conectar o WhatsApp da clínica",
@@ -90,8 +154,7 @@ export default async function InicioPage() {
     },
   ];
 
-  const pendentes = passos.filter((passo) => !passo.concluido);
-  const tudoPronto = pendentes.length === 0;
+  const tudoPronto = passos.every((passo) => passo.concluido);
 
   return (
     <div className="grid gap-6 p-6">
@@ -103,73 +166,13 @@ export default async function InicioPage() {
             : `Vamos deixar ${active.clinicName} pronta para atender`
         }
       />
-
-      <div className="grid gap-3">
-        {passos.map((passo) => {
-          const Icone = passo.icone;
-          return (
-            <div
-              key={passo.titulo}
-              className="flex flex-wrap items-center gap-4 rounded-lg border bg-card p-4"
-            >
-              <span
-                className="flex size-10 shrink-0 items-center justify-center rounded-full"
-                style={
-                  passo.concluido
-                    ? {
-                        backgroundColor: "var(--success-bg)",
-                        color: "var(--success-text)",
-                      }
-                    : {
-                        backgroundColor: "var(--warning-bg)",
-                        color: "var(--warning-text)",
-                      }
-                }
-              >
-                <Icone strokeWidth={1.5} className="size-5" />
-              </span>
-              <div className="grid min-w-0 flex-1 gap-0.5">
-                <span className="flex items-center gap-2 text-sm font-semibold">
-                  {passo.titulo}
-                  <span
-                    className="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                    style={
-                      passo.concluido
-                        ? {
-                            backgroundColor: "var(--success-bg)",
-                            color: "var(--success-text)",
-                          }
-                        : {
-                            backgroundColor: "var(--warning-bg)",
-                            color: "var(--warning-text)",
-                          }
-                    }
-                  >
-                    {passo.concluido ? "Feito" : "Pendente"}
-                  </span>
-                </span>
-                <span className="text-[12.5px] text-text-secondary">
-                  {passo.descricao}
-                </span>
-              </div>
-              {passo.acao ? (
-                <Button
-                  asChild
-                  variant={passo.concluido ? "outline" : "default"}
-                  size="sm"
-                >
-                  <Link href={passo.acao.href}>{passo.acao.rotulo}</Link>
-                </Button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-
-      <p className="text-sm text-text-tertiary">
-        Os indicadores da clínica (consultas recuperadas, desempenho da IA,
-        origem dos pacientes) chegam na fase do painel.
-      </p>
+      {tudoPronto ? null : <Checklist passos={passos} />}
+      <Painel
+        funil={funil}
+        agenda={agenda}
+        atendimento={atendimento}
+        proximasAcoes={proximasAcoes}
+      />
     </div>
   );
 }
