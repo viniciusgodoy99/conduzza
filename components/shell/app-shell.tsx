@@ -214,7 +214,7 @@ export function AppShell({
     <TooltipProvider delayDuration={200}>
       <div className="flex min-h-dvh bg-background text-foreground">
         {/* Sidebar de 236px, escura nos dois temas; gaveta abaixo de 1024px */}
-        <aside className="sticky top-0 hidden h-dvh w-[236px] shrink-0 flex-col [background:var(--sidebar)] lg:flex">
+        <aside className="sticky top-0 hidden h-dvh w-[236px] shrink-0 flex-col [background:var(--sidebar)] lg:flex print:hidden">
           <SidebarBody
             viewer={viewer}
             items={items}
@@ -226,7 +226,7 @@ export function AppShell({
 
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Faixas fixas + barra superior de 56px */}
-          <div className="sticky top-0 z-10">
+          <div className="sticky top-0 z-10 print:hidden">
             {banner}
             <header className="flex h-14 items-center gap-2 border-b border-border bg-surface-1 px-4">
               <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
