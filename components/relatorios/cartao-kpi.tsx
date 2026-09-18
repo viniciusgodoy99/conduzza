@@ -27,6 +27,7 @@ export function CartaoKpi({
   rotulo,
   valor,
   anterior,
+  polaridade = "maior-melhor",
   notaSemDelta,
   heroi = false,
   children,
@@ -39,6 +40,11 @@ export function CartaoKpi({
    * comparacao desligada); a linha diz isso em texto, nunca inventa 0%.
    */
   anterior?: { atual: number; anterior: number } | null;
+  /**
+   * O que "subir" significa para a clinica. Falta e cancelamento sobem para
+   * PIOR: sem isto, alta de faltas sairia verde na tela que renova contrato.
+   */
+  polaridade?: "maior-melhor" | "menor-melhor";
   /** Substitui a linha de delta quando o delta seria desonesto. */
   notaSemDelta?: string;
   heroi?: boolean;
@@ -74,11 +80,11 @@ export function CartaoKpi({
           className="flex items-center gap-1 text-[12.5px] font-medium"
           style={{
             color:
-              variacao > 0
-                ? "var(--success-text)"
-                : variacao < 0
-                  ? "var(--alert-text)"
-                  : "var(--neutral-text)",
+              variacao === 0
+                ? "var(--neutral-text)"
+                : (variacao > 0) === (polaridade === "maior-melhor")
+                  ? "var(--success-text)"
+                  : "var(--alert-text)",
           }}
         >
           {variacao > 0 ? (

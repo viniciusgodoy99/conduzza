@@ -41,12 +41,17 @@ export default async function InicioPage() {
   // Matriz de papeis: profissional ve "so os proprios". O painel dele sao os
   // proprios atendimentos + as pendencias que a RLS ja recorta para ele.
   if (active.role === "profissional") {
-    const { data: membro } = await supabase
+    const { data: membro, error: erroDeVinculo } = await supabase
       .from("clinic_member")
       .select("professional_id")
       .eq("clinic_id", active.clinicId)
       .eq("user_id", context.userId)
       .maybeSingle();
+    if (erroDeVinculo) {
+      // Leitura que DECIDE a visao: erro vira erro, nunca o estado falso
+      // "seu perfil nao esta ligado a agenda" (achado da revisao de 18/09).
+      throw new Error(erroDeVinculo.message);
+    }
     const professionalId = (membro?.professional_id ?? null) as string | null;
 
     const [proximasAcoes, agendaPropria] = await Promise.all([

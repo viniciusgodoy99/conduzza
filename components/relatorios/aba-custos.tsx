@@ -14,7 +14,7 @@ import type {
 // o VOLUME, e diz com todas as letras por que nao ha reais aqui. Quando o
 // canal oficial existir, o custo entra por dado, nao por chute.
 
-const AUTOR_ROTULO: Record<string, string> = {
+export const AUTOR_ROTULO: Record<string, string> = {
   paciente: "Pacientes",
   usuario: "Equipe",
   sistema: "Mensagens automáticas",

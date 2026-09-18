@@ -11,8 +11,8 @@ import {
   type DimensaoDaAgenda,
 } from "@/components/relatorios/aba-agendamentos";
 import { AbaConfirmacao } from "@/components/relatorios/aba-confirmacao";
-import { AbaCustos } from "@/components/relatorios/aba-custos";
-import { AbaIa, formatarDuracao } from "@/components/relatorios/aba-ia";
+import { AbaCustos, AUTOR_ROTULO } from "@/components/relatorios/aba-custos";
+import { AbaIa } from "@/components/relatorios/aba-ia";
 import {
   AbaOrigem,
   montarDetalheDeOrigem,
@@ -25,6 +25,7 @@ import { CardsSkeleton } from "@/components/shared/loading-skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatarDuracao } from "@/lib/domain/duracao";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import {
@@ -304,9 +305,14 @@ export function RelatoriosClient({
               ["Mensagens enviadas", String(atual.mensagens.saida)],
               ["Mensagens recebidas", String(atual.mensagens.entrada)],
               ["Notas internas", String(atual.mensagens.notasInternas)],
-              ...Object.entries(atual.mensagens.porAutor).map(
-                ([autor, total]) => [`Enviadas por ${autor}`, String(total)],
-              ),
+              // So quem ENVIA: 'paciente' e quem recebe, nao entra como
+              // envio (achado da revisao de 18/09).
+              ...Object.entries(atual.mensagens.porAutor)
+                .filter(([autor]) => autor !== "paciente")
+                .map(([autor, total]) => [
+                  `Enviadas: ${AUTOR_ROTULO[autor] ?? autor}`,
+                  String(total),
+                ]),
             ]
           : []),
       ],
@@ -369,6 +375,7 @@ export function RelatoriosClient({
             aba={abaAtiva}
             periodoRotulo={periodoRotulo}
             montar={montarExportavel}
+            desabilitado={carregando || comErro}
           />
         </div>
       </div>

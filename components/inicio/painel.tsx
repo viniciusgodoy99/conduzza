@@ -8,7 +8,7 @@ import {
 import Link from "next/link";
 
 import { rotuloDoCanal } from "@/components/leads/rotulos";
-import { formatarDuracao } from "@/components/relatorios/aba-ia";
+import { formatarDuracao } from "@/lib/domain/duracao";
 import { BarraHorizontal } from "@/components/relatorios/barra-horizontal";
 import { CartaoKpi } from "@/components/relatorios/cartao-kpi";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -33,7 +33,8 @@ import { formatarCentavos } from "@/lib/utils/moeda";
 
 function pct(parte: number, todo: number): string {
   if (todo <= 0) {
-    return "0%";
+    // Mesmo criterio da Tela 11: sem denominador nao ha taxa a mostrar.
+    return "sem dados";
   }
   return `${Math.round((parte / todo) * 100)}%`;
 }

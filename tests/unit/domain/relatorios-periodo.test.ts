@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatarDuracao } from "@/components/relatorios/aba-ia";
+import { formatarDuracao } from "@/lib/domain/duracao";
 import { variacaoPercentual } from "@/components/relatorios/cartao-kpi";
 import { janelaDoPeriodo } from "@/lib/queries/relatorios";
 

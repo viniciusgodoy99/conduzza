@@ -29,7 +29,9 @@ import type {
 
 export function pctSeguro(parte: number, todo: number): string {
   if (todo <= 0) {
-    return "0%";
+    // Zero medido e ausencia de base sao coisas diferentes: "0%" com
+    // denominador vazio seria numero inventado.
+    return "sem dados";
   }
   return `${Math.round((parte / todo) * 100)}%`;
 }

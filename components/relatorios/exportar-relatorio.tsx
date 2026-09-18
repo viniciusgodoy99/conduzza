@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
 import { registrarExportacaoDeRelatorioAction } from "@/app/(app)/relatorios/actions";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -33,11 +34,15 @@ export function ExportarRelatorio({
   aba,
   periodoRotulo,
   montar,
+  desabilitado = false,
 }: {
   aba: string;
   periodoRotulo: string;
   /** Monta as linhas na hora do clique, sempre da aba ATIVA. */
   montar: () => ExportavelDaAba;
+  /** Aba ainda carregando ou em erro: exportar gravaria trilha de um CSV
+   *  vazio (achado da revisao de 18/09). Visivel e desabilitado, com dica. */
+  desabilitado?: boolean;
 }) {
   const [imprimindo, setImprimindo] = useState<ExportavelDaAba | null>(null);
 
@@ -75,6 +80,17 @@ export function ExportarRelatorio({
       window.print();
     }, 80);
   };
+
+  if (desabilitado) {
+    return (
+      <DisabledWithHint hint="Aguarde os dados do período carregarem.">
+        <Button variant="outline" className="h-10 gap-2" disabled>
+          <Download strokeWidth={1.5} className="size-4" aria-hidden />
+          Exportar
+        </Button>
+      </DisabledWithHint>
+    );
+  }
 
   return (
     <>

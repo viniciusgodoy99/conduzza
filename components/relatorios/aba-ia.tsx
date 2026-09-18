@@ -4,6 +4,7 @@ import { Bot } from "lucide-react";
 
 import { CartaoKpi } from "@/components/relatorios/cartao-kpi";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { formatarDuracao } from "@/lib/domain/duracao";
 import type {
   AtendimentoDoPeriodo,
   Periodizado,
@@ -15,28 +16,6 @@ import type {
 // dica (regra 5), nunca como zero falso. O que da para medir e o
 // atendimento HUMANO: mediana e p90 da primeira resposta, nunca media (uma
 // noite sem plantao destruiria a media).
-
-export function formatarDuracao(segundos: number | null): string {
-  if (segundos === null) {
-    return "sem dados";
-  }
-  if (segundos < 60) {
-    return "menos de 1 min";
-  }
-  const minutos = Math.round(segundos / 60);
-  if (minutos < 60) {
-    return `${minutos} min`;
-  }
-  const horas = Math.floor(minutos / 60);
-  const resto = minutos % 60;
-  if (horas < 24) {
-    return resto > 0
-      ? `${horas}h${String(resto).padStart(2, "0")}`
-      : `${horas}h`;
-  }
-  const dias = Math.floor(horas / 24);
-  return `${dias} dia${dias === 1 ? "" : "s"}`;
-}
 
 const METRICAS_DO_AGENTE = [
   "Conversas resolvidas sem humano",
@@ -75,12 +54,12 @@ export function AbaIa({
         <CartaoKpi
           rotulo="Primeira resposta (mediana)"
           valor={formatarDuracao(atual.primeiraResposta.medianaSegundos)}
-          notaSemDelta="metade das novas conversas foi respondida nesse tempo ou menos"
+          notaSemDelta="metade das conversas respondidas levou esse tempo ou menos"
         />
         <CartaoKpi
           rotulo="Primeira resposta (90% em até)"
           valor={formatarDuracao(atual.primeiraResposta.p90Segundos)}
-          notaSemDelta="9 em cada 10 novas conversas foram respondidas nesse tempo ou menos"
+          notaSemDelta="9 em cada 10 conversas respondidas levaram esse tempo ou menos"
         />
       </section>
 

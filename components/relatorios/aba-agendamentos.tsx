@@ -143,6 +143,7 @@ export function AbaAgendamentos({
         <CartaoKpi
           rotulo="Faltas"
           valor={atual.porStatus.faltou.toLocaleString("pt-BR")}
+          polaridade="menor-melhor"
           anterior={
             anterior
               ? {
@@ -155,6 +156,7 @@ export function AbaAgendamentos({
         <CartaoKpi
           rotulo="Cancelamentos"
           valor={cancelados.toLocaleString("pt-BR")}
+          polaridade="menor-melhor"
           anterior={
             canceladosAnterior !== null
               ? { atual: cancelados, anterior: canceladosAnterior }

@@ -66,6 +66,7 @@ export function AbaConfirmacao({
         <CartaoKpi
           rotulo="Faltas"
           valor={atual.porStatus.faltou.toLocaleString("pt-BR")}
+          polaridade="menor-melhor"
           anterior={
             anterior
               ? {
@@ -135,7 +136,13 @@ export function AbaConfirmacao({
                 >
                   Registrar de novo
                 </Button>
-              ) : null}
+              ) : (
+                <DisabledWithHint hint="Só quem administra a clínica registra a linha de base.">
+                  <Button variant="ghost" className="h-10 w-fit" disabled>
+                    Registrar de novo
+                  </Button>
+                </DisabledWithHint>
+              )}
             </div>
             <div className="grid content-start gap-1 rounded-lg border p-4">
               <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">

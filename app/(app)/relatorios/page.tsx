@@ -48,13 +48,18 @@ export default async function ResultadosPage({
   // no banco recusa qualquer agregado da clinica para o papel.
   if (active.role === "profissional") {
     const supabaseProfissional = await createClient();
-    const { data: membro } = await supabaseProfissional
+    const { data: membro, error: erroDeVinculo } = await supabaseProfissional
       .from("clinic_member")
       .select("professional_id")
       .eq("clinic_id", active.clinicId)
       .eq("user_id", context.userId)
       .maybeSingle();
-    const professionalId = membro?.professional_id as string | null;
+    if (erroDeVinculo) {
+      // Leitura que DECIDE a visao: erro vira erro, nunca o estado falso
+      // "seu perfil nao esta ligado a agenda" (achado da revisao de 18/09).
+      throw new Error(erroDeVinculo.message);
+    }
+    const professionalId = (membro?.professional_id ?? null) as string | null;
 
     if (!professionalId) {
       return (

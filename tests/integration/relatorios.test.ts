@@ -421,6 +421,18 @@ describe("linha de base", () => {
     expect(linha).not.toBeNull();
     expect(linha!.ratePercent).toBe(21.5);
     expect(linha!.note).toBe("corrigida com a planilha da recepção");
-    await admin.auth.admin.deleteUser(usuario!.user!.id);
+    // A FK registered_by (sem on delete) BLOQUEIA apagar o usuario enquanto
+    // as linhas existem, e deleteUser nao lanca: sem esta ordem o teste
+    // vazava um usuario auth orfao em producao por execucao (achado da
+    // revisao de 18/09). Service role ignora o append-only da RLS.
+    await admin
+      .from("no_show_baseline")
+      .delete()
+      .eq("clinic_id", clinicId)
+      .throwOnError();
+    const { error: erroDeLimpeza } = await admin.auth.admin.deleteUser(
+      usuario!.user!.id,
+    );
+    expect(erroDeLimpeza).toBeNull();
   });
 });
