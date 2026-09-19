@@ -26,7 +26,12 @@ import { createClient } from "@/lib/supabase/server";
 // existe em tests/rls/reguas.test.ts (gestor edita texto do passo, recepcao
 // recebe 42501).
 
-export type AutomacoesActionResult = { ok: boolean; error?: string };
+export type AutomacoesActionResult = {
+  ok: boolean;
+  error?: string;
+  /** Deu certo, mas com uma ressalva que a clinica precisa ouvir. */
+  aviso?: string;
+};
 
 async function requireAutomacoes() {
   const context = await getSessionContext();
@@ -83,14 +88,28 @@ export async function salvarTextoDoPassoAction(
       };
     }
   }
-  const { data: linhas, error } = await supabase
+  // Escrita CONDICIONAL contra a corrida com removerAnexo (achado da
+  // revisao de 19/09): esvaziar o texto so passa se o anexo AINDA existir
+  // no instante do update, nao so no da conferencia acima.
+  let query = supabase
     .from("cadence_step")
-    .update({ fixed_body: parsed.data.fixed_body === "" ? null : parsed.data.fixed_body })
+    .update({
+      fixed_body: parsed.data.fixed_body === "" ? null : parsed.data.fixed_body,
+    })
     .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.cadence_step_id)
-    .select("id");
+    .eq("id", parsed.data.cadence_step_id);
+  if (parsed.data.fixed_body === "") {
+    query = query.not("media_path", "is", null);
+  }
+  const { data: linhas, error } = await query.select("id");
   if (error || !linhas || linhas.length === 0) {
-    return { ok: false, error: "Não foi possível salvar o texto." };
+    return {
+      ok: false,
+      error:
+        parsed.data.fixed_body === ""
+          ? "Escreva a mensagem, ou anexe uma mídia antes de deixar o texto vazio."
+          : "Não foi possível salvar o texto.",
+    };
   }
 
   await supabase.from("audit_log").insert({
@@ -241,7 +260,10 @@ export async function removerAnexoDoPassoAction(
     };
   }
 
-  const { error } = await supabase
+  // Mesmo desenho condicional do salvarTexto: remover o anexo so passa se
+  // o TEXTO ainda existir no instante do update (a corrida contraria
+  // deixaria o passo sem conteudo nenhum).
+  const { data: linhasDoAnexo, error } = await supabase
     .from("cadence_step")
     .update({
       media_path: null,
@@ -250,9 +272,15 @@ export async function removerAnexoDoPassoAction(
       media_filename: null,
     })
     .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.cadence_step_id);
-  if (error) {
-    return { ok: false, error: "Não foi possível remover o anexo." };
+    .eq("id", parsed.data.cadence_step_id)
+    .not("fixed_body", "is", null)
+    .select("id");
+  if (error || !linhasDoAnexo || linhasDoAnexo.length === 0) {
+    return {
+      ok: false,
+      error:
+        "Escreva o texto antes de remover o anexo, ou exclua o passo inteiro.",
+    };
   }
   // Objeto depois da linha: se a remocao do objeto falhar, sobra um orfao
   // inofensivo (sem media_path ninguem o referencia; a policy exige o passo).
@@ -361,26 +389,33 @@ export async function criarReguaDeExcecaoAction(
     };
   }
 
-  // Copia os passos da padrao. O insert em lote e ATOMICO no PostgREST:
-  // falhou, nao entrou NENHUM passo. Nesse caso a regua recem-criada e
-  // desfeita e a clinica ouve a verdade, em vez de ganhar uma regua vazia
-  // que parece pronta.
+  // Copia os passos da padrao, ANEXO INCLUSO (achado da revisao de 19/09:
+  // copiar so o texto transformava passo so-anexo em passo vazio que nunca
+  // envia, em silencio). O insert em lote e ATOMICO no PostgREST: falhou,
+  // nao entrou NENHUM passo, a regua recem-criada e desfeita e a clinica
+  // ouve a verdade. A copia dos ARQUIVOS vem depois das linhas: se um
+  // arquivo falhar, o passo copiado fica sem anexo, e um passo que ficaria
+  // sem conteudo nenhum e removido com aviso, nunca deixado como casca.
   const { data: passos } = await supabase
     .from("cadence_step")
-    .select("offset_minutes, fixed_body")
+    .select("offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename")
     .eq("clinic_id", guard.clinicId)
     .eq("cadence_id", padrao.id as string)
     .order("offset_minutes");
+  let avisoDaCopia: string | undefined;
   if (passos && passos.length > 0) {
-    const { error: erroCopia } = await supabase.from("cadence_step").insert(
-      passos.map((passo) => ({
-        clinic_id: guard.clinicId,
-        cadence_id: nova.id as string,
-        offset_minutes: passo.offset_minutes as number,
-        fixed_body: passo.fixed_body as string | null,
-      })),
-    );
-    if (erroCopia) {
+    const { data: copiados, error: erroCopia } = await supabase
+      .from("cadence_step")
+      .insert(
+        passos.map((passo) => ({
+          clinic_id: guard.clinicId,
+          cadence_id: nova.id as string,
+          offset_minutes: passo.offset_minutes as number,
+          fixed_body: passo.fixed_body as string | null,
+        })),
+      )
+      .select("id, offset_minutes");
+    if (erroCopia || !copiados) {
       await supabase
         .from("cadence")
         .delete()
@@ -392,8 +427,61 @@ export async function criarReguaDeExcecaoAction(
           "Não foi possível copiar as mensagens da régua principal. Tente de novo.",
       };
     }
+    const adminStorage = createAdminClient();
+    for (const original of passos) {
+      if (!original.media_path) {
+        continue;
+      }
+      const copiado = copiados.find(
+        (c) => c.offset_minutes === original.offset_minutes,
+      );
+      if (!copiado) {
+        continue;
+      }
+      const destino = `${guard.clinicId}/${copiado.id as string}`;
+      const { data: bytesDoAnexo } = await adminStorage.storage
+        .from("midia-de-regua")
+        .download(original.media_path as string);
+      const copiouArquivo = bytesDoAnexo
+        ? !(
+            await adminStorage.storage
+              .from("midia-de-regua")
+              .upload(destino, Buffer.from(await bytesDoAnexo.arrayBuffer()), {
+                contentType:
+                  (original.media_mimetype as string | null) ??
+                  "application/octet-stream",
+                upsert: true,
+                cacheControl: "0",
+              })
+          ).error
+        : false;
+      if (copiouArquivo) {
+        await supabase
+          .from("cadence_step")
+          .update({
+            media_path: destino,
+            media_type: original.media_type,
+            media_mimetype: original.media_mimetype,
+            media_filename: original.media_filename,
+          })
+          .eq("clinic_id", guard.clinicId)
+          .eq("id", copiado.id as string);
+      } else if (!original.fixed_body) {
+        // Sem o arquivo e sem texto o passo seria uma casca que nunca envia:
+        // melhor nao existir, e a clinica fica sabendo.
+        await supabase
+          .from("cadence_step")
+          .delete()
+          .eq("clinic_id", guard.clinicId)
+          .eq("id", copiado.id as string);
+        avisoDaCopia =
+          "Um dos passos da régua principal é só anexo e o arquivo não pôde ser copiado: ele ficou de fora. Anexe de novo na régua nova.";
+      } else {
+        avisoDaCopia =
+          "O texto veio, mas um anexo não pôde ser copiado. Anexe de novo na régua nova.";
+      }
+    }
   }
-
   await supabase.from("audit_log").insert({
     clinic_id: guard.clinicId,
     user_id: guard.context.userId,
@@ -403,7 +491,7 @@ export async function criarReguaDeExcecaoAction(
   });
   revalidatePath("/automacoes");
   revalidatePath("/confirmacoes");
-  return { ok: true };
+  return { ok: true, ...(avisoDaCopia ? { aviso: avisoDaCopia } : {}) };
 }
 
 export async function excluirReguaAction(

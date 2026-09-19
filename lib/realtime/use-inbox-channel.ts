@@ -135,6 +135,23 @@ export function useInboxChannel(
         {
           event: "UPDATE",
           schema: "public",
+          table: "contact",
+          filter: `clinic_id=eq.${clinicId}`,
+        },
+        () => {
+          // Etapa e nome do contato mudam FORA do Inbox (Kanban, termo-chave,
+          // gatilhos da agenda, o proprio assumir): sem isto o seletor de
+          // etapa do painel editava sobre um retrato velho (achado da
+          // revisao de 19/09). So a lista e invalidada: o contato viaja
+          // embutido nela.
+          void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
           table: "whatsapp_account",
           filter: `clinic_id=eq.${clinicId}`,
         },

@@ -15,6 +15,7 @@ import {
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { EtapaDoContato } from "@/components/atendimento/etapa-do-contato";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import type { ConsentInfo, ContactSummary } from "@/lib/queries/conversations";
 
@@ -65,6 +66,8 @@ export function ContextPanel({
   jornada,
   podeEditarLeads,
   dicaLeads,
+  podeAgendar,
+  dicaAgenda,
   aoMudarEtapa,
 }: {
   contact: ContactSummary;
@@ -72,6 +75,8 @@ export function ContextPanel({
   jornada: EtapaDaJornada[];
   podeEditarLeads: boolean;
   dicaLeads: string;
+  podeAgendar: boolean;
+  dicaAgenda: string;
   aoMudarEtapa: () => Promise<unknown> | void;
 }) {
   return (
@@ -165,13 +170,22 @@ export function ContextPanel({
       </Section>
 
       <Section title="Ações">
-        <Link
-          href={`/agenda?agendar=${contact.id}`}
-          className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
-        >
-          <CalendarPlus strokeWidth={1.5} className="size-4" aria-hidden />
-          Marcar consulta
-        </Link>
+        {podeAgendar ? (
+          <Link
+            href={`/agenda?agendar=${contact.id}`}
+            className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
+          >
+            <CalendarPlus strokeWidth={1.5} className="size-4" aria-hidden />
+            Marcar consulta
+          </Link>
+        ) : (
+          <DisabledWithHint hint={dicaAgenda}>
+            <span className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium opacity-50">
+              <CalendarPlus strokeWidth={1.5} className="size-4" aria-hidden />
+              Marcar consulta
+            </span>
+          </DisabledWithHint>
+        )}
         <Link
           href={`/espera?adicionar=${contact.id}`}
           className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"

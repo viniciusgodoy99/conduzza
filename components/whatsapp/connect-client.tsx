@@ -111,7 +111,11 @@ export function ConnectClient({
   };
 
   const verifyButton = (
-    <Button variant="outline" onClick={verificarAgora} disabled={pending}>
+    <Button
+      variant="outline"
+      onClick={verificarAgora}
+      disabled={pending || !canManage}
+    >
       <RefreshCw strokeWidth={1.5} className="size-4" />
       {pending ? "Verificando..." : "Verificar agora"}
     </Button>

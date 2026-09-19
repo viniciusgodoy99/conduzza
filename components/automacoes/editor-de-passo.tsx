@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PLACEHOLDERS, renderizarModelo } from "@/lib/domain/modelo-mensagem";
+import { CORPO_DO_MENU_APOS_MIDIA } from "@/lib/domain/textos-padrao";
 import type { PassoDaReguaDaTela } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/client";
 
@@ -80,7 +81,9 @@ export function EditorDePasso({
     const supabase = createClient();
     supabase.storage
       .from("midia-de-regua")
-      .createSignedUrl(passo.media_path, 300)
+      // 1 hora: e conteudo da CLINICA (nao de paciente) numa sessao de
+      // edicao; 5 minutos derrubava o player de audio no meio do trabalho.
+      .createSignedUrl(passo.media_path, 3600)
       .then(({ data }) => {
         if (!cancelado) {
           setAnexoUrl(data?.signedUrl ?? null);
@@ -307,19 +310,35 @@ export function EditorDePasso({
       </div>
       <div className="grid content-start gap-1.5">
         <span className="text-sm font-medium">Como o paciente vê</span>
-        <BalaoWhatsApp
-          corpo={preview}
-          botoes={botoes}
-          anexo={
-            temAnexo && passo.media_type
-              ? {
-                  tipo: passo.media_type,
-                  url: anexoUrl,
-                  nome: passo.media_filename,
-                }
-              : null
-          }
-        />
+        {temAnexo && passo.media_type && botoes && botoes.length > 0 ? (
+          // Com anexo, a confirmacao vira DUAS mensagens de verdade (a midia
+          // e depois os botoes): a preview mostra o PAR, senao mentiria.
+          <div className="grid gap-2">
+            <BalaoWhatsApp
+              corpo={preview}
+              anexo={{
+                tipo: passo.media_type,
+                url: anexoUrl,
+                nome: passo.media_filename,
+              }}
+            />
+            <BalaoWhatsApp corpo={CORPO_DO_MENU_APOS_MIDIA} botoes={botoes} />
+          </div>
+        ) : (
+          <BalaoWhatsApp
+            corpo={preview}
+            botoes={botoes}
+            anexo={
+              temAnexo && passo.media_type
+                ? {
+                    tipo: passo.media_type,
+                    url: anexoUrl,
+                    nome: passo.media_filename,
+                  }
+                : null
+            }
+          />
+        )}
         <p className="text-[11.5px] text-text-tertiary">
           Amostra com dados fictícios. No envio real, os campos são
           preenchidos com os dados da consulta e do paciente.

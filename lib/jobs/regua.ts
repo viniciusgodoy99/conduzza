@@ -21,6 +21,8 @@ import {
   sendWhatsAppMenu,
   sendWhatsAppText,
 } from "@/lib/integrations/whatsapp/send";
+import { log } from "@/lib/log";
+
 import { espacamentoDeMassaMs } from "./espacamento";
 import type { Job, ResultadoDeJob } from "./worker";
 
@@ -545,7 +547,22 @@ export async function executarPassoDeRegua(
       return { ok: false, erro: "anexo_ilegivel" };
     }
     const bytes = Buffer.from(await download.data.arrayBuffer());
-    const messageId = crypto.randomUUID();
+
+    // O CAMINHO DA COPIA SEGUE A LINHA message DONA DO ENVIO (achado da
+    // revisao de 19/09): a linha nasce em send.ts ANTES do despacho, com
+    // media_url apontando para a copia, e um retry REUSA a linha pela chave
+    // do job sem nunca reescrever media_url. Se cada passagem inventasse um
+    // uuid novo, a falha transitoria deixava a linha apontando para um
+    // objeto de uma passagem e o objeto vivo em outra (balao que nunca
+    // abre + orfao permanente). Reusar o id da linha existente faz o
+    // upsert REGRAVAR exatamente o caminho que media_url ja referencia.
+    const { data: linhaExistente } = await admin
+      .from("message")
+      .select("id")
+      .eq("clinic_id", job.clinic_id)
+      .eq("job_id", job.id)
+      .maybeSingle();
+    const messageId = (linhaExistente?.id as string | undefined) ?? crypto.randomUUID();
     const caminhoDaConversa = `${job.clinic_id}/${messageId}`;
     const upload = await admin.storage
       .from("midia-conversas")
@@ -560,10 +577,12 @@ export async function executarPassoDeRegua(
     resultado = await sendWhatsAppMedia(admin, {
       ...envio,
       // Na confirmacao, a midia e os botoes sao UM toque em duas mensagens:
-      // a midia reserva so o espacamento curto padrao (o par sai junto) e o
-      // espacamento de massa fica com a ULTIMA mensagem do par. Nos demais
-      // kinds a midia e a unica mensagem e carrega a massa normalmente.
-      ...(regua.kind === "confirmacao" ? { espacamentoMs: undefined } : {}),
+      // a midia reserva um espacamento CURTO E FIXO abaixo do teto de espera
+      // do proximo envio (3s), para o par sair na MESMA passagem (o sorteio
+      // padrao de 1,5 a 4s separava o par em ~1/3 dos envios, achado da
+      // revisao de 19/09); o espacamento de massa fica com a ULTIMA mensagem
+      // do par. Nos demais kinds a midia e unica e carrega a massa.
+      ...(regua.kind === "confirmacao" ? { espacamentoMs: 1_500 } : {}),
       messageId,
       midia: {
         tipo: passo.media_type ?? "document",
@@ -573,11 +592,21 @@ export async function executarPassoDeRegua(
         caminhoNoStorage: caminhoDaConversa,
       },
     });
-    if (!resultado.ok) {
-      // Nao saiu agora (falha, adiamento ou 'ja_enviado' de retry, cuja
-      // message aponta para a copia da PRIMEIRA tentativa): a copia desta
-      // passagem e orfa, e orfao se remove.
-      await admin.storage.from("midia-conversas").remove([caminhoDaConversa]);
+    if (!resultado.ok && resultado.reason !== "ja_enviado") {
+      // So se remove copia que NENHUMA linha referencia. A falha pode ter
+      // acontecido depois do insert (a linha ja aponta para o caminho, e o
+      // retry vai regravar o MESMO caminho) ou antes (slot adiado,
+      // desconectado): a consulta decide, nunca o palpite. Em 'ja_enviado'
+      // o objeto regravado E o referenciado.
+      const { data: aindaSemLinha } = await admin
+        .from("message")
+        .select("id")
+        .eq("clinic_id", job.clinic_id)
+        .eq("job_id", job.id)
+        .maybeSingle();
+      if (!aindaSemLinha) {
+        await admin.storage.from("midia-conversas").remove([caminhoDaConversa]);
+      }
     }
     if (
       (resultado.ok || resultado.reason === "ja_enviado") &&
@@ -588,12 +617,57 @@ export async function executarPassoDeRegua(
       // depois de menu perdido reenvia so o menu; duplicata rara, aceita.
       // Se o slot da clinica adiar o menu, o proprio adiamento reagenda o
       // job e a midia nao repete (ja_enviado pela chave do job).
+      //
+      // Nota assumida: linha de midia morta em 'enviando' (processo caiu
+      // entre o registro e o envio) vira 'ja_enviado' no retry e o menu sai
+      // sem a midia ter saido; e a mesma perda menor e visivel do envio de
+      // texto (send.ts registra), aceita la e aca.
       resultado = await sendWhatsAppMenu(admin, {
         ...envio,
         jobId: undefined,
         body: CORPO_DO_MENU_APOS_MIDIA,
         options: MENU_CONFIRMACAO,
       });
+      if (!resultado.ok && resultado.reason !== "ja_enviado") {
+        // A midia JA CHEGOU ao paciente e so o menu falhou. Na ultima
+        // tentativa do job (ou falha definitiva), fechar a run como enviada
+        // apontando para a MENSAGEM DA MIDIA cega menos que deixa-la
+        // pendente para sempre: o paciente recebeu o toque e ainda pode
+        // responder por texto (o interceptador entende confirmo/cancelo sem
+        // menu). Falha retentavel fora da ultima tentativa segue o fluxo
+        // normal (o retry reenvia SO o menu).
+        const ultimaTentativa = job.attempts + 1 >= job.max_attempts;
+        const definitiva =
+          resultado.reason === "falha_envio" &&
+          !falhaPermiteRetry(resultado.code);
+        if (ultimaTentativa || definitiva) {
+          const { data: mensagemDaMidia } = await admin
+            .from("message")
+            .select("id")
+            .eq("clinic_id", job.clinic_id)
+            .eq("job_id", job.id)
+            .maybeSingle();
+          await admin
+            .from("cadence_run")
+            .update({
+              sent_at: new Date().toISOString(),
+              message_id: (mensagemDaMidia?.id as string | undefined) ?? null,
+            })
+            .eq("id", run.id)
+            .is("sent_at", null);
+          if (run.appointment_id) {
+            await admin.rpc("marcar_aguardando_confirmacao", {
+              p_clinic_id: job.clinic_id,
+              p_appointment_id: run.appointment_id,
+            });
+          }
+          log.warn("menu_do_par_nao_saiu", {
+            clinic_id: job.clinic_id,
+            job_id: job.id,
+          });
+          return { ok: true };
+        }
+      }
     }
   } else {
     resultado =

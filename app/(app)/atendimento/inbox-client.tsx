@@ -112,6 +112,9 @@ export function InboxClient({
     "Seu perfil não altera a etapa do contato";
   const aoMudarEtapa = () =>
     queryClient.invalidateQueries({ queryKey: ["conversations"] });
+  const podeAgendar = canEdit(viewerRole, "agenda");
+  const dicaAgenda =
+    permissionHint(viewerRole, "agenda") ?? "Seu perfil só consulta a agenda";
   const ehChefia = viewerRole === "admin" || viewerRole === "gestor";
 
   useInboxChannel(supabase, clinicId);
@@ -535,6 +538,8 @@ export function InboxClient({
             jornada={jornada}
             podeEditarLeads={podeEditarLeads}
             dicaLeads={dicaLeads}
+            podeAgendar={podeAgendar}
+            dicaAgenda={dicaAgenda}
             aoMudarEtapa={aoMudarEtapa}
           />
         ) : (
@@ -566,6 +571,8 @@ export function InboxClient({
               jornada={jornada}
               podeEditarLeads={podeEditarLeads}
               dicaLeads={dicaLeads}
+              podeAgendar={podeAgendar}
+              dicaAgenda={dicaAgenda}
               aoMudarEtapa={aoMudarEtapa}
             />
           ) : null}

@@ -4,6 +4,8 @@ import { RefreshCw, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { toast } from "sonner";
+
 import { checarConexaoAction } from "@/lib/actions/whatsapp-connect";
 import { createClient } from "@/lib/supabase/client";
 
@@ -79,9 +81,17 @@ export function WhatsappStatus({
     setVerificando(true);
     void checarConexaoAction()
       .then((resultado) => {
-        if (!resultado.error) {
-          setStatus(resultado.status);
+        if (resultado.error) {
+          toast.error(resultado.error);
+          return;
         }
+        setStatus(resultado.status);
+        if (resultado.status !== "conectado") {
+          toast.info("Ainda desconectado. Abra Configurações para reconectar.");
+        }
+      })
+      .catch(() => {
+        toast.error("Não foi possível verificar agora. Tente de novo.");
       })
       .finally(() => setVerificando(false));
   };
@@ -101,7 +111,7 @@ export function WhatsappStatus({
       <span>WhatsApp desconectado: os pacientes não estão sendo atendidos</span>
       <Link
         href="/configuracoes?aba=whatsapp"
-        className="rounded-md bg-black/15 px-2.5 py-1 text-xs font-semibold underline-offset-2 hover:underline"
+        className="flex min-h-10 items-center rounded-md bg-black/15 px-3 text-xs font-semibold underline-offset-2 hover:underline"
       >
         Reconectar
       </Link>
@@ -109,7 +119,7 @@ export function WhatsappStatus({
         type="button"
         onClick={verificarAgora}
         disabled={verificando}
-        className="flex items-center gap-1.5 rounded-md bg-black/15 px-2.5 py-1 text-xs font-semibold underline-offset-2 hover:underline disabled:opacity-60"
+        className="flex min-h-10 items-center gap-1.5 rounded-md bg-black/15 px-3 text-xs font-semibold underline-offset-2 hover:underline disabled:opacity-60"
       >
         <RefreshCw
           strokeWidth={1.5}

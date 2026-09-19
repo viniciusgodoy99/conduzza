@@ -82,6 +82,9 @@ export function Excecoes({
           : { base, no_show_threshold: Number(limiar) },
       );
       if (resultado.ok) {
+        if (resultado.aviso) {
+          toast.warning(resultado.aviso);
+        }
         toast.success("Régua criada, desligada. Ajuste os textos e ligue.");
         setDialogoAberto(false);
         await aoMudar();
