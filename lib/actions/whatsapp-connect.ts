@@ -121,12 +121,14 @@ async function persistStatus(
   clinicId: string,
   status: InstanceStatus,
 ): Promise<void> {
+  // TRANSICAO primeiro, com o .neq do webhook: os carimbos connected_at e
+  // disconnected_at marcam o instante em que o status MUDOU. Sem o guard, o
+  // poll de 2,5s reescrevia disconnected_at a cada passagem e o instante
+  // real da queda se perdia (achado da exploracao de 19/09/2026).
   await admin
     .from("whatsapp_account")
     .update({
       connection_status: status.status,
-      ...(status.displayPhone ? { display_phone: status.displayPhone } : {}),
-      ...(status.instanceId ? { instance_id: status.instanceId } : {}),
       ...(status.status === "conectado"
         ? { connected_at: new Date().toISOString() }
         : {}),
@@ -134,7 +136,19 @@ async function persistStatus(
         ? { disconnected_at: new Date().toISOString() }
         : {}),
     })
-    .eq("clinic_id", clinicId);
+    .eq("clinic_id", clinicId)
+    .neq("connection_status", status.status);
+
+  // Metadados sempre, mudanca de status ou nao.
+  if (status.displayPhone || status.instanceId) {
+    await admin
+      .from("whatsapp_account")
+      .update({
+        ...(status.displayPhone ? { display_phone: status.displayPhone } : {}),
+        ...(status.instanceId ? { instance_id: status.instanceId } : {}),
+      })
+      .eq("clinic_id", clinicId);
+  }
 
   await admin
     .from("whatsapp_account_secret")
@@ -260,6 +274,51 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
       displayPhone: account.display_phone,
       error: mensagemDeErro(error),
     };
+  }
+}
+
+// Checagem de status para QUALQUER membro ativo (o botao "Verificar
+// conexao" da faixa vermelha): consulta o provedor e grava, mas NAO devolve
+// QR nem segredo, so o status. O pollWhatsAppStatusAction continua
+// admin/gestor porque carrega o QR do pareamento.
+export async function checarConexaoAction(): Promise<{
+  status: string | null;
+  error?: string;
+}> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { status: null, error: "Sessão expirada. Entre de novo." };
+  }
+  const clinicId = context.active.clinicId;
+  const admin = createAdminClient();
+  // Leitura SECA (sem os upserts do loadAccount): membro conferindo status
+  // nao pode criar conta de WhatsApp do nada.
+  const { data: account } = await admin
+    .from("whatsapp_account")
+    .select("provider, server_url, instance_id, connection_status")
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if (!account) {
+    return { status: null };
+  }
+  const { data: secret } = await admin
+    .from("whatsapp_account_secret")
+    .select("instance_token")
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  const provider = getWhatsAppProvider(account.provider);
+  try {
+    const status = await provider.getStatus({
+      clinicId,
+      serverUrl: account.server_url,
+      instanceToken: secret?.instance_token ?? null,
+      instanceId: account.instance_id,
+    });
+    await persistStatus(admin, clinicId, status);
+    return { status: status.status };
+  } catch {
+    // Provedor fora do ar: devolve o que o banco sabe, sem gravar nada.
+    return { status: account.connection_status as string };
   }
 }
 

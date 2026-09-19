@@ -1,6 +1,8 @@
 "use client";
 
-import { CircleCheck, Plug, QrCode, Unplug } from "lucide-react";
+import { CircleCheck, Plug, QrCode, Unplug,
+  RefreshCw,
+} from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -101,6 +103,20 @@ export function ConnectClient({
     </Button>
   );
 
+  const verificarAgora = () => {
+    startTransition(async () => {
+      const proximo = await pollWhatsAppStatusAction();
+      setState((atual) => (atual.status === "conectado" ? atual : proximo));
+    });
+  };
+
+  const verifyButton = (
+    <Button variant="outline" onClick={verificarAgora} disabled={pending}>
+      <RefreshCw strokeWidth={1.5} className="size-4" />
+      {pending ? "Verificando..." : "Verificar agora"}
+    </Button>
+  );
+
   const disconnectButton = (
     <Button
       variant="outline"
@@ -187,13 +203,18 @@ export function ConnectClient({
                 </p>
               ) : null}
 
-              <div>
+              <div className="flex flex-wrap gap-2">
                 {canManage ? (
                   connectButton
                 ) : (
                   <DisabledWithHint hint={dica}>
                     {connectButton}
                   </DisabledWithHint>
+                )}
+                {canManage ? (
+                  verifyButton
+                ) : (
+                  <DisabledWithHint hint={dica}>{verifyButton}</DisabledWithHint>
                 )}
               </div>
 

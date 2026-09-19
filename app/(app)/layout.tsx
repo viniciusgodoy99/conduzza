@@ -5,7 +5,7 @@ import { QueryProvider } from "@/components/providers/query-provider";
 import { AppShell } from "@/components/shell/app-shell";
 import { CriarClinica } from "@/components/shell/criar-clinica";
 import { MotorStatus } from "@/components/shell/motor-status";
-import { WhatsappBanner } from "@/components/shell/whatsapp-banner";
+import { WhatsappStatus } from "@/components/shell/whatsapp-status";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import { diaCivil, limitesDoDia, somarDias } from "@/lib/domain/horarios";
 import type { SaudeDoMotor } from "@/lib/domain/motor";
@@ -155,9 +155,12 @@ export default async function AppLayout({
       saudeInicial={saudeInicial}
       timezone={active.timezone}
       fallback={
-        whatsappAccount && whatsappAccount.connection_status !== "conectado" ? (
-          <WhatsappBanner />
-        ) : null
+        <WhatsappStatus
+          clinicId={active.clinicId}
+          statusInicial={
+            (whatsappAccount?.connection_status as string | undefined) ?? null
+          }
+        />
       }
     />
   );
