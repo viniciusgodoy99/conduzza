@@ -129,7 +129,7 @@ export async function fetchExcecoesDeConfirmacao(
       const [passos, eventos, enviados, pulados] = await Promise.all([
         supabase
           .from("cadence_step")
-          .select("id, offset_minutes, fixed_body")
+          .select("id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename")
           .eq("clinic_id", clinicId)
           .eq("cadence_id", regua.id as string)
           .order("offset_minutes"),
@@ -266,7 +266,7 @@ export async function fetchFollowups(
         await Promise.all([
           supabase
             .from("cadence_step")
-            .select("id, offset_minutes, fixed_body")
+            .select("id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename")
             .eq("clinic_id", clinicId)
             .eq("cadence_id", regua.id as string)
             .order("offset_minutes"),

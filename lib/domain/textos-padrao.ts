@@ -104,6 +104,12 @@ export const RESPOSTA_REMARCAR =
  * degrada para lista numerada). Os dois caminhos sao lidos por
  * interpretarResposta.
  */
+/** Corpo da mensagem de botoes quando o passo de confirmacao tem anexo: a
+ *  midia sai primeiro (com o texto do passo como legenda) e os botoes vao
+ *  numa segunda mensagem, que precisa de um corpo proprio. */
+export const CORPO_DO_MENU_APOS_MIDIA =
+  "Responda com uma das opções abaixo:";
+
 export const MENU_CONFIRMACAO: MenuOption[] = [
   { id: "confirmar", text: "Confirmar" },
   { id: "remarcar", text: "Remarcar" },

@@ -1,16 +1,25 @@
 "use client";
 
-// Pre-visualizacao em balao de WhatsApp (brief da Tela 7): o texto exatamente
-// como o paciente vai ler, com os botoes renderizados quando a regua os tem.
-// Puro visual: quem renderiza as {{variaveis}} e o chamador, com
-// renderizarModelo e os MESMOS valores de amostra do editor.
+import { FileText } from "lucide-react";
+
+// Pre-visualizacao em balao de WhatsApp: corpo de texto, botoes (confirmacao)
+// e, quando o passo tem anexo, a midia acima do texto, como o paciente ve.
+
+export type AnexoDaPreview = {
+  tipo: "image" | "audio" | "document";
+  /** URL assinada; null enquanto assina (mostra o cartao sem a midia). */
+  url: string | null;
+  nome: string | null;
+};
 
 export function BalaoWhatsApp({
   corpo,
   botoes,
+  anexo,
 }: {
   corpo: string;
   botoes?: string[];
+  anexo?: AnexoDaPreview | null;
 }) {
   return (
     <div
@@ -19,8 +28,38 @@ export function BalaoWhatsApp({
       aria-label="Pré-visualização da mensagem"
     >
       <div className="max-w-xs rounded-lg rounded-tl-sm border bg-card p-3 shadow-sm">
+        {anexo ? (
+          <div className="mb-2">
+            {anexo.tipo === "image" && anexo.url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={anexo.url}
+                alt="Foto anexada ao passo"
+                className="max-h-40 w-full rounded-md object-cover"
+              />
+            ) : anexo.tipo === "audio" && anexo.url ? (
+              <audio controls src={anexo.url} className="w-full">
+                O navegador não toca este áudio.
+              </audio>
+            ) : (
+              <span className="flex items-center gap-2 rounded-md border px-2.5 py-2 text-[12.5px]">
+                <FileText
+                  strokeWidth={1.5}
+                  className="size-4 shrink-0 text-text-secondary"
+                  aria-hidden
+                />
+                <span className="min-w-0 truncate">
+                  {anexo.nome ?? "Arquivo anexado"}
+                </span>
+              </span>
+            )}
+          </div>
+        ) : null}
         <p className="text-[13px] whitespace-pre-line">
-          {corpo || "A mensagem aparece aqui enquanto você escreve."}
+          {corpo ||
+            (anexo
+              ? ""
+              : "A mensagem aparece aqui enquanto você escreve.")}
         </p>
         {botoes && botoes.length > 0 ? (
           <div className="mt-2 grid gap-1 border-t pt-2">

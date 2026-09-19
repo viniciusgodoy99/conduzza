@@ -9,7 +9,10 @@ import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import { canEdit } from "@/lib/domain/permissions";
-import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
+import {
+  CORPO_DO_MENU_APOS_MIDIA,
+  MENU_CONFIRMACAO,
+} from "@/lib/domain/textos-padrao";
 import { carregarInstancia } from "@/lib/integrations/whatsapp/send";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -43,7 +46,9 @@ const textoSchema = z.object({
   cadence_step_id: z.uuid(),
   // 2000 caracteres cobre com folga qualquer texto de recepcao; o corpo cru
   // vai para o WhatsApp, entao tamanho desgovernado seria mensagem quebrada.
-  fixed_body: z.string().trim().min(1).max(2000),
+  // Vazio e permitido SOMENTE quando o passo tem anexo (a mensagem vira so a
+  // midia); a conferencia vive no corpo da action.
+  fixed_body: z.string().trim().max(2000),
 });
 
 export async function salvarTextoDoPassoAction(
@@ -62,9 +67,25 @@ export async function salvarTextoDoPassoAction(
   }
 
   const supabase = await createClient();
+  if (parsed.data.fixed_body === "") {
+    // Passo sem texto so existe quando ha anexo: sem os dois, o executor
+    // pularia o toque como passo_sem_conteudo e a regua mentiria na tela.
+    const { data: atual } = await supabase
+      .from("cadence_step")
+      .select("media_path")
+      .eq("clinic_id", guard.clinicId)
+      .eq("id", parsed.data.cadence_step_id)
+      .maybeSingle();
+    if (!atual?.media_path) {
+      return {
+        ok: false,
+        error: "Escreva a mensagem, ou anexe uma mídia antes de deixar o texto vazio.",
+      };
+    }
+  }
   const { data: linhas, error } = await supabase
     .from("cadence_step")
-    .update({ fixed_body: parsed.data.fixed_body })
+    .update({ fixed_body: parsed.data.fixed_body === "" ? null : parsed.data.fixed_body })
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data.cadence_step_id)
     .select("id");
@@ -76,6 +97,173 @@ export async function salvarTextoDoPassoAction(
     clinic_id: guard.clinicId,
     user_id: guard.context.userId,
     action: "salvou_texto_do_passo",
+    entity: "cadence_step",
+    entity_id: parsed.data.cadence_step_id,
+  });
+  revalidatePath("/automacoes");
+  revalidatePath("/confirmacoes");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Anexo do passo (decisao do dono em 19/09/2026): UM anexo por passo (foto,
+// audio ou arquivo), texto opcional quando ha anexo. O arquivo vive no balde
+// midia-de-regua em <clinic_id>/<cadence_step_id>; o executor copia para
+// midia-conversas na hora do envio, em nome da message nova.
+
+// Mesmo teto da Server Action de anexo do Inbox: a plataforma recusa corpo
+// acima de ~4,5 MB, e 3,8 MB deixa folga para o overhead do FormData.
+const TETO_DO_ANEXO_BYTES = 3_800_000;
+
+const MIMES_DO_ANEXO: Record<string, "image" | "audio" | "document"> = {
+  "image/jpeg": "image",
+  "image/png": "image",
+  "image/webp": "image",
+  "image/gif": "image",
+  "audio/mpeg": "audio",
+  "audio/mp4": "audio",
+  "audio/ogg": "audio",
+  "audio/webm": "audio",
+  "application/pdf": "document",
+};
+
+export async function salvarAnexoDoPassoAction(
+  cadenceStepId: unknown,
+  formulario: FormData,
+): Promise<AutomacoesActionResult> {
+  const guard = await requireAutomacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsedId = z.uuid().safeParse(cadenceStepId);
+  if (!parsedId.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+  const arquivo = formulario.get("arquivo");
+  if (!(arquivo instanceof File) || arquivo.size === 0) {
+    return { ok: false, error: "Escolha um arquivo para anexar." };
+  }
+  const tipo = MIMES_DO_ANEXO[arquivo.type];
+  if (!tipo) {
+    return {
+      ok: false,
+      error: "Formato não aceito. Use foto (JPG, PNG, WebP, GIF), áudio (MP3, M4A, OGG) ou PDF.",
+    };
+  }
+  if (arquivo.size > TETO_DO_ANEXO_BYTES) {
+    return { ok: false, error: "O arquivo passa de 3,8 MB. Reduza e tente de novo." };
+  }
+
+  // O passo precisa existir NA CLINICA da sessao (a RLS ja recorta, mas o
+  // caminho do objeto usa clinic_id e nao pode nascer de palpite).
+  const supabase = await createClient();
+  const { data: passo } = await supabase
+    .from("cadence_step")
+    .select("id")
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsedId.data)
+    .maybeSingle();
+  if (!passo) {
+    return { ok: false, error: "Mensagem não encontrada." };
+  }
+
+  const caminho = `${guard.clinicId}/${parsedId.data}`;
+  const bytes = Buffer.from(await arquivo.arrayBuffer());
+  const admin = createAdminClient();
+  const { error: erroUpload } = await admin.storage
+    .from("midia-de-regua")
+    .upload(caminho, bytes, {
+      contentType: arquivo.type,
+      upsert: true,
+      cacheControl: "0",
+    });
+  if (erroUpload) {
+    return { ok: false, error: "Não foi possível guardar o arquivo. Tente de novo." };
+  }
+
+  const { data: linhas, error } = await supabase
+    .from("cadence_step")
+    .update({
+      media_path: caminho,
+      media_type: tipo,
+      media_mimetype: arquivo.type,
+      media_filename: tipo === "document" ? arquivo.name : null,
+    })
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsedId.data)
+    .select("id");
+  if (error || !linhas || linhas.length === 0) {
+    await admin.storage.from("midia-de-regua").remove([caminho]);
+    return { ok: false, error: "Não foi possível salvar o anexo." };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "anexou_midia_no_passo",
+    entity: "cadence_step",
+    entity_id: parsedId.data,
+  });
+  revalidatePath("/automacoes");
+  revalidatePath("/confirmacoes");
+  return { ok: true };
+}
+
+export async function removerAnexoDoPassoAction(
+  input: unknown,
+): Promise<AutomacoesActionResult> {
+  const guard = await requireAutomacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = z.object({ cadence_step_id: z.uuid() }).safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { data: passo } = await supabase
+    .from("cadence_step")
+    .select("fixed_body, media_path")
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsed.data.cadence_step_id)
+    .maybeSingle();
+  if (!passo) {
+    return { ok: false, error: "Mensagem não encontrada." };
+  }
+  if (!passo.media_path) {
+    return { ok: true };
+  }
+  if (!passo.fixed_body || !(passo.fixed_body as string).trim()) {
+    return {
+      ok: false,
+      error: "Escreva o texto antes de remover o anexo, ou exclua o passo inteiro.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("cadence_step")
+    .update({
+      media_path: null,
+      media_type: null,
+      media_mimetype: null,
+      media_filename: null,
+    })
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsed.data.cadence_step_id);
+  if (error) {
+    return { ok: false, error: "Não foi possível remover o anexo." };
+  }
+  // Objeto depois da linha: se a remocao do objeto falhar, sobra um orfao
+  // inofensivo (sem media_path ninguem o referencia; a policy exige o passo).
+  await createAdminClient()
+    .storage.from("midia-de-regua")
+    .remove([passo.media_path as string]);
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "removeu_midia_do_passo",
     entity: "cadence_step",
     entity_id: parsed.data.cadence_step_id,
   });
@@ -257,6 +445,14 @@ export async function excluirReguaAction(
     };
   }
 
+  // Antes do cascade levar os passos, anotar os anexos para limpar o balde.
+  const { data: passosComAnexo } = await supabase
+    .from("cadence_step")
+    .select("media_path")
+    .eq("clinic_id", guard.clinicId)
+    .eq("cadence_id", parsed.data.cadence_id)
+    .not("media_path", "is", null);
+
   // O cascade apaga os passos; runs pendentes morrem no executor como
   // condicao_parada (regua inexistente), comportamento ja provado.
   const { error } = await supabase
@@ -266,6 +462,14 @@ export async function excluirReguaAction(
     .eq("id", parsed.data.cadence_id);
   if (error) {
     return { ok: false, error: "Não foi possível excluir a régua." };
+  }
+  const caminhos = (passosComAnexo ?? [])
+    .map((p) => p.media_path as string | null)
+    .filter((c): c is string => c !== null);
+  if (caminhos.length > 0) {
+    // Melhor esforco: a regua ja se foi; objeto orfao nao vaza (policy exige
+    // cadence_step vivo para leitura).
+    await createAdminClient().storage.from("midia-de-regua").remove(caminhos);
   }
 
   await supabase.from("audit_log").insert({
@@ -450,9 +654,16 @@ export async function excluirPassoAction(
     .delete()
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data.cadence_step_id)
-    .select("id");
+    .select("id, media_path");
   if (error || !removidos || removidos.length === 0) {
     return { ok: false, error: "Não foi possível excluir a mensagem." };
+  }
+  // Limpeza do anexo orfao: melhor esforco, a exclusao do passo ja valeu.
+  const caminhoDoAnexo = removidos[0]?.media_path as string | null;
+  if (caminhoDoAnexo) {
+    await createAdminClient()
+      .storage.from("midia-de-regua")
+      .remove([caminhoDoAnexo]);
   }
 
   await supabase.from("audit_log").insert({
@@ -565,7 +776,9 @@ export async function testarEnvioAction(
   const supabase = await createClient();
   const { data: passo } = await supabase
     .from("cadence_step")
-    .select("fixed_body, cadence:cadence_id ( kind )")
+    .select(
+      "fixed_body, media_path, media_type, media_mimetype, media_filename, cadence:cadence_id ( kind )",
+    )
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data.cadence_step_id)
     .maybeSingle();
@@ -577,8 +790,12 @@ export async function testarEnvioAction(
   if (!passo || !kind) {
     return { ok: false, error: "Mensagem não encontrada." };
   }
-  if (!passo.fixed_body || !(passo.fixed_body as string).trim()) {
-    return { ok: false, error: "Escreva e salve o texto antes de testar." };
+  const temTexto = Boolean(passo.fixed_body && (passo.fixed_body as string).trim());
+  if (!temTexto && !passo.media_path) {
+    return {
+      ok: false,
+      error: "Escreva o texto ou anexe uma mídia antes de testar.",
+    };
   }
 
   const { data: clinica } = await supabase
@@ -619,7 +836,9 @@ export async function testarEnvioAction(
     Date.now() + 24 * 60 * 60_000,
     (clinica?.timezone as string) ?? "America/Fortaleza",
   );
-  const corpo = `Teste da régua: ${renderizarModelo(passo.fixed_body as string, {
+  const corpo = !temTexto
+    ? "Teste da régua"
+    : `Teste da régua: ${renderizarModelo(passo.fixed_body as string, {
     nome: "Maria",
     clinica: (clinica?.name as string) ?? "sua clínica",
     data: format(amanha, "dd/MM/yyyy", { locale: ptBR }),
@@ -630,10 +849,45 @@ export async function testarEnvioAction(
   }).trim()}`;
 
   const { provider, ref } = await carregarInstancia(adminDb, guard.clinicId);
-  const resultado =
-    kind === "confirmacao"
-      ? await provider.sendMenu(ref, destino, corpo, MENU_CONFIRMACAO)
-      : await provider.sendText(ref, destino, corpo);
+  let resultado;
+  if (passo.media_path) {
+    // O teste envia a MIDIA REAL do passo: os bytes vem do balde de regua e
+    // vao direto ao provedor (sem message, como todo o resto deste caminho).
+    const download = await adminDb.storage
+      .from("midia-de-regua")
+      .download(passo.media_path as string);
+    if (download.error || !download.data) {
+      return {
+        ok: false,
+        error: "Não foi possível ler o anexo do passo. Anexe de novo e tente.",
+      };
+    }
+    const base64 = Buffer.from(await download.data.arrayBuffer()).toString(
+      "base64",
+    );
+    resultado = await provider.sendMedia(ref, destino, {
+      tipo: passo.media_type as "image" | "audio" | "document",
+      base64,
+      mimetype: passo.media_mimetype as string,
+      // Audio nao mostra legenda no WhatsApp; imagem e documento mostram.
+      legenda: temTexto ? corpo : "Teste da régua",
+      nomeDoArquivo: (passo.media_filename as string | null) ?? null,
+    });
+    if (resultado.ok && kind === "confirmacao") {
+      // Mesma coreografia do envio real: a midia primeiro, os botoes depois.
+      resultado = await provider.sendMenu(
+        ref,
+        destino,
+        CORPO_DO_MENU_APOS_MIDIA,
+        MENU_CONFIRMACAO,
+      );
+    }
+  } else {
+    resultado =
+      kind === "confirmacao"
+        ? await provider.sendMenu(ref, destino, corpo, MENU_CONFIRMACAO)
+        : await provider.sendText(ref, destino, corpo);
+  }
   if (!resultado.ok) {
     return {
       ok: false,

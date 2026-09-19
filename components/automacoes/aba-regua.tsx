@@ -160,7 +160,10 @@ export function AbaRegua({
 
   const resultado = estimarRegua({
     ...estimativa,
-    passos: regua.passos.filter((passo) => passo.fixed_body).length,
+    // Passo com CONTEUDO: texto ou anexo (pode ser so o audio).
+    passos: regua.passos.filter(
+      (passo) => passo.fixed_body || passo.media_path,
+    ).length,
   });
 
   return (
@@ -193,7 +196,7 @@ export function AbaRegua({
               pontos={regua.passos.map((passo) => ({
                 id: passo.id,
                 rotulo: rotuloDoPasso(passo.offset_minutes),
-                temTexto: Boolean(passo.fixed_body),
+                temTexto: Boolean(passo.fixed_body || passo.media_path),
               }))}
               selecionadoId={passoSelecionado?.id ?? null}
               onSelecionar={setPassoAberto}
@@ -237,7 +240,10 @@ export function AbaRegua({
                   variant="ghost"
                   size="sm"
                   className="h-9"
-                  disabled={pendente || !passoSelecionado.fixed_body}
+                  disabled={
+                    pendente ||
+                    (!passoSelecionado.fixed_body && !passoSelecionado.media_path)
+                  }
                   onClick={testarEnvio}
                 >
                   <SendHorizonal strokeWidth={1.5} className="size-4" />

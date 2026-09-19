@@ -163,7 +163,10 @@ export function PainelRegua({
                     {rotuloDoPasso(passo.offset_minutes)}
                   </span>
                   <p className="text-[13px] whitespace-pre-line text-text-secondary">
-                    {passo.fixed_body ?? "Sem texto cadastrado."}
+                    {passo.fixed_body ??
+                      (passo.media_path
+                        ? "Só o anexo, sem texto."
+                        : "Sem texto cadastrado.")}
                   </p>
                 </article>
               ))}

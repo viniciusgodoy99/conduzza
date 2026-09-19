@@ -66,6 +66,10 @@ export type PassoDaReguaDaTela = {
   id: string;
   offset_minutes: number;
   fixed_body: string | null;
+  media_path: string | null;
+  media_type: "image" | "audio" | "document" | null;
+  media_mimetype: string | null;
+  media_filename: string | null;
 };
 
 export type ReguaDeConfirmacao = {
@@ -400,7 +404,7 @@ export async function fetchReguaPadrao(
   const [passos, jaEnviou, enviados, pulados] = await Promise.all([
     supabase
       .from("cadence_step")
-      .select("id, offset_minutes, fixed_body")
+      .select("id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename")
       .eq("clinic_id", clinicId)
       .eq("cadence_id", regua.id as string)
       .order("offset_minutes"),

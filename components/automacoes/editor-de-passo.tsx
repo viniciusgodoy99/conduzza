@@ -2,10 +2,15 @@
 
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { Paperclip, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { salvarTextoDoPassoAction } from "@/app/(app)/automacoes/actions";
+import {
+  removerAnexoDoPassoAction,
+  salvarAnexoDoPassoAction,
+  salvarTextoDoPassoAction,
+} from "@/app/(app)/automacoes/actions";
 import { BalaoWhatsApp } from "@/components/automacoes/balao-whatsapp";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
@@ -13,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PLACEHOLDERS, renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import type { PassoDaReguaDaTela } from "@/lib/queries/confirmacoes";
+import { createClient } from "@/lib/supabase/client";
 
 // Editor de um passo da regua: textarea com os campos {{...}} em chips
 // clicaveis e a pre-visualizacao ao vivo em balao de WhatsApp, lado a lado.
@@ -57,7 +63,63 @@ export function EditorDePasso({
 }) {
   const [texto, setTexto] = useState(passo.fixed_body ?? "");
   const [pendente, iniciarTransicao] = useTransition();
+  const [pendenteAnexo, setPendenteAnexo] = useState(false);
+  const [anexoUrl, setAnexoUrl] = useState<string | null>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const arquivoRef = useRef<HTMLInputElement>(null);
+  const temAnexo = passo.media_path !== null;
+
+  // URL assinada para a preview: a policy do balde deixa o membro ler o
+  // anexo do proprio passo, entao o browser assina direto.
+  useEffect(() => {
+    if (!passo.media_path) {
+      setAnexoUrl(null);
+      return;
+    }
+    let cancelado = false;
+    const supabase = createClient();
+    supabase.storage
+      .from("midia-de-regua")
+      .createSignedUrl(passo.media_path, 300)
+      .then(({ data }) => {
+        if (!cancelado) {
+          setAnexoUrl(data?.signedUrl ?? null);
+        }
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [passo.media_path]);
+
+  const anexarArquivo = (arquivo: File) => {
+    setPendenteAnexo(true);
+    const dados = new FormData();
+    dados.set("arquivo", arquivo);
+    void salvarAnexoDoPassoAction(passo.id, dados)
+      .then(async (resultado) => {
+        if (resultado.ok) {
+          toast.success("Anexo salvo.");
+          await aoMudar();
+        } else {
+          toast.error(resultado.error ?? "Não foi possível salvar o anexo.");
+        }
+      })
+      .finally(() => setPendenteAnexo(false));
+  };
+
+  const removerAnexo = () => {
+    setPendenteAnexo(true);
+    void removerAnexoDoPassoAction({ cadence_step_id: passo.id })
+      .then(async (resultado) => {
+        if (resultado.ok) {
+          toast.success("Anexo removido.");
+          await aoMudar();
+        } else {
+          toast.error(resultado.error ?? "Não foi possível remover o anexo.");
+        }
+      })
+      .finally(() => setPendenteAnexo(false));
+  };
 
   // Trocar de passo recarrega o rascunho do que esta salvo.
   useEffect(() => {
@@ -147,6 +209,73 @@ export function EditorDePasso({
             </button>
           ))}
         </div>
+        <div className="grid gap-1.5 rounded-lg border p-3">
+          <span className="text-xs font-medium text-text-secondary">
+            Anexo (foto, áudio ou arquivo)
+          </span>
+          {temAnexo ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex min-h-10 items-center gap-2 rounded-md border px-3 text-[12.5px]">
+                <Paperclip
+                  strokeWidth={1.5}
+                  className="size-4 shrink-0 text-text-secondary"
+                  aria-hidden
+                />
+                {passo.media_type === "image"
+                  ? "Foto anexada"
+                  : passo.media_type === "audio"
+                    ? "Áudio anexado"
+                    : (passo.media_filename ?? "Arquivo anexado")}
+              </span>
+              {podeEditar ? (
+                <Button
+                  variant="ghost"
+                  className="h-10"
+                  disabled={pendenteAnexo}
+                  onClick={removerAnexo}
+                >
+                  <X strokeWidth={1.5} className="size-4" aria-hidden />
+                  Remover
+                </Button>
+              ) : null}
+            </div>
+          ) : podeEditar ? (
+            <>
+              <input
+                ref={arquivoRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,audio/mpeg,audio/mp4,audio/ogg,audio/webm,application/pdf"
+                className="sr-only"
+                onChange={(evento) => {
+                  const arquivo = evento.target.files?.[0];
+                  evento.target.value = "";
+                  if (arquivo) {
+                    anexarArquivo(arquivo);
+                  }
+                }}
+              />
+              <Button
+                variant="outline"
+                className="h-10 justify-self-start"
+                disabled={pendenteAnexo}
+                onClick={() => arquivoRef.current?.click()}
+              >
+                <Paperclip strokeWidth={1.5} className="size-4" aria-hidden />
+                {pendenteAnexo ? "Enviando..." : "Anexar arquivo"}
+              </Button>
+              <span className="text-[11.5px] text-text-tertiary">
+                Até 3,8 MB. Com anexo, o texto é opcional e vira a legenda.
+              </span>
+            </>
+          ) : (
+            <DisabledWithHint hint={dicaSemPermissao}>
+              <Button variant="outline" className="h-10" disabled>
+                <Paperclip strokeWidth={1.5} className="size-4" aria-hidden />
+                Anexar arquivo
+              </Button>
+            </DisabledWithHint>
+          )}
+        </div>
         {desconhecidos.length > 0 ? (
           <p className="text-xs" style={{ color: "var(--warning-text)" }}>
             {desconhecidos.length === 1 ? "O campo" : "Os campos"}{" "}
@@ -159,7 +288,11 @@ export function EditorDePasso({
         {podeEditar ? (
           <Button
             className="h-10 justify-self-start"
-            disabled={pendente || !mudou || texto.trim().length === 0}
+            disabled={
+              pendente ||
+              !mudou ||
+              (texto.trim().length === 0 && !temAnexo)
+            }
             onClick={salvar}
           >
             {pendente ? "Salvando..." : "Salvar texto"}
@@ -174,7 +307,19 @@ export function EditorDePasso({
       </div>
       <div className="grid content-start gap-1.5">
         <span className="text-sm font-medium">Como o paciente vê</span>
-        <BalaoWhatsApp corpo={preview} botoes={botoes} />
+        <BalaoWhatsApp
+          corpo={preview}
+          botoes={botoes}
+          anexo={
+            temAnexo && passo.media_type
+              ? {
+                  tipo: passo.media_type,
+                  url: anexoUrl,
+                  nome: passo.media_filename,
+                }
+              : null
+          }
+        />
         <p className="text-[11.5px] text-text-tertiary">
           Amostra com dados fictícios. No envio real, os campos são
           preenchidos com os dados da consulta e do paciente.

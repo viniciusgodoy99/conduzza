@@ -10,10 +10,14 @@ import {
   type JanelaDeEnvio,
 } from "@/lib/domain/cadence";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
-import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
+import {
+  CORPO_DO_MENU_APOS_MIDIA,
+  MENU_CONFIRMACAO,
+} from "@/lib/domain/textos-padrao";
 import { getWhatsAppProvider } from "@/lib/integrations/whatsapp/provider";
 import {
   falhaPermiteRetry,
+  sendWhatsAppMedia,
   sendWhatsAppMenu,
   sendWhatsAppText,
 } from "@/lib/integrations/whatsapp/send";
@@ -99,6 +103,10 @@ type LinhaDaRun = {
     id: string;
     offset_minutes: number;
     fixed_body: string | null;
+    media_path: string | null;
+    media_type: "image" | "audio" | "document" | null;
+    media_mimetype: string | null;
+    media_filename: string | null;
     cadence: ReguaDaRun | null;
   } | null;
   contact: {
@@ -305,6 +313,7 @@ export async function executarPassoDeRegua(
        skipped_reason,
        cadence_step:cadence_step_id (
          id, offset_minutes, fixed_body,
+         media_path, media_type, media_mimetype, media_filename,
          cadence:cadence_id (
            id, kind, active, send_window_start, send_window_end,
            send_weekdays, trigger_stage
@@ -482,19 +491,20 @@ export async function executarPassoDeRegua(
     return { ok: false, erro: "canal_oficial_pendente", definitivo: true };
   }
 
-  // 6. ENVIO.
+  // 6. ENVIO. O conteudo do passo e texto e/ou anexo (decisao do dono em
+  // 19/09/2026: pode ser so o audio). Sem nenhum dos dois, o toque e
+  // definitivamente invalido.
   const modelo = passo.fixed_body;
-  if (!modelo || !modelo.trim()) {
-    return { ok: false, erro: "passo_sem_texto", definitivo: true };
-  }
-  const body = renderizarModelo(
-    modelo,
-    consulta
-      ? valoresDoModelo(run, consulta, timezone)
-      : valoresDeFollowup(run),
-  ).trim();
-  if (!body) {
-    return { ok: false, erro: "mensagem_vazia", definitivo: true };
+  const body = modelo && modelo.trim()
+    ? renderizarModelo(
+        modelo,
+        consulta
+          ? valoresDoModelo(run, consulta, timezone)
+          : valoresDeFollowup(run),
+      ).trim()
+    : "";
+  if (!body && !passo.media_path) {
+    return { ok: false, erro: "passo_sem_conteudo", definitivo: true };
   }
 
   const { data: conversationId, error: erroConversa } = await admin.rpc(
@@ -520,10 +530,77 @@ export async function executarPassoDeRegua(
     // Chave de idempotencia: um retry encontra a message e nao reenvia.
     jobId: job.id,
   };
-  const resultado =
-    regua.kind === "confirmacao"
-      ? await sendWhatsAppMenu(admin, { ...envio, options: MENU_CONFIRMACAO })
-      : await sendWhatsAppText(admin, envio);
+
+  let resultado;
+  if (passo.media_path) {
+    // O anexo VIVE em midia-de-regua; a mensagem nasce com uma COPIA em
+    // midia-conversas/<clinic>/<message_id>, para a policy de leitura, a
+    // rota de midia e o fluxo de apagar valerem sem excecao nova.
+    const download = await admin.storage
+      .from("midia-de-regua")
+      .download(passo.media_path);
+    if (download.error || !download.data) {
+      // Transiente ate prova em contrario: storage fora do ar nao pode
+      // matar o toque para sempre.
+      return { ok: false, erro: "anexo_ilegivel" };
+    }
+    const bytes = Buffer.from(await download.data.arrayBuffer());
+    const messageId = crypto.randomUUID();
+    const caminhoDaConversa = `${job.clinic_id}/${messageId}`;
+    const upload = await admin.storage
+      .from("midia-conversas")
+      .upload(caminhoDaConversa, bytes, {
+        contentType: passo.media_mimetype ?? "application/octet-stream",
+        upsert: true,
+        cacheControl: "0",
+      });
+    if (upload.error) {
+      return { ok: false, erro: "copia_do_anexo_falhou" };
+    }
+    resultado = await sendWhatsAppMedia(admin, {
+      ...envio,
+      // Na confirmacao, a midia e os botoes sao UM toque em duas mensagens:
+      // a midia reserva so o espacamento curto padrao (o par sai junto) e o
+      // espacamento de massa fica com a ULTIMA mensagem do par. Nos demais
+      // kinds a midia e a unica mensagem e carrega a massa normalmente.
+      ...(regua.kind === "confirmacao" ? { espacamentoMs: undefined } : {}),
+      messageId,
+      midia: {
+        tipo: passo.media_type ?? "document",
+        base64: bytes.toString("base64"),
+        mimetype: passo.media_mimetype ?? "application/octet-stream",
+        nomeDoArquivo: passo.media_filename,
+        caminhoNoStorage: caminhoDaConversa,
+      },
+    });
+    if (!resultado.ok) {
+      // Nao saiu agora (falha, adiamento ou 'ja_enviado' de retry, cuja
+      // message aponta para a copia da PRIMEIRA tentativa): a copia desta
+      // passagem e orfa, e orfao se remove.
+      await admin.storage.from("midia-conversas").remove([caminhoDaConversa]);
+    }
+    if (
+      (resultado.ok || resultado.reason === "ja_enviado") &&
+      regua.kind === "confirmacao"
+    ) {
+      // Botao e midia nao viajam na mesma mensagem: os botoes vao numa
+      // segunda, SEM jobId (a chave de idempotencia ficou na midia). Retry
+      // depois de menu perdido reenvia so o menu; duplicata rara, aceita.
+      // Se o slot da clinica adiar o menu, o proprio adiamento reagenda o
+      // job e a midia nao repete (ja_enviado pela chave do job).
+      resultado = await sendWhatsAppMenu(admin, {
+        ...envio,
+        jobId: undefined,
+        body: CORPO_DO_MENU_APOS_MIDIA,
+        options: MENU_CONFIRMACAO,
+      });
+    }
+  } else {
+    resultado =
+      regua.kind === "confirmacao"
+        ? await sendWhatsAppMenu(admin, { ...envio, options: MENU_CONFIRMACAO })
+        : await sendWhatsAppText(admin, envio);
+  }
 
   if (resultado.ok || resultado.reason === "ja_enviado") {
     let messageId: string | null = resultado.ok ? resultado.messageId : null;
