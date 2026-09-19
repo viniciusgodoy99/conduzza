@@ -466,6 +466,10 @@ export type Database = {
           created_at: string
           fixed_body: string | null
           id: string
+          media_filename: string | null
+          media_mimetype: string | null
+          media_path: string | null
+          media_type: string | null
           offset_minutes: number
           stop_conditions: string[]
           template_id: string | null
@@ -477,6 +481,10 @@ export type Database = {
           clinic_id: string
           created_at?: string
           fixed_body?: string | null
+          media_filename?: string | null
+          media_mimetype?: string | null
+          media_path?: string | null
+          media_type?: string | null
           id?: string
           offset_minutes: number
           stop_conditions?: string[]
@@ -489,6 +497,10 @@ export type Database = {
           clinic_id?: string
           created_at?: string
           fixed_body?: string | null
+          media_filename?: string | null
+          media_mimetype?: string | null
+          media_path?: string | null
+          media_type?: string | null
           id?: string
           offset_minutes?: number
           stop_conditions?: string[]
