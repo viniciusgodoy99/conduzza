@@ -52,6 +52,7 @@ export default async function AtendimentoPage() {
         viewerId={context.userId}
         viewerRole={active.role}
         nomesDeEtapa={nomesDeEtapa}
+        jornada={jornada}
         authorNames={authorNames}
         initialConversations={conversations}
         hasWhatsappAccount={accountResult.data !== null}

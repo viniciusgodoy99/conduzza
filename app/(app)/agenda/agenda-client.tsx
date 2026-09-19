@@ -52,6 +52,7 @@ export function AgendaClient({
   dica,
   ownProfessionalId,
   papelProfissionalSemVinculo = false,
+  agendarContato = null,
 }: {
   clinicId: string;
   timezone: string;
@@ -64,6 +65,8 @@ export function AgendaClient({
   dica: string;
   ownProfessionalId: string | null;
   papelProfissionalSemVinculo?: boolean;
+  /** Deep link ?agendar=<contactId>: abre o modal com o paciente escolhido. */
+  agendarContato?: string | null;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [dia, setDia] = useState(diaInicial);
@@ -72,10 +75,13 @@ export function AgendaClient({
     ...FILTROS_VAZIOS,
     profissionalId: ownProfessionalId,
   });
-  const [modal, setModal] = useState<AberturaDeModal>({
-    aberto: false,
-    prePreenchido: {},
-  });
+  const [modal, setModal] = useState<AberturaDeModal>(() =>
+    // Deep link so abre o modal para quem PODE agendar: papel de leitura ve
+    // a tela normal (mesma regra do /espera?adicionar=).
+    agendarContato && podeEditar
+      ? { aberto: true, prePreenchido: { contactId: agendarContato } }
+      : { aberto: false, prePreenchido: {} },
+  );
 
   useAgendaChannel(supabase, clinicId, timezone);
 

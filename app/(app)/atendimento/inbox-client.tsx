@@ -26,7 +26,8 @@ import {
   type ConversationListItem,
   type MessageItem,
 } from "@/lib/queries/conversations";
-import { canEdit, type Role } from "@/lib/domain/permissions";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
+import { canEdit, permissionHint, type Role } from "@/lib/domain/permissions";
 import {
   conciliarEnvios,
   enviosDaConversa,
@@ -53,6 +54,7 @@ export function InboxClient({
   viewerId,
   viewerRole,
   nomesDeEtapa,
+  jornada,
   authorNames,
   initialConversations,
   hasWhatsappAccount,
@@ -61,6 +63,8 @@ export function InboxClient({
   viewerId: string;
   viewerRole: Role;
   nomesDeEtapa: Record<string, string>;
+  /** A jornada inteira (com papel e tom): o painel troca etapa por ela. */
+  jornada: EtapaDaJornada[];
   authorNames: Record<string, string>;
   initialConversations: ConversationListItem[];
   hasWhatsappAccount: boolean;
@@ -100,6 +104,14 @@ export function InboxClient({
   const [apagandoPendente, startApagar] = useTransition();
 
   const podeEditar = canEdit(viewerRole, "atendimento");
+  // Mudar etapa e assunto de LEADS, nao de atendimento: matriz propria
+  // (profissional e leitura veem o seletor desabilitado com dica).
+  const podeEditarLeads = canEdit(viewerRole, "leads_pacientes");
+  const dicaLeads =
+    permissionHint(viewerRole, "leads_pacientes") ??
+    "Seu perfil não altera a etapa do contato";
+  const aoMudarEtapa = () =>
+    queryClient.invalidateQueries({ queryKey: ["conversations"] });
   const ehChefia = viewerRole === "admin" || viewerRole === "gestor";
 
   useInboxChannel(supabase, clinicId);
@@ -520,7 +532,10 @@ export function InboxClient({
           <ContextPanel
             contact={selected.contact}
             consent={consentQuery.data ?? null}
-            nomesDeEtapa={nomesDeEtapa}
+            jornada={jornada}
+            podeEditarLeads={podeEditarLeads}
+            dicaLeads={dicaLeads}
+            aoMudarEtapa={aoMudarEtapa}
           />
         ) : (
           <div className="p-4 text-[12.5px] text-text-tertiary">
@@ -548,7 +563,10 @@ export function InboxClient({
             <ContextPanel
               contact={selected.contact}
               consent={consentQuery.data ?? null}
-              nomesDeEtapa={nomesDeEtapa}
+              jornada={jornada}
+              podeEditarLeads={podeEditarLeads}
+              dicaLeads={dicaLeads}
+              aoMudarEtapa={aoMudarEtapa}
             />
           ) : null}
         </SheetContent>

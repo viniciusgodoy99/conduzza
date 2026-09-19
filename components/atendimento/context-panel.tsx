@@ -6,6 +6,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   CalendarClock,
+  CalendarPlus,
   History,
   Hourglass,
   ShieldCheck,
@@ -13,6 +14,8 @@ import {
 } from "lucide-react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { EtapaDoContato } from "@/components/atendimento/etapa-do-contato";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import type { ConsentInfo, ContactSummary } from "@/lib/queries/conversations";
 
 // Painel de contexto (handoff): dados do contato, estado da autorizacao de
@@ -57,13 +60,19 @@ function Row({ label, value }: { label: string; value: string | null }) {
 }
 
 export function ContextPanel({
-  nomesDeEtapa,
   contact,
   consent,
+  jornada,
+  podeEditarLeads,
+  dicaLeads,
+  aoMudarEtapa,
 }: {
-  nomesDeEtapa: Record<string, string>;
   contact: ContactSummary;
   consent: ConsentInfo;
+  jornada: EtapaDaJornada[];
+  podeEditarLeads: boolean;
+  dicaLeads: string;
+  aoMudarEtapa: () => Promise<unknown> | void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -83,9 +92,13 @@ export function ContextPanel({
           label="Tipo"
           value={contact.kind === "paciente" ? "Paciente" : "Lead"}
         />
-        <Row
-          label="Etapa"
-          value={nomesDeEtapa[contact.funnel_stage] ?? contact.funnel_stage}
+        <EtapaDoContato
+          contactId={contact.id}
+          etapaAtual={contact.funnel_stage}
+          jornada={jornada}
+          podeEditar={podeEditarLeads}
+          dicaSemPermissao={dicaLeads}
+          aoMudar={aoMudarEtapa}
         />
         <Row
           label="Primeiro contato"
@@ -152,6 +165,13 @@ export function ContextPanel({
       </Section>
 
       <Section title="Ações">
+        <Link
+          href={`/agenda?agendar=${contact.id}`}
+          className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
+        >
+          <CalendarPlus strokeWidth={1.5} className="size-4" aria-hidden />
+          Marcar consulta
+        </Link>
         <Link
           href={`/espera?adicionar=${contact.id}`}
           className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"

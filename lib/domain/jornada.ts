@@ -96,6 +96,33 @@ export function porChave(
   return new Map(jornada.map((etapa) => [etapa.chave, etapa]));
 }
 
+/**
+ * Assumir a conversa de um lead NOVO o move para "Em contato" (decisao do
+ * dono em 19/09/2026): atender e o primeiro contato de verdade. Regras
+ * defensivas, nesta ordem: so contato kind lead; so quando a etapa ATUAL tem
+ * papel de entrada (quem ja avancou ou se perdeu nao volta por causa de um
+ * clique em Assumir); e so se a chave em_contato ainda existir na jornada
+ * (ela e etapa LIVRE, renomeavel e excluivel; a clinica que a excluiu nao
+ * quer essa automacao). Devolve a chave de destino ou null para nao mover.
+ */
+export function etapaAposAssumir(params: {
+  kind: "lead" | "paciente";
+  etapaAtual: Pick<EtapaDaJornada, "chave" | "papel"> | null;
+  jornada: readonly Pick<EtapaDaJornada, "chave" | "papel">[];
+}): string | null {
+  if (params.kind !== "lead") {
+    return null;
+  }
+  if (!params.etapaAtual || params.etapaAtual.papel !== "entrada") {
+    return null;
+  }
+  const destino = params.jornada.find((etapa) => etapa.chave === "em_contato");
+  if (!destino || destino.chave === params.etapaAtual.chave) {
+    return null;
+  }
+  return destino.chave;
+}
+
 /** A etapa com um papel de sistema; as quatro existem em toda jornada. */
 export function etapaPorPapel(
   jornada: readonly EtapaDaJornada[],

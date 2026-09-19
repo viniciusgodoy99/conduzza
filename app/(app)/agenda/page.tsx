@@ -14,7 +14,11 @@ import { AgendaClient } from "./agenda-client";
 // hoje NO FUSO DA CLINICA), interatividade e tempo real no cliente. O papel
 // 'profissional' recebe o proprio professional_id e a tela trava na coluna
 // dele (a RLS ja recorta os dados; isto e so a experiencia).
-export default async function AgendaPage() {
+export default async function AgendaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ agendar?: string }>;
+}) {
   const context = await getSessionContext();
   const active = context?.active;
   if (!context || !active) {
@@ -23,6 +27,18 @@ export default async function AgendaPage() {
 
   const supabase = await createClient();
   const hoje = diaCivil(active.timezone, new Date());
+
+  // Deep link do Inbox e da ficha: /agenda?agendar=<contactId> abre o modal
+  // com o paciente ja escolhido (o modal resolve nome e telefone sozinho;
+  // a RLS recorta a clinica). Padrao do /espera?adicionar=.
+  const { agendar } = await searchParams;
+  const agendarContato =
+    agendar &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+      agendar,
+    )
+      ? agendar
+      : null;
 
   // Regra 3.1: abrir a agenda mostra nome de paciente (dado de saude); a
   // leitura vai para a trilha (com throttle no helper). Sem await: nao
@@ -54,6 +70,7 @@ export default async function AgendaPage() {
         timezone={active.timezone}
         viewerId={context.userId}
         diaInicial={hoje}
+        agendarContato={agendarContato}
         catalogoInicial={catalogo}
         diaInicialDados={dia}
         pendenciasIniciais={pendencias}
