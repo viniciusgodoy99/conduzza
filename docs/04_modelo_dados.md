@@ -214,10 +214,34 @@ create table conversation (
   unread_count integer not null default 0, -- por LER; zera ao abrir a conversa
   awaiting_reply boolean not null default false, -- ver nota abaixo
   last_message_at timestamptz,
-  tags text[] not null default '{}',
+  tags text[] not null default '{}',   -- CHAVES do catalogo, ver abaixo
   created_at timestamptz not null default now()
 );
+
+-- Catalogo de etiquetas por clinica (21/09/2026). conversation.tags guarda a
+-- CHAVE, nunca o nome: por isso renomear uma etiqueta e um update de uma
+-- linha so e todo chip muda junto, inclusive nas conversas ja resolvidas.
+create table conversation_tag_def (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  chave text not null,                     -- imutavel por gatilho
+  nome text not null,                      -- renomeavel
+  tom text not null default 'neutral'      -- paleta de status, sem o violeta
+    check (tom in ('neutral','info','warning','success','alert')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (clinic_id, chave)
+);
 ```
+
+**Duas invariantes de etiqueta, ambas do banco e não da tela.** Um gatilho em
+`conversation` recusa qualquer chave que não exista no catálogo da clínica
+(errcode 23514, o mesmo contrato da etapa do funil), e ele só roda quando
+`tags` muda de fato, então o caminho quente da ingestão de mensagem não paga
+nada. E excluir uma etiqueta do catálogo **a remove das conversas** no mesmo
+gatilho: sem isso, uma chave pendurada faria o validador recusar toda edição
+futura de etiqueta naquela conversa, e quem atende ficaria travado sem
+entender o motivo.
 
 **`awaiting_reply` não é o mesmo que `unread_count > 0`, e não é o mesmo que `status = 'aguardando_humano'`.** As três respondem perguntas diferentes, e confundi-las já custou dois defeitos:
 

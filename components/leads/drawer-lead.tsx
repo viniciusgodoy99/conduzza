@@ -155,7 +155,7 @@ export function DrawerLead({
                   ? (membros[lead.owner_user_id] ?? "Sem responsável")
                   : "Sem responsável"}
               </Linha>
-              <Linha rotulo="Etiquetas">
+              <Linha rotulo="Etiquetas do lead">
                 {lead.tags.length > 0 ? (
                   <span className="flex flex-wrap gap-1">
                     {lead.tags.map((etiqueta) => (

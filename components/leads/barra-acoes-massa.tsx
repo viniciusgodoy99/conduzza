@@ -261,17 +261,21 @@ export function BarraAcoesMassa({
           podeEditar={podeEditar}
           dica={dica}
           ocupado={ocupado}
-          rotulo="Etiquetar"
+          rotulo="Etiquetar lead"
           icone={Tag}
           aberto={etiquetarAberto}
           onAberto={setEtiquetarAberto}
         >
           <div className="grid w-60 gap-3 p-2">
+      <p className="text-[11px] text-text-tertiary">
+        Estas etiquetas ficam no lead. As etiquetas da conversa ficam no
+        Atendimento.
+      </p>
             <div className="flex gap-1.5">
               <Input
                 value={novaEtiqueta}
                 onChange={(e) => setNovaEtiqueta(e.target.value)}
-                placeholder="Nova etiqueta"
+                placeholder="Nova etiqueta do lead"
                 className="h-10"
                 maxLength={40}
                 aria-label="Nova etiqueta"
@@ -287,7 +291,7 @@ export function BarraAcoesMassa({
             {etiquetasAtuais.length > 0 ? (
               <div className="grid gap-1">
                 <p className="text-xs text-text-tertiary">
-                  Etiquetas dos selecionados (toque para remover)
+                  Etiquetas do lead nos selecionados (toque para remover)
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {etiquetasAtuais.map((etiqueta) => (

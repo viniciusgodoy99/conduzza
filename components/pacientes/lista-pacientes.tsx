@@ -135,7 +135,7 @@ export function ListaPacientes({
     };
     const etiquetas: ColumnDef<PacienteResumo> = {
       id: "etiquetas",
-      header: "Etiquetas",
+      header: "Sinais automáticos",
       cell: ({ row }) => (
         <EtiquetasDoPaciente
           etiquetas={etiquetasDoPaciente(row.original, agora)}
