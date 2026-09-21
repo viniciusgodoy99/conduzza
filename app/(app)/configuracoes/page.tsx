@@ -11,6 +11,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 import { ConfiguracoesClient } from "./configuracoes-client";
+import {
+  fetchContagemDeEtiquetas,
+  fetchEtiquetasDeConversa,
+} from "@/lib/queries/etiquetas-de-conversa";
 import { fetchJornada } from "@/lib/queries/jornada";
 import type { Pendente } from "./equipe-client";
 
@@ -37,6 +41,8 @@ export default async function ConfiguracoesPage({
     codigoResult,
     whatsappResult,
     jornada,
+    etiquetas,
+    contagemDeEtiquetas,
     contaMetaResult,
   ] = await Promise.all([
       supabase
@@ -62,6 +68,8 @@ export default async function ConfiguracoesPage({
         .maybeSingle(),
       // A jornada da clinica (etapas + conversao): a RLS recorta por clinica.
       fetchJornada(supabase, active.clinicId),
+      fetchEtiquetasDeConversa(supabase, active.clinicId),
+      fetchContagemDeEtiquetas(supabase, active.clinicId),
       // Conta de anuncios da Meta: a policy so mostra para admin e gestor.
       supabase
         .from("meta_ads_account")
@@ -176,6 +184,8 @@ export default async function ConfiguracoesPage({
           providerName,
         }}
         jornada={jornada}
+        etiquetas={etiquetas}
+        contagemDeEtiquetas={contagemDeEtiquetas}
         contaMeta={contaMetaResult.data ?? null}
         temTokenMeta={tokenMetaResult.data !== null}
       />

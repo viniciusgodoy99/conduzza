@@ -18,11 +18,13 @@ import type { ConnectState } from "@/lib/actions/whatsapp-connect";
 
 import { CodigoAcesso, PendentesList } from "./equipe-client";
 import type { Pendente } from "./equipe-client";
+import { EtiquetasTab } from "@/components/configuracoes/etiquetas-tab";
 import { JornadaTab } from "@/components/configuracoes/jornada-tab";
 import {
   MetaAdsTab,
   type ContaMeta,
 } from "@/components/configuracoes/meta-ads-tab";
+import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { InviteForm } from "./invite-form";
 
@@ -34,6 +36,7 @@ const ABAS = [
   ["equipe", "Equipe e permissões"],
   ["whatsapp", "WhatsApp"],
   ["jornada", "Jornada e conversões"],
+  ["etiquetas", "Etiquetas de conversa"],
   ["meta", "Anúncios da Meta"],
 ] as const;
 
@@ -51,6 +54,8 @@ export function ConfiguracoesClient({
   codigoAtivo,
   whatsapp,
   jornada,
+  etiquetas,
+  contagemDeEtiquetas,
   contaMeta,
   temTokenMeta,
 }: {
@@ -69,6 +74,8 @@ export function ConfiguracoesClient({
     providerName: string;
   };
   jornada: EtapaDaJornada[];
+  etiquetas: EtiquetaDeConversa[];
+  contagemDeEtiquetas: Record<string, number>;
   contaMeta: ContaMeta | null;
   temTokenMeta: boolean;
 }) {
@@ -172,6 +179,20 @@ export function ConfiguracoesClient({
         </p>
         <JornadaTab
           jornada={jornada}
+          podeGerenciar={podeGerenciar}
+          dica={dica}
+        />
+      </TabsContent>
+
+      <TabsContent value="etiquetas" className="grid gap-4">
+        <p className="text-sm text-text-secondary">
+          As etiquetas que a equipe usa para marcar o estado de uma conversa
+          no Atendimento, como orçamento enviado ou aguardando convênio. Quem
+          atende aplica e remove; criar e apagar é da administração.
+        </p>
+        <EtiquetasTab
+          etiquetas={etiquetas}
+          contagem={contagemDeEtiquetas}
           podeGerenciar={podeGerenciar}
           dica={dica}
         />

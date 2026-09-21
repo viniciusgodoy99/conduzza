@@ -726,6 +726,173 @@ export async function excluirEtapaDaJornadaAction(
 }
 
 // ---------------------------------------------------------------------------
+// Etiquetas de CONVERSA (21/09/2026): o vocabulario da clinica para marcar
+// conversas no Inbox. Admin e gestor mantem o catalogo; quem atende so
+// APLICA (e isso acontece pela RPC etiquetar_conversa, fora destas actions).
+//
+// Mesma forma das actions da jornada: guard, Zod, cliente de SESSAO, chave
+// derivada do nome com desempate, audit_log e revalidate.
+
+/** Catalogo grande mata a fileira de chips e o popover de aplicar. */
+const MAXIMO_DE_ETIQUETAS = 20;
+
+const etiquetaDeConversaSchema = z.object({
+  /** ausente = criar; presente = editar a existente */
+  chave: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9_]{1,40}$/)
+    .nullable(),
+  nome: z.string().trim().min(2).max(32),
+  tom: z.enum(["neutral", "info", "warning", "success", "alert"]),
+});
+
+export async function salvarEtiquetaDeConversaAction(
+  entrada: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = etiquetaDeConversaSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "Confira o nome (de 2 a 32 caracteres) e a cor.",
+    };
+  }
+  const dados = parsed.data;
+  const supabase = await createClient();
+
+  if (dados.chave) {
+    const { data: linhas, error } = await supabase
+      .from("conversation_tag_def")
+      .update({ nome: dados.nome, tom: dados.tom })
+      .eq("clinic_id", guard.clinicId)
+      .eq("chave", dados.chave)
+      .select("id");
+    if (error || !linhas || linhas.length === 0) {
+      return {
+        ok: false,
+        error:
+          error?.code === "23505"
+            ? "Já existe uma etiqueta com esse nome."
+            : "Não foi possível salvar a etiqueta.",
+      };
+    }
+    await supabase.from("audit_log").insert({
+      clinic_id: guard.clinicId,
+      user_id: guard.context.userId,
+      action: "editou_etiqueta_de_conversa",
+      entity: "conversation_tag_def",
+      entity_id: linhas[0]!.id,
+    });
+    revalidatePath("/configuracoes");
+    revalidatePath("/atendimento");
+    return { ok: true };
+  }
+
+  // Criar: precisa do catalogo atual para o teto e para desempatar a chave.
+  const { data: existentes, error: erroLeitura } = await supabase
+    .from("conversation_tag_def")
+    .select("chave")
+    .eq("clinic_id", guard.clinicId);
+  if (erroLeitura) {
+    // Leitura que DECIDE a chave: erro vira erro, nunca chave palpitada.
+    return {
+      ok: false,
+      error: "Não foi possível ler as etiquetas. Tente de novo.",
+    };
+  }
+  if ((existentes ?? []).length >= MAXIMO_DE_ETIQUETAS) {
+    return {
+      ok: false,
+      error:
+        "Vinte etiquetas já é muita coisa para escolher na hora do atendimento. Exclua uma antes de criar outra.",
+    };
+  }
+  const usadas = new Set((existentes ?? []).map((linha) => linha.chave));
+  const base = chaveDoNome(dados.nome);
+  let chave = base;
+  let sufixo = 2;
+  while (usadas.has(chave)) {
+    chave = `${base}_${sufixo}`;
+    sufixo += 1;
+  }
+
+  const { data: criada, error } = await supabase
+    .from("conversation_tag_def")
+    .insert({
+      clinic_id: guard.clinicId,
+      chave,
+      nome: dados.nome,
+      tom: dados.tom,
+    })
+    .select("id")
+    .single();
+  if (error || !criada) {
+    return {
+      ok: false,
+      error:
+        error?.code === "23505"
+          ? "Já existe uma etiqueta com esse nome."
+          : "Não foi possível criar a etiqueta.",
+    };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "criou_etiqueta_de_conversa",
+    entity: "conversation_tag_def",
+    entity_id: criada.id,
+  });
+  revalidatePath("/configuracoes");
+  revalidatePath("/atendimento");
+  return { ok: true };
+}
+
+export async function excluirEtiquetaDeConversaAction(
+  chave: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = z
+    .string()
+    .regex(/^[a-z0-9_]{1,40}$/)
+    .safeParse(chave);
+  if (!parsed.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+
+  // O gatilho do banco remove a etiqueta das conversas junto, o que mantem a
+  // invariante "toda chave em tags existe no catalogo".
+  const supabase = await createClient();
+  const { data: removidas, error } = await supabase
+    .from("conversation_tag_def")
+    .delete()
+    .eq("clinic_id", guard.clinicId)
+    .eq("chave", parsed.data)
+    .select("id");
+  if (error || !removidas || removidas.length === 0) {
+    return { ok: false, error: "Não foi possível excluir a etiqueta." };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "excluiu_etiqueta_de_conversa",
+    entity: "conversation_tag_def",
+    entity_id: removidas[0]!.id,
+  });
+  revalidatePath("/configuracoes");
+  revalidatePath("/atendimento");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // Anuncios da Meta (R6): a conta que recebera as conversoes de volta.
 //
 // A configuracao legivel (pixel, conta, WABA, codigo de teste) vive em
