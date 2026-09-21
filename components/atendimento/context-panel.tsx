@@ -15,7 +15,9 @@ import {
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { EtapaDoContato } from "@/components/atendimento/etapa-do-contato";
+import { EtiquetasDaConversa } from "@/components/atendimento/etiquetas-da-conversa";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import type { ConsentInfo, ContactSummary } from "@/lib/queries/conversations";
 
@@ -69,6 +71,13 @@ export function ContextPanel({
   podeAgendar,
   dicaAgenda,
   aoMudarEtapa,
+  conversationId,
+  etiquetasDaConversa,
+  catalogoDeEtiquetas,
+  podeEtiquetar,
+  dicaEtiquetar,
+  ehChefia,
+  aoEtiquetar,
 }: {
   contact: ContactSummary;
   consent: ConsentInfo;
@@ -78,6 +87,13 @@ export function ContextPanel({
   podeAgendar: boolean;
   dicaAgenda: string;
   aoMudarEtapa: () => Promise<unknown> | void;
+  conversationId: string;
+  etiquetasDaConversa: string[];
+  catalogoDeEtiquetas: EtiquetaDeConversa[];
+  podeEtiquetar: boolean;
+  dicaEtiquetar: string;
+  ehChefia: boolean;
+  aoEtiquetar: (tags: string[]) => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -114,6 +130,18 @@ export function ContextPanel({
                 })
               : null
           }
+        />
+      </Section>
+
+      <Section title="Etiquetas desta conversa">
+        <EtiquetasDaConversa
+          conversationId={conversationId}
+          tags={etiquetasDaConversa}
+          catalogo={catalogoDeEtiquetas}
+          podeEtiquetar={podeEtiquetar}
+          dicaSemPermissao={dicaEtiquetar}
+          ehChefia={ehChefia}
+          aoEtiquetar={aoEtiquetar}
         />
       </Section>
 

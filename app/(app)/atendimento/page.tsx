@@ -4,6 +4,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { fetchClinicAuthorNames } from "@/lib/queries/profiles";
 import { fetchConversations } from "@/lib/queries/conversations";
+import { fetchEtiquetasDeConversa } from "@/lib/queries/etiquetas-de-conversa";
 import { fetchJornada } from "@/lib/queries/jornada";
 import { createClient } from "@/lib/supabase/server";
 
@@ -28,7 +29,7 @@ export default async function AtendimentoPage() {
     userId: context.userId,
     entity: "inbox",
   });
-  const [conversations, accountResult, authorNames, jornada] =
+  const [conversations, accountResult, authorNames, jornada, etiquetas] =
     await Promise.all([
       fetchConversations(supabase, active.clinicId),
       supabase
@@ -38,6 +39,7 @@ export default async function AtendimentoPage() {
         .maybeSingle(),
       fetchClinicAuthorNames(supabase, active.clinicId),
       fetchJornada(supabase, active.clinicId),
+      fetchEtiquetasDeConversa(supabase, active.clinicId),
     ]);
   // A jornada e configuravel por clinica: os rotulos de etapa que o Inbox
   // mostra vem dela, nao mais de um dicionario fixo.
@@ -53,6 +55,7 @@ export default async function AtendimentoPage() {
         viewerRole={active.role}
         nomesDeEtapa={nomesDeEtapa}
         jornada={jornada}
+        etiquetas={etiquetas}
         authorNames={authorNames}
         initialConversations={conversations}
         hasWhatsappAccount={accountResult.data !== null}

@@ -1,6 +1,6 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { Check, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ConversationCard } from "@/components/atendimento/conversation-card";
@@ -11,7 +11,16 @@ import {
   STATUS_TONE_VARS,
   type ConversationStatus,
 } from "@/lib/design/status";
-import type { ConversationListItem } from "@/lib/queries/conversations";
+import {
+  casaEtiquetas,
+  etiquetasDaConversa,
+  porChaveDeEtiqueta,
+  type EtiquetaDeConversa,
+} from "@/lib/domain/etiquetas-de-conversa";
+import {
+  CONVERSATIONS_ATIVAS_LIMIT,
+  type ConversationListItem,
+} from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
 // Lista de conversas (handoff): segmentador de posse no topo, chips de status
@@ -29,6 +38,7 @@ const STATUS_ORDER: ConversationStatus[] = [
 
 export function ConversationList({
   nomesDeEtapa,
+  etiquetas,
   conversations,
   viewerId,
   selectedId,
@@ -37,6 +47,8 @@ export function ConversationList({
   resolvedLoading = false,
 }: {
   nomesDeEtapa: Record<string, string>;
+  /** Catalogo da clinica: resolve chave para nome e cor. */
+  etiquetas: EtiquetaDeConversa[];
   conversations: ConversationListItem[];
   viewerId: string;
   selectedId: string | null;
@@ -51,6 +63,7 @@ export function ConversationList({
     null,
   );
   const [search, setSearch] = useState("");
+  const [etiquetasEscolhidas, setEtiquetasEscolhidas] = useState<string[]>([]);
 
   const handleStatusFilter = (status: ConversationStatus) => {
     const proximo = statusFilter === status ? null : status;
@@ -114,6 +127,10 @@ export function ConversationList({
           ) {
             return false;
           }
+          // Marcar varias etiquetas SOMA os resultados (decisao do dono).
+          if (!casaEtiquetas(conversation.tags, etiquetasEscolhidas)) {
+            return false;
+          }
           if (term) {
             const haystack =
               `${conversation.contact.name ?? ""} ${conversation.contact.phone_e164}`.toLowerCase();
@@ -134,7 +151,9 @@ export function ConversationList({
         // que o paciente escreveu, e quem quer ver só quem espera, filtra.
         .sort((a, b) => recencia(b) - recencia(a))
     );
-  }, [conversations, own, statusFilter, search, viewerId]);
+  }, [conversations, own, statusFilter, search, etiquetasEscolhidas, viewerId]);
+
+  const porChave = useMemo(() => porChaveDeEtiqueta(etiquetas), [etiquetas]);
 
   const hasActiveFilter =
     own !== "todas" || statusFilter !== null || search !== "";
@@ -195,6 +214,56 @@ export function ConversationList({
         })}
       </div>
 
+      {etiquetas.length > 0 ? (
+        <div
+          className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          role="group"
+          aria-label="Filtrar por etiqueta"
+        >
+          {etiquetas.map((etiqueta) => {
+            const ativa = etiquetasEscolhidas.includes(etiqueta.chave);
+            const cores = STATUS_TONE_VARS[etiqueta.tom];
+            return (
+              <button
+                key={etiqueta.chave}
+                type="button"
+                aria-pressed={ativa}
+                onClick={() =>
+                  setEtiquetasEscolhidas((atuais) =>
+                    ativa
+                      ? atuais.filter((chave) => chave !== etiqueta.chave)
+                      : [...atuais, etiqueta.chave],
+                  )
+                }
+                className={cn(
+                  "flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[11.5px] font-semibold transition-colors",
+                  ativa ? "border-transparent" : "border-border-strong bg-card",
+                )}
+                style={
+                  ativa
+                    ? { color: cores.text, backgroundColor: cores.bg }
+                    : { color: cores.text }
+                }
+              >
+                {/* O check e a camada de FORMA: ativo nao pode ser
+                    comunicado so por cor. */}
+                {ativa ? (
+                  <Check strokeWidth={2} className="size-3" aria-hidden />
+                ) : null}
+                {etiqueta.nome}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {etiquetasEscolhidas.length > 0 &&
+      conversations.length >= CONVERSATIONS_ATIVAS_LIMIT ? (
+        // Sem este aviso, a atendente conclui que a conversa etiquetada sumiu.
+        <p className="text-[11px] text-text-tertiary">
+          Filtrando as {CONVERSATIONS_ATIVAS_LIMIT} conversas mais recentes.
+        </p>
+      ) : null}
+
       <div className="relative">
         <Search
           strokeWidth={1.5}
@@ -229,6 +298,7 @@ export function ConversationList({
                     setOwn("todas");
                     setStatusFilter(null);
                     setSearch("");
+                    setEtiquetasEscolhidas([]);
                   }
                 : undefined
             }
@@ -241,6 +311,7 @@ export function ConversationList({
                 key={conversation.id}
                 conversation={conversation}
                 preview={previewOf(conversation, nomesDeEtapa)}
+                etiquetas={etiquetasDaConversa(conversation.tags, porChave)}
                 selected={conversation.id === selectedId}
                 isMine={conversation.assignee_user_id === viewerId}
                 onSelect={() => onSelect(conversation.id)}

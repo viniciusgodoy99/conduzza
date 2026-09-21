@@ -712,6 +712,65 @@ async function moverLeadAoAssumir(
   }
 }
 
+// Etiquetas da conversa (21/09/2026). A RPC e security invoker: quem pode
+// etiquetar e exatamente quem a policy de UPDATE de conversation deixa
+// escrever (recepcao sim, leitura nao, profissional so na conversa dele).
+// Devolve o array final para o cliente gravar no cache sem refetch.
+
+const etiquetarConversaSchema = z.object({
+  conversation_id: z.uuid(),
+  adicionar: z.array(z.string().regex(/^[a-z0-9_]{1,40}$/)).max(8),
+  remover: z.array(z.string().regex(/^[a-z0-9_]{1,40}$/)).max(8),
+});
+
+export async function etiquetarConversaAction(
+  entrada: unknown,
+): Promise<InboxActionResult & { tags?: string[] }> {
+  const parsed = etiquetarConversaSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+  const loaded = await loadVisibleConversation(parsed.data.conversation_id, {
+    exigeEdicao: true,
+  });
+  if ("error" in loaded) {
+    return { ok: false, error: loaded.error };
+  }
+  const { context, supabase, conversation } = loaded;
+
+  const { data, error } = await supabase.rpc("etiquetar_conversa", {
+    p_clinic_id: context.active!.clinicId,
+    p_conversation_id: conversation.id,
+    p_adicionar: parsed.data.adicionar,
+    p_remover: parsed.data.remover,
+  });
+  if (error) {
+    // Lista branca: erro de banco nunca sobe cru para a tela.
+    return {
+      ok: false,
+      error: error.message.includes("não existe nesta clínica")
+        ? "Essa etiqueta foi excluída por outra pessoa. Atualize a página."
+        : "Não foi possível etiquetar a conversa.",
+    };
+  }
+  if (data === null) {
+    // Zero linhas: a RLS recusou (papel sem escrita, ou conversa de outro
+    // atendente para o papel profissional).
+    return { ok: false, error: "Você não pode etiquetar esta conversa." };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: context.active!.clinicId,
+    user_id: context.userId,
+    action: "etiquetou_conversa",
+    entity: "conversation",
+    entity_id: conversation.id,
+  });
+  // Sem revalidatePath: a lista e cache de cliente mantido por realtime, e
+  // revalidar seria uma ida ao servidor por clique de caixa de selecao.
+  return { ok: true, tags: data as string[] };
+}
+
 export async function devolverParaIaAction(
   conversationId: string,
 ): Promise<InboxActionResult> {

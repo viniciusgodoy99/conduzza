@@ -5,8 +5,10 @@ import { ptBR } from "date-fns/locale";
 import { Sparkles } from "lucide-react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { ChipDeEtiqueta } from "@/components/shared/chip-de-etiqueta";
 import { StatusChip } from "@/components/shared/status-chip";
 import { CONVERSATION_STATUS } from "@/lib/design/status";
+import type { ChipDeEtiquetaDados } from "@/lib/domain/etiquetas-de-conversa";
 import type { ConversationListItem } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
@@ -26,12 +28,15 @@ function timeLabel(value: string | null): string {
 export function ConversationCard({
   conversation,
   preview,
+  etiquetas,
   selected,
   isMine,
   onSelect,
 }: {
   conversation: ConversationListItem;
   preview: string;
+  /** Ja resolvidas e ordenadas pela lista, como o preview. */
+  etiquetas: ChipDeEtiquetaDados[];
   selected: boolean;
   isMine: boolean;
   onSelect: () => void;
@@ -79,6 +84,31 @@ export function ConversationCard({
         <span className="truncate text-[12.5px] text-text-tertiary">
           {preview}
         </span>
+        {etiquetas.length > 0 ? (
+          // O aria-label carrega TODAS as etiquetas: o "+2" visual nao e
+          // acessivel sozinho, e title nao funciona em toque.
+          <span
+            className="flex items-center gap-1 overflow-hidden"
+            aria-label={`Etiquetas: ${etiquetas.map((e) => e.nome).join(", ")}`}
+          >
+            {etiquetas.slice(0, 2).map((etiqueta) => (
+              <ChipDeEtiqueta
+                key={etiqueta.chave}
+                nome={etiqueta.nome}
+                tom={etiqueta.tom}
+                className="max-w-[92px]"
+              />
+            ))}
+            {etiquetas.length > 2 ? (
+              <span
+                aria-hidden
+                className="inline-flex h-[18px] shrink-0 items-center rounded-full bg-surface-3 px-1.5 text-[10.5px] font-semibold text-text-secondary"
+              >
+                +{etiquetas.length - 2}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
       </span>
       <span className="grid justify-items-end gap-1">
         <span className="font-mono text-[11px] text-text-tertiary tabular-nums">

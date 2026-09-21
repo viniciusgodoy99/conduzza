@@ -26,6 +26,11 @@ import {
   type ConversationListItem,
   type MessageItem,
 } from "@/lib/queries/conversations";
+import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
+import {
+  etiquetasKeys,
+  fetchEtiquetasDeConversa,
+} from "@/lib/queries/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { canEdit, permissionHint, type Role } from "@/lib/domain/permissions";
 import {
@@ -55,6 +60,7 @@ export function InboxClient({
   viewerRole,
   nomesDeEtapa,
   jornada,
+  etiquetas,
   authorNames,
   initialConversations,
   hasWhatsappAccount,
@@ -65,6 +71,8 @@ export function InboxClient({
   nomesDeEtapa: Record<string, string>;
   /** A jornada inteira (com papel e tom): o painel troca etapa por ela. */
   jornada: EtapaDaJornada[];
+  /** Catalogo de etiquetas de conversa da clinica. */
+  etiquetas: EtiquetaDeConversa[];
   authorNames: Record<string, string>;
   initialConversations: ConversationListItem[];
   hasWhatsappAccount: boolean;
@@ -113,6 +121,62 @@ export function InboxClient({
   const aoMudarEtapa = () =>
     queryClient.invalidateQueries({ queryKey: ["conversations"] });
   const podeAgendar = canEdit(viewerRole, "agenda");
+
+  // Catalogo de etiquetas: vem do servidor e se mantem por refetch ao voltar
+  // para a aba (o gestor pode ter criado uma etiqueta nova na outra tela).
+  useDadosDoServidor(etiquetasKeys.daClinica(clinicId), etiquetas);
+  const etiquetasQuery = useQuery({
+    queryKey: etiquetasKeys.daClinica(clinicId),
+    queryFn: () => fetchEtiquetasDeConversa(supabase, clinicId),
+    initialData: etiquetas,
+    staleTime: 60_000,
+  });
+  const catalogoDeEtiquetas = etiquetasQuery.data ?? etiquetas;
+  const dicaEtiquetar =
+    permissionHint(viewerRole, "atendimento") ??
+    "Seu perfil não altera esta conversa";
+
+  /** O painel duplica as props em dois pontos de montagem (aside e Sheet):
+   *  monta uma vez e espalha nos dois, para nunca divergirem. */
+  const propsDoPainel = (conversa: ConversationListItem) => ({
+    contact: conversa.contact,
+    consent: consentQuery.data ?? null,
+    jornada,
+    podeEditarLeads,
+    dicaLeads,
+    podeAgendar,
+    dicaAgenda,
+    aoMudarEtapa,
+    conversationId: conversa.id,
+    etiquetasDaConversa: conversa.tags,
+    catalogoDeEtiquetas,
+    // Quem atende etiqueta; 'profissional' so a conversa atribuida a ele,
+    // que e exatamente o recorte da policy de UPDATE de conversation.
+    podeEtiquetar:
+      canEdit(viewerRole, "atendimento") &&
+      (viewerRole !== "profissional" ||
+        conversa.assignee_user_id === viewerId),
+    dicaEtiquetar:
+      viewerRole === "profissional" && conversa.assignee_user_id !== viewerId
+        ? "Só quem está atendendo esta conversa pode etiquetar."
+        : dicaEtiquetar,
+    ehChefia,
+    aoEtiquetar: (tags: string[]) => {
+      // Grava nas DUAS chaves: a lista ativa e o arquivo de resolvidas.
+      for (const chave of [
+        conversationKeys.list(clinicId),
+        [...conversationKeys.list(clinicId), "resolved"] as const,
+      ]) {
+        queryClient.setQueryData(
+          chave,
+          (atual: ConversationListItem[] | undefined) =>
+            atual?.map((item) =>
+              item.id === conversa.id ? { ...item, tags } : item,
+            ),
+        );
+      }
+    },
+  });
   const dicaAgenda =
     permissionHint(viewerRole, "agenda") ?? "Seu perfil só consulta a agenda";
   const ehChefia = viewerRole === "admin" || viewerRole === "gestor";
@@ -437,6 +501,7 @@ export function InboxClient({
       >
         <ConversationList
           nomesDeEtapa={nomesDeEtapa}
+          etiquetas={catalogoDeEtiquetas}
           conversations={conversations}
           viewerId={viewerId}
           selectedId={selectedId}
@@ -532,16 +597,7 @@ export function InboxClient({
 
       <aside className="hidden w-[320px] shrink-0 border-l border-border xl:block">
         {selected ? (
-          <ContextPanel
-            contact={selected.contact}
-            consent={consentQuery.data ?? null}
-            jornada={jornada}
-            podeEditarLeads={podeEditarLeads}
-            dicaLeads={dicaLeads}
-            podeAgendar={podeAgendar}
-            dicaAgenda={dicaAgenda}
-            aoMudarEtapa={aoMudarEtapa}
-          />
+          <ContextPanel {...propsDoPainel(selected)} />
         ) : (
           <div className="p-4 text-[12.5px] text-text-tertiary">
             Os dados do contato aparecem aqui.
@@ -565,16 +621,7 @@ export function InboxClient({
         <SheetContent side="right" className="w-[360px] p-0">
           <SheetTitle className="sr-only">Contexto do contato</SheetTitle>
           {selected ? (
-            <ContextPanel
-              contact={selected.contact}
-              consent={consentQuery.data ?? null}
-              jornada={jornada}
-              podeEditarLeads={podeEditarLeads}
-              dicaLeads={dicaLeads}
-              podeAgendar={podeAgendar}
-              dicaAgenda={dicaAgenda}
-              aoMudarEtapa={aoMudarEtapa}
-            />
+            <ContextPanel {...propsDoPainel(selected)} />
           ) : null}
         </SheetContent>
       </Sheet>
