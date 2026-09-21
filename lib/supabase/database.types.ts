@@ -934,6 +934,44 @@ export type Database = {
           },
         ]
       }
+      conversation_tag_def: {
+        Row: {
+          chave: string
+          clinic_id: string
+          created_at: string
+          id: string
+          nome: string
+          tom: string
+          updated_at: string
+        }
+        Insert: {
+          chave: string
+          clinic_id: string
+          created_at?: string
+          id?: string
+          nome: string
+          tom?: string
+          updated_at?: string
+        }
+        Update: {
+          chave?: string
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          nome?: string
+          tom?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_tag_def_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversion_event: {
         Row: {
           clinic_id: string
@@ -2644,6 +2682,13 @@ export type Database = {
         Args: { p_channel?: string; p_clinic_id: string; p_contact_id: string }
         Returns: boolean
       }
+      contagem_de_etiquetas_de_conversa: {
+        Args: { p_clinic_id: string }
+        Returns: {
+          chave: string
+          total: number
+        }[]
+      }
       conversoes_devolvidas_da_clinica: {
         Args: { p_clinic_id: string }
         Returns: Json
@@ -2677,6 +2722,15 @@ export type Database = {
           p_remover: string[]
         }
         Returns: number
+      }
+      etiquetar_conversa: {
+        Args: {
+          p_adicionar?: string[]
+          p_clinic_id: string
+          p_conversation_id: string
+          p_remover?: string[]
+        }
+        Returns: string[]
       }
       falhar_job: {
         Args: {
