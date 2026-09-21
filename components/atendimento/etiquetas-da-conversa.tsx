@@ -133,7 +133,9 @@ export function EtiquetasDaConversa({
                 )}
               </div>
             ) : (
-              <div className="grid">
+              // Teto do catalogo e 20: sem rolagem, as ultimas ficariam
+              // inalcancaveis dentro do popover.
+              <div className="grid max-h-72 overflow-y-auto">
                 {catalogo.map((etiqueta) => {
                   const marcada = tags.includes(etiqueta.chave);
                   return (
@@ -141,6 +143,7 @@ export function EtiquetasDaConversa({
                       key={etiqueta.chave}
                       type="button"
                       disabled={pendente}
+                      aria-pressed={marcada}
                       onClick={() => alternar(etiqueta.chave, marcada)}
                       className="flex min-h-10 items-center gap-2 rounded-md px-2 text-left text-[12.5px] hover:bg-surface-3 disabled:opacity-60"
                     >

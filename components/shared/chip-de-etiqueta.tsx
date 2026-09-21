@@ -22,12 +22,16 @@ export function ChipDeEtiqueta({
   return (
     <span
       className={cn(
-        "inline-flex h-[18px] max-w-full items-center truncate rounded-full px-1.5 text-[10.5px] font-semibold",
+        "inline-flex h-[18px] max-w-full shrink-0 items-center overflow-hidden rounded-full px-1.5 text-[10.5px] font-semibold",
         className,
       )}
       style={{ color: cores.text, backgroundColor: cores.bg }}
+      title={nome}
     >
-      {nome}
+      {/* O truncate vive no TEXTO: num container inline-flex ele nao
+          produziria reticencias, e dois nomes longos apareceriam cortados
+          no mesmo ponto, indistinguiveis. */}
+      <span className="truncate">{nome}</span>
     </span>
   );
 }

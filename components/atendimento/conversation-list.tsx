@@ -65,6 +65,16 @@ export function ConversationList({
   const [search, setSearch] = useState("");
   const [etiquetasEscolhidas, setEtiquetasEscolhidas] = useState<string[]>([]);
 
+  const porChave = useMemo(() => porChaveDeEtiqueta(etiquetas), [etiquetas]);
+
+  // Escolha EFETIVA: o gestor pode excluir uma etiqueta enquanto ela esta
+  // marcada aqui. Sem a poda, a chave morta continuaria filtrando e a lista
+  // ficaria vazia sem nenhum chip na tela para desmarcar.
+  const etiquetasAtivas = useMemo(
+    () => etiquetasEscolhidas.filter((chave) => porChave.has(chave)),
+    [etiquetasEscolhidas, porChave],
+  );
+
   const handleStatusFilter = (status: ConversationStatus) => {
     const proximo = statusFilter === status ? null : status;
     setStatusFilter(proximo);
@@ -128,7 +138,7 @@ export function ConversationList({
             return false;
           }
           // Marcar varias etiquetas SOMA os resultados (decisao do dono).
-          if (!casaEtiquetas(conversation.tags, etiquetasEscolhidas)) {
+          if (!casaEtiquetas(conversation.tags, etiquetasAtivas)) {
             return false;
           }
           if (term) {
@@ -151,12 +161,13 @@ export function ConversationList({
         // que o paciente escreveu, e quem quer ver só quem espera, filtra.
         .sort((a, b) => recencia(b) - recencia(a))
     );
-  }, [conversations, own, statusFilter, search, etiquetasEscolhidas, viewerId]);
-
-  const porChave = useMemo(() => porChaveDeEtiqueta(etiquetas), [etiquetas]);
+  }, [conversations, own, statusFilter, search, etiquetasAtivas, viewerId]);
 
   const hasActiveFilter =
-    own !== "todas" || statusFilter !== null || search !== "";
+    own !== "todas" ||
+    statusFilter !== null ||
+    search !== "" ||
+    etiquetasAtivas.length > 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-3">
@@ -221,7 +232,7 @@ export function ConversationList({
           aria-label="Filtrar por etiqueta"
         >
           {etiquetas.map((etiqueta) => {
-            const ativa = etiquetasEscolhidas.includes(etiqueta.chave);
+            const ativa = etiquetasAtivas.includes(etiqueta.chave);
             const cores = STATUS_TONE_VARS[etiqueta.tom];
             return (
               <button
@@ -256,7 +267,7 @@ export function ConversationList({
           })}
         </div>
       ) : null}
-      {etiquetasEscolhidas.length > 0 &&
+      {etiquetasAtivas.length > 0 &&
       conversations.length >= CONVERSATIONS_ATIVAS_LIMIT ? (
         // Sem este aviso, a atendente conclui que a conversa etiquetada sumiu.
         <p className="text-[11px] text-text-tertiary">

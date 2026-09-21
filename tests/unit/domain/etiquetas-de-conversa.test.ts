@@ -75,3 +75,22 @@ describe("etiquetasDaConversa", () => {
     expect(etiquetasDaConversa([], porChave)).toEqual([]);
   });
 });
+
+// A poda que a revisao adversarial de 21/09/2026 cobrou: o gestor pode
+// excluir uma etiqueta enquanto ela esta marcada no filtro de alguem. A
+// lista deriva a escolha EFETIVA do catalogo, senao a chave morta continua
+// filtrando e a caixa de entrada fica vazia sem nenhum chip para desmarcar.
+describe("escolha efetiva de filtro (poda de chave morta)", () => {
+  const porChave = porChaveDeEtiqueta(CATALOGO);
+  const efetivas = (escolhidas: string[]) =>
+    escolhidas.filter((chave) => porChave.has(chave));
+
+  it("chave que saiu do catálogo deixa de filtrar", () => {
+    expect(efetivas(["urgente", "excluida"])).toEqual(["urgente"]);
+    // E com a única escolhida excluída, o filtro se desliga sozinho: sem
+    // isso, casaEtiquetas derrubaria a lista inteira.
+    const so_a_morta = efetivas(["excluida"]);
+    expect(so_a_morta).toEqual([]);
+    expect(casaEtiquetas(["urgente"], so_a_morta)).toBe(true);
+  });
+});
