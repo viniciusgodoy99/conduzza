@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<!-- @template name="Painel Conduzza" description="App shell da Conduzza Chat: rail escuro, top bar e grade de KPIs prontos para receber conteúdo." -->
+<helmet><script src="./ds-base.js"></script></helmet>
+<div style="display:flex;height:100vh;overflow:hidden;background:#f5f6ef;font-family:'Manrope',-apple-system,'Segoe UI',sans-serif">
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.SidebarNav" items="{{ navItems }}" active="{{ page }}" onNavigate="{{ setPage }}" brand="{{ brand }}" footer="{{ userChip }}" hint-size="248px,100%"></x-import>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column">
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.TopBar" title="{{ pageTitle }}" breadcrumb="CLÍNICA VITTA · UNIDADE CENTRO" hint-size="100%,60px">
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.SearchField" placeholder="Buscar conversas, pacientes, telefones…" shortcut="⌘K" style="width:300px" hint-size="300px,36px"></x-import>
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.Badge" tone="success" dot="{{ true }}" size="sm" hint-size="120px,20px">WhatsApp on-line</x-import>
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.IconButton" icon="bell" label="Notificações" badge="{{ 3 }}" hint-size="34px,34px"></x-import>
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.Avatar" name="Rafaela Souza" size="sm" hint-size="30px,30px"></x-import>
+</x-import>
+<main style="flex:1;min-height:0;overflow:auto;padding:24px;display:grid;gap:16px;align-content:start;max-width:1240px">
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.PageHeader" title="{{ pageTitle }}" eyebrow="TERÇA, 22 DE SETEMBRO" description="Troque este cabeçalho pelo conteúdo da sua tela." hint-size="100%,72px"></x-import>
+<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.StatCard" label="Consultas hoje" value="147" icon="calendar-days" footnote="3 unidades" hint-size="100%,116px"></x-import>
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.StatCard" label="Confirmadas" value="128" accent="{{ true }}" delta="+12,4%" deltaDirection="up" footnote="87,2% do total" hint-size="100%,116px"></x-import>
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.StatCard" label="Aguardando" value="19" icon="clock" footnote="Último disparo 09:02" hint-size="100%,116px"></x-import>
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.StatCard" label="Resolvidas pela IA" value="64" unit="%" icon="sparkles" delta="+8,1%" deltaDirection="up" hint-size="100%,116px"></x-import>
+</div>
+<div style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;align-items:start">
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.Card" header="Área principal" padding="{{ 16 }}" hint-size="100%,220px">
+<p style="font-size:13.5px;color:#4f5f57;line-height:1.55">Substitua este bloco pela tabela, lista ou gráfico da sua tela. Use <code style="font-family:'JetBrains Mono',monospace;font-size:12px">DataTable</code>, <code style="font-family:'JetBrains Mono',monospace;font-size:12px">BarChart</code> ou <code style="font-family:'JetBrains Mono',monospace;font-size:12px">ConversationItem</code> do bundle.</p>
+</x-import>
+<x-import component-from-global-scope="ConduzzaDesignSystem_cea3ac.Card" header="Coluna de apoio" padding="{{ 16 }}" hint-size="100%,220px">
+<p style="font-size:13.5px;color:#4f5f57;line-height:1.55">Resumos, próximos passos ou o card escuro do agente de IA.</p>
+</x-import>
+</div>
+</main>
+</div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  state = { page: 'inicio' };
+  renderVals() {
+    const NS = window.ConduzzaDesignSystem_cea3ac || {};
+    const R = React;
+    const titles = { inicio: 'Início', atendimento: 'Atendimento', leads: 'Leads', agenda: 'Agenda', pacientes: 'Pacientes', confirmacoes: 'Confirmações', espera: 'Lista de espera', resultados: 'Resultados', ia: 'Agente de IA', automacoes: 'Automações', cadastro: 'Cadastro', config: 'Configurações' };
+    return {
+      page: this.state.page,
+      pageTitle: titles[this.state.page] || 'Início',
+      setPage: (id) => this.setState({ page: id }),
+      navItems: [
+        { id: 'inicio', label: 'Início', icon: 'house' },
+        { id: 'atendimento', label: 'Atendimento', icon: 'messages-square', count: 12 },
+        { id: 'leads', label: 'Leads', icon: 'user-plus', count: 38 },
+        { id: 'agenda', label: 'Agenda', icon: 'calendar-days' },
+        { id: 'pacientes', label: 'Pacientes', icon: 'users' },
+        { section: 'Operação do dia' },
+        { id: 'confirmacoes', label: 'Confirmações', icon: 'calendar-check', count: 19 },
+        { id: 'espera', label: 'Lista de espera', icon: 'clock', count: 7 },
+        { id: 'resultados', label: 'Resultados', icon: 'chart-column' },
+        { section: 'Inteligência' },
+        { id: 'ia', label: 'Agente de IA', icon: 'sparkles' },
+        { id: 'automacoes', label: 'Automações', icon: 'workflow' },
+        { section: 'Administração' },
+        { id: 'cadastro', label: 'Cadastro', icon: 'folder-cog' },
+        { id: 'config', label: 'Configurações', icon: 'settings' },
+      ],
+      brand: R.createElement('img', { src: '../../assets/logo-lockup-on-dark.png', alt: 'Conduzza', style: { height: 20, width: 'auto' } }),
+      userChip: NS.Avatar
+        ? R.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 9 } },
+            R.createElement(NS.Avatar, { name: 'Rafaela Souza', size: 'sm', status: 'online' }),
+            R.createElement('div', { style: { minWidth: 0 } },
+              R.createElement('div', { style: { fontSize: 12.5, fontWeight: 600, color: '#fbfce8' } }, 'Rafaela Souza'),
+              R.createElement('div', { style: { fontSize: 10.5, color: '#8b9a92' } }, 'Atendimento')))
+        : null,
+    };
+  }
+}
+
+</script>
+</body>
+</html>

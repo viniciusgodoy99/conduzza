@@ -1,0 +1,97 @@
+:root{
+/* ── Brand primitives (sampled from the supplied logo files) ───────── */
+--cz-lime-500:#b2e54f;      /* the brand lime, exact from LOGO-BG-VERDE.png */
+--cz-ink-900:#051813;       /* the brand near-black, exact from the symbol  */
+--cz-cream-050:#fbfce8;     /* the brand cream, exact from LOGO-BG-BRANCO   */
+
+/* ── Lime ramp (hue held at the brand lime, value stepped) ─────────── */
+--cz-lime-050:#f4fbe3;
+--cz-lime-100:#e8f7c6;
+--cz-lime-200:#d7f09e;
+--cz-lime-300:#c6ea78;
+--cz-lime-400:#b2e54f;
+--cz-lime-500:#a2d93c;
+--cz-lime-600:#7fb320;
+--cz-lime-700:#5d8515;  /* lowest step that clears 4.5:1 on white */
+--cz-lime-800:#42600f;
+--cz-lime-900:#2b400a;
+
+/* ── Ink ramp — a cool green-black, not neutral grey ───────────────── */
+--cz-ink-050:#f3f5f1;
+--cz-ink-100:#e6eae5;
+--cz-ink-200:#d2d9d4;
+--cz-ink-300:#b2bdb7;
+--cz-ink-400:#8b9a92;
+--cz-ink-500:#6b7c73;
+--cz-ink-600:#4f5f57;
+--cz-ink-700:#33443c;
+--cz-ink-800:#1b2c25;
+--cz-ink-900:#051813;
+--cz-ink-950:#03100c;
+
+/* ── Warm paper neutrals — the canvas the product sits on ──────────── */
+--cz-paper-050:#fbfcf7;
+--cz-paper-100:#f5f6ef;
+--cz-paper-200:#eceee3;
+--cz-paper-300:#e0e3d6;
+
+/* ── Semantics — desaturated so the lime stays the only loud colour ── */
+--cz-success-050:#e8f6ec; --cz-success-500:#2f9e5b; --cz-success-700:#1f6d3e;
+--cz-warning-050:#fdf3e0; --cz-warning-500:#d9962a; --cz-warning-700:#96650f;
+--cz-danger-050:#fdeeeb;  --cz-danger-500:#d4553d;  --cz-danger-700:#9c3524;
+--cz-info-050:#eaf2f8;    --cz-info-500:#4785b5;    --cz-info-700:#2d5d83;
+
+/* ── Channel colours (WhatsApp / Meta surfaces the product touches) ── */
+--cz-whatsapp:#25d366;
+--cz-meta:#0866ff;
+--cz-instagram:#c13584;
+
+/* ── Semantic aliases: use THESE in components ─────────────────────── */
+--canvas:var(--cz-paper-100);
+--surface:#ffffff;
+--surface-sunken:var(--cz-paper-200);
+--surface-raised:#ffffff;
+--surface-inverse:var(--cz-ink-900);
+--surface-accent:var(--cz-lime-400);
+--surface-accent-soft:var(--cz-lime-050);
+
+--text-strong:var(--cz-ink-900);
+--text-body:var(--cz-ink-800);
+--text-muted:var(--cz-ink-500);
+--text-faint:var(--cz-ink-400);
+--text-on-accent:var(--cz-ink-900);
+--text-on-inverse:var(--cz-cream-050);
+--text-inverse-muted:var(--cz-ink-400);
+--text-accent:var(--cz-lime-700);
+--text-link:var(--cz-lime-700);
+--text-link-hover:var(--cz-lime-800);
+
+--border-hairline:rgba(5,24,19,.08);
+--border-subtle:rgba(5,24,19,.12);
+--border-strong:rgba(5,24,19,.22);
+--border-accent:var(--cz-lime-400);
+--border-inverse:rgba(251,252,232,.14);
+
+--focus-ring:0 0 0 3px rgba(178,229,79,.55);
+--overlay-scrim:rgba(5,24,19,.42);
+}
+
+/* Inverse scope — apply to any element that sits on the dark ground. */
+.cz-dark{
+--canvas:var(--cz-ink-950);
+--surface:var(--cz-ink-900);
+--surface-sunken:var(--cz-ink-950);
+--surface-raised:var(--cz-ink-800);
+--surface-accent-soft:rgba(178,229,79,.12);
+--text-strong:var(--cz-cream-050);
+--text-body:rgba(251,252,232,.88);
+--text-muted:var(--cz-ink-400);
+--text-faint:var(--cz-ink-500);
+--text-accent:var(--cz-lime-400);
+--text-link:var(--cz-lime-400);
+--text-link-hover:var(--cz-lime-300);
+--border-hairline:rgba(251,252,232,.08);
+--border-subtle:rgba(251,252,232,.14);
+--border-strong:rgba(251,252,232,.28);
+color:var(--text-body);
+}

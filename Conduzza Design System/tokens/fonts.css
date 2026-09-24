@@ -1,0 +1,4 @@
+/* Conduzza webfonts — served from Google Fonts.
+   Manrope stands in for the custom rounded-geometric wordmark face (see readme.md → Type substitution).
+   JetBrains Mono carries tabular numerals, IDs and timestamps. */
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");

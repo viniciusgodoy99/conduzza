@@ -1,0 +1,33 @@
+<!-- @dsCard group="Components" viewport="700x330" name="Forms — inputs, selects, toggles" subtitle="Control shell, focus and error states, segmented control, dropdown" -->
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;padding:18px;background:var(--canvas)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px}.row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}</style></head><body><div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const { Input, Select, Textarea, Checkbox, Switch, SearchField, SegmentedControl, Dropdown, Button } = window.ConduzzaDesignSystem_cea3ac;
+function Demo(){
+  const [view,setView]=React.useState('kanban');
+  const [on,setOn]=React.useState(true);
+  return(<div>
+    <div className="grid">
+      <Input label="Nome do paciente" placeholder="Ex.: Mariana Alves" icon="user"/>
+      <Input label="WhatsApp" defaultValue="(11) 9" error="Número incompleto"/>
+      <Select label="Profissional" options={["Dra. Helena Reis","Dr. Caio Prado","Dra. Lívia Monteiro"]}/>
+    </div>
+    <div className="grid">
+      <Textarea label="Mensagem de confirmação" rows={3} counter={320} defaultValue="Olá, {nome}! Confirmando sua consulta em {data} às {hora}."/>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <SearchField placeholder="Buscar conversas, pacientes…" shortcut="⌘K"/>
+        <SegmentedControl value={view} onChange={setView} options={[{value:'kanban',label:'Kanban',icon:'columns-3'},{value:'lista',label:'Lista',icon:'list',count:38}]}/>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:12,justifyContent:'center'}}>
+        <Switch checked={on} onChange={setOn} label="Confirmação de consulta" description="Dispara 24h antes"/>
+        <div className="row"><Checkbox checked label="Ativo" onChange={()=>{}}/><Checkbox indeterminate label="Parcial" onChange={()=>{}}/><Checkbox label="Inativo" onChange={()=>{}}/></div>
+        <Dropdown trigger={<Button variant="secondary" size="sm" iconRight="chevron-down">Ações</Button>} items={[{label:'Ver paciente',icon:'user'},{label:'Transferir',icon:'arrow-right-left',shortcut:'⌘T'},{divider:true},{label:'Encerrar',icon:'x',danger:true}]}/>
+      </div>
+    </div>
+  </div>)
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

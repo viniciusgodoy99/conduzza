@@ -1,0 +1,35 @@
+<!-- @dsCard group="Components" viewport="700x420" name="Atendimento — bubbles, inbox rows, composer, lead cards" subtitle="The WhatsApp thread vocabulary plus the Leads board card" -->
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;padding:18px;background:var(--canvas)}</style></head><body><div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const { ChatBubble, ConversationItem, Composer, KanbanCard } = window.ConduzzaDesignSystem_cea3ac;
+function Demo(){
+  const [draft,setDraft]=React.useState('');
+  return(<div style={{display:'grid',gridTemplateColumns:'260px 1fr 210px',gap:14,alignItems:'start'}}>
+    <div style={{background:'var(--surface)',borderRadius:'var(--radius-card)',border:'1px solid var(--border-hairline)',overflow:'hidden'}}>
+      <ConversationItem active name="Mariana Alves" preview="Consigo remarcar pra quinta?" time="14:28" unread={2} tags={[{label:'Remarcação',color:'#d9962a'}]} assignee="Rafaela"/>
+      <ConversationItem name="Paulo Nogueira" preview="Horários disponíveis: 10:30, 15:00" time="13:02" aiHandled tags={[{label:'Primeira consulta',color:'#b2e54f'}]}/>
+      <ConversationItem name="Tatiane Moraes" preview="Bom dia! Qual o valor?" time="ontem" tags={[{label:'Meta Ads',color:'#0866ff'}]}/>
+      <ConversationItem name="Bruno Tavares" preview="Obrigado, até quinta." time="ontem"/>
+    </div>
+    <div style={{background:'var(--cz-paper-050)',borderRadius:'var(--radius-card)',border:'1px solid var(--border-hairline)',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div style={{padding:14,display:'flex',flexDirection:'column',gap:8}}>
+        <ChatBubble from="in" time="14:28">Oi! Consigo remarcar minha consulta pra quinta?</ChatBubble>
+        <ChatBubble from="ai" author="Agente Conduzza" time="14:29" status="read">Claro, Mariana. Na quinta tenho 10:30 e 15:00 com a Dra. Helena. Qual prefere?</ChatBubble>
+        <ChatBubble from="in" time="14:30" attachment={{name:'pedido-exame.pdf',icon:'file-text'}}>Pode ser 10:30. Segue o pedido.</ChatBubble>
+        <ChatBubble from="out" author="Rafaela" time="14:31" status="read">Remarcado! Enviei a confirmação por aqui.</ChatBubble>
+        <ChatBubble note time="14:31">Paciente prefere manhã — anotado no cadastro.</ChatBubble>
+      </div>
+      <Composer value={draft} onChange={setDraft} aiSuggestion="Posso confirmar quinta às 10:30?" quickReplies={['Bom dia! 👋','Confirmar presença','Enviar endereço','Valores']}/>
+    </div>
+    <div style={{display:'grid',gap:10}}>
+      <KanbanCard name="Tatiane Moraes" phone="(21) 98130-7755" meta="Interesse: Harmonização facial" tags={[{label:'Meta Ads',color:'#0866ff'}]} owner="Rafaela" value="R$ 1.200" waiting="2d 4h"/>
+      <KanbanCard urgent name="Bruno Tavares" phone="(11) 99714-2280" meta="Sem resposta há 3 dias" tags={[{label:'Indicação',color:'#b2e54f'}]} waiting="3d"/>
+    </div>
+  </div>)
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

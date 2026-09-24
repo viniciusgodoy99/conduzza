@@ -1,0 +1,34 @@
+<!-- @dsCard group="Components" viewport="700x300" name="Agenda — appointment blocks" subtitle="The five booking states on a day column" -->
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;padding:18px;background:var(--canvas)}</style></head><body><div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const { AppointmentCard } = window.ConduzzaDesignSystem_cea3ac;
+const col=(title,sub,kids)=>(<div style={{background:'var(--surface)',border:'1px solid var(--border-hairline)',borderRadius:'var(--radius-card)',overflow:'hidden'}}>
+  <div style={{padding:'10px 12px',borderBottom:'1px solid var(--border-hairline)',background:'var(--cz-paper-050)'}}>
+    <div style={{fontSize:13,fontWeight:700,color:'var(--text-strong)'}}>{title}</div>
+    <div style={{fontSize:11,color:'var(--text-muted)'}}>{sub}</div>
+  </div>
+  <div style={{padding:10,display:'grid',gap:6}}>{kids}</div>
+</div>);
+function Demo(){return(<div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+  {col('Dra. Helena Reis','Dermatologia · Sala 2',[
+    <AppointmentCard key="1" start="08:00" end="08:30" patient="Mariana Alves" procedure="Retorno" status="confirmado" professional="Sala 2"/>,
+    <AppointmentCard key="2" start="08:30" end="09:00" patient="Paulo Nogueira" procedure="Primeira consulta" status="aguardando" professional="Sala 2"/>,
+    <AppointmentCard key="3" compact start="09:00" patient="Encaixe — Lia R." status="encaixe"/>,
+  ])}
+  {col('Dr. Caio Prado','Cardiologia · Sala 4',[
+    <AppointmentCard key="1" start="08:00" end="09:00" patient="Tatiane Moraes" procedure="Ecocardiograma" status="confirmado" professional="Sala 4"/>,
+    <AppointmentCard key="2" start="09:00" end="09:30" patient="Bruno Tavares" procedure="Retorno" status="cancelado" professional="Sala 4"/>,
+    <AppointmentCard key="3" compact start="09:30" patient="Almoço" status="bloqueio"/>,
+  ])}
+  {col('Dra. Lívia Monteiro','Ginecologia · Sala 1',[
+    <AppointmentCard key="1" start="08:15" end="08:45" patient="Camila Fontes" procedure="Preventivo" status="confirmado" professional="Sala 1"/>,
+    <AppointmentCard key="2" start="08:45" end="09:15" patient="Renata Lopes" procedure="Primeira consulta" status="aguardando" professional="Sala 1"/>,
+    <AppointmentCard key="3" start="09:15" end="09:45" patient="Sofia Duarte" procedure="Retorno" status="confirmado" professional="Sala 1"/>,
+  ])}
+</div>)}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

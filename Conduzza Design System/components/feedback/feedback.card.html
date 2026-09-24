@@ -1,0 +1,39 @@
+<!-- @dsCard group="Components" viewport="700x330" name="Feedback — banners, toasts, tooltips, modal" subtitle="Inline banners, the dark toast, hover labels and the dialog shell" -->
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;padding:18px;background:var(--canvas)}</style></head><body><div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const { Banner, Toast, Tooltip, Button, IconButton, Input, Select } = window.ConduzzaDesignSystem_cea3ac;
+function Demo(){return(<div style={{display:'grid',gridTemplateColumns:'1.1fr .9fr',gap:16,alignItems:'start'}}>
+  <div style={{display:'grid',gap:10}}>
+    <Banner tone="warning" title="WhatsApp desconectado" action={<Button size="sm" variant="ghost">Reconectar</Button>}>Mensagens não estão sendo enviadas desde 09:14.</Banner>
+    <Banner tone="lime" title="O agente respondeu 64% das conversas hoje">Você pode revisar as respostas em Agente de IA.</Banner>
+    <Banner tone="success" title="Lembretes disparados" onDismiss={()=>{}}>128 pacientes notificados às 09:00.</Banner>
+    <Banner tone="danger" title="3 confirmações falharam">Números inválidos no cadastro.</Banner>
+    <div style={{display:'flex',gap:10,alignItems:'center',paddingTop:4}}>
+      <Tooltip label="Transferir atendimento"><IconButton icon="arrow-right-left" label="Transferir" variant="secondary"/></Tooltip>
+      <Tooltip label="Marcar como resolvido" side="right"><IconButton icon="check-check" label="Resolver" variant="secondary"/></Tooltip>
+      <span style={{fontSize:12,color:'var(--text-muted)'}}>← passe o mouse</span>
+    </div>
+    <Toast title="Consulta remarcada" description="Mariana Alves · quinta, 10:30" action={<Button size="sm" variant="ghost" style={{color:'var(--cz-lime-400)'}}>Desfazer</Button>}/>
+  </div>
+  <div style={{background:'var(--surface)',borderRadius:'var(--radius-xl)',boxShadow:'var(--shadow-lg)',overflow:'hidden'}}>
+    <div style={{padding:'18px 20px 14px'}}>
+      <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+        <div style={{flex:1}}><h2 style={{fontSize:'var(--text-h2)',letterSpacing:'-0.015em'}}>Nova consulta</h2><p style={{fontSize:13,color:'var(--text-muted)',marginTop:3}}>O paciente recebe a confirmação no WhatsApp.</p></div>
+        <IconButton icon="x" label="Fechar"/>
+      </div>
+    </div>
+    <div style={{padding:'0 20px 18px',display:'grid',gap:12}}>
+      <Input label="Paciente" defaultValue="Mariana Alves" icon="user"/>
+      <Select label="Profissional" options={["Dra. Helena Reis","Dr. Caio Prado"]}/>
+    </div>
+    <div style={{display:'flex',justifyContent:'flex-end',gap:8,padding:'14px 20px',borderTop:'1px solid var(--border-hairline)',background:'var(--cz-paper-050)'}}>
+      <Button variant="ghost">Cancelar</Button><Button variant="primary">Agendar</Button>
+    </div>
+  </div>
+</div>)}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

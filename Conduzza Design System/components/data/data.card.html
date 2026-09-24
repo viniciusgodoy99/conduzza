@@ -1,0 +1,47 @@
+<!-- @dsCard group="Components" viewport="700x400" name="Data — tables, KPIs, charts, empty states" subtitle="Record table, stat tiles, bar and donut series, progress, zero state" -->
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;padding:18px;background:var(--canvas)}</style></head><body><div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const { DataTable, StatCard, BarChart, DonutChart, ProgressBar, EmptyState, Card, Badge, Avatar, Button } = window.ConduzzaDesignSystem_cea3ac;
+const rows=[
+ {id:'1',nome:'Mariana Alves',tel:'(11) 98812-4409',proc:'Dermatologia',ultima:'12/09/2026',status:'ok'},
+ {id:'2',nome:'Paulo Nogueira',tel:'(11) 99714-2280',proc:'Cardiologia',ultima:'04/09/2026',status:'wait'},
+ {id:'3',nome:'Tatiane Moraes',tel:'(21) 98130-7755',proc:'Harmonização',ultima:'28/08/2026',status:'off'},
+];
+function Demo(){
+  const [sel,setSel]=React.useState(['1']);
+  return(<div style={{display:'grid',gap:14}}>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+      <StatCard label="Confirmadas hoje" value="128" delta="+12,4%" deltaDirection="up" icon="calendar-check"/>
+      <StatCard label="Taxa de confirmação" value="87,2" unit="%" accent footnote="Meta: 85%"/>
+      <StatCard label="Faltas" value="7" delta="-2,1%" deltaDirection="down" icon="user-x"/>
+      <StatCard label="Resolvidas pela IA" value="64" unit="%" icon="sparkles"/>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1.3fr 1fr',gap:14}}>
+      <Card header="Consultas por dia" padding={16}>
+        <BarChart height={116} data={[{label:'Seg',value:34},{label:'Ter',value:41},{label:'Qua',value:38},{label:'Qui',value:47},{label:'Sex',value:52,highlight:true},{label:'Sáb',value:19}]}/>
+      </Card>
+      <Card header="Status de hoje" padding={16}>
+        <DonutChart size={108} thickness={14} centerValue="147" centerLabel="consultas" segments={[{label:'Confirmadas',value:128,color:'var(--cz-lime-400)'},{label:'Aguardando',value:12,color:'var(--cz-warning-500)'},{label:'Canceladas',value:7,color:'var(--cz-danger-500)'}]}/>
+        <div style={{marginTop:12}}><ProgressBar label="Meta do dia" caption="128 / 147" value={128} max={147}/></div>
+      </Card>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1.6fr 1fr',gap:14,alignItems:'start'}}>
+      <Card padding={0}>
+        <DataTable selectable selected={sel} onSelect={(id)=>setSel(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id])} rows={rows} columns={[
+          {key:'nome',header:'Paciente',strong:true,render:r=>(<span style={{display:'inline-flex',alignItems:'center',gap:8}}><Avatar name={r.nome} size="xs"/>{r.nome}</span>)},
+          {key:'tel',header:'WhatsApp',numeric:true,muted:true},
+          {key:'proc',header:'Especialidade',muted:true},
+          {key:'status',header:'Status',render:r=>r.status==='ok'?<Badge tone="success" dot size="sm">Ativo</Badge>:r.status==='wait'?<Badge tone="warning" dot size="sm">Pendente</Badge>:<Badge tone="neutral" size="sm">Inativo</Badge>},
+          {key:'ultima',header:'Última consulta',numeric:true,align:'right',muted:true},
+        ]}/>
+      </Card>
+      <Card padding={0}><EmptyState compact icon="calendar-x" title="Lista de espera vazia" description="Pacientes sem horário adequado aparecem aqui." action={<Button size="sm" variant="secondary" icon="plus">Adicionar</Button>}/></Card>
+    </div>
+  </div>)
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

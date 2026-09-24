@@ -1,0 +1,11 @@
+<!-- @dsCard group="Brand" viewport="700x180" name="Iconography" subtitle="Lucide, 2px stroke, rendered through the Icon mask so it inherits colour" -->
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css"><style>body{margin:0;padding:18px;background:var(--canvas);font-family:var(--font-sans)}.g{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}.i{display:flex;flex-direction:column;align-items:center;gap:6px}.m{width:22px;height:22px;color:var(--cz-ink-800);display:grid;place-items:center}.n{font-family:var(--font-mono);font-size:8px;color:var(--text-faint);text-align:center;line-height:1.2}</style></head><body>
+<div class="g" id="g"></div>
+<div style="font-size:11.5px;color:var(--text-muted);margin-top:14px">Substituição sinalizada: a Conduzza não forneceu um conjunto próprio de ícones. Usamos <strong>Lucide 0.544</strong> via CDN — traço 2px, cantos arredondados, que combina com o desenho do símbolo.</div>
+<script>
+const names=['house','messages-square','user-plus','calendar-days','users','calendar-check','clock','chart-column','sparkles','workflow','folder-cog','settings','search','bell','filter','send','paperclip','mic','check-check','phone','tag','columns-3','list','trending-up','user-x','circle-check','triangle-alert','x','plus','ellipsis','arrow-right-left','zap','ban','file-text','image','download'];
+const g=document.getElementById('g');
+g.innerHTML=names.map(n=>`<div class="i"><span class="m" data-n="${n}"></span><span class="n">${n}</span></div>`).join('');
+names.forEach(n=>fetch('https://unpkg.com/lucide-static@0.544.0/icons/'+n+'.svg').then(r=>r.text()).then(t=>{const e=g.querySelector('[data-n="'+n+'"]');if(e)e.innerHTML=t.replace('width="24"','width="22"').replace('height="24"','height="22"')}).catch(()=>{}));
+</script>
+</body></html>

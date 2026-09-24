@@ -1,0 +1,18 @@
+:root{
+/* 4px base. Product density is tight — 8/12/16 do most of the work. */
+--space-0:0px; --space-1:2px; --space-2:4px; --space-3:6px; --space-4:8px;
+--space-5:12px; --space-6:16px; --space-7:20px; --space-8:24px; --space-9:32px;
+--space-10:40px; --space-11:48px; --space-12:64px; --space-13:80px; --space-14:120px;
+
+/* Layout constants */
+--sidebar-w:248px;
+--sidebar-w-collapsed:64px;
+--topbar-h:60px;
+--inbox-list-w:336px;
+--context-panel-w:320px;
+--page-gutter:24px;
+--content-max:1240px;
+--control-h-sm:30px;
+--control-h-md:36px;
+--control-h-lg:44px;
+}

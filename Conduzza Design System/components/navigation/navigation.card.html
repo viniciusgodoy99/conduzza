@@ -1,0 +1,31 @@
+<!-- @dsCard group="Components" viewport="700x400" name="Navigation — rail, top bar, tabs" subtitle="The dark sidebar, the white top bar, in-page tabs and page headers" -->
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;background:var(--canvas)}</style></head><body><div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<script type="text/babel">
+const { SidebarNav, TopBar, Tabs, PageHeader, SearchField, IconButton, Avatar, Button } = window.ConduzzaDesignSystem_cea3ac;
+function Demo(){
+  const [page,setPage]=React.useState('atendimento');
+  const [tab,setTab]=React.useState('profissionais');
+  return(<div style={{display:'flex',height:400}}>
+    <SidebarNav active={page} onNavigate={setPage}
+      brand={<img src="../../assets/logo-lockup-on-dark.png" alt="Conduzza" style={{height:20,width:'auto'}}/>}
+      items={[{id:'inicio',label:'Início',icon:'house'},{id:'atendimento',label:'Atendimento',icon:'messages-square',count:12},{id:'leads',label:'Leads',icon:'user-plus',count:38},{id:'agenda',label:'Agenda',icon:'calendar-days'},{section:'Inteligência'},{id:'ia',label:'Agente de IA',icon:'sparkles'},{id:'automacoes',label:'Automações',icon:'workflow'}]}
+      footer={<div style={{display:'flex',alignItems:'center',gap:9}}><Avatar name="Rafaela Souza" size="sm" status="online"/><div style={{minWidth:0}}><div style={{fontSize:12.5,fontWeight:600,color:'var(--cz-cream-050)'}}>Rafaela Souza</div><div style={{fontSize:10.5,color:'var(--cz-ink-400)'}}>Atendimento</div></div></div>}/>
+    <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column'}}>
+      <TopBar title="Cadastro" breadcrumb="CLÍNICA VITTA · UNIDADE CENTRO">
+        <SearchField shortcut="⌘K" style={{width:200}}/>
+        <IconButton icon="bell" label="Notificações" badge={3}/>
+        <Avatar name="Rafaela Souza" size="sm"/>
+      </TopBar>
+      <div style={{padding:20,flex:1,overflow:'hidden'}}>
+        <PageHeader eyebrow="CONFIGURAÇÃO" title="Cadastros da clínica" description="Profissionais, procedimentos, convênios, horários e unidades." actions={<Button variant="primary" icon="plus">Novo profissional</Button>}/>
+        <Tabs value={tab} onChange={setTab} items={[{value:'profissionais',label:'Profissionais',count:14},{value:'procedimentos',label:'Procedimentos',count:62},{value:'convenios',label:'Planos de saúde',count:9},{value:'horarios',label:'Horários'},{value:'unidades',label:'Unidades',count:3}]}/>
+      </div>
+    </div>
+  </div>)
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

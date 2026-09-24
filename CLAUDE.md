@@ -37,7 +37,7 @@ SaaS multi-tenant que coloca uma recepcionista de IA no WhatsApp de clínicas m�
 | Arquivos | Supabase Storage |
 | Jobs e filas | Tabela `job_queue` executada pelo **motor por pg_cron** (ligado em 02/09/2026): `pg_cron` + `pg_net` chamam `/api/webhooks/motor` na Vercel a cada 20s, que reivindica jobs com `FOR UPDATE SKIP LOCKED`. **Não existe mais worker em servidor nenhum** (`npm run worker` é só ferramenta local de teste). Runbook: `supabase/operacao/motor-por-cron.md` |
 | Webhooks | Supabase Edge Functions (Deno) |
-| Ícones | Lucide, traço 1.5px |
+| Ícones | Lucide, traço 2px (padrão da biblioteca; decisão de 24/09/2026, alinhada ao design system) |
 | Datas | date-fns com locale pt-BR |
 | Testes | Vitest (unidade) + Playwright (fluxo crítico) |
 
@@ -116,7 +116,7 @@ Decisão do dono do produto, fora do backlog original: o sistema tem **cadastro 
 
 ## 5. Regras de interface
 
-**Fonte da verdade visual (decisão de 19/08/2026):** a identidade é a do `design_handoff_conduzza_atendimento_ia/` (verde-limão da marca, Inter Tight e IBM Plex Mono, sidebar escura fixa, **claro por padrão**). O `docs/02_brief_telas_claude_design.md` continua valendo para **comportamento e conteúdo** das telas (os 12 módulos, os 10 status, a matriz de papéis, os estados obrigatórios). Onde os dois divergem em aparência, vale o handoff; onde divergem em regra, vale o brief.
+**Fonte da verdade visual (decisão de 24/09/2026, substitui a de 19/08):** a identidade é a do `Conduzza Design System/` (Manrope e JetBrains Mono, lime `#b2e54f`, ink `#051813`, canvas papel quente, cartões de raio 16 com uma borda fina e uma sombra baixa, sidebar ink de 248px que recolhe para 64px abaixo de 1600px, **claro por padrão**). A especificação de adoção, com os valores exatos e os desvios de acessibilidade, está em `docs/06_adocao_design_system.md`. Onde um tom ou tamanho do design system reprova contraste AA ou o alvo de 40px, ele desce um passo na mesma rampa ou cresce até 40px (autorizado pelo dono). O `docs/02_brief_telas_claude_design.md` continua valendo para **comportamento e conteúdo** das telas (os 12 módulos, os 10 status, a matriz de papéis, os estados obrigatórios). Onde os dois divergem em aparência, vale o design system; onde divergem em regra, vale o brief. O `design_handoff_conduzza_atendimento_ia/` fica só como histórico.
 
 Resumo do que mais se erra:
 
