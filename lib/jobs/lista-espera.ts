@@ -5,10 +5,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   diaDaSemanaNoFuso,
+  liberacaoPorContato,
   montarOnda,
+  proximaTentativaDaVaga,
+  temFolgaParaResponder,
   turnoDoInstante,
+  vinculoDaEntrada,
   REPOUSO_POS_OFERTA_MS,
   type EntradaDaFila,
+  type SlotVago,
+  type VinculoDaVaga,
 } from "@/lib/domain/lista-espera";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import { OFERTA_DE_ESPERA } from "@/lib/domain/textos-padrao";
@@ -21,23 +27,120 @@ import type { Job, ResultadoDeJob } from "@/lib/jobs/worker";
 // preferencias, exclusoes, consentimento) e entrega para a RPC atomica
 // criar_oferta_de_espera, que grava a oferta e enfileira as mensagens numa
 // transacao so. O envio em si sai pelo executor de envio ativo EXISTENTE,
-// que reconfere consentimento e respeita o espacamento anti-ban.
+// que reconfere consentimento e respeita o espacamento anti-ban, e que so
+// envia enquanto a oferta vale (situacaoDoEnvioDeOferta, abaixo).
 //
 // Guardas concluem {ok:true} SEM EFEITO de proposito: execucao tardia (motor
 // parado, deploy) nao pode ofertar horario que ja passou nem duplicar onda.
+// A excecao e a vaga PRESA (quem serve esta em outra oferta, ou o WhatsApp
+// caiu): ai o job volta mais tarde, ate o limite do horario menos a janela.
 //
 // REGRA ABSOLUTA: nenhum dado de paciente em log; so ids.
 
 const TETO_DE_CANDIDATOS = 30;
+/** A fila lida por vaga (a mesma ordem de chegada da tela). */
+const TAMANHO_DA_FILA_LIDA = 500;
+/** WhatsApp fora do ar: a onda espera a reconexao em passos de 10 minutos. */
+const ESPERA_POR_RECONEXAO_MS = 10 * 60_000;
 
 type Slot = {
   professionalId: string;
+  unitId: string | null;
   startsAt: string;
   endsAt: string;
   sourceAppointmentId: string;
   contatoQueCancelou: string | null;
+  /** Nome do procedimento da consulta cancelada (texto da mensagem). */
   procedimentoDoSlot: string | null;
+  /** Procedimento da consulta cancelada (entrada "qualquer procedimento"). */
+  procedimentoDoSlotId: string | null;
+  /** A recepcao pode ter escolhido NAO oferecer este horario ao cancelar. */
+  oferecerVaga: boolean;
 };
+
+type MotivoDaVaga = { ok: true; motivo: string | null } | { ok: false };
+
+/**
+ * A regra unica "a vaga existe?" (vaga_de_espera_indisponivel no banco):
+ * profissional ativo, sem bloqueio, dentro da jornada e sem consulta no
+ * intervalo. A mesma funcao vale no aceite e no envio de cada mensagem.
+ */
+async function motivoDaVagaIndisponivel(
+  admin: SupabaseClient,
+  clinicId: string,
+  vaga: {
+    professionalId: string;
+    startsAt: string;
+    endsAt: string;
+    unitId: string | null;
+  },
+): Promise<MotivoDaVaga> {
+  const { data, error } = await admin.rpc("vaga_de_espera_indisponivel", {
+    p_clinic_id: clinicId,
+    p_professional_id: vaga.professionalId,
+    p_starts_at: vaga.startsAt,
+    p_ends_at: vaga.endsAt,
+    p_unit_id: vaga.unitId,
+  });
+  if (error) {
+    return { ok: false };
+  }
+  return { ok: true, motivo: typeof data === "string" ? data : null };
+}
+
+export type SituacaoDoEnvioDeOferta = "enviar" | "encerrada" | "leitura_falhou";
+
+/**
+ * A mensagem de uma onda ainda deve sair? Chamado pelo executor de envio
+ * ativo quando o payload traz offer_id. So envia com a oferta ABERTA, o
+ * contato sem ter recusado, metade da janela de resposta ainda pela frente e
+ * a vaga livre. Isso cobre o retry de desconexao, o canal ocupado, a
+ * reoferta cancelada pela recepcao e a vaga preenchida ou ocupada.
+ */
+export async function situacaoDoEnvioDeOferta(
+  admin: SupabaseClient,
+  clinicId: string,
+  offerId: string,
+  contactId: string,
+  agora: number = Date.now(),
+): Promise<SituacaoDoEnvioDeOferta> {
+  const { data: oferta, error } = await admin
+    .from("waitlist_offer")
+    .select(
+      "status, created_at, expires_at, declined_by, professional_id, slot_starts_at, slot_ends_at",
+    )
+    .eq("clinic_id", clinicId)
+    .eq("id", offerId)
+    .maybeSingle();
+  if (error) {
+    return "leitura_falhou";
+  }
+  if (!oferta || oferta.status !== "aberta") {
+    return "encerrada";
+  }
+  if (((oferta.declined_by as string[] | null) ?? []).includes(contactId)) {
+    return "encerrada";
+  }
+  if (
+    !temFolgaParaResponder({
+      criadaEm: oferta.created_at as string,
+      venceEm: oferta.expires_at as string,
+      agora,
+    })
+  ) {
+    return "encerrada";
+  }
+  const vaga = await motivoDaVagaIndisponivel(admin, clinicId, {
+    professionalId: oferta.professional_id as string,
+    startsAt: oferta.slot_starts_at as string,
+    endsAt: oferta.slot_ends_at as string,
+    unitId: null,
+  });
+  if (!vaga.ok) {
+    return "leitura_falhou";
+  }
+  return vaga.motivo ? "encerrada" : "enviar";
+}
 
 // Distinguir "nao existe" (definitivo) de "leitura falhou" (retry): erro
 // engolido aqui virava fila vazia ou exclusao ausente em silencio (achado
@@ -55,7 +158,7 @@ async function carregarSlot(
     const { data, error } = await admin
       .from("appointment")
       .select(
-        "id, professional_id, contact_id, starts_at, ends_at, service_link:service_link_id ( procedure:procedure_id ( name ) )",
+        "id, professional_id, contact_id, unit_id, starts_at, ends_at, oferecer_vaga_ao_cancelar, service_link:service_link_id ( procedure_id, procedure:procedure_id ( name ) )",
       )
       .eq("clinic_id", clinicId)
       .eq("id", appointmentId)
@@ -66,9 +169,15 @@ async function carregarSlot(
     if (!data) {
       return { ok: true as const, slot: null };
     }
-    const vinculo = Array.isArray(data.service_link)
-      ? data.service_link[0]
-      : data.service_link;
+    const vinculo = (
+      Array.isArray(data.service_link) ? data.service_link[0] : data.service_link
+    ) as
+      | {
+          procedure_id?: string | null;
+          procedure?: { name?: string } | { name?: string }[] | null;
+        }
+      | null
+      | undefined;
     const procedimento = vinculo
       ? Array.isArray(vinculo.procedure)
         ? vinculo.procedure[0]
@@ -78,12 +187,14 @@ async function carregarSlot(
       ok: true as const,
       slot: {
         professionalId: data.professional_id as string,
+        unitId: (data.unit_id as string | null) ?? null,
         startsAt: data.starts_at as string,
         endsAt: data.ends_at as string,
         sourceAppointmentId: data.id as string,
         contatoQueCancelou: (data.contact_id as string | null) ?? null,
-        procedimentoDoSlot:
-          ((procedimento as { name?: string } | null)?.name as string) ?? null,
+        procedimentoDoSlot: procedimento?.name ?? null,
+        procedimentoDoSlotId: vinculo?.procedure_id ?? null,
+        oferecerVaga: data.oferecer_vaga_ao_cancelar !== false,
       },
     };
   };
@@ -122,6 +233,11 @@ export async function executarOfertaDeEspera(
   if (!slot) {
     return { ok: false, erro: "payload_invalido", definitivo: true };
   }
+  // A recepcao cancelou escolhendo "nao oferecer a lista de espera": vale
+  // tambem para as ondas seguintes (expiracao e recusa geral voltam aqui).
+  if (!slot.oferecerVaga) {
+    return { ok: true };
+  }
 
   const { data: clinica, error: erroClinica } = await admin
     .from("clinic")
@@ -140,26 +256,21 @@ export async function executarOfertaDeEspera(
 
   // GUARDAS: tudo aqui conclui ok sem efeito.
   // A oferta precisa vencer ANTES do horario; slot mais perto que a janela
-  // (ou no passado) nao tem o que prometer.
+  // (ou no passado) nao tem o que prometer. O mesmo limite vale para voltar
+  // mais tarde (vaga presa ou WhatsApp fora do ar).
   const inicioDoSlot = new Date(slot.startsAt).getTime();
-  if (inicioDoSlot <= Date.now() + janelaMin * 60_000) {
+  const limite = inicioDoSlot - janelaMin * 60_000;
+  if (Date.now() >= limite) {
     return { ok: true };
   }
-  // O horario continua livre? (a exclusion e por profissional; encaixe fora)
-  const { data: ocupacoes, error: erroOcupacoes } = await admin
-    .from("appointment")
-    .select("id")
-    .eq("clinic_id", job.clinic_id)
-    .eq("professional_id", slot.professionalId)
-    .eq("is_overbooking", false)
-    .not("status", "in", "(cancelado_paciente,cancelado_clinica)")
-    .lt("starts_at", slot.endsAt)
-    .gt("ends_at", slot.startsAt)
-    .limit(1);
-  if (erroOcupacoes) {
+  // A vaga EXISTE? Bloqueio (ferias, doenca; qualquer um, porque a oferta
+  // nunca e encaixe), profissional desativado, fora da jornada ou horario
+  // ocupado (inclusive por encaixe): nada a oferecer.
+  const vaga = await motivoDaVagaIndisponivel(admin, job.clinic_id, slot);
+  if (!vaga.ok) {
     return { ok: false, erro: "leitura_falhou" };
   }
-  if ((ocupacoes ?? []).length > 0) {
+  if (vaga.motivo) {
     return { ok: true };
   }
   // Ja existe onda aberta para este horario?
@@ -177,11 +288,34 @@ export async function executarOfertaDeEspera(
   if ((abertaExistente ?? []).length > 0) {
     return { ok: true };
   }
+  // WhatsApp fora do ar: a oferta NAO nasce, porque o prazo de resposta
+  // contaria com ninguem recebendo (e a onda queimaria a vez de quem nunca
+  // viu a mensagem). A onda espera a reconexao, ate o limite.
+  const { data: conta, error: erroConta } = await admin
+    .from("whatsapp_account")
+    .select("connection_status")
+    .eq("clinic_id", job.clinic_id)
+    .maybeSingle();
+  if (erroConta) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
+  if (!conta) {
+    return { ok: true };
+  }
+  if (conta.connection_status !== "conectado") {
+    const quando = Date.now() + ESPERA_POR_RECONEXAO_MS;
+    return quando < limite
+      ? {
+          reagendar: new Date(quando).toISOString(),
+          motivo: "whatsapp_desconectado",
+        }
+      : { ok: true };
+  }
 
-  // EXCLUSOES.
-  const excluir = new Set<string>();
+  // EXCLUSOES PERMANENTES para esta vaga.
+  const excluirPermanentes = new Set<string>();
   if (slot.contatoQueCancelou) {
-    excluir.add(slot.contatoQueCancelou);
+    excluirPermanentes.add(slot.contatoQueCancelou);
   }
   // Quem ja recebeu QUALQUER onda deste horario (inclusive quem recusou).
   const { data: ondasDoSlot, error: erroOndas } = await admin
@@ -194,25 +328,7 @@ export async function executarOfertaDeEspera(
   }
   for (const onda of (ondasDoSlot ?? []) as { offered_to: string[] }[]) {
     for (const contato of onda.offered_to) {
-      excluir.add(contato);
-    }
-  }
-  // Um contato em NO MAXIMO uma oferta aberta (determinismo do SIM) e o
-  // repouso de 2h entre ofertas de horarios diferentes.
-  const desdeRepouso = new Date(
-    Date.now() - REPOUSO_POS_OFERTA_MS,
-  ).toISOString();
-  const { data: outrasOndas, error: erroOutras } = await admin
-    .from("waitlist_offer")
-    .select("offered_to, status, created_at")
-    .eq("clinic_id", job.clinic_id)
-    .or(`status.eq.aberta,created_at.gte.${desdeRepouso}`);
-  if (erroOutras) {
-    return { ok: false, erro: "leitura_falhou" };
-  }
-  for (const onda of (outrasOndas ?? []) as { offered_to: string[] }[]) {
-    for (const contato of onda.offered_to) {
-      excluir.add(contato);
+      excluirPermanentes.add(contato);
     }
   }
   // Quem ja tem consulta ATIVA em cima do horario oferecido nao precisa dele.
@@ -227,24 +343,62 @@ export async function executarOfertaDeEspera(
     return { ok: false, erro: "leitura_falhou" };
   }
   for (const linha of (conflitantes ?? []) as { contact_id: string }[]) {
-    excluir.add(linha.contact_id);
+    excluirPermanentes.add(linha.contact_id);
   }
 
-  // A FILA e o casamento.
+  // EXCLUSOES TEMPORARIAS: um contato em NO MAXIMO uma oferta aberta
+  // (determinismo do SIM) e o repouso de 2h entre ofertas de horarios
+  // diferentes. Guardam QUANDO cada um se libera: se a onda sair vazia so
+  // por causa delas, a vaga espera em vez de sumir (achado 58).
+  const desdeRepouso = new Date(
+    Date.now() - REPOUSO_POS_OFERTA_MS,
+  ).toISOString();
+  const { data: outrasOndas, error: erroOutras } = await admin
+    .from("waitlist_offer")
+    .select("offered_to, status, created_at, expires_at")
+    .eq("clinic_id", job.clinic_id)
+    .or(`status.eq.aberta,created_at.gte.${desdeRepouso}`);
+  if (erroOutras) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
+  const liberacao = liberacaoPorContato(
+    (
+      (outrasOndas ?? []) as {
+        offered_to: string[];
+        status: string;
+        created_at: string;
+        expires_at: string;
+      }[]
+    ).map((onda) => ({
+      offeredTo: onda.offered_to,
+      status: onda.status,
+      createdAt: onda.created_at,
+      expiresAt: onda.expires_at,
+    })),
+  );
+  const excluir = new Set<string>([
+    ...excluirPermanentes,
+    ...liberacao.keys(),
+  ]);
+
+  // A FILA e o casamento. A fila vem na ordem de chegada (a ordem entre
+  // grupos); a ordem dentro do grupo quem aplica e montarOnda.
   const [filaResult, vinculosResult] = await Promise.all([
     admin
       .from("waitlist")
       .select(
-        "id, contact_id, procedure_id, professional_id, preferred_shifts, preferred_weekdays, priority, created_at",
+        "id, contact_id, procedure_id, professional_id, preferred_shifts, preferred_weekdays, priority, created_at, contact:contact_id ( insurance_id )",
       )
       .eq("clinic_id", job.clinic_id)
       .eq("active", true)
-      .order("priority")
       .order("created_at")
-      .limit(200),
+      .order("id")
+      .limit(TAMANHO_DA_FILA_LIDA),
     admin
       .from("service_link")
-      .select("procedure_id, procedure:procedure_id ( name )")
+      .select(
+        "id, procedure_id, insurance_id, duration_min, procedure:procedure_id ( name, resource_id, active )",
+      )
       .eq("clinic_id", job.clinic_id)
       .eq("professional_id", slot.professionalId)
       .eq("active", true),
@@ -252,25 +406,71 @@ export async function executarOfertaDeEspera(
   if (filaResult.error || vinculosResult.error) {
     return { ok: false, erro: "leitura_falhou" };
   }
-  const fila = filaResult.data;
-  const vinculos = vinculosResult.data;
-  const procedimentosDoProfissional = new Set<string>();
+  const vinculos: VinculoDaVaga[] = [];
   const nomeDoProcedimento = new Map<string, string>();
-  for (const linha of (vinculos ?? []) as {
+  for (const linha of (vinculosResult.data ?? []) as {
+    id: string;
     procedure_id: string;
-    procedure: { name: string }[] | { name: string } | null;
+    insurance_id: string | null;
+    duration_min: number;
+    procedure:
+      | { name: string; resource_id: string | null; active: boolean }[]
+      | { name: string; resource_id: string | null; active: boolean }
+      | null;
   }[]) {
-    procedimentosDoProfissional.add(linha.procedure_id);
     const procedimento = Array.isArray(linha.procedure)
       ? linha.procedure[0]
       : linha.procedure;
-    if (procedimento?.name) {
-      nomeDoProcedimento.set(linha.procedure_id, procedimento.name);
+    if (!procedimento || procedimento.active === false) {
+      continue;
+    }
+    vinculos.push({
+      id: linha.id,
+      procedureId: linha.procedure_id,
+      insuranceId: linha.insurance_id ?? null,
+      durationMin: linha.duration_min,
+      resourceId: procedimento.resource_id ?? null,
+    });
+    nomeDoProcedimento.set(linha.procedure_id, procedimento.name);
+  }
+
+  // Sala ou equipamento que algum procedimento exige e que ja esta ocupado
+  // neste horario (por QUALQUER profissional): quem precisa dele nao entra
+  // na onda, senao o SIM bateria na exclusion de recurso.
+  const recursosExigidos = [
+    ...new Set(
+      vinculos
+        .map((vinculo) => vinculo.resourceId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const recursosOcupados = new Set<string>();
+  if (recursosExigidos.length > 0) {
+    const { data: usos, error: erroUsos } = await admin
+      .from("appointment")
+      .select("resource_id")
+      .eq("clinic_id", job.clinic_id)
+      .in("resource_id", recursosExigidos)
+      .not("status", "in", "(cancelado_paciente,cancelado_clinica)")
+      .lt("starts_at", slot.endsAt)
+      .gt("ends_at", slot.startsAt);
+    if (erroUsos) {
+      return { ok: false, erro: "leitura_falhou" };
+    }
+    for (const uso of (usos ?? []) as { resource_id: string | null }[]) {
+      if (uso.resource_id) {
+        recursosOcupados.add(uso.resource_id);
+      }
     }
   }
 
-  const entradas: EntradaDaFila[] = ((fila ?? []) as Record<string, unknown>[]).map(
-    (linha) => ({
+  const entradas: EntradaDaFila[] = (
+    (filaResult.data ?? []) as Record<string, unknown>[]
+  ).map((linha) => {
+    const contato = (
+      Array.isArray(linha.contact) ? linha.contact[0] : linha.contact
+    ) as { insurance_id?: string | null } | null | undefined;
+    return {
       id: linha.id as string,
       contactId: linha.contact_id as string,
       procedureId: (linha.procedure_id as string | null) ?? null,
@@ -279,24 +479,28 @@ export async function executarOfertaDeEspera(
       preferredWeekdays: (linha.preferred_weekdays as number[] | null) ?? [],
       priority: linha.priority as number,
       createdAt: linha.created_at as string,
-    }),
-  );
+      insuranceId: contato?.insurance_id ?? null,
+    };
+  });
   const inicio = new Date(slot.startsAt);
+  const slotVago: SlotVago = {
+    professionalId: slot.professionalId,
+    weekday: diaDaSemanaNoFuso(inicio, timezone),
+    turno: turnoDoInstante(inicio, timezone),
+    duracaoMin: Math.floor(
+      (new Date(slot.endsAt).getTime() - inicio.getTime()) / 60_000,
+    ),
+    procedimentoDaVaga: slot.procedimentoDoSlotId,
+  };
   const candidatos = montarOnda({
     entradas,
-    slot: {
-      professionalId: slot.professionalId,
-      weekday: diaDaSemanaNoFuso(inicio, timezone),
-      turno: turnoDoInstante(inicio, timezone),
-    },
-    procedimentosDoProfissional,
+    slot: slotVago,
+    vinculos,
+    recursosOcupados,
     excluirContatos: excluir,
     // Margem para o consentimento poder pular sem esvaziar a onda.
     tamanho: Math.min(TETO_DE_CANDIDATOS, tamanhoDaOnda + 10),
   });
-  if (candidatos.length === 0) {
-    return { ok: true };
-  }
 
   // Consentimento por candidato ate encher a onda (o executor de envio
   // reconfere na hora do envio; aqui evita oferta gravada para quem nunca
@@ -325,6 +529,25 @@ export async function executarOfertaDeEspera(
     }
   }
   if (onda.length === 0) {
+    // Ninguem livre agora. Se quem serve para a vaga esta PRESO em outra
+    // oferta (duas vagas na mesma manha) ou no repouso, a vaga espera essa
+    // oferta fechar em vez de sumir sem aviso.
+    const quando = proximaTentativaDaVaga({
+      entradas,
+      slot: slotVago,
+      vinculos,
+      recursosOcupados,
+      excluirPermanentes,
+      liberacao,
+      agora: Date.now(),
+      limite,
+    });
+    if (quando !== null) {
+      return {
+        reagendar: new Date(quando).toISOString(),
+        motivo: "vaga_aguardando_outra_oferta",
+      };
+    }
     return { ok: true };
   }
 
@@ -363,10 +586,12 @@ export async function executarOfertaDeEspera(
       body: renderizarModelo(modelo, {
         nome,
         clinica: clinica.name as string,
+        // O procedimento com que a pessoa SERIA agendada (o mesmo vinculo
+        // que o aceite escolhe).
         procedimento:
-          (entrada.procedureId
-            ? nomeDoProcedimento.get(entrada.procedureId)
-            : null) ??
+          nomeDoProcedimento.get(
+            vinculoDaEntrada(entrada, slotVago, vinculos)?.procedureId ?? "",
+          ) ??
           slot.procedimentoDoSlot ??
           "consulta",
         profissional: (profissional?.name as string | undefined) ?? null,

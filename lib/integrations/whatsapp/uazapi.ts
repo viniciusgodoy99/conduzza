@@ -55,6 +55,64 @@ type UazapiOptions = {
   fetchFn?: typeof fetch;
 };
 
+/** Operacoes de instancia que olham o status HTTP e podem lancar este erro. */
+export type OperacaoDeInstancia = "criar" | "conectar" | "status" | "webhook";
+
+/**
+ * O que a recusa significa, pelos codigos da especificacao:
+ * - instancia_invalida: 401 (token invalido ou expirado) ou 404 (instancia
+ *   nao existe). No servidor COMPARTILHADO isso acontece quando alguem apaga
+ *   ou recria a instancia no painel. O remedio e descartar o token e criar
+ *   outra.
+ * - fluxo_em_andamento: 409, ja existe um pareamento aberto.
+ * - limite_de_conexoes: 429, o servidor esta no teto.
+ * - recusado: qualquer outro fora de 2xx.
+ */
+export type MotivoDaRecusa =
+  | "instancia_invalida"
+  | "fluxo_em_andamento"
+  | "limite_de_conexoes"
+  | "recusado";
+
+/**
+ * Resposta fora de 2xx numa operacao de instancia.
+ *
+ * Antes, connectInstance e getStatus liam o corpo de erro como se fosse
+ * status, e qualquer recusa virava "desconectado" mudo: sem QR, sem mensagem,
+ * e clicar de novo dava o mesmo. A mensagem do erro so carrega operacao e
+ * codigo, nunca o corpo da resposta.
+ */
+export class UazapiHttpError extends Error {
+  readonly status: number;
+  readonly operacao: OperacaoDeInstancia;
+  readonly motivo: MotivoDaRecusa;
+
+  constructor(status: number, operacao: OperacaoDeInstancia) {
+    super(
+      status === 429 && operacao === "criar"
+        ? "O servidor do WhatsApp atingiu o limite de instâncias conectadas."
+        : `uazapi ${operacao} ${status}`,
+    );
+    this.name = "UazapiHttpError";
+    this.status = status;
+    this.operacao = operacao;
+    this.motivo =
+      status === 401 || status === 404
+        ? "instancia_invalida"
+        : status === 409
+          ? "fluxo_em_andamento"
+          : status === 429
+            ? "limite_de_conexoes"
+            : "recusado";
+  }
+}
+
+function exigir2xx(status: number, operacao: OperacaoDeInstancia): void {
+  if (status < 200 || status >= 300) {
+    throw new UazapiHttpError(status, operacao);
+  }
+}
+
 export class UazapiProvider implements WhatsAppProvider {
   readonly name = "uazapi" as const;
   readonly isOfficialChannel = false;
@@ -393,11 +451,9 @@ export class UazapiProvider implements WhatsAppProvider {
       payload: { name },
       tokenKind: "admin",
     });
-    if (status === 429) {
-      throw new Error(
-        "O servidor uazapi atingiu o limite de instâncias conectadas.",
-      );
-    }
+    // 429 (teto de instancias) e 401 (token administrativo recusado) chegam
+    // tipados, para a tela dizer o que houve em vez de "tente de novo".
+    exigir2xx(status, "criar");
     const token = pickString(body, ["token", "instance.token"]);
     if (!token) {
       throw new Error(
@@ -413,22 +469,26 @@ export class UazapiProvider implements WhatsAppProvider {
   }
 
   async connectInstance(ref: InstanceRef): Promise<InstanceStatus> {
-    const { body } = await this.request(ref, PATHS.instanceConnect, {
+    const { status, body } = await this.request(ref, PATHS.instanceConnect, {
       payload: {},
     });
+    exigir2xx(status, "conectar");
     return parseInstanceStatus(body);
   }
 
   async getStatus(ref: InstanceRef): Promise<InstanceStatus> {
     // GET, conforme a especificacao.
-    const { body } = await this.request(ref, PATHS.instanceStatus, {
+    const { status, body } = await this.request(ref, PATHS.instanceStatus, {
       method: "GET",
     });
+    exigir2xx(status, "status");
     return parseInstanceStatus(body);
   }
 
   async configureWebhook(ref: InstanceRef, url: string): Promise<void> {
-    await this.request(ref, PATHS.webhook, {
+    // Recusa aqui lanca: antes um 401 passava calado, o numero conectava e
+    // nenhuma resposta de paciente chegava.
+    const { status } = await this.request(ref, PATHS.webhook, {
       payload: {
         enabled: true,
         url,
@@ -438,6 +498,7 @@ export class UazapiProvider implements WhatsAppProvider {
         excludeMessages: ["wasSentByApi"],
       },
     });
+    exigir2xx(status, "webhook");
   }
 
   async disconnect(ref: InstanceRef): Promise<void> {

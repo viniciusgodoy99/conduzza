@@ -60,6 +60,8 @@ function evento(
     contentType: "texto",
     body,
     mediaUrl: null,
+    mediaFilename: null,
+    mediaMimetype: null,
     quotedWaMessageId: null,
     anuncio: null,
     instanceToken: null,

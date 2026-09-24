@@ -5,9 +5,12 @@ import { adminClient, anonClient } from "./stack";
 
 // Tarefa 4.9, fase 1: RLS da lista de espera (migration 20260915100000).
 // O que esta em jogo: a fila carrega nome e preferencia de paciente
-// (isolamento entre clinicas e inegociavel); a matriz da a leitura "ver"
-// sem escrever; e waitlist_offer nasce SO pelo motor (insert de sessao
-// seria oferta forjada mandando mensagem em massa pela clinica).
+// (isolamento entre clinicas e inegociavel); a matriz da "ver" a leitura E
+// ao profissional, sem escrever (migration 20260924104000: as policies
+// usavam user_can_write, que inclui profissional); e waitlist_offer nasce SO
+// pelo motor (insert de sessao seria oferta forjada mandando mensagem em
+// massa pela clinica). A sessao so leva oferta ABERTA para CANCELADA, e so
+// mexe na coluna status.
 
 const RLS_VIOLATION = "42501";
 
@@ -22,9 +25,31 @@ let profissionalA = "";
 let consultaA = "";
 
 const sessoes = {} as Record<
-  "recepcaoA" | "leituraA" | "gestorB",
+  "recepcaoA" | "leituraA" | "profissionalA" | "gestorB",
   SupabaseClient
 >;
+
+const HORA = 60 * 60_000;
+
+/** Oferta ABERTA criada pelo motor (service role), num horario proprio. */
+async function ofertaAbertaDoMotor(horasAFrente: number): Promise<string> {
+  const inicio = Date.now() + horasAFrente * HORA;
+  const { data } = await admin
+    .from("waitlist_offer")
+    .insert({
+      clinic_id: clinicaA,
+      source_appointment_id: consultaA,
+      professional_id: profissionalA,
+      slot_starts_at: new Date(inicio).toISOString(),
+      slot_ends_at: new Date(inicio + HORA / 2).toISOString(),
+      offered_to: [contatoA],
+      expires_at: new Date(Date.now() + HORA / 2).toISOString(),
+    })
+    .select("id")
+    .single()
+    .throwOnError();
+  return data!.id as string;
+}
 
 const email = (papel: string) => `espera-${papel}-${sufixo}@teste.dev`;
 
@@ -71,6 +96,7 @@ beforeAll(async () => {
   await Promise.all([
     criarUsuario("recepcaoA", clinicaA, "recepcao"),
     criarUsuario("leituraA", clinicaA, "leitura"),
+    criarUsuario("profissionalA", clinicaA, "profissional"),
     criarUsuario("gestorB", clinicaB, "gestor"),
   ]);
 
@@ -200,6 +226,45 @@ describe("waitlist", () => {
     expect(prova).toHaveLength(1);
   });
 
+  it("profissional vê a fila e não escreve nela (a matriz dá só ver)", async () => {
+    const { data: fila } = await sessoes.profissionalA
+      .from("waitlist")
+      .select("id, preferred_shifts")
+      .eq("clinic_id", clinicaA);
+    expect(fila).toHaveLength(1);
+
+    const { error: erroInsert } = await sessoes.profissionalA
+      .from("waitlist")
+      .insert({ clinic_id: clinicaA, contact_id: contatoA });
+    expect(erroInsert?.code).toBe(RLS_VIOLATION);
+
+    // UPDATE sem policy que o deixe passar: zero linhas, sem erro.
+    const { data: editadas, error: erroUpdate } = await sessoes.profissionalA
+      .from("waitlist")
+      .update({ preferred_shifts: ["noite"], active: false })
+      .eq("clinic_id", clinicaA)
+      .select("id");
+    expect(erroUpdate).toBeNull();
+    expect(editadas ?? []).toHaveLength(0);
+    const { data: prova } = await admin
+      .from("waitlist")
+      .select("preferred_shifts, active")
+      .eq("clinic_id", clinicaA)
+      .single();
+    expect(prova!.active).toBe(true);
+    expect(prova!.preferred_shifts).toEqual(["manha"]);
+  });
+
+  it("leitura também não edita a fila", async () => {
+    const { data: editadas, error } = await sessoes.leituraA
+      .from("waitlist")
+      .update({ active: false })
+      .eq("clinic_id", clinicaA)
+      .select("id");
+    expect(error).toBeNull();
+    expect(editadas ?? []).toHaveLength(0);
+  });
+
   it("delete não existe nem para quem escreve: sair da fila é active=false", async () => {
     const { data: antes } = await admin
       .from("waitlist")
@@ -271,6 +336,23 @@ describe("mover_na_lista_de_espera (RPC de reordenar)", () => {
       { p_clinic_id: clinicaA, p_id: ultima, p_nova_posicao: 2 },
     );
     expect(erroLeitura?.message).toContain("Entrada não encontrada");
+
+    // A RPC e SECURITY INVOKER: o recorte da policy de UPDATE (sem
+    // profissional) vale para ela tambem.
+    const { error: erroProfissional } = await sessoes.profissionalA.rpc(
+      "mover_na_lista_de_espera",
+      { p_clinic_id: clinicaA, p_id: ultima, p_nova_posicao: 2 },
+    );
+    expect(erroProfissional?.message).toContain("Entrada não encontrada");
+    const { data: intacta } = await admin
+      .from("waitlist")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("active", true)
+      .order("priority")
+      .limit(1)
+      .single();
+    expect(intacta!.id).toBe(ultima);
   });
 });
 
@@ -312,7 +394,24 @@ describe("waitlist_offer", () => {
     expect(alheias).toHaveLength(0);
   });
 
-  it("quem escreve cancela a reoferta; leitura não", async () => {
+  it("profissional e leitura não cancelam; a recepção cancela a reoferta aberta", async () => {
+    for (const sessao of [sessoes.profissionalA, sessoes.leituraA]) {
+      const { data: nada, error } = await sessao
+        .from("waitlist_offer")
+        .update({ status: "cancelada" })
+        .eq("clinic_id", clinicaA)
+        .eq("status", "aberta")
+        .select("id");
+      expect(error).toBeNull(); // zero linhas, sem erro
+      expect(nada ?? []).toHaveLength(0);
+    }
+    const { data: aindaAberta } = await admin
+      .from("waitlist_offer")
+      .select("status")
+      .eq("clinic_id", clinicaA)
+      .single();
+    expect(aindaAberta!.status).toBe("aberta");
+
     const { data: cancelada, error } = await sessoes.recepcaoA
       .from("waitlist_offer")
       .update({ status: "cancelada" })
@@ -333,5 +432,140 @@ describe("waitlist_offer", () => {
       .eq("clinic_id", clinicaA)
       .single();
     expect(prova!.status).toBe("cancelada");
+  });
+
+  it("nem a recepção reabre, preenche ou mexe em outra coluna da oferta", async () => {
+    // Reabrir: o USING exige oferta aberta, entao a cancelada nem aparece.
+    const { data: reaberta, error: erroReabrir } = await sessoes.recepcaoA
+      .from("waitlist_offer")
+      .update({ status: "aberta" })
+      .eq("clinic_id", clinicaA)
+      .eq("status", "cancelada")
+      .select("id");
+    expect(erroReabrir).toBeNull();
+    expect(reaberta ?? []).toHaveLength(0);
+
+    const ofertaId = await ofertaAbertaDoMotor(10);
+
+    // Aberta para preenchida: o WITH CHECK so aceita cancelada.
+    const { error: erroPreencher } = await sessoes.recepcaoA
+      .from("waitlist_offer")
+      .update({ status: "preenchida" })
+      .eq("id", ofertaId);
+    expect(erroPreencher?.code).toBe(RLS_VIOLATION);
+
+    // Outra coluna, sozinha ou junto do cancelamento: sem privilegio de
+    // coluna (so status e gravavel pela sessao).
+    const { error: erroPrazo } = await sessoes.recepcaoA
+      .from("waitlist_offer")
+      .update({ expires_at: new Date(Date.now() + 48 * HORA).toISOString() })
+      .eq("id", ofertaId);
+    expect(erroPrazo?.code).toBe(RLS_VIOLATION);
+    const { error: erroJunto } = await sessoes.recepcaoA
+      .from("waitlist_offer")
+      .update({ status: "cancelada", offered_to: [] })
+      .eq("id", ofertaId);
+    expect(erroJunto?.code).toBe(RLS_VIOLATION);
+
+    const { data: prova } = await admin
+      .from("waitlist_offer")
+      .select("status, offered_to")
+      .eq("id", ofertaId)
+      .single();
+    expect(prova!.status).toBe("aberta");
+    expect(prova!.offered_to).toEqual([contatoA]);
+
+    // Higiene para os proximos cenarios.
+    await admin
+      .from("waitlist_offer")
+      .update({ status: "cancelada" })
+      .eq("id", ofertaId)
+      .throwOnError();
+  });
+});
+
+describe("cancelar_reoferta_de_espera (botão Cancelar reoferta)", () => {
+  it("recepção cancela a oferta e as mensagens da onda que ainda estavam na fila", async () => {
+    const ofertaId = await ofertaAbertaDoMotor(20);
+    const { data: envio } = await admin
+      .from("job_queue")
+      .insert({
+        clinic_id: clinicaA,
+        kind: "enviar_mensagem_ativa",
+        // Um dia a frente: o motor nunca chega a pegar este envio de teste.
+        run_at: new Date(Date.now() + 24 * HORA).toISOString(),
+        payload: {
+          contact_id: contatoA,
+          body: "Oferta de teste",
+          offer_id: ofertaId,
+        },
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+
+    const { data: cancelou, error } = await sessoes.recepcaoA.rpc(
+      "cancelar_reoferta_de_espera",
+      { p_clinic_id: clinicaA, p_offer_id: ofertaId },
+    );
+    expect(error).toBeNull();
+    expect(cancelou).toBe(true);
+
+    const { data: oferta } = await admin
+      .from("waitlist_offer")
+      .select("status")
+      .eq("id", ofertaId)
+      .single();
+    expect(oferta!.status).toBe("cancelada");
+    const { data: job } = await admin
+      .from("job_queue")
+      .select("status, last_error")
+      .eq("id", envio!.id as string)
+      .single();
+    expect(job!.status).toBe("cancelado");
+    expect(job!.last_error).toBe("oferta_encerrada");
+
+    // Segunda vez: ja encerrada, resposta honesta sem erro.
+    const { data: deNovo, error: erroDeNovo } = await sessoes.recepcaoA.rpc(
+      "cancelar_reoferta_de_espera",
+      { p_clinic_id: clinicaA, p_offer_id: ofertaId },
+    );
+    expect(erroDeNovo).toBeNull();
+    expect(deNovo).toBe(false);
+  });
+
+  it("profissional, leitura e a outra clínica recebem recusa de permissão", async () => {
+    const ofertaId = await ofertaAbertaDoMotor(30);
+    for (const sessao of [
+      sessoes.profissionalA,
+      sessoes.leituraA,
+      sessoes.gestorB,
+    ]) {
+      const { error } = await sessao.rpc("cancelar_reoferta_de_espera", {
+        p_clinic_id: clinicaA,
+        p_offer_id: ofertaId,
+      });
+      expect(error?.code).toBe(RLS_VIOLATION);
+    }
+    // Gestor da B passando a PROPRIA clinica com a oferta da A: o update
+    // recorta por clinic_id e nada acontece.
+    const { data: alheia, error: erroAlheia } = await sessoes.gestorB.rpc(
+      "cancelar_reoferta_de_espera",
+      { p_clinic_id: clinicaB, p_offer_id: ofertaId },
+    );
+    expect(erroAlheia).toBeNull();
+    expect(alheia).toBe(false);
+
+    const { data: prova } = await admin
+      .from("waitlist_offer")
+      .select("status")
+      .eq("id", ofertaId)
+      .single();
+    expect(prova!.status).toBe("aberta");
+    await admin
+      .from("waitlist_offer")
+      .update({ status: "cancelada" })
+      .eq("id", ofertaId)
+      .throwOnError();
   });
 });

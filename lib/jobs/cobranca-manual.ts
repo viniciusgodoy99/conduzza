@@ -82,6 +82,9 @@ export async function planejarCobrancaManual(
     .in("id", appointmentIds)
     .in("status", STATUS_PENDENTES)
     .eq("send_confirmation", true)
+    // Quem pediu para remarcar ja respondeu: cobrar de novo e a pergunta
+    // errada (a Tela 2 desabilita; o servidor nao confia no botao).
+    .is("remarcacao_pedida_em", null)
     .gt("starts_at", agora.toISOString());
   const cobraveis = (consultas ?? []) as ConsultaCobravel[];
   if (cobraveis.length === 0) {

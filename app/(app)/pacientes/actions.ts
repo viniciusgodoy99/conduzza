@@ -5,6 +5,12 @@ import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import {
+  chaveDeTelefone,
+  MENSAGEM_TELEFONE_INVALIDO,
+  mensagemDeTelefoneDuplicado,
+  normalizarTelefone,
+} from "@/lib/domain/telefone";
 import { createClient } from "@/lib/supabase/server";
 
 // Server Action da ficha do paciente (Tela 9, tarefa 4.5). Uma so: editar o
@@ -38,7 +44,9 @@ async function requirePacientesWriter() {
 const atualizarPacienteSchema = z.object({
   contact_id: idSchema,
   name: z.string().trim().min(2).max(120).nullable(),
-  phone_e164: z.string().regex(/^\+[1-9]\d{7,14}$/),
+  // Texto como veio: a normalizacao unica (lib/domain/telefone.ts) roda na
+  // action, porque a do formulario nao protege nada.
+  phone_e164: z.string().trim().min(1).max(40),
   email: z.email().max(160).nullable(),
   // So digitos: a mascara e da tela, o banco guarda o numero limpo.
   cpf: z
@@ -66,6 +74,10 @@ export async function atualizarPacienteAction(
     return { ok: false, error: "Confira os campos do cadastro." };
   }
   const dados = parsed.data;
+  const telefoneDigitado = normalizarTelefone(dados.phone_e164);
+  if (!telefoneDigitado) {
+    return { ok: false, error: MENSAGEM_TELEFONE_INVALIDO };
+  }
 
   const supabase = await createClient();
   // O contato precisa ser da clinica ativa. A RLS ja recorta, mas sem esta
@@ -73,12 +85,33 @@ export async function atualizarPacienteAction(
   // por que.
   const { data: dono } = await supabase
     .from("contact")
-    .select("id")
+    .select("id, phone_e164")
     .eq("clinic_id", guard.clinicId)
     .eq("id", dados.contact_id)
     .maybeSingle();
   if (!dono) {
     return { ok: false, error: "Paciente não encontrado nesta clínica." };
+  }
+  // Mesma chave que o numero gravado (a recepcao so acrescentou ou tirou o
+  // nono digito): mantem o GRAVADO, que e a forma que o WhatsApp entregou e
+  // com certeza recebe mensagem. Trocar pela digitada nao muda a pessoa, so
+  // arrisca o envio.
+  const chaveNova = chaveDeTelefone(telefoneDigitado);
+  const telefone =
+    chaveDeTelefone(dono.phone_e164 as string) === chaveNova
+      ? (dono.phone_e164 as string)
+      : telefoneDigitado;
+  // Numero de OUTRA pessoa (pela chave, com ou sem o nono digito): recusa
+  // dizendo quem, em vez de juntar dois pacientes num telefone so.
+  const { data: outro } = await supabase
+    .from("contact")
+    .select("id, name")
+    .eq("clinic_id", guard.clinicId)
+    .eq("phone_key", chaveNova)
+    .neq("id", dados.contact_id)
+    .maybeSingle();
+  if (outro) {
+    return { ok: false, error: mensagemDeTelefoneDuplicado(outro.name) };
   }
   // Convenio de OUTRA clinica nao entra: a chave estrangeira aponta para
   // insurance sem olhar clinica, entao a checagem tem que ser explicita.
@@ -98,7 +131,7 @@ export async function atualizarPacienteAction(
     .from("contact")
     .update({
       name: dados.name,
-      phone_e164: dados.phone_e164,
+      phone_e164: telefone,
       email: dados.email,
       cpf: dados.cpf,
       birth_date: dados.birth_date,

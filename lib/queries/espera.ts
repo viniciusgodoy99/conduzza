@@ -49,6 +49,7 @@ export type ConfigDaEspera = {
 
 export const esperaKeys = {
   fila: (clinicId: string) => ["espera", clinicId, "fila"] as const,
+  /** As reofertas abertas (todas, uma faixa por oferta). */
   oferta: (clinicId: string) => ["espera", clinicId, "oferta"] as const,
   metricas: (clinicId: string) => ["espera", clinicId, "metricas"] as const,
 };
@@ -85,10 +86,18 @@ export async function fetchFilaDeEspera(
   })) as EntradaDaEspera[];
 }
 
-export async function fetchOfertaEmAndamento(
+/** Teto de faixas na tela: mais que isso e sinal de outro problema. */
+const TETO_DE_OFERTAS_NA_TELA = 20;
+
+/**
+ * TODAS as reofertas abertas, do horario mais proximo para o mais longe.
+ * Duas vagas abertas ao mesmo tempo (a medica adoeceu e a tarde inteira foi
+ * cancelada) precisam de duas faixas: a recepcao so cancela o que enxerga.
+ */
+export async function fetchOfertasEmAndamento(
   supabase: SupabaseClient,
   clinicId: string,
-): Promise<OfertaEmAndamento | null> {
+): Promise<OfertaEmAndamento[]> {
   const { data, error } = await supabase
     .from("waitlist_offer")
     .select(
@@ -96,41 +105,50 @@ export async function fetchOfertaEmAndamento(
     )
     .eq("clinic_id", clinicId)
     .eq("status", "aberta")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("slot_starts_at")
+    .order("id")
+    .limit(TETO_DE_OFERTAS_NA_TELA);
   if (error) {
     throw new Error(error.message);
   }
-  if (!data) {
-    return null;
+  const ofertas = (data ?? []) as Record<string, unknown>[];
+  if (ofertas.length === 0) {
+    return [];
   }
-  const offeredTo = (data.offered_to as string[]) ?? [];
-  const declinedBy = new Set((data.declined_by as string[]) ?? []);
-  const { data: contatos } = await supabase
+  const todosOsContatos = [
+    ...new Set(ofertas.flatMap((oferta) => (oferta.offered_to as string[]) ?? [])),
+  ];
+  const { data: contatos, error: erroContatos } = await supabase
     .from("contact")
     .select("id, name")
     .eq("clinic_id", clinicId)
-    .in("id", offeredTo);
+    .in("id", todosOsContatos);
+  if (erroContatos) {
+    throw new Error(erroContatos.message);
+  }
   const nomePorContato = new Map(
     ((contatos ?? []) as { id: string; name: string | null }[]).map(
       (linha) => [linha.id, linha.name],
     ),
   );
-  const profissional = primeiro(
-    data.professional as { name: string } | { name: string }[] | null,
-  );
-  return {
-    id: data.id as string,
-    slot_starts_at: data.slot_starts_at as string,
-    expires_at: data.expires_at as string,
-    professional_nome: profissional?.name ?? null,
-    destinatarios: offeredTo.map((contactId) => ({
-      contactId,
-      nome: nomePorContato.get(contactId) ?? null,
-      situacao: declinedBy.has(contactId) ? "recusou" : "aguardando",
-    })),
-  };
+  return ofertas.map((oferta) => {
+    const offeredTo = (oferta.offered_to as string[]) ?? [];
+    const declinedBy = new Set((oferta.declined_by as string[]) ?? []);
+    const profissional = primeiro(
+      oferta.professional as { name: string } | { name: string }[] | null,
+    );
+    return {
+      id: oferta.id as string,
+      slot_starts_at: oferta.slot_starts_at as string,
+      expires_at: oferta.expires_at as string,
+      professional_nome: profissional?.name ?? null,
+      destinatarios: offeredTo.map((contactId) => ({
+        contactId,
+        nome: nomePorContato.get(contactId) ?? null,
+        situacao: declinedBy.has(contactId) ? "recusou" : "aguardando",
+      })),
+    };
+  });
 }
 
 export async function fetchMetricasDaEspera(

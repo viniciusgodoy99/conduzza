@@ -162,6 +162,7 @@ export function AutomacoesClient({
             precoCents: volumes.precoCents,
           }}
           sentidoDoPasso="antes"
+          tipoDaRegua="confirmacao"
           eventoRotulo="a consulta"
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
@@ -204,6 +205,7 @@ export function AutomacoesClient({
             precoCents: volumes.precoCents,
           }}
           sentidoDoPasso="depois"
+          tipoDaRegua="pos_falta"
           eventoRotulo="a falta"
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}

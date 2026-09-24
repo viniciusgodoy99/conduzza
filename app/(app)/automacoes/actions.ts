@@ -953,12 +953,14 @@ export async function testarEnvioAction(
     const base64 = Buffer.from(await download.data.arrayBuffer()).toString(
       "base64",
     );
+    // Audio nao mostra legenda no WhatsApp; imagem e documento mostram. Com
+    // audio e texto, o texto vai numa segunda mensagem (lib/jobs/regua.ts).
+    const audioComTexto = passo.media_type === "audio" && temTexto;
     resultado = await provider.sendMedia(ref, destino, {
       tipo: passo.media_type as "image" | "audio" | "document",
       base64,
       mimetype: passo.media_mimetype as string,
-      // Audio nao mostra legenda no WhatsApp; imagem e documento mostram.
-      legenda: temTexto ? corpo : "Teste da régua",
+      legenda: audioComTexto ? null : temTexto ? corpo : "Teste da régua",
       nomeDoArquivo: (passo.media_filename as string | null) ?? null,
     });
     if (resultado.ok && kind === "confirmacao") {
@@ -966,9 +968,11 @@ export async function testarEnvioAction(
       resultado = await provider.sendMenu(
         ref,
         destino,
-        CORPO_DO_MENU_APOS_MIDIA,
+        audioComTexto ? corpo : CORPO_DO_MENU_APOS_MIDIA,
         MENU_CONFIRMACAO,
       );
+    } else if (resultado.ok && audioComTexto) {
+      resultado = await provider.sendText(ref, destino, corpo);
     }
   } else {
     resultado =

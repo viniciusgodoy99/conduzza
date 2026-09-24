@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Plus, Trash2, UserRound, X } from "lucide-react";
+import { Plus, Sunrise, Trash2, UserRound, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -9,9 +9,14 @@ import {
   salvarProfissionalAction,
 } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { BotaoProtegido, chipAtivo } from "@/components/cadastros/comum";
+import {
+  AcoesDaLinha,
+  AvisoDeConsultas,
+  BotaoProtegido,
+  ChipSituacao,
+  DetalheSomenteLeitura,
+} from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
-import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,6 +88,18 @@ function horaCurta(valor: string): string {
   return valor.slice(0, 5);
 }
 
+// Fim antes do inicio e uma janela que VIRA O DIA (plantao 22:00 as 02:00),
+// prevista no modelo de dados (catalogo_clinico.sql e scheduling.ts). A tela
+// diz isso em texto e pede confirmacao ao salvar, para uma inversao por
+// engano (18:00 as 08:00) nao virar plantao calado (achado 43).
+function viraODia(faixa: { starts_at: string; ends_at: string }): boolean {
+  return (
+    faixa.starts_at !== "" &&
+    faixa.ends_at !== "" &&
+    horaCurta(faixa.ends_at) < horaCurta(faixa.starts_at)
+  );
+}
+
 let contadorChave = 0;
 function novaChave(): string {
   contadorChave += 1;
@@ -94,18 +111,42 @@ export function ProfissionaisTab({
   podeEditar,
   dica,
   aoMudar,
+  timezone,
 }: TabProps) {
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<FormProfissional>(FORM_VAZIO);
-  const [faixas, setFaixas] = useState<FaixaForm[]>([]);
+  const [faixas, setFaixasBruto] = useState<FaixaForm[]>([]);
   const [especialidadeDigitada, setEspecialidadeDigitada] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Quem so ve Cadastros consulta a jornada por dia neste mesmo painel, em
+  // modo leitura (achado 41).
+  const [somenteLeitura, setSomenteLeitura] = useState(false);
+  // Faixa que vira o dia (achado 43): pedindoVirada mostra a pergunta;
+  // confirmarVirada guarda o "sim" ate a jornada mudar de novo.
+  const [pedindoVirada, setPedindoVirada] = useState(false);
+  const [confirmarVirada, setConfirmarVirada] = useState(false);
+  // Desativacao com consultas futuras esperando confirmacao (achado 37).
+  const [aviso, setAviso] = useState<{
+    consultas: number;
+    primeira: string | null;
+  } | null>(null);
 
   const temVariasUnidades = catalogo.unidades.length >= 2;
 
-  const abrir = (profissional?: Profissional) => {
+  // Mexeu na jornada: a confirmacao de plantao anterior nao vale mais.
+  const setFaixas = (proximas: FaixaForm[]) => {
+    setConfirmarVirada(false);
+    setPedindoVirada(false);
+    setFaixasBruto(proximas);
+  };
+
+  const abrir = (profissional?: Profissional, leitura = false) => {
     setErro(null);
+    setAviso(null);
+    setConfirmarVirada(false);
+    setPedindoVirada(false);
+    setSomenteLeitura(leitura);
     setEspecialidadeDigitada("");
     if (profissional) {
       setForm({
@@ -117,17 +158,19 @@ export function ProfissionaisTab({
         calendar_color: profissional.calendar_color ?? COR_PADRAO,
         active: profissional.active,
       });
-      setFaixas(
-        catalogo.jornadas
-          .filter((j) => j.professional_id === profissional.id)
-          .map((j) => ({
-            chave: novaChave(),
-            weekday: j.weekday,
-            starts_at: horaCurta(j.starts_at),
-            ends_at: horaCurta(j.ends_at),
-            unit_id: j.unit_id,
-          })),
-      );
+      const salvas = catalogo.jornadas
+        .filter((j) => j.professional_id === profissional.id)
+        .map((j) => ({
+          chave: novaChave(),
+          weekday: j.weekday,
+          starts_at: horaCurta(j.starts_at),
+          ends_at: horaCurta(j.ends_at),
+          unit_id: j.unit_id,
+        }));
+      setFaixas(salvas);
+      // Plantao que ja estava salvo nao pede confirmacao de novo ate a
+      // jornada mudar (a linha continua dizendo "termina no dia seguinte").
+      setConfirmarVirada(salvas.some(viraODia));
     } else {
       setForm(FORM_VAZIO);
       setFaixas([]);
@@ -174,15 +217,39 @@ export function ProfissionaisTab({
     setFaixas(faixas.filter((f) => f.chave !== chave));
   };
 
-  const salvar = async () => {
+  const salvar = async (
+    opcoes: { confirmarVirada?: boolean; confirmarConsultas?: boolean } = {},
+  ) => {
+    // Validacao da jornada ANTES de qualquer gravacao (achado 36): antes, a
+    // faixa invalida so era recusada depois de o profissional ja existir.
     for (const faixa of faixas) {
       if (!faixa.starts_at || !faixa.ends_at) {
         setErro("Preencha início e fim de todas as faixas da jornada.");
         return;
       }
+      if (horaCurta(faixa.starts_at) === horaCurta(faixa.ends_at)) {
+        setErro(
+          `A faixa de ${WEEKDAY_LABELS[faixa.weekday] ?? "um dos dias"} começa e termina no mesmo horário. Corrija o início ou o fim.`,
+        );
+        return;
+      }
     }
+    const confirmouVirada = opcoes.confirmarVirada === true || confirmarVirada;
+    if (faixas.some(viraODia) && !confirmouVirada) {
+      setErro(null);
+      setConfirmarVirada(false);
+      setAviso(null);
+      setPedindoVirada(true);
+      return;
+    }
+    setPedindoVirada(false);
+    if (opcoes.confirmarVirada) {
+      setConfirmarVirada(true);
+    }
+
     setSalvando(true);
     setErro(null);
+    const criando = !form.id;
     const resultado = await salvarProfissionalAction({
       id: form.id,
       name: form.name,
@@ -191,14 +258,27 @@ export function ProfissionaisTab({
       specialties: form.specialties,
       calendar_color: form.calendar_color || null,
       active: form.active,
+      confirmar_consultas: opcoes.confirmarConsultas === true,
     });
     if (!resultado.ok || !resultado.id) {
       setSalvando(false);
+      if (resultado.code === "consultas_no_periodo") {
+        setAviso({
+          consultas: resultado.consultas ?? 0,
+          primeira: resultado.primeiraConsulta ?? null,
+        });
+        return;
+      }
       setErro(resultado.error ?? "Não foi possível salvar o profissional.");
       return;
     }
+    setAviso(null);
+    // O id fica no formulario ANTES da jornada: se ela falhar, o proximo
+    // Salvar atualiza este profissional em vez de criar um duplicado.
+    const novoId = resultado.id;
+    setForm((atual) => ({ ...atual, id: novoId }));
     const resultadoJornada = await salvarJornadaAction(
-      resultado.id,
+      novoId,
       faixas.map((f) => ({
         weekday: f.weekday,
         starts_at: f.starts_at,
@@ -208,14 +288,16 @@ export function ProfissionaisTab({
     );
     setSalvando(false);
     if (!resultadoJornada.ok) {
+      const motivo = resultadoJornada.error ?? "Tente de novo.";
       setErro(
-        resultadoJornada.error ??
-          "O profissional foi salvo, mas a jornada não. Tente de novo.",
+        criando
+          ? `O profissional foi criado, mas a jornada não foi salva. ${motivo} Corrija e clique em Salvar de novo.`
+          : `O profissional foi salvo, mas a jornada não. ${motivo}`,
       );
       aoMudar();
       return;
     }
-    toast.success(form.id ? "Profissional atualizado" : "Profissional criado");
+    toast.success(criando ? "Profissional criado" : "Profissional atualizado");
     setAberto(false);
     aoMudar();
   };
@@ -271,7 +353,6 @@ export function ProfissionaisTab({
             </TableHeader>
             <TableBody>
               {catalogo.profissionais.map((profissional) => {
-                const chip = chipAtivo(profissional.active);
                 const extras = profissional.specialties.length - 3;
                 return (
                   <TableRow key={profissional.id}>
@@ -320,31 +401,17 @@ export function ProfissionaisTab({
                     <TableCell className="text-text-secondary">
                       {resumoJornada(profissional.id)}
                     </TableCell>
-                    <TableCell className={chip.classe}>{chip.texto}</TableCell>
                     <TableCell>
-                      {podeEditar ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-9"
-                          onClick={() => abrir(profissional)}
-                          aria-label={`Editar ${profissional.name}`}
-                        >
-                          <Pencil strokeWidth={1.5} className="size-4" />
-                        </Button>
-                      ) : (
-                        <DisabledWithHint hint={dica}>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-9"
-                            disabled
-                            aria-label={`Editar ${profissional.name}`}
-                          >
-                            <Pencil strokeWidth={1.5} className="size-4" />
-                          </Button>
-                        </DisabledWithHint>
-                      )}
+                      <ChipSituacao active={profissional.active} />
+                    </TableCell>
+                    <TableCell>
+                      <AcoesDaLinha
+                        podeEditar={podeEditar}
+                        dica={dica}
+                        nome={profissional.name}
+                        aoEditar={() => abrir(profissional)}
+                        aoVerDetalhes={() => abrir(profissional, true)}
+                      />
                     </TableCell>
                   </TableRow>
                 );
@@ -358,10 +425,68 @@ export function ProfissionaisTab({
         <SheetContent className="w-[480px] overflow-y-auto p-5 sm:max-w-[480px]">
           <SheetHeader className="p-0">
             <SheetTitle>
-              {form.id ? "Editar profissional" : "Novo profissional"}
+              {somenteLeitura
+                ? form.name
+                : form.id
+                  ? "Editar profissional"
+                  : "Novo profissional"}
             </SheetTitle>
           </SheetHeader>
-          <div className="grid gap-4 py-4">
+          {somenteLeitura ? (
+            <DetalheSomenteLeitura
+              itens={[
+                {
+                  rotulo: "Conselho",
+                  valor: form.council_type
+                    ? `${form.council_type} ${form.council_number}`.trim()
+                    : "Sem conselho",
+                },
+                {
+                  rotulo: "Especialidades",
+                  valor: form.specialties.join(", "),
+                },
+                {
+                  rotulo: "Situação",
+                  valor: <ChipSituacao active={form.active} />,
+                },
+                {
+                  rotulo: "Jornada semanal",
+                  valor:
+                    faixas.length === 0 ? (
+                      "Sem jornada cadastrada"
+                    ) : (
+                      <ul className="grid gap-1">
+                        {[...faixas]
+                          .sort(
+                            (a, b) =>
+                              a.weekday - b.weekday ||
+                              a.starts_at.localeCompare(b.starts_at),
+                          )
+                          .map((faixa) => (
+                            <li key={faixa.chave} className="tabular-nums">
+                              {WEEKDAY_LABELS[faixa.weekday]}: {faixa.starts_at}{" "}
+                              às {faixa.ends_at}
+                              {viraODia(faixa)
+                                ? " (termina no dia seguinte)"
+                                : ""}
+                              {temVariasUnidades && faixa.unit_id
+                                ? `, ${
+                                    catalogo.unidades.find(
+                                      (u) => u.id === faixa.unit_id,
+                                    )?.name ?? "unidade removida"
+                                  }`
+                                : ""}
+                            </li>
+                          ))}
+                      </ul>
+                    ),
+                },
+              ]}
+            />
+          ) : null}
+          {/* O formulario fica fora da arvore visivel no modo leitura
+              (atributo hidden, que o preflight do Tailwind forca). */}
+          <div className="grid gap-4 py-4" hidden={somenteLeitura}>
             <div className="grid gap-2">
               <Label htmlFor="prof-nome">Nome</Label>
               <Input
@@ -407,11 +532,14 @@ export function ProfissionaisTab({
                       className="gap-1 pr-1 text-[12px]"
                     >
                       {esp}
+                      {/* Visual de 16px, area de toque de 40px (achado 44):
+                          o pseudo-elemento estende o clique sem mudar o
+                          tamanho do chip. */}
                       <button
                         type="button"
                         onClick={() => removerEspecialidade(esp)}
                         aria-label={`Remover ${esp}`}
-                        className="flex size-4 items-center justify-center rounded-full hover:bg-muted"
+                        className="relative flex size-4 items-center justify-center rounded-full after:absolute after:-inset-3 after:content-[''] hover:bg-muted"
                       >
                         <X strokeWidth={1.5} className="size-3" />
                       </button>
@@ -450,9 +578,18 @@ export function ProfissionaisTab({
               <Switch
                 id="prof-ativo"
                 checked={form.active}
-                onCheckedChange={(v) => setForm({ ...form, active: v })}
+                onCheckedChange={(v) => {
+                  setAviso(null);
+                  setForm({ ...form, active: v });
+                }}
               />
             </div>
+            {form.id && !form.active ? (
+              <p className="text-xs text-text-secondary">
+                Desativado, o profissional sai da Agenda e da oferta de
+                horários. Consultas já marcadas não são desmarcadas.
+              </p>
+            ) : null}
 
             <div className="grid gap-3 border-t pt-4">
               <div className="grid gap-1">
@@ -512,6 +649,16 @@ export function ProfissionaisTab({
                         aria-label="Fim da faixa"
                         className="h-10 w-[104px]"
                       />
+                      {viraODia(faixa) ? (
+                        <span className="flex basis-full items-center gap-1.5 text-xs [color:var(--warning-text)]">
+                          <Sunrise
+                            strokeWidth={1.5}
+                            className="size-4 shrink-0"
+                            aria-hidden
+                          />
+                          Termina no dia seguinte (plantão noturno)
+                        </span>
+                      ) : null}
                       {temVariasUnidades ? (
                         <Select
                           value={faixa.unit_id ?? "todas"}
@@ -563,9 +710,58 @@ export function ProfissionaisTab({
                 {erro}
               </p>
             ) : null}
-            <Button onClick={salvar} disabled={salvando} className="h-10">
-              {salvando ? "Salvando..." : "Salvar"}
-            </Button>
+            {pedindoVirada ? (
+              <div
+                role="alert"
+                className="grid gap-3 rounded-lg border border-[color:var(--warning)] bg-[color:var(--warning-bg)] p-3"
+              >
+                <div className="flex items-start gap-2 text-sm">
+                  <Sunrise
+                    strokeWidth={1.5}
+                    className="mt-0.5 size-4 shrink-0 [color:var(--warning-text)]"
+                    aria-hidden
+                  />
+                  <p>
+                    Uma faixa termina no dia seguinte (plantão noturno): a
+                    agenda vai abrir horários depois da meia noite. Se o fim
+                    ficou antes do início por engano, corrija a faixa.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    className="h-10"
+                    disabled={salvando}
+                    onClick={() => void salvar({ confirmarVirada: true })}
+                  >
+                    É plantão, salvar assim
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-10"
+                    onClick={() => setPedindoVirada(false)}
+                  >
+                    Corrigir a faixa
+                  </Button>
+                </div>
+              </div>
+            ) : aviso ? (
+              <AvisoDeConsultas
+                consultas={aviso.consultas}
+                primeira={aviso.primeira}
+                timezone={timezone}
+                rotuloConfirmar="Desativar mesmo assim"
+                confirmando={salvando}
+                aoConfirmar={() => void salvar({ confirmarConsultas: true })}
+              />
+            ) : (
+              <Button
+                onClick={() => void salvar()}
+                disabled={salvando}
+                className="h-10"
+              >
+                {salvando ? "Salvando..." : "Salvar"}
+              </Button>
+            )}
           </div>
         </SheetContent>
       </Sheet>

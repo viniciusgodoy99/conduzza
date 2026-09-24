@@ -1,14 +1,17 @@
 "use client";
 
-import { Armchair, Pencil, Plus } from "lucide-react";
+import { Armchair, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { salvarRecursoAction } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { BotaoProtegido, chipAtivo } from "@/components/cadastros/comum";
+import {
+  AcoesDaLinha,
+  BotaoProtegido,
+  ChipSituacao,
+} from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
-import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -145,7 +148,6 @@ export function RecursosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
             </TableHeader>
             <TableBody>
               {catalogo.recursos.map((recurso) => {
-                const chip = chipAtivo(recurso.active);
                 const total = contarProcedimentos(recurso.id);
                 return (
                   <TableRow key={recurso.id}>
@@ -165,31 +167,16 @@ export function RecursosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                           ? "1 procedimento"
                           : `${total} procedimentos`}
                     </TableCell>
-                    <TableCell className={chip.classe}>{chip.texto}</TableCell>
                     <TableCell>
-                      {podeEditar ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-9"
-                          onClick={() => abrir(recurso)}
-                          aria-label={`Editar ${recurso.name}`}
-                        >
-                          <Pencil strokeWidth={1.5} className="size-4" />
-                        </Button>
-                      ) : (
-                        <DisabledWithHint hint={dica}>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-9"
-                            disabled
-                            aria-label={`Editar ${recurso.name}`}
-                          >
-                            <Pencil strokeWidth={1.5} className="size-4" />
-                          </Button>
-                        </DisabledWithHint>
-                      )}
+                      <ChipSituacao active={recurso.active} />
+                    </TableCell>
+                    <TableCell>
+                      <AcoesDaLinha
+                        podeEditar={podeEditar}
+                        dica={dica}
+                        nome={recurso.name}
+                        aoEditar={() => abrir(recurso)}
+                      />
                     </TableCell>
                   </TableRow>
                 );

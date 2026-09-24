@@ -14,6 +14,10 @@ import {
   CORPO_DO_MENU_APOS_MIDIA,
   MENU_CONFIRMACAO,
 } from "@/lib/domain/textos-padrao";
+import {
+  decidirToqueDeConfirmacao,
+  mudouDeDia,
+} from "@/lib/domain/toque-atrasado";
 import { getWhatsAppProvider } from "@/lib/integrations/whatsapp/provider";
 import {
   falhaPermiteRetry,
@@ -125,6 +129,8 @@ type LinhaDaConsulta = {
   status: string;
   starts_at: string;
   send_confirmation: boolean;
+  /** O paciente pediu para remarcar (gravado pelo interceptador). */
+  remarcacao_pedida_em: string | null;
   service_link: {
     procedure: { name: string; prep_instructions: string | null } | null;
   } | null;
@@ -139,7 +145,16 @@ type MotivoDePulo =
   | "desconectado"
   // Canal da clinica ocupado ate depois da hora da consulta: o toque perdeu o
   // sentido. So acontece com fila muito longa da mesma clinica.
-  | "canal_ocupado";
+  | "canal_ocupado"
+  // O horario da consulta mudou depois do planejamento: este toque aponta
+  // para o horario antigo. Antes era 'condicao_parada', que escondia o motivo.
+  | "consulta_remarcada"
+  // O paciente pediu para remarcar: perguntar se ele confirma a consulta que
+  // quer trocar so confunde.
+  | "remarcacao_pedida"
+  // Empurrado para outro dia civil (janela, canal fora do ar) com um toque
+  // seguinte da mesma regua que ainda sai antes da consulta.
+  | "toque_atrasado";
 
 /** Fecha ESTA run, sem tocar em run ja enviada ou ja pulada. */
 async function pularRun(
@@ -225,7 +240,7 @@ async function carregarConsulta(
   const { data } = await admin
     .from("appointment")
     .select(
-      `id, status, starts_at, send_confirmation,
+      `id, status, starts_at, send_confirmation, remarcacao_pedida_em,
        service_link:service_link_id (
          procedure:procedure_id ( name, prep_instructions )
        ),
@@ -235,6 +250,82 @@ async function carregarConsulta(
     .eq("id", appointmentId)
     .maybeSingle();
   return (data as LinhaDaConsulta | null) ?? null;
+}
+
+/**
+ * Os passos da MESMA regua, para decidir o toque atrasado. Leitura que falha
+ * vira excecao (retry do job): decidir "nao ha passo seguinte" por erro de
+ * rede mandaria o toque que deveria ter sido pulado.
+ */
+async function carregarPassosDaRegua(
+  admin: SupabaseClient,
+  clinicId: string,
+  cadenceId: string,
+): Promise<{ offsetMinutes: number }[]> {
+  const { data, error } = await admin
+    .from("cadence_step")
+    .select("offset_minutes")
+    .eq("clinic_id", clinicId)
+    .eq("cadence_id", cadenceId);
+  if (error) {
+    throw new Error(`passos_da_regua_ilegiveis: ${error.code ?? "desconhecido"}`);
+  }
+  return ((data ?? []) as { offset_minutes: number }[]).map((passo) => ({
+    offsetMinutes: passo.offset_minutes,
+  }));
+}
+
+type ConferenciaDaConfirmacao =
+  | { segue: true }
+  | { segue: false; motivo: "consulta_remarcada" | "remarcacao_pedida" }
+  | { segue: false; motivo: "parar_cadeia" };
+
+/**
+ * A consulta ainda pede ESTE toque de confirmacao? Roda duas vezes: na
+ * condicao de parada e de novo com a consulta relida logo antes do envio,
+ * porque a recepcao pode remarcar enquanto o anexo baixa.
+ *
+ * - Horario mudou (o vencimento da run nao bate com starts_at + offset, com a
+ *   tolerancia de 1 minuto de passoCondizComAgenda): so ESTE toque morre
+ *   ('consulta_remarcada'). A cadeia nao para, senao os toques que o planner
+ *   materializou para o horario novo morreriam junto. A run manual nao passa
+ *   por aqui: ela nasceu agora, ja com o horario que a tela mostrou.
+ * - Consulta fora do jogo (cancelada, ja passou, confirmacao automatica
+ *   desligada): a cadeia inteira para.
+ * - Paciente pediu para remarcar: so este toque morre ('remarcacao_pedida'),
+ *   inclusive o manual. Enquanto o pedido estiver aberto o planner nao cria
+ *   toque novo; resolvido o pedido, os que couberem voltam a sair.
+ */
+function conferirConfirmacao(
+  consulta: LinhaDaConsulta,
+  entrada: {
+    offsetMinutes: number;
+    scheduledFor: string;
+    manual: boolean;
+    agora: Date;
+  },
+): ConferenciaDaConfirmacao {
+  const remarcada =
+    !entrada.manual &&
+    !passoCondizComAgenda({
+      startsAt: new Date(consulta.starts_at),
+      offsetMinutes: entrada.offsetMinutes,
+      scheduledFor: new Date(entrada.scheduledFor),
+    });
+  if (remarcada) {
+    return { segue: false, motivo: "consulta_remarcada" };
+  }
+  const parou =
+    !STATUS_A_CONFIRMAR.includes(consulta.status) ||
+    new Date(consulta.starts_at).getTime() <= entrada.agora.getTime() ||
+    !consulta.send_confirmation;
+  if (parou) {
+    return { segue: false, motivo: "parar_cadeia" };
+  }
+  if (consulta.remarcacao_pedida_em) {
+    return { segue: false, motivo: "remarcacao_pedida" };
+  }
+  return { segue: true };
 }
 
 /**
@@ -414,36 +505,29 @@ export async function executarPassoDeRegua(
     }
   }
 
-  // Consulta remarcada: SO este toque ficou obsoleto (ele aponta para o
-  // horario antigo). A cadeia NAO para, senao os toques que o planner acabou
-  // de materializar para o horario novo morreriam junto e o paciente que
-  // remarcou nunca mais receberia confirmacao. A run manual nao passa por
-  // aqui: ela nasceu agora, ja com o horario que a tela mostrou.
+  // Confirmacao: horario mudou, consulta fora do jogo ou pedido de
+  // remarcacao (regras em conferirConfirmacao). Pos falta: a consulta deixou
+  // de ser falta ou o paciente ja remarcou depois dela, e a cadeia para.
   if (consulta) {
-    const obsoleta =
-      regua.kind === "confirmacao" &&
-      !manual &&
-      !passoCondizComAgenda({
-        startsAt: new Date(consulta.starts_at),
+    if (regua.kind === "confirmacao") {
+      const conferencia = conferirConfirmacao(consulta, {
         offsetMinutes: passo.offset_minutes,
-        scheduledFor: new Date(run.scheduled_for),
+        scheduledFor: run.scheduled_for,
+        manual,
+        agora,
       });
-    if (obsoleta) {
-      await pularRun(admin, run, "condicao_parada");
-      return { ok: true };
-    }
-
-    // Parada de verdade: a consulta saiu do jogo (cancelada, ja aconteceu,
-    // com a confirmacao automatica desligada) ou o paciente ja remarcou
-    // depois da falta. Ai sim a cadeia inteira para.
-    const parou =
-      regua.kind === "confirmacao"
-        ? !STATUS_A_CONFIRMAR.includes(consulta.status) ||
-          new Date(consulta.starts_at).getTime() <= agora.getTime() ||
-          !consulta.send_confirmation
-        : consulta.status !== "faltou" ||
-          (await remarcouDepoisDaFalta(admin, run, consulta));
-    if (parou) {
+      if (!conferencia.segue) {
+        if (conferencia.motivo === "parar_cadeia") {
+          await pararCadeia(admin, run);
+        } else {
+          await pularRun(admin, run, conferencia.motivo);
+        }
+        return { ok: true };
+      }
+    } else if (
+      consulta.status !== "faltou" ||
+      (await remarcouDepoisDaFalta(admin, run, consulta))
+    ) {
       await pararCadeia(admin, run);
       return { ok: true };
     }
@@ -472,7 +556,71 @@ export async function executarPassoDeRegua(
       await pularRun(admin, run, "fora_janela");
       return { ok: true };
     }
+    // A abertura cai em OUTRO dia civil e um toque seguinte ja cobre a
+    // consulta: pular agora, em vez de devolver o job so para pula-lo na
+    // abertura (a mesma regra roda de novo no envio, com o relogio real).
+    if (
+      regua.kind === "confirmacao" &&
+      consulta &&
+      mudouDeDia({
+        agora: abertura,
+        scheduledFor: new Date(run.scheduled_for),
+        timezone,
+      })
+    ) {
+      const decisao = decidirToqueDeConfirmacao({
+        agora: abertura,
+        scheduledFor: new Date(run.scheduled_for),
+        startsAt: new Date(consulta.starts_at),
+        offsetDoToque: passo.offset_minutes,
+        modelo: passo.fixed_body,
+        passos: await carregarPassosDaRegua(admin, job.clinic_id, regua.id),
+        janela,
+        timezone,
+        manual,
+      });
+      if (decisao.acao === "pular") {
+        await pularRun(admin, run, "toque_atrasado");
+        return { ok: true };
+      }
+    }
     return { reagendar: abertura.toISOString() };
+  }
+
+  // TOQUE ATRASADO. O toque de confirmacao pode sair num dia civil diferente
+  // do vencimento (janela, WhatsApp fora do ar, fila): o "Amanhã" do texto de
+  // 24h passaria a mentir, colado no "é hoje" do toque de 3h. Com toque
+  // seguinte que ainda sai a tempo, este e pulado; sem, sai com o dia
+  // relativo corrigido (melhor avisar que nao avisar). Regras em
+  // lib/domain/toque-atrasado.ts.
+  let modelo = passo.fixed_body;
+  if (
+    regua.kind === "confirmacao" &&
+    consulta &&
+    mudouDeDia({
+      agora,
+      scheduledFor: new Date(run.scheduled_for),
+      timezone,
+    })
+  ) {
+    const decisao = decidirToqueDeConfirmacao({
+      agora,
+      scheduledFor: new Date(run.scheduled_for),
+      startsAt: new Date(consulta.starts_at),
+      offsetDoToque: passo.offset_minutes,
+      modelo: passo.fixed_body,
+      passos: manual
+        ? []
+        : await carregarPassosDaRegua(admin, job.clinic_id, regua.id),
+      janela,
+      timezone,
+      manual,
+    });
+    if (decisao.acao === "pular") {
+      await pularRun(admin, run, "toque_atrasado");
+      return { ok: true };
+    }
+    modelo = decisao.modelo;
   }
 
   const { data: account } = await admin
@@ -496,7 +644,6 @@ export async function executarPassoDeRegua(
   // 6. ENVIO. O conteudo do passo e texto e/ou anexo (decisao do dono em
   // 19/09/2026: pode ser so o audio). Sem nenhum dos dois, o toque e
   // definitivamente invalido.
-  const modelo = passo.fixed_body;
   const body = modelo && modelo.trim()
     ? renderizarModelo(
         modelo,
@@ -507,6 +654,34 @@ export async function executarPassoDeRegua(
     : "";
   if (!body && !passo.media_path) {
     return { ok: false, erro: "passo_sem_conteudo", definitivo: true };
+  }
+
+  // DEFESA DA REMARCACAO, com a consulta RELIDA. Entre a condicao de parada
+  // e este ponto passaram consultas ao banco (e, no reagendamento, horas): a
+  // recepcao pode ter remarcado, e o paciente pode ter pedido para remarcar.
+  // Perguntar "podemos confirmar?" com o horario velho e o pior toque possivel.
+  if (regua.kind === "confirmacao" && run.appointment_id) {
+    const atual = await carregarConsulta(
+      admin,
+      job.clinic_id,
+      run.appointment_id,
+    );
+    const conferencia = atual
+      ? conferirConfirmacao(atual, {
+          offsetMinutes: passo.offset_minutes,
+          scheduledFor: run.scheduled_for,
+          manual,
+          agora: new Date(),
+        })
+      : ({ segue: false, motivo: "parar_cadeia" } as const);
+    if (!conferencia.segue) {
+      if (conferencia.motivo === "parar_cadeia") {
+        await pararCadeia(admin, run);
+      } else {
+        await pularRun(admin, run, conferencia.motivo);
+      }
+      return { ok: true };
+    }
   }
 
   const { data: conversationId, error: erroConversa } = await admin.rpc(
@@ -524,6 +699,9 @@ export async function executarPassoDeRegua(
     body,
     authorUserId: null,
     author: "sistema" as const,
+    // Envio do motor: reserva no slot de MASSA, que a resposta digitada no
+    // Inbox nunca espera (decisao do dono de 24/09/2026).
+    envioAutomatico: true,
     espacamentoMs: espacamentoDeMassaMs(),
     // Teto CURTO: o piso do espacamento de massa e 10 segundos, entao quase
     // todo toque concorrente cai em adiamento e nao em espera. Esperar de
@@ -574,15 +752,24 @@ export async function executarPassoDeRegua(
     if (upload.error) {
       return { ok: false, erro: "copia_do_anexo_falhou" };
     }
+    // AUDIO NAO MOSTRA LEGENDA no WhatsApp (achado da revisao de 24/09): o
+    // texto do passo, com data e hora, ia como legenda e nunca chegava ao
+    // paciente. Com audio, o audio sai SEM legenda e o texto vira mensagem
+    // propria logo depois: na confirmacao, e o corpo dos botoes; nos demais
+    // kinds, um texto simples. Foto e documento continuam com legenda.
+    const audioComTexto = passo.media_type === "audio" && body.length > 0;
+    const temSegundaMensagem = regua.kind === "confirmacao" || audioComTexto;
     resultado = await sendWhatsAppMedia(admin, {
       ...envio,
-      // Na confirmacao, a midia e os botoes sao UM toque em duas mensagens:
-      // a midia reserva um espacamento CURTO E FIXO abaixo do teto de espera
-      // do proximo envio (3s), para o par sair na MESMA passagem (o sorteio
-      // padrao de 1,5 a 4s separava o par em ~1/3 dos envios, achado da
-      // revisao de 19/09); o espacamento de massa fica com a ULTIMA mensagem
-      // do par. Nos demais kinds a midia e unica e carrega a massa.
-      ...(regua.kind === "confirmacao" ? { espacamentoMs: 1_500 } : {}),
+      body: audioComTexto ? "" : body,
+      // Com segunda mensagem (os botoes da confirmacao ou o texto do audio),
+      // o toque e UM par: a midia reserva um espacamento CURTO E FIXO abaixo
+      // do teto de espera do proximo envio (3s), para o par sair na MESMA
+      // passagem (o sorteio padrao de 1,5 a 4s separava o par em ~1/3 dos
+      // envios, achado da revisao de 19/09); o espacamento de massa fica com
+      // a ULTIMA mensagem do par. Sem segunda mensagem, a midia carrega a
+      // massa.
+      ...(temSegundaMensagem ? { espacamentoMs: 1_500 } : {}),
       messageId,
       midia: {
         tipo: passo.media_type ?? "document",
@@ -610,32 +797,43 @@ export async function executarPassoDeRegua(
     }
     if (
       (resultado.ok || resultado.reason === "ja_enviado") &&
-      regua.kind === "confirmacao"
+      temSegundaMensagem
     ) {
-      // Botao e midia nao viajam na mesma mensagem: os botoes vao numa
-      // segunda, SEM jobId (a chave de idempotencia ficou na midia). Retry
-      // depois de menu perdido reenvia so o menu; duplicata rara, aceita.
-      // Se o slot da clinica adiar o menu, o proprio adiamento reagenda o
-      // job e a midia nao repete (ja_enviado pela chave do job).
+      // Botao e midia nao viajam na mesma mensagem, e audio nao carrega
+      // texto: a segunda mensagem sai SEM jobId (a chave de idempotencia
+      // ficou na midia). Retry depois de segunda mensagem perdida reenvia so
+      // ela; duplicata rara, aceita. Se o slot da clinica adiar a segunda, o
+      // proprio adiamento reagenda o job e a midia nao repete (ja_enviado
+      // pela chave do job).
       //
       // Nota assumida: linha de midia morta em 'enviando' (processo caiu
-      // entre o registro e o envio) vira 'ja_enviado' no retry e o menu sai
-      // sem a midia ter saido; e a mesma perda menor e visivel do envio de
-      // texto (send.ts registra), aceita la e aca.
-      resultado = await sendWhatsAppMenu(admin, {
-        ...envio,
-        jobId: undefined,
-        body: CORPO_DO_MENU_APOS_MIDIA,
-        options: MENU_CONFIRMACAO,
-      });
+      // entre o registro e o envio) vira 'ja_enviado' no retry e a segunda
+      // sai sem a midia ter saido; e a mesma perda menor e visivel do envio
+      // de texto (send.ts registra), aceita la e aca.
+      resultado =
+        regua.kind === "confirmacao"
+          ? await sendWhatsAppMenu(admin, {
+              ...envio,
+              jobId: undefined,
+              // Com audio, o texto do passo (data e hora da consulta) e o
+              // corpo dos botoes; a frase generica fica so para passo sem
+              // texto ou com foto/documento, cujo texto ja foi na legenda.
+              body: audioComTexto ? body : CORPO_DO_MENU_APOS_MIDIA,
+              options: MENU_CONFIRMACAO,
+            })
+          : await sendWhatsAppText(admin, {
+              ...envio,
+              jobId: undefined,
+              body,
+            });
       if (!resultado.ok && resultado.reason !== "ja_enviado") {
-        // A midia JA CHEGOU ao paciente e so o menu falhou. Na ultima
-        // tentativa do job (ou falha definitiva), fechar a run como enviada
-        // apontando para a MENSAGEM DA MIDIA cega menos que deixa-la
+        // A midia JA CHEGOU ao paciente e so a segunda mensagem falhou. Na
+        // ultima tentativa do job (ou falha definitiva), fechar a run como
+        // enviada apontando para a MENSAGEM DA MIDIA cega menos que deixa-la
         // pendente para sempre: o paciente recebeu o toque e ainda pode
         // responder por texto (o interceptador entende confirmo/cancelo sem
         // menu). Falha retentavel fora da ultima tentativa segue o fluxo
-        // normal (o retry reenvia SO o menu).
+        // normal (o retry reenvia SO a segunda mensagem).
         const ultimaTentativa = job.attempts + 1 >= job.max_attempts;
         const definitiva =
           resultado.reason === "falha_envio" &&
@@ -655,7 +853,7 @@ export async function executarPassoDeRegua(
             })
             .eq("id", run.id)
             .is("sent_at", null);
-          if (run.appointment_id) {
+          if (regua.kind === "confirmacao" && run.appointment_id) {
             await admin.rpc("marcar_aguardando_confirmacao", {
               p_clinic_id: job.clinic_id,
               p_appointment_id: run.appointment_id,

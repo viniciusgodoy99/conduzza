@@ -5,12 +5,17 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import {
+  alternarVinculoAtivoAction,
   alternarVinculoIaAction,
   duplicarVinculosAction,
   salvarVinculoAction,
 } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { BotaoProtegido } from "@/components/cadastros/comum";
+import {
+  BotaoProtegido,
+  ChipSituacao,
+  PreviaDeReais,
+} from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import {
@@ -53,6 +58,7 @@ import {
 } from "@/components/ui/table";
 import { exibirPrecoVinculo } from "@/lib/domain/pricing";
 import type { Profissional, Vinculo } from "@/lib/queries/catalogo";
+import { centavosParaReais, lerReais } from "@/lib/utils/moeda";
 
 // Aba de Vínculos: a matriz de três pontas (profissional x procedimento x
 // convênio). Acordeão por profissional, tabela inline, edição na linha e
@@ -76,23 +82,17 @@ function tituloProfissional(p: Profissional): string {
   return partes.join(" · ");
 }
 
-function centavosParaReais(cents: number | null): string {
-  if (cents === null) {
-    return "";
+// Valor em reais do vinculo: vazio e invalido tem mensagens diferentes, e
+// "250.00" e lido como R$ 250,00 (achado 34), nunca R$ 25.000,00.
+function erroDoValor(texto: string): string | null {
+  const centavos = lerReais(texto);
+  if (centavos === null) {
+    return "Informe o valor em reais, por exemplo 250,00.";
   }
-  return (cents / 100).toFixed(2).replace(".", ",");
-}
-
-function reaisParaCentavos(texto: string): number | null {
-  const normalizado = texto.trim().replace(/\./g, "").replace(",", ".");
-  if (normalizado === "") {
-    return null;
+  if (centavos === undefined) {
+    return "Não entendemos o valor. Use o formato 250,00.";
   }
-  const valor = Number(normalizado);
-  if (!Number.isFinite(valor) || valor < 0) {
-    return null;
-  }
-  return Math.round(valor * 100);
+  return null;
 }
 
 function modoDoVinculo(v: Vinculo): ModoPreco {
@@ -139,6 +139,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
 
   const [alternandoId, setAlternandoId] = useState<string | null>(null);
+  const [ativandoId, setAtivandoId] = useState<string | null>(null);
 
   const [duplicar, setDuplicar] = useState<EstadoDuplicar | null>(null);
   const [duplicando, setDuplicando] = useState(false);
@@ -221,11 +222,12 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
     }
     let precoCentavos: number | null = null;
     if (formNovo.modo === "valor") {
-      precoCentavos = reaisParaCentavos(formNovo.precoReais);
-      if (precoCentavos === null) {
-        setErroNovo("Informe o valor em reais, por exemplo 250,00.");
+      const erroValor = erroDoValor(formNovo.precoReais);
+      if (erroValor) {
+        setErroNovo(erroValor);
         return;
       }
+      precoCentavos = lerReais(formNovo.precoReais) ?? null;
     }
     setSalvandoNovo(true);
     const resultado = await salvarVinculoAction({
@@ -277,11 +279,12 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
     }
     let precoCentavos: number | null = null;
     if (formEdicao.modo === "valor") {
-      precoCentavos = reaisParaCentavos(formEdicao.precoReais);
-      if (precoCentavos === null) {
-        setErroEdicao("Informe o valor em reais, por exemplo 250,00.");
+      const erroValor = erroDoValor(formEdicao.precoReais);
+      if (erroValor) {
+        setErroEdicao(erroValor);
         return;
       }
+      precoCentavos = lerReais(formEdicao.precoReais) ?? null;
     }
     setSalvandoEdicao(true);
     const resultado = await salvarVinculoAction({
@@ -312,6 +315,28 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
     if (!resultado.ok) {
       toast.error(resultado.error ?? "Não foi possível alterar a chave da IA.");
     }
+    aoMudar();
+  };
+
+  // Desativar/Reativar o vinculo (achado 33): o inativo sai do agendamento
+  // e da reoferta da lista de espera; as consultas antigas continuam
+  // apontando para ele.
+  const alternarAtivo = async (vinculo: Vinculo) => {
+    setAtivandoId(vinculo.id);
+    const resultado = await alternarVinculoAtivoAction(
+      vinculo.id,
+      !vinculo.active,
+    );
+    setAtivandoId(null);
+    if (!resultado.ok) {
+      toast.error(resultado.error ?? "Não foi possível alterar o vínculo.");
+      return;
+    }
+    toast.success(
+      vinculo.active
+        ? "Vínculo desativado. Ele não aparece mais para agendar."
+        : "Vínculo reativado",
+    );
     aoMudar();
   };
 
@@ -377,22 +402,27 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
             title="Nenhum vínculo cadastrado"
             description="O vínculo diz quem faz o quê, por quanto e em quanto tempo. Sem ele, a IA não informa preço nem agenda."
           />
+          {/* Acao principal do vazio (achados 42 e 116): a importacao por
+              planilha nao existe, entao nao aparece nem como promessa. */}
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <DisabledWithHint hint="A importação por planilha chega em breve. Por enquanto, use Adicionar vínculo.">
-              <Button size="lg" disabled className="h-11">
-                Importar de planilha
-              </Button>
-            </DisabledWithHint>
             <BotaoProtegido
               podeEditar={podeEditar}
               dica={dica}
+              size="lg"
+              className="h-11 px-4"
               onClick={() => abrirNovo(profissionaisVisiveis[0]?.id ?? "")}
             >
               <Plus strokeWidth={1.5} className="size-4" /> Adicionar vínculo
             </BotaoProtegido>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <p className="text-sm text-text-secondary">
+          Para trocar o profissional, o procedimento ou o convênio de um
+          vínculo, desative o vínculo e crie outro. As consultas já marcadas
+          continuam com o vínculo antigo.
+        </p>
+      )}
 
       {profissionaisVisiveis.length > 0 ? (
         <Accordion type="multiple" className="grid gap-2">
@@ -429,11 +459,25 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                      {/* Item desabilitado leva a dica em texto dentro do
+                          proprio item (achado 44): tooltip dentro de menu
+                          nao abre em toque. */}
                       <DropdownMenuItem
                         disabled={!podeEditar || vinculos.length === 0}
                         onClick={() => abrirDuplicar(profissional.id)}
+                        className="min-h-10 flex-col items-start gap-0.5"
                       >
-                        Duplicar para outro profissional
+                        <span>Duplicar para outro profissional</span>
+                        {!podeEditar ? (
+                          <span className="text-xs text-text-secondary">
+                            {dica}
+                          </span>
+                        ) : vinculos.length === 0 ? (
+                          <span className="text-xs text-text-secondary">
+                            Este profissional ainda não tem vínculos para
+                            copiar.
+                          </span>
+                        ) : null}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -464,7 +508,8 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                             <TableHead>Preço</TableHead>
                             <TableHead>Duração</TableHead>
                             <TableHead>IA</TableHead>
-                            <TableHead className="w-24" />
+                            <TableHead>Situação</TableHead>
+                            <TableHead className="w-40" />
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -531,6 +576,11 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                           className="h-10 font-mono tabular-nums"
                                         />
                                       ) : null}
+                                      {formEdicao.modo === "valor" ? (
+                                        <PreviaDeReais
+                                          texto={formEdicao.precoReais}
+                                        />
+                                      ) : null}
                                     </div>
                                   ) : preco.kind === "coberto" ? (
                                     <span className="text-text-secondary">
@@ -564,24 +614,35 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                 </TableCell>
                                 <TableCell>
                                   <div className="grid gap-1">
-                                    <Switch
-                                      checked={vinculo.bookable_by_ai}
-                                      disabled={
-                                        !podeEditar ||
-                                        alternandoId === vinculo.id
-                                      }
-                                      onCheckedChange={(v) =>
-                                        void alternarIa(vinculo, v)
-                                      }
-                                      aria-label="IA pode agendar"
-                                      className="scale-90"
-                                    />
+                                    {podeEditar ? (
+                                      <Switch
+                                        checked={vinculo.bookable_by_ai}
+                                        disabled={alternandoId === vinculo.id}
+                                        onCheckedChange={(v) =>
+                                          void alternarIa(vinculo, v)
+                                        }
+                                        aria-label="IA pode agendar"
+                                        className="scale-90"
+                                      />
+                                    ) : (
+                                      <DisabledWithHint hint={dica}>
+                                        <Switch
+                                          checked={vinculo.bookable_by_ai}
+                                          disabled
+                                          aria-label="IA pode agendar"
+                                          className="scale-90"
+                                        />
+                                      </DisabledWithHint>
+                                    )}
                                     {!vinculo.bookable_by_ai ? (
                                       <span className="text-xs text-text-tertiary">
                                         Só a recepção agenda
                                       </span>
                                     ) : null}
                                   </div>
+                                </TableCell>
+                                <TableCell>
+                                  <ChipSituacao active={vinculo.active} />
                                 </TableCell>
                                 <TableCell>
                                   {emEdicao ? (
@@ -616,25 +677,12 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                       </Button>
                                     </div>
                                   ) : podeEditar ? (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="size-10"
-                                      onClick={() => iniciarEdicao(vinculo)}
-                                      aria-label="Editar vínculo"
-                                    >
-                                      <Pencil
-                                        strokeWidth={1.5}
-                                        className="size-4"
-                                      />
-                                    </Button>
-                                  ) : (
-                                    <DisabledWithHint hint={dica}>
+                                    <div className="flex items-center gap-1">
                                       <Button
                                         variant="ghost"
                                         size="icon"
                                         className="size-10"
-                                        disabled
+                                        onClick={() => iniciarEdicao(vinculo)}
                                         aria-label="Editar vínculo"
                                       >
                                         <Pencil
@@ -642,7 +690,47 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                           className="size-4"
                                         />
                                       </Button>
-                                    </DisabledWithHint>
+                                      <Button
+                                        variant="ghost"
+                                        className="h-10"
+                                        disabled={ativandoId === vinculo.id}
+                                        onClick={() =>
+                                          void alternarAtivo(vinculo)
+                                        }
+                                      >
+                                        {vinculo.active
+                                          ? "Desativar"
+                                          : "Reativar"}
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-1">
+                                      <DisabledWithHint hint={dica}>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="size-10"
+                                          disabled
+                                          aria-label="Editar vínculo"
+                                        >
+                                          <Pencil
+                                            strokeWidth={1.5}
+                                            className="size-4"
+                                          />
+                                        </Button>
+                                      </DisabledWithHint>
+                                      <DisabledWithHint hint={dica}>
+                                        <Button
+                                          variant="ghost"
+                                          className="h-10"
+                                          disabled
+                                        >
+                                          {vinculo.active
+                                            ? "Desativar"
+                                            : "Reativar"}
+                                        </Button>
+                                      </DisabledWithHint>
+                                    </div>
                                   )}
                                 </TableCell>
                               </TableRow>
@@ -652,7 +740,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                           erroEdicao !== null &&
                           vinculos.some((v) => v.id === editandoId) ? (
                             <TableRow>
-                              <TableCell colSpan={6}>
+                              <TableCell colSpan={7}>
                                 <p
                                   role="alert"
                                   className="text-sm [color:var(--alert-text)]"
@@ -801,7 +889,12 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                     }
                     inputMode="decimal"
                     placeholder="250,00"
+                    aria-describedby="vinculo-preco-previa"
                     className="h-10 font-mono tabular-nums"
+                  />
+                  <PreviaDeReais
+                    texto={formNovo.precoReais}
+                    id="vinculo-preco-previa"
                   />
                 </div>
               ) : null}

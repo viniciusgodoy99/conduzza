@@ -5,6 +5,7 @@ import { ptBR } from "date-fns/locale";
 import {
   AudioLines,
   CircleSlash,
+  CloudOff,
   CornerUpLeft,
   FileText,
   Image as ImageIcon,
@@ -15,7 +16,7 @@ import {
   Trash2,
   Video,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,14 @@ import { impedimentoParaTodos } from "@/components/atendimento/dialogo-apagar";
 import { CitacaoDaBolha } from "@/components/atendimento/citacao";
 import { FotoDaConversa } from "@/components/atendimento/media/foto-da-conversa";
 import { PlayerDeAudio } from "@/components/atendimento/media/player-de-audio";
+import {
+  estadoDaMidia,
+  exibicaoDaMidiaDeTexto,
+  nomeOriginalDoArquivo,
+  nomeSeguroDeArquivo,
+  type EstadoDaMidia,
+  type MotivoDeIndisponivel,
+} from "@/lib/domain/midia-recebida";
 import type {
   ComplianceDecision,
   MessageItem,
@@ -115,18 +124,81 @@ export function ComplianceBlockCard({
   );
 }
 
+/**
+ * Estado do arquivo, reavaliado sozinho quando a janela de download vence.
+ *
+ * Nada muda no banco quando o prazo passa sem arquivo (o job pode nem ter
+ * nascido), entao a bolha "baixando" arma UM timer para virar indisponivel na
+ * hora certa. Quando o worker grava storage:// ou a sentinela, o fio recarrega
+ * e o estado sai direto da coluna.
+ */
+function useEstadoDaMidia(message: MessageItem): EstadoDaMidia {
+  const [agora, setAgora] = useState(() => Date.now());
+  const estado = estadoDaMidia(message.media_url, message.created_at, agora);
+  const venceEm = estado.tipo === "baixando" ? estado.venceEm : null;
+  useEffect(() => {
+    if (venceEm === null) {
+      return;
+    }
+    const timer = setTimeout(
+      () => setAgora(Date.now()),
+      Math.max(0, venceEm - Date.now()) + 1_000,
+    );
+    return () => clearTimeout(timer);
+  }, [venceEm]);
+  return estado;
+}
+
+/**
+ * O arquivo nao vem mais. Icone proprio (nuvem cortada), que nao se confunde
+ * com o de foto, documento ou video: e um estado, nao um tipo de arquivo.
+ */
+function MidiaIndisponivel({
+  rotulo,
+  motivo,
+  fromPatient,
+}: {
+  rotulo: string;
+  motivo: MotivoDeIndisponivel | null;
+  fromPatient: boolean;
+}) {
+  const explicacao = !fromPatient
+    ? "Este arquivo não está disponível."
+    : motivo === "grande_demais"
+      ? "O arquivo passou do tamanho que o sistema consegue receber. Peça ao paciente para enviar um arquivo menor."
+      : "Não foi possível receber este arquivo. Peça ao paciente para enviar de novo.";
+  return (
+    <>
+      <span className="flex items-center gap-1.5 text-[12.5px] font-medium [color:var(--warning-text)]">
+        <CloudOff strokeWidth={1.5} className="size-4 shrink-0" />
+        {rotulo}
+      </span>
+      <span className="text-[12px] leading-snug text-text-secondary">
+        {explicacao}
+      </span>
+    </>
+  );
+}
+
 function AudioBody({ message }: { message: MessageItem }) {
   const [expanded, setExpanded] = useState(false);
-  const pronto = arquivoPronto(message);
+  const estado = useEstadoDaMidia(message);
+  const fromPatient = message.direction === "entrada";
   return (
     <div className="grid gap-1.5">
-      {pronto ? (
+      {estado.tipo === "pronta" ? (
         <PlayerDeAudio messageId={message.id} />
+      ) : estado.tipo === "indisponivel" ? (
+        <MidiaIndisponivel
+          rotulo={fromPatient ? "Áudio não recebido" : "Áudio indisponível"}
+          motivo={estado.motivo}
+          fromPatient={fromPatient}
+        />
       ) : (
         <span className="flex items-center gap-1.5 text-[12.5px] text-text-secondary">
           <AudioLines strokeWidth={1.5} className="size-4" />
           Áudio{" "}
-          {message.media_url?.startsWith("seed://")
+          {estado.tipo === "demonstracao"
             ? "(indisponível na demonstração)"
             : "(baixando)"}
         </span>
@@ -178,87 +250,171 @@ function ehMidia(message: MessageItem): boolean {
   ) {
     return true;
   }
-  return message.content_type === "texto" && Boolean(message.media_url);
+  return (
+    message.content_type === "texto" &&
+    (Boolean(message.media_url) || Boolean(message.media_mimetype))
+  );
 }
 
+type TipoDaMidia = "foto" | "documento" | "video" | "imagem" | "audio";
+
 /**
- * O arquivo esta guardado e servivel?
+ * O que a midia E, para escolher o elemento e o rotulo.
  *
- * media_url passa por tres estados: a URL criptografada do provedor (assim que
- * a mensagem chega), `storage://...` (depois que o job de download rodou) e
- * `seed://...` (dado de demonstracao). So o segundo tem arquivo nosso para
- * entregar.
+ * Midia que chega como 'texto' (o enum do banco nao preve video nem
+ * figurinha) e decidida pelo tipo REAL guardado em media_mimetype: figurinha
+ * e image/webp e vai para <img>. Antes todo 'texto com midia' virava <video>,
+ * e a figurinha aparecia como um player quebrado.
  */
-function arquivoPronto(message: MessageItem): boolean {
-  return message.media_url?.startsWith("storage://") ?? false;
+function tipoDaMidia(message: MessageItem): TipoDaMidia {
+  if (message.content_type === "imagem") return "foto";
+  if (message.content_type === "documento") return "documento";
+  const exibicao = exibicaoDaMidiaDeTexto(message.media_mimetype);
+  return exibicao === "foto" ? "imagem" : exibicao;
+}
+
+const ROTULOS: Record<
+  TipoDaMidia,
+  {
+    Icone: typeof ImageIcon;
+    recebido: string;
+    naoRecebido: string;
+    nome: string;
+  }
+> = {
+  foto: {
+    Icone: ImageIcon,
+    recebido: "Foto recebida",
+    naoRecebido: "Foto não recebida",
+    nome: "Foto",
+  },
+  imagem: {
+    Icone: ImageIcon,
+    recebido: "Imagem recebida",
+    naoRecebido: "Imagem não recebida",
+    nome: "Imagem",
+  },
+  documento: {
+    Icone: FileText,
+    recebido: "Documento recebido",
+    naoRecebido: "Documento não recebido",
+    nome: "Documento",
+  },
+  video: {
+    Icone: Video,
+    recebido: "Vídeo recebido",
+    naoRecebido: "Vídeo não recebido",
+    nome: "Vídeo",
+  },
+  audio: {
+    Icone: AudioLines,
+    recebido: "Áudio recebido",
+    naoRecebido: "Áudio não recebido",
+    nome: "Áudio",
+  },
+};
+
+function Legenda({ texto }: { texto: string | null }) {
+  return texto ? (
+    <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">{texto}</p>
+  ) : null;
 }
 
 function MidiaBody({ message }: { message: MessageItem }) {
-  const demonstracao = message.media_url?.startsWith("seed://") ?? false;
+  const estado = useEstadoDaMidia(message);
+  const fromPatient = message.direction === "entrada";
+  const tipo = tipoDaMidia(message);
+  const rotulos = ROTULOS[tipo];
 
-  if (arquivoPronto(message)) {
-    if (message.content_type === "documento") {
-      return (
-        <CartaoDeDocumento
-          messageId={message.id}
-          nomeDoArquivo={message.body}
-        />
-      );
-    }
-    // Video chega como content_type 'texto' com media_url, porque o enum do
-    // banco nao preve 'video'. Sem este ramo, ele ficava para sempre em
-    // "Baixando o arquivo" mesmo com o arquivo pronto no balde.
-    if (message.content_type === "texto") {
+  // O nome do arquivo e a legenda sao coisas diferentes. body so vira nome no
+  // dado antigo (quando termina em extensao); com media_filename, body e
+  // sempre a legenda e aparece embaixo.
+  const nomeDoArquivo = nomeOriginalDoArquivo(message);
+  const legenda =
+    nomeDoArquivo !== null && !nomeSeguroDeArquivo(message.media_filename)
+      ? null
+      : message.body;
+
+  if (estado.tipo === "pronta") {
+    if (tipo === "documento") {
       return (
         <div className="grid gap-1.5">
-          <video
-            src={`/api/atendimento/midia/${message.id}`}
-            controls
-            preload="metadata"
-            className="max-h-[280px] w-[240px] rounded-md bg-surface-3"
+          <CartaoDeDocumento
+            messageId={message.id}
+            nomeDoArquivo={
+              nomeDoArquivo ??
+              (fromPatient ? "Documento recebido" : "Documento enviado")
+            }
           />
-          {message.body ? (
-            <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
-              {message.body}
-            </p>
-          ) : null}
+          <Legenda texto={legenda} />
         </div>
       );
     }
-    if (message.content_type === "imagem") {
+    if (tipo === "foto" || tipo === "imagem") {
       return (
         <div className="grid gap-1.5">
           <FotoDaConversa messageId={message.id} legenda={message.body} />
-          {message.body ? (
-            <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
-              {message.body}
-            </p>
-          ) : null}
+          <Legenda texto={message.body} />
         </div>
       );
     }
+    if (tipo === "audio") {
+      return (
+        <div className="grid gap-1.5">
+          <PlayerDeAudio messageId={message.id} />
+          <Legenda texto={message.body} />
+        </div>
+      );
+    }
+    return (
+      <div className="grid gap-1.5">
+        <video
+          src={`/api/atendimento/midia/${message.id}`}
+          controls
+          preload="metadata"
+          className="max-h-[280px] w-[240px] rounded-md bg-surface-3"
+        />
+        <Legenda texto={message.body} />
+      </div>
+    );
   }
 
-  const { Icone, rotulo } =
-    message.content_type === "imagem"
-      ? { Icone: ImageIcon, rotulo: "Foto recebida" }
-      : message.content_type === "documento"
-        ? { Icone: FileText, rotulo: "Documento recebido" }
-        : { Icone: Video, rotulo: "Vídeo recebido" };
+  const nomeVisivel =
+    nomeDoArquivo !== null ? (
+      <span className="truncate text-[13px] font-medium" title={nomeDoArquivo}>
+        {nomeDoArquivo}
+      </span>
+    ) : null;
 
+  if (estado.tipo === "indisponivel") {
+    return (
+      <div className="grid gap-1">
+        <MidiaIndisponivel
+          rotulo={
+            fromPatient ? rotulos.naoRecebido : `${rotulos.nome} indisponível`
+          }
+          motivo={estado.motivo}
+          fromPatient={fromPatient}
+        />
+        {nomeVisivel}
+        <Legenda texto={legenda} />
+      </div>
+    );
+  }
+
+  const { Icone } = rotulos;
   return (
     <div className="grid gap-1">
       <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-text-secondary">
         <Icone strokeWidth={1.5} className="size-4 shrink-0" />
-        {rotulo}
+        {rotulos.recebido}
       </span>
-      {message.body ? (
-        <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
-          {message.body}
-        </p>
-      ) : null}
+      {nomeVisivel}
+      <Legenda texto={legenda} />
       <span className="text-[11.5px] text-text-tertiary">
-        {demonstracao ? "Indisponível na demonstração" : "Baixando o arquivo"}
+        {estado.tipo === "demonstracao"
+          ? "Indisponível na demonstração"
+          : "Baixando o arquivo"}
       </span>
     </div>
   );

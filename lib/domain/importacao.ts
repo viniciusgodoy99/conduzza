@@ -2,6 +2,8 @@
 // linha mapeada e divisao em lotes. PURO, zero I/O: quem le o arquivo e a
 // tela (lib/utils/csv.ts) e quem grava e a Server Action, em lotes.
 
+import { normalizarTelefone as normalizarTelefoneUnico } from "@/lib/domain/telefone";
+
 export type LinhaImportada = {
   name: string | null;
   phone_e164: string;
@@ -10,65 +12,16 @@ export type LinhaImportada = {
   source_campaign: string | null;
 };
 
-// DDD brasileiro: dois digitos, nenhum deles zero.
-const DDD_REGEX = /^[1-9][1-9]$/;
-
 /**
- * Numero nacional (sem +55): remove o zero de operadora e aceita DDD + 9
- * digitos de celular (o terceiro digito e 9) ou DDD + 8 digitos de fixo
- * (primeiro digito local 2 a 9). Sem DDD nao ha como montar E.164: null.
- */
-function normalizarNacional(digitos: string): string | null {
-  let nacional = digitos;
-  while (nacional.startsWith("0")) {
-    nacional = nacional.slice(1);
-  }
-  if (!DDD_REGEX.test(nacional.slice(0, 2))) {
-    return null;
-  }
-  const local = nacional.slice(2);
-  const celular = local.length === 9 && /^9\d{8}$/.test(local);
-  const fixo = local.length === 8 && /^[2-9]\d{7}$/.test(local);
-  if (!celular && !fixo) {
-    return null;
-  }
-  return `+55${nacional}`;
-}
-
-/**
- * Telefone bruto de planilha em E.164. Aceita os formatos brasileiros
- * comuns: com ou sem +55, com ou sem DDD explicito no prefixo 55, com ou
- * sem o nono digito (fixo de 8 digitos vale), com pontuacao e espacos.
- * Numero internacional ja em E.164 (+ e 8 a 15 digitos, sem zero a
- * esquerda) passa direto. Irrecuperavel (letras, curto demais, DDD
- * invalido) devolve null e a linha e reportada, nunca chutada.
+ * Telefone bruto de planilha em E.164. A regra mora em lib/domain/telefone.ts
+ * (a normalizacao UNICA de entrada humana: importacao, novo lead, ficha e
+ * cadastro rapido da Agenda passam todos por ela). Mantida aqui com a mesma
+ * assinatura porque a tela da importacao, o novo lead e a ficha importam
+ * deste modulo. Irrecuperavel devolve null e a linha e reportada, nunca
+ * chutada.
  */
 export function normalizarTelefone(bruto: string): string | null {
-  const texto = bruto.trim();
-  if (texto === "" || /[a-z]/i.test(texto)) {
-    return null;
-  }
-  const digitos = texto.replace(/\D/g, "");
-  if (digitos.length === 0) {
-    return null;
-  }
-
-  if (texto.startsWith("+")) {
-    if (digitos.startsWith("55")) {
-      return normalizarNacional(digitos.slice(2));
-    }
-    return /^[1-9]\d{7,14}$/.test(digitos) ? `+${digitos}` : null;
-  }
-
-  // Sem +: pode vir com o 55 do pais na frente (12 ou 13 digitos). Com 11
-  // digitos, 55 e DDD valido (regiao de Santa Maria), nao prefixo de pais.
-  if (
-    digitos.startsWith("55") &&
-    (digitos.length === 12 || digitos.length === 13)
-  ) {
-    return normalizarNacional(digitos.slice(2));
-  }
-  return normalizarNacional(digitos);
+  return normalizarTelefoneUnico(bruto);
 }
 
 /** Campos de LinhaImportada que o mapeamento de colunas pode apontar. */

@@ -133,6 +133,8 @@ export function EditorDePasso({
     () => renderizarModelo(texto, valoresDeAmostra(nomeDaClinica)),
     [texto, nomeDaClinica],
   );
+  const audioComTexto =
+    temAnexo && passo.media_type === "audio" && preview.trim().length > 0;
 
   // Campo desconhecido nao explode no envio (renderizarModelo limpa), mas
   // sumir em silencio e pior: avisa enquanto edita.
@@ -185,7 +187,9 @@ export function EditorDePasso({
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="grid content-start gap-3">
         <div className="grid gap-1.5">
-          <Label htmlFor={idArea}>Mensagem de {rotulo.toLowerCase()}</Label>
+          <Label htmlFor={idArea}>
+            Mensagem enviada {rotulo.toLowerCase()}
+          </Label>
           <Textarea
             id={idArea}
             ref={areaRef}
@@ -241,6 +245,13 @@ export function EditorDePasso({
                   Remover
                 </Button>
               ) : null}
+              {audioComTexto ? (
+                // O WhatsApp nao mostra legenda em audio: o envio manda o
+                // texto numa segunda mensagem, e a tela diz isso.
+                <span className="basis-full text-[11.5px] text-text-tertiary">
+                  Com áudio, o texto vai numa mensagem separada, logo depois.
+                </span>
+              ) : null}
             </div>
           ) : podeEditar ? (
             <>
@@ -267,7 +278,9 @@ export function EditorDePasso({
                 {pendenteAnexo ? "Enviando..." : "Anexar arquivo"}
               </Button>
               <span className="text-[11.5px] text-text-tertiary">
-                Até 3,8 MB. Com anexo, o texto é opcional e vira a legenda.
+                Até 3,8 MB. Com anexo, o texto é opcional. Na foto e no
+                arquivo, ele vira a legenda; com áudio, vai numa mensagem
+                separada, logo depois.
               </span>
             </>
           ) : (
@@ -310,9 +323,15 @@ export function EditorDePasso({
       </div>
       <div className="grid content-start gap-1.5">
         <span className="text-sm font-medium">Como o paciente vê</span>
-        {temAnexo && passo.media_type && botoes && botoes.length > 0 ? (
+        {temAnexo &&
+        passo.media_type &&
+        botoes &&
+        botoes.length > 0 &&
+        !audioComTexto ? (
           // Com anexo, a confirmacao vira DUAS mensagens de verdade (a midia
-          // e depois os botoes): a preview mostra o PAR, senao mentiria.
+          // e depois os botoes): a preview mostra o PAR, senao mentiria. Com
+          // audio e texto, o proprio balao mostra o par (audio sozinho, depois
+          // o texto com os botoes), igual ao envio real.
           <div className="grid gap-2">
             <BalaoWhatsApp
               corpo={preview}

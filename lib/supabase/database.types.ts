@@ -115,8 +115,10 @@ export type Database = {
           id: string
           is_overbooking: boolean
           notes: string | null
+          oferecer_vaga_ao_cancelar: boolean
           package_balance_id: string | null
           professional_id: string
+          remarcacao_pedida_em: string | null
           resource_id: string | null
           send_confirmation: boolean
           service_link_id: string
@@ -139,8 +141,10 @@ export type Database = {
           id?: string
           is_overbooking?: boolean
           notes?: string | null
+          oferecer_vaga_ao_cancelar?: boolean
           package_balance_id?: string | null
           professional_id: string
+          remarcacao_pedida_em?: string | null
           resource_id?: string | null
           send_confirmation?: boolean
           service_link_id: string
@@ -163,8 +167,10 @@ export type Database = {
           id?: string
           is_overbooking?: boolean
           notes?: string | null
+          oferecer_vaga_ao_cancelar?: boolean
           package_balance_id?: string | null
           professional_id?: string
+          remarcacao_pedida_em?: string | null
           resource_id?: string | null
           send_confirmation?: boolean
           service_link_id?: string
@@ -233,7 +239,13 @@ export type Database = {
           changed_by: string
           changed_by_user_id: string | null
           clinic_id: string
+          event: string | null
           id: string
+          kind: string
+          new_professional_id: string | null
+          new_starts_at: string | null
+          previous_professional_id: string | null
+          previous_starts_at: string | null
           status: string
         }
         Insert: {
@@ -242,7 +254,13 @@ export type Database = {
           changed_by?: string
           changed_by_user_id?: string | null
           clinic_id: string
+          event?: string | null
           id?: string
+          kind?: string
+          new_professional_id?: string | null
+          new_starts_at?: string | null
+          previous_professional_id?: string | null
+          previous_starts_at?: string | null
           status: string
         }
         Update: {
@@ -251,7 +269,13 @@ export type Database = {
           changed_by?: string
           changed_by_user_id?: string | null
           clinic_id?: string
+          event?: string | null
           id?: string
+          kind?: string
+          new_professional_id?: string | null
+          new_starts_at?: string | null
+          previous_professional_id?: string | null
+          previous_starts_at?: string | null
           status?: string
         }
         Relationships: [
@@ -267,6 +291,20 @@ export type Database = {
             columns: ["clinic_id"]
             isOneToOne: false
             referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointment_status_history_new_professional_id_fkey"
+            columns: ["new_professional_id"]
+            isOneToOne: false
+            referencedRelation: "professional"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointment_status_history_previous_professional_id_fkey"
+            columns: ["previous_professional_id"]
+            isOneToOne: false
+            referencedRelation: "professional"
             referencedColumns: ["id"]
           },
         ]
@@ -760,6 +798,7 @@ export type Database = {
           clinic_id: string
           cpf: string | null
           created_at: string
+          criado_por_importacao: boolean
           email: string | null
           first_contact_at: string
           funnel_stage: string
@@ -777,6 +816,7 @@ export type Database = {
           notes: string | null
           owner_user_id: string | null
           phone_e164: string
+          phone_key: string | null
           ctwa_clid: string | null
           source_ad_id: string | null
           source_adset_id: string | null
@@ -795,6 +835,7 @@ export type Database = {
           clinic_id: string
           cpf?: string | null
           created_at?: string
+          criado_por_importacao?: boolean
           email?: string | null
           first_contact_at?: string
           funnel_stage?: string
@@ -812,6 +853,7 @@ export type Database = {
           notes?: string | null
           owner_user_id?: string | null
           phone_e164: string
+          phone_key?: never
           ctwa_clid?: string | null
           source_ad_id?: string | null
           source_adset_id?: string | null
@@ -830,6 +872,7 @@ export type Database = {
           clinic_id?: string
           cpf?: string | null
           created_at?: string
+          criado_por_importacao?: boolean
           email?: string | null
           first_contact_at?: string
           funnel_stage?: string
@@ -847,6 +890,7 @@ export type Database = {
           notes?: string | null
           owner_user_id?: string | null
           phone_e164?: string
+          phone_key?: never
           ctwa_clid?: string | null
           source_ad_id?: string | null
           source_adset_id?: string | null
@@ -1244,6 +1288,7 @@ export type Database = {
           locked_by: string | null
           max_attempts: number
           payload: Json
+          prioridade: number
           run_at: string
           status: string
           ultimo_motivo_devolucao: string | null
@@ -1261,6 +1306,7 @@ export type Database = {
           locked_by?: string | null
           max_attempts?: number
           payload?: Json
+          prioridade?: number
           run_at?: string
           status?: string
           ultimo_motivo_devolucao?: string | null
@@ -1278,6 +1324,7 @@ export type Database = {
           locked_by?: string | null
           max_attempts?: number
           payload?: Json
+          prioridade?: number
           run_at?: string
           status?: string
           ultimo_motivo_devolucao?: string | null
@@ -1314,6 +1361,8 @@ export type Database = {
           id: string
           is_internal_note: boolean
           job_id: string | null
+          media_filename: string | null
+          media_mimetype: string | null
           media_url: string | null
           pricing_category: string | null
           reply_to_message_id: string | null
@@ -1343,6 +1392,8 @@ export type Database = {
           id?: string
           is_internal_note?: boolean
           job_id?: string | null
+          media_filename?: string | null
+          media_mimetype?: string | null
           media_url?: string | null
           pricing_category?: string | null
           reply_to_message_id?: string | null
@@ -1372,6 +1423,8 @@ export type Database = {
           id?: string
           is_internal_note?: boolean
           job_id?: string | null
+          media_filename?: string | null
+          media_mimetype?: string | null
           media_url?: string | null
           pricing_category?: string | null
           reply_to_message_id?: string | null
@@ -1668,6 +1721,7 @@ export type Database = {
       }
       package: {
         Row: {
+          active: boolean
           clinic_id: string
           created_at: string
           id: string
@@ -1678,6 +1732,7 @@ export type Database = {
           validity_days: number | null
         }
         Insert: {
+          active?: boolean
           clinic_id: string
           created_at?: string
           id?: string
@@ -1688,6 +1743,7 @@ export type Database = {
           validity_days?: number | null
         }
         Update: {
+          active?: boolean
           clinic_id?: string
           created_at?: string
           id?: string
@@ -2426,6 +2482,7 @@ export type Database = {
           display_phone: string | null
           instance_id: string | null
           messaging_limit: string | null
+          next_bulk_send_at: string | null
           next_send_at: string | null
           phone_number_id: string | null
           provider: string
@@ -2444,6 +2501,7 @@ export type Database = {
           display_phone?: string | null
           instance_id?: string | null
           messaging_limit?: string | null
+          next_bulk_send_at?: string | null
           next_send_at?: string | null
           phone_number_id?: string | null
           provider?: string
@@ -2462,6 +2520,7 @@ export type Database = {
           display_phone?: string | null
           instance_id?: string | null
           messaging_limit?: string | null
+          next_bulk_send_at?: string | null
           next_send_at?: string | null
           phone_number_id?: string | null
           provider?: string
@@ -2595,6 +2654,10 @@ export type Database = {
         }
         Returns: Json
       }
+      cancelar_reoferta_de_espera: {
+        Args: { p_clinic_id: string; p_offer_id: string }
+        Returns: boolean
+      }
       claim_jobs: {
         Args: { p_limit?: number; p_worker: string }
         Returns: {
@@ -2609,6 +2672,7 @@ export type Database = {
           locked_by: string | null
           max_attempts: number
           payload: Json
+          prioridade: number
           run_at: string
           status: string
           ultimo_motivo_devolucao: string | null
@@ -2640,6 +2704,7 @@ export type Database = {
           locked_by: string | null
           max_attempts: number
           payload: Json
+          prioridade: number
           run_at: string
           status: string
           ultimo_motivo_devolucao: string | null
@@ -2652,6 +2717,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      chave_telefone: { Args: { p_phone: string }; Returns: string }
       concluir_job: {
         Args: { p_id: string; p_worker: string }
         Returns: undefined
@@ -2706,6 +2772,10 @@ export type Database = {
         Returns: string
       }
       expirar_ofertas_de_espera: { Args: never; Returns: number }
+      encerrar_envios_da_oferta: {
+        Args: { p_clinic_id: string; p_offer_id: string }
+        Returns: number
+      }
       disparar_ciclo_do_motor: { Args: never; Returns: undefined }
       emails_da_equipe: {
         Args: { p_clinic_id: string }
@@ -2755,15 +2825,13 @@ export type Database = {
         Args: { p_clinic_id: string; p_contact_id: string }
         Returns: string
       }
-      incrementar_no_show: {
-        Args: { p_contact_id: string }
-        Returns: undefined
-      }
       ingest_inbound_message: {
         Args: {
           p_body?: string
           p_clinic_id: string
           p_content_type?: string
+          p_media_filename?: string
+          p_media_mimetype?: string
           p_media_url?: string
           p_name: string
           p_phone_e164: string
@@ -2795,6 +2863,15 @@ export type Database = {
       mover_na_lista_de_espera: {
         Args: { p_clinic_id: string; p_id: string; p_nova_posicao: number }
         Returns: string
+      }
+      pedir_remarcacao_pelo_paciente: {
+        Args: {
+          p_appointment_id: string
+          p_clinic_id: string
+          p_contact_id: string
+          p_conversation_id?: string
+        }
+        Returns: Json
       }
       pacientes_resumo: {
         Args: { p_clinic_id: string }
@@ -2848,8 +2925,10 @@ export type Database = {
       reservar_slot_envio_v2: {
         Args: {
           p_clinic_id: string
+          p_espaco_curto_ms?: number
           p_espaco_ms: number
           p_espera_maxima_ms: number
+          p_massa?: boolean
         }
         Returns: Json
       }
@@ -2865,6 +2944,24 @@ export type Database = {
       user_has_role: {
         Args: { p_clinic_id: string; p_roles: string[] }
         Returns: boolean
+      }
+      uso_dos_pacotes: {
+        Args: { p_clinic_id: string }
+        Returns: {
+          package_id: string
+          pacientes_com_saldo: number
+          vendas: number
+        }[]
+      }
+      vaga_de_espera_indisponivel: {
+        Args: {
+          p_clinic_id: string
+          p_ends_at: string
+          p_professional_id: string
+          p_starts_at: string
+          p_unit_id?: string
+        }
+        Returns: string
       }
       user_professional_id: { Args: { p_clinic_id: string }; Returns: string }
       validar_codigo_clinica: { Args: { p_codigo: string }; Returns: Json }

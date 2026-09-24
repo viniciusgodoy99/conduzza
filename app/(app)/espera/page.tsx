@@ -8,7 +8,7 @@ import {
   fetchConfigDaEspera,
   fetchFilaDeEspera,
   fetchMetricasDaEspera,
-  fetchOfertaEmAndamento,
+  fetchOfertasEmAndamento,
 } from "@/lib/queries/espera";
 import { createClient } from "@/lib/supabase/server";
 
@@ -36,10 +36,10 @@ export default async function EsperaPage({
   });
 
   const { adicionar } = await searchParams;
-  const [fila, oferta, metricas, config, procedimentos, profissionais, contatoParaAdicionar] =
+  const [fila, ofertas, metricas, config, procedimentos, profissionais, contatoParaAdicionar] =
     await Promise.all([
       fetchFilaDeEspera(supabase, active.clinicId),
-      fetchOfertaEmAndamento(supabase, active.clinicId),
+      fetchOfertasEmAndamento(supabase, active.clinicId),
       fetchMetricasDaEspera(supabase, active.clinicId),
       fetchConfigDaEspera(supabase, active.clinicId),
       supabase
@@ -86,7 +86,7 @@ export default async function EsperaPage({
         podeEditar={canEdit(active.role, "confirmacoes_espera")}
         dicaSemPermissao={'Seu perfil vê a lista de espera, sem alterar (quem altera é a recepção e a gestão)'}
         filaInicial={fila}
-        ofertaInicial={oferta}
+        ofertasIniciais={ofertas}
         metricasIniciais={metricas}
         config={config}
         procedimentos={(procedimentos.data ?? []) as { id: string; name: string }[]}

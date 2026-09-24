@@ -48,20 +48,36 @@ export const PASSOS_POS_FALTA: readonly PassoPadrao[] = [
   { offsetMinutes: 2880, rotulo: "Dois dias depois", body: POS_FALTA_D2 },
 ];
 
-const ROTULO_POR_OFFSET = new Map(
-  [...PASSOS_CONFIRMACAO, ...PASSOS_POS_FALTA].map((passo) => [
-    passo.offsetMinutes,
-    passo.rotulo,
-  ]),
-);
+/** O tipo de regua que o rotulo descreve: cada uma tem os proprios padroes. */
+export type TipoDeReguaDoRotulo = "confirmacao" | "pos_falta" | "followup";
+
+// Um mapa POR TIPO de regua. O mapa unico juntava confirmacao e pos falta, e
+// o passo de 0 horas do follow-up aparecia como "No dia da falta" numa regua
+// de leads (achado da revisao de 24/09/2026).
+const ROTULOS_POR_TIPO: Record<
+  TipoDeReguaDoRotulo,
+  ReadonlyMap<number, string>
+> = {
+  confirmacao: new Map(
+    PASSOS_CONFIRMACAO.map((passo) => [passo.offsetMinutes, passo.rotulo]),
+  ),
+  pos_falta: new Map(
+    PASSOS_POS_FALTA.map((passo) => [passo.offsetMinutes, passo.rotulo]),
+  ),
+  followup: new Map(),
+};
 
 /**
- * "72 horas antes" para os passos padrao; conta horas (ou dias, quando a
- * conta fecha redonda) para os demais. Compartilhado entre o painel da Tela 2
- * e o editor da Tela 7.
+ * "72 horas antes" para os passos padrao DA REGUA CERTA; conta horas (ou
+ * dias, quando a conta fecha redonda) para os demais, e "Na hora" para o
+ * zero de uma regua sem padrao no zero (o follow-up). Compartilhado entre o
+ * painel da Tela 2 e o editor da Tela 7.
  */
-export function rotuloDoPasso(offsetMinutes: number): string {
-  const conhecido = ROTULO_POR_OFFSET.get(offsetMinutes);
+export function rotuloDoPasso(
+  offsetMinutes: number,
+  tipo: TipoDeReguaDoRotulo,
+): string {
+  const conhecido = ROTULOS_POR_TIPO[tipo].get(offsetMinutes);
   if (conhecido) {
     return conhecido;
   }
@@ -84,19 +100,30 @@ export const NOME_REGUA_POS_FALTA = "Recuperação depois da falta";
 
 // Retorno ao paciente que respondeu o toque de confirmacao (tarefa 4.7).
 // Saem pelo job de envio ativo DEPOIS de a RPC mudar o status: sem eco a
-// pessoa fica sem saber se a mensagem dela valeu. Texto fixo e curto de
-// proposito, sem dado da consulta: quem responde ja sabe qual e.
+// pessoa fica sem saber se a mensagem dela valeu. Levam {{data}} e {{hora}}
+// da consulta (revisao de 24/09): quem tem duas consultas perto precisa saber
+// qual o sistema entendeu. O interceptador preenche no fuso da clinica.
 
 /** Depois de confirmar_pelo_paciente. */
-export const RESPOSTA_CONFIRMADA = "Presença confirmada, obrigado! Até lá.";
+export const RESPOSTA_CONFIRMADA =
+  "Presença confirmada para {{data}} às {{hora}}, obrigado! Até lá.";
 
 /** Depois de cancelar_pelo_paciente. */
 export const RESPOSTA_CANCELADA =
-  "Tudo bem, sua consulta foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.";
+  "Tudo bem, sua consulta de {{data}} às {{hora}} foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.";
 
-/** Pedido de remarcacao: nao muda status, a recepcao assume a conversa. */
+/** Depois de pedir_remarcacao_pelo_paciente: status intacto, a recepcao assume. */
 export const RESPOSTA_REMARCAR =
-  "Certo! Nossa recepção vai falar com você para encontrar um novo horário.";
+  "Certo! Nossa recepção vai falar com você para encontrar um novo horário no lugar da consulta de {{data}} às {{hora}}.";
+
+/**
+ * Aviso automatico quando a recepcao remarca a consulta com a chave "Avisar
+ * o paciente pelo WhatsApp" ligada (texto do dono em 24/09/2026). Data e hora
+ * no fuso da clinica. Sai pelo job de envio ativo, que reconfere a
+ * autorizacao e grava o custo; nao tem copia no banco (nao e passo de regua).
+ */
+export const AVISO_REMARCACAO =
+  "Olá, {{nome}}! Sua consulta na {{clinica}} foi remarcada para {{data}} às {{hora}}. Qualquer dúvida, é só responder aqui.";
 
 /**
  * As tres opcoes do toque de confirmacao. O id e o que volta na resposta do
@@ -104,9 +131,11 @@ export const RESPOSTA_REMARCAR =
  * degrada para lista numerada). Os dois caminhos sao lidos por
  * interpretarResposta.
  */
-/** Corpo da mensagem de botoes quando o passo de confirmacao tem anexo: a
- *  midia sai primeiro (com o texto do passo como legenda) e os botoes vao
- *  numa segunda mensagem, que precisa de um corpo proprio. */
+/** Corpo da mensagem de botoes quando o passo de confirmacao tem anexo e NAO
+ *  tem texto: a midia sai primeiro e os botoes vao numa segunda mensagem,
+ *  que precisa de um corpo proprio. Com texto, o corpo dos botoes e o proprio
+ *  texto do passo quando o anexo e audio (o WhatsApp nao mostra legenda em
+ *  audio) e a legenda da midia nos demais casos. */
 export const CORPO_DO_MENU_APOS_MIDIA =
   "Responda com uma das opções abaixo:";
 

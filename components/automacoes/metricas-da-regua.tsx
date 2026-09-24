@@ -25,6 +25,9 @@ const ROTULO_DO_MOTIVO: Record<string, string> = {
   desconectado: "WhatsApp fora do ar",
   teto_gasto: "teto de gasto",
   canal_ocupado: "canal ocupado",
+  consulta_remarcada: "consulta remarcada",
+  remarcacao_pedida: "pediu para remarcar",
+  toque_atrasado: "atrasada, a seguinte cobriu",
 };
 
 export function MetricasDaRegua({

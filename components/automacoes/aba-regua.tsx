@@ -21,7 +21,10 @@ import {
   estimarRegua,
   type BaseDaEstimativa,
 } from "@/lib/domain/estimativa-regua";
-import { rotuloDoPasso } from "@/lib/domain/textos-padrao";
+import {
+  rotuloDoPasso,
+  type TipoDeReguaDoRotulo,
+} from "@/lib/domain/textos-padrao";
 import type { ReguaDeConfirmacao } from "@/lib/queries/confirmacoes";
 
 // Uma aba de regua da Tela 7 (confirmacao ou pos falta, e as excecoes da
@@ -36,6 +39,7 @@ export function AbaRegua({
   botoesDaPreview,
   estimativa,
   sentidoDoPasso,
+  tipoDaRegua,
   eventoRotulo,
   placeholders,
   podeEditar,
@@ -57,6 +61,8 @@ export function AbaRegua({
   estimativa: Omit<BaseDaEstimativa, "passos">;
   /** confirmacao conta ANTES da consulta; pos falta conta DEPOIS do evento. */
   sentidoDoPasso: "antes" | "depois";
+  /** Qual regua e: decide os rotulos padrao dos pontos da linha do tempo. */
+  tipoDaRegua: TipoDeReguaDoRotulo;
   /** "a consulta" | "a falta", para os dialogos. */
   eventoRotulo: string;
   /** Campos {{...}} que fazem sentido nesta regua; ausente = todos. */
@@ -195,7 +201,7 @@ export function AbaRegua({
               fimRotulo={copy.fimDaLinha}
               pontos={regua.passos.map((passo) => ({
                 id: passo.id,
-                rotulo: rotuloDoPasso(passo.offset_minutes),
+                rotulo: rotuloDoPasso(passo.offset_minutes, tipoDaRegua),
                 temTexto: Boolean(passo.fixed_body || passo.media_path),
               }))}
               selecionadoId={passoSelecionado?.id ?? null}
@@ -288,7 +294,10 @@ export function AbaRegua({
             <EditorDePasso
               key={passoSelecionado.id}
               passo={passoSelecionado}
-              rotulo={rotuloDoPasso(passoSelecionado.offset_minutes)}
+              rotulo={rotuloDoPasso(
+                passoSelecionado.offset_minutes,
+                tipoDaRegua,
+              )}
               nomeDaClinica={nomeDaClinica}
               botoes={botoesDaPreview}
               placeholders={placeholders}

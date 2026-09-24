@@ -492,7 +492,9 @@ describe("os seis passos do toque", () => {
     const velha = (await runsDaClinica(cenario.clinicId)).find(
       (r) => r.id === antes[0]!.id,
     );
-    expect(velha?.skipped_reason).toBe("condicao_parada");
+    // Motivo proprio desde 24/09/2026: 'condicao_parada' escondia da recepcao
+    // que o toque morreu porque a consulta mudou de horario.
+    expect(velha?.skipped_reason).toBe("consulta_remarcada");
 
     // O planner materializa o toque do horário novo, com outra chave natural.
     await planejar();

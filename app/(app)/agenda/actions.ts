@@ -3,10 +3,37 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { TZDate } from "@date-fns/tz";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import type { AppointmentStatus } from "@/lib/design/status";
-import { exigeCanal, podeTransicionar } from "@/lib/domain/appointment-status";
+import {
+  DICA_FALTA_ANTES_DO_HORARIO,
+  DICA_REMARCAR_ENCERRADA,
+  eCancelamento,
+  exigeCanal,
+  faltaLiberada,
+  podeRemarcar,
+  podeTransicionar,
+  statusAposRemarcar,
+} from "@/lib/domain/appointment-status";
+import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
+import {
+  cabeNaJornada,
+  colideComBloqueio,
+  MENSAGEM_SEM_VINCULO,
+  vinculoEquivalente,
+} from "@/lib/domain/remarcacao";
+import { AVISO_REMARCACAO } from "@/lib/domain/textos-padrao";
 import { canEdit } from "@/lib/domain/permissions";
+import {
+  chaveDeTelefone,
+  MENSAGEM_TELEFONE_INVALIDO,
+  normalizarTelefone,
+} from "@/lib/domain/telefone";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 // Server Actions da Agenda (Tela 3). Guard: canEdit(role, "agenda"); o papel
@@ -18,8 +45,33 @@ import { createClient } from "@/lib/supabase/server";
 export type AgendaActionResult = {
   ok: boolean;
   error?: string;
-  code?: "conflito" | "conflito_recurso" | "ja_tratado";
+  code?:
+    | "conflito"
+    | "conflito_recurso"
+    | "ja_tratado"
+    // Remarcar: situacao final, sem vinculo no profissional de destino,
+    // fora da jornada ou em cima de bloqueio. Os tres ultimos a tela corrige
+    // escolhendo outro horario ou profissional, com o dialogo aberto.
+    | "situacao_final"
+    | "sem_vinculo"
+    | "fora_da_jornada"
+    | "bloqueado"
+    // Mudar situacao: falta antes do horario da consulta.
+    | "falta_antes_do_horario";
   id?: string;
+  /**
+   * A acao deu certo, mas algo que a recepcao pediu junto nao aconteceu (ex.:
+   * o aviso de remarcacao nao saiu porque o paciente nao autorizou). A tela
+   * mostra como aviso, nunca como sucesso silencioso.
+   */
+  aviso?: string;
+  /**
+   * Cadastro rapido: o telefone ja era de um contato (casado pela chave, com
+   * ou sem o nono digito) e o id devolvido e o DELE. `nome` e o nome desse
+   * cadastro, para a tela perguntar "usar este cadastro?".
+   */
+  existente?: boolean;
+  nome?: string | null;
 };
 
 const idSchema = z.uuid();
@@ -35,7 +87,12 @@ async function requireAgendaEditor() {
   if (!canEdit(context.active.role, "agenda")) {
     return { error: "Seu perfil não pode alterar a agenda." as const };
   }
-  return { context, clinicId: context.active.clinicId };
+  return {
+    context,
+    clinicId: context.active.clinicId,
+    clinicName: context.active.clinicName,
+    timezone: context.active.timezone,
+  };
 }
 
 async function registrarHistorico(
@@ -60,10 +117,9 @@ async function registrarHistorico(
 
 const pacienteRapidoSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^\+?\d{10,15}$/, "Telefone com DDD, só números"),
+  // Texto como veio (pode ser colado do WhatsApp Web, "+55 85 99999-0000"):
+  // quem decide se e telefone e a normalizacao unica, logo abaixo.
+  phone: z.string().trim().min(1).max(40),
 });
 
 export async function criarPacienteRapidoAction(
@@ -77,19 +133,32 @@ export async function criarPacienteRapidoAction(
   if (!parsed.success) {
     return { ok: false, error: "Informe nome e telefone com DDD." };
   }
-  const telefone = parsed.data.phone.startsWith("+")
-    ? parsed.data.phone
-    : `+55${parsed.data.phone}`;
+  // Normalizacao UNICA de telefone (lib/domain/telefone.ts). Antes o "+" era
+  // arrancado no cliente e o servidor punha +55 na frente de novo: colar
+  // "+55 85 99999-0000" gravava +555585999990000, numero que nao existe.
+  const telefone = normalizarTelefone(parsed.data.phone);
+  if (!telefone) {
+    return { ok: false, error: MENSAGEM_TELEFONE_INVALIDO };
+  }
 
   const supabase = await createClient();
-  const { data: existente } = await supabase
-    .from("contact")
-    .select("id")
-    .eq("clinic_id", guard.clinicId)
-    .eq("phone_e164", telefone)
-    .maybeSingle();
+  // Casamento pela CHAVE: com e sem o nono digito sao a mesma pessoa (o
+  // WhatsApp entrega sem, a recepcao digita com).
+  const buscarExistente = async () =>
+    await supabase
+      .from("contact")
+      .select("id, name")
+      .eq("clinic_id", guard.clinicId)
+      .eq("phone_key", chaveDeTelefone(telefone))
+      .maybeSingle();
+  const { data: existente } = await buscarExistente();
   if (existente) {
-    return { ok: true, id: existente.id };
+    return {
+      ok: true,
+      id: existente.id,
+      existente: true,
+      nome: existente.name ?? null,
+    };
   }
   const { data, error } = await supabase
     .from("contact")
@@ -102,6 +171,19 @@ export async function criarPacienteRapidoAction(
     .select("id")
     .single();
   if (error || !data) {
+    // Corrida: outra pessoa (ou o WhatsApp) criou o mesmo numero entre a
+    // busca e o insert. O indice unico da chave barrou; devolve o que ficou.
+    if (error?.code === "23505") {
+      const { data: criadoAgora } = await buscarExistente();
+      if (criadoAgora) {
+        return {
+          ok: true,
+          id: criadoAgora.id,
+          existente: true,
+          nome: criadoAgora.name ?? null,
+        };
+      }
+    }
     return { ok: false, error: "Não foi possível criar o cadastro." };
   }
   await supabase.from("audit_log").insert({
@@ -257,6 +339,131 @@ const remarcarSchema = z.object({
   avisar_paciente: z.boolean(),
 });
 
+// Violacao de check do Postgres: aqui so chega pelo gatilho
+// preparar_remarcacao (consulta encerrada) ou impedir_falta_antes_do_horario.
+const CHECK_VIOLATION = "23514";
+
+const AVISO_SEM_AUTORIZACAO =
+  "O paciente não autorizou receber mensagens. Avise por telefone.";
+const AVISO_CANAL_FORA =
+  "O WhatsApp da clínica está desconectado, então o aviso não saiu. Avise o paciente por telefone.";
+const AVISO_NAO_ENFILEIRADO =
+  "Não foi possível enviar o aviso ao paciente. Avise por telefone.";
+
+type ConsultaParaRemarcar = {
+  starts_at: string;
+  ends_at: string;
+  status: AppointmentStatus;
+  professional_id: string;
+  contact_id: string;
+  service_link_id: string;
+  is_overbooking: boolean;
+  service_link:
+    | { procedure_id: string; insurance_id: string | null }
+    | { procedure_id: string; insurance_id: string | null }[]
+    | null;
+};
+
+type VinculoDoBanco = {
+  id: string;
+  professional_id: string;
+  procedure_id: string;
+  insurance_id: string | null;
+  duration_min: number;
+  active: boolean;
+};
+
+/**
+ * Aviso de remarcacao pelo WhatsApp (decisao do dono em 24/09/2026). Sai pelo
+ * job enviar_mensagem_ativa, o mesmo caminho dos retornos automaticos: o
+ * worker reconfere a autorizacao na hora do envio, respeita o espacamento
+ * anti-ban e grava o custo. Aqui a autorizacao e conferida ANTES de enfileirar
+ * para a recepcao saber na hora que precisa ligar. Devolve o aviso para a
+ * tela quando nada foi enfileirado; undefined quando o envio esta a caminho.
+ */
+async function enfileirarAvisoDeRemarcacao(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  params: {
+    clinicId: string;
+    clinicName: string;
+    timezone: string;
+    userId: string;
+    appointmentId: string;
+    contactId: string;
+    inicio: Date;
+  },
+): Promise<string | undefined> {
+  // Horario novo no passado (correcao de registro): nao ha o que avisar.
+  if (params.inicio.getTime() <= Date.now()) {
+    return "O novo horário já passou, então nenhum aviso foi enviado ao paciente.";
+  }
+  const { data: autorizado, error: erroAutorizacao } = await supabase.rpc(
+    "consentimento_vigente",
+    {
+      p_clinic_id: params.clinicId,
+      p_contact_id: params.contactId,
+      p_channel: "whatsapp",
+    },
+  );
+  if (erroAutorizacao) {
+    return AVISO_NAO_ENFILEIRADO;
+  }
+  if (autorizado !== true) {
+    return AVISO_SEM_AUTORIZACAO;
+  }
+
+  // Canal fora do ar: dizer a verdade na hora do clique, como o "Cobrar
+  // agora". Enfileirar aqui deixaria a recepcao achando que o paciente soube.
+  const { data: conta } = await supabase
+    .from("whatsapp_account")
+    .select("connection_status")
+    .eq("clinic_id", params.clinicId)
+    .maybeSingle();
+  if (!conta || conta.connection_status !== "conectado") {
+    return AVISO_CANAL_FORA;
+  }
+
+  const { data: contato } = await supabase
+    .from("contact")
+    .select("name")
+    .eq("clinic_id", params.clinicId)
+    .eq("id", params.contactId)
+    .maybeSingle();
+
+  // Data e hora no fuso da clinica (regra 3.6): o banco guarda UTC.
+  const inicioLocal = new TZDate(params.inicio.getTime(), params.timezone);
+  const body = renderizarModelo(AVISO_REMARCACAO, {
+    nome: (contato?.name as string | null | undefined) ?? null,
+    clinica: params.clinicName,
+    data: format(inicioLocal, "dd/MM/yyyy", { locale: ptBR }),
+    hora: format(inicioLocal, "HH:mm", { locale: ptBR }),
+  }).trim();
+
+  // job_queue nao tem policy de escrita (quem grava e o sistema). O service
+  // role entra SO aqui, depois de a sessao ter movido a consulta pela RLS.
+  const admin = createAdminClient();
+  const { error: erroJob } = await admin.from("job_queue").insert({
+    clinic_id: params.clinicId,
+    kind: "enviar_mensagem_ativa",
+    payload: {
+      contact_id: params.contactId,
+      body,
+      appointment_id: params.appointmentId,
+    },
+  });
+  if (erroJob) {
+    return AVISO_NAO_ENFILEIRADO;
+  }
+  await supabase.from("audit_log").insert({
+    clinic_id: params.clinicId,
+    user_id: params.userId,
+    action: "enfileirou_aviso_de_remarcacao",
+    entity: "appointment",
+    entity_id: params.appointmentId,
+  });
+  return undefined;
+}
+
 export async function remarcarAgendamentoAction(
   input: unknown,
 ): Promise<AgendaActionResult> {
@@ -268,45 +475,211 @@ export async function remarcarAgendamentoAction(
   if (!parsed.success) {
     return { ok: false, error: "Confira o novo horário." };
   }
+  const { id, novo_professional_id } = parsed.data;
 
   const supabase = await createClient();
-  // A DURACAO nao vem do cliente: le a consulta e preserva o intervalo real,
+  // A DURACAO nao vem do cliente: le a consulta e o vinculo e recalcula,
   // senao o range que a exclusion constraint avalia poderia ser forjado.
-  const { data: atual } = await supabase
+  const { data: bruta } = await supabase
     .from("appointment")
-    .select("starts_at, ends_at")
+    .select(
+      "starts_at, ends_at, status, professional_id, contact_id, service_link_id, is_overbooking, service_link:service_link_id (procedure_id, insurance_id)",
+    )
     .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.id)
+    .eq("id", id)
     .maybeSingle();
-  if (!atual) {
+  if (!bruta) {
     return { ok: false, error: "Consulta não encontrada." };
   }
-  const duracaoMs =
-    new Date(atual.ends_at as string).getTime() -
-    new Date(atual.starts_at as string).getTime();
-  const novo_ends_at = new Date(
-    new Date(parsed.data.novo_starts_at).getTime() + duracaoMs,
-  ).toISOString();
+  const atual = bruta as unknown as ConsultaParaRemarcar;
 
-  // Update condicional no horario que a tela viu: se alguem mexeu antes,
-  // zero linhas voltam e a tela avisa em vez de sobrescrever.
+  // Situacao final nao se move (achado 78): a falta fica no dia em que
+  // aconteceu e o horario novo nao nasce preso numa situacao final. O
+  // gatilho preparar_remarcacao recusa de novo no banco.
+  if (!podeRemarcar(atual.status)) {
+    return {
+      ok: false,
+      code: "situacao_final",
+      error: DICA_REMARCAR_ENCERRADA,
+    };
+  }
+
+  const vinculoAtual = Array.isArray(atual.service_link)
+    ? (atual.service_link[0] ?? null)
+    : atual.service_link;
+  const trocouProfissional = novo_professional_id !== atual.professional_id;
+
+  // Profissional novo: o vinculo dele para o MESMO procedimento e convenio
+  // (achado 85). Sem isto a consulta ficava com o profissional novo e a
+  // duracao, o preco e o convenio do antigo.
+  let serviceLinkId = atual.service_link_id;
+  let duracaoMs =
+    new Date(atual.ends_at).getTime() - new Date(atual.starts_at).getTime();
+  if (trocouProfissional) {
+    if (!vinculoAtual) {
+      return { ok: false, code: "sem_vinculo", error: MENSAGEM_SEM_VINCULO };
+    }
+    const [{ data: candidatos, error: erroVinculos }, { data: profissional }] =
+      await Promise.all([
+        supabase
+          .from("service_link")
+          .select(
+            "id, professional_id, procedure_id, insurance_id, duration_min, active",
+          )
+          .eq("clinic_id", guard.clinicId)
+          .eq("professional_id", novo_professional_id)
+          .eq("procedure_id", vinculoAtual.procedure_id)
+          .eq("active", true),
+        supabase
+          .from("professional")
+          .select("active")
+          .eq("clinic_id", guard.clinicId)
+          .eq("id", novo_professional_id)
+          .maybeSingle(),
+      ]);
+    if (erroVinculos) {
+      return { ok: false, error: "Não foi possível remarcar." };
+    }
+    if (!profissional || profissional.active !== true) {
+      return {
+        ok: false,
+        code: "sem_vinculo",
+        error: "Este profissional está inativo. Escolha outro.",
+      };
+    }
+    const vinculo = vinculoEquivalente((candidatos ?? []) as VinculoDoBanco[], {
+      professionalId: novo_professional_id,
+      procedureId: vinculoAtual.procedure_id,
+      insuranceId: vinculoAtual.insurance_id,
+    });
+    if (!vinculo) {
+      return { ok: false, code: "sem_vinculo", error: MENSAGEM_SEM_VINCULO };
+    }
+    serviceLinkId = vinculo.id;
+    duracaoMs = vinculo.duration_min * 60_000;
+  }
+
+  const novoInicio = new Date(parsed.data.novo_starts_at);
+  const novoFim = new Date(novoInicio.getTime() + duracaoMs);
+
+  // Bloqueio e jornada do profissional de DESTINO (achado 85). Encaixe (a
+  // flag que a consulta ja carrega) passa por cima da jornada e do bloqueio
+  // comum, mas nunca do bloqueio que impede encaixe, como na criacao.
+  const [
+    { data: bloqueios, error: erroBloqueios },
+    { data: jornada, error: erroJornada },
+  ] = await Promise.all([
+    supabase
+      .from("professional_block")
+      .select("starts_at, ends_at, blocks_overbooking")
+      .eq("clinic_id", guard.clinicId)
+      .eq("professional_id", novo_professional_id)
+      .lt("starts_at", novoFim.toISOString())
+      .gt("ends_at", novoInicio.toISOString()),
+    supabase
+      .from("professional_schedule")
+      .select("weekday, starts_at, ends_at")
+      .eq("clinic_id", guard.clinicId)
+      .eq("professional_id", novo_professional_id),
+  ]);
+  if (erroBloqueios || erroJornada) {
+    return {
+      ok: false,
+      error:
+        "Não foi possível conferir a agenda do profissional. Tente de novo.",
+    };
+  }
+  const bloqueiosQueValem = (
+    (bloqueios ?? []) as {
+      starts_at: string;
+      ends_at: string;
+      blocks_overbooking: boolean;
+    }[]
+  ).filter((b) => !atual.is_overbooking || b.blocks_overbooking);
+  if (colideComBloqueio(bloqueiosQueValem, novoInicio, novoFim)) {
+    return {
+      ok: false,
+      code: "bloqueado",
+      error: atual.is_overbooking
+        ? "Este período está bloqueado sem permissão de encaixe."
+        : "Este horário está bloqueado na agenda do profissional. Escolha outro horário.",
+    };
+  }
+  if (
+    !atual.is_overbooking &&
+    !cabeNaJornada({
+      timezone: guard.timezone,
+      jornada: (
+        (jornada ?? []) as {
+          weekday: number;
+          starts_at: string;
+          ends_at: string;
+        }[]
+      ).map((j) => ({
+        weekday: j.weekday,
+        startsAt: j.starts_at,
+        endsAt: j.ends_at,
+      })),
+      inicio: novoInicio,
+      fim: novoFim,
+    })
+  ) {
+    return {
+      ok: false,
+      code: "fora_da_jornada",
+      error:
+        "Este horário está fora da jornada do profissional. Escolha outro horário.",
+    };
+  }
+
+  // Quem confirmou confirmou o HORARIO ANTIGO (decisao do dono em
+  // 24/09/2026): a consulta volta para Agendado e a regua pede confirmacao
+  // de novo no horario novo. O gatilho preparar_remarcacao faz o mesmo no
+  // banco; aqui fica explicito.
+  const novoStatus = statusAposRemarcar(atual.status);
+
+  // Update condicional no horario, no profissional e na situacao que o
+  // servidor leu: se alguem mexeu antes, zero linhas voltam e a tela avisa
+  // em vez de sobrescrever. O historico (linha de remarcacao com o antes e o
+  // depois) e os toques pendentes do horario antigo sao do gatilho
+  // registrar_remarcacao.
   const { data, error } = await supabase
     .from("appointment")
     .update({
-      starts_at: parsed.data.novo_starts_at,
-      ends_at: novo_ends_at,
-      professional_id: parsed.data.novo_professional_id,
+      starts_at: novoInicio.toISOString(),
+      ends_at: novoFim.toISOString(),
+      professional_id: novo_professional_id,
+      service_link_id: serviceLinkId,
+      ...(novoStatus !== atual.status
+        ? {
+            status: novoStatus,
+            confirmed_by_user_id: null,
+            confirmation_channel: null,
+          }
+        : {}),
     })
     .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.id)
+    .eq("id", id)
     .eq("starts_at", parsed.data.starts_at_esperado)
+    .eq("professional_id", atual.professional_id)
+    .eq("status", atual.status)
     .select("id");
   if (error) {
     if (error.code === EXCLUSION_VIOLATION) {
+      const conflito = mensagemDeConflito(error.message);
+      return conflito.code === "conflito_recurso"
+        ? { ok: false, ...conflito }
+        : {
+            ok: false,
+            code: "conflito",
+            error: "O horário de destino está ocupado.",
+          };
+    }
+    if (error.code === CHECK_VIOLATION) {
       return {
         ok: false,
-        code: "conflito",
-        error: "O horário de destino está ocupado.",
+        code: "situacao_final",
+        error: DICA_REMARCAR_ENCERRADA,
       };
     }
     return { ok: false, error: "Não foi possível remarcar." };
@@ -324,20 +697,23 @@ export async function remarcarAgendamentoAction(
     user_id: guard.context.userId,
     action: "remarcou",
     entity: "appointment",
-    entity_id: parsed.data.id,
+    entity_id: id,
   });
-  // O aviso ao paciente e intencao registrada; o envio real e a regua (4.7).
-  if (parsed.data.avisar_paciente) {
-    await supabase.from("audit_log").insert({
-      clinic_id: guard.clinicId,
-      user_id: guard.context.userId,
-      action: "pediu_aviso_de_remarcacao",
-      entity: "appointment",
-      entity_id: parsed.data.id,
-    });
-  }
+
+  const aviso = parsed.data.avisar_paciente
+    ? await enfileirarAvisoDeRemarcacao(supabase, {
+        clinicId: guard.clinicId,
+        clinicName: guard.clinicName,
+        timezone: guard.timezone,
+        userId: guard.context.userId,
+        appointmentId: id,
+        contactId: atual.contact_id,
+        inicio: novoInicio,
+      })
+    : undefined;
+
   revalidatePath("/agenda");
-  return { ok: true };
+  return aviso ? { ok: true, aviso } : { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +738,10 @@ const mudarStatusSchema = z.object({
   status_atual: statusSchema,
   novo_status: statusSchema,
   canal: z.enum(["whatsapp", "telefone", "presencial"]).nullable(),
+  // So nos cancelamentos: a escolha do dialogo "Oferecer este horario a lista
+  // de espera". Ausente vale true (o padrao da coluna e o comportamento de
+  // antes para quem chama sem dialogo).
+  oferecer_vaga: z.boolean().optional(),
 });
 
 export async function mudarStatusAction(
@@ -375,7 +755,7 @@ export async function mudarStatusAction(
   if (!parsed.success) {
     return { ok: false, error: "Mudança de situação inválida." };
   }
-  const { id, status_atual, novo_status, canal } = parsed.data;
+  const { id, status_atual, novo_status, canal, oferecer_vaga } = parsed.data;
 
   if (!podeTransicionar(status_atual, novo_status)) {
     return {
@@ -388,6 +768,29 @@ export async function mudarStatusAction(
   }
 
   const supabase = await createClient();
+
+  // Falta so a partir do horario da consulta (achado 81). O horario vem do
+  // BANCO, nunca da tela. O gatilho impedir_falta_antes_do_horario recusa de
+  // novo, para qualquer caminho.
+  if (novo_status === "faltou") {
+    const { data: consulta } = await supabase
+      .from("appointment")
+      .select("starts_at")
+      .eq("clinic_id", guard.clinicId)
+      .eq("id", id)
+      .maybeSingle();
+    if (!consulta) {
+      return { ok: false, error: "Consulta não encontrada." };
+    }
+    if (!faltaLiberada(consulta.starts_at as string, new Date())) {
+      return {
+        ok: false,
+        code: "falta_antes_do_horario",
+        error: DICA_FALTA_ANTES_DO_HORARIO,
+      };
+    }
+  }
+
   // Condicional no status que a tela viu: corrida perde educadamente.
   const { data, error } = await supabase
     .from("appointment")
@@ -399,12 +802,24 @@ export async function mudarStatusAction(
             confirmation_channel: canal,
           }
         : {}),
+      // Vai no MESMO update do status: o gatilho de reoferta le a escolha na
+      // linha nova (contrato com o grupo lista-de-espera).
+      ...(eCancelamento(novo_status)
+        ? { oferecer_vaga_ao_cancelar: oferecer_vaga ?? true }
+        : {}),
     })
     .eq("clinic_id", guard.clinicId)
     .eq("id", id)
     .eq("status", status_atual)
-    .select("id, contact_id");
+    .select("id");
   if (error) {
+    if (error.code === CHECK_VIOLATION && novo_status === "faltou") {
+      return {
+        ok: false,
+        code: "falta_antes_do_horario",
+        error: DICA_FALTA_ANTES_DO_HORARIO,
+      };
+    }
     return { ok: false, error: "Não foi possível mudar a situação." };
   }
   if (!data || data.length === 0) {
@@ -423,15 +838,9 @@ export async function mudarStatusAction(
     guard.context.userId,
   );
 
-  // Falta e SEMPRE explicita, e alimenta o contador do paciente (etiqueta de
-  // risco e regua reforcada na Fase 4). Incremento ATOMICO no banco: dois
-  // "faltou" quase juntos nao perdem contagem.
-  if (novo_status === "faltou") {
-    const contactId = data[0]?.contact_id as string | undefined;
-    if (contactId) {
-      await supabase.rpc("incrementar_no_show", { p_contact_id: contactId });
-    }
-  }
+  // Falta e SEMPRE explicita e alimenta o contador do paciente (etiqueta de
+  // risco e regua reforcada). Quem soma e o gatilho contar_falta, na mesma
+  // transacao do update acima: nada a chamar daqui (achados 133 e 7).
 
   await supabase.from("audit_log").insert({
     clinic_id: guard.clinicId,

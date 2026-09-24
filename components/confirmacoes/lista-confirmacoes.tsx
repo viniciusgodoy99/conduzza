@@ -21,7 +21,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { APPOINTMENT_STATUS, PATIENT_TAG } from "@/lib/design/status";
+import {
+  APPOINTMENT_FLAG,
+  APPOINTMENT_STATUS,
+  PATIENT_TAG,
+} from "@/lib/design/status";
 import { temRiscoDeFalta } from "@/lib/domain/etiquetas";
 import type { ConsultaDaConfirmacao } from "@/lib/queries/confirmacoes";
 import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
@@ -128,13 +132,19 @@ function Linha({
   const pendente = STATUS_PENDENTES.includes(consulta.status);
   const telefone = consulta.contact?.phone_e164 ?? null;
 
+  // O paciente respondeu "Remarcar": ele JA respondeu, e perguntar de novo se
+  // confirma o horario que ele quer trocar e a mensagem errada.
+  const pediuRemarcacao = consulta.remarcacao_pedida_em !== null;
+
   const motivoSemCobranca = !podeEditar
     ? dicaSemPermissao
-    : !consulta.consent_ativo
-      ? "Sem autorização para receber mensagens no WhatsApp"
-      : !consulta.send_confirmation
-        ? "A confirmação automática está desligada nesta consulta"
-        : null;
+    : pediuRemarcacao
+      ? "O paciente pediu para remarcar. Combine o novo horário pela conversa."
+      : !consulta.consent_ativo
+        ? "Sem autorização para receber mensagens no WhatsApp"
+        : !consulta.send_confirmation
+          ? "A confirmação automática está desligada nesta consulta"
+          : null;
 
   return (
     <li className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-2 last:border-b-0">
@@ -178,12 +188,19 @@ function Linha({
         {consulta.service_link?.insurance?.name ?? "Particular"}
       </span>
       <StatusChip definition={APPOINTMENT_STATUS[consulta.status]} />
-      {/* O que a régua já fez por esta consulta. Sem isto, a recepção decidia
-          cobrar sem saber se a mensagem já tinha saído. */}
-      <ChipDoToque
-        toque={consulta.toque}
-        horaLocal={(iso) => horaLocal(iso, timezone)}
-      />
+      {/* O pedido de remarcação é a informação que a recepção precisa aqui:
+          sem ele, quem tocou em "Remarcar" parecia quem não respondeu. Fica no
+          lugar do chip do toque, que só diria que os próximos foram pulados. */}
+      {pediuRemarcacao ? (
+        <StatusChip definition={APPOINTMENT_FLAG.remarcacao_pedida} />
+      ) : (
+        /* O que a régua já fez por esta consulta. Sem isto, a recepção
+           decidia cobrar sem saber se a mensagem já tinha saído. */
+        <ChipDoToque
+          toque={consulta.toque}
+          horaLocal={(iso) => horaLocal(iso, timezone)}
+        />
+      )}
       <span className="ml-auto flex items-center gap-0.5">
         {pendente ? (
           motivoSemCobranca ? (

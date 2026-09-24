@@ -50,7 +50,16 @@ export type MessageItem = {
   content_type:
     "texto" | "imagem" | "audio" | "documento" | "template" | "evento";
   body: string | null;
+  /**
+   * storage://, URL do provedor (ainda baixando), seed:// (demonstracao) ou
+   * indisponivel://<motivo> (o download desistiu de vez). Ver
+   * lib/domain/midia-recebida.ts.
+   */
   media_url: string | null;
+  /** nome original do arquivo, como veio do WhatsApp; body e a LEGENDA */
+  media_filename?: string | null;
+  /** tipo real do arquivo; escolhe foto ou video e a extensao do download */
+  media_mimetype?: string | null;
   transcript: string | null;
   is_internal_note: boolean;
   delivery_status: string | null;
@@ -159,7 +168,7 @@ export async function fetchResolvedConversations(
 }
 
 const MESSAGE_SELECT =
-  "id, direction, author, author_user_id, content_type, body, media_url, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, " +
+  "id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, " +
   // Auto-juncao: a citada e outra linha da MESMA tabela. O apelido aponta para
   // a COLUNA, nao para o nome da chave estrangeira: numa relacao de uma tabela
   // com ela mesma, o nome da chave nao diz qual ponta seguir, e o PostgREST

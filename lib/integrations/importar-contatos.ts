@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { dividirEmLotes, type LinhaImportada } from "@/lib/domain/importacao";
+import { chaveDeTelefone, normalizarTelefone } from "@/lib/domain/telefone";
 import {
   consentimentoVigenteDeLinhas,
   type LinhaConsent,
@@ -71,6 +72,7 @@ const PEDACO_DE_CONSULTA = 100;
 type ContatoExistente = {
   id: string;
   phone_e164: string;
+  phone_key: string;
   name: string | null;
   email: string | null;
   insurance_id: string | null;
@@ -90,35 +92,49 @@ export async function importarContatos(
     lote: readonly LinhaImportada[];
   },
 ): Promise<ResultadoDaImportacao> {
-  // Telefone repetido dentro do lote: a primeira linha vence. Sem isso o
-  // insert em massa quebraria na unique (clinic_id, phone_e164).
-  const porTelefone = new Map<string, LinhaImportada>();
-  for (const linha of payload.lote) {
-    if (!porTelefone.has(linha.phone_e164)) {
-      porTelefone.set(linha.phone_e164, linha);
+  // Telefone pela normalizacao UNICA (lib/domain/telefone.ts), de novo aqui
+  // no servidor: a tela ja normalizou, mas o que vem do cliente nao e
+  // confiavel. Linha que nao normaliza so chega por payload adulterado.
+  //
+  // Telefone repetido dentro do lote: a primeira linha vence. A comparacao e
+  // pela CHAVE (com e sem o nono digito sao a mesma pessoa). Sem isso o
+  // insert em massa quebraria no indice unico (clinic_id, phone_key).
+  const porChave = new Map<string, LinhaImportada>();
+  for (const linhaBruta of payload.lote) {
+    const telefone = normalizarTelefone(linhaBruta.phone_e164);
+    if (!telefone) {
+      return { ok: false, error: "Há telefones inválidos no lote." };
+    }
+    const chave = chaveDeTelefone(telefone);
+    if (!porChave.has(chave)) {
+      porChave.set(chave, { ...linhaBruta, phone_e164: telefone });
     }
   }
-  const linhas = [...porTelefone.values()];
+  const linhas = [...porChave.values()];
   if (linhas.length === 0) {
     return { ok: false, error: "O lote chegou vazio." };
   }
+  const chaveDaLinha = (linha: LinhaImportada): string =>
+    chaveDeTelefone(linha.phone_e164);
 
-  // (a) Quem ja existe, numa consulta set-based por telefone.
+  // (a) Quem ja existe, numa consulta set-based pela CHAVE do telefone: o
+  // paciente que ja conversava pelo WhatsApp esta gravado sem o nono digito e
+  // a planilha traz com ele.
   const existentes = new Map<string, ContatoExistente>();
   for (const pedaco of dividirEmLotes(
-    linhas.map((linha) => linha.phone_e164),
+    [...porChave.keys()],
     PEDACO_DE_CONSULTA,
   )) {
     const { data, error } = await supabase
       .from("contact")
-      .select("id, phone_e164, name, email, insurance_id")
+      .select("id, phone_e164, phone_key, name, email, insurance_id")
       .eq("clinic_id", clinicId)
-      .in("phone_e164", pedaco);
+      .in("phone_key", pedaco);
     if (error) {
       return { ok: false, error: "Não foi possível conferir os contatos." };
     }
     for (const contato of (data ?? []) as ContatoExistente[]) {
-      existentes.set(contato.phone_e164, contato);
+      existentes.set(contato.phone_key, contato);
     }
   }
 
@@ -152,7 +168,7 @@ export async function importarContatos(
   // o gatilho impedir_reatribuicao_de_origem so arma quando source_channel
   // esta preenchido: uma atribuicao real futura (token de campanha) ainda
   // pode completar a origem deste contato.
-  const novas = linhas.filter((linha) => !existentes.has(linha.phone_e164));
+  const novas = linhas.filter((linha) => !existentes.has(chaveDaLinha(linha)));
   const idsDoLote: string[] = [];
   if (novas.length > 0) {
     const { data, error } = await supabase
@@ -165,6 +181,15 @@ export async function importarContatos(
           email: linha.email,
           insurance_id: convenioDe(linha),
           kind: "lead",
+          // IMPORTACAO NAO ENTRA NO FOLLOW-UP (decisao do dono de
+          // 24/09/2026). O banco carimba o relogio da etapa no insert, como
+          // em qualquer contato novo, mas subir uma planilha nao e um ato
+          // sobre ESTE lead: com esta marca, o planner (planejar_reguas)
+          // ignora o relogio do nascimento, e 800 linhas importadas nao viram
+          // 800 mensagens de follow-up uma hora depois. Quando alguem muda a
+          // etapa do contato (ato explicito, inclusive a mudanca em massa), o
+          // relogio anda e ele entra no follow-up normalmente.
+          criado_por_importacao: true,
           ...(linha.source_campaign
             ? {
                 source_campaign: linha.source_campaign,
@@ -194,7 +219,7 @@ export async function importarContatos(
   // aqui: origem ja capturada e imutavel (gatilho no banco).
   let atualizados = 0;
   for (const linha of linhas) {
-    const atual = existentes.get(linha.phone_e164);
+    const atual = existentes.get(chaveDaLinha(linha));
     if (!atual) {
       continue;
     }

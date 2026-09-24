@@ -16,7 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   catalogoKeys,
   fetchCatalogo,
+  fetchUsoDosPacotes,
   type Catalogo,
+  type UsoDoPacote,
 } from "@/lib/queries/catalogo";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { createClient } from "@/lib/supabase/client";
@@ -49,6 +51,7 @@ export type TabProps = {
 export function CadastrosClient({
   clinicId,
   catalogoInicial,
+  usoDosPacotesInicial,
   abaInicial,
   podeEditar,
   dica,
@@ -56,6 +59,8 @@ export function CadastrosClient({
 }: {
   clinicId: string;
   catalogoInicial: Catalogo;
+  // null quando a leitura no servidor falhou: a aba tenta de novo aqui.
+  usoDosPacotesInicial: Record<string, UsoDoPacote> | null;
   abaInicial?: string;
   podeEditar: boolean;
   dica: string;
@@ -83,6 +88,19 @@ export function CadastrosClient({
   });
   const catalogo = catalogoQuery.data;
 
+  // Vendas e pacientes com saldo por pacote (aba Pacotes). A chave comeca
+  // com o prefixo do catalogo: o invalidate de aoMudar recarrega os dois.
+  useDadosDoServidor(
+    catalogoKeys.usoDosPacotes(clinicId),
+    usoDosPacotesInicial ?? undefined,
+  );
+  const usoDosPacotesQuery = useQuery({
+    queryKey: catalogoKeys.usoDosPacotes(clinicId),
+    queryFn: () => fetchUsoDosPacotes(supabase, clinicId),
+    initialData: usoDosPacotesInicial ?? undefined,
+    staleTime: 30_000,
+  });
+
   const aoMudar = () => {
     void queryClient.invalidateQueries({
       queryKey: catalogoKeys.tudo(clinicId),
@@ -101,7 +119,7 @@ export function CadastrosClient({
     <Tabs value={abaAtiva} onValueChange={trocarAba} className="gap-4">
       <TabsList className="h-auto flex-wrap justify-start">
         {ABAS.map(([key, label]) => (
-          <TabsTrigger key={key} value={key} className="min-h-9">
+          <TabsTrigger key={key} value={key} className="min-h-10 px-3">
             {label}
           </TabsTrigger>
         ))}
@@ -119,7 +137,11 @@ export function CadastrosClient({
         <VinculosTab {...tabProps} />
       </TabsContent>
       <TabsContent value="pacotes">
-        <PacotesTab {...tabProps} />
+        <PacotesTab
+          {...tabProps}
+          usoDosPacotes={usoDosPacotesQuery.data}
+          usoIndisponivel={usoDosPacotesQuery.isError}
+        />
       </TabsContent>
       <TabsContent value="recursos">
         <RecursosTab {...tabProps} />

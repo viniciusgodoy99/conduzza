@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
-import { fetchCatalogo } from "@/lib/queries/catalogo";
+import { fetchCatalogo, fetchUsoDosPacotes } from "@/lib/queries/catalogo";
 import { createClient } from "@/lib/supabase/server";
 
 import { CadastrosClient } from "./cadastros-client";
@@ -23,7 +23,13 @@ export default async function CadastrosPage({
   }
 
   const supabase = await createClient();
-  const catalogo = await fetchCatalogo(supabase, active.clinicId);
+  // O uso dos pacotes e um detalhe de uma aba: se falhar, a tela carrega o
+  // resto e a aba Pacotes tenta de novo no navegador (e mostra o erro se
+  // continuar falhando), em vez de derrubar Cadastros inteiro.
+  const [catalogo, usoDosPacotes] = await Promise.all([
+    fetchCatalogo(supabase, active.clinicId),
+    fetchUsoDosPacotes(supabase, active.clinicId).catch(() => null),
+  ]);
   const { aba } = await searchParams;
 
   const podeEditar = canEdit(active.role, "cadastros");
@@ -38,6 +44,7 @@ export default async function CadastrosPage({
       <CadastrosClient
         clinicId={active.clinicId}
         catalogoInicial={catalogo}
+        usoDosPacotesInicial={usoDosPacotes}
         abaInicial={aba}
         podeEditar={podeEditar}
         dica={dica ?? "Seu perfil não altera os cadastros"}

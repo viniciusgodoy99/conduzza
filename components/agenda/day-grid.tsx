@@ -8,7 +8,8 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { remarcarAgendamentoAction } from "@/app/(app)/agenda/actions";
@@ -19,11 +20,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import type { ConsultaDaAgenda } from "@/lib/queries/agenda";
+import { MENSAGEM_SEM_VINCULO } from "@/lib/domain/remarcacao";
+import { agendaKeys, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 import { AppointmentBlock } from "@/components/agenda/appointment-block";
+import {
+  atendeAConsulta,
+  ChaveAvisarPaciente,
+  NotaDaConfirmacao,
+} from "@/components/agenda/remarcacao-comum";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -195,7 +200,14 @@ export function DayGrid({
         ))}
       </div>
 
+      {/* A chave remonta o dialogo a cada soltura: erro e chave de aviso da
+          remarcacao anterior nao vazam para a proxima. */}
       <RemarcarDialog
+        key={
+          remarcacao
+            ? `${remarcacao.consulta.id}-${remarcacao.novoInicio.getTime()}-${remarcacao.novoProfissionalId}`
+            : "fechado"
+        }
         contexto={contexto}
         remarcacao={remarcacao}
         onFechar={() => setRemarcacao(null)}
@@ -217,14 +229,21 @@ function RemarcarDialog({
   } | null;
   onFechar: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [avisar, setAvisar] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const idChaveAviso = useId();
 
   if (!remarcacao) {
     return null;
   }
   const { consulta, novoInicio, novoProfissionalId } = remarcacao;
+  const diaNovo = novoInicio.toLocaleDateString("pt-BR", {
+    timeZone: contexto.timezone,
+    day: "2-digit",
+    month: "2-digit",
+  });
   const horaNova = novoInicio.toLocaleTimeString("pt-BR", {
     timeZone: contexto.timezone,
     hour: "2-digit",
@@ -233,6 +252,9 @@ function RemarcarDialog({
   const profissionalNovo = contexto.catalogo.profissionais.find(
     (p) => p.id === novoProfissionalId,
   );
+  // Soltou na coluna de quem nao atende o procedimento pelo convenio da
+  // consulta: diz na hora, em vez de deixar o servidor recusar (achado 85).
+  const semVinculo = !atendeAConsulta(contexto, consulta, novoProfissionalId);
 
   const confirmar = async () => {
     setSalvando(true);
@@ -249,7 +271,17 @@ function RemarcarDialog({
       setErro(resultado.error ?? "Não foi possível remarcar.");
       return;
     }
-    toast.success("Consulta remarcada");
+    toast.success("Consulta remarcada.");
+    if (resultado.aviso) {
+      // O aviso NAO saiu: a recepcao precisa saber para ligar.
+      toast.warning(resultado.aviso, { duration: 10_000 });
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["agenda", contexto.clinicId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: agendaKeys.historico(consulta.id),
+    });
     onFechar();
   };
 
@@ -261,30 +293,42 @@ function RemarcarDialog({
         </DialogHeader>
         <p className="text-sm text-text-secondary">
           Mover a consulta de {consulta.contact?.name ?? "paciente"} para{" "}
-          <strong>{horaNova}</strong>
+          <strong>
+            {diaNovo} às {horaNova}
+          </strong>
           {profissionalNovo && novoProfissionalId !== consulta.professional_id
             ? ` com ${profissionalNovo.name}`
             : ""}
           ?
         </p>
-        <div className="flex items-center justify-between">
-          <Label htmlFor="avisar-paciente">Avisar o paciente</Label>
-          <Switch
-            id="avisar-paciente"
-            checked={avisar}
-            onCheckedChange={setAvisar}
-          />
-        </div>
+        {semVinculo ? (
+          <p role="alert" className="text-sm [color:var(--alert-text)]">
+            {MENSAGEM_SEM_VINCULO}
+          </p>
+        ) : (
+          <>
+            <ChaveAvisarPaciente
+              id={idChaveAviso}
+              marcada={avisar}
+              aoMudar={setAvisar}
+            />
+            <NotaDaConfirmacao consulta={consulta} />
+          </>
+        )}
         {erro ? (
           <p role="alert" className="text-sm [color:var(--alert-text)]">
             {erro}
           </p>
         ) : null}
         <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onFechar}>
+          <Button variant="outline" className="h-10" onClick={onFechar}>
             Cancelar
           </Button>
-          <Button onClick={confirmar} disabled={salvando}>
+          <Button
+            className="h-10"
+            onClick={confirmar}
+            disabled={salvando || semVinculo}
+          >
             {salvando ? "Remarcando..." : "Remarcar"}
           </Button>
         </div>

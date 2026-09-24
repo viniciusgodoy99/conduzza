@@ -124,6 +124,7 @@ beforeAll(async () => {
   const usuarios: [string, string, string, string | null][] = [
     [`agr-joao-${sufixo}@teste.dev`, clinicaA, "profissional", profJoao],
     [`agr-recep-${sufixo}@teste.dev`, clinicaA, "recepcao", null],
+    [`agr-leitura-${sufixo}@teste.dev`, clinicaA, "leitura", null],
     [`agr-outra-${sufixo}@teste.dev`, clinicaB, "admin", null],
   ];
   for (const [email, clinicId, role, professionalId] of usuarios) {
@@ -287,48 +288,107 @@ describe("recepção e isolamento entre clínicas", () => {
   });
 });
 
-// Regressao da migration 20260825220000: fechar o update de contact para o
-// papel profissional nao podia tirar dele o ato de marcar falta na propria
-// agenda. incrementar_no_show virou security definer, e por isso o recorte de
-// clinica precisa viver DENTRO da funcao.
-describe("marcar falta continua sendo ato do profissional", () => {
-  it("Dr. João incrementa a falta na própria clínica", async () => {
-    const joao = await logado(`agr-joao-${sufixo}@teste.dev`);
-    const { data: antes } = await admin
+// Faltas pelo banco (migration 20260924105000, achados 133 e 7). O contador
+// no_show_count e mantido pelo gatilho contar_falta na transicao para
+// 'faltou': herda o recorte da policy de update de appointment (profissional
+// so na propria agenda, leitura nunca). A RPC avulsa incrementar_no_show, que
+// qualquer membro ativo chamava, deixou de existir. E a falta so vale a
+// partir do horario da consulta (gatilho impedir_falta_antes_do_horario).
+describe("faltas: o banco conta e o banco trava", () => {
+  async function contadorDe(contactId: string): Promise<number> {
+    const { data } = await admin
       .from("contact")
       .select("no_show_count")
-      .eq("id", contato)
+      .eq("id", contactId)
       .single()
       .throwOnError();
+    return data!.no_show_count as number;
+  }
 
+  async function consultaPassada(professionalId: string, vinculo: string) {
+    const inicio = new Date(Date.now() - 3 * 3600_000);
+    const { data } = await admin
+      .from("appointment")
+      .insert({
+        clinic_id: clinicaA,
+        contact_id: contato,
+        professional_id: professionalId,
+        service_link_id: vinculo,
+        starts_at: inicio.toISOString(),
+        ends_at: new Date(inicio.getTime() + 30 * 60_000).toISOString(),
+        status: "confirmado_recepcao",
+        confirmation_channel: "telefone",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    return data!.id as string;
+  }
+
+  it("a RPC avulsa de falta não existe mais para a sessão", async () => {
+    const joao = await logado(`agr-joao-${sufixo}@teste.dev`);
+    const antes = await contadorDe(contatoOutraClinica);
     const { error } = await joao.rpc("incrementar_no_show", {
       p_contact_id: contato,
     });
-    expect(error).toBeNull();
-
-    const { data: depois } = await admin
-      .from("contact")
-      .select("no_show_count")
-      .eq("id", contato)
-      .single()
-      .throwOnError();
-    expect(depois!.no_show_count).toBe(antes!.no_show_count + 1);
+    expect(error).not.toBeNull();
+    expect(await contadorDe(contatoOutraClinica)).toBe(antes);
   });
 
-  it("a mesma chamada com contato de outra clínica não muda nada", async () => {
+  it("Dr. João marca falta na própria consulta que já passou e o contador sobe uma vez", async () => {
+    const passada = await consultaPassada(profJoao, vinculoJoao);
     const joao = await logado(`agr-joao-${sufixo}@teste.dev`);
-    const { error } = await joao.rpc("incrementar_no_show", {
-      p_contact_id: contatoOutraClinica,
-    });
-    // Definer nao levanta erro de RLS: a prova e o contador intacto.
-    expect(error).toBeNull();
+    const antes = await contadorDe(contato);
 
-    const { data: intacto } = await admin
-      .from("contact")
-      .select("no_show_count")
-      .eq("id", contatoOutraClinica)
+    const { data, error } = await joao
+      .from("appointment")
+      .update({ status: "faltou" })
+      .eq("id", passada)
+      .select("id");
+    expect(error).toBeNull();
+    expect(data).toHaveLength(1);
+    expect(await contadorDe(contato)).toBe(antes + 1);
+
+    // Update que nao muda a situacao nao soma de novo.
+    await admin
+      .from("appointment")
+      .update({ notes: "revisado" })
+      .eq("id", passada)
+      .throwOnError();
+    expect(await contadorDe(contato)).toBe(antes + 1);
+  });
+
+  it("leitura não marca falta nem mexe no contador", async () => {
+    const passada = await consultaPassada(profAna, vinculoAna);
+    const leitura = await logado(`agr-leitura-${sufixo}@teste.dev`);
+    const antes = await contadorDe(contato);
+
+    const { data } = await leitura
+      .from("appointment")
+      .update({ status: "faltou" })
+      .eq("id", passada)
+      .select("id");
+    expect(data ?? []).toHaveLength(0);
+    expect(await contadorDe(contato)).toBe(antes);
+    const { data: intacta } = await admin
+      .from("appointment")
+      .select("status")
+      .eq("id", passada)
       .single()
       .throwOnError();
-    expect(intacto!.no_show_count).toBe(0);
+    expect(intacta!.status).toBe("confirmado_recepcao");
+  });
+
+  it("falta antes do horário é recusada pelo banco, mesmo direto pela API", async () => {
+    const recepcao = await logado(`agr-recep-${sufixo}@teste.dev`);
+    const antes = await contadorDe(contato);
+    // consultaAna e de 06/10/2026: futura.
+    const { error } = await recepcao
+      .from("appointment")
+      .update({ status: "faltou" })
+      .eq("id", consultaAna)
+      .select("id");
+    expect(error?.code).toBe("23514");
+    expect(await contadorDe(contato)).toBe(antes);
   });
 });

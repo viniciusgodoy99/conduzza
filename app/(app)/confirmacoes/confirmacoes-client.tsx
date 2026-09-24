@@ -179,7 +179,11 @@ export function ConfirmacoesClient({
     STATUS_PENDENTES.includes(consulta.status),
   );
   const cobraveis = pendentes.filter(
-    (consulta) => consulta.consent_ativo && consulta.send_confirmation,
+    (consulta) =>
+      consulta.consent_ativo &&
+      consulta.send_confirmation &&
+      // Quem pediu para remarcar ja respondeu: fica fora da cobranca em lote.
+      consulta.remarcacao_pedida_em === null,
   );
   const contagens: ContagensDoDia = {
     total: consultas.length,

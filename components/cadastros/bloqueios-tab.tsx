@@ -9,7 +9,7 @@ import {
   excluirBloqueioAction,
 } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { BotaoProtegido } from "@/components/cadastros/comum";
+import { AvisoDeConsultas, BotaoProtegido } from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
@@ -76,9 +76,23 @@ export function BloqueiosTab({
   timezone,
 }: TabProps) {
   const [criarAberto, setCriarAberto] = useState(false);
-  const [form, setForm] = useState<FormBloqueio>(FORM_VAZIO);
+  const [form, setFormBruto] = useState<FormBloqueio>(FORM_VAZIO);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Consultas ja marcadas no periodo (achado 37): o servidor conta e devolve
+  // sem gravar; a tela avisa e so cria com confirmacao explicita.
+  const [aviso, setAviso] = useState<{
+    consultas: number;
+    primeira: string | null;
+  } | null>(null);
+
+  // Mudou profissional ou periodo: a contagem antiga nao vale mais.
+  const setForm = (
+    proximo: FormBloqueio | ((atual: FormBloqueio) => FormBloqueio),
+  ) => {
+    setAviso(null);
+    setFormBruto(proximo);
+  };
 
   const [paraExcluir, setParaExcluir] = useState<Bloqueio | null>(null);
   const [excluindo, setExcluindo] = useState(false);
@@ -114,7 +128,7 @@ export function BloqueiosTab({
     }));
   };
 
-  const salvar = async () => {
+  const salvar = async (confirmarConsultas = false) => {
     if (form.professionalIds.length === 0) {
       setErro("Escolha pelo menos um profissional.");
       return;
@@ -140,12 +154,21 @@ export function BloqueiosTab({
       ends_at: instanteLocal(timezone, fimDia!, fimHora!).toISOString(),
       reason: form.motivo.trim(),
       blocks_overbooking: form.impedirEncaixe,
+      confirmar_consultas: confirmarConsultas,
     });
     setSalvando(false);
     if (!resultado.ok) {
+      if (resultado.code === "consultas_no_periodo") {
+        setAviso({
+          consultas: resultado.consultas ?? 0,
+          primeira: resultado.primeiraConsulta ?? null,
+        });
+        return;
+      }
       setErro(resultado.error ?? "Não foi possível criar os bloqueios.");
       return;
     }
+    setAviso(null);
     toast.success(
       form.professionalIds.length === 1
         ? "Bloqueio criado"
@@ -236,7 +259,7 @@ export function BloqueiosTab({
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-9"
+                        className="size-10"
                         onClick={() => {
                           setErroExclusao(null);
                           setParaExcluir(bloqueio);
@@ -250,7 +273,7 @@ export function BloqueiosTab({
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="size-9"
+                          className="size-10"
                           disabled
                           aria-label={`Remover bloqueio de ${nomeProfissional(bloqueio.professional_id)}`}
                         >
@@ -348,16 +371,31 @@ export function BloqueiosTab({
             </div>
             <p className="text-sm text-text-secondary">
               O bloqueio aparece hachurado na agenda e os horários somem da
-              oferta.
+              oferta. Consultas já marcadas no período não são desmarcadas.
             </p>
             {erro ? (
               <p role="alert" className="text-sm [color:var(--alert-text)]">
                 {erro}
               </p>
             ) : null}
-            <Button onClick={salvar} disabled={salvando} className="h-10">
-              {salvando ? "Salvando..." : "Criar bloqueio"}
-            </Button>
+            {aviso ? (
+              <AvisoDeConsultas
+                consultas={aviso.consultas}
+                primeira={aviso.primeira}
+                timezone={timezone}
+                rotuloConfirmar="Criar o bloqueio mesmo assim"
+                confirmando={salvando}
+                aoConfirmar={() => void salvar(true)}
+              />
+            ) : (
+              <Button
+                onClick={() => void salvar()}
+                disabled={salvando}
+                className="h-10"
+              >
+                {salvando ? "Salvando..." : "Criar bloqueio"}
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>

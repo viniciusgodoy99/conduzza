@@ -220,6 +220,7 @@ export function Excecoes({
                       precoCents,
                     }}
                     sentidoDoPasso="antes"
+                    tipoDaRegua="confirmacao"
                     eventoRotulo="a consulta"
                     podeEditar={podeEditar}
                     dicaSemPermissao={dicaSemPermissao}

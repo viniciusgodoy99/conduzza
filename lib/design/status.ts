@@ -4,6 +4,7 @@ import {
   BadgePlus,
   Calendar,
   CalendarPlus,
+  CalendarSync,
   CheckCheck,
   CircleCheck,
   CircleX,
@@ -174,6 +175,20 @@ export const PATIENT_TAG: Record<PatientTag, StatusDefinition> = {
     icon: ShieldAlert,
   },
   inativo: { label: "Inativo", tone: "neutral", icon: MoonStar },
+};
+
+// Marcas da CONSULTA que nao sao status (a situacao continua a mesma). O
+// pedido de remarcacao vem do paciente pelo WhatsApp (appointment.
+// remarcacao_pedida_em) e pede acao da recepcao: ambar, com icone exclusivo
+// (nenhum outro estado usa CalendarSync).
+export type AppointmentFlag = "remarcacao_pedida";
+
+export const APPOINTMENT_FLAG: Record<AppointmentFlag, StatusDefinition> = {
+  remarcacao_pedida: {
+    label: "Pediu para remarcar",
+    tone: "warning",
+    icon: CalendarSync,
+  },
 };
 
 // marker: cor plena (pontos, bordas de evento). text/bg: par do chip, com

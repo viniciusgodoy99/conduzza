@@ -37,6 +37,8 @@ const eslintConfig = [
       "test-results/**",
       "playwright-report/**",
       "design_handoff_conduzza_atendimento_ia/**",
+      // Design system novo (24/09/2026): prototipo em JSX de navegador, referencia visual.
+      "Conduzza Design System/**",
     ],
   },
   prettier,

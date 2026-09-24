@@ -205,6 +205,11 @@ export async function ingerirMensagemRecebida(
     p_body: event.body,
     p_media_url: event.mediaUrl,
     p_transcript: null,
+    // Nome e tipo do arquivo (migration 20260924100000). So vao quando
+    // existem: assim o texto comum, que e quase tudo, continua casando com a
+    // assinatura antiga da RPC se o codigo subir antes da migration.
+    ...(event.mediaFilename ? { p_media_filename: event.mediaFilename } : {}),
+    ...(event.mediaMimetype ? { p_media_mimetype: event.mediaMimetype } : {}),
   });
   if (error) {
     return { data: null, error };

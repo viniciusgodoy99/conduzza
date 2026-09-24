@@ -249,6 +249,7 @@ export function AbaFollowup({
                       precoCents,
                     }}
                     sentidoDoPasso="depois"
+                    tipoDaRegua="followup"
                     eventoRotulo="a entrada na etapa"
                     placeholders={["nome", "clinica"]}
                     podeEditar={podeEditar}

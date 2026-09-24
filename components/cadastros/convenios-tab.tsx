@@ -1,14 +1,18 @@
 "use client";
 
-import { Pencil, Plus, ShieldCheck } from "lucide-react";
+import { Plus, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { salvarConvenioAction } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { BotaoProtegido, chipAtivo } from "@/components/cadastros/comum";
+import {
+  AcoesDaLinha,
+  BotaoProtegido,
+  ChipSituacao,
+  DetalheSomenteLeitura,
+} from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
-import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,9 +61,13 @@ export function ConveniosTab({
   const [form, setForm] = useState<FormConvenio>(FORM_VAZIO);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Modo leitura para quem so ve Cadastros (achado 41): a recepcao consulta
+  // as observacoes do convenio inteiras antes de responder o paciente.
+  const [somenteLeitura, setSomenteLeitura] = useState(false);
 
-  const abrir = (convenio?: Convenio) => {
+  const abrir = (convenio?: Convenio, leitura = false) => {
     setErro(null);
+    setSomenteLeitura(leitura);
     setForm(
       convenio
         ? {
@@ -129,7 +137,6 @@ export function ConveniosTab({
             </TableHeader>
             <TableBody>
               {catalogo.convenios.map((convenio) => {
-                const chip = chipAtivo(convenio.active);
                 return (
                   <TableRow key={convenio.id}>
                     <TableCell className="font-medium">
@@ -141,34 +148,28 @@ export function ConveniosTab({
                     <TableCell>
                       {convenio.requires_card ? "Sim" : "Não"}
                     </TableCell>
-                    <TableCell className="max-w-[240px] truncate text-text-secondary">
-                      {convenio.notes ?? ""}
+                    {/* Duas linhas na tabela, texto inteiro no title e no
+                        painel (Editar ou Ver detalhes): nunca cortado sem
+                        alternativa. */}
+                    <TableCell className="max-w-[280px] text-text-secondary">
+                      <span
+                        className="line-clamp-2 whitespace-normal"
+                        title={convenio.notes ?? undefined}
+                      >
+                        {convenio.notes ?? ""}
+                      </span>
                     </TableCell>
-                    <TableCell className={chip.classe}>{chip.texto}</TableCell>
                     <TableCell>
-                      {podeEditar ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-9"
-                          onClick={() => abrir(convenio)}
-                          aria-label={`Editar ${convenio.name}`}
-                        >
-                          <Pencil strokeWidth={1.5} className="size-4" />
-                        </Button>
-                      ) : (
-                        <DisabledWithHint hint={dica}>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-9"
-                            disabled
-                            aria-label={`Editar ${convenio.name}`}
-                          >
-                            <Pencil strokeWidth={1.5} className="size-4" />
-                          </Button>
-                        </DisabledWithHint>
-                      )}
+                      <ChipSituacao active={convenio.active} />
+                    </TableCell>
+                    <TableCell>
+                      <AcoesDaLinha
+                        podeEditar={podeEditar}
+                        dica={dica}
+                        nome={convenio.name}
+                        aoEditar={() => abrir(convenio)}
+                        aoVerDetalhes={() => abrir(convenio, true)}
+                      />
                     </TableCell>
                   </TableRow>
                 );
@@ -182,10 +183,32 @@ export function ConveniosTab({
         <SheetContent className="w-[380px] p-5">
           <SheetHeader className="p-0">
             <SheetTitle>
-              {form.id ? "Editar convênio" : "Novo convênio"}
+              {somenteLeitura
+                ? form.name
+                : form.id
+                  ? "Editar convênio"
+                  : "Novo convênio"}
             </SheetTitle>
           </SheetHeader>
-          <div className="grid gap-4 py-4">
+          {somenteLeitura ? (
+            <DetalheSomenteLeitura
+              itens={[
+                { rotulo: "Plano", valor: form.plan_name },
+                {
+                  rotulo: "Carteirinha obrigatória",
+                  valor: form.requires_card ? "Sim" : "Não",
+                },
+                { rotulo: "Observações", valor: form.notes },
+                {
+                  rotulo: "Situação",
+                  valor: <ChipSituacao active={form.active} />,
+                },
+              ]}
+            />
+          ) : null}
+          {/* O formulario fica fora da arvore visivel no modo leitura
+              (atributo hidden, que o preflight do Tailwind forca). */}
+          <div className="grid gap-4 py-4" hidden={somenteLeitura}>
             <div className="grid gap-2">
               <Label htmlFor="convenio-nome">Nome</Label>
               <Input

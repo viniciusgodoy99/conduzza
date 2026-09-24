@@ -160,7 +160,7 @@ export function PainelRegua({
                   className="grid gap-1.5 rounded-lg border p-3"
                 >
                   <span className="text-[12.5px] font-semibold">
-                    {rotuloDoPasso(passo.offset_minutes)}
+                    {rotuloDoPasso(passo.offset_minutes, tipo)}
                   </span>
                   <p className="text-[13px] whitespace-pre-line text-text-secondary">
                     {passo.fixed_body ??

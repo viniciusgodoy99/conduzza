@@ -55,3 +55,6 @@ next-env.d.ts
 # laboratorio do R0 (credencial de instancia de teste, nunca versionar)
 scripts/dev/.r0-lab.json
 scripts/dev/.r0-qr.txt
+
+# design system: referencias de terceiros (Behance), nunca versionar
+/Conduzza Design System/uploads/Behance_3_Projetos_Imagens/

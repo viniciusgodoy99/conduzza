@@ -160,17 +160,25 @@ export async function cancelarReofertaAction(
   }
 
   const supabase = await createClient();
-  // Condicionado a 'aberta': corrida com o vencedor perde educadamente (a
-  // RPC do aceite exige aberta, entao quem respondeu depois do cancelamento
-  // recebe a recusa educada).
-  const { data: linhas, error } = await supabase
-    .from("waitlist_offer")
-    .update({ status: "cancelada" })
-    .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.offer_id)
-    .eq("status", "aberta")
-    .select("id");
-  if (error || !linhas || linhas.length === 0) {
+  // A RPC (sessao, papel conferido no banco) leva a oferta ABERTA para
+  // cancelada e cancela junto as mensagens da onda que ainda estavam na fila
+  // de envio: sem isso, 3 ou 4 pacientes ainda recebiam "Abriu um
+  // horario..." depois do cancelamento. Corrida com o vencedor perde
+  // educadamente (o aceite exige aberta).
+  const { data: cancelou, error } = await supabase.rpc(
+    "cancelar_reoferta_de_espera",
+    { p_clinic_id: guard.clinicId, p_offer_id: parsed.data.offer_id },
+  );
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "42501"
+          ? "Seu perfil não altera a lista de espera."
+          : "Não foi possível cancelar a reoferta. Tente de novo.",
+    };
+  }
+  if (cancelou !== true) {
     return { ok: false, error: "Esta reoferta já foi encerrada." };
   }
 

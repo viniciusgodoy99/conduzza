@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { parseInboundEvent } from "@/lib/integrations/whatsapp/inbound";
+import {
+  JANELA_DE_RESPOSTA_AUTOMATICA_MS,
+  limiteParaRespostaDePessoa,
+  normalizarMimetype,
+  parseInboundEvent,
+  sanearNomeDeArquivo,
+} from "@/lib/integrations/whatsapp/inbound";
 
 // Os payloads uazapi deste arquivo seguem capturas reais do formato v2.1.1.
 
@@ -23,6 +29,8 @@ describe("formato canônico (simulador de desenvolvimento)", () => {
       contentType: "texto",
       body: "Oi, quero agendar",
       mediaUrl: null,
+      mediaFilename: null,
+      mediaMimetype: null,
       quotedWaMessageId: null,
       anuncio: null,
       instanceToken: null,
@@ -65,6 +73,8 @@ describe("formato uazapi: mensagens", () => {
       contentType: "texto",
       body: "Bom dia",
       mediaUrl: null,
+      mediaFilename: null,
+      mediaMimetype: null,
       quotedWaMessageId: null,
       anuncio: null,
       instanceToken: "token-da-instancia",
@@ -382,6 +392,221 @@ describe("canal real", () => {
         message: { ...base.message, fromMe: true, wasSentByApi: true },
       }),
     ).toBeNull();
+  });
+
+  it("reação e edição feitas no celular da clínica não contam como resposta", () => {
+    // Reagir com joinha ou corrigir uma mensagem já enviada não responde o
+    // paciente: a conversa não pode sair de "Aguardando você" por isso.
+    expect(
+      parseInboundEvent({
+        ...base,
+        message: { ...base.message, fromMe: true, messageType: "reaction" },
+      }),
+    ).toBeNull();
+    expect(
+      parseInboundEvent({
+        ...base,
+        message: { ...base.message, fromMe: true, reaction: { text: "👍" } },
+      }),
+    ).toBeNull();
+    expect(
+      parseInboundEvent({
+        ...base,
+        message: {
+          ...base.message,
+          fromMe: true,
+          messageType: "ProtocolMessage",
+        },
+      }),
+    ).toBeNull();
+    expect(
+      parseInboundEvent({
+        ...base,
+        message: {
+          ...base.message,
+          fromMe: true,
+          messageType: "EditedMessage",
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("resposta do celular traz o horário de envio (ms ou segundos)", () => {
+    const emMs = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        fromMe: true,
+        messageTimestamp: 1_790_000_000_000,
+      },
+    });
+    const emSegundos = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        fromMe: true,
+        messageTimestamp: 1_790_000_000,
+      },
+    });
+    const semHorario = parseInboundEvent({
+      ...base,
+      message: { ...base.message, fromMe: true },
+    });
+    const esperado = new Date(1_790_000_000_000).toISOString();
+    expect(emMs).toMatchObject({
+      kind: "clinic_device_reply",
+      enviadaEm: esperado,
+    });
+    expect(emSegundos).toMatchObject({ enviadaEm: esperado });
+    expect(semHorario).toMatchObject({ enviadaEm: null });
+  });
+
+  it("marcador de envio automático vira só caminho de chave, nunca texto", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        fromMe: true,
+        text: "Olá! Estamos fora do horário.",
+        content: { contextInfo: { isAutomated: true }, awayMessage: "texto" },
+      },
+    });
+    const marcadores =
+      evento && evento.kind === "clinic_device_reply"
+        ? evento.marcadoresDeEnvioAutomatico
+        : [];
+    expect(marcadores).toEqual([
+      "content.contextInfo.isAutomated=true",
+      "content.awayMessage",
+    ]);
+    expect(marcadores.join(" ")).not.toContain("fora do horário");
+    expect(marcadores.join(" ")).not.toContain("texto");
+  });
+
+  it("figurinha vira imagem, não texto com mídia", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        type: "media",
+        messageType: "StickerMessage",
+        mediaType: "sticker",
+        content: {
+          URL: "https://mmg.whatsapp.net/x.enc",
+          mimetype: "image/webp",
+        },
+      },
+    });
+    expect(evento).toMatchObject({
+      contentType: "imagem",
+      mediaMimetype: "image/webp",
+    });
+  });
+
+  it("documento traz nome e tipo do arquivo; legenda segue no body", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        type: "media",
+        messageType: "DocumentMessage",
+        mediaType: "document",
+        text: "segue o pedido",
+        content: {
+          URL: "https://mmg.whatsapp.net/doc.enc",
+          fileName: "pedido de exame.docx",
+          title: "outro nome",
+          mimetype:
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+      },
+    });
+    expect(evento).toMatchObject({
+      contentType: "documento",
+      body: "segue o pedido",
+      mediaFilename: "pedido de exame.docx",
+      mediaMimetype:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+  });
+
+  it("sem fileName, o título do documento vale como nome", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        messageType: "DocumentMessage",
+        content: { title: "laudo.pdf", mimetype: "application/pdf" },
+      },
+    });
+    expect(evento).toMatchObject({ mediaFilename: "laudo.pdf" });
+  });
+
+  it("título de prévia de link em texto comum não vira nome de arquivo", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        ...base.message,
+        messageType: "ExtendedTextMessage",
+        text: "olha esse site",
+        content: { title: "Página qualquer" },
+      },
+    });
+    expect(evento).toMatchObject({ contentType: "texto", mediaFilename: null });
+  });
+});
+
+describe("saneamento do nome e do tipo do arquivo", () => {
+  it("tira barras e caracteres de controle e corta em 200", () => {
+    expect(sanearNomeDeArquivo("../../etc/passwd")).toBe("....etcpasswd");
+    expect(sanearNomeDeArquivo("a\\b\u0000c\nd.pdf")).toBe("abcd.pdf");
+    expect(sanearNomeDeArquivo("x".repeat(300))).toHaveLength(200);
+    expect(sanearNomeDeArquivo("   ")).toBeNull();
+    expect(sanearNomeDeArquivo(42)).toBeNull();
+  });
+
+  it("corta por caractere, sem partir emoji ao meio", () => {
+    const nome = sanearNomeDeArquivo(`${"a".repeat(199)}😀😀`);
+    expect(nome).toBe(`${"a".repeat(199)}😀`);
+  });
+
+  it("tipo fica só tipo/subtipo, minúsculo, sem parâmetros", () => {
+    expect(normalizarMimetype("audio/ogg; codecs=opus")).toBe("audio/ogg");
+    expect(normalizarMimetype("Application/PDF")).toBe("application/pdf");
+    expect(normalizarMimetype("nada")).toBeNull();
+    expect(normalizarMimetype("image/svg+xml")).toBe("image/svg+xml");
+    expect(normalizarMimetype(null)).toBeNull();
+  });
+});
+
+describe("resposta automática do app WhatsApp Business", () => {
+  const agora = Date.parse("2026-09-24T12:00:00.000Z");
+
+  it("a janela é de 8 segundos", () => {
+    expect(JANELA_DE_RESPOSTA_AUTOMATICA_MS).toBe(8_000);
+  });
+
+  it("sem horário no payload, o limite é a chegada menos a janela", () => {
+    expect(limiteParaRespostaDePessoa(null, agora)).toBe(
+      "2026-09-24T11:59:52.000Z",
+    );
+  });
+
+  it("com horário plausível, o limite parte do envio", () => {
+    // Eco atrasado: saiu às 11:00 e chegou ao meio-dia. Uma mensagem que o
+    // paciente mandou às 11:30 continua esperando resposta.
+    expect(limiteParaRespostaDePessoa("2026-09-24T11:00:00.000Z", agora)).toBe(
+      "2026-09-24T10:59:52.000Z",
+    );
+  });
+
+  it("horário absurdo (futuro ou muito antigo) cai na hora da chegada", () => {
+    expect(limiteParaRespostaDePessoa("2026-09-25T12:00:00.000Z", agora)).toBe(
+      "2026-09-24T11:59:52.000Z",
+    );
+    expect(limiteParaRespostaDePessoa("2020-01-01T00:00:00.000Z", agora)).toBe(
+      "2026-09-24T11:59:52.000Z",
+    );
   });
 });
 

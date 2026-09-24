@@ -379,4 +379,112 @@ describe("anexo no passo da régua, contra o banco real", () => {
       .single();
     expect(run!.message_id).toBe(menu!.id);
   });
+
+  // Revisao de 24/09/2026: o WhatsApp nao mostra legenda em audio. O texto
+  // (com data e hora) ia como legenda e nunca chegava ao paciente.
+  it("áudio com texto no follow-up: o áudio sem legenda e o texto numa mensagem própria", async () => {
+    const clinicId = await montarClinica("audiotexto");
+    const contactId = await contatoComConsent(clinicId, "+5584976200005");
+    await passoDeFollowup(clinicId, {
+      texto: "Oi, {{nome}}! Ouça o recado da clínica.",
+      anexo: "audio",
+    });
+    const { runId, job } = await armarFollowup(clinicId, contactId);
+
+    const resultado = await executarPassoDeRegua(admin, job);
+    expect(resultado).toEqual({ ok: true });
+
+    const mensagens = await mensagensDeSaida(clinicId);
+    expect(mensagens).toHaveLength(2);
+    const audio = mensagens.find((m) => m.content_type === "audio");
+    const texto = mensagens.find((m) => m.content_type === "texto");
+    expect(audio?.body ?? "").toBe("");
+    expect(texto?.body).toBe("Oi, Paciente Mídia! Ouça o recado da clínica.");
+
+    const { data: run } = await admin
+      .from("cadence_run")
+      .select("sent_at")
+      .eq("id", runId)
+      .single();
+    expect(run!.sent_at).not.toBeNull();
+  });
+
+  it("áudio com texto na confirmação: o texto do passo é o corpo dos botões", async () => {
+    const clinicId = await montarClinica("audioconfirma");
+    const contactId = await contatoComConsent(clinicId, "+5584976200006");
+    const { data: prof } = await admin
+      .from("professional")
+      .insert({ clinic_id: clinicId, name: "Dra. Áudio" })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: proc } = await admin
+      .from("procedure")
+      .insert({ clinic_id: clinicId, name: "Avaliação", default_duration_min: 30 })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: vinculo } = await admin
+      .from("service_link")
+      .insert({
+        clinic_id: clinicId,
+        professional_id: prof!.id,
+        procedure_id: proc!.id,
+        insurance_id: null,
+        duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    await admin
+      .from("cadence")
+      .update({ active: true, ...JANELA_ABERTA })
+      .eq("clinic_id", clinicId)
+      .eq("kind", "confirmacao")
+      .throwOnError();
+    const inicio = new Date(Date.now() + 3 * HORA + 10 * MINUTO);
+    await admin
+      .from("appointment")
+      .insert({
+        clinic_id: clinicId,
+        contact_id: contactId,
+        professional_id: prof!.id,
+        service_link_id: vinculo!.id,
+        starts_at: inicio.toISOString(),
+        ends_at: new Date(inicio.getTime() + 30 * MINUTO).toISOString(),
+      })
+      .throwOnError();
+
+    const { error: erroPlanner } = await admin.rpc("planejar_reguas");
+    expect(erroPlanner).toBeNull();
+    const { data: jobs } = await admin
+      .from("job_queue")
+      .select("id, clinic_id, kind, payload, attempts, max_attempts")
+      .eq("clinic_id", clinicId)
+      .eq("kind", "executar_passo_de_regua");
+    expect(jobs).toHaveLength(1);
+    const job = jobs![0] as unknown as Job;
+    const { data: runComPasso } = await admin
+      .from("cadence_run")
+      .select("cadence_step_id")
+      .eq("id", job.payload.cadence_run_id as string)
+      .single();
+    // O passo de 3h semeado tem texto com {{hora}}.
+    await anexarNoPasso(
+      clinicId,
+      runComPasso!.cadence_step_id as string,
+      "audio",
+    );
+
+    const resultado = await executarPassoDeRegua(admin, job);
+    expect(resultado).toEqual({ ok: true });
+
+    const mensagens = await mensagensDeSaida(clinicId);
+    expect(mensagens).toHaveLength(2);
+    const audio = mensagens.find((m) => m.content_type === "audio");
+    const menu = mensagens.find((m) => m.content_type === "texto");
+    expect(audio?.body ?? "").toBe("");
+    expect(menu?.body).toContain("sua consulta é hoje às");
+    expect(menu?.body).not.toContain(CORPO_DO_MENU_APOS_MIDIA);
+  });
 });

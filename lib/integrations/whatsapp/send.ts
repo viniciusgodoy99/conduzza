@@ -50,9 +50,18 @@ export type SendTextInput = {
    */
   espacamentoMs?: number;
   /**
+   * Envio do MOTOR (regua, follow-up, oferta de espera, eco, toque manual).
+   * Reserva contra o slot de massa (whatsapp_account.next_bulk_send_at) E o
+   * intervalo curto do ultimo envio real. Ausente (a resposta digitada no
+   * Inbox), o envio respeita SO o intervalo curto e nunca espera a fila das
+   * mensagens automaticas (decisao do dono de 24/09/2026: atendimento
+   * primeiro).
+   */
+  envioAutomatico?: boolean;
+  /**
    * Teto de espera pelo slot. O 1:1 do atendente nao pode dormir um minuto
    * atras de uma campanha: acima do teto o envio falha com 'canal_ocupado'.
-   * O worker passa um teto alto (a espera e o trabalho dele).
+   * O worker passa um teto curto e reagenda (adiar nao custa nada).
    */
   esperaMaximaMs?: number;
   /** id do job da fila, quando o envio vem do worker (chave de idempotencia) */
@@ -393,6 +402,13 @@ async function enviarPeloCanal(
   // espera e nao devolvia, entao cada tentativa frustrada empurrava o proximo
   // envio da clinica em 10 a 30 segundos, cumulativamente, sem ninguem ter
   // enviado.
+  //
+  // DOIS TRILHOS (revisao de 24/09/2026). Antes, resposta humana e disparo
+  // automatico disputavam o MESMO slot: 30 toques de "Cobrar agora" seguravam
+  // o canal por 10 a 30 s cada, e a recepcao lia "O número está enviando
+  // outras mensagens" por minutos. Agora o envio automatico reserva o slot
+  // de massa (o limite anti-ban por instancia continua) e o humano so espera
+  // o intervalo curto desde o ultimo envio real.
   const teto = input.esperaMaximaMs ?? 8_000;
   const { data: slot, error: erroSlot } = await supabase.rpc(
     "reservar_slot_envio_v2",
@@ -400,6 +416,10 @@ async function enviarPeloCanal(
       p_clinic_id: input.clinicId,
       p_espaco_ms: input.espacamentoMs ?? espacamentoPadraoMs(),
       p_espera_maxima_ms: teto,
+      p_massa: input.envioAutomatico === true,
+      // O intervalo curto que um envio automatico deixa para o proximo
+      // envio de qualquer trilho. O banco nunca usa mais que p_espaco_ms.
+      p_espaco_curto_ms: espacamentoPadraoMs(),
     },
   );
   const estado = (slot as { estado?: string } | null)?.estado;

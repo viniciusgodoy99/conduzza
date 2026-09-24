@@ -1,7 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { parseInboundEvent } from "@/lib/integrations/whatsapp/inbound";
+import { chaveDeTelefone } from "@/lib/domain/telefone";
+import {
+  limiteParaRespostaDePessoa,
+  parseInboundEvent,
+} from "@/lib/integrations/whatsapp/inbound";
 import { ingerirMensagemRecebida } from "@/lib/integrations/whatsapp/ingest";
 import { interceptarRespostaDePaciente } from "@/lib/integrations/whatsapp/interceptar-resposta";
 import { log } from "@/lib/log";
@@ -95,7 +99,17 @@ export async function POST(request: NextRequest) {
     // Midia NUNCA e baixada aqui: a URL do provedor e criptografada e o
     // download demora segundos, o que estouraria o timeout do webhook e
     // provocaria reenvio. Vira job; o worker baixa e guarda no Storage.
-    if (event.mediaUrl && data?.inserted && data.message_id) {
+    //
+    // O job nasce para TODA imagem, documento e audio, com ou sem URL: o
+    // worker baixa pelo wa_message_id (POST /message/download), nao pela URL.
+    // Antes a trava era a URL, e foto que chegava sem ela nunca entrava na
+    // fila: a bolha dizia "Baixando o arquivo" para sempre. Com URL vale
+    // tambem para o que o parser chama de texto (video).
+    const ehMidia =
+      event.contentType === "imagem" ||
+      event.contentType === "documento" ||
+      event.contentType === "audio";
+    if ((ehMidia || event.mediaUrl) && data?.inserted && data.message_id) {
       const { error: erroJob } = await admin.from("job_queue").insert({
         clinic_id: clinicId,
         kind: "baixar_midia",
@@ -126,6 +140,9 @@ export async function POST(request: NextRequest) {
           conversationId: data.conversation_id,
           body: event.body,
           contentType: event.contentType,
+          // A citacao decide a que pergunta a resposta se refere (o botao
+          // tocado cita o menu do toque daquela consulta).
+          quotedWaMessageId: event.quotedWaMessageId,
         });
       } catch {
         log.error("webhook_interceptar_resposta_falhou", {
@@ -142,20 +159,43 @@ export async function POST(request: NextRequest) {
   // por aqui), mas a conversa PRECISA sair do contador de espera: senao outra
   // atendente ve a pergunta como "sem resposta" e responde de novo, e o
   // paciente recebe duas respostas para a mesma coisa.
+  //
+  // RESPOSTA AUTOMATICA do app WhatsApp Business (saudacao, ausencia) tambem
+  // sai do celular pareado e chega aqui igual. Ela NAO e ninguem atendendo:
+  // derrubar a espera por ela fazia toda conversa da noite sumir de
+  // "Aguardando voce" na manha seguinte. Reconhecida pelo tempo: sai poucos
+  // segundos depois da mensagem do paciente (limiteParaRespostaDePessoa).
   if (event.kind === "clinic_device_reply") {
+    // Depuracao: se o payload trouxer alguma chave que pareca marcar envio
+    // automatico, registra SO o caminho da chave (nunca texto), para decidir
+    // depois se da para filtrar por ela em vez de pelo tempo.
+    if (event.marcadoresDeEnvioAutomatico.length > 0) {
+      log.info("whatsapp_eco_do_celular_com_marcador", {
+        clinic_id: clinicId,
+        wa_message_id: event.waMessageId,
+        path: event.marcadoresDeEnvioAutomatico.join(","),
+        count: event.marcadoresDeEnvioAutomatico.length,
+      });
+    }
+    // Pela CHAVE do telefone: o chatid vem na forma do WhatsApp, que pode
+    // nao ter o nono digito que o cadastro tem.
     const { data: contato } = await admin
       .from("contact")
       .select("id")
       .eq("clinic_id", clinicId)
-      .eq("phone_e164", event.phone)
+      .eq("phone_key", chaveDeTelefone(event.phone))
       .maybeSingle();
     if (contato) {
+      const limite = limiteParaRespostaDePessoa(event.enviadaEm, Date.now());
       await admin
         .from("conversation")
         .update({ awaiting_reply: false })
         .eq("clinic_id", clinicId)
         .eq("contact_id", contato.id)
-        .neq("status", "resolvida");
+        .neq("status", "resolvida")
+        // So derruba se a ultima mensagem do paciente chegou ANTES da
+        // janela: eco colado nela e a resposta automatica do app Business.
+        .or(`last_inbound_at.is.null,last_inbound_at.lt."${limite}"`);
     }
     return NextResponse.json({ ok: true });
   }

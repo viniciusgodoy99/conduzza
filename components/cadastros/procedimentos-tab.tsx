@@ -1,14 +1,19 @@
 "use client";
 
-import { Pencil, Plus, Stethoscope } from "lucide-react";
+import { Plus, Stethoscope } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { salvarProcedimentoAction } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { BotaoProtegido, chipAtivo } from "@/components/cadastros/comum";
+import {
+  AcoesDaLinha,
+  BotaoProtegido,
+  ChipSituacao,
+  DetalheSomenteLeitura,
+  PreviaDeReais,
+} from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
-import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,7 +41,11 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import type { Procedimento } from "@/lib/queries/catalogo";
-import { formatarCentavos } from "@/lib/utils/moeda";
+import {
+  centavosParaReais,
+  formatarCentavos,
+  lerReais,
+} from "@/lib/utils/moeda";
 
 // Valor sentinela do Select de recurso: o item do shadcn nao aceita value "".
 const SEM_RECURSO = "nenhum";
@@ -66,27 +75,6 @@ const FORM_VAZIO: FormProcedimento = {
   active: true,
 };
 
-// "120,50" ou "120.50" viram 12050 centavos; vazio vira null; texto que nao
-// e numero vira undefined para a tela avisar antes de chamar a action.
-function reaisParaCentavos(texto: string): number | null | undefined {
-  const limpo = texto.trim();
-  if (limpo === "") {
-    return null;
-  }
-  const numero = Number(limpo.replace(/\./g, "").replace(",", "."));
-  if (!Number.isFinite(numero) || numero < 0) {
-    return undefined;
-  }
-  return Math.round(numero * 100);
-}
-
-function centavosParaReais(cents: number | null): string {
-  if (cents === null) {
-    return "";
-  }
-  return (cents / 100).toFixed(2).replace(".", ",");
-}
-
 export function ProcedimentosTab({
   catalogo,
   podeEditar,
@@ -97,6 +85,9 @@ export function ProcedimentosTab({
   const [form, setForm] = useState<FormProcedimento>(FORM_VAZIO);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Quem so ve Cadastros (recepcao, leitura, profissional) abre o mesmo
+  // painel em modo leitura para consultar descricao e preparo (achado 41).
+  const [somenteLeitura, setSomenteLeitura] = useState(false);
 
   const nomeRecurso = (resourceId: string | null): string => {
     if (!resourceId) {
@@ -107,8 +98,9 @@ export function ProcedimentosTab({
     );
   };
 
-  const abrir = (procedimento?: Procedimento) => {
+  const abrir = (procedimento?: Procedimento, leitura = false) => {
     setErro(null);
+    setSomenteLeitura(leitura);
     setForm(
       procedimento
         ? {
@@ -129,7 +121,7 @@ export function ProcedimentosTab({
   };
 
   const salvar = async () => {
-    const centavos = reaisParaCentavos(form.preco_reais);
+    const centavos = lerReais(form.preco_reais);
     if (centavos === undefined) {
       setErro("Informe o preço em reais, por exemplo 150,00, ou deixe vazio.");
       return;
@@ -198,7 +190,6 @@ export function ProcedimentosTab({
             </TableHeader>
             <TableBody>
               {catalogo.procedimentos.map((procedimento) => {
-                const chip = chipAtivo(procedimento.active);
                 return (
                   <TableRow key={procedimento.id}>
                     <TableCell className="font-medium">
@@ -227,31 +218,17 @@ export function ProcedimentosTab({
                         <span className="text-text-tertiary">Só recepção</span>
                       )}
                     </TableCell>
-                    <TableCell className={chip.classe}>{chip.texto}</TableCell>
                     <TableCell>
-                      {podeEditar ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-9"
-                          onClick={() => abrir(procedimento)}
-                          aria-label={`Editar ${procedimento.name}`}
-                        >
-                          <Pencil strokeWidth={1.5} className="size-4" />
-                        </Button>
-                      ) : (
-                        <DisabledWithHint hint={dica}>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-9"
-                            disabled
-                            aria-label={`Editar ${procedimento.name}`}
-                          >
-                            <Pencil strokeWidth={1.5} className="size-4" />
-                          </Button>
-                        </DisabledWithHint>
-                      )}
+                      <ChipSituacao active={procedimento.active} />
+                    </TableCell>
+                    <TableCell>
+                      <AcoesDaLinha
+                        podeEditar={podeEditar}
+                        dica={dica}
+                        nome={procedimento.name}
+                        aoEditar={() => abrir(procedimento)}
+                        aoVerDetalhes={() => abrir(procedimento, true)}
+                      />
                     </TableCell>
                   </TableRow>
                 );
@@ -265,10 +242,55 @@ export function ProcedimentosTab({
         <SheetContent className="w-[420px] overflow-y-auto p-5">
           <SheetHeader className="p-0">
             <SheetTitle>
-              {form.id ? "Editar procedimento" : "Novo procedimento"}
+              {somenteLeitura
+                ? form.name
+                : form.id
+                  ? "Editar procedimento"
+                  : "Novo procedimento"}
             </SheetTitle>
           </SheetHeader>
-          <div className="grid gap-4 py-4">
+          {somenteLeitura ? (
+            <DetalheSomenteLeitura
+              itens={[
+                { rotulo: "Descrição", valor: form.description },
+                {
+                  rotulo: "Orientação de preparo enviada ao paciente",
+                  valor: form.prep_instructions,
+                },
+                {
+                  rotulo: "Duração padrão",
+                  valor: `${form.default_duration_min} min`,
+                },
+                {
+                  rotulo: "Preço base",
+                  valor: (() => {
+                    const centavos = lerReais(form.preco_reais);
+                    return typeof centavos === "number"
+                      ? formatarCentavos(centavos)
+                      : "Sem preço fixo";
+                  })(),
+                },
+                {
+                  rotulo: "Exige avaliação antes",
+                  valor: form.requires_evaluation ? "Sim" : "Não",
+                },
+                {
+                  rotulo: "Recurso necessário",
+                  valor:
+                    form.resource_id === SEM_RECURSO
+                      ? "Nenhum"
+                      : nomeRecurso(form.resource_id),
+                },
+                {
+                  rotulo: "Situação",
+                  valor: <ChipSituacao active={form.active} />,
+                },
+              ]}
+            />
+          ) : null}
+          {/* O formulario fica fora da arvore visivel no modo leitura
+              (atributo hidden, que o preflight do Tailwind forca). */}
+          <div className="grid gap-4 py-4" hidden={somenteLeitura}>
             <div className="grid gap-2">
               <Label htmlFor="proc-nome">Nome</Label>
               <Input
@@ -314,7 +336,12 @@ export function ProcedimentosTab({
                   onChange={(e) =>
                     setForm({ ...form, preco_reais: e.target.value })
                   }
+                  aria-describedby="proc-preco-previa"
                   className="h-10"
+                />
+                <PreviaDeReais
+                  texto={form.preco_reais}
+                  id="proc-preco-previa"
                 />
               </div>
             </div>

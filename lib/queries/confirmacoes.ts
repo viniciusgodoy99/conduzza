@@ -36,6 +36,11 @@ export type ConsultaDaConfirmacao = {
   status: AppointmentStatus;
   confirmation_channel: string | null;
   send_confirmation: boolean;
+  /**
+   * Quando o paciente pediu para remarcar pelo WhatsApp (pedido ainda de pe).
+   * A regua para de perguntar e a recepcao precisa combinar o novo horario.
+   */
+  remarcacao_pedida_em: string | null;
   contact: {
     id: string;
     name: string | null;
@@ -119,7 +124,7 @@ export const confirmacoesKeys = {
 };
 
 const CONSULTA_SELECT =
-  "id, contact_id, professional_id, starts_at, ends_at, status, confirmation_channel, send_confirmation, contact:contact_id (id, name, phone_e164, no_show_count), professional:professional_id (id, name), service_link:service_link_id (id, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
+  "id, contact_id, professional_id, starts_at, ends_at, status, confirmation_channel, send_confirmation, remarcacao_pedida_em, contact:contact_id (id, name, phone_e164, no_show_count), professional:professional_id (id, name), service_link:service_link_id (id, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
 
 function primeiro<T>(valor: T | T[] | null | undefined): T | null {
   if (Array.isArray(valor)) {
@@ -149,6 +154,8 @@ function normalizarConsulta(
     contact: primeiro(row.contact),
     professional: primeiro(row.professional),
     service_link,
+    remarcacao_pedida_em:
+      (row.remarcacao_pedida_em as string | null | undefined) ?? null,
     consent_ativo: consentPorContato.get(row.contact_id as string) ?? false,
     conversation_id: conversaPorContato.get(row.contact_id as string) ?? null,
     toque: toquePorConsulta?.get(row.id as string) ?? { situacao: "nenhum" },

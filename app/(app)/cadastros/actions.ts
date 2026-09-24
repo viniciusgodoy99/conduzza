@@ -13,7 +13,50 @@ import { createClient } from "@/lib/supabase/server";
 // vai para audit_log; exclusao e sempre suave (active = false), porque
 // apagar de verdade quebraria agendamentos historicos por FK.
 
-export type CadastroActionResult = { ok: boolean; error?: string; id?: string };
+export type CadastroActionResult = {
+  ok: boolean;
+  error?: string;
+  id?: string;
+  // code 'consultas_no_periodo': nada foi gravado; ha consultas marcadas no
+  // periodo afetado e a tela precisa pedir confirmacao explicita (achado 37).
+  code?: "consultas_no_periodo";
+  consultas?: number;
+  primeiraConsulta?: string | null;
+};
+
+// Consultas nao canceladas dos profissionais que ainda nao terminaram e
+// cruzam o periodo [inicio, fim). "Ainda nao terminaram" usa o instante
+// atual (comparacao de instantes em UTC, sem dia civil envolvido). Erro de
+// leitura volta como erro: nunca "zero consultas" falso.
+async function contarConsultasNoPeriodo(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  professionalIds: string[],
+  inicio: string | null,
+  fim: string | null,
+): Promise<{ total: number; primeira: string | null } | null> {
+  const agora = new Date().toISOString();
+  const inicioEfetivo =
+    inicio !== null && new Date(inicio) > new Date(agora) ? inicio : agora;
+  let consulta = supabase
+    .from("appointment")
+    .select("starts_at", { count: "exact" })
+    .eq("clinic_id", clinicId)
+    .in("professional_id", professionalIds)
+    .not("status", "in", "(cancelado_paciente,cancelado_clinica)")
+    .gt("ends_at", inicioEfetivo);
+  if (fim !== null) {
+    consulta = consulta.lt("starts_at", fim);
+  }
+  const { data, count, error } = await consulta
+    .order("starts_at", { ascending: true })
+    .limit(1);
+  if (error) {
+    return null;
+  }
+  const primeira = (data?.[0]?.starts_at as string | undefined) ?? null;
+  return { total: count ?? 0, primeira };
+}
 
 async function requireEditor() {
   const context = await getSessionContext();
@@ -67,6 +110,8 @@ const profissionalSchema = z.object({
     .regex(/^#[0-9a-fA-F]{6}$/)
     .nullable(),
   active: z.boolean(),
+  // Desativar com consultas futuras so passa com confirmacao explicita.
+  confirmar_consultas: z.boolean().optional(),
 });
 
 export async function salvarProfissionalAction(
@@ -81,9 +126,44 @@ export async function salvarProfissionalAction(
     return { ok: false, error: "Confira os campos do profissional." };
   }
   const supabase = await createClient();
-  const { id, ...campos } = parsed.data;
+  const { id, confirmar_consultas, ...campos } = parsed.data;
 
   if (id) {
+    // Desativar tira a coluna do profissional da Agenda, mas nao desmarca
+    // nada: as consultas futuras continuam valendo e os lembretes saem.
+    // Avisar antes (achado 37; decisao: so avisar e pedir confirmacao).
+    if (!campos.active && confirmar_consultas !== true) {
+      const { data: atual } = await supabase
+        .from("professional")
+        .select("active")
+        .eq("clinic_id", guard.clinicId)
+        .eq("id", id)
+        .maybeSingle();
+      if (atual?.active === true) {
+        const futuras = await contarConsultasNoPeriodo(
+          supabase,
+          guard.clinicId,
+          [id],
+          null,
+          null,
+        );
+        if (futuras === null) {
+          return {
+            ok: false,
+            error:
+              "Não foi possível conferir as consultas marcadas. Tente de novo.",
+          };
+        }
+        if (futuras.total > 0) {
+          return {
+            ok: false,
+            code: "consultas_no_periodo",
+            consultas: futuras.total,
+            primeiraConsulta: futuras.primeira,
+          };
+        }
+      }
+    }
     const { data } = await supabase
       .from("professional")
       .update(campos)
@@ -233,7 +313,29 @@ const pacoteSchema = z.object({
   sessions: z.number().int().min(1).max(200),
   price_cents: z.number().int().min(0).max(100_000_000),
   validity_days: z.number().int().min(1).max(3650).nullable(),
+  active: z.boolean(),
 });
+
+const MENSAGEM_PACOTE_VENDIDO_PROCEDIMENTO =
+  "Este pacote já foi vendido, então o procedimento não muda. Para outro procedimento, crie um pacote novo.";
+const MENSAGEM_PACOTE_VENDIDO_REMOVER =
+  "Este pacote já foi vendido. Desative em vez de remover.";
+
+async function vendasDoPacote(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  packageId: string,
+): Promise<number | null> {
+  const { count, error } = await supabase
+    .from("package_balance")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", clinicId)
+    .eq("package_id", packageId);
+  if (error) {
+    return null;
+  }
+  return count ?? 0;
+}
 
 async function salvarEntidade(
   tabela: string,
@@ -323,7 +425,115 @@ export async function salvarUnidadeAction(
 export async function salvarPacoteAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
-  return salvarEntidade("package", pacoteSchema, input);
+  // Procedimento congelado depois da primeira venda (achado 35): o debito
+  // automatico casa o saldo pelo procedimento do pacote, e troca-lo mudaria
+  // o saldo de quem ja pagou. O gatilho exigir_cadastro_da_mesma_clinica
+  // recusa no banco (23514, inclusive na corrida com uma venda feita entre a
+  // conferencia abaixo e o update); aqui so antecipa a mensagem.
+  const guard = await requireEditor();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = pacoteSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Confira os campos do pacote." };
+  }
+  const supabase = await createClient();
+  const { id, ...campos } = parsed.data;
+
+  if (!id) {
+    return salvarEntidade("package", pacoteSchema, input);
+  }
+
+  const { data: atual } = await supabase
+    .from("package")
+    .select("procedure_id")
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", id)
+    .maybeSingle();
+  if (!atual) {
+    return { ok: false, error: "Pacote não encontrado." };
+  }
+  if (atual.procedure_id !== campos.procedure_id) {
+    const vendas = await vendasDoPacote(supabase, guard.clinicId, id);
+    if (vendas === null) {
+      return {
+        ok: false,
+        error:
+          "Não foi possível conferir as vendas deste pacote. Tente de novo.",
+      };
+    }
+    if (vendas > 0) {
+      return { ok: false, error: MENSAGEM_PACOTE_VENDIDO_PROCEDIMENTO };
+    }
+  }
+  const { data, error } = await supabase
+    .from("package")
+    .update(campos)
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", id)
+    .select("id");
+  if (error || !data || data.length === 0) {
+    return {
+      ok: false,
+      error:
+        error?.code === "23514"
+          ? MENSAGEM_PACOTE_VENDIDO_PROCEDIMENTO
+          : "Não foi possível salvar o pacote.",
+    };
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "editou",
+    "package",
+    id,
+  );
+  revalidatePath("/cadastros");
+  return { ok: true, id };
+}
+
+// Desativar tira o pacote da venda na ficha do paciente; os saldos ja
+// vendidos continuam valendo e sendo debitados.
+export async function alternarPacoteAtivoAction(
+  id: unknown,
+  ativo: unknown,
+): Promise<CadastroActionResult> {
+  const guard = await requireEditor();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsedId = idSchema.safeParse(id);
+  const parsedAtivo = z.boolean().safeParse(ativo);
+  if (!parsedId.success || !parsedAtivo.success) {
+    return { ok: false, error: "Pacote inválido." };
+  }
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("package")
+    .update({ active: parsedAtivo.data })
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsedId.data)
+    .select("id");
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      error: parsedAtivo.data
+        ? "Não foi possível reativar o pacote."
+        : "Não foi possível desativar o pacote.",
+    };
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    parsedAtivo.data ? "reativou" : "desativou",
+    "package",
+    parsedId.data,
+  );
+  revalidatePath("/cadastros");
+  return { ok: true, id: parsedId.data };
 }
 
 export async function excluirPacoteAction(
@@ -338,14 +548,31 @@ export async function excluirPacoteAction(
     return { ok: false, error: "Registro inválido." };
   }
   const supabase = await createClient();
-  // Pacote nao tem coluna active e nada referencia pacote ainda: delete real.
+  // Delete real so para pacote que nunca foi vendido. Com venda, a FK de
+  // package_balance (NO ACTION) recusa, e o caminho e desativar.
+  const vendas = await vendasDoPacote(supabase, guard.clinicId, parsed.data);
+  if (vendas === null) {
+    return {
+      ok: false,
+      error: "Não foi possível conferir as vendas deste pacote. Tente de novo.",
+    };
+  }
+  if (vendas > 0) {
+    return { ok: false, error: MENSAGEM_PACOTE_VENDIDO_REMOVER };
+  }
   const { error } = await supabase
     .from("package")
     .delete()
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data);
   if (error) {
-    return { ok: false, error: "Não foi possível remover o pacote." };
+    return {
+      ok: false,
+      error:
+        error.code === "23503"
+          ? MENSAGEM_PACOTE_VENDIDO_REMOVER
+          : "Não foi possível remover o pacote.",
+    };
   }
   await auditar(
     supabase,
@@ -429,7 +656,7 @@ export async function salvarVinculoAction(
       return {
         ok: false,
         error:
-          "Este profissional já tem vínculo para este procedimento neste convênio.",
+          "Este profissional já tem vínculo para este procedimento neste convênio. Se ele estiver inativo, reative na lista.",
       };
     }
     return { ok: false, error: "Não foi possível criar o vínculo." };
@@ -478,6 +705,50 @@ export async function alternarVinculoIaAction(
   );
   revalidatePath("/cadastros");
   return { ok: true };
+}
+
+// Desativar/Reativar vinculo (achado 33). Suave: appointment.service_link_id
+// e FK NO ACTION, e as consultas antigas continuam apontando para ele. O
+// vinculo inativo sai do modal de agendamento e da reoferta da lista de
+// espera, que ja filtram service_link.active.
+export async function alternarVinculoAtivoAction(
+  id: unknown,
+  ativo: unknown,
+): Promise<CadastroActionResult> {
+  const guard = await requireEditor();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsedId = idSchema.safeParse(id);
+  const parsedAtivo = z.boolean().safeParse(ativo);
+  if (!parsedId.success || !parsedAtivo.success) {
+    return { ok: false, error: "Vínculo inválido." };
+  }
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("service_link")
+    .update({ active: parsedAtivo.data })
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsedId.data)
+    .select("id");
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      error: parsedAtivo.data
+        ? "Não foi possível reativar o vínculo."
+        : "Não foi possível desativar o vínculo.",
+    };
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    parsedAtivo.data ? "reativou" : "desativou",
+    "service_link",
+    parsedId.data,
+  );
+  revalidatePath("/cadastros");
+  return { ok: true, id: parsedId.data };
 }
 
 export async function duplicarVinculosAction(
@@ -552,6 +823,8 @@ const bloqueioLoteSchema = z.object({
   ends_at: z.iso.datetime({ offset: true }),
   reason: z.string().trim().min(2).max(200),
   blocks_overbooking: z.boolean(),
+  // Bloqueio sobre consultas ja marcadas so passa com confirmacao explicita.
+  confirmar_consultas: z.boolean().optional(),
 });
 
 export async function criarBloqueiosEmLoteAction(
@@ -573,6 +846,34 @@ export async function criarBloqueiosEmLoteAction(
   }
 
   const supabase = await createClient();
+  // O bloqueio tira os horarios da oferta, mas nao desmarca o que ja estava
+  // marcado: as consultas continuam valendo e a regua pede confirmacao ao
+  // paciente. Avisar antes (achado 37; decisao: so avisar e pedir
+  // confirmacao, a recepcao remarca ou cancela pela Agenda).
+  if (parsed.data.confirmar_consultas !== true) {
+    const noPeriodo = await contarConsultasNoPeriodo(
+      supabase,
+      guard.clinicId,
+      parsed.data.professional_ids,
+      parsed.data.starts_at,
+      parsed.data.ends_at,
+    );
+    if (noPeriodo === null) {
+      return {
+        ok: false,
+        error:
+          "Não foi possível conferir as consultas marcadas. Tente de novo.",
+      };
+    }
+    if (noPeriodo.total > 0) {
+      return {
+        ok: false,
+        code: "consultas_no_periodo",
+        consultas: noPeriodo.total,
+        primeiraConsulta: noPeriodo.primeira,
+      };
+    }
+  }
   const { error } = await supabase.from("professional_block").insert(
     parsed.data.professional_ids.map((professionalId) => ({
       clinic_id: guard.clinicId,

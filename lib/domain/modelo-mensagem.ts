@@ -34,6 +34,61 @@ const PONTUACAO = new Set([
   "\u2015",
 ]);
 
+// Marca provisoria do lugar onde {{nome}} saiu vazio. Caractere de uso
+// privado: nao existe em texto digitado e nunca chega ao paciente (a limpeza
+// abaixo tira todas).
+const NOME_VAZIO = "";
+
+function capitalizarInicio(linha: string): string {
+  const inicio = linha.search(/\S/u);
+  if (inicio < 0) {
+    return linha;
+  }
+  return (
+    linha.slice(0, inicio) +
+    linha.charAt(inicio).toLocaleUpperCase("pt-BR") +
+    linha.slice(inicio + 1)
+  );
+}
+
+/**
+ * Tira o vocativo que sobra quando o paciente nao tem nome cadastrado.
+ *
+ * Sem isto, "Olá, {{nome}}! Aqui é da..." saia "Olá, ! Aqui é da..." e o
+ * toque de 3h comecava com ", sua consulta é hoje". Contato sem nome e comum
+ * (quem chega pelo WhatsApp sem nome de perfil), entao a limpeza vive no
+ * renderizador e vale para os textos padrao E para os editados pela clinica.
+ * O texto em si continua sendo o que a clinica escreveu: so a pontuacao que
+ * cercava o nome some.
+ */
+function limparVocativoSemNome(linha: string): string {
+  if (!linha.includes(NOME_VAZIO)) {
+    return linha;
+  }
+  let saida = linha;
+  let tirouDoComeco = false;
+  // "{{nome}}, sua consulta" vira "Sua consulta".
+  saida = saida.replace(
+    /^([ \t]*)[ \t]*[,;:!?.]?[ \t]*/u,
+    (_todo, recuo: string) => {
+      tirouDoComeco = true;
+      return recuo;
+    },
+  );
+  // "Olá, {{nome}}, tudo bem?" vira "Olá, tudo bem?".
+  saida = saida.replace(/[ \t]*,[ \t]*[ \t]*,/gu, ",");
+  // "Olá, {{nome}}!" vira "Olá!"; "Oi {{nome}}." vira "Oi.".
+  saida = saida.replace(/[ \t]*,?[ \t]*[ \t]*([!?.;:])/gu, "$1");
+  // "Oi {{nome}}, tudo bem?" vira "Oi, tudo bem?".
+  saida = saida.replace(/[ \t]*[ \t]*,/gu, ",");
+  // "Até logo, {{nome}}" vira "Até logo".
+  saida = saida.replace(/[ \t]*,?[ \t]*[ \t]*$/u, "");
+  // No meio da frase, sem pontuacao: some sem deixar espaco duplo.
+  saida = saida.replace(/[ \t]+[ \t]+/gu, " ");
+  saida = saida.replace(//gu, "");
+  return tirouDoComeco ? capitalizarInicio(saida) : saida;
+}
+
 function soEspacoOuPontuacao(linha: string): boolean {
   for (const caractere of linha) {
     if (caractere.trim() === "") {
@@ -57,6 +112,9 @@ function soEspacoOuPontuacao(linha: string): boolean {
  *
  * Linha em branco que ja estava no modelo e mantida: e paragrafo escolhido
  * pela clinica, nao sobra de substituicao. So sai a linha que TINHA marcador.
+ *
+ * {{nome}} vazio (ou so espaco) leva junto o vocativo que o cercava: "Olá,
+ * {{nome}}!" vira "Olá!" e "{{nome}}, sua consulta" vira "Sua consulta".
  */
 export function renderizarModelo(
   modelo: string,
@@ -67,10 +125,16 @@ export function renderizarModelo(
   for (const linha of modelo.split("\n")) {
     const tinhaMarcador = linha.includes("{{");
     const substituida = linha.replace(MARCADOR, (_todo, chave: string) => {
-      const valor = valores[chave.trim()];
+      const nomeDaChave = chave.trim();
+      const valor = valores[nomeDaChave];
+      if (nomeDaChave === "nome" && (valor == null || valor.trim() === "")) {
+        return NOME_VAZIO;
+      }
       return valor == null ? "" : valor;
     });
-    const limpa = substituida.replace(SOBRA_DE_CHAVE, "");
+    const limpa = limparVocativoSemNome(
+      substituida.replace(SOBRA_DE_CHAVE, ""),
+    );
     if (tinhaMarcador && soEspacoOuPontuacao(limpa)) {
       continue;
     }

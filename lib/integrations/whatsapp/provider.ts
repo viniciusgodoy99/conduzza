@@ -130,16 +130,74 @@ export interface WhatsAppProvider {
   ): Promise<MediaDownloadResult>;
 }
 
+export const MENSAGEM_CANAL_NAO_CONFIGURADO =
+  "Canal de WhatsApp não configurado no servidor. Fale com o suporte.";
+
+/**
+ * Producao sem provedor de verdade configurado.
+ *
+ * Existe para FALHAR FECHADO. Antes, um deploy que perdesse WHATSAPP_PROVIDER
+ * caia no fake em silencio: a clinica "conectava" na hora com um numero
+ * ficticio, todo envio virava 'enviada' sem sair nada, e o provedor 'fake'
+ * ficava gravado na conta dela.
+ */
+export class CanalNaoConfiguradoError extends Error {
+  constructor() {
+    super(MENSAGEM_CANAL_NAO_CONFIGURADO);
+    this.name = "CanalNaoConfiguradoError";
+  }
+}
+
+function emProducao(): boolean {
+  return process.env.VERCEL_ENV === "production";
+}
+
+function provedorReal(valor: string | null | undefined): boolean {
+  return valor === "uazapi" || valor === "cloud_api";
+}
+
+/**
+ * O provedor que o AMBIENTE manda usar para uma conta nova.
+ *
+ * Fora de producao, sem configuracao, e o fake (desenvolvimento e testes).
+ * Em producao so vale provedor real: ausente ou 'fake' devolve nulo, e quem
+ * chama recusa a conexao em vez de criar a conta com o fake.
+ */
+export function provedorDoAmbiente(): ProviderName | null {
+  const valor = process.env.WHATSAPP_PROVIDER?.trim() || null;
+  if (emProducao()) {
+    return provedorReal(valor) ? (valor as ProviderName) : null;
+  }
+  return (valor as ProviderName | null) ?? "fake";
+}
+
+/**
+ * A CONEXAO de um numero em producao so acontece com provedor real.
+ *
+ * Vale para a conta que ja ficou gravada com 'fake' por um deploy mal
+ * configurado: conectar ali "conectaria" o simulador. Fica fora do
+ * getWhatsAppProvider de proposito: as clinicas descartaveis da suite e2e
+ * vivem no mesmo banco com provider 'fake', e o motor de producao executa os
+ * jobs delas; recusar la quebraria a suite sem proteger clinica real nenhuma
+ * (conta nova em producao ja nao nasce mais 'fake').
+ */
+export function conexaoRecusadaNoAmbiente(provedorDaConta: string): boolean {
+  return emProducao() && !provedorReal(provedorDaConta);
+}
+
 import { FakeProvider } from "./fake";
 import { UazapiProvider } from "./uazapi";
 
 export function getWhatsAppProvider(
   name?: ProviderName | string | null,
 ): WhatsAppProvider {
-  const resolved = (name ??
-    process.env.WHATSAPP_PROVIDER ??
-    "fake") as ProviderName;
-  switch (resolved) {
+  // Sem provedor na conta, vale o do ambiente, e em producao ele nunca e o
+  // fake por omissao: sem configuracao, falha fechado em vez de simular.
+  const resolved = name ?? provedorDoAmbiente();
+  if (resolved === null) {
+    throw new CanalNaoConfiguradoError();
+  }
+  switch (resolved as ProviderName) {
     case "uazapi":
       return new UazapiProvider();
     case "cloud_api":

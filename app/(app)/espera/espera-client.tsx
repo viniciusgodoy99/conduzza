@@ -18,7 +18,7 @@ import {
   esperaKeys,
   fetchFilaDeEspera,
   fetchMetricasDaEspera,
-  fetchOfertaEmAndamento,
+  fetchOfertasEmAndamento,
   type ConfigDaEspera,
   type EntradaDaEspera,
   type MetricasDaEspera,
@@ -38,7 +38,7 @@ export function EsperaClient({
   podeEditar,
   dicaSemPermissao,
   filaInicial,
-  ofertaInicial,
+  ofertasIniciais,
   metricasIniciais,
   config,
   procedimentos,
@@ -51,7 +51,7 @@ export function EsperaClient({
   podeEditar: boolean;
   dicaSemPermissao: string;
   filaInicial: EntradaDaEspera[];
-  ofertaInicial: OfertaEmAndamento | null;
+  ofertasIniciais: OfertaEmAndamento[];
   metricasIniciais: MetricasDaEspera;
   config: ConfigDaEspera;
   procedimentos: OpcaoDeCatalogo[];
@@ -74,10 +74,10 @@ export function EsperaClient({
     queryFn: () => fetchFilaDeEspera(supabase, clinicId),
     initialData: filaInicial,
   });
-  const { data: oferta } = useQuery({
+  const { data: ofertas } = useQuery({
     queryKey: esperaKeys.oferta(clinicId),
-    queryFn: () => fetchOfertaEmAndamento(supabase, clinicId),
-    initialData: ofertaInicial,
+    queryFn: () => fetchOfertasEmAndamento(supabase, clinicId),
+    initialData: ofertasIniciais,
   });
   const { data: metricas } = useQuery({
     queryKey: esperaKeys.metricas(clinicId),
@@ -132,14 +132,19 @@ export function EsperaClient({
 
       <PainelMetricas metricas={metricas} />
 
-      {oferta ? (
-        <FaixaReoferta
-          oferta={oferta}
-          timezone={timezone}
-          podeEditar={podeEditar}
-          dicaSemPermissao={dicaSemPermissao}
-          aoMudar={invalidar}
-        />
+      {ofertas.length > 0 ? (
+        <div className="grid gap-2">
+          {ofertas.map((oferta) => (
+            <FaixaReoferta
+              key={oferta.id}
+              oferta={oferta}
+              timezone={timezone}
+              podeEditar={podeEditar}
+              dicaSemPermissao={dicaSemPermissao}
+              aoMudar={invalidar}
+            />
+          ))}
+        </div>
       ) : null}
 
       <FilaDeEspera

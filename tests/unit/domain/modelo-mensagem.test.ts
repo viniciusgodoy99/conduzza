@@ -87,6 +87,75 @@ describe("renderizarModelo", () => {
     }
   });
 
+  describe("paciente sem nome cadastrado", () => {
+    const SEM_NOME = { ...VALORES, preparo: null };
+
+    it("os cinco textos padrao saem sem vocativo quebrado", () => {
+      for (const nome of [null, undefined, "", "   "]) {
+        const valores = { ...SEM_NOME, nome };
+        expect(renderizarModelo(CONFIRMACAO_72H, valores)).toBe(
+          "Olá! Aqui é da Clínica Sorriso. Sua consulta de Limpeza com Dra. Marina está marcada para 10/09 às 14:00. Podemos confirmar sua presença?",
+        );
+        expect(renderizarModelo(CONFIRMACAO_24H, valores)).toBe(
+          "Oi! Amanhã, 10/09 às 14:00, você tem Limpeza com Dra. Marina.\nPodemos confirmar sua presença?",
+        );
+        expect(renderizarModelo(CONFIRMACAO_3H, valores)).toBe(
+          "Sua consulta é hoje às 14:00 com Dra. Marina. Está tudo certo para você vir?",
+        );
+        expect(renderizarModelo(POS_FALTA_D0, valores)).toBe(
+          "Oi. Sentimos sua falta na Clínica Sorriso, no seu horário de 10/09. Aconteceu algum imprevisto? Se quiser remarcar, é só responder esta mensagem.",
+        );
+        expect(renderizarModelo(POS_FALTA_D2, valores)).toBe(
+          "Olá! Ainda dá tempo de remarcar seu Limpeza. Quer que a gente encontre um novo horário para você?",
+        );
+      }
+    });
+
+    it("com nome, nada muda", () => {
+      expect(renderizarModelo(CONFIRMACAO_3H, VALORES)).toBe(
+        "Ana, sua consulta é hoje às 14:00 com Dra. Marina. Está tudo certo para você vir?",
+      );
+    });
+
+    it("texto editado pela clinica: vocativo no meio, entre virgulas, sem virgula e no fim", () => {
+      const valores = { nome: null, clinica: "Clínica Sorriso" };
+      expect(
+        renderizarModelo(
+          "Bom dia, {{nome}}, tudo bem? Aqui é a {{clinica}}.",
+          valores,
+        ),
+      ).toBe("Bom dia, tudo bem? Aqui é a Clínica Sorriso.");
+      expect(renderizarModelo("Oi {{nome}}, tudo bem?", valores)).toBe(
+        "Oi, tudo bem?",
+      );
+      expect(renderizarModelo("Obrigado {{nome}} por vir!", valores)).toBe(
+        "Obrigado por vir!",
+      );
+      expect(renderizarModelo("Até logo, {{nome}}", valores)).toBe("Até logo");
+      expect(renderizarModelo("{{nome}}! Tudo certo?", valores)).toBe(
+        "Tudo certo?",
+      );
+      expect(
+        renderizarModelo("Oi, {{ nome }}.\n\n{{nome}}, até lá.", valores),
+      ).toBe("Oi.\n\nAté lá.");
+    });
+
+    it("linha que so tinha o nome some inteira", () => {
+      expect(
+        renderizarModelo("{{nome}},\nSua consulta é amanhã.", { nome: "" }),
+      ).toBe("Sua consulta é amanhã.");
+    });
+
+    it("so o nome aciona a limpeza: outro campo vazio segue a regra antiga", () => {
+      expect(
+        renderizarModelo("Oi, {{nome}}! Com {{profissional}}.", {
+          nome: "Ana",
+          profissional: null,
+        }),
+      ).toBe("Oi, Ana! Com .");
+    });
+  });
+
   it("os textos padrao so usam chaves da lista publicada", () => {
     const conhecidas = new Set<string>(PLACEHOLDERS);
     const usadas = new Set<string>();

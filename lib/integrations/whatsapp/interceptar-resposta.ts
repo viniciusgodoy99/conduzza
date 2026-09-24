@@ -8,7 +8,16 @@ import {
   REPOUSO_POS_OFERTA_MS,
 } from "@/lib/domain/lista-espera";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
-import { interpretarResposta } from "@/lib/domain/resposta-paciente";
+import {
+  ehRespostaDoMenuDeConfirmacao,
+  interpretarResposta,
+  JANELA_DE_CONTEXTO_MS,
+  qualPerguntaFoiRespondida,
+  type Citacao,
+  type FatosDaResposta,
+  type OfertaPerguntada,
+  type ToqueEnviado,
+} from "@/lib/domain/resposta-paciente";
 import {
   RESPOSTA_CANCELADA,
   RESPOSTA_CONFIRMADA,
@@ -18,54 +27,40 @@ import {
   RESPOSTA_REMARCAR,
 } from "@/lib/domain/textos-padrao";
 
-// Interceptador da resposta do paciente ao toque de confirmacao (tarefa 4.7).
-// Roda no webhook, DEPOIS de a mensagem estar salva, e e o que faz o status da
-// agenda mudar sozinho quando alguem toca em "Confirmar".
+// Interceptador da resposta do paciente ao toque de confirmacao (tarefa 4.7)
+// e a oferta da lista de espera (4.9). Roda no webhook, DEPOIS de a mensagem
+// estar salva, e e o que faz o status da agenda mudar sozinho quando alguem
+// toca em "Confirmar".
 //
-// Tres cuidados que sustentam o resto:
+// Quatro cuidados que sustentam o resto:
 //
-// 1. CONTEXTO OBRIGATORIO. So interpreta quem foi perguntado: precisa existir
-//    um toque de confirmacao ENVIADO nos ultimos 7 dias para este contato,
-//    apontando para uma consulta FUTURA e ainda em aberto. Sem contexto o
-//    interceptador se cala e a conversa segue para a recepcao (que e o
-//    fail-safe do fluxo, ja que a conversa nasce em 'aguardando_humano').
+// 1. SO RESPONDE QUEM FOI PERGUNTADO, E PELA ULTIMA PERGUNTA. Os fatos do
+//    banco (toques enviados, oferta enviada, a ultima mensagem de gente da
+//    clinica, a citacao do WhatsApp, a conversa assumida por alguem) vao para
+//    qualPerguntaFoiRespondida, que e pura e testada. Se a recepcao falou
+//    depois do toque, se a conversa esta em atendimento, se ha duas consultas
+//    perguntadas sem citacao, ninguem interpreta: a conversa ja esta
+//    esperando a recepcao, e esse e o fail-safe (revisao de 24/09).
 // 2. LEITURA CONSERVADORA. interpretarResposta so devolve intencao com frase
 //    inteira reconhecida; qualquer sobra vira 'nao_reconhecida' e nada
 //    acontece. Interpretar errado cancela a consulta de alguem.
 // 3. QUEM DECIDE E O BANCO. As RPCs fazem update condicional no status atual,
 //    entao resposta repetida (ou duas chegando juntas) muda uma vez so e o
 //    segundo caminho recebe { ok: false, erro: 'ja_tratado' } sem efeito.
+// 4. FATO QUE NAO DA PARA LER E DUVIDA. Erro de consulta ao banco no meio da
+//    coleta nao vira "nao houve mensagem da recepcao": o interceptador se
+//    cala e a recepcao decide.
 //
 // Regra 3.1 do CLAUDE.md: este arquivo nao loga nada. O corpo da mensagem do
 // paciente entra aqui e nao sai em lugar nenhum.
 
-// Sete dias cobrem o toque de 72h com folga. Mais que isso e resposta a uma
-// conversa velha, e o contexto deixa de ser confiavel.
-const JANELA_DE_CONTEXTO_MS = 7 * 24 * 60 * 60 * 1000;
+// Teto de toques lidos por resposta: tres passos por consulta e um ou outro
+// follow up cabem com folga numa semana.
+const TOQUES_CONSIDERADOS = 20;
 
-// Consulta que ainda espera (ou ja teve) resposta do paciente. Cancelada,
-// atendida ou faltosa nao aceita confirmacao nem cancelamento pelo WhatsApp.
-const STATUS_EM_ABERTO = [
-  "agendado",
-  "aguardando_confirmacao",
-  "confirmado_paciente",
-  "confirmado_recepcao",
-];
-
-// Teto de linhas lidas: a consulta certa e quase sempre a primeira, e o laco
-// so existe para pular toque de consulta ja passada ou ja resolvida.
-const TOQUES_CONSIDERADOS = 10;
-
-type ConsultaDoToque = {
-  id: string;
-  status: string;
-  starts_at: string;
-};
-
-type LinhaDeToque = {
-  sent_at: string | null;
-  appointment: ConsultaDoToque | ConsultaDoToque[] | null;
-};
+// Conversas do contato consideradas: a resolvida e reaberta vira outra linha,
+// e o fio do WhatsApp continua sendo um so.
+const CONVERSAS_CONSIDERADAS = 20;
 
 export type EntradaDaResposta = {
   clinicId: string;
@@ -73,12 +68,20 @@ export type EntradaDaResposta = {
   conversationId: string;
   body: string | null;
   contentType: string;
+  /**
+   * wa_message_id da mensagem que o paciente citou (tocar num botao cita o
+   * menu; "responder" cita a mensagem escolhida). Quando vem, ela decide a
+   * que pergunta a resposta se refere.
+   */
+  quotedWaMessageId?: string | null;
 };
 
 /** O embed aninhado do PostgREST chega como objeto ou array, conforme o caso. */
+function um<T>(v: T | T[] | null | undefined): T | null {
+  return Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
+}
+
 function kindDoToque(linha: unknown): string | null {
-  const um = <T>(v: T | T[] | null | undefined): T | null =>
-    Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
   const passo = um(
     (linha as { cadence_step?: unknown } | null)?.cadence_step as
       { cadence?: unknown } | { cadence?: unknown }[] | null,
@@ -90,85 +93,167 @@ function kindDoToque(linha: unknown): string | null {
   return regua?.kind ?? null;
 }
 
-/**
- * A consulta a que esta resposta se refere, ou null quando o contato nao foi
- * perguntado. Tres passos curtos em vez de um filtro aninhado: o recorte por
- * regua de confirmacao vive em cadence, e filtro de embed encadeado no
- * PostgREST falha calado, o que aqui significaria confirmar a consulta errada.
- */
-async function acharConsultaPerguntada(
+// O recorte por tipo de regua e feito AQUI, em codigo, sobre o embed lido:
+// filtro de embed encadeado no PostgREST falha calado, o que significaria
+// confirmar a consulta errada.
+const SELECT_DO_TOQUE =
+  "id, sent_at, cadence_step:cadence_step_id ( cadence:cadence_id ( kind ) ), appointment:appointment_id ( id, status, starts_at, remarcacao_pedida_em )";
+
+type ConsultaDaLinha = {
+  id: string;
+  status: string;
+  starts_at: string;
+  remarcacao_pedida_em: string | null;
+};
+
+type LinhaDeToque = {
+  id: string;
+  sent_at: string | null;
+  cadence_step: unknown;
+  appointment: ConsultaDaLinha | ConsultaDaLinha[] | null;
+};
+
+function paraToque(linha: LinhaDeToque): ToqueEnviado | null {
+  if (!linha.sent_at) {
+    return null;
+  }
+  const consulta = um(linha.appointment);
+  return {
+    runId: linha.id,
+    kind: kindDoToque(linha),
+    sentAt: linha.sent_at,
+    consulta: consulta
+      ? {
+          id: consulta.id,
+          status: consulta.status,
+          startsAt: consulta.starts_at,
+          remarcacaoPedidaEm: consulta.remarcacao_pedida_em ?? null,
+        }
+      : null,
+  };
+}
+
+/** Um toque pelo id da run, so se for DESTE contato. */
+async function toquePorRun(
   admin: SupabaseClient,
-  clinicId: string,
-  contactId: string,
-): Promise<string | null> {
-  // O ULTIMO toque que saiu para este contato manda. Se foi o de recuperacao
-  // depois da falta ("Ainda da tempo de remarcar?"), o "sim" do paciente e
-  // resposta AQUELA pergunta, e nao confirmacao da proxima consulta: sem esta
-  // guarda, quem tem uma consulta futura teria essa consulta confirmada
-  // sozinha por causa de uma conversa sobre outra coisa. Nao reconhecer manda
-  // para a recepcao, que e o comportamento seguro.
-  const { data: ultimo } = await admin
+  entrada: EntradaDaResposta,
+  filtro: { coluna: "id" | "message_id"; valor: string },
+): Promise<{ toque: ToqueEnviado | null; erro: boolean }> {
+  const { data, error } = await admin
     .from("cadence_run")
-    .select("cadence_step:cadence_step_id ( cadence:cadence_id ( kind ) )")
-    .eq("clinic_id", clinicId)
-    .eq("contact_id", contactId)
-    .not("sent_at", "is", null)
-    .order("sent_at", { ascending: false })
+    .select(SELECT_DO_TOQUE)
+    .eq("clinic_id", entrada.clinicId)
+    .eq("contact_id", entrada.contactId)
+    .eq(filtro.coluna, filtro.valor)
     .limit(1)
     .maybeSingle();
-  if (ultimo && kindDoToque(ultimo) !== "confirmacao") {
+  if (error) {
+    return { toque: null, erro: true };
+  }
+  return {
+    toque: data ? paraToque(data as unknown as LinhaDeToque) : null,
+    erro: false,
+  };
+}
+
+/**
+ * O que a mensagem citada e. Null quando a leitura falhou (duvida).
+ *
+ * Contrato com a regua (lib/jobs/regua.ts): cadence_run.message_id aponta
+ * para a mensagem do MENU; no toque com anexo o menu vai numa segunda
+ * mensagem, e a MIDIA carrega o job_id do passo (payload.cadence_run_id).
+ * Quando o menu nao sai, a run aponta para a midia. Os tres caminhos caem
+ * aqui. A mensagem da oferta de espera nasce de um job enviar_mensagem_ativa
+ * criado junto com a oferta (mesmo created_at, ou payload.offer_id).
+ */
+async function resolverCitacao(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+  conversaIds: string[],
+): Promise<Citacao | null> {
+  const citadaWaId = entrada.quotedWaMessageId;
+  if (!citadaWaId) {
+    return { tipo: "nenhuma" };
+  }
+  const { data: citada, error } = await admin
+    .from("message")
+    .select("id, job_id, direction")
+    .eq("clinic_id", entrada.clinicId)
+    .eq("wa_message_id", citadaWaId)
+    .in("conversation_id", conversaIds)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
     return null;
   }
+  if (!citada || citada.direction !== "saida") {
+    return { tipo: "outra" };
+  }
 
-  const { data: reguas } = await admin
-    .from("cadence")
-    .select("id")
-    .eq("clinic_id", clinicId)
-    .eq("kind", "confirmacao");
-  const reguaIds = ((reguas ?? []) as { id: string }[]).map((r) => r.id);
-  if (reguaIds.length === 0) {
+  const direto = await toquePorRun(admin, entrada, {
+    coluna: "message_id",
+    valor: citada.id as string,
+  });
+  if (direto.erro) {
     return null;
   }
+  if (direto.toque) {
+    return { tipo: "toque", toque: direto.toque };
+  }
 
-  const { data: passos } = await admin
-    .from("cadence_step")
-    .select("id")
-    .eq("clinic_id", clinicId)
-    .in("cadence_id", reguaIds);
-  const passoIds = ((passos ?? []) as { id: string }[]).map((p) => p.id);
-  if (passoIds.length === 0) {
+  const jobId = citada.job_id as string | null;
+  if (!jobId) {
+    return { tipo: "outra" };
+  }
+  const { data: job, error: erroJob } = await admin
+    .from("job_queue")
+    .select("kind, payload, created_at")
+    .eq("clinic_id", entrada.clinicId)
+    .eq("id", jobId)
+    .maybeSingle();
+  if (erroJob) {
     return null;
   }
+  const payload = (job?.payload ?? {}) as Record<string, unknown>;
 
-  const desde = new Date(Date.now() - JANELA_DE_CONTEXTO_MS).toISOString();
-  const { data: toques } = await admin
-    .from("cadence_run")
-    .select("sent_at, appointment:appointment_id ( id, status, starts_at )")
-    .eq("clinic_id", clinicId)
-    .eq("contact_id", contactId)
-    .not("sent_at", "is", null)
-    .gte("sent_at", desde)
-    .in("cadence_step_id", passoIds)
-    .order("sent_at", { ascending: false })
-    .limit(TOQUES_CONSIDERADOS);
-
-  const agora = Date.now();
-  for (const linha of (toques ?? []) as LinhaDeToque[]) {
-    const consulta = Array.isArray(linha.appointment)
-      ? (linha.appointment[0] ?? null)
-      : linha.appointment;
-    if (!consulta) {
-      continue;
+  if (
+    job?.kind === "executar_passo_de_regua" &&
+    typeof payload.cadence_run_id === "string"
+  ) {
+    const daMidia = await toquePorRun(admin, entrada, {
+      coluna: "id",
+      valor: payload.cadence_run_id,
+    });
+    if (daMidia.erro) {
+      return null;
     }
-    if (!STATUS_EM_ABERTO.includes(consulta.status)) {
-      continue;
-    }
-    if (new Date(consulta.starts_at).getTime() <= agora) {
-      continue;
-    }
-    return consulta.id;
+    return daMidia.toque
+      ? { tipo: "toque", toque: daMidia.toque }
+      : { tipo: "outra" };
   }
-  return null;
+
+  if (job?.kind === "enviar_mensagem_ativa") {
+    const consulta = admin
+      .from("waitlist_offer")
+      .select("id")
+      .eq("clinic_id", entrada.clinicId)
+      .contains("offered_to", [entrada.contactId]);
+    const { data: oferta, error: erroOferta } = await (
+      typeof payload.offer_id === "string"
+        ? consulta.eq("id", payload.offer_id)
+        : consulta.eq("created_at", job.created_at as string)
+    )
+      .limit(1)
+      .maybeSingle();
+    if (erroOferta) {
+      return null;
+    }
+    if (oferta) {
+      return { tipo: "oferta", offerId: oferta.id as string };
+    }
+  }
+  return { tipo: "outra" };
 }
 
 /**
@@ -183,7 +268,13 @@ async function responder(
   await admin.from("job_queue").insert({
     clinic_id: entrada.clinicId,
     kind: "enviar_mensagem_ativa",
-    payload: { contact_id: entrada.contactId, body },
+    // resposta_ao_paciente: o eco responde a um toque do proprio paciente e
+    // usa o espacamento curto do 1:1, nao o de massa (lib/jobs/worker.ts).
+    payload: {
+      contact_id: entrada.contactId,
+      body,
+      resposta_ao_paciente: true,
+    },
   });
 }
 
@@ -193,7 +284,11 @@ type OfertaDoContato = {
   expires_at: string;
   declined_by: string[];
   responded_by: string | null;
+  created_at: string;
 };
+
+const SELECT_DA_OFERTA =
+  "id, status, expires_at, declined_by, responded_by, created_at, updated_at";
 
 /**
  * A oferta de espera mais recente que PERGUNTOU algo a este contato: aberta
@@ -204,40 +299,202 @@ async function acharOfertaDoContato(
   admin: SupabaseClient,
   clinicId: string,
   contactId: string,
-): Promise<OfertaDoContato | null> {
+): Promise<{ oferta: OfertaDoContato | null; erro: boolean }> {
   const desde = new Date(Date.now() - REPOUSO_POS_OFERTA_MS).toISOString();
   // A janela do "respondeu tarde" e medida do ENCERRAMENTO (updated_at, que
   // o fechamento carimba), nao da criacao: com janela de resposta longa, a
   // oferta encerrada ha pouco ainda merece a recusa educada.
-  const { data } = await admin
+  const { data, error } = await admin
     .from("waitlist_offer")
-    .select("id, status, expires_at, declined_by, responded_by, updated_at")
+    .select(SELECT_DA_OFERTA)
     .eq("clinic_id", clinicId)
     .contains("offered_to", [contactId])
     .or(`status.eq.aberta,updated_at.gte.${desde}`)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  return { oferta: (data as OfertaDoContato | null) ?? null, erro: !!error };
+}
+
+async function buscarOferta(
+  admin: SupabaseClient,
+  clinicId: string,
+  offerId: string,
+): Promise<OfertaDoContato | null> {
+  const { data } = await admin
+    .from("waitlist_offer")
+    .select(SELECT_DA_OFERTA)
+    .eq("clinic_id", clinicId)
+    .eq("id", offerId)
+    .maybeSingle();
   return (data as OfertaDoContato | null) ?? null;
+}
+
+/**
+ * Quando a mensagem da oferta SAIU para este contato. A oferta nasce com as
+ * mensagens na fila; enquanto a dele nao sai, a oferta nao e pergunta para
+ * ele e nao pode capturar o "sim" que responde outra coisa.
+ *
+ * O job da mensagem e achado por payload.offer_id (quando o payload trouxer)
+ * ou pelo created_at igual ao da oferta (criar_oferta_de_espera insere os
+ * dois na mesma transacao, e now() e o instante da transacao). A mensagem
+ * enviada carrega o job_id (send.ts). Sem job nenhum achado, o instante da
+ * criacao da oferta vale como aproximacao, que e o comportamento anterior.
+ */
+async function envioDaOferta(
+  admin: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+  oferta: OfertaDoContato,
+): Promise<{ enviadaEm: string | null; erro: boolean }> {
+  const { data: jobs, error } = await admin
+    .from("job_queue")
+    .select("id, payload, created_at")
+    .eq("clinic_id", clinicId)
+    .eq("kind", "enviar_mensagem_ativa")
+    .eq("payload->>contact_id", contactId)
+    .gte("created_at", oferta.created_at)
+    .order("created_at", { ascending: true })
+    .limit(20);
+  if (error) {
+    return { enviadaEm: null, erro: true };
+  }
+  const daOferta = (
+    (jobs ?? []) as {
+      id: string;
+      payload: Record<string, unknown> | null;
+      created_at: string;
+    }[]
+  ).filter(
+    (job) =>
+      job.payload?.offer_id === oferta.id ||
+      new Date(job.created_at).getTime() ===
+        new Date(oferta.created_at).getTime(),
+  );
+  if (daOferta.length === 0) {
+    return { enviadaEm: oferta.created_at, erro: false };
+  }
+  const { data: mensagens, error: erroMensagem } = await admin
+    .from("message")
+    .select("created_at, delivery_status")
+    .eq("clinic_id", clinicId)
+    .in(
+      "job_id",
+      daOferta.map((job) => job.id),
+    )
+    .order("created_at", { ascending: true });
+  if (erroMensagem) {
+    return { enviadaEm: null, erro: true };
+  }
+  const saiu = (
+    (mensagens ?? []) as { created_at: string; delivery_status: string | null }[]
+  ).find((m) => m.delivery_status !== "falhou");
+  return { enviadaEm: saiu?.created_at ?? null, erro: false };
+}
+
+/**
+ * Junta os fatos que qualPerguntaFoiRespondida precisa. Null quando alguma
+ * leitura falhou: sem saber se a recepcao falou depois, nao se interpreta.
+ */
+async function reunirFatos(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+): Promise<{ fatos: FatosDaResposta; oferta: OfertaDoContato | null } | null> {
+  const agora = Date.now();
+  const { data: conversas, error: erroConversas } = await admin
+    .from("conversation")
+    .select("id, status")
+    .eq("clinic_id", entrada.clinicId)
+    .eq("contact_id", entrada.contactId)
+    .order("created_at", { ascending: false })
+    .limit(CONVERSAS_CONSIDERADAS);
+  if (erroConversas) {
+    return null;
+  }
+  const linhasDeConversa = (conversas ?? []) as { id: string; status: string }[];
+  const conversaIds = [
+    ...new Set([entrada.conversationId, ...linhasDeConversa.map((c) => c.id)]),
+  ];
+  const atual = linhasDeConversa.find((c) => c.id === entrada.conversationId);
+
+  const desde = new Date(agora - JANELA_DE_CONTEXTO_MS).toISOString();
+  const [toques, humana, achada, citacao] = await Promise.all([
+    admin
+      .from("cadence_run")
+      .select(SELECT_DO_TOQUE)
+      .eq("clinic_id", entrada.clinicId)
+      .eq("contact_id", entrada.contactId)
+      .not("sent_at", "is", null)
+      .gte("sent_at", desde)
+      .order("sent_at", { ascending: false })
+      .limit(TOQUES_CONSIDERADOS),
+    // Gente da clinica falando com o paciente. Nota interna nao chega a ele,
+    // entao nao e pergunta. Evento e eco sao do sistema.
+    admin
+      .from("message")
+      .select("created_at")
+      .eq("clinic_id", entrada.clinicId)
+      .in("conversation_id", conversaIds)
+      .eq("direction", "saida")
+      .in("author", ["usuario", "ia"])
+      .eq("is_internal_note", false)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    acharOfertaDoContato(admin, entrada.clinicId, entrada.contactId),
+    resolverCitacao(admin, entrada, conversaIds),
+  ]);
+  if (toques.error || humana.error || achada.erro || citacao === null) {
+    return null;
+  }
+
+  let oferta: OfertaPerguntada | null = null;
+  if (achada.oferta) {
+    const envio = await envioDaOferta(
+      admin,
+      entrada.clinicId,
+      entrada.contactId,
+      achada.oferta,
+    );
+    if (envio.erro) {
+      return null;
+    }
+    oferta = { id: achada.oferta.id, enviadaEm: envio.enviadaEm };
+  }
+
+  return {
+    fatos: {
+      agora,
+      conversaEmAtendimento: atual?.status === "em_atendimento",
+      citacao,
+      toques: ((toques.data ?? []) as unknown as LinhaDeToque[])
+        .map(paraToque)
+        .filter((toque): toque is ToqueEnviado => toque !== null),
+      oferta,
+      ultimaMensagemHumanaEm:
+        (humana.data?.created_at as string | undefined) ?? null,
+    },
+    oferta: achada.oferta,
+  };
+}
+
+async function tirarDoContadorDeAtendimento(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+): Promise<void> {
+  await admin
+    .from("conversation")
+    .update({ awaiting_reply: false })
+    .eq("clinic_id", entrada.clinicId)
+    .eq("id", entrada.conversationId);
 }
 
 async function tratarRespostaDeOferta(
   admin: SupabaseClient,
   entrada: EntradaDaResposta,
-): Promise<boolean> {
-  const intencao = interpretarRespostaDeOferta(entrada.body);
-  if (intencao === "nao_reconhecida") {
-    return false;
-  }
-  const oferta = await acharOfertaDoContato(
-    admin,
-    entrada.clinicId,
-    entrada.contactId,
-  );
-  if (!oferta) {
-    return false;
-  }
-
+  oferta: OfertaDoContato,
+  intencao: "aceitar" | "recusar",
+): Promise<void> {
   const aberta =
     oferta.status === "aberta" &&
     new Date(oferta.expires_at).getTime() > Date.now() &&
@@ -245,23 +502,18 @@ async function tratarRespostaDeOferta(
 
   if (!aberta) {
     // O VENCEDOR repetindo "sim" (ou agradecendo com "ok") nunca pode ouvir
-    // que perdeu: o horario E dele. Silencio aqui, e o fluxo normal segue
-    // (o "sim" pode ser a confirmacao da consulta recem-ganhada).
+    // que perdeu: o horario E dele. Silencio, e a recepcao ve a mensagem.
     if (oferta.responded_by === entrada.contactId) {
-      return false;
+      return;
     }
-    // Respondeu tarde querendo a vaga: recusa educada. Qualquer outra coisa
-    // sobre uma oferta morta segue para o fluxo normal da conversa.
+    // Respondeu tarde querendo a vaga: recusa educada. So chega aqui quando
+    // a oferta e a pergunta mais recente (ou a citada): com um toque de
+    // confirmacao depois dela, o "Confirmar" e do toque, nunca desta recusa.
     if (intencao === "aceitar") {
       await responder(admin, entrada, RESPOSTA_OFERTA_PERDIDA);
-      await admin
-        .from("conversation")
-        .update({ awaiting_reply: false })
-        .eq("clinic_id", entrada.clinicId)
-        .eq("id", entrada.conversationId);
-      return true;
+      await tirarDoContadorDeAtendimento(admin, entrada);
     }
-    return false;
+    return;
   }
 
   if (intencao === "recusar") {
@@ -273,7 +525,7 @@ async function tratarRespostaDeOferta(
     if (error) {
       // Erro transitorio NAO vira desfecho: silencio, conversa continua
       // esperando gente (awaiting_reply fica de pe) e a recepcao ve o "nao".
-      return true;
+      return;
     }
     if ((data as { ok?: boolean } | null)?.ok === true) {
       await responder(admin, entrada, RESPOSTA_OFERTA_RECUSADA);
@@ -289,7 +541,7 @@ async function tratarRespostaDeOferta(
       // Erro transitorio da RPC nao pode virar "PERDIDA" falsa com a oferta
       // ainda aberta: silencio, a pessoa segue elegivel e a recepcao ve o
       // "sim" na conversa (awaiting_reply fica de pe).
-      return true;
+      return;
     }
     const resultado = data as {
       ok?: boolean;
@@ -322,20 +574,27 @@ async function tratarRespostaDeOferta(
         .eq("id", oferta.id)
         .maybeSingle();
       if (atual?.responded_by === entrada.contactId) {
-        return false;
+        return;
       }
       // O segundo a responder: a recusa educada do aceite da 4.9.
       await responder(admin, entrada, RESPOSTA_OFERTA_PERDIDA);
     }
   }
 
-  await admin
-    .from("conversation")
-    .update({ awaiting_reply: false })
-    .eq("clinic_id", entrada.clinicId)
-    .eq("id", entrada.conversationId);
-  return true;
+  await tirarDoContadorDeAtendimento(admin, entrada);
 }
+
+const RPC_DA_INTENCAO = {
+  confirmar: "confirmar_pelo_paciente",
+  cancelar: "cancelar_pelo_paciente",
+  remarcar: "pedir_remarcacao_pelo_paciente",
+} as const;
+
+const ECO_DA_INTENCAO = {
+  confirmar: RESPOSTA_CONFIRMADA,
+  cancelar: RESPOSTA_CANCELADA,
+  remarcar: RESPOSTA_REMARCAR,
+} as const;
 
 export async function interceptarRespostaDePaciente(
   admin: SupabaseClient,
@@ -350,74 +609,92 @@ export async function interceptarRespostaDePaciente(
   // A leitura pura vem ANTES das consultas: mensagem comum ("bom dia") sai
   // daqui sem custo nenhum, e e a maioria esmagadora do trafego.
   const intencao = interpretarResposta(entrada.body);
-  const intencaoDeOferta = interpretarRespostaDeOferta(entrada.body);
+  // O vocabulario do menu do toque ("Confirmar", "Cancelar", "1", "3") e do
+  // toque: nunca aceita nem recusa uma oferta da lista de espera.
+  const intencaoDeOferta = ehRespostaDoMenuDeConfirmacao(entrada.body)
+    ? "nao_reconhecida"
+    : interpretarRespostaDeOferta(entrada.body);
   if (intencao === "nao_reconhecida" && intencaoDeOferta === "nao_reconhecida") {
     return;
   }
 
-  // OFERTA DE ESPERA primeiro (4.9): a oferta e a pergunta mais recente e
-  // tem prazo; com uma oferta na mesa, o SIM e dela, nunca da confirmacao
-  // de consulta. Tratou, acabou.
-  if (await tratarRespostaDeOferta(admin, entrada)) {
+  const coletado = await reunirFatos(admin, entrada);
+  if (!coletado) {
     return;
   }
-  if (intencao === "nao_reconhecida") {
-    return;
-  }
-
-  const appointmentId = await acharConsultaPerguntada(
-    admin,
-    entrada.clinicId,
-    entrada.contactId,
+  const pergunta = qualPerguntaFoiRespondida(
+    coletado.fatos,
+    intencao,
+    intencaoDeOferta,
   );
-  if (!appointmentId) {
+
+  if (pergunta.alvo === "nenhum") {
+    // A conversa ja esta esperando a recepcao (a ingestao marcou), e e ela
+    // quem le e decide.
     return;
   }
 
-  if (intencao === "remarcar") {
-    // Remarcar NAO muda status: horario novo e escolha humana, e a conversa
-    // ja esta em 'aguardando_humano' esperando a recepcao.
-    await responder(admin, entrada, RESPOSTA_REMARCAR);
+  if (pergunta.alvo === "oferta") {
+    if (intencaoDeOferta === "nao_reconhecida") {
+      return;
+    }
+    const oferta =
+      coletado.oferta?.id === pergunta.offerId
+        ? coletado.oferta
+        : await buscarOferta(admin, entrada.clinicId, pergunta.offerId);
+    if (oferta) {
+      await tratarRespostaDeOferta(admin, entrada, oferta, intencaoDeOferta);
+    }
     return;
   }
 
-  const { data, error } = await admin.rpc(
-    intencao === "confirmar"
-      ? "confirmar_pelo_paciente"
-      : "cancelar_pelo_paciente",
-    {
-      p_clinic_id: entrada.clinicId,
-      p_appointment_id: appointmentId,
-      p_contact_id: entrada.contactId,
-      p_conversation_id: entrada.conversationId,
-    },
-  );
+  const { data, error } = await admin.rpc(RPC_DA_INTENCAO[pergunta.intencao], {
+    p_clinic_id: entrada.clinicId,
+    p_appointment_id: pergunta.appointmentId,
+    p_contact_id: entrada.contactId,
+    p_conversation_id: entrada.conversationId,
+  });
   if (error) {
     return;
   }
   // 'ja_tratado': alguem (ou a propria pessoa, duas vezes) chegou antes. Sem
   // eco, para o paciente nao receber dois agradecimentos pela mesma consulta.
-  if ((data as { ok?: boolean } | null)?.ok !== true) {
+  const resultado = data as {
+    ok?: boolean;
+    starts_at?: string;
+    timezone?: string;
+  } | null;
+  if (resultado?.ok !== true) {
     return;
   }
 
+  // O eco diz QUAL consulta: com duas no mesmo dia, "sua consulta foi
+  // cancelada" nao conta ao paciente se o sistema entendeu a certa.
+  const inicio = new TZDate(
+    new Date(resultado.starts_at ?? pergunta.startsAt).getTime(),
+    resultado.timezone ?? "America/Fortaleza",
+  );
   await responder(
     admin,
     entrada,
-    intencao === "confirmar" ? RESPOSTA_CONFIRMADA : RESPOSTA_CANCELADA,
+    renderizarModelo(ECO_DA_INTENCAO[pergunta.intencao], {
+      data: format(inicio, "dd/MM", { locale: ptBR }),
+      hora: format(inicio, "HH:mm", { locale: ptBR }),
+    }),
   );
+
+  // Remarcar termina em "nossa recepcao vai falar com voce": alguem TEM de
+  // agir, e a RPC deixou a conversa esperando a recepcao.
+  if (pergunta.intencao === "remarcar") {
+    return;
+  }
 
   // O sistema resolveu sozinho: mudou o status da consulta e respondeu ao
   // paciente. Ninguem da clinica precisa fazer nada, entao a conversa sai do
   // contador de Atendimento. Sem isto, uma manha em que 30 pacientes tocam
   // "Confirmar" mostra badge 31 e enterra a unica conversa que precisa de
-  // gente. Nao vale para "remarcar", que termina em "nossa recepcao vai falar
-  // com voce": ali alguem TEM de agir, e a espera continua de pe.
-  await admin
-    .from("conversation")
-    .update({ awaiting_reply: false })
-    .eq("clinic_id", entrada.clinicId)
-    .eq("id", entrada.conversationId);
+  // gente.
+  await tirarDoContadorDeAtendimento(admin, entrada);
 
   // O cancelamento libera um horario, e a reoferta da lista de espera parte
   // SOZINHA: o gatilho oferecer_ao_cancelar (banco) enfileira o job quando o

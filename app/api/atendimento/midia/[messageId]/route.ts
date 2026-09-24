@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarAberturaDeMidia } from "@/lib/auth/read-audit";
+import { nomeParaBaixar } from "@/lib/domain/midia-recebida";
 import { log } from "@/lib/log";
 import { createClient } from "@/lib/supabase/server";
 
@@ -39,28 +40,15 @@ type LinhaDaMensagem = {
   media_url: string | null;
   deleted_at: string | null;
   body: string | null;
+  media_filename: string | null;
+  media_mimetype: string | null;
 };
 
-/**
- * Nome com que o arquivo chega ao computador de quem baixa.
- *
- * `download: true` faria o Storage usar o NOME DO OBJETO, que e um uuid sem
- * extensao: o PDF do paciente chegaria como um arquivo sem tipo que o sistema
- * operacional nao sabe abrir. Passar o nome resolve.
- */
-function nomeParaBaixar(mensagem: LinhaDaMensagem): string {
-  const limpo = (mensagem.body ?? "").trim().replace(/[\\/:*?"<>|]/g, "");
-  if (limpo && /\.\w{2,5}$/.test(limpo)) {
-    return limpo;
-  }
-  const extensao =
-    mensagem.content_type === "documento"
-      ? "pdf"
-      : mensagem.content_type === "imagem"
-        ? "jpg"
-        : "bin";
-  return `conduzza-${mensagem.content_type}.${extensao}`;
-}
+// O nome do download sai de nomeParaBaixar (lib/domain/midia-recebida.ts):
+// `download: true` faria o Storage usar o NOME DO OBJETO, que e um uuid sem
+// extensao, e o antigo ".pdf" fixo fazia uma planilha abrir num leitor de PDF.
+// O nome original (sanitizado) vem primeiro; sem ele, "conduzza-documento"
+// com a extensao do tipo REAL, que o worker guarda em media_mimetype.
 
 /** `storage://midia-conversas/<clinic>/<message>` vira `<clinic>/<message>`. */
 function caminhoDoObjeto(mediaUrl: string | null): string | null {
@@ -89,7 +77,9 @@ export async function GET(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("message")
-    .select("clinic_id, content_type, media_url, deleted_at, body")
+    .select(
+      "clinic_id, content_type, media_url, deleted_at, body, media_filename, media_mimetype",
+    )
     .eq("id", messageId)
     .maybeSingle();
 
@@ -103,7 +93,8 @@ export async function GET(
   const caminho = caminhoDoObjeto(mensagem.media_url);
   if (!caminho) {
     // Inclui o caso em que o job de download ainda nao rodou (media_url ainda
-    // e a URL criptografada do provedor) e o dado de demonstracao (seed://).
+    // e a URL criptografada do provedor), o dado de demonstracao (seed://) e
+    // o download que desistiu de vez (indisponivel://).
     return NextResponse.json({ error: "arquivo_indisponivel" }, { status: 409 });
   }
 

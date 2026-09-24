@@ -6,8 +6,17 @@ import {
   sendWhatsAppText,
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
+import {
+  classificarFalhaDeUpload,
+  marcaDeIndisponivel,
+  motivoDaDesistencia,
+  normalizarMimetype,
+} from "@/lib/domain/midia-recebida";
 import { executarEnvioDeConversao } from "./conversao-meta";
-import { executarOfertaDeEspera } from "./lista-espera";
+import {
+  executarOfertaDeEspera,
+  situacaoDoEnvioDeOferta,
+} from "./lista-espera";
 import { espacamentoDeMassaMs } from "./espacamento";
 import { executarPassoDeRegua } from "./regua";
 
@@ -77,6 +86,29 @@ async function executarEnvioAtivo(
     return { ok: false, erro: "payload_invalido", definitivo: true };
   }
 
+  // Mensagem de uma onda da lista de espera: so sai enquanto a oferta vale
+  // (aberta, metade da janela pela frente, vaga livre). Oferta cancelada,
+  // preenchida, vencida no retry da desconexao ou com a vaga ocupada encerra
+  // o envio sem mandar nada ao paciente, antes de qualquer efeito colateral.
+  const offerId = job.payload.offer_id;
+  if (offerId !== undefined && offerId !== null) {
+    if (typeof offerId !== "string") {
+      return { ok: false, erro: "payload_invalido", definitivo: true };
+    }
+    const situacao = await situacaoDoEnvioDeOferta(
+      admin,
+      job.clinic_id,
+      offerId,
+      contactId,
+    );
+    if (situacao === "leitura_falhou") {
+      return { ok: false, erro: "leitura_falhou" };
+    }
+    if (situacao === "encerrada") {
+      return { ok: false, erro: "oferta_encerrada", definitivo: true };
+    }
+  }
+
   // Consentimento ANTES de qualquer efeito colateral: contato que revogou nao
   // ganha nem conversa aberta. sendWhatsAppText reconfere na hora do envio.
   const { data: vigente } = await admin.rpc("consentimento_vigente", {
@@ -103,6 +135,14 @@ async function executarEnvioAtivo(
     return { ok: false, erro: "conversa_indisponivel" };
   }
 
+  // Eco ao paciente ("Presença confirmada", "Tudo bem, sua consulta foi
+  // cancelada"): responde a um toque do PROPRIO paciente, entao impoe ao
+  // proximo envio so o espacamento curto do 1:1, e nao os 10 a 30 s da
+  // massa. Continua no trilho automatico (espera o slot de massa em vez de
+  // furar a fila das outras mensagens automaticas). A marca vem de
+  // interceptar-resposta.ts; oferta de espera e aviso de remarcacao nao a
+  // tem e seguem com o espacamento de massa.
+  const respostaAoPaciente = job.payload.resposta_ao_paciente === true;
   const resultado = await sendWhatsAppText(admin, {
     clinicId: job.clinic_id,
     conversationId,
@@ -110,7 +150,8 @@ async function executarEnvioAtivo(
     body,
     authorUserId: null,
     author: "sistema",
-    espacamentoMs: espacamentoDeMassaMs(),
+    envioAutomatico: true,
+    ...(respostaAoPaciente ? {} : { espacamentoMs: espacamentoDeMassaMs() }),
     // Teto CURTO de proposito. O piso do espacamento de massa e 10 segundos,
     // entao quase todo job concorrente cai em adiamento e nao em espera. Os 3
     // segundos cobrem so a poeira. Esperar de verdade nao cabe num ambiente
@@ -153,7 +194,93 @@ async function executarEnvioAtivo(
   };
 }
 
+// Falhas em que a mensagem nao tem o que marcar: sumiu, foi apagada (a lapide
+// ja diz o que aconteceu) ou o payload nem aponta para uma.
+const DESISTENCIAS_SEM_MARCA = new Set([
+  "mensagem_apagada",
+  "mensagem_nao_encontrada",
+  "payload_invalido",
+]);
+
+/**
+ * Baixa a midia e, quando o job DESISTE de vez, deixa isso escrito na
+ * mensagem (media_url = indisponivel://<motivo>).
+ *
+ * Sem a marca, a bolha dizia "Baixando o arquivo" para sempre: o job morria
+ * como 'falhou' na fila e nada voltava a olhar a linha. Desistir e o erro
+ * definitivo ou a ultima tentativa (o claim ja somou esta em attempts).
+ */
 async function executarDownloadDeMidia(
+  admin: SupabaseClient,
+  job: Job,
+): Promise<ResultadoDeJob> {
+  let resultado: ResultadoDeJob;
+  try {
+    resultado = await baixarEGuardarMidia(admin, job);
+  } catch {
+    resultado = { ok: false, erro: "excecao_no_worker" };
+  }
+  if (
+    "ok" in resultado &&
+    !resultado.ok &&
+    !DESISTENCIAS_SEM_MARCA.has(resultado.erro) &&
+    (resultado.definitivo === true || job.attempts >= job.max_attempts)
+  ) {
+    await marcarMidiaIndisponivel(admin, job, resultado.erro);
+  }
+  return resultado;
+}
+
+async function marcarMidiaIndisponivel(
+  admin: SupabaseClient,
+  job: Job,
+  erro: string,
+): Promise<void> {
+  const messageId = job.payload.message_id;
+  if (typeof messageId !== "string") {
+    return;
+  }
+  // Releitura na hora: um arquivo que ja esta no balde (execucao dupla depois
+  // de lease vencido) nunca e rebaixado a indisponivel, e mensagem apagada
+  // fica como esta.
+  const { data: atual } = await admin
+    .from("message")
+    .select("media_url, deleted_at")
+    .eq("clinic_id", job.clinic_id)
+    .eq("id", messageId)
+    .maybeSingle();
+  if (
+    !atual ||
+    atual.deleted_at ||
+    (typeof atual.media_url === "string" &&
+      atual.media_url.startsWith("storage://"))
+  ) {
+    return;
+  }
+  if (erro === "atualizacao_falhou") {
+    // O arquivo subiu mas a linha nunca passou a apontar para ele: sem dono,
+    // e arquivo de paciente guardado sem motivo e sem trilha.
+    await admin.storage
+      .from(MIDIA_BUCKET)
+      .remove([`${job.clinic_id}/${messageId}`]);
+  }
+  const { error } = await admin
+    .from("message")
+    .update({ media_url: marcaDeIndisponivel(motivoDaDesistencia(erro)) })
+    .eq("clinic_id", job.clinic_id)
+    .eq("id", messageId)
+    .is("deleted_at", null);
+  if (error) {
+    log.error("worker_midia_marca_falhou", {
+      job_id: job.id,
+      clinic_id: job.clinic_id,
+      message_id: messageId,
+      error_code: error.code ?? null,
+    });
+  }
+}
+
+async function baixarEGuardarMidia(
   admin: SupabaseClient,
   job: Job,
 ): Promise<ResultadoDeJob> {
@@ -214,13 +341,26 @@ async function executarDownloadDeMidia(
       message: "",
     }));
   if (!baixado.ok) {
-    // A midia expira no provedor em poucos dias: retry cedo vale a pena.
-    return { ok: false, erro: `download:${baixado.errorCode}` };
+    // A midia expira no provedor em poucos dias: retry cedo vale a pena. A
+    // excecao e o arquivo acima do teto de download (413 local): o tamanho
+    // nao muda na proxima tentativa.
+    return {
+      ok: false,
+      erro: `download:${baixado.errorCode}`,
+      definitivo: baixado.errorCode === "uazapi_download_413",
+    };
   }
 
-  const contentType = MIMETYPES_ACEITOS.test(baixado.mimetype)
-    ? baixado.mimetype
-    : "application/octet-stream";
+  // O tipo REAL fica na mensagem (media_mimetype), mesmo quando o Storage
+  // recebe binario generico: e ele que escolhe foto ou video na bolha e a
+  // extensao do download. Perde-lo fazia toda planilha baixar como .pdf.
+  const tipoReal = normalizarMimetype(baixado.mimetype);
+  // SVG fica de fora mesmo sendo image/*: aberto em navegacao de topo no
+  // dominio do Storage, executa script.
+  const contentType =
+    tipoReal && tipoReal !== "image/svg+xml" && MIMETYPES_ACEITOS.test(tipoReal)
+      ? tipoReal
+      : "application/octet-stream";
   const caminho = `${job.clinic_id}/${messageId}`;
   const { error: erroUpload } = await admin.storage
     .from(MIDIA_BUCKET)
@@ -235,7 +375,19 @@ async function executarDownloadDeMidia(
       cacheControl: "0",
     });
   if (erroUpload) {
-    return { ok: false, erro: "storage_falhou" };
+    // O codigo real vai para last_error (so status e codigo do Storage, nunca
+    // a mensagem): sem ele, 7 documentos morreram como 'storage_falhou' sem
+    // pista nenhuma da causa. Erro do ARQUIVO (tamanho, pedido invalido) e
+    // definitivo; repetir 8 vezes ao longo de uma hora nao muda nada.
+    const falha = classificarFalhaDeUpload(erroUpload);
+    log.error("worker_midia_upload_falhou", {
+      job_id: job.id,
+      clinic_id: job.clinic_id,
+      message_id: messageId,
+      error_code: falha.erro,
+      attempt: job.attempts,
+    });
+    return { ok: false, erro: falha.erro, definitivo: falha.definitivo };
   }
 
   // O download demora dezenas de segundos, e alguem pode ter apagado a
@@ -245,6 +397,7 @@ async function executarDownloadDeMidia(
     .from("message")
     .update({
       media_url: `storage://${MIDIA_BUCKET}/${caminho}`,
+      ...(tipoReal ? { media_mimetype: tipoReal } : {}),
       ...(baixado.transcript && !mensagem.transcript
         ? { transcript: baixado.transcript }
         : {}),

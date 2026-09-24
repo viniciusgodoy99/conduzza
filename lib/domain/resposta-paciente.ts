@@ -129,3 +129,254 @@ export function interpretarResposta(body: string | null): IntencaoDoPaciente {
   }
   return "nao_reconhecida";
 }
+
+// ---------------------------------------------------------------------------
+// A QUE PERGUNTA o paciente respondeu (revisao de liberacao de 24/09).
+//
+// Ler "ok" como confirmacao so e seguro quando o "ok" responde ao toque. O
+// paciente pode estar respondendo a recepcao ("posso marcar quinta as 9h?"),
+// a uma oferta da lista de espera, ao toque de OUTRA consulta, ou a qualquer
+// coisa que o sistema nao ve. A decisao abaixo e PURA: o interceptador junta
+// os fatos do banco e ela escolhe um alvo, ou nenhum. Nenhum e sempre seguro:
+// a conversa ja esta esperando a recepcao.
+// ---------------------------------------------------------------------------
+
+/**
+ * O menu do toque de confirmacao: os ids dos botoes (que chegam como texto
+ * quando o paciente toca) e os numeros da lista que o uazapi usa quando o
+ * botao degrada. Essas respostas pertencem ao toque e NUNCA valem como
+ * resposta a oferta da lista de espera, que pede "SIM" ou "NAO QUERO".
+ */
+const VOCABULARIO_DO_MENU = new Set(["1", "2", "3", "confirmar", "remarcar", "cancelar"]);
+
+export function ehRespostaDoMenuDeConfirmacao(body: string | null): boolean {
+  if (!body) {
+    return false;
+  }
+  return VOCABULARIO_DO_MENU.has(normalizar(body));
+}
+
+/** Sete dias cobrem o toque de 72h com folga; mais que isso e conversa velha. */
+export const JANELA_DE_CONTEXTO_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Consulta que ainda aceita resposta do paciente pelo WhatsApp. */
+const STATUS_EM_ABERTO = new Set([
+  "agendado",
+  "aguardando_confirmacao",
+  "confirmado_paciente",
+  "confirmado_recepcao",
+]);
+
+/** So estas ainda podem ser CONFIRMADAS (as outras ja estao confirmadas). */
+const STATUS_A_CONFIRMAR = new Set(["agendado", "aguardando_confirmacao"]);
+
+export type ConsultaDoToque = {
+  id: string;
+  status: string;
+  startsAt: string;
+  /** Marca do pedido de remarcacao: o contexto desta consulta esta fechado. */
+  remarcacaoPedidaEm: string | null;
+};
+
+/** Um toque de regua que saiu para o contato (cadence_run com sent_at). */
+export type ToqueEnviado = {
+  runId: string;
+  /** kind da regua: 'confirmacao', 'pos_falta', 'followup'... */
+  kind: string | null;
+  sentAt: string;
+  consulta: ConsultaDoToque | null;
+};
+
+/** A oferta da lista de espera mais recente que perguntou algo ao contato. */
+export type OfertaPerguntada = {
+  id: string;
+  /**
+   * Quando a mensagem da oferta saiu para ESTE contato. Null quando ela ainda
+   * esta na fila (ou falhou): oferta que o paciente nao recebeu nao e
+   * pergunta, e nao pode capturar o "sim" dele.
+   */
+  enviadaEm: string | null;
+};
+
+/** O que a citacao do WhatsApp (responder a uma mensagem) aponta. */
+export type Citacao =
+  | { tipo: "nenhuma" }
+  | { tipo: "toque"; toque: ToqueEnviado }
+  | { tipo: "oferta"; offerId: string }
+  /** Citou outra mensagem, ou uma que o sistema nao conhece. */
+  | { tipo: "outra" };
+
+export type FatosDaResposta = {
+  agora: number;
+  /** Alguem da clinica assumiu a conversa (conversation.status). */
+  conversaEmAtendimento: boolean;
+  citacao: Citacao;
+  /**
+   * Toques enviados ao contato na janela de contexto, de QUALQUER regua, do
+   * mais recente para o mais antigo.
+   */
+  toques: ToqueEnviado[];
+  oferta: OfertaPerguntada | null;
+  /**
+   * A mensagem mais recente que ALGUEM da clinica mandou ao paciente (autor
+   * usuario ou ia, fora nota interna). Depois dela, "ok" e resposta a ela.
+   */
+  ultimaMensagemHumanaEm: string | null;
+};
+
+export type MotivoDeSilencio =
+  | "sem_intencao"
+  | "citou_outra_mensagem"
+  | "sem_pergunta"
+  | "clinica_falou_depois"
+  | "outra_regua_mais_recente"
+  | "conversa_em_atendimento"
+  | "toque_antigo"
+  | "consulta_resolvida"
+  | "remarcacao_pedida"
+  | "mais_de_uma_consulta";
+
+export type PerguntaRespondida =
+  | { alvo: "nenhum"; motivo: MotivoDeSilencio }
+  | { alvo: "oferta"; offerId: string }
+  | {
+      alvo: "toque";
+      appointmentId: string;
+      startsAt: string;
+      intencao: Exclude<IntencaoDoPaciente, "nao_reconhecida">;
+    };
+
+function instante(iso: string | null): number {
+  return iso ? new Date(iso).getTime() : Number.NEGATIVE_INFINITY;
+}
+
+function consultaAceitaResposta(
+  consulta: ConsultaDoToque,
+  agora: number,
+): boolean {
+  return (
+    STATUS_EM_ABERTO.has(consulta.status) &&
+    new Date(consulta.startsAt).getTime() > agora
+  );
+}
+
+function avaliarToque(
+  fatos: FatosDaResposta,
+  toque: ToqueEnviado,
+  intencao: IntencaoDoPaciente,
+  exigirConsultaUnica: boolean,
+): PerguntaRespondida {
+  if (intencao === "nao_reconhecida") {
+    return { alvo: "nenhum", motivo: "sem_intencao" };
+  }
+  // Alguem da clinica esta conduzindo: "1" pode ser a opcao 1 que a
+  // recepcionista ofereceu, "ok" pode ser o aceite de outro horario.
+  if (fatos.conversaEmAtendimento) {
+    return { alvo: "nenhum", motivo: "conversa_em_atendimento" };
+  }
+  if (instante(fatos.ultimaMensagemHumanaEm) > instante(toque.sentAt)) {
+    return { alvo: "nenhum", motivo: "clinica_falou_depois" };
+  }
+  if (fatos.agora - instante(toque.sentAt) > JANELA_DE_CONTEXTO_MS) {
+    return { alvo: "nenhum", motivo: "toque_antigo" };
+  }
+  const consulta = toque.consulta;
+  if (!consulta || !consultaAceitaResposta(consulta, fatos.agora)) {
+    return { alvo: "nenhum", motivo: "consulta_resolvida" };
+  }
+  // Depois de "Remarcar" a conversa e da recepcao: o "ok" que o paciente
+  // manda para "nossa recepcao vai falar com voce" nao confirma nada.
+  if (consulta.remarcacaoPedidaEm) {
+    return { alvo: "nenhum", motivo: "remarcacao_pedida" };
+  }
+  if (exigirConsultaUnica) {
+    // Sem citacao, duas consultas com toque recente sao duas perguntas de pe:
+    // escolher uma e apostar. Para confirmar so conta quem ainda pode ser
+    // confirmada; para cancelar ou remarcar, qualquer uma em aberto.
+    const podeSerAlvo = (outra: ConsultaDoToque) =>
+      consultaAceitaResposta(outra, fatos.agora) &&
+      (intencao !== "confirmar" || STATUS_A_CONFIRMAR.has(outra.status));
+    const outras = new Set(
+      fatos.toques
+        .filter(
+          (t) =>
+            t.kind === "confirmacao" &&
+            t.consulta !== null &&
+            t.consulta.id !== consulta.id &&
+            fatos.agora - instante(t.sentAt) <= JANELA_DE_CONTEXTO_MS &&
+            podeSerAlvo(t.consulta),
+        )
+        .map((t) => t.consulta?.id),
+    );
+    if (outras.size > 0) {
+      return { alvo: "nenhum", motivo: "mais_de_uma_consulta" };
+    }
+  }
+  return {
+    alvo: "toque",
+    appointmentId: consulta.id,
+    startsAt: consulta.startsAt,
+    intencao,
+  };
+}
+
+/**
+ * Decide a que pergunta a resposta se refere.
+ *
+ * Com CITACAO (o paciente tocou num botao ou respondeu a uma mensagem), a
+ * citacao manda: vale o toque ou a oferta citada, e qualquer outra mensagem
+ * citada cala o interceptador.
+ *
+ * Sem citacao, vale a pergunta MAIS RECENTE de fato enviada ao contato: o
+ * ultimo toque de regua, a mensagem da oferta (so se ja saiu) ou a ultima
+ * mensagem de alguem da clinica. Se a mais recente foi de gente, ninguem
+ * interpreta. Empate com mensagem de gente conta como gente.
+ */
+export function qualPerguntaFoiRespondida(
+  fatos: FatosDaResposta,
+  intencao: IntencaoDoPaciente,
+  intencaoDeOferta: "aceitar" | "recusar" | "nao_reconhecida",
+): PerguntaRespondida {
+  const { citacao } = fatos;
+  if (citacao.tipo === "outra") {
+    return { alvo: "nenhum", motivo: "citou_outra_mensagem" };
+  }
+  if (citacao.tipo === "oferta") {
+    return intencaoDeOferta === "nao_reconhecida"
+      ? { alvo: "nenhum", motivo: "sem_intencao" }
+      : { alvo: "oferta", offerId: citacao.offerId };
+  }
+  if (citacao.tipo === "toque") {
+    if (citacao.toque.kind !== "confirmacao") {
+      return { alvo: "nenhum", motivo: "outra_regua_mais_recente" };
+    }
+    return avaliarToque(fatos, citacao.toque, intencao, false);
+  }
+
+  const ultimoToque = fatos.toques[0] ?? null;
+  const tToque = instante(ultimoToque?.sentAt ?? null);
+  const tOferta = instante(fatos.oferta?.enviadaEm ?? null);
+  const tHumano = instante(fatos.ultimaMensagemHumanaEm);
+  const maisRecente = Math.max(tToque, tOferta, tHumano);
+
+  if (maisRecente === Number.NEGATIVE_INFINITY) {
+    return { alvo: "nenhum", motivo: "sem_pergunta" };
+  }
+  if (tHumano === maisRecente) {
+    return { alvo: "nenhum", motivo: "clinica_falou_depois" };
+  }
+  if (fatos.oferta && tOferta === maisRecente) {
+    return intencaoDeOferta === "nao_reconhecida"
+      ? { alvo: "nenhum", motivo: "sem_intencao" }
+      : { alvo: "oferta", offerId: fatos.oferta.id };
+  }
+  if (!ultimoToque) {
+    return { alvo: "nenhum", motivo: "sem_pergunta" };
+  }
+  // O ultimo toque foi de outra regua (recuperacao depois da falta, follow
+  // up): o "sim" responde AQUELA pergunta, nunca confirma outra consulta.
+  if (ultimoToque.kind !== "confirmacao") {
+    return { alvo: "nenhum", motivo: "outra_regua_mais_recente" };
+  }
+  return avaliarToque(fatos, ultimoToque, intencao, true);
+}

@@ -1,7 +1,14 @@
 "use client";
 
-import { CircleCheck, Plug, QrCode, Unplug,
+import {
+  CircleCheck,
+  FlaskConical,
+  Info,
+  Plug,
+  QrCode,
   RefreshCw,
+  TriangleAlert,
+  Unplug,
 } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 
@@ -37,6 +44,54 @@ const STATUS_LABEL: Record<ConnectState["status"], string> = {
 
 const DICA_PADRAO = "Somente administradores e gestores conectam o WhatsApp";
 
+// A saudacao e a ausencia do WhatsApp Business saem do celular pareado, e o
+// sistema as recebe como resposta da clinica: a conversa de quem escreveu
+// fora do horario sai da fila "Aguardando você" um segundo depois.
+const ORIENTACAO_BUSINESS =
+  "Se o número usa o WhatsApp Business, desligue a mensagem de saudação e a mensagem de ausência no aplicativo. O sistema já atende os pacientes, e essas respostas automáticas tiram as conversas da fila Aguardando você.";
+
+/**
+ * A consulta de status nao sabe do aviso da conexao (ele nasce so no clique
+ * de conectar). Sem esta juncao, o aviso de que as respostas dos pacientes
+ * nao vao chegar sumia na primeira consulta, 2,5 segundos depois.
+ */
+function comAvisoMantido(
+  atual: ConnectState,
+  proximo: ConnectState,
+): ConnectState {
+  const aviso = proximo.aviso ?? atual.aviso;
+  return aviso ? { ...proximo, aviso } : proximo;
+}
+
+function Aviso({ texto }: { texto: string }) {
+  return (
+    <p
+      role="alert"
+      className="flex items-start gap-1.5 text-sm [color:var(--warning-text)]"
+    >
+      <TriangleAlert strokeWidth={1.5} className="mt-0.5 size-4 shrink-0" />
+      {texto}
+    </p>
+  );
+}
+
+function Erro({ texto }: { texto: string }) {
+  return (
+    <p role="alert" className="text-alert-text text-sm">
+      {texto}
+    </p>
+  );
+}
+
+function Orientacao() {
+  return (
+    <p className="flex items-start gap-1.5 text-xs text-text-secondary">
+      <Info strokeWidth={1.5} className="mt-px size-3.5 shrink-0" />
+      {ORIENTACAO_BUSINESS}
+    </p>
+  );
+}
+
 export type ConnectClientProps = {
   initial: ConnectState;
   connectedAt: string | null;
@@ -66,7 +121,9 @@ export function ConnectClient({
         startTransition(async () => {
           const next = await pollWhatsAppStatusAction();
           setState((current) =>
-            current.status === "conectado" ? current : next,
+            current.status === "conectado"
+              ? current
+              : comAvisoMantido(current, next),
           );
         });
       }, 2500);
@@ -95,6 +152,7 @@ export function ConnectClient({
   };
 
   const dica = hint ?? DICA_PADRAO;
+  const demonstracao = providerName === "fake";
 
   const connectButton = (
     <Button onClick={connect} disabled={!canManage || pending}>
@@ -106,7 +164,9 @@ export function ConnectClient({
   const verificarAgora = () => {
     startTransition(async () => {
       const proximo = await pollWhatsAppStatusAction();
-      setState((atual) => (atual.status === "conectado" ? atual : proximo));
+      setState((atual) =>
+        atual.status === "conectado" ? atual : comAvisoMantido(atual, proximo),
+      );
     });
   };
 
@@ -154,14 +214,32 @@ export function ConnectClient({
                   : null}
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              {canManage ? (
-                disconnectButton
-              ) : (
-                <DisabledWithHint hint={dica}>
-                  {disconnectButton}
-                </DisabledWithHint>
-              )}
+            <CardContent className="grid gap-4">
+              {state.aviso ? <Aviso texto={state.aviso} /> : null}
+              {state.error ? <Erro texto={state.error} /> : null}
+              {demonstracao ? (
+                // O selo aparece tambem CONECTADO: e nesse estado que o
+                // simulador engana, porque todo envio vira "enviada" sem sair
+                // nada para o paciente.
+                <p className="flex items-center gap-1.5 text-xs text-text-secondary">
+                  <FlaskConical
+                    strokeWidth={1.5}
+                    className="size-3.5 shrink-0"
+                  />
+                  Ambiente de demonstração: a conexão é simulada e nenhuma
+                  mensagem sai de verdade para o paciente.
+                </p>
+              ) : null}
+              <Orientacao />
+              <div>
+                {canManage ? (
+                  disconnectButton
+                ) : (
+                  <DisabledWithHint hint={dica}>
+                    {disconnectButton}
+                  </DisabledWithHint>
+                )}
+              </div>
             </CardContent>
           </Card>
         ) : (
@@ -201,11 +279,10 @@ export function ConnectClient({
                 </div>
               ) : null}
 
-              {state.error ? (
-                <p role="alert" className="text-alert-text text-sm">
-                  {state.error}
-                </p>
-              ) : null}
+              {state.error ? <Erro texto={state.error} /> : null}
+              {state.aviso ? <Aviso texto={state.aviso} /> : null}
+
+              <Orientacao />
 
               <div className="flex flex-wrap gap-2">
                 {canManage ? (
@@ -222,8 +299,12 @@ export function ConnectClient({
                 )}
               </div>
 
-              {providerName === "fake" ? (
-                <p className="text-xs text-text-tertiary">
+              {demonstracao ? (
+                <p className="flex items-center gap-1.5 text-xs text-text-secondary">
+                  <FlaskConical
+                    strokeWidth={1.5}
+                    className="size-3.5 shrink-0"
+                  />
                   Ambiente de demonstração: a conexão é simulada e conecta na
                   hora, sem QR code.
                 </p>

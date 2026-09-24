@@ -82,6 +82,15 @@ export type Pacote = {
   sessions: number;
   price_cents: number;
   validity_days: number | null;
+  active: boolean;
+};
+
+// Uso de cada pacote (aba Pacotes): quantas vendas ja existem (o delete real
+// so vale sem venda, e o procedimento fica congelado depois da primeira) e
+// quantos pacientes ainda tem saldo usavel, no dia civil da clinica.
+export type UsoDoPacote = {
+  vendas: number;
+  pacientesComSaldo: number;
 };
 
 export type Unidade = {
@@ -106,6 +115,9 @@ export type Catalogo = {
 
 export const catalogoKeys = {
   tudo: (clinicId: string) => ["catalogo", clinicId] as const,
+  // Mesmo prefixo: invalidar tudo(clinicId) invalida o uso dos pacotes junto.
+  usoDosPacotes: (clinicId: string) =>
+    ["catalogo", clinicId, "uso-dos-pacotes"] as const,
 };
 
 // O catalogo inteiro numa carga so: sao tabelas pequenas (dezenas de linhas
@@ -172,7 +184,7 @@ export async function fetchCatalogo(
       .eq("clinic_id", clinicId),
     supabase
       .from("package")
-      .select("id, procedure_id, sessions, price_cents, validity_days")
+      .select("id, procedure_id, sessions, price_cents, validity_days, active")
       .eq("clinic_id", clinicId),
     supabase
       .from("unit")
@@ -208,6 +220,32 @@ export async function fetchCatalogo(
     pacotes: (pacotes.data ?? []) as Pacote[],
     unidades: (unidades.data ?? []) as Unidade[],
   };
+}
+
+// Contagem no banco (RPC uso_dos_pacotes, SECURITY INVOKER: a RLS de
+// package_balance vale). So numeros: nenhum dado de paciente sai daqui.
+export async function fetchUsoDosPacotes(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<Record<string, UsoDoPacote>> {
+  const { data, error } = await supabase.rpc("uso_dos_pacotes", {
+    p_clinic_id: clinicId,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  const uso: Record<string, UsoDoPacote> = {};
+  for (const linha of (data ?? []) as {
+    package_id: string;
+    vendas: number;
+    pacientes_com_saldo: number;
+  }[]) {
+    uso[linha.package_id] = {
+      vendas: linha.vendas,
+      pacientesComSaldo: linha.pacientes_com_saldo,
+    };
+  }
+  return uso;
 }
 
 export const WEEKDAY_LABELS = [

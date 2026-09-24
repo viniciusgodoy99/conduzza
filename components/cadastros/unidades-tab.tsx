@@ -1,14 +1,17 @@
 "use client";
 
-import { Building2, Pencil, Plus } from "lucide-react";
+import { Building2, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { salvarUnidadeAction } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { BotaoProtegido, chipAtivo } from "@/components/cadastros/comum";
+import {
+  AcoesDaLinha,
+  BotaoProtegido,
+  ChipSituacao,
+} from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
-import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -118,7 +121,6 @@ export function UnidadesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
             </TableHeader>
             <TableBody>
               {catalogo.unidades.map((unidade) => {
-                const chip = chipAtivo(unidade.active);
                 return (
                   <TableRow key={unidade.id}>
                     <TableCell className="font-medium">
@@ -130,31 +132,16 @@ export function UnidadesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                     <TableCell className="font-mono text-[12px] tabular-nums">
                       {unidade.phone ?? ""}
                     </TableCell>
-                    <TableCell className={chip.classe}>{chip.texto}</TableCell>
                     <TableCell>
-                      {podeEditar ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-9"
-                          onClick={() => abrir(unidade)}
-                          aria-label={`Editar ${unidade.name}`}
-                        >
-                          <Pencil strokeWidth={1.5} className="size-4" />
-                        </Button>
-                      ) : (
-                        <DisabledWithHint hint={dica}>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-9"
-                            disabled
-                            aria-label={`Editar ${unidade.name}`}
-                          >
-                            <Pencil strokeWidth={1.5} className="size-4" />
-                          </Button>
-                        </DisabledWithHint>
-                      )}
+                      <ChipSituacao active={unidade.active} />
+                    </TableCell>
+                    <TableCell>
+                      <AcoesDaLinha
+                        podeEditar={podeEditar}
+                        dica={dica}
+                        nome={unidade.name}
+                        aoEditar={() => abrir(unidade)}
+                      />
                     </TableCell>
                   </TableRow>
                 );

@@ -27,6 +27,10 @@ const MOTIVO: Record<string, string> = {
   condicao_parada: "não era mais necessária",
   falha_envio: "falhou no envio",
   teto_gasto: "limite de gasto atingido",
+  remarcacao_pedida: "o paciente pediu para remarcar",
+  canal_ocupado: "o número estava ocupado até a hora da consulta",
+  consulta_remarcada: "a consulta mudou de horário",
+  toque_atrasado: "atrasou e a mensagem seguinte cobriu",
 };
 
 type Aparencia = {

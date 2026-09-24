@@ -6,9 +6,12 @@ import { History, MoreVertical } from "lucide-react";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
+import {
+  ConteudoDaLinhaDoHistorico,
+  momentoNoFuso,
+} from "@/components/agenda/linha-do-historico";
 import { PrintDay } from "@/components/agenda/print-day";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
-import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -30,21 +33,14 @@ import {
   agendaKeys,
   fetchHistoricoDia,
   type AgendaDia,
-  type LinhaDeHistorico,
 } from "@/lib/queries/agenda";
 import { createClient } from "@/lib/supabase/client";
 import { baixarCsv, gerarCsv } from "@/lib/utils/csv";
 
 // Menu de tres pontos da barra da Agenda: imprimir, exportar CSV e ver o
 // historico de alteracoes do dia. Impressao e exportacao registram trilha
-// (LGPD) antes do dado sair da tela.
-
-const AUTORIA: Record<LinhaDeHistorico["changed_by"], string> = {
-  usuario: "pela equipe",
-  ia: "pela IA",
-  paciente: "pelo paciente",
-  sistema: "pelo sistema",
-};
+// (LGPD) antes do dado sair da tela. O historico diz de qual paciente e qual
+// consulta, quem mudou e quando (achado 84), inclusive as remarcacoes.
 
 function horaNoFuso(instante: string, timezone: string): string {
   return new Date(instante).toLocaleTimeString("pt-BR", {
@@ -73,6 +69,12 @@ export function AgendaActionsMenu({
     enabled: historicoAberto,
     staleTime: 30_000,
   });
+  const nomesDosProfissionais = useMemo(
+    () => new Map(contexto.catalogo.profissionais.map((p) => [p.id, p.name])),
+    [contexto.catalogo.profissionais],
+  );
+  const nomeDoProfissional = (id: string | null) =>
+    id ? (nomesDosProfissionais.get(id) ?? null) : null;
 
   const [imprimindo, setImprimindo] = useState(false);
   const imprimir = async () => {
@@ -175,7 +177,8 @@ export function AgendaActionsMenu({
           <SheetHeader>
             <SheetTitle>Histórico de alterações</SheetTitle>
             <SheetDescription>
-              Mudanças de situação das consultas de {dataFormatada}.
+              Mudanças de situação e remarcações das consultas de{" "}
+              {dataFormatada}.
             </SheetDescription>
           </SheetHeader>
           <div className="grid gap-3 px-4 pb-6">
@@ -207,15 +210,35 @@ export function AgendaActionsMenu({
               (historicoQuery.data ?? []).map((linha) => (
                 <div
                   key={linha.id}
-                  className="flex min-h-10 flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2"
+                  className="grid gap-1.5 rounded-lg border border-border px-3 py-2"
                 >
-                  <StatusChip definition={APPOINTMENT_STATUS[linha.status]} />
-                  <span className="text-xs text-text-secondary">
-                    {AUTORIA[linha.changed_by]}
-                  </span>
-                  <span className="ml-auto font-mono text-xs text-text-secondary tabular-nums">
-                    {horaNoFuso(linha.changed_at, contexto.timezone)}
-                  </span>
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                    <span className="truncate text-sm font-semibold">
+                      {linha.consulta?.paciente ?? "Paciente"}
+                    </span>
+                    {linha.consulta ? (
+                      <span className="text-xs text-text-secondary">
+                        consulta de{" "}
+                        {momentoNoFuso(
+                          contexto.timezone,
+                          linha.consulta.starts_at,
+                        )}
+                        {nomeDoProfissional(linha.consulta.professional_id)
+                          ? ` com ${nomeDoProfissional(linha.consulta.professional_id)}`
+                          : ""}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex min-h-10 flex-wrap items-start gap-2">
+                    <ConteudoDaLinhaDoHistorico
+                      linha={linha}
+                      timezone={contexto.timezone}
+                      nomeDoProfissional={nomeDoProfissional}
+                    />
+                    <span className="ml-auto font-mono text-xs text-text-secondary tabular-nums">
+                      {momentoNoFuso(contexto.timezone, linha.changed_at)}
+                    </span>
+                  </div>
                 </div>
               ))
             )}

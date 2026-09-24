@@ -8,6 +8,12 @@ import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { gerarToken, SOURCE_CHANNELS } from "@/lib/domain/attribution";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import {
+  chaveDeTelefone,
+  MENSAGEM_TELEFONE_INVALIDO,
+  mensagemDeTelefoneDuplicado,
+  normalizarTelefone,
+} from "@/lib/domain/telefone";
 import { importarContatos } from "@/lib/integrations/importar-contatos";
 import { fetchLeadDetalhe, type LeadDetalhe } from "@/lib/queries/leads";
 import { createClient } from "@/lib/supabase/server";
@@ -344,7 +350,9 @@ export async function etiquetarAction(
 
 const criarLeadSchema = z.object({
   name: nomeSchema.optional(),
-  phone_e164: z.string().regex(/^\+[1-9]\d{7,14}$/),
+  // Texto como veio: a normalizacao unica (lib/domain/telefone.ts) roda aqui
+  // no servidor, porque a do formulario nao protege nada.
+  phone_e164: z.string().trim().min(1).max(40),
   source_channel: canalSchema.optional(),
   source_origin: z.string().trim().min(1).max(120).optional(),
   source_campaign: z.string().trim().min(1).max(120).optional(),
@@ -364,7 +372,24 @@ export async function criarLeadAction(
     return { ok: false, error: "Confira os campos do lead." };
   }
 
+  const telefone = normalizarTelefone(parsed.data.phone_e164);
+  if (!telefone) {
+    return { ok: false, error: MENSAGEM_TELEFONE_INVALIDO };
+  }
+
   const supabase = await createClient();
+  // Duplicado pela CHAVE do telefone: com e sem o nono digito sao a mesma
+  // pessoa (o WhatsApp entrega sem, a recepcao digita com). O indice unico
+  // de phone_key barra de qualquer jeito; conferir antes so da o nome.
+  const { data: existente } = await supabase
+    .from("contact")
+    .select("id, name")
+    .eq("clinic_id", guard.clinicId)
+    .eq("phone_key", chaveDeTelefone(telefone))
+    .maybeSingle();
+  if (existente) {
+    return { ok: false, error: mensagemDeTelefoneDuplicado(existente.name) };
+  }
   // Origem so entra junto com o canal (method manual, capturada agora); o
   // trigger de origem imutavel preserva depois. NAO grava consentimento:
   // cadastrar lead nao e autorizacao de disparo (regra 3.3).
@@ -372,7 +397,7 @@ export async function criarLeadAction(
     .from("contact")
     .insert({
       clinic_id: guard.clinicId,
-      phone_e164: parsed.data.phone_e164,
+      phone_e164: telefone,
       name: parsed.data.name ?? null,
       kind: "lead",
       funnel_stage: "novo",

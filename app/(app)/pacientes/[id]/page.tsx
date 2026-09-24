@@ -93,10 +93,13 @@ export default async function FichaPacientePage({
       procedimento.name,
     ]),
   );
-  const pacotesDoCatalogo = catalogo.pacotes.map((pacote) => ({
-    id: pacote.id,
-    rotulo: `${nomeDoProcedimento.get(pacote.procedure_id) ?? "Pacote"}, ${pacote.sessions} sessões, ${formatarCentavos(pacote.price_cents)}`,
-  }));
+  // So pacote ativo vai a venda (o banco recusa vender desativado).
+  const pacotesDoCatalogo = catalogo.pacotes
+    .filter((pacote) => pacote.active)
+    .map((pacote) => ({
+      id: pacote.id,
+      rotulo: `${nomeDoProcedimento.get(pacote.procedure_id) ?? "Pacote"}, ${pacote.sessions} sessões, ${formatarCentavos(pacote.price_cents)}`,
+    }));
 
   const podeEditar = canEdit(active.role, "leads_pacientes");
   const dica =

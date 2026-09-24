@@ -5,11 +5,16 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import {
+  alternarPacoteAtivoAction,
   excluirPacoteAction,
   salvarPacoteAction,
 } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { BotaoProtegido } from "@/components/cadastros/comum";
+import {
+  BotaoProtegido,
+  ChipSituacao,
+  PreviaDeReais,
+} from "@/components/cadastros/comum";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
@@ -35,6 +40,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -43,8 +49,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { Pacote } from "@/lib/queries/catalogo";
-import { formatarCentavos } from "@/lib/utils/moeda";
+import type { Pacote, UsoDoPacote } from "@/lib/queries/catalogo";
+import {
+  centavosParaReais,
+  formatarCentavos,
+  lerReais,
+} from "@/lib/utils/moeda";
 
 type FormPacote = {
   id?: string;
@@ -52,6 +62,7 @@ type FormPacote = {
   sessions: string;
   preco: string;
   validity_days: string;
+  active: boolean;
 };
 
 const FORM_VAZIO: FormPacote = {
@@ -59,22 +70,26 @@ const FORM_VAZIO: FormPacote = {
   sessions: "10",
   preco: "",
   validity_days: "",
+  active: true,
 };
 
-// Converte "1.234,56" (ou "1234.56") digitado em reais para centavos.
-function reaisParaCentavos(texto: string): number | null {
-  const limpo = texto.trim().replace(/\./g, "").replace(",", ".");
-  if (limpo === "") return null;
-  const valor = Number(limpo);
-  if (!Number.isFinite(valor) || valor < 0) return null;
-  return Math.round(valor * 100);
-}
+const DICA_VENDIDO_REMOVER =
+  "Este pacote já foi vendido. Desative em vez de remover.";
 
-function centavosParaReais(cents: number): string {
-  return (cents / 100).toFixed(2).replace(".", ",");
-}
-
-export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
+// Pacote ja vendido (achado 35): nao sai do banco (os saldos apontam para
+// ele), o procedimento fica congelado (o debito automatico casa por ele) e
+// "tirar de linha" e desativar, que so tira o pacote da venda na ficha.
+export function PacotesTab({
+  catalogo,
+  podeEditar,
+  dica,
+  aoMudar,
+  usoDosPacotes,
+  usoIndisponivel,
+}: TabProps & {
+  usoDosPacotes: Record<string, UsoDoPacote> | undefined;
+  usoIndisponivel: boolean;
+}) {
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<FormPacote>(FORM_VAZIO);
   const [salvando, setSalvando] = useState(false);
@@ -84,10 +99,20 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
   );
   const [removendo, setRemovendo] = useState(false);
   const [erroRemocao, setErroRemocao] = useState<string | null>(null);
+  const [alternandoId, setAlternandoId] = useState<string | null>(null);
 
   const nomeProcedimento = (procedureId: string) =>
     catalogo.procedimentos.find((p) => p.id === procedureId)?.name ??
     "Procedimento removido";
+
+  // undefined enquanto o uso nao carregou: a tela nao afirma "nunca vendido"
+  // sem saber (o servidor confere de novo antes de remover).
+  const vendasDe = (pacoteId: string): number | undefined =>
+    usoDosPacotes === undefined
+      ? undefined
+      : (usoDosPacotes[pacoteId]?.vendas ?? 0);
+
+  const formVendido = form.id !== undefined && (vendasDe(form.id) ?? 0) > 0;
 
   const abrir = (pacote?: Pacote) => {
     setErro(null);
@@ -100,10 +125,30 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
             preco: centavosParaReais(pacote.price_cents),
             validity_days:
               pacote.validity_days === null ? "" : String(pacote.validity_days),
+            active: pacote.active,
           }
         : FORM_VAZIO,
     );
     setAberto(true);
+  };
+
+  const alternarAtivo = async (pacote: Pacote) => {
+    setAlternandoId(pacote.id);
+    const resultado = await alternarPacoteAtivoAction(
+      pacote.id,
+      !pacote.active,
+    );
+    setAlternandoId(null);
+    if (!resultado.ok) {
+      toast.error(resultado.error ?? "Não foi possível alterar o pacote.");
+      return;
+    }
+    toast.success(
+      pacote.active
+        ? "Pacote desativado. Ele sai da venda, e os saldos já vendidos continuam valendo."
+        : "Pacote reativado",
+    );
+    aoMudar();
   };
 
   const salvar = async () => {
@@ -117,9 +162,13 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
       setErro("Informe quantas sessões o pacote inclui (no mínimo 1).");
       return;
     }
-    const priceCents = reaisParaCentavos(form.preco);
+    const priceCents = lerReais(form.preco);
     if (priceCents === null) {
       setErro("Informe o preço do pacote em reais.");
+      return;
+    }
+    if (priceCents === undefined) {
+      setErro("Não entendemos o preço. Use o formato 1.200,00.");
       return;
     }
     let validityDays: number | null = null;
@@ -141,6 +190,7 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
       sessions,
       price_cents: priceCents,
       validity_days: validityDays,
+      active: form.active,
     });
     setSalvando(false);
     if (!resultado.ok) {
@@ -194,80 +244,130 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                 <TableHead>Sessões</TableHead>
                 <TableHead>Preço do pacote</TableHead>
                 <TableHead>Validade</TableHead>
-                <TableHead className="w-20" />
+                <TableHead>Pacientes com saldo</TableHead>
+                <TableHead>Situação</TableHead>
+                <TableHead className="w-44" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {catalogo.pacotes.map((pacote) => (
-                <TableRow key={pacote.id}>
-                  <TableCell className="font-medium">
-                    {nomeProcedimento(pacote.procedure_id)}
-                  </TableCell>
-                  <TableCell className="tabular-nums">
-                    {pacote.sessions}
-                  </TableCell>
-                  <TableCell className="font-mono text-[12px] tabular-nums">
-                    {formatarCentavos(pacote.price_cents)}
-                  </TableCell>
-                  <TableCell className="text-text-secondary">
-                    {pacote.validity_days === null
-                      ? "Sem validade"
-                      : `${pacote.validity_days} dias`}
-                  </TableCell>
-                  <TableCell>
-                    {podeEditar ? (
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-9"
-                          onClick={() => abrir(pacote)}
-                          aria-label={`Editar pacote de ${nomeProcedimento(pacote.procedure_id)}`}
-                        >
-                          <Pencil strokeWidth={1.5} className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-9"
-                          onClick={() => {
-                            setErroRemocao(null);
-                            setPacoteParaRemover(pacote);
-                          }}
-                          aria-label={`Remover pacote de ${nomeProcedimento(pacote.procedure_id)}`}
-                        >
-                          <Trash2 strokeWidth={1.5} className="size-4" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex justify-end gap-1">
-                        <DisabledWithHint hint={dica}>
+              {catalogo.pacotes.map((pacote) => {
+                const nome = nomeProcedimento(pacote.procedure_id);
+                const vendas = vendasDe(pacote.id);
+                const comSaldo = usoDosPacotes?.[pacote.id]?.pacientesComSaldo;
+                const vendido = (vendas ?? 0) > 0;
+                return (
+                  <TableRow key={pacote.id}>
+                    <TableCell className="font-medium">{nome}</TableCell>
+                    <TableCell className="tabular-nums">
+                      {pacote.sessions}
+                    </TableCell>
+                    <TableCell className="font-mono text-[12px] tabular-nums">
+                      {formatarCentavos(pacote.price_cents)}
+                    </TableCell>
+                    <TableCell className="text-text-secondary">
+                      {pacote.validity_days === null
+                        ? "Sem validade"
+                        : `${pacote.validity_days} dias`}
+                    </TableCell>
+                    <TableCell className="text-text-secondary tabular-nums">
+                      {usoDosPacotes === undefined
+                        ? usoIndisponivel
+                          ? "Não carregou"
+                          : "Carregando..."
+                        : comSaldo === undefined || comSaldo === 0
+                          ? vendido
+                            ? "Nenhum (já vendido)"
+                            : "Nenhum"
+                          : comSaldo === 1
+                            ? "1 paciente"
+                            : `${comSaldo} pacientes`}
+                    </TableCell>
+                    <TableCell>
+                      <ChipSituacao active={pacote.active} />
+                    </TableCell>
+                    <TableCell>
+                      {podeEditar ? (
+                        <div className="flex items-center justify-end gap-1">
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="size-9"
-                            disabled
-                            aria-label={`Editar pacote de ${nomeProcedimento(pacote.procedure_id)}`}
+                            className="size-10"
+                            onClick={() => abrir(pacote)}
+                            aria-label={`Editar pacote de ${nome}`}
                           >
                             <Pencil strokeWidth={1.5} className="size-4" />
                           </Button>
-                        </DisabledWithHint>
-                        <DisabledWithHint hint={dica}>
                           <Button
                             variant="ghost"
-                            size="icon"
-                            className="size-9"
-                            disabled
-                            aria-label={`Remover pacote de ${nomeProcedimento(pacote.procedure_id)}`}
+                            className="h-10"
+                            disabled={alternandoId === pacote.id}
+                            onClick={() => void alternarAtivo(pacote)}
+                            aria-label={`${pacote.active ? "Desativar" : "Reativar"} pacote de ${nome}`}
                           >
-                            <Trash2 strokeWidth={1.5} className="size-4" />
+                            {pacote.active ? "Desativar" : "Reativar"}
                           </Button>
-                        </DisabledWithHint>
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+                          {vendido ? (
+                            <DisabledWithHint hint={DICA_VENDIDO_REMOVER}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-10"
+                                disabled
+                                aria-label={`Remover pacote de ${nome}`}
+                              >
+                                <Trash2 strokeWidth={1.5} className="size-4" />
+                              </Button>
+                            </DisabledWithHint>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-10"
+                              onClick={() => {
+                                setErroRemocao(null);
+                                setPacoteParaRemover(pacote);
+                              }}
+                              aria-label={`Remover pacote de ${nome}`}
+                            >
+                              <Trash2 strokeWidth={1.5} className="size-4" />
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <DisabledWithHint hint={dica}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-10"
+                              disabled
+                              aria-label={`Editar pacote de ${nome}`}
+                            >
+                              <Pencil strokeWidth={1.5} className="size-4" />
+                            </Button>
+                          </DisabledWithHint>
+                          <DisabledWithHint hint={dica}>
+                            <Button variant="ghost" className="h-10" disabled>
+                              {pacote.active ? "Desativar" : "Reativar"}
+                            </Button>
+                          </DisabledWithHint>
+                          <DisabledWithHint hint={dica}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-10"
+                              disabled
+                              aria-label={`Remover pacote de ${nome}`}
+                            >
+                              <Trash2 strokeWidth={1.5} className="size-4" />
+                            </Button>
+                          </DisabledWithHint>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
@@ -284,18 +384,41 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
               <Select
                 value={form.procedure_id}
                 onValueChange={(v) => setForm({ ...form, procedure_id: v })}
+                disabled={formVendido}
               >
-                <SelectTrigger id="pacote-procedimento" className="h-10 w-full">
+                <SelectTrigger
+                  id="pacote-procedimento"
+                  className="h-10 w-full"
+                  aria-describedby={
+                    formVendido ? "pacote-procedimento-fixo" : undefined
+                  }
+                >
                   <SelectValue placeholder="Escolha o procedimento" />
                 </SelectTrigger>
                 <SelectContent>
-                  {catalogo.procedimentos.map((procedimento) => (
-                    <SelectItem key={procedimento.id} value={procedimento.id}>
-                      {procedimento.name}
-                    </SelectItem>
-                  ))}
+                  {catalogo.procedimentos
+                    .filter(
+                      (procedimento) =>
+                        procedimento.active ||
+                        procedimento.id === form.procedure_id,
+                    )
+                    .map((procedimento) => (
+                      <SelectItem key={procedimento.id} value={procedimento.id}>
+                        {procedimento.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
+              {formVendido ? (
+                <p
+                  id="pacote-procedimento-fixo"
+                  className="text-xs text-text-secondary"
+                >
+                  Este pacote já foi vendido, então o procedimento não muda (os
+                  saldos dos pacientes são debitados por ele). Para outro
+                  procedimento, crie um pacote novo.
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="pacote-sessoes">Quantidade de sessões</Label>
@@ -316,8 +439,10 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                 placeholder="Ex.: 1.200,00"
                 value={form.preco}
                 onChange={(e) => setForm({ ...form, preco: e.target.value })}
+                aria-describedby="pacote-preco-previa"
                 className="h-10"
               />
+              <PreviaDeReais texto={form.preco} id="pacote-preco-previa" />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="pacote-validade">Validade (dias)</Label>
@@ -331,6 +456,20 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                   setForm({ ...form, validity_days: e.target.value })
                 }
                 className="h-10"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="grid gap-1">
+                <Label htmlFor="pacote-ativo">Pacote à venda</Label>
+                <p className="text-xs text-text-secondary">
+                  Desativado, ele sai da venda na ficha do paciente. Os saldos
+                  já vendidos continuam valendo.
+                </p>
+              </div>
+              <Switch
+                id="pacote-ativo"
+                checked={form.active}
+                onCheckedChange={(v) => setForm({ ...form, active: v })}
               />
             </div>
             {erro ? (
@@ -360,7 +499,8 @@ export function PacotesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
               {nomeProcedimento(pacoteParaRemover.procedure_id)},{" "}
               {pacoteParaRemover.sessions}{" "}
               {pacoteParaRemover.sessions === 1 ? "sessão" : "sessões"},{" "}
-              {formatarCentavos(pacoteParaRemover.price_cents)}.
+              {formatarCentavos(pacoteParaRemover.price_cents)}. Só dá para
+              remover pacote que nunca foi vendido.
             </p>
           ) : null}
           {erroRemocao ? (
