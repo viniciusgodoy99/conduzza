@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { passoCondizComAgenda } from "@/lib/domain/cadence";
 import {
   interpretarRespostaDeOferta,
   REPOUSO_POS_OFERTA_MS,
@@ -13,6 +14,7 @@ import {
   interpretarResposta,
   JANELA_DE_CONTEXTO_MS,
   qualPerguntaFoiRespondida,
+  type AvisoDeRemarcacao,
   type Citacao,
   type FatosDaResposta,
   type OfertaPerguntada,
@@ -36,11 +38,13 @@ import {
 //
 // 1. SO RESPONDE QUEM FOI PERGUNTADO, E PELA ULTIMA PERGUNTA. Os fatos do
 //    banco (toques enviados, oferta enviada, a ultima mensagem de gente da
-//    clinica, a citacao do WhatsApp, a conversa assumida por alguem) vao para
-//    qualPerguntaFoiRespondida, que e pura e testada. Se a recepcao falou
-//    depois do toque, se a conversa esta em atendimento, se ha duas consultas
-//    perguntadas sem citacao, ninguem interpreta: a conversa ja esta
-//    esperando a recepcao, e esse e o fail-safe (revisao de 24/09).
+//    clinica, o aviso de remarcacao enviado, a citacao do WhatsApp, a
+//    conversa assumida por alguem) vao para qualPerguntaFoiRespondida, que e
+//    pura e testada. Se a recepcao falou depois do toque, se a conversa esta
+//    em atendimento e o paciente nao citou o toque, se o toque perguntou por
+//    um horario que a consulta nao tem mais, se ha duas consultas perguntadas
+//    sem citacao, ninguem interpreta: a conversa ja esta esperando a
+//    recepcao, e esse e o fail-safe (revisao de 24/09).
 // 2. LEITURA CONSERVADORA. interpretarResposta so devolve intencao com frase
 //    inteira reconhecida; qualquer sobra vira 'nao_reconhecida' e nada
 //    acontece. Interpretar errado cancela a consulta de alguem.
@@ -62,6 +66,12 @@ const TOQUES_CONSIDERADOS = 20;
 // e o fio do WhatsApp continua sendo um so.
 const CONVERSAS_CONSIDERADAS = 20;
 
+// Mensagens automaticas do contato lidas para achar o aviso de remarcacao
+// (toques, ecos, ofertas e avisos de uma semana cabem com folga), e linhas de
+// remarcacao lidas da trilha das consultas dos toques.
+const MENSAGENS_AUTOMATICAS_CONSIDERADAS = 50;
+const REMARCACOES_CONSIDERADAS = 200;
+
 export type EntradaDaResposta = {
   clinicId: string;
   contactId: string;
@@ -81,23 +91,33 @@ function um<T>(v: T | T[] | null | undefined): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
 }
 
-function kindDoToque(linha: unknown): string | null {
+type PassoDaLinha = {
+  offset_minutes?: number | null;
+  cadence?: { kind?: string } | { kind?: string }[] | null;
+};
+
+/** O kind da regua e o offset do passo, lidos do embed do toque. */
+function passoDoToque(linha: LinhaDeToque): {
+  kind: string | null;
+  offsetMinutes: number | null;
+} {
   const passo = um(
-    (linha as { cadence_step?: unknown } | null)?.cadence_step as
-      { cadence?: unknown } | { cadence?: unknown }[] | null,
+    linha.cadence_step as PassoDaLinha | PassoDaLinha[] | null,
   );
-  const regua = um(
-    (passo as { cadence?: unknown } | null)?.cadence as
-      { kind?: string } | { kind?: string }[] | null,
-  );
-  return regua?.kind ?? null;
+  const regua = um(passo?.cadence ?? null);
+  return {
+    kind: regua?.kind ?? null,
+    offsetMinutes:
+      typeof passo?.offset_minutes === "number" ? passo.offset_minutes : null,
+  };
 }
 
 // O recorte por tipo de regua e feito AQUI, em codigo, sobre o embed lido:
 // filtro de embed encadeado no PostgREST falha calado, o que significaria
-// confirmar a consulta errada.
+// confirmar a consulta errada. scheduled_for e o offset do passo dizem para
+// QUAL horario o toque perguntou (resposta-paciente.ts).
 const SELECT_DO_TOQUE =
-  "id, sent_at, cadence_step:cadence_step_id ( cadence:cadence_id ( kind ) ), appointment:appointment_id ( id, status, starts_at, remarcacao_pedida_em )";
+  "id, sent_at, scheduled_for, skipped_reason, cadence_step:cadence_step_id ( offset_minutes, cadence:cadence_id ( kind ) ), appointment:appointment_id ( id, status, starts_at, remarcacao_pedida_em )";
 
 type ConsultaDaLinha = {
   id: string;
@@ -109,25 +129,37 @@ type ConsultaDaLinha = {
 type LinhaDeToque = {
   id: string;
   sent_at: string | null;
+  scheduled_for: string;
+  skipped_reason: string | null;
   cadence_step: unknown;
   appointment: ConsultaDaLinha | ConsultaDaLinha[] | null;
 };
 
+/**
+ * O toque como a linha o traz. `manual` e `horarioMudouEm` nascem vazios e
+ * sao preenchidos por completarToques, que le o job e a trilha da consulta.
+ */
 function paraToque(linha: LinhaDeToque): ToqueEnviado | null {
   if (!linha.sent_at) {
     return null;
   }
   const consulta = um(linha.appointment);
+  const passo = passoDoToque(linha);
   return {
     runId: linha.id,
-    kind: kindDoToque(linha),
+    kind: passo.kind,
     sentAt: linha.sent_at,
+    scheduledFor: linha.scheduled_for,
+    offsetMinutes: passo.offsetMinutes,
+    manual: false,
+    skippedReason: linha.skipped_reason ?? null,
     consulta: consulta
       ? {
           id: consulta.id,
           status: consulta.status,
           startsAt: consulta.starts_at,
           remarcacaoPedidaEm: consulta.remarcacao_pedida_em ?? null,
+          horarioMudouEm: null,
         }
       : null,
   };
@@ -393,6 +425,240 @@ async function envioDaOferta(
 }
 
 /**
+ * A consulta de um aviso de remarcacao, pelo payload do job. Vale a marca
+ * dedicada (aviso_remarcacao.appointment_id), se o payload a trouxer, e o
+ * appointment_id solto, que e o formato de enfileirarAvisoDeRemarcacao
+ * (app/(app)/agenda/actions.ts). Oferta de espera e eco ao paciente nao levam
+ * consulta no payload.
+ */
+function consultaDoAviso(
+  payload: Record<string, unknown> | null,
+): string | null {
+  if (!payload) {
+    return null;
+  }
+  const marca = payload.aviso_remarcacao;
+  if (marca && typeof marca === "object" && !Array.isArray(marca)) {
+    const id = (marca as Record<string, unknown>).appointment_id;
+    if (typeof id === "string") {
+      return id;
+    }
+  }
+  return typeof payload.appointment_id === "string"
+    ? payload.appointment_id
+    : null;
+}
+
+/**
+ * Avisos de remarcacao que SAIRAM para o contato desde `desde`. O aviso sai
+ * pelo worker como mensagem automatica (autor sistema) com o job_id de um
+ * enviar_mensagem_ativa que leva a consulta no payload (send.ts grava o
+ * job_id). A leitura parte das mensagens da conversa, que tem indice, e so
+ * depois olha os jobs pelo id. Aviso que falhou nao chegou ao paciente e nao
+ * encerra contexto nenhum. Null quando a leitura falhou (duvida).
+ */
+async function avisosDeRemarcacaoEnviados(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+  conversaIds: string[],
+  desde: string,
+): Promise<AvisoDeRemarcacao[] | null> {
+  const { data: mensagens, error } = await admin
+    .from("message")
+    .select("job_id, created_at, delivery_status")
+    .eq("clinic_id", entrada.clinicId)
+    .in("conversation_id", conversaIds)
+    .eq("direction", "saida")
+    .eq("author", "sistema")
+    .not("job_id", "is", null)
+    .gte("created_at", desde)
+    .order("created_at", { ascending: false })
+    .limit(MENSAGENS_AUTOMATICAS_CONSIDERADAS);
+  if (error) {
+    return null;
+  }
+  const enviadas = (
+    (mensagens ?? []) as {
+      job_id: string;
+      created_at: string;
+      delivery_status: string | null;
+    }[]
+  ).filter((mensagem) => mensagem.delivery_status !== "falhou");
+  if (enviadas.length === 0) {
+    return [];
+  }
+  const { data: jobs, error: erroJob } = await admin
+    .from("job_queue")
+    .select("id, payload")
+    .eq("clinic_id", entrada.clinicId)
+    .eq("kind", "enviar_mensagem_ativa")
+    .in(
+      "id",
+      enviadas.map((mensagem) => mensagem.job_id),
+    );
+  if (erroJob) {
+    return null;
+  }
+  const consultaDoJob = new Map<string, string>();
+  for (const job of (jobs ?? []) as {
+    id: string;
+    payload: Record<string, unknown> | null;
+  }[]) {
+    const consultaId = consultaDoAviso(job.payload);
+    if (consultaId) {
+      consultaDoJob.set(job.id, consultaId);
+    }
+  }
+  return enviadas.flatMap((mensagem) => {
+    const consultaId = consultaDoJob.get(mensagem.job_id);
+    return consultaId
+      ? [{ appointmentId: consultaId, enviadoEm: mensagem.created_at }]
+      : [];
+  });
+}
+
+/**
+ * Quais destas runs sairam pelo "Cobrar agora" (payload.manual do job). A
+ * run manual nao traz marca propria; sem o job achado ela e tratada como
+ * automatica, e a conta do passo a da por vencida: a resposta fica com a
+ * recepcao, que e o lado seguro.
+ */
+async function runsManuais(
+  admin: SupabaseClient,
+  clinicId: string,
+  runIds: string[],
+): Promise<Set<string> | null> {
+  if (runIds.length === 0) {
+    return new Set();
+  }
+  const { data, error } = await admin
+    .from("job_queue")
+    .select("payload")
+    .eq("clinic_id", clinicId)
+    .eq("kind", "executar_passo_de_regua")
+    .eq("payload->>manual", "true")
+    .in("payload->>cadence_run_id", runIds);
+  if (error) {
+    return null;
+  }
+  const manuais = new Set<string>();
+  for (const job of (data ?? []) as {
+    payload: Record<string, unknown> | null;
+  }[]) {
+    const runId = job.payload?.cadence_run_id;
+    if (typeof runId === "string") {
+      manuais.add(runId);
+    }
+  }
+  return manuais;
+}
+
+/**
+ * A ultima mudanca de HORARIO de cada consulta desde `desde`, pela trilha
+ * (linha kind='remarcacao', gravada pelo gatilho registrar_remarcacao). Troca
+ * so de profissional nao muda o horario que o toque perguntou.
+ */
+async function mudancasDeHorario(
+  admin: SupabaseClient,
+  clinicId: string,
+  consultaIds: string[],
+  desde: string,
+): Promise<Map<string, string> | null> {
+  if (consultaIds.length === 0) {
+    return new Map();
+  }
+  const { data, error } = await admin
+    .from("appointment_status_history")
+    .select("appointment_id, changed_at, previous_starts_at, new_starts_at")
+    .eq("clinic_id", clinicId)
+    .eq("kind", "remarcacao")
+    .in("appointment_id", consultaIds)
+    .gte("changed_at", desde)
+    .order("changed_at", { ascending: false })
+    .limit(REMARCACOES_CONSIDERADAS);
+  if (error) {
+    return null;
+  }
+  const ultima = new Map<string, string>();
+  for (const linha of (data ?? []) as {
+    appointment_id: string;
+    changed_at: string;
+    previous_starts_at: string | null;
+    new_starts_at: string | null;
+  }[]) {
+    // Sem o antes ou o depois, na duvida conta como mudanca de horario.
+    const mudou =
+      !linha.previous_starts_at ||
+      !linha.new_starts_at ||
+      new Date(linha.previous_starts_at).getTime() !==
+        new Date(linha.new_starts_at).getTime();
+    if (mudou && !ultima.has(linha.appointment_id)) {
+      ultima.set(linha.appointment_id, linha.changed_at);
+    }
+  }
+  return ultima;
+}
+
+/**
+ * Preenche o que a linha do toque nao traz: se saiu pelo "Cobrar agora" e
+ * quando o horario da consulta mudou. Vale para os toques da janela e para o
+ * toque citado, que pode estar fora dela. Null quando a leitura falhou.
+ */
+async function completarToques(
+  admin: SupabaseClient,
+  clinicId: string,
+  toques: ToqueEnviado[],
+  citacao: Citacao,
+  desde: string,
+): Promise<{ toques: ToqueEnviado[]; citacao: Citacao } | null> {
+  const todos =
+    citacao.tipo === "toque" ? [...toques, citacao.toque] : toques;
+  // So a run que NAO bate com a conta do passo precisa saber se e manual: a
+  // automatica que bate ja vale, e a leitura do job fica fora do caminho
+  // comum da resposta.
+  const foraDaConta = todos.filter(
+    (toque) =>
+      toque.consulta !== null &&
+      (toque.offsetMinutes === null ||
+        !passoCondizComAgenda({
+          startsAt: new Date(toque.consulta.startsAt),
+          offsetMinutes: toque.offsetMinutes,
+          scheduledFor: new Date(toque.scheduledFor),
+        })),
+  );
+  const runIds = [...new Set(foraDaConta.map((toque) => toque.runId))];
+  const consultaIds = [
+    ...new Set(
+      todos.flatMap((toque) => (toque.consulta ? [toque.consulta.id] : [])),
+    ),
+  ];
+  const [manuais, mudancas] = await Promise.all([
+    runsManuais(admin, clinicId, runIds),
+    mudancasDeHorario(admin, clinicId, consultaIds, desde),
+  ]);
+  if (!manuais || !mudancas) {
+    return null;
+  }
+  const completar = (toque: ToqueEnviado): ToqueEnviado => ({
+    ...toque,
+    manual: manuais.has(toque.runId),
+    consulta: toque.consulta
+      ? {
+          ...toque.consulta,
+          horarioMudouEm: mudancas.get(toque.consulta.id) ?? null,
+        }
+      : null,
+  });
+  return {
+    toques: toques.map(completar),
+    citacao:
+      citacao.tipo === "toque"
+        ? { tipo: "toque", toque: completar(citacao.toque) }
+        : citacao,
+  };
+}
+
+/**
  * Junta os fatos que qualPerguntaFoiRespondida precisa. Null quando alguma
  * leitura falhou: sem saber se a recepcao falou depois, nao se interpreta.
  */
@@ -418,7 +684,7 @@ async function reunirFatos(
   const atual = linhasDeConversa.find((c) => c.id === entrada.conversationId);
 
   const desde = new Date(agora - JANELA_DE_CONTEXTO_MS).toISOString();
-  const [toques, humana, achada, citacao] = await Promise.all([
+  const [toques, humana, achada, citacao, avisos] = await Promise.all([
     admin
       .from("cadence_run")
       .select(SELECT_DO_TOQUE)
@@ -443,8 +709,28 @@ async function reunirFatos(
       .maybeSingle(),
     acharOfertaDoContato(admin, entrada.clinicId, entrada.contactId),
     resolverCitacao(admin, entrada, conversaIds),
+    avisosDeRemarcacaoEnviados(admin, entrada, conversaIds, desde),
   ]);
-  if (toques.error || humana.error || achada.erro || citacao === null) {
+  if (
+    toques.error ||
+    humana.error ||
+    achada.erro ||
+    citacao === null ||
+    avisos === null
+  ) {
+    return null;
+  }
+
+  const completos = await completarToques(
+    admin,
+    entrada.clinicId,
+    ((toques.data ?? []) as unknown as LinhaDeToque[])
+      .map(paraToque)
+      .filter((toque): toque is ToqueEnviado => toque !== null),
+    citacao,
+    desde,
+  );
+  if (!completos) {
     return null;
   }
 
@@ -466,13 +752,12 @@ async function reunirFatos(
     fatos: {
       agora,
       conversaEmAtendimento: atual?.status === "em_atendimento",
-      citacao,
-      toques: ((toques.data ?? []) as unknown as LinhaDeToque[])
-        .map(paraToque)
-        .filter((toque): toque is ToqueEnviado => toque !== null),
+      citacao: completos.citacao,
+      toques: completos.toques,
       oferta,
       ultimaMensagemHumanaEm:
         (humana.data?.created_at as string | undefined) ?? null,
+      avisosDeRemarcacao: avisos,
     },
     oferta: achada.oferta,
   };

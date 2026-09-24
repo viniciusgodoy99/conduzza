@@ -816,6 +816,12 @@ function BuscaPaciente({
   const [novoTelefone, setNovoTelefone] = useState("");
   const [erroCriacao, setErroCriacao] = useState<string | null>(null);
   const [salvandoNovo, setSalvandoNovo] = useState(false);
+  // Criacao rapida que caiu num cadastro existente: o aviso fica sob o
+  // paciente escolhido enquanto ele for esse cadastro.
+  const [avisoDeCadastro, setAvisoDeCadastro] = useState<{
+    id: string;
+    texto: string;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Debounce de 300ms na busca por nome ou telefone.
@@ -859,11 +865,32 @@ function BuscaPaciente({
       setErroCriacao(resultado.error ?? "Não foi possível criar o cadastro.");
       return;
     }
-    onPaciente({
-      id: resultado.id,
-      name: novoNome.trim(),
-      phone: novoTelefone.trim(),
-    });
+    if (resultado.existente) {
+      // O telefone ja tinha cadastro (casado pela chave, com ou sem o nono
+      // digito): a consulta fica NELE. Mostra o nome e o telefone do cadastro,
+      // nunca os digitados, e diz isso a recepcao (achado R6).
+      const nomeDoCadastro = resultado.nome?.trim()
+        ? resultado.nome.trim()
+        : null;
+      setAvisoDeCadastro({
+        id: resultado.id,
+        texto: nomeDoCadastro
+          ? `Este telefone já é do cadastro de ${nomeDoCadastro}. A consulta fica nesse cadastro.`
+          : "Este telefone já é de um cadastro sem nome. A consulta fica nesse cadastro.",
+      });
+      onPaciente({
+        id: resultado.id,
+        name: nomeDoCadastro ?? "Cadastro sem nome",
+        phone: resultado.telefone ?? novoTelefone.trim(),
+      });
+    } else {
+      setAvisoDeCadastro(null);
+      onPaciente({
+        id: resultado.id,
+        name: novoNome.trim(),
+        phone: novoTelefone.trim(),
+      });
+    }
     setCriando(false);
     setTermo("");
     setResultados([]);
@@ -888,12 +915,18 @@ function BuscaPaciente({
             onClick={() => {
               setTermo("");
               setCriando(false);
+              setAvisoDeCadastro(null);
               onLimpar();
             }}
           >
             Trocar
           </Button>
         </div>
+        {avisoDeCadastro && avisoDeCadastro.id === paciente.id ? (
+          <p role="status" className="text-xs text-text-secondary">
+            {avisoDeCadastro.texto}
+          </p>
+        ) : null}
       </div>
     );
   }

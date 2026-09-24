@@ -41,15 +41,16 @@ test("chip diferencia confirmado por WhatsApp de confirmado pela recepção", as
 }) => {
   await abrirAgenda(page, dados().emails.recepcao);
 
-  // Estado do seed: Camila 09:00 confirmada pelo WhatsApp, Roberto 08:00
-  // apenas agendado.
+  // Estado do seed: Camila 09:00 confirmada pelo WhatsApp, Roberto 00:00
+  // apenas agendado (00:00 ja passou a qualquer hora do dia: o teste 2 marca
+  // falta nele, e falta so vale a partir do horario da consulta).
   await expect(
     bloco(page, /Camila Áudio, 09:00, Confirmado por WhatsApp/),
   ).toBeVisible();
-  await expect(bloco(page, /Roberto Recibo, 08:00, Agendado/)).toBeVisible();
+  await expect(bloco(page, /Roberto Recibo, 00:00, Agendado/)).toBeVisible();
 
   // Recepcao confirma por telefone: o status pergunta o canal antes de mudar.
-  await bloco(page, /Roberto Recibo, 08:00, Agendado/).click();
+  await bloco(page, /Roberto Recibo, 00:00, Agendado/).click();
   await page
     .getByRole("menuitem", { name: "Confirmado pela recepção" })
     .click();
@@ -60,7 +61,7 @@ test("chip diferencia confirmado por WhatsApp de confirmado pela recepção", as
 
   // Os DOIS rotulos distintos na tela ao mesmo tempo: autoria no status.
   await expect(
-    bloco(page, /Roberto Recibo, 08:00, Confirmado pela recepção/),
+    bloco(page, /Roberto Recibo, 00:00, Confirmado pela recepção/),
   ).toBeVisible();
   await expect(
     bloco(page, /Camila Áudio, 09:00, Confirmado por WhatsApp/),
@@ -71,7 +72,7 @@ test("faltou exige confirmação explícita", async ({ page }) => {
   await abrirAgenda(page, dados().emails.recepcao);
   const blocoRoberto = bloco(
     page,
-    /Roberto Recibo, 08:00, Confirmado pela recepção/,
+    /Roberto Recibo, 00:00, Confirmado pela recepção/,
   );
   await expect(blocoRoberto).toBeVisible();
 
@@ -93,7 +94,7 @@ test("faltou exige confirmação explícita", async ({ page }) => {
   await page.getByRole("button", { name: "Confirmar falta" }).click();
   // A troca de rotulo passa por action + refetch: orcamento maior que o
   // padrao de 5s para nao falhar sob carga.
-  await expect(bloco(page, /Roberto Recibo, 08:00, Faltou/)).toBeVisible({
+  await expect(bloco(page, /Roberto Recibo, 00:00, Faltou/)).toBeVisible({
     timeout: 10_000,
   });
 });
@@ -101,7 +102,7 @@ test("faltou exige confirmação explícita", async ({ page }) => {
 test("histórico mostra quem mudou o que e quando", async ({ page }) => {
   await abrirAgenda(page, dados().emails.recepcao);
 
-  await bloco(page, /Roberto Recibo, 08:00, Faltou/).click();
+  await bloco(page, /Roberto Recibo, 00:00, Faltou/).click();
   await page.getByRole("menuitem", { name: "Ver histórico" }).click();
 
   const folha = page.getByRole("dialog");

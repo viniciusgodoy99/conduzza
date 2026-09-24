@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type ConsultaDoAviso,
   DICA_FALTA_ANTES_DO_HORARIO,
   DICA_REMARCAR_ENCERRADA,
   STATUS_TERMINAIS,
+  avisoDeRemarcacaoVale,
   eCancelamento,
   faltaLiberada,
   podeRemarcar,
@@ -160,8 +162,130 @@ describe("remarcação", () => {
     expect(statusAposRemarcar("agendado")).toBe("agendado");
   });
 
-  it("paciente já na clínica mantém a situação", () => {
+  it("confirmação volta para agendado em qualquer dia", () => {
+    for (const mesmoDia of [true, false]) {
+      expect(statusAposRemarcar("confirmado_paciente", { mesmoDia })).toBe(
+        "agendado",
+      );
+      expect(statusAposRemarcar("confirmado_recepcao", { mesmoDia })).toBe(
+        "agendado",
+      );
+    }
+  });
+
+  it("paciente já na clínica mantém a situação no mesmo dia", () => {
+    expect(statusAposRemarcar("na_recepcao", { mesmoDia: true })).toBe(
+      "na_recepcao",
+    );
+    expect(statusAposRemarcar("em_atendimento", { mesmoDia: true })).toBe(
+      "em_atendimento",
+    );
+    // Sem o dia informado vale o mesmo dia (a nota do diálogo).
     expect(statusAposRemarcar("na_recepcao")).toBe("na_recepcao");
-    expect(statusAposRemarcar("em_atendimento")).toBe("em_atendimento");
+  });
+
+  it("paciente já na clínica movido para outro dia volta para agendado", () => {
+    expect(statusAposRemarcar("na_recepcao", { mesmoDia: false })).toBe(
+      "agendado",
+    );
+    expect(statusAposRemarcar("em_atendimento", { mesmoDia: false })).toBe(
+      "agendado",
+    );
+  });
+});
+
+describe("aviso de remarcação na hora do envio", () => {
+  const agora = new Date("2026-09-24T12:00:00.000Z");
+  const consulta: ConsultaDoAviso = {
+    status: "agendado",
+    // O banco devolve com +00:00; o payload leva toISOString (Z).
+    starts_at: "2026-09-26T13:00:00+00:00",
+    professional_id: "prof-a",
+  };
+  const esperado = {
+    startsAt: "2026-09-26T13:00:00.000Z",
+    professionalId: "prof-a",
+  };
+
+  it("sai quando a consulta continua no horário e com o profissional anunciados", () => {
+    expect(avisoDeRemarcacaoVale(consulta, esperado, agora)).toBe(true);
+    expect(
+      avisoDeRemarcacaoVale(
+        { ...consulta, status: "na_recepcao" },
+        esperado,
+        agora,
+      ),
+    ).toBe(true);
+  });
+
+  it("não sai se a consulta sumiu", () => {
+    expect(avisoDeRemarcacaoVale(null, esperado, agora)).toBe(false);
+  });
+
+  it("não sai se a consulta foi cancelada, encerrada ou está em atendimento", () => {
+    const mortas: AppointmentStatus[] = [
+      "cancelado_paciente",
+      "cancelado_clinica",
+      "faltou",
+      "compareceu",
+      "em_atendimento",
+    ];
+    for (const status of mortas) {
+      expect(
+        avisoDeRemarcacaoVale({ ...consulta, status }, esperado, agora),
+      ).toBe(false);
+    }
+  });
+
+  it("não sai se a consulta foi remarcada de novo para outro horário", () => {
+    expect(
+      avisoDeRemarcacaoVale(
+        { ...consulta, starts_at: "2026-09-26T14:00:00+00:00" },
+        esperado,
+        agora,
+      ),
+    ).toBe(false);
+  });
+
+  it("não sai se a consulta mudou de profissional", () => {
+    expect(
+      avisoDeRemarcacaoVale(
+        { ...consulta, professional_id: "prof-b" },
+        esperado,
+        agora,
+      ),
+    ).toBe(false);
+  });
+
+  it("não sai se o horário anunciado já passou (retry longo)", () => {
+    expect(
+      avisoDeRemarcacaoVale(
+        consulta,
+        esperado,
+        new Date("2026-09-26T13:00:00.000Z"),
+      ),
+    ).toBe(false);
+  });
+
+  it("payload com horário ilegível não sai", () => {
+    expect(
+      avisoDeRemarcacaoVale(
+        consulta,
+        { ...esperado, startsAt: "ontem" },
+        agora,
+      ),
+    ).toBe(false);
+  });
+
+  it("aviso antigo sem o horário esperado confere só a situação e o vencimento", () => {
+    const semEsperado = { startsAt: null, professionalId: null };
+    expect(avisoDeRemarcacaoVale(consulta, semEsperado, agora)).toBe(true);
+    expect(
+      avisoDeRemarcacaoVale(
+        { ...consulta, status: "cancelado_clinica" },
+        semEsperado,
+        agora,
+      ),
+    ).toBe(false);
   });
 });

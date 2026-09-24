@@ -7,6 +7,10 @@ import {
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
 import {
+  avisoDeRemarcacaoVale,
+  type ConsultaDoAviso,
+} from "@/lib/domain/appointment-status";
+import {
   classificarFalhaDeUpload,
   marcaDeIndisponivel,
   motivoDaDesistencia,
@@ -106,6 +110,45 @@ async function executarEnvioAtivo(
     }
     if (situacao === "encerrada") {
       return { ok: false, erro: "oferta_encerrada", definitivo: true };
+    }
+  }
+
+  // Aviso de remarcacao (Agenda): o texto saiu da fila com data e hora
+  // congeladas, e o job pode ter esperado o canal (regua da manha) ou o retry
+  // de desconexao. So sai se a consulta continua viva, no MESMO instante e com
+  // o MESMO profissional que o aviso anuncia, e se o horario nao passou. Senao
+  // morre sem enviar: a remarcacao mais nova enfileira o proprio aviso, e a
+  // consulta cancelada nao pode ser "remarcada para X" (achados R3, R5, R10 e
+  // R18). Antes do consentimento e de abrir conversa: nenhum efeito colateral.
+  const avisoDaConsulta = job.payload.appointment_id;
+  if (avisoDaConsulta !== undefined && avisoDaConsulta !== null) {
+    if (typeof avisoDaConsulta !== "string") {
+      return { ok: false, erro: "payload_invalido", definitivo: true };
+    }
+    const { data: consulta, error: erroConsulta } = await admin
+      .from("appointment")
+      .select("status, starts_at, professional_id")
+      .eq("clinic_id", job.clinic_id)
+      .eq("id", avisoDaConsulta)
+      .maybeSingle();
+    if (erroConsulta) {
+      return { ok: false, erro: "leitura_falhou" };
+    }
+    const inicioEsperado = job.payload.starts_at;
+    const profissionalEsperado = job.payload.professional_id;
+    const vale = avisoDeRemarcacaoVale(
+      (consulta as ConsultaDoAviso | null) ?? null,
+      {
+        startsAt: typeof inicioEsperado === "string" ? inicioEsperado : null,
+        professionalId:
+          typeof profissionalEsperado === "string"
+            ? profissionalEsperado
+            : null,
+      },
+      new Date(),
+    );
+    if (!vale) {
+      return { ok: false, erro: "aviso_desatualizado", definitivo: true };
     }
   }
 

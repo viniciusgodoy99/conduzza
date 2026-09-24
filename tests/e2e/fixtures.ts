@@ -600,12 +600,19 @@ export async function provisionar(): Promise<DadosE2E> {
     .from("appointment")
     .insert([
       {
+        // Roberto a 00:00 no fuso da clinica: um horario de HOJE que ja
+        // passou a qualquer hora do dia. O teste "faltou exige confirmação
+        // explícita" (agenda-status.spec.ts) marca falta nele, e falta so vale
+        // a partir do horario da consulta (faltaLiberada e o gatilho
+        // impedir_falta_antes_do_horario). As 08:00 a suite quebrava quando
+        // rodava antes das 08:00 de Fortaleza (achado R14). A jornada do
+        // seed cobre 00:00 a 23:59, entao a grade mostra a faixa das 00:00.
         ...consultaBase,
         contact_id: contatos.find((c) => c.name === "Roberto Recibo")!.id,
         professional_id: profJoaoId,
         service_link_id: vinculoEndoParticular,
-        starts_at: `${diaISO}T08:00:00-03:00`,
-        ends_at: `${diaISO}T08:40:00-03:00`,
+        starts_at: `${diaISO}T00:00:00-03:00`,
+        ends_at: `${diaISO}T00:40:00-03:00`,
       },
       {
         ...consultaBase,

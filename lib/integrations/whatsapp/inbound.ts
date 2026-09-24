@@ -222,14 +222,20 @@ function mapContentType(
   return "texto";
 }
 
-// Barras (separador de pasta), barra invertida e caracteres de controle.
-const CARACTERES_PROIBIDOS_NO_NOME = /[\u0000-\u001f\u007f/\\]/g;
+// Barras (separador de pasta), barra invertida, caracteres de controle (Cc) e
+// de formatacao Unicode (Cf, que inclui os bidirecionais U+200E, U+200F,
+// U+202A a U+202E e U+2066 a U+2069). Sem tirar o Cf, 'laudo<RLO>fdp.exe'
+// aparece na tela como 'laudoexe.pdf'. A tela e o download saneiam de novo na
+// leitura (nomeSeguroDeArquivo); aqui e para o dado ja nascer limpo.
+const CARACTERES_PROIBIDOS_NO_NOME = /[\p{Cc}\p{Cf}/\\]/gu;
 const LIMITE_DO_NOME_DE_ARQUIVO = 200;
 
 /**
  * Nome de arquivo vindo do WhatsApp, pronto para guardar e oferecer no
  * download: sem barra (nao vira caminho), sem caractere de controle (nao
- * quebra cabecalho), ate 200 caracteres. Vazio ou nao texto vira null.
+ * quebra cabecalho), sem caractere de formatacao invisivel (nao inverte o
+ * texto para fingir outra extensao), ate 200 caracteres. Vazio ou nao texto
+ * vira null.
  */
 export function sanearNomeDeArquivo(bruto: unknown): string | null {
   if (typeof bruto !== "string") {

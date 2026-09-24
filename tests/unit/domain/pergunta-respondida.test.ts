@@ -39,17 +39,38 @@ function consulta(
     status: "aguardando_confirmacao",
     startsAt: iso(2 * DIA),
     remarcacaoPedidaEm: null,
+    horarioMudouEm: null,
     ...opcoes,
   };
 }
 
+/** Passo de 24h: o offset padrao dos toques daqui. */
+const OFFSET = -1440;
+
+/**
+ * Toque automatico como a regua o deixa: vencido em starts_at + offset do
+ * passo, ou seja, perguntando pelo horario que a consulta tinha no envio.
+ */
 function toque(
   runId: string,
   sentAtMs: number,
   alvo: ConsultaDoToque | null,
   kind: string | null = "confirmacao",
+  opcoes: Partial<ToqueEnviado> = {},
 ): ToqueEnviado {
-  return { runId, kind, sentAt: iso(sentAtMs), consulta: alvo };
+  return {
+    runId,
+    kind,
+    sentAt: iso(sentAtMs),
+    scheduledFor: alvo
+      ? new Date(new Date(alvo.startsAt).getTime() + OFFSET * MINUTO).toISOString()
+      : iso(sentAtMs),
+    offsetMinutes: OFFSET,
+    manual: false,
+    skippedReason: null,
+    consulta: alvo,
+    ...opcoes,
+  };
 }
 
 function fatos(parcial: Partial<FatosDaResposta> = {}): FatosDaResposta {
@@ -60,6 +81,7 @@ function fatos(parcial: Partial<FatosDaResposta> = {}): FatosDaResposta {
     toques: [],
     oferta: null,
     ultimaMensagemHumanaEm: null,
+    avisosDeRemarcacao: [],
     ...parcial,
   };
 }
@@ -138,18 +160,392 @@ describe("a que pergunta o paciente respondeu", () => {
     expect(decisao).toEqual({ alvo: "nenhum", motivo: "clinica_falou_depois" });
   });
 
-  it("conversa assumida por alguem da clinica: ninguem interpreta", () => {
-    const decisao = qualPerguntaFoiRespondida(
-      fatos({
-        conversaEmAtendimento: true,
-        toques: [toque("run-a", -2 * HORA, a)],
-      }),
-      "confirmar",
-      "aceitar",
+  // Revisao da leva 1 (R1): responder no Atendimento exige assumir, e nada
+  // tira a conversa de em_atendimento sozinho. O status nao pode calar para
+  // sempre o botao tocado num toque enviado depois de tudo.
+  describe("conversa assumida por alguem da clinica", () => {
+    const toqueA = toque("run-a", -2 * HORA, a);
+
+    it("sem citacao, ninguem interpreta", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          conversaEmAtendimento: true,
+          toques: [toqueA],
+        }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toEqual({
+        alvo: "nenhum",
+        motivo: "conversa_em_atendimento",
+      });
+    });
+
+    it("sem citacao, nem com a ultima mensagem de gente ANTES do toque", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          conversaEmAtendimento: true,
+          toques: [toqueA],
+          ultimaMensagemHumanaEm: iso(-3 * DIA),
+        }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toEqual({
+        alvo: "nenhum",
+        motivo: "conversa_em_atendimento",
+      });
+    });
+
+    it("assumida ha dias: o botao citado do toque mais recente vale", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          conversaEmAtendimento: true,
+          citacao: { tipo: "toque", toque: toqueA },
+          toques: [toqueA],
+          ultimaMensagemHumanaEm: iso(-3 * DIA),
+        }),
+        interpretarResposta("Confirmar"),
+        "nao_reconhecida",
+      );
+      expect(decisao).toEqual({
+        alvo: "toque",
+        appointmentId: a.id,
+        startsAt: a.startsAt,
+        intencao: "confirmar",
+      });
+    });
+
+    it("assumida sem ninguem ter escrito: o botao citado vale", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          conversaEmAtendimento: true,
+          citacao: { tipo: "toque", toque: toqueA },
+          toques: [toqueA],
+        }),
+        "remarcar",
+        "nao_reconhecida",
+      );
+      expect(decisao).toMatchObject({
+        alvo: "toque",
+        appointmentId: a.id,
+        intencao: "remarcar",
+      });
+    });
+
+    it("a recepcao escreveu depois do toque: nem o botao citado vale", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          conversaEmAtendimento: true,
+          citacao: { tipo: "toque", toque: toqueA },
+          toques: [toqueA],
+          ultimaMensagemHumanaEm: iso(-30 * MINUTO),
+        }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toEqual({
+        alvo: "nenhum",
+        motivo: "clinica_falou_depois",
+      });
+    });
+  });
+
+  // Revisao da leva 1 (R11 e R13): a consulta de terca 10h vai para sexta
+  // 16h. O toque de terca continua na conversa, e a consulta voltou a
+  // 'agendado'. Nada que responda a ele pode confirmar ou cancelar a sexta:
+  // a remarcacao volta a pedir confirmacao, com toque novo.
+  describe("toque do horario antigo, depois da remarcacao", () => {
+    // O toque de 24h venceu e saiu ha 5 horas, para a consulta daqui a 19h.
+    const antiga = consulta("consulta-a", { startsAt: iso(19 * HORA) });
+    const toqueAntigo = toque("run-antigo", -5 * HORA, antiga);
+    const movida: ConsultaDoToque = {
+      ...antiga,
+      status: "agendado",
+      startsAt: iso(4 * DIA + 4 * HORA),
+      horarioMudouEm: iso(-2 * HORA),
+    };
+    const velhoApontandoParaMovida: ToqueEnviado = {
+      ...toqueAntigo,
+      consulta: movida,
+    };
+
+    it.each([
+      ["ok", "aceitar"],
+      ["\u{1F44D}", "nao_reconhecida"],
+      ["Não vou poder", "nao_reconhecida"],
+      ["3", "nao_reconhecida"],
+    ] as const)("sem citacao, '%s' fica com a recepcao", (texto, oferta) => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({ toques: [velhoApontandoParaMovida] }),
+        interpretarResposta(texto),
+        oferta,
+      );
+      expect(decisao).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
+    });
+
+    it.each(["Confirmar", "Cancelar", "Remarcar"])(
+      "o botao velho citado ('%s') fica com a recepcao",
+      (botao) => {
+        const decisao = qualPerguntaFoiRespondida(
+          fatos({
+            citacao: { tipo: "toque", toque: velhoApontandoParaMovida },
+            toques: [velhoApontandoParaMovida],
+          }),
+          interpretarResposta(botao),
+          "nao_reconhecida",
+        );
+        expect(decisao).toEqual({
+          alvo: "nenhum",
+          motivo: "consulta_remarcada",
+        });
+      },
     );
-    expect(decisao).toEqual({
-      alvo: "nenhum",
-      motivo: "conversa_em_atendimento",
+
+    it("so a conta do passo ja basta (trilha nao lida ou fora da janela)", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          toques: [
+            { ...toqueAntigo, consulta: { ...movida, horarioMudouEm: null } },
+          ],
+        }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
+    });
+
+    it("run pulada como 'consulta_remarcada' nao vale", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          toques: [toque("run-a", -2 * HORA, a, "confirmacao", {
+            skippedReason: "consulta_remarcada",
+          })],
+        }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
+    });
+
+    it("consulta que foi e voltou ao horario do toque: a trilha fecha o toque", () => {
+      const voltou = { ...antiga, status: "agendado", horarioMudouEm: iso(-HORA) };
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({ toques: [{ ...toqueAntigo, consulta: voltou }] }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
+    });
+
+    it("remarcada ANTES do toque: o toque ja perguntou pelo horario novo", () => {
+      const remarcadaAntes = { ...movida, horarioMudouEm: iso(-10 * HORA) };
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({ toques: [toque("run-novo", -2 * HORA, remarcadaAntes)] }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toMatchObject({
+        alvo: "toque",
+        appointmentId: movida.id,
+        startsAt: movida.startsAt,
+      });
+    });
+
+    it("a tolerancia e de 1 minuto, como no executor", () => {
+      const base = toque("run-a", -2 * HORA, a);
+      const deslocado = (ms: number): ToqueEnviado => ({
+        ...base,
+        scheduledFor: new Date(
+          new Date(base.scheduledFor).getTime() + ms,
+        ).toISOString(),
+      });
+      expect(
+        qualPerguntaFoiRespondida(
+          fatos({ toques: [deslocado(30_000)] }),
+          "confirmar",
+          "aceitar",
+        ),
+      ).toMatchObject({ alvo: "toque", appointmentId: a.id });
+      expect(
+        qualPerguntaFoiRespondida(
+          fatos({ toques: [deslocado(2 * MINUTO)] }),
+          "confirmar",
+          "aceitar",
+        ),
+      ).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
+    });
+
+    describe("toque do 'Cobrar agora'", () => {
+      // A run manual vence na hora do clique, fora da conta do passo.
+      const manual = toque("run-manual", -2 * HORA, a, "confirmacao", {
+        manual: true,
+        scheduledFor: iso(-2 * HORA - MINUTO),
+      });
+
+      it("vale para o horario que a consulta tinha no envio", () => {
+        expect(
+          qualPerguntaFoiRespondida(
+            fatos({ toques: [manual] }),
+            "confirmar",
+            "aceitar",
+          ),
+        ).toMatchObject({ alvo: "toque", appointmentId: a.id });
+      });
+
+      it("horario mudou depois do envio: fica com a recepcao", () => {
+        const depois = {
+          ...manual,
+          consulta: { ...a, startsAt: iso(3 * DIA), horarioMudouEm: iso(-HORA) },
+        };
+        expect(
+          qualPerguntaFoiRespondida(
+            fatos({ citacao: { tipo: "toque", toque: depois }, toques: [depois] }),
+            "cancelar",
+            "recusar",
+          ),
+        ).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
+      });
+
+      it("o mesmo vencimento numa run automatica nao vale", () => {
+        expect(
+          qualPerguntaFoiRespondida(
+            fatos({ toques: [{ ...manual, manual: false }] }),
+            "confirmar",
+            "aceitar",
+          ),
+        ).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
+      });
+    });
+  });
+
+  // Revisao da leva 1 (R11 e R13): "Sua consulta foi remarcada para sexta as
+  // 16h, qualquer duvida e so responder aqui". O aviso nao pergunta nada e
+  // encerra o contexto do toque de antes dele.
+  describe("aviso de remarcacao", () => {
+    it("depois do toque: 'ok' ou 'nao vou poder' fica com a recepcao", () => {
+      for (const texto of ["ok", "Não vou poder", "1"]) {
+        const decisao = qualPerguntaFoiRespondida(
+          fatos({
+            toques: [toque("run-a", -5 * HORA, a)],
+            avisosDeRemarcacao: [
+              { appointmentId: a.id, enviadoEm: iso(-HORA) },
+            ],
+          }),
+          interpretarResposta(texto),
+          "nao_reconhecida",
+        );
+        expect(decisao).toEqual({
+          alvo: "nenhum",
+          motivo: "aviso_de_remarcacao",
+        });
+      }
+    });
+
+    it("aviso de OUTRA consulta depois do toque tambem fecha a resposta sem citacao", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          toques: [toque("run-a", -5 * HORA, a)],
+          avisosDeRemarcacao: [
+            { appointmentId: "consulta-b", enviadoEm: iso(-HORA) },
+          ],
+        }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toEqual({ alvo: "nenhum", motivo: "aviso_de_remarcacao" });
+    });
+
+    it("mas o botao citado do toque de outra consulta ainda vale", () => {
+      const toqueA = toque("run-a", -5 * HORA, a);
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          citacao: { tipo: "toque", toque: toqueA },
+          toques: [toqueA],
+          avisosDeRemarcacao: [
+            { appointmentId: "consulta-b", enviadoEm: iso(-HORA) },
+          ],
+        }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toMatchObject({ alvo: "toque", appointmentId: a.id });
+    });
+
+    it("o botao citado do toque DESTA consulta, anterior ao aviso, nao vale", () => {
+      const toqueA = toque("run-a", -5 * HORA, a);
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({
+          citacao: { tipo: "toque", toque: toqueA },
+          toques: [toqueA],
+          avisosDeRemarcacao: [{ appointmentId: a.id, enviadoEm: iso(-HORA) }],
+        }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
+    });
+
+    it("aviso que ainda nao saiu nao conta: so o que o paciente leu", () => {
+      const decisao = qualPerguntaFoiRespondida(
+        fatos({ toques: [toque("run-a", -5 * HORA, a)] }),
+        "confirmar",
+        "aceitar",
+      );
+      expect(decisao).toMatchObject({ alvo: "toque", appointmentId: a.id });
+    });
+
+    // Decisao do dono: remarcacao avisa o paciente e volta a pedir
+    // confirmacao. O toque do horario novo sai depois do aviso e vale.
+    it("o toque do horario novo, depois do aviso, volta a confirmar", () => {
+      const antiga = consulta("consulta-a", { startsAt: iso(19 * HORA) });
+      // Movida para daqui a 23h30: o toque de 24h do horario novo venceu e
+      // saiu ha 30 minutos, depois do aviso.
+      const movida: ConsultaDoToque = {
+        ...antiga,
+        status: "agendado",
+        startsAt: iso(DIA - 30 * MINUTO),
+        horarioMudouEm: iso(-3 * HORA),
+      };
+      const velho = { ...toque("run-velho", -5 * HORA, antiga), consulta: movida };
+      const novo = toque("run-novo", -30 * MINUTO, movida);
+      const avisos = [{ appointmentId: movida.id, enviadoEm: iso(-2 * HORA) }];
+
+      expect(
+        qualPerguntaFoiRespondida(
+          fatos({ toques: [novo, velho], avisosDeRemarcacao: avisos }),
+          interpretarResposta("ok"),
+          "aceitar",
+        ),
+      ).toEqual({
+        alvo: "toque",
+        appointmentId: movida.id,
+        startsAt: movida.startsAt,
+        intencao: "confirmar",
+      });
+      expect(
+        qualPerguntaFoiRespondida(
+          fatos({
+            citacao: { tipo: "toque", toque: novo },
+            toques: [novo, velho],
+            avisosDeRemarcacao: avisos,
+          }),
+          "cancelar",
+          "recusar",
+        ),
+      ).toMatchObject({ alvo: "toque", appointmentId: movida.id });
+      // O botao velho continua sem valer, mesmo com o toque novo na conversa.
+      expect(
+        qualPerguntaFoiRespondida(
+          fatos({
+            citacao: { tipo: "toque", toque: velho },
+            toques: [novo, velho],
+            avisosDeRemarcacao: avisos,
+          }),
+          "confirmar",
+          "aceitar",
+        ),
+      ).toEqual({ alvo: "nenhum", motivo: "consulta_remarcada" });
     });
   });
 

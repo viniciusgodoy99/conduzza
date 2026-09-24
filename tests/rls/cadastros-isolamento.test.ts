@@ -38,8 +38,10 @@ let convenioB = "";
 let vinculoA = "";
 let vinculoA2 = "";
 let contatoA = "";
+let contatoB = "";
 let conversaA = "";
 let conversaB = "";
+let pacoteB = "";
 
 async function criarUsuario(
   email: string,
@@ -167,7 +169,7 @@ beforeAll(async () => {
     phone_e164: `+5584982${sufixo.replace(/\D/g, "0").slice(0, 6)}1`,
     name: "Paciente A",
   });
-  const contatoB = await inserirId("contact", {
+  contatoB = await inserirId("contact", {
     clinic_id: clinicaB,
     phone_e164: `+5584982${sufixo.replace(/\D/g, "0").slice(0, 6)}2`,
     name: "Paciente B",
@@ -181,6 +183,20 @@ beforeAll(async () => {
     clinic_id: clinicaB,
     contact_id: contatoB,
     status: "aguardando_humano",
+  });
+  // Pacote VENDIDO na B: sem isto, uso_dos_pacotes da B volta vazio por
+  // falta de dado, e o teste de isolamento passaria mesmo com vazamento.
+  pacoteB = await inserirId("package", {
+    clinic_id: clinicaB,
+    procedure_id: procB,
+    sessions: 5,
+    price_cents: 50000,
+  });
+  await inserirId("package_balance", {
+    clinic_id: clinicaB,
+    contact_id: contatoB,
+    package_id: pacoteB,
+    sessions_total: 5,
   });
 });
 
@@ -415,11 +431,33 @@ describe("pacote vendido", () => {
   });
 
   it("uso_dos_pacotes da B não aparece para a A", async () => {
-    const recepcao = await logado(`iso-recepcao-${sufixo}@teste.dev`);
-    const { data } = await recepcao.rpc("uso_dos_pacotes", {
+    type Uso = {
+      package_id: string;
+      vendas: number;
+      pacientes_com_saldo: number;
+    };
+
+    // Anti falso positivo: a venda da B existe e a propria B a enxerga pela
+    // mesma RPC. Sem isto o vazio abaixo poderia ser so falta de dado.
+    const daB = await logado(`iso-outra-${sufixo}@teste.dev`);
+    const propria = await daB.rpc("uso_dos_pacotes", {
       p_clinic_id: clinicaB,
     });
-    expect(data ?? []).toHaveLength(0);
+    expect(propria.error).toBeNull();
+    const linhaDaB = ((propria.data ?? []) as Uso[]).find(
+      (u) => u.package_id === pacoteB,
+    );
+    expect(linhaDaB?.vendas).toBe(1);
+    expect(linhaDaB?.pacientes_com_saldo).toBe(1);
+
+    // A recepcao da A pede a B pelo id: sem erro (a chamada e permitida) e
+    // sem nenhuma linha. Erro da RPC NAO conta como isolamento.
+    const recepcao = await logado(`iso-recepcao-${sufixo}@teste.dev`);
+    const alheia = await recepcao.rpc("uso_dos_pacotes", {
+      p_clinic_id: clinicaB,
+    });
+    expect(alheia.error).toBeNull();
+    expect(alheia.data).toEqual([]);
   });
 });
 

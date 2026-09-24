@@ -556,9 +556,10 @@ export async function executarPassoDeRegua(
       await pularRun(admin, run, "fora_janela");
       return { ok: true };
     }
-    // A abertura cai em OUTRO dia civil e um toque seguinte ja cobre a
-    // consulta: pular agora, em vez de devolver o job so para pula-lo na
-    // abertura (a mesma regra roda de novo no envio, com o relogio real).
+    // A abertura cai em OUTRO dia civil e um toque seguinte sai naquele mesmo
+    // dia, antes da consulta: pular agora, em vez de devolver o job so para
+    // pula-lo na abertura (a mesma regra roda de novo no envio, com o relogio
+    // real).
     if (
       regua.kind === "confirmacao" &&
       consulta &&
@@ -590,9 +591,10 @@ export async function executarPassoDeRegua(
   // TOQUE ATRASADO. O toque de confirmacao pode sair num dia civil diferente
   // do vencimento (janela, WhatsApp fora do ar, fila): o "Amanhã" do texto de
   // 24h passaria a mentir, colado no "é hoje" do toque de 3h. Com toque
-  // seguinte que ainda sai a tempo, este e pulado; sem, sai com o dia
-  // relativo corrigido (melhor avisar que nao avisar). Regras em
-  // lib/domain/toque-atrasado.ts.
+  // seguinte que sai no MESMO dia civil, antes da consulta, este e pulado;
+  // sem, sai com o dia relativo corrigido (melhor avisar que nao avisar: um
+  // toque seguinte que so sai num dia depois nao substitui o aviso de hoje).
+  // Regras em lib/domain/toque-atrasado.ts.
   let modelo = passo.fixed_body;
   if (
     regua.kind === "confirmacao" &&

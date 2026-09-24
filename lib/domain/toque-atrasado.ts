@@ -17,10 +17,27 @@ import { diaCivil, diasEntre } from "./horarios";
 //
 // A regra:
 //   - mesmo dia civil do vencimento: nada muda;
-//   - outro dia, e existe passo POSTERIOR da mesma regua que ainda sai antes
-//     da consulta: este toque e pulado ('toque_atrasado'), o seguinte cobre;
-//   - outro dia, sem passo posterior que saia a tempo: o toque sai (melhor
+//   - outro dia, e um passo POSTERIOR da mesma regua sai antes da consulta NO
+//     MESMO DIA CIVIL em que este sairia: este toque e pulado
+//     ('toque_atrasado'), o seguinte cobre aquele dia (o caso do "Amanhã"
+//     colado no "é hoje");
+//   - outro dia, sem passo posterior naquele mesmo dia: o toque sai (melhor
 //     avisar que nao avisar), com o dia relativo do texto corrigido.
+//
+// Por que o MESMO DIA, e nao "qualquer passo posterior a tempo" (revisao da
+// leva 1, 24/09/2026): janela de segunda a sabado, 08:00 as 18:00, consulta
+// terca as 18:30. O de 72h cai segunda 08:00, o de 24h cai terca 08:00 e o de
+// 3h sai terca 15:30. Com a regra antiga o de 72h cedia ao de 24h (ou ao de
+// 3h), o de 24h cedia ao de 3h, e o paciente ficava so com o toque de 3h. O
+// de 72h e o unico aviso de segunda: ele sai, e o texto dele (com a data por
+// extenso) continua certo.
+//
+// A cascata ("o posterior tambem sera pulado?") ja esta resolvida por essa
+// regra, sem recursao: se algum passo posterior sai naquele dia, o ULTIMO
+// deles nao tem outro depois dele no mesmo dia, entao nunca e pulado e de
+// fato avisa o paciente naquele dia (com o dia do texto corrigido, se for o
+// caso). A saida efetiva cresce com o offset, entao "algum sai naquele dia"
+// e "o que de fato sai naquele dia" sao a mesma pergunta.
 
 const MINUTOS_POR_DIA = 1440;
 
@@ -64,10 +81,13 @@ export function saidaEfetiva(entrada: {
 
 /**
  * Existe passo da mesma regua MAIS PERTO da consulta (offset maior, ainda
- * antes do evento) que sai antes dela? E ele que avisa o paciente, com o texto
- * certo para o dia.
+ * antes do evento) que sai antes dela e NO MESMO DIA CIVIL em que este toque
+ * sai (`agora`)? So esse cobre o toque atrasado: e ele que avisa o paciente
+ * naquele dia, com o texto certo. Um passo que so sai num dia seguinte nao
+ * cobre, porque pular este toque deixaria o paciente sem aviso neste dia (ver
+ * o cabecalho: a cascata ja esta resolvida por esta regra).
  */
-export function existePassoPosteriorATempo(entrada: {
+export function existePassoPosteriorNoMesmoDia(entrada: {
   passos: readonly { offsetMinutes: number }[];
   offsetDoToque: number;
   startsAt: Date;
@@ -76,6 +96,7 @@ export function existePassoPosteriorATempo(entrada: {
   timezone: string;
 }): boolean {
   const inicioDaConsulta = entrada.startsAt.getTime();
+  const diaDoToque = diaCivil(entrada.timezone, entrada.agora);
   return entrada.passos.some((passo) => {
     if (passo.offsetMinutes <= entrada.offsetDoToque || passo.offsetMinutes >= 0) {
       return false;
@@ -86,7 +107,11 @@ export function existePassoPosteriorATempo(entrada: {
       janela: entrada.janela,
       timezone: entrada.timezone,
     });
-    return saida !== null && saida.getTime() < inicioDaConsulta;
+    return (
+      saida !== null &&
+      saida.getTime() < inicioDaConsulta &&
+      diaCivil(entrada.timezone, saida) === diaDoToque
+    );
   });
 }
 
@@ -167,7 +192,7 @@ export function decidirToqueDeConfirmacao(entrada: {
   }
   if (
     !entrada.manual &&
-    existePassoPosteriorATempo({
+    existePassoPosteriorNoMesmoDia({
       passos: entrada.passos,
       offsetDoToque: entrada.offsetDoToque,
       startsAt: entrada.startsAt,

@@ -206,8 +206,13 @@ async function descartarInstancia(
     .eq("clinic_id", clinicId);
 }
 
+// O mesmo texto aparece em dois momentos (a tela o mantem do QR ate depois
+// de conectar), entao ele tem de ser verdade nos dois: nao afirma que o
+// numero ja conectou (com o QR na tela, ainda nao) e nao manda clicar num
+// botao que o cartao "WhatsApp conectado" nao tem. Conectado, a unica forma de
+// refazer a configuracao e desconectar e ler o QR de novo, e o texto diz isso.
 const AVISO_WEBHOOK =
-  "O número conectou, mas não foi possível configurar o recebimento de mensagens. As respostas dos pacientes não vão chegar até isso ser resolvido. Clique em Conectar WhatsApp de novo; se continuar, fale com o suporte.";
+  "Não foi possível configurar o recebimento de mensagens deste número: as respostas dos pacientes não vão chegar até isso ser resolvido. Para tentar de novo, clique em Conectar WhatsApp; se o número já estiver conectado, é preciso desconectar e ler o QR code outra vez. Se continuar, fale com o suporte.";
 
 /**
  * Webhook e pareamento, na ordem certa.

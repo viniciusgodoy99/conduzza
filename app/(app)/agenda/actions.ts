@@ -19,6 +19,7 @@ import {
   podeTransicionar,
   statusAposRemarcar,
 } from "@/lib/domain/appointment-status";
+import { diaCivil } from "@/lib/domain/horarios";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import {
   cabeNaJornada,
@@ -67,11 +68,13 @@ export type AgendaActionResult = {
   aviso?: string;
   /**
    * Cadastro rapido: o telefone ja era de um contato (casado pela chave, com
-   * ou sem o nono digito) e o id devolvido e o DELE. `nome` e o nome desse
-   * cadastro, para a tela perguntar "usar este cadastro?".
+   * ou sem o nono digito) e o id devolvido e o DELE. `nome` e `telefone` sao
+   * os desse cadastro (o nome digitado so entra quando ele estava sem nome):
+   * a tela mostra estes, nunca o que foi digitado, e avisa a recepcao.
    */
   existente?: boolean;
   nome?: string | null;
+  telefone?: string;
 };
 
 const idSchema = z.uuid();
@@ -147,18 +150,53 @@ export async function criarPacienteRapidoAction(
   const buscarExistente = async () =>
     await supabase
       .from("contact")
-      .select("id, name")
+      .select("id, name, phone_e164")
       .eq("clinic_id", guard.clinicId)
       .eq("phone_key", chaveDeTelefone(telefone))
       .maybeSingle();
-  const { data: existente } = await buscarExistente();
-  if (existente) {
+
+  // O telefone ja tem cadastro: a consulta fica NELE, com o nome DELE (a tela
+  // diz isso e nunca mostra o nome digitado como se fosse o do cadastro).
+  // Cadastro sem nome (contato do WhatsApp que chegou sem pushname) ganha o
+  // nome digitado, com update guardado por name is null: nunca sobrescreve um
+  // nome que alguem ja deu (achado R6).
+  const usarExistente = async (existente: {
+    id: string;
+    name: string | null;
+    phone_e164: string;
+  }): Promise<AgendaActionResult> => {
+    let nome = existente.name ?? null;
+    if (nome === null) {
+      const { data: nomeado } = await supabase
+        .from("contact")
+        .update({ name: parsed.data.name })
+        .eq("clinic_id", guard.clinicId)
+        .eq("id", existente.id)
+        .is("name", null)
+        .select("name");
+      if (nomeado && nomeado.length > 0) {
+        nome = (nomeado[0]?.name as string | null | undefined) ?? null;
+        await supabase.from("audit_log").insert({
+          clinic_id: guard.clinicId,
+          user_id: guard.context.userId,
+          action: "editou",
+          entity: "contact",
+          entity_id: existente.id,
+        });
+      }
+    }
     return {
       ok: true,
       id: existente.id,
       existente: true,
-      nome: existente.name ?? null,
+      nome,
+      telefone: existente.phone_e164,
     };
+  };
+
+  const { data: existente } = await buscarExistente();
+  if (existente) {
+    return await usarExistente(existente);
   }
   const { data, error } = await supabase
     .from("contact")
@@ -176,12 +214,7 @@ export async function criarPacienteRapidoAction(
     if (error?.code === "23505") {
       const { data: criadoAgora } = await buscarExistente();
       if (criadoAgora) {
-        return {
-          ok: true,
-          id: criadoAgora.id,
-          existente: true,
-          nome: criadoAgora.name ?? null,
-        };
+        return await usarExistente(criadoAgora);
       }
     }
     return { ok: false, error: "Não foi possível criar o cadastro." };
@@ -390,6 +423,7 @@ async function enfileirarAvisoDeRemarcacao(
     userId: string;
     appointmentId: string;
     contactId: string;
+    professionalId: string;
     inicio: Date;
   },
 ): Promise<string | undefined> {
@@ -441,6 +475,9 @@ async function enfileirarAvisoDeRemarcacao(
 
   // job_queue nao tem policy de escrita (quem grava e o sistema). O service
   // role entra SO aqui, depois de a sessao ter movido a consulta pela RLS.
+  // O payload leva o instante e o profissional que o texto anuncia: o worker
+  // (executarEnvioAtivo) reconfere a consulta na hora do envio e mata o aviso
+  // que ficou velho (remarcada de novo, cancelada, encerrada ou vencida).
   const admin = createAdminClient();
   const { error: erroJob } = await admin.from("job_queue").insert({
     clinic_id: params.clinicId,
@@ -449,6 +486,8 @@ async function enfileirarAvisoDeRemarcacao(
       contact_id: params.contactId,
       body,
       appointment_id: params.appointmentId,
+      starts_at: params.inicio.toISOString(),
+      professional_id: params.professionalId,
     },
   });
   if (erroJob) {
@@ -634,9 +673,14 @@ export async function remarcarAgendamentoAction(
 
   // Quem confirmou confirmou o HORARIO ANTIGO (decisao do dono em
   // 24/09/2026): a consulta volta para Agendado e a regua pede confirmacao
-  // de novo no horario novo. O gatilho preparar_remarcacao faz o mesmo no
-  // banco; aqui fica explicito.
-  const novoStatus = statusAposRemarcar(atual.status);
+  // de novo no horario novo. Paciente ja na clinica (Na recepcao, Em
+  // atendimento) so fica como esta numa troca no mesmo dia civil da clinica;
+  // para outro dia volta para Agendado (achado R4). O gatilho
+  // preparar_remarcacao faz o mesmo no banco; aqui fica explicito.
+  const mesmoDia =
+    diaCivil(guard.timezone, new Date(atual.starts_at)) ===
+    diaCivil(guard.timezone, novoInicio);
+  const novoStatus = statusAposRemarcar(atual.status, { mesmoDia });
 
   // Update condicional no horario, no profissional e na situacao que o
   // servidor leu: se alguem mexeu antes, zero linhas voltam e a tela avisa
@@ -708,6 +752,7 @@ export async function remarcarAgendamentoAction(
         userId: guard.context.userId,
         appointmentId: id,
         contactId: atual.contact_id,
+        professionalId: novo_professional_id,
         inicio: novoInicio,
       })
     : undefined;

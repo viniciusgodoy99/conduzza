@@ -13,6 +13,8 @@
 // confirmacao so por conter a palavra, e qualquer sobra cai em
 // 'nao_reconhecida'.
 
+import { passoCondizComAgenda } from "./cadence";
+
 export type IntencaoDoPaciente =
   "confirmar" | "remarcar" | "cancelar" | "nao_reconhecida";
 
@@ -176,6 +178,11 @@ export type ConsultaDoToque = {
   startsAt: string;
   /** Marca do pedido de remarcacao: o contexto desta consulta esta fechado. */
   remarcacaoPedidaEm: string | null;
+  /**
+   * A ultima vez que o HORARIO desta consulta mudou (linha kind='remarcacao'
+   * da trilha com starts_at diferente). Null quando nao mudou na janela.
+   */
+  horarioMudouEm: string | null;
 };
 
 /** Um toque de regua que saiu para o contato (cadence_run com sent_at). */
@@ -184,7 +191,28 @@ export type ToqueEnviado = {
   /** kind da regua: 'confirmacao', 'pos_falta', 'followup'... */
   kind: string | null;
   sentAt: string;
+  /** Vencimento da run. Na regua automatica, starts_at + offset do passo. */
+  scheduledFor: string;
+  /** offset_minutes do passo; null quando a leitura nao trouxe o passo. */
+  offsetMinutes: number | null;
+  /**
+   * Toque do "Cobrar agora" (payload.manual do job): a run nasce com
+   * scheduled_for = agora, entao a conta do passo nao diz nada sobre o
+   * horario que ele perguntou.
+   */
+  manual: boolean;
+  /** cadence_run.skipped_reason ('consulta_remarcada': o executor a venceu). */
+  skippedReason: string | null;
   consulta: ConsultaDoToque | null;
+};
+
+/**
+ * Aviso de remarcacao que SAIU para o contato: mensagem automatica, sem
+ * pergunta, que diz o horario novo e convida a responder.
+ */
+export type AvisoDeRemarcacao = {
+  appointmentId: string;
+  enviadoEm: string;
 };
 
 /** A oferta da lista de espera mais recente que perguntou algo ao contato. */
@@ -208,7 +236,12 @@ export type Citacao =
 
 export type FatosDaResposta = {
   agora: number;
-  /** Alguem da clinica assumiu a conversa (conversation.status). */
+  /**
+   * Alguem da clinica assumiu a conversa (conversation.status). So cala a
+   * resposta SEM citacao: o status nao diz QUANDO a conversa foi assumida, e
+   * nada tira a conversa dele sozinho. O botao tocado num toque mais recente
+   * que qualquer mensagem de gente prova a que pergunta o paciente respondeu.
+   */
   conversaEmAtendimento: boolean;
   citacao: Citacao;
   /**
@@ -222,6 +255,12 @@ export type FatosDaResposta = {
    * usuario ou ia, fora nota interna). Depois dela, "ok" e resposta a ela.
    */
   ultimaMensagemHumanaEm: string | null;
+  /**
+   * Avisos de remarcacao enviados ao contato na janela de contexto, em
+   * qualquer ordem. Nao perguntam nada, mas encerram o contexto dos toques
+   * de antes deles.
+   */
+  avisosDeRemarcacao: AvisoDeRemarcacao[];
 };
 
 export type MotivoDeSilencio =
@@ -233,6 +272,8 @@ export type MotivoDeSilencio =
   | "conversa_em_atendimento"
   | "toque_antigo"
   | "consulta_resolvida"
+  | "consulta_remarcada"
+  | "aviso_de_remarcacao"
   | "remarcacao_pedida"
   | "mais_de_uma_consulta";
 
@@ -260,18 +301,70 @@ function consultaAceitaResposta(
   );
 }
 
+/**
+ * O toque ainda pergunta pelo horario ATUAL da consulta? O "Confirmar" de
+ * "terca as 10h" nunca confirma a sexta as 16h para onde a consulta foi, e o
+ * "Cancelar" dele nunca cancela a sexta: a remarcacao volta a pedir
+ * confirmacao com toque novo (decisao do dono), e a resposta ao toque velho
+ * fica com a recepcao.
+ *
+ * - Run pulada como 'consulta_remarcada': o executor ja a deu por vencida.
+ * - Toque automatico: o vencimento menos o offset do passo tem de bater com
+ *   o starts_at atual, com a tolerancia de 1 minuto do executor
+ *   (passoCondizComAgenda). O manual nasce com scheduled_for = agora e fica
+ *   fora desta conta.
+ * - Qualquer toque: o horario nao pode ter mudado DEPOIS do envio. Cobre o
+ *   manual e a consulta que foi para sexta e voltou para terca.
+ * - Aviso de remarcacao DESTA consulta enviado depois do toque: o contexto
+ *   do toque acabou ali, mesmo com o botao velho citado.
+ */
+function toqueValeParaOHorarioAtual(
+  fatos: FatosDaResposta,
+  toque: ToqueEnviado,
+  consulta: ConsultaDoToque,
+): boolean {
+  if (toque.skippedReason === "consulta_remarcada") {
+    return false;
+  }
+  if (!toque.manual) {
+    if (toque.offsetMinutes === null) {
+      return false;
+    }
+    const condiz = passoCondizComAgenda({
+      startsAt: new Date(consulta.startsAt),
+      offsetMinutes: toque.offsetMinutes,
+      scheduledFor: new Date(toque.scheduledFor),
+    });
+    if (!condiz) {
+      return false;
+    }
+  }
+  const enviadoEm = instante(toque.sentAt);
+  if (instante(consulta.horarioMudouEm) > enviadoEm) {
+    return false;
+  }
+  return !fatos.avisosDeRemarcacao.some(
+    (aviso) =>
+      aviso.appointmentId === consulta.id &&
+      instante(aviso.enviadoEm) > enviadoEm,
+  );
+}
+
 function avaliarToque(
   fatos: FatosDaResposta,
   toque: ToqueEnviado,
   intencao: IntencaoDoPaciente,
-  exigirConsultaUnica: boolean,
+  citado: boolean,
 ): PerguntaRespondida {
   if (intencao === "nao_reconhecida") {
     return { alvo: "nenhum", motivo: "sem_intencao" };
   }
   // Alguem da clinica esta conduzindo: "1" pode ser a opcao 1 que a
-  // recepcionista ofereceu, "ok" pode ser o aceite de outro horario.
-  if (fatos.conversaEmAtendimento) {
+  // recepcionista ofereceu, "ok" pode ser o aceite de outro horario. O botao
+  // CITADO de um toque fala por si: se nenhuma mensagem de gente veio depois
+  // dele (a regra logo abaixo), o paciente respondeu ao toque, e a conversa
+  // assumida ha dias nao pode calar a confirmacao para sempre.
+  if (fatos.conversaEmAtendimento && !citado) {
     return { alvo: "nenhum", motivo: "conversa_em_atendimento" };
   }
   if (instante(fatos.ultimaMensagemHumanaEm) > instante(toque.sentAt)) {
@@ -284,12 +377,15 @@ function avaliarToque(
   if (!consulta || !consultaAceitaResposta(consulta, fatos.agora)) {
     return { alvo: "nenhum", motivo: "consulta_resolvida" };
   }
+  if (!toqueValeParaOHorarioAtual(fatos, toque, consulta)) {
+    return { alvo: "nenhum", motivo: "consulta_remarcada" };
+  }
   // Depois de "Remarcar" a conversa e da recepcao: o "ok" que o paciente
   // manda para "nossa recepcao vai falar com voce" nao confirma nada.
   if (consulta.remarcacaoPedidaEm) {
     return { alvo: "nenhum", motivo: "remarcacao_pedida" };
   }
-  if (exigirConsultaUnica) {
+  if (!citado) {
     // Sem citacao, duas consultas com toque recente sao duas perguntas de pe:
     // escolher uma e apostar. Para confirmar so conta quem ainda pode ser
     // confirmada; para cancelar ou remarcar, qualquer uma em aberto.
@@ -330,7 +426,9 @@ function avaliarToque(
  * Sem citacao, vale a pergunta MAIS RECENTE de fato enviada ao contato: o
  * ultimo toque de regua, a mensagem da oferta (so se ja saiu) ou a ultima
  * mensagem de alguem da clinica. Se a mais recente foi de gente, ninguem
- * interpreta. Empate com mensagem de gente conta como gente.
+ * interpreta. Empate com mensagem de gente conta como gente. O aviso de
+ * remarcacao entra na disputa como fala da clinica: o "ok" ou o "nao vou
+ * poder" depois dele responde a ELE, e quem le e a recepcao.
  */
 export function qualPerguntaFoiRespondida(
   fatos: FatosDaResposta,
@@ -350,20 +448,30 @@ export function qualPerguntaFoiRespondida(
     if (citacao.toque.kind !== "confirmacao") {
       return { alvo: "nenhum", motivo: "outra_regua_mais_recente" };
     }
-    return avaliarToque(fatos, citacao.toque, intencao, false);
+    return avaliarToque(fatos, citacao.toque, intencao, true);
   }
 
   const ultimoToque = fatos.toques[0] ?? null;
   const tToque = instante(ultimoToque?.sentAt ?? null);
   const tOferta = instante(fatos.oferta?.enviadaEm ?? null);
   const tHumano = instante(fatos.ultimaMensagemHumanaEm);
-  const maisRecente = Math.max(tToque, tOferta, tHumano);
+  const tAviso = Math.max(
+    Number.NEGATIVE_INFINITY,
+    ...fatos.avisosDeRemarcacao.map((aviso) => instante(aviso.enviadoEm)),
+  );
+  const maisRecente = Math.max(tToque, tOferta, tHumano, tAviso);
 
   if (maisRecente === Number.NEGATIVE_INFINITY) {
     return { alvo: "nenhum", motivo: "sem_pergunta" };
   }
   if (tHumano === maisRecente) {
     return { alvo: "nenhum", motivo: "clinica_falou_depois" };
+  }
+  // "Sua consulta foi remarcada para sexta as 16h, qualquer duvida e so
+  // responder": nao pergunta nada, e o toque de antes dele perguntou por
+  // outro horario. Empate com toque ou oferta conta como aviso.
+  if (tAviso === maisRecente) {
+    return { alvo: "nenhum", motivo: "aviso_de_remarcacao" };
   }
   if (fatos.oferta && tOferta === maisRecente) {
     return intencaoDeOferta === "nao_reconhecida"
@@ -378,5 +486,5 @@ export function qualPerguntaFoiRespondida(
   if (ultimoToque.kind !== "confirmacao") {
     return { alvo: "nenhum", motivo: "outra_regua_mais_recente" };
   }
-  return avaliarToque(fatos, ultimoToque, intencao, true);
+  return avaliarToque(fatos, ultimoToque, intencao, false);
 }

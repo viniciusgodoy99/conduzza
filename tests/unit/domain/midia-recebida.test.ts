@@ -183,10 +183,84 @@ describe("nome do arquivo baixado", () => {
     ).toBe("conduzza-documento.xlsx");
   });
 
-  it("documento de tipo desconhecido baixa sem extensao em vez de mentir", () => {
+  it("documento do paciente de tipo desconhecido baixa sem extensao em vez de mentir", () => {
     expect(nomeParaBaixar({ content_type: "documento", body: null })).toBe(
       "conduzza-documento",
     );
+    expect(
+      nomeParaBaixar({
+        content_type: "documento",
+        body: null,
+        direction: "entrada",
+      }),
+    ).toBe("conduzza-documento");
+  });
+
+  it("PDF enviado pela clinica (linha de saida sem tipo) baixa como .pdf", () => {
+    // A linha de saida nasce sem media_mimetype nem media_filename, e o body
+    // e a legenda (ou vazio): antes da reserva baixava sem extensao.
+    expect(
+      nomeParaBaixar({
+        content_type: "documento",
+        body: null,
+        direction: "saida",
+      }),
+    ).toBe("conduzza-documento.pdf");
+    expect(
+      nomeParaBaixar({
+        content_type: "documento",
+        body: "segue o preparo do exame",
+        media_filename: null,
+        media_mimetype: null,
+        direction: "saida",
+      }),
+    ).toBe("conduzza-documento.pdf");
+    // Tipo generico guardado tambem cai na reserva.
+    expect(
+      nomeParaBaixar({
+        content_type: "documento",
+        body: null,
+        media_mimetype: "application/octet-stream",
+        direction: "saida",
+      }),
+    ).toBe("conduzza-documento.pdf");
+    // Tipo real guardado continua valendo.
+    expect(
+      nomeParaBaixar({
+        content_type: "documento",
+        body: null,
+        media_mimetype: "application/pdf",
+        direction: "saida",
+      }),
+    ).toBe("conduzza-documento.pdf");
+  });
+
+  it("caractere de controle bidirecional nao finge outra extensao", () => {
+    // U+202E (RLO): na tela, 'laudo<RLO>fdp.exe' apareceria 'laudoexe.pdf'.
+    expect(nomeSeguroDeArquivo("laudo‮fdp.exe")).toBe("laudofdp.exe");
+    expect(
+      nomeSeguroDeArquivo(
+        "⁦exame⁩‏‎‪‫‬‭⁧⁨ final​﻿.pdf",
+      ),
+    ).toBe("exame final.pdf");
+    expect(
+      nomeParaBaixar({
+        content_type: "documento",
+        body: null,
+        media_filename: "laudo‮fdp.exe",
+        media_mimetype: "application/pdf",
+        direction: "entrada",
+      }),
+    ).toBe("laudofdp.exe");
+    expect(
+      nomeOriginalDoArquivo({
+        content_type: "documento",
+        body: null,
+        media_filename: "laudo‮fdp.exe",
+      }),
+    ).toBe("laudofdp.exe");
+    // So invisivel vira nulo.
+    expect(nomeSeguroDeArquivo("‮⁦‏")).toBeNull();
   });
 
   it("o nome original vem primeiro, sanitizado", () => {

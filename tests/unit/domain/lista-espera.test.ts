@@ -8,9 +8,11 @@ import {
   liberacaoPorContato,
   montarOnda,
   ordenarFila,
+  proximaEsperaPorReconexao,
   proximaTentativaDaVaga,
   temFolgaParaResponder,
   turnoDoInstante,
+  FOLGA_DA_ULTIMA_VOLTA_MS,
   FOLGA_DO_FECHAMENTO_MS,
   REPOUSO_POS_OFERTA_MS,
   type EntradaDaFila,
@@ -459,6 +461,74 @@ describe("temFolgaParaResponder", () => {
         agora: new Date("2026-09-24T12:40:00Z").getTime(),
       }),
     ).toBe(false);
+  });
+});
+
+describe("proximaEsperaPorReconexao (WhatsApp fora do ar)", () => {
+  // Revisao da leva 1, achado R2: a espera pela reconexao tem teto de TEMPO
+  // (o limite da vaga), nao de voltas. Uma queda de sexta a noite nao pode
+  // matar a oferta da vaga de segunda.
+  const MIN = 60_000;
+  const agora = new Date("2026-09-25T20:30:00Z").getTime();
+  const longe = agora + 60 * 60 * MIN;
+
+  it("cresce de 5 em 5 minutos e para em 30", () => {
+    const esperas = [0, 1, 2, 3, 4, 5, 6, 40].map(
+      (passo) =>
+        (proximaEsperaPorReconexao({ passo, agora, limite: longe })! - agora) /
+        MIN,
+    );
+    expect(esperas).toEqual([5, 10, 15, 20, 25, 30, 30, 30]);
+  });
+
+  it("uma queda de fim de semana nunca esgota as voltas antes do limite", () => {
+    // Sexta 17h30 ate segunda 8h30 (limite = 9h menos 30 min de janela).
+    const inicio = new Date("2026-09-25T20:30:00Z").getTime();
+    const limite = new Date("2026-09-28T11:30:00Z").getTime();
+    let instante = inicio;
+    let passo = 0;
+    let ultimo = inicio;
+    for (;;) {
+      const quando = proximaEsperaPorReconexao({ passo, agora: instante, limite });
+      if (quando === null) {
+        break;
+      }
+      expect(quando).toBeGreaterThan(instante);
+      expect(quando).toBeLessThan(limite);
+      ultimo = quando;
+      instante = quando;
+      passo += 1;
+    }
+    // Muito mais que 20 voltas, e a ultima cai 1 minuto antes do limite.
+    expect(passo).toBeGreaterThan(20);
+    expect(ultimo).toBe(limite - FOLGA_DA_ULTIMA_VOLTA_MS);
+  });
+
+  it("perto do limite, a última volta cai 1 minuto antes dele", () => {
+    const limite = agora + 12 * MIN;
+    expect(proximaEsperaPorReconexao({ passo: 5, agora, limite })).toBe(
+      limite - FOLGA_DA_ULTIMA_VOLTA_MS,
+    );
+  });
+
+  it("sem tempo útil (menos de 1 minuto de espera antes do limite), desiste", () => {
+    expect(
+      proximaEsperaPorReconexao({ passo: 0, agora, limite: agora + 90_000 }),
+    ).toBeNull();
+    expect(
+      proximaEsperaPorReconexao({ passo: 0, agora, limite: agora }),
+    ).toBeNull();
+    expect(
+      proximaEsperaPorReconexao({ passo: 0, agora, limite: agora - MIN }),
+    ).toBeNull();
+  });
+
+  it("passo inválido no payload conta como a primeira volta", () => {
+    for (const passo of [-3, 1.5, Number.NaN]) {
+      expect(proximaEsperaPorReconexao({ passo, agora, limite: longe })).toBe(
+        agora + 5 * MIN,
+      );
+    }
   });
 });
 

@@ -42,13 +42,16 @@ type LinhaDaMensagem = {
   body: string | null;
   media_filename: string | null;
   media_mimetype: string | null;
+  direction: string;
 };
 
 // O nome do download sai de nomeParaBaixar (lib/domain/midia-recebida.ts):
 // `download: true` faria o Storage usar o NOME DO OBJETO, que e um uuid sem
 // extensao, e o antigo ".pdf" fixo fazia uma planilha abrir num leitor de PDF.
 // O nome original (sanitizado) vem primeiro; sem ele, "conduzza-documento"
-// com a extensao do tipo REAL, que o worker guarda em media_mimetype.
+// com a extensao do tipo REAL, que o worker guarda em media_mimetype. A
+// direcao entra porque o documento que a clinica enviou nasce sem tipo e e
+// sempre PDF.
 
 /** `storage://midia-conversas/<clinic>/<message>` vira `<clinic>/<message>`. */
 function caminhoDoObjeto(mediaUrl: string | null): string | null {
@@ -78,7 +81,7 @@ export async function GET(
   const { data, error } = await supabase
     .from("message")
     .select(
-      "clinic_id, content_type, media_url, deleted_at, body, media_filename, media_mimetype",
+      "clinic_id, content_type, media_url, deleted_at, body, media_filename, media_mimetype, direction",
     )
     .eq("id", messageId)
     .maybeSingle();

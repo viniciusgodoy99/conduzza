@@ -92,10 +92,21 @@ function horaCurta(valor: string): string {
 // prevista no modelo de dados (catalogo_clinico.sql e scheduling.ts). A tela
 // diz isso em texto e pede confirmacao ao salvar, para uma inversao por
 // engano (18:00 as 08:00) nao virar plantao calado (achado 43).
+//
+// Fim 00:00 NAO e plantao: e "ate a meia-noite". O motor (scheduling.ts e
+// vaga_de_espera_indisponivel no banco) leva esse fim para 00:00 do dia
+// seguinte, entao o ultimo horario termina exatamente a meia-noite e nenhum
+// comeca depois dela. O campo de hora nao aceita 24:00, e 23:59 perderia o
+// ultimo horario: 00:00 e o unico jeito de dizer "ate a meia-noite".
+function terminaAMeiaNoite(faixa: { ends_at: string }): boolean {
+  return horaCurta(faixa.ends_at) === "00:00";
+}
+
 function viraODia(faixa: { starts_at: string; ends_at: string }): boolean {
   return (
     faixa.starts_at !== "" &&
     faixa.ends_at !== "" &&
+    !terminaAMeiaNoite(faixa) &&
     horaCurta(faixa.ends_at) < horaCurta(faixa.starts_at)
   );
 }
@@ -468,7 +479,9 @@ export function ProfissionaisTab({
                               às {faixa.ends_at}
                               {viraODia(faixa)
                                 ? " (termina no dia seguinte)"
-                                : ""}
+                                : terminaAMeiaNoite(faixa)
+                                  ? " (meia-noite)"
+                                  : ""}
                               {temVariasUnidades && faixa.unit_id
                                 ? `, ${
                                     catalogo.unidades.find(
@@ -723,7 +736,7 @@ export function ProfissionaisTab({
                   />
                   <p>
                     Uma faixa termina no dia seguinte (plantão noturno): a
-                    agenda vai abrir horários depois da meia noite. Se o fim
+                    agenda vai abrir horários depois da meia-noite. Se o fim
                     ficou antes do início por engano, corrija a faixa.
                   </p>
                 </div>

@@ -10,6 +10,11 @@ import { adminClient, anonClient } from "./stack";
 // - os toques pendentes do horario antigo sao pulados;
 // - consulta com situacao final nao se move;
 // - a linha do historico nao atravessa clinica.
+// Migration 20260924130000 (achados R4 e R19):
+// - Na recepcao e Em atendimento movidas para OUTRO DIA voltam para
+//   'agendado'; no mesmo dia ficam como estao;
+// - a sessao so grava linha de status como equipe (changed_by 'usuario'),
+//   sem evento, e com a hora do banco (changed_at forjado e sobrescrito).
 
 const admin = adminClient();
 const sufixo = crypto.randomUUID().slice(0, 8);
@@ -291,6 +296,54 @@ describe("remarcar pela sessão da recepção", () => {
     );
     expect(intacta!.status).toBe("faltou");
   });
+
+  it("paciente que já chegou, movido para outro dia, volta para agendado", async () => {
+    const recepcao = await logado(`rem-recep-${sufixo}@teste.dev`);
+    const casos: [number, "na_recepcao" | "em_atendimento"][] = [
+      [11, "na_recepcao"],
+      [12, "em_atendimento"],
+    ];
+    for (const [dias, status] of casos) {
+      const consulta = await novaConsulta(emDias(dias), {
+        status,
+        confirmation_channel: "telefone",
+        confirmed_by_user_id: recepcaoId,
+      });
+      // Tres dias depois, no mesmo horario: outro dia civil em Fortaleza.
+      const novoInicio = emDias(dias + 3);
+      const { data, error } = await recepcao
+        .from("appointment")
+        .update({
+          starts_at: novoInicio.toISOString(),
+          ends_at: new Date(novoInicio.getTime() + 30 * 60_000).toISOString(),
+        })
+        .eq("id", consulta)
+        .select("status, confirmation_channel, confirmed_by_user_id");
+      expect(error).toBeNull();
+      expect(data?.[0]?.status).toBe("agendado");
+      expect(data?.[0]?.confirmation_channel).toBeNull();
+      expect(data?.[0]?.confirmed_by_user_id).toBeNull();
+    }
+  });
+
+  it("paciente que já chegou, movido no mesmo dia, mantém a situação", async () => {
+    // 13:00 UTC e 15:00 UTC: 10:00 e 12:00 em Fortaleza, o mesmo dia civil
+    // no fuso padrao da clinica de teste.
+    const inicio = emDias(16, 13);
+    const consulta = await novaConsulta(inicio, { status: "na_recepcao" });
+    const recepcao = await logado(`rem-recep-${sufixo}@teste.dev`);
+    const novoInicio = emDias(16, 15);
+    const { data, error } = await recepcao
+      .from("appointment")
+      .update({
+        starts_at: novoInicio.toISOString(),
+        ends_at: new Date(novoInicio.getTime() + 30 * 60_000).toISOString(),
+      })
+      .eq("id", consulta)
+      .select("status");
+    expect(error).toBeNull();
+    expect(data?.[0]?.status).toBe("na_recepcao");
+  });
 });
 
 describe("a trilha não se forja", () => {
@@ -334,6 +387,91 @@ describe("a trilha não se forja", () => {
         changed_by_user_id: recepcaoId,
       });
     expect(mesmaClinica).toBeNull();
+  });
+
+  it("a sessão não grava linha em nome do paciente, do sistema nem o pedido de remarcação", async () => {
+    const consulta = await novaConsulta(emDias(17));
+    const recepcao = await logado(`rem-recep-${sufixo}@teste.dev`);
+    const tentativas: Record<string, unknown>[] = [
+      { status: "cancelado_paciente", changed_by: "paciente" },
+      { status: "agendado", changed_by: "sistema" },
+      { status: "agendado", changed_by: "ia" },
+      {
+        status: "agendado",
+        changed_by: "usuario",
+        event: "remarcacao_pedida",
+      },
+      {
+        status: "agendado",
+        changed_by: "paciente",
+        event: "remarcacao_pedida",
+      },
+    ];
+    for (const tentativa of tentativas) {
+      const { error } = await recepcao
+        .from("appointment_status_history")
+        .insert({
+          clinic_id: clinicaA,
+          appointment_id: consulta,
+          changed_by_user_id: recepcaoId,
+          ...tentativa,
+        });
+      expect(error?.code).toBe(RLS_VIOLATION);
+    }
+    // Nada entrou: a unica linha e a inicial do gatilho do INSERT (created_by
+    // padrao 'usuario', sem evento).
+    const { data: gravadas } = await admin
+      .from("appointment_status_history")
+      .select("changed_by, event")
+      .eq("appointment_id", consulta)
+      .throwOnError();
+    expect(gravadas).toHaveLength(1);
+    expect(gravadas![0]!.changed_by).toBe("usuario");
+    expect(gravadas![0]!.event).toBeNull();
+  });
+
+  it("a hora da linha gravada pela sessão é a do banco", async () => {
+    const consulta = await novaConsulta(emDias(18));
+    const recepcao = await logado(`rem-recep-${sufixo}@teste.dev`);
+    const forjada = new Date(Date.now() - 20 * 86_400_000);
+    const { data, error } = await recepcao
+      .from("appointment_status_history")
+      .insert({
+        clinic_id: clinicaA,
+        appointment_id: consulta,
+        status: "agendado",
+        changed_by: "usuario",
+        changed_by_user_id: recepcaoId,
+        changed_at: forjada.toISOString(),
+      })
+      .select("changed_at")
+      .single();
+    expect(error).toBeNull();
+    const gravada = new Date(data!.changed_at as string).getTime();
+    // Folga para relogio da maquina de teste diferente do banco.
+    expect(Math.abs(gravada - Date.now())).toBeLessThan(10 * 60_000);
+    expect(gravada).toBeGreaterThan(forjada.getTime() + 19 * 86_400_000);
+  });
+
+  it("sem sessão (sistema) a hora informada continua valendo", async () => {
+    const consulta = await novaConsulta(emDias(19));
+    const passada = new Date(Date.now() - 3 * 86_400_000);
+    passada.setUTCMilliseconds(0);
+    const { data } = await admin
+      .from("appointment_status_history")
+      .insert({
+        clinic_id: clinicaA,
+        appointment_id: consulta,
+        status: "agendado",
+        changed_by: "sistema",
+        changed_at: passada.toISOString(),
+      })
+      .select("changed_at")
+      .single()
+      .throwOnError();
+    expect(new Date(data!.changed_at as string).getTime()).toBe(
+      passada.getTime(),
+    );
   });
 
   it("membro de outra clínica não lê a trilha de remarcação (que existe)", async () => {

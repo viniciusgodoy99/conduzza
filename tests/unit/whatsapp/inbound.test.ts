@@ -565,6 +565,17 @@ describe("saneamento do nome e do tipo do arquivo", () => {
     expect(sanearNomeDeArquivo(42)).toBeNull();
   });
 
+  it("tira caractere de formatação invisível, inclusive o bidirecional", () => {
+    // U+202E (RLO): 'laudo<RLO>fdp.exe' apareceria na tela como 'laudoexe.pdf'.
+    expect(sanearNomeDeArquivo("laudo‮fdp.exe")).toBe("laudofdp.exe");
+    expect(
+      sanearNomeDeArquivo(
+        "⁦exame⁩‎‏‪‫‬‭⁧⁨​﻿.pdf",
+      ),
+    ).toBe("exame.pdf");
+    expect(sanearNomeDeArquivo("‮⁦‏")).toBeNull();
+  });
+
   it("corta por caractere, sem partir emoji ao meio", () => {
     const nome = sanearNomeDeArquivo(`${"a".repeat(199)}😀😀`);
     expect(nome).toBe(`${"a".repeat(199)}😀`);

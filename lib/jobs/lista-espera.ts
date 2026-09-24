@@ -7,6 +7,7 @@ import {
   diaDaSemanaNoFuso,
   liberacaoPorContato,
   montarOnda,
+  proximaEsperaPorReconexao,
   proximaTentativaDaVaga,
   temFolgaParaResponder,
   turnoDoInstante,
@@ -40,8 +41,64 @@ import type { Job, ResultadoDeJob } from "@/lib/jobs/worker";
 const TETO_DE_CANDIDATOS = 30;
 /** A fila lida por vaga (a mesma ordem de chegada da tela). */
 const TAMANHO_DA_FILA_LIDA = 500;
-/** WhatsApp fora do ar: a onda espera a reconexao em passos de 10 minutos. */
-const ESPERA_POR_RECONEXAO_MS = 10 * 60_000;
+/** Motivo gravado em job_queue.ultimo_motivo_devolucao na espera. */
+const MOTIVO_WHATSAPP_DESCONECTADO = "whatsapp_desconectado";
+/** Chave do payload: quantas voltas a vaga ja deu esperando a reconexao. */
+const CHAVE_DO_PASSO_DE_RECONEXAO = "passo_reconexao";
+
+/**
+ * WhatsApp fora do ar: a vaga espera a reconexao ate nao sobrar tempo util
+ * para oferecer (proximaEsperaPorReconexao), em passos de 5 ate 30 minutos.
+ *
+ * A espera NAO passa por reagendar_job: la cada devolucao soma no teto de 20
+ * (o sinal de "canal que nao abre" dos envios), e uma queda de sexta a noite
+ * matava o job em cerca de 3 horas, com a vaga de segunda nunca oferecida e
+ * ninguem avisado (revisao da leva 1, achado R2). Aqui o prazo e o proprio
+ * horario: esta passagem conclui e deixa a CONTINUACAO na fila (mesmo payload,
+ * passo + 1, contador de devolucoes zerado por ser linha nova). O
+ * reagendamento por 'vaga_aguardando_outra_oferta' continua pelo caminho
+ * comum. Se a continuacao nao puder ser gravada, a devolucao comum segura a
+ * vaga (gasta o teto, mas nao perde a vaga agora).
+ */
+async function aguardarReconexao(
+  admin: SupabaseClient,
+  job: Job,
+  limite: number,
+): Promise<ResultadoDeJob> {
+  const registrado = job.payload[CHAVE_DO_PASSO_DE_RECONEXAO];
+  const passo =
+    typeof registrado === "number" &&
+    Number.isInteger(registrado) &&
+    registrado >= 0
+      ? registrado
+      : 0;
+  const quando = proximaEsperaPorReconexao({
+    passo,
+    agora: Date.now(),
+    limite,
+  });
+  if (quando === null) {
+    // Sem tempo util para oferecer: desistir e o desfecho certo.
+    return { ok: true };
+  }
+  const runAt = new Date(quando).toISOString();
+  const { error } = await admin.from("job_queue").insert({
+    clinic_id: job.clinic_id,
+    kind: "oferecer_lista_espera",
+    payload: { ...job.payload, [CHAVE_DO_PASSO_DE_RECONEXAO]: passo + 1 },
+    run_at: runAt,
+    ultimo_motivo_devolucao: MOTIVO_WHATSAPP_DESCONECTADO,
+  });
+  if (error) {
+    log.warn("oferta_de_espera_continuacao_falhou", {
+      clinic_id: job.clinic_id,
+      job_id: job.id,
+      error_code: error.code ?? null,
+    });
+    return { reagendar: runAt, motivo: MOTIVO_WHATSAPP_DESCONECTADO };
+  }
+  return { ok: true };
+}
 
 type Slot = {
   professionalId: string;
@@ -290,7 +347,8 @@ export async function executarOfertaDeEspera(
   }
   // WhatsApp fora do ar: a oferta NAO nasce, porque o prazo de resposta
   // contaria com ninguem recebendo (e a onda queimaria a vez de quem nunca
-  // viu a mensagem). A onda espera a reconexao, ate o limite.
+  // viu a mensagem). A onda espera a reconexao, ate o limite, sem gastar o
+  // teto de devolucoes da fila (aguardarReconexao).
   const { data: conta, error: erroConta } = await admin
     .from("whatsapp_account")
     .select("connection_status")
@@ -303,13 +361,7 @@ export async function executarOfertaDeEspera(
     return { ok: true };
   }
   if (conta.connection_status !== "conectado") {
-    const quando = Date.now() + ESPERA_POR_RECONEXAO_MS;
-    return quando < limite
-      ? {
-          reagendar: new Date(quando).toISOString(),
-          motivo: "whatsapp_desconectado",
-        }
-      : { ok: true };
+    return aguardarReconexao(admin, job, limite);
   }
 
   // EXCLUSOES PERMANENTES para esta vaga.

@@ -176,7 +176,8 @@ export function normalizarMimetype(
 // Lista FECHADA. SVG e HTML ficam de fora de proposito: baixados com a
 // extensao certa, abririam no navegador com script. Fora da lista, o arquivo
 // baixa sem extensao, que e honesto: .pdf fixo fazia uma planilha abrir num
-// leitor de PDF e dar erro.
+// leitor de PDF e dar erro. A lista so decide a extensao TIRADA DO TIPO: o
+// nome original que o paciente mandou mantem a extensao que ja tiver.
 const EXTENSOES: Readonly<Record<string, string>> = {
   "application/pdf": "pdf",
   "application/msword": "doc",
@@ -216,11 +217,21 @@ export function extensaoDoMimetype(
 
 const TAMANHO_MAXIMO_DO_NOME = 120;
 
+// Controle (Cc) e FORMATACAO Unicode (Cf). Cf e o que importa aqui: inclui os
+// controles bidirecionais (U+200E, U+200F, U+202A a U+202E, U+2066 a U+2069)
+// e os invisiveis de largura zero. Um contato manda 'laudo<RLO>fdp.exe' e a
+// tela desenha 'laudoexe.pdf': o cartao mostraria PDF e o download seria um
+// executavel. Tirando o Cf, o nome aparece como e ('laudofdp.exe').
+const CARACTERES_PROIBIDOS = /[\p{Cc}\p{Cf}\\/:*?"<>|]/gu;
+
 /**
  * Nome de arquivo que pode ir para o Content-Disposition e para a tela.
  *
- * Tira separador de pasta, caractere proibido no Windows e controle; corta
- * nomes enormes preservando a extensao. Nome que sobra vazio vira nulo.
+ * Tira separador de pasta, caractere proibido no Windows, controle e
+ * caractere de formatacao invisivel (inclusive os bidirecionais); corta nomes
+ * enormes preservando a extensao. Nome que sobra vazio vira nulo.
+ *
+ * Roda na LEITURA (tela e download), entao vale tambem para nome ja gravado.
  */
 export function nomeSeguroDeArquivo(
   nome: string | null | undefined,
@@ -229,7 +240,7 @@ export function nomeSeguroDeArquivo(
     return null;
   }
   const limpo = nome
-    .replace(/[\u0000-\u001f\u007f\\/:*?"<>|]/g, "")
+    .replace(CARACTERES_PROIBIDOS, "")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^\.+/, "")
@@ -253,6 +264,8 @@ export type ArquivoDaMensagem = {
   body: string | null;
   media_filename?: string | null;
   media_mimetype?: string | null;
+  /** 'entrada' (do paciente) ou 'saida' (da clinica) */
+  direction?: string | null;
 };
 
 /**
@@ -284,16 +297,37 @@ function rotuloDoArquivo(mensagem: ArquivoDaMensagem): string {
 }
 
 /**
+ * Extensao quando o tipo guardado nao diz nada (nulo ou fora da lista).
+ *
+ * - Foto: .jpg, porque o WhatsApp sempre recomprime foto em JPEG.
+ * - Documento que a CLINICA enviou: .pdf. A linha de saida nasce sem
+ *   media_mimetype (send.ts so repassa o tipo ao provedor), e o unico
+ *   documento que sai e PDF: o anexo do Inbox (MIMES_ACEITOS em
+ *   atendimento/actions.ts) e o do passo da regua (MIMES_DO_ANEXO em
+ *   automacoes/actions.ts) so aceitam application/pdf. Sem isto o PDF enviado
+ *   baixava como "conduzza-documento", sem extensao.
+ * - Documento do PACIENTE sem tipo: nenhuma. Pode ser planilha, e .pdf fixo a
+ *   faria abrir num leitor de PDF e dar erro.
+ */
+function extensaoDeReserva(mensagem: ArquivoDaMensagem): string | null {
+  if (mensagem.content_type === "imagem") return "jpg";
+  if (mensagem.content_type === "documento" && mensagem.direction === "saida") {
+    return "pdf";
+  }
+  return null;
+}
+
+/**
  * Nome com que o arquivo chega ao computador de quem baixa.
  *
  * Ordem: o nome original (com a extensao do tipo real quando faltar), e
- * depois "conduzza-<tipo>" com a extensao do tipo real. Foto antiga sem tipo
- * guardado continua .jpg, porque o WhatsApp sempre recomprime foto em JPEG.
+ * depois "conduzza-<tipo>" com a extensao do tipo real. Sem tipo que sirva,
+ * vale a extensao de reserva (foto .jpg, PDF enviado pela clinica .pdf).
  */
 export function nomeParaBaixar(mensagem: ArquivoDaMensagem): string {
   const extensao =
     extensaoDoMimetype(mensagem.media_mimetype) ??
-    (mensagem.content_type === "imagem" ? "jpg" : null);
+    extensaoDeReserva(mensagem);
   const original = nomeOriginalDoArquivo(mensagem);
   if (original) {
     return temExtensao(original) || !extensao

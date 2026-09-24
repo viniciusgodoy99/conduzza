@@ -288,6 +288,132 @@ async function ecosDaClinica(clinicId: string) {
   return (data ?? []) as { payload: { body?: string } }[];
 }
 
+async function responderCitando(
+  cenario: Cenario,
+  body: string,
+  quotedWaMessageId: string,
+): Promise<void> {
+  await interceptarRespostaDePaciente(admin, {
+    clinicId: cenario.clinicId,
+    contactId: cenario.contactId,
+    conversationId: cenario.conversationId,
+    body,
+    contentType: "texto",
+    quotedWaMessageId,
+  });
+}
+
+/**
+ * A recepção move a consulta pela Agenda: os gatilhos voltam a situação para
+ * 'agendado' e gravam a linha de remarcação na trilha. Devolve o novo início.
+ */
+async function moverConsulta(cenario: Cenario, emMs: number): Promise<Date> {
+  const inicio = new Date(Date.now() + emMs);
+  await admin
+    .from("appointment")
+    .update({
+      starts_at: inicio.toISOString(),
+      ends_at: new Date(inicio.getTime() + 30 * MINUTO).toISOString(),
+    })
+    .eq("id", cenario.appointmentId)
+    .throwOnError();
+  return inicio;
+}
+
+const AVISO_DE_TESTE = "Aviso de remarcação (teste)";
+
+/**
+ * O aviso de remarcação SAIU para o paciente, como o worker deixa o mundo:
+ * job enviar_mensagem_ativa com a consulta no payload e a mensagem enviada
+ * com o job_id, autor sistema. O job nasce concluído: nenhum motor o executa.
+ */
+async function avisoDeRemarcacaoEnviado(
+  cenario: Cenario,
+  emMs: number,
+): Promise<void> {
+  const { data: job } = await admin
+    .from("job_queue")
+    .insert({
+      clinic_id: cenario.clinicId,
+      kind: "enviar_mensagem_ativa",
+      status: "concluido",
+      payload: {
+        contact_id: cenario.contactId,
+        body: AVISO_DE_TESTE,
+        appointment_id: cenario.appointmentId,
+      },
+    })
+    .select("id")
+    .single()
+    .throwOnError();
+  await admin
+    .from("message")
+    .insert({
+      clinic_id: cenario.clinicId,
+      conversation_id: cenario.conversationId,
+      direction: "saida",
+      author: "sistema",
+      content_type: "texto",
+      body: AVISO_DE_TESTE,
+      job_id: job!.id,
+      delivery_status: "entregue",
+      created_at: new Date(Date.now() + emMs).toISOString(),
+      billable: false,
+      cost_cents: 0,
+    })
+    .throwOnError();
+}
+
+/** Ecos do interceptador, sem o aviso de remarcação simulado. */
+async function ecosSemAviso(clinicId: string) {
+  return (await ecosDaClinica(clinicId)).filter(
+    (eco) => eco.payload.body !== AVISO_DE_TESTE,
+  );
+}
+
+/**
+ * Toque do "Cobrar agora": o passo de 24h (o texto de "amanhã") com a run
+ * vencida na hora do clique, e o job com a marca manual quando `manual`.
+ */
+async function toqueDoCobrarAgora(
+  cenario: Cenario,
+  manual: boolean,
+): Promise<void> {
+  const { data: passo } = await admin
+    .from("cadence_step")
+    .select("id")
+    .eq("clinic_id", cenario.clinicId)
+    .eq("offset_minutes", -1440)
+    .single()
+    .throwOnError();
+  const { data: run } = await admin
+    .from("cadence_run")
+    .insert({
+      clinic_id: cenario.clinicId,
+      cadence_step_id: passo!.id,
+      contact_id: cenario.contactId,
+      appointment_id: cenario.appointmentId,
+      scheduled_for: new Date(
+        Math.floor(Date.now() / MINUTO) * MINUTO,
+      ).toISOString(),
+      sent_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single()
+    .throwOnError();
+  await admin
+    .from("job_queue")
+    .insert({
+      clinic_id: cenario.clinicId,
+      kind: "executar_passo_de_regua",
+      status: "concluido",
+      payload: manual
+        ? { cadence_run_id: run!.id, manual: true }
+        : { cadence_run_id: run!.id },
+    })
+    .throwOnError();
+}
+
 afterAll(async () => {
   for (const clinicId of clinicasCriadas) {
     await admin.from("clinic").delete().eq("id", clinicId);
@@ -516,6 +642,132 @@ describe("resposta do paciente ao toque de confirmação", () => {
       .throwOnError();
 
     await responder(cenario, "Cancelar");
+
+    expect((await statusDaConsulta(cenario)).status).toBe(
+      "aguardando_confirmacao",
+    );
+    expect(await ecosDaClinica(cenario.clinicId)).toHaveLength(0);
+  });
+
+  // Revisão da leva 1 (R1): responder no Atendimento exige assumir, e nada
+  // tira a conversa de em_atendimento sozinho. A conversa assumida há dias
+  // não pode calar o botão tocado num toque enviado depois de tudo.
+  it("conversa assumida antes do toque: o botão citado confirma, o texto solto não", async () => {
+    const cenario = await montarCenario("assumidaantes", "+5584962000013");
+    await admin
+      .from("conversation")
+      .update({ status: "em_atendimento" })
+      .eq("id", cenario.conversationId)
+      .throwOnError();
+    // A recepção conversou com o paciente ANTES do toque.
+    await admin
+      .from("message")
+      .insert({
+        clinic_id: cenario.clinicId,
+        conversation_id: cenario.conversationId,
+        direction: "saida",
+        author: "usuario",
+        content_type: "texto",
+        body: "Consulta marcada, até lá",
+        created_at: new Date(Date.now() - HORA).toISOString(),
+        billable: false,
+        cost_cents: 0,
+      })
+      .throwOnError();
+
+    await responder(cenario, "Confirmar");
+    expect((await statusDaConsulta(cenario)).status).toBe(
+      "aguardando_confirmacao",
+    );
+    expect(await ecosDaClinica(cenario.clinicId)).toHaveLength(0);
+
+    const menu = await menuDoToque(cenario, cenario.appointmentId);
+    await responderCitando(cenario, "Confirmar", menu);
+
+    expect((await statusDaConsulta(cenario)).status).toBe("confirmado_paciente");
+    const ecos = await ecosDaClinica(cenario.clinicId);
+    expect(ecos).toHaveLength(1);
+    expect(ecos[0]?.payload.body).toContain("Presença confirmada");
+  });
+
+  // Revisão da leva 1 (R11 e R13): a recepção remarca por telefone depois do
+  // toque. O toque velho perguntou por outro horário: nada que responda a ele
+  // confirma ou cancela o horário novo.
+  it("depois da remarcação, 'ok', 'não vou poder' e o botão velho ficam com a recepção", async () => {
+    const cenario = await montarCenario("remarcada", "+5584962000014");
+    const menu = await menuDoToque(cenario, cenario.appointmentId);
+    await moverConsulta(cenario, 26 * HORA);
+    const depoisDeMover = await statusDaConsulta(cenario);
+    expect(depoisDeMover.status).toBe("agendado");
+
+    await responder(cenario, "ok");
+    await responder(cenario, "Não vou poder");
+    await responder(cenario, "3");
+    await responderCitando(cenario, "Confirmar", menu);
+    await responderCitando(cenario, "Cancelar", menu);
+
+    const consulta = await statusDaConsulta(cenario);
+    expect(consulta.status).toBe(depoisDeMover.status);
+    expect(consulta.confirmation_channel).toBeNull();
+    expect(await ecosDaClinica(cenario.clinicId)).toHaveLength(0);
+  });
+
+  // Decisão do dono: a remarcação avisa o paciente e volta a pedir
+  // confirmação. O aviso encerra o contexto do toque antigo; o toque do
+  // horário novo, que sai depois, vale.
+  it("o aviso de remarcação encerra o toque antigo e o toque do horário novo volta a confirmar", async () => {
+    const cenario = await montarCenario("aviso", "+5584962000015");
+    const novoInicio = await moverConsulta(cenario, 26 * HORA);
+    await avisoDeRemarcacaoEnviado(cenario, 1000);
+
+    await responder(cenario, "ok");
+    await responder(cenario, "Não vou poder");
+    expect((await statusDaConsulta(cenario)).status).toBe("agendado");
+    expect(await ecosSemAviso(cenario.clinicId)).toHaveLength(0);
+
+    await admin
+      .from("cadence_run")
+      .insert({
+        clinic_id: cenario.clinicId,
+        cadence_step_id: cenario.stepId,
+        contact_id: cenario.contactId,
+        appointment_id: cenario.appointmentId,
+        scheduled_for: new Date(
+          novoInicio.getTime() - 180 * MINUTO,
+        ).toISOString(),
+        sent_at: new Date(Date.now() + MINUTO).toISOString(),
+      })
+      .throwOnError();
+
+    await responder(cenario, "Confirmar");
+
+    expect((await statusDaConsulta(cenario)).status).toBe("confirmado_paciente");
+    const ecos = await ecosSemAviso(cenario.clinicId);
+    expect(ecos).toHaveLength(1);
+    expect(ecos[0]?.payload.body).toContain("Presença confirmada");
+  });
+
+  // O "Cobrar agora" vence na hora do clique, fora da conta do passo. O
+  // interceptador reconhece a run manual pelo job; sem a marca, a run parece
+  // toque de horário antigo e a resposta fica com a recepção.
+  it("toque do 'Cobrar agora' continua valendo", async () => {
+    const cenario = await montarCenario("manual", "+5584962000016", {
+      comToque: false,
+    });
+    await toqueDoCobrarAgora(cenario, true);
+
+    await responder(cenario, "Confirmar");
+
+    expect((await statusDaConsulta(cenario)).status).toBe("confirmado_paciente");
+  });
+
+  it("run fora da conta do passo e sem a marca manual fica com a recepção", async () => {
+    const cenario = await montarCenario("semmarca", "+5584962000017", {
+      comToque: false,
+    });
+    await toqueDoCobrarAgora(cenario, false);
+
+    await responder(cenario, "Confirmar");
 
     expect((await statusDaConsulta(cenario)).status).toBe(
       "aguardando_confirmacao",

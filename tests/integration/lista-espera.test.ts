@@ -8,7 +8,7 @@ import {
   executarOfertaDeEspera,
   situacaoDoEnvioDeOferta,
 } from "@/lib/jobs/lista-espera";
-import type { Job } from "@/lib/jobs/worker";
+import { executarJobComPosse, type Job } from "@/lib/jobs/worker";
 import {
   RESPOSTA_OFERTA_PERDIDA,
   RESPOSTA_OFERTA_RECUSADA,
@@ -339,6 +339,65 @@ async function ecosDoContato(clinicId: string, contactId: string) {
   return ((data ?? []) as { payload: { body?: string } }[]).map(
     (linha) => linha.payload.body ?? "",
   );
+}
+
+async function mudarConexao(
+  clinicId: string,
+  status: "conectado" | "desconectado",
+): Promise<void> {
+  await admin
+    .from("whatsapp_account")
+    .update({ connection_status: status })
+    .eq("clinic_id", clinicId)
+    .throwOnError();
+}
+
+/** Jobs de oferta ainda na fila (o motor de producao ignora clinica de teste). */
+async function pendentesDeOferta(clinicId: string) {
+  const { data } = await admin
+    .from("job_queue")
+    .select(
+      "id, clinic_id, kind, payload, attempts, max_attempts, status, run_at, devolucoes, ultimo_motivo_devolucao",
+    )
+    .eq("clinic_id", clinicId)
+    .eq("kind", "oferecer_lista_espera")
+    .eq("status", "pendente")
+    .order("created_at")
+    .throwOnError();
+  return data ?? [];
+}
+
+/**
+ * Uma volta pelo caminho REAL do motor, so para este job: o claim (que o
+ * teste faz na mao, porque claim_jobs pegaria jobs de outras clinicas) e
+ * depois executarJobComPosse, que confere a posse e fecha no banco com
+ * concluir_job, reagendar_job ou falhar_job. A hora do run_at e ignorada de
+ * proposito: cada volta simula a passagem do tempo.
+ */
+async function rodarPeloMotor(
+  linha: Awaited<ReturnType<typeof pendentesDeOferta>>[number],
+  workerId: string,
+) {
+  const attempts = (linha.attempts as number) + 1;
+  await admin
+    .from("job_queue")
+    .update({
+      status: "executando",
+      locked_by: workerId,
+      locked_at: new Date().toISOString(),
+      attempts,
+    })
+    .eq("id", linha.id as string)
+    .eq("status", "pendente")
+    .throwOnError();
+  return executarJobComPosse(admin, workerId, {
+    id: linha.id as string,
+    clinic_id: linha.clinic_id as string,
+    kind: "oferecer_lista_espera",
+    payload: linha.payload as Record<string, unknown>,
+    attempts,
+    max_attempts: linha.max_attempts as number,
+  });
 }
 
 afterAll(async () => {
@@ -1034,18 +1093,111 @@ describe("envio amarrado à oferta", () => {
     expect(depois.every((envio) => envio.status !== "pendente")).toBe(true);
   });
 
-  it("WhatsApp desconectado: a oferta não nasce e o job volta depois", async () => {
+  it("WhatsApp desconectado: a oferta não nasce e a vaga volta depois, numa continuação", async () => {
     const cenario = await montarCenario("desconectado");
     await contatoNaFila(cenario);
-    await admin
-      .from("whatsapp_account")
-      .update({ connection_status: "desconectado" })
-      .eq("clinic_id", cenario.clinicId)
-      .throwOnError();
+    await mudarConexao(cenario.clinicId, "desconectado");
     const { appointmentId } = await consultaParaCancelar(cenario);
     await cancelar(appointmentId);
-    const resultado = await executarUltimoJobCru(cenario.clinicId);
-    expect(resultado).toMatchObject({ motivo: "whatsapp_desconectado" });
+    const [original] = await pendentesDeOferta(cenario.clinicId);
+    const antes = Date.now();
+    const resultado = await executarOfertaDeEspera(
+      admin,
+      original as unknown as Job,
+    );
+    // A passagem conclui: a espera nao gasta o teto de devolucoes da fila.
+    expect(resultado).toEqual({ ok: true });
+    expect(await ofertaAberta(cenario.clinicId)).toBeNull();
+
+    const continuacoes = (await pendentesDeOferta(cenario.clinicId)).filter(
+      (job) => job.id !== original!.id,
+    );
+    expect(continuacoes).toHaveLength(1);
+    const continuacao = continuacoes[0]!;
+    expect(continuacao.payload).toEqual({
+      appointment_id: appointmentId,
+      passo_reconexao: 1,
+    });
+    expect(continuacao.devolucoes).toBe(0);
+    expect(continuacao.ultimo_motivo_devolucao).toBe("whatsapp_desconectado");
+    // Primeira volta: 5 minutos.
+    const espera = new Date(continuacao.run_at as string).getTime() - antes;
+    expect(espera).toBeGreaterThanOrEqual(5 * MINUTO - 5_000);
+    expect(espera).toBeLessThanOrEqual(5 * MINUTO + 60_000);
+  });
+
+  it("queda longa: mais de 20 voltas pelo motor sem o job morrer, e a oferta nasce quando o WhatsApp volta", async () => {
+    // Revisao da leva 1, achado R2: cada volta passava por reagendar_job, que
+    // mata o job na 20a devolucao (cerca de 3 horas de queda), e a vaga
+    // nunca era oferecida. Aqui cada volta passa pelo caminho REAL do motor
+    // (posse, execucao, concluir/reagendar/falhar no banco).
+    const cenario = await montarCenario("quedalonga");
+    const naFila = await contatoNaFila(cenario);
+    await mudarConexao(cenario.clinicId, "desconectado");
+    const { appointmentId, startsAt } = await consultaParaCancelar(cenario, 3);
+    await cancelar(appointmentId);
+    const limite = startsAt.getTime() - 30 * MINUTO;
+
+    const workerId = `teste-queda-${sufixo}`;
+    const VOLTAS = 25;
+    for (let volta = 0; volta < VOLTAS; volta += 1) {
+      const pendentes = await pendentesDeOferta(cenario.clinicId);
+      expect(pendentes).toHaveLength(1);
+      expect(await rodarPeloMotor(pendentes[0]!, workerId)).toBe("concluido");
+    }
+
+    const { data: falhos } = await admin
+      .from("job_queue")
+      .select("id")
+      .eq("clinic_id", cenario.clinicId)
+      .eq("kind", "oferecer_lista_espera")
+      .in("status", ["falhou", "executando"])
+      .throwOnError();
+    expect(falhos).toHaveLength(0);
+    expect(await ofertaAberta(cenario.clinicId)).toBeNull();
+
+    const pendentes = await pendentesDeOferta(cenario.clinicId);
+    expect(pendentes).toHaveLength(1);
+    const continuacao = pendentes[0]!;
+    expect(continuacao.payload).toEqual({
+      appointment_id: appointmentId,
+      passo_reconexao: VOLTAS,
+    });
+    expect(continuacao.devolucoes).toBe(0);
+    // Passo alto: a espera parou no teto de 30 minutos, antes do limite.
+    const runAt = new Date(continuacao.run_at as string).getTime();
+    expect(runAt).toBeGreaterThan(Date.now() + 25 * MINUTO);
+    expect(runAt).toBeLessThan(limite);
+
+    // O WhatsApp volta: a proxima volta oferece a vaga e a corrente termina.
+    await mudarConexao(cenario.clinicId, "conectado");
+    expect(await rodarPeloMotor(continuacao, workerId)).toBe("concluido");
+    const oferta = await ofertaAberta(cenario.clinicId);
+    expect(oferta?.status).toBe("aberta");
+    expect(oferta!.offered_to).toEqual([naFila]);
+    expect(await pendentesDeOferta(cenario.clinicId)).toHaveLength(0);
+    // Mais de 20 voltas reais pelo motor, cada uma perto de 1 s contra o banco.
+  }, 120_000);
+
+  it("WhatsApp desconectado sem tempo útil antes do limite: desiste sem continuação", async () => {
+    const cenario = await montarCenario("semtempo");
+    await contatoNaFila(cenario);
+    await mudarConexao(cenario.clinicId, "desconectado");
+    // Inicio daqui a 30 min e 40 s: o limite (inicio menos a janela de 30
+    // min) fica a 40 s, menos que a folga da ultima volta.
+    const { appointmentId } = await consultaParaCancelar(
+      cenario,
+      (30 * MINUTO + 40_000) / DIA,
+    );
+    await cancelar(appointmentId);
+    const [original] = await pendentesDeOferta(cenario.clinicId);
+    expect(
+      await executarOfertaDeEspera(admin, original as unknown as Job),
+    ).toEqual({ ok: true });
+    const continuacoes = (await pendentesDeOferta(cenario.clinicId)).filter(
+      (job) => job.id !== original!.id,
+    );
+    expect(continuacoes).toHaveLength(0);
     expect(await ofertaAberta(cenario.clinicId)).toBeNull();
   });
 });
