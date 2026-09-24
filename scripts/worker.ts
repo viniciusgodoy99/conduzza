@@ -1,19 +1,41 @@
-import { hostname } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { garantirBucketDeMidia, processarLote } from "../lib/jobs/worker";
+import { executarPassagemDoMotor } from "../lib/jobs/motor";
 import { log } from "../lib/log";
 
-// Processo do worker da job_queue. Roda ao lado do servidor web no mesmo
-// servidor 24/7 (decisao de deploy de 21/08/2026):
+// O motor de automacao num laco local: o MESMO motor de producao, fora do
+// pg_cron.
 //
 //   npm run worker
 //
-// Concorrencia segura: pode haver mais de um worker (claim_jobs usa FOR
-// UPDATE SKIP LOCKED), e o espacamento anti-ban vive no banco, entao mais
-// workers NAO furam o limite por numero.
+// Em producao quem dispara e o pg_cron, dentro do Supabase (ver
+// supabase/operacao/motor-por-cron.md): a cada 20 segundos ele chama a rota
+// /api/webhooks/motor, que roda executarPassagemDoMotor, e a cada 60 roda
+// motor_manutencao() no proprio banco. Este laco faz as duas coisas, na mesma
+// cadencia e com o mesmo codigo, para dois usos:
+//
+// 1. Desenvolvimento e testes de navegador num banco sem pg_cron.
+// 2. Ponte de emergencia, depois de motor_desagendar(), enquanto o cron ou a
+//    Vercel sao consertados. Ele bate ponto como motor-fila (dentro de
+//    executarPassagemDoMotor) e como motor-planner (dentro de
+//    motor_manutencao), entao a faixa "as mensagens automaticas estao
+//    paradas" some de verdade e o monitor externo volta a responder 200.
+//
+// Ao lado do pg_cron ligado ele nao duplica envio: o claim usa FOR UPDATE
+// SKIP LOCKED e o espacamento anti-ban vive no banco, como ja acontece com as
+// duas invocacoes da rota que se sobrepoem em producao. Mas as batidas se
+// misturam: com este laco de pe, nem a faixa nem o monitor enxergam o cron
+// parado. Contra o banco de producao, so durante incidente.
+//
+// Clinicas e_de_teste ficam de fora, como no motor de producao: as suites de
+// integracao executam os proprios jobs.
+
+/** Cadencia do pg_cron para a entrada motor-fila. */
+const CADENCIA_DA_FILA_MS = 20_000;
+/** Cadencia do pg_cron para a entrada motor-manutencao. */
+const CADENCIA_DA_MANUTENCAO_MS = 60_000;
 
 function carregarEnvLocal(): void {
   const path = join(process.cwd(), ".env.local");
@@ -44,8 +66,53 @@ function carregarEnvLocal(): void {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** O que motor_manutencao() devolve, so as partes que viram log. */
+type ResultadoDaManutencao = {
+  reguas?: Record<string, unknown> | null;
+  erros?: string[] | null;
+};
+
+/** O papel motor-planner: a manutencao inteira, dentro do banco. */
+async function manutencao(admin: SupabaseClient): Promise<void> {
+  try {
+    const { data, error } = await admin.rpc("motor_manutencao");
+    if (error) {
+      // Falha aqui nao derruba o laco: o proximo minuto tenta de novo e o
+      // horizonte do planner (30 minutos atras) recupera o que ficou.
+      log.warn("motor_manutencao_falhou", { error_code: error.code ?? null });
+      return;
+    }
+    const resultado = (data ?? {}) as ResultadoDaManutencao;
+    for (const [kind, count] of Object.entries(resultado.reguas ?? {})) {
+      if (typeof count === "number" && count > 0) {
+        log.info("reguas_planejadas", { kind, count });
+      }
+    }
+    // Cada erro ja e um codigo curto ("planejar_reguas:42P01"). A funcao
+    // engole a excecao de cada rotina para as outras seguirem, entao sem este
+    // log o erro so apareceria em saude_do_motor().
+    for (const erro of resultado.erros ?? []) {
+      log.warn("motor_manutencao_com_erro", { error_code: erro });
+    }
+  } catch (erro) {
+    log.error("motor_manutencao_falhou", {
+      error_code: erro instanceof Error ? erro.name : "desconhecido",
+    });
+  }
+}
+
+/** O papel motor-fila: uma passagem, como a rota faz a cada tick. */
+async function passagem(admin: SupabaseClient): Promise<void> {
+  try {
+    await executarPassagemDoMotor(admin, { executorId: "motor-fila" });
+  } catch (erro) {
+    // A passagem trata o erro de cada job; isto cobre a rede caindo nas RPCs
+    // de claim ou de fechamento. Um job que ficou 'executando' volta pelo
+    // lease.
+    log.error("motor_passagem_falhou", {
+      error_code: erro instanceof Error ? erro.name : "desconhecido",
+    });
+  }
 }
 
 async function main() {
@@ -61,111 +128,57 @@ async function main() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  await garantirBucketDeMidia(admin);
+  // O balde de midia nao e mais criado aqui: nasce na migration
+  // 20260902120000 e motor_manutencao() reafirma que ele e privado.
+  log.info("worker_iniciou", { path: "motor-fila" });
 
-  const workerId = `${hostname()}:${process.pid}`;
-  log.info("worker_iniciou", { path: workerId });
-
-  // Higiene da agenda: apaga holds vencidos com folga de ~60s. A expiracao
-  // LOGICA nao depende disto (toda leitura filtra expires_at > agora); isto
-  // so evita acumulo fisico.
-  let ultimaLimpezaDeHolds = 0;
-
-  // Planner das reguas (Fase 4.6): materializa os toques devidos e enfileira,
-  // numa transacao so. Carimbo PROPRIO, separado do carimbo dos holds: com um
-  // so, uma passagem lenta atrasaria a outra tarefa.
-  let ultimoPlanejamentoDeReguas = 0;
-
-  // Prova de vida. Sem pg_cron neste projeto, ESTE processo e o unico executor
-  // de tudo que e automatico. Se ele nao esta de pe, a tela da clinica fica
-  // identica a de uma clinica saudavel (regua "ligada", consultas "pendentes",
-  // "Cobrar agora" respondendo sucesso) e ninguem fica sabendo. O carimbo e o
-  // que permite a interface avisar "as mensagens automaticas estao paradas".
-  let ultimaBatida = 0;
-
-  let ultimoLote = 0;
+  // Ctrl+C (ou SIGTERM) nao corta a passagem em voo: abandonar um job no meio
+  // deixaria uma mensagem saindo sem ninguem para gravar o resultado. O sinal
+  // so acorda a espera e impede a proxima volta.
   let ativo = true;
-  process.on("SIGINT", () => {
+  let acordar: (() => void) | null = null;
+  const parar = () => {
     ativo = false;
-  });
-  process.on("SIGTERM", () => {
-    ativo = false;
-  });
+    acordar?.();
+  };
+  process.on("SIGINT", parar);
+  process.on("SIGTERM", parar);
+  const esperar = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        acordar = null;
+        resolve();
+      }, ms);
+      acordar = () => {
+        clearTimeout(timer);
+        acordar = null;
+        resolve();
+      };
+    });
 
+  // Cadencia contada do INICIO de cada tarefa, como o cron: uma passagem de
+  // 30 segundos nao empurra a seguinte para 50. Se a passagem passa da
+  // cadencia, a proxima comeca na hora (o cron sobreporia as duas; aqui elas
+  // so encostam).
+  let proximaManutencao = 0;
+  let proximaFila = 0;
   while (ativo) {
-    if (Date.now() - ultimaLimpezaDeHolds > 60_000) {
-      ultimaLimpezaDeHolds = Date.now();
-      const { error: erroHolds } = await admin.rpc("limpar_holds_vencidos");
-      if (erroHolds) {
-        log.warn("limpeza_de_holds_falhou", {
-          error_code: erroHolds.code ?? null,
-        });
-      }
+    // Manutencao primeiro: o que o planner acabou de enfileirar ja sai na
+    // passagem logo em seguida.
+    if (Date.now() >= proximaManutencao) {
+      proximaManutencao = Date.now() + CADENCIA_DA_MANUTENCAO_MS;
+      await manutencao(admin);
     }
-    if (Date.now() - ultimaBatida > 30_000) {
-      ultimaBatida = Date.now();
-      const { error: erroBatida } = await admin.rpc("bater_ponto_do_worker", {
-        p_worker_id: workerId,
-        p_ultimo_lote: ultimoLote,
-      });
-      if (erroBatida) {
-        log.warn("batida_do_worker_falhou", {
-          error_code: erroBatida.code ?? null,
-        });
-      }
+    if (ativo && Date.now() >= proximaFila) {
+      proximaFila = Date.now() + CADENCIA_DA_FILA_MS;
+      await passagem(admin);
     }
-    if (Date.now() - ultimoPlanejamentoDeReguas > 60_000) {
-      ultimoPlanejamentoDeReguas = Date.now();
-      // Toque cujo job morreu de vez ficava pendurado sem sent_at e sem
-      // skipped_reason, indistinguivel de um toque que ainda vai sair, e nunca
-      // mais era tentado (o planner usa on conflict do nothing).
-      const { data: orfas, error: erroOrfas } =
-        await admin.rpc("fechar_runs_orfas");
-      if (erroOrfas) {
-        log.warn("fechamento_de_runs_orfas_falhou", {
-          error_code: erroOrfas.code ?? null,
-        });
-      } else if (typeof orfas === "number" && orfas > 0) {
-        log.warn("runs_orfas_fechadas", { count: orfas });
-      }
-
-      const { data: plano, error: erroPlano } =
-        await admin.rpc("planejar_reguas");
-      if (erroPlano) {
-        // Falha aqui nao derruba o laco: o proximo minuto tenta de novo e o
-        // horizonte do planner (30 minutos atras) recupera o que ficou.
-        log.warn("planejamento_de_reguas_falhou", {
-          error_code: erroPlano.code ?? null,
-        });
-      } else {
-        const contas = (plano ?? {}) as {
-          confirmacao?: number;
-          pos_falta?: number;
-        };
-        for (const kind of ["confirmacao", "pos_falta"] as const) {
-          const count = contas[kind] ?? 0;
-          if (count > 0) {
-            log.info("reguas_planejadas", { kind, count });
-          }
-        }
-      }
-    }
-    let processados = 0;
-    try {
-      processados = await processarLote(admin, workerId, {
-        deveParar: () => !ativo,
-      });
-      ultimoLote = processados;
-    } catch {
-      log.error("worker_lote_falhou");
-      await sleep(5_000);
-      continue;
-    }
-    if (processados === 0) {
-      await sleep(3_000);
+    const espera = Math.min(proximaManutencao, proximaFila) - Date.now();
+    if (ativo && espera > 0) {
+      await esperar(espera);
     }
   }
-  log.info("worker_encerrou", { path: workerId });
+  log.info("worker_encerrou", { path: "motor-fila" });
 }
 
 main().catch((error: unknown) => {

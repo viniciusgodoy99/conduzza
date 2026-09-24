@@ -224,7 +224,6 @@ export function EditorDePasso({
             <div className="flex flex-wrap items-center gap-2">
               <span className="flex min-h-10 items-center gap-2 rounded-md border px-3 text-[12.5px]">
                 <Paperclip
-                  strokeWidth={1.5}
                   className="size-4 shrink-0 text-text-secondary"
                   aria-hidden
                 />
@@ -241,7 +240,7 @@ export function EditorDePasso({
                   disabled={pendenteAnexo}
                   onClick={removerAnexo}
                 >
-                  <X strokeWidth={1.5} className="size-4" aria-hidden />
+                  <X className="size-4" aria-hidden />
                   Remover
                 </Button>
               ) : null}
@@ -274,19 +273,19 @@ export function EditorDePasso({
                 disabled={pendenteAnexo}
                 onClick={() => arquivoRef.current?.click()}
               >
-                <Paperclip strokeWidth={1.5} className="size-4" aria-hidden />
+                <Paperclip className="size-4" aria-hidden />
                 {pendenteAnexo ? "Enviando..." : "Anexar arquivo"}
               </Button>
               <span className="text-[11.5px] text-text-tertiary">
-                Até 3,8 MB. Com anexo, o texto é opcional. Na foto e no
-                arquivo, ele vira a legenda; com áudio, vai numa mensagem
-                separada, logo depois.
+                Até 3,8 MB. Com anexo, o texto é opcional. Na foto e no arquivo,
+                ele vira a legenda; com áudio, vai numa mensagem separada, logo
+                depois.
               </span>
             </>
           ) : (
             <DisabledWithHint hint={dicaSemPermissao}>
               <Button variant="outline" className="h-10" disabled>
-                <Paperclip strokeWidth={1.5} className="size-4" aria-hidden />
+                <Paperclip className="size-4" aria-hidden />
                 Anexar arquivo
               </Button>
             </DisabledWithHint>
@@ -305,9 +304,7 @@ export function EditorDePasso({
           <Button
             className="h-10 justify-self-start"
             disabled={
-              pendente ||
-              !mudou ||
-              (texto.trim().length === 0 && !temAnexo)
+              pendente || !mudou || (texto.trim().length === 0 && !temAnexo)
             }
             onClick={salvar}
           >
@@ -359,8 +356,8 @@ export function EditorDePasso({
           />
         )}
         <p className="text-[11.5px] text-text-tertiary">
-          Amostra com dados fictícios. No envio real, os campos são
-          preenchidos com os dados da consulta e do paciente.
+          Amostra com dados fictícios. No envio real, os campos são preenchidos
+          com os dados da consulta e do paciente.
         </p>
       </div>
     </div>

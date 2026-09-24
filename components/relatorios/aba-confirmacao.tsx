@@ -98,7 +98,7 @@ export function AbaConfirmacao({
 
       <section className="grid gap-3 rounded-lg border bg-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Flag strokeWidth={1.5} className="size-4 text-text-secondary" />
+          <Flag className="size-4 text-text-secondary" />
           <h2 className="text-[15px] font-semibold">Contra a linha de base</h2>
         </div>
         {linhaDeBase ? (
@@ -186,10 +186,7 @@ export function AbaConfirmacao({
 
       <section className="grid gap-3 rounded-lg border bg-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <ClipboardCheck
-            strokeWidth={1.5}
-            className="size-4 text-text-secondary"
-          />
+          <ClipboardCheck className="size-4 text-text-secondary" />
           <h2 className="text-[15px] font-semibold">
             Antes e depois da primeira mensagem de régua
           </h2>
@@ -211,7 +208,8 @@ export function AbaConfirmacao({
             </div>
             <div className="grid content-start gap-1 rounded-lg border p-4">
               <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-                Depois ({format(
+                Depois (
+                {format(
                   new TZDate(pivo.primeiraReguaEm, timezone),
                   "dd/MM/yy",
                   { locale: ptBR },

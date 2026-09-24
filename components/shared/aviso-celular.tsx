@@ -1,25 +1,24 @@
 import { MonitorSmartphone } from "lucide-react";
 
-// Faixa exibida SO em telas de celular (abaixo de 768px), nas telas de
-// operacao que o brief define como "somente leitura no celular" (secao 6):
-// Leads, Pacientes, Confirmacoes, Lista de espera e Automacoes. O aviso e a
-// camada de comunicacao; o bloqueio real das acoes continua nas Server
-// Actions e nos botoes desabilitados de cada tela.
+import { Aviso } from "@/components/shared/aviso";
+
+// Aviso exibido SO abaixo de 768px, nas telas pensadas para computador (brief
+// secao 6: "melhor no computador"). Hoje aparece em Leads, Pacientes (lista e
+// ficha) e Confirmacoes.
+//
+// O texto diz so o que e verdade: nenhuma tela trava acao pela largura (a
+// permissao e por papel, na RLS, nas Server Actions e nos botoes desabilitados
+// com dica), entao o aviso nao promete "somente leitura" (achados 75, 103 e
+// 110 da revisao).
 export function AvisoCelular() {
   return (
-    <div
+    <Aviso
+      tom="info"
+      icone={MonitorSmartphone}
       role="note"
-      className="bg-surface flex items-center gap-2 rounded-lg border border-border px-3 py-2 md:hidden"
+      className="md:hidden"
     >
-      <MonitorSmartphone
-        strokeWidth={1.5}
-        className="size-4 shrink-0 text-text-tertiary"
-        aria-hidden
-      />
-      <p className="text-xs text-text-secondary">
-        No celular esta tela é somente leitura. Para editar, use um computador
-        ou tablet.
-      </p>
-    </div>
+      Esta tela funciona melhor no computador ou tablet.
+    </Aviso>
   );
 }

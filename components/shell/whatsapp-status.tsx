@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw, TriangleAlert } from "lucide-react";
+import { RefreshCw, WifiOff } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { checarConexaoAction } from "@/lib/actions/whatsapp-connect";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
 // Vigia da CONEXAO do WhatsApp no cliente, irmao do MotorStatus e pelo mesmo
 // motivo: o layout e preservado em navegacao suave, entao a faixa renderizada
@@ -100,18 +101,25 @@ export function WhatsappStatus({
     return null;
   }
 
-  // Estado 5 da secao 8 do brief: faixa vermelha fixa, com acao de
-  // reconexao. As 3 camadas: forma (triangulo), rotulo em texto e cor.
+  // Estado 5 da secao 8 do brief: faixa fixa no topo de todas as telas, com
+  // acao de reconexao, na linguagem do DS (conflito C22): fundo de alerta
+  // suave, texto de alerta e fio vermelho embaixo. As 3 camadas: forma
+  // (WifiOff, reservado para esta faixa), rotulo em texto e cor.
   return (
     <div
       role="alert"
-      className="flex flex-wrap items-center justify-center gap-3 px-4 py-2 text-sm font-medium [color:var(--on-alert)] [background:var(--alert)]"
+      className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 border-b border-alert bg-alert-bg px-4 py-2 text-alert-text md:px-6"
     >
-      <TriangleAlert strokeWidth={1.5} className="size-4 shrink-0" />
-      <span>WhatsApp desconectado: os pacientes não estão sendo atendidos</span>
+      <WifiOff aria-hidden className="size-4 shrink-0" />
+      <p className="min-w-0 flex-1 text-[13.5px] font-semibold">
+        WhatsApp desconectado:{" "}
+        <span className="font-normal">
+          os pacientes não estão sendo atendidos
+        </span>
+      </p>
       <Link
         href="/configuracoes?aba=whatsapp"
-        className="flex min-h-10 items-center rounded-md bg-black/15 px-3 text-xs font-semibold underline-offset-2 hover:underline"
+        className="inline-flex h-10 items-center rounded-lg bg-inverse px-3.5 text-[13px] font-semibold text-inverse-foreground shadow-xs cz-transition hover:bg-inverse-hover"
       >
         Reconectar
       </Link>
@@ -119,12 +127,14 @@ export function WhatsappStatus({
         type="button"
         onClick={verificarAgora}
         disabled={verificando}
-        className="flex min-h-10 items-center gap-1.5 rounded-md bg-black/15 px-3 text-xs font-semibold underline-offset-2 hover:underline disabled:opacity-60"
+        className="inline-flex h-10 items-center gap-1.5 rounded-lg px-3 text-[13px] font-semibold text-alert-text cz-transition hover:bg-alert-bg-hover disabled:cursor-not-allowed disabled:opacity-45"
       >
         <RefreshCw
-          strokeWidth={1.5}
-          className={`size-3.5 ${verificando ? "animate-spin" : ""}`}
           aria-hidden
+          className={cn(
+            "size-3.5",
+            verificando && "animate-spin motion-reduce:animate-none",
+          )}
         />
         {verificando ? "Verificando..." : "Verificar conexão"}
       </button>

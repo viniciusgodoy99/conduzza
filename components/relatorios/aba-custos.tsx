@@ -73,10 +73,7 @@ export function AbaCustos({
 
       <section className="grid gap-3 rounded-lg border bg-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <MessageSquareText
-            strokeWidth={1.5}
-            className="size-4 text-text-secondary"
-          />
+          <MessageSquareText className="size-4 text-text-secondary" />
           <h2 className="text-[15px] font-semibold">Quem enviou</h2>
         </div>
         {porAutorSaida.length === 0 ? (
@@ -98,9 +95,9 @@ export function AbaCustos({
           </div>
         )}
         <p className="max-w-prose text-sm text-text-secondary">
-          Quando o canal oficial do WhatsApp estiver ativo, o custo por
-          mensagem em reais aparece aqui, calculado pela tabela de preços da
-          Meta, nunca por estimativa.
+          Quando o canal oficial do WhatsApp estiver ativo, o custo por mensagem
+          em reais aparece aqui, calculado pela tabela de preços da Meta, nunca
+          por estimativa.
         </p>
       </section>
     </div>

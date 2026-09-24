@@ -31,9 +31,15 @@ export function ThemeToggle() {
       onClick={() => setTheme(isDark ? "light" : "dark")}
     >
       {isDark ? (
-        <Sun strokeWidth={1.5} className="size-4" />
+        <Sun
+          aria-hidden
+          className="size-[18px] text-text-secondary group-hover/button:text-text-strong"
+        />
       ) : (
-        <Moon strokeWidth={1.5} className="size-4" />
+        <Moon
+          aria-hidden
+          className="size-[18px] text-text-secondary group-hover/button:text-text-strong"
+        />
       )}
     </Button>
   );

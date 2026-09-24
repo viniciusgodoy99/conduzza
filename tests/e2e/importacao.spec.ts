@@ -94,7 +94,8 @@ test("é impossível importar sem declarar a autorização", async ({ page }) =>
     dialogo.locator("dl > div").filter({ hasText: "Linhas inválidas" }),
   ).toContainText("1");
 
-  await dialogo.getByRole("button", { name: "Fechar" }).click();
+  // exact: o X do dialogo se chama "Fechar janela" e casaria por substring.
+  await dialogo.getByRole("button", { name: "Fechar", exact: true }).click();
   await expect(dialogo).toBeHidden();
 
   // Os contatos importados aparecem na lista de leads.

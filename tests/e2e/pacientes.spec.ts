@@ -188,21 +188,23 @@ test("paciente descadastrado mostra o pedido, e a nova autorização exige evid�
   await expect(dialogo).toBeHidden();
 });
 
-test("a lista de espera aparece visível e desabilitada, com a dica", async ({
+test("a lista de espera abre a Lista de espera com o paciente já escolhido", async ({
   page,
 }) => {
+  // A lista de espera existe desde 15/09: a acao da ficha e um link para a
+  // Tela 10 com o paciente pre-selecionado.
   const d = dados();
   await login(page, d.emails.gestor);
   await page.goto(`/pacientes/${d.pacientes.comFaltasId}`);
 
-  const espera = page.getByRole("button", {
+  const espera = page.getByRole("link", {
     name: "Adicionar à lista de espera",
   });
   await expect(espera).toBeVisible();
-  await expect(espera).toBeDisabled();
-
-  await espera.locator("..").focus();
-  await expect(page.getByText("Chega com a lista de espera")).toBeVisible();
+  await expect(espera).toHaveAttribute(
+    "href",
+    `/espera?adicionar=${d.pacientes.comFaltasId}`,
+  );
 });
 
 test("papel leitura abre a ficha inteira com as ações desabilitadas e com dica", async ({

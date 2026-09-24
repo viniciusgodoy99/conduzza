@@ -41,7 +41,10 @@ async function reduzirImagem(arquivo: File): Promise<File> {
   }
   try {
     const bitmap = await createImageBitmap(arquivo);
-    const escala = Math.min(1, LADO_MAXIMO / Math.max(bitmap.width, bitmap.height));
+    const escala = Math.min(
+      1,
+      LADO_MAXIMO / Math.max(bitmap.width, bitmap.height),
+    );
     if (escala === 1 && arquivo.size <= TETO_BYTES) {
       return arquivo;
     }
@@ -228,7 +231,7 @@ export function BarraDeAnexo({
             />
           ) : (
             <span className="grid size-12 shrink-0 place-items-center rounded-md bg-surface-4">
-              <Paperclip strokeWidth={1.5} className="size-5" />
+              <Paperclip className="size-5" />
             </span>
           )}
           <span className="min-w-0 flex-1">
@@ -250,7 +253,7 @@ export function BarraDeAnexo({
             }}
             aria-label="Remover o arquivo"
           >
-            <X strokeWidth={1.5} className="size-4" />
+            <X className="size-4" />
           </Button>
         </div>
         <div className="flex items-end gap-2">
@@ -266,7 +269,7 @@ export function BarraDeAnexo({
             disabled={pendente}
             onClick={() => aoEnviar(escolhido, legenda, notaDeVoz)}
           >
-            <Send strokeWidth={1.5} className="size-4" />
+            <Send className="size-4" />
             {pendente ? "Enviando..." : "Enviar"}
           </Button>
         </div>
@@ -282,50 +285,51 @@ export function BarraDeAnexo({
         </p>
       ) : null}
       <div className="flex items-center gap-1">
-      <input
-        ref={inputRef}
-        type="file"
-        accept={ACEITOS.join(",")}
-        className="sr-only"
-        onChange={(evento) => {
-          const arquivo = evento.target.files?.[0];
-          if (arquivo) {
-            void receber(arquivo);
-          }
-          evento.target.value = "";
-        }}
-      />
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        disabled={desabilitado || gravando}
-        onClick={() => inputRef.current?.click()}
-        aria-label="Anexar arquivo"
-        title="Anexar foto, documento ou áudio"
-      >
-        <Paperclip strokeWidth={1.5} className="size-4" />
-      </Button>
-      <Button
-        type="button"
-        variant={gravando ? "destructive" : "ghost"}
-        size="sm"
-        disabled={desabilitado}
-        onClick={() => (gravando ? pararGravacao() : void iniciarGravacao())}
-        aria-label={gravando ? "Parar a gravação" : "Gravar nota de voz"}
-        title={gravando ? "Parar a gravação" : "Gravar nota de voz"}
-      >
-        {gravando ? (
-          <Square strokeWidth={1.5} className="size-4" />
-        ) : (
-          <Mic strokeWidth={1.5} className="size-4" />
-        )}
-        {gravando ? (
-          <span className="font-mono text-[11px] tabular-nums">
-            {Math.floor(segundos / 60)}:{String(segundos % 60).padStart(2, "0")}
-          </span>
-        ) : null}
-      </Button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={ACEITOS.join(",")}
+          className="sr-only"
+          onChange={(evento) => {
+            const arquivo = evento.target.files?.[0];
+            if (arquivo) {
+              void receber(arquivo);
+            }
+            evento.target.value = "";
+          }}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={desabilitado || gravando}
+          onClick={() => inputRef.current?.click()}
+          aria-label="Anexar arquivo"
+          title="Anexar foto, documento ou áudio"
+        >
+          <Paperclip className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant={gravando ? "destructive" : "ghost"}
+          size="sm"
+          disabled={desabilitado}
+          onClick={() => (gravando ? pararGravacao() : void iniciarGravacao())}
+          aria-label={gravando ? "Parar a gravação" : "Gravar nota de voz"}
+          title={gravando ? "Parar a gravação" : "Gravar nota de voz"}
+        >
+          {gravando ? (
+            <Square className="size-4" />
+          ) : (
+            <Mic className="size-4" />
+          )}
+          {gravando ? (
+            <span className="font-mono text-[11px] tabular-nums">
+              {Math.floor(segundos / 60)}:
+              {String(segundos % 60).padStart(2, "0")}
+            </span>
+          ) : null}
+        </Button>
       </div>
     </div>
   );
@@ -364,5 +368,9 @@ export function useArquivoSolto(
     },
   };
 
-  return { props, sobrevoando, classes: cn(sobrevoando && "ring-2 ring-ring/50") };
+  return {
+    props,
+    sobrevoando,
+    classes: cn(sobrevoando && "ring-2 ring-ring/50"),
+  };
 }

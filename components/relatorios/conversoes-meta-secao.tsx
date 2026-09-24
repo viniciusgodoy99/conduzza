@@ -65,7 +65,7 @@ export function ConversoesMetaSecao({
   return (
     <section className="grid gap-3 rounded-lg border bg-card p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Send strokeWidth={1.5} className="size-4 text-text-secondary" />
+        <Send className="size-4 text-text-secondary" />
         <h2 className="text-[15px] font-semibold">
           Conversões devolvidas à Meta
         </h2>
@@ -86,10 +86,10 @@ export function ConversoesMetaSecao({
       </div>
       {conversoes.total === 0 ? (
         <p className="max-w-prose text-sm text-text-secondary">
-          Nenhuma conversão registrada ainda. Escolha em qual etapa da jornada
-          a clínica registra conversão na aba Jornada e conversões, em
-          Configurações. O envio para a conta de anúncios liga depois, na aba
-          de anúncios da Meta.
+          Nenhuma conversão registrada ainda. Escolha em qual etapa da jornada a
+          clínica registra conversão na aba Jornada e conversões, em
+          Configurações. O envio para a conta de anúncios liga depois, na aba de
+          anúncios da Meta.
         </p>
       ) : (
         <>
@@ -98,7 +98,6 @@ export function ConversoesMetaSecao({
               <div key={status.rotulo} className="grid gap-1">
                 <span className="flex items-center gap-1.5 text-sm text-text-secondary">
                   <status.Icone
-                    strokeWidth={1.5}
                     className="size-4"
                     style={{ color: status.cor }}
                     aria-hidden

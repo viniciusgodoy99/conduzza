@@ -24,7 +24,7 @@ export default async function OnboardingLayout({
           href="/atendimento"
           className="inline-flex w-fit items-center gap-1.5 text-sm text-text-secondary hover:text-foreground"
         >
-          <ArrowLeft strokeWidth={1.5} className="size-4" />
+          <ArrowLeft className="size-4" />
           Voltar para o Atendimento
         </Link>
         {children}

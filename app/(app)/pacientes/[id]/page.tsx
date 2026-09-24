@@ -113,7 +113,7 @@ export default async function FichaPacientePage({
         href="/pacientes"
         className="flex h-10 w-fit items-center gap-1.5 text-sm text-text-secondary hover:text-foreground"
       >
-        <ArrowLeft strokeWidth={1.5} className="size-4" aria-hidden />
+        <ArrowLeft className="size-4" aria-hidden />
         Voltar para {t("paciente", { plural: true })}
       </Link>
 

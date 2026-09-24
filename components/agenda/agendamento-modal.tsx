@@ -633,7 +633,6 @@ export function AgendamentoModal({
               style={{ backgroundColor: "var(--warning-bg)" }}
             >
               <TriangleAlert
-                strokeWidth={1.5}
                 className="mt-0.5 size-4 shrink-0"
                 style={{ color: "var(--warning-text)" }}
               />
@@ -936,7 +935,6 @@ function BuscaPaciente({
       <Label htmlFor="busca-paciente">Paciente</Label>
       <div className="relative">
         <Search
-          strokeWidth={1.5}
           className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-tertiary"
           aria-hidden
         />
@@ -1003,7 +1001,7 @@ function BuscaPaciente({
               setErroCriacao(null);
             }}
           >
-            <UserPlus strokeWidth={1.5} className="size-4" aria-hidden />
+            <UserPlus className="size-4" aria-hidden />
             Criar cadastro para {termo.trim()}
           </button>
         </div>

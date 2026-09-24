@@ -98,7 +98,7 @@ export function ChipDoToque({
           backgroundColor: "var(--neutral-bg)",
         }}
       >
-        <MailX strokeWidth={1.5} className="size-3.5 shrink-0" aria-hidden />
+        <MailX className="size-3.5 shrink-0" aria-hidden />
         {vazio}
       </span>
     );
@@ -109,7 +109,7 @@ export function ChipDoToque({
       className="inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-semibold whitespace-nowrap"
       style={{ color: visual.cor, backgroundColor: visual.fundo }}
     >
-      <Icone strokeWidth={1.5} className="size-3.5 shrink-0" aria-hidden />
+      <Icone className="size-3.5 shrink-0" aria-hidden />
       {visual.rotulo}
     </span>
   );

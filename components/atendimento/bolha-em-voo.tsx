@@ -43,7 +43,7 @@ export function BolhaEmVoo({
       >
         {envio.ehNota ? (
           <span className="flex items-center gap-1 text-[11px] font-semibold [color:var(--warning-text)]">
-            <Lock strokeWidth={1.5} className="size-3" />
+            <Lock className="size-3" />
             Nota interna, o paciente não vê
           </span>
         ) : null}
@@ -55,7 +55,7 @@ export function BolhaEmVoo({
             "falhou" das mensagens reais já vivem, para a pessoa procurar o
             estado sempre no mesmo lugar. */}
         <span className="flex items-center justify-end gap-1 font-mono text-[10.5px] text-text-tertiary tabular-nums">
-          <Clock strokeWidth={1.5} className="size-3" />
+          <Clock className="size-3" />
           enviando
         </span>
       </div>
@@ -84,7 +84,7 @@ function CartaoNaoEnviada({
     <div className="flex justify-end">
       <div className="grid max-w-[74%] gap-2 rounded-[14px_4px_14px_14px] border [border-color:var(--alert)] px-3 py-2 [background:var(--alert-bg)]">
         <span className="flex items-center gap-1.5 text-[11px] font-semibold [color:var(--alert-text)]">
-          <TriangleAlert strokeWidth={1.5} className="size-3 shrink-0" />
+          <TriangleAlert className="size-3 shrink-0" />
           {envio.incerto ? "Envio não confirmado" : "Não enviada"}
         </span>
         <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
@@ -103,12 +103,12 @@ function CartaoNaoEnviada({
               e escreve, que é um gesto consciente. */}
           {envio.incerto ? null : (
             <Button size="sm" variant="outline" onClick={aoTentarDeNovo}>
-              <RotateCcw strokeWidth={1.5} className="size-4" />
+              <RotateCcw className="size-4" />
               Tentar de novo
             </Button>
           )}
           <Button size="sm" variant="ghost" onClick={aoDescartar}>
-            <Trash2 strokeWidth={1.5} className="size-4" />
+            <Trash2 className="size-4" />
             {envio.incerto ? "Entendi, esconder" : "Descartar"}
           </Button>
         </div>

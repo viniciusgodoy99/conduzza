@@ -85,7 +85,7 @@ export function ExportarRelatorio({
     return (
       <DisabledWithHint hint="Aguarde os dados do período carregarem.">
         <Button variant="outline" className="h-10 gap-2" disabled>
-          <Download strokeWidth={1.5} className="size-4" aria-hidden />
+          <Download className="size-4" aria-hidden />
           Exportar
         </Button>
       </DisabledWithHint>
@@ -97,17 +97,17 @@ export function ExportarRelatorio({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" className="h-10 gap-2 print:hidden">
-            <Download strokeWidth={1.5} className="size-4" aria-hidden />
+            <Download className="size-4" aria-hidden />
             Exportar
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => void exportarCsv()}>
-            <FileText strokeWidth={1.5} className="size-4" aria-hidden />
+            <FileText className="size-4" aria-hidden />
             Planilha (CSV)
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void imprimir()}>
-            <Printer strokeWidth={1.5} className="size-4" aria-hidden />
+            <Printer className="size-4" aria-hidden />
             Imprimir ou salvar em PDF
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -118,33 +118,36 @@ export function ExportarRelatorio({
       {imprimindo
         ? createPortal(
             <div className="hidden bg-white text-black print:block">
-          <h1 className="mb-1 text-xl font-bold">{imprimindo.titulo}</h1>
-          <p className="mb-4 text-sm">{periodoRotulo}</p>
-          <table className="w-full border-collapse text-xs">
-            <thead>
-              <tr>
-                {(imprimindo.linhas[0] ?? []).map((celula, indice) => (
-                  <th
-                    key={indice}
-                    className="border-b border-black py-1 text-left font-semibold"
-                  >
-                    {celula}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {imprimindo.linhas.slice(1).map((linha, i) => (
-                <tr key={i} className="break-inside-avoid">
-                  {linha.map((celula, j) => (
-                    <td key={j} className="border-b border-neutral-400 py-1">
-                      {celula}
-                    </td>
+              <h1 className="mb-1 text-xl font-bold">{imprimindo.titulo}</h1>
+              <p className="mb-4 text-sm">{periodoRotulo}</p>
+              <table className="w-full border-collapse text-xs">
+                <thead>
+                  <tr>
+                    {(imprimindo.linhas[0] ?? []).map((celula, indice) => (
+                      <th
+                        key={indice}
+                        className="border-b border-black py-1 text-left font-semibold"
+                      >
+                        {celula}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {imprimindo.linhas.slice(1).map((linha, i) => (
+                    <tr key={i} className="break-inside-avoid">
+                      {linha.map((celula, j) => (
+                        <td
+                          key={j}
+                          className="border-b border-neutral-400 py-1"
+                        >
+                          {celula}
+                        </td>
+                      ))}
+                    </tr>
                   ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                </tbody>
+              </table>
             </div>,
             document.body,
           )

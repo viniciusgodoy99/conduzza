@@ -48,7 +48,7 @@ export default async function AtendimentoPage() {
   );
 
   return (
-    <div className="h-[calc(100dvh-3.5rem)] overflow-hidden">
+    <div className="h-full overflow-hidden">
       <InboxClient
         clinicId={active.clinicId}
         viewerId={context.userId}

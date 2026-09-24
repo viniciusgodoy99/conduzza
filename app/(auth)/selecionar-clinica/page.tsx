@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { pickClinicAction } from "@/app/(auth)/actions";
-import { Button } from "@/components/ui/button";
+import { SairDaConta } from "@/components/shell/sair-da-conta";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 
 function initialsOf(name: string): string {
@@ -44,7 +44,7 @@ export default async function SelecionarClinicaPage() {
             <input type="hidden" name="clinicId" value={membership.clinicId} />
             <button
               type="submit"
-              className="border-border-strong flex w-full items-center gap-3 rounded-[11px] border bg-card p-3 text-left transition-colors hover:border-primary"
+              className="flex w-full items-center gap-3 rounded-[11px] border border-border-strong bg-card p-3 text-left transition-colors hover:border-primary-edge"
             >
               <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
                 {initialsOf(membership.clinicName)}
@@ -61,9 +61,12 @@ export default async function SelecionarClinicaPage() {
           </form>
         ))}
       </div>
-      <Button variant="ghost" asChild className="justify-self-start">
-        <a href="/login">Voltar</a>
-      </Button>
+      {/* Sair, e nao "Voltar" para /login: o login devolve quem tem sessao
+          para a area logada, que manda de volta para ca (laco sem saida). */}
+      <SairDaConta
+        email={context.userEmail}
+        className="justify-items-start border-t border-border pt-4"
+      />
     </div>
   );
 }

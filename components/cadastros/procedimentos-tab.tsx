@@ -163,7 +163,7 @@ export function ProcedimentosTab({
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus strokeWidth={1.5} className="size-4" /> Novo procedimento
+          <Plus className="size-4" /> Novo procedimento
         </BotaoProtegido>
       </div>
 

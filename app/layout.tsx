@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Inter_Tight } from "next/font/google";
+import { JetBrains_Mono, Manrope } from "next/font/google";
 import "./globals.css";
 
 import { ThemeProvider } from "@/components/providers/theme-provider";
@@ -7,18 +7,21 @@ import { Toaster } from "@/components/ui/sonner";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { brandStyleFor } from "@/lib/branding/brand-style";
 
-// Tipografia do handoff: Inter Tight para a interface, IBM Plex Mono para
-// numeros, telefones, horas e valores (alinha colunas e evita erro de leitura).
-const interTight = Inter_Tight({
+// Tipografia do Conduzza Design System: Manrope na interface, JetBrains Mono
+// em todo numero, hora, telefone e valor (alinha colunas e evita erro de
+// leitura). As duas sao variaveis (Manrope 200 a 800, JetBrains Mono 100 a
+// 800), por isso sem weight. Os nomes de variavel nao mudam: o @theme do
+// globals.css continua igual.
+const manrope = Manrope({
   variable: "--font-app-sans",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  display: "swap",
 });
 
-const ibmPlexMono = IBM_Plex_Mono({
+const jetbrainsMono = JetBrains_Mono({
   variable: "--font-app-mono",
   subsets: ["latin"],
-  weight: ["400", "500"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -40,7 +43,7 @@ export default async function RootLayout({
   return (
     <html
       lang="pt-BR"
-      className={`${interTight.variable} ${ibmPlexMono.variable}`}
+      className={`${manrope.variable} ${jetbrainsMono.variable}`}
       style={brandStyle}
       suppressHydrationWarning
     >

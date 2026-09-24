@@ -98,7 +98,7 @@ export function ModalMotivoPerda({
                 value={opcao.codigo}
                 checked={motivo === opcao.codigo}
                 onChange={() => setMotivo(opcao.codigo)}
-                className="size-4 accent-primary"
+                className="size-4 accent-(--primary-edge)"
               />
               <span className="text-sm">{opcao.rotulo}</span>
             </label>

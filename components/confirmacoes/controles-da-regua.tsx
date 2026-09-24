@@ -158,14 +158,12 @@ export function ControlesDaRegua({
         <span className="flex items-center gap-2">
           {regua.active ? (
             <CircleCheck
-              strokeWidth={1.5}
               className="size-4"
               style={{ color: "var(--success-text)" }}
               aria-hidden
             />
           ) : (
             <CirclePause
-              strokeWidth={1.5}
               className="size-4"
               style={{ color: "var(--neutral-text)" }}
               aria-hidden
@@ -305,15 +303,14 @@ export function ControlesDaRegua({
           </DialogHeader>
           <div className="flex gap-3 rounded-lg border p-3">
             <TriangleAlert
-              strokeWidth={1.5}
               className="size-5 shrink-0"
               style={{ color: "var(--warning-text)" }}
               aria-hidden
             />
             <p className="text-sm text-text-secondary">
-              Registre agora a taxa de falta atual da clínica. É ela que prova
-              o resultado depois: sem o número de antes, não existe comparação
-              e o ganho da régua fica sem evidência.
+              Registre agora a taxa de falta atual da clínica. É ela que prova o
+              resultado depois: sem o número de antes, não existe comparação e o
+              ganho da régua fica sem evidência.
             </p>
           </div>
           <DialogFooter>

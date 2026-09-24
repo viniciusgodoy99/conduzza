@@ -88,11 +88,7 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
         aria-label={tocando ? "Pausar o áudio" : "Tocar o áudio"}
         className="grid size-10 shrink-0 place-items-center rounded-full bg-surface-4 hover:bg-surface-5 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
       >
-        {tocando ? (
-          <Pause strokeWidth={1.5} className="size-4" />
-        ) : (
-          <Play strokeWidth={1.5} className="size-4" />
-        )}
+        {tocando ? <Pause className="size-4" /> : <Play className="size-4" />}
       </button>
       <input
         type="range"
@@ -108,9 +104,9 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
             audioRef.current.currentTime = valor;
           }
         }}
-        className="h-1 min-w-[110px] flex-1 cursor-pointer accent-[var(--primary)]"
+        className="h-1 min-w-[110px] flex-1 cursor-pointer accent-[var(--chart-bar)]"
       />
-      <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-tertiary">
+      <span className="shrink-0 font-mono text-[11px] text-text-tertiary tabular-nums">
         {duracao > 0 ? `${tempo(posicao)} / ${tempo(duracao)}` : tempo(posicao)}
       </span>
     </div>

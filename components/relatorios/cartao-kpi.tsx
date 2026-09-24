@@ -82,21 +82,17 @@ export function CartaoKpi({
             color:
               variacao === 0
                 ? "var(--neutral-text)"
-                : (variacao > 0) === (polaridade === "maior-melhor")
+                : variacao > 0 === (polaridade === "maior-melhor")
                   ? "var(--success-text)"
                   : "var(--alert-text)",
           }}
         >
           {variacao > 0 ? (
-            <ArrowUpRight strokeWidth={1.5} className="size-3.5" aria-hidden />
+            <ArrowUpRight className="size-3.5" aria-hidden />
           ) : variacao < 0 ? (
-            <ArrowDownRight
-              strokeWidth={1.5}
-              className="size-3.5"
-              aria-hidden
-            />
+            <ArrowDownRight className="size-3.5" aria-hidden />
           ) : (
-            <Minus strokeWidth={1.5} className="size-3.5" aria-hidden />
+            <Minus className="size-3.5" aria-hidden />
           )}
           {variacao > 0 ? "subiu" : variacao < 0 ? "caiu" : "estável"}{" "}
           {Math.abs(variacao).toLocaleString("pt-BR", {

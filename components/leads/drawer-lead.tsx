@@ -230,13 +230,13 @@ export function DrawerLead({
             <div className="grid gap-2 p-5">
               <Button variant="outline" className="h-10 w-full" asChild>
                 <Link href="/atendimento">
-                  <MessageSquareText strokeWidth={1.5} className="size-4" />
+                  <MessageSquareText className="size-4" />
                   Abrir conversa
                 </Link>
               </Button>
               <Button variant="outline" className="h-10 w-full" asChild>
                 <Link href="/agenda">
-                  <CalendarPlus strokeWidth={1.5} className="size-4" />
+                  <CalendarPlus className="size-4" />
                   Agendar
                 </Link>
               </Button>
@@ -246,7 +246,7 @@ export function DrawerLead({
                   className="h-10 w-full [color:var(--alert-text)]"
                   onClick={() => setPerdaIds([lead.id])}
                 >
-                  <UserRoundX strokeWidth={1.5} className="size-4" />
+                  <UserRoundX className="size-4" />
                   Marcar perdido
                 </Button>
               ) : (
@@ -254,7 +254,7 @@ export function DrawerLead({
                   hint={jaPerdido ? "Este lead já está em Perdido" : dica}
                 >
                   <Button variant="outline" className="h-10 w-full" disabled>
-                    <UserRoundX strokeWidth={1.5} className="size-4" />
+                    <UserRoundX className="size-4" />
                     Marcar perdido
                   </Button>
                 </DisabledWithHint>

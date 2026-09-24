@@ -209,7 +209,7 @@ export function EtiquetasTab({
               }
             }}
           >
-            <Trash2 strokeWidth={1.5} className="size-4" aria-hidden />
+            <Trash2 className="size-4" aria-hidden />
             Excluir
           </Button>
         ) : null}
@@ -252,20 +252,22 @@ export function EtiquetasTab({
                         onClick={() => abrirEdicao(etiqueta)}
                         aria-label={`Editar ${etiqueta.nome}`}
                       >
-                        <Pencil strokeWidth={1.5} className="size-4" />
+                        <Pencil className="size-4" />
                         Editar
                       </Button>
                     ) : (
                       <DisabledWithHint hint={dica}>
                         <Button variant="ghost" className="h-10" disabled>
-                          <Pencil strokeWidth={1.5} className="size-4" />
+                          <Pencil className="size-4" />
                           Editar
                         </Button>
                       </DisabledWithHint>
                     )}
                   </span>
                 </div>
-                {editando === etiqueta.chave ? formulario(etiqueta.chave) : null}
+                {editando === etiqueta.chave
+                  ? formulario(etiqueta.chave)
+                  : null}
               </article>
             );
           })}
@@ -284,13 +286,17 @@ export function EtiquetasTab({
           disabled={pendente}
           onClick={abrirCriacao}
         >
-          <Plus strokeWidth={1.5} className="size-4" />
+          <Plus className="size-4" />
           Nova etiqueta
         </Button>
       ) : (
         <DisabledWithHint hint={dica}>
-          <Button variant="outline" className="h-10 justify-self-start" disabled>
-            <Plus strokeWidth={1.5} className="size-4" />
+          <Button
+            variant="outline"
+            className="h-10 justify-self-start"
+            disabled
+          >
+            <Plus className="size-4" />
             Nova etiqueta
           </Button>
         </DisabledWithHint>
@@ -321,11 +327,7 @@ export function EtiquetasTab({
             >
               Cancelar
             </Button>
-            <Button
-              className="h-10"
-              disabled={pendente}
-              onClick={excluir}
-            >
+            <Button className="h-10" disabled={pendente} onClick={excluir}>
               {pendente ? "Excluindo..." : "Excluir etiqueta"}
             </Button>
           </DialogFooter>

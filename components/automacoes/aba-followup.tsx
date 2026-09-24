@@ -1,6 +1,12 @@
 "use client";
 
-import { Bot, ChevronDown, MessageSquareText, Plus, Trash2 } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  MessageSquareText,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -73,9 +79,7 @@ export function AbaFollowup({
         trigger_stage: etapaEscolhida,
       });
       if (resultado.ok) {
-        toast.success(
-          "Régua criada, desligada. Escreva as mensagens e ligue.",
-        );
+        toast.success("Régua criada, desligada. Escreva as mensagens e ligue.");
         setDialogoAberto(false);
         setEtapaEscolhida("");
         await aoMudar();
@@ -103,7 +107,6 @@ export function AbaFollowup({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="flex gap-3 rounded-lg border bg-card p-3">
           <MessageSquareText
-            strokeWidth={1.5}
             className="size-5 shrink-0"
             style={{ color: "var(--success-text)" }}
             aria-hidden
@@ -117,11 +120,7 @@ export function AbaFollowup({
         </div>
         <DisabledWithHint hint="Chega com o agente de IA. As travas de conformidade médica vêm antes de qualquer texto escrito por máquina.">
           <div className="flex gap-3 rounded-lg border border-dashed bg-card p-3 opacity-60">
-            <Bot
-              strokeWidth={1.5}
-              className="size-5 shrink-0 text-text-tertiary"
-              aria-hidden
-            />
+            <Bot className="size-5 shrink-0 text-text-tertiary" aria-hidden />
             <div className="grid gap-0.5 text-sm">
               <span className="font-medium">Deixar a IA escrever</span>
               <span className="text-xs text-text-secondary">
@@ -134,8 +133,8 @@ export function AbaFollowup({
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="max-w-prose text-xs text-text-secondary">
-          A régua acompanha o lead enquanto ele está na etapa. Ela para
-          sozinha quando ele responde, agenda ou muda de etapa.
+          A régua acompanha o lead enquanto ele está na etapa. Ela para sozinha
+          quando ele responde, agenda ou muda de etapa.
         </p>
         {podeEditar ? (
           <Button
@@ -144,13 +143,13 @@ export function AbaFollowup({
             disabled={pendente || etapasLivres.length === 0}
             onClick={() => setDialogoAberto(true)}
           >
-            <Plus strokeWidth={1.5} className="size-4" />
+            <Plus className="size-4" />
             Nova régua por etapa
           </Button>
         ) : (
           <DisabledWithHint hint={dicaSemPermissao}>
             <Button variant="outline" className="h-10" disabled>
-              <Plus strokeWidth={1.5} className="size-4" />
+              <Plus className="size-4" />
               Nova régua por etapa
             </Button>
           </DisabledWithHint>
@@ -159,8 +158,8 @@ export function AbaFollowup({
 
       {followups.length === 0 ? (
         <p className="rounded-lg border border-dashed p-4 text-sm text-text-secondary">
-          Nenhuma régua de follow-up ainda. Crie uma para a etapa onde os
-          leads mais esfriam, como quem pediu preço e sumiu.
+          Nenhuma régua de follow-up ainda. Crie uma para a etapa onde os leads
+          mais esfriam, como quem pediu preço e sumiu.
         </p>
       ) : (
         followups.map((regua) => {
@@ -175,7 +174,6 @@ export function AbaFollowup({
                   className="flex min-h-10 flex-1 items-center gap-2 text-left"
                 >
                   <ChevronDown
-                    strokeWidth={1.5}
                     className={cn(
                       "size-4 shrink-0 transition-transform",
                       expandida ? "rotate-180" : "",
@@ -198,7 +196,7 @@ export function AbaFollowup({
                     disabled={pendente}
                     onClick={() => excluir(regua)}
                   >
-                    <Trash2 strokeWidth={1.5} className="size-4" />
+                    <Trash2 className="size-4" />
                     Excluir
                   </Button>
                 ) : (
@@ -209,7 +207,7 @@ export function AbaFollowup({
                       className="h-9 [color:var(--alert-text)]"
                       disabled
                     >
-                      <Trash2 strokeWidth={1.5} className="size-4" />
+                      <Trash2 className="size-4" />
                       Excluir
                     </Button>
                   </DisabledWithHint>
@@ -226,7 +224,9 @@ export function AbaFollowup({
                       desta etapa não{" "}
                       {regua.sem_autorizacao === 1 ? "tem" : "têm"} autorização
                       para receber mensagens e{" "}
-                      {regua.sem_autorizacao === 1 ? "será pulado" : "serão pulados"}
+                      {regua.sem_autorizacao === 1
+                        ? "será pulado"
+                        : "serão pulados"}
                       .
                     </p>
                   ) : null}

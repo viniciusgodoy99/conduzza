@@ -5,10 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 // da tela.
 export default function CarregandoAgenda() {
   return (
-    <div
-      className="flex h-[calc(100dvh-3.5rem)] flex-col overflow-hidden"
-      aria-hidden
-    >
+    <div className="flex h-full flex-col overflow-hidden" aria-hidden>
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-1 px-4 py-2.5">
         <div className="flex items-center gap-1">
           <Skeleton className="size-10 rounded-md" />

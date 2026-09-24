@@ -136,7 +136,7 @@ export function ConversationCard({
               aria-hidden
               className="flex size-[22px] items-center justify-center rounded-full [color:var(--ai-text)] [background:var(--ai-bg)]"
             >
-              <Sparkles strokeWidth={1.5} className="size-3" />
+              <Sparkles className="size-3" />
             </span>
           ) : null}
         </span>

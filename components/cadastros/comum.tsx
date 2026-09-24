@@ -87,7 +87,7 @@ export function AcoesDaLinha({
         onClick={aoEditar}
         aria-label={`Editar ${nome}`}
       >
-        <Pencil strokeWidth={1.5} className="size-4" />
+        <Pencil className="size-4" />
       </Button>
     );
   }
@@ -100,7 +100,7 @@ export function AcoesDaLinha({
           onClick={aoVerDetalhes}
           aria-label={`Ver detalhes de ${nome}`}
         >
-          <Eye strokeWidth={1.5} className="size-4" /> Ver detalhes
+          <Eye className="size-4" /> Ver detalhes
         </Button>
       ) : null}
       <DisabledWithHint hint={dica}>
@@ -111,7 +111,7 @@ export function AcoesDaLinha({
           disabled
           aria-label={`Editar ${nome}`}
         >
-          <Pencil strokeWidth={1.5} className="size-4" />
+          <Pencil className="size-4" />
         </Button>
       </DisabledWithHint>
     </div>
@@ -183,7 +183,6 @@ export function AvisoDeConsultas({
     >
       <div className="flex items-start gap-2">
         <TriangleAlert
-          strokeWidth={1.5}
           className="mt-0.5 size-4 shrink-0 [color:var(--warning-text)]"
           aria-hidden
         />
@@ -203,7 +202,7 @@ export function AvisoDeConsultas({
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild variant="outline" className="h-10">
           <Link href="/agenda">
-            <CalendarDays strokeWidth={1.5} className="size-4" /> Abrir a Agenda
+            <CalendarDays className="size-4" /> Abrir a Agenda
           </Link>
         </Button>
         <Button
@@ -226,7 +225,7 @@ export function ChipSituacao({ active }: { active: boolean }) {
   const chip = chipAtivo(active);
   return (
     <span className={cn("inline-flex items-center gap-1.5", chip.classe)}>
-      <Icone strokeWidth={1.5} className="size-4 shrink-0" aria-hidden />
+      <Icone className="size-4 shrink-0" aria-hidden />
       {chip.texto}
     </span>
   );

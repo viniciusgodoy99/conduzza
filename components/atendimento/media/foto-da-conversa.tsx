@@ -34,7 +34,7 @@ export function FotoDaConversa({
         className="grid place-items-center gap-1.5 rounded-md border border-dashed p-4 text-center"
         style={{ width: LARGURA, height: ALTURA }}
       >
-        <ImageOff strokeWidth={1.5} className="size-5 text-text-tertiary" />
+        <ImageOff className="size-5 text-text-tertiary" />
         <span className="text-[12px] text-text-secondary">
           Não foi possível carregar a foto
         </span>
@@ -94,7 +94,7 @@ export function FotoDaConversa({
                     para o arquivo em vez de baixar. */}
                 <Button asChild variant="secondary" size="sm">
                   <a href={`${src}?download=1`}>
-                    <Download strokeWidth={1.5} className="size-4" />
+                    <Download className="size-4" />
                     Baixar
                   </a>
                 </Button>
@@ -103,7 +103,7 @@ export function FotoDaConversa({
                   size="sm"
                   onClick={() => setAberta(false)}
                 >
-                  <X strokeWidth={1.5} className="size-4" />
+                  <X className="size-4" />
                   Fechar
                 </Button>
               </div>

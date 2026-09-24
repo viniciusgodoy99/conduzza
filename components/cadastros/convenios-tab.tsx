@@ -112,7 +112,7 @@ export function ConveniosTab({
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus strokeWidth={1.5} className="size-4" /> Novo convênio
+          <Plus className="size-4" /> Novo convênio
         </BotaoProtegido>
       </div>
 

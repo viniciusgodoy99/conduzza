@@ -1,8 +1,10 @@
 "use client";
 
-import { RotateCcw, TriangleAlert } from "lucide-react";
-import { useEffect } from "react";
+import { OctagonAlert, RotateCcw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useTransition } from "react";
 
+import { EstadoDeTela } from "@/components/shell/estado-de-tela";
 import { Button } from "@/components/ui/button";
 
 // Estado de ERRO de todas as telas do aplicativo. Achado da revisão de
@@ -22,34 +24,55 @@ export default function ErroDoAplicativo({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const router = useRouter();
+  const [tentando, startTransition] = useTransition();
+
   useEffect(() => {
     // O console do navegador é da pessoa; nenhum dado de paciente passa por
     // aqui (o digest é um código, não conteúdo).
     console.error("tela_falhou", error.digest ?? "");
   }, [error]);
 
+  // reset() sozinho só limpa o estado do boundary e desenha de novo o mesmo
+  // payload do servidor, que já traz o erro: a tela voltava na hora e o
+  // botão parecia quebrado. router.refresh() refaz a busca no servidor, e os
+  // dois na mesma transição trocam a tela de erro pela nova de uma vez
+  // (achado 114 da revisão).
+  const tentarDeNovo = () => {
+    startTransition(() => {
+      router.refresh();
+      reset();
+    });
+  };
+
   return (
     <div className="grid min-h-[60vh] place-items-center p-6">
-      <div className="grid max-w-md justify-items-center gap-3 text-center">
-        <TriangleAlert
-          strokeWidth={1.5}
-          className="size-8 [color:var(--alert-text)]"
-        />
-        <h1 className="text-lg font-semibold">Esta tela não carregou</h1>
-        <p className="text-sm text-text-secondary">
-          Alguma coisa falhou ao buscar os dados. Suas conversas e agendamentos
-          continuam guardados: é só esta tela que não abriu.
-        </p>
-        <Button onClick={reset}>
-          <RotateCcw strokeWidth={1.5} className="size-4" />
+      <EstadoDeTela
+        icone={OctagonAlert}
+        tom="alerta"
+        titulo="Esta tela não carregou"
+        descricao={
+          <p>
+            Alguma coisa falhou ao buscar os dados. Suas conversas e
+            agendamentos continuam guardados: é só esta tela que não abriu.
+          </p>
+        }
+      >
+        <Button
+          variant="outline"
+          className="h-10 px-4"
+          onClick={tentarDeNovo}
+          disabled={tentando}
+        >
+          <RotateCcw aria-hidden className="size-4" />
           Tentar de novo
         </Button>
         {error.digest ? (
-          <p className="font-mono text-[11px] text-text-tertiary">
+          <p className="cz-num text-[11px] text-text-tertiary">
             código para o suporte: {error.digest}
           </p>
         ) : null}
-      </div>
+      </EstadoDeTela>
     </div>
   );
 }

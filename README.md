@@ -16,14 +16,19 @@ Documentação de produto e handoff de engenharia do V1.
 
 ```bash
 npm run dev      # a aplicação
-npm run worker   # o motor de automação, em outro terminal
 ```
 
-Em produção, `npm run build && npm start` mais `npm run worker`, este último **com supervisão e reinício automático** (systemd, pm2 ou equivalente).
+Em produção a aplicação roda na Vercel (região de São Paulo) e **não existe processo de worker em servidor nenhum**. O motor de automação roda pelo `pg_cron`, dentro do Supabase, desde 02/09/2026:
 
-**Não existe `pg_cron` neste projeto.** O worker é o único executor de tudo que é automático: planejamento e envio das réguas de confirmação e pós falta, o botão "Cobrar agora", o download de mídia que o paciente manda e a limpeza das reservas de horário. Com ele fora do ar a aplicação abre, a agenda funciona e **nenhuma mensagem sai nem entra na automação**. Quando isso acontece, o sistema mostra a faixa "as mensagens automáticas estão paradas" no topo de todas as telas.
+- a cada 20 segundos, o `pg_cron` chama (via `pg_net`) a rota `POST /api/webhooks/motor` na Vercel, que processa a fila de tarefas: envio das réguas de confirmação, pós falta e follow up, o botão "Cobrar agora", o download de mídia que o paciente manda;
+- a cada 60 segundos, `motor_manutencao()` roda no próprio banco: planeja as réguas, limpa as reservas de horário vencidas, expira ofertas da lista de espera;
+- uma vez por dia, `poda-do-cron` apaga o histórico do agendador com mais de 7 dias.
 
-Para conferir que a corrente inteira está funcionando (planejamento, envio, webhook, resposta do paciente, pós falta), com os dois processos de pé:
+Com o motor parado a aplicação abre, a agenda funciona e **nenhuma mensagem automática sai**. Quando isso acontece, o sistema mostra a faixa "as mensagens automáticas estão paradas" no topo de todas as telas, e a rota `GET /api/webhooks/saude` passa a responder 503 para o monitor externo que avisa o dono por e-mail (configuração no runbook).
+
+`npm run worker` é o **mesmo motor** num laço local, na mesma cadência: serve para desenvolver e testar num banco sem `pg_cron` e como ponte de emergência quando o cron é desligado. Contra o banco de produção, só durante incidente (ver "Desligar" no runbook).
+
+Para conferir que a corrente inteira está funcionando (planejamento, envio, webhook, resposta do paciente, pós falta), com a aplicação e o motor de pé:
 
 ```bash
 npm run prova:motor

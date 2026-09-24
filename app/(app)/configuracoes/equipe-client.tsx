@@ -122,7 +122,7 @@ export function PendentesList({
                 )
               }
             >
-              <Check strokeWidth={1.5} className="size-4" />
+              <Check className="size-4" />
               Liberar
             </Button>
             <Button
@@ -131,7 +131,7 @@ export function PendentesList({
               disabled={!podeGerenciar || pending}
               onClick={() => executar(() => recusarMembroAction(pessoa.userId))}
             >
-              <X strokeWidth={1.5} className="size-4" />
+              <X className="size-4" />
               Recusar
             </Button>
           </li>
@@ -192,7 +192,7 @@ export function CodigoAcesso({
             setTimeout(() => setCopiado(false), 2000);
           }}
         >
-          <Copy strokeWidth={1.5} className="size-4" />
+          <Copy className="size-4" />
           {copiado ? "Copiado" : "Copiar"}
         </Button>
         <Button
@@ -201,7 +201,7 @@ export function CodigoAcesso({
           disabled={!podeGerenciar || pending}
           onClick={() => executar(gerarNovoCodigoAction)}
         >
-          <RefreshCw strokeWidth={1.5} className="size-4" />
+          <RefreshCw className="size-4" />
           Gerar novo
         </Button>
         <div className="ml-auto flex items-center gap-2">

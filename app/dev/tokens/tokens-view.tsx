@@ -21,28 +21,43 @@ import {
   type ConversationStatus,
 } from "@/lib/design/status";
 
+// Tokens do Conduzza Design System (docs/06, secao 4.3). Os valores vivem no
+// app/globals.css; esta pagina so mostra, nos dois temas.
 const SURFACE_TOKENS = [
-  { name: "--background", label: "Fundo da aplicação" },
+  { name: "--background", label: "Fundo da aplicação (papel)" },
   { name: "--surface-1", label: "Superfície 1" },
   { name: "--surface-2", label: "Superfície 2 (card)" },
-  { name: "--surface-3", label: "Superfície 3" },
-  { name: "--surface-4", label: "Superfície 4" },
-  { name: "--surface-5", label: "Superfície 5 (seleção)" },
+  { name: "--surface-subtle", label: "Superfície sutil (cabeçalho, rodapé)" },
+  { name: "--surface-3", label: "Superfície 3 (hover)" },
+  { name: "--surface-4", label: "Superfície 4 (afundado, trilho)" },
+  { name: "--surface-5", label: "Superfície 5 (pressionado)" },
   { name: "--surface-6", label: "Superfície 6" },
-  { name: "--border", label: "Divisor decorativo" },
+  { name: "--border", label: "Fio de cartão e linha" },
+  { name: "--border-strong", label: "Fio de botão, menu e tag" },
   { name: "--input", label: "Borda de campo e controle" },
+  { name: "--inverse", label: "Invertido (botão sólido, dica)" },
   { name: "--sidebar", label: "Sidebar (fixa nos 2 temas)" },
 ];
 
 const TEXT_TOKENS = [
-  { name: "--foreground", label: "Texto primário" },
+  { name: "--text-strong", label: "Texto forte (títulos, números)" },
+  { name: "--foreground", label: "Texto do corpo" },
   { name: "--text-secondary", label: "Texto secundário" },
   { name: "--text-tertiary", label: "Texto terciário" },
+  { name: "--primary-text", label: "Lime como texto e link" },
+];
+
+const ACCENT_TOKENS = [
+  { name: "--primary", label: "Preenchimento da marca (nunca texto)" },
+  { name: "--primary-soft", label: "Selecionado e botão suave" },
+  { name: "--primary-edge", label: "Indicador de seleção" },
+  { name: "--focus", label: "Contorno de foco" },
+  { name: "--chart-bar", label: "Barra de dado" },
+  { name: "--chart-bar-muted", label: "Barra neutra" },
 ];
 
 const SEMANTIC_TOKENS = [
-  { name: "--primary", label: "Ação primária (lime da marca)" },
-  { name: "--ai", label: "IA (violeta, reservado)" },
+  { name: "--ai", label: "IA (lime suave, reservado)" },
   { name: "--info", label: "Informativo (azul)" },
   { name: "--success", label: "Confirmado (verde)" },
   { name: "--warning", label: "Atenção (âmbar)" },
@@ -70,14 +85,16 @@ const DEMO_COLUMNS: ColumnDef<DemoRow, unknown>[] = [
 
 function Swatch({ name, label }: { name: string; label: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border bg-card p-3">
+    <div className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-xs">
       <span
-        className="size-9 shrink-0 rounded-md border"
+        className="size-9 shrink-0 rounded-md border border-border-strong"
         style={{ backgroundColor: `var(${name})` }}
       />
-      <div className="grid">
-        <span className="text-sm font-medium">{label}</span>
-        <code className="font-mono text-xs text-text-tertiary">{name}</code>
+      <div className="grid min-w-0">
+        <span className="text-[13px] font-semibold text-text-strong">
+          {label}
+        </span>
+        <code className="cz-num text-xs text-text-tertiary">{name}</code>
       </div>
     </div>
   );
@@ -92,9 +109,7 @@ function Section({
 }) {
   return (
     <section className="grid gap-4">
-      <h2 className="text-[10.5px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-        {title}
-      </h2>
+      <h2 className="cz-eyebrow text-text-secondary">{title}</h2>
       {children}
     </section>
   );
@@ -127,6 +142,14 @@ export function TokensView() {
           </div>
         </Section>
 
+        <Section title="Acento lime">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+            {ACCENT_TOKENS.map((token) => (
+              <Swatch key={token.name} {...token} />
+            ))}
+          </div>
+        </Section>
+
         <Section title="Cores semânticas">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             {SEMANTIC_TOKENS.map((token) => (
@@ -136,28 +159,85 @@ export function TokensView() {
         </Section>
 
         <Section title="Tipografia">
-          <div className="grid gap-3 rounded-lg border bg-card p-5">
-            <p className="text-4xl font-bold tracking-tight tabular-nums">
+          <div className="grid gap-3 rounded-card border border-border bg-card p-5 shadow-sm">
+            <p className="cz-num text-[34px] leading-none font-semibold text-text-strong">
               R$ 12.480,00
             </p>
-            <p className="text-[22px] font-semibold">Título de página, 22px</p>
-            <p className="text-[15px] font-semibold">Título de card, 15px</p>
+            <p className="text-[24px] leading-[1.2] font-bold tracking-[-0.02em] text-text-strong">
+              Título de página, 24px
+            </p>
+            <p className="text-[19px] leading-[1.25] font-bold tracking-[-0.015em] text-text-strong">
+              Título de modal e da barra superior, 19px
+            </p>
+            <p className="text-base leading-[1.3] font-bold tracking-[-0.01em] text-text-strong">
+              Título de cartão, 16px
+            </p>
             <p className="text-sm">
-              Corpo de 14px com altura de linha 1.5, o tamanho padrão de leitura
+              Corpo de 14px com altura de linha 1,5, o tamanho padrão de leitura
               da interface.
             </p>
-            <p className="text-xs font-medium">Rótulo e metadado, 12px</p>
-            <p className="text-[11px] font-medium tracking-[0.04em] text-text-tertiary uppercase">
-              Micro, timestamp, 11px
+            <p className="text-xs font-semibold">Rótulo de campo, 12px</p>
+            <p className="text-[11px] text-text-tertiary">
+              Legenda e metadado, 11px
             </p>
-            <p className="font-mono text-sm tabular-nums">
+            <p className="cz-eyebrow text-text-secondary">Eyebrow, 10px</p>
+            <p className="cz-num text-sm">
               (84) 99104-0914 · 14:30 · R$ 400,00
             </p>
           </div>
         </Section>
 
+        <Section title="Acento, seleção e foco">
+          <div className="grid gap-3 rounded-card border border-border bg-card p-5 shadow-sm">
+            <p className="text-sm">
+              Link e ícone de destaque em{" "}
+              <span className="font-semibold text-primary-text">
+                lime como texto
+              </span>
+              , nunca no lime de preenchimento.
+            </p>
+            <div className="rounded-md border-l-2 border-l-primary-edge bg-primary-soft px-3 py-2.5 text-sm">
+              Linha selecionada, com{" "}
+              <span className="font-semibold text-primary-text">
+                borda de indicador
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="inline-flex h-10 items-center rounded-lg bg-primary px-3.5 text-sm font-semibold text-primary-foreground">
+                Preenchimento lime
+              </span>
+              <span className="inline-flex h-10 items-center rounded-lg bg-inverse px-3.5 text-sm font-semibold text-inverse-foreground">
+                Invertido
+              </span>
+              <span className="inline-flex h-10 items-center rounded-lg border border-input bg-card px-3.5 text-sm outline-2 outline-offset-2 outline-focus outline-solid">
+                Campo com foco
+              </span>
+            </div>
+            <div className="grid gap-2 rounded-xl bg-background p-3">
+              <p className="max-w-[80%] justify-self-start rounded-bubble border border-border bg-card px-3 py-2 text-sm">
+                Mensagem do paciente
+                <span className="block cz-num text-[11px] text-text-secondary">
+                  14:30
+                </span>
+              </p>
+              <p className="max-w-[80%] justify-self-end rounded-bubble bg-bubble-out px-3 py-2 text-sm text-bubble-out-foreground">
+                Resposta da atendente
+                <span className="block cz-num text-[11px] text-(--bubble-out-meta)">
+                  14:31
+                </span>
+              </p>
+              <p className="max-w-[80%] justify-self-end rounded-bubble border border-(--bubble-ai-border) bg-bubble-ai px-3 py-2 text-sm text-bubble-ai-foreground">
+                Resposta da IA
+                <span className="block cz-num text-[11px] text-(--bubble-ai-meta)">
+                  14:32
+                </span>
+              </p>
+            </div>
+          </div>
+        </Section>
+
         <Section title="Status de agendamento, os 10">
-          <div className="flex flex-wrap gap-2 rounded-lg border p-5">
+          <div className="flex flex-wrap gap-2 rounded-card border border-border bg-card p-5 shadow-sm">
             {(Object.keys(APPOINTMENT_STATUS) as AppointmentStatus[]).map(
               (status) => (
                 <StatusChip
@@ -170,7 +250,7 @@ export function TokensView() {
         </Section>
 
         <Section title="Status de conversa, os 4">
-          <div className="flex flex-wrap gap-2 rounded-lg border p-5">
+          <div className="flex flex-wrap gap-2 rounded-card border border-border bg-card p-5 shadow-sm">
             {(Object.keys(CONVERSATION_STATUS) as ConversationStatus[]).map(
               (status) =>
                 status === "em_atendimento" ? (
@@ -208,7 +288,7 @@ export function TokensView() {
         </Section>
 
         <Section title="Esqueletos de carregamento">
-          <div className="grid gap-6 rounded-lg border p-5">
+          <div className="grid gap-6 rounded-card border border-border bg-card p-5 shadow-sm">
             <ListSkeleton rows={3} />
             <TableSkeleton rows={2} columns={4} />
             <CardsSkeleton cards={4} />
@@ -220,7 +300,7 @@ export function TokensView() {
         </Section>
 
         <Section title="Botões">
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border p-5">
+          <div className="flex flex-wrap items-center gap-2 rounded-card border border-border bg-card p-5 shadow-sm">
             <Button>Ação principal</Button>
             <Button variant="secondary">Secundária</Button>
             <Button variant="outline">Contorno</Button>

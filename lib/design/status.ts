@@ -2,38 +2,54 @@ import {
   AlarmClock,
   Armchair,
   BadgePlus,
+  Bot,
   Calendar,
   CalendarPlus,
   CalendarSync,
   CheckCheck,
   CircleCheck,
+  CircleDashed,
+  CirclePause,
+  CircleSlash,
   CircleX,
   Clock,
+  ConciergeBell,
+  Eye,
   Gauge,
   Hand,
+  KeyRound,
+  LoaderCircle,
   MessageCircleCheck,
   MessageSquareText,
   MoonStar,
+  QrCode,
+  Send,
   ShieldAlert,
+  ShieldCheck,
+  ShieldOff,
+  ShieldX,
   Sparkles,
   Stethoscope,
   Timer,
   TriangleAlert,
   UserCheck,
+  UserRound,
   UserRoundX,
   Watch,
+  WifiOff,
   type LucideIcon,
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 
 import { BuildingSlash } from "@/components/shared/icons/building-slash";
+import { ACCESS_LABELS, type Access } from "@/lib/domain/permissions";
 
 // Fonte unica dos status do produto.
 // Regra das 3 camadas: todo estado e comunicado por forma do icone, rotulo em
 // texto e cor, simultaneamente. Nunca o mesmo icone em cores diferentes.
-// Semantica de cor do handoff Conduzza: violeta e RESERVADO para IA; azul e
-// informativo; verde confirmado/sucesso; ambar aguardando/atencao; vermelho
-// falta/erro; neutro para concluido.
+// Semantica de cor do design system Conduzza: lime suave (tom ai) e
+// reservado para IA; azul e informativo; verde confirmado/sucesso; ambar
+// aguardando/atencao; vermelho falta/erro; neutro para concluido.
 
 export type StatusTone =
   "ai" | "info" | "success" | "warning" | "alert" | "neutral";
@@ -47,6 +63,8 @@ export type StatusDefinition = {
   tone: StatusTone;
   /** null quando a camada de forma e um avatar (conversa em atendimento) */
   icon: StatusIcon | null;
+  /** Classe extra do icone, aplicada pelo StatusChip (ex.: o giro do "Conectando") */
+  iconClassName?: string;
 };
 
 // Os 10 status de agendamento, strings identicas aos checks de docs/04.
@@ -66,8 +84,8 @@ export const APPOINTMENT_STATUS: Record<AppointmentStatus, StatusDefinition> = {
   // Brief 3.5: Agendado e NEUTRO ("agendado, sem status") e Compareceu e
   // SUCESSO. Excecao consciente: na_recepcao e em_atendimento ficam em
   // warning/info em vez da "Primaria" do brief, porque a primaria e variavel
-  // por clinica (white-label) e o handoff (que vence em aparencia) usa
-  // ambar/azul nesses dois.
+  // por clinica (white-label) e o design system Conduzza (que vence em
+  // aparencia) usa ambar/azul nesses dois.
   agendado: { label: "Agendado", tone: "neutral", icon: Calendar },
   aguardando_confirmacao: {
     label: "Aguardando",
@@ -190,6 +208,145 @@ export const APPOINTMENT_FLAG: Record<AppointmentFlag, StatusDefinition> = {
     icon: CalendarSync,
   },
 };
+
+// Mapas de estado das telas de cadastro, automacao e configuracao
+// (docs/06 secao 4.6, conflito C8 do anexo). Antes cada tela desenhava o
+// proprio "Ativo" ou "Ligada" com um ponto colorido; o design system Conduzza
+// usa o "dot", mas aqui status e sempre as 3 camadas pelo StatusChip. Cada
+// mapa tem um icone e uma cor por chave, e os icones repetidos entre mapas
+// carregam sempre o mesmo tom: CircleCheck e sempre success, CirclePause e
+// CircleDashed sempre neutral. Quando a tela tem um rotulo proprio ("Regua
+// ligada", "Recuperacao ligada", o nome do evento da Meta), ele entra pelo
+// label do StatusChip; a forma e a cor continuam vindo daqui.
+
+// Registro de cadastro (profissional, unidade, recurso, convenio, pacote).
+export type RecordStatus = "ativo" | "inativo";
+
+export const RECORD_STATUS: Record<RecordStatus, StatusDefinition> = {
+  ativo: { label: "Ativo", tone: "success", icon: CircleCheck },
+  inativo: { label: "Inativo", tone: "neutral", icon: CirclePause },
+};
+
+// Regua de mensagens automaticas (Confirmacoes e Automacoes). O rotulo da
+// tela varia com a regua e entra pelo label do StatusChip.
+export type ReguaStatus = "ligada" | "desligada";
+
+export const REGUA_STATUS: Record<ReguaStatus, StatusDefinition> = {
+  ligada: { label: "Ligada", tone: "success", icon: CircleCheck },
+  desligada: { label: "Desligada", tone: "neutral", icon: CirclePause },
+};
+
+// Conexao do numero da clinica. Rotulos iguais aos do painel de conexao
+// (components/whatsapp/connect-client.tsx): o e2e confere "Situacao atual:
+// Desconectado".
+export type WhatsAppConnectionStatus =
+  "conectado" | "conectando" | "aguardando_qr" | "desconectado";
+
+export const WHATSAPP_CONNECTION_STATUS: Record<
+  WhatsAppConnectionStatus,
+  StatusDefinition
+> = {
+  conectado: { label: "Conectado", tone: "success", icon: CircleCheck },
+  conectando: {
+    label: "Conectando",
+    tone: "info",
+    icon: LoaderCircle,
+    iconClassName: "motion-safe:animate-spin",
+  },
+  aguardando_qr: {
+    label: "Aguardando leitura do QR code",
+    tone: "warning",
+    icon: QrCode,
+  },
+  desconectado: { label: "Desconectado", tone: "alert", icon: WifiOff },
+};
+
+// Nivel de acesso da matriz de papeis (Configuracoes, aba equipe). O texto e
+// o de ACCESS_LABELS, sem mudar.
+export const ACCESS_LEVEL_STATUS: Record<Access, StatusDefinition> = {
+  tudo: { label: ACCESS_LABELS.tudo, tone: "success", icon: CircleCheck },
+  ver: { label: ACCESS_LABELS.ver, tone: "neutral", icon: Eye },
+  proprio: { label: ACCESS_LABELS.proprio, tone: "warning", icon: UserRound },
+  nada: { label: ACCESS_LABELS.nada, tone: "neutral", icon: CircleSlash },
+};
+
+// Se a IA pode agendar o procedimento sozinha (Cadastros, procedimentos).
+export type IaAgendaStatus = "sim" | "nao";
+
+export const IA_AGENDA_STATUS: Record<IaAgendaStatus, StatusDefinition> = {
+  sim: { label: "IA agenda", tone: "success", icon: Bot },
+  nao: { label: "Só recepção", tone: "neutral", icon: ConciergeBell },
+};
+
+// Conversao da etapa da jornada para a Meta (Configuracoes, jornada). Com o
+// nome do evento, a tela passa o proprio rotulo pelo label do StatusChip.
+export type ConversaoStatus = "ativa" | "pausada" | "sem";
+
+export const CONVERSAO_STATUS: Record<ConversaoStatus, StatusDefinition> = {
+  ativa: { label: "Conversão ativa", tone: "success", icon: Send },
+  pausada: { label: "Conversão pausada", tone: "neutral", icon: CirclePause },
+  sem: {
+    label: "Sem evento de conversão",
+    tone: "neutral",
+    icon: CircleDashed,
+  },
+};
+
+// Token de acesso da Meta (Configuracoes, anuncios).
+export type TokenMetaStatus = "salvo" | "ausente";
+
+export const TOKEN_META_STATUS: Record<TokenMetaStatus, StatusDefinition> = {
+  salvo: { label: "Token salvo", tone: "success", icon: KeyRound },
+  ausente: { label: "Sem token", tone: "neutral", icon: CircleDashed },
+};
+
+// Autorizacao do paciente para receber mensagens (ficha, painel do
+// Atendimento). Revogado e definitivo ate o paciente autorizar de novo
+// (CLAUDE.md 3.4), por isso alert.
+export type ConsentStatus = "autorizado" | "revogado" | "sem_autorizacao";
+
+export const CONSENT_STATUS: Record<ConsentStatus, StatusDefinition> = {
+  autorizado: {
+    label: "Autorizado a receber mensagens",
+    tone: "success",
+    icon: ShieldCheck,
+  },
+  revogado: {
+    label: "Pediu para não receber mensagens",
+    tone: "alert",
+    icon: ShieldX,
+  },
+  sem_autorizacao: {
+    label: "Sem autorização registrada",
+    tone: "neutral",
+    icon: ShieldOff,
+  },
+};
+
+// Tabela de icones reservados (docs/06 secao 4.6, conflito C18). Um icone,
+// um sentido, uma cor, em qualquer tela, dentro ou fora destes mapas:
+// - TriangleAlert: SO o status Faltou (alert).
+// - CircleAlert: atencao (warning).
+// - OctagonAlert: erro ou falha (alert). Tambem "codigo nao encontrado".
+// - Info: informacao (info).
+// - CircleCheck: sucesso, ativo, feito (sempre success).
+// - Clock: SO o status Aguardando (warning); "enviando" usa SendHorizonal.
+// - CircleX: SO Cancelado pelo paciente.
+// - ShieldAlert: SO Risco de falta; bloqueio de conformidade usa ShieldBan.
+// - Calendar: SO o status Agendado; o menu da Agenda usa CalendarDays.
+// - Hourglass: pendencia (warning) e o item Lista de espera do menu (sem cor
+//   semantica).
+// - WifiOff: WhatsApp desconectado (alert).
+// Trocas decorrentes, cada uma no lote da sua tela: toque "pulado" MailWarning
+// e "na fila" Mail; aviso de recurso do modal de agendamento e dialogo da
+// regua CircleAlert; erro de Confirmacoes OctagonAlert; Recuperadas com tom
+// fixo success; reoferta "recusou" ThumbsDown neutral e "Cancelar reoferta"
+// com X; tempo medio da espera TimerReset; "Nao sairam" da regua
+// SkipForward; Faltas dos Pacientes CalendarMinus2 e "Vale ate"
+// CalendarRange; Proximas acoes do Inicio CalendarClock neutral, Hand
+// warning e AlarmClock alert; passo pendente do checklist Hourglass warning;
+// faixa do motor e error.tsx OctagonAlert; falha do formulario de codigo
+// CircleAlert.
 
 // marker: cor plena (pontos, bordas de evento). text/bg: par do chip, com
 // contraste AA garantido pelo teste de design.

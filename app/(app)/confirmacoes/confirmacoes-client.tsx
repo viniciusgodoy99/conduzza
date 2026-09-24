@@ -300,7 +300,7 @@ export function ConfirmacoesClient({
             className="ml-auto h-10"
             onClick={() => setPainelAberto(true)}
           >
-            <Workflow strokeWidth={1.5} className="size-4" aria-hidden />
+            <Workflow className="size-4" aria-hidden />
             Mensagens automáticas
           </Button>
         </div>
@@ -314,7 +314,7 @@ export function ConfirmacoesClient({
               aria-label="Dia anterior"
               onClick={() => setParams({ data: somarDias(dia, -1) })}
             >
-              <ChevronLeft strokeWidth={1.5} className="size-4" aria-hidden />
+              <ChevronLeft className="size-4" aria-hidden />
             </Button>
             <Input
               type="date"
@@ -332,7 +332,7 @@ export function ConfirmacoesClient({
               aria-label="Próximo dia"
               onClick={() => setParams({ data: somarDias(dia, 1) })}
             >
-              <ChevronRight strokeWidth={1.5} className="size-4" aria-hidden />
+              <ChevronRight className="size-4" aria-hidden />
             </Button>
             {dia !== amanha ? (
               <Button
@@ -348,7 +348,6 @@ export function ConfirmacoesClient({
           {erroDoDia && consultas.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-12 text-center">
               <TriangleAlert
-                strokeWidth={1.5}
                 className="size-5 [color:var(--alert)]"
                 aria-hidden
               />
@@ -366,7 +365,6 @@ export function ConfirmacoesClient({
               {erroDoDia ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
                   <TriangleAlert
-                    strokeWidth={1.5}
                     className="size-4 shrink-0 [color:var(--alert)]"
                     aria-hidden
                   />
@@ -420,7 +418,6 @@ export function ConfirmacoesClient({
           {faltasQuery.isError && faltas.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-12 text-center">
               <TriangleAlert
-                strokeWidth={1.5}
                 className="size-5 [color:var(--alert)]"
                 aria-hidden
               />

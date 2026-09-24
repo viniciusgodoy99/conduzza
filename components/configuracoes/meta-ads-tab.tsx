@@ -145,8 +145,8 @@ export function MetaAdsTab({
       <article className="grid gap-4 rounded-lg border bg-card p-4">
         <p className="text-sm font-semibold">Conta de anúncios</p>
         <p className="text-sm text-text-secondary">
-          Os identificadores ficam no Gerenciador de Eventos e no Gerenciador
-          de Negócios da Meta. Com eles preenchidos, a clínica devolve as
+          Os identificadores ficam no Gerenciador de Eventos e no Gerenciador de
+          Negócios da Meta. Com eles preenchidos, a clínica devolve as
           conversões da aba Jornada para os anúncios.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -186,8 +186,7 @@ export function MetaAdsTab({
             />
             <p className="text-[12px] text-text-tertiary">
               Necessária para casar a conversão com o clique do anúncio de
-              WhatsApp. Fica no Gerenciador de Negócios, em contas do
-              WhatsApp.
+              WhatsApp. Fica no Gerenciador de Negócios, em contas do WhatsApp.
             </p>
           </div>
           <div className="grid gap-1.5">
@@ -213,13 +212,13 @@ export function MetaAdsTab({
             disabled={pendente}
             className="justify-self-start"
           >
-            <Check strokeWidth={1.5} className="size-4" />
+            <Check className="size-4" />
             {pendente ? "Salvando..." : "Salvar conta"}
           </Button>
         ) : (
           <DisabledWithHint hint={dica}>
             <Button disabled className="justify-self-start">
-              <Check strokeWidth={1.5} className="size-4" />
+              <Check className="size-4" />
               Salvar conta
             </Button>
           </DisabledWithHint>
@@ -228,7 +227,7 @@ export function MetaAdsTab({
 
       <article className="grid gap-3 rounded-lg border bg-card p-4">
         <p className="flex items-center gap-2 text-sm font-semibold">
-          <KeyRound strokeWidth={1.5} className="size-4" aria-hidden />
+          <KeyRound className="size-4" aria-hidden />
           Token da API de conversões
         </p>
         <p className="text-sm text-text-secondary">
@@ -267,7 +266,7 @@ export function MetaAdsTab({
 
       <article className="grid gap-4 rounded-lg border bg-card p-4">
         <p className="flex items-center gap-2 text-sm font-semibold">
-          <SendHorizonal strokeWidth={1.5} className="size-4" aria-hidden />
+          <SendHorizonal className="size-4" aria-hidden />
           Envio das conversões
         </p>
 
@@ -293,8 +292,8 @@ export function MetaAdsTab({
                   Só o identificador do anúncio (sem dado pessoal)
                 </SelectItem>
                 <SelectItem value="telefone_hasheado">
-                  Identificador do anúncio e telefone protegido (com
-                  autorização do paciente)
+                  Identificador do anúncio e telefone protegido (com autorização
+                  do paciente)
                 </SelectItem>
               </SelectContent>
             </Select>

@@ -87,7 +87,6 @@ export function EtapaDoContato({
               <span className="flex items-center gap-2">
                 {Icone ? (
                   <Icone
-                    strokeWidth={1.5}
                     className="size-3.5 shrink-0"
                     style={{ color: cores.text }}
                     aria-hidden

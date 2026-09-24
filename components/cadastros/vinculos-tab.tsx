@@ -412,7 +412,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
               className="h-11 px-4"
               onClick={() => abrirNovo(profissionaisVisiveis[0]?.id ?? "")}
             >
-              <Plus strokeWidth={1.5} className="size-4" /> Adicionar vínculo
+              <Plus className="size-4" /> Adicionar vínculo
             </BotaoProtegido>
           </div>
         </div>
@@ -445,7 +445,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                     size="sm"
                     onClick={() => abrirNovo(profissional.id)}
                   >
-                    <Plus strokeWidth={1.5} className="size-4" /> Adicionar
+                    <Plus className="size-4" /> Adicionar
                   </BotaoProtegido>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -455,7 +455,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                         className="size-10"
                         aria-label={`Mais ações para ${profissional.name}`}
                       >
-                        <MoreVertical strokeWidth={1.5} className="size-4" />
+                        <MoreVertical className="size-4" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
@@ -495,7 +495,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                         size="sm"
                         onClick={() => abrirNovo(profissional.id)}
                       >
-                        <Plus strokeWidth={1.5} className="size-4" /> Adicionar
+                        <Plus className="size-4" /> Adicionar
                       </BotaoProtegido>
                     </div>
                   ) : (
@@ -657,10 +657,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                         }
                                         aria-label="Salvar vínculo"
                                       >
-                                        <Check
-                                          strokeWidth={1.5}
-                                          className="size-4"
-                                        />
+                                        <Check className="size-4" />
                                       </Button>
                                       <Button
                                         variant="ghost"
@@ -670,10 +667,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                         onClick={cancelarEdicao}
                                         aria-label="Cancelar edição"
                                       >
-                                        <X
-                                          strokeWidth={1.5}
-                                          className="size-4"
-                                        />
+                                        <X className="size-4" />
                                       </Button>
                                     </div>
                                   ) : podeEditar ? (
@@ -685,10 +679,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                         onClick={() => iniciarEdicao(vinculo)}
                                         aria-label="Editar vínculo"
                                       >
-                                        <Pencil
-                                          strokeWidth={1.5}
-                                          className="size-4"
-                                        />
+                                        <Pencil className="size-4" />
                                       </Button>
                                       <Button
                                         variant="ghost"
@@ -713,10 +704,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                                           disabled
                                           aria-label="Editar vínculo"
                                         >
-                                          <Pencil
-                                            strokeWidth={1.5}
-                                            className="size-4"
-                                          />
+                                          <Pencil className="size-4" />
                                         </Button>
                                       </DisabledWithHint>
                                       <DisabledWithHint hint={dica}>

@@ -32,7 +32,7 @@ export function BarraHorizontal({
           className="block h-full rounded-full"
           style={{
             width: `${largura}%`,
-            background: destaque ? "var(--primary)" : "var(--neutral)",
+            background: destaque ? "var(--chart-bar)" : "var(--neutral)",
           }}
         />
       </span>

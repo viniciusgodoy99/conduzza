@@ -42,7 +42,6 @@ export function KanbanColuna({
       <header className="flex items-center gap-1.5 px-1 pt-1">
         {Icone ? (
           <Icone
-            strokeWidth={1.5}
             className="size-4 shrink-0"
             style={{ color: tone.text }}
             aria-hidden

@@ -266,7 +266,7 @@ export function JornadaTab({
                   className="flex items-center gap-1 text-[11.5px] text-text-tertiary"
                   title={explicacao ?? undefined}
                 >
-                  <Lock strokeWidth={1.5} className="size-3" />
+                  <Lock className="size-3" />
                   sistema
                 </span>
               ) : null}
@@ -289,7 +289,7 @@ export function JornadaTab({
                   disabled={!podeGerenciar || pendente || indice === 0}
                   onClick={() => reordenar(etapa, "subir")}
                 >
-                  <ArrowUp strokeWidth={1.5} className="size-4" />
+                  <ArrowUp className="size-4" />
                 </Button>
                 <Button
                   variant="ghost"
@@ -301,7 +301,7 @@ export function JornadaTab({
                   }
                   onClick={() => reordenar(etapa, "descer")}
                 >
-                  <ArrowDown strokeWidth={1.5} className="size-4" />
+                  <ArrowDown className="size-4" />
                 </Button>
                 {aberta ? null : podeGerenciar ? (
                   <Button
@@ -310,13 +310,13 @@ export function JornadaTab({
                     disabled={pendente}
                     onClick={() => abrir(etapa)}
                   >
-                    <Pencil strokeWidth={1.5} className="size-4" />
+                    <Pencil className="size-4" />
                     Editar
                   </Button>
                 ) : (
                   <DisabledWithHint hint={dica}>
                     <Button variant="outline" size="sm" disabled>
-                      <Pencil strokeWidth={1.5} className="size-4" />
+                      <Pencil className="size-4" />
                       Editar
                     </Button>
                   </DisabledWithHint>
@@ -365,13 +365,13 @@ export function JornadaTab({
           onClick={() => abrir(null)}
           className="justify-self-start"
         >
-          <Plus strokeWidth={1.5} className="size-4" />
+          <Plus className="size-4" />
           Nova etapa
         </Button>
       ) : (
         <DisabledWithHint hint={dica}>
           <Button variant="outline" disabled className="justify-self-start">
-            <Plus strokeWidth={1.5} className="size-4" />
+            <Plus className="size-4" />
             Nova etapa
           </Button>
         </DisabledWithHint>
@@ -489,7 +489,7 @@ function FormularioDaEtapa({
               {Object.entries(ICONES_DE_ETAPA).map(([nome, Icone]) => (
                 <SelectItem key={nome} value={nome}>
                   <span className="flex items-center gap-2">
-                    <Icone strokeWidth={1.5} className="size-4" aria-hidden />
+                    <Icone className="size-4" aria-hidden />
                     {nome}
                   </span>
                 </SelectItem>
@@ -506,208 +506,210 @@ function FormularioDaEtapa({
           <Label htmlFor={`termo-${id}`}>
             Termos que movem o contato para cá
           </Label>
-        <p className="text-[12px] text-text-tertiary">
-          Quando o paciente escrever um destes termos na conversa, o contato
-          anda sozinho para esta etapa (só para frente na jornada, nunca para a
-          etapa de perda).
-        </p>
-        {rascunho.termos.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {rascunho.termos.map((termo) => (
-              <span
-                key={termo}
-                className="flex items-center gap-1 rounded-full bg-surface-3 px-2.5 py-1 text-[12px]"
-              >
-                {termo}
-                {/* O X e pequeno no olho, mas o alvo de toque chega aos 40px
-                    da regra 5 pelo pseudo-elemento expandido. */}
-                <button
-                  type="button"
-                  aria-label={`Remover o termo ${termo}`}
-                  className="relative grid size-5 place-items-center rounded-full after:absolute after:-inset-2.5 hover:bg-surface-4"
-                  onClick={() =>
-                    setRascunho((atual) => ({
-                      ...atual,
-                      termos: atual.termos.filter((t) => t !== termo),
-                    }))
-                  }
-                >
-                  <X strokeWidth={1.5} className="size-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : null}
-        {rascunho.termos.length >= MAXIMO_DE_TERMOS ? (
           <p className="text-[12px] text-text-tertiary">
-            Esta etapa chegou ao máximo de {MAXIMO_DE_TERMOS} termos. Remova um
-            para adicionar outro.
+            Quando o paciente escrever um destes termos na conversa, o contato
+            anda sozinho para esta etapa (só para frente na jornada, nunca para
+            a etapa de perda).
           </p>
-        ) : (
-          <div className="flex gap-2">
-            <Input
-              id={`termo-${id}`}
-              value={rascunho.termoNovo}
-              onChange={(evento) =>
-                setRascunho((atual) => ({
-                  ...atual,
-                  termoNovo: evento.target.value,
-                }))
-              }
-              onKeyDown={(evento) => {
-                if (evento.key === "Enter") {
-                  evento.preventDefault();
-                  adicionarTermo();
+          {rascunho.termos.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {rascunho.termos.map((termo) => (
+                <span
+                  key={termo}
+                  className="flex items-center gap-1 rounded-full bg-surface-3 px-2.5 py-1 text-[12px]"
+                >
+                  {termo}
+                  {/* O X e pequeno no olho, mas o alvo de toque chega aos 40px
+                    da regra 5 pelo pseudo-elemento expandido. */}
+                  <button
+                    type="button"
+                    aria-label={`Remover o termo ${termo}`}
+                    className="relative grid size-5 place-items-center rounded-full after:absolute after:-inset-2.5 hover:bg-surface-4"
+                    onClick={() =>
+                      setRascunho((atual) => ({
+                        ...atual,
+                        termos: atual.termos.filter((t) => t !== termo),
+                      }))
+                    }
+                  >
+                    <X className="size-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {rascunho.termos.length >= MAXIMO_DE_TERMOS ? (
+            <p className="text-[12px] text-text-tertiary">
+              Esta etapa chegou ao máximo de {MAXIMO_DE_TERMOS} termos. Remova
+              um para adicionar outro.
+            </p>
+          ) : (
+            <div className="flex gap-2">
+              <Input
+                id={`termo-${id}`}
+                value={rascunho.termoNovo}
+                onChange={(evento) =>
+                  setRascunho((atual) => ({
+                    ...atual,
+                    termoNovo: evento.target.value,
+                  }))
                 }
-              }}
-              placeholder="Digite e aperte Enter para adicionar"
-              maxLength={40}
-              className="h-10 max-w-xs"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              onClick={adicionarTermo}
-              disabled={rascunho.termoNovo.trim().length < 2}
-            >
-              Adicionar
-            </Button>
-          </div>
-        )}
+                onKeyDown={(evento) => {
+                  if (evento.key === "Enter") {
+                    evento.preventDefault();
+                    adicionarTermo();
+                  }
+                }}
+                placeholder="Digite e aperte Enter para adicionar"
+                maxLength={40}
+                className="h-10 max-w-xs"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={adicionarTermo}
+                disabled={rascunho.termoNovo.trim().length < 2}
+              >
+                Adicionar
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
       {/* Perda nunca e conversao: o check perdido_sem_conversao no banco
           recusa, entao a tela nem oferece. */}
       {etapa?.papel === "perdido" ? null : (
-      <div className="grid gap-3 rounded-lg bg-surface-2 p-3">
-        <p className="text-[13px] font-semibold">Conversão para os anúncios</p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="grid gap-1.5">
-            <Label htmlFor={`evento-${id}`}>Evento que a Meta recebe</Label>
-            <Select
-              value={rascunho.evento}
-              onValueChange={(valor) =>
-                setRascunho((atual) => ({ ...atual, evento: valor }))
-              }
-            >
-              <SelectTrigger id={`evento-${id}`} className="min-h-10">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SEM_EVENTO}>Sem evento</SelectItem>
-                {EVENTOS_META_PADRAO.map((evento) => (
-                  <SelectItem key={evento.nome} value={evento.nome}>
-                    {evento.rotulo}
-                  </SelectItem>
-                ))}
-                <SelectItem value={EVENTO_PERSONALIZADO}>
-                  Personalizado (digitar o nome)
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            {rascunho.evento === EVENTO_PERSONALIZADO ? (
-              <Input
-                value={rascunho.eventoPersonalizado}
-                onChange={(evento) =>
-                  setRascunho((atual) => ({
-                    ...atual,
-                    eventoPersonalizado: evento.target.value,
-                  }))
+        <div className="grid gap-3 rounded-lg bg-surface-2 p-3">
+          <p className="text-[13px] font-semibold">
+            Conversão para os anúncios
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor={`evento-${id}`}>Evento que a Meta recebe</Label>
+              <Select
+                value={rascunho.evento}
+                onValueChange={(valor) =>
+                  setRascunho((atual) => ({ ...atual, evento: valor }))
                 }
-                placeholder="NomeDoEventoNaMeta"
-                aria-label="Nome do evento personalizado"
-                className="h-10 font-mono"
-                maxLength={100}
-              />
+              >
+                <SelectTrigger id={`evento-${id}`} className="min-h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SEM_EVENTO}>Sem evento</SelectItem>
+                  {EVENTOS_META_PADRAO.map((evento) => (
+                    <SelectItem key={evento.nome} value={evento.nome}>
+                      {evento.rotulo}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={EVENTO_PERSONALIZADO}>
+                    Personalizado (digitar o nome)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              {rascunho.evento === EVENTO_PERSONALIZADO ? (
+                <Input
+                  value={rascunho.eventoPersonalizado}
+                  onChange={(evento) =>
+                    setRascunho((atual) => ({
+                      ...atual,
+                      eventoPersonalizado: evento.target.value,
+                    }))
+                  }
+                  placeholder="NomeDoEventoNaMeta"
+                  aria-label="Nome do evento personalizado"
+                  className="h-10 font-mono"
+                  maxLength={100}
+                />
+              ) : null}
+            </div>
+
+            {temEvento ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor={`valor-${id}`}>Valor da conversão</Label>
+                <Select
+                  value={rascunho.modoDeValor}
+                  onValueChange={(valor) =>
+                    setRascunho((atual) => ({
+                      ...atual,
+                      modoDeValor: valor as Rascunho["modoDeValor"],
+                    }))
+                  }
+                >
+                  <SelectTrigger id={`valor-${id}`} className="min-h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sem">Sem valor</SelectItem>
+                    <SelectItem value="fixo">Valor fixo</SelectItem>
+                    <SelectItem value="service_link">
+                      Preço da consulta do agendamento
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                {rascunho.modoDeValor === "fixo" ? (
+                  <Input
+                    value={rascunho.valorReais}
+                    onChange={(evento) =>
+                      setRascunho((atual) => ({
+                        ...atual,
+                        valorReais: evento.target.value,
+                      }))
+                    }
+                    inputMode="decimal"
+                    placeholder="250,00"
+                    aria-label="Valor em reais"
+                    className="h-10 font-mono tabular-nums"
+                  />
+                ) : null}
+              </div>
             ) : null}
           </div>
 
           {temEvento ? (
-            <div className="grid gap-1.5">
-              <Label htmlFor={`valor-${id}`}>Valor da conversão</Label>
-              <Select
-                value={rascunho.modoDeValor}
-                onValueChange={(valor) =>
-                  setRascunho((atual) => ({
-                    ...atual,
-                    modoDeValor: valor as Rascunho["modoDeValor"],
-                  }))
-                }
-              >
-                <SelectTrigger id={`valor-${id}`} className="min-h-10">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sem">Sem valor</SelectItem>
-                  <SelectItem value="fixo">Valor fixo</SelectItem>
-                  <SelectItem value="service_link">
-                    Preço da consulta do agendamento
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              {rascunho.modoDeValor === "fixo" ? (
-                <Input
-                  value={rascunho.valorReais}
-                  onChange={(evento) =>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id={`venda-${id}`}
+                  checked={rascunho.ehVenda}
+                  onCheckedChange={(valor) =>
+                    setRascunho((atual) => ({ ...atual, ehVenda: valor }))
+                  }
+                />
+                <Label htmlFor={`venda-${id}`}>Esta etapa é uma venda</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id={`primeiro-${id}`}
+                  checked={rascunho.primeiroContato}
+                  onCheckedChange={(valor) =>
                     setRascunho((atual) => ({
                       ...atual,
-                      valorReais: evento.target.value,
+                      primeiroContato: valor,
                     }))
                   }
-                  inputMode="decimal"
-                  placeholder="250,00"
-                  aria-label="Valor em reais"
-                  className="h-10 font-mono tabular-nums"
                 />
-              ) : null}
+                <Label htmlFor={`primeiro-${id}`}>É o primeiro contato</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id={`conversao-ativa-${id}`}
+                  checked={rascunho.conversaoAtiva}
+                  onCheckedChange={(valor) =>
+                    setRascunho((atual) => ({
+                      ...atual,
+                      conversaoAtiva: valor,
+                    }))
+                  }
+                />
+                <Label htmlFor={`conversao-ativa-${id}`}>
+                  {rascunho.conversaoAtiva ? "Conversão ativa" : "Pausada"}
+                </Label>
+              </div>
             </div>
           ) : null}
         </div>
-
-        {temEvento ? (
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div className="flex items-center gap-2">
-              <Switch
-                id={`venda-${id}`}
-                checked={rascunho.ehVenda}
-                onCheckedChange={(valor) =>
-                  setRascunho((atual) => ({ ...atual, ehVenda: valor }))
-                }
-              />
-              <Label htmlFor={`venda-${id}`}>Esta etapa é uma venda</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch
-                id={`primeiro-${id}`}
-                checked={rascunho.primeiroContato}
-                onCheckedChange={(valor) =>
-                  setRascunho((atual) => ({
-                    ...atual,
-                    primeiroContato: valor,
-                  }))
-                }
-              />
-              <Label htmlFor={`primeiro-${id}`}>É o primeiro contato</Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch
-                id={`conversao-ativa-${id}`}
-                checked={rascunho.conversaoAtiva}
-                onCheckedChange={(valor) =>
-                  setRascunho((atual) => ({
-                    ...atual,
-                    conversaoAtiva: valor,
-                  }))
-                }
-              />
-              <Label htmlFor={`conversao-ativa-${id}`}>
-                {rascunho.conversaoAtiva ? "Conversão ativa" : "Pausada"}
-              </Label>
-            </div>
-          </div>
-        ) : null}
-      </div>
       )}
 
       {erro ? (
@@ -718,11 +720,11 @@ function FormularioDaEtapa({
 
       <div className="flex flex-wrap items-center gap-2">
         <Button disabled={pendente} onClick={aoSalvar}>
-          <Check strokeWidth={1.5} className="size-4" />
+          <Check className="size-4" />
           {pendente ? "Salvando..." : "Salvar"}
         </Button>
         <Button variant="ghost" disabled={pendente} onClick={aoCancelar}>
-          <X strokeWidth={1.5} className="size-4" />
+          <X className="size-4" />
           Cancelar
         </Button>
         {aoExcluir ? (
@@ -732,7 +734,7 @@ function FormularioDaEtapa({
             onClick={aoExcluir}
             className="ml-auto [color:var(--alert-text)]"
           >
-            <Trash2 strokeWidth={1.5} className="size-4" />
+            <Trash2 className="size-4" />
             Excluir etapa
           </Button>
         ) : null}

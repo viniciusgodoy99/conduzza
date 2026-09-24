@@ -1,6 +1,12 @@
 "use client";
 
-import { CalendarClock, Coins, Plus, SendHorizonal, Trash2 } from "lucide-react";
+import {
+  CalendarClock,
+  Coins,
+  Plus,
+  SendHorizonal,
+  Trash2,
+} from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -167,9 +173,8 @@ export function AbaRegua({
   const resultado = estimarRegua({
     ...estimativa,
     // Passo com CONTEUDO: texto ou anexo (pode ser so o audio).
-    passos: regua.passos.filter(
-      (passo) => passo.fixed_body || passo.media_path,
-    ).length,
+    passos: regua.passos.filter((passo) => passo.fixed_body || passo.media_path)
+      .length,
   });
 
   return (
@@ -215,13 +220,13 @@ export function AbaRegua({
               disabled={pendente}
               onClick={() => setDialogo("criar")}
             >
-              <Plus strokeWidth={1.5} className="size-4" />
+              <Plus className="size-4" />
               Adicionar mensagem
             </Button>
           ) : (
             <DisabledWithHint hint={dicaSemPermissao}>
               <Button variant="outline" className="h-10" disabled>
-                <Plus strokeWidth={1.5} className="size-4" />
+                <Plus className="size-4" />
                 Adicionar mensagem
               </Button>
             </DisabledWithHint>
@@ -232,39 +237,40 @@ export function AbaRegua({
             <div className="flex flex-wrap gap-2 border-t pt-3">
               {podeEditar ? (
                 <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-9"
-                  disabled={pendente}
-                  onClick={() => setDialogo("momento")}
-                >
-                  <CalendarClock strokeWidth={1.5} className="size-4" />
-                  Mudar o momento
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-9"
-                  disabled={
-                    pendente ||
-                    (!passoSelecionado.fixed_body && !passoSelecionado.media_path)
-                  }
-                  onClick={testarEnvio}
-                >
-                  <SendHorizonal strokeWidth={1.5} className="size-4" />
-                  {pendente ? "Enviando..." : "Testar no WhatsApp da clínica"}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-9 [color:var(--alert-text)]"
-                  disabled={pendente || regua.passos.length <= 1}
-                  onClick={excluirPasso}
-                >
-                  <Trash2 strokeWidth={1.5} className="size-4" />
-                  Excluir mensagem
-                </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9"
+                    disabled={pendente}
+                    onClick={() => setDialogo("momento")}
+                  >
+                    <CalendarClock className="size-4" />
+                    Mudar o momento
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9"
+                    disabled={
+                      pendente ||
+                      (!passoSelecionado.fixed_body &&
+                        !passoSelecionado.media_path)
+                    }
+                    onClick={testarEnvio}
+                  >
+                    <SendHorizonal className="size-4" />
+                    {pendente ? "Enviando..." : "Testar no WhatsApp da clínica"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 [color:var(--alert-text)]"
+                    disabled={pendente || regua.passos.length <= 1}
+                    onClick={excluirPasso}
+                  >
+                    <Trash2 className="size-4" />
+                    Excluir mensagem
+                  </Button>
                   {regua.passos.length <= 1 ? (
                     <span className="self-center text-xs text-text-tertiary">
                       A última mensagem não se exclui; desligue a régua para
@@ -276,15 +282,15 @@ export function AbaRegua({
                 <DisabledWithHint hint={dicaSemPermissao}>
                   <span className="flex flex-wrap gap-2">
                     <Button variant="ghost" size="sm" className="h-9" disabled>
-                      <CalendarClock strokeWidth={1.5} className="size-4" />
+                      <CalendarClock className="size-4" />
                       Mudar o momento
                     </Button>
                     <Button variant="ghost" size="sm" className="h-9" disabled>
-                      <SendHorizonal strokeWidth={1.5} className="size-4" />
+                      <SendHorizonal className="size-4" />
                       Testar no WhatsApp da clínica
                     </Button>
                     <Button variant="ghost" size="sm" className="h-9" disabled>
-                      <Trash2 strokeWidth={1.5} className="size-4" />
+                      <Trash2 className="size-4" />
                       Excluir mensagem
                     </Button>
                   </span>
@@ -308,8 +314,8 @@ export function AbaRegua({
           </>
         ) : (
           <p className="text-sm text-text-secondary">
-            Esta régua ainda não tem mensagens. Toque em Adicionar mensagem
-            para criar a primeira.
+            Esta régua ainda não tem mensagens. Toque em Adicionar mensagem para
+            criar a primeira.
           </p>
         )}
       </section>
@@ -319,11 +325,7 @@ export function AbaRegua({
       </section>
 
       <section className="flex gap-3 rounded-lg border bg-card p-4">
-        <Coins
-          strokeWidth={1.5}
-          className="size-5 shrink-0 text-text-secondary"
-          aria-hidden
-        />
+        <Coins className="size-5 shrink-0 text-text-secondary" aria-hidden />
         <div className="grid gap-1 text-sm">
           <p>{resultado.frase}</p>
           <p className="text-text-secondary">{resultado.fraseDeCusto}</p>

@@ -216,9 +216,9 @@ export function AutomacoesClient({
       <TabsContent value="followup" className="grid gap-4">
         <p className="max-w-prose text-sm text-text-secondary">
           Mensagens de acompanhamento por etapa da jornada: o lead entrou na
-          etapa, esperou o tempo configurado e ainda não respondeu nem se
-          moveu, a mensagem sai. Quem responde, agenda ou muda de etapa sai da
-          régua na hora.
+          etapa, esperou o tempo configurado e ainda não respondeu nem se moveu,
+          a mensagem sai. Quem responde, agenda ou muda de etapa sai da régua na
+          hora.
         </p>
         <AbaFollowup
           clinicId={clinicId}
@@ -235,11 +235,7 @@ export function AutomacoesClient({
       <TabsContent value="espera" className="grid gap-4">
         <div className="grid max-w-prose gap-3 rounded-lg border bg-card p-4">
           <div className="flex items-center gap-2">
-            <Hourglass
-              strokeWidth={1.5}
-              className="size-4 text-text-secondary"
-              aria-hidden
-            />
+            <Hourglass className="size-4 text-text-secondary" aria-hidden />
             <h2 className="text-[15px] font-semibold">
               A reoferta não é uma régua de texto
             </h2>

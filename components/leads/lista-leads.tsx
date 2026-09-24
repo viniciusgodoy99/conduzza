@@ -183,20 +183,12 @@ export function ListaLeads({
         cell: ({ row }) =>
           row.original.consent_ativo ? (
             <span className="flex items-center gap-1.5 whitespace-nowrap [color:var(--success-text)]">
-              <ShieldCheck
-                strokeWidth={1.5}
-                className="size-4 shrink-0"
-                aria-hidden
-              />
+              <ShieldCheck className="size-4 shrink-0" aria-hidden />
               Autorizado
             </span>
           ) : (
             <span className="flex items-center gap-1.5 whitespace-nowrap text-text-tertiary">
-              <ShieldOff
-                strokeWidth={1.5}
-                className="size-4 shrink-0"
-                aria-hidden
-              />
+              <ShieldOff className="size-4 shrink-0" aria-hidden />
               Sem autorização
             </span>
           ),

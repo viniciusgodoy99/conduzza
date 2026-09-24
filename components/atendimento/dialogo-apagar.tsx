@@ -116,7 +116,7 @@ export function DialogoApagar({
               aoApagar("todos");
             }}
           >
-            <Trash2 strokeWidth={1.5} className="size-4 shrink-0" />
+            <Trash2 className="size-4 shrink-0" />
             <span className="grid gap-0.5">
               <span className="text-[13px] font-semibold">
                 Apagar para todos
@@ -155,7 +155,7 @@ export function DialogoApagar({
                 aoApagar("local");
               }}
             >
-              <CircleSlash strokeWidth={1.5} className="size-4 shrink-0" />
+              <CircleSlash className="size-4 shrink-0" />
               <span className="grid gap-0.5">
                 <span className="text-[13px] font-semibold">
                   Apagar só aqui

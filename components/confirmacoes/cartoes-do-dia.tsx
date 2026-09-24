@@ -66,7 +66,7 @@ function Cartao({
           className="flex size-7 shrink-0 items-center justify-center rounded-full"
           style={{ backgroundColor: cores.bg, color: cores.text }}
         >
-          <Icone strokeWidth={1.5} className="size-4" aria-hidden />
+          <Icone className="size-4" aria-hidden />
         </span>
         <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
           {rotulo}

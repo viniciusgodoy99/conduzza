@@ -38,10 +38,12 @@ export function PainelMetricas({ metricas }: { metricas: MetricasDaEspera }) {
   return (
     <section className="grid gap-3 sm:grid-cols-3">
       {cartoes.map((cartao) => (
-        <div key={cartao.rotulo} className="grid gap-1 rounded-lg border bg-card p-4">
+        <div
+          key={cartao.rotulo}
+          className="grid gap-1 rounded-lg border bg-card p-4"
+        >
           <span className="flex items-center gap-1.5 text-xs text-text-secondary">
             <cartao.Icone
-              strokeWidth={1.5}
               className="size-4"
               style={{ color: cartao.cor }}
               aria-hidden

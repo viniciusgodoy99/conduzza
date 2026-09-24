@@ -132,7 +132,7 @@ export function FiltrosLeads({
       </div>
       {temAtivo ? (
         <Button variant="ghost" className="h-10" onClick={aoLimpar}>
-          <X strokeWidth={1.5} className="size-4" /> Limpar filtros
+          <X className="size-4" /> Limpar filtros
         </Button>
       ) : null}
     </div>

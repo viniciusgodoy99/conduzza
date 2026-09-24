@@ -65,13 +65,13 @@ export function FaixaReoferta({
     >
       <div className="flex flex-wrap items-center gap-2">
         <Send
-          strokeWidth={1.5}
           className="size-4"
           style={{ color: "var(--info-text)" }}
           aria-hidden
         />
         <span className="text-sm font-semibold">
-          Reoferta em andamento: {format(inicio, "dd/MM 'às' HH:mm", { locale: ptBR })}
+          Reoferta em andamento:{" "}
+          {format(inicio, "dd/MM 'às' HH:mm", { locale: ptBR })}
           {oferta.professional_nome ? ` com ${oferta.professional_nome}` : ""}
         </span>
         <span className="text-sm text-text-secondary">
@@ -87,13 +87,13 @@ export function FaixaReoferta({
               disabled={pendente}
               onClick={cancelar}
             >
-              <CircleX strokeWidth={1.5} className="size-4" />
+              <CircleX className="size-4" />
               {pendente ? "Cancelando..." : "Cancelar reoferta"}
             </Button>
           ) : (
             <DisabledWithHint hint={dicaSemPermissao}>
               <Button variant="outline" className="h-10" disabled>
-                <CircleX strokeWidth={1.5} className="size-4" />
+                <CircleX className="size-4" />
                 Cancelar reoferta
               </Button>
             </DisabledWithHint>
@@ -105,23 +105,19 @@ export function FaixaReoferta({
           <li key={destinatario.contactId} className="flex items-center gap-1">
             {destinatario.situacao === "recusou" ? (
               <UserRoundX
-                strokeWidth={1.5}
                 className="size-3.5"
                 style={{ color: "var(--neutral-text)" }}
                 aria-hidden
               />
             ) : (
               <Hourglass
-                strokeWidth={1.5}
                 className="size-3.5"
                 style={{ color: "var(--warning-text)" }}
                 aria-hidden
               />
             )}
             {destinatario.nome ?? "Paciente"}{" "}
-            {destinatario.situacao === "recusou"
-              ? "(recusou)"
-              : "(aguardando)"}
+            {destinatario.situacao === "recusou" ? "(recusou)" : "(aguardando)"}
           </li>
         ))}
       </ul>

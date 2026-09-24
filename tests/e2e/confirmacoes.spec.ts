@@ -83,15 +83,17 @@ test("abre no dia seguinte e o painel mostra as situações do dia", async ({
   await expect(page.getByText(NOME_WHATSAPP)).toBeVisible();
 });
 
-test("Recuperadas não inventa número enquanto a lista de espera não existe", async ({
+test("Recuperadas mostra o que a lista de espera recuperou no dia", async ({
   page,
 }) => {
+  // A lista de espera existe desde 15/09: o cartao traz o numero real, nao o
+  // aviso de "chega com a lista de espera".
   await login(page, dados().emails.gestor);
   await page.goto("/confirmacoes");
 
   await expect(page.getByText("Recuperadas", { exact: true })).toBeVisible();
-  await expect(page.getByText("Chega com a lista de espera")).toBeVisible();
-  await expect(page.getByText("ainda sem número")).toBeAttached();
+  await expect(page.getByText("pela lista de espera")).toBeVisible();
+  await expect(page.getByText("Chega com a lista de espera")).toHaveCount(0);
 });
 
 test("o chip diferencia quem confirmou pelo WhatsApp de quem confirmou na recepção", async ({

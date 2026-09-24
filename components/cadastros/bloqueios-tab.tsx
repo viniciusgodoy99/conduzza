@@ -205,7 +205,7 @@ export function BloqueiosTab({
           dica={dica}
           onClick={abrirCriacao}
         >
-          <Plus strokeWidth={1.5} className="size-4" /> Novo bloqueio
+          <Plus className="size-4" /> Novo bloqueio
         </BotaoProtegido>
       </div>
 
@@ -266,7 +266,7 @@ export function BloqueiosTab({
                         }}
                         aria-label={`Remover bloqueio de ${nomeProfissional(bloqueio.professional_id)}`}
                       >
-                        <Trash2 strokeWidth={1.5} className="size-4" />
+                        <Trash2 className="size-4" />
                       </Button>
                     ) : (
                       <DisabledWithHint hint={dica}>
@@ -277,7 +277,7 @@ export function BloqueiosTab({
                           disabled
                           aria-label={`Remover bloqueio de ${nomeProfissional(bloqueio.professional_id)}`}
                         >
-                          <Trash2 strokeWidth={1.5} className="size-4" />
+                          <Trash2 className="size-4" />
                         </Button>
                       </DisabledWithHint>
                     )}

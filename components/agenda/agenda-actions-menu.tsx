@@ -156,7 +156,7 @@ export function AgendaActionsMenu({
             className="size-10 print:hidden"
             aria-label="Mais ações da agenda"
           >
-            <MoreVertical strokeWidth={1.5} className="size-4" />
+            <MoreVertical className="size-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -197,11 +197,7 @@ export function AgendaActionsMenu({
               </p>
             ) : (historicoQuery.data ?? []).length === 0 ? (
               <div className="grid place-items-center gap-2 py-8 text-center">
-                <History
-                  strokeWidth={1.5}
-                  className="size-6 text-text-tertiary"
-                  aria-hidden
-                />
+                <History className="size-6 text-text-tertiary" aria-hidden />
                 <p className="text-sm text-text-secondary">
                   Nenhuma alteração neste dia
                 </p>

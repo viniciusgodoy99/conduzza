@@ -21,11 +21,11 @@ export default async function SupabaseHealthPage() {
       <div className="grid max-w-md gap-2 rounded-lg border bg-card p-6">
         <h1 className="text-[15px] font-semibold">Conexão com o Supabase</h1>
         {error ? (
-          <p className="text-sm text-alert">
+          <p className="text-sm text-alert-text">
             Falha ao ler a tabela de teste: {error.message}
           </p>
         ) : data ? (
-          <p className="text-sm text-success">{data.label}</p>
+          <p className="text-sm text-success-text">{data.label}</p>
         ) : (
           <p className="text-sm text-text-secondary">
             Tabela de teste vazia. Rode as migrations com npm run db:reset.

@@ -104,26 +104,26 @@ export function EsperaClient({
             className="h-10"
             onClick={() => setConfigAberta(true)}
           >
-            <Settings2 strokeWidth={1.5} className="size-4" />
+            <Settings2 className="size-4" />
             Configurar reoferta
           </Button>
         ) : (
           <DisabledWithHint hint="Somente administradores alteram a configuração da reoferta">
             <Button variant="outline" className="h-10" disabled>
-              <Settings2 strokeWidth={1.5} className="size-4" />
+              <Settings2 className="size-4" />
               Configurar reoferta
             </Button>
           </DisabledWithHint>
         )}
         {podeEditar ? (
           <Button className="h-10" onClick={() => setModalAberto(true)}>
-            <UserRoundPlus strokeWidth={1.5} className="size-4" />
+            <UserRoundPlus className="size-4" />
             Adicionar manualmente
           </Button>
         ) : (
           <DisabledWithHint hint={dicaSemPermissao}>
             <Button className="h-10" disabled>
-              <UserRoundPlus strokeWidth={1.5} className="size-4" />
+              <UserRoundPlus className="size-4" />
               Adicionar manualmente
             </Button>
           </DisabledWithHint>

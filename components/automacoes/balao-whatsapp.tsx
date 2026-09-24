@@ -75,7 +75,6 @@ function Bolha({
           ) : (
             <span className="flex items-center gap-2 rounded-md border px-2.5 py-2 text-[12.5px]">
               <FileText
-                strokeWidth={1.5}
                 className="size-4 shrink-0 text-text-secondary"
                 aria-hidden
               />
@@ -95,7 +94,7 @@ function Bolha({
           {botoes.map((botao) => (
             <span
               key={botao}
-              className="rounded-md border py-1.5 text-center text-[12.5px] font-medium text-primary"
+              className="rounded-md border py-1.5 text-center text-[12.5px] font-medium text-foreground"
             >
               {botao}
             </span>

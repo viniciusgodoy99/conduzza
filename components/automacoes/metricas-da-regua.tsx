@@ -1,13 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import {
-  CheckCheck,
-  CircleSlash,
-  Send,
-  Timer,
-  UserRoundX,
-} from "lucide-react";
+import { CheckCheck, CircleSlash, Send, Timer, UserRoundX } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
 import { fetchMetricasDaRegua } from "@/lib/queries/automacoes";
@@ -109,7 +103,6 @@ export function MetricasDaRegua({
             >
               <span className="flex items-center gap-1.5 text-xs text-text-secondary">
                 <cartao.Icone
-                  strokeWidth={1.5}
                   className="size-4"
                   style={{ color: cartao.cor }}
                   aria-hidden
@@ -131,7 +124,6 @@ export function MetricasDaRegua({
       {data.puladasPorMotivo.length > 0 ? (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
           <CircleSlash
-            strokeWidth={1.5}
             className="size-4"
             style={{ color: "var(--warning-text)" }}
             aria-hidden

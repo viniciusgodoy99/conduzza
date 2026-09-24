@@ -231,7 +231,7 @@ export function Painel({
                       className="block h-full rounded-full"
                       style={{
                         width: `${largura}%`,
-                        background: "var(--primary)",
+                        background: "var(--chart-bar)",
                       }}
                     />
                   </span>
@@ -266,11 +266,7 @@ export function Painel({
       <section className="grid gap-3 lg:grid-cols-2">
         <div className="grid content-start gap-2 rounded-lg border bg-card p-4">
           <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-            <MessageSquareText
-              strokeWidth={1.5}
-              className="size-4"
-              aria-hidden
-            />
+            <MessageSquareText className="size-4" aria-hidden />
             Mensagens no período
           </span>
           <div className="grid grid-cols-2 gap-3">
@@ -333,7 +329,7 @@ export function CartaoProximasAcoes({
   return (
     <div className="grid content-start gap-2 rounded-lg border bg-card p-4">
       <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-        <MessagesSquare strokeWidth={1.5} className="size-4" aria-hidden />
+        <MessagesSquare className="size-4" aria-hidden />
         {rotulo}
       </span>
       <div className="grid gap-1.5">
@@ -344,7 +340,6 @@ export function CartaoProximasAcoes({
             className="flex min-h-10 items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-surface-2"
           >
             <acao.Icone
-              strokeWidth={1.5}
               className="size-4 shrink-0 text-text-secondary"
               aria-hidden
             />

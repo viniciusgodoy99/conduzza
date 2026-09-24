@@ -65,8 +65,12 @@ export function EtiquetasDaConversa({
   };
 
   const botao = (
-    <Button variant="outline" className="h-10" disabled={!podeEtiquetar || pendente}>
-      <Tag strokeWidth={1.5} className="size-4" aria-hidden />
+    <Button
+      variant="outline"
+      className="h-10"
+      disabled={!podeEtiquetar || pendente}
+    >
+      <Tag className="size-4" aria-hidden />
       Etiquetar
     </Button>
   );
@@ -92,7 +96,7 @@ export function EtiquetasDaConversa({
                 <span className="py-0.5 pl-2 text-[11px] font-semibold">
                   {etiqueta.nome}
                 </span>
-                <X strokeWidth={1.5} className="mr-1.5 size-3" aria-hidden />
+                <X className="mr-1.5 size-3" aria-hidden />
               </button>
             ) : (
               <ChipDeEtiqueta

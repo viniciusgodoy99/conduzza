@@ -96,11 +96,7 @@ export function PendingPanel({
         {pendencias.length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center">
             <span className="flex size-10 items-center justify-center rounded-full bg-muted">
-              <Sparkles
-                strokeWidth={1.5}
-                className="size-5 text-text-secondary"
-                aria-hidden
-              />
+              <Sparkles className="size-5 text-text-secondary" aria-hidden />
             </span>
             <p className="text-sm font-semibold">Nada pendente de você</p>
             <p className="text-xs text-text-secondary">
@@ -200,7 +196,6 @@ export function PendingPanel({
                 <li key={status} className="flex items-center gap-2">
                   {Icone ? (
                     <Icone
-                      strokeWidth={1.5}
                       className="size-3.5 shrink-0"
                       style={{ color: tone.marker }}
                       aria-hidden

@@ -64,7 +64,7 @@ function AcaoComPopover({
     return (
       <DisabledWithHint hint={dica}>
         <Button variant="outline" className="h-10" disabled>
-          <Icone strokeWidth={1.5} className="size-4" /> {rotulo}
+          <Icone className="size-4" /> {rotulo}
         </Button>
       </DisabledWithHint>
     );
@@ -73,7 +73,7 @@ function AcaoComPopover({
     <Popover open={aberto} onOpenChange={onAberto}>
       <PopoverTrigger asChild>
         <Button variant="outline" className="h-10" disabled={ocupado}>
-          <Icone strokeWidth={1.5} className="size-4" /> {rotulo}
+          <Icone className="size-4" /> {rotulo}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="p-1" align="center" side="top">
@@ -244,7 +244,6 @@ export function BarraAcoesMassa({
                 >
                   {Icone ? (
                     <Icone
-                      strokeWidth={1.5}
                       className="size-4 shrink-0"
                       style={{ color: tone.text }}
                       aria-hidden
@@ -267,10 +266,10 @@ export function BarraAcoesMassa({
           onAberto={setEtiquetarAberto}
         >
           <div className="grid w-60 gap-3 p-2">
-      <p className="text-[11px] text-text-tertiary">
-        Estas etiquetas ficam no lead. As etiquetas da conversa ficam no
-        Atendimento.
-      </p>
+            <p className="text-[11px] text-text-tertiary">
+              Estas etiquetas ficam no lead. As etiquetas da conversa ficam no
+              Atendimento.
+            </p>
             <div className="flex gap-1.5">
               <Input
                 value={novaEtiqueta}
@@ -304,7 +303,7 @@ export function BarraAcoesMassa({
                       aria-label={`Remover etiqueta ${etiqueta}`}
                     >
                       {etiqueta}
-                      <X strokeWidth={1.5} className="size-3" aria-hidden />
+                      <X className="size-3" aria-hidden />
                     </button>
                   ))}
                 </div>
@@ -319,12 +318,12 @@ export function BarraAcoesMassa({
 
         <DisabledWithHint hint="Nenhuma régua de follow-up ativa. Ative uma em Automações.">
           <Button variant="outline" className="h-10" disabled>
-            <Send strokeWidth={1.5} className="size-4" /> Disparar régua
+            <Send className="size-4" /> Disparar régua
           </Button>
         </DisabledWithHint>
 
         <Button variant="ghost" className="h-10" onClick={onLimpar}>
-          <X strokeWidth={1.5} className="size-4" /> Limpar seleção
+          <X className="size-4" /> Limpar seleção
         </Button>
       </div>
 

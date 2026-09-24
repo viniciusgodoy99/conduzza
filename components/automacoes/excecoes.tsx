@@ -124,13 +124,13 @@ export function Excecoes({
             disabled={pendente}
             onClick={() => setDialogoAberto(true)}
           >
-            <Plus strokeWidth={1.5} className="size-4" />
+            <Plus className="size-4" />
             Nova régua de exceção
           </Button>
         ) : (
           <DisabledWithHint hint={dicaSemPermissao}>
             <Button variant="outline" className="h-10" disabled>
-              <Plus strokeWidth={1.5} className="size-4" />
+              <Plus className="size-4" />
               Nova régua de exceção
             </Button>
           </DisabledWithHint>
@@ -154,7 +154,6 @@ export function Excecoes({
                   className="flex min-h-10 flex-1 items-center gap-2 text-left"
                 >
                   <ChevronDown
-                    strokeWidth={1.5}
                     className={cn(
                       "size-4 shrink-0 transition-transform",
                       expandida ? "rotate-180" : "",
@@ -179,7 +178,7 @@ export function Excecoes({
                     disabled={pendente}
                     onClick={() => excluir(regua)}
                   >
-                    <Trash2 strokeWidth={1.5} className="size-4" />
+                    <Trash2 className="size-4" />
                     Excluir
                   </Button>
                 ) : (
@@ -190,7 +189,7 @@ export function Excecoes({
                       className="h-9 [color:var(--alert-text)]"
                       disabled
                     >
-                      <Trash2 strokeWidth={1.5} className="size-4" />
+                      <Trash2 className="size-4" />
                       Excluir
                     </Button>
                   </DisabledWithHint>
@@ -253,9 +252,7 @@ export function Excecoes({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="procedimento">
-                    Por procedimento
-                  </SelectItem>
+                  <SelectItem value="procedimento">Por procedimento</SelectItem>
                   <SelectItem value="reforcada" disabled={temReforcada}>
                     Reforçada por histórico de falta
                     {temReforcada ? " (já existe)" : ""}
@@ -270,18 +267,12 @@ export function Excecoes({
                   value={procedimentoId}
                   onValueChange={setProcedimentoId}
                 >
-                  <SelectTrigger
-                    id="excecao-procedimento"
-                    className="min-h-10"
-                  >
+                  <SelectTrigger id="excecao-procedimento" className="min-h-10">
                     <SelectValue placeholder="Escolha o procedimento" />
                   </SelectTrigger>
                   <SelectContent>
                     {procedimentosLivres.map((procedimento) => (
-                      <SelectItem
-                        key={procedimento.id}
-                        value={procedimento.id}
-                      >
+                      <SelectItem key={procedimento.id} value={procedimento.id}>
                         {procedimento.name}
                       </SelectItem>
                     ))}

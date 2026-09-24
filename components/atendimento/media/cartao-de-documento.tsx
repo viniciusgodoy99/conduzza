@@ -26,7 +26,7 @@ export function CartaoDeDocumento({
   return (
     <div className="flex items-center gap-2.5 rounded-md border bg-surface-2 p-2.5">
       <span className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-4">
-        <FileText strokeWidth={1.5} className="size-5 text-text-secondary" />
+        <FileText className="size-5 text-text-secondary" />
       </span>
       <span
         className="min-w-0 flex-1 truncate text-[13px] font-medium"
@@ -38,7 +38,7 @@ export function CartaoDeDocumento({
         {/* download=1 e obrigatorio: <a download> e ignorado quando a resposta
             vem de outro dominio, e sem ele o clique navegaria para o arquivo. */}
         <a href={`/api/atendimento/midia/${messageId}?download=1`}>
-          <Download strokeWidth={1.5} className="size-4" />
+          <Download className="size-4" />
           Baixar
         </a>
       </Button>

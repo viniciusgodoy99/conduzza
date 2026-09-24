@@ -62,11 +62,7 @@ function Selo({ situacao }: { situacao: Situacao }) {
   if (situacao === "autorizado") {
     return (
       <span className="flex items-center gap-1.5 text-sm font-medium [color:var(--success-text)]">
-        <ShieldCheck
-          strokeWidth={1.5}
-          className="size-4 shrink-0"
-          aria-hidden
-        />
+        <ShieldCheck className="size-4 shrink-0" aria-hidden />
         Autorizado a receber mensagens
       </span>
     );
@@ -74,14 +70,14 @@ function Selo({ situacao }: { situacao: Situacao }) {
   if (situacao === "revogado") {
     return (
       <span className="flex items-center gap-1.5 text-sm font-medium [color:var(--alert-text)]">
-        <ShieldX strokeWidth={1.5} className="size-4 shrink-0" aria-hidden />
+        <ShieldX className="size-4 shrink-0" aria-hidden />
         Pediu para não receber mensagens
       </span>
     );
   }
   return (
     <span className="flex items-center gap-1.5 text-sm font-medium text-text-secondary">
-      <ShieldOff strokeWidth={1.5} className="size-4 shrink-0" aria-hidden />
+      <ShieldOff className="size-4 shrink-0" aria-hidden />
       Sem autorização registrada
     </span>
   );

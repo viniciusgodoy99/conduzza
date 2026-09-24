@@ -67,7 +67,7 @@ export function PassoConsentimento({
             className={cn(
               "flex min-h-10 cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5",
               opcao === item.valor
-                ? "border-primary bg-muted"
+                ? "border-primary-edge bg-muted"
                 : "border-border",
             )}
           >
@@ -77,7 +77,7 @@ export function PassoConsentimento({
               value={item.valor}
               checked={opcao === item.valor}
               onChange={() => aoEscolher(item.valor)}
-              className="mt-0.5 size-4 shrink-0 accent-primary"
+              className="mt-0.5 size-4 shrink-0 accent-(--primary-edge)"
             />
             <span className="grid gap-0.5">
               <span className="text-sm font-medium">{item.rotulo}</span>
@@ -112,11 +112,7 @@ export function PassoConsentimento({
           color: "var(--warning-text)",
         }}
       >
-        <TriangleAlert
-          strokeWidth={1.5}
-          className="mt-0.5 size-4 shrink-0"
-          aria-hidden
-        />
+        <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
         <p className="text-sm">
           Disparar mensagem para quem não autorizou derruba a nota do seu número
           no WhatsApp e pode travar os envios da clínica inteira.

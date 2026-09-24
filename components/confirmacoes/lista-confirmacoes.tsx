@@ -82,15 +82,15 @@ function AcaoDeLinha({
       {!desabilitado && href !== undefined ? (
         externo ? (
           <a href={href} aria-label={rotulo}>
-            <Icone strokeWidth={1.5} className="size-4" aria-hidden />
+            <Icone className="size-4" aria-hidden />
           </a>
         ) : (
           <Link href={href} aria-label={rotulo}>
-            <Icone strokeWidth={1.5} className="size-4" aria-hidden />
+            <Icone className="size-4" aria-hidden />
           </Link>
         )
       ) : (
-        <Icone strokeWidth={1.5} className="size-4" aria-hidden />
+        <Icone className="size-4" aria-hidden />
       )}
     </Button>
   );
@@ -168,11 +168,7 @@ function Linha({
                   backgroundColor: "var(--alert-bg)",
                 }}
               >
-                <IconeDeRisco
-                  strokeWidth={1.5}
-                  className="size-3.5"
-                  aria-hidden
-                />
+                <IconeDeRisco className="size-3.5" aria-hidden />
                 <span className="sr-only">{faltas} faltas anteriores</span>
               </span>
             </TooltipTrigger>
@@ -206,7 +202,7 @@ function Linha({
           motivoSemCobranca ? (
             <DisabledWithHint hint={motivoSemCobranca}>
               <Button variant="outline" size="sm" className="h-10" disabled>
-                <Send strokeWidth={1.5} className="size-4" aria-hidden />
+                <Send className="size-4" aria-hidden />
                 Cobrar agora
               </Button>
             </DisabledWithHint>
@@ -218,7 +214,7 @@ function Linha({
               disabled={ocupado}
               onClick={() => onCobrar(consulta)}
             >
-              <Send strokeWidth={1.5} className="size-4" aria-hidden />
+              <Send className="size-4" aria-hidden />
               Cobrar agora
             </Button>
           )

@@ -24,7 +24,7 @@ function Cartao({
   return (
     <div className="grid gap-2 rounded-lg border p-4">
       <span className="flex items-center gap-1.5 text-xs font-medium text-text-secondary">
-        <Icone strokeWidth={1.5} className="size-4 shrink-0" aria-hidden />
+        <Icone className="size-4 shrink-0" aria-hidden />
         {rotulo}
       </span>
       {children}

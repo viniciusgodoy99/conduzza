@@ -184,7 +184,7 @@ export function Thread({
           onClick={onBack}
           aria-label="Voltar para a lista"
         >
-          <ArrowLeft strokeWidth={1.5} className="size-4" />
+          <ArrowLeft className="size-4" />
         </Button>
         <ContactAvatar
           name={conversation.contact.name}
@@ -221,7 +221,7 @@ export function Thread({
             onClick={onToggleContext}
             aria-label="Abrir contexto do contato"
           >
-            <Info strokeWidth={1.5} className="size-4" />
+            <Info className="size-4" />
           </Button>
         </div>
       </header>

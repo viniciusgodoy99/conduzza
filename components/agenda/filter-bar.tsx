@@ -131,7 +131,7 @@ export function FilterBar({
           aria-label="Dia anterior"
           onClick={() => onDia(somarDias(dia, -1))}
         >
-          <ChevronLeft strokeWidth={1.5} className="size-4" />
+          <ChevronLeft className="size-4" />
         </Button>
         <Popover open={dataAberta} onOpenChange={setDataAberta}>
           <PopoverTrigger asChild>
@@ -139,7 +139,7 @@ export function FilterBar({
               variant="outline"
               className="h-10 gap-2 font-mono tabular-nums"
             >
-              <CalendarDays strokeWidth={1.5} className="size-4" />
+              <CalendarDays className="size-4" />
               {dataFormatada}
             </Button>
           </PopoverTrigger>
@@ -169,7 +169,7 @@ export function FilterBar({
           aria-label="Dia seguinte"
           onClick={() => onDia(somarDias(dia, 1))}
         >
-          <ChevronRight strokeWidth={1.5} className="size-4" />
+          <ChevronRight className="size-4" />
         </Button>
       </div>
 
@@ -253,7 +253,7 @@ export function FilterBar({
           dica={dica}
           onClick={onNovoAgendamento}
         >
-          <Plus strokeWidth={1.5} className="size-4" /> Novo agendamento
+          <Plus className="size-4" /> Novo agendamento
         </BotaoProtegido>
         <AgendaActionsMenu contexto={contexto} dia={dia} dados={dados} />
       </div>

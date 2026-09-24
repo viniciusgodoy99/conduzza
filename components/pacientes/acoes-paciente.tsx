@@ -23,27 +23,27 @@ export function AcoesPaciente({
         {conversationId ? (
           <Button variant="outline" className="h-10 w-full" asChild>
             <Link href={`/atendimento?conversa=${conversationId}`}>
-              <MessageSquareText strokeWidth={1.5} className="size-4" />
+              <MessageSquareText className="size-4" />
               Abrir conversa
             </Link>
           </Button>
         ) : (
           <DisabledWithHint hint="Este paciente não tem conversa aberta no WhatsApp">
             <Button variant="outline" className="h-10 w-full" disabled>
-              <MessageSquareText strokeWidth={1.5} className="size-4" />
+              <MessageSquareText className="size-4" />
               Abrir conversa
             </Button>
           </DisabledWithHint>
         )}
         <Button variant="outline" className="h-10 w-full" asChild>
           <Link href="/agenda">
-            <CalendarPlus strokeWidth={1.5} className="size-4" />
+            <CalendarPlus className="size-4" />
             Agendar
           </Link>
         </Button>
         <Button variant="outline" className="h-10 w-full" asChild>
           <Link href={`/espera?adicionar=${contactId}`}>
-            <Hourglass strokeWidth={1.5} className="size-4" />
+            <Hourglass className="size-4" />
             Adicionar à lista de espera
           </Link>
         </Button>

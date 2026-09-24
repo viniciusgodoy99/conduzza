@@ -227,7 +227,7 @@ export function ConversationList({
 
       {etiquetas.length > 0 ? (
         <div
-          className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex [scrollbar-width:none] gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden"
           role="group"
           aria-label="Filtrar por etiqueta"
         >
@@ -276,10 +276,7 @@ export function ConversationList({
       ) : null}
 
       <div className="relative">
-        <Search
-          strokeWidth={1.5}
-          className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-text-tertiary"
-        />
+        <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-text-tertiary" />
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}

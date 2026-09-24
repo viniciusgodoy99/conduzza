@@ -5,10 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 // conversa no centro e contexto a direita), nunca giratorio no meio da tela.
 export default function CarregandoAtendimento() {
   return (
-    <div
-      className="flex h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden"
-      aria-hidden
-    >
+    <div className="flex h-full min-h-0 overflow-hidden" aria-hidden>
       <aside className="hidden w-[322px] shrink-0 border-r border-border lg:block">
         <div className="grid gap-4 p-4">
           <Skeleton className="h-9 w-full rounded-md" />

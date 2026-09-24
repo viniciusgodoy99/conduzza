@@ -1,15 +1,22 @@
-import { Hourglass } from "lucide-react";
+import { DoorClosed, Hourglass, OctagonAlert } from "lucide-react";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { QueryProvider } from "@/components/providers/query-provider";
 import { AppShell } from "@/components/shell/app-shell";
+import { BotaoRecarregar } from "@/components/shell/botao-recarregar";
+import {
+  contarConfirmacoesDeAmanha,
+  contarConversasAguardando,
+} from "@/components/shell/contadores-do-menu";
 import { CriarClinica } from "@/components/shell/criar-clinica";
+import { EstadoDeTela, TelaSemShell } from "@/components/shell/estado-de-tela";
 import { MotorStatus } from "@/components/shell/motor-status";
+import { SairDaConta } from "@/components/shell/sair-da-conta";
 import { WhatsappStatus } from "@/components/shell/whatsapp-status";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
-import { diaCivil, limitesDoDia, somarDias } from "@/lib/domain/horarios";
 import type { SaudeDoMotor } from "@/lib/domain/motor";
-import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
+import { COOKIE_DO_RAIL, preferenciaDoRail } from "@/lib/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 // Layout da area logada: exige sessao e clinica ativa validada em
@@ -34,14 +41,42 @@ export default async function AppLayout({
   );
 
   if (!context.active) {
+    // Leitura do vinculo que FALHOU nao e "sem clinica": e erro, com saida.
+    // Vem antes de tudo porque, com a falha, memberships chega vazio e os
+    // ramos abaixo afirmariam algo falso (achado 115 da revisao).
+    if (context.vinculoIndisponivel) {
+      return (
+        <TelaSemShell>
+          <EstadoDeTela
+            emCartao
+            icone={OctagonAlert}
+            tom="alerta"
+            titulo="Seu acesso não carregou"
+            descricao={
+              <p>
+                Houve uma falha ao consultar as clínicas desta conta. Nada foi
+                alterado: tente de novo em instantes.
+              </p>
+            }
+          >
+            <BotaoRecarregar rotulo="Tentar de novo" />
+            <SairDaConta
+              email={context.userEmail}
+              className="mt-2 w-full border-t border-border pt-4"
+            />
+          </EstadoDeTela>
+        </TelaSemShell>
+      );
+    }
+
     // Dono do produto sem clinica ativa: precisa poder CRIAR uma, senao entra
     // no sistema e nao consegue fazer nada. A tela completa de administracao
     // e a Tela 14 (tarefa 5.5).
     if (context.isProductAdmin && ativos.length === 0) {
       return (
-        <main className="grid min-h-dvh place-items-center p-8">
-          <CriarClinica primeira />
-        </main>
+        <TelaSemShell>
+          <CriarClinica primeira email={context.userEmail} />
+        </TelaSemShell>
       );
     }
 
@@ -53,41 +88,65 @@ export default async function AppLayout({
     }
 
     // Entrou por codigo e aguarda aprovacao: entra no sistema, mas sem
-    // enxergar dado de paciente. Nada de sessao orfa nem laco de logout.
+    // enxergar dado de paciente. Nada de sessao orfa nem laco de logout: o
+    // Sair fica na propria tela (o /login devolveria a pessoa para ca).
     if (pendentes.length > 0) {
       const clinica = pendentes[0]?.clinicName ?? "sua clínica";
       return (
-        <main className="grid min-h-dvh place-items-center p-8">
-          <div className="grid max-w-md justify-items-center gap-3 rounded-lg border bg-card p-8 text-center">
-            <span className="flex size-12 items-center justify-center rounded-full bg-muted">
-              <Hourglass
-                strokeWidth={1.5}
-                className="size-6 [color:var(--warning)]"
-              />
-            </span>
-            <h1 className="text-[15px] font-semibold">
-              Aguardando liberação de acesso
-            </h1>
-            <p className="text-sm text-text-secondary">
-              Seu pedido de entrada em <strong>{clinica}</strong> foi
-              registrado. Um administrador precisa liberar seu acesso, e é por
-              isso que você ainda não vê as conversas dos pacientes.
-            </p>
-          </div>
-        </main>
+        <TelaSemShell>
+          <EstadoDeTela
+            emCartao
+            icone={Hourglass}
+            tom="aviso"
+            titulo="Aguardando liberação de acesso"
+            descricao={
+              <>
+                <p>
+                  Seu pedido de entrada em{" "}
+                  <strong className="font-semibold text-foreground">
+                    {clinica}
+                  </strong>{" "}
+                  foi registrado. Um administrador precisa liberar seu acesso, e
+                  é por isso que você ainda não vê as conversas dos pacientes.
+                </p>
+                <p>
+                  Quando o administrador liberar seu acesso, atualize a página.
+                </p>
+              </>
+            }
+          >
+            <BotaoRecarregar rotulo="Atualizar" />
+            <SairDaConta
+              email={context.userEmail}
+              className="mt-2 w-full border-t border-border pt-4"
+            />
+          </EstadoDeTela>
+        </TelaSemShell>
       );
     }
 
+    // Sem vinculo ativo nem pendente: nunca entrou, teve o pedido recusado
+    // ou teve o acesso retirado. O texto serve aos tres casos.
     return (
-      <main className="grid min-h-dvh place-items-center p-8">
-        <div className="grid max-w-md gap-2 rounded-lg border bg-card p-6 text-center">
-          <h1 className="text-[15px] font-semibold">Sem clínica vinculada</h1>
-          <p className="text-sm text-text-secondary">
-            Seu usuário ainda não pertence a nenhuma clínica. Peça o convite ao
-            administrador.
-          </p>
-        </div>
-      </main>
+      <TelaSemShell>
+        <EstadoDeTela
+          emCartao
+          icone={DoorClosed}
+          titulo="Sem clínica vinculada"
+          descricao={
+            <p>
+              Esta conta não tem acesso a nenhuma clínica agora. Se você
+              trabalhava em uma clínica, o acesso pode ter sido retirado. Fale
+              com o administrador dela ou saia para entrar com outra conta.
+            </p>
+          }
+        >
+          <SairDaConta
+            email={context.userEmail}
+            className="mt-2 w-full border-t border-border pt-4"
+          />
+        </EstadoDeTela>
+      </TelaSemShell>
     );
   }
 
@@ -99,14 +158,13 @@ export default async function AppLayout({
   // comecaram a estourar o limite de 2 segundos. O shell e o caminho mais
   // quente do sistema; latencia aqui e paga por toda tela.
   const supabase = await createClient();
-  const amanha = somarDias(diaCivil(active.timezone, new Date()), 1);
-  const janelaDeAmanha = limitesDoDia(active.timezone, amanha);
+  const cookieStore = await cookies();
 
   const [
     { data: whatsappAccount },
     { data: saude },
-    { count: aguardandoHumano },
-    { count: confirmacoesPendentes },
+    aguardandoHumano,
+    confirmacoesPendentes,
   ] = await Promise.all([
     // Faixa de WhatsApp desconectado (estado 5 da secao 8 do brief): so quando
     // a clinica tem conta e ela nao esta conectada.
@@ -120,26 +178,17 @@ export default async function AppLayout({
     // cru pegaria "a batida mais recente de qualquer executor", e o planner
     // vivo esconderia a fila morta.
     supabase.rpc("saude_do_motor"),
-    // awaiting_reply, nao status e nao unread_count. Status sozinho contaria
-    // as conversas que a REGUA abriu para enviar confirmacao (40 disparos =
-    // badge 40, com a mensagem de paciente de verdade enterrada). E
-    // unread_count zera quando alguem so ABRE a conversa para ler, o que
-    // faria o lembrete sumir sem ninguem ter respondido.
-    supabase
-      .from("conversation")
-      .select("id", { count: "exact", head: true })
-      .eq("clinic_id", active.clinicId)
-      .eq("status", "aguardando_humano")
-      .eq("awaiting_reply", true),
-    // Confirmacoes pendentes de amanha, no fuso da CLINICA: o mesmo recorte
-    // que a Tela 2 abre por padrao.
-    supabase
-      .from("appointment")
-      .select("id", { count: "exact", head: true })
-      .eq("clinic_id", active.clinicId)
-      .in("status", STATUS_PENDENTES)
-      .gte("starts_at", janelaDeAmanha.inicio.toISOString())
-      .lt("starts_at", janelaDeAmanha.fim.toISOString()),
+    // Contadores do menu (Atendimento e Confirmacoes): o primeiro numero sai
+    // daqui e o vigia do AppShell o mantem vivo com as MESMAS consultas
+    // (components/shell/contadores-do-menu.ts, onde o criterio esta
+    // explicado).
+    contarConversasAguardando(supabase, active.clinicId),
+    contarConfirmacoesDeAmanha(
+      supabase,
+      active.clinicId,
+      active.timezone,
+      new Date(),
+    ),
   ]);
 
   // A decisao motor x WhatsApp (e a precedencia entre as duas faixas) vive no
@@ -174,11 +223,16 @@ export default async function AppLayout({
         clinicName: active.clinicName,
         productName: active.productName,
       }}
+      clinicId={active.clinicId}
+      timezone={active.timezone}
       canSwitchClinic={
         context.memberships.filter((m) => m.status === "ativo").length > 1
       }
       labels={active.labels}
       banner={banner}
+      preferenciaDoRail={preferenciaDoRail(
+        cookieStore.get(COOKIE_DO_RAIL)?.value,
+      )}
       counts={{
         conversas: aguardandoHumano ?? 0,
         confirmacoes: confirmacoesPendentes ?? 0,

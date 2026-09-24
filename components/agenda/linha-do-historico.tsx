@@ -63,7 +63,6 @@ export function ConteudoDaLinhaDoHistorico({
       <div className="grid min-w-0 gap-1">
         <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
           <CalendarClock
-            strokeWidth={1.5}
             className="size-4 shrink-0 text-text-secondary"
             aria-hidden
           />

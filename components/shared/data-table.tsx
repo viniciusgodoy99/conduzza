@@ -30,12 +30,39 @@ type DataTableProps<TData, TValue> = {
   emptyTitle?: string;
   emptyDescription?: string;
   onRowClick?: (row: TData) => void;
+  /** Classe da casca (ou do bloco, na variante bare) */
   className?: string;
+  /** "bare" tira a casca de cartao, para tabela que ja esta dentro de um Card */
+  variant?: "default" | "bare";
+  /**
+   * Cabecalho grudado no topo enquanto as linhas rolam dentro da tabela. A
+   * altura maxima padrao e 70vh; troque por containerClassName (ex.:
+   * "max-h-[480px]").
+   */
+  stickyHeader?: boolean;
+  /** Classe do conteiner de rolagem da tabela */
+  containerClassName?: string;
+  /** Marca a linha como selecionada (fundo lime suave e fio a esquerda) */
+  isRowSelected?: (row: TData) => boolean;
+  /** Linhas de 36px e texto de 12,5px, para tabela dentro de painel */
+  dense?: boolean;
 };
 
+// Metadados de coluna lidos aqui. align "right" alinha cabecalho e celula;
+// numeric aplica a fonte mono tabular (cz-num). Coluna alinhada a direita e
+// numerica por padrao (brief secao 3.6), salvo numeric: false.
+type MetaDaColuna = { align?: "right"; numeric?: boolean } | undefined;
+
+function lerMeta(meta: unknown): { direita: boolean; numerica: boolean } {
+  const lida = meta as MetaDaColuna;
+  const direita = lida?.align === "right";
+  return { direita, numerica: lida?.numeric ?? direita };
+}
+
 // Tabela generica sobre TanStack Table v8 com estados de carregando e vazio
-// embutidos. Numeros tabulares alinhados a direita ficam por conta da coluna
-// (meta.align = "right" e fonte mono), conforme brief secao 3.6.
+// embutidos, na casca do DataTable do design system Conduzza (docs/06 secao
+// 4.5): cartao de raio 16 com fio e sombra baixa, cabecalho sutil em caixa
+// alta e linhas de 44px. Carregando e vazio aparecem dentro da mesma casca.
 export function DataTable<TData, TValue>({
   columns,
   data,
@@ -44,6 +71,11 @@ export function DataTable<TData, TValue>({
   emptyDescription,
   onRowClick,
   className,
+  variant = "default",
+  stickyHeader = false,
+  containerClassName,
+  isRowSelected,
+  dense = false,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -56,36 +88,51 @@ export function DataTable<TData, TValue>({
     getSortedRowModel: getSortedRowModel(),
   });
 
-  if (isLoading) {
-    return <TableSkeleton columns={columns.length} className={className} />;
-  }
+  const casca = cn(
+    variant === "default" &&
+      "overflow-hidden rounded-card border border-border bg-card shadow-sm",
+    className,
+  );
 
-  if (data.length === 0) {
+  if (isLoading) {
     return (
-      <EmptyState
-        icon={SearchX}
-        title={emptyTitle}
-        description={emptyDescription}
+      <TableSkeleton
+        columns={columns.length}
+        variant={variant}
         className={className}
       />
     );
   }
 
+  if (data.length === 0) {
+    return (
+      <div className={casca}>
+        <EmptyState
+          icon={SearchX}
+          title={emptyTitle}
+          description={emptyDescription}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className={cn("overflow-x-auto rounded-lg border", className)}>
-      <Table>
+    <div className={casca}>
+      <Table
+        containerClassName={cn(
+          stickyHeader && "max-h-[70vh]",
+          containerClassName,
+        )}
+      >
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
               {headerGroup.headers.map((header) => {
-                const align = (
-                  header.column.columnDef.meta as
-                    { align?: "right" } | undefined
-                )?.align;
+                const { direita } = lerMeta(header.column.columnDef.meta);
                 return (
                   <TableHead
                     key={header.id}
-                    className={cn(align === "right" && "text-right")}
+                    className={cn(dense && "px-3", direita && "text-right")}
                   >
                     {header.isPlaceholder
                       ? null
@@ -100,29 +147,41 @@ export function DataTable<TData, TValue>({
           ))}
         </TableHeader>
         <TableBody>
-          {table.getRowModel().rows.map((row) => (
-            <TableRow
-              key={row.id}
-              onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-              className={cn(onRowClick && "cursor-pointer")}
-            >
-              {row.getVisibleCells().map((cell) => {
-                const align = (
-                  cell.column.columnDef.meta as { align?: "right" } | undefined
-                )?.align;
-                return (
-                  <TableCell
-                    key={cell.id}
-                    className={cn(
-                      align === "right" && "text-right font-mono tabular-nums",
-                    )}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                );
-              })}
-            </TableRow>
-          ))}
+          {table.getRowModel().rows.map((row) => {
+            const selecionada = isRowSelected?.(row.original) ?? false;
+            return (
+              <TableRow
+                key={row.id}
+                data-state={selecionada ? "selected" : undefined}
+                aria-selected={isRowSelected ? selecionada : undefined}
+                onClick={
+                  onRowClick ? () => onRowClick(row.original) : undefined
+                }
+                className={cn(onRowClick && "cursor-pointer")}
+              >
+                {row.getVisibleCells().map((cell) => {
+                  const { direita, numerica } = lerMeta(
+                    cell.column.columnDef.meta,
+                  );
+                  return (
+                    <TableCell
+                      key={cell.id}
+                      className={cn(
+                        dense && "h-9 px-3 text-[12.5px]",
+                        direita && "text-right",
+                        numerica && "cz-num",
+                      )}
+                    >
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext(),
+                      )}
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>

@@ -69,7 +69,7 @@ function Aviso({ texto }: { texto: string }) {
       role="alert"
       className="flex items-start gap-1.5 text-sm [color:var(--warning-text)]"
     >
-      <TriangleAlert strokeWidth={1.5} className="mt-0.5 size-4 shrink-0" />
+      <TriangleAlert className="mt-0.5 size-4 shrink-0" />
       {texto}
     </p>
   );
@@ -77,7 +77,7 @@ function Aviso({ texto }: { texto: string }) {
 
 function Erro({ texto }: { texto: string }) {
   return (
-    <p role="alert" className="text-alert-text text-sm">
+    <p role="alert" className="text-sm text-alert-text">
       {texto}
     </p>
   );
@@ -86,7 +86,7 @@ function Erro({ texto }: { texto: string }) {
 function Orientacao() {
   return (
     <p className="flex items-start gap-1.5 text-xs text-text-secondary">
-      <Info strokeWidth={1.5} className="mt-px size-3.5 shrink-0" />
+      <Info className="mt-px size-3.5 shrink-0" />
       {ORIENTACAO_BUSINESS}
     </p>
   );
@@ -156,7 +156,7 @@ export function ConnectClient({
 
   const connectButton = (
     <Button onClick={connect} disabled={!canManage || pending}>
-      <Plug strokeWidth={1.5} className="size-4" />
+      <Plug className="size-4" />
       {pending ? "Conectando..." : "Conectar WhatsApp"}
     </Button>
   );
@@ -176,7 +176,7 @@ export function ConnectClient({
       onClick={verificarAgora}
       disabled={pending || !canManage}
     >
-      <RefreshCw strokeWidth={1.5} className="size-4" />
+      <RefreshCw className="size-4" />
       {pending ? "Verificando..." : "Verificar agora"}
     </Button>
   );
@@ -187,7 +187,7 @@ export function ConnectClient({
       onClick={disconnect}
       disabled={!canManage || pending}
     >
-      <Unplug strokeWidth={1.5} className="size-4" />
+      <Unplug className="size-4" />
       Desconectar
     </Button>
   );
@@ -199,10 +199,7 @@ export function ConnectClient({
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <CircleCheck
-                  strokeWidth={1.5}
-                  className="size-5 text-success"
-                />
+                <CircleCheck className="size-5 text-success" />
                 WhatsApp conectado
               </CardTitle>
               <CardDescription>
@@ -222,10 +219,7 @@ export function ConnectClient({
                 // simulador engana, porque todo envio vira "enviada" sem sair
                 // nada para o paciente.
                 <p className="flex items-center gap-1.5 text-xs text-text-secondary">
-                  <FlaskConical
-                    strokeWidth={1.5}
-                    className="size-3.5 shrink-0"
-                  />
+                  <FlaskConical className="size-3.5 shrink-0" />
                   Ambiente de demonstração: a conexão é simulada e nenhuma
                   mensagem sai de verdade para o paciente.
                 </p>
@@ -273,8 +267,8 @@ export function ConnectClient({
                     </p>
                   )}
                   <p className="flex items-center gap-1.5 text-xs text-text-tertiary">
-                    <QrCode strokeWidth={1.5} className="size-3.5" />O QR expira
-                    em instantes; se falhar, conecte de novo
+                    <QrCode className="size-3.5" />O QR expira em instantes; se
+                    falhar, conecte de novo
                   </p>
                 </div>
               ) : null}
@@ -295,16 +289,15 @@ export function ConnectClient({
                 {canManage ? (
                   verifyButton
                 ) : (
-                  <DisabledWithHint hint={dica}>{verifyButton}</DisabledWithHint>
+                  <DisabledWithHint hint={dica}>
+                    {verifyButton}
+                  </DisabledWithHint>
                 )}
               </div>
 
               {demonstracao ? (
                 <p className="flex items-center gap-1.5 text-xs text-text-secondary">
-                  <FlaskConical
-                    strokeWidth={1.5}
-                    className="size-3.5 shrink-0"
-                  />
+                  <FlaskConical className="size-3.5 shrink-0" />
                   Ambiente de demonstração: a conexão é simulada e conecta na
                   hora, sem QR code.
                 </p>

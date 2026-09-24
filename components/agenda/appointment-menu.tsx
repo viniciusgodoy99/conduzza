@@ -250,11 +250,7 @@ export function AppointmentMenu({
                   className="h-10"
                   onSelect={() => tratarEncaixe("aprovar")}
                 >
-                  <Check
-                    strokeWidth={1.5}
-                    className="size-4 shrink-0"
-                    aria-hidden
-                  />
+                  <Check className="size-4 shrink-0" aria-hidden />
                   <span>Aprovar encaixe</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -262,11 +258,7 @@ export function AppointmentMenu({
                   className="h-10"
                   onSelect={() => tratarEncaixe("recusar")}
                 >
-                  <X
-                    strokeWidth={1.5}
-                    className="size-4 shrink-0"
-                    aria-hidden
-                  />
+                  <X className="size-4 shrink-0" aria-hidden />
                   <span>Recusar encaixe</span>
                 </DropdownMenuItem>
               </DropdownMenuGroup>
@@ -301,7 +293,6 @@ export function AppointmentMenu({
                     >
                       {Icone ? (
                         <Icone
-                          strokeWidth={1.5}
                           className="size-4 shrink-0"
                           style={{ color: tone.text }}
                           aria-hidden
@@ -334,7 +325,7 @@ export function AppointmentMenu({
             className="h-10"
             onSelect={() => setDialogRemarcar(true)}
           >
-            <CalendarClock strokeWidth={1.5} className="size-4" aria-hidden />
+            <CalendarClock className="size-4" aria-hidden />
             <span>Remarcar</span>
           </DropdownMenuItem>
           {!remarcavel ? (
@@ -349,7 +340,7 @@ export function AppointmentMenu({
             className="h-10"
             onSelect={() => setHistoricoAberto(true)}
           >
-            <History strokeWidth={1.5} className="size-4" aria-hidden />
+            <History className="size-4" aria-hidden />
             <span>Ver histórico</span>
           </DropdownMenuItem>
 

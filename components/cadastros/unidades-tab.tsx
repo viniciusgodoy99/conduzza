@@ -97,7 +97,7 @@ export function UnidadesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus strokeWidth={1.5} className="size-4" /> Nova unidade
+          <Plus className="size-4" /> Nova unidade
         </BotaoProtegido>
       </div>
 

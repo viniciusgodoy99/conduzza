@@ -207,7 +207,7 @@ function ItemDaFila({
       ref={setDropRef}
       className={cn(
         "rounded-lg border bg-card transition-colors",
-        isOver ? "border-primary" : "",
+        isOver ? "border-primary-edge" : "",
         isDragging ? "opacity-60" : "",
       )}
       style={
@@ -227,9 +227,9 @@ function ItemDaFila({
           )}
           aria-label={`Arrastar ${entrada.contact?.name ?? "paciente"} para reordenar`}
         >
-          <GripVertical strokeWidth={1.5} className="size-4" aria-hidden />
+          <GripVertical className="size-4" aria-hidden />
         </span>
-        <span className="w-6 text-center text-sm font-semibold tabular-nums text-text-secondary">
+        <span className="w-6 text-center text-sm font-semibold text-text-secondary tabular-nums">
           {posicao}
         </span>
         <div className="grid min-w-0 flex-1 gap-0.5">
@@ -255,7 +255,7 @@ function ItemDaFila({
               disabled={posicao === 1 || pendente}
               onClick={aoSubir}
             >
-              <ArrowUp strokeWidth={1.5} className="size-4" />
+              <ArrowUp className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -265,7 +265,7 @@ function ItemDaFila({
               disabled={posicao === total || pendente}
               onClick={aoDescer}
             >
-              <ArrowDown strokeWidth={1.5} className="size-4" />
+              <ArrowDown className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -274,7 +274,7 @@ function ItemDaFila({
               disabled={pendente}
               onClick={aoRemover}
             >
-              <UserRoundMinus strokeWidth={1.5} className="size-4" />
+              <UserRoundMinus className="size-4" />
               Remover
             </Button>
           </span>
@@ -282,10 +282,10 @@ function ItemDaFila({
           <DisabledWithHint hint={dicaSemPermissao}>
             <span className="flex items-center gap-1">
               <Button variant="ghost" size="icon" className="size-10" disabled>
-                <ArrowUp strokeWidth={1.5} className="size-4" />
+                <ArrowUp className="size-4" />
               </Button>
               <Button variant="ghost" size="icon" className="size-10" disabled>
-                <ArrowDown strokeWidth={1.5} className="size-4" />
+                <ArrowDown className="size-4" />
               </Button>
               <Button
                 variant="ghost"
@@ -293,7 +293,7 @@ function ItemDaFila({
                 className="h-10 [color:var(--alert-text)]"
                 disabled
               >
-                <UserRoundMinus strokeWidth={1.5} className="size-4" />
+                <UserRoundMinus className="size-4" />
                 Remover
               </Button>
             </span>

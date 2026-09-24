@@ -50,17 +50,9 @@ function Vencimento({ dia, vencido }: { dia: string; vencido: boolean }) {
       }}
     >
       {vencido ? (
-        <CalendarX2
-          strokeWidth={1.5}
-          className="size-3.5 shrink-0"
-          aria-hidden
-        />
+        <CalendarX2 className="size-3.5 shrink-0" aria-hidden />
       ) : (
-        <CircleCheck
-          strokeWidth={1.5}
-          className="size-3.5 shrink-0"
-          aria-hidden
-        />
+        <CircleCheck className="size-3.5 shrink-0" aria-hidden />
       )}
       {vencido ? `Venceu em ${diaEmTexto(dia)}` : `Vale até ${diaEmTexto(dia)}`}
     </span>
@@ -124,7 +116,7 @@ export function PacotesPaciente({
             setAberto(true);
           }}
         >
-          <Plus strokeWidth={1.5} className="size-4" /> Vender pacote
+          <Plus className="size-4" /> Vender pacote
         </BotaoProtegido>
       }
     >

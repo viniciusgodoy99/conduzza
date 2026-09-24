@@ -85,7 +85,7 @@ export function ComplianceBlockCard({
     <div className="flex justify-center">
       <div className="grid max-w-md gap-2 rounded-lg border [border-color:var(--alert)] px-4 py-3 [background:var(--alert-bg)]">
         <p className="flex items-center gap-2 text-[12.5px] font-semibold [color:var(--alert-text)]">
-          <ShieldAlert strokeWidth={1.5} className="size-4 shrink-0" />
+          <ShieldAlert className="size-4 shrink-0" />
           Resposta da IA bloqueada pela conformidade
         </p>
         <p className="text-[12.5px] text-text-secondary">
@@ -170,7 +170,7 @@ function MidiaIndisponivel({
   return (
     <>
       <span className="flex items-center gap-1.5 text-[12.5px] font-medium [color:var(--warning-text)]">
-        <CloudOff strokeWidth={1.5} className="size-4 shrink-0" />
+        <CloudOff className="size-4 shrink-0" />
         {rotulo}
       </span>
       <span className="text-[12px] leading-snug text-text-secondary">
@@ -196,7 +196,7 @@ function AudioBody({ message }: { message: MessageItem }) {
         />
       ) : (
         <span className="flex items-center gap-1.5 text-[12.5px] text-text-secondary">
-          <AudioLines strokeWidth={1.5} className="size-4" />
+          <AudioLines className="size-4" />
           Áudio{" "}
           {estado.tipo === "demonstracao"
             ? "(indisponível na demonstração)"
@@ -406,7 +406,7 @@ function MidiaBody({ message }: { message: MessageItem }) {
   return (
     <div className="grid gap-1">
       <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-text-secondary">
-        <Icone strokeWidth={1.5} className="size-4 shrink-0" />
+        <Icone className="size-4 shrink-0" />
         {rotulos.recebido}
       </span>
       {nomeVisivel}
@@ -456,7 +456,7 @@ function Lapide({
           : "A clínica apagou";
   return (
     <span className="flex items-center gap-1.5 text-[12.5px] text-text-tertiary italic">
-      <CircleSlash strokeWidth={1.5} className="size-4 shrink-0" />
+      <CircleSlash className="size-4 shrink-0" />
       {soAqui && !nota
         ? `${quem} esta mensagem só aqui. O paciente ainda vê.`
         : nota
@@ -499,16 +499,16 @@ function AcoesDaBolha({
             "data-[state=open]:opacity-100",
           )}
         >
-          <MoreVertical strokeWidth={1.5} className="size-4" />
+          <MoreVertical className="size-4" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuItem onSelect={onResponder} disabled={!podeResponder}>
-          <CornerUpLeft strokeWidth={1.5} className="size-4" />
+          <CornerUpLeft className="size-4" />
           Responder
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onApagar} disabled={!podeApagar}>
-          <Trash2 strokeWidth={1.5} className="size-4" />
+          <Trash2 className="size-4" />
           Apagar
         </DropdownMenuItem>
         {/* O motivo fica VISÍVEL no menu, e não num title.
@@ -628,7 +628,7 @@ export function MessageBubble({
         className={cn(
           "grid max-w-[74%] gap-1 border px-3 py-2",
           fromPatient
-            ? "border-border-strong rounded-[4px_14px_14px_14px] bg-card"
+            ? "rounded-[4px_14px_14px_14px] border-border-strong bg-card"
             : "rounded-[14px_4px_14px_14px]",
           !fromPatient &&
             !note &&
@@ -639,12 +639,12 @@ export function MessageBubble({
             "[border-color:var(--warning)] [background:var(--warning-bg)]",
           // Mensagem apagada perde a cor de autoria: ela não é mais fala de
           // ninguém, é o registro de que houve uma.
-          apagada && "border-border-strong border-dashed bg-transparent",
+          apagada && "border-dashed border-border-strong bg-transparent",
         )}
       >
         {fromIa && !apagada ? (
           <span className="flex items-center gap-1 text-[11px] font-semibold [color:var(--ai-text)]">
-            <Sparkles strokeWidth={1.5} className="size-3" />
+            <Sparkles className="size-3" />
             {authorName ?? "Assistente"}
             <span className="rounded-full px-1.5 py-px text-[9px] tracking-wide [color:var(--ai-bg)] uppercase [background:var(--ai)]">
               IA
@@ -658,7 +658,7 @@ export function MessageBubble({
               note ? "[color:var(--warning-text)]" : "text-text-secondary",
             )}
           >
-            {note ? <Lock strokeWidth={1.5} className="size-3" /> : null}
+            {note ? <Lock className="size-3" /> : null}
             {authorName}
             {note ? " · Nota interna, o paciente não vê" : null}
           </span>

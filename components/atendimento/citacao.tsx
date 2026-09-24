@@ -96,12 +96,12 @@ export function BlocoDeCitacao({
     >
       <span className="flex items-center gap-1 text-[11px] font-semibold text-text-secondary">
         {mensagem.is_internal_note ? (
-          <Lock strokeWidth={1.5} className="size-3 shrink-0" />
+          <Lock className="size-3 shrink-0" />
         ) : null}
         {autor}
       </span>
       <span className="flex items-center gap-1 truncate text-[12px] text-text-tertiary">
-        {Icone ? <Icone strokeWidth={1.5} className="size-3 shrink-0" /> : null}
+        {Icone ? <Icone className="size-3 shrink-0" /> : null}
         <span className="truncate">{rotulo}</span>
       </span>
     </Container>

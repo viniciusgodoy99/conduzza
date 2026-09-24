@@ -225,7 +225,7 @@ export function PacotesTab({
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus strokeWidth={1.5} className="size-4" /> Novo pacote
+          <Plus className="size-4" /> Novo pacote
         </BotaoProtegido>
       </div>
 
@@ -295,7 +295,7 @@ export function PacotesTab({
                             onClick={() => abrir(pacote)}
                             aria-label={`Editar pacote de ${nome}`}
                           >
-                            <Pencil strokeWidth={1.5} className="size-4" />
+                            <Pencil className="size-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -315,7 +315,7 @@ export function PacotesTab({
                                 disabled
                                 aria-label={`Remover pacote de ${nome}`}
                               >
-                                <Trash2 strokeWidth={1.5} className="size-4" />
+                                <Trash2 className="size-4" />
                               </Button>
                             </DisabledWithHint>
                           ) : (
@@ -329,7 +329,7 @@ export function PacotesTab({
                               }}
                               aria-label={`Remover pacote de ${nome}`}
                             >
-                              <Trash2 strokeWidth={1.5} className="size-4" />
+                              <Trash2 className="size-4" />
                             </Button>
                           )}
                         </div>
@@ -343,7 +343,7 @@ export function PacotesTab({
                               disabled
                               aria-label={`Editar pacote de ${nome}`}
                             >
-                              <Pencil strokeWidth={1.5} className="size-4" />
+                              <Pencil className="size-4" />
                             </Button>
                           </DisabledWithHint>
                           <DisabledWithHint hint={dica}>
@@ -359,7 +359,7 @@ export function PacotesTab({
                               disabled
                               aria-label={`Remover pacote de ${nome}`}
                             >
-                              <Trash2 strokeWidth={1.5} className="size-4" />
+                              <Trash2 className="size-4" />
                             </Button>
                           </DisabledWithHint>
                         </div>

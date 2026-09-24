@@ -182,7 +182,6 @@ export function PassoPrevia({
         <div className="grid gap-2 rounded-lg border p-4">
           <p className="flex items-center gap-2 text-sm font-semibold">
             <CircleCheck
-              strokeWidth={1.5}
               className="size-4 shrink-0"
               style={{ color: "var(--success)" }}
               aria-hidden
@@ -227,11 +226,7 @@ export function PassoPrevia({
               }}
             >
               <p className="flex items-center gap-2 text-sm font-medium">
-                <TriangleAlert
-                  strokeWidth={1.5}
-                  className="size-4 shrink-0"
-                  aria-hidden
-                />
+                <TriangleAlert className="size-4 shrink-0" aria-hidden />
                 {numero.format(fase.totais.mantidos_sem_autorizacao)}{" "}
                 {fase.totais.mantidos_sem_autorizacao === 1
                   ? "pessoa pediu para não receber mensagens"
@@ -251,7 +246,7 @@ export function PassoPrevia({
             className="h-10 w-fit"
             onClick={baixarRejeitadas}
           >
-            <Download strokeWidth={1.5} className="size-4" /> Baixar rejeitados
+            <Download className="size-4" /> Baixar rejeitados
           </Button>
         ) : null}
       </div>
@@ -286,7 +281,6 @@ export function PassoPrevia({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
         <span className="flex items-center gap-1.5">
           <CircleCheck
-            strokeWidth={1.5}
             className="size-4 shrink-0"
             style={{ color: "var(--success)" }}
             aria-hidden
@@ -301,7 +295,6 @@ export function PassoPrevia({
         {invalidas.length > 0 ? (
           <span className="flex items-center gap-1.5">
             <CircleX
-              strokeWidth={1.5}
               className="size-4 shrink-0"
               style={{ color: "var(--alert)" }}
               aria-hidden
@@ -388,11 +381,7 @@ export function PassoPrevia({
           }}
         >
           <p className="flex items-center gap-2 text-sm font-medium">
-            <CircleX
-              strokeWidth={1.5}
-              className="size-4 shrink-0"
-              aria-hidden
-            />
+            <CircleX className="size-4 shrink-0" aria-hidden />
             {fase.mensagem}
           </p>
           <p className="text-xs">
@@ -409,8 +398,7 @@ export function PassoPrevia({
             className="h-10"
             onClick={() => importarDesde(fase.loteIndice)}
           >
-            <RotateCcw strokeWidth={1.5} className="size-4" /> Tentar o lote de
-            novo
+            <RotateCcw className="size-4" /> Tentar o lote de novo
           </Button>
         ) : (
           <Button
@@ -418,7 +406,7 @@ export function PassoPrevia({
             disabled={validas.length === 0}
             onClick={() => importarDesde(0)}
           >
-            <Upload strokeWidth={1.5} className="size-4" /> Importar{" "}
+            <Upload className="size-4" /> Importar{" "}
             {numero.format(validas.length)}{" "}
             {validas.length === 1 ? "contato" : "contatos"}
           </Button>

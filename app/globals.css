@@ -1,8 +1,61 @@
+/*
+ * Tokens do Conduzza Design System (24/09/2026). Fonte visual: a pasta
+ * "Conduzza Design System/" (tokens de cor, raio, sombra, movimento e
+ * tipografia), copiada em VALORES e nunca importada em runtime: o fonts.css
+ * dela usa @import do Google Fonts e o base.css zera margens e muda o display
+ * dos svg. Especificacao completa em docs/06_adocao_design_system.md, secao 4.
+ *
+ * Desvios AA registrados (CLAUDE.md secao 5 e decisoes do dono de 24/09/2026,
+ * anexo C3 a C6 e C11 da especificacao):
+ * - texto secundario e terciario ink-600 no claro (o ink-500 e o ink-400 do
+ *   DS dao 4,42 e 2,94 no branco); no escuro ink-300 e ink-400;
+ * - lime como texto lime-800 (o lime-700 do DS da 4,35 no branco);
+ * - borda de campo ink-500 (a hairline de 12% do DS da 1,29);
+ * - foco lime-800 no claro, contorno de 2px com offset de 2px (o halo do DS
+ *   da 1,25 no branco e o lime-700 da 2,94 contra o botao lime);
+ * - indicador nao textual (selecao, checkbox e switch ligados, aba ativa,
+ *   barra de dado) lime-700 no claro (o lime-400 do DS da 1,48 no branco);
+ * - sidebar muted ink-400 opaco (o cream a 32% do DS da 2,81);
+ * - IA deixa o violeta e vira lime suave (tom ai);
+ * - sem a sombra lime do DS e sem blur no fundo de modal.
+ * Escuro derivado das rampas (o DS so tem o escopo .cz-dark): canvas ink-950,
+ * cartao ink-900, popover ink-800 e dois passos novos da rampa ink (850 e
+ * 750). Familias semanticas no escuro: texto = a 500 com 45% de cream e
+ * fundo = ink-900 com 16% da 500. O marcador e sempre redundante; quando a cor
+ * e a unica codificacao (preenchimento de barra), usar a cor de texto da
+ * familia, nunca a 500.
+ *
+ * O teste de contraste (tests/unit/design/contrast.test.ts) le este arquivo:
+ * um bloco de tokens claro e um escuro (seletor .cz-dark junto com .dark),
+ * sem chave fechando dentro deles, cores testadas so em hex de 6 digitos ou
+ * rgba(), nada de color-mix. Em componente, nunca hex solto nem a rampa
+ * crua cz: so os aliases semanticos.
+ */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+@source not "../Conduzza Design System";
+@source not "../design_handoff_conduzza_atendimento_ia";
+
+@custom-variant dark (&:is(.dark *, .cz-dark, .cz-dark *));
+
+/*
+ * Menu lateral (docs/06 secao 5.1): recolhido em 64px de 1024 a 1599px e
+ * aberto em 248px a partir de 1600px. O atributo data-rail na raiz do shell
+ * guarda a preferencia: "auto" segue a largura, "expanded" e "collapsed"
+ * forcam. A gaveta do celular usa data-rail="expanded".
+ */
+@custom-variant rail-aberto {
+  &:where([data-rail="expanded"] *) {
+    @slot;
+  }
+  @media (min-width: 1600px) {
+    &:where([data-rail="auto"] *) {
+      @slot;
+    }
+  }
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -49,160 +102,478 @@
   --color-info: var(--info);
   --color-ai: var(--ai);
   --color-neutral: var(--neutral);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-text-strong: var(--text-strong);
+  --color-surface-subtle: var(--surface-subtle);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-soft-hover: var(--primary-soft-hover);
+  --color-primary-text: var(--primary-text);
+  --color-primary-edge: var(--primary-edge);
+  --color-focus: var(--focus);
+  --color-chart-bar: var(--chart-bar);
+  --color-chart-bar-muted: var(--chart-bar-muted);
+  --color-border-strong: var(--border-strong);
+  --color-border-heavy: var(--border-heavy);
+  --color-inverse: var(--inverse);
+  --color-inverse-foreground: var(--inverse-foreground);
+  --color-inverse-hover: var(--inverse-hover);
+  --color-on-alert: var(--on-alert);
+  --color-alert-bg-hover: var(--alert-bg-hover);
+  --color-bubble-out: var(--bubble-out);
+  --color-bubble-out-foreground: var(--bubble-out-foreground);
+  --color-bubble-ai: var(--bubble-ai);
+  --color-bubble-ai-foreground: var(--bubble-ai-foreground);
+  --color-success-text: var(--success-text);
+  --color-success-bg: var(--success-bg);
+  --color-warning-text: var(--warning-text);
+  --color-warning-bg: var(--warning-bg);
+  --color-alert-text: var(--alert-text);
+  --color-alert-bg: var(--alert-bg);
+  --color-info-text: var(--info-text);
+  --color-info-bg: var(--info-bg);
+  --color-ai-text: var(--ai-text);
+  --color-ai-bg: var(--ai-bg);
+  --color-neutral-text: var(--neutral-text);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-strong: var(--sidebar-strong);
+  --color-whatsapp: var(--cz-whatsapp);
+  --color-meta: var(--cz-meta);
+  /* Raios do DS: a escala do Tailwind cai toda num raio do DS */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
+  --radius-4xl: 28px;
+  --radius-control: 10px;
+  --radius-card: 16px;
+  --radius-bubble: 18px;
+  --radius-modal: 20px;
+  /* Sombras baixas em tinta; a sombra lime do DS nao entra */
+  --shadow-xs: var(--elev-xs);
+  --shadow-sm: var(--elev-sm);
+  --shadow-md: var(--elev-md);
+  --shadow-lg: var(--elev-lg);
+  --shadow-pop: var(--elev-pop);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.6, 0, 1, 1);
+  /* Medidas de layout do DS */
+  --spacing-sidebar: 248px;
+  --spacing-sidebar-collapsed: 64px;
+  --spacing-topbar: 60px;
+  --spacing-inbox-list: 336px;
+  --spacing-context-panel: 320px;
+  --spacing-gutter: 24px;
+  --container-content: 1240px;
 }
 
-/*
- * Tokens do design system, identidade do handoff Conduzza
- * (design_handoff_conduzza_atendimento_ia/README.md, "Tokens do app").
- * Tema claro em :root (o app abre no claro, como no handoff), tema escuro
- * em .dark. Nunca usar hex solto em componente.
- *
- * Desvios registrados, exigidos pela regra WCAG AA do CLAUDE.md:
- * - Primaria clara usa #5F7C06 (o limeText do proprio handoff): o lime puro
- *   nao passa contraste sobre claro, como o handoff mesmo avisa.
- * - Borda de campo (--input) usa cinza com 3:1 sobre a superficie, mais forte
- *   que a line3 do handoff, que fica em ~2.7:1.
- * Familias semanticas: cada uma tem cor plena (marcador), texto de chip e
- * fundo de chip, copiadas do handoff. Violeta e reservado para IA.
- */
 :root {
-  --background: #fbfbfa;
-  --foreground: #111311;
+  /* Primitivos do DS, copiados sem ajuste. Uso restrito a este arquivo */
+  --cz-lime-050: #f4fbe3;
+  --cz-lime-100: #e8f7c6;
+  --cz-lime-200: #d7f09e;
+  --cz-lime-300: #c6ea78;
+  --cz-lime-400: #b2e54f;
+  --cz-lime-500: #a2d93c;
+  --cz-lime-600: #7fb320;
+  --cz-lime-700: #5d8515;
+  --cz-lime-800: #42600f;
+  --cz-lime-900: #2b400a;
+  --cz-ink-050: #f3f5f1;
+  --cz-ink-100: #e6eae5;
+  --cz-ink-200: #d2d9d4;
+  --cz-ink-300: #b2bdb7;
+  --cz-ink-400: #8b9a92;
+  --cz-ink-500: #6b7c73;
+  --cz-ink-600: #4f5f57;
+  --cz-ink-700: #33443c;
+  --cz-ink-800: #1b2c25;
+  --cz-ink-900: #051813;
+  --cz-ink-950: #03100c;
+  /* Passos derivados, so para o escuro: ink-900 com 6% e 14% de cream */
+  --cz-ink-850: #142620;
+  --cz-ink-750: #273831;
+  --cz-paper-050: #fbfcf7;
+  --cz-paper-100: #f5f6ef;
+  --cz-paper-200: #eceee3;
+  --cz-paper-300: #e0e3d6;
+  --cz-cream-050: #fbfce8;
+  --cz-success-050: #e8f6ec;
+  --cz-success-500: #2f9e5b;
+  --cz-success-700: #1f6d3e;
+  --cz-warning-050: #fdf3e0;
+  --cz-warning-500: #d9962a;
+  --cz-warning-700: #96650f;
+  --cz-danger-050: #fdeeeb;
+  /* Hover do botao danger (no DS era hex solto no componente) */
+  --cz-danger-100: #fbe0da;
+  --cz-danger-500: #d4553d;
+  --cz-danger-700: #9c3524;
+  --cz-info-050: #eaf2f8;
+  --cz-info-500: #4785b5;
+  --cz-info-700: #2d5d83;
+  --cz-whatsapp: #25d366;
+  --cz-meta: #0866ff;
+  --cz-instagram: #c13584;
+
+  /* Superficies e texto (claro, o padrao) */
+  --background: var(--cz-paper-100);
+  --foreground: var(--cz-ink-800);
+  --text-strong: var(--cz-ink-900);
   --surface-1: #ffffff;
   --surface-2: #ffffff;
-  --surface-3: #f4f5f2;
-  --surface-4: #edeeea;
-  --surface-5: #e3e5df;
-  --surface-6: #d6d9d2;
-  --text-secondary: #565c55;
-  /* Desvio AA: o t3 do handoff (#767C74) fica em ~4.3:1 sobre claro */
-  --text-tertiary: #6a706a;
+  --surface-subtle: var(--cz-paper-050);
+  --surface-3: var(--cz-ink-050);
+  --surface-4: var(--cz-paper-200);
+  --surface-5: var(--cz-ink-100);
+  --surface-6: var(--cz-ink-200);
+  /* Desvio AA: o DS usa ink-500 e ink-400 (4,42 e 2,94 no branco) */
+  --text-secondary: var(--cz-ink-600);
+  --text-tertiary: var(--cz-ink-600);
   --card: var(--surface-2);
   --card-foreground: var(--foreground);
   --popover: var(--surface-1);
   --popover-foreground: var(--foreground);
-  /* Acento lime da marca, escurecido para passar AA no claro */
-  --primary: #5f7c06;
-  --primary-hover: #5a7504;
-  --primary-foreground: #ffffff;
+
+  /* Lime da marca: a primaria e SO preenchimento, nunca texto */
+  --primary: var(--cz-lime-400);
+  --primary-hover: var(--cz-lime-500);
+  --primary-foreground: var(--cz-ink-900);
+  --primary-soft: var(--cz-lime-050);
+  --primary-soft-hover: var(--cz-lime-100);
+  /* Desvio AA: lime como texto e lime-800 (o lime-700 do DS da 4,35) */
+  --primary-text: var(--cz-lime-800);
+  /* Indicador nao textual (borda de selecao, aba, checkbox, switch) */
+  --primary-edge: var(--cz-lime-700);
+  /* Contorno de foco: 3:1 contra o fundo e contra o botao lime */
+  --focus: var(--cz-lime-800);
+  /* So o halo decorativo dos campos, nunca o indicador de foco */
+  --ring: var(--cz-lime-400);
+  --chart-bar: var(--cz-lime-700);
+  --chart-bar-muted: var(--cz-ink-500);
+
   --secondary: var(--surface-4);
   --secondary-foreground: var(--foreground);
   --muted: var(--surface-3);
   --muted-foreground: var(--text-secondary);
   --accent: var(--surface-3);
   --accent-foreground: var(--foreground);
-  --border: rgba(0, 0, 0, 0.06);
-  --border-strong: rgba(0, 0, 0, 0.11);
-  --input: #8a8f88;
-  --ring: var(--primary);
+
+  /* Fios: border e a hairline do DS, border-strong e o subtle do DS e
+     border-heavy e o strong do DS (so decorativo, tracejado e hachura) */
+  --border: rgba(5, 24, 19, 0.08);
+  --border-strong: rgba(5, 24, 19, 0.12);
+  --border-heavy: rgba(5, 24, 19, 0.22);
+  /* Desvio AA: borda de campo com 3:1 (a do DS fica em 1,29) */
+  --input: var(--cz-ink-500);
+  --scrollbar-thumb: var(--cz-ink-500);
+
+  --inverse: var(--cz-ink-900);
+  --inverse-foreground: var(--cz-cream-050);
+  --inverse-hover: var(--cz-ink-800);
+  /* Fundo de modal e folha, sem blur */
+  --overlay: rgba(5, 24, 19, 0.42);
+  --overlay-media: rgba(3, 16, 12, 0.88);
+  --qr-surface: #ffffff;
+
+  /* Bolhas do Atendimento (a do paciente usa card e border) */
+  --bubble-out: var(--cz-lime-100);
+  --bubble-out-foreground: var(--cz-ink-900);
+  --bubble-out-meta: var(--cz-ink-600);
+  --bubble-ai: var(--cz-ink-900);
+  --bubble-ai-foreground: var(--cz-cream-050);
+  --bubble-ai-meta: rgba(251, 252, 232, 0.66);
+  --bubble-ai-border: rgba(5, 24, 19, 0);
+
+  /* Elevacao em tinta a 4 a 14% */
+  --elev-xs: 0 1px 2px rgba(5, 24, 19, 0.05);
+  --elev-sm: 0 1px 2px rgba(5, 24, 19, 0.04), 0 2px 6px rgba(5, 24, 19, 0.04);
+  --elev-md: 0 2px 4px rgba(5, 24, 19, 0.04), 0 8px 20px rgba(5, 24, 19, 0.06);
+  --elev-lg: 0 4px 8px rgba(5, 24, 19, 0.05), 0 18px 44px rgba(5, 24, 19, 0.09);
+  --elev-pop: 0 12px 32px rgba(5, 24, 19, 0.14);
+
+  /* Movimento curto, sem quique */
+  --dur-instant: 90ms;
+  --dur-fast: 140ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --dur-page: 420ms;
+
   --radius: 0.625rem;
-  /* Familias semanticas do handoff (claro) */
-  --success: #0e9b72;
-  --success-text: #0b7a59;
-  --success-bg: #e8f6f0;
-  --warning: #b77800;
-  --warning-text: #8a5a00;
-  --warning-bg: #fcf3e1;
-  --alert: #c63f2c;
-  --alert-text: #a93524;
-  --alert-bg: #fcedea;
+
+  /* Familias semanticas: marcador, texto de chip e fundo de chip */
+  --success: var(--cz-success-500);
+  --success-text: var(--cz-success-700);
+  --success-bg: var(--cz-success-050);
+  --warning: var(--cz-warning-500);
+  --warning-text: var(--cz-warning-700);
+  --warning-bg: var(--cz-warning-050);
+  --alert: var(--cz-danger-500);
+  --alert-text: var(--cz-danger-700);
+  --alert-bg: var(--cz-danger-050);
+  --alert-bg-hover: var(--cz-danger-100);
   --on-alert: #ffffff;
-  --info: #2f6fd0;
-  --info-text: #20539f;
-  --info-bg: #ebf2fc;
-  --ai: #6b49de;
-  --ai-text: #5133be;
-  --ai-bg: #f1edfe;
-  --neutral: #767c74;
-  --neutral-text: #565c55;
-  --neutral-bg: #edeeea;
-  --destructive: var(--alert);
+  --info: var(--cz-info-500);
+  --info-text: var(--cz-info-700);
+  --info-bg: var(--cz-info-050);
+  /* IA: lime suave, reservado para IA (o DS nao tem violeta) */
+  --ai: var(--cz-lime-700);
+  --ai-text: var(--cz-lime-800);
+  --ai-bg: var(--cz-lime-100);
+  --neutral: var(--cz-ink-500);
+  --neutral-text: var(--cz-ink-700);
+  --neutral-bg: var(--cz-ink-050);
+  --destructive: var(--alert-text);
   --destructive-foreground: var(--on-alert);
-  /* Sidebar fixa escura nos dois temas (handoff: e onde o logo branco funciona) */
-  --sidebar: #0c110f;
-  --sidebar-foreground: rgba(255, 255, 255, 0.78);
-  --sidebar-muted: rgba(255, 255, 255, 0.55);
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-active-bg: rgba(168, 211, 24, 0.14);
-  --sidebar-active-text: #d8f07e;
-  --sidebar-active-bar: #a8d318;
-  --sidebar-primary: #a8d318;
-  --sidebar-primary-foreground: #10160a;
-  --sidebar-accent: rgba(255, 255, 255, 0.06);
-  --sidebar-accent-foreground: rgba(255, 255, 255, 0.92);
-  --sidebar-ring: #a8d318;
-  --sidebar-badge: #ef7e70;
-  --sidebar-badge-text: #1a0805;
+
+  /* Sidebar fixa em ink-900 nos dois temas (definida so aqui). Badge opaco
+     porque o teste compoe fundo translucido sobre o canvas, nao a sidebar */
+  --sidebar: var(--cz-ink-900);
+  --sidebar-foreground: rgba(251, 252, 232, 0.62);
+  /* Desvio AA: o cream a 32% do DS da 2,81 */
+  --sidebar-muted: var(--cz-ink-400);
+  --sidebar-strong: var(--cz-cream-050);
+  --sidebar-border: rgba(251, 252, 232, 0.07);
+  --sidebar-accent: rgba(251, 252, 232, 0.05);
+  --sidebar-accent-foreground: var(--cz-cream-050);
+  --sidebar-active-bg: rgba(178, 229, 79, 0.14);
+  --sidebar-active-text: var(--cz-lime-400);
+  --sidebar-active-bar: var(--cz-lime-400);
+  --sidebar-primary: var(--cz-lime-400);
+  --sidebar-primary-foreground: var(--cz-ink-900);
+  --sidebar-ring: var(--cz-lime-400);
+  --sidebar-badge: var(--cz-ink-800);
+  --sidebar-badge-text: var(--cz-ink-200);
 }
 
+/*
+ * Escuro: o tema do app (.dark no html) e o escopo do DS (.cz-dark, usado no
+ * toast) compartilham os mesmos valores. A primaria (preenchimento lime-400,
+ * texto ink-900, halo) e a mesma nos dois temas e vem do bloco claro, para que
+ * a cor de uma clinica (white-label) valha tambem dentro de um escopo .cz-dark.
+ */
+.cz-dark,
 .dark {
-  --background: #121212;
-  --foreground: rgba(255, 255, 255, 0.92);
-  --surface-1: #161616;
-  --surface-2: #181818;
-  --surface-3: #1f1f1f;
-  --surface-4: #242424;
-  --surface-5: #2e2e2e;
-  --surface-6: #3a3a3a;
-  --text-secondary: rgba(255, 255, 255, 0.66);
-  --text-tertiary: rgba(255, 255, 255, 0.55);
+  --background: var(--cz-ink-950);
+  --foreground: var(--cz-ink-100);
+  --text-strong: var(--cz-cream-050);
+  --surface-1: var(--cz-ink-900);
+  --surface-2: var(--cz-ink-900);
+  --surface-subtle: var(--cz-ink-850);
+  --surface-3: var(--cz-ink-850);
+  --surface-4: var(--cz-ink-800);
+  --surface-5: var(--cz-ink-750);
+  --surface-6: var(--cz-ink-700);
+  --text-secondary: var(--cz-ink-300);
+  /* Terciario no escuro so ate a Superficie 3 */
+  --text-tertiary: var(--cz-ink-400);
   --card: var(--surface-2);
   --card-foreground: var(--foreground);
-  --popover: var(--surface-3);
+  --popover: var(--cz-ink-800);
   --popover-foreground: var(--foreground);
-  /* Acento lime pleno da marca sobre escuro */
-  --primary: #a8d318;
-  --primary-hover: #c2e84a;
-  --primary-foreground: #10160a;
+
+  /* Lime 12% e 20% sobre ink-900, opacos */
+  --primary-soft: #1a311a;
+  --primary-soft-hover: #21391d;
+  --primary-text: var(--cz-lime-400);
+  --primary-edge: var(--cz-lime-400);
+  --focus: var(--cz-lime-400);
+  --chart-bar: var(--cz-lime-400);
+  --chart-bar-muted: var(--cz-ink-500);
+
   --secondary: var(--surface-4);
   --secondary-foreground: var(--foreground);
   --muted: var(--surface-3);
   --muted-foreground: var(--text-secondary);
-  --accent: var(--surface-4);
+  --accent: var(--surface-3);
   --accent-foreground: var(--foreground);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.13);
-  --input: #6f6f6f;
-  --ring: var(--primary);
-  /* Familias semanticas do handoff (escuro) */
-  --success: #3fd3a3;
-  --success-text: #8ae3c2;
-  --success-bg: #1c2d26;
-  --warning: #e8b44c;
-  --warning-text: #f0ce84;
-  --warning-bg: #33291c;
-  --alert: #ef7e70;
-  --alert-text: #ffaea3;
-  --alert-bg: #33231f;
-  --on-alert: #1a0805;
-  --info: #6ea8fe;
-  --info-text: #a8c9ff;
-  --info-bg: #1f2a33;
-  --ai: #9b8cf7;
-  --ai-text: #c6bcff;
-  --ai-bg: #262433;
-  --neutral: rgba(255, 255, 255, 0.55);
-  --neutral-text: rgba(255, 255, 255, 0.66);
-  --neutral-bg: #242424;
-  --destructive: var(--alert);
+
+  --border: rgba(251, 252, 232, 0.08);
+  --border-strong: rgba(251, 252, 232, 0.14);
+  --border-heavy: rgba(251, 252, 232, 0.28);
+  --input: var(--cz-ink-500);
+  --scrollbar-thumb: var(--cz-ink-500);
+
+  --inverse: var(--cz-cream-050);
+  --inverse-foreground: var(--cz-ink-900);
+  --inverse-hover: var(--cz-paper-200);
+  --overlay: rgba(3, 16, 12, 0.72);
+  --overlay-media: rgba(3, 16, 12, 0.88);
+  --qr-surface: #ffffff;
+
+  --bubble-out: #21391d;
+  --bubble-out-foreground: var(--cz-cream-050);
+  --bubble-out-meta: rgba(251, 252, 232, 0.66);
+  --bubble-ai: var(--cz-ink-900);
+  --bubble-ai-foreground: var(--cz-cream-050);
+  --bubble-ai-meta: rgba(251, 252, 232, 0.66);
+  --bubble-ai-border: rgba(178, 229, 79, 0.4);
+
+  /* Elevacao tonal, sem sombra em repouso. Sombra vazia em vez de "none"
+     porque o Tailwind junta sombra e anel (ring) numa lista so, e o "none"
+     invalidaria o anel do mesmo elemento */
+  --elev-xs: 0 0 rgba(0, 0, 0, 0);
+  --elev-sm: 0 0 rgba(0, 0, 0, 0);
+  --elev-md: 0 0 rgba(0, 0, 0, 0);
+  --elev-lg: 0 18px 44px rgba(0, 0, 0, 0.5);
+  --elev-pop: 0 12px 32px rgba(0, 0, 0, 0.55);
+
+  /* Familias: texto = 500 com 45% de cream, fundo = ink-900 com 16% da 500 */
+  --success: var(--cz-success-500);
+  --success-text: #8bc89a;
+  --success-bg: #0c2d1f;
+  --warning: var(--cz-warning-500);
+  --warning-text: #e8c480;
+  --warning-bg: #272c17;
+  --alert: var(--cz-danger-500);
+  --alert-text: #e6a08a;
+  --alert-bg: #26221a;
+  --alert-bg-hover: #37271d;
+  --on-alert: var(--cz-ink-900);
+  --info: var(--cz-info-500);
+  --info-text: #98bbcc;
+  --info-bg: #10292d;
+  --ai: var(--cz-lime-400);
+  --ai-text: var(--cz-lime-300);
+  --ai-bg: #21391d;
+  --neutral: var(--cz-ink-400);
+  --neutral-text: var(--cz-ink-200);
+  --neutral-bg: var(--cz-ink-800);
+  --destructive: var(--alert-text);
   --destructive-foreground: var(--on-alert);
+}
+
+.cz-dark {
+  color: var(--foreground);
+  color-scheme: dark;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+/* Numero, hora, telefone e valor: mono tabular */
+@utility cz-num {
+  font-family: var(--font-app-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Rotulo em caixa alta de 10px. Sem cor: a cor vem de uma classe text-* */
+@utility cz-eyebrow {
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+/* Barra de rolagem fina com polegar de 3:1 */
+@utility cz-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* Transicao padrao de controle do DS */
+@utility cz-transition {
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-fast) var(--ease-standard),
+    transform var(--dur-instant) var(--ease-standard);
+}
+
+/*
+ * Alvo de toque de 40px para controle visualmente menor (pseudo-elemento).
+ * Nao funciona dentro de ancestral com overflow-hidden: ali o controle
+ * precisa ter 40px reais.
+ */
+@utility hit-40 {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 40px);
+    height: max(100%, 40px);
+    transform: translate(-50%, -50%);
+  }
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
+    @apply border-border;
   }
   html {
     @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: var(--text-strong);
+    text-wrap: balance;
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--cz-lime-200);
+    color: var(--cz-ink-900);
+  }
+  .dark ::selection,
+  .cz-dark ::selection {
+    background: rgba(178, 229, 79, 0.3);
+    color: var(--cz-cream-050);
+  }
+}
+
+/*
+ * Movimento reduzido. 0.01ms e nao "animation: none": o Presence do Radix
+ * espera o animationend para desmontar dialog, folha e toast. O spinner e a
+ * unica animacao que continua.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --dur-page: 0ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-spin {
+    animation-duration: 900ms !important;
+    animation-iteration-count: infinite !important;
   }
 }

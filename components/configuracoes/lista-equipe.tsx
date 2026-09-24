@@ -189,9 +189,9 @@ export function ListaEquipe({
               }
             >
               {membro.ativo ? (
-                <UserMinus strokeWidth={1.5} className="size-4" />
+                <UserMinus className="size-4" />
               ) : (
-                <UserPlus strokeWidth={1.5} className="size-4" />
+                <UserPlus className="size-4" />
               )}
               {membro.ativo ? "Tirar acesso" : "Reativar"}
             </Button>
@@ -224,7 +224,7 @@ export function ListaEquipe({
 
               {membro.ativo ? null : (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-text-tertiary">
-                  <CircleSlash strokeWidth={1.5} className="size-3.5" />
+                  <CircleSlash className="size-3.5" />
                   Sem acesso
                 </span>
               )}

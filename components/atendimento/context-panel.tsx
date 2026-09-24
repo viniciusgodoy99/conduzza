@@ -148,10 +148,7 @@ export function ContextPanel({
       <Section title="Autorização de mensagens">
         {consent ? (
           <div className="flex items-start gap-2 text-[12.5px]">
-            <ShieldCheck
-              strokeWidth={1.5}
-              className="mt-0.5 size-4 shrink-0 [color:var(--success)]"
-            />
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 [color:var(--success)]" />
             <div className="grid">
               <span className="font-medium [color:var(--success-text)]">
                 Autorizado a receber mensagens
@@ -166,10 +163,7 @@ export function ContextPanel({
           </div>
         ) : (
           <div className="flex items-start gap-2 text-[12.5px]">
-            <ShieldOff
-              strokeWidth={1.5}
-              className="mt-0.5 size-4 shrink-0 [color:var(--alert)]"
-            />
+            <ShieldOff className="mt-0.5 size-4 shrink-0 [color:var(--alert)]" />
             <div className="grid">
               <span className="font-medium [color:var(--alert-text)]">
                 Sem autorização para receber mensagens
@@ -203,13 +197,13 @@ export function ContextPanel({
             href={`/agenda?agendar=${contact.id}`}
             className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
           >
-            <CalendarPlus strokeWidth={1.5} className="size-4" aria-hidden />
+            <CalendarPlus className="size-4" aria-hidden />
             Marcar consulta
           </Link>
         ) : (
           <DisabledWithHint hint={dicaAgenda}>
             <span className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium opacity-50">
-              <CalendarPlus strokeWidth={1.5} className="size-4" aria-hidden />
+              <CalendarPlus className="size-4" aria-hidden />
               Marcar consulta
             </span>
           </DisabledWithHint>
@@ -218,7 +212,7 @@ export function ContextPanel({
           href={`/espera?adicionar=${contact.id}`}
           className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
         >
-          <Hourglass strokeWidth={1.5} className="size-4" aria-hidden />
+          <Hourglass className="size-4" aria-hidden />
           Adicionar à lista de espera
         </Link>
       </Section>
@@ -230,20 +224,20 @@ export function ContextPanel({
               href={`/pacientes/${contact.id}`}
               className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
             >
-              <History strokeWidth={1.5} className="size-4" aria-hidden />
+              <History className="size-4" aria-hidden />
               Abrir a ficha com a linha do tempo
             </Link>
             <Link
               href="/agenda"
               className="flex h-10 items-center gap-2 rounded-md border px-3 text-[12.5px] font-medium hover:bg-surface-3"
             >
-              <CalendarClock strokeWidth={1.5} className="size-4" aria-hidden />
+              <CalendarClock className="size-4" aria-hidden />
               Ver a agenda
             </Link>
           </div>
         ) : (
           <p className="flex items-center gap-2 text-[12.5px] text-text-tertiary">
-            <CalendarClock strokeWidth={1.5} className="size-4 shrink-0" />
+            <CalendarClock className="size-4 shrink-0" />
             Quando este lead agendar, a consulta aparece na Agenda e a ficha
             completa nasce em {"Pacientes"}.
           </p>

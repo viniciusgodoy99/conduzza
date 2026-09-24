@@ -65,14 +65,14 @@ export function AbaIa({
 
       <section className="grid gap-3 rounded-lg border bg-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Bot strokeWidth={1.5} className="size-4 text-text-secondary" />
+          <Bot className="size-4 text-text-secondary" />
           <h2 className="text-[15px] font-semibold">
             Desempenho da recepcionista de IA
           </h2>
         </div>
         <p className="max-w-prose text-sm text-text-secondary">
-          Estes números chegam com o agente de IA. Enquanto ele não atende,
-          não existe número para mostrar, e número inventado não entra aqui.
+          Estes números chegam com o agente de IA. Enquanto ele não atende, não
+          existe número para mostrar, e número inventado não entra aqui.
         </p>
         <div className="grid gap-3 sm:grid-cols-3">
           {METRICAS_DO_AGENTE.map((rotulo) => (

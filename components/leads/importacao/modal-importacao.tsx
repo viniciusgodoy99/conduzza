@@ -166,7 +166,7 @@ export function ModalImportacao({
                   indice < passo &&
                     "border-transparent bg-[var(--success-bg)] text-[var(--success-text)]",
                   indice === passo &&
-                    "border-primary bg-primary text-primary-foreground",
+                    "border-primary-edge bg-primary text-primary-foreground",
                   indice > passo && "border-border text-text-tertiary",
                 )}
               >
@@ -212,11 +212,7 @@ export function ModalImportacao({
               onClick={() => inputArquivo.current?.click()}
               className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-8 text-center hover:bg-muted"
             >
-              <FileUp
-                strokeWidth={1.5}
-                className="size-5 text-text-secondary"
-                aria-hidden
-              />
+              <FileUp className="size-5 text-text-secondary" aria-hidden />
               <span className="text-sm font-medium">Escolher arquivo CSV</span>
               <span className="text-xs text-text-secondary">
                 Exporte a planilha de contatos como CSV e escolha o arquivo

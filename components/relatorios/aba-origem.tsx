@@ -16,10 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
-import type {
-  FunilDoPeriodo,
-  Periodizado,
-} from "@/lib/queries/relatorios";
+import type { FunilDoPeriodo, Periodizado } from "@/lib/queries/relatorios";
 
 // Aba Origem (Tela 11): de qual canal e de qual campanha vem o paciente que
 // comparece. KPIs com delta contra o periodo anterior, barras por canal e a
@@ -151,7 +148,7 @@ export function AbaOrigem({
 
       <section className="grid gap-3 rounded-lg border bg-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Megaphone strokeWidth={1.5} className="size-4 text-text-secondary" />
+          <Megaphone className="size-4 text-text-secondary" />
           <h2 className="text-[15px] font-semibold">Leads por canal</h2>
           <span className="text-sm text-text-tertiary">
             {pctSeguro(rastreados, atual.leads)} com origem identificada

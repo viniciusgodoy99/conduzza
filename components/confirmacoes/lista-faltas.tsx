@@ -70,11 +70,7 @@ export function ListaFaltas({
                           backgroundColor: "var(--alert-bg)",
                         }}
                       >
-                        <IconeDeRisco
-                          strokeWidth={1.5}
-                          className="size-3.5"
-                          aria-hidden
-                        />
+                        <IconeDeRisco className="size-3.5" aria-hidden />
                         <span className="sr-only">
                           {faltasAnteriores} faltas anteriores
                         </span>
@@ -107,7 +103,7 @@ export function ListaFaltas({
                       href={`tel:${telefone}`}
                       aria-label={`Ligar para ${nome}`}
                     >
-                      <Phone strokeWidth={1.5} className="size-4" aria-hidden />
+                      <Phone className="size-4" aria-hidden />
                     </a>
                   </Button>
                 ) : null}
@@ -118,11 +114,7 @@ export function ListaFaltas({
                     className="h-10"
                     onClick={() => onRemarcar(falta)}
                   >
-                    <CalendarClock
-                      strokeWidth={1.5}
-                      className="size-4"
-                      aria-hidden
-                    />
+                    <CalendarClock className="size-4" aria-hidden />
                     Remarcar
                   </Button>
                 ) : (
@@ -133,11 +125,7 @@ export function ListaFaltas({
                       className="h-10"
                       disabled
                     >
-                      <CalendarClock
-                        strokeWidth={1.5}
-                        className="size-4"
-                        aria-hidden
-                      />
+                      <CalendarClock className="size-4" aria-hidden />
                       Remarcar
                     </Button>
                   </DisabledWithHint>

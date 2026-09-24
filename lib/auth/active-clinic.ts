@@ -36,6 +36,14 @@ export type SessionContext = {
   /** null quando o usuario pertence a mais de uma clinica e ainda nao escolheu */
   active: Membership | null;
   isProductAdmin: boolean;
+  /**
+   * A leitura dos vinculos FALHOU (erro do banco ou da rede), e por isso
+   * memberships veio vazio. Nao quer dizer "sem clinica": o layout mostra
+   * um erro honesto com "Tentar de novo" em vez de afirmar que a pessoa nao
+   * pertence a nenhuma clinica (achado 115 da revisao). Nao lanca excecao
+   * porque o layout raiz tambem chama esta funcao e nao ha global-error.
+   */
+  vinculoIndisponivel: boolean;
 };
 
 type BrandingEmbed = {
@@ -72,21 +80,22 @@ export const getSessionContext = cache(
 
     // As duas so dependem de user.id: em serie eram duas idas ao Postgres
     // remoto pagas por TODA navegacao, dentro do caminho mais quente do app.
-    const [{ data: memberRows }, { data: productAdminRow }] = await Promise.all(
-      [
-        supabase
-          .from("clinic_member")
-          .select(
-            "clinic_id, role, status, clinic:clinic_id (id, name, slug, timezone, clinic_branding (product_name, primary_color, labels))",
-          )
-          .eq("user_id", user.id),
-        supabase
-          .from("product_admin")
-          .select("user_id")
-          .eq("user_id", user.id)
-          .maybeSingle(),
-      ],
-    );
+    const [
+      { data: memberRows, error: erroVinculos },
+      { data: productAdminRow, error: erroDonoDoProduto },
+    ] = await Promise.all([
+      supabase
+        .from("clinic_member")
+        .select(
+          "clinic_id, role, status, clinic:clinic_id (id, name, slug, timezone, clinic_branding (product_name, primary_color, labels))",
+        )
+        .eq("user_id", user.id),
+      supabase
+        .from("product_admin")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle(),
+    ]);
 
     // Quem esta PENDENTE nao le a tabela clinic (a policy exige vinculo ativo,
     // para o codigo de acesso nao vazar antes da aprovacao), entao o embed vem
@@ -95,10 +104,14 @@ export const getSessionContext = cache(
       (memberRows ?? []) as { status?: string; clinic?: unknown }[]
     ).some((row) => row.status === "pendente" && !row.clinic);
     const nomesPendentes = new Map<string, string>();
+    let erroNomesPendentes = false;
     if (temPendenteSemNome) {
-      const { data: pendentes } = await supabase.rpc(
+      const { data: pendentes, error: erroPendentes } = await supabase.rpc(
         "minhas_clinicas_pendentes",
       );
+      // Sem o nome, o vinculo pendente sumiria e a pessoa veria "Sem
+      // clinica vinculada": melhor dizer que o acesso nao carregou.
+      erroNomesPendentes = erroPendentes !== null;
       for (const linha of (pendentes ?? []) as {
         clinic_id: string;
         clinic_name: string;
@@ -134,7 +147,7 @@ export const getSessionContext = cache(
               role: row.role,
               status: "pendente" as const,
               productName: "Conduzza Clínicas",
-              primaryColor: "#A8D318",
+              primaryColor: "#B2E54F",
               labels: null,
             };
           }
@@ -151,7 +164,7 @@ export const getSessionContext = cache(
           role: row.role,
           status: row.status ?? "ativo",
           productName: branding?.product_name ?? "Conduzza Clínicas",
-          primaryColor: branding?.primary_color ?? "#A8D318",
+          primaryColor: branding?.primary_color ?? "#B2E54F",
           labels: branding?.labels ?? null,
         };
       })
@@ -182,6 +195,12 @@ export const getSessionContext = cache(
       memberships,
       active,
       isProductAdmin: productAdminRow !== null,
+      // A leitura de dono do produto entra junto: falhando, o dono sem
+      // clinica veria "Sem clinica vinculada" no lugar de "Criar clinica".
+      vinculoIndisponivel:
+        erroVinculos !== null ||
+        erroDonoDoProduto !== null ||
+        erroNomesPendentes,
     };
   },
 );

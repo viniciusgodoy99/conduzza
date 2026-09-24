@@ -7,36 +7,56 @@ type StatusChipProps = {
   label?: string;
   /** Iniciais exibidas quando a camada de forma do status e um avatar */
   avatarInitials?: string;
+  /** md (24px) e o padrao; sm (20px) para tabela densa, cartao e lista */
+  size?: "sm" | "md";
   className?: string;
 };
 
-// Chip de status no estilo do handoff: pilula com fundo da familia semantica
-// e texto na variante de texto da mesma familia (par validado pelo teste de
-// contraste). As 3 camadas sao obrigatorias: icone, rotulo e cor.
+// Chip de status com a pele do Badge do design system Conduzza: pilula com
+// fundo da familia semantica e texto na variante de texto da mesma familia
+// (par validado pelo teste de contraste). As 3 camadas sao obrigatorias:
+// icone, rotulo e cor. Nunca o "dot" do Badge do DS no lugar do icone
+// (docs/06, conflito C8): a forma do icone e a camada que discrimina o status.
 export function StatusChip({
   definition,
   label,
   avatarInitials,
+  size = "md",
   className,
 }: StatusChipProps) {
   const tone = STATUS_TONE_VARS[definition.tone];
   const Icon = definition.icon;
   const text = label ?? definition.label;
+  const pequeno = size === "sm";
 
   return (
     <span
+      data-size={size}
       className={cn(
-        "inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-semibold whitespace-nowrap",
+        "inline-flex items-center rounded-full font-semibold tracking-[-0.005em] whitespace-nowrap",
+        pequeno
+          ? "h-5 gap-1 px-[7px] text-[11px]"
+          : "h-6 gap-1.5 px-[9px] text-xs",
         className,
       )}
       style={{ color: tone.text, backgroundColor: tone.bg }}
     >
       {Icon ? (
-        <Icon strokeWidth={1.5} className="size-3.5 shrink-0" />
+        <Icon
+          aria-hidden
+          className={cn(
+            "shrink-0",
+            pequeno ? "size-3" : "size-[13px]",
+            definition.iconClassName,
+          )}
+        />
       ) : (
         <span
           aria-hidden
-          className="flex size-3.5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-foreground"
+          className={cn(
+            "flex shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-foreground",
+            pequeno ? "size-3" : "size-[13px]",
+          )}
           style={{
             backgroundColor: `color-mix(in srgb, ${tone.marker} 30%, ${tone.bg})`,
           }}

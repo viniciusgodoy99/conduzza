@@ -65,10 +65,10 @@ function EscolhaCaminho({
       <button
         type="button"
         onClick={() => onEscolher("clinica")}
-        className="border-border-strong grid gap-1 rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary"
+        className="grid gap-1 rounded-xl border border-border-strong bg-card p-4 text-left transition-colors hover:border-primary-edge"
       >
         <span className="flex items-center gap-2 text-sm font-semibold">
-          <Building2 strokeWidth={1.5} className="size-4 text-primary" />
+          <Building2 className="size-4 text-primary-text" />
           Cadastrar minha clínica
         </span>
         <span className="text-[12.5px] text-text-secondary">
@@ -80,10 +80,10 @@ function EscolhaCaminho({
       <button
         type="button"
         onClick={() => onEscolher("codigo")}
-        className="border-border-strong grid gap-1 rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary"
+        className="grid gap-1 rounded-xl border border-border-strong bg-card p-4 text-left transition-colors hover:border-primary-edge"
       >
         <span className="flex items-center gap-2 text-sm font-semibold">
-          <Users strokeWidth={1.5} className="size-4 text-primary" />
+          <Users className="size-4 text-primary-text" />
           Entrar com código da clínica
         </span>
         <span className="text-[12.5px] text-text-secondary">
@@ -106,7 +106,7 @@ function Confirmacao({ email, tipo }: { email: string; tipo: string }) {
   return (
     <div className="grid gap-4 text-center">
       <span className="mx-auto flex size-12 items-center justify-center rounded-full bg-muted">
-        <MailCheck strokeWidth={1.5} className="size-6 text-primary" />
+        <MailCheck className="size-6 text-primary-text" />
       </span>
       <div className="grid gap-1">
         <h1 className="text-[22px] font-semibold">Conta criada</h1>
@@ -136,7 +136,7 @@ function Voltar({ onVoltar }: { onVoltar: () => void }) {
       onClick={onVoltar}
       className="inline-flex w-fit items-center gap-1.5 text-sm text-text-secondary hover:text-foreground"
     >
-      <ArrowLeft strokeWidth={1.5} className="size-4" />
+      <ArrowLeft className="size-4" />
       Voltar
     </button>
   );
@@ -295,12 +295,12 @@ function FormCodigo({ onVoltar }: { onVoltar: () => void }) {
         />
         {conferindo ? (
           <p className="flex items-center gap-1.5 text-xs text-text-tertiary">
-            <Loader2 strokeWidth={1.5} className="size-3 animate-spin" />
+            <Loader2 className="size-3 animate-spin" />
             Conferindo o código
           </p>
         ) : codigoConferido ? (
           <p className="flex items-center gap-1.5 text-xs [color:var(--success-text)]">
-            <CircleCheck strokeWidth={1.5} className="size-3.5" />
+            <CircleCheck className="size-3.5" />
             Você vai pedir entrada em: <strong>{clinica.nome}</strong>
           </p>
         ) : falhouConferencia ? (

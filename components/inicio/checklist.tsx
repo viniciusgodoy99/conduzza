@@ -39,7 +39,7 @@ export function Checklist({ passos }: { passos: PassoDoChecklist[] }) {
                     }
               }
             >
-              <Icone strokeWidth={1.5} className="size-5" />
+              <Icone className="size-5" />
             </span>
             <div className="grid min-w-0 flex-1 gap-0.5">
               <span className="flex items-center gap-2 text-sm font-semibold">

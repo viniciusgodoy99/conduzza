@@ -331,7 +331,7 @@ export function ProfissionaisTab({
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus strokeWidth={1.5} className="size-4" /> Novo profissional
+          <Plus className="size-4" /> Novo profissional
         </BotaoProtegido>
       </div>
 
@@ -554,7 +554,7 @@ export function ProfissionaisTab({
                         aria-label={`Remover ${esp}`}
                         className="relative flex size-4 items-center justify-center rounded-full after:absolute after:-inset-3 after:content-[''] hover:bg-muted"
                       >
-                        <X strokeWidth={1.5} className="size-3" />
+                        <X className="size-3" />
                       </button>
                     </Badge>
                   ))}
@@ -664,11 +664,7 @@ export function ProfissionaisTab({
                       />
                       {viraODia(faixa) ? (
                         <span className="flex basis-full items-center gap-1.5 text-xs [color:var(--warning-text)]">
-                          <Sunrise
-                            strokeWidth={1.5}
-                            className="size-4 shrink-0"
-                            aria-hidden
-                          />
+                          <Sunrise className="size-4 shrink-0" aria-hidden />
                           Termina no dia seguinte (plantão noturno)
                         </span>
                       ) : null}
@@ -703,7 +699,7 @@ export function ProfissionaisTab({
                         onClick={() => removerFaixa(faixa.chave)}
                         aria-label="Remover faixa"
                       >
-                        <Trash2 strokeWidth={1.5} className="size-4" />
+                        <Trash2 className="size-4" />
                       </Button>
                     </div>
                   ))}
@@ -714,7 +710,7 @@ export function ProfissionaisTab({
                 onClick={adicionarFaixa}
                 className="h-10"
               >
-                <Plus strokeWidth={1.5} className="size-4" /> Adicionar faixa
+                <Plus className="size-4" /> Adicionar faixa
               </Button>
             </div>
 
@@ -730,7 +726,6 @@ export function ProfissionaisTab({
               >
                 <div className="flex items-start gap-2 text-sm">
                   <Sunrise
-                    strokeWidth={1.5}
                     className="mt-0.5 size-4 shrink-0 [color:var(--warning-text)]"
                     aria-hidden
                   />

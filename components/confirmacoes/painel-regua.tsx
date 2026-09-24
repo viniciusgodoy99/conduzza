@@ -145,7 +145,7 @@ export function PainelRegua({
                   </h3>
                   <Link
                     href={`/automacoes?aba=${tipo}`}
-                    className="text-xs font-medium text-primary hover:underline"
+                    className="text-xs font-medium text-primary-text hover:underline"
                   >
                     Editar em Automações
                   </Link>

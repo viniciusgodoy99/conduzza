@@ -58,7 +58,13 @@ const ABAS = [
 ] as const;
 
 type AbaKey = (typeof ABAS)[number][0];
-const TODAS: AbaKey[] = ["origem", "agendamentos", "ia", "confirmacao", "custos"];
+const TODAS: AbaKey[] = [
+  "origem",
+  "agendamentos",
+  "ia",
+  "confirmacao",
+  "custos",
+];
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -366,7 +372,7 @@ export function RelatoriosClient({
             className="h-10"
             onClick={() => setParams({ de: null, ate: null })}
           >
-            <X strokeWidth={1.5} className="size-4" aria-hidden />
+            <X className="size-4" aria-hidden />
             Últimos 30 dias
           </Button>
         ) : null}

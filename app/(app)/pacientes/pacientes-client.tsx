@@ -156,7 +156,6 @@ export function PacientesClient({
       {pacientesQuery.isError && pacientes.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
           <TriangleAlert
-            strokeWidth={1.5}
             className="size-4 shrink-0 [color:var(--alert)]"
             aria-hidden
           />
@@ -177,11 +176,7 @@ export function PacientesClient({
 
       {pacientesQuery.isError && pacientes.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-12 text-center">
-          <TriangleAlert
-            strokeWidth={1.5}
-            className="size-5 [color:var(--alert)]"
-            aria-hidden
-          />
+          <TriangleAlert className="size-5 [color:var(--alert)]" aria-hidden />
           <p className="text-sm text-text-secondary">
             Não foi possível carregar os pacientes.
           </p>

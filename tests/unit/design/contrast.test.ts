@@ -11,6 +11,13 @@ import { join } from "node:path";
 // Regras de uso que o teste codifica:
 // - Texto primario e secundario valem ate a Superficie 5 (linha selecionada).
 // - Texto terciario so pode aparecer ate a Superficie 3.
+// - Indicador nao textual (foco, borda de selecao, borda de campo, barra de
+//   dado) tem 3:1 sobre as superficies em que aparece.
+//
+// Tokens do Conduzza Design System (docs/06, secoes 4.3 e 6.2): o bloco
+// escuro (.cz-dark, .dark) so redefine o que muda, e herda do :root os
+// primitivos --cz-* e a primaria, que e a mesma nos dois temas. Por isso o
+// tema escuro e o merge dos dois blocos.
 
 type TokenMap = Record<string, string>;
 type Rgba = { r: number; g: number; b: number; a: number };
@@ -125,17 +132,20 @@ function contrast(
 }
 
 const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf-8");
+const claro = parseBlock(css, ":root");
 const themes = {
-  claro: parseBlock(css, ":root"),
-  escuro: parseBlock(css, ".dark"),
+  claro,
+  escuro: { ...claro, ...parseBlock(css, ".dark") },
 };
 // Sidebar e fixa nos dois temas e definida so no :root
 const sidebarTokens = themes.claro;
 
+// O tom "ai" (lime suave, reservado para IA) continua na lista: o chip de IA
+// tambem precisa de 4.5:1.
 const TONES = ["ai", "info", "success", "warning", "alert", "neutral"];
 
 describe.each(Object.entries(themes))("tema %s", (_themeName, tokens) => {
-  it.each(["foreground", "text-secondary"])(
+  it.each(["foreground", "text-strong", "text-secondary"])(
     "texto --%s tem 4.5:1 até a Superfície 5",
     (token) => {
       expect(contrast(tokens, token, "surface-5")).toBeGreaterThanOrEqual(4.5);
@@ -145,6 +155,73 @@ describe.each(Object.entries(themes))("tema %s", (_themeName, tokens) => {
   it("texto terciário tem 4.5:1 até a Superfície 3", () => {
     expect(
       contrast(tokens, "text-tertiary", "surface-3"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(["surface-subtle", "primary-soft"])(
+    "texto secundário tem 4.5:1 sobre --%s",
+    (bg) => {
+      expect(contrast(tokens, "text-secondary", bg)).toBeGreaterThanOrEqual(
+        4.5,
+      );
+    },
+  );
+
+  it.each(["background", "surface-2", "primary-soft"])(
+    "lime como texto (--primary-text) tem 4.5:1 sobre --%s",
+    (bg) => {
+      expect(contrast(tokens, "primary-text", bg)).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it("contorno de foco (--focus) tem 3.0:1 sobre o card", () => {
+    expect(contrast(tokens, "focus", "surface-2")).toBeGreaterThanOrEqual(3.0);
+  });
+
+  it.each(["surface-2", "primary-soft"])(
+    "indicador de seleção (--primary-edge) tem 3.0:1 sobre --%s",
+    (bg) => {
+      expect(contrast(tokens, "primary-edge", bg)).toBeGreaterThanOrEqual(3.0);
+    },
+  );
+
+  it.each(["background", "surface-4"])(
+    "borda de campo (--input) tem 3.0:1 sobre --%s",
+    (bg) => {
+      expect(contrast(tokens, "input", bg)).toBeGreaterThanOrEqual(3.0);
+    },
+  );
+
+  it.each(["chart-bar", "chart-bar-muted"])(
+    "barra de dado (--%s) tem 3.0:1 sobre o trilho",
+    (bar) => {
+      expect(contrast(tokens, bar, "surface-4")).toBeGreaterThanOrEqual(3.0);
+    },
+  );
+
+  it("texto invertido (botão sólido, dica) tem 4.5:1", () => {
+    expect(
+      contrast(tokens, "inverse-foreground", "inverse"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(["bubble-out-foreground", "bubble-out-meta"])(
+    "bolha da atendente: --%s tem 4.5:1",
+    (fg) => {
+      expect(contrast(tokens, fg, "bubble-out")).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it.each(["bubble-ai-foreground", "bubble-ai-meta"])(
+    "bolha da IA: --%s tem 4.5:1",
+    (fg) => {
+      expect(contrast(tokens, fg, "bubble-ai")).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it("texto de alerta tem 4.5:1 no hover do botão destrutivo", () => {
+    expect(
+      contrast(tokens, "alert-text", "alert-bg-hover"),
     ).toBeGreaterThanOrEqual(4.5);
   });
 
@@ -171,7 +248,29 @@ describe.each(Object.entries(themes))("tema %s", (_themeName, tokens) => {
   });
 });
 
+// No claro o foco tambem precisa de 3:1 contra o proprio botao lime (brief
+// 3.9). No escuro foco e botao sao lime-400 e quem separa e o offset de 2px.
+describe("tema claro, foco sobre o botão primário", () => {
+  it("contorno de foco (--focus) tem 3.0:1 sobre --primary", () => {
+    expect(contrast(themes.claro, "focus", "primary")).toBeGreaterThanOrEqual(
+      3.0,
+    );
+  });
+});
+
 describe("sidebar fixa (os dois temas)", () => {
+  it("nome forte da sidebar (--sidebar-strong) tem 4.5:1", () => {
+    expect(
+      contrast(sidebarTokens, "sidebar-strong", "sidebar"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("texto sobre o lime da sidebar tem 4.5:1", () => {
+    expect(
+      contrast(sidebarTokens, "sidebar-primary-foreground", "sidebar-primary"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
   it("texto da sidebar tem 4.5:1", () => {
     expect(
       contrast(sidebarTokens, "sidebar-foreground", "sidebar"),

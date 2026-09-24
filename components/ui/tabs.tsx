@@ -24,34 +24,67 @@ function Tabs({
   );
 }
 
+// Abas do Conduzza Design System (docs/06 secao 4.5, D11), sempre com
+// role=tab do Radix:
+// - line (padrao): sublinhado, para 5 ou mais vistas; a lista rola na
+//   horizontal em vez de quebrar linha;
+// - segmented: trilho afundado, para 2 a 4 vistas; a aba ativa ganha cartao
+//   branco e negrito (o negrito e a pista que nao e cor);
+// - cartoes: sem estilo de gatilho, o chamador desenha o cartao (Automacoes).
+type TabsVariant = "line" | "segmented" | "cartoes";
+
+const TabsVariantContext = React.createContext<TabsVariant>("line");
+
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
+  "group/tabs-list items-center text-text-secondary group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col",
   {
     variants: {
       variant: {
-        default: "bg-muted",
-        line: "gap-1 bg-transparent",
+        line: "inline-flex h-auto w-full justify-start gap-0.5 overflow-x-auto rounded-none border-b border-border bg-transparent p-0",
+        segmented:
+          "inline-flex h-10 w-fit gap-0.5 rounded-lg bg-surface-4 p-[3px]",
+        cartoes: "grid h-auto w-full gap-3 bg-transparent p-0",
       },
     },
     defaultVariants: {
-      variant: "default",
+      variant: "line",
+    },
+  },
+);
+
+const tabsTriggerVariants = cva(
+  "relative outline-none cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:pointer-events-none disabled:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[15px]",
+  {
+    variants: {
+      variant: {
+        line: "inline-flex min-h-10 flex-none items-center justify-center gap-[7px] px-3 pt-2.5 pb-[11px] text-[13.5px] font-medium whitespace-nowrap text-text-secondary after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary-edge after:opacity-0 hover:text-text-strong focus-visible:-outline-offset-2 data-active:font-bold data-active:text-text-strong data-active:after:opacity-100",
+        segmented:
+          "inline-flex h-[34px] items-center justify-center gap-1.5 rounded-[7px] px-3 text-[13px] font-medium whitespace-nowrap text-text-secondary hit-40 hover:text-text-strong focus-visible:outline-offset-1 data-active:bg-card data-active:font-bold data-active:text-text-strong data-active:shadow-xs",
+        cartoes: "block w-full rounded-card text-left",
+      },
+    },
+    defaultVariants: {
+      variant: "line",
     },
   },
 );
 
 function TabsList({
   className,
-  variant = "default",
+  variant,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> &
   VariantProps<typeof tabsListVariants>) {
+  const variante = variant ?? "line";
   return (
-    <TabsPrimitive.List
-      data-slot="tabs-list"
-      data-variant={variant}
-      className={cn(tabsListVariants({ variant }), className)}
-      {...props}
-    />
+    <TabsVariantContext.Provider value={variante}>
+      <TabsPrimitive.List
+        data-slot="tabs-list"
+        data-variant={variante}
+        className={cn(tabsListVariants({ variant: variante }), className)}
+        {...props}
+      />
+    </TabsVariantContext.Provider>
   );
 }
 
@@ -59,14 +92,24 @@ function TabsTrigger({
   className,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+  const variante = React.useContext(TabsVariantContext);
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
+      className={cn(tabsTriggerVariants({ variant: variante }), className)}
+      {...props}
+    />
+  );
+}
+
+// Contagem dentro do gatilho. O espaco antes do numero fica a cargo do
+// chamador quando um e2e buscar o texto com o numero junto.
+function TabsCount({ className, ...props }: React.ComponentProps<"span">) {
+  return (
+    <span
+      data-slot="tabs-count"
       className={cn(
-        "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium whitespace-nowrap text-foreground/60 transition-all group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-1 has-data-[icon=inline-start]:pl-1 dark:text-muted-foreground dark:hover:text-foreground group-data-[variant=default]/tabs-list:data-active:shadow-sm group-data-[variant=line]/tabs-list:data-active:shadow-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-        "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-active:bg-transparent dark:group-data-[variant=line]/tabs-list:data-active:border-transparent dark:group-data-[variant=line]/tabs-list:data-active:bg-transparent",
-        "data-active:bg-background data-active:text-foreground dark:data-active:border-input dark:data-active:bg-input/30 dark:data-active:text-foreground",
-        "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity group-data-horizontal/tabs:after:inset-x-0 group-data-horizontal/tabs:after:bottom-[-5px] group-data-horizontal/tabs:after:h-0.5 group-data-vertical/tabs:after:inset-y-0 group-data-vertical/tabs:after:-right-1 group-data-vertical/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
+        "ml-1.5 rounded-full bg-surface-4 px-1.5 py-px cz-num text-[11px] font-medium text-text-secondary",
         className,
       )}
       {...props}
@@ -87,4 +130,12 @@ function TabsContent({
   );
 }
 
-export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants };
+export {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  TabsCount,
+  tabsListVariants,
+  tabsTriggerVariants,
+};

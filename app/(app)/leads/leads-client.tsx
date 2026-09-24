@@ -229,7 +229,7 @@ export function LeadsClient({
                       : "text-text-secondary hover:text-foreground",
                   )}
                 >
-                  <Icone strokeWidth={1.5} className="size-4" aria-hidden />
+                  <Icone className="size-4" aria-hidden />
                   {rotulo}
                 </button>
               ))}
@@ -240,7 +240,7 @@ export function LeadsClient({
             dica={dica}
             onClick={() => setNovoAberto(true)}
           >
-            <Plus strokeWidth={1.5} className="size-4" /> Novo lead
+            <Plus className="size-4" /> Novo lead
           </BotaoProtegido>
           <BotaoProtegido
             podeEditar={podeEditar}
@@ -248,7 +248,7 @@ export function LeadsClient({
             variant="outline"
             onClick={() => setImportAberto(true)}
           >
-            <Upload strokeWidth={1.5} className="size-4" /> Importar planilha
+            <Upload className="size-4" /> Importar planilha
           </BotaoProtegido>
         </div>
       </div>
@@ -256,7 +256,6 @@ export function LeadsClient({
       {leadsQuery.isError && leads.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
           <TriangleAlert
-            strokeWidth={1.5}
             className="size-4 shrink-0 [color:var(--alert)]"
             aria-hidden
           />
@@ -277,11 +276,7 @@ export function LeadsClient({
 
       {leadsQuery.isError && leads.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-12 text-center">
-          <TriangleAlert
-            strokeWidth={1.5}
-            className="size-5 [color:var(--alert)]"
-            aria-hidden
-          />
+          <TriangleAlert className="size-5 [color:var(--alert)]" aria-hidden />
           <p className="text-sm text-text-secondary">
             Não foi possível carregar os leads.
           </p>

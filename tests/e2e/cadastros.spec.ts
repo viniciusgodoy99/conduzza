@@ -138,8 +138,10 @@ test("bloqueio em lote cria uma linha por profissional", async ({ page }) => {
     String(amanha.getDate()).padStart(2, "0"),
   ].join("-");
 
-  await dialogo.getByLabel("Início").fill(`${amanhaISO}T08:00`);
-  await dialogo.getByLabel("Fim").fill(`${amanhaISO}T09:00`);
+  // 06:00 as 07:00: fora das consultas da fixture (a partir das 08:00), para
+  // o teste medir o lote e nao o aviso de consultas no periodo.
+  await dialogo.getByLabel("Início").fill(`${amanhaISO}T06:00`);
+  await dialogo.getByLabel("Fim").fill(`${amanhaISO}T07:00`);
   await dialogo.getByLabel("Motivo").fill("Reunião de equipe");
   await dialogo.getByRole("button", { name: "Criar bloqueio" }).click();
   await expect(dialogo).toBeHidden();

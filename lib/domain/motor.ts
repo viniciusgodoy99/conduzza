@@ -76,3 +76,45 @@ export function motorParado(saude: SaudeDoMotor | null, agora: Date): boolean {
 export function filaAtrasada(atrasados: number | null | undefined): boolean {
   return (atrasados ?? 0) > 0;
 }
+
+/** Por que o monitor externo deve disparar o alerta. */
+export type AlertaDoMotor =
+  | "fila_parada"
+  | "planner_parado"
+  | "fila_atrasada"
+  | "planner_com_erro";
+
+/**
+ * Tudo o que justifica acordar o dono do produto, para o monitor externo
+ * (rota /api/webhooks/saude). Lista vazia quer dizer saudavel.
+ *
+ * E mais rigorosa que a faixa da tela de proposito. A faixa fala com a
+ * recepcionista e so aparece quando o motor PAROU, porque ela nao tem o que
+ * fazer com "a fila atrasou". O monitor fala com quem conserta, e precisa
+ * pegar tambem o modo de falha que a faixa nao ve: a corrente viva (as duas
+ * batidas em dia) e o trabalho parado, seja a fila acumulando, seja o planner
+ * errando a cada minuto sem nunca planejar uma regua.
+ *
+ * O erro do planner e o da ULTIMA passagem: motor_manutencao() grava null
+ * quando a passagem sai limpa, entao um soluco isolado some no minuto
+ * seguinte.
+ */
+export function alertasDoMotor(
+  saude: SaudeDoMotor | null,
+  agora: Date,
+): AlertaDoMotor[] {
+  const alertas: AlertaDoMotor[] = [];
+  if (batidaVencida(saude?.fila ?? null, agora)) {
+    alertas.push("fila_parada");
+  }
+  if (batidaVencida(saude?.planner ?? null, agora)) {
+    alertas.push("planner_parado");
+  }
+  if (filaAtrasada(saude?.atrasados)) {
+    alertas.push("fila_atrasada");
+  }
+  if (saude?.planner?.ultimo_erro) {
+    alertas.push("planner_com_erro");
+  }
+  return alertas;
+}

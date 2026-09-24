@@ -246,7 +246,7 @@ export function Composer({
   if (conversation.status === "resolvida") {
     return (
       <Callout
-        icon={<CheckCircle2 strokeWidth={1.5} className="size-4" />}
+        icon={<CheckCircle2 className="size-4" />}
         toneClass="[background:var(--success-bg)] [color:var(--success-text)]"
         text="Conversa resolvida."
         error={error}
@@ -259,7 +259,7 @@ export function Composer({
             executarAcaoDeConversa(() => reabrirConversaAction(conversation.id))
           }
         >
-          <RotateCcw strokeWidth={1.5} className="size-4" />
+          <RotateCcw className="size-4" />
           Reabrir e responder
         </Button>
       </Callout>
@@ -269,7 +269,7 @@ export function Composer({
   if (conversation.status === "ia_atendendo") {
     return (
       <Callout
-        icon={<Sparkles strokeWidth={1.5} className="size-4" />}
+        icon={<Sparkles className="size-4" />}
         toneClass="[background:var(--ai-bg)] [color:var(--ai-text)]"
         text="A IA está atendendo esta conversa."
         error={error}
@@ -287,7 +287,7 @@ export function Composer({
   if (conversation.status === "aguardando_humano") {
     return (
       <Callout
-        icon={<Hand strokeWidth={1.5} className="size-4" />}
+        icon={<Hand className="size-4" />}
         toneClass="[background:var(--warning-bg)] [color:var(--warning-text)]"
         text="Ninguém está atendendo. Assuma para responder."
         error={error}
@@ -305,7 +305,7 @@ export function Composer({
   if (!isMine) {
     return (
       <Callout
-        icon={<Hand strokeWidth={1.5} className="size-4" />}
+        icon={<Hand className="size-4" />}
         toneClass="bg-surface-3 text-text-secondary"
         text="Outra pessoa está com esta conversa."
         error={error}
@@ -357,7 +357,7 @@ export function Composer({
                 : "text-text-secondary",
             )}
           >
-            <Lock strokeWidth={1.5} className="size-3" />
+            <Lock className="size-3" />
             Nota interna
           </button>
         </div>
@@ -372,7 +372,7 @@ export function Composer({
               )
             }
           >
-            <Undo2 strokeWidth={1.5} className="size-4" />
+            <Undo2 className="size-4" />
             Devolver para a IA
           </Button>
           <Button
@@ -385,7 +385,7 @@ export function Composer({
               )
             }
           >
-            <CheckCircle2 strokeWidth={1.5} className="size-4" />
+            <CheckCircle2 className="size-4" />
             Resolver
           </Button>
         </div>
@@ -393,7 +393,7 @@ export function Composer({
 
       {isNote ? (
         <p className="flex items-center gap-1.5 text-[11.5px] font-medium [color:var(--warning-text)]">
-          <Lock strokeWidth={1.5} className="size-3" />
+          <Lock className="size-3" />
           Nota interna: o paciente não vê.
         </p>
       ) : null}
@@ -473,7 +473,7 @@ export function Composer({
             aria-label="Cancelar a resposta a esta mensagem"
             className="grid size-10 shrink-0 place-items-center rounded-full text-text-tertiary hover:bg-surface-3 hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
           >
-            <X strokeWidth={1.5} className="size-4" />
+            <X className="size-4" />
           </button>
         </div>
       ) : null}
@@ -530,7 +530,7 @@ export function Composer({
         {/* Sem "Enviando...": o envio não bloqueia mais nada. O disabled fica
             só como afordância de que não há o que mandar. */}
         <Button type="submit" disabled={texto.trim().length === 0}>
-          <Send strokeWidth={1.5} className="size-4" />
+          <Send className="size-4" />
           {isNote ? "Salvar nota" : "Enviar"}
         </Button>
       </form>
