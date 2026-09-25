@@ -7,6 +7,15 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { checarConexaoAction } from "@/lib/actions/whatsapp-connect";
+import {
+  COLUNAS_DA_FAIXA,
+  aplicarLinhaDoNumero,
+  aplicarVerificacao,
+  lerVerificacao,
+  textoDaFaixa,
+  type LinhaDoNumero,
+  type NumeroDaFaixa,
+} from "@/lib/domain/conexao-dos-numeros";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -22,23 +31,37 @@ import { cn } from "@/lib/utils";
 // provedor, cobrindo canal de Realtime que caiu. O botao "Verificar
 // conexao" e o unico caminho que consulta o provedor, por action de MEMBRO
 // que devolve so o status (sem QR, sem segredo).
+//
+// VARIOS NUMEROS (docs/07, Fase 2): o estado e a LISTA de numeros ativos da
+// clinica, e cada evento de Realtime atualiza a linha dele (pelo id), nunca
+// "a clinica". A faixa considera o principal e os que ja conectaram alguma
+// vez (D6), e o texto (lib/domain/conexao-dos-numeros.ts) e o de sempre
+// quando a clinica tem um numero so.
 
 const INTERVALO_MS = 60_000;
 
 export function WhatsappStatus({
   clinicId,
-  statusInicial,
+  numerosIniciais,
 }: {
   clinicId: string;
-  /** null = clinica sem conta de WhatsApp: nenhuma faixa. */
-  statusInicial: string | null;
+  /** Os numeros ATIVOS da clinica. Lista vazia: nenhuma faixa. */
+  numerosIniciais: readonly NumeroDaFaixa[];
 }) {
-  const [status, setStatus] = useState(statusInicial);
+  const [numeros, setNumeros] = useState(numerosIniciais);
   const [verificando, setVerificando] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
     let ativo = true;
+    const aplicar = (payload: { new: unknown }) => {
+      const linha = payload.new as LinhaDoNumero | null;
+      if (ativo && linha) {
+        // Mesma lista de volta quando nada da faixa mudou (o UPDATE do slot
+        // a cada envio): o React nao renderiza de novo.
+        setNumeros((atuais) => aplicarLinhaDoNumero(atuais, linha));
+      }
+    };
     const canal = supabase
       .channel(`whatsapp-status-${clinicId}`)
       .on(
@@ -49,23 +72,29 @@ export function WhatsappStatus({
           table: "whatsapp_account",
           filter: `clinic_id=eq.${clinicId}`,
         },
-        (payload) => {
-          const novo = (payload.new as { connection_status?: string })
-            .connection_status;
-          if (ativo && novo) {
-            setStatus(novo);
-          }
+        aplicar,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "whatsapp_account",
+          filter: `clinic_id=eq.${clinicId}`,
         },
+        aplicar,
       )
       .subscribe();
     const consultar = async () => {
       const { data, error } = await supabase
         .from("whatsapp_account")
-        .select("connection_status")
+        .select(COLUNAS_DA_FAIXA)
         .eq("clinic_id", clinicId)
-        .maybeSingle();
+        .is("removido_em", null)
+        .order("principal", { ascending: false })
+        .order("created_at", { ascending: true });
       if (ativo && !error) {
-        setStatus(data?.connection_status ?? null);
+        setNumeros((data ?? []) as NumeroDaFaixa[]);
       }
     };
     const timer = setInterval(() => {
@@ -81,14 +110,25 @@ export function WhatsappStatus({
   const verificarAgora = () => {
     setVerificando(true);
     void checarConexaoAction()
-      .then((resultado) => {
-        if (resultado.error) {
-          toast.error(resultado.error);
+      .then((resultado: unknown) => {
+        // A resposta e lida por lerVerificacao: a lista de numeros
+        // verificados (Fase 2) ou o status unico de antes.
+        const verificacao = lerVerificacao(resultado);
+        if (verificacao.erro) {
+          toast.error(verificacao.erro);
           return;
         }
-        setStatus(resultado.status);
-        if (resultado.status !== "conectado") {
-          toast.info("Ainda desconectado. Abra Configurações para reconectar.");
+        // Funcional: um evento de Realtime que chegou durante a verificacao
+        // nao e desfeito. O aviso sai da lista que esta na tela.
+        setNumeros((atuais) => aplicarVerificacao(atuais, verificacao));
+        const proximos = aplicarVerificacao(numeros, verificacao);
+        const aindaFora = textoDaFaixa(proximos);
+        if (aindaFora) {
+          toast.info(
+            proximos.length <= 1
+              ? "Ainda desconectado. Abra Configurações para reconectar."
+              : `${aindaFora.titulo}. Abra Configurações para reconectar.`,
+          );
         }
       })
       .catch(() => {
@@ -97,7 +137,8 @@ export function WhatsappStatus({
       .finally(() => setVerificando(false));
   };
 
-  if (status === null || status === "conectado") {
+  const faixa = textoDaFaixa(numeros);
+  if (!faixa) {
     return null;
   }
 
@@ -112,10 +153,7 @@ export function WhatsappStatus({
     >
       <WifiOff aria-hidden className="size-4 shrink-0" />
       <p className="min-w-0 flex-1 text-[13.5px] font-semibold">
-        WhatsApp desconectado:{" "}
-        <span className="font-normal">
-          os pacientes não estão sendo atendidos
-        </span>
+        {faixa.titulo}: <span className="font-normal">{faixa.detalhe}</span>
       </p>
       <Link
         href="/configuracoes?aba=whatsapp"

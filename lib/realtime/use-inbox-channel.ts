@@ -6,6 +6,10 @@ import { useEffect } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  assinaturaDaConexao,
+  type LinhaDoNumero,
+} from "@/lib/domain/conexao-dos-numeros";
+import {
   conversationKeys,
   type ConversationListItem,
 } from "@/lib/queries/conversations";
@@ -42,6 +46,9 @@ type ConversationRow = {
   last_preview_author?: ConversationListItem["last_preview_author"];
   last_preview_author_user_id?: string | null;
   tags: string[] | null;
+  // Numero da conversa (docs/07). So muda de nulo para valor (adocao da
+  // conversa orfa quando a clinica ganha o primeiro numero).
+  whatsapp_account_id?: string | null;
 };
 
 /** undefined (evento sem a coluna) mantem o valor da tela; null e valor. */
@@ -127,6 +134,10 @@ export function useInboxChannel(
           existente.last_preview_author_user_id,
         ),
         tags: row.tags ?? existente.tags,
+        whatsapp_account_id: colunaOu(
+          row.whatsapp_account_id,
+          existente.whatsapp_account_id,
+        ),
       };
       const proxima = atual
         .map((c) => (c.id === row.id ? atualizada : c))
@@ -134,6 +145,60 @@ export function useInboxChannel(
           (b.last_inbound_at ?? "").localeCompare(a.last_inbound_at ?? ""),
         );
       queryClient.setQueryData<ConversationListItem[]>(listKey, proxima);
+    };
+
+    // Conexao dos numeros (docs/07, achado 6). Toda reserva de slot de envio
+    // faz UPDATE em whatsapp_account, e antes cada UPDATE chamava
+    // router.refresh(): cada mensagem enviada recarregava a pagina em todas
+    // as abas abertas da clinica. Agora so recarrega quando o STATUS de algum
+    // numero muda (ou ele e removido) em relacao ao que esta aba ja sabe. O
+    // retrato de partida e lido quando o canal fica de pe (e de novo a cada
+    // reconexao, que tambem recarrega se algo mudou durante a queda).
+    const conexoes = new Map<string, string>();
+    let retratoLido = false;
+    let vivo = true;
+
+    const lerRetratoDasConexoes = async () => {
+      const { data, error } = await supabase
+        .from("whatsapp_account")
+        .select("id, connection_status, removido_em")
+        .eq("clinic_id", clinicId);
+      if (!vivo || error) {
+        return;
+      }
+      let mudou = false;
+      for (const linha of (data ?? []) as LinhaDoNumero[]) {
+        const assinatura = assinaturaDaConexao(linha);
+        if (!linha.id || assinatura === null) {
+          continue;
+        }
+        if (retratoLido && conexoes.get(linha.id) !== assinatura) {
+          mudou = true;
+        }
+        conexoes.set(linha.id, assinatura);
+      }
+      retratoLido = true;
+      if (mudou) {
+        router.refresh();
+      }
+    };
+
+    const aplicarConexao = (linha: LinhaDoNumero) => {
+      const assinatura = assinaturaDaConexao(linha);
+      if (!linha.id || assinatura === null) {
+        return;
+      }
+      const anterior = conexoes.get(linha.id);
+      conexoes.set(linha.id, assinatura);
+      // Numero que esta aba ainda nao conhecia: com o retrato lido, e numero
+      // novo (recarrega); antes dele, nao ha com o que comparar.
+      if (anterior === assinatura || (anterior === undefined && !retratoLido)) {
+        return;
+      }
+      // O layout e a pagina sao renderizados no servidor (a faixa de
+      // desconectado na primeira pintura, e se a clinica tem numero):
+      // recarrega para acompanharem a conexao.
+      router.refresh();
     };
 
     const channel = supabase
@@ -199,10 +264,11 @@ export function useInboxChannel(
           table: "whatsapp_account",
           filter: `clinic_id=eq.${clinicId}`,
         },
-        () => {
-          // A faixa de desconectado e renderizada no servidor: recarrega o
-          // layout para ela aparecer ou sumir na hora.
-          router.refresh();
+        (payload) => {
+          const linha = payload.new as LinhaDoNumero | null;
+          if (linha) {
+            aplicarConexao(linha);
+          }
         },
       )
       .subscribe((status) => {
@@ -216,10 +282,12 @@ export function useInboxChannel(
           });
           invalidarTotalDeResolvidas();
           void queryClient.invalidateQueries({ queryKey: ["messages"] });
+          void lerRetratoDasConexoes();
         }
       });
 
     return () => {
+      vivo = false;
       void supabase.removeChannel(channel);
     };
   }, [supabase, clinicId, queryClient, router]);

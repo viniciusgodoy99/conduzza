@@ -71,6 +71,12 @@ type ConversationRow = {
   contact_id: string;
   status: "ia_atendendo" | "aguardando_humano" | "em_atendimento" | "resolvida";
   assignee_user_id: string | null;
+  /**
+   * O numero da clinica desta conversa (docs/07, decisao 1: uma conversa por
+   * numero). Nulo so em clinica sem numero ativo. O envio (send.ts) le o
+   * numero da propria conversa; aqui ele serve a reabrir e a citacao.
+   */
+  whatsapp_account_id: string | null;
 };
 
 async function loadVisibleConversation(
@@ -94,7 +100,7 @@ async function loadVisibleConversation(
   const supabase = await createClient();
   const { data } = await supabase
     .from("conversation")
-    .select("id, contact_id, status, assignee_user_id")
+    .select("id, contact_id, status, assignee_user_id, whatsapp_account_id")
     .eq("id", parsed.data)
     .eq("clinic_id", context.active.clinicId)
     .maybeSingle();
@@ -133,10 +139,16 @@ type CitacaoResolvida =
  *    resposta ao paciente citando uma nota interna mostraria a previa da nota
  *    para a equipe e nada para o paciente, que receberia a mensagem solta: a
  *    atendente acharia que ele esta vendo um contexto que nunca chegou la.
+ *
+ * E uma terceira, que a primeira ja implica hoje e continua valendo se um dia
+ * a citacao entre conversas do mesmo contato for aberta: MESMO NUMERO (docs/07,
+ * D2). O wa_message_id da citada so existe no chat do numero que a enviou ou
+ * recebeu; citado por outro numero da clinica, o WhatsApp do paciente
+ * receberia uma citacao para uma mensagem que aquele chat nunca teve.
  */
 async function resolverCitacao(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  conversationId: string,
+  conversation: Pick<ConversationRow, "id" | "whatsapp_account_id">,
   replyToMessageId: string | null | undefined,
   comoNota: boolean,
 ): Promise<CitacaoResolvida> {
@@ -148,11 +160,22 @@ async function resolverCitacao(
   }
   const { data } = await supabase
     .from("message")
-    .select("id, wa_message_id, conversation_id, is_internal_note, deleted_at")
+    .select(
+      "id, wa_message_id, conversation_id, whatsapp_account_id, is_internal_note, deleted_at",
+    )
     .eq("id", replyToMessageId)
     .maybeSingle();
-  if (!data || data.conversation_id !== conversationId) {
+  if (!data || data.conversation_id !== conversation.id) {
     return { ok: false, error: "A mensagem citada não é desta conversa." };
+  }
+  if (
+    ((data.whatsapp_account_id as string | null) ?? null) !==
+    (conversation.whatsapp_account_id ?? null)
+  ) {
+    return {
+      ok: false,
+      error: "A mensagem citada é de outro número da clínica.",
+    };
   }
   if (data.deleted_at) {
     return {
@@ -237,7 +260,7 @@ export async function sendMessageAction(
   // que a citada e visivel para quem esta citando.
   const citacao = await resolverCitacao(
     supabase,
-    conversation.id,
+    conversation,
     replyToMessageId,
     false,
   );
@@ -349,7 +372,7 @@ export async function enviarArquivoAction(
 
   const citacao = await resolverCitacao(
     supabase,
-    conversation.id,
+    conversation,
     citadaId,
     false,
   );
@@ -429,7 +452,7 @@ export async function addInternalNoteAction(
   const { context, supabase, conversation } = loaded;
   const citacao = await resolverCitacao(
     supabase,
-    conversation.id,
+    conversation,
     replyToMessageId,
     true,
   );
@@ -494,6 +517,70 @@ type Veredito = {
   nota_interna?: boolean;
 };
 
+type NumeroDaMensagem =
+  { ok: true; accountId: string } | { ok: false; error: string };
+
+/**
+ * O numero pelo qual a mensagem saiu (message.whatsapp_account_id: a copia do
+ * numero da conversa, imutavel). Revogar no WhatsApp so funciona pela MESMA
+ * instancia que enviou: o wa_message_id nao existe no chat de outro numero
+ * (docs/07, Fase 2).
+ *
+ * Lido com o admin client DEPOIS de pode_apagar_mensagem ter autorizado, e
+ * filtrado pela clinica do veredito: traz so ids e a data de remocao, nenhum
+ * conteudo. Pela sessao, o profissional autor de uma mensagem numa conversa
+ * que ja passou para outra pessoa nao enxergaria a linha, e o veredito ja o
+ * autorizou a apagar.
+ */
+async function numeroDaMensagem(
+  admin: ReturnType<typeof createAdminClient>,
+  clinicId: string,
+  messageId: string,
+): Promise<NumeroDaMensagem> {
+  const falhaGenerica: NumeroDaMensagem = {
+    ok: false,
+    error: "Não foi possível apagar agora. Tente de novo.",
+  };
+  const { data: mensagem, error } = await admin
+    .from("message")
+    .select("whatsapp_account_id")
+    .eq("clinic_id", clinicId)
+    .eq("id", messageId)
+    .maybeSingle();
+  if (error) {
+    return falhaGenerica;
+  }
+  const accountId =
+    (mensagem as { whatsapp_account_id: string | null } | null)
+      ?.whatsapp_account_id ?? null;
+  if (!accountId) {
+    return {
+      ok: false,
+      error:
+        "Não encontramos o número de WhatsApp por onde esta mensagem saiu. Você ainda pode apagar só aqui.",
+    };
+  }
+  const { data: numero, error: erroDoNumero } = await admin
+    .from("whatsapp_account")
+    .select("removido_em")
+    .eq("clinic_id", clinicId)
+    .eq("id", accountId)
+    .maybeSingle();
+  if (erroDoNumero) {
+    return falhaGenerica;
+  }
+  // Numero removido teve a instancia excluida no servidor do WhatsApp: nao
+  // ha mais por onde revogar.
+  if (!numero || (numero as { removido_em: string | null }).removido_em) {
+    return {
+      ok: false,
+      error:
+        "Esta mensagem saiu por um número que foi removido da clínica. Você ainda pode apagar só aqui.",
+    };
+  }
+  return { ok: true, accountId };
+}
+
 /**
  * Apaga uma mensagem, em um de dois escopos.
  *
@@ -556,10 +643,21 @@ export async function apagarMensagemAction(
     !veredito.nota_interna &&
     Boolean(veredito.wa_message_id) &&
     veredito.acao !== "adotar";
+  let numeroDoEnvio: string | null = null;
   if (precisaRevogar) {
+    const numero = await numeroDaMensagem(
+      admin,
+      veredito.clinic_id!,
+      messageId,
+    );
+    if (!numero.ok) {
+      return { ok: false, error: numero.error };
+    }
+    numeroDoEnvio = numero.accountId;
     const { provider, ref } = await carregarInstancia(
       admin,
       veredito.clinic_id!,
+      numero.accountId,
     );
     const revogado = await provider
       .deleteMessage(ref, veredito.wa_message_id!)
@@ -588,6 +686,7 @@ export async function apagarMensagemAction(
       log.error("apagou_no_whatsapp_mas_nao_gravou", {
         clinic_id: veredito.clinic_id ?? null,
         message_id: messageId,
+        whatsapp_account_id: numeroDoEnvio,
       });
     }
     return {
@@ -1005,12 +1104,26 @@ export async function reabrirConversaAction(
     // voltou a escrever depois de resolvida e ja tem OUTRA conversa aberta.
     // Antes a tela dizia "A conversa já foi reaberta", que era falso. Agora
     // devolve qual e a conversa aberta, e a tela leva a atendente ate ela.
-    const { data: aberta } = await supabase
+    //
+    // POR NUMERO (docs/07, achado 7): uma conversa por numero, entao o
+    // mesmo paciente pode ter uma aberta em cada numero da clinica. A que
+    // barrou esta e a do MESMO numero; sem o filtro (e sem o limit), o
+    // .maybeSingle() quebrava com duas abertas e a atendente ficava sem
+    // destino. Conversa sem numero (clinica sem numero ativo) procura entre
+    // as sem numero.
+    const busca = supabase
       .from("conversation")
       .select("id")
       .eq("clinic_id", context.active!.clinicId)
       .eq("contact_id", conversation.contact_id)
-      .neq("status", "resolvida")
+      .neq("status", "resolvida");
+    const { data: aberta } = await (
+      conversation.whatsapp_account_id
+        ? busca.eq("whatsapp_account_id", conversation.whatsapp_account_id)
+        : busca.is("whatsapp_account_id", null)
+    )
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(1)
       .maybeSingle();
     return {
       ok: false,

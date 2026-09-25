@@ -20,6 +20,25 @@ const sufixo = Date.now().toString(36);
 const clinicasCriadas: string[] = [];
 const MINUTO = 60_000;
 const HORA = 60 * MINUTO;
+// Varios numeros por clinica (docs/07, Fase 2): o executor pergunta ao banco
+// por qual numero o toque sai (numero_do_job), e o banco so responde a quem
+// tem a posse do job. O teste faz o claim que o motor faria, so deste job.
+const WORKER = `teste-regua-midia-${sufixo}`;
+
+async function reivindicar(job: Job): Promise<Job> {
+  await admin
+    .from("job_queue")
+    .update({
+      status: "executando",
+      locked_by: WORKER,
+      locked_at: new Date().toISOString(),
+      attempts: job.attempts + 1,
+    })
+    .eq("id", job.id)
+    .eq("status", "pendente")
+    .throwOnError();
+  return { ...job, attempts: job.attempts + 1 };
+}
 
 const JANELA_ABERTA = {
   send_window_start: "00:00",
@@ -175,7 +194,7 @@ async function armarFollowup(
     .eq("clinic_id", clinicId)
     .eq("kind", "executar_passo_de_regua");
   expect(jobs).toHaveLength(1);
-  const job = jobs![0] as unknown as Job;
+  const job = await reivindicar(jobs![0] as unknown as Job);
   return { runId: job.payload.cadence_run_id as string, job };
 }
 
@@ -230,7 +249,7 @@ describe("anexo no passo da régua, contra o banco real", () => {
     });
     const { runId, job } = await armarFollowup(clinicId, contactId);
 
-    const resultado = await executarPassoDeRegua(admin, job);
+    const resultado = await executarPassoDeRegua(admin, job, WORKER);
     expect(resultado).toEqual({ ok: true });
 
     const mensagens = await mensagensDeSaida(clinicId);
@@ -265,7 +284,7 @@ describe("anexo no passo da régua, contra o banco real", () => {
     await passoDeFollowup(clinicId, { texto: null, anexo: "audio" });
     const { job } = await armarFollowup(clinicId, contactId);
 
-    const resultado = await executarPassoDeRegua(admin, job);
+    const resultado = await executarPassoDeRegua(admin, job, WORKER);
     expect(resultado).toEqual({ ok: true });
 
     const mensagens = await mensagensDeSaida(clinicId);
@@ -280,7 +299,7 @@ describe("anexo no passo da régua, contra o banco real", () => {
     await passoDeFollowup(clinicId, { texto: null, anexo: null });
     const { job } = await armarFollowup(clinicId, contactId);
 
-    const resultado = await executarPassoDeRegua(admin, job);
+    const resultado = await executarPassoDeRegua(admin, job, WORKER);
     expect(resultado).toEqual({
       ok: false,
       erro: "passo_sem_conteudo",
@@ -346,7 +365,7 @@ describe("anexo no passo da régua, contra o banco real", () => {
       .eq("clinic_id", clinicId)
       .eq("kind", "executar_passo_de_regua");
     expect(jobs).toHaveLength(1);
-    const job = jobs![0] as unknown as Job;
+    const job = await reivindicar(jobs![0] as unknown as Job);
 
     const { data: runComPasso } = await admin
       .from("cadence_run")
@@ -359,7 +378,7 @@ describe("anexo no passo da régua, contra o banco real", () => {
       "image",
     );
 
-    const resultado = await executarPassoDeRegua(admin, job);
+    const resultado = await executarPassoDeRegua(admin, job, WORKER);
     expect(resultado).toEqual({ ok: true });
 
     const mensagens = await mensagensDeSaida(clinicId);
@@ -391,7 +410,7 @@ describe("anexo no passo da régua, contra o banco real", () => {
     });
     const { runId, job } = await armarFollowup(clinicId, contactId);
 
-    const resultado = await executarPassoDeRegua(admin, job);
+    const resultado = await executarPassoDeRegua(admin, job, WORKER);
     expect(resultado).toEqual({ ok: true });
 
     const mensagens = await mensagensDeSaida(clinicId);
@@ -463,7 +482,7 @@ describe("anexo no passo da régua, contra o banco real", () => {
       .eq("clinic_id", clinicId)
       .eq("kind", "executar_passo_de_regua");
     expect(jobs).toHaveLength(1);
-    const job = jobs![0] as unknown as Job;
+    const job = await reivindicar(jobs![0] as unknown as Job);
     const { data: runComPasso } = await admin
       .from("cadence_run")
       .select("cadence_step_id")
@@ -476,7 +495,7 @@ describe("anexo no passo da régua, contra o banco real", () => {
       "audio",
     );
 
-    const resultado = await executarPassoDeRegua(admin, job);
+    const resultado = await executarPassoDeRegua(admin, job, WORKER);
     expect(resultado).toEqual({ ok: true });
 
     const mensagens = await mensagensDeSaida(clinicId);

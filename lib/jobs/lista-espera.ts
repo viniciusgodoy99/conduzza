@@ -20,6 +20,7 @@ import {
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import { OFERTA_DE_ESPERA } from "@/lib/domain/textos-padrao";
 import { log } from "@/lib/log";
+import { contasDeEnvio } from "@/lib/jobs/numero-de-envio";
 import type { Job, ResultadoDeJob } from "@/lib/jobs/worker";
 
 // Job oferecer_lista_espera (tarefa 4.9): um horario vagou (gatilho de
@@ -349,18 +350,23 @@ export async function executarOfertaDeEspera(
   // contaria com ninguem recebendo (e a onda queimaria a vez de quem nunca
   // viu a mensagem). A onda espera a reconexao, ate o limite, sem gastar o
   // teto de devolucoes da fila (aguardarReconexao).
-  const { data: conta, error: erroConta } = await admin
+  //
+  // Aqui a conferencia e da CLINICA (nenhum numero ativo, ou nenhum
+  // conectado), antes de todo o trabalho de montar a onda. O numero de CADA
+  // candidato e conferido depois, na onda (decisao D7).
+  const { data: numeros, error: erroNumeros } = await admin
     .from("whatsapp_account")
     .select("connection_status")
     .eq("clinic_id", job.clinic_id)
-    .maybeSingle();
-  if (erroConta) {
+    .is("removido_em", null);
+  if (erroNumeros) {
     return { ok: false, erro: "leitura_falhou" };
   }
-  if (!conta) {
+  const numerosAtivos = (numeros ?? []) as { connection_status: string }[];
+  if (numerosAtivos.length === 0) {
     return { ok: true };
   }
-  if (conta.connection_status !== "conectado") {
+  if (!numerosAtivos.some((n) => n.connection_status === "conectado")) {
     return aguardarReconexao(admin, job, limite);
   }
 
@@ -554,6 +560,22 @@ export async function executarOfertaDeEspera(
     tamanho: Math.min(TETO_DE_CANDIDATOS, tamanhoDaOnda + 10),
   });
 
+  // O NUMERO de cada candidato, numa leitura so, pela mesma regra do envio
+  // (fixo, ultimo usado pelo paciente, principal). Quem esta num numero
+  // DESCONECTADO fica fora DESTA onda sem entrar em offered_to (decisao D7):
+  // o prazo de resposta correria com a mensagem parada, e a pessoa perderia a
+  // vez sem nunca ter visto a pergunta. Na onda seguinte ela volta a contar.
+  const contas = await contasDeEnvio(
+    admin,
+    job.clinic_id,
+    candidatos.map((candidato) => candidato.contactId),
+  );
+  if (!contas) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
+  const numeroPorContato = new Map<string, string>();
+  let foraPorNumeroDesconectado = 0;
+
   // Consentimento por candidato ate encher a onda (o executor de envio
   // reconfere na hora do envio; aqui evita oferta gravada para quem nunca
   // poderia receber).
@@ -561,6 +583,12 @@ export async function executarOfertaDeEspera(
   for (const candidato of candidatos) {
     if (onda.length >= tamanhoDaOnda) {
       break;
+    }
+    const conta = contas.get(candidato.contactId);
+    if (!conta?.whatsappAccountId) {
+      // Nenhum numero ativo por onde oferecer (nao acontece com a clinica
+      // tendo numero ativo, conferido acima: o principal cobre todo mundo).
+      continue;
     }
     const { data: vigente, error: erroConsent } = await admin.rpc(
       "consentimento_vigente",
@@ -576,11 +604,24 @@ export async function executarOfertaDeEspera(
       // oferecido a ninguem (achado da revisao de 15/09/2026).
       return { ok: false, erro: "leitura_falhou" };
     }
-    if (vigente === true) {
-      onda.push(candidato);
+    if (vigente !== true) {
+      continue;
     }
+    // Depois do consentimento de proposito: so conta como "fora pela
+    // desconexao" quem de fato receberia a oferta com o numero de pe.
+    if (!conta.conectado) {
+      foraPorNumeroDesconectado += 1;
+      continue;
+    }
+    onda.push(candidato);
+    numeroPorContato.set(candidato.contactId, conta.whatsappAccountId);
   }
   if (onda.length === 0) {
+    // A onda saiu vazia SO porque o numero de quem serve esta fora do ar: a
+    // vaga espera a reconexao, como quando a clinica inteira cai.
+    if (foraPorNumeroDesconectado > 0) {
+      return aguardarReconexao(admin, job, limite);
+    }
     // Ninguem livre agora. Se quem serve para a vaga esta PRESO em outra
     // oferta (duas vagas na mesma manha) ou no repouso, a vaga espera essa
     // oferta fechar em vez de sumir sem aviso.
@@ -635,6 +676,10 @@ export async function executarOfertaDeEspera(
       // A entrada que CASOU com a vaga viaja junto: o aceite usa este id em
       // vez de adivinhar de novo com regra diferente da do casamento.
       waitlist_id: entrada.id,
+      // O numero conferido conectado acima: criar_oferta_de_espera carimba o
+      // job da mensagem com ele (sem ele, o gatilho da fila resolveria de
+      // novo pela mesma regra).
+      whatsapp_account_id: numeroPorContato.get(entrada.contactId) ?? null,
       body: renderizarModelo(modelo, {
         nome,
         clinica: clinica.name as string,

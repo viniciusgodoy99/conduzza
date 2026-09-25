@@ -43,6 +43,9 @@ import { formatarTelefone } from "@/lib/domain/telefone";
 // Desenho do design system (docs/06 secao 5.12): cartao unico com o ladrilho
 // do WhatsApp (decorativo), a situacao da conexao em StatusChip (icone,
 // rotulo e cor, de WHATSAPP_CONNECTION_STATUS) e os avisos no Banner do DS.
+//
+// Um cartao e UM numero (docs/07, Fase 2): toda acao leva o id dele. Ate a
+// Fase 4 (um cartao por numero), as duas telas mostram so o principal.
 
 const DICA_PADRAO = "Somente administradores e gestores conectam o WhatsApp";
 
@@ -110,7 +113,18 @@ function Orientacao() {
   );
 }
 
+// D1 do docs/07: o nome com que o numero nasce. Com esse nome o cartao nao
+// repete o nome; renomeado, o cartao diz qual numero e.
+const NOME_PADRAO = "Número principal";
+
 export type ConnectClientProps = {
+  /**
+   * O numero deste cartao (whatsapp_account.id). Nulo: a clinica ainda nao
+   * tem numero, e Conectar cria o principal (o id volta na resposta).
+   */
+  accountId: string | null;
+  /** Nome do numero, quando ele ja existe */
+  nome?: string | null;
   initial: ConnectState;
   connectedAt: string | null;
   canManage: boolean;
@@ -126,6 +140,8 @@ export type ConnectClientProps = {
 };
 
 export function ConnectClient({
+  accountId,
+  nome,
   initial,
   connectedAt,
   canManage,
@@ -134,8 +150,17 @@ export function ConnectClient({
   timezone,
 }: ConnectClientProps) {
   const [state, setState] = useState<ConnectState>(initial);
+  // O id pode chegar depois: a clinica sem numero ganha o principal no
+  // primeiro Conectar, e toda chamada seguinte vai para ele.
+  const [numeroId, setNumeroId] = useState<string | null>(accountId);
   const [pending, startTransition] = useTransition();
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const lembrarNumero = (proximo: ConnectState) => {
+    if (proximo.accountId) {
+      setNumeroId(proximo.accountId);
+    }
+  };
 
   // Enquanto o pareamento esta em andamento, consulta o status a cada 2,5s.
   useEffect(() => {
@@ -144,7 +169,10 @@ export function ConnectClient({
     if (shouldPoll && pollingRef.current === null) {
       pollingRef.current = setInterval(() => {
         startTransition(async () => {
-          const next = await pollWhatsAppStatusAction();
+          const next = await pollWhatsAppStatusAction(numeroId);
+          if (next.accountId) {
+            setNumeroId(next.accountId);
+          }
           setState((current) =>
             current.status === "conectado"
               ? current
@@ -163,16 +191,23 @@ export function ConnectClient({
         pollingRef.current = null;
       }
     };
-  }, [state.status]);
+  }, [state.status, numeroId]);
 
   const connect = () => {
     startTransition(async () => {
-      setState(await connectWhatsAppAction());
+      const proximo = await connectWhatsAppAction(numeroId);
+      lembrarNumero(proximo);
+      setState(proximo);
     });
   };
   const disconnect = () => {
+    if (!numeroId) {
+      return;
+    }
     startTransition(async () => {
-      setState(await disconnectWhatsAppAction());
+      const proximo = await disconnectWhatsAppAction(numeroId);
+      lembrarNumero(proximo);
+      setState(proximo);
     });
   };
 
@@ -190,7 +225,8 @@ export function ConnectClient({
 
   const verificarAgora = () => {
     startTransition(async () => {
-      const proximo = await pollWhatsAppStatusAction();
+      const proximo = await pollWhatsAppStatusAction(numeroId);
+      lembrarNumero(proximo);
       setState((atual) =>
         atual.status === "conectado" ? atual : comAvisoMantido(atual, proximo),
       );
@@ -212,7 +248,7 @@ export function ConnectClient({
     <Button
       variant="destructive"
       onClick={disconnect}
-      disabled={!canManage || pending}
+      disabled={!canManage || pending || !numeroId}
     >
       <Unplug className="size-4" />
       Desconectar
@@ -236,6 +272,7 @@ export function ConnectClient({
               <div className="grid min-w-0 gap-[3px]">
                 <CardTitle>WhatsApp conectado</CardTitle>
                 <CardDescription>
+                  {nome && nome !== NOME_PADRAO ? <>{nome} · </> : null}
                   {state.displayPhone ? (
                     <>
                       Número{" "}

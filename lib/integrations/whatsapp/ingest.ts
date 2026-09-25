@@ -20,10 +20,21 @@ import { log } from "@/lib/log";
 
 export type IngestResultado = {
   inserted: boolean;
+  /**
+   * Presente quando a RPC NAO gravou nada de proposito, e isso nao e erro:
+   * - numero_proprio: quem escreveu e um numero ativo da propria clinica
+   *   (o numero A falando com o numero B nao e paciente);
+   * - numero_removido: o numero que recebeu foi removido no meio do caminho
+   *   (corrida com a remocao; a URL dele ja recebe 401).
+   * Os ids vem nulos e inserted false.
+   */
+  ignorada?: "numero_proprio" | "numero_removido";
   contact_id: string | null;
   contact_created: boolean;
   conversation_id: string | null;
   message_id: string | null;
+  /** O numero que recebeu. Nulo so em clinica sem numero ativo. */
+  whatsapp_account_id: string | null;
 };
 
 type MensagemRecebida = Extract<InboundEvent, { kind: "message_received" }>;
@@ -191,13 +202,23 @@ async function tentarMoverPorTermo(
   });
 }
 
+/**
+ * Grava a mensagem recebida pelo NUMERO `accountId` da clinica.
+ *
+ * O webhook sempre sabe o numero (resolvido pela URL). `accountId` nulo so
+ * existe para teste e ferramenta de desenvolvimento sem numero: a RPC usa o
+ * principal ativo da clinica (ou nenhum, em clinica sem numero), como antes
+ * de existir mais de um numero.
+ */
 export async function ingerirMensagemRecebida(
   admin: SupabaseClient,
   clinicId: string,
+  accountId: string | null,
   event: MensagemRecebida,
 ): Promise<{ data: IngestResultado | null; error: PostgrestError | null }> {
   const { data, error } = await admin.rpc("ingest_inbound_message", {
     p_clinic_id: clinicId,
+    p_whatsapp_account_id: accountId,
     p_phone_e164: event.phone,
     p_name: event.name,
     p_wa_message_id: event.waMessageId,
@@ -216,6 +237,12 @@ export async function ingerirMensagemRecebida(
   }
 
   const resultado = (data ?? null) as IngestResultado | null;
+
+  // Numero proprio ou numero removido: nada foi gravado, entao nao ha
+  // citacao, anuncio, jornada nem origem a mexer. Sai sem erro.
+  if (resultado?.ignorada) {
+    return { data: resultado, error: null };
+  }
 
   // CITACAO, num passo separado da ingestao de proposito.
   //
@@ -236,6 +263,7 @@ export async function ingerirMensagemRecebida(
     if (erroCitacao) {
       log.error("citacao_recebida_falhou", {
         clinic_id: clinicId,
+        whatsapp_account_id: resultado.whatsapp_account_id ?? accountId,
         message_id: resultado.message_id,
         error_code: erroCitacao.code ?? null,
       });
@@ -265,6 +293,7 @@ export async function ingerirMensagemRecebida(
       if (erroAnuncio) {
         log.error("captura_ctwa_falhou", {
           clinic_id: clinicId,
+          whatsapp_account_id: resultado.whatsapp_account_id ?? accountId,
           contact_id: resultado.contact_id,
           error_code: erroAnuncio.code ?? null,
         });

@@ -1,15 +1,23 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { agruparPorRaia } from "@/lib/jobs/numero-de-envio";
 import { executarJobComPosse, type Job } from "@/lib/jobs/worker";
 import { log } from "@/lib/log";
 
 // Uma passagem do motor de automacao, sem processo continuo.
 //
 // POR QUE UM JOB POR CLINICA. O espacamento anti-banimento vive em
-// whatsapp_account.next_send_at, chaveado por clinic_id: clinicas NAO competem
-// entre si. Dentro de uma clinica, o segundo job em voo seria adiado de
-// qualquer jeito, entao reivindica-lo e trabalho perdido, e e a origem da
-// reserva queimada que a reservar_slot_envio_v2 corrige.
+// whatsapp_account.next_send_at, chaveado pelo NUMERO (uma linha por numero
+// desde os varios numeros por clinica, docs/07): numeros NAO competem entre
+// si. Dentro de um numero, o segundo job em voo seria adiado de qualquer
+// jeito, entao reivindica-lo e trabalho perdido, e e a origem da reserva
+// queimada que a reservar_slot_envio_v2 corrige.
+//
+// RAIA. A execucao agrupa por raia: o numero do job, ou a clinica quando o
+// job nao tem numero (integracoes, oferta da lista de espera, clinica sem
+// numero). O claim ainda trava a clinica (claim_jobs_por_clinica) e
+// MOTOR_MAX_CLINICAS ainda conta clinicas: a fila por raia no banco e a
+// Fase 3 do desenho.
 //
 // Justica sai de graca: uma clinica com 200 toques cede UM job por passagem e
 // a vizinha continua sendo servida na mesma passagem. Com o claim global por
@@ -63,19 +71,6 @@ export type ResultadoDaPassagem = {
   sem_posse: number;
   nao_couberam: number;
 };
-
-function agruparPorClinica(jobs: Job[]): Map<string, Job[]> {
-  const grupos = new Map<string, Job[]>();
-  for (const job of jobs) {
-    const atual = grupos.get(job.clinic_id);
-    if (atual) {
-      atual.push(job);
-    } else {
-      grupos.set(job.clinic_id, [job]);
-    }
-  }
-  return grupos;
-}
 
 async function reivindicar(
   admin: SupabaseClient,
@@ -173,13 +168,13 @@ export async function executarPassagemDoMotor(
     return resultado;
   }
 
-  const grupos = [...agruparPorClinica(todos).values()];
+  const grupos = [...agruparPorRaia(todos).values()];
 
-  // Grupos em paralelo, jobs em serie DENTRO do grupo (o slot da clinica e um
-  // so). try/catch POR GRUPO: uma clinica que explode nao derruba as outras.
+  // Raias em paralelo, jobs em serie DENTRO da raia (o slot do numero e um
+  // so). try/catch POR RAIA: um numero que explode nao derruba os outros.
   await Promise.allSettled(
-    grupos.map(async (jobsDaClinica) => {
-      for (const job of jobsDaClinica) {
+    grupos.map(async (jobsDaRaia) => {
+      for (const job of jobsDaRaia) {
         const gasto = Date.now() - inicio;
         const custo = CUSTO_ESTIMADO_MS[job.kind] ?? CUSTO_PADRAO_MS;
         if (gasto + custo > ORCAMENTO_MS) {

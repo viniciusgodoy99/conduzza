@@ -138,11 +138,17 @@ export default async function ConfiguracoesPage({
       .select("code")
       .eq("clinic_id", active.clinicId)
       .maybeSingle(),
+    // Os numeros ATIVOS da clinica. Ate a Fase 4 (um cartao por numero) a
+    // aba mostra o do principal (docs/07, Fase 2).
     supabase
       .from("whatsapp_account")
-      .select("connection_status, display_phone, connected_at, provider")
+      .select(
+        "id, nome, principal, connection_status, display_phone, connected_at, provider",
+      )
       .eq("clinic_id", active.clinicId)
-      .maybeSingle(),
+      .is("removido_em", null)
+      .order("principal", { ascending: false })
+      .order("created_at", { ascending: true }),
     // A jornada da clinica (etapas + conversao): a RLS recorta por clinica.
     seguro(fetchJornada(supabase, active.clinicId)),
     seguro(fetchEtiquetasDeConversa(supabase, active.clinicId)),
@@ -263,7 +269,12 @@ export default async function ConfiguracoesPage({
   const ehAdmin = active.role === "admin";
   const dica = permissionHint(active.role, "configuracoes");
 
-  const whatsapp = whatsappResult.data;
+  // Sem numero nenhum, o cartao abre sem id e Conectar cria o principal.
+  const numerosDoWhatsapp = whatsappResult.data ?? [];
+  const whatsapp =
+    numerosDoWhatsapp.find((numero) => numero.principal) ??
+    numerosDoWhatsapp[0] ??
+    null;
   const initial: ConnectState = {
     status:
       (whatsapp?.connection_status as ConnectState["status"]) ?? "desconectado",
@@ -317,6 +328,8 @@ export default async function ConfiguracoesPage({
         codigo={codigoResult.error ? null : (codigoResult.data?.code ?? null)}
         codigoAtivo={clinica?.allow_code_signup ?? false}
         whatsapp={{
+          accountId: whatsapp?.id ?? null,
+          nome: whatsapp?.nome ?? null,
           initial,
           connectedAt: whatsapp?.connected_at ?? null,
           providerName,

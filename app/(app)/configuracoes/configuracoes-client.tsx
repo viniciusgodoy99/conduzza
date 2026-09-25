@@ -120,6 +120,9 @@ export function ConfiguracoesClient({
   codigo: string | null;
   codigoAtivo: boolean;
   whatsapp: {
+    /** o principal ativo; nulo quando a clinica ainda nao tem numero */
+    accountId: string | null;
+    nome: string | null;
     initial: ConnectState;
     connectedAt: string | null;
     providerName: string | null;
@@ -273,6 +276,8 @@ export function ConfiguracoesClient({
           interrompe o atendimento na hora.
         </p>
         <ConnectClient
+          accountId={whatsapp.accountId}
+          nome={whatsapp.nome}
           initial={whatsapp.initial}
           connectedAt={whatsapp.connectedAt}
           canManage={podeGerenciar}

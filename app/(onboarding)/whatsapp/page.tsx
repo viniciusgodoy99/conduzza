@@ -17,12 +17,22 @@ export default async function WhatsAppOnboardingPage() {
   const context = await getSessionContext();
   const active = context?.active;
 
+  // Os numeros ATIVOS da clinica; o cartao e o do principal (docs/07, Fase
+  // 2). Sem numero nenhum, o cartao abre sem id e Conectar cria o principal.
   const supabase = await createClient();
-  const { data: account, error: erroDaConta } = await supabase
+  const { data: numeros, error: erroDaConta } = await supabase
     .from("whatsapp_account")
-    .select("connection_status, display_phone, connected_at, provider")
+    .select(
+      "id, nome, principal, connection_status, display_phone, connected_at, provider",
+    )
     .eq("clinic_id", active?.clinicId ?? "")
-    .maybeSingle();
+    .is("removido_em", null)
+    .order("principal", { ascending: false })
+    .order("created_at", { ascending: true });
+  const account =
+    (numeros ?? []).find((numero) => numero.principal) ??
+    (numeros ?? [])[0] ??
+    null;
 
   const initial: ConnectState = {
     status:
@@ -58,6 +68,8 @@ export default async function WhatsAppOnboardingPage() {
           como ser escaneada. */}
       <AvisoCelular />
       <ConnectClient
+        accountId={account?.id ?? null}
+        nome={account?.nome ?? null}
         initial={initial}
         connectedAt={account?.connected_at ?? null}
         canManage={podeConectar}

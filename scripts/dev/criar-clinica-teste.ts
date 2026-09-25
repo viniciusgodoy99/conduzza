@@ -55,23 +55,41 @@ async function main() {
     .eq("clinic_id", clinicId)
     .single();
 
-  await admin.from("whatsapp_account").upsert(
-    {
-      clinic_id: clinicId,
-      provider: process.env.WHATSAPP_PROVIDER ?? "fake",
-    },
-    { onConflict: "clinic_id", ignoreDuplicates: true },
-  );
+  // O numero principal da clinica e o segredo dele, chaveado pelo numero
+  // (varios numeros por clinica, docs/07). Sem depender do unique temporario
+  // (clinic_id), que sai na Fase 3: usa o principal ativo se ja existir.
+  const { data: existentes } = await admin
+    .from("whatsapp_account")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .eq("principal", true)
+    .is("removido_em", null)
+    .limit(1)
+    .throwOnError();
+  let accountId = (existentes?.[0]?.id as string | undefined) ?? null;
+  if (!accountId) {
+    const { data: novo } = await admin
+      .from("whatsapp_account")
+      .insert({
+        clinic_id: clinicId,
+        provider: process.env.WHATSAPP_PROVIDER ?? "fake",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    accountId = novo!.id as string;
+  }
   await admin
     .from("whatsapp_account_secret")
     .upsert(
-      { clinic_id: clinicId },
-      { onConflict: "clinic_id", ignoreDuplicates: true },
-    );
+      { clinic_id: clinicId, account_id: accountId },
+      { onConflict: "account_id", ignoreDuplicates: true },
+    )
+    .throwOnError();
   const { data: segredo } = await admin
     .from("whatsapp_account_secret")
     .select("webhook_secret")
-    .eq("clinic_id", clinicId)
+    .eq("account_id", accountId)
     .single();
 
   if (process.argv.includes("--com-demonstracao")) {
@@ -88,8 +106,9 @@ async function main() {
   console.log(`  Código:   ${acesso?.code}`);
   console.log(`  Login:    ${email}`);
   console.log(`  Senha:    ${senha}`);
+  console.log(`  Número:   ${accountId}`);
   console.log(
-    `  Webhook:  ${base}/api/webhooks/whatsapp?clinic=${clinicId}&secret=${segredo?.webhook_secret}`,
+    `  Webhook:  ${base}/api/webhooks/whatsapp?clinic=${clinicId}&account=${accountId}&secret=${segredo?.webhook_secret}`,
   );
 }
 

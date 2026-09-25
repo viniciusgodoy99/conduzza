@@ -172,7 +172,7 @@ export default async function InicioPage() {
   const podeConfigurar = canEdit(active.role, "configuracoes");
 
   const [
-    conta,
+    numeros,
     conversas,
     equipe,
     pedidos,
@@ -181,11 +181,13 @@ export default async function InicioPage() {
     atendimento,
     proximasAcoes,
   ] = await Promise.all([
+    // Os numeros ATIVOS da clinica (docs/07): o passo fica feito com pelo
+    // menos um conectado. So o status, nenhum dado de paciente.
     supabase
       .from("whatsapp_account")
       .select("connection_status")
       .eq("clinic_id", active.clinicId)
-      .maybeSingle(),
+      .is("removido_em", null),
     supabase
       .from("conversation")
       .select("id", { count: "exact", head: true })
@@ -230,13 +232,19 @@ export default async function InicioPage() {
 
   // Leitura que decide o checklist: erro vira a tela de erro, nunca um
   // passo "Pendente" falso nem um pedido de acesso escondido.
-  for (const resposta of [conta, conversas, equipe, pedidos]) {
+  for (const resposta of [numeros, conversas, equipe, pedidos]) {
     if (resposta?.error) {
       throw new Error(resposta.error.message);
     }
   }
 
-  const conectado = conta.data?.connection_status === "conectado";
+  const statusDosNumeros = (
+    (numeros.data ?? []) as { connection_status: string }[]
+  ).map((numero) => numero.connection_status);
+  const numerosConectados = statusDosNumeros.filter(
+    (status) => status === "conectado",
+  ).length;
+  const conectado = numerosConectados > 0;
   const totalConversas = conversas.count ?? 0;
   const totalEquipe = equipe.count ?? 0;
   const pedidosDeAcesso = pedidos?.count ?? 0;
@@ -247,9 +255,19 @@ export default async function InicioPage() {
       chave: "whatsapp",
       concluido: conectado,
       titulo: "Conectar o WhatsApp da clínica",
-      descricao: conectado
-        ? "O número está conectado e recebendo mensagens."
-        : "Sem isso, nenhuma mensagem de paciente chega até aqui.",
+      // Com um numero, o texto de sempre. Com varios, quantos estao
+      // conectados: a faixa do topo ja nomeia o que caiu.
+      descricao: !conectado ? (
+        "Sem isso, nenhuma mensagem de paciente chega até aqui."
+      ) : statusDosNumeros.length <= 1 ? (
+        "O número está conectado e recebendo mensagens."
+      ) : (
+        <>
+          <span className="cz-num">{numerosConectados}</span> de{" "}
+          <span className="cz-num">{statusDosNumeros.length}</span> números
+          conectados e recebendo mensagens.
+        </>
+      ),
       acao: conectado
         ? undefined
         : {

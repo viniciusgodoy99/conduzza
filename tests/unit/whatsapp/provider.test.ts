@@ -317,6 +317,172 @@ describe("nome da instância no painel do uazapi", () => {
     expect(nome.length).toBeLessThanOrEqual("conduzza_".length + 40);
     expect(nome.endsWith("_")).toBe(false);
   });
+
+  // Varios numeros por clinica (docs/07, Fase 2): instance_id guarda o nome e
+  // e unico entre os numeros ativos, entao o numero novo ganha sufixo proprio.
+  it("com o número, acrescenta os 8 primeiros caracteres do id dele", () => {
+    expect(
+      nomeDaInstancia(
+        "clinica-conduzza-teste",
+        "6180eafd-0000",
+        "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      ),
+    ).toBe("conduzza_clinica_conduzza_teste_a1b2c3d4");
+  });
+
+  it("dois números da mesma clínica nunca recebem o mesmo nome", () => {
+    const primeiro = nomeDaInstancia(
+      "clinica-x",
+      "6180eafd-0000",
+      "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
+    const segundo = nomeDaInstancia(
+      "clinica-x",
+      "6180eafd-0000",
+      "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    );
+    expect(primeiro).not.toBe(segundo);
+  });
+
+  it("sem o número, o nome é o de antes (o principal atual não é renomeado)", () => {
+    expect(nomeDaInstancia("clinica-conduzza-teste", "6180eafd-0000")).toBe(
+      "conduzza_clinica_conduzza_teste",
+    );
+    expect(
+      nomeDaInstancia("clinica-conduzza-teste", "6180eafd-0000", null),
+    ).toBe("conduzza_clinica_conduzza_teste");
+    expect(nomeDaInstancia("clinica-conduzza-teste", "6180eafd-0000", "")).toBe(
+      "conduzza_clinica_conduzza_teste",
+    );
+  });
+
+  it("slug vazio com número: início do id da clínica e sufixo do número", () => {
+    expect(
+      nomeDaInstancia(
+        "",
+        "6180eafd-1111",
+        "A1B2C3D4-0000-4000-8000-000000000000",
+      ),
+    ).toBe("conduzza_6180eafd_a1b2c3d4");
+  });
+});
+
+describe("provedor falso por número", () => {
+  beforeEach(() => {
+    resetFakeProvider();
+  });
+
+  it("gera uma instância por número, não por clínica", async () => {
+    const fake = new FakeProvider();
+    const a = await fake.connectInstance({
+      clinicId: "6180eafd-0000",
+      accountId: "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const b = await fake.connectInstance({
+      clinicId: "6180eafd-0000",
+      accountId: "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
+    expect(a.instanceId).toBe("fake-11111111");
+    expect(b.instanceId).toBe("fake-22222222");
+  });
+
+  it("sem o número, mantém o nome antigo pela clínica", async () => {
+    const status = await new FakeProvider().connectInstance({
+      clinicId: "6180eafd-0000",
+    });
+    expect(status.instanceId).toBe("fake-6180eafd");
+  });
+
+  it("registra por qual número cada envio saiu", async () => {
+    const fake = new FakeProvider();
+    await fake.sendText({ ...REF, accountId: "conta-a" }, "+5584", "texto");
+    await fake.sendMenu({ ...REF, accountId: "conta-b" }, "+5584", "menu", [
+      { id: "sim", text: "Confirmar" },
+    ]);
+    await fake.sendMedia(REF, "+5584", {
+      tipo: "image",
+      base64: "AAAA",
+      mimetype: "image/png",
+    });
+    expect(fakeSentMessages().map((m) => m.accountId)).toEqual([
+      "conta-a",
+      "conta-b",
+      null,
+    ]);
+  });
+});
+
+describe("excluir instância no uazapi", () => {
+  function stubComMetodo(respostas: Array<{ status: number; body?: unknown }>) {
+    const chamadas: Array<{
+      url: string;
+      method: string | undefined;
+      token: string | undefined;
+      body: unknown;
+    }> = [];
+    const fn = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      chamadas.push({
+        url: String(url),
+        method: init?.method,
+        token: (init?.headers as Record<string, string> | undefined)?.token,
+        body: init?.body ?? null,
+      });
+      const proxima = respostas.shift() ?? { status: 200, body: {} };
+      return new Response(JSON.stringify(proxima.body ?? {}), {
+        status: proxima.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+    return { fn, chamadas };
+  }
+
+  it("usa DELETE /instance com o token da instância e sem corpo", async () => {
+    const { fn, chamadas } = stubComMetodo([
+      { status: 200, body: { response: "Instance Deleted" } },
+    ]);
+    const resultado = await testProvider(fn).excluirInstancia(REF);
+    expect(resultado).toEqual({ ok: true, situacao: "excluida" });
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0]?.url).toBe("https://uazapi.exemplo/instance");
+    expect(chamadas[0]?.method).toBe("DELETE");
+    expect(chamadas[0]?.token).toBe("token-instancia");
+    expect(chamadas[0]?.body).toBeNull();
+  });
+
+  it("202 é exclusão agendada e 404 é instância que já não existia", async () => {
+    const agendada = stubComMetodo([{ status: 202, body: {} }]);
+    expect(await testProvider(agendada.fn).excluirInstancia(REF)).toEqual({
+      ok: true,
+      situacao: "agendada",
+    });
+    const sumida = stubComMetodo([{ status: 404, body: {} }]);
+    expect(await testProvider(sumida.fn).excluirInstancia(REF)).toEqual({
+      ok: true,
+      situacao: "ja_nao_existia",
+    });
+  });
+
+  it("número que nunca conectou não chama o servidor", async () => {
+    const { fn, chamadas } = stubComMetodo([]);
+    const resultado = await testProvider(fn).excluirInstancia({
+      ...REF,
+      instanceToken: null,
+    });
+    expect(resultado).toEqual({ ok: true, situacao: "sem_instancia" });
+    expect(chamadas).toHaveLength(0);
+  });
+
+  it("token recusado e servidor fora do ar viram falha, nunca exceção", async () => {
+    const recusado = stubComMetodo([{ status: 401, body: {} }]);
+    const r1 = await testProvider(recusado.fn).excluirInstancia(REF);
+    expect(r1).toMatchObject({ ok: false, errorCode: "instancia_invalida" });
+
+    const fora = (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    const r2 = await testProvider(fora).excluirInstancia(REF);
+    expect(r2).toMatchObject({ ok: false, errorCode: "provider_indisponivel" });
+  });
 });
 
 // Responder citando e apagar, na camada do provedor.

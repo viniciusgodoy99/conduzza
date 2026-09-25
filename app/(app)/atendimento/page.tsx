@@ -63,18 +63,20 @@ export default async function AtendimentoPage({
   });
   const [
     conversations,
-    accountResult,
+    numerosAtivos,
     authorNames,
     jornada,
     etiquetas,
     conversaDoLink,
   ] = await Promise.all([
     fetchConversations(supabase, active.clinicId),
+    // Se a clinica tem ao menos um numero ATIVO (docs/07): so a contagem,
+    // sem trazer linha. Numero removido nao conta.
     supabase
       .from("whatsapp_account")
-      .select("connection_status")
+      .select("id", { count: "exact", head: true })
       .eq("clinic_id", active.clinicId)
-      .maybeSingle(),
+      .is("removido_em", null),
     fetchClinicAuthorNames(supabase, active.clinicId),
     fetchJornada(supabase, active.clinicId),
     fetchEtiquetasDeConversa(supabase, active.clinicId),
@@ -109,7 +111,7 @@ export default async function AtendimentoPage({
         etiquetas={etiquetas}
         authorNames={authorNames}
         initialConversations={conversations}
-        hasWhatsappAccount={accountResult.data !== null}
+        hasWhatsappAccount={(numerosAtivos.count ?? 0) > 0}
         temResolvidas={temResolvidas}
         conversaDoLink={conversaDoLink}
         linkIndisponivel={Boolean(parametros.conversa) && !conversaDoLink}

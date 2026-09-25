@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Aceite da tarefa 1.1: isolamento das tabelas de conversa entre clinicas,
@@ -224,28 +225,10 @@ beforeAll(async () => {
     "ai_decision_log",
   );
 
-  await mustInsert(
-    admin.from("whatsapp_account").insert([
-      {
-        clinic_id: clinicA.id,
-        provider: "fake",
-        connection_status: "conectado",
-      },
-      {
-        clinic_id: clinicB.id,
-        provider: "fake",
-        connection_status: "conectado",
-      },
-    ]),
-    "whatsapp_account",
-  );
-  await mustInsert(
-    admin.from("whatsapp_account_secret").insert([
-      { clinic_id: clinicA.id, instance_token: "segredo-a" },
-      { clinic_id: clinicB.id, instance_token: "segredo-b" },
-    ]),
-    "whatsapp_account_secret",
-  );
+  // Um numero em cada clinica, com o segredo ligado por account_id. As
+  // conversas acima, criadas antes do numero, sao adotadas por ele.
+  await criarNumeroDeTeste(admin, clinicA.id, { instance_token: "segredo-a" });
+  await criarNumeroDeTeste(admin, clinicB.id, { instance_token: "segredo-b" });
   await mustInsert(
     admin.from("message_template").insert([
       {

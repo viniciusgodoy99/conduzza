@@ -150,7 +150,16 @@ async function runsDoContato(
   return (data ?? []) as Run[];
 }
 
-/** Executa o job REAL da run (o que o motor faria), direto e idempotente. */
+// Varios numeros por clinica (docs/07, Fase 2): o executor pergunta ao banco
+// por qual numero o toque sai (numero_do_job), e o banco so responde a quem
+// tem a posse do job.
+const WORKER = `teste-followup-${sufixo}`;
+
+/**
+ * Executa o job REAL da run (o que o motor faria), direto e idempotente. O
+ * claim e o do motor, so deste job; se o job ja esta com este executor (uma
+ * segunda execucao do mesmo cenario), a posse continua valendo.
+ */
 async function executarJobDaRun(clinicId: string, runId: string) {
   const { data: jobs } = await admin
     .from("job_queue")
@@ -159,7 +168,19 @@ async function executarJobDaRun(clinicId: string, runId: string) {
     .eq("kind", "executar_passo_de_regua")
     .contains("payload", { cadence_run_id: runId });
   expect(jobs).toHaveLength(1);
-  return executarPassoDeRegua(admin, jobs![0] as unknown as Job);
+  const job = jobs![0] as unknown as Job;
+  await admin
+    .from("job_queue")
+    .update({
+      status: "executando",
+      locked_by: WORKER,
+      locked_at: new Date().toISOString(),
+      attempts: job.attempts + 1,
+    })
+    .eq("id", job.id)
+    .eq("status", "pendente")
+    .throwOnError();
+  return executarPassoDeRegua(admin, job, WORKER);
 }
 
 afterAll(async () => {

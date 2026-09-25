@@ -28,6 +28,7 @@ import {
 import { log } from "@/lib/log";
 
 import { espacamentoDeMassaMs } from "./espacamento";
+import { numeroDoJob } from "./numero-de-envio";
 import type { Job, ResultadoDeJob } from "./worker";
 
 // Executor de UM toque de regua (Fase 4, tarefas 4.6 e 4.7). Roda os seis
@@ -154,7 +155,11 @@ type MotivoDePulo =
   | "remarcacao_pedida"
   // Empurrado para outro dia civil (janela, canal fora do ar) com um toque
   // seguinte da mesma regua que ainda sai antes da consulta.
-  | "toque_atrasado";
+  | "toque_atrasado"
+  // O numero de WhatsApp do toque foi removido da clinica depois de o toque
+  // ja ter gravado mensagem por ele: trocar de numero agora repetiria a
+  // mensagem por outro (varios numeros por clinica, docs/07).
+  | "numero_removido";
 
 /** Fecha ESTA run, sem tocar em run ja enviada ou ja pulada. */
 async function pularRun(
@@ -391,6 +396,8 @@ function valoresDoModelo(
 export async function executarPassoDeRegua(
   admin: SupabaseClient,
   job: Job,
+  // Quem reivindicou o job: numero_do_job so responde ao dono da posse.
+  workerId: string,
 ): Promise<ResultadoDeJob> {
   const runId = job.payload.cadence_run_id;
   if (typeof runId !== "string") {
@@ -625,12 +632,40 @@ export async function executarPassoDeRegua(
     modelo = decisao.modelo;
   }
 
-  const { data: account } = await admin
-    .from("whatsapp_account")
-    .select("provider")
-    .eq("clinic_id", job.clinic_id)
-    .maybeSingle();
-  const provider = getWhatsAppProvider(account?.provider);
+  // NUMERO do toque (varios numeros por clinica, docs/07). O planner carimbou
+  // o job pela regra de conta_de_envio; numero_do_job confere a posse e a
+  // remocao na hora de executar e recarimba se o numero saiu da clinica antes
+  // de o toque gravar mensagem. Desconectado NAO e remocao: o numero continua
+  // o mesmo e o toque espera a reconexao (abaixo), sem trocar de numero.
+  const numero = await numeroDoJob(admin, job.id, workerId);
+  if (numero.estado === "sem_posse") {
+    // Outro executor assumiu o job (lease vencido): nada sai daqui.
+    return { ok: false, erro: "sem_posse" };
+  }
+  if (numero.estado === "leitura_falhou") {
+    return { ok: false, erro: "leitura_falhou" };
+  }
+  if (numero.estado === "numero_removido") {
+    await pularRun(admin, run, "numero_removido");
+    return { ok: false, erro: "numero_removido", definitivo: true };
+  }
+  // Sem numero ativo na clinica: o "sem conta" de antes. O provedor e o do
+  // ambiente e o envio responde desconectado (espera a reconexao).
+  const accountId = numero.estado === "ok" ? numero.whatsappAccountId : null;
+  let nomeDoProvedor: string | null = null;
+  if (accountId) {
+    const { data: account, error: erroConta } = await admin
+      .from("whatsapp_account")
+      .select("provider")
+      .eq("clinic_id", job.clinic_id)
+      .eq("id", accountId)
+      .maybeSingle();
+    if (erroConta) {
+      return { ok: false, erro: "leitura_falhou" };
+    }
+    nomeDoProvedor = (account?.provider as string | null | undefined) ?? null;
+  }
+  const provider = getWhatsAppProvider(nomeDoProvedor);
 
   // 4 e 5. JANELA DE 24H e TETO DE GASTO sao conceitos do canal OFICIAL da
   // Meta (CLAUDE.md 3.3). No uazapi e no fake nao existe janela de 24h,
@@ -686,9 +721,16 @@ export async function executarPassoDeRegua(
     }
   }
 
+  // A conversa do NUMERO do toque (uma conversa por numero, decisao 1 do
+  // dono). As duas mensagens do par (anexo e botoes, ou audio e texto) usam
+  // esta mesma conversa, entao saem pelo mesmo numero.
   const { data: conversationId, error: erroConversa } = await admin.rpc(
     "garantir_conversa_aberta",
-    { p_clinic_id: job.clinic_id, p_contact_id: run.contact_id },
+    {
+      p_clinic_id: job.clinic_id,
+      p_contact_id: run.contact_id,
+      ...(accountId ? { p_whatsapp_account_id: accountId } : {}),
+    },
   );
   if (erroConversa || typeof conversationId !== "string") {
     return { ok: false, erro: "conversa_indisponivel" };
@@ -698,6 +740,8 @@ export async function executarPassoDeRegua(
     clinicId: job.clinic_id,
     conversationId,
     contactId: run.contact_id,
+    // Assercao: a conversa e deste numero. Divergiu, nada sai (send.ts).
+    whatsappAccountId: accountId,
     body,
     authorUserId: null,
     author: "sistema" as const,
@@ -952,6 +996,18 @@ export async function executarPassoDeRegua(
     }
     await pularRun(admin, run, "canal_ocupado");
     return { ok: false, erro: "canal_ocupado", definitivo: true };
+  }
+
+  // Numero REMOVIDO entre numero_do_job e o envio: este envio nao gravou
+  // nada. Volta ja para a fila: a proxima passagem pergunta de novo a
+  // numero_do_job, que recarimba pelo numero que sobrou ou, se o par ja
+  // gravou a midia por ele, pula a run com 'numero_removido'. Esperar os 5
+  // minutos da reconexao nao faria sentido: removido nao reconecta.
+  if (
+    resultado.reason === "desconectado" &&
+    resultado.code === "numero_removido"
+  ) {
+    return { reagendar: new Date().toISOString(), motivo: "numero_removido" };
   }
 
   if (resultado.reason === "desconectado") {

@@ -65,21 +65,27 @@ try {
     .throwOnError();
   clinicId = clinica!.id as string;
 
-  await admin
+  // O numero e o segredo dele, ligados por account_id (varios numeros por
+  // clinica, docs/07). O webhook abaixo usa a URL nova, com o numero.
+  const { data: numero } = await admin
     .from("whatsapp_account")
     .insert({
       clinic_id: clinicId,
       provider: "fake",
       connection_status: "conectado",
     })
+    .select("id")
+    .single()
     .throwOnError();
+  const accountId = numero!.id as string;
   const { data: segredo } = await admin
     .from("whatsapp_account_secret")
-    .insert({ clinic_id: clinicId })
+    .insert({ clinic_id: clinicId, account_id: accountId })
     .select("webhook_secret")
     .single()
     .throwOnError();
   const secret = segredo!.webhook_secret as string;
+  const urlDoWebhook = `http://localhost:3000/api/webhooks/whatsapp?clinic=${clinicId}&account=${accountId}&secret=${encodeURIComponent(secret)}`;
 
   const { data: prof } = await admin
     .from("professional")
@@ -285,20 +291,17 @@ try {
   );
 
   // ---------- 2. resposta "1" pelo webhook HTTP real ----------
-  const resposta = await fetch(
-    `http://localhost:3000/api/webhooks/whatsapp?clinic=${clinicId}&secret=${encodeURIComponent(secret)}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        kind: "message_received",
-        phone: telefone1,
-        waMessageId: `prova-viva-${sufixo}-1`,
-        contentType: "texto",
-        body: "1",
-      }),
-    },
-  );
+  const resposta = await fetch(urlDoWebhook, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      kind: "message_received",
+      phone: telefone1,
+      waMessageId: `prova-viva-${sufixo}-1`,
+      contentType: "texto",
+      body: "1",
+    }),
+  });
   ok("webhook aceitou a resposta do paciente (200)", resposta.status === 200, {
     status: resposta.status,
     body: await resposta.text(),
@@ -376,20 +379,17 @@ try {
   );
 
   // responder "1" de novo não confirma duas vezes nem manda dois ecos
-  await fetch(
-    `http://localhost:3000/api/webhooks/whatsapp?clinic=${clinicId}&secret=${encodeURIComponent(secret)}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        kind: "message_received",
-        phone: telefone1,
-        waMessageId: `prova-viva-${sufixo}-2`,
-        contentType: "texto",
-        body: "1",
-      }),
-    },
-  );
+  await fetch(urlDoWebhook, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      kind: "message_received",
+      phone: telefone1,
+      waMessageId: `prova-viva-${sufixo}-2`,
+      contentType: "texto",
+      body: "1",
+    }),
+  });
   await new Promise((r) => setTimeout(r, 4000));
   const { count: trilhaDepois } = await admin
     .from("appointment_status_history")
@@ -403,14 +403,11 @@ try {
 
   // ---------- 2b. o canal real: reação e botão ----------
   const postar = (corpo: Record<string, unknown>) =>
-    fetch(
-      `http://localhost:3000/api/webhooks/whatsapp?clinic=${clinicId}&secret=${encodeURIComponent(secret)}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(corpo),
-      },
-    );
+    fetch(urlDoWebhook, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(corpo),
+    });
 
   // Uma segunda consulta pendente para os testes de resposta.
   // Uma hora depois da primeira: mesma profissional, e o banco recusa
@@ -539,7 +536,7 @@ try {
   await admin
     .from("whatsapp_account")
     .update({ connection_status: "desconectado" })
-    .eq("clinic_id", clinicId)
+    .eq("id", accountId)
     .throwOnError();
   const { planejarCobrancaManual } =
     await import("../../lib/jobs/cobranca-manual");
@@ -556,7 +553,7 @@ try {
   await admin
     .from("whatsapp_account")
     .update({ connection_status: "conectado" })
-    .eq("clinic_id", clinicId)
+    .eq("id", accountId)
     .throwOnError();
 
   // ---------- 3. pós-falta: D+0 com a data, nunca "hoje" ----------

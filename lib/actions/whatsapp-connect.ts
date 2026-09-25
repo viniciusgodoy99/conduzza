@@ -2,9 +2,17 @@
 
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
+import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import {
+  acharCelularDuplicado,
+  mensagemDeCelularDuplicado,
+  pareamentoNovo,
+  type NumeroConectado,
+} from "@/lib/domain/celular-duplicado";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import type { Role } from "@/lib/domain/permissions";
 import {
   CanalNaoConfiguradoError,
   conexaoRecusadaNoAmbiente,
@@ -24,18 +32,36 @@ import {
 } from "@/lib/integrations/whatsapp/uazapi";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
-// Conexao do WhatsApp por clinica (Tela 13). Cada clinica ganha a PROPRIA
-// instancia no uazapi, criada no primeiro acesso com o token administrativo:
-// e isso que torna o cadastro de clientes escalavel, sem intervencao tecnica.
-// Escrita em whatsapp_account e whatsapp_account_secret e sempre por service
-// role (tabelas sem policy de escrita), com papel conferido aqui.
+// Conexao do WhatsApp por NUMERO (Tela 13; docs/07, Fase 2). Cada numero da
+// clinica (whatsapp_account.id) ganha a PROPRIA instancia no uazapi, criada
+// no primeiro acesso com o token administrativo: e isso que torna o cadastro
+// de clientes escalavel, sem intervencao tecnica. Escrita em
+// whatsapp_account e whatsapp_account_secret e sempre por service role
+// (tabelas sem policy de escrita), com papel conferido aqui.
+//
+// Toda acao recebe o id do numero e filtra por clinica E id: nenhuma leitura
+// ou escrita "da clinica" sobrou, porque com mais de um numero ela pegaria um
+// qualquer. Sem id (clinica que ainda nao tem numero), a conexao cria o
+// principal.
 //
 // Fica em lib/actions porque as mesmas acoes servem duas telas: o onboarding
 // de primeiro acesso (/whatsapp) e a aba de conexao das Configuracoes.
 
 const DICA_SEM_PERMISSAO =
   "Somente administradores e gestores conectam o WhatsApp";
+// D8 do docs/07: remover e so do administrador.
+const DICA_SO_ADMIN = "Somente administradores removem um número de WhatsApp.";
+// D1: o numero que nasce sozinho numa clinica sem numero.
+const NOME_DO_PRINCIPAL = "Número principal";
+
+const TEXTO_NUMERO_INVALIDO =
+  "Número de WhatsApp inválido. Recarregue a página e tente de novo.";
+const TEXTO_NUMERO_NAO_ENCONTRADO =
+  "Este número não existe mais nesta clínica. Recarregue a página.";
+const TEXTO_FALHA_DE_LEITURA =
+  "Não foi possível carregar os números desta clínica. Tente de novo em instantes.";
 
 export type ConnectState = {
   status: "desconectado" | "aguardando_qr" | "conectando" | "conectado";
@@ -50,25 +76,76 @@ export type ConnectState = {
    * sumia na primeira consulta de status, 2,5 segundos depois.
    */
   aviso?: string;
+  /**
+   * O numero (whatsapp_account.id) desta conexao. A tela que abriu sem numero
+   * (clinica nova) recebe aqui o id do principal que a acao criou, e passa a
+   * usa-lo nas chamadas seguintes.
+   */
+  accountId?: string;
+};
+
+/** Resultado das acoes de cadastro do numero (adicionar, renomear...). */
+export type NumeroActionResult = {
+  ok: boolean;
+  error?: string;
+  /** o numero criado ou alterado */
+  accountId?: string;
 };
 
 type AccountRow = {
+  id: string;
   provider: "fake" | "uazapi" | "cloud_api";
   server_url: string | null;
   instance_id: string | null;
   display_phone: string | null;
   connection_status: ConnectState["status"];
+  nome: string;
+  principal: boolean;
+  connected_at: string | null;
 };
+
+const COLUNAS_DA_CONTA =
+  "id, provider, server_url, instance_id, display_phone, connection_status, nome, principal, connected_at";
 
 type SecretRow = {
   instance_token: string | null;
   webhook_secret: string;
 };
 
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+/** O numero em que a acao mexe: sempre clinica E id. */
+type NumeroAlvo = { clinicId: string; accountId: string };
+
+type Guard = {
+  clinicId: string;
+  clinicName: string;
+  slug: string;
+  userId: string;
+  role: Role;
+};
+
+const idDoNumero = z.uuid();
+const idDoNumeroOuNulo = z.uuid().nullable();
+const nomeDoNumero = z.string().trim().min(1).max(40);
+const numeroNovoSchema = z.object({
+  nome: nomeDoNumero,
+  unitId: z.uuid().nullable().optional(),
+});
+const numeroEditadoSchema = z.object({
+  accountId: z.uuid(),
+  nome: nomeDoNumero,
+  /** ausente: a unidade fica como esta; nulo: tira a unidade */
+  unitId: z.uuid().nullable().optional(),
+});
+const TEXTO_NOME_INVALIDO =
+  "Dê um nome ao número, com até 40 caracteres, e escolha a unidade da lista.";
+
 // Quem edita Configuracoes conecta o numero (administrador e gestor). A
-// checagem vale para as tres acoes, inclusive a consulta de status: o QR e o
-// token da instancia sao segredo da clinica.
-async function requireManageContext() {
+// checagem vale para todas as acoes de conexao, inclusive a consulta de
+// status: o QR e o token da instancia sao segredo da clinica. Adicionar,
+// renomear, trocar a unidade e escolher o principal tambem (D8).
+async function requireManageContext(): Promise<Guard | { error: string }> {
   const context = await getSessionContext();
   if (!context?.active) {
     return { error: "Sessão expirada. Entre de novo." };
@@ -83,7 +160,22 @@ async function requireManageContext() {
     clinicId: context.active.clinicId,
     clinicName: context.active.clinicName,
     slug: context.active.slug,
+    userId: context.userId,
+    role,
   };
+}
+
+// Remover um numero encerra as conversas abertas dele (D3): so o
+// administrador (D8).
+async function requireAdminContext(): Promise<Guard | { error: string }> {
+  const guard = await requireManageContext();
+  if ("error" in guard) {
+    return guard;
+  }
+  if (guard.role !== "admin") {
+    return { error: DICA_SO_ADMIN };
+  }
+  return guard;
 }
 
 // A conexao alimenta a faixa vermelha do shell e o checklist do Inicio; sem
@@ -94,54 +186,175 @@ function revalidarTelasDeConexao(): void {
   revalidatePath("/inicio");
 }
 
+/**
+ * Trilha das acoes de cadastro do numero. Pela sessao: a policy da trilha so
+ * aceita a acao do proprio usuario. Falha da trilha nao desfaz a acao.
+ */
+async function registrarNaTrilha(
+  guard: Guard,
+  action: string,
+  entity: string,
+  entityId: string,
+): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.userId,
+    action,
+    entity,
+    entity_id: entityId,
+  });
+}
+
+/** Os numeros ATIVOS da clinica, o principal primeiro. */
+async function listarNumerosAtivos(
+  admin: AdminClient,
+  clinicId: string,
+): Promise<AccountRow[] | null> {
+  const { data, error } = await admin
+    .from("whatsapp_account")
+    .select(COLUNAS_DA_CONTA)
+    .eq("clinic_id", clinicId)
+    .is("removido_em", null)
+    .order("principal", { ascending: false })
+    .order("created_at", { ascending: true });
+  return error ? null : ((data ?? []) as AccountRow[]);
+}
+
+/**
+ * Erro de gravacao do numero em texto de recepcao. O limite do plano chega
+ * pelo gatilho antes_de_criar_numero (23514) e o nome repetido pelo indice
+ * whatsapp_account_nome_unico (23505).
+ *
+ * TEMPORARIO: enquanto o unique whatsapp_account_uma_por_clinica existir
+ * (sai no contrato da Fase 3), o segundo numero da clinica recebe 23505 dele.
+ */
+function mensagemDeCadastro(
+  error: { code?: string; message?: string } | null,
+): string {
+  const texto = error?.message ?? "";
+  switch (error?.code) {
+    case "23514":
+      return texto.includes("whatsapp_account_nome_tamanho")
+        ? "O nome do número precisa ter de 1 a 40 caracteres."
+        : "Esta clínica atingiu o limite de números do plano.";
+    case "23505":
+      if (texto.includes("whatsapp_account_nome_unico")) {
+        return "Já existe um número com este nome nesta clínica. Escolha outro nome.";
+      }
+      if (texto.includes("whatsapp_account_uma_por_clinica")) {
+        return "Por enquanto, esta clínica tem um número só.";
+      }
+      return "Não foi possível salvar este número. Tente de novo.";
+    case "23503":
+      return "A unidade escolhida não pertence a esta clínica.";
+    default:
+      return "Não foi possível salvar este número. Tente de novo.";
+  }
+}
+
+/**
+ * Cria o principal de uma clinica que ainda nao tem numero. A conta nasce com
+ * o provedor do AMBIENTE; em producao sem provedor real configurado nao
+ * nasce: antes ela nascia 'fake', conectava na hora com um numero ficticio e
+ * ficava gravada assim para sempre. O gatilho antes_de_criar_numero a torna
+ * principal (nao ha outro ativo).
+ */
+async function criarPrincipal(
+  admin: AdminClient,
+  clinicId: string,
+): Promise<{ id: string } | { erro: string }> {
+  const provedor = provedorDoAmbiente();
+  if (!provedor) {
+    return { erro: MENSAGEM_CANAL_NAO_CONFIGURADO };
+  }
+  const { data, error } = await admin
+    .from("whatsapp_account")
+    .insert({
+      clinic_id: clinicId,
+      provider: provedor,
+      nome: NOME_DO_PRINCIPAL,
+    })
+    .select("id")
+    .single();
+  if (data) {
+    return { id: data.id as string };
+  }
+  // Dois cliques (ou duas abas) criando ao mesmo tempo: o segundo recebe
+  // 23505 e usa o principal que o primeiro criou.
+  if (error?.code === "23505") {
+    const numeros = await listarNumerosAtivos(admin, clinicId);
+    const principal = numeros?.find((numero) => numero.principal);
+    if (principal) {
+      return { id: principal.id };
+    }
+  }
+  return { erro: mensagemDeCadastro(error) };
+}
+
 type ContaCarregada = {
-  admin: ReturnType<typeof createAdminClient>;
+  admin: AdminClient;
   account: AccountRow;
   secret: SecretRow;
 };
 
+/**
+ * O numero e o segredo dele, lidos por clinica E id. Id nulo: o principal
+ * ativo, e sem numero nenhum, o principal nasce aqui (a clinica nova conecta
+ * sem passar por "Adicionar numero").
+ */
 async function loadAccount(
   clinicId: string,
+  accountId: string | null,
 ): Promise<ContaCarregada | { erro: string }> {
   const admin = createAdminClient();
 
-  // A conta nasce com o provedor do AMBIENTE. Em producao sem provedor real
-  // configurado nao nasce: antes ela nascia 'fake', conectava na hora com um
-  // numero ficticio e ficava gravada assim para sempre.
-  const provedor = provedorDoAmbiente();
-  if (provedor) {
-    await admin
-      .from("whatsapp_account")
-      .upsert(
-        { clinic_id: clinicId, provider: provedor },
-        { onConflict: "clinic_id", ignoreDuplicates: true },
-      );
-  }
-  const { data: account } = await admin
-    .from("whatsapp_account")
-    .select(
-      "provider, server_url, instance_id, display_phone, connection_status",
-    )
-    .eq("clinic_id", clinicId)
-    .maybeSingle();
-  if (!account) {
-    return { erro: MENSAGEM_CANAL_NAO_CONFIGURADO };
+  let id = accountId;
+  if (id === null) {
+    const numeros = await listarNumerosAtivos(admin, clinicId);
+    if (numeros === null) {
+      return { erro: TEXTO_FALHA_DE_LEITURA };
+    }
+    const principal = numeros.find((numero) => numero.principal) ?? null;
+    if (principal) {
+      id = principal.id;
+    } else {
+      const criado = await criarPrincipal(admin, clinicId);
+      if ("erro" in criado) {
+        return criado;
+      }
+      id = criado.id;
+    }
   }
 
+  const { data: account } = await admin
+    .from("whatsapp_account")
+    .select(COLUNAS_DA_CONTA)
+    .eq("clinic_id", clinicId)
+    .eq("id", id)
+    .is("removido_em", null)
+    .maybeSingle();
+  if (!account) {
+    return { erro: TEXTO_NUMERO_NAO_ENCONTRADO };
+  }
+
+  // O segredo e do NUMERO (PK account_id). Nasce na primeira conexao, com o
+  // webhook_secret do default do banco; ja existindo, fica como esta.
   await admin
     .from("whatsapp_account_secret")
     .upsert(
-      { clinic_id: clinicId },
-      { onConflict: "clinic_id", ignoreDuplicates: true },
+      { clinic_id: clinicId, account_id: id },
+      { onConflict: "account_id", ignoreDuplicates: true },
     );
   const { data: secret } = await admin
     .from("whatsapp_account_secret")
     .select("instance_token, webhook_secret")
     .eq("clinic_id", clinicId)
+    .eq("account_id", id)
     .maybeSingle();
   if (!secret) {
     return {
-      erro: "Não foi possível carregar a conexão desta clínica. Tente de novo em instantes.",
+      erro: "Não foi possível carregar a conexão deste número. Tente de novo em instantes.",
     };
   }
 
@@ -161,23 +374,45 @@ function instanciaInvalida(error: unknown): boolean {
   );
 }
 
-/** Cria a instancia da clinica e guarda o token proprio dela. */
+/**
+ * Rotulo da instancia nova no painel do uazapi.
+ *
+ * O principal que ja tem instance_id mantem o nome que tem (docs/07: o
+ * principal atual nao e renomeado), inclusive quando a instancia e recriada
+ * porque o servidor nao a reconhece mais. Numero novo, ou que nao e o
+ * principal, ganha o sufixo do proprio id: instance_id e unico entre os
+ * numeros ativos (indice whatsapp_account_instancia_unica), e o nome so da
+ * clinica colidiria no segundo numero.
+ */
+function nomeDaNovaInstancia(
+  guard: { slug: string; clinicId: string },
+  account: AccountRow,
+): string {
+  if (account.principal && account.instance_id) {
+    return account.instance_id;
+  }
+  return nomeDaInstancia(guard.slug, guard.clinicId, account.id);
+}
+
+/** Cria a instancia do numero e guarda o token proprio dela. */
 async function criarInstancia(
-  admin: ReturnType<typeof createAdminClient>,
-  guard: { clinicId: string; slug: string },
+  admin: AdminClient,
+  numero: NumeroAlvo,
   provider: UazapiProvider,
   ref: InstanceRef,
+  nome: string,
 ): Promise<InstanceRef> {
-  const nome = nomeDaInstancia(guard.slug, guard.clinicId);
   const criada = await provider.createInstance(ref, nome);
   await admin
     .from("whatsapp_account_secret")
     .update({ instance_token: criada.instanceToken })
-    .eq("clinic_id", guard.clinicId);
+    .eq("clinic_id", numero.clinicId)
+    .eq("account_id", numero.accountId);
   await admin
     .from("whatsapp_account")
     .update({ instance_id: criada.instanceId ?? nome })
-    .eq("clinic_id", guard.clinicId);
+    .eq("clinic_id", numero.clinicId)
+    .eq("id", numero.accountId);
   return {
     ...ref,
     instanceToken: criada.instanceToken,
@@ -193,17 +428,19 @@ async function criarInstancia(
  * caminho na tela para sair disso, so mexendo direto no banco.
  */
 async function descartarInstancia(
-  admin: ReturnType<typeof createAdminClient>,
-  clinicId: string,
+  admin: AdminClient,
+  numero: NumeroAlvo,
 ): Promise<void> {
   await admin
     .from("whatsapp_account_secret")
     .update({ instance_token: null, qr_code: null })
-    .eq("clinic_id", clinicId);
+    .eq("clinic_id", numero.clinicId)
+    .eq("account_id", numero.accountId);
   await admin
     .from("whatsapp_account")
     .update({ instance_id: null })
-    .eq("clinic_id", clinicId);
+    .eq("clinic_id", numero.clinicId)
+    .eq("id", numero.accountId);
 }
 
 // O mesmo texto aparece em dois momentos (a tela o mantem do QR ate depois
@@ -236,6 +473,7 @@ async function parear(
     }
     log.warn("whatsapp_webhook_nao_configurado", {
       clinic_id: ref.clinicId,
+      whatsapp_account_id: ref.accountId ?? null,
       http_status: error instanceof UazapiHttpError ? error.status : null,
     });
     avisoDoWebhook = AVISO_WEBHOOK;
@@ -257,9 +495,100 @@ async function parear(
   }
 }
 
-async function persistStatus(
-  admin: ReturnType<typeof createAdminClient>,
-  clinicId: string,
+/** O que a trava do celular precisa para conferir e, se for o caso, desligar. */
+type Pareamento = {
+  /** o numero como estava no banco antes desta consulta ao provedor */
+  anterior: { connection_status: string; display_phone: string | null };
+  provider: WhatsAppProvider;
+  ref: InstanceRef;
+};
+
+/** A conexao nao foi gravada como veio: o que a tela mostra e por que. */
+type Recusa = { status: ConnectState["status"]; mensagem: string };
+
+/**
+ * Trava contra o MESMO celular em duas instancias (achado 10 do docs/07).
+ *
+ * Roda no pareamento NOVO que chega "conectado" e procura o mesmo celular
+ * (chave canonica de telefone) entre os numeros ativos e conectados de
+ * QUALQUER clinica, por service role. Achou: desliga a instancia nova antes
+ * de gravar "conectado", para ela nao receber a conversa de ninguem.
+ *
+ * Leitura que falha nao deixa passar nem derruba: a conexao nao e gravada e
+ * a tela continua em "conectando", e a proxima consulta confere de novo.
+ */
+async function recusarCelularDuplicado(
+  admin: AdminClient,
+  numero: NumeroAlvo,
+  status: InstanceStatus,
+  pareamento: Pareamento,
+): Promise<Recusa | null> {
+  // O simulador devolve o MESMO numero ficticio para toda clinica: nao ha
+  // celular de verdade para proteger, e a trava so atrapalharia a
+  // demonstracao e o desenvolvimento.
+  if (pareamento.provider.name === "fake") {
+    return null;
+  }
+  if (!pareamentoNovo(pareamento.anterior, status.displayPhone)) {
+    return null;
+  }
+  // Numero do simulador fica de fora pelo mesmo motivo: o celular dele e
+  // ficticio (as clinicas descartaveis da suite e2e vivem no mesmo banco).
+  const { data, error } = await admin
+    .from("whatsapp_account")
+    .select("id, clinic_id, nome, display_phone")
+    .is("removido_em", null)
+    .eq("connection_status", "conectado")
+    .neq("provider", "fake")
+    .not("display_phone", "is", null)
+    .neq("id", numero.accountId);
+  if (error) {
+    log.warn("whatsapp_trava_de_celular_sem_leitura", {
+      clinic_id: numero.clinicId,
+      whatsapp_account_id: numero.accountId,
+      error_code: error.code,
+    });
+    return {
+      status: "conectando",
+      mensagem:
+        "Não foi possível confirmar esta conexão agora. O sistema confere de novo em instantes.",
+    };
+  }
+  const duplicado = acharCelularDuplicado(
+    {
+      accountId: numero.accountId,
+      clinicId: numero.clinicId,
+      displayPhone: status.displayPhone,
+    },
+    (data ?? []) as NumeroConectado[],
+  );
+  if (!duplicado) {
+    return null;
+  }
+
+  try {
+    await pareamento.provider.disconnect(pareamento.ref);
+  } catch {
+    // Sem alcance ao servidor, o estado local vira desconectado mesmo assim.
+  }
+  await gravarStatus(admin, numero, { status: "desconectado" });
+  log.warn("whatsapp_celular_em_outro_numero", {
+    clinic_id: numero.clinicId,
+    whatsapp_account_id: numero.accountId,
+    provider: pareamento.provider.name,
+    // So ONDE esta o outro: nada sobre a outra clinica vai para o log.
+    status: duplicado.mesmaClinica ? "mesma_clinica" : "outra_clinica",
+  });
+  return {
+    status: "desconectado",
+    mensagem: mensagemDeCelularDuplicado(duplicado),
+  };
+}
+
+/** Grava o que o provedor disse sobre o numero, sem conferir nada. */
+async function gravarStatus(
+  admin: AdminClient,
+  numero: NumeroAlvo,
   status: InstanceStatus,
 ): Promise<void> {
   // TRANSICAO primeiro, com o .neq do webhook: os carimbos connected_at e
@@ -277,7 +606,8 @@ async function persistStatus(
         ? { disconnected_at: new Date().toISOString() }
         : {}),
     })
-    .eq("clinic_id", clinicId)
+    .eq("clinic_id", numero.clinicId)
+    .eq("id", numero.accountId)
     .neq("connection_status", status.status);
 
   // Metadados sempre, mudanca de status ou nao.
@@ -288,7 +618,8 @@ async function persistStatus(
         ...(status.displayPhone ? { display_phone: status.displayPhone } : {}),
         ...(status.instanceId ? { instance_id: status.instanceId } : {}),
       })
-      .eq("clinic_id", clinicId);
+      .eq("clinic_id", numero.clinicId)
+      .eq("id", numero.accountId);
   }
 
   await admin
@@ -297,7 +628,34 @@ async function persistStatus(
       qr_code: status.qrCode ?? null,
       ...(status.instanceToken ? { instance_token: status.instanceToken } : {}),
     })
-    .eq("clinic_id", clinicId);
+    .eq("clinic_id", numero.clinicId)
+    .eq("account_id", numero.accountId);
+}
+
+/**
+ * Grava o status do numero. Com `pareamento`, confere antes a trava do
+ * celular: devolve a recusa quando a conexao nova nao pode valer (e ai o
+ * "conectado" nao e gravado).
+ */
+async function persistStatus(
+  admin: AdminClient,
+  numero: NumeroAlvo,
+  status: InstanceStatus,
+  pareamento?: Pareamento,
+): Promise<Recusa | null> {
+  if (pareamento && status.status === "conectado") {
+    const recusa = await recusarCelularDuplicado(
+      admin,
+      numero,
+      status,
+      pareamento,
+    );
+    if (recusa) {
+      return recusa;
+    }
+  }
+  await gravarStatus(admin, numero, status);
+  return null;
 }
 
 /**
@@ -317,16 +675,45 @@ async function publicOrigin(): Promise<string> {
   );
 }
 
-function toState(status: InstanceStatus, phone: string | null): ConnectState {
+function toState(
+  status: InstanceStatus,
+  account: Pick<AccountRow, "id" | "display_phone">,
+): ConnectState {
   return {
     status: status.status,
     qrCode: status.qrCode ?? null,
-    displayPhone: status.displayPhone ?? phone,
+    displayPhone: status.displayPhone ?? account.display_phone,
+    accountId: account.id,
+  };
+}
+
+/** Estado de falha antes de haver numero carregado (guard, id, leitura). */
+function falhaSemNumero(error: string): ConnectState {
+  return {
+    status: "desconectado",
+    qrCode: null,
+    displayPhone: null,
+    error,
+  };
+}
+
+/** A instancia do numero, como o provedor a enxerga. */
+function refDoNumero(
+  clinicId: string,
+  account: AccountRow,
+  secret: Pick<SecretRow, "instance_token">,
+): InstanceRef {
+  return {
+    clinicId,
+    accountId: account.id,
+    serverUrl: account.server_url,
+    instanceToken: secret.instance_token,
+    instanceId: account.instance_id,
   };
 }
 
 const TEXTO_INSTANCIA_PERDIDA =
-  "O servidor do WhatsApp não reconhece mais a conexão desta clínica. Clique em Conectar WhatsApp para refazer a conexão.";
+  "O servidor do WhatsApp não reconhece mais a conexão deste número. Clique em Conectar WhatsApp para refazer a conexão.";
 
 function mensagemDeErro(error: unknown): string {
   if (error instanceof CanalNaoConfiguradoError) {
@@ -361,32 +748,34 @@ function mensagemDeErro(error: unknown): string {
   return "Não foi possível falar com o servidor do WhatsApp. Tente de novo em instantes.";
 }
 
-export async function connectWhatsAppAction(): Promise<ConnectState> {
+/**
+ * Conecta (pareia) um numero. `accountId` nulo: o principal da clinica, e
+ * sem numero nenhum ele nasce aqui; o id dele volta em `accountId`.
+ */
+export async function connectWhatsAppAction(
+  accountId: string | null = null,
+): Promise<ConnectState> {
   const guard = await requireManageContext();
   if ("error" in guard) {
-    return {
-      status: "desconectado",
-      qrCode: null,
-      displayPhone: null,
-      error: guard.error,
-    };
+    return falhaSemNumero(guard.error);
   }
-  const carregada = await loadAccount(guard.clinicId);
+  const id = idDoNumeroOuNulo.safeParse(accountId);
+  if (!id.success) {
+    return falhaSemNumero(TEXTO_NUMERO_INVALIDO);
+  }
+  const carregada = await loadAccount(guard.clinicId, id.data);
   if ("erro" in carregada) {
-    return {
-      status: "desconectado",
-      qrCode: null,
-      displayPhone: null,
-      error: carregada.erro,
-    };
+    return falhaSemNumero(carregada.erro);
   }
   const { admin, account, secret } = carregada;
-  let ref: InstanceRef = {
+  const numero: NumeroAlvo = {
     clinicId: guard.clinicId,
-    serverUrl: account.server_url,
-    instanceToken: secret.instance_token,
-    instanceId: account.instance_id,
+    accountId: account.id,
   };
+  let ref = refDoNumero(guard.clinicId, account, secret);
+  // Calculado ANTES de qualquer descarte: o principal que ja tinha instancia
+  // mantem o nome dela mesmo quando ela e recriada.
+  const nomeDaInstanciaNova = nomeDaNovaInstancia(guard, account);
   // O que a tela mostra se algo falhar no caminho. Vira desconectado quando a
   // instancia guardada se prova morta, mesmo que a recriacao falhe depois.
   let statusConhecido: ConnectState["status"] = account.connection_status;
@@ -404,10 +793,16 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
     // criada recusando o proprio token nao se resolve criando outra.
     const tinhaInstanciaGuardada = Boolean(ref.instanceToken);
 
-    // 1. A clinica ainda nao tem instancia? Cria uma, com o token
+    // 1. O numero ainda nao tem instancia? Cria uma, com o token
     // administrativo, e guarda o token proprio dela.
     if (!ref.instanceToken && uazapi) {
-      ref = await criarInstancia(admin, guard, uazapi, ref);
+      ref = await criarInstancia(
+        admin,
+        numero,
+        uazapi,
+        ref,
+        nomeDaInstanciaNova,
+      );
     }
 
     const origin = await publicOrigin();
@@ -419,7 +814,10 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
       avisoDeEndereco =
         "O endereço público do sistema não está configurado, então as respostas dos pacientes não vão chegar. Configure PUBLIC_APP_URL antes de usar com paciente de verdade.";
     }
-    const urlDoWebhook = `${origin}/api/webhooks/whatsapp?clinic=${guard.clinicId}&secret=${secret.webhook_secret}`;
+    // URL NOVA (docs/07, Compatibilidade): o numero vem dito, e o segredo e
+    // o dele. A URL antiga (?clinic=&secret=) continua valendo no webhook
+    // para as instancias que ja estao no ar; esta so e gravada ao conectar.
+    const urlDoWebhook = `${origin}/api/webhooks/whatsapp?clinic=${guard.clinicId}&account=${account.id}&secret=${secret.webhook_secret}`;
 
     // 2 e 3. Webhook e pareamento. Se o servidor nao reconhece mais a
     // instancia guardada (apagada ou recriada no painel do servidor
@@ -434,22 +832,41 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
       }
       log.warn("whatsapp_instancia_recriada", {
         clinic_id: guard.clinicId,
+        whatsapp_account_id: account.id,
         http_status: error instanceof UazapiHttpError ? error.status : null,
       });
-      await descartarInstancia(admin, guard.clinicId);
-      await persistStatus(admin, guard.clinicId, { status: "desconectado" });
+      await descartarInstancia(admin, numero);
+      await persistStatus(admin, numero, { status: "desconectado" });
       statusConhecido = "desconectado";
-      ref = await criarInstancia(admin, guard, uazapi, {
-        ...ref,
-        instanceToken: null,
-        instanceId: null,
-      });
+      ref = await criarInstancia(
+        admin,
+        numero,
+        uazapi,
+        { ...ref, instanceToken: null, instanceId: null },
+        nomeDaInstanciaNova,
+      );
       pareamento = await parear(provider, ref, urlDoWebhook);
     }
 
-    await persistStatus(admin, guard.clinicId, pareamento.status);
+    const recusa = await persistStatus(admin, numero, pareamento.status, {
+      anterior: {
+        connection_status: statusConhecido,
+        display_phone: account.display_phone,
+      },
+      provider,
+      ref,
+    });
     revalidarTelasDeConexao();
-    const estado = toState(pareamento.status, account.display_phone);
+    if (recusa) {
+      return {
+        status: recusa.status,
+        qrCode: null,
+        displayPhone: account.display_phone,
+        error: recusa.mensagem,
+        accountId: account.id,
+      };
+    }
+    const estado = toState(pareamento.status, account);
     const aviso = avisoDeEndereco ?? pareamento.avisoDoWebhook;
     return aviso ? { ...estado, aviso } : estado;
   } catch (error) {
@@ -461,102 +878,187 @@ export async function connectWhatsAppAction(): Promise<ConnectState> {
       qrCode: null,
       displayPhone: account.display_phone,
       error: mensagemDeErro(error),
+      accountId: account.id,
     };
   }
 }
 
-// Checagem de status para QUALQUER membro ativo (o botao "Verificar
-// conexao" da faixa vermelha): consulta o provedor e grava, mas NAO devolve
-// QR nem segredo, so o status. O pollWhatsAppStatusAction continua
-// admin/gestor porque carrega o QR do pareamento.
-export async function checarConexaoAction(): Promise<{
+/** Um numero conferido pela checagem de conexao. */
+export type NumeroVerificado = {
+  id: string;
+  nome: string;
+  principal: boolean;
+  connection_status: ConnectState["status"];
+};
+
+export type ChecagemDeConexao = {
+  /**
+   * Status do PRINCIPAL (nulo: clinica sem numero). E a forma de antes, que
+   * valia para o unico numero; quem le a lista usa `numeros`.
+   */
   status: string | null;
+  /** Todos os numeros ativos da clinica, cada um com o status conferido. */
+  numeros: NumeroVerificado[];
   error?: string;
-}> {
+};
+
+/** Consulta o provedor por UM numero e grava o que ele disser. */
+async function conferirNumero(
+  admin: AdminClient,
+  clinicId: string,
+  account: AccountRow,
+  secret: Pick<SecretRow, "instance_token"> | null,
+): Promise<ConnectState["status"]> {
+  const numero: NumeroAlvo = { clinicId, accountId: account.id };
+  try {
+    const provider = getWhatsAppProvider(account.provider);
+    const ref = refDoNumero(clinicId, account, {
+      instance_token: secret?.instance_token ?? null,
+    });
+    const status = await provider.getStatus(ref);
+    const recusa = await persistStatus(admin, numero, status, {
+      anterior: account,
+      provider,
+      ref,
+    });
+    return recusa ? recusa.status : status.status;
+  } catch (error) {
+    // Instancia que o servidor nao reconhece mais E desconexao, e das que so
+    // se resolvem conectando de novo: grava, para a faixa vermelha aparecer.
+    if (instanciaInvalida(error)) {
+      await persistStatus(admin, numero, { status: "desconectado" });
+      return "desconectado";
+    }
+    // Provedor fora do ar: devolve o que o banco sabe, sem gravar nada.
+    return account.connection_status;
+  }
+}
+
+// Checagem de status para QUALQUER membro ativo (o botao "Verificar
+// conexao" da faixa vermelha): consulta o provedor por TODOS os numeros
+// ativos da clinica e grava, mas NAO devolve QR nem segredo, so o status de
+// cada um. O pollWhatsAppStatusAction continua admin/gestor porque carrega o
+// QR do pareamento.
+export async function checarConexaoAction(): Promise<ChecagemDeConexao> {
   const context = await getSessionContext();
   if (!context?.active) {
-    return { status: null, error: "Sessão expirada. Entre de novo." };
+    return {
+      status: null,
+      numeros: [],
+      error: "Sessão expirada. Entre de novo.",
+    };
   }
   const clinicId = context.active.clinicId;
   const admin = createAdminClient();
   // Leitura SECA (sem os upserts do loadAccount): membro conferindo status
   // nao pode criar conta de WhatsApp do nada.
-  const { data: account } = await admin
-    .from("whatsapp_account")
-    .select("provider, server_url, instance_id, connection_status")
-    .eq("clinic_id", clinicId)
-    .maybeSingle();
-  if (!account) {
-    return { status: null };
+  const numeros = await listarNumerosAtivos(admin, clinicId);
+  if (numeros === null) {
+    return {
+      status: null,
+      numeros: [],
+      error: "Não foi possível verificar agora. Tente de novo.",
+    };
   }
-  const { data: secret } = await admin
+  if (numeros.length === 0) {
+    return { status: null, numeros: [] };
+  }
+  const { data: segredos } = await admin
     .from("whatsapp_account_secret")
-    .select("instance_token")
+    .select("account_id, instance_token")
     .eq("clinic_id", clinicId)
-    .maybeSingle();
-  try {
-    const provider = getWhatsAppProvider(account.provider);
-    const status = await provider.getStatus({
-      clinicId,
-      serverUrl: account.server_url,
-      instanceToken: secret?.instance_token ?? null,
-      instanceId: account.instance_id,
-    });
-    await persistStatus(admin, clinicId, status);
-    return { status: status.status };
-  } catch (error) {
-    // Instancia que o servidor nao reconhece mais E desconexao, e das que so
-    // se resolvem conectando de novo: grava, para a faixa vermelha aparecer.
-    if (instanciaInvalida(error)) {
-      await persistStatus(admin, clinicId, { status: "desconectado" });
-      return { status: "desconectado" };
-    }
-    // Provedor fora do ar: devolve o que o banco sabe, sem gravar nada.
-    return { status: account.connection_status as string };
-  }
+    .in(
+      "account_id",
+      numeros.map((numero) => numero.id),
+    );
+  const tokenPorNumero = new Map(
+    (
+      (segredos ?? []) as {
+        account_id: string;
+        instance_token: string | null;
+      }[]
+    ).map((segredo) => [segredo.account_id, segredo] as const),
+  );
+
+  const verificados = await Promise.all(
+    numeros.map(async (numero): Promise<NumeroVerificado> => ({
+      id: numero.id,
+      nome: numero.nome,
+      principal: numero.principal,
+      connection_status: await conferirNumero(
+        admin,
+        clinicId,
+        numero,
+        tokenPorNumero.get(numero.id) ?? null,
+      ),
+    })),
+  );
+  const principal =
+    verificados.find((numero) => numero.principal) ?? verificados[0] ?? null;
+  return {
+    status: principal?.connection_status ?? null,
+    numeros: verificados,
+  };
 }
 
-export async function pollWhatsAppStatusAction(): Promise<ConnectState> {
+/**
+ * Status do pareamento em andamento (a tela consulta a cada 2,5 segundos).
+ * `accountId` nulo: o principal, como na conexao.
+ */
+export async function pollWhatsAppStatusAction(
+  accountId: string | null = null,
+): Promise<ConnectState> {
   const guard = await requireManageContext();
   if ("error" in guard) {
-    return {
-      status: "desconectado",
-      qrCode: null,
-      displayPhone: null,
-      error: guard.error,
-    };
+    return falhaSemNumero(guard.error);
   }
-  const carregada = await loadAccount(guard.clinicId);
+  const id = idDoNumeroOuNulo.safeParse(accountId);
+  if (!id.success) {
+    return falhaSemNumero(TEXTO_NUMERO_INVALIDO);
+  }
+  const carregada = await loadAccount(guard.clinicId, id.data);
   if ("erro" in carregada) {
-    return {
-      status: "desconectado",
-      qrCode: null,
-      displayPhone: null,
-      error: carregada.erro,
-    };
+    return falhaSemNumero(carregada.erro);
   }
   const { admin, account, secret } = carregada;
+  const numero: NumeroAlvo = {
+    clinicId: guard.clinicId,
+    accountId: account.id,
+  };
   try {
     const provider = getWhatsAppProvider(account.provider);
-    const status = await provider.getStatus({
-      clinicId: guard.clinicId,
-      serverUrl: account.server_url,
-      instanceToken: secret.instance_token,
-      instanceId: account.instance_id,
+    const ref = refDoNumero(guard.clinicId, account, secret);
+    const status = await provider.getStatus(ref);
+    const recusa = await persistStatus(admin, numero, status, {
+      anterior: account,
+      provider,
+      ref,
     });
-    await persistStatus(admin, guard.clinicId, status);
-    return toState(status, account.display_phone);
+    if (recusa) {
+      if (recusa.status === "desconectado") {
+        revalidarTelasDeConexao();
+      }
+      return {
+        status: recusa.status,
+        qrCode: null,
+        displayPhone: account.display_phone,
+        error: recusa.mensagem,
+        accountId: account.id,
+      };
+    }
+    return toState(status, account);
   } catch (error) {
     if (instanciaInvalida(error)) {
       // Antes isto virava "Desconectado" mudo, e clicar de novo dava o mesmo.
       // Agora a tela diz o que houve, e Conectar recria a instancia.
-      await persistStatus(admin, guard.clinicId, { status: "desconectado" });
+      await persistStatus(admin, numero, { status: "desconectado" });
       revalidarTelasDeConexao();
       return {
         status: "desconectado",
         qrCode: null,
         displayPhone: account.display_phone,
         error: TEXTO_INSTANCIA_PERDIDA,
+        accountId: account.id,
       };
     }
     if (
@@ -569,6 +1071,7 @@ export async function pollWhatsAppStatusAction(): Promise<ConnectState> {
         qrCode: null,
         displayPhone: account.display_phone,
         error: mensagemDeErro(error),
+        accountId: account.id,
       };
     }
     // Falha passageira de rede: o laco de 2,5 segundos tenta de novo, e um
@@ -577,46 +1080,349 @@ export async function pollWhatsAppStatusAction(): Promise<ConnectState> {
       status: account.connection_status,
       qrCode: null,
       displayPhone: account.display_phone,
+      accountId: account.id,
     };
   }
 }
 
-export async function disconnectWhatsAppAction(): Promise<ConnectState> {
+/** Desconecta um numero. Precisa do id: nao ha o que desconectar sem ele. */
+export async function disconnectWhatsAppAction(
+  accountId: string,
+): Promise<ConnectState> {
   const guard = await requireManageContext();
   if ("error" in guard) {
-    return {
-      status: "desconectado",
-      qrCode: null,
-      displayPhone: null,
-      error: guard.error,
-    };
+    return falhaSemNumero(guard.error);
   }
-  const carregada = await loadAccount(guard.clinicId);
+  const id = idDoNumero.safeParse(accountId);
+  if (!id.success) {
+    return falhaSemNumero(TEXTO_NUMERO_INVALIDO);
+  }
+  const carregada = await loadAccount(guard.clinicId, id.data);
   if ("erro" in carregada) {
-    return {
-      status: "desconectado",
-      qrCode: null,
-      displayPhone: null,
-      error: carregada.erro,
-    };
+    return falhaSemNumero(carregada.erro);
   }
   const { admin, account, secret } = carregada;
   try {
     const provider = getWhatsAppProvider(account.provider);
-    await provider.disconnect({
-      clinicId: guard.clinicId,
-      serverUrl: account.server_url,
-      instanceToken: secret.instance_token,
-      instanceId: account.instance_id,
-    });
+    await provider.disconnect(refDoNumero(guard.clinicId, account, secret));
   } catch {
     // Mesmo sem alcance ao servidor, o estado local vira desconectado.
   }
-  await persistStatus(admin, guard.clinicId, { status: "desconectado" });
+  await persistStatus(
+    admin,
+    { clinicId: guard.clinicId, accountId: account.id },
+    { status: "desconectado" },
+  );
   revalidarTelasDeConexao();
   return {
     status: "desconectado",
     qrCode: null,
     displayPhone: account.display_phone,
+    accountId: account.id,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Cadastro dos numeros (docs/07, Fase 2). A tela de varios numeros e da
+// Fase 4; ate la, a de Configuracoes mostra so o principal e estas acoes
+// existem para ela e para os testes.
+// ---------------------------------------------------------------------------
+
+/**
+ * Adiciona um numero a clinica, ainda sem conexao (o pareamento e o
+ * "Conectar" do cartao dele). Nasce com o provedor do ambiente; sem principal
+ * ativo, o gatilho o torna principal.
+ */
+export async function adicionarNumeroAction(
+  input: unknown,
+): Promise<NumeroActionResult> {
+  const guard = await requireManageContext();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = numeroNovoSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: TEXTO_NOME_INVALIDO };
+  }
+  const provedor = provedorDoAmbiente();
+  if (!provedor) {
+    return { ok: false, error: MENSAGEM_CANAL_NAO_CONFIGURADO };
+  }
+
+  const admin = createAdminClient();
+  const { data: novo, error } = await admin
+    .from("whatsapp_account")
+    .insert({
+      clinic_id: guard.clinicId,
+      provider: provedor,
+      nome: parsed.data.nome,
+      unit_id: parsed.data.unitId ?? null,
+    })
+    .select("id")
+    .single();
+  if (error || !novo) {
+    return { ok: false, error: mensagemDeCadastro(error) };
+  }
+  const accountId = novo.id as string;
+
+  // O segredo ja nasce com o numero. Se falhar aqui, a primeira conexao cria
+  // (loadAccount): o numero nao fica inutilizavel.
+  const { error: erroDoSegredo } = await admin
+    .from("whatsapp_account_secret")
+    .insert({ clinic_id: guard.clinicId, account_id: accountId });
+  if (erroDoSegredo) {
+    log.warn("whatsapp_segredo_nao_criado", {
+      clinic_id: guard.clinicId,
+      whatsapp_account_id: accountId,
+      error_code: erroDoSegredo.code,
+    });
+  }
+
+  await registrarNaTrilha(
+    guard,
+    "adicionou_numero_whatsapp",
+    "whatsapp_account",
+    accountId,
+  );
+  revalidarTelasDeConexao();
+  return { ok: true, accountId };
+}
+
+/** Renomeia o numero e troca (ou tira) a unidade dele. */
+export async function atualizarNumeroAction(
+  input: unknown,
+): Promise<NumeroActionResult> {
+  const guard = await requireManageContext();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = numeroEditadoSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: TEXTO_NOME_INVALIDO };
+  }
+  const { accountId, nome, unitId } = parsed.data;
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("whatsapp_account")
+    .update({ nome, ...(unitId !== undefined ? { unit_id: unitId } : {}) })
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", accountId)
+    .is("removido_em", null)
+    .select("id");
+  if (error) {
+    return { ok: false, error: mensagemDeCadastro(error) };
+  }
+  if (!data || data.length === 0) {
+    return { ok: false, error: TEXTO_NUMERO_NAO_ENCONTRADO };
+  }
+
+  await registrarNaTrilha(
+    guard,
+    "atualizou_numero_whatsapp",
+    "whatsapp_account",
+    accountId,
+  );
+  revalidarTelasDeConexao();
+  revalidatePath("/atendimento");
+  return { ok: true, accountId };
+}
+
+/**
+ * Torna o numero o principal da clinica: a entrada sem numero e o envio para
+ * quem nunca escreveu saem por ele. A troca e atomica na RPC (trava por
+ * clinica, um principal ativo por vez).
+ */
+export async function definirNumeroPrincipalAction(
+  accountId: unknown,
+): Promise<NumeroActionResult> {
+  const guard = await requireManageContext();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const id = idDoNumero.safeParse(accountId);
+  if (!id.success) {
+    return { ok: false, error: TEXTO_NUMERO_INVALIDO };
+  }
+
+  const admin = createAdminClient();
+  const { error } = await admin.rpc("definir_numero_principal", {
+    p_clinic_id: guard.clinicId,
+    p_account_id: id.data,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "P0002"
+          ? TEXTO_NUMERO_NAO_ENCONTRADO
+          : error.code === "23514"
+            ? "Este número foi removido da clínica e não pode ser o principal."
+            : "Não foi possível tornar este número o principal. Tente de novo.",
+    };
+  }
+
+  await registrarNaTrilha(
+    guard,
+    "definiu_numero_principal",
+    "whatsapp_account",
+    id.data,
+  );
+  revalidarTelasDeConexao();
+  revalidatePath("/atendimento");
+  return { ok: true, accountId: id.data };
+}
+
+/**
+ * Remove o numero da clinica (D3 e D8): so o administrador. Encerra as
+ * conversas abertas dele (com evento de sistema), redistribui os envios
+ * automaticos pendentes e gira o segredo do webhook, tudo na RPC
+ * remover_numero; o historico fica.
+ *
+ * Recusa ANTES de tocar na instancia: o principal enquanto houver outro
+ * numero ativo (a clinica escolhe o novo principal antes) e o numero fixo
+ * das mensagens automaticas (a clinica escolhe outro em Automacoes antes).
+ * Depois da RPC, desconecta e apaga a instancia no servidor compartilhado;
+ * falha ali nao desfaz a remocao, so fica registrada para o suporte limpar.
+ */
+export async function removerNumeroAction(
+  accountId: unknown,
+): Promise<NumeroActionResult> {
+  const guard = await requireAdminContext();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const id = idDoNumero.safeParse(accountId);
+  if (!id.success) {
+    return { ok: false, error: TEXTO_NUMERO_INVALIDO };
+  }
+
+  const admin = createAdminClient();
+  const { data: alvo, error: erroDoAlvo } = await admin
+    .from("whatsapp_account")
+    .select(`${COLUNAS_DA_CONTA}, removido_em`)
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", id.data)
+    .maybeSingle();
+  if (erroDoAlvo) {
+    return {
+      ok: false,
+      error: "Não foi possível remover este número. Tente de novo.",
+    };
+  }
+  if (!alvo) {
+    return { ok: false, error: TEXTO_NUMERO_NAO_ENCONTRADO };
+  }
+  const conta = alvo as AccountRow & { removido_em: string | null };
+  // Segundo clique, ou outra aba: ja esta removido, nada a fazer.
+  if (conta.removido_em) {
+    return { ok: true, accountId: conta.id };
+  }
+
+  const numeros = await listarNumerosAtivos(admin, guard.clinicId);
+  if (numeros === null) {
+    return { ok: false, error: TEXTO_FALHA_DE_LEITURA };
+  }
+  if (conta.principal && numeros.some((numero) => numero.id !== conta.id)) {
+    return {
+      ok: false,
+      error: "Escolha outro número como principal antes de remover este.",
+    };
+  }
+  const { data: politica } = await admin
+    .from("whatsapp_envio_automatico")
+    .select("modo, conta_fixa_id")
+    .eq("clinic_id", guard.clinicId)
+    .maybeSingle();
+  if (politica?.modo === "fixo" && politica.conta_fixa_id === conta.id) {
+    return {
+      ok: false,
+      error:
+        "As mensagens automáticas saem sempre por este número. Em Automações, escolha outro número antes de remover este.",
+    };
+  }
+
+  // O token vem ANTES da RPC, que o apaga junto com o segredo do webhook.
+  const { data: segredo } = await admin
+    .from("whatsapp_account_secret")
+    .select("instance_token")
+    .eq("clinic_id", guard.clinicId)
+    .eq("account_id", conta.id)
+    .maybeSingle();
+
+  const { error } = await admin.rpc("remover_numero", {
+    p_clinic_id: guard.clinicId,
+    p_account_id: conta.id,
+    p_removido_por: guard.userId,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "55000"
+          ? "Escolha outro número como principal antes de remover este."
+          : error.code === "P0002"
+            ? TEXTO_NUMERO_NAO_ENCONTRADO
+            : "Não foi possível remover este número. Tente de novo.",
+    };
+  }
+
+  await desligarInstanciaRemovida(guard.clinicId, conta, {
+    instance_token: (segredo?.instance_token as string | null) ?? null,
+  });
+
+  await registrarNaTrilha(
+    guard,
+    "removeu_numero_whatsapp",
+    "whatsapp_account",
+    conta.id,
+  );
+  revalidarTelasDeConexao();
+  revalidatePath("/atendimento");
+  revalidatePath("/automacoes");
+  return { ok: true, accountId: conta.id };
+}
+
+/**
+ * Desconecta e apaga a instancia do numero removido. O servidor uazapi e
+ * compartilhado e tem teto de instancias: numero removido nao pode deixar
+ * instancia orfa ocupando vaga. Nunca lanca e nunca trava a remocao.
+ */
+async function desligarInstanciaRemovida(
+  clinicId: string,
+  conta: AccountRow,
+  segredo: Pick<SecretRow, "instance_token">,
+): Promise<void> {
+  const campos = {
+    clinic_id: clinicId,
+    whatsapp_account_id: conta.id,
+    instance_id: conta.instance_id,
+    provider: conta.provider,
+  };
+  let provider: WhatsAppProvider;
+  try {
+    provider = getWhatsAppProvider(conta.provider);
+  } catch {
+    log.warn("whatsapp_instancia_nao_excluida", {
+      ...campos,
+      error_code: "provedor_indisponivel",
+    });
+    return;
+  }
+  const ref = refDoNumero(clinicId, conta, segredo);
+  try {
+    await provider.disconnect(ref);
+  } catch {
+    // Desconectar e cortesia: apagar a instancia, abaixo, tambem desliga.
+  }
+  if (!(provider instanceof UazapiProvider)) {
+    return;
+  }
+  const exclusao = await provider.excluirInstancia(ref);
+  if (!exclusao.ok) {
+    log.warn("whatsapp_instancia_nao_excluida", {
+      ...campos,
+      error_code: exclusao.errorCode,
+    });
+  }
 }

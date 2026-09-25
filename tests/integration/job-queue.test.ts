@@ -9,6 +9,7 @@ import {
   fakeSentMessages,
   resetFakeProvider,
 } from "@/lib/integrations/whatsapp/fake";
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient, anonClient } from "../rls/stack";
 
 // Worker da job_queue contra o banco REAL (Etapa B da auditoria de escala).
@@ -19,6 +20,8 @@ import { adminClient, anonClient } from "../rls/stack";
 const admin = adminClient();
 const sufixo = Date.now().toString(36);
 const clinicasCriadas: string[] = [];
+/** O numero de WhatsApp (whatsapp_account.id) de cada clinica criada aqui. */
+const numeroDaClinica = new Map<string, string>();
 
 async function criarClinica(nome: string): Promise<string> {
   const { data } = await admin
@@ -29,14 +32,8 @@ async function criarClinica(nome: string): Promise<string> {
     .throwOnError();
   const clinicId = data!.id as string;
   clinicasCriadas.push(clinicId);
-  await admin
-    .from("whatsapp_account")
-    .insert({
-      clinic_id: clinicId,
-      provider: "fake",
-      connection_status: "conectado",
-    })
-    .throwOnError();
+  const numero = await criarNumeroDeTeste(admin, clinicId);
+  numeroDaClinica.set(clinicId, numero.id);
   return clinicId;
 }
 
@@ -187,7 +184,7 @@ describe("disparo ativo (confirmação de atendimento)", () => {
     await admin
       .from("whatsapp_account")
       .update({ connection_status: "desconectado" })
-      .eq("clinic_id", clinicId);
+      .eq("id", numeroDaClinica.get(clinicId)!);
     const contactId = await criarContato(clinicId, "+5584960000003", {
       consentimento: "ativo",
     });

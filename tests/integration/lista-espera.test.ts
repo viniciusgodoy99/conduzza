@@ -436,13 +436,26 @@ describe("lista de espera de ponta a ponta, contra o banco real", () => {
     expect(oferta!.offered_to).not.toContain(semConsent);
     expect(oferta!.offered_to).toEqual([vip, comum1]);
 
-    // As mensagens da onda nasceram junto (uma por destinatario).
+    // As mensagens da onda nasceram junto (uma por destinatario), cada uma
+    // com o numero conferido conectado na montagem da onda (varios numeros
+    // por clinica, docs/07: o numero viaja no JSON da oferta).
     const { data: envios } = await admin
       .from("job_queue")
-      .select("id")
+      .select("id, whatsapp_account_id")
       .eq("clinic_id", cenario.clinicId)
       .eq("kind", "enviar_mensagem_ativa");
     expect(envios).toHaveLength(2);
+    const { data: numero } = await admin
+      .from("whatsapp_account")
+      .select("id")
+      .eq("clinic_id", cenario.clinicId)
+      .eq("principal", true)
+      .is("removido_em", null)
+      .single()
+      .throwOnError();
+    for (const envio of envios ?? []) {
+      expect(envio.whatsapp_account_id).toBe(numero!.id);
+    }
   });
 
   it("ACEITE: o primeiro a responder leva; o segundo recebe recusa educada", async () => {

@@ -22,6 +22,7 @@ const PATHS = {
   instanceConnect: "/instance/connect", // token da instancia
   instanceStatus: "/instance/status", // GET, token da instancia
   instanceDisconnect: "/instance/disconnect",
+  instanceDelete: "/instance", // DELETE, token da instancia
   webhook: "/webhook",
   sendText: "/send/text",
   sendMenu: "/send/menu",
@@ -137,7 +138,7 @@ export class UazapiProvider implements WhatsAppProvider {
     ref: InstanceRef,
     path: string,
     options: {
-      method?: "GET" | "POST";
+      method?: "GET" | "POST" | "DELETE";
       payload?: Record<string, unknown>;
       tokenKind?: "instance" | "admin";
       /**
@@ -189,7 +190,8 @@ export class UazapiProvider implements WhatsAppProvider {
         const response = await this.fetchFn(`${this.baseUrl(ref)}${path}`, {
           method,
           headers,
-          body: method === "GET" ? undefined : JSON.stringify(payload ?? {}),
+          // So o POST leva corpo: GET e DELETE da especificacao nao tem.
+          body: method === "POST" ? JSON.stringify(payload ?? {}) : undefined,
           signal: controller.signal,
         });
         if (maxBodyBytes !== undefined) {
@@ -504,7 +506,80 @@ export class UazapiProvider implements WhatsAppProvider {
   async disconnect(ref: InstanceRef): Promise<void> {
     await this.request(ref, PATHS.instanceDisconnect, { payload: {} });
   }
+
+  /**
+   * Apaga a instancia do servidor uazapi (DELETE /instance, com o token dela).
+   *
+   * Existe para a remocao de um numero: o servidor e COMPARTILHADO com outros
+   * produtos e tem teto de instancias, entao numero removido nao pode deixar
+   * instancia orfa ocupando vaga. Desconectar nao basta: a instancia
+   * desconectada continua existindo e contando.
+   *
+   * Nunca lanca. Quem remove o numero segue com a remocao no banco mesmo
+   * quando o servidor nao responde (o numero deixa de existir para a clinica
+   * de qualquer jeito) e so registra o que sobrou para limpar.
+   *
+   * COM retry, como o apagar mensagem: a especificacao diz que repetir durante
+   * a exclusao assincrona e seguro, e desistir na primeira falha de rede
+   * deixaria a instancia orfa.
+   */
+  async excluirInstancia(ref: InstanceRef): Promise<ExclusaoDeInstancia> {
+    // Numero que nunca conectou nao tem instancia no servidor.
+    if (!ref.instanceToken) {
+      return { ok: true, situacao: "sem_instancia" };
+    }
+    try {
+      const { status } = await this.request(ref, PATHS.instanceDelete, {
+        method: "DELETE",
+      });
+      // 202: exclusao agendada; o servidor ja parou de aceitar operacoes nela.
+      if (status === 202) {
+        return { ok: true, situacao: "agendada" };
+      }
+      if (status >= 200 && status < 300) {
+        return { ok: true, situacao: "excluida" };
+      }
+      // 404: alguem ja apagou no painel. O objetivo (nao sobrar instancia)
+      // esta cumprido.
+      if (status === 404) {
+        return { ok: true, situacao: "ja_nao_existia" };
+      }
+      if (status === 401) {
+        // Token recusado: o servidor nao reconhece mais este token, e so ele
+        // autoriza o DELETE. Pode ter sido apagada ou recriada no painel.
+        return {
+          ok: false,
+          errorCode: "instancia_invalida",
+          message:
+            "O servidor do WhatsApp não reconhece mais esta instância. Ela pode precisar de limpeza pelo suporte.",
+        };
+      }
+      return {
+        ok: false,
+        errorCode: `uazapi_${status}`,
+        message: "O servidor do WhatsApp não apagou a instância deste número.",
+      };
+    } catch {
+      return {
+        ok: false,
+        errorCode: "provider_indisponivel",
+        message:
+          "Não conseguimos falar com o servidor do WhatsApp. A instância deste número não foi apagada.",
+      };
+    }
+  }
 }
+
+/**
+ * Resultado de excluirInstancia. Sucesso tambem cobre "nao havia o que
+ * apagar": o que importa para quem remove o numero e nao sobrar instancia.
+ */
+export type ExclusaoDeInstancia =
+  | {
+      ok: true;
+      situacao: "excluida" | "agendada" | "ja_nao_existia" | "sem_instancia";
+    }
+  | { ok: false; errorCode: string; message: string };
 
 /**
  * O trecho `replyid` do corpo, quando ha citacao.
@@ -622,16 +697,25 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Rotulo da instancia no painel do uazapi: `conduzza_` mais o slug da clinica.
+ * Rotulo da instancia no painel do uazapi: `conduzza_` mais o slug da clinica,
+ * e o inicio do id do NUMERO quando ele vem.
  *
  * O servidor uazapi e COMPARTILHADO com outros produtos, entao o prefixo diz
  * de quem e a instancia numa olhada, e o slug (unico por clinica no banco)
- * diz de QUAL clinica. O nome e so rotulo: toda operacao seguinte autentica
- * pelo token da instancia, entao dois nomes iguais nao quebrariam nada, mas
- * o slug unico evita confusao no painel. Clinica sem slug utilizavel cai no
- * inicio do id, que sempre existe.
+ * diz de QUAL clinica. Clinica sem slug utilizavel cai no inicio do id, que
+ * sempre existe.
+ *
+ * O sufixo do numero (`conduzza_<slug>_<8 do accountId>`) existe porque o
+ * nome e guardado em whatsapp_account.instance_id, unico entre os numeros
+ * ativos: dois numeros da mesma clinica com o mesmo nome colidiriam no banco,
+ * mesmo o uazapi aceitando (toda operacao autentica pelo token). Sem
+ * accountId, o nome e o de antes: o principal que ja existe nao e renomeado.
  */
-export function nomeDaInstancia(slug: string, clinicId: string): string {
+export function nomeDaInstancia(
+  slug: string,
+  clinicId: string,
+  accountId?: string | null,
+): string {
   const base = slug
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
@@ -640,5 +724,10 @@ export function nomeDaInstancia(slug: string, clinicId: string): string {
     .replace(/^_+|_+$/g, "")
     .slice(0, 40)
     .replace(/_+$/g, "");
-  return `conduzza_${base.length > 0 ? base : clinicId.slice(0, 8)}`;
+  const nome = `conduzza_${base.length > 0 ? base : clinicId.slice(0, 8)}`;
+  const sufixo = (accountId ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 8);
+  return sufixo.length > 0 ? `${nome}_${sufixo}` : nome;
 }

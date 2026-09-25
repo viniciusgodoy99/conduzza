@@ -1,3 +1,4 @@
+import { caminhoDoWebhook, criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
 // Dados de teste da suite de navegador. Antes a suite dependia do seed de
@@ -12,7 +13,13 @@ export const E2E_PREFIXO = "e2e";
 export type DadosE2E = {
   clinicId: string;
   clinicIdDesconectada: string;
+  /** whatsapp_account.id do numero (principal) da Clinica E2E */
+  whatsappAccountId: string;
   webhookSecret: string;
+  /** Caminho do webhook no formato novo: ?clinic=&account=&secret= */
+  webhookUrl: string;
+  /** Caminho do webhook no formato legado: ?clinic=&secret= */
+  webhookUrlLegada: string;
   emails: {
     admin: string;
     recepcao: string;
@@ -206,35 +213,19 @@ export async function provisionar(): Promise<DadosE2E> {
     ])
     .throwOnError();
 
-  await admin
-    .from("whatsapp_account")
-    .insert([
-      {
-        clinic_id: clinica.id,
-        provider: "fake",
-        connection_status: "conectado",
-        display_phone: "+55 84 90000-0001",
-      },
-      {
-        clinic_id: clinicaDesconectada.id,
-        provider: "fake",
-        connection_status: "desconectado",
-      },
-    ])
-    .throwOnError();
-  const segredos = (
-    await admin
-      .from("whatsapp_account_secret")
-      .insert([
-        { clinic_id: clinica.id },
-        { clinic_id: clinicaDesconectada.id },
-      ])
-      .select("clinic_id, webhook_secret")
-      .throwOnError()
-  ).data as { clinic_id: string; webhook_secret: string }[];
-  const webhookSecret = segredos.find(
-    (linha) => linha.clinic_id === clinica.id,
-  )!.webhook_secret as string;
+  // Um numero por clinica, cada um com o proprio segredo (ligado por
+  // account_id). O webhook da suite usa a URL NOVA, com o numero; a antiga
+  // (so clinica e segredo) continua provada em webhook.spec.ts.
+  const numeroPrincipal = await criarNumeroDeTeste(admin, clinica.id, {
+    connection_status: "conectado",
+    display_phone: "+55 84 90000-0001",
+  });
+  await criarNumeroDeTeste(admin, clinicaDesconectada.id, {
+    connection_status: "desconectado",
+  });
+  const webhookSecret = numeroPrincipal.webhookSecret;
+  const webhookUrl = caminhoDoWebhook(numeroPrincipal);
+  const webhookUrlLegada = caminhoDoWebhook(numeroPrincipal, { legado: true });
 
   const contatos = (
     await admin
@@ -1022,7 +1013,10 @@ export async function provisionar(): Promise<DadosE2E> {
   return {
     clinicId: clinica.id,
     clinicIdDesconectada: clinicaDesconectada.id,
+    whatsappAccountId: numeroPrincipal.id,
     webhookSecret,
+    webhookUrl,
+    webhookUrlLegada,
     emails: {
       admin: email("admin"),
       recepcao: email("recepcao"),

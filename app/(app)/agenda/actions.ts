@@ -37,6 +37,11 @@ import {
   MENSAGEM_TELEFONE_INVALIDO,
   normalizarTelefone,
 } from "@/lib/domain/telefone";
+import {
+  contasDeEnvio,
+  fraseDeNumerosDesconectados,
+  nomesParaATela,
+} from "@/lib/jobs/numero-de-envio";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -453,13 +458,29 @@ async function enfileirarAvisoDeRemarcacao(
 
   // Canal fora do ar: dizer a verdade na hora do clique, como o "Cobrar
   // agora". Enfileirar aqui deixaria a recepcao achando que o paciente soube.
-  const { data: conta } = await supabase
-    .from("whatsapp_account")
-    .select("connection_status")
-    .eq("clinic_id", params.clinicId)
-    .maybeSingle();
-  if (!conta || conta.connection_status !== "conectado") {
-    return AVISO_CANAL_FORA;
+  // O canal e o NUMERO pelo qual o aviso sairia (varios numeros por clinica,
+  // docs/07): o ultimo em que o paciente escreveu, ou o principal. O aviso
+  // nomeia o numero quando a clinica tem mais de um, para a recepcao saber
+  // qual reconectar; com um so, a frase e a de sempre.
+  const [contas, ativos] = await Promise.all([
+    contasDeEnvio(supabase, params.clinicId, [params.contactId]),
+    supabase
+      .from("whatsapp_account")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", params.clinicId)
+      .is("removido_em", null),
+  ]);
+  if (!contas || ativos.error) {
+    return AVISO_NAO_ENFILEIRADO;
+  }
+  const conta = contas.get(params.contactId);
+  if (!conta?.whatsappAccountId || !conta.conectado) {
+    const frase = fraseDeNumerosDesconectados(
+      nomesParaATela([conta?.nome ?? null], ativos.count ?? 0),
+    );
+    return frase
+      ? `${frase}, então o aviso não saiu. Avise o paciente por telefone.`
+      : AVISO_CANAL_FORA;
   }
 
   const { data: contato } = await supabase
@@ -482,7 +503,9 @@ async function enfileirarAvisoDeRemarcacao(
   // role entra SO aqui, depois de a sessao ter movido a consulta pela RLS.
   // O payload leva o instante e o profissional que o texto anuncia: o worker
   // (executarEnvioAtivo) reconfere a consulta na hora do envio e mata o aviso
-  // que ficou velho (remarcada de novo, cancelada, encerrada ou vencida).
+  // que ficou velho (remarcada de novo, cancelada, encerrada ou vencida). O
+  // job leva o numero conferido conectado acima; numero_do_job o confirma na
+  // execucao.
   const admin = createAdminClient();
   const { error: erroJob } = await admin.from("job_queue").insert({
     clinic_id: params.clinicId,
@@ -494,6 +517,7 @@ async function enfileirarAvisoDeRemarcacao(
       starts_at: params.inicio.toISOString(),
       professional_id: params.professionalId,
     },
+    whatsapp_account_id: conta.whatsappAccountId,
   });
   if (erroJob) {
     return AVISO_NAO_ENFILEIRADO;

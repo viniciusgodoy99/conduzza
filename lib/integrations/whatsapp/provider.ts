@@ -6,6 +6,17 @@ export type ProviderName = "fake" | "uazapi" | "cloud_api";
 
 export type InstanceRef = {
   clinicId: string;
+  /**
+   * O numero da clinica (whatsapp_account.id) a que esta instancia pertence.
+   *
+   * Com mais de um numero por clinica, a clinica deixou de identificar a
+   * instancia: e o numero que diz por qual WhatsApp a mensagem sai. O HTTP do
+   * uazapi autentica pelo token e nao usa este campo; ele serve ao provedor
+   * falso (instancia e registro de envio por numero) e ao rastro de quem
+   * chama. Opcional so enquanto o contrato da Fase 3 nao chega: toda
+   * referencia montada pelo orquestrador de envio ja carrega o numero.
+   */
+  accountId?: string | null;
   /** URL do servidor uazapi; null usa UAZAPI_SERVER_URL do ambiente */
   serverUrl?: string | null;
   instanceToken?: string | null;

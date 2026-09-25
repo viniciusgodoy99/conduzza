@@ -15,6 +15,10 @@ import { MotorStatus } from "@/components/shell/motor-status";
 import { SairDaConta } from "@/components/shell/sair-da-conta";
 import { WhatsappStatus } from "@/components/shell/whatsapp-status";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
+import {
+  COLUNAS_DA_FAIXA,
+  type NumeroDaFaixa,
+} from "@/lib/domain/conexao-dos-numeros";
 import type { SaudeDoMotor } from "@/lib/domain/motor";
 import { COOKIE_DO_RAIL, preferenciaDoRail } from "@/lib/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -161,18 +165,23 @@ export default async function AppLayout({
   const cookieStore = await cookies();
 
   const [
-    { data: whatsappAccount },
+    { data: numerosDoWhatsapp },
     { data: saude },
     aguardandoHumano,
     confirmacoesPendentes,
   ] = await Promise.all([
-    // Faixa de WhatsApp desconectado (estado 5 da secao 8 do brief): so quando
-    // a clinica tem conta e ela nao esta conectada.
+    // Faixa de WhatsApp desconectado (estado 5 da secao 8 do brief): a LISTA
+    // de numeros ativos da clinica (docs/07, Fase 2). Quem decide se a faixa
+    // aparece, e com que texto, e o WhatsappStatus (decisao D6). Erro de
+    // leitura vira lista vazia, como antes (nenhuma faixa, nunca tela
+    // quebrada): o polling do componente corrige em seguida.
     supabase
       .from("whatsapp_account")
-      .select("connection_status")
+      .select(COLUNAS_DA_FAIXA)
       .eq("clinic_id", active.clinicId)
-      .maybeSingle(),
+      .is("removido_em", null)
+      .order("principal", { ascending: false })
+      .order("created_at", { ascending: true }),
     // Prova de vida do motor: os DOIS papeis (fila e planner) mais a
     // contagem de tarefas atrasadas, numa chamada so. Ler worker_heartbeat
     // cru pegaria "a batida mais recente de qualquer executor", e o planner
@@ -206,9 +215,7 @@ export default async function AppLayout({
       fallback={
         <WhatsappStatus
           clinicId={active.clinicId}
-          statusInicial={
-            (whatsappAccount?.connection_status as string | undefined) ?? null
-          }
+          numerosIniciais={(numerosDoWhatsapp ?? []) as NumeroDaFaixa[]}
         />
       }
     />

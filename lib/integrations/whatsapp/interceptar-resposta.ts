@@ -54,6 +54,11 @@ import {
 // 4. FATO QUE NAO DA PARA LER E DUVIDA. Erro de consulta ao banco no meio da
 //    coleta nao vira "nao houve mensagem da recepcao": o interceptador se
 //    cala e a recepcao decide.
+// 5. SO O NUMERO QUE RECEBEU (varios numeros por clinica, docs/07). Toques,
+//    oferta, conversas e mensagens da recepcao contam so quando sao do numero
+//    em que a resposta chegou (decisao D2): o "sim" dito ao numero B nao
+//    confirma o toque que saiu pelo numero A. E o eco sai pelo mesmo numero
+//    que recebeu, mesmo com as automaticas presas a um numero fixo (D4).
 //
 // Regra 3.1 do CLAUDE.md: este arquivo nao loga nada. O corpo da mensagem do
 // paciente entra aqui e nao sai em lugar nenhum.
@@ -84,7 +89,60 @@ export type EntradaDaResposta = {
    * que pergunta a resposta se refere.
    */
   quotedWaMessageId?: string | null;
+  /**
+   * O numero da clinica (whatsapp_account.id) que RECEBEU a resposta, como o
+   * webhook o identificou. Delimita o contexto (D2) e e o numero do eco (D4).
+   * A conversa em que a mensagem caiu e a fonte da verdade: ausente, vale o
+   * numero dela; diferente do dela, o interceptador se cala (duvida).
+   */
+  whatsappAccountId?: string | null;
 };
+
+/** O recorte de numero de uma resposta (decisao D2). */
+export type ContextoDoNumero = {
+  /** O numero que recebeu. Nulo so em clinica sem numero: sem recorte. */
+  numero: string | null;
+  /** O contato tem conversa em OUTRO numero da clinica. */
+  outrosNumeros: boolean;
+};
+
+/**
+ * O numero que recebeu a resposta: o informado pelo webhook e o da conversa
+ * em que a mensagem caiu dizem o mesmo; um so basta. Os dois presentes e
+ * diferentes e duvida ('divergente'), e duvida nao interpreta nada.
+ */
+export function numeroQueRecebeu(
+  informado: string | null | undefined,
+  daConversa: string | null | undefined,
+): string | null | "divergente" {
+  const doWebhook = informado ?? null;
+  const conversa = daConversa ?? null;
+  if (doWebhook !== null && conversa !== null && doWebhook !== conversa) {
+    return "divergente";
+  }
+  return doWebhook ?? conversa;
+}
+
+/**
+ * Esta mensagem automatica (toque, oferta) conta como pergunta feita PELO
+ * numero que recebeu a resposta? O numero dela e o da mensagem gravada. Sem
+ * essa informacao (toque antigo ou sem mensagem ligada), vale so quando o
+ * contato nao conversa por outro numero da clinica: ai toda mensagem que ele
+ * recebeu saiu por este numero. Com outro numero na historia, a duvida fica
+ * com a recepcao.
+ */
+export function valeParaONumero(
+  numeroDaMensagem: string | null,
+  contexto: ContextoDoNumero,
+): boolean {
+  if (contexto.numero === null) {
+    return true;
+  }
+  if (numeroDaMensagem !== null) {
+    return numeroDaMensagem === contexto.numero;
+  }
+  return !contexto.outrosNumeros;
+}
 
 /** O embed aninhado do PostgREST chega como objeto ou array, conforme o caso. */
 function um<T>(v: T | T[] | null | undefined): T | null {
@@ -115,9 +173,10 @@ function passoDoToque(linha: LinhaDeToque): {
 // O recorte por tipo de regua e feito AQUI, em codigo, sobre o embed lido:
 // filtro de embed encadeado no PostgREST falha calado, o que significaria
 // confirmar a consulta errada. scheduled_for e o offset do passo dizem para
-// QUAL horario o toque perguntou (resposta-paciente.ts).
+// QUAL horario o toque perguntou (resposta-paciente.ts). A mensagem gravada
+// pelo toque diz por qual NUMERO ele saiu (D2).
 const SELECT_DO_TOQUE =
-  "id, sent_at, scheduled_for, skipped_reason, cadence_step:cadence_step_id ( offset_minutes, cadence:cadence_id ( kind ) ), appointment:appointment_id ( id, status, starts_at, remarcacao_pedida_em )";
+  "id, sent_at, scheduled_for, skipped_reason, cadence_step:cadence_step_id ( offset_minutes, cadence:cadence_id ( kind ) ), appointment:appointment_id ( id, status, starts_at, remarcacao_pedida_em ), mensagem:message_id ( whatsapp_account_id )";
 
 type ConsultaDaLinha = {
   id: string;
@@ -126,6 +185,8 @@ type ConsultaDaLinha = {
   remarcacao_pedida_em: string | null;
 };
 
+type MensagemDaLinha = { whatsapp_account_id?: string | null };
+
 type LinhaDeToque = {
   id: string;
   sent_at: string | null;
@@ -133,7 +194,13 @@ type LinhaDeToque = {
   skipped_reason: string | null;
   cadence_step: unknown;
   appointment: ConsultaDaLinha | ConsultaDaLinha[] | null;
+  mensagem?: MensagemDaLinha | MensagemDaLinha[] | null;
 };
+
+/** O numero pelo qual o toque saiu, pela mensagem que ele gravou. */
+function numeroDoToque(linha: LinhaDeToque): string | null {
+  return um(linha.mensagem ?? null)?.whatsapp_account_id ?? null;
+}
 
 /**
  * O toque como a linha o traz. `manual` e `horarioMudouEm` nascem vazios e
@@ -291,6 +358,12 @@ async function resolverCitacao(
 /**
  * Eco para o paciente pela fila (nunca envio direto no webhook): o worker
  * reconfere consentimento, respeita o espacamento anti-ban e grava o custo.
+ *
+ * O job nasce com o NUMERO que recebeu a resposta (D4): o eco continua a
+ * conversa em que o paciente escreveu, mesmo com as automaticas presas a um
+ * numero fixo. A remocao do numero nao o redistribui (cancela o eco), e o
+ * executor nao o deixa sair por outro. Sem numero (clinica sem numero), o
+ * gatilho da fila resolve, como antes.
  */
 async function responder(
   admin: SupabaseClient,
@@ -307,6 +380,7 @@ async function responder(
       body,
       resposta_ao_paciente: true,
     },
+    whatsapp_account_id: entrada.whatsappAccountId ?? null,
   });
 }
 
@@ -372,12 +446,16 @@ async function buscarOferta(
  * dois na mesma transacao, e now() e o instante da transacao). A mensagem
  * enviada carrega o job_id (send.ts). Sem job nenhum achado, o instante da
  * criacao da oferta vale como aproximacao, que e o comportamento anterior.
+ *
+ * So conta a mensagem que saiu pelo NUMERO que recebeu a resposta (D2): a
+ * oferta enviada por outro numero da clinica nao e pergunta nesta conversa.
  */
 async function envioDaOferta(
   admin: SupabaseClient,
   clinicId: string,
   contactId: string,
   oferta: OfertaDoContato,
+  contexto: ContextoDoNumero,
 ): Promise<{ enviadaEm: string | null; erro: boolean }> {
   const { data: jobs, error } = await admin
     .from("job_queue")
@@ -404,11 +482,15 @@ async function envioDaOferta(
         new Date(oferta.created_at).getTime(),
   );
   if (daOferta.length === 0) {
-    return { enviadaEm: oferta.created_at, erro: false };
+    // A aproximacao nao sabe o numero: so vale sem outro numero na historia.
+    return {
+      enviadaEm: valeParaONumero(null, contexto) ? oferta.created_at : null,
+      erro: false,
+    };
   }
   const { data: mensagens, error: erroMensagem } = await admin
     .from("message")
-    .select("created_at, delivery_status")
+    .select("created_at, delivery_status, whatsapp_account_id")
     .eq("clinic_id", clinicId)
     .in(
       "job_id",
@@ -419,8 +501,16 @@ async function envioDaOferta(
     return { enviadaEm: null, erro: true };
   }
   const saiu = (
-    (mensagens ?? []) as { created_at: string; delivery_status: string | null }[]
-  ).find((m) => m.delivery_status !== "falhou");
+    (mensagens ?? []) as {
+      created_at: string;
+      delivery_status: string | null;
+      whatsapp_account_id: string | null;
+    }[]
+  ).find(
+    (m) =>
+      m.delivery_status !== "falhou" &&
+      valeParaONumero(m.whatsapp_account_id ?? null, contexto),
+  );
   return { enviadaEm: saiu?.created_at ?? null, erro: false };
 }
 
@@ -665,11 +755,16 @@ async function completarToques(
 async function reunirFatos(
   admin: SupabaseClient,
   entrada: EntradaDaResposta,
-): Promise<{ fatos: FatosDaResposta; oferta: OfertaDoContato | null } | null> {
+): Promise<{
+  fatos: FatosDaResposta;
+  oferta: OfertaDoContato | null;
+  /** O numero que recebeu: o do eco (D4). */
+  numero: string | null;
+} | null> {
   const agora = Date.now();
   const { data: conversas, error: erroConversas } = await admin
     .from("conversation")
-    .select("id, status")
+    .select("id, status, whatsapp_account_id")
     .eq("clinic_id", entrada.clinicId)
     .eq("contact_id", entrada.contactId)
     .order("created_at", { ascending: false })
@@ -677,11 +772,39 @@ async function reunirFatos(
   if (erroConversas) {
     return null;
   }
-  const linhasDeConversa = (conversas ?? []) as { id: string; status: string }[];
+  const todasAsConversas = (conversas ?? []) as {
+    id: string;
+    status: string;
+    whatsapp_account_id: string | null;
+  }[];
+  const atual = todasAsConversas.find((c) => c.id === entrada.conversationId);
+
+  // O NUMERO que recebeu delimita tudo o que vem abaixo (D2): as conversas,
+  // e por elas a citacao, a mensagem da recepcao e o aviso de remarcacao; os
+  // toques e a oferta, pela mensagem que gravaram.
+  const numero = numeroQueRecebeu(
+    entrada.whatsappAccountId,
+    atual?.whatsapp_account_id,
+  );
+  if (numero === "divergente") {
+    return null;
+  }
+  const contexto: ContextoDoNumero = {
+    numero,
+    outrosNumeros:
+      numero !== null &&
+      todasAsConversas.some(
+        (c) =>
+          c.whatsapp_account_id !== null && c.whatsapp_account_id !== numero,
+      ),
+  };
+  const linhasDeConversa =
+    numero === null
+      ? todasAsConversas
+      : todasAsConversas.filter((c) => c.whatsapp_account_id === numero);
   const conversaIds = [
     ...new Set([entrada.conversationId, ...linhasDeConversa.map((c) => c.id)]),
   ];
-  const atual = linhasDeConversa.find((c) => c.id === entrada.conversationId);
 
   const desde = new Date(agora - JANELA_DE_CONTEXTO_MS).toISOString();
   const [toques, humana, achada, citacao, avisos] = await Promise.all([
@@ -721,10 +844,13 @@ async function reunirFatos(
     return null;
   }
 
+  // So os toques que sairam pelo numero que recebeu (D2). A citacao nao passa
+  // por aqui: ela ja foi achada nas conversas deste numero.
   const completos = await completarToques(
     admin,
     entrada.clinicId,
     ((toques.data ?? []) as unknown as LinhaDeToque[])
+      .filter((linha) => valeParaONumero(numeroDoToque(linha), contexto))
       .map(paraToque)
       .filter((toque): toque is ToqueEnviado => toque !== null),
     citacao,
@@ -741,6 +867,7 @@ async function reunirFatos(
       entrada.clinicId,
       entrada.contactId,
       achada.oferta,
+      contexto,
     );
     if (envio.erro) {
       return null;
@@ -760,6 +887,7 @@ async function reunirFatos(
       avisosDeRemarcacao: avisos,
     },
     oferta: achada.oferta,
+    numero,
   };
 }
 
@@ -907,6 +1035,12 @@ export async function interceptarRespostaDePaciente(
   if (!coletado) {
     return;
   }
+  // Daqui para baixo a entrada leva o numero que RECEBEU, ja resolvido (o do
+  // webhook ou o da conversa): e por ele que o eco sai (D4).
+  const daResposta: EntradaDaResposta = {
+    ...entrada,
+    whatsappAccountId: coletado.numero,
+  };
   const pergunta = qualPerguntaFoiRespondida(
     coletado.fatos,
     intencao,
@@ -928,7 +1062,7 @@ export async function interceptarRespostaDePaciente(
         ? coletado.oferta
         : await buscarOferta(admin, entrada.clinicId, pergunta.offerId);
     if (oferta) {
-      await tratarRespostaDeOferta(admin, entrada, oferta, intencaoDeOferta);
+      await tratarRespostaDeOferta(admin, daResposta, oferta, intencaoDeOferta);
     }
     return;
   }
@@ -961,7 +1095,7 @@ export async function interceptarRespostaDePaciente(
   );
   await responder(
     admin,
-    entrada,
+    daResposta,
     renderizarModelo(ECO_DA_INTENCAO[pergunta.intencao], {
       data: format(inicio, "dd/MM", { locale: ptBR }),
       hora: format(inicio, "HH:mm", { locale: ptBR }),

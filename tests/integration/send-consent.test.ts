@@ -5,6 +5,7 @@ import {
   resetFakeProvider,
 } from "@/lib/integrations/whatsapp/fake";
 import { sendWhatsAppText } from "@/lib/integrations/whatsapp/send";
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
 // Aceite da tarefa 1.4: envio para contato sem consentimento ativo e
@@ -44,12 +45,8 @@ beforeAll(async () => {
   }
   clinicId = clinic.id;
 
-  await admin.from("whatsapp_account").insert({
-    clinic_id: clinicId,
-    provider: "fake",
-    connection_status: "conectado",
-  });
-  await admin.from("whatsapp_account_secret").insert({ clinic_id: clinicId });
+  // O numero e o segredo dele, ligados por account_id (docs/07).
+  await criarNumeroDeTeste(admin, clinicId);
 
   const { data: contacts, error: contactError } = await admin
     .from("contact")

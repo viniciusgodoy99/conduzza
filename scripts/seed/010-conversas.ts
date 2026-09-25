@@ -29,6 +29,74 @@ function minutesAgo(minutes: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
+type CamposDoNumero = {
+  provider: "fake" | "uazapi";
+  display_phone: string;
+  connection_status: "conectado" | "desconectado";
+  connected_at?: string;
+  disconnected_at?: string;
+};
+
+/**
+ * O numero principal da clinica do seed, e o segredo dele com o webhook_secret
+ * fixo de desenvolvimento. Devolve o id do numero.
+ *
+ * Idempotente SEM depender do unique temporario (clinic_id), que sai na
+ * Fase 3 dos varios numeros (docs/07): acha o principal ativo e atualiza, ou
+ * cria. O segredo e chaveado pelo numero (account_id, a PK).
+ */
+async function garantirNumeroPrincipal(
+  admin: SupabaseClient,
+  clinicId: string,
+  campos: CamposDoNumero,
+  webhookSecret: string,
+): Promise<string> {
+  const { data: existentes, error: erroLeitura } = await admin
+    .from("whatsapp_account")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .eq("principal", true)
+    .is("removido_em", null)
+    .limit(1);
+  if (erroLeitura) {
+    throw new Error(`whatsapp_account: ${erroLeitura.message}`);
+  }
+
+  let accountId = (existentes?.[0]?.id as string | undefined) ?? null;
+  if (accountId) {
+    const { error } = await admin
+      .from("whatsapp_account")
+      .update(campos)
+      .eq("id", accountId);
+    if (error) throw new Error(`whatsapp_account: ${error.message}`);
+  } else {
+    const { data: novo, error } = await admin
+      .from("whatsapp_account")
+      .insert({ clinic_id: clinicId, ...campos })
+      .select("id")
+      .single();
+    if (error || !novo) {
+      throw new Error(`whatsapp_account: ${error?.message ?? "sem linha"}`);
+    }
+    accountId = novo.id as string;
+  }
+
+  const { error: erroSegredo } = await admin
+    .from("whatsapp_account_secret")
+    .upsert(
+      {
+        clinic_id: clinicId,
+        account_id: accountId,
+        webhook_secret: webhookSecret,
+      },
+      { onConflict: "account_id" },
+    );
+  if (erroSegredo) {
+    throw new Error(`whatsapp_account_secret: ${erroSegredo.message}`);
+  }
+  return accountId;
+}
+
 type SeedContact = {
   n: number;
   name: string;
@@ -750,39 +818,28 @@ export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
   if (aiLogError) throw new Error(`ai_decision_log: ${aiLogError.message}`);
   log.push("1 bloqueio de conformidade registrado (triagem)");
 
-  const { error: accountError } = await admin.from("whatsapp_account").upsert(
-    [
-      {
-        clinic_id: VITALIS,
-        provider: "fake",
-        display_phone: "+55 84 98888-0001",
-        connection_status: "conectado",
-        connected_at: minutesAgo(60 * 24 * 3),
-      },
-      {
-        clinic_id: BELEZA,
-        provider: "fake",
-        display_phone: "+55 84 98888-0002",
-        connection_status: "desconectado",
-        disconnected_at: minutesAgo(60 * 5),
-      },
-    ],
-    { onConflict: "clinic_id" },
+  await garantirNumeroPrincipal(
+    admin,
+    VITALIS,
+    {
+      provider: "fake",
+      display_phone: "+55 84 98888-0001",
+      connection_status: "conectado",
+      connected_at: minutesAgo(60 * 24 * 3),
+    },
+    DEV_WEBHOOK_SECRET_VITALIS,
   );
-  if (accountError)
-    throw new Error(`whatsapp_account: ${accountError.message}`);
-
-  const { error: secretError } = await admin
-    .from("whatsapp_account_secret")
-    .upsert(
-      [
-        { clinic_id: VITALIS, webhook_secret: DEV_WEBHOOK_SECRET_VITALIS },
-        { clinic_id: BELEZA, webhook_secret: DEV_WEBHOOK_SECRET_BELEZA },
-      ],
-      { onConflict: "clinic_id" },
-    );
-  if (secretError)
-    throw new Error(`whatsapp_account_secret: ${secretError.message}`);
+  await garantirNumeroPrincipal(
+    admin,
+    BELEZA,
+    {
+      provider: "fake",
+      display_phone: "+55 84 98888-0002",
+      connection_status: "desconectado",
+      disconnected_at: minutesAgo(60 * 5),
+    },
+    DEV_WEBHOOK_SECRET_BELEZA,
+  );
   log.push("contas WhatsApp: Vitalis conectada, Beleza Pura desconectada");
 
   const { error: templateError } = await admin.from("message_template").upsert(

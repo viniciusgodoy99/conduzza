@@ -210,4 +210,40 @@ describe("mídia que não vem mais ganha estado final", () => {
     // O fake devolve audio/mpeg: o tipo do provedor fica na mensagem.
     expect(depois.media_mimetype).toBe("audio/mpeg");
   });
+
+  // Varios numeros por clinica (Fase 2, docs/07): o arquivo so baixa pela
+  // instancia do numero que RECEBEU a mensagem. Removido o numero, a instancia
+  // dele se foi e nenhum outro numero consegue baixar: desiste de vez, sem
+  // tentar por outro numero.
+  it("número removido desiste de vez sem baixar por outro número", async () => {
+    const { clinicId, messageId, jobId } = await criarMensagemComJob(
+      "removido",
+      { maxAttempts: 8 },
+    );
+    const { data: numero } = await admin
+      .from("whatsapp_account")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .is("removido_em", null)
+      .single()
+      .throwOnError();
+    await admin
+      .rpc("remover_numero", {
+        p_clinic_id: clinicId,
+        p_account_id: numero!.id,
+      })
+      .throwOnError();
+    const baixar = vi.spyOn(FakeProvider.prototype, "downloadMedia");
+
+    await processarLote(admin, "teste-midia");
+
+    expect(baixar).not.toHaveBeenCalled();
+    expect(await lerJob(jobId)).toEqual({
+      status: "falhou",
+      last_error: "numero_removido",
+    });
+    expect((await lerMensagem(messageId)).media_url).toBe(
+      "indisponivel://desistiu",
+    );
+  });
 });

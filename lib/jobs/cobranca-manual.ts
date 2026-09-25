@@ -5,6 +5,11 @@ import {
   consentimentoVigenteDeLinhas,
   type LinhaConsent,
 } from "@/lib/domain/leads-ui";
+import {
+  contasDeEnvio,
+  fraseDeNumerosDesconectados,
+  nomesParaATela,
+} from "@/lib/jobs/numero-de-envio";
 import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
 
 // Miolo do "Cobrar agora" da Tela 2: escolhe o passo, respeita a autorizacao e
@@ -31,9 +36,26 @@ export type CobrancaManual = {
   error?: string;
   enfileirados: number;
   pulados_sem_autorizacao: number;
+  /**
+   * Consultas cujo paciente receberia a mensagem por um numero DESCONECTADO
+   * (varios numeros por clinica, docs/07). Nada e enfileirado para elas: o
+   * envio nunca troca de numero sozinho, e prometer "na fila" seria mentir.
+   */
+  pulados_desconectado: number;
+  /**
+   * O nome dos numeros desconectados que seguraram alguma cobranca, para a
+   * tela dizer QUAL reconectar. Vazio com um numero so: la "o WhatsApp da
+   * clinica" diz mais do que um nome que ninguem escolheu.
+   */
+  numeros_desconectados: string[];
   /** Consultas que viraram run de verdade. E o que vai para a trilha. */
   cobrados: string[];
 };
+
+// O fim da frase de canal fora do ar; o comeco diz qual numero (ou "o
+// WhatsApp", com um numero so).
+const FIM_DO_ERRO_DESCONECTADO =
+  ", então a mensagem não sairia. Reconecte em Configurações e cobre de novo.";
 
 export async function planejarCobrancaManual(
   leitura: SupabaseClient,
@@ -48,29 +70,45 @@ export async function planejarCobrancaManual(
 ): Promise<CobrancaManual> {
   const { clinicId, timezone, appointmentIds } = params;
   const agora = params.agora ?? new Date();
-  const vazio = { enfileirados: 0, pulados_sem_autorizacao: 0, cobrados: [] };
+  const vazio = {
+    enfileirados: 0,
+    pulados_sem_autorizacao: 0,
+    pulados_desconectado: 0,
+    numeros_desconectados: [],
+    cobrados: [],
+  };
 
   // Canal fora do ar: recusar ANTES de enfileirar. Enfileirar aqui devolveria
   // "cobranca na fila de envio" para a recepcao e o toque morreria depois, sem
   // rastro nenhum na tela: ela cobraria de novo as cegas ou concluiria que o
   // paciente ignorou. Melhor dizer a verdade na hora do clique.
-  const { data: conta } = await leitura
+  //
+  // Aqui a conferencia e da CLINICA (nenhum numero ativo, ou nenhum
+  // conectado). O numero de CADA paciente e conferido abaixo.
+  const { data: numeros, error: erroNumeros } = await leitura
     .from("whatsapp_account")
     .select("connection_status")
     .eq("clinic_id", clinicId)
-    .maybeSingle();
-  if (!conta) {
+    .is("removido_em", null);
+  if (erroNumeros) {
+    return {
+      ok: false,
+      error: "Não foi possível enfileirar as cobranças.",
+      ...vazio,
+    };
+  }
+  const numerosAtivos = (numeros ?? []) as { connection_status: string }[];
+  if (numerosAtivos.length === 0) {
     return {
       ok: false,
       error: "Esta clínica ainda não tem WhatsApp conectado.",
       ...vazio,
     };
   }
-  if (conta.connection_status !== "conectado") {
+  if (!numerosAtivos.some((n) => n.connection_status === "conectado")) {
     return {
       ok: false,
-      error:
-        "O WhatsApp está desconectado, então a mensagem não sairia. Reconecte em Configurações e cobre de novo.",
+      error: `O WhatsApp está desconectado${FIM_DO_ERRO_DESCONECTADO}`,
       ...vazio,
     };
   }
@@ -145,6 +183,18 @@ export async function planejarCobrancaManual(
     porContato.set(linha.contact_id, lista);
   }
 
+  // O NUMERO de cada paciente, pela mesma regra do envio (fixo, ultimo usado
+  // pelo paciente, principal), numa leitura so. Com a sessao, a RPC so aceita
+  // a clinica de quem clicou.
+  const contas = await contasDeEnvio(leitura, clinicId, contactIds);
+  if (!contas) {
+    return {
+      ok: false,
+      error: "Não foi possível enfileirar as cobranças.",
+      ...vazio,
+    };
+  }
+
   // Truncado ao minuto de proposito: dois cliques seguidos na MESMA consulta
   // caem na mesma chave (cadence_step_id, contact_id, appointment_id,
   // scheduled_for) e o segundo nao cria run nenhuma. E a trava do banco
@@ -158,6 +208,9 @@ export async function planejarCobrancaManual(
 
   const linhas: Record<string, unknown>[] = [];
   let puladosSemAutorizacao = 0;
+  let puladosDesconectado = 0;
+  const nomesDesconectados: (string | null)[] = [];
+  const numeroPorContato = new Map<string, string>();
   for (const consulta of cobraveis) {
     if (
       !consentimentoVigenteDeLinhas(porContato.get(consulta.contact_id) ?? [])
@@ -173,6 +226,15 @@ export async function planejarCobrancaManual(
     if (!passo) {
       continue;
     }
+    // Numero do paciente fora do ar: nada entra na fila (o envio nunca troca
+    // de numero sozinho) e a tela fica sabendo quantos e por qual numero.
+    const conta = contas.get(consulta.contact_id);
+    if (!conta?.whatsappAccountId || !conta.conectado) {
+      puladosDesconectado += 1;
+      nomesDesconectados.push(conta?.nome ?? null);
+      continue;
+    }
+    numeroPorContato.set(consulta.contact_id, conta.whatsappAccountId);
     linhas.push({
       clinic_id: clinicId,
       cadence_step_id: passo.id,
@@ -181,12 +243,35 @@ export async function planejarCobrancaManual(
       scheduled_for: minutoAtual,
     });
   }
+  const numerosDesconectados = nomesParaATela(
+    nomesDesconectados,
+    numerosAtivos.length,
+  );
+  const pulados = {
+    pulados_sem_autorizacao: puladosSemAutorizacao,
+    pulados_desconectado: puladosDesconectado,
+    numeros_desconectados: numerosDesconectados,
+  };
 
   if (linhas.length === 0) {
+    if (puladosDesconectado > 0) {
+      // Nada saiu, e ao menos uma cobranca parou num numero desconectado: a
+      // verdade na hora do clique, como no canal inteiro fora do ar.
+      return {
+        ok: false,
+        error: `${
+          fraseDeNumerosDesconectados(numerosDesconectados) ??
+          "O WhatsApp está desconectado"
+        }${FIM_DO_ERRO_DESCONECTADO}`,
+        enfileirados: 0,
+        ...pulados,
+        cobrados: [],
+      };
+    }
     return {
       ok: true,
       enfileirados: 0,
-      pulados_sem_autorizacao: puladosSemAutorizacao,
+      ...pulados,
       cobrados: [],
     };
   }
@@ -197,7 +282,7 @@ export async function planejarCobrancaManual(
       onConflict: "cadence_step_id,contact_id,appointment_id,scheduled_for",
       ignoreDuplicates: true,
     })
-    .select("id, appointment_id, cadence_step_id");
+    .select("id, appointment_id, cadence_step_id, contact_id");
   if (erroRun) {
     return {
       ok: false,
@@ -209,21 +294,26 @@ export async function planejarCobrancaManual(
     id: string;
     appointment_id: string | null;
     cadence_step_id: string;
+    contact_id: string;
   }[];
   if (novas.length === 0) {
     return {
       ok: true,
       enfileirados: 0,
-      pulados_sem_autorizacao: puladosSemAutorizacao,
+      ...pulados,
       cobrados: [],
     };
   }
 
+  // O job nasce com o numero conferido conectado acima (numero_do_job o
+  // confirma na execucao). Sem ele, o gatilho da fila resolveria de novo
+  // pela mesma regra, mas o numero que a recepcao viu e o que vale.
   const { error: erroJob } = await admin.from("job_queue").insert(
     novas.map((run) => ({
       clinic_id: clinicId,
       kind: "executar_passo_de_regua",
       payload: { cadence_run_id: run.id, manual: true },
+      whatsapp_account_id: numeroPorContato.get(run.contact_id) ?? null,
     })),
   );
   if (erroJob) {
@@ -280,7 +370,7 @@ export async function planejarCobrancaManual(
   return {
     ok: true,
     enfileirados: novas.length,
-    pulados_sem_autorizacao: puladosSemAutorizacao,
+    ...pulados,
     cobrados: novas
       .map((run) => run.appointment_id)
       .filter((id): id is string => id !== null),

@@ -103,6 +103,7 @@ describe("termo-chave na ingestão, contra o banco real", () => {
     const { data } = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento("+5584972200001", `termo:${sufixo}:m1`, "Oi, quero agendar!"),
     );
     expect(data?.contact_id).toBeTruthy();
@@ -125,6 +126,7 @@ describe("termo-chave na ingestão, contra o banco real", () => {
     const { data: primeira } = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       mensagem,
     );
     expect(await etapaDe(primeira!.contact_id!)).toBe("em_contato");
@@ -139,6 +141,7 @@ describe("termo-chave na ingestão, contra o banco real", () => {
     const { data: segunda } = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       mensagem,
     );
     expect(segunda?.inserted).toBe(false);
@@ -155,6 +158,7 @@ describe("termo-chave na ingestão, contra o banco real", () => {
     const { data } = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento(telefone, `termo:${sufixo}:g1`, "Quero agendar amanha"),
     );
     expect(await etapaDe(data!.contact_id!)).toBe("agendou");
@@ -163,6 +167,7 @@ describe("termo-chave na ingestão, contra o banco real", () => {
     await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento(telefone, `termo:${sufixo}:g2`, "quero saber o endereco"),
     );
     expect(await etapaDe(data!.contact_id!)).toBe("agendou");
@@ -177,6 +182,7 @@ describe("termo-chave na ingestão, contra o banco real", () => {
     await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento(telefone, `termo:${sufixo}:g3`, "posso agendar de novo?"),
     );
     expect(await etapaDe(data!.contact_id!)).toBe("perdido");
@@ -187,6 +193,7 @@ describe("termo-chave na ingestão, contra o banco real", () => {
     const { data } = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento("+5584972200004", `termo:${sufixo}:q1`, "Oi, tudo bem?"),
     );
     expect(await etapaDe(data!.contact_id!)).toBe("novo");

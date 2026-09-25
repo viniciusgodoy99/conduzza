@@ -4,6 +4,7 @@ import { importarContatos } from "@/lib/integrations/importar-contatos";
 import { sendWhatsAppText } from "@/lib/integrations/whatsapp/send";
 import { executarPassoDeRegua } from "@/lib/jobs/regua";
 import type { Job } from "@/lib/jobs/worker";
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
 // Revisao de liberacao de 24/09/2026, grupo reguas-e-fila, contra o banco
@@ -26,6 +27,8 @@ import { adminClient } from "../rls/stack";
 const admin = adminClient();
 const sufixo = Date.now().toString(36);
 const clinicasCriadas: string[] = [];
+/** O numero de WhatsApp (whatsapp_account.id) de cada clinica criada aqui. */
+const numeroDaClinica = new Map<string, string>();
 const MINUTO = 60_000;
 const HORA = 60 * MINUTO;
 
@@ -48,14 +51,8 @@ async function montarClinica(nome: string): Promise<string> {
     .throwOnError();
   const clinicId = clinica!.id as string;
   clinicasCriadas.push(clinicId);
-  await admin
-    .from("whatsapp_account")
-    .insert({
-      clinic_id: clinicId,
-      provider: "fake",
-      connection_status: "conectado",
-    })
-    .throwOnError();
+  const numero = await criarNumeroDeTeste(admin, clinicId);
+  numeroDaClinica.set(clinicId, numero.id);
   return clinicId;
 }
 
@@ -297,9 +294,23 @@ describe("pedido de remarcação segura o toque de confirmação", () => {
       .eq("clinic_id", clinicId)
       .eq("kind", "executar_passo_de_regua")
       .contains("payload", { cadence_run_id: runs[0]!.id });
+    // Varios numeros por clinica (docs/07, Fase 2): o executor pergunta ao
+    // banco por qual numero o toque sai, e o banco so responde a quem tem a
+    // posse do job. O claim e o do motor, so deste job.
+    const worker = `teste-fila-remarca-${sufixo}`;
+    await admin
+      .from("job_queue")
+      .update({
+        status: "executando",
+        locked_by: worker,
+        locked_at: new Date().toISOString(),
+      })
+      .eq("id", jobs![0]!.id as string)
+      .throwOnError();
     const resultado = await executarPassoDeRegua(
       admin,
       jobs![0] as unknown as Job,
+      worker,
     );
     expect(resultado).toEqual({ ok: true });
     const [run] = await runsDoContato(clinicId, contactId);
@@ -392,10 +403,11 @@ describe("dois trilhos no slot anti-ban", () => {
     expect(humano.ok).toBe(true);
     expect(Date.now() - inicio).toBeLessThan(8_000);
 
+    // O slot anti-ban e do NUMERO (varios numeros por clinica, docs/07).
     const { data: conta } = await admin
       .from("whatsapp_account")
       .select("next_send_at, next_bulk_send_at")
-      .eq("clinic_id", clinicId)
+      .eq("id", numeroDaClinica.get(clinicId)!)
       .single()
       .throwOnError();
     // O slot de massa continua la na frente; o 1:1 nao o empurrou nem o usou.

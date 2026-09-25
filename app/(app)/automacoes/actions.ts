@@ -14,6 +14,7 @@ import {
   MENU_CONFIRMACAO,
 } from "@/lib/domain/textos-padrao";
 import { carregarInstancia } from "@/lib/integrations/whatsapp/send";
+import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -921,7 +922,15 @@ export async function testarEnvioAction(
   if ("error" in guard) {
     return { ok: false, error: guard.error };
   }
-  const parsed = z.object({ cadence_step_id: z.uuid() }).safeParse(input);
+  const parsed = z
+    .object({
+      cadence_step_id: z.uuid(),
+      // Por qual numero o teste sai (e para qual ele chega: o numero manda
+      // para ele mesmo). Ausente: o das automaticas quando e fixo, senao o
+      // principal.
+      whatsapp_account_id: z.uuid().optional(),
+    })
+    .safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: "Dados inválidos." };
   }
@@ -960,14 +969,47 @@ export async function testarEnvioAction(
     .single();
 
   // O numero da instancia e o status vem por admin client (a secret do
-  // provedor nao tem policy), SO depois do guard de papel acima.
+  // provedor nao tem policy), SO depois do guard de papel acima. A lista e a
+  // dos numeros ATIVOS da clinica: um id de outra clinica ou removido nao
+  // casa com nenhum.
   const adminDb = createAdminClient();
-  const { data: conta } = await adminDb
+  const { data: numerosAtivos } = await adminDb
     .from("whatsapp_account")
-    .select("connection_status, display_phone")
+    .select("id, principal, connection_status, display_phone")
     .eq("clinic_id", guard.clinicId)
-    .maybeSingle();
-  if (conta?.connection_status !== "conectado" || !conta.display_phone) {
+    .is("removido_em", null);
+  const numeros = (numerosAtivos ?? []) as {
+    id: string;
+    principal: boolean;
+    connection_status: string;
+    display_phone: string | null;
+  }[];
+  let contaId = parsed.data.whatsapp_account_id ?? null;
+  if (contaId === null) {
+    const { data: politica } = await supabase
+      .from("whatsapp_envio_automatico")
+      .select("modo, conta_fixa_id")
+      .eq("clinic_id", guard.clinicId)
+      .maybeSingle();
+    const fixo =
+      politica?.modo === "fixo"
+        ? numeros.find((numero) => numero.id === politica.conta_fixa_id)
+        : undefined;
+    contaId =
+      fixo?.id ?? numeros.find((numero) => numero.principal)?.id ?? null;
+  }
+  const conta = numeros.find((numero) => numero.id === contaId);
+  if (parsed.data.whatsapp_account_id && !conta) {
+    return {
+      ok: false,
+      error: "Este número não existe mais nesta clínica. Recarregue a página.",
+    };
+  }
+  if (
+    !conta ||
+    conta.connection_status !== "conectado" ||
+    !conta.display_phone
+  ) {
     return {
       ok: false,
       error:
@@ -1003,7 +1045,11 @@ export async function testarEnvioAction(
         preparo: "",
       }).trim()}`;
 
-  const { provider, ref } = await carregarInstancia(adminDb, guard.clinicId);
+  const { provider, ref } = await carregarInstancia(
+    adminDb,
+    guard.clinicId,
+    conta.id,
+  );
   let resultado;
   if (passo.media_path) {
     // O teste envia a MIDIA REAL do passo: os bytes vem do balde de regua e
@@ -1069,4 +1115,120 @@ export async function testarEnvioAction(
         ? "Canal de teste: nenhuma mensagem real saiu."
         : undefined,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Numero das mensagens automaticas (decisao 2 do dono, docs/07): por padrao,
+// confirmacao, pos-falta, follow-up, lista de espera, aviso de remarcacao e
+// Cobrar agora saem pelo ultimo numero para o qual o paciente escreveu (sem
+// conversa, pelo principal); quem configura as automacoes pode fixar "sempre
+// pelo numero X". O cartao desta escolha e da Fase 4.
+
+const numeroDasAutomaticasSchema = z.discriminatedUnion("modo", [
+  z.object({
+    modo: z.literal("ultimo_usado"),
+    contaFixaId: z.null().optional(),
+  }),
+  z.object({ modo: z.literal("fixo"), contaFixaId: z.uuid() }),
+]);
+
+export async function definirNumeroDasAutomaticasAction(
+  input: unknown,
+): Promise<AutomacoesActionResult> {
+  const guard = await requireAutomacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = numeroDasAutomaticasSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "Escolha por qual número as mensagens automáticas saem.",
+    };
+  }
+  const contaFixaId =
+    parsed.data.modo === "fixo" ? parsed.data.contaFixaId : null;
+
+  // Pela SESSAO: a policy da tabela decide quem grava (administrador e
+  // gestor), e o gatilho exigir_cadastro_da_mesma_clinica recusa numero de
+  // outra clinica ou removido.
+  const supabase = await createClient();
+  const { data: gravada, error } = await supabase
+    .from("whatsapp_envio_automatico")
+    .upsert(
+      {
+        clinic_id: guard.clinicId,
+        modo: parsed.data.modo,
+        conta_fixa_id: contaFixaId,
+      },
+      { onConflict: "clinic_id" },
+    )
+    .select("clinic_id");
+  if (error || !gravada || gravada.length === 0) {
+    return {
+      ok: false,
+      error:
+        error?.code === "42501"
+          ? "Somente administradores e gestores alteram as automações."
+          : error?.code === "23503"
+            ? "O número escolhido não pertence a esta clínica."
+            : error?.code === "23514"
+              ? "O número escolhido foi removido da clínica. Escolha outro."
+              : "Não foi possível salvar o número das mensagens automáticas.",
+    };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "definiu_numero_das_automaticas",
+    entity: "whatsapp_envio_automatico",
+    entity_id: guard.clinicId,
+  });
+
+  // Recarimbo dos envios automaticos PENDENTES pela regra nova: cada job ja
+  // nasceu com um numero (job_ganha_numero), e o executor so troca o numero
+  // de job cujo numero foi removido. Sem isto, a escolha so valeria para o
+  // que for agendado depois. Por service role (a RPC e so dele), depois do
+  // guard e da gravacao acima. Um numero de cada vez: a RPC move os jobs de
+  // UM numero, e em sequencia nenhum job e disputado por duas chamadas.
+  const adminDb = createAdminClient();
+  const { data: numeros, error: erroDosNumeros } = await adminDb
+    .from("whatsapp_account")
+    .select("id")
+    .eq("clinic_id", guard.clinicId)
+    .is("removido_em", null);
+  let recarimboFalhou = Boolean(erroDosNumeros);
+  let movidos = 0;
+  for (const numero of (numeros ?? []) as { id: string }[]) {
+    const { data: total, error: erroDoRecarimbo } = await adminDb.rpc(
+      "redistribuir_jobs_do_numero",
+      { p_account_id: numero.id },
+    );
+    if (erroDoRecarimbo) {
+      recarimboFalhou = true;
+    } else {
+      movidos += (total as number | null) ?? 0;
+    }
+  }
+  if (recarimboFalhou) {
+    log.warn("numero_das_automaticas_sem_recarimbo", {
+      clinic_id: guard.clinicId,
+      count: movidos,
+    });
+  } else if (movidos > 0) {
+    log.info("numero_das_automaticas_recarimbou", {
+      clinic_id: guard.clinicId,
+      count: movidos,
+    });
+  }
+
+  revalidatePath("/automacoes");
+  return recarimboFalhou
+    ? {
+        ok: true,
+        aviso:
+          "A escolha foi salva, mas parte das mensagens que já estavam agendadas continua saindo pelo número de antes.",
+      }
+    : { ok: true };
 }

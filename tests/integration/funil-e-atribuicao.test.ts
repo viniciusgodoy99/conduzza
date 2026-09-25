@@ -199,6 +199,7 @@ describe("aceite 4.2: atribuição de origem na ingestão", () => {
     const { data, error } = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento(
         "+5584971100001",
         `fun:${sufixo}:a1`,
@@ -243,6 +244,7 @@ describe("aceite 4.2: atribuição de origem na ingestão", () => {
     const primeira = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento("+5584971100002", `fun:${sufixo}:b1`, "Oi [#C7K3F9]"),
     );
     expect(primeira.error).toBeNull();
@@ -251,6 +253,7 @@ describe("aceite 4.2: atribuição de origem na ingestão", () => {
     const segunda = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento(
         "+5584971100002",
         `fun:${sufixo}:b2`,
@@ -468,6 +471,7 @@ describe("correções da revisão: descadastro, coerência de clínica e token t
     const primeira = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento(telefone, `fun:${sufixo}:r1`, "Oi, quero informacoes"),
     );
     const contatoId = primeira.data!.contact_id!;
@@ -496,6 +500,7 @@ describe("correções da revisão: descadastro, coerência de clínica e token t
     const segunda = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento(
         telefone,
         `fun:${sufixo}:r2`,
@@ -560,6 +565,7 @@ describe("correções da revisão: descadastro, coerência de clínica e token t
     const primeira = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento("+5584971500003", `fun:${sufixo}:t1`, "Oi, tudo bem?"),
     );
     const contatoId = primeira.data!.contact_id!;
@@ -569,6 +575,7 @@ describe("correções da revisão: descadastro, coerência de clínica e token t
     await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento("+5584971500003", `fun:${sufixo}:t2`, "Quanto custa o botox?"),
     );
     expect((await origemDe(contatoId)).source_channel).toBeNull();
@@ -577,6 +584,7 @@ describe("correções da revisão: descadastro, coerência de clínica e token t
     await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento(
         "+5584971500003",
         `fun:${sufixo}:t3`,
@@ -612,6 +620,7 @@ describe("captura do ctwa_clid na ingestão", () => {
     const { data, error } = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       comAnuncio,
     );
     expect(error).toBeNull();
@@ -639,7 +648,7 @@ describe("captura do ctwa_clid na ingestão", () => {
         sourceUrl: null,
       },
     };
-    await ingerirMensagemRecebida(admin, clinicId, segundo);
+    await ingerirMensagemRecebida(admin, clinicId, null, segundo);
 
     const { data: depois } = await admin
       .from("contact")
@@ -655,6 +664,7 @@ describe("captura do ctwa_clid na ingestão", () => {
     const { data } = await ingerirMensagemRecebida(
       admin,
       clinicId,
+      null,
       evento("+5584977770002", `semctwa-${sufixo}`, "bom dia"),
     );
     const { data: contato } = await admin

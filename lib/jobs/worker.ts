@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { getWhatsAppProvider } from "@/lib/integrations/whatsapp/provider";
 import {
+  carregarInstancia,
   falhaPermiteRetry,
   sendWhatsAppText,
 } from "@/lib/integrations/whatsapp/send";
@@ -22,6 +22,7 @@ import {
   situacaoDoEnvioDeOferta,
 } from "./lista-espera";
 import { espacamentoDeMassaMs } from "./espacamento";
+import { numeroDoJob } from "./numero-de-envio";
 import { executarPassoDeRegua } from "./regua";
 
 // Worker da job_queue (Etapa B da auditoria de escala). Executa disparo ativo
@@ -60,6 +61,13 @@ export type Job = {
   payload: Record<string, unknown>;
   attempts: number;
   max_attempts: number;
+  /**
+   * O numero carimbado no job, como o claim devolveu (a linha inteira de
+   * job_queue). Serve a raia do motor e a conferencia do eco. Quem ENVIA nao
+   * confia nele: pergunta a numero_do_job, que confere a posse, a remocao e
+   * recarimba. Opcional porque jobs montados a mao (testes) nao o trazem.
+   */
+  whatsapp_account_id?: string | null;
 };
 
 /**
@@ -79,6 +87,7 @@ export type ResultadoDeJob =
 async function executarEnvioAtivo(
   admin: SupabaseClient,
   job: Job,
+  workerId: string,
 ): Promise<ResultadoDeJob> {
   const contactId = job.payload.contact_id;
   const body = job.payload.body;
@@ -170,14 +179,6 @@ async function executarEnvioAtivo(
     return { ok: false, erro: "sem_consentimento", definitivo: true };
   }
 
-  const { data: conversationId, error: erroConversa } = await admin.rpc(
-    "garantir_conversa_aberta",
-    { p_clinic_id: job.clinic_id, p_contact_id: contactId },
-  );
-  if (erroConversa || typeof conversationId !== "string") {
-    return { ok: false, erro: "conversa_indisponivel" };
-  }
-
   // Eco ao paciente ("Presença confirmada", "Tudo bem, sua consulta foi
   // cancelada"): responde a um toque do PROPRIO paciente, entao impoe ao
   // proximo envio so o espacamento curto do 1:1, e nao os 10 a 30 s da
@@ -186,6 +187,53 @@ async function executarEnvioAtivo(
   // interceptar-resposta.ts; oferta de espera e aviso de remarcacao nao a
   // tem e seguem com o espacamento de massa.
   const respostaAoPaciente = job.payload.resposta_ao_paciente === true;
+
+  // NUMERO (varios numeros por clinica, docs/07): o banco diz por qual numero
+  // este job sai, conferindo a posse e a remocao, e carimba (numero_do_job).
+  // Numero desconectado continua sendo o numero do job: o envio responde
+  // 'desconectado', o job tenta de novo e nunca troca de numero sozinho.
+  const numero = await numeroDoJob(admin, job.id, workerId);
+  if (numero.estado === "sem_posse") {
+    // Outro executor assumiu o job (lease vencido): nada sai daqui.
+    return { ok: false, erro: "sem_posse" };
+  }
+  if (numero.estado === "leitura_falhou") {
+    return { ok: false, erro: "leitura_falhou" };
+  }
+  if (numero.estado === "numero_removido") {
+    // O numero foi removido e este job ja gravou mensagem por ele: trocar de
+    // numero agora seria a mesma mensagem saindo de novo por outro.
+    return { ok: false, erro: "numero_removido", definitivo: true };
+  }
+  // Sem numero ativo na clinica: o "sem conta" de antes (o envio responde
+  // desconectado e o job tenta de novo).
+  const accountId = numero.estado === "ok" ? numero.whatsappAccountId : null;
+  // O eco sai pelo numero que RECEBEU a resposta (decisao D4). Se esse numero
+  // foi removido depois do claim, numero_do_job recarimba pela regra geral, e
+  // o eco sairia por um numero que o paciente nao usou: morre sem enviar,
+  // como os ecos pendentes que a remocao cancela.
+  if (
+    respostaAoPaciente &&
+    typeof job.whatsapp_account_id === "string" &&
+    accountId !== job.whatsapp_account_id
+  ) {
+    return { ok: false, erro: "numero_removido", definitivo: true };
+  }
+
+  // A conversa em que a mensagem cai e a DESTE numero (uma conversa por
+  // numero, decisao 1 do dono).
+  const { data: conversationId, error: erroConversa } = await admin.rpc(
+    "garantir_conversa_aberta",
+    {
+      p_clinic_id: job.clinic_id,
+      p_contact_id: contactId,
+      ...(accountId ? { p_whatsapp_account_id: accountId } : {}),
+    },
+  );
+  if (erroConversa || typeof conversationId !== "string") {
+    return { ok: false, erro: "conversa_indisponivel" };
+  }
+
   const resultado = await sendWhatsAppText(admin, {
     clinicId: job.clinic_id,
     conversationId,
@@ -201,10 +249,23 @@ async function executarEnvioAtivo(
     // sem servidor, e o adiamento nao custa nada (nada e reservado).
     esperaMaximaMs: 3_000,
     jobId: job.id,
+    // Assercao: a conversa e deste numero. Divergiu, nada sai (send.ts).
+    whatsappAccountId: accountId,
   });
 
   if (resultado.ok) {
     return { ok: true };
+  }
+  // Numero removido entre numero_do_job e o envio: nada foi gravado. A
+  // proxima tentativa pergunta de novo a numero_do_job, que recarimba pelo
+  // numero que sobrou (ou desiste, se ja houver mensagem deste job). O eco
+  // nao troca de numero (D4): morre aqui.
+  if (resultado.code === "numero_removido") {
+    return {
+      ok: false,
+      erro: "numero_removido",
+      definitivo: respostaAoPaciente,
+    };
   }
   // Canal ocupado: devolve o job para quando o canal abre. Nao e falha e nao
   // queima tentativa; nenhuma reserva foi feita.
@@ -323,6 +384,28 @@ async function marcarMidiaIndisponivel(
   }
 }
 
+const UUID_DO_NUMERO =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * O numero pelo qual a midia baixa, nesta ordem: a coluna do job (claim_jobs
+ * devolve a linha inteira), o payload (o webhook grava nos dois) e, para job
+ * enfileirado antes de existir numero, o da mensagem. Os tres dizem o mesmo
+ * numero quando existem: o que recebeu.
+ */
+function numeroDaMidia(job: Job, daMensagem: unknown): string | null {
+  for (const candidato of [
+    job.whatsapp_account_id,
+    job.payload.whatsapp_account_id,
+    daMensagem,
+  ]) {
+    if (typeof candidato === "string" && UUID_DO_NUMERO.test(candidato)) {
+      return candidato;
+    }
+  }
+  return null;
+}
+
 async function baixarEGuardarMidia(
   admin: SupabaseClient,
   job: Job,
@@ -335,7 +418,7 @@ async function baixarEGuardarMidia(
 
   const { data: mensagem } = await admin
     .from("message")
-    .select("id, content_type, transcript, deleted_at")
+    .select("id, content_type, transcript, deleted_at, whatsapp_account_id")
     .eq("clinic_id", job.clinic_id)
     .eq("id", messageId)
     .maybeSingle();
@@ -353,31 +436,36 @@ async function baixarEGuardarMidia(
     return { ok: false, erro: "mensagem_apagada", definitivo: true };
   }
 
-  const [{ data: account }, { data: secret }] = await Promise.all([
-    admin
-      .from("whatsapp_account")
-      .select("provider, server_url, instance_id")
-      .eq("clinic_id", job.clinic_id)
-      .maybeSingle(),
-    admin
-      .from("whatsapp_account_secret")
-      .select("instance_token")
-      .eq("clinic_id", job.clinic_id)
-      .maybeSingle(),
-  ]);
+  // O arquivo so baixa pela instancia do NUMERO que recebeu a mensagem: o
+  // numero do job (o webhook carimba), ou o da propria mensagem para job
+  // antigo sem numero. Numero removido teve a instancia apagada, e nenhum
+  // outro numero consegue baixar: desiste de vez, sem trocar de numero.
+  const accountId = numeroDaMidia(job, mensagem.whatsapp_account_id);
+  if (!accountId) {
+    return { ok: false, erro: "sem_numero", definitivo: true };
+  }
+  const { data: numero, error: erroNumero } = await admin
+    .from("whatsapp_account")
+    .select("removido_em")
+    .eq("clinic_id", job.clinic_id)
+    .eq("id", accountId)
+    .maybeSingle();
+  if (erroNumero) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
+  if (!numero || numero.removido_em) {
+    return { ok: false, erro: "numero_removido", definitivo: true };
+  }
 
-  const provider = getWhatsAppProvider(account?.provider);
+  const { provider, ref } = await carregarInstancia(
+    admin,
+    job.clinic_id,
+    accountId,
+  );
   const baixado = await provider
-    .downloadMedia(
-      {
-        clinicId: job.clinic_id,
-        serverUrl: account?.server_url ?? null,
-        instanceToken: secret?.instance_token ?? null,
-        instanceId: account?.instance_id ?? null,
-      },
-      waMessageId,
-      { transcribe: mensagem.content_type === "audio" },
-    )
+    .downloadMedia(ref, waMessageId, {
+      transcribe: mensagem.content_type === "audio",
+    })
     .catch(() => ({
       ok: false as const,
       errorCode: "download_indisponivel",
@@ -426,6 +514,7 @@ async function baixarEGuardarMidia(
     log.error("worker_midia_upload_falhou", {
       job_id: job.id,
       clinic_id: job.clinic_id,
+      whatsapp_account_id: accountId,
       message_id: messageId,
       error_code: falha.erro,
       attempt: job.attempts,
@@ -464,14 +553,16 @@ async function baixarEGuardarMidia(
 async function executarJob(
   admin: SupabaseClient,
   job: Job,
+  // A posse do job: numero_do_job so responde ao executor que o reivindicou.
+  workerId: string,
 ): Promise<ResultadoDeJob> {
   switch (job.kind) {
     case "enviar_mensagem_ativa":
-      return executarEnvioAtivo(admin, job);
+      return executarEnvioAtivo(admin, job, workerId);
     case "baixar_midia":
       return executarDownloadDeMidia(admin, job);
     case "executar_passo_de_regua":
-      return executarPassoDeRegua(admin, job);
+      return executarPassoDeRegua(admin, job, workerId);
     case "enviar_conversao_meta":
       return executarEnvioDeConversao(admin, job);
     case "oferecer_lista_espera":
@@ -549,7 +640,7 @@ export async function executarJobComPosse(
   const inicio = Date.now();
   let resultado: ResultadoDeJob;
   try {
-    resultado = await executarJob(admin, job);
+    resultado = await executarJob(admin, job, workerId);
   } catch {
     resultado = { ok: false, erro: "excecao_no_worker" };
   }

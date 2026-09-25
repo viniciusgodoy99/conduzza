@@ -47,18 +47,21 @@ async function main(): Promise<void> {
 
   const { data: conta } = await admin
     .from("whatsapp_account")
-    .select("clinic_id, provider, server_url, instance_id, display_phone")
+    .select("id, clinic_id, provider, server_url, instance_id, display_phone")
     .eq("connection_status", "conectado")
+    .is("removido_em", null)
     .limit(1)
     .maybeSingle();
   if (!conta) {
     console.log("Nenhuma clínica com WhatsApp conectado. Nada a provar.");
     return;
   }
+  // O segredo e do NUMERO (account_id), nao da clinica: com varios numeros
+  // por clinica (docs/07), a clinica nao identifica a instancia.
   const { data: segredo } = await admin
     .from("whatsapp_account_secret")
     .select("instance_token")
-    .eq("clinic_id", conta.clinic_id)
+    .eq("account_id", conta.id)
     .maybeSingle();
 
   // O numero conectado vem de /instance/status (campo `owner`), e nao de
@@ -79,6 +82,7 @@ async function main(): Promise<void> {
   const provider = getWhatsAppProvider(conta.provider as string);
   const ref = {
     clinicId: conta.clinic_id as string,
+    accountId: conta.id as string,
     serverUrl: (conta.server_url as string | null) ?? null,
     instanceToken: (segredo?.instance_token as string | null) ?? null,
     instanceId: (conta.instance_id as string | null) ?? null,

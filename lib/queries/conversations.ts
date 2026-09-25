@@ -48,6 +48,13 @@ export type ConversationListItem = {
   /** A pessoa da equipe, quando o autor e 'usuario' ("Voce:" ou "Clinica:"). */
   last_preview_author_user_id: string | null;
   tags: string[];
+  /**
+   * O numero da clinica desta conversa (whatsapp_account.id): uma conversa
+   * por numero, e ela responde por ele (docs/07, decisao 1). Nulo so em
+   * clinica sem numero ativo. Opcional so para os testes que montam a
+   * conversa na mao; o select traz sempre.
+   */
+  whatsapp_account_id?: string | null;
   contact: ContactSummary;
 };
 
@@ -146,7 +153,7 @@ export function estadoDoConsentimento(
 }
 
 const CONVERSATION_SELECT =
-  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
+  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,
@@ -247,6 +254,46 @@ export async function fetchConversationById(
     throw new Error(error.message);
   }
   return data ? normalizeConversation(data as Record<string, unknown>) : null;
+}
+
+/**
+ * Um numero de WhatsApp ATIVO da clinica, como o Inbox e Configuracoes vao
+ * mostrar (selo, cabecalho, filtro e cartoes da Fase 4, docs/07).
+ */
+export type NumeroDaClinica = {
+  id: string;
+  /** nome livre dado pela equipe ("Recepção", "Unidade Centro") */
+  nome: string;
+  /** o telefone pareado, quando ja conectou alguma vez */
+  display_phone: string | null;
+  connection_status: string;
+  principal: boolean;
+  /** ultima vez que conectou; nulo = nunca foi pareado */
+  connected_at: string | null;
+};
+
+// Os numeros ATIVOS da clinica (removido_em nulo), o principal primeiro e os
+// outros na ordem de cadastro. Pela sessao: todo membro ativo le
+// whatsapp_account (RLS), e o segredo da instancia nunca passa por aqui.
+// Numero removido fica de fora: o historico das conversas dele continua, mas
+// ele nao e mais opcao de nada.
+export async function fetchNumerosDaClinica(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<NumeroDaClinica[]> {
+  const { data, error } = await supabase
+    .from("whatsapp_account")
+    .select(
+      "id, nome, display_phone, connection_status, principal, connected_at",
+    )
+    .eq("clinic_id", clinicId)
+    .is("removido_em", null)
+    .order("principal", { ascending: false })
+    .order("created_at", { ascending: true });
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (data ?? []) as NumeroDaClinica[];
 }
 
 // So se EXISTE alguma resolvida (head, sem trazer linha): decide entre

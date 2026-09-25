@@ -17,8 +17,15 @@ import type {
 // (service role) e por isso TODA consulta aqui re-filtra clinic_id
 // explicitamente; os testes injetam o client do harness.
 //
+// POR NUMERO (Fase 2 de varios numeros por clinica, docs/07): a mensagem sai
+// SEMPRE pelo numero da conversa (uma conversa por numero, decisao 1 do
+// dono). O numero vem da propria conversa, numa leitura so, e tudo o que
+// depende dele segue esse numero: status, slot anti-ban, token da instancia.
+// Quem chama pode informar o numero que ESPERA (whatsappAccountId), mas so
+// como assercao: divergiu, nada sai. O envio nunca troca de numero sozinho.
+//
 // A ORDEM do fluxo e a defesa contra mensagem duplicada ao paciente:
-//   1. consentimento vigente + conta conectada
+//   1. consentimento vigente + o numero da conversa conectado
 //   2. a linha de message NASCE AQUI, 'enviando', amarrada ao job quando
 //      houver (unique de job_id): um retry encontra a linha e nao reenvia o
 //      que pode ja ter saido
@@ -105,6 +112,15 @@ export type SendTextInput = {
     messageId: string;
     waMessageId: string | null;
   } | null;
+  /**
+   * O numero (whatsapp_account.id) pelo qual quem chama ESPERA que o envio
+   * saia. So assercao: o numero de verdade e sempre o da conversa. Se os dois
+   * divergem, nada e enviado e o resultado e 'conta_divergente', que nunca
+   * entra em retry (repetir daria o mesmo resultado, e trocar de numero em
+   * silencio e justamente o que nao pode acontecer). O worker passa o numero
+   * que numero_do_job resolveu; ausente ou nulo, nao ha o que conferir.
+   */
+  whatsappAccountId?: string | null;
 };
 
 /** Traduz o tipo do provedor para o content_type do banco. */
@@ -143,7 +159,13 @@ export type SendTextResult =
          * queimada. O chamador reagenda o job para `livreEm`.
          */
         | "slot_adiado";
-      /** codigo curto para o worker decidir retry; sem conteudo de paciente */
+      /**
+       * Codigo curto para o worker decidir retry; sem conteudo de paciente.
+       * Os do numero: 'desconectado' (reason desconectado; espera a
+       * reconexao), 'numero_removido' (reason desconectado, mas DEFINITIVO:
+       * o numero nao volta e o envio nao troca de numero sozinho),
+       * 'conta_divergente' e 'conversa_inexistente' (falha_envio, sem retry).
+       */
       code?: string;
       /** so em slot_adiado: quando o canal da clinica abre */
       livreEm?: string;
@@ -155,6 +177,7 @@ export type SendTextResult =
 // so a resposta se perdido): esse NUNCA entra em retry automatico.
 const FALHAS_SEM_ENVIO = new Set([
   "slot_indisponivel",
+  "leitura_falhou",
   "canal_ocupado",
   "sem_consentimento_no_envio",
   "sem_instancia",
@@ -260,33 +283,146 @@ export async function sendWhatsAppMenu(
   });
 }
 
+/** O que o envio precisa saber do numero da conversa. */
+type NumeroDaConversa = {
+  id: string;
+  provider: string;
+  server_url: string | null;
+  instance_id: string | null;
+  nome: string;
+  connection_status: string;
+  removido_em: string | null;
+};
+
+type ConversaDoEnvio =
+  | { estado: "erro" }
+  | { estado: "inexistente" }
+  | { estado: "ok"; numero: NumeroDaConversa | null };
+
+// O numero vem EMBUTIDO na leitura da conversa (uma ida ao banco). O nome da
+// FK no embed e obrigatorio: message tambem aponta para conversation e para
+// whatsapp_account, e sem a dica o PostgREST pode enxergar dois caminhos
+// entre as duas tabelas e recusar o embed.
+const SELECT_NUMERO_DA_CONVERSA =
+  "whatsapp_account_id, numero:whatsapp_account!conversation_whatsapp_account_id_fkey(id, provider, server_url, instance_id, nome, connection_status, removido_em)";
+
 /**
- * Monta o provedor e a referencia da instancia daquela clinica.
+ * O numero da conversa, por onde a mensagem sai.
  *
- * Exportada porque apagar mensagem tambem precisa falar com o provedor, e a
- * alternativa seria uma terceira copia da leitura do segredo. O segredo mora
- * em whatsapp_account_secret, que nenhuma sessao le: exige o admin client.
+ * Nulo quando a conversa nao tem numero, o que so acontece em clinica sem
+ * numero nenhum (a conversa e adotada pelo primeiro numero que a clinica
+ * ganhar). Para o envio, isso e o mesmo que "desconectado", como era antes
+ * com a clinica sem conta.
  */
-export async function carregarInstancia(
+async function lerNumeroDaConversa(
   supabase: SupabaseClient,
   clinicId: string,
-): Promise<{ provider: WhatsAppProvider; ref: InstanceRef }> {
-  const { data: account } = await supabase
-    .from("whatsapp_account")
-    .select("provider, server_url, instance_id")
+  conversationId: string,
+): Promise<ConversaDoEnvio> {
+  const { data, error } = await supabase
+    .from("conversation")
+    .select(SELECT_NUMERO_DA_CONVERSA)
     .eq("clinic_id", clinicId)
+    .eq("id", conversationId)
     .maybeSingle();
+  if (error) {
+    // Visivel no log: um embed recusado (dica de FK errada, cache de esquema
+    // velho) derrubaria TODO envio com o mesmo codigo, e so ids saem aqui.
+    log.warn("envio_leitura_da_conversa_falhou", {
+      clinic_id: clinicId,
+      conversation_id: conversationId,
+      error_code: error.code ?? null,
+    });
+    return { estado: "erro" };
+  }
+  if (!data) {
+    return { estado: "inexistente" };
+  }
+  const linha = data as unknown as {
+    whatsapp_account_id: string | null;
+    numero: NumeroDaConversa | NumeroDaConversa[] | null;
+  };
+  // Embed de muitos para um volta objeto; a lista cobre um PostgREST que
+  // devolva vetor sem quebrar o tipo.
+  const numero = Array.isArray(linha.numero)
+    ? (linha.numero[0] ?? null)
+    : linha.numero;
+  return {
+    estado: "ok",
+    numero: linha.whatsapp_account_id && numero ? numero : null,
+  };
+}
+
+/** O token da instancia daquele numero (o segredo e por numero, nao por clinica). */
+async function lerTokenDaInstancia(
+  supabase: SupabaseClient,
+  clinicId: string,
+  accountId: string,
+): Promise<string | null> {
   const { data: segredo } = await supabase
     .from("whatsapp_account_secret")
     .select("instance_token")
     .eq("clinic_id", clinicId)
+    .eq("account_id", accountId)
     .maybeSingle();
+  return (segredo?.instance_token as string | null | undefined) ?? null;
+}
+
+/**
+ * O nome do numero para a mensagem de erro, so quando a clinica tem mais de
+ * um numero. Com um so, "o WhatsApp da clinica" diz mais do que um nome que
+ * ninguem escolheu ("Numero principal"). Conta os ativos, e o proprio numero
+ * quando ele acabou de ser removido (a clinica TINHA mais de um). Roda so no
+ * caminho de erro: envio que sai nao paga esta consulta.
+ */
+async function nomeSeHouverOutros(
+  supabase: SupabaseClient,
+  clinicId: string,
+  numero: Pick<NumeroDaConversa, "nome" | "removido_em">,
+): Promise<string | null> {
+  const { count, error } = await supabase
+    .from("whatsapp_account")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", clinicId)
+    .is("removido_em", null);
+  if (error) {
+    return null;
+  }
+  const total = (count ?? 0) + (numero.removido_em ? 1 : 0);
+  return total > 1 ? numero.nome : null;
+}
+
+/**
+ * Monta o provedor e a referencia da instancia de UM numero da clinica.
+ *
+ * Exportada porque apagar mensagem e o teste da regua tambem falam com o
+ * provedor, e a alternativa seria outra copia da leitura do segredo. O
+ * segredo mora em whatsapp_account_secret, que nenhuma sessao le: exige o
+ * admin client. O numero e lido por id E clinica: um id de outra clinica
+ * devolve referencia vazia (o provedor recusa por falta de token), nunca a
+ * instancia alheia.
+ */
+export async function carregarInstancia(
+  supabase: SupabaseClient,
+  clinicId: string,
+  accountId: string,
+): Promise<{ provider: WhatsAppProvider; ref: InstanceRef }> {
+  const [{ data: account }, instanceToken] = await Promise.all([
+    supabase
+      .from("whatsapp_account")
+      .select("provider, server_url, instance_id")
+      .eq("clinic_id", clinicId)
+      .eq("id", accountId)
+      .maybeSingle(),
+    lerTokenDaInstancia(supabase, clinicId, accountId),
+  ]);
   return {
     provider: getWhatsAppProvider(account?.provider),
     ref: {
       clinicId,
+      accountId,
       serverUrl: account?.server_url ?? null,
-      instanceToken: segredo?.instance_token ?? null,
+      instanceToken,
       instanceId: account?.instance_id ?? null,
     },
   };
@@ -300,47 +436,93 @@ async function enviarPeloCanal(
   // Consentimento VIGENTE: o registro mais recente manda. Perguntar "existe
   // alguma linha ativa" deixava o paciente que pediu descadastro voltar a
   // receber, bastando alguem inserir uma linha nova.
-  const { data: consentimentoVigente } = await supabase.rpc(
-    "consentimento_vigente",
-    {
+  //
+  // O numero vem DA CONVERSA, junto com ela: e por ele que a mensagem sai.
+  const [{ data: consentimentoVigente }, conversa] = await Promise.all([
+    supabase.rpc("consentimento_vigente", {
       p_clinic_id: input.clinicId,
       p_contact_id: input.contactId,
       p_channel: "whatsapp",
-    },
-  );
+    }),
+    lerNumeroDaConversa(supabase, input.clinicId, input.conversationId),
+  ]);
 
-  const { data: account } = await supabase
-    .from("whatsapp_account")
-    .select("provider, server_url, instance_id, connection_status")
-    .eq("clinic_id", input.clinicId)
-    .maybeSingle();
+  if (conversa.estado === "erro") {
+    return {
+      ok: false,
+      reason: "falha_envio",
+      code: "leitura_falhou",
+      message: "Não foi possível carregar a conversa. Tente de novo.",
+    };
+  }
+  if (conversa.estado === "inexistente") {
+    return {
+      ok: false,
+      reason: "falha_envio",
+      code: "conversa_inexistente",
+      message: "Conversa não encontrada.",
+    };
+  }
+  const numero = conversa.numero;
 
+  // ASSERCAO de quem chama: o job carimbado com um numero nao pode sair por
+  // outro. Nada foi reservado nem gravado, e repetir daria o mesmo resultado.
+  if (input.whatsappAccountId && input.whatsappAccountId !== numero?.id) {
+    return {
+      ok: false,
+      reason: "falha_envio",
+      code: "conta_divergente",
+      message:
+        "Esta conversa pertence a outro número da clínica. Nada foi enviado.",
+    };
+  }
+
+  // Numero removido nao envia mais (e nao conta como conectado, mesmo que a
+  // linha dissesse o contrario): a decisao e pelo status DAQUELE numero.
+  const ativo = numero && !numero.removido_em ? numero : null;
   const decision = canSendDecision({
     consentActive: consentimentoVigente === true,
-    accountStatus: account?.connection_status ?? null,
+    accountStatus: ativo?.connection_status ?? null,
   });
 
-  if (!decision.allowed) {
-    if (decision.reason === "sem_consentimento") {
-      await supabase.from("audit_log").insert({
-        clinic_id: input.clinicId,
-        user_id: input.authorUserId,
-        action: "envio_bloqueado_sem_autorizacao",
-        entity: "contact",
-        entity_id: input.contactId,
-      });
+  if (!decision.allowed && decision.reason === "sem_consentimento") {
+    await supabase.from("audit_log").insert({
+      clinic_id: input.clinicId,
+      user_id: input.authorUserId,
+      action: "envio_bloqueado_sem_autorizacao",
+      entity: "contact",
+      entity_id: input.contactId,
+    });
+    return {
+      ok: false,
+      reason: "sem_consentimento",
+      message:
+        "Este contato não autorizou receber mensagens. O envio foi bloqueado e registrado.",
+    };
+  }
+  if (!decision.allowed || !ativo) {
+    const nome = numero
+      ? await nomeSeHouverOutros(supabase, input.clinicId, numero)
+      : null;
+    if (numero?.removido_em) {
+      // O numero nao volta, e o envio nao troca de numero sozinho: quem chama
+      // trata 'numero_removido' como definitivo.
       return {
         ok: false,
-        reason: "sem_consentimento",
-        message:
-          "Este contato não autorizou receber mensagens. O envio foi bloqueado e registrado.",
+        reason: "desconectado",
+        code: "numero_removido",
+        message: nome
+          ? `O número "${nome}" foi removido da clínica. Nada foi enviado.`
+          : "O número desta conversa foi removido da clínica. Nada foi enviado.",
       };
     }
     return {
       ok: false,
       reason: "desconectado",
       code: "desconectado",
-      message: "O WhatsApp da clínica não está conectado.",
+      message: nome
+        ? `O número "${nome}" da clínica não está conectado.`
+        : "O WhatsApp da clínica não está conectado.",
     };
   }
 
@@ -409,6 +591,9 @@ async function enviarPeloCanal(
   // outras mensagens" por minutos. Agora o envio automatico reserva o slot
   // de massa (o limite anti-ban por instancia continua) e o humano so espera
   // o intervalo curto desde o ultimo envio real.
+  //
+  // O slot e do NUMERO: cada numero e uma instancia, com o proprio limite
+  // anti-ban. A trava e na linha dele, e numero removido devolve 'sem_conta'.
   const teto = input.esperaMaximaMs ?? 8_000;
   const { data: slot, error: erroSlot } = await supabase.rpc(
     "reservar_slot_envio_v2",
@@ -420,6 +605,7 @@ async function enviarPeloCanal(
       // O intervalo curto que um envio automatico deixa para o proximo
       // envio de qualquer trilho. O banco nunca usa mais que p_espaco_ms.
       p_espaco_curto_ms: espacamentoPadraoMs(),
+      p_whatsapp_account_id: ativo.id,
     },
   );
   const estado = (slot as { estado?: string } | null)?.estado;
@@ -433,25 +619,32 @@ async function enviarPeloCanal(
   }
   if (estado === "sem_conta") {
     // Falha FECHADA. A v1 devolvia nulo aqui, o cliente convertia em espera 0
-    // e a mensagem saia SEM ESPACAMENTO NENHUM.
+    // e a mensagem saia SEM ESPACAMENTO NENHUM. Com o numero lido ativo logo
+    // acima, isto e o numero removido no meio do caminho: o retry le de novo
+    // e responde 'numero_removido'.
+    const nome = await nomeSeHouverOutros(supabase, input.clinicId, ativo);
     return {
       ok: false,
       reason: "falha_envio",
       code: "slot_indisponivel",
-      message: "Este número não está configurado para envio.",
+      message: nome
+        ? `O número "${nome}" não está configurado para envio.`
+        : "Este número não está configurado para envio.",
     };
   }
   if (estado === "adiado") {
     // Nada foi reservado e nada foi gravado: o chamador reagenda o job para o
     // instante em que o canal abre. Ninguem fica esperando segurando uma
     // requisicao, que e o que nao cabe num ambiente sem servidor.
+    const nome = await nomeSeHouverOutros(supabase, input.clinicId, ativo);
     return {
       ok: false,
       reason: "slot_adiado",
       code: "canal_ocupado",
       livreEm: (slot as { livre_em: string }).livre_em,
-      message:
-        "O número está enviando outras mensagens agora. O envio foi remarcado.",
+      message: nome
+        ? `O número "${nome}" está enviando outras mensagens agora. O envio foi remarcado.`
+        : "O número está enviando outras mensagens agora. O envio foi remarcado.",
     };
   }
   const espera = Number((slot as { espera_ms?: number }).espera_ms ?? 0);
@@ -535,17 +728,18 @@ async function enviarPeloCanal(
     }
   }
 
-  const provider = getWhatsAppProvider(account?.provider);
-  const { data: segredo } = await supabase
-    .from("whatsapp_account_secret")
-    .select("instance_token")
-    .eq("clinic_id", input.clinicId)
-    .maybeSingle();
+  // Provedor, servidor e token DO NUMERO da conversa.
+  const provider = getWhatsAppProvider(ativo.provider);
   const ref: InstanceRef = {
     clinicId: input.clinicId,
-    serverUrl: account?.server_url ?? null,
-    instanceToken: segredo?.instance_token ?? null,
-    instanceId: account?.instance_id ?? null,
+    accountId: ativo.id,
+    serverUrl: ativo.server_url,
+    instanceToken: await lerTokenDaInstancia(
+      supabase,
+      input.clinicId,
+      ativo.id,
+    ),
+    instanceId: ativo.instance_id,
   };
   const result = await despacho
     .enviar(provider, ref, contact.phone_e164, {
@@ -582,11 +776,17 @@ async function enviarPeloCanal(
 
   if (!result.ok) {
     await marcarFalha(supabase, messageId, result.errorCode);
+    const nome =
+      result.errorCode === "sem_instancia"
+        ? await nomeSeHouverOutros(supabase, input.clinicId, ativo)
+        : null;
     return {
       ok: false,
       reason: "falha_envio",
       code: result.errorCode,
-      message: result.message,
+      message: nome
+        ? `O número "${nome}" ainda não foi conectado. Conecte em Conexão do WhatsApp.`
+        : result.message,
     };
   }
 
@@ -600,6 +800,7 @@ async function enviarPeloCanal(
   if (erroUpdate) {
     log.error("envio_saiu_sem_confirmar_registro", {
       clinic_id: input.clinicId,
+      whatsapp_account_id: ativo.id,
       message_id: messageId,
       error_code: erroUpdate.code ?? null,
     });

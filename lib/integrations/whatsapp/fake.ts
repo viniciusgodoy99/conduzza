@@ -24,6 +24,12 @@ export type FakeSentMessage = {
     bytes: number;
   };
   clinicId: string;
+  /**
+   * O numero da clinica (whatsapp_account.id) pelo qual o envio saiu; nulo
+   * quando quem chamou nao informou. Com mais de um numero, e isso que os
+   * testes conferem para provar que a mensagem saiu pelo numero certo.
+   */
+  accountId: string | null;
   to: string;
   body: string;
   menuOptions?: MenuOption[];
@@ -50,6 +56,18 @@ export function resetFakeProvider(): void {
   apagadas.length = 0;
 }
 
+/**
+ * Nome da instancia falsa: um por NUMERO.
+ *
+ * instance_id e unico entre os numeros ativos (provider, instance_id). O nome
+ * antigo, `fake-` mais o inicio do id da clinica, faria o segundo numero da
+ * mesma clinica colidir com o primeiro. Sem o numero na referencia, vale o
+ * nome antigo, que e o que as contas falsas de hoje ja guardam.
+ */
+export function instanciaFalsa(ref: InstanceRef): string {
+  return `fake-${(ref.accountId ?? ref.clinicId).slice(0, 8)}`;
+}
+
 export class FakeProvider implements WhatsAppProvider {
   readonly name = "fake" as const;
   readonly isOfficialChannel = false;
@@ -63,6 +81,7 @@ export class FakeProvider implements WhatsAppProvider {
     const waMessageId = `fake:${crypto.randomUUID()}`;
     sent.push({
       clinicId: ref.clinicId,
+      accountId: ref.accountId ?? null,
       to,
       body,
       waMessageId,
@@ -80,6 +99,7 @@ export class FakeProvider implements WhatsAppProvider {
     const waMessageId = `fake:${crypto.randomUUID()}`;
     sent.push({
       clinicId: ref.clinicId,
+      accountId: ref.accountId ?? null,
       to,
       body: midia.legenda ?? "",
       midia: {
@@ -104,6 +124,7 @@ export class FakeProvider implements WhatsAppProvider {
     const waMessageId = `fake:${crypto.randomUUID()}`;
     sent.push({
       clinicId: ref.clinicId,
+      accountId: ref.accountId ?? null,
       to,
       body,
       menuOptions: options,
@@ -125,7 +146,7 @@ export class FakeProvider implements WhatsAppProvider {
     return {
       status: "conectado",
       displayPhone: "+55 84 98888-0001",
-      instanceId: `fake-${ref.clinicId.slice(0, 8)}`,
+      instanceId: instanciaFalsa(ref),
       qrCode: null,
     };
   }

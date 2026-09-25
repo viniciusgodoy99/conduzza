@@ -19,6 +19,9 @@ const CAMPOS_PERMITIDOS = new Set([
   "wa_message_id",
   "user_id",
   "instance_id",
+  // O numero da clinica (whatsapp_account.id): com mais de um numero, saber
+  // QUAL caiu ou falhou e o que separa o diagnostico de um palpite.
+  "whatsapp_account_id",
   "event_type",
   "status",
   "delivery_status",
