@@ -632,6 +632,7 @@ export type Database = {
           created_at: string
           e_de_teste: boolean
           id: string
+          limite_de_numeros: number | null
           name: string
           slug: string
           spend_cap_action: string
@@ -646,6 +647,7 @@ export type Database = {
           created_at?: string
           e_de_teste?: boolean
           id?: string
+          limite_de_numeros?: number | null
           name: string
           slug: string
           spend_cap_action?: string
@@ -660,6 +662,7 @@ export type Database = {
           created_at?: string
           e_de_teste?: boolean
           id?: string
+          limite_de_numeros?: number | null
           name?: string
           slug?: string
           spend_cap_action?: string
@@ -1100,6 +1103,7 @@ export type Database = {
           tags: string[]
           unread_count: number
           updated_at: string
+          whatsapp_account_id: string | null
           window_expires_at: string | null
         }
         Insert: {
@@ -1119,6 +1123,7 @@ export type Database = {
           tags?: string[]
           unread_count?: number
           updated_at?: string
+          whatsapp_account_id?: string | null
           window_expires_at?: string | null
         }
         Update: {
@@ -1138,6 +1143,7 @@ export type Database = {
           tags?: string[]
           unread_count?: number
           updated_at?: string
+          whatsapp_account_id?: string | null
           window_expires_at?: string | null
         }
         Relationships: [
@@ -1153,6 +1159,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_whatsapp_account_id_fkey"
+            columns: ["whatsapp_account_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_account"
             referencedColumns: ["id"]
           },
         ]
@@ -1305,6 +1318,7 @@ export type Database = {
           status: string
           ultimo_motivo_devolucao: string | null
           updated_at: string
+          whatsapp_account_id: string | null
         }
         Insert: {
           attempts?: number
@@ -1323,6 +1337,7 @@ export type Database = {
           status?: string
           ultimo_motivo_devolucao?: string | null
           updated_at?: string
+          whatsapp_account_id?: string | null
         }
         Update: {
           attempts?: number
@@ -1341,6 +1356,7 @@ export type Database = {
           status?: string
           ultimo_motivo_devolucao?: string | null
           updated_at?: string
+          whatsapp_account_id?: string | null
         }
         Relationships: [
           {
@@ -1348,6 +1364,13 @@ export type Database = {
             columns: ["clinic_id"]
             isOneToOne: false
             referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_queue_whatsapp_account_id_fkey"
+            columns: ["whatsapp_account_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_account"
             referencedColumns: ["id"]
           },
         ]
@@ -1383,6 +1406,7 @@ export type Database = {
           transcript: string | null
           updated_at: string
           wa_message_id: string | null
+          whatsapp_account_id: string | null
         }
         Insert: {
           author: string
@@ -1414,6 +1438,7 @@ export type Database = {
           transcript?: string | null
           updated_at?: string
           wa_message_id?: string | null
+          whatsapp_account_id?: string | null
         }
         Update: {
           author?: string
@@ -1445,6 +1470,7 @@ export type Database = {
           transcript?: string | null
           updated_at?: string
           wa_message_id?: string | null
+          whatsapp_account_id?: string | null
         }
         Relationships: [
           {
@@ -1473,6 +1499,13 @@ export type Database = {
             columns: ["reply_to_message_id"]
             isOneToOne: false
             referencedRelation: "message"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_whatsapp_account_id_fkey"
+            columns: ["whatsapp_account_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_account"
             referencedColumns: ["id"]
           },
         ]
@@ -2572,14 +2605,20 @@ export type Database = {
           created_at: string
           disconnected_at: string | null
           display_phone: string | null
+          id: string
           instance_id: string | null
           messaging_limit: string | null
           next_bulk_send_at: string | null
           next_send_at: string | null
+          nome: string
           phone_number_id: string | null
+          principal: boolean
           provider: string
           quality_rating: string | null
+          removido_em: string | null
+          removido_por: string | null
           server_url: string | null
+          unit_id: string | null
           updated_at: string
           waba_id: string | null
         }
@@ -2591,14 +2630,20 @@ export type Database = {
           created_at?: string
           disconnected_at?: string | null
           display_phone?: string | null
+          id?: string
           instance_id?: string | null
           messaging_limit?: string | null
           next_bulk_send_at?: string | null
           next_send_at?: string | null
+          nome?: string
           phone_number_id?: string | null
+          principal?: boolean
           provider?: string
           quality_rating?: string | null
+          removido_em?: string | null
+          removido_por?: string | null
           server_url?: string | null
+          unit_id?: string | null
           updated_at?: string
           waba_id?: string | null
         }
@@ -2610,14 +2655,20 @@ export type Database = {
           created_at?: string
           disconnected_at?: string | null
           display_phone?: string | null
+          id?: string
           instance_id?: string | null
           messaging_limit?: string | null
           next_bulk_send_at?: string | null
           next_send_at?: string | null
+          nome?: string
           phone_number_id?: string | null
+          principal?: boolean
           provider?: string
           quality_rating?: string | null
+          removido_em?: string | null
+          removido_por?: string | null
           server_url?: string | null
+          unit_id?: string | null
           updated_at?: string
           waba_id?: string | null
         }
@@ -2629,10 +2680,18 @@ export type Database = {
             referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "whatsapp_account_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "unit"
+            referencedColumns: ["id"]
+          },
         ]
       }
       whatsapp_account_secret: {
         Row: {
+          account_id: string
           clinic_id: string
           created_at: string
           instance_token: string | null
@@ -2642,6 +2701,7 @@ export type Database = {
           webhook_secret: string
         }
         Insert: {
+          account_id: string
           clinic_id: string
           created_at?: string
           instance_token?: string | null
@@ -2651,6 +2711,7 @@ export type Database = {
           webhook_secret?: string
         }
         Update: {
+          account_id?: string
           clinic_id?: string
           created_at?: string
           instance_token?: string | null
@@ -2661,10 +2722,56 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "whatsapp_account_secret_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: true
+            referencedRelation: "whatsapp_account"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "whatsapp_account_secret_clinic_id_fkey"
             columns: ["clinic_id"]
             isOneToOne: true
             referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_envio_automatico: {
+        Row: {
+          clinic_id: string
+          conta_fixa_id: string | null
+          created_at: string
+          modo: string
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          conta_fixa_id?: string | null
+          created_at?: string
+          modo?: string
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          conta_fixa_id?: string | null
+          created_at?: string
+          modo?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_envio_automatico_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_envio_automatico_conta_fixa_id_fkey"
+            columns: ["conta_fixa_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_account"
             referencedColumns: ["id"]
           },
         ]
@@ -2782,6 +2889,7 @@ export type Database = {
           status: string
           ultimo_motivo_devolucao: string | null
           updated_at: string
+          whatsapp_account_id: string | null
         }[]
         SetofOptions: {
           from: "*"
@@ -2814,6 +2922,7 @@ export type Database = {
           status: string
           ultimo_motivo_devolucao: string | null
           updated_at: string
+          whatsapp_account_id: string | null
         }[]
         SetofOptions: {
           from: "*"
@@ -2826,6 +2935,23 @@ export type Database = {
       concluir_job: {
         Args: { p_id: string; p_worker: string }
         Returns: undefined
+      }
+      conta_de_envio: {
+        Args: { p_clinic_id: string; p_contact_id: string }
+        Returns: string
+      }
+      contas_de_envio: {
+        Args: { p_clinic_id: string; p_contact_ids: string[] }
+        Returns: {
+          connection_status: string
+          contact_id: string
+          nome: string
+          whatsapp_account_id: string
+        }[]
+      }
+      contato_do_job: {
+        Args: { p_clinic_id: string; p_payload: Json }
+        Returns: string
       }
       confirmar_pelo_paciente: {
         Args: {
@@ -2883,6 +3009,10 @@ export type Database = {
         }
         Returns: string
       }
+      definir_numero_principal: {
+        Args: { p_account_id: string; p_clinic_id: string }
+        Returns: string
+      }
       definir_entrada_por_codigo: {
         Args: { p_ativo: boolean; p_clinic_id: string }
         Returns: boolean
@@ -2938,7 +3068,11 @@ export type Database = {
         Returns: Json
       }
       garantir_conversa_aberta: {
-        Args: { p_clinic_id: string; p_contact_id: string }
+        Args: {
+          p_clinic_id: string
+          p_contact_id: string
+          p_whatsapp_account_id?: string
+        }
         Returns: string
       }
       ingest_inbound_message: {
@@ -2953,6 +3087,7 @@ export type Database = {
           p_phone_e164: string
           p_transcript?: string
           p_wa_message_id: string
+          p_whatsapp_account_id?: string
         }
         Returns: Json
       }
@@ -2976,6 +3111,10 @@ export type Database = {
       motor_agendar: { Args: never; Returns: string }
       motor_desagendar: { Args: never; Returns: string }
       motor_manutencao: { Args: never; Returns: Json }
+      numero_do_job: {
+        Args: { p_job_id: string; p_worker: string }
+        Returns: Json
+      }
       mover_na_lista_de_espera: {
         Args: { p_clinic_id: string; p_id: string; p_nova_posicao: number }
         Returns: string
@@ -3035,8 +3174,24 @@ export type Database = {
         Args: { p_conversation_id: string }
         Returns: undefined
       }
+      redistribuir_jobs_do_numero: {
+        Args: { p_account_id: string }
+        Returns: number
+      }
       registrar_apagamento_do_whatsapp: {
-        Args: { p_clinic_id: string; p_wa_message_id: string }
+        Args: {
+          p_clinic_id: string
+          p_wa_message_id: string
+          p_whatsapp_account_id?: string
+        }
+        Returns: Json
+      }
+      remover_numero: {
+        Args: {
+          p_account_id: string
+          p_clinic_id: string
+          p_removido_por?: string
+        }
         Returns: Json
       }
       reservar_slot_envio: {
@@ -3050,8 +3205,13 @@ export type Database = {
           p_espaco_ms: number
           p_espera_maxima_ms: number
           p_massa?: boolean
+          p_whatsapp_account_id?: string
         }
         Returns: Json
+      }
+      resolver_conta_de_envio: {
+        Args: { p_clinic_id: string; p_contact_id: string }
+        Returns: string
       }
       saude_do_motor: { Args: never; Returns: Json }
       seed_reguas_padrao: { Args: { p_clinic_id: string }; Returns: undefined }
