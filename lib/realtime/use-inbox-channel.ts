@@ -33,8 +33,21 @@ type ConversationRow = {
   awaiting_reply?: boolean;
   last_message_at: string | null;
   last_inbound_at: string | null;
+  // Previa da ultima mensagem (gatilho no banco). Dado de paciente: chega
+  // pelo mesmo filtro de RLS da linha e so vai para o cache da tela.
+  last_preview?: string | null;
+  last_preview_kind?: ConversationListItem["last_preview_kind"];
+  // Quem escreveu a mensagem da previa (mesmo gatilho, migration
+  // 20260925120000).
+  last_preview_author?: ConversationListItem["last_preview_author"];
+  last_preview_author_user_id?: string | null;
   tags: string[] | null;
 };
+
+/** undefined (evento sem a coluna) mantem o valor da tela; null e valor. */
+function colunaOu<T>(novo: T | undefined, atual: T): T {
+  return novo !== undefined ? novo : atual;
+}
 
 export function useInboxChannel(
   supabase: SupabaseClient,
@@ -45,6 +58,13 @@ export function useInboxChannel(
 
   useEffect(() => {
     const listKey = conversationKeys.list(clinicId);
+    // O total de resolvidas (chip "Resolvida") mora fora da chave-mae da
+    // lista; muda quando uma conversa e resolvida ou reaberta. Invalidar uma
+    // consulta desligada (filtro fechado) nao custa nada.
+    const invalidarTotalDeResolvidas = () =>
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.totalResolvidas(clinicId),
+      });
 
     const aplicarConversa = (row: ConversationRow) => {
       const atual =
@@ -59,6 +79,14 @@ export function useInboxChannel(
             atual.filter((c) => c.id !== row.id),
           );
         }
+        // O arquivo de resolvidas (e a conversa aberta por link) so refaz a
+        // busca se estiver na tela: invalidar uma consulta desligada nao
+        // custa nada.
+        void queryClient.invalidateQueries({
+          queryKey: listKey,
+          predicate: (query) => query.queryKey.length > listKey.length,
+        });
+        invalidarTotalDeResolvidas();
         return;
       }
 
@@ -66,6 +94,7 @@ export function useInboxChannel(
       // contato, que o evento nao traz. Invalida uma vez, evento raro.
       if (!existente) {
         void queryClient.invalidateQueries({ queryKey: listKey });
+        invalidarTotalDeResolvidas();
         return;
       }
 
@@ -82,6 +111,21 @@ export function useInboxChannel(
         awaiting_reply: row.awaiting_reply ?? existente.awaiting_reply,
         last_message_at: row.last_message_at,
         last_inbound_at: row.last_inbound_at,
+        // undefined (evento sem a coluna) mantem o que esta na tela; null e
+        // valor de verdade (conversa sem mensagem visivel).
+        last_preview: colunaOu(row.last_preview, existente.last_preview),
+        last_preview_kind: colunaOu(
+          row.last_preview_kind,
+          existente.last_preview_kind,
+        ),
+        last_preview_author: colunaOu(
+          row.last_preview_author,
+          existente.last_preview_author,
+        ),
+        last_preview_author_user_id: colunaOu(
+          row.last_preview_author_user_id,
+          existente.last_preview_author_user_id,
+        ),
         tags: row.tags ?? existente.tags,
       };
       const proxima = atual
@@ -170,6 +214,7 @@ export function useInboxChannel(
           void queryClient.invalidateQueries({
             queryKey: conversationKeys.list(clinicId),
           });
+          invalidarTotalDeResolvidas();
           void queryClient.invalidateQueries({ queryKey: ["messages"] });
         }
       });

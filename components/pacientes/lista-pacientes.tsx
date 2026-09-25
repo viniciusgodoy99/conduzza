@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { useMemo } from "react";
 
+import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { dataLocal } from "@/components/leads/rotulos";
 import {
   BarraComparecimento,
@@ -13,6 +14,7 @@ import {
 } from "@/components/pacientes/comum";
 import { DataTable } from "@/components/shared/data-table";
 import { etiquetasDoPaciente, indicadoresDe } from "@/lib/domain/pacientes-ui";
+import { formatarTelefone } from "@/lib/domain/telefone";
 import type { PacienteResumo } from "@/lib/queries/pacientes";
 import { cn } from "@/lib/utils";
 
@@ -55,11 +57,18 @@ export function ListaPacientes({
             aria-label={`Abrir a ficha de ${paciente.name ?? `Sem nome, ${paciente.phone_e164}`}`}
             onClick={(evento) => evento.stopPropagation()}
             className={cn(
-              "flex h-10 items-center rounded-md underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-              paciente.name ? "font-medium" : "text-text-tertiary",
+              "flex h-10 max-w-[260px] min-w-0 items-center gap-2 rounded-md underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
+              paciente.name
+                ? "font-semibold text-text-strong"
+                : "text-text-secondary",
             )}
           >
-            {paciente.name ?? "Sem nome"}
+            <ContactAvatar
+              name={paciente.name}
+              phone={paciente.phone_e164}
+              size={24}
+            />
+            <span className="truncate">{paciente.name ?? "Sem nome"}</span>
           </Link>
         );
       },
@@ -67,9 +76,10 @@ export function ListaPacientes({
     const telefone: ColumnDef<PacienteResumo> = {
       accessorKey: "phone_e164",
       header: "Telefone",
+      meta: { numeric: true },
       cell: ({ row }) => (
-        <span className="font-mono text-[13px] whitespace-nowrap">
-          {row.original.phone_e164}
+        <span className="whitespace-nowrap text-text-secondary">
+          {formatarTelefone(row.original.phone_e164)}
         </span>
       ),
     };
@@ -78,35 +88,35 @@ export function ListaPacientes({
       header: "Convênio",
       cell: ({ row }) =>
         row.original.insurance_name ? (
-          <span className="text-text-secondary">
-            {row.original.insurance_name}
-          </span>
+          <span>{row.original.insurance_name}</span>
         ) : (
-          <span className="text-text-tertiary">Particular</span>
+          <span className="text-text-secondary">Particular</span>
         ),
     };
     const ultima: ColumnDef<PacienteResumo> = {
       accessorKey: "ultima_consulta",
       header: "Última consulta",
+      meta: { align: "right", numeric: false },
       cell: ({ row }) =>
         row.original.ultima_consulta ? (
-          <span className="font-mono text-[13px] whitespace-nowrap tabular-nums">
+          <span className="cz-num whitespace-nowrap">
             {dataLocal(row.original.ultima_consulta, timezone)}
           </span>
         ) : (
-          <SemDado leitura="Sem consulta registrada" />
+          <SemDado texto="Nenhuma ainda" className="whitespace-nowrap" />
         ),
     };
     const proxima: ColumnDef<PacienteResumo> = {
       accessorKey: "proxima_consulta",
       header: "Próxima",
+      meta: { align: "right", numeric: false },
       cell: ({ row }) =>
         row.original.proxima_consulta ? (
-          <span className="font-mono text-[13px] whitespace-nowrap tabular-nums">
+          <span className="cz-num whitespace-nowrap text-text-strong">
             {dataLocal(row.original.proxima_consulta, timezone)}
           </span>
         ) : (
-          <span className="whitespace-nowrap text-text-tertiary">
+          <span className="whitespace-nowrap text-text-secondary">
             Sem marcação
           </span>
         ),
@@ -126,21 +136,27 @@ export function ListaPacientes({
       cell: ({ row }) =>
         row.original.saldo_sessoes > 0 ? (
           <span className="whitespace-nowrap">
-            {row.original.saldo_sessoes}{" "}
+            <span className="cz-num">{row.original.saldo_sessoes}</span>{" "}
             {plural(row.original.saldo_sessoes, "sessão", "sessões")}
           </span>
         ) : (
-          <span className="text-text-tertiary">Sem pacote</span>
+          <span className="whitespace-nowrap text-text-secondary">
+            Sem pacote
+          </span>
         ),
     };
     const etiquetas: ColumnDef<PacienteResumo> = {
       id: "etiquetas",
       header: "Sinais automáticos",
-      cell: ({ row }) => (
-        <EtiquetasDoPaciente
-          etiquetas={etiquetasDoPaciente(row.original, agora)}
-        />
-      ),
+      cell: ({ row }) => {
+        const sinais = etiquetasDoPaciente(row.original, agora);
+        // Campo vazio em texto (receita 4.7), nunca celula em branco.
+        return sinais.length > 0 ? (
+          <EtiquetasDoPaciente etiquetas={sinais} tamanho="sm" />
+        ) : (
+          <SemDado texto="Nenhum" />
+        );
+      },
     };
 
     if (telaEstreita) {
@@ -158,12 +174,16 @@ export function ListaPacientes({
     ];
   }, [timezone, telaEstreita, agora]);
 
+  // Sem casca propria: a tabela mora dentro do cartao da tela, com o
+  // cabecalho grudado enquanto as linhas rolam.
   return (
     <DataTable
       columns={columns}
       data={pacientes}
       onRowClick={onAbrirFicha}
-      className="text-sm"
+      variant="bare"
+      stickyHeader
+      containerClassName="cz-scroll max-h-[min(720px,calc(100dvh-16rem))]"
     />
   );
 }

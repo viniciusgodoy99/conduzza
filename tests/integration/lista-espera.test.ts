@@ -746,7 +746,7 @@ describe("lista de espera de ponta a ponta, contra o banco real", () => {
     const { appointmentId } = await consultaParaCancelar(cenario);
     await cancelar(appointmentId);
     await executarUltimoJob(cenario.clinicId);
-    const oferta = await ofertaAberta(cenario.clinicId);
+    expect((await ofertaAberta(cenario.clinicId))?.status).toBe("aberta");
 
     const { data: conversa } = await admin.rpc("garantir_conversa_aberta", {
       p_clinic_id: cenario.clinicId,

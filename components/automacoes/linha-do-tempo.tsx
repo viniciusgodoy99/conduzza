@@ -1,11 +1,29 @@
 "use client";
 
+import { MessageSquareDashed } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 
 // O editor em linha do tempo horizontal do brief da Tela 7:
-// Agendou ──● 72h antes ──● 24h antes ──● 3h antes ── Consulta
+// Agendou, ponto 72h antes, ponto 24h antes, ponto 3h antes, Consulta.
 // Cada ponto e um botao (alvo minimo de 40px) que abre o editor do passo.
-// Ponto sem texto ganha aviso visual E textual (3 camadas, nunca so cor).
+// Desenho do design system (docs/06 secao 5.10): pilula clara com borda, e
+// a escolhida em tinta (bg-inverse), nunca preenchida de lime. Ponto sem
+// texto ganha icone proprio e o texto "(sem texto)": o ponto colorido
+// sozinho era status so por cor.
+
+/** Numero dentro do rotulo ("72 horas antes") em cz-num. */
+function ComNumeros({ texto }: { texto: string }) {
+  return texto.split(/(\d+)/).map((parte, indice) =>
+    /^\d+$/.test(parte) ? (
+      <span key={indice} className="cz-num">
+        {parte}
+      </span>
+    ) : (
+      parte
+    ),
+  );
+}
 
 export type PontoDaLinha = {
   id: string;
@@ -27,49 +45,58 @@ export function LinhaDoTempo({
   onSelecionar: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <div className="flex min-w-max items-center gap-1 py-1">
+    // O p-1 deixa o contorno de foco (2px com 2px de folga) inteiro dentro
+    // do conteiner que rola na horizontal.
+    <div className="cz-scroll overflow-x-auto">
+      <div className="flex min-w-max items-center gap-1.5 p-1">
         <span className="text-[12.5px] font-medium text-text-secondary">
           {inicioRotulo}
         </span>
-        {pontos.map((ponto) => (
-          <span key={ponto.id} className="flex items-center gap-1">
-            <span aria-hidden className="h-px w-6 bg-border" />
-            <button
-              type="button"
-              aria-pressed={selecionadoId === ponto.id}
-              onClick={() => onSelecionar(ponto.id)}
-              className={cn(
-                "flex h-10 items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-medium transition-colors",
-                selecionadoId === ponto.id
-                  ? "border-transparent bg-primary text-primary-foreground"
-                  : "text-text-secondary hover:text-foreground",
-              )}
-            >
-              <span
-                aria-hidden
-                className="size-2 rounded-full"
-                style={{
-                  background:
-                    selecionadoId === ponto.id
-                      ? "currentColor"
-                      : ponto.temTexto
-                        ? "var(--success)"
-                        : "var(--warning)",
-                }}
-              />
-              {ponto.rotulo}
-              {!ponto.temTexto ? (
-                <span className="text-[11px] font-normal opacity-80">
-                  (sem texto)
+        {pontos.map((ponto) => {
+          const selecionado = selecionadoId === ponto.id;
+          return (
+            <span key={ponto.id} className="flex items-center gap-1.5">
+              <span aria-hidden className="h-px w-6 bg-border-strong" />
+              <button
+                type="button"
+                aria-pressed={selecionado}
+                onClick={() => onSelecionar(ponto.id)}
+                className={cn(
+                  "flex h-10 items-center gap-1.5 rounded-full border px-3.5 text-[12.5px] font-semibold cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
+                  selecionado
+                    ? "border-transparent bg-inverse text-inverse-foreground shadow-none"
+                    : "border-border-strong bg-card text-text-strong shadow-xs hover:bg-surface-subtle",
+                )}
+              >
+                {!ponto.temTexto ? (
+                  <MessageSquareDashed
+                    aria-hidden
+                    className={cn(
+                      "size-3.5 shrink-0",
+                      !selecionado && "text-warning-text",
+                    )}
+                  />
+                ) : null}
+                <span>
+                  <ComNumeros texto={ponto.rotulo} />
                 </span>
-              ) : null}
-            </button>
-          </span>
-        ))}
+                {!ponto.temTexto ? (
+                  <span
+                    className={cn(
+                      "text-[11px] font-medium",
+                      !selecionado && "text-warning-text",
+                    )}
+                  >
+                    (sem texto)
+                  </span>
+                ) : null}
+              </button>
+            </span>
+          );
+        })}
         {fimRotulo ? (
           <>
-            <span aria-hidden className="h-px w-6 bg-border" />
+            <span aria-hidden className="h-px w-6 bg-border-strong" />
             <span className="text-[12.5px] font-medium text-text-secondary">
               {fimRotulo}
             </span>

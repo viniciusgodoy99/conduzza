@@ -1,9 +1,9 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { ShieldCheck, ShieldOff } from "lucide-react";
 import { useMemo } from "react";
 
+import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import {
   dataLocal,
   rotuloDoCanal,
@@ -11,24 +11,45 @@ import {
 } from "@/components/leads/rotulos";
 import { DataTable } from "@/components/shared/data-table";
 import { StatusChip } from "@/components/shared/status-chip";
+import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CONSENT_STATUS, STATUS_TONE_VARS } from "@/lib/design/status";
 import {
   definicaoDaEtapa,
   porChave,
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
+import { formatarTelefone } from "@/lib/domain/telefone";
 import type { LeadResumo } from "@/lib/queries/leads";
 import { cn } from "@/lib/utils";
 
-// Visao em lista da Tela 4: tabela densa com selecao multipla para as acoes
-// em massa. Autorizacao segue as 3 camadas (icone, rotulo, cor), no padrao
-// do chipAtivo: nunca so cor.
+// Visao em lista da Tela 4: tabela densa dentro de um Card, com cabecalho
+// grudado e selecao multipla para as acoes em massa (docs/06 secao 5.4). A
+// linha marcada ganha o selecionado do DS (lime suave e fio a esquerda). A
+// autorizacao segue as 3 camadas (icone, rotulo, cor) do CONSENT_STATUS:
+// nunca so cor.
 //
 // O NOME e um botao de verdade, do mesmo jeito que o cartao do Kanban: abaixo
 // de 1024px a tela forca a lista, e sem ele o drawer so abriria com o mouse. O
 // clique na linha continua valendo, e o botao segura o evento (o
 // stopPropagation) para o drawer nao abrir duas vezes. Botao, e nao link,
 // porque o drawer nao tem URL propria.
+
+function Autorizacao({ autorizado }: { autorizado: boolean }) {
+  const definicao = autorizado
+    ? CONSENT_STATUS.autorizado
+    : CONSENT_STATUS.sem_autorizacao;
+  const Icone = definicao.icon;
+  return (
+    <span
+      className="flex items-center gap-1.5 font-medium whitespace-nowrap"
+      style={{ color: STATUS_TONE_VARS[definicao.tone].text }}
+    >
+      {Icone ? <Icone className="size-[15px] shrink-0" aria-hidden /> : null}
+      {autorizado ? "Autorizado" : "Sem autorização"}
+    </span>
+  );
+}
 
 export function ListaLeads({
   leads,
@@ -44,35 +65,46 @@ export function ListaLeads({
   membros: Record<string, string>;
   jornada: EtapaDaJornada[];
   timezone: string;
-  selecionados: string[];
+  selecionados: ReadonlySet<string>;
   onSelecionar: (id: string, marcado: boolean) => void;
   onSelecionarTodos: (ids: string[], marcado: boolean) => void;
   onAbrirLead: (lead: LeadResumo) => void;
 }) {
   const defs = useMemo(() => porChave(jornada), [jornada]);
   const columns = useMemo<ColumnDef<LeadResumo>[]>(() => {
-    const todosMarcados =
-      leads.length > 0 && leads.every((lead) => selecionados.includes(lead.id));
+    const marcadosNaTela = leads.filter((lead) =>
+      selecionados.has(lead.id),
+    ).length;
+    const cabecalho: boolean | "indeterminate" =
+      leads.length > 0 && marcadosNaTela === leads.length
+        ? true
+        : marcadosNaTela > 0
+          ? "indeterminate"
+          : false;
     return [
       {
         id: "selecao",
         header: () => (
-          <Checkbox
-            aria-label="Selecionar todos os leads visíveis"
-            checked={todosMarcados}
-            onCheckedChange={(v) =>
-              onSelecionarTodos(
-                leads.map((lead) => lead.id),
-                v === true,
-              )
-            }
-          />
+          <span className="flex">
+            <Checkbox
+              aria-label="Selecionar todos os leads visíveis"
+              checked={cabecalho}
+              onCheckedChange={(v) =>
+                onSelecionarTodos(
+                  leads.map((lead) => lead.id),
+                  // Indeterminado vira "marcar todos", como nos leitores de
+                  // planilha: o proximo clique desmarca.
+                  v === true || v === "indeterminate",
+                )
+              }
+            />
+          </span>
         ),
         cell: ({ row }) => (
           <span className="flex" onClick={(e) => e.stopPropagation()}>
             <Checkbox
-              aria-label={`Selecionar ${row.original.name ?? row.original.phone_e164}`}
-              checked={selecionados.includes(row.original.id)}
+              aria-label={`Selecionar ${row.original.name ?? formatarTelefone(row.original.phone_e164)}`}
+              checked={selecionados.has(row.original.id)}
               onCheckedChange={(v) => onSelecionar(row.original.id, v === true)}
             />
           </span>
@@ -86,17 +118,24 @@ export function ListaLeads({
           return (
             <button
               type="button"
-              aria-label={`Abrir ${lead.name ?? `Sem nome, ${lead.phone_e164}`}`}
+              aria-label={`Abrir ${lead.name ?? `Sem nome, ${formatarTelefone(lead.phone_e164)}`}`}
               onClick={(evento) => {
                 evento.stopPropagation();
                 onAbrirLead(lead);
               }}
               className={cn(
-                "flex h-10 items-center rounded-md text-left underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                lead.name ? "font-medium" : "text-text-tertiary",
+                "flex h-10 max-w-[240px] min-w-0 items-center gap-2 rounded-md text-left underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
+                lead.name
+                  ? "font-semibold text-text-strong"
+                  : "text-text-secondary",
               )}
             >
-              {lead.name ?? "Sem nome"}
+              <ContactAvatar
+                name={lead.name}
+                phone={lead.phone_e164}
+                size={24}
+              />
+              <span className="truncate">{lead.name ?? "Sem nome"}</span>
             </button>
           );
         },
@@ -105,8 +144,8 @@ export function ListaLeads({
         accessorKey: "phone_e164",
         header: "Telefone",
         cell: ({ row }) => (
-          <span className="font-mono text-[13px] whitespace-nowrap">
-            {row.original.phone_e164}
+          <span className="cz-num whitespace-nowrap">
+            {formatarTelefone(row.original.phone_e164)}
           </span>
         ),
       },
@@ -137,9 +176,9 @@ export function ListaLeads({
           // cache velho na troca de jornada).
           const def = defs.get(row.original.funnel_stage);
           return def ? (
-            <StatusChip definition={definicaoDaEtapa(def)} />
+            <StatusChip size="sm" definition={definicaoDaEtapa(def)} />
           ) : (
-            <span className="text-sm text-text-secondary">
+            <span className="text-text-secondary">
               {row.original.funnel_stage}
             </span>
           );
@@ -165,14 +204,17 @@ export function ListaLeads({
               {tempoRelativo(row.original.last_contact_at)}
             </span>
           ) : (
-            <span className="text-text-tertiary">Sem contato</span>
+            <span className="whitespace-nowrap text-text-secondary">
+              Sem contato
+            </span>
           ),
       },
       {
         accessorKey: "first_contact_at",
         header: "Entrou em",
+        meta: { align: "right" },
         cell: ({ row }) => (
-          <span className="font-mono text-[13px] whitespace-nowrap tabular-nums">
+          <span className="whitespace-nowrap">
             {dataLocal(row.original.first_contact_at, timezone)}
           </span>
         ),
@@ -180,18 +222,9 @@ export function ListaLeads({
       {
         accessorKey: "consent_ativo",
         header: "Autorização",
-        cell: ({ row }) =>
-          row.original.consent_ativo ? (
-            <span className="flex items-center gap-1.5 whitespace-nowrap [color:var(--success-text)]">
-              <ShieldCheck className="size-4 shrink-0" aria-hidden />
-              Autorizado
-            </span>
-          ) : (
-            <span className="flex items-center gap-1.5 whitespace-nowrap text-text-tertiary">
-              <ShieldOff className="size-4 shrink-0" aria-hidden />
-              Sem autorização
-            </span>
-          ),
+        cell: ({ row }) => (
+          <Autorizacao autorizado={row.original.consent_ativo} />
+        ),
       },
     ];
   }, [
@@ -202,16 +235,20 @@ export function ListaLeads({
     onSelecionar,
     onSelecionarTodos,
     onAbrirLead,
-    ,
     defs,
   ]);
 
   return (
-    <DataTable
-      columns={columns}
-      data={leads}
-      onRowClick={onAbrirLead}
-      className="text-sm"
-    />
+    <Card>
+      <DataTable
+        variant="bare"
+        stickyHeader
+        columns={columns}
+        data={leads}
+        onRowClick={onAbrirLead}
+        isRowSelected={(lead) => selecionados.has(lead.id)}
+        containerClassName="max-h-[min(720px,calc(100dvh-16rem))] cz-scroll"
+      />
+    </Card>
   );
 }

@@ -21,6 +21,8 @@ export type OpcaoSegmentada<T extends string> = {
   label: string;
   icon?: LucideIcon;
   count?: number;
+  /** Opcao visivel e indisponivel (quem chama explica o porque ao lado) */
+  disabled?: boolean;
 };
 
 export function SegmentedControl<T extends string>({
@@ -61,9 +63,10 @@ export function SegmentedControl<T extends string>({
             key={opcao.value}
             type="button"
             aria-pressed={ligada}
+            disabled={opcao.disabled}
             onClick={() => onChange(opcao.value)}
             className={cn(
-              "hit-40 inline-flex items-center justify-center gap-1.5 rounded-[7px] px-3 font-medium whitespace-nowrap text-text-secondary cz-transition hover:text-text-strong focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid aria-pressed:bg-card aria-pressed:font-bold aria-pressed:text-text-strong aria-pressed:shadow-xs aria-pressed:ring-1 aria-pressed:ring-input aria-pressed:ring-inset",
+              "hit-40 inline-flex items-center justify-center gap-1.5 rounded-[7px] px-3 font-medium whitespace-nowrap text-text-secondary cz-transition hover:text-text-strong focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid disabled:pointer-events-none disabled:opacity-45 aria-pressed:bg-card aria-pressed:font-bold aria-pressed:text-text-strong aria-pressed:shadow-xs aria-pressed:ring-1 aria-pressed:ring-input aria-pressed:ring-inset",
               pequeno ? "h-7 text-xs" : "h-[34px] text-[13px]",
               block && "flex-1",
             )}

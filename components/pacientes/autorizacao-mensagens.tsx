@@ -1,6 +1,5 @@
 "use client";
 
-import { ShieldCheck, ShieldOff, ShieldX } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -9,18 +8,20 @@ import {
   concederConsentimentoAction,
   revogarConsentimentoAction,
 } from "@/app/(app)/leads/actions";
-import { BotaoProtegido } from "@/components/cadastros/comum";
 import { dataLocal } from "@/components/leads/rotulos";
 import {
+  AcaoProtegida,
   BlocoFicha,
   LinhaDaFicha,
   rotuloDaFonte,
 } from "@/components/pacientes/comum";
+import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -33,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CONSENT_STATUS } from "@/lib/design/status";
 import type { ConsentimentoVigente } from "@/lib/queries/pacientes";
 
 // Autorizacao para receber mensagens (regra 3.3: sem ela a clinica nao
@@ -58,27 +60,12 @@ function situacaoDe(consentimento: ConsentimentoVigente): Situacao {
   return consentimento.revoked_at === null ? "autorizado" : "revogado";
 }
 
+// Situacao no StatusChip com o mapa CONSENT_STATUS: icone de forma propria,
+// rotulo e cor, as 3 camadas de sempre.
 function Selo({ situacao }: { situacao: Situacao }) {
-  if (situacao === "autorizado") {
-    return (
-      <span className="flex items-center gap-1.5 text-sm font-medium [color:var(--success-text)]">
-        <ShieldCheck className="size-4 shrink-0" aria-hidden />
-        Autorizado a receber mensagens
-      </span>
-    );
-  }
-  if (situacao === "revogado") {
-    return (
-      <span className="flex items-center gap-1.5 text-sm font-medium [color:var(--alert-text)]">
-        <ShieldX className="size-4 shrink-0" aria-hidden />
-        Pediu para não receber mensagens
-      </span>
-    );
-  }
   return (
-    <span className="flex items-center gap-1.5 text-sm font-medium text-text-secondary">
-      <ShieldOff className="size-4 shrink-0" aria-hidden />
-      Sem autorização registrada
+    <span className="flex">
+      <StatusChip definition={CONSENT_STATUS[situacao]} />
     </span>
   );
 }
@@ -150,25 +137,24 @@ export function AutorizacaoMensagens({
     <BlocoFicha
       titulo="Autorização para receber mensagens"
       acao={
+        // 40px de altura (achado 76): descadastrar e definitivo, nao pode
+        // ser um alvo pequeno.
         situacao === "autorizado" ? (
-          <BotaoProtegido
+          <AcaoProtegida
             podeEditar={podeEditar}
             dica={dica}
-            variant="outline"
-            size="sm"
+            variant="destructive"
             onClick={() => {
               setErro(null);
               setDescadastroAberto(true);
             }}
           >
             Descadastrar
-          </BotaoProtegido>
+          </AcaoProtegida>
         ) : (
-          <BotaoProtegido
+          <AcaoProtegida
             podeEditar={podeEditar}
             dica={dica}
-            variant="outline"
-            size="sm"
             onClick={() => {
               setErro(null);
               setRegistrarAberto(true);
@@ -177,11 +163,11 @@ export function AutorizacaoMensagens({
             {situacao === "revogado"
               ? "Registrar nova autorização"
               : "Registrar autorização"}
-          </BotaoProtegido>
+          </AcaoProtegida>
         )
       }
     >
-      <div className="grid gap-2">
+      <div className="grid gap-2.5">
         <Selo situacao={situacao} />
         {consentimento && situacao === "autorizado" ? (
           <>
@@ -189,16 +175,20 @@ export function AutorizacaoMensagens({
               {rotuloDaFonte(consentimento.source)}
             </LinhaDaFicha>
             <LinhaDaFicha rotulo="Desde">
-              {dataLocal(consentimento.granted_at, timezone)}
+              <span className="cz-num">
+                {dataLocal(consentimento.granted_at, timezone)}
+              </span>
             </LinhaDaFicha>
           </>
         ) : null}
         {consentimento?.revoked_at ? (
           <>
             <LinhaDaFicha rotulo="Descadastrada em">
-              {dataLocal(consentimento.revoked_at, timezone)}
+              <span className="cz-num">
+                {dataLocal(consentimento.revoked_at, timezone)}
+              </span>
             </LinhaDaFicha>
-            <p className="text-sm text-text-secondary">
+            <p className="text-[13px] text-text-secondary">
               A clínica não envia nada para este paciente, nem confirmação de
               consulta. Isso só volta se ele autorizar de novo e alguém
               registrar aqui.
@@ -206,14 +196,14 @@ export function AutorizacaoMensagens({
           </>
         ) : null}
         {situacao === "sem_autorizacao" ? (
-          <p className="text-sm text-text-secondary">
+          <p className="text-[13px] text-text-secondary">
             Sem autorização, a clínica não envia mensagem para este paciente.
           </p>
         ) : null}
       </div>
 
       <Dialog open={registrarAberto} onOpenChange={setRegistrarAberto}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>
               {exigeEvidencia
@@ -258,36 +248,31 @@ export function AutorizacaoMensagens({
               />
             </div>
             {erro ? (
-              <p role="alert" className="text-sm [color:var(--alert-text)]">
+              <p role="alert" className="text-[13px] text-alert-text">
                 {erro}
               </p>
             ) : null}
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                className="h-10"
-                onClick={() => setRegistrarAberto(false)}
-              >
-                Cancelar
-              </Button>
-              {/* sem a evidencia o botao nem fica disponivel; a checagem
-                  continua na action e no gatilho, que sao a garantia */}
-              <Button
-                className="h-10"
-                onClick={() => void registrar()}
-                disabled={
-                  salvando || (exigeEvidencia && evidencia.trim().length < 2)
-                }
-              >
-                {salvando ? "Registrando..." : "Registrar"}
-              </Button>
-            </div>
           </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRegistrarAberto(false)}>
+              Cancelar
+            </Button>
+            {/* sem a evidencia o botao nem fica disponivel; a checagem
+                continua na action e no gatilho, que sao a garantia */}
+            <Button
+              onClick={() => void registrar()}
+              disabled={
+                salvando || (exigeEvidencia && evidencia.trim().length < 2)
+              }
+            >
+              {salvando ? "Registrando..." : "Registrar"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={descadastroAberto} onOpenChange={setDescadastroAberto}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>Descadastrar das mensagens</DialogTitle>
             <DialogDescription>
@@ -297,27 +282,25 @@ export function AutorizacaoMensagens({
             </DialogDescription>
           </DialogHeader>
           {erro ? (
-            <p role="alert" className="text-sm [color:var(--alert-text)]">
+            <p role="alert" className="text-[13px] text-alert-text">
               {erro}
             </p>
           ) : null}
-          <div className="flex justify-end gap-2">
+          <DialogFooter>
             <Button
               variant="outline"
-              className="h-10"
               onClick={() => setDescadastroAberto(false)}
             >
               Cancelar
             </Button>
             <Button
-              className="h-10 [color:var(--alert-text)]"
-              variant="outline"
+              variant="destructive"
               onClick={() => void descadastrar()}
               disabled={salvando}
             >
               {salvando ? "Descadastrando..." : "Descadastrar"}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </BlocoFicha>

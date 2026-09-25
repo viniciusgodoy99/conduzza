@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleSlash, UserMinus, UserPlus } from "lucide-react";
+import { CircleAlert, UserMinus, UserPlus, Users } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -8,13 +8,18 @@ import {
   desativarMembroAction,
   mudarPapelAction,
   reativarMembroAction,
+  vincularProfissionalAction,
 } from "@/app/(app)/configuracoes/actions";
+import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -25,16 +30,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  ACCESS_LEVEL_STATUS,
+  type StatusDefinition,
+} from "@/lib/design/status";
 import { ROLE_OPTIONS } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
+import { cn } from "@/lib/utils";
 
 // Lista da equipe da clinica: quem tem acesso, com qual papel, e quem esta
-// com o acesso desativado (fica no fim, esmaecido e com chip). Tirar acesso
-// nao apaga ninguem: o vinculo vira inativo e volta com um clique.
+// com o acesso desativado (fica no fim, com fundo afundado e chip). Tirar
+// acesso nao apaga ninguem: o vinculo vira inativo e volta com um clique.
 //
 // Tres travas, iguais as do banco, aqui so para explicar antes de tentar:
 // ninguem mexe na propria linha, gestor nao mexe em administrador, e o unico
 // administrador ativo nao pode ser rebaixado nem desativado.
+//
+// Papel Profissional (achados 1, 31 e 120): a linha ganha o seletor
+// "Profissional da agenda". Sem esse vinculo a Agenda, o Inicio e os
+// Resultados da pessoa ficam vazios, entao a falta aparece como aviso na
+// propria linha.
 
 export type MembroEquipe = {
   userId: string;
@@ -43,15 +58,52 @@ export type MembroEquipe = {
   papel: Role;
   /** false = acesso tirado, reversivel */
   ativo: boolean;
+  /** cadastro de profissional da agenda (so vale para o papel Profissional) */
+  professionalId: string | null;
 };
 
-function iniciais(nome: string): string {
-  return nome
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((parte) => parte[0] ?? "")
-    .join("")
-    .toUpperCase();
+/** Cadastro de profissional que um usuario de papel Profissional pode ser. */
+export type ProfissionalDaAgenda = {
+  id: string;
+  nome: string;
+  ativo: boolean;
+};
+
+// Atencao e CircleAlert (tabela de icones reservados, docs/06 secao 4.6).
+const SEM_VINCULO: StatusDefinition = {
+  label: "Sem profissional da agenda",
+  tone: "warning",
+  icon: CircleAlert,
+};
+
+// Radix Select nao aceita item de valor vazio: a sentinela desfaz o vinculo.
+const DESLIGAR = "__desligar__";
+
+/**
+ * Opcoes do seletor: os profissionais ativos e, se a pessoa ja estiver ligada
+ * a um desativado, esse tambem (senao o seletor apareceria vazio).
+ */
+export function opcoesDeProfissional(
+  profissionais: ProfissionalDaAgenda[] | null,
+  atual: string | null,
+): ProfissionalDaAgenda[] {
+  return (profissionais ?? []).filter(
+    (profissional) => profissional.ativo || profissional.id === atual,
+  );
+}
+
+/** Por que o seletor de profissional esta travado, ou nulo se esta livre. */
+export function motivoSemProfissional(
+  profissionais: ProfissionalDaAgenda[] | null,
+  opcoes: ProfissionalDaAgenda[],
+): string | null {
+  if (profissionais === null) {
+    return "Não foi possível carregar os profissionais. Recarregue a página";
+  }
+  if (opcoes.length === 0) {
+    return "Cadastre o profissional em Cadastros antes de ligar";
+  }
+  return null;
 }
 
 export function ListaEquipe({
@@ -60,12 +112,15 @@ export function ListaEquipe({
   podeGerenciar,
   ehAdmin,
   dica,
+  profissionais,
 }: {
   membros: MembroEquipe[];
   meuUserId: string;
   podeGerenciar: boolean;
   ehAdmin: boolean;
   dica: string;
+  /** nulo: a leitura dos profissionais falhou */
+  profissionais: ProfissionalDaAgenda[] | null;
 }) {
   const [pending, startTransition] = useTransition();
   const [confirmar, setConfirmar] = useState<MembroEquipe | null>(null);
@@ -129,20 +184,42 @@ export function ListaEquipe({
     });
   };
 
-  return (
-    <div className="grid gap-3">
-      <div className="grid gap-0.5">
-        <h3 className="text-sm font-semibold">Quem trabalha nesta clínica</h3>
-        <p className="text-[12.5px] text-text-secondary">
-          O papel decide o que cada pessoa vê e altera. Tirar o acesso não apaga
-          nada: o histórico fica e você devolve o acesso quando quiser.
-        </p>
-      </div>
+  const vincular = (membro: MembroEquipe, valor: string) => {
+    const professionalId = valor === DESLIGAR ? null : valor;
+    const nomeDoProfissional = profissionais?.find(
+      (profissional) => profissional.id === professionalId,
+    )?.nome;
+    executar(
+      () =>
+        vincularProfissionalAction({
+          user_id: membro.userId,
+          professional_id: professionalId,
+        }),
+      nomeDoProfissional
+        ? `Agenda de ${nomeDoProfissional} ligada a ${membro.nome}`
+        : `Vínculo de ${membro.nome} com a agenda desfeito`,
+      "Não foi possível ligar ao profissional da agenda.",
+    );
+  };
 
-      <ul className="grid gap-2">
+  if (membros.length === 0) {
+    return (
+      <EmptyState
+        compact
+        icon={Users}
+        title="Ninguém na equipe ainda"
+        description="Convide a recepção por e-mail ou passe o código da clínica."
+      />
+    );
+  }
+
+  return (
+    <>
+      <ul className="divide-y divide-border">
         {membros.map((membro) => {
           const motivoPapel = motivo(membro, "papel");
           const motivoAcesso = motivo(membro, "acesso");
+          const ehProfissional = membro.papel === "profissional";
 
           const seletor = (
             <Select
@@ -164,14 +241,65 @@ export function ListaEquipe({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ROLE_OPTIONS.map((opcao) => (
-                  <SelectItem key={opcao.value} value={opcao.value}>
-                    {opcao.label}
-                  </SelectItem>
-                ))}
+                {ROLE_OPTIONS.map((opcao) => {
+                  // Mesma trava da liberacao e do convite: o gestor ve a
+                  // opcao, desabilitada, em vez de ser recusado depois. Na
+                  // linha de quem ja e administrador o seletor inteiro fica
+                  // travado, e o rotulo atual continua limpo.
+                  const soAdmin =
+                    opcao.value === "admin" &&
+                    !ehAdmin &&
+                    membro.papel !== "admin";
+                  return (
+                    <SelectItem
+                      key={opcao.value}
+                      value={opcao.value}
+                      disabled={soAdmin}
+                    >
+                      {soAdmin
+                        ? `${opcao.label} (só um administrador promove)`
+                        : opcao.label}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           );
+
+          const opcoes = opcoesDeProfissional(
+            profissionais,
+            membro.professionalId,
+          );
+          const motivoVinculo =
+            motivoPapel ?? motivoSemProfissional(profissionais, opcoes);
+          const seletorDeProfissional = ehProfissional ? (
+            <Select
+              value={membro.professionalId ?? ""}
+              onValueChange={(valor) => vincular(membro, valor)}
+              disabled={motivoVinculo !== null || pending}
+            >
+              <SelectTrigger
+                className="h-10 w-56"
+                aria-label={`Profissional da agenda de ${membro.nome}`}
+              >
+                <SelectValue placeholder="Profissional da agenda" />
+              </SelectTrigger>
+              <SelectContent>
+                {opcoes.map((profissional) => (
+                  <SelectItem key={profissional.id} value={profissional.id}>
+                    {profissional.ativo
+                      ? profissional.nome
+                      : `${profissional.nome} (desativado)`}
+                  </SelectItem>
+                ))}
+                {membro.professionalId ? (
+                  <SelectItem value={DESLIGAR}>
+                    Desligar do profissional
+                  </SelectItem>
+                ) : null}
+              </SelectContent>
+            </Select>
+          ) : null;
 
           const botao = (
             <Button
@@ -200,47 +328,59 @@ export function ListaEquipe({
           return (
             <li
               key={membro.userId}
-              className={`flex flex-wrap items-center gap-3 rounded-md border bg-card px-3 py-2 ${
-                membro.ativo ? "" : "opacity-70"
-              }`}
+              className={cn(
+                "flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3",
+                !membro.ativo && "bg-surface-4",
+              )}
             >
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
-                {iniciais(membro.nome)}
-              </span>
-              <span className="grid min-w-0 flex-1">
-                <span className="truncate text-sm font-medium">
+              <ContactAvatar name={membro.nome} phone="" size={30} />
+              <span className="grid min-w-[12rem] flex-1 gap-0.5">
+                <span className="truncate text-[13.5px] font-semibold text-text-strong">
                   {membro.nome}
                   {membro.userId === meuUserId ? (
-                    <span className="font-normal text-text-tertiary">
+                    <span className="font-normal text-text-secondary">
                       {" "}
                       (você)
                     </span>
                   ) : null}
                 </span>
-                <span className="truncate text-xs text-text-tertiary">
+                <span className="truncate text-xs text-text-secondary">
                   {membro.email}
                 </span>
               </span>
 
               {membro.ativo ? null : (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-text-tertiary">
-                  <CircleSlash className="size-3.5" />
-                  Sem acesso
-                </span>
+                <StatusChip size="sm" definition={ACCESS_LEVEL_STATUS.nada} />
               )}
+              {ehProfissional && !membro.professionalId ? (
+                <StatusChip size="sm" definition={SEM_VINCULO} />
+              ) : null}
 
-              {motivoPapel ? (
-                <DisabledWithHint hint={motivoPapel}>
-                  {seletor}
-                </DisabledWithHint>
-              ) : (
-                seletor
-              )}
-              {motivoAcesso ? (
-                <DisabledWithHint hint={motivoAcesso}>{botao}</DisabledWithHint>
-              ) : (
-                botao
-              )}
+              <span className="flex flex-wrap items-center gap-2">
+                {motivoPapel ? (
+                  <DisabledWithHint hint={motivoPapel}>
+                    {seletor}
+                  </DisabledWithHint>
+                ) : (
+                  seletor
+                )}
+                {seletorDeProfissional ? (
+                  motivoVinculo ? (
+                    <DisabledWithHint hint={motivoVinculo}>
+                      {seletorDeProfissional}
+                    </DisabledWithHint>
+                  ) : (
+                    seletorDeProfissional
+                  )
+                ) : null}
+                {motivoAcesso ? (
+                  <DisabledWithHint hint={motivoAcesso}>
+                    {botao}
+                  </DisabledWithHint>
+                ) : (
+                  botao
+                )}
+              </span>
             </li>
           );
         })}
@@ -254,7 +394,7 @@ export function ListaEquipe({
           }
         }}
       >
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>
               Tirar o acesso de {confirmar?.nome ?? "esta pessoa"}?
@@ -265,25 +405,20 @@ export function ListaEquipe({
               pode devolver o acesso quando quiser.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              className="h-10"
-              onClick={() => setConfirmar(null)}
-            >
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setConfirmar(null)}>
               Cancelar
             </Button>
             <Button
               variant="destructive"
-              className="h-10"
               disabled={pending}
               onClick={confirmarDesativacao}
             >
               {pending ? "Tirando..." : "Tirar acesso"}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

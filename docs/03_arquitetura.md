@@ -11,7 +11,7 @@
 | Banco | **Supabase Postgres** | RLS resolve isolamento multi-tenant no nível do banco, que é o que a LGPD art. 11 exige. Postgres dá exclusion constraint para conflito de agenda, que é a trava mais importante do produto |
 | Auth | **Supabase Auth** | Integra com RLS via JWT. Convite por e-mail pronto |
 | Tempo real | **Supabase Realtime** | Inbox e Agenda precisam atualizar sozinhos. Sem isso, duas recepcionistas se atropelam |
-| Filas | **`job_queue` + worker Node** (`npm run worker`) | Régua de mensagem é trabalho agendado, não requisição HTTP. O desenho original era `pg_cron` + Edge Function, mas **a extensão não está disponível neste projeto** (degrade de 31/08/2026, registrado em `docs/05_backlog.md` 4.6). O contrato de concorrência continua no banco (`claim_jobs` com `FOR UPDATE SKIP LOCKED`); só o hospedeiro mudou. Consequência: o deploy tem dois processos, o worker precisa de supervisão, e `worker_heartbeat` alimenta a faixa "as mensagens automáticas estão paradas" |
+| Filas | **`job_queue` + motor por `pg_cron`** | Régua de mensagem é trabalho agendado, não requisição HTTP. Desde 02/09/2026 o `pg_cron` com `pg_net` chama `/api/webhooks/motor` na Vercel a cada 20 s (entrada `motor-fila`) e a manutenção a cada minuto (`motor-manutencao`); a rota reivindica jobs com `FOR UPDATE SKIP LOCKED` (`claim_jobs_por_clinica`, com prioridade: confirmação antes de follow-up). Não existe worker em servidor: `npm run worker` é ferramenta local e ponte de emergência que roda o mesmo motor. `worker_heartbeat` alimenta a faixa "as mensagens automáticas estão paradas", e `/api/webhooks/saude` responde 503 para um monitor externo quando o motor para ou atrasa. Runbook: `supabase/operacao/motor-por-cron.md` |
 | Webhook WhatsApp | **Edge Function (Deno)** | Precisa responder em menos de 5 segundos para a Meta não reenviar. Function isolada, sem cold start de Next |
 
 ### Alerta de residência de dado
@@ -171,7 +171,7 @@ Implementar como combinação de regras determinísticas (lista de padrões) **e
 ## 5. Fluxo de mensagem enviada (réguas)
 
 ```
-worker Node a cada minuto (era pg_cron no desenho original)
+pg_cron chama o motor na Vercel a cada 20 s (planner a cada minuto)
         |
         v
 Edge Function `job-worker` faz SELECT ... FOR UPDATE SKIP LOCKED em `job_queue`

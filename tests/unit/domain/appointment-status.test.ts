@@ -2,14 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   type ConsultaDoAviso,
+  DICA_COMPARECEU_ANTES_DO_DIA,
   DICA_FALTA_ANTES_DO_HORARIO,
   DICA_REMARCAR_ENCERRADA,
+  MENSAGEM_PROFISSIONAL_INATIVO,
   STATUS_TERMINAIS,
+  type SaldoParaComparecimento,
   avisoDeRemarcacaoVale,
+  comparecimentoLiberado,
   eCancelamento,
   faltaLiberada,
   podeRemarcar,
   podeTransicionar,
+  saldoDescontadoAoComparecer,
   statusAposRemarcar,
   transicoesPermitidas,
 } from "@/lib/domain/appointment-status";
@@ -130,6 +135,144 @@ describe("falta só a partir do horário da consulta", () => {
   it("a dica aponta o caminho certo sem travessão", () => {
     expect(DICA_FALTA_ANTES_DO_HORARIO).toContain("Cancelado pelo paciente");
     expect(DICA_FALTA_ANTES_DO_HORARIO).not.toMatch(/[–—]/);
+  });
+});
+
+// Achado L11 da revisao da leva 2: Compareceu e situacao final e desconta
+// sessao de pacote. Consulta de amanha nao pode ser marcada por engano.
+describe("compareceu só a partir do dia da consulta", () => {
+  const FUSO = "America/Fortaleza";
+  // 10:00 de 25/09 em Fortaleza.
+  const inicio = "2026-09-25T13:00:00.000Z";
+
+  it("em dia anterior ao da consulta não libera", () => {
+    // 24/09 às 18:00 em Fortaleza.
+    expect(
+      comparecimentoLiberado(FUSO, inicio, new Date("2026-09-24T21:00:00Z")),
+    ).toBe(false);
+  });
+
+  it("no dia da consulta libera, mesmo antes do horário (chegou adiantado)", () => {
+    // 25/09 às 07:00 em Fortaleza.
+    expect(
+      comparecimentoLiberado(FUSO, inicio, new Date("2026-09-25T10:00:00Z")),
+    ).toBe(true);
+  });
+
+  it("depois do dia da consulta libera (fechar o dia atrasado)", () => {
+    expect(
+      comparecimentoLiberado(FUSO, inicio, new Date("2026-09-27T12:00:00Z")),
+    ).toBe(true);
+  });
+
+  it("o dia é o civil da clínica, não o do UTC", () => {
+    // 24/09 às 22:30 em Fortaleza ja e 25/09 em UTC: ainda e vespera.
+    expect(
+      comparecimentoLiberado(FUSO, inicio, new Date("2026-09-25T01:30:00Z")),
+    ).toBe(false);
+    // Consulta as 23:00 de 25/09 em Fortaleza (26/09 em UTC), marcada as
+    // 21:00 de 25/09: mesmo dia na clinica.
+    expect(
+      comparecimentoLiberado(
+        FUSO,
+        "2026-09-26T02:00:00.000Z",
+        new Date("2026-09-26T00:00:00Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("a dica é a combinada, sem travessão", () => {
+    expect(DICA_COMPARECEU_ANTES_DO_DIA).toBe(
+      "Compareceu só pode ser marcado no dia da consulta.",
+    );
+    expect(DICA_COMPARECEU_ANTES_DO_DIA).not.toMatch(/[–—]/);
+  });
+});
+
+describe("saldo de pacote que o Compareceu desconta", () => {
+  const PROCEDIMENTO = "proc-limpeza";
+  const HOJE = "2026-09-25";
+
+  function saldo(
+    parcial: Partial<SaldoParaComparecimento> & { id: string },
+  ): SaldoParaComparecimento {
+    return {
+      procedure_id: PROCEDIMENTO,
+      procedure_name: "Limpeza de pele",
+      sessions_total: 10,
+      sessions_used: 3,
+      expires_at: null,
+      created_at: "2026-01-01T12:00:00Z",
+      ...parcial,
+    };
+  }
+
+  it("sem pacote do procedimento, nada é descontado", () => {
+    expect(saldoDescontadoAoComparecer([], PROCEDIMENTO, HOJE)).toBeNull();
+    expect(
+      saldoDescontadoAoComparecer(
+        [saldo({ id: "a", procedure_id: "outro" })],
+        PROCEDIMENTO,
+        HOJE,
+      ),
+    ).toBeNull();
+  });
+
+  it("pacote esgotado ou vencido não é descontado", () => {
+    expect(
+      saldoDescontadoAoComparecer(
+        [
+          saldo({ id: "esgotado", sessions_used: 10 }),
+          saldo({ id: "vencido", expires_at: "2026-09-24" }),
+        ],
+        PROCEDIMENTO,
+        HOJE,
+      ),
+    ).toBeNull();
+  });
+
+  it("vence hoje ainda vale", () => {
+    expect(
+      saldoDescontadoAoComparecer(
+        [saldo({ id: "hoje", expires_at: HOJE })],
+        PROCEDIMENTO,
+        HOJE,
+      )?.id,
+    ).toBe("hoje");
+  });
+
+  it("o que vence primeiro é descontado antes, sem validade por último", () => {
+    expect(
+      saldoDescontadoAoComparecer(
+        [
+          saldo({ id: "sem-validade", created_at: "2025-01-01T12:00:00Z" }),
+          saldo({ id: "dezembro", expires_at: "2026-12-01" }),
+          saldo({ id: "outubro", expires_at: "2026-10-01" }),
+        ],
+        PROCEDIMENTO,
+        HOJE,
+      )?.id,
+    ).toBe("outubro");
+  });
+
+  it("no empate de validade, o mais antigo primeiro (espelha o gatilho)", () => {
+    expect(
+      saldoDescontadoAoComparecer(
+        [
+          saldo({ id: "novo", created_at: "2026-05-01T12:00:00Z" }),
+          saldo({ id: "antigo", created_at: "2026-02-01T12:00:00Z" }),
+        ],
+        PROCEDIMENTO,
+        HOJE,
+      )?.id,
+    ).toBe("antigo");
+  });
+});
+
+describe("remarcar com profissional inativo", () => {
+  it("a mensagem pede outro profissional, sem travessão", () => {
+    expect(MENSAGEM_PROFISSIONAL_INATIVO).toContain("inativo");
+    expect(MENSAGEM_PROFISSIONAL_INATIVO).not.toMatch(/[–—]/);
   });
 });
 

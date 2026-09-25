@@ -1,0 +1,109 @@
+<!doctype html>
+<!-- prettier-ignore -->
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="supported-color-schemes" content="light" />
+    <title>Crie uma senha nova</title>
+    <!--
+      Modelo "Reset password" do Supabase (Authentication, Emails). Como colar e
+      testar: supabase/templates/LEIA-ME.md.
+
+      O link usa token_hash e cai na rota /confirm do app, que abre a sessao e
+      leva para /redefinir-senha. O modelo padrao do Supabase manda um code
+      PKCE que so troca pela sessao no navegador que pediu a recuperacao:
+      pedida no computador da recepcao e aberta no celular, falhava (achado
+      117). Com token_hash, abre em qualquer aparelho.
+
+      Cores em hex porque cliente de e-mail nao le variavel CSS. Origem de cada
+      uma no Conduzza Design System (app/globals.css):
+        #f5f6ef  paper-100: fundo da mensagem
+        #051813  ink-900: faixa da marca, titulo e texto do botao
+        #fbfce8  cream-050: texto alternativo do logo sobre a faixa
+        #ffffff  cartao
+        #e6eae5  ink-100: borda do cartao
+        #4f5f57  ink-600: paragrafos e rodape (6,76:1 no branco)
+        #b2e54f  lime-400: preenchimento do botao (ink-900 por cima, 12,4:1)
+        #42600f  lime-800: endereco do link em texto (7,21:1 no branco)
+      Fontes: Manrope e JetBrains Mono quando instaladas, com reserva do sistema.
+    -->
+  </head>
+  <body style="margin:0; padding:0; background-color:#f5f6ef;">
+    <!-- Previa na caixa de entrada, invisivel no corpo -->
+    <div style="display:none; max-height:0; overflow:hidden; opacity:0;">
+      Use o link para criar uma senha nova.
+    </div>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f5f6ef;">
+      <tr>
+        <td align="center" style="padding:32px 16px;">
+
+          <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:560px;">
+
+            <!-- Faixa da marca -->
+            <tr>
+              <td bgcolor="#051813" align="left" style="background-color:#051813; border-radius:16px 16px 0 0; padding:20px 32px;">
+                <img src="{{ .SiteURL }}/brand/email/conduzza-lockup-on-dark@2x.png" width="146" height="24" alt="Conduzza" style="display:block; width:146px; height:24px; border:0; outline:none; text-decoration:none; font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:18px; line-height:24px; font-weight:800; color:#fbfce8;" />
+              </td>
+            </tr>
+
+            <!-- Cartao -->
+            <tr>
+              <td style="background-color:#ffffff; border:1px solid #e6eae5; border-top:0; border-radius:0 0 16px 16px; padding:36px 32px 32px 32px;">
+
+                <h1 style="margin:0 0 12px 0; font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:24px; line-height:1.2; font-weight:700; letter-spacing:-0.02em; color:#051813;">
+                  Crie uma senha nova
+                </h1>
+
+                <p style="margin:0 0 28px 0; font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:1.6; color:#4f5f57;">
+                  Foi pedida uma senha nova para a sua conta no Conduzza Clínicas. Use o botão abaixo para criar a senha.
+                </p>
+
+                <!-- Botao -->
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" bgcolor="#b2e54f" style="background-color:#b2e54f; border-radius:10px;">
+                      <a href="{{ .SiteURL }}/confirm?token_hash={{ .TokenHash }}&amp;type=recovery&amp;next=/redefinir-senha"
+                         style="display:inline-block; padding:14px 24px; font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; font-weight:700; line-height:1; color:#051813; text-decoration:none; border-radius:10px;">
+                        Criar senha nova
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+                <p style="margin:24px 0 0 0; font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:1.6; color:#4f5f57;">
+                  O link vale por tempo limitado e funciona uma vez só. Pode abrir em qualquer aparelho, não precisa ser o mesmo em que o pedido foi feito.
+                </p>
+
+                <!-- Alternativa ao botao -->
+                <p style="margin:20px 0 8px 0; font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:1.6; color:#4f5f57;">
+                  Se o botão não abrir, copie o endereço abaixo e cole no navegador:
+                </p>
+                <p style="margin:0; font-family:'JetBrains Mono',Consolas,Menlo,monospace; font-size:12px; line-height:1.6; color:#42600f; word-break:break-all;">
+                  {{ .SiteURL }}/confirm?token_hash={{ .TokenHash }}&amp;type=recovery&amp;next=/redefinir-senha
+                </p>
+
+              </td>
+            </tr>
+
+            <!-- Rodape -->
+            <tr>
+              <td style="padding:20px 8px 0 8px;">
+                <p style="margin:0 0 6px 0; font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; line-height:1.6; color:#4f5f57;">
+                  Enviado para {{ .Email }}. Se não foi você que pediu, é só ignorar esta mensagem: a senha atual continua valendo.
+                </p>
+                <p style="margin:0; font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; line-height:1.6; color:#4f5f57;">
+                  Conduzza Clínicas, atendimento e agenda para clínicas.
+                </p>
+              </td>
+            </tr>
+
+          </table>
+
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

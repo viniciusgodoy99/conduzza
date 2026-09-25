@@ -1092,6 +1092,10 @@ export type Database = {
           id: string
           last_inbound_at: string | null
           last_message_at: string | null
+          last_preview: string | null
+          last_preview_author: string | null
+          last_preview_author_user_id: string | null
+          last_preview_kind: string | null
           status: string
           tags: string[]
           unread_count: number
@@ -1107,6 +1111,10 @@ export type Database = {
           id?: string
           last_inbound_at?: string | null
           last_message_at?: string | null
+          last_preview?: string | null
+          last_preview_author?: string | null
+          last_preview_author_user_id?: string | null
+          last_preview_kind?: string | null
           status?: string
           tags?: string[]
           unread_count?: number
@@ -1122,6 +1130,10 @@ export type Database = {
           id?: string
           last_inbound_at?: string | null
           last_message_at?: string | null
+          last_preview?: string | null
+          last_preview_author?: string | null
+          last_preview_author_user_id?: string | null
+          last_preview_kind?: string | null
           status?: string
           tags?: string[]
           unread_count?: number
@@ -1821,6 +1833,86 @@ export type Database = {
           },
           {
             foreignKeyName: "package_balance_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "package"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      package_balance_adjustment: {
+        Row: {
+          clinic_id: string
+          contact_id: string
+          created_at: string
+          expires_at_after: string | null
+          expires_at_before: string | null
+          id: string
+          kind: string
+          package_balance_id: string | null
+          package_id: string
+          reason: string
+          sessions_total: number
+          sessions_used_after: number | null
+          sessions_used_before: number
+          user_id: string
+        }
+        Insert: {
+          clinic_id: string
+          contact_id: string
+          created_at?: string
+          expires_at_after?: string | null
+          expires_at_before?: string | null
+          id?: string
+          kind: string
+          package_balance_id?: string | null
+          package_id: string
+          reason: string
+          sessions_total: number
+          sessions_used_after?: number | null
+          sessions_used_before: number
+          user_id: string
+        }
+        Update: {
+          clinic_id?: string
+          contact_id?: string
+          created_at?: string
+          expires_at_after?: string | null
+          expires_at_before?: string | null
+          id?: string
+          kind?: string
+          package_balance_id?: string | null
+          package_id?: string
+          reason?: string
+          sessions_total?: number
+          sessions_used_after?: number | null
+          sessions_used_before?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "package_balance_adjustment_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_balance_adjustment_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_balance_adjustment_package_balance_id_fkey"
+            columns: ["package_balance_id"]
+            isOneToOne: false
+            referencedRelation: "package_balance"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_balance_adjustment_package_id_fkey"
             columns: ["package_id"]
             isOneToOne: false
             referencedRelation: "package"
@@ -2619,6 +2711,15 @@ export type Database = {
         }
         Returns: Json
       }
+      ajustar_saldo_de_pacote: {
+        Args: {
+          p_balance_id: string
+          p_expires_at: string
+          p_reason: string
+          p_sessions_used: number
+        }
+        Returns: undefined
+      }
       atendimento_do_periodo: {
         Args: {
           p_ate: string
@@ -2657,6 +2758,10 @@ export type Database = {
       cancelar_reoferta_de_espera: {
         Args: { p_clinic_id: string; p_offer_id: string }
         Returns: boolean
+      }
+      cancelar_venda_de_pacote: {
+        Args: { p_balance_id: string; p_reason: string }
+        Returns: undefined
       }
       claim_jobs: {
         Args: { p_limit?: number; p_worker: string }
@@ -2748,6 +2853,13 @@ export type Database = {
         Args: { p_channel?: string; p_clinic_id: string; p_contact_id: string }
         Returns: boolean
       }
+      conta_por_email: {
+        Args: { p_email: string }
+        Returns: {
+          confirmada: boolean
+          user_id: string
+        }[]
+      }
       contagem_de_etiquetas_de_conversa: {
         Args: { p_clinic_id: string }
         Returns: {
@@ -2770,6 +2882,10 @@ export type Database = {
           p_source_appointment_id: string
         }
         Returns: string
+      }
+      definir_entrada_por_codigo: {
+        Args: { p_ativo: boolean; p_clinic_id: string }
+        Returns: boolean
       }
       expirar_ofertas_de_espera: { Args: never; Returns: number }
       encerrar_envios_da_oferta: {
@@ -2882,6 +2998,7 @@ export type Database = {
           name: string
           no_show_count: number
           phone_e164: string
+          primeira_consulta: string
           profissionais_ids: string[]
           proxima_consulta: string
           saldo_sessoes: number
@@ -2913,6 +3030,10 @@ export type Database = {
           p_worker: string
         }
         Returns: boolean
+      }
+      recalcular_previa_da_conversa: {
+        Args: { p_conversation_id: string }
+        Returns: undefined
       }
       registrar_apagamento_do_whatsapp: {
         Args: { p_clinic_id: string; p_wa_message_id: string }

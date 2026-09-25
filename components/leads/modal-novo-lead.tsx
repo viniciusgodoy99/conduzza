@@ -4,12 +4,15 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { criarLeadAction } from "@/app/(app)/leads/actions";
+import type { OpcaoDeResponsavel } from "@/components/leads/filtros-leads";
 import { CANAIS } from "@/components/leads/rotulos";
+import { Aviso } from "@/components/shared/aviso";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -29,18 +32,22 @@ import { normalizarTelefone } from "@/lib/domain/importacao";
 // Nada aqui fala de consentimento: cadastrar um lead NAO e autorizacao para
 // receber mensagens (regra 3.3); a autorizacao e registrada na ficha, com
 // fonte e evidencia. Convenio ficou de fora desta versao: exigiria carregar
-// o catalogo inteiro so para um select, e o convenio ja e editavel na ficha.
+// o catalogo inteiro so para um select, e o convenio ja e editavel na ficha
+// (o drawer do lead tem "Abrir ficha").
+//
+// Responsavel: so membro ATIVO (achado 102). A Server Action confere de novo.
 
 const SEM = "__sem__";
 
 export function ModalNovoLead({
   aberto,
-  membros,
+  responsaveis,
   onFechar,
   aoCriar,
 }: {
   aberto: boolean;
-  membros: Record<string, string>;
+  /** Membros ativos, ja ordenados */
+  responsaveis: OpcaoDeResponsavel[];
   onFechar: () => void;
   aoCriar: () => void;
 }) {
@@ -51,10 +58,6 @@ export function ModalNovoLead({
   const [responsavel, setResponsavel] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-
-  const responsaveis = Object.entries(membros)
-    .map(([id, nomeMembro]) => ({ id, nome: nomeMembro }))
-    .sort((a, b) => a.nome.localeCompare(b.nome));
 
   const fechar = () => {
     setNome("");
@@ -100,7 +103,7 @@ export function ModalNovoLead({
 
   return (
     <Dialog open={aberto} onOpenChange={(a) => (!a ? fechar() : null)}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Novo lead</DialogTitle>
           <DialogDescription>
@@ -108,17 +111,16 @@ export function ModalNovoLead({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
-          <div className="grid gap-2">
+          <div className="grid gap-1.5">
             <Label htmlFor="lead-nome">Nome</Label>
             <Input
               id="lead-nome"
               value={nome}
               onChange={(e) => setNome(e.target.value)}
-              className="h-10"
               maxLength={120}
             />
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-1.5">
             <Label htmlFor="lead-telefone">Telefone</Label>
             <Input
               id="lead-telefone"
@@ -126,10 +128,10 @@ export function ModalNovoLead({
               onChange={(e) => setTelefone(e.target.value)}
               placeholder="(85) 99999-0000"
               inputMode="tel"
-              className="h-10"
+              className="cz-num"
             />
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-1.5">
             <Label htmlFor="lead-origem">Origem</Label>
             <Select
               value={canal || SEM}
@@ -141,7 +143,7 @@ export function ModalNovoLead({
                 }
               }}
             >
-              <SelectTrigger id="lead-origem" className="h-10 w-full">
+              <SelectTrigger id="lead-origem" className="w-full">
                 <SelectValue placeholder="Sem origem" />
               </SelectTrigger>
               <SelectContent>
@@ -154,7 +156,7 @@ export function ModalNovoLead({
               </SelectContent>
             </Select>
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-1.5">
             <Label htmlFor="lead-campanha">Campanha</Label>
             <Input
               id="lead-campanha"
@@ -162,17 +164,16 @@ export function ModalNovoLead({
               onChange={(e) => setCampanha(e.target.value)}
               disabled={!canal}
               placeholder={canal ? "" : "Escolha a origem primeiro"}
-              className="h-10"
               maxLength={120}
             />
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-1.5">
             <Label htmlFor="lead-responsavel">Responsável</Label>
             <Select
               value={responsavel || SEM}
               onValueChange={(v) => setResponsavel(v === SEM ? "" : v)}
             >
-              <SelectTrigger id="lead-responsavel" className="h-10 w-full">
+              <SelectTrigger id="lead-responsavel" className="w-full">
                 <SelectValue placeholder="Sem responsável" />
               </SelectTrigger>
               <SelectContent>
@@ -186,19 +187,19 @@ export function ModalNovoLead({
             </Select>
           </div>
           {erro ? (
-            <p role="alert" className="text-sm [color:var(--alert-text)]">
+            <Aviso tom="alert" role="alert">
               {erro}
-            </p>
+            </Aviso>
           ) : null}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" className="h-10" onClick={fechar}>
-              Cancelar
-            </Button>
-            <Button className="h-10" onClick={salvar} disabled={salvando}>
-              {salvando ? "Criando..." : "Criar lead"}
-            </Button>
-          </div>
         </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={fechar}>
+            Cancelar
+          </Button>
+          <Button onClick={salvar} disabled={salvando}>
+            {salvando ? "Criando..." : "Criar lead"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -12,7 +12,13 @@ import { ProfissionaisTab } from "@/components/cadastros/profissionais-tab";
 import { RecursosTab } from "@/components/cadastros/recursos-tab";
 import { UnidadesTab } from "@/components/cadastros/unidades-tab";
 import { VinculosTab } from "@/components/cadastros/vinculos-tab";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsCount,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   catalogoKeys,
   fetchCatalogo,
@@ -25,7 +31,9 @@ import { createClient } from "@/lib/supabase/client";
 
 // Tela 8: as oito abas do catalogo. A aba vive na URL (?aba=vinculos) para
 // link direto. O catalogo inteiro vem numa query so (tabelas pequenas) e
-// toda mutacao invalida essa chave unica.
+// toda mutacao invalida essa chave unica. Abas sublinhadas do design system
+// (5 ou mais vistas), com a contagem de cada lista; em tela estreita a
+// fileira rola na horizontal em vez de quebrar linha.
 
 const ABAS = [
   ["profissionais", "Profissionais"],
@@ -115,12 +123,25 @@ export function CadastrosClient({
 
   const tabProps: TabProps = { catalogo, podeEditar, dica, aoMudar, timezone };
 
+  const contagem: Record<AbaKey, number> = {
+    profissionais: catalogo.profissionais.length,
+    procedimentos: catalogo.procedimentos.length,
+    convenios: catalogo.convenios.length,
+    vinculos: catalogo.vinculos.length,
+    pacotes: catalogo.pacotes.length,
+    recursos: catalogo.recursos.length,
+    unidades: catalogo.unidades.length,
+    bloqueios: catalogo.bloqueios.length,
+  };
+
   return (
-    <Tabs value={abaAtiva} onValueChange={trocarAba} className="gap-4">
-      <TabsList className="h-auto flex-wrap justify-start">
+    // min-w-0: sem ele a tabela mais larga alarga a grade da pagina e a tela
+    // inteira rola de lado; com ele, so a tabela rola dentro do cartao.
+    <Tabs value={abaAtiva} onValueChange={trocarAba} className="min-w-0 gap-4">
+      <TabsList className="cz-scroll">
         {ABAS.map(([key, label]) => (
-          <TabsTrigger key={key} value={key} className="min-h-10 px-3">
-            {label}
+          <TabsTrigger key={key} value={key}>
+            {label} <TabsCount className="ml-0">{contagem[key]}</TabsCount>
           </TabsTrigger>
         ))}
       </TabsList>
@@ -141,6 +162,7 @@ export function CadastrosClient({
           {...tabProps}
           usoDosPacotes={usoDosPacotesQuery.data}
           usoIndisponivel={usoDosPacotesQuery.isError}
+          aoRecarregarUso={() => void usoDosPacotesQuery.refetch()}
         />
       </TabsContent>
       <TabsContent value="recursos">

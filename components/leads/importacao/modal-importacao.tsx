@@ -1,8 +1,9 @@
 "use client";
 
-import { Check, FileUp } from "lucide-react";
+import { Check, FileSpreadsheet, FileUp } from "lucide-react";
 import { useRef, useState } from "react";
 
+import { decodificarCsv } from "@/components/leads/importacao/decodificar-csv";
 import { PassoConsentimento } from "@/components/leads/importacao/passo-consentimento";
 import {
   MAPEAMENTO_VAZIO,
@@ -11,6 +12,7 @@ import {
   type MapeamentoDeColunas,
 } from "@/components/leads/importacao/passo-mapeamento";
 import { PassoPrevia } from "@/components/leads/importacao/passo-previa";
+import { Aviso } from "@/components/shared/aviso";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,6 +30,11 @@ import { cn } from "@/lib/utils";
 // arquivo, mapeamento de colunas, declaracao de consentimento (obrigatoria) e
 // previa com envio em lotes. Quem abre e a tela de Leads, atras do
 // BotaoProtegido; a permissao real e conferida na Server Action.
+//
+// O arquivo e lido em bytes e decodificado aqui (achado 101 da revisao): o
+// CSV do Excel em portugues vem em Windows-1252, e ler como UTF-8 quebrava os
+// acentos sem aviso. Quando o arquivo nao e UTF-8, a tela diz que leu como
+// Excel e pede para conferir os nomes na previa.
 
 export type ModalImportacaoProps = {
   aberto: boolean;
@@ -53,6 +60,7 @@ export function ModalImportacao({
   const [passo, setPasso] = useState(0);
   const [nomeArquivo, setNomeArquivo] = useState<string | null>(null);
   const [csv, setCsv] = useState<CsvLido | null>(null);
+  const [recodificado, setRecodificado] = useState(false);
   const [erroArquivo, setErroArquivo] = useState<string | null>(null);
   const [mapeamento, setMapeamento] =
     useState<MapeamentoDeColunas>(MAPEAMENTO_VAZIO);
@@ -66,26 +74,28 @@ export function ModalImportacao({
   const lerArquivo = (arquivo: File) => {
     setErroArquivo(null);
     setCsv(null);
+    setRecodificado(false);
     setNomeArquivo(arquivo.name);
-    const leitor = new FileReader();
-    leitor.onerror = () => {
-      setErroArquivo(
-        "Não foi possível ler o arquivo. Confira se ele abre no computador e tente de novo.",
-      );
-    };
-    leitor.onload = () => {
-      const texto = typeof leitor.result === "string" ? leitor.result : "";
-      const lido = parseCsv(texto);
-      if (lido.linhas.length < 2) {
+    arquivo
+      .arrayBuffer()
+      .then((bytes) => {
+        const { texto, recodificado: foiRecodificado } = decodificarCsv(bytes);
+        const lido = parseCsv(texto);
+        if (lido.linhas.length < 2) {
+          setErroArquivo(
+            "O arquivo está vazio ou tem só o cabeçalho. Exporte a planilha com os contatos e escolha o arquivo de novo.",
+          );
+          return;
+        }
+        setCsv(lido);
+        setRecodificado(foiRecodificado);
+        setMapeamento(preMapearColunas(lido.linhas[0] ?? []));
+      })
+      .catch(() => {
         setErroArquivo(
-          "O arquivo está vazio ou tem só o cabeçalho. Exporte a planilha com os contatos e escolha o arquivo de novo.",
+          "Não foi possível ler o arquivo. Confira se ele abre no computador e tente de novo.",
         );
-        return;
-      }
-      setCsv(lido);
-      setMapeamento(preMapearColunas(lido.linhas[0] ?? []));
-    };
-    leitor.readAsText(arquivo);
+      });
   };
 
   const fechar = () => {
@@ -95,6 +105,7 @@ export function ModalImportacao({
     setPasso(0);
     setNomeArquivo(null);
     setCsv(null);
+    setRecodificado(false);
     setErroArquivo(null);
     setMapeamento(MAPEAMENTO_VAZIO);
     setOpcao(null);
@@ -138,10 +149,7 @@ export function ModalImportacao({
         }
       }}
     >
-      <DialogContent
-        className="max-h-[90vh] gap-4 overflow-y-auto sm:max-w-2xl"
-        showCloseButton={!ocupado}
-      >
+      <DialogContent className="sm:max-w-[640px]" showCloseButton={!ocupado}>
         <DialogHeader>
           <DialogTitle>Importar contatos</DialogTitle>
           <DialogDescription>
@@ -152,38 +160,34 @@ export function ModalImportacao({
 
         <ol
           aria-label="Etapas da importação"
-          className="flex flex-wrap items-center gap-x-3 gap-y-1"
+          className="flex flex-wrap items-center gap-x-4 gap-y-2"
         >
           {PASSOS.map((rotulo, indice) => (
             <li
               key={rotulo}
               aria-current={indice === passo ? "step" : undefined}
-              className="flex items-center gap-1.5"
+              className="flex items-center gap-2"
             >
               <span
                 className={cn(
-                  "flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
-                  indice < passo &&
-                    "border-transparent bg-[var(--success-bg)] text-[var(--success-text)]",
-                  indice === passo &&
-                    "border-primary-edge bg-primary text-primary-foreground",
-                  indice > passo && "border-border text-text-tertiary",
+                  "flex size-6 shrink-0 items-center justify-center rounded-full cz-num text-xs font-bold",
+                  indice < passo && "bg-success-bg text-success-text",
+                  indice === passo && "bg-primary text-primary-foreground",
+                  indice > passo && "border border-input text-text-secondary",
                 )}
               >
                 {indice < passo ? (
-                  <Check
-                    strokeWidth={2}
-                    className="size-3.5"
-                    aria-label="concluída"
-                  />
+                  <Check className="size-3.5" aria-label="concluída" />
                 ) : (
                   indice + 1
                 )}
               </span>
               <span
                 className={cn(
-                  "text-sm",
-                  indice === passo ? "font-medium" : "text-text-secondary",
+                  "text-[13px]",
+                  indice === passo
+                    ? "font-bold text-text-strong"
+                    : "font-medium text-text-secondary",
                 )}
               >
                 {rotulo}
@@ -210,37 +214,54 @@ export function ModalImportacao({
             <button
               type="button"
               onClick={() => inputArquivo.current?.click()}
-              className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-8 text-center hover:bg-muted"
+              className="flex flex-col items-center justify-center gap-2.5 rounded-card border border-dashed border-input bg-surface-subtle px-6 py-8 text-center outline-none cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
             >
-              <FileUp className="size-5 text-text-secondary" aria-hidden />
-              <span className="text-sm font-medium">Escolher arquivo CSV</span>
-              <span className="text-xs text-text-secondary">
+              <span className="grid size-[52px] place-items-center rounded-card bg-primary-soft">
+                <FileUp className="size-6 text-primary-text" aria-hidden />
+              </span>
+              <span className="text-sm font-bold text-text-strong">
+                Escolher arquivo CSV
+              </span>
+              <span className="max-w-[44ch] text-[13px] text-text-secondary">
                 Exporte a planilha de contatos como CSV e escolha o arquivo
                 aqui.
               </span>
             </button>
             {csv && nomeArquivo ? (
-              <div className="rounded-lg border px-3 py-2 text-sm">
-                <p className="font-medium">{nomeArquivo}</p>
-                <p className="text-text-secondary">
-                  {numero.format(csv.linhas.length - 1)}{" "}
-                  {csv.linhas.length - 1 === 1
-                    ? "linha de contato"
-                    : "linhas de contato"}
-                  , colunas separadas por{" "}
-                  {csv.delimitador === ";" ? "ponto e vírgula" : "vírgula"}. A
-                  primeira linha é o cabeçalho.
-                </p>
+              <div className="flex items-start gap-3 rounded-xl bg-surface-4 p-3.5">
+                <FileSpreadsheet
+                  className="mt-0.5 size-[18px] shrink-0 text-text-secondary"
+                  aria-hidden
+                />
+                <div className="grid min-w-0 gap-0.5 text-[13px]">
+                  <p className="truncate font-semibold text-text-strong">
+                    {nomeArquivo}
+                  </p>
+                  <p className="text-text-secondary">
+                    <span className="cz-num">
+                      {numero.format(csv.linhas.length - 1)}
+                    </span>{" "}
+                    {csv.linhas.length - 1 === 1
+                      ? "linha de contato"
+                      : "linhas de contato"}
+                    , colunas separadas por{" "}
+                    {csv.delimitador === ";" ? "ponto e vírgula" : "vírgula"}. A
+                    primeira linha é o cabeçalho.
+                  </p>
+                </div>
               </div>
             ) : null}
+            {csv && recodificado ? (
+              <Aviso tom="info" role="note">
+                O arquivo não estava em UTF-8 e foi lido como planilha do Excel
+                em português. Confira se os acentos dos nomes aparecem certos na
+                prévia.
+              </Aviso>
+            ) : null}
             {erroArquivo ? (
-              <p
-                role="alert"
-                className="text-sm"
-                style={{ color: "var(--alert-text)" }}
-              >
+              <Aviso tom="alert" role="alert">
                 {erroArquivo}
-              </p>
+              </Aviso>
             ) : null}
           </div>
         ) : null}
@@ -276,6 +297,7 @@ export function ModalImportacao({
                 ? { observacao: observacao.trim() }
                 : {}),
             }}
+            recodificado={recodificado}
             aoOcupado={setOcupado}
             aoGravarLote={() => {
               gravouAlgo.current = true;
@@ -284,15 +306,14 @@ export function ModalImportacao({
           />
         ) : null}
 
-        <div className="flex items-center justify-between gap-3 border-t pt-3">
-          <div className="min-h-5 text-xs text-text-secondary">
+        <div className="-mx-5 -mb-5 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-surface-subtle px-5 py-3.5">
+          <div className="min-h-5 flex-1 text-xs text-text-secondary">
             {passo < 3 && !podeContinuar && dicaDoPasso ? dicaDoPasso : null}
           </div>
           <div className="flex items-center gap-2">
             {passo > 0 && !terminou ? (
               <Button
                 variant="outline"
-                className="h-10"
                 disabled={ocupado}
                 onClick={() => setPasso((atual) => Math.max(0, atual - 1))}
               >
@@ -301,18 +322,13 @@ export function ModalImportacao({
             ) : null}
             {passo < 3 ? (
               <Button
-                className="h-10"
                 disabled={!podeContinuar}
                 onClick={() => setPasso((atual) => Math.min(3, atual + 1))}
               >
                 Continuar
               </Button>
             ) : null}
-            {terminou ? (
-              <Button className="h-10" onClick={fechar}>
-                Fechar
-              </Button>
-            ) : null}
+            {terminou ? <Button onClick={fechar}>Fechar</Button> : null}
           </div>
         </div>
       </DialogContent>

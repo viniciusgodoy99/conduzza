@@ -10,6 +10,7 @@ import type {
   FiltrosAgenda,
   VisaoAgenda,
 } from "@/components/agenda/tipos";
+import { SegmentedControl } from "@/components/shared/segmented-control";
 import type { AgendaDia } from "@/lib/queries/agenda";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,14 +27,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
-import { cn } from "@/lib/utils";
 
 // Barra de filtros da Agenda. A ORDEM e regra de produto (brief Tela 3):
 // data, Unidade, Especialidade, Convenio, Procedimento e o PROFISSIONAL POR
 // ULTIMO. "A recepcao pergunta quem esta livre para dermato pela Unimed, nao
 // abra a agenda do Dr. Fulano."
+//
+// Desenho do design system (docs/06 secao 5.6): a barra fica solta sobre o
+// canvas, sem faixa propria; "Novo agendamento" e o unico preenchimento lime
+// da tela.
 
 const TODOS = "__todos__";
+
+const VISOES = [
+  { value: "dia", label: "Dia" },
+  { value: "semana", label: "Semana" },
+] as const satisfies readonly { value: VisaoAgenda; label: string }[];
 
 function SelectFiltro({
   placeholder,
@@ -52,7 +61,7 @@ function SelectFiltro({
       onValueChange={(v) => onChange(v === TODOS ? null : v)}
     >
       <SelectTrigger
-        className="h-10 w-auto max-w-[180px] min-w-[120px]"
+        className="h-10 w-auto max-w-[180px] min-w-[120px] text-[13px]"
         aria-label={placeholder}
       >
         <SelectValue placeholder={placeholder} />
@@ -90,7 +99,8 @@ export function FilterBar({
   onFiltros: (f: FiltrosAgenda) => void;
   travadoNoProfissional: string | null;
   onNovoAgendamento: () => void;
-  dados: AgendaDia;
+  /** null quando o dia nao carregou: imprimir e exportar ficam desabilitados */
+  dados: AgendaDia | null;
 }) {
   const { catalogo, podeEditar, dica } = contexto;
   const [dataAberta, setDataAberta] = useState(false);
@@ -122,24 +132,23 @@ export function FilterBar({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-1 px-4 py-2.5">
+    <div className="flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-1">
         <Button
-          variant="ghost"
+          variant="outline"
           size="icon"
-          className="size-10"
           aria-label="Dia anterior"
           onClick={() => onDia(somarDias(dia, -1))}
         >
-          <ChevronLeft className="size-4" />
+          <ChevronLeft aria-hidden />
         </Button>
         <Popover open={dataAberta} onOpenChange={setDataAberta}>
           <PopoverTrigger asChild>
             <Button
               variant="outline"
-              className="h-10 gap-2 font-mono tabular-nums"
+              className="h-10 cz-num text-[13px] font-semibold"
             >
-              <CalendarDays className="size-4" />
+              <CalendarDays aria-hidden />
               {dataFormatada}
             </Button>
           </PopoverTrigger>
@@ -153,23 +162,22 @@ export function FilterBar({
                     onDia(e.target.value);
                   }
                 }}
-                className="h-10"
+                className="cz-num"
                 aria-label="Escolher data"
               />
-              <Button variant="outline" size="sm" onClick={hoje}>
+              <Button variant="outline" onClick={hoje}>
                 Hoje
               </Button>
             </div>
           </PopoverContent>
         </Popover>
         <Button
-          variant="ghost"
+          variant="outline"
           size="icon"
-          className="size-10"
           aria-label="Dia seguinte"
           onClick={() => onDia(somarDias(dia, 1))}
         >
-          <ChevronRight className="size-4" />
+          <ChevronRight aria-hidden />
         </Button>
       </div>
 
@@ -221,39 +229,18 @@ export function FilterBar({
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        <div
-          role="group"
-          aria-label="Visão da agenda"
-          className="grid grid-cols-2 rounded-lg bg-surface-3 p-0.5 text-[12.5px] font-medium"
-        >
-          {(
-            [
-              ["dia", "Dia"],
-              ["semana", "Semana"],
-            ] as [VisaoAgenda, string][]
-          ).map(([valor, rotulo]) => (
-            <button
-              key={valor}
-              type="button"
-              onClick={() => onVisao(valor)}
-              aria-pressed={visao === valor}
-              className={cn(
-                "h-[34px] min-w-[64px] rounded-md px-3 transition-colors",
-                visao === valor
-                  ? "bg-surface-5 text-foreground"
-                  : "text-text-secondary hover:text-foreground",
-              )}
-            >
-              {rotulo}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="Visão da agenda"
+          options={VISOES}
+          value={visao}
+          onChange={onVisao}
+        />
         <BotaoProtegido
           podeEditar={podeEditar}
           dica={dica}
           onClick={onNovoAgendamento}
         >
-          <Plus className="size-4" /> Novo agendamento
+          <Plus aria-hidden /> Novo agendamento
         </BotaoProtegido>
         <AgendaActionsMenu contexto={contexto} dia={dia} dados={dados} />
       </div>

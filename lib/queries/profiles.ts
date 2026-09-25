@@ -27,6 +27,28 @@ export async function fetchProfileNames(
   return nomes;
 }
 
+/**
+ * Ids dos membros ATIVOS da clinica: quem pode ser escolhido como responsavel
+ * de um lead. Pendente (entrou pelo codigo e espera liberacao) e inativo nao
+ * enxergam dado de paciente, entao nao podem dar seguimento a ninguem (achado
+ * 102 da revisao). Os nomes continuam vindo de fetchClinicAuthorNames, que
+ * inclui os antigos, porque dono antigo de lead precisa continuar com nome.
+ */
+export async function fetchResponsaveisAtivos(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("clinic_member")
+    .select("user_id")
+    .eq("clinic_id", clinicId)
+    .eq("status", "ativo");
+  if (error) {
+    throw new Error(error.message);
+  }
+  return ((data ?? []) as { user_id: string }[]).map((m) => m.user_id);
+}
+
 export async function fetchClinicAuthorNames(
   supabase: SupabaseClient,
   clinicId: string,

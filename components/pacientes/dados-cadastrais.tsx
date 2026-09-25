@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { normalizarTelefone } from "@/lib/domain/importacao";
+import { formatarTelefone } from "@/lib/domain/telefone";
 import type { ContatoDaFicha } from "@/lib/queries/pacientes";
 
 // Cadastro do paciente, o unico bloco editavel da ficha. O telefone aceita os
@@ -77,7 +78,9 @@ type ValoresDoFormulario = z.infer<typeof formSchema>;
 function valoresIniciais(contato: ContatoDaFicha): ValoresDoFormulario {
   return {
     name: contato.name ?? "",
-    telefone: contato.phone_e164,
+    // Formatado como a recepcao le e disca; a normalizacao devolve o mesmo
+    // numero, e a action mantem o gravado quando a chave nao muda.
+    telefone: formatarTelefone(contato.phone_e164),
     email: contato.email ?? "",
     cpf: contato.cpf ?? "",
     birth_date: contato.birth_date ?? "",
@@ -167,7 +170,7 @@ export function DadosCadastrais({
                 <FormControl>
                   <Input
                     {...field}
-                    className="h-10 font-mono"
+                    className="h-10 cz-num"
                     inputMode="tel"
                     placeholder="(85) 99999-0000"
                     disabled={!podeEditar}
@@ -206,7 +209,7 @@ export function DadosCadastrais({
                   <FormControl>
                     <Input
                       {...field}
-                      className="h-10 font-mono"
+                      className="h-10 cz-num"
                       inputMode="numeric"
                       placeholder="000.000.000-00"
                       maxLength={14}
@@ -227,7 +230,7 @@ export function DadosCadastrais({
                     <Input
                       {...field}
                       type="date"
-                      className="h-10"
+                      className="h-10 cz-num"
                       disabled={!podeEditar}
                     />
                   </FormControl>
@@ -274,7 +277,7 @@ export function DadosCadastrais({
                 <FormControl>
                   <Input
                     {...field}
-                    className="h-10 font-mono"
+                    className="h-10 cz-num"
                     maxLength={60}
                     disabled={!podeEditar}
                   />
@@ -303,7 +306,7 @@ export function DadosCadastrais({
             )}
           />
           {erroGeral ? (
-            <p role="alert" className="text-sm [color:var(--alert-text)]">
+            <p role="alert" className="text-[13px] text-alert-text">
               {erroGeral}
             </p>
           ) : null}

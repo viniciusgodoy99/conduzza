@@ -40,7 +40,31 @@ export type InboxActionResult = {
    * mas ele é aproximado: este id o encerra sem dúvida.
    */
   messageId?: string;
+  /**
+   * A conversa aberta que ja existe para o mesmo contato, quando reabrir
+   * esbarra nela. A tela leva a atendente ate essa conversa.
+   */
+  conversaAbertaId?: string;
+  /**
+   * A conversa deixou de existir PARA ESTA PESSOA (a RLS nao a mostra mais).
+   * O caso real e o profissional de quem a conversa foi passada para outra
+   * pessoa: o tempo real nao avisa ele, porque o evento da linha nova ja nao
+   * passa pela RLS dele (achado L4). A tela tira a conversa da lista, fecha
+   * o fio e explica, em vez de mostrar uma falha de envio sem motivo.
+   */
+  conversaIndisponivel?: boolean;
 };
+
+// O TypeScript normaliza a uniao de retornos de loadVisibleConversation com
+// as chaves opcionais, entao aqui as duas vem opcionais.
+type CargaRecusada = { error?: string; indisponivel?: boolean };
+
+/** A recusa de loadVisibleConversation no formato das acoes. */
+function recusaDaCarga(carga: CargaRecusada): InboxActionResult {
+  return carga.indisponivel
+    ? { ok: false, error: carga.error, conversaIndisponivel: true }
+    : { ok: false, error: carga.error };
+}
 
 type ConversationRow = {
   id: string;
@@ -75,7 +99,10 @@ async function loadVisibleConversation(
     .eq("clinic_id", context.active.clinicId)
     .maybeSingle();
   if (!data) {
-    return { error: "Conversa não encontrada." as const };
+    return {
+      error: "Esta conversa não está mais disponível para você." as const,
+      indisponivel: true as const,
+    };
   }
   return {
     context,
@@ -193,7 +220,7 @@ export async function sendMessageAction(
     exigeEdicao: true,
   });
   if ("error" in loaded) {
-    return { ok: false, error: loaded.error };
+    return recusaDaCarga(loaded);
   }
   const { context, supabase, conversation } = loaded;
   if (
@@ -310,7 +337,7 @@ export async function enviarArquivoAction(
     exigeEdicao: true,
   });
   if ("error" in loaded) {
-    return { ok: false, error: loaded.error };
+    return recusaDaCarga(loaded);
   }
   const { context, supabase, conversation } = loaded;
   if (
@@ -397,7 +424,7 @@ export async function addInternalNoteAction(
     exigeEdicao: true,
   });
   if ("error" in loaded) {
-    return { ok: false, error: loaded.error };
+    return recusaDaCarga(loaded);
   }
   const { context, supabase, conversation } = loaded;
   const citacao = await resolverCitacao(
@@ -595,7 +622,7 @@ export async function assumirConversaAction(
     exigeEdicao: true,
   });
   if ("error" in loaded) {
-    return { ok: false, error: loaded.error };
+    return recusaDaCarga(loaded);
   }
   const { context, supabase, conversation } = loaded;
   if (conversation.assignee_user_id === context.userId) {
@@ -674,10 +701,12 @@ async function moverLeadAoAssumir(
     const destino = etapaAposAssumir({
       kind: contato.kind as "lead" | "paciente",
       etapaAtual:
-        (jornada.find((e) => e.chave === contato.funnel_stage) as {
-          chave: string;
-          papel: "entrada" | "agendou" | "compareceu" | "perdido" | null;
-        } | undefined) ?? null,
+        (jornada.find((e) => e.chave === contato.funnel_stage) as
+          | {
+              chave: string;
+              papel: "entrada" | "agendou" | "compareceu" | "perdido" | null;
+            }
+          | undefined) ?? null,
       jornada: jornada as {
         chave: string;
         papel: "entrada" | "agendou" | "compareceu" | "perdido" | null;
@@ -734,7 +763,7 @@ export async function etiquetarConversaAction(
     exigeEdicao: true,
   });
   if ("error" in loaded) {
-    return { ok: false, error: loaded.error };
+    return recusaDaCarga(loaded);
   }
   const { context, supabase, conversation } = loaded;
 
@@ -771,6 +800,17 @@ export async function etiquetarConversaAction(
   return { ok: true, tags: data as string[] };
 }
 
+/**
+ * Devolver para a IA: RECUSADO enquanto o agente de IA nao existir (Fase 3).
+ *
+ * Achados 8 e 105 da revisao: a conversa ia para 'ia_atendendo' sem
+ * responsavel, nenhum agente respondia, e o ingest nao tira a conversa desse
+ * estado quando o paciente volta a escrever. Ela saia do contador do menu e
+ * de "Aguardando voce", e o paciente ficava sem resposta sem ninguem notar.
+ * O botao aparece desabilitado com dica, mas botao desabilitado nao protege
+ * nada: a recusa mora aqui. Quando o agente chegar, esta acao volta a gravar
+ * status 'ia_atendendo' com update condicional ao responsavel atual.
+ */
 export async function devolverParaIaAction(
   conversationId: string,
 ): Promise<InboxActionResult> {
@@ -778,27 +818,139 @@ export async function devolverParaIaAction(
     exigeEdicao: true,
   });
   if ("error" in loaded) {
-    return { ok: false, error: loaded.error };
+    return recusaDaCarga(loaded);
+  }
+  return {
+    ok: false,
+    error:
+      "O agente de IA ainda não está ativo nesta clínica. Use Resolver quando terminar o atendimento.",
+  };
+}
+
+// Quem passa conversa para outra pessoa: a matriz da recepcao para cima. O
+// profissional so ve as conversas dele e nao distribui atendimento.
+const PAPEIS_QUE_TRANSFEREM = ["admin", "gestor", "recepcao"] as const;
+// Quem pode RECEBER: quem escreve dado de paciente (o mesmo recorte de
+// user_can_write). Passar para 'leitura' deixaria a conversa com alguem que
+// nao consegue responder.
+const PAPEIS_QUE_RECEBEM = [
+  "admin",
+  "gestor",
+  "recepcao",
+  "profissional",
+] as const;
+
+const transferirSchema = z.object({
+  conversation_id: z.uuid(),
+  para_user_id: z.uuid(),
+});
+
+/**
+ * Passa a conversa para um membro ativo da clinica (achados 2 e 16).
+ *
+ * E o caminho pelo qual a conversa chega ao profissional, que pela RLS so
+ * enxerga as conversas atribuidas a ele. A policy de UPDATE de conversation
+ * ja permite a quem nao e profissional gravar outro responsavel; a checagem
+ * de papel e de destino mora aqui. Update condicional ao responsavel e ao
+ * status que a tela viu, no mesmo padrao do assumir: se alguem mexeu no
+ * meio do caminho, nada muda e a tela avisa.
+ */
+export async function transferirConversaAction(
+  entrada: unknown,
+): Promise<InboxActionResult> {
+  const parsed = transferirSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+  const loaded = await loadVisibleConversation(parsed.data.conversation_id, {
+    exigeEdicao: true,
+  });
+  if ("error" in loaded) {
+    return recusaDaCarga(loaded);
   }
   const { context, supabase, conversation } = loaded;
+  const clinicId = context.active!.clinicId;
+  const destino = parsed.data.para_user_id;
 
-  // UNICO caminho do sistema que devolve uma conversa para a IA: devolucao
-  // explicita de quem esta com a posse. A IA nunca volta sozinha.
-  const { data: updated } = await supabase
-    .from("conversation")
-    .update({ status: "ia_atendendo", assignee_user_id: null })
-    .eq("id", conversation.id)
-    .eq("assignee_user_id", context.userId)
-    .select("id");
-  if (!updated || updated.length === 0) {
-    return { ok: false, error: "Só quem está com a conversa pode devolver." };
+  if (
+    !(PAPEIS_QUE_TRANSFEREM as readonly string[]).includes(context.active!.role)
+  ) {
+    return {
+      ok: false,
+      error:
+        "Só administrador, gestor e recepção passam a conversa para outra pessoa.",
+    };
   }
+  if (conversation.status === "resolvida") {
+    return {
+      ok: false,
+      error: "Conversa resolvida não é passada adiante. Reabra antes.",
+    };
+  }
+  if (destino === context.userId) {
+    return { ok: false, error: "Para ficar com a conversa, use Assumir." };
+  }
+  if (destino === conversation.assignee_user_id) {
+    return { ok: false, error: "A conversa já está com essa pessoa." };
+  }
+
+  // O destino e conferido com a SESSAO (a policy de clinic_member deixa o
+  // membro ativo ver o time): membro ativo desta clinica, com papel que
+  // responde paciente.
+  const { data: membro } = await supabase
+    .from("clinic_member")
+    .select("user_id")
+    .eq("clinic_id", clinicId)
+    .eq("user_id", destino)
+    .eq("status", "ativo")
+    .in("role", [...PAPEIS_QUE_RECEBEM])
+    .maybeSingle();
+  if (!membro) {
+    return {
+      ok: false,
+      error:
+        "Essa pessoa não está ativa na clínica ou não atende conversas. Atualize a página e escolha de novo.",
+    };
+  }
+  const { data: perfil } = await supabase
+    .from("profile")
+    .select("name")
+    .eq("user_id", destino)
+    .maybeSingle();
+  const nomeDoDestino =
+    (perfil as { name: string | null } | null)?.name?.trim() || "um colega";
+
+  const base = supabase
+    .from("conversation")
+    .update({ status: "em_atendimento", assignee_user_id: destino })
+    .eq("id", conversation.id)
+    .eq("status", conversation.status);
+  const guarded =
+    conversation.assignee_user_id === null
+      ? base.is("assignee_user_id", null)
+      : base.eq("assignee_user_id", conversation.assignee_user_id);
+  const { data: updated } = await guarded.select("id");
+  if (!updated || updated.length === 0) {
+    return {
+      ok: false,
+      error:
+        "A conversa mudou enquanto você escolhia. Confira quem está com ela e tente de novo.",
+    };
+  }
+
   await addSystemEvent(
     supabase,
-    context.active!.clinicId,
+    clinicId,
     conversation.id,
-    `${context.userName} devolveu a conversa para a IA`,
+    `${context.userName} passou a conversa para ${nomeDoDestino}`,
   );
+  await supabase.from("audit_log").insert({
+    clinic_id: clinicId,
+    user_id: context.userId,
+    action: "transferiu_conversa",
+    entity: "conversation",
+    entity_id: conversation.id,
+  });
   return { ok: true };
 }
 
@@ -809,7 +961,7 @@ export async function resolverConversaAction(
     exigeEdicao: true,
   });
   if ("error" in loaded) {
-    return { ok: false, error: loaded.error };
+    return recusaDaCarga(loaded);
   }
   const { context, supabase, conversation } = loaded;
   const { data: updated } = await supabase
@@ -839,15 +991,36 @@ export async function reabrirConversaAction(
     exigeEdicao: true,
   });
   if ("error" in loaded) {
-    return { ok: false, error: loaded.error };
+    return recusaDaCarga(loaded);
   }
   const { context, supabase, conversation } = loaded;
-  const { data: updated } = await supabase
+  const { data: updated, error: erroAoReabrir } = await supabase
     .from("conversation")
     .update({ status: "em_atendimento", assignee_user_id: context.userId })
     .eq("id", conversation.id)
     .eq("status", "resolvida")
     .select("id");
+  if (erroAoReabrir?.code === "23505") {
+    // O indice unico de conversa aberta por contato recusou: o paciente
+    // voltou a escrever depois de resolvida e ja tem OUTRA conversa aberta.
+    // Antes a tela dizia "A conversa já foi reaberta", que era falso. Agora
+    // devolve qual e a conversa aberta, e a tela leva a atendente ate ela.
+    const { data: aberta } = await supabase
+      .from("conversation")
+      .select("id")
+      .eq("clinic_id", context.active!.clinicId)
+      .eq("contact_id", conversation.contact_id)
+      .neq("status", "resolvida")
+      .maybeSingle();
+    return {
+      ok: false,
+      error: "Este paciente já tem uma conversa aberta.",
+      conversaAbertaId: (aberta as { id: string } | null)?.id,
+    };
+  }
+  if (erroAoReabrir) {
+    return { ok: false, error: "Não foi possível reabrir. Tente de novo." };
+  }
   if (!updated || updated.length === 0) {
     return { ok: false, error: "A conversa já foi reaberta." };
   }

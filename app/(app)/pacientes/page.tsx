@@ -42,8 +42,12 @@ export default async function PacientesPage() {
   const t = createT(active.labels);
   const titulo = t("paciente", { plural: true, capitalize: true });
 
+  // Sem acoes no cabecalho (C25): o kit sugere busca, exportar e "Novo
+  // paciente", mas paciente nasce da primeira consulta e exportar e dado de
+  // saude em massa. Os indicadores (C28) e a lista moram no cliente, porque
+  // contam sobre a mesma query que a tabela usa.
   return (
-    <div className="grid gap-6 p-6">
+    <div className="flex flex-col gap-3.5 p-6">
       <PageHeader
         title={titulo}
         description={`A lista traz quem já teve pelo menos uma ${t("consulta")}. Quem ainda não agendou fica em Leads.`}
@@ -52,6 +56,9 @@ export default async function PacientesPage() {
       <PacientesClient
         clinicId={active.clinicId}
         timezone={active.timezone}
+        termoPacientes={t("paciente", { plural: true })}
+        termoConsulta={t("consulta")}
+        soDaSuaAgenda={active.role === "profissional"}
         pacientesIniciais={pacientes}
         convenios={catalogo.convenios.map((convenio) => ({
           id: convenio.id,

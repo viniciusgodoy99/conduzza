@@ -21,6 +21,7 @@ import {
   ExportarRelatorio,
   type ExportavelDaAba,
 } from "@/components/relatorios/exportar-relatorio";
+import { Aviso } from "@/components/shared/aviso";
 import { CardsSkeleton } from "@/components/shared/loading-skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -346,10 +347,10 @@ export function RelatoriosClient({
                 setParams({ de: valor, ate: valor <= diaAte ? diaAte : valor });
               }
             }}
-            className="h-10 w-[150px]"
+            className="h-10 w-[152px] cz-num"
             aria-label="Período a partir de"
           />
-          <span className="text-xs text-text-tertiary">até</span>
+          <span className="text-xs text-text-secondary">até</span>
           <Input
             type="date"
             value={diaAte}
@@ -359,20 +360,21 @@ export function RelatoriosClient({
                 setParams({ ate: valor, de: valor >= diaDe ? diaDe : valor });
               }
             }}
-            className="h-10 w-[150px]"
+            className="h-10 w-[152px] cz-num"
             aria-label="Período até"
           />
         </div>
-        <span className="text-sm text-text-tertiary">
-          comparado com os {contarDias(diaDe, diaAte)} dias anteriores
+        <span className="text-[13px] text-text-secondary">
+          comparado com os{" "}
+          <span className="cz-num">{contarDias(diaDe, diaAte)}</span> dias
+          anteriores
         </span>
         {filtroAtivo ? (
           <Button
             variant="ghost"
-            className="h-10"
             onClick={() => setParams({ de: null, ate: null })}
           >
-            <X className="size-4" aria-hidden />
+            <X aria-hidden />
             Últimos 30 dias
           </Button>
         ) : null}
@@ -386,14 +388,10 @@ export function RelatoriosClient({
         </div>
       </div>
 
-      <Tabs
-        value={abaAtiva}
-        onValueChange={(aba) => setParams({ aba })}
-        className="gap-4"
-      >
-        <TabsList className="h-auto flex-wrap justify-start">
+      <Tabs value={abaAtiva} onValueChange={(aba) => setParams({ aba })}>
+        <TabsList variant="line" aria-label="Vistas de Resultados">
           {ABAS.map(([key, label]) => (
-            <TabsTrigger key={key} value={key} className="min-h-9">
+            <TabsTrigger key={key} value={key}>
               {label}
             </TabsTrigger>
           ))}
@@ -401,10 +399,32 @@ export function RelatoriosClient({
       </Tabs>
 
       {comErro ? (
-        <p role="alert" className="text-sm [color:var(--alert-text)]">
-          Não foi possível carregar os resultados agora. Tente de novo em
-          instantes.
-        </p>
+        <Aviso
+          tom="alert"
+          role="alert"
+          titulo="Não foi possível carregar os resultados agora."
+          acao={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                for (const consulta of [
+                  funilQuery,
+                  agendaQuery,
+                  atendimentoQuery,
+                ]) {
+                  if (consulta.isError) {
+                    void consulta.refetch();
+                  }
+                }
+              }}
+            >
+              Tentar de novo
+            </Button>
+          }
+        >
+          Tente de novo em instantes.
+        </Aviso>
       ) : carregando ? (
         <CardsSkeleton cards={4} />
       ) : (

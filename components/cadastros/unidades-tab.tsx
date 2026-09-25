@@ -1,5 +1,6 @@
 "use client";
 
+import type { ColumnDef } from "@tanstack/react-table";
 import { Building2, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -9,27 +10,15 @@ import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
 import {
   AcoesDaLinha,
   BotaoProtegido,
+  CampoDeMarcar,
   ChipSituacao,
+  PainelDeCadastro,
+  RodapeDeSalvar,
+  VazioDaAba,
 } from "@/components/cadastros/comum";
-import { EmptyState } from "@/components/shared/empty-state";
-import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/shared/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import type { Unidade } from "@/lib/queries/catalogo";
 
 type FormUnidade = {
@@ -89,6 +78,57 @@ export function UnidadesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
     aoMudar();
   };
 
+  const colunas: ColumnDef<Unidade>[] = [
+    {
+      id: "nome",
+      header: "Nome",
+      cell: ({ row }) => (
+        <span className="font-semibold text-text-strong">
+          {row.original.name}
+        </span>
+      ),
+    },
+    {
+      id: "endereco",
+      header: "Endereço",
+      cell: ({ row }) => (
+        <span className="text-text-secondary">
+          {row.original.address ?? "Não informado"}
+        </span>
+      ),
+    },
+    {
+      id: "telefone",
+      header: "Telefone",
+      cell: ({ row }) =>
+        row.original.phone ? (
+          <span className="cz-num whitespace-nowrap">{row.original.phone}</span>
+        ) : (
+          <span className="text-text-secondary">Não informado</span>
+        ),
+    },
+    {
+      id: "situacao",
+      header: "Situação",
+      cell: ({ row }) => <ChipSituacao active={row.original.active} />,
+    },
+    {
+      id: "acoes",
+      header: () => <span className="sr-only">Ações</span>,
+      meta: { align: "right", numeric: false },
+      cell: ({ row }) => (
+        <AcoesDaLinha
+          podeEditar={podeEditar}
+          dica={dica}
+          nome={row.original.name}
+          aoEditar={() => abrir(row.original)}
+        />
+      ),
+    },
+  ];
+
+  const fechar = () => setAberto(false);
+
   return (
     <div className="grid gap-3">
       <div className="flex justify-end">
@@ -97,114 +137,75 @@ export function UnidadesTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus className="size-4" /> Nova unidade
+          <Plus aria-hidden /> Nova unidade
         </BotaoProtegido>
       </div>
 
       {catalogo.unidades.length === 0 ? (
-        <EmptyState
+        <VazioDaAba
           icon={Building2}
-          title="Nenhuma unidade cadastrada"
-          description="Cadastre a primeira unidade da clínica para organizar agenda e recursos."
+          titulo="Nenhuma unidade cadastrada"
+          descricao="Cadastre a primeira unidade da clínica para organizar agenda e recursos."
+          acao={{
+            rotulo: "Cadastrar a primeira unidade",
+            onClick: () => abrir(),
+          }}
+          podeEditar={podeEditar}
+          dica={dica}
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nome</TableHead>
-                <TableHead>Endereço</TableHead>
-                <TableHead>Telefone</TableHead>
-                <TableHead>Situação</TableHead>
-                <TableHead className="w-12" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {catalogo.unidades.map((unidade) => {
-                return (
-                  <TableRow key={unidade.id}>
-                    <TableCell className="font-medium">
-                      {unidade.name}
-                    </TableCell>
-                    <TableCell className="text-text-secondary">
-                      {unidade.address ?? ""}
-                    </TableCell>
-                    <TableCell className="font-mono text-[12px] tabular-nums">
-                      {unidade.phone ?? ""}
-                    </TableCell>
-                    <TableCell>
-                      <ChipSituacao active={unidade.active} />
-                    </TableCell>
-                    <TableCell>
-                      <AcoesDaLinha
-                        podeEditar={podeEditar}
-                        dica={dica}
-                        nome={unidade.name}
-                        aoEditar={() => abrir(unidade)}
-                      />
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <DataTable columns={colunas} data={catalogo.unidades} />
       )}
 
-      <Sheet open={aberto} onOpenChange={setAberto}>
-        <SheetContent className="w-[380px] p-5">
-          <SheetHeader className="p-0">
-            <SheetTitle>
-              {form.id ? "Editar unidade" : "Nova unidade"}
-            </SheetTitle>
-          </SheetHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="unidade-nome">Nome</Label>
-              <Input
-                id="unidade-nome"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="h-10"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="unidade-endereco">Endereço</Label>
-              <Input
-                id="unidade-endereco"
-                value={form.address}
-                onChange={(e) => setForm({ ...form, address: e.target.value })}
-                className="h-10"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="unidade-telefone">Telefone</Label>
-              <Input
-                id="unidade-telefone"
-                value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                className="h-10"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="unidade-ativa">Unidade ativa</Label>
-              <Switch
-                id="unidade-ativa"
-                checked={form.active}
-                onCheckedChange={(v) => setForm({ ...form, active: v })}
-              />
-            </div>
-            {erro ? (
-              <p role="alert" className="text-sm [color:var(--alert-text)]">
-                {erro}
-              </p>
-            ) : null}
-            <Button onClick={salvar} disabled={salvando} className="h-10">
-              {salvando ? "Salvando..." : "Salvar"}
-            </Button>
+      <PainelDeCadastro
+        aberto={aberto}
+        aoMudarAberto={setAberto}
+        titulo={form.id ? "Editar unidade" : "Nova unidade"}
+        erro={erro}
+        rodape={
+          <RodapeDeSalvar
+            salvando={salvando}
+            aoCancelar={fechar}
+            aoSalvar={() => void salvar()}
+          />
+        }
+      >
+        <div className="grid gap-4">
+          <div className="grid gap-1.5">
+            <Label htmlFor="unidade-nome">Nome</Label>
+            <Input
+              id="unidade-nome"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
           </div>
-        </SheetContent>
-      </Sheet>
+          <div className="grid gap-1.5">
+            <Label htmlFor="unidade-endereco">Endereço</Label>
+            <Input
+              id="unidade-endereco"
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="unidade-telefone">Telefone</Label>
+            <Input
+              id="unidade-telefone"
+              type="tel"
+              inputMode="tel"
+              value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              className="cz-num"
+            />
+          </div>
+          <CampoDeMarcar
+            id="unidade-ativa"
+            rotulo="Unidade ativa"
+            marcado={form.active}
+            aoMudar={(marcado) => setForm({ ...form, active: marcado })}
+          />
+        </div>
+      </PainelDeCadastro>
     </div>
   );
 }

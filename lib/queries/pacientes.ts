@@ -10,7 +10,7 @@ import type { AppointmentStatus } from "@/lib/design/status";
 // appointment e package_balance manda, inclusive o recorte de clinica. A
 // leitura humana da tela passa por auditarLeituraDePaciente na page.
 
-/** Espelho exato das 14 colunas devolvidas por pacientes_resumo (v3). */
+/** Espelho exato das 15 colunas devolvidas por pacientes_resumo (v4). */
 export type PacienteResumo = {
   contact_id: string;
   name: string | null;
@@ -26,6 +26,11 @@ export type PacienteResumo = {
   saldo_sessoes: number;
   saldo_total: number;
   profissionais_ids: string[];
+  /**
+   * Consulta nao cancelada mais antiga (passada ou futura), para o indicador
+   * "Novos no mes". Migration 20260925102000.
+   */
+  primeira_consulta: string | null;
 };
 
 export const pacientesKeys = {
@@ -64,6 +69,7 @@ function normalizarPaciente(row: Record<string, unknown>): PacienteResumo {
     saldo_sessoes: (row.saldo_sessoes as number | null) ?? 0,
     saldo_total: (row.saldo_total as number | null) ?? 0,
     profissionais_ids: (row.profissionais_ids as string[] | null) ?? [],
+    primeira_consulta: (row.primeira_consulta as string | null) ?? null,
   };
 }
 
@@ -102,6 +108,8 @@ export type ConsultaDoPaciente = {
   /** Preco ATUAL do vinculo; a exibicao passa por exibirPrecoVinculo. */
   price_cents: number | null;
   covered_by_insurance: boolean;
+  /** Saldo de pacote que esta consulta descontou (null quando nao descontou). */
+  package_balance_id: string | null;
 };
 
 export type SaldoDePacote = {
@@ -155,7 +163,11 @@ export type FichaDoPaciente = {
   consultas: ConsultaDoPaciente[];
   pacotes: SaldoDePacote[];
   consentimento: ConsentimentoVigente;
-  /** Conversa nao resolvida; null quando nao ha conversa aberta. */
+  /**
+   * Conversa do "Abrir conversa": a aberta, se houver; senao a mais recente,
+   * mesmo resolvida (o Atendimento abre resolvida pelo link). null so quando
+   * o paciente nao tem conversa nenhuma que esta sessao possa ler.
+   */
   conversationId: string | null;
 };
 
@@ -192,7 +204,7 @@ const CONTATO_SELECT =
 // Molde do CONSULTA_SELECT da Agenda, mais o nome do profissional e o preco do
 // vinculo, que a linha do tempo mostra.
 const CONSULTA_DO_PACIENTE_SELECT =
-  "id, starts_at, status, professional_id, professional:professional_id (id, name), service_link:service_link_id (id, price_cents, covered_by_insurance, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
+  "id, starts_at, status, professional_id, package_balance_id, professional:professional_id (id, name), service_link:service_link_id (id, price_cents, covered_by_insurance, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
 
 const PACOTE_SELECT =
   "id, package_id, sessions_total, sessions_used, expires_at, package:package_id (id, procedure:procedure_id (id, name))";
@@ -221,6 +233,7 @@ function normalizarConsultaDoPaciente(
     insurance_name: (convenio?.name as string | null) ?? null,
     price_cents: (vinculo?.price_cents as number | null) ?? null,
     covered_by_insurance: (vinculo?.covered_by_insurance as boolean) ?? false,
+    package_balance_id: (row.package_balance_id as string | null) ?? null,
   };
 }
 
@@ -239,7 +252,8 @@ function normalizarPacote(row: Record<string, unknown>): SaldoDePacote {
 
 /**
  * Ficha completa da Tela 9: cadastro, linha do tempo de consultas, saldos de
- * pacote, autorizacao para receber mensagens e a conversa aberta. null quando
+ * pacote, autorizacao para receber mensagens e a conversa do atalho (aberta
+ * ou, sem ela, a mais recente). null quando
  * o contato nao existe ou a RLS nao deixa ler.
  */
 export async function fetchFichaPaciente(
@@ -247,44 +261,65 @@ export async function fetchFichaPaciente(
   clinicId: string,
   contactId: string,
 ): Promise<FichaDoPaciente | null> {
-  const [contato, consultas, pacotes, consentimentos, conversa] =
-    await Promise.all([
-      supabase
-        .from("contact")
-        .select(CONTATO_SELECT)
-        .eq("clinic_id", clinicId)
-        .eq("id", contactId)
-        .maybeSingle(),
-      supabase
-        .from("appointment")
-        .select(CONSULTA_DO_PACIENTE_SELECT)
-        .eq("contact_id", contactId)
-        .order("starts_at", { ascending: false }),
-      supabase
-        .from("package_balance")
-        .select(PACOTE_SELECT)
-        .eq("contact_id", contactId)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("contact_consent")
-        .select("channel, source, granted_at, revoked_at")
-        .eq("contact_id", contactId)
-        .order("granted_at", { ascending: false }),
-      supabase
-        .from("conversation")
-        .select("id")
-        .eq("contact_id", contactId)
-        .neq("status", "resolvida")
-        .order("last_message_at", { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle(),
-    ]);
+  const [
+    contato,
+    consultas,
+    pacotes,
+    consentimentos,
+    conversaAberta,
+    conversaRecente,
+  ] = await Promise.all([
+    supabase
+      .from("contact")
+      .select(CONTATO_SELECT)
+      .eq("clinic_id", clinicId)
+      .eq("id", contactId)
+      .maybeSingle(),
+    supabase
+      .from("appointment")
+      .select(CONSULTA_DO_PACIENTE_SELECT)
+      .eq("contact_id", contactId)
+      .order("starts_at", { ascending: false }),
+    supabase
+      .from("package_balance")
+      .select(PACOTE_SELECT)
+      .eq("contact_id", contactId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("contact_consent")
+      .select("channel, source, granted_at, revoked_at")
+      .eq("contact_id", contactId)
+      .order("granted_at", { ascending: false }),
+    // "Abrir conversa" (achado 70): a aberta vence, porque e onde a conversa
+    // continua; sem ela, a mais recente em qualquer situacao, inclusive
+    // resolvida, que o Atendimento abre pelo link. Duas consultas porque
+    // last_message_at pode ser nulo numa conversa aberta recem criada, e a
+    // ordenacao sozinha poria uma resolvida antiga na frente dela. A RLS
+    // decide o que esta sessao le (o profissional so ve as atribuidas a ele).
+    supabase
+      .from("conversation")
+      .select("id")
+      .eq("contact_id", contactId)
+      .neq("status", "resolvida")
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("conversation")
+      .select("id")
+      .eq("contact_id", contactId)
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
   for (const resultado of [
     contato,
     consultas,
     pacotes,
     consentimentos,
-    conversa,
+    conversaAberta,
+    conversaRecente,
   ]) {
     if (resultado.error) {
       throw new Error(resultado.error.message);
@@ -311,6 +346,9 @@ export async function fetchFichaPaciente(
     consentimento: consentimentoVigenteDaFicha(
       (consentimentos.data ?? []) as LinhaDeConsentimento[],
     ),
-    conversationId: (conversa.data?.id as string | undefined) ?? null,
+    conversationId:
+      (conversaAberta.data?.id as string | undefined) ??
+      (conversaRecente.data?.id as string | undefined) ??
+      null,
   };
 }

@@ -2,10 +2,14 @@ import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-// Cartao de indicador do Painel e dos Relatorios, modelado no Cartao dos
-// cartoes-do-dia (o padrao bento): rotulo em caixa alta, numero mono grande
-// tabular, e a linha de variacao contra o periodo anterior com as 3 camadas
-// (seta = forma, texto = rotulo, cor = success/alert).
+// Cartao de indicador do Painel e dos Relatorios na receita StatCard do
+// design system Conduzza (docs/06 secao 4.7): rotulo em eyebrow, numero mono
+// grande tabular (cz-num), e a linha de variacao contra o periodo anterior
+// com as 3 camadas (seta = forma, texto = rotulo, cor = success/alert).
+//
+// Heroi (D16, so o Inicio usa): o unico preenchimento lime da tela, texto em
+// primary-foreground cheio (sem opacidade) e a variacao numa pilula clara
+// com a cor semantica, para as 3 camadas continuarem legiveis sobre o lime.
 //
 // Regra de honestidade: o delta so aparece quando ele e COMPARAVEL. Taxa de
 // coorte (lead -> comparecimento) nao ganha seta: a coorte anterior teve
@@ -30,6 +34,7 @@ export function CartaoKpi({
   polaridade = "maior-melhor",
   notaSemDelta,
   heroi = false,
+  className,
   children,
 }: {
   rotulo: string;
@@ -46,8 +51,9 @@ export function CartaoKpi({
    */
   polaridade?: "maior-melhor" | "menor-melhor";
   /** Substitui a linha de delta quando o delta seria desonesto. */
-  notaSemDelta?: string;
+  notaSemDelta?: React.ReactNode;
   heroi?: boolean;
+  className?: string;
   children?: React.ReactNode;
 }) {
   const variacao =
@@ -55,53 +61,101 @@ export function CartaoKpi({
       ? variacaoPercentual(anterior.atual, anterior.anterior)
       : null;
 
+  // Valor sem digito ("sem dados", sem denominador) nao e numero: vai como
+  // texto de campo vazio, nao em mono de 34px.
+  const semNumero = !/\d/.test(valor);
+
+  // Cor da variacao pela polaridade, sempre com seta e texto junto.
+  const corDaVariacao =
+    variacao === null || variacao === 0
+      ? "text-neutral-text"
+      : variacao > 0 === (polaridade === "maior-melhor")
+        ? "text-success-text"
+        : "text-alert-text";
+
   return (
     <div
       className={cn(
-        "grid content-start gap-2 rounded-lg border bg-card p-4",
-        heroi && "sm:col-span-2",
+        "grid min-w-0 content-start rounded-card border",
+        heroi
+          ? "gap-3 border-transparent bg-primary p-5 text-primary-foreground shadow-none"
+          : "gap-2.5 border-border bg-card p-4 shadow-sm",
+        className,
       )}
     >
-      <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-        {rotulo}
-      </span>
       <span
         className={cn(
-          "font-mono leading-none font-semibold tabular-nums",
-          heroi ? "text-[40px]" : "text-[34px]",
+          "cz-eyebrow",
+          heroi ? "text-primary-foreground" : "text-text-secondary",
         )}
       >
-        {valor}
+        {rotulo}
       </span>
+      {semNumero ? (
+        // Campo vazio (docs/06 4.7): "Sem dados" escrito, na altura do
+        // numero para a grade de cartoes nao pular, nunca travessao.
+        <span
+          className={cn(
+            "flex min-h-[34px] items-end text-base leading-tight font-semibold",
+            heroi ? "text-primary-foreground" : "text-text-secondary",
+          )}
+        >
+          {valor.charAt(0).toUpperCase() + valor.slice(1)}
+        </span>
+      ) : (
+        <span
+          className={cn(
+            "cz-num leading-none font-semibold",
+            heroi
+              ? "text-[40px] text-primary-foreground"
+              : "text-[34px] text-text-strong",
+          )}
+        >
+          {valor}
+        </span>
+      )}
       {notaSemDelta ? (
-        <span className="text-[12.5px] text-text-tertiary">{notaSemDelta}</span>
+        <span
+          className={cn(
+            "text-xs",
+            heroi ? "text-primary-foreground" : "text-text-secondary",
+          )}
+        >
+          {notaSemDelta}
+        </span>
       ) : variacao !== null ? (
         <span
-          className="flex items-center gap-1 text-[12.5px] font-medium"
-          style={{
-            color:
-              variacao === 0
-                ? "var(--neutral-text)"
-                : variacao > 0 === (polaridade === "maior-melhor")
-                  ? "var(--success-text)"
-                  : "var(--alert-text)",
-          }}
+          className={cn(
+            "flex items-center gap-1 text-xs font-semibold",
+            corDaVariacao,
+            heroi && "h-6 w-fit rounded-full bg-card px-2",
+          )}
         >
           {variacao > 0 ? (
-            <ArrowUpRight className="size-3.5" aria-hidden />
+            <ArrowUpRight className="size-[13px] shrink-0" aria-hidden />
           ) : variacao < 0 ? (
-            <ArrowDownRight className="size-3.5" aria-hidden />
+            <ArrowDownRight className="size-[13px] shrink-0" aria-hidden />
           ) : (
-            <Minus className="size-3.5" aria-hidden />
+            <Minus className="size-[13px] shrink-0" aria-hidden />
           )}
-          {variacao > 0 ? "subiu" : variacao < 0 ? "caiu" : "estável"}{" "}
-          {Math.abs(variacao).toLocaleString("pt-BR", {
-            maximumFractionDigits: 0,
-          })}
-          % vs. período anterior
+          <span>
+            {variacao > 0 ? "subiu" : variacao < 0 ? "caiu" : "estável"}{" "}
+            <span className="cz-num">
+              {Math.abs(variacao).toLocaleString("pt-BR", {
+                maximumFractionDigits: 0,
+              })}
+              %
+            </span>{" "}
+            vs. período anterior
+          </span>
         </span>
       ) : anterior != null ? (
-        <span className="text-[12.5px] text-text-tertiary">
+        <span
+          className={cn(
+            "text-xs",
+            heroi ? "text-primary-foreground" : "text-text-secondary",
+          )}
+        >
           sem base de comparação no período anterior
         </span>
       ) : null}

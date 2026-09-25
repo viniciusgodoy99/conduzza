@@ -1,13 +1,19 @@
 "use client";
 
+import { LoaderCircle } from "lucide-react";
+import Link from "next/link";
 import { useActionState } from "react";
 
-import { updatePasswordAction, type ActionState } from "@/app/(auth)/actions";
+import {
+  updatePasswordAction,
+  type SenhaNovaState,
+} from "@/app/(auth)/actions";
+import { Aviso } from "@/components/shared/aviso";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-const initialState: ActionState = {};
+const initialState: SenhaNovaState = {};
 
 // Formulario compartilhado de definicao de senha: usado na redefinicao
 // (esqueci a senha) e no aceite de convite. Exige sessao vinda do link.
@@ -26,12 +32,14 @@ export function PasswordForm({
   );
 
   return (
-    <form action={formAction} className="grid gap-4">
-      <div className="grid gap-1">
-        <h1 className="text-[22px] font-semibold">{title}</h1>
-        <p className="text-sm text-text-secondary">{description}</p>
+    <form action={formAction} className="grid gap-5">
+      <div className="grid gap-1.5">
+        <h1 className="text-[24px] leading-[1.2] font-bold tracking-[-0.02em]">
+          {title}
+        </h1>
+        <p className="text-[13.5px] text-text-secondary">{description}</p>
       </div>
-      <div className="grid gap-2">
+      <div className="grid gap-1.5">
         <Label htmlFor="password">Nova senha</Label>
         <Input
           id="password"
@@ -40,16 +48,40 @@ export function PasswordForm({
           autoComplete="new-password"
           required
           minLength={8}
+          aria-describedby="password-dica"
           className="h-11"
         />
+        <p id="password-dica" className="text-xs text-text-secondary">
+          Pelo menos 8 caracteres.
+        </p>
       </div>
       {state.error ? (
-        <p role="alert" className="text-alert-text text-sm">
+        <Aviso
+          tom="alert"
+          role="alert"
+          acao={
+            state.pedirLinkNovo ? (
+              <Link
+                href="/recuperar-senha"
+                className="inline-flex min-h-10 items-center rounded-sm text-[13px] font-semibold whitespace-nowrap underline underline-offset-2"
+              >
+                Pedir link novo
+              </Link>
+            ) : undefined
+          }
+        >
           {state.error}
-        </p>
+        </Aviso>
       ) : null}
-      <Button type="submit" disabled={pending} className="h-11">
-        {pending ? "Salvando..." : submitLabel}
+      <Button type="submit" size="lg" disabled={pending} className="w-full">
+        {pending ? (
+          <>
+            <LoaderCircle aria-hidden className="animate-spin" />
+            Salvando...
+          </>
+        ) : (
+          submitLabel
+        )}
       </Button>
     </form>
   );

@@ -15,8 +15,10 @@ import {
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 
 // Filtros da Tela 4: etapa, origem, responsavel e periodo de entrada. Os
-// valores vivem na URL (o pai grava); aqui e so a barra. O sentinela evita
-// value="" no Radix Select, mesmo padrao do SelectFiltro da Agenda.
+// valores vivem na URL (o pai grava); aqui e so a barra, solta na pagina
+// (fora de cartao), no desenho do design system Conduzza (docs/06 secao
+// 5.4). O sentinela evita value="" no Radix Select, mesmo padrao do
+// SelectFiltro da Agenda.
 
 const TODOS = "__todos__";
 
@@ -27,6 +29,9 @@ export type ValoresFiltros = {
   de: string;
   ate: string;
 };
+
+/** Membro que aparece numa lista de responsavel (filtro, Reatribuir, Novo lead). */
+export type OpcaoDeResponsavel = { id: string; nome: string };
 
 function SelectFiltro({
   placeholder,
@@ -45,7 +50,7 @@ function SelectFiltro({
       onValueChange={(v) => onChange(v === TODOS ? "" : v)}
     >
       <SelectTrigger
-        className="h-10 w-auto max-w-[190px] min-w-[120px]"
+        className="h-10 w-auto max-w-[200px] min-w-[128px] text-[13px] shadow-xs"
         aria-label={placeholder}
       >
         <SelectValue placeholder={placeholder} />
@@ -64,13 +69,14 @@ function SelectFiltro({
 
 export function FiltrosLeads({
   valores,
-  membros,
+  responsaveis,
   jornada,
   aoMudar,
   aoLimpar,
 }: {
   valores: ValoresFiltros;
-  membros: Record<string, string>;
+  /** Ja ordenados; o pai decide quem entra (ativos e donos atuais) */
+  responsaveis: OpcaoDeResponsavel[];
   jornada: EtapaDaJornada[];
   aoMudar: (campo: keyof ValoresFiltros, valor: string) => void;
   aoLimpar: () => void;
@@ -79,9 +85,6 @@ export function FiltrosLeads({
     value: def.chave,
     label: def.nome,
   }));
-  const responsaveis = Object.entries(membros)
-    .map(([id, nome]) => ({ value: id, label: nome }))
-    .sort((a, b) => a.label.localeCompare(b.label));
   const temAtivo = Boolean(
     valores.etapa ||
     valores.origem ||
@@ -111,27 +114,30 @@ export function FiltrosLeads({
         placeholder="Responsável"
         value={valores.resp}
         onChange={(v) => aoMudar("resp", v)}
-        opcoes={responsaveis}
+        opcoes={responsaveis.map((membro) => ({
+          value: membro.id,
+          label: membro.nome,
+        }))}
       />
       <div className="flex items-center gap-1.5">
         <Input
           type="date"
           value={valores.de}
           onChange={(e) => aoMudar("de", e.target.value)}
-          className="h-10 w-[150px]"
+          className="h-10 w-[150px] cz-num shadow-xs"
           aria-label="Entrou a partir de"
         />
-        <span className="text-xs text-text-tertiary">até</span>
+        <span className="text-xs text-text-secondary">até</span>
         <Input
           type="date"
           value={valores.ate}
           onChange={(e) => aoMudar("ate", e.target.value)}
-          className="h-10 w-[150px]"
+          className="h-10 w-[150px] cz-num shadow-xs"
           aria-label="Entrou até"
         />
       </div>
       {temAtivo ? (
-        <Button variant="ghost" className="h-10" onClick={aoLimpar}>
+        <Button variant="ghost" onClick={aoLimpar}>
           <X className="size-4" /> Limpar filtros
         </Button>
       ) : null}

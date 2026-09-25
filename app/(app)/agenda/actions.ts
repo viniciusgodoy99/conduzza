@@ -10,11 +10,14 @@ import { ptBR } from "date-fns/locale";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import type { AppointmentStatus } from "@/lib/design/status";
 import {
+  comparecimentoLiberado,
+  DICA_COMPARECEU_ANTES_DO_DIA,
   DICA_FALTA_ANTES_DO_HORARIO,
   DICA_REMARCAR_ENCERRADA,
   eCancelamento,
   exigeCanal,
   faltaLiberada,
+  MENSAGEM_PROFISSIONAL_INATIVO,
   podeRemarcar,
   podeTransicionar,
   statusAposRemarcar,
@@ -57,8 +60,10 @@ export type AgendaActionResult = {
     | "sem_vinculo"
     | "fora_da_jornada"
     | "bloqueado"
-    // Mudar situacao: falta antes do horario da consulta.
-    | "falta_antes_do_horario";
+    // Mudar situacao: falta antes do horario da consulta, e Compareceu
+    // antes do dia dela.
+    | "falta_antes_do_horario"
+    | "comparecimento_antes_do_dia";
   id?: string;
   /**
    * A acao deu certo, mas algo que a recepcao pediu junto nao aconteceu (ex.:
@@ -554,37 +559,43 @@ export async function remarcarAgendamentoAction(
   let serviceLinkId = atual.service_link_id;
   let duracaoMs =
     new Date(atual.ends_at).getTime() - new Date(atual.starts_at).getTime();
+
+  // Profissional de destino ATIVO sempre, mesmo sem trocar (achado L12):
+  // mover a consulta de um profissional desativado para outro dia ou horario
+  // abre horario novo com quem nao atende mais, e a regua ainda pediria
+  // confirmacao ao paciente para ele.
+  const { data: profissional, error: erroProfissional } = await supabase
+    .from("professional")
+    .select("active")
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", novo_professional_id)
+    .maybeSingle();
+  if (erroProfissional) {
+    return { ok: false, error: "Não foi possível remarcar." };
+  }
+  if (!profissional || profissional.active !== true) {
+    return {
+      ok: false,
+      code: "sem_vinculo",
+      error: MENSAGEM_PROFISSIONAL_INATIVO,
+    };
+  }
+
   if (trocouProfissional) {
     if (!vinculoAtual) {
       return { ok: false, code: "sem_vinculo", error: MENSAGEM_SEM_VINCULO };
     }
-    const [{ data: candidatos, error: erroVinculos }, { data: profissional }] =
-      await Promise.all([
-        supabase
-          .from("service_link")
-          .select(
-            "id, professional_id, procedure_id, insurance_id, duration_min, active",
-          )
-          .eq("clinic_id", guard.clinicId)
-          .eq("professional_id", novo_professional_id)
-          .eq("procedure_id", vinculoAtual.procedure_id)
-          .eq("active", true),
-        supabase
-          .from("professional")
-          .select("active")
-          .eq("clinic_id", guard.clinicId)
-          .eq("id", novo_professional_id)
-          .maybeSingle(),
-      ]);
+    const { data: candidatos, error: erroVinculos } = await supabase
+      .from("service_link")
+      .select(
+        "id, professional_id, procedure_id, insurance_id, duration_min, active",
+      )
+      .eq("clinic_id", guard.clinicId)
+      .eq("professional_id", novo_professional_id)
+      .eq("procedure_id", vinculoAtual.procedure_id)
+      .eq("active", true);
     if (erroVinculos) {
       return { ok: false, error: "Não foi possível remarcar." };
-    }
-    if (!profissional || profissional.active !== true) {
-      return {
-        ok: false,
-        code: "sem_vinculo",
-        error: "Este profissional está inativo. Escolha outro.",
-      };
     }
     const vinculo = vinculoEquivalente((candidatos ?? []) as VinculoDoBanco[], {
       professionalId: novo_professional_id,
@@ -817,7 +828,10 @@ export async function mudarStatusAction(
   // Falta so a partir do horario da consulta (achado 81). O horario vem do
   // BANCO, nunca da tela. O gatilho impedir_falta_antes_do_horario recusa de
   // novo, para qualquer caminho.
-  if (novo_status === "faltou") {
+  // Compareceu so a partir do DIA da consulta no fuso da clinica (achado
+  // L11): e situacao final e o gatilho consumir_sessao_de_pacote desconta
+  // sessao. Consulta de amanha marcada por engano nao tinha volta.
+  if (novo_status === "faltou" || novo_status === "compareceu") {
     const { data: consulta } = await supabase
       .from("appointment")
       .select("starts_at")
@@ -827,11 +841,29 @@ export async function mudarStatusAction(
     if (!consulta) {
       return { ok: false, error: "Consulta não encontrada." };
     }
-    if (!faltaLiberada(consulta.starts_at as string, new Date())) {
+    const agora = new Date();
+    if (
+      novo_status === "faltou" &&
+      !faltaLiberada(consulta.starts_at as string, agora)
+    ) {
       return {
         ok: false,
         code: "falta_antes_do_horario",
         error: DICA_FALTA_ANTES_DO_HORARIO,
+      };
+    }
+    if (
+      novo_status === "compareceu" &&
+      !comparecimentoLiberado(
+        guard.timezone,
+        consulta.starts_at as string,
+        agora,
+      )
+    ) {
+      return {
+        ok: false,
+        code: "comparecimento_antes_do_dia",
+        error: DICA_COMPARECEU_ANTES_DO_DIA,
       };
     }
   }

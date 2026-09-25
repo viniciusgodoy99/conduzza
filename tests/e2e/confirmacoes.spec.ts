@@ -50,6 +50,19 @@ async function reguaAtiva(kind: "confirmacao" | "pos_falta"): Promise<boolean> {
   return Boolean(data?.active);
 }
 
+/**
+ * O aviso da linha de base aparece ao ligar a régua de CONFIRMAÇÃO enquanto
+ * a clínica não tem nenhuma linha em no_show_baseline (achado 49; antes o
+ * gatilho era "a clínica nunca enviou"). Sem linha, o teste fica
+ * determinístico.
+ */
+async function semLinhaDeBase(): Promise<void> {
+  await adminClient()
+    .from("no_show_baseline")
+    .delete()
+    .eq("clinic_id", dados().clinicId);
+}
+
 /** Preenche a janela de envio e salva. O interruptor só libera depois disto. */
 async function preencherJanela(page: Page): Promise<void> {
   await page.getByLabel("Começa às").fill("08:00");
@@ -133,6 +146,7 @@ test("a régua não liga sem a clínica informar o horário, e liga depois", asy
 }) => {
   apenasDesktop();
   await desligarRegua();
+  await semLinhaDeBase();
 
   await login(page, dados().emails.admin);
   await page.goto("/confirmacoes");
@@ -155,11 +169,15 @@ test("a régua não liga sem a clínica informar o horário, e liga depois", asy
   await expect(interruptor).toBeEnabled({ timeout: 10_000 });
 
   try {
-    // A primeira ativação da clínica avisa sobre a linha de base.
+    // Sem linha de base, ligar a confirmação avisa e diz onde registrar
+    // (o administrador tem o atalho para Resultados, aba Confirmação).
     await interruptor.click();
     await expect(
       page.getByText("Antes de ligar, anote a taxa de falta"),
     ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Registrar a taxa de falta" }),
+    ).toHaveAttribute("href", "/relatorios?aba=confirmacao");
     expect(await reguaAtiva("confirmacao")).toBe(false);
 
     // E o aviso não é decoração: confirmar LIGA a régua de verdade. Enquanto
@@ -187,6 +205,7 @@ test("a recuperação depois da falta tem caminho de ativação própria", async
 }) => {
   apenasDesktop();
   await desligarRegua("pos_falta");
+  await semLinhaDeBase();
 
   await login(page, dados().emails.admin);
   await page.goto("/confirmacoes");
@@ -207,17 +226,110 @@ test("a recuperação depois da falta tem caminho de ativação própria", async
   await expect(interruptor).toBeEnabled({ timeout: 10_000 });
 
   try {
+    // A linha de base mede o ganho da CONFIRMAÇÃO (achado 49): mesmo sem
+    // linha registrada, ligar a recuperação não pede o aviso.
     await interruptor.click();
-    // Já houve primeira ativação nesta clínica ou não: o aviso da linha de
-    // base só aparece antes do primeiro envio, então aceita os dois caminhos.
-    const aviso = page.getByRole("button", { name: "Anotei, pode ligar" });
-    if (await aviso.isVisible().catch(() => false)) {
-      await aviso.click();
-    }
     await expect(interruptor).toBeChecked({ timeout: 10_000 });
+    await expect(
+      page.getByText("Antes de ligar, anote a taxa de falta"),
+    ).toHaveCount(0);
     expect(await reguaAtiva("pos_falta")).toBe(true);
   } finally {
     await desligarRegua("pos_falta");
+  }
+});
+
+test("o filtro por situação mostra só as consultas escolhidas, agrupadas como antes", async ({
+  page,
+}) => {
+  apenasDesktop();
+  await login(page, dados().emails.gestor);
+  await page.goto("/confirmacoes");
+
+  const filtro = page.getByRole("group", { name: "Filtrar por situação" });
+  await expect(
+    filtro.getByRole("button", { name: /^Todas \d+$/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  // Confirmadas: some quem ainda não confirmou, fica quem confirmou.
+  await filtro.getByRole("button", { name: /^Confirmadas \d+$/ }).click();
+  await expect(page.getByText(NOME_WHATSAPP)).toBeVisible();
+  await expect(page.getByText(NOME_PENDENTE)).toHaveCount(0);
+
+  // Aguardando: o contrário.
+  await filtro.getByRole("button", { name: /^Aguardando \d+$/ }).click();
+  await expect(page.getByText(NOME_PENDENTE)).toBeVisible();
+  await expect(page.getByText(NOME_WHATSAPP)).toHaveCount(0);
+
+  // Os cartões do topo continuam contando o dia inteiro.
+  await expect(page.getByText("Confirmadas", { exact: true })).toBeVisible();
+});
+
+test("manter o horário tira o pedido de remarcação da lista", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const consultaId = dados().confirmacoes.pendenteId;
+  const admin = adminClient();
+  const { data: antes } = await admin
+    .from("appointment")
+    .select("status, starts_at")
+    .eq("id", consultaId)
+    .single();
+  await admin
+    .from("appointment")
+    .update({ remarcacao_pedida_em: new Date().toISOString() })
+    .eq("id", consultaId);
+
+  try {
+    await login(page, dados().emails.recepcao);
+    await page.goto("/confirmacoes");
+
+    const linha = page.getByRole("listitem").filter({ hasText: NOME_PENDENTE });
+    await expect(linha.getByText("Pediu para remarcar")).toBeVisible();
+
+    // Pergunta antes: a marca some e a confirmação volta a valer.
+    await linha.getByRole("button", { name: "Manter o horário" }).click();
+    const dialogo = page.getByRole("dialog", { name: "Manter o horário?" });
+    await expect(dialogo).toBeVisible();
+    await dialogo.getByRole("button", { name: "Manter o horário" }).click();
+
+    // Espera a acao terminar: com o dialogo aberto a lista fica aria-hidden, e
+    // procurar o chip nela passaria antes de o servidor responder.
+    await expect(page.getByText(/Horário mantido/)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(dialogo).toBeHidden();
+    await expect(linha.getByText("Pediu para remarcar")).toHaveCount(0, {
+      timeout: 10_000,
+    });
+    // Só a marca sai: situação e horário ficam como estavam.
+    await expect
+      .poll(
+        async () =>
+          (
+            await admin
+              .from("appointment")
+              .select("remarcacao_pedida_em")
+              .eq("id", consultaId)
+              .single()
+          ).data?.remarcacao_pedida_em ?? null,
+        { timeout: 10_000 },
+      )
+      .toBeNull();
+    const { data } = await admin
+      .from("appointment")
+      .select("remarcacao_pedida_em, status, starts_at")
+      .eq("id", consultaId)
+      .single();
+    expect(data?.remarcacao_pedida_em).toBeNull();
+    expect(data?.status).toBe(antes?.status);
+    expect(data?.starts_at).toBe(antes?.starts_at);
+  } finally {
+    await admin
+      .from("appointment")
+      .update({ remarcacao_pedida_em: null })
+      .eq("id", consultaId);
   }
 });
 

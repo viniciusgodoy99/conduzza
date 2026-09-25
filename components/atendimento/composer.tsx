@@ -1,26 +1,13 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  CheckCircle2,
-  Hand,
-  Lock,
-  RotateCcw,
-  Send,
-  Sparkles,
-  Undo2,
-  X,
-} from "lucide-react";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { Eye, Hand, Lock, Send, ShieldOff, ShieldX, X } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import {
-  enviarArquivoAction,
-  assumirConversaAction,
-  devolverParaIaAction,
-  reabrirConversaAction,
-  resolverConversaAction,
-} from "@/app/(app)/atendimento/actions";
+import { enviarArquivoAction } from "@/app/(app)/atendimento/actions";
+import { SO_ACOMPANHA } from "@/components/atendimento/acoes-da-conversa";
 import {
   BarraDeAnexo,
   useArquivoSolto,
@@ -29,19 +16,32 @@ import {
   autorDaCitacao,
   BlocoDeCitacao,
 } from "@/components/atendimento/citacao";
+import {
+  dataNaClinica,
+  FUSO_PADRAO,
+} from "@/components/atendimento/fuso-da-clinica";
+import { Aviso } from "@/components/shared/aviso";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
 import { conversationKeys } from "@/lib/queries/conversations";
 import type {
+  ConsentInfo,
   ConversationListItem,
   MessageItem,
 } from "@/lib/queries/conversations";
+import { estadoDoConsentimento } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
-// Compositor (tarefa 1.6), estados do handoff:
-// 1. IA atendendo: campo travado, callout com Assumir.
-// 2. Aguardando humano: assumir explicitamente antes de responder.
-// 3. Em atendimento (meu): abas Responder / Nota interna (fundo ambar).
-// 4. Resolvida: reabrir para responder.
+// Compositor, SO A ESCRITA (decisao do dono, C29): as acoes da conversa
+// (Assumir, Transferir, Resolver, Reabrir) moram no cabecalho do fio. Aqui:
+// 1. IA atendendo, aguardando humano, com colega ou resolvida: um aviso que
+//    diz o estado e aponta para a acao no topo. Campo fora da tela.
+// 2. Em atendimento (meu): Responder / Nota interna (fundo ambar), distintos
+//    tambem pelo botao ("Enviar" e "Salvar nota").
+// 3. Autorizacao revogada ou inexistente: a resposta ao paciente fica
+//    desabilitada com o motivo e o caminho para a ficha; a nota interna
+//    continua liberada.
 // A janela de 24h e conceito do canal oficial (isOfficialChannel) e nao
 // renderiza com uazapi/fake; o dominio windowState ja esta pronto e testado.
 
@@ -72,6 +72,9 @@ function temTecladoDeVerdade(): boolean {
 export function Composer({
   conversation,
   viewerId,
+  podeEditar,
+  autorizacao,
+  timezone = FUSO_PADRAO,
   citando,
   aoCancelarCitacao,
   aoCancelarCitacaoSeFor,
@@ -81,9 +84,20 @@ export function Composer({
   texto,
   aoMudarTexto,
   aoEnviarTexto,
+  aoPerderConversa,
 }: {
   conversation: ConversationListItem;
   viewerId: string;
+  /** o papel escreve no Atendimento (a matriz); leitura so acompanha */
+  podeEditar: boolean;
+  /**
+   * A autorizacao de mensagens do contato, quando ja conferida. Undefined
+   * enquanto carrega ou se a consulta falhou: ai o compositor nao trava
+   * (quem decide e o envio no servidor), so o painel mostra o estado.
+   */
+  autorizacao?: ConsentInfo;
+  /** fuso da clinica, para a data da revogacao */
+  timezone?: string;
   /** mensagem que está sendo respondida, quando houver */
   citando: MessageItem | null;
   aoCancelarCitacao: () => void;
@@ -126,17 +140,15 @@ export function Composer({
     ehNota: boolean;
     citandoId: string | null;
   }) => void;
+  /**
+   * A conversa deixou de estar disponivel para esta pessoa (o servidor
+   * respondeu conversaIndisponivel): o InboxClient tira da lista e fecha.
+   */
+  aoPerderConversa?: (conversationId: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const caixaRef = useRef<HTMLTextAreaElement>(null);
-  // AÇÕES DE CONVERSA (assumir, resolver, devolver, reabrir). Elas mudam a
-  // interface inteira, então esperar é o comportamento certo.
-  //
-  // Antes existia UM `pending` só, que alimentava também a barra de anexo e o
-  // botão de texto: por isso os dois botões diziam "Enviando..." ao mesmo
-  // tempo, mesmo quando só um deles estava trabalhando.
-  const [pendenteAcao, startTransition] = useTransition();
   // O upload de arquivo é trabalho real de segundos, e a barra não tem trava
   // de idempotência: o segundo clique reenviaria o mesmo arquivo.
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
@@ -148,36 +160,32 @@ export function Composer({
   // Muda a cada envio de arquivo bem-sucedido, para a barra limpar a previa.
   const [enviadoEm, setEnviadoEm] = useState(0);
   const isNote = modo === "nota";
+  // Autorizacao revogada ou inexistente: a RESPOSTA ao paciente nao sai (o
+  // envio no servidor recusa, e a regra 3.4 diz que a mensagem do paciente
+  // nao reautoriza sozinha). A nota interna nunca sai da clinica e continua.
+  const estadoDaAutorizacao =
+    autorizacao === undefined ? null : estadoDoConsentimento(autorizacao);
+  const respostaBloqueada =
+    estadoDaAutorizacao === "revogado" ||
+    estadoDaAutorizacao === "sem_autorizacao";
+  const autorizacaoTrava = !isNote && respostaBloqueada;
+  // Quem esta com a conversa mas perdeu a escrita (o papel virou Somente
+  // leitura com conversa atribuida, achado L5): o compositor aparece, mas
+  // tudo que escreve fica desabilitado com o motivo. O servidor recusa de
+  // novo (exigeEdicao).
+  const escritaTravada = !podeEditar || autorizacaoTrava;
   // O compositor tem retornos antecipados por estado da conversa (resolvida,
   // com a IA, de outra pessoa), entao o hook precisa vir ANTES de todos eles.
-  const solto = useArquivoSolto((arquivo) => setArquivoSolto(arquivo), !isNote);
+  const solto = useArquivoSolto(
+    (arquivo) => setArquivoSolto(arquivo),
+    podeEditar && !isNote && !respostaBloqueada,
+  );
 
   const refresh = () => {
     void queryClient.invalidateQueries({
       queryKey: conversationKeys.messages(conversation.id),
     });
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-  };
-
-  /**
-   * Ações que mudam o ESTADO DA CONVERSA.
-   *
-   * Substitui o antigo `run()`, que limpava o texto e a citação em qualquer
-   * sucesso: resolver a conversa, ou enviar um anexo, apagava o rascunho que a
-   * pessoa tinha começado a escrever.
-   */
-  const executarAcaoDeConversa = (
-    tarefa: () => Promise<{ ok: boolean; error?: string }>,
-  ) => {
-    setError(null);
-    startTransition(async () => {
-      const resultado = await tarefa();
-      if (!resultado.ok) {
-        setError(resultado.error ?? "Algo deu errado. Tente de novo.");
-        return;
-      }
-      refresh();
-    });
   };
 
   /**
@@ -190,7 +198,7 @@ export function Composer({
    */
   const enviarTexto = () => {
     const corpo = texto.trim();
-    if (corpo.length === 0) {
+    if (corpo.length === 0 || escritaTravada) {
       return;
     }
     if (corpo.length > TETO_DE_CARACTERES) {
@@ -243,81 +251,68 @@ export function Composer({
     conversation.status === "em_atendimento" &&
     conversation.assignee_user_id === viewerId;
 
+  // Quem so acompanha le o estado, sem ser mandado para um botao que nao
+  // pode usar (o botao no topo aparece desabilitado com a MESMA frase na
+  // dica, SO_ACOMPANHA).
+
   if (conversation.status === "resolvida") {
     return (
-      <Callout
-        icon={<CheckCircle2 className="size-4" />}
-        toneClass="[background:var(--success-bg)] [color:var(--success-text)]"
-        text="Conversa resolvida."
-        error={error}
-      >
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={pendenteAcao}
-          onClick={() =>
-            executarAcaoDeConversa(() => reabrirConversaAction(conversation.id))
-          }
-        >
-          <RotateCcw className="size-4" />
-          Reabrir e responder
-        </Button>
-      </Callout>
+      <AvisoDoCompositor>
+        <Aviso tom="success" titulo="Conversa resolvida.">
+          {podeEditar
+            ? "Para responder de novo, use Reabrir e responder, no topo da conversa."
+            : SO_ACOMPANHA}
+        </Aviso>
+      </AvisoDoCompositor>
     );
   }
 
   if (conversation.status === "ia_atendendo") {
     return (
-      <Callout
-        icon={<Sparkles className="size-4" />}
-        toneClass="[background:var(--ai-bg)] [color:var(--ai-text)]"
-        text="A IA está atendendo esta conversa."
-        error={error}
-      >
-        <TakeoverButton
-          pending={pendenteAcao}
-          onClick={() =>
-            executarAcaoDeConversa(() => assumirConversaAction(conversation.id))
-          }
-        />
-      </Callout>
+      <AvisoDoCompositor>
+        <Aviso tom="ia" titulo="A IA está atendendo esta conversa.">
+          {podeEditar
+            ? "Para responder, use Assumir conversa, no topo da conversa."
+            : SO_ACOMPANHA}
+        </Aviso>
+      </AvisoDoCompositor>
     );
   }
 
   if (conversation.status === "aguardando_humano") {
     return (
-      <Callout
-        icon={<Hand className="size-4" />}
-        toneClass="[background:var(--warning-bg)] [color:var(--warning-text)]"
-        text="Ninguém está atendendo. Assuma para responder."
-        error={error}
-      >
-        <TakeoverButton
-          pending={pendenteAcao}
-          onClick={() =>
-            executarAcaoDeConversa(() => assumirConversaAction(conversation.id))
+      <AvisoDoCompositor>
+        <Aviso
+          tom="warning"
+          icone={Hand}
+          // Quem so acompanha nao e mandado assumir: o Assumir dele esta
+          // desabilitado (achado L25).
+          titulo={
+            podeEditar
+              ? "Ninguém está atendendo. Assuma para responder."
+              : "Ninguém está atendendo."
           }
-        />
-      </Callout>
+        >
+          {podeEditar
+            ? "Use Assumir conversa, no topo da conversa."
+            : SO_ACOMPANHA}
+        </Aviso>
+      </AvisoDoCompositor>
     );
   }
 
   if (!isMine) {
+    const quemAtende = conversation.assignee_user_id
+      ? (authorNames[conversation.assignee_user_id] ?? "Outra pessoa")
+      : "Outra pessoa";
     return (
-      <Callout
-        icon={<Hand className="size-4" />}
-        toneClass="bg-surface-3 text-text-secondary"
-        text="Outra pessoa está com esta conversa."
-        error={error}
-      >
-        <TakeoverButton
-          pending={pendenteAcao}
-          label="Assumir do colega"
-          onClick={() =>
-            executarAcaoDeConversa(() => assumirConversaAction(conversation.id))
-          }
-        />
-      </Callout>
+      <AvisoDoCompositor>
+        <AvisoDeColega nome={quemAtende}>
+          {podeEditar
+            ? `${quemAtende} está atendendo. Para responder, use Assumir do colega, no topo da conversa.`
+            : `${quemAtende} está atendendo. ${SO_ACOMPANHA}`}
+        </AvisoDeColega>
+      </AvisoDoCompositor>
     );
   }
 
@@ -325,136 +320,130 @@ export function Composer({
     <div
       {...solto.props}
       className={cn(
-        "grid gap-2 px-4 py-3",
-        isNote && "[background:var(--warning-bg)]",
+        // minmax(0, 1fr): sem ela a trilha implicita cresce ate o conteudo
+        // mais largo e, no celular, empurrava o Enviar para fora da tela.
+        "grid grid-cols-[minmax(0,1fr)] gap-2 px-4 py-3 cz-transition",
+        isNote && "bg-warning-bg",
         solto.classes,
       )}
     >
+      {!podeEditar ? (
+        <Aviso
+          tom="neutral"
+          icone={Eye}
+          titulo="Esta conversa está com você, mas seu perfil só acompanha."
+        >
+          {SO_ACOMPANHA} Peça a um administrador ou gestor para passar a
+          conversa a outra pessoa.
+        </Aviso>
+      ) : null}
       {solto.sobrevoando ? (
-        <p className="rounded-md border border-dashed px-3 py-2 text-center text-[12.5px] text-text-secondary">
+        <p className="rounded-xl border border-dashed border-primary-edge bg-primary-soft px-3 py-2 text-center text-[12.5px] font-semibold text-primary-text">
           Solte o arquivo para anexar
         </p>
       ) : null}
-      <div className="flex items-center gap-2">
-        <div className="flex rounded-lg bg-surface-3 p-0.5 text-[12px] font-medium">
-          <button
-            type="button"
-            onClick={() => trocarModo("responder")}
-            className={cn(
-              "h-7 rounded-md px-3",
-              !isNote ? "bg-surface-5" : "text-text-secondary",
-            )}
-          >
-            Responder
-          </button>
-          <button
-            type="button"
-            onClick={() => trocarModo("nota")}
-            className={cn(
-              "flex h-7 items-center gap-1 rounded-md px-3",
-              isNote
-                ? "bg-surface-5 [color:var(--warning-text)]"
-                : "text-text-secondary",
-            )}
-          >
-            <Lock className="size-3" />
-            Nota interna
-          </button>
-        </div>
-        <div className="ml-auto flex items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={pendenteAcao}
-            onClick={() =>
-              executarAcaoDeConversa(() =>
-                devolverParaIaAction(conversation.id),
-              )
-            }
-          >
-            <Undo2 className="size-4" />
-            Devolver para a IA
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={pendenteAcao}
-            onClick={() =>
-              executarAcaoDeConversa(() =>
-                resolverConversaAction(conversation.id),
-              )
-            }
-          >
-            <CheckCircle2 className="size-4" />
-            Resolver
-          </Button>
-        </div>
-      </div>
-
-      {isNote ? (
-        <p className="flex items-center gap-1.5 text-[11.5px] font-medium [color:var(--warning-text)]">
-          <Lock className="size-3" />
-          Nota interna: o paciente não vê.
-        </p>
-      ) : null}
-
       {/* Anexo só na aba de resposta: nota interna nunca sai da clínica, então
           arquivo nela não teria para onde ir.
 
           ESCONDIDA, e não desmontada: o arquivo escolhido mora no estado da
           barra, então desmontá-la ao trocar de aba jogava fora, sem avisar, a
-          foto que a pessoa acabara de anexar. Escondida, ela volta com o
-          arquivo intacto quando a pessoa retorna para Responder. */}
-      <div className={isNote ? "hidden" : undefined}>
-        <BarraDeAnexo
-          pendente={enviandoArquivo}
-          desabilitado={enviandoArquivo}
-          arquivoDeFora={arquivoSolto}
-          aoConsumirArquivoDeFora={() => setArquivoSolto(null)}
-          enviadoEm={enviadoEm}
-          aoEnviar={(arquivo, legenda, notaDeVoz) => {
-            const dados = new FormData();
-            dados.set("arquivo", arquivo);
-            dados.set("legenda", legenda);
-            dados.set("nota_de_voz", notaDeVoz ? "1" : "0");
-            if (citando) {
-              dados.set("citando", citando.id);
-            }
-            // Caminho próprio, sem `useTransition` e sem tocar no texto: o
-            // rascunho que a pessoa tem na caixa não pode sumir porque ela
-            // mandou uma foto.
-            setError(null);
-            setEnviandoArquivo(true);
-            // A citação que ESTE envio levou, capturada agora. O upload demora
-            // segundos, e cancelar "a citação" na volta alcançaria a que a
-            // pessoa escolheu enquanto esperava, ou até a de outra conversa,
-            // porque quem guarda a citação é o InboxClient, que não remonta.
-            const citadaDesteEnvio = citando?.id ?? null;
-            void enviarArquivoAction(conversation.id, dados)
-              .then((resultado) => {
-                if (!resultado.ok) {
-                  setError(resultado.error ?? "Não foi possível enviar.");
+          foto que a pessoa acabara de anexar. A barra fica montada sempre; o
+          compositor só esconde as partes dela na nota interna. */}
+      <BarraDeAnexo
+        pendente={enviandoArquivo}
+        desabilitado={enviandoArquivo || respostaBloqueada || !podeEditar}
+        arquivoDeFora={arquivoSolto}
+        aoConsumirArquivoDeFora={() => setArquivoSolto(null)}
+        enviadoEm={enviadoEm}
+        aoEnviar={(arquivo, legenda, notaDeVoz) => {
+          const dados = new FormData();
+          dados.set("arquivo", arquivo);
+          dados.set("legenda", legenda);
+          dados.set("nota_de_voz", notaDeVoz ? "1" : "0");
+          if (citando) {
+            dados.set("citando", citando.id);
+          }
+          // Caminho próprio, sem `useTransition` e sem tocar no texto: o
+          // rascunho que a pessoa tem na caixa não pode sumir porque ela
+          // mandou uma foto.
+          setError(null);
+          setEnviandoArquivo(true);
+          // A citação que ESTE envio levou, capturada agora. O upload demora
+          // segundos, e cancelar "a citação" na volta alcançaria a que a
+          // pessoa escolheu enquanto esperava, ou até a de outra conversa,
+          // porque quem guarda a citação é o InboxClient, que não remonta.
+          const citadaDesteEnvio = citando?.id ?? null;
+          void enviarArquivoAction(conversation.id, dados)
+            .then((resultado) => {
+              if (!resultado.ok) {
+                if (resultado.conversaIndisponivel) {
+                  // A conversa saiu do alcance desta pessoa (passada para
+                  // outra): a tela inteira sai dela, com o aviso.
+                  aoPerderConversa?.(conversation.id);
                   return;
                 }
-                setEnviadoEm(Date.now());
-                if (citadaDesteEnvio) {
-                  aoCancelarCitacaoSeFor(citadaDesteEnvio);
-                }
-                toast.success("Arquivo enviado.");
-                refresh();
-              })
-              // Sem isto, uma rejeição (rede caindo no meio do upload) destrava
-              // o botão pelo finally e não avisa nada: a pessoa fica sem erro e
-              // sem arquivo, achando que mandou.
-              .catch(() => {
-                setError(
-                  "Não foi possível falar com o servidor. O arquivo não foi enviado.",
-                );
-              })
-              .finally(() => setEnviandoArquivo(false));
-          }}
-        />
-      </div>
+                setError(resultado.error ?? "Não foi possível enviar.");
+                return;
+              }
+              setEnviadoEm(Date.now());
+              if (citadaDesteEnvio) {
+                aoCancelarCitacaoSeFor(citadaDesteEnvio);
+              }
+              toast.success("Arquivo enviado.");
+              refresh();
+            })
+            // Sem isto, uma rejeição (rede caindo no meio do upload) destrava
+            // o botão pelo finally e não avisa nada: a pessoa fica sem erro e
+            // sem arquivo, achando que mandou.
+            .catch(() => {
+              setError(
+                "Não foi possível falar com o servidor. O arquivo não foi enviado.",
+              );
+            })
+            .finally(() => setEnviandoArquivo(false));
+        }}
+      >
+        {({ botoes, previa }) => (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <SegmentedControl
+                size="sm"
+                ariaLabel="Para quem vai o texto"
+                value={modo}
+                onChange={trocarModo}
+                options={[
+                  { value: "responder", label: "Responder" },
+                  { value: "nota", label: "Nota interna", icon: Lock },
+                ]}
+              />
+              {isNote ? (
+                <p className="flex items-center gap-1.5 text-[11.5px] font-semibold text-warning-text">
+                  <Lock aria-hidden className="size-3" />
+                  Nota interna: o paciente não vê.
+                </p>
+              ) : null}
+              <div
+                className={cn(
+                  "ml-auto",
+                  (isNote || respostaBloqueada) && "hidden",
+                )}
+              >
+                {botoes}
+              </div>
+            </div>
+            {podeEditar && autorizacaoTrava && estadoDaAutorizacao ? (
+              <AvisoDeAutorizacao
+                revogadaEm={autorizacao?.revoked_at ?? null}
+                contactId={conversation.contact.id}
+                timezone={timezone}
+              />
+            ) : null}
+            <div className={isNote || respostaBloqueada ? "hidden" : undefined}>
+              {previa}
+            </div>
+          </>
+        )}
+      </BarraDeAnexo>
 
       {citando ? (
         <div className="flex items-center gap-2">
@@ -467,19 +456,27 @@ export function Composer({
             mensagem={citando}
             className="min-w-0 flex-1"
           />
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={aoCancelarCitacao}
             aria-label="Cancelar a resposta a esta mensagem"
-            className="grid size-10 shrink-0 place-items-center rounded-full text-text-tertiary hover:bg-surface-3 hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+            className="rounded-full text-text-secondary"
           >
-            <X className="size-4" />
-          </button>
+            <X aria-hidden />
+          </Button>
         </div>
       ) : null}
 
       <form
-        className="flex items-end gap-2"
+        className={cn(
+          "flex items-end gap-2 rounded-card border p-2 cz-transition focus-within:border-focus focus-within:ring-3 focus-within:ring-ring/55",
+          isNote
+            ? "border-(--warning-text) bg-card"
+            : "border-input bg-surface-subtle",
+          escritaTravada && "opacity-60",
+        )}
         onSubmit={(event) => {
           event.preventDefault();
           enviarTexto();
@@ -491,6 +488,7 @@ export function Composer({
           onChange={(event) => aoMudarTexto(event.target.value)}
           maxLength={TETO_DE_CARACTERES}
           rows={2}
+          disabled={escritaTravada}
           placeholder={
             citando
               ? "Escreva a resposta a esta mensagem"
@@ -499,10 +497,7 @@ export function Composer({
                 : "Escreva a resposta"
           }
           aria-label={isNote ? "Nota interna" : "Resposta ao paciente"}
-          className={cn(
-            "min-h-[76px] flex-1 resize-none rounded-lg border border-input bg-card px-3 py-2 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-            isNote && "[border-color:var(--warning)]",
-          )}
+          className="field-sizing-content max-h-[120px] min-h-[52px] min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-[5px] text-base leading-[1.5] text-text-strong outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed md:text-[13.5px]"
           onKeyDown={(event) => {
             if (event.key === "Escape" && citando) {
               event.preventDefault();
@@ -528,15 +523,35 @@ export function Composer({
           }}
         />
         {/* Sem "Enviando...": o envio não bloqueia mais nada. O disabled fica
-            só como afordância de que não há o que mandar. */}
-        <Button type="submit" disabled={texto.trim().length === 0}>
-          <Send className="size-4" />
-          {isNote ? "Salvar nota" : "Enviar"}
-        </Button>
+            só como afordância de que não há o que mandar. Os dois planos se
+            distinguem pelo TEXTO e pela pele do botão (lime para o paciente,
+            tinta com cadeado para a nota): houve nota indo ao paciente. */}
+        {podeEditar ? (
+          <Button
+            type="submit"
+            variant={isNote ? "solid" : "default"}
+            disabled={texto.trim().length === 0 || escritaTravada}
+          >
+            {isNote ? <Lock aria-hidden /> : <Send aria-hidden />}
+            {isNote ? "Salvar nota" : "Enviar"}
+          </Button>
+        ) : (
+          // Sem escrita: visivel e desabilitado, com o motivo na dica.
+          <DisabledWithHint hint={SO_ACOMPANHA}>
+            <Button
+              type="submit"
+              variant={isNote ? "solid" : "default"}
+              disabled
+            >
+              {isNote ? <Lock aria-hidden /> : <Send aria-hidden />}
+              {isNote ? "Salvar nota" : "Enviar"}
+            </Button>
+          </DisabledWithHint>
+        )}
       </form>
 
       {error ? (
-        <p role="alert" className="text-[12px] [color:var(--alert-text)]">
+        <p role="alert" className="text-[12px] text-alert-text">
           {error}
         </p>
       ) : null}
@@ -544,52 +559,95 @@ export function Composer({
   );
 }
 
-function TakeoverButton({
-  pending,
-  onClick,
-  label = "Assumir conversa",
-}: {
-  pending: boolean;
-  onClick: () => void;
-  label?: string;
-}) {
-  return (
-    <Button size="sm" disabled={pending} onClick={onClick}>
-      {pending ? "Assumindo..." : label}
-    </Button>
-  );
+/** O aviso de estado ocupa o lugar do compositor, com o mesmo respiro. */
+function AvisoDoCompositor({ children }: { children: React.ReactNode }) {
+  return <div className="grid gap-2 px-4 py-3">{children}</div>;
 }
 
-function Callout({
-  icon,
-  toneClass,
-  text,
-  error,
+/**
+ * Conversa com um colega: aviso neutro com as INICIAIS de quem atende, e nao
+ * a mao, que ja e o icone ambar de "Aguardando você". O Aviso compartilhado
+ * so aceita icone Lucide, por isso a casca e montada aqui com as mesmas
+ * classes do tom neutro.
+ */
+function AvisoDeColega({
+  nome,
   children,
 }: {
-  icon: React.ReactNode;
-  toneClass: string;
-  text: string;
-  error: string | null;
+  nome: string;
   children: React.ReactNode;
 }) {
+  const iniciais = nome
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((parte) => parte[0] ?? "")
+    .join("")
+    .toUpperCase();
   return (
-    <div className="grid gap-2 px-4 py-3">
-      <div
-        className={cn(
-          "flex items-center gap-2 rounded-lg px-3 py-2 text-[12.5px] font-medium",
-          toneClass,
-        )}
+    <div
+      role="status"
+      data-tom="neutral"
+      className="flex items-start gap-[11px] rounded-xl bg-neutral-bg px-3.5 py-3 text-neutral-text"
+    >
+      <span
+        aria-hidden
+        className="mt-px grid size-[17px] shrink-0 place-items-center rounded-full bg-surface-5 text-[8px] font-bold text-text-strong"
       >
-        {icon}
-        <span className="flex-1">{text}</span>
-        {children}
-      </div>
-      {error ? (
-        <p role="alert" className="text-[12px] [color:var(--alert-text)]">
-          {error}
+        {iniciais || "?"}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <p className="text-[13.5px] leading-[1.35] font-bold">
+          Outra pessoa está com esta conversa.
         </p>
-      ) : null}
+        <div className="text-[13px] leading-[1.45]">{children}</div>
+      </div>
     </div>
+  );
+}
+
+/**
+ * Resposta ao paciente travada por falta de autorização (achado 15). O
+ * motivo, a data e o caminho para a ficha, onde a nova autorização é
+ * registrada com evidência. A nota interna continua liberada.
+ */
+function AvisoDeAutorizacao({
+  revogadaEm,
+  contactId,
+  timezone,
+}: {
+  revogadaEm: string | null;
+  contactId: string;
+  timezone: string;
+}) {
+  const abrirFicha = (
+    <Button asChild variant="outline" size="sm">
+      <Link href={`/pacientes/${contactId}`}>Abrir a ficha</Link>
+    </Button>
+  );
+  if (revogadaEm) {
+    return (
+      <Aviso
+        tom="alert"
+        icone={ShieldX}
+        titulo="Este contato pediu para não receber mensagens."
+        acao={abrirFicha}
+      >
+        Desde{" "}
+        <span className="cz-num">{dataNaClinica(revogadaEm, timezone)}</span>. A
+        resposta só sai depois de registrar a nova autorização na ficha. A nota
+        interna continua liberada.
+      </Aviso>
+    );
+  }
+  return (
+    <Aviso
+      tom="neutral"
+      icone={ShieldOff}
+      titulo="Sem autorização registrada para mensagens."
+      acao={abrirFicha}
+    >
+      A resposta só sai depois de registrar a autorização na ficha. A nota
+      interna continua liberada.
+    </Aviso>
   );
 }

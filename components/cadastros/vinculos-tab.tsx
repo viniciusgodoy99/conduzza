@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, Link2, MoreVertical, Pencil, Plus, X } from "lucide-react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Check, Ellipsis, Link2, Pencil, Plus, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -12,12 +13,19 @@ import {
 } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
 import {
+  AvatarDoProfissional,
   BotaoProtegido,
+  COBERTO_PELO_CONVENIO,
+  CampoDeMarcar,
   ChipSituacao,
   PreviaDeReais,
+  VazioDaAba,
 } from "@/components/cadastros/comum";
-import { EmptyState } from "@/components/shared/empty-state";
+import { Aviso } from "@/components/shared/aviso";
+import { DataTable } from "@/components/shared/data-table";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { SegmentedControl } from "@/components/shared/segmented-control";
+import { StatusChip } from "@/components/shared/status-chip";
 import {
   Accordion,
   AccordionContent,
@@ -29,6 +37,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -48,14 +57,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { exibirPrecoVinculo } from "@/lib/domain/pricing";
 import type { Profissional, Vinculo } from "@/lib/queries/catalogo";
 import { centavosParaReais, lerReais } from "@/lib/utils/moeda";
@@ -68,8 +69,12 @@ type ModoPreco = "valor" | "coberto" | "sem";
 
 const PARTICULAR = "particular";
 
-function tituloProfissional(p: Profissional): string {
-  const partes: string[] = [p.name];
+// O que vem depois do nome no gatilho do acordeao (" · CRM 12345 ·
+// Endocrinologia, Nutrologia"). O gatilho junta nome e resto num texto
+// continuo: o nome acessivel e exatamente "Dr. Joao Pereira · CRM 12345 ·
+// Endocrinologia, Nutrologia" (o e2e de Cadastros procura assim).
+function restoDoTitulo(p: Profissional): string {
+  const partes: string[] = [];
   const conselho = [p.council_type, p.council_number]
     .filter((v): v is string => Boolean(v && v.trim()))
     .join(" ");
@@ -79,7 +84,7 @@ function tituloProfissional(p: Profissional): string {
   if (p.specialties.length > 0) {
     partes.push(p.specialties.join(", "));
   }
-  return partes.join(" · ");
+  return partes.map((parte) => ` · ${parte}`).join("");
 }
 
 // Valor em reais do vinculo: vazio e invalido tem mensagens diferentes, e
@@ -393,31 +398,268 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
 
   const semVinculos = catalogo.vinculos.length === 0;
 
+  const nomeDoVinculo = (vinculo: Vinculo): string =>
+    `${nomeProcedimento.get(vinculo.procedure_id) ?? "Procedimento removido"}, ${
+      vinculo.insurance_id === null
+        ? "Particular"
+        : (nomeConvenio.get(vinculo.insurance_id) ?? "Convênio removido")
+    }`;
+
+  const celulaDoPreco = (vinculo: Vinculo) => {
+    if (editandoId === vinculo.id && formEdicao) {
+      return (
+        <div className="grid min-w-48 gap-1.5 py-2">
+          <Select
+            value={formEdicao.modo}
+            onValueChange={(v) =>
+              setFormEdicao({ ...formEdicao, modo: v as ModoPreco })
+            }
+          >
+            <SelectTrigger aria-label="Modo de preço" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="valor">Valor em reais</SelectItem>
+              <SelectItem
+                value="coberto"
+                disabled={vinculo.insurance_id === null}
+              >
+                Coberto pelo convênio
+              </SelectItem>
+              <SelectItem value="sem">Sem preço informado</SelectItem>
+            </SelectContent>
+          </Select>
+          {formEdicao.modo === "valor" ? (
+            <>
+              <Input
+                value={formEdicao.precoReais}
+                onChange={(e) =>
+                  setFormEdicao({ ...formEdicao, precoReais: e.target.value })
+                }
+                inputMode="decimal"
+                placeholder="250,00"
+                aria-label="Valor em reais"
+                className="cz-num"
+              />
+              <PreviaDeReais texto={formEdicao.precoReais} />
+            </>
+          ) : null}
+        </div>
+      );
+    }
+    const preco = exibirPrecoVinculo(vinculo);
+    if (preco.kind === "coberto") {
+      // "Coberto" e rotulo, nunca moeda (o caso do Dr. Joao no e2e).
+      return (
+        <StatusChip
+          size="sm"
+          definition={COBERTO_PELO_CONVENIO}
+          label={preco.text}
+        />
+      );
+    }
+    if (preco.kind === "valor") {
+      return (
+        <span className="cz-num whitespace-nowrap text-text-strong">
+          {preco.text}
+        </span>
+      );
+    }
+    return (
+      <span className="whitespace-nowrap text-text-secondary">
+        Sem preço informado
+      </span>
+    );
+  };
+
+  const acoesDoVinculo = (vinculo: Vinculo) => {
+    const nome = nomeDoVinculo(vinculo);
+    if (editandoId === vinculo.id && formEdicao) {
+      return (
+        <div className="flex justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={salvandoEdicao}
+            onClick={() => void salvarEdicao(vinculo)}
+            aria-label="Salvar vínculo"
+          >
+            <Check aria-hidden />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={salvandoEdicao}
+            onClick={cancelarEdicao}
+            aria-label="Cancelar edição"
+          >
+            <X aria-hidden />
+          </Button>
+        </div>
+      );
+    }
+    if (!podeEditar) {
+      return (
+        <div className="flex items-center justify-end gap-1">
+          <DisabledWithHint hint={dica}>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled
+              aria-label={`Editar vínculo ${nome}`}
+            >
+              <Pencil aria-hidden />
+            </Button>
+          </DisabledWithHint>
+          <DisabledWithHint hint={dica}>
+            <Button variant="ghost" className="min-w-[92px]" disabled>
+              {vinculo.active ? "Desativar" : "Reativar"}
+            </Button>
+          </DisabledWithHint>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center justify-end gap-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => iniciarEdicao(vinculo)}
+          aria-label={`Editar vínculo ${nome}`}
+        >
+          <Pencil aria-hidden />
+        </Button>
+        <Button
+          variant="ghost"
+          className="min-w-[92px]"
+          disabled={ativandoId === vinculo.id}
+          onClick={() => void alternarAtivo(vinculo)}
+          aria-label={`${vinculo.active ? "Desativar" : "Reativar"} vínculo ${nome}`}
+        >
+          {vinculo.active ? "Desativar" : "Reativar"}
+        </Button>
+      </div>
+    );
+  };
+
+  // A chave da IA vale na hora (sem Salvar), por isso continua Switch.
+  const chaveDaIa = (vinculo: Vinculo) => {
+    const rotulo = `IA pode agendar ${nomeDoVinculo(vinculo)}`;
+    return (
+      <div className="flex items-center gap-2 whitespace-nowrap">
+        {podeEditar ? (
+          <Switch
+            size="sm"
+            checked={vinculo.bookable_by_ai}
+            disabled={alternandoId === vinculo.id}
+            onCheckedChange={(v) => void alternarIa(vinculo, v)}
+            aria-label={rotulo}
+          />
+        ) : (
+          <DisabledWithHint hint={dica}>
+            <Switch
+              size="sm"
+              checked={vinculo.bookable_by_ai}
+              disabled
+              aria-label={rotulo}
+            />
+          </DisabledWithHint>
+        )}
+        <span className="text-xs text-text-secondary">
+          {vinculo.bookable_by_ai ? "IA agenda" : "Só a recepção agenda"}
+        </span>
+      </div>
+    );
+  };
+
+  const colunas: ColumnDef<Vinculo>[] = [
+    {
+      id: "procedimento",
+      header: "Procedimento",
+      cell: ({ row }) => (
+        <span className="font-semibold text-text-strong">
+          {nomeProcedimento.get(row.original.procedure_id) ??
+            "Procedimento removido"}
+        </span>
+      ),
+    },
+    {
+      id: "convenio",
+      header: "Convênio",
+      cell: ({ row }) => (
+        <span className="text-text-secondary">
+          {row.original.insurance_id === null
+            ? "Particular"
+            : (nomeConvenio.get(row.original.insurance_id) ??
+              "Convênio removido")}
+        </span>
+      ),
+    },
+    {
+      id: "preco",
+      header: "Preço",
+      cell: ({ row }) => celulaDoPreco(row.original),
+    },
+    {
+      id: "duracao",
+      header: "Duração",
+      cell: ({ row }) =>
+        editandoId === row.original.id && formEdicao ? (
+          <Input
+            type="number"
+            min={5}
+            max={600}
+            value={formEdicao.duration_min}
+            onChange={(e) =>
+              setFormEdicao({ ...formEdicao, duration_min: e.target.value })
+            }
+            aria-label="Duração em minutos"
+            className="w-24 cz-num"
+          />
+        ) : (
+          <span className="whitespace-nowrap">
+            <span className="cz-num">{row.original.duration_min}</span> min
+          </span>
+        ),
+    },
+    {
+      id: "ia",
+      header: "IA",
+      cell: ({ row }) => chaveDaIa(row.original),
+    },
+    {
+      id: "situacao",
+      header: "Situação",
+      cell: ({ row }) => <ChipSituacao active={row.original.active} />,
+    },
+    {
+      id: "acoes",
+      header: () => <span className="sr-only">Ações</span>,
+      meta: { align: "right", numeric: false },
+      cell: ({ row }) => acoesDoVinculo(row.original),
+    },
+  ];
+
   return (
     <div className="grid gap-3">
       {semVinculos ? (
-        <div className="grid gap-3">
-          <EmptyState
-            icon={Link2}
-            title="Nenhum vínculo cadastrado"
-            description="O vínculo diz quem faz o quê, por quanto e em quanto tempo. Sem ele, a IA não informa preço nem agenda."
-          />
-          {/* Acao principal do vazio (achados 42 e 116): a importacao por
-              planilha nao existe, entao nao aparece nem como promessa. */}
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <BotaoProtegido
-              podeEditar={podeEditar}
-              dica={dica}
-              size="lg"
-              className="h-11 px-4"
-              onClick={() => abrirNovo(profissionaisVisiveis[0]?.id ?? "")}
-            >
-              <Plus className="size-4" /> Adicionar vínculo
-            </BotaoProtegido>
-          </div>
-        </div>
+        // Acao principal do vazio (achados 42 e 116): a importacao por
+        // planilha nao existe, entao nao aparece nem como promessa. Aqui ela
+        // e o unico lime da aba (nao ha "Novo vinculo" no topo).
+        <VazioDaAba
+          icon={Link2}
+          titulo="Nenhum vínculo cadastrado"
+          descricao="O vínculo diz quem faz o quê, por quanto e em quanto tempo. Sem ele, a IA não informa preço nem agenda."
+          acao={{
+            rotulo: "Adicionar vínculo",
+            onClick: () => abrirNovo(profissionaisVisiveis[0]?.id ?? ""),
+            variant: "default",
+          }}
+          podeEditar={podeEditar}
+          dica={dica}
+        />
       ) : (
-        <p className="text-sm text-text-secondary">
+        <p className="max-w-[80ch] text-[13px] text-text-secondary">
           Para trocar o profissional, o procedimento ou o convênio de um
           vínculo, desative o vínculo e crie outro. As consultas já marcadas
           continuam com o vínculo antigo.
@@ -425,55 +667,78 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
       )}
 
       {profissionaisVisiveis.length > 0 ? (
-        <Accordion type="multiple" className="grid gap-2">
+        <Accordion type="multiple" className="grid gap-3">
           {profissionaisVisiveis.map((profissional) => {
             const vinculos = vinculosPorProfissional.get(profissional.id) ?? [];
+            const erroDesteProfissional =
+              editandoId !== null &&
+              erroEdicao !== null &&
+              vinculos.some((v) => v.id === editandoId);
             return (
               <AccordionItem
                 key={profissional.id}
                 value={profissional.id}
-                className="rounded-lg border px-3 last:border-b"
+                className="overflow-hidden rounded-card border border-border bg-card shadow-sm"
               >
-                <div className="flex items-center gap-2">
-                  <AccordionTrigger className="min-h-10 flex-1 py-3 text-left text-sm font-medium">
-                    {tituloProfissional(profissional)}
+                {/* O gatilho vem dentro de um h3 do Radix: e o h3 que cresce
+                    para empurrar contador e acoes para a direita. */}
+                <div className="flex items-center gap-2 pr-3 pl-4 [&>h3]:min-w-0 [&>h3]:flex-1">
+                  <AccordionTrigger className="min-h-14 min-w-0 flex-1 gap-3 py-2 font-medium">
+                    <span className="flex min-w-0 items-center gap-3">
+                      <AvatarDoProfissional
+                        nome={profissional.name}
+                        cor={profissional.calendar_color}
+                      />
+                      <span className="min-w-0 truncate">
+                        <span className="font-bold text-text-strong">
+                          {profissional.name}
+                        </span>
+                        <span className="text-text-secondary">
+                          {restoDoTitulo(profissional)}
+                        </span>
+                      </span>
+                    </span>
                   </AccordionTrigger>
+                  {/* O contador fica fora do gatilho: o nome acessivel do
+                      gatilho e so o titulo do profissional. */}
+                  <span className="hidden shrink-0 text-xs whitespace-nowrap text-text-secondary sm:inline">
+                    <span className="cz-num">{vinculos.length}</span>{" "}
+                    {vinculos.length === 1 ? "vínculo" : "vínculos"}
+                  </span>
                   <BotaoProtegido
                     podeEditar={podeEditar}
                     dica={dica}
                     variant="outline"
-                    size="sm"
                     onClick={() => abrirNovo(profissional.id)}
                   >
-                    <Plus className="size-4" /> Adicionar
+                    <Plus aria-hidden /> Adicionar
                   </BotaoProtegido>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-10"
                         aria-label={`Mais ações para ${profissional.name}`}
                       >
-                        <MoreVertical className="size-4" />
+                        <Ellipsis aria-hidden />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
+                    <DropdownMenuContent align="end" className="max-w-72">
                       {/* Item desabilitado leva a dica em texto dentro do
                           proprio item (achado 44): tooltip dentro de menu
                           nao abre em toque. */}
                       <DropdownMenuItem
                         disabled={!podeEditar || vinculos.length === 0}
                         onClick={() => abrirDuplicar(profissional.id)}
-                        className="min-h-10 flex-col items-start gap-0.5"
+                        className="flex-col items-start justify-center gap-0.5 py-2"
                       >
                         <span>Duplicar para outro profissional</span>
                         {!podeEditar ? (
-                          <span className="text-xs text-text-secondary">
+                          <span className="text-xs font-normal text-text-secondary">
                             {dica}
                           </span>
                         ) : vinculos.length === 0 ? (
-                          <span className="text-xs text-text-secondary">
+                          <span className="text-xs font-normal text-text-secondary">
                             Este profissional ainda não tem vínculos para
                             copiar.
                           </span>
@@ -482,266 +747,29 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
-                <AccordionContent className="pb-3">
-                  {vinculos.length === 0 ? (
-                    <div className="flex flex-wrap items-center gap-3 rounded-md border border-dashed px-4 py-4">
-                      <p className="text-sm text-text-secondary">
-                        Este profissional ainda não tem vínculos.
+                <AccordionContent className="pb-0">
+                  <div className="border-t border-border">
+                    {vinculos.length === 0 ? (
+                      <p className="px-4 py-5 text-[13px] text-text-secondary">
+                        Este profissional ainda não tem vínculos. Use Adicionar
+                        para dizer o que ele atende.
                       </p>
-                      <BotaoProtegido
-                        podeEditar={podeEditar}
-                        dica={dica}
-                        variant="outline"
-                        size="sm"
-                        onClick={() => abrirNovo(profissional.id)}
-                      >
-                        <Plus className="size-4" /> Adicionar
-                      </BotaoProtegido>
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Procedimento</TableHead>
-                            <TableHead>Convênio</TableHead>
-                            <TableHead>Preço</TableHead>
-                            <TableHead>Duração</TableHead>
-                            <TableHead>IA</TableHead>
-                            <TableHead>Situação</TableHead>
-                            <TableHead className="w-40" />
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {vinculos.map((vinculo) => {
-                            const preco = exibirPrecoVinculo(vinculo);
-                            const emEdicao =
-                              editandoId === vinculo.id && formEdicao !== null;
-                            return (
-                              <TableRow key={vinculo.id}>
-                                <TableCell className="font-medium">
-                                  {nomeProcedimento.get(vinculo.procedure_id) ??
-                                    "Procedimento removido"}
-                                </TableCell>
-                                <TableCell className="text-text-secondary">
-                                  {vinculo.insurance_id === null
-                                    ? "Particular"
-                                    : (nomeConvenio.get(vinculo.insurance_id) ??
-                                      "Convênio removido")}
-                                </TableCell>
-                                <TableCell>
-                                  {emEdicao && formEdicao ? (
-                                    <div className="grid min-w-44 gap-1.5">
-                                      <Select
-                                        value={formEdicao.modo}
-                                        onValueChange={(v) =>
-                                          setFormEdicao({
-                                            ...formEdicao,
-                                            modo: v as ModoPreco,
-                                          })
-                                        }
-                                      >
-                                        <SelectTrigger className="h-10 w-full">
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="valor">
-                                            Valor em reais
-                                          </SelectItem>
-                                          <SelectItem
-                                            value="coberto"
-                                            disabled={
-                                              vinculo.insurance_id === null
-                                            }
-                                          >
-                                            Coberto pelo convênio
-                                          </SelectItem>
-                                          <SelectItem value="sem">
-                                            Sem preço informado
-                                          </SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                      {formEdicao.modo === "valor" ? (
-                                        <Input
-                                          value={formEdicao.precoReais}
-                                          onChange={(e) =>
-                                            setFormEdicao({
-                                              ...formEdicao,
-                                              precoReais: e.target.value,
-                                            })
-                                          }
-                                          inputMode="decimal"
-                                          placeholder="250,00"
-                                          aria-label="Valor em reais"
-                                          className="h-10 font-mono tabular-nums"
-                                        />
-                                      ) : null}
-                                      {formEdicao.modo === "valor" ? (
-                                        <PreviaDeReais
-                                          texto={formEdicao.precoReais}
-                                        />
-                                      ) : null}
-                                    </div>
-                                  ) : preco.kind === "coberto" ? (
-                                    <span className="text-text-secondary">
-                                      {preco.text}
-                                    </span>
-                                  ) : preco.kind === "valor" ? (
-                                    <span className="font-mono tabular-nums">
-                                      {preco.text}
-                                    </span>
-                                  ) : null}
-                                </TableCell>
-                                <TableCell>
-                                  {emEdicao && formEdicao ? (
-                                    <Input
-                                      type="number"
-                                      min={5}
-                                      max={600}
-                                      value={formEdicao.duration_min}
-                                      onChange={(e) =>
-                                        setFormEdicao({
-                                          ...formEdicao,
-                                          duration_min: e.target.value,
-                                        })
-                                      }
-                                      aria-label="Duração em minutos"
-                                      className="h-10 w-24 tabular-nums"
-                                    />
-                                  ) : (
-                                    `${vinculo.duration_min} min`
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <div className="grid gap-1">
-                                    {podeEditar ? (
-                                      <Switch
-                                        checked={vinculo.bookable_by_ai}
-                                        disabled={alternandoId === vinculo.id}
-                                        onCheckedChange={(v) =>
-                                          void alternarIa(vinculo, v)
-                                        }
-                                        aria-label="IA pode agendar"
-                                        className="scale-90"
-                                      />
-                                    ) : (
-                                      <DisabledWithHint hint={dica}>
-                                        <Switch
-                                          checked={vinculo.bookable_by_ai}
-                                          disabled
-                                          aria-label="IA pode agendar"
-                                          className="scale-90"
-                                        />
-                                      </DisabledWithHint>
-                                    )}
-                                    {!vinculo.bookable_by_ai ? (
-                                      <span className="text-xs text-text-tertiary">
-                                        Só a recepção agenda
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <ChipSituacao active={vinculo.active} />
-                                </TableCell>
-                                <TableCell>
-                                  {emEdicao ? (
-                                    <div className="flex gap-1">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="size-10"
-                                        disabled={salvandoEdicao}
-                                        onClick={() =>
-                                          void salvarEdicao(vinculo)
-                                        }
-                                        aria-label="Salvar vínculo"
-                                      >
-                                        <Check className="size-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="size-10"
-                                        disabled={salvandoEdicao}
-                                        onClick={cancelarEdicao}
-                                        aria-label="Cancelar edição"
-                                      >
-                                        <X className="size-4" />
-                                      </Button>
-                                    </div>
-                                  ) : podeEditar ? (
-                                    <div className="flex items-center gap-1">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="size-10"
-                                        onClick={() => iniciarEdicao(vinculo)}
-                                        aria-label="Editar vínculo"
-                                      >
-                                        <Pencil className="size-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        className="h-10"
-                                        disabled={ativandoId === vinculo.id}
-                                        onClick={() =>
-                                          void alternarAtivo(vinculo)
-                                        }
-                                      >
-                                        {vinculo.active
-                                          ? "Desativar"
-                                          : "Reativar"}
-                                      </Button>
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center gap-1">
-                                      <DisabledWithHint hint={dica}>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="size-10"
-                                          disabled
-                                          aria-label="Editar vínculo"
-                                        >
-                                          <Pencil className="size-4" />
-                                        </Button>
-                                      </DisabledWithHint>
-                                      <DisabledWithHint hint={dica}>
-                                        <Button
-                                          variant="ghost"
-                                          className="h-10"
-                                          disabled
-                                        >
-                                          {vinculo.active
-                                            ? "Desativar"
-                                            : "Reativar"}
-                                        </Button>
-                                      </DisabledWithHint>
-                                    </div>
-                                  )}
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                          {editandoId !== null &&
-                          erroEdicao !== null &&
-                          vinculos.some((v) => v.id === editandoId) ? (
-                            <TableRow>
-                              <TableCell colSpan={7}>
-                                <p
-                                  role="alert"
-                                  className="text-sm [color:var(--alert-text)]"
-                                >
-                                  {erroEdicao}
-                                </p>
-                              </TableCell>
-                            </TableRow>
-                          ) : null}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
+                    ) : (
+                      <DataTable
+                        variant="bare"
+                        dense
+                        columns={colunas}
+                        data={vinculos}
+                      />
+                    )}
+                    {erroDesteProfissional ? (
+                      <div className="border-t border-border px-4 py-3">
+                        <Aviso tom="alert" role="alert">
+                          {erroEdicao}
+                        </Aviso>
+                      </div>
+                    ) : null}
+                  </div>
                 </AccordionContent>
               </AccordionItem>
             );
@@ -750,13 +778,16 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
       ) : null}
 
       <Dialog open={novoAberto} onOpenChange={setNovoAberto}>
-        <DialogContent className="max-w-md">
+        <DialogContent
+          className="sm:max-w-[640px]"
+          aria-describedby={undefined}
+        >
           <DialogHeader>
             <DialogTitle>Adicionar vínculo</DialogTitle>
           </DialogHeader>
           {formNovo ? (
             <div className="grid gap-4">
-              <div className="grid gap-2">
+              <div className="grid gap-1.5">
                 <Label htmlFor="vinculo-profissional">Profissional</Label>
                 <Select
                   value={formNovo.professional_id}
@@ -764,10 +795,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                     setFormNovo({ ...formNovo, professional_id: v })
                   }
                 >
-                  <SelectTrigger
-                    id="vinculo-profissional"
-                    className="h-10 w-full"
-                  >
+                  <SelectTrigger id="vinculo-profissional" className="w-full">
                     <SelectValue placeholder="Escolha o profissional" />
                   </SelectTrigger>
                   <SelectContent>
@@ -781,149 +809,147 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="vinculo-procedimento">Procedimento</Label>
-                <Select
-                  value={formNovo.procedure_id}
-                  onValueChange={escolherProcedimento}
-                >
-                  <SelectTrigger
-                    id="vinculo-procedimento"
-                    className="h-10 w-full"
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="vinculo-procedimento">Procedimento</Label>
+                  <Select
+                    value={formNovo.procedure_id}
+                    onValueChange={escolherProcedimento}
                   >
-                    <SelectValue placeholder="Escolha o procedimento" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {catalogo.procedimentos
-                      .filter((p) => p.active)
-                      .map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="vinculo-convenio">Convênio</Label>
-                <Select
-                  value={formNovo.insurance_id}
-                  onValueChange={(v) =>
-                    setFormNovo({
-                      ...formNovo,
-                      insurance_id: v,
-                      modo:
-                        v === PARTICULAR && formNovo.modo === "coberto"
-                          ? "sem"
-                          : formNovo.modo,
-                    })
-                  }
-                >
-                  <SelectTrigger id="vinculo-convenio" className="h-10 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={PARTICULAR}>Particular</SelectItem>
-                    {catalogo.convenios
-                      .filter((c) => c.active)
-                      .map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>Modo de preço</Label>
-                <div className="flex flex-wrap gap-1 rounded-md border p-1">
-                  {modoBotoes.map(({ valor, rotulo }) => {
-                    const cobertoBloqueado =
-                      valor === "coberto" &&
-                      formNovo.insurance_id === PARTICULAR;
-                    return (
-                      <Button
-                        key={valor}
-                        type="button"
-                        size="sm"
-                        variant={formNovo.modo === valor ? "default" : "ghost"}
-                        disabled={cobertoBloqueado}
-                        className="h-10 flex-1 whitespace-nowrap"
-                        aria-pressed={formNovo.modo === valor}
-                        onClick={() =>
-                          setFormNovo({ ...formNovo, modo: valor })
-                        }
-                      >
-                        {rotulo}
-                      </Button>
-                    );
-                  })}
+                    <SelectTrigger id="vinculo-procedimento" className="w-full">
+                      <SelectValue placeholder="Escolha o procedimento" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {catalogo.procedimentos
+                        .filter((p) => p.active)
+                        .map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="vinculo-convenio">Convênio</Label>
+                  <Select
+                    value={formNovo.insurance_id}
+                    onValueChange={(v) =>
+                      setFormNovo({
+                        ...formNovo,
+                        insurance_id: v,
+                        modo:
+                          v === PARTICULAR && formNovo.modo === "coberto"
+                            ? "sem"
+                            : formNovo.modo,
+                      })
+                    }
+                  >
+                    <SelectTrigger id="vinculo-convenio" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={PARTICULAR}>Particular</SelectItem>
+                      {catalogo.convenios
+                        .filter((c) => c.active)
+                        .map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <p className="text-xs font-semibold text-foreground">
+                  Modo de preço
+                </p>
+                <SegmentedControl
+                  ariaLabel="Modo de preço"
+                  block
+                  value={formNovo.modo}
+                  onChange={(modo) => setFormNovo({ ...formNovo, modo })}
+                  options={modoBotoes.map(({ valor, rotulo }) => ({
+                    value: valor,
+                    label: rotulo,
+                    disabled:
+                      valor === "coberto" &&
+                      formNovo.insurance_id === PARTICULAR,
+                  }))}
+                />
                 {formNovo.insurance_id === PARTICULAR ? (
-                  <p className="text-xs text-text-tertiary">
+                  <p className="text-xs text-text-secondary">
                     Coberto pelo convênio só vale quando um convênio é
                     escolhido.
                   </p>
                 ) : null}
               </div>
-              {formNovo.modo === "valor" ? (
-                <div className="grid gap-2">
-                  <Label htmlFor="vinculo-preco">Valor em reais</Label>
+              <div className="grid items-start gap-4 sm:grid-cols-2">
+                {formNovo.modo === "valor" ? (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="vinculo-preco">Valor em reais</Label>
+                    <Input
+                      id="vinculo-preco"
+                      value={formNovo.precoReais}
+                      onChange={(e) =>
+                        setFormNovo({
+                          ...formNovo,
+                          precoReais: e.target.value,
+                        })
+                      }
+                      inputMode="decimal"
+                      placeholder="250,00"
+                      aria-describedby="vinculo-preco-previa"
+                      className="cz-num"
+                    />
+                    <PreviaDeReais
+                      texto={formNovo.precoReais}
+                      id="vinculo-preco-previa"
+                    />
+                  </div>
+                ) : null}
+                <div className="grid gap-1.5">
+                  <Label htmlFor="vinculo-duracao">Duração (minutos)</Label>
                   <Input
-                    id="vinculo-preco"
-                    value={formNovo.precoReais}
+                    id="vinculo-duracao"
+                    type="number"
+                    min={5}
+                    max={600}
+                    value={formNovo.duration_min}
                     onChange={(e) =>
-                      setFormNovo({ ...formNovo, precoReais: e.target.value })
+                      setFormNovo({
+                        ...formNovo,
+                        duration_min: e.target.value,
+                      })
                     }
-                    inputMode="decimal"
-                    placeholder="250,00"
-                    aria-describedby="vinculo-preco-previa"
-                    className="h-10 font-mono tabular-nums"
-                  />
-                  <PreviaDeReais
-                    texto={formNovo.precoReais}
-                    id="vinculo-preco-previa"
+                    className="w-32 cz-num"
                   />
                 </div>
-              ) : null}
-              <div className="grid gap-2">
-                <Label htmlFor="vinculo-duracao">Duração (minutos)</Label>
-                <Input
-                  id="vinculo-duracao"
-                  type="number"
-                  min={5}
-                  max={600}
-                  value={formNovo.duration_min}
-                  onChange={(e) =>
-                    setFormNovo({ ...formNovo, duration_min: e.target.value })
-                  }
-                  className="h-10 w-32 tabular-nums"
-                />
               </div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="vinculo-ia">A IA pode agendar</Label>
-                <Switch
-                  id="vinculo-ia"
-                  checked={formNovo.bookable_by_ai}
-                  onCheckedChange={(v) =>
-                    setFormNovo({ ...formNovo, bookable_by_ai: v })
-                  }
-                />
-              </div>
+              <CampoDeMarcar
+                id="vinculo-ia"
+                rotulo="A IA pode agendar"
+                marcado={formNovo.bookable_by_ai}
+                aoMudar={(marcado) =>
+                  setFormNovo({ ...formNovo, bookable_by_ai: marcado })
+                }
+              />
               {erroNovo ? (
-                <p role="alert" className="text-sm [color:var(--alert-text)]">
+                <Aviso tom="alert" role="alert">
                   {erroNovo}
-                </p>
+                </Aviso>
               ) : null}
-              <Button
-                onClick={() => void salvarNovo()}
-                disabled={salvandoNovo}
-                className="h-10"
-              >
-                {salvandoNovo ? "Salvando..." : "Salvar"}
-              </Button>
             </div>
           ) : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setNovoAberto(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void salvarNovo()} disabled={salvandoNovo}>
+              {salvandoNovo ? "Salvando..." : "Salvar"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -935,13 +961,16 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
           }
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent
+          className="sm:max-w-[480px]"
+          aria-describedby={undefined}
+        >
           <DialogHeader>
             <DialogTitle>Duplicar para outro profissional</DialogTitle>
           </DialogHeader>
           {duplicar ? (
             <div className="grid gap-4">
-              <div className="grid gap-2">
+              <div className="grid gap-1.5">
                 <Label htmlFor="duplicar-destino">
                   Profissional que vai receber
                 </Label>
@@ -951,7 +980,7 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                     setDuplicar({ ...duplicar, destinoId: v })
                   }
                 >
-                  <SelectTrigger id="duplicar-destino" className="h-10 w-full">
+                  <SelectTrigger id="duplicar-destino" className="w-full">
                     <SelectValue placeholder="Escolha o profissional" />
                   </SelectTrigger>
                   <SelectContent>
@@ -965,16 +994,18 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-2">
-                <Label>Vínculos para copiar</Label>
-                <div className="grid max-h-64 gap-1 overflow-y-auto rounded-md border p-2">
+              <fieldset className="grid gap-1.5">
+                <legend className="mb-1.5 text-xs font-semibold text-foreground">
+                  Vínculos para copiar
+                </legend>
+                <div className="grid cz-scroll max-h-64 gap-0.5 overflow-y-auto rounded-xl border border-border p-1.5">
                   {(vinculosPorProfissional.get(duplicar.origemId) ?? []).map(
                     (vinculo) => {
                       const marcado = duplicar.selecionados.has(vinculo.id);
                       return (
                         <label
                           key={vinculo.id}
-                          className="flex min-h-10 cursor-pointer items-center gap-2 rounded px-2 text-sm"
+                          className="flex min-h-10 cursor-pointer items-center gap-3 rounded-md px-2.5 text-[13.5px] text-foreground cz-transition hover:bg-surface-3"
                         >
                           <Checkbox
                             checked={marcado}
@@ -1007,21 +1038,25 @@ export function VinculosTab({ catalogo, podeEditar, dica, aoMudar }: TabProps) {
                     },
                   )}
                 </div>
-              </div>
+              </fieldset>
               {erroDuplicar ? (
-                <p role="alert" className="text-sm [color:var(--alert-text)]">
+                <Aviso tom="alert" role="alert">
                   {erroDuplicar}
-                </p>
+                </Aviso>
               ) : null}
-              <Button
-                onClick={() => void confirmarDuplicar()}
-                disabled={duplicando}
-                className="h-10"
-              >
-                {duplicando ? "Copiando..." : "Copiar vínculos"}
-              </Button>
             </div>
           ) : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDuplicar(null)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => void confirmarDuplicar()}
+              disabled={duplicando}
+            >
+              {duplicando ? "Copiando..." : "Copiar vínculos"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

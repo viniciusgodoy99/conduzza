@@ -52,7 +52,45 @@ export const esperaKeys = {
   /** As reofertas abertas (todas, uma faixa por oferta). */
   oferta: (clinicId: string) => ["espera", clinicId, "oferta"] as const,
   metricas: (clinicId: string) => ["espera", clinicId, "metricas"] as const,
+  consentimento: (clinicId: string, contactId: string) =>
+    ["espera", clinicId, "consentimento", contactId] as const,
 };
+
+/**
+ * Autorizacao do contato para receber mensagens no WhatsApp, para o modal de
+ * adicionar (achado 57): a reoferta confere consentimento_vigente e pula
+ * quem nao tem, entao a recepcao precisa saber ANTES. A linha mais recente
+ * manda (a mesma regra da RPC), e o retorno separa "nunca registrou" de
+ * "pediu para nao receber", que a RPC booleana nao separa.
+ */
+export type SituacaoDaAutorizacao =
+  "autorizado" | "revogado" | "sem_autorizacao";
+
+export async function fetchAutorizacaoDoContato(
+  supabase: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+): Promise<SituacaoDaAutorizacao> {
+  const { data, error } = await supabase
+    .from("contact_consent")
+    .select("granted_at, revoked_at")
+    .eq("clinic_id", clinicId)
+    .eq("contact_id", contactId)
+    .eq("channel", "whatsapp")
+    .order("granted_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) {
+    throw new Error(error.message);
+  }
+  const maisRecente = (
+    (data ?? []) as { granted_at: string; revoked_at: string | null }[]
+  )[0];
+  if (!maisRecente) {
+    return "sem_autorizacao";
+  }
+  return maisRecente.revoked_at === null ? "autorizado" : "revogado";
+}
 
 function primeiro<T>(valor: T | T[] | null | undefined): T | null {
   if (Array.isArray(valor)) {
@@ -116,7 +154,9 @@ export async function fetchOfertasEmAndamento(
     return [];
   }
   const todosOsContatos = [
-    ...new Set(ofertas.flatMap((oferta) => (oferta.offered_to as string[]) ?? [])),
+    ...new Set(
+      ofertas.flatMap((oferta) => (oferta.offered_to as string[]) ?? []),
+    ),
   ];
   const { data: contatos, error: erroContatos } = await supabase
     .from("contact")
@@ -127,9 +167,10 @@ export async function fetchOfertasEmAndamento(
     throw new Error(erroContatos.message);
   }
   const nomePorContato = new Map(
-    ((contatos ?? []) as { id: string; name: string | null }[]).map(
-      (linha) => [linha.id, linha.name],
-    ),
+    ((contatos ?? []) as { id: string; name: string | null }[]).map((linha) => [
+      linha.id,
+      linha.name,
+    ]),
   );
   return ofertas.map((oferta) => {
     const offeredTo = (oferta.offered_to as string[]) ?? [];

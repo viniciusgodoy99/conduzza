@@ -59,17 +59,23 @@ export function DialogConfig({
     });
   };
 
-  const valida =
+  // Os mesmos limites da action (e do banco); cada campo diz o seu, e o
+  // Salvar so libera com os dois dentro.
+  const ondaValida =
+    onda.trim() !== "" &&
     Number.isInteger(Number(onda)) &&
     Number(onda) >= 1 &&
-    Number(onda) <= 20 &&
+    Number(onda) <= 20;
+  const janelaValida =
+    janela.trim() !== "" &&
     Number.isInteger(Number(janela)) &&
     Number(janela) >= 5 &&
     Number(janela) <= 240;
+  const valida = ondaValida && janelaValida;
 
   return (
     <Dialog open={aberto} onOpenChange={(v) => (!v ? onFechar() : null)}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Como a reoferta funciona</DialogTitle>
           <DialogDescription>
@@ -77,46 +83,69 @@ export function DialogConfig({
             fila e o primeiro que responder fica com ele.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="grid gap-1.5">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="config-onda">Pessoas por onda</Label>
             <Input
               id="config-onda"
               type="number"
+              inputMode="numeric"
               min={1}
               max={20}
-              className="h-10"
+              className="cz-num"
+              aria-invalid={!ondaValida}
+              aria-describedby="config-onda-dica"
               value={onda}
               onChange={(e) => setOnda(e.target.value)}
             />
+            <p
+              id="config-onda-dica"
+              className={
+                ondaValida
+                  ? "text-[11px] text-text-secondary"
+                  : "text-[11px] font-medium text-alert-text"
+              }
+            >
+              De <span className="cz-num">1</span> a{" "}
+              <span className="cz-num">20</span> pessoas.
+            </p>
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="config-janela">Minutos para responder</Label>
             <Input
               id="config-janela"
               type="number"
+              inputMode="numeric"
               min={5}
               max={240}
-              className="h-10"
+              className="cz-num"
+              aria-invalid={!janelaValida}
+              aria-describedby="config-janela-dica"
               value={janela}
               onChange={(e) => setJanela(e.target.value)}
             />
+            <p
+              id="config-janela-dica"
+              className={
+                janelaValida
+                  ? "text-[11px] text-text-secondary"
+                  : "text-[11px] font-medium text-alert-text"
+              }
+            >
+              De <span className="cz-num">5</span> a{" "}
+              <span className="cz-num">240</span> minutos.
+            </p>
           </div>
         </div>
-        <p className="text-xs text-text-tertiary">
-          Ninguém respondeu no prazo, a oferta passa para as próximas pessoas
-          da fila sozinha.
+        <p className="text-[13px] text-text-secondary">
+          Ninguém respondeu no prazo, a oferta passa para as próximas pessoas da
+          fila sozinha.
         </p>
         <DialogFooter>
-          <Button
-            variant="outline"
-            className="h-10"
-            disabled={pendente}
-            onClick={onFechar}
-          >
+          <Button variant="ghost" disabled={pendente} onClick={onFechar}>
             Cancelar
           </Button>
-          <Button className="h-10" disabled={pendente || !valida} onClick={salvar}>
+          <Button disabled={pendente || !valida} onClick={salvar}>
             {pendente ? "Salvando..." : "Salvar"}
           </Button>
         </DialogFooter>

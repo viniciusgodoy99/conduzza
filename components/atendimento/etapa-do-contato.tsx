@@ -74,7 +74,7 @@ export function EtapaDoContato({
       onValueChange={trocar}
       disabled={!podeEditar || pendente}
     >
-      <SelectTrigger className="h-10 w-full text-[12.5px]">
+      <SelectTrigger className="h-10 w-full" aria-label="Etapa da jornada">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -101,13 +101,16 @@ export function EtapaDoContato({
     </Select>
   );
 
+  // O titulo "Etapa da jornada" mora na secao do painel; aqui so o seletor,
+  // na largura toda, com o mesmo nome acessivel.
   return (
-    <div className="grid grid-cols-[110px_1fr] items-center gap-2 text-[12.5px]">
-      <span className="text-text-tertiary">Etapa</span>
+    <div className="grid">
       {podeEditar ? (
         seletor
       ) : (
-        <DisabledWithHint hint={dicaSemPermissao}>{seletor}</DisabledWithHint>
+        <DisabledWithHint hint={dicaSemPermissao} className="w-full">
+          {seletor}
+        </DisabledWithHint>
       )}
       <ModalMotivoPerda
         contactIds={perdaIds}

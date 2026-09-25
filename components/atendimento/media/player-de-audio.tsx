@@ -54,7 +54,7 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
 
   if (falhou) {
     return (
-      <span className="text-[12.5px] text-text-secondary">
+      <span className="text-[12.5px] text-(--bolha-meta,var(--text-secondary))">
         Não foi possível carregar o áudio
       </span>
     );
@@ -75,7 +75,7 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
   };
 
   return (
-    <div className="flex items-center gap-2.5">
+    <div className="flex min-w-0 flex-1 items-center gap-2.5">
       <audio
         ref={audioRef}
         src={`/api/atendimento/midia/${messageId}`}
@@ -86,9 +86,13 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
         type="button"
         onClick={alternar}
         aria-label={tocando ? "Pausar o áudio" : "Tocar o áudio"}
-        className="grid size-10 shrink-0 place-items-center rounded-full bg-surface-4 hover:bg-surface-5 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+        className="grid size-10 shrink-0 place-items-center rounded-full bg-surface-4 text-text-strong cz-transition hover:bg-surface-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
       >
-        {tocando ? <Pause className="size-4" /> : <Play className="size-4" />}
+        {tocando ? (
+          <Pause aria-hidden className="size-4" />
+        ) : (
+          <Play aria-hidden className="size-4" />
+        )}
       </button>
       <input
         type="range"
@@ -104,9 +108,9 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
             audioRef.current.currentTime = valor;
           }
         }}
-        className="h-1 min-w-[110px] flex-1 cursor-pointer accent-[var(--chart-bar)]"
+        className="h-1 min-w-[110px] flex-1 cursor-pointer accent-(--primary-edge)"
       />
-      <span className="shrink-0 font-mono text-[11px] text-text-tertiary tabular-nums">
+      <span className="shrink-0 cz-num text-[11px] text-(--bolha-meta,var(--text-secondary))">
         {duracao > 0 ? `${tempo(posicao)} / ${tempo(duracao)}` : tempo(posicao)}
       </span>
     </div>

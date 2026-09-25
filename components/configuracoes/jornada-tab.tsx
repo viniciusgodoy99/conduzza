@@ -7,6 +7,7 @@ import {
   Lock,
   Pencil,
   Plus,
+  Route,
   Trash2,
   X,
 } from "lucide-react";
@@ -18,9 +19,20 @@ import {
   reordenarEtapaDaJornadaAction,
   salvarEtapaDaJornadaAction,
 } from "@/app/(app)/configuracoes/actions";
+import { Aviso } from "@/components/shared/aviso";
+import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -30,8 +42,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { STATUS_TONE_VARS, type StatusTone } from "@/lib/design/status";
+import {
+  CONVERSAO_STATUS,
+  STATUS_TONE_VARS,
+  type StatusDefinition,
+  type StatusTone,
+} from "@/lib/design/status";
 import {
   ICONES_DE_ETAPA,
   definicaoDaEtapa,
@@ -52,6 +68,36 @@ import { centavosParaReais, reaisParaCentavos } from "@/lib/utils/moeda";
 // Papel de sistema (entrada, agendou, compareceu, perdido) aparece com
 // cadeado e explicacao: renomeia e reordena, nunca exclui. Quem garante isso
 // e gatilho no banco; a tela so evita oferecer o que vai ser recusado.
+//
+// Desenho do design system (docs/06 secao 5.12): cada etapa e uma linha
+// afundada; a aberta vira cartao com o formulario. As marcas da conversao
+// sao Checkbox, porque so valem quando se clica em Salvar (C31).
+
+const ETAPA_DE_SISTEMA: StatusDefinition = {
+  label: "Sistema",
+  tone: "neutral",
+  icon: Lock,
+};
+
+/** A situacao da conversao da etapa, em 3 camadas (CONVERSAO_STATUS). */
+function chipDaConversao(etapa: EtapaDaJornada): {
+  definicao: StatusDefinition;
+  rotulo: string;
+} {
+  if (!etapa.meta_event_name) {
+    return {
+      definicao: CONVERSAO_STATUS.sem,
+      rotulo: CONVERSAO_STATUS.sem.label,
+    };
+  }
+  const evento = rotuloDoEvento(etapa.meta_event_name);
+  return etapa.conversao_ativa
+    ? { definicao: CONVERSAO_STATUS.ativa, rotulo: `Envia ${evento}` }
+    : {
+        definicao: CONVERSAO_STATUS.pausada,
+        rotulo: `Conversão pausada (${evento})`,
+      };
+}
 
 const TONS: { valor: StatusTone; rotulo: string }[] = [
   { valor: "neutral", rotulo: "Cinza (neutro)" },
@@ -249,142 +295,163 @@ export function JornadaTab({
     });
   };
 
+  const botaoNovaEtapa = (
+    <Button
+      variant="outline"
+      disabled={!podeGerenciar || pendente || editando === CRIANDO}
+      onClick={() => abrir(null)}
+    >
+      <Plus className="size-4" />
+      Nova etapa
+    </Button>
+  );
+
   return (
-    <div className="grid gap-3">
-      {jornada.map((etapa, indice) => {
-        const aberta = editando === etapa.chave;
-        const explicacao = etapa.papel ? PAPEL_EXPLICADO[etapa.papel] : null;
-        return (
-          <article
-            key={etapa.chave}
-            className="grid gap-3 rounded-lg border bg-card p-4"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusChip definition={definicaoDaEtapa(etapa)} />
-              {etapa.papel ? (
-                <span
-                  className="flex items-center gap-1 text-[11.5px] text-text-tertiary"
-                  title={explicacao ?? undefined}
-                >
-                  <Lock className="size-3" />
-                  sistema
-                </span>
-              ) : null}
-              <span className="text-sm text-text-secondary">
-                {etapa.meta_event_name
-                  ? etapa.conversao_ativa
-                    ? `Envia ${rotuloDoEvento(etapa.meta_event_name)}`
-                    : `Conversão pausada (${rotuloDoEvento(etapa.meta_event_name)})`
-                  : "Sem evento de conversão"}
-                {etapa.termos_chave.length > 0
-                  ? ` · ${etapa.termos_chave.length} ${etapa.termos_chave.length === 1 ? "termo" : "termos"}`
-                  : ""}
-              </span>
-              <div className="ml-auto flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-10"
-                  aria-label={`Subir ${etapa.nome}`}
-                  disabled={!podeGerenciar || pendente || indice === 0}
-                  onClick={() => reordenar(etapa, "subir")}
-                >
-                  <ArrowUp className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-10"
-                  aria-label={`Descer ${etapa.nome}`}
-                  disabled={
-                    !podeGerenciar || pendente || indice === jornada.length - 1
-                  }
-                  onClick={() => reordenar(etapa, "descer")}
-                >
-                  <ArrowDown className="size-4" />
-                </Button>
-                {aberta ? null : podeGerenciar ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={pendente}
-                    onClick={() => abrir(etapa)}
-                  >
-                    <Pencil className="size-4" />
-                    Editar
-                  </Button>
-                ) : (
-                  <DisabledWithHint hint={dica}>
-                    <Button variant="outline" size="sm" disabled>
-                      <Pencil className="size-4" />
-                      Editar
-                    </Button>
-                  </DisabledWithHint>
-                )}
-              </div>
-            </div>
-
-            {explicacao ? (
-              <p className="text-[12px] text-text-tertiary">{explicacao}</p>
-            ) : null}
-
-            {aberta ? (
-              <FormularioDaEtapa
-                etapa={etapa}
-                rascunho={rascunho}
-                setRascunho={setRascunho}
-                erro={erro}
-                pendente={pendente}
-                aoSalvar={() => salvar(etapa)}
-                aoCancelar={fechar}
-                aoExcluir={etapa.papel ? null : () => excluir(etapa)}
-              />
-            ) : null}
-          </article>
-        );
-      })}
-
-      {editando === CRIANDO ? (
-        <article className="grid gap-3 rounded-lg border bg-card p-4">
-          <p className="text-sm font-semibold">Nova etapa</p>
-          <FormularioDaEtapa
-            etapa={null}
-            rascunho={rascunho}
-            setRascunho={setRascunho}
-            erro={erro}
-            pendente={pendente}
-            aoSalvar={() => salvar(null)}
-            aoCancelar={fechar}
-            aoExcluir={null}
+    <Card>
+      <CardHeader>
+        <CardTitle>Etapas da jornada</CardTitle>
+        <CardAction>
+          {podeGerenciar ? (
+            botaoNovaEtapa
+          ) : (
+            <DisabledWithHint hint={dica}>{botaoNovaEtapa}</DisabledWithHint>
+          )}
+        </CardAction>
+      </CardHeader>
+      <CardContent className="grid gap-2">
+        {jornada.length === 0 && editando !== CRIANDO ? (
+          <EmptyState
+            compact
+            icon={Route}
+            title="Nenhuma etapa na jornada"
+            description="Crie a primeira etapa para acompanhar o caminho do contato até a consulta."
           />
-        </article>
-      ) : podeGerenciar ? (
-        <Button
-          variant="outline"
-          disabled={pendente}
-          onClick={() => abrir(null)}
-          className="justify-self-start"
-        >
-          <Plus className="size-4" />
-          Nova etapa
-        </Button>
-      ) : (
-        <DisabledWithHint hint={dica}>
-          <Button variant="outline" disabled className="justify-self-start">
-            <Plus className="size-4" />
-            Nova etapa
-          </Button>
-        </DisabledWithHint>
-      )}
+        ) : null}
 
-      <p className="text-[12.5px] text-text-tertiary">
-        As etapas de sistema podem mudar de nome e de lugar, nunca sair: são
-        elas que movem o contato sozinho (agendar, comparecer) e que protegem o
-        motivo de perda. Os eventos de conversão ainda não são enviados à Meta:
-        esta tela define o que será enviado quando a conta de anúncios for
-        conectada.
-      </p>
-    </div>
+        {jornada.map((etapa, indice) => {
+          const aberta = editando === etapa.chave;
+          const explicacao = etapa.papel ? PAPEL_EXPLICADO[etapa.papel] : null;
+          const conversao = chipDaConversao(etapa);
+          const botaoEditar = (
+            <Button
+              variant="ghost"
+              disabled={!podeGerenciar || pendente}
+              onClick={() => abrir(etapa)}
+            >
+              <Pencil className="size-4" />
+              Editar
+            </Button>
+          );
+          return (
+            <article
+              key={etapa.chave}
+              className={
+                aberta
+                  ? "grid gap-3 rounded-xl border border-border bg-card p-4 shadow-xs"
+                  : "grid gap-1.5 rounded-md bg-surface-4 px-3 py-2"
+              }
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  aria-hidden
+                  className="w-5 text-center cz-num text-[11px] text-text-secondary"
+                >
+                  {indice + 1}
+                </span>
+                <StatusChip definition={definicaoDaEtapa(etapa)} />
+                {etapa.papel ? (
+                  <StatusChip size="sm" definition={ETAPA_DE_SISTEMA} />
+                ) : null}
+                <StatusChip
+                  size="sm"
+                  definition={conversao.definicao}
+                  label={conversao.rotulo}
+                />
+                {etapa.termos_chave.length > 0 ? (
+                  <span className="text-xs text-text-secondary">
+                    <span className="cz-num">{etapa.termos_chave.length}</span>{" "}
+                    {etapa.termos_chave.length === 1 ? "termo" : "termos"}
+                  </span>
+                ) : null}
+                <div className="ml-auto flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Subir ${etapa.nome}`}
+                    disabled={!podeGerenciar || pendente || indice === 0}
+                    onClick={() => reordenar(etapa, "subir")}
+                  >
+                    <ArrowUp className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Descer ${etapa.nome}`}
+                    disabled={
+                      !podeGerenciar ||
+                      pendente ||
+                      indice === jornada.length - 1
+                    }
+                    onClick={() => reordenar(etapa, "descer")}
+                  >
+                    <ArrowDown className="size-4" />
+                  </Button>
+                  {aberta ? null : podeGerenciar ? (
+                    botaoEditar
+                  ) : (
+                    <DisabledWithHint hint={dica}>
+                      {botaoEditar}
+                    </DisabledWithHint>
+                  )}
+                </div>
+              </div>
+
+              {explicacao ? (
+                <p className="pl-7 text-xs text-text-secondary">{explicacao}</p>
+              ) : null}
+
+              {aberta ? (
+                <FormularioDaEtapa
+                  etapa={etapa}
+                  rascunho={rascunho}
+                  setRascunho={setRascunho}
+                  erro={erro}
+                  pendente={pendente}
+                  aoSalvar={() => salvar(etapa)}
+                  aoCancelar={fechar}
+                  aoExcluir={etapa.papel ? null : () => excluir(etapa)}
+                />
+              ) : null}
+            </article>
+          );
+        })}
+
+        {editando === CRIANDO ? (
+          <article className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-xs">
+            <p className="text-sm font-bold text-text-strong">Nova etapa</p>
+            <FormularioDaEtapa
+              etapa={null}
+              rascunho={rascunho}
+              setRascunho={setRascunho}
+              erro={erro}
+              pendente={pendente}
+              aoSalvar={() => salvar(null)}
+              aoCancelar={fechar}
+              aoExcluir={null}
+            />
+          </article>
+        ) : null}
+      </CardContent>
+      <CardFooter>
+        <p className="text-xs text-text-secondary">
+          As etapas de sistema podem mudar de nome e de lugar, nunca sair: são
+          elas que movem o contato sozinho (agendar, comparecer) e que protegem
+          o motivo de perda. Os eventos de conversão ainda não são enviados à
+          Meta: esta tela define o que será enviado quando a conta de anúncios
+          for conectada.
+        </p>
+      </CardFooter>
+    </Card>
   );
 }
 
@@ -427,7 +494,7 @@ function FormularioDaEtapa({
   };
 
   return (
-    <div className="grid gap-4 border-t pt-4">
+    <div className="grid gap-4 border-t border-border pt-4">
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="grid gap-1.5">
           <Label htmlFor={`nome-${id}`}>Nome da etapa</Label>
@@ -506,25 +573,25 @@ function FormularioDaEtapa({
           <Label htmlFor={`termo-${id}`}>
             Termos que movem o contato para cá
           </Label>
-          <p className="text-[12px] text-text-tertiary">
+          <p className="text-xs text-text-secondary">
             Quando o paciente escrever um destes termos na conversa, o contato
             anda sozinho para esta etapa (só para frente na jornada, nunca para
             a etapa de perda).
           </p>
           {rascunho.termos.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-2.5">
               {rascunho.termos.map((termo) => (
                 <span
                   key={termo}
-                  className="flex items-center gap-1 rounded-full bg-surface-3 px-2.5 py-1 text-[12px]"
+                  className="inline-flex h-6 items-center gap-1 rounded-sm border border-border-strong bg-card pr-1 pl-2.5 text-xs font-medium text-foreground"
                 >
                   {termo}
                   {/* O X e pequeno no olho, mas o alvo de toque chega aos 40px
-                    da regra 5 pelo pseudo-elemento expandido. */}
+                    da regra 5 pelo hit-40. */}
                   <button
                     type="button"
                     aria-label={`Remover o termo ${termo}`}
-                    className="relative grid size-5 place-items-center rounded-full after:absolute after:-inset-2.5 hover:bg-surface-4"
+                    className="hit-40 relative grid size-4 place-items-center rounded-[4px] text-text-secondary cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
                     onClick={() =>
                       setRascunho((atual) => ({
                         ...atual,
@@ -532,14 +599,14 @@ function FormularioDaEtapa({
                       }))
                     }
                   >
-                    <X className="size-3" />
+                    <X className="size-[11px]" />
                   </button>
                 </span>
               ))}
             </div>
           ) : null}
           {rascunho.termos.length >= MAXIMO_DE_TERMOS ? (
-            <p className="text-[12px] text-text-tertiary">
+            <p className="text-xs text-text-secondary">
               Esta etapa chegou ao máximo de {MAXIMO_DE_TERMOS} termos. Remova
               um para adicionar outro.
             </p>
@@ -580,8 +647,8 @@ function FormularioDaEtapa({
       {/* Perda nunca e conversao: o check perdido_sem_conversao no banco
           recusa, entao a tela nem oferece. */}
       {etapa?.papel === "perdido" ? null : (
-        <div className="grid gap-3 rounded-lg bg-surface-2 p-3">
-          <p className="text-[13px] font-semibold">
+        <div className="grid gap-3 rounded-xl bg-surface-4 p-3.5">
+          <p className="text-[13px] font-bold text-text-strong">
             Conversão para os anúncios
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -660,7 +727,7 @@ function FormularioDaEtapa({
                     inputMode="decimal"
                     placeholder="250,00"
                     aria-label="Valor em reais"
-                    className="h-10 font-mono tabular-nums"
+                    className="cz-num"
                   />
                 ) : null}
               </div>
@@ -669,42 +736,45 @@ function FormularioDaEtapa({
 
           {temEvento ? (
             <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-              <div className="flex items-center gap-2">
-                <Switch
+              <div className="flex min-h-10 items-center gap-2.5">
+                <Checkbox
                   id={`venda-${id}`}
                   checked={rascunho.ehVenda}
                   onCheckedChange={(valor) =>
-                    setRascunho((atual) => ({ ...atual, ehVenda: valor }))
+                    setRascunho((atual) => ({
+                      ...atual,
+                      ehVenda: valor === true,
+                    }))
                   }
                 />
                 <Label htmlFor={`venda-${id}`}>Esta etapa é uma venda</Label>
               </div>
-              <div className="flex items-center gap-2">
-                <Switch
+              <div className="flex min-h-10 items-center gap-2.5">
+                <Checkbox
                   id={`primeiro-${id}`}
                   checked={rascunho.primeiroContato}
                   onCheckedChange={(valor) =>
                     setRascunho((atual) => ({
                       ...atual,
-                      primeiroContato: valor,
+                      primeiroContato: valor === true,
                     }))
                   }
                 />
                 <Label htmlFor={`primeiro-${id}`}>É o primeiro contato</Label>
               </div>
-              <div className="flex items-center gap-2">
-                <Switch
+              <div className="flex min-h-10 items-center gap-2.5">
+                <Checkbox
                   id={`conversao-ativa-${id}`}
                   checked={rascunho.conversaoAtiva}
                   onCheckedChange={(valor) =>
                     setRascunho((atual) => ({
                       ...atual,
-                      conversaoAtiva: valor,
+                      conversaoAtiva: valor === true,
                     }))
                   }
                 />
                 <Label htmlFor={`conversao-ativa-${id}`}>
-                  {rascunho.conversaoAtiva ? "Conversão ativa" : "Pausada"}
+                  Conversão ativa (desmarcada, fica pausada)
                 </Label>
               </div>
             </div>
@@ -713,9 +783,9 @@ function FormularioDaEtapa({
       )}
 
       {erro ? (
-        <p role="alert" className="text-sm [color:var(--alert-text)]">
+        <Aviso tom="alert" role="alert">
           {erro}
-        </p>
+        </Aviso>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -729,10 +799,10 @@ function FormularioDaEtapa({
         </Button>
         {aoExcluir ? (
           <Button
-            variant="ghost"
+            variant="destructive"
             disabled={pendente}
             onClick={aoExcluir}
-            className="ml-auto [color:var(--alert-text)]"
+            className="ml-auto"
           >
             <Trash2 className="size-4" />
             Excluir etapa

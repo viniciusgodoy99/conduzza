@@ -31,6 +31,9 @@ const eslintConfig = [
       // O servidor de desenvolvimento grava aqui (NEXT_DIST_DIR no script dev),
       // para nao disputar a pasta .next com o build de producao.
       ".next-dev/**",
+      // Qualquer outra pasta de build separada (ex.: um servidor de conferencia
+      // com NEXT_DIST_DIR proprio).
+      ".next-*/**",
       "out/**",
       "build/**",
       "next-env.d.ts",

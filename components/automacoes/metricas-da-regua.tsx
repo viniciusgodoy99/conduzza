@@ -1,15 +1,22 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CheckCheck, CircleSlash, Send, Timer, UserRoundX } from "lucide-react";
+import { BellOff, Inbox, ListEnd, Mails, SkipForward } from "lucide-react";
 
-import { createClient } from "@/lib/supabase/client";
-import { fetchMetricasDaRegua } from "@/lib/queries/automacoes";
+import { Aviso } from "@/components/shared/aviso";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { fetchMetricasDaRegua } from "@/lib/queries/automacoes";
+import { createClient } from "@/lib/supabase/client";
 
 // Metricas por regua (spec 7.8), ultimos 30 dias, so numero real. Sem
 // "respondidas" e "agendadas": sem atribuicao de resposta confiavel seria
-// numero inventado; chegam com a atribuicao. 3 camadas em cada cartao.
+// numero inventado; chegam com a atribuicao.
+//
+// Receita StatCard afundado (docs/06 secoes 4.7 e 5.10): contagem nao e
+// status, entao o icone e neutro e de forma propria (nenhum dos mapas de
+// status usa estes quatro); o rotulo e o numero dizem tudo. O titulo
+// "Últimos 30 dias" fica no cabecalho do cartao, em AbaRegua.
 
 const ROTULO_DO_MOTIVO: Record<string, string> = {
   sem_consentimento: "sem autorização",
@@ -18,7 +25,7 @@ const ROTULO_DO_MOTIVO: Record<string, string> = {
   falha_envio: "falha no envio",
   desconectado: "WhatsApp fora do ar",
   teto_gasto: "teto de gasto",
-  canal_ocupado: "canal ocupado",
+  canal_ocupado: "WhatsApp da clínica com fila",
   consulta_remarcada: "consulta remarcada",
   remarcacao_pedida: "pediu para remarcar",
   toque_atrasado: "atrasada, a seguinte cobriu",
@@ -32,7 +39,7 @@ export function MetricasDaRegua({
   cadenceId: string;
 }) {
   const supabase = createClient();
-  const { data, isPending, isError } = useQuery({
+  const { data, isPending, isError, refetch } = useQuery({
     queryKey: ["automacoes", clinicId, "metricas", cadenceId],
     queryFn: () => fetchMetricasDaRegua(supabase, clinicId, cadenceId),
     staleTime: 60_000,
@@ -40,18 +47,29 @@ export function MetricasDaRegua({
 
   if (isPending) {
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-hidden>
         {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-16" />
+          <div key={i} className="grid gap-2.5 rounded-xl bg-surface-4 p-3.5">
+            <Skeleton className="h-2.5 w-3/5 bg-surface-5" />
+            <Skeleton className="h-6 w-2/5 bg-surface-5" />
+          </div>
         ))}
       </div>
     );
   }
   if (isError || !data) {
+    // Erro nao vira zero: numero falso e pior que estado de erro.
     return (
-      <p className="text-xs text-text-secondary">
-        Não foi possível carregar as métricas agora.
-      </p>
+      <Aviso
+        tom="alert"
+        acao={
+          <Button variant="outline" onClick={() => void refetch()}>
+            Tentar de novo
+          </Button>
+        }
+      >
+        Não foi possível carregar os números da régua agora.
+      </Aviso>
     );
   }
 
@@ -63,58 +81,54 @@ export function MetricasDaRegua({
     {
       rotulo: "Enviadas",
       valor: data.enviadas30d,
-      Icone: Send,
-      cor: "var(--success-text)",
+      Icone: Mails,
       exato: true,
     },
     {
       rotulo: "Entregues",
       valor: data.entregues30d,
-      Icone: CheckCheck,
-      cor: "var(--info-text)",
+      Icone: Inbox,
       exato: false,
     },
     {
       rotulo: "Na fila",
       valor: data.naFila,
-      Icone: Timer,
-      cor: "var(--neutral-text)",
+      Icone: ListEnd,
       exato: true,
     },
     {
       rotulo: "Descadastros",
       valor: data.descadastros30d,
-      Icone: UserRoundX,
-      cor: "var(--alert-text)",
+      Icone: BellOff,
       exato: false,
     },
   ];
 
   return (
     <div className="grid gap-3">
-      <h4 className="text-[13px] font-semibold">Últimos 30 dias</h4>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {cartoes.map((cartao) => {
           const amostrado = data.aproximado && !cartao.exato;
           return (
             <div
               key={cartao.rotulo}
-              className="grid gap-1 rounded-lg border p-3"
+              className="grid min-w-0 content-start gap-2.5 rounded-xl bg-surface-4 p-3.5"
             >
-              <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+              <span className="flex items-center justify-between gap-2">
+                <span className="cz-eyebrow text-text-secondary">
+                  {cartao.rotulo}
+                </span>
                 <cartao.Icone
-                  className="size-4"
-                  style={{ color: cartao.cor }}
+                  className="size-4 shrink-0 text-text-secondary"
                   aria-hidden
                 />
-                {cartao.rotulo}
               </span>
-              <span className="text-xl font-semibold tabular-nums">
+              <span className="cz-num text-2xl leading-none font-semibold text-text-strong">
                 {cartao.valor}
               </span>
               {amostrado ? (
-                <span className="text-[11px] text-text-tertiary">
-                  nos 1000 toques mais recentes
+                <span className="text-[11px] text-text-secondary">
+                  nos <span className="cz-num">1000</span> toques mais recentes
                 </span>
               ) : null}
             </div>
@@ -123,20 +137,24 @@ export function MetricasDaRegua({
       </div>
       {data.puladasPorMotivo.length > 0 ? (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
-          <CircleSlash
-            className="size-4"
-            style={{ color: "var(--warning-text)" }}
-            aria-hidden
-          />
-          Não saíram:
+          <span className="flex items-center gap-1.5 font-semibold text-text-strong">
+            <SkipForward
+              className="size-4 shrink-0 text-warning-text"
+              aria-hidden
+            />
+            Não saíram:
+          </span>
           {data.puladasPorMotivo.map((linha) => (
             <span key={linha.motivo}>
-              {linha.total} {ROTULO_DO_MOTIVO[linha.motivo] ?? linha.motivo}
+              <span className="cz-num font-semibold text-text-strong">
+                {linha.total}
+              </span>{" "}
+              {ROTULO_DO_MOTIVO[linha.motivo] ?? "motivo não identificado"}
             </span>
           ))}
         </p>
       ) : null}
-      <p className="text-[11.5px] text-text-tertiary">
+      <p className="text-[11.5px] text-text-secondary">
         {data.aproximado
           ? "Régua com muito volume: Enviadas e Na fila são totais do período; Entregues, Descadastros e os motivos vêm dos 1000 toques mais recentes. "
           : ""}

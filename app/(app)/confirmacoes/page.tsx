@@ -1,3 +1,5 @@
+import { format, parseISO } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { redirect } from "next/navigation";
 
 import { AvisoCelular } from "@/components/shared/aviso-celular";
@@ -33,14 +35,22 @@ export default async function ConfirmacoesPage({
   }
 
   const supabase = await createClient();
-  // A aba vem da URL e quem a le e o cliente; aqui so o dia importa, porque
-  // e ele que decide qual carga inicial buscar.
-  const { data } = await searchParams;
+  // A aba vem da URL e quem a le e o cliente; aqui o dia decide qual carga
+  // inicial buscar, e a aba so escolhe a data do eyebrow.
+  const { aba, data } = await searchParams;
 
   const hoje = diaCivil(active.timezone, new Date());
   const amanha = somarDias(hoje, 1);
   const diaValido = /^\d{4}-\d{2}-\d{2}$/.test(data ?? "");
   const dia = diaValido ? (data as string) : amanha;
+  // Dia civil da clinica ja calculado no fuso dela (regra 3.6): parseISO de
+  // "aaaa-mm-dd" e format no mesmo relogio devolvem a mesma data, qualquer
+  // que seja o fuso do servidor.
+  const dataDoEyebrow = format(
+    parseISO(aba === "faltas" ? hoje : dia),
+    "EEEE, d 'de' MMMM",
+    { locale: ptBR },
+  );
 
   // Regra 3.1: a tela mostra nome e telefone de paciente (dado sensivel); a
   // leitura vai para a trilha, com throttle no helper. Sem await: nao atrasa
@@ -58,11 +68,13 @@ export default async function ConfirmacoesPage({
   ]);
 
   return (
-    <div className="grid gap-6 p-6">
+    <div className="flex flex-col gap-3.5 p-6">
       <PageHeader
+        eyebrow={dataDoEyebrow}
         title="Confirmações"
         description="Quem já confirmou a consulta e quem ainda precisa de um empurrão"
       />
+      {/* Tela pensada para computador (brief secao 6): no celular, o aviso. */}
       <AvisoCelular />
       <ConfirmacoesClient
         clinicId={active.clinicId}
@@ -89,6 +101,20 @@ export default async function ConfirmacoesPage({
           permissionHint(active.role, "automacoes") ??
           "Somente administradores e gestores alteram as automações"
         }
+        // Registrar autorizacao e a mesma acao da ficha (leads e pacientes).
+        podeRegistrarAutorizacao={canEdit(active.role, "leads_pacientes")}
+        dicaAutorizacao={
+          permissionHint(active.role, "leads_pacientes") ??
+          "Seu perfil não pode editar leads e pacientes"
+        }
+        // O modal de agendamento (Remarcar da falta) leva a Cadastros quando
+        // falta jornada ou vinculo: a mesma permissao da Agenda (achado L21).
+        podeEditarCadastros={canEdit(active.role, "cadastros")}
+        dicaCadastros={
+          permissionHint(active.role, "cadastros") ??
+          "Somente administradores e gestores alteram os cadastros"
+        }
+        ehAdministrador={active.role === "admin"}
       />
     </div>
   );

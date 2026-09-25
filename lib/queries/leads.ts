@@ -56,6 +56,10 @@ export type LeadDetalhe = {
 
 export const leadsKeys = {
   lista: (clinicId: string) => ["leads", clinicId, "lista"] as const,
+  /** Quantos contatos a clinica tem no total (para o aviso de corte). */
+  total: (clinicId: string) => ["leads", clinicId, "total"] as const,
+  /** Etapas com regua de follow-up ligada (aviso do Mudar etapa). */
+  reguas: (clinicId: string) => ["leads", clinicId, "reguas"] as const,
   detalhe: (contactId: string) => ["leads", "detalhe", contactId] as const,
   /** Nomes dos membros (fetchClinicAuthorNames) para avatar de responsavel. */
   autores: (clinicId: string) => ["leads", clinicId, "autores"] as const,
@@ -96,15 +100,21 @@ function normalizarLead(row: Record<string, unknown>): LeadResumo {
 
 // Teto de seguranca, mesmo padrao do Inbox (CONVERSATIONS_ATIVAS_LIMIT): sem
 // limite, uma clinica grande serializava TODOS os contatos com embeds no
-// payload de cada navegacao para /leads. O corte segue a MESMA ordem da tela
-// (nunca contatado primeiro, depois o contato mais antigo), entao o que sai
-// e o lead ja trabalhado mais recentemente. Acima do teto a tela passa a
-// precisar de busca no servidor.
+// payload de cada navegacao para /leads.
+//
+// O corte fica com os MAIS RECENTES (achado 93 da revisao): last_contact_at e
+// a ultima mensagem RECEBIDA do paciente, entao quem escreveu hoje e o lead
+// mais quente e nao pode ser o primeiro a sumir. Contato que nunca escreveu
+// (importado, criado a mao, cadastro rapido da Agenda) vem depois, pelo
+// primeiro contato mais recente; o id desempata para o corte ser estavel. A
+// ordem de EXIBICAO continua sendo a de proxima acao, aplicada depois do
+// corte. A tela conta o total (fetchTotalDeLeads) e avisa quando corta.
 export const LEADS_LIMIT = 1000;
 
 /**
- * Os contatos da clinica com os embeds, ja ordenados por proxima acao
- * (nunca contatado primeiro, depois o contato mais antigo).
+ * Os contatos da clinica com os embeds (os LEADS_LIMIT mais recentes), ja
+ * ordenados por proxima acao (nunca contatado primeiro, depois o contato mais
+ * antigo).
  */
 export async function fetchLeads(
   supabase: SupabaseClient,
@@ -114,7 +124,9 @@ export async function fetchLeads(
     .from("contact")
     .select(LEAD_SELECT)
     .eq("clinic_id", clinicId)
-    .order("last_contact_at", { ascending: true, nullsFirst: true })
+    .order("last_contact_at", { ascending: false, nullsFirst: false })
+    .order("first_contact_at", { ascending: false })
+    .order("id", { ascending: true })
     .limit(LEADS_LIMIT);
   if (error) {
     throw new Error(error.message);
@@ -122,6 +134,68 @@ export async function fetchLeads(
   return ((data ?? []) as Record<string, unknown>[])
     .map(normalizarLead)
     .sort(compararPorProximaAcao);
+}
+
+/**
+ * Quantos contatos a clinica tem, sem trazer linha nenhuma (count head). A
+ * tela compara com o que carregou para dizer quando o teto cortou a lista.
+ */
+export async function fetchTotalDeLeads(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("contact")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", clinicId);
+  if (error) {
+    throw new Error(error.message);
+  }
+  return count ?? 0;
+}
+
+/** Regua de follow-up LIGADA de uma etapa da jornada. */
+export type ReguaDaEtapa = {
+  /** Chave da etapa (cadence.trigger_stage) */
+  etapa: string;
+  /** Nome da regua, como aparece em Automacoes */
+  nome: string;
+};
+
+/**
+ * As etapas que tem regua de follow-up ligada e com pelo menos um passo, ou
+ * seja, as que mandam mensagem sozinhas quando um lead entra nelas (achado 98
+ * da revisao). O indice cadence_followup_unico_por_etapa garante uma regua
+ * por etapa. A leitura de cadence e de qualquer membro ativo (RLS).
+ */
+export async function fetchReguasDeFollowup(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<ReguaDaEtapa[]> {
+  const { data, error } = await supabase
+    .from("cadence")
+    .select("trigger_stage, name, cadence_step (id)")
+    .eq("clinic_id", clinicId)
+    .eq("kind", "followup")
+    .eq("active", true);
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (
+    (data ?? []) as {
+      trigger_stage: string | null;
+      name: string;
+      cadence_step: { id: string }[] | null;
+    }[]
+  )
+    .filter(
+      (regua) =>
+        regua.trigger_stage !== null && (regua.cadence_step ?? []).length > 0,
+    )
+    .map((regua) => ({
+      etapa: regua.trigger_stage as string,
+      nome: regua.name,
+    }));
 }
 
 /** Busca um contato so, com os embeds (usada pelo tempo real em INSERT). */

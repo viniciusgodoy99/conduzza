@@ -253,3 +253,64 @@ export async function cobrarAgoraAction(
     pulados_sem_autorizacao: resultado.pulados_sem_autorizacao,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Manter o horario depois de um pedido de remarcacao (revisao da leva 1, R12)
+// ---------------------------------------------------------------------------
+
+const manterHorarioSchema = z.object({ appointment_id: idSchema });
+
+/**
+ * O paciente pediu para remarcar, a recepcao falou com ele e ele fica com o
+ * horario. Sem esta acao, a marca so saia movendo a consulta (o que avisa o
+ * paciente duas vezes) ou no dia, e ate la a Tela 2 mostrava "Pediu para
+ * remarcar" numa consulta resolvida e o interceptador ignorava o paciente.
+ *
+ * So zera a marca: nao muda status nem horario. Se a consulta ainda espera
+ * confirmacao, o planejador volta a criar os toques que ainda couberem
+ * (reguas_e_fila: "a.remarcacao_pedida_em is null"). Sessao do usuario e
+ * RLS (user_can_write) decidem; o update condicional nao mexe em consulta
+ * sem pedido em aberto. A trilha vai para audit_log: a trilha da consulta
+ * (appointment_status_history.event) so aceita 'remarcacao_pedida' hoje.
+ */
+export async function manterHorarioAction(
+  input: unknown,
+): Promise<ConfirmacoesActionResult> {
+  const guard = await requireConfirmacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = manterHorarioSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Consulta inválida." };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("appointment")
+    .update({ remarcacao_pedida_em: null })
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsed.data.appointment_id)
+    .not("remarcacao_pedida_em", "is", null)
+    .select("id");
+  if (error) {
+    return { ok: false, error: "Não foi possível manter o horário." };
+  }
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      error: "Esta consulta não tem mais pedido de remarcação em aberto.",
+    };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "manteve_horario_apos_pedido_de_remarcacao",
+    entity: "appointment",
+    entity_id: parsed.data.appointment_id,
+  });
+  revalidatePath("/confirmacoes");
+  revalidatePath("/agenda");
+  return { ok: true };
+}

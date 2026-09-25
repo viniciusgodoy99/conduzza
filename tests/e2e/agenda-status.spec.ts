@@ -99,6 +99,34 @@ test("faltou exige confirmação explícita", async ({ page }) => {
   });
 });
 
+// Achado L11 da revisao da leva 2: Compareceu e situacao final e desconta
+// sessao de pacote. Em consulta de outro dia fica visivel, desabilitado e com
+// o porque. So LE: o Roberto de amanha e do seed da Tela 2 (Confirmacoes).
+test("compareceu fica desabilitado com dica em consulta de amanhã", async ({
+  page,
+}) => {
+  await abrirAgenda(page, dados().emails.recepcao);
+  await page.getByRole("button", { name: "Dia seguinte" }).click();
+
+  const blocoDeAmanha = bloco(
+    page,
+    /Roberto Recibo, 09:00, Confirmado por WhatsApp/,
+  );
+  await expect(blocoDeAmanha).toBeVisible({ timeout: 10_000 });
+  await blocoDeAmanha.click();
+
+  const compareceu = page.getByRole("menuitem", { name: "Compareceu" });
+  await expect(compareceu).toBeVisible();
+  await expect(compareceu).toBeDisabled();
+  await expect(
+    page.getByText("Compareceu só pode ser marcado no dia da consulta."),
+  ).toBeVisible();
+  // O resto do menu continua valendo (Remarcar, cancelamentos).
+  await expect(page.getByRole("menuitem", { name: "Remarcar" })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(blocoDeAmanha).toBeVisible();
+});
+
 test("histórico mostra quem mudou o que e quando", async ({ page }) => {
   await abrirAgenda(page, dados().emails.recepcao);
 

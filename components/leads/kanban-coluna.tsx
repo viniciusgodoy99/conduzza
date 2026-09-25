@@ -1,6 +1,7 @@
 "use client";
 
 import { useDroppable } from "@dnd-kit/core";
+import { Workflow } from "lucide-react";
 
 import { LeadCard } from "@/components/leads/lead-card";
 import { STATUS_TONE_VARS } from "@/lib/design/status";
@@ -8,20 +9,29 @@ import { definicaoDaEtapa, type EtapaDaJornada } from "@/lib/domain/jornada";
 import type { LeadResumo } from "@/lib/queries/leads";
 import { cn } from "@/lib/utils";
 
-// Coluna do Kanban: area de soltura por etapa, cabecalho com as 3 camadas da
-// etapa (icone, rotulo, cor) e contagem em cinza. Coluna vazia existe, com
-// estado proprio.
+// Coluna do Kanban no desenho do design system Conduzza (docs/06 secao 5.4):
+// trilho afundado sem borda, cabecalho com o ICONE da etapa na cor dela (e
+// nao o quadrado colorido do kit: a forma e a camada que discrimina, C8),
+// rotulo e contagem. Coluna vazia existe, com estado proprio. Sem o botao "+"
+// do kit (C25): lead novo nasce pelo Novo lead do cabecalho.
+//
+// Etapa com regua de follow-up ligada mostra o icone de Automacoes com o
+// rotulo "Régua" (achado 98): quem solta um lead ali sabe que ele passa a
+// receber mensagens automaticas, se tiver autorizacao.
 
 export function KanbanColuna({
   etapa,
   leads,
   membros,
+  reguaNome,
   podeEditar,
   onAbrirLead,
 }: {
   etapa: EtapaDaJornada;
   leads: LeadResumo[];
   membros: Record<string, string>;
+  /** Nome da regua de follow-up ligada nesta etapa; null sem regua */
+  reguaNome: string | null;
   podeEditar: boolean;
   onAbrirLead: (lead: LeadResumo) => void;
 }) {
@@ -35,24 +45,38 @@ export function KanbanColuna({
       ref={setNodeRef}
       aria-label={`${definicao.label}, ${leads.length} leads`}
       className={cn(
-        "flex min-h-[320px] w-[260px] shrink-0 flex-col gap-2 rounded-lg border bg-surface-3 p-2 transition-colors",
-        isOver && "border-ring bg-surface-4",
+        "flex min-h-[320px] min-w-0 flex-col gap-[9px] rounded-card bg-surface-4 p-2.5 cz-transition",
+        isOver && "bg-primary-soft ring-2 ring-primary-edge ring-inset",
       )}
     >
-      <header className="flex items-center gap-1.5 px-1 pt-1">
+      <header className="flex h-7 min-w-0 items-center gap-[7px] px-1">
         {Icone ? (
           <Icone
-            className="size-4 shrink-0"
+            className="size-3.5 shrink-0"
             style={{ color: tone.text }}
             aria-hidden
           />
         ) : null}
-        <span className="text-[13px] font-semibold">{definicao.label}</span>
-        <span className="text-[13px] text-text-tertiary">{leads.length}</span>
+        <span className="truncate text-[12.5px] font-bold text-text-strong">
+          {definicao.label}
+        </span>
+        <span className="shrink-0 cz-num text-xs text-text-secondary">
+          {leads.length}
+        </span>
+        {reguaNome ? (
+          <span
+            title={`Régua de follow-up ligada: ${reguaNome}`}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-text-secondary"
+          >
+            <Workflow className="size-3" aria-hidden />
+            Régua
+            <span className="sr-only">de follow-up ligada: {reguaNome}</span>
+          </span>
+        ) : null}
       </header>
       <div className="grid content-start gap-2">
         {leads.length === 0 ? (
-          <p className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-text-tertiary">
+          <p className="px-2 py-[18px] text-center text-xs text-text-secondary">
             Nenhum lead nesta etapa
           </p>
         ) : (

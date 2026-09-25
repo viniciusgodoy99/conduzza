@@ -2,7 +2,8 @@ import { cn } from "@/lib/utils";
 
 type PageHeaderProps = {
   title: string;
-  description?: string;
+  /** Texto ou trechos (ex.: numeros em cz-num dentro da frase) */
+  description?: React.ReactNode;
   /** Linha curta em caixa alta acima do titulo (ex.: o grupo do menu) */
   eyebrow?: string;
   /** Acoes da pagina (botoes), alinhadas a direita */

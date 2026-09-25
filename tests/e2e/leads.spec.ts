@@ -11,7 +11,9 @@ import { login } from "./helpers";
 // autorizacao aparece em texto na lista (3 camadas, nunca so cor).
 
 const NOME_COM_ORIGEM = "Otávio Origem";
-const FONE_SEM_ORIGEM = "+5584970000022";
+// O lead sem nome e gravado como +5584970000022; a tela mostra o telefone
+// formatado (formatarTelefone), no cartao, na lista e no nome acessivel.
+const FONE_SEM_ORIGEM = "(84) 97000-0022";
 
 /** Coluna do Kanban pela etapa: section com aria-label "Etapa, N leads". */
 function coluna(page: Page, etapa: string) {
@@ -176,6 +178,50 @@ test("papel leitura vê a tela com Novo lead desabilitado e com dica", async ({
   await novoLead.locator("..").focus();
   await expect(
     page.getByText("Seu perfil não pode editar leads e pacientes"),
+  ).toBeVisible();
+});
+
+// Achados 6 e 22 da leva 2: a Agenda so abre o modal do link para quem
+// agenda. Quem agenda recebe o link; o papel leitura ve o botao desabilitado
+// e com a dica, em vez de cair numa Agenda onde nada acontece.
+test("Agendar do drawer leva à Agenda com o lead para quem agenda", async ({
+  page,
+}) => {
+  test.skip(
+    test.info().project.name !== "desktop-1600",
+    "permissão não depende do viewport",
+  );
+  const d = dados();
+  await login(page, d.emails.gestor);
+  await page.goto("/leads?visao=lista");
+  await page.getByRole("button", { name: `Abrir ${NOME_COM_ORIGEM}` }).click();
+  const drawer = page.getByRole("dialog");
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole("link", { name: "Agendar" })).toHaveAttribute(
+    "href",
+    `/agenda?agendar=${d.leads.comOrigemId}`,
+  );
+});
+
+test("Agendar do drawer fica desabilitado e com dica para o papel leitura", async ({
+  page,
+}) => {
+  test.skip(
+    test.info().project.name !== "desktop-1600",
+    "permissão não depende do viewport",
+  );
+  await login(page, dados().emails.leitura);
+  await page.goto("/leads?visao=lista");
+  await page.getByRole("button", { name: `Abrir ${NOME_COM_ORIGEM}` }).click();
+  const drawer = page.getByRole("dialog");
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole("link", { name: "Agendar" })).toHaveCount(0);
+  const agendar = drawer.getByRole("button", { name: "Agendar" });
+  await expect(agendar).toBeVisible();
+  await expect(agendar).toBeDisabled();
+  await agendar.locator("..").focus();
+  await expect(
+    page.getByText("Seu perfil não pode alterar a agenda"),
   ).toBeVisible();
 });
 

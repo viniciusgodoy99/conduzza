@@ -16,8 +16,7 @@ export type VolumesDaEstimativa = {
 
 export const automacoesKeys = {
   volumes: (clinicId: string) => ["automacoes", clinicId, "volumes"] as const,
-  excecoes: (clinicId: string) =>
-    ["automacoes", clinicId, "excecoes"] as const,
+  excecoes: (clinicId: string) => ["automacoes", clinicId, "excecoes"] as const,
   followups: (clinicId: string) =>
     ["automacoes", clinicId, "followups"] as const,
 };
@@ -88,7 +87,7 @@ export async function fetchExcecoesDeConfirmacao(
   const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
   const desde24h = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
   const agora = new Date().toISOString();
-  const [reguas, procedimentos, jaEnviou] = await Promise.all([
+  const [reguas, procedimentos, jaEnviou, linhaDeBase] = await Promise.all([
     supabase
       .from("cadence")
       .select(
@@ -110,12 +109,20 @@ export async function fetchExcecoesDeConfirmacao(
       .eq("clinic_id", clinicId)
       .not("sent_at", "is", null)
       .limit(1),
+    // A excecao tambem e regua de confirmacao: sem linha de base, ligar
+    // qualquer uma lembra o registro (achado 49).
+    supabase
+      .from("no_show_baseline")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .limit(1),
   ]);
   if (reguas.error) {
     throw new Error(reguas.error.message);
   }
   const linhas = (reguas.data ?? []) as Record<string, unknown>[];
   const primeiraAtivacao = (jaEnviou.data ?? []).length === 0;
+  const semLinhaDeBase = (linhaDeBase.data ?? []).length === 0;
 
   // Poucas excecoes por clinica (uma por procedimento com preparo, mais a
   // reforcada): as consultas por regua abaixo sao baratas e em paralelo.
@@ -129,7 +136,9 @@ export async function fetchExcecoesDeConfirmacao(
       const [passos, eventos, enviados, pulados] = await Promise.all([
         supabase
           .from("cadence_step")
-          .select("id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename")
+          .select(
+            "id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
+          )
           .eq("clinic_id", clinicId)
           .eq("cadence_id", regua.id as string)
           .order("offset_minutes"),
@@ -188,6 +197,7 @@ export async function fetchExcecoesDeConfirmacao(
         send_weekdays: (regua.send_weekdays as number[] | null) ?? null,
         passos: (passos.data ?? []) as ReguaDeConfirmacao["passos"],
         primeira_ativacao: primeiraAtivacao,
+        pede_linha_de_base: semLinhaDeBase,
         enviados_24h: enviados.count ?? 0,
         pulados_24h: pulados.count ?? 0,
         procedure,
@@ -266,7 +276,9 @@ export async function fetchFollowups(
         await Promise.all([
           supabase
             .from("cadence_step")
-            .select("id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename")
+            .select(
+              "id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
+            )
             .eq("clinic_id", clinicId)
             .eq("cadence_id", regua.id as string)
             .order("offset_minutes"),
@@ -321,6 +333,8 @@ export async function fetchFollowups(
         send_weekdays: (regua.send_weekdays as number[] | null) ?? null,
         passos: (passos.data ?? []) as ReguaDeConfirmacao["passos"],
         primeira_ativacao: primeiraAtivacao,
+        // Follow-up nao mexe na taxa de falta: nunca pede a linha de base.
+        pede_linha_de_base: false,
         enviados_24h: enviados.count ?? 0,
         pulados_24h: pulados.count ?? 0,
         trigger_stage: chave,
@@ -391,18 +405,19 @@ export async function fetchMetricasDaRegua(
   // Erro de leitura NAO vira zero nos cartoes: numero falso e pior que
   // estado de erro (o useQuery do componente trata o throw).
   if (enviadas.error || naFila.error || puladas.error) {
-    throw new Error(
-      (enviadas.error ?? naFila.error ?? puladas.error)!.message,
-    );
+    throw new Error((enviadas.error ?? naFila.error ?? puladas.error)!.message);
   }
 
   const linhas = (puladas.data ?? []) as {
     skipped_reason: string | null;
     sent_at: string | null;
     contact_id: string;
-    message: { delivery_status: string | null }[] | {
-      delivery_status: string | null;
-    } | null;
+    message:
+      | { delivery_status: string | null }[]
+      | {
+          delivery_status: string | null;
+        }
+      | null;
   }[];
 
   const porMotivo = new Map<string, number>();

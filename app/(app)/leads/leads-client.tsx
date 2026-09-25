@@ -2,11 +2,10 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  LayoutList,
+  Columns3,
+  List,
   Plus,
   SearchX,
-  SquareKanban,
-  TriangleAlert,
   Upload,
   UsersRound,
 } from "lucide-react";
@@ -15,35 +14,74 @@ import { useEffect, useMemo, useState } from "react";
 
 import { BotaoProtegido } from "@/components/cadastros/comum";
 import { BarraAcoesMassa } from "@/components/leads/barra-acoes-massa";
+import { ColunasCarregando } from "@/components/leads/colunas-carregando";
 import { DrawerLead } from "@/components/leads/drawer-lead";
 import {
   FiltrosLeads,
+  type OpcaoDeResponsavel,
   type ValoresFiltros,
 } from "@/components/leads/filtros-leads";
 import { ModalImportacao } from "@/components/leads/importacao/modal-importacao";
 import { KanbanBoard } from "@/components/leads/kanban-board";
 import { ListaLeads } from "@/components/leads/lista-leads";
 import { ModalNovoLead } from "@/components/leads/modal-novo-lead";
+import { Aviso } from "@/components/shared/aviso";
+import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { EmptyState } from "@/components/shared/empty-state";
 import { TableSkeleton } from "@/components/shared/loading-skeleton";
+import { PageHeader } from "@/components/shared/page-header";
+import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Card } from "@/components/ui/card";
 import { instanteLocal } from "@/lib/domain/horarios";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { filtrarLeads, type FiltrosDeLeads } from "@/lib/domain/leads-ui";
-import { fetchLeads, leadsKeys, type LeadResumo } from "@/lib/queries/leads";
+import {
+  fetchLeads,
+  fetchReguasDeFollowup,
+  fetchTotalDeLeads,
+  LEADS_LIMIT,
+  leadsKeys,
+  type LeadResumo,
+  type ReguaDaEtapa,
+} from "@/lib/queries/leads";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { useLeadsChannel } from "@/lib/realtime/use-leads-channel";
 import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
 
 // Tela 4: visao (kanban ou lista) e filtros vivem na URL para link direto,
 // mesmo padrao de Cadastros. UMA query da clinica com initialData do
 // servidor; filtros aplicados no cliente (filtrarLeads, puro) e tempo real
 // mesclando a linha afetada. Abaixo de 1024px a tela forca a lista: Kanban
 // arrastavel nao funciona bem no toque estreito.
+//
+// Selecao (achado 96 da revisao): o alvo de uma acao em massa e sempre o que
+// esta NA TELA. A selecao efetiva e recortada pelos leads filtrados, zera
+// quando um filtro muda e, depois de uma acao em massa, fica so com os leads
+// que nao mudaram (nenhum, quando tudo deu certo).
 
 type Visao = "kanban" | "lista";
+
+const VISOES = [
+  { value: "kanban", label: "Kanban", icon: Columns3 },
+  { value: "lista", label: "Lista", icon: List },
+] as const;
+
+const numero = new Intl.NumberFormat("pt-BR");
+
+function ordenarPorNome(
+  ids: Iterable<string>,
+  membros: Record<string, string>,
+): OpcaoDeResponsavel[] {
+  const opcoes: OpcaoDeResponsavel[] = [];
+  for (const id of ids) {
+    const nome = membros[id];
+    if (nome !== undefined) {
+      opcoes.push({ id, nome });
+    }
+  }
+  return opcoes.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
 
 function useTelaEstreita(): boolean {
   const [estreita, setEstreita] = useState(false);
@@ -61,18 +99,36 @@ export function LeadsClient({
   clinicId,
   timezone,
   leadsIniciais,
+  totalInicial,
+  reguasIniciais,
   jornada,
   membros,
+  responsaveisAtivos,
   podeEditar,
   dica,
+  podeAgendar,
+  dicaAgendar,
+  soAtribuidas,
 }: {
   clinicId: string;
   timezone: string;
   leadsIniciais: LeadResumo[];
+  /** Total de contatos da clinica; null se a contagem falhou no servidor */
+  totalInicial: number | null;
+  /** Etapas com regua de follow-up ligada; null se a leitura falhou */
+  reguasIniciais: ReguaDaEtapa[] | null;
   jornada: EtapaDaJornada[];
+  /** Nomes de todos os membros, inclusive antigos (exibicao) */
   membros: Record<string, string>;
+  /** Ids dos membros ativos: os unicos que podem virar responsavel */
+  responsaveisAtivos: string[];
   podeEditar: boolean;
   dica: string;
+  /** Permissao da Agenda, para o "Agendar" do drawer */
+  podeAgendar: boolean;
+  dicaAgendar: string;
+  /** Profissional: a RLS so mostra as conversas atribuidas a ele */
+  soAtribuidas: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
@@ -86,6 +142,8 @@ export function LeadsClient({
   // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
   // da visita anterior (initialData so vale na criacao da entrada).
   useDadosDoServidor(leadsKeys.lista(clinicId), leadsIniciais);
+  useDadosDoServidor(leadsKeys.total(clinicId), totalInicial ?? undefined);
+  useDadosDoServidor(leadsKeys.reguas(clinicId), reguasIniciais ?? undefined);
 
   const leadsQuery = useQuery({
     queryKey: leadsKeys.lista(clinicId),
@@ -96,6 +154,23 @@ export function LeadsClient({
     // lista inteira sem necessidade.
     refetchOnWindowFocus: false,
   });
+
+  // Acessorios: sem dado do servidor (falhou la), o navegador busca sozinho.
+  const totalQuery = useQuery({
+    queryKey: leadsKeys.total(clinicId),
+    queryFn: () => fetchTotalDeLeads(supabase, clinicId),
+    initialData: totalInicial ?? undefined,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+  const reguasQuery = useQuery({
+    queryKey: leadsKeys.reguas(clinicId),
+    queryFn: () => fetchReguasDeFollowup(supabase, clinicId),
+    initialData: reguasIniciais ?? undefined,
+    staleTime: 60_000,
+  });
+  // null = nao deu para conferir (carregando ou erro): o Mudar etapa avisa.
+  const reguas = reguasQuery.data ?? null;
 
   const visao: Visao =
     searchParams.get("visao") === "lista" ? "lista" : "kanban";
@@ -155,155 +230,201 @@ export function LeadsClient({
     [leads, filtros],
   );
 
-  const [selecionados, setSelecionados] = useState<string[]>([]);
+  const [selecionados, setSelecionados] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [leadAbertoId, setLeadAbertoId] = useState<string | null>(null);
   const [novoAberto, setNovoAberto] = useState(false);
   const [importAberto, setImportAberto] = useState(false);
 
   const leadAberto = leads.find((lead) => lead.id === leadAbertoId) ?? null;
-  const leadsSelecionados = leads.filter((lead) =>
-    selecionados.includes(lead.id),
+  // So o que esta na tela pode ser alvo: lead que saiu do filtro (pela troca
+  // de filtro, por uma acao ou pelo tempo real) sai da selecao efetiva.
+  const leadsSelecionados = useMemo(
+    () => leadsFiltrados.filter((lead) => selecionados.has(lead.id)),
+    [leadsFiltrados, selecionados],
   );
 
-  const limparFiltros = () =>
+  const limparSelecao = () => setSelecionados(new Set());
+
+  const mudarFiltro = (campo: keyof ValoresFiltros, valor: string) => {
+    limparSelecao();
+    setParams({ [campo]: valor || null });
+  };
+
+  const limparFiltros = () => {
+    limparSelecao();
     setParams({ etapa: null, origem: null, resp: null, de: null, ate: null });
+  };
 
   const trocarVisao = (nova: Visao) => {
-    setSelecionados([]);
+    limparSelecao();
     setParams({ visao: nova });
   };
 
   const selecionar = (id: string, marcado: boolean) =>
-    setSelecionados((atual) =>
-      marcado ? [...new Set([...atual, id])] : atual.filter((s) => s !== id),
-    );
+    setSelecionados((atual) => {
+      const proximo = new Set(atual);
+      if (marcado) {
+        proximo.add(id);
+      } else {
+        proximo.delete(id);
+      }
+      return proximo;
+    });
   const selecionarTodos = (ids: string[], marcado: boolean) =>
-    setSelecionados((atual) =>
-      marcado
-        ? [...new Set([...atual, ...ids])]
-        : atual.filter((s) => !ids.includes(s)),
-    );
+    setSelecionados((atual) => {
+      const proximo = new Set(atual);
+      for (const id of ids) {
+        if (marcado) {
+          proximo.add(id);
+        } else {
+          proximo.delete(id);
+        }
+      }
+      return proximo;
+    });
 
-  const invalidar = () =>
+  // Responsavel que se ESCOLHE (Reatribuir, Novo lead): so membro ativo. No
+  // filtro entram tambem os donos atuais dos leads carregados, para ainda
+  // dar para achar os leads de quem saiu da clinica (achado 102).
+  const responsaveis = useMemo(
+    () => ordenarPorNome(responsaveisAtivos, membros),
+    [responsaveisAtivos, membros],
+  );
+  const responsaveisDoFiltro = useMemo(() => {
+    const ids = new Set(responsaveisAtivos);
+    for (const lead of leads) {
+      if (lead.owner_user_id) {
+        ids.add(lead.owner_user_id);
+      }
+    }
+    if (valores.resp) {
+      ids.add(valores.resp);
+    }
+    return ordenarPorNome(ids, membros);
+  }, [responsaveisAtivos, leads, membros, valores.resp]);
+
+  const invalidar = () => {
     void queryClient.invalidateQueries({ queryKey: leadsKeys.lista(clinicId) });
+    void queryClient.invalidateQueries({ queryKey: leadsKeys.total(clinicId) });
+  };
 
   const abrirLead = (lead: LeadResumo) => setLeadAbertoId(lead.id);
 
   const vazioInicial = !leadsQuery.isError && leads.length === 0;
 
+  // Aviso de corte (achado 93): so quando o teto cortou de verdade. Contato
+  // criado entre a contagem e a busca nao dispara aviso numa clinica pequena.
+  const total = totalQuery.data;
+  const cortado =
+    total !== undefined && leads.length >= LEADS_LIMIT && total > leads.length;
+
   return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <FiltrosLeads
-          jornada={jornada}
-          valores={valores}
-          membros={membros}
-          aoMudar={(campo, valor) => setParams({ [campo]: valor || null })}
-          aoLimpar={limparFiltros}
-        />
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* Some por CSS, nao por estado: o estado de tela estreita so fica
-              pronto DEPOIS da montagem, e trocar o DOM naquele instante
-              derrubava o foco de quem navega por teclado. */}
-          <div className="hidden lg:contents">
-            <div
-              role="group"
-              aria-label="Modo de exibição"
-              className="grid grid-cols-2 rounded-lg bg-surface-3 p-0.5 text-[12.5px] font-medium"
-            >
-              {(
-                [
-                  ["kanban", "Kanban", SquareKanban],
-                  ["lista", "Lista", LayoutList],
-                ] as const
-              ).map(([valor, rotulo, Icone]) => (
-                <button
-                  key={valor}
-                  type="button"
-                  onClick={() => trocarVisao(valor)}
-                  aria-pressed={visao === valor}
-                  className={cn(
-                    "flex h-[34px] min-w-[80px] items-center justify-center gap-1.5 rounded-md px-3 transition-colors",
-                    visao === valor
-                      ? "bg-surface-5 text-foreground"
-                      : "text-text-secondary hover:text-foreground",
-                  )}
-                >
-                  <Icone className="size-4" aria-hidden />
-                  {rotulo}
-                </button>
-              ))}
-            </div>
-          </div>
-          <BotaoProtegido
-            podeEditar={podeEditar}
-            dica={dica}
-            onClick={() => setNovoAberto(true)}
-          >
-            <Plus className="size-4" /> Novo lead
-          </BotaoProtegido>
-          <BotaoProtegido
-            podeEditar={podeEditar}
-            dica={dica}
-            variant="outline"
-            onClick={() => setImportAberto(true)}
-          >
-            <Upload className="size-4" /> Importar planilha
-          </BotaoProtegido>
+    <div className="flex flex-col gap-3.5 p-6">
+      <PageHeader
+        title="Leads"
+        description="Todos os contatos no funil da clínica, do primeiro contato ao comparecimento"
+      >
+        {/* Some por CSS, nao por estado: o estado de tela estreita so fica
+            pronto DEPOIS da montagem, e trocar o DOM naquele instante
+            derrubava o foco de quem navega por teclado. */}
+        <div className="hidden lg:contents">
+          <SegmentedControl
+            options={VISOES}
+            value={visao}
+            onChange={trocarVisao}
+            ariaLabel="Modo de exibição"
+          />
         </div>
-      </div>
+        <BotaoProtegido
+          podeEditar={podeEditar}
+          dica={dica}
+          variant="outline"
+          onClick={() => setImportAberto(true)}
+        >
+          <Upload className="size-4" /> Importar planilha
+        </BotaoProtegido>
+        <BotaoProtegido
+          podeEditar={podeEditar}
+          dica={dica}
+          onClick={() => setNovoAberto(true)}
+        >
+          <Plus className="size-4" /> Novo lead
+        </BotaoProtegido>
+      </PageHeader>
+
+      <AvisoCelular />
+
+      <FiltrosLeads
+        jornada={jornada}
+        valores={valores}
+        responsaveis={responsaveisDoFiltro}
+        aoMudar={mudarFiltro}
+        aoLimpar={limparFiltros}
+      />
+
+      {cortado ? (
+        <Aviso tom="info" role="note">
+          Mostrando{" "}
+          <span className="cz-num font-bold">
+            {numero.format(leads.length)}
+          </span>{" "}
+          de{" "}
+          <span className="cz-num font-bold">{numero.format(total ?? 0)}</span>{" "}
+          leads, os de contato mais recente. Use os filtros para achar alguém
+          entre eles.
+        </Aviso>
+      ) : null}
 
       {leadsQuery.isError && leads.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
-          <TriangleAlert
-            className="size-4 shrink-0 [color:var(--alert)]"
-            aria-hidden
-          />
-          <p className="text-sm text-text-secondary">
-            Não foi possível atualizar os leads. Os dados exibidos podem estar
-            desatualizados.
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-auto"
-            onClick={() => void leadsQuery.refetch()}
-          >
-            Tentar de novo
-          </Button>
-        </div>
+        <Aviso
+          tom="warning"
+          acao={
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void leadsQuery.refetch()}
+            >
+              Tentar de novo
+            </Button>
+          }
+        >
+          Não foi possível atualizar os leads. Os dados exibidos podem estar
+          desatualizados.
+        </Aviso>
       ) : null}
 
       {leadsQuery.isError && leads.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-12 text-center">
-          <TriangleAlert className="size-5 [color:var(--alert)]" aria-hidden />
-          <p className="text-sm text-text-secondary">
-            Não foi possível carregar os leads.
-          </p>
-          <Button variant="outline" onClick={() => void leadsQuery.refetch()}>
-            Tentar de novo
-          </Button>
-        </div>
+        <Card>
+          <EmptyState
+            tom="erro"
+            title="Não foi possível carregar os leads"
+            description="A lista não chegou do servidor. Confira a internet e tente de novo."
+            action={{
+              label: "Tentar de novo",
+              onClick: () => void leadsQuery.refetch(),
+              variant: "outline",
+            }}
+          />
+        </Card>
       ) : leadsQuery.isLoading ? (
         visaoEfetiva === "kanban" ? (
-          <div className="flex gap-3 overflow-x-auto pb-2" aria-hidden>
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <Skeleton key={i} className="h-[420px] w-[260px] shrink-0" />
-            ))}
-          </div>
+          <ColunasCarregando colunas={jornada.length} />
         ) : (
-          <TableSkeleton columns={6} />
+          <TableSkeleton columns={9} />
         )
       ) : vazioInicial ? (
-        <EmptyState
-          icon={UsersRound}
-          title="Nenhum lead ainda"
-          description="Os leads chegam sozinhos pelas conversas do WhatsApp. Você também pode criar um lead ou trazer sua base numa planilha."
-        >
-          <div className="flex flex-wrap justify-center gap-2">
+        <Card>
+          <EmptyState
+            icon={UsersRound}
+            title="Nenhum lead ainda"
+            description="Os leads chegam sozinhos pelas conversas do WhatsApp. Você também pode criar um lead ou trazer sua base numa planilha."
+          >
             <BotaoProtegido
               podeEditar={podeEditar}
               dica={dica}
+              variant="outline"
               onClick={() => setNovoAberto(true)}
             >
               Criar lead
@@ -316,21 +437,25 @@ export function LeadsClient({
             >
               Importar planilha
             </BotaoProtegido>
-          </div>
-        </EmptyState>
+          </EmptyState>
+        </Card>
       ) : leadsFiltrados.length === 0 ? (
-        <EmptyState
-          icon={SearchX}
-          title="Nenhum lead com esses filtros"
-          description="Ajuste os filtros ou limpe para ver todos os leads."
-          onClearFilters={limparFiltros}
-        />
+        <Card>
+          <EmptyState
+            compact
+            icon={SearchX}
+            title="Nenhum lead com esses filtros"
+            description="Ajuste os filtros ou limpe para ver todos os leads."
+            onClearFilters={limparFiltros}
+          />
+        </Card>
       ) : visaoEfetiva === "kanban" ? (
         <KanbanBoard
           jornada={jornada}
           clinicId={clinicId}
           leads={leadsFiltrados}
           membros={membros}
+          reguas={reguas}
           podeEditar={podeEditar}
           onAbrirLead={abrirLead}
         />
@@ -352,10 +477,12 @@ export function LeadsClient({
           jornada={jornada}
           clinicId={clinicId}
           selecionados={leadsSelecionados}
-          membros={membros}
+          responsaveis={responsaveis}
+          reguas={reguas}
           podeEditar={podeEditar}
           dica={dica}
-          onLimpar={() => setSelecionados([])}
+          onLimpar={limparSelecao}
+          aoConcluir={(restantes) => setSelecionados(new Set(restantes))}
         />
       ) : null}
 
@@ -367,12 +494,15 @@ export function LeadsClient({
         membros={membros}
         podeEditar={podeEditar}
         dica={dica}
+        podeAgendar={podeAgendar}
+        dicaAgendar={dicaAgendar}
+        soAtribuidas={soAtribuidas}
         onFechar={() => setLeadAbertoId(null)}
       />
 
       <ModalNovoLead
         aberto={novoAberto}
-        membros={membros}
+        responsaveis={responsaveis}
         onFechar={() => setNovoAberto(false)}
         aoCriar={invalidar}
       />

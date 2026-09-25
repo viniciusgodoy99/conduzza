@@ -1,11 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { AppointmentStatus } from "@/lib/design/status";
+import type { AppointmentStatus, ConsentStatus } from "@/lib/design/status";
 import { limitesDoDia } from "@/lib/domain/horarios";
-import {
-  consentimentoVigenteDeLinhas,
-  type LinhaConsent,
-} from "@/lib/domain/leads-ui";
+import type { LinhaConsent } from "@/lib/domain/leads-ui";
 
 // Tipos e fetchers da Tela 2 (Confirmacoes). Isomorficos como os da Agenda:
 // recebem o SupabaseClient e rodam no servidor (carga inicial) e no browser
@@ -55,6 +52,13 @@ export type ConsultaDaConfirmacao = {
   } | null;
   /** Autorizacao vigente para receber mensagem no WhatsApp. */
   consent_ativo: boolean;
+  /**
+   * Os tres casos que a tela separa (achado 57): autorizado, "pediu para nao
+   * receber" (revogado) e "sem autorizacao registrada" (nunca houve linha).
+   * Dizer "nao autorizou" para quem so nunca foi registrado dava a entender
+   * que o paciente tinha recusado.
+   */
+  consent_estado: ConsentStatus;
   /** Conversa aberta do contato, para o atalho "Abrir conversa". */
   conversation_id: string | null;
   /** O que a regua fez (ou nao fez) por esta consulta ate agora. */
@@ -91,6 +95,13 @@ export type ReguaDeConfirmacao = {
    * a primeira mensagem sair.
    */
   primeira_ativacao: boolean;
+  /**
+   * Ligar esta regua pede o aviso da linha de base (achado 49): so a regua de
+   * CONFIRMACAO (e o ganho dela que a taxa de falta mede) e so enquanto a
+   * clinica nao tem nenhuma linha em no_show_baseline. Pos falta e follow-up
+   * nunca pedem.
+   */
+  pede_linha_de_base: boolean;
   /**
    * Quantos toques DESTA regua sairam nas ultimas 24 horas e quantos foram
    * pulados. Sem isto, "Regua ligada" era a unica informacao da tela, e uma
@@ -135,7 +146,7 @@ function primeiro<T>(valor: T | T[] | null | undefined): T | null {
 
 function normalizarConsulta(
   row: Record<string, unknown>,
-  consentPorContato: Map<string, boolean>,
+  consentPorContato: Map<string, ConsentStatus>,
   conversaPorContato: Map<string, string>,
   toquePorConsulta?: Map<string, EstadoDoToque>,
 ): ConsultaDaConfirmacao {
@@ -156,7 +167,10 @@ function normalizarConsulta(
     service_link,
     remarcacao_pedida_em:
       (row.remarcacao_pedida_em as string | null | undefined) ?? null,
-    consent_ativo: consentPorContato.get(row.contact_id as string) ?? false,
+    consent_ativo:
+      consentPorContato.get(row.contact_id as string) === "autorizado",
+    consent_estado:
+      consentPorContato.get(row.contact_id as string) ?? "sem_autorizacao",
     conversation_id: conversaPorContato.get(row.contact_id as string) ?? null,
     toque: toquePorConsulta?.get(row.id as string) ?? { situacao: "nenhum" },
   } as ConsultaDaConfirmacao;
@@ -187,24 +201,46 @@ async function conversasDosContatos(
 }
 
 /**
- * Autorizacao vigente de cada contato, numa consulta so. Mesma regra da RPC
- * consentimento_vigente: a linha mais recente do canal manda, e uma revogacao
- * recente derruba um consentimento antigo.
+ * Estado da autorizacao de WhatsApp a partir das linhas do contato. Mesma
+ * regra da RPC consentimento_vigente (e de consentimentoVigenteDeLinhas): a
+ * linha mais recente do canal manda, e uma revogacao recente derruba um
+ * consentimento antigo. Sem linha nenhuma, "sem autorizacao registrada".
+ */
+function estadoDoConsentimentoDeLinhas(
+  linhas: readonly LinhaConsent[],
+): ConsentStatus {
+  const maisRecente = linhas
+    .filter((linha) => linha.channel === "whatsapp")
+    .sort((a, b) => b.granted_at.localeCompare(a.granted_at))[0];
+  if (!maisRecente) {
+    return "sem_autorizacao";
+  }
+  return maisRecente.revoked_at === null ? "autorizado" : "revogado";
+}
+
+/**
+ * Autorizacao vigente de cada contato, numa consulta so. Erro de leitura
+ * LANCA: tratar a falha como "sem autorizacao" mostraria a clinica inteira
+ * como nao autorizada (docs/06, risco 20), e numero falso e pior que estado
+ * de erro.
  */
 async function consentimentoDosContatos(
   supabase: SupabaseClient,
   clinicId: string,
   contactIds: string[],
-): Promise<Map<string, boolean>> {
-  const mapa = new Map<string, boolean>();
+): Promise<Map<string, ConsentStatus>> {
+  const mapa = new Map<string, ConsentStatus>();
   if (contactIds.length === 0) {
     return mapa;
   }
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("contact_consent")
     .select("contact_id, channel, granted_at, revoked_at")
     .eq("clinic_id", clinicId)
     .in("contact_id", contactIds);
+  if (error) {
+    throw new Error(error.message);
+  }
 
   const porContato = new Map<string, LinhaConsent[]>();
   for (const linha of (data ?? []) as (LinhaConsent & {
@@ -217,7 +253,7 @@ async function consentimentoDosContatos(
   for (const contactId of contactIds) {
     mapa.set(
       contactId,
-      consentimentoVigenteDeLinhas(porContato.get(contactId) ?? []),
+      estadoDoConsentimentoDeLinhas(porContato.get(contactId) ?? []),
     );
   }
   return mapa;
@@ -408,10 +444,12 @@ export async function fetchReguaPadrao(
   }
 
   const desde24h = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-  const [passos, jaEnviou, enviados, pulados] = await Promise.all([
+  const [passos, jaEnviou, enviados, pulados, linhaDeBase] = await Promise.all([
     supabase
       .from("cadence_step")
-      .select("id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename")
+      .select(
+        "id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
+      )
       .eq("clinic_id", clinicId)
       .eq("cadence_id", regua.id as string)
       .order("offset_minutes"),
@@ -442,6 +480,15 @@ export async function fetchReguaPadrao(
       .eq("cadence_step.cadence_id", regua.id as string)
       .not("skipped_reason", "is", null)
       .gte("scheduled_for", desde24h),
+    // Linha de base so importa para a confirmacao (achado 49). Basta saber
+    // se existe UMA; erro de leitura cai em "pede", que so mostra o lembrete.
+    kind === "confirmacao"
+      ? supabase
+          .from("no_show_baseline")
+          .select("id")
+          .eq("clinic_id", clinicId)
+          .limit(1)
+      : Promise.resolve(null),
   ]);
 
   return {
@@ -453,6 +500,8 @@ export async function fetchReguaPadrao(
     send_weekdays: (regua.send_weekdays as number[] | null) ?? null,
     passos: (passos.data ?? []) as PassoDaReguaDaTela[],
     primeira_ativacao: (jaEnviou.data ?? []).length === 0,
+    pede_linha_de_base:
+      linhaDeBase !== null && (linhaDeBase.data ?? []).length === 0,
     enviados_24h: enviados.count ?? 0,
     pulados_24h: pulados.count ?? 0,
   };

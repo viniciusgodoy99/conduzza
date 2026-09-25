@@ -2,16 +2,17 @@
 
 import {
   CircleCheck,
-  CircleX,
   Download,
+  OctagonAlert,
   RotateCcw,
-  TriangleAlert,
   Upload,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { importarContatosAction } from "@/app/(app)/leads/actions";
 import type { MapeamentoDeColunas } from "@/components/leads/importacao/passo-mapeamento";
+import { Aviso } from "@/components/shared/aviso";
+import { BarraDeProgresso } from "@/components/shared/barra-de-progresso";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -26,12 +27,22 @@ import {
   validarLinha,
   type LinhaImportada,
 } from "@/lib/domain/importacao";
+import { chaveDeTelefone, formatarTelefone } from "@/lib/domain/telefone";
 import type { DeclaracaoDeConsentimento } from "@/lib/integrations/importar-contatos";
 import { baixarCsv, gerarCsv } from "@/lib/utils/csv";
 
 // Passo 4 da importacao: previa das linhas validadas e o envio em lotes de
 // 500 pela importarContatosAction, com progresso real, retomada do lote que
 // falhou e download das linhas rejeitadas.
+//
+// Linhas repetidas sao contadas pela CHAVE do telefone (lib/domain/telefone):
+// "(84) 98812-3456" e "8488123456" sao a mesma pessoa, e o servidor ja une as
+// duas pela chave; contar por texto exato prometia dois contatos onde entra
+// um so.
+//
+// A previa diz que a importacao NAO inscreve ninguem em follow-up (decisao
+// do dono de 24/09/2026): o planejador ignora o relogio de etapa de quem
+// nasceu pela planilha, ate alguem mudar a etapa do contato.
 
 const TAMANHO_DO_LOTE = 500;
 const LINHAS_NA_PREVIA = 20;
@@ -69,6 +80,7 @@ export function PassoPrevia({
   linhas,
   mapeamento,
   declaracao,
+  recodificado = false,
   aoOcupado,
   aoGravarLote,
   aoTerminar,
@@ -78,6 +90,8 @@ export function PassoPrevia({
   linhas: string[][];
   mapeamento: MapeamentoDeColunas;
   declaracao: DeclaracaoDeConsentimento;
+  /** O arquivo nao era UTF-8 e foi lido como Windows-1252 (Excel pt-BR) */
+  recodificado?: boolean;
   /** Avisa o modal para travar o fechamento enquanto grava. */
   aoOcupado: (ocupado: boolean) => void;
   /** Chamado a cada lote gravado: a tela de Leads precisa recarregar. */
@@ -103,11 +117,12 @@ export function PassoPrevia({
         });
         return;
       }
-      if (validasPorTelefone.has(resultado.linha.phone_e164)) {
+      const chave = chaveDeTelefone(resultado.linha.phone_e164);
+      if (validasPorTelefone.has(chave)) {
         linhasRepetidas += 1;
         return;
       }
-      validasPorTelefone.set(resultado.linha.phone_e164, resultado.linha);
+      validasPorTelefone.set(chave, resultado.linha);
     });
     return {
       validas: [...validasPorTelefone.values()],
@@ -179,36 +194,39 @@ export function PassoPrevia({
   if (fase.etapa === "concluido") {
     return (
       <div className="grid gap-3">
-        <div className="grid gap-2 rounded-lg border p-4">
-          <p className="flex items-center gap-2 text-sm font-semibold">
+        <div className="grid gap-3 rounded-card border border-border bg-card p-4 shadow-sm">
+          <p className="flex items-center gap-2 text-base font-bold text-text-strong">
             <CircleCheck
-              className="size-4 shrink-0"
-              style={{ color: "var(--success)" }}
+              className="size-[18px] shrink-0 text-success-text"
               aria-hidden
             />
             Importação concluída
           </p>
-          <dl className="grid gap-1 text-sm">
+          <dl className="grid gap-1.5 text-[13px]">
             <div className="flex items-center justify-between gap-4">
               <dt className="text-text-secondary">Contatos novos</dt>
-              <dd className="font-medium">
+              <dd className="cz-num font-semibold text-text-strong">
                 {numero.format(fase.totais.importados)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-4">
               <dt className="text-text-secondary">Contatos atualizados</dt>
-              <dd className="font-medium">
+              <dd className="cz-num font-semibold text-text-strong">
                 {numero.format(fase.totais.atualizados)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-4">
               <dt className="text-text-secondary">Linhas inválidas</dt>
-              <dd className="font-medium">{numero.format(invalidas.length)}</dd>
+              <dd className="cz-num font-semibold text-text-strong">
+                {numero.format(invalidas.length)}
+              </dd>
             </div>
           </dl>
           {fase.totais.pulados > 0 ? (
             <p className="text-xs text-text-secondary">
-              {numero.format(fase.totais.pulados)}{" "}
+              <span className="cz-num">
+                {numero.format(fase.totais.pulados)}
+              </span>{" "}
               {fase.totais.pulados === 1
                 ? "contato já tinha autorização e foi mantido"
                 : "contatos já tinham autorização e foram mantidos"}{" "}
@@ -216,34 +234,25 @@ export function PassoPrevia({
             </p>
           ) : null}
           {fase.totais.mantidos_sem_autorizacao > 0 ? (
-            <div
+            <Aviso
+              tom="warning"
               role="note"
-              className="grid gap-1 rounded-lg border px-3 py-2.5"
-              style={{
-                borderColor: "var(--warning)",
-                backgroundColor: "var(--warning-bg)",
-                color: "var(--warning-text)",
-              }}
-            >
-              <p className="flex items-center gap-2 text-sm font-medium">
-                <TriangleAlert className="size-4 shrink-0" aria-hidden />
-                {numero.format(fase.totais.mantidos_sem_autorizacao)}{" "}
-                {fase.totais.mantidos_sem_autorizacao === 1
+              titulo={`${numero.format(fase.totais.mantidos_sem_autorizacao)} ${
+                fase.totais.mantidos_sem_autorizacao === 1
                   ? "pessoa pediu para não receber mensagens"
-                  : "pessoas pediram para não receber mensagens"}
-              </p>
-              <p className="text-xs">
-                Os dados entraram, mas elas continuam sem autorização e nenhum
-                envio automático as alcança. Para voltar a enviar, abra a ficha
-                e registre como a pessoa autorizou de novo.
-              </p>
-            </div>
+                  : "pessoas pediram para não receber mensagens"
+              }`}
+            >
+              Os dados entraram, mas elas continuam sem autorização e nenhum
+              envio automático as alcança. Para voltar a enviar, abra a ficha e
+              registre como a pessoa autorizou de novo.
+            </Aviso>
           ) : null}
         </div>
         {invalidas.length > 0 ? (
           <Button
             variant="outline"
-            className="h-10 w-fit"
+            className="w-fit"
             onClick={baixarRejeitadas}
           >
             <Download className="size-4" /> Baixar rejeitados
@@ -254,39 +263,29 @@ export function PassoPrevia({
   }
 
   if (fase.etapa === "importando") {
-    const percentual =
-      validas.length === 0
-        ? 0
-        : Math.round((fase.enviados / validas.length) * 100);
     return (
-      <div role="status" className="grid gap-2 py-6">
-        <div className="flex items-center justify-between text-sm">
-          <span>Importando contatos, não feche esta janela.</span>
-          <span className="font-medium tabular-nums">
-            {numero.format(fase.enviados)} de {numero.format(validas.length)}
-          </span>
-        </div>
-        <div className="h-2 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-primary transition-all"
-            style={{ width: `${percentual}%` }}
-          />
-        </div>
+      <div role="status" className="py-6">
+        <BarraDeProgresso
+          valor={fase.enviados}
+          maximo={validas.length}
+          rotulo="Importando contatos, não feche esta janela."
+          legenda={`${numero.format(fase.enviados)} de ${numero.format(validas.length)}`}
+          ariaLabel={`${fase.enviados} de ${validas.length} contatos importados`}
+        />
       </div>
     );
   }
 
   return (
     <div className="grid gap-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13.5px] font-medium text-text-strong">
         <span className="flex items-center gap-1.5">
           <CircleCheck
-            className="size-4 shrink-0"
-            style={{ color: "var(--success)" }}
+            className="size-4 shrink-0 text-success-text"
             aria-hidden
           />
           <span>
-            {numero.format(validas.length)}{" "}
+            <span className="cz-num">{numero.format(validas.length)}</span>{" "}
             {validas.length === 1
               ? "contato pronto para importar"
               : "contatos prontos para importar"}
@@ -294,13 +293,12 @@ export function PassoPrevia({
         </span>
         {invalidas.length > 0 ? (
           <span className="flex items-center gap-1.5">
-            <CircleX
-              className="size-4 shrink-0"
-              style={{ color: "var(--alert)" }}
+            <OctagonAlert
+              className="size-4 shrink-0 text-alert-text"
               aria-hidden
             />
             <span>
-              {numero.format(invalidas.length)}{" "}
+              <span className="cz-num">{numero.format(invalidas.length)}</span>{" "}
               {invalidas.length === 1 ? "linha inválida" : "linhas inválidas"}
             </span>
           </span>
@@ -308,7 +306,7 @@ export function PassoPrevia({
       </div>
       {repetidas > 0 ? (
         <p className="text-xs text-text-secondary">
-          {numero.format(repetidas)}{" "}
+          <span className="cz-num">{numero.format(repetidas)}</span>{" "}
           {repetidas === 1
             ? "linha repetia um telefone e foi unida"
             : "linhas repetiam telefones e foram unidas"}{" "}
@@ -317,18 +315,14 @@ export function PassoPrevia({
       ) : null}
 
       {validas.length === 0 ? (
-        <p
-          role="alert"
-          className="text-sm"
-          style={{ color: "var(--alert-text)" }}
-        >
+        <Aviso tom="alert" role="alert">
           Nenhuma linha válida para importar. Volte e confira se a coluna de
           telefone está certa.
-        </p>
+        </Aviso>
       ) : (
         <>
-          <div className="max-h-64 overflow-auto rounded-lg border">
-            <Table>
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            <Table containerClassName="max-h-64">
               <TableHeader>
                 <TableRow>
                   <TableHead>Nome</TableHead>
@@ -340,12 +334,12 @@ export function PassoPrevia({
               </TableHeader>
               <TableBody>
                 {validas.slice(0, LINHAS_NA_PREVIA).map((linha) => (
-                  <TableRow key={linha.phone_e164}>
-                    <TableCell className="font-medium">
+                  <TableRow key={chaveDeTelefone(linha.phone_e164)}>
+                    <TableCell className="font-semibold text-text-strong">
                       {linha.name ?? ""}
                     </TableCell>
-                    <TableCell className="tabular-nums">
-                      {linha.phone_e164}
+                    <TableCell className="cz-num whitespace-nowrap">
+                      {formatarTelefone(linha.phone_e164)}
                     </TableCell>
                     <TableCell className="text-text-secondary">
                       {linha.email ?? ""}
@@ -363,46 +357,45 @@ export function PassoPrevia({
           </div>
           {validas.length > LINHAS_NA_PREVIA ? (
             <p className="text-xs text-text-secondary">
-              Mostrando as primeiras {LINHAS_NA_PREVIA} de{" "}
-              {numero.format(validas.length)} linhas válidas.
+              Mostrando as primeiras{" "}
+              <span className="cz-num">{LINHAS_NA_PREVIA}</span> de{" "}
+              <span className="cz-num">{numero.format(validas.length)}</span>{" "}
+              linhas válidas.
             </p>
           ) : null}
+          {recodificado ? (
+            <Aviso tom="info" role="note">
+              O arquivo não estava em UTF-8 e foi lido como planilha do Excel em
+              português. Confira se os acentos dos nomes acima estão certos
+              antes de importar.
+            </Aviso>
+          ) : null}
+          <Aviso tom="info" role="note" titulo="Sem follow-up automático">
+            Os contatos importados não recebem as réguas de follow-up só por
+            terem entrado pela planilha. A régua de uma etapa começa para eles
+            quando alguém mudar a etapa do contato.
+          </Aviso>
         </>
       )}
 
       {fase.etapa === "erro" ? (
-        <div
-          role="alert"
-          className="grid gap-1 rounded-lg border px-3 py-2.5"
-          style={{
-            borderColor: "var(--alert)",
-            backgroundColor: "var(--alert-bg)",
-            color: "var(--alert-text)",
-          }}
-        >
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <CircleX className="size-4 shrink-0" aria-hidden />
-            {fase.mensagem}
-          </p>
-          <p className="text-xs">
-            {numero.format(fase.enviados)} de {numero.format(validas.length)}{" "}
-            contatos já foram gravados. O restante espera este lote.
-          </p>
-        </div>
+        <Aviso tom="alert" role="alert" titulo={fase.mensagem}>
+          <span className="cz-num">{numero.format(fase.enviados)}</span> de{" "}
+          <span className="cz-num">{numero.format(validas.length)}</span>{" "}
+          contatos já foram gravados. O restante espera este lote.
+        </Aviso>
       ) : null}
 
       <div className="flex justify-end">
         {fase.etapa === "erro" ? (
           <Button
             variant="outline"
-            className="h-10"
             onClick={() => importarDesde(fase.loteIndice)}
           >
             <RotateCcw className="size-4" /> Tentar o lote de novo
           </Button>
         ) : (
           <Button
-            className="h-10"
             disabled={validas.length === 0}
             onClick={() => importarDesde(0)}
           >

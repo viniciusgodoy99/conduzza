@@ -236,6 +236,79 @@ test("papel leitura abre a ficha inteira com as ações desabilitadas e com dica
   await expect(
     page.getByText("Seu perfil não pode editar leads e pacientes"),
   ).toBeVisible();
+
+  // A dica da lista de espera fala da lista de espera, nao de confirmacoes
+  // (achado 10 da leva 2).
+  const espera = page.getByRole("button", {
+    name: "Adicionar à lista de espera",
+  });
+  await expect(espera).toBeDisabled();
+  await espera.locator("..").focus();
+  await expect(
+    page.getByText("Seu perfil não pode alterar a lista de espera"),
+  ).toBeVisible();
+});
+
+test("Abrir conversa leva à conversa resolvida quando não há outra", async ({
+  page,
+}) => {
+  // Achados 1 e 8 da leva 2 (achado 70): o Atendimento abre conversa
+  // resolvida pelo link, entao a ficha aponta para ela; o botao so fica
+  // desabilitado sem conversa nenhuma. A conversa e criada aqui e apagada no
+  // fim, para nao mexer nas contagens do Atendimento nos outros specs.
+  const d = dados();
+  const admin = adminClient();
+  const { data: contato } = await admin
+    .from("contact")
+    .select("clinic_id")
+    .eq("id", d.pacientes.comPacoteId)
+    .single()
+    .throwOnError();
+  // Sem conversa aberta antes: a resolvida e a unica que o link pode achar.
+  const { data: abertas } = await admin
+    .from("conversation")
+    .select("id")
+    .eq("contact_id", d.pacientes.comPacoteId)
+    .neq("status", "resolvida")
+    .throwOnError();
+  test.skip(
+    (abertas ?? []).length > 0,
+    "o paciente do fixture já tem conversa aberta",
+  );
+  const { data: resolvida } = await admin
+    .from("conversation")
+    .insert({
+      clinic_id: (contato as { clinic_id: string }).clinic_id,
+      contact_id: d.pacientes.comPacoteId,
+      status: "resolvida",
+      awaiting_reply: false,
+      last_message_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single()
+    .throwOnError();
+  const conversaId = (resolvida as { id: string }).id;
+
+  try {
+    await login(page, d.emails.gestor);
+    await page.goto(`/pacientes/${d.pacientes.comPacoteId}`);
+    await expect(
+      page.getByRole("link", { name: "Abrir conversa" }),
+    ).toHaveAttribute("href", `/atendimento?conversa=${conversaId}`);
+  } finally {
+    await admin.from("conversation").delete().eq("id", conversaId);
+  }
+});
+
+test("campo vazio da lista é texto, nunca hífen", async ({ page }) => {
+  // Receita 4.7 do docs/06: "Nenhuma ainda", "Ainda não medido", "Nenhum".
+  const d = dados();
+  await login(page, d.emails.gestor);
+  await page.goto("/pacientes");
+  await expect(linhaDaLista(page, NOME_COM_FALTAS)).toBeVisible();
+  await expect(page.getByRole("cell", { name: "-", exact: true })).toHaveCount(
+    0,
+  );
 });
 
 test("o filtro Com pacote deixa na lista quem tem saldo", async ({ page }) => {

@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 
+import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import { NAV_GROUPS } from "@/lib/navigation";
 import {
   fetchExcecoesDeConfirmacao,
   fetchFollowups,
@@ -39,11 +41,14 @@ export default async function AutomacoesPage({
   const { aba } = await searchParams;
 
   return (
-    <div className="grid gap-6 p-6">
+    <div className="mx-auto grid w-full max-w-content content-start gap-4 p-6">
       <PageHeader
+        eyebrow={NAV_GROUPS.inteligencia ?? undefined}
         title="Automações"
         description="As mensagens que saem sozinhas: o que dizem, quando saem e para quem."
       />
+      {/* Tela pensada para computador (brief secao 6): no celular, o aviso. */}
+      <AvisoCelular />
       <AutomacoesClient
         clinicId={active.clinicId}
         nomeDaClinica={active.clinicName}
@@ -60,6 +65,7 @@ export default async function AutomacoesPage({
           permissionHint(active.role, "automacoes") ??
           "Somente administradores e gestores alteram as automações"
         }
+        ehAdministrador={active.role === "admin"}
       />
     </div>
   );

@@ -8,7 +8,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 
 import { mudarEtapaAction } from "@/app/(app)/leads/actions";
@@ -16,20 +16,30 @@ import { KanbanColuna } from "@/components/leads/kanban-coluna";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
 import { agruparPorJornada, type EtapaDaJornada } from "@/lib/domain/jornada";
 import { compararPorProximaAcao } from "@/lib/domain/leads-ui";
-import { leadsKeys, type LeadResumo } from "@/lib/queries/leads";
+import {
+  leadsKeys,
+  type LeadResumo,
+  type ReguaDaEtapa,
+} from "@/lib/queries/leads";
 
 // Kanban da Tela 4: as colunas SAO A JORNADA DA CLINICA (funnel_stage_def),
 // na ordem que ela definiu, nao mais uma lista fixa de 6. Arrasto com
 // PointerSensor de 8px (o clique continua abrindo o drawer). Soltar em etapa
 // comum e otimista com rollback; soltar na etapa de papel PERDIDO nao
 // persiste nada: o modal de motivo decide, e cancelar devolve o cartao,
-// porque nada foi gravado.
+// porque nada foi gravado. A coluna cuja etapa tem regua de follow-up ligada
+// diz isso no cabecalho: soltar ali faz o lead autorizado receber a regua.
+//
+// O id do DndContext vem do useId: sem ele o dnd-kit numera o
+// aria-describedby dos cartoes por um contador global, que diverge entre o
+// servidor e o navegador e gerava erro de hidratacao.
 
 export function KanbanBoard({
   clinicId,
   jornada,
   leads,
   membros,
+  reguas,
   podeEditar,
   onAbrirLead,
 }: {
@@ -37,9 +47,12 @@ export function KanbanBoard({
   jornada: EtapaDaJornada[];
   leads: LeadResumo[];
   membros: Record<string, string>;
+  /** Etapas com regua de follow-up ligada; null quando nao deu para ler */
+  reguas: ReguaDaEtapa[] | null;
   podeEditar: boolean;
   onAbrirLead: (lead: LeadResumo) => void;
 }) {
+  const dndId = useId();
   const queryClient = useQueryClient();
   const sensores = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -93,15 +106,20 @@ export function KanbanBoard({
     );
   };
 
+  const reguaPorEtapa = new Map(
+    (reguas ?? []).map((regua) => [regua.etapa, regua.nome]),
+  );
+
   return (
-    <DndContext sensors={sensores} onDragEnd={aoSoltar}>
-      <div className="flex items-stretch gap-3 overflow-x-auto pb-2">
+    <DndContext id={dndId} sensors={sensores} onDragEnd={aoSoltar}>
+      <div className="grid cz-scroll auto-cols-[minmax(228px,1fr)] grid-flow-col items-start gap-3 overflow-x-auto pb-2">
         {jornada.map((etapa) => (
           <KanbanColuna
             key={etapa.chave}
             etapa={etapa}
             leads={grupos.get(etapa.chave) ?? []}
             membros={membros}
+            reguaNome={reguaPorEtapa.get(etapa.chave) ?? null}
             podeEditar={podeEditar}
             onAbrirLead={onAbrirLead}
           />

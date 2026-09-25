@@ -17,6 +17,10 @@ export type ContactSummary = {
   first_contact_at: string | null;
 };
 
+/** Tipo da ultima mensagem visivel ao paciente (coluna last_preview_kind). */
+export type TipoDaPrevia =
+  "texto" | "template" | "imagem" | "video" | "audio" | "documento" | "apagada";
+
 export type ConversationListItem = {
   id: string;
   status: ConversationStatus;
@@ -27,9 +31,28 @@ export type ConversationListItem = {
   last_message_at: string | null;
   /** quando o PACIENTE falou por ultimo; e a chave de ordenacao do Inbox */
   last_inbound_at: string | null;
+  /**
+   * Trecho (ate 120 caracteres) da ultima mensagem que o paciente ve, mantido
+   * por gatilho no banco (migration 20260925100000). Nota interna e evento
+   * nunca entram; apagada vem nula com o tipo 'apagada'. E DADO DE PACIENTE:
+   * so para a tela, nunca para log.
+   */
+  last_preview: string | null;
+  last_preview_kind: TipoDaPrevia | null;
+  /**
+   * Quem escreveu a mensagem da previa (migration 20260925120000), mantido
+   * pelo mesmo gatilho. O cartao marca a saida ("Voce:", "Clinica:", "IA:")
+   * para a resposta da clinica nao ser lida como fala do paciente.
+   */
+  last_preview_author: AutorDaPrevia | null;
+  /** A pessoa da equipe, quando o autor e 'usuario' ("Voce:" ou "Clinica:"). */
+  last_preview_author_user_id: string | null;
   tags: string[];
   contact: ContactSummary;
 };
+
+/** Os mesmos valores de message.author. */
+export type AutorDaPrevia = "paciente" | "usuario" | "ia" | "sistema";
 
 /** O pouco que a previa da citacao precisa mostrar dentro da bolha. */
 export type QuotedMessage = {
@@ -44,6 +67,14 @@ export type QuotedMessage = {
 
 export type MessageItem = {
   id: string;
+  /**
+   * A conversa da mensagem. O fio carrega tambem as conversas ANTERIORES do
+   * mesmo contato (historico), e e por este campo que ele desenha a divisa
+   * "Conversa resolvida em" e recusa citar mensagem de outra conversa.
+   * Opcional so para os testes que montam mensagem na mao; o select traz
+   * sempre.
+   */
+  conversation_id?: string;
   direction: "entrada" | "saida";
   author: "paciente" | "ia" | "usuario" | "sistema";
   author_user_id: string | null;
@@ -93,16 +124,40 @@ export type ComplianceDecision = {
   created_at: string;
 };
 
+/**
+ * A linha de autorizacao de WhatsApp que VIGORA, revogada ou nao. Null quando
+ * o contato nunca teve autorizacao registrada. O painel precisa separar os
+ * tres casos: autorizado, "pediu para nao receber" e "nunca autorizou".
+ */
 export type ConsentInfo = {
   source: string;
   granted_at: string;
+  revoked_at: string | null;
 } | null;
 
+/** O estado de autorizacao que a tela mostra (CONSENT_STATUS). */
+export function estadoDoConsentimento(
+  consent: ConsentInfo,
+): "autorizado" | "revogado" | "sem_autorizacao" {
+  if (!consent) {
+    return "sem_autorizacao";
+  }
+  return consent.revoked_at ? "revogado" : "autorizado";
+}
+
 const CONVERSATION_SELECT =
-  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, tags, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
+  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,
+  /**
+   * Total de resolvidas (um numero). FORA da chave-mae da lista de proposito:
+   * as gravacoes por chave-mae (setQueriesData de lida e etiqueta) tratam
+   * tudo ali como lista de conversas. Quem invalida a lista invalida este
+   * tambem (tempo real e acoes da conversa).
+   */
+  totalResolvidas: (clinicId: string) =>
+    ["conversations-resolvidas-total", clinicId] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,
   decisions: (conversationId: string) => ["decisions", conversationId] as const,
   consent: (contactId: string) => ["consent", contactId] as const,
@@ -148,11 +203,16 @@ export async function fetchConversations(
   return ((data ?? []) as Record<string, unknown>[]).map(normalizeConversation);
 }
 
+// Teto do arquivo de resolvidas carregado de uma vez. A lista precisa dele
+// para nao mostrar o teto como se fosse o total, e para avisar que a busca
+// nas resolvidas para nele (achado L3 da revisao da leva 2).
+export const RESOLVIDAS_LIMIT = 100;
+
 // Conversas resolvidas, sob demanda (quando o usuario abre o filtro).
 export async function fetchResolvedConversations(
   supabase: SupabaseClient,
   clinicId: string,
-  limit = 100,
+  limit = RESOLVIDAS_LIMIT,
 ): Promise<ConversationListItem[]> {
   const { data, error } = await supabase
     .from("conversation")
@@ -167,8 +227,58 @@ export async function fetchResolvedConversations(
   return ((data ?? []) as Record<string, unknown>[]).map(normalizeConversation);
 }
 
+// Uma conversa pelo id, para o link /atendimento?conversa=<id> (Confirmacoes,
+// ficha do paciente, drawer do lead). Vem com a SESSAO de quem abre: a RLS
+// decide se ela existe para esta pessoa (outra clinica, ou o profissional
+// fora da propria conversa, volta nulo). Serve tambem para a conversa que
+// ficou fora das 300 ativas carregadas e para a resolvida.
+export async function fetchConversationById(
+  supabase: SupabaseClient,
+  clinicId: string,
+  conversationId: string,
+): Promise<ConversationListItem | null> {
+  const { data, error } = await supabase
+    .from("conversation")
+    .select(CONVERSATION_SELECT)
+    .eq("clinic_id", clinicId)
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(error.message);
+  }
+  return data ? normalizeConversation(data as Record<string, unknown>) : null;
+}
+
+// So se EXISTE alguma resolvida (head, sem trazer linha): decide entre
+// "Nenhuma conversa ainda" e "Nenhuma conversa em andamento" com atalho para
+// o arquivo, quando nao ha conversa ativa.
+export async function existeConversaResolvida(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<boolean> {
+  return (await contarConversasResolvidas(supabase, clinicId)) > 0;
+}
+
+// Total de resolvidas que ESTA pessoa ve (head, sem trazer linha): e o numero
+// do chip "Resolvida" quando o arquivo passa do teto carregado. Pela sessao,
+// entao a RLS recorta (o profissional conta so as dele).
+export async function contarConversasResolvidas(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("conversation")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", clinicId)
+    .eq("status", "resolvida");
+  if (error) {
+    throw new Error(error.message);
+  }
+  return count ?? 0;
+}
+
 const MESSAGE_SELECT =
-  "id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, " +
+  "id, conversation_id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, " +
   // Auto-juncao: a citada e outra linha da MESMA tabela. O apelido aponta para
   // a COLUNA, nao para o nome da chave estrangeira: numa relacao de uma tabela
   // com ela mesma, o nome da chave nao diz qual ponta seguir, e o PostgREST
@@ -189,15 +299,49 @@ export type MessagePage = {
 // conversa parava de mostrar mensagem nova depois disso). O historico e
 // carregado sob demanda com o cursor. Ordena desc no banco (usa o indice
 // message(conversation_id, created_at desc)) e inverte para exibir asc.
+//
+// HISTORICO DO CONTATO (achado 10 da revisao). Resolver uma conversa e o
+// paciente voltar a escrever abre uma conversa NOVA (o indice unico so vale
+// para as nao resolvidas), e o fio comecava vazio: a atendente nao via o que
+// tinha sido combinado antes. Com o contactId, a pagina junta a conversa
+// aberta e as RESOLVIDAS do mesmo contato, na mesma ordem de tempo; a tela
+// desenha a divisa entre elas. A conversa aberta de outro ciclo nunca entra
+// (so as resolvidas e a propria). Tudo pela sessao: o profissional so ve as
+// conversas atribuidas a ele, e a RLS de message repete o recorte.
+async function conversasDoHistorico(
+  supabase: SupabaseClient,
+  conversationId: string,
+  contactId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("conversation")
+    .select("id")
+    .eq("contact_id", contactId)
+    .or(`status.eq.resolvida,id.eq.${conversationId}`)
+    // Teto de ciclos: o fio pagina por tempo, e um contato de anos nao pode
+    // virar um filtro sem fim. A propria conversa entra sempre (abaixo).
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) {
+    throw new Error(error.message);
+  }
+  const ids = ((data ?? []) as { id: string }[]).map((linha) => linha.id);
+  return ids.includes(conversationId) ? ids : [...ids, conversationId];
+}
+
 export async function fetchMessagesPage(
   supabase: SupabaseClient,
   conversationId: string,
   cursor?: string,
+  contactId?: string,
 ): Promise<MessagePage> {
+  const conversas = contactId
+    ? await conversasDoHistorico(supabase, conversationId, contactId)
+    : [conversationId];
   let query = supabase
     .from("message")
     .select(MESSAGE_SELECT)
-    .eq("conversation_id", conversationId)
+    .in("conversation_id", conversas)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(MESSAGES_PAGE_SIZE);
@@ -242,16 +386,21 @@ export async function fetchComplianceDecisions(
   return (data ?? []) as ComplianceDecision[];
 }
 
+// A linha MAIS RECENTE do canal, revogada ou nao: a mesma regra da RPC
+// consentimento_vigente (e de lib/domain/leads-ui.ts). Filtrar por ativa
+// escondia a revogacao, e o painel dizia "a clinica so pode responder quando
+// o contato escrever primeiro" para quem PEDIU para nao receber mensagens.
 export async function fetchConsent(
   supabase: SupabaseClient,
   contactId: string,
 ): Promise<ConsentInfo> {
   const { data, error } = await supabase
     .from("contact_consent")
-    .select("source, granted_at")
+    .select("source, granted_at, revoked_at")
     .eq("contact_id", contactId)
-    .eq("active", true)
+    .eq("channel", "whatsapp")
     .order("granted_at", { ascending: false })
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) {

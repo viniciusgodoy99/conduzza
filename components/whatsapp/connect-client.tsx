@@ -1,21 +1,24 @@
 "use client";
 
+import { TZDate } from "@date-fns/tz";
+import { format } from "date-fns";
 import {
-  CircleCheck,
   FlaskConical,
-  Info,
+  Lightbulb,
+  MessageCircle,
   Plug,
-  QrCode,
   RefreshCw,
-  TriangleAlert,
   Unplug,
 } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 
+import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -28,19 +31,18 @@ import {
   pollWhatsAppStatusAction,
   type ConnectState,
 } from "@/lib/actions/whatsapp-connect";
+import { WHATSAPP_CONNECTION_STATUS } from "@/lib/design/status";
+import { formatarTelefone } from "@/lib/domain/telefone";
 
 // Painel de conexao do numero da clinica. Vive em dois lugares: o onboarding
 // de primeiro acesso (/whatsapp) e a aba de WhatsApp das Configuracoes, entao
-// nao carrega largura, moldura nem texto de onboarding: a tela de fora e que
-// decide o enquadramento. O TooltipProvider e local porque o onboarding roda
-// fora do shell e a dica de acao desabilitada precisa dele.
-
-const STATUS_LABEL: Record<ConnectState["status"], string> = {
-  desconectado: "Desconectado",
-  aguardando_qr: "Aguardando leitura do QR code",
-  conectando: "Conectando",
-  conectado: "Conectado",
-};
+// nao carrega largura nem texto de onboarding: a tela de fora e que decide o
+// enquadramento. O TooltipProvider e local porque o onboarding roda fora do
+// shell e a dica de acao desabilitada precisa dele.
+//
+// Desenho do design system (docs/06 secao 5.12): cartao unico com o ladrilho
+// do WhatsApp (decorativo), a situacao da conexao em StatusChip (icone,
+// rotulo e cor, de WHATSAPP_CONNECTION_STATUS) e os avisos no Banner do DS.
 
 const DICA_PADRAO = "Somente administradores e gestores conectam o WhatsApp";
 
@@ -63,32 +65,48 @@ function comAvisoMantido(
   return aviso ? { ...proximo, aviso } : proximo;
 }
 
-function Aviso({ texto }: { texto: string }) {
-  return (
-    <p
-      role="alert"
-      className="flex items-start gap-1.5 text-sm [color:var(--warning-text)]"
-    >
-      <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-      {texto}
-    </p>
-  );
+/**
+ * Numero para exibir: o provedor guarda so digitos ("5584..."); a tela mostra
+ * como a recepcao discaria. Texto que nao e telefone volta como esta.
+ */
+function telefoneParaExibir(bruto: string): string {
+  const digitos = bruto.replace(/\D/g, "");
+  if (/^[+\d\s().-]+$/.test(bruto) && digitos.length >= 10) {
+    return formatarTelefone(`+${digitos}`);
+  }
+  return bruto;
 }
 
-function Erro({ texto }: { texto: string }) {
+/** Data da conexao no fuso da clinica (CLAUDE.md 3.6), nunca no do navegador. */
+function dataNoFusoDaClinica(
+  instante: string,
+  timezone: string,
+): string | null {
+  const ms = Date.parse(instante);
+  if (Number.isNaN(ms)) {
+    return null;
+  }
+  return format(new TZDate(ms, timezone), "dd/MM/yyyy");
+}
+
+// Ladrilho de identidade do canal. A cor do WhatsApp e decorativa: o estado
+// da conexao e dito pelo StatusChip, nunca por ela.
+function Identidade() {
   return (
-    <p role="alert" className="text-sm text-alert-text">
-      {texto}
-    </p>
+    <span
+      aria-hidden
+      className="grid size-10 shrink-0 place-items-center rounded-md bg-whatsapp/12"
+    >
+      <MessageCircle className="size-5 text-whatsapp" />
+    </span>
   );
 }
 
 function Orientacao() {
   return (
-    <p className="flex items-start gap-1.5 text-xs text-text-secondary">
-      <Info className="mt-px size-3.5 shrink-0" />
+    <Aviso tom="neutral" icone={Lightbulb} role="note">
       {ORIENTACAO_BUSINESS}
-    </p>
+    </Aviso>
   );
 }
 
@@ -98,7 +116,13 @@ export type ConnectClientProps = {
   canManage: boolean;
   /** dica da acao desabilitada; cai no texto padrao quando vem nula */
   hint?: string | null;
-  providerName: string;
+  /**
+   * Provedor da conta, ou o do ambiente quando a conta ainda nao existe.
+   * Nulo: producao sem provedor real configurado (a conexao e recusada).
+   */
+  providerName: string | null;
+  /** Fuso da clinica, para a data "desde" */
+  timezone: string;
 };
 
 export function ConnectClient({
@@ -107,6 +131,7 @@ export function ConnectClient({
   canManage,
   hint,
   providerName,
+  timezone,
 }: ConnectClientProps) {
   const [state, setState] = useState<ConnectState>(initial);
   const [pending, startTransition] = useTransition();
@@ -153,6 +178,8 @@ export function ConnectClient({
 
   const dica = hint ?? DICA_PADRAO;
   const demonstracao = providerName === "fake";
+  const canalNaoConfigurado = providerName === null;
+  const desde = connectedAt ? dataNoFusoDaClinica(connectedAt, timezone) : null;
 
   const connectButton = (
     <Button onClick={connect} disabled={!canManage || pending}>
@@ -183,7 +210,7 @@ export function ConnectClient({
 
   const disconnectButton = (
     <Button
-      variant="outline"
+      variant="destructive"
       onClick={disconnect}
       disabled={!canManage || pending}
     >
@@ -192,120 +219,159 @@ export function ConnectClient({
     </Button>
   );
 
+  const avisoDoCanal = canalNaoConfigurado ? (
+    <Aviso tom="alert" role="alert">
+      O canal de WhatsApp não está configurado no servidor, então o número não
+      conecta agora. Fale com o suporte.
+    </Aviso>
+  ) : null;
+
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="grid gap-4">
-        {state.status === "conectado" ? (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CircleCheck className="size-5 text-success" />
-                WhatsApp conectado
-              </CardTitle>
-              <CardDescription>
-                {state.displayPhone
-                  ? `Número ${state.displayPhone}`
-                  : "Número conectado"}
-                {connectedAt
-                  ? ` · desde ${new Date(connectedAt).toLocaleDateString("pt-BR")}`
-                  : null}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              {state.aviso ? <Aviso texto={state.aviso} /> : null}
-              {state.error ? <Erro texto={state.error} /> : null}
-              {demonstracao ? (
-                // O selo aparece tambem CONECTADO: e nesse estado que o
-                // simulador engana, porque todo envio vira "enviada" sem sair
-                // nada para o paciente.
-                <p className="flex items-center gap-1.5 text-xs text-text-secondary">
-                  <FlaskConical className="size-3.5 shrink-0" />
-                  Ambiente de demonstração: a conexão é simulada e nenhuma
-                  mensagem sai de verdade para o paciente.
-                </p>
-              ) : null}
-              <Orientacao />
-              <div>
-                {canManage ? (
-                  disconnectButton
-                ) : (
-                  <DisabledWithHint hint={dica}>
-                    {disconnectButton}
-                  </DisabledWithHint>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle>Conectar o número da clínica</CardTitle>
-              <CardDescription>
-                O WhatsApp da clínica é pareado com a plataforma, como no
-                WhatsApp Web: clique em conectar e leia o QR code no celular em
-                Aparelhos conectados. Recomendamos um número WhatsApp Business
-                dedicado da clínica.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <p className="text-sm text-text-secondary">
-                Situação atual: {STATUS_LABEL[state.status]}
-              </p>
-
-              {state.qrCode ? (
-                <div className="grid justify-items-center gap-2 rounded-lg border bg-card p-6">
-                  {state.qrCode.startsWith("data:image") ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={state.qrCode}
-                      alt="QR code para parear o WhatsApp"
-                      className="size-56"
-                    />
+      {state.status === "conectado" ? (
+        <Card>
+          <CardHeader>
+            <div className="flex min-w-0 items-center gap-3">
+              <Identidade />
+              <div className="grid min-w-0 gap-[3px]">
+                <CardTitle>WhatsApp conectado</CardTitle>
+                <CardDescription>
+                  {state.displayPhone ? (
+                    <>
+                      Número{" "}
+                      <span className="cz-num">
+                        {telefoneParaExibir(state.displayPhone)}
+                      </span>
+                    </>
                   ) : (
-                    <p className="max-w-sm text-center font-mono text-xs break-all text-text-secondary">
-                      {state.qrCode}
-                    </p>
+                    "Número conectado"
                   )}
-                  <p className="flex items-center gap-1.5 text-xs text-text-tertiary">
-                    <QrCode className="size-3.5" />O QR expira em instantes; se
-                    falhar, conecte de novo
-                  </p>
-                </div>
-              ) : null}
-
-              {state.error ? <Erro texto={state.error} /> : null}
-              {state.aviso ? <Aviso texto={state.aviso} /> : null}
-
-              <Orientacao />
-
-              <div className="flex flex-wrap gap-2">
-                {canManage ? (
-                  connectButton
-                ) : (
-                  <DisabledWithHint hint={dica}>
-                    {connectButton}
-                  </DisabledWithHint>
-                )}
-                {canManage ? (
-                  verifyButton
-                ) : (
-                  <DisabledWithHint hint={dica}>
-                    {verifyButton}
-                  </DisabledWithHint>
-                )}
+                  {desde ? (
+                    <>
+                      {" "}
+                      · desde <span className="cz-num">{desde}</span>
+                    </>
+                  ) : null}
+                </CardDescription>
               </div>
+            </div>
+            <CardAction>
+              <StatusChip definition={WHATSAPP_CONNECTION_STATUS.conectado} />
+            </CardAction>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {state.error ? (
+              <Aviso tom="alert" role="alert">
+                {state.error}
+              </Aviso>
+            ) : null}
+            {state.aviso ? (
+              <Aviso tom="warning" role="alert">
+                {state.aviso}
+              </Aviso>
+            ) : null}
+            {demonstracao ? (
+              // O selo aparece tambem CONECTADO: e nesse estado que o
+              // simulador engana, porque todo envio vira "enviada" sem sair
+              // nada para o paciente.
+              <Aviso tom="info" icone={FlaskConical}>
+                Ambiente de demonstração: a conexão é simulada e nenhuma
+                mensagem sai de verdade para o paciente.
+              </Aviso>
+            ) : null}
+            <Orientacao />
+            <div className="pt-1">
+              {canManage ? (
+                disconnectButton
+              ) : (
+                <DisabledWithHint hint={dica}>
+                  {disconnectButton}
+                </DisabledWithHint>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <div className="flex min-w-0 items-center gap-3">
+              <Identidade />
+              <div className="grid min-w-0 gap-[3px]">
+                <CardTitle>Conectar o número da clínica</CardTitle>
+                <CardDescription>
+                  O WhatsApp da clínica é pareado com a plataforma, como no
+                  WhatsApp Web: clique em conectar e leia o QR code no celular
+                  em Aparelhos conectados. Recomendamos um número WhatsApp
+                  Business dedicado da clínica.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {/* Rotulo e chip no MESMO elemento: o texto lido e "Situação
+                atual: Desconectado" (e2e de Configuracoes). */}
+            <p className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+              Situação atual:{" "}
+              <StatusChip
+                definition={WHATSAPP_CONNECTION_STATUS[state.status]}
+              />
+            </p>
 
-              {demonstracao ? (
-                <p className="flex items-center gap-1.5 text-xs text-text-secondary">
-                  <FlaskConical className="size-3.5 shrink-0" />
-                  Ambiente de demonstração: a conexão é simulada e conecta na
-                  hora, sem QR code.
+            {state.qrCode ? (
+              <div className="grid justify-items-center gap-3 rounded-xl bg-surface-4 p-5">
+                {state.qrCode.startsWith("data:image") ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={state.qrCode}
+                    alt="QR code para parear o WhatsApp"
+                    className="size-56 rounded-lg bg-(--qr-surface) p-3"
+                  />
+                ) : (
+                  <p className="max-w-sm text-center cz-num text-xs break-all text-text-secondary">
+                    {state.qrCode}
+                  </p>
+                )}
+                <p className="text-center text-xs text-text-secondary">
+                  O QR expira em instantes; se falhar, conecte de novo.
                 </p>
-              ) : null}
-            </CardContent>
-          </Card>
-        )}
-      </div>
+              </div>
+            ) : null}
+
+            {avisoDoCanal}
+            {state.error ? (
+              <Aviso tom="alert" role="alert">
+                {state.error}
+              </Aviso>
+            ) : null}
+            {state.aviso ? (
+              <Aviso tom="warning" role="alert">
+                {state.aviso}
+              </Aviso>
+            ) : null}
+            {demonstracao ? (
+              <Aviso tom="info" icone={FlaskConical}>
+                Ambiente de demonstração: a conexão é simulada e conecta na
+                hora, sem QR code.
+              </Aviso>
+            ) : null}
+
+            <Orientacao />
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              {canManage ? (
+                connectButton
+              ) : (
+                <DisabledWithHint hint={dica}>{connectButton}</DisabledWithHint>
+              )}
+              {canManage ? (
+                verifyButton
+              ) : (
+                <DisabledWithHint hint={dica}>{verifyButton}</DisabledWithHint>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </TooltipProvider>
   );
 }

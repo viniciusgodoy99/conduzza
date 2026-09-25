@@ -82,26 +82,30 @@ export function BlocoDeCitacao({
 }) {
   const { rotulo, Icone } = resumoDaCitacao(mensagem);
   const Container = aoClicar ? "button" : "div";
+  // Cores proprias, e nao herdadas da bolha: a faixa tem fundo afundado e
+  // aparece dentro de qualquer pele (inclusive a de tinta da IA) e acima do
+  // compositor. Texto forte e secundario sobre surface-4 passam AA nos dois
+  // temas; a cor de apoio da bolha nao passaria sobre esse fundo.
   return (
     <Container
       type={aoClicar ? "button" : undefined}
       onClick={aoClicar}
       className={cn(
-        "grid w-full gap-0.5 rounded-md border-l-[3px] py-1 pr-2 pl-2 text-left",
-        "[border-color:var(--brand)] bg-surface-3/70",
-        mensagem.is_internal_note && "[border-color:var(--warning)]",
-        aoClicar && "hover:bg-surface-4",
+        "grid w-full min-w-0 gap-0.5 rounded-md border-l-[3px] border-l-primary-edge bg-surface-4 py-1 pr-2 pl-2 text-left",
+        mensagem.is_internal_note && "border-l-(--warning-text)",
+        aoClicar &&
+          "cursor-pointer cz-transition hover:bg-surface-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
         className,
       )}
     >
-      <span className="flex items-center gap-1 text-[11px] font-semibold text-text-secondary">
+      <span className="flex items-center gap-1 text-[11px] font-semibold text-text-strong">
         {mensagem.is_internal_note ? (
-          <Lock className="size-3 shrink-0" />
+          <Lock aria-hidden className="size-3 shrink-0" />
         ) : null}
         {autor}
       </span>
-      <span className="flex items-center gap-1 truncate text-[12px] text-text-tertiary">
-        {Icone ? <Icone className="size-3 shrink-0" /> : null}
+      <span className="flex min-w-0 items-center gap-1 text-xs text-text-secondary">
+        {Icone ? <Icone aria-hidden className="size-3 shrink-0" /> : null}
         <span className="truncate">{rotulo}</span>
       </span>
     </Container>
@@ -120,12 +124,11 @@ export function CitacaoForaDoHistorico({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "rounded-md border-l-[3px] bg-surface-3/70 py-1 pr-2 pl-2",
-        "[border-color:var(--border-strong)]",
+        "rounded-md border-l-[3px] border-l-border-heavy bg-surface-4 py-1 pr-2 pl-2",
         className,
       )}
     >
-      <span className="text-[12px] text-text-tertiary">
+      <span className="text-xs text-text-secondary">
         Respondendo a uma mensagem que não está neste histórico
       </span>
     </div>

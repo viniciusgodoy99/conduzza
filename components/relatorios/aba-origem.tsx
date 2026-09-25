@@ -1,13 +1,15 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Megaphone } from "lucide-react";
+import { Inbox, Megaphone, TableProperties } from "lucide-react";
 
 import { rotuloDoCanal } from "@/components/leads/rotulos";
 import { BarraHorizontal } from "@/components/relatorios/barra-horizontal";
 import { CartaoKpi } from "@/components/relatorios/cartao-kpi";
 import { ConversoesMetaSecao } from "@/components/relatorios/conversoes-meta-secao";
+import { Secao } from "@/components/relatorios/secao";
 import { DataTable } from "@/components/shared/data-table";
+import { EmptyState } from "@/components/shared/empty-state";
 import {
   Select,
   SelectContent,
@@ -102,10 +104,18 @@ export function AbaOrigem({
     (max, canal) => Math.max(max, canal.leads),
     0,
   );
+  // Denominador da participacao de cada canal: a soma das proprias barras.
+  const totalDosCanais = atual.porCanal.reduce(
+    (soma, canal) => soma + canal.leads,
+    0,
+  );
 
   return (
-    <div className="grid gap-6">
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid gap-4">
+      <section
+        aria-label="Indicadores do período"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+      >
         <CartaoKpi
           rotulo="Leads no período"
           valor={atual.leads.toLocaleString("pt-BR")}
@@ -146,45 +156,55 @@ export function AbaOrigem({
         />
       </section>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Megaphone className="size-4 text-text-secondary" />
-          <h2 className="text-[15px] font-semibold">Leads por canal</h2>
-          <span className="text-sm text-text-tertiary">
-            {pctSeguro(rastreados, atual.leads)} com origem identificada
-          </span>
-        </div>
+      <Secao
+        titulo="Leads por canal"
+        icone={Megaphone}
+        meta={
+          atual.leads > 0 ? (
+            <>
+              <span className="cz-num">
+                {pctSeguro(rastreados, atual.leads)}
+              </span>{" "}
+              com origem identificada
+            </>
+          ) : null
+        }
+      >
         {atual.porCanal.length === 0 ? (
-          <p className="text-sm text-text-secondary">
-            Nenhum lead chegou neste período.
-          </p>
+          <EmptyState
+            compact
+            icon={Inbox}
+            title="Nenhum lead chegou neste período"
+          />
         ) : (
-          <div className="grid gap-2">
-            {atual.porCanal.map((canal) => (
-              <BarraHorizontal
-                key={canal.canal ?? "sem_atribuicao"}
-                rotulo={rotuloDoCanal(canal.canal) ?? "Sem atribuição"}
-                valor={canal.leads}
-                maximo={maiorCanal}
-                destaque={canal.canal !== null}
-              />
-            ))}
-          </div>
+          atual.porCanal.map((canal) => (
+            <BarraHorizontal
+              key={canal.canal ?? "sem_atribuicao"}
+              rotulo={rotuloDoCanal(canal.canal) ?? "Sem atribuição"}
+              valor={canal.leads}
+              maximo={maiorCanal}
+              total={totalDosCanais}
+              destaque={canal.canal !== null}
+            />
+          ))
         )}
-      </section>
+      </Secao>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-[15px] font-semibold">Detalhe</h2>
+      <Secao
+        titulo="Detalhe"
+        icone={TableProperties}
+        semPadding
+        acao={
+          // Dimensao por Select ate a decisao C33 (o brief pede dropdown).
           <div className="flex items-center gap-2">
-            <span className="text-sm text-text-secondary">Dimensão</span>
+            <span className="text-[13px] text-text-secondary">Dimensão</span>
             <Select
               value={dimensao}
               onValueChange={(valor) =>
                 aoMudarDimensao(valor === "campanha" ? "campanha" : "canal")
               }
             >
-              <SelectTrigger className="h-10 w-40">
+              <SelectTrigger className="w-40" aria-label="Dimensão">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -193,14 +213,16 @@ export function AbaOrigem({
               </SelectContent>
             </Select>
           </div>
-        </div>
+        }
+      >
         <DataTable
+          variant="bare"
           columns={COLUNAS}
           data={montarDetalheDeOrigem(atual, dimensao)}
           emptyTitle="Sem leads no período"
           emptyDescription="Os detalhes aparecem quando os primeiros contatos chegarem no período escolhido."
         />
-      </section>
+      </Secao>
 
       <ConversoesMetaSecao conversoes={conversoes} timezone={timezone} />
     </div>

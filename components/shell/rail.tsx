@@ -145,11 +145,12 @@ function ItemDoMenu({
     </Link>
   );
 
-  if (!recolhido) {
-    return link;
-  }
+  // O Tooltip existe sempre e so fica impedido de abrir com o rail aberto:
+  // a arvore do item nao muda quando o rail abre ou fecha. (A divergencia de
+  // ids que motivou olhar aqui vinha do Segment Explorer do Next em dev,
+  // desligado em next.config.ts; ver o comentario la.)
   return (
-    <Tooltip>
+    <Tooltip open={recolhido ? undefined : false}>
       <TooltipTrigger asChild>{link}</TooltipTrigger>
       <TooltipContent side="right" sideOffset={8}>
         {rotulo}

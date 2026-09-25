@@ -1,72 +1,66 @@
-import { CalendarCheck, Percent, TriangleAlert } from "lucide-react";
+import { CalendarCheck, CalendarMinus2, Percent } from "lucide-react";
 
-import { BarraComparecimento, SemDado } from "@/components/pacientes/comum";
-import type { StatusIcon } from "@/lib/design/status";
+import {
+  BarraComparecimento,
+  CartaoIndicador,
+  SemDado,
+  ValorIndicador,
+} from "@/components/pacientes/comum";
 import {
   porcentagemDeComparecimento,
   type IndicadoresDoPaciente,
 } from "@/lib/domain/pacientes-ui";
 
-// Os tres cartoes da ficha. Total de consultas = compareceu + faltou:
-// cancelada com aviso nao e o mesmo que sumir no dia, entao nao entra na
-// conta. Sem consulta nenhuma a taxa NAO existe e a tela poe traco, nunca 0%,
-// que leria como paciente que nunca aparece.
-
-function Cartao({
-  rotulo,
-  icone: Icone,
-  children,
-}: {
-  rotulo: string;
-  icone: StatusIcon;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid gap-2 rounded-lg border p-4">
-      <span className="flex items-center gap-1.5 text-xs font-medium text-text-secondary">
-        <Icone className="size-4 shrink-0" aria-hidden />
-        {rotulo}
-      </span>
-      {children}
-    </div>
-  );
-}
+// Os tres cartoes da ficha, na receita StatCard. Total de consultas =
+// compareceu + faltou: cancelada com aviso nao e o mesmo que sumir no dia,
+// entao nao entra na conta. Sem consulta nenhuma a taxa NAO existe e a tela
+// diz isso em texto (receita 4.7), nunca 0%, que leria como paciente que
+// nunca aparece, nem traco. Sem lime:
+// o lime da ficha e o "Salvar cadastro".
+//
+// Profissional so enxerga as consultas da propria agenda (RLS de
+// appointment): os rotulos dizem isso, para o numero nao passar por historico
+// completo do paciente.
 
 export function IndicadoresPaciente({
   indicadores,
+  soDaSuaAgenda = false,
 }: {
   indicadores: IndicadoresDoPaciente;
+  soDaSuaAgenda?: boolean;
 }) {
+  const sufixo = soDaSuaAgenda ? " na sua agenda" : "";
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      <Cartao rotulo="Total de consultas" icone={CalendarCheck}>
-        <span className="font-mono text-2xl leading-none font-semibold tabular-nums">
-          {indicadores.totalConsultas}
-        </span>
-      </Cartao>
-      <Cartao rotulo="Faltas" icone={TriangleAlert}>
-        <span className="font-mono text-2xl leading-none font-semibold tabular-nums">
-          {indicadores.faltas}
-        </span>
-      </Cartao>
-      <Cartao rotulo="Taxa de comparecimento" icone={Percent}>
+    <div className="grid gap-3 sm:grid-cols-3">
+      <CartaoIndicador
+        rotulo={`Total de consultas${sufixo}`}
+        icone={CalendarCheck}
+      >
+        <ValorIndicador>{indicadores.totalConsultas}</ValorIndicador>
+      </CartaoIndicador>
+      <CartaoIndicador rotulo={`Faltas${sufixo}`} icone={CalendarMinus2}>
+        <ValorIndicador>{indicadores.faltas}</ValorIndicador>
+      </CartaoIndicador>
+      <CartaoIndicador
+        rotulo={`Taxa de comparecimento${sufixo}`}
+        icone={Percent}
+      >
         {indicadores.taxaComparecimento === null ? (
-          <span className="font-mono text-2xl leading-none font-semibold">
-            <SemDado leitura="Sem consulta registrada" />
-          </span>
+          <SemDado texto="Ainda não medido" className="text-[13px]" />
         ) : (
-          <div className="grid gap-2">
-            <span className="font-mono text-2xl leading-none font-semibold tabular-nums">
+          <div className="grid gap-2.5">
+            <ValorIndicador>
               {porcentagemDeComparecimento(indicadores.taxaComparecimento)}
-            </span>
+            </ValorIndicador>
             <BarraComparecimento
               taxa={indicadores.taxaComparecimento}
               mostrarValor={false}
+              tamanho="md"
               className="max-w-none"
             />
           </div>
         )}
-      </Cartao>
+      </CartaoIndicador>
     </div>
   );
 }

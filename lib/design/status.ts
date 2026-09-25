@@ -140,6 +140,87 @@ export const CONVERSATION_STATUS: Record<ConversationStatus, StatusDefinition> =
     resolvida: { label: "Resolvida", tone: "success", icon: CircleCheck },
   };
 
+// Estado VISUAL da conversa (cartao da lista e cabecalho do fio), que nao e
+// so o status do banco. Achado 13 da revisao de liberacao: aguardando_humano
+// SEM awaiting_reply (a clinica respondeu pelo celular pareado, ou a regua
+// abriu a conversa e o paciente ainda nao escreveu) mostrava "Aguardando
+// voce" com a mao ambar, enquanto o contador do menu e o chip de filtro ja
+// nao contavam. A atendente respondia de novo e o paciente recebia duas
+// respostas. Esse caso vira "Sem atendente", neutro, com a forma de um lugar
+// vazio (CircleDashed, sempre neutral na tabela de icones).
+export const CONVERSA_SEM_ATENDENTE: StatusDefinition = {
+  label: "Sem atendente",
+  tone: "neutral",
+  icon: CircleDashed,
+};
+
+export type EstadoVisualDaConversa = {
+  definition: StatusDefinition;
+  /** Sobrescreve o rotulo do mapa (quem esta atendendo) */
+  label?: string;
+  /** Iniciais do atendente, a camada de forma de "em atendimento" */
+  avatarInitials?: string;
+};
+
+function iniciaisDoNome(nome: string): string {
+  const partes = nome.trim().split(/\s+/);
+  const primeira = partes[0]?.[0] ?? "";
+  const ultima =
+    partes.length > 1 ? (partes[partes.length - 1]?.[0] ?? "") : "";
+  return (primeira + ultima).toUpperCase();
+}
+
+/**
+ * Helper UNICO do estado visual da conversa: o cartao da lista e o
+ * cabecalho do fio chamam este, para os dois nunca divergirem.
+ * Em atendimento diz QUEM atende (achado 19): "Voce" para quem esta vendo,
+ * senao o primeiro nome (ou o nome inteiro, no cabecalho) com as iniciais.
+ */
+export function estadoVisualDaConversa(
+  conversa: {
+    status: ConversationStatus;
+    awaiting_reply: boolean;
+    assignee_user_id: string | null;
+  },
+  contexto: {
+    viewerId: string;
+    authorNames: Record<string, string>;
+    /** Cabecalho do fio: nome inteiro em vez do primeiro nome */
+    nomeCompleto?: boolean;
+  },
+): EstadoVisualDaConversa {
+  if (conversa.status === "aguardando_humano") {
+    return {
+      definition: conversa.awaiting_reply
+        ? CONVERSATION_STATUS.aguardando_humano
+        : CONVERSA_SEM_ATENDENTE,
+    };
+  }
+  if (conversa.status !== "em_atendimento") {
+    return { definition: CONVERSATION_STATUS[conversa.status] };
+  }
+  const definition = CONVERSATION_STATUS.em_atendimento;
+  const responsavel = conversa.assignee_user_id;
+  const nome = responsavel
+    ? (contexto.authorNames[responsavel]?.trim() ?? "")
+    : "";
+  if (responsavel !== null && responsavel === contexto.viewerId) {
+    return {
+      definition,
+      label: "Você",
+      avatarInitials: nome ? iniciaisDoNome(nome) : "EU",
+    };
+  }
+  if (!nome) {
+    return { definition, label: "Em atendimento", avatarInitials: "AT" };
+  }
+  return {
+    definition,
+    label: contexto.nomeCompleto ? nome : (nome.split(/\s+/)[0] ?? nome),
+    avatarInitials: iniciaisDoNome(nome),
+  };
+}
+
 // As 6 etapas do funil de leads, strings identicas ao check de contact.
 // Compareceu usa o MESMO icone e o MESMO tom do status de agendamento de
 // proposito: mesma semantica, mesma forma (a proibicao e mesmo icone em
@@ -337,6 +418,12 @@ export const CONSENT_STATUS: Record<ConsentStatus, StatusDefinition> = {
 // - Hourglass: pendencia (warning) e o item Lista de espera do menu (sem cor
 //   semantica).
 // - WifiOff: WhatsApp desconectado (alert).
+// - CalendarX2: SO o pacote vencido da ficha ("Venceu em", alert). O vazio da
+//   Agenda o usa como ilustracao do EmptyState, que nao e status.
+// - Umbrella: SO "Coberto" pelo convenio nos Vinculos de Cadastros (info). A
+//   familia Shield e da autorizacao para receber mensagens.
+// - ZapOff: SO "Impede encaixe" do bloqueio em Cadastros (warning); o Zap e o
+//   encaixe, sempre neutral.
 // Trocas decorrentes, cada uma no lote da sua tela: toque "pulado" MailWarning
 // e "na fila" Mail; aviso de recurso do modal de agendamento e dialogo da
 // regua CircleAlert; erro de Confirmacoes OctagonAlert; Recuperadas com tom

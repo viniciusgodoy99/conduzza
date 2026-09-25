@@ -1,6 +1,6 @@
 "use client";
 
-import { Tag, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -66,49 +66,34 @@ export function EtiquetasDaConversa({
 
   const botao = (
     <Button
-      variant="outline"
-      className="h-10"
+      variant="ghost"
+      size="sm"
+      className="w-fit"
       disabled={!podeEtiquetar || pendente}
     >
-      <Tag className="size-4" aria-hidden />
+      <Plus aria-hidden />
       Etiquetar
     </Button>
   );
 
   return (
-    <div className="grid gap-2">
+    <div className="grid justify-items-start gap-2">
       {aplicadas.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
-          {aplicadas.map((etiqueta) =>
-            podeEtiquetar ? (
-              <button
-                key={etiqueta.chave}
-                type="button"
-                disabled={pendente}
-                onClick={() => alternar(etiqueta.chave, true)}
-                aria-label={`Remover etiqueta ${etiqueta.nome}`}
-                className="inline-flex items-center gap-1 rounded-full disabled:opacity-60"
-                style={{
-                  color: STATUS_TONE_VARS[etiqueta.tom].text,
-                  backgroundColor: STATUS_TONE_VARS[etiqueta.tom].bg,
-                }}
-              >
-                <span className="py-0.5 pl-2 text-[11px] font-semibold">
-                  {etiqueta.nome}
-                </span>
-                <X className="mr-1.5 size-3" aria-hidden />
-              </button>
-            ) : (
-              <ChipDeEtiqueta
-                key={etiqueta.chave}
-                nome={etiqueta.nome}
-                tom={etiqueta.tom}
-              />
-            ),
-          )}
+        <div className="flex flex-wrap gap-1.5">
+          {aplicadas.map((etiqueta) => (
+            <ChipDeEtiqueta
+              key={etiqueta.chave}
+              nome={etiqueta.nome}
+              tom={etiqueta.tom}
+              aoRemover={
+                podeEtiquetar ? () => alternar(etiqueta.chave, true) : undefined
+              }
+              removerDesabilitado={pendente}
+            />
+          ))}
         </div>
       ) : (
-        <p className="text-[12.5px] text-text-tertiary">
+        <p className="text-[12.5px] text-text-secondary">
           Nenhuma etiqueta nesta conversa.
         </p>
       )}
@@ -116,7 +101,7 @@ export function EtiquetasDaConversa({
       {podeEtiquetar ? (
         <Popover open={aberto} onOpenChange={setAberto}>
           <PopoverTrigger asChild>{botao}</PopoverTrigger>
-          <PopoverContent align="start" className="w-64 p-1">
+          <PopoverContent align="start" className="w-64 p-[5px]">
             {catalogo.length === 0 ? (
               <div className="grid gap-1.5 p-2">
                 <p className="text-xs text-text-secondary">
@@ -125,12 +110,12 @@ export function EtiquetasDaConversa({
                 {ehChefia ? (
                   <Link
                     href="/configuracoes?aba=etiquetas"
-                    className="text-xs font-medium underline underline-offset-2"
+                    className="text-xs font-semibold text-primary-text underline underline-offset-2"
                   >
                     Criar etiquetas
                   </Link>
                 ) : (
-                  <p className="text-xs text-text-tertiary">
+                  <p className="text-xs text-text-secondary">
                     Peça a um administrador para criar as etiquetas em
                     Configurações.
                   </p>
@@ -139,7 +124,7 @@ export function EtiquetasDaConversa({
             ) : (
               // Teto do catalogo e 20: sem rolagem, as ultimas ficariam
               // inalcancaveis dentro do popover.
-              <div className="grid max-h-72 overflow-y-auto">
+              <div className="grid cz-scroll max-h-72 overflow-y-auto">
                 {catalogo.map((etiqueta) => {
                   const marcada = tags.includes(etiqueta.chave);
                   return (
@@ -149,7 +134,7 @@ export function EtiquetasDaConversa({
                       disabled={pendente}
                       aria-pressed={marcada}
                       onClick={() => alternar(etiqueta.chave, marcada)}
-                      className="flex min-h-10 items-center gap-2 rounded-md px-2 text-left text-[12.5px] hover:bg-surface-3 disabled:opacity-60"
+                      className="flex min-h-10 w-full items-center gap-2 rounded-sm px-2 text-left text-[13px] font-medium text-foreground cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:opacity-45"
                     >
                       <Checkbox
                         checked={marcada}
@@ -159,9 +144,10 @@ export function EtiquetasDaConversa({
                       />
                       <span
                         aria-hidden
-                        className="size-2.5 shrink-0 rounded-full"
+                        className="size-[7px] shrink-0 rounded-[2px]"
                         style={{
-                          backgroundColor: STATUS_TONE_VARS[etiqueta.tom].text,
+                          backgroundColor:
+                            STATUS_TONE_VARS[etiqueta.tom].marker,
                         }}
                       />
                       <span className="min-w-0 truncate">{etiqueta.nome}</span>

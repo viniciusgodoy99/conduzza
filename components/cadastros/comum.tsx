@@ -2,24 +2,66 @@
 
 import {
   CalendarDays,
-  CircleCheck,
-  CircleSlash,
   Eye,
   Pencil,
-  TriangleAlert,
+  Umbrella,
+  Zap,
+  ZapOff,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 
+import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { Aviso } from "@/components/shared/aviso";
+import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { RECORD_STATUS, type StatusDefinition } from "@/lib/design/status";
 import { cn } from "@/lib/utils";
 import { formatarCentavos, lerReais } from "@/lib/utils/moeda";
 
-// Pecas minimas compartilhadas pelas abas de Cadastros.
+// Pecas compartilhadas pelas abas de Cadastros, no desenho do design system
+// Conduzza (docs/06 secao 5.11).
+
+// Situacoes proprias de Cadastros, nas 3 camadas (icone, rotulo e cor). Cada
+// icone e EXCLUSIVO deste sentido e desta cor em qualquer tela, e esta
+// registrado na tabela de reservados (lib/design/status.ts e docs/06 secao
+// 4.6), achados 9 e 16:
+// - Coberto: Umbrella info. A familia Shield e da autorizacao para receber
+//   mensagens (ShieldCheck success, ShieldX alert, ShieldOff neutral) e o
+//   ShieldPlus e o botao "Registrar autorizacao" de Confirmacoes.
+// - Impede encaixe: ZapOff warning, o par do Zap (encaixe, sempre neutro na
+//   Agenda). CalendarX2 e so do pacote vencido (alert) na ficha.
+export const COBERTO_PELO_CONVENIO: StatusDefinition = {
+  label: "Coberto",
+  tone: "info",
+  icon: Umbrella,
+};
+
+export const ENCAIXE_DO_BLOQUEIO: Record<
+  "impede" | "permite",
+  StatusDefinition
+> = {
+  impede: { label: "Impede encaixe", tone: "warning", icon: ZapOff },
+  permite: { label: "Permite encaixe", tone: "neutral", icon: Zap },
+};
 
 // Acao de escrita: visivel sempre; desabilitada com dica quando o papel nao
 // edita (regra do brief: esconder confunde, desabilitar explica). Alvo de
-// toque minimo de 40px (h-10) em qualquer tamanho.
+// toque de 40px (h-10) em qualquer tamanho. O padrao e o primario: o "Novo X"
+// e o unico lime da aba; o resto usa outline, ghost ou destructive.
 export function BotaoProtegido({
   podeEditar,
   dica,
@@ -34,7 +76,7 @@ export function BotaoProtegido({
   dica: string;
   onClick: () => void;
   children: React.ReactNode;
-  variant?: "default" | "outline" | "ghost";
+  variant?: "default" | "outline" | "ghost" | "destructive";
   size?: "default" | "sm" | "lg";
   className?: string;
   disabled?: boolean;
@@ -83,11 +125,10 @@ export function AcoesDaLinha({
       <Button
         variant="ghost"
         size="icon"
-        className="size-10"
         onClick={aoEditar}
         aria-label={`Editar ${nome}`}
       >
-        <Pencil className="size-4" />
+        <Pencil aria-hidden />
       </Button>
     );
   }
@@ -96,22 +137,20 @@ export function AcoesDaLinha({
       {aoVerDetalhes ? (
         <Button
           variant="ghost"
-          className="h-10"
           onClick={aoVerDetalhes}
           aria-label={`Ver detalhes de ${nome}`}
         >
-          <Eye className="size-4" /> Ver detalhes
+          <Eye aria-hidden /> Ver detalhes
         </Button>
       ) : null}
       <DisabledWithHint hint={dica}>
         <Button
           variant="ghost"
           size="icon"
-          className="size-10"
           disabled
           aria-label={`Editar ${nome}`}
         >
-          <Pencil className="size-4" />
+          <Pencil aria-hidden />
         </Button>
       </DisabledWithHint>
     </div>
@@ -126,17 +165,20 @@ export function DetalheSomenteLeitura({
   itens: { rotulo: string; valor: React.ReactNode }[];
 }) {
   return (
-    <dl className="grid gap-4 py-4">
+    <dl className="grid">
       {itens.map((item) => (
-        <div key={item.rotulo} className="grid gap-1">
-          <dt className="text-xs font-medium text-text-secondary">
+        <div
+          key={item.rotulo}
+          className="grid gap-1 border-b border-border py-3 first:pt-0 last:border-b-0 last:pb-0"
+        >
+          <dt className="text-xs font-semibold text-text-secondary">
             {item.rotulo}
           </dt>
-          <dd className="text-sm break-words whitespace-pre-wrap">
+          <dd className="text-[13.5px] break-words whitespace-pre-wrap text-foreground">
             {item.valor === null ||
             item.valor === undefined ||
             item.valor === "" ? (
-              <span className="text-text-tertiary">Não informado</span>
+              <span className="text-text-secondary">Não informado</span>
             ) : (
               item.valor
             )}
@@ -144,6 +186,194 @@ export function DetalheSomenteLeitura({
         </div>
       ))}
     </dl>
+  );
+}
+
+// Painel lateral de cadastro (criar, editar ou ver): cabecalho fixo, corpo
+// que rola, avisos e erro fixos logo acima do rodape (sempre a vista, mesmo
+// com o formulario comprido) e rodape com Cancelar e Salvar.
+export function PainelDeCadastro({
+  aberto,
+  aoMudarAberto,
+  titulo,
+  descricao,
+  larga = false,
+  erro,
+  aviso,
+  rodape,
+  children,
+}: {
+  aberto: boolean;
+  aoMudarAberto: (aberto: boolean) => void;
+  titulo: string;
+  descricao?: string;
+  /** 520px no lugar de 440px (a jornada do profissional pede mais largura) */
+  larga?: boolean;
+  erro?: string | null;
+  /** Pergunta de confirmacao que substitui o Salvar enquanto esta aberta */
+  aviso?: React.ReactNode;
+  rodape?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Sheet open={aberto} onOpenChange={aoMudarAberto}>
+      <SheetContent
+        className={cn(
+          "gap-0 p-0 data-[side=right]:w-full",
+          larga
+            ? "data-[side=right]:sm:max-w-[520px]"
+            : "data-[side=right]:sm:max-w-[440px]",
+        )}
+        // Sem descricao, o painel nao aponta para uma que nao existe.
+        {...(descricao ? {} : { "aria-describedby": undefined })}
+      >
+        <SheetHeader>
+          <SheetTitle>{titulo}</SheetTitle>
+          {descricao ? <SheetDescription>{descricao}</SheetDescription> : null}
+        </SheetHeader>
+        <div className="cz-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {children}
+        </div>
+        {aviso || erro ? (
+          <div className="grid gap-3 px-5 pb-4">
+            {aviso}
+            {erro ? (
+              <Aviso tom="alert" role="alert">
+                {erro}
+              </Aviso>
+            ) : null}
+          </div>
+        ) : null}
+        {rodape ? <SheetFooter>{rodape}</SheetFooter> : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// Rodape padrao dos formularios: Cancelar (ghost) e Salvar (primario).
+export function RodapeDeSalvar({
+  salvando,
+  aoCancelar,
+  aoSalvar,
+  rotuloSalvar = "Salvar",
+}: {
+  salvando: boolean;
+  aoCancelar: () => void;
+  aoSalvar: () => void;
+  rotuloSalvar?: string;
+}) {
+  return (
+    <>
+      <Button variant="ghost" onClick={aoCancelar}>
+        Cancelar
+      </Button>
+      <Button onClick={aoSalvar} disabled={salvando}>
+        {salvando ? "Salvando..." : rotuloSalvar}
+      </Button>
+    </>
+  );
+}
+
+// Vazio de uma aba: dentro de um cartao, com a acao em outline (o lime da
+// aba e o "Novo X" do topo). Quem nao edita ve a acao desabilitada com dica.
+export function VazioDaAba({
+  icon,
+  titulo,
+  descricao,
+  acao,
+  podeEditar,
+  dica,
+}: {
+  icon: LucideIcon;
+  titulo: string;
+  descricao: string;
+  acao?: {
+    rotulo: string;
+    onClick: () => void;
+    variant?: "default" | "outline";
+  };
+  podeEditar: boolean;
+  dica: string;
+}) {
+  return (
+    <Card>
+      <EmptyState icon={icon} title={titulo} description={descricao}>
+        {acao ? (
+          <BotaoProtegido
+            podeEditar={podeEditar}
+            dica={dica}
+            variant={acao.variant ?? "outline"}
+            onClick={acao.onClick}
+          >
+            {acao.rotulo}
+          </BotaoProtegido>
+        ) : null}
+      </EmptyState>
+    </Card>
+  );
+}
+
+// Avatar do profissional com o ponto da cor da agenda. A cor e dado da
+// clinica (escolhida no cadastro), por isso vai inline: e a unica cor fora
+// dos tokens na tela.
+export function AvatarDoProfissional({
+  nome,
+  cor,
+  tamanho = 30,
+}: {
+  nome: string;
+  cor: string | null;
+  tamanho?: number;
+}) {
+  return (
+    <span aria-hidden className="relative inline-flex shrink-0">
+      <ContactAvatar name={nome} phone="" size={tamanho} />
+      {cor ? (
+        <span
+          className="absolute -right-px -bottom-px size-2.5 rounded-full border-2 border-card"
+          style={{ backgroundColor: cor }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+// Opcao de formulario com Salvar: Checkbox com rotulo e descricao (docs/06,
+// C31). Switch fica so para o que vale na hora (a IA do vinculo).
+export function CampoDeMarcar({
+  id,
+  rotulo,
+  descricao,
+  marcado,
+  aoMudar,
+}: {
+  id: string;
+  rotulo: string;
+  descricao?: string;
+  marcado: boolean;
+  aoMudar: (marcado: boolean) => void;
+}) {
+  const idDaDescricao = descricao ? `${id}-descricao` : undefined;
+  return (
+    <div className="flex items-start gap-3">
+      <Checkbox
+        id={id}
+        checked={marcado}
+        onCheckedChange={(valor) => aoMudar(valor === true)}
+        aria-describedby={idDaDescricao}
+        className="mt-px"
+      />
+      <div className="grid gap-1">
+        <Label htmlFor={id} className="text-[13.5px] leading-[1.3]">
+          {rotulo}
+        </Label>
+        {descricao ? (
+          <p id={idDaDescricao} className="text-xs text-text-secondary">
+            {descricao}
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -176,58 +406,46 @@ export function AvisoDeConsultas({
         minute: "2-digit",
       })}`
     : null;
+  // Atencao e CircleAlert (padrao do Aviso warning): TriangleAlert e so do
+  // status Faltou (tabela de icones reservados, docs/06 secao 4.6).
   return (
-    <div
-      role="alert"
-      className="grid gap-3 rounded-lg border border-[color:var(--warning)] bg-[color:var(--warning-bg)] p-3"
-    >
-      <div className="flex items-start gap-2">
-        <TriangleAlert
-          className="mt-0.5 size-4 shrink-0 [color:var(--warning-text)]"
-          aria-hidden
-        />
-        <div className="grid gap-1 text-sm">
-          <p className="font-medium">
-            {consultas === 1
-              ? "Há 1 consulta marcada neste período. Remarque ou cancele."
-              : `Há ${consultas} consultas marcadas neste período. Remarque ou cancele.`}
-          </p>
-          <p className="text-text-secondary">
-            {quando ? `A primeira é em ${quando}. ` : ""}
-            Esta ação não desmarca nada: as consultas continuam valendo e os
-            lembretes continuam saindo para os pacientes.
-          </p>
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button asChild variant="outline" className="h-10">
+    <Aviso tom="warning" role="alert">
+      <p className="text-[13.5px] leading-[1.35] font-bold">
+        Há <span className="cz-num">{consultas}</span>{" "}
+        {consultas === 1 ? "consulta marcada" : "consultas marcadas"} neste
+        período. Remarque ou cancele.
+      </p>
+      <p className="mt-1">
+        {quando ? (
+          <>
+            A primeira é em <span className="cz-num">{quando}</span>.{" "}
+          </>
+        ) : null}
+        Esta ação não desmarca nada: as consultas continuam valendo e os
+        lembretes continuam saindo para os pacientes.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button asChild variant="outline">
           <Link href="/agenda">
-            <CalendarDays className="size-4" /> Abrir a Agenda
+            <CalendarDays aria-hidden /> Abrir a Agenda
           </Link>
         </Button>
-        <Button
-          variant="ghost"
-          className="h-10"
-          onClick={aoConfirmar}
-          disabled={confirmando}
-        >
+        <Button variant="ghost" onClick={aoConfirmar} disabled={confirmando}>
           {confirmando ? "Salvando..." : rotuloConfirmar}
         </Button>
       </div>
-    </div>
+    </Aviso>
   );
 }
 
 // Situacao ativo/inativo nas 3 camadas (icone de forma distinta, rotulo em
-// texto e cor). Nunca so cor.
+// texto e cor), com o mapa RECORD_STATUS. Nunca so cor.
 export function ChipSituacao({ active }: { active: boolean }) {
-  const Icone = active ? CircleCheck : CircleSlash;
-  const chip = chipAtivo(active);
   return (
-    <span className={cn("inline-flex items-center gap-1.5", chip.classe)}>
-      <Icone className="size-4 shrink-0" aria-hidden />
-      {chip.texto}
-    </span>
+    <StatusChip
+      size="sm"
+      definition={RECORD_STATUS[active ? "ativo" : "inativo"]}
+    />
   );
 }
 
@@ -241,32 +459,17 @@ export function PreviaDeReais({ texto, id }: { texto: string; id?: string }) {
   }
   if (centavos === undefined) {
     return (
-      <p
-        id={id}
-        aria-live="polite"
-        className="text-xs [color:var(--alert-text)]"
-      >
+      <p id={id} aria-live="polite" className="text-xs text-alert-text">
         Não entendemos este valor. Use o formato 250,00.
       </p>
     );
   }
   return (
-    <p
-      id={id}
-      aria-live="polite"
-      className="font-mono text-xs text-text-secondary tabular-nums"
-    >
-      Será salvo como {formatarCentavos(centavos)}
+    <p id={id} aria-live="polite" className="text-xs text-text-secondary">
+      Será salvo como{" "}
+      <span className="cz-num text-text-strong">
+        {formatarCentavos(centavos)}
+      </span>
     </p>
   );
-}
-
-export function chipAtivo(active: boolean): {
-  texto: string;
-  classe: string;
-} {
-  // Estado com rotulo em texto, nunca so cor.
-  return active
-    ? { texto: "Ativo", classe: "text-[color:var(--success-text)]" }
-    : { texto: "Inativo", classe: "text-text-tertiary" };
 }

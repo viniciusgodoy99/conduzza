@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -43,7 +43,7 @@ function SelectFiltro({
       onValueChange={(v) => onChange(v === TODOS ? "" : v)}
     >
       <SelectTrigger
-        className="h-10 w-auto max-w-[190px] min-w-[120px]"
+        className="h-10 w-auto max-w-[200px] min-w-[128px] text-[13px] shadow-xs"
         aria-label={placeholder}
       >
         <SelectValue placeholder={placeholder} />
@@ -60,8 +60,9 @@ function SelectFiltro({
   );
 }
 
-// Chave de sim ou nao com estado em texto (aria-pressed) e em forma (fundo
-// cheio quando ligada), nunca so cor.
+// Chave de sim ou nao com estado em texto (aria-pressed), em forma (o check
+// aparece quando ligada) e em cor, nunca so cor. Ligada usa a receita de
+// escolha em chip do DS: fio lime-700 e fundo lime suave, nunca lime cheio.
 function ChaveFiltro({
   rotulo,
   ligada,
@@ -77,12 +78,13 @@ function ChaveFiltro({
       aria-pressed={ligada}
       onClick={onClick}
       className={cn(
-        "flex h-10 items-center rounded-lg border px-3 text-[13px] font-medium transition-colors",
+        "inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[13px] font-semibold cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
         ligada
-          ? "border-transparent bg-surface-5 text-foreground"
-          : "border-border text-text-secondary hover:text-foreground",
+          ? "border-primary-edge bg-primary-soft text-text-strong"
+          : "border-border-strong bg-card text-text-secondary hover:bg-surface-3 hover:text-text-strong",
       )}
     >
+      {ligada ? <Check aria-hidden className="size-3.5 shrink-0" /> : null}
       {rotulo}
     </button>
   );
@@ -112,7 +114,7 @@ export function FiltrosPacientes({
     Boolean(valores.prof);
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-1 flex-wrap items-center gap-2">
       <ChaveFiltro
         rotulo="Com falta"
         ligada={valores.falta}
@@ -147,8 +149,8 @@ export function FiltrosPacientes({
         }))}
       />
       {temAtivo ? (
-        <Button variant="ghost" className="h-10" onClick={aoLimpar}>
-          <X className="size-4" /> Limpar filtros
+        <Button variant="ghost" onClick={aoLimpar}>
+          <X aria-hidden /> Limpar filtros
         </Button>
       ) : null}
     </div>

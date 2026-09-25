@@ -8,8 +8,11 @@ import { useState } from "react";
 
 import { CartaoKpi } from "@/components/relatorios/cartao-kpi";
 import { DialogLinhaDeBase } from "@/components/relatorios/dialog-linha-de-base";
+import { Secao } from "@/components/relatorios/secao";
+import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type {
   AgendaDoPeriodo,
   LinhaDeBase,
@@ -31,6 +34,37 @@ function pctDeFalta(faltas: number, comDesfecho: number): string | null {
   return `${((faltas / comDesfecho) * 100).toLocaleString("pt-BR", {
     maximumFractionDigits: 1,
   })}%`;
+}
+
+// Receita "bloco afundado" (docs/06 4.7): ladrilho dentro de cartao, sem
+// borda e sem sombra.
+const BLOCO_AFUNDADO = "grid content-start gap-2 rounded-xl bg-surface-4 p-3.5";
+
+/** Taxa em mono; sem denominador, o campo vazio escrito (nunca travessao). */
+function ValorOuVazio({
+  valor,
+  className,
+}: {
+  valor: string | null;
+  className: string;
+}) {
+  if (valor === null) {
+    return (
+      <span className="text-base font-semibold text-text-secondary">
+        Sem dados
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn(
+        "cz-num leading-none font-semibold text-text-strong",
+        className,
+      )}
+    >
+      {valor}
+    </span>
+  );
 }
 
 export function AbaConfirmacao({
@@ -56,8 +90,11 @@ export function AbaConfirmacao({
   const taxaDeFaltaNoPeriodo = pctDeFalta(atual.porStatus.faltou, comDesfecho);
 
   return (
-    <div className="grid gap-6">
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid gap-4">
+      <section
+        aria-label="Indicadores do período"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+      >
         <CartaoKpi
           rotulo="Confirmadas em algum momento"
           valor={`${atual.confirmadasAlgumaVez} de ${atual.total}`}
@@ -80,13 +117,23 @@ export function AbaConfirmacao({
           rotulo="Recuperadas pela lista de espera"
           valor={atual.recuperadas.total.toLocaleString("pt-BR")}
           notaSemDelta={
-            atual.recuperadas.total > 0
-              ? `${formatarCentavos(atual.recuperadas.receitaCents)} em receita associada${
-                  atual.recuperadas.semPreco > 0
-                    ? `, ${atual.recuperadas.semPreco} sem preço cadastrado`
-                    : ""
-                }`
-              : "horários vagos preenchidos pela reoferta"
+            atual.recuperadas.total > 0 ? (
+              <>
+                <span className="cz-num">
+                  {formatarCentavos(atual.recuperadas.receitaCents)}
+                </span>{" "}
+                em receita associada
+                {atual.recuperadas.semPreco > 0 ? (
+                  <>
+                    ,{" "}
+                    <span className="cz-num">{atual.recuperadas.semPreco}</span>{" "}
+                    sem preço cadastrado
+                  </>
+                ) : null}
+              </>
+            ) : (
+              "horários vagos preenchidos pela reoferta"
+            )
           }
         />
         <CartaoKpi
@@ -96,143 +143,149 @@ export function AbaConfirmacao({
         />
       </section>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Flag className="size-4 text-text-secondary" />
-          <h2 className="text-[15px] font-semibold">Contra a linha de base</h2>
-        </div>
+      <Secao titulo="Contra a linha de base" icone={Flag}>
         {linhaDeBase ? (
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="grid content-start gap-1 rounded-lg border p-4">
-              <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
+            <div className={BLOCO_AFUNDADO}>
+              <span className="cz-eyebrow text-text-secondary">
                 Linha de base (informada pela clínica)
               </span>
-              <span className="font-mono text-[34px] leading-none font-semibold tabular-nums">
+              <span className="cz-num text-[34px] leading-none font-semibold text-text-strong">
                 {linhaDeBase.ratePercent.toLocaleString("pt-BR", {
                   maximumFractionDigits: 1,
                 })}
                 %
               </span>
-              <span className="text-[12.5px] text-text-tertiary">
+              <span className="text-xs text-text-secondary">
                 faltas medidas de{" "}
-                {format(
-                  new TZDate(`${linhaDeBase.measuredFrom}T12:00:00`, timezone),
-                  "dd/MM/yy",
-                  { locale: ptBR },
-                )}{" "}
+                <span className="cz-num">
+                  {format(
+                    new TZDate(
+                      `${linhaDeBase.measuredFrom}T12:00:00`,
+                      timezone,
+                    ),
+                    "dd/MM/yy",
+                    { locale: ptBR },
+                  )}
+                </span>{" "}
                 a{" "}
-                {format(
-                  new TZDate(`${linhaDeBase.measuredTo}T12:00:00`, timezone),
-                  "dd/MM/yy",
-                  { locale: ptBR },
-                )}
+                <span className="cz-num">
+                  {format(
+                    new TZDate(`${linhaDeBase.measuredTo}T12:00:00`, timezone),
+                    "dd/MM/yy",
+                    { locale: ptBR },
+                  )}
+                </span>
                 {linhaDeBase.note ? ` (${linhaDeBase.note})` : ""}
               </span>
               {ehAdmin ? (
                 <Button
-                  variant="ghost"
-                  className="h-10 w-fit"
+                  variant="outline"
+                  className="w-fit"
                   onClick={() => setDialogAberto(true)}
                 >
                   Registrar de novo
                 </Button>
               ) : (
                 <DisabledWithHint hint="Só quem administra a clínica registra a linha de base.">
-                  <Button variant="ghost" className="h-10 w-fit" disabled>
+                  <Button variant="outline" className="w-fit" disabled>
                     Registrar de novo
                   </Button>
                 </DisabledWithHint>
               )}
             </div>
-            <div className="grid content-start gap-1 rounded-lg border p-4">
-              <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
+            <div className={BLOCO_AFUNDADO}>
+              <span className="cz-eyebrow text-text-secondary">
                 Taxa de faltas no período (medida pelo sistema)
               </span>
-              <span className="font-mono text-[34px] leading-none font-semibold tabular-nums">
-                {taxaDeFaltaNoPeriodo ?? "sem dados"}
-              </span>
-              <span className="text-[12.5px] text-text-tertiary">
-                {comDesfecho > 0
-                  ? `${atual.porStatus.faltou} falta${atual.porStatus.faltou === 1 ? "" : "s"} em ${comDesfecho} consultas com desfecho (compareceu ou faltou)`
-                  : "nenhuma consulta com desfecho no período"}
+              <ValorOuVazio
+                valor={taxaDeFaltaNoPeriodo}
+                className="text-[34px]"
+              />
+              <span className="text-xs text-text-secondary">
+                {comDesfecho > 0 ? (
+                  <>
+                    <span className="cz-num">{atual.porStatus.faltou}</span>{" "}
+                    falta{atual.porStatus.faltou === 1 ? "" : "s"} em{" "}
+                    <span className="cz-num">{comDesfecho}</span> consultas com
+                    desfecho (compareceu ou faltou)
+                  </>
+                ) : (
+                  "nenhuma consulta com desfecho no período"
+                )}
               </span>
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed p-4">
-            <div className="grid gap-1">
-              <p className="text-sm font-medium">
-                A linha de base ainda não foi registrada
-              </p>
-              <p className="max-w-prose text-sm text-text-secondary">
-                Registre a taxa de faltas da clínica dos 30 dias anteriores às
-                mensagens automáticas. Sem ela, não existe prova de resultado.
-              </p>
-            </div>
+          <EmptyState
+            compact
+            icon={Flag}
+            title="A linha de base ainda não foi registrada"
+            description="Registre a taxa de faltas da clínica dos 30 dias anteriores às mensagens automáticas. Sem ela, não existe prova de resultado."
+          >
             {ehAdmin ? (
-              <Button className="h-10" onClick={() => setDialogAberto(true)}>
+              <Button onClick={() => setDialogAberto(true)}>
                 Registrar a linha de base
               </Button>
             ) : (
               <DisabledWithHint hint="Só quem administra a clínica registra a linha de base.">
-                <Button className="h-10" disabled>
-                  Registrar a linha de base
-                </Button>
+                <Button disabled>Registrar a linha de base</Button>
               </DisabledWithHint>
             )}
-          </div>
+          </EmptyState>
         )}
-      </section>
+      </Secao>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <ClipboardCheck className="size-4 text-text-secondary" />
-          <h2 className="text-[15px] font-semibold">
-            Antes e depois da primeira mensagem de régua
-          </h2>
-        </div>
+      <Secao
+        titulo="Antes e depois da primeira mensagem de régua"
+        icone={ClipboardCheck}
+      >
         {pivo ? (
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="grid content-start gap-1 rounded-lg border p-4">
-              <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-                Antes
-              </span>
-              <span className="font-mono text-[28px] leading-none font-semibold tabular-nums">
-                {pctDeFalta(pivo.antes.faltas, pivo.antes.comDesfecho) ??
-                  "sem dados"}
-              </span>
-              <span className="text-[12.5px] text-text-tertiary">
-                {pivo.antes.faltas} faltas em {pivo.antes.comDesfecho} consultas
-                com desfecho
+            <div className={BLOCO_AFUNDADO}>
+              <span className="cz-eyebrow text-text-secondary">Antes</span>
+              <ValorOuVazio
+                valor={pctDeFalta(pivo.antes.faltas, pivo.antes.comDesfecho)}
+                className="text-[24px]"
+              />
+              <span className="text-xs text-text-secondary">
+                <span className="cz-num">{pivo.antes.faltas}</span> faltas em{" "}
+                <span className="cz-num">{pivo.antes.comDesfecho}</span>{" "}
+                consultas com desfecho
               </span>
             </div>
-            <div className="grid content-start gap-1 rounded-lg border p-4">
-              <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
+            <div className={BLOCO_AFUNDADO}>
+              <span className="cz-eyebrow text-text-secondary">
                 Depois (
-                {format(
-                  new TZDate(pivo.primeiraReguaEm, timezone),
-                  "dd/MM/yy",
-                  { locale: ptBR },
-                )}{" "}
+                <span className="cz-num">
+                  {format(
+                    new TZDate(pivo.primeiraReguaEm, timezone),
+                    "dd/MM/yy",
+                    { locale: ptBR },
+                  )}
+                </span>{" "}
                 em diante)
               </span>
-              <span className="font-mono text-[28px] leading-none font-semibold tabular-nums">
-                {pctDeFalta(pivo.depois.faltas, pivo.depois.comDesfecho) ??
-                  "sem dados"}
-              </span>
-              <span className="text-[12.5px] text-text-tertiary">
-                {pivo.depois.faltas} faltas em {pivo.depois.comDesfecho}{" "}
+              <ValorOuVazio
+                valor={pctDeFalta(pivo.depois.faltas, pivo.depois.comDesfecho)}
+                className="text-[24px]"
+              />
+              <span className="text-xs text-text-secondary">
+                <span className="cz-num">{pivo.depois.faltas}</span> faltas em{" "}
+                <span className="cz-num">{pivo.depois.comDesfecho}</span>{" "}
                 consultas com desfecho
               </span>
             </div>
           </div>
         ) : (
-          <p className="max-w-prose text-sm text-text-secondary">
-            A régua desta clínica ainda não enviou nenhuma mensagem. Quando o
-            primeiro toque sair, o comparativo aparece aqui.
-          </p>
+          <EmptyState
+            compact
+            icon={ClipboardCheck}
+            title="A régua desta clínica ainda não enviou nenhuma mensagem"
+            description="Quando o primeiro toque sair, o comparativo aparece aqui."
+          />
         )}
-      </section>
+      </Secao>
 
       <DialogLinhaDeBase
         aberto={dialogAberto}

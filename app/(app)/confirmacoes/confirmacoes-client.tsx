@@ -6,7 +6,7 @@ import {
   CalendarX,
   ChevronLeft,
   ChevronRight,
-  TriangleAlert,
+  ListFilter,
   Workflow,
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -14,7 +14,10 @@ import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { mudarStatusAction } from "@/app/(app)/agenda/actions";
-import { cobrarAgoraAction } from "@/app/(app)/confirmacoes/actions";
+import {
+  cobrarAgoraAction,
+  manterHorarioAction,
+} from "@/app/(app)/confirmacoes/actions";
 import { AgendamentoModal } from "@/components/agenda/agendamento-modal";
 import { FILTROS_VAZIOS } from "@/components/agenda/tipos";
 import {
@@ -27,11 +30,26 @@ import {
 } from "@/components/confirmacoes/lista-confirmacoes";
 import { ListaFaltas } from "@/components/confirmacoes/lista-faltas";
 import { PainelRegua } from "@/components/confirmacoes/painel-regua";
+import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
-import { TableSkeleton } from "@/components/shared/loading-skeleton";
+import {
+  CardsSkeleton,
+  TableSkeleton,
+} from "@/components/shared/loading-skeleton";
+import {
+  SegmentedControl,
+  type OpcaoSegmentada,
+} from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsCount,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { somarDias } from "@/lib/domain/horarios";
 import { agendaKeys, fetchAgendaDia } from "@/lib/queries/agenda";
 import { catalogoKeys, fetchCatalogo } from "@/lib/queries/catalogo";
@@ -60,6 +78,44 @@ import { createClient } from "@/lib/supabase/client";
 
 type Aba = "amanha" | "faltas";
 
+// Filtro por situacao da lista do dia (decisao do dono, C27): local, sobre os
+// mesmos dados, e a lista continua agrupada por profissional em ordem de
+// horario. "Nao enviadas" sao exatamente as linhas com o chip "Nao enviada"
+// (toque pulado); quem pediu para remarcar mostra o pedido no lugar e fica
+// fora, como na linha.
+type FiltroDoDia =
+  "todas" | "confirmadas" | "aguardando" | "canceladas" | "nao_enviadas";
+
+const FILTROS: {
+  value: FiltroDoDia;
+  label: string;
+  inclui: (consulta: ConsultaDaConfirmacao) => boolean;
+}[] = [
+  { value: "todas", label: "Todas", inclui: () => true },
+  {
+    value: "confirmadas",
+    label: "Confirmadas",
+    inclui: (consulta) => STATUS_CONFIRMADOS.includes(consulta.status),
+  },
+  {
+    value: "aguardando",
+    label: "Aguardando",
+    inclui: (consulta) => STATUS_PENDENTES.includes(consulta.status),
+  },
+  {
+    value: "canceladas",
+    label: "Canceladas",
+    inclui: (consulta) => STATUS_CANCELADOS.includes(consulta.status),
+  },
+  {
+    value: "nao_enviadas",
+    label: "Não enviadas",
+    inclui: (consulta) =>
+      consulta.remarcacao_pedida_em === null &&
+      consulta.toque.situacao === "pulado",
+  },
+];
+
 export function ConfirmacoesClient({
   clinicId,
   timezone,
@@ -76,6 +132,11 @@ export function ConfirmacoesClient({
   dicaAgendar,
   podeAutomatizar,
   dicaAutomatizar,
+  podeRegistrarAutorizacao,
+  dicaAutorizacao,
+  podeEditarCadastros,
+  dicaCadastros,
+  ehAdministrador,
 }: {
   clinicId: string;
   timezone: string;
@@ -92,6 +153,11 @@ export function ConfirmacoesClient({
   dicaAgendar: string;
   podeAutomatizar: boolean;
   dicaAutomatizar: string;
+  podeRegistrarAutorizacao: boolean;
+  dicaAutorizacao: string;
+  podeEditarCadastros: boolean;
+  dicaCadastros: string;
+  ehAdministrador: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
@@ -101,6 +167,7 @@ export function ConfirmacoesClient({
   const [pendente, iniciarTransicao] = useTransition();
   const [painelAberto, setPainelAberto] = useState(false);
   const [remarcarPara, setRemarcarPara] = useState<string | null>(null);
+  const [filtro, setFiltro] = useState<FiltroDoDia>("todas");
 
   const aba: Aba = searchParams.get("aba") === "faltas" ? "faltas" : "amanha";
   // Mesma validacao do servidor: dia fora do formato cai no dia inicial, para
@@ -198,9 +265,36 @@ export function ConfirmacoesClient({
     cobraveis: cobraveis.length,
   };
 
+  const filtroAtual =
+    FILTROS.find((opcao) => opcao.value === filtro) ?? FILTROS[0]!;
+  const visiveis = consultas.filter(filtroAtual.inclui);
+  const opcoesDoFiltro: OpcaoSegmentada<FiltroDoDia>[] = FILTROS.map(
+    (opcao) => ({
+      value: opcao.value,
+      label: opcao.label,
+      count: consultas.filter(opcao.inclui).length,
+    }),
+  );
+
   const atualizarDia = async () => {
     await queryClient.invalidateQueries({
       queryKey: confirmacoesKeys.dia(clinicId, dia),
+    });
+  };
+
+  // Manter o horario depois de um pedido de remarcacao (R12). A pergunta de
+  // confirmacao mora na lista; aqui so a acao, o aviso e a recarga do dia.
+  const manterHorario = (consulta: ConsultaDaConfirmacao) => {
+    iniciarTransicao(async () => {
+      const resultado = await manterHorarioAction({
+        appointment_id: consulta.id,
+      });
+      if (resultado.ok) {
+        toast.success("Horário mantido. O pedido de remarcação saiu da lista.");
+      } else {
+        toast.error(resultado.error ?? "Não foi possível manter o horário.");
+      }
+      await atualizarDia();
     });
   };
 
@@ -273,53 +367,53 @@ export function ConfirmacoesClient({
   const carregandoDia = diaQuery.isLoading;
 
   return (
-    <div className="grid gap-4">
+    <div className="flex flex-col gap-3.5">
       <Tabs
         value={aba}
         onValueChange={(valor) =>
           setParams({ aba: valor === "faltas" ? "faltas" : null })
         }
-        className="gap-4"
+        className="gap-3.5"
       >
         <div className="flex flex-wrap items-center gap-2">
-          <TabsList className="h-auto flex-wrap justify-start">
-            <TabsTrigger value="amanha" className="min-h-9">
-              Confirmações do dia
-            </TabsTrigger>
-            <TabsTrigger value="faltas" className="min-h-9">
+          {/* Duas vistas: abas segmentadas, com role=tab (docs/06, D11). */}
+          <TabsList variant="segmented">
+            <TabsTrigger value="amanha">Confirmações do dia</TabsTrigger>
+            <TabsTrigger value="faltas">
               Faltas de hoje
               {faltas.length > 0 ? (
-                <span className="ml-1.5 font-mono tabular-nums">
-                  {faltas.length}
-                </span>
+                <>
+                  {" "}
+                  <TabsCount>{faltas.length}</TabsCount>
+                </>
               ) : null}
             </TabsTrigger>
           </TabsList>
+          {/* Nome unico na pagina: o e2e abre o painel por ele. */}
           <Button
             variant="outline"
-            className="ml-auto h-10"
+            className="ml-auto"
             onClick={() => setPainelAberto(true)}
           >
-            <Workflow className="size-4" aria-hidden />
+            <Workflow aria-hidden />
             Mensagens automáticas
           </Button>
         </div>
 
-        <TabsContent value="amanha" className="grid gap-4">
+        <TabsContent value="amanha" className="flex flex-col gap-3.5">
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="icon"
-              className="size-10"
               aria-label="Dia anterior"
               onClick={() => setParams({ data: somarDias(dia, -1) })}
             >
-              <ChevronLeft className="size-4" aria-hidden />
+              <ChevronLeft aria-hidden />
             </Button>
             <Input
               type="date"
               aria-label="Dia das confirmações"
-              className="h-10 w-[168px]"
+              className="w-[168px] cz-num"
               value={dia}
               onChange={(evento) =>
                 setParams({ data: evento.target.value || null })
@@ -328,59 +422,57 @@ export function ConfirmacoesClient({
             <Button
               variant="outline"
               size="icon"
-              className="size-10"
               aria-label="Próximo dia"
               onClick={() => setParams({ data: somarDias(dia, 1) })}
             >
-              <ChevronRight className="size-4" aria-hidden />
+              <ChevronRight aria-hidden />
             </Button>
             {dia !== amanha ? (
-              <Button
-                variant="ghost"
-                className="h-10"
-                onClick={() => setParams({ data: null })}
-              >
+              <Button variant="ghost" onClick={() => setParams({ data: null })}>
                 Voltar para amanhã
               </Button>
             ) : null}
           </div>
 
           {erroDoDia && consultas.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-12 text-center">
-              <TriangleAlert
-                className="size-5 [color:var(--alert)]"
-                aria-hidden
+            <Card>
+              <EmptyState
+                tom="erro"
+                title="Não foi possível carregar as consultas deste dia"
+                description="Confira a conexão e tente de novo. Nada foi alterado."
+                action={{
+                  label: "Tentar de novo",
+                  variant: "outline",
+                  onClick: () => void diaQuery.refetch(),
+                }}
               />
-              <p className="text-sm text-text-secondary">
-                Não foi possível carregar as consultas deste dia.
-              </p>
-              <Button variant="outline" onClick={() => void diaQuery.refetch()}>
-                Tentar de novo
-              </Button>
-            </div>
+            </Card>
           ) : carregandoDia ? (
-            <TableSkeleton columns={6} />
+            <>
+              <CardsSkeleton
+                cards={5}
+                className="sm:grid-cols-2 lg:grid-cols-5"
+              />
+              <TableSkeleton columns={6} />
+            </>
           ) : (
             <>
               {erroDoDia ? (
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
-                  <TriangleAlert
-                    className="size-4 shrink-0 [color:var(--alert)]"
-                    aria-hidden
-                  />
-                  <p className="text-sm text-text-secondary">
-                    Não foi possível atualizar a lista. Os dados exibidos podem
-                    estar desatualizados.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="ml-auto"
-                    onClick={() => void diaQuery.refetch()}
-                  >
-                    Tentar de novo
-                  </Button>
-                </div>
+                <Aviso
+                  tom="alert"
+                  role="alert"
+                  acao={
+                    <Button
+                      variant="outline"
+                      onClick={() => void diaQuery.refetch()}
+                    >
+                      Tentar de novo
+                    </Button>
+                  }
+                >
+                  Não foi possível atualizar a lista. Os dados exibidos podem
+                  estar desatualizados.
+                </Aviso>
               ) : null}
 
               <CartoesDoDia
@@ -394,59 +486,109 @@ export function ConfirmacoesClient({
               />
 
               {consultas.length === 0 ? (
-                <EmptyState
-                  icon={CalendarCheck}
-                  title="Nenhuma consulta neste dia"
-                  description="Escolha outro dia ou marque a primeira consulta na Agenda."
-                />
+                <Card>
+                  <EmptyState
+                    icon={CalendarCheck}
+                    title="Nenhuma consulta neste dia"
+                    description="Escolha outro dia ou marque a primeira consulta na Agenda."
+                    action={{
+                      label: "Abrir a Agenda",
+                      href: "/agenda",
+                      variant: "outline",
+                    }}
+                  />
+                </Card>
               ) : (
                 <ListaConfirmacoes
-                  consultas={consultas}
+                  consultas={visiveis}
                   timezone={timezone}
                   podeEditar={podeConfirmar}
                   dicaSemPermissao={dicaConfirmar}
+                  podeRegistrarAutorizacao={podeRegistrarAutorizacao}
+                  dicaAutorizacao={dicaAutorizacao}
                   ocupado={pendente}
                   onCobrar={(consulta) => cobrar([consulta.id])}
                   onConfirmar={confirmarManualmente}
+                  onManterHorario={manterHorario}
+                  aoRegistrarAutorizacao={atualizarDia}
+                  barra={
+                    // O trilho rola na horizontal no celular: cinco opcoes
+                    // nao cabem em 390px e a pagina nao pode rolar de lado.
+                    <div className="cz-scroll max-w-full overflow-x-auto">
+                      <SegmentedControl
+                        ariaLabel="Filtrar por situação"
+                        options={opcoesDoFiltro}
+                        value={filtro}
+                        onChange={setFiltro}
+                      />
+                    </div>
+                  }
+                  vazio={
+                    <EmptyState
+                      compact
+                      icon={ListFilter}
+                      title="Nenhuma consulta nesta situação"
+                      description="Neste dia, nenhuma consulta está na situação escolhida."
+                      onClearFilters={() => setFiltro("todas")}
+                    />
+                  }
                 />
               )}
             </>
           )}
         </TabsContent>
 
-        <TabsContent value="faltas" className="grid gap-4">
+        <TabsContent value="faltas" className="flex flex-col gap-3.5">
           {faltasQuery.isError && faltas.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-6 py-12 text-center">
-              <TriangleAlert
-                className="size-5 [color:var(--alert)]"
-                aria-hidden
+            <Card>
+              <EmptyState
+                tom="erro"
+                title="Não foi possível carregar as faltas de hoje"
+                description="Confira a conexão e tente de novo. Nada foi alterado."
+                action={{
+                  label: "Tentar de novo",
+                  variant: "outline",
+                  onClick: () => void faltasQuery.refetch(),
+                }}
               />
-              <p className="text-sm text-text-secondary">
-                Não foi possível carregar as faltas de hoje.
-              </p>
-              <Button
-                variant="outline"
-                onClick={() => void faltasQuery.refetch()}
-              >
-                Tentar de novo
-              </Button>
-            </div>
+            </Card>
           ) : faltasQuery.isLoading ? (
             <TableSkeleton columns={5} />
           ) : faltas.length === 0 ? (
-            <EmptyState
-              icon={CalendarX}
-              title="Ninguém faltou hoje"
-              description="A falta é sempre registrada por alguém da clínica, na Agenda. Quando isso acontecer, o paciente aparece aqui."
-            />
+            <Card>
+              <EmptyState
+                icon={CalendarX}
+                title="Ninguém faltou hoje"
+                description="A falta é sempre registrada por alguém da clínica, na Agenda. Quando isso acontecer, o paciente aparece aqui."
+              />
+            </Card>
           ) : (
-            <ListaFaltas
-              faltas={faltas}
-              timezone={timezone}
-              podeEditar={podeAgendar}
-              dicaSemPermissao={dicaAgendar}
-              onRemarcar={abrirRemarcacao}
-            />
+            <>
+              {faltasQuery.isError ? (
+                <Aviso
+                  tom="alert"
+                  role="alert"
+                  acao={
+                    <Button
+                      variant="outline"
+                      onClick={() => void faltasQuery.refetch()}
+                    >
+                      Tentar de novo
+                    </Button>
+                  }
+                >
+                  Não foi possível atualizar a lista. Os dados exibidos podem
+                  estar desatualizados.
+                </Aviso>
+              ) : null}
+              <ListaFaltas
+                faltas={faltas}
+                timezone={timezone}
+                podeEditar={podeAgendar}
+                dicaSemPermissao={dicaAgendar}
+                onRemarcar={abrirRemarcacao}
+              />
+            </>
           )}
         </TabsContent>
       </Tabs>
@@ -458,10 +600,14 @@ export function ConfirmacoesClient({
         onFechar={() => setPainelAberto(false)}
         podeEditar={podeAutomatizar}
         dicaSemPermissao={dicaAutomatizar}
+        ehAdministrador={ehAdministrador}
       />
 
       {remarcarPara && catalogoQuery.data && agendaDiaQuery.data ? (
         <AgendamentoModal
+          // O mesmo contrato da Agenda (achados L13 e L21): autorizacao pela
+          // permissao de leads e pacientes, atalho de Cadastros pela de
+          // cadastros. Nunca a da agenda por tabela.
           contexto={{
             clinicId,
             timezone,
@@ -469,6 +615,10 @@ export function ConfirmacoesClient({
             podeEditar: podeAgendar,
             dica: dicaAgendar,
             viewerId,
+            podeEditarCadastros,
+            dicaCadastros,
+            podeRegistrarAutorizacao,
+            dicaAutorizacao,
           }}
           aberto
           onFechar={() => setRemarcarPara(null)}

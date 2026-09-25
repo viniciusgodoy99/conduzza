@@ -1,23 +1,27 @@
 "use client";
 
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import {
   AudioLines,
   CircleSlash,
   CloudOff,
   CornerUpLeft,
+  Ellipsis,
   FileText,
   Image as ImageIcon,
   Lock,
-  MoreVertical,
-  ShieldAlert,
+  OctagonAlert,
+  ShieldBan,
   Sparkles,
   Trash2,
   Video,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import {
+  FUSO_PADRAO,
+  horaNaClinica,
+} from "@/components/atendimento/fuso-da-clinica";
+import { Aviso } from "@/components/shared/aviso";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -52,19 +56,46 @@ import type {
 } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
-// Bolhas da conversa (handoff): paciente a esquerda (raio 4/14/14/14), IA e
-// humano a direita (14/4/14/14), largura maxima 74%. A bolha da IA carrega
-// rotulo textual e selo, nunca so cor. Nota interna em ambar com cadeado.
+// Bolhas da conversa na pele do ChatBubble do design system Conduzza (docs/06
+// secao 5.3): raio 18 com o canto da cauda em 6, do lado de quem falou.
+// Paciente a esquerda em branco; atendente a direita em lime suave
+// (--bubble-out); IA a direita em tinta (--bubble-ai), sempre com o selo
+// textual "IA"; nota interna a direita em ambar, com cadeado e o aviso de que
+// o paciente nao ve. Autoria nunca so por cor: lado, rotulo e pele.
+//
+// --bolha-meta e a cor de apoio de cada pele (hora, legenda, rotulos de
+// midia). Tudo o que fica DENTRO da bolha usa ela, e nao text-text-secondary:
+// na bolha de tinta da IA o cinza do tema claro sumiria.
 
-function hour(value: string): string {
-  return format(new Date(value), "HH:mm", { locale: ptBR });
-}
+const PELES = {
+  paciente:
+    "rounded-bl-[6px] border-border bg-card text-foreground [--bolha-meta:var(--text-secondary)]",
+  atendente:
+    "rounded-br-[6px] border-transparent bg-bubble-out text-bubble-out-foreground [--bolha-meta:var(--bubble-out-meta)]",
+  ia: "rounded-br-[6px] border-(--bubble-ai-border) bg-bubble-ai text-bubble-ai-foreground [--bolha-meta:var(--bubble-ai-meta)]",
+  nota: "rounded-br-[6px] border-warning/20 bg-warning-bg text-warning-text [--bolha-meta:var(--warning-text)]",
+} as const;
 
-export function SystemEventCard({ message }: { message: MessageItem }) {
+// Ladrilho de arquivo (documento, audio, arquivo que nao veio): fundo de
+// cartao dentro de qualquer pele, entao zera a cor herdada da bolha.
+const LADRILHO =
+  "flex items-center gap-2.5 rounded-md border border-border bg-card p-2.5 text-foreground [--bolha-meta:var(--text-secondary)]";
+
+export function SystemEventCard({
+  message,
+  timezone = FUSO_PADRAO,
+}: {
+  message: MessageItem;
+  timezone?: string;
+}) {
   return (
     <div className="flex justify-center">
-      <span className="rounded-full bg-surface-3 px-3 py-1 text-[11.5px] text-text-secondary">
-        {message.body} · {hour(message.created_at)}
+      <span className="inline-flex max-w-[80%] items-center gap-1.5 rounded-xl bg-surface-4 px-3 py-1 text-[11.5px] text-text-secondary">
+        <span className="min-w-0">{message.body}</span>
+        <span aria-hidden>·</span>
+        <span className="shrink-0 cz-num">
+          {horaNaClinica(message.created_at, timezone)}
+        </span>
       </span>
     </div>
   );
@@ -83,12 +114,13 @@ export function ComplianceBlockCard({
   };
   return (
     <div className="flex justify-center">
-      <div className="grid max-w-md gap-2 rounded-lg border [border-color:var(--alert)] px-4 py-3 [background:var(--alert-bg)]">
-        <p className="flex items-center gap-2 text-[12.5px] font-semibold [color:var(--alert-text)]">
-          <ShieldAlert className="size-4 shrink-0" />
-          Resposta da IA bloqueada pela conformidade
-        </p>
-        <p className="text-[12.5px] text-text-secondary">
+      <Aviso
+        tom="alert"
+        icone={ShieldBan}
+        titulo="Resposta da IA bloqueada pela conformidade"
+        className="w-full max-w-md"
+      >
+        <p>
           Motivo:{" "}
           {RULE_LABEL[decision.compliance_rule ?? ""] ??
             "regra de conformidade"}
@@ -97,11 +129,7 @@ export function ComplianceBlockCard({
         {decision.blocked_draft ? (
           <Dialog>
             <DialogTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-fit [color:var(--alert-text)]"
-              >
+              <Button variant="outline" size="sm" className="mt-2 w-fit">
                 Ver o que a IA ia responder
               </Button>
             </DialogTrigger>
@@ -113,13 +141,13 @@ export function ComplianceBlockCard({
                   paciente.
                 </DialogDescription>
               </DialogHeader>
-              <p className="rounded-lg bg-surface-3 p-3 text-sm">
+              <p className="rounded-xl bg-surface-4 p-3 text-sm">
                 {decision.blocked_draft}
               </p>
             </DialogContent>
           </Dialog>
         ) : null}
-      </div>
+      </Aviso>
     </div>
   );
 }
@@ -168,15 +196,45 @@ function MidiaIndisponivel({
       ? "O arquivo passou do tamanho que o sistema consegue receber. Peça ao paciente para enviar um arquivo menor."
       : "Não foi possível receber este arquivo. Peça ao paciente para enviar de novo.";
   return (
-    <>
-      <span className="flex items-center gap-1.5 text-[12.5px] font-medium [color:var(--warning-text)]">
-        <CloudOff className="size-4 shrink-0" />
-        {rotulo}
+    <div className={cn(LADRILHO, "items-start")}>
+      <CloudOff
+        aria-hidden
+        className="mt-px size-4 shrink-0 text-warning-text"
+      />
+      <span className="grid min-w-0 gap-0.5">
+        <span className="text-[12.5px] font-semibold text-warning-text">
+          {rotulo}
+        </span>
+        <span className="text-[12px] leading-snug text-text-secondary">
+          {explicacao}
+        </span>
       </span>
-      <span className="text-[12px] leading-snug text-text-secondary">
-        {explicacao}
+    </div>
+  );
+}
+
+/** Arquivo ainda chegando: ladrilho com o tipo e o que esta acontecendo. */
+function MidiaChegando({
+  Icone,
+  rotulo,
+  demonstracao,
+}: {
+  Icone: typeof ImageIcon;
+  rotulo: string;
+  demonstracao: boolean;
+}) {
+  return (
+    <div className={LADRILHO}>
+      <span className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-4">
+        <Icone aria-hidden className="size-5 text-text-secondary" />
       </span>
-    </>
+      <span className="grid min-w-0">
+        <span className="text-[12.5px] font-semibold">{rotulo}</span>
+        <span className="text-[11.5px] text-text-secondary">
+          {demonstracao ? "Indisponível na demonstração" : "Baixando o arquivo"}
+        </span>
+      </span>
+    </div>
   );
 }
 
@@ -187,7 +245,9 @@ function AudioBody({ message }: { message: MessageItem }) {
   return (
     <div className="grid gap-1.5">
       {estado.tipo === "pronta" ? (
-        <PlayerDeAudio messageId={message.id} />
+        <div className={LADRILHO}>
+          <PlayerDeAudio messageId={message.id} />
+        </div>
       ) : estado.tipo === "indisponivel" ? (
         <MidiaIndisponivel
           rotulo={fromPatient ? "Áudio não recebido" : "Áudio indisponível"}
@@ -195,36 +255,27 @@ function AudioBody({ message }: { message: MessageItem }) {
           fromPatient={fromPatient}
         />
       ) : (
-        <span className="flex items-center gap-1.5 text-[12.5px] text-text-secondary">
-          <AudioLines className="size-4" />
-          Áudio{" "}
-          {estado.tipo === "demonstracao"
-            ? "(indisponível na demonstração)"
-            : "(baixando)"}
-        </span>
+        <MidiaChegando
+          Icone={AudioLines}
+          rotulo={fromPatient ? "Áudio recebido" : "Áudio"}
+          demonstracao={estado.tipo === "demonstracao"}
+        />
       )}
       {/* A legenda que a atendente escreveu junto com o audio: ela FOI para o
           paciente, entao precisa aparecer aqui tambem. */}
       {message.body ? (
-        <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
-          {message.body}
-        </p>
+        <p className="break-words whitespace-pre-wrap">{message.body}</p>
       ) : null}
       {message.transcript ? (
         <div className="grid gap-1">
-          <p
-            className={cn(
-              "text-[13px] leading-relaxed",
-              !expanded && "line-clamp-2",
-            )}
-          >
-            <span className="text-text-tertiary">Transcrição: </span>
+          <p className={cn("break-words", !expanded && "line-clamp-2")}>
+            <span className="text-(--bolha-meta)">Transcrição: </span>
             {message.transcript}
           </p>
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
-            className="w-fit text-[11.5px] text-text-secondary underline-offset-2 hover:underline"
+            className="hit-40 relative w-fit rounded-sm text-[12px] font-semibold text-(--bolha-meta) underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
           >
             {expanded ? "ver menos" : "ver mais"}
           </button>
@@ -316,7 +367,7 @@ const ROTULOS: Record<
 
 function Legenda({ texto }: { texto: string | null }) {
   return texto ? (
-    <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">{texto}</p>
+    <p className="break-words whitespace-pre-wrap">{texto}</p>
   ) : null;
 }
 
@@ -372,7 +423,7 @@ function MidiaBody({ message }: { message: MessageItem }) {
           src={`/api/atendimento/midia/${message.id}`}
           controls
           preload="metadata"
-          className="max-h-[280px] w-[240px] rounded-md bg-surface-3"
+          className="max-h-[280px] w-[240px] rounded-xl bg-surface-4"
         />
         <Legenda texto={message.body} />
       </div>
@@ -381,7 +432,10 @@ function MidiaBody({ message }: { message: MessageItem }) {
 
   const nomeVisivel =
     nomeDoArquivo !== null ? (
-      <span className="truncate text-[13px] font-medium" title={nomeDoArquivo}>
+      <span
+        className="truncate text-[12.5px] font-medium text-(--bolha-meta)"
+        title={nomeDoArquivo}
+      >
         {nomeDoArquivo}
       </span>
     ) : null;
@@ -403,19 +457,39 @@ function MidiaBody({ message }: { message: MessageItem }) {
   }
 
   const { Icone } = rotulos;
+  const demonstracao = estado.tipo === "demonstracao";
+  // Foto e video reservam os 240x180 que vao ocupar quando chegarem: o fio
+  // rola para o fim a cada mensagem, e um arquivo sem altura reservada faria
+  // o conteudo pular na cara de quem esta lendo.
+  if (tipo === "foto" || tipo === "imagem" || tipo === "video") {
+    return (
+      <div className="grid gap-1">
+        <div className="grid h-[180px] w-[240px] place-items-center rounded-xl bg-surface-4 text-text-secondary">
+          <span className="grid justify-items-center gap-1.5 px-4 text-center">
+            <Icone aria-hidden className="size-6" />
+            <span className="text-[12.5px] font-semibold">
+              {rotulos.recebido}
+            </span>
+            <span className="text-[11.5px]">
+              {demonstracao
+                ? "Indisponível na demonstração"
+                : "Baixando o arquivo"}
+            </span>
+          </span>
+        </div>
+        <Legenda texto={legenda} />
+      </div>
+    );
+  }
   return (
     <div className="grid gap-1">
-      <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-text-secondary">
-        <Icone className="size-4 shrink-0" />
-        {rotulos.recebido}
-      </span>
+      <MidiaChegando
+        Icone={Icone}
+        rotulo={rotulos.recebido}
+        demonstracao={demonstracao}
+      />
       {nomeVisivel}
       <Legenda texto={legenda} />
-      <span className="text-[11.5px] text-text-tertiary">
-        {estado.tipo === "demonstracao"
-          ? "Indisponível na demonstração"
-          : "Baixando o arquivo"}
-      </span>
     </div>
   );
 }
@@ -455,8 +529,8 @@ function Lapide({
           ? `${authorNames[message.deleted_by] ?? "A clínica"} apagou`
           : "A clínica apagou";
   return (
-    <span className="flex items-center gap-1.5 text-[12.5px] text-text-tertiary italic">
-      <CircleSlash className="size-4 shrink-0" />
+    <span className="flex items-center gap-1.5 text-[12.5px] text-text-secondary italic">
+      <CircleSlash aria-hidden className="size-4 shrink-0" />
       {soAqui && !nota
         ? `${quem} esta mensagem só aqui. O paciente ainda vê.`
         : nota
@@ -486,29 +560,32 @@ function AcoesDaBolha({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="icon"
           aria-label="Ações da mensagem"
           // Aparece no toque desde sempre (celular nao tem passar o mouse) e
           // no computador quando o cursor ou o teclado chegam na bolha.
           className={cn(
-            "grid size-10 shrink-0 place-items-center rounded-full text-text-tertiary",
-            "hover:bg-surface-3 hover:text-text-secondary",
-            "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+            "rounded-full text-text-secondary",
             "sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100",
             "data-[state=open]:opacity-100",
           )}
         >
-          <MoreVertical className="size-4" />
-        </button>
+          <Ellipsis aria-hidden />
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuItem onSelect={onResponder} disabled={!podeResponder}>
-          <CornerUpLeft className="size-4" />
+          <CornerUpLeft aria-hidden />
           Responder
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onApagar} disabled={!podeApagar}>
-          <Trash2 className="size-4" />
+        <DropdownMenuItem
+          variant="destructive"
+          onSelect={onApagar}
+          disabled={!podeApagar}
+        >
+          <Trash2 aria-hidden />
           Apagar
         </DropdownMenuItem>
         {/* O motivo fica VISÍVEL no menu, e não num title.
@@ -540,6 +617,8 @@ export function MessageBubble({
   onApagar,
   onIrParaCitada,
   citadaEstaNaTela = false,
+  deConversaAnterior = false,
+  timezone = FUSO_PADRAO,
 }: {
   message: MessageItem;
   authorName: string | null;
@@ -566,15 +645,30 @@ export function MessageBubble({
   onIrParaCitada?: (id: string) => void;
   /** a mensagem citada já está entre as carregadas no fio */
   citadaEstaNaTela?: boolean;
+  /**
+   * A mensagem é de uma conversa anterior do mesmo contato (histórico). Dá
+   * para ler e apagar, mas não para citar: a resposta sairia nesta conversa
+   * citando outra, e o servidor recusa.
+   */
+  deConversaAnterior?: boolean;
+  /** fuso da clínica, para a hora da bolha */
+  timezone?: string;
 }) {
   if (message.content_type === "evento") {
-    return <SystemEventCard message={message} />;
+    return <SystemEventCard message={message} timezone={timezone} />;
   }
 
   const fromPatient = message.direction === "entrada";
   const fromIa = message.author === "ia";
   const note = message.is_internal_note;
   const apagada = message.deleted_at !== null;
+  const pele: keyof typeof PELES = fromPatient
+    ? "paciente"
+    : note
+      ? "nota"
+      : fromIa
+        ? "ia"
+        : "atendente";
 
   // Apagada SÓ AQUI ainda pode ser tirada do celular do paciente.
   //
@@ -598,55 +692,51 @@ export function MessageBubble({
   const mostrarAcoes =
     Boolean(onResponder && onApagar) && (!apagada || podeAmpliar);
 
+  // O menu fica do lado de FORA da bolha, e no lado oposto ao dono da
+  // mensagem, para não cobrir o texto nem empurrar a hora.
+  const acoes = mostrarAcoes ? (
+    <AcoesDaBolha
+      podeResponder={podeResponder && !apagada && !deConversaAnterior}
+      podeApagar={podeApagar}
+      motivoSemPermissao={
+        apagada
+          ? "Mensagem apagada não pode ser citada."
+          : deConversaAnterior
+            ? "Mensagem de uma conversa anterior não pode ser citada."
+            : podeEditar
+              ? "Assuma a conversa antes de responder."
+              : "Seu perfil pode acompanhar o atendimento, mas não responder."
+      }
+      onResponder={() => onResponder?.(message)}
+      onApagar={() => onApagar?.(message)}
+    />
+  ) : null;
+
+  const falhou = message.delivery_status === "falhou" && !apagada;
+
   return (
     <div
       id={`mensagem-${message.id}`}
       className={cn(
-        "group flex scroll-mt-4 items-center gap-1",
+        "group flex scroll-mt-4 items-end gap-1",
         fromPatient ? "justify-start" : "justify-end",
       )}
     >
-      {/* O menu fica do lado de FORA da bolha, e no lado oposto ao dono da
-          mensagem, para não cobrir o texto nem empurrar a hora. */}
-      {!fromPatient && mostrarAcoes ? (
-        <AcoesDaBolha
-          podeResponder={podeResponder && !apagada}
-          podeApagar={podeApagar}
-          motivoSemPermissao={
-            apagada
-              ? "Mensagem apagada não pode ser citada."
-              : podeEditar
-                ? "Assuma a conversa antes de responder."
-                : "Seu perfil pode acompanhar o atendimento, mas não responder."
-          }
-          onResponder={() => onResponder?.(message)}
-          onApagar={() => onApagar?.(message)}
-        />
-      ) : null}
+      {!fromPatient ? acoes : null}
 
       <div
         className={cn(
-          "grid max-w-[74%] gap-1 border px-3 py-2",
-          fromPatient
-            ? "rounded-[4px_14px_14px_14px] border-border-strong bg-card"
-            : "rounded-[14px_4px_14px_14px]",
-          !fromPatient &&
-            !note &&
-            (fromIa
-              ? "[border-color:var(--ai)] [background:var(--ai-bg)]"
-              : "border-transparent bg-surface-4"),
-          note &&
-            "[border-color:var(--warning)] [background:var(--warning-bg)]",
-          // Mensagem apagada perde a cor de autoria: ela não é mais fala de
-          // ninguém, é o registro de que houve uma.
-          apagada && "border-dashed border-border-strong bg-transparent",
+          "flex max-w-[85%] min-w-0 flex-col gap-[3px] sm:max-w-[68%]",
+          fromPatient ? "items-start" : "items-end",
         )}
       >
+        {/* Autoria ACIMA da bolha, fora dela: o selo "IA" e o aviso da nota
+            interna sao a camada de texto da autoria, nunca so a cor. */}
         {fromIa && !apagada ? (
-          <span className="flex items-center gap-1 text-[11px] font-semibold [color:var(--ai-text)]">
-            <Sparkles className="size-3" />
+          <span className="flex items-center gap-1 px-1 text-[11px] font-semibold text-text-secondary">
+            <Sparkles aria-hidden className="size-3 text-ai-text" />
             {authorName ?? "Assistente"}
-            <span className="rounded-full px-1.5 py-px text-[9px] tracking-wide [color:var(--ai-bg)] uppercase [background:var(--ai)]">
+            <span className="inline-flex h-4 items-center rounded-full bg-ai-bg px-1.5 text-[10px] font-bold text-ai-text">
               IA
             </span>
           </span>
@@ -654,71 +744,68 @@ export function MessageBubble({
         {!fromPatient && !fromIa && authorName && !apagada ? (
           <span
             className={cn(
-              "flex items-center gap-1 text-[11px] font-semibold",
-              note ? "[color:var(--warning-text)]" : "text-text-secondary",
+              "flex items-center gap-1 px-1 text-[11px] font-semibold",
+              note ? "text-warning-text" : "text-text-secondary",
             )}
           >
-            {note ? <Lock className="size-3" /> : null}
+            {note ? <Lock aria-hidden className="size-3" /> : null}
             {authorName}
             {note ? " · Nota interna, o paciente não vê" : null}
           </span>
         ) : null}
 
-        {apagada ? (
-          <Lapide
-            message={message}
-            authorNames={authorNames}
-            viewerId={viewerId}
-          />
-        ) : (
-          <>
-            <CitacaoDaBolha
-              message={message}
-              contato={contato}
-              nomes={authorNames}
-              aoIrParaCitada={onIrParaCitada}
-              citadaEstaNaTela={citadaEstaNaTela}
-            />
-            {message.content_type === "audio" ? (
-              <AudioBody message={message} />
-            ) : ehMidia(message) ? (
-              <MidiaBody message={message} />
-            ) : (
-              <p className="text-[13px] leading-[1.45] whitespace-pre-wrap">
-                {message.body}
-              </p>
-            )}
-          </>
-        )}
-
-        <span
+        <div
+          data-bolha
           className={cn(
-            "justify-self-end font-mono text-[10.5px] tabular-nums",
-            "text-text-tertiary",
+            "grid max-w-full min-w-24 gap-1 rounded-bubble border px-3 pt-[9px] pb-[7px] text-[13.5px] leading-[1.5] shadow-xs",
+            PELES[pele],
+            // Mensagem apagada perde a cor de autoria: ela não é mais fala de
+            // ninguém, é o registro de que houve uma.
+            apagada &&
+              "border-dashed border-border-heavy bg-transparent text-text-secondary shadow-none [--bolha-meta:var(--text-secondary)]",
           )}
         >
-          {hour(message.created_at)}
-          {message.delivery_status === "falhou" && !apagada ? (
-            <span className="[color:var(--alert-text)]"> · falhou</span>
-          ) : null}
-        </span>
+          {apagada ? (
+            <Lapide
+              message={message}
+              authorNames={authorNames}
+              viewerId={viewerId}
+            />
+          ) : (
+            <>
+              <CitacaoDaBolha
+                message={message}
+                contato={contato}
+                nomes={authorNames}
+                aoIrParaCitada={onIrParaCitada}
+                citadaEstaNaTela={citadaEstaNaTela}
+              />
+              {message.content_type === "audio" ? (
+                <AudioBody message={message} />
+              ) : ehMidia(message) ? (
+                <MidiaBody message={message} />
+              ) : (
+                <p className="break-words whitespace-pre-wrap">
+                  {message.body}
+                </p>
+              )}
+            </>
+          )}
+
+          <span className="mt-[3px] flex items-center justify-end gap-1 cz-num text-[11px] text-(--bolha-meta)">
+            {horaNaClinica(message.created_at, timezone)}
+          </span>
+        </div>
+
+        {falhou ? (
+          <span className="flex items-center gap-1 px-1 text-[11px] font-semibold text-alert-text">
+            <OctagonAlert aria-hidden className="size-3" />
+            Não foi entregue
+          </span>
+        ) : null}
       </div>
 
-      {fromPatient && mostrarAcoes ? (
-        <AcoesDaBolha
-          podeResponder={podeResponder && !apagada}
-          podeApagar={podeApagar}
-          motivoSemPermissao={
-            apagada
-              ? "Mensagem apagada não pode ser citada."
-              : podeEditar
-                ? "Assuma a conversa antes de responder."
-                : "Seu perfil pode acompanhar o atendimento, mas não responder."
-          }
-          onResponder={() => onResponder?.(message)}
-          onApagar={() => onApagar?.(message)}
-        />
-      ) : null}
+      {fromPatient ? acoes : null}
     </div>
   );
 }

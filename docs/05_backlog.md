@@ -138,6 +138,14 @@ Desenho: `conversation_tag_def` no molde da jornada (chave estável, nome renome
 **Pendência registrada:** `contact.tags` (as etiquetas de Leads) continua texto livre sem catálogo, o mesmo problema que a Jornada resolveu para as etapas. Ou converge para este catálogo, ou sai. Enquanto isso, a tela distingue: "Etiquetas do lead" em Leads, "Sinais automáticos" para as derivadas de Pacientes (risco de falta, inativo).
 **Aceite:** 16 testes de RLS (isolamento com contraprova, recepção aplica mas não cria, profissional só a conversa dele, chave imutável até pelo service role, teto de 8, e a invariante da limpeza ao excluir) e 8 de unidade da lógica pura.
 
+### [x] Revisão de liberação para a primeira clínica `G` (23 e 24/09/2026)
+Pedido do dono: deixar redondo tudo o que já existe para liberar uma clínica real, com agente de IA e Resultados adiados. Revisão com 12 revisores por área e dois céticos por achado: 142 achados, 134 confirmados. Decisões do dono em 24/09: remarcação avisa o paciente por mensagem automática e volta a pedir confirmação; gestor gerencia o código de entrada; atendimento primeiro (a resposta da recepção não espera a fila das automáticas, confirmação antes de follow-up, importado não entra no follow-up); Compareceu direto.
+Leva 1 (núcleo, commits 1bf3529 e 7934498): telefone com e sem nono dígito casado por chave canônica (`contact.phone_key`), réguas (toque atrasado, áudio com texto, dois trilhos no slot anti-ban, prioridade), interceptador de respostas só no contexto certo, lista de espera que não oferece vaga inexistente, agenda (remarcação com aviso, falta só depois do horário, Compareceu direto, faltas contadas pelo banco), isolamento entre clínicas por gatilho em todas as FKs de agenda e catálogo. Leva 2: correções de cada tela, junto com o layout do design system novo.
+**Pendências do dono:** plano Pro do Supabase (o Free não tem backup) com restauração testada; plano da Vercel; `MOTOR_SAUDE_SECRET` e o monitor externo; colar os modelos de e-mail no painel; conferir nome e fuso da clínica; linha de base de faltas (6.3).
+
+### [x] Design system novo como fonte visual `G` (24/09/2026)
+Pedido do dono: usar a pasta `Conduzza Design System/` como base do layout do que existe e do que vai existir. Especificação de adoção em `docs/06_adocao_design_system.md`, com os 37 conflitos e as decisões do dono (tons e tamanhos ajustados para AA e 40px, ícone de 2px, menu recolhido em 64px abaixo de 1600px, e do kit: saudação no Início, filtro em Confirmações, ações no topo da conversa, indicadores em Pacientes). Base visual publicada em 1286e7e (tema claro e escuro, fontes, componentes, shell, ícones); telas em lotes na leva 2.
+
 ---
 
 ## FASE 2. Cadastro e Agenda
@@ -228,6 +236,7 @@ Lista, ficha com linha do tempo, indicadores, etiqueta automática de risco (2 o
 **Aceite:** régua não duplica envio, respeita janela de envio, pula quem não tem consentimento e para na condição de parada. Teste com dois workers simultâneos.
 
 **Degrade de infraestrutura (31/08/2026):** a extensão `pg_cron` **não está disponível** neste projeto Supabase, e não existe Edge Function `job-worker`. O executor é um **processo Node** (`npm run worker`), e a exclusão mútua entre workers vive no banco, na RPC `claim_jobs` com `FOR UPDATE SKIP LOCKED` (o contrato do aceite está cumprido, o hospedeiro é que mudou). Consequências que o time precisa conhecer: o deploy tem **dois processos** e o worker precisa de supervisão com reinício automático; a tabela `worker_heartbeat` e a faixa "as mensagens automáticas estão paradas" existem porque, sem elas, um worker morto era indistinguível de operação normal. Migrar para `pg_cron` + Edge Function continua desejável e vira tarefa própria quando a extensão estiver disponível.
+**Superado em 02/09/2026:** o `pg_cron` foi ligado e o motor passou a rodar por ele, chamando `/api/webhooks/motor` na Vercel (runbook `supabase/operacao/motor-por-cron.md`). Não há mais worker em servidor.
 
 ### [x] 4.7 Confirmação de consulta (Tela 2) `G`
 Régua padrão de 72h, 24h e 3h. **Template com botões de resposta rápida.** Exceção por procedimento. Régua reforçada para quem tem histórico de falta. Painel do dia seguinte com bento, o card de Pendentes como herói. Aba de Faltas de hoje.
@@ -273,6 +282,7 @@ Lista de clínicas com plano, status do WhatsApp, quality rating, conversas e cu
 
 ### [ ] 6.1 Observabilidade `M`
 Alertas de disponibilidade, erro de webhook, fila crescendo, quality rating rebaixado, gasto contra teto, latência do LLM. **Garantir que nenhum conteúdo de mensagem de paciente vá para log.**
+Parcial (24/09/2026): `/api/webhooks/saude` responde 503 quando o motor para, atrasa ou o planner erra, para um monitor externo (UptimeRobot ou BetterStack) que o dono configura seguindo o runbook; poda diária de `cron.job_run_details`. Falta o resto da lista.
 
 ### [ ] 6.2 Testes de ponta a ponta `G`
 Playwright nos fluxos críticos: agendar, confirmar por botão, assumir da IA, e o teste de conflito de agenda concorrente.

@@ -111,7 +111,43 @@ export const agendaKeys = {
     ["agenda", clinicId, "historico-dia", diaISO] as const,
   listaDeEspera: (clinicId: string) =>
     ["agenda", clinicId, "lista-de-espera"] as const,
+  consentimento: (clinicId: string, contactId: string) =>
+    ["agenda", clinicId, "consentimento", contactId] as const,
 };
+
+/**
+ * Situacao da autorizacao para receber mensagens de um contato (modal de
+ * agendamento, achados 50, 57 e 88): a linha mais recente do WhatsApp manda,
+ * a mesma regra da RPC consentimento_vigente. Distingue "nunca registrou" de
+ * "pediu para nao receber", que a RPC (so booleano) nao distingue.
+ */
+export type SituacaoDoConsentimento =
+  "autorizado" | "revogado" | "sem_autorizacao";
+
+export async function fetchConsentimentoDoContato(
+  supabase: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+): Promise<SituacaoDoConsentimento> {
+  const { data, error } = await supabase
+    .from("contact_consent")
+    .select("granted_at, revoked_at")
+    .eq("clinic_id", clinicId)
+    .eq("contact_id", contactId)
+    .eq("channel", "whatsapp")
+    .order("granted_at", { ascending: false })
+    .limit(1);
+  if (error) {
+    throw new Error(error.message);
+  }
+  const maisRecente = (
+    (data ?? []) as { granted_at: string; revoked_at: string | null }[]
+  )[0];
+  if (!maisRecente) {
+    return "sem_autorizacao";
+  }
+  return maisRecente.revoked_at === null ? "autorizado" : "revogado";
+}
 
 const CONSULTA_SELECT =
   "id, unit_id, contact_id, professional_id, service_link_id, resource_id, starts_at, ends_at, status, confirmation_channel, is_overbooking, created_by, approval_status, send_confirmation, notes, contact:contact_id (id, name, phone_e164), service_link:service_link_id (id, duration_min, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";

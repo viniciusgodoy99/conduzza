@@ -1,8 +1,10 @@
 import { TrendingUp } from "lucide-react";
 import { redirect } from "next/navigation";
 
+import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
+import { Card } from "@/components/ui/card";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { createT } from "@/lib/branding/labels";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
@@ -25,6 +27,20 @@ import { VisaoDoProfissional } from "./visao-do-profissional";
 // EXPORTACAO, essa sim, grava trilha antes do download (action propria).
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Casca do design system (docs/06 secao 5.9). A tela inteira some na
+// impressao: o que imprime e o layout proprio da exportacao.
+const CONTEINER =
+  "mx-auto grid w-full max-w-content content-start gap-4 p-6 print:hidden";
+
+/** "26/08/26 a 24/09/26" (nunca meia-risca entre as datas). */
+function rotuloDoRecorte(diaDe: string, diaAte: string): string {
+  const curto = (dia: string) => {
+    const [ano, mes, diaDoMes] = dia.split("-");
+    return `${diaDoMes}/${mes}/${ano?.slice(2)}`;
+  };
+  return `${curto(diaDe)} a ${curto(diaAte)}`;
+}
 
 export default async function ResultadosPage({
   searchParams,
@@ -63,16 +79,19 @@ export default async function ResultadosPage({
 
     if (!professionalId) {
       return (
-        <div className="grid gap-6 p-6">
+        <div className={CONTEINER}>
+          <AvisoCelular />
           <PageHeader
             title="Resultados"
             description="Os resultados dos seus atendimentos."
           />
-          <EmptyState
-            icon={TrendingUp}
-            title="Seu perfil ainda não está ligado à agenda"
-            description="Peça para a administração vincular o seu usuário a um profissional da agenda. Depois disso, os seus resultados aparecem aqui."
-          />
+          <Card>
+            <EmptyState
+              icon={TrendingUp}
+              title="Seu perfil ainda não está ligado à agenda"
+              description="Peça para a administração vincular o seu usuário a um profissional da agenda. Depois disso, os seus resultados aparecem aqui."
+            />
+          </Card>
         </div>
       );
     }
@@ -86,8 +105,10 @@ export default async function ResultadosPage({
       { professionalId },
     );
     return (
-      <div className="grid gap-6 p-6">
+      <div className={CONTEINER}>
+        <AvisoCelular />
         <PageHeader
+          eyebrow="Últimos 30 dias"
           title="Resultados"
           description="Os resultados dos seus atendimentos."
         />
@@ -109,16 +130,40 @@ export default async function ResultadosPage({
   const supabase = await createClient();
   const [funil, agenda, atendimento, conversoes, linhaDeBase] =
     await Promise.all([
-      fetchFunilDoPeriodo(supabase, active.clinicId, active.timezone, diaDe, diaAte),
-      fetchAgendaDoPeriodo(supabase, active.clinicId, active.timezone, diaDe, diaAte),
-      fetchAtendimentoDoPeriodo(supabase, active.clinicId, active.timezone, diaDe, diaAte),
+      fetchFunilDoPeriodo(
+        supabase,
+        active.clinicId,
+        active.timezone,
+        diaDe,
+        diaAte,
+      ),
+      fetchAgendaDoPeriodo(
+        supabase,
+        active.clinicId,
+        active.timezone,
+        diaDe,
+        diaAte,
+      ),
+      fetchAtendimentoDoPeriodo(
+        supabase,
+        active.clinicId,
+        active.timezone,
+        diaDe,
+        diaAte,
+      ),
       fetchConversoesDevolvidas(supabase, active.clinicId),
       fetchLinhaDeBase(supabase, active.clinicId),
     ]);
 
+  const recortePadrao = diaDe === diaDePadrao && diaAte === diaAtePadrao;
+
   return (
-    <div className="grid gap-6 p-6 print:hidden">
+    <div className={CONTEINER}>
+      <AvisoCelular />
       <PageHeader
+        eyebrow={
+          recortePadrao ? "Últimos 30 dias" : rotuloDoRecorte(diaDe, diaAte)
+        }
         title="Resultados"
         description={`De qual canal vem o ${t("paciente")} que comparece.`}
       />

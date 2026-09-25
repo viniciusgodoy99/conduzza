@@ -3,6 +3,7 @@
 import {
   CalendarClock,
   Coins,
+  MessagesSquare,
   Plus,
   SendHorizonal,
   Trash2,
@@ -17,12 +18,24 @@ import {
   testarEnvioAction,
 } from "@/app/(app)/automacoes/actions";
 import { DialogPasso } from "@/components/automacoes/dialog-passo";
+import {
+  DialogoDeExclusao,
+  PERDAS_DO_HISTORICO,
+} from "@/components/automacoes/dialogo-de-exclusao";
 import { EditorDePasso } from "@/components/automacoes/editor-de-passo";
 import { LinhaDoTempo } from "@/components/automacoes/linha-do-tempo";
 import { MetricasDaRegua } from "@/components/automacoes/metricas-da-regua";
 import { ControlesDaRegua } from "@/components/confirmacoes/controles-da-regua";
+import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
 import {
   estimarRegua,
   type BaseDaEstimativa,
@@ -36,6 +49,95 @@ import type { ReguaDeConfirmacao } from "@/lib/queries/confirmacoes";
 // Uma aba de regua da Tela 7 (confirmacao ou pos falta, e as excecoes da
 // fase seguinte): ativacao (o MESMO bloco da Tela 2), a linha do tempo com
 // um editor por passo e a estimativa honesta de volume.
+//
+// Desenho do design system (docs/06 secao 5.10): cada bloco em Card. Dentro
+// de uma excecao ou de um follow-up (que ja sao cartoes), "aninhada" tira a
+// casca e separa os blocos por um fio, para nao empilhar cartao em cartao.
+
+// Textos do dialogo de excluir mensagem por tipo de regua (achado L14, o
+// mesmo cuidado do achado 54 na prova de trabalho): quem deixa de receber e
+// onde o historico apagado aparecia. Confirmacao e pos falta aparecem em
+// Confirmacoes (lista do dia e Faltas de hoje); follow-up fala com leads e
+// nao aparece la. A comparacao de antes e depois em Resultados usa o
+// primeiro envio de qualquer regua, entao vale para as tres.
+const EXCLUSAO_DO_PASSO: Record<
+  TipoDeReguaDoRotulo,
+  { publico: string; historico: string }
+> = {
+  confirmacao: {
+    publico: "os pacientes",
+    historico:
+      "O histórico de envios dela também é apagado: some das métricas da régua e da lista do dia em Confirmações, e pode mudar a comparação de antes e depois em Resultados.",
+  },
+  pos_falta: {
+    publico: "quem faltou",
+    historico:
+      "O histórico de envios dela também é apagado: some das métricas da régua e da aba Faltas de hoje em Confirmações, e pode mudar a comparação de antes e depois em Resultados.",
+  },
+  followup: {
+    publico: "os leads desta etapa",
+    historico:
+      "O histórico de envios dela também é apagado: some das métricas da régua e pode mudar a comparação de antes e depois em Resultados.",
+  },
+};
+
+function Bloco({
+  aninhada,
+  titulo,
+  descricao,
+  acao,
+  children,
+}: {
+  aninhada: boolean;
+  titulo?: string;
+  descricao?: string;
+  acao?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const cabecalho = titulo ? (
+    <div className="grid gap-0.5">
+      {aninhada ? (
+        <h3 className="text-sm font-bold">{titulo}</h3>
+      ) : (
+        <h2 className="text-base leading-[1.3] font-bold tracking-[-0.01em]">
+          {titulo}
+        </h2>
+      )}
+      {descricao ? (
+        aninhada ? (
+          <p className="text-xs text-text-secondary">{descricao}</p>
+        ) : (
+          <CardDescription>{descricao}</CardDescription>
+        )
+      ) : null}
+    </div>
+  ) : null;
+
+  if (aninhada) {
+    return (
+      <section className="grid gap-4 border-t border-border pt-4 first:border-t-0 first:pt-0">
+        {cabecalho ? (
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            {cabecalho}
+            {acao}
+          </div>
+        ) : null}
+        {children}
+      </section>
+    );
+  }
+  return (
+    <Card>
+      {cabecalho ? (
+        <CardHeader>
+          {cabecalho}
+          {acao ? <CardAction>{acao}</CardAction> : null}
+        </CardHeader>
+      ) : null}
+      <CardContent className="grid gap-4">{children}</CardContent>
+    </Card>
+  );
+}
 
 export function AbaRegua({
   clinicId,
@@ -50,6 +152,8 @@ export function AbaRegua({
   placeholders,
   podeEditar,
   dicaSemPermissao,
+  ehAdministrador,
+  aninhada = false,
   aoMudar,
 }: {
   clinicId: string;
@@ -75,10 +179,16 @@ export function AbaRegua({
   placeholders?: readonly string[];
   podeEditar: boolean;
   dicaSemPermissao: string;
+  /** So o administrador registra a linha de base (aviso ao ligar). */
+  ehAdministrador: boolean;
+  /** Dentro de outro cartao (excecao, follow-up): blocos sem casca. */
+  aninhada?: boolean;
   aoMudar: () => Promise<unknown> | void;
 }) {
   const [passoAberto, setPassoAberto] = useState<string | null>(null);
-  const [dialogo, setDialogo] = useState<"criar" | "momento" | null>(null);
+  const [dialogo, setDialogo] = useState<
+    "criar" | "momento" | "excluir" | null
+  >(null);
   const [pendente, iniciarTransicao] = useTransition();
 
   const passoSelecionado = useMemo(() => {
@@ -93,7 +203,10 @@ export function AbaRegua({
   }, [regua, passoAberto]);
 
   if (!regua) {
-    return <p className="text-sm text-text-secondary">{copy.vazio}</p>;
+    const vazio = (
+      <EmptyState compact icon={MessagesSquare} title={copy.vazio} />
+    );
+    return aninhada ? vazio : <Card>{vazio}</Card>;
   }
   const reguaAtual = regua;
 
@@ -162,6 +275,7 @@ export function AbaRegua({
       });
       if (resultado.ok) {
         toast.success("Mensagem excluída.");
+        setDialogo(null);
         setPassoAberto(null);
         await aoMudar();
         return;
@@ -177,30 +291,54 @@ export function AbaRegua({
       .length,
   });
 
+  const ultimaMensagem = regua.passos.length <= 1;
+  const rotuloDoSelecionado = passoSelecionado
+    ? rotuloDoPasso(passoSelecionado.offset_minutes, tipoDaRegua)
+    : "";
+
+  const botaoAdicionar = podeEditar ? (
+    <Button
+      variant="outline"
+      disabled={pendente}
+      onClick={() => setDialogo("criar")}
+    >
+      <Plus aria-hidden />
+      Adicionar mensagem
+    </Button>
+  ) : (
+    <DisabledWithHint hint={dicaSemPermissao}>
+      <Button variant="outline" disabled>
+        <Plus aria-hidden />
+        Adicionar mensagem
+      </Button>
+    </DisabledWithHint>
+  );
+
   return (
-    <div className="grid gap-6">
-      <div className="grid gap-6 rounded-lg border bg-card p-4">
+    <div className="grid gap-4">
+      <Bloco aninhada={aninhada}>
         <ControlesDaRegua
           regua={regua}
+          tipo={tipoDaRegua}
           rotuloLigar={copy.ligar}
           rotuloLigada={copy.ligada}
           rotuloDesligada={copy.desligada}
           visivel
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
+          ehAdministrador={ehAdministrador}
           aoMudar={aoMudar}
         />
-      </div>
+      </Bloco>
 
-      <section className="grid gap-4 rounded-lg border bg-card p-4">
-        <div className="grid gap-1">
-          <h3 className="text-sm font-semibold">As mensagens da régua</h3>
-          <p className="text-xs text-text-secondary">
-            Toque num ponto da linha para editar a mensagem daquele momento.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="min-w-0 flex-1">
+      <Bloco
+        aninhada={aninhada}
+        titulo="As mensagens da régua"
+        descricao="Toque num ponto da linha para editar a mensagem daquele momento."
+        acao={botaoAdicionar}
+      >
+        {passoSelecionado ? (
+          <>
             <LinhaDoTempo
               inicioRotulo={copy.inicioDaLinha}
               fimRotulo={copy.fimDaLinha}
@@ -209,48 +347,24 @@ export function AbaRegua({
                 rotulo: rotuloDoPasso(passo.offset_minutes, tipoDaRegua),
                 temTexto: Boolean(passo.fixed_body || passo.media_path),
               }))}
-              selecionadoId={passoSelecionado?.id ?? null}
+              selecionadoId={passoSelecionado.id}
               onSelecionar={setPassoAberto}
             />
-          </div>
-          {podeEditar ? (
-            <Button
-              variant="outline"
-              className="h-10"
-              disabled={pendente}
-              onClick={() => setDialogo("criar")}
-            >
-              <Plus className="size-4" />
-              Adicionar mensagem
-            </Button>
-          ) : (
-            <DisabledWithHint hint={dicaSemPermissao}>
-              <Button variant="outline" className="h-10" disabled>
-                <Plus className="size-4" />
-                Adicionar mensagem
-              </Button>
-            </DisabledWithHint>
-          )}
-        </div>
-        {passoSelecionado ? (
-          <>
-            <div className="flex flex-wrap gap-2 border-t pt-3">
+            {/* Barra do passo: acoes que mudam o passo inteiro. Sem
+                permissao, visiveis e desabilitadas, com a dica. */}
+            <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
               {podeEditar ? (
                 <>
                   <Button
                     variant="ghost"
-                    size="sm"
-                    className="h-9"
                     disabled={pendente}
                     onClick={() => setDialogo("momento")}
                   >
-                    <CalendarClock className="size-4" />
+                    <CalendarClock aria-hidden />
                     Mudar o momento
                   </Button>
                   <Button
                     variant="ghost"
-                    size="sm"
-                    className="h-9"
                     disabled={
                       pendente ||
                       (!passoSelecionado.fixed_body &&
@@ -258,52 +372,58 @@ export function AbaRegua({
                     }
                     onClick={testarEnvio}
                   >
-                    <SendHorizonal className="size-4" />
+                    <SendHorizonal aria-hidden />
                     {pendente ? "Enviando..." : "Testar no WhatsApp da clínica"}
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-9 [color:var(--alert-text)]"
-                    disabled={pendente || regua.passos.length <= 1}
-                    onClick={excluirPasso}
-                  >
-                    <Trash2 className="size-4" />
-                    Excluir mensagem
-                  </Button>
-                  {regua.passos.length <= 1 ? (
-                    <span className="self-center text-xs text-text-tertiary">
-                      A última mensagem não se exclui; desligue a régua para
-                      pausar.
-                    </span>
-                  ) : null}
-                </>
-              ) : (
-                <DisabledWithHint hint={dicaSemPermissao}>
-                  <span className="flex flex-wrap gap-2">
-                    <Button variant="ghost" size="sm" className="h-9" disabled>
-                      <CalendarClock className="size-4" />
-                      Mudar o momento
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-9" disabled>
-                      <SendHorizonal className="size-4" />
-                      Testar no WhatsApp da clínica
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-9" disabled>
-                      <Trash2 className="size-4" />
+                  {ultimaMensagem ? (
+                    <DisabledWithHint
+                      hint="A última mensagem não se exclui. Desligue a régua para pausar."
+                      className="ml-auto"
+                    >
+                      <Button variant="destructive" disabled>
+                        <Trash2 aria-hidden />
+                        Excluir mensagem
+                      </Button>
+                    </DisabledWithHint>
+                  ) : (
+                    <Button
+                      variant="destructive"
+                      className="ml-auto"
+                      disabled={pendente}
+                      onClick={() => setDialogo("excluir")}
+                    >
+                      <Trash2 aria-hidden />
                       Excluir mensagem
                     </Button>
-                  </span>
-                </DisabledWithHint>
+                  )}
+                </>
+              ) : (
+                <>
+                  <DisabledWithHint hint={dicaSemPermissao}>
+                    <Button variant="ghost" disabled>
+                      <CalendarClock aria-hidden />
+                      Mudar o momento
+                    </Button>
+                  </DisabledWithHint>
+                  <DisabledWithHint hint={dicaSemPermissao}>
+                    <Button variant="ghost" disabled>
+                      <SendHorizonal aria-hidden />
+                      Testar no WhatsApp da clínica
+                    </Button>
+                  </DisabledWithHint>
+                  <DisabledWithHint hint={dicaSemPermissao} className="ml-auto">
+                    <Button variant="destructive" disabled>
+                      <Trash2 aria-hidden />
+                      Excluir mensagem
+                    </Button>
+                  </DisabledWithHint>
+                </>
               )}
             </div>
             <EditorDePasso
               key={passoSelecionado.id}
               passo={passoSelecionado}
-              rotulo={rotuloDoPasso(
-                passoSelecionado.offset_minutes,
-                tipoDaRegua,
-              )}
+              rotulo={rotuloDoSelecionado}
               nomeDaClinica={nomeDaClinica}
               botoes={botoesDaPreview}
               placeholders={placeholders}
@@ -313,24 +433,45 @@ export function AbaRegua({
             />
           </>
         ) : (
-          <p className="text-sm text-text-secondary">
-            Esta régua ainda não tem mensagens. Toque em Adicionar mensagem para
-            criar a primeira.
-          </p>
+          <EmptyState
+            compact
+            icon={MessagesSquare}
+            title="Esta régua ainda não tem mensagens"
+            description="Toque em Adicionar mensagem para criar a primeira."
+          />
         )}
-      </section>
+      </Bloco>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
+      <Bloco aninhada={aninhada} titulo="Últimos 30 dias">
         <MetricasDaRegua clinicId={clinicId} cadenceId={regua.id} />
-      </section>
-
-      <section className="flex gap-3 rounded-lg border bg-card p-4">
-        <Coins className="size-5 shrink-0 text-text-secondary" aria-hidden />
-        <div className="grid gap-1 text-sm">
-          <p>{resultado.frase}</p>
-          <p className="text-text-secondary">{resultado.fraseDeCusto}</p>
+        {/* Estimativa em bloco afundado: volume dos ultimos 30 dias vezes
+            os passos com conteudo, sem inventar preco. */}
+        <div className="flex gap-3 rounded-xl bg-surface-4 p-3.5">
+          <Coins
+            className="mt-px size-[17px] shrink-0 text-text-secondary"
+            aria-hidden
+          />
+          <div className="grid gap-1 text-[13px]">
+            <p className="text-foreground">{resultado.frase}</p>
+            <p className="text-text-secondary">{resultado.fraseDeCusto}</p>
+          </div>
         </div>
-      </section>
+      </Bloco>
+
+      <DialogoDeExclusao
+        aberto={dialogo === "excluir"}
+        titulo="Excluir esta mensagem?"
+        descricao={`A mensagem enviada ${rotuloDoSelecionado.toLowerCase()} deixa de sair para ${EXCLUSAO_DO_PASSO[tipoDaRegua].publico}.`}
+        consequencias={[
+          "O texto e o anexo desta mensagem são apagados.",
+          EXCLUSAO_DO_PASSO[tipoDaRegua].historico,
+          PERDAS_DO_HISTORICO.resposta,
+        ]}
+        rotuloConfirmar="Excluir mensagem"
+        pendente={pendente}
+        onFechar={() => setDialogo(null)}
+        onConfirmar={excluirPasso}
+      />
       <DialogPasso
         aberto={dialogo === "criar"}
         onFechar={() => setDialogo(null)}

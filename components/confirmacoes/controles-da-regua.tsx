@@ -1,6 +1,7 @@
 "use client";
 
-import { CircleCheck, CirclePause, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, Check } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -8,6 +9,9 @@ import {
   alternarReguaAction,
   salvarJanelaDaReguaAction,
 } from "@/app/(app)/confirmacoes/actions";
+import { Aviso } from "@/components/shared/aviso";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,6 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { REGUA_STATUS } from "@/lib/design/status";
 import type { ReguaDeConfirmacao } from "@/lib/queries/confirmacoes";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +35,38 @@ import { cn } from "@/lib/utils";
 // As duas regras do dono continuam inteiras aqui:
 // 1. A CLINICA informa a janela; o banco recusa ativar sem ela e o
 //    interruptor fica desabilitado com dica ate la.
-// 2. Primeira ativacao pede o registro da taxa de falta (linha de base).
+// 2. Ligar a regua de CONFIRMACAO sem linha de base registrada pede o
+//    registro da taxa de falta (achado 49: antes o aviso seguia "a clinica
+//    nunca enviou", aparecia no follow-up e mandava registrar sem dizer onde).
+
+/** Qual regua e: decide os textos de apoio (achado 54). */
+export type TipoDaReguaDosControles = "confirmacao" | "pos_falta" | "followup";
+
+// Prova de trabalho por tipo: o aviso do topo da tela e a faixa global do
+// shell (WhatsApp desconectado ou envio parado); onde ver o motivo de cada
+// mensagem que nao saiu depende da regua (so a confirmacao tem a lista do
+// dia com o motivo por consulta).
+const PROVA_DE_TRABALHO: Record<
+  TipoDaReguaDosControles,
+  { semEnvio: string; motivo: string }
+> = {
+  confirmacao: {
+    semEnvio:
+      "Nenhuma mensagem enviada nas últimas 24 horas. Se havia consultas para confirmar no período, veja se há aviso no topo da tela (WhatsApp desconectado ou envio parado).",
+    motivo: "O motivo de cada uma aparece na lista do dia, em Confirmações.",
+  },
+  pos_falta: {
+    semEnvio:
+      "Nenhuma mensagem enviada nas últimas 24 horas. Se alguém faltou no período, veja se há aviso no topo da tela (WhatsApp desconectado ou envio parado).",
+    motivo:
+      "Os motivos aparecem nos números dos últimos 30 dias da régua, em Automações.",
+  },
+  followup: {
+    semEnvio:
+      "Nenhuma mensagem enviada nas últimas 24 horas. Se havia leads parados nesta etapa no período, veja se há aviso no topo da tela (WhatsApp desconectado ou envio parado).",
+    motivo: "Os motivos aparecem nos números dos últimos 30 dias da régua.",
+  },
+};
 
 const DIAS = [
   { valor: 0, curto: "Dom", longo: "domingo" },
@@ -49,15 +85,18 @@ function horaCurta(valor: string | null | undefined): string {
 
 export function ControlesDaRegua({
   regua,
+  tipo,
   rotuloLigar,
   rotuloLigada,
   rotuloDesligada,
   visivel,
   podeEditar,
   dicaSemPermissao,
+  ehAdministrador,
   aoMudar,
 }: {
   regua: ReguaDeConfirmacao;
+  tipo: TipoDaReguaDosControles;
   rotuloLigar: string;
   rotuloLigada: string;
   rotuloDesligada: string;
@@ -65,6 +104,11 @@ export function ControlesDaRegua({
   visivel: boolean;
   podeEditar: boolean;
   dicaSemPermissao: string;
+  /**
+   * So o administrador registra a linha de base (policy "admin registra
+   * linha de base"): para o gestor, o aviso diz a quem pedir.
+   */
+  ehAdministrador: boolean;
   aoMudar: () => Promise<unknown> | void;
 }) {
   const [pendente, iniciarTransicao] = useTransition();
@@ -114,7 +158,8 @@ export function ControlesDaRegua({
   };
 
   const alternar = (ativar: boolean) => {
-    if (ativar && regua.primeira_ativacao) {
+    // So a confirmacao e so sem linha de base (a query ja decide os dois).
+    if (ativar && regua.pede_linha_de_base) {
       setAvisoAberto(true);
       return;
     }
@@ -150,35 +195,34 @@ export function ControlesDaRegua({
 
   const idInicio = `regua-inicio-${regua.id}`;
   const idFim = `regua-fim-${regua.id}`;
+  const prova = PROVA_DE_TRABALHO[tipo];
+
+  const botaoSalvar = (
+    <Button
+      variant="outline"
+      disabled={!podeEditar || pendente || !janelaMudou}
+      onClick={salvarJanela}
+    >
+      {pendente ? "Salvando..." : "Salvar horário"}
+    </Button>
+  );
 
   return (
     <>
-      {/* Situacao da regua, nas 3 camadas */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
-        <span className="flex items-center gap-2">
-          {regua.active ? (
-            <CircleCheck
-              className="size-4"
-              style={{ color: "var(--success-text)" }}
-              aria-hidden
-            />
-          ) : (
-            <CirclePause
-              className="size-4"
-              style={{ color: "var(--neutral-text)" }}
-              aria-hidden
-            />
-          )}
-          <span className="text-sm font-medium">
-            {regua.active ? rotuloLigada : rotuloDesligada}
-          </span>
-        </span>
+      {/* Situacao da regua, nas 3 camadas (REGUA_STATUS com o rotulo da
+          tela), e o interruptor. Travado, o interruptor e a dica ficam no
+          MESMO pai: e ele que o e2e foca para ler a dica. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface-4 px-3.5 py-3">
+        <StatusChip
+          definition={REGUA_STATUS[regua.active ? "ligada" : "desligada"]}
+          label={regua.active ? rotuloLigada : rotuloDesligada}
+        />
         {dicaDoInterruptor ? (
-          <span className="flex items-center gap-2">
-            <Switch checked={regua.active} disabled aria-label={rotuloLigar} />
-            <span className="max-w-56 text-xs text-text-tertiary">
+          <span className="flex items-center gap-2.5">
+            <span className="max-w-60 text-right text-xs text-text-secondary">
               {dicaDoInterruptor}
             </span>
+            <Switch checked={regua.active} disabled aria-label={rotuloLigar} />
           </span>
         ) : (
           <Switch
@@ -192,25 +236,29 @@ export function ControlesDaRegua({
 
       {/* Prova de trabalho. "Regua ligada" sozinho nao diz nada. */}
       {regua.active ? (
-        <p className="rounded-lg border px-3 py-2 text-xs text-text-secondary">
+        <p className="text-[12.5px] text-text-secondary">
           {regua.enviados_24h > 0 ? (
             <>
-              <strong>{regua.enviados_24h}</strong>{" "}
+              <span className="cz-num font-semibold text-text-strong">
+                {regua.enviados_24h}
+              </span>{" "}
               {regua.enviados_24h === 1
                 ? "mensagem enviada"
                 : "mensagens enviadas"}{" "}
-              nas últimas 24 horas
+              nas últimas 24 horas.
             </>
           ) : (
-            "Nenhuma mensagem enviada nas últimas 24 horas. Se havia consultas no período, confira o aviso no topo da tela."
+            prova.semEnvio
           )}
           {regua.pulados_24h > 0 ? (
             <>
-              {". "}
-              <strong>{regua.pulados_24h}</strong>{" "}
+              {" "}
+              <span className="cz-num font-semibold text-text-strong">
+                {regua.pulados_24h}
+              </span>{" "}
               {regua.pulados_24h === 1 ? "não saiu" : "não saíram"} (sem
-              autorização, fora do horário ou WhatsApp fora do ar). O motivo de
-              cada uma aparece na lista do dia.
+              autorização, fora do horário ou WhatsApp fora do ar).{" "}
+              {prova.motivo}
             </>
           ) : null}
         </p>
@@ -219,19 +267,19 @@ export function ControlesDaRegua({
       {/* Janela de envio: a clinica informa */}
       <section className="grid gap-3">
         <div className="grid gap-1">
-          <h3 className="text-sm font-semibold">Horário de envio</h3>
+          <h3 className="text-sm font-bold">Horário de envio</h3>
           <p className="text-xs text-text-secondary">
             As mensagens só saem dentro desta faixa, no fuso da clínica. Um
             toque que vence fora dela espera a próxima abertura.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:max-w-[360px]">
           <div className="grid gap-1.5">
             <Label htmlFor={idInicio}>Começa às</Label>
             <Input
               id={idInicio}
               type="time"
-              className="h-10"
+              className="cz-num"
               value={inicio}
               disabled={!podeEditar || pendente}
               onChange={(e) => setInicio(e.target.value)}
@@ -242,15 +290,20 @@ export function ControlesDaRegua({
             <Input
               id={idFim}
               type="time"
-              className="h-10"
+              className="cz-num"
               value={fim}
               disabled={!podeEditar || pendente}
               onChange={(e) => setFim(e.target.value)}
             />
           </div>
         </div>
-        <fieldset className="grid gap-1.5">
-          <legend className="pb-1.5 text-sm font-medium">Dias de envio</legend>
+        <fieldset className="grid gap-2">
+          <legend className="pb-2 text-xs font-semibold text-foreground">
+            Dias de envio
+          </legend>
+          {/* Receita "escolha em chip" (docs/06 secao 4.7): escolhido em lime
+              suave com borda e o sinal de marcado, nunca preenchido de lime.
+              O nome acessivel e o dia por extenso (o e2e clica por ele). */}
           <div className="flex flex-wrap gap-1.5">
             {DIAS.map((dia) => {
               const marcado = dias.includes(dia.valor);
@@ -263,12 +316,13 @@ export function ControlesDaRegua({
                   disabled={!podeEditar || pendente}
                   onClick={() => alternarDia(dia.valor)}
                   className={cn(
-                    "h-10 min-w-11 rounded-md border px-2 text-[13px] font-medium transition-colors disabled:opacity-50",
+                    "inline-flex h-10 min-w-11 items-center justify-center gap-1 rounded-lg border px-2.5 text-[13px] font-medium cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:cursor-not-allowed disabled:opacity-45",
                     marcado
-                      ? "border-transparent bg-primary text-primary-foreground"
-                      : "text-text-secondary hover:text-foreground",
+                      ? "border-primary-edge bg-primary-soft font-semibold text-primary-text"
+                      : "border-input bg-card text-foreground hover:bg-surface-3",
                   )}
                 >
+                  {marcado ? <Check className="size-3.5" aria-hidden /> : null}
                   {dia.curto}
                 </button>
               );
@@ -276,54 +330,56 @@ export function ControlesDaRegua({
           </div>
         </fieldset>
         <div className="flex items-center gap-2">
-          <Button
-            className="h-10"
-            disabled={!podeEditar || pendente || !janelaMudou}
-            onClick={salvarJanela}
-          >
-            {pendente ? "Salvando..." : "Salvar horário"}
-          </Button>
-          {!podeEditar ? (
-            <span className="text-xs text-text-tertiary">
-              {dicaSemPermissao}
-            </span>
-          ) : null}
+          {podeEditar ? (
+            botaoSalvar
+          ) : (
+            <DisabledWithHint hint={dicaSemPermissao}>
+              {botaoSalvar}
+            </DisabledWithHint>
+          )}
         </div>
       </section>
 
-      {/* Primeira ativacao da clinica: o aviso da linha de base */}
+      {/* Regua de confirmacao sem linha de base: o aviso diz ONDE registrar
+          (Resultados, aba Confirmacao) e, para quem nao e administrador, a
+          quem pedir, porque so o administrador registra (achado 49). */}
       <Dialog open={avisoAberto} onOpenChange={setAvisoAberto}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>Antes de ligar, anote a taxa de falta</DialogTitle>
             <DialogDescription>
-              Esta é a primeira vez que a clínica vai enviar mensagem
-              automática.
+              {regua.primeira_ativacao
+                ? "Esta é a primeira vez que a clínica vai enviar mensagem automática."
+                : "A clínica ainda não registrou a taxa de falta de antes das mensagens automáticas."}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex gap-3 rounded-lg border p-3">
-            <TriangleAlert
-              className="size-5 shrink-0"
-              style={{ color: "var(--warning-text)" }}
-              aria-hidden
-            />
-            <p className="text-sm text-text-secondary">
-              Registre agora a taxa de falta atual da clínica. É ela que prova o
-              resultado depois: sem o número de antes, não existe comparação e o
-              ganho da régua fica sem evidência.
+          <Aviso tom="warning" role="note">
+            <p>
+              {ehAdministrador
+                ? "Registre a taxa de falta atual da clínica em Resultados, aba Confirmação."
+                : "Peça a quem administra a clínica para registrar a taxa de falta em Resultados."}{" "}
+              É ela que prova o resultado depois: sem o número de antes, não
+              existe comparação e o ganho da régua fica sem evidência.
             </p>
-          </div>
+            {ehAdministrador ? (
+              <Link
+                href="/relatorios?aba=confirmacao"
+                className="mt-1 inline-flex min-h-10 items-center gap-1 rounded-sm font-bold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+              >
+                Registrar a taxa de falta
+                <ArrowUpRight className="size-3.5" aria-hidden />
+              </Link>
+            ) : null}
+          </Aviso>
           <DialogFooter>
             <Button
-              variant="outline"
-              className="h-10"
+              variant="ghost"
               disabled={pendente}
               onClick={() => setAvisoAberto(false)}
             >
               Agora não
             </Button>
             <Button
-              className="h-10"
               disabled={pendente}
               onClick={() => aplicarAlternancia(true)}
             >

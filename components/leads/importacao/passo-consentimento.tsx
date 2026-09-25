@@ -1,7 +1,6 @@
 "use client";
 
-import { TriangleAlert } from "lucide-react";
-
+import { Aviso } from "@/components/shared/aviso";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { OpcaoDeclaracao } from "@/lib/integrations/importar-contatos";
@@ -9,7 +8,9 @@ import { cn } from "@/lib/utils";
 
 // Passo 3 da importacao: declaracao OBRIGATORIA de como os contatos
 // autorizaram receber mensagens. A escolha vira a evidencia gravada em
-// contact_consent (regra 3.3: sem autorização, nenhum disparo).
+// contact_consent (regra 3.3: sem autorização, nenhum disparo). A opcao
+// escolhida segue a receita de selecionado do DS (lime suave com borda
+// lime-700), com o radio nativo como pista que nao depende de cor.
 
 const OPCOES: {
   valor: OpcaoDeclaracao;
@@ -51,7 +52,7 @@ export function PassoConsentimento({
 }) {
   return (
     <div className="grid gap-4">
-      <p className="text-sm text-text-secondary">
+      <p className="text-[13.5px] text-text-secondary">
         Como estas pessoas autorizaram receber mensagens da clínica no WhatsApp?
         A declaração fica registrada junto de cada contato.
       </p>
@@ -61,32 +62,42 @@ export function PassoConsentimento({
         aria-label="Como os contatos autorizaram receber mensagens"
         className="grid gap-2"
       >
-        {OPCOES.map((item) => (
-          <label
-            key={item.valor}
-            className={cn(
-              "flex min-h-10 cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5",
-              opcao === item.valor
-                ? "border-primary-edge bg-muted"
-                : "border-border",
-            )}
-          >
-            <input
-              type="radio"
-              name="declaracao-consentimento"
-              value={item.valor}
-              checked={opcao === item.valor}
-              onChange={() => aoEscolher(item.valor)}
-              className="mt-0.5 size-4 shrink-0 accent-(--primary-edge)"
-            />
-            <span className="grid gap-0.5">
-              <span className="text-sm font-medium">{item.rotulo}</span>
-              <span className="text-xs text-text-secondary">
-                {item.descricao}
+        {OPCOES.map((item) => {
+          const escolhida = opcao === item.valor;
+          return (
+            <label
+              key={item.valor}
+              className={cn(
+                "flex min-h-10 cursor-pointer items-start gap-3 rounded-xl border px-3.5 py-3 cz-transition",
+                escolhida
+                  ? "border-primary-edge bg-primary-soft"
+                  : "border-border-strong bg-card hover:bg-surface-subtle",
+              )}
+            >
+              <input
+                type="radio"
+                name="declaracao-consentimento"
+                value={item.valor}
+                checked={escolhida}
+                onChange={() => aoEscolher(item.valor)}
+                className="mt-0.5 size-4 shrink-0 accent-(--primary-edge)"
+              />
+              <span className="grid gap-0.5">
+                <span
+                  className={cn(
+                    "text-sm text-text-strong",
+                    escolhida ? "font-bold" : "font-semibold",
+                  )}
+                >
+                  {item.rotulo}
+                </span>
+                <span className="text-xs text-text-secondary">
+                  {item.descricao}
+                </span>
               </span>
-            </span>
-          </label>
-        ))}
+            </label>
+          );
+        })}
       </div>
 
       <div className="grid gap-1.5">
@@ -103,21 +114,10 @@ export function PassoConsentimento({
         />
       </div>
 
-      <div
-        role="note"
-        className="flex items-start gap-2 rounded-lg border px-3 py-2.5"
-        style={{
-          borderColor: "var(--warning)",
-          backgroundColor: "var(--warning-bg)",
-          color: "var(--warning-text)",
-        }}
-      >
-        <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <p className="text-sm">
-          Disparar mensagem para quem não autorizou derruba a nota do seu número
-          no WhatsApp e pode travar os envios da clínica inteira.
-        </p>
-      </div>
+      <Aviso tom="warning" role="note">
+        Disparar mensagem para quem não autorizou derruba a nota do seu número
+        no WhatsApp e pode travar os envios da clínica inteira.
+      </Aviso>
     </div>
   );
 }

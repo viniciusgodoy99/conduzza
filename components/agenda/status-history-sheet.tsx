@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { History } from "lucide-react";
 import { useMemo } from "react";
 
 import {
@@ -8,6 +9,9 @@ import {
   momentoNoFuso,
 } from "@/components/agenda/linha-do-historico";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
+import { Aviso } from "@/components/shared/aviso";
+import { EmptyState } from "@/components/shared/empty-state";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -68,7 +72,7 @@ export function StatusHistorySheet({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="grid gap-3 overflow-y-auto px-4 pb-6">
+        <div className="grid cz-scroll gap-3 overflow-y-auto px-5 pb-6">
           {historicoQuery.isPending && aberto ? (
             <>
               <Skeleton className="h-10 w-full" />
@@ -76,33 +80,39 @@ export function StatusHistorySheet({
               <Skeleton className="h-10 w-full" />
             </>
           ) : historicoQuery.isError ? (
-            <p
+            <Aviso
+              tom="alert"
               role="alert"
-              className="rounded-md px-3 py-2 text-sm"
-              style={{
-                color: "var(--alert-text)",
-                backgroundColor: "var(--alert-bg)",
-              }}
+              acao={
+                <Button
+                  variant="outline"
+                  onClick={() => void historicoQuery.refetch()}
+                >
+                  Tentar de novo
+                </Button>
+              }
             >
-              Não foi possível carregar o histórico. Feche e tente de novo.
-            </p>
+              Não foi possível carregar o histórico.
+            </Aviso>
           ) : (historicoQuery.data ?? []).length === 0 ? (
-            <p className="text-sm text-text-tertiary">
-              Sem mudanças registradas
-            </p>
+            <EmptyState
+              compact
+              icon={History}
+              title="Sem mudanças registradas"
+            />
           ) : (
-            <ol className="grid gap-2">
+            <ol className="grid">
               {(historicoQuery.data ?? []).map((linha) => (
                 <li
                   key={linha.id}
-                  className="flex min-h-10 flex-wrap items-start gap-x-2 gap-y-1 border-b border-border pb-2 last:border-b-0"
+                  className="flex min-h-10 flex-wrap items-start gap-x-2 gap-y-1 border-b border-border py-2.5 last:border-b-0"
                 >
                   <ConteudoDaLinhaDoHistorico
                     linha={linha}
                     timezone={contexto.timezone}
                     nomeDoProfissional={nomeDoProfissional}
                   />
-                  <span className="ml-auto font-mono text-xs text-text-tertiary tabular-nums">
+                  <span className="ml-auto cz-num text-xs text-text-secondary">
                     {momentoNoFuso(contexto.timezone, linha.changed_at)}
                   </span>
                 </li>

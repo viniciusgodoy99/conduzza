@@ -1,8 +1,9 @@
 "use client";
 
-import { Bot } from "lucide-react";
+import { BotMessageSquare } from "lucide-react";
 
 import { CartaoKpi } from "@/components/relatorios/cartao-kpi";
+import { Secao } from "@/components/relatorios/secao";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { formatarDuracao } from "@/lib/domain/duracao";
 import type {
@@ -32,8 +33,11 @@ export function AbaIa({
   const anterior = atendimento.anterior;
 
   return (
-    <div className="grid gap-6">
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid gap-4">
+      <section
+        aria-label="Indicadores do período"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+      >
         <CartaoKpi
           rotulo="Conversas iniciadas"
           valor={atual.conversasIniciadas.toLocaleString("pt-BR")}
@@ -63,14 +67,11 @@ export function AbaIa({
         />
       </section>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Bot className="size-4 text-text-secondary" />
-          <h2 className="text-[15px] font-semibold">
-            Desempenho da recepcionista de IA
-          </h2>
-        </div>
-        <p className="max-w-prose text-sm text-text-secondary">
+      <Secao
+        titulo="Desempenho da recepcionista de IA"
+        icone={BotMessageSquare}
+      >
+        <p className="max-w-prose text-[13px] text-text-secondary">
           Estes números chegam com o agente de IA. Enquanto ele não atende, não
           existe número para mostrar, e número inventado não entra aqui.
         </p>
@@ -78,20 +79,19 @@ export function AbaIa({
           {METRICAS_DO_AGENTE.map((rotulo) => (
             <DisabledWithHint
               key={rotulo}
+              className="w-full"
               hint="Chega com o agente de IA. As travas de conformidade médica vêm antes de qualquer número."
             >
-              <div className="grid content-start gap-1 rounded-lg border border-dashed p-4 opacity-60">
-                <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-                  {rotulo}
-                </span>
-                <span className="font-mono text-[28px] leading-none font-semibold text-text-tertiary">
-                  --
+              <div className="grid w-full content-start gap-2 rounded-xl bg-surface-4 p-3.5 opacity-45">
+                <span className="cz-eyebrow text-text-secondary">{rotulo}</span>
+                <span className="text-base font-semibold text-text-secondary">
+                  Ainda não medido
                 </span>
               </div>
             </DisabledWithHint>
           ))}
         </div>
-      </section>
+      </Secao>
     </div>
   );
 }

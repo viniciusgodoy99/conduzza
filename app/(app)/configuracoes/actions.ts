@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { dadosDaClinicaSchema } from "@/components/configuracoes/dados-da-clinica";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { ICONES_DE_ETAPA } from "@/lib/domain/jornada";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
@@ -30,6 +31,11 @@ const papelSchema = z.enum([
 
 const alvoSchema = z.object({ user_id: z.uuid() });
 const mudarPapelSchema = z.object({ user_id: z.uuid(), papel: papelSchema });
+const vincularProfissionalSchema = z.object({
+  user_id: z.uuid(),
+  /** nulo desfaz o vinculo */
+  professional_id: z.uuid().nullable(),
+});
 
 async function requireGestorOuAdmin() {
   const context = await getSessionContext();
@@ -54,6 +60,9 @@ const RECUSAS_DO_BANCO = [
   "Somente um administrador",
   "A clínica precisa de pelo menos um administrador ativo.",
   "Você não pode alterar o próprio papel",
+  // Gatilho exigir_cadastro_da_mesma_clinica (leva 1): o vinculo usuario ->
+  // profissional so aceita profissional da mesma clinica.
+  "O profissional informado não pertence a esta clínica.",
 ];
 
 function mensagemDeErro(
@@ -79,14 +88,42 @@ async function auditar(
   userId: string,
   action: string,
   entityId: string,
+  entity = "clinic_member",
 ): Promise<void> {
   await supabase.from("audit_log").insert({
     clinic_id: clinicId,
     user_id: userId,
     action,
-    entity: "clinic_member",
+    entity,
     entity_id: entityId,
   });
+}
+
+// O cadastro de profissional que o usuario com papel Profissional vai ser:
+// precisa existir NESTA clinica e estar ativo (inativo some da Agenda). A
+// leitura e pela sessao, entao a RLS ja recorta a clinica; o gatilho
+// exigir_cadastro_da_mesma_clinica confere de novo no banco.
+async function conferirProfissional(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  professionalId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("professional")
+    .select("id, active")
+    .eq("clinic_id", clinicId)
+    .eq("id", professionalId)
+    .maybeSingle();
+  if (error) {
+    return "Não foi possível conferir o profissional. Tente de novo.";
+  }
+  if (!data) {
+    return "Este profissional não faz parte da clínica.";
+  }
+  if (!data.active) {
+    return "Este profissional está desativado em Cadastros. Reative antes de ligar.";
+  }
+  return null;
 }
 
 type Alvo = { role: Role; status: "ativo" | "pendente" | "inativo" };
@@ -123,6 +160,11 @@ function barrarMexidaEmAdmin(
 export async function aprovarMembroAction(
   userId: string,
   papel: string,
+  /**
+   * So vale para o papel Profissional: o cadastro da agenda que a pessoa
+   * vai ser. Opcional, porque o vinculo tambem se faz depois, na lista.
+   */
+  professionalId?: string | null,
 ): Promise<TeamActionResult> {
   const guard = await requireGestorOuAdmin();
   if ("error" in guard) {
@@ -130,7 +172,16 @@ export async function aprovarMembroAction(
   }
   const parsedUser = z.uuid().safeParse(userId);
   const parsedPapel = papelSchema.safeParse(papel);
-  if (!parsedUser.success || !parsedPapel.success) {
+  const parsedProfissional = z
+    .uuid()
+    .nullable()
+    .optional()
+    .safeParse(professionalId);
+  if (
+    !parsedUser.success ||
+    !parsedPapel.success ||
+    !parsedProfissional.success
+  ) {
     return { ok: false, error: "Dados inválidos." };
   }
   if (guard.role !== "admin" && parsedPapel.data === "admin") {
@@ -141,9 +192,28 @@ export async function aprovarMembroAction(
   }
 
   const supabase = await createClient();
+  const vinculo =
+    parsedPapel.data === "profissional"
+      ? (parsedProfissional.data ?? null)
+      : null;
+  if (vinculo) {
+    const recusa = await conferirProfissional(
+      supabase,
+      guard.clinicId,
+      vinculo,
+    );
+    if (recusa) {
+      return { ok: false, error: recusa };
+    }
+  }
+
   const { data, error } = await supabase
     .from("clinic_member")
-    .update({ status: "ativo", role: parsedPapel.data })
+    .update({
+      status: "ativo",
+      role: parsedPapel.data,
+      ...(vinculo ? { professional_id: vinculo } : {}),
+    })
     .eq("clinic_id", guard.clinicId)
     .eq("user_id", parsedUser.data)
     .eq("status", "pendente")
@@ -165,7 +235,96 @@ export async function aprovarMembroAction(
     "liberou_acesso",
     parsedUser.data,
   );
+  if (vinculo) {
+    await auditar(
+      supabase,
+      guard.clinicId,
+      guard.context.userId,
+      "vinculou_profissional",
+      parsedUser.data,
+    );
+  }
   revalidatePath("/configuracoes");
+  return { ok: true };
+}
+
+/**
+ * Liga (ou desliga, com nulo) o usuario de papel Profissional ao cadastro de
+ * profissional da agenda (achados 1, 31 e 120). Sem esse vinculo, o
+ * user_professional_id() do banco e nulo: a Agenda, o Inicio e os Resultados
+ * do profissional ficam vazios e as policies recusam qualquer agendamento
+ * dele. Antes, o unico caminho era SQL direto.
+ */
+export async function vincularProfissionalAction(
+  input: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = vincularProfissionalSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+  const { user_id: alvoId, professional_id: profissionalId } = parsed.data;
+
+  const supabase = await createClient();
+  const alvo = await carregarAlvo(supabase, guard.clinicId, alvoId);
+  if (!alvo) {
+    return { ok: false, error: "Esta pessoa não faz parte da equipe." };
+  }
+  if (alvo.role !== "profissional") {
+    return {
+      ok: false,
+      error:
+        "Só quem tem o papel Profissional é ligado a um profissional da agenda.",
+    };
+  }
+  if (profissionalId) {
+    const recusa = await conferirProfissional(
+      supabase,
+      guard.clinicId,
+      profissionalId,
+    );
+    if (recusa) {
+      return { ok: false, error: recusa };
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("clinic_member")
+    .update({ professional_id: profissionalId })
+    .eq("clinic_id", guard.clinicId)
+    .eq("user_id", alvoId)
+    .eq("role", "profissional")
+    .select("user_id");
+  if (error) {
+    return {
+      ok: false,
+      error: mensagemDeErro(
+        error,
+        "Não foi possível ligar ao profissional da agenda.",
+      ),
+    };
+  }
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      error: "O papel mudou em outro lugar. Recarregue a página.",
+    };
+  }
+
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    profissionalId ? "vinculou_profissional" : "desvinculou_profissional",
+    alvoId,
+  );
+  revalidatePath("/configuracoes");
+  revalidatePath("/agenda");
+  revalidatePath("/inicio");
+  revalidatePath("/relatorios");
   return { ok: true };
 }
 
@@ -395,20 +554,39 @@ export async function gerarNovoCodigoAction(): Promise<TeamActionResult> {
   // Math.random, que e previsivel. 10 caracteres de alfabeto sem ambiguidade.
   // O unique do banco confere; o valor antigo para de funcionar na hora, que
   // e o objetivo da rotacao. A tabela clinic_access_code e legivel e
-  // atualizavel so por quem gerencia a clinica (policy propria).
+  // atualizavel por administrador e gestor (policy propria, migration
+  // 20260925110000, decisao do dono de 24/09/2026).
   const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const bytes = randomBytes(10);
   const novo = Array.from(
     bytes,
     (byte) => alfabeto[byte % alfabeto.length],
   ).join("");
-  const { error } = await supabase
+  // .select() porque a RLS filtra o UPDATE sem erro: zero linhas e recusa,
+  // nunca "funcionou" (achados 0 e 122).
+  const { data, error } = await supabase
     .from("clinic_access_code")
     .update({ code: novo })
-    .eq("clinic_id", guard.clinicId);
+    .eq("clinic_id", guard.clinicId)
+    .select("clinic_id");
   if (error) {
     return { ok: false, error: "Não foi possível gerar um código novo." };
   }
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      error:
+        "O código não mudou: seu perfil não gira o código desta clínica. O código antigo continua valendo.",
+    };
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "gerou_codigo_da_clinica",
+    guard.clinicId,
+    "clinic_access_code",
+  );
   revalidatePath("/configuracoes");
   return { ok: true };
 }
@@ -424,18 +602,92 @@ export async function alternarCodigoAction(
   if (!parsed.success) {
     return { ok: false, error: "Dados inválidos." };
   }
+  // RPC e nao UPDATE direto em clinic: a policy de UPDATE de clinic e so do
+  // administrador (ela tambem abre nome e fuso), e o gestor gerencia o
+  // codigo. A funcao confere admin ou gestor e altera SO allow_code_signup;
+  // recusa vira erro, nunca zero linhas caladas (achados 0 e 122).
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("clinic")
-    .update({ allow_code_signup: parsed.data })
-    .eq("id", guard.clinicId);
-  if (error) {
+  const { data, error } = await supabase.rpc("definir_entrada_por_codigo", {
+    p_clinic_id: guard.clinicId,
+    p_ativo: parsed.data,
+  });
+  if (error || data !== parsed.data) {
     return {
       ok: false,
-      error: "Não foi possível alterar a entrada por código.",
+      error:
+        error?.code === "42501"
+          ? "Seu perfil não altera a entrada por código."
+          : "Não foi possível alterar a entrada por código.",
     };
   }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    parsed.data ? "ligou_entrada_por_codigo" : "desligou_entrada_por_codigo",
+    guard.clinicId,
+    "clinic",
+  );
   revalidatePath("/configuracoes");
+  return { ok: true };
+}
+
+/**
+ * Aba "Clinica" (achado 123): nome e fuso. So o administrador, porque o nome
+ * e o que o paciente le nas mensagens automaticas e o fuso move a regua, a
+ * agenda e o corte de hoje e amanha. O UPDATE vai pela sessao: a policy
+ * "admin da clinica edita a clinica" e quem autoriza; o guard daqui so
+ * explica antes.
+ */
+export async function salvarDadosDaClinicaAction(
+  entrada: unknown,
+): Promise<TeamActionResult> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: "Sessão expirada. Entre de novo." };
+  }
+  if (context.active.role !== "admin") {
+    return {
+      ok: false,
+      error: "Somente o administrador altera o nome e o fuso da clínica.",
+    };
+  }
+  const parsed = dadosDaClinicaSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Dados inválidos.",
+    };
+  }
+  const clinicId = context.active.clinicId;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("clinic")
+    .update({ name: parsed.data.nome, timezone: parsed.data.timezone })
+    .eq("id", clinicId)
+    .select("id");
+  if (error) {
+    return { ok: false, error: "Não foi possível salvar os dados da clínica." };
+  }
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      error: "Somente o administrador altera o nome e o fuso da clínica.",
+    };
+  }
+
+  await auditar(
+    supabase,
+    clinicId,
+    context.userId,
+    "editou_dados_da_clinica",
+    clinicId,
+    "clinic",
+  );
+  // O nome aparece na barra superior e no seletor de clinica; o fuso, em toda
+  // tela com hora. Revalida o layout inteiro.
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -988,15 +1240,13 @@ export async function salvarTokenMetaAction(
   // Tabela-secret nao tem policy: escrita SO pelo admin client, depois do
   // guard de papel acima (padrao whatsapp-connect).
   const admin = createAdminClient();
-  const { error } = await admin
-    .from("meta_ads_account_secret")
-    .upsert(
-      {
-        clinic_id: guard.clinicId,
-        capi_access_token: parsed.data.capi_access_token,
-      },
-      { onConflict: "clinic_id" },
-    );
+  const { error } = await admin.from("meta_ads_account_secret").upsert(
+    {
+      clinic_id: guard.clinicId,
+      capi_access_token: parsed.data.capi_access_token,
+    },
+    { onConflict: "clinic_id" },
+  );
   if (error) {
     return { ok: false, error: "Não foi possível salvar o token." };
   }
@@ -1053,9 +1303,7 @@ export async function alternarEnvioMetaAction(
     // 'enfileirado' sem job seria orfao para sempre. O job aceita evento
     // 'registrado' numa boa (ele so recusa 'enviado'/'descartado'/'falhou').
     const admin = createAdminClient();
-    const corte = new Date(
-      Date.now() - 7 * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const corte = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { error: erroDescarte } = await admin
       .from("conversion_event")
       .update({ status: "descartado", erro: "fora_da_janela_capi" })

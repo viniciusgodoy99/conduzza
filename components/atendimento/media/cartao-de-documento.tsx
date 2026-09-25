@@ -23,10 +23,13 @@ export function CartaoDeDocumento({
   nomeDoArquivo: string | null;
 }) {
   const nome = nomeDoArquivo?.trim() || "Documento recebido";
+  // Ladrilho do design system: fundo de cartao dentro de qualquer pele de
+  // bolha, com a cor de texto propria (na bolha de tinta da IA a cor herdada
+  // sumiria no branco).
   return (
-    <div className="flex items-center gap-2.5 rounded-md border bg-surface-2 p-2.5">
+    <div className="flex min-w-0 items-center gap-2.5 rounded-md border border-border bg-card p-2.5 text-foreground">
       <span className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-4">
-        <FileText className="size-5 text-text-secondary" />
+        <FileText aria-hidden className="size-5 text-text-secondary" />
       </span>
       <span
         className="min-w-0 flex-1 truncate text-[13px] font-medium"
@@ -38,7 +41,7 @@ export function CartaoDeDocumento({
         {/* download=1 e obrigatorio: <a download> e ignorado quando a resposta
             vem de outro dominio, e sem ele o clique navegaria para o arquivo. */}
         <a href={`/api/atendimento/midia/${messageId}?download=1`}>
-          <Download className="size-4" />
+          <Download aria-hidden />
           Baixar
         </a>
       </Button>

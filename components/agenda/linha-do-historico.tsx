@@ -61,7 +61,7 @@ export function ConteudoDaLinhaDoHistorico({
       linha.previous_professional_id !== linha.new_professional_id;
     return (
       <div className="grid min-w-0 gap-1">
-        <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+        <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-strong">
           <CalendarClock
             className="size-4 shrink-0 text-text-secondary"
             aria-hidden
@@ -69,8 +69,14 @@ export function ConteudoDaLinhaDoHistorico({
           Remarcada
         </span>
         <span className="text-sm text-text-secondary">
-          De {momentoNoFuso(timezone, linha.previous_starts_at)} para{" "}
-          {momentoNoFuso(timezone, linha.new_starts_at)}
+          De{" "}
+          <span className="cz-num">
+            {momentoNoFuso(timezone, linha.previous_starts_at)}
+          </span>{" "}
+          para{" "}
+          <span className="cz-num">
+            {momentoNoFuso(timezone, linha.new_starts_at)}
+          </span>
           {trocouProfissional && de && para ? ` (de ${de} para ${para})` : ""}
         </span>
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-secondary">

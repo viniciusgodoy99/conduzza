@@ -80,13 +80,13 @@ export function DialogLinhaDeBase({
 
   return (
     <Dialog open={aberto} onOpenChange={(v) => (!v ? onFechar() : null)}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Registrar a linha de base</DialogTitle>
           <DialogDescription>
-            A taxa de faltas da clínica ANTES das mensagens automáticas,
-            medida no período indicado. É contra esse número que o relatório
-            prova o resultado.
+            A taxa de faltas da clínica ANTES das mensagens automáticas, medida
+            no período indicado. É contra esse número que o relatório prova o
+            resultado.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
@@ -98,7 +98,7 @@ export function DialogLinhaDeBase({
               placeholder="Ex.: 18"
               value={taxa}
               onChange={(evento) => setTaxa(evento.target.value)}
-              className="h-10"
+              className="cz-num"
             />
           </div>
           <div className="grid gap-1.5">
@@ -108,15 +108,15 @@ export function DialogLinhaDeBase({
                 type="date"
                 value={de}
                 onChange={(evento) => setDe(evento.target.value)}
-                className="h-10"
+                className="cz-num"
                 aria-label="Início do período medido"
               />
-              <span className="text-xs text-text-tertiary">até</span>
+              <span className="text-xs text-text-secondary">até</span>
               <Input
                 type="date"
                 value={ate}
                 onChange={(evento) => setAte(evento.target.value)}
-                className="h-10"
+                className="cz-num"
                 aria-label="Fim do período medido"
               />
             </div>
@@ -135,14 +135,10 @@ export function DialogLinhaDeBase({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" className="h-10" onClick={onFechar}>
+          <Button variant="outline" onClick={onFechar}>
             Cancelar
           </Button>
-          <Button
-            className="h-10"
-            disabled={!valida || pendente}
-            onClick={salvar}
-          >
+          <Button disabled={!valida || pendente} onClick={salvar}>
             {pendente ? "Registrando..." : "Registrar"}
           </Button>
         </DialogFooter>

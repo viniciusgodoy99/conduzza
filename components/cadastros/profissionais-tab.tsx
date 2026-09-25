@@ -1,6 +1,7 @@
 "use client";
 
-import { Plus, Sunrise, Trash2, UserRound, X } from "lucide-react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { BriefcaseMedical, Plus, Sunrise, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -11,12 +12,18 @@ import {
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
 import {
   AcoesDaLinha,
+  AvatarDoProfissional,
   AvisoDeConsultas,
   BotaoProtegido,
+  CampoDeMarcar,
   ChipSituacao,
   DetalheSomenteLeitura,
+  PainelDeCadastro,
+  RodapeDeSalvar,
+  VazioDaAba,
 } from "@/components/cadastros/comum";
-import { EmptyState } from "@/components/shared/empty-state";
+import { Aviso } from "@/components/shared/aviso";
+import { DataTable } from "@/components/shared/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,21 +35,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { WEEKDAY_LABELS, type Profissional } from "@/lib/queries/catalogo";
 
 type FormProfissional = {
@@ -63,6 +55,10 @@ type FaixaForm = {
   unit_id: string | null;
 };
 
+// Constante de dominio, nao de interface: e a cor de agenda que um
+// profissional novo recebe (dado gravado em professional.calendar_color, que
+// a clinica troca no seletor). Por isso e o unico hex do arquivo (docs/06
+// secao 5.11).
 const COR_PADRAO = "#84cc16";
 
 const FORM_VAZIO: FormProfissional = {
@@ -73,15 +69,6 @@ const FORM_VAZIO: FormProfissional = {
   calendar_color: COR_PADRAO,
   active: true,
 };
-
-function iniciais(nome: string): string {
-  const partes = nome.trim().split(/\s+/).filter(Boolean);
-  if (partes.length === 0) return "?";
-  const primeira = partes[0]?.charAt(0) ?? "";
-  const ultima =
-    partes.length > 1 ? (partes[partes.length - 1]?.charAt(0) ?? "") : "";
-  return (primeira + ultima).toUpperCase();
-}
 
 function horaCurta(valor: string): string {
   // O banco devolve "HH:MM:SS"; o input type="time" quer "HH:MM".
@@ -313,15 +300,113 @@ export function ProfissionaisTab({
     aoMudar();
   };
 
-  const resumoJornada = (profissionalId: string): string => {
-    const dias = new Set(
+  const diasDeJornada = (profissionalId: string): number =>
+    new Set(
       catalogo.jornadas
         .filter((j) => j.professional_id === profissionalId)
         .map((j) => j.weekday),
     ).size;
-    if (dias === 0) return "Sem jornada";
-    return dias === 1 ? "1 dia/semana" : `${dias} dias/semana`;
-  };
+
+  const colunas: ColumnDef<Profissional>[] = [
+    {
+      id: "nome",
+      header: "Nome",
+      cell: ({ row }) => (
+        <span className="flex min-w-0 items-center gap-2.5">
+          <AvatarDoProfissional
+            nome={row.original.name}
+            cor={row.original.calendar_color}
+          />
+          <span className="truncate font-semibold text-text-strong">
+            {row.original.name}
+          </span>
+        </span>
+      ),
+    },
+    {
+      id: "conselho",
+      header: "Conselho",
+      cell: ({ row }) =>
+        row.original.council_type ? (
+          <span className="cz-num whitespace-nowrap text-text-secondary">
+            {`${row.original.council_type} ${row.original.council_number ?? ""}`.trim()}
+          </span>
+        ) : (
+          <span className="text-text-secondary">Sem conselho</span>
+        ),
+    },
+    {
+      id: "especialidades",
+      header: "Especialidades",
+      cell: ({ row }) => {
+        const especialidades = row.original.specialties;
+        if (especialidades.length === 0) {
+          return <span className="text-text-secondary">Sem especialidade</span>;
+        }
+        const restantes = especialidades.slice(3);
+        return (
+          <span className="flex flex-wrap items-center gap-1 py-1.5">
+            {especialidades.slice(0, 3).map((esp) => (
+              // Especialidade e Tag neutra do DS (variante outline do
+              // Badge), nunca status: sem icone e sem cor semantica.
+              <Badge
+                key={esp}
+                variant="outline"
+                className="h-5 px-2 text-[11px]"
+              >
+                {esp}
+              </Badge>
+            ))}
+            {restantes.length > 0 ? (
+              <span
+                className="cz-num text-xs text-text-secondary"
+                title={restantes.join(", ")}
+              >
+                +{restantes.length}
+              </span>
+            ) : null}
+          </span>
+        );
+      },
+    },
+    {
+      id: "jornada",
+      header: "Jornada",
+      cell: ({ row }) => {
+        const dias = diasDeJornada(row.original.id);
+        if (dias === 0) {
+          return <span className="text-text-secondary">Sem jornada</span>;
+        }
+        return (
+          <span className="whitespace-nowrap text-text-secondary">
+            <span className="cz-num">{dias}</span>{" "}
+            {dias === 1 ? "dia/semana" : "dias/semana"}
+          </span>
+        );
+      },
+    },
+    {
+      id: "situacao",
+      header: "Situação",
+      cell: ({ row }) => <ChipSituacao active={row.original.active} />,
+    },
+    {
+      id: "acoes",
+      header: () => <span className="sr-only">Ações</span>,
+      meta: { align: "right", numeric: false },
+      cell: ({ row }) => (
+        <AcoesDaLinha
+          podeEditar={podeEditar}
+          dica={dica}
+          nome={row.original.name}
+          aoEditar={() => abrir(row.original)}
+          aoVerDetalhes={() => abrir(row.original, true)}
+        />
+      ),
+    },
+  ];
+
+  const fechar = () => setAberto(false);
 
   return (
     <div className="grid gap-3">
@@ -331,448 +416,375 @@ export function ProfissionaisTab({
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus className="size-4" /> Novo profissional
+          <Plus aria-hidden /> Novo profissional
         </BotaoProtegido>
       </div>
 
       {catalogo.profissionais.length === 0 ? (
-        <EmptyState
-          icon={UserRound}
-          title="Nenhum profissional cadastrado"
-          description="Cadastre quem atende na clínica para montar a agenda e liberar o agendamento pela IA."
-          action={
-            podeEditar
-              ? {
-                  label: "Cadastrar o primeiro profissional",
-                  onClick: () => abrir(),
-                }
-              : undefined
-          }
+        <VazioDaAba
+          icon={BriefcaseMedical}
+          titulo="Nenhum profissional cadastrado"
+          descricao="Cadastre quem atende na clínica para montar a agenda e liberar o agendamento pela IA."
+          acao={{
+            rotulo: "Cadastrar o primeiro profissional",
+            onClick: () => abrir(),
+          }}
+          podeEditar={podeEditar}
+          dica={dica}
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nome</TableHead>
-                <TableHead>Conselho</TableHead>
-                <TableHead>Especialidades</TableHead>
-                <TableHead>Jornada</TableHead>
-                <TableHead>Situação</TableHead>
-                <TableHead className="w-12" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {catalogo.profissionais.map((profissional) => {
-                const extras = profissional.specialties.length - 3;
-                return (
-                  <TableRow key={profissional.id}>
-                    <TableCell className="font-medium">
-                      <span className="flex items-center gap-2">
-                        <span className="relative flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-text-secondary">
-                          {iniciais(profissional.name)}
-                          {profissional.calendar_color ? (
-                            <span
-                              aria-hidden="true"
-                              className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border border-background"
-                              style={{
-                                backgroundColor: profissional.calendar_color,
-                              }}
-                            />
-                          ) : null}
-                        </span>
-                        {profissional.name}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-text-secondary">
-                      {profissional.council_type
-                        ? `${profissional.council_type} ${profissional.council_number ?? ""}`.trim()
-                        : "Sem conselho"}
-                    </TableCell>
-                    <TableCell>
-                      {profissional.specialties.length === 0 ? null : (
-                        <span className="flex flex-wrap items-center gap-1">
-                          {profissional.specialties.slice(0, 3).map((esp) => (
-                            <Badge
-                              key={esp}
-                              variant="secondary"
-                              className="text-[11px]"
-                            >
-                              {esp}
-                            </Badge>
-                          ))}
-                          {extras > 0 ? (
-                            <span className="text-xs text-text-secondary">
-                              +{extras}
-                            </span>
-                          ) : null}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-text-secondary">
-                      {resumoJornada(profissional.id)}
-                    </TableCell>
-                    <TableCell>
-                      <ChipSituacao active={profissional.active} />
-                    </TableCell>
-                    <TableCell>
-                      <AcoesDaLinha
-                        podeEditar={podeEditar}
-                        dica={dica}
-                        nome={profissional.name}
-                        aoEditar={() => abrir(profissional)}
-                        aoVerDetalhes={() => abrir(profissional, true)}
-                      />
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <DataTable columns={colunas} data={catalogo.profissionais} />
       )}
 
-      <Sheet open={aberto} onOpenChange={setAberto}>
-        <SheetContent className="w-[480px] overflow-y-auto p-5 sm:max-w-[480px]">
-          <SheetHeader className="p-0">
-            <SheetTitle>
-              {somenteLeitura
-                ? form.name
-                : form.id
-                  ? "Editar profissional"
-                  : "Novo profissional"}
-            </SheetTitle>
-          </SheetHeader>
-          {somenteLeitura ? (
-            <DetalheSomenteLeitura
-              itens={[
-                {
-                  rotulo: "Conselho",
-                  valor: form.council_type
-                    ? `${form.council_type} ${form.council_number}`.trim()
-                    : "Sem conselho",
-                },
-                {
-                  rotulo: "Especialidades",
-                  valor: form.specialties.join(", "),
-                },
-                {
-                  rotulo: "Situação",
-                  valor: <ChipSituacao active={form.active} />,
-                },
-                {
-                  rotulo: "Jornada semanal",
-                  valor:
-                    faixas.length === 0 ? (
-                      "Sem jornada cadastrada"
-                    ) : (
-                      <ul className="grid gap-1">
-                        {[...faixas]
-                          .sort(
-                            (a, b) =>
-                              a.weekday - b.weekday ||
-                              a.starts_at.localeCompare(b.starts_at),
-                          )
-                          .map((faixa) => (
-                            <li key={faixa.chave} className="tabular-nums">
-                              {WEEKDAY_LABELS[faixa.weekday]}: {faixa.starts_at}{" "}
-                              às {faixa.ends_at}
-                              {viraODia(faixa)
-                                ? " (termina no dia seguinte)"
-                                : terminaAMeiaNoite(faixa)
-                                  ? " (meia-noite)"
-                                  : ""}
-                              {temVariasUnidades && faixa.unit_id
-                                ? `, ${
-                                    catalogo.unidades.find(
-                                      (u) => u.id === faixa.unit_id,
-                                    )?.name ?? "unidade removida"
-                                  }`
-                                : ""}
-                            </li>
-                          ))}
-                      </ul>
-                    ),
-                },
-              ]}
+      <PainelDeCadastro
+        aberto={aberto}
+        aoMudarAberto={setAberto}
+        larga
+        titulo={
+          somenteLeitura
+            ? form.name
+            : form.id
+              ? "Editar profissional"
+              : "Novo profissional"
+        }
+        erro={somenteLeitura ? null : erro}
+        aviso={
+          somenteLeitura ? null : pedindoVirada ? (
+            <Aviso tom="warning" icone={Sunrise} role="alert">
+              <p>
+                Uma faixa termina no dia seguinte (plantão noturno): a agenda
+                vai abrir horários depois da meia-noite. Se o fim ficou antes do
+                início por engano, corrija a faixa.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  disabled={salvando}
+                  onClick={() => void salvar({ confirmarVirada: true })}
+                >
+                  É plantão, salvar assim
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setPedindoVirada(false)}
+                >
+                  Corrigir a faixa
+                </Button>
+              </div>
+            </Aviso>
+          ) : aviso ? (
+            <AvisoDeConsultas
+              consultas={aviso.consultas}
+              primeira={aviso.primeira}
+              timezone={timezone}
+              rotuloConfirmar="Desativar mesmo assim"
+              confirmando={salvando}
+              aoConfirmar={() => void salvar({ confirmarConsultas: true })}
             />
-          ) : null}
-          {/* O formulario fica fora da arvore visivel no modo leitura
-              (atributo hidden, que o preflight do Tailwind forca). */}
-          <div className="grid gap-4 py-4" hidden={somenteLeitura}>
-            <div className="grid gap-2">
-              <Label htmlFor="prof-nome">Nome</Label>
+          ) : null
+        }
+        rodape={
+          somenteLeitura ? undefined : pedindoVirada || aviso ? (
+            <Button variant="ghost" onClick={fechar}>
+              Cancelar
+            </Button>
+          ) : (
+            <RodapeDeSalvar
+              salvando={salvando}
+              aoCancelar={fechar}
+              aoSalvar={() => void salvar()}
+            />
+          )
+        }
+      >
+        {somenteLeitura ? (
+          <DetalheSomenteLeitura
+            itens={[
+              {
+                rotulo: "Conselho",
+                valor: form.council_type ? (
+                  <span className="cz-num">
+                    {`${form.council_type} ${form.council_number}`.trim()}
+                  </span>
+                ) : (
+                  "Sem conselho"
+                ),
+              },
+              {
+                rotulo: "Especialidades",
+                valor: form.specialties.join(", "),
+              },
+              {
+                rotulo: "Situação",
+                valor: <ChipSituacao active={form.active} />,
+              },
+              {
+                rotulo: "Jornada semanal",
+                valor:
+                  faixas.length === 0 ? (
+                    "Sem jornada cadastrada"
+                  ) : (
+                    <ul className="grid gap-1">
+                      {[...faixas]
+                        .sort(
+                          (a, b) =>
+                            a.weekday - b.weekday ||
+                            a.starts_at.localeCompare(b.starts_at),
+                        )
+                        .map((faixa) => (
+                          <li key={faixa.chave}>
+                            {WEEKDAY_LABELS[faixa.weekday]}:{" "}
+                            <span className="cz-num">{faixa.starts_at}</span> às{" "}
+                            <span className="cz-num">{faixa.ends_at}</span>
+                            {viraODia(faixa)
+                              ? " (termina no dia seguinte)"
+                              : terminaAMeiaNoite(faixa)
+                                ? " (meia-noite)"
+                                : ""}
+                            {temVariasUnidades && faixa.unit_id
+                              ? `, ${
+                                  catalogo.unidades.find(
+                                    (u) => u.id === faixa.unit_id,
+                                  )?.name ?? "unidade removida"
+                                }`
+                              : ""}
+                          </li>
+                        ))}
+                    </ul>
+                  ),
+              },
+            ]}
+          />
+        ) : null}
+        {/* O formulario fica fora da arvore visivel no modo leitura
+            (atributo hidden, que o preflight do Tailwind forca). */}
+        <div className="grid gap-4" hidden={somenteLeitura}>
+          <div className="grid gap-1.5">
+            <Label htmlFor="prof-nome">Nome</Label>
+            <Input
+              id="prof-nome"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="prof-conselho">Conselho</Label>
               <Input
-                id="prof-nome"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="h-10"
+                id="prof-conselho"
+                value={form.council_type}
+                onChange={(e) =>
+                  setForm({ ...form, council_type: e.target.value })
+                }
+                placeholder="CRM, CRO, CREFITO... (vazio se não tiver)"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-2">
-                <Label htmlFor="prof-conselho">Conselho</Label>
-                <Input
-                  id="prof-conselho"
-                  value={form.council_type}
-                  onChange={(e) =>
-                    setForm({ ...form, council_type: e.target.value })
-                  }
-                  placeholder="CRM, CRO, CREFITO... (vazio se não tiver)"
-                  className="h-10"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="prof-numero">Número</Label>
-                <Input
-                  id="prof-numero"
-                  value={form.council_number}
-                  onChange={(e) =>
-                    setForm({ ...form, council_number: e.target.value })
-                  }
-                  className="h-10"
-                />
-              </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="prof-numero">Número</Label>
+              <Input
+                id="prof-numero"
+                value={form.council_number}
+                onChange={(e) =>
+                  setForm({ ...form, council_number: e.target.value })
+                }
+                className="cz-num"
+              />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="prof-especialidade">Especialidades</Label>
-              {form.specialties.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {form.specialties.map((esp) => (
+          </div>
+          {/* gap-2 (8px) e nao 1,5: a area de toque do "x" passa 8px acima
+              e abaixo da etiqueta e nao pode cobrir o rotulo nem o campo. */}
+          <div className="grid gap-2">
+            <Label htmlFor="prof-especialidade">Especialidades</Label>
+            {form.specialties.length > 0 ? (
+              <ul
+                aria-label="Especialidades adicionadas"
+                className="flex flex-wrap gap-2"
+              >
+                {form.specialties.map((esp) => (
+                  <li key={esp} className="flex">
+                    {/* A etiqueta nao recorta (overflow-visible): o botao de
+                        remover tem 40x40px de verdade (achados 44 e R16).
+                        Ele comeca depois do nome, entao tocar no fim do nome
+                        nao remove nada, e passa so 8px da borda da
+                        etiqueta, o mesmo vao ate a vizinha. */}
                     <Badge
-                      key={esp}
-                      variant="secondary"
-                      className="gap-1 pr-1 text-[12px]"
+                      variant="outline"
+                      className="gap-1 overflow-visible pr-0"
                     >
                       {esp}
-                      {/* Visual de 16px, area de toque de 40px (achado 44):
-                          o pseudo-elemento estende o clique sem mudar o
-                          tamanho do chip. */}
                       <button
                         type="button"
                         onClick={() => removerEspecialidade(esp)}
                         aria-label={`Remover ${esp}`}
-                        className="relative flex size-4 items-center justify-center rounded-full after:absolute after:-inset-3 after:content-[''] hover:bg-muted"
+                        className="group/remover relative -my-2 -mr-2 flex size-10 shrink-0 items-center pl-2 outline-none"
                       >
-                        <X className="size-3" />
+                        <span className="grid size-5 place-items-center rounded-sm text-text-secondary cz-transition group-hover/remover:bg-surface-3 group-hover/remover:text-text-strong group-focus-visible/remover:outline-2 group-focus-visible/remover:outline-offset-1 group-focus-visible/remover:outline-focus group-focus-visible/remover:outline-solid">
+                          <X aria-hidden className="size-3" />
+                        </span>
                       </button>
                     </Badge>
-                  ))}
-                </div>
-              ) : null}
-              <Input
-                id="prof-especialidade"
-                value={especialidadeDigitada}
-                onChange={(e) => setEspecialidadeDigitada(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    adicionarEspecialidade();
-                  }
-                }}
-                placeholder="Digite e aperte Enter para adicionar"
-                className="h-10"
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="prof-cor">Cor na agenda</Label>
-              <input
-                id="prof-cor"
-                type="color"
-                value={form.calendar_color}
-                onChange={(e) =>
-                  setForm({ ...form, calendar_color: e.target.value })
-                }
-                className="h-10 w-16 cursor-pointer rounded-md border bg-transparent p-1"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="prof-ativo">Profissional ativo</Label>
-              <Switch
-                id="prof-ativo"
-                checked={form.active}
-                onCheckedChange={(v) => {
-                  setAviso(null);
-                  setForm({ ...form, active: v });
-                }}
-              />
-            </div>
-            {form.id && !form.active ? (
-              <p className="text-xs text-text-secondary">
-                Desativado, o profissional sai da Agenda e da oferta de
-                horários. Consultas já marcadas não são desmarcadas.
-              </p>
+                  </li>
+                ))}
+              </ul>
             ) : null}
+            <Input
+              id="prof-especialidade"
+              value={especialidadeDigitada}
+              onChange={(e) => setEspecialidadeDigitada(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  adicionarEspecialidade();
+                }
+              }}
+              placeholder="Digite e aperte Enter para adicionar"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="prof-cor">Cor na agenda</Label>
+            <input
+              id="prof-cor"
+              type="color"
+              value={form.calendar_color}
+              onChange={(e) =>
+                setForm({ ...form, calendar_color: e.target.value })
+              }
+              className="h-10 w-16 cursor-pointer rounded-lg border border-input bg-card p-1 cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+            />
+          </div>
+          <CampoDeMarcar
+            id="prof-ativo"
+            rotulo="Profissional ativo"
+            descricao={
+              form.id && !form.active
+                ? "Desativado, o profissional sai da Agenda e da oferta de horários. Consultas já marcadas não são desmarcadas."
+                : undefined
+            }
+            marcado={form.active}
+            aoMudar={(marcado) => {
+              setAviso(null);
+              setForm({ ...form, active: marcado });
+            }}
+          />
 
-            <div className="grid gap-3 border-t pt-4">
-              <div className="grid gap-1">
-                <p className="text-sm font-semibold">Jornada semanal</p>
-                <p className="text-xs text-text-secondary">
-                  Almoço: crie duas faixas no mesmo dia (manhã e tarde).
-                </p>
-              </div>
-              {faixas.length === 0 ? (
-                <p className="text-sm text-text-tertiary">
-                  Sem jornada cadastrada. Sem faixas, a agenda não abre horários
-                  para este profissional.
-                </p>
-              ) : (
-                <div className="grid gap-2">
-                  {faixas.map((faixa) => (
-                    <div
-                      key={faixa.chave}
-                      className="flex flex-wrap items-center gap-2"
+          <div className="grid gap-3 border-t border-border pt-4">
+            <div className="grid gap-1">
+              <p className="text-sm font-bold text-text-strong">
+                Jornada semanal
+              </p>
+              <p className="text-xs text-text-secondary">
+                Almoço: crie duas faixas no mesmo dia (manhã e tarde).
+              </p>
+            </div>
+            {faixas.length === 0 ? (
+              <p className="text-[13px] text-text-secondary">
+                Sem jornada cadastrada. Sem faixas, a agenda não abre horários
+                para este profissional.
+              </p>
+            ) : (
+              <div className="grid gap-2">
+                {faixas.map((faixa) => (
+                  <div
+                    key={faixa.chave}
+                    className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-4 p-2"
+                  >
+                    <Select
+                      value={String(faixa.weekday)}
+                      onValueChange={(v) =>
+                        atualizarFaixa(faixa.chave, { weekday: Number(v) })
+                      }
                     >
+                      <SelectTrigger
+                        aria-label="Dia da faixa"
+                        className="w-[110px]"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {WEEKDAY_LABELS.map((rotulo, indice) => (
+                          <SelectItem key={rotulo} value={String(indice)}>
+                            {rotulo}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="time"
+                      value={faixa.starts_at}
+                      onChange={(e) =>
+                        atualizarFaixa(faixa.chave, {
+                          starts_at: e.target.value,
+                        })
+                      }
+                      aria-label="Início da faixa"
+                      className="w-[112px] cz-num"
+                    />
+                    <Input
+                      type="time"
+                      value={faixa.ends_at}
+                      onChange={(e) =>
+                        atualizarFaixa(faixa.chave, {
+                          ends_at: e.target.value,
+                        })
+                      }
+                      aria-label="Fim da faixa"
+                      className="w-[112px] cz-num"
+                    />
+                    {temVariasUnidades ? (
                       <Select
-                        value={String(faixa.weekday)}
+                        value={faixa.unit_id ?? "todas"}
                         onValueChange={(v) =>
-                          atualizarFaixa(faixa.chave, { weekday: Number(v) })
+                          atualizarFaixa(faixa.chave, {
+                            unit_id: v === "todas" ? null : v,
+                          })
                         }
                       >
-                        <SelectTrigger className="h-10 w-[110px]">
-                          <SelectValue />
+                        <SelectTrigger
+                          aria-label="Unidade da faixa"
+                          className="w-[130px]"
+                        >
+                          <SelectValue placeholder="Unidade" />
                         </SelectTrigger>
                         <SelectContent>
-                          {WEEKDAY_LABELS.map((rotulo, indice) => (
-                            <SelectItem key={rotulo} value={String(indice)}>
-                              {rotulo}
+                          <SelectItem value="todas">
+                            Qualquer unidade
+                          </SelectItem>
+                          {catalogo.unidades.map((unidade) => (
+                            <SelectItem key={unidade.id} value={unidade.id}>
+                              {unidade.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      <Input
-                        type="time"
-                        value={faixa.starts_at}
-                        onChange={(e) =>
-                          atualizarFaixa(faixa.chave, {
-                            starts_at: e.target.value,
-                          })
-                        }
-                        aria-label="Início da faixa"
-                        className="h-10 w-[104px]"
-                      />
-                      <Input
-                        type="time"
-                        value={faixa.ends_at}
-                        onChange={(e) =>
-                          atualizarFaixa(faixa.chave, {
-                            ends_at: e.target.value,
-                          })
-                        }
-                        aria-label="Fim da faixa"
-                        className="h-10 w-[104px]"
-                      />
-                      {viraODia(faixa) ? (
-                        <span className="flex basis-full items-center gap-1.5 text-xs [color:var(--warning-text)]">
-                          <Sunrise className="size-4 shrink-0" aria-hidden />
-                          Termina no dia seguinte (plantão noturno)
-                        </span>
-                      ) : null}
-                      {temVariasUnidades ? (
-                        <Select
-                          value={faixa.unit_id ?? "todas"}
-                          onValueChange={(v) =>
-                            atualizarFaixa(faixa.chave, {
-                              unit_id: v === "todas" ? null : v,
-                            })
-                          }
-                        >
-                          <SelectTrigger className="h-10 w-[130px]">
-                            <SelectValue placeholder="Unidade" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="todas">
-                              Qualquer unidade
-                            </SelectItem>
-                            {catalogo.unidades.map((unidade) => (
-                              <SelectItem key={unidade.id} value={unidade.id}>
-                                {unidade.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : null}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-10"
-                        onClick={() => removerFaixa(faixa.chave)}
-                        aria-label="Remover faixa"
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <Button
-                variant="outline"
-                onClick={adicionarFaixa}
-                className="h-10"
-              >
-                <Plus className="size-4" /> Adicionar faixa
-              </Button>
-            </div>
-
-            {erro ? (
-              <p role="alert" className="text-sm [color:var(--alert-text)]">
-                {erro}
-              </p>
-            ) : null}
-            {pedindoVirada ? (
-              <div
-                role="alert"
-                className="grid gap-3 rounded-lg border border-[color:var(--warning)] bg-[color:var(--warning-bg)] p-3"
-              >
-                <div className="flex items-start gap-2 text-sm">
-                  <Sunrise
-                    className="mt-0.5 size-4 shrink-0 [color:var(--warning-text)]"
-                    aria-hidden
-                  />
-                  <p>
-                    Uma faixa termina no dia seguinte (plantão noturno): a
-                    agenda vai abrir horários depois da meia-noite. Se o fim
-                    ficou antes do início por engano, corrija a faixa.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    className="h-10"
-                    disabled={salvando}
-                    onClick={() => void salvar({ confirmarVirada: true })}
-                  >
-                    É plantão, salvar assim
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="h-10"
-                    onClick={() => setPedindoVirada(false)}
-                  >
-                    Corrigir a faixa
-                  </Button>
-                </div>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto"
+                      onClick={() => removerFaixa(faixa.chave)}
+                      aria-label="Remover faixa"
+                    >
+                      <Trash2 aria-hidden />
+                    </Button>
+                    {viraODia(faixa) ? (
+                      <span className="flex basis-full items-center gap-1.5 px-1 text-xs font-medium text-warning-text">
+                        <Sunrise className="size-4 shrink-0" aria-hidden />
+                        Termina no dia seguinte (plantão noturno)
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
               </div>
-            ) : aviso ? (
-              <AvisoDeConsultas
-                consultas={aviso.consultas}
-                primeira={aviso.primeira}
-                timezone={timezone}
-                rotuloConfirmar="Desativar mesmo assim"
-                confirmando={salvando}
-                aoConfirmar={() => void salvar({ confirmarConsultas: true })}
-              />
-            ) : (
-              <Button
-                onClick={() => void salvar()}
-                disabled={salvando}
-                className="h-10"
-              >
-                {salvando ? "Salvando..." : "Salvar"}
-              </Button>
             )}
+            <Button
+              variant="outline"
+              onClick={adicionarFaixa}
+              className="justify-self-start"
+            >
+              <Plus aria-hidden /> Adicionar faixa
+            </Button>
           </div>
-        </SheetContent>
-      </Sheet>
+        </div>
+      </PainelDeCadastro>
     </div>
   );
 }

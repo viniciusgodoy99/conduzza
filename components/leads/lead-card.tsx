@@ -2,16 +2,23 @@
 
 import { useDraggable } from "@dnd-kit/core";
 
-import { initialsOf } from "@/components/atendimento/contact-avatar";
+import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { ChipDeOrigem } from "@/components/leads/chip-de-origem";
 import { rotuloDoCanal, tempoRelativo } from "@/components/leads/rotulos";
 import { StatusChip } from "@/components/shared/status-chip";
-import { CONTACT_RECENCY, STATUS_TONE_VARS } from "@/lib/design/status";
+import { CONTACT_RECENCY } from "@/lib/design/status";
 import { recencyDe } from "@/lib/domain/leads-ui";
+import { formatarTelefone } from "@/lib/domain/telefone";
 import type { LeadResumo } from "@/lib/queries/leads";
+import { cn } from "@/lib/utils";
 
-// Cartao do Kanban: ate 5 elementos, cada um condicional (sem valor, o
-// elemento some; nunca rotulo orfao). Arrastavel com 8px de ativacao, entao
-// o clique continua abrindo o drawer.
+// Cartao do Kanban no desenho do KanbanCard do design system Conduzza, com o
+// conteudo do brief: ate 5 elementos (nome, telefone, origem, tempo desde o
+// ultimo contato e o responsavel), cada um condicional (sem valor, o
+// elemento some; nunca rotulo orfao). Do kit NAO entram ticket em R$, tempo
+// parado nem "urgente": nao ha dado para eles (C25). Arrastavel com 8px de
+// ativacao, entao o clique continua abrindo o drawer. O telefone aparece
+// formatado, como uma pessoa discaria.
 
 export function LeadCard({
   lead,
@@ -40,8 +47,8 @@ export function LeadCard({
 
   const recencia = recencyDe(lead.last_contact_at, new Date());
   const origem = rotuloDoCanal(lead.source_channel);
-  const neutro = STATUS_TONE_VARS.neutral;
-  const infoTone = STATUS_TONE_VARS.info;
+  const telefone = formatarTelefone(lead.phone_e164);
+  const temRecencia = recencia !== null && lead.last_contact_at !== null;
 
   return (
     <button
@@ -50,52 +57,48 @@ export function LeadCard({
       {...listeners}
       {...atributosDeArrasto}
       onClick={() => onAbrir(lead)}
-      className="relative grid w-full gap-1.5 rounded-lg border bg-card p-3 text-left shadow-sm transition-shadow hover:shadow-md focus-visible:ring-2"
-      style={{
-        ...(transform
+      className={cn(
+        "grid w-full gap-2 rounded-xl border border-border bg-card p-[11px] text-left shadow-xs transition-[box-shadow,translate] duration-(--dur-fast) outline-none hover:-translate-y-px hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid motion-reduce:hover:translate-y-0",
+        podeEditar && "cursor-grab",
+        isDragging && "cursor-grabbing shadow-pop",
+      )}
+      style={
+        transform
           ? {
+              // O arrasto anda por transform; o translate de 1px do hover e
+              // outra propriedade e so soma, sem brigar com ele.
               transform: `translate(${transform.x}px, ${transform.y}px)`,
               zIndex: 30,
-              opacity: 0.85,
             }
-          : {}),
-        ...(isDragging ? { cursor: "grabbing" } : {}),
-      }}
-      aria-label={`Abrir ${lead.name ?? lead.phone_e164}`}
+          : undefined
+      }
+      aria-label={`Abrir ${lead.name ?? telefone}`}
     >
-      <span className="truncate text-sm leading-tight font-semibold">
-        {lead.name ?? lead.phone_e164}
-      </span>
-      {lead.name ? (
-        <span className="truncate font-mono text-xs text-text-secondary">
-          {lead.phone_e164}
+      <span className="grid min-w-0 gap-0.5">
+        <span className="truncate text-[13px] leading-tight font-semibold text-text-strong">
+          {lead.name ?? <span className="cz-num">{telefone}</span>}
         </span>
-      ) : null}
-      {origem || (recencia && lead.last_contact_at) ? (
-        <span className="flex flex-wrap items-center gap-1 pr-6">
-          {origem ? (
-            <span
-              className="inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium whitespace-nowrap"
-              style={{ color: neutro.text, backgroundColor: neutro.bg }}
-            >
-              {origem}
-            </span>
-          ) : null}
+        {lead.name ? (
+          <span className="truncate cz-num text-xs text-text-secondary">
+            {telefone}
+          </span>
+        ) : null}
+      </span>
+      {origem || temRecencia || nomeResponsavel ? (
+        <span className="flex flex-wrap items-center gap-1">
+          {origem ? <ChipDeOrigem rotulo={origem} /> : null}
           {recencia && lead.last_contact_at ? (
             <StatusChip
+              size="sm"
               definition={CONTACT_RECENCY[recencia]}
               label={tempoRelativo(lead.last_contact_at)}
             />
           ) : null}
-        </span>
-      ) : null}
-      {nomeResponsavel ? (
-        <span
-          title={nomeResponsavel}
-          className="absolute right-2 bottom-2 flex size-5 items-center justify-center rounded-full text-[9px] font-semibold"
-          style={{ color: infoTone.text, backgroundColor: infoTone.bg }}
-        >
-          {initialsOf(nomeResponsavel, "")}
+          {nomeResponsavel ? (
+            <span title={nomeResponsavel} className="ml-auto shrink-0">
+              <ContactAvatar name={nomeResponsavel} phone="" size={24} />
+            </span>
+          ) : null}
         </span>
       ) : null}
     </button>

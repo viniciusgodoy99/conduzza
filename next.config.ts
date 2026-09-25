@@ -22,6 +22,18 @@ const nextConfig: NextConfig = {
       // documento grande, e ai a mensagem de erro diz o tamanho.
       bodySizeLimit: "4mb",
     },
+    // Painel "Segment Explorer" do devtools, so em desenvolvimento. Ele
+    // embrulha cada layout e pagina num SegmentViewNode que devolve
+    // [marcador, conteudo], e o conteudo vira filho de lista. Quando o RSC do
+    // layout (assincrono, le o banco) ainda nao chegou no momento da
+    // hidratacao, o Fragment do segmento suspende e o React (19.2 canary que
+    // o Next 15.5 embute) o refaz sem a marca de filho de lista: todo useId
+    // abaixo perde dois bits e diverge do servidor (id do menu do usuario,
+    // abas, arrasto de Leads). Depende de tempo, por isso aparecia em telas
+    // diferentes a cada rodada. Em producao o SegmentViewNode nao existe e o
+    // Fragment e filho unico, entao desligar o painel so alinha o dev a
+    // producao.
+    devtoolSegmentExplorer: false,
   },
 };
 

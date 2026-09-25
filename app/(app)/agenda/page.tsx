@@ -13,7 +13,10 @@ import { AgendaClient } from "./agenda-client";
 // Tela 3, Agenda (tarefas 2.5 a 2.7): carga inicial no servidor (o dia de
 // hoje NO FUSO DA CLINICA), interatividade e tempo real no cliente. O papel
 // 'profissional' recebe o proprio professional_id e a tela trava na coluna
-// dele (a RLS ja recorta os dados; isto e so a experiencia).
+// dele (a RLS ja recorta os dados; isto e so a experiencia). As permissoes de
+// Cadastros e de leads e pacientes vao junto: o modal leva a Cadastros quando
+// falta jornada ou vinculo (achado 38) e registra a autorizacao do paciente
+// (achados 50, 57 e 88), com a acao visivel e desabilitada para quem nao pode.
 export default async function AgendaPage({
   searchParams,
 }: {
@@ -78,6 +81,16 @@ export default async function AgendaPage({
         dica={
           permissionHint(active.role, "agenda") ??
           "Seu perfil só consulta a agenda"
+        }
+        podeEditarCadastros={canEdit(active.role, "cadastros")}
+        dicaCadastros={
+          permissionHint(active.role, "cadastros") ??
+          "Somente administradores e gestores alteram os cadastros"
+        }
+        podeRegistrarAutorizacao={canEdit(active.role, "leads_pacientes")}
+        dicaAutorizacao={
+          permissionHint(active.role, "leads_pacientes") ??
+          "Seu perfil não pode editar leads e pacientes"
         }
         ownProfessionalId={
           (membroProfissional.data?.professional_id as string | null) ?? null

@@ -24,6 +24,13 @@ import type { MessageItem } from "@/lib/queries/conversations";
 // divergirem a pessoa ve a recusa em texto.
 const PRAZO_MINUTOS = 60 * 60;
 
+// Opcao do dialogo (docs/06 secao 5.3): botao nativo em grade, para o texto
+// QUEBRAR LINHA. O Button base e whitespace-nowrap, e com ele a descricao
+// ficava numa linha so e estourava a largura do dialogo (achado L0).
+// Terceira coluna: "Apagando..." durante o envio.
+const OPCAO =
+  "grid w-full min-h-10 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-xl border border-border-strong bg-card p-3 text-left whitespace-normal cz-transition hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:pointer-events-none disabled:opacity-45";
+
 /** A mensagem chegou a sair para o WhatsApp? */
 function saiuDaClinica(message: MessageItem): boolean {
   return (
@@ -106,32 +113,36 @@ export function DialogoApagar({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-2">
-          <Button
-            variant="outline"
-            className="h-auto justify-start gap-3 py-3 text-left"
+        {/* min-w-0: sem ele a grade do diálogo cresce até a largura da
+            opção mais longa e ganha rolagem de lado. */}
+        <div className="grid min-w-0 gap-2">
+          <button
+            type="button"
+            className={OPCAO}
             disabled={pendente || impedimento !== null}
             onClick={() => {
               setEscolhido("todos");
               aoApagar("todos");
             }}
           >
-            <Trash2 className="size-4 shrink-0" />
-            <span className="grid gap-0.5">
-              <span className="text-[13px] font-semibold">
+            <Trash2 aria-hidden className="mt-0.5 size-4 text-alert-text" />
+            <span className="grid min-w-0 gap-0.5">
+              <span className="text-[13px] font-semibold text-text-strong">
                 Apagar para todos
               </span>
-              <span className="text-[11.5px] font-normal text-text-secondary">
+              <span className="text-[11.5px] leading-snug text-text-secondary">
                 Some daqui e do WhatsApp do paciente. Ele vê que uma mensagem
                 foi apagada.
               </span>
             </span>
             {pendente && escolhido === "todos" ? (
-              <span className="ml-auto text-[11.5px] text-text-tertiary">
+              <span className="text-[11.5px] text-text-tertiary">
                 Apagando...
               </span>
-            ) : null}
-          </Button>
+            ) : (
+              <span aria-hidden />
+            )}
+          </button>
 
           {/* O motivo fica FORA do botão desabilitado.
               Dentro, ele herdava o disabled:opacity-50 e caía para 2,3:1 de
@@ -146,37 +157,42 @@ export function DialogoApagar({
           ) : null}
 
           {!ampliando ? (
-            <Button
-              variant="outline"
-              className="h-auto justify-start gap-3 py-3 text-left"
+            <button
+              type="button"
+              className={OPCAO}
               disabled={pendente}
               onClick={() => {
                 setEscolhido("local");
                 aoApagar("local");
               }}
             >
-              <CircleSlash className="size-4 shrink-0" />
-              <span className="grid gap-0.5">
-                <span className="text-[13px] font-semibold">
+              <CircleSlash
+                aria-hidden
+                className="mt-0.5 size-4 text-text-secondary"
+              />
+              <span className="grid min-w-0 gap-0.5">
+                <span className="text-[13px] font-semibold text-text-strong">
                   Apagar só aqui
                 </span>
-                <span className="text-[11.5px] font-normal text-text-secondary">
+                <span className="text-[11.5px] leading-snug text-text-secondary">
                   {message.is_internal_note
                     ? "Some da conversa da clínica. A nota nunca foi para o paciente."
                     : "Some da conversa da clínica. O paciente continua vendo no celular dele."}
                 </span>
               </span>
               {pendente && escolhido === "local" ? (
-                <span className="ml-auto text-[11.5px] text-text-tertiary">
+                <span className="text-[11.5px] text-text-tertiary">
                   Apagando...
                 </span>
-              ) : null}
-            </Button>
+              ) : (
+                <span aria-hidden />
+              )}
+            </button>
           ) : null}
         </div>
 
         {erro ? (
-          <p role="alert" className="text-[12px] [color:var(--alert-text)]">
+          <p role="alert" className="text-[12px] text-alert-text">
             {erro}
           </p>
         ) : null}

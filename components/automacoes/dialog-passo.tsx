@@ -85,7 +85,7 @@ export function DialogPasso({
 
   return (
     <Dialog open={aberto} onOpenChange={(v) => (!v ? onFechar() : null)}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-[420px]">
         <DialogHeader>
           <DialogTitle>{titulo}</DialogTitle>
           <DialogDescription>
@@ -101,7 +101,7 @@ export function DialogPasso({
               id="passo-valor"
               type="number"
               min={sentido === "antes" ? 1 : 0}
-              className="h-10"
+              className="cz-num"
               value={valor}
               onChange={(e) => setValor(e.target.value)}
             />
@@ -112,7 +112,7 @@ export function DialogPasso({
               value={unidade}
               onValueChange={(v) => setUnidade(v as "horas" | "dias")}
             >
-              <SelectTrigger id="passo-unidade" className="min-h-10">
+              <SelectTrigger id="passo-unidade" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -136,21 +136,15 @@ export function DialogPasso({
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
               placeholder="Escreva a mensagem. Dá para ajustar depois no editor."
-              className="text-[13px]"
+              className="text-sm"
             />
           </div>
         ) : null}
         <DialogFooter>
-          <Button
-            variant="outline"
-            className="h-10"
-            disabled={pendente}
-            onClick={onFechar}
-          >
+          <Button variant="ghost" disabled={pendente} onClick={onFechar}>
             Cancelar
           </Button>
           <Button
-            className="h-10"
             disabled={
               pendente || !valorValido || (pedirTexto && texto.trim() === "")
             }

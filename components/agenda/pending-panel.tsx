@@ -21,9 +21,11 @@ import {
 } from "@/lib/design/status";
 import type { ConsultaDaAgenda } from "@/lib/queries/agenda";
 
-// Painel lateral "Pendente de voce" (handoff, 264px): encaixes sugeridos
-// pela IA aguardando aprovacao humana. Abaixo, a legenda compacta dos 10
-// status da agenda (3 camadas: icone, rotulo e cor).
+// Painel lateral "Pendente de voce" (264px, cartao do design system, docs/06
+// secao 5.6): encaixes sugeridos pela IA aguardando aprovacao humana. Abaixo,
+// a legenda compacta dos 10 status da agenda (3 camadas: icone, rotulo e
+// cor). "Aprovar" vai no botao suave: o unico lime cheio da tela e o "Novo
+// agendamento".
 
 const CHIP_ENCAIXE_IA: StatusDefinition = {
   label: "Encaixe da IA",
@@ -88,18 +90,26 @@ export function PendingPanel({
   return (
     <aside
       aria-label="Pendente de você"
-      className="hidden w-[264px] shrink-0 overflow-y-auto border-l bg-card xl:block"
+      className="hidden w-[264px] shrink-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm xl:flex"
     >
-      <div className="flex flex-col gap-4 p-4">
-        <h2 className="text-sm font-semibold">Pendente de você</h2>
+      <div className="flex h-12 shrink-0 items-center border-b border-border px-4">
+        <h2 className="text-base font-bold tracking-[-0.01em]">
+          Pendente de você
+        </h2>
+      </div>
 
+      <div className="flex cz-scroll min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         {pendencias.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center">
-            <span className="flex size-10 items-center justify-center rounded-full bg-muted">
-              <Sparkles className="size-5 text-text-secondary" aria-hidden />
+          // Vazio compacto no tom da IA (ladrilho lime suave com o Sparkles):
+          // quem sugere encaixe e a IA.
+          <div className="flex flex-col items-center justify-center gap-2 px-2 py-7 text-center">
+            <span className="grid size-[38px] shrink-0 place-items-center rounded-card bg-ai-bg">
+              <Sparkles className="size-[18px] text-ai-text" aria-hidden />
             </span>
-            <p className="text-sm font-semibold">Nada pendente de você</p>
-            <p className="text-xs text-text-secondary">
+            <p className="text-sm font-bold tracking-[-0.01em] text-text-strong">
+              Nada pendente de você
+            </p>
+            <p className="text-[13px] text-text-secondary">
               Quando a IA sugerir um encaixe, ele aparece aqui para aprovação.
             </p>
           </div>
@@ -110,11 +120,13 @@ export function PendingPanel({
               return (
                 <li
                   key={consulta.id}
-                  className="flex flex-col gap-2 rounded-lg border bg-background p-3"
+                  className="flex flex-col gap-2.5 rounded-xl border border-border p-3"
                 >
-                  <StatusChip definition={CHIP_ENCAIXE_IA} />
+                  <span className="flex">
+                    <StatusChip size="sm" definition={CHIP_ENCAIXE_IA} />
+                  </span>
                   <div className="grid gap-0.5">
-                    <p className="truncate text-[13px] font-semibold">
+                    <p className="truncate text-[13px] font-semibold text-text-strong">
                       {consulta.contact?.name ??
                         consulta.contact?.phone_e164 ??
                         "Paciente"}
@@ -123,7 +135,7 @@ export function PendingPanel({
                       {consulta.service_link?.procedure?.name ??
                         "Procedimento não informado"}
                     </p>
-                    <p className="text-xs text-text-secondary">
+                    <p className="cz-num text-xs text-text-secondary">
                       {diaEHora(consulta.starts_at, contexto.timezone)}
                     </p>
                   </div>
@@ -131,15 +143,13 @@ export function PendingPanel({
                     {contexto.podeEditar ? (
                       <>
                         <Button
+                          variant="secondary"
                           className="h-10 flex-1"
                           disabled={ocupado}
                           onClick={() => tratar(consulta.id, "aprovar")}
                         >
                           {ocupado && emAndamento?.acao === "aprovar" ? (
-                            <Loader2
-                              className="size-4 animate-spin"
-                              aria-hidden
-                            />
+                            <Loader2 className="animate-spin" aria-hidden />
                           ) : null}
                           Aprovar
                         </Button>
@@ -150,23 +160,34 @@ export function PendingPanel({
                           onClick={() => tratar(consulta.id, "recusar")}
                         >
                           {ocupado && emAndamento?.acao === "recusar" ? (
-                            <Loader2
-                              className="size-4 animate-spin"
-                              aria-hidden
-                            />
+                            <Loader2 className="animate-spin" aria-hidden />
                           ) : null}
                           Recusar
                         </Button>
                       </>
                     ) : (
                       <>
-                        <DisabledWithHint hint={contexto.dica}>
-                          <Button className="h-10" disabled>
+                        <DisabledWithHint
+                          hint={contexto.dica}
+                          className="flex-1"
+                        >
+                          <Button
+                            variant="secondary"
+                            className="h-10 w-full"
+                            disabled
+                          >
                             Aprovar
                           </Button>
                         </DisabledWithHint>
-                        <DisabledWithHint hint={contexto.dica}>
-                          <Button variant="outline" className="h-10" disabled>
+                        <DisabledWithHint
+                          hint={contexto.dica}
+                          className="flex-1"
+                        >
+                          <Button
+                            variant="outline"
+                            className="h-10 w-full"
+                            disabled
+                          >
                             Recusar
                           </Button>
                         </DisabledWithHint>
@@ -179,8 +200,8 @@ export function PendingPanel({
           </ul>
         )}
 
-        <div className="grid gap-2 border-t pt-4">
-          <h3 className="text-xs font-semibold text-text-secondary">
+        <div className="grid gap-2 border-t border-border pt-4">
+          <h3 className="cz-eyebrow text-text-secondary">
             Legenda de situações
           </h3>
           <ul className="grid gap-1.5">
@@ -197,7 +218,7 @@ export function PendingPanel({
                   {Icone ? (
                     <Icone
                       className="size-3.5 shrink-0"
-                      style={{ color: tone.marker }}
+                      style={{ color: tone.text }}
                       aria-hidden
                     />
                   ) : null}

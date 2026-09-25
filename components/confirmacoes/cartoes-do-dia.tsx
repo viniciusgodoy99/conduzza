@@ -25,17 +25,29 @@ export type ContagensDoDia = {
   recuperadas: number;
 };
 
-function percentual(parte: number, total: number): string {
+function percentual(parte: number, total: number): React.ReactNode {
   if (total <= 0) {
     return "sem consultas no dia";
   }
   const valor = (parte / total) * 100;
-  return `${valor.toLocaleString("pt-BR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  })}% do dia`;
+  return (
+    <>
+      <span className="cz-num">
+        {valor.toLocaleString("pt-BR", {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 1,
+        })}
+        %
+      </span>{" "}
+      do dia
+    </>
+  );
 }
 
+// Receita StatCard do design system (docs/06 secao 4.7): rotulo em eyebrow
+// (a caixa alta e so do CSS: no DOM o texto continua "Pendentes", que o e2e
+// procura exato) e o icone do status num quadrado com o fundo e o texto da
+// familia. O heroi tem o numero de 34px; os demais, 24px.
 function Cartao({
   icone: Icone,
   tom,
@@ -48,8 +60,8 @@ function Cartao({
   icone: typeof Clock;
   tom: StatusTone;
   rotulo: string;
-  valor: React.ReactNode;
-  apoio: string;
+  valor: number;
+  apoio: React.ReactNode;
   heroi?: boolean;
   children?: React.ReactNode;
 }) {
@@ -57,30 +69,28 @@ function Cartao({
   return (
     <div
       className={cn(
-        "grid content-start gap-2 rounded-lg border bg-card p-4",
-        heroi && "sm:col-span-2 lg:col-span-2",
+        "grid min-w-0 content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm",
+        heroi && "sm:col-span-2",
       )}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="cz-eyebrow text-text-secondary">{rotulo}</span>
         <span
-          className="flex size-7 shrink-0 items-center justify-center rounded-full"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md"
           style={{ backgroundColor: cores.bg, color: cores.text }}
         >
           <Icone className="size-4" aria-hidden />
         </span>
-        <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-          {rotulo}
-        </span>
       </div>
       <span
         className={cn(
-          "font-mono leading-none font-semibold tabular-nums",
-          heroi ? "text-[40px]" : "text-[28px]",
+          "cz-num leading-none font-semibold text-text-strong",
+          heroi ? "text-[34px]" : "text-2xl",
         )}
       >
         {valor}
       </span>
-      <span className="text-[12.5px] text-text-secondary">{apoio}</span>
+      <span className="text-xs text-text-secondary">{apoio}</span>
       {children}
     </div>
   );
@@ -103,9 +113,10 @@ export function CartoesDoDia({
     contagens.cobraveis > 0
       ? `Cobrar ${contagens.cobraveis === 1 ? "a pendente" : `todas as ${contagens.cobraveis}`}`
       : "Cobrar pendentes";
+  // O unico botao lime do corpo da tela (docs/06 secao 5.7).
   const botao = (
     <Button
-      className="h-10 w-full sm:w-auto"
+      className="w-full sm:w-auto"
       disabled={!podeCobrar || cobrando || contagens.cobraveis === 0}
       onClick={onCobrarTodos}
     >
@@ -119,18 +130,22 @@ export function CartoesDoDia({
         icone={Clock}
         tom="warning"
         rotulo="Pendentes"
-        valor={String(contagens.pendentes)}
+        valor={contagens.pendentes}
         apoio={
-          contagens.total === 1
-            ? "de 1 consulta no dia"
-            : `de ${contagens.total} consultas no dia`
+          <>
+            de <span className="cz-num">{contagens.total}</span>{" "}
+            {contagens.total === 1 ? "consulta no dia" : "consultas no dia"}
+          </>
         }
         heroi
       >
         {!podeCobrar ? (
-          <DisabledWithHint hint={dicaSemPermissao}>{botao}</DisabledWithHint>
+          <DisabledWithHint hint={dicaSemPermissao} className="w-full sm:w-fit">
+            {botao}
+          </DisabledWithHint>
         ) : contagens.cobraveis === 0 ? (
           <DisabledWithHint
+            className="w-full sm:w-fit"
             hint={
               contagens.pendentes === 0
                 ? "Nenhuma consulta pendente neste dia"
@@ -147,23 +162,25 @@ export function CartoesDoDia({
         icone={CircleCheck}
         tom="success"
         rotulo="Confirmadas"
-        valor={String(contagens.confirmadas)}
+        valor={contagens.confirmadas}
         apoio={percentual(contagens.confirmadas, contagens.total)}
       />
       <Cartao
         icone={CircleX}
         tom="alert"
         rotulo="Canceladas"
-        valor={String(contagens.canceladas)}
+        valor={contagens.canceladas}
         apoio={percentual(contagens.canceladas, contagens.total)}
       />
       {/* O numero que justifica a mensalidade, agora REAL: horarios do dia
-          preenchidos pela reoferta da lista de espera. */}
+          preenchidos pela reoferta da lista de espera. Tom fixo success
+          (tabela de icones reservados): o icone nao troca de cor com o
+          valor. */}
       <Cartao
         icone={RotateCcw}
-        tom={contagens.recuperadas > 0 ? "success" : "neutral"}
+        tom="success"
         rotulo="Recuperadas"
-        valor={String(contagens.recuperadas)}
+        valor={contagens.recuperadas}
         apoio="pela lista de espera"
       />
     </div>

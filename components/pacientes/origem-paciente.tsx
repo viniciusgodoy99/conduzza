@@ -19,15 +19,15 @@ export function OrigemPaciente({
     <BlocoFicha titulo="Origem">
       <div className="grid gap-2">
         <LinhaDaFicha rotulo="Canal">
-          {canal ?? <span className="text-text-tertiary">Não informado</span>}
+          {canal ?? <span className="text-text-secondary">Não informado</span>}
         </LinhaDaFicha>
         <LinhaDaFicha rotulo="Campanha">
           {contato.source_campaign ?? (
-            <span className="text-text-tertiary">Sem campanha</span>
+            <span className="text-text-secondary">Sem campanha</span>
           )}
         </LinhaDaFicha>
         <LinhaDaFicha rotulo="Chegou em">
-          {dataLocal(quando, timezone)}
+          <span className="cz-num">{dataLocal(quando, timezone)}</span>
         </LinhaDaFicha>
       </div>
     </BlocoFicha>

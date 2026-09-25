@@ -1,8 +1,10 @@
 "use client";
 
-import { MessageSquareText } from "lucide-react";
+import { MessageCircleMore } from "lucide-react";
 
 import { CartaoKpi } from "@/components/relatorios/cartao-kpi";
+import { Secao } from "@/components/relatorios/secao";
+import { EmptyState } from "@/components/shared/empty-state";
 import type {
   AtendimentoDoPeriodo,
   Periodizado,
@@ -36,8 +38,11 @@ export function AbaCustos({
     .sort((a, b) => b[1] - a[1]);
 
   return (
-    <div className="grid gap-6">
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid gap-4">
+      <section
+        aria-label="Indicadores do período"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+      >
         <CartaoKpi
           rotulo="Mensagens enviadas"
           valor={enviadas.toLocaleString("pt-BR")}
@@ -71,35 +76,36 @@ export function AbaCustos({
         />
       </section>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <MessageSquareText className="size-4 text-text-secondary" />
-          <h2 className="text-[15px] font-semibold">Quem enviou</h2>
-        </div>
+      <Secao titulo="Quem enviou" icone={MessageCircleMore}>
         {porAutorSaida.length === 0 ? (
-          <p className="text-sm text-text-secondary">
-            Nenhuma mensagem enviada no período.
-          </p>
+          <EmptyState
+            compact
+            icon={MessageCircleMore}
+            title="Nenhuma mensagem enviada no período"
+          />
         ) : (
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-3">
             {porAutorSaida.map(([autor, total]) => (
-              <div key={autor} className="grid gap-1 rounded-lg border p-3">
-                <span className="text-xs text-text-secondary">
+              <div
+                key={autor}
+                className="grid content-start gap-2 rounded-xl bg-surface-4 p-3.5"
+              >
+                <span className="cz-eyebrow text-text-secondary">
                   {AUTOR_ROTULO[autor] ?? autor}
                 </span>
-                <span className="text-xl font-semibold tabular-nums">
+                <span className="cz-num text-[24px] leading-none font-semibold text-text-strong">
                   {total.toLocaleString("pt-BR")}
                 </span>
               </div>
             ))}
           </div>
         )}
-        <p className="max-w-prose text-sm text-text-secondary">
+        <p className="max-w-prose border-t border-border pt-3 text-xs text-text-secondary">
           Quando o canal oficial do WhatsApp estiver ativo, o custo por mensagem
           em reais aparece aqui, calculado pela tabela de preços da Meta, nunca
           por estimativa.
         </p>
-      </section>
+      </Secao>
     </div>
   );
 }

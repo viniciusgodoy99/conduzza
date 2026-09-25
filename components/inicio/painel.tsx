@@ -1,17 +1,27 @@
 import {
+  AlarmClock,
   CalendarClock,
+  ChevronRight,
+  Funnel,
   Hand,
-  MessageSquareText,
+  Hourglass,
+  Inbox,
+  ListTodo,
+  Megaphone,
+  MessageCircleMore,
   MessagesSquare,
-  Timer,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 
 import { rotuloDoCanal } from "@/components/leads/rotulos";
-import { formatarDuracao } from "@/lib/domain/duracao";
 import { BarraHorizontal } from "@/components/relatorios/barra-horizontal";
 import { CartaoKpi } from "@/components/relatorios/cartao-kpi";
+import { Secao } from "@/components/relatorios/secao";
+import { BarraDeProgresso } from "@/components/shared/barra-de-progresso";
+import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { formatarDuracao } from "@/lib/domain/duracao";
 import type {
   AgendaDoPeriodo,
   AtendimentoDoPeriodo,
@@ -19,17 +29,20 @@ import type {
   Periodizado,
   ProximasAcoes,
 } from "@/lib/queries/relatorios";
+import { cn } from "@/lib/utils";
 import { formatarCentavos } from "@/lib/utils/moeda";
 
-// O painel do Inicio (Tela 5): bento com um ponto focal, leitura em F.
-// Periodo FIXO dos ultimos 30 dias civis contra os 30 anteriores; o filtro
-// livre mora em Resultados. Todo numero aqui vem das mesmas RPCs da Tela 11:
-// dois numeros com o mesmo nome contam igual nas duas telas.
+// O painel do Inicio (Tela 5): bento com um ponto focal, leitura em F, no
+// desenho do design system Conduzza (docs/06 secao 5.2). Periodo FIXO dos
+// ultimos 30 dias civis contra os 30 anteriores; o filtro livre mora em
+// Resultados. Todo numero aqui vem das mesmas RPCs da Tela 11: dois numeros
+// com o mesmo nome contam igual nas duas telas.
 //
 // O card heroi e "Consultas recuperadas": horarios preenchidos pela lista
 // de espera, com a receita associada. Sem contrafactual ("confirmacoes que
 // evitaram falta" nao e mensuravel e nao se inventa numero); a remarcacao
-// apos falta entra como numero FACTUAL, com o rotulo exato.
+// apos falta entra como numero FACTUAL, com o rotulo exato. E o unico
+// preenchimento lime do corpo da tela (D16).
 
 function pct(parte: number, todo: number): string {
   if (todo <= 0) {
@@ -39,16 +52,44 @@ function pct(parte: number, todo: number): string {
   return `${Math.round((parte / todo) * 100)}%`;
 }
 
+// Linha de dado do bloco Atendimento (receita "linha de dado", docs/06 4.7):
+// rotulo a esquerda, numero mono a direita. Valor sem numero ("sem dados") e
+// campo vazio: texto secundario, nunca travessao.
+const LINHA_DE_DADO =
+  "flex items-baseline justify-between gap-2 border-b border-border py-2.5 text-[13px] last:border-0";
+
+function LinhaDeDado({ rotulo, valor }: { rotulo: string; valor: string }) {
+  const temNumero = /\d/.test(valor);
+  return (
+    <div className={LINHA_DE_DADO}>
+      <dt className="text-text-secondary">{rotulo}</dt>
+      <dd
+        className={
+          temNumero
+            ? "cz-num font-semibold text-text-strong"
+            : "text-text-secondary"
+        }
+      >
+        {temNumero ? valor : valor.charAt(0).toUpperCase() + valor.slice(1)}
+      </dd>
+    </div>
+  );
+}
+
 export function Painel({
   funil,
   agenda,
   atendimento,
   proximasAcoes,
+  pedidosDeAcesso = 0,
 }: {
   funil: Periodizado<FunilDoPeriodo>;
   agenda: Periodizado<AgendaDoPeriodo>;
   atendimento: Periodizado<AtendimentoDoPeriodo>;
   proximasAcoes: ProximasAcoes;
+  /** Pedidos de entrada pelo codigo aguardando liberacao (so quem gerencia
+   *  a equipe recebe o numero; para os outros papeis fica 0). */
+  pedidosDeAcesso?: number;
 }) {
   const f = funil.atual;
   const fAnterior = funil.anterior;
@@ -61,17 +102,41 @@ export function Painel({
     0,
   );
 
+  const etapasDoFunil = [
+    {
+      rotulo: "Chegaram",
+      valor: f.coorte.leads,
+      taxa: null as string | null,
+    },
+    {
+      rotulo: "Agendaram",
+      valor: f.coorte.agendaram,
+      taxa: pct(f.coorte.agendaram, f.coorte.leads),
+    },
+    {
+      rotulo: "Compareceram",
+      valor: f.coorte.compareceram,
+      taxa: pct(f.coorte.compareceram, f.coorte.agendaram),
+    },
+  ];
+  // Denominador da participacao de cada canal: a soma das proprias barras.
+  const totalDosCanais = f.porCanal.reduce(
+    (soma, canal) => soma + canal.leads,
+    0,
+  );
+
   return (
     <div className="grid gap-4">
-      <p className="text-sm text-text-secondary">
-        Últimos 30 dias, comparados com os 30 anteriores.{" "}
-        <Link href="/relatorios" className="underline underline-offset-2">
-          Ver com outro período em Resultados
-        </Link>
+      <p className="text-xs font-medium text-text-secondary">
+        Últimos <span className="cz-num">30</span> dias, comparados com os{" "}
+        <span className="cz-num">30</span> anteriores.
       </p>
 
-      {/* Linha 1: a faixa de 4 indicadores */}
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* A faixa de 4 indicadores */}
+      <section
+        aria-label="Indicadores do período"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+      >
         <CartaoKpi
           rotulo="Leads no período"
           valor={f.leads.toLocaleString("pt-BR")}
@@ -110,8 +175,8 @@ export function Painel({
         />
       </section>
 
-      {/* Linha 2: heroi + atendimento */}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Linha 1: heroi + atendimento */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <CartaoKpi
           rotulo="Consultas recuperadas"
           valor={a.recuperadas.total.toLocaleString("pt-BR")}
@@ -125,231 +190,239 @@ export function Painel({
               : null
           }
         >
-          <p className="text-[12.5px] text-text-secondary">
-            {a.recuperadas.total > 0
-              ? `Horários que ficariam vagos e foram preenchidos pela lista de espera, com ${formatarCentavos(a.recuperadas.receitaCents)} em receita associada${
-                  a.recuperadas.semPreco > 0
-                    ? ` (${a.recuperadas.semPreco} sem preço cadastrado)`
-                    : ""
-                }.`
-              : "Quando um cancelamento for preenchido pela lista de espera, o horário recuperado conta aqui."}{" "}
-            {a.remarcadasAposFalta.faltas > 0
-              ? `Além disso, ${a.remarcadasAposFalta.remarcadas} de ${a.remarcadasAposFalta.faltas} faltas remarcaram em até 30 dias.`
-              : ""}
+          <p className="max-w-[60ch] text-[13px] leading-[1.5] text-primary-foreground">
+            {a.recuperadas.total > 0 ? (
+              <>
+                Horários que ficariam vagos e foram preenchidos pela lista de
+                espera, com{" "}
+                <span className="cz-num font-semibold">
+                  {formatarCentavos(a.recuperadas.receitaCents)}
+                </span>{" "}
+                em receita associada
+                {a.recuperadas.semPreco > 0 ? (
+                  <>
+                    {" "}
+                    (<span className="cz-num">
+                      {a.recuperadas.semPreco}
+                    </span>{" "}
+                    sem preço cadastrado)
+                  </>
+                ) : null}
+                .
+              </>
+            ) : (
+              "Quando um cancelamento for preenchido pela lista de espera, o horário recuperado conta aqui."
+            )}
+            {a.remarcadasAposFalta.faltas > 0 ? (
+              <>
+                {" "}
+                Além disso,{" "}
+                <span className="cz-num">
+                  {a.remarcadasAposFalta.remarcadas}
+                </span>{" "}
+                de{" "}
+                <span className="cz-num">{a.remarcadasAposFalta.faltas}</span>{" "}
+                faltas remarcaram em até <span className="cz-num">30</span>{" "}
+                dias.
+              </>
+            ) : null}
           </p>
         </CartaoKpi>
-        <div className="grid content-start gap-2 rounded-lg border bg-card p-4 sm:col-span-2">
-          <span className="text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-            Atendimento
-          </span>
-          <div className="grid gap-1.5 text-sm">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-text-secondary">Novas conversas</span>
-              <span className="font-mono font-semibold tabular-nums">
-                {at.conversasIniciadas.toLocaleString("pt-BR")}
-              </span>
+        <Secao
+          titulo="Atendimento"
+          icone={MessagesSquare}
+          corpoClassName="py-1.5"
+        >
+          <dl className="grid">
+            <LinhaDeDado
+              rotulo="Novas conversas"
+              valor={at.conversasIniciadas.toLocaleString("pt-BR")}
+            />
+            <LinhaDeDado
+              rotulo="Primeira resposta (mediana)"
+              valor={formatarDuracao(at.primeiraResposta.medianaSegundos)}
+            />
+            <LinhaDeDado
+              rotulo="Aguardando resposta agora"
+              valor={proximasAcoes.aguardandoHumano.toLocaleString("pt-BR")}
+            />
+            <div className={cn(LINHA_DE_DADO, "opacity-45")}>
+              <dt className="text-text-secondary">
+                Resolvidas pela IA sem humano
+              </dt>
+              <dd>
+                <DisabledWithHint hint="Chega com o agente de IA. Sem o agente atendendo, não existe número para mostrar.">
+                  <span className="text-text-secondary">Ainda não medido</span>
+                </DisabledWithHint>
+              </dd>
             </div>
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-text-secondary">
-                Primeira resposta (mediana)
-              </span>
-              <span className="font-mono font-semibold tabular-nums">
-                {formatarDuracao(at.primeiraResposta.medianaSegundos)}
-              </span>
-            </div>
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-text-secondary">
-                Aguardando resposta agora
-              </span>
-              <span className="font-mono font-semibold tabular-nums">
-                {proximasAcoes.aguardandoHumano.toLocaleString("pt-BR")}
-              </span>
-            </div>
-            <DisabledWithHint hint="Chega com o agente de IA. Sem o agente atendendo, não existe número para mostrar.">
-              <div className="flex w-full items-baseline justify-between gap-2 opacity-60">
-                <span className="text-text-secondary">
-                  Resolvidas pela IA sem humano
-                </span>
-                <span className="font-mono font-semibold text-text-tertiary">
-                  --
-                </span>
-              </div>
-            </DisabledWithHint>
-          </div>
-        </div>
-      </section>
+          </dl>
+        </Secao>
+      </div>
 
-      {/* Linha 3: funil + origem */}
-      <section className="grid gap-3 lg:grid-cols-2">
-        <div className="grid content-start gap-3 rounded-lg border bg-card p-4">
-          <h2 className="text-[15px] font-semibold">
-            Funil dos leads do período
-          </h2>
-          <div className="grid gap-3">
-            {[
-              {
-                rotulo: "Chegaram",
-                valor: f.coorte.leads,
-                taxa: null as string | null,
-              },
-              {
-                rotulo: "Agendaram",
-                valor: f.coorte.agendaram,
-                taxa: pct(f.coorte.agendaram, f.coorte.leads),
-              },
-              {
-                rotulo: "Compareceram",
-                valor: f.coorte.compareceram,
-                taxa: pct(f.coorte.compareceram, f.coorte.agendaram),
-              },
-            ].map((etapa) => {
-              // Piso so para valor > 0: barra desenhada para zero mente.
-              const largura =
-                f.coorte.leads > 0 && etapa.valor > 0
-                  ? Math.max(4, (etapa.valor / f.coorte.leads) * 100)
-                  : 0;
-              return (
-                <div key={etapa.rotulo} className="grid gap-1">
-                  <div className="flex items-baseline justify-between text-sm">
-                    <span className="font-medium">{etapa.rotulo}</span>
-                    <span className="text-text-secondary tabular-nums">
-                      {etapa.valor}
-                      {etapa.taxa ? (
-                        <span className="text-text-tertiary">
-                          {" "}
-                          ({etapa.taxa})
-                        </span>
-                      ) : null}
-                    </span>
-                  </div>
-                  <span
-                    role="img"
-                    aria-label={`${etapa.rotulo}: ${etapa.valor}`}
-                    className="block h-2.5 overflow-hidden rounded-full bg-surface-4"
-                  >
-                    <span
-                      className="block h-full rounded-full"
-                      style={{
-                        width: `${largura}%`,
-                        background: "var(--chart-bar)",
-                      }}
-                    />
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="grid content-start gap-3 rounded-lg border bg-card p-4">
-          <h2 className="text-[15px] font-semibold">Origem dos leads</h2>
+      {/* Linha 2: funil + origem */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <Secao titulo="Funil dos leads do período" icone={Funnel}>
+          {etapasDoFunil.map((etapa) => (
+            <BarraDeProgresso
+              key={etapa.rotulo}
+              rotulo={etapa.rotulo}
+              legenda={`${etapa.valor.toLocaleString("pt-BR")}${
+                etapa.taxa ? ` (${etapa.taxa})` : ""
+              }`}
+              valor={etapa.valor}
+              maximo={f.coorte.leads}
+              tom="destaque"
+              ariaLabel={`${etapa.rotulo}: ${etapa.valor}`}
+            />
+          ))}
+        </Secao>
+        <Secao titulo="Origem dos leads" icone={Megaphone}>
           {f.porCanal.length === 0 ? (
-            <p className="text-sm text-text-secondary">
-              Nenhum lead chegou neste período.
-            </p>
+            <EmptyState
+              compact
+              icon={Inbox}
+              title="Nenhum lead chegou neste período"
+            />
           ) : (
-            <div className="grid gap-2">
-              {f.porCanal.map((canal) => (
-                <BarraHorizontal
-                  key={canal.canal ?? "sem_atribuicao"}
-                  rotulo={rotuloDoCanal(canal.canal) ?? "Sem atribuição"}
-                  valor={canal.leads}
-                  maximo={maiorCanal}
-                  destaque={canal.canal !== null}
-                />
-              ))}
-            </div>
+            f.porCanal.map((canal) => (
+              <BarraHorizontal
+                key={canal.canal ?? "sem_atribuicao"}
+                rotulo={rotuloDoCanal(canal.canal) ?? "Sem atribuição"}
+                valor={canal.leads}
+                maximo={maiorCanal}
+                total={totalDosCanais}
+                destaque={canal.canal !== null}
+              />
+            ))
           )}
-        </div>
-      </section>
+        </Secao>
+      </div>
 
-      {/* Linha 4: mensagens + proximas acoes */}
-      <section className="grid gap-3 lg:grid-cols-2">
-        <div className="grid content-start gap-2 rounded-lg border bg-card p-4">
-          <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-            <MessageSquareText className="size-4" aria-hidden />
-            Mensagens no período
-          </span>
+      {/* Linha 3: proximas acoes + mensagens */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <CartaoProximasAcoes
+          proximasAcoes={proximasAcoes}
+          pedidosDeAcesso={pedidosDeAcesso}
+        />
+        <Secao titulo="Mensagens no período" icone={MessageCircleMore}>
           <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-0.5">
-              <span className="text-xs text-text-secondary">Enviadas</span>
-              <span className="font-mono text-[28px] leading-none font-semibold tabular-nums">
+            <div className="grid gap-2">
+              <span className="cz-eyebrow text-text-secondary">Enviadas</span>
+              <span className="cz-num text-[24px] leading-none font-semibold text-text-strong">
                 {at.mensagens.saida.toLocaleString("pt-BR")}
               </span>
             </div>
-            <div className="grid gap-0.5">
-              <span className="text-xs text-text-secondary">Recebidas</span>
-              <span className="font-mono text-[28px] leading-none font-semibold tabular-nums">
+            <div className="grid gap-2">
+              <span className="cz-eyebrow text-text-secondary">Recebidas</span>
+              <span className="cz-num text-[24px] leading-none font-semibold text-text-strong">
                 {at.mensagens.entrada.toLocaleString("pt-BR")}
               </span>
             </div>
           </div>
-          <p className="text-[12.5px] text-text-tertiary">
+          <p className="border-t border-border pt-3 text-xs text-text-secondary">
             No WhatsApp conectado por QR não há custo por mensagem
-            {atAnterior
-              ? `; no período anterior foram ${atAnterior.mensagens.saida.toLocaleString("pt-BR")} enviadas`
-              : ""}
+            {atAnterior ? (
+              <>
+                ; no período anterior foram{" "}
+                <span className="cz-num">
+                  {atAnterior.mensagens.saida.toLocaleString("pt-BR")}
+                </span>{" "}
+                enviadas
+              </>
+            ) : null}
             .
           </p>
-        </div>
-        <CartaoProximasAcoes proximasAcoes={proximasAcoes} />
-      </section>
+        </Secao>
+      </div>
     </div>
   );
 }
 
+type ItemDeProximaAcao = {
+  rotulo: string;
+  valor: number;
+  href: string;
+  Icone: LucideIcon;
+  /** Tabela de icones reservados (docs/06 4.6): um icone, uma cor. */
+  corDoIcone: string;
+};
+
 /** Card de Próximas ações, compartilhado com a visão do profissional (onde
- *  a RLS já recorta as contagens para "as dele"). */
+ *  a RLS já recorta as contagens para "as dele"). Cada item leva à pendência
+ *  já filtrada (achado 109): o Atendimento lê ?filtro= e abre no recorte. */
 export function CartaoProximasAcoes({
   proximasAcoes,
+  pedidosDeAcesso = 0,
   rotulo = "Próximas ações",
 }: {
   proximasAcoes: ProximasAcoes;
+  /** Pedidos de entrada pelo código (achados 108 e 125): o item só aparece
+   *  com pedido parado, para quem gerencia a equipe. */
+  pedidosDeAcesso?: number;
   rotulo?: string;
 }) {
-  const acoes = [
+  const acoes: ItemDeProximaAcao[] = [
     {
       rotulo: "Confirmações pendentes de amanhã",
       valor: proximasAcoes.confirmacoesPendentesAmanha,
       href: "/confirmacoes",
       Icone: CalendarClock,
+      corDoIcone: "text-text-secondary",
     },
     {
       rotulo: "Conversas aguardando você",
       valor: proximasAcoes.aguardandoHumano,
-      href: "/atendimento",
+      href: "/atendimento?filtro=aguardando",
       Icone: Hand,
+      corDoIcone: "text-warning-text",
     },
     {
       rotulo: "Sem resposta há mais de 24h",
       valor: proximasAcoes.semResposta24h,
-      href: "/atendimento",
-      Icone: Timer,
+      href: "/atendimento?filtro=sem_resposta_24h",
+      Icone: AlarmClock,
+      corDoIcone: "text-alert-text",
     },
   ];
+  if (pedidosDeAcesso > 0) {
+    acoes.push({
+      rotulo:
+        pedidosDeAcesso === 1
+          ? "Pessoa aguardando liberação de acesso"
+          : "Pessoas aguardando liberação de acesso",
+      valor: pedidosDeAcesso,
+      href: "/configuracoes?aba=equipe",
+      Icone: Hourglass,
+      corDoIcone: "text-warning-text",
+    });
+  }
+
   return (
-    <div className="grid content-start gap-2 rounded-lg border bg-card p-4">
-      <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-        <MessagesSquare className="size-4" aria-hidden />
-        {rotulo}
-      </span>
-      <div className="grid gap-1.5">
+    <Secao titulo={rotulo} icone={ListTodo} semPadding>
+      <ul>
         {acoes.map((acao) => (
-          <Link
-            key={acao.rotulo}
-            href={acao.href}
-            className="flex min-h-10 items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-surface-2"
-          >
-            <acao.Icone
-              className="size-4 shrink-0 text-text-secondary"
-              aria-hidden
-            />
-            <span className="min-w-0 flex-1 truncate">{acao.rotulo}</span>
-            <span className="font-mono font-semibold tabular-nums">
-              {acao.valor.toLocaleString("pt-BR")}
-            </span>
-          </Link>
+          <li key={acao.href} className="border-b border-border last:border-0">
+            <Link
+              href={acao.href}
+              className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13.5px] text-foreground outline-none cz-transition hover:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+            >
+              <acao.Icone
+                aria-hidden
+                className={cn("size-4 shrink-0", acao.corDoIcone)}
+              />
+              <span className="min-w-0 flex-1 truncate">{acao.rotulo}</span>
+              <span className="cz-num font-bold text-text-strong">
+                {acao.valor.toLocaleString("pt-BR")}
+              </span>
+              <ChevronRight
+                aria-hidden
+                className="size-4 shrink-0 text-text-secondary"
+              />
+            </Link>
+          </li>
         ))}
-      </div>
-    </div>
+      </ul>
+    </Secao>
   );
 }

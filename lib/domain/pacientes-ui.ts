@@ -1,5 +1,6 @@
 import type { AppointmentStatus, PatientTag } from "@/lib/design/status";
 import { estaInativo, temRiscoDeFalta } from "@/lib/domain/etiquetas";
+import { diaCivil } from "@/lib/domain/horarios";
 
 // Regras PURAS da Tela 9 (Pacientes): filtros da barra, indicadores da ficha
 // e etiquetas derivadas. Zero I/O: quem busca dados e lib/queries/pacientes.ts.
@@ -232,4 +233,51 @@ export function porcentagemDeComparecimento(taxa: number | null): string {
     return "";
   }
   return `${Math.round(taxa * 100)}%`;
+}
+
+/** O minimo de um paciente para os indicadores do topo da lista. */
+export type PacienteContavel = PacienteFiltravel & {
+  primeira_consulta: string | null;
+};
+
+export type IndicadoresDaLista = {
+  total: number;
+  novosNoMes: number;
+  comPacoteAtivo: number;
+  inativos: number;
+};
+
+/**
+ * Indicadores do topo da Tela 9 (decisao C28 do dono, 24/09/2026): so o que a
+ * lista ja sabe contar, com a MESMA regra dos filtros e das etiquetas, sem
+ * definicao nova. "Novo no mes" = primeira consulta nao cancelada no mes
+ * corrente, comparado no DIA CIVIL da clinica (regra 3.6). "Com pacote
+ * ativo" = o filtro "Com pacote". "Inativos" = a etiqueta "Inativo" (sem
+ * consulta futura e a ultima ha mais de 90 dias).
+ */
+export function indicadoresDaLista(
+  pacientes: readonly PacienteContavel[],
+  agora: Date,
+  timezone: string,
+): IndicadoresDaLista {
+  const mesAtual = diaCivil(timezone, agora).slice(0, 7);
+  let novosNoMes = 0;
+  let comPacoteAtivo = 0;
+  let inativos = 0;
+  for (const paciente of pacientes) {
+    if (
+      paciente.primeira_consulta !== null &&
+      diaCivil(timezone, new Date(paciente.primeira_consulta)).slice(0, 7) ===
+        mesAtual
+    ) {
+      novosNoMes++;
+    }
+    if (paciente.saldo_sessoes > 0) {
+      comPacoteAtivo++;
+    }
+    if (etiquetasDoPaciente(paciente, agora).includes("inativo")) {
+      inativos++;
+    }
+  }
+  return { total: pacientes.length, novosNoMes, comPacoteAtivo, inativos };
 }

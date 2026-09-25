@@ -1,6 +1,7 @@
 "use client";
 
-import { Plus, ShieldCheck } from "lucide-react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { IdCard, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -9,28 +10,16 @@ import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
 import {
   AcoesDaLinha,
   BotaoProtegido,
+  CampoDeMarcar,
   ChipSituacao,
   DetalheSomenteLeitura,
+  PainelDeCadastro,
+  RodapeDeSalvar,
+  VazioDaAba,
 } from "@/components/cadastros/comum";
-import { EmptyState } from "@/components/shared/empty-state";
-import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/shared/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import type { Convenio } from "@/lib/queries/catalogo";
 
@@ -104,6 +93,70 @@ export function ConveniosTab({
     aoMudar();
   };
 
+  const colunas: ColumnDef<Convenio>[] = [
+    {
+      id: "nome",
+      header: "Nome",
+      cell: ({ row }) => (
+        <span className="font-semibold text-text-strong">
+          {row.original.name}
+        </span>
+      ),
+    },
+    {
+      id: "plano",
+      header: "Plano",
+      cell: ({ row }) => (
+        <span className="text-text-secondary">
+          {row.original.plan_name ?? "Não informado"}
+        </span>
+      ),
+    },
+    {
+      id: "carteirinha",
+      header: "Carteirinha obrigatória",
+      cell: ({ row }) => (row.original.requires_card ? "Sim" : "Não"),
+    },
+    {
+      id: "observacoes",
+      header: "Observações",
+      // Duas linhas na tabela, texto inteiro no title e no painel (Editar ou
+      // Ver detalhes): nunca cortado sem alternativa.
+      cell: ({ row }) =>
+        row.original.notes ? (
+          <span
+            className="line-clamp-2 max-w-[280px] py-1.5 whitespace-normal text-text-secondary"
+            title={row.original.notes}
+          >
+            {row.original.notes}
+          </span>
+        ) : (
+          <span className="text-text-secondary">Sem observações</span>
+        ),
+    },
+    {
+      id: "situacao",
+      header: "Situação",
+      cell: ({ row }) => <ChipSituacao active={row.original.active} />,
+    },
+    {
+      id: "acoes",
+      header: () => <span className="sr-only">Ações</span>,
+      meta: { align: "right", numeric: false },
+      cell: ({ row }) => (
+        <AcoesDaLinha
+          podeEditar={podeEditar}
+          dica={dica}
+          nome={row.original.name}
+          aoEditar={() => abrir(row.original)}
+          aoVerDetalhes={() => abrir(row.original, true)}
+        />
+      ),
+    },
+  ];
+
+  const fechar = () => setAberto(false);
+
   return (
     <div className="grid gap-3">
       <div className="flex justify-end">
@@ -112,161 +165,105 @@ export function ConveniosTab({
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus className="size-4" /> Novo convênio
+          <Plus aria-hidden /> Novo convênio
         </BotaoProtegido>
       </div>
 
       {catalogo.convenios.length === 0 ? (
-        <EmptyState
-          icon={ShieldCheck}
-          title="Nenhum convênio cadastrado"
-          description="Cadastre os convênios que a clínica atende para a recepcionista informar cobertura e preço."
+        <VazioDaAba
+          icon={IdCard}
+          titulo="Nenhum convênio cadastrado"
+          descricao="Cadastre os convênios que a clínica atende para a recepcionista informar cobertura e preço."
+          acao={{
+            rotulo: "Cadastrar o primeiro convênio",
+            onClick: () => abrir(),
+          }}
+          podeEditar={podeEditar}
+          dica={dica}
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nome</TableHead>
-                <TableHead>Plano</TableHead>
-                <TableHead>Carteirinha obrigatória</TableHead>
-                <TableHead>Observações</TableHead>
-                <TableHead>Situação</TableHead>
-                <TableHead className="w-12" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {catalogo.convenios.map((convenio) => {
-                return (
-                  <TableRow key={convenio.id}>
-                    <TableCell className="font-medium">
-                      {convenio.name}
-                    </TableCell>
-                    <TableCell className="text-text-secondary">
-                      {convenio.plan_name ?? ""}
-                    </TableCell>
-                    <TableCell>
-                      {convenio.requires_card ? "Sim" : "Não"}
-                    </TableCell>
-                    {/* Duas linhas na tabela, texto inteiro no title e no
-                        painel (Editar ou Ver detalhes): nunca cortado sem
-                        alternativa. */}
-                    <TableCell className="max-w-[280px] text-text-secondary">
-                      <span
-                        className="line-clamp-2 whitespace-normal"
-                        title={convenio.notes ?? undefined}
-                      >
-                        {convenio.notes ?? ""}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <ChipSituacao active={convenio.active} />
-                    </TableCell>
-                    <TableCell>
-                      <AcoesDaLinha
-                        podeEditar={podeEditar}
-                        dica={dica}
-                        nome={convenio.name}
-                        aoEditar={() => abrir(convenio)}
-                        aoVerDetalhes={() => abrir(convenio, true)}
-                      />
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <DataTable columns={colunas} data={catalogo.convenios} />
       )}
 
-      <Sheet open={aberto} onOpenChange={setAberto}>
-        <SheetContent className="w-[380px] p-5">
-          <SheetHeader className="p-0">
-            <SheetTitle>
-              {somenteLeitura
-                ? form.name
-                : form.id
-                  ? "Editar convênio"
-                  : "Novo convênio"}
-            </SheetTitle>
-          </SheetHeader>
-          {somenteLeitura ? (
-            <DetalheSomenteLeitura
-              itens={[
-                { rotulo: "Plano", valor: form.plan_name },
-                {
-                  rotulo: "Carteirinha obrigatória",
-                  valor: form.requires_card ? "Sim" : "Não",
-                },
-                { rotulo: "Observações", valor: form.notes },
-                {
-                  rotulo: "Situação",
-                  valor: <ChipSituacao active={form.active} />,
-                },
-              ]}
+      <PainelDeCadastro
+        aberto={aberto}
+        aoMudarAberto={setAberto}
+        titulo={
+          somenteLeitura
+            ? form.name
+            : form.id
+              ? "Editar convênio"
+              : "Novo convênio"
+        }
+        erro={somenteLeitura ? null : erro}
+        rodape={
+          somenteLeitura ? undefined : (
+            <RodapeDeSalvar
+              salvando={salvando}
+              aoCancelar={fechar}
+              aoSalvar={() => void salvar()}
             />
-          ) : null}
-          {/* O formulario fica fora da arvore visivel no modo leitura
-              (atributo hidden, que o preflight do Tailwind forca). */}
-          <div className="grid gap-4 py-4" hidden={somenteLeitura}>
-            <div className="grid gap-2">
-              <Label htmlFor="convenio-nome">Nome</Label>
-              <Input
-                id="convenio-nome"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="h-10"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="convenio-plano">Plano</Label>
-              <Input
-                id="convenio-plano"
-                value={form.plan_name}
-                onChange={(e) =>
-                  setForm({ ...form, plan_name: e.target.value })
-                }
-                className="h-10"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="convenio-carteirinha">
-                Carteirinha obrigatória
-              </Label>
-              <Switch
-                id="convenio-carteirinha"
-                checked={form.requires_card}
-                onCheckedChange={(v) => setForm({ ...form, requires_card: v })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="convenio-observacoes">Observações</Label>
-              <Textarea
-                id="convenio-observacoes"
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                rows={3}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="convenio-ativo">Convênio ativo</Label>
-              <Switch
-                id="convenio-ativo"
-                checked={form.active}
-                onCheckedChange={(v) => setForm({ ...form, active: v })}
-              />
-            </div>
-            {erro ? (
-              <p role="alert" className="text-sm [color:var(--alert-text)]">
-                {erro}
-              </p>
-            ) : null}
-            <Button onClick={salvar} disabled={salvando} className="h-10">
-              {salvando ? "Salvando..." : "Salvar"}
-            </Button>
+          )
+        }
+      >
+        {somenteLeitura ? (
+          <DetalheSomenteLeitura
+            itens={[
+              { rotulo: "Plano", valor: form.plan_name },
+              {
+                rotulo: "Carteirinha obrigatória",
+                valor: form.requires_card ? "Sim" : "Não",
+              },
+              { rotulo: "Observações", valor: form.notes },
+              {
+                rotulo: "Situação",
+                valor: <ChipSituacao active={form.active} />,
+              },
+            ]}
+          />
+        ) : null}
+        {/* O formulario fica fora da arvore visivel no modo leitura
+            (atributo hidden, que o preflight do Tailwind forca). */}
+        <div className="grid gap-4" hidden={somenteLeitura}>
+          <div className="grid gap-1.5">
+            <Label htmlFor="convenio-nome">Nome</Label>
+            <Input
+              id="convenio-nome"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
           </div>
-        </SheetContent>
-      </Sheet>
+          <div className="grid gap-1.5">
+            <Label htmlFor="convenio-plano">Plano</Label>
+            <Input
+              id="convenio-plano"
+              value={form.plan_name}
+              onChange={(e) => setForm({ ...form, plan_name: e.target.value })}
+            />
+          </div>
+          <CampoDeMarcar
+            id="convenio-carteirinha"
+            rotulo="Carteirinha obrigatória"
+            marcado={form.requires_card}
+            aoMudar={(marcado) => setForm({ ...form, requires_card: marcado })}
+          />
+          <div className="grid gap-1.5">
+            <Label htmlFor="convenio-observacoes">Observações</Label>
+            <Textarea
+              id="convenio-observacoes"
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              rows={3}
+            />
+          </div>
+          <CampoDeMarcar
+            id="convenio-ativo"
+            rotulo="Convênio ativo"
+            marcado={form.active}
+            aoMudar={(marcado) => setForm({ ...form, active: marcado })}
+          />
+        </div>
+      </PainelDeCadastro>
     </div>
   );
 }

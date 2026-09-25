@@ -4,6 +4,12 @@ import { Mic, Paperclip, Send, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 // Anexar e gravar, no compositor do Atendimento.
@@ -77,6 +83,18 @@ function tamanhoLegivel(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
+/**
+ * As duas partes que a barra entrega ao compositor, que decide onde cada uma
+ * fica: os BOTOES (clipe e microfone, na linha de ferramentas) e a PREVIA do
+ * arquivo escolhido (acima do campo). O estado mora aqui, num lugar so: se
+ * cada parte tivesse o seu, a previa mostraria um arquivo e o envio mandaria
+ * outro.
+ */
+export type PartesDoAnexo = {
+  botoes: React.ReactNode;
+  previa: React.ReactNode;
+};
+
 export function BarraDeAnexo({
   aoEnviar,
   pendente,
@@ -84,7 +102,10 @@ export function BarraDeAnexo({
   arquivoDeFora,
   aoConsumirArquivoDeFora,
   enviadoEm,
+  children,
 }: {
+  /** Posiciona as partes; a barra nao decide o layout do compositor */
+  children: (partes: PartesDoAnexo) => React.ReactNode;
   aoEnviar: (arquivo: File, legenda: string, notaDeVoz: boolean) => void;
   pendente: boolean;
   desabilitado: boolean;
@@ -217,122 +238,143 @@ export function BarraDeAnexo({
     setGravando(false);
   };
 
-  if (escolhido) {
-    const ehImagem = escolhido.type.startsWith("image/");
-    return (
-      <div className="grid gap-2 rounded-lg border bg-surface-2 p-2.5">
-        <div className="flex items-center gap-2.5">
-          {ehImagem ? (
-            // eslint-disable-next-line @next/next/no-img-element -- previa local
-            <img
-              src={URL.createObjectURL(escolhido)}
-              alt=""
-              className="size-12 shrink-0 rounded-md object-cover"
-            />
-          ) : (
-            <span className="grid size-12 shrink-0 place-items-center rounded-md bg-surface-4">
-              <Paperclip className="size-5" />
-            </span>
-          )}
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] font-medium">
-              {notaDeVoz ? "Nota de voz" : escolhido.name}
-            </span>
-            <span className="text-[11.5px] text-text-tertiary">
-              {tamanhoLegivel(escolhido.size)}
-            </span>
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setEscolhido(null);
-              setLegenda("");
-              setNotaDeVoz(false);
-            }}
-            aria-label="Remover o arquivo"
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
-        <div className="flex items-end gap-2">
-          <input
-            value={legenda}
-            onChange={(evento) => setLegenda(evento.target.value)}
-            placeholder="Legenda (opcional)"
-            aria-label="Legenda do arquivo"
-            className="h-10 flex-1 rounded-lg border border-input bg-card px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-          />
-          <Button
-            type="button"
-            disabled={pendente}
-            onClick={() => aoEnviar(escolhido, legenda, notaDeVoz)}
-          >
-            <Send className="size-4" />
-            {pendente ? "Enviando..." : "Enviar"}
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  const removerArquivo = () => {
+    setEscolhido(null);
+    setLegenda("");
+    setNotaDeVoz(false);
+  };
 
-  return (
-    <div className="grid gap-1">
-      {erroLocal ? (
-        <p role="alert" className="text-[12px] [color:var(--alert-text)]">
-          {erroLocal}
-        </p>
-      ) : null}
-      <div className="flex items-center gap-1">
-        <input
-          ref={inputRef}
-          type="file"
-          accept={ACEITOS.join(",")}
-          className="sr-only"
-          onChange={(evento) => {
-            const arquivo = evento.target.files?.[0];
-            if (arquivo) {
-              void receber(arquivo);
-            }
-            evento.target.value = "";
-          }}
-        />
+  const previa = escolhido ? (
+    <div className="grid gap-2 rounded-xl border border-border-strong bg-card p-2.5 shadow-xs">
+      <div className="flex items-center gap-2.5">
+        {escolhido.type.startsWith("image/") ? (
+          // eslint-disable-next-line @next/next/no-img-element -- previa local
+          <img
+            src={URL.createObjectURL(escolhido)}
+            alt=""
+            className="size-12 shrink-0 rounded-md object-cover"
+          />
+        ) : (
+          <span className="grid size-12 shrink-0 place-items-center rounded-md bg-surface-4">
+            {notaDeVoz ? (
+              <Mic aria-hidden className="size-5 text-text-secondary" />
+            ) : (
+              <Paperclip aria-hidden className="size-5 text-text-secondary" />
+            )}
+          </span>
+        )}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold text-text-strong">
+            {notaDeVoz ? "Nota de voz" : escolhido.name}
+          </span>
+          <span className="cz-num text-[11.5px] text-text-secondary">
+            {tamanhoLegivel(escolhido.size)}
+          </span>
+        </span>
         <Button
           type="button"
           variant="ghost"
-          size="sm"
-          disabled={desabilitado || gravando}
-          onClick={() => inputRef.current?.click()}
-          aria-label="Anexar arquivo"
-          title="Anexar foto, documento ou áudio"
+          size="icon"
+          onClick={removerArquivo}
+          aria-label="Remover o arquivo"
         >
-          <Paperclip className="size-4" />
+          <X aria-hidden />
         </Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={legenda}
+          onChange={(evento) => setLegenda(evento.target.value)}
+          placeholder="Legenda (opcional)"
+          aria-label="Legenda do arquivo"
+          className="min-w-[160px] flex-1"
+        />
+        {/* Tinta, e nao lime: o lime da tela e o Enviar do texto. */}
         <Button
           type="button"
-          variant={gravando ? "destructive" : "ghost"}
-          size="sm"
-          disabled={desabilitado}
-          onClick={() => (gravando ? pararGravacao() : void iniciarGravacao())}
-          aria-label={gravando ? "Parar a gravação" : "Gravar nota de voz"}
-          title={gravando ? "Parar a gravação" : "Gravar nota de voz"}
+          variant="solid"
+          disabled={pendente}
+          onClick={() => aoEnviar(escolhido, legenda, notaDeVoz)}
         >
-          {gravando ? (
-            <Square className="size-4" />
-          ) : (
-            <Mic className="size-4" />
-          )}
-          {gravando ? (
-            <span className="font-mono text-[11px] tabular-nums">
-              {Math.floor(segundos / 60)}:
-              {String(segundos % 60).padStart(2, "0")}
-            </span>
-          ) : null}
+          <Send aria-hidden />
+          {pendente ? "Enviando..." : "Enviar arquivo"}
         </Button>
       </div>
     </div>
+  ) : erroLocal ? (
+    <p role="alert" className="text-[12px] text-alert-text">
+      {erroLocal}
+    </p>
+  ) : null;
+
+  const botoes = escolhido ? null : (
+    <div className="flex items-center gap-1">
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ACEITOS.join(",")}
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={(evento) => {
+          const arquivo = evento.target.files?.[0];
+          if (arquivo) {
+            void receber(arquivo);
+          }
+          evento.target.value = "";
+        }}
+      />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="text-text-secondary"
+            disabled={desabilitado || gravando}
+            onClick={() => inputRef.current?.click()}
+            aria-label="Anexar arquivo"
+          >
+            <Paperclip aria-hidden className="size-[18px]" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Anexar arquivo</TooltipContent>
+      </Tooltip>
+      {gravando ? (
+        <button
+          type="button"
+          onClick={pararGravacao}
+          aria-label="Parar a gravação"
+          className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-alert-bg px-3 text-[13px] font-semibold text-alert-text cz-transition hover:bg-alert-bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+        >
+          <Square aria-hidden className="size-4" />
+          Gravando
+          <span className="cz-num">
+            {Math.floor(segundos / 60)}:{String(segundos % 60).padStart(2, "0")}
+          </span>
+        </button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="text-text-secondary"
+              disabled={desabilitado}
+              onClick={() => void iniciarGravacao()}
+              aria-label="Gravar nota de voz"
+            >
+              <Mic aria-hidden className="size-[18px]" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Gravar nota de voz</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
   );
+
+  return <>{children({ botoes, previa })}</>;
 }
 
 /** Aceita o arquivo vindo de arrastar e soltar ou de colar. */
@@ -371,6 +413,9 @@ export function useArquivoSolto(
   return {
     props,
     sobrevoando,
-    classes: cn(sobrevoando && "ring-2 ring-ring/50"),
+    classes: cn(
+      sobrevoando &&
+        "outline-2 -outline-offset-4 outline-dashed outline-primary-edge",
+    ),
   };
 }

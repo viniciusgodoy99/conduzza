@@ -7,22 +7,38 @@ import {
 } from "@tanstack/react-query";
 import { MessagesSquare, Plug } from "lucide-react";
 import { toast } from "sonner";
-import { useMemo, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 
 import { Composer, type Mode } from "@/components/atendimento/composer";
 import { ContextPanel } from "@/components/atendimento/context-panel";
 import { ConversationList } from "@/components/atendimento/conversation-list";
 import { DialogoApagar } from "@/components/atendimento/dialogo-apagar";
 import { Thread } from "@/components/atendimento/thread";
+import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
+  filtroDeSituacaoDaUrl,
+  type FiltroDaUrl,
+  type FiltroDeSituacao,
+} from "@/lib/domain/filtros-da-conversa";
+import {
+  contarConversasResolvidas,
   conversationKeys,
   fetchComplianceDecisions,
   fetchConsent,
+  fetchConversationById,
   fetchConversations,
   fetchMessagesPage,
   fetchResolvedConversations,
+  RESOLVIDAS_LIMIT,
   type ConversationListItem,
   type MessageItem,
 } from "@/lib/queries/conversations";
@@ -50,24 +66,38 @@ import {
   sendMessageAction,
 } from "./actions";
 
-// Tela 1, Atendimento (layout do handoff): lista 322px, fio flexivel,
-// contexto 320px (colapsa em overlay abaixo de 1280px; abaixo de 1024px a
-// tela alterna entre lista e fio). Leituras do cliente passam pela RLS.
+// Tela 1, Atendimento (design system Conduzza, docs/06 secao 5.3): lista
+// 336px, fio flexivel, contexto 320px. O painel de contexto segue a largura
+// UTIL da tela (container query @container/inbox, D13), e nao a da janela:
+// com o menu aberto em 248px ou recolhido em 64px, sobra espaco diferente.
+// Abaixo de 1100px uteis o contexto abre numa folha. Abaixo de 1024px de
+// janela a tela alterna entre lista e fio. Leituras do cliente passam pela
+// RLS.
 
 export function InboxClient({
   clinicId,
   viewerId,
   viewerRole,
+  timezone,
+  agoraInicial,
   nomesDeEtapa,
   jornada,
   etiquetas,
   authorNames,
   initialConversations,
   hasWhatsappAccount,
+  temResolvidas,
+  conversaDoLink,
+  linkIndisponivel,
+  filtroInicial,
 }: {
   clinicId: string;
   viewerId: string;
   viewerRole: Role;
+  /** Fuso da clinica: toda hora da tela sai nele (regra 3.6). */
+  timezone: string;
+  /** Relogio do servidor na carga: o primeiro desenho bate com o do HTML. */
+  agoraInicial: number;
   nomesDeEtapa: Record<string, string>;
   /** A jornada inteira (com papel e tom): o painel troca etapa por ela. */
   jornada: EtapaDaJornada[];
@@ -76,12 +106,49 @@ export function InboxClient({
   authorNames: Record<string, string>;
   initialConversations: ConversationListItem[];
   hasWhatsappAccount: boolean;
+  /** Ha conversa resolvida (so consultado quando nao ha nenhuma ativa). */
+  temResolvidas: boolean;
+  /** A conversa de /atendimento?conversa=<id>, ja conferida pela RLS. */
+  conversaDoLink: ConversationListItem | null;
+  /** O link pedia uma conversa que nao existe para esta pessoa. */
+  linkIndisponivel: boolean;
+  /** /atendimento?filtro=: chip de situacao marcado na chegada. */
+  filtroInicial: FiltroDaUrl | null;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // LINK DIRETO (achados 9, 70 e 100 da revisao): Confirmacoes, a ficha do
+  // paciente e o drawer do lead mandam para /atendimento?conversa=<id>. A
+  // conversa abre selecionada; se ela estiver resolvida, a lista chega com o
+  // filtro de resolvidas ligado. Os valores iniciais valem so na montagem:
+  // um router.refresh() nao desfaz o que a pessoa escolheu depois.
+  const [selectedId, setSelectedId] = useState<string | null>(
+    conversaDoLink?.id ?? null,
+  );
   const [contextOpen, setContextOpen] = useState(false);
-  const [showResolved, setShowResolved] = useState(false);
+  const [ladoDoContexto, setLadoDoContexto] = useState<"right" | "bottom">(
+    "right",
+  );
+  const [showResolved, setShowResolved] = useState(
+    conversaDoLink?.status === "resolvida",
+  );
+  const [filtroDaLista] = useState<FiltroDeSituacao | null>(() =>
+    conversaDoLink?.status === "resolvida"
+      ? "resolvida"
+      : filtroInicial
+        ? filtroDeSituacaoDaUrl(filtroInicial)
+        : null,
+  );
+  // A conversa do link que NAO veio nas 300 ativas (resolvida, ou antiga
+  // demais): vive numa consulta propria, sob a mesma chave-mae da lista, para
+  // as invalidacoes do tempo real e das acoes alcancarem ela tambem.
+  const [conversaAvulsaId, setConversaAvulsaId] = useState<string | null>(() =>
+    conversaDoLink &&
+    !initialConversations.some((c) => c.id === conversaDoLink.id)
+      ? conversaDoLink.id
+      : null,
+  );
+  const [avisoDoLink, setAvisoDoLink] = useState(linkIndisponivel);
   // Mensagem que está sendo respondida, e mensagem que está sendo apagada.
   // Moram AQUI, e não no compositor ou na bolha, porque a ação nasce numa
   // bolha e é consumida pelo compositor: são dois filhos irmãos.
@@ -141,11 +208,23 @@ export function InboxClient({
   const propsDoPainel = (conversa: ConversationListItem) => ({
     contact: conversa.contact,
     consent: consentQuery.data ?? null,
+    // Carregando e erro NAO sao "sem autorizacao" (achado 18): o painel
+    // mostra esqueleto ou o erro com Tentar de novo.
+    estadoDaAutorizacao: consentQuery.isPending
+      ? ("carregando" as const)
+      : consentQuery.isError
+        ? ("erro" as const)
+        : ("pronto" as const),
+    aoTentarAutorizacaoDeNovo: () => void consentQuery.refetch(),
+    timezone,
     jornada,
     podeEditarLeads,
     dicaLeads,
     podeAgendar,
     dicaAgenda,
+    // Lista de espera: profissional e leitura so veem (achado 17).
+    podeListaDeEspera: canEdit(viewerRole, "confirmacoes_espera"),
+    dicaListaDeEspera: "Seu perfil só consulta a lista de espera",
     aoMudarEtapa,
     conversationId: conversa.id,
     etiquetasDaConversa: conversa.tags,
@@ -154,27 +233,22 @@ export function InboxClient({
     // que e exatamente o recorte da policy de UPDATE de conversation.
     podeEtiquetar:
       canEdit(viewerRole, "atendimento") &&
-      (viewerRole !== "profissional" ||
-        conversa.assignee_user_id === viewerId),
+      (viewerRole !== "profissional" || conversa.assignee_user_id === viewerId),
     dicaEtiquetar:
       viewerRole === "profissional" && conversa.assignee_user_id !== viewerId
         ? "Só quem está atendendo esta conversa pode etiquetar."
         : dicaEtiquetar,
     ehChefia,
     aoEtiquetar: (tags: string[]) => {
-      // Grava nas DUAS chaves: a lista ativa e o arquivo de resolvidas.
-      for (const chave of [
-        conversationKeys.list(clinicId),
-        [...conversationKeys.list(clinicId), "resolved"] as const,
-      ]) {
-        queryClient.setQueryData(
-          chave,
-          (atual: ConversationListItem[] | undefined) =>
-            atual?.map((item) =>
-              item.id === conversa.id ? { ...item, tags } : item,
-            ),
-        );
-      }
+      // Grava em TODAS as listas sob a chave-mae: a ativa, o arquivo de
+      // resolvidas e a conversa aberta por link.
+      queryClient.setQueriesData<ConversationListItem[]>(
+        { queryKey: conversationKeys.list(clinicId) },
+        (atual) =>
+          atual?.map((item) =>
+            item.id === conversa.id ? { ...item, tags } : item,
+          ),
+      );
     },
   });
   const dicaAgenda =
@@ -187,13 +261,23 @@ export function InboxClient({
   // da visita anterior (initialData so vale na criacao da entrada).
   useDadosDoServidor(conversationKeys.list(clinicId), initialConversations);
 
+  // O PROFISSIONAL e o unico papel que perde a visao de uma conversa pelo que
+  // OUTRA pessoa faz: a RLS so mostra a ele as atribuidas a ele, e quando a
+  // recepcao passa a conversa para outra pessoa o tempo real nao entrega o
+  // evento (a linha nova ja nao passa pela RLS dele). Sem sinal do canal, a
+  // lista dele se confere sozinha: ao voltar para a aba e de 30 em 30
+  // segundos com a aba a vista (achado L4). A lista do profissional e curta
+  // (so as dele), entao o custo fica nele.
+  const ehProfissional = viewerRole === "profissional";
+
   const conversationsQuery = useQuery({
     queryKey: conversationKeys.list(clinicId),
     queryFn: () => fetchConversations(supabase, clinicId),
     initialData: initialConversations,
     // O canal Realtime mantem a lista viva; o refetch por foco so duplicava
-    // a carga a cada volta do WhatsApp Web.
-    refetchOnWindowFocus: false,
+    // a carga a cada volta do WhatsApp Web. Exceto para o profissional, acima.
+    refetchOnWindowFocus: ehProfissional,
+    refetchInterval: ehProfissional ? 30_000 : false,
   });
   const activeConversations = useMemo(
     () => conversationsQuery.data ?? [],
@@ -207,12 +291,86 @@ export function InboxClient({
     queryFn: () => fetchResolvedConversations(supabase, clinicId),
     enabled: showResolved,
   });
+  // O total de resolvidas, contado no servidor (achado L3): o chip nao
+  // mostra o teto carregado como se fosse o total. Pela sessao: a RLS recorta.
+  const totalResolvidasQuery = useQuery({
+    queryKey: conversationKeys.totalResolvidas(clinicId),
+    queryFn: () => contarConversasResolvidas(supabase, clinicId),
+    enabled: showResolved,
+  });
+
+  // A conversa do link fora das ativas (ver conversaAvulsaId). Lista de 0 ou
+  // 1 item, na mesma forma das outras, para as gravacoes por chave-mae
+  // (etiqueta, lida) valerem para ela sem caso especial.
+  const avulsaQuery = useQuery({
+    queryKey: [
+      ...conversationKeys.list(clinicId),
+      "conversa",
+      conversaAvulsaId ?? "nenhuma",
+    ] as const,
+    queryFn: async () => {
+      const conversa = await fetchConversationById(
+        supabase,
+        clinicId,
+        conversaAvulsaId!,
+      );
+      return conversa ? [conversa] : [];
+    },
+    // O servidor ja trouxe a do link; outra (irParaConversa) busca agora.
+    initialData:
+      conversaDoLink && conversaAvulsaId === conversaDoLink.id
+        ? [conversaDoLink]
+        : undefined,
+    enabled: conversaAvulsaId !== null,
+    refetchOnWindowFocus: ehProfissional,
+  });
+
   const conversations = useMemo(() => {
-    if (!showResolved) {
-      return activeConversations;
+    // Uma conversa aparece UMA vez, com a versao mais viva primeiro: a lista
+    // ativa (mantida pelo tempo real), depois o arquivo, depois a do link.
+    const vistas = new Set<string>();
+    const resultado: ConversationListItem[] = [];
+    const incluir = (lista: ConversationListItem[] | undefined) => {
+      for (const conversa of lista ?? []) {
+        if (vistas.has(conversa.id)) {
+          continue;
+        }
+        // Resolvida so aparece com o filtro de resolvidas aberto, menos a
+        // que a pessoa acabou de abrir por link ou pelo historico do fio.
+        if (
+          conversa.status === "resolvida" &&
+          !showResolved &&
+          conversa.id !== selectedId
+        ) {
+          continue;
+        }
+        vistas.add(conversa.id);
+        resultado.push(conversa);
+      }
+    };
+    incluir(activeConversations);
+    if (showResolved) {
+      incluir(resolvedQuery.data);
     }
-    return [...activeConversations, ...(resolvedQuery.data ?? [])];
-  }, [activeConversations, resolvedQuery.data, showResolved]);
+    incluir(avulsaQuery.data);
+    return resultado;
+  }, [
+    activeConversations,
+    resolvedQuery.data,
+    avulsaQuery.data,
+    showResolved,
+    selectedId,
+  ]);
+
+  // "Ja houve conversa nesta sessao": sem ativas, oferecer o arquivo mesmo
+  // que a consulta do servidor tenha dito que nao havia resolvida.
+  const [jaHouveConversa, setJaHouveConversa] = useState(
+    initialConversations.length > 0,
+  );
+  if (!jaHouveConversa && activeConversations.length > 0) {
+    setJaHouveConversa(true);
+  }
+  const temArquivo = temResolvidas || jaHouveConversa;
 
   const selected =
     conversations.find((conversation) => conversation.id === selectedId) ??
@@ -220,8 +378,15 @@ export function InboxClient({
 
   const messagesQuery = useInfiniteQuery({
     queryKey: conversationKeys.messages(selected?.id ?? "none"),
+    // Com o contato: o fio traz tambem as conversas RESOLVIDAS dele, com a
+    // divisa "Conversa resolvida em" (achado 10). A RLS recorta o resto.
     queryFn: ({ pageParam }) =>
-      fetchMessagesPage(supabase, selected!.id, pageParam),
+      fetchMessagesPage(
+        supabase,
+        selected!.id,
+        pageParam,
+        selected!.contact.id,
+      ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: selected !== null,
@@ -268,8 +433,26 @@ export function InboxClient({
     setCitando(null);
     setModo("responder");
     setTexto("");
-    queryClient.setQueryData<ConversationListItem[]>(
-      conversationKeys.list(clinicId),
+    marcarComoLida(id);
+  };
+
+  // Leva a tela ate uma conversa que pode NAO estar na lista carregada (a
+  // conversa aberta do mesmo paciente ao reabrir, a anterior no historico,
+  // uma fora das 300 ativas): ela entra como a conversa avulsa, buscada pela
+  // sessao, e fica selecionada. Para o Thread e as acoes do cabecalho
+  // (aoIrParaConversa).
+  const irParaConversa = (id: string) => {
+    if (!conversations.some((conversa) => conversa.id === id)) {
+      setConversaAvulsaId(id);
+    }
+    handleSelect(id);
+  };
+
+  // Zera a nao lida em TODAS as listas sob a chave-mae (ativa, resolvidas e a
+  // conversa do link) e grava no banco.
+  const marcarComoLida = (id: string) => {
+    queryClient.setQueriesData<ConversationListItem[]>(
+      { queryKey: conversationKeys.list(clinicId) },
       (current) =>
         current?.map((conversation) =>
           conversation.id === id
@@ -278,6 +461,117 @@ export function InboxClient({
         ),
     );
     void markConversationReadAction(id);
+  };
+
+  // Chegada por link: a conversa ja abre selecionada, e abrir e ler (como o
+  // clique na lista). Depois, a URL volta a ser so /atendimento, para um
+  // recarregar nao reaplicar o link nem o filtro por cima do que a pessoa
+  // escolheu.
+  const linkAplicado = useRef(false);
+  useEffect(() => {
+    if (linkAplicado.current) {
+      return;
+    }
+    linkAplicado.current = true;
+    if (conversaDoLink) {
+      marcarComoLida(conversaDoLink.id);
+    }
+    if (window.location.search) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    // So na montagem: o link e aplicado uma vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * A conversa deixou de existir PARA ESTA PESSOA (achado L4): o servidor
+   * respondeu conversaIndisponivel, ou a lista conferida ja nao a traz e a
+   * busca pelo id volta vazia. Sai de todas as listas na hora, o fio fecha e
+   * a pessoa fica sabendo por que, em vez de responder numa conversa que
+   * ja e de outra pessoa. O rascunho e os envios pendurados nela vao junto:
+   * nao ha mais para onde manda-los.
+   */
+  // A selecao VIGENTE, para quem volta depois (o envio que falha com a
+  // atendente ja em outra conversa nao pode fechar a outra).
+  const selecaoAtual = useRef(selectedId);
+  useEffect(() => {
+    selecaoAtual.current = selectedId;
+  }, [selectedId]);
+
+  const perderConversa = useCallback(
+    (id: string, { comEnvio = false }: { comEnvio?: boolean } = {}) => {
+      setEmVoo((atual) => atual.filter((e) => e.conversationId !== id));
+      queryClient.setQueriesData<ConversationListItem[]>(
+        { queryKey: conversationKeys.list(clinicId) },
+        (atual) => atual?.filter((conversa) => conversa.id !== id),
+      );
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.list(clinicId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.totalResolvidas(clinicId),
+      });
+      setConversaAvulsaId((atual) => (atual === id ? null : atual));
+      if (selecaoAtual.current === id) {
+        selecaoAtual.current = null;
+        setSelectedId(null);
+        setCitando(null);
+        setModo("responder");
+        setTexto("");
+      }
+      // Um aviso so por conversa, mesmo com varios envios voltando juntos.
+      toast.warning("Esta conversa não está mais disponível para você.", {
+        id: `conversa-indisponivel-${id}`,
+        description: comEnvio
+          ? "Ela pode ter sido passada para outra pessoa. A mensagem não foi enviada."
+          : "Ela pode ter sido passada para outra pessoa.",
+      });
+    },
+    [queryClient, clinicId],
+  );
+
+  // A conversa aberta SUMIU da lista conferida (profissional, refetch de 30
+  // segundos ou ao voltar para a aba): confere pelo id, com a sessao. Vazio e
+  // "nao e mais sua"; se ela ainda existe (resolvida, por exemplo), nada muda.
+  const vistaNaTela = useRef<string | null>(null);
+  useEffect(() => {
+    if (selected) {
+      vistaNaTela.current = selected.id;
+      return;
+    }
+    if (!ehProfissional || !selectedId || vistaNaTela.current !== selectedId) {
+      return;
+    }
+    vistaNaTela.current = null;
+    const id = selectedId;
+    let cancelado = false;
+    fetchConversationById(supabase, clinicId, id)
+      .then((conversa) => {
+        if (!cancelado && !conversa) {
+          perderConversa(id);
+        }
+      })
+      // Falha de rede: nada a afirmar; a proxima conferencia tenta de novo.
+      .catch(() => undefined);
+    return () => {
+      cancelado = true;
+    };
+  }, [
+    selected,
+    selectedId,
+    ehProfissional,
+    supabase,
+    clinicId,
+    perderConversa,
+  ]);
+
+  // Abaixo de 1100px uteis o contexto abre numa folha: de baixo no celular,
+  // da direita no resto.
+  const abrirContexto = () => {
+    setLadoDoContexto(
+      window.matchMedia("(max-width: 767px)").matches ? "bottom" : "right",
+    );
+    setContextOpen(true);
   };
 
   // A citação guardada é um RETRATO do momento do clique. Se a mensagem citada
@@ -361,6 +655,10 @@ export function InboxClient({
       : sendMessageAction(envio.conversationId, envio.corpo, envio.citandoId);
     void acao
       .then(async (resultado) => {
+        if (!resultado.ok && resultado.conversaIndisponivel) {
+          perderConversa(envio.conversationId, { comEnvio: true });
+          return;
+        }
         if (!resultado.ok) {
           setEmVoo((atual) =>
             atual.map((e) =>
@@ -459,16 +757,19 @@ export function InboxClient({
     });
   };
 
-  if (activeConversations.length === 0) {
+  // Sem WhatsApp e sem nada para mostrar, o passo e conectar. Com WhatsApp, a
+  // lista aparece SEMPRE, com os filtros, mesmo sem conversa ativa (achado 10
+  // da revisao): antes o vazio tomava a tela inteira e o arquivo de
+  // resolvidas ficava inalcancavel pelo Atendimento.
+  if (
+    !hasWhatsappAccount &&
+    activeConversations.length === 0 &&
+    !temArquivo &&
+    conversations.length === 0
+  ) {
     return (
-      <div className="grid h-full place-items-center p-6">
-        {hasWhatsappAccount ? (
-          <EmptyState
-            icon={MessagesSquare}
-            title="Nenhuma conversa ainda"
-            description="Quando um paciente escrever no WhatsApp da clínica, a conversa aparece aqui na hora."
-          />
-        ) : (
+      <div className="grid h-full place-items-center p-4 md:p-6">
+        <div className="w-full max-w-md rounded-card border border-border bg-card shadow-sm">
           <EmptyState
             icon={Plug}
             title="Conecte o WhatsApp da clínica"
@@ -478,14 +779,14 @@ export function InboxClient({
               href: "/configuracoes?aba=whatsapp",
             }}
           />
-        )}
+        </div>
       </div>
     );
   }
 
   return (
     <div
-      className="flex h-full min-h-0"
+      className="@container/inbox flex h-full min-h-0"
       // Soltar um arquivo em QUALQUER outro ponto da tela faz o navegador
       // abrir o arquivo e trocar de pagina, tirando a atendente do sistema no
       // meio do atendimento. O compositor trata o que cai nele; aqui a gente
@@ -494,25 +795,56 @@ export function InboxClient({
       onDrop={(evento) => evento.preventDefault()}
     >
       <aside
+        aria-label="Conversas"
         className={cn(
-          "w-full shrink-0 border-r border-border lg:w-[322px]",
-          selected ? "hidden lg:block" : "block",
+          "w-full min-w-0 shrink-0 flex-col border-r border-border bg-card lg:w-inbox-list",
+          selected ? "hidden lg:flex" : "flex",
         )}
       >
+        {avisoDoLink ? (
+          <div className="shrink-0 border-b border-border p-3">
+            <Aviso
+              tom="warning"
+              titulo="Não foi possível abrir a conversa do link."
+              aoDispensar={() => setAvisoDoLink(false)}
+            >
+              Ela não existe mais ou não está disponível para o seu perfil.
+            </Aviso>
+          </div>
+        ) : null}
         <ConversationList
           nomesDeEtapa={nomesDeEtapa}
           etiquetas={catalogoDeEtiquetas}
           conversations={conversations}
           viewerId={viewerId}
+          authorNames={authorNames}
+          timezone={timezone}
+          agoraInicial={agoraInicial}
           selectedId={selectedId}
           onSelect={handleSelect}
+          filtroInicial={filtroDaLista}
           onResolvedRequested={setShowResolved}
           resolvedLoading={resolvedQuery.isFetching}
+          resolvedError={showResolved && resolvedQuery.isError}
+          onRetryResolved={() => void resolvedQuery.refetch()}
+          resolvidasTotal={totalResolvidasQuery.data ?? null}
+          resolvidasNoTeto={
+            (resolvedQuery.data?.length ?? 0) >= RESOLVIDAS_LIMIT
+          }
+          semAtivas={activeConversations.length === 0}
+          temArquivo={temArquivo}
+          ehProfissional={viewerRole === "profissional"}
         />
       </aside>
 
       <section
-        className={cn("min-w-0 flex-1", selected ? "block" : "hidden lg:block")}
+        // Regiao nomeada: o fio (e so ele) e achavel por papel e nome, sem
+        // confundir com a previa da mesma mensagem no cartao da lista.
+        aria-label="Conversa aberta"
+        className={cn(
+          "min-w-0 flex-1 bg-background",
+          selected ? "block" : "hidden lg:block",
+        )}
       >
         {selected ? (
           <Thread
@@ -520,12 +852,19 @@ export function InboxClient({
             messages={messages}
             decisions={decisionsQuery.data ?? []}
             isLoading={messagesQuery.isPending}
+            erroAoCarregar={messagesQuery.isError}
+            aoRecarregar={() => void messagesQuery.refetch()}
+            clinicId={clinicId}
+            viewerRole={viewerRole}
+            timezone={timezone}
+            aoIrParaConversa={irParaConversa}
+            aoPerderConversa={perderConversa}
             hasOlder={messagesQuery.hasNextPage}
             loadingOlder={messagesQuery.isFetchingNextPage}
             onLoadOlder={() => void messagesQuery.fetchNextPage()}
             authorNames={authorNames}
             onBack={() => setSelectedId(null)}
-            onToggleContext={() => setContextOpen(true)}
+            onToggleContext={abrirContexto}
             viewerId={viewerId}
             podeEditar={podeEditar}
             ehChefia={ehChefia}
@@ -569,6 +908,13 @@ export function InboxClient({
                 key={selected.id}
                 conversation={selected}
                 viewerId={viewerId}
+                podeEditar={podeEditar}
+                // So trava a resposta com a autorizacao CONFERIDA: carregando
+                // ou com erro, quem decide e o envio no servidor.
+                autorizacao={
+                  consentQuery.isSuccess ? consentQuery.data : undefined
+                }
+                timezone={timezone}
                 citando={citandoVivo}
                 aoCancelarCitacao={() => setCitando(null)}
                 aoCancelarCitacaoSeFor={(id) =>
@@ -580,28 +926,39 @@ export function InboxClient({
                 texto={texto}
                 aoMudarTexto={setTexto}
                 aoEnviarTexto={enviarTexto}
+                aoPerderConversa={perderConversa}
               />
             }
           />
         ) : (
           <div className="grid h-full place-items-center p-6">
-            <EmptyState
-              icon={MessagesSquare}
-              title="Escolha uma conversa"
-              description="Selecione um atendimento na lista para ver as mensagens."
-              className="border-0"
-            />
+            {conversations.length > 0 ? (
+              <EmptyState
+                icon={MessagesSquare}
+                title="Escolha uma conversa"
+                description="Selecione um atendimento na lista para ver as mensagens."
+              />
+            ) : (
+              <EmptyState
+                icon={MessagesSquare}
+                title="Nenhuma conversa aberta"
+                description="Quando houver uma conversa na lista, as mensagens aparecem aqui."
+              />
+            )}
           </div>
         )}
       </section>
 
-      <aside className="hidden w-[320px] shrink-0 border-l border-border xl:block">
+      <aside
+        aria-label="Dados do contato"
+        className="hidden w-context-panel shrink-0 border-l border-border bg-card @min-[1100px]/inbox:block"
+      >
         {selected ? (
           <ContextPanel {...propsDoPainel(selected)} />
         ) : (
-          <div className="p-4 text-[12.5px] text-text-tertiary">
+          <p className="p-4 text-[12.5px] text-text-secondary">
             Os dados do contato aparecem aqui.
-          </div>
+          </p>
         )}
       </aside>
 
@@ -618,11 +975,17 @@ export function InboxClient({
       />
 
       <Sheet open={contextOpen} onOpenChange={setContextOpen}>
-        <SheetContent side="right" className="w-[360px] p-0">
+        <SheetContent
+          side={ladoDoContexto}
+          className={cn(
+            "gap-0 p-0",
+            ladoDoContexto === "bottom"
+              ? "max-h-[85dvh]"
+              : "data-[side=right]:w-[360px] data-[side=right]:max-w-[90vw]",
+          )}
+        >
           <SheetTitle className="sr-only">Contexto do contato</SheetTitle>
-          {selected ? (
-            <ContextPanel {...propsDoPainel(selected)} />
-          ) : null}
+          {selected ? <ContextPanel {...propsDoPainel(selected)} /> : null}
         </SheetContent>
       </Sheet>
     </div>

@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
+import { adminClient } from "../rls/stack";
 import { dados } from "./dados";
+import { E2E_PREFIXO, E2E_SENHA } from "./fixtures";
 import { login } from "./helpers";
 
 // Tela 12, Configuracoes: as duas abas na URL, o cartao de conexao do
@@ -42,10 +44,10 @@ test("as abas de Configurações vivem na URL", async ({ page }) => {
   await login(page, dados().emails.admin);
   await page.goto("/configuracoes");
 
-  const abaEquipe = page.getByRole("tab", {
-    name: "Equipe e permissões",
-    exact: true,
-  });
+  // A aba leva contadores (quem tem acesso e quem aguarda liberação), entao
+  // o nome acessivel e "Equipe e permissões 4 com acesso ...": casa pelo
+  // comeco.
+  const abaEquipe = page.getByRole("tab", { name: /^Equipe e permissões/ });
   const abaWhats = page.getByRole("tab", { name: "WhatsApp", exact: true });
   await expect(abaEquipe).toBeVisible();
   await expect(abaWhats).toBeVisible();
@@ -162,4 +164,75 @@ test("o painel de papéis mostra os 9 módulos e os 5 papéis em texto", async (
   await expect(
     linhaConfiguracoes.getByRole("cell", { name: "Sem acesso", exact: true }),
   ).toHaveCount(3);
+});
+
+// Achados L17/L20 da revisao da leva 2: o cadastro e publico, entao qualquer
+// pessoa vira administradora. Convidar o e-mail de quem ja tem conta cria o
+// vinculo na hora, mas a tela responde como num convite comum e a lista da
+// equipe mostra o comeco do e-mail (o nome de uma conta nova), nunca o nome
+// que a pessoa escolheu, ate ela usar a clinica.
+test("convite de conta que já existe responde como convite comum e não mostra o nome dela", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const admin = adminClient();
+  const d = dados();
+  const endereco = `${E2E_PREFIXO}-conta-existente-${Date.now()}@teste.dev`;
+  const comecoDoEmail = endereco.split("@")[0] ?? "";
+  const nomeEscolhido = "Nome Escolhido Pela Pessoa";
+  const criada = await admin.auth.admin.createUser({
+    email: endereco,
+    password: E2E_SENHA,
+    email_confirm: true,
+    user_metadata: { name: nomeEscolhido },
+  });
+  const userId = criada.data.user?.id;
+  if (!userId) {
+    throw new Error(`Não foi possível criar ${endereco}`);
+  }
+
+  try {
+    await login(page, d.emails.admin);
+    await page.goto("/configuracoes");
+
+    await page.locator("#invite-email").fill(endereco);
+    await page.getByRole("button", { name: "Convidar por e-mail" }).click();
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: `Convite registrado para ${endereco}` }),
+    ).toBeVisible();
+    await expect(page.getByText(/já tinha conta/)).toHaveCount(0);
+
+    // O vinculo entrou ativo, e a trilha tem o convite.
+    const vinculo = await admin
+      .from("clinic_member")
+      .select("status")
+      .eq("clinic_id", d.clinicId)
+      .eq("user_id", userId)
+      .maybeSingle()
+      .throwOnError();
+    expect(vinculo.data?.status).toBe("ativo");
+    const trilha = await admin
+      .from("audit_log")
+      .select("action, entity")
+      .eq("clinic_id", d.clinicId)
+      .eq("entity_id", userId)
+      .throwOnError();
+    expect(trilha.data).toEqual([
+      { action: "convidou_membro", entity: "clinic_member" },
+    ]);
+
+    // Na lista, o comeco do e-mail; o nome escolhido nao aparece em lugar
+    // nenhum da tela.
+    await page.reload();
+    await expect(
+      page.getByRole("combobox", { name: `Papel de ${comecoDoEmail}` }),
+    ).toBeVisible();
+    await expect(page.getByText(nomeEscolhido)).toHaveCount(0);
+  } finally {
+    // O vinculo sai com a conta (on delete cascade). A linha da trilha tem
+    // user_id de quem convidou e sai com a clinica no teardown.
+    await admin.auth.admin.deleteUser(userId);
+  }
 });

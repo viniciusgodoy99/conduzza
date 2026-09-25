@@ -192,3 +192,136 @@ export function firstAvailableSlots(
 ): SlotLivre[] {
   return availableSlots(input).slice(0, quantos);
 }
+
+// ---------------------------------------------------------------------------
+// Faixa de horas da grade (visoes Dia e Semana da Agenda)
+// ---------------------------------------------------------------------------
+
+/**
+ * Horas inteiras visiveis na grade: das jornadas (com 1 hora de folga de cada
+ * lado) e, por cima, de toda consulta que precisa aparecer, inclusive encaixe
+ * fora do expediente (achados 82 e 89: antes a Semana cortava tudo fora de
+ * 07:00 as 19:00 e a consulta das 20:00 ficava abaixo da grade). Sem jornada,
+ * vale a faixa padrao, esticada pelas consultas.
+ *
+ * Jornada com fim menor ou igual ao inicio vira o dia: vai ate 24:00. A
+ * consulta e medida no fuso da clinica; a que passa da meia-noite tambem.
+ */
+export function faixaDeHorasVisivel(params: {
+  timezone: string;
+  jornadas: readonly Pick<JanelaSemanal, "startsAt" | "endsAt">[];
+  consultas: readonly IntervaloOcupado[];
+  padrao?: { horaInicio: number; horaFim: number };
+}): { horaInicio: number; horaFim: number } {
+  const padrao = params.padrao ?? { horaInicio: 7, horaFim: 19 };
+  let horaInicio = padrao.horaInicio;
+  let horaFim = padrao.horaFim;
+
+  if (params.jornadas.length > 0) {
+    let inicioMin = Infinity;
+    let fimMin = -Infinity;
+    for (const jornada of params.jornadas) {
+      const iniciou = minutosDaHora(jornada.startsAt);
+      let terminou = minutosDaHora(jornada.endsAt);
+      if (terminou <= iniciou) {
+        terminou = 24 * 60;
+      }
+      inicioMin = Math.min(inicioMin, iniciou);
+      fimMin = Math.max(fimMin, terminou);
+    }
+    horaInicio = Math.floor(inicioMin / 60) - 1;
+    horaFim = Math.ceil(fimMin / 60) + 1;
+  }
+
+  for (const consulta of params.consultas) {
+    const inicio = minutosLocais(params.timezone, consulta.startsAt);
+    let fim = minutosLocais(params.timezone, consulta.endsAt);
+    if (fim <= inicio) {
+      fim = 24 * 60; // atravessa a meia-noite: vai ate o fim do dia visivel
+    }
+    horaInicio = Math.min(horaInicio, Math.floor(inicio / 60));
+    horaFim = Math.max(horaFim, Math.ceil(fim / 60));
+  }
+
+  horaInicio = Math.max(0, horaInicio);
+  horaFim = Math.min(24, Math.max(horaFim, horaInicio + 1));
+  return { horaInicio, horaFim };
+}
+
+function minutosDaHora(hora: string): number {
+  const [h, m] = hora.split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+// ---------------------------------------------------------------------------
+// Encaixe proposital (achado 82)
+// ---------------------------------------------------------------------------
+
+/**
+ * O que um encaixe num horario escolhido a mao atravessa. Encaixe passa por
+ * cima da jornada, de consulta e de bloqueio comum (a tela so avisa), mas
+ * nunca de bloqueio que impede encaixe nem de recurso ocupado: o primeiro e
+ * regra da clinica (a Server Action recusa de novo) e o segundo e a exclusion
+ * constraint do recurso, que encaixe nao resolve.
+ */
+export type ConferenciaDeEncaixe = {
+  /** Bloqueio com blocks_overbooking: impede salvar. */
+  bloqueadoSemEncaixe: boolean;
+  /** Sala ou equipamento do procedimento ocupado: impede salvar. */
+  recursoOcupado: boolean;
+  /** Fora da jornada do profissional: so aviso. */
+  foraDaJornada: boolean;
+  /** Em cima de consulta do profissional: so aviso. */
+  sobreConsulta: boolean;
+  /** Em cima de bloqueio comum (permite encaixe): so aviso. */
+  sobreBloqueio: boolean;
+  /** O horario ja passou: so aviso. */
+  noPassado: boolean;
+};
+
+export function conferirEncaixe(params: {
+  timezone: string;
+  jornada: readonly JanelaSemanal[];
+  inicio: Date;
+  fim: Date;
+  bloqueios: readonly (IntervaloOcupado & { impedeEncaixe: boolean })[];
+  consultas: readonly IntervaloOcupado[];
+  recursoOcupado?: readonly IntervaloOcupado[];
+  agora: Date;
+}): ConferenciaDeEncaixe {
+  const { inicio, fim } = params;
+  const cruza = (o: IntervaloOcupado) =>
+    o.startsAt.getTime() < fim.getTime() &&
+    o.endsAt.getTime() > inicio.getTime();
+
+  // Cabe na jornada se o motor, sem ocupacao e com grade de 1 minuto, abre
+  // um horario exatamente em `inicio` (a mesma regra do cabeNaJornada da
+  // remarcacao, inclusive a faixa que vira o dia).
+  const duracaoMin = Math.round((fim.getTime() - inicio.getTime()) / 60_000);
+  const cabe =
+    duracaoMin > 0 &&
+    params.jornada.length > 0 &&
+    availableSlots({
+      timezone: params.timezone,
+      rangeStart: inicio,
+      rangeEnd: fim,
+      durationMin: duracaoMin,
+      gridMin: 1,
+      schedule: [...params.jornada],
+      blocks: [],
+      appointments: [],
+      holds: [],
+      now: new Date(0),
+    }).some((slot) => slot.startsAt.getTime() === inicio.getTime());
+
+  return {
+    bloqueadoSemEncaixe: params.bloqueios.some(
+      (b) => b.impedeEncaixe && cruza(b),
+    ),
+    recursoOcupado: (params.recursoOcupado ?? []).some(cruza),
+    foraDaJornada: !cabe,
+    sobreConsulta: params.consultas.some(cruza),
+    sobreBloqueio: params.bloqueios.some((b) => !b.impedeEncaixe && cruza(b)),
+    noPassado: inicio.getTime() < params.agora.getTime(),
+  };
+}

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
@@ -36,11 +37,14 @@ export default async function CadastrosPage({
   const dica = permissionHint(active.role, "cadastros");
 
   return (
-    <div className="grid gap-6 p-6">
+    <div className="mx-auto grid w-full max-w-content content-start gap-4 p-6">
       <PageHeader
+        eyebrow="Administração"
         title="Cadastros"
         description="Profissionais, procedimentos, convênios e a matriz de vínculos da clínica"
       />
+      {/* Tela de computador (brief secao 6): no celular so avisa, nada trava */}
+      <AvisoCelular />
       <CadastrosClient
         clinicId={active.clinicId}
         catalogoInicial={catalogo}

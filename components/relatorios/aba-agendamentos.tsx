@@ -1,8 +1,10 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { TableProperties } from "lucide-react";
 
 import { CartaoKpi } from "@/components/relatorios/cartao-kpi";
+import { Secao } from "@/components/relatorios/secao";
 import { DataTable } from "@/components/shared/data-table";
 import {
   Select,
@@ -12,10 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { APPOINTMENT_STATUS } from "@/lib/design/status";
-import type {
-  AgendaDoPeriodo,
-  Periodizado,
-} from "@/lib/queries/relatorios";
+import type { AgendaDoPeriodo, Periodizado } from "@/lib/queries/relatorios";
 
 // Aba Agendamentos (Tela 11): o movimento da agenda no periodo. KPIs com
 // delta e a tabela de detalhe com dimensao trocavel (10.7). "Realizados" =
@@ -114,11 +113,16 @@ export function AbaAgendamentos({
     : null;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-4">
       {rotuloProprio ? (
-        <p className="text-sm text-text-secondary">{rotuloProprio}</p>
+        <p className="text-xs font-medium text-text-secondary">
+          {rotuloProprio}
+        </p>
       ) : null}
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section
+        aria-label="Indicadores do período"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+      >
         <CartaoKpi
           rotulo="Criados no período"
           valor={atual.criados.toLocaleString("pt-BR")}
@@ -165,18 +169,21 @@ export function AbaAgendamentos({
         />
       </section>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-[15px] font-semibold">Detalhe</h2>
+      <Secao
+        titulo="Detalhe"
+        icone={TableProperties}
+        semPadding
+        acao={
+          // Dimensao por Select ate a decisao C33 (o brief pede dropdown).
           <div className="flex items-center gap-2">
-            <span className="text-sm text-text-secondary">Dimensão</span>
+            <span className="text-[13px] text-text-secondary">Dimensão</span>
             <Select
               value={dimensao}
               onValueChange={(valor) =>
                 aoMudarDimensao(valor as DimensaoDaAgenda)
               }
             >
-              <SelectTrigger className="h-10 w-44">
+              <SelectTrigger className="w-44" aria-label="Dimensão">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -186,14 +193,16 @@ export function AbaAgendamentos({
               </SelectContent>
             </Select>
           </div>
-        </div>
+        }
+      >
         <DataTable
+          variant="bare"
           columns={COLUNAS}
           data={montarDetalheDaAgenda(atual, dimensao)}
           emptyTitle="Sem consultas no período"
           emptyDescription="Os detalhes aparecem quando houver consultas com início no período escolhido."
         />
-      </section>
+      </Secao>
     </div>
   );
 }

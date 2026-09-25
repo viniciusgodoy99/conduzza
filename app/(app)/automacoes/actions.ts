@@ -84,7 +84,8 @@ export async function salvarTextoDoPassoAction(
     if (!atual?.media_path) {
       return {
         ok: false,
-        error: "Escreva a mensagem, ou anexe uma mídia antes de deixar o texto vazio.",
+        error:
+          "Escreva a mensagem, ou anexe uma mídia antes de deixar o texto vazio.",
       };
     }
   }
@@ -166,11 +167,15 @@ export async function salvarAnexoDoPassoAction(
   if (!tipo) {
     return {
       ok: false,
-      error: "Formato não aceito. Use foto (JPG, PNG, WebP, GIF), áudio (MP3, M4A, OGG) ou PDF.",
+      error:
+        "Formato não aceito. Use foto (JPG, PNG, WebP, GIF), áudio (MP3, M4A, OGG) ou PDF.",
     };
   }
   if (arquivo.size > TETO_DO_ANEXO_BYTES) {
-    return { ok: false, error: "O arquivo passa de 3,8 MB. Reduza e tente de novo." };
+    return {
+      ok: false,
+      error: "O arquivo passa de 3,8 MB. Reduza e tente de novo.",
+    };
   }
 
   // O passo precisa existir NA CLINICA da sessao (a RLS ja recorta, mas o
@@ -197,7 +202,10 @@ export async function salvarAnexoDoPassoAction(
       cacheControl: "0",
     });
   if (erroUpload) {
-    return { ok: false, error: "Não foi possível guardar o arquivo. Tente de novo." };
+    return {
+      ok: false,
+      error: "Não foi possível guardar o arquivo. Tente de novo.",
+    };
   }
 
   const { data: linhas, error } = await supabase
@@ -256,7 +264,8 @@ export async function removerAnexoDoPassoAction(
   if (!passo.fixed_body || !(passo.fixed_body as string).trim()) {
     return {
       ok: false,
-      error: "Escreva o texto antes de remover o anexo, ou exclua o passo inteiro.",
+      error:
+        "Escreva o texto antes de remover o anexo, ou exclua o passo inteiro.",
     };
   }
 
@@ -398,7 +407,9 @@ export async function criarReguaDeExcecaoAction(
   // sem conteudo nenhum e removido com aviso, nunca deixado como casca.
   const { data: passos } = await supabase
     .from("cadence_step")
-    .select("offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename")
+    .select(
+      "offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
+    )
     .eq("clinic_id", guard.clinicId)
     .eq("cadence_id", padrao.id as string)
     .order("offset_minutes");
@@ -494,6 +505,58 @@ export async function criarReguaDeExcecaoAction(
   return { ok: true, ...(avisoDaCopia ? { aviso: avisoDaCopia } : {}) };
 }
 
+const limiarSchema = z.object({
+  cadence_id: z.uuid(),
+  // Mesmo recorte da criacao: 1 a 10 faltas (o banco confere >= 1).
+  no_show_threshold: z.number().int().min(1).max(10),
+});
+
+/**
+ * Muda o numero de faltas da regua reforcada depois de criada (achado 53).
+ * Antes o numero so mudava excluindo e recriando a regua, o que apaga os
+ * textos, os anexos e o historico de envios. O filtro for_no_show_history
+ * garante que so a reforcada aceita o numero: nas outras ele nao tem efeito.
+ */
+export async function salvarLimiarDaReforcadaAction(
+  input: unknown,
+): Promise<AutomacoesActionResult> {
+  const guard = await requireAutomacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = limiarSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Informe um número de faltas de 1 a 10." };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("cadence")
+    .update({ no_show_threshold: parsed.data.no_show_threshold })
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", parsed.data.cadence_id)
+    .eq("kind", "confirmacao")
+    .eq("for_no_show_history", true)
+    .select("id");
+  if (error) {
+    return { ok: false, error: "Não foi possível salvar o número de faltas." };
+  }
+  if (!data || data.length === 0) {
+    return { ok: false, error: "Régua reforçada não encontrada." };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "mudou_limiar_da_regua_reforcada",
+    entity: "cadence",
+    entity_id: parsed.data.cadence_id,
+  });
+  revalidatePath("/automacoes");
+  revalidatePath("/confirmacoes");
+  return { ok: true };
+}
+
 export async function excluirReguaAction(
   input: unknown,
 ): Promise<AutomacoesActionResult> {
@@ -541,8 +604,10 @@ export async function excluirReguaAction(
     .eq("cadence_id", parsed.data.cadence_id)
     .not("media_path", "is", null);
 
-  // O cascade apaga os passos; runs pendentes morrem no executor como
-  // condicao_parada (regua inexistente), comportamento ja provado.
+  // O cascade apaga os passos E as cadence_run deles, inclusive as ja
+  // enviadas (FK ON DELETE CASCADE): o historico de envios da regua some e o
+  // job de uma run pendente termina como run_inexistente no executor. Por
+  // isso a tela pergunta antes e diz o que se perde (achado 48).
   const { error } = await supabase
     .from("cadence")
     .delete()
@@ -878,7 +943,9 @@ export async function testarEnvioAction(
   if (!passo || !kind) {
     return { ok: false, error: "Mensagem não encontrada." };
   }
-  const temTexto = Boolean(passo.fixed_body && (passo.fixed_body as string).trim());
+  const temTexto = Boolean(
+    passo.fixed_body && (passo.fixed_body as string).trim(),
+  );
   if (!temTexto && !passo.media_path) {
     return {
       ok: false,
@@ -927,14 +994,14 @@ export async function testarEnvioAction(
   const corpo = !temTexto
     ? "Teste da régua"
     : `Teste da régua: ${renderizarModelo(passo.fixed_body as string, {
-    nome: "Maria",
-    clinica: (clinica?.name as string) ?? "sua clínica",
-    data: format(amanha, "dd/MM/yyyy", { locale: ptBR }),
-    hora: "14:00",
-    profissional: "Dra. Exemplo",
-    procedimento: "Consulta",
-    preparo: "",
-  }).trim()}`;
+        nome: "Maria",
+        clinica: (clinica?.name as string) ?? "sua clínica",
+        data: format(amanha, "dd/MM/yyyy", { locale: ptBR }),
+        hora: "14:00",
+        profissional: "Dra. Exemplo",
+        procedimento: "Consulta",
+        preparo: "",
+      }).trim()}`;
 
   const { provider, ref } = await carregarInstancia(adminDb, guard.clinicId);
   let resultado;

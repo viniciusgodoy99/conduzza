@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import { redirect } from "next/navigation";
 
 import { pickClinicAction } from "@/app/(auth)/actions";
@@ -9,8 +10,8 @@ function initialsOf(name: string): string {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase();
 }
 
-// Selecao de clinica para quem pertence a mais de uma (estilo do handoff:
-// cartoes com avatar de iniciais, nome e papel).
+// Selecao de clinica para quem pertence a mais de uma (docs/06 secao 5.13:
+// cartoes com iniciais em lime suave, nome, papel e seta).
 export default async function SelecionarClinicaPage() {
   const context = await getSessionContext();
   if (!context) {
@@ -31,32 +32,41 @@ export default async function SelecionarClinicaPage() {
   }
 
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-1">
-        <h1 className="text-[22px] font-semibold">Escolha a clínica</h1>
-        <p className="text-sm text-text-secondary">
+    <div className="grid gap-5">
+      <div className="grid gap-1.5">
+        <h1 className="text-[24px] leading-[1.2] font-bold tracking-[-0.02em]">
+          Escolha a clínica
+        </h1>
+        <p className="text-[13.5px] text-text-secondary">
           Você tem acesso a mais de uma operação. Em qual vai trabalhar agora?
         </p>
       </div>
-      <div className="grid gap-2">
+      <div className="grid gap-2.5">
         {ativos.map((membership) => (
           <form key={membership.clinicId} action={pickClinicAction}>
             <input type="hidden" name="clinicId" value={membership.clinicId} />
             <button
               type="submit"
-              className="flex w-full items-center gap-3 rounded-[11px] border border-border-strong bg-card p-3 text-left transition-colors hover:border-primary-edge"
+              className="flex min-h-14 w-full items-center gap-3 rounded-card border border-border bg-card p-3 pr-4 text-left shadow-sm cz-transition hover:-translate-y-px hover:shadow-md motion-reduce:transform-none"
             >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
+              <span
+                aria-hidden
+                className="grid size-9 shrink-0 place-items-center rounded-full bg-primary-soft text-xs font-bold text-primary-text"
+              >
                 {initialsOf(membership.clinicName)}
               </span>
-              <span className="grid min-w-0">
-                <span className="truncate text-sm font-medium">
+              <span className="grid min-w-0 flex-1 gap-0.5">
+                <span className="truncate text-sm font-bold text-text-strong">
                   {membership.clinicName}
                 </span>
-                <span className="text-xs text-text-tertiary">
+                <span className="text-xs text-text-secondary">
                   {ROLE_LABELS[membership.role]}
                 </span>
               </span>
+              <ChevronRight
+                aria-hidden
+                className="size-4 shrink-0 text-text-secondary"
+              />
             </button>
           </form>
         ))}

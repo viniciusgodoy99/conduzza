@@ -1,5 +1,6 @@
 "use client";
 
+import type { ColumnDef } from "@tanstack/react-table";
 import { CalendarOff, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -9,28 +10,29 @@ import {
   excluirBloqueioAction,
 } from "@/app/(app)/cadastros/actions";
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
-import { AvisoDeConsultas, BotaoProtegido } from "@/components/cadastros/comum";
-import { EmptyState } from "@/components/shared/empty-state";
+import {
+  AvisoDeConsultas,
+  BotaoProtegido,
+  CampoDeMarcar,
+  ENCAIXE_DO_BLOQUEIO,
+  VazioDaAba,
+} from "@/components/cadastros/comum";
+import { Aviso } from "@/components/shared/aviso";
+import { DataTable } from "@/components/shared/data-table";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { instanteLocal } from "@/lib/domain/horarios";
 import type { Bloqueio } from "@/lib/queries/catalogo";
 
@@ -197,6 +199,86 @@ export function BloqueiosTab({
     aoMudar();
   };
 
+  const colunas: ColumnDef<Bloqueio>[] = [
+    {
+      id: "profissional",
+      header: "Profissional",
+      cell: ({ row }) => (
+        <span className="font-semibold text-text-strong">
+          {nomeProfissional(row.original.professional_id)}
+        </span>
+      ),
+    },
+    {
+      id: "inicio",
+      header: "Início",
+      meta: { numeric: true },
+      cell: ({ row }) => (
+        <span className="whitespace-nowrap">
+          {formatarMomento(row.original.starts_at, timezone)}
+        </span>
+      ),
+    },
+    {
+      id: "fim",
+      header: "Fim",
+      meta: { numeric: true },
+      cell: ({ row }) => (
+        <span className="whitespace-nowrap">
+          {formatarMomento(row.original.ends_at, timezone)}
+        </span>
+      ),
+    },
+    {
+      id: "motivo",
+      header: "Motivo",
+      cell: ({ row }) => (
+        <span className="text-text-secondary">{row.original.reason}</span>
+      ),
+    },
+    {
+      id: "encaixe",
+      header: "Encaixe",
+      cell: ({ row }) => (
+        <StatusChip
+          size="sm"
+          definition={
+            ENCAIXE_DO_BLOQUEIO[
+              row.original.blocks_overbooking ? "impede" : "permite"
+            ]
+          }
+        />
+      ),
+    },
+    {
+      id: "acoes",
+      header: () => <span className="sr-only">Ações</span>,
+      meta: { align: "right", numeric: false },
+      cell: ({ row }) => {
+        const rotulo = `Remover bloqueio de ${nomeProfissional(row.original.professional_id)}`;
+        return podeEditar ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setErroExclusao(null);
+              setParaExcluir(row.original);
+            }}
+            aria-label={rotulo}
+          >
+            <Trash2 aria-hidden />
+          </Button>
+        ) : (
+          <DisabledWithHint hint={dica}>
+            <Button variant="ghost" size="icon" disabled aria-label={rotulo}>
+              <Trash2 aria-hidden />
+            </Button>
+          </DisabledWithHint>
+        );
+      },
+    },
+  ];
+
   return (
     <div className="grid gap-3">
       <div className="flex justify-end">
@@ -205,105 +287,44 @@ export function BloqueiosTab({
           dica={dica}
           onClick={abrirCriacao}
         >
-          <Plus className="size-4" /> Novo bloqueio
+          <Plus aria-hidden /> Novo bloqueio
         </BotaoProtegido>
       </div>
 
       {catalogo.bloqueios.length === 0 ? (
-        <EmptyState
+        <VazioDaAba
           icon={CalendarOff}
-          title="Nenhum bloqueio futuro"
-          description="Crie um bloqueio para tirar da oferta os horários de férias, congressos ou imprevistos."
+          titulo="Nenhum bloqueio futuro"
+          descricao="Crie um bloqueio para tirar da oferta os horários de férias, congressos ou imprevistos."
+          acao={{ rotulo: "Criar o primeiro bloqueio", onClick: abrirCriacao }}
+          podeEditar={podeEditar}
+          dica={dica}
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Profissional</TableHead>
-                <TableHead>Início</TableHead>
-                <TableHead>Fim</TableHead>
-                <TableHead>Motivo</TableHead>
-                <TableHead>Encaixe</TableHead>
-                <TableHead className="w-12" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {catalogo.bloqueios.map((bloqueio) => (
-                <TableRow key={bloqueio.id}>
-                  <TableCell className="font-medium">
-                    {nomeProfissional(bloqueio.professional_id)}
-                  </TableCell>
-                  <TableCell className="font-mono text-[12px] tabular-nums">
-                    {formatarMomento(bloqueio.starts_at, timezone)}
-                  </TableCell>
-                  <TableCell className="font-mono text-[12px] tabular-nums">
-                    {formatarMomento(bloqueio.ends_at, timezone)}
-                  </TableCell>
-                  <TableCell className="text-text-secondary">
-                    {bloqueio.reason}
-                  </TableCell>
-                  <TableCell
-                    className={
-                      bloqueio.blocks_overbooking
-                        ? "[color:var(--alert-text)]"
-                        : "text-text-secondary"
-                    }
-                  >
-                    {bloqueio.blocks_overbooking
-                      ? "Impede encaixe"
-                      : "Permite encaixe"}
-                  </TableCell>
-                  <TableCell>
-                    {podeEditar ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-10"
-                        onClick={() => {
-                          setErroExclusao(null);
-                          setParaExcluir(bloqueio);
-                        }}
-                        aria-label={`Remover bloqueio de ${nomeProfissional(bloqueio.professional_id)}`}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    ) : (
-                      <DisabledWithHint hint={dica}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-10"
-                          disabled
-                          aria-label={`Remover bloqueio de ${nomeProfissional(bloqueio.professional_id)}`}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </DisabledWithHint>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+        <DataTable columns={colunas} data={catalogo.bloqueios} />
       )}
 
       <Dialog open={criarAberto} onOpenChange={setCriarAberto}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Novo bloqueio</DialogTitle>
+            <DialogDescription>
+              O bloqueio aparece hachurado na agenda e os horários somem da
+              oferta. Consultas já marcadas no período não são desmarcadas.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
-            <div className="grid gap-2">
-              <Label>Profissionais</Label>
+            <fieldset className="grid gap-1.5">
+              <legend className="mb-1.5 text-xs font-semibold text-foreground">
+                Profissionais
+              </legend>
               {catalogo.profissionais.length === 0 ? (
-                <p className="text-sm text-text-secondary">
+                <p className="text-[13px] text-text-secondary">
                   Cadastre um profissional antes de criar bloqueios.
                 </p>
               ) : (
-                <div className="grid gap-1 rounded-lg border p-2">
-                  <label className="flex min-h-10 items-center gap-2 rounded px-2 text-sm font-medium">
+                <div className="grid cz-scroll max-h-64 gap-0.5 overflow-y-auto rounded-xl border border-border p-1.5">
+                  <label className="flex min-h-10 cursor-pointer items-center gap-3 rounded-md px-2.5 text-[13.5px] font-semibold text-text-strong cz-transition hover:bg-surface-3">
                     <Checkbox
                       checked={todosSelecionados}
                       onCheckedChange={(v) => alternarTodos(v === true)}
@@ -313,7 +334,7 @@ export function BloqueiosTab({
                   {catalogo.profissionais.map((profissional) => (
                     <label
                       key={profissional.id}
-                      className="flex min-h-10 items-center gap-2 rounded px-2 text-sm"
+                      className="flex min-h-10 cursor-pointer items-center gap-3 rounded-md px-2.5 text-[13.5px] text-foreground cz-transition hover:bg-surface-3"
                     >
                       <Checkbox
                         checked={form.professionalIds.includes(profissional.id)}
@@ -326,57 +347,50 @@ export function BloqueiosTab({
                   ))}
                 </div>
               )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-2">
+            </fieldset>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
                 <Label htmlFor="bloqueio-inicio">Início</Label>
                 <Input
                   id="bloqueio-inicio"
                   type="datetime-local"
                   value={form.inicio}
                   onChange={(e) => setForm({ ...form, inicio: e.target.value })}
-                  className="h-10"
+                  className="cz-num"
                 />
               </div>
-              <div className="grid gap-2">
+              <div className="grid gap-1.5">
                 <Label htmlFor="bloqueio-fim">Fim</Label>
                 <Input
                   id="bloqueio-fim"
                   type="datetime-local"
                   value={form.fim}
                   onChange={(e) => setForm({ ...form, fim: e.target.value })}
-                  className="h-10"
+                  className="cz-num"
                 />
               </div>
             </div>
-            <div className="grid gap-2">
+            <div className="grid gap-1.5">
               <Label htmlFor="bloqueio-motivo">Motivo</Label>
               <Input
                 id="bloqueio-motivo"
                 value={form.motivo}
                 onChange={(e) => setForm({ ...form, motivo: e.target.value })}
                 placeholder="Férias, congresso, imprevisto"
-                className="h-10"
               />
             </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="bloqueio-encaixe">
-                Impedir encaixe neste período
-              </Label>
-              <Switch
-                id="bloqueio-encaixe"
-                checked={form.impedirEncaixe}
-                onCheckedChange={(v) => setForm({ ...form, impedirEncaixe: v })}
-              />
-            </div>
-            <p className="text-sm text-text-secondary">
-              O bloqueio aparece hachurado na agenda e os horários somem da
-              oferta. Consultas já marcadas no período não são desmarcadas.
-            </p>
+            <CampoDeMarcar
+              id="bloqueio-encaixe"
+              rotulo="Impedir encaixe neste período"
+              marcado={form.impedirEncaixe}
+              aoMudar={(marcado) =>
+                setForm({ ...form, impedirEncaixe: marcado })
+              }
+            />
             {erro ? (
-              <p role="alert" className="text-sm [color:var(--alert-text)]">
+              <Aviso tom="alert" role="alert">
                 {erro}
-              </p>
+              </Aviso>
             ) : null}
             {aviso ? (
               <AvisoDeConsultas
@@ -387,16 +401,18 @@ export function BloqueiosTab({
                 confirmando={salvando}
                 aoConfirmar={() => void salvar(true)}
               />
-            ) : (
-              <Button
-                onClick={() => void salvar()}
-                disabled={salvando}
-                className="h-10"
-              >
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCriarAberto(false)}>
+              Cancelar
+            </Button>
+            {aviso ? null : (
+              <Button onClick={() => void salvar()} disabled={salvando}>
                 {salvando ? "Salvando..." : "Criar bloqueio"}
               </Button>
             )}
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -408,35 +424,40 @@ export function BloqueiosTab({
           }
         }}
       >
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>Remover bloqueio</DialogTitle>
+            {paraExcluir ? (
+              <DialogDescription>
+                O bloqueio de {nomeProfissional(paraExcluir.professional_id)} (
+                <span className="cz-num">
+                  {formatarMomento(paraExcluir.starts_at, timezone)}
+                </span>{" "}
+                até{" "}
+                <span className="cz-num">
+                  {formatarMomento(paraExcluir.ends_at, timezone)}
+                </span>
+                ) será removido e os horários voltam para a oferta.
+              </DialogDescription>
+            ) : null}
           </DialogHeader>
-          {paraExcluir ? (
-            <p className="text-sm text-text-secondary">
-              O bloqueio de {nomeProfissional(paraExcluir.professional_id)} (
-              {formatarMomento(paraExcluir.starts_at, timezone)} até{" "}
-              {formatarMomento(paraExcluir.ends_at, timezone)}) será removido e
-              os horários voltam para a oferta.
-            </p>
-          ) : null}
           {erroExclusao ? (
-            <p role="alert" className="text-sm [color:var(--alert-text)]">
+            <Aviso tom="alert" role="alert">
               {erroExclusao}
-            </p>
+            </Aviso>
           ) : null}
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              className="h-10"
-              onClick={() => setParaExcluir(null)}
-            >
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setParaExcluir(null)}>
               Cancelar
             </Button>
-            <Button onClick={excluir} disabled={excluindo} className="h-10">
+            <Button
+              variant="destructive"
+              onClick={() => void excluir()}
+              disabled={excluindo}
+            >
               {excluindo ? "Removendo..." : "Remover"}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -35,8 +35,36 @@ export type LeadsActionResult = {
 
 const idSchema = z.uuid();
 const nomeSchema = z.string().trim().min(2).max(120);
+// Teto por chamada das acoes em massa. A tela divide selecoes maiores em
+// lotes deste tamanho (components/leads/em-lotes.ts, LOTE_DE_ACOES), com
+// progresso; se algo chegar acima dele, a mensagem diz o porque (achado 95).
 const idsSchema = z.array(idSchema).min(1).max(100);
+const MENSAGEM_LOTE_GRANDE = "Selecione até 100 leads por vez.";
 const canalSchema = z.enum(SOURCE_CHANNELS);
+
+/** Zod recusou por excesso de contatos numa chamada so. */
+function passouDoLote(error: z.ZodError): boolean {
+  return error.issues.some(
+    (issue) => issue.code === "too_big" && issue.path[0] === "contact_ids",
+  );
+}
+
+// Responsavel precisa ser membro ATIVO da clinica: uuid de fora, vinculo
+// pendente ou funcionaria desativada nao vira dono de lead (achado 102).
+async function ehMembroAtivo(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  userId: string,
+): Promise<boolean> {
+  const { data: membro } = await supabase
+    .from("clinic_member")
+    .select("user_id")
+    .eq("clinic_id", clinicId)
+    .eq("user_id", userId)
+    .eq("status", "ativo")
+    .maybeSingle();
+  return membro !== null;
+}
 
 // A etapa e uma CHAVE da jornada da clinica (funnel_stage_def), nao mais um
 // enum global: cada clinica tem as suas. O formato e validado aqui; a
@@ -188,6 +216,9 @@ export async function mudarEtapaAction(
   }
   const parsed = mudarEtapaSchema.safeParse(input);
   if (!parsed.success) {
+    if (passouDoLote(parsed.error)) {
+      return { ok: false, error: MENSAGEM_LOTE_GRANDE };
+    }
     const refinado = parsed.error.issues.find((i) => i.code === "custom");
     return {
       ok: false,
@@ -255,26 +286,23 @@ export async function reatribuirAction(
   }
   const parsed = reatribuirSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: "Confira os campos informados." };
+    return {
+      ok: false,
+      error: passouDoLote(parsed.error)
+        ? MENSAGEM_LOTE_GRANDE
+        : "Confira os campos informados.",
+    };
   }
 
   const supabase = await createClient();
-  // Responsavel precisa ser membro ATIVO da clinica: uuid de fora ou vinculo
-  // pendente nao vira dono de lead.
-  if (parsed.data.owner_user_id !== null) {
-    const { data: membro } = await supabase
-      .from("clinic_member")
-      .select("user_id")
-      .eq("clinic_id", guard.clinicId)
-      .eq("user_id", parsed.data.owner_user_id)
-      .eq("status", "ativo")
-      .maybeSingle();
-    if (!membro) {
-      return {
-        ok: false,
-        error: "Escolha um membro ativo da clínica como responsável.",
-      };
-    }
+  if (
+    parsed.data.owner_user_id !== null &&
+    !(await ehMembroAtivo(supabase, guard.clinicId, parsed.data.owner_user_id))
+  ) {
+    return {
+      ok: false,
+      error: "Escolha um membro ativo da clínica como responsável.",
+    };
   }
 
   const { data, error } = await supabase
@@ -315,7 +343,12 @@ export async function etiquetarAction(
   }
   const parsed = etiquetarSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: "Confira as etiquetas informadas." };
+    return {
+      ok: false,
+      error: passouDoLote(parsed.error)
+        ? MENSAGEM_LOTE_GRANDE
+        : "Confira as etiquetas informadas.",
+    };
   }
 
   const supabase = await createClient();
@@ -378,6 +411,17 @@ export async function criarLeadAction(
   }
 
   const supabase = await createClient();
+  // Mesma regra do reatribuir: o select da tela so oferece membro ativo, mas
+  // o cliente nao e confiavel (achado 102).
+  if (
+    parsed.data.owner_user_id !== undefined &&
+    !(await ehMembroAtivo(supabase, guard.clinicId, parsed.data.owner_user_id))
+  ) {
+    return {
+      ok: false,
+      error: "Escolha um membro ativo da clínica como responsável.",
+    };
+  }
   // Duplicado pela CHAVE do telefone: com e sem o nono digito sao a mesma
   // pessoa (o WhatsApp entrega sem, a recepcao digita com). O indice unico
   // de phone_key barra de qualquer jeito; conferir antes so da o nome.

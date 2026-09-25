@@ -1,6 +1,7 @@
 "use client";
 
-import { Package2, Pencil, Plus, Trash2 } from "lucide-react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Package2, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -12,15 +13,21 @@ import {
 import type { TabProps } from "@/app/(app)/cadastros/cadastros-client";
 import {
   BotaoProtegido,
+  CampoDeMarcar,
   ChipSituacao,
+  PainelDeCadastro,
   PreviaDeReais,
+  RodapeDeSalvar,
+  VazioDaAba,
 } from "@/components/cadastros/comum";
-import { EmptyState } from "@/components/shared/empty-state";
+import { Aviso } from "@/components/shared/aviso";
+import { DataTable } from "@/components/shared/data-table";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -34,21 +41,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import type { Pacote, UsoDoPacote } from "@/lib/queries/catalogo";
 import {
   centavosParaReais,
@@ -86,9 +78,12 @@ export function PacotesTab({
   aoMudar,
   usoDosPacotes,
   usoIndisponivel,
+  aoRecarregarUso,
 }: TabProps & {
   usoDosPacotes: Record<string, UsoDoPacote> | undefined;
   usoIndisponivel: boolean;
+  /** Tenta de novo a leitura das vendas quando ela falhou */
+  aoRecarregarUso: () => void;
 }) {
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<FormPacote>(FORM_VAZIO);
@@ -217,6 +212,164 @@ export function PacotesTab({
     aoMudar();
   };
 
+  const pacientesComSaldo = (pacote: Pacote): React.ReactNode => {
+    if (usoDosPacotes === undefined) {
+      return usoIndisponivel ? "Não carregou" : "Carregando...";
+    }
+    const comSaldo = usoDosPacotes[pacote.id]?.pacientesComSaldo ?? 0;
+    if (comSaldo === 0) {
+      return (vendasDe(pacote.id) ?? 0) > 0 ? "Nenhum (já vendido)" : "Nenhum";
+    }
+    return (
+      <>
+        <span className="cz-num">{comSaldo}</span>{" "}
+        {comSaldo === 1 ? "paciente" : "pacientes"}
+      </>
+    );
+  };
+
+  const acoesDoPacote = (pacote: Pacote) => {
+    const nome = nomeProcedimento(pacote.procedure_id);
+    const vendido = (vendasDe(pacote.id) ?? 0) > 0;
+    if (!podeEditar) {
+      return (
+        <div className="flex items-center justify-end gap-1">
+          <DisabledWithHint hint={dica}>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled
+              aria-label={`Editar pacote de ${nome}`}
+            >
+              <Pencil aria-hidden />
+            </Button>
+          </DisabledWithHint>
+          <DisabledWithHint hint={dica}>
+            <Button variant="ghost" disabled>
+              {pacote.active ? "Desativar" : "Reativar"}
+            </Button>
+          </DisabledWithHint>
+          <DisabledWithHint hint={dica}>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled
+              aria-label={`Remover pacote de ${nome}`}
+            >
+              <Trash2 aria-hidden />
+            </Button>
+          </DisabledWithHint>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center justify-end gap-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => abrir(pacote)}
+          aria-label={`Editar pacote de ${nome}`}
+        >
+          <Pencil aria-hidden />
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={alternandoId === pacote.id}
+          onClick={() => void alternarAtivo(pacote)}
+          aria-label={`${pacote.active ? "Desativar" : "Reativar"} pacote de ${nome}`}
+        >
+          {pacote.active ? "Desativar" : "Reativar"}
+        </Button>
+        {vendido ? (
+          <DisabledWithHint hint={DICA_VENDIDO_REMOVER}>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled
+              aria-label={`Remover pacote de ${nome}`}
+            >
+              <Trash2 aria-hidden />
+            </Button>
+          </DisabledWithHint>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setErroRemocao(null);
+              setPacoteParaRemover(pacote);
+            }}
+            aria-label={`Remover pacote de ${nome}`}
+          >
+            <Trash2 aria-hidden />
+          </Button>
+        )}
+      </div>
+    );
+  };
+
+  const colunas: ColumnDef<Pacote>[] = [
+    {
+      id: "procedimento",
+      header: "Procedimento",
+      cell: ({ row }) => (
+        <span className="font-semibold text-text-strong">
+          {nomeProcedimento(row.original.procedure_id)}
+        </span>
+      ),
+    },
+    {
+      id: "sessoes",
+      header: "Sessões",
+      meta: { align: "right" },
+      cell: ({ row }) => row.original.sessions,
+    },
+    {
+      id: "preco",
+      header: "Preço do pacote",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <span className="whitespace-nowrap text-text-strong">
+          {formatarCentavos(row.original.price_cents)}
+        </span>
+      ),
+    },
+    {
+      id: "validade",
+      header: "Validade",
+      cell: ({ row }) =>
+        row.original.validity_days === null ? (
+          <span className="text-text-secondary">Sem validade</span>
+        ) : (
+          <span className="whitespace-nowrap text-text-secondary">
+            <span className="cz-num">{row.original.validity_days}</span> dias
+          </span>
+        ),
+    },
+    {
+      id: "saldo",
+      header: "Pacientes com saldo",
+      cell: ({ row }) => (
+        <span className="whitespace-nowrap text-text-secondary">
+          {pacientesComSaldo(row.original)}
+        </span>
+      ),
+    },
+    {
+      id: "situacao",
+      header: "Situação",
+      cell: ({ row }) => <ChipSituacao active={row.original.active} />,
+    },
+    {
+      id: "acoes",
+      header: () => <span className="sr-only">Ações</span>,
+      meta: { align: "right", numeric: false },
+      cell: ({ row }) => acoesDoPacote(row.original),
+    },
+  ];
+
+  const fechar = () => setAberto(false);
+
   return (
     <div className="grid gap-3">
       <div className="flex justify-end">
@@ -225,264 +378,145 @@ export function PacotesTab({
           dica={dica}
           onClick={() => abrir()}
         >
-          <Plus className="size-4" /> Novo pacote
+          <Plus aria-hidden /> Novo pacote
         </BotaoProtegido>
       </div>
 
+      {/* Erro da leitura das vendas (achado 35): a tabela continua, a coluna
+          diz "Não carregou" e daqui da para tentar de novo. */}
+      {usoIndisponivel && catalogo.pacotes.length > 0 ? (
+        <Aviso
+          tom="alert"
+          role="alert"
+          acao={
+            <Button variant="outline" onClick={aoRecarregarUso}>
+              <RotateCcw aria-hidden /> Tentar de novo
+            </Button>
+          }
+        >
+          Não foi possível carregar as vendas dos pacotes: a coluna de pacientes
+          com saldo fica sem número até carregar.
+        </Aviso>
+      ) : null}
+
       {catalogo.pacotes.length === 0 ? (
-        <EmptyState
+        <VazioDaAba
           icon={Package2}
-          title="Nenhum pacote cadastrado"
-          description="Pacotes de várias sessões (10 de drenagem, por exemplo) são essenciais em estética. Cadastre o primeiro para a recepção oferecer."
+          titulo="Nenhum pacote cadastrado"
+          descricao="Pacotes de várias sessões (10 de drenagem, por exemplo) são essenciais em estética. Cadastre o primeiro para a recepção oferecer."
+          acao={{
+            rotulo: "Cadastrar o primeiro pacote",
+            onClick: () => abrir(),
+          }}
+          podeEditar={podeEditar}
+          dica={dica}
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Procedimento</TableHead>
-                <TableHead>Sessões</TableHead>
-                <TableHead>Preço do pacote</TableHead>
-                <TableHead>Validade</TableHead>
-                <TableHead>Pacientes com saldo</TableHead>
-                <TableHead>Situação</TableHead>
-                <TableHead className="w-44" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {catalogo.pacotes.map((pacote) => {
-                const nome = nomeProcedimento(pacote.procedure_id);
-                const vendas = vendasDe(pacote.id);
-                const comSaldo = usoDosPacotes?.[pacote.id]?.pacientesComSaldo;
-                const vendido = (vendas ?? 0) > 0;
-                return (
-                  <TableRow key={pacote.id}>
-                    <TableCell className="font-medium">{nome}</TableCell>
-                    <TableCell className="tabular-nums">
-                      {pacote.sessions}
-                    </TableCell>
-                    <TableCell className="font-mono text-[12px] tabular-nums">
-                      {formatarCentavos(pacote.price_cents)}
-                    </TableCell>
-                    <TableCell className="text-text-secondary">
-                      {pacote.validity_days === null
-                        ? "Sem validade"
-                        : `${pacote.validity_days} dias`}
-                    </TableCell>
-                    <TableCell className="text-text-secondary tabular-nums">
-                      {usoDosPacotes === undefined
-                        ? usoIndisponivel
-                          ? "Não carregou"
-                          : "Carregando..."
-                        : comSaldo === undefined || comSaldo === 0
-                          ? vendido
-                            ? "Nenhum (já vendido)"
-                            : "Nenhum"
-                          : comSaldo === 1
-                            ? "1 paciente"
-                            : `${comSaldo} pacientes`}
-                    </TableCell>
-                    <TableCell>
-                      <ChipSituacao active={pacote.active} />
-                    </TableCell>
-                    <TableCell>
-                      {podeEditar ? (
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-10"
-                            onClick={() => abrir(pacote)}
-                            aria-label={`Editar pacote de ${nome}`}
-                          >
-                            <Pencil className="size-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            className="h-10"
-                            disabled={alternandoId === pacote.id}
-                            onClick={() => void alternarAtivo(pacote)}
-                            aria-label={`${pacote.active ? "Desativar" : "Reativar"} pacote de ${nome}`}
-                          >
-                            {pacote.active ? "Desativar" : "Reativar"}
-                          </Button>
-                          {vendido ? (
-                            <DisabledWithHint hint={DICA_VENDIDO_REMOVER}>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="size-10"
-                                disabled
-                                aria-label={`Remover pacote de ${nome}`}
-                              >
-                                <Trash2 className="size-4" />
-                              </Button>
-                            </DisabledWithHint>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-10"
-                              onClick={() => {
-                                setErroRemocao(null);
-                                setPacoteParaRemover(pacote);
-                              }}
-                              aria-label={`Remover pacote de ${nome}`}
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-end gap-1">
-                          <DisabledWithHint hint={dica}>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-10"
-                              disabled
-                              aria-label={`Editar pacote de ${nome}`}
-                            >
-                              <Pencil className="size-4" />
-                            </Button>
-                          </DisabledWithHint>
-                          <DisabledWithHint hint={dica}>
-                            <Button variant="ghost" className="h-10" disabled>
-                              {pacote.active ? "Desativar" : "Reativar"}
-                            </Button>
-                          </DisabledWithHint>
-                          <DisabledWithHint hint={dica}>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-10"
-                              disabled
-                              aria-label={`Remover pacote de ${nome}`}
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
-                          </DisabledWithHint>
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <DataTable columns={colunas} data={catalogo.pacotes} />
       )}
 
-      <Sheet open={aberto} onOpenChange={setAberto}>
-        <SheetContent className="w-[380px] p-5">
-          <SheetHeader className="p-0">
-            <SheetTitle>{form.id ? "Editar pacote" : "Novo pacote"}</SheetTitle>
-          </SheetHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="pacote-procedimento">Procedimento</Label>
-              <Select
-                value={form.procedure_id}
-                onValueChange={(v) => setForm({ ...form, procedure_id: v })}
-                disabled={formVendido}
-              >
-                <SelectTrigger
-                  id="pacote-procedimento"
-                  className="h-10 w-full"
-                  aria-describedby={
-                    formVendido ? "pacote-procedimento-fixo" : undefined
-                  }
-                >
-                  <SelectValue placeholder="Escolha o procedimento" />
-                </SelectTrigger>
-                <SelectContent>
-                  {catalogo.procedimentos
-                    .filter(
-                      (procedimento) =>
-                        procedimento.active ||
-                        procedimento.id === form.procedure_id,
-                    )
-                    .map((procedimento) => (
-                      <SelectItem key={procedimento.id} value={procedimento.id}>
-                        {procedimento.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              {formVendido ? (
-                <p
-                  id="pacote-procedimento-fixo"
-                  className="text-xs text-text-secondary"
-                >
-                  Este pacote já foi vendido, então o procedimento não muda (os
-                  saldos dos pacientes são debitados por ele). Para outro
-                  procedimento, crie um pacote novo.
-                </p>
-              ) : null}
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="pacote-sessoes">Quantidade de sessões</Label>
-              <Input
-                id="pacote-sessoes"
-                type="number"
-                min={1}
-                value={form.sessions}
-                onChange={(e) => setForm({ ...form, sessions: e.target.value })}
-                className="h-10"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="pacote-preco">Preço do pacote (R$)</Label>
-              <Input
-                id="pacote-preco"
-                inputMode="decimal"
-                placeholder="Ex.: 1.200,00"
-                value={form.preco}
-                onChange={(e) => setForm({ ...form, preco: e.target.value })}
-                aria-describedby="pacote-preco-previa"
-                className="h-10"
-              />
-              <PreviaDeReais texto={form.preco} id="pacote-preco-previa" />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="pacote-validade">Validade (dias)</Label>
-              <Input
-                id="pacote-validade"
-                type="number"
-                min={1}
-                placeholder="Em branco: sem validade"
-                value={form.validity_days}
-                onChange={(e) =>
-                  setForm({ ...form, validity_days: e.target.value })
+      <PainelDeCadastro
+        aberto={aberto}
+        aoMudarAberto={setAberto}
+        titulo={form.id ? "Editar pacote" : "Novo pacote"}
+        erro={erro}
+        rodape={
+          <RodapeDeSalvar
+            salvando={salvando}
+            aoCancelar={fechar}
+            aoSalvar={() => void salvar()}
+          />
+        }
+      >
+        <div className="grid gap-4">
+          <div className="grid gap-1.5">
+            <Label htmlFor="pacote-procedimento">Procedimento</Label>
+            <Select
+              value={form.procedure_id}
+              onValueChange={(v) => setForm({ ...form, procedure_id: v })}
+              disabled={formVendido}
+            >
+              <SelectTrigger
+                id="pacote-procedimento"
+                className="w-full"
+                aria-describedby={
+                  formVendido ? "pacote-procedimento-fixo" : undefined
                 }
-                className="h-10"
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <div className="grid gap-1">
-                <Label htmlFor="pacote-ativo">Pacote à venda</Label>
-                <p className="text-xs text-text-secondary">
-                  Desativado, ele sai da venda na ficha do paciente. Os saldos
-                  já vendidos continuam valendo.
-                </p>
-              </div>
-              <Switch
-                id="pacote-ativo"
-                checked={form.active}
-                onCheckedChange={(v) => setForm({ ...form, active: v })}
-              />
-            </div>
-            {erro ? (
-              <p role="alert" className="text-sm [color:var(--alert-text)]">
-                {erro}
+              >
+                <SelectValue placeholder="Escolha o procedimento" />
+              </SelectTrigger>
+              <SelectContent>
+                {catalogo.procedimentos
+                  .filter(
+                    (procedimento) =>
+                      procedimento.active ||
+                      procedimento.id === form.procedure_id,
+                  )
+                  .map((procedimento) => (
+                    <SelectItem key={procedimento.id} value={procedimento.id}>
+                      {procedimento.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {formVendido ? (
+              <p
+                id="pacote-procedimento-fixo"
+                className="text-xs text-text-secondary"
+              >
+                Este pacote já foi vendido, então o procedimento não muda (os
+                saldos dos pacientes são debitados por ele). Para outro
+                procedimento, crie um pacote novo.
               </p>
             ) : null}
-            <Button onClick={salvar} disabled={salvando} className="h-10">
-              {salvando ? "Salvando..." : "Salvar"}
-            </Button>
           </div>
-        </SheetContent>
-      </Sheet>
+          <div className="grid gap-1.5">
+            <Label htmlFor="pacote-sessoes">Quantidade de sessões</Label>
+            <Input
+              id="pacote-sessoes"
+              type="number"
+              min={1}
+              value={form.sessions}
+              onChange={(e) => setForm({ ...form, sessions: e.target.value })}
+              className="cz-num"
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="pacote-preco">Preço do pacote (R$)</Label>
+            <Input
+              id="pacote-preco"
+              inputMode="decimal"
+              placeholder="Ex.: 1.200,00"
+              value={form.preco}
+              onChange={(e) => setForm({ ...form, preco: e.target.value })}
+              aria-describedby="pacote-preco-previa"
+              className="cz-num"
+            />
+            <PreviaDeReais texto={form.preco} id="pacote-preco-previa" />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="pacote-validade">Validade (dias)</Label>
+            <Input
+              id="pacote-validade"
+              type="number"
+              min={1}
+              placeholder="Em branco: sem validade"
+              value={form.validity_days}
+              onChange={(e) =>
+                setForm({ ...form, validity_days: e.target.value })
+              }
+              className="cz-num"
+            />
+          </div>
+          <CampoDeMarcar
+            id="pacote-ativo"
+            rotulo="Pacote à venda"
+            descricao="Desativado, ele sai da venda na ficha do paciente. Os saldos já vendidos continuam valendo."
+            marcado={form.active}
+            aoMudar={(marcado) => setForm({ ...form, active: marcado })}
+          />
+        </div>
+      </PainelDeCadastro>
 
       <Dialog
         open={pacoteParaRemover !== null}
@@ -490,36 +524,33 @@ export function PacotesTab({
           if (!open) setPacoteParaRemover(null);
         }}
       >
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>Remover este pacote?</DialogTitle>
+            {pacoteParaRemover ? (
+              <DialogDescription>
+                {nomeProcedimento(pacoteParaRemover.procedure_id)},{" "}
+                <span className="cz-num">{pacoteParaRemover.sessions}</span>{" "}
+                {pacoteParaRemover.sessions === 1 ? "sessão" : "sessões"},{" "}
+                <span className="cz-num">
+                  {formatarCentavos(pacoteParaRemover.price_cents)}
+                </span>
+                . Só dá para remover pacote que nunca foi vendido.
+              </DialogDescription>
+            ) : null}
           </DialogHeader>
-          {pacoteParaRemover ? (
-            <p className="text-sm text-text-secondary">
-              {nomeProcedimento(pacoteParaRemover.procedure_id)},{" "}
-              {pacoteParaRemover.sessions}{" "}
-              {pacoteParaRemover.sessions === 1 ? "sessão" : "sessões"},{" "}
-              {formatarCentavos(pacoteParaRemover.price_cents)}. Só dá para
-              remover pacote que nunca foi vendido.
-            </p>
-          ) : null}
           {erroRemocao ? (
-            <p role="alert" className="text-sm [color:var(--alert-text)]">
+            <Aviso tom="alert" role="alert">
               {erroRemocao}
-            </p>
+            </Aviso>
           ) : null}
           <DialogFooter>
-            <Button
-              variant="outline"
-              className="h-10"
-              onClick={() => setPacoteParaRemover(null)}
-            >
+            <Button variant="ghost" onClick={() => setPacoteParaRemover(null)}>
               Cancelar
             </Button>
             <Button
               variant="destructive"
-              className="h-10"
-              onClick={remover}
+              onClick={() => void remover()}
               disabled={removendo}
             >
               {removendo ? "Removendo..." : "Remover"}

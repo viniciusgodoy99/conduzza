@@ -2,8 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { History, MoreVertical } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Download, History, MoreVertical, Printer } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -12,6 +12,8 @@ import {
 } from "@/components/agenda/linha-do-historico";
 import { PrintDay } from "@/components/agenda/print-day";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
+import { Aviso } from "@/components/shared/aviso";
+import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -40,7 +42,9 @@ import { baixarCsv, gerarCsv } from "@/lib/utils/csv";
 // Menu de tres pontos da barra da Agenda: imprimir, exportar CSV e ver o
 // historico de alteracoes do dia. Impressao e exportacao registram trilha
 // (LGPD) antes do dado sair da tela. O historico diz de qual paciente e qual
-// consulta, quem mudou e quando (achado 84), inclusive as remarcacoes.
+// consulta, quem mudou e quando (achado 84), inclusive as remarcacoes. Sem o
+// dado do dia (busca falhou), imprimir e exportar ficam visiveis e
+// desabilitados, com o porque: antes saia papel vazio (achado 83).
 
 function horaNoFuso(instante: string, timezone: string): string {
   return new Date(instante).toLocaleTimeString("pt-BR", {
@@ -57,10 +61,11 @@ export function AgendaActionsMenu({
 }: {
   contexto: ContextoAgenda;
   dia: string;
-  dados: AgendaDia;
+  dados: AgendaDia | null;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [historicoAberto, setHistoricoAberto] = useState(false);
+  const idSemDado = useId();
 
   const historicoQuery = useQuery({
     queryKey: agendaKeys.historicoDia(contexto.clinicId, dia),
@@ -78,6 +83,9 @@ export function AgendaActionsMenu({
 
   const [imprimindo, setImprimindo] = useState(false);
   const imprimir = async () => {
+    if (!dados) {
+      return;
+    }
     // A trilha vai ANTES de o dado sair da tela (regra 3.1): sem gravar a
     // auditoria, nao imprime.
     const auditoria = await registrarExportacaoAction(dia, "impressao");
@@ -99,6 +107,9 @@ export function AgendaActionsMenu({
   };
 
   const exportarCsv = async () => {
+    if (!dados) {
+      return;
+    }
     const auditoria = await registrarExportacaoAction(dia, "csv");
     if (!auditoria.ok) {
       toast.error("Não foi possível registrar a exportação. Tente de novo.");
@@ -153,35 +164,55 @@ export function AgendaActionsMenu({
           <Button
             variant="ghost"
             size="icon"
-            className="size-10 print:hidden"
+            className="print:hidden"
             aria-label="Mais ações da agenda"
           >
-            <MoreVertical className="size-4" />
+            <MoreVertical aria-hidden />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => void imprimir()}>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuItem
+            disabled={!dados}
+            aria-describedby={!dados ? idSemDado : undefined}
+            onSelect={() => void imprimir()}
+          >
+            <Printer aria-hidden />
             Imprimir agenda do dia
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => void exportarCsv()}>
+          <DropdownMenuItem
+            disabled={!dados}
+            aria-describedby={!dados ? idSemDado : undefined}
+            onSelect={() => void exportarCsv()}
+          >
+            <Download aria-hidden />
             Exportar CSV
           </DropdownMenuItem>
+          {!dados ? (
+            <p
+              id={idSemDado}
+              className="px-[9px] pb-1.5 text-xs whitespace-normal text-text-secondary"
+            >
+              A agenda deste dia não carregou. Tente de novo antes de imprimir
+              ou exportar.
+            </p>
+          ) : null}
           <DropdownMenuItem onSelect={() => setHistoricoAberto(true)}>
+            <History aria-hidden />
             Ver histórico de alterações
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
       <Sheet open={historicoAberto} onOpenChange={setHistoricoAberto}>
-        <SheetContent className="overflow-y-auto">
+        <SheetContent className="cz-scroll overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Histórico de alterações</SheetTitle>
             <SheetDescription>
               Mudanças de situação e remarcações das consultas de{" "}
-              {dataFormatada}.
+              <span className="cz-num">{dataFormatada}</span>.
             </SheetDescription>
           </SheetHeader>
-          <div className="grid gap-3 px-4 pb-6">
+          <div className="grid gap-3 px-5 pb-6">
             {historicoQuery.isPending ? (
               <div className="grid gap-2" aria-label="Carregando histórico">
                 <Skeleton className="h-10 w-full" />
@@ -189,54 +220,65 @@ export function AgendaActionsMenu({
                 <Skeleton className="h-10 w-full" />
               </div>
             ) : historicoQuery.isError ? (
-              <p
+              <Aviso
+                tom="alert"
                 role="alert"
-                className="text-sm text-[color:var(--alert-text)]"
+                acao={
+                  <Button
+                    variant="outline"
+                    onClick={() => void historicoQuery.refetch()}
+                  >
+                    Tentar de novo
+                  </Button>
+                }
               >
-                Não foi possível carregar o histórico. Tente de novo.
-              </p>
+                Não foi possível carregar o histórico.
+              </Aviso>
             ) : (historicoQuery.data ?? []).length === 0 ? (
-              <div className="grid place-items-center gap-2 py-8 text-center">
-                <History className="size-6 text-text-tertiary" aria-hidden />
-                <p className="text-sm text-text-secondary">
-                  Nenhuma alteração neste dia
-                </p>
-              </div>
+              <EmptyState
+                compact
+                icon={History}
+                title="Nenhuma alteração neste dia"
+              />
             ) : (
-              (historicoQuery.data ?? []).map((linha) => (
-                <div
-                  key={linha.id}
-                  className="grid gap-1.5 rounded-lg border border-border px-3 py-2"
-                >
-                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-                    <span className="truncate text-sm font-semibold">
-                      {linha.consulta?.paciente ?? "Paciente"}
-                    </span>
-                    {linha.consulta ? (
-                      <span className="text-xs text-text-secondary">
-                        consulta de{" "}
-                        {momentoNoFuso(
-                          contexto.timezone,
-                          linha.consulta.starts_at,
-                        )}
-                        {nomeDoProfissional(linha.consulta.professional_id)
-                          ? ` com ${nomeDoProfissional(linha.consulta.professional_id)}`
-                          : ""}
+              <ol className="grid">
+                {(historicoQuery.data ?? []).map((linha) => (
+                  <li
+                    key={linha.id}
+                    className="grid min-h-10 gap-1.5 border-b border-border py-2.5 last:border-b-0"
+                  >
+                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                      <span className="truncate text-sm font-semibold text-text-strong">
+                        {linha.consulta?.paciente ?? "Paciente"}
                       </span>
-                    ) : null}
-                  </div>
-                  <div className="flex min-h-10 flex-wrap items-start gap-2">
-                    <ConteudoDaLinhaDoHistorico
-                      linha={linha}
-                      timezone={contexto.timezone}
-                      nomeDoProfissional={nomeDoProfissional}
-                    />
-                    <span className="ml-auto font-mono text-xs text-text-secondary tabular-nums">
-                      {momentoNoFuso(contexto.timezone, linha.changed_at)}
-                    </span>
-                  </div>
-                </div>
-              ))
+                      {linha.consulta ? (
+                        <span className="text-xs text-text-secondary">
+                          consulta de{" "}
+                          <span className="cz-num">
+                            {momentoNoFuso(
+                              contexto.timezone,
+                              linha.consulta.starts_at,
+                            )}
+                          </span>
+                          {nomeDoProfissional(linha.consulta.professional_id)
+                            ? ` com ${nomeDoProfissional(linha.consulta.professional_id)}`
+                            : ""}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap items-start gap-2">
+                      <ConteudoDaLinhaDoHistorico
+                        linha={linha}
+                        timezone={contexto.timezone}
+                        nomeDoProfissional={nomeDoProfissional}
+                      />
+                      <span className="ml-auto cz-num text-xs text-text-secondary">
+                        {momentoNoFuso(contexto.timezone, linha.changed_at)}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
             )}
           </div>
         </SheetContent>
@@ -244,7 +286,7 @@ export function AgendaActionsMenu({
 
       {/* Portal no body: com a tela da Agenda print:hidden, um PrintDay
           filho dela nunca imprimiria. */}
-      {imprimindo
+      {imprimindo && dados
         ? createPortal(
             <PrintDay contexto={contexto} dia={dia} dados={dados} />,
             document.body,

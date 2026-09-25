@@ -7,6 +7,12 @@ import { createClient } from "@/lib/supabase/server";
 // Destino dos links de e-mail (convite, recuperacao, confirmacao).
 // Aceita os dois formatos do Supabase: token_hash + type (verifyOtp) e
 // code (PKCE, exchangeCodeForSession). Depois redireciona para `next`.
+//
+// Os modelos de e-mail de supabase/templates mandam token_hash (achado 117):
+// o verifyOtp nao depende do cookie do navegador que pediu o link, entao a
+// recuperacao pedida no computador abre no celular, e o convite (que o
+// GoTrue nao emite em PKCE) nao devolve mais a sessao no fragmento da URL,
+// que esta rota nunca le. O `code` fica para o modelo padrao do Supabase.
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);

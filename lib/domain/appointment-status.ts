@@ -1,4 +1,5 @@
 import type { AppointmentStatus } from "@/lib/design/status";
+import { diaCivil } from "@/lib/domain/horarios";
 
 // Transicoes validas do ciclo de status da consulta (tarefa 2.7). Mapa PURO,
 // usado pela Server Action (que confere de novo) e pelo menu do bloco.
@@ -12,7 +13,10 @@ import type { AppointmentStatus } from "@/lib/design/status";
 // - As duas confirmacoes sao STATUS DISTINTOS (autoria no proprio status).
 // - "compareceu" direto (decisao do dono em 24/09/2026): clinica que nao faz
 //   check-in fecha o dia marcando quem veio, sem passar por Na recepcao e Em
-//   atendimento. Os dois continuam existindo como etapas opcionais.
+//   atendimento. Os dois continuam existindo como etapas opcionais. So a
+//   partir do DIA da consulta no fuso da clinica (comparecimentoLiberado): e
+//   situacao final e desconta sessao de pacote. A Server Action confere de
+//   novo com o horario do banco.
 
 const TRANSICOES: Record<AppointmentStatus, AppointmentStatus[]> = {
   agendado: [
@@ -106,11 +110,85 @@ export function faltaLiberada(startsAt: string | Date, agora: Date): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Compareceu so a partir do dia da consulta
+// ---------------------------------------------------------------------------
+
+export const DICA_COMPARECEU_ANTES_DO_DIA =
+  "Compareceu só pode ser marcado no dia da consulta.";
+
+/**
+ * Compareceu vale a partir do DIA CIVIL da consulta no fuso da clinica (regra
+ * 3.6), nunca pela hora de inicio: paciente que chega adiantado no mesmo dia
+ * continua podendo ser marcado. Consulta de amanha nao: Compareceu e situacao
+ * final e desconta sessao de pacote (achado L11).
+ */
+export function comparecimentoLiberado(
+  timezone: string,
+  startsAt: string | Date,
+  agora: Date,
+): boolean {
+  return diaCivil(timezone, new Date(startsAt)) <= diaCivil(timezone, agora);
+}
+
+/** Saldo de pacote do paciente, como a tela o le para o Compareceu. */
+export type SaldoParaComparecimento = {
+  id: string;
+  procedure_id: string | null;
+  procedure_name: string | null;
+  sessions_total: number;
+  sessions_used: number;
+  /** "aaaa-mm-dd" (coluna date) */
+  expires_at: string | null;
+  created_at: string;
+};
+
+/**
+ * Qual saldo o Compareceu vai descontar. Espelha o gatilho
+ * consumir_sessao_de_pacote: o mesmo procedimento da consulta, com sessao
+ * sobrando e dentro da validade no dia de hoje da clinica, o que vence
+ * primeiro (sem validade por ultimo) e, no empate, o mais antigo. Null quando
+ * nenhum saldo vai ser descontado.
+ */
+export function saldoDescontadoAoComparecer(
+  saldos: readonly SaldoParaComparecimento[],
+  procedureId: string,
+  hojeNaClinica: string,
+): SaldoParaComparecimento | null {
+  const elegiveis = saldos.filter(
+    (saldo) =>
+      saldo.procedure_id === procedureId &&
+      saldo.sessions_used < saldo.sessions_total &&
+      (saldo.expires_at === null || saldo.expires_at >= hojeNaClinica),
+  );
+  elegiveis.sort((a, b) => {
+    if (a.expires_at !== b.expires_at) {
+      if (a.expires_at === null) {
+        return 1;
+      }
+      if (b.expires_at === null) {
+        return -1;
+      }
+      return a.expires_at < b.expires_at ? -1 : 1;
+    }
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  });
+  return elegiveis[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Remarcacao
 // ---------------------------------------------------------------------------
 
 export const DICA_REMARCAR_ENCERRADA =
   "Consulta encerrada não se remarca. Marque uma nova consulta.";
+
+/**
+ * Remarcar nunca deixa a consulta com profissional desativado, nem quando so
+ * o dia ou a hora mudam (achado L12): seria horario novo com quem nao atende
+ * mais. O servidor confere o destino sempre.
+ */
+export const MENSAGEM_PROFISSIONAL_INATIVO =
+  "Este profissional está inativo. Escolha outro.";
 
 /** Consulta com situacao final nao se move: fica registrada onde aconteceu. */
 export function podeRemarcar(status: AppointmentStatus): boolean {
