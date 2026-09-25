@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Revisao de liberacao (24/09/2026), migration 20260924106000:
@@ -102,6 +103,9 @@ beforeAll(async () => {
     .throwOnError();
   clinicaA = clinicas!.find((c) => c.slug.startsWith("iso-a"))!.id as string;
   clinicaB = clinicas!.find((c) => c.slug.startsWith("iso-b"))!.id as string;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3).
+  await criarNumeroDeTeste(admin, clinicaA);
+  await criarNumeroDeTeste(admin, clinicaB);
 
   adminAId = await criarUsuario(
     `iso-admin-${sufixo}@teste.dev`,

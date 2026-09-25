@@ -1,5 +1,10 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 
+import {
+  lerPoliticaDeEnvio,
+  type NumerosDasAutomaticas,
+} from "@/components/automacoes/numeros-de-envio";
 import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
@@ -12,9 +17,42 @@ import {
 } from "@/lib/queries/automacoes";
 import { fetchJornada } from "@/lib/queries/jornada";
 import { fetchReguasDaClinica } from "@/lib/queries/confirmacoes";
+import { fetchNumerosDaClinica } from "@/lib/queries/conversations";
 import { createClient } from "@/lib/supabase/server";
 
 import { AutomacoesClient } from "./automacoes-client";
+
+// Os numeros ATIVOS e a politica das mensagens automaticas (varios numeros
+// por clinica, docs/07, Fase 4), pela SESSAO: todo membro ativo le as duas
+// tabelas (RLS). Falha de leitura vira null, e o cartao mostra o erro sem
+// derrubar a tela inteira: as reguas nao dependem disto.
+async function fetchNumerosDasAutomaticas(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<NumerosDasAutomaticas | null> {
+  try {
+    const [numeros, politica] = await Promise.all([
+      fetchNumerosDaClinica(supabase, clinicId),
+      supabase
+        .from("whatsapp_envio_automatico")
+        .select("modo, conta_fixa_id")
+        .eq("clinic_id", clinicId)
+        .maybeSingle(),
+    ]);
+    if (politica.error) {
+      return null;
+    }
+    return {
+      numeros,
+      politica: lerPoliticaDeEnvio(
+        politica.data as { modo: unknown; conta_fixa_id: unknown } | null,
+        numeros,
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
 
 // Tela 7, Automacoes (tarefa 4.8): onde a clinica edita as reguas. Sem
 // auditarLeituraDePaciente de proposito: a tela mostra configuracao e
@@ -31,13 +69,15 @@ export default async function AutomacoesPage({
   }
 
   const supabase = await createClient();
-  const [reguas, volumes, excecoes, followups, jornada] = await Promise.all([
-    fetchReguasDaClinica(supabase, active.clinicId),
-    fetchVolumesDaEstimativa(supabase, active.clinicId),
-    fetchExcecoesDeConfirmacao(supabase, active.clinicId),
-    fetchFollowups(supabase, active.clinicId),
-    fetchJornada(supabase, active.clinicId),
-  ]);
+  const [reguas, volumes, excecoes, followups, jornada, numeros] =
+    await Promise.all([
+      fetchReguasDaClinica(supabase, active.clinicId),
+      fetchVolumesDaEstimativa(supabase, active.clinicId),
+      fetchExcecoesDeConfirmacao(supabase, active.clinicId),
+      fetchFollowups(supabase, active.clinicId),
+      fetchJornada(supabase, active.clinicId),
+      fetchNumerosDasAutomaticas(supabase, active.clinicId),
+    ]);
   const { aba } = await searchParams;
 
   return (
@@ -60,6 +100,7 @@ export default async function AutomacoesPage({
           .filter((etapa) => etapa.papel !== "perdido")
           .map((etapa) => ({ chave: etapa.chave, nome: etapa.nome }))}
         volumes={volumes}
+        numeros={numeros}
         podeEditar={canEdit(active.role, "automacoes")}
         dicaSemPermissao={
           permissionHint(active.role, "automacoes") ??

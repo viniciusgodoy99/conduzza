@@ -4,7 +4,9 @@ import {
   aplicarLinhaDoNumero,
   aplicarVerificacao,
   assinaturaDaConexao,
+  avisoDaVerificacao,
   lerVerificacao,
+  numerosParaContar,
   numerosVigiados,
   textoDaFaixa,
   type NumeroDaFaixa,
@@ -99,7 +101,36 @@ describe("textoDaFaixa", () => {
         connection_status: "desconectado",
       }),
     ];
-    expect(textoDaFaixa(lista)?.titulo).toBe("2 números desconectados");
+    // Fase 4 (docs/07): a faixa NOMEIA os que cairam (ate 3).
+    expect(textoDaFaixa(lista)?.titulo).toBe(
+      "WhatsApp Número principal e Recepção desconectados",
+    );
+  });
+
+  it("com mais de 3 caidos, conta em vez de nomear", () => {
+    const lista = ["A", "B", "C", "D"].map((nome, indice) =>
+      numero({
+        id: `0000000${indice}-0000-4000-8000-000000000000`,
+        nome,
+        principal: indice === 0,
+        connection_status: "desconectado",
+      }),
+    );
+    expect(textoDaFaixa(lista)?.titulo).toBe("4 números desconectados");
+  });
+
+  it("com tres caidos, nomeia na forma falada", () => {
+    const lista = ["Recepção", "Centro", "Sul"].map((nome, indice) =>
+      numero({
+        id: `0000000${indice}-0000-4000-8000-000000000000`,
+        nome,
+        principal: indice === 0,
+        connection_status: "desconectado",
+      }),
+    );
+    expect(textoDaFaixa(lista)?.titulo).toBe(
+      "WhatsApp Recepção, Centro e Sul desconectados",
+    );
   });
 
   it("numero novo que nunca conectou nao acende a faixa", () => {
@@ -131,11 +162,117 @@ describe("textoDaFaixa", () => {
       lista.slice(0, 1),
       [lista[0]!, numero({ id: RECEPCAO, principal: false, nome: "Recepção" })],
     ]) {
-      const texto = textoDaFaixa(caso);
+      const texto = textoDaFaixa(caso, { [PRINCIPAL]: 2, [RECEPCAO]: 1 });
       expect(`${texto?.titulo} ${texto?.detalhe}`).not.toContain(
         String.fromCharCode(0x2014),
       );
     }
+  });
+});
+
+describe("mensagens automaticas esperando na faixa (Fase 4)", () => {
+  const recepcaoCaida = numero({
+    id: RECEPCAO,
+    nome: "Recepção",
+    principal: false,
+    connection_status: "desconectado",
+  });
+
+  it("com um numero so, o texto de sempre, mesmo com contagem", () => {
+    expect(
+      textoDaFaixa([numero({ connection_status: "desconectado" })], {
+        [PRINCIPAL]: 7,
+      }),
+    ).toEqual({
+      titulo: "WhatsApp desconectado",
+      detalhe: "os pacientes não estão sendo atendidos",
+    });
+  });
+
+  it("nomeia o numero e diz quantas esperam a reconexao", () => {
+    expect(textoDaFaixa([numero(), recepcaoCaida], { [RECEPCAO]: 3 })).toEqual({
+      titulo: "WhatsApp Recepção desconectado",
+      detalhe:
+        "os pacientes deste número não estão sendo atendidos e 3 mensagens automáticas esperam a reconexão",
+    });
+  });
+
+  it("uma mensagem so, no singular", () => {
+    expect(
+      textoDaFaixa([numero(), recepcaoCaida], { [RECEPCAO]: 1 })?.detalhe,
+    ).toBe(
+      "os pacientes deste número não estão sendo atendidos e 1 mensagem automática espera a reconexão",
+    );
+  });
+
+  it("zero, ou sem contagem, nao fala da fila", () => {
+    const esperado = "os pacientes deste número não estão sendo atendidos";
+    expect(
+      textoDaFaixa([numero(), recepcaoCaida], { [RECEPCAO]: 0 })?.detalhe,
+    ).toBe(esperado);
+    expect(textoDaFaixa([numero(), recepcaoCaida])?.detalhe).toBe(esperado);
+  });
+
+  it("so conta o que caiu: a contagem do numero conectado nao entra", () => {
+    expect(
+      textoDaFaixa([numero(), recepcaoCaida], {
+        [PRINCIPAL]: 9,
+        [RECEPCAO]: 2,
+      })?.detalhe,
+    ).toContain(" e 2 mensagens automáticas esperam a reconexão");
+  });
+
+  it("com dois caidos, soma; sem a contagem de um deles, nao afirma total", () => {
+    const lista = [
+      numero({ connection_status: "desconectado" }),
+      recepcaoCaida,
+    ];
+    expect(
+      textoDaFaixa(lista, { [PRINCIPAL]: 2, [RECEPCAO]: 3 })?.detalhe,
+    ).toBe(
+      "os pacientes destes números não estão sendo atendidos e 5 mensagens automáticas esperam a reconexão",
+    );
+    expect(textoDaFaixa(lista, { [PRINCIPAL]: 2 })?.detalhe).toBe(
+      "os pacientes destes números não estão sendo atendidos",
+    );
+  });
+});
+
+describe("numerosParaContar", () => {
+  it("com um numero so, ninguem consulta a fila", () => {
+    expect(
+      numerosParaContar([numero({ connection_status: "desconectado" })]),
+    ).toEqual([]);
+  });
+
+  it("com varios, so os vigiados que estao fora do ar", () => {
+    const lista = [
+      numero(),
+      numero({
+        id: RECEPCAO,
+        nome: "Recepção",
+        principal: false,
+        connection_status: "desconectado",
+      }),
+      // Nunca conectou: nao e vigiado (D6), nao conta.
+      numero({
+        id: NOVO,
+        nome: "Novo",
+        principal: false,
+        connected_at: null,
+        connection_status: "desconectado",
+      }),
+    ];
+    expect(numerosParaContar(lista)).toEqual([RECEPCAO]);
+  });
+
+  it("tudo conectado: nada a contar", () => {
+    expect(
+      numerosParaContar([
+        numero(),
+        numero({ id: RECEPCAO, nome: "Recepção", principal: false }),
+      ]),
+    ).toEqual([]);
   });
 });
 
@@ -311,5 +448,136 @@ describe("lerVerificacao e aplicarVerificacao", () => {
     for (const resposta of [null, undefined, 42, "x", { outra: true }]) {
       expect(aplicarVerificacao(lista, lerVerificacao(resposta))).toBe(lista);
     }
+  });
+});
+
+// O motivo da recusa do celular no "Verificar conexao" (continuacao do
+// achado M[0] da revisao das Fases 3 e 4): vai no complemento do aviso, e
+// nao no texto da faixa.
+describe("motivo da recusa na verificacao", () => {
+  const OUTRA_CONTA =
+    "Este número já está conectado em outra conta do Conduzza. Fale com o suporte.";
+  // Pelo codigo, para o caractere nao aparecer escrito no fonte.
+  const TRAVESSAO = String.fromCharCode(0x2014);
+
+  it("lerVerificacao le o motivo de cada numero, so quando e texto", () => {
+    const lida = lerVerificacao({
+      numeros: [
+        {
+          id: PRINCIPAL,
+          connection_status: "desconectado",
+          motivo: OUTRA_CONTA,
+        },
+        { id: RECEPCAO, connection_status: "desconectado", motivo: "" },
+        { id: NOVO, connection_status: "desconectado", motivo: 7 },
+      ],
+    });
+    expect(lida.linhas.map((linha) => linha.motivo)).toEqual([
+      OUTRA_CONTA,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("um numero so: o motivo vai como veio, no complemento do aviso", () => {
+    const lista = [numero({ connection_status: "desconectado" })];
+    const aviso = avisoDaVerificacao(
+      lista,
+      lerVerificacao({
+        status: "desconectado",
+        numeros: [
+          {
+            id: PRINCIPAL,
+            connection_status: "desconectado",
+            motivo: OUTRA_CONTA,
+          },
+        ],
+      }),
+    );
+    expect(aviso).toEqual({
+      mensagem: "Ainda desconectado. Abra Configurações para reconectar.",
+      motivo: OUTRA_CONTA,
+    });
+    // A faixa continua curta: o motivo nao entra no texto dela.
+    expect(JSON.stringify(textoDaFaixa(lista))).not.toContain(OUTRA_CONTA);
+  });
+
+  it("varios numeros: cada motivo leva o nome do numero na frente", () => {
+    const lista = [
+      numero(),
+      numero({ id: RECEPCAO, nome: "Recepção", principal: false }),
+      numero({ id: NOVO, nome: "Centro", principal: false }),
+    ];
+    const aviso = avisoDaVerificacao(
+      lista,
+      lerVerificacao({
+        numeros: [
+          { id: PRINCIPAL, connection_status: "conectado" },
+          {
+            id: RECEPCAO,
+            connection_status: "desconectado",
+            motivo: "Este número já está conectado como Centro.",
+          },
+          { id: NOVO, connection_status: "desconectado" },
+        ],
+      }),
+    );
+    expect(aviso).toEqual({
+      mensagem:
+        "WhatsApp Recepção e Centro desconectados. Abra Configurações para reconectar.",
+      motivo: "Recepção: Este número já está conectado como Centro.",
+    });
+    expect(JSON.stringify(aviso)).not.toContain(TRAVESSAO);
+  });
+
+  it("sem motivo, o aviso e o de antes", () => {
+    const lista = [numero({ connection_status: "desconectado" })];
+    expect(
+      avisoDaVerificacao(lista, lerVerificacao({ status: "desconectado" })),
+    ).toEqual({
+      mensagem: "Ainda desconectado. Abra Configurações para reconectar.",
+      motivo: null,
+    });
+  });
+
+  it("numero que a faixa nao nomeia (nunca conectou e nao e o principal) nao entra no motivo", () => {
+    const lista = [
+      numero({ connection_status: "desconectado" }),
+      numero({
+        id: NOVO,
+        nome: "Novo",
+        principal: false,
+        connected_at: null,
+      }),
+    ];
+    const aviso = avisoDaVerificacao(
+      lista,
+      lerVerificacao({
+        numeros: [
+          { id: PRINCIPAL, connection_status: "desconectado" },
+          {
+            id: NOVO,
+            connection_status: "desconectado",
+            motivo: OUTRA_CONTA,
+          },
+        ],
+      }),
+    );
+    expect(aviso?.mensagem).toBe(
+      "WhatsApp Número principal desconectado. Abra Configurações para reconectar.",
+    );
+    expect(aviso?.motivo).toBeNull();
+  });
+
+  it("a verificacao que apaga a faixa nao abre aviso nenhum", () => {
+    const lista = [numero({ connection_status: "desconectado" })];
+    expect(
+      avisoDaVerificacao(
+        lista,
+        lerVerificacao({
+          numeros: [{ id: PRINCIPAL, connection_status: "conectado" }],
+        }),
+      ),
+    ).toBeNull();
   });
 });

@@ -30,6 +30,7 @@ import {
 } from "@/components/confirmacoes/lista-confirmacoes";
 import { ListaFaltas } from "@/components/confirmacoes/lista-faltas";
 import { PainelRegua } from "@/components/confirmacoes/painel-regua";
+import { resumoDaCobranca } from "@/components/confirmacoes/resumo-da-cobranca";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import {
@@ -308,24 +309,18 @@ export function ConfirmacoesClient({
         toast.error(resultado.error ?? "Não foi possível cobrar agora.");
         return;
       }
-      const enfileirados = resultado.enfileirados ?? 0;
-      const pulados = resultado.pulados_sem_autorizacao ?? 0;
-      const partes: string[] = [
-        enfileirados === 1
-          ? "1 cobrança na fila de envio"
-          : `${enfileirados} cobranças na fila de envio`,
-      ];
-      if (pulados > 0) {
-        partes.push(
-          pulados === 1
-            ? "1 pulada por falta de autorização"
-            : `${pulados} puladas por falta de autorização`,
-        );
-      }
-      if (enfileirados > 0) {
-        toast.success(partes.join(", "));
+      // Com varios numeros, parte pode ter ficado de fora por numero
+      // desconectado: o aviso diz quantas, qual numero e o que fazer.
+      const resumo = resumoDaCobranca(resultado);
+      if (resumo.tom === "success") {
+        toast.success(resumo.titulo);
+      } else if (resumo.detalhe) {
+        toast.warning(resumo.titulo, {
+          description: resumo.detalhe,
+          duration: 10_000,
+        });
       } else {
-        toast.warning(partes.join(", "));
+        toast.warning(resumo.titulo);
       }
       await atualizarDia();
     });

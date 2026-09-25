@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import {
   afterAll,
@@ -32,7 +33,7 @@ import {
   type NumeroDeTeste,
   type OpcoesDoNumeroDeTeste,
 } from "../rls/numeros";
-import { adminClient, stackCredentials } from "../rls/stack";
+import { adminClient, anonClient, stackCredentials } from "../rls/stack";
 
 // Varios numeros de WhatsApp por clinica, FASE 2 (o codigo por numero),
 // contra o banco REAL. Desenho em docs/07_multiplos_numeros_whatsapp.md.
@@ -43,13 +44,14 @@ import { adminClient, stackCredentials } from "../rls/stack";
 // celular, o recibo, o apagamento, a midia, o status e o envio seguem esse
 // numero. Tudo pelas portas reais: o handler do webhook (POST da rota), o
 // executor da fila (executarJobComPosse, com o claim feito a mao so para o
-// job do teste) e o orquestrador de envio.
+// job do teste), o orquestrador de envio e as Server Actions do atendimento
+// (apagar, reabrir e citar), que rodam de verdade com a sessao trocada por
+// um usuario real logado (so getSessionContext e createClient sao dublados:
+// fora do Next nao ha cookie).
 //
-// NESTA FASE o unique temporario whatsapp_account_uma_por_clinica ainda
-// impede o segundo numero numa clinica. O que vale com UM numero e testado
-// agora, e o "outro numero" dos casos negativos e o de outra clinica. Os
-// casos que exigem dois numeros na MESMA clinica ficam em it.skip, prontos,
-// e ativam na Fase 3 (quando o unique sai).
+// Desde o contrato da Fase 3 (migration 20260925140000) a clinica pode ter
+// dois numeros: os casos negativos rodam com o "outro numero" em outra
+// clinica E com o segundo numero da MESMA clinica.
 //
 // Clinicas e_de_teste: o motor de producao as ignora, entao nenhum job
 // enfileirado aqui sai sozinho. Provedor 'fake' em todo numero: nenhum teste
@@ -420,9 +422,9 @@ describe("webhook: qual número está chamando", () => {
     expect(depois?.connection_status).toBe("desconectado");
   });
 
-  // Ativa na Fase 3: dois numeros na mesma clinica, a URL antiga com o
-  // segredo do SEGUNDO entrega no segundo, nao no principal.
-  it.skip("URL legada com o segredo do segundo número entrega no segundo", async () => {
+  // Dois numeros na mesma clinica: a URL antiga com o segredo do SEGUNDO
+  // entrega no segundo, nao no principal.
+  it("URL legada com o segredo do segundo número entrega no segundo", async () => {
     const { clinicId, numero: principal } = await clinicaComNumero("legada-2");
     const segundo = await criarNumeroDeTeste(admin, clinicId, {
       nome: "Segundo",
@@ -435,8 +437,8 @@ describe("webhook: qual número está chamando", () => {
     expect(corpo.whatsapp_account_id).not.toBe(principal.id);
   });
 
-  // Ativa na Fase 3: o token da instancia do numero A nao passa na URL do B.
-  it.skip("token do número A na URL do número B é 401", async () => {
+  // O token da instancia do numero A nao passa na URL do B, da mesma clinica.
+  it("token do número A na URL do número B é 401", async () => {
     const { clinicId } = await clinicaComNumero("token-2", {
       instance_token: `tok-a-${sufixo}`,
     });
@@ -483,8 +485,8 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
     expect(linha(b.numero.id)?.disconnected_at).toBeNull();
   });
 
-  // Ativa na Fase 3: dois numeros na mesma clinica.
-  it.skip("a queda do número A não derruba o número B da mesma clínica", async () => {
+  // Dois numeros na mesma clinica.
+  it("a queda do número A não derruba o número B da mesma clínica", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("status-2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
     await postar(caminhoDoWebhook(a), {
@@ -540,10 +542,10 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
     expect(espera(conversas[1]!)).toBe(true);
   });
 
-  // Ativa na Fase 3: o mesmo paciente com uma conversa em cada numero da
-  // clinica (decisao 1 do dono). A resposta dada pelo celular do A nao
-  // responde a pergunta feita no B.
-  it.skip("eco do celular do número A não mexe na conversa do mesmo paciente no B", async () => {
+  // O mesmo paciente com uma conversa em cada numero da clinica (decisao 1
+  // do dono). A resposta dada pelo celular do A nao responde a pergunta
+  // feita no B.
+  it("eco do celular do número A não mexe na conversa do mesmo paciente no B", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("eco-celular-2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
     const phone = telefone();
@@ -597,10 +599,10 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
     expect((await mensagensComWaId(waId))[0]?.delivery_status).toBe("lida");
   });
 
-  // Ativa na Fase 3: o recibo que chega pela instancia B nao marca a linha
-  // do numero A, mesmo com o mesmo wa_message_id (numero A escrevendo para o
-  // numero B). A unicidade por numero e da Fase 5; aqui so o filtro.
-  it.skip("recibo que chega pelo número B não marca a mensagem do número A", async () => {
+  // O recibo que chega pela instancia B nao marca a linha do numero A,
+  // mesmo com o mesmo wa_message_id (numero A escrevendo para o numero B). A
+  // unicidade por numero e da Fase 5; aqui so o filtro.
+  it("recibo que chega pelo número B não marca a mensagem do número A", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("recibo-2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
     const contactId = await contatoComConsentimento(clinicId, telefone());
@@ -631,8 +633,8 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
     expect((await mensagensComWaId(waId))[0]?.deleted_at).not.toBeNull();
   });
 
-  // Ativa na Fase 3: dois numeros na mesma clinica.
-  it.skip("apagamento que chega pelo número B não apaga a mensagem do número A", async () => {
+  // Dois numeros na mesma clinica.
+  it("apagamento que chega pelo número B não apaga a mensagem do número A", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("apagar-2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
     const contactId = await contatoComConsentimento(clinicId, telefone());
@@ -701,7 +703,11 @@ describe("mídia e apagar pelo número", () => {
     );
   });
 
-  it("apagar no WhatsApp usa a instância do número que enviou; número de outra clínica não abre nada", async () => {
+  // O que ele prova: carregarInstancia resolve a instancia pelo numero. A
+  // acao de apagar de verdade (o numero vindo da mensagem, o numero removido,
+  // a mensagem sem numero) roda em "acoes do atendimento pelo numero", mais
+  // abaixo.
+  it("carregarInstancia resolve a instância pelo número da mensagem; número de outra clínica devolve referência vazia", async () => {
     const instancia = `fake-f2-apagar-${sufixo}`;
     const a = await clinicaComNumero("revogar", {
       instance_id: instancia,
@@ -716,8 +722,8 @@ describe("mídia e apagar pelo número", () => {
     const waId = `num2:${sufixo}:revogar`;
     await mensagemEnviada(a.clinicId, conversa, waId);
 
-    // O que a acao de apagar faz: o numero vem da MENSAGEM (copia imutavel do
-    // numero da conversa), e a instancia e a daquele numero.
+    // O que a acao de apagar usa: o numero da MENSAGEM (copia imutavel do
+    // numero da conversa) e a instancia daquele numero.
     const [linha] = await mensagensComWaId(waId);
     expect(linha?.whatsapp_account_id).toBe(a.numero.id);
     const { provider, ref } = await carregarInstancia(
@@ -742,15 +748,343 @@ describe("mídia e apagar pelo número", () => {
   });
 });
 
+describe("ações do atendimento pelo número (a Server Action de verdade)", () => {
+  // Achado N[3] da revisao da Fase 2: nenhum teste chamava as acoes do
+  // atendimento. Aqui apagar, reabrir e citar rodam pela acao de producao
+  // (app/(app)/atendimento/actions.ts). Fora do Next nao ha cookie, entao so
+  // getSessionContext e createClient sao dublados, com um usuario REAL logado
+  // por senha: o JWT, a RLS e pode_apagar_mensagem sao os de verdade.
+  //
+  // Cada caso usa DOIS numeros na mesma clinica (contrato da Fase 3) e age no
+  // SEGUNDO, que nao e o principal: trocar a fonte do numero pelo principal
+  // quebra o teste. A mensagem sem numero nao existe mais no banco (NOT NULL
+  // do contrato); o ramo da acao que a trata e provado em
+  // tests/unit/atendimento/acoes-por-numero.test.ts.
+  //
+  // vi.doMock (sem hoist) vale so para o que e importado DEPOIS dele: os
+  // outros blocos deste arquivo nao enxergam a dublagem.
+  const senha = `NumerosF2!${sufixo}`;
+  const clinicasDoBloco: string[] = [];
+  let usuarioId = "";
+  let clienteDaSessao: SupabaseClient | null = null;
+  const sessaoDaAcao: {
+    userId: string;
+    userName: string;
+    active: {
+      clinicId: string;
+      clinicName: string;
+      slug: string;
+      timezone: string;
+      role: string;
+      status: string;
+    } | null;
+  } = { userId: "", userName: "Recepção F2", active: null };
+  let acoes: typeof import("@/app/(app)/atendimento/actions");
+
+  beforeAll(async () => {
+    const email = `num-f2-acoes-${sufixo}@teste.dev`;
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password: senha,
+      email_confirm: true,
+      user_metadata: { name: "Recepção F2" },
+    });
+    if (error || !data.user) {
+      throw new Error(`criar usuário: ${error?.message ?? "sem usuário"}`);
+    }
+    usuarioId = data.user.id;
+    sessaoDaAcao.userId = usuarioId;
+    const cliente = anonClient();
+    const { error: erroDeLogin } = await cliente.auth.signInWithPassword({
+      email,
+      password: senha,
+    });
+    if (erroDeLogin) {
+      throw new Error(`login: ${erroDeLogin.message}`);
+    }
+    clienteDaSessao = cliente;
+
+    vi.doMock("@/lib/auth/active-clinic", () => ({
+      getSessionContext: async () => sessaoDaAcao,
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      createClient: async () => clienteDaSessao,
+    }));
+    vi.doMock("next/cache", () => ({ revalidatePath: () => undefined }));
+    acoes = await import("@/app/(app)/atendimento/actions");
+  });
+
+  afterAll(async () => {
+    vi.doUnmock("@/lib/auth/active-clinic");
+    vi.doUnmock("@/lib/supabase/server");
+    vi.doUnmock("next/cache");
+    // As clinicas antes do usuario: autoria e apagamento apontam para ele.
+    for (const clinicId of clinicasDoBloco) {
+      await admin.from("clinic").delete().eq("id", clinicId);
+    }
+    if (usuarioId) {
+      await admin.auth.admin.deleteUser(usuarioId);
+    }
+  });
+
+  /** A clinica passa a ser a ativa da sessao, com o usuario como administrador. */
+  async function entrarNa(clinicId: string): Promise<void> {
+    clinicasDoBloco.push(clinicId);
+    await admin
+      .from("clinic_member")
+      .insert({
+        clinic_id: clinicId,
+        user_id: usuarioId,
+        role: "admin",
+        status: "ativo",
+      })
+      .throwOnError();
+    sessaoDaAcao.active = {
+      clinicId,
+      clinicName: "Clínica F2",
+      slug: `num-f2-${clinicId.slice(0, 8)}`,
+      timezone: "America/Fortaleza",
+      role: "admin",
+      status: "ativo",
+    };
+  }
+
+  /** A clinica com o principal e um segundo numero, cada um com instancia. */
+  async function clinicaComDoisNumeros(nome: string): Promise<{
+    clinicId: string;
+    principal: NumeroDeTeste;
+    segundo: NumeroDeTeste;
+    instanciaDoSegundo: string;
+  }> {
+    const { clinicId, numero: principal } = await clinicaComNumero(nome, {
+      instance_id: `fake-f2-${nome}-a-${sufixo}`,
+      instance_token: `tok-${nome}-a-${sufixo}`,
+    });
+    const instanciaDoSegundo = `fake-f2-${nome}-b-${sufixo}`;
+    const segundo = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "Segundo",
+      instance_id: instanciaDoSegundo,
+      instance_token: `tok-${nome}-b-${sufixo}`,
+    });
+    expect(segundo.principal).toBe(false);
+    await entrarNa(clinicId);
+    return { clinicId, principal, segundo, instanciaDoSegundo };
+  }
+
+  /** Conversa resolvida do contato naquele numero, inserida direto. */
+  async function conversaResolvida(
+    clinicId: string,
+    contactId: string,
+    accountId: string,
+  ): Promise<string> {
+    const { data } = await admin
+      .from("conversation")
+      .insert({
+        clinic_id: clinicId,
+        contact_id: contactId,
+        whatsapp_account_id: accountId,
+        status: "resolvida",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    return data!.id as string;
+  }
+
+  /** Mensagem do PACIENTE numa conversa (herda o numero da conversa). */
+  async function mensagemRecebida(
+    clinicId: string,
+    conversationId: string,
+    waMessageId: string,
+  ): Promise<string> {
+    const { data } = await admin
+      .from("message")
+      .insert({
+        clinic_id: clinicId,
+        conversation_id: conversationId,
+        wa_message_id: waMessageId,
+        direction: "entrada",
+        author: "paciente",
+        content_type: "texto",
+        body: "Posso ir amanhã?",
+        billable: false,
+        cost_cents: 0,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    return data!.id as string;
+  }
+
+  it("apagar para todos revoga pela instância do número que ENVIOU (o segundo, não o principal) e grava", async () => {
+    const { clinicId, segundo, instanciaDoSegundo } =
+      await clinicaComDoisNumeros("acao-apagar");
+    const contactId = await contatoComConsentimento(clinicId, telefone());
+    const conversa = await conversaNoNumero(clinicId, contactId, segundo.id);
+    const waId = `num2:${sufixo}:acao-apagar`;
+    const messageId = await mensagemEnviada(clinicId, conversa, waId);
+    expect((await mensagensComWaId(waId))[0]?.whatsapp_account_id).toBe(
+      segundo.id,
+    );
+    resetFakeProvider();
+    const revogar = vi.spyOn(FakeProvider.prototype, "deleteMessage");
+
+    const resultado = await acoes.apagarMensagemAction(messageId, "todos");
+
+    expect(resultado).toEqual({ ok: true });
+    expect(revogar).toHaveBeenCalledTimes(1);
+    const [ref, idRevogado] = revogar.mock.calls[0]!;
+    expect(idRevogado).toBe(waId);
+    expect(ref).toMatchObject({
+      clinicId,
+      accountId: segundo.id,
+      instanceId: instanciaDoSegundo,
+      instanceToken: segundo.instanceToken,
+    });
+    expect(fakeDeletedMessages()).toEqual([waId]);
+    expect((await mensagensComWaId(waId))[0]?.deleted_at).not.toBeNull();
+  });
+
+  it("apagar para todos com o número que enviou removido não revoga e a mensagem continua", async () => {
+    const { clinicId, segundo } = await clinicaComDoisNumeros("acao-removido");
+    const contactId = await contatoComConsentimento(clinicId, telefone());
+    const conversa = await conversaNoNumero(clinicId, contactId, segundo.id);
+    const waId = `num2:${sufixo}:acao-removido`;
+    const messageId = await mensagemEnviada(clinicId, conversa, waId);
+    await admin
+      .rpc("remover_numero", {
+        p_clinic_id: clinicId,
+        p_account_id: segundo.id,
+        p_removido_por: usuarioId,
+      })
+      .throwOnError();
+    const revogar = vi.spyOn(FakeProvider.prototype, "deleteMessage");
+
+    const resultado = await acoes.apagarMensagemAction(messageId, "todos");
+
+    // Nem cai no principal, que continua ativo: o wa_message_id nao existe
+    // no chat dele.
+    expect(resultado).toEqual({
+      ok: false,
+      error:
+        "Esta mensagem saiu por um número que foi removido da clínica. Você ainda pode apagar só aqui.",
+    });
+    expect(revogar).not.toHaveBeenCalled();
+    expect((await mensagensComWaId(waId))[0]?.deleted_at).toBeNull();
+  });
+
+  it("reabrir leva à conversa aberta do MESMO número, com o paciente aberto nos dois números", async () => {
+    const { clinicId, principal, segundo } =
+      await clinicaComDoisNumeros("acao-reabrir");
+    const contactId = await contatoComConsentimento(clinicId, telefone());
+    const antigaNoSegundo = await conversaResolvida(
+      clinicId,
+      contactId,
+      segundo.id,
+    );
+    const abertaNoPrincipal = await conversaNoNumero(
+      clinicId,
+      contactId,
+      principal.id,
+    );
+    const abertaNoSegundo = await conversaNoNumero(
+      clinicId,
+      contactId,
+      segundo.id,
+    );
+    expect(
+      new Set([antigaNoSegundo, abertaNoPrincipal, abertaNoSegundo]).size,
+    ).toBe(3);
+
+    const resultado = await acoes.reabrirConversaAction(antigaNoSegundo);
+
+    // Antes do filtro por numero, o .maybeSingle() quebrava com as duas
+    // abertas e a atendente ficava sem destino (achado 7 do docs/07).
+    expect(resultado).toEqual({
+      ok: false,
+      error: "Este paciente já tem uma conversa aberta.",
+      conversaAbertaId: abertaNoSegundo,
+    });
+    const { data: depois } = await admin
+      .from("conversation")
+      .select("status")
+      .eq("id", antigaNoSegundo)
+      .single()
+      .throwOnError();
+    expect(depois!.status).toBe("resolvida");
+  });
+
+  it("citar: a resposta sai pelo número da conversa com o replyid da citada; mensagem da conversa do outro número é recusada", async () => {
+    const { clinicId, principal, segundo } =
+      await clinicaComDoisNumeros("acao-citar");
+    const contactId = await contatoComConsentimento(clinicId, telefone());
+    const noPrincipal = await conversaNoNumero(
+      clinicId,
+      contactId,
+      principal.id,
+    );
+    const noSegundo = await conversaNoNumero(clinicId, contactId, segundo.id);
+    const doOutroNumero = await mensagemRecebida(
+      clinicId,
+      noPrincipal,
+      `num2:${sufixo}:citar-principal`,
+    );
+    await admin
+      .from("conversation")
+      .update({ status: "em_atendimento", assignee_user_id: usuarioId })
+      .eq("id", noSegundo)
+      .throwOnError();
+    const waCitada = `num2:${sufixo}:citar-segundo`;
+    const citada = await mensagemRecebida(clinicId, noSegundo, waCitada);
+    resetFakeProvider();
+
+    // O mesmo paciente, no outro numero da clinica: o wa_message_id dela nao
+    // existe no chat do segundo numero (D2).
+    const recusada = await acoes.sendMessageAction(
+      noSegundo,
+      "Pode sim.",
+      doOutroNumero,
+    );
+    expect(recusada).toEqual({
+      ok: false,
+      error: "A mensagem citada não é desta conversa.",
+    });
+    expect(fakeSentMessages()).toHaveLength(0);
+
+    const resultado = await acoes.sendMessageAction(
+      noSegundo,
+      "Pode sim.",
+      citada,
+    );
+    expect(resultado.ok).toBe(true);
+    const enviadas = fakeSentMessages();
+    expect(enviadas).toHaveLength(1);
+    expect(enviadas[0]).toMatchObject({
+      clinicId,
+      accountId: segundo.id,
+      replyToWaMessageId: waCitada,
+    });
+    const { data: gravada } = await admin
+      .from("message")
+      .select("whatsapp_account_id, reply_to_message_id")
+      .eq("id", resultado.messageId!)
+      .single()
+      .throwOnError();
+    expect(gravada).toEqual({
+      whatsapp_account_id: segundo.id,
+      reply_to_message_id: citada,
+    });
+  });
+});
+
 describe("envio pelo número da conversa", () => {
   // O envio com UM numero (sai pelo numero da conversa, conta_divergente,
   // numero_removido, carregarInstancia) esta provado contra o banco em
   // tests/integration/envio-por-numero.test.ts, do mesmo orquestrador. Aqui
-  // fica so o caso de dois numeros, que depende da Fase 3.
+  // fica so o caso de dois numeros na mesma clinica.
 
-  // Ativa na Fase 3: a conversa do numero B sai pelo B, mesmo com o A sendo
-  // o principal.
-  it.skip("conversa do segundo número sai pelo segundo, não pelo principal", async () => {
+  // A conversa do numero B sai pelo B, mesmo com o A sendo o principal.
+  it("conversa do segundo número sai pelo segundo, não pelo principal", async () => {
     const { clinicId } = await clinicaComNumero("envio-2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
     const contactId = await contatoComConsentimento(clinicId, telefone());
@@ -874,9 +1208,9 @@ describe("régua e eco pelo número", () => {
     );
   });
 
-  // Ativa na Fase 3: com o A (carimbado) desconectado e o B conectado, o
-  // toque espera o A em vez de sair pelo B.
-  it.skip("toque carimbado no número A desconectado não sai pelo B conectado", async () => {
+  // Com o A (carimbado) desconectado e o B conectado, o toque espera o A em
+  // vez de sair pelo B.
+  it("toque carimbado no número A desconectado não sai pelo B conectado", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("regua-2", {
       connection_status: "desconectado",
     });
@@ -1046,10 +1380,10 @@ describe("régua e eco pelo número", () => {
     }
   });
 
-  // Ativa na Fase 3 (D4): com as automaticas fixas no numero B, o eco da
-  // resposta que chegou pelo A sai pelo A, porque responde a uma mensagem
-  // que o paciente mandou para o A.
-  it.skip("modo fixo em outro número: o eco sai mesmo assim pelo número que recebeu", async () => {
+  // D4: com as automaticas fixas no numero B, o eco da resposta que chegou
+  // pelo A sai pelo A, porque responde a uma mensagem que o paciente mandou
+  // para o A.
+  it("modo fixo em outro número: o eco sai mesmo assim pelo número que recebeu", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("eco-toque-2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
     await admin
@@ -1076,10 +1410,9 @@ describe("régua e eco pelo número", () => {
     }
   });
 
-  // Ativa na Fase 3 (D2): o "1" sem citacao so vale para o toque enviado
-  // pelo MESMO numero. O toque saiu pelo A; o "1" que chega pelo B nao
-  // confirma nada.
-  it.skip("resposta curta pelo número B não confirma o toque enviado pelo A", async () => {
+  // D2: o "1" sem citacao so vale para o toque enviado pelo MESMO numero. O
+  // toque saiu pelo A; o "1" que chega pelo B nao confirma nada.
+  it("resposta curta pelo número B não confirma o toque enviado pelo A", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("d2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
     const { phone, appointmentId } = await consultaTocada(clinicId, a.id);

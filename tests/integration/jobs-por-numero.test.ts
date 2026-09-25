@@ -19,10 +19,10 @@ import { adminClient } from "../rls/stack";
 // job ja gravou mensagem, nem no eco da resposta ao toque (decisao D4).
 // Desenho em docs/07_multiplos_numeros_whatsapp.md.
 //
-// NESTA FASE o unique temporario whatsapp_account_uma_por_clinica impede o
-// segundo numero numa clinica: o "outro numero" daqui e a falta dele (a
-// clinica que perdeu o unico numero). Os casos de dois numeros vivem em
-// numeros-fase-2.test.ts, em it.skip ate a Fase 3.
+// Desde o contrato da Fase 3 (migration 20260925140000) a clinica pode ter
+// dois numeros: o "outro numero" daqui e tanto a falta dele (a clinica que
+// perdeu o unico numero) quanto o segundo numero da mesma clinica. Os casos
+// de dois numeros do webhook e da regua vivem em numeros-fase-2.test.ts.
 //
 // Clinicas e_de_teste (o motor de producao as ignora) e jobs com run_at no
 // futuro: so o claim manual deste teste os executa. Provedor 'fake' sempre.
@@ -115,7 +115,7 @@ async function reivindicar(jobId: string, workerId: string): Promise<Job> {
     .eq("id", jobId)
     .eq("status", "pendente")
     .select(
-      "id, clinic_id, kind, payload, attempts, max_attempts, whatsapp_account_id",
+      "id, clinic_id, kind, payload, attempts, max_attempts, whatsapp_account_id, created_at",
     )
     .single()
     .throwOnError();
@@ -221,18 +221,79 @@ describe("envio ativo pelo número do job", () => {
 
     resetFakeProvider();
     const desfecho = await executarJobComPosse(admin, worker, job);
-    expect(desfecho).toBe("falhou");
+    expect(desfecho).toBe("reagendado");
 
     // Sem numero ativo na clinica: numero_do_job tira o removido do job e o
-    // envio espera numero (retry), como a clinica sem conta de antes.
+    // envio ESPERA a clinica ter numero (espera do canal, sem queimar
+    // tentativa), como a clinica sem conta de antes. Desde o contrato da Fase
+    // 3 nao existe conversa sem numero, entao o executor desvia ANTES de
+    // pedir a conversa (estado 'sem_numero' de numero_do_job), e nenhuma
+    // conversa nasce.
     const estado = await estadoDoJob(criado.id);
     expect(estado.status).toBe("pendente");
     expect(estado.whatsapp_account_id).toBeNull();
-    expect(estado.last_error).toBe("desconectado");
+    expect(estado.last_error).toBeNull();
+    const { data: devolvido } = await admin
+      .from("job_queue")
+      .select("attempts, ultimo_motivo_devolucao")
+      .eq("id", criado.id)
+      .single()
+      .throwOnError();
+    expect(devolvido).toEqual({
+      attempts: 0,
+      ultimo_motivo_devolucao: "sem_numero",
+    });
     expect(await mensagensDoJob(clinicId, criado.id)).toEqual([]);
     expect(fakeSentMessages().filter((m) => m.clinicId === clinicId)).toEqual(
       [],
     );
+    const { data: conversas } = await admin
+      .from("conversation")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("contact_id", contactId)
+      .throwOnError();
+    expect(conversas).toEqual([]);
+  });
+
+  it("número removido antes de gravar, com outro número na clínica: recarimba e sai pelo outro", async () => {
+    const { clinicId, numero: a } = await clinicaComNumero("envio-removido-2");
+    const b = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "Segundo",
+      connection_status: "conectado",
+    });
+    const contactId = await contatoComConsentimento(clinicId);
+    const criado = await envioAtivo(clinicId, {
+      contact_id: contactId,
+      body: "Mensagem automática (teste)",
+    });
+    // Sem conversa anterior: o gatilho carimba o principal (A).
+    expect(criado.whatsapp_account_id).toBe(a.id);
+    const worker = `teste-jobs-num-removido-2-${sufixo}`;
+    const job = await reivindicar(criado.id, worker);
+    // A clinica troca o principal e remove o A com o job ja reivindicado:
+    // remover_numero so redistribui os pendentes.
+    await admin
+      .rpc("definir_numero_principal", {
+        p_clinic_id: clinicId,
+        p_account_id: b.id,
+      })
+      .throwOnError();
+    await removerNumero(clinicId, a.id);
+
+    resetFakeProvider();
+    const desfecho = await executarJobComPosse(admin, worker, job);
+    expect(desfecho).toBe("concluido");
+
+    // numero_do_job recarimbou (o job nao tinha mensagem) e o envio saiu
+    // pelo B, com a mensagem na conversa do B.
+    expect((await estadoDoJob(criado.id)).whatsapp_account_id).toBe(b.id);
+    const mensagens = await mensagensDoJob(clinicId, criado.id);
+    expect(mensagens).toHaveLength(1);
+    expect(mensagens[0]!.whatsapp_account_id).toBe(b.id);
+    const enviadas = fakeSentMessages().filter((m) => m.clinicId === clinicId);
+    expect(enviadas).toHaveLength(1);
+    expect(enviadas[0]!.accountId).toBe(b.id);
   });
 
   it("eco da resposta ao toque cujo número saiu depois do claim morre sem enviar (D4)", async () => {
@@ -440,6 +501,69 @@ describe("régua pelo número do job", () => {
     expect(fakeSentMessages().filter((m) => m.clinicId === clinicId)).toEqual(
       [],
     );
+  });
+
+  it("clínica que perdeu o único número: o toque espera como no desconectado, sem queimar tentativa e sem abrir conversa", async () => {
+    const { clinicId, numero } = await clinicaComNumero("regua-sem-numero");
+    const { contactId, runId, jobId, jobAccountId } =
+      await execucaoDeFollowup(clinicId);
+    expect(jobAccountId).toBe(numero.id);
+    const worker = `teste-jobs-num-regua-sem-${sufixo}`;
+    const job = await reivindicar(jobId, worker);
+    // A clinica remove o unico numero com o toque ja reivindicado (o
+    // principal pode sair quando e o unico): numero_do_job tira o numero do
+    // job e responde 'sem_numero'.
+    await removerNumero(clinicId, numero.id);
+
+    resetFakeProvider();
+    const antes = Date.now();
+    const desfecho = await executarJobComPosse(admin, worker, job);
+    // Nao e falha do toque: volta para a fila depois da espera de
+    // reconexao (5 minutos), como o numero desconectado. Antes do desvio
+    // pelo 'sem_numero', garantir_conversa_aberta recusava (23502) e o toque
+    // gastava as tentativas com 'conversa_indisponivel'.
+    expect(desfecho).toBe("reagendado");
+
+    const { data: linha } = await admin
+      .from("job_queue")
+      .select(
+        "status, attempts, run_at, last_error, whatsapp_account_id, ultimo_motivo_devolucao",
+      )
+      .eq("id", jobId)
+      .single()
+      .throwOnError();
+    const estado = linha as {
+      status: string;
+      attempts: number;
+      run_at: string;
+      last_error: string | null;
+      whatsapp_account_id: string | null;
+      ultimo_motivo_devolucao: string | null;
+    };
+    expect(estado.status).toBe("pendente");
+    // reivindicar somou 1; reagendar_job devolve a tentativa.
+    expect(estado.attempts).toBe(0);
+    expect(estado.last_error).toBeNull();
+    expect(estado.whatsapp_account_id).toBeNull();
+    expect(estado.ultimo_motivo_devolucao).toBe("sem_numero");
+    expect(new Date(estado.run_at).getTime()).toBeGreaterThanOrEqual(
+      antes + 4 * MINUTO,
+    );
+
+    // A run continua aberta (nem enviada, nem pulada), nada saiu e nenhuma
+    // conversa nasceu.
+    expect(await run(runId)).toEqual({ sent_at: null, skipped_reason: null });
+    expect(await mensagensDoJob(clinicId, jobId)).toEqual([]);
+    expect(fakeSentMessages().filter((m) => m.clinicId === clinicId)).toEqual(
+      [],
+    );
+    const { data: conversas } = await admin
+      .from("conversation")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("contact_id", contactId)
+      .throwOnError();
+    expect(conversas).toEqual([]);
   });
 });
 

@@ -5,12 +5,6 @@ import { headers } from "next/headers";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
-import {
-  acharCelularDuplicado,
-  mensagemDeCelularDuplicado,
-  pareamentoNovo,
-  type NumeroConectado,
-} from "@/lib/domain/celular-duplicado";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import {
@@ -25,6 +19,13 @@ import type {
   InstanceStatus,
   WhatsAppProvider,
 } from "@/lib/integrations/whatsapp/provider";
+import {
+  motivoDaRecusaVigente,
+  motivosDaRecusaVigentes,
+  recusarCelularDuplicado,
+  type Pareamento,
+  type RecusaDaTrava,
+} from "@/lib/integrations/whatsapp/trava-celular";
 import {
   nomeDaInstancia,
   UazapiHttpError,
@@ -132,12 +133,18 @@ const numeroNovoSchema = z.object({
   nome: nomeDoNumero,
   unitId: z.uuid().nullable().optional(),
 });
-const numeroEditadoSchema = z.object({
-  accountId: z.uuid(),
-  nome: nomeDoNumero,
-  /** ausente: a unidade fica como esta; nulo: tira a unidade */
-  unitId: z.uuid().nullable().optional(),
-});
+// So o campo que veio e gravado: o dialogo de Unidade manda so a unidade e o
+// de Renomear so o nome. Regravar o nome do retrato da tela desfazia um
+// renomear feito em outra aba enquanto esta estava aberta.
+const numeroEditadoSchema = z
+  .object({
+    accountId: z.uuid(),
+    /** ausente: o nome fica como esta */
+    nome: nomeDoNumero.optional(),
+    /** ausente: a unidade fica como esta; nulo: tira a unidade */
+    unitId: z.uuid().nullable().optional(),
+  })
+  .refine((dados) => dados.nome !== undefined || dados.unitId !== undefined);
 const TEXTO_NOME_INVALIDO =
   "Dê um nome ao número, com até 40 caracteres, e escolha a unidade da lista.";
 
@@ -495,107 +502,59 @@ async function parear(
   }
 }
 
-/** O que a trava do celular precisa para conferir e, se for o caso, desligar. */
-type Pareamento = {
-  /** o numero como estava no banco antes desta consulta ao provedor */
-  anterior: { connection_status: string; display_phone: string | null };
-  provider: WhatsAppProvider;
-  ref: InstanceRef;
-};
-
-/** A conexao nao foi gravada como veio: o que a tela mostra e por que. */
-type Recusa = { status: ConnectState["status"]; mensagem: string };
+/**
+ * A conexao nao foi gravada como veio: o que a tela mostra e por que.
+ *
+ * A trava contra o MESMO celular em duas instancias (achado 10 do docs/07)
+ * mora em lib/integrations/whatsapp/trava-celular.ts: ela vale tambem para o
+ * evento de conexao do webhook, e todo export deste arquivo "use server"
+ * viraria acao chamavel pelo navegador. Na recusa, ela mesma gira o segredo
+ * do webhook, desliga a instancia e grava "desconectado".
+ */
+type Recusa = RecusaDaTrava;
 
 /**
- * Trava contra o MESMO celular em duas instancias (achado 10 do docs/07).
- *
- * Roda no pareamento NOVO que chega "conectado" e procura o mesmo celular
- * (chave canonica de telefone) entre os numeros ativos e conectados de
- * QUALQUER clinica, por service role. Achou: desliga a instancia nova antes
- * de gravar "conectado", para ela nao receber a conversa de ninguem.
- *
- * Leitura que falha nao deixa passar nem derruba: a conexao nao e gravada e
- * a tela continua em "conectando", e a proxima consulta confere de novo.
+ * Quem grava o status. `abrePareamento` so no Conectar: o clique que abre o
+ * pareamento grava o "conectando" que o provedor devolver, venha de onde vier.
  */
-async function recusarCelularDuplicado(
-  admin: AdminClient,
-  numero: NumeroAlvo,
-  status: InstanceStatus,
-  pareamento: Pareamento,
-): Promise<Recusa | null> {
-  // O simulador devolve o MESMO numero ficticio para toda clinica: nao ha
-  // celular de verdade para proteger, e a trava so atrapalharia a
-  // demonstracao e o desenvolvimento.
-  if (pareamento.provider.name === "fake") {
-    return null;
-  }
-  if (!pareamentoNovo(pareamento.anterior, status.displayPhone)) {
-    return null;
-  }
-  // Numero do simulador fica de fora pelo mesmo motivo: o celular dele e
-  // ficticio (as clinicas descartaveis da suite e2e vivem no mesmo banco).
-  const { data, error } = await admin
-    .from("whatsapp_account")
-    .select("id, clinic_id, nome, display_phone")
-    .is("removido_em", null)
-    .eq("connection_status", "conectado")
-    .neq("provider", "fake")
-    .not("display_phone", "is", null)
-    .neq("id", numero.accountId);
-  if (error) {
-    log.warn("whatsapp_trava_de_celular_sem_leitura", {
-      clinic_id: numero.clinicId,
-      whatsapp_account_id: numero.accountId,
-      error_code: error.code,
-    });
-    return {
-      status: "conectando",
-      mensagem:
-        "Não foi possível confirmar esta conexão agora. O sistema confere de novo em instantes.",
-    };
-  }
-  const duplicado = acharCelularDuplicado(
-    {
-      accountId: numero.accountId,
-      clinicId: numero.clinicId,
-      displayPhone: status.displayPhone,
-    },
-    (data ?? []) as NumeroConectado[],
-  );
-  if (!duplicado) {
-    return null;
-  }
+type ComoGravar = { abrePareamento?: boolean };
 
-  try {
-    await pareamento.provider.disconnect(pareamento.ref);
-  } catch {
-    // Sem alcance ao servidor, o estado local vira desconectado mesmo assim.
-  }
-  await gravarStatus(admin, numero, { status: "desconectado" });
-  log.warn("whatsapp_celular_em_outro_numero", {
-    clinic_id: numero.clinicId,
-    whatsapp_account_id: numero.accountId,
-    provider: pareamento.provider.name,
-    // So ONDE esta o outro: nada sobre a outra clinica vai para o log.
-    status: duplicado.mesmaClinica ? "mesma_clinica" : "outra_clinica",
-  });
-  return {
-    status: "desconectado",
-    mensagem: mensagemDeCelularDuplicado(duplicado),
-  };
+/**
+ * O status que fica no banco depois de uma CONSULTA (gravarStatus sem
+ * `abrePareamento`): "conectando" so substitui "aguardando_qr".
+ */
+function statusQueFica(
+  anterior: ConnectState["status"],
+  lido: ConnectState["status"],
+): ConnectState["status"] {
+  return lido === "conectando" && anterior !== "aguardando_qr"
+    ? anterior
+    : lido;
 }
 
-/** Grava o que o provedor disse sobre o numero, sem conferir nada. */
+/**
+ * Grava o que o provedor disse sobre o numero, sem conferir nada.
+ *
+ * "conectando" so e gravado DENTRO de um pareamento (achado T[0] da revisao
+ * da trava): o que este clique abriu (`abrePareamento`) ou o que ja esta
+ * aberto no banco ("aguardando_qr", o QR na tela). A porta da ingestao
+ * (app/api/webhooks/whatsapp/route.ts) segura a mensagem de numero
+ * "conectando" ate a trava decidir, entao a consulta que via a sessao ja
+ * pareada reconectando rebaixava um numero "conectado" e segurava mensagem de
+ * paciente. Fora do pareamento o status fica como esta (statusQueFica). O
+ * evento de conexao do webhook segue a mesma regra.
+ */
 async function gravarStatus(
   admin: AdminClient,
   numero: NumeroAlvo,
   status: InstanceStatus,
+  { abrePareamento = false }: ComoGravar = {},
 ): Promise<void> {
   // TRANSICAO primeiro, com o .neq do webhook: os carimbos connected_at e
   // disconnected_at marcam o instante em que o status MUDOU. Sem o guard, o
   // poll de 2,5s reescrevia disconnected_at a cada passagem e o instante
   // real da queda se perdia (achado da exploracao de 19/09/2026).
-  await admin
+  const transicao = admin
     .from("whatsapp_account")
     .update({
       connection_status: status.status,
@@ -609,6 +568,9 @@ async function gravarStatus(
     .eq("clinic_id", numero.clinicId)
     .eq("id", numero.accountId)
     .neq("connection_status", status.status);
+  await (status.status === "conectando" && !abrePareamento
+    ? transicao.eq("connection_status", "aguardando_qr")
+    : transicao);
 
   // Metadados sempre, mudanca de status ou nao.
   if (status.displayPhone || status.instanceId) {
@@ -642,6 +604,7 @@ async function persistStatus(
   numero: NumeroAlvo,
   status: InstanceStatus,
   pareamento?: Pareamento,
+  comoGravar: ComoGravar = {},
 ): Promise<Recusa | null> {
   if (pareamento && status.status === "conectado") {
     const recusa = await recusarCelularDuplicado(
@@ -654,7 +617,7 @@ async function persistStatus(
       return recusa;
     }
   }
-  await gravarStatus(admin, numero, status);
+  await gravarStatus(admin, numero, status, comoGravar);
   return null;
 }
 
@@ -848,14 +811,23 @@ export async function connectWhatsAppAction(
       pareamento = await parear(provider, ref, urlDoWebhook);
     }
 
-    const recusa = await persistStatus(admin, numero, pareamento.status, {
-      anterior: {
-        connection_status: statusConhecido,
-        display_phone: account.display_phone,
+    // Este clique ABRE o pareamento: o "conectando" que o provedor devolver
+    // (codigo de pareamento, sem QR) vale mesmo sem "aguardando_qr" antes, e
+    // a porta da ingestao segura a mensagem ate a trava decidir.
+    const recusa = await persistStatus(
+      admin,
+      numero,
+      pareamento.status,
+      {
+        anterior: {
+          connection_status: statusConhecido,
+          display_phone: account.display_phone,
+        },
+        provider,
+        ref,
       },
-      provider,
-      ref,
-    });
+      { abrePareamento: true },
+    );
     revalidarTelasDeConexao();
     if (recusa) {
       return {
@@ -889,6 +861,12 @@ export type NumeroVerificado = {
   nome: string;
   principal: boolean;
   connection_status: ConnectState["status"];
+  /**
+   * Por que o numero caiu, quando a trava recusou o celular dele (o texto do
+   * dialogo de conexao). So para administrador e gestor, e so com motivo
+   * vigente: ausente nos outros casos.
+   */
+  motivo?: string;
 };
 
 export type ChecagemDeConexao = {
@@ -921,7 +899,12 @@ async function conferirNumero(
       provider,
       ref,
     });
-    return recusa ? recusa.status : status.status;
+    // O que ficou no banco, que a faixa aplica na hora: o "conectando" de uma
+    // sessao ja pareada nao foi gravado (achado T[0] da revisao da trava).
+    return statusQueFica(
+      account.connection_status,
+      recusa ? recusa.status : status.status,
+    );
   } catch (error) {
     // Instancia que o servidor nao reconhece mais E desconexao, e das que so
     // se resolvem conectando de novo: grava, para a faixa vermelha aparecer.
@@ -939,6 +922,10 @@ async function conferirNumero(
 // ativos da clinica e grava, mas NAO devolve QR nem segredo, so o status de
 // cada um. O pollWhatsAppStatusAction continua admin/gestor porque carrega o
 // QR do pareamento.
+//
+// O motivo da recusa do celular (achado M[0] da revisao das Fases 3 e 4) vem
+// junto so para administrador e gestor, o mesmo publico do dialogo de
+// conexao: a faixa o mostra no aviso da verificacao, e nao no texto dela.
 export async function checarConexaoAction(): Promise<ChecagemDeConexao> {
   const context = await getSessionContext();
   if (!context?.active) {
@@ -995,9 +982,24 @@ export async function checarConexaoAction(): Promise<ChecagemDeConexao> {
   );
   const principal =
     verificados.find((numero) => numero.principal) ?? verificados[0] ?? null;
+  // Lido DEPOIS da conferencia (que pode ter acabado de recusar o celular),
+  // com a clinica da sessao, so pelos desta clinica que seguem desconectados.
+  const podeVerOMotivo = canEdit(context.active.role, "configuracoes");
+  const motivos: Record<string, string> = podeVerOMotivo
+    ? await motivosDaRecusaVigentes(
+        admin,
+        clinicId,
+        verificados
+          .filter((numero) => numero.connection_status === "desconectado")
+          .map((numero) => numero.id),
+      )
+    : {};
   return {
     status: principal?.connection_status ?? null,
-    numeros: verificados,
+    numeros: verificados.map((numero) => {
+      const motivo = motivos[numero.id];
+      return motivo ? { ...numero, motivo } : numero;
+    }),
   };
 }
 
@@ -1029,6 +1031,9 @@ export async function pollWhatsAppStatusAction(
     const provider = getWhatsAppProvider(account.provider);
     const ref = refDoNumero(guard.clinicId, account, secret);
     const status = await provider.getStatus(ref);
+    // A consulta nao abre pareamento: "conectando" so e gravado em cima de
+    // "aguardando_qr" (gravarStatus, achado T[0] da revisao da trava). O
+    // dialogo recebe o que o provedor disse e acompanha a conexao.
     const recusa = await persistStatus(admin, numero, status, {
       anterior: account,
       provider,
@@ -1045,6 +1050,17 @@ export async function pollWhatsAppStatusAction(
         error: recusa.mensagem,
         accountId: account.id,
       };
+    }
+    // Desligado, o provedor nao diz por que. Quando o webhook recusou o
+    // celular antes desta consulta (o caso comum: o evento chega na hora e a
+    // consulta so a cada 2,5 s), a trava ja desligou a instancia e o motivo
+    // esta na trilha. Sem isto a tela ficava so em "Desconectado" (achado
+    // M[0] da revisao das Fases 3 e 4).
+    if (status.status === "desconectado") {
+      const motivo = await motivoDaRecusaVigente(admin, numero);
+      if (motivo) {
+        return { ...toState(status, account), error: motivo };
+      }
     }
     return toState(status, account);
   } catch (error) {
@@ -1188,7 +1204,10 @@ export async function adicionarNumeroAction(
   return { ok: true, accountId };
 }
 
-/** Renomeia o numero e troca (ou tira) a unidade dele. */
+/**
+ * Renomeia o numero e/ou troca (ou tira) a unidade dele. Grava so os campos
+ * que vieram; sem nenhum dos dois, recusa.
+ */
 export async function atualizarNumeroAction(
   input: unknown,
 ): Promise<NumeroActionResult> {
@@ -1205,7 +1224,10 @@ export async function atualizarNumeroAction(
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("whatsapp_account")
-    .update({ nome, ...(unitId !== undefined ? { unit_id: unitId } : {}) })
+    .update({
+      ...(nome !== undefined ? { nome } : {}),
+      ...(unitId !== undefined ? { unit_id: unitId } : {}),
+    })
     .eq("clinic_id", guard.clinicId)
     .eq("id", accountId)
     .is("removido_em", null)

@@ -1,6 +1,8 @@
 // Conexao dos numeros de WhatsApp da clinica, vista pelo shell: a faixa de
-// desconectado (components/shell/whatsapp-status.tsx) e o recarregar do
-// Inbox (lib/realtime/use-inbox-channel.ts). Regras puras, testadas em
+// desconectado (components/shell/whatsapp-status.tsx). O Inbox aplica os
+// eventos na propria copia dos numeros (lib/domain/numeros-do-inbox.ts) e
+// nao recarrega mais a pagina; assinaturaDaConexao fica para quem precisar
+// comparar so o status. Regras puras, testadas em
 // tests/unit/domain/conexao-dos-numeros.test.ts.
 //
 // Desenho: docs/07_multiplos_numeros_whatsapp.md (decisao D6).
@@ -54,19 +56,61 @@ export type TextoDaFaixa = {
   detalhe: string;
 };
 
+/** Os numeros vigiados que estao fora do ar (a faixa acende por eles). */
+function vigiadosDesconectados(
+  numeros: readonly NumeroDaFaixa[],
+): NumeroDaFaixa[] {
+  return numerosVigiados(numeros).filter(
+    (numero) => numero.connection_status !== "conectado",
+  );
+}
+
+/**
+ * Os numeros cujas mensagens automaticas esperando a faixa conta: so com mais
+ * de um numero ativo (com um so, o texto e o de sempre) e so os vigiados que
+ * estao fora do ar. Lista vazia: nada a contar, e ninguem consulta a fila.
+ */
+export function numerosParaContar(numeros: readonly NumeroDaFaixa[]): string[] {
+  if (numeros.length <= 1) {
+    return [];
+  }
+  return vigiadosDesconectados(numeros).map((numero) => numero.id);
+}
+
+/**
+ * Quantas mensagens automaticas esperam por cada numero, pelo id
+ * (contarMensagensEsperando, em lib/queries/mensagens-esperando.ts). Numero
+ * ausente: nao contado.
+ */
+export type EsperandoPorNumero = Readonly<Record<string, number>>;
+
+/** Junta os nomes na forma falada: "A", "A e B", "A, B e C". */
+function listaDeNomes(nomes: readonly string[]): string {
+  if (nomes.length <= 1) {
+    return nomes[0] ?? "";
+  }
+  return `${nomes.slice(0, -1).join(", ")} e ${nomes[nomes.length - 1]}`;
+}
+
+/** Teto de nomes no titulo; acima dele, a faixa conta os numeros. */
+const NOMES_NO_TITULO = 3;
+
 /**
  * O texto da faixa, ou null quando ela nao aparece.
  *
  * Com um numero ativo, o texto e o de sempre ("WhatsApp desconectado"). Com
- * mais de um, a faixa diz QUAL caiu: "WhatsApp Recepcao desconectado", ou
- * "2 numeros desconectados" quando cai mais de um.
+ * mais de um, a faixa NOMEIA quem caiu ("WhatsApp Recepcao desconectado",
+ * "WhatsApp Recepcao e Centro desconectados"; acima de 3, "4 numeros
+ * desconectados") e, com a contagem da fila, diz quantas mensagens
+ * automaticas esperam a reconexao. Sem contagem (ainda nao chegou, ou a
+ * consulta falhou) ou com zero, a frase da fila nao aparece: a faixa nunca
+ * afirma um numero que nao conferiu.
  */
 export function textoDaFaixa(
   numeros: readonly NumeroDaFaixa[],
+  esperando?: EsperandoPorNumero,
 ): TextoDaFaixa | null {
-  const desconectados = numerosVigiados(numeros).filter(
-    (numero) => numero.connection_status !== "conectado",
-  );
+  const desconectados = vigiadosDesconectados(numeros);
   if (desconectados.length === 0) {
     return null;
   }
@@ -76,15 +120,36 @@ export function textoDaFaixa(
       detalhe: "os pacientes não estão sendo atendidos",
     };
   }
+  // So com a contagem de TODOS os que cairam: somar uma parte seria afirmar
+  // um total menor do que o da fila (o numero que acabou de cair ainda nao
+  // foi contado).
+  const contados = desconectados.every(
+    (numero) => esperando?.[numero.id] !== undefined,
+  );
+  const naFila = contados
+    ? desconectados.reduce(
+        (soma, numero) => soma + (esperando?.[numero.id] ?? 0),
+        0,
+      )
+    : 0;
+  const fila =
+    naFila === 0
+      ? ""
+      : naFila === 1
+        ? " e 1 mensagem automática espera a reconexão"
+        : ` e ${naFila} mensagens automáticas esperam a reconexão`;
   if (desconectados.length === 1) {
     return {
       titulo: `WhatsApp ${desconectados[0]!.nome} desconectado`,
-      detalhe: "os pacientes deste número não estão sendo atendidos",
+      detalhe: `os pacientes deste número não estão sendo atendidos${fila}`,
     };
   }
   return {
-    titulo: `${desconectados.length} números desconectados`,
-    detalhe: "os pacientes destes números não estão sendo atendidos",
+    titulo:
+      desconectados.length <= NOMES_NO_TITULO
+        ? `WhatsApp ${listaDeNomes(desconectados.map((numero) => numero.nome))} desconectados`
+        : `${desconectados.length} números desconectados`,
+    detalhe: `os pacientes destes números não estão sendo atendidos${fila}`,
   };
 }
 
@@ -186,6 +251,11 @@ export type VerificacaoLida = {
     connection_status: string;
     nome?: string;
     principal?: boolean;
+    /**
+     * por que o numero caiu, quando a trava recusou o celular (so vem para
+     * administrador e gestor)
+     */
+    motivo?: string;
   }[];
   /** status unico (forma antiga da acao), quando ela nao devolve a lista */
   statusUnico: string | null | undefined;
@@ -230,6 +300,10 @@ export function lerVerificacao(resultado: unknown): VerificacaoLida {
         nome: typeof numero.nome === "string" ? numero.nome : undefined,
         principal:
           typeof numero.principal === "boolean" ? numero.principal : undefined,
+        motivo:
+          typeof numero.motivo === "string" && numero.motivo.length > 0
+            ? numero.motivo
+            : undefined,
       });
     }
   }
@@ -267,4 +341,54 @@ export function aplicarVerificacao(
     }
   }
   return proxima;
+}
+
+/** O aviso que o "Verificar conexao" mostra quando a faixa continua acesa. */
+export type AvisoDaVerificacao = {
+  mensagem: string;
+  /**
+   * Por que caiu, quando a trava recusou o celular de um numero que a faixa
+   * nomeia. Vai no complemento do aviso, e nao no texto da faixa, que
+   * continua curto.
+   */
+  motivo: string | null;
+};
+
+/**
+ * O aviso depois do "Verificar conexao", ou null quando a verificacao apagou
+ * a faixa.
+ *
+ * Com um numero so, o motivo vai como veio ("Este número já está conectado
+ * em outra conta do Conduzza..."). Com mais de um, cada motivo leva o nome
+ * do numero na frente, porque "este número" sozinho nao diz qual. So entram
+ * os numeros que a faixa nomeia (os vigiados fora do ar, D6).
+ */
+export function avisoDaVerificacao(
+  numeros: readonly NumeroDaFaixa[],
+  verificacao: VerificacaoLida,
+): AvisoDaVerificacao | null {
+  const proximos = aplicarVerificacao(numeros, verificacao);
+  const aindaFora = textoDaFaixa(proximos);
+  if (!aindaFora) {
+    return null;
+  }
+  const umSo = proximos.length <= 1;
+  const motivoPorNumero = new Map(
+    verificacao.linhas.flatMap((linha) =>
+      linha.motivo ? [[linha.id, linha.motivo] as const] : [],
+    ),
+  );
+  const motivos = vigiadosDesconectados(proximos).flatMap((numero) => {
+    const motivo = motivoPorNumero.get(numero.id);
+    if (!motivo) {
+      return [];
+    }
+    return [umSo ? motivo : `${numero.nome}: ${motivo}`];
+  });
+  return {
+    mensagem: umSo
+      ? "Ainda desconectado. Abra Configurações para reconectar."
+      : `${aindaFora.titulo}. Abra Configurações para reconectar.`,
+    motivo: motivos.length > 0 ? motivos.join(" ") : null,
+  };
 }

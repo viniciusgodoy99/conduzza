@@ -9,6 +9,11 @@ import {
   proximaAbertura,
   type JanelaDeEnvio,
 } from "@/lib/domain/cadence";
+import {
+  decidirEsperaDoCanal,
+  prazoDaEsperaNaRegua,
+  type MotivoDaEsperaDoCanal,
+} from "@/lib/domain/espera-do-canal";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import {
   CORPO_DO_MENU_APOS_MIDIA,
@@ -27,6 +32,7 @@ import {
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
 
+import { codigoDoErro, ErroComCodigoDeJob } from "./erro-de-job";
 import { espacamentoDeMassaMs } from "./espacamento";
 import { numeroDoJob } from "./numero-de-envio";
 import type { Job, ResultadoDeJob } from "./worker";
@@ -77,14 +83,6 @@ const STATUS_VIVOS = [
 
 // Confirmar so faz sentido enquanto a consulta espera resposta. Confirmada,
 // cancelada ou ja atendida, a regua para.
-/**
- * Quanto esperar antes de tentar de novo quando o WhatsApp esta desconectado.
- * Cinco minutos: rapido o bastante para o toque sair logo depois de a recepcao
- * reconectar, devagar o bastante para nao martelar a fila enquanto o celular
- * esta fora do ar.
- */
-const ESPERA_DE_RECONEXAO_MS = 5 * 60_000;
-
 const STATUS_A_CONFIRMAR = ["agendado", "aguardando_confirmacao"];
 
 type ReguaDaRun = {
@@ -178,7 +176,7 @@ async function pularRun(
     // falha com backoff), nunca silencio: foi silencio que escondeu por
     // semanas o 'canal_ocupado' fora do CHECK (corrigido na migration
     // 20260914150000).
-    throw new Error(`pular_run_falhou: ${error.code ?? "desconhecido"}`);
+    throw new ErroComCodigoDeJob(`pular_run_falhou: ${codigoDoErro(error)}`);
   }
 }
 
@@ -234,6 +232,15 @@ async function pararCadeiaDeFollowup(
     .is("skipped_reason", null);
 }
 
+/**
+ * A consulta da run. null SO quando ela nao existe (ou a run nao tem
+ * consulta). Leitura que falha vira excecao, no mesmo padrao de
+ * carregarPassosDaRegua: o worker converte em falha com retry (backoff, teto
+ * em max_attempts) e, esgotado, fechar_runs_orfas fecha a run como
+ * 'falha_envio'. Antes o erro virava null, e quem le null conclui "consulta
+ * sumiu": a condicao de parada e a defesa da remarcacao chamavam pararCadeia
+ * e um erro de rede matava a regua de confirmacao inteira da consulta.
+ */
 async function carregarConsulta(
   admin: SupabaseClient,
   clinicId: string,
@@ -242,7 +249,7 @@ async function carregarConsulta(
   if (!appointmentId) {
     return null;
   }
-  const { data } = await admin
+  const { data, error } = await admin
     .from("appointment")
     .select(
       `id, status, starts_at, send_confirmation, remarcacao_pedida_em,
@@ -254,7 +261,67 @@ async function carregarConsulta(
     .eq("clinic_id", clinicId)
     .eq("id", appointmentId)
     .maybeSingle();
+  if (error) {
+    // Mensagem so com o codigo do erro, nunca dado de paciente (regra 3.1).
+    throw new ErroComCodigoDeJob(`consulta_ilegivel: ${codigoDoErro(error)}`);
+  }
   return (data as LinhaDaConsulta | null) ?? null;
+}
+
+/**
+ * WhatsApp da clinica fora do ar para este toque: o numero desconectado
+ * ('desconectado'), ou a clinica sem numero ativo ('sem_numero'). Nao e falha
+ * do toque, e "ainda nao": devolve o job para a proxima volta, sem queimar
+ * tentativa, em esperas crescentes de 5 ate 30 minutos (as esperas ja feitas
+ * vem do payload, contadas por reagendar_job).
+ *
+ * A desistencia e por PRAZO FIXO (prazoDaEsperaNaRegua): a confirmacao espera
+ * ate a hora da consulta; as demais reguas, ate 12 horas depois da primeira
+ * abertura da janela a partir do vencimento da run (o proprio scheduled_for
+ * no toque manual ou quando ele ja cai na janela), nunca o relogio da
+ * espera. Passado o prazo, pula a run com 'desconectado'.
+ *
+ * A hora da consulta vem de quem chama, lida NESTA passagem (a releitura da
+ * defesa da remarcacao, segundos antes): o horario vale o de agora, nao o do
+ * planejamento, e nao ha terceira leitura para falhar aqui.
+ *
+ * Esperar o canal NAO e o "canal que nao abre" do teto de 20 devolucoes:
+ * reagendar_job reconhece os dois motivos e da a eles um teto de seguranca
+ * proprio (400, migration 20260925141000), sem gastar o teto de 20 dos
+ * demais. `motivo` vai para job_queue.ultimo_motivo_devolucao.
+ */
+async function esperarOCanal(
+  admin: SupabaseClient,
+  job: Job,
+  run: LinhaDaRun,
+  regra: {
+    kind: string;
+    janela: JanelaDeEnvio;
+    timezone: string;
+    manual: boolean;
+    /** So a confirmacao usa como prazo. */
+    inicioDaConsulta: string | null;
+  },
+  motivo: MotivoDaEsperaDoCanal,
+): Promise<ResultadoDeJob> {
+  const decisao = decidirEsperaDoCanal({
+    motivo,
+    payload: job.payload,
+    agora: Date.now(),
+    prazo: prazoDaEsperaNaRegua({
+      kind: regra.kind,
+      inicioDaConsulta: regra.inicioDaConsulta,
+      scheduledFor: run.scheduled_for,
+      janela: regra.janela,
+      timezone: regra.timezone,
+      manual: regra.manual,
+    }),
+  });
+  if (decisao) {
+    return decisao;
+  }
+  await pularRun(admin, run, "desconectado");
+  return { ok: false, erro: "desconectado", definitivo: true };
 }
 
 /**
@@ -273,7 +340,9 @@ async function carregarPassosDaRegua(
     .eq("clinic_id", clinicId)
     .eq("cadence_id", cadenceId);
   if (error) {
-    throw new Error(`passos_da_regua_ilegiveis: ${error.code ?? "desconhecido"}`);
+    throw new ErroComCodigoDeJob(
+      `passos_da_regua_ilegiveis: ${codigoDoErro(error)}`,
+    );
   }
   return ((data ?? []) as { offset_minutes: number }[]).map((passo) => ({
     offsetMinutes: passo.offset_minutes,
@@ -342,7 +411,9 @@ async function remarcouDepoisDaFalta(
   run: LinhaDaRun,
   consulta: LinhaDaConsulta,
 ): Promise<boolean> {
-  const { data: marcacao } = await admin
+  // Leitura com erro vira retry do job, nunca "nao remarcou": o pos falta
+  // sairia para quem ja remarcou.
+  const { data: marcacao, error: erroDaMarcacao } = await admin
     .from("appointment_status_history")
     .select("changed_at")
     .eq("clinic_id", run.clinic_id)
@@ -351,10 +422,15 @@ async function remarcouDepoisDaFalta(
     .order("changed_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (erroDaMarcacao) {
+    throw new ErroComCodigoDeJob(
+      `remarcacao_ilegivel: ${codigoDoErro(erroDaMarcacao)}`,
+    );
+  }
   const desde =
     (marcacao?.changed_at as string | undefined) ?? run.scheduled_for;
 
-  const { count } = await admin
+  const { count, error: erroDaContagem } = await admin
     .from("appointment")
     .select("id", { count: "exact", head: true })
     .eq("clinic_id", run.clinic_id)
@@ -362,6 +438,11 @@ async function remarcouDepoisDaFalta(
     .in("status", STATUS_VIVOS)
     .gt("starts_at", new Date().toISOString())
     .gt("created_at", desde);
+  if (erroDaContagem) {
+    throw new ErroComCodigoDeJob(
+      `remarcacao_ilegivel: ${codigoDoErro(erroDaContagem)}`,
+    );
+  }
   return (count ?? 0) > 0;
 }
 
@@ -406,7 +487,7 @@ export async function executarPassoDeRegua(
   const manual = job.payload.manual === true;
 
   // 0. CARREGA. Uma consulta so traz passo, regua, contato e clinica.
-  const { data: bruta } = await admin
+  const { data: bruta, error: erroDaRun } = await admin
     .from("cadence_run")
     .select(
       `id, clinic_id, contact_id, appointment_id, scheduled_for, sent_at,
@@ -427,6 +508,11 @@ export async function executarPassoDeRegua(
     .eq("clinic_id", job.clinic_id)
     .eq("id", runId)
     .maybeSingle();
+  if (erroDaRun) {
+    // Falha de leitura nao e "run inexistente" (que e definitivo e fecharia a
+    // run como falha_envio): vira retry do job.
+    throw new ErroComCodigoDeJob(`run_ilegivel: ${codigoDoErro(erroDaRun)}`);
+  }
 
   const run = (bruta as LinhaDaRun | null) ?? null;
   const passo = run?.cadence_step ?? null;
@@ -458,11 +544,21 @@ export async function executarPassoDeRegua(
   const agora = new Date();
 
   // 1. CONSENTIMENTO. Pula e CONTA: nao e erro do job, e escolha do paciente.
-  const { data: vigente } = await admin.rpc("consentimento_vigente", {
-    p_clinic_id: job.clinic_id,
-    p_contact_id: run.contact_id,
-    p_channel: "whatsapp",
-  });
+  const { data: vigente, error: erroDoConsentimento } = await admin.rpc(
+    "consentimento_vigente",
+    {
+      p_clinic_id: job.clinic_id,
+      p_contact_id: run.contact_id,
+      p_channel: "whatsapp",
+    },
+  );
+  if (erroDoConsentimento) {
+    // Sem resposta nao e revogacao: nada de pular nem de registrar na trilha
+    // um bloqueio que o paciente nao pediu. Retry do job.
+    throw new ErroComCodigoDeJob(
+      `consentimento_ilegivel: ${codigoDoErro(erroDoConsentimento)}`,
+    );
+  }
   if (vigente !== true) {
     await pularRun(admin, run, "sem_consentimento");
     await admin.from("audit_log").insert({
@@ -649,14 +745,17 @@ export async function executarPassoDeRegua(
     await pularRun(admin, run, "numero_removido");
     return { ok: false, erro: "numero_removido", definitivo: true };
   }
-  // Sem numero ativo na clinica: o "sem conta" de antes. O provedor e o do
-  // ambiente e o envio responde desconectado (espera a reconexao).
+  // Sem numero ativo na clinica ('sem_numero'): o "sem conta" de antes. O
+  // provedor e o do ambiente, e o toque espera como no desconectado, logo
+  // antes de pedir a conversa (abaixo).
   const accountId = numero.estado === "ok" ? numero.whatsappAccountId : null;
   let nomeDoProvedor: string | null = null;
+  // O numero do toque esta fora do ar (a espera antecipada, abaixo).
+  let numeroDesconectado = false;
   if (accountId) {
     const { data: account, error: erroConta } = await admin
       .from("whatsapp_account")
-      .select("provider")
+      .select("provider, connection_status, removido_em")
       .eq("clinic_id", job.clinic_id)
       .eq("id", accountId)
       .maybeSingle();
@@ -664,6 +763,15 @@ export async function executarPassoDeRegua(
       return { ok: false, erro: "leitura_falhou" };
     }
     nomeDoProvedor = (account?.provider as string | null | undefined) ?? null;
+    // A mesma regra de canSendDecision em send.ts: so 'conectado' envia.
+    // Removido NAO conta: numa corrida (removido depois de numero_do_job),
+    // send.ts responde 'numero_removido' e o toque volta na hora para
+    // numero_do_job recarimbar; esperar a reconexao o atrasaria 5 a 30
+    // minutos por um numero que nao volta.
+    const status = account?.connection_status as string | null | undefined;
+    const removidoEm = account?.removido_em as string | null | undefined;
+    numeroDesconectado =
+      account != null && !removidoEm && status !== "conectado";
   }
   const provider = getWhatsAppProvider(nomeDoProvedor);
 
@@ -697,12 +805,10 @@ export async function executarPassoDeRegua(
   // e este ponto passaram consultas ao banco (e, no reagendamento, horas): a
   // recepcao pode ter remarcado, e o paciente pode ter pedido para remarcar.
   // Perguntar "podemos confirmar?" com o horario velho e o pior toque possivel.
+  // A consulta relida tambem da o prazo da espera do canal (abaixo).
+  let atual: LinhaDaConsulta | null = null;
   if (regua.kind === "confirmacao" && run.appointment_id) {
-    const atual = await carregarConsulta(
-      admin,
-      job.clinic_id,
-      run.appointment_id,
-    );
+    atual = await carregarConsulta(admin, job.clinic_id, run.appointment_id);
     const conferencia = atual
       ? conferirConfirmacao(atual, {
           offsetMinutes: passo.offset_minutes,
@@ -719,6 +825,42 @@ export async function executarPassoDeRegua(
       }
       return { ok: true };
     }
+  }
+
+  // O que decide a ESPERA DO CANAL (esperarOCanal), montado uma vez para os
+  // tres caminhos que esperam. Na confirmacao, `atual` nunca e nulo aqui
+  // (senao a cadeia ja teria parado); nas demais reguas a consulta nao da
+  // prazo e o dominio ignora.
+  const regraDaEspera = {
+    kind: regua.kind,
+    janela,
+    timezone,
+    manual,
+    inicioDaConsulta: (atual ?? consulta)?.starts_at ?? null,
+  };
+
+  // Sem numero ativo na clinica (removeu o unico que tinha): o WhatsApp da
+  // clinica esta fora do ar para este toque, e ele espera pelo mesmo prazo do
+  // desconectado. Vem ANTES de pedir a conversa: desde o contrato da Fase 3
+  // (migration 20260925140000) nao existe conversa sem numero, e
+  // garantir_conversa_aberta recusaria (23502), gastando as tentativas com
+  // 'conversa_indisponivel' ate a run fechar como 'falha_envio'. Nenhuma
+  // conversa nasce. Depois da defesa da remarcacao: consulta remarcada ou
+  // cancelada continua parando a cadeia antes de qualquer espera.
+  if (numero.estado === "sem_numero") {
+    return await esperarOCanal(admin, job, run, regraDaEspera, "sem_numero");
+  }
+
+  // Numero do toque DESCONECTADO: espera ja, sem pedir a conversa, baixar o
+  // anexo, regravar a copia e gerar o base64 so para send.ts descobrir o
+  // 'desconectado' la dentro. A espera dura horas (ate a consulta, na
+  // confirmacao), e cada volta repetia esse trabalho, com egress de Storage
+  // cobrado. send.ts continua a autoridade final: status desatualizado aqui
+  // so adia para a proxima volta ou cai no 'desconectado' dele, como antes.
+  // Fica DEPOIS da defesa da remarcacao e do ramo sem_numero: consulta
+  // remarcada ou cancelada continua parando a cadeia antes de esperar.
+  if (numeroDesconectado) {
+    return await esperarOCanal(admin, job, run, regraDaEspera, "desconectado");
   }
 
   // A conversa do NUMERO do toque (uma conversa por numero, decisao 1 do
@@ -968,22 +1110,23 @@ export async function executarPassoDeRegua(
   // toques da manha inteira, sem reagendar nada quando a clinica reconectava e
   // sem contar em lugar nenhum o que deixou de sair.
   //
-  // A desistencia e por PRAZO, nao por contagem: para a confirmacao, faz
-  // sentido esperar enquanto a consulta nao chegou; depois dela o toque perdeu
-  // o sentido. Para o pos falta, algumas horas.
+  // A desistencia e por PRAZO FIXO, nao por contagem (esperarOCanal): para a
+  // confirmacao, faz sentido esperar enquanto a consulta nao chegou; depois
+  // dela o toque perdeu o sentido. Para as demais reguas, 12 horas depois da
+  // primeira abertura da janela a partir do vencimento da run. O numero ja
+  // desconectado no banco espera antes do envio (acima); aqui chega o que
+  // caiu no meio da passagem.
   // Canal ocupado: devolve para quando o slot da clinica abre. Mesma regra de
   // prazo do desconectado, e pelo mesmo motivo: um toque de confirmacao que so
   // sairia depois da consulta perdeu o sentido, e ficar indo e voltando para
   // sempre esconderia o problema numa fila que parece saudavel.
   if (resultado.reason === "slot_adiado") {
-    const consultaDaEspera = await carregarConsulta(
-      admin,
-      job.clinic_id,
-      run.appointment_id,
-    );
+    // A consulta ja foi lida nesta passagem (regraDaEspera): reler so dava
+    // mais uma chance de erro de leitura queimar tentativa. So a confirmacao
+    // usa a hora da consulta como prazo (no pos falta ela e a da falta).
     const limite =
-      regua.kind === "confirmacao" && consultaDaEspera
-        ? new Date(consultaDaEspera.starts_at).getTime()
+      regua.kind === "confirmacao" && regraDaEspera.inicioDaConsulta
+        ? new Date(regraDaEspera.inicioDaConsulta).getTime()
         : Date.now() + 12 * 60 * 60_000;
     const proxima = resultado.livreEm
       ? new Date(resultado.livreEm).getTime()
@@ -1011,21 +1154,7 @@ export async function executarPassoDeRegua(
   }
 
   if (resultado.reason === "desconectado") {
-    const consultaDaEspera = await carregarConsulta(
-      admin,
-      job.clinic_id,
-      run.appointment_id,
-    );
-    const limite =
-      regua.kind === "confirmacao" && consultaDaEspera
-        ? new Date(consultaDaEspera.starts_at).getTime()
-        : Date.now() + 12 * 60 * 60_000;
-    const proxima = Date.now() + ESPERA_DE_RECONEXAO_MS;
-    if (proxima < limite) {
-      return { reagendar: new Date(proxima).toISOString() };
-    }
-    await pularRun(admin, run, "desconectado");
-    return { ok: false, erro: "desconectado", definitivo: true };
+    return await esperarOCanal(admin, job, run, regraDaEspera, "desconectado");
   }
 
   // So entra em retry o que COM CERTEZA nao chegou ao paciente. Na ultima

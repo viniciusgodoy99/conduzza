@@ -17,10 +17,13 @@ import { WhatsappStatus } from "@/components/shell/whatsapp-status";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import {
   COLUNAS_DA_FAIXA,
+  numerosParaContar,
   type NumeroDaFaixa,
 } from "@/lib/domain/conexao-dos-numeros";
 import type { SaudeDoMotor } from "@/lib/domain/motor";
 import { COOKIE_DO_RAIL, preferenciaDoRail } from "@/lib/navigation";
+import { contarMensagensEsperando } from "@/lib/queries/mensagens-esperando";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 // Layout da area logada: exige sessao e clinica ativa validada em
@@ -208,6 +211,27 @@ export default async function AppLayout({
   // componente mantem a faixa honesta depois.
   const saudeInicial = (saude ?? null) as SaudeDoMotor | null;
 
+  // Com mais de um numero e algum fora do ar (docs/07, Fase 4), a faixa diz
+  // quantas mensagens automaticas esperam por ele. A contagem da primeira
+  // pintura sai daqui, e SO nesse caso: a clinica conectada (o normal) nao
+  // paga ida nenhuma a mais. A fila so e legivel pelo administrador na RLS,
+  // por isso o service role, preso a clinica ativa. Falha vira faixa sem a
+  // contagem, nunca tela quebrada; o componente pede de novo.
+  const numerosDaFaixa = (numerosDoWhatsapp ?? []) as NumeroDaFaixa[];
+  const paraContar = numerosParaContar(numerosDaFaixa);
+  const esperandoIniciais =
+    paraContar.length > 0
+      ? await Promise.resolve()
+          .then(() =>
+            contarMensagensEsperando(
+              createAdminClient(),
+              active.clinicId,
+              paraContar,
+            ),
+          )
+          .catch(() => undefined)
+      : undefined;
+
   const banner = (
     <MotorStatus
       saudeInicial={saudeInicial}
@@ -215,7 +239,8 @@ export default async function AppLayout({
       fallback={
         <WhatsappStatus
           clinicId={active.clinicId}
-          numerosIniciais={(numerosDoWhatsapp ?? []) as NumeroDaFaixa[]}
+          numerosIniciais={numerosDaFaixa}
+          esperandoIniciais={esperandoIniciais}
         />
       }
     />

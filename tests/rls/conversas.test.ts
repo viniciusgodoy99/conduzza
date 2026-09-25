@@ -85,6 +85,11 @@ beforeAll(async () => {
     (c: { slug: string }) => c.slug === `conv-b-${suffix}`,
   )!;
 
+  // Um numero em cada clinica, com o segredo ligado por account_id, ANTES
+  // das conversas: desde o contrato da Fase 3 conversa exige numero.
+  await criarNumeroDeTeste(admin, clinicA.id, { instance_token: "segredo-a" });
+  await criarNumeroDeTeste(admin, clinicB.id, { instance_token: "segredo-b" });
+
   await mustInsert(
     admin.from("clinic_member").insert([
       { clinic_id: clinicA.id, user_id: a.id, role: "admin" },
@@ -225,10 +230,6 @@ beforeAll(async () => {
     "ai_decision_log",
   );
 
-  // Um numero em cada clinica, com o segredo ligado por account_id. As
-  // conversas acima, criadas antes do numero, sao adotadas por ele.
-  await criarNumeroDeTeste(admin, clinicA.id, { instance_token: "segredo-a" });
-  await criarNumeroDeTeste(admin, clinicB.id, { instance_token: "segredo-b" });
   await mustInsert(
     admin.from("message_template").insert([
       {

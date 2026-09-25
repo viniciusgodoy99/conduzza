@@ -29,6 +29,7 @@ const ROTULO_DO_MOTIVO: Record<string, string> = {
   consulta_remarcada: "consulta remarcada",
   remarcacao_pedida: "pediu para remarcar",
   toque_atrasado: "atrasada, a seguinte cobriu",
+  numero_removido: "número removido",
 };
 
 export function MetricasDaRegua({

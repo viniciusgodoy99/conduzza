@@ -8,12 +8,17 @@ import {
 } from "@/lib/integrations/whatsapp/inbound";
 import { ingerirMensagemRecebida } from "@/lib/integrations/whatsapp/ingest";
 import { interceptarRespostaDePaciente } from "@/lib/integrations/whatsapp/interceptar-resposta";
+import type {
+  ConnectionStatus,
+  OpcoesDeConsulta,
+} from "@/lib/integrations/whatsapp/provider";
 import {
   acharNumeroPeloSegredo,
   lerIdentificacaoDoWebhook,
   segredosIguais,
   type IdentificacaoDoWebhook,
 } from "@/lib/integrations/whatsapp/segredo-do-webhook";
+import { conferirConexaoDoWebhook } from "@/lib/integrations/whatsapp/trava-celular";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -33,11 +38,46 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // Quando houver SUPABASE_ACCESS_TOKEN e conta uazapi, este handler vira uma
 // Edge Function fina reutilizando a MESMA RPC (ver supabase/functions/README).
 
+export const runtime = "nodejs";
+// Teto explicito, como no motor e na saude (achado T[1] da revisao da trava).
+// O dia a dia leva milissegundos: so a trava consulta o provedor. O caminho
+// mais longo e o pareamento com o servidor lento, em que cada consulta tem
+// ate tres tentativas de 10 s. Se o teto cortar ali, o corte do nosso lado
+// (segredo, trilha e status) ja aconteceu antes do desligamento, e a mensagem
+// ainda nao gravada fica com erro, que o provedor tenta de novo (tentativas
+// finitas, cerca de 3 pela especificacao).
+export const maxDuration = 60;
+
+/**
+ * Consulta ao provedor na porta da ingestao FORA do pareamento (numero
+ * "desconectado"). La a mensagem entra com ou sem decisao, entao esperar o
+ * padrao (ate tres tentativas de 10 s, uns 32 s num servidor travado) so
+ * atrasaria a mensagem e a resposta da IA. No pareamento e no evento de
+ * conexao fica o padrao, que tolera um servidor lento: la a falta de decisao
+ * vira 503, e desistir cedo seguraria a mensagem mais vezes.
+ */
+const CONSULTA_CURTA: OpcoesDeConsulta = { timeoutMs: 5_000, semRetry: true };
+
 type NumeroDoWebhook = {
   accountId: string;
   clinicId: string;
   instanceToken: string | null;
+  /**
+   * Provedor e situacao gravados, lidos na mesma consulta da resolucao: a
+   * porta da ingestao decide por eles sem ida a mais ao banco.
+   */
+  provider: string | null;
+  connectionStatus: string | null;
 };
+
+type LinhaDaConta = {
+  id: string;
+  provider: string | null;
+  connection_status: string | null;
+};
+
+const COLUNAS_DA_CONTA =
+  "id, clinic_id, removido_em, provider, connection_status";
 
 type Resolucao =
   | { estado: "ok"; numero: NumeroDoWebhook }
@@ -73,7 +113,7 @@ async function resolverNumero(
         .maybeSingle(),
       admin
         .from("whatsapp_account")
-        .select("id, clinic_id, removido_em")
+        .select(COLUNAS_DA_CONTA)
         .eq("id", ident.accountId)
         .maybeSingle(),
     ]);
@@ -84,11 +124,8 @@ async function resolverNumero(
       };
     }
     const segredo = segredoResult.data as LinhaDeSegredo | null;
-    const conta = contaResult.data as {
-      id: string;
-      clinic_id: string;
-      removido_em: string | null;
-    } | null;
+    const conta = contaResult.data as
+      (LinhaDaConta & { clinic_id: string; removido_em: string | null }) | null;
     if (!segredo || !conta) {
       return { estado: "recusado" };
     }
@@ -109,6 +146,8 @@ async function resolverNumero(
         accountId: segredo.account_id,
         clinicId: segredo.clinic_id,
         instanceToken: segredo.instance_token,
+        provider: conta.provider ?? null,
+        connectionStatus: conta.connection_status ?? null,
       },
     };
   }
@@ -119,7 +158,7 @@ async function resolverNumero(
   const [contasResult, segredosResult] = await Promise.all([
     admin
       .from("whatsapp_account")
-      .select("id")
+      .select("id, provider, connection_status")
       .eq("clinic_id", ident.clinicId)
       .is("removido_em", null),
     admin
@@ -133,8 +172,10 @@ async function resolverNumero(
       errorCode: contasResult.error?.code ?? segredosResult.error?.code ?? null,
     };
   }
-  const ativos = new Set(
-    ((contasResult.data ?? []) as { id: string }[]).map((conta) => conta.id),
+  const ativos = new Map(
+    ((contasResult.data ?? []) as LinhaDaConta[]).map(
+      (conta) => [conta.id, conta] as const,
+    ),
   );
   const candidatos = ((segredosResult.data ?? []) as LinhaDeSegredo[]).filter(
     (linha) => ativos.has(linha.account_id),
@@ -143,6 +184,7 @@ async function resolverNumero(
   if (!achado) {
     return { estado: "recusado" };
   }
+  const conta = ativos.get(achado.account_id);
   // Rastro para saber quando a ultima instancia migrou para a URL nova.
   log.info("webhook_url_legada", {
     clinic_id: achado.clinic_id,
@@ -154,8 +196,162 @@ async function resolverNumero(
       accountId: achado.account_id,
       clinicId: achado.clinic_id,
       instanceToken: achado.instance_token,
+      provider: conta?.provider ?? null,
+      connectionStatus: conta?.connection_status ?? null,
     },
   };
+}
+
+/**
+ * Grava a situacao de conexao do numero (evento de conexao, ou a conexao
+ * confirmada pela porta da ingestao).
+ *
+ * So escreve quando o status MUDOU: o provedor reenvia o mesmo evento de
+ * conexao varias vezes, e cada escrita gera evento de Realtime e linha morta
+ * a toa. O filtro .neq faz o update afetar zero linhas no repeteco.
+ *
+ * Pelo id DO NUMERO: com varios numeros, a conexao de um nao mexe no status
+ * dos outros. Numero removido fica como a remocao o deixou.
+ *
+ * "conectando" so substitui "aguardando_qr" (achado T[0] da revisao da
+ * trava): e o QR lido, dentro de um pareamento aberto pelo Conectar. A porta
+ * da ingestao segura a mensagem de numero "conectando" ate a trava decidir, e
+ * a sessao JA pareada que reconecta sozinha nao pode cair nessa espera. O
+ * filtro vive no update, e nao so na rota: um "connecting" atrasado, que
+ * chega depois do "connected", tambem nao rebaixa o numero.
+ */
+async function gravarStatusDoNumero(
+  admin: SupabaseClient,
+  numero: { clinicId: string; accountId: string },
+  status: ConnectionStatus,
+  telefoneConferido: string | null,
+): Promise<void> {
+  const { clinicId, accountId } = numero;
+  const atualizacao = admin
+    .from("whatsapp_account")
+    .update({
+      connection_status: status,
+      // O telefone que a trava conferiu: sem ele, este numero ficaria
+      // invisivel para a trava dos pareamentos seguintes.
+      ...(telefoneConferido ? { display_phone: telefoneConferido } : {}),
+      ...(status === "conectado"
+        ? { connected_at: new Date().toISOString() }
+        : {}),
+      ...(status === "desconectado"
+        ? { disconnected_at: new Date().toISOString() }
+        : {}),
+    })
+    .eq("id", accountId)
+    .eq("clinic_id", clinicId)
+    .is("removido_em", null)
+    .neq("connection_status", status);
+  const { data: mudou } = await (
+    status === "conectando"
+      ? atualizacao.eq("connection_status", "aguardando_qr")
+      : atualizacao
+  ).select("id");
+
+  if (mudou && mudou.length > 0) {
+    // Desconexao e o proxy de qualidade neste canal (CLAUDE.md 3.3): o alerta
+    // operacional nasce desta linha estruturada. Nenhum dado de paciente.
+    if (status === "desconectado") {
+      log.warn("whatsapp_desconectou", {
+        clinic_id: clinicId,
+        whatsapp_account_id: accountId,
+        connection_status: status,
+      });
+    } else {
+      log.info("whatsapp_conexao_mudou", {
+        clinic_id: clinicId,
+        whatsapp_account_id: accountId,
+        connection_status: status,
+      });
+    }
+  }
+}
+
+/**
+ * A PORTA DA INGESTAO respeita a trava do mesmo celular (achado M[5] da
+ * revisao das Fases 3 e 4). Antes a mensagem entrava sem olhar a conexao:
+ * enquanto a trava nao decidia (a janela entre ler o QR e o corte, e sem
+ * prazo quando ela nao conseguia confirmar), a instancia pareada com o
+ * celular de OUTRA clinica gravava aqui as mensagens dos pacientes de la.
+ *
+ * Numero conectado no banco (o caso de todo dia) e o simulador passam direto,
+ * sem consulta nenhuma. Nos outros, a mensagem so entra depois da MESMA
+ * conferencia do evento de conexao, que roda de novo a cada mensagem:
+ *   - confirmada: grava "conectado" (a reconexao que o evento nao conseguiu
+ *     confirmar se resolve na primeira mensagem) e a mensagem entra;
+ *   - recusada: a trava ja cortou o numero; a mensagem nao e gravada (e de
+ *     um celular que nao e desta clinica) e o 200 evita reenvio;
+ *   - sem decisao, com o numero em PAREAMENTO (aguardando_qr ou conectando):
+ *     503, e o provedor reenvia depois, quando a trava ja decidiu;
+ *   - sem decisao, com o numero "desconectado": entra, como antes. So a
+ *     sessao ja pareada volta sozinha (celular novo passa pelo QR, e o QR
+ *     grava aguardando_qr), e barrar aqui perderia mensagem de paciente numa
+ *     queda do provedor.
+ *
+ * "conectando" e SEMPRE pareamento de verdade (achado T[0] da revisao da
+ * trava): so o Conectar o grava direto, e o evento de conexao e as consultas
+ * da tela so o gravam em cima de "aguardando_qr". A sessao ja pareada que
+ * reconecta sozinha continua "conectado" (passa direto) ou "desconectado"
+ * (entra sem decisao), nunca cai no 503.
+ *
+ * Fora do pareamento a consulta ao provedor e curta (CONSULTA_CURTA): a
+ * mensagem entra de qualquer jeito, e o padrao so a atrasaria (achado T[1]).
+ *
+ * Devolve a resposta quando a mensagem NAO deve ser ingerida agora.
+ */
+async function barrarAntesDaTrava(
+  admin: SupabaseClient,
+  numero: NumeroDoWebhook,
+  waMessageId: string,
+): Promise<NextResponse | null> {
+  if (numero.connectionStatus === "conectado" || numero.provider === "fake") {
+    return null;
+  }
+  const campos = {
+    clinic_id: numero.clinicId,
+    whatsapp_account_id: numero.accountId,
+    wa_message_id: waMessageId,
+  };
+  const emPareamento =
+    numero.connectionStatus === "aguardando_qr" ||
+    numero.connectionStatus === "conectando";
+  const conferida = await conferirConexaoDoWebhook(
+    admin,
+    { clinicId: numero.clinicId, accountId: numero.accountId },
+    numero.instanceToken,
+    emPareamento ? undefined : CONSULTA_CURTA,
+  );
+  if (conferida.resultado === "confirmada") {
+    await gravarStatusDoNumero(
+      admin,
+      numero,
+      "conectado",
+      conferida.displayPhone,
+    );
+    return null;
+  }
+  if (conferida.resultado === "recusada") {
+    log.info("webhook_mensagem_ignorada", {
+      ...campos,
+      status: "celular_recusado",
+    });
+    return NextResponse.json({ ignorada: "celular_recusado" });
+  }
+  if (!emPareamento) {
+    return null;
+  }
+  log.warn("webhook_mensagem_adiada", {
+    ...campos,
+    connection_status: numero.connectionStatus,
+    status: conferida.resultado,
+  });
+  return NextResponse.json(
+    { error: "conexao_sem_confirmacao" },
+    { status: 503 },
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -211,6 +407,14 @@ export async function POST(request: NextRequest) {
   }
 
   if (event.kind === "message_received") {
+    const barrada = await barrarAntesDaTrava(
+      admin,
+      resolucao.numero,
+      event.waMessageId,
+    );
+    if (barrada) {
+      return barrada;
+    }
     const { data, error } = await ingerirMensagemRecebida(
       admin,
       clinicId,
@@ -430,45 +634,67 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // So escreve quando o status MUDOU: o provedor reenvia o mesmo evento de
-  // conexao varias vezes, e cada escrita gera evento de Realtime e linha
-  // morta a toa. O filtro .neq faz o update afetar zero linhas no repeteco.
+  // "Conectado" passa pela trava do MESMO celular em duas instancias, a
+  // mesma das acoes da tela (lib/integrations/whatsapp/trava-celular.ts).
+  // Antes este evento gravava "conectado" direto: pulava a trava e ainda a
+  // desarmava na consulta seguinte da tela, que ja achava o numero conectado.
   //
-  // Pelo id DO NUMERO: com varios numeros, a conexao de um nao mexe no status
-  // dos outros. Numero removido fica como a remocao o deixou.
-  const { data: mudou } = await admin
-    .from("whatsapp_account")
-    .update({
-      connection_status: event.status,
-      ...(event.status === "conectado"
-        ? { connected_at: new Date().toISOString() }
-        : {}),
-      ...(event.status === "desconectado"
-        ? { disconnected_at: new Date().toISOString() }
-        : {}),
-    })
-    .eq("id", accountId)
-    .eq("clinic_id", clinicId)
-    .is("removido_em", null)
-    .neq("connection_status", event.status)
-    .select("id");
-
-  if (mudou && mudou.length > 0) {
-    // Desconexao e o proxy de qualidade neste canal (CLAUDE.md 3.3): o alerta
-    // operacional nasce desta linha estruturada. Nenhum dado de paciente.
-    if (event.status === "desconectado") {
-      log.warn("whatsapp_desconectou", {
-        clinic_id: clinicId,
-        whatsapp_account_id: accountId,
-        connection_status: event.status,
-      });
-    } else {
-      log.info("whatsapp_conexao_mudou", {
-        clinic_id: clinicId,
-        whatsapp_account_id: accountId,
-        connection_status: event.status,
-      });
-    }
+  // Recusado ou encerrado (nada a confirmar), nada e gravado e o 200 evita
+  // reenvio em laco. SEM CONFIRMACAO (provedor ou banco falhou, telefone
+  // desconhecido, instancia ainda conectando) responde 503, como o
+  // apagamento: antes era 200 e ninguem conferia de novo, e uma reconexao
+  // sozinha de madrugada ficava "desconectado" com a instancia viva ate
+  // alguem clicar em "Verificar conexao" (achado M[5] da revisao das Fases 3
+  // e 4). O reenvio confere de novo; a primeira mensagem recebida tambem
+  // (barrarAntesDaTrava).
+  //
+  // "Conectando" FORA de um pareamento aberto pelo QR (numero "conectado" ou
+  // "desconectado") nao muda nada (achado T[0] da revisao da trava): e a
+  // sessao ja pareada reconectando. Gravar "conectando" ali fazia a porta da
+  // ingestao tratar o numero como pareamento, e com o provedor sem responder
+  // a mensagem do paciente levava 503 ate o provedor desistir de reenviar.
+  // "Conectado" fica "conectado": a mensagem continua entrando direto, a faixa
+  // e o compositor nao acusam queda por uma reconexao de segundos, e se ela
+  // falhar o evento "disconnected" grava a queda. O registro existe para
+  // saber se o uazapi manda mesmo este evento fora do QR.
+  const situacaoGravada = resolucao.numero.connectionStatus;
+  if (
+    event.status === "conectando" &&
+    situacaoGravada !== "aguardando_qr" &&
+    situacaoGravada !== "conectando"
+  ) {
+    log.info("whatsapp_conectando_fora_do_pareamento", {
+      clinic_id: clinicId,
+      whatsapp_account_id: accountId,
+      connection_status: situacaoGravada,
+    });
+    return NextResponse.json({ ok: true, gravado: false });
   }
+
+  let telefoneConferido: string | null = null;
+  if (event.status === "conectado") {
+    const conferida = await conferirConexaoDoWebhook(
+      admin,
+      { clinicId, accountId },
+      instanceToken,
+    );
+    if (conferida.resultado === "sem_confirmacao") {
+      return NextResponse.json(
+        { error: "conexao_sem_confirmacao" },
+        { status: 503 },
+      );
+    }
+    if (conferida.resultado !== "confirmada") {
+      return NextResponse.json({ ok: true, gravado: false });
+    }
+    telefoneConferido = conferida.displayPhone;
+  }
+
+  await gravarStatusDoNumero(
+    admin,
+    { clinicId, accountId },
+    event.status,
+    telefoneConferido,
+  );
   return NextResponse.json({ ok: true });
 }

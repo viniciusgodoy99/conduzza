@@ -6,6 +6,7 @@ import type {
   InstanceStatus,
   MediaDownloadResult,
   MenuOption,
+  OpcoesDeConsulta,
   SendResult,
   WhatsAppProvider,
   MidiaParaEnviar,
@@ -57,7 +58,8 @@ type UazapiOptions = {
 };
 
 /** Operacoes de instancia que olham o status HTTP e podem lancar este erro. */
-export type OperacaoDeInstancia = "criar" | "conectar" | "status" | "webhook";
+export type OperacaoDeInstancia =
+  "criar" | "conectar" | "status" | "webhook" | "desconectar";
 
 /**
  * O que a recusa significa, pelos codigos da especificacao:
@@ -478,10 +480,16 @@ export class UazapiProvider implements WhatsAppProvider {
     return parseInstanceStatus(body);
   }
 
-  async getStatus(ref: InstanceRef): Promise<InstanceStatus> {
-    // GET, conforme a especificacao.
+  async getStatus(
+    ref: InstanceRef,
+    opcoes: OpcoesDeConsulta = {},
+  ): Promise<InstanceStatus> {
+    // GET, conforme a especificacao. Sem opcoes, o prazo e as tentativas
+    // padrao de request() (o campo ausente cai no default de la).
     const { status, body } = await this.request(ref, PATHS.instanceStatus, {
       method: "GET",
+      semRetry: opcoes.semRetry,
+      timeoutMs: opcoes.timeoutMs,
     });
     exigir2xx(status, "status");
     return parseInstanceStatus(body);
@@ -504,7 +512,14 @@ export class UazapiProvider implements WhatsAppProvider {
   }
 
   async disconnect(ref: InstanceRef): Promise<void> {
-    await this.request(ref, PATHS.instanceDisconnect, { payload: {} });
+    // So 2xx e desligamento confirmado. Antes 401, 409 e 429 voltavam como
+    // sucesso, e a trava do mesmo celular gravava "desconectado" com a
+    // instancia ainda pareada (achado N[1] da revisao da Fase 2). Quem chama
+    // decide o que fazer com a recusa: todos seguem com o estado local.
+    const { status } = await this.request(ref, PATHS.instanceDisconnect, {
+      payload: {},
+    });
+    exigir2xx(status, "desconectar");
   }
 
   /**
@@ -644,18 +659,16 @@ function parseInstanceStatus(body: Record<string, unknown>): InstanceStatus {
     // Enquanto ha QR na resposta, o pareamento esta aberto esperando leitura.
     status: qrCode && status !== "conectado" ? "aguardando_qr" : status,
     qrCode: qrCode ?? paircode,
-    // O NUMERO vem primeiro (owner/jid.user); o nome de perfil e ultimo
-    // recurso. A ordem antiga preferia profileName e display_phone acabava
-    // guardando o NOME, que o teste de envio da Tela 7 usaria como destino
-    // (achado grave da revisao de 14/09/2026): nome sem digito nao chega, e
-    // nome COM digitos viraria numero de terceiro.
+    // So o NUMERO (owner/jid.user), nunca o nome de perfil. A ordem antiga
+    // preferia profileName e display_phone acabava guardando o NOME, que o
+    // teste de envio da Tela 7 usaria como destino (achado grave da revisao
+    // de 14/09/2026): nome sem digito nao chega, e nome COM digitos viraria
+    // numero de terceiro. Depois ele ficou como ultimo recurso, e o numero
+    // que o recebia ficava invisivel para a trava do mesmo celular (achado
+    // N[2] da revisao da Fase 2). Sem numero na resposta, fica nulo: a trava
+    // trata como desconhecido e quem grava mantem o telefone que ja tinha.
     displayPhone: semSufixoDeJid(
-      pickString(body, [
-        "instance.owner",
-        "owner",
-        "status.jid.user",
-        "instance.profileName",
-      ]),
+      pickString(body, ["instance.owner", "owner", "status.jid.user"]),
     ),
     instanceId: pickString(body, ["instance.name", "instance.id"]),
     instanceToken: pickString(body, ["instance.token", "token"]),

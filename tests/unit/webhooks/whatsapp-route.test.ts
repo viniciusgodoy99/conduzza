@@ -82,7 +82,13 @@ const NUMERO_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const NUMERO_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const NUMERO_REMOVIDO = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
-type Conta = { id: string; clinic_id: string; removido_em: string | null };
+type Conta = {
+  id: string;
+  clinic_id: string;
+  removido_em: string | null;
+  provider: string;
+  connection_status: string;
+};
 type Segredo = {
   account_id: string;
   clinic_id: string;
@@ -113,7 +119,11 @@ function responder(consulta: Consulta): Resultado {
       data: contas
         .filter((c) => c.clinic_id === clinica)
         .filter((c) => !soAtivos || c.removido_em === null)
-        .map((c) => ({ id: c.id })),
+        .map((c) => ({
+          id: c.id,
+          provider: c.provider,
+          connection_status: c.connection_status,
+        })),
       error: null,
     };
   }
@@ -167,7 +177,8 @@ vi.mock("@/lib/integrations/whatsapp/interceptar-resposta", () => ({
   interceptarRespostaDePaciente: interceptar,
 }));
 
-const { POST } = await import("@/app/api/webhooks/whatsapp/route");
+const { POST, maxDuration, runtime } =
+  await import("@/app/api/webhooks/whatsapp/route");
 
 function pedido(query: string, corpo: unknown): NextRequest {
   return new NextRequest(
@@ -220,12 +231,26 @@ function consultasDe(tabela: string, operacao: Consulta["operacao"]) {
 
 beforeEach(() => {
   contas = [
-    { id: NUMERO_A, clinic_id: CLINICA, removido_em: null },
-    { id: NUMERO_B, clinic_id: CLINICA, removido_em: null },
+    {
+      id: NUMERO_A,
+      clinic_id: CLINICA,
+      removido_em: null,
+      provider: "fake",
+      connection_status: "conectado",
+    },
+    {
+      id: NUMERO_B,
+      clinic_id: CLINICA,
+      removido_em: null,
+      provider: "fake",
+      connection_status: "conectado",
+    },
     {
       id: NUMERO_REMOVIDO,
       clinic_id: CLINICA,
       removido_em: "2026-09-25T10:00:00.000Z",
+      provider: "fake",
+      connection_status: "desconectado",
     },
   ];
   segredos = [
@@ -329,6 +354,18 @@ describe("POST /api/webhooks/whatsapp: qual numero chama", () => {
     // A lista da clinica e lida so entre os numeros ativos.
     const leituraDeContas = consultasDe("whatsapp_account", "select")[0]!;
     expect(leituraDeContas.valorDe("is", "removido_em")).toBeNull();
+  });
+
+  it("numero conectado: a porta da trava nao custa leitura a mais, nas duas URLs", async () => {
+    ingerir.mockResolvedValue(ingestInserida(NUMERO_A));
+
+    await POST(pedido(urlNova(NUMERO_A, "segredo-a"), RECEBIDA));
+    await POST(pedido(urlLegada("segredo-a"), RECEBIDA));
+
+    expect(ingerir).toHaveBeenCalledTimes(2);
+    // So a leitura da resolucao, uma por pedido: provedor e situacao vem nela.
+    expect(consultasDe("whatsapp_account", "select")).toHaveLength(2);
+    expect(consultasDe("whatsapp_account", "update")).toHaveLength(0);
   });
 
   it("URL legada com o segredo de numero removido: 401", async () => {
@@ -497,5 +534,46 @@ describe("POST /api/webhooks/whatsapp: tudo filtrado pelo numero", () => {
     expect(update!.valorDe("is", "removido_em")).toBeNull();
     expect(update!.valorDe("neq", "connection_status")).toBe("conectado");
     expect(update!.valores).toMatchObject({ connection_status: "conectado" });
+  });
+
+  it("'conectando' no pareamento só substitui 'aguardando_qr', e o filtro vive no update (T[0])", async () => {
+    contas = contas.map((c) =>
+      c.id === NUMERO_B ? { ...c, connection_status: "aguardando_qr" } : c,
+    );
+
+    const resposta = await POST(
+      pedido(urlNova(NUMERO_B, "segredo-b"), {
+        kind: "connection_update",
+        status: "conectando",
+      }),
+    );
+
+    expect(resposta.status).toBe(200);
+    const [update] = consultasDe("whatsapp_account", "update");
+    // Um "connecting" atrasado, que chega depois do "connected", acha o
+    // numero ja conectado e nao o rebaixa.
+    expect(update!.valorDe("eq", "connection_status")).toBe("aguardando_qr");
+    expect(update!.valorDe("neq", "connection_status")).toBe("conectando");
+    expect(update!.valores).toMatchObject({ connection_status: "conectando" });
+  });
+
+  it("'conectando' com o número conectado: nada é gravado (T[0])", async () => {
+    const resposta = await POST(
+      pedido(urlNova(NUMERO_B, "segredo-b"), {
+        kind: "connection_update",
+        status: "conectando",
+      }),
+    );
+
+    expect(resposta.status).toBe(200);
+    expect(await resposta.json()).toEqual({ ok: true, gravado: false });
+    expect(consultasDe("whatsapp_account", "update")).toHaveLength(0);
+  });
+});
+
+describe("POST /api/webhooks/whatsapp: configuração da rota", () => {
+  it("roda em Node com teto de 60 s declarado, como o motor (T[1])", () => {
+    expect(runtime).toBe("nodejs");
+    expect(maxDuration).toBe(60);
   });
 });

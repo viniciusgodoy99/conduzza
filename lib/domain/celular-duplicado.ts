@@ -7,8 +7,10 @@ import { chaveDeTelefone } from "@/lib/domain/telefone";
 // clinicas diferentes a clinica errada leria a conversa (risco LGPD). A
 // conexao nova e recusada no instante em que chega "conectado".
 //
-// PURO, zero I/O: a Server Action le os numeros conectados e decide com estas
-// funcoes; tests/unit/whatsapp/celular-duplicado.test.ts prova a decisao.
+// PURO, zero I/O: a trava (lib/integrations/whatsapp/trava-celular.ts, usada
+// pelas acoes de conexao e pelo evento de conexao do webhook) le os numeros
+// conectados e decide com estas funcoes;
+// tests/unit/whatsapp/celular-duplicado.test.ts prova a decisao.
 
 /**
  * Chave canonica do celular pareado, para comparar. Nulo quando o valor nao

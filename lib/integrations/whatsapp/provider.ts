@@ -81,6 +81,18 @@ export type InstanceStatus = {
   instanceToken?: string | null;
 };
 
+/**
+ * Como consultar a situacao da instancia. Sem opcoes vale o padrao do
+ * provedor (no uazapi, 10 s por tentativa e ate duas novas tentativas em
+ * tempo esgotado ou 5xx), que tolera um servidor lento.
+ */
+export type OpcoesDeConsulta = {
+  /** prazo de cada tentativa, em milissegundos */
+  timeoutMs?: number;
+  /** uma tentativa so: tempo esgotado ou 5xx lanca na hora */
+  semRetry?: boolean;
+};
+
 export interface WhatsAppProvider {
   readonly name: ProviderName;
   /**
@@ -126,7 +138,15 @@ export interface WhatsAppProvider {
    */
   deleteMessage(ref: InstanceRef, waMessageId: string): Promise<DeleteResult>;
   connectInstance(ref: InstanceRef): Promise<InstanceStatus>;
-  getStatus(ref: InstanceRef): Promise<InstanceStatus>;
+  /**
+   * Situacao da instancia. `opcoes` so encurta a consulta onde esperar nao
+   * muda o desfecho: a porta da ingestao com o numero "desconectado", em que a
+   * mensagem entra com ou sem resposta (achado T[1] da revisao da trava).
+   */
+  getStatus(
+    ref: InstanceRef,
+    opcoes?: OpcoesDeConsulta,
+  ): Promise<InstanceStatus>;
   configureWebhook(ref: InstanceRef, url: string): Promise<void>;
   disconnect(ref: InstanceRef): Promise<void>;
   /**

@@ -8,11 +8,13 @@ import { vi } from "vitest";
 // com as mensagens de erro que o PostgREST devolve:
 //
 //   - whatsapp_account: o gatilho antes_de_criar_numero (limite do plano,
-//     23514, e principal automatico), o unique TEMPORARIO por clinica
-//     (whatsapp_account_uma_por_clinica, ligado por padrao, como na Fase 2) e
-//     o nome unico entre os ativos (whatsapp_account_nome_unico);
-//   - whatsapp_account_secret: PK account_id, unique temporario por clinica e
-//     webhook_secret com default;
+//     23514, e principal automatico) e o nome unico entre os ativos
+//     (whatsapp_account_nome_unico). O unique TEMPORARIO por clinica
+//     (whatsapp_account_uma_por_clinica) saiu no contrato da Fase 3
+//     (migration 20260925140000): fica desligado por padrao e so liga no
+//     teste que simula o banco anterior ao contrato;
+//   - whatsapp_account_secret: PK account_id (o unique temporario por
+//     clinica segue a mesma chave) e webhook_secret com default;
 //   - whatsapp_envio_automatico: PK clinic_id (upsert por ela).
 //
 // Filtros e ordem sao os usados pelas acoes (eq, neq, is, in, not is); a
@@ -33,8 +35,11 @@ function duplicada(restricao: string): ErroFalso {
 
 export class BancoFalso {
   readonly tabelas = new Map<string, Linha[]>();
-  /** unique temporario (clinic_id) das duas tabelas, ate a Fase 3 */
-  uniqueTemporario = true;
+  /**
+   * Unique temporario (clinic_id) das duas tabelas, que existiu da Fase 1A
+   * ao contrato da Fase 3. Desligado: e o banco de hoje.
+   */
+  uniqueTemporario = false;
   /** clinic.limite_de_numeros por clinica; ausente = sem limite */
   readonly limites = new Map<string, number>();
   readonly rpc = vi.fn<
@@ -52,7 +57,7 @@ export class BancoFalso {
 
   limpar(): void {
     this.tabelas.clear();
-    this.uniqueTemporario = true;
+    this.uniqueTemporario = false;
     this.limites.clear();
     this.rpc.mockReset();
     this.rpc.mockImplementation(async () => ({ data: null, error: null }));

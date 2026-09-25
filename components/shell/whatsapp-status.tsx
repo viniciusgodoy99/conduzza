@@ -2,17 +2,21 @@
 
 import { RefreshCw, WifiOff } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { toast } from "sonner";
 
+import { contarMensagensEsperandoAction } from "@/lib/actions/mensagens-esperando";
 import { checarConexaoAction } from "@/lib/actions/whatsapp-connect";
 import {
   COLUNAS_DA_FAIXA,
   aplicarLinhaDoNumero,
   aplicarVerificacao,
+  avisoDaVerificacao,
   lerVerificacao,
+  numerosParaContar,
   textoDaFaixa,
+  type EsperandoPorNumero,
   type LinhaDoNumero,
   type NumeroDaFaixa,
 } from "@/lib/domain/conexao-dos-numeros";
@@ -37,19 +41,75 @@ import { cn } from "@/lib/utils";
 // "a clinica". A faixa considera o principal e os que ja conectaram alguma
 // vez (D6), e o texto (lib/domain/conexao-dos-numeros.ts) e o de sempre
 // quando a clinica tem um numero so.
+//
+// O "Verificar conexao" diz, no aviso que abre depois, por que o numero caiu
+// quando a trava recusou o celular dele (so para administrador e gestor; a
+// regra e avisoDaVerificacao). O texto da faixa nao muda.
+//
+// Com mais de um numero (Fase 4), a faixa nomeia quem caiu e diz quantas
+// mensagens automaticas esperam a reconexao. A contagem vem da fila por
+// action (a RLS da fila e so do administrador, e a faixa e de todos), e so
+// e pedida enquanto ha numero vigiado fora do ar: a clinica conectada nunca
+// paga esta consulta.
 
 const INTERVALO_MS = 60_000;
 
 export function WhatsappStatus({
   clinicId,
   numerosIniciais,
+  esperandoIniciais,
 }: {
   clinicId: string;
   /** Os numeros ATIVOS da clinica. Lista vazia: nenhuma faixa. */
   numerosIniciais: readonly NumeroDaFaixa[];
+  /**
+   * Mensagens automaticas esperando por numero, contadas no servidor para a
+   * primeira pintura (so quando ja ha numero fora do ar). Sem ela, a faixa
+   * pede a contagem ao montar.
+   */
+  esperandoIniciais?: EsperandoPorNumero;
 }) {
   const [numeros, setNumeros] = useState(numerosIniciais);
   const [verificando, setVerificando] = useState(false);
+  const [esperando, setEsperando] = useState<EsperandoPorNumero>(
+    esperandoIniciais ?? {},
+  );
+
+  // Quem contar: os vigiados fora do ar, so com mais de um numero. A chave
+  // em texto faz o efeito rodar so quando o CONJUNTO muda (um numero cai ou
+  // volta), e nao a cada UPDATE de slot que devolve a mesma lista.
+  const chaveParaContar = numerosParaContar(numeros).join(",");
+  // A contagem do servidor vale para a primeira pintura: a primeira rodada
+  // do efeito nao repete a consulta se ela ja cobre todos os numeros.
+  const contagemDoServidor = useRef(esperandoIniciais);
+  useEffect(() => {
+    if (!chaveParaContar) {
+      return;
+    }
+    const ids = chaveParaContar.split(",");
+    let ativo = true;
+    const contar = () => {
+      void contarMensagensEsperandoAction(ids)
+        .then((resultado) => {
+          if (ativo) {
+            setEsperando(resultado);
+          }
+        })
+        // Falha de rede: a faixa segue com a ultima contagem; o proximo
+        // ciclo tenta de novo.
+        .catch(() => undefined);
+    };
+    const doServidor = contagemDoServidor.current;
+    contagemDoServidor.current = undefined;
+    if (!doServidor || ids.some((id) => doServidor[id] === undefined)) {
+      contar();
+    }
+    const timer = setInterval(contar, INTERVALO_MS);
+    return () => {
+      ativo = false;
+      clearInterval(timer);
+    };
+  }, [chaveParaContar]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -119,15 +179,19 @@ export function WhatsappStatus({
           return;
         }
         // Funcional: um evento de Realtime que chegou durante a verificacao
-        // nao e desfeito. O aviso sai da lista que esta na tela.
+        // nao e desfeito. O aviso sai da lista que esta na tela. O motivo
+        // da recusa do celular (so para administrador e gestor) vai no
+        // complemento do aviso, para a faixa continuar curta.
         setNumeros((atuais) => aplicarVerificacao(atuais, verificacao));
-        const proximos = aplicarVerificacao(numeros, verificacao);
-        const aindaFora = textoDaFaixa(proximos);
-        if (aindaFora) {
+        const aviso = avisoDaVerificacao(numeros, verificacao);
+        if (aviso) {
           toast.info(
-            proximos.length <= 1
-              ? "Ainda desconectado. Abra Configurações para reconectar."
-              : `${aindaFora.titulo}. Abra Configurações para reconectar.`,
+            aviso.mensagem,
+            // Mais tempo na tela quando ha motivo para ler, como os outros
+            // avisos longos do sistema.
+            aviso.motivo
+              ? { description: aviso.motivo, duration: 10_000 }
+              : undefined,
           );
         }
       })
@@ -137,7 +201,7 @@ export function WhatsappStatus({
       .finally(() => setVerificando(false));
   };
 
-  const faixa = textoDaFaixa(numeros);
+  const faixa = textoDaFaixa(numeros, esperando);
   if (!faixa) {
     return null;
   }

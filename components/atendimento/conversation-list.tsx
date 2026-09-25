@@ -8,6 +8,7 @@ import {
   MessagesSquare,
   OctagonAlert,
   Search,
+  Smartphone,
   Tag,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -41,6 +42,14 @@ import {
   type FiltroDeSituacao,
 } from "@/lib/domain/filtros-da-conversa";
 import {
+  casaNumero,
+  numeroParaMostrar,
+  opcoesDoFiltroDeNumero,
+  SEM_NUMEROS,
+  variosNumeros,
+  type NumerosDoInbox,
+} from "@/lib/domain/numeros-do-inbox";
+import {
   CONVERSATIONS_ATIVAS_LIMIT,
   RESOLVIDAS_LIMIT,
   type ConversationListItem,
@@ -48,9 +57,10 @@ import {
 import { cn } from "@/lib/utils";
 
 // Lista de conversas (design system Conduzza, docs/06 secao 5.3): filtros no
-// topo na ordem busca, posse, situacao e etiquetas; cartoes rolando embaixo.
-// Busca client-side sobre as conversas carregadas (as 300 ativas mais
-// recentes, mais o arquivo quando aberto).
+// topo na ordem busca, posse, numero (so com mais de um numero ativo,
+// docs/07), situacao e etiquetas; cartoes rolando embaixo. Busca client-side
+// sobre as conversas carregadas (as 300 ativas mais recentes, mais o arquivo
+// quando aberto).
 
 type OwnFilter = "minhas" | "sem_atendente" | "todas";
 
@@ -99,6 +109,7 @@ export function ConversationList({
   semAtivas = false,
   temArquivo = false,
   ehProfissional = false,
+  numeros = SEM_NUMEROS,
 }: {
   nomesDeEtapa: Record<string, string>;
   /** Catalogo da clinica: resolve chave para nome e cor. */
@@ -134,8 +145,15 @@ export function ConversationList({
   temArquivo?: boolean;
   /** O profissional so enxerga as conversas atribuidas a ele (RLS) */
   ehProfissional?: boolean;
+  /**
+   * Os numeros de WhatsApp da clinica: com mais de um ativo, o cartao ganha o
+   * selo do numero e a lista ganha o filtro "Numero" (docs/07).
+   */
+  numeros?: NumerosDoInbox;
 }) {
   const [own, setOwn] = useState<OwnFilter>("todas");
+  // null = Todos. Guarda o id do numero escolhido.
+  const [numeroEscolhido, setNumeroEscolhido] = useState<string | null>(null);
   const [situacao, setSituacao] = useState<FiltroDeSituacao | null>(
     filtroInicial,
   );
@@ -159,6 +177,23 @@ export function ConversationList({
     () => etiquetasEscolhidas.filter((chave) => porChave.has(chave)),
     [etiquetasEscolhidas, porChave],
   );
+
+  // Filtro "Numero": so com mais de um numero ativo. Com um so, nem aparece
+  // e nao filtra nada (a clinica que volta a ter um numero nao fica presa
+  // num filtro que ela nao ve mais).
+  const comNumeros = variosNumeros(numeros);
+  const opcoesDeNumero = useMemo(
+    () => (comNumeros ? opcoesDoFiltroDeNumero(conversations, numeros) : []),
+    [comNumeros, conversations, numeros],
+  );
+  // Escolha EFETIVA, pelo mesmo motivo das etiquetas: o numero escolhido pode
+  // ser removido com a lista aberta, e o filtro morto esvaziaria a lista sem
+  // chip nenhum para desmarcar.
+  const numeroAtivo =
+    numeroEscolhido !== null &&
+    opcoesDeNumero.some((opcao) => opcao.id === numeroEscolhido)
+      ? numeroEscolhido
+      : null;
 
   const escolherSituacao = (proxima: FiltroDeSituacao | null) => {
     const anterior = situacao;
@@ -208,6 +243,9 @@ export function ConversationList({
           if (situacao && !casaSituacao(conversation, situacao, agora)) {
             return false;
           }
+          if (!casaNumero(conversation, numeroAtivo)) {
+            return false;
+          }
           // Marcar varias etiquetas SOMA os resultados (decisao do dono).
           if (!casaEtiquetas(conversation.tags, etiquetasAtivas)) {
             return false;
@@ -227,19 +265,30 @@ export function ConversationList({
         // que o paciente escreveu, e quem quer ver só quem espera, filtra.
         .sort((a, b) => recencia(b) - recencia(a))
     );
-  }, [conversations, own, situacao, search, etiquetasAtivas, viewerId, agora]);
+  }, [
+    conversations,
+    own,
+    situacao,
+    search,
+    etiquetasAtivas,
+    numeroAtivo,
+    viewerId,
+    agora,
+  ]);
 
   const hasActiveFilter =
     own !== "todas" ||
     situacao !== null ||
     search.trim() !== "" ||
-    etiquetasAtivas.length > 0;
+    etiquetasAtivas.length > 0 ||
+    numeroAtivo !== null;
 
   const limparFiltros = () => {
     setOwn("todas");
     escolherSituacao(null);
     setSearch("");
     setEtiquetasEscolhidas([]);
+    setNumeroEscolhido(null);
   };
 
   // Resolvidas: o numero so existe depois de o arquivo chegar. Antes disso o
@@ -254,14 +303,18 @@ export function ConversationList({
     counts.ativas >= CONVERSATIONS_ATIVAS_LIMIT &&
     (etiquetasAtivas.length > 0 ||
       situacao === "sem_resposta_24h" ||
-      search.trim() !== "");
+      search.trim() !== "" ||
+      numeroAtivo !== null);
 
   // O arquivo de resolvidas tambem tem teto (achado L3): o chip mostra o
   // TOTAL contado no servidor, e nao as 100 carregadas; a lista, a busca e
   // as etiquetas so alcancam as carregadas, e o aviso diz isso.
   const arquivoNoTeto = arquivoCarregado && resolvidasNoTeto;
   const buscandoNoArquivo =
-    search.trim() !== "" || etiquetasAtivas.length > 0 || own !== "todas";
+    search.trim() !== "" ||
+    etiquetasAtivas.length > 0 ||
+    own !== "todas" ||
+    numeroAtivo !== null;
   const numeroDeResolvidas = (n: number): string =>
     resolvidasTotal !== null
       ? String(Math.max(resolvidasTotal, n))
@@ -309,6 +362,69 @@ export function ConversationList({
             { value: "todas", label: "Todas", count: counts.all },
           ]}
         />
+
+        {comNumeros ? (
+          // Numero da clinica (docs/07): escolha unica, com "Todos". Chips e
+          // nao SegmentedControl porque o nome e livre (ate 40 letras) e a
+          // clinica pode ter varios: a fileira quebra linha, e no celular rola
+          // de lado como a de situacao.
+          <div
+            role="group"
+            aria-label="Filtrar por número"
+            className="flex flex-wrap items-center gap-x-1.5 gap-y-3 max-sm:-my-1.5 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:py-1.5 max-sm:[&::-webkit-scrollbar]:hidden"
+          >
+            <span
+              aria-hidden
+              className="shrink-0 text-[11.5px] font-semibold text-text-secondary"
+            >
+              Número
+            </span>
+            {[
+              {
+                id: null,
+                nome: "Todos",
+                removido: false,
+                total: counts.all,
+              },
+              ...opcoesDeNumero,
+            ].map((opcao) => {
+              const ativo = numeroAtivo === opcao.id;
+              return (
+                <button
+                  key={opcao.id ?? "todos"}
+                  type="button"
+                  aria-pressed={ativo}
+                  onClick={() =>
+                    setNumeroEscolhido(
+                      opcao.id === null || ativo ? null : opcao.id,
+                    )
+                  }
+                  title={opcao.id === null ? undefined : `Número ${opcao.nome}`}
+                  className={cn(
+                    "hit-40 inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
+                    // Ligado: tinta cheia, como os chips de situacao. Sem cor
+                    // de status: numero e origem, nao estado.
+                    ativo
+                      ? "border-transparent bg-inverse text-inverse-foreground"
+                      : "border-border-strong bg-card text-foreground hover:bg-surface-3",
+                  )}
+                >
+                  {opcao.id !== null ? (
+                    <Smartphone aria-hidden className="size-3 shrink-0" />
+                  ) : null}
+                  <span className="min-w-0 truncate">{opcao.nome}</span>
+                  {opcao.removido ? (
+                    <>
+                      {" "}
+                      <span className="shrink-0 font-medium">(removido)</span>
+                    </>
+                  ) : null}{" "}
+                  <span className="shrink-0 cz-num">{opcao.total}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
         <div
           role="group"
@@ -516,6 +632,7 @@ export function ConversationList({
               timezone={timezone}
               agora={agora}
               onSelect={() => onSelect(conversation.id)}
+              numero={numeroParaMostrar(conversation, numeros)}
             />
           ))
         ) : situacao === "resolvida" && resolvedLoading ? (

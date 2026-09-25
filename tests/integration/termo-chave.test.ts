@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { ingerirMensagemRecebida } from "@/lib/integrations/whatsapp/ingest";
 import type { InboundEvent } from "@/lib/integrations/whatsapp/inbound";
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
 // Fase 4 da jornada configuravel, contra o banco REAL: o termo-chave move o
@@ -31,6 +32,9 @@ async function criarClinica(nome: string): Promise<string> {
     .throwOnError();
   const clinicId = data!.id as string;
   clinicasCriadas.push(clinicId);
+  // Conversa exige numero de WhatsApp (contrato da Fase 3): a entrada sem
+  // numero explicito cai no principal.
+  await criarNumeroDeTeste(admin, clinicId);
   return clinicId;
 }
 

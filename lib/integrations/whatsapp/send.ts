@@ -438,7 +438,10 @@ async function enviarPeloCanal(
   // receber, bastando alguem inserir uma linha nova.
   //
   // O numero vem DA CONVERSA, junto com ela: e por ele que a mensagem sai.
-  const [{ data: consentimentoVigente }, conversa] = await Promise.all([
+  const [
+    { data: consentimentoVigente, error: erroDoConsentimento },
+    conversa,
+  ] = await Promise.all([
     supabase.rpc("consentimento_vigente", {
       p_clinic_id: input.clinicId,
       p_contact_id: input.contactId,
@@ -447,12 +450,17 @@ async function enviarPeloCanal(
     lerNumeroDaConversa(supabase, input.clinicId, input.conversationId),
   ]);
 
-  if (conversa.estado === "erro") {
+  // Sem resposta nao e revogacao: nada de "sem autorizacao" nem de registro
+  // na trilha de um bloqueio que o paciente nao pediu. 'leitura_falhou' e
+  // retentavel (FALHAS_SEM_ENVIO), entao regua e envio ativo tentam de novo.
+  if (erroDoConsentimento || conversa.estado === "erro") {
     return {
       ok: false,
       reason: "falha_envio",
       code: "leitura_falhou",
-      message: "Não foi possível carregar a conversa. Tente de novo.",
+      message: erroDoConsentimento
+        ? "Não foi possível conferir a autorização. Tente de novo."
+        : "Não foi possível carregar a conversa. Tente de novo.",
     };
   }
   if (conversa.estado === "inexistente") {
@@ -704,11 +712,23 @@ async function enviarPeloCanal(
   // durante os segundos de fila (o descadastro vale na hora, nao "a partir do
   // proximo envio").
   if (espera > 0) {
-    const { data: aindaVigente } = await supabase.rpc("consentimento_vigente", {
-      p_clinic_id: input.clinicId,
-      p_contact_id: input.contactId,
-      p_channel: "whatsapp",
-    });
+    const { data: aindaVigente, error: erroDaReconferencia } =
+      await supabase.rpc("consentimento_vigente", {
+        p_clinic_id: input.clinicId,
+        p_contact_id: input.contactId,
+        p_channel: "whatsapp",
+      });
+    if (erroDaReconferencia) {
+      // Idem acima: falha de leitura nao e descadastro. A linha fica
+      // reutilizavel no retry pela chave do job.
+      await marcarFalha(supabase, messageId, "leitura_falhou");
+      return {
+        ok: false,
+        reason: "falha_envio",
+        code: "leitura_falhou",
+        message: "Não foi possível conferir a autorização. Tente de novo.",
+      };
+    }
     if (aindaVigente !== true) {
       await marcarFalha(supabase, messageId, "sem_consentimento_no_envio");
       await supabase.from("audit_log").insert({

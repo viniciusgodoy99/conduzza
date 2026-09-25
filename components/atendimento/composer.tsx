@@ -1,7 +1,17 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Eye, Hand, Lock, Send, ShieldOff, ShieldX, X } from "lucide-react";
+import {
+  Eye,
+  Hand,
+  Lock,
+  Send,
+  ShieldOff,
+  ShieldX,
+  Smartphone,
+  WifiOff,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -24,6 +34,7 @@ import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
+import type { TravaDoNumero } from "@/lib/domain/numeros-do-inbox";
 import { conversationKeys } from "@/lib/queries/conversations";
 import type {
   ConsentInfo,
@@ -42,6 +53,11 @@ import { cn } from "@/lib/utils";
 // 3. Autorizacao revogada ou inexistente: a resposta ao paciente fica
 //    desabilitada com o motivo e o caminho para a ficha; a nota interna
 //    continua liberada.
+// 4. Numero da conversa desconectado ou removido (so com mais de um numero,
+//    docs/07): a resposta sai SO pelo numero da conversa, entao fica
+//    desabilitada com o motivo (e o caminho para reconectar, para quem pode);
+//    a nota interna continua liberada. Removido fora do meu atendimento vira
+//    so o aviso, porque nenhuma acao do topo faz a resposta sair.
 // A janela de 24h e conceito do canal oficial (isOfficialChannel) e nao
 // renderiza com uazapi/fake; o dominio windowState ja esta pronto e testado.
 
@@ -85,6 +101,8 @@ export function Composer({
   aoMudarTexto,
   aoEnviarTexto,
   aoPerderConversa,
+  travaDoNumero = null,
+  podeReconectar = false,
 }: {
   conversation: ConversationListItem;
   viewerId: string;
@@ -145,6 +163,15 @@ export function Composer({
    * respondeu conversaIndisponivel): o InboxClient tira da lista e fecha.
    */
   aoPerderConversa?: (conversationId: string) => void;
+  /**
+   * O numero da conversa impede a resposta (travaDoNumero, em
+   * lib/domain/numeros-do-inbox.ts): desconectado ou removido. Null quando
+   * nao impede ou quando a clinica tem um numero so (ai quem avisa e a faixa
+   * do topo, e o envio no servidor recusa com o motivo, como sempre).
+   */
+  travaDoNumero?: TravaDoNumero | null;
+  /** Quem pode reconectar o numero (Configuracoes: administrador e gestor) */
+  podeReconectar?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
@@ -165,9 +192,12 @@ export function Composer({
   // nao reautoriza sozinha). A nota interna nunca sai da clinica e continua.
   const estadoDaAutorizacao =
     autorizacao === undefined ? null : estadoDoConsentimento(autorizacao);
-  const respostaBloqueada =
+  const autorizacaoBloqueia =
     estadoDaAutorizacao === "revogado" ||
     estadoDaAutorizacao === "sem_autorizacao";
+  // A resposta ao paciente nao sai: pela autorizacao ou pelo numero da
+  // conversa (desconectado ou removido). A nota interna continua nos dois.
+  const respostaBloqueada = autorizacaoBloqueia || travaDoNumero !== null;
   const autorizacaoTrava = !isNote && respostaBloqueada;
   // Quem esta com a conversa mas perdeu a escrita (o papel virou Somente
   // leitura com conversa atribuida, achado L5): o compositor aparece, mas
@@ -254,6 +284,17 @@ export function Composer({
   // Quem so acompanha le o estado, sem ser mandado para um botao que nao
   // pode usar (o botao no topo aparece desabilitado com a MESMA frase na
   // dica, SO_ACOMPANHA).
+
+  // Numero removido fora do meu atendimento: nenhuma acao do topo (Reabrir,
+  // Assumir) faz a resposta sair por ele, entao o aviso de estado mandaria a
+  // pessoa para um caminho sem saida. O motivo vem primeiro.
+  if (travaDoNumero?.motivo === "removido" && !isMine) {
+    return (
+      <AvisoDoCompositor>
+        <AvisoDoNumero trava={travaDoNumero} podeReconectar={false} />
+      </AvisoDoCompositor>
+    );
+  }
 
   if (conversation.status === "resolvida") {
     return (
@@ -431,7 +472,14 @@ export function Composer({
                 {botoes}
               </div>
             </div>
-            {podeEditar && autorizacaoTrava && estadoDaAutorizacao ? (
+            {podeEditar && !isNote && travaDoNumero ? (
+              <AvisoDoNumero
+                trava={travaDoNumero}
+                podeReconectar={podeReconectar}
+                comNota
+              />
+            ) : null}
+            {podeEditar && !isNote && autorizacaoBloqueia ? (
               <AvisoDeAutorizacao
                 revogadaEm={autorizacao?.revoked_at ?? null}
                 contactId={conversation.contact.id}
@@ -602,6 +650,67 @@ function AvisoDeColega({
         <div className="text-[13px] leading-[1.45]">{children}</div>
       </div>
     </div>
+  );
+}
+
+// Quem nao reconecta ve o botao desabilitado com o porque (regra de interface
+// do CLAUDE.md), com a frase das acoes de conexao (whatsapp-connect.ts).
+const DICA_SEM_RECONECTAR =
+  "Somente administradores e gestores conectam o WhatsApp.";
+
+/**
+ * Resposta ao paciente presa ao numero da conversa (docs/07). Desconectado:
+ * a resposta so sai por aquele numero, e nunca troca de numero sozinha, entao
+ * espera a reconexao; quem pode reconectar ganha o caminho, quem nao pode ve
+ * o botao desabilitado com o motivo. Removido: nao sai mais, e nao ha o que
+ * reconectar. `comNota` acrescenta que a nota interna continua liberada (o
+ * compositor esta aberto).
+ */
+function AvisoDoNumero({
+  trava,
+  podeReconectar,
+  comNota = false,
+}: {
+  trava: TravaDoNumero;
+  podeReconectar: boolean;
+  comNota?: boolean;
+}) {
+  const nota = comNota ? " A nota interna continua liberada." : "";
+  if (trava.motivo === "removido") {
+    return (
+      <Aviso
+        tom="neutral"
+        icone={Smartphone}
+        titulo={`Esta conversa era do número ${trava.nome}, que foi removido.`}
+      >
+        {`Nenhuma resposta sai mais por ele. O histórico continua aqui.${nota}`}
+      </Aviso>
+    );
+  }
+  const reconectar = (
+    <Button asChild variant="outline" size="sm">
+      <Link href="/configuracoes?aba=whatsapp">Reconectar</Link>
+    </Button>
+  );
+  return (
+    <Aviso
+      tom="alert"
+      icone={WifiOff}
+      titulo={`O número ${trava.nome} está desconectado.`}
+      acao={
+        podeReconectar ? (
+          reconectar
+        ) : (
+          <DisabledWithHint hint={DICA_SEM_RECONECTAR}>
+            <Button variant="outline" size="sm" disabled>
+              Reconectar
+            </Button>
+          </DisabledWithHint>
+        )
+      }
+    >
+      {`A resposta sai quando ele reconectar.${nota}`}
+    </Aviso>
   );
 }
 

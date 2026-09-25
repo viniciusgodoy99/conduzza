@@ -6,16 +6,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // daqui.
 //
 // O numero e o segredo nascem JUNTOS e ligados por account_id, como o codigo
-// da Fase 2 grava. O caminho legado (inserir so com clinic_id e deixar o
-// gatilho temporario preencher_conta_do_segredo escolher o principal)
-// continua provado de proposito em tests/rls/numeros-whatsapp.test.ts, e sai
-// na Fase 3.
+// da Fase 2 grava. Desde o contrato da Fase 3 (migration 20260925140000) nao
+// ha outro caminho: segredo sem account_id recebe 23502.
 //
 // Provedor padrao 'fake': nenhum teste pode encostar no WhatsApp real.
 //
-// Enquanto o unique temporario whatsapp_account_uma_por_clinica existir
-// (ate a Fase 3), cada clinica tem UM numero: o segundo criarNumeroDeTeste na
-// mesma clinica recebe 23505. Os testes de dois numeros ficam em it.skip.
+// A clinica pode ter varios numeros: o primeiro criarNumeroDeTeste nasce
+// principal, os seguintes nascem comuns (com nomes diferentes: o nome e
+// unico entre os numeros ativos da clinica).
+//
+// CONVERSA EXIGE NUMERO. conversation.whatsapp_account_id e NOT NULL desde o
+// contrato: teste que cria conversa (direto, por ingest_inbound_message ou
+// por garantir_conversa_aberta) precisa criar o numero da clinica antes.
 
 export type ProvedorDeTeste = "fake" | "uazapi" | "cloud_api";
 

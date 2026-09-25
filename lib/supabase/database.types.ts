@@ -1103,7 +1103,7 @@ export type Database = {
           tags: string[]
           unread_count: number
           updated_at: string
-          whatsapp_account_id: string | null
+          whatsapp_account_id: string
           window_expires_at: string | null
         }
         Insert: {
@@ -1123,7 +1123,7 @@ export type Database = {
           tags?: string[]
           unread_count?: number
           updated_at?: string
-          whatsapp_account_id?: string | null
+          whatsapp_account_id: string
           window_expires_at?: string | null
         }
         Update: {
@@ -1143,7 +1143,7 @@ export type Database = {
           tags?: string[]
           unread_count?: number
           updated_at?: string
-          whatsapp_account_id?: string | null
+          whatsapp_account_id?: string
           window_expires_at?: string | null
         }
         Relationships: [
@@ -1406,7 +1406,7 @@ export type Database = {
           transcript: string | null
           updated_at: string
           wa_message_id: string | null
-          whatsapp_account_id: string | null
+          whatsapp_account_id: string
         }
         Insert: {
           author: string
@@ -1438,7 +1438,7 @@ export type Database = {
           transcript?: string | null
           updated_at?: string
           wa_message_id?: string | null
-          whatsapp_account_id?: string | null
+          whatsapp_account_id: string
         }
         Update: {
           author?: string
@@ -1470,7 +1470,7 @@ export type Database = {
           transcript?: string | null
           updated_at?: string
           wa_message_id?: string | null
-          whatsapp_account_id?: string | null
+          whatsapp_account_id?: string
         }
         Relationships: [
           {
@@ -3193,10 +3193,6 @@ export type Database = {
           p_removido_por?: string
         }
         Returns: Json
-      }
-      reservar_slot_envio: {
-        Args: { p_clinic_id: string; p_espaco_ms: number }
-        Returns: number
       }
       reservar_slot_envio_v2: {
         Args: {

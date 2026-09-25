@@ -296,6 +296,58 @@ export async function fetchNumerosDaClinica(
   return (data ?? []) as NumeroDaClinica[];
 }
 
+/** Um numero que saiu da clinica: so o nome, para o historico dizer de onde era. */
+export type NumeroRemovido = { id: string; nome: string };
+
+/** O que o Inbox sabe dos numeros da clinica (lib/domain/numeros-do-inbox.ts). */
+export type NumerosDoInbox = {
+  /** Os ativos: o principal primeiro, os outros na ordem de cadastro. */
+  ativos: NumeroDaClinica[];
+  /** Os removidos, so para nomear as conversas antigas deles. */
+  removidos: NumeroRemovido[];
+};
+
+export const numerosKeys = {
+  doInbox: (clinicId: string) => ["whatsapp-numeros-inbox", clinicId] as const,
+};
+
+// Teto dos removidos lidos: eles so servem para nomear conversa antiga, e uma
+// clinica nao remove numero toda semana.
+const REMOVIDOS_LIMIT = 50;
+
+// Os numeros REMOVIDOS da clinica, so id e nome: a conversa de um numero que
+// saiu continua no historico e diz de qual numero era. Pela sessao (a RLS de
+// whatsapp_account nao olha removido_em).
+export async function fetchNumerosRemovidos(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<NumeroRemovido[]> {
+  const { data, error } = await supabase
+    .from("whatsapp_account")
+    .select("id, nome")
+    .eq("clinic_id", clinicId)
+    .not("removido_em", "is", null)
+    .order("removido_em", { ascending: false })
+    .limit(REMOVIDOS_LIMIT);
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (data ?? []) as NumeroRemovido[];
+}
+
+// Os ativos e os removidos numa ida so, para a consulta do Inbox no browser
+// (a pagina busca os dois no servidor para a primeira pintura).
+export async function fetchNumerosDoInbox(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<NumerosDoInbox> {
+  const [ativos, removidos] = await Promise.all([
+    fetchNumerosDaClinica(supabase, clinicId),
+    fetchNumerosRemovidos(supabase, clinicId),
+  ]);
+  return { ativos, removidos };
+}
+
 // So se EXISTE alguma resolvida (head, sem trazer linha): decide entre
 // "Nenhuma conversa ainda" e "Nenhuma conversa em andamento" com atalho para
 // o arquivo, quando nao ha conversa ativa.
@@ -355,16 +407,33 @@ export type MessagePage = {
 // desenha a divisa entre elas. A conversa aberta de outro ciclo nunca entra
 // (so as resolvidas e a propria). Tudo pela sessao: o profissional so ve as
 // conversas atribuidas a ele, e a RLS de message repete o recorte.
+//
+// POR NUMERO (docs/07, decisao 1 do dono: uma conversa por numero). O
+// historico junta so as conversas anteriores do contato NO MESMO NUMERO da
+// conversa aberta: o que o paciente falou com a Unidade Centro nao aparece
+// no fio da Recepcao, porque a resposta daquele fio sai pela Recepcao e cada
+// numero e um WhatsApp diferente para o paciente. `numeroId` undefined e o
+// fio de antes (sem filtro de numero), para quem monta a conversa sem a
+// coluna; null e a conversa sem numero (clinica que ainda nao tem nenhum),
+// que junta so as outras sem numero.
 async function conversasDoHistorico(
   supabase: SupabaseClient,
   conversationId: string,
   contactId: string,
+  numeroId: string | null | undefined,
 ): Promise<string[]> {
-  const { data, error } = await supabase
+  let busca = supabase
     .from("conversation")
     .select("id")
     .eq("contact_id", contactId)
-    .or(`status.eq.resolvida,id.eq.${conversationId}`)
+    .or(`status.eq.resolvida,id.eq.${conversationId}`);
+  if (numeroId !== undefined) {
+    busca =
+      numeroId === null
+        ? busca.is("whatsapp_account_id", null)
+        : busca.eq("whatsapp_account_id", numeroId);
+  }
+  const { data, error } = await busca
     // Teto de ciclos: o fio pagina por tempo, e um contato de anos nao pode
     // virar um filtro sem fim. A propria conversa entra sempre (abaixo).
     .order("created_at", { ascending: false })
@@ -381,9 +450,11 @@ export async function fetchMessagesPage(
   conversationId: string,
   cursor?: string,
   contactId?: string,
+  /** O numero da conversa: o historico fica nele (ver conversasDoHistorico). */
+  numeroId?: string | null,
 ): Promise<MessagePage> {
   const conversas = contactId
-    ? await conversasDoHistorico(supabase, conversationId, contactId)
+    ? await conversasDoHistorico(supabase, conversationId, contactId, numeroId)
     : [conversationId];
   let query = supabase
     .from("message")

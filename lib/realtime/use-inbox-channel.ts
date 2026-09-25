@@ -1,17 +1,18 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
-  assinaturaDaConexao,
-  type LinhaDoNumero,
-} from "@/lib/domain/conexao-dos-numeros";
+  aplicarLinhaAosNumeros,
+  type LinhaDoNumeroNoInbox,
+} from "@/lib/domain/numeros-do-inbox";
 import {
   conversationKeys,
+  numerosKeys,
   type ConversationListItem,
+  type NumerosDoInbox,
 } from "@/lib/queries/conversations";
 
 // Tempo real do Inbox (tarefa 1.7): postgres_changes em conversation, message
@@ -61,10 +62,10 @@ export function useInboxChannel(
   clinicId: string,
 ): void {
   const queryClient = useQueryClient();
-  const router = useRouter();
 
   useEffect(() => {
     const listKey = conversationKeys.list(clinicId);
+    const numerosKey = numerosKeys.doInbox(clinicId);
     // O total de resolvidas (chip "Resolvida") mora fora da chave-mae da
     // lista; muda quando uma conversa e resolvida ou reaberta. Invalidar uma
     // consulta desligada (filtro fechado) nao custa nada.
@@ -147,58 +148,24 @@ export function useInboxChannel(
       queryClient.setQueryData<ConversationListItem[]>(listKey, proxima);
     };
 
-    // Conexao dos numeros (docs/07, achado 6). Toda reserva de slot de envio
-    // faz UPDATE em whatsapp_account, e antes cada UPDATE chamava
-    // router.refresh(): cada mensagem enviada recarregava a pagina em todas
-    // as abas abertas da clinica. Agora so recarrega quando o STATUS de algum
-    // numero muda (ou ele e removido) em relacao ao que esta aba ja sabe. O
-    // retrato de partida e lido quando o canal fica de pe (e de novo a cada
-    // reconexao, que tambem recarrega se algo mudou durante a queda).
-    const conexoes = new Map<string, string>();
-    let retratoLido = false;
-    let vivo = true;
-
-    const lerRetratoDasConexoes = async () => {
-      const { data, error } = await supabase
-        .from("whatsapp_account")
-        .select("id, connection_status, removido_em")
-        .eq("clinic_id", clinicId);
-      if (!vivo || error) {
+    // Numeros da clinica (docs/07, achado 6). Toda reserva de slot de envio
+    // faz UPDATE em whatsapp_account, e antes cada mudanca de status chamava
+    // router.refresh(), que refazia a pagina inteira no servidor (lista,
+    // jornada, etiquetas, trilha de leitura) em todas as abas. Agora a linha
+    // do evento e aplicada SO no cache dos numeros do Inbox, pelo id: o selo,
+    // o cabecalho, o filtro e o compositor acompanham o status na hora, e o
+    // UPDATE do slot (nada que a tela use mudou) devolve o mesmo objeto, sem
+    // redesenhar nada. A faixa do topo tem o proprio vigia
+    // (components/shell/whatsapp-status.tsx).
+    const aplicarNumero = (linha: LinhaDoNumeroNoInbox) => {
+      const atual = queryClient.getQueryData<NumerosDoInbox>(numerosKey);
+      if (!atual) {
         return;
       }
-      let mudou = false;
-      for (const linha of (data ?? []) as LinhaDoNumero[]) {
-        const assinatura = assinaturaDaConexao(linha);
-        if (!linha.id || assinatura === null) {
-          continue;
-        }
-        if (retratoLido && conexoes.get(linha.id) !== assinatura) {
-          mudou = true;
-        }
-        conexoes.set(linha.id, assinatura);
+      const proximo = aplicarLinhaAosNumeros(atual, linha);
+      if (proximo !== atual) {
+        queryClient.setQueryData<NumerosDoInbox>(numerosKey, proximo);
       }
-      retratoLido = true;
-      if (mudou) {
-        router.refresh();
-      }
-    };
-
-    const aplicarConexao = (linha: LinhaDoNumero) => {
-      const assinatura = assinaturaDaConexao(linha);
-      if (!linha.id || assinatura === null) {
-        return;
-      }
-      const anterior = conexoes.get(linha.id);
-      conexoes.set(linha.id, assinatura);
-      // Numero que esta aba ainda nao conhecia: com o retrato lido, e numero
-      // novo (recarrega); antes dele, nao ha com o que comparar.
-      if (anterior === assinatura || (anterior === undefined && !retratoLido)) {
-        return;
-      }
-      // O layout e a pagina sao renderizados no servidor (a faixa de
-      // desconectado na primeira pintura, e se a clinica tem numero):
-      // recarrega para acompanharem a conexao.
-      router.refresh();
     };
 
     const channel = supabase
@@ -259,36 +226,39 @@ export function useInboxChannel(
       .on(
         "postgres_changes",
         {
-          event: "UPDATE",
+          // UPDATE (status, nome, principal, remocao) e INSERT (numero novo,
+          // inclusive o primeiro da clinica, que tira o Inbox do "Conecte o
+          // WhatsApp").
+          event: "*",
           schema: "public",
           table: "whatsapp_account",
           filter: `clinic_id=eq.${clinicId}`,
         },
         (payload) => {
-          const linha = payload.new as LinhaDoNumero | null;
-          if (linha) {
-            aplicarConexao(linha);
+          const linha = payload.new as LinhaDoNumeroNoInbox | null;
+          if (linha?.id) {
+            aplicarNumero(linha);
           }
         },
       )
       .subscribe((status) => {
         // Catch-up: o que chegou entre a busca do servidor e o canal ficar de
         // pe (ou durante uma queda de conexao) nao gerou evento para esta
-        // aba. Ao (re)conectar, refaz a lista e o fio aberto; sem isto, a
-        // mensagem da janela do handshake so aparecia no proximo gatilho.
+        // aba. Ao (re)conectar, refaz a lista, o fio aberto e os numeros; sem
+        // isto, a mensagem da janela do handshake so aparecia no proximo
+        // gatilho, e um numero que caiu durante a queda ficava "conectado".
         if (status === "SUBSCRIBED") {
           void queryClient.invalidateQueries({
             queryKey: conversationKeys.list(clinicId),
           });
           invalidarTotalDeResolvidas();
           void queryClient.invalidateQueries({ queryKey: ["messages"] });
-          void lerRetratoDasConexoes();
+          void queryClient.invalidateQueries({ queryKey: numerosKey });
         }
       });
 
     return () => {
-      vivo = false;
       void supabase.removeChannel(channel);
     };
-  }, [supabase, clinicId, queryClient, router]);
+  }, [supabase, clinicId, queryClient]);
 }

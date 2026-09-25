@@ -9,6 +9,8 @@ import {
   existeConversaResolvida,
   fetchConversationById,
   fetchConversations,
+  fetchNumerosDaClinica,
+  fetchNumerosRemovidos,
 } from "@/lib/queries/conversations";
 import { fetchEtiquetasDeConversa } from "@/lib/queries/etiquetas-de-conversa";
 import { fetchJornada } from "@/lib/queries/jornada";
@@ -64,19 +66,22 @@ export default async function AtendimentoPage({
   const [
     conversations,
     numerosAtivos,
+    numerosRemovidos,
     authorNames,
     jornada,
     etiquetas,
     conversaDoLink,
   ] = await Promise.all([
     fetchConversations(supabase, active.clinicId),
-    // Se a clinica tem ao menos um numero ATIVO (docs/07): so a contagem,
-    // sem trazer linha. Numero removido nao conta.
-    supabase
-      .from("whatsapp_account")
-      .select("id", { count: "exact", head: true })
-      .eq("clinic_id", active.clinicId)
-      .is("removido_em", null),
+    // Os numeros ATIVOS da clinica (docs/07): se ha ao menos um (senao, o
+    // passo e conectar) e, com mais de um, o selo, o cabecalho, o filtro e o
+    // compositor que diz por que a resposta nao sai. O tempo real mantem o
+    // status vivo no cliente.
+    fetchNumerosDaClinica(supabase, active.clinicId),
+    // Os removidos, so id e nome: a conversa antiga diz de qual numero era.
+    // So nomeia; se a leitura falhar, a tela abre sem o nome (o cliente
+    // tenta de novo), e nunca cai por isso.
+    fetchNumerosRemovidos(supabase, active.clinicId).catch(() => []),
     fetchClinicAuthorNames(supabase, active.clinicId),
     fetchJornada(supabase, active.clinicId),
     fetchEtiquetasDeConversa(supabase, active.clinicId),
@@ -111,7 +116,7 @@ export default async function AtendimentoPage({
         etiquetas={etiquetas}
         authorNames={authorNames}
         initialConversations={conversations}
-        hasWhatsappAccount={(numerosAtivos.count ?? 0) > 0}
+        numerosIniciais={{ ativos: numerosAtivos, removidos: numerosRemovidos }}
         temResolvidas={temResolvidas}
         conversaDoLink={conversaDoLink}
         linkIndisponivel={Boolean(parametros.conversa) && !conversaDoLink}

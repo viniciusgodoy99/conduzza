@@ -16,12 +16,17 @@ import {
   ComplianceBlockCard,
   MessageBubble,
 } from "@/components/atendimento/message-bubble";
+import {
+  ConexaoDoNumero,
+  SeloDoNumero,
+} from "@/components/atendimento/selo-do-numero";
 import { Aviso } from "@/components/shared/aviso";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { estadoVisualDaConversa } from "@/lib/design/status";
 import type { EnvioEmVoo } from "@/lib/domain/envios-em-voo";
+import type { NumeroDaConversa } from "@/lib/domain/numeros-do-inbox";
 import type { Role } from "@/lib/domain/permissions";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import type {
@@ -179,6 +184,7 @@ export function Thread({
   aoIrParaConversa,
   aoPerderConversa,
   timezone = FUSO_PADRAO,
+  numero = null,
 }: {
   conversation: ConversationListItem;
   messages: MessageItem[];
@@ -211,6 +217,11 @@ export function Thread({
   aoPerderConversa?: (conversationId: string) => void;
   /** fuso da clínica: horas e separadores de dia saem nele */
   timezone?: string;
+  /**
+   * O número da clínica desta conversa, quando a tela deve mostrar
+   * (numeroParaMostrar): mais de um número ativo, ou número removido.
+   */
+  numero?: NumeroDaConversa | null;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const ultimaId = messages[messages.length - 1]?.id;
@@ -335,16 +346,52 @@ export function Thread({
           />
         </span>
         <div className="grid min-w-0 flex-1">
-          <span className="truncate text-sm font-bold text-text-strong">
-            {conversation.contact.name ??
-              formatarTelefone(conversation.contact.phone_e164)}
-          </span>
-          <span className="truncate cz-num text-[11.5px] text-text-secondary">
-            {formatarTelefone(conversation.contact.phone_e164)}
-            <span className="font-sans">
-              {" · "}
-              {conversation.contact.kind === "paciente" ? "Paciente" : "Lead"}
+          {/* Com mais de um numero (docs/07): a primeira linha e do paciente
+              (o nome, e a conexao do numero quando ele esta fora); o numero
+              da clinica vai na linha de baixo, como no cartao da lista. O
+              nome do paciente nunca disputa espaco com o selo. */}
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 truncate text-sm font-bold text-text-strong">
+              {conversation.contact.name ??
+                formatarTelefone(conversation.contact.phone_e164)}
             </span>
+            {numero ? (
+              // Abaixo de 760px de fio (1366, e 1600 com o painel aberto) o
+              // chip tiraria o espaco do nome: a conexao fica na faixa do
+              // topo e no aviso do compositor.
+              <ConexaoDoNumero
+                numero={numero}
+                className="@max-[759px]/fio:hidden"
+              />
+            ) : null}
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[11.5px] text-text-secondary">
+            <span
+              // Com selo, no fio de celular o telefone do paciente sai (fica
+              // no painel do contato) para o nome do numero caber.
+              className={cn(
+                "shrink-0 cz-num",
+                numero ? "@max-[479px]/fio:hidden" : undefined,
+              )}
+            >
+              {formatarTelefone(conversation.contact.phone_e164)}
+            </span>
+            <span
+              // Fio apertado e com selo: o nome do numero vale mais que
+              // "Lead/Paciente", que continua no painel do contato.
+              className={cn(
+                "flex min-w-0 items-center gap-1.5",
+                numero ? "shrink-0 @max-[659px]/fio:hidden" : undefined,
+              )}
+            >
+              <span aria-hidden>·</span>
+              <span className="min-w-0 truncate">
+                {conversation.contact.kind === "paciente" ? "Paciente" : "Lead"}
+              </span>
+            </span>
+            {numero ? (
+              <SeloDoNumero numero={numero} comTelefone className="min-w-0" />
+            ) : null}
           </span>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">

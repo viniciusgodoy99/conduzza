@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Aceite do cadastro self-service: o gatilho handle_new_user cria a clinica
@@ -67,6 +68,10 @@ beforeAll(async () => {
     .eq("user_id", userDona.id)
     .single();
   clinicId = membro!.clinic_id;
+
+  // Conversa exige numero de WhatsApp (contrato da Fase 3). O cadastro nao
+  // cria numero: a clinica nova conecta o dela depois.
+  await criarNumeroDeTeste(admin, clinicId);
 
   // Dado de paciente na clinica, para provar o bloqueio do pendente.
   const { data: contato } = await admin

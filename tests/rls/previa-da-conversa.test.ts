@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Previa da ultima mensagem no cartao da conversa (migration
@@ -120,6 +121,8 @@ beforeAll(async () => {
   )) as { id: string; slug: string }[];
   clinicA = clinics.find((c) => c.slug === `previa-a-${suffix}`)!;
   clinicB = clinics.find((c) => c.slug === `previa-b-${suffix}`)!;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3).
+  await criarNumeroDeTeste(admin, clinicA.id);
 
   await must(
     admin.from("clinic_member").insert([

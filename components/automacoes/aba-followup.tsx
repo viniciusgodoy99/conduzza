@@ -21,6 +21,7 @@ import {
   DialogoDeExclusao,
   PERDAS_DO_HISTORICO,
 } from "@/components/automacoes/dialogo-de-exclusao";
+import type { NumerosDasAutomaticas } from "@/components/automacoes/numeros-de-envio";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -69,6 +70,7 @@ export function AbaFollowup({
   podeEditar,
   dicaSemPermissao,
   ehAdministrador,
+  numeros = null,
   aoMudar,
 }: {
   clinicId: string;
@@ -80,6 +82,8 @@ export function AbaFollowup({
   podeEditar: boolean;
   dicaSemPermissao: string;
   ehAdministrador: boolean;
+  /** Numeros ativos e politica: o teste de cada passo escolhe o numero. */
+  numeros?: NumerosDasAutomaticas | null;
   aoMudar: () => Promise<unknown> | void;
 }) {
   const [aberta, setAberta] = useState<string | null>(null);
@@ -306,6 +310,7 @@ export function AbaFollowup({
                     podeEditar={podeEditar}
                     dicaSemPermissao={dicaSemPermissao}
                     ehAdministrador={ehAdministrador}
+                    numeros={numeros}
                     aninhada
                     aoMudar={aoMudar}
                   />

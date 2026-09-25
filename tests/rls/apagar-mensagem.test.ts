@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Quem pode apagar mensagem de conversa de paciente, e ate quando.
@@ -106,6 +107,8 @@ beforeAll(async () => {
     .id as string;
   clinicaB = clinicas.find((c) => c.slug === `apagar-b-${suffix}`)!
     .id as string;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3).
+  await criarNumeroDeTeste(admin, clinicaA);
 
   [autora, colega, chefe, soLeitura, deOutraClinica] = await Promise.all([
     criarPessoa(`apagar-autora-${suffix}@teste.dev`),

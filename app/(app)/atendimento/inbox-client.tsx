@@ -37,11 +37,18 @@ import {
   fetchConversationById,
   fetchConversations,
   fetchMessagesPage,
+  fetchNumerosDoInbox,
   fetchResolvedConversations,
+  numerosKeys,
   RESOLVIDAS_LIMIT,
   type ConversationListItem,
   type MessageItem,
+  type NumerosDoInbox,
 } from "@/lib/queries/conversations";
+import {
+  numeroParaMostrar,
+  travaDoNumero,
+} from "@/lib/domain/numeros-do-inbox";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import {
   etiquetasKeys,
@@ -85,7 +92,7 @@ export function InboxClient({
   etiquetas,
   authorNames,
   initialConversations,
-  hasWhatsappAccount,
+  numerosIniciais,
   temResolvidas,
   conversaDoLink,
   linkIndisponivel,
@@ -105,7 +112,11 @@ export function InboxClient({
   etiquetas: EtiquetaDeConversa[];
   authorNames: Record<string, string>;
   initialConversations: ConversationListItem[];
-  hasWhatsappAccount: boolean;
+  /**
+   * Os numeros de WhatsApp da clinica (ativos e removidos), como o servidor
+   * viu na carga. O tempo real (useInboxChannel) mantem o status vivo.
+   */
+  numerosIniciais: NumerosDoInbox;
   /** Ha conversa resolvida (so consultado quando nao ha nenhuma ativa). */
   temResolvidas: boolean;
   /** A conversa de /atendimento?conversa=<id>, ja conferida pela RLS. */
@@ -261,6 +272,22 @@ export function InboxClient({
   // da visita anterior (initialData so vale na criacao da entrada).
   useDadosDoServidor(conversationKeys.list(clinicId), initialConversations);
 
+  // Os numeros da clinica (docs/07): o servidor traz na carga e o tempo real
+  // aplica cada mudanca de status na linha do numero (useInboxChannel), sem
+  // recarregar a pagina. A consulta so volta ao banco ao reconectar o canal.
+  useDadosDoServidor(numerosKeys.doInbox(clinicId), numerosIniciais);
+  const numerosQuery = useQuery({
+    queryKey: numerosKeys.doInbox(clinicId),
+    queryFn: () => fetchNumerosDoInbox(supabase, clinicId),
+    initialData: numerosIniciais,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+  const numeros = numerosQuery.data ?? numerosIniciais;
+  const hasWhatsappAccount = numeros.ativos.length > 0;
+  // Reconectar o numero e das Configuracoes: administrador e gestor (D8).
+  const podeReconectar = canEdit(viewerRole, "configuracoes");
+
   // O PROFISSIONAL e o unico papel que perde a visao de uma conversa pelo que
   // OUTRA pessoa faz: a RLS so mostra a ele as atribuidas a ele, e quando a
   // recepcao passa a conversa para outra pessoa o tempo real nao entrega o
@@ -375,17 +402,27 @@ export function InboxClient({
   const selected =
     conversations.find((conversation) => conversation.id === selectedId) ??
     null;
+  // O numero da conversa aberta, quando a tela deve falar dele (mais de um
+  // numero ativo, ou numero removido), e o que ele impede na resposta.
+  const numeroDoSelecionado = selected
+    ? numeroParaMostrar(selected, numeros)
+    : null;
+  const travaDoSelecionado = travaDoNumero(numeroDoSelecionado);
 
   const messagesQuery = useInfiniteQuery({
     queryKey: conversationKeys.messages(selected?.id ?? "none"),
     // Com o contato: o fio traz tambem as conversas RESOLVIDAS dele, com a
     // divisa "Conversa resolvida em" (achado 10). A RLS recorta o resto.
+    // Com o numero: so as do MESMO numero (uma conversa por numero, decisao
+    // 1 do dono). O numero de uma conversa so muda de nulo para valor (a
+    // adocao da conversa orfa), entao a chave do fio continua sendo o id.
     queryFn: ({ pageParam }) =>
       fetchMessagesPage(
         supabase,
         selected!.id,
         pageParam,
         selected!.contact.id,
+        selected!.whatsapp_account_id,
       ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
@@ -834,6 +871,7 @@ export function InboxClient({
           semAtivas={activeConversations.length === 0}
           temArquivo={temArquivo}
           ehProfissional={viewerRole === "profissional"}
+          numeros={numeros}
         />
       </aside>
 
@@ -857,6 +895,7 @@ export function InboxClient({
             clinicId={clinicId}
             viewerRole={viewerRole}
             timezone={timezone}
+            numero={numeroDoSelecionado}
             aoIrParaConversa={irParaConversa}
             aoPerderConversa={perderConversa}
             hasOlder={messagesQuery.hasNextPage}
@@ -927,6 +966,8 @@ export function InboxClient({
                 aoMudarTexto={setTexto}
                 aoEnviarTexto={enviarTexto}
                 aoPerderConversa={perderConversa}
+                travaDoNumero={travaDoSelecionado}
+                podeReconectar={podeReconectar}
               />
             }
           />

@@ -44,6 +44,11 @@ type CamposDoNumero = {
  * Idempotente SEM depender do unique temporario (clinic_id), que sai na
  * Fase 3 dos varios numeros (docs/07): acha o principal ativo e atualiza, ou
  * cria. O segredo e chaveado pelo numero (account_id, a PK).
+ *
+ * Roda ANTES das conversas: desde o contrato da Fase 3 (migration
+ * 20260925140000) conversation.whatsapp_account_id e NOT NULL, e conversa
+ * gravada numa clinica ainda sem numero e recusada (23502). O primeiro numero
+ * da clinica nasce principal (gatilho antes_de_criar_numero).
  */
 async function garantirNumeroPrincipal(
   admin: SupabaseClient,
@@ -698,6 +703,33 @@ const COMPLIANCE_LOG_ID = "00000000-0000-4000-e000-000000000001";
 export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
   const log: string[] = [];
 
+  // Os numeros PRIMEIRO: toda conversa pertence a um numero (NOT NULL desde o
+  // contrato da Fase 3). O da Vitalis vai explicito nas conversas abaixo, e as
+  // mensagens herdam o numero da conversa (gatilho mensagem_herda_numero).
+  const numeroDaVitalis = await garantirNumeroPrincipal(
+    admin,
+    VITALIS,
+    {
+      provider: "fake",
+      display_phone: "+55 84 98888-0001",
+      connection_status: "conectado",
+      connected_at: minutesAgo(60 * 24 * 3),
+    },
+    DEV_WEBHOOK_SECRET_VITALIS,
+  );
+  await garantirNumeroPrincipal(
+    admin,
+    BELEZA,
+    {
+      provider: "fake",
+      display_phone: "+55 84 98888-0002",
+      connection_status: "desconectado",
+      disconnected_at: minutesAgo(60 * 5),
+    },
+    DEV_WEBHOOK_SECRET_BELEZA,
+  );
+  log.push("contas WhatsApp: Vitalis conectada, Beleza Pura desconectada");
+
   const { error: contactError } = await admin.from("contact").upsert(
     CONTACTS.map((c) => ({
       id: contactId(c.n),
@@ -744,6 +776,7 @@ export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
     CONVERSATIONS.map((c) => ({
       id: conversationId(c.n),
       clinic_id: VITALIS,
+      whatsapp_account_id: numeroDaVitalis,
       contact_id: contactId(c.contact),
       status: c.status,
       assignee_user_id: c.assigneeEmail
@@ -817,30 +850,6 @@ export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
   );
   if (aiLogError) throw new Error(`ai_decision_log: ${aiLogError.message}`);
   log.push("1 bloqueio de conformidade registrado (triagem)");
-
-  await garantirNumeroPrincipal(
-    admin,
-    VITALIS,
-    {
-      provider: "fake",
-      display_phone: "+55 84 98888-0001",
-      connection_status: "conectado",
-      connected_at: minutesAgo(60 * 24 * 3),
-    },
-    DEV_WEBHOOK_SECRET_VITALIS,
-  );
-  await garantirNumeroPrincipal(
-    admin,
-    BELEZA,
-    {
-      provider: "fake",
-      display_phone: "+55 84 98888-0002",
-      connection_status: "desconectado",
-      disconnected_at: minutesAgo(60 * 5),
-    },
-    DEV_WEBHOOK_SECRET_BELEZA,
-  );
-  log.push("contas WhatsApp: Vitalis conectada, Beleza Pura desconectada");
 
   const { error: templateError } = await admin.from("message_template").upsert(
     [

@@ -12,11 +12,13 @@ import {
 } from "lucide-react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { SeloDoNumero } from "@/components/atendimento/selo-do-numero";
 import { ChipDeEtiqueta } from "@/components/shared/chip-de-etiqueta";
 import { StatusChip } from "@/components/shared/status-chip";
 import type { EstadoVisualDaConversa } from "@/lib/design/status";
 import type { ChipDeEtiquetaDados } from "@/lib/domain/etiquetas-de-conversa";
 import { diaCivil } from "@/lib/domain/horarios";
+import type { NumeroDaConversa } from "@/lib/domain/numeros-do-inbox";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import type {
   ConversationListItem,
@@ -26,8 +28,9 @@ import { cn } from "@/lib/utils";
 
 // Cartao de conversa da lista (design system Conduzza, docs/06 secao 5.3):
 // linha 1 nome e hora, linha 2 previa da ultima mensagem e nao lidas, linha 3
-// estado (quem atende) e etiquetas compactas. Selecionado em lime suave com a
-// borda de 2px a esquerda; sem ponto vermelho, sem selo de canal.
+// estado (quem atende), o numero da clinica (so com mais de um, docs/07) e
+// etiquetas compactas. Selecionado em lime suave com a borda de 2px a
+// esquerda; sem ponto vermelho, sem selo de canal.
 
 /**
  * Hora do cartao NO FUSO DA CLINICA (regra 3.6): "HH:mm" quando e hoje la,
@@ -159,10 +162,16 @@ export function ConversationCard({
   timezone,
   agora,
   onSelect,
+  numero = null,
 }: {
   conversation: ConversationListItem;
   /** estadoVisualDaConversa: o MESMO helper do cabecalho do fio */
   estado: EstadoVisualDaConversa;
+  /**
+   * O numero da clinica desta conversa, quando a tela deve mostrar
+   * (numeroParaMostrar): mais de um numero ativo, ou numero removido.
+   */
+  numero?: NumeroDaConversa | null;
   /** "Paciente · Etapa", quando nao ha previa de mensagem */
   reserva: string;
   /** Ja resolvidas e ordenadas pela lista. */
@@ -176,6 +185,8 @@ export function ConversationCard({
 }) {
   const naoLidas = conversation.unread_count;
   const prefixo = prefixoDaPrevia(conversation, viewerId);
+  // Com o selo do numero na linha 3, cabe uma etiqueta so antes do "+N".
+  const etiquetasVisiveis = numero ? 1 : 2;
   // A hora exibida e a MESMA que ordena a lista. Mostrar a atividade e
   // ordenar pelo recebimento faria a coluna parecer embaralhada; o prefixo
   // da previa e o rotulo da hora dizem de que mensagem e cada uma.
@@ -259,7 +270,10 @@ export function ConversationCard({
             avatarInitials={estado.avatarInitials}
             className="shrink-0"
           />
-          {etiquetas.slice(0, 2).map((etiqueta) => (
+          {numero ? (
+            <SeloDoNumero numero={numero} className="max-w-[112px]" />
+          ) : null}
+          {etiquetas.slice(0, etiquetasVisiveis).map((etiqueta) => (
             <ChipDeEtiqueta
               key={etiqueta.chave}
               nome={etiqueta.nome}
@@ -268,20 +282,20 @@ export function ConversationCard({
               className="max-w-[92px]"
             />
           ))}
-          {etiquetas.length > 2 ? (
+          {etiquetas.length > etiquetasVisiveis ? (
             <>
               <span
                 aria-hidden
                 className="inline-flex h-[18px] shrink-0 items-center rounded-[4px] bg-surface-4 px-1.5 cz-num text-[10.5px] font-medium text-foreground"
               >
-                +{etiquetas.length - 2}
+                +{etiquetas.length - etiquetasVisiveis}
               </span>
               {/* O "+2" visual nao e acessivel sozinho (e title nao funciona
                   em toque): o leitor de tela ouve o nome das que sobraram. */}
               <span className="sr-only">
                 , mais{" "}
                 {etiquetas
-                  .slice(2)
+                  .slice(etiquetasVisiveis)
                   .map((e) => e.nome)
                   .join(", ")}
               </span>

@@ -179,7 +179,7 @@ describe("disparo ativo (confirmação de atendimento)", () => {
     ).toBe(true);
   });
 
-  it("clínica desconectada volta para retry com backoff, não perde o job", async () => {
+  it("clínica desconectada espera a reconexão sem queimar tentativa, não perde o job", async () => {
     const clinicId = await criarClinica("offline");
     await admin
       .from("whatsapp_account")
@@ -202,16 +202,23 @@ describe("disparo ativo (confirmação de atendimento)", () => {
 
     await processarLote(admin, "teste-worker");
 
+    // Espera do canal (migration 20260925141000): devolvido para daqui a 5
+    // minutos com o motivo, sem gastar tentativa nem virar erro. Antes era
+    // retry com backoff, e o envio morria em cerca de meia hora.
     const { data: jobDepois } = await admin
       .from("job_queue")
-      .select("status, last_error, attempts, run_at")
+      .select(
+        "status, last_error, attempts, run_at, devolucoes, ultimo_motivo_devolucao",
+      )
       .eq("id", job!.id)
       .single();
     expect(jobDepois?.status).toBe("pendente");
-    expect(jobDepois?.last_error).toBe("desconectado");
-    expect(jobDepois?.attempts).toBe(1);
+    expect(jobDepois?.last_error).toBeNull();
+    expect(jobDepois?.attempts).toBe(0);
+    expect(jobDepois?.devolucoes).toBe(1);
+    expect(jobDepois?.ultimo_motivo_devolucao).toBe("desconectado");
     expect(new Date(jobDepois!.run_at as string).getTime()).toBeGreaterThan(
-      Date.now(),
+      Date.now() + 4 * 60_000,
     );
   });
 
@@ -403,27 +410,38 @@ describe("mecânica da fila", () => {
 
   it("a reserva de slot é atômica e encadeia os espaçamentos", async () => {
     const clinicId = await criarClinica("slot");
-    // A funcao devolve a ESPERA em ms (relogio do banco, imune a desvio do
-    // relogio local). Tres reservas concorrentes: esperas escalonadas pelo
+    // A v2 (a v1 saiu no contrato da Fase 3) devolve a ESPERA em ms (relogio
+    // do banco, imune a desvio do relogio local), travando a linha DO NUMERO.
+    // Tres reservas concorrentes no mesmo numero: esperas escalonadas pelo
     // espaco pedido. E ISTO que impede dois processos de dispararem juntos.
-    const [{ data: e1 }, { data: e2 }, { data: e3 }] = await Promise.all([
-      admin.rpc("reservar_slot_envio", {
+    const reservar = () =>
+      admin.rpc("reservar_slot_envio_v2", {
         p_clinic_id: clinicId,
         p_espaco_ms: 5000,
-      }),
-      admin.rpc("reservar_slot_envio", {
-        p_clinic_id: clinicId,
-        p_espaco_ms: 5000,
-      }),
-      admin.rpc("reservar_slot_envio", {
-        p_clinic_id: clinicId,
-        p_espaco_ms: 5000,
-      }),
-    ]);
-    const esperas = [e1, e2, e3].map((v) => Number(v)).sort((x, y) => x - y);
+        p_espera_maxima_ms: 60_000,
+        p_whatsapp_account_id: numeroDaClinica.get(clinicId)!,
+      });
+    const resultados = await Promise.all([reservar(), reservar(), reservar()]);
+    const esperas = resultados
+      .map(({ data, error }) => {
+        expect(error).toBeNull();
+        const reserva = data as { estado: string; espera_ms: number };
+        expect(reserva.estado).toBe("reservado");
+        return Number(reserva.espera_ms);
+      })
+      .sort((x, y) => x - y);
     expect(esperas[0]).toBeLessThan(1000);
     expect(esperas[1]).toBeGreaterThanOrEqual(4000);
     expect(esperas[2]).toBeGreaterThanOrEqual(9000);
+  });
+
+  it("a v1 do slot (sem número) não existe mais", async () => {
+    const { error } = await admin.rpc("reservar_slot_envio", {
+      p_clinic_id: crypto.randomUUID(),
+      p_espaco_ms: 5000,
+    });
+    // PostgREST: funcao inexistente no cache de esquema.
+    expect(error?.code).toBe("PGRST202");
   });
 
   it("retry NÃO reenvia envio que pode já ter saído (idempotência por job)", async () => {

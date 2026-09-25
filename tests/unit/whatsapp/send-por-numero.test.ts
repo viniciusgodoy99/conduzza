@@ -45,6 +45,8 @@ type Cenario = {
   /** quantos numeros ativos a clinica tem */
   ativos?: number;
   slot?: Record<string, unknown>;
+  /** Respostas de consentimento_vigente, na ordem (a leitura e a reconferencia). */
+  consentimentos?: Array<{ data: unknown; error: unknown }>;
 };
 
 type Consulta = {
@@ -150,7 +152,8 @@ function bancoFalso(cenario: Cenario = {}) {
   async function rpc(nome: string, args: Record<string, unknown>) {
     rpcs.push({ nome, args });
     if (nome === "consentimento_vigente") {
-      return { data: cenario.consentimento ?? true, error: null };
+      const proxima = cenario.consentimentos?.shift();
+      return proxima ?? { data: cenario.consentimento ?? true, error: null };
     }
     if (nome === "reservar_slot_envio_v2") {
       return {
@@ -371,6 +374,40 @@ describe("status e remoção do número", () => {
       ok: false,
       reason: "sem_consentimento",
     });
+  });
+
+  it("consentimento sem resposta não é revogação: retry, sem trilha e sem gravar nada", async () => {
+    const banco = bancoFalso({
+      consentimentos: [{ data: null, error: { code: "57014" } }],
+    });
+    const resultado = await enviar(banco);
+    expect(resultado).toMatchObject({
+      ok: false,
+      reason: "falha_envio",
+      code: "leitura_falhou",
+    });
+    expect(falhaPermiteRetry("leitura_falhou")).toBe(true);
+    expect(banco.consultas.some((c) => c.tabela === "audit_log")).toBe(false);
+    expect(mensagemGravada(banco)).toBe(false);
+    expect(slotReservado(banco)).toBe(false);
+  });
+
+  it("reconferência sem resposta depois da espera: falha retentável, sem trilha", async () => {
+    const banco = bancoFalso({
+      slot: { estado: "reservado", espera_ms: 1 },
+      consentimentos: [
+        { data: true, error: null },
+        { data: null, error: { code: "08006" } },
+      ],
+    });
+    const resultado = await enviar(banco);
+    expect(resultado).toMatchObject({
+      ok: false,
+      reason: "falha_envio",
+      code: "leitura_falhou",
+    });
+    expect(banco.consultas.some((c) => c.tabela === "audit_log")).toBe(false);
+    expect(fakeSentMessages()).toHaveLength(0);
   });
 
   it("conversa inexistente falha sem retry", async () => {

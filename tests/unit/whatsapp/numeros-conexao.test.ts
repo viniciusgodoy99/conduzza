@@ -561,7 +561,10 @@ describe("checar conexão: todos os números ativos", () => {
 });
 
 describe("adicionar número", () => {
-  it("enquanto o unique temporário existir, o segundo número recebe a mensagem clara", async () => {
+  it("banco anterior ao contrato (unique temporário): o segundo número recebe a mensagem clara", async () => {
+    // O contrato da Fase 3 tirou o unique; aqui ele e ligado a mao para
+    // cobrir o ramo de mensagem que o codigo ainda tem.
+    banco.uniqueTemporario = true;
     banco.numero({ clinic_id: CLINICA_A });
 
     const resultado = await adicionarNumeroAction({ nome: "Recepção" });
@@ -688,6 +691,35 @@ describe("renomear e unidade", () => {
     });
 
     expect(numero.unit_id).toBeNull();
+  });
+
+  it("trocar só a unidade não regrava o nome renomeado em outra aba", async () => {
+    const UNIDADE_NOVA = "0c0c0c0c-0000-4000-8000-00000000000c";
+    const numero = banco.numero({
+      clinic_id: CLINICA_A,
+      nome: "Recepção Centro",
+      unit_id: null,
+    });
+
+    const resultado = await atualizarNumeroAction({
+      accountId: numero.id,
+      unitId: UNIDADE_NOVA,
+    });
+
+    expect(resultado.ok).toBe(true);
+    expect(numero).toMatchObject({
+      nome: "Recepção Centro",
+      unit_id: UNIDADE_NOVA,
+    });
+  });
+
+  it("sem nome e sem unidade não grava nada", async () => {
+    const numero = banco.numero({ clinic_id: CLINICA_A, nome: "Recepção" });
+
+    const resultado = await atualizarNumeroAction({ accountId: numero.id });
+
+    expect(resultado.ok).toBe(false);
+    expect(numero.nome).toBe("Recepção");
   });
 
   it("número de outra clínica não é alterado", async () => {

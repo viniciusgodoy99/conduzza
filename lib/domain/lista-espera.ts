@@ -338,43 +338,16 @@ export function proximaTentativaDaVaga(params: {
   return quando < params.limite ? quando : null;
 }
 
-/** Espera pela reconexao do WhatsApp: cresce de 5 em 5 minutos por volta. */
-export const PASSO_DA_ESPERA_POR_RECONEXAO_MS = 5 * 60_000;
-/** Espera maxima entre uma volta e outra enquanto o WhatsApp segue fora. */
-export const TETO_DA_ESPERA_POR_RECONEXAO_MS = 30 * 60_000;
-/**
- * A ultima volta cai este tanto antes do limite, e espera menor que isto nao
- * vale uma volta: o relogio do banco (que libera o job) e o do executor (que
- * decide) podem divergir alguns segundos.
- */
-export const FOLGA_DA_ULTIMA_VOLTA_MS = 60_000;
-
-/**
- * WhatsApp fora do ar: quando a onda tenta de novo. O teto e de TEMPO, nao de
- * voltas: a vaga espera a reconexao enquanto ainda da para oferecer (limite =
- * inicio da vaga menos a janela de resposta), em passos crescentes de 5, 10,
- * 15... ate 30 minutos. Perto do limite, a ultima volta cai 1 minuto antes
- * dele, para uma reconexao de ultima hora ainda salvar a vaga. Devolve null
- * quando nao sobra tempo util (desistir). `passo` e quantas voltas ja foram
- * dadas esperando a reconexao (0 na primeira). Epoch em ms.
- */
-export function proximaEsperaPorReconexao(params: {
-  passo: number;
-  agora: number;
-  limite: number;
-}): number | null {
-  const passo =
-    Number.isInteger(params.passo) && params.passo >= 0 ? params.passo : 0;
-  const espera = Math.min(
-    PASSO_DA_ESPERA_POR_RECONEXAO_MS * (passo + 1),
-    TETO_DA_ESPERA_POR_RECONEXAO_MS,
-  );
-  const quando = Math.min(
-    params.agora + espera,
-    params.limite - FOLGA_DA_ULTIMA_VOLTA_MS,
-  );
-  return quando - params.agora >= FOLGA_DA_ULTIMA_VOLTA_MS ? quando : null;
-}
+// A espera pela reconexao do WhatsApp (passos de 5 ate 30 minutos, teto de
+// TEMPO) mora em lib/domain/espera-do-canal.ts desde que a regua e o envio
+// ativo passaram a usar a mesma regra. Continua exportada daqui, identica,
+// para a lista de espera e os testes dela.
+export {
+  FOLGA_DA_ULTIMA_VOLTA_MS,
+  PASSO_DA_ESPERA_POR_RECONEXAO_MS,
+  proximaEsperaPorReconexao,
+  TETO_DA_ESPERA_POR_RECONEXAO_MS,
+} from "@/lib/domain/espera-do-canal";
 
 /**
  * A mensagem da oferta ainda vale a pena sair? So com pelo menos METADE da

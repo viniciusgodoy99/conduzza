@@ -22,9 +22,15 @@ import {
   DialogoDeExclusao,
   PERDAS_DO_HISTORICO,
 } from "@/components/automacoes/dialogo-de-exclusao";
+import { DialogoDeTeste } from "@/components/automacoes/dialogo-de-teste";
 import { EditorDePasso } from "@/components/automacoes/editor-de-passo";
 import { LinhaDoTempo } from "@/components/automacoes/linha-do-tempo";
 import { MetricasDaRegua } from "@/components/automacoes/metricas-da-regua";
+import {
+  numeroPadraoDoTeste,
+  temEscolhaDeNumero,
+  type NumerosDasAutomaticas,
+} from "@/components/automacoes/numeros-de-envio";
 import { ControlesDaRegua } from "@/components/confirmacoes/controles-da-regua";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -153,6 +159,7 @@ export function AbaRegua({
   podeEditar,
   dicaSemPermissao,
   ehAdministrador,
+  numeros = null,
   aninhada = false,
   aoMudar,
 }: {
@@ -181,13 +188,19 @@ export function AbaRegua({
   dicaSemPermissao: string;
   /** So o administrador registra a linha de base (aviso ao ligar). */
   ehAdministrador: boolean;
+  /**
+   * Os numeros ativos da clinica e a politica das automaticas. Com mais de
+   * um, o teste pergunta por qual numero sai; sem isto (ou com um so), o
+   * teste sai direto pelo padrao da action.
+   */
+  numeros?: NumerosDasAutomaticas | null;
   /** Dentro de outro cartao (excecao, follow-up): blocos sem casca. */
   aninhada?: boolean;
   aoMudar: () => Promise<unknown> | void;
 }) {
   const [passoAberto, setPassoAberto] = useState<string | null>(null);
   const [dialogo, setDialogo] = useState<
-    "criar" | "momento" | "excluir" | null
+    "criar" | "momento" | "excluir" | "testar" | null
   >(null);
   const [pendente, iniciarTransicao] = useTransition();
 
@@ -246,23 +259,44 @@ export function AbaRegua({
     });
   };
 
-  const testarEnvio = () => {
+  // Com mais de um numero ativo, o teste pergunta por qual sai (dialogo);
+  // com um so, sai direto, e a action escolhe o numero como sempre.
+  const escolheNumeroDoTeste = temEscolhaDeNumero(numeros);
+
+  const testarEnvio = (whatsappAccountId?: string) => {
     if (!passoSelecionado) {
       return;
     }
+    const nomeDoNumero = whatsappAccountId
+      ? numeros?.numeros.find((numero) => numero.id === whatsappAccountId)?.nome
+      : undefined;
     iniciarTransicao(async () => {
       const resultado = await testarEnvioAction({
         cadence_step_id: passoSelecionado.id,
+        ...(whatsappAccountId
+          ? { whatsapp_account_id: whatsappAccountId }
+          : {}),
       });
       if (resultado.ok) {
+        setDialogo(null);
         toast.success(
           resultado.aviso ??
-            "Teste enviado para o WhatsApp da clínica. Confira lá.",
+            (nomeDoNumero
+              ? `Teste enviado para o número "${nomeDoNumero}". Confira lá.`
+              : "Teste enviado para o WhatsApp da clínica. Confira lá."),
         );
         return;
       }
       toast.error(resultado.error ?? "Não foi possível enviar o teste.");
     });
+  };
+
+  const pedirTeste = () => {
+    if (escolheNumeroDoTeste) {
+      setDialogo("testar");
+      return;
+    }
+    testarEnvio();
   };
 
   const excluirPasso = () => {
@@ -370,7 +404,7 @@ export function AbaRegua({
                       (!passoSelecionado.fixed_body &&
                         !passoSelecionado.media_path)
                     }
-                    onClick={testarEnvio}
+                    onClick={pedirTeste}
                   >
                     <SendHorizonal aria-hidden />
                     {pendente ? "Enviando..." : "Testar no WhatsApp da clínica"}
@@ -494,6 +528,15 @@ export function AbaRegua({
         pendente={pendente}
         aoConfirmar={(offset) => mudarMomento(offset)}
       />
+      {dialogo === "testar" && escolheNumeroDoTeste ? (
+        <DialogoDeTeste
+          numeros={numeros.numeros}
+          padraoId={numeroPadraoDoTeste(numeros)}
+          pendente={pendente}
+          onFechar={() => setDialogo(null)}
+          onEnviar={(whatsappAccountId) => testarEnvio(whatsappAccountId)}
+        />
+      ) : null}
     </div>
   );
 }

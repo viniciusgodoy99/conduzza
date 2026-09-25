@@ -1,7 +1,5 @@
 "use client";
 
-import { TZDate } from "@date-fns/tz";
-import { format } from "date-fns";
 import {
   FlaskConical,
   Lightbulb,
@@ -10,7 +8,7 @@ import {
   RefreshCw,
   Unplug,
 } from "lucide-react";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 
 import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -32,20 +30,22 @@ import {
   type ConnectState,
 } from "@/lib/actions/whatsapp-connect";
 import { WHATSAPP_CONNECTION_STATUS } from "@/lib/design/status";
-import { formatarTelefone } from "@/lib/domain/telefone";
 
-// Painel de conexao do numero da clinica. Vive em dois lugares: o onboarding
-// de primeiro acesso (/whatsapp) e a aba de WhatsApp das Configuracoes, entao
-// nao carrega largura nem texto de onboarding: a tela de fora e que decide o
-// enquadramento. O TooltipProvider e local porque o onboarding roda fora do
-// shell e a dica de acao desabilitada precisa dele.
+import { dataNoFusoDaClinica, telefoneFormatado } from "./numeros";
+
+// Painel de conexao de UM numero da clinica. Vive em dois lugares: o
+// onboarding de primeiro acesso (/whatsapp), como cartao do principal, e o
+// dialogo "Conectar" de cada cartao da aba de WhatsApp das Configuracoes
+// (lista-de-numeros.tsx), sem moldura. Nao carrega largura nem texto de
+// onboarding: a tela de fora e que decide o enquadramento. O TooltipProvider
+// e local porque o onboarding roda fora do shell e a dica de acao
+// desabilitada precisa dele.
 //
 // Desenho do design system (docs/06 secao 5.12): cartao unico com o ladrilho
 // do WhatsApp (decorativo), a situacao da conexao em StatusChip (icone,
 // rotulo e cor, de WHATSAPP_CONNECTION_STATUS) e os avisos no Banner do DS.
 //
-// Um cartao e UM numero (docs/07, Fase 2): toda acao leva o id dele. Ate a
-// Fase 4 (um cartao por numero), as duas telas mostram so o principal.
+// Um painel e UM numero (docs/07): toda acao leva o id dele.
 
 const DICA_PADRAO = "Somente administradores e gestores conectam o WhatsApp";
 
@@ -73,28 +73,12 @@ function comAvisoMantido(
  * como a recepcao discaria. Texto que nao e telefone volta como esta.
  */
 function telefoneParaExibir(bruto: string): string {
-  const digitos = bruto.replace(/\D/g, "");
-  if (/^[+\d\s().-]+$/.test(bruto) && digitos.length >= 10) {
-    return formatarTelefone(`+${digitos}`);
-  }
-  return bruto;
-}
-
-/** Data da conexao no fuso da clinica (CLAUDE.md 3.6), nunca no do navegador. */
-function dataNoFusoDaClinica(
-  instante: string,
-  timezone: string,
-): string | null {
-  const ms = Date.parse(instante);
-  if (Number.isNaN(ms)) {
-    return null;
-  }
-  return format(new TZDate(ms, timezone), "dd/MM/yyyy");
+  return telefoneFormatado(bruto) ?? bruto;
 }
 
 // Ladrilho de identidade do canal. A cor do WhatsApp e decorativa: o estado
 // da conexao e dito pelo StatusChip, nunca por ela.
-function Identidade() {
+export function IdentidadeDoWhatsapp() {
   return (
     <span
       aria-hidden
@@ -105,7 +89,8 @@ function Identidade() {
   );
 }
 
-function Orientacao() {
+/** Orientacao do WhatsApp Business (saudacao e ausencia), para todo numero. */
+export function OrientacaoDoWhatsappBusiness() {
   return (
     <Aviso tom="neutral" icone={Lightbulb} role="note">
       {ORIENTACAO_BUSINESS}
@@ -137,6 +122,19 @@ export type ConnectClientProps = {
   providerName: string | null;
   /** Fuso da clinica, para a data "desde" */
   timezone: string;
+  /**
+   * "cartao" (padrao): o cartao com titulo, do onboarding. "dialogo": sem
+   * moldura e sem titulo, dentro do dialogo de conexao das Configuracoes, que
+   * ja diz qual numero e; ali o Desconectar fica no cartao do numero.
+   */
+  moldura?: "cartao" | "dialogo";
+  /**
+   * Comeca o pareamento ao abrir: o clique que abriu o dialogo ("Conectar",
+   * "Criar e conectar") ja foi o pedido de conexao.
+   */
+  conectarAoAbrir?: boolean;
+  /** Avisa quem abriu o painel quando a situacao da conexao muda. */
+  aoMudarDeSituacao?: (situacao: ConnectState["status"]) => void;
 };
 
 export function ConnectClient({
@@ -148,6 +146,9 @@ export function ConnectClient({
   hint,
   providerName,
   timezone,
+  moldura = "cartao",
+  conectarAoAbrir = false,
+  aoMudarDeSituacao,
 }: ConnectClientProps) {
   const [state, setState] = useState<ConnectState>(initial);
   // O id pode chegar depois: a clinica sem numero ganha o principal no
@@ -155,12 +156,25 @@ export function ConnectClient({
   const [numeroId, setNumeroId] = useState<string | null>(accountId);
   const [pending, startTransition] = useTransition();
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const conexaoAoAbrirPedida = useRef(false);
+  const situacaoAvisada = useRef(initial.status);
 
   const lembrarNumero = (proximo: ConnectState) => {
     if (proximo.accountId) {
       setNumeroId(proximo.accountId);
     }
   };
+
+  // Quem abriu o painel (o dialogo das Configuracoes) recarrega a lista de
+  // numeros quando a situacao muda: o poll do pareamento nao revalida a
+  // pagina, entao o cartao atras do dialogo ficaria com a situacao antiga.
+  useEffect(() => {
+    if (state.status === situacaoAvisada.current) {
+      return;
+    }
+    situacaoAvisada.current = state.status;
+    aoMudarDeSituacao?.(state.status);
+  }, [state.status, aoMudarDeSituacao]);
 
   // Enquanto o pareamento esta em andamento, consulta o status a cada 2,5s.
   useEffect(() => {
@@ -193,13 +207,25 @@ export function ConnectClient({
     };
   }, [state.status, numeroId]);
 
-  const connect = () => {
+  const connect = useCallback(() => {
     startTransition(async () => {
       const proximo = await connectWhatsAppAction(numeroId);
-      lembrarNumero(proximo);
+      if (proximo.accountId) {
+        setNumeroId(proximo.accountId);
+      }
       setState(proximo);
     });
-  };
+  }, [numeroId]);
+
+  // Uma vez so, mesmo com o efeito repetido do modo estrito: dois pedidos
+  // seguidos ao provedor recusam o segundo ("fluxo em andamento").
+  useEffect(() => {
+    if (!conectarAoAbrir || conexaoAoAbrirPedida.current) {
+      return;
+    }
+    conexaoAoAbrirPedida.current = true;
+    connect();
+  }, [conectarAoAbrir, connect]);
   const disconnect = () => {
     if (!numeroId) {
       return;
@@ -262,33 +288,90 @@ export function ConnectClient({
     </Aviso>
   ) : null;
 
-  return (
-    <TooltipProvider delayDuration={200}>
-      {state.status === "conectado" ? (
+  const noDialogo = moldura === "dialogo";
+
+  // Rotulo e chip no MESMO elemento: o texto lido e "Situação atual:
+  // Desconectado" (e2e do dialogo de conexao).
+  const situacaoAtual = (
+    <p className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+      Situação atual:{" "}
+      <StatusChip definition={WHATSAPP_CONNECTION_STATUS[state.status]} />
+    </p>
+  );
+
+  // "Número (84) 9... · desde dd/MM/yyyy": a mesma linha no cartao e no
+  // dialogo.
+  const linhaDoNumero = (
+    <>
+      {state.displayPhone ? (
+        <>
+          Número{" "}
+          <span className="cz-num">
+            {telefoneParaExibir(state.displayPhone)}
+          </span>
+        </>
+      ) : (
+        "Número conectado"
+      )}
+      {desde ? (
+        <>
+          {" "}
+          · desde <span className="cz-num">{desde}</span>
+        </>
+      ) : null}
+    </>
+  );
+
+  const avisosDoEstado = (
+    <>
+      {state.error ? (
+        <Aviso tom="alert" role="alert">
+          {state.error}
+        </Aviso>
+      ) : null}
+      {state.aviso ? (
+        <Aviso tom="warning" role="alert">
+          {state.aviso}
+        </Aviso>
+      ) : null}
+    </>
+  );
+
+  // O selo aparece tambem CONECTADO: e nesse estado que o simulador engana,
+  // porque todo envio vira "enviada" sem sair nada para o paciente.
+  const demonstracaoConectada = demonstracao ? (
+    <Aviso tom="info" icone={FlaskConical}>
+      Ambiente de demonstração: a conexão é simulada e nenhuma mensagem sai de
+      verdade para o paciente.
+    </Aviso>
+  ) : null;
+
+  if (state.status === "conectado" && noDialogo) {
+    return (
+      <TooltipProvider delayDuration={200}>
+        <div className="grid gap-3">
+          {situacaoAtual}
+          <p className="text-[13px] text-text-secondary">{linhaDoNumero}</p>
+          {avisosDoEstado}
+          {demonstracaoConectada}
+          <OrientacaoDoWhatsappBusiness />
+        </div>
+      </TooltipProvider>
+    );
+  }
+
+  if (state.status === "conectado") {
+    return (
+      <TooltipProvider delayDuration={200}>
         <Card>
           <CardHeader>
             <div className="flex min-w-0 items-center gap-3">
-              <Identidade />
+              <IdentidadeDoWhatsapp />
               <div className="grid min-w-0 gap-[3px]">
                 <CardTitle>WhatsApp conectado</CardTitle>
                 <CardDescription>
                   {nome && nome !== NOME_PADRAO ? <>{nome} · </> : null}
-                  {state.displayPhone ? (
-                    <>
-                      Número{" "}
-                      <span className="cz-num">
-                        {telefoneParaExibir(state.displayPhone)}
-                      </span>
-                    </>
-                  ) : (
-                    "Número conectado"
-                  )}
-                  {desde ? (
-                    <>
-                      {" "}
-                      · desde <span className="cz-num">{desde}</span>
-                    </>
-                  ) : null}
+                  {linhaDoNumero}
                 </CardDescription>
               </div>
             </div>
@@ -297,26 +380,9 @@ export function ConnectClient({
             </CardAction>
           </CardHeader>
           <CardContent className="grid gap-3">
-            {state.error ? (
-              <Aviso tom="alert" role="alert">
-                {state.error}
-              </Aviso>
-            ) : null}
-            {state.aviso ? (
-              <Aviso tom="warning" role="alert">
-                {state.aviso}
-              </Aviso>
-            ) : null}
-            {demonstracao ? (
-              // O selo aparece tambem CONECTADO: e nesse estado que o
-              // simulador engana, porque todo envio vira "enviada" sem sair
-              // nada para o paciente.
-              <Aviso tom="info" icone={FlaskConical}>
-                Ambiente de demonstração: a conexão é simulada e nenhuma
-                mensagem sai de verdade para o paciente.
-              </Aviso>
-            ) : null}
-            <Orientacao />
+            {avisosDoEstado}
+            {demonstracaoConectada}
+            <OrientacaoDoWhatsappBusiness />
             <div className="pt-1">
               {canManage ? (
                 disconnectButton
@@ -328,11 +394,69 @@ export function ConnectClient({
             </div>
           </CardContent>
         </Card>
+      </TooltipProvider>
+    );
+  }
+
+  const pareamento = (
+    <>
+      {situacaoAtual}
+
+      {state.qrCode ? (
+        <div className="grid justify-items-center gap-3 rounded-xl bg-surface-4 p-5">
+          {state.qrCode.startsWith("data:image") ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={state.qrCode}
+              alt="QR code para parear o WhatsApp"
+              className="size-56 rounded-lg bg-(--qr-surface) p-3"
+            />
+          ) : (
+            <p className="max-w-sm text-center cz-num text-xs break-all text-text-secondary">
+              {state.qrCode}
+            </p>
+          )}
+          <p className="text-center text-xs text-text-secondary">
+            O QR expira em instantes; se falhar, conecte de novo.
+          </p>
+        </div>
+      ) : null}
+
+      {avisoDoCanal}
+      {avisosDoEstado}
+      {demonstracao ? (
+        <Aviso tom="info" icone={FlaskConical}>
+          Ambiente de demonstração: a conexão é simulada e conecta na hora, sem
+          QR code.
+        </Aviso>
+      ) : null}
+
+      <OrientacaoDoWhatsappBusiness />
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        {canManage ? (
+          connectButton
+        ) : (
+          <DisabledWithHint hint={dica}>{connectButton}</DisabledWithHint>
+        )}
+        {canManage ? (
+          verifyButton
+        ) : (
+          <DisabledWithHint hint={dica}>{verifyButton}</DisabledWithHint>
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      {noDialogo ? (
+        <div className="grid gap-3">{pareamento}</div>
       ) : (
         <Card>
           <CardHeader>
             <div className="flex min-w-0 items-center gap-3">
-              <Identidade />
+              <IdentidadeDoWhatsapp />
               <div className="grid min-w-0 gap-[3px]">
                 <CardTitle>Conectar o número da clínica</CardTitle>
                 <CardDescription>
@@ -344,69 +468,7 @@ export function ConnectClient({
               </div>
             </div>
           </CardHeader>
-          <CardContent className="grid gap-3">
-            {/* Rotulo e chip no MESMO elemento: o texto lido e "Situação
-                atual: Desconectado" (e2e de Configuracoes). */}
-            <p className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
-              Situação atual:{" "}
-              <StatusChip
-                definition={WHATSAPP_CONNECTION_STATUS[state.status]}
-              />
-            </p>
-
-            {state.qrCode ? (
-              <div className="grid justify-items-center gap-3 rounded-xl bg-surface-4 p-5">
-                {state.qrCode.startsWith("data:image") ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={state.qrCode}
-                    alt="QR code para parear o WhatsApp"
-                    className="size-56 rounded-lg bg-(--qr-surface) p-3"
-                  />
-                ) : (
-                  <p className="max-w-sm text-center cz-num text-xs break-all text-text-secondary">
-                    {state.qrCode}
-                  </p>
-                )}
-                <p className="text-center text-xs text-text-secondary">
-                  O QR expira em instantes; se falhar, conecte de novo.
-                </p>
-              </div>
-            ) : null}
-
-            {avisoDoCanal}
-            {state.error ? (
-              <Aviso tom="alert" role="alert">
-                {state.error}
-              </Aviso>
-            ) : null}
-            {state.aviso ? (
-              <Aviso tom="warning" role="alert">
-                {state.aviso}
-              </Aviso>
-            ) : null}
-            {demonstracao ? (
-              <Aviso tom="info" icone={FlaskConical}>
-                Ambiente de demonstração: a conexão é simulada e conecta na
-                hora, sem QR code.
-              </Aviso>
-            ) : null}
-
-            <Orientacao />
-
-            <div className="flex flex-wrap gap-2 pt-1">
-              {canManage ? (
-                connectButton
-              ) : (
-                <DisabledWithHint hint={dica}>{connectButton}</DisabledWithHint>
-              )}
-              {canManage ? (
-                verifyButton
-              ) : (
-                <DisabledWithHint hint={dica}>{verifyButton}</DisabledWithHint>
-              )}
-            </div>
-          </CardContent>
+          <CardContent className="grid gap-3">{pareamento}</CardContent>
         </Card>
       )}
     </TooltipProvider>

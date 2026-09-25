@@ -7,6 +7,7 @@ import {
   fetchFunilDoPeriodo,
   fetchLinhaDeBase,
 } from "@/lib/queries/relatorios";
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
 // Fase 5.1/5.2 contra o banco REAL: as tres RPCs de agregados por periodo
@@ -46,6 +47,8 @@ beforeAll(async () => {
     .single()
     .throwOnError();
   clinicId = clinica!.id as string;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3).
+  await criarNumeroDeTeste(admin, clinicId);
 
   const { data: prof } = await admin
     .from("professional")
@@ -57,7 +60,11 @@ beforeAll(async () => {
 
   const { data: proc } = await admin
     .from("procedure")
-    .insert({ clinic_id: clinicId, name: "Avaliação", default_duration_min: 30 })
+    .insert({
+      clinic_id: clinicId,
+      name: "Avaliação",
+      default_duration_min: 30,
+    })
     .select("id")
     .single()
     .throwOnError();

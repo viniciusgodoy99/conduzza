@@ -176,7 +176,17 @@ function normalizarConsulta(
   } as ConsultaDaConfirmacao;
 }
 
-/** Conversa nao resolvida de cada contato, para o atalho da lista. */
+/**
+ * Conversa nao resolvida de cada contato, para o atalho da lista.
+ *
+ * VARIOS NUMEROS (docs/07): o paciente pode ter uma conversa aberta em cada
+ * numero da clinica, e sem ordem o atalho abria uma qualquer. A escolha e a
+ * mesma da Ficha e do drawer do Lead: a de atividade mais recente, empate
+ * para a mais nova. O toque da regua sai pela conversa do numero dele e
+ * atualiza last_message_at dela (send.ts), e a resposta do paciente cai nela
+ * tambem, entao o atalho leva a conversa em que a consulta esta sendo
+ * tratada, no modo automatico e no numero fixo.
+ */
 async function conversasDosContatos(
   supabase: SupabaseClient,
   clinicId: string,
@@ -191,7 +201,10 @@ async function conversasDosContatos(
     .select("id, contact_id")
     .eq("clinic_id", clinicId)
     .in("contact_id", contactIds)
-    .neq("status", "resolvida");
+    .neq("status", "resolvida")
+    .order("last_message_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+  // A primeira linha de cada contato e a mais recente (a ordem acima).
   for (const linha of (data ?? []) as { id: string; contact_id: string }[]) {
     if (!mapa.has(linha.contact_id)) {
       mapa.set(linha.contact_id, linha.id);

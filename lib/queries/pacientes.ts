@@ -296,12 +296,18 @@ export async function fetchFichaPaciente(
     // last_message_at pode ser nulo numa conversa aberta recem criada, e a
     // ordenacao sozinha poria uma resolvida antiga na frente dela. A RLS
     // decide o que esta sessao le (o profissional so ve as atribuidas a ele).
+    //
+    // VARIOS NUMEROS (docs/07): o paciente pode ter uma conversa aberta em
+    // cada numero da clinica. O atalho leva a mais recente em QUALQUER numero
+    // (o limit(1) nunca quebra com duas); empate de atividade vai para a mais
+    // nova, e o Atendimento mostra de qual numero ela e.
     supabase
       .from("conversation")
       .select("id")
       .eq("contact_id", contactId)
       .neq("status", "resolvida")
       .order("last_message_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
     supabase

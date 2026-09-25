@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Autoria da previa do cartao (migration 20260925120000_autoria_da_previa,
@@ -117,6 +118,8 @@ beforeAll(async () => {
   )) as { id: string; slug: string }[];
   clinicA = clinics.find((c) => c.slug === `autoria-a-${suffix}`)!;
   clinicB = clinics.find((c) => c.slug === `autoria-b-${suffix}`)!;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3).
+  await criarNumeroDeTeste(admin, clinicA.id);
 
   await must(
     admin.from("clinic_member").insert([

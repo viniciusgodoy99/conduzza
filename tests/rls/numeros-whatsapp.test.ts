@@ -3,8 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { adminClient, anonClient } from "./stack";
 
-// Varios numeros de WhatsApp por clinica, Fases 1A e 1B (migrations
-// 20260925130000 e 20260925131000; desenho em
+// Varios numeros de WhatsApp por clinica, Fases 1A, 1B e o contrato da Fase
+// 3 (migrations 20260925130000, 20260925131000 e 20260925140000; desenho em
 // docs/07_multiplos_numeros_whatsapp.md). O que esta em jogo aqui e o que
 // NAO pode depender da tela:
 //
@@ -15,19 +15,17 @@ import { adminClient, anonClient } from "./stack";
 //   - um principal por clinica; unidade so da propria clinica;
 //   - a politica das mensagens automaticas: gestao grava, recepcao nao, e o
 //     numero fixo tem de ser da propria clinica;
-//   - whatsapp_account_secret continua invisivel para qualquer sessao.
+//   - whatsapp_account_secret continua invisivel para qualquer sessao, e cada
+//     segredo e de UM numero (account_id obrigatorio desde o contrato).
 //
-// NESTA FASE o unique temporario whatsapp_account_uma_por_clinica (clinic_id)
-// ainda impede o segundo numero. Por isso o limite e provado pela ORDEM: o
-// gatilho antes_de_criar_numero roda antes da checagem do unique, entao com
-// limite 1 o segundo numero recebe 23514 (limite), e sem limite o MESMO
-// insert recebe 23505 (unique temporario). Os casos que exigem dois numeros
-// ativos ficam em it.skip e ativam na Fase 3, quando o unique sai.
+// Desde o contrato da Fase 3 nao ha mais o unique temporario por clinica:
+// dois numeros ativos convivem, e quem limita e o plano (limite_de_numeros).
 
 const RLS_VIOLATION = "42501";
 const CHECK_VIOLATION = "23514";
 const UNIQUE_VIOLATION = "23505";
 const FK_VIOLATION = "23503";
+const NOT_NULL_VIOLATION = "23502";
 
 const admin = adminClient();
 const sufixo = crypto.randomUUID().slice(0, 8);
@@ -107,12 +105,13 @@ beforeAll(async () => {
   numeroA = numeros!.find((n) => n.clinic_id === clinicaA)!.id as string;
   numeroB = numeros!.find((n) => n.clinic_id === clinicaB)!.id as string;
 
-  // Segredo so com clinic_id (caminho legado do loadAccount e das fixtures).
+  // O segredo e do NUMERO: account_id obrigatorio desde o contrato da Fase 3
+  // (o gatilho que escolhia o principal para quem gravava so clinic_id saiu).
   await admin
     .from("whatsapp_account_secret")
     .insert([
-      { clinic_id: clinicaA, instance_token: "segredo-a" },
-      { clinic_id: clinicaB, instance_token: "segredo-b" },
+      { clinic_id: clinicaA, account_id: numeroA, instance_token: "segredo-a" },
+      { clinic_id: clinicaB, account_id: numeroB, instance_token: "segredo-b" },
     ])
     .throwOnError();
 
@@ -258,8 +257,7 @@ describe("limite de números do plano", () => {
   });
 
   it("com limite 1, o segundo número é recusado pelo limite", async () => {
-    // O gatilho do limite roda ANTES do unique temporario: o erro e o do
-    // plano, com a mensagem que a tela vai mostrar.
+    // O erro e o do plano, com a mensagem que a tela vai mostrar.
     const { error } = await admin
       .from("whatsapp_account")
       .insert({ clinic_id: clinicaA, provider: "fake", nome: "Segundo" });
@@ -269,21 +267,7 @@ describe("limite de números do plano", () => {
     );
   });
 
-  it("sem limite, o mesmo insert esbarra no unique temporário desta fase", async () => {
-    await admin
-      .from("clinic")
-      .update({ limite_de_numeros: null })
-      .eq("id", clinicaA)
-      .throwOnError();
-    const { error } = await admin
-      .from("whatsapp_account")
-      .insert({ clinic_id: clinicaA, provider: "fake", nome: "Segundo" });
-    expect(error?.code).toBe(UNIQUE_VIOLATION);
-  });
-
-  // Ativa na Fase 3 (sem o unique temporario): com limite 2, o segundo entra
-  // e o terceiro e recusado; restaurar um removido tambem conta.
-  it.skip("limite 2: o segundo número entra e o terceiro é recusado", async () => {
+  it("limite 2: o segundo número entra e o terceiro é recusado", async () => {
     await admin
       .from("clinic")
       .update({ limite_de_numeros: 2 })
@@ -291,12 +275,53 @@ describe("limite de números do plano", () => {
       .throwOnError();
     const segundo = await admin
       .from("whatsapp_account")
-      .insert({ clinic_id: clinicaA, provider: "fake", nome: "Segundo" });
+      .insert({ clinic_id: clinicaA, provider: "fake", nome: "Segundo" })
+      .select("principal")
+      .single();
     expect(segundo.error).toBeNull();
+    // O primeiro continua principal: o segundo nasce comum.
+    expect(segundo.data?.principal).toBe(false);
     const terceiro = await admin
       .from("whatsapp_account")
       .insert({ clinic_id: clinicaA, provider: "fake", nome: "Terceiro" });
     expect(terceiro.error?.code).toBe(CHECK_VIOLATION);
+  });
+
+  it("sem limite, o terceiro entra (não há mais um número só por clínica)", async () => {
+    await admin
+      .from("clinic")
+      .update({ limite_de_numeros: null })
+      .eq("id", clinicaA)
+      .throwOnError();
+    const { error } = await admin
+      .from("whatsapp_account")
+      .insert({ clinic_id: clinicaA, provider: "fake", nome: "Terceiro" });
+    expect(error).toBeNull();
+    const { count } = await admin
+      .from("whatsapp_account")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicaA)
+      .is("removido_em", null);
+    expect(count).toBe(3);
+  });
+
+  it("nome repetido entre os números ativos da clínica é recusado", async () => {
+    const { error } = await admin
+      .from("whatsapp_account")
+      .insert({ clinic_id: clinicaA, provider: "fake", nome: "segundo" });
+    expect(error?.code).toBe(UNIQUE_VIOLATION);
+  });
+
+  it("admin da A lê os três números da A e nenhum da B", async () => {
+    const { data, error } = await adminA
+      .from("whatsapp_account")
+      .select("clinic_id, nome, principal");
+    expect(error).toBeNull();
+    expect(data).toHaveLength(3);
+    expect(data?.every((numero) => numero.clinic_id === clinicaA)).toBe(true);
+    expect(data?.filter((numero) => numero.principal)).toEqual([
+      { clinic_id: clinicaA, nome: "Número principal", principal: true },
+    ]);
   });
 });
 
@@ -320,26 +345,26 @@ describe("um principal por clínica", () => {
   });
 
   it("um segundo principal na mesma clínica é recusado", async () => {
-    // Nesta fase quem recusa pode ser o unique temporario ou o indice
-    // whatsapp_account_um_principal: os dois sao 23505. Na Fase 3 so o
-    // indice parcial continua (teste abaixo).
-    const { error } = await admin
+    // Quem recusa e o indice parcial whatsapp_account_um_principal.
+    const { error } = await admin.from("whatsapp_account").insert({
+      clinic_id: clinicaA,
+      provider: "fake",
+      nome: "Outro principal",
+      principal: true,
+    });
+    expect(error?.code).toBe(UNIQUE_VIOLATION);
+  });
+
+  // Dois numeros ativos: marcar o segundo como principal direto na tabela
+  // esbarra no indice parcial; a troca e pela RPC, que tira o antigo antes.
+  it("dois números ativos: só um principal, e a troca é pela RPC", async () => {
+    const { data: segundo } = await admin
       .from("whatsapp_account")
       .insert({
         clinic_id: clinicaA,
         provider: "fake",
-        nome: "Outro principal",
-        principal: true,
-      });
-    expect(error?.code).toBe(UNIQUE_VIOLATION);
-  });
-
-  // Ativa na Fase 3: dois numeros ativos, e marcar o segundo como principal
-  // direto na tabela esbarra no indice parcial; a troca e pela RPC.
-  it.skip("dois números ativos: só um principal, e a troca é pela RPC", async () => {
-    const { data: segundo } = await admin
-      .from("whatsapp_account")
-      .insert({ clinic_id: clinicaA, provider: "fake", nome: "Segundo" })
+        nome: `Recepção ${sufixo}`,
+      })
       .select("id, principal")
       .single()
       .throwOnError();
@@ -354,6 +379,20 @@ describe("um principal por clínica", () => {
       p_account_id: segundo!.id,
     });
     expect(error).toBeNull();
+    const { data: principais } = await admin
+      .from("whatsapp_account")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("principal", true);
+    expect(principais).toEqual([{ id: segundo!.id }]);
+
+    // Volta o principal original: os testes abaixo contam com ele.
+    await admin
+      .rpc("definir_numero_principal", {
+        p_clinic_id: clinicaA,
+        p_account_id: numeroA,
+      })
+      .throwOnError();
   });
 });
 
@@ -545,5 +584,55 @@ describe("segredo do número", () => {
       .select("account_id")
       .eq("clinic_id", clinicaA);
     expect(data).toEqual([{ account_id: numeroA }]);
+  });
+
+  it("segredo sem número é recusado alto, mesmo pelo service role", async () => {
+    // Antes do contrato, o gatilho preencher_conta_do_segredo dava o
+    // principal a quem gravava so clinic_id. Agora o segredo e do numero.
+    const { error } = await admin
+      .from("whatsapp_account_secret")
+      .insert({ clinic_id: clinicaA, instance_token: "sem-numero" });
+    expect(error?.code).toBe(NOT_NULL_VIOLATION);
+  });
+
+  it("cada número da clínica tem o próprio segredo", async () => {
+    const { data: segundo } = await admin
+      .from("whatsapp_account")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("nome", "Segundo")
+      .single()
+      .throwOnError();
+    await admin
+      .from("whatsapp_account_secret")
+      .insert({
+        clinic_id: clinicaA,
+        account_id: segundo!.id,
+        instance_token: "segredo-segundo",
+      })
+      .throwOnError();
+    const { data } = await admin
+      .from("whatsapp_account_secret")
+      .select("account_id, webhook_secret")
+      .eq("clinic_id", clinicaA);
+    expect(data).toHaveLength(2);
+    expect(new Set(data?.map((linha) => linha.account_id))).toEqual(
+      new Set([numeroA, segundo!.id]),
+    );
+    // Segredo de webhook proprio de cada numero.
+    expect(data?.[0]?.webhook_secret).not.toBe(data?.[1]?.webhook_secret);
+
+    // E continua invisivel para a sessao do administrador.
+    const { data: visto } = await adminA
+      .from("whatsapp_account_secret")
+      .select("account_id");
+    expect(visto ?? []).toHaveLength(0);
+  });
+
+  it("segredo com número de outra clínica é recusado", async () => {
+    const { error } = await admin
+      .from("whatsapp_account_secret")
+      .insert({ clinic_id: clinicaA, account_id: numeroB });
+    expect(error?.code).toBe(FK_VIOLATION);
   });
 });

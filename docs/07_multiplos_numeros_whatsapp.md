@@ -29,6 +29,25 @@ Decisões assumidas pela recomendação (valem até o dono mudar):
 - **Número desconectado:** o envio espera a reconexão e **nunca troca de número sozinho**. A exceção é o número **removido**:
   os jobs pendentes dele são redistribuídos pela `conta_de_envio`.
 
+### Como a espera funciona (detalhe de implementação, 25/09)
+
+A revisão das Fases 3 e 4 achou que a espera não cumpria a regra acima: cada volta somava no teto de 20 devoluções da fila
+(`reagendar_job`) e o toque morria em cerca de 95 minutos, antes de a clínica reconectar. A migration
+`20260925141000_espera_do_canal.sql` e `lib/domain/espera-do-canal.ts` corrigem assim:
+
+- Esperar o canal (motivos `desconectado` e `sem_numero`) **não conta no teto de 20**, que continua valendo para o "canal que
+  não abre" (`canal_ocupado` e o resto). O contador próprio fica em `job_queue.payload.esperas_do_canal`, com teto de
+  segurança de 400.
+- A desistência é por **prazo fixo**: confirmação, até a hora da consulta; outras réguas, 12 horas depois da primeira
+  abertura da janela de envio a partir do vencimento; envio avulso (aviso de remarcação, Cobrar agora), até a consulta do
+  payload ou 12 horas depois de criado.
+- A volta cresce de 5 até 30 minutos (a mesma regra da lista de espera).
+- Com o número do job desconectado, a régua vai direto para a espera, sem baixar o anexo nem abrir conversa.
+
+**Status `conectando` só existe em pareamento aberto** (clique em Conectar ou QR na tela). Um evento `connecting` de uma
+sessão já pareada não rebaixa o número. Isso importa porque a entrada da ingestão segura (503) a mensagem de um número em
+pareamento enquanto a trava do mesmo celular não decide, e o uazapi reenvia o webhook só cerca de 3 vezes.
+
 ## Estado de produção em 25/09 (Fase 0)
 
 | Item | Valor |

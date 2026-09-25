@@ -33,6 +33,14 @@ export type ConfirmacoesActionResult = {
 export type CobrancaResult = ConfirmacoesActionResult & {
   enfileirados?: number;
   pulados_sem_autorizacao?: number;
+  /**
+   * Consultas que NAO foram cobradas porque o paciente receberia pelo numero
+   * de WhatsApp desconectado (varios numeros, docs/07). Nada foi enfileirado
+   * para elas: a recepcao reconecta e cobra de novo.
+   */
+  pulados_desconectado?: number;
+  /** O nome dos numeros desconectados; vazio com um numero so. */
+  numeros_desconectados?: string[];
 };
 
 // Violacao de check do Postgres. Aqui so chega em um caso: ligar a regua sem
@@ -251,6 +259,8 @@ export async function cobrarAgoraAction(
     ok: true,
     enfileirados: resultado.enfileirados,
     pulados_sem_autorizacao: resultado.pulados_sem_autorizacao,
+    pulados_desconectado: resultado.pulados_desconectado,
+    numeros_desconectados: resultado.numeros_desconectados,
   };
 }
 

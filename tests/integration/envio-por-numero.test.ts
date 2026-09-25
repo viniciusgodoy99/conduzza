@@ -17,8 +17,9 @@ import { adminClient } from "../rls/stack";
 // numero na leitura da conversa (com a dica de FK), o slot anti-ban na linha
 // DAQUELE numero, o segredo por account_id e o numero herdado pela mensagem.
 //
-// Com o unique temporario de uma conta por clinica (ate a Fase 3), a clinica
-// tem um numero so; o caso de dois numeros entra quando o unique sair.
+// Aqui a clinica tem um numero so; o caso de dois numeros na mesma clinica
+// (a conversa do segundo sai pelo segundo) vive em numeros-fase-2.test.ts,
+// ativo desde o contrato da Fase 3.
 // Clinica e_de_teste: o motor de producao nao pega nada daqui.
 
 const admin = adminClient();

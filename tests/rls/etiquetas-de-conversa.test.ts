@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Etiquetas de conversa (migration 20260921100000). O que esta em jogo: o
@@ -76,6 +77,9 @@ beforeAll(async () => {
     .throwOnError();
   clinicaA = clinicas!.find((c) => c.slug === `etiq-a-${sufixo}`)!.id as string;
   clinicaB = clinicas!.find((c) => c.slug === `etiq-b-${sufixo}`)!.id as string;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3).
+  await criarNumeroDeTeste(admin, clinicaA);
+  await criarNumeroDeTeste(admin, clinicaB);
 
   gestorA = (await criarPessoa("gestor-a", "gestor", clinicaA)).client;
   recepcaoA = (await criarPessoa("recepcao-a", "recepcao", clinicaA)).client;
@@ -85,9 +89,9 @@ beforeAll(async () => {
   profissionalUserId = prof.id;
   gestorB = (await criarPessoa("gestor-b", "gestor", clinicaB)).client;
 
-  // DOIS contatos: o indice conversation_aberta_por_contato so permite uma
-  // conversa nao resolvida por contato, e o teste precisa de duas abertas
-  // (uma do profissional, outra de outro atendente).
+  // DOIS contatos: o indice conversation_aberta_por_numero so permite uma
+  // conversa nao resolvida por contato e numero, e o teste precisa de duas
+  // abertas (uma do profissional, outra de outro atendente).
   const { data: contatos } = await admin
     .from("contact")
     .insert([
@@ -104,9 +108,8 @@ beforeAll(async () => {
     ])
     .select("id, phone_e164")
     .throwOnError();
-  contatoA = contatos!.find((c) =>
-    (c.phone_e164 as string).endsWith("1"),
-  )!.id as string;
+  contatoA = contatos!.find((c) => (c.phone_e164 as string).endsWith("1"))!
+    .id as string;
   const contatoDoColega = contatos!.find((c) =>
     (c.phone_e164 as string).endsWith("3"),
   )!.id as string;

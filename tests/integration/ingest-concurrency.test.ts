@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
 // Aceite da tarefa 1.3: reenviar o mesmo evento 3 vezes cria UMA mensagem, e
@@ -12,8 +13,15 @@ const suffix = crypto.randomUUID().slice(0, 8);
 const admin = adminClient();
 
 let clinicId: string;
+/** O numero principal da clinica (whatsapp_account.id). */
+let numeroPrincipal: string;
 
-async function ingest(phone: string, waMessageId: string, body: string) {
+async function ingest(
+  phone: string,
+  waMessageId: string,
+  body: string,
+  numero?: string,
+) {
   return await admin.rpc("ingest_inbound_message", {
     p_clinic_id: clinicId,
     p_phone_e164: phone,
@@ -23,6 +31,7 @@ async function ingest(phone: string, waMessageId: string, body: string) {
     p_body: body,
     p_media_url: null,
     p_transcript: null,
+    ...(numero ? { p_whatsapp_account_id: numero } : {}),
   });
 }
 
@@ -36,6 +45,9 @@ beforeAll(async () => {
     throw new Error(`Falha ao criar clínica: ${error?.message}`);
   }
   clinicId = data.id;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3). Sem numero
+  // explicito, a entrada cai no principal.
+  numeroPrincipal = (await criarNumeroDeTeste(admin, clinicId)).id;
 });
 
 afterAll(async () => {
@@ -128,5 +140,60 @@ describe("concorrência", () => {
       .eq("clinic_id", clinicId);
     // 1 da repeticao + 1 da concorrencia + 8 destes contatos
     expect(count).toBe(10);
+  });
+});
+
+describe("concorrência com dois números (contrato da Fase 3)", () => {
+  it("o mesmo paciente escrevendo aos dois números ao mesmo tempo: uma conversa por número, nunca mais", async () => {
+    const segundo = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "Segundo",
+    });
+    const phone = `+5584913${suffix.slice(0, 4)}01`;
+    // 20 eventos por numero, disparados juntos: o indice
+    // conversation_aberta_por_numero arbitra a corrida dentro de cada numero.
+    const calls: Promise<{ error: unknown }>[] = [];
+    for (let i = 0; i < 20; i++) {
+      calls.push(
+        ingest(phone, `it:${suffix}:dois:a:${i}`, "oi", numeroPrincipal),
+      );
+      calls.push(ingest(phone, `it:${suffix}:dois:b:${i}`, "oi", segundo.id));
+    }
+    const settled = await Promise.all(calls);
+    for (const result of settled) {
+      expect(result.error).toBeNull();
+    }
+
+    const { data: contato } = await admin
+      .from("contact")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("phone_e164", phone)
+      .single()
+      .throwOnError();
+    const { data: conversas } = await admin
+      .from("conversation")
+      .select("id, whatsapp_account_id")
+      .eq("clinic_id", clinicId)
+      .eq("contact_id", contato!.id)
+      .throwOnError();
+    expect(conversas).toHaveLength(2);
+    expect(
+      new Set((conversas ?? []).map((c) => c.whatsapp_account_id)),
+    ).toEqual(new Set([numeroPrincipal, segundo.id]));
+
+    // Cada mensagem ficou na conversa do numero que a recebeu.
+    const { data: mensagens } = await admin
+      .from("message")
+      .select("wa_message_id, whatsapp_account_id")
+      .eq("clinic_id", clinicId)
+      .like("wa_message_id", `it:${suffix}:dois:%`)
+      .throwOnError();
+    expect(mensagens).toHaveLength(40);
+    for (const mensagem of mensagens ?? []) {
+      const pelaA = (mensagem.wa_message_id as string).includes(":dois:a:");
+      expect(mensagem.whatsapp_account_id).toBe(
+        pelaA ? numeroPrincipal : segundo.id,
+      );
+    }
   });
 });

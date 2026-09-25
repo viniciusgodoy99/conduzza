@@ -1,13 +1,14 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 import { dados } from "./dados";
 import { E2E_PREFIXO, E2E_SENHA } from "./fixtures";
 import { login } from "./helpers";
 
-// Tela 12, Configuracoes: as duas abas na URL, o cartao de conexao do
-// WhatsApp, a troca de papel pela lista da equipe, a trava da propria linha e
-// a tabela de quem pode o que.
+// Tela 12, Configuracoes: as duas abas na URL, os cartoes dos numeros de
+// WhatsApp (um por numero; docs/07, Telas), a troca de papel pela lista da
+// equipe, a trava da propria linha e a tabela de quem pode o que.
 //
 // Recepcao nem chega nesta tela (o layout redireciona): o aceite desse
 // redirect mora em auth-permissions.spec.ts e nao se repete aqui.
@@ -39,6 +40,14 @@ function apenasDesktop(): void {
   );
 }
 
+// O cartao do numero e um article nomeado pelo nome do numero. O das
+// fixtures nasce com o nome padrao do banco (D1).
+const NUMERO_PRINCIPAL = "Número principal";
+
+function cartaoDoNumero(page: Page, nome: string): Locator {
+  return page.getByRole("article", { name: nome, exact: true });
+}
+
 test("as abas de Configurações vivem na URL", async ({ page }) => {
   apenasDesktop();
   await login(page, dados().emails.admin);
@@ -57,7 +66,9 @@ test("as abas de Configurações vivem na URL", async ({ page }) => {
   await abaWhats.click();
   await page.waitForURL(/\/configuracoes\?aba=whatsapp/);
   await expect(abaWhats).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("WhatsApp conectado")).toBeVisible();
+  const principal = cartaoDoNumero(page, NUMERO_PRINCIPAL);
+  await expect(principal).toBeVisible();
+  await expect(principal.getByText("Conectado", { exact: true })).toBeVisible();
 });
 
 test("abrir a URL da aba de WhatsApp já cai na aba certa", async ({ page }) => {
@@ -68,22 +79,208 @@ test("abrir a URL da aba de WhatsApp já cai na aba certa", async ({ page }) => 
   await expect(
     page.getByRole("tab", { name: "WhatsApp", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("WhatsApp conectado")).toBeVisible();
+  await expect(
+    page.getByText("Cada número é um WhatsApp separado.", { exact: false }),
+  ).toBeVisible();
+  const principal = cartaoDoNumero(page, NUMERO_PRINCIPAL);
+  await expect(principal.getByText("Conectado", { exact: true })).toBeVisible();
+  await expect(principal.getByText("Principal", { exact: true })).toBeVisible();
 });
 
-test("clínica desconectada vê o cartão de conexão com Conectar liberado", async ({
+test("clínica desconectada vê o cartão do número com Conectar liberado", async ({
   page,
 }) => {
   apenasDesktop();
   // Bruno Offline administra so a clinica que nasce desconectada nas fixtures.
+  // O teste NAO clica em Conectar: o numero dela e 'fake' e conectaria na
+  // hora, e as outras suites esperam essa clinica desconectada.
   await login(page, dados().emails.offline);
   await page.goto("/configuracoes?aba=whatsapp");
 
-  await expect(page.getByText("Conectar o número da clínica")).toBeVisible();
-  await expect(page.getByText("Situação atual: Desconectado")).toBeVisible();
-  const conectar = page.getByRole("button", { name: "Conectar WhatsApp" });
+  const cartao = cartaoDoNumero(page, NUMERO_PRINCIPAL);
+  // Status em 3 camadas: o rotulo e texto, nunca so a cor.
+  await expect(cartao.getByText("Desconectado", { exact: true })).toBeVisible();
+  const conectar = cartao.getByRole("button", {
+    name: new RegExp(`^(Conectar|Reconectar) ${NUMERO_PRINCIPAL}$`),
+  });
   await expect(conectar).toBeVisible();
   await expect(conectar).toBeEnabled();
+});
+
+// Varios numeros (docs/07, Telas). O segundo numero nasce pelo helper, com o
+// provedor 'fake': o "Criar e conectar" da tela cria o numero com o provedor
+// do AMBIENTE, e o servidor de desenvolvimento local usa o uazapi de verdade
+// (servidor compartilhado). O dialogo de adicionar e conferido sem enviar.
+//
+// Roda com o contrato aplicado (20260925140000): sem o unique temporario de
+// um numero por clinica, o segundo numero entra. Recusa do banco aqui e
+// defeito, nunca motivo para pular.
+test("com dois números, a aba mostra um cartão por número, renomeia e remove pelo menu", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const admin = adminClient();
+  const d = dados();
+  const sufixo = Date.now().toString(36);
+  const nome = `Recepção ${sufixo}`;
+  const novoNome = `Recepção Sul ${sufixo}`;
+
+  const { data: unidade } = await admin
+    .from("unit")
+    .select("id")
+    .eq("clinic_id", d.clinicId)
+    .eq("name", "Unidade E2E")
+    .maybeSingle()
+    .throwOnError();
+
+  let segundoId: string | null = null;
+  try {
+    const segundo = await criarNumeroDeTeste(admin, d.clinicId, {
+      nome,
+      connection_status: "desconectado",
+      unit_id: (unidade as { id: string } | null)?.id ?? null,
+    });
+    segundoId = segundo.id;
+
+    await login(page, d.emails.admin);
+    await page.goto("/configuracoes?aba=whatsapp");
+
+    const lista = page.getByRole("list", {
+      name: "Números de WhatsApp da clínica",
+    });
+    await expect(lista.getByRole("article")).toHaveCount(2);
+
+    const principal = cartaoDoNumero(page, NUMERO_PRINCIPAL);
+    const recepcao = cartaoDoNumero(page, nome);
+    await expect(
+      principal.getByText("Principal", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      principal.getByText("Conectado", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      recepcao.getByText("Desconectado", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      recepcao.getByText("Unidade E2E", { exact: true }),
+    ).toBeVisible();
+    await expect(recepcao.getByText("Principal", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(
+      recepcao.getByRole("button", { name: `Conectar ${nome}` }),
+    ).toBeEnabled();
+
+    // O dialogo de adicionar: nome com o exemplo, unidade opcional (a clinica
+    // tem unidade) e "Criar e conectar". Fecha sem criar (ver o topo).
+    await lista.getByRole("button", { name: "Adicionar número" }).click();
+    const dialogoNovo = page.getByRole("dialog", { name: "Adicionar número" });
+    await expect(
+      dialogoNovo.getByRole("textbox", { name: "Nome do número" }),
+    ).toHaveAttribute("placeholder", "Ex.: Recepção");
+    await expect(
+      dialogoNovo.getByRole("combobox", { name: "Unidade (opcional)" }),
+    ).toBeVisible();
+    await expect(
+      dialogoNovo.getByRole("button", { name: "Criar e conectar" }),
+    ).toBeVisible();
+    await dialogoNovo.getByRole("button", { name: "Cancelar" }).click();
+    await expect(dialogoNovo).toBeHidden();
+
+    // O principal nao sai enquanto houver outro numero: o item fica visivel e
+    // desabilitado, com o motivo escrito dentro dele.
+    await principal
+      .getByRole("button", { name: `Mais ações do número ${NUMERO_PRINCIPAL}` })
+      .click();
+    const removerPrincipal = page.getByRole("menuitem", {
+      name: /^Remover número/,
+    });
+    await expect(removerPrincipal).toBeDisabled();
+    await expect(removerPrincipal).toContainText(
+      "Escolha outro número como principal antes de remover este.",
+    );
+    await page.keyboard.press("Escape");
+
+    // Renomear pelo menu do cartao.
+    await recepcao
+      .getByRole("button", { name: `Mais ações do número ${nome}` })
+      .click();
+    await page.getByRole("menuitem", { name: "Renomear", exact: true }).click();
+    const dialogoRenomear = page.getByRole("dialog", {
+      name: `Renomear ${nome}`,
+    });
+    await dialogoRenomear
+      .getByRole("textbox", { name: "Nome do número" })
+      .fill(novoNome);
+    await dialogoRenomear.getByRole("button", { name: "Salvar" }).click();
+    const renomeado = cartaoDoNumero(page, novoNome);
+    await expect(renomeado).toBeVisible();
+
+    // Remover (administrador, numero que nao e o principal nem o fixo das
+    // automaticas): o dialogo diz o que acontece, e o cartao sai da lista.
+    await renomeado
+      .getByRole("button", { name: `Mais ações do número ${novoNome}` })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Remover número", exact: true })
+      .click();
+    const dialogoRemover = page.getByRole("dialog", {
+      name: `Remover o número ${novoNome}?`,
+    });
+    await expect(dialogoRemover).toContainText(
+      "deixa de receber e enviar mensagens pelo Conduzza. As conversas abertas dele são encerradas e o histórico continua.",
+    );
+    await dialogoRemover
+      .getByRole("button", { name: "Remover número" })
+      .click();
+    await expect(dialogoRemover).toBeHidden();
+    await expect(lista.getByRole("article")).toHaveCount(1);
+    await expect(renomeado).toHaveCount(0);
+
+    // Remocao logica (D3): a linha fica, com removido_em, e o principal
+    // continua o mesmo.
+    const { data: linha } = await admin
+      .from("whatsapp_account")
+      .select("removido_em, principal")
+      .eq("id", segundoId)
+      .single()
+      .throwOnError();
+    expect(
+      (linha as { removido_em: string | null; principal: boolean }).removido_em,
+    ).not.toBeNull();
+  } finally {
+    // Se o teste parou no meio, o segundo numero sai pela mesma RPC da tela
+    // (chamar de novo para um numero ja removido nao faz nada).
+    if (segundoId) {
+      await admin.rpc("remover_numero", {
+        p_clinic_id: d.clinicId,
+        p_account_id: segundoId,
+      });
+    }
+  }
+});
+
+test("gestor vê Remover número desabilitado, com a dica de que só o administrador remove", async ({
+  page,
+}) => {
+  apenasDesktop();
+  await login(page, dados().emails.gestor);
+  await page.goto("/configuracoes?aba=whatsapp");
+
+  const principal = cartaoDoNumero(page, NUMERO_PRINCIPAL);
+  await principal
+    .getByRole("button", { name: `Mais ações do número ${NUMERO_PRINCIPAL}` })
+    .click();
+  const remover = page.getByRole("menuitem", { name: /^Remover número/ });
+  await expect(remover).toBeDisabled();
+  await expect(remover).toContainText(
+    "Somente administradores removem um número de WhatsApp.",
+  );
+  // D8: o resto do cadastro do numero e do gestor tambem.
+  await expect(
+    page.getByRole("menuitem", { name: "Renomear", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
 });
 
 test("administrador troca o papel de alguém da equipe pela lista", async ({

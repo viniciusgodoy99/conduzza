@@ -6,22 +6,24 @@ import { log } from "@/lib/log";
 
 // Uma passagem do motor de automacao, sem processo continuo.
 //
-// POR QUE UM JOB POR CLINICA. O espacamento anti-banimento vive em
+// POR QUE UM JOB POR RAIA. O espacamento anti-banimento vive em
 // whatsapp_account.next_send_at, chaveado pelo NUMERO (uma linha por numero
 // desde os varios numeros por clinica, docs/07): numeros NAO competem entre
 // si. Dentro de um numero, o segundo job em voo seria adiado de qualquer
 // jeito, entao reivindica-lo e trabalho perdido, e e a origem da reserva
 // queimada que a reservar_slot_envio_v2 corrige.
 //
-// RAIA. A execucao agrupa por raia: o numero do job, ou a clinica quando o
-// job nao tem numero (integracoes, oferta da lista de espera, clinica sem
-// numero). O claim ainda trava a clinica (claim_jobs_por_clinica) e
-// MOTOR_MAX_CLINICAS ainda conta clinicas: a fila por raia no banco e a
-// Fase 3 do desenho.
+// RAIA. A raia de um job e o numero dele, ou a clinica quando o job nao tem
+// numero (integracoes, oferta da lista de espera, clinica sem numero ativo).
+// O claim (claim_jobs_por_clinica, contrato da Fase 3) traz UM job por raia e
+// trava a linha da raia (o numero ou a clinica) durante a propria chamada:
+// dois numeros da mesma clinica andam na mesma passagem. A execucao agrupa
+// do mesmo jeito (agruparPorRaia). MOTOR_MAX_CLINICAS conta RAIAS (o nome
+// ficou para nao mudar a variavel de ambiente).
 //
-// Justica sai de graca: uma clinica com 200 toques cede UM job por passagem e
-// a vizinha continua sendo servida na mesma passagem. Com o claim global por
-// run_at, um lote inteiro sairia da mesma clinica.
+// Justica sai de graca: um numero com 200 toques cede UM job por passagem e o
+// vizinho continua sendo servido na mesma passagem. Com o claim global por
+// run_at, um lote inteiro sairia do mesmo numero.
 //
 // POR QUE TRILHO SEPARADO PARA MIDIA. Dois claims por passagem. Assim o
 // download de audio nunca empurra uma confirmacao de consulta, e nunca passa
@@ -29,7 +31,7 @@ import { log } from "@/lib/log";
 // inanicao silenciosa, porque job nunca tentado nao tem attempts, nao tem
 // last_error e nao aparece em lugar nenhum.
 
-/** Tipos que disputam o slot de envio da clinica. */
+/** Tipos que disputam o slot de envio do numero. */
 const KINDS_DE_ENVIO = ["enviar_mensagem_ativa", "executar_passo_de_regua"];
 /** Mídia nao toca o slot de envio: trilho proprio. */
 const KINDS_DE_MIDIA = ["baixar_midia"];
@@ -60,8 +62,43 @@ const CUSTO_PADRAO_MS = 25_000;
  * Prazo para COMECAR um job. Nao e um timeout: abandonar um job em voo
  * deixaria uma mensagem saindo sem ninguem para gravar o resultado. O teto
  * real e o timeout do provedor, que e duro (AbortController).
+ *
+ * Conta de tempo da passagem (maxDuration da rota: 60 s). As raias correm em
+ * PARALELO e cada claim traz no maximo um job por raia, entao o numero de
+ * raias nao alonga a passagem: o pior caso e o da raia mais cheia, com dois
+ * jobs em serie (um envio e uma midia do mesmo numero, ou um envio sem numero
+ * e uma integracao da mesma clinica). O primeiro comeca perto de 0 s e o
+ * segundo so comeca se a estimativa dele (CUSTO_ESTIMADO_MS) ainda termina
+ * ate 45 s; senao volta para a fila sem queimar tentativa. Sobram 15 s para
+ * as RPCs de fechamento e a batida de ponto. Subir as raias de 4 para 8 so
+ * aumenta o paralelismo: ate 8 envios, 2 midias e 2 integracoes ao mesmo
+ * tempo numa invocacao.
  */
 const ORCAMENTO_MS = 45_000;
+
+/**
+ * Quantas raias o claim de envio traz por passagem, sem MOTOR_MAX_CLINICAS.
+ * Era 4 com a trava por clinica (cerca de 12 envios por minuto no produto
+ * inteiro, achado 9 do docs/07); com a trava por numero, 8.
+ */
+const RAIAS_POR_PASSAGEM = 8;
+
+/**
+ * MOTOR_MAX_CLINICAS (que conta raias). Vazio, zero, negativo ou texto que
+ * nao e inteiro caem no padrao: um valor torto no ambiente nao pode parar o
+ * motor com um claim recusado a cada passagem.
+ */
+export function raiasDoAmbiente(
+  valor: string | undefined = process.env.MOTOR_MAX_CLINICAS,
+): number {
+  const numero = Number(valor);
+  return valor !== undefined &&
+    valor.trim() !== "" &&
+    Number.isInteger(numero) &&
+    numero > 0
+    ? numero
+    : RAIAS_POR_PASSAGEM;
+}
 
 export type ResultadoDaPassagem = {
   reivindicados: number;
@@ -76,12 +113,14 @@ async function reivindicar(
   admin: SupabaseClient,
   executorId: string,
   kinds: string[],
-  maxClinicas: number,
+  /** Quantas raias (numero, ou clinica para job sem numero). */
+  maxRaias: number,
   incluirTeste: boolean,
 ): Promise<Job[]> {
   const { data, error } = await admin.rpc("claim_jobs_por_clinica", {
     p_worker: executorId,
-    p_max_clinicas: maxClinicas,
+    // O nome do parametro ficou de quando a raia era a clinica.
+    p_max_clinicas: maxRaias,
     p_kinds: kinds,
     p_incluir_teste: incluirTeste,
   });
@@ -106,7 +145,7 @@ async function baterPonto(
 }
 
 /**
- * Executa uma passagem completa: reivindica, roda as clinicas em paralelo e
+ * Executa uma passagem completa: reivindica, roda as raias em paralelo e
  * fecha tudo no banco. Compartilhada entre a rota HTTP (producao) e o laco
  * local (desenvolvimento e testes), para os dois rodarem o MESMO codigo.
  */
@@ -114,14 +153,15 @@ export async function executarPassagemDoMotor(
   admin: SupabaseClient,
   opcoes: {
     executorId: string;
-    maxClinicas?: number;
+    /** Raias do claim de envio; sem ele, MOTOR_MAX_CLINICAS ou 8. */
+    maxRaias?: number;
     incluirClinicasDeTeste?: boolean;
   },
 ): Promise<ResultadoDaPassagem> {
   const inicio = Date.now();
   const {
     executorId,
-    maxClinicas = Number(process.env.MOTOR_MAX_CLINICAS ?? 4),
+    maxRaias = raiasDoAmbiente(),
     incluirClinicasDeTeste = false,
   } = opcoes;
 
@@ -137,7 +177,7 @@ export async function executarPassagemDoMotor(
       admin,
       executorId,
       KINDS_DE_ENVIO,
-      maxClinicas,
+      maxRaias,
       incluirClinicasDeTeste,
     ),
     reivindicar(admin, executorId, KINDS_DE_MIDIA, 2, incluirClinicasDeTeste),
@@ -179,9 +219,9 @@ export async function executarPassagemDoMotor(
         const custo = CUSTO_ESTIMADO_MS[job.kind] ?? CUSTO_PADRAO_MS;
         if (gasto + custo > ORCAMENTO_MS) {
           // Nao cabe: devolve sem executar e sem queimar tentativa. O proximo
-          // tick pega. Na pratica isto quase nunca acontece (o claim traz um
-          // job por clinica, entao todos comecam em t proximo de zero); existe
-          // para o caso de uma RPC travar.
+          // tick pega. Na pratica isto quase nunca acontece (cada claim traz
+          // um job por raia, entao quase todos comecam em t proximo de zero);
+          // existe para o segundo job da raia e para o caso de uma RPC travar.
           await admin.rpc("reagendar_job", {
             p_id: job.id,
             p_worker: executorId,

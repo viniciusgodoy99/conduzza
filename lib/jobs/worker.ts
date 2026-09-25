@@ -11,12 +11,18 @@ import {
   type ConsultaDoAviso,
 } from "@/lib/domain/appointment-status";
 import {
+  decidirEsperaDoCanal,
+  prazoDaEsperaDoEnvioAtivo,
+  type MotivoDaEsperaDoCanal,
+} from "@/lib/domain/espera-do-canal";
+import {
   classificarFalhaDeUpload,
   marcaDeIndisponivel,
   motivoDaDesistencia,
   normalizarMimetype,
 } from "@/lib/domain/midia-recebida";
 import { executarEnvioDeConversao } from "./conversao-meta";
+import { codigoDoErro, ErroComCodigoDeJob } from "./erro-de-job";
 import {
   executarOfertaDeEspera,
   situacaoDoEnvioDeOferta,
@@ -68,6 +74,12 @@ export type Job = {
    * recarimba. Opcional porque jobs montados a mao (testes) nao o trazem.
    */
   whatsapp_account_id?: string | null;
+  /**
+   * Quando o job nasceu (job_queue.created_at, que o claim devolve): a ancora
+   * fixa do prazo da espera do canal no envio ativo. Opcional pelo mesmo
+   * motivo do numero.
+   */
+  created_at?: string;
 };
 
 /**
@@ -83,6 +95,38 @@ export type ResultadoDeJob =
   // vai e volta sem nunca executar fica indistinguivel de um job saudavel
   // esperando a hora.
   | { reagendar: string; motivo?: string };
+
+/**
+ * WhatsApp da clinica fora do ar para este envio ('desconectado': o numero do
+ * job caiu; 'sem_numero': a clinica nao tem numero ativo). Nao queima
+ * tentativa: devolve o job para a proxima volta, em esperas crescentes de 5
+ * ate 30 minutos, pelo MESMO numero (nunca troca sozinho). Antes isto era
+ * retry com backoff, e o aviso de remarcacao ou o eco da resposta ao toque
+ * morria em cerca de meia hora de celular caido.
+ *
+ * A desistencia e por PRAZO FIXO (prazoDaEsperaDoEnvioAtivo): com consulta no
+ * payload, ate a hora dela; sem, 12 horas depois de o job nascer. Passado o
+ * prazo, erro definitivo 'desconectado'. Esperar o canal nao gasta o teto de
+ * 20 devolucoes de reagendar_job (migration 20260925141000).
+ */
+function esperarOCanalNoEnvio(
+  job: Job,
+  motivo: MotivoDaEsperaDoCanal,
+  inicioDaConsulta: string | null,
+): ResultadoDeJob {
+  const agora = Date.now();
+  const decisao = decidirEsperaDoCanal({
+    motivo,
+    payload: job.payload,
+    agora,
+    prazo: prazoDaEsperaDoEnvioAtivo({
+      inicioDaConsulta,
+      criadoEm: job.created_at,
+      agora,
+    }),
+  });
+  return decisao ?? { ok: false, erro: "desconectado", definitivo: true };
+}
 
 async function executarEnvioAtivo(
   admin: SupabaseClient,
@@ -129,6 +173,8 @@ async function executarEnvioAtivo(
   // morre sem enviar: a remarcacao mais nova enfileira o proprio aviso, e a
   // consulta cancelada nao pode ser "remarcada para X" (achados R3, R5, R10 e
   // R18). Antes do consentimento e de abrir conversa: nenhum efeito colateral.
+  // A hora da consulta tambem e o prazo da espera do canal deste envio.
+  let inicioDaConsulta: string | null = null;
   const avisoDaConsulta = job.payload.appointment_id;
   if (avisoDaConsulta !== undefined && avisoDaConsulta !== null) {
     if (typeof avisoDaConsulta !== "string") {
@@ -159,15 +205,26 @@ async function executarEnvioAtivo(
     if (!vale) {
       return { ok: false, erro: "aviso_desatualizado", definitivo: true };
     }
+    inicioDaConsulta = (consulta as ConsultaDoAviso).starts_at;
   }
 
   // Consentimento ANTES de qualquer efeito colateral: contato que revogou nao
   // ganha nem conversa aberta. sendWhatsAppText reconfere na hora do envio.
-  const { data: vigente } = await admin.rpc("consentimento_vigente", {
-    p_clinic_id: job.clinic_id,
-    p_contact_id: contactId,
-    p_channel: "whatsapp",
-  });
+  const { data: vigente, error: erroDoConsentimento } = await admin.rpc(
+    "consentimento_vigente",
+    {
+      p_clinic_id: job.clinic_id,
+      p_contact_id: contactId,
+      p_channel: "whatsapp",
+    },
+  );
+  if (erroDoConsentimento) {
+    // Sem resposta nao e revogacao: retry, sem registrar na trilha um
+    // bloqueio que o paciente nao pediu.
+    throw new ErroComCodigoDeJob(
+      `consentimento_ilegivel: ${codigoDoErro(erroDoConsentimento)}`,
+    );
+  }
   if (vigente !== true) {
     await admin.from("audit_log").insert({
       clinic_id: job.clinic_id,
@@ -191,7 +248,8 @@ async function executarEnvioAtivo(
   // NUMERO (varios numeros por clinica, docs/07): o banco diz por qual numero
   // este job sai, conferindo a posse e a remocao, e carimba (numero_do_job).
   // Numero desconectado continua sendo o numero do job: o envio responde
-  // 'desconectado', o job tenta de novo e nunca troca de numero sozinho.
+  // 'desconectado', o job espera a reconexao (esperarOCanalNoEnvio) e nunca
+  // troca de numero sozinho.
   const numero = await numeroDoJob(admin, job.id, workerId);
   if (numero.estado === "sem_posse") {
     // Outro executor assumiu o job (lease vencido): nada sai daqui.
@@ -205,8 +263,8 @@ async function executarEnvioAtivo(
     // numero agora seria a mesma mensagem saindo de novo por outro.
     return { ok: false, erro: "numero_removido", definitivo: true };
   }
-  // Sem numero ativo na clinica: o "sem conta" de antes (o envio responde
-  // desconectado e o job tenta de novo).
+  // Sem numero ativo na clinica ('sem_numero'): tratado logo abaixo, depois
+  // da conferencia do eco.
   const accountId = numero.estado === "ok" ? numero.whatsappAccountId : null;
   // O eco sai pelo numero que RECEBEU a resposta (decisao D4). Se esse numero
   // foi removido depois do claim, numero_do_job recarimba pela regra geral, e
@@ -218,6 +276,17 @@ async function executarEnvioAtivo(
     accountId !== job.whatsapp_account_id
   ) {
     return { ok: false, erro: "numero_removido", definitivo: true };
+  }
+  // Sem numero ativo na clinica (removeu o unico que tinha): o "sem conta" de
+  // antes. O job espera a clinica ter numero de novo, como no desconectado e
+  // pelo mesmo prazo, sem queimar tentativa. Vem ANTES de pedir a conversa:
+  // desde o contrato da Fase 3 (migration 20260925140000) nao existe conversa
+  // sem numero, e garantir_conversa_aberta recusaria (23502), o que faria o
+  // job morrer como 'conversa_indisponivel'. Nenhuma conversa nasce. Depois da
+  // conferencia do eco: o eco cujo numero saiu morre acima, nunca espera
+  // outro numero (D4).
+  if (numero.estado === "sem_numero") {
+    return esperarOCanalNoEnvio(job, "sem_numero", inicioDaConsulta);
   }
 
   // A conversa em que a mensagem cai e a DESTE numero (uma conversa por
@@ -287,10 +356,14 @@ async function executarEnvioAtivo(
       definitivo: true,
     };
   }
+  // Numero do job desconectado: espera a reconexao DELE, sem queimar
+  // tentativa (o removido ja saiu acima, pelo code 'numero_removido').
+  if (resultado.reason === "desconectado") {
+    return esperarOCanalNoEnvio(job, "desconectado", inicioDaConsulta);
+  }
   // So entra em retry o que COM CERTEZA nao chegou ao paciente. O ambiguo
   // ('envio_incerto') morre definitivo e fica visivel para revisao humana.
-  const podeRepetir =
-    resultado.reason === "desconectado" || falhaPermiteRetry(resultado.code);
+  const podeRepetir = falhaPermiteRetry(resultado.code);
   return {
     ok: false,
     erro: resultado.code ?? resultado.reason,
@@ -641,8 +714,14 @@ export async function executarJobComPosse(
   let resultado: ResultadoDeJob;
   try {
     resultado = await executarJob(admin, job, workerId);
-  } catch {
-    resultado = { ok: false, erro: "excecao_no_worker" };
+  } catch (erro) {
+    // So o codigo seguro de ErroComCodigoDeJob sai do processo (last_error e
+    // log); qualquer outra excecao vira 'excecao_no_worker' (regra 3.1).
+    resultado = {
+      ok: false,
+      erro:
+        erro instanceof ErroComCodigoDeJob ? erro.codigo : "excecao_no_worker",
+    };
   }
 
   if ("reagendar" in resultado) {

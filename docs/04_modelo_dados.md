@@ -486,15 +486,67 @@ create index on job_queue (run_at) where completed_at is null;
 ## 8. WhatsApp, custo, auditoria e assinatura
 
 ```sql
+-- Vários números por clínica (25/09/2026, docs/07). Cada linha é um número
+-- (uma instância do provedor). Remoção é lógica: conversas, mensagens e jobs
+-- guardam a FK para sempre.
 create table whatsapp_account (
-  clinic_id uuid primary key references clinic(id) on delete cascade,
-  phone_number_id text, waba_id text, display_phone text,
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  nome text not null default 'Número principal', -- livre, 1 a 40, único por clínica entre os ativos
+  unit_id uuid references unit(id) on delete set null, -- opcional, mesma clínica por gatilho
+  principal boolean not null default false, -- um por clínica entre os ativos (índice único parcial)
+  removido_em timestamptz, removido_por uuid,
+  provider text not null default 'fake',    -- fake | uazapi | cloud_api
+  server_url text, instance_id text,        -- único (provider, instance_id) entre os ativos
+  display_phone text,
+  connection_status text not null default 'desconectado',
+  connected_at timestamptz, disconnected_at timestamptz,
+  next_send_at timestamptz, next_bulk_send_at timestamptz, -- slot anti-ban, dois trilhos, por número
+  phone_number_id text, waba_id text,       -- canal oficial, futuro
   business_verified boolean not null default false,
-  quality_rating text,                      -- GREEN | YELLOW | RED
-  messaging_limit text,
-  connected_at timestamptz,
-  token_ref text                            -- referência ao segredo, NUNCA o token em texto
+  quality_rating text, messaging_limit text
 );
+
+-- Segredos por número (token da instância, segredo do webhook, QR). Nenhuma
+-- sessão lê: só service role e funções definer.
+create table whatsapp_account_secret (
+  account_id uuid primary key references whatsapp_account(id) on delete cascade,
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  instance_token text, webhook_secret text not null,
+  qr_code text, qr_code_expires_at timestamptz
+);
+
+-- Por onde saem as automáticas. Tabela própria para não abrir o update de
+-- clinic ao gestor. Sem linha = ultimo_usado.
+create table whatsapp_envio_automatico (
+  clinic_id uuid primary key references clinic(id) on delete cascade,
+  modo text not null default 'ultimo_usado' check (modo in ('ultimo_usado','fixo')),
+  conta_fixa_id uuid references whatsapp_account(id),
+  check ((modo = 'fixo') = (conta_fixa_id is not null))
+);
+
+-- clinic.limite_de_numeros int null: nulo = sem limite. Só o dono do produto
+-- altera (gatilho proteger_limite_de_numeros); o gatilho antes_de_criar_numero
+-- recusa o excedente mesmo em concorrência. Preparado para planos por número.
+```
+
+**Conversa, mensagem e job carregam o número.** `conversation.whatsapp_account_id`
+é NOT NULL e nunca muda: o mesmo paciente falando com dois números tem duas
+conversas (índice aberto único em `(clinic_id, contact_id, whatsapp_account_id)
+where status <> 'resolvida'`). `message.whatsapp_account_id` é NOT NULL e é
+sempre copiada da conversa por gatilho, nunca vem do cliente.
+`job_queue.whatsapp_account_id` é carimbada no enfileiramento pela função
+`conta_de_envio` (fixo ativo, depois a conversa em que o paciente escreveu por
+último, depois o principal) e conferida na execução por `numero_do_job`.
+Número desconectado faz o envio esperar, nunca troca de número (a espera tem
+prazo próprio e não gasta o teto de 20 devoluções: `payload.esperas_do_canal`,
+ver docs/07); número
+removido tem os jobs pendentes redistribuídos (menos o eco da resposta ao
+toque, que é cancelado). O motor reivindica por **raia**
+(`coalesce(whatsapp_account_id, clinic_id)`), então dois números da mesma
+clínica enviam em paralelo e o mesmo número serializa.
+
+```sql
 
 create table message_template (
   id uuid primary key default gen_random_uuid(),

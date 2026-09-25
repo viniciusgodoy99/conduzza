@@ -247,6 +247,10 @@ export async function fetchLeadDetalhe(
   const sourceCampaign = (row.source_campaign as string | null) ?? null;
 
   const [conversa, campanha] = await Promise.all([
+    // VARIOS NUMEROS (docs/07): o lead pode ter uma conversa aberta em cada
+    // numero da clinica. O drawer mostra e liga a mais recente em QUALQUER
+    // numero (o limit(1) nunca quebra com duas); empate de atividade vai para
+    // a mais nova.
     supabase
       .from("conversation")
       .select("id")
@@ -254,6 +258,7 @@ export async function fetchLeadDetalhe(
       .eq("contact_id", contactId)
       .neq("status", "resolvida")
       .order("last_message_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
     sourceCampaign

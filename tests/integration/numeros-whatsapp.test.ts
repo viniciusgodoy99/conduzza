@@ -2,18 +2,12 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { adminClient } from "../rls/stack";
 
-// Varios numeros de WhatsApp por clinica, Fases 1A e 1B, contra o banco REAL
-// (migrations 20260925130000 e 20260925131000; desenho em
-// docs/07_multiplos_numeros_whatsapp.md). Prova os gatilhos e as RPCs que a
-// Fase 2 vai usar, SEM mudar codigo: e isso que deixa as migrations subirem
-// antes do codigo.
-//
-// NESTA FASE o unique temporario whatsapp_account_uma_por_clinica ainda
-// impede o segundo numero numa clinica, e ele e constraint da tabela (nao da
-// para desligar so numa clinica de teste). Tudo o que funciona com UM numero
-// e testado agora; o que precisa de dois fica em it.skip e ativa na Fase 3.
-// O comportamento com dois numeros foi provado no ensaio das migrations, numa
-// transacao desfeita que derruba o unique temporario.
+// Varios numeros de WhatsApp por clinica contra o banco REAL: os gatilhos e
+// as RPCs das Fases 1A e 1B (migrations 20260925130000 e 20260925131000) e o
+// contrato da Fase 3 (20260925140000), que tira o unique temporario de um
+// numero por clinica, troca a conversa aberta por contato pela conversa
+// aberta por contato E numero e torna o numero da conversa obrigatorio.
+// Desenho em docs/07_multiplos_numeros_whatsapp.md.
 //
 // Clinicas e_de_teste (o motor de producao as ignora) e jobs com run_at no
 // futuro: nenhum executor pega o que este arquivo enfileira.
@@ -48,7 +42,7 @@ async function criarClinica(
   if (!opcoes.comNumero) {
     return { clinicId, numeroId: null };
   }
-  // Como o codigo de HOJE grava: so clinic_id e provedor.
+  // So clinic_id e provedor: nome, principal e id vem do banco.
   const { data: numero } = await admin
     .from("whatsapp_account")
     .insert({
@@ -59,11 +53,40 @@ async function criarClinica(
     .select("id")
     .single()
     .throwOnError();
+  // O segredo e do numero (account_id obrigatorio desde o contrato).
   await admin
     .from("whatsapp_account_secret")
-    .insert({ clinic_id: clinicId, instance_token: `tok-${nome}` })
+    .insert({
+      clinic_id: clinicId,
+      account_id: numero!.id,
+      instance_token: `tok-${nome}`,
+    })
     .throwOnError();
   return { clinicId, numeroId: numero!.id as string };
+}
+
+/** Um numero a mais na clinica (nasce comum: o principal ja existe). */
+async function criarOutroNumero(
+  clinicId: string,
+  nome = "Segundo",
+): Promise<string> {
+  const { data } = await admin
+    .from("whatsapp_account")
+    .insert({
+      clinic_id: clinicId,
+      provider: "fake",
+      nome,
+      connection_status: "conectado",
+    })
+    .select("id, principal")
+    .single()
+    .throwOnError();
+  expect(data!.principal).toBe(false);
+  await admin
+    .from("whatsapp_account_secret")
+    .insert({ clinic_id: clinicId, account_id: data!.id })
+    .throwOnError();
+  return data!.id as string;
 }
 
 async function criarContato(clinicId: string): Promise<string> {
@@ -92,7 +115,9 @@ async function ingerir(
   });
 }
 
-async function numeroDaConversa(conversationId: string): Promise<string | null> {
+async function numeroDaConversa(
+  conversationId: string,
+): Promise<string | null> {
   const { data } = await admin
     .from("conversation")
     .select("whatsapp_account_id")
@@ -167,33 +192,37 @@ describe("conversa e mensagem ganham o número", () => {
     expect(error?.code).toBe("23514");
   });
 
-  it("clínica sem número: conversa fica sem número e é adotada quando o número chega", async () => {
-    // Muitos testes antigos inserem conversa em clinica SEM conta: isso
-    // continua funcionando, e o primeiro numero da clinica adota o que ficou.
-    const { clinicId } = await criarClinica("orfas", { comNumero: false });
-    const { data: entrada, error } = await ingerir(
-      clinicId,
-      telefone(),
-      `num:${sufixo}:orfa`,
-    );
-    expect(error).toBeNull();
-    const conversationId = (entrada as { conversation_id: string })
-      .conversation_id;
-    expect(await numeroDaConversa(conversationId)).toBeNull();
+  it("clínica sem número: conversa não nasce (o número é obrigatório)", async () => {
+    // Desde o contrato da Fase 3 nao existe conversa sem numero: nem pela
+    // tabela, nem pela entrada, nem pelo garantir do executor.
+    const { clinicId } = await criarClinica("sem-numero", { comNumero: false });
+    const contactId = await criarContato(clinicId);
+    const direto = await admin
+      .from("conversation")
+      .insert({ clinic_id: clinicId, contact_id: contactId });
+    expect(direto.error?.code).toBe("23502");
 
-    const { data: numero } = await admin
-      .from("whatsapp_account")
-      .insert({ clinic_id: clinicId, provider: "fake" })
-      .select("id, principal")
-      .single()
-      .throwOnError();
-    expect(numero!.principal).toBe(true);
-    expect(await numeroDaConversa(conversationId)).toBe(numero!.id);
-    const { data: mensagens } = await admin
-      .from("message")
-      .select("whatsapp_account_id")
-      .eq("conversation_id", conversationId);
-    expect(mensagens).toEqual([{ whatsapp_account_id: numero!.id }]);
+    const garantir = await admin.rpc("garantir_conversa_aberta", {
+      p_clinic_id: clinicId,
+      p_contact_id: contactId,
+    });
+    expect(garantir.error?.code).toBe("23502");
+
+    // A entrada e uma transacao so: sem conversa, nem o contato novo fica.
+    const fone = telefone();
+    const entrada = await ingerir(clinicId, fone, `num:${sufixo}:sem-numero`);
+    expect(entrada.error?.code).toBe("23502");
+    const { data: contatos } = await admin
+      .from("contact")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("phone_e164", fone);
+    expect(contatos).toHaveLength(0);
+    const { data: conversas } = await admin
+      .from("conversation")
+      .select("id")
+      .eq("clinic_id", clinicId);
+    expect(conversas).toHaveLength(0);
   });
 });
 
@@ -282,26 +311,107 @@ describe("entrada com número", () => {
       .update({ display_phone: "Clinica 24h" })
       .eq("id", numeroId!)
       .throwOnError();
-    const { data } = await ingerir(clinicId, telefone(), `num:${sufixo}:perfil`);
+    const { data } = await ingerir(
+      clinicId,
+      telefone(),
+      `num:${sufixo}:perfil`,
+    );
     expect((data as { inserted: boolean }).inserted).toBe(true);
   });
 
-  // Ativa na Fase 3 (sem o unique temporario nem conversation_aberta_por_contato).
-  it.skip("números A e B abrem duas conversas do mesmo paciente", async () => {
+  // Contrato da Fase 3: sem o unique temporario nem
+  // conversation_aberta_por_contato, uma conversa aberta por contato E numero.
+  it("números A e B abrem duas conversas do mesmo paciente", async () => {
     const { clinicId, numeroId: numeroA } = await criarClinica("dois");
-    const { data: b } = await admin
-      .from("whatsapp_account")
-      .insert({ clinic_id: clinicId, provider: "fake", nome: "Segundo" })
-      .select("id")
-      .single()
-      .throwOnError();
+    const numeroB = await criarOutroNumero(clinicId);
     const fone = telefone();
     const pelaA = await ingerir(clinicId, fone, `num:${sufixo}:a`, numeroA!);
-    const pelaB = await ingerir(clinicId, fone, `num:${sufixo}:b`, b!.id);
-    const conversaA = (pelaA.data as { conversation_id: string }).conversation_id;
-    const conversaB = (pelaB.data as { conversation_id: string }).conversation_id;
-    expect(conversaA).not.toBe(conversaB);
-    expect(await numeroDaConversa(conversaB)).toBe(b!.id);
+    const pelaB = await ingerir(clinicId, fone, `num:${sufixo}:b`, numeroB);
+    expect(pelaA.error).toBeNull();
+    expect(pelaB.error).toBeNull();
+    const a = pelaA.data as { conversation_id: string; contact_id: string };
+    const b = pelaB.data as { conversation_id: string; contact_id: string };
+    // O mesmo paciente (um contato so), duas conversas.
+    expect(b.contact_id).toBe(a.contact_id);
+    expect(a.conversation_id).not.toBe(b.conversation_id);
+    expect(await numeroDaConversa(a.conversation_id)).toBe(numeroA);
+    expect(await numeroDaConversa(b.conversation_id)).toBe(numeroB);
+
+    // A segunda mensagem pelo A cai na conversa do A, nao na do B.
+    const deNovoPelaA = await ingerir(
+      clinicId,
+      fone,
+      `num:${sufixo}:a2`,
+      numeroA!,
+    );
+    expect(
+      (deNovoPelaA.data as { conversation_id: string }).conversation_id,
+    ).toBe(a.conversation_id);
+
+    // Cada mensagem guarda o numero da propria conversa.
+    const { data: mensagens } = await admin
+      .from("message")
+      .select("conversation_id, whatsapp_account_id")
+      .eq("clinic_id", clinicId);
+    expect(mensagens).toHaveLength(3);
+    for (const mensagem of mensagens ?? []) {
+      expect(mensagem.whatsapp_account_id).toBe(
+        mensagem.conversation_id === a.conversation_id ? numeroA : numeroB,
+      );
+    }
+
+    // Duas abertas no MESMO numero continuam proibidas.
+    const duplicada = await admin.from("conversation").insert({
+      clinic_id: clinicId,
+      contact_id: a.contact_id,
+      whatsapp_account_id: numeroA,
+    });
+    expect(duplicada.error?.code).toBe("23505");
+  });
+
+  it("reabrir a conversa do A não colide com a aberta no B", async () => {
+    const { clinicId, numeroId: numeroA } = await criarClinica("reabrir");
+    const numeroB = await criarOutroNumero(clinicId);
+    const fone = telefone();
+    const pelaA = await ingerir(clinicId, fone, `num:${sufixo}:ra`, numeroA!);
+    const pelaB = await ingerir(clinicId, fone, `num:${sufixo}:rb`, numeroB);
+    const conversaA = (pelaA.data as { conversation_id: string })
+      .conversation_id;
+    const { contact_id: contactId } = pelaB.data as { contact_id: string };
+
+    await admin
+      .from("conversation")
+      .update({ status: "resolvida" })
+      .eq("id", conversaA)
+      .throwOnError();
+    // Com a do B aberta, reabrir a do A passa (antes, por contato, era 23505).
+    const reaberta = await admin
+      .from("conversation")
+      .update({ status: "aguardando_humano" })
+      .eq("id", conversaA)
+      .select("status");
+    expect(reaberta.error).toBeNull();
+    expect(reaberta.data).toEqual([{ status: "aguardando_humano" }]);
+
+    // Com uma NOVA aberta no A, reabrir a velha do A colide: a unicidade
+    // continua, agora por numero.
+    await admin
+      .from("conversation")
+      .update({ status: "resolvida" })
+      .eq("id", conversaA)
+      .throwOnError();
+    const { data: nova } = await admin.rpc("garantir_conversa_aberta", {
+      p_clinic_id: clinicId,
+      p_contact_id: contactId,
+      p_whatsapp_account_id: numeroA,
+    });
+    expect(nova).not.toBe(conversaA);
+    expect(await numeroDaConversa(nova as string)).toBe(numeroA);
+    const colide = await admin
+      .from("conversation")
+      .update({ status: "aguardando_humano" })
+      .eq("id", conversaA);
+    expect(colide.error?.code).toBe("23505");
   });
 });
 
@@ -374,28 +484,71 @@ describe("conta_de_envio", () => {
     expect(data).toBeNull();
   });
 
-  // Ativa na Fase 3: dois numeros, o paciente escreveu por ultimo no B.
-  it.skip("último usado é o número em que o paciente escreveu por último (last_inbound_at)", async () => {
+  // Dois numeros: o paciente escreveu por ultimo no B.
+  it("último usado é o número em que o paciente escreveu por último (last_inbound_at)", async () => {
     const { clinicId, numeroId: numeroA } = await criarClinica("conta-dois");
-    const { data: b } = await admin
-      .from("whatsapp_account")
-      .insert({ clinic_id: clinicId, provider: "fake", nome: "Segundo" })
-      .select("id")
-      .single()
-      .throwOnError();
+    const numeroB = await criarOutroNumero(clinicId);
     const fone = telefone();
     const pelaA = await ingerir(clinicId, fone, `num:${sufixo}:u-a`, numeroA!);
-    await ingerir(clinicId, fone, `num:${sufixo}:u-b`, b!.id);
+    await ingerir(clinicId, fone, `num:${sufixo}:u-b`, numeroB);
     await admin
       .from("conversation")
-      .update({ last_inbound_at: new Date(Date.now() - 3_600_000).toISOString() })
+      .update({
+        last_inbound_at: new Date(Date.now() - 3_600_000).toISOString(),
+      })
       .eq("id", (pelaA.data as { conversation_id: string }).conversation_id)
+      .throwOnError();
+    const contactId = (pelaA.data as { contact_id: string }).contact_id;
+    const { data } = await admin.rpc("conta_de_envio", {
+      p_clinic_id: clinicId,
+      p_contact_id: contactId,
+    });
+    expect(data).toBe(numeroB);
+
+    // A versao em lote diz o mesmo, com o nome do numero.
+    const { data: lote } = await admin.rpc("contas_de_envio", {
+      p_clinic_id: clinicId,
+      p_contact_ids: [contactId],
+    });
+    expect(lote).toEqual([
+      {
+        contact_id: contactId,
+        whatsapp_account_id: numeroB,
+        nome: "Segundo",
+        connection_status: "conectado",
+      },
+    ]);
+
+    // E o job de envio sem numero nasce carimbado no B pelo gatilho.
+    const { data: job } = await admin
+      .from("job_queue")
+      .insert({
+        clinic_id: clinicId,
+        kind: "enviar_mensagem_ativa",
+        payload: { contact_id: contactId, body: "teste" },
+        run_at: AMANHA(),
+      })
+      .select("whatsapp_account_id")
+      .single()
+      .throwOnError();
+    expect(job!.whatsapp_account_id).toBe(numeroB);
+  });
+
+  it("modo fixo no número que não é o principal manda em todo contato", async () => {
+    const { clinicId, numeroId: numeroA } = await criarClinica("conta-fixo-b");
+    const numeroB = await criarOutroNumero(clinicId);
+    const fone = telefone();
+    // O paciente escreveu pelo A, mas as automaticas sao fixas no B.
+    const pelaA = await ingerir(clinicId, fone, `num:${sufixo}:f-a`, numeroA!);
+    await admin
+      .from("whatsapp_envio_automatico")
+      .insert({ clinic_id: clinicId, modo: "fixo", conta_fixa_id: numeroB })
       .throwOnError();
     const { data } = await admin.rpc("conta_de_envio", {
       p_clinic_id: clinicId,
       p_contact_id: (pelaA.data as { contact_id: string }).contact_id,
     });
-    expect(data).toBe(b!.id);
+    expect(data).toBe(numeroB);
   });
 });
 
@@ -590,8 +743,10 @@ describe("remover_numero", () => {
       telefone(),
       `num:${sufixo}:remover`,
     );
-    const { conversation_id: conversaId, contact_id: contactId } =
-      entrada as { conversation_id: string; contact_id: string };
+    const { conversation_id: conversaId, contact_id: contactId } = entrada as {
+      conversation_id: string;
+      contact_id: string;
+    };
 
     // Job pendente sem mensagem (redistribui) e job que ja gravou mensagem
     // (fica no numero removido e falha na execucao).
@@ -701,7 +856,10 @@ describe("remover_numero", () => {
       `num:${sufixo}:tarde`,
       numeroId!,
     );
-    expect(tarde).toMatchObject({ inserted: false, ignorada: "numero_removido" });
+    expect(tarde).toMatchObject({
+      inserted: false,
+      ignorada: "numero_removido",
+    });
 
     // Remover de novo nao faz nada.
     const { data: deNovo } = await admin.rpc("remover_numero", {
@@ -802,16 +960,11 @@ describe("remover_numero", () => {
       .throwOnError();
   });
 
-  // Ativa na Fase 3: com dois numeros, o principal so sai depois de outro
-  // virar principal, e os jobs pendentes vao para o outro numero.
-  it.skip("principal com outro número ativo: recusa; o outro recebe os jobs", async () => {
+  // Com dois numeros, o principal so sai depois de outro virar principal, e
+  // os jobs pendentes vao para o outro numero.
+  it("principal com outro número ativo: recusa; o outro recebe os jobs", async () => {
     const { clinicId, numeroId: numeroA } = await criarClinica("remover-dois");
-    const { data: b } = await admin
-      .from("whatsapp_account")
-      .insert({ clinic_id: clinicId, provider: "fake", nome: "Segundo" })
-      .select("id")
-      .single()
-      .throwOnError();
+    const numeroB = await criarOutroNumero(clinicId);
     const recusa = await admin.rpc("remover_numero", {
       p_clinic_id: clinicId,
       p_account_id: numeroA,
@@ -826,13 +979,13 @@ describe("remover_numero", () => {
         kind: "enviar_mensagem_ativa",
         payload: { contact_id: contactId },
         run_at: AMANHA(),
-        whatsapp_account_id: b!.id,
+        whatsapp_account_id: numeroB,
       })
       .select("id")
       .single()
       .throwOnError();
     await admin
-      .rpc("remover_numero", { p_clinic_id: clinicId, p_account_id: b!.id })
+      .rpc("remover_numero", { p_clinic_id: clinicId, p_account_id: numeroB })
       .throwOnError();
     const { data: depois } = await admin
       .from("job_queue")
@@ -840,5 +993,92 @@ describe("remover_numero", () => {
       .eq("id", job!.id)
       .single();
     expect(depois?.whatsapp_account_id).toBe(numeroA);
+  });
+
+  // Achado N[0] da revisao da Fase 2: o eco da resposta ao toque ja
+  // reivindicado quando o numero sai. remover_numero so cancela eco
+  // PENDENTE; este, executando, chega a numero_do_job. Antes do contrato ele
+  // era recarimbado com o outro numero e so a copia lida no claim (worker.ts)
+  // segurava a D4. Agora o banco devolve 'numero_removido' e nao mexe na
+  // coluna, por mais que o job volte a fila.
+  it("numero_do_job: eco cujo número saiu não é recarimbado (D4)", async () => {
+    const { clinicId, numeroId: numeroA } = await criarClinica("eco-removido");
+    const numeroB = await criarOutroNumero(clinicId);
+    const contactId = await criarContato(clinicId);
+    const worker = `teste-eco-${sufixo}`;
+    const { data: eco } = await admin
+      .from("job_queue")
+      .insert({
+        clinic_id: clinicId,
+        kind: "enviar_mensagem_ativa",
+        payload: {
+          contact_id: contactId,
+          body: "Presença confirmada (teste)",
+          resposta_ao_paciente: true,
+        },
+        run_at: AMANHA(),
+        whatsapp_account_id: numeroA,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: comum } = await admin
+      .from("job_queue")
+      .insert({
+        clinic_id: clinicId,
+        kind: "enviar_mensagem_ativa",
+        payload: { contact_id: contactId, body: "comum" },
+        run_at: AMANHA(),
+        whatsapp_account_id: numeroA,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    // Posse simulada, como o claim faz: os dois ja estao executando.
+    await admin
+      .from("job_queue")
+      .update({ status: "executando", locked_by: worker })
+      .in("id", [eco!.id, comum!.id])
+      .throwOnError();
+
+    await admin
+      .rpc("definir_numero_principal", {
+        p_clinic_id: clinicId,
+        p_account_id: numeroB,
+      })
+      .throwOnError();
+    await admin
+      .rpc("remover_numero", { p_clinic_id: clinicId, p_account_id: numeroA })
+      .throwOnError();
+
+    for (let vez = 0; vez < 2; vez += 1) {
+      const { data: estado } = await admin.rpc("numero_do_job", {
+        p_job_id: eco!.id,
+        p_worker: worker,
+      });
+      expect(estado).toEqual({ estado: "numero_removido" });
+      const { data: linha } = await admin
+        .from("job_queue")
+        .select("whatsapp_account_id")
+        .eq("id", eco!.id)
+        .single();
+      expect(linha?.whatsapp_account_id).toBe(numeroA);
+    }
+
+    // O envio comum, sem mensagem, continua indo para o numero que sobrou.
+    const { data: estadoComum } = await admin.rpc("numero_do_job", {
+      p_job_id: comum!.id,
+      p_worker: worker,
+    });
+    expect(estadoComum).toEqual({
+      estado: "ok",
+      whatsapp_account_id: numeroB,
+    });
+
+    await admin
+      .from("job_queue")
+      .update({ status: "cancelado", locked_by: null })
+      .in("id", [eco!.id, comum!.id])
+      .throwOnError();
   });
 });

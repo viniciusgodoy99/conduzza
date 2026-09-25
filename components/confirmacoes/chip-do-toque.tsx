@@ -43,6 +43,7 @@ const MOTIVO: Record<string, string> = {
   canal_ocupado: "o WhatsApp da clínica ficou com fila até a hora da consulta",
   consulta_remarcada: "a consulta mudou de horário",
   toque_atrasado: "atrasou e a mensagem seguinte cobriu",
+  numero_removido: "o número de WhatsApp foi removido da clínica",
 };
 
 /**

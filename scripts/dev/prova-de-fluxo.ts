@@ -1,3 +1,4 @@
+import { criarNumeroDeTeste } from "../../tests/rls/numeros";
 import { anonClient } from "../../tests/rls/stack";
 import { seedClient } from "../seed/lib";
 
@@ -109,6 +110,12 @@ async function main() {
     if (!ok(e3 !== null, "cadastro recusado com código inexistente")) falhas++;
 
     console.log("4. Pendente não enxerga dado de paciente");
+    // Toda conversa pertence a um numero de WhatsApp (NOT NULL desde o
+    // contrato da Fase 3, migration 20260925140000), e o cadastro nao cria
+    // numero: a prova cria o da clinica (provedor fake) antes da conversa.
+    await criarNumeroDeTeste(admin, clinicId);
+    // Insert recusado derruba a prova: sem conversa, o passo 4 passaria no
+    // vazio e os passos 6 e 7 acusariam uma falha de RLS que nao existe.
     const { data: contato } = await admin
       .from("contact")
       .insert({
@@ -117,12 +124,16 @@ async function main() {
         name: "Paciente Reservado",
       })
       .select("id")
-      .single();
-    await admin.from("conversation").insert({
-      clinic_id: clinicId,
-      contact_id: contato!.id,
-      status: "aguardando_humano",
-    });
+      .single()
+      .throwOnError();
+    await admin
+      .from("conversation")
+      .insert({
+        clinic_id: clinicId,
+        contact_id: contato!.id,
+        status: "aguardando_humano",
+      })
+      .throwOnError();
 
     const clientePendente = anonClient();
     await clientePendente.auth.signInWithPassword({
@@ -199,12 +210,15 @@ async function main() {
       email_confirm: true,
       user_metadata: { name: "Leitor" },
     });
-    await admin.from("clinic_member").insert({
-      clinic_id: clinicId,
-      user_id: leitor!.user!.id,
-      role: "leitura",
-      status: "ativo",
-    });
+    await admin
+      .from("clinic_member")
+      .insert({
+        clinic_id: clinicId,
+        user_id: leitor!.user!.id,
+        role: "leitura",
+        status: "ativo",
+      })
+      .throwOnError();
     const clienteLeitor = anonClient();
     await clienteLeitor.auth.signInWithPassword({
       email: `leitor-${s}@teste.dev`,

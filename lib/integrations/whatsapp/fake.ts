@@ -151,6 +151,8 @@ export class FakeProvider implements WhatsAppProvider {
     };
   }
 
+  // Responde na hora e sem rede: o prazo e as tentativas de OpcoesDeConsulta
+  // (segundo parametro da interface) nao tem o que encurtar aqui.
   async getStatus(): Promise<InstanceStatus> {
     return { status: "conectado" };
   }

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { chaveDeTelefone } from "@/lib/domain/telefone";
 import { importarContatos } from "@/lib/integrations/importar-contatos";
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
 // Migration 20260924100000, contra o banco REAL. O WhatsApp entrega o celular
@@ -58,6 +59,9 @@ beforeAll(async () => {
     .single()
     .throwOnError();
   clinicId = data!.id as string;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3): a entrada sem
+  // numero explicito cai no principal.
+  await criarNumeroDeTeste(admin, clinicId);
 });
 
 afterAll(async () => {

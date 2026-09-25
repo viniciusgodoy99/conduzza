@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Isolamento do acervo de MIDIA de paciente (foto de exame, audio, documento).
@@ -54,8 +55,16 @@ beforeAll(async () => {
   const { data: clinicas, error } = await admin
     .from("clinic")
     .insert([
-      { name: `Mídia A ${suffix}`, slug: `midia-a-${suffix}`, e_de_teste: true },
-      { name: `Mídia B ${suffix}`, slug: `midia-b-${suffix}`, e_de_teste: true },
+      {
+        name: `Mídia A ${suffix}`,
+        slug: `midia-a-${suffix}`,
+        e_de_teste: true,
+      },
+      {
+        name: `Mídia B ${suffix}`,
+        slug: `midia-b-${suffix}`,
+        e_de_teste: true,
+      },
     ])
     .select("id, slug");
   if (error || clinicas?.length !== 2) {
@@ -63,6 +72,8 @@ beforeAll(async () => {
   }
   clinicaA = clinicas.find((c) => c.slug === `midia-a-${suffix}`)!.id as string;
   clinicaB = clinicas.find((c) => c.slug === `midia-b-${suffix}`)!.id as string;
+  // Conversa exige numero de WhatsApp (contrato da Fase 3).
+  await criarNumeroDeTeste(admin, clinicaA);
 
   [daClinicaA, daClinicaB, profissionalSemAConversa] = await Promise.all([
     criarPessoa(`midia-a-${suffix}@teste.dev`),
@@ -83,7 +94,10 @@ beforeAll(async () => {
 
   const { data: contato } = await admin
     .from("contact")
-    .insert({ clinic_id: clinicaA, phone_e164: `+5511${Date.now() % 100000000}` })
+    .insert({
+      clinic_id: clinicaA,
+      phone_e164: `+5511${Date.now() % 100000000}`,
+    })
     .select("id")
     .single();
   const { data: conversa } = await admin

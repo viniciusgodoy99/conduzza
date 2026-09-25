@@ -5,6 +5,8 @@ import type { ConnectState } from "@/lib/actions/whatsapp-connect";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { provedorDoAmbiente } from "@/lib/integrations/whatsapp/provider";
+import { motivosDaRecusaVigentes } from "@/lib/integrations/whatsapp/trava-celular";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 // Tela 13 reformulada para o canal atual: conexao do numero por pareamento
@@ -13,12 +15,17 @@ import { createClient } from "@/lib/supabase/server";
 //
 // Esta rota e o onboarding de primeiro acesso; o mesmo painel aparece na aba
 // de WhatsApp das Configuracoes, pelo componente compartilhado.
+//
+// Fica fora do layout de Configuracoes, entao qualquer membro chega aqui: o
+// papel e conferido nesta pagina (canEdit), para o botao e para o motivo da
+// recusa do celular.
 export default async function WhatsAppOnboardingPage() {
   const context = await getSessionContext();
   const active = context?.active;
 
-  // Os numeros ATIVOS da clinica; o cartao e o do principal (docs/07, Fase
-  // 2). Sem numero nenhum, o cartao abre sem id e Conectar cria o principal.
+  // Os numeros ATIVOS da clinica; o cartao e o do principal (docs/07). Os
+  // outros numeros vivem em Configuracoes > WhatsApp, um cartao por numero.
+  // Sem numero nenhum, o cartao abre sem id e Conectar cria o principal.
   const supabase = await createClient();
   const { data: numeros, error: erroDaConta } = await supabase
     .from("whatsapp_account")
@@ -34,6 +41,25 @@ export default async function WhatsAppOnboardingPage() {
     (numeros ?? [])[0] ??
     null;
 
+  const podeConectar = active ? canEdit(active.role, "configuracoes") : false;
+  const dica = active ? permissionHint(active.role, "configuracoes") : null;
+
+  // Desconectado porque a trava recusou o celular: o cartao ja abre dizendo
+  // por que (achado M[0] da revisao das Fases 3 e 4). Antes so a consulta do
+  // pareamento dizia, e recarregar a pagina deixava so "Desconectado". O
+  // texto e de quem conecta (administrador e gestor), lido por service role
+  // com a clinica DA SESSAO.
+  const motivos: Record<string, string> =
+    active &&
+    account &&
+    podeConectar &&
+    account.connection_status === "desconectado"
+      ? await motivosDaRecusaVigentes(createAdminClient(), active.clinicId, [
+          account.id,
+        ])
+      : {};
+  const motivo = account ? (motivos[account.id] ?? null) : null;
+
   const initial: ConnectState = {
     status:
       (account?.connection_status as ConnectState["status"]) ?? "desconectado",
@@ -45,11 +71,10 @@ export default async function WhatsAppOnboardingPage() {
           error:
             "Não foi possível carregar a situação da conexão. Clique em Verificar agora.",
         }
-      : {}),
+      : motivo
+        ? { error: motivo }
+        : {}),
   };
-
-  const podeConectar = active ? canEdit(active.role, "configuracoes") : false;
-  const dica = active ? permissionHint(active.role, "configuracoes") : null;
 
   // Sem linha de whatsapp_account ainda, o provedor e o do AMBIENTE, pela
   // mesma regra que cria a conta (achado 30): fora de producao, sem

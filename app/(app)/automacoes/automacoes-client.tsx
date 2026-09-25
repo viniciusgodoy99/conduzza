@@ -18,6 +18,8 @@ import {
   type EtapaParaFollowup,
 } from "@/components/automacoes/aba-followup";
 import { Excecoes } from "@/components/automacoes/excecoes";
+import { NumeroDasAutomaticas } from "@/components/automacoes/numero-das-automaticas";
+import type { NumerosDasAutomaticas } from "@/components/automacoes/numeros-de-envio";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -107,6 +109,7 @@ export function AutomacoesClient({
   followupsIniciais,
   etapasParaFollowup,
   volumes,
+  numeros,
   podeEditar,
   dicaSemPermissao,
   ehAdministrador,
@@ -122,6 +125,11 @@ export function AutomacoesClient({
   followupsIniciais: ReguaDeFollowup[];
   etapasParaFollowup: EtapaParaFollowup[];
   volumes: VolumesDaEstimativa;
+  /**
+   * Os numeros ativos e a politica das automaticas (docs/07). Nulo quando a
+   * leitura falhou: o cartao mostra o erro e o teste sai pelo padrao.
+   */
+  numeros: NumerosDasAutomaticas | null;
   podeEditar: boolean;
   dicaSemPermissao: string;
   /** So o administrador registra a linha de base (aviso ao ligar). */
@@ -233,6 +241,14 @@ export function AutomacoesClient({
 
   return (
     <Tabs value={abaAtiva} onValueChange={trocarAba} className="gap-4">
+      {/* Por qual numero as automaticas saem: vale para todas as abas, entao
+          fica acima delas, e so aparece com mais de um numero ativo. */}
+      <NumeroDasAutomaticas
+        dados={numeros}
+        podeEditar={podeEditar}
+        dicaSemPermissao={dicaSemPermissao}
+        aoTentarDeNovo={() => router.refresh()}
+      />
       <TabsList
         variant="cartoes"
         className="grid-cols-1 items-stretch sm:grid-cols-2 xl:grid-cols-4"
@@ -314,6 +330,7 @@ export function AutomacoesClient({
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
           ehAdministrador={ehAdministrador}
+          numeros={numeros}
           aoMudar={invalidar}
         />
         <Excecoes
@@ -325,6 +342,7 @@ export function AutomacoesClient({
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
           ehAdministrador={ehAdministrador}
+          numeros={numeros}
           aoMudar={invalidar}
         />
       </TabsContent>
@@ -360,6 +378,7 @@ export function AutomacoesClient({
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
           ehAdministrador={ehAdministrador}
+          numeros={numeros}
           aoMudar={invalidar}
         />
       </TabsContent>
@@ -380,6 +399,7 @@ export function AutomacoesClient({
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
           ehAdministrador={ehAdministrador}
+          numeros={numeros}
           aoMudar={invalidar}
         />
       </TabsContent>

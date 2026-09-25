@@ -31,8 +31,10 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { ConnectClient } from "@/components/whatsapp/connect-client";
-import type { ConnectState } from "@/lib/actions/whatsapp-connect";
+import {
+  ListaDeNumeros,
+  type ListaDeNumerosProps,
+} from "@/components/whatsapp/lista-de-numeros";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 
@@ -119,15 +121,15 @@ export function ConfiguracoesClient({
   /** nulo: a leitura do codigo falhou */
   codigo: string | null;
   codigoAtivo: boolean;
-  whatsapp: {
-    /** o principal ativo; nulo quando a clinica ainda nao tem numero */
-    accountId: string | null;
-    nome: string | null;
-    initial: ConnectState;
-    connectedAt: string | null;
-    providerName: string | null;
-    timezone: string;
-  };
+  /**
+   * Os numeros de WhatsApp da clinica e o que a aba precisa deles (sem a
+   * permissao, que vem de podeGerenciar e ehAdmin). Nulo: a leitura dos
+   * numeros falhou.
+   */
+  whatsapp: Omit<
+    ListaDeNumerosProps,
+    "podeGerenciar" | "ehAdmin" | "dica"
+  > | null;
   jornada: EtapaDaJornada[] | null;
   etiquetas: {
     lista: EtiquetaDeConversa[];
@@ -271,20 +273,20 @@ export function ConfiguracoesClient({
 
       <TabsContent value="whatsapp" className="grid gap-4">
         <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          O número conectado aqui é o WhatsApp que a clínica usa para atender.
-          Toda conversa de paciente entra e sai por ele, então desconectar
-          interrompe o atendimento na hora.
+          Cada número é um WhatsApp separado. O paciente que escreve para um
+          número é atendido por ele, e a conversa mostra por qual número está
+          falando.
         </p>
-        <ConnectClient
-          accountId={whatsapp.accountId}
-          nome={whatsapp.nome}
-          initial={whatsapp.initial}
-          connectedAt={whatsapp.connectedAt}
-          canManage={podeGerenciar}
-          hint={dica}
-          providerName={whatsapp.providerName}
-          timezone={whatsapp.timezone}
-        />
+        {whatsapp ? (
+          <ListaDeNumeros
+            {...whatsapp}
+            podeGerenciar={podeGerenciar}
+            ehAdmin={ehAdmin}
+            dica={dica}
+          />
+        ) : (
+          <ErroDaAba titulo="Não foi possível carregar os números de WhatsApp" />
+        )}
       </TabsContent>
 
       <TabsContent value="jornada" className="grid gap-4">
