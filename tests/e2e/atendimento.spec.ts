@@ -212,6 +212,32 @@ test("clínica com WhatsApp desconectado vê a faixa vermelha fixa", async ({
   await expect(page.getByRole("link", { name: "Reconectar" })).toBeVisible();
 });
 
+// O Inbox ocupa a altura da tela e so as colunas rolam. Defeito de 29/09: os
+// textos so para leitor de tela (sr-only, que e absolute) dos cartoes tinham
+// o <main> como bloco de contencao, escapavam da rolagem da lista e davam a
+// pagina centenas de pixels de rolagem vazia.
+test("o Inbox não deixa a página rolar além da tela", async ({ page }) => {
+  await login(page, dados().emails.admin);
+  await page.goto("/atendimento");
+  await expect(
+    page.getByRole("complementary", { name: "Conversas" }),
+  ).toBeVisible();
+  const medida = await page.locator("main").evaluate((main) => {
+    let escapados = 0;
+    for (const el of Array.from(main.querySelectorAll<HTMLElement>("*"))) {
+      if (
+        getComputedStyle(el).position === "absolute" &&
+        el.offsetParent === main
+      ) {
+        escapados += 1;
+      }
+    }
+    return { folga: main.scrollHeight - main.clientHeight, escapados };
+  });
+  expect(medida.escapados).toBe(0);
+  expect(medida.folga).toBeLessThanOrEqual(1);
+});
+
 // ---------------------------------------------------------------------------
 // Varios numeros de WhatsApp (docs/07, Fase 4), com o provedor fake. Clinica
 // e pessoa PROPRIAS (prefixo e2e, apagadas pelo teardown), para os dois

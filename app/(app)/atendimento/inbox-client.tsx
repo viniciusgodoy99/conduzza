@@ -823,7 +823,7 @@ export function InboxClient({
 
   return (
     <div
-      className="@container/inbox flex h-full min-h-0"
+      className="@container/inbox relative flex h-full min-h-0 overflow-clip"
       // Soltar um arquivo em QUALQUER outro ponto da tela faz o navegador
       // abrir o arquivo e trocar de pagina, tirando a atendente do sistema no
       // meio do atendimento. O compositor trata o que cai nele; aqui a gente

@@ -98,7 +98,7 @@ export function PendingPanel({
         </h2>
       </div>
 
-      <div className="flex cz-scroll min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <div className="relative flex cz-scroll min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-4">
         {pendencias.length === 0 ? (
           // Vazio compacto no tom da IA (ladrilho lime suave com o Sparkles):
           // quem sugere encaixe e a IA.

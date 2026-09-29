@@ -615,7 +615,11 @@ export function ConversationList({
         ) : null}
       </div>
 
-      <div className="cz-scroll min-h-0 flex-1 overflow-y-auto">
+      {/* relative: os textos so para leitor de tela (sr-only, que e absolute)
+          dos cartoes ficam contidos AQUI. Sem ele, o bloco de contencao deles
+          era o <main>: escapavam desta rolagem e davam ao <main> centenas de
+          pixels de rolagem vazia (a pagina subia por baixo da barra). */}
+      <div className="relative cz-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {filtered.length > 0 ? (
           filtered.map((conversation) => (
             <ConversationCard

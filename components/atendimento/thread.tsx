@@ -427,7 +427,7 @@ export function Thread({
       <div
         ref={scrollRef}
         onScroll={registrarRolagem}
-        className="cz-scroll min-h-0 flex-1 overflow-y-auto bg-background p-4"
+        className="relative cz-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background p-4"
       >
         {isLoading ? (
           <EsqueletoDoFio />

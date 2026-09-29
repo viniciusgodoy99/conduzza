@@ -260,7 +260,7 @@ export function ContextPanel({
   );
 
   return (
-    <div className="flex cz-scroll h-full min-h-0 flex-col gap-4 overflow-y-auto p-4">
+    <div className="relative flex cz-scroll h-full min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-4">
       <section
         aria-label="Contato"
         className="flex flex-col items-center gap-2 text-center"

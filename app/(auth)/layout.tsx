@@ -35,7 +35,9 @@ export default function AuthLayout({
           width={170}
           height={28}
           priority
-          className="h-7 w-auto"
+          // self-start: na coluna, o flex esticava a imagem na largura toda
+          // do painel com a altura travada em 28px (logo repuxada).
+          className="h-7 w-auto self-start"
         />
         <div className="grid max-w-[30rem] gap-4">
           <p className="text-[32px] leading-[1.06] font-bold tracking-[-0.025em] text-balance text-sidebar-strong">

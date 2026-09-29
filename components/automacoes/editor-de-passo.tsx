@@ -237,7 +237,9 @@ export function EditorDePasso({
             ))}
           </div>
         </div>
-        <div className="grid gap-2 rounded-xl bg-surface-4 p-3.5">
+        {/* relative: contem o campo de arquivo (sr-only, absolute) aqui, e
+            nao no <main>. */}
+        <div className="relative grid gap-2 rounded-xl bg-surface-4 p-3.5">
           <span className="text-xs font-semibold text-foreground">
             Anexo (foto, áudio ou arquivo)
           </span>
