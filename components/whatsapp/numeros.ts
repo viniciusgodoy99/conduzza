@@ -119,14 +119,16 @@ export const ROTULO_DA_ACAO: Record<AcaoDeConexao, string> = {
   desconectar: "Desconectar",
 };
 
-// D8 do docs/07: remover e so do administrador. Os dois outros textos sao os
-// mesmos que removerNumeroAction devolve quando recusa.
+// D8 do docs/07: remover e so do administrador. O outro texto e o mesmo que
+// removerNumeroAction devolve quando recusa.
+//
+// Numero fixo de algum tipo de mensagem automatica NAO trava a remocao
+// (decisao do dono de 29/09/2026): a escolha daquele tipo volta para o
+// ultimo numero usado pelo paciente (remover_numero), e o dialogo avisa.
 export const DICA_SO_ADMIN =
   "Somente administradores removem um número de WhatsApp.";
 export const DICA_PRINCIPAL_COM_OUTROS =
   "Escolha outro número como principal antes de remover este.";
-export const DICA_NUMERO_DAS_AUTOMATICAS =
-  "As mensagens automáticas saem sempre por este número. Em Automações, escolha outro número antes de remover este.";
 export const DICA_JA_E_PRINCIPAL = "Este já é o número principal.";
 export const DICA_SEM_UNIDADES =
   "Esta clínica ainda não tem unidades. Cadastre em Cadastros, na aba Unidades.";
@@ -136,7 +138,7 @@ export const DICA_UNIDADES_NAO_CARREGADAS =
 /**
  * Por que o numero nao pode ser removido agora (nulo: pode). A tela deixa o
  * item visivel e desabilitado com este texto; a acao confere de novo no
- * servidor, porque outra aba pode ter mudado o principal ou a politica.
+ * servidor, porque outra aba pode ter mudado o principal.
  */
 export function motivoParaNaoRemover(
   numero: Pick<NumeroDoWhatsapp, "id" | "principal">,
@@ -144,8 +146,6 @@ export function motivoParaNaoRemover(
     ehAdmin: boolean;
     /** numeros ativos da clinica, este incluido */
     totalAtivos: number;
-    /** o numero fixo das mensagens automaticas (modo fixo), se houver */
-    contaFixaId: string | null;
   },
 ): string | null {
   if (!contexto.ehAdmin) {
@@ -153,9 +153,6 @@ export function motivoParaNaoRemover(
   }
   if (numero.principal && contexto.totalAtivos > 1) {
     return DICA_PRINCIPAL_COM_OUTROS;
-  }
-  if (contexto.contaFixaId === numero.id) {
-    return DICA_NUMERO_DAS_AUTOMATICAS;
   }
   return null;
 }
@@ -178,13 +175,21 @@ export function dicaDoLimite(limite: number): string {
   return `O plano desta clínica permite até ${limite} ${numerosPorExtenso(limite)}. Fale com o suporte para ampliar.`;
 }
 
-/** Corpo do dialogo de remover (D3: as conversas abertas sao encerradas). */
+/**
+ * Corpo do dialogo de remover (D3: as conversas abertas sao encerradas).
+ * Numero fixo de algum tipo de mensagem automatica: esses tipos voltam para
+ * o ultimo numero usado pelo paciente (decisao do dono de 29/09/2026).
+ */
 export function textoDaRemocao(
   numero: Pick<NumeroDoWhatsapp, "displayPhone">,
+  fixoDasAutomaticas = false,
 ): string {
   const telefone = telefoneFormatado(numero.displayPhone);
   const quem = telefone ? `O WhatsApp ${telefone}` : "Este número";
-  return `${quem} deixa de receber e enviar mensagens pelo Conduzza. As conversas abertas dele são encerradas e o histórico continua.`;
+  const base = `${quem} deixa de receber e enviar mensagens pelo Conduzza. As conversas abertas dele são encerradas e o histórico continua.`;
+  return fixoDasAutomaticas
+    ? `${base} As mensagens automáticas que saíam sempre por ele passam a sair pelo último número usado pelo paciente.`
+    : base;
 }
 
 /** Nome da unidade do numero, quando ele tem uma e ela esta na lista. */

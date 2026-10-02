@@ -7,16 +7,26 @@ import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { fetchCatalogo, fetchUsoDosPacotes } from "@/lib/queries/catalogo";
 import { createClient } from "@/lib/supabase/server";
 
+import { redirecionamentoDeAbaQueSaiu } from "./abas";
 import { CadastrosClient } from "./cadastros-client";
 
-// Tela 8, Cadastros (tarefa 2.2): as oito abas do catalogo clinico. Escrita
-// so de administrador e gestor; recepcao e demais papeis VEEM tudo, com as
-// acoes visiveis e desabilitadas com dica (nunca escondidas).
+// Tela 8, Cadastros (tarefa 2.2): as cinco abas do catalogo clinico (lista
+// e motivo em ./abas). Escrita so de administrador e gestor; recepcao e
+// demais papeis VEEM tudo, com as acoes visiveis e desabilitadas com dica
+// (nunca escondidas).
 export default async function CadastrosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ aba?: string }>;
+  searchParams: Promise<{ aba?: string | string[] }>;
 }) {
+  const { aba } = await searchParams;
+  // Link antigo para uma aba que saiu (29/09/2026): vai para onde o assunto
+  // mora agora, antes de buscar o catalogo.
+  const destino = redirecionamentoDeAbaQueSaiu(aba);
+  if (destino) {
+    redirect(destino);
+  }
+
   const context = await getSessionContext();
   const active = context?.active;
   if (!context || !active) {
@@ -31,7 +41,6 @@ export default async function CadastrosPage({
     fetchCatalogo(supabase, active.clinicId),
     fetchUsoDosPacotes(supabase, active.clinicId).catch(() => null),
   ]);
-  const { aba } = await searchParams;
 
   const podeEditar = canEdit(active.role, "cadastros");
   const dica = permissionHint(active.role, "cadastros");
@@ -41,7 +50,7 @@ export default async function CadastrosPage({
       <PageHeader
         eyebrow="Administração"
         title="Cadastros"
-        description="Profissionais, procedimentos, convênios e a matriz de vínculos da clínica"
+        description="Profissionais, procedimentos e quem faz cada um, convênios, pacotes e unidades da clínica"
       />
       {/* Tela de computador (brief secao 6): no celular so avisa, nada trava */}
       <AvisoCelular />
@@ -49,7 +58,7 @@ export default async function CadastrosPage({
         clinicId={active.clinicId}
         catalogoInicial={catalogo}
         usoDosPacotesInicial={usoDosPacotes}
-        abaInicial={aba}
+        abaInicial={typeof aba === "string" ? aba : undefined}
         podeEditar={podeEditar}
         dica={dica ?? "Seu perfil não altera os cadastros"}
         timezone={active.timezone}

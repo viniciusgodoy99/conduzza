@@ -691,3 +691,351 @@ describe("a régua não liga sem janela de envio", () => {
     expect(noBanco.send_weekdays).toBeNull();
   });
 });
+
+// Regua vinculada a medico, especialidade ou procedimento (decisao do dono de
+// 29/09/2026, migration 20260929110000). As colunas novas (professional_id,
+// specialty) vivem na MESMA linha de cadence: a policy "gestao escreve
+// reguas" continua decidindo quem escreve. O que se prova aqui e o que o
+// banco acrescentou: o vinculo e da mesma clinica (gatilho
+// exigir_cadastro_da_mesma_clinica, que fecha tambem o procedure_id de outra
+// clinica), um vinculo so por regua, especialidade unica pela chave (grafias
+// diferentes conflitam), follow-up sem vinculo, e regua_da_consulta respeita
+// a RLS de quem chama (SECURITY INVOKER).
+describe("régua vinculada: médico, especialidade ou procedimento", () => {
+  const FK_VIOLATION = "23503";
+  const UNIQUE_VIOLATION = "23505";
+
+  let profissionalA = "";
+  let profissionalB = "";
+  let procedimentoB = "";
+  let consultaA = "";
+  const criadas: string[] = [];
+
+  beforeAll(async () => {
+    const { data: profA } = await admin
+      .from("professional")
+      .insert({
+        clinic_id: clinicaA,
+        name: `Dra. Vinculada ${sufixo}`,
+        specialties: ["Dermatologia"],
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    profissionalA = profA!.id as string;
+
+    const { data: profB } = await admin
+      .from("professional")
+      .insert({ clinic_id: clinicaB, name: `Dr. da Vizinha ${sufixo}` })
+      .select("id")
+      .single()
+      .throwOnError();
+    profissionalB = profB!.id as string;
+
+    const { data: procB } = await admin
+      .from("procedure")
+      .insert({
+        clinic_id: clinicaB,
+        name: `Procedimento da Vizinha ${sufixo}`,
+        default_duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    procedimentoB = procB!.id as string;
+
+    // Uma consulta da A com a Dra. Vinculada, daqui a 10 dias (longe do
+    // horizonte do planner; as reguas daqui nao tem passo).
+    const { data: procA } = await admin
+      .from("procedure")
+      .insert({
+        clinic_id: clinicaA,
+        name: `Consulta vinculada ${sufixo}`,
+        default_duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: vinculo } = await admin
+      .from("service_link")
+      .insert({
+        clinic_id: clinicaA,
+        professional_id: profissionalA,
+        procedure_id: procA!.id,
+        duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const inicio = new Date(Date.now() + 10 * 86_400_000);
+    const { data: consulta } = await admin
+      .from("appointment")
+      .insert({
+        clinic_id: clinicaA,
+        contact_id: contatoA,
+        professional_id: profissionalA,
+        service_link_id: vinculo!.id,
+        starts_at: inicio.toISOString(),
+        ends_at: new Date(inicio.getTime() + 30 * 60_000).toISOString(),
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    consultaA = consulta!.id as string;
+  });
+
+  afterAll(async () => {
+    if (criadas.length > 0) {
+      await admin.from("cadence").delete().in("id", criadas);
+    }
+  });
+
+  async function reguasDaA(): Promise<number> {
+    const { count } = await admin
+      .from("cadence")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicaA);
+    return count ?? 0;
+  }
+
+  it("gestor cria confirmação vinculada ao médico e pós falta vinculado; administrador, a da especialidade", async () => {
+    const { data: doMedico, error: erroMedico } = await sessoes.gestor
+      .from("cadence")
+      .insert({
+        clinic_id: clinicaA,
+        kind: "confirmacao",
+        name: "Confirmação: Dra. Vinculada",
+        professional_id: profissionalA,
+      })
+      .select("id, professional_id, specialty, procedure_id")
+      .single();
+    expect(erroMedico).toBeNull();
+    expect(doMedico).toMatchObject({
+      professional_id: profissionalA,
+      specialty: null,
+      procedure_id: null,
+    });
+    criadas.push(doMedico!.id as string);
+
+    const { data: posFalta, error: erroPosFalta } = await sessoes.gestor
+      .from("cadence")
+      .insert({
+        clinic_id: clinicaA,
+        kind: "pos_falta",
+        name: "Recuperação: Dra. Vinculada",
+        professional_id: profissionalA,
+      })
+      .select("id")
+      .single();
+    expect(erroPosFalta).toBeNull();
+    criadas.push(posFalta!.id as string);
+
+    const { data: daEspecialidade, error: erroEspecialidade } =
+      await sessoes.admin
+        .from("cadence")
+        .insert({
+          clinic_id: clinicaA,
+          kind: "confirmacao",
+          name: "Confirmação: Dermatologia",
+          specialty: "Dermatologia",
+        })
+        .select("id, specialty")
+        .single();
+    expect(erroEspecialidade).toBeNull();
+    // O rotulo fica como o usuario escolheu; a chave so compara.
+    expect(daEspecialidade?.specialty).toBe("Dermatologia");
+    criadas.push(daEspecialidade!.id as string);
+  });
+
+  it("a mesma especialidade com outra grafia conflita: 23505", async () => {
+    const antes = await reguasDaA();
+    const { error } = await sessoes.gestor.from("cadence").insert({
+      clinic_id: clinicaA,
+      kind: "confirmacao",
+      name: "Duplicada",
+      specialty: "  dermatologia ",
+    });
+    expect(error?.code).toBe(UNIQUE_VIOLATION);
+    expect(await reguasDaA()).toBe(antes);
+  });
+
+  it("médico da clínica B não entra na régua da A: 23503", async () => {
+    const antes = await reguasDaA();
+    const { error } = await sessoes.gestor.from("cadence").insert({
+      clinic_id: clinicaA,
+      kind: "confirmacao",
+      name: "Médico da vizinha",
+      professional_id: profissionalB,
+    });
+    expect(error?.code).toBe(FK_VIOLATION);
+    expect(await reguasDaA()).toBe(antes);
+  });
+
+  it("procedimento da clínica B também não (a falha antiga fechada): 23503", async () => {
+    const antes = await reguasDaA();
+    const { error } = await sessoes.admin.from("cadence").insert({
+      clinic_id: clinicaA,
+      kind: "confirmacao",
+      name: "Procedimento da vizinha",
+      procedure_id: procedimentoB,
+    });
+    expect(error?.code).toBe(FK_VIOLATION);
+    expect(await reguasDaA()).toBe(antes);
+  });
+
+  it("nem trocando o médico de uma régua que já existe: 23503, e o vínculo fica", async () => {
+    const reguaDoMedico = criadas[0]!;
+    const { error } = await sessoes.gestor
+      .from("cadence")
+      .update({ professional_id: profissionalB })
+      .eq("id", reguaDoMedico)
+      .select("id");
+    expect(error?.code).toBe(FK_VIOLATION);
+    const { data } = await admin
+      .from("cadence")
+      .select("professional_id")
+      .eq("id", reguaDoMedico)
+      .single()
+      .throwOnError();
+    expect(data?.professional_id).toBe(profissionalA);
+  });
+
+  it("um vínculo só por régua: médico e especialidade juntos, 23514", async () => {
+    const antes = await reguasDaA();
+    const { error } = await sessoes.gestor.from("cadence").insert({
+      clinic_id: clinicaA,
+      kind: "confirmacao",
+      name: "Dois vínculos",
+      professional_id: profissionalA,
+      specialty: "Cardiologia",
+    });
+    expect(error?.code).toBe(CHECK_VIOLATION);
+    expect(error?.message).toContain("cadence_um_vinculo");
+    expect(await reguasDaA()).toBe(antes);
+  });
+
+  it("follow-up não ganha vínculo: 23514", async () => {
+    const { error } = await sessoes.gestor.from("cadence").insert({
+      clinic_id: clinicaA,
+      kind: "followup",
+      name: "Follow-up vinculado",
+      trigger_stage: "em_contato",
+      professional_id: profissionalA,
+    });
+    expect(error?.code).toBe(CHECK_VIOLATION);
+  });
+
+  it("recepção e leitura não criam régua vinculada: 42501", async () => {
+    const antes = await reguasDaA();
+    for (const chave of ["recepcao", "leitura"] as const) {
+      const { error } = await sessoes[chave].from("cadence").insert({
+        clinic_id: clinicaA,
+        kind: "confirmacao",
+        name: `Vinculada pela ${chave}`,
+        specialty: "Cardiologia",
+      });
+      expect(error?.code, chave).toBe(RLS_VIOLATION);
+    }
+    expect(await reguasDaA()).toBe(antes);
+  });
+
+  it("recepção não troca o vínculo de uma régua (zero linha, banco igual)", async () => {
+    const reguaDaEspecialidade = criadas[2]!;
+    const { data: alteradas, error } = await sessoes.recepcao
+      .from("cadence")
+      .update({ specialty: "Cardiologia" })
+      .eq("id", reguaDaEspecialidade)
+      .select("id");
+    if (error) {
+      expect(error.code).toBe(RLS_VIOLATION);
+    } else {
+      expect(alteradas ?? []).toHaveLength(0);
+    }
+    const { data } = await admin
+      .from("cadence")
+      .select("specialty")
+      .eq("id", reguaDaEspecialidade)
+      .single()
+      .throwOnError();
+    expect(data?.specialty).toBe("Dermatologia");
+  });
+
+  it("o gestor da B não lê as réguas vinculadas da A nem cria uma lá", async () => {
+    const { data, error } = await sessoes.gestorB
+      .from("cadence")
+      .select("id, professional_id, specialty")
+      .in("id", criadas);
+    expect(error).toBeNull();
+    expect(data).toHaveLength(0);
+
+    const { error: erroInsert } = await sessoes.gestorB.from("cadence").insert({
+      clinic_id: clinicaA,
+      kind: "confirmacao",
+      name: "Invasão vinculada",
+      professional_id: profissionalA,
+    });
+    expect(erroInsert?.code).toBe(RLS_VIOLATION);
+
+    // Anti falso-positivo: as tres existem para o service role.
+    const { count } = await admin
+      .from("cadence")
+      .select("id", { count: "exact", head: true })
+      .in("id", criadas);
+    expect(count).toBe(3);
+  });
+
+  it("regua_da_consulta respeita a RLS de quem chama", async () => {
+    const reguaDoMedico = criadas[0]!;
+    // Ligada (com janela) so para este caso; o afterAll apaga.
+    await admin
+      .from("cadence")
+      .update({
+        active: true,
+        send_window_start: "08:00",
+        send_window_end: "18:00",
+        send_weekdays: [1, 2, 3, 4, 5],
+      })
+      .eq("id", reguaDoMedico)
+      .throwOnError();
+    const argumentos = {
+      p_appointment_id: consultaA,
+      p_kind: "confirmacao",
+    };
+
+    // Anti falso-positivo: o service role enxerga a regua vigente.
+    const { data: peloServico } = await admin.rpc(
+      "regua_da_consulta",
+      argumentos,
+    );
+    expect(peloServico).toBe(reguaDoMedico);
+
+    const { data: pelaGestora, error: erroGestora } = await sessoes.gestor.rpc(
+      "regua_da_consulta",
+      argumentos,
+    );
+    expect(erroGestora).toBeNull();
+    expect(pelaGestora).toBe(reguaDoMedico);
+
+    // A sessao da B nao enxerga a consulta da A: nulo, sem erro e sem
+    // oraculo.
+    const { data: pelaVizinha, error: erroVizinha } = await sessoes.gestorB.rpc(
+      "regua_da_consulta",
+      argumentos,
+    );
+    expect(erroVizinha).toBeNull();
+    expect(pelaVizinha).toBeNull();
+
+    // Sem login, nem executa.
+    const { error: erroAnonimo } = await anonClient().rpc(
+      "regua_da_consulta",
+      argumentos,
+    );
+    expect(erroAnonimo?.code).toBe(RLS_VIOLATION);
+
+    await admin
+      .from("cadence")
+      .update({ active: false })
+      .eq("id", reguaDoMedico)
+      .throwOnError();
+  });
+});

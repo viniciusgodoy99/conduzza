@@ -15,7 +15,8 @@ import { vi } from "vitest";
 //     teste que simula o banco anterior ao contrato;
 //   - whatsapp_account_secret: PK account_id (o unique temporario por
 //     clinica segue a mesma chave) e webhook_secret com default;
-//   - whatsapp_envio_automatico: PK clinic_id (upsert por ela).
+//   - whatsapp_envio_automatico: PK (clinic_id, tipo) desde 29/09/2026
+//     (upsert por ela, com uma linha ou com a lista, como o PostgREST).
 //
 // Filtros e ordem sao os usados pelas acoes (eq, neq, is, in, not is); a
 // ordem e ignorada, porque as acoes nao dependem dela para decidir.
@@ -190,6 +191,8 @@ class Consulta implements PromiseLike<Resultado> {
   private readonly filtros: Filtro[] = [];
   private operacao: "select" | "insert" | "update" | "upsert" = "select";
   private valores: Linha = {};
+  /** O upsert em lista (PostgREST aceita um objeto ou um array). */
+  private lote: Linha[] | null = null;
   private conflito: { onConflict?: string; ignoreDuplicates?: boolean } = {};
   private devolverLinhas = false;
   private modo: "lista" | "um" | "talvez" = "lista";
@@ -217,11 +220,15 @@ class Consulta implements PromiseLike<Resultado> {
     return this;
   }
   upsert(
-    valores: Linha,
+    valores: Linha | Linha[],
     opcoes: { onConflict?: string; ignoreDuplicates?: boolean } = {},
   ): this {
     this.operacao = "upsert";
-    this.valores = valores;
+    if (Array.isArray(valores)) {
+      this.lote = valores;
+    } else {
+      this.valores = valores;
+    }
     this.conflito = opcoes;
     return this;
   }
@@ -316,26 +323,63 @@ class Consulta implements PromiseLike<Resultado> {
           : { data: null, error: null };
       }
       case "upsert": {
-        const coluna = this.conflito.onConflict ?? "id";
-        const existente = this.banco
-          .linhas(this.tabela)
-          .find((linha) => linha[coluna] === this.valores[coluna]);
-        if (existente) {
-          if (!this.conflito.ignoreDuplicates) {
-            Object.assign(existente, this.valores);
+        if (this.lote !== null) {
+          // Em lista: uma linha por vez, e a primeira recusa devolve o erro
+          // (o PostgREST grava tudo ou nada; aqui os testes so conferem o
+          // caminho feliz em lista).
+          const gravadas: Linha[] = [];
+          for (const valores of this.lote) {
+            const { linha, error } = this.gravarUpsert(valores);
+            if (error) {
+              return { data: null, error };
+            }
+            if (linha) {
+              gravadas.push(linha);
+            }
           }
           return this.devolverLinhas
-            ? this.formatar(this.conflito.ignoreDuplicates ? [] : [existente])
+            ? { data: gravadas.map((linha) => ({ ...linha })), error: null }
             : { data: null, error: null };
         }
-        const { linha, error } = this.banco.inserir(this.tabela, this.valores);
+        const { linha, error } = this.gravarUpsert(this.valores);
         if (error) {
           return { data: null, error };
         }
         return this.devolverLinhas
-          ? this.formatar([linha!])
+          ? this.formatar(linha ? [linha] : [])
           : { data: null, error: null };
       }
     }
+  }
+
+  /**
+   * Um upsert de uma linha. onConflict pode ser composto ("clinic_id,tipo"),
+   * como no PostgREST. Devolve a linha gravada, ou nula quando o conflito
+   * foi ignorado (ignoreDuplicates).
+   */
+  private gravarUpsert(valores: Linha): {
+    linha?: Linha | null;
+    error?: ErroFalso;
+  } {
+    const colunas = (this.conflito.onConflict ?? "id")
+      .split(",")
+      .map((coluna) => coluna.trim());
+    const existente = this.banco
+      .linhas(this.tabela)
+      .find((linha) =>
+        colunas.every((coluna) => linha[coluna] === valores[coluna]),
+      );
+    if (existente) {
+      if (this.conflito.ignoreDuplicates) {
+        return { linha: null };
+      }
+      Object.assign(existente, valores);
+      return { linha: existente };
+    }
+    const { linha, error } = this.banco.inserir(this.tabela, valores);
+    if (error) {
+      return { error };
+    }
+    return { linha: linha ?? null };
   }
 }

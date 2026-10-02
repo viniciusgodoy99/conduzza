@@ -36,7 +36,6 @@ vi.mock("next/navigation", () => ({
 
 const {
   acaoDeConexao,
-  DICA_NUMERO_DAS_AUTOMATICAS,
   DICA_PRINCIPAL_COM_OUTROS,
   DICA_SO_ADMIN,
   dicaDoLimite,
@@ -51,7 +50,7 @@ const {
 } = await import("@/components/whatsapp/numeros");
 const { CartaoDoNumero } =
   await import("@/components/whatsapp/cartao-do-numero");
-const { ListaDeNumeros } =
+const { descricaoDaRemocao, ListaDeNumeros } =
   await import("@/components/whatsapp/lista-de-numeros");
 const { ConnectClient } = await import("@/components/whatsapp/connect-client");
 
@@ -116,7 +115,7 @@ function lista(
       <ListaDeNumeros
         numeros={[numero()]}
         unidades={[]}
-        contaFixaId={null}
+        numerosDasAutomaticas={[]}
         limite={null}
         podeGerenciar
         ehAdmin
@@ -180,45 +179,24 @@ describe("regras da tela de números", () => {
     );
   });
 
-  it("remover: só administrador, nunca o principal com outros, nunca o fixo das automáticas", () => {
+  it("remover: só administrador e nunca o principal com outros; o fixo de um tipo de mensagem automática pode sair", () => {
     const principal = { id: PRINCIPAL, principal: true };
     const recepcao = { id: RECEPCAO, principal: false };
 
     expect(
-      motivoParaNaoRemover(recepcao, {
-        ehAdmin: false,
-        totalAtivos: 2,
-        contaFixaId: null,
-      }),
+      motivoParaNaoRemover(recepcao, { ehAdmin: false, totalAtivos: 2 }),
     ).toBe(DICA_SO_ADMIN);
     expect(
-      motivoParaNaoRemover(principal, {
-        ehAdmin: true,
-        totalAtivos: 2,
-        contaFixaId: null,
-      }),
+      motivoParaNaoRemover(principal, { ehAdmin: true, totalAtivos: 2 }),
     ).toBe(DICA_PRINCIPAL_COM_OUTROS);
     // O principal sozinho pode sair (a clinica fica sem numero).
     expect(
-      motivoParaNaoRemover(principal, {
-        ehAdmin: true,
-        totalAtivos: 1,
-        contaFixaId: null,
-      }),
+      motivoParaNaoRemover(principal, { ehAdmin: true, totalAtivos: 1 }),
     ).toBeNull();
+    // Numero fixo de algum tipo (29/09/2026): a escolha volta ao ultimo
+    // usado na remocao, e o dialogo avisa; nada trava.
     expect(
-      motivoParaNaoRemover(recepcao, {
-        ehAdmin: true,
-        totalAtivos: 2,
-        contaFixaId: RECEPCAO,
-      }),
-    ).toBe(DICA_NUMERO_DAS_AUTOMATICAS);
-    expect(
-      motivoParaNaoRemover(recepcao, {
-        ehAdmin: true,
-        totalAtivos: 2,
-        contaFixaId: PRINCIPAL,
-      }),
+      motivoParaNaoRemover(recepcao, { ehAdmin: true, totalAtivos: 2 }),
     ).toBeNull();
   });
 
@@ -227,13 +205,11 @@ describe("regras da tela de números", () => {
       join(process.cwd(), "lib/actions/whatsapp-connect.ts"),
       "utf-8",
     );
-    for (const dica of [
-      DICA_SO_ADMIN,
-      DICA_PRINCIPAL_COM_OUTROS,
-      DICA_NUMERO_DAS_AUTOMATICAS,
-    ]) {
+    for (const dica of [DICA_SO_ADMIN, DICA_PRINCIPAL_COM_OUTROS]) {
       expect(acao.replace(/\s*\n\s*/g, " ")).toContain(dica);
     }
+    // A recusa antiga do numero fixo das automaticas saiu da acao.
+    expect(acao).not.toContain("As mensagens automáticas saem sempre por este");
   });
 
   it("limite do plano: nulo é sem limite; o texto e a dica", () => {
@@ -254,6 +230,26 @@ describe("regras da tela de números", () => {
     expect(textoDaRemocao({ displayPhone: null })).toBe(
       "Este número deixa de receber e enviar mensagens pelo Conduzza. As conversas abertas dele são encerradas e o histórico continua.",
     );
+    // Fixo de algum tipo de mensagem automatica: diz para onde elas vao.
+    expect(textoDaRemocao({ displayPhone: null }, true)).toBe(
+      "Este número deixa de receber e enviar mensagens pelo Conduzza. As conversas abertas dele são encerradas e o histórico continua. As mensagens automáticas que saíam sempre por ele passam a sair pelo último número usado pelo paciente.",
+    );
+  });
+
+  it("diálogo de remover: a frase das automáticas fixas só aparece quando sobra outro número", () => {
+    const base =
+      "O WhatsApp (84) 90000-0001 deixa de receber e enviar mensagens pelo Conduzza. As conversas abertas dele são encerradas e o histórico continua.";
+    const frase =
+      "As mensagens automáticas que saíam sempre por ele passam a sair pelo último número usado pelo paciente.";
+    // Fixo das automaticas com outro numero ativo: diz para onde elas vao.
+    expect(descricaoDaRemocao(numero(), [PRINCIPAL], 2)).toBe(
+      `${base} ${frase}`,
+    );
+    // Fixo e unico numero: depois de remover nao ha por onde sair, entao nao
+    // promete o "ultimo numero usado".
+    expect(descricaoDaRemocao(numero(), [PRINCIPAL], 1)).toBe(base);
+    // Nao e fixo de nenhum tipo: so o texto base.
+    expect(descricaoDaRemocao(numero(), [RECEPCAO], 2)).toBe(base);
   });
 
   it("unidade: o nome pela lista e o seletor com as ativas mais a atual", () => {
@@ -378,6 +374,21 @@ describe("lista de números", () => {
     expect(texto(html)).not.toContain("do plano");
   });
 
+  it("a etiqueta Mensagens automáticas vai no número fixo de algum tipo, e só nele", () => {
+    const html = lista({
+      numeros: [
+        numero(),
+        numero({ id: RECEPCAO, nome: "Recepção", principal: false }),
+      ],
+      numerosDasAutomaticas: [RECEPCAO],
+    });
+    const visivel = texto(html);
+    expect(visivel.split("Mensagens automáticas")).toHaveLength(2);
+    expect(visivel.indexOf("Mensagens automáticas")).toBeGreaterThan(
+      visivel.indexOf("Recepção"),
+    );
+  });
+
   it("com limite: mostra N de M e, no limite, desabilita adicionar com a dica escrita", () => {
     const abaixo = lista({ limite: 3 });
     expect(texto(abaixo)).toContain("1 de 3 números do plano");
@@ -429,6 +440,9 @@ describe("lista de números", () => {
     });
     expect(html).not.toContain(TRAVESSAO);
     expect(textoDaRemocao({ displayPhone: null })).not.toContain(TRAVESSAO);
+    expect(textoDaRemocao({ displayPhone: null }, true)).not.toContain(
+      TRAVESSAO,
+    );
     expect(dicaDoLimite(2)).not.toContain(TRAVESSAO);
   });
 });

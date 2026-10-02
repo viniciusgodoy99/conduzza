@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Search, UserPlus, Zap } from "lucide-react";
+import { Ban, Check, Loader2, Search, UserPlus, Zap } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import {
   criarPacienteRapidoAction,
 } from "@/app/(app)/agenda/actions";
 import { concederConsentimentoAction } from "@/app/(app)/leads/actions";
+import { DICA_BLOQUEAR_SEM_PERMISSAO } from "@/components/agenda/bloqueio-comum";
 import { BotaoProtegido } from "@/components/cadastros/comum";
 import type {
   ContextoAgenda,
@@ -108,6 +109,7 @@ export function AgendamentoModal({
   dia,
   dadosDoDia,
   filtros,
+  aoBloquearEsteHorario,
 }: {
   contexto: ContextoAgenda;
   aberto: boolean;
@@ -117,6 +119,15 @@ export function AgendamentoModal({
   /** null quando o dia da tela nao carregou: o modal busca de novo */
   dadosDoDia: AgendaDia | null;
   filtros: FiltrosAgenda;
+  /**
+   * So no modal aberto pelo clique no vao (docs/02, Tela 3): a acao
+   * secundaria "Bloquear este horario" no rodape. Quem monta fecha o modal e
+   * abre o "Bloquear horario" com o profissional da coluna e a hora clicada.
+   * O caminho principal continua sendo a consulta nova. Sem permissao de
+   * bloquear (so admin e gestor), a acao fica visivel, desabilitada e com a
+   * dica.
+   */
+  aoBloquearEsteHorario?: () => void;
 }) {
   const { clinicId, timezone, catalogo } = contexto;
   const supabase = useMemo(() => createClient(), []);
@@ -613,6 +624,20 @@ export function AgendamentoModal({
         queryKey: agendaKeys.dia(clinicId, dataEscolhida),
       });
     }
+    if (resultado.code === "bloqueado") {
+      // O bloqueio foi criado depois que o dia entrou em cache (bloqueio nao
+      // tem tempo real): refaz o dia para a faixa aparecer na grade e o
+      // horario sair da oferta. Nao e conflito de horario, entao sem os
+      // botoes do conflito. O horario escolhido sai da selecao para a
+      // recepcao escolher outro; no modo Encaixe, a conferencia do encaixe
+      // ja mostra o bloqueio quando o dia volta.
+      void queryClient.invalidateQueries({
+        queryKey: agendaKeys.dia(clinicId, dataEscolhida),
+      });
+      if (!modoEncaixe) {
+        setSlot(null);
+      }
+    }
     setErroGeral(resultado.error ?? "Não foi possível marcar a consulta.");
   };
 
@@ -716,7 +741,7 @@ export function AgendamentoModal({
               valor={procedimentoId ?? ""}
               placeholder={
                 !temVinculoNaClinica
-                  ? "Nenhum vínculo cadastrado ainda"
+                  ? "Nenhum procedimento com quem faz definido"
                   : procedimentosDisponiveis.length === 0
                     ? "Nenhum procedimento atendido neste convênio"
                     : "Escolha o procedimento"
@@ -735,20 +760,23 @@ export function AgendamentoModal({
             />
             {!temVinculoNaClinica ? (
               // Clinica nova: sem vinculo, nao ha procedimento para escolher
-              // em convenio nenhum. O caminho e Cadastros (achado 38).
+              // em convenio nenhum. O caminho e o modal do Procedimento em
+              // Cadastros, onde o vinculo passou a ser feito em 29/09/2026
+              // (achado 38).
               <Aviso
                 tom="warning"
                 acao={
                   <AtalhoParaCadastros
                     contexto={contexto}
-                    aba="vinculos"
-                    rotulo="Cadastrar vínculos"
+                    aba="procedimentos"
+                    rotulo="Definir quem faz"
                   />
                 }
               >
-                A clínica ainda não tem vínculos: quem faz qual procedimento,
-                por qual convênio e por qual preço. Sem eles a agenda não
-                oferece procedimento.
+                Ainda não foi definido quem faz cada procedimento, por qual
+                convênio e por qual preço. Defina quem faz cada procedimento em
+                Cadastros &gt; Procedimentos: sem isso a agenda não oferece
+                procedimento.
               </Aviso>
             ) : null}
             <ErroDeCampo mensagem={erros.procedimento} />
@@ -967,6 +995,21 @@ export function AgendamentoModal({
         </div>
 
         <DialogFooter>
+          {aoBloquearEsteHorario ? (
+            // Secundaria e a esquerda do rodape: nao atrasa o "Marcar
+            // consulta". Mesma permissao da barra (admin e gestor, a da RLS).
+            <div className="grid sm:mr-auto">
+              <BotaoProtegido
+                variant="outline"
+                podeEditar={contexto.podeEditarCadastros}
+                dica={DICA_BLOQUEAR_SEM_PERMISSAO}
+                disabled={salvando}
+                onClick={aoBloquearEsteHorario}
+              >
+                <Ban aria-hidden /> Bloquear este horário
+              </BotaoProtegido>
+            </div>
+          ) : null}
           <Button type="button" variant="ghost" onClick={onFechar}>
             Cancelar
           </Button>
@@ -1003,9 +1046,11 @@ function ErroDeCampo({ mensagem }: { mensagem?: string }) {
 }
 
 /**
- * Atalho para Cadastros quando falta jornada ou vinculo (achado 38). Quem nao
- * cadastra (recepcao, profissional, leitura) ve o atalho desabilitado, com a
- * dica: esconder deixaria a clinica sem saber o que falta.
+ * Atalho para Cadastros quando falta jornada (aba Profissionais) ou quem faz
+ * o procedimento (aba Procedimentos, onde o vinculo e feito desde 29/09/2026)
+ * (achado 38). Quem nao cadastra (recepcao, profissional, leitura) ve o
+ * atalho desabilitado, com a dica: esconder deixaria a clinica sem saber o
+ * que falta.
  */
 function AtalhoParaCadastros({
   contexto,
@@ -1013,7 +1058,7 @@ function AtalhoParaCadastros({
   rotulo,
 }: {
   contexto: ContextoAgenda;
-  aba: "profissionais" | "vinculos";
+  aba: "profissionais" | "procedimentos";
   rotulo: string;
 }) {
   if (contexto.podeEditarCadastros) {

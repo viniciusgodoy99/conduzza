@@ -130,24 +130,35 @@ export function comparecimentoLiberado(
   return diaCivil(timezone, new Date(startsAt)) <= diaCivil(timezone, agora);
 }
 
-/** Saldo de pacote do paciente, como a tela o le para o Compareceu. */
+/**
+ * Um ITEM de saldo de pacote do paciente (package_balance_item: um
+ * procedimento de uma venda), como a tela o le para o Compareceu. Desde a
+ * migration 20260929120000 o pacote pode ter varios procedimentos e o saldo
+ * e por item; a validade e a data da venda sao da venda inteira.
+ */
 export type SaldoParaComparecimento = {
+  /** id do item (package_balance_item) */
   id: string;
-  procedure_id: string | null;
+  /** a venda (package_balance) a que o item pertence */
+  package_balance_id: string;
+  package_name: string | null;
+  procedure_id: string;
   procedure_name: string | null;
   sessions_total: number;
   sessions_used: number;
-  /** "aaaa-mm-dd" (coluna date) */
+  /** Validade da venda, "aaaa-mm-dd" (coluna date); null = nao vence */
   expires_at: string | null;
+  /** Quando a venda foi registrada (desempate do gatilho) */
   created_at: string;
 };
 
 /**
- * Qual saldo o Compareceu vai descontar. Espelha o gatilho
- * consumir_sessao_de_pacote: o mesmo procedimento da consulta, com sessao
- * sobrando e dentro da validade no dia de hoje da clinica, o que vence
- * primeiro (sem validade por ultimo) e, no empate, o mais antigo. Null quando
- * nenhum saldo vai ser descontado.
+ * Qual item de saldo o Compareceu vai descontar. Espelha o gatilho
+ * consumir_sessao_de_pacote: item do mesmo procedimento da consulta, com
+ * sessao sobrando, de venda dentro da validade no dia de hoje da clinica; a
+ * venda que vence primeiro (sem validade por ultimo), no empate a mais
+ * antiga e, por fim, o id da venda (desempate fixo, como o do banco). Null
+ * quando nada vai ser descontado.
  */
 export function saldoDescontadoAoComparecer(
   saldos: readonly SaldoParaComparecimento[],
@@ -170,7 +181,16 @@ export function saldoDescontadoAoComparecer(
       }
       return a.expires_at < b.expires_at ? -1 : 1;
     }
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    const porData =
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    if (porData !== 0) {
+      return porData;
+    }
+    // uuid em minusculas: a ordem do texto e a ordem do uuid no Postgres.
+    if (a.package_balance_id === b.package_balance_id) {
+      return 0;
+    }
+    return a.package_balance_id < b.package_balance_id ? -1 : 1;
   });
   return elegiveis[0] ?? null;
 }

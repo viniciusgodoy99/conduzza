@@ -3,150 +3,119 @@ import { expect, test, type Page } from "@playwright/test";
 import { dados } from "./dados";
 import { login } from "./helpers";
 
-// Aceites da Fase 2 sobre o catalogo (tela de Cadastros): os tres estados de
-// preco do vinculo (o caso do Dr. Joao), criacao de vinculo pela interface,
-// papel de leitura com acao visivel e desabilitada, e bloqueio em lote.
+// Aceites da tela de Cadastros depois da decisao do dono de 29/09/2026: as
+// abas Vinculos, Recursos e Bloqueios sairam (link antigo redireciona), todo
+// cadastro abre em modal central, e o papel que so le ve o conteudo com a
+// acao visivel e desabilitada. Os aceites do vinculo (o caso do Dr. Joao,
+// agora no modal do Procedimento) e do bloqueio em lote (agora na Agenda)
+// vivem nos arquivos das frentes que os levaram para la.
 
-const NOME_JOAO = "Dr. João Pereira · CRM 12345 · Endocrinologia, Nutrologia";
+const DICA_DE_QUEM_SO_VE =
+  "Somente administradores e gestores alteram os cadastros";
 
-function apenasDesktop(): void {
-  test.skip(
-    test.info().project.name !== "desktop-1600",
-    "fluxo completo roda uma vez, no desktop",
-  );
+// Distancia maxima, em px, entre o centro do modal e o centro da tela para
+// ele contar como central (um painel lateral fica centenas de px fora).
+const FOLGA_DO_CENTRO_PX = 24;
+
+async function esperarModalCentral(page: Page): Promise<void> {
+  const dialogo = page.getByRole("dialog");
+  await expect(dialogo).toBeVisible();
+  // Espera a animacao de entrada (zoom e deslize) assentar antes de medir.
+  await expect
+    .poll(async () => {
+      const caixa = await dialogo.boundingBox();
+      const tela = page.viewportSize();
+      if (!caixa || !tela) {
+        return Number.POSITIVE_INFINITY;
+      }
+      return Math.max(
+        Math.abs(caixa.x + caixa.width / 2 - tela.width / 2),
+        Math.abs(caixa.y + caixa.height / 2 - tela.height / 2),
+      );
+    })
+    .toBeLessThanOrEqual(FOLGA_DO_CENTRO_PX);
 }
 
-function itemJoao(page: Page) {
-  return page
-    .locator('[data-slot="accordion-item"]')
-    .filter({ hasText: "Dr. João Pereira" });
-}
-
-async function abrirAcordeaoJoao(page: Page): Promise<void> {
-  const gatilho = page.getByRole("button", { name: NOME_JOAO });
-  await expect(gatilho).toBeVisible();
-  if ((await gatilho.getAttribute("aria-expanded")) !== "true") {
-    await gatilho.click();
-  }
-}
-
-test("o caso do Dr. João aparece sem gambiarra na aba Vínculos", async ({
+test("as abas que saíram de Cadastros não aparecem e o link antigo leva ao lugar novo", async ({
   page,
 }) => {
-  apenasDesktop();
   await login(page, dados().emails.gestor);
+
+  // Vínculo agora é feito dentro do Procedimento.
   await page.goto("/cadastros?aba=vinculos");
-  await abrirAcordeaoJoao(page);
+  await page.waitForURL(/\/cadastros\?aba=procedimentos$/);
+  await expect(
+    page.getByRole("tab", { name: /^Procedimentos/ }),
+  ).toHaveAttribute("aria-selected", "true");
 
-  const linhas = itemJoao(page).getByRole("row");
+  // Recursos e Bloqueios caem na aba padrão.
+  for (const antiga of ["recursos", "bloqueios"]) {
+    await page.goto(`/cadastros?aba=${antiga}`);
+    await page.waitForURL(/\/cadastros$/);
+    await expect(
+      page.getByRole("tab", { name: /^Profissionais/ }),
+    ).toHaveAttribute("aria-selected", "true");
+  }
 
-  // Coberto pelo convênio é rótulo, nunca moeda.
-  const linhaUnimed = linhas.filter({ hasText: "Unimed" });
-  await expect(linhaUnimed).toContainText("Coberto");
-  await expect(linhaUnimed).not.toContainText("0,00");
-
-  // Particular tem preço de verdade.
-  const linhaParticular = linhas
-    .filter({ hasText: "Consulta endocrinologia" })
-    .filter({ hasText: "Particular" });
-  await expect(linhaParticular).toContainText(/R\$\s?400,00/u);
-
-  // Gratuito de verdade é R$ 0,00, diferente de coberto.
-  const linhaGratuita = linhas.filter({ hasText: "Avaliação gratuita" });
-  await expect(linhaGratuita).toContainText(/R\$\s?0,00/u);
+  await expect(page.getByRole("tab")).toHaveCount(5);
+  for (const nome of [/^Vínculos/, /^Recursos/, /^Bloqueios/]) {
+    await expect(page.getByRole("tab", { name: nome })).toHaveCount(0);
+  }
 });
 
-test("criar um vínculo novo pela interface", async ({ page }) => {
-  apenasDesktop();
+test("cadastro abre em modal central, com Salvar no rodapé e Esc fechando", async ({
+  page,
+}) => {
   await login(page, dados().emails.gestor);
-  await page.goto("/cadastros?aba=vinculos");
-  await abrirAcordeaoJoao(page);
+  await page.goto("/cadastros?aba=convenios");
 
-  await itemJoao(page)
-    .getByRole("button", { name: "Adicionar", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Novo convênio" }).click();
+  await esperarModalCentral(page);
 
   const dialogo = page.getByRole("dialog");
   await expect(
-    dialogo.getByRole("heading", { name: "Adicionar vínculo" }),
+    dialogo.getByRole("heading", { name: "Novo convênio" }),
+  ).toBeVisible();
+  await expect(dialogo.getByLabel("Nome", { exact: true })).toBeVisible();
+  await expect(
+    dialogo.getByRole("button", { name: "Salvar", exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialogo.getByRole("button", { name: "Cancelar", exact: true }),
   ).toBeVisible();
 
-  await dialogo.getByLabel("Procedimento").click();
-  await page.getByRole("option", { name: "Consulta endocrinologia" }).click();
-
-  await dialogo.getByLabel("Convênio").click();
-  await page.getByRole("option", { name: "Bradesco Saúde" }).click();
-
-  await dialogo.getByRole("button", { name: "Coberto pelo convênio" }).click();
-  await dialogo.getByRole("button", { name: "Salvar", exact: true }).click();
+  // Nada foi gravado: Esc fecha sem salvar.
+  await page.keyboard.press("Escape");
   await expect(dialogo).toBeHidden();
-
-  const linhaNova = itemJoao(page)
-    .getByRole("row")
-    .filter({ hasText: "Bradesco Saúde" });
-  await expect(linhaNova).toBeVisible();
-  await expect(linhaNova).toContainText("Coberto");
 });
 
 test("recepção vê tudo mas com as ações desabilitadas", async ({ page }) => {
   await login(page, dados().emails.recepcao);
-  await page.goto("/cadastros?aba=vinculos");
+  await page.goto("/cadastros?aba=convenios");
 
   // O conteúdo aparece: nada de esconder do papel que só lê.
-  await expect(page.getByRole("button", { name: NOME_JOAO })).toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: "Unimed" }).first(),
+  ).toBeVisible();
 
-  const adicionar = page
-    .getByRole("button", { name: "Adicionar", exact: true })
-    .first();
-  await expect(adicionar).toBeVisible();
-  await expect(adicionar).toBeDisabled();
+  const novo = page.getByRole("button", { name: "Novo convênio" });
+  await expect(novo).toBeVisible();
+  await expect(novo).toBeDisabled();
 
   // A dica explica o porquê ao focar o invólucro do botão desabilitado.
-  await adicionar.locator("..").focus();
-  await expect(
-    page.getByText("Somente administradores e gestores alteram os cadastros"),
-  ).toBeVisible();
-});
+  await novo.locator("..").focus();
+  await expect(page.getByText(DICA_DE_QUEM_SO_VE)).toBeVisible();
 
-test("bloqueio em lote cria uma linha por profissional", async ({ page }) => {
-  apenasDesktop();
-  await login(page, dados().emails.gestor);
-  await page.goto("/cadastros?aba=bloqueios");
-
-  await page.getByRole("button", { name: "Novo bloqueio" }).click();
+  // "Ver detalhes" abre o mesmo modal central, só para ler: sem Salvar.
+  await page
+    .getByRole("button", { name: "Ver detalhes de Unimed", exact: true })
+    .click();
+  await esperarModalCentral(page);
   const dialogo = page.getByRole("dialog");
   await expect(
-    dialogo.getByRole("heading", { name: "Novo bloqueio" }),
+    dialogo.getByRole("heading", { name: "Unimed", exact: true }),
   ).toBeVisible();
-
-  const marcarTodos = dialogo
-    .locator("label", { hasText: "Selecionar todos" })
-    .getByRole("checkbox");
-  await marcarTodos.click();
-  await expect(marcarTodos).toBeChecked();
-
-  // Amanhã, calculado sobre o dia provisionado pela fixture.
-  const [ano, mes, dia] = dados().agenda.diaISO.split("-").map(Number) as [
-    number,
-    number,
-    number,
-  ];
-  const amanha = new Date(ano, mes - 1, dia + 1);
-  const amanhaISO = [
-    amanha.getFullYear(),
-    String(amanha.getMonth() + 1).padStart(2, "0"),
-    String(amanha.getDate()).padStart(2, "0"),
-  ].join("-");
-
-  // 06:00 as 07:00: fora das consultas da fixture (a partir das 08:00), para
-  // o teste medir o lote e nao o aviso de consultas no periodo.
-  await dialogo.getByLabel("Início").fill(`${amanhaISO}T06:00`);
-  await dialogo.getByLabel("Fim").fill(`${amanhaISO}T07:00`);
-  await dialogo.getByLabel("Motivo").fill("Reunião de equipe");
-  await dialogo.getByRole("button", { name: "Criar bloqueio" }).click();
-  await expect(dialogo).toBeHidden();
-
   await expect(
-    page.getByRole("row").filter({ hasText: "Reunião de equipe" }),
-  ).toHaveCount(2);
+    dialogo.getByRole("button", { name: "Salvar", exact: true }),
+  ).toHaveCount(0);
 });

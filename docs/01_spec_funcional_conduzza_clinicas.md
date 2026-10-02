@@ -288,16 +288,27 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 
 3.1. **Profissionais:** nome, foto, **conselho de classe em campo livre** (CRM, CRO, CREFITO, CRBM, CRN, ou "sem conselho" para esteticista), número, especialidades, unidade, cor na agenda, ativo ou inativo.
 3.2. **Horário de atendimento por profissional**, por dia da semana, com intervalos, por unidade.
-3.3. **Procedimentos:** nome, descrição, duração padrão, preço particular, exige avaliação prévia, orientação de preparo, agendável pela IA, **recurso necessário** (sala, cabine, equipamento).
+3.3. **Procedimentos:** nome, descrição, duração padrão, preço particular, exige avaliação prévia, orientação de preparo, agendável pela IA, **recurso necessário** (sala, cabine, equipamento). Desde 29/09/2026 o campo "recurso necessário" não aparece mais na tela (ver 3.7).
 3.4. **Convênios:** nome, plano, carteirinha obrigatória, observações.
 3.5. **A matriz de vínculo** (o item mais enfatizado na reunião): relação de três pontas entre profissional, procedimento e convênio, cada combinação com preço e duração próprios.
 
    Exemplo que precisa funcionar: Dr. João, Endocrinologia, particular R$ 400, 40 min, atende Unimed e Bradesco. O mesmo Dr. João, Nutrologia, particular R$ 500, 60 min, só particular.
 
+   > **Onde fica (decisão do dono em 29/09/2026):** a função continua a mesma, o lugar mudou. A matriz é feita **dentro do cadastro do Procedimento**, na seção "Quem faz e convênios": quem faz (vários profissionais), convênios aceitos (Particular sempre disponível), o preço e a duração do procedimento como padrão e a exceção por profissional ou convênio (preço próprio, "Coberto" ou duração própria) ali mesmo. "Agendável pela IA" é a chave do procedimento, e o vínculo segue essa chave (uma fonte só). Vínculo que já tem consulta é desativado, nunca apagado. A tela própria de vínculos saiu de Cadastros. O exemplo do Dr. João continua sendo o aceite, agora cadastrado pelo Procedimento.
+
 3.6. **Unidades.**
 3.7. **Recursos** (sala, cabine, equipamento). Exigência do nicho de estética: dois procedimentos podem precisar do mesmo aparelho de laser e não podem ser marcados no mesmo horário mesmo com profissionais diferentes.
+
+   > **Onde fica (decisão do dono em 29/09/2026):** os recursos continuam no banco, com a **trava contra uso duplo mantida** (exclusion constraint por recurso, ver 4.8), mas **saíram da tela**: não há mais cadastro de recursos nem o campo "recurso necessário" no procedimento. Consequência: por enquanto uma clínica não configura recurso novo pela interface, e o caso do laser só é protegido para o que já estava gravado. Voltar a ter tela é decisão do dono.
+
 3.8. **Pacotes de sessões:** procedimento vendido em N sessões, com controle de sessões usadas e restantes por paciente. Sem isso o produto não atende metade do nicho de estética declarado na reunião.
+
+   > **Pacote com vários procedimentos (decisão do dono em 29/09/2026):** um pacote tem **nome** e junta **um ou mais procedimentos, cada um com as suas sessões** (ex.: "Harmonização" com Botox 2 sessões + Facelift 1 sessão). O cadastro mostra o **preço avulso** (soma de sessões x preço base de cada procedimento, calculado na hora e nunca gravado; com procedimento sem preço base a soma é dada como incompleta) ao lado do **preço do pacote** (o valor que a clínica define), com o desconto em porcentagem; pacote mais caro que o avulso aparece como acréscimo, nunca escondido. Regras: a **validade é do pacote**, não de cada procedimento; o **mesmo procedimento aparece uma vez só** no pacote; o **saldo vendido é por procedimento**; o preço do pacote **não é distribuído** entre os procedimentos. A sessão continua sendo descontada **só no Compareceu**: o procedimento da consulta casa com o saldo do mesmo procedimento do paciente, dentro da validade, com sessão sobrando, do pacote que vence primeiro (sem validade por último; no empate, o vendido antes). Pacote **já vendido** não muda os procedimentos nem as sessões (para mudar, cria-se um pacote novo); nome, preço, validade e "à venda" continuam editáveis.
 3.9. **Bloqueios como entidade própria** (férias, congresso, almoço), criáveis em lote, com opção de impedir encaixe. Nunca agendamento falso.
+
+   > **Onde fica (decisão do dono em 29/09/2026):** a função continua a mesma (entidade própria, em lote para vários profissionais, com opção de impedir encaixe), o lugar mudou: o bloqueio é **ação da Agenda** (Módulo 4). Cria pelo botão "Bloquear horário" da barra ou por "Bloquear este horário" no modal aberto pelo clique num horário vazio, e remove pela faixa do bloqueio na grade. Se já houver consultas no período, a tela avisa e só cria com confirmação explícita; o bloqueio não desmarca nada. A tela própria de bloqueios saiu de Cadastros.
+
+   > **Consulta dentro do bloqueio (02/10/2026):** consulta comum não entra em horário bloqueado (o servidor recusa); encaixe entra só em bloqueio que permite encaixe ("Impedir encaixe" desmarcado).
 
 ---
 
@@ -323,7 +334,7 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
    Falta é sempre ação explícita, nunca inferida pelo sistema.
 4.6. Encaixe (overbooking controlado) com marcação visual distinta.
 4.7. **Busca de primeiro horário disponível com reserva temporária (hold).** Quando a IA oferece um horário ao paciente, o slot fica reservado por N minutos (padrão de 10). Sem isso, a IA oferece um horário, o paciente demora 40 segundos, a recepcionista marca outro paciente no mesmo slot e a clínica tem dois pacientes no mesmo horário. Esse erro isolado faz a clínica desligar o agente e não voltar.
-4.8. **Verificação de disponibilidade de recurso** (sala, equipamento) no momento da marcação.
+4.8. **Verificação de disponibilidade de recurso** (sala, equipamento) no momento da marcação. A trava é do banco e continua valendo; desde 29/09/2026 os recursos não têm tela (ver 3.7).
 4.9. Impressão e exportação da agenda do dia.
 4.10. **Log de alterações** (quem mudou o quê e quando).
 
@@ -357,7 +368,7 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 6.3. **Indicadores automáticos:** total de consultas, total de faltas, taxa de comparecimento, dias desde a última consulta, valor total gerado.
 6.4. **Etiqueta automática de risco:** 2 ou mais faltas entra em régua de confirmação reforçada.
 6.5. **Etiqueta de inativo:** sem consulta há X dias, configurável por especialidade.
-6.6. **Saldo de pacote:** sessões contratadas, usadas e restantes.
+6.6. **Saldo de pacote:** sessões contratadas, usadas e restantes. Desde 29/09/2026 (pacote com vários procedimentos, ver 3.8), a ficha mostra **um cartão por venda**, com o nome do pacote, a validade da venda e **uma barra de sessões por procedimento**. A venda escolhe o pacote pelo nome e mostra o que ele inclui; o pacote em andamento (comprado antes do sistema) pede as sessões já usadas **de cada procedimento** e a data de início; o ajuste corrige as sessões usadas de cada procedimento e a validade, com um motivo só; o cancelamento é da venda inteira. A lista de pacientes e o filtro "Com pacote" somam as sessões restantes de todos os procedimentos dentro da validade.
 6.7. Vínculo com a conversa do WhatsApp.
 6.8. Origem preservada desde o lead.
 6.9. **Estado de consentimento visível na ficha** (opt-in ativo, origem do consentimento, data, opção de descadastrar).
@@ -386,12 +397,14 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 
 8.1. **Régua configurável por clínica.** Padrão sugerido `[PREMISSA]`: 72h, 24h e 3h antes. Não há benchmark que defina o número ideal de toques.
 8.2. **Régua diferente por procedimento.** Procedimento com preparo recebe mais toques e a orientação junto. Justificativa: colonoscopia tem 41,3% de no-show contra 2,1% da média de exames no mesmo estudo.
+
+   > **Régua vinculada (decisão do dono em 29/09/2026):** a régua de confirmação e a régua pós falta (8.8) podem ser vinculadas a **um médico, a uma especialidade ou a um procedimento**, um vínculo só por régua. Sem vínculo, é a **régua geral**. A especialidade é escolhida da lista das especialidades que os profissionais ativos já têm. Quando mais de uma régua ligada vale para a consulta, **a mais específica vence**: procedimento, depois médico, depois especialidade, depois a geral. Régua desligada não conta, e a consulta cai para a próxima que vale para ela. Dentro do mesmo nível, a reforçada (8.3) vence a comum para o paciente com histórico de falta. Se a régua que vale para a consulta muda no meio da sequência (troca de médico, régua mais específica ligada depois), os toques pendentes da régua antiga não saem.
 8.3. **Régua reforçada automática para paciente com histórico de falta.**
 8.4. **Template com botões de resposta rápida: Confirmar, Remarcar, Cancelar.** Não é estética, é margem: o toque no botão abre a janela de 24h e zera o custo do resto da conversa.
 8.5. Resposta do paciente atualiza o status da agenda com autoria registrada.
 8.6. **Cancelou pelo botão, dispara a lista de espera na hora** (Módulo 9).
 8.7. **Painel de confirmações do dia seguinte:** confirmados, pendentes e cancelados, com botão de ligar ou cobrar manualmente. Primeira tela que a recepcionista abre de manhã.
-8.8. **Régua pós falta (recuperação ativa):** paciente que faltou recebe contato automático em D+0 e D+2 oferecendo remarcação. Usa a mesma máquina de régua, custo marginal quase zero, e é o que impede o relatório de eficácia de mostrar falta sem ação associada.
+8.8. **Régua pós falta (recuperação ativa):** paciente que faltou recebe contato automático em D+0 e D+2 oferecendo remarcação. Usa a mesma máquina de régua, custo marginal quase zero, e é o que impede o relatório de eficácia de mostrar falta sem ação associada. Desde 29/09/2026 também aceita régua vinculada a médico, especialidade ou procedimento, com a mesma precedência da confirmação (ver 8.2).
 8.9. Envio de orientação de preparo junto com a confirmação.
 8.10. **Relatório de eficácia:** taxa de confirmação, no-show antes e depois, consultas recuperadas, receita recuperada. É a ferramenta de renovação do contrato.
 
@@ -494,7 +507,8 @@ Profissional
 
 Recurso (sala | cabine | equipamento, unidade_id)
 Procedimento (duracao, preco_base, exige_avaliacao, agendavel_por_ia, preparo, recurso_id)
-Pacote (procedimento_id, qtd_sessoes, preco, validade)
+Pacote (nome, preco, validade, ativo)       <- desde 29/09/2026
+ |- ItemPacote (procedimento_id, qtd_sessoes) <- 1 ou mais; procedimento unico no pacote
 Convenio (nome, plano, exige_carteirinha)
 
 VinculoAtendimento          <- a matriz de tres pontas
@@ -507,7 +521,8 @@ Contato                     <- entidade unica, evita duplicidade
  |- tipo: lead | paciente
  |- etapa_funil, motivo_perda, tags[]
  |- Consentimento (canal, origem, data, ativo, data_revogacao)
- |- SaldoPacote (pacote_id, sessoes_usadas, sessoes_restantes)
+ |- SaldoPacote (pacote_id, validade)        <- a venda
+     |- ItemSaldo (procedimento_id, sessoes_total, sessoes_usadas) <- copia dos itens na venda
 
 Conversa
  |- contato_id, status (ia_atendendo | aguardando_humano | em_atendimento | resolvida)
@@ -526,6 +541,7 @@ ReservaTemporaria (slot, profissional_id, contato_id, expira_em)   <- trava de c
 ListaEspera (contato_id, procedimento_id, profissional_id, preferencias, prioridade)
 
 Regua (tipo: followup | confirmacao | pos_falta | reativacao)
+ |- vinculo opcional, um so: procedimento_id | profissional_id | especialidade   <- 29/09/2026, so confirmacao e pos_falta
  |- Passo (offset, template_id ou usar_ia, condicao_parada)
  |- Execucao (contato_id, passo_id, enviado_em, entregue, respondido, custo)
 
@@ -545,12 +561,12 @@ LogAuditoria (usuario_id, acao, entidade, entidade_id, quando, ip)
 |---|---|
 | 1. Inbox | Completo, com takeover, estados, contador de janela 24h, transcrição de áudio, log da IA |
 | 2. Agente IA | Persona, conhecimento, habilidades, horário, simulador, guardrail de conformidade, versionamento |
-| 3. Cadastro | Profissionais, horários, procedimentos, convênios, matriz de vínculo, recursos, pacotes, bloqueios, unidades |
+| 3. Cadastro | Profissionais, horários, procedimentos, convênios, matriz de vínculo, recursos, pacotes, bloqueios, unidades. Desde 29/09/2026 as funções continuam e o lugar mudou: a matriz de vínculo é feita dentro do Procedimento, o bloqueio é ação da Agenda e os recursos ficam só no banco, com a trava, sem tela |
 | 4. Agenda | Visão dia multi profissional, visão semana individual, arrastar e soltar, 10 status, reserva temporária, log |
 | 5. Leads | Lista e kanban, 6 etapas, filtros, motivo de perda, importação com opt-in |
 | 6. Pacientes | Ficha, linha do tempo, indicadores, etiquetas de risco e inativo, saldo de pacote, consentimento |
 | 7. Follow-up | Réguas por etapa, texto fixo ou IA, janela de envio, bloqueio sem opt-in, métricas |
-| 8. Confirmação | Régua por clínica e por procedimento, botões de resposta rápida, painel do dia, régua pós falta, relatório de eficácia |
+| 8. Confirmação | Régua geral por clínica e régua vinculada a médico, especialidade ou procedimento (confirmação e pós falta, desde 29/09/2026), botões de resposta rápida, painel do dia, régua pós falta, relatório de eficácia |
 | 9. Lista de espera | Fila, reoferta automática ao cancelar, métrica de recuperação |
 | 10. Dashboard | 4 indicadores, funil, origem por canal, desempenho da IA, custo |
 | 11. Config | Multi-tenant, white-label, perfis, Cloud API, verificação Meta, templates, teto de gasto, opt-in, auditoria |

@@ -812,12 +812,16 @@ export async function provisionar(): Promise<DadosE2E> {
   const pacienteInativoId = fichaPorFone("+5584970000033");
   const pacienteDescadastradoId = fichaPorFone("+5584970000034");
 
+  // Pacote no modelo de itens (migration 20260929120000): nome, o item do
+  // procedimento com as sessoes, e a venda com o saldo POR ITEM. Nada do
+  // caminho legado (package.procedure_id/sessions, package_balance.
+  // sessions_total), que sai na migration de contrato. O total da venda
+  // (legado) e preenchido pelo gatilho espelhar_totais_no_saldo_legado.
   const { data: pacoteE2e } = await admin
     .from("package")
     .insert({
       clinic_id: clinica.id,
-      procedure_id: procDermatoId,
-      sessions: 10,
+      name: "Dermatologia 10 sessões",
       price_cents: 300000,
       validity_days: 180,
     })
@@ -825,14 +829,34 @@ export async function provisionar(): Promise<DadosE2E> {
     .single()
     .throwOnError();
   await admin
+    .from("package_item")
+    .insert({
+      clinic_id: clinica.id,
+      package_id: pacoteE2e!.id,
+      procedure_id: procDermatoId,
+      sessions: 10,
+    })
+    .throwOnError();
+  const { data: vendaE2e } = await admin
     .from("package_balance")
     .insert({
       clinic_id: clinica.id,
       contact_id: pacienteComPacoteId,
       package_id: pacoteE2e!.id,
+      sessions_total: null,
+      expires_at: diaEm(180),
+    })
+    .select("id")
+    .single()
+    .throwOnError();
+  await admin
+    .from("package_balance_item")
+    .insert({
+      clinic_id: clinica.id,
+      package_balance_id: vendaE2e!.id,
+      procedure_id: procDermatoId,
       sessions_total: 10,
       sessions_used: 3,
-      expires_at: diaEm(180),
     })
     .throwOnError();
 

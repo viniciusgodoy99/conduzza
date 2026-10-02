@@ -443,16 +443,24 @@ describe("conta_de_envio", () => {
     expect(data).toBe(numeroId);
   });
 
+  // Escolha POR TIPO desde 29/09/2026 (casos de dois numeros em
+  // tests/integration/numero-por-tipo.test.ts).
   it("modo fixo manda no número", async () => {
     const { clinicId, numeroId } = await criarClinica("conta-fixo");
     await admin
       .from("whatsapp_envio_automatico")
-      .insert({ clinic_id: clinicId, modo: "fixo", conta_fixa_id: numeroId })
+      .insert({
+        clinic_id: clinicId,
+        tipo: "confirmacao",
+        modo: "fixo",
+        conta_fixa_id: numeroId,
+      })
       .throwOnError();
     const contactId = await criarContato(clinicId);
     const { data } = await admin.rpc("contas_de_envio", {
       p_clinic_id: clinicId,
       p_contact_ids: [contactId, contactId],
+      p_tipo: "confirmacao",
     });
     expect(data).toEqual([
       {
@@ -534,21 +542,34 @@ describe("conta_de_envio", () => {
     expect(job!.whatsapp_account_id).toBe(numeroB);
   });
 
-  it("modo fixo no número que não é o principal manda em todo contato", async () => {
+  it("modo fixo no número que não é o principal manda em todo contato do tipo", async () => {
     const { clinicId, numeroId: numeroA } = await criarClinica("conta-fixo-b");
     const numeroB = await criarOutroNumero(clinicId);
     const fone = telefone();
-    // O paciente escreveu pelo A, mas as automaticas sao fixas no B.
+    // O paciente escreveu pelo A, mas a confirmacao e fixa no B.
     const pelaA = await ingerir(clinicId, fone, `num:${sufixo}:f-a`, numeroA!);
     await admin
       .from("whatsapp_envio_automatico")
-      .insert({ clinic_id: clinicId, modo: "fixo", conta_fixa_id: numeroB })
+      .insert({
+        clinic_id: clinicId,
+        tipo: "confirmacao",
+        modo: "fixo",
+        conta_fixa_id: numeroB,
+      })
       .throwOnError();
+    const contactId = (pelaA.data as { contact_id: string }).contact_id;
     const { data } = await admin.rpc("conta_de_envio", {
       p_clinic_id: clinicId,
-      p_contact_id: (pelaA.data as { contact_id: string }).contact_id,
+      p_contact_id: contactId,
+      p_tipo: "confirmacao",
     });
     expect(data).toBe(numeroB);
+    // Sem tipo, nenhuma escolha fixa vale: o ultimo usado (A).
+    const { data: semTipo } = await admin.rpc("conta_de_envio", {
+      p_clinic_id: clinicId,
+      p_contact_id: contactId,
+    });
+    expect(semTipo).toBe(numeroA);
   });
 });
 

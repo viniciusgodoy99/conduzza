@@ -117,6 +117,7 @@ export type Database = {
           notes: string | null
           oferecer_vaga_ao_cancelar: boolean
           package_balance_id: string | null
+          package_balance_item_id: string | null
           professional_id: string
           remarcacao_pedida_em: string | null
           resource_id: string | null
@@ -143,6 +144,7 @@ export type Database = {
           notes?: string | null
           oferecer_vaga_ao_cancelar?: boolean
           package_balance_id?: string | null
+          package_balance_item_id?: string | null
           professional_id: string
           remarcacao_pedida_em?: string | null
           resource_id?: string | null
@@ -169,6 +171,7 @@ export type Database = {
           notes?: string | null
           oferecer_vaga_ao_cancelar?: boolean
           package_balance_id?: string | null
+          package_balance_item_id?: string | null
           professional_id?: string
           remarcacao_pedida_em?: string | null
           resource_id?: string | null
@@ -200,6 +203,13 @@ export type Database = {
             columns: ["package_balance_id"]
             isOneToOne: false
             referencedRelation: "package_balance"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointment_package_balance_item_id_fkey"
+            columns: ["package_balance_item_id"]
+            isOneToOne: false
+            referencedRelation: "package_balance_item"
             referencedColumns: ["id"]
           },
           {
@@ -364,9 +374,11 @@ export type Database = {
           name: string
           no_show_threshold: number
           procedure_id: string | null
+          professional_id: string | null
           send_weekdays: number[] | null
           send_window_end: string | null
           send_window_start: string | null
+          specialty: string | null
           trigger_stage: string | null
           updated_at: string
         }
@@ -380,9 +392,11 @@ export type Database = {
           name: string
           no_show_threshold?: number
           procedure_id?: string | null
+          professional_id?: string | null
           send_weekdays?: number[] | null
           send_window_end?: string | null
           send_window_start?: string | null
+          specialty?: string | null
           trigger_stage?: string | null
           updated_at?: string
         }
@@ -396,9 +410,11 @@ export type Database = {
           name?: string
           no_show_threshold?: number
           procedure_id?: string | null
+          professional_id?: string | null
           send_weekdays?: number[] | null
           send_window_end?: string | null
           send_window_start?: string | null
+          specialty?: string | null
           trigger_stage?: string | null
           updated_at?: string
         }
@@ -415,6 +431,13 @@ export type Database = {
             columns: ["procedure_id"]
             isOneToOne: false
             referencedRelation: "procedure"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cadence_professional_id_fkey"
+            columns: ["professional_id"]
+            isOneToOne: false
+            referencedRelation: "professional"
             referencedColumns: ["id"]
           },
         ]
@@ -1770,9 +1793,10 @@ export type Database = {
           clinic_id: string
           created_at: string
           id: string
+          name: string
           price_cents: number
-          procedure_id: string
-          sessions: number
+          procedure_id: string | null
+          sessions: number | null
           updated_at: string
           validity_days: number | null
         }
@@ -1781,9 +1805,10 @@ export type Database = {
           clinic_id: string
           created_at?: string
           id?: string
+          name: string
           price_cents: number
-          procedure_id: string
-          sessions: number
+          procedure_id?: string | null
+          sessions?: number | null
           updated_at?: string
           validity_days?: number | null
         }
@@ -1792,9 +1817,10 @@ export type Database = {
           clinic_id?: string
           created_at?: string
           id?: string
+          name?: string
           price_cents?: number
-          procedure_id?: string
-          sessions?: number
+          procedure_id?: string | null
+          sessions?: number | null
           updated_at?: string
           validity_days?: number | null
         }
@@ -1823,7 +1849,7 @@ export type Database = {
           expires_at: string | null
           id: string
           package_id: string
-          sessions_total: number
+          sessions_total: number | null
           sessions_used: number
           updated_at: string
         }
@@ -1834,7 +1860,7 @@ export type Database = {
           expires_at?: string | null
           id?: string
           package_id: string
-          sessions_total: number
+          sessions_total?: number | null
           sessions_used?: number
           updated_at?: string
         }
@@ -1845,7 +1871,7 @@ export type Database = {
           expires_at?: string | null
           id?: string
           package_id?: string
-          sessions_total?: number
+          sessions_total?: number | null
           sessions_used?: number
           updated_at?: string
         }
@@ -1883,7 +1909,9 @@ export type Database = {
           id: string
           kind: string
           package_balance_id: string | null
+          package_balance_item_id: string | null
           package_id: string
+          procedure_id: string | null
           reason: string
           sessions_total: number
           sessions_used_after: number | null
@@ -1899,7 +1927,9 @@ export type Database = {
           id?: string
           kind: string
           package_balance_id?: string | null
+          package_balance_item_id?: string | null
           package_id: string
+          procedure_id?: string | null
           reason: string
           sessions_total: number
           sessions_used_after?: number | null
@@ -1915,7 +1945,9 @@ export type Database = {
           id?: string
           kind?: string
           package_balance_id?: string | null
+          package_balance_item_id?: string | null
           package_id?: string
+          procedure_id?: string | null
           reason?: string
           sessions_total?: number
           sessions_used_after?: number | null
@@ -1945,10 +1977,131 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "package_balance_adjustment_package_balance_item_id_fkey"
+            columns: ["package_balance_item_id"]
+            isOneToOne: false
+            referencedRelation: "package_balance_item"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "package_balance_adjustment_package_id_fkey"
             columns: ["package_id"]
             isOneToOne: false
             referencedRelation: "package"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_balance_adjustment_procedure_id_fkey"
+            columns: ["procedure_id"]
+            isOneToOne: false
+            referencedRelation: "procedure"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      package_balance_item: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          package_balance_id: string
+          procedure_id: string
+          sessions_total: number
+          sessions_used: number
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          package_balance_id: string
+          procedure_id: string
+          sessions_total: number
+          sessions_used?: number
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          package_balance_id?: string
+          procedure_id?: string
+          sessions_total?: number
+          sessions_used?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "package_balance_item_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_balance_item_package_balance_id_fkey"
+            columns: ["package_balance_id"]
+            isOneToOne: false
+            referencedRelation: "package_balance"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_balance_item_procedure_id_fkey"
+            columns: ["procedure_id"]
+            isOneToOne: false
+            referencedRelation: "procedure"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      package_item: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          package_id: string
+          procedure_id: string
+          sessions: number
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          package_id: string
+          procedure_id: string
+          sessions: number
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          package_id?: string
+          procedure_id?: string
+          sessions?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "package_item_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_item_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "package"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "package_item_procedure_id_fkey"
+            columns: ["procedure_id"]
+            isOneToOne: false
+            referencedRelation: "procedure"
             referencedColumns: ["id"]
           },
         ]
@@ -2743,6 +2896,7 @@ export type Database = {
           conta_fixa_id: string | null
           created_at: string
           modo: string
+          tipo: string
           updated_at: string
         }
         Insert: {
@@ -2750,6 +2904,7 @@ export type Database = {
           conta_fixa_id?: string | null
           created_at?: string
           modo?: string
+          tipo: string
           updated_at?: string
         }
         Update: {
@@ -2757,13 +2912,14 @@ export type Database = {
           conta_fixa_id?: string | null
           created_at?: string
           modo?: string
+          tipo?: string
           updated_at?: string
         }
         Relationships: [
           {
             foreignKeyName: "whatsapp_envio_automatico_clinic_id_fkey"
             columns: ["clinic_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
@@ -2818,15 +2974,25 @@ export type Database = {
         }
         Returns: Json
       }
-      ajustar_saldo_de_pacote: {
-        Args: {
-          p_balance_id: string
-          p_expires_at: string
-          p_reason: string
-          p_sessions_used: number
-        }
-        Returns: undefined
-      }
+      ajustar_saldo_de_pacote:
+        | {
+            Args: {
+              p_balance_id: string
+              p_expires_at: string
+              p_itens: Json
+              p_reason: string
+            }
+            Returns: undefined
+          }
+        | {
+            Args: {
+              p_balance_id: string
+              p_expires_at: string
+              p_reason: string
+              p_sessions_used: number
+            }
+            Returns: undefined
+          }
       atendimento_do_periodo: {
         Args: {
           p_ate: string
@@ -2931,17 +3097,18 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      chave_de_especialidade: { Args: { p_texto: string }; Returns: string }
       chave_telefone: { Args: { p_phone: string }; Returns: string }
       concluir_job: {
         Args: { p_id: string; p_worker: string }
         Returns: undefined
       }
       conta_de_envio: {
-        Args: { p_clinic_id: string; p_contact_id: string }
+        Args: { p_clinic_id: string; p_contact_id: string; p_tipo?: string }
         Returns: string
       }
       contas_de_envio: {
-        Args: { p_clinic_id: string; p_contact_ids: string[] }
+        Args: { p_clinic_id: string; p_contact_ids: string[]; p_tipo?: string }
         Returns: {
           connection_status: string
           contact_id: string
@@ -3175,8 +3342,12 @@ export type Database = {
         Returns: undefined
       }
       redistribuir_jobs_do_numero: {
-        Args: { p_account_id: string }
+        Args: { p_account_id: string; p_tipos?: string[] }
         Returns: number
+      }
+      regua_da_consulta: {
+        Args: { p_appointment_id: string; p_kind: string }
+        Returns: string
       }
       registrar_apagamento_do_whatsapp: {
         Args: {
@@ -3206,14 +3377,34 @@ export type Database = {
         Returns: Json
       }
       resolver_conta_de_envio: {
-        Args: { p_clinic_id: string; p_contact_id: string }
+        Args: { p_clinic_id: string; p_contact_id: string; p_tipo?: string }
+        Returns: string
+      }
+      salvar_pacote: {
+        Args: {
+          p_active: boolean
+          p_clinic_id: string
+          p_itens: Json
+          p_name: string
+          p_package_id?: string
+          p_price_cents: number
+          p_validity_days: number
+        }
         Returns: string
       }
       saude_do_motor: { Args: never; Returns: Json }
       seed_reguas_padrao: { Args: { p_clinic_id: string }; Returns: undefined }
+      sincronizar_vinculos_do_procedimento: {
+        Args: { p_linhas: Json; p_procedure_id: string }
+        Returns: Json
+      }
       substituir_jornada: {
         Args: { p_clinic_id: string; p_faixas: Json; p_professional_id: string }
         Returns: undefined
+      }
+      tipo_de_envio_do_job: {
+        Args: { p_kind: string; p_payload: Json }
+        Returns: string
       }
       user_active_clinic_ids: { Args: never; Returns: string[] }
       user_can_write: { Args: { p_clinic_id: string }; Returns: boolean }
@@ -3242,6 +3433,15 @@ export type Database = {
       }
       user_professional_id: { Args: { p_clinic_id: string }; Returns: string }
       validar_codigo_clinica: { Args: { p_codigo: string }; Returns: Json }
+      vender_pacote: {
+        Args: {
+          p_contact_id: string
+          p_inicio?: string
+          p_package_id: string
+          p_usadas?: Json
+        }
+        Returns: string
+      }
       vincular_citacao_recebida: {
         Args: {
           p_clinic_id: string

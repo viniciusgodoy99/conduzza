@@ -38,6 +38,12 @@ export type PrePreenchido = {
 export type AberturaDeModal = {
   aberto: boolean;
   prePreenchido: PrePreenchido;
+  /**
+   * So quando o modal nasceu do clique no vao da grade: o profissional da
+   * coluna e o instante clicado. E o que habilita o "Bloquear este horario"
+   * no rodape do modal (docs/02, Tela 3).
+   */
+  vao?: { professionalId: string; inicio: Date };
 };
 
 export type ContextoAgenda = {

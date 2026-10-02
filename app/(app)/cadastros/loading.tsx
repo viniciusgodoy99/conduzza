@@ -1,8 +1,11 @@
 import { TableSkeleton } from "@/components/shared/loading-skeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
-// Esqueleto na forma da tela de Cadastros (cabecalho, fileira das oito abas
+import { ABAS_DE_CADASTROS } from "./abas";
+
+// Esqueleto na forma da tela de Cadastros (cabecalho, fileira das abas
 // sublinhadas, o botao da aba e a tabela), nunca giratorio no meio da tela.
+// A quantidade de abas vem da mesma lista da tela.
 export default function CarregandoCadastros() {
   return (
     <div
@@ -15,8 +18,8 @@ export default function CarregandoCadastros() {
         <Skeleton className="h-4 w-96 max-w-full" />
       </div>
       <div className="flex gap-1 overflow-hidden border-b border-border">
-        {Array.from({ length: 8 }).map((_, index) => (
-          <div key={index} className="flex h-10 shrink-0 items-center px-3">
+        {ABAS_DE_CADASTROS.map(([chave]) => (
+          <div key={chave} className="flex h-10 shrink-0 items-center px-3">
             <Skeleton className="h-3.5 w-24" />
           </div>
         ))}

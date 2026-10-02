@@ -9,6 +9,7 @@ import {
   CheckCheck,
   CircleCheck,
   CircleDashed,
+  CircleDot,
   CirclePause,
   CircleSlash,
   CircleX,
@@ -310,10 +311,22 @@ export const RECORD_STATUS: Record<RecordStatus, StatusDefinition> = {
 
 // Regua de mensagens automaticas (Confirmacoes e Automacoes). O rotulo da
 // tela varia com a regua e entra pelo label do StatusChip.
-export type ReguaStatus = "ligada" | "desligada";
+//
+// "Ligada nas vinculadas" e so do cartao da aba de Automacoes (confirmacao e
+// pos falta): a geral esta desligada, mas alguma regua vinculada do tipo
+// (medico, especialidade, procedimento) esta ligada e envia para a parte
+// dos pacientes que ela cobre. "Ligada" diria que todos recebem e
+// "Desligada" diria que ninguem recebe; os dois mentiriam. Informativo, com
+// a forma de um alvo parcial (CircleDot, que nenhum outro estado usa).
+export type ReguaStatus = "ligada" | "ligada_nas_vinculadas" | "desligada";
 
 export const REGUA_STATUS: Record<ReguaStatus, StatusDefinition> = {
   ligada: { label: "Ligada", tone: "success", icon: CircleCheck },
+  ligada_nas_vinculadas: {
+    label: "Ligada nas vinculadas",
+    tone: "info",
+    icon: CircleDot,
+  },
   desligada: { label: "Desligada", tone: "neutral", icon: CirclePause },
 };
 
@@ -424,6 +437,8 @@ export const CONSENT_STATUS: Record<ConsentStatus, StatusDefinition> = {
 //   familia Shield e da autorizacao para receber mensagens.
 // - ZapOff: SO "Impede encaixe" do bloqueio em Cadastros (warning); o Zap e o
 //   encaixe, sempre neutral.
+// - CircleDot: SO "Ligada nas vinculadas" do cartao da aba de Automacoes
+//   (info).
 // Trocas decorrentes, cada uma no lote da sua tela: toque "pulado" MailWarning
 // e "na fila" Mail; aviso de recurso do modal de agendamento e dialogo da
 // regua CircleAlert; erro de Confirmacoes OctagonAlert; Recuperadas com tom

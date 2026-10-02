@@ -1,7 +1,14 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, CalendarPlus, Check, History, X } from "lucide-react";
+import {
+  CalendarClock,
+  CalendarPlus,
+  Check,
+  History,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useId, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -11,6 +18,12 @@ import {
   recusarEncaixeAction,
   remarcarAgendamentoAction,
 } from "@/app/(app)/agenda/actions";
+import { DICA_REMOVER_SEM_PERMISSAO } from "@/components/agenda/bloqueio-comum";
+import {
+  ConfirmarRemocaoDoBloqueio,
+  podeRemoverBloqueio,
+  ResumoDoBloqueio,
+} from "@/components/agenda/detalhe-do-bloqueio";
 import {
   ChaveAvisarPaciente,
   ERROS_CORRIGIVEIS_NA_REMARCACAO,
@@ -62,15 +75,20 @@ import {
   podeRemarcar,
   saldoDescontadoAoComparecer,
   transicoesPermitidas,
-  type SaldoParaComparecimento,
 } from "@/lib/domain/appointment-status";
 import { diaCivil, instanteLocal } from "@/lib/domain/horarios";
+import {
+  fraseDoDescontoAoComparecer,
+  fraseDoQueSobra,
+} from "@/lib/domain/pacotes-ui";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import {
   agendaKeys,
   fetchListaDeEsperaDaClinica,
+  type BloqueioDaAgenda,
   type ConsultaDaAgenda,
 } from "@/lib/queries/agenda";
+import { fetchSaldosParaComparecimento } from "@/lib/queries/pacientes";
 import { createClient } from "@/lib/supabase/client";
 
 // Menu do bloco de consulta: cabecalho de contexto, mudanca de situacao
@@ -83,7 +101,10 @@ import { createClient } from "@/lib/supabase/client";
 // com o paciente e o procedimento, e a falta fica registrada no dia em que
 // aconteceu (achado 78). Compareceu que vai descontar sessao de pacote pede
 // confirmacao nomeando paciente e pacote (achado L11); sem saldo a
-// descontar, sai direto (decisao do dono).
+// descontar, sai direto (decisao do dono). Bloqueio do mesmo profissional
+// que cruza o horario (criado "mesmo assim" por cima da consulta) fica
+// coberto pelo bloco na grade: o menu mostra a secao "Horario bloqueado"
+// com o mesmo detalhe e o mesmo "Remover bloqueio" da faixa.
 
 /** "quinta-feira, 25/09 às 10:00" no fuso da clinica. */
 function diaEHoraNoFuso(timezone: string, instante: string): string {
@@ -122,46 +143,12 @@ function horaNoFuso(timezone: string, instante: string): string {
 // Saldo de pacote que o Compareceu desconta
 // ---------------------------------------------------------------------------
 
-// Sem tipos gerados, o supabase-js devolve embed como array: desembrulha.
-function desembrulhar(valor: unknown): Record<string, unknown> | null {
-  const bruto = Array.isArray(valor) ? valor[0] : valor;
-  return (bruto as Record<string, unknown> | null) ?? null;
-}
-
-/** Saldos de pacote do paciente (poucas linhas; o filtro e o do dominio). */
-async function fetchSaldosDoPaciente(
-  supabase: ReturnType<typeof createClient>,
-  clinicId: string,
-  contactId: string,
-): Promise<SaldoParaComparecimento[]> {
-  const { data, error } = await supabase
-    .from("package_balance")
-    .select(
-      "id, sessions_total, sessions_used, expires_at, created_at, package:package_id (procedure_id, procedure:procedure_id (name))",
-    )
-    .eq("clinic_id", clinicId)
-    .eq("contact_id", contactId);
-  if (error) {
-    throw new Error(error.message);
-  }
-  return ((data ?? []) as Record<string, unknown>[]).map((linha) => {
-    const pacote = desembrulhar(linha.package);
-    const procedimento = pacote ? desembrulhar(pacote.procedure) : null;
-    return {
-      id: linha.id as string,
-      procedure_id: (pacote?.procedure_id as string | null) ?? null,
-      procedure_name: (procedimento?.name as string | null) ?? null,
-      sessions_total: linha.sessions_total as number,
-      sessions_used: linha.sessions_used as number,
-      expires_at: (linha.expires_at as string | null) ?? null,
-      created_at: linha.created_at as string,
-    };
-  });
-}
-
 /**
- * O saldo que o Compareceu desta consulta vai descontar (null: nenhum). A
- * chave comeca por ["agenda", clinicId]: toda mudanca na agenda a renova.
+ * O item de saldo (procedimento de uma venda) que o Compareceu desta
+ * consulta vai descontar (null: nenhum). Os itens vem de
+ * fetchSaldosParaComparecimento (um por procedimento de cada venda) e quem
+ * escolhe e saldoDescontadoAoComparecer, espelho do gatilho. A chave comeca
+ * por ["agenda", clinicId]: toda mudanca na agenda a renova.
  */
 function useSaldoDoComparecimento(
   contexto: ContextoAgenda,
@@ -182,7 +169,7 @@ function useSaldoDoComparecimento(
       if (!procedureId) {
         return null;
       }
-      const saldos = await fetchSaldosDoPaciente(
+      const saldos = await fetchSaldosParaComparecimento(
         supabase,
         contexto.clinicId,
         consulta.contact_id,
@@ -198,17 +185,16 @@ function useSaldoDoComparecimento(
   });
 }
 
-function plural(n: number, um: string, varios: string): string {
-  return n === 1 ? um : varios;
-}
-
 export function AppointmentMenu({
   contexto,
   consulta,
+  bloqueios,
   children,
 }: {
   contexto: ContextoAgenda;
   consulta: ConsultaDaAgenda;
+  /** Bloqueios do mesmo profissional que cruzam o horario da consulta. */
+  bloqueios: readonly BloqueioDaAgenda[];
   children: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -222,6 +208,8 @@ export function AppointmentMenu({
   );
   const [historicoAberto, setHistoricoAberto] = useState(false);
   const [dialogComparecer, setDialogComparecer] = useState(false);
+  const [bloqueioARemover, setBloqueioARemover] =
+    useState<BloqueioDaAgenda | null>(null);
   const [menuAberto, setMenuAberto] = useState(false);
   // O relogio do menu: renovado a cada abertura (falta so a partir do
   // horario da consulta, Compareceu so a partir do dia dela). O servidor
@@ -230,6 +218,8 @@ export function AppointmentMenu({
   const idDicaFalta = useId();
   const idDicaComparecer = useId();
   const idDicaRemarcar = useId();
+  const idBloqueio = useId();
+  const podeRemoverBloqueios = podeRemoverBloqueio(contexto);
 
   const nome =
     consulta.contact?.name ?? consulta.contact?.phone_e164 ?? "Paciente";
@@ -386,6 +376,58 @@ export function AppointmentMenu({
             </span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+
+          {bloqueios.length > 0 ? (
+            <>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="cz-eyebrow text-[10px] text-text-tertiary">
+                  Horário bloqueado
+                </DropdownMenuLabel>
+                {bloqueios.map((bloqueio, indice) => {
+                  const idResumo = `${idBloqueio}-resumo-${indice}`;
+                  const idDica = `${idBloqueio}-dica-${indice}`;
+                  return (
+                    <div key={bloqueio.id} className="grid gap-1">
+                      <div className="px-[9px] pb-1">
+                        <ResumoDoBloqueio
+                          contexto={contexto}
+                          bloqueio={bloqueio}
+                          comRotulo={false}
+                          id={idResumo}
+                        />
+                      </div>
+                      {/* Visivel sempre; sem permissao, desabilitado com o
+                          porque logo abaixo, como na faixa. O item descreve
+                          qual bloqueio sai (o menu le so os itens). */}
+                      <DropdownMenuItem
+                        variant="destructive"
+                        disabled={!podeRemoverBloqueios}
+                        aria-describedby={
+                          podeRemoverBloqueios
+                            ? idResumo
+                            : `${idResumo} ${idDica}`
+                        }
+                        className="h-10"
+                        onSelect={() => setBloqueioARemover(bloqueio)}
+                      >
+                        <Trash2 className="size-4 shrink-0" aria-hidden />
+                        <span>Remover bloqueio</span>
+                      </DropdownMenuItem>
+                      {podeRemoverBloqueios ? null : (
+                        <p
+                          id={idDica}
+                          className="max-w-64 px-[9px] pb-1.5 text-xs whitespace-normal text-text-secondary"
+                        >
+                          {DICA_REMOVER_SEM_PERMISSAO}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
 
           {consulta.approval_status === "pendente" ? (
             <>
@@ -610,6 +652,14 @@ export function AppointmentMenu({
         />
       ) : null}
 
+      {bloqueioARemover ? (
+        <ConfirmarRemocaoDoBloqueio
+          contexto={contexto}
+          bloqueio={bloqueioARemover}
+          onFechar={() => setBloqueioARemover(null)}
+        />
+      ) : null}
+
       {dialogRemarcar ? (
         <RemarcarDialog
           contexto={contexto}
@@ -778,7 +828,7 @@ function RemarcarDialog({
             </Select>
             <p className="text-xs text-text-secondary">
               {profissionaisPossiveis.length === 0
-                ? "Nenhum profissional ativo atende este procedimento por este convênio. Cadastre o vínculo em Cadastros ou cancele a consulta."
+                ? "Nenhum profissional ativo atende este procedimento por este convênio. Defina quem faz este procedimento em Cadastros > Procedimentos ou cancele a consulta."
                 : "Aparecem só os profissionais ativos que atendem este procedimento por este convênio."}
             </p>
           </div>
@@ -851,9 +901,6 @@ function ComparecimentoDialog({
   )?.name;
   const quando = diaEHoraNoFuso(contexto.timezone, consulta.starts_at);
 
-  const usadasDepois = saldo ? saldo.sessions_used + 1 : 0;
-  const restantesDepois = saldo ? saldo.sessions_total - usadasDepois : 0;
-
   return (
     <Dialog open onOpenChange={(open) => (!open ? onFechar() : null)}>
       <DialogContent className="sm:max-w-[440px]">
@@ -878,19 +925,15 @@ function ComparecimentoDialog({
               pacote de {procedimento}, uma sessão será descontada.
             </Aviso>
           ) : saldo ? (
+            // Pacote com varios procedimentos: a frase nomeia o procedimento
+            // que perde a sessao e o pacote de onde ela sai, com o estado
+            // depois de marcar.
             <div className="grid gap-1 rounded-xl border border-border px-3.5 py-2.5">
               <p className="text-sm font-semibold text-text-strong">
-                Desconta 1 sessão do pacote de{" "}
-                {saldo.procedure_name ?? procedimento} de {nome}.
+                {fraseDoDescontoAoComparecer(saldo, procedimento)}
               </p>
               <p className="text-xs text-text-secondary">
-                Depois de marcar:{" "}
-                <span className="cz-num">
-                  {usadasDepois} de {saldo.sessions_total}
-                </span>{" "}
-                {plural(saldo.sessions_total, "sessão usada", "sessões usadas")}
-                , <span className="cz-num">{restantesDepois}</span>{" "}
-                {plural(restantesDepois, "restante", "restantes")}.
+                {fraseDoQueSobra(saldo, procedimento)}
               </p>
             </div>
           ) : null}

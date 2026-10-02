@@ -189,7 +189,7 @@ export function AbaRegua({
   /** So o administrador registra a linha de base (aviso ao ligar). */
   ehAdministrador: boolean;
   /**
-   * Os numeros ativos da clinica e a politica das automaticas. Com mais de
+   * Os numeros ativos da clinica e a escolha de cada tipo. Com mais de
    * um, o teste pergunta por qual numero sai; sem isto (ou com um so), o
    * teste sai direto pelo padrao da action.
    */
@@ -531,7 +531,7 @@ export function AbaRegua({
       {dialogo === "testar" && escolheNumeroDoTeste ? (
         <DialogoDeTeste
           numeros={numeros.numeros}
-          padraoId={numeroPadraoDoTeste(numeros)}
+          padraoId={numeroPadraoDoTeste(numeros, tipoDaRegua)}
           pendente={pendente}
           onFechar={() => setDialogo(null)}
           onEnviar={(whatsappAccountId) => testarEnvio(whatsappAccountId)}

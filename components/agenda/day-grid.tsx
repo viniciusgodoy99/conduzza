@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { Ban, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { useId, useMemo, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
@@ -31,6 +31,12 @@ import { MENSAGEM_SEM_VINCULO } from "@/lib/domain/remarcacao";
 import { agendaKeys, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 import { AppointmentBlock } from "@/components/agenda/appointment-block";
+import {
+  bloqueiosQueCruzam,
+  bloqueiosRecortadosNoDia,
+  faixaNaGrade,
+} from "@/components/agenda/bloqueio-comum";
+import { FaixaDeBloqueio } from "@/components/agenda/faixa-de-bloqueio";
 import {
   atendeAConsulta,
   ChaveAvisarPaciente,
@@ -56,7 +62,11 @@ import type { Jornada, Profissional } from "@/lib/queries/catalogo";
 // secao 5.6): calha de 62px com a hora no topo da linha, cabecalho da coluna
 // fixo, hachura so no bloqueio (C19) e a linha de agora sempre em alerta,
 // nunca lime. Todo elemento novo dentro da coluna e pointer-events-none: o
-// clique no vao depende de event.target === event.currentTarget.
+// clique no vao depende de event.target === event.currentTarget. Excecao: a
+// faixa do bloqueio e um botao (abre o detalhe com "Remover bloqueio"), e o
+// vao ignora o clique nela pela mesma comparacao. O bloqueio que cruza uma
+// consulta fica por baixo do bloco dela, entao o menu da consulta tambem
+// mostra o bloqueio, com o mesmo "Remover bloqueio".
 
 export const ALTURA_HORA_PX = 96;
 
@@ -121,8 +131,10 @@ export function DayGrid({
   const weekday = weekdayLocal(timezone, instanteLocal(timezone, dia, "12:00"));
 
   // Faixa visivel de horas: das jornadas do dia (com folga de 1h), esticada
-  // para caber toda consulta viva, inclusive encaixe fora do expediente;
-  // sem jornada, 07:00 as 19:00.
+  // para caber toda consulta viva, inclusive encaixe fora do expediente, e
+  // todo bloqueio que ficaria inteiro fora dela (recortado no dia civil da
+  // clinica; senao ele sumia da grade sem ter onde ser removido); sem
+  // jornada, 07:00 as 19:00.
   const { horaInicio, horaFim } = useMemo(
     () =>
       faixaDeHorasVisivel({
@@ -143,6 +155,13 @@ export function DayGrid({
             startsAt: new Date(c.starts_at),
             endsAt: new Date(c.ends_at),
           })),
+        bloqueios: bloqueiosRecortadosNoDia(
+          dados.bloqueios.filter((b) =>
+            profissionais.some((p) => p.id === b.professional_id),
+          ),
+          timezone,
+          dia,
+        ),
       }),
     [
       catalogo.jornadas,
@@ -649,27 +668,25 @@ function ColunaDoProfissional({
           />
         ))}
 
-        {/* Bloqueios: hachura 45 graus + motivo num chip solido (C19) */}
+        {/* Bloqueios: hachura 45 graus + motivo num chip solido (C19),
+            recortados na parte visivel; o clique abre o detalhe */}
         {bloqueios.map((bloqueio) => {
-          const top = minutoParaY(
-            (new Date(bloqueio.starts_at).getTime() - inicioVisivel.getTime()) /
-              60_000,
-            ALTURA_HORA_PX,
-          );
-          const height = minutoParaY(
-            (new Date(bloqueio.ends_at).getTime() -
-              new Date(bloqueio.starts_at).getTime()) /
-              60_000,
-            ALTURA_HORA_PX,
-          );
-          return (
+          const faixa = faixaNaGrade({
+            inicio: new Date(bloqueio.starts_at),
+            fim: new Date(bloqueio.ends_at),
+            inicioVisivel,
+            alturaHoraPx: ALTURA_HORA_PX,
+            alturaTotal,
+          });
+          return faixa ? (
             <FaixaDeBloqueio
               key={bloqueio.id}
-              motivo={bloqueio.reason}
-              top={top}
-              height={height}
+              contexto={contexto}
+              bloqueio={bloqueio}
+              top={faixa.top}
+              height={faixa.height}
             />
-          );
+          ) : null;
         })}
 
         {/* Reservas da IA: tracejado no tom da IA, com os minutos restantes */}
@@ -685,12 +702,14 @@ function ColunaDoProfissional({
             ))
           : null}
 
-        {/* Consultas */}
+        {/* Consultas. O bloqueio que cruza a consulta vai junto para o menu
+            dela: coberto pelo bloco, ele continua visivel e removivel. */}
         {blocos.map((bloco) => (
           <AppointmentBlock
             key={bloco.item.id}
             contexto={contexto}
             consulta={bloco.item}
+            bloqueios={bloqueiosQueCruzam(bloqueios, bloco.item)}
             top={bloco.top}
             height={bloco.height}
             lane={bloco.lane}
@@ -702,38 +721,6 @@ function ColunaDoProfissional({
           top={posicaoDeAgora(timezone, dia, inicioVisivel, alturaTotal, agora)}
         />
       </div>
-    </div>
-  );
-}
-
-/**
- * Bloqueio: hachura a 45 graus sobre o afundado (a camada de forma, C19) e o
- * motivo num chip solido com o Ban. Nunca so cor. Sem clique: o vao por baixo
- * continua respondendo (pointer-events-none).
- */
-export function FaixaDeBloqueio({
-  motivo,
-  top,
-  height,
-}: {
-  motivo: string;
-  top: number;
-  height: number;
-}) {
-  return (
-    <div
-      className="pointer-events-none absolute inset-x-0.5 z-[1] flex items-start overflow-hidden rounded-md border border-border-strong bg-surface-4 p-1"
-      style={{
-        top,
-        height,
-        backgroundImage:
-          "repeating-linear-gradient(45deg, var(--border-heavy) 0 1px, transparent 1px 8px)",
-      }}
-    >
-      <span className="inline-flex max-w-full items-center gap-1 rounded-sm bg-card px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary">
-        <Ban className="size-3 shrink-0" aria-hidden />
-        <span className="truncate">{motivo}</span>
-      </span>
     </div>
   );
 }

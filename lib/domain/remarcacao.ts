@@ -86,3 +86,38 @@ export function colideComBloqueio(
       new Date(b.ends_at).getTime() > inicio.getTime(),
   );
 }
+
+export const MENSAGEM_HORARIO_BLOQUEADO =
+  "Este horário está bloqueado na agenda do profissional. Escolha outro horário.";
+export const MENSAGEM_BLOQUEADO_SEM_ENCAIXE =
+  "Este período está bloqueado sem permissão de encaixe.";
+/** A leitura dos bloqueios falhou: recusa, nunca deixa passar sem conferir. */
+export const MENSAGEM_SEM_CONFERIR_AGENDA =
+  "Não foi possível conferir a agenda do profissional. Tente de novo.";
+
+/**
+ * A recusa por bloqueio de uma consulta em [inicio, fim), ou null quando
+ * pode. Consulta comum nao entra em bloqueio nenhum do profissional; encaixe
+ * passa por cima do bloqueio comum, mas nunca do que impede encaixe
+ * (blocks_overbooking). A MESMA regra vale para marcar e para remarcar: antes
+ * a criacao so conferia o encaixe, e a tela com a agenda em cache (o bloqueio
+ * nao tem tempo real) gravava consulta comum dentro de um bloqueio novo.
+ */
+export function recusaPorBloqueio(
+  bloqueios: readonly {
+    starts_at: string;
+    ends_at: string;
+    blocks_overbooking: boolean;
+  }[],
+  consulta: { inicio: Date; fim: Date; encaixe: boolean },
+): string | null {
+  const queValem = bloqueios.filter(
+    (b) => !consulta.encaixe || b.blocks_overbooking,
+  );
+  if (!colideComBloqueio(queValem, consulta.inicio, consulta.fim)) {
+    return null;
+  }
+  return consulta.encaixe
+    ? MENSAGEM_BLOQUEADO_SEM_ENCAIXE
+    : MENSAGEM_HORARIO_BLOQUEADO;
+}

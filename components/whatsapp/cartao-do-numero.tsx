@@ -124,7 +124,7 @@ export type CartaoDoNumeroProps = {
   numero: NumeroDoWhatsapp;
   /** nome da unidade do numero, quando ele tem uma */
   unidade: string | null;
-  /** e o numero fixo das mensagens automaticas (modo fixo da politica) */
+  /** algum tipo de mensagem automatica sai sempre por este numero */
   fixoDasAutomaticas: boolean;
   /** fuso da clinica, para a data "desde" */
   timezone: string;

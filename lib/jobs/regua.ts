@@ -403,6 +403,35 @@ function conferirConfirmacao(
 }
 
 /**
+ * A regua que vale AGORA para a consulta (regua vinculada a medico,
+ * especialidade ou procedimento, decisao do dono de 29/09/2026). A escolha
+ * mora no banco, em regua_da_consulta, a mesma funcao que o planner usa:
+ * procedimento > profissional > especialidade > geral, a reforcada vence no
+ * nivel, desempate por created_at e id. null = nenhuma regua ativa casa.
+ *
+ * Leitura que falha vira excecao (retry do job), nunca decisao: tratar o erro
+ * como "a regua mudou" pularia um toque que ainda vale, e como "nao mudou"
+ * mandaria o toque de uma regua que deixou de valer.
+ */
+async function reguaVigenteDaConsulta(
+  admin: SupabaseClient,
+  appointmentId: string,
+  /** 'confirmacao' ou 'pos_falta'; outro tipo o banco responde nulo. */
+  kind: string,
+): Promise<string | null> {
+  const { data, error } = await admin.rpc("regua_da_consulta", {
+    p_appointment_id: appointmentId,
+    p_kind: kind,
+  });
+  if (error) {
+    throw new ErroComCodigoDeJob(
+      `regua_vigente_ilegivel: ${codigoDoErro(error)}`,
+    );
+  }
+  return typeof data === "string" ? data : null;
+}
+
+/**
  * O paciente ja remarcou depois da falta? O eixo do pos_falta e o instante em
  * que a falta foi marcada, entao so conta consulta futura CRIADA depois disso.
  */
@@ -633,6 +662,28 @@ export async function executarPassoDeRegua(
     ) {
       await pararCadeia(admin, run);
       return { ok: true };
+    }
+
+    // REGUA VIGENTE (regua vinculada, 29/09/2026). A run nasceu da regua que
+    // valia no planejamento; se a consulta trocou de medico ou de
+    // procedimento, ou se uma regua mais especifica foi ligada (ou esta
+    // desligada) no meio da sequencia, ESTE toque e de uma regua que deixou
+    // de valer: pula so ele ('condicao_parada'). A cadeia nao para, porque os
+    // toques da regua vigente sao outras runs, que o planner materializa. Vem
+    // depois das paradas da consulta: cancelada, remarcada ou ja remarcada
+    // depois da falta continua parando a cadeia (ou pulando com o motivo
+    // proprio) antes desta conferencia. O toque manual (Cobrar agora) nao
+    // passa por aqui: quem pediu foi uma pessoa, olhando a consulta.
+    if (!manual && run.appointment_id) {
+      const vigente = await reguaVigenteDaConsulta(
+        admin,
+        run.appointment_id,
+        regua.kind,
+      );
+      if (vigente !== regua.id) {
+        await pularRun(admin, run, "condicao_parada");
+        return { ok: true };
+      }
     }
   }
 

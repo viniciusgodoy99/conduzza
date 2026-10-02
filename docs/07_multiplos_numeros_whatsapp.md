@@ -29,6 +29,42 @@ Decisões assumidas pela recomendação (valem até o dono mudar):
 - **Número desconectado:** o envio espera a reconexão e **nunca troca de número sozinho**. A exceção é o número **removido**:
   os jobs pendentes dele são redistribuídos pela `conta_de_envio`.
 
+## Decisão do dono (29/09/2026): número POR TIPO de mensagem automática
+
+Revê a decisão 2. A escolha do número deixa de ser uma por clínica e passa a ser **uma por tipo** de mensagem automática.
+Exemplo do dono: confirmação sempre por um número específico; follow-up sempre pelo número com que o paciente falou.
+
+| Tipo (`whatsapp_envio_automatico.tipo`) | Rótulo na tela | De onde o banco tira o tipo do job |
+|---|---|---|
+| `confirmacao` | Confirmação de consulta e Cobrar agora | `executar_passo_de_regua`: `cadence.kind` da run (o Cobrar agora é run da régua de confirmação) |
+| `pos_falta` | Recuperação depois da falta | idem |
+| `followup` | Follow-up de leads | idem |
+| `lista_espera` | Oferta da lista de espera | `enviar_mensagem_ativa`: `payload.tipo_de_envio` (gravado por `criar_oferta_de_espera`) |
+| `aviso_remarcacao` | Aviso de remarcação | `enviar_mensagem_ativa`: `payload.tipo_de_envio` (gravado pelo aviso em `app/(app)/agenda/actions.ts`) |
+
+- Cada tipo: **"Último número usado pelo paciente (recomendado)"** ou **"Sempre pelo número X"**. **Sem linha para o tipo =
+  último usado.**
+- O **eco da resposta ao toque** ("Presença confirmada") continua saindo pelo número que recebeu (D4), sem tipo e sem política.
+- **Desconectado** continua esperando a reconexão e nunca troca sozinho (inalterado).
+- **Número removido:** a escolha fixa de todo tipo que apontava para ele **volta para "último usado"**, na mesma transação da
+  remoção (`remover_numero`), antes de redistribuir os jobs. A remoção **não** é mais recusada por o número ser o fixo das
+  automáticas (antes a ação pedia para escolher outro número em Automações); o diálogo de remover avisa que essas mensagens
+  passam a sair pelo último número usado.
+- Migração (`20260929130000_numero_por_tipo.sql`): a linha única de cada clínica é **copiada para os cinco tipos** (nada muda
+  para quem já escolheu). Linha fixa num número já removido vira `ultimo_usado` antes da cópia (o resolvedor já a ignorava).
+  Produção tinha zero linhas em 29/09.
+- Funções: `resolver_conta_de_envio(clinica, contato, p_tipo default null)`; **sem tipo, só último usado e principal** (nenhum
+  fixo vale). `conta_de_envio` e `contas_de_envio` ganham `p_tipo default null` (as chamadas antigas continuam casando; tipo
+  desconhecido recebe 22023). `tipo_de_envio_do_job(kind, payload)` deriva o tipo; `job_ganha_numero`, `numero_do_job` e
+  `redistribuir_jobs_do_numero` o usam. `redistribuir_jobs_do_numero(numero, p_tipos text[] default null)`: nulo move todos
+  (remoção); com valor, só os tipos cuja escolha mudou (tela de Automações). `planejar_reguas` passa o tipo de cada seção.
+- A migration **redefine `planejar_reguas` a partir do corpo da `20260929110000_regua_vinculada.sql`**: precisa ser aplicada
+  depois dela, e qualquer mudança futura no planner da 110000 tem de ser refletida aqui.
+- Tela (Automações): o cartão "Número das mensagens automáticas" (só com mais de um número ativo) vira uma lista com uma linha
+  por tipo e um seletor em cada; um botão "Salvar escolhas" grava só os tipos que mudaram (um upsert por `(clinic_id, tipo)`) e
+  recarimba só os pendentes desses tipos. Sem permissão: seletores e botão desabilitados, com a dica.
+- Configurações: a etiqueta "Mensagens automáticas" vai em todo número que algum tipo usa como fixo.
+
 ### Como a espera funciona (detalhe de implementação, 25/09)
 
 A revisão das Fases 3 e 4 achou que a espera não cumpria a regra acima: cada volta somava no teto de 20 devoluções da fila
@@ -133,7 +169,7 @@ pareamento enquanto a trava do mesmo celular não decide, e o uazapi reenvia o w
   whatsapp_account_id is not null`.
 - Gatilho `job_ganha_numero` (BEFORE INSERT): quando o número vem nulo e o kind é `enviar_mensagem_ativa` ou
   `executar_passo_de_regua`, resolve pela `conta_de_envio`. O contato vem de `payload->>'contact_id'`, ou de `cadence_run` via
-  `payload->>'cadence_run_id'`.
+  `payload->>'cadence_run_id'`; o tipo, de `tipo_de_envio_do_job(kind, payload)` (29/09/2026).
 - Motivo novo de pulo: `'numero_removido'` no `cadence_run_skipped_reason_check`.
 
 ### `clinic.limite_de_numeros`
@@ -142,23 +178,24 @@ pareamento enquanto a trava do mesmo celular não decide, e o uazapi reenvia o w
 - Gatilho `proteger_limite_de_numeros`: com `auth.uid()` presente e sem `is_product_admin()`, uma mudança do valor recebe erro
   `42501`.
 
-### `whatsapp_envio_automatico` (política)
+### `whatsapp_envio_automatico` (política, por tipo desde 29/09/2026)
 
-- `clinic_id` PK; `modo 'ultimo_usado' | 'fixo'` (padrão `ultimo_usado`); `conta_fixa_id`.
+- PK `(clinic_id, tipo)`; `tipo` em `confirmacao | pos_falta | followup | lista_espera | aviso_remarcacao`;
+  `modo 'ultimo_usado' | 'fixo'` (padrão `ultimo_usado`); `conta_fixa_id`.
 - Check `(modo = 'fixo') = (conta_fixa_id is not null)`, mais gatilho de mesma clínica e número ativo.
-- Sem linha, vale `ultimo_usado`.
+- Tipo sem linha, vale `ultimo_usado`.
 - RLS: SELECT para membro ativo; INSERT e UPDATE para `user_has_role(clinic_id, array['admin','gestor'])`.
 
-### `conta_de_envio(p_clinic_id, p_contact_id) returns uuid`
+### `conta_de_envio(p_clinic_id, p_contact_id, p_tipo default null) returns uuid`
 
 - Stable, security definer, `search_path = public`.
-- Com `auth.uid()` presente, confere que a clínica é do usuário (senão erro 42501).
+- Com `auth.uid()` presente, confere que a clínica é do usuário (senão erro 42501). Tipo desconhecido: 22023.
 - Ordem de escolha:
-  1. modo fixo com número ativo;
+  1. o fixo **do tipo**, com número ativo (sem tipo, este passo não existe);
   2. a conversa do contato cujo número está ativo, ordenada por `last_inbound_at desc nulls last, last_message_at desc nulls last`;
   3. o principal ativo.
-- Versão em lote `contas_de_envio(p_clinic_id, p_contact_ids uuid[]) returns table(contact_id, whatsapp_account_id, nome,
-  connection_status)`.
+- Versão em lote `contas_de_envio(p_clinic_id, p_contact_ids uuid[], p_tipo default null) returns table(contact_id,
+  whatsapp_account_id, nome, connection_status)`.
 
 ## Compatibilidade
 
@@ -257,7 +294,8 @@ where j.id in (select id from escolhidos) returning j.*;
     "Mensagens automáticas";
   - ações de 40px e menu (Renomear, Unidade, Tornar principal, Remover);
   - "Adicionar número", que mostra "N de M números do plano" quando há limite.
-- **Automações:** cartão "Número das mensagens automáticas", só com mais de um número ativo.
+- **Automações:** cartão "Número das mensagens automáticas", só com mais de um número ativo; uma linha por tipo desde
+  29/09/2026 (ver a decisão no topo).
 - **Inbox:** selo, cabeçalho, filtro por número e compositor desabilitado com o motivo, tudo só com mais de um número.
 - **Faixa:** nomeia o número e diz quantas automáticas esperam por ele.
 - **Início:** conta como feito se houver ao menos um número conectado.

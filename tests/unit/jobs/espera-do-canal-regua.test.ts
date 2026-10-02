@@ -167,6 +167,9 @@ function banco(cenario: Cenario) {
         : { data: null, error: null },
     rpcs: {
       consentimento_vigente: () => ({ data: true, error: null }),
+      // A regua da run continua sendo a vigente da consulta (regua vinculada,
+      // 29/09/2026; os casos da troca estao em regua-vigente.test.ts).
+      regua_da_consulta: () => ({ data: "regua", error: null }),
       numero_do_job: () => ({ data: cenario.numero, error: null }),
       garantir_conversa_aberta: () => ({ data: "conversa-1", error: null }),
       confirmar_posse_job: () => ({ data: true, error: null }),

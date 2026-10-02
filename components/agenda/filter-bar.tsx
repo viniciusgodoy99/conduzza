@@ -1,15 +1,23 @@
 "use client";
 
-import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import {
+  Ban,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { AgendaActionsMenu } from "@/components/agenda/agenda-actions-menu";
+import { DICA_BLOQUEAR_SEM_PERMISSAO } from "@/components/agenda/bloqueio-comum";
 import { BotaoProtegido } from "@/components/cadastros/comum";
 import type {
   ContextoAgenda,
   FiltrosAgenda,
   VisaoAgenda,
 } from "@/components/agenda/tipos";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import type { AgendaDia } from "@/lib/queries/agenda";
 import { Button } from "@/components/ui/button";
@@ -26,6 +34,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 
 // Barra de filtros da Agenda. A ORDEM e regra de produto (brief Tela 3):
@@ -35,9 +48,20 @@ import { diaCivil, somarDias } from "@/lib/domain/horarios";
 //
 // Desenho do design system (docs/06 secao 5.6): a barra fica solta sobre o
 // canvas, sem faixa propria; "Novo agendamento" e o unico preenchimento lime
-// da tela.
+// da tela. "Bloquear horario" e secundario (outline) e segue a permissao de
+// quem grava bloqueio (admin e gestor, a mesma da Server Action e da RLS).
+// Com a barra estreita (1366 e 1600 com os filtros todos), o rotulo dele
+// recolhe e fica so o icone, com o nome acessivel inteiro e a dica
+// (container query da barra).
 
 const TODOS = "__todos__";
+
+// "Bloquear horario" recolhe para so o icone (40px) quando a barra fica
+// estreita; o rotulo vira sr-only e continua sendo o nome acessivel (mesmo
+// padrao das acoes da conversa no Atendimento).
+const ROTULO_RECOLHIVEL = "@max-[1319px]/barra-agenda:sr-only";
+const BOTAO_RECOLHIVEL =
+  "h-10 @max-[1319px]/barra-agenda:w-10 @max-[1319px]/barra-agenda:px-0";
 
 const VISOES = [
   { value: "dia", label: "Dia" },
@@ -88,6 +112,7 @@ export function FilterBar({
   onFiltros,
   travadoNoProfissional,
   onNovoAgendamento,
+  onBloquearHorario,
   dados,
 }: {
   contexto: ContextoAgenda;
@@ -99,6 +124,8 @@ export function FilterBar({
   onFiltros: (f: FiltrosAgenda) => void;
   travadoNoProfissional: string | null;
   onNovoAgendamento: () => void;
+  /** Abre o dialogo "Bloquear horario" (admin e gestor). */
+  onBloquearHorario: () => void;
   /** null quando o dia nao carregou: imprimir e exportar ficam desabilitados */
   dados: AgendaDia | null;
 }) {
@@ -132,7 +159,7 @@ export function FilterBar({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="@container/barra-agenda flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-1">
         <Button
           variant="outline"
@@ -235,6 +262,30 @@ export function FilterBar({
           value={visao}
           onChange={onVisao}
         />
+        {contexto.podeEditarCadastros ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                className={BOTAO_RECOLHIVEL}
+                onClick={onBloquearHorario}
+              >
+                <Ban aria-hidden />
+                <span className={ROTULO_RECOLHIVEL}>Bloquear horário</span>
+              </Button>
+            </TooltipTrigger>
+            {/* O nome curto da acao (C23): com o rotulo recolhido, e o unico
+                lugar em que quem usa o mouse le "Bloquear horário". */}
+            <TooltipContent>Bloquear horário</TooltipContent>
+          </Tooltip>
+        ) : (
+          <DisabledWithHint hint={DICA_BLOQUEAR_SEM_PERMISSAO}>
+            <Button variant="outline" className={BOTAO_RECOLHIVEL} disabled>
+              <Ban aria-hidden />
+              <span className={ROTULO_RECOLHIVEL}>Bloquear horário</span>
+            </Button>
+          </DisabledWithHint>
+        )}
         <BotaoProtegido
           podeEditar={podeEditar}
           dica={dica}

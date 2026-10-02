@@ -4,7 +4,11 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
-import { diaCivil, somarDias } from "@/lib/domain/horarios";
+import { diaCivil } from "@/lib/domain/horarios";
+import {
+  ITENS_POR_PACOTE_MAX,
+  SESSOES_POR_ITEM_MAX,
+} from "@/lib/domain/pacotes";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   chaveDeTelefone,
@@ -197,13 +201,23 @@ export async function atualizarPacienteAction(
 // ---------------------------------------------------------------------------
 
 // Venda. Alem da venda de hoje, cobre o pacote EM ANDAMENTO de quem chega ao
-// sistema no meio de um pacote comprado antes: sessoes ja usadas e a data em
-// que o pacote comecou (a validade conta dali). Sem isso o saldo nascia
-// errado desde o primeiro dia.
+// sistema no meio de um pacote comprado antes: sessoes ja usadas de CADA
+// procedimento e a data em que o pacote comecou (a validade conta dali). Sem
+// isso o saldo nascia errado desde o primeiro dia.
+// A venda e a copia dos itens do pacote acontecem numa transacao so (RPC
+// vender_pacote, SECURITY INVOKER): o banco calcula a validade no dia civil
+// da clinica (regra 3.6), confere pacote ativo, data de inicio, sessoes por
+// procedimento e o papel (admin, gestor e recepcao).
+const usadasDoItemSchema = z.object({
+  procedure_id: idSchema,
+  sessions_used: z.number().int().min(0).max(SESSOES_POR_ITEM_MAX),
+});
+
 const venderPacoteSchema = z.object({
   contact_id: idSchema,
   package_id: idSchema,
-  sessions_used: z.number().int().min(0).max(1000).default(0),
+  /** So os procedimentos com sessao ja usada; os ausentes nascem com 0. */
+  usadas: z.array(usadasDoItemSchema).max(ITENS_POR_PACOTE_MAX).default([]),
   inicio: diaSchema.optional(),
 });
 
@@ -219,10 +233,28 @@ export async function venderPacoteAction(
     return { ok: false, error: "Confira o pacote, as sessões e a data." };
   }
   const dados = parsed.data;
+  if (
+    new Set(dados.usadas.map((item) => item.procedure_id)).size !==
+    dados.usadas.length
+  ) {
+    return {
+      ok: false,
+      error: "O mesmo procedimento aparece duas vezes nas sessões já usadas.",
+    };
+  }
+  const hoje = diaCivil(guard.timezone, new Date());
+  if (dados.inicio !== undefined && dados.inicio > hoje) {
+    return {
+      ok: false,
+      error: "A data de início não pode ser depois de hoje.",
+    };
+  }
 
   const supabase = await createClient();
-  // O contato precisa ser da clinica ativa (o gatilho de coerencia confere de
-  // novo; aqui so devolve mensagem melhor).
+  // O contato e o pacote precisam ser da clinica ATIVA: a RLS deixa quem e
+  // membro de duas clinicas enxergar a outra, e a trilha abaixo vai para a
+  // clinica ativa. A RPC confere de novo que paciente e pacote sao da mesma
+  // clinica.
   const { data: dono } = await supabase
     .from("contact")
     .select("id")
@@ -232,70 +264,25 @@ export async function venderPacoteAction(
   if (!dono) {
     return { ok: false, error: "Paciente não encontrado nesta clínica." };
   }
-  const { data: pacoteRow } = await supabase
+  const { data: pacote } = await supabase
     .from("package")
-    .select("sessions, validity_days, active")
+    .select("id")
     .eq("clinic_id", guard.clinicId)
     .eq("id", dados.package_id)
     .maybeSingle();
-  if (!pacoteRow) {
+  if (!pacote) {
     return { ok: false, error: "Pacote não encontrado." };
   }
-  const pacote = pacoteRow as {
-    sessions: number;
-    validity_days: number | null;
-    active: boolean;
-  };
-  if (!pacote.active) {
-    return {
-      ok: false,
-      error: "Este pacote está desativado e não pode ser vendido.",
-    };
-  }
-  if (dados.sessions_used >= pacote.sessions) {
-    return {
-      ok: false,
-      error: `As sessões já usadas precisam ser menos que as ${pacote.sessions} do pacote.`,
-    };
-  }
 
-  // Dia civil do fuso da clinica (regra 3.6): vendido hoje com 90 dias vence
-  // no dia local correto, nao no dia UTC do servidor.
-  const hoje = diaCivil(guard.timezone, new Date());
-  const inicio = dados.inicio ?? hoje;
-  if (inicio > hoje) {
-    return {
-      ok: false,
-      error: "A data de início não pode ser depois de hoje.",
-    };
-  }
-  const expiraEm =
-    pacote.validity_days !== null
-      ? somarDias(inicio, pacote.validity_days)
-      : null;
-  if (expiraEm !== null && expiraEm < hoje) {
-    return {
-      ok: false,
-      error:
-        "Com essa data de início o pacote já teria vencido. Confira a data.",
-    };
-  }
-
-  const { data, error } = await supabase
-    .from("package_balance")
-    .insert({
-      clinic_id: guard.clinicId,
-      contact_id: dados.contact_id,
-      package_id: dados.package_id,
-      sessions_total: pacote.sessions,
-      sessions_used: dados.sessions_used,
-      expires_at: expiraEm,
-    })
-    .select("id")
-    .single();
-  if (error || !data) {
-    // 23514 do gatilho de coerencia: pacote desativado entre abrir a janela e
-    // confirmar. A mensagem do gatilho ja e a que a recepcao entende.
+  const { data, error } = await supabase.rpc("vender_pacote", {
+    p_contact_id: dados.contact_id,
+    p_package_id: dados.package_id,
+    p_inicio: dados.inicio ?? null,
+    p_usadas: dados.usadas,
+  });
+  if (error || typeof data !== "string") {
+    // 23514: regra (pacote desativado entre abrir a janela e confirmar,
+    // sessoes, data). A mensagem do banco ja e a que a recepcao entende.
     return {
       ok: false,
       error: mensagemDoBanco(error, "Não foi possível registrar o pacote."),
@@ -306,7 +293,7 @@ export async function venderPacoteAction(
     user_id: guard.context.userId,
     action: "vendeu_pacote",
     entity: "package_balance",
-    entity_id: data.id as string,
+    entity_id: data,
   });
   revalidatePath("/pacientes");
   revalidatePath(`/pacientes/${dados.contact_id}`);
@@ -333,17 +320,29 @@ async function saldoDaClinica(
   return (data as { id: string; contact_id: string } | null) ?? null;
 }
 
+const usadasDoItemDoSaldoSchema = z.object({
+  /** id do item da venda (package_balance_item) */
+  item_id: idSchema,
+  sessions_used: z.number().int().min(0).max(SESSOES_POR_ITEM_MAX),
+});
+
 const ajustarSaldoSchema = z.object({
   balance_id: idSchema,
-  sessions_used: z.number().int().min(0).max(1000),
-  /** null = o pacote nao vence */
+  /** So os itens que a tela quer gravar; os ausentes ficam como estao. */
+  itens: z
+    .array(usadasDoItemDoSaldoSchema)
+    .max(ITENS_POR_PACOTE_MAX)
+    .default([]),
+  /** null = o pacote nao vence (validade da venda inteira) */
   expires_at: diaSchema.nullable(),
   motivo: motivoSchema,
 });
 
-// Ajuste: sessoes usadas (0 ate o total) e validade. Papel: admin, gestor e
-// recepcao, igual a policy "recepcao e gestao ajustam saldo". A funcao do
-// banco muda o saldo e grava o historico com o motivo na mesma transacao.
+// Ajuste: sessoes usadas de cada procedimento (0 ate o total do item) e a
+// validade da venda. Papel: admin, gestor e recepcao, igual a policy
+// "recepcao e gestao ajustam saldo". A funcao do banco muda o saldo e grava
+// o historico (item, procedimento, antes, depois e motivo) na mesma
+// transacao; nada mudou e recusado.
 export async function ajustarSaldoDePacoteAction(
   input: unknown,
 ): Promise<PacientesActionResult> {
@@ -359,6 +358,14 @@ export async function ajustarSaldoDePacoteAction(
     };
   }
   const dados = parsed.data;
+  if (
+    new Set(dados.itens.map((item) => item.item_id)).size !== dados.itens.length
+  ) {
+    return {
+      ok: false,
+      error: "O mesmo procedimento aparece duas vezes no ajuste.",
+    };
+  }
 
   const supabase = await createClient();
   const saldo = await saldoDaClinica(
@@ -373,9 +380,11 @@ export async function ajustarSaldoDePacoteAction(
     };
   }
 
+  // Assinatura nova (p_itens jsonb). A antiga (p_sessions_used) so existe
+  // para o codigo publicado antes da troca e sai na migration de contrato.
   const { error } = await supabase.rpc("ajustar_saldo_de_pacote", {
     p_balance_id: dados.balance_id,
-    p_sessions_used: dados.sessions_used,
+    p_itens: dados.itens,
     p_expires_at: dados.expires_at,
     p_reason: dados.motivo,
   });

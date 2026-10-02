@@ -1,16 +1,20 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { TipoDeEnvio } from "@/lib/domain/tipo-de-envio";
+
 // Por qual numero de WhatsApp um envio sai (varios numeros por clinica,
 // docs/07, Fase 2). Tres portas, todas decididas pelo banco:
 //
 // - na EXECUCAO de um job de envio: numero_do_job(p_job_id, p_worker). So
 //   responde a quem tem a posse do job, confere se o numero carimbado
-//   continua ativo e recarimba pela regra de conta_de_envio quando ele foi
-//   removido antes de o job gravar mensagem;
+//   continua ativo e recarimba pela regra de conta_de_envio (com o tipo do
+//   job) quando ele foi removido antes de o job gravar mensagem;
 // - no ENFILEIRAMENTO em lote (lista de espera, Cobrar agora, aviso de
-//   remarcacao): contas_de_envio(p_clinic_id, p_contact_ids), o numero de
-//   cada contato com nome e status, para separar quem esta num numero
-//   desconectado sem uma consulta por contato;
+//   remarcacao): contas_de_envio(p_clinic_id, p_contact_ids, p_tipo), o
+//   numero de cada contato com nome e status, para separar quem esta num
+//   numero desconectado sem uma consulta por contato. O TIPO da mensagem
+//   escolhe a regra (decisao do dono de 29/09/2026): cada tipo pode ter o
+//   seu numero fixo, e sem escolha vale o ultimo numero usado pelo paciente;
 // - no MOTOR: a raia de um job e o numero dele, ou a clinica quando o job nao
 //   tem numero (integracoes, oferta da lista de espera, clinica sem numero).
 //
@@ -120,15 +124,17 @@ export function lerContasDeEnvio(linhas: unknown): Map<string, ContaDoContato> {
 }
 
 /**
- * Por qual numero cada contato receberia uma mensagem automatica agora (a
- * mesma regra do gatilho da fila: fixo, ultimo usado pelo paciente,
- * principal). Com a sessao do usuario, a RPC so aceita a clinica dele. Null
- * quando a leitura falhou.
+ * Por qual numero cada contato receberia uma mensagem automatica DESTE TIPO
+ * agora (a mesma regra do gatilho da fila: o fixo do tipo, o ultimo usado
+ * pelo paciente, o principal). O tipo e obrigatorio: sem ele o banco ignora
+ * qualquer escolha fixa. Com a sessao do usuario, a RPC so aceita a clinica
+ * dele. Null quando a leitura falhou.
  */
 export async function contasDeEnvio(
   cliente: SupabaseClient,
   clinicId: string,
   contactIds: string[],
+  tipo: TipoDeEnvio,
 ): Promise<Map<string, ContaDoContato> | null> {
   const unicos = [...new Set(contactIds)];
   if (unicos.length === 0) {
@@ -137,6 +143,7 @@ export async function contasDeEnvio(
   const { data, error } = await cliente.rpc("contas_de_envio", {
     p_clinic_id: clinicId,
     p_contact_ids: unicos,
+    p_tipo: tipo,
   });
   if (error) {
     return null;

@@ -6,11 +6,16 @@ import { useMemo } from "react";
 
 import { AppointmentBlock } from "@/components/agenda/appointment-block";
 import {
+  bloqueiosQueCruzam,
+  bloqueiosRecortadosNoDia,
+  faixaNaGrade,
+} from "@/components/agenda/bloqueio-comum";
+import {
   ALTURA_HORA_PX,
-  FaixaDeBloqueio,
   HoldOverlay,
   useAgora,
 } from "@/components/agenda/day-grid";
+import { FaixaDeBloqueio } from "@/components/agenda/faixa-de-bloqueio";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,11 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  minutoParaY,
-  posicionarBlocos,
-  yParaMinutos,
-} from "@/lib/domain/agenda-layout";
+import { posicionarBlocos, yParaMinutos } from "@/lib/domain/agenda-layout";
 import {
   diaCivil,
   instanteLocal,
@@ -111,7 +112,9 @@ export function WeekGrid({
   const hoje = agora === null ? null : diaCivil(timezone, new Date(agora));
 
   // Faixa de horas: todas as faixas de jornada do profissional na semana (na
-  // unidade filtrada), esticada pelas consultas vivas dele nos 7 dias.
+  // unidade filtrada), esticada pelas consultas vivas dele nos 7 dias e pelos
+  // bloqueios dele que ficariam inteiros fora dela (cada um recortado no seu
+  // dia civil da clinica).
   const consultasDaSemana = queries.flatMap((q, indice) =>
     (q.data?.consultas ?? []).filter(
       (c) =>
@@ -120,6 +123,18 @@ export function WeekGrid({
         diaCivil(timezone, new Date(c.starts_at)) === dias[indice],
     ),
   );
+  const bloqueiosDaSemana = queries.flatMap((q, indice) => {
+    const diaISO = dias[indice];
+    return diaISO
+      ? bloqueiosRecortadosNoDia(
+          (q.data?.bloqueios ?? []).filter(
+            (b) => b.professional_id === profissional.id,
+          ),
+          timezone,
+          diaISO,
+        )
+      : [];
+  });
   const { horaInicio, horaFim } = faixaDeHorasVisivel({
     timezone,
     jornadas: catalogo.jornadas
@@ -133,6 +148,7 @@ export function WeekGrid({
       startsAt: new Date(c.starts_at),
       endsAt: new Date(c.ends_at),
     })),
+    bloqueios: bloqueiosDaSemana,
   });
   const totalHoras = horaFim - horaInicio;
   const alturaTotal = totalHoras * ALTURA_HORA_SEMANA_PX;
@@ -387,25 +403,26 @@ function ColunaDoDia({
             />
           ))}
 
-          {/* Bloqueios: hachura 45 graus + motivo num chip solido (C19) */}
-          {bloqueios.map((bloqueio) => (
-            <FaixaDeBloqueio
-              key={bloqueio.id}
-              motivo={bloqueio.reason}
-              top={minutoParaY(
-                (new Date(bloqueio.starts_at).getTime() -
-                  inicioVisivel.getTime()) /
-                  60_000,
-                ALTURA_HORA_SEMANA_PX,
-              )}
-              height={minutoParaY(
-                (new Date(bloqueio.ends_at).getTime() -
-                  new Date(bloqueio.starts_at).getTime()) /
-                  60_000,
-                ALTURA_HORA_SEMANA_PX,
-              )}
-            />
-          ))}
+          {/* Bloqueios: hachura 45 graus + motivo num chip solido (C19),
+              recortados no dia visivel; o clique abre o detalhe */}
+          {bloqueios.map((bloqueio) => {
+            const faixa = faixaNaGrade({
+              inicio: new Date(bloqueio.starts_at),
+              fim: new Date(bloqueio.ends_at),
+              inicioVisivel,
+              alturaHoraPx: ALTURA_HORA_SEMANA_PX,
+              alturaTotal,
+            });
+            return faixa ? (
+              <FaixaDeBloqueio
+                key={bloqueio.id}
+                contexto={contexto}
+                bloqueio={bloqueio}
+                top={faixa.top}
+                height={faixa.height}
+              />
+            ) : null;
+          })}
 
           {/* Reservas da IA: tracejado no tom da IA, com os minutos restantes */}
           {agora !== null
@@ -420,12 +437,14 @@ function ColunaDoDia({
               ))
             : null}
 
-          {/* Consultas */}
+          {/* Consultas, com o bloqueio que cruza cada uma para o menu dela
+              (coberto pelo bloco, ele continua visivel e removivel) */}
           {blocos.map((bloco) => (
             <AppointmentBlock
               key={bloco.item.id}
               contexto={contexto}
               consulta={bloco.item}
+              bloqueios={bloqueiosQueCruzam(bloqueios, bloco.item)}
               top={bloco.top}
               height={bloco.height}
               lane={bloco.lane}

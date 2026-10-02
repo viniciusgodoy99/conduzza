@@ -17,7 +17,8 @@ import {
   AbaFollowup,
   type EtapaParaFollowup,
 } from "@/components/automacoes/aba-followup";
-import { Excecoes } from "@/components/automacoes/excecoes";
+import { ReguasVinculadas } from "@/components/automacoes/excecoes";
+import { situacaoDoTipo } from "@/components/automacoes/vinculo-da-regua";
 import { NumeroDasAutomaticas } from "@/components/automacoes/numero-das-automaticas";
 import type { NumerosDasAutomaticas } from "@/components/automacoes/numeros-de-envio";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -30,10 +31,9 @@ import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
 import { cn } from "@/lib/utils";
 import {
   automacoesKeys,
-  fetchExcecoesDeConfirmacao,
   fetchFollowups,
-  type ExcecaoDeConfirmacao,
-  type ProcedimentoParaExcecao,
+  fetchReguasVinculadas,
+  type DadosDasReguasVinculadas,
   type ReguaDeFollowup,
   type VolumesDaEstimativa,
 } from "@/lib/queries/automacoes";
@@ -105,7 +105,7 @@ export function AutomacoesClient({
   nomeDaClinica,
   abaInicial,
   reguasIniciais,
-  excecoesIniciais,
+  vinculadasIniciais,
   followupsIniciais,
   etapasParaFollowup,
   volumes,
@@ -118,10 +118,8 @@ export function AutomacoesClient({
   nomeDaClinica: string;
   abaInicial?: string;
   reguasIniciais: ReguasDaClinica;
-  excecoesIniciais: {
-    excecoes: ExcecaoDeConfirmacao[];
-    procedimentos: ProcedimentoParaExcecao[];
-  };
+  /** Reguas vinculadas (medico, especialidade, procedimento) dos dois tipos. */
+  vinculadasIniciais: DadosDasReguasVinculadas;
   followupsIniciais: ReguaDeFollowup[];
   etapasParaFollowup: EtapaParaFollowup[];
   volumes: VolumesDaEstimativa;
@@ -156,10 +154,10 @@ export function AutomacoesClient({
     queryFn: () => fetchReguasDaClinica(supabase, clinicId),
     initialData: reguasIniciais,
   });
-  const { data: dadosDeExcecao } = useQuery({
-    queryKey: automacoesKeys.excecoes(clinicId),
-    queryFn: () => fetchExcecoesDeConfirmacao(supabase, clinicId),
-    initialData: excecoesIniciais,
+  const { data: vinculadas } = useQuery({
+    queryKey: automacoesKeys.vinculadas(clinicId),
+    queryFn: () => fetchReguasVinculadas(supabase, clinicId),
+    initialData: vinculadasIniciais,
   });
   const { data: followups } = useQuery({
     queryKey: automacoesKeys.followups(clinicId),
@@ -173,7 +171,7 @@ export function AutomacoesClient({
         queryKey: confirmacoesKeys.regua(clinicId),
       }),
       queryClient.invalidateQueries({
-        queryKey: automacoesKeys.excecoes(clinicId),
+        queryKey: automacoesKeys.vinculadas(clinicId),
       }),
       queryClient.invalidateQueries({
         queryKey: automacoesKeys.followups(clinicId),
@@ -182,33 +180,50 @@ export function AutomacoesClient({
   };
 
   // Situacao de cada cartao, com dado que a tela ja tem (nada novo buscado).
+  // Cada aba inclui as vinculadas do seu tipo: todas sao reguas dela, e a
+  // vinculada envia mesmo com a geral desligada. Por isso o chip olha as
+  // duas (situacaoDoTipo) e o numero de enviadas soma as duas.
   const situacaoDaRegua = (
+    kind: "confirmacao" | "pos_falta",
     regua: ReguasDaClinica["confirmacao"],
-    enviadas24h: number,
-  ): SituacaoDoCartao =>
-    regua
-      ? {
-          ligada: regua.active,
-          chip: REGUA_STATUS[regua.active ? "ligada" : "desligada"],
+  ): SituacaoDoCartao => {
+    const doTipo = vinculadas.reguas.filter((v) => v.kind === kind);
+    const enviadas24h = doTipo.reduce(
+      (soma, v) => soma + v.enviados_24h,
+      regua?.enviados_24h ?? 0,
+    );
+    const situacao = situacaoDoTipo(regua, doTipo);
+    switch (situacao.estado) {
+      case "nao_configurada":
+        return { ligada: false, chip: NAO_CONFIGURADA, nota: null };
+      case "ligada_nas_vinculadas":
+        return {
+          ligada: true,
+          chip: REGUA_STATUS.ligada_nas_vinculadas,
+          nota: (
+            <>
+              Geral desligada,{" "}
+              <span className="cz-num">{situacao.ligadas}</span> de{" "}
+              <span className="cz-num">{situacao.total}</span>{" "}
+              {situacao.total === 1 ? "vinculada ligada" : "vinculadas ligadas"}
+              , {enviadas(enviadas24h)}
+            </>
+          ),
+        };
+      case "ligada":
+      case "desligada":
+        return {
+          ligada: situacao.estado === "ligada",
+          chip: REGUA_STATUS[situacao.estado],
           nota: enviadas(enviadas24h),
-        }
-      : { ligada: false, chip: NAO_CONFIGURADA, nota: null };
+        };
+    }
+  };
 
   const followupsLigados = followups.filter((regua) => regua.active).length;
   const situacoes: Record<AbaKey, SituacaoDoCartao> = {
-    // A confirmacao inclui as excecoes: todas sao reguas desta aba.
-    confirmacao: situacaoDaRegua(
-      reguas.confirmacao,
-      (reguas.confirmacao?.enviados_24h ?? 0) +
-        dadosDeExcecao.excecoes.reduce(
-          (soma, regua) => soma + regua.enviados_24h,
-          0,
-        ),
-    ),
-    pos_falta: situacaoDaRegua(
-      reguas.pos_falta,
-      reguas.pos_falta?.enviados_24h ?? 0,
-    ),
+    confirmacao: situacaoDaRegua("confirmacao", reguas.confirmacao),
+    pos_falta: situacaoDaRegua("pos_falta", reguas.pos_falta),
     followup:
       followups.length === 0
         ? {
@@ -333,10 +348,11 @@ export function AutomacoesClient({
           numeros={numeros}
           aoMudar={invalidar}
         />
-        <Excecoes
+        <ReguasVinculadas
+          kind="confirmacao"
           clinicId={clinicId}
-          excecoes={dadosDeExcecao.excecoes}
-          procedimentos={dadosDeExcecao.procedimentos}
+          reguas={vinculadas.reguas}
+          opcoes={vinculadas.opcoes}
           nomeDaClinica={nomeDaClinica}
           precoCents={volumes.precoCents}
           podeEditar={podeEditar}
@@ -375,6 +391,19 @@ export function AutomacoesClient({
           sentidoDoPasso="depois"
           tipoDaRegua="pos_falta"
           eventoRotulo="a falta"
+          podeEditar={podeEditar}
+          dicaSemPermissao={dicaSemPermissao}
+          ehAdministrador={ehAdministrador}
+          numeros={numeros}
+          aoMudar={invalidar}
+        />
+        <ReguasVinculadas
+          kind="pos_falta"
+          clinicId={clinicId}
+          reguas={vinculadas.reguas}
+          opcoes={vinculadas.opcoes}
+          nomeDaClinica={nomeDaClinica}
+          precoCents={volumes.precoCents}
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
           ehAdministrador={ehAdministrador}

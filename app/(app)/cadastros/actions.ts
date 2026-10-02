@@ -4,6 +4,12 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import {
+  ITENS_POR_PACOTE_MAX,
+  NOME_DO_PACOTE_MAX,
+  problemaNosItens,
+  SESSOES_POR_ITEM_MAX,
+} from "@/lib/domain/pacotes";
 import { canEdit } from "@/lib/domain/permissions";
 import { createClient } from "@/lib/supabase/server";
 
@@ -266,7 +272,8 @@ export async function salvarJornadaAction(
 }
 
 // ---------------------------------------------------------------------------
-// Procedimentos, convenios, recursos, unidades, pacotes
+// Procedimentos, convenios, unidades, pacotes (recursos sairam da tela em
+// 29/09/2026: continuam no banco, com a trava, sem action de escrita)
 // ---------------------------------------------------------------------------
 
 const procedimentoSchema = z.object({
@@ -277,7 +284,11 @@ const procedimentoSchema = z.object({
   base_price_cents: centavosSchema,
   requires_evaluation: z.boolean(),
   prep_instructions: z.string().trim().max(4000).nullable(),
-  resource_id: idSchema.nullable(),
+  // Recursos sairam da tela (decisao do dono em 29/09/2026), mas a coluna e
+  // a trava do banco ficam: sem o campo no formulario, o update NAO toca
+  // procedure.resource_id (a chave ausente fica fora do update), e o
+  // procedimento que ja exigia uma sala continua exigindo.
+  resource_id: idSchema.nullable().optional(),
   bookable_by_ai: z.boolean(),
   active: z.boolean(),
 });
@@ -291,14 +302,6 @@ const convenioSchema = z.object({
   active: z.boolean(),
 });
 
-const recursoSchema = z.object({
-  id: idSchema.optional(),
-  name: nomeSchema,
-  kind: z.enum(["sala", "cabine", "equipamento"]),
-  unit_id: idSchema.nullable(),
-  active: z.boolean(),
-});
-
 const unidadeSchema = z.object({
   id: idSchema.optional(),
   name: nomeSchema,
@@ -307,19 +310,55 @@ const unidadeSchema = z.object({
   active: z.boolean(),
 });
 
+// Pacote com varios procedimentos (migration 20260929120000): nome, os itens
+// (procedimento e sessoes, cada procedimento uma vez), o preco que a clinica
+// define e a validade do PACOTE. O preco avulso nao vem da tela: e calculado
+// do preco base de cada procedimento (lib/domain/pacotes.ts).
+const itemDoPacoteSchema = z.object({
+  procedure_id: idSchema,
+  sessions: z.number().int().min(1).max(SESSOES_POR_ITEM_MAX),
+});
+
 const pacoteSchema = z.object({
   id: idSchema.optional(),
-  procedure_id: idSchema,
-  sessions: z.number().int().min(1).max(200),
+  name: z.string().trim().min(1).max(NOME_DO_PACOTE_MAX),
+  itens: z.array(itemDoPacoteSchema).min(1).max(ITENS_POR_PACOTE_MAX),
   price_cents: z.number().int().min(0).max(100_000_000),
   validity_days: z.number().int().min(1).max(3650).nullable(),
   active: z.boolean(),
 });
 
-const MENSAGEM_PACOTE_VENDIDO_PROCEDIMENTO =
-  "Este pacote já foi vendido, então o procedimento não muda. Para outro procedimento, crie um pacote novo.";
 const MENSAGEM_PACOTE_VENDIDO_REMOVER =
   "Este pacote já foi vendido. Desative em vez de remover.";
+
+// Erros da RPC salvar_pacote. 23514 (regra) e a mensagem em portugues do
+// proprio banco, que a tela mostra como veio (ver mensagemDaRegra).
+const MENSAGENS_DO_PACOTE: Record<string, string> = {
+  "23503": "Um procedimento escolhido não é desta clínica.",
+  "42501": "Somente administradores e gestores alteram os cadastros.",
+  P0002: "Pacote não encontrado.",
+  "22023": "Confira os procedimentos do pacote.",
+  "23505": "O mesmo procedimento aparece duas vezes no pacote.",
+};
+
+/**
+ * Mensagem de regra (23514) que o banco levanta ja em portugues. A mensagem
+ * crua de CHECK do Postgres (em ingles, com nome de constraint) nunca vai
+ * para a tela: vira o texto padrao.
+ */
+function mensagemDaRegra(
+  error: { code?: string; message?: string },
+  padrao: string,
+): string {
+  if (
+    error.code === "23514" &&
+    error.message &&
+    !/violates|constraint|relation|row-level/i.test(error.message)
+  ) {
+    return error.message;
+  }
+  return MENSAGENS_DO_PACOTE[error.code ?? ""] ?? padrao;
+}
 
 async function vendasDoPacote(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -398,10 +437,33 @@ async function salvarEntidade(
   return { ok: true, id: data.id };
 }
 
+// "IA pode agendar" tem uma fonte so: o vinculo segue a chave do
+// procedimento. O modal so regrava os vinculos (RPC
+// sincronizar_vinculos_do_procedimento) quando "Quem faz e convenios", o
+// preco base, a duracao ou a chave mudaram em relacao a abertura; com o
+// catalogo desatualizado (outro gestor mudou a chave no meio), a comparacao
+// diria "nada mudou" e os vinculos ficariam com a chave antiga. Por isso o
+// Salvar do procedimento alinha a chave dos vinculos aqui, sem criar nem
+// desativar vinculo (a RLS de service_link vale: admin e gestor).
 export async function salvarProcedimentoAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
-  return salvarEntidade("procedure", procedimentoSchema, input);
+  const resultado = await salvarEntidade("procedure", procedimentoSchema, input);
+  if (!resultado.ok || !resultado.id) {
+    return resultado;
+  }
+  const parsed = procedimentoSchema.safeParse(input);
+  if (parsed.success) {
+    const supabase = await createClient();
+    // Falha aqui nao desfaz o Salvar ja gravado: o proximo Salvar ou a
+    // sincronizacao dos vinculos alinham de novo.
+    await supabase
+      .from("service_link")
+      .update({ bookable_by_ai: parsed.data.bookable_by_ai })
+      .eq("procedure_id", resultado.id)
+      .neq("bookable_by_ai", parsed.data.bookable_by_ai);
+  }
+  return resultado;
 }
 
 export async function salvarConvenioAction(
@@ -410,26 +472,22 @@ export async function salvarConvenioAction(
   return salvarEntidade("insurance", convenioSchema, input);
 }
 
-export async function salvarRecursoAction(
-  input: unknown,
-): Promise<CadastroActionResult> {
-  return salvarEntidade("resource", recursoSchema, input);
-}
-
 export async function salvarUnidadeAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
   return salvarEntidade("unit", unidadeSchema, input);
 }
 
+// Cria ou edita o pacote e os itens numa transacao so no banco (RPC
+// salvar_pacote, SECURITY INVOKER: a RLS e o papel da sessao valem la
+// dentro). Pacote ja vendido: nome, preco, validade e "a venda" mudam; os
+// itens (procedimentos e sessoes) ficam congelados, porque a venda copiou os
+// itens para o saldo do paciente e o pacote precisa continuar dizendo o que
+// foi vendido. O banco recusa com 23514 (inclusive na corrida com uma venda
+// feita no meio); mandar os MESMOS itens de sempre passa.
 export async function salvarPacoteAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
-  // Procedimento congelado depois da primeira venda (achado 35): o debito
-  // automatico casa o saldo pelo procedimento do pacote, e troca-lo mudaria
-  // o saldo de quem ja pagou. O gatilho exigir_cadastro_da_mesma_clinica
-  // recusa no banco (23514, inclusive na corrida com uma venda feita entre a
-  // conferencia abaixo e o update); aqui so antecipa a mensagem.
   const guard = await requireEditor();
   if ("error" in guard) {
     return { ok: false, error: guard.error };
@@ -438,60 +496,41 @@ export async function salvarPacoteAction(
   if (!parsed.success) {
     return { ok: false, error: "Confira os campos do pacote." };
   }
+  const { id, name, itens, price_cents, validity_days, active } = parsed.data;
+  const problema = problemaNosItens(itens);
+  if (problema) {
+    return { ok: false, error: problema };
+  }
+
   const supabase = await createClient();
-  const { id, ...campos } = parsed.data;
-
-  if (!id) {
-    return salvarEntidade("package", pacoteSchema, input);
-  }
-
-  const { data: atual } = await supabase
-    .from("package")
-    .select("procedure_id")
-    .eq("clinic_id", guard.clinicId)
-    .eq("id", id)
-    .maybeSingle();
-  if (!atual) {
-    return { ok: false, error: "Pacote não encontrado." };
-  }
-  if (atual.procedure_id !== campos.procedure_id) {
-    const vendas = await vendasDoPacote(supabase, guard.clinicId, id);
-    if (vendas === null) {
-      return {
-        ok: false,
-        error:
-          "Não foi possível conferir as vendas deste pacote. Tente de novo.",
-      };
-    }
-    if (vendas > 0) {
-      return { ok: false, error: MENSAGEM_PACOTE_VENDIDO_PROCEDIMENTO };
-    }
-  }
-  const { data, error } = await supabase
-    .from("package")
-    .update(campos)
-    .eq("clinic_id", guard.clinicId)
-    .eq("id", id)
-    .select("id");
-  if (error || !data || data.length === 0) {
+  const { data, error } = await supabase.rpc("salvar_pacote", {
+    p_clinic_id: guard.clinicId,
+    p_name: name,
+    p_itens: itens,
+    p_price_cents: price_cents,
+    p_validity_days: validity_days,
+    p_active: active,
+    p_package_id: id ?? null,
+  });
+  if (error || typeof data !== "string") {
     return {
       ok: false,
-      error:
-        error?.code === "23514"
-          ? MENSAGEM_PACOTE_VENDIDO_PROCEDIMENTO
-          : "Não foi possível salvar o pacote.",
+      error: error
+        ? mensagemDaRegra(error, "Não foi possível salvar o pacote.")
+        : "Não foi possível salvar o pacote.",
     };
   }
   await auditar(
     supabase,
     guard.clinicId,
     guard.context.userId,
-    "editou",
+    id ? "editou" : "criou",
     "package",
-    id,
+    data,
   );
   revalidatePath("/cadastros");
-  return { ok: true, id };
+  revalidatePath("/pacientes");
+  return { ok: true, id: data };
 }
 
 // Desativar tira o pacote da venda na ficha do paciente; os saldos ja
@@ -587,229 +626,147 @@ export async function excluirPacoteAction(
 }
 
 // ---------------------------------------------------------------------------
-// Vinculos (a matriz de tres pontas)
+// Vinculos dentro do Procedimento ("Quem faz e convenios")
 // ---------------------------------------------------------------------------
+// Desde 29/09/2026 o vinculo de tres pontas so e editado aqui: a aba Vinculos
+// saiu de Cadastros, e com ela as actions de salvar, alternar IA, ativar e
+// duplicar um vinculo solto.
 
-const vinculoSchema = z.object({
-  id: idSchema.optional(),
-  professional_id: idSchema,
-  procedure_id: idSchema,
-  insurance_id: idSchema.nullable(),
-  // Os TRES estados de preco: valor em centavos, coberto (null + covered),
-  // ou nao informado (null sem covered).
-  price_cents: centavosSchema,
-  covered_by_insurance: z.boolean(),
-  duration_min: z.number().int().min(5).max(600),
-  bookable_by_ai: z.boolean(),
-  active: z.boolean(),
-});
+// Uma linha por profissional e convenio, com o valor CONCRETO (o "padrao do
+// procedimento" ja virou preco e duracao na tela, lib/domain/vinculos-do-
+// procedimento.ts). bookable_by_ai nao vem daqui: segue o procedimento, e a
+// RPC le a chave dele no banco.
+const vinculoDoProcedimentoSchema = z
+  .object({
+    professional_id: idSchema,
+    insurance_id: idSchema.nullable(),
+    price_cents: centavosSchema,
+    covered_by_insurance: z.boolean(),
+    duration_min: z.number().int().min(5).max(600),
+  })
+  .refine((v) => !v.covered_by_insurance || v.insurance_id !== null);
 
-export async function salvarVinculoAction(
-  input: unknown,
-): Promise<CadastroActionResult> {
+export type ResultadoDosVinculosDoProcedimento = CadastroActionResult & {
+  resumo?: {
+    criados: number;
+    reativados: number;
+    atualizados: number;
+    desativados: number;
+    /** Consultas futuras que continuam marcadas nos vinculos que sairam */
+    consultasFuturas: number;
+  };
+};
+
+const MENSAGENS_DA_SINCRONIZACAO: Record<string, string> = {
+  // Profissional ou convenio de outra clinica (gatilho de isolamento).
+  "23503": "Um profissional ou convênio escolhido não é desta clínica.",
+  "42501": "Somente administradores e gestores alteram os cadastros.",
+  P0002: "Procedimento não encontrado.",
+  "22023": "Confira o preço e a duração de cada profissional e convênio.",
+  // Corrida com outra gravacao do mesmo vinculo por outro caminho.
+  "23505":
+    "Outra pessoa alterou estes vínculos agora. Feche, abra de novo e salve.",
+};
+
+// Grava de uma vez quem faz o procedimento e por quais convenios: cria,
+// reativa e atualiza o que esta na lista e DESATIVA (nunca apaga) o que saiu,
+// numa transacao so no banco (RPC sincronizar_vinculos_do_procedimento,
+// SECURITY INVOKER: a RLS e o papel da sessao valem la dentro tambem).
+export async function sincronizarVinculosDoProcedimentoAction(
+  procedureId: unknown,
+  linhas: unknown,
+): Promise<ResultadoDosVinculosDoProcedimento> {
   const guard = await requireEditor();
   if ("error" in guard) {
     return { ok: false, error: guard.error };
   }
-  const parsed = vinculoSchema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: "Confira os campos do vínculo." };
-  }
-  if (parsed.data.covered_by_insurance && parsed.data.insurance_id === null) {
+  const parsedId = idSchema.safeParse(procedureId);
+  const parsedLinhas = z
+    .array(vinculoDoProcedimentoSchema)
+    .max(500)
+    .safeParse(linhas);
+  if (!parsedId.success || !parsedLinhas.success) {
     return {
       ok: false,
-      error: "Cobertura de convênio exige escolher o convênio.",
+      error: "Confira o preço e a duração de cada profissional e convênio.",
     };
   }
-  const supabase = await createClient();
-  const { id, ...campos } = parsed.data;
-
-  if (id) {
-    const { data } = await supabase
-      .from("service_link")
-      .update(campos)
-      .eq("clinic_id", guard.clinicId)
-      .eq("id", id)
-      .select("id");
-    if (!data || data.length === 0) {
-      return { ok: false, error: "Não foi possível salvar o vínculo." };
-    }
-    await auditar(
-      supabase,
-      guard.clinicId,
-      guard.context.userId,
-      "editou",
-      "service_link",
-      id,
-    );
-    revalidatePath("/cadastros");
-    return { ok: true, id };
+  const chaves = new Set(
+    parsedLinhas.data.map(
+      (linha) => `${linha.professional_id}:${linha.insurance_id ?? ""}`,
+    ),
+  );
+  if (chaves.size !== parsedLinhas.data.length) {
+    return {
+      ok: false,
+      error: "O mesmo profissional aparece duas vezes no mesmo convênio.",
+    };
   }
 
-  const { data, error } = await supabase
-    .from("service_link")
-    .insert({ clinic_id: guard.clinicId, ...campos })
+  const supabase = await createClient();
+  // So o procedimento da clinica ATIVA. A RLS deixa quem e membro de duas
+  // clinicas enxergar o procedimento da outra, e a RPC aceitaria (o papel e
+  // conferido na clinica do procedimento), mas a trilha abaixo iria para a
+  // clinica ativa com o id de um procedimento que nao e dela.
+  const { data: procedimento, error: erroDoProcedimento } = await supabase
+    .from("procedure")
     .select("id")
-    .single();
-  if (error) {
-    if (error.code === "23505") {
-      return {
-        ok: false,
-        error:
-          "Este profissional já tem vínculo para este procedimento neste convênio. Se ele estiver inativo, reative na lista.",
-      };
-    }
-    return { ok: false, error: "Não foi possível criar o vínculo." };
-  }
-  await auditar(
-    supabase,
-    guard.clinicId,
-    guard.context.userId,
-    "criou",
-    "service_link",
-    data.id,
-  );
-  revalidatePath("/cadastros");
-  return { ok: true, id: data.id };
-}
-
-export async function alternarVinculoIaAction(
-  id: unknown,
-  bookable: boolean,
-): Promise<CadastroActionResult> {
-  const guard = await requireEditor();
-  if ("error" in guard) {
-    return { ok: false, error: guard.error };
-  }
-  const parsed = idSchema.safeParse(id);
-  if (!parsed.success) {
-    return { ok: false, error: "Vínculo inválido." };
-  }
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("service_link")
-    .update({ bookable_by_ai: bookable === true })
-    .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data)
-    .select("id");
-  if (!data || data.length === 0) {
-    return { ok: false, error: "Não foi possível alterar a chave da IA." };
-  }
-  await auditar(
-    supabase,
-    guard.clinicId,
-    guard.context.userId,
-    "editou",
-    "service_link",
-    parsed.data,
-  );
-  revalidatePath("/cadastros");
-  return { ok: true };
-}
-
-// Desativar/Reativar vinculo (achado 33). Suave: appointment.service_link_id
-// e FK NO ACTION, e as consultas antigas continuam apontando para ele. O
-// vinculo inativo sai do modal de agendamento e da reoferta da lista de
-// espera, que ja filtram service_link.active.
-export async function alternarVinculoAtivoAction(
-  id: unknown,
-  ativo: unknown,
-): Promise<CadastroActionResult> {
-  const guard = await requireEditor();
-  if ("error" in guard) {
-    return { ok: false, error: guard.error };
-  }
-  const parsedId = idSchema.safeParse(id);
-  const parsedAtivo = z.boolean().safeParse(ativo);
-  if (!parsedId.success || !parsedAtivo.success) {
-    return { ok: false, error: "Vínculo inválido." };
-  }
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("service_link")
-    .update({ active: parsedAtivo.data })
-    .eq("clinic_id", guard.clinicId)
     .eq("id", parsedId.data)
-    .select("id");
-  if (!data || data.length === 0) {
+    .eq("clinic_id", guard.clinicId)
+    .maybeSingle();
+  if (erroDoProcedimento) {
     return {
       ok: false,
-      error: parsedAtivo.data
-        ? "Não foi possível reativar o vínculo."
-        : "Não foi possível desativar o vínculo.",
+      error: "Não foi possível salvar quem faz e os convênios.",
     };
   }
-  await auditar(
-    supabase,
-    guard.clinicId,
-    guard.context.userId,
-    parsedAtivo.data ? "reativou" : "desativou",
-    "service_link",
-    parsedId.data,
+  if (!procedimento) {
+    return { ok: false, error: "Procedimento não encontrado." };
+  }
+  const { data, error } = await supabase.rpc(
+    "sincronizar_vinculos_do_procedimento",
+    {
+      p_procedure_id: parsedId.data,
+      p_linhas: parsedLinhas.data,
+    },
   );
-  revalidatePath("/cadastros");
-  return { ok: true, id: parsedId.data };
-}
-
-export async function duplicarVinculosAction(
-  vinculoIds: unknown,
-  professionalDestinoId: unknown,
-): Promise<CadastroActionResult> {
-  const guard = await requireEditor();
-  if ("error" in guard) {
-    return { ok: false, error: guard.error };
+  if (error) {
+    return {
+      ok: false,
+      error:
+        MENSAGENS_DA_SINCRONIZACAO[error.code ?? ""] ??
+        "Não foi possível salvar quem faz e os convênios.",
+    };
   }
-  const parsedIds = z.array(idSchema).min(1).max(100).safeParse(vinculoIds);
-  const parsedDestino = idSchema.safeParse(professionalDestinoId);
-  if (!parsedIds.success || !parsedDestino.success) {
-    return { ok: false, error: "Escolha os vínculos e o profissional." };
-  }
-
-  const supabase = await createClient();
-  const { data: origem } = await supabase
-    .from("service_link")
-    .select(
-      "procedure_id, insurance_id, price_cents, covered_by_insurance, duration_min, bookable_by_ai, active",
-    )
-    .eq("clinic_id", guard.clinicId)
-    .in("id", parsedIds.data);
-  if (!origem || origem.length === 0) {
-    return { ok: false, error: "Vínculos não encontrados." };
-  }
-
-  // Copia um a um para tolerar duplicata (unique de tres pontas) e reportar
-  // "3 copiados, 1 já existia" em vez de falhar tudo.
-  let copiados = 0;
-  let existentes = 0;
-  for (const vinculo of origem) {
-    const { error } = await supabase.from("service_link").insert({
-      clinic_id: guard.clinicId,
-      professional_id: parsedDestino.data,
-      ...vinculo,
-    });
-    if (!error) {
-      copiados++;
-    } else if (error.code === "23505") {
-      existentes++;
-    } else {
-      return { ok: false, error: "Não foi possível duplicar os vínculos." };
-    }
-  }
+  const contagem = (data ?? {}) as Partial<
+    Record<
+      | "criados"
+      | "reativados"
+      | "atualizados"
+      | "desativados"
+      | "consultas_futuras",
+      number
+    >
+  >;
   await auditar(
     supabase,
     guard.clinicId,
     guard.context.userId,
-    "criou",
-    "service_link",
-    parsedDestino.data,
+    "editou_vinculos_do_procedimento",
+    "procedure",
+    parsedId.data,
   );
   revalidatePath("/cadastros");
   return {
     ok: true,
-    error:
-      existentes > 0
-        ? `${copiados} copiado${copiados === 1 ? "" : "s"}, ${existentes} já existia${existentes === 1 ? "" : "m"}.`
-        : undefined,
+    id: parsedId.data,
+    resumo: {
+      criados: contagem.criados ?? 0,
+      reativados: contagem.reativados ?? 0,
+      atualizados: contagem.atualizados ?? 0,
+      desativados: contagem.desativados ?? 0,
+      consultasFuturas: contagem.consultas_futuras ?? 0,
+    },
   };
 }
 
@@ -895,6 +852,8 @@ export async function criarBloqueiosEmLoteAction(
     "professional_block",
     null,
   );
+  // O bloqueio e criado e removido pela Agenda (a aba de Cadastros saiu).
+  revalidatePath("/agenda");
   revalidatePath("/cadastros");
   return { ok: true };
 }
@@ -927,6 +886,7 @@ export async function excluirBloqueioAction(
     "professional_block",
     parsed.data,
   );
+  revalidatePath("/agenda");
   revalidatePath("/cadastros");
   return { ok: true };
 }

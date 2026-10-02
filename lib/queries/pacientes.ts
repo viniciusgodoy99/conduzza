@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { AppointmentStatus } from "@/lib/design/status";
+import type { SaldoParaComparecimento } from "@/lib/domain/appointment-status";
 
 // Tipos e fetchers da Tela 9 (Pacientes e ficha). Isomorficos como leads.ts:
 // recebem o SupabaseClient e rodam no servidor (carga inicial) e no browser
@@ -110,15 +111,34 @@ export type ConsultaDoPaciente = {
   covered_by_insurance: boolean;
   /** Saldo de pacote que esta consulta descontou (null quando nao descontou). */
   package_balance_id: string | null;
+  /** O item (procedimento) da venda que foi descontado; null sem desconto. */
+  package_balance_item_id: string | null;
 };
 
-export type SaldoDePacote = {
+/** Um procedimento da venda (package_balance_item), com o proprio saldo. */
+export type ItemDoSaldo = {
   id: string;
-  package_id: string;
+  procedure_id: string;
   procedure_name: string | null;
   sessions_total: number;
   sessions_used: number;
+};
+
+/**
+ * Uma venda de pacote (package_balance). Desde a migration 20260929120000 o
+ * saldo e POR ITEM: os itens sao a copia dos procedimentos do pacote feita na
+ * venda. A validade e da venda inteira. Os itens vem ordenados pelo nome do
+ * procedimento.
+ */
+export type SaldoDePacote = {
+  id: string;
+  package_id: string;
+  /** Nome do pacote como esta HOJE no cadastro (o nome pode mudar). */
+  package_name: string | null;
+  /** Dia civil (aaaa-mm-dd), ou null quando nao vence. */
   expires_at: string | null;
+  created_at: string;
+  itens: ItemDoSaldo[];
 };
 
 /**
@@ -204,10 +224,12 @@ const CONTATO_SELECT =
 // Molde do CONSULTA_SELECT da Agenda, mais o nome do profissional e o preco do
 // vinculo, que a linha do tempo mostra.
 const CONSULTA_DO_PACIENTE_SELECT =
-  "id, starts_at, status, professional_id, package_balance_id, professional:professional_id (id, name), service_link:service_link_id (id, price_cents, covered_by_insurance, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
+  "id, starts_at, status, professional_id, package_balance_id, package_balance_item_id, professional:professional_id (id, name), service_link:service_link_id (id, price_cents, covered_by_insurance, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
 
+// Venda e itens: package_balance.sessions_total e sessions_used sao legado
+// (soma dos itens, para o codigo antigo) e nao sao lidos.
 const PACOTE_SELECT =
-  "id, package_id, sessions_total, sessions_used, expires_at, package:package_id (id, procedure:procedure_id (id, name))";
+  "id, package_id, expires_at, created_at, package:package_id (id, name), itens:package_balance_item (id, procedure_id, sessions_total, sessions_used, procedure:procedure_id (id, name))";
 
 // Sem tipos gerados, o supabase-js devolve embed como array: desembrulha no
 // padrao de normalizarConsulta (lib/queries/agenda.ts).
@@ -234,20 +256,73 @@ function normalizarConsultaDoPaciente(
     price_cents: (vinculo?.price_cents as number | null) ?? null,
     covered_by_insurance: (vinculo?.covered_by_insurance as boolean) ?? false,
     package_balance_id: (row.package_balance_id as string | null) ?? null,
+    package_balance_item_id:
+      (row.package_balance_item_id as string | null) ?? null,
+  };
+}
+
+function normalizarItemDoSaldo(row: Record<string, unknown>): ItemDoSaldo {
+  const procedimento = desembrulhar(row.procedure);
+  return {
+    id: row.id as string,
+    procedure_id: row.procedure_id as string,
+    procedure_name: (procedimento?.name as string | null) ?? null,
+    sessions_total: row.sessions_total as number,
+    sessions_used: row.sessions_used as number,
   };
 }
 
 function normalizarPacote(row: Record<string, unknown>): SaldoDePacote {
   const pacote = desembrulhar(row.package);
-  const procedimento = pacote ? desembrulhar(pacote.procedure) : null;
+  const itens = ((row.itens as Record<string, unknown>[] | null) ?? [])
+    .map(normalizarItemDoSaldo)
+    .sort((a, b) =>
+      (a.procedure_name ?? "").localeCompare(b.procedure_name ?? "", "pt-BR"),
+    );
   return {
     id: row.id as string,
     package_id: row.package_id as string,
-    procedure_name: (procedimento?.name as string | null) ?? null,
-    sessions_total: row.sessions_total as number,
-    sessions_used: row.sessions_used as number,
+    package_name: (pacote?.name as string | null) ?? null,
     expires_at: (row.expires_at as string | null) ?? null,
+    created_at: row.created_at as string,
+    itens,
   };
+}
+
+/**
+ * Itens de saldo do paciente para o Compareceu (poucas linhas; quem escolhe
+ * o item e saldoDescontadoAoComparecer, espelho do gatilho
+ * consumir_sessao_de_pacote). Um elemento por ITEM, com a validade e a data
+ * da venda a que ele pertence.
+ */
+export async function fetchSaldosParaComparecimento(
+  supabase: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+): Promise<SaldoParaComparecimento[]> {
+  const { data, error } = await supabase
+    .from("package_balance")
+    .select(PACOTE_SELECT)
+    .eq("clinic_id", clinicId)
+    .eq("contact_id", contactId);
+  if (error) {
+    throw new Error(error.message);
+  }
+  return ((data ?? []) as Record<string, unknown>[])
+    .map(normalizarPacote)
+    .flatMap((venda) =>
+      venda.itens.map((item) => ({
+        id: item.id,
+        package_balance_id: venda.id,
+        package_name: venda.package_name,
+        procedure_id: item.procedure_id,
+        procedure_name: item.procedure_name,
+        sessions_total: item.sessions_total,
+        sessions_used: item.sessions_used,
+        expires_at: venda.expires_at,
+        created_at: venda.created_at,
+      })),
+    );
 }
 
 /**

@@ -368,7 +368,7 @@ Primeira tela que a recepcionista abre de manhã. **A mais simples do sistema.**
 
 **Barra de filtros, e a ordem importa:**
 
-`[◄ 14/08/26 ►] [Unidade] [Especialidade] [Convênio] [Procedimento] [Profissional] ··· [Dia|Semana] [+ Novo agendamento]`
+`[◄ 14/08/26 ►] [Unidade] [Especialidade] [Convênio] [Procedimento] [Profissional] ··· [Dia|Semana] [Bloquear horário] [+ Novo agendamento]`
 
 **Nome do profissional é o ÚLTIMO filtro.** A recepção pergunta "quem está livre para dermato pela Unimed", não "abra a agenda do Dr. Fulano". Esse detalhe separa a agenda boa da ruim.
 
@@ -377,11 +377,17 @@ Primeira tela que a recepcionista abre de manhã. **A mais simples do sistema.**
 - Eixo de horas fixo à esquerda, faixa de 15 minutos, linha reforçada a cada hora.
 - **Linha do horário atual** em vermelho fino atravessando as colunas.
 - **Bloco de agendamento:** altura proporcional à duração, borda esquerda de 4px na cor do status, nome em 13px semibold, procedimento em 11px, ícone de status no canto. Bloco de menos de 30 minutos mostra só o nome.
-- **Bloqueio:** hachura diagonal a 45 graus mais rótulo do motivo. Nunca só cor.
+- **Bloqueio:** hachura diagonal a 45 graus mais rótulo do motivo. Nunca só cor. Desde 29/09/2026 (decisão do dono, ver Tela 8) o bloqueio é criado e removido aqui, na Agenda, por três caminhos:
+  - **"Bloquear horário" na barra**, botão secundário (contorno, ícone `ban`) ao lado de "Novo agendamento". Abre o diálogo "Bloquear horário": profissionais (vários de uma vez, já marcado o do filtro ou da semana), início e fim (data e hora no fuso da clínica, ou "Dia inteiro" com primeiro e último dia), motivo e "Impedir encaixe neste período" (marcado por padrão). Com consultas já marcadas no período, o diálogo avisa quantas são e qual a primeira, e só cria com confirmação explícita ("Criar o bloqueio mesmo assim"): o bloqueio não desmarca nada. Com a barra estreita, o rótulo recolhe e fica o ícone, com o mesmo nome acessível e a dica.
+  - **"Bloquear este horário" no modal aberto pelo clique num horário vazio.** O clique no vão continua abrindo o modal de novo agendamento, que é o fluxo principal e não pode ficar mais lento; dentro dele, a ação secundária "Bloquear este horário" (contorno, à esquerda do rodapé, longe do "Marcar consulta") fecha o modal e abre o mesmo diálogo com o profissional da coluna e o horário clicado já preenchidos. Ela só aparece no modal aberto pelo vão, não no "Novo agendamento" da barra.
+  - **Remoção pela faixa hachurada.** A faixa é um botão: o clique (ou Enter) abre um balão com motivo, profissional, período, o chip "Impede encaixe" ou "Permite encaixe" (ícone, rótulo e cor) e "Remover bloqueio", que pede confirmação. Clicar dentro da faixa não abre "Nova consulta"; o encaixe sobre um bloqueio que permite encaixe sai por "Novo agendamento". Bloqueio coberto por uma consulta (a faixa fica embaixo do bloco) também se remove pelo **menu da consulta**, na seção "Horário bloqueado", com o mesmo "Remover bloqueio" (02/10/2026).
+  - **A grade se estende para mostrar o bloqueio** que fica inteiro fora do horário de atendimento (como já faz com as consultas): todo bloqueio do dia tem faixa à vista e onde clicar (02/10/2026).
+  - **Consulta comum sobre bloqueio é recusada** pelo servidor, com "Este horário está bloqueado na agenda do profissional. Escolha outro horário."; o encaixe segue o "Impedir encaixe" do bloqueio (02/10/2026).
+  - Só administrador e gestor criam e removem bloqueio (a mesma regra da RLS). Para os outros papéis, as três ações ficam visíveis e desabilitadas, com a dica "Somente administradores e gestores bloqueiam horários" (ou "removem bloqueios").
 - **Encaixe:** borda tracejada, deslocamento de 8px.
 - **Reserva temporária (hold):** bloco semitransparente com contador regressivo e rótulo "Reservado pela IA, 8 min". Estado novo e essencial: sem ele, IA e recepção marcam duas pessoas no mesmo horário.
 - Arrastar e soltar para remarcar, com modal perguntando se deve avisar o paciente.
-- Clique em espaço vazio abre o modal já preenchido com profissional e horário.
+- Clique em espaço vazio abre o modal já preenchido com profissional e horário (com a ação secundária "Bloquear este horário", ver Bloqueio acima).
 - Menu de três pontos no topo: Imprimir agenda do dia, Exportar, **Ver histórico de alterações**.
 
 **Visão Semana:** um profissional, 7 colunas de dia.
@@ -393,7 +399,7 @@ Primeira tela que a recepcionista abre de manhã. **A mais simples do sistema.**
 4. Procedimento (a lista filtra pelo convênio).
 5. Profissional (só quem faz aquele procedimento naquele convênio, com preço e duração ao lado do nome).
 6. Data e horário, com **3 primeiros horários livres em botões grandes** mais "escolher outro".
-7. **Aviso de recurso** quando o procedimento exige sala ou equipamento ocupado.
+7. **Aviso de recurso** quando o procedimento exige sala ou equipamento ocupado (desde 29/09/2026 os recursos não têm tela; o aviso vale para o que já estava gravado no banco, ver Tela 8).
 8. Observação.
 9. Chave "Enviar confirmação automática", ligada por padrão.
 
@@ -481,21 +487,53 @@ Agendou ──● 72h antes ──● 24h antes ──● 3h antes ── Consul
 Cada ponto abre painel com modelo de mensagem e **pré-visualização em balão de WhatsApp, com os botões Confirmar, Remarcar e Cancelar renderizados**.
 
 Abaixo:
-- **Exceções por procedimento.** Texto de apoio: "Procedimentos com preparo, como colonoscopia, têm no-show muito maior e pedem mais toques."
+- **Réguas vinculadas** (decisão do dono em 29/09/2026; até 28/09 era "Exceções por procedimento"). Uma régua pode ser vinculada a **um médico, a uma especialidade ou a um procedimento**, um vínculo só por régua. Sem vínculo, é a **régua geral**.
+  - "Nova régua vinculada" (contorno) abre o diálogo com **"Vincular a: Médico, Especialidade ou Procedimento"** e a escolha do cadastro. A especialidade vem da lista das especialidades que os profissionais ativos já têm (sem digitar texto livre). O que já tem régua própria não aparece na lista, e a lista vazia diz por quê. A régua nasce desligada, com as mensagens copiadas da geral, para a clínica ajustar e ligar.
+  - Texto de apoio: "Procedimentos com preparo, como colonoscopia, têm falta muito maior e pedem mais toques. Um médico ou uma especialidade também podem pedir outra conversa." E a regra escrita na tela: "A régua mais específica vence: procedimento, depois médico, depois especialidade. Sem vínculo, vale a geral."
+  - **Precedência:** procedimento, depois médico, depois especialidade, depois a geral. Régua desligada não conta: a consulta cai para a próxima que vale para ela. No mesmo nível, a reforçada vence a comum para quem tem histórico de falta. Profissional com duas especialidades que têm régua: vale a régua criada primeiro. Se a régua que vale para a consulta muda no meio da sequência (troca de médico, régua mais específica ligada depois), os toques pendentes da antiga não saem.
+  - Cada régua vinculada é um cartão com cabeçalho de acordeão: nome, etiqueta do vínculo com ícone e tipo ("Médico", "Especialidade", "Procedimento"; a reforçada, "Histórico de falta"), situação em 3 camadas ("Ligada" ou "Desligada") e "Excluir", que pergunta antes e avisa que o histórico de envios dela some. Régua que enviou há menos de 30 minutos não se exclui ("Esta régua enviou mensagens há pouco. Desligue agora e exclua daqui a 30 minutos."), para o paciente não receber o mesmo toque de novo pela régua que passa a valer. Dentro, o mesmo editor da régua geral.
+  - Vale para as abas **Confirmação** e **Pós falta**, com o mesmo bloco. Follow-up não tem régua vinculada.
 - **Régua reforçada para paciente com histórico de falta** (chave mais número de faltas que dispara).
 - **Estimativa de custo:** "Esta régua envia cerca de 1.320 mensagens por mês, considerando 440 consultas e 3 toques. Custo estimado: [valor]. Mensagens respondidas dentro de 24 horas não são cobradas."
 
 **Follow-up:** mesma lógica, gatilho por etapa do funil. Cada passo permite **mensagem fixa** ou **deixar a IA escrever**, em dois cartões de escolha. Janela de envio permitida (hora de início e fim, chave por dia da semana). **Bloco de contatos sem opt-in que serão pulados, com contagem.**
 
-**Pós falta:** régua em D+0 e D+2 com oferta de remarcação.
+**Pós falta:** régua em D+0 e D+2 com oferta de remarcação. Desde 29/09/2026 tem também as **réguas vinculadas** (médico, especialidade ou procedimento), com a mesma precedência e o mesmo bloco da Confirmação.
+
+**Situação no cartão de cada aba (chip de 3 estados, desde 29/09/2026):** o cartão seletor da aba diz a verdade sobre o conjunto de réguas daquele tipo, não só sobre a geral. **"Ligada"** quando a régua geral está ligada; **"Ligada nas vinculadas"** quando a geral está desligada e alguma régua da lista de vinculadas daquele tipo (inclusive a reforçada) está ligada, com ícone e cor próprios (`circle-dot`, informativo), porque "Ligada" diria que todos recebem e "Desligada" diria que ninguém recebe; **"Desligada"** quando nenhuma está ligada. Sempre ícone, rótulo e cor. A nota soma a geral e as vinculadas do tipo: "{n} enviadas em 24 h" e, no estado do meio, "Geral desligada, N de M vinculadas ligadas, {n} enviadas em 24 h". Sem régua geral criada, continua "Não configurada".
 
 ---
 
 ### TELA 8. CADASTROS
 
-Abas: Profissionais · Procedimentos · Convênios · **Vínculos** · Pacotes · Recursos · Unidades · Bloqueios.
+> **Mudança (decisão do dono em 29/09/2026):** Cadastros fica com cinco abas, todo cadastro abre em **modal central**, o vínculo passa a ser feito **dentro do Procedimento**, o bloqueio de horário vira **ação da Agenda** e os recursos saem da tela. O desenho anterior (oito abas, Vínculos em acordeão por profissional) fica no fim desta tela como histórico.
 
-**A aba Vínculos é a mais importante e a mais difícil.** Matriz de três pontas com preço e duração próprios. Solução: **acordeão agrupado por profissional.**
+Abas: Profissionais · Procedimentos · Convênios · Pacotes · Unidades. A aba vive na URL. Link antigo não quebra: `?aba=vinculos` abre Procedimentos; `?aba=recursos` e `?aba=bloqueios` abrem a aba padrão (Profissionais).
+
+**Todo cadastro abre em modal central** (criar, editar ou ver detalhes), nunca em painel lateral: 520px, ou 640px quando o formulário tem tabela dentro (jornada do profissional, quem faz o procedimento). Cabeçalho com título e descrição, corpo que rola por dentro (o modal vai até 86% da altura da tela), aviso e erro fixos logo acima do rodapé, rodapé fixo com Cancelar e Salvar. Esc e o X fecham. Quem só vê abre o mesmo modal em modo leitura, sem Salvar.
+
+**O vínculo é a parte mais importante e a mais difícil, e agora mora no Procedimento.** A matriz de três pontas (profissional x procedimento x convênio, com preço e duração próprios) é feita no modal do procedimento, na seção "Quem faz e convênios":
+- quem faz (vários profissionais) e convênios aceitos (vários; "Particular" sempre disponível);
+- preço e duração do procedimento valem como padrão; a exceção por profissional ou convênio (preço próprio, "Coberto" ou duração própria) é feita ali mesmo;
+- a chave "IA pode agendar" é a do procedimento, e o vínculo segue essa chave (uma fonte só);
+- vínculo que já tem consulta não é apagado, é desativado.
+
+No modal de agendamento (Tela 3), quando a clínica ainda não definiu quem faz nenhum procedimento, o aviso manda para Cadastros > Procedimentos.
+
+**Bloqueio de horário é ação da Agenda** (Tela 3), com o mesmo aviso de consultas já marcadas no período. **Recursos saem da tela:** sala, cabine ou equipamento continuam no banco, com a trava contra uso duplo, mas sem aba e sem campo no procedimento.
+
+Regras que continuam valendo, onde quer que o vínculo seja editado:
+
+- **"Coberto" é rótulo, não zero.** Campo vazio, valor zero e cobertura de convênio são três coisas diferentes e precisam parecer diferentes. Zero de verdade aparece como `R$ 0,00`.
+- Com a chave da IA desligada, o procedimento aparece como "Só recepção" (ícone, rótulo e cor).
+- Campo de conselho de classe é **livre**, não dropdown fechado: precisa aceitar CRM, CRO, CREFITO, CRBM, CRN e "sem conselho" (esteticista).
+- Estado vazio com botão grande **Importar de planilha**.
+
+**Aba Pacotes (pacote com vários procedimentos, decisão do dono em 29/09/2026):** o modal (640px, porque tem lista dentro) pede **Nome do pacote**, a seção **"Procedimentos do pacote"** (adicionar procedimento ativo pelo campo que fica sempre vazio, pronto para o próximo; sessões de cada um, de 1 a 200; remover; o mesmo procedimento entra uma vez só e sai das opções quando já está na lista; cada linha mostra o preço base por sessão e quanto as sessões dariam avulsas), o **"Preço avulso"** calculado ao vivo (soma de sessões x preço base, em mono; com procedimento sem preço base a soma é dada como incompleta e o desconto não aparece), o **"Preço do pacote"** editável e, quando os dois existem, o **desconto em porcentagem** ("14,3% de desconto: R$ 1.000,00 a menos que o avulso"; mais caro que o avulso aparece como acréscimo). Validade (dias, em branco = sem validade, vale para o pacote inteiro) e "Pacote à venda" como antes. **Pacote já vendido:** os procedimentos e as sessões ficam visíveis e desabilitados, com a dica "Pacote já vendido: os procedimentos e as sessões não mudam; crie um pacote novo."; nome, preço, validade e "à venda" continuam editáveis. A tabela tem **Pacote** (nome), **Procedimentos** ("Botox 2x + Facelift 1x"), **Preço avulso** ("Falta preço base" quando incompleto), **Preço do pacote** (com o desconto embaixo), Validade, Pacientes com saldo, Situação e ações (editar, desativar, remover só o nunca vendido).
+
+**Histórico: o desenho até 28/09/2026.** Abas: Profissionais · Procedimentos · Convênios · **Vínculos** · Pacotes · Recursos · Unidades · Bloqueios, com painel lateral de cadastro.
+
+**A aba Vínculos era a mais importante e a mais difícil.** Matriz de três pontas com preço e duração próprios. Solução de então: **acordeão agrupado por profissional.**
 
 ```
 ▼ Dr. João Pereira · CRM 12345 · Endocrinologia, Nutrologia      [+ Adicionar]
@@ -511,15 +549,7 @@ Abas: Profissionais · Procedimentos · Convênios · **Vínculos** · Pacotes �
 ▶ Dra. Ana Costa · CRM 67890 · Dermatologia
 ```
 
-- **"Coberto" é rótulo, não zero.** Campo vazio, valor zero e cobertura de convênio são três coisas diferentes e precisam parecer diferentes. Zero de verdade aparece como `R$ 0,00`.
-- Coluna **IA** é a chave "o agente pode agendar isso sozinho". Desligada, mostra dica "Só a recepção agenda".
-- Botão **Duplicar para outro profissional**.
-- Campo de conselho de classe é **livre**, não dropdown fechado: precisa aceitar CRM, CRO, CREFITO, CRBM, CRN e "sem conselho" (esteticista).
-- Estado vazio com botão grande **Importar de planilha**.
-
-**Aba Pacotes:** procedimento, quantidade de sessões, preço do pacote, validade. Listagem mostra quantos pacientes têm saldo ativo.
-
-**Aba Recursos:** sala, cabine ou equipamento, com unidade e procedimentos que dependem dele.
+No desenho de então, a coluna **IA** era a chave "o agente pode agendar isso sozinho" por vínculo, havia o botão **Duplicar para outro profissional**, a **aba Recursos** listava sala, cabine ou equipamento com unidade e procedimentos que dependem dele, e a **aba Bloqueios** criava bloqueio em lote para vários profissionais.
 
 ---
 
@@ -532,6 +562,8 @@ Abas: Profissionais · Procedimentos · Convênios · **Vínculos** · Pacotes �
 Três cards de indicador: Total de consultas · Faltas · Taxa de comparecimento.
 
 Duas colunas: à esquerda **linha do tempo de agendamentos** (data, profissional, procedimento, valor, chip de status); à direita dados cadastrais, **saldo de pacote com barra de sessões**, **estado do consentimento** (origem, data, botão de descadastrar), origem preservada desde o lead, e botões Abrir conversa, Agendar, Adicionar à lista de espera.
+
+**Saldo de pacote (pacote com vários procedimentos, desde 29/09/2026):** **um cartão por venda**, com o nome do pacote, as sessões restantes da venda, a validade ("Vale até", ou "Venceu em" com ícone, rótulo e cor de alerta) e **uma barra por procedimento** ("Botox, 1 de 2 usadas"; a barra diz o procedimento para quem ouve). Ações do cartão: **Ajustar saldo** (um campo de sessões usadas por procedimento, a validade da venda e um motivo só) e **Cancelar venda** (só administrador e gestor, e só enquanto nenhuma consulta descontou da venda; fora disso, visível e desabilitado com a dica). **Vender pacote** escolhe o pacote pelo nome, com o que ele inclui na própria opção ("Harmonização (Botox 2x + Facelift 1x)"), e mostra preço, validade e os procedimentos; "Pacote em andamento, comprado antes do sistema" acrescenta o campo "Já usadas" em cada procedimento (de 0 até as sessões dele, com ao menos 1 sessão sobrando no pacote) e a data de início. Na **Agenda**, o diálogo do Compareceu diz de onde sai a sessão: "Desconta 1 sessão de Botox do pacote Harmonização (2 de 3 usadas)." e o que sobra daquele procedimento.
 
 ---
 

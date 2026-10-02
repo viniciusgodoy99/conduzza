@@ -52,6 +52,20 @@ export type CobrancaManual = {
   cobrados: string[];
 };
 
+type PassoDaCobranca = { id: string; offsetMinutes: number };
+
+/**
+ * De qual regua sai o texto do toque manual de uma consulta: a vigente
+ * (o que regua_da_consulta devolveu) ou, sem nenhuma regua ativa que case,
+ * a geral. Null so quando nem a geral existe.
+ */
+export function reguaDoToqueManual(
+  vigente: unknown,
+  geralId: string | null,
+): string | null {
+  return typeof vigente === "string" && vigente !== "" ? vigente : geralId;
+}
+
 // O fim da frase de canal fora do ar; o comeco diz qual numero (ou "o
 // WhatsApp", com um numero so).
 const FIM_DO_ERRO_DESCONECTADO =
@@ -133,32 +147,76 @@ export async function planejarCobrancaManual(
     };
   }
 
-  // A regua PADRAO da clinica: e dela que sai o texto do toque. Excecao por
-  // procedimento e regua reforcada sao a Tela 7 (tarefa 4.8).
-  const { data: regua } = await leitura
+  // A regua do toque, POR CONSULTA: a VIGENTE (regua_da_consulta, a mesma
+  // escolha do planner e do executor: procedimento > medico > especialidade
+  // > geral, e a reforcada no nivel), para a recepcao cobrar com o texto que
+  // a regua automatica daquela consulta mandaria. Sem regua vigente (tudo
+  // desligado), a GERAL, como sempre foi: a recepcao cobra mesmo com a regua
+  // desligada (o toque manual nao olha o interruptor).
+  const { data: geral } = await leitura
     .from("cadence")
     .select("id")
     .eq("clinic_id", clinicId)
     .eq("kind", "confirmacao")
+    // A GERAL: sem vinculo nenhum (procedimento, medico, especialidade) e
+    // nao reforcada; com uma vinculada por medico, o filtro antigo casaria
+    // duas linhas e o maybeSingle falharia.
     .is("procedure_id", null)
+    .is("professional_id", null)
+    .is("specialty", null)
     .eq("for_no_show_history", false)
     .maybeSingle();
-  if (!regua) {
+  const geralId = (geral?.id as string | undefined) ?? null;
+
+  // Uma leitura por consulta, em paralelo (a selecao da Tela 2 e de poucas
+  // dezenas). Erro em qualquer uma recusa tudo: cobrar com o texto de outra
+  // regua seria pior do que pedir para tentar de novo.
+  const vigentes = await Promise.all(
+    cobraveis.map((consulta) =>
+      leitura.rpc("regua_da_consulta", {
+        p_appointment_id: consulta.id,
+        p_kind: "confirmacao",
+      }),
+    ),
+  );
+  if (vigentes.some((resposta) => resposta.error)) {
+    return {
+      ok: false,
+      error: "Não foi possível enfileirar as cobranças.",
+      ...vazio,
+    };
+  }
+  const reguaPorConsulta = new Map<string, string>();
+  cobraveis.forEach((consulta, indice) => {
+    const regua = reguaDoToqueManual(vigentes[indice]?.data, geralId);
+    if (regua) {
+      reguaPorConsulta.set(consulta.id, regua);
+    }
+  });
+  if (reguaPorConsulta.size === 0) {
     return {
       ok: false,
       error: "A régua de confirmação não está configurada.",
       ...vazio,
     };
   }
+
   const { data: passos } = await leitura
     .from("cadence_step")
-    .select("id, offset_minutes")
+    .select("id, offset_minutes, cadence_id")
     .eq("clinic_id", clinicId)
-    .eq("cadence_id", regua.id as string);
-  const passosDaRegua = (
-    (passos ?? []) as { id: string; offset_minutes: number }[]
-  ).map((passo) => ({ id: passo.id, offsetMinutes: passo.offset_minutes }));
-  if (passosDaRegua.length === 0) {
+    .in("cadence_id", [...new Set(reguaPorConsulta.values())]);
+  const passosPorRegua = new Map<string, PassoDaCobranca[]>();
+  for (const passo of (passos ?? []) as {
+    id: string;
+    offset_minutes: number;
+    cadence_id: string;
+  }[]) {
+    const lista = passosPorRegua.get(passo.cadence_id) ?? [];
+    lista.push({ id: passo.id, offsetMinutes: passo.offset_minutes });
+    passosPorRegua.set(passo.cadence_id, lista);
+  }
+  if (passosPorRegua.size === 0) {
     return {
       ok: false,
       error: "A régua de confirmação não tem mensagens.",
@@ -184,9 +242,16 @@ export async function planejarCobrancaManual(
   }
 
   // O NUMERO de cada paciente, pela mesma regra do envio (fixo, ultimo usado
-  // pelo paciente, principal), numa leitura so. Com a sessao, a RPC so aceita
-  // a clinica de quem clicou.
-  const contas = await contasDeEnvio(leitura, clinicId, contactIds);
+  // pelo paciente, principal), numa leitura so. O "Cobrar agora" e toque da
+  // regua de confirmacao: vale a escolha do tipo 'confirmacao' (a mesma que o
+  // banco deriva da run no gatilho da fila). Com a sessao, a RPC so aceita a
+  // clinica de quem clicou.
+  const contas = await contasDeEnvio(
+    leitura,
+    clinicId,
+    contactIds,
+    "confirmacao",
+  );
   if (!contas) {
     return {
       ok: false,
@@ -218,11 +283,17 @@ export async function planejarCobrancaManual(
       puladosSemAutorizacao += 1;
       continue;
     }
-    const passo = passoDoToqueManual(passosDaRegua, {
-      agora,
-      startsAt: new Date(consulta.starts_at),
-      timezone,
-    });
+    // Regua sem passo (a vinculada teve todos apagados): nada a cobrar para
+    // esta consulta, como quando nenhum passo casa com o dia.
+    const reguaDaConsulta = reguaPorConsulta.get(consulta.id);
+    const passo = passoDoToqueManual(
+      (reguaDaConsulta && passosPorRegua.get(reguaDaConsulta)) || [],
+      {
+        agora,
+        startsAt: new Date(consulta.starts_at),
+        timezone,
+      },
+    );
     if (!passo) {
       continue;
     }

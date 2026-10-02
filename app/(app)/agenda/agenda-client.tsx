@@ -1,10 +1,12 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarX2, UserRoundX } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { AgendamentoModal } from "@/components/agenda/agendamento-modal";
+import { BloquearHorarioDialog } from "@/components/agenda/bloquear-horario-dialog";
+import { horarioDoVao } from "@/components/agenda/bloqueio-comum";
 import { DayGrid } from "@/components/agenda/day-grid";
 import { FilterBar } from "@/components/agenda/filter-bar";
 import { PendingPanel } from "@/components/agenda/pending-panel";
@@ -49,6 +51,17 @@ import { createClient } from "@/lib/supabase/client";
 
 const DIA_VAZIO: AgendaDia = { consultas: [], bloqueios: [], holds: [] };
 
+const MODAL_FECHADO: AberturaDeModal = { aberto: false, prePreenchido: {} };
+
+/** Como o "Bloquear horario" abre: pela barra ou pelo modal do vao. */
+type AberturaDoBloqueio = {
+  profissionais: string[];
+  /** aaaa-mm-dd, fuso da clinica */
+  dia: string;
+  /** HH:MM, fuso da clinica; so quando veio do clique no vao */
+  hora?: string;
+};
+
 export function AgendaClient({
   clinicId,
   timezone,
@@ -86,7 +99,11 @@ export function AgendaClient({
   agendarContato?: string | null;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const queryClient = useQueryClient();
   const [dia, setDia] = useState(diaInicial);
+  // "Bloquear horario" (admin e gestor), pela barra ou pelo "Bloquear este
+  // horario" do modal do vao: montado so quando aberto.
+  const [bloqueio, setBloqueio] = useState<AberturaDoBloqueio | null>(null);
   const [visao, setVisao] = useState<VisaoAgenda>("dia");
   const [filtros, setFiltros] = useState<FiltrosAgenda>({
     ...FILTROS_VAZIOS,
@@ -101,7 +118,7 @@ export function AgendaClient({
     // a tela normal (mesma regra do /espera?adicionar=).
     agendarContato && podeEditar
       ? { aberto: true, prePreenchido: { contactId: agendarContato } }
-      : { aberto: false, prePreenchido: {} },
+      : MODAL_FECHADO,
   );
 
   useAgendaChannel(supabase, clinicId, timezone);
@@ -116,7 +133,7 @@ export function AgendaClient({
     queryKey: catalogoKeys.tudo(clinicId),
     queryFn: () => fetchCatalogo(supabase, clinicId),
     initialData: catalogoInicial,
-    // Catalogo muda raramente e cada refetch sao 9 queries: sem motivo para
+    // Catalogo muda raramente e cada refetch sao 8 queries: sem motivo para
     // refazer a cada alt-tab.
     staleTime: 5 * 60_000,
   });
@@ -142,6 +159,33 @@ export function AgendaClient({
 
   const abrirModal = (pre: AberturaDeModal["prePreenchido"] = {}) =>
     setModal({ aberto: true, prePreenchido: pre });
+
+  // Clique no vao (Dia e Semana): a consulta nova continua sendo o caminho
+  // principal; o vao guardado habilita o "Bloquear este horario" do modal.
+  const abrirDoVao = (professionalId: string, inicio: Date) =>
+    setModal({
+      aberto: true,
+      prePreenchido: { professionalId, inicio },
+      vao: { professionalId, inicio },
+    });
+
+  // "Bloquear este horario": fecha a consulta nova e abre o bloqueio com o
+  // profissional da coluna, o dia e a hora do clique (fuso da clinica).
+  const vaoDoModal = modal.vao;
+  const bloquearVaoDoModal = vaoDoModal
+    ? () => {
+        const { dia: diaDoVao, hora } = horarioDoVao(
+          vaoDoModal.inicio,
+          timezone,
+        );
+        setModal(MODAL_FECHADO);
+        setBloqueio({
+          profissionais: [vaoDoModal.professionalId],
+          dia: diaDoVao,
+          hora,
+        });
+      }
+    : undefined;
 
   const contexto: ContextoAgenda = {
     clinicId,
@@ -269,6 +313,21 @@ export function AgendaClient({
     profissionaisVisiveis[0] ??
     null;
 
+  // Quem ja vem marcado no "Bloquear horario": o da Semana, o do filtro (ou
+  // o do proprio papel), ou o unico visivel. Com varios, ninguem: bloquear o
+  // profissional errado e pior que marcar um a mais.
+  const profissionalEscolhido = filtros.profissionalId ?? ownProfessionalId;
+  const unicoVisivel =
+    profissionaisVisiveis.length === 1 ? profissionaisVisiveis[0] : undefined;
+  const profissionaisDoBloqueio: string[] =
+    visao === "semana" && profissionalDaSemana
+      ? [profissionalDaSemana.id]
+      : profissionalEscolhido
+        ? [profissionalEscolhido]
+        : unicoVisivel
+          ? [unicoVisivel.id]
+          : [];
+
   // Estado do dia (achado 83): sem dado e com a busca falhando, a grade NAO
   // se desenha vazia (a recepcao leria o dia como livre). Durante uma nova
   // tentativa, esqueleto.
@@ -307,6 +366,9 @@ export function AgendaClient({
         onFiltros={setFiltros}
         travadoNoProfissional={ownProfessionalId}
         onNovoAgendamento={() => abrirModal({})}
+        onBloquearHorario={() =>
+          setBloqueio({ profissionais: profissionaisDoBloqueio, dia })
+        }
         dados={diaQuery.data ?? null}
       />
 
@@ -366,9 +428,7 @@ export function AgendaClient({
                 carregando={carregandoDia}
                 profissionais={profissionaisVisiveis}
                 unidadeId={filtros.unidadeId}
-                onVaoClicado={(professionalId, inicio) =>
-                  abrirModal({ professionalId, inicio })
-                }
+                onVaoClicado={abrirDoVao}
               />
             )
           ) : profissionalDaSemana ? (
@@ -379,9 +439,7 @@ export function AgendaClient({
               profissionaisVisiveis={profissionaisVisiveis}
               onProfissional={setEscolhaDaSemana}
               unidadeId={filtros.unidadeId}
-              onVaoClicado={(professionalId, inicio) =>
-                abrirModal({ professionalId, inicio })
-              }
+              onVaoClicado={abrirDoVao}
             />
           ) : null}
         </div>
@@ -400,11 +458,32 @@ export function AgendaClient({
         <AgendamentoModal
           contexto={contexto}
           aberto={modal.aberto}
-          onFechar={() => setModal({ aberto: false, prePreenchido: {} })}
+          onFechar={() => setModal(MODAL_FECHADO)}
           prePreenchido={modal.prePreenchido}
           dia={dia}
           dadosDoDia={diaQuery.data ?? null}
           filtros={filtros}
+          aoBloquearEsteHorario={bloquearVaoDoModal}
+        />
+      ) : null}
+
+      {/* Bloqueio nao tem tempo real: depois de cada tentativa de gravar,
+          os dias em cache (Dia e as 7 da Semana, prefixo da clinica) buscam
+          de novo. */}
+      {bloqueio ? (
+        <BloquearHorarioDialog
+          onFechar={() => setBloqueio(null)}
+          profissionais={catalogo.profissionais.filter((p) => p.active)}
+          timezone={timezone}
+          diaSugerido={bloqueio.dia}
+          horaSugerida={bloqueio.hora}
+          profissionaisSugeridos={bloqueio.profissionais}
+          atualizarAgenda={() =>
+            void queryClient.invalidateQueries({
+              queryKey: ["agenda", clinicId],
+            })
+          }
+          aoIrParaODia={setDia}
         />
       ) : null}
     </div>

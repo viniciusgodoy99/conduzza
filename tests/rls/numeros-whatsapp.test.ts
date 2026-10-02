@@ -414,26 +414,43 @@ describe("unidade do número", () => {
   });
 });
 
+// Uma linha por TIPO desde 29/09/2026 (migration 20260929130000); as
+// policies continuam as mesmas, linha a linha. Aqui so o tipo 'confirmacao'.
 describe("número das mensagens automáticas", () => {
   it("recepção não grava a política", async () => {
-    const { error } = await recepcaoA
-      .from("whatsapp_envio_automatico")
-      .insert({ clinic_id: clinicaA, modo: "ultimo_usado" });
+    const { error } = await recepcaoA.from("whatsapp_envio_automatico").insert({
+      clinic_id: clinicaA,
+      tipo: "confirmacao",
+      modo: "ultimo_usado",
+    });
     expect(error?.code).toBe(RLS_VIOLATION);
   });
 
   it("gestor grava a política da própria clínica", async () => {
-    const { error } = await gestorA
-      .from("whatsapp_envio_automatico")
-      .insert({ clinic_id: clinicaA, modo: "ultimo_usado" });
+    const { error } = await gestorA.from("whatsapp_envio_automatico").insert({
+      clinic_id: clinicaA,
+      tipo: "confirmacao",
+      modo: "ultimo_usado",
+    });
     expect(error).toBeNull();
   });
 
   it("gestor não grava política de outra clínica", async () => {
-    const { error } = await gestorA
-      .from("whatsapp_envio_automatico")
-      .insert({ clinic_id: clinicaB, modo: "ultimo_usado" });
+    const { error } = await gestorA.from("whatsapp_envio_automatico").insert({
+      clinic_id: clinicaB,
+      tipo: "confirmacao",
+      modo: "ultimo_usado",
+    });
     expect(error?.code).toBe(RLS_VIOLATION);
+  });
+
+  it("tipo fora dos cinco é recusado", async () => {
+    const { error } = await gestorA.from("whatsapp_envio_automatico").insert({
+      clinic_id: clinicaA,
+      tipo: "reativacao",
+      modo: "ultimo_usado",
+    });
+    expect(error?.code).toBe(CHECK_VIOLATION);
   });
 
   it("número fixo de outra clínica é recusado", async () => {
@@ -514,6 +531,22 @@ describe("conta_de_envio por sessão", () => {
     });
     expect(error).toBeNull();
     expect(data).toBe(numeroA);
+  });
+
+  it("com o tipo, a escolha dele vale; admin de outra clínica continua recusado", async () => {
+    const { data, error } = await gestorA.rpc("conta_de_envio", {
+      p_clinic_id: clinicaA,
+      p_contact_id: null,
+      p_tipo: "confirmacao",
+    });
+    expect(error).toBeNull();
+    expect(data).toBe(numeroA);
+    const alheio = await adminB.rpc("contas_de_envio", {
+      p_clinic_id: clinicaA,
+      p_contact_ids: [],
+      p_tipo: "confirmacao",
+    });
+    expect(alheio.error?.code).toBe(RLS_VIOLATION);
   });
 
   it("admin de outra clínica é recusado", async () => {

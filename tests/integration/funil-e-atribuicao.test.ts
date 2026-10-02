@@ -359,6 +359,11 @@ describe("consumo de sessão de pacote no comparecimento", () => {
       .single()
       .throwOnError();
 
+    // Pacote e venda pelo caminho ANTIGO (procedure_id + sessions, INSERT
+    // direto em package_balance): desde a migration 20260929120000 os
+    // gatilhos do modo expand criam o item do pacote e o item da venda, e o
+    // debito e por item. O pacote de varios procedimentos tem teste proprio
+    // (tests/integration/pacote-com-varios-procedimentos.test.ts).
     const { data: pacote } = await admin
       .from("package")
       .insert({
@@ -382,23 +387,46 @@ describe("consumo de sessão de pacote no comparecimento", () => {
       .single()
       .throwOnError();
     const saldoId = saldo!.id as string;
+    const { data: item } = await admin
+      .from("package_balance_item")
+      .select("id")
+      .eq("package_balance_id", saldoId)
+      .eq("procedure_id", agenda.procedimentoId)
+      .single()
+      .throwOnError();
+    const itemId = item!.id as string;
 
+    // O saldo mora no item; package_balance.sessions_used e a soma legada.
     const sessoesUsadas = async (): Promise<number> => {
       const { data } = await admin
+        .from("package_balance_item")
+        .select("sessions_used")
+        .eq("id", itemId)
+        .single()
+        .throwOnError();
+      const { data: legado } = await admin
         .from("package_balance")
         .select("sessions_used")
         .eq("id", saldoId)
         .single()
         .throwOnError();
+      expect(legado!.sessions_used).toBe(data!.sessions_used);
       return data!.sessions_used as number;
     };
     const saldoDebitado = async (consultaId: string) => {
       const { data } = await admin
         .from("appointment")
-        .select("package_balance_id")
+        .select("package_balance_id, package_balance_item_id")
         .eq("id", consultaId)
         .single()
         .throwOnError();
+      // Venda e item andam juntos: os dois ou nenhum.
+      expect(data!.package_balance_item_id === null).toBe(
+        data!.package_balance_id === null,
+      );
+      if (data!.package_balance_item_id !== null) {
+        expect(data!.package_balance_item_id).toBe(itemId);
+      }
       return data!.package_balance_id as string | null;
     };
 

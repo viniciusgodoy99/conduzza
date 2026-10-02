@@ -44,7 +44,12 @@ async function reguaAtiva(kind: "confirmacao" | "pos_falta"): Promise<boolean> {
     .select("active")
     .eq("clinic_id", dados().clinicId)
     .eq("kind", kind)
+    // A GERAL: sem vinculo nenhum (procedimento, medico, especialidade) e
+    // nao reforcada. Uma vinculada por medico tambem tem procedure_id nulo, e
+    // o filtro antigo casaria duas linhas no single.
     .is("procedure_id", null)
+    .is("professional_id", null)
+    .is("specialty", null)
     .eq("for_no_show_history", false)
     .single();
   return Boolean(data?.active);

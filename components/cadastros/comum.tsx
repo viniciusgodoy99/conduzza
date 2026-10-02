@@ -19,15 +19,15 @@ import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { RECORD_STATUS, type StatusDefinition } from "@/lib/design/status";
 import { cn } from "@/lib/utils";
 import { formatarCentavos, lerReais } from "@/lib/utils/moeda";
@@ -105,7 +105,7 @@ export function BotaoProtegido({
 }
 
 // Acoes da linha de uma tabela de Cadastros. Quem edita ve o lapis. Quem so
-// ve (achado 41) ganha "Ver detalhes", que abre o mesmo painel em modo
+// ve (achado 41) ganha "Ver detalhes", que abre o mesmo modal em modo
 // leitura, e o lapis continua visivel e desabilitado com a dica do papel.
 export function AcoesDaLinha({
   podeEditar,
@@ -157,7 +157,7 @@ export function AcoesDaLinha({
   );
 }
 
-// Painel em modo leitura: rotulo e valor em texto corrido, sem truncar
+// Modal em modo leitura: rotulo e valor em texto corrido, sem truncar
 // (preparo e observacoes podem ser longos e a recepcao responde por eles).
 export function DetalheSomenteLeitura({
   itens,
@@ -189,9 +189,21 @@ export function DetalheSomenteLeitura({
   );
 }
 
-// Painel lateral de cadastro (criar, editar ou ver): cabecalho fixo, corpo
-// que rola, avisos e erro fixos logo acima do rodape (sempre a vista, mesmo
-// com o formulario comprido) e rodape com Cancelar e Salvar.
+// Larguras do modal de cadastro (decisao do dono de 29/09/2026: modal
+// central em todos os cadastros, no lugar do painel lateral). A larga e para
+// o formulario com tabela dentro (jornada do profissional, quem faz o
+// procedimento).
+export const LARGURA_DO_MODAL = {
+  normal: "sm:max-w-[520px]",
+  larga: "sm:max-w-[640px]",
+} as const;
+
+// Modal central de cadastro (criar, editar ou ver), na receita do Modal do
+// design system: cabecalho fixo com titulo e descricao, corpo que rola por
+// dentro (o modal inteiro vai ate 86vh), avisos e erro fixos logo acima do
+// rodape (sempre a vista, mesmo com o formulario comprido) e rodape fixo com
+// Cancelar e Salvar. Foco preso no modal, Esc e o X fecham (Radix Dialog). O
+// nome continua PainelDeCadastro para os chamadores nao mudarem.
 export function PainelDeCadastro({
   aberto,
   aoMudarAberto,
@@ -207,7 +219,7 @@ export function PainelDeCadastro({
   aoMudarAberto: (aberto: boolean) => void;
   titulo: string;
   descricao?: string;
-  /** 520px no lugar de 440px (a jornada do profissional pede mais largura) */
+  /** 640px no lugar de 520px (formulario com tabela dentro) */
   larga?: boolean;
   erro?: string | null;
   /** Pergunta de confirmacao que substitui o Salvar enquanto esta aberta */
@@ -216,26 +228,30 @@ export function PainelDeCadastro({
   children: React.ReactNode;
 }) {
   return (
-    <Sheet open={aberto} onOpenChange={aoMudarAberto}>
-      <SheetContent
+    <Dialog open={aberto} onOpenChange={aoMudarAberto}>
+      <DialogContent
+        // O Dialog padrao rola inteiro; aqui so o corpo rola, para cabecalho,
+        // aviso e rodape ficarem parados (flex em coluna, sem padding proprio).
         className={cn(
-          "gap-0 p-0 data-[side=right]:w-full",
-          larga
-            ? "data-[side=right]:sm:max-w-[520px]"
-            : "data-[side=right]:sm:max-w-[440px]",
+          "flex flex-col gap-0 overflow-hidden p-0",
+          larga ? LARGURA_DO_MODAL.larga : LARGURA_DO_MODAL.normal,
         )}
-        // Sem descricao, o painel nao aponta para uma que nao existe.
+        // Sem descricao, o modal nao aponta para uma que nao existe.
         {...(descricao ? {} : { "aria-describedby": undefined })}
       >
-        <SheetHeader>
-          <SheetTitle>{titulo}</SheetTitle>
-          {descricao ? <SheetDescription>{descricao}</SheetDescription> : null}
-        </SheetHeader>
-        <div className="cz-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <DialogHeader className="shrink-0 px-5 pt-[18px] pr-14 pb-3.5">
+          <DialogTitle>{titulo}</DialogTitle>
+          {descricao ? (
+            <DialogDescription>{descricao}</DialogDescription>
+          ) : null}
+        </DialogHeader>
+        {/* pt-1: o contorno de foco (2px com folga de 2px) do primeiro campo
+            nao e cortado pela rolagem do corpo. */}
+        <div className="cz-scroll min-h-0 flex-auto overflow-y-auto px-5 pt-1 pb-5">
           {children}
         </div>
         {aviso || erro ? (
-          <div className="grid gap-3 px-5 pb-4">
+          <div className="grid shrink-0 gap-3 px-5 pb-4">
             {aviso}
             {erro ? (
               <Aviso tom="alert" role="alert">
@@ -244,9 +260,11 @@ export function PainelDeCadastro({
             ) : null}
           </div>
         ) : null}
-        {rodape ? <SheetFooter>{rodape}</SheetFooter> : null}
-      </SheetContent>
-    </Sheet>
+        {rodape ? (
+          <DialogFooter className="m-0 shrink-0">{rodape}</DialogFooter>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

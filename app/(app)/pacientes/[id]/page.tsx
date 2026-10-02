@@ -9,7 +9,10 @@ import { DadosCadastrais } from "@/components/pacientes/dados-cadastrais";
 import { IndicadoresPaciente } from "@/components/pacientes/indicadores-paciente";
 import { LinhaDoTempo } from "@/components/pacientes/linha-do-tempo";
 import { OrigemPaciente } from "@/components/pacientes/origem-paciente";
-import { PacotesPaciente } from "@/components/pacientes/pacotes-paciente";
+import {
+  PacotesPaciente,
+  type PacoteVendavel,
+} from "@/components/pacientes/pacotes-paciente";
 import { Aviso } from "@/components/shared/aviso";
 import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { Button } from "@/components/ui/button";
@@ -23,8 +26,8 @@ import {
   indicadoresDe,
   saldoDeSessoes,
 } from "@/lib/domain/pacientes-ui";
+import { vendasQueJaDescontaram } from "@/lib/domain/pacotes-ui";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
-import { formatarCentavos } from "@/lib/utils/moeda";
 import { fetchCatalogo } from "@/lib/queries/catalogo";
 import { fetchFichaPaciente } from "@/lib/queries/pacientes";
 import { createClient } from "@/lib/supabase/server";
@@ -95,24 +98,30 @@ export default async function FichaPacientePage({
       procedimento.name,
     ]),
   );
-  // So pacote ativo vai a venda (o banco recusa vender desativado). O total
-  // cadastrado separa "nenhum pacote cadastrado" de "todos desativados".
-  const pacotesDoCatalogo = catalogo.pacotes
-    .filter((pacote) => pacote.active)
+  // So pacote ativo e com procedimentos vai a venda (o banco recusa vender
+  // desativado ou vazio). O total cadastrado separa "nenhum pacote
+  // cadastrado" de "todos desativados". A venda escolhe pelo nome e mostra
+  // os procedimentos com as sessoes de cada um.
+  const pacotesDoCatalogo: PacoteVendavel[] = catalogo.pacotes
+    .filter((pacote) => pacote.active && pacote.itens.length > 0)
     .map((pacote) => ({
       id: pacote.id,
-      rotulo: `${nomeDoProcedimento.get(pacote.procedure_id) ?? "Pacote"}, ${pacote.sessions} sessões, ${formatarCentavos(pacote.price_cents)}`,
-      sessoes: pacote.sessions,
+      nome: pacote.name,
+      price_cents: pacote.price_cents,
+      validity_days: pacote.validity_days,
+      itens: pacote.itens.map((item) => ({
+        procedure_id: item.procedure_id,
+        nome:
+          nomeDoProcedimento.get(item.procedure_id) ?? "Procedimento removido",
+        sessions: item.sessions,
+      })),
     }));
-  // Saldo que alguma consulta ja descontou: a venda nao se cancela (a
-  // consulta guarda o saldo que usou), so se ajusta.
-  const saldosQueJaDescontaram = [
-    ...new Set(
-      ficha.consultas
-        .map((consulta) => consulta.package_balance_id)
-        .filter((saldo): saldo is string => saldo !== null),
-    ),
-  ];
+  // Venda que alguma consulta ja descontou: nao se cancela (a consulta
+  // guarda a venda e o item que usou), so se ajusta.
+  const saldosQueJaDescontaram = vendasQueJaDescontaram(
+    ficha.consultas,
+    ficha.pacotes,
+  );
 
   const papel = active.role;
   // Profissional so enxerga as consultas da propria agenda (RLS de

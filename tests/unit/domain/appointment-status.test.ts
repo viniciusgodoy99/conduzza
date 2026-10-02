@@ -193,10 +193,14 @@ describe("saldo de pacote que o Compareceu desconta", () => {
   const PROCEDIMENTO = "proc-limpeza";
   const HOJE = "2026-09-25";
 
+  // Um ITEM de saldo (procedimento de uma venda). Cada item de teste e de
+  // uma venda propria, salvo quando o teste diz outra coisa.
   function saldo(
     parcial: Partial<SaldoParaComparecimento> & { id: string },
   ): SaldoParaComparecimento {
     return {
+      package_balance_id: `venda-${parcial.id}`,
+      package_name: "Pacote de limpeza",
       procedure_id: PROCEDIMENTO,
       procedure_name: "Limpeza de pele",
       sessions_total: 10,
@@ -266,6 +270,55 @@ describe("saldo de pacote que o Compareceu desconta", () => {
         HOJE,
       )?.id,
     ).toBe("antigo");
+  });
+
+  it("pacote de vários procedimentos: desconta o item do procedimento da consulta", () => {
+    // Uma venda (Botox 2 + Facelift 1): a consulta de Facelift desconta o
+    // item Facelift, e a de outro procedimento nao desconta nada.
+    const botox = saldo({
+      id: "item-botox",
+      package_balance_id: "venda-combo",
+      procedure_id: "botox",
+      procedure_name: "Botox",
+      sessions_total: 2,
+      sessions_used: 0,
+    });
+    const facelift = saldo({
+      id: "item-facelift",
+      package_balance_id: "venda-combo",
+      procedure_id: "facelift",
+      procedure_name: "Facelift",
+      sessions_total: 1,
+      sessions_used: 0,
+    });
+    expect(
+      saldoDescontadoAoComparecer([botox, facelift], "facelift", HOJE)?.id,
+    ).toBe("item-facelift");
+    expect(
+      saldoDescontadoAoComparecer([botox, facelift], "limpeza", HOJE),
+    ).toBeNull();
+    // Item esgotado nao empresta sessao do outro item da mesma venda.
+    expect(
+      saldoDescontadoAoComparecer(
+        [botox, { ...facelift, sessions_used: 1 }],
+        "facelift",
+        HOJE,
+      ),
+    ).toBeNull();
+  });
+
+  it("empate de validade e de data: desempata pela venda, como o banco", () => {
+    const mesmaHora = "2026-03-01T12:00:00Z";
+    expect(
+      saldoDescontadoAoComparecer(
+        [
+          saldo({ id: "b", package_balance_id: "bbbb", created_at: mesmaHora }),
+          saldo({ id: "a", package_balance_id: "aaaa", created_at: mesmaHora }),
+        ],
+        PROCEDIMENTO,
+        HOJE,
+      )?.id,
+    ).toBe("a");
   });
 });
 

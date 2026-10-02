@@ -8,7 +8,10 @@ import { login } from "./helpers";
 // falta nasce sozinha das consultas, a ficha mostra os indicadores e a linha do
 // tempo, o cadastro persiste, quem pediu para nao receber mensagens so volta com
 // evidencia, a lista de espera aparece desabilitada com dica, o papel leitura ve
-// tudo sem editar nada e o filtro de pacote separa quem tem saldo.
+// tudo sem editar nada e o filtro de pacote separa quem tem saldo. Desde o
+// pacote com varios procedimentos (29/09/2026), a ficha mostra um cartao por
+// venda com uma barra por procedimento; a venda, o Compareceu por item e o
+// travamento do pacote vendido estao em pacote-varios-procedimentos.spec.ts.
 
 const NOME_COM_FALTAS = "Fátima Faltas";
 const NOME_COM_PACOTE = "Paulo Pacote";
@@ -309,6 +312,73 @@ test("campo vazio da lista é texto, nunca hífen", async ({ page }) => {
   await expect(page.getByRole("cell", { name: "-", exact: true })).toHaveCount(
     0,
   );
+});
+
+test("a ficha mostra um cartão por venda, com uma barra por procedimento", async ({
+  page,
+}) => {
+  // Fixture no modelo de itens: pacote "Dermatologia 10 sessões" com um item
+  // (Consulta dermatologia, 10 sessões) e a venda com 3 usadas, validade de
+  // 180 dias. So LE: nada muda no banco.
+  const d = dados();
+  await login(page, d.emails.gestor);
+  await page.goto(`/pacientes/${d.pacientes.comPacoteId}`);
+
+  const saldo = bloco(page, "Saldo de pacote");
+  await expect(
+    saldo.getByRole("heading", { name: "Dermatologia 10 sessões" }),
+  ).toBeVisible();
+  await expect(saldo).toContainText("7 sessões restantes");
+  await expect(saldo).toContainText("Vale até");
+  const itens = saldo.getByRole("list", {
+    name: "Procedimentos de Dermatologia 10 sessões",
+  });
+  await expect(itens.getByRole("listitem")).toHaveCount(1);
+  await expect(
+    itens.getByRole("img", {
+      name: "Consulta dermatologia: 3 de 10 sessões usadas",
+    }),
+  ).toBeVisible();
+  await expect(itens).toContainText("3 de 10 usadas");
+
+  // O ajuste mostra um campo por procedimento, com o valor gravado, e a
+  // validade da venda inteira. Sai sem salvar.
+  await saldo.getByRole("button", { name: "Ajustar saldo" }).click();
+  const ajuste = page.getByRole("dialog", { name: "Ajustar saldo" });
+  await expect(
+    ajuste.getByLabel("Sessões usadas de Consulta dermatologia"),
+  ).toHaveValue("3");
+  await expect(ajuste.getByLabel("Validade do pacote")).not.toHaveValue("");
+  // Nada mudou: o Salvar fica desabilitado mesmo com motivo.
+  await ajuste
+    .getByLabel("Motivo (obrigatório)")
+    .fill("Conferência do saldo no e2e");
+  await expect(
+    ajuste.getByRole("button", { name: "Salvar ajuste" }),
+  ).toBeDisabled();
+  await ajuste.getByRole("button", { name: "Cancelar" }).click();
+  await expect(ajuste).toBeHidden();
+});
+
+test("papel leitura vê o saldo do pacote, com Ajustar e Cancelar desabilitados", async ({
+  page,
+}) => {
+  const d = dados();
+  await login(page, d.emails.leitura);
+  await page.goto(`/pacientes/${d.pacientes.comPacoteId}`);
+
+  const saldo = bloco(page, "Saldo de pacote");
+  await expect(
+    saldo.getByRole("img", {
+      name: "Consulta dermatologia: 3 de 10 sessões usadas",
+    }),
+  ).toBeVisible();
+  await expect(
+    saldo.getByRole("button", { name: "Ajustar saldo" }),
+  ).toBeDisabled();
+  await expect(
+    saldo.getByRole("button", { name: "Cancelar venda" }),
+  ).toBeDisabled();
 });
 
 test("o filtro Com pacote deixa na lista quem tem saldo", async ({ page }) => {

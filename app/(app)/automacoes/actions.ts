@@ -6,6 +6,11 @@ import { ptBR } from "date-fns/locale";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import {
+  especialidadesDosProfissionais,
+  nomeDaReguaVinculada,
+  resolverEspecialidade,
+} from "@/components/automacoes/vinculo-da-regua";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import { canEdit } from "@/lib/domain/permissions";
@@ -13,6 +18,7 @@ import {
   CORPO_DO_MENU_APOS_MIDIA,
   MENU_CONFIRMACAO,
 } from "@/lib/domain/textos-padrao";
+import { TIPOS_DE_ENVIO, tipoDeEnvioDaRegua } from "@/lib/domain/tipo-de-envio";
 import { carregarInstancia } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -311,19 +317,56 @@ export async function removerAnexoDoPassoAction(
 }
 
 // ---------------------------------------------------------------------------
-// Excecoes e passos (fase 2 da 4.8). Tudo pela SESSAO: a policy "gestao
-// escreve reguas/passos" decide, e o planner ja resolve a regua mais
-// especifica sozinho (procedimento vence historico, que vence a padrao).
+// Reguas vinculadas e passos (fase 2 da 4.8; vinculo por medico, especialidade
+// ou procedimento na decisao do dono de 29/09/2026). Tudo pela SESSAO: a
+// policy "gestao escreve reguas/passos" decide, e quem escolhe a regua de
+// cada consulta e o banco (regua_da_consulta: procedimento, depois medico,
+// depois especialidade, depois a geral; no mesmo nivel, a reforcada vence).
 
 const OFFSET_MAXIMO_MIN = 43_200; // 30 dias: alem disso e erro de digitacao
 
-const excecaoSchema = z.discriminatedUnion("base", [
-  z.object({ base: z.literal("procedimento"), procedure_id: z.uuid() }),
+const kindVinculavelSchema = z.enum(["confirmacao", "pos_falta"]);
+
+const reguaVinculadaSchema = z.discriminatedUnion("base", [
   z.object({
+    kind: kindVinculavelSchema,
+    base: z.literal("procedimento"),
+    procedure_id: z.uuid(),
+  }),
+  z.object({
+    kind: kindVinculavelSchema,
+    base: z.literal("medico"),
+    professional_id: z.uuid(),
+  }),
+  z.object({
+    kind: kindVinculavelSchema,
+    base: z.literal("especialidade"),
+    // O rotulo como aparece na lista; a action confere pela chave contra as
+    // especialidades dos profissionais ATIVOS e grava o rotulo da lista.
+    specialty: z.string().trim().min(1).max(120),
+  }),
+  // A reforcada por historico de falta so existe na confirmacao.
+  z.object({
+    kind: z.literal("confirmacao"),
     base: z.literal("reforcada"),
     no_show_threshold: z.number().int().min(1).max(10),
   }),
 ]);
+
+/** Nome da regua geral de cada tipo, para as mensagens de erro. */
+const GERAL_DO_TIPO: Record<"confirmacao" | "pos_falta", string> = {
+  confirmacao: "a régua geral de confirmação",
+  pos_falta: "a régua geral de recuperação depois da falta",
+};
+
+const ALVO_DO_VINCULO: Record<
+  "procedimento" | "medico" | "especialidade",
+  string
+> = {
+  procedimento: "este procedimento",
+  medico: "este médico",
+  especialidade: "esta especialidade",
+};
 
 export async function criarReguaDeExcecaoAction(
   input: unknown,
@@ -332,74 +375,132 @@ export async function criarReguaDeExcecaoAction(
   if ("error" in guard) {
     return { ok: false, error: guard.error };
   }
-  const parsed = excecaoSchema.safeParse(input);
+  const parsed = reguaVinculadaSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: "Dados inválidos." };
   }
+  const entrada = parsed.data;
+  const kind = entrada.kind;
 
   const supabase = await createClient();
-  // A excecao NASCE como copia da regua padrao da propria clinica (janela e
-  // passos): conteudo da clinica, nada inventado. Nasce DESLIGADA.
-  const { data: padrao } = await supabase
+  // A vinculada NASCE como copia da regua GERAL do mesmo tipo (janela e
+  // passos): conteudo da clinica, nada inventado. Nasce DESLIGADA. Geral e a
+  // que nao tem vinculo nenhum e nao e reforcada.
+  const { data: geral } = await supabase
     .from("cadence")
     .select("id, send_window_start, send_window_end, send_weekdays")
     .eq("clinic_id", guard.clinicId)
-    .eq("kind", "confirmacao")
+    .eq("kind", kind)
     .is("procedure_id", null)
+    .is("professional_id", null)
+    .is("specialty", null)
     .eq("for_no_show_history", false)
     .maybeSingle();
-  if (!padrao) {
+  if (!geral) {
     return {
       ok: false,
-      error: "A clínica ainda não tem a régua de confirmação principal.",
+      error: `A clínica ainda não tem ${GERAL_DO_TIPO[kind]}.`,
     };
   }
 
+  // O nome e o vinculo vem do CADASTRO ativo da clinica, nunca do cliente:
+  // id de outra clinica ou de cadastro desativado nao casa com nada.
   let nome = "Confirmação reforçada";
-  if (parsed.data.base === "procedimento") {
+  const vinculo: {
+    procedure_id: string | null;
+    professional_id: string | null;
+    specialty: string | null;
+  } = { procedure_id: null, professional_id: null, specialty: null };
+  if (entrada.base === "procedimento") {
     const { data: procedimento } = await supabase
       .from("procedure")
       .select("name")
       .eq("clinic_id", guard.clinicId)
-      .eq("id", parsed.data.procedure_id)
+      .eq("id", entrada.procedure_id)
+      .eq("active", true)
       .maybeSingle();
     if (!procedimento) {
-      return { ok: false, error: "Procedimento não encontrado." };
+      return {
+        ok: false,
+        error: "Procedimento não encontrado entre os ativos da clínica.",
+      };
     }
-    nome = `Confirmação: ${procedimento.name as string}`;
+    nome = nomeDaReguaVinculada(kind, procedimento.name as string);
+    vinculo.procedure_id = entrada.procedure_id;
+  } else if (entrada.base === "medico") {
+    const { data: profissional } = await supabase
+      .from("professional")
+      .select("name")
+      .eq("clinic_id", guard.clinicId)
+      .eq("id", entrada.professional_id)
+      .eq("active", true)
+      .maybeSingle();
+    if (!profissional) {
+      return {
+        ok: false,
+        error: "Médico não encontrado entre os ativos da clínica.",
+      };
+    }
+    nome = nomeDaReguaVinculada(kind, profissional.name as string);
+    vinculo.professional_id = entrada.professional_id;
+  } else if (entrada.base === "especialidade") {
+    const { data: profissionais } = await supabase
+      .from("professional")
+      .select("specialties, active")
+      .eq("clinic_id", guard.clinicId)
+      .eq("active", true);
+    const especialidade = resolverEspecialidade(
+      entrada.specialty,
+      especialidadesDosProfissionais(
+        (profissionais ?? []) as {
+          specialties: string[] | null;
+          active: boolean;
+        }[],
+      ),
+    );
+    if (!especialidade) {
+      return {
+        ok: false,
+        error:
+          "Nenhum profissional ativo tem esta especialidade. Confira em Cadastros.",
+      };
+    }
+    nome = nomeDaReguaVinculada(kind, especialidade.rotulo);
+    vinculo.specialty = especialidade.rotulo;
   }
 
   const { data: nova, error } = await supabase
     .from("cadence")
     .insert({
       clinic_id: guard.clinicId,
-      kind: "confirmacao",
+      kind,
       name: nome,
-      procedure_id:
-        parsed.data.base === "procedimento" ? parsed.data.procedure_id : null,
-      for_no_show_history: parsed.data.base === "reforcada",
+      ...vinculo,
+      for_no_show_history: entrada.base === "reforcada",
       no_show_threshold:
-        parsed.data.base === "reforcada" ? parsed.data.no_show_threshold : 2,
-      send_window_start: padrao.send_window_start,
-      send_window_end: padrao.send_window_end,
-      send_weekdays: padrao.send_weekdays,
+        entrada.base === "reforcada" ? entrada.no_show_threshold : 2,
+      send_window_start: geral.send_window_start,
+      send_window_end: geral.send_window_end,
+      send_weekdays: geral.send_weekdays,
       active: false,
     })
     .select("id")
     .single();
   if (error || !nova) {
+    // 23505: o indice unico cadence_configuracao_unica (a especialidade casa
+    // pela chave, entao "dermatologia" e "Dermatologia" sao a mesma).
     return {
       ok: false,
       error:
         error?.code === "23505"
-          ? parsed.data.base === "procedimento"
-            ? "Já existe uma régua para este procedimento."
-            : "Já existe uma régua reforçada nesta clínica."
+          ? entrada.base === "reforcada"
+            ? "Já existe uma régua reforçada nesta clínica."
+            : `Já existe uma régua de ${kind === "confirmacao" ? "confirmação" : "pós-falta"} para ${ALVO_DO_VINCULO[entrada.base]}.`
           : "Não foi possível criar a régua.",
     };
   }
 
-  // Copia os passos da padrao, ANEXO INCLUSO (achado da revisao de 19/09:
+  // Copia os passos da geral, ANEXO INCLUSO (achado da revisao de 19/09:
   // copiar so o texto transformava passo so-anexo em passo vazio que nunca
   // envia, em silencio). O insert em lote e ATOMICO no PostgREST: falhou,
   // nao entrou NENHUM passo, a regua recem-criada e desfeita e a clinica
@@ -412,7 +513,7 @@ export async function criarReguaDeExcecaoAction(
       "offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
     )
     .eq("clinic_id", guard.clinicId)
-    .eq("cadence_id", padrao.id as string)
+    .eq("cadence_id", geral.id as string)
     .order("offset_minutes");
   let avisoDaCopia: string | undefined;
   if (passos && passos.length > 0) {
@@ -436,7 +537,7 @@ export async function criarReguaDeExcecaoAction(
       return {
         ok: false,
         error:
-          "Não foi possível copiar as mensagens da régua principal. Tente de novo.",
+          "Não foi possível copiar as mensagens da régua geral. Tente de novo.",
       };
     }
     const adminStorage = createAdminClient();
@@ -487,7 +588,7 @@ export async function criarReguaDeExcecaoAction(
           .eq("clinic_id", guard.clinicId)
           .eq("id", copiado.id as string);
         avisoDaCopia =
-          "Um dos passos da régua principal é só anexo e o arquivo não pôde ser copiado: ele ficou de fora. Anexe de novo na régua nova.";
+          "Um dos passos da régua geral é só anexo e o arquivo não pôde ser copiado: ele ficou de fora. Anexe de novo na régua nova.";
       } else {
         avisoDaCopia =
           "O texto veio, mas um anexo não pôde ser copiado. Anexe de novo na régua nova.";
@@ -558,6 +659,52 @@ export async function salvarLimiarDaReforcadaAction(
   return { ok: true };
 }
 
+/**
+ * A janela da trava do toque recente de planejar_reguas (migration
+ * 20260929110000): as duas precisam mudar juntas.
+ */
+const JANELA_DO_TOQUE_RECENTE_MS = 30 * 60_000;
+
+const MENSAGEM_ENVIOU_HA_POUCO =
+  "Esta régua enviou mensagens há pouco. Desligue agora e exclua daqui a 30 minutos.";
+
+/**
+ * Se alguma run da regua saiu nos ultimos 30 minutos. Null quando a leitura
+ * falhou: quem chama recusa, porque excluir sem saber pode repetir o toque.
+ */
+async function enviouHaPouco(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  cadenceId: string,
+): Promise<boolean | null> {
+  const { data: passos, error: erroDosPassos } = await supabase
+    .from("cadence_step")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .eq("cadence_id", cadenceId);
+  if (erroDosPassos) {
+    return null;
+  }
+  const idsDosPassos = (passos ?? []).map((passo) => passo.id as string);
+  if (idsDosPassos.length === 0) {
+    return false;
+  }
+  // Instante absoluto (UTC), comparado com sent_at: nao e relogio de parede,
+  // entao o fuso da clinica nao entra.
+  const desde = new Date(Date.now() - JANELA_DO_TOQUE_RECENTE_MS).toISOString();
+  const { data: enviadas, error } = await supabase
+    .from("cadence_run")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .in("cadence_step_id", idsDosPassos)
+    .gt("sent_at", desde)
+    .limit(1);
+  if (error) {
+    return null;
+  }
+  return (enviadas ?? []).length > 0;
+}
+
 export async function excluirReguaAction(
   input: unknown,
 ): Promise<AutomacoesActionResult> {
@@ -573,28 +720,58 @@ export async function excluirReguaAction(
   const supabase = await createClient();
   const { data: regua } = await supabase
     .from("cadence")
-    .select("id, kind, procedure_id, for_no_show_history")
+    .select(
+      "id, kind, procedure_id, professional_id, specialty, for_no_show_history",
+    )
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data.cadence_id)
     .maybeSingle();
   if (!regua) {
     return { ok: false, error: "Régua não encontrada." };
   }
-  const ehPadrao =
-    regua.procedure_id === null && regua.for_no_show_history === false;
-  if (regua.kind === "confirmacao" && ehPadrao) {
+  // A GERAL de confirmacao e a de pos-falta (sem vinculo nenhum e nao
+  // reforcada) nao se excluem: sem elas, a consulta fora de todo recorte
+  // ficaria sem regua. As vinculadas dos dois tipos e o follow-up, sim.
+  const ehGeral =
+    (regua.procedure_id ?? null) === null &&
+    (regua.professional_id ?? null) === null &&
+    (regua.specialty ?? null) === null &&
+    regua.for_no_show_history === false;
+  if (ehGeral && regua.kind === "confirmacao") {
     return {
       ok: false,
       error:
-        "A régua principal de confirmação não pode ser excluída. Desligue o interruptor para pausar.",
+        "A régua geral de confirmação não pode ser excluída. Desligue o interruptor para pausar.",
     };
   }
-  if (regua.kind === "pos_falta") {
+  if (ehGeral && regua.kind === "pos_falta") {
     return {
       ok: false,
       error:
-        "A régua de recuperação não pode ser excluída. Desligue o interruptor para pausar.",
+        "A régua geral de recuperação não pode ser excluída. Desligue o interruptor para pausar.",
     };
+  }
+
+  // Vinculada (ou reforcada) de confirmacao ou de pos-falta que enviou toque
+  // ha pouco: o cascade levaria as runs enviadas dela, que sao a prova que o
+  // planner usa para nao repetir o toque (planejar_reguas nao recupera passo
+  // vencido de consulta que recebeu toque do mesmo tipo nos ultimos 30
+  // minutos). Sem essa prova, a regua que volta a valer para a consulta
+  // mandaria de novo a mesma mensagem. Desligar agora ja tira a regua do
+  // envio; excluir depois da janela nao repete nada. O follow-up nao entra:
+  // ele nao disputa consulta com outra regua.
+  if (regua.kind === "confirmacao" || regua.kind === "pos_falta") {
+    const recente = await enviouHaPouco(
+      supabase,
+      guard.clinicId,
+      parsed.data.cadence_id,
+    );
+    if (recente === null) {
+      return { ok: false, error: "Não foi possível excluir a régua." };
+    }
+    if (recente) {
+      return { ok: false, error: MENSAGEM_ENVIOU_HA_POUCO };
+    }
   }
 
   // Antes do cascade levar os passos, anotar os anexos para limpar o balde.
@@ -926,7 +1103,7 @@ export async function testarEnvioAction(
     .object({
       cadence_step_id: z.uuid(),
       // Por qual numero o teste sai (e para qual ele chega: o numero manda
-      // para ele mesmo). Ausente: o das automaticas quando e fixo, senao o
+      // para ele mesmo). Ausente: o fixo do tipo desta regua, senao o
       // principal.
       whatsapp_account_id: z.uuid().optional(),
     })
@@ -985,18 +1162,23 @@ export async function testarEnvioAction(
     display_phone: string | null;
   }[];
   let contaId = parsed.data.whatsapp_account_id ?? null;
-  if (contaId === null) {
+  // Sem numero pedido: o fixo do TIPO desta regua (a escolha e por tipo desde
+  // 29/09/2026), senao o principal.
+  const tipo = tipoDeEnvioDaRegua(kind);
+  if (contaId === null && tipo !== null) {
     const { data: politica } = await supabase
       .from("whatsapp_envio_automatico")
       .select("modo, conta_fixa_id")
       .eq("clinic_id", guard.clinicId)
+      .eq("tipo", tipo)
       .maybeSingle();
-    const fixo =
-      politica?.modo === "fixo"
-        ? numeros.find((numero) => numero.id === politica.conta_fixa_id)
-        : undefined;
     contaId =
-      fixo?.id ?? numeros.find((numero) => numero.principal)?.id ?? null;
+      (politica?.modo === "fixo"
+        ? numeros.find((numero) => numero.id === politica.conta_fixa_id)?.id
+        : undefined) ?? null;
+  }
+  if (contaId === null) {
+    contaId = numeros.find((numero) => numero.principal)?.id ?? null;
   }
   const conta = numeros.find((numero) => numero.id === contaId);
   if (parsed.data.whatsapp_account_id && !conta) {
@@ -1118,19 +1300,33 @@ export async function testarEnvioAction(
 }
 
 // ---------------------------------------------------------------------------
-// Numero das mensagens automaticas (decisao 2 do dono, docs/07): por padrao,
-// confirmacao, pos-falta, follow-up, lista de espera, aviso de remarcacao e
-// Cobrar agora saem pelo ultimo numero para o qual o paciente escreveu (sem
-// conversa, pelo principal); quem configura as automacoes pode fixar "sempre
-// pelo numero X". O cartao desta escolha e da Fase 4.
+// Numero das mensagens automaticas, POR TIPO (decisao 2 do dono, docs/07, e a
+// de 29/09/2026): cada tipo (confirmacao e Cobrar agora, pos-falta,
+// follow-up, oferta da lista de espera, aviso de remarcacao) sai pelo ultimo
+// numero para o qual o paciente escreveu (sem conversa, pelo principal) ou,
+// se quem configura as automacoes fixar, "sempre pelo numero X". Tipo sem
+// linha gravada vale o ultimo usado. O eco da resposta ao toque fica fora:
+// sai pelo numero em que o paciente respondeu (D4).
 
-const numeroDasAutomaticasSchema = z.discriminatedUnion("modo", [
-  z.object({
-    modo: z.literal("ultimo_usado"),
-    contaFixaId: z.null().optional(),
-  }),
-  z.object({ modo: z.literal("fixo"), contaFixaId: z.uuid() }),
-]);
+const numeroDasAutomaticasSchema = z.object({
+  // So os tipos que mudaram (a tela manda a diferenca): gravar os cinco
+  // desfaria a troca que outra pessoa fez em outro tipo nesse meio tempo.
+  escolhas: z
+    .array(
+      z.object({
+        tipo: z.enum(TIPOS_DE_ENVIO),
+        /** Nulo: ultimo numero usado pelo paciente. */
+        contaFixaId: z.uuid().nullable(),
+      }),
+    )
+    .min(1)
+    .max(TIPOS_DE_ENVIO.length)
+    .refine(
+      (escolhas) =>
+        new Set(escolhas.map((escolha) => escolha.tipo)).size ===
+        escolhas.length,
+    ),
+});
 
 export async function definirNumeroDasAutomaticasAction(
   input: unknown,
@@ -1146,25 +1342,26 @@ export async function definirNumeroDasAutomaticasAction(
       error: "Escolha por qual número as mensagens automáticas saem.",
     };
   }
-  const contaFixaId =
-    parsed.data.modo === "fixo" ? parsed.data.contaFixaId : null;
+  const escolhas = parsed.data.escolhas;
 
   // Pela SESSAO: a policy da tabela decide quem grava (administrador e
   // gestor), e o gatilho exigir_cadastro_da_mesma_clinica recusa numero de
-  // outra clinica ou removido.
+  // outra clinica ou removido. Um upsert so: ou todos os tipos mudam, ou
+  // nenhum.
   const supabase = await createClient();
   const { data: gravada, error } = await supabase
     .from("whatsapp_envio_automatico")
     .upsert(
-      {
+      escolhas.map((escolha) => ({
         clinic_id: guard.clinicId,
-        modo: parsed.data.modo,
-        conta_fixa_id: contaFixaId,
-      },
-      { onConflict: "clinic_id" },
+        tipo: escolha.tipo,
+        modo: escolha.contaFixaId === null ? "ultimo_usado" : "fixo",
+        conta_fixa_id: escolha.contaFixaId,
+      })),
+      { onConflict: "clinic_id,tipo" },
     )
-    .select("clinic_id");
-  if (error || !gravada || gravada.length === 0) {
+    .select("tipo");
+  if (error || !gravada || gravada.length !== escolhas.length) {
     return {
       ok: false,
       error:
@@ -1189,9 +1386,11 @@ export async function definirNumeroDasAutomaticasAction(
   // Recarimbo dos envios automaticos PENDENTES pela regra nova: cada job ja
   // nasceu com um numero (job_ganha_numero), e o executor so troca o numero
   // de job cujo numero foi removido. Sem isto, a escolha so valeria para o
-  // que for agendado depois. Por service role (a RPC e so dele), depois do
-  // guard e da gravacao acima. Um numero de cada vez: a RPC move os jobs de
-  // UM numero, e em sequencia nenhum job e disputado por duas chamadas.
+  // que for agendado depois. So os jobs dos TIPOS que mudaram (p_tipos): a
+  // confirmacao pendente nao muda de numero porque alguem mexeu no
+  // follow-up. Por service role (a RPC e so dele), depois do guard e da
+  // gravacao acima. Um numero de cada vez: a RPC move os jobs de UM numero,
+  // e em sequencia nenhum job e disputado por duas chamadas.
   const adminDb = createAdminClient();
   const { data: numeros, error: erroDosNumeros } = await adminDb
     .from("whatsapp_account")
@@ -1200,10 +1399,11 @@ export async function definirNumeroDasAutomaticasAction(
     .is("removido_em", null);
   let recarimboFalhou = Boolean(erroDosNumeros);
   let movidos = 0;
+  const tipos = escolhas.map((escolha) => escolha.tipo);
   for (const numero of (numeros ?? []) as { id: string }[]) {
     const { data: total, error: erroDoRecarimbo } = await adminDb.rpc(
       "redistribuir_jobs_do_numero",
-      { p_account_id: numero.id },
+      { p_account_id: numero.id, p_tipos: tipos },
     );
     if (erroDoRecarimbo) {
       recarimboFalhou = true;

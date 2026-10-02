@@ -7,7 +7,7 @@ import { AppointmentMenu } from "@/components/agenda/appointment-menu";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
 import { APPOINTMENT_STATUS, STATUS_TONE_VARS } from "@/lib/design/status";
 import { STATUS_TERMINAIS } from "@/lib/domain/appointment-status";
-import type { ConsultaDaAgenda } from "@/lib/queries/agenda";
+import type { BloqueioDaAgenda, ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 // Bloco de consulta na grade, na pele do AppointmentCard do design system
 // (docs/06 secao 5.6, C9): fundo da familia do status, barra de 3px na cor do
@@ -25,6 +25,7 @@ const ZAP_DO_ENCAIXE = STATUS_TONE_VARS.neutral.text;
 export function AppointmentBlock({
   contexto,
   consulta,
+  bloqueios,
   top,
   height,
   lane,
@@ -32,6 +33,11 @@ export function AppointmentBlock({
 }: {
   contexto: ContextoAgenda;
   consulta: ConsultaDaAgenda;
+  /**
+   * Bloqueios do mesmo profissional que cruzam o horario da consulta
+   * (bloqueiosQueCruzam). O bloco cobre a faixa deles; o menu os mostra.
+   */
+  bloqueios: readonly BloqueioDaAgenda[];
   top: number;
   height: number;
   lane: number;
@@ -78,7 +84,11 @@ export function AppointmentBlock({
     consulta.contact?.name ?? consulta.contact?.phone_e164 ?? "Paciente";
 
   return (
-    <AppointmentMenu contexto={contexto} consulta={consulta}>
+    <AppointmentMenu
+      contexto={contexto}
+      consulta={consulta}
+      bloqueios={bloqueios}
+    >
       <button
         type="button"
         ref={setNodeRef}

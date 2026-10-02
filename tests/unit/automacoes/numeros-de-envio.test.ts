@@ -3,16 +3,21 @@ import { describe, expect, it } from "vitest";
 import {
   lerPoliticaDeEnvio,
   numeroPadraoDoTeste,
+  numerosFixosDaPolitica,
+  politicaNoUltimoUsado,
   situacaoDoNumero,
   telefoneDoNumero,
   temEscolhaDeNumero,
+  tiposQueMudaram,
   type NumerosDasAutomaticas,
+  type PoliticaDeEnvio,
 } from "@/components/automacoes/numeros-de-envio";
 import { WHATSAPP_CONNECTION_STATUS } from "@/lib/design/status";
 import type { NumeroDaClinica } from "@/lib/queries/conversations";
 
-// Calculos puros da tela de Automacoes com varios numeros (docs/07, Fase 4):
-// quando o cartao aparece, como a politica crua e lida, a situacao em 3
+// Calculos puros da tela de Automacoes com varios numeros (docs/07, Fase 4;
+// escolha POR TIPO desde 29/09/2026): quando o cartao aparece, como as
+// linhas cruas da politica viram a escolha de cada tipo, a situacao em 3
 // camadas, o telefone exibido e o numero que o dialogo de teste ja marca.
 
 const PRINCIPAL = "0a0a0a0a-0000-4000-8000-00000000000a";
@@ -36,35 +41,93 @@ const DOIS: NumeroDaClinica[] = [
   numero({ id: RECEPCAO, nome: "Recepção", principal: false }),
 ];
 
+const TODOS_NO_ULTIMO: PoliticaDeEnvio = {
+  confirmacao: null,
+  pos_falta: null,
+  followup: null,
+  lista_espera: null,
+  aviso_remarcacao: null,
+};
+
 describe("lerPoliticaDeEnvio", () => {
-  it("sem linha vale o último usado", () => {
-    expect(lerPoliticaDeEnvio(null, DOIS)).toEqual({
-      modo: "ultimo_usado",
-      contaFixaId: null,
+  it("sem linha, todo tipo vale o último usado", () => {
+    expect(lerPoliticaDeEnvio([], DOIS)).toEqual(TODOS_NO_ULTIMO);
+    expect(lerPoliticaDeEnvio(null, DOIS)).toEqual(TODOS_NO_ULTIMO);
+    expect(politicaNoUltimoUsado()).toEqual(TODOS_NO_ULTIMO);
+  });
+
+  it("cada tipo lê a própria linha: confirmação fixa, follow-up no último usado", () => {
+    expect(
+      lerPoliticaDeEnvio(
+        [
+          { tipo: "confirmacao", modo: "fixo", conta_fixa_id: RECEPCAO },
+          { tipo: "followup", modo: "ultimo_usado", conta_fixa_id: null },
+          { tipo: "aviso_remarcacao", modo: "fixo", conta_fixa_id: PRINCIPAL },
+        ],
+        DOIS,
+      ),
+    ).toEqual({
+      ...TODOS_NO_ULTIMO,
+      confirmacao: RECEPCAO,
+      aviso_remarcacao: PRINCIPAL,
     });
   });
 
-  it("fixo com número ativo guarda o número", () => {
+  it("fixo apontando para número fora dos ativos vale o último usado, como no banco", () => {
     expect(
-      lerPoliticaDeEnvio({ modo: "fixo", conta_fixa_id: RECEPCAO }, DOIS),
-    ).toEqual({ modo: "fixo", contaFixaId: RECEPCAO });
+      lerPoliticaDeEnvio(
+        [{ tipo: "pos_falta", modo: "fixo", conta_fixa_id: UNIDADE }],
+        DOIS,
+      ),
+    ).toEqual(TODOS_NO_ULTIMO);
   });
 
-  it("fixo apontando para número fora dos ativos fica fixo sem número", () => {
+  it("modo ou tipo desconhecido é ignorado", () => {
     expect(
-      lerPoliticaDeEnvio({ modo: "fixo", conta_fixa_id: UNIDADE }, DOIS),
-    ).toEqual({ modo: "fixo", contaFixaId: null });
+      lerPoliticaDeEnvio(
+        [
+          { tipo: "confirmacao", modo: "outro", conta_fixa_id: RECEPCAO },
+          { tipo: "reativacao", modo: "fixo", conta_fixa_id: RECEPCAO },
+          null,
+          "lixo",
+        ],
+        DOIS,
+      ),
+    ).toEqual(TODOS_NO_ULTIMO);
   });
+});
 
-  it("modo desconhecido cai no último usado", () => {
+describe("numerosFixosDaPolitica", () => {
+  it("os números fixos de algum tipo, sem repetição", () => {
+    expect(numerosFixosDaPolitica(TODOS_NO_ULTIMO)).toEqual([]);
     expect(
-      lerPoliticaDeEnvio({ modo: "outro", conta_fixa_id: RECEPCAO }, DOIS),
-    ).toEqual({ modo: "ultimo_usado", contaFixaId: null });
+      numerosFixosDaPolitica({
+        ...TODOS_NO_ULTIMO,
+        confirmacao: RECEPCAO,
+        lista_espera: RECEPCAO,
+        aviso_remarcacao: PRINCIPAL,
+      }).sort(),
+    ).toEqual([PRINCIPAL, RECEPCAO].sort());
+  });
+});
+
+describe("tiposQueMudaram", () => {
+  it("só os tipos cuja escolha mudou, na ordem da tela", () => {
+    const salva = { ...TODOS_NO_ULTIMO, followup: RECEPCAO };
+    expect(tiposQueMudaram(salva, salva)).toEqual([]);
+    expect(
+      tiposQueMudaram(salva, {
+        ...salva,
+        aviso_remarcacao: PRINCIPAL,
+        confirmacao: RECEPCAO,
+        followup: null,
+      }),
+    ).toEqual(["confirmacao", "followup", "aviso_remarcacao"]);
   });
 });
 
 describe("temEscolhaDeNumero", () => {
-  const politica = { modo: "ultimo_usado" as const, contaFixaId: null };
+  const politica = TODOS_NO_ULTIMO;
 
   it("só com mais de um número ativo", () => {
     expect(temEscolhaDeNumero({ numeros: DOIS, politica })).toBe(true);
@@ -113,22 +176,29 @@ describe("telefoneDoNumero", () => {
 describe("numeroPadraoDoTeste", () => {
   function dados(
     numeros: NumeroDaClinica[],
-    contaFixaId: string | null = null,
+    confirmacaoFixa: string | null = null,
   ): NumerosDasAutomaticas {
     return {
       numeros,
-      politica: contaFixaId
-        ? { modo: "fixo", contaFixaId }
-        : { modo: "ultimo_usado", contaFixaId: null },
+      politica: { ...TODOS_NO_ULTIMO, confirmacao: confirmacaoFixa },
     };
   }
 
   it("no último usado, marca o principal", () => {
-    expect(numeroPadraoDoTeste(dados(DOIS))).toBe(PRINCIPAL);
+    expect(numeroPadraoDoTeste(dados(DOIS), "confirmacao")).toBe(PRINCIPAL);
   });
 
-  it("no modo fixo, marca o número fixo", () => {
-    expect(numeroPadraoDoTeste(dados(DOIS, RECEPCAO))).toBe(RECEPCAO);
+  it("com o tipo da régua fixo, marca o número fixo dele", () => {
+    expect(numeroPadraoDoTeste(dados(DOIS, RECEPCAO), "confirmacao")).toBe(
+      RECEPCAO,
+    );
+  });
+
+  it("o fixo de OUTRO tipo não conta: o follow-up marca o principal", () => {
+    expect(numeroPadraoDoTeste(dados(DOIS, RECEPCAO), "followup")).toBe(
+      PRINCIPAL,
+    );
+    expect(numeroPadraoDoTeste(dados(DOIS, RECEPCAO), null)).toBe(PRINCIPAL);
   });
 
   it("o padrão desconectado cede ao primeiro conectado", () => {
@@ -136,7 +206,7 @@ describe("numeroPadraoDoTeste", () => {
       numero({ connection_status: "desconectado" }),
       numero({ id: RECEPCAO, nome: "Recepção", principal: false }),
     ];
-    expect(numeroPadraoDoTeste(dados(numeros))).toBe(RECEPCAO);
+    expect(numeroPadraoDoTeste(dados(numeros), "pos_falta")).toBe(RECEPCAO);
   });
 
   it("nenhum conectado, nada marcado", () => {
@@ -144,6 +214,6 @@ describe("numeroPadraoDoTeste", () => {
       ...n,
       connection_status: "desconectado",
     }));
-    expect(numeroPadraoDoTeste(dados(numeros))).toBeNull();
+    expect(numeroPadraoDoTeste(dados(numeros), "confirmacao")).toBeNull();
   });
 });

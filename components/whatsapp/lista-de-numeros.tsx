@@ -74,8 +74,11 @@ export type ListaDeNumerosProps = {
   numeros: NumeroDoWhatsapp[];
   /** as unidades da clinica; nulo: a leitura falhou */
   unidades: UnidadeDaClinica[] | null;
-  /** o numero fixo das mensagens automaticas (modo fixo), se houver */
-  contaFixaId: string | null;
+  /**
+   * os numeros que algum tipo de mensagem automatica usa como fixo ("sempre
+   * pelo numero X"), sem repeticao
+   */
+  numerosDasAutomaticas: string[];
   /** clinic.limite_de_numeros; nulo = sem limite (o padrao) */
   limite: number | null;
   /** administrador ou gestor */
@@ -89,10 +92,27 @@ export type ListaDeNumerosProps = {
   timezone: string;
 };
 
+/**
+ * Descricao do dialogo de remover. A frase das mensagens automaticas fixas
+ * ("passam a sair pelo ultimo numero usado pelo paciente") so vale quando
+ * sobra outro numero: com um numero so, depois de remover nao ha por onde
+ * sair, e o texto base ja diz que ele deixa de receber e enviar.
+ */
+export function descricaoDaRemocao(
+  numero: NumeroDoWhatsapp,
+  numerosDasAutomaticas: readonly string[],
+  totalAtivos: number,
+): string {
+  return textoDaRemocao(
+    numero,
+    totalAtivos > 1 && numerosDasAutomaticas.includes(numero.id),
+  );
+}
+
 export function ListaDeNumeros({
   numeros,
   unidades,
-  contaFixaId,
+  numerosDasAutomaticas,
   limite,
   podeGerenciar,
   ehAdmin,
@@ -302,14 +322,13 @@ export function ListaDeNumeros({
               <CartaoDoNumero
                 numero={numero}
                 unidade={nomeDaUnidade(numero.unitId, unidades)}
-                fixoDasAutomaticas={contaFixaId === numero.id}
+                fixoDasAutomaticas={numerosDasAutomaticas.includes(numero.id)}
                 timezone={timezone}
                 podeGerenciar={podeGerenciar}
                 dica={dica}
                 motivoParaNaoRemover={motivoParaNaoRemover(numero, {
                   ehAdmin,
                   totalAtivos: total,
-                  contaFixaId,
                 })}
                 motivoParaNaoEscolherUnidade={motivoDaUnidade(numero)}
                 ocupado={ocupado === numero.id}
@@ -415,7 +434,11 @@ export function ListaDeNumeros({
         aberto={aberto && alvo?.tipo === "remover"}
         aoFechar={fechar}
         titulo={`Remover o número ${numeroDoAlvo?.nome ?? ""}?`}
-        descricao={numeroDoAlvo ? textoDaRemocao(numeroDoAlvo) : ""}
+        descricao={
+          numeroDoAlvo
+            ? descricaoDaRemocao(numeroDoAlvo, numerosDasAutomaticas, total)
+            : ""
+        }
         rotulo="Remover número"
         rotuloPendente="Removendo..."
         icone={Trash2}

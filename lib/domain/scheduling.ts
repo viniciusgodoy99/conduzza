@@ -206,11 +206,19 @@ export function firstAvailableSlots(
  *
  * Jornada com fim menor ou igual ao inicio vira o dia: vai ate 24:00. A
  * consulta e medida no fuso da clinica; a que passa da meia-noite tambem.
+ *
+ * Bloqueios (ja recortados no dia exibido por quem chama, com
+ * bloqueiosRecortadosNoDia): so esticam a faixa quando ficariam INTEIROS fora
+ * dela. Sem isso o bloqueio das 19:00 as 21:00 numa jornada das 08:00 as
+ * 18:00 nao aparecia na grade e, sem a aba de Cadastros, nao tinha mais onde
+ * ser visto nem removido. O bloqueio que cruza a faixa ja aparece recortado:
+ * o de dia inteiro ou de ferias nao vira grade de 24 horas.
  */
 export function faixaDeHorasVisivel(params: {
   timezone: string;
   jornadas: readonly Pick<JanelaSemanal, "startsAt" | "endsAt">[];
   consultas: readonly IntervaloOcupado[];
+  bloqueios?: readonly IntervaloOcupado[];
   padrao?: { horaInicio: number; horaFim: number };
 }): { horaInicio: number; horaFim: number } {
   const padrao = params.padrao ?? { horaInicio: 7, horaFim: 19 };
@@ -241,6 +249,28 @@ export function faixaDeHorasVisivel(params: {
     }
     horaInicio = Math.min(horaInicio, Math.floor(inicio / 60));
     horaFim = Math.max(horaFim, Math.ceil(fim / 60));
+  }
+
+  // Bloqueios depois da faixa de jornadas e consultas: so o que ficaria todo
+  // fora dela estica. O fim sai da duracao (o recorte no dia garante no
+  // maximo 24 horas), e o que termina a meia-noite vai ate 24:00. Cada
+  // bloqueio e comparado com a faixa de jornadas e consultas, nunca com a ja
+  // esticada por outro bloqueio, para o resultado nao depender da ordem.
+  const baseInicioMin = horaInicio * 60;
+  const baseFimMin = horaFim * 60;
+  for (const bloqueio of params.bloqueios ?? []) {
+    const duracaoMin =
+      (bloqueio.endsAt.getTime() - bloqueio.startsAt.getTime()) / 60_000;
+    if (duracaoMin <= 0) {
+      continue;
+    }
+    const inicio = minutosLocais(params.timezone, bloqueio.startsAt);
+    const fim = Math.min(24 * 60, inicio + duracaoMin);
+    const todoForaDaFaixa = fim <= baseInicioMin || inicio >= baseFimMin;
+    if (todoForaDaFaixa) {
+      horaInicio = Math.min(horaInicio, Math.floor(inicio / 60));
+      horaFim = Math.max(horaFim, Math.ceil(fim / 60));
+    }
   }
 
   horaInicio = Math.max(0, horaInicio);

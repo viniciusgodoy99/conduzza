@@ -561,14 +561,16 @@ export async function executarOfertaDeEspera(
   });
 
   // O NUMERO de cada candidato, numa leitura so, pela mesma regra do envio
-  // (fixo, ultimo usado pelo paciente, principal). Quem esta num numero
-  // DESCONECTADO fica fora DESTA onda sem entrar em offered_to (decisao D7):
-  // o prazo de resposta correria com a mensagem parada, e a pessoa perderia a
-  // vez sem nunca ter visto a pergunta. Na onda seguinte ela volta a contar.
+  // com a escolha do tipo 'lista_espera' (fixo, ultimo usado pelo paciente,
+  // principal). Quem esta num numero DESCONECTADO fica fora DESTA onda sem
+  // entrar em offered_to (decisao D7): o prazo de resposta correria com a
+  // mensagem parada, e a pessoa perderia a vez sem nunca ter visto a
+  // pergunta. Na onda seguinte ela volta a contar.
   const contas = await contasDeEnvio(
     admin,
     job.clinic_id,
     candidatos.map((candidato) => candidato.contactId),
+    "lista_espera",
   );
   if (!contas) {
     return { ok: false, erro: "leitura_falhou" };

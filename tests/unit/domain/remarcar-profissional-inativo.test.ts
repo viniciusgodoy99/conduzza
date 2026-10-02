@@ -46,7 +46,6 @@ function contexto(profissionais: Profissional[]): ContextoAgenda {
   const catalogo: Catalogo = {
     profissionais,
     jornadas: [],
-    bloqueios: [],
     recursos: [],
     procedimentos: [],
     convenios: [],

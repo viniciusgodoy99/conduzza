@@ -44,7 +44,14 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { pacoteVencido, sessoesRestantes } from "@/lib/domain/pacientes-ui";
+import {
+  itensDoAjuste,
+  resumoDosItens,
+  usadasParaVender,
+  type ItemVendavel,
+} from "@/lib/domain/pacotes-ui";
 import type { SaldoDePacote } from "@/lib/queries/pacientes";
+import { formatarCentavos } from "@/lib/utils/moeda";
 
 // Saldo de pacote do paciente. A validade e comparada em DIA CIVIL da clinica
 // (regra 3.6), do mesmo jeito que a RPC pacientes_resumo compara: pacote
@@ -53,17 +60,35 @@ import type { SaldoDePacote } from "@/lib/queries/pacientes";
 // restante: a lista e a ficha nao podem dizer coisas diferentes sobre o mesmo
 // pacote.
 //
+// Pacote com varios procedimentos (pedido do dono em 29/09/2026): um cartao
+// por VENDA, com uma barra por procedimento (o saldo e por item) e a validade
+// da venda inteira. A venda em andamento pede as sessoes ja usadas de cada
+// procedimento, e o ajuste corrige cada procedimento e a validade com um
+// motivo so.
+//
 // Achado 71: alem de vender, a ficha AJUSTA o saldo (sessoes usadas e
 // validade, com motivo guardado) e CANCELA a venda feita por engano (so
 // administrador e gestor, e so enquanto nenhuma consulta descontou dela). A
 // venda tambem cadastra pacote em andamento, comprado antes do sistema.
 
+/** Pacote a venda (ativo e com procedimentos), como o dialogo de venda o mostra. */
 export type PacoteVendavel = {
   id: string;
-  rotulo: string;
-  /** Sessoes do pacote: limite das "sessoes ja usadas" da venda em andamento */
-  sessoes: number;
+  nome: string;
+  price_cents: number;
+  /** Validade do pacote em dias a partir da venda; null = nao vence */
+  validity_days: number | null;
+  /** Os procedimentos do pacote, na ordem do nome */
+  itens: ItemVendavel[];
 };
+
+function resumoDoPacote(pacote: PacoteVendavel): string {
+  const nomes = new Map(pacote.itens.map((item) => [item.procedure_id, item]));
+  return resumoDosItens(
+    pacote.itens,
+    (procedureId) => nomes.get(procedureId)?.nome ?? "Procedimento",
+  );
+}
 
 const DICA_JA_DESCONTOU =
   "Esta venda já descontou sessão de consulta. Para corrigir, use Ajustar saldo.";
@@ -131,6 +156,91 @@ function Erro({ texto }: { texto: string | null }) {
   );
 }
 
+/**
+ * O que o pacote escolhido inclui: preco, validade e os procedimentos com as
+ * sessoes de cada um. No pacote em andamento, cada procedimento ganha o campo
+ * das sessoes ja usadas (de 0 ate as sessoes dele; campo vazio conta 0).
+ */
+function ItensDaVenda({
+  pacote,
+  emAndamento,
+  jaUsadas,
+  aoMudarJaUsadas,
+}: {
+  pacote: PacoteVendavel;
+  emAndamento: boolean;
+  jaUsadas: Readonly<Record<string, string>>;
+  aoMudarJaUsadas: (procedureId: string, valor: string) => void;
+}) {
+  return (
+    <div className="grid gap-2.5 rounded-xl border border-border p-3.5">
+      <div className="grid gap-0.5">
+        <span className="flex flex-wrap items-baseline justify-between gap-2">
+          <span className="text-sm font-semibold text-text-strong">
+            {pacote.nome}
+          </span>
+          <span className="cz-num text-[13px] text-text-strong">
+            {formatarCentavos(pacote.price_cents)}
+          </span>
+        </span>
+        <span className="text-xs text-text-secondary">
+          {pacote.validity_days === null ? (
+            "Sem validade"
+          ) : (
+            <>
+              Vale <span className="cz-num">{pacote.validity_days}</span>{" "}
+              {plural(pacote.validity_days, "dia", "dias")} a partir{" "}
+              {emAndamento ? "da data de início" : "de hoje"}
+            </>
+          )}
+        </span>
+      </div>
+      <ul
+        className="grid border-t border-border"
+        aria-label={`Procedimentos de ${pacote.nome}`}
+      >
+        {pacote.itens.map((item) => {
+          const idCampo = `pacote-ja-usadas-${item.procedure_id}`;
+          return (
+            <li
+              key={item.procedure_id}
+              className="flex min-h-10 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-border py-1.5 last:border-b-0"
+            >
+              <span className="text-[13px] text-foreground">
+                <span className="font-medium">{item.nome}</span>{" "}
+                <span className="text-text-secondary">
+                  <span className="cz-num">{item.sessions}</span>{" "}
+                  {plural(item.sessions, "sessão", "sessões")}
+                </span>
+              </span>
+              {emAndamento ? (
+                <span className="flex items-center gap-2">
+                  <Label htmlFor={idCampo} className="font-medium">
+                    Já usadas<span className="sr-only"> de {item.nome}</span>
+                  </Label>
+                  <Input
+                    id={idCampo}
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    max={item.sessions}
+                    placeholder="0"
+                    value={jaUsadas[item.procedure_id] ?? ""}
+                    onChange={(evento) =>
+                      aoMudarJaUsadas(item.procedure_id, evento.target.value)
+                    }
+                    className="w-20 cz-num"
+                  />
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export function PacotesPaciente({
   contactId,
   pacotes,
@@ -160,18 +270,20 @@ export function PacotesPaciente({
 }) {
   const router = useRouter();
 
-  // Venda
+  // Venda. As sessoes ja usadas (pacote em andamento) sao por procedimento,
+  // em texto como o campo guarda, pela chave procedure_id.
   const [aberto, setAberto] = useState(false);
   const [escolhido, setEscolhido] = useState("");
   const [emAndamento, setEmAndamento] = useState(false);
-  const [jaUsadas, setJaUsadas] = useState("0");
+  const [jaUsadas, setJaUsadas] = useState<Record<string, string>>({});
   const [inicio, setInicio] = useState(hojeNaClinica);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  // Ajuste e cancelamento: o saldo escolhido abre o dialogo
+  // Ajuste e cancelamento: a venda escolhida abre o dialogo. As sessoes
+  // usadas do ajuste sao por item da venda (chave: id do item).
   const [ajustando, setAjustando] = useState<SaldoDePacote | null>(null);
-  const [usadasAjuste, setUsadasAjuste] = useState("");
+  const [usadasAjuste, setUsadasAjuste] = useState<Record<string, string>>({});
   const [validadeAjuste, setValidadeAjuste] = useState("");
   const [cancelando, setCancelando] = useState<SaldoDePacote | null>(null);
   const [motivo, setMotivo] = useState("");
@@ -185,7 +297,7 @@ export function PacotesPaciente({
     setErro(null);
     setEscolhido("");
     setEmAndamento(false);
-    setJaUsadas("0");
+    setJaUsadas({});
     setInicio(hojeNaClinica);
     setAberto(true);
   };
@@ -195,27 +307,25 @@ export function PacotesPaciente({
       setErro("Escolha o pacote vendido.");
       return;
     }
-    const usadas = emAndamento ? Number(jaUsadas) : 0;
-    if (
-      !Number.isInteger(usadas) ||
-      usadas < 0 ||
-      usadas >= pacoteEscolhido.sessoes
-    ) {
-      setErro(
-        `As sessões já usadas vão de 0 a ${pacoteEscolhido.sessoes - 1} neste pacote.`,
-      );
-      return;
-    }
-    if (emAndamento && (!inicio || inicio > hojeNaClinica)) {
-      setErro("Informe a data de início, até hoje.");
-      return;
+    let usadas: { procedure_id: string; sessions_used: number }[] = [];
+    if (emAndamento) {
+      const conferidas = usadasParaVender(pacoteEscolhido.itens, jaUsadas);
+      if (!conferidas.ok) {
+        setErro(conferidas.erro);
+        return;
+      }
+      usadas = conferidas.usadas;
+      if (!inicio || inicio > hojeNaClinica) {
+        setErro("Informe a data de início, até hoje.");
+        return;
+      }
     }
     setSalvando(true);
     setErro(null);
     const resultado = await venderPacoteAction({
       contact_id: contactId,
       package_id: pacoteEscolhido.id,
-      sessions_used: usadas,
+      usadas,
       inicio: emAndamento ? inicio : undefined,
     });
     setSalvando(false);
@@ -231,38 +341,39 @@ export function PacotesPaciente({
   const abrirAjuste = (pacote: SaldoDePacote) => {
     setErro(null);
     setMotivo("");
-    setUsadasAjuste(String(pacote.sessions_used));
+    setUsadasAjuste(
+      Object.fromEntries(
+        pacote.itens.map((item) => [item.id, String(item.sessions_used)]),
+      ),
+    );
     setValidadeAjuste(pacote.expires_at ?? "");
     setAjustando(pacote);
   };
 
-  const usadasNoAjuste = Number(usadasAjuste);
-  const ajusteValido =
-    ajustando !== null &&
-    usadasAjuste.trim() !== "" &&
-    Number.isInteger(usadasNoAjuste) &&
-    usadasNoAjuste >= 0 &&
-    usadasNoAjuste <= ajustando.sessions_total;
+  // So os itens que mudaram vao para o banco (uma linha de historico por
+  // item). Campo invalido conta como mudanca: o Salvar fica ativo para a
+  // tela dizer o que corrigir.
+  const ajuste = ajustando
+    ? itensDoAjuste(ajustando.itens, usadasAjuste)
+    : null;
+  const validadeMudou =
+    ajustando !== null && (validadeAjuste || null) !== ajustando.expires_at;
   const ajusteMudou =
-    ajustando !== null &&
-    (usadasNoAjuste !== ajustando.sessions_used ||
-      (validadeAjuste || null) !== ajustando.expires_at);
+    ajuste !== null && (!ajuste.ok || ajuste.itens.length > 0 || validadeMudou);
 
   const ajustar = async () => {
-    if (!ajustando) {
+    if (!ajustando || !ajuste) {
       return;
     }
-    if (!ajusteValido) {
-      setErro(
-        `As sessões usadas vão de 0 a ${ajustando.sessions_total} neste pacote.`,
-      );
+    if (!ajuste.ok) {
+      setErro(ajuste.erro);
       return;
     }
     setSalvando(true);
     setErro(null);
     const resultado = await ajustarSaldoDePacoteAction({
       balance_id: ajustando.id,
-      sessions_used: usadasNoAjuste,
+      itens: ajuste.itens,
       expires_at: validadeAjuste || null,
       motivo: motivo.trim(),
     });
@@ -325,50 +436,66 @@ export function PacotesPaciente({
             const vencido = pacoteVencido(pacote, hojeNaClinica);
             const restantes = sessoesRestantes(pacote, hojeNaClinica);
             const jaDescontou = descontaram.has(pacote.id);
-            const nome = pacote.procedure_name ?? "Pacote";
+            const nome = pacote.package_name ?? "Pacote";
             return (
               <li
                 key={pacote.id}
-                className="grid gap-2 rounded-xl bg-surface-4 p-3.5"
+                className="grid gap-3 rounded-xl border border-border p-3.5"
               >
-                <span className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-sm font-semibold text-text-strong">
-                    {nome}
-                  </span>
-                  <span
-                    className={
-                      vencido
-                        ? "cz-num text-[13px] text-text-secondary"
-                        : "cz-num text-[13px] font-semibold text-text-strong"
-                    }
-                  >
-                    {restantes} {plural(restantes, "sessão", "sessões")}{" "}
-                    {plural(restantes, "restante", "restantes")}
-                  </span>
-                </span>
-                <BarraSessoes
-                  usadas={pacote.sessions_used}
-                  total={pacote.sessions_total}
-                  vencida={vencido}
-                />
-                <span className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-secondary">
-                  <span>
-                    <span className="cz-num">
-                      {pacote.sessions_used} de {pacote.sessions_total}
-                    </span>{" "}
-                    {plural(
-                      pacote.sessions_total,
-                      "sessão usada",
-                      "sessões usadas",
-                    )}
-                  </span>
+                <div className="grid gap-1">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-text-strong">
+                      {nome}
+                    </h3>
+                    <span
+                      className={
+                        vencido
+                          ? "cz-num text-[13px] text-text-secondary"
+                          : "cz-num text-[13px] font-semibold text-text-strong"
+                      }
+                    >
+                      {restantes} {plural(restantes, "sessão", "sessões")}{" "}
+                      {plural(restantes, "restante", "restantes")}
+                    </span>
+                  </div>
                   {pacote.expires_at ? (
                     <Vencimento dia={pacote.expires_at} vencido={vencido} />
                   ) : (
-                    <span>Sem validade</span>
+                    <span className="text-xs text-text-secondary">
+                      Sem validade
+                    </span>
                   )}
-                </span>
-                <div className="flex flex-wrap gap-2 pt-1">
+                </div>
+                <ul
+                  className="grid gap-2.5"
+                  aria-label={`Procedimentos de ${nome}`}
+                >
+                  {pacote.itens.map((item) => {
+                    const procedimento = item.procedure_name ?? "Procedimento";
+                    return (
+                      <li key={item.id} className="grid gap-1.5">
+                        <span className="flex flex-wrap items-baseline justify-between gap-2 text-[13px]">
+                          <span className="font-medium text-foreground">
+                            {procedimento}
+                          </span>
+                          <span className="text-xs text-text-secondary">
+                            <span className="cz-num">
+                              {item.sessions_used} de {item.sessions_total}
+                            </span>{" "}
+                            {plural(item.sessions_total, "usada", "usadas")}
+                          </span>
+                        </span>
+                        <BarraSessoes
+                          usadas={item.sessions_used}
+                          total={item.sessions_total}
+                          vencida={vencido}
+                          nome={procedimento}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="flex flex-wrap gap-2">
                   <AcaoProtegida
                     podeEditar={podeEditar}
                     dica={dica}
@@ -394,13 +521,13 @@ export function PacotesPaciente({
       )}
 
       <Dialog open={aberto} onOpenChange={setAberto}>
-        <DialogContent className="sm:max-w-[420px]">
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Vender pacote</DialogTitle>
             <DialogDescription>
               {emAndamento
-                ? "O saldo entra com as sessões já usadas, e a validade conta a partir da data de início, no fuso da clínica."
-                : "O saldo entra na hora e a validade conta a partir de hoje, no fuso da clínica."}
+                ? "O saldo entra com as sessões já usadas de cada procedimento, e a validade conta a partir da data de início, no fuso da clínica."
+                : "O saldo de cada procedimento entra na hora e a validade conta a partir de hoje, no fuso da clínica."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
@@ -420,14 +547,21 @@ export function PacotesPaciente({
               <>
                 <div className="grid gap-1.5">
                   <Label htmlFor="pacote-escolhido">Pacote</Label>
-                  <Select value={escolhido} onValueChange={setEscolhido}>
+                  <Select
+                    value={escolhido}
+                    onValueChange={(valor) => {
+                      setEscolhido(valor);
+                      setJaUsadas({});
+                      setErro(null);
+                    }}
+                  >
                     <SelectTrigger id="pacote-escolhido" className="w-full">
                       <SelectValue placeholder="Escolha o pacote" />
                     </SelectTrigger>
                     <SelectContent>
                       {pacotesDoCatalogo.map((pacote) => (
                         <SelectItem key={pacote.id} value={pacote.id}>
-                          {pacote.rotulo}
+                          {pacote.nome} ({resumoDoPacote(pacote)})
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -446,38 +580,27 @@ export function PacotesPaciente({
                     Pacote em andamento, comprado antes do sistema
                   </Label>
                 </div>
+                {pacoteEscolhido ? (
+                  <ItensDaVenda
+                    pacote={pacoteEscolhido}
+                    emAndamento={emAndamento}
+                    jaUsadas={jaUsadas}
+                    aoMudarJaUsadas={(procedureId, valor) =>
+                      setJaUsadas({ ...jaUsadas, [procedureId]: valor })
+                    }
+                  />
+                ) : null}
                 {emAndamento ? (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="pacote-ja-usadas">
-                        Sessões já usadas
-                      </Label>
-                      <Input
-                        id="pacote-ja-usadas"
-                        type="number"
-                        inputMode="numeric"
-                        min={0}
-                        max={
-                          pacoteEscolhido
-                            ? pacoteEscolhido.sessoes - 1
-                            : undefined
-                        }
-                        value={jaUsadas}
-                        onChange={(evento) => setJaUsadas(evento.target.value)}
-                        className="cz-num"
-                      />
-                    </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="pacote-inicio">Data de início</Label>
-                      <Input
-                        id="pacote-inicio"
-                        type="date"
-                        max={hojeNaClinica}
-                        value={inicio}
-                        onChange={(evento) => setInicio(evento.target.value)}
-                        className="cz-num"
-                      />
-                    </div>
+                  <div className="grid gap-1.5 sm:max-w-[220px]">
+                    <Label htmlFor="pacote-inicio">Data de início</Label>
+                    <Input
+                      id="pacote-inicio"
+                      type="date"
+                      max={hojeNaClinica}
+                      value={inicio}
+                      onChange={(evento) => setInicio(evento.target.value)}
+                      className="cz-num"
+                    />
                   </div>
                 ) : null}
               </>
@@ -506,47 +629,85 @@ export function PacotesPaciente({
           }
         }}
       >
-        <DialogContent className="sm:max-w-[420px]">
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Ajustar saldo</DialogTitle>
             <DialogDescription>
               {ajustando
-                ? `${ajustando.procedure_name ?? "Pacote"}, ${ajustando.sessions_total} ${plural(ajustando.sessions_total, "sessão", "sessões")} no pacote. Corrija as sessões usadas ou a validade.`
+                ? `${ajustando.package_name ?? "Pacote"}: corrija as sessões usadas de cada procedimento ou a validade do pacote.`
                 : null}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-1.5">
-                <Label htmlFor="ajuste-usadas">Sessões usadas</Label>
-                <Input
-                  id="ajuste-usadas"
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={ajustando?.sessions_total}
-                  value={usadasAjuste}
-                  onChange={(evento) => setUsadasAjuste(evento.target.value)}
-                  className="cz-num"
-                />
-                <p className="text-[11px] text-text-tertiary">
-                  De <span className="cz-num">0</span> a{" "}
-                  <span className="cz-num">{ajustando?.sessions_total}</span>
-                </p>
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="ajuste-validade">Validade</Label>
-                <Input
-                  id="ajuste-validade"
-                  type="date"
-                  value={validadeAjuste}
-                  onChange={(evento) => setValidadeAjuste(evento.target.value)}
-                  className="cz-num"
-                />
-                <p className="text-[11px] text-text-tertiary">
-                  Em branco, o pacote não vence.
-                </p>
-              </div>
+            {ajustando ? (
+              <fieldset className="grid gap-1.5">
+                <legend className="mb-1.5 text-xs font-semibold text-foreground">
+                  Sessões usadas
+                </legend>
+                <ul className="grid rounded-xl border border-border">
+                  {ajustando.itens.map((item) => {
+                    const procedimento = item.procedure_name ?? "Procedimento";
+                    const idCampo = `ajuste-usadas-${item.id}`;
+                    return (
+                      <li
+                        key={item.id}
+                        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-border px-3.5 py-2 last:border-b-0"
+                      >
+                        <Label
+                          htmlFor={idCampo}
+                          className="text-[13px] font-medium"
+                        >
+                          <span className="sr-only">Sessões usadas de </span>
+                          {procedimento}
+                        </Label>
+                        <span className="flex items-center gap-2">
+                          <Input
+                            id={idCampo}
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            max={item.sessions_total}
+                            value={
+                              usadasAjuste[item.id] ??
+                              String(item.sessions_used)
+                            }
+                            onChange={(evento) =>
+                              setUsadasAjuste({
+                                ...usadasAjuste,
+                                [item.id]: evento.target.value,
+                              })
+                            }
+                            aria-describedby={`${idCampo}-total`}
+                            className="w-20 cz-num"
+                          />
+                          <span
+                            id={`${idCampo}-total`}
+                            className="text-xs whitespace-nowrap text-text-secondary"
+                          >
+                            de{" "}
+                            <span className="cz-num">
+                              {item.sessions_total}
+                            </span>
+                          </span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </fieldset>
+            ) : null}
+            <div className="grid gap-1.5 sm:max-w-[220px]">
+              <Label htmlFor="ajuste-validade">Validade do pacote</Label>
+              <Input
+                id="ajuste-validade"
+                type="date"
+                value={validadeAjuste}
+                onChange={(evento) => setValidadeAjuste(evento.target.value)}
+                className="cz-num"
+              />
+              <p className="text-[11px] text-text-tertiary">
+                Em branco, o pacote não vence.
+              </p>
             </div>
             <CampoMotivo
               id="ajuste-motivo"
@@ -583,7 +744,7 @@ export function PacotesPaciente({
             <DialogTitle>Cancelar venda</DialogTitle>
             <DialogDescription>
               {cancelando
-                ? `O saldo de ${cancelando.procedure_name ?? "Pacote"} sai da ficha e deixa de ser descontado nas consultas. Use só para venda registrada por engano.`
+                ? `A venda de ${cancelando.package_name ?? "Pacote"} sai da ficha, com o saldo de todos os procedimentos, e deixa de ser descontada nas consultas. Use só para venda registrada por engano.`
                 : null}
             </DialogDescription>
           </DialogHeader>

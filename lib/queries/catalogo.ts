@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { precoAvulsoDoPacote, type PrecoAvulso } from "@/lib/domain/pacotes";
+
 // Tipos e fetchers do catalogo clinico (Fase 2). Isomorficos: recebem o
 // SupabaseClient e rodam no servidor (carga inicial) e no browser (TanStack).
 // Reusados pela Tela 8 (Cadastros), pela barra de filtros e pelo modal da
@@ -23,15 +25,6 @@ export type Jornada = {
   weekday: number;
   starts_at: string;
   ends_at: string;
-};
-
-export type Bloqueio = {
-  id: string;
-  professional_id: string;
-  starts_at: string;
-  ends_at: string;
-  reason: string;
-  blocks_overbooking: boolean;
 };
 
 export type Recurso = {
@@ -76,17 +69,35 @@ export type Vinculo = {
   active: boolean;
 };
 
-export type Pacote = {
+/** Um procedimento do pacote (package_item). */
+export type ItemDoPacote = {
   id: string;
   procedure_id: string;
   sessions: number;
+};
+
+// Pacote com varios procedimentos (migration 20260929120000). Os itens vem
+// ordenados pelo nome do procedimento. package.procedure_id e
+// package.sessions sao legado e nao sao lidos.
+export type Pacote = {
+  id: string;
+  name: string;
+  /** O valor que a clinica define; nao e distribuido entre os itens. */
   price_cents: number;
+  /** Validade do PACOTE (conta da venda), null = nao vence. */
   validity_days: number | null;
   active: boolean;
+  itens: ItemDoPacote[];
+  /**
+   * Soma de sessoes x preco base de cada procedimento, calculada aqui a
+   * partir de procedure.base_price_cents (nunca gravada). Com item sem
+   * preco base, itensSemPreco > 0 e a soma e parcial.
+   */
+  preco_avulso: PrecoAvulso;
 };
 
 // Uso de cada pacote (aba Pacotes): quantas vendas ja existem (o delete real
-// so vale sem venda, e o procedimento fica congelado depois da primeira) e
+// so vale sem venda, e os itens ficam congelados depois da primeira) e
 // quantos pacientes ainda tem saldo usavel, no dia civil da clinica.
 export type UsoDoPacote = {
   vendas: number;
@@ -104,7 +115,6 @@ export type Unidade = {
 export type Catalogo = {
   profissionais: Profissional[];
   jornadas: Jornada[];
-  bloqueios: Bloqueio[];
   recursos: Recurso[];
   procedimentos: Procedimento[];
   convenios: Convenio[];
@@ -122,7 +132,9 @@ export const catalogoKeys = {
 
 // O catalogo inteiro numa carga so: sao tabelas pequenas (dezenas de linhas
 // por clinica) e as abas, os filtros da Agenda e o modal precisam de tudo
-// junto. Uma requisicao por tabela, em paralelo.
+// junto. Uma requisicao por tabela, em paralelo. Bloqueio nao e catalogo:
+// desde 29/09/2026 ele e acao da Agenda, que o busca por dia
+// (fetchAgendaDia em lib/queries/agenda.ts).
 export async function fetchCatalogo(
   supabase: SupabaseClient,
   clinicId: string,
@@ -130,7 +142,6 @@ export async function fetchCatalogo(
   const [
     profissionais,
     jornadas,
-    bloqueios,
     recursos,
     procedimentos,
     convenios,
@@ -150,14 +161,6 @@ export async function fetchCatalogo(
       .select("id, professional_id, unit_id, weekday, starts_at, ends_at")
       .eq("clinic_id", clinicId)
       .order("weekday")
-      .order("starts_at"),
-    supabase
-      .from("professional_block")
-      .select(
-        "id, professional_id, starts_at, ends_at, reason, blocks_overbooking",
-      )
-      .eq("clinic_id", clinicId)
-      .gte("ends_at", new Date().toISOString())
       .order("starts_at"),
     supabase
       .from("resource")
@@ -184,8 +187,11 @@ export async function fetchCatalogo(
       .eq("clinic_id", clinicId),
     supabase
       .from("package")
-      .select("id, procedure_id, sessions, price_cents, validity_days, active")
-      .eq("clinic_id", clinicId),
+      .select(
+        "id, name, price_cents, validity_days, active, itens:package_item (id, procedure_id, sessions)",
+      )
+      .eq("clinic_id", clinicId)
+      .order("name"),
     supabase
       .from("unit")
       .select("id, name, address, phone, active")
@@ -196,7 +202,6 @@ export async function fetchCatalogo(
   for (const resultado of [
     profissionais,
     jornadas,
-    bloqueios,
     recursos,
     procedimentos,
     convenios,
@@ -209,16 +214,46 @@ export async function fetchCatalogo(
     }
   }
 
+  const listaDeProcedimentos = (procedimentos.data ?? []) as Procedimento[];
   return {
     profissionais: (profissionais.data ?? []) as Profissional[],
     jornadas: (jornadas.data ?? []) as Jornada[],
-    bloqueios: (bloqueios.data ?? []) as Bloqueio[],
     recursos: (recursos.data ?? []) as Recurso[],
-    procedimentos: (procedimentos.data ?? []) as Procedimento[],
+    procedimentos: listaDeProcedimentos,
     convenios: (convenios.data ?? []) as Convenio[],
     vinculos: (vinculos.data ?? []) as Vinculo[],
-    pacotes: (pacotes.data ?? []) as Pacote[],
+    pacotes: ((pacotes.data ?? []) as Record<string, unknown>[]).map((linha) =>
+      normalizarPacote(linha, listaDeProcedimentos),
+    ),
     unidades: (unidades.data ?? []) as Unidade[],
+  };
+}
+
+function normalizarPacote(
+  linha: Record<string, unknown>,
+  procedimentos: readonly Procedimento[],
+): Pacote {
+  const nomePorId = new Map(procedimentos.map((p) => [p.id, p.name]));
+  const itens = ((linha.itens as ItemDoPacote[] | null) ?? [])
+    .map((item) => ({
+      id: item.id,
+      procedure_id: item.procedure_id,
+      sessions: item.sessions,
+    }))
+    .sort((a, b) =>
+      (nomePorId.get(a.procedure_id) ?? "").localeCompare(
+        nomePorId.get(b.procedure_id) ?? "",
+        "pt-BR",
+      ),
+    );
+  return {
+    id: linha.id as string,
+    name: linha.name as string,
+    price_cents: linha.price_cents as number,
+    validity_days: (linha.validity_days as number | null) ?? null,
+    active: linha.active as boolean,
+    itens,
+    preco_avulso: precoAvulsoDoPacote(itens, procedimentos),
   };
 }
 

@@ -112,17 +112,22 @@ export function BarraComparecimento({
  * Barra de sessoes de um pacote: usadas contra contratadas. Pacote fora da
  * validade nao tem saldo para desenhar, entao a barra fica no trilho vazio e
  * quem le em voz alta ouve que venceu; o historico de uso continua em texto
- * na linha de baixo.
+ * na linha de baixo. Com `nome` (pacote de varios procedimentos, uma barra
+ * por item), quem ouve sabe de qual procedimento e cada barra.
  */
 export function BarraSessoes({
   usadas,
   total,
   vencida = false,
+  nome,
 }: {
   usadas: number;
   total: number;
   vencida?: boolean;
+  /** Procedimento do item, no comeco do rotulo acessivel */
+  nome?: string;
 }) {
+  const prefixo = nome ? `${nome}: ` : "";
   return (
     <BarraDeProgresso
       valor={vencida ? 0 : Math.min(usadas, total)}
@@ -130,8 +135,8 @@ export function BarraSessoes({
       tom="neutro"
       ariaLabel={
         vencida
-          ? "Pacote vencido, sem sessões para usar"
-          : `${usadas} de ${total} ${plural(total, "sessão usada", "sessões usadas")}`
+          ? `${prefixo}${nome ? "pacote" : "Pacote"} vencido, sem sessões para usar`
+          : `${prefixo}${usadas} de ${total} ${plural(total, "sessão usada", "sessões usadas")}`
       }
     />
   );

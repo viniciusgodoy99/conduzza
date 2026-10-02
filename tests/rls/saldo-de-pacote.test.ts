@@ -11,11 +11,31 @@ import { adminClient, anonClient } from "./stack";
 // nem mexe no saldo da A.
 // Padrao da suite: toda negacao tem o caso positivo ao lado (anti falso
 // positivo), para o teste nao passar por um motivo errado.
+//
+// Pacote com varios procedimentos (migration 20260929120000): o saldo passou
+// a ser POR ITEM (package_balance_item). Este arquivo usa de proposito o
+// caminho ANTIGO (pacote com procedure_id + sessions, venda por INSERT
+// direto e a assinatura antiga ajustar_saldo_de_pacote(uuid, integer, date,
+// text)), que o modo expand mantem funcionando para venda de UM
+// procedimento: os gatilhos criam os itens e o ajuste antigo mexe no item
+// unico, com a trilha apontando o item e o procedimento. A assinatura nova
+// (p_itens) e a venda de varios procedimentos estao em
+// tests/integration/pacote-com-varios-procedimentos.test.ts.
+//
+// Sem edicao direta (migration 20261002100000): pela sessao, o item de saldo
+// so aceita UPDATE de sessions_used (o que a RPC de ajuste grava), e o
+// desconto de pacote gravado na consulta (package_balance_id e
+// package_balance_item_id) nao muda mais, nem limpo. Os casos do fim do
+// arquivo so passam com essa migration aplicada.
 
 const FK_VIOLATION = "23503";
 const CHECK_VIOLATION = "23514";
 const RLS_VIOLATION = "42501";
+// Mesmo codigo da RLS, mas aqui e o privilegio de coluna que recusa.
+const SEM_PRIVILEGIO = "42501";
 const NAO_ENCONTRADO = "P0002";
+const MENSAGEM_DESCONTO_TRAVADO =
+  "O desconto de pacote desta consulta não muda. Para corrigir, ajuste o saldo na ficha do paciente.";
 
 const admin = adminClient();
 const sufixo = crypto.randomUUID().slice(0, 8);
@@ -26,12 +46,14 @@ let clinicaB = "";
 let adminAId = "";
 let recepcaoAId = "";
 let contatoA = "";
+let procedimentoA = "";
 let pacoteA = "";
 let saldoAjuste = "";
 let saldoCancelavel = "";
 let saldoDebitado = "";
 let saldoB = "";
 let primeiraConsulta = "";
+let consultaDebitada = "";
 
 async function criarUsuario(
   email: string,
@@ -124,6 +146,7 @@ beforeAll(async () => {
     name: "Sessão A",
     default_duration_min: 30,
   });
+  procedimentoA = procA;
   const procB = await inserirId("procedure", {
     clinic_id: clinicaB,
     name: "Sessão B",
@@ -169,7 +192,7 @@ beforeAll(async () => {
 
   // Consulta que descontou do saldoDebitado: a venda dele nao se cancela.
   primeiraConsulta = "2026-10-06T13:00:00.000Z";
-  await inserirId("appointment", {
+  consultaDebitada = await inserirId("appointment", {
     clinic_id: clinicaA,
     contact_id: contatoA,
     professional_id: profA,
@@ -212,11 +235,22 @@ describe("ajuste de saldo de pacote", () => {
       .single()
       .throwOnError();
     expect(saldo).toEqual({ sessions_used: 4, expires_at: "2026-12-31" });
+    // O saldo de verdade mora no item (a coluna acima e a soma legada).
+    const { data: item } = await admin
+      .from("package_balance_item")
+      .select("id, procedure_id, sessions_used")
+      .eq("package_balance_id", saldoAjuste)
+      .single()
+      .throwOnError();
+    expect(item).toMatchObject({
+      procedure_id: procedimentoA,
+      sessions_used: 4,
+    });
 
     const { data: historico } = await admin
       .from("package_balance_adjustment")
       .select(
-        "kind, user_id, sessions_used_before, sessions_used_after, reason",
+        "kind, user_id, sessions_used_before, sessions_used_after, reason, package_balance_item_id, procedure_id",
       )
       .eq("package_balance_id", saldoAjuste)
       .throwOnError();
@@ -227,6 +261,8 @@ describe("ajuste de saldo de pacote", () => {
         sessions_used_before: 0,
         sessions_used_after: 4,
         reason: "Sessões feitas antes do sistema",
+        package_balance_item_id: (item as { id: string }).id,
+        procedure_id: procedimentoA,
       },
     ]);
   });
@@ -414,5 +450,121 @@ describe("pacientes_resumo com primeira_consulta", () => {
       p_clinic_id: clinicaA,
     });
     expect(vazado).toEqual([]);
+  });
+});
+
+describe("saldo sem edição direta pela API (migration 20261002100000)", () => {
+  it("recepção não aumenta as sessões vendidas do item direto; pela RPC o ajuste passa e entra na trilha", async () => {
+    const saldo = await venderSaldo(clinicaA, contatoA, pacoteA);
+    const { data: item } = await admin
+      .from("package_balance_item")
+      .select("id")
+      .eq("package_balance_id", saldo)
+      .single()
+      .throwOnError();
+    const itemId = (item as { id: string }).id;
+
+    const recepcao = await logado(`saldo-recepcao-${sufixo}@teste.dev`);
+    const direto = await recepcao
+      .from("package_balance_item")
+      .update({ sessions_total: 50 })
+      .eq("id", itemId)
+      .select("id");
+    expect(direto.error?.code).toBe(SEM_PRIVILEGIO);
+
+    // Intacto no item e no espelho legado da venda.
+    const { data: intacto } = await admin
+      .from("package_balance_item")
+      .select("sessions_total, sessions_used")
+      .eq("id", itemId)
+      .single()
+      .throwOnError();
+    expect(intacto).toEqual({ sessions_total: 10, sessions_used: 0 });
+    const { data: legado } = await admin
+      .from("package_balance")
+      .select("sessions_total")
+      .eq("id", saldo)
+      .single()
+      .throwOnError();
+    expect(legado?.sessions_total).toBe(10);
+
+    // Anti falso positivo: a mesma recepção ajusta pela RPC, com motivo, e o
+    // ajuste fica na trilha apontando o item.
+    const { error } = await recepcao.rpc("ajustar_saldo_de_pacote", {
+      p_balance_id: saldo,
+      p_sessions_used: 2,
+      p_expires_at: null,
+      p_reason: "Duas sessões feitas antes do sistema",
+    });
+    expect(error).toBeNull();
+    const { data: ajustado } = await admin
+      .from("package_balance_item")
+      .select("sessions_total, sessions_used")
+      .eq("id", itemId)
+      .single()
+      .throwOnError();
+    expect(ajustado).toEqual({ sessions_total: 10, sessions_used: 2 });
+    const { data: trilha } = await admin
+      .from("package_balance_adjustment")
+      .select("kind, user_id, sessions_used_after, package_balance_item_id")
+      .eq("package_balance_id", saldo)
+      .throwOnError();
+    expect(trilha).toEqual([
+      {
+        kind: "ajuste",
+        user_id: recepcaoAId,
+        sessions_used_after: 2,
+        package_balance_item_id: itemId,
+      },
+    ]);
+  });
+
+  it("recepção não limpa o desconto de pacote da consulta, e a venda continua sem cancelar", async () => {
+    const recepcao = await logado(`saldo-recepcao-${sufixo}@teste.dev`);
+    const limpar = await recepcao
+      .from("appointment")
+      .update({ package_balance_id: null, package_balance_item_id: null })
+      .eq("id", consultaDebitada)
+      .select("id");
+    expect(limpar.error?.code).toBe(CHECK_VIOLATION);
+    expect(limpar.error?.message).toBe(MENSAGEM_DESCONTO_TRAVADO);
+    const { data: consulta } = await admin
+      .from("appointment")
+      .select("package_balance_id")
+      .eq("id", consultaDebitada)
+      .single()
+      .throwOnError();
+    expect(consulta?.package_balance_id).toBe(saldoDebitado);
+
+    // Anti falso positivo: a mesma recepção edita o resto da consulta (quem
+    // recusa e a trava do desconto, nao a RLS), e corrige o saldo pela RPC
+    // de ajuste, o caminho que a mensagem indica.
+    const nota = await recepcao
+      .from("appointment")
+      .update({ notes: "Trouxe exames" })
+      .eq("id", consultaDebitada)
+      .select("id");
+    expect(nota.error).toBeNull();
+    expect(nota.data).toHaveLength(1);
+    const ajuste = await recepcao.rpc("ajustar_saldo_de_pacote", {
+      p_balance_id: saldoDebitado,
+      p_sessions_used: 1,
+      p_expires_at: null,
+      p_reason: "Desconto corrigido pela ficha",
+    });
+    expect(ajuste.error).toBeNull();
+
+    // O cancelamento continua recusando a venda que descontou.
+    const adminA = await logado(`saldo-admin-${sufixo}@teste.dev`);
+    const cancelar = await adminA.rpc("cancelar_venda_de_pacote", {
+      p_balance_id: saldoDebitado,
+      p_reason: "Depois de tentar limpar o desconto",
+    });
+    expect(cancelar.error?.code).toBe(FK_VIOLATION);
+    const { data: venda } = await admin
+      .from("package_balance")
+      .select("id")
+      .eq("id", saldoDebitado);
+    expect(venda).toHaveLength(1);
   });
 });

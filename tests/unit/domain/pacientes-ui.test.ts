@@ -8,7 +8,9 @@ import {
   pacoteVencido,
   porcentagemDeComparecimento,
   saldoDeSessoes,
+  sessoesDoItem,
   sessoesRestantes,
+  totaisDoPacote,
   type ConsultaAgregavel,
   type PacienteFiltravel,
 } from "@/lib/domain/pacientes-ui";
@@ -310,15 +312,19 @@ describe("etiquetasDoPaciente", () => {
 
 describe("saldo de pacote", () => {
   const HOJE = "2026-08-25";
+  // Venda de UM procedimento (o caso de sempre): um item so.
   const pacote = (parcial: {
     sessions_total?: number;
     sessions_used?: number;
     expires_at?: string | null;
   }) => ({
-    sessions_total: 10,
-    sessions_used: 4,
-    expires_at: null as string | null,
-    ...parcial,
+    expires_at: parcial.expires_at ?? null,
+    itens: [
+      {
+        sessions_total: parcial.sessions_total ?? 10,
+        sessions_used: parcial.sessions_used ?? 4,
+      },
+    ],
   });
 
   it("pacote sem validade nunca vence", () => {
@@ -373,6 +379,43 @@ describe("saldo de pacote", () => {
     const pacoteDoDia = pacote({ expires_at: "2026-08-25" });
     expect(pacoteVencido(pacoteDoDia, "2026-08-25")).toBe(false);
     expect(pacoteVencido(pacoteDoDia, "2026-08-26")).toBe(true);
+  });
+
+  describe("venda de vários procedimentos (saldo por item)", () => {
+    // Botox 2 (1 usada) + Facelift 1 (0 usada), vence no fim do ano.
+    const combo = {
+      expires_at: "2026-12-31",
+      itens: [
+        { sessions_total: 2, sessions_used: 1 },
+        { sessions_total: 1, sessions_used: 0 },
+      ],
+    };
+
+    it("as sessões restantes somam os itens", () => {
+      expect(sessoesRestantes(combo, HOJE)).toBe(2);
+      expect(totaisDoPacote(combo)).toEqual({ total: 3, usadas: 1 });
+    });
+
+    it("item gasto além do total não tira sessão do outro item", () => {
+      const estourado = {
+        ...combo,
+        itens: [
+          { sessions_total: 2, sessions_used: 5 },
+          { sessions_total: 1, sessions_used: 0 },
+        ],
+      };
+      expect(sessoesDoItem(estourado.itens[0]!)).toBe(0);
+      expect(sessoesRestantes(estourado, HOJE)).toBe(1);
+    });
+
+    it("a validade é da venda inteira: vencida, nenhum item vale", () => {
+      expect(
+        sessoesRestantes({ ...combo, expires_at: "2026-08-24" }, HOJE),
+      ).toBe(0);
+      expect(saldoDeSessoes([combo, pacote({ sessions_used: 0 })], HOJE)).toBe(
+        12,
+      );
+    });
   });
 });
 

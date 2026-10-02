@@ -184,12 +184,20 @@ export function agregadosDeConsultas(
   return { total_compareceu, total_faltou, ultima_consulta, proxima_consulta };
 }
 
-/** O minimo de um saldo de pacote para as contas da ficha. */
-export type PacoteComValidade = {
+/** O minimo de um item de saldo (um procedimento da venda) para as contas. */
+export type ItemComSessoes = {
   sessions_total: number;
   sessions_used: number;
+};
+
+/**
+ * O minimo de uma venda de pacote para as contas da ficha. Desde a migration
+ * 20260929120000 o saldo e POR ITEM (procedimento) e a validade e da venda.
+ */
+export type PacoteComValidade = {
   /** Dia civil (aaaa-mm-dd), ou null quando o pacote nao vence. */
   expires_at: string | null;
+  itens: readonly ItemComSessoes[];
 };
 
 /**
@@ -199,13 +207,35 @@ export type PacoteComValidade = {
  * precisa contar igual a lista.
  */
 export function pacoteVencido(
-  pacote: PacoteComValidade,
+  pacote: { expires_at: string | null },
   hojeNaClinica: string,
 ): boolean {
   return pacote.expires_at !== null && pacote.expires_at < hojeNaClinica;
 }
 
-/** Sessoes que ainda dao para usar. Pacote vencido nao vale nada: zero. */
+/** Sessoes que o item ainda tem, sem olhar validade (nunca negativo). */
+export function sessoesDoItem(item: ItemComSessoes): number {
+  return Math.max(item.sessions_total - item.sessions_used, 0);
+}
+
+/** Vendidas e usadas da venda inteira (soma dos itens). */
+export function totaisDoPacote(pacote: { itens: readonly ItemComSessoes[] }): {
+  total: number;
+  usadas: number;
+} {
+  let total = 0;
+  let usadas = 0;
+  for (const item of pacote.itens) {
+    total += item.sessions_total;
+    usadas += item.sessions_used;
+  }
+  return { total, usadas };
+}
+
+/**
+ * Sessoes que ainda dao para usar na venda (soma dos itens). Pacote vencido
+ * nao vale nada: zero.
+ */
 export function sessoesRestantes(
   pacote: PacoteComValidade,
   hojeNaClinica: string,
@@ -213,7 +243,7 @@ export function sessoesRestantes(
   if (pacoteVencido(pacote, hojeNaClinica)) {
     return 0;
   }
-  return Math.max(pacote.sessions_total - pacote.sessions_used, 0);
+  return pacote.itens.reduce((soma, item) => soma + sessoesDoItem(item), 0);
 }
 
 /** Saldo total da ficha, a mesma conta do saldo_sessoes da RPC. */

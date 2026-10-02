@@ -280,6 +280,13 @@ async function consentimentoDosContatos(
  * A run mais recente manda. "Mais recente" e por scheduled_for: enviada,
  * pulada e na fila convivem quando a regua tem tres toques, e o que a recepcao
  * precisa ver e o ultimo estado, nao o primeiro.
+ *
+ * Empate de scheduled_for: a regua vinculada nasce com os mesmos offsets da
+ * geral, entao quando a regua vigente da consulta muda convivem a run antiga,
+ * pulada como 'condicao_parada', e a da regua nova, enviada ou na fila, no
+ * mesmo instante. No empate vem a enviada, depois a que esta na fila e, por
+ * ultimo, a pulada: a recepcao nao pode ver como pulado o toque de uma
+ * mensagem que saiu e cobrar o paciente de novo.
  */
 async function toquesDasConsultas(
   supabase: SupabaseClient,
@@ -298,7 +305,9 @@ async function toquesDasConsultas(
     )
     .eq("clinic_id", clinicId)
     .in("appointment_id", appointmentIds)
-    .order("scheduled_for", { ascending: false });
+    .order("scheduled_for", { ascending: false })
+    .order("sent_at", { ascending: false, nullsFirst: false })
+    .order("skipped_reason", { ascending: true, nullsFirst: true });
 
   for (const linha of (data ?? []) as {
     appointment_id: string | null;
@@ -446,7 +455,11 @@ export async function fetchReguaPadrao(
     )
     .eq("clinic_id", clinicId)
     .eq("kind", kind)
+    // A GERAL: sem vinculo nenhum (procedimento, medico, especialidade) e
+    // nao reforcada. As vinculadas sao a Tela 7.
     .is("procedure_id", null)
+    .is("professional_id", null)
+    .is("specialty", null)
     .eq("for_no_show_history", false)
     .maybeSingle();
   if (error) {

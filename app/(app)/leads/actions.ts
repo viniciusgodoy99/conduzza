@@ -6,7 +6,6 @@ import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { gerarToken, SOURCE_CHANNELS } from "@/lib/domain/attribution";
-import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   chaveDeTelefone,
@@ -604,87 +603,6 @@ export async function revogarConsentimentoAction(
   revalidatePath("/leads");
   revalidatePath("/pacientes");
   return { ok: true };
-}
-
-// ---------------------------------------------------------------------------
-// Venda de pacote (saldo de sessoes)
-// ---------------------------------------------------------------------------
-
-const venderPacoteSchema = z.object({
-  contact_id: idSchema,
-  package_id: idSchema,
-});
-
-export async function venderPacoteAction(
-  input: unknown,
-): Promise<LeadsActionResult> {
-  const guard = await requireLeadsWriter();
-  if ("error" in guard) {
-    return { ok: false, error: guard.error };
-  }
-  const parsed = venderPacoteSchema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: "Confira o paciente e o pacote." };
-  }
-
-  const supabase = await createClient();
-  // O contato precisa ser da clinica ativa (o trigger de coerencia no banco
-  // confere de novo; aqui so devolve mensagem melhor).
-  const { data: donoPacote } = await supabase
-    .from("contact")
-    .select("id")
-    .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.contact_id)
-    .maybeSingle();
-  if (!donoPacote) {
-    return { ok: false, error: "Paciente não encontrado nesta clínica." };
-  }
-  const { data: pacoteRow } = await supabase
-    .from("package")
-    .select("sessions, validity_days")
-    .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.package_id)
-    .maybeSingle();
-  if (!pacoteRow) {
-    return { ok: false, error: "Pacote não encontrado." };
-  }
-  const pacote = pacoteRow as {
-    sessions: number;
-    validity_days: number | null;
-  };
-
-  // Validade em DIA CIVIL do fuso da clinica (regra 3.6): vendido hoje com 90
-  // dias vence no dia local correto, nao no dia UTC.
-  const expiraEm =
-    pacote.validity_days !== null
-      ? somarDias(diaCivil(guard.timezone, new Date()), pacote.validity_days)
-      : null;
-
-  const { data, error } = await supabase
-    .from("package_balance")
-    .insert({
-      clinic_id: guard.clinicId,
-      contact_id: parsed.data.contact_id,
-      package_id: parsed.data.package_id,
-      sessions_total: pacote.sessions,
-      expires_at: expiraEm,
-    })
-    .select("id")
-    .single();
-  if (error || !data) {
-    return { ok: false, error: "Não foi possível registrar o pacote." };
-  }
-  await auditar(
-    supabase,
-    guard.clinicId,
-    guard.context.userId,
-    "vendeu_pacote",
-    "package_balance",
-    data.id,
-  );
-  revalidatePath("/leads");
-  revalidatePath("/pacientes");
-  return { ok: true, id: data.id };
 }
 
 // ---------------------------------------------------------------------------

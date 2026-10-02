@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
 
 import {
+  lerPoliticaDeEnvio,
+  numerosFixosDaPolitica,
+} from "@/components/automacoes/numeros-de-envio";
+import {
   ACAO_DE_CONVITE,
   nomeNaEquipe,
   temNomeProprio,
@@ -169,9 +173,10 @@ export default async function ConfiguracoesPage({
       )
       .eq("clinic_id", active.clinicId)
       .maybeSingle(),
-    // Aba de WhatsApp: unidades para o numero, a politica das mensagens
-    // automaticas (etiqueta do numero fixo) e o limite do plano. Leituras
-    // separadas, para a falha de uma nao derrubar a aba.
+    // Aba de WhatsApp: unidades para o numero, a escolha de numero de cada
+    // tipo de mensagem automatica (etiqueta do numero fixo de algum tipo) e o
+    // limite do plano. Leituras separadas, para a falha de uma nao derrubar
+    // a aba.
     supabase
       .from("unit")
       .select("id, name, active")
@@ -179,9 +184,8 @@ export default async function ConfiguracoesPage({
       .order("name", { ascending: true }),
     supabase
       .from("whatsapp_envio_automatico")
-      .select("modo, conta_fixa_id")
-      .eq("clinic_id", active.clinicId)
-      .maybeSingle(),
+      .select("tipo, modo, conta_fixa_id")
+      .eq("clinic_id", active.clinicId),
     supabase
       .from("clinic")
       .select("limite_de_numeros")
@@ -332,9 +336,11 @@ export default async function ConfiguracoesPage({
         nome: unidade.name,
         ativa: unidade.active,
       }));
-  const politicaDoEnvio = politicaDoEnvioResult.data;
-  const contaFixaId =
-    politicaDoEnvio?.modo === "fixo" ? politicaDoEnvio.conta_fixa_id : null;
+  // Os numeros que algum tipo de mensagem automatica usa como fixo. So os
+  // ATIVOS contam (o banco ignora fixo em numero removido).
+  const numerosDasAutomaticas = numerosFixosDaPolitica(
+    lerPoliticaDeEnvio(politicaDoEnvioResult.data, numerosDoWhatsapp),
+  );
 
   const clinica = clinicResult.data as {
     name: string;
@@ -374,7 +380,7 @@ export default async function ConfiguracoesPage({
             : {
                 numeros: numerosDoWhatsapp,
                 unidades: unidadesDaClinica,
-                contaFixaId,
+                numerosDasAutomaticas,
                 limite: limiteDeNumerosResult.data?.limite_de_numeros ?? null,
                 // O provedor com que um numero NOVO nasce, pela mesma regra
                 // que cria a conta (achado 30): fora de producao, sem

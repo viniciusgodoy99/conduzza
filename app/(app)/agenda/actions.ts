@@ -26,8 +26,9 @@ import { diaCivil } from "@/lib/domain/horarios";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import {
   cabeNaJornada,
-  colideComBloqueio,
+  MENSAGEM_SEM_CONFERIR_AGENDA,
   MENSAGEM_SEM_VINCULO,
+  recusaPorBloqueio,
   vinculoEquivalente,
 } from "@/lib/domain/remarcacao";
 import { AVISO_REMARCACAO } from "@/lib/domain/textos-padrao";
@@ -37,6 +38,7 @@ import {
   MENSAGEM_TELEFONE_INVALIDO,
   normalizarTelefone,
 } from "@/lib/domain/telefone";
+import type { TipoDeEnvio } from "@/lib/domain/tipo-de-envio";
 import {
   contasDeEnvio,
   fraseDeNumerosDesconectados,
@@ -58,12 +60,16 @@ export type AgendaActionResult = {
     | "conflito"
     | "conflito_recurso"
     | "ja_tratado"
-    // Remarcar: situacao final, sem vinculo no profissional de destino,
-    // fora da jornada ou em cima de bloqueio. Os tres ultimos a tela corrige
-    // escolhendo outro horario ou profissional, com o dialogo aberto.
+    // Remarcar: situacao final, sem vinculo no profissional de destino ou
+    // fora da jornada. Os dois ultimos (e o "bloqueado", abaixo) a tela
+    // corrige escolhendo outro horario ou profissional, com o dialogo aberto.
     | "situacao_final"
     | "sem_vinculo"
     | "fora_da_jornada"
+    // Marcar e remarcar: em cima de bloqueio do profissional (consulta comum
+    // em qualquer bloqueio; encaixe so no que impede encaixe). No modal da
+    // consulta nova, a tela refaz o dia em cache para o bloqueio aparecer e
+    // sair dos horarios livres.
     | "bloqueado"
     // Mudar situacao: falta antes do horario da consulta, e Compareceu
     // antes do dia dela.
@@ -313,24 +319,36 @@ export async function criarAgendamentoAction(
       (vinculo.duration_min as number) * 60_000,
   ).toISOString();
 
-  // Encaixe sob bloqueio que impede encaixe: recusar antes do insert (o
-  // bloqueio nao e constraint; e regra de negocio do blocks_overbooking).
-  if (parsed.data.is_overbooking) {
-    const { data: bloqueios } = await supabase
-      .from("professional_block")
-      .select("id")
-      .eq("clinic_id", guard.clinicId)
-      .eq("professional_id", parsed.data.professional_id)
-      .eq("blocks_overbooking", true)
-      .lt("starts_at", ends_at)
-      .gt("ends_at", parsed.data.starts_at)
-      .limit(1);
-    if (bloqueios && bloqueios.length > 0) {
-      return {
-        ok: false,
-        error: "Este período está bloqueado sem permissão de encaixe.",
-      };
-    }
+  // Bloqueio do profissional: recusar antes do insert (o bloqueio nao e
+  // constraint; e regra de negocio). TODA consulta confere, como na
+  // remarcacao: a comum nao entra em bloqueio nenhum e o encaixe so nao
+  // entra no que impede encaixe. A tela pode estar com a agenda em cache (o
+  // bloqueio nao tem tempo real), entao a palavra final e daqui. Erro na
+  // leitura recusa: nunca grava sem conferir.
+  const { data: bloqueios, error: erroBloqueios } = await supabase
+    .from("professional_block")
+    .select("starts_at, ends_at, blocks_overbooking")
+    .eq("clinic_id", guard.clinicId)
+    .eq("professional_id", parsed.data.professional_id)
+    .lt("starts_at", ends_at)
+    .gt("ends_at", parsed.data.starts_at);
+  if (erroBloqueios) {
+    return { ok: false, error: MENSAGEM_SEM_CONFERIR_AGENDA };
+  }
+  const recusa = recusaPorBloqueio(
+    (bloqueios ?? []) as {
+      starts_at: string;
+      ends_at: string;
+      blocks_overbooking: boolean;
+    }[],
+    {
+      inicio: new Date(parsed.data.starts_at),
+      fim: new Date(ends_at),
+      encaixe: parsed.data.is_overbooking,
+    },
+  );
+  if (recusa) {
+    return { ok: false, code: "bloqueado", error: recusa };
   }
 
   const { data, error } = await supabase
@@ -459,11 +477,17 @@ async function enfileirarAvisoDeRemarcacao(
   // Canal fora do ar: dizer a verdade na hora do clique, como o "Cobrar
   // agora". Enfileirar aqui deixaria a recepcao achando que o paciente soube.
   // O canal e o NUMERO pelo qual o aviso sairia (varios numeros por clinica,
-  // docs/07): o ultimo em que o paciente escreveu, ou o principal. O aviso
-  // nomeia o numero quando a clinica tem mais de um, para a recepcao saber
-  // qual reconectar; com um so, a frase e a de sempre.
+  // docs/07): o fixo do tipo 'aviso_remarcacao', senao o ultimo em que o
+  // paciente escreveu, senao o principal. O aviso nomeia o numero quando a
+  // clinica tem mais de um, para a recepcao saber qual reconectar; com um so,
+  // a frase e a de sempre.
   const [contas, ativos] = await Promise.all([
-    contasDeEnvio(supabase, params.clinicId, [params.contactId]),
+    contasDeEnvio(
+      supabase,
+      params.clinicId,
+      [params.contactId],
+      "aviso_remarcacao",
+    ),
     supabase
       .from("whatsapp_account")
       .select("id", { count: "exact", head: true })
@@ -505,7 +529,8 @@ async function enfileirarAvisoDeRemarcacao(
   // (executarEnvioAtivo) reconfere a consulta na hora do envio e mata o aviso
   // que ficou velho (remarcada de novo, cancelada, encerrada ou vencida). O
   // job leva o numero conferido conectado acima; numero_do_job o confirma na
-  // execucao.
+  // execucao. tipo_de_envio diz ao banco qual escolha de numero vale quando
+  // ele precisar recarimbar o job (numero removido, escolha trocada).
   const admin = createAdminClient();
   const { error: erroJob } = await admin.from("job_queue").insert({
     clinic_id: params.clinicId,
@@ -516,6 +541,7 @@ async function enfileirarAvisoDeRemarcacao(
       appointment_id: params.appointmentId,
       starts_at: params.inicio.toISOString(),
       professional_id: params.professionalId,
+      tipo_de_envio: "aviso_remarcacao" satisfies TipoDeEnvio,
     },
     whatsapp_account_id: conta.whatsappAccountId,
   });
@@ -657,27 +683,18 @@ export async function remarcarAgendamentoAction(
       .eq("professional_id", novo_professional_id),
   ]);
   if (erroBloqueios || erroJornada) {
-    return {
-      ok: false,
-      error:
-        "Não foi possível conferir a agenda do profissional. Tente de novo.",
-    };
+    return { ok: false, error: MENSAGEM_SEM_CONFERIR_AGENDA };
   }
-  const bloqueiosQueValem = (
+  const recusa = recusaPorBloqueio(
     (bloqueios ?? []) as {
       starts_at: string;
       ends_at: string;
       blocks_overbooking: boolean;
-    }[]
-  ).filter((b) => !atual.is_overbooking || b.blocks_overbooking);
-  if (colideComBloqueio(bloqueiosQueValem, novoInicio, novoFim)) {
-    return {
-      ok: false,
-      code: "bloqueado",
-      error: atual.is_overbooking
-        ? "Este período está bloqueado sem permissão de encaixe."
-        : "Este horário está bloqueado na agenda do profissional. Escolha outro horário.",
-    };
+    }[],
+    { inicio: novoInicio, fim: novoFim, encaixe: atual.is_overbooking },
+  );
+  if (recusa) {
+    return { ok: false, code: "bloqueado", error: recusa };
   }
   if (
     !atual.is_overbooking &&

@@ -1,13 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import type { NumerosDasAutomaticas } from "@/components/automacoes/numeros-de-envio";
+import type {
+  NumerosDasAutomaticas,
+  PoliticaDeEnvio,
+} from "@/components/automacoes/numeros-de-envio";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { NumeroDaClinica } from "@/lib/queries/conversations";
 
-// Cartao "Numero das mensagens automaticas" da Tela 7 (docs/07, Fase 4):
-// so aparece com mais de um numero ativo, diz as duas opcoes com a
-// explicacao do dono, avisa que desconectado espera (nunca troca sozinho) e,
+// Cartao "Numero das mensagens automaticas" da Tela 7 (docs/07, Fase 4; POR
+// TIPO desde 29/09/2026): so aparece com mais de um numero ativo, tem uma
+// linha por tipo com o seletor ("Ultimo numero usado pelo paciente
+// (recomendado)" ou o numero), avisa que desconectado espera (nunca troca
+// sozinho), diz que a resposta sai pelo numero em que o paciente respondeu e,
 // para quem nao edita, fica visivel e desabilitado.
 
 vi.mock("@/app/(app)/automacoes/actions", () => ({
@@ -58,52 +63,110 @@ function render(
   );
 }
 
-const ULTIMO = { modo: "ultimo_usado" as const, contaFixaId: null };
+const ULTIMO: PoliticaDeEnvio = {
+  confirmacao: null,
+  pos_falta: null,
+  followup: null,
+  lista_espera: null,
+  aviso_remarcacao: null,
+};
+
+const ROTULOS = [
+  "Confirmação de consulta e Cobrar agora",
+  "Recuperação depois da falta",
+  "Follow-up de leads",
+  "Oferta da lista de espera",
+  "Aviso de remarcação",
+];
+
+/** O trecho da linha de um tipo: do rotulo ate o fim do seletor dela. */
+function linhaDoTipo(html: string, tipo: string): string {
+  const inicio = html.indexOf(`for="numero-do-tipo-${tipo}"`);
+  expect(inicio).toBeGreaterThan(-1);
+  const fim = html.indexOf("</li>", inicio);
+  return html.slice(inicio, fim);
+}
 
 describe("NumeroDasAutomaticas", () => {
   it("com um número só, não aparece", () => {
     expect(render({ numeros: [numero()], politica: ULTIMO })).toBe("");
   });
 
-  it("com dois números, mostra as duas opções, a explicação e a nota", () => {
+  it("com dois números, uma linha por tipo, na linguagem da recepção, e as duas notas", () => {
     const html = render({ numeros: DOIS, politica: ULTIMO });
     expect(html).toContain("Número das mensagens automáticas");
-    expect(html).toContain("Último número usado pelo paciente (recomendado)");
-    expect(html).toContain(
-      "Confirmações, lembretes e avisos saem pelo número com que o paciente conversou por último. Quem nunca conversou recebe pelo número principal.",
-    );
-    expect(html).toContain("Sempre pelo mesmo número");
+    let posicao = -1;
+    for (const rotulo of ROTULOS) {
+      const aqui = html.indexOf(rotulo);
+      expect(aqui).toBeGreaterThan(posicao);
+      posicao = aqui;
+    }
+    for (const tipo of [
+      "confirmacao",
+      "pos_falta",
+      "followup",
+      "lista_espera",
+      "aviso_remarcacao",
+    ]) {
+      expect(html).toContain(`id="numero-do-tipo-${tipo}"`);
+      // Sem escolha gravada, o seletor mostra o ultimo usado.
+      expect(linhaDoTipo(html, tipo)).toContain(
+        "Último número usado pelo paciente (recomendado)",
+      );
+    }
     expect(html).toContain(
       "Se o número escolhido estiver desconectado, as mensagens esperam a reconexão. Elas nunca saem por outro número sozinhas.",
     );
-    // Sem o fixo marcado, o seletor de numero ainda nao aparece.
-    expect(html).not.toContain("numero-fixo-das-automaticas");
+    expect(html).toContain(
+      "A resposta a quem respondeu uma mensagem sai pelo número em que o paciente respondeu.",
+    );
     expect(html).not.toContain("—");
+    expect(html).not.toContain("não está conectado");
   });
 
-  it("no modo fixo, o seletor aparece com o número escolhido", () => {
+  it("confirmação fixa no número e follow-up no último usado, cada linha com a sua escolha", () => {
     const html = render({
       numeros: DOIS,
-      politica: { modo: "fixo", contaFixaId: PRINCIPAL },
+      politica: { ...ULTIMO, confirmacao: PRINCIPAL },
     });
-    expect(html).toContain('id="numero-fixo-das-automaticas"');
-    expect(html).toContain("Número principal");
+    expect(linhaDoTipo(html, "confirmacao")).toContain("Número principal");
+    expect(linhaDoTipo(html, "confirmacao")).not.toContain(
+      "Último número usado pelo paciente",
+    );
+    expect(linhaDoTipo(html, "followup")).toContain(
+      "Último número usado pelo paciente (recomendado)",
+    );
   });
 
-  it("número fixo desconectado avisa que as mensagens esperam", () => {
+  it("número fixo desconectado avisa uma vez que as mensagens dele esperam", () => {
     const html = render({
       numeros: DOIS,
-      politica: { modo: "fixo", contaFixaId: RECEPCAO },
+      politica: {
+        ...ULTIMO,
+        confirmacao: RECEPCAO,
+        aviso_remarcacao: RECEPCAO,
+      },
     });
-    expect(html).toContain("O número &quot;Recepção&quot; não está conectado");
+    const aviso = "O número &quot;Recepção&quot; não está conectado";
+    expect(html).toContain(aviso);
+    expect(html.split(aviso)).toHaveLength(2);
     expect(html).toContain("ficam esperando");
+    // Status em 3 camadas no seletor: o rotulo em texto, alem de icone e cor.
+    expect(linhaDoTipo(html, "confirmacao")).toContain("Desconectado");
   });
 
-  it("quem não edita vê tudo desabilitado", () => {
+  it("quem não edita vê tudo desabilitado, com o botão visível", () => {
     const html = render({ numeros: DOIS, politica: ULTIMO }, false);
     expect(html).toMatch(/<fieldset[^>]*disabled/);
-    expect(html).toContain("Salvar escolha");
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>.*Salvar escolha/);
+    expect(html).toContain("Salvar escolhas");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>.*Salvar escolhas/);
+  });
+
+  it("quem edita vê o salvar desabilitado enquanto nada mudou", () => {
+    const html = render({ numeros: DOIS, politica: ULTIMO });
+    expect(html).not.toMatch(/<fieldset[^>]*disabled/);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>.*Salvar escolhas/);
+    expect(html).not.toContain("Há escolhas ainda não salvas.");
   });
 
   it("leitura que falhou mostra o erro com o caminho de tentar de novo", () => {

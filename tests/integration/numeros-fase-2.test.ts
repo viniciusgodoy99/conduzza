@@ -1386,9 +1386,23 @@ describe("régua e eco pelo número", () => {
   it("modo fixo em outro número: o eco sai mesmo assim pelo número que recebeu", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("eco-toque-2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
+    // Todos os tipos fixos no B (escolha por tipo desde 29/09/2026).
     await admin
       .from("whatsapp_envio_automatico")
-      .insert({ clinic_id: clinicId, modo: "fixo", conta_fixa_id: b.id })
+      .insert(
+        [
+          "confirmacao",
+          "pos_falta",
+          "followup",
+          "lista_espera",
+          "aviso_remarcacao",
+        ].map((tipo) => ({
+          clinic_id: clinicId,
+          tipo,
+          modo: "fixo",
+          conta_fixa_id: b.id,
+        })),
+      )
       .throwOnError();
     const { phone, contactId } = await consultaTocada(clinicId, a.id);
     await postar(

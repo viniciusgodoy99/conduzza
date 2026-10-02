@@ -814,20 +814,26 @@ describe("remover número (só administrador, D8)", () => {
     expect(chamadas).toHaveLength(0);
   });
 
-  it("recusa o número fixo das mensagens automáticas", async () => {
+  // Decisao do dono de 29/09/2026: o numero fixo de algum tipo de mensagem
+  // automatica sai sem trava; a RPC remover_numero devolve a escolha desses
+  // tipos ao ultimo numero usado pelo paciente (ensaiado no banco).
+  it("não recusa o número fixo de um tipo de mensagem automática: a remoção segue pela RPC", async () => {
     const numero = banco.numero({ clinic_id: CLINICA_A });
     banco.linhas("whatsapp_envio_automatico").push({
       clinic_id: CLINICA_A,
+      tipo: "confirmacao",
       modo: "fixo",
       conta_fixa_id: numero.id,
     });
 
     const resultado = await removerNumeroAction(numero.id);
 
-    expect(resultado.error).toBe(
-      "As mensagens automáticas saem sempre por este número. Em Automações, escolha outro número antes de remover este.",
-    );
-    expect(banco.rpc).not.toHaveBeenCalled();
+    expect(resultado.error).toBeUndefined();
+    expect(banco.rpc).toHaveBeenCalledWith("remover_numero", {
+      p_clinic_id: CLINICA_A,
+      p_account_id: numero.id,
+      p_removido_por: "usuario-da-sessao",
+    });
   });
 
   it("remove: RPC com quem removeu, depois desconecta e apaga a instância com o token de antes", async () => {

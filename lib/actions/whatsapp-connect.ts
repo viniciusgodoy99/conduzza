@@ -1302,8 +1302,10 @@ export async function definirNumeroPrincipalAction(
  * remover_numero; o historico fica.
  *
  * Recusa ANTES de tocar na instancia: o principal enquanto houver outro
- * numero ativo (a clinica escolhe o novo principal antes) e o numero fixo
- * das mensagens automaticas (a clinica escolhe outro em Automacoes antes).
+ * numero ativo (a clinica escolhe o novo principal antes). Numero fixo de
+ * algum tipo de mensagem automatica NAO trava (decisao do dono de
+ * 29/09/2026): a RPC devolve a escolha desses tipos ao ultimo numero usado
+ * pelo paciente, na mesma transacao, antes de redistribuir os envios.
  * Depois da RPC, desconecta e apaga a instancia no servidor compartilhado;
  * falha ali nao desfaz a remocao, so fica registrada para o suporte limpar.
  */
@@ -1349,18 +1351,6 @@ export async function removerNumeroAction(
     return {
       ok: false,
       error: "Escolha outro número como principal antes de remover este.",
-    };
-  }
-  const { data: politica } = await admin
-    .from("whatsapp_envio_automatico")
-    .select("modo, conta_fixa_id")
-    .eq("clinic_id", guard.clinicId)
-    .maybeSingle();
-  if (politica?.modo === "fixo" && politica.conta_fixa_id === conta.id) {
-    return {
-      ok: false,
-      error:
-        "As mensagens automáticas saem sempre por este número. Em Automações, escolha outro número antes de remover este.",
     };
   }
 

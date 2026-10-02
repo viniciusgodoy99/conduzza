@@ -16,7 +16,8 @@ export type VolumesDaEstimativa = {
 
 export const automacoesKeys = {
   volumes: (clinicId: string) => ["automacoes", clinicId, "volumes"] as const,
-  excecoes: (clinicId: string) => ["automacoes", clinicId, "excecoes"] as const,
+  vinculadas: (clinicId: string) =>
+    ["automacoes", clinicId, "vinculadas"] as const,
   followups: (clinicId: string) =>
     ["automacoes", clinicId, "followups"] as const,
 };
@@ -61,78 +62,178 @@ export async function fetchVolumesDaEstimativa(
 }
 
 // ---------------------------------------------------------------------------
-// Excecoes da regua de confirmacao (fase 2 da 4.8): regua por procedimento e
-// regua reforcada por historico de falta. O planner ja escolhe a mais
-// especifica; aqui e so leitura para a tela.
+// Reguas vinculadas de confirmacao e de pos-falta (decisao do dono em
+// 29/09/2026; antes eram as "excecoes" da confirmacao, so por procedimento e
+// a reforcada). Cada regua tem UM vinculo: medico, especialidade ou
+// procedimento; sem vinculo e a geral. Quem escolhe a regua de cada consulta
+// e o banco (regua_da_consulta); aqui e so leitura para a tela.
 
+import {
+  chaveDeEspecialidade,
+  especialidadesDosProfissionais,
+  vinculoDaLinha,
+  type KindVinculavel,
+  type OpcoesDeVinculo,
+  type VinculoDaRegua,
+} from "@/components/automacoes/vinculo-da-regua";
 import type { ReguaDeConfirmacao } from "@/lib/queries/confirmacoes";
 
-export type ExcecaoDeConfirmacao = ReguaDeConfirmacao & {
-  procedure: { id: string; name: string } | null;
+export type ReguaVinculada = ReguaDeConfirmacao & {
+  kind: KindVinculavel;
+  /** null: regua so reforcada por historico de falta, sem vinculo. */
+  vinculo: VinculoDaRegua | null;
   for_no_show_history: boolean;
   no_show_threshold: number;
-  /** Consultas dos ultimos 30 dias no recorte da excecao (estimativa). */
+  /**
+   * Consultas marcadas (confirmacao) ou faltas registradas (pos-falta) dos
+   * ultimos 30 dias no recorte da regua (estimativa de volume).
+   */
   eventos30d: number;
 };
 
-export type ProcedimentoParaExcecao = { id: string; name: string };
+export type DadosDasReguasVinculadas = {
+  /** As vinculadas dos dois tipos; cada aba fica com as do seu. */
+  reguas: ReguaVinculada[];
+  /** Medicos, especialidades e procedimentos ATIVOS, para o dialogo. */
+  opcoes: OpcoesDeVinculo;
+};
 
-export async function fetchExcecoesDeConfirmacao(
+// As colunas novas de cadence (professional_id, specialty) chegam em
+// lib/supabase/database.types.ts pelo outro grupo desta frente; o cliente
+// daqui nao e tipado, entao a forma da linha fica local.
+type LinhaDoProfissional = {
+  id: string;
+  name: string;
+  specialties: string[] | null;
+  active: boolean;
+};
+
+export async function fetchReguasVinculadas(
   supabase: SupabaseClient,
   clinicId: string,
-): Promise<{
-  excecoes: ExcecaoDeConfirmacao[];
-  procedimentos: ProcedimentoParaExcecao[];
-}> {
+): Promise<DadosDasReguasVinculadas> {
   const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
   const desde24h = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
   const agora = new Date().toISOString();
-  const [reguas, procedimentos, jaEnviou, linhaDeBase] = await Promise.all([
-    supabase
-      .from("cadence")
-      .select(
-        "id, name, active, send_window_start, send_window_end, send_weekdays, for_no_show_history, no_show_threshold, procedure:procedure_id (id, name)",
-      )
-      .eq("clinic_id", clinicId)
-      .eq("kind", "confirmacao")
-      .or("procedure_id.not.is.null,for_no_show_history.eq.true")
-      .order("name"),
-    supabase
-      .from("procedure")
-      .select("id, name")
-      .eq("clinic_id", clinicId)
-      .eq("active", true)
-      .order("name"),
-    supabase
-      .from("cadence_run")
-      .select("id")
-      .eq("clinic_id", clinicId)
-      .not("sent_at", "is", null)
-      .limit(1),
-    // A excecao tambem e regua de confirmacao: sem linha de base, ligar
-    // qualquer uma lembra o registro (achado 49).
-    supabase
-      .from("no_show_baseline")
-      .select("id")
-      .eq("clinic_id", clinicId)
-      .limit(1),
-  ]);
-  if (reguas.error) {
-    throw new Error(reguas.error.message);
+  const [reguas, procedimentos, profissionais, jaEnviou, linhaDeBase] =
+    await Promise.all([
+      supabase
+        .from("cadence")
+        .select(
+          "id, kind, name, active, send_window_start, send_window_end, send_weekdays, for_no_show_history, no_show_threshold, specialty, procedure:procedure_id (id, name), professional:professional_id (id, name)",
+        )
+        .eq("clinic_id", clinicId)
+        .in("kind", ["confirmacao", "pos_falta"])
+        .or(
+          "procedure_id.not.is.null,professional_id.not.is.null,specialty.not.is.null,for_no_show_history.eq.true",
+        )
+        .order("name"),
+      supabase
+        .from("procedure")
+        .select("id, name")
+        .eq("clinic_id", clinicId)
+        .eq("active", true)
+        .order("name"),
+      // TODOS os profissionais: os ativos montam as opcoes do dialogo, e a
+      // estimativa por especialidade casa tambem quem ja saiu do cadastro
+      // (a consulta dos ultimos 30 dias continua sendo dele).
+      supabase
+        .from("professional")
+        .select("id, name, specialties, active")
+        .eq("clinic_id", clinicId)
+        .order("name"),
+      supabase
+        .from("cadence_run")
+        .select("id")
+        .eq("clinic_id", clinicId)
+        .not("sent_at", "is", null)
+        .limit(1),
+      // A vinculada de confirmacao tambem mexe na taxa de falta: sem linha de
+      // base, ligar qualquer uma lembra o registro (achado 49).
+      supabase
+        .from("no_show_baseline")
+        .select("id")
+        .eq("clinic_id", clinicId)
+        .limit(1),
+    ]);
+  // Lista vazia por erro de leitura diria "Nenhum médico ativo" sem ser
+  // verdade: melhor o estado de erro da tela.
+  const erro = reguas.error ?? procedimentos.error ?? profissionais.error;
+  if (erro) {
+    throw new Error(erro.message);
   }
   const linhas = (reguas.data ?? []) as Record<string, unknown>[];
+  const todosOsProfissionais = (profissionais.data ??
+    []) as LinhaDoProfissional[];
   const primeiraAtivacao = (jaEnviou.data ?? []).length === 0;
   const semLinhaDeBase = (linhaDeBase.data ?? []).length === 0;
 
-  // Poucas excecoes por clinica (uma por procedimento com preparo, mais a
-  // reforcada): as consultas por regua abaixo sao baratas e em paralelo.
-  const excecoes = await Promise.all(
+  // Quem atende cada especialidade, pela MESMA chave do banco.
+  const profissionaisDaEspecialidade = (chave: string): string[] =>
+    todosOsProfissionais
+      .filter((profissional) =>
+        (profissional.specialties ?? []).some(
+          (especialidade) => chaveDeEspecialidade(especialidade) === chave,
+        ),
+      )
+      .map((profissional) => profissional.id);
+
+  // Estimativa de 30 dias no recorte da regua, janela FECHADA em agora (como
+  // fetchVolumesDaEstimativa). Conta o recorte inteiro, sem descontar o que
+  // uma regua mais especifica levaria: e a ordem de grandeza, nao a divisao.
+  const contarEventos = async (
+    kind: KindVinculavel,
+    vinculo: VinculoDaRegua | null,
+    reforcada: boolean,
+    limiar: number,
+  ): Promise<number> => {
+    let doRecorte: string[] | null = null;
+    if (vinculo?.tipo === "especialidade") {
+      doRecorte = profissionaisDaEspecialidade(vinculo.chave);
+      if (doRecorte.length === 0) {
+        return 0;
+      }
+    }
+    const colunas = ["id"];
+    if (vinculo?.tipo === "procedimento") {
+      colunas.push("service_link!inner(procedure_id)");
+    }
+    if (reforcada) {
+      colunas.push("contact!inner(no_show_count)");
+    }
+    let consulta = supabase
+      .from("appointment")
+      .select(colunas.join(", "), { count: "exact", head: true })
+      .eq("clinic_id", clinicId)
+      .gte("starts_at", desde30d)
+      .lt("starts_at", agora);
+    consulta =
+      kind === "confirmacao"
+        ? consulta.eq("send_confirmation", true)
+        : consulta.eq("status", "faltou");
+    if (vinculo?.tipo === "procedimento") {
+      consulta = consulta.eq("service_link.procedure_id", vinculo.id);
+    } else if (vinculo?.tipo === "medico") {
+      consulta = consulta.eq("professional_id", vinculo.id);
+    } else if (doRecorte) {
+      consulta = consulta.in("professional_id", doRecorte);
+    }
+    if (reforcada) {
+      consulta = consulta.gte("contact.no_show_count", limiar);
+    }
+    const { count } = await consulta;
+    return count ?? 0;
+  };
+
+  // Poucas vinculadas por clinica (alguns medicos, especialidades e
+  // procedimentos com preparo, mais a reforcada): as consultas por regua
+  // abaixo sao baratas e em paralelo.
+  const vinculadas = await Promise.all(
     linhas.map(async (regua) => {
-      const procedureBruto = regua.procedure;
-      const procedure = (
-        Array.isArray(procedureBruto) ? procedureBruto[0] : procedureBruto
-      ) as { id: string; name: string } | null;
+      const kind = regua.kind as KindVinculavel;
+      const vinculo = vinculoDaLinha(regua);
       const reforcada = regua.for_no_show_history as boolean;
+      const limiar = (regua.no_show_threshold as number | null) ?? 2;
       const [passos, eventos, enviados, pulados] = await Promise.all([
         supabase
           .from("cadence_step")
@@ -142,32 +243,7 @@ export async function fetchExcecoesDeConfirmacao(
           .eq("clinic_id", clinicId)
           .eq("cadence_id", regua.id as string)
           .order("offset_minutes"),
-        procedure
-          ? supabase
-              .from("appointment")
-              .select("id, service_link!inner(procedure_id)", {
-                count: "exact",
-                head: true,
-              })
-              .eq("clinic_id", clinicId)
-              .eq("send_confirmation", true)
-              .eq("service_link.procedure_id", procedure.id)
-              .gte("starts_at", desde30d)
-              .lt("starts_at", agora)
-          : supabase
-              .from("appointment")
-              .select("id, contact!inner(no_show_count)", {
-                count: "exact",
-                head: true,
-              })
-              .eq("clinic_id", clinicId)
-              .eq("send_confirmation", true)
-              .gte(
-                "contact.no_show_count",
-                (regua.no_show_threshold as number) ?? 2,
-              )
-              .gte("starts_at", desde30d)
-              .lt("starts_at", agora),
+        contarEventos(kind, vinculo, reforcada, limiar),
         supabase
           .from("cadence_run")
           .select("id, cadence_step!inner(cadence_id)", {
@@ -197,19 +273,38 @@ export async function fetchExcecoesDeConfirmacao(
         send_weekdays: (regua.send_weekdays as number[] | null) ?? null,
         passos: (passos.data ?? []) as ReguaDeConfirmacao["passos"],
         primeira_ativacao: primeiraAtivacao,
-        pede_linha_de_base: semLinhaDeBase,
+        // So a confirmacao pede a linha de base (achado 49): a pos-falta
+        // nao muda a taxa de falta que ela mede.
+        pede_linha_de_base: kind === "confirmacao" && semLinhaDeBase,
         enviados_24h: enviados.count ?? 0,
         pulados_24h: pulados.count ?? 0,
-        procedure,
+        kind,
+        vinculo,
         for_no_show_history: reforcada,
-        no_show_threshold: (regua.no_show_threshold as number) ?? 2,
-        eventos30d: eventos.count ?? 0,
-      } satisfies ExcecaoDeConfirmacao;
+        no_show_threshold: limiar,
+        eventos30d: eventos,
+      } satisfies ReguaVinculada;
     }),
   );
+
+  const ativos = todosOsProfissionais.filter(
+    (profissional) => profissional.active,
+  );
   return {
-    excecoes,
-    procedimentos: (procedimentos.data ?? []) as ProcedimentoParaExcecao[],
+    reguas: vinculadas,
+    opcoes: {
+      medicos: ativos.map((profissional) => ({
+        id: profissional.id,
+        nome: profissional.name,
+      })),
+      especialidades: especialidadesDosProfissionais(ativos),
+      procedimentos: (
+        (procedimentos.data ?? []) as { id: string; name: string }[]
+      ).map((procedimento) => ({
+        id: procedimento.id,
+        nome: procedimento.name,
+      })),
+    },
   };
 }
 

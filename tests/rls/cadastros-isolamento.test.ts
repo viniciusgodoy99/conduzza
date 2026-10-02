@@ -10,7 +10,11 @@ import { adminClient, anonClient } from "./stack";
 //     clinica A travava a agenda da B. O gatilho exigir_cadastro_da_mesma_
 //     clinica recusa com 23503.
 // (2) achado 35: pacote vendido nao troca de procedimento (23514), nao sai do
-//     banco (23503) e pacote desativado nao e vendido (23514).
+//     banco (23503) e pacote desativado nao e vendido (23514). Desde a
+//     migration 20260929120000 (pacote com varios procedimentos) o
+//     congelamento e do item (package_item: procedimento e sessoes); o teste
+//     abaixo usa de proposito o caminho ANTIGO (procedure_id + sessions,
+//     venda por INSERT direto), que o modo expand mantem funcionando.
 // (3) achado 7c: INSERT de message pela sessao amarrado ao autor.
 // Padrao da suite: toda negacao tem o caso positivo ao lado (anti falso
 // positivo), para o teste nao passar por um motivo errado.
@@ -374,12 +378,18 @@ describe("pacote vendido", () => {
       price_cents: 100000,
     });
 
-    // Antes da venda, trocar o procedimento e livre.
+    // Antes da venda, trocar o procedimento e livre (o item acompanha).
     const antes = await gestao
       .from("package")
       .update({ procedure_id: procA2 })
       .eq("id", pacote);
     expect(antes.error).toBeNull();
+    const { data: itemAntes } = await admin
+      .from("package_item")
+      .select("procedure_id, sessions")
+      .eq("package_id", pacote)
+      .throwOnError();
+    expect(itemAntes).toEqual([{ procedure_id: procA2, sessions: 10 }]);
 
     const venda = await recepcao.from("package_balance").insert({
       clinic_id: clinicaA,
@@ -395,7 +405,21 @@ describe("pacote vendido", () => {
       .eq("id", pacote);
     expect(troca.error?.code).toBe(CHECK_VIOLATION);
 
-    // Preco e sessoes continuam editaveis (nao mexem no saldo vendido).
+    // Desde o pacote com varios procedimentos (migration 20260929120000), o
+    // item vendido fica congelado por inteiro: as sessoes tambem nao mudam,
+    // nem pelo caminho antigo (procedure_id + sessions) nem pelo item.
+    const sessoes = await gestao
+      .from("package")
+      .update({ sessions: 12 })
+      .eq("id", pacote);
+    expect(sessoes.error?.code).toBe(CHECK_VIOLATION);
+    const item = await gestao
+      .from("package_item")
+      .update({ sessions: 12 })
+      .eq("package_id", pacote);
+    expect(item.error?.code).toBe(CHECK_VIOLATION);
+
+    // Preco continua editavel (nao mexe no saldo vendido).
     const preco = await gestao
       .from("package")
       .update({ price_cents: 120000 })

@@ -84,6 +84,8 @@ create table professional_block (
   blocks_overbooking boolean not null default true
 );
 
+-- Sem tela desde 29/09/2026 (decisão do dono): a tabela, a coluna
+-- procedure.resource_id e a trava sem_sobreposicao_recurso continuam.
 create table resource (                       -- sala, cabine, equipamento
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references clinic(id) on delete cascade,
@@ -102,8 +104,8 @@ create table procedure (
   base_price_cents integer,
   requires_evaluation boolean not null default false,
   prep_instructions text,
-  resource_id uuid references resource(id),
-  bookable_by_ai boolean not null default true,
+  resource_id uuid references resource(id),   -- sem campo na tela desde 29/09/2026
+  bookable_by_ai boolean not null default true, -- fonte única: o vínculo segue esta chave
   active boolean not null default true
 );
 
@@ -118,6 +120,9 @@ create table insurance (                      -- convênio
 );
 
 -- A MATRIZ DE TRÊS PONTAS. É o coração do cadastro.
+-- Desde 29/09/2026 é gerida pelo PROCEDIMENTO (seção "Quem faz e convênios"
+-- do modal), gravada de uma vez pela RPC sincronizar_vinculos_do_procedimento
+-- (ver a nota abaixo). Não há mais tela própria de vínculos.
 create table service_link (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references clinic(id) on delete cascade,
@@ -135,14 +140,41 @@ create table service_link (
 create table package (                        -- pacote de sessões, exigência do nicho de estética
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references clinic(id) on delete cascade,
+  name text not null check (char_length(btrim(name)) between 1 and 80),
+  price_cents integer not null,                -- o valor que a clínica define; não é distribuído entre os itens
+  validity_days integer,                       -- validade do PACOTE (conta da venda); null = não vence
+  active boolean not null default true,        -- "à venda"
+  procedure_id uuid references procedure(id),  -- LEGADO desde 29/09/2026 (código novo grava null); sai no contrato
+  sessions integer check (sessions > 0)        -- LEGADO desde 29/09/2026; sai no contrato
+);
+
+-- Os procedimentos do pacote (29/09/2026): Botox 2 sessões + Facelift 1 sessão.
+create table package_item (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  package_id uuid not null references package(id) on delete cascade,
   procedure_id uuid not null references procedure(id),
   sessions integer not null check (sessions > 0),
-  price_cents integer not null,
-  validity_days integer
+  unique (package_id, procedure_id)            -- o mesmo procedimento uma vez só
 );
 ```
 
 > **Atenção de produto:** `price_cents = 0` e `covered_by_insurance = true` e `price_cents is null` são **três coisas diferentes** e a interface precisa mostrar as três de forma diferente ("R$ 0,00", "Coberto", campo vazio). Confundir isso faz a IA informar preço errado ao paciente.
+
+> **`service_link` é gerido pelo Procedimento (decisão do dono em 29/09/2026, migration `20260929100000_vinculos_do_procedimento.sql`).** A tela manda o estado desejado do procedimento inteiro (uma linha por profissional e convênio, com preço, "Coberto" e duração já resolvidos: o padrão do procedimento vira valor concreto antes de gravar) para a RPC `sincronizar_vinculos_do_procedimento(p_procedure_id uuid, p_linhas jsonb) returns jsonb`, que reconcilia numa transação só:
+> - **cria** o vínculo que ainda não existe;
+> - **reativa e atualiza** o que existe (ativo ou não) e continua na lista; o unique de três pontas faz o Particular desativado voltar em vez de duplicar;
+> - **desativa, nunca apaga,** o vínculo ativo que saiu da lista: `appointment.service_link_id` continua apontando para ele, e desativado ele some do modal de agendamento e da reoferta da lista de espera;
+> - grava `bookable_by_ai = procedure.bookable_by_ai` em todo vínculo (uma fonte só para "IA pode agendar");
+> - devolve `{criados, reativados, atualizados, desativados, consultas_futuras}`; `consultas_futuras` conta as consultas que ainda vão acontecer nos vínculos que acabaram de sair (a desativação não desmarca nada, a recepção remarca ou cancela pela Agenda).
+>
+> É `SECURITY INVOKER`, com `execute` só para `authenticated`: a RLS de `procedure` e de `service_link` vale inteira. O papel é conferido no começo (admin ou gestor, senão 42501); procedimento de outra clínica ou inexistente dá "não encontrado" (P0002); profissional ou convênio de outra clínica é recusado pelo gatilho `exigir_cadastro_da_mesma_clinica` (23503). A linha do procedimento fica travada (`FOR UPDATE`) durante a reconciliação: dois Salvar simultâneos do mesmo procedimento rodam em série e o último vence por inteiro. A lista é validada antes de gravar (até 500 linhas, duração de 5 a 600 minutos, preço não negativo, "Coberto" só com convênio, o mesmo profissional no mesmo convênio uma vez só).
+
+> **Pacote com vários procedimentos (pedido do dono em 29/09/2026, migration `20260929120000_pacote_com_varios_procedimentos.sql`).** Um pacote junta procedimentos em `package_item` (procedimento e sessões, cada procedimento uma vez). O cadastro mostra o **preço avulso** (soma de sessões x `procedure.base_price_cents` de cada item, **calculado** na leitura, nunca gravado; item de procedimento sem preço base deixa a soma incompleta e a tela diz isso) ao lado do **preço do pacote** (`package.price_cents`, o valor que a clínica define), para ver o desconto. A validade é do pacote. O preço do pacote não é distribuído entre os itens.
+> - **Gravação:** RPC `salvar_pacote(p_clinic_id uuid, p_name text, p_itens jsonb, p_price_cents integer, p_validity_days integer, p_active boolean, p_package_id uuid default null) returns uuid`, `SECURITY INVOKER`, cria ou edita pacote e itens numa transação (`p_itens = [{procedure_id, sessions}]`, 1 a 30 itens, 1 a 200 sessões). Papel admin ou gestor (42501); pacote de outra clínica, P0002; procedimento de outra clínica, 23503; regra, 23514 com a mensagem em português.
+> - **Item de pacote vendido fica congelado** (gatilho `travar_itens_de_pacote_vendido`, em qualquer caminho): o item não entra, não sai e não muda de procedimento ou de sessões depois da primeira venda (23514). Nome, preço, validade e "à venda" continuam editáveis; mandar os mesmos itens passa. A trava pega a linha do pacote `FOR UPDATE`, que conflita com o `KEY SHARE` da FK da venda: item mudando e venda acontecendo rodam em série.
+> - **Isolamento:** `package_item` tem as mesmas policies de `package` (membro ativo lê, admin e gestor escrevem) e entra em `exigir_cadastro_da_mesma_clinica` (pacote e procedimento da mesma clínica, 23503). O gatilho de isolamento roda antes do de congelamento, então o item que aponta pacote de outra clínica nunca revela se ele foi vendido.
+> - **Modo expand:** `package.procedure_id` e `package.sessions` ficaram opcionais e o código novo não os usa. Enquanto o código publicado antes existir, o INSERT/UPDATE antigo (procedure_id + sessions) vira o item único do pacote (gatilho `espelhar_item_do_pacote_legado`) e o pacote criado sem nome recebe o nome do procedimento (`preencher_nome_do_pacote_legado`). A migration de contrato apaga as duas colunas e os dois gatilhos.
 
 ---
 
@@ -187,16 +219,81 @@ create table contact_consent (
   evidence text
 );
 
+-- A venda de um pacote a um contato. A validade é da venda inteira.
 create table package_balance (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references clinic(id) on delete cascade,
   contact_id uuid not null references contact(id) on delete cascade,
   package_id uuid not null references package(id),
+  expires_at date,                             -- dia civil da clínica; null = não vence
+  -- LEGADO desde 29/09/2026: soma dos itens, mantida pelo gatilho
+  -- espelhar_totais_no_saldo_legado para o código antigo; sai no contrato.
   sessions_used integer not null default 0,
+  sessions_total integer
+);
+
+-- O saldo vendido, POR PROCEDIMENTO: cópia dos itens do pacote feita na
+-- venda, que isola o que o paciente comprou de qualquer edição futura do
+-- pacote. Procedimento, venda e sessões vendidas não mudam depois de
+-- gravados: pela sessão, só sessions_used tem UPDATE (o que o ajuste grava).
+create table package_balance_item (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  package_balance_id uuid not null references package_balance(id) on delete cascade,
+  procedure_id uuid not null references procedure(id),
+  sessions_total integer not null check (sessions_total > 0),
+  sessions_used integer not null default 0 check (sessions_used >= 0),
+  check (sessions_used <= sessions_total),
+  unique (package_balance_id, procedure_id)
+);
+
+-- Trilha de ajuste e cancelamento de saldo (quem, antes, depois e o motivo).
+create table package_balance_adjustment (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  contact_id uuid not null references contact(id) on delete cascade,
+  package_balance_id uuid references package_balance(id) on delete set null,
+  package_balance_item_id uuid references package_balance_item(id) on delete set null,
+  procedure_id uuid references procedure(id),  -- qual procedimento; null = ajuste só da validade
+  package_id uuid not null references package(id),
+  user_id uuid not null references auth.users(id),
+  kind text not null check (kind in ('ajuste','cancelamento')),
   sessions_total integer not null,
-  expires_at date
+  sessions_used_before integer not null,
+  sessions_used_after integer,
+  expires_at_before date,
+  expires_at_after date,
+  reason text not null,
+  created_at timestamptz not null default now()
 );
 ```
+
+**Saldo de pacote por item (29/09/2026).** Todas as funções abaixo são `SECURITY INVOKER` (a RLS e o papel da sessão valem lá dentro), com `execute` só para `authenticated` e `service_role`:
+
+- `vender_pacote(p_contact_id uuid, p_package_id uuid, p_inicio date default null, p_usadas jsonb default '[]') returns uuid`: grava a venda e copia os itens do pacote numa transação. `p_inicio` é o dia em que o pacote começou (null = hoje no fuso da clínica; a validade conta dali); `p_usadas = [{procedure_id, sessions_used}]` cobre o pacote **em andamento** de quem chega ao sistema no meio dele. Precisa sobrar ao menos uma sessão. Papel admin, gestor e recepção (42501); pacote ou paciente de outra clínica, P0002; pacote desativado, data futura, pacote já vencido, sessões fora do item ou procedimento fora do pacote, 23514.
+- `ajustar_saldo_de_pacote(p_balance_id uuid, p_itens jsonb, p_expires_at date, p_reason text)`: `p_itens = [{item_id, sessions_used}]` (só os itens a gravar) e a validade da venda. Grava na trilha uma linha por item que mudou (com o item e o procedimento); ajuste só da validade grava uma linha sem item. Nada mudou é recusado (23514). Leitura, profissional e outra clínica recebem P0002 (o `FOR UPDATE` com RLS não devolve a venda). A assinatura antiga `(uuid, integer, date, text)` continua para venda de **um** procedimento até a migration de contrato.
+- `cancelar_venda_de_pacote(p_balance_id uuid, p_reason text)`: só admin e gestor; venda com consulta que descontou (pela venda **ou** por um item dela) não se cancela (23503, o caminho é o ajuste). A trilha guarda uma linha por procedimento cancelado.
+- `uso_dos_pacotes(p_clinic_id)` e `pacientes_resumo(p_clinic_id)` somam pelos itens; `saldo_sessoes` (sessões sobrando nas vendas dentro da validade) e `saldo_total` (sessões vendidas) continuam números únicos.
+
+**Débito no Compareceu (gatilho `consumir_sessao_de_pacote`, `BEFORE UPDATE OF status` na troca para `compareceu`).** O item do procedimento do vínculo da consulta, do mesmo contato, com sessão sobrando, de venda dentro da validade no dia civil da clínica; a venda que vence primeiro (sem validade por último), no empate a mais antiga e por fim o id. `SKIP LOCKED`. Grava `appointment.package_balance_item_id` **e** `package_balance_id`. A tela prevê o item com `saldoDescontadoAoComparecer` (`lib/domain/appointment-status.ts`), espelho desta regra. Falta nunca desconta.
+
+**Escrita direta pela API (migration `20261002100000`, 02/10/2026).** O saldo muda pelas RPCs, com trilha, e pelo débito do Compareceu. O que a sessão de quem está logado **não** faz direto:
+
+- `package_balance`: UPDATE só em `expires_at` (desde a `20260929120000`); `sessions_total` e `sessions_used` são o espelho legado.
+- `package_balance_item`: UPDATE só em `sessions_used`, a coluna que `ajustar_saldo_de_pacote` grava pela sessão. `sessions_total`, `procedure_id`, `package_balance_id` e `clinic_id` nascem no INSERT da venda e só mudam pelos caminhos `SECURITY DEFINER` (débito e espelhos legados). Mudar o total direto dá 42501 para qualquer papel, admin e gestor inclusive.
+- `appointment.package_balance_id` e `package_balance_item_id`: depois que a consulta tem desconto (qualquer das duas preenchida), nenhuma das duas muda nem é limpa. Gatilho `travar_desconto_de_pacote` (`BEFORE UPDATE OF` as duas colunas), 23514 com "O desconto de pacote desta consulta não muda. Para corrigir, ajuste o saldo na ficha do paciente.". Vale para todo papel, `service_role` inclusive. Sem a trava, limpar as duas colunas de uma consulta em Compareceu liberava o cancelamento de venda já usada e um segundo débito ao sair e voltar para Compareceu. O débito não esbarra nela: `consumir_sessao_de_pacote` só preenche coluna vazia e escreve em `NEW` (fora do `OF`). INSERT não passa por ela.
+
+**Ainda aberto até a migration de contrato**, no mesmo nível de antes (as RPCs `SECURITY INVOKER` e o código publicado antes dependem dessas permissões):
+
+- UPDATE direto de `package_balance_item.sessions_used` pela recepção e pela gestão, sem trilha;
+- INSERT direto de item numa venda já feita (`vender_pacote` insere os itens pela sessão);
+- DELETE direto de item pela gestão (`cancelar_venda_de_pacote` apaga os itens pela sessão);
+- INSERT direto em `package_balance` com `sessions_total` livre (é a venda do código antigo; `criar_itens_da_venda_legada` copia o total para o item);
+- consulta **sem** desconto pode ganhar `package_balance_id` ou `package_balance_item_id` por UPDATE direto, sem debitar.
+
+O contrato passa `vender_pacote`, `ajustar_saldo_de_pacote` (assinatura nova) e `cancelar_venda_de_pacote` para `SECURITY DEFINER`, com `set search_path = public` e papel e clínica conferidos de forma explícita (`user_has_role` da clínica da venda; o ajuste responde P0002 a quem não pode, para não revelar venda de outra clínica; o cancelamento só admin e gestor; `auth.uid()` na trilha), e então revoga INSERT, UPDATE e DELETE de `package_balance_item` e INSERT de `package_balance` para `authenticated`.
+
+**Modo expand:** venda feita pelo INSERT antigo em `package_balance` (com `sessions_total`) ganha os itens pelo gatilho `criar_itens_da_venda_legada`; a venda nova grava `sessions_total` null e os itens ela mesma. A migration de contrato apaga `package_balance.sessions_total`, `sessions_used`, os gatilhos `criar_itens_da_venda_legada` e `espelhar_totais_no_saldo_legado` e a assinatura antiga do ajuste, além do fechamento de escrita do parágrafo acima (a lista completa está nos cabeçalhos da `20260929120000` e da `20261002100000`).
 
 ---
 
@@ -321,6 +418,10 @@ create table appointment (
   source text not null default 'interna' check (source in ('interna','externa')),
   external_id text,                        -- prepara integração com PMS no V2
   notes text,
+  -- Venda de pacote e item (procedimento) que o Compareceu descontou; os
+  -- dois ou nenhum. Sem cascata: consulta que descontou segura a venda.
+  package_balance_id uuid references package_balance(id),
+  package_balance_item_id uuid references package_balance_item(id),
   created_at timestamptz not null default now()
 );
 
@@ -430,12 +531,38 @@ create table cadence (
   kind text not null check (kind in ('confirmacao','followup','pos_falta','reativacao','lista_espera')),
   name text not null,
   trigger_stage text,                       -- para followup
-  procedure_id uuid references procedure(id),-- exceção por procedimento
+  -- Régua vinculada (29/09/2026): UM vínculo por régua, e só em confirmacao
+  -- e pos_falta. Os três nulos = régua geral.
+  procedure_id uuid references procedure(id),-- vínculo com um procedimento
+  professional_id uuid references professional(id) on delete cascade, -- vínculo com um médico
+  specialty text,                           -- vínculo com uma especialidade (rótulo como o usuário escolheu)
   for_no_show_history boolean not null default false,
+  no_show_threshold integer not null default 2 check (no_show_threshold >= 1), -- faltas a partir das quais a reforçada vale
   send_window_start time, send_window_end time,
   send_weekdays smallint[],
-  active boolean not null default false
+  active boolean not null default false,
+  constraint cadence_um_vinculo
+    check (num_nonnulls(procedure_id, professional_id, specialty) <= 1),
+  constraint cadence_especialidade_preenchida
+    check (specialty is null or chave_de_especialidade(specialty) <> ''),
+  constraint cadence_vinculo_so_na_agenda
+    check (kind in ('confirmacao','pos_falta')
+           or (professional_id is null and specialty is null)),
+  constraint followup_sem_excecao
+    check (kind <> 'followup'
+           or (procedure_id is null and professional_id is null
+               and specialty is null and not for_no_show_history))
 );
+create index cadence_professional_id_idx on cadence (professional_id);
+-- Uma régua por recorte (tipo, vínculo e reforço). A especialidade entra pela
+-- CHAVE: "Dermatologia" e "dermatologia " conflitam (23505).
+create unique index cadence_configuracao_unica on cadence (
+  clinic_id, kind,
+  coalesce(procedure_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  coalesce(professional_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  coalesce(chave_de_especialidade(specialty), ''),
+  for_no_show_history
+) where kind <> 'followup';
 
 create table cadence_step (
   id uuid primary key default gen_random_uuid(),
@@ -481,6 +608,18 @@ create table job_queue (
 create index on job_queue (run_at) where completed_at is null;
 ```
 
+> **Régua vinculada (decisão do dono em 29/09/2026, migration `20260929110000_regua_vinculada.sql`).** Cada régua de confirmação ou de pós falta pode ter **um** vínculo: um procedimento (`procedure_id`, que já existia), um profissional (`professional_id`) ou uma especialidade (`specialty`). Sem vínculo, é a régua geral, que o código lê como `procedure_id is null and professional_id is null and specialty is null and not for_no_show_history`. Follow-up não tem vínculo (`followup_sem_excecao`).
+>
+> - **`chave_de_especialidade(p_texto text) returns text`** (`immutable`, `strict`, `search_path` vazio): minúsculas, sem acento, sem espaço nas pontas e com os espaços internos colapsados (`translate` antes de `lower`). `professional.specialties` é texto livre, então a régua guarda o rótulo como o usuário escolheu e toda comparação (casar com o profissional, índice único) passa pela chave. A tela tem um espelho em TypeScript da mesma tabela de acentos (`components/automacoes/vinculo-da-regua.ts`): mudou uma, muda a outra.
+> - **Mesma clínica:** `cadence` entra no gatilho `exigir_cadastro_da_mesma_clinica` (`before insert or update of clinic_id, procedure_id, professional_id`). O procedimento e o profissional da régua têm de ser da clínica da régua (23503). Isso fecha também a falha antiga de `procedure_id` apontando para procedimento de outra clínica, que a FK sozinha não pegava.
+> - **`regua_da_consulta(p_appointment_id uuid, p_kind text) returns uuid`** (`stable`, `SECURITY INVOKER`, `execute` para `authenticated` e `service_role`): devolve a régua **ativa** do tipo (`confirmacao` ou `pos_falta`; outro tipo devolve nulo) que vale para a consulta. O procedimento vem do vínculo da consulta (`service_link`), o profissional e as especialidades vêm do profissional da consulta, o histórico de falta vem do contato (`no_show_count >= no_show_threshold` para a reforçada). Precedência: **procedimento (3) > profissional (2) > especialidade (1) > geral (0)**; no mesmo nível a reforçada vence a comum; desempate fixo por `created_at, id` (profissional com duas especialidades que têm régua fica com a mais antiga). Régua desligada não entra, e a consulta cai para a próxima que casar. Pela sessão, a RLS vale como em qualquer leitura (consulta de outra clínica devolve nulo).
+> - **Planner:** `planejar_reguas()` escolhe a régua de cada consulta por `regua_da_consulta`, na confirmação e no pós falta (o pós falta tinha `limit 1` sem ordem). Uma régua só por consulta. Duas travas novas:
+>   - **toque repetido quando a vigente muda:** a vinculada nasce com os mesmos momentos da geral e a chave de `cadence_run` leva o `cadence_step_id`, então ligar, desligar ou trocar a régua vigente logo depois de um toque faria o passo de mesmo momento nascer de novo. Por isso um passo **já vencido** (a recuperação da folga de 30 minutos) só é materializado se a consulta não recebeu nenhum toque do mesmo tipo nos últimos 30 minutos, de qualquer régua; passo futuro continua nascendo adiantado. Como excluir uma régua apaga as runs dela no cascade (e com elas essa prova), a exclusão de régua vinculada que enviou nos últimos 30 minutos é recusada ("Desligue agora e exclua daqui a 30 minutos");
+>   - **custo:** `regua_da_consulta` não é inlinada, então a confirmação filtra antes as consultas candidatas (CTE `materialized`: só a consulta que tem, em alguma régua ativa de confirmação da clínica, um passo dentro do horizonte). O horizonte aparece nos dois lugares e muda junto.
+>   - Consequência aceita: quando a régua vigente muda no meio da sequência, o passo da régua nova cujo momento já passou há mais de 30 minutos não nasce, e o paciente pode ficar sem esse toque.
+> - **Executor** (`lib/jobs/regua.ts`): antes de cada toque de confirmação ou pós falta confere se a run ainda é da régua vigente da consulta. Se não é (troca de médico, régua mais específica ligada ou desligada depois do planejamento), pula a run como `condicao_parada`; os toques da régua vigente são outras runs, que o planner materializa.
+> - **Ordem de publicação:** a migration vai ao banco **antes** do código. Sem a função, todo toque de confirmação e pós falta vira nova tentativa e, esgotadas, falha; sem as colunas, as telas de Confirmações e Automações quebram.
+
 ---
 
 ## 8. WhatsApp, custo, auditoria e assinatura
@@ -516,13 +655,18 @@ create table whatsapp_account_secret (
   qr_code text, qr_code_expires_at timestamptz
 );
 
--- Por onde saem as automáticas. Tabela própria para não abrir o update de
--- clinic ao gestor. Sem linha = ultimo_usado.
+-- Por onde saem as automáticas, POR TIPO de mensagem (29/09/2026, migration
+-- 20260929130000). Tabela própria para não abrir o update de clinic ao
+-- gestor. Tipo sem linha = ultimo_usado. RLS: membro ativo lê; admin e
+-- gestor inserem e alteram; ninguém apaga por sessão.
 create table whatsapp_envio_automatico (
-  clinic_id uuid primary key references clinic(id) on delete cascade,
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  tipo text not null check (tipo in ('confirmacao','pos_falta','followup','lista_espera','aviso_remarcacao')),
+                                            -- confirmacao inclui o Cobrar agora
   modo text not null default 'ultimo_usado' check (modo in ('ultimo_usado','fixo')),
-  conta_fixa_id uuid references whatsapp_account(id),
-  check ((modo = 'fixo') = (conta_fixa_id is not null))
+  conta_fixa_id uuid references whatsapp_account(id), -- mesma clínica e ativo, por gatilho
+  check ((modo = 'fixo') = (conta_fixa_id is not null)),
+  primary key (clinic_id, tipo)
 );
 
 -- clinic.limite_de_numeros int null: nulo = sem limite. Só o dono do produto
@@ -535,14 +679,22 @@ create table whatsapp_envio_automatico (
 conversas (índice aberto único em `(clinic_id, contact_id, whatsapp_account_id)
 where status <> 'resolvida'`). `message.whatsapp_account_id` é NOT NULL e é
 sempre copiada da conversa por gatilho, nunca vem do cliente.
-`job_queue.whatsapp_account_id` é carimbada no enfileiramento pela função
-`conta_de_envio` (fixo ativo, depois a conversa em que o paciente escreveu por
-último, depois o principal) e conferida na execução por `numero_do_job`.
-Número desconectado faz o envio esperar, nunca troca de número (a espera tem
+`job_queue.whatsapp_account_id` é carimbada no enfileiramento pela regra de
+`conta_de_envio` com o **tipo** do job (o fixo ativo daquele tipo, depois a
+conversa em que o paciente escreveu por último, depois o principal) e
+conferida na execução por `numero_do_job`. O tipo vem de
+`tipo_de_envio_do_job(kind, payload)`: na régua, o `cadence.kind` da run (o
+Cobrar agora é run da confirmação); no envio ativo, o marcador
+`payload.tipo_de_envio` (`aviso_remarcacao` ou `lista_espera`). O eco da
+resposta ao toque não tem tipo: sai pelo número que recebeu (D4). Sem tipo,
+nenhuma escolha fixa vale. Número desconectado faz o envio esperar, nunca troca de número (a espera tem
 prazo próprio e não gasta o teto de 20 devoluções: `payload.esperas_do_canal`,
 ver docs/07); número
 removido tem os jobs pendentes redistribuídos (menos o eco da resposta ao
-toque, que é cancelado). O motor reivindica por **raia**
+toque, que é cancelado), e a escolha fixa de todo tipo que apontava para ele
+volta a `ultimo_usado` (`remover_numero`). Trocar a escolha de um tipo
+recarimba só os pendentes daquele tipo (`redistribuir_jobs_do_numero(numero,
+p_tipos)`). O motor reivindica por **raia**
 (`coalesce(whatsapp_account_id, clinic_id)`), então dois números da mesma
 clínica enviam em paralelo e o mesmo número serializa.
 

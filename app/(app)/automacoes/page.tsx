@@ -11,8 +11,8 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { NAV_GROUPS } from "@/lib/navigation";
 import {
-  fetchExcecoesDeConfirmacao,
   fetchFollowups,
+  fetchReguasVinculadas,
   fetchVolumesDaEstimativa,
 } from "@/lib/queries/automacoes";
 import { fetchJornada } from "@/lib/queries/jornada";
@@ -22,10 +22,11 @@ import { createClient } from "@/lib/supabase/server";
 
 import { AutomacoesClient } from "./automacoes-client";
 
-// Os numeros ATIVOS e a politica das mensagens automaticas (varios numeros
-// por clinica, docs/07, Fase 4), pela SESSAO: todo membro ativo le as duas
-// tabelas (RLS). Falha de leitura vira null, e o cartao mostra o erro sem
-// derrubar a tela inteira: as reguas nao dependem disto.
+// Os numeros ATIVOS e a escolha de numero de cada tipo de mensagem
+// automatica (varios numeros por clinica, docs/07; uma linha por tipo desde
+// 29/09/2026), pela SESSAO: todo membro ativo le as duas tabelas (RLS).
+// Falha de leitura vira null, e o cartao mostra o erro sem derrubar a tela
+// inteira: as reguas nao dependem disto.
 async function fetchNumerosDasAutomaticas(
   supabase: SupabaseClient,
   clinicId: string,
@@ -35,19 +36,15 @@ async function fetchNumerosDasAutomaticas(
       fetchNumerosDaClinica(supabase, clinicId),
       supabase
         .from("whatsapp_envio_automatico")
-        .select("modo, conta_fixa_id")
-        .eq("clinic_id", clinicId)
-        .maybeSingle(),
+        .select("tipo, modo, conta_fixa_id")
+        .eq("clinic_id", clinicId),
     ]);
     if (politica.error) {
       return null;
     }
     return {
       numeros,
-      politica: lerPoliticaDeEnvio(
-        politica.data as { modo: unknown; conta_fixa_id: unknown } | null,
-        numeros,
-      ),
+      politica: lerPoliticaDeEnvio(politica.data, numeros),
     };
   } catch {
     return null;
@@ -69,11 +66,11 @@ export default async function AutomacoesPage({
   }
 
   const supabase = await createClient();
-  const [reguas, volumes, excecoes, followups, jornada, numeros] =
+  const [reguas, volumes, vinculadas, followups, jornada, numeros] =
     await Promise.all([
       fetchReguasDaClinica(supabase, active.clinicId),
       fetchVolumesDaEstimativa(supabase, active.clinicId),
-      fetchExcecoesDeConfirmacao(supabase, active.clinicId),
+      fetchReguasVinculadas(supabase, active.clinicId),
       fetchFollowups(supabase, active.clinicId),
       fetchJornada(supabase, active.clinicId),
       fetchNumerosDasAutomaticas(supabase, active.clinicId),
@@ -94,7 +91,7 @@ export default async function AutomacoesPage({
         nomeDaClinica={active.clinicName}
         abaInicial={aba}
         reguasIniciais={reguas}
-        excecoesIniciais={excecoes}
+        vinculadasIniciais={vinculadas}
         followupsIniciais={followups}
         etapasParaFollowup={jornada
           .filter((etapa) => etapa.papel !== "perdido")
