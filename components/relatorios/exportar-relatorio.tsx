@@ -14,6 +14,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  linhasDoCsv,
+  type ExportavelDaAba,
+} from "@/lib/domain/exportacao-de-resultados";
 import { baixarCsv, gerarCsv } from "@/lib/utils/csv";
 
 // Exportacao da aba ativa dos Relatorios (10.11): CSV de verdade e "PDF"
@@ -21,14 +25,16 @@ import { baixarCsv, gerarCsv } from "@/lib/utils/csv";
 // imprimir-para-PDF e o caminho honesto; o layout de impressao e proprio,
 // preto no branco, padrao do print-day da Agenda).
 //
+// Desde a Fase 3 a aba exporta VARIAS secoes (Comercial e Agente de IA tem
+// mais de uma tabela): no CSV cada secao abre com uma linha de titulo; na
+// impressao, uma tabela por secao. As linhas vem montadas pelo modulo puro
+// lib/domain/exportacao-de-resultados.ts, que nunca poe "R$" para quem nao
+// pode ver valores.
+//
 // A trilha vai ANTES de o dado sair da tela (regra 3.1): sem gravar a
 // auditoria, nada e baixado nem impresso.
 
-export type ExportavelDaAba = {
-  titulo: string;
-  /** Primeira linha = cabecalho. */
-  linhas: string[][];
-};
+export type { ExportavelDaAba };
 
 export function ExportarRelatorio({
   aba,
@@ -55,7 +61,7 @@ export function ExportarRelatorio({
     const dados = montar();
     baixarCsv(
       `resultados-${aba}-${periodoRotulo.replaceAll("/", "-").replaceAll(" ", "")}.csv`,
-      gerarCsv(dados.linhas),
+      gerarCsv(linhasDoCsv(dados)),
     );
   };
 
@@ -120,34 +126,39 @@ export function ExportarRelatorio({
             <div className="hidden bg-white text-black print:block">
               <h1 className="mb-1 text-xl font-bold">{imprimindo.titulo}</h1>
               <p className="mb-4 text-sm">{periodoRotulo}</p>
-              <table className="w-full border-collapse text-xs">
-                <thead>
-                  <tr>
-                    {(imprimindo.linhas[0] ?? []).map((celula, indice) => (
-                      <th
-                        key={indice}
-                        className="border-b border-black py-1 text-left font-semibold"
-                      >
-                        {celula}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {imprimindo.linhas.slice(1).map((linha, i) => (
-                    <tr key={i} className="break-inside-avoid">
-                      {linha.map((celula, j) => (
-                        <td
-                          key={j}
-                          className="border-b border-neutral-400 py-1"
-                        >
-                          {celula}
-                        </td>
+              {imprimindo.secoes.map((secao, indiceDaSecao) => (
+                <section key={indiceDaSecao} className="mb-6 break-inside-avoid">
+                  <h2 className="mb-2 text-sm font-bold">{secao.titulo}</h2>
+                  <table className="w-full border-collapse text-xs">
+                    <thead>
+                      <tr>
+                        {(secao.linhas[0] ?? []).map((celula, indice) => (
+                          <th
+                            key={indice}
+                            className="border-b border-black py-1 text-left font-semibold"
+                          >
+                            {celula}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {secao.linhas.slice(1).map((linha, i) => (
+                        <tr key={i} className="break-inside-avoid">
+                          {linha.map((celula, j) => (
+                            <td
+                              key={j}
+                              className="border-b border-neutral-400 py-1"
+                            >
+                              {celula}
+                            </td>
+                          ))}
+                        </tr>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    </tbody>
+                  </table>
+                </section>
+              ))}
             </div>,
             document.body,
           )

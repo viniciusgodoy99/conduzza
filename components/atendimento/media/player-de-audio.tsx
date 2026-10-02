@@ -14,6 +14,13 @@ import { useEffect, useRef, useState } from "react";
 //
 // O <input type="range"> e nativo por acessibilidade: busca por teclado e
 // leitura por leitor de tela vem de graca, e o alvo de toque passa dos 40px.
+//
+// preload="none" (02/10/2026): o audio so e pedido quando a pessoa toca. A
+// rota entrega os bytes pela propria origem, pedaco por pedaco, com a sessao
+// (nada expira; antes o link de 5 minutos vencia e o audio parava em uns 2
+// segundos). Abrir uma conversa com varios audios nao dispara um pedido, nem
+// um registro de "leu a midia" na trilha, para cada um. A duracao aparece
+// depois do primeiro toque.
 
 function tempo(segundos: number): string {
   if (!Number.isFinite(segundos) || segundos < 0) {
@@ -30,22 +37,40 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
   const [posicao, setPosicao] = useState(0);
   const [duracao, setDuracao] = useState(0);
   const [falhou, setFalhou] = useState(false);
+  // Recuperacao de soluco no meio do audio: cada pedaco passa pela rota (sessao,
+  // RLS, trilha, Storage), e um pedaco que falha faz o navegador desistir do
+  // elemento. Ate 2 vezes, o player recarrega e volta ao mesmo ponto; o
+  // contador zera quando o audio volta a tocar.
+  const tocouRef = useRef(false);
+  const tocandoRef = useRef(false);
+  const posicaoRef = useRef(0);
+  const tentativasRef = useRef(0);
 
   useEffect(() => {
     const elemento = audioRef.current;
     if (!elemento) {
       return;
     }
-    const aoTempo = () => setPosicao(elemento.currentTime);
+    const aoTempo = () => {
+      posicaoRef.current = elemento.currentTime;
+      setPosicao(elemento.currentTime);
+    };
+    const aoVoltarATocar = () => {
+      tentativasRef.current = 0;
+    };
     const aoCarregar = () => setDuracao(elemento.duration);
     const aoTerminar = () => {
+      tocandoRef.current = false;
+      posicaoRef.current = 0;
       setTocando(false);
       setPosicao(0);
     };
+    elemento.addEventListener("playing", aoVoltarATocar);
     elemento.addEventListener("timeupdate", aoTempo);
     elemento.addEventListener("loadedmetadata", aoCarregar);
     elemento.addEventListener("ended", aoTerminar);
     return () => {
+      elemento.removeEventListener("playing", aoVoltarATocar);
       elemento.removeEventListener("timeupdate", aoTempo);
       elemento.removeEventListener("loadedmetadata", aoCarregar);
       elemento.removeEventListener("ended", aoTerminar);
@@ -60,18 +85,52 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
     );
   }
 
+  const tocar = (elemento: HTMLAudioElement) => {
+    tocouRef.current = true;
+    tocandoRef.current = true;
+    setTocando(true);
+    elemento.play().catch(() => {
+      // Pedido de play interrompido (o load da recuperacao, por exemplo):
+      // o botao volta ao "Tocar" em vez de mentir que esta tocando.
+      tocandoRef.current = false;
+      setTocando(false);
+    });
+  };
+
   const alternar = () => {
     const elemento = audioRef.current;
     if (!elemento) {
       return;
     }
     if (elemento.paused) {
-      void elemento.play();
-      setTocando(true);
+      tocar(elemento);
     } else {
       elemento.pause();
+      tocandoRef.current = false;
       setTocando(false);
     }
+  };
+
+  const aoErro = () => {
+    const elemento = audioRef.current;
+    if (!elemento || !tocouRef.current || tentativasRef.current >= 2) {
+      setFalhou(true);
+      return;
+    }
+    tentativasRef.current += 1;
+    const voltarPara = posicaoRef.current;
+    const estavaTocando = tocandoRef.current;
+    elemento.addEventListener(
+      "loadedmetadata",
+      () => {
+        elemento.currentTime = voltarPara;
+        if (estavaTocando) {
+          tocar(elemento);
+        }
+      },
+      { once: true },
+    );
+    elemento.load();
   };
 
   return (
@@ -79,8 +138,8 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
       <audio
         ref={audioRef}
         src={`/api/atendimento/midia/${messageId}`}
-        preload="metadata"
-        onError={() => setFalhou(true)}
+        preload="none"
+        onError={aoErro}
       />
       <button
         type="button"

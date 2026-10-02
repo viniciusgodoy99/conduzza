@@ -2,11 +2,7 @@ import { BarraDeProgresso } from "@/components/shared/barra-de-progresso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
-import {
-  PATIENT_TAG,
-  type PatientTag,
-  type StatusIcon,
-} from "@/lib/design/status";
+import { PATIENT_TAG, type PatientTag } from "@/lib/design/status";
 import { porcentagemDeComparecimento } from "@/lib/domain/pacientes-ui";
 import { cn } from "@/lib/utils";
 
@@ -193,38 +189,6 @@ export function LinhaDaFicha({
 }
 
 /**
- * Cartao de indicador na receita StatCard (docs/06 secao 4.7): rotulo em
- * eyebrow com o icone na mesma linha e o numero grande embaixo. O span do
- * rotulo e filho DIRETO do cartao e leva o icone dentro: o e2e acha o
- * cartao subindo um nivel a partir do texto do rotulo. Nunca e botao.
- */
-export function CartaoIndicador({
-  rotulo,
-  icone: Icone,
-  iconeClassName = "text-neutral",
-  nota,
-  children,
-}: {
-  rotulo: string;
-  icone: StatusIcon;
-  /** Cor do icone: neutra por padrao; a do tom quando o cartao E um status */
-  iconeClassName?: string;
-  nota?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid min-w-0 content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm">
-      <span className="flex items-center justify-between gap-2 cz-eyebrow text-text-secondary">
-        {rotulo}
-        <Icone aria-hidden className={cn("size-4 shrink-0", iconeClassName)} />
-      </span>
-      {children}
-      {nota ? <p className="text-xs text-text-secondary">{nota}</p> : null}
-    </div>
-  );
-}
-
-/**
  * Botao de acao da ficha com a regra do brief: sem permissao ele continua
  * visivel, desabilitado e com a dica do porque (nunca escondido). Altura de
  * 40px (alvo de toque, achado 76). Aceita qualquer variante do Button, ao
@@ -258,15 +222,6 @@ export function AcaoProtegida({
         {children}
       </Button>
     </DisabledWithHint>
-  );
-}
-
-/** Numero grande do cartao de indicador. */
-export function ValorIndicador({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="cz-num text-[34px] leading-none font-semibold text-text-strong">
-      {children}
-    </span>
   );
 }
 

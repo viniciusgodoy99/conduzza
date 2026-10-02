@@ -176,6 +176,8 @@ Percentual      69,1%             Duração       40 min · 1h20
 Nome de mês em tabela: abreviado em 3 letras, minúsculo (jan, fev, mar)
 ```
 
+**Moeda compacta no cartão de métrica (desde 02/10/2026):** só de 10 mil para cima, com no máximo 1 casa e nunca "k" ("R$ 12,5 mil", "R$ 284 mil", "R$ 1,2 mi"); abaixo de 10 mil o valor vai cheio ("R$ 9.850,00"). O leitor de tela e a exportação recebem sempre o valor cheio. Os percentuais das métricas da Fase 3 (Início, Confirmações, indicadores da lista de Pacientes, Lista de espera e Resultados, inclusive o CSV) têm 1 casa ("64,2%"); a taxa de comparecimento da ficha do paciente continua inteira ("33%").
+
 ### 3.8 Grid, espaçamento, alvos
 
 - Grid de 8pt. Espaçamentos: 4, 8, 12, 16, 24, 32, 48.
@@ -245,6 +247,8 @@ Anel de foco: 2px, cor primária, offset de 2px, com no mínimo 3:1 contra o fun
 | Configurações e Assinatura | tudo | ver | nada | nada | nada |
 
 **Regra visual:** ação sem permissão fica **visível e desabilitada**, com dica explicando por quê. Esconder confunde mais do que desabilitar. Módulo inteiro sem permissão some do rail.
+
+**Valores em reais só para Admin e Gestor (decisão do dono em 02/10/2026, Fase 3 das métricas).** Dentro de Relatórios (Resultados) e da Lista de espera, quem tem "ver" não vê dinheiro: faturamento estimado, custo por lead, receita das consultas recuperadas, receita associada da Lista de espera, valor das conversões devolvidas à Meta e custo de mensagens só têm número para Admin e Gestor. Para Recepção, Profissional e Leitura, o cartão ou a linha que é só o valor (faturamento, custo por lead, receita associada da espera, custo de mensagens) fica **visível e desabilitado**, escrito "Sem acesso", com a dica "Só administrador e gestor veem valores em reais."; nas frases que citam um valor (receita das recuperadas, valor das conversões já enviadas), o valor simplesmente não aparece; e a exportação sai sem essas linhas. Esconder na tela não basta: o faturamento, a receita das recuperadas e a receita da Lista de espera saem **nulos do banco** para os outros papéis. O valor das conversões devolvidas à Meta, em 02/10/2026, ainda só é escondido na tela (a leitura das conversões não recorta por papel): ponto aberto para o dono, registrado no backlog. O objetivo de conversão de Resultados segue a mesma divisão: Admin e Gestor definem, os demais só leem.
 
 ---
 
@@ -319,7 +323,7 @@ Quatro regiões.
 - **Cartão de evento do sistema** entre mensagens, centralizado, 12px, fundo Superfície 2: "Ana assumiu a conversa", "Consulta agendada para 20/08 às 14:30", "A IA escalou: paciente descreveu sintoma".
 - **Bloqueio de conformidade** aparece como cartão de alerta: "Mensagem bloqueada antes do envio: continha orientação clínica. Escalado para atendimento humano." Com link "Ver o que a IA ia responder".
 - **Indicador "IA digitando"** com três pontos animados.
-- **Áudio recebido:** player mais transcrição automática em texto secundário, colapsada em 2 linhas com "ver mais".
+- **Áudio recebido:** player mais transcrição automática em texto secundário, colapsada em 2 linhas com "ver mais". O áudio toca até o fim a qualquer hora em que a pessoa der o play, mesmo com a conversa aberta há horas ou depois de pausar (desde 02/10/2026: antes, um link de 5 minutos vencia e o áudio parava em uns 2 segundos). O áudio só é baixado quando a pessoa toca; a duração aparece a partir do primeiro toque.
 - Separadores de data centralizados.
 
 - **Compositor, três estados:**
@@ -340,17 +344,24 @@ Blocos com título em micro tipografia maiúscula: Identificação · **Origem**
 
 Primeira tela que a recepcionista abre de manhã. **A mais simples do sistema.**
 
-**Topo, bento com o card de Pendentes como herói (largura dupla):**
+> **Mudança (decisão do dono em 02/10/2026, Fase 3 das métricas):** o topo segue o protótipo do design system, com cinco cartões no cartão de métrica único. "Pendentes" vira **"Aguardando"**, com o "Cobrar" dentro e em botão secundário; o lime da tela passa a ser o cartão **Confirmadas**; **"Recuperadas" sai desta tela** e vai para Resultados (aba Comercial). O desenho anterior do topo fica no fim desta tela como histórico.
 
-```
-┌──────────────────────────┬────────────┬────────────┬────────────┐
-│  PENDENTES               │ CONFIRMADAS│ CANCELADAS │ RECUPERADAS│
-│  ⏱                       │ ✓          │ ✕          │ ↻          │
-│  14                      │ 38         │ 3          │ 2          │
-│  de 55 consultas amanhã  │ 69,1%      │ 5,5%       │ R$ 400,00  │
-│  [Cobrar todos os 14]    │            │            │ da espera  │
-└──────────────────────────┴────────────┴────────────┴────────────┘
-```
+**Topo, cinco cartões numa faixa** (2 colunas a partir de 640px, 3 a partir de 1024px e 5 a partir de 1280px, para o "Cobrar todas as N" caber):
+
+| Cartão | Ícone e cor | O que conta | Rodapé |
+|---|---|---|---|
+| Agendadas | `calendar-days`, neutro | todas as consultas que começam no dia, em qualquer situação | nenhum |
+| **Confirmadas** (o lime da tela) | nenhum (cartão em destaque não tem ícone) | o predicado único de Confirmada (abaixo) | "87,2% do total"; sem consulta no dia, nada |
+| Aguardando | `clock`, âmbar (é o status) | Agendado ou Aguardando confirmação | o botão "Cobrar" |
+| Canceladas | `circle-x`, alerta | canceladas pelo paciente ou pela clínica | "5,5% do total" |
+| Não enviadas | `mail-warning`, âmbar (o mesmo do chip "Não enviada") | o predicado de Não enviada (abaixo) | o motivo |
+
+- **Confirmada é um predicado só**, o mesmo no banco (`consulta_foi_confirmada`), no cartão, no filtro e no Início: a consulta em "Confirmado por WhatsApp" ou "Confirmado pela recepção", ou a que tem o canal de confirmação gravado e já passou para Na recepção, Em atendimento, Compareceu ou Faltou. Quem confirmou e chegou continua contando; a remarcada que voltou para Agendado e a cancelada não contam.
+- **Não enviada** é a consulta que ainda aguarda confirmação, sem pedido de remarcação, cujo **último** toque foi pulado por falha no envio, WhatsApp desconectado, fila até a hora da consulta, número removido, falta de autorização, fora do horário de envio ou limite de gasto atingido. Pulo esperado (condição de parada, consulta remarcada, pedido de remarcação, toque atrasado) não conta.
+- **Rodapé de Não enviadas:** "Motivo: X" quando todas têm o mesmo motivo, "Mais comum: X" quando um motivo lidera e "Motivos variados" no empate (o empate não escolhe um lado); sem nenhuma, sem rodapé. Na falha de envio o motivo vem do código gravado no toque ("Servidor do WhatsApp fora do ar", "WhatsApp recusou a mensagem", "WhatsApp restringiu o número"); sem código conhecido, "Falha no envio". O chip da linha diz o mesmo motivo ("falhou no envio: servidor do WhatsApp fora do ar"), para a recepção achar na lista o que o cartão aponta. O chip "Não enviada" (`mail-warning`, âmbar) usa o mesmo critério de motivo do cartão; no pulo esperado (condição de parada, consulta remarcada, pedido de remarcação, toque atrasado) o chip diz **"Dispensada"** (`mail-minus`, neutro), com o motivo na linha de apoio. O cartão conta só quem ainda aguarda confirmação: uma consulta já confirmada ou cancelada cujo último toque falhou mostra o chip "Não enviada" e não entra no número.
+- **Cobrar** fica dentro do cartão Aguardando, em contorno: "Cobrar a pendente", "Cobrar todas as N" ou "Cobrar pendentes", e "Enviando..." durante o envio. Visível e desabilitado com dica quando falta permissão ou quando nada pode ser cobrado ("Nenhuma consulta aguardando confirmação neste dia", ou a dica de que as pendentes estão sem autorização ou com a confirmação automática desligada).
+- **Filtro** sobre a lista do dia: Todas, Confirmadas, Aguardando, Canceladas, Não enviadas. Cada filtro usa o mesmo predicado do cartão de mesmo nome, então o número do filtro é sempre o do cartão.
+- Erro na leitura dos toques não vira "nenhum toque": a tela mostra o erro, e Não enviadas nunca cai para zero por falha.
 
 **Corpo: lista agrupada por profissional**, ordenada por horário, linhas de 56px:
 
@@ -361,6 +372,18 @@ Primeira tela que a recepcionista abre de manhã. **A mais simples do sistema.**
 - Paciente com histórico de falta ganha ícone `triangle-alert` antes do nome, com dica "2 faltas anteriores".
 - Seletor de data no topo, padrão em amanhã.
 - Aba secundária **"Faltas de hoje"** com a régua pós falta: quem faltou, se já recebeu contato, botão Remarcar.
+
+**Histórico: o topo até 01/10/2026.** Bento com o card de Pendentes como herói (largura dupla, com "Cobrar todos" em botão primário), Confirmadas, Canceladas e Recuperadas (horários preenchidos pela lista de espera, com a receita):
+
+```
+┌──────────────────────────┬────────────┬────────────┬────────────┐
+│  PENDENTES               │ CONFIRMADAS│ CANCELADAS │ RECUPERADAS│
+│  ⏱                       │ ✓          │ ✕          │ ↻          │
+│  14                      │ 38         │ 3          │ 2          │
+│  de 55 consultas amanhã  │ 69,1%      │ 5,5%       │ R$ 400,00  │
+│  [Cobrar todos os 14]    │            │            │ da espera  │
+└──────────────────────────┴────────────┴────────────┴────────────┘
+```
 
 ---
 
@@ -430,22 +453,31 @@ Campo vazio some, nunca mostra rótulo sem valor. Arrastar entre colunas. Soltar
 
 ### TELA 5. INÍCIO (Dashboard) `PRIORIDADE ALTA`
 
+> **Mudança (decisão do dono em 02/10/2026, Fase 3 das métricas):** o Início passa a mostrar **o dia**, como no protótipo do design system, e não mais os últimos 30 dias. O herói "Consultas recuperadas" vai para Resultados (aba Comercial); Origem dos leads, Mensagens, o funil de coorte de 30 dias e o desempenho da IA por período saem do Início e ficam em Resultados. **Próximas ações continua** (este brief exige). O desenho anterior fica no fim desta tela como histórico.
+
 Bento, um ponto focal só, leitura em F.
 
-**Linha 1, faixa de 4 indicadores** (número em 36px tabular, rótulo em cima, variação contra o período anterior embaixo com seta e cor):
-`Leads no período` · `Agendamentos` · `Comparecimentos` · `Taxa de lead para comparecimento`
+**Cabeçalho:** a data no fuso da clínica como eyebrow, a saudação e a frase com as pendências reais (C26 do `docs/06`), e o atalho "Ver em Resultados". O checklist de primeiros passos aparece acima do painel enquanto houver passo pendente.
 
-**Linha 2:**
-- **Card herói, largura dupla: "Consultas recuperadas".** Número grande, valor em reais abaixo, e uma linha explicando a composição ("18 confirmações que evitaram falta, 4 horários reofertados, 2 remarcações após falta"). **É o card que justifica a mensalidade e precisa ser o maior elemento depois dos indicadores.**
-- Card "Desempenho da IA": conversas atendidas, percentual resolvido sem humano com barra de progresso, tempo médio de primeira resposta, escalonamentos.
+**Linha 1, quatro cartões do dia** (cartão de métrica único, número de 34px; a variação compara com o **mesmo dia da semana passada**, sabendo que o dia de hoje ainda está em andamento e o da semana passada já fechou):
+1. **Consultas hoje** (`calendar-days`, neutro): todas as consultas que começam hoje, em qualquer situação. Rodapé "N unidades" só quando o dia tem consulta em 2 ou mais unidades. Com variação.
+2. **Confirmadas** (o lime da tela, sem ícone): o predicado único de Confirmada (Tela 2). Rodapé "87,1% do total" e variação.
+3. **Aguardando** (`clock`, âmbar): Agendado ou Aguardando confirmação. Rodapé "Último disparo HH:mm" (o último toque da régua de confirmação enviado hoje, incluindo o "Cobrar agora", no fuso da clínica) ou "Nenhum disparo hoje".
+4. **Resolvidas pela IA** (`sparkles`, cor da IA): "Ainda não medido", com a dica de que o número chega com o agente de IA.
 
-**Linha 3:**
-- **Funil horizontal** de 3 etapas com a taxa de conversão escrita entre as setas.
-- **Origem dos leads em barras horizontais** ordenadas por volume, rótulo à esquerda, número à direita da barra. **Proibido pizza, rosca, barra empilhada, medidor, treemap e 3D.**
+**Linha 2, duas colunas:**
+- À esquerda, **Próximas ações** (pendências de confirmação, leads sem resposta há mais de 24h, conversas aguardando humano; cada item é link para a tela já filtrada) e, embaixo, **"Consultas por dia, últimos 7 dias"**: 7 barras deitadas, uma por dia, de seis dias atrás até hoje sem pular dia (domingo com zero aparece), com "Hoje" escrito no rótulo e a barra de hoje em destaque; os outros dias ficam neutros. A contagem é a mesma de "Consultas hoje", então a barra de hoje bate com o cartão. Coluna vertical é proibida (C12 do `docs/06`).
+- À direita, **Funil de leads**: uma barra por etapa da jornada da clínica, na ordem dela, com quantos contatos estão em cada etapa **agora** (o mesmo número do Kanban de Leads, não a coorte do período). "Perdido" fica neutro, as outras etapas em destaque. Botão de ícone "Abrir Leads" no cabeçalho.
 
-**Linha 4:**
-- Card "Custo de mensagens": gasto do mês, teto configurado, barra que fica âmbar em 80% e alerta em 95%.
-- Card "Próximas ações": pendências de confirmação, leads sem resposta há mais de 24h, conversas aguardando humano. Cada item é link para a tela correspondente.
+**Estados:** cada bloco carrega sozinho. Se um falha, só ele mostra o erro (nunca zero) e um aviso no topo, "Alguns números não carregaram", oferece "Tentar de novo"; o resto da tela continua. Vazios: "Nenhuma consulta nos últimos 7 dias" e "Nenhum lead na jornada ainda".
+
+**Profissional:** continua com a visão própria (a agenda dele nos últimos 30 dias) e "Suas próximas ações". Os números da clínica não chegam a ele: o banco devolve nulo.
+
+**Histórico: o desenho até 01/10/2026** (últimos 30 dias contra os 30 anteriores):
+- Faixa de 4 indicadores: `Leads no período` · `Agendamentos` · `Comparecimentos` · `Taxa de lead para comparecimento`.
+- Card herói "Consultas recuperadas", com o valor em reais e a composição, e card "Desempenho da IA".
+- Funil horizontal de 3 etapas e Origem dos leads em barras horizontais.
+- Card "Custo de mensagens" (gasto contra teto) e card "Próximas ações".
 
 ---
 
@@ -557,9 +589,17 @@ No desenho de então, a coluna **IA** era a chave "o agente pode agendar isso so
 
 **Lista:** tabela com Nome, Telefone, Convênio, Última consulta, Próxima, Comparecimento (percentual com barra fina), Saldo de pacote, Etiquetas. Filtros: com falta, inativos, com pacote ativo, por convênio, por profissional.
 
+**Indicadores da lista (decisões do dono em 29/09 e 02/10/2026, Fase 3 das métricas):** quatro cartões acima da tabela, contados no banco para a clínica inteira (não o recorte dos filtros). Não são botões: o filtro "Com pacote" continua sendo o único controle com esse nome.
+1. **"{Pacientes} ativos"** (`users`): quem compareceu nos últimos 12 meses. Variação **em pessoas** contra 30 dias atrás ("+34"), escondida quando 30 dias atrás o número era zero. Rodapé "Atendidos nos últimos 12 meses", ou "Contando desde dd/mm/aaaa" enquanto o sistema tem menos de 12 meses de atendimentos.
+2. **Novos no mês** (`user-round-plus`): quem tem a primeira consulta não cancelada no mês civil da clínica, passada ou futura. Rodapé "Primeira {consulta} em {mês}".
+3. **Retorno em 90 dias** (`repeat-2`): dos comparecimentos de 12 meses atrás até 90 dias atrás (janela que já pode ser medida), o percentual com outra consulta marcada ou atendida em outro dia, até 90 dias depois; falta não conta como retorno. Percentual com 1 casa e rodapé "De N {consultas}". Sem base: "Ainda não medido" com a dica e "Primeira medida em dd/mm/aaaa", nunca 0%.
+4. **"Sem {consulta} há 6 meses"** (`calendar-off`): último comparecimento há mais de 6 meses e nada marcado daqui para a frente. Rodapé "Atendidos há mais de 6 meses, nada marcado". Com menos de 6 meses de atendimentos no sistema: "Ainda não medido" e "Começa a contar em dd/mm/aaaa". A etiqueta Inativo (90 dias sem consulta) não mudou e tem outro ícone, porque é outra conta.
+- Os rótulos usam o termo da clínica (white-label). O profissional vê os números da própria agenda, e os rodapés das contagens terminam em ", na sua agenda".
+- Carregando e erro em cada cartão, com "Tentar de novo"; erro nunca vira zero.
+
 **Ficha:** cabeçalho com avatar, nome, telefone, convênio, chips de etiqueta (Risco de falta em alerta, Inativo em neutro, VIP em destaque).
 
-Três cards de indicador: Total de consultas · Faltas · Taxa de comparecimento.
+Três cards de indicador: Total de consultas (atendidas mais faltas) · Faltas · Taxa de comparecimento. Desde 02/10/2026 no cartão de métrica único; sem consulta atendida nem falta, a taxa diz "Ainda não medido" com a dica, nunca 0%.
 
 Duas colunas: à esquerda **linha do tempo de agendamentos** (data, profissional, procedimento, valor, chip de status); à direita dados cadastrais, **saldo de pacote com barra de sessões**, **estado do consentimento** (origem, data, botão de descadastrar), origem preservada desde o lead, e botões Abrir conversa, Agendar, Adicionar à lista de espera.
 
@@ -571,7 +611,14 @@ Duas colunas: à esquerda **linha do tempo de agendamentos** (data, profissional
 
 Lista agrupada por profissional e procedimento. Cada item: nome, telefone, procedimento, preferência de turno e dias, data de entrada, prioridade.
 
-**Painel superior:** horários recuperados no mês, receita associada, tempo médio até preencher um cancelamento.
+**Painel "Desempenho da lista" (Fase 3 das métricas, 02/10/2026; o "no mês" vem do plano aprovado em 29/09, e o mês civil com a safra pela 1ª oferta foi assumido na recomendação do levantamento, a confirmar com o dono):** conta o **mês civil da clínica**, com o mês escrito no subtítulo ("Outubro de 2026"); a vaga entra no mês da sua primeira oferta. Barras só onde há denominador honesto, e só nos tons destaque e neutro.
+- **Vagas preenchidas:** barra em destaque, preenchidas de resolvidas (preenchidas mais esgotadas), com a legenda "24 de 31". Rodapé "N em andamento, N canceladas" quando houver: ainda não terminaram, ou não dependeram do paciente. Sem vaga resolvida: "Nenhuma vaga resolvida ainda".
+- **Aceite na 1ª oferta:** barra neutra com o percentual ("68,0%") e o rodapé "17 aceitas, 8 sem aceite". A base são as primeiras ofertas que o paciente resolveu (aceita ou vencida); a cancelada pela recepção não entra. Sem base: "Sem dados".
+- **Tempo médio até o encaixe:** número, sem barra (não tem máximo), da primeira oferta ao aceite. Sem vaga preenchida: "Sem vaga preenchida".
+- **Receita associada** (este brief exige): o preço das consultas marcadas pelas vagas preenchidas (preço do vínculo; sem ele, o preço base do procedimento; "Coberto" sem valor não soma). O que ficou fora da soma é contado à parte, como no faturamento: com parte das vagas sem valor, o valor leva o rodapé "Fora da soma: N de convênio sem valor, N sem preço cadastrado"; com nenhuma vaga com valor, "Sem preço para somar", nunca R$ 0,00. Só administrador e gestor veem o valor; para os outros papéis, "Sem acesso" visível e desabilitado com a dica "Só administrador e gestor veem valores em reais.", sem nenhum valor na página.
+- Vazio: "Nenhuma vaga na reoferta neste mês". Carregando com esqueleto; erro com "Tentar de novo", nunca zero.
+
+Até 01/10/2026 o painel mostrava horários recuperados, receita associada e tempo médio até preencher, nos últimos 30 dias.
 
 **Quando um cancelamento dispara reoferta:** faixa no topo mostrando "Reoferta em andamento: 20/08 às 14:30, enviado para 5 pessoas, 22 min restantes" com botão Cancelar reoferta e a lista de quem recebeu.
 
@@ -581,11 +628,31 @@ Arrastar para reordenar prioridade. Botão Adicionar manualmente.
 
 ### TELA 11. RELATÓRIOS
 
-Filtro de período com comparação contra o anterior. Abas: Origem · Agendamentos · IA · Confirmação · Custos.
+> **Mudança (decisão do dono em 02/10/2026, Fase 3 das métricas):** quatro abas, como no protótipo do design system: **Visão geral · Marketing · Comercial · Agente de IA**. O conteúdo das cinco abas anteriores foi redistribuído nelas. No menu a tela se chama "Resultados".
 
-Cada aba: faixa de indicadores, um gráfico principal (barras horizontais ou linha com marcadores, nunca outro tipo) e tabela com **dimensão primária trocável por dropdown**. Exportar em CSV e PDF no topo direito.
+Filtro de período com comparação contra o anterior (datas na URL, "comparado com os N dias anteriores"). Abas em controle segmentado, cada uma na URL (`?aba=geral`, `marketing`, `comercial`, `ia`); aba ausente ou desconhecida abre a Visão geral. **Link antigo não quebra:** `origem` abre Marketing, `agendamentos` e `confirmacao` abrem Comercial, `custos` abre Agente de IA. No celular as abas quebram linha em vez de rolar.
 
-**Aba Confirmação precisa conter o comparativo antes e depois da linha de base**, porque é o relatório que renova o contrato.
+Cada aba: faixa de cartões, gráficos só em barras horizontais ou linha com marcadores (nunca outro tipo) e, onde há tabela, **dimensão primária trocável por dropdown**. Exportar em CSV e PDF no topo direito, por aba, em várias seções; nenhuma linha em reais sai para quem não pode ver valores.
+
+**Visão geral:**
+- Cinco cartões: **Leads recebidos** e **Consultas agendadas** (agendamentos criados no período), os dois com variação contra o período anterior; **Taxa de conversão** (o lime da aba): dos leads que chegaram no período, quantos já agendaram (coorte), com 1 casa, sem variação (a coorte anterior teve mais tempo para maturar), "Sem leads no período" quando não há lead, rodapé "Objetivo: X%" que some sem objetivo e o botão "Definir objetivo" ou "Alterar objetivo"; **Custo por lead**: "Ainda não medido" até a leitura do investimento na Meta (Fase 4 das métricas); **Faturamento estimado** (abaixo).
+- Blocos: **Leads x consultas agendadas** (linha com marcadores, duas séries, um ponto por dia civil da clínica); **Origem dos leads** em barras com percentual; **Funil comercial** (coorte: Chegaram, Agendaram, Compareceram); **Confirmação de consulta** (as taxas com o par bruto escrito, as recuperadas e a linha de base contra a taxa medida, sem frase de causa, com "Ver detalhes em Comercial"); **Agente de IA** (as métricas do agente em "Ainda não medido" e a primeira resposta da equipe); **Campanhas** (leads, agendados e conversão; investimento e custo por lead chegam com a Fase 4).
+
+**Faturamento estimado:** soma do preço das consultas **com comparecimento** no período. Preço do vínculo; sem ele, o preço base do procedimento; "Coberto" pelo convênio sem valor não soma e é contado à parte, assim como a consulta sem preço nenhum; preço zero é gratuito de verdade e entra. "Estimado" porque o preço vem do cadastro atual. Na Visão geral em formato compacto ("R$ 284 mil", o leitor de tela ouve o valor cheio), com variação e o rodapé do que ficou fora da soma ("Fora da soma: 2 consultas de convênio sem valor"); em Comercial com o valor cheio e todas as contagens. Sem comparecimento: "Nenhum comparecimento"; só com convênio sem valor ou sem preço: "Sem preço para somar" (nunca `R$ 0,00`).
+
+**Marketing:** cartões Leads recebidos, Com origem identificada (%), Lead para comparecimento (coorte) e Custo por lead; Origem dos leads; Campanhas; Detalhe da origem por canal ou campanha (dropdown); Conversões devolvidas à Meta (o valor em reais já enviado só para administrador e gestor).
+
+**Comercial:** cartões Consultas agendadas (criadas no período), Comparecimentos, Faltas e Cancelamentos (em Faltas e Cancelamentos subir é ruim, e a cor da variação diz isso); o herói **Consultas recuperadas** (o lime da aba, que saiu do Início), com a receita associada só para administrador e gestor; Faturamento estimado detalhado; Funil comercial; **Confirmação completa**; Detalhe por profissional, procedimento ou situação.
+
+**O comparativo antes e depois da linha de base continua obrigatório**, porque é o relatório que renova o contrato: mora na Confirmação completa, dentro de Comercial (taxas, "Contra a linha de base" com o registro só para administrador, e "Antes e depois da primeira mensagem de régua"). O link "Registrar a taxa de falta", no aviso "Antes de ligar, anote a taxa de falta" que aparece ao ligar a régua, abre Resultados na aba Comercial.
+
+**Agente de IA:** atendimento humano em quatro cartões (Conversas iniciadas, Novas conversas respondidas, primeira resposta mediana e o tempo em que 90% foram respondidas); "Desempenho da recepcionista de IA" com seis métricas em "Ainda não medido" (Resolvidas sem humano, Transferidas para a equipe, Escalonadas por insatisfação, Primeira resposta da IA, Agendamentos feitos pela IA, Satisfação), sem número inventado; Mensagens no período (Enviadas, Recebidas, Notas internas) e Quem enviou. O cartão "Custo do período" só aparece com o canal oficial do WhatsApp, e mesmo assim sem acesso para quem não é administrador nem gestor.
+
+**Objetivo de conversão:** um percentual por clínica, de 0,1 a 100 com uma casa, que administrador e gestor definem no diálogo "Objetivo de conversão" (campo "Objetivo (%)", Salvar, Remover objetivo, Cancelar); todo membro ativo vê o rodapé. Para os outros papéis o botão fica visível e desabilitado com a dica "Só administrador e gestor definem o objetivo de conversão.". Definir e remover vão para a trilha de auditoria.
+
+**Profissional:** continua com a visão própria (a agenda dele, sem abas).
+
+**Histórico: até 01/10/2026** as abas eram Origem · Agendamentos · IA · Confirmação · Custos, cada uma com faixa de indicadores, um gráfico principal e tabela com dimensão trocável, e a aba Confirmação trazia o comparativo contra a linha de base.
 
 ---
 
@@ -623,6 +690,16 @@ Tela só para o Administrador do produto, fora do contexto de uma clínica.
 - Indicadores: clínicas ativas, MRR, churn, inadimplência, custo total de mensagens contra receita.
 - Ações: entrar como a clínica (com registro na auditoria), suspender, reativar, mudar plano.
 - **Alerta de quality rating baixo** em destaque, porque isso é incidente de produto e precisa aparecer antes de a clínica reclamar.
+
+---
+
+### TELAS DE ENTRADA (login, cadastro, convite e nova senha)
+
+Fora das 14 telas. Registrado em 02/10/2026, a pedido do dono, para o campo de senha.
+
+- **Olho no campo de senha** no login, no cadastro (os dois caminhos: criar a clínica e pedir entrada pelo código), no convite por e-mail e na redefinição de senha: botão de ícone dentro do campo, à direita, que mostra e oculta o que foi digitado ("Mostrar senha" e "Ocultar senha"). Não envia o formulário (no login, Enter continua entrando), fica logo depois do campo na ordem do Tab, e a senha volta a ficar oculta quando o formulário é enviado. Ícone neutro, sem cor de status.
+- **"Repita a senha"** no cadastro, no convite e na redefinição: segundo campo, logo abaixo do primeiro ("Senha" no cadastro, "Nova senha" no convite e na redefinição), com o próprio olho ("Mostrar a senha repetida"). Senhas diferentes param no navegador, antes de qualquer envio, com a mensagem "As senhas não são iguais. Digite a mesma senha nos dois campos." (ícone, texto e cor de erro), que aparece ao sair do campo ou ao tentar enviar e some quando as senhas ficam iguais. O servidor confere de novo, porque o navegador nunca é garantia. Segundo campo vazio: o navegador pede o preenchimento, e o servidor responde "Repita a senha para confirmar.". A dica "Pelo menos 8 caracteres." continua no primeiro campo.
+- O login tem só o olho, porque a senha já existe. O token de anúncios da Meta, em Configurações, **não** tem olho: é segredo colado, e o valor salvo nunca volta para a tela.
 
 ---
 

@@ -8,6 +8,11 @@ import { createClient } from "@/lib/supabase/server";
 
 // Server Actions da tela de Resultados (Telas 5/11).
 //
+// O objetivo de conversao (Fase 3, A3) e a meta da clinica para a Taxa de
+// conversao da Visao geral: so admin e gestor definem ou removem, todo
+// membro ativo le. A RLS de objetivo_de_conversao e quem garante o papel e a
+// autoria (definido_por = auth.uid()); o guard aqui devolve mensagem digna.
+//
 // A linha de base de no-show e a metade da tarefa 6.3 que vive no sistema:
 // o numero e INFORMADO pela clinica (medicao pre-implantacao), so admin
 // registra, e corrigir e inserir linha nova (a tabela e append-only, sem
@@ -109,8 +114,9 @@ export async function registrarExportacaoDeRelatorioAction(
     return { ok: false };
   }
   const parsedFormato = z.enum(["csv", "impressao"]).safeParse(formato);
+  // As 4 abas da Fase 3; "painel" e a exportacao do Inicio.
   const parsedAba = z
-    .enum(["origem", "agendamentos", "ia", "confirmacao", "custos", "painel"])
+    .enum(["geral", "marketing", "comercial", "ia", "painel"])
     .safeParse(aba);
   if (!parsedFormato.success || !parsedAba.success) {
     return { ok: false };
@@ -124,4 +130,116 @@ export async function registrarExportacaoDeRelatorioAction(
     entity_id: null,
   });
   return { ok: !error };
+}
+
+// ---------------------------------------------------------------------------
+// Objetivo de conversao (A3)
+// ---------------------------------------------------------------------------
+
+const PAPEIS_DO_OBJETIVO = ["admin", "gestor"] as const;
+
+const MENSAGEM_SEM_PAPEL_DO_OBJETIVO =
+  "Só administrador e gestor definem o objetivo de conversão.";
+
+// De 0,1 a 100, com no maximo 1 casa decimal (numeric(4,1) no banco). A
+// casa e conferida aqui para o banco nunca arredondar em silencio o que a
+// pessoa digitou.
+const objetivoSchema = z.object({
+  percentual: z
+    .number()
+    .finite()
+    .min(0.1)
+    .max(100)
+    .refine((valor) => Math.abs(valor * 10 - Math.round(valor * 10)) < 1e-6, {
+      message: "Use no máximo uma casa decimal.",
+    }),
+});
+
+export async function definirObjetivoDeConversaoAction(
+  input: unknown,
+): Promise<RelatoriosActionResult> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: "Sessão expirada. Entre de novo." };
+  }
+  if (
+    !PAPEIS_DO_OBJETIVO.includes(
+      context.active.role as (typeof PAPEIS_DO_OBJETIVO)[number],
+    )
+  ) {
+    return { ok: false, error: MENSAGEM_SEM_PAPEL_DO_OBJETIVO };
+  }
+  const parsed = objetivoSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "Informe um percentual de 0,1 a 100, com até uma casa decimal.",
+    };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("objetivo_de_conversao").upsert(
+    {
+      clinic_id: context.active.clinicId,
+      percentual: parsed.data.percentual,
+      definido_por: context.userId,
+    },
+    { onConflict: "clinic_id" },
+  );
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "42501"
+          ? MENSAGEM_SEM_PAPEL_DO_OBJETIVO
+          : error.code === "23514"
+            ? "Informe um percentual de 0,1 a 100, com até uma casa decimal."
+            : "Não foi possível salvar o objetivo.",
+    };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: context.active.clinicId,
+    user_id: context.userId,
+    action: "definiu_objetivo_de_conversao",
+    entity: "objetivo_de_conversao",
+    entity_id: context.active.clinicId,
+  });
+
+  revalidatePath("/relatorios");
+  return { ok: true };
+}
+
+export async function removerObjetivoDeConversaoAction(): Promise<RelatoriosActionResult> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: "Sessão expirada. Entre de novo." };
+  }
+  if (
+    !PAPEIS_DO_OBJETIVO.includes(
+      context.active.role as (typeof PAPEIS_DO_OBJETIVO)[number],
+    )
+  ) {
+    return { ok: false, error: MENSAGEM_SEM_PAPEL_DO_OBJETIVO };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("objetivo_de_conversao")
+    .delete()
+    .eq("clinic_id", context.active.clinicId);
+  if (error) {
+    return { ok: false, error: "Não foi possível remover o objetivo." };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: context.active.clinicId,
+    user_id: context.userId,
+    action: "removeu_objetivo_de_conversao",
+    entity: "objetivo_de_conversao",
+    entity_id: context.active.clinicId,
+  });
+
+  revalidatePath("/relatorios");
+  return { ok: true };
 }

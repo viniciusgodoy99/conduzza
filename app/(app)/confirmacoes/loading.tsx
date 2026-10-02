@@ -5,8 +5,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Esqueleto na forma da tela de confirmacoes (docs/06 secao 5.7): cabecalho
-// com a data, abas segmentadas com a acao no canto, navegacao de dia, cinco
-// cartoes de contagem e o cartao da lista com o filtro, o cabecalho de
+// com a data, abas segmentadas com a acao no canto, navegacao de dia, os cinco
+// cartoes do dia e o cartao da lista com o filtro, o cabecalho de
 // colunas e os grupos por profissional. Nunca giratorio no meio da tela.
 export default function CarregandoConfirmacoes() {
   return (
@@ -28,7 +28,11 @@ export default function CarregandoConfirmacoes() {
         <Skeleton className="size-10 rounded-md" />
       </div>
 
-      <CardsSkeleton cards={5} className="sm:grid-cols-2 lg:grid-cols-5" />
+      {/* Mesma grade dos cartoes do dia (cartoes-do-dia.tsx). */}
+      <CardsSkeleton
+        cards={5}
+        className="grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5"
+      />
 
       <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
         <div className="border-b border-border px-3.5 py-3">

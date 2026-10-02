@@ -51,17 +51,19 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { resumirMotivos } from "@/lib/domain/falha-de-envio";
 import { somarDias } from "@/lib/domain/horarios";
 import { agendaKeys, fetchAgendaDia } from "@/lib/queries/agenda";
 import { catalogoKeys, fetchCatalogo } from "@/lib/queries/catalogo";
 import {
   confirmacoesKeys,
+  falhouNoEnvio,
   fetchConfirmacoesDia,
   fetchFaltasDeHoje,
-  fetchRecuperadasDoDia,
   fetchReguasDaClinica,
+  foiConfirmada,
+  rotuloDoNaoEnvioDaConsulta,
   STATUS_CANCELADOS,
-  STATUS_CONFIRMADOS,
   STATUS_PENDENTES,
   type ConsultaDaConfirmacao,
   type FaltaDoDia,
@@ -81,9 +83,12 @@ type Aba = "amanha" | "faltas";
 
 // Filtro por situacao da lista do dia (decisao do dono, C27): local, sobre os
 // mesmos dados, e a lista continua agrupada por profissional em ordem de
-// horario. "Nao enviadas" sao exatamente as linhas com o chip "Nao enviada"
-// (toque pulado); quem pediu para remarcar mostra o pedido no lugar e fica
-// fora, como na linha.
+// horario. Cada filtro usa o MESMO predicado do cartao de mesmo nome (Fase 3,
+// 02/10/2026): "Confirmadas" e foiConfirmada (espelho do SQL
+// consulta_foi_confirmada, inclui quem confirmou e ja chegou) e "Nao
+// enviadas" e falhouNoEnvio (aguardando, sem pedido de remarcacao, ultimo
+// toque pulado por um motivo que deixou o paciente sem a mensagem). O numero
+// do filtro e o do cartao sao sempre iguais.
 type FiltroDoDia =
   "todas" | "confirmadas" | "aguardando" | "canceladas" | "nao_enviadas";
 
@@ -96,7 +101,8 @@ const FILTROS: {
   {
     value: "confirmadas",
     label: "Confirmadas",
-    inclui: (consulta) => STATUS_CONFIRMADOS.includes(consulta.status),
+    inclui: (consulta) =>
+      foiConfirmada(consulta.status, consulta.confirmation_channel),
   },
   {
     value: "aguardando",
@@ -111,9 +117,7 @@ const FILTROS: {
   {
     value: "nao_enviadas",
     label: "Não enviadas",
-    inclui: (consulta) =>
-      consulta.remarcacao_pedida_em === null &&
-      consulta.toque.situacao === "pulado",
+    inclui: falhouNoEnvio,
   },
 ];
 
@@ -235,35 +239,40 @@ export function ConfirmacoesClient({
     staleTime: 15_000,
   });
 
-  const recuperadasQuery = useQuery({
-    queryKey: [...confirmacoesKeys.dia(clinicId, dia), "recuperadas"],
-    queryFn: () => fetchRecuperadasDoDia(supabase, clinicId, dia, timezone),
-  });
-
   const consultas = diaQuery.data ?? [];
   const faltas = faltasQuery.data ?? [];
 
-  const pendentes = consultas.filter((consulta) =>
+  // Os cartoes contam sobre a MESMA lista do dia (ja recortada pela RLS: o
+  // profissional ve so as proprias consultas) e com os mesmos predicados dos
+  // filtros. Nenhuma query a parte: carregando e erro sao os da lista, e um
+  // erro nunca vira zero.
+  const aguardando = consultas.filter((consulta) =>
     STATUS_PENDENTES.includes(consulta.status),
   );
-  const cobraveis = pendentes.filter(
+  const cobraveis = aguardando.filter(
     (consulta) =>
       consulta.consent_ativo &&
       consulta.send_confirmation &&
       // Quem pediu para remarcar ja respondeu: fica fora da cobranca em lote.
       consulta.remarcacao_pedida_em === null,
   );
+  const naoEnviadas = consultas.filter(falhouNoEnvio);
   const contagens: ContagensDoDia = {
     total: consultas.length,
-    recuperadas: recuperadasQuery.data ?? 0,
-    pendentes: pendentes.length,
     confirmadas: consultas.filter((consulta) =>
-      STATUS_CONFIRMADOS.includes(consulta.status),
+      foiConfirmada(consulta.status, consulta.confirmation_channel),
     ).length,
+    aguardando: aguardando.length,
     canceladas: consultas.filter((consulta) =>
       STATUS_CANCELADOS.includes(consulta.status),
     ).length,
     cobraveis: cobraveis.length,
+    naoEnviadas: naoEnviadas.length,
+    motivos: resumirMotivos(
+      naoEnviadas
+        .map(rotuloDoNaoEnvioDaConsulta)
+        .filter((rotulo): rotulo is string => rotulo !== null),
+    ),
   };
 
   const filtroAtual =
@@ -446,7 +455,7 @@ export function ConfirmacoesClient({
             <>
               <CardsSkeleton
                 cards={5}
-                className="sm:grid-cols-2 lg:grid-cols-5"
+                className="grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5"
               />
               <TableSkeleton columns={6} />
             </>

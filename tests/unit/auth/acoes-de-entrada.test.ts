@@ -8,6 +8,7 @@ const auth = {
   signInWithPassword: vi.fn(),
   resend: vi.fn(),
   signUp: vi.fn(),
+  updateUser: vi.fn(),
 };
 const rpc = vi.fn();
 
@@ -34,10 +35,12 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-const { signInAction, reenviarConfirmacaoAction } =
+const { signInAction, reenviarConfirmacaoAction, updatePasswordAction } =
   await import("@/app/(auth)/actions");
-const { cadastrarPorCodigoAction } =
+const { cadastrarClinicaAction, cadastrarPorCodigoAction } =
   await import("@/app/(auth)/cadastro/actions");
+const { REPITA_A_SENHA, SENHA_CURTA, SENHAS_DIFERENTES } =
+  await import("@/lib/auth/senha");
 
 function formulario(campos: Record<string, string>): FormData {
   const dados = new FormData();
@@ -57,6 +60,7 @@ beforeEach(() => {
   auth.signInWithPassword.mockReset();
   auth.resend.mockReset();
   auth.signUp.mockReset();
+  auth.updateUser.mockReset();
   rpc.mockReset();
 });
 
@@ -155,12 +159,14 @@ describe("reenviarConfirmacaoAction", () => {
 });
 
 describe("cadastrarPorCodigoAction", () => {
-  const pedido = () =>
+  const pedido = (mudancas: Record<string, string> = {}) =>
     formulario({
       codigo: "a1b2c3d4",
       nome: "Recepcionista",
       email: "recepcao@clinica.test",
       password: "senha-nova-123",
+      confirmacao: "senha-nova-123",
+      ...mudancas,
     });
 
   it("codigo desligado depois da conferencia e recusado antes do signUp", async () => {
@@ -202,5 +208,160 @@ describe("cadastrarPorCodigoAction", () => {
         }),
       }),
     );
+  });
+
+  // Pedido do dono em 02/10/2026: a senha vem duas vezes. A conferencia
+  // acontece antes de qualquer ida ao banco ou ao GoTrue.
+  it("senhas diferentes param antes da conferencia do codigo e do signUp", async () => {
+    const estado = await cadastrarPorCodigoAction(
+      {},
+      pedido({ confirmacao: "senha-nova-124" }),
+    );
+    expect(estado).toEqual({ error: SENHAS_DIFERENTES });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(auth.signUp).not.toHaveBeenCalled();
+  });
+
+  it("sem a confirmacao a mensagem sai em portugues", async () => {
+    const dados = pedido();
+    dados.delete("confirmacao");
+    const estado = await cadastrarPorCodigoAction({}, dados);
+    expect(estado).toEqual({ error: REPITA_A_SENHA });
+    expect(auth.signUp).not.toHaveBeenCalled();
+  });
+
+  it("confirmacao vazia pede para repetir a senha", async () => {
+    const estado = await cadastrarPorCodigoAction(
+      {},
+      pedido({ confirmacao: "" }),
+    );
+    expect(estado).toEqual({ error: REPITA_A_SENHA });
+    expect(auth.signUp).not.toHaveBeenCalled();
+  });
+
+  it("senha curta vem antes de senhas diferentes", async () => {
+    const estado = await cadastrarPorCodigoAction(
+      {},
+      pedido({ password: "curta", confirmacao: "outra" }),
+    );
+    expect(estado).toEqual({ error: SENHA_CURTA });
+  });
+
+  it("a confirmacao nao vai para o signUp", async () => {
+    rpc.mockResolvedValue({ data: { nome: "Clínica Teste" }, error: null });
+    auth.signUp.mockResolvedValue({ error: null });
+    await cadastrarPorCodigoAction({}, pedido());
+    const chamada = auth.signUp.mock.calls[0]?.[0];
+    expect(chamada.password).toBe("senha-nova-123");
+    expect(Object.keys(chamada)).not.toContain("confirmacao");
+    expect(Object.keys(chamada.options.data)).not.toContain("confirmacao");
+  });
+});
+
+describe("cadastrarClinicaAction", () => {
+  const pedido = (mudancas: Record<string, string> = {}) =>
+    formulario({
+      nomeClinica: "Clínica Sorriso",
+      nome: "Dona da Clínica",
+      email: "dona@clinica.test",
+      password: "senha-nova-123",
+      confirmacao: "senha-nova-123",
+      ...mudancas,
+    });
+
+  it("senhas diferentes nao chegam ao signUp", async () => {
+    const estado = await cadastrarClinicaAction(
+      {},
+      pedido({ confirmacao: "senha-nova-321" }),
+    );
+    expect(estado).toEqual({ error: SENHAS_DIFERENTES });
+    expect(auth.signUp).not.toHaveBeenCalled();
+  });
+
+  it("espaco faz parte da senha: com espaco a mais nao confere", async () => {
+    const estado = await cadastrarClinicaAction(
+      {},
+      pedido({ confirmacao: "senha-nova-123 " }),
+    );
+    expect(estado).toEqual({ error: SENHAS_DIFERENTES });
+    expect(auth.signUp).not.toHaveBeenCalled();
+  });
+
+  it("sem a confirmacao a mensagem sai em portugues", async () => {
+    const dados = pedido();
+    dados.delete("confirmacao");
+    const estado = await cadastrarClinicaAction({}, dados);
+    expect(estado).toEqual({ error: REPITA_A_SENHA });
+    expect(auth.signUp).not.toHaveBeenCalled();
+  });
+
+  it("senhas iguais criam a conta sem levar a confirmacao", async () => {
+    auth.signUp.mockResolvedValue({ error: null });
+    const estado = await cadastrarClinicaAction({}, pedido());
+    expect(estado).toEqual({ success: "clinica", email: "dona@clinica.test" });
+    expect(auth.signUp).toHaveBeenCalledTimes(1);
+    const chamada = auth.signUp.mock.calls[0]?.[0];
+    expect(chamada.email).toBe("dona@clinica.test");
+    expect(chamada.password).toBe("senha-nova-123");
+    expect(Object.keys(chamada)).not.toContain("confirmacao");
+    expect(chamada.options.data).toEqual({
+      tipo: "clinica",
+      nome: "Dona da Clínica",
+      nome_clinica: "Clínica Sorriso",
+      name: "Dona da Clínica",
+    });
+  });
+});
+
+describe("updatePasswordAction", () => {
+  const pedido = (mudancas: Record<string, string> = {}) =>
+    formulario({
+      password: "senha-nova-123",
+      confirmacao: "senha-nova-123",
+      ...mudancas,
+    });
+
+  it("senhas diferentes se resolvem no campo, sem pedir link novo", async () => {
+    const estado = await updatePasswordAction(
+      {},
+      pedido({ confirmacao: "senha-nova-321" }),
+    );
+    expect(estado).toEqual({ error: SENHAS_DIFERENTES });
+    expect(auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("sem a confirmacao a mensagem sai em portugues", async () => {
+    const dados = pedido();
+    dados.delete("confirmacao");
+    const estado = await updatePasswordAction({}, dados);
+    expect(estado).toEqual({ error: REPITA_A_SENHA });
+    expect(auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("senha curta continua com a mensagem de sempre", async () => {
+    const estado = await updatePasswordAction(
+      {},
+      pedido({ password: "curta", confirmacao: "curta" }),
+    );
+    expect(estado).toEqual({ error: SENHA_CURTA });
+    expect(auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("senhas iguais salvam so a senha e entram", async () => {
+    auth.updateUser.mockResolvedValue({ error: null });
+    await expect(updatePasswordAction({}, pedido())).rejects.toThrow(
+      "redirect:/inicio",
+    );
+    expect(auth.updateUser).toHaveBeenCalledWith({
+      password: "senha-nova-123",
+    });
+  });
+
+  it("link vencido continua pedindo link novo", async () => {
+    auth.updateUser.mockResolvedValue({
+      error: erroDoGoTrue("session_not_found", 403),
+    });
+    const estado = await updatePasswordAction({}, pedido());
+    expect(estado.pedirLinkNovo).toBe(true);
   });
 });

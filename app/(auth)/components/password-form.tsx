@@ -8,15 +8,15 @@ import {
   updatePasswordAction,
   type SenhaNovaState,
 } from "@/app/(auth)/actions";
+import { SenhaComConfirmacao } from "@/app/(auth)/components/senha-com-confirmacao";
 import { Aviso } from "@/components/shared/aviso";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 const initialState: SenhaNovaState = {};
 
 // Formulario compartilhado de definicao de senha: usado na redefinicao
-// (esqueci a senha) e no aceite de convite. Exige sessao vinda do link.
+// (esqueci a senha) e no aceite de convite. Exige sessao vinda do link. A
+// senha nova vem duas vezes, com o olho nos dois campos (02/10/2026).
 export function PasswordForm({
   title,
   description,
@@ -39,22 +39,7 @@ export function PasswordForm({
         </h1>
         <p className="text-[13.5px] text-text-secondary">{description}</p>
       </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor="password">Nova senha</Label>
-        <Input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={8}
-          aria-describedby="password-dica"
-          className="h-11"
-        />
-        <p id="password-dica" className="text-xs text-text-secondary">
-          Pelo menos 8 caracteres.
-        </p>
-      </div>
+      <SenhaComConfirmacao rotulo="Nova senha" />
       {state.error ? (
         <Aviso
           tom="alert"

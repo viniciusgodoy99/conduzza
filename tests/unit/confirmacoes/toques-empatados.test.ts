@@ -21,7 +21,10 @@ type Ordem = { coluna: string; crescente: boolean; nuloPrimeiro: boolean };
 class ConsultaFalsa {
   private readonly ordens: Ordem[] = [];
 
-  constructor(private readonly linhas: Linha[]) {}
+  constructor(
+    private readonly linhas: Linha[],
+    private readonly erro: { message: string } | null = null,
+  ) {}
 
   select() {
     return this;
@@ -77,19 +80,27 @@ class ConsultaFalsa {
   }
 
   then<T>(
-    aoResolver: (resultado: { data: Linha[]; error: null }) => T,
+    aoResolver: (resultado: {
+      data: Linha[] | null;
+      error: { message: string } | null;
+    }) => T,
     aoFalhar?: (erro: unknown) => T,
   ): Promise<T> {
-    return Promise.resolve({ data: this.ordenadas(), error: null }).then(
-      aoResolver,
-      aoFalhar,
-    );
+    return Promise.resolve(
+      this.erro
+        ? { data: null, error: this.erro }
+        : { data: this.ordenadas(), error: null },
+    ).then(aoResolver, aoFalhar);
   }
 }
 
-function bancoFalso(tabelas: Record<string, Linha[]>): SupabaseClient {
+function bancoFalso(
+  tabelas: Record<string, Linha[]>,
+  erros: Record<string, { message: string }> = {},
+): SupabaseClient {
   return {
-    from: (tabela: string) => new ConsultaFalsa(tabelas[tabela] ?? []),
+    from: (tabela: string) =>
+      new ConsultaFalsa(tabelas[tabela] ?? [], erros[tabela] ?? null),
   } as unknown as SupabaseClient;
 }
 
@@ -176,6 +187,60 @@ describe("toque da consulta com runs no mesmo horário", () => {
     expect(resultado.a4).toEqual({
       situacao: "pulado",
       motivo: "sem_autorizacao",
+      detalhe: null,
     });
+  });
+});
+
+// Fase 3: o toque pulado por falha de envio traz o codigo curto gravado em
+// cadence_run.motivo_da_falha (o rodape "motivo mais comum" do cartao "Não
+// enviadas"), e erro de leitura das runs nao vira "nenhum toque".
+describe("detalhe da falha e erro de leitura", () => {
+  it("falha de envio traz motivo_da_falha como detalhe", async () => {
+    const resultado = await toques(
+      [
+        run("b1", {
+          skipped_reason: "falha_envio",
+          motivo_da_falha: "whatsapp_463",
+        }),
+      ],
+      ["b1"],
+    );
+    expect(resultado.b1).toEqual({
+      situacao: "pulado",
+      motivo: "falha_envio",
+      detalhe: "whatsapp_463",
+    });
+  });
+
+  it("linha antiga (sem motivo_da_falha) fica com detalhe nulo", async () => {
+    const resultado = await toques(
+      [run("b2", { skipped_reason: "falha_envio", motivo_da_falha: null })],
+      ["b2"],
+    );
+    expect(resultado.b2).toEqual({
+      situacao: "pulado",
+      motivo: "falha_envio",
+      detalhe: null,
+    });
+  });
+
+  it("erro ao ler as runs lança, em vez de zerar as não enviadas", async () => {
+    await expect(
+      fetchConfirmacoesDia(
+        bancoFalso(
+          {
+            appointment: [consulta("b3")],
+            contact_consent: [],
+            conversation: [],
+            cadence_run: [],
+          },
+          { cadence_run: { message: "falhou" } },
+        ),
+        "clinica",
+        "2026-10-02",
+        "America/Fortaleza",
+      ),
+    ).rejects.toThrow("falhou");
   });
 });

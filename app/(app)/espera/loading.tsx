@@ -58,9 +58,23 @@ export default function CarregandoEspera() {
               <Skeleton className="h-5 w-44" />
               <Skeleton className="h-3.5 w-24" />
             </div>
-            <div className="grid gap-3 px-4 py-3.5">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="flex items-center justify-between">
+            <div className="grid gap-4 px-4 py-3.5">
+              {/* As duas barras (preenchidas e aceite) e as duas linhas de
+                  numero (tempo medio e receita). */}
+              {[0, 1].map((i) => (
+                <div key={`barra-${i}`} className="grid gap-1.5">
+                  <div className="flex justify-between">
+                    <Skeleton className="h-3.5 w-36" />
+                    <Skeleton className="h-3.5 w-12" />
+                  </div>
+                  <Skeleton className="h-[7px] rounded-full" />
+                </div>
+              ))}
+              {[0, 1].map((i) => (
+                <div
+                  key={`linha-${i}`}
+                  className="flex items-center justify-between"
+                >
                   <Skeleton className="h-4 w-44" />
                   <Skeleton className="h-5 w-16" />
                 </div>

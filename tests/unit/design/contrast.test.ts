@@ -199,6 +199,37 @@ describe.each(Object.entries(themes))("tema %s", (_themeName, tokens) => {
     },
   );
 
+  // Cartao de metrica (Fase 3): a variacao e escrita na cor da polaridade
+  // sobre o cartao (surface-2), sobre o ladrilho afundado (surface-4) e na
+  // pilula bg-card do destaque lime (surface-2 de novo, D16).
+  it.each(
+    ["success-text", "alert-text", "neutral-text"].flatMap((fg) =>
+      ["surface-2", "surface-4"].map((bg) => [fg, bg] as const),
+    ),
+  )("variação do cartão: --%s tem 4.5:1 sobre --%s", (fg, bg) => {
+    expect(contrast(tokens, fg, bg)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // Icone de tom no eyebrow (o cartao E um status): indicador nao textual,
+  // 3:1 sobre o cartao e sobre o afundado.
+  it.each(
+    TONES.flatMap((toneName) =>
+      ["surface-2", "surface-4"].map((bg) => [toneName, bg] as const),
+    ),
+  )("ícone do cartão no tom %s tem 3.0:1 sobre --%s", (toneName, bg) => {
+    expect(contrast(tokens, `${toneName}-text`, bg)).toBeGreaterThanOrEqual(
+      3.0,
+    );
+  });
+
+  // Linha com marcadores: as duas series sobre o cartao.
+  it.each(["chart-bar", "chart-bar-muted"])(
+    "linha do gráfico (--%s) tem 3.0:1 sobre o card",
+    (serie) => {
+      expect(contrast(tokens, serie, "surface-2")).toBeGreaterThanOrEqual(3.0);
+    },
+  );
+
   it("texto invertido (botão sólido, dica) tem 4.5:1", () => {
     expect(
       contrast(tokens, "inverse-foreground", "inverse"),

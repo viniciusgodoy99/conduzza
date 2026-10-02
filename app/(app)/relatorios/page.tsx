@@ -12,8 +12,11 @@ import { fetchConversoesDevolvidas } from "@/lib/queries/conversoes-meta";
 import {
   fetchAgendaDoPeriodo,
   fetchAtendimentoDoPeriodo,
+  fetchFaturamentoDoPeriodo,
   fetchFunilDoPeriodo,
   fetchLinhaDeBase,
+  fetchObjetivoDeConversao,
+  fetchSerieDiariaDoPeriodo,
 } from "@/lib/queries/relatorios";
 import { createClient } from "@/lib/supabase/server";
 
@@ -25,6 +28,10 @@ import { VisaoDoProfissional } from "./visao-do-profissional";
 // comparacao contra o periodo anterior e exportacao. So contagens agregadas,
 // nenhum nome ou telefone de paciente, entao nao ha leitura a auditar; a
 // EXPORTACAO, essa sim, grava trilha antes do download (action propria).
+//
+// Fase 3: 4 vistas (Visao geral, Marketing, Comercial, Agente de IA). Os
+// valores em reais sao so de admin e gestor, decidido AQUI no servidor: para
+// os outros papeis o faturamento nem e buscado (e o banco devolveria null).
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -32,6 +39,28 @@ const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 // impressao: o que imprime e o layout proprio da exportacao.
 const CONTEINER =
   "mx-auto grid w-full max-w-content content-start gap-4 p-6 print:hidden";
+
+/**
+ * A clinica tem algum numero no canal OFICIAL da Meta. Hoje so o provedor
+ * cloud_api tem isOfficialChannel (lib/integrations/whatsapp/provider.ts), e
+ * a fabrica ainda recusa instancia-lo; por isso a pergunta e feita pelo nome
+ * do provedor gravado na conta. Sem canal oficial, custo por mensagem nao
+ * aparece na tela (regra 3.3).
+ */
+async function temCanalOficial(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("whatsapp_account")
+    .select("provider")
+    .eq("clinic_id", clinicId)
+    .is("removido_em", null);
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (data ?? []).some((conta) => conta.provider === "cloud_api");
+}
 
 /** "26/08/26 a 24/09/26" (nunca meia-risca entre as datas). */
 function rotuloDoRecorte(diaDe: string, diaAte: string): string {
@@ -127,33 +156,64 @@ export default async function ResultadosPage({
   const diaDe = recorteValido ? de : diaDePadrao;
   const diaAte = recorteValido ? ate : diaAtePadrao;
 
+  // Matriz de papeis da Fase 3: reais (faturamento, receita das
+  // recuperadas, custo) e o objetivo de conversao sao de admin e gestor.
+  const podeVerValores = active.role === "admin" || active.role === "gestor";
+
   const supabase = await createClient();
-  const [funil, agenda, atendimento, conversoes, linhaDeBase] =
-    await Promise.all([
-      fetchFunilDoPeriodo(
-        supabase,
-        active.clinicId,
-        active.timezone,
-        diaDe,
-        diaAte,
-      ),
-      fetchAgendaDoPeriodo(
-        supabase,
-        active.clinicId,
-        active.timezone,
-        diaDe,
-        diaAte,
-      ),
-      fetchAtendimentoDoPeriodo(
-        supabase,
-        active.clinicId,
-        active.timezone,
-        diaDe,
-        diaAte,
-      ),
-      fetchConversoesDevolvidas(supabase, active.clinicId),
-      fetchLinhaDeBase(supabase, active.clinicId),
-    ]);
+  const [
+    funil,
+    agenda,
+    atendimento,
+    serie,
+    faturamento,
+    conversoes,
+    linhaDeBase,
+    objetivo,
+    canalOficial,
+  ] = await Promise.all([
+    fetchFunilDoPeriodo(
+      supabase,
+      active.clinicId,
+      active.timezone,
+      diaDe,
+      diaAte,
+    ),
+    fetchAgendaDoPeriodo(
+      supabase,
+      active.clinicId,
+      active.timezone,
+      diaDe,
+      diaAte,
+    ),
+    fetchAtendimentoDoPeriodo(
+      supabase,
+      active.clinicId,
+      active.timezone,
+      diaDe,
+      diaAte,
+    ),
+    fetchSerieDiariaDoPeriodo(
+      supabase,
+      active.clinicId,
+      active.timezone,
+      diaDe,
+      diaAte,
+    ),
+    podeVerValores
+      ? fetchFaturamentoDoPeriodo(
+          supabase,
+          active.clinicId,
+          active.timezone,
+          diaDe,
+          diaAte,
+        )
+      : Promise.resolve(undefined),
+    fetchConversoesDevolvidas(supabase, active.clinicId),
+    fetchLinhaDeBase(supabase, active.clinicId),
+    fetchObjetivoDeConversao(supabase, active.clinicId),
+    temCanalOficial(supabase, active.clinicId),
+  ]);
 
   const recortePadrao = diaDe === diaDePadrao && diaAte === diaAtePadrao;
 
@@ -165,12 +225,15 @@ export default async function ResultadosPage({
           recortePadrao ? "Últimos 30 dias" : rotuloDoRecorte(diaDe, diaAte)
         }
         title="Resultados"
-        description={`De qual canal vem o ${t("paciente")} que comparece.`}
+        description={`De qual canal vem o ${t("paciente")}, quanto agenda e quanto comparece.`}
       />
       <RelatoriosClient
         clinicId={active.clinicId}
         timezone={active.timezone}
         ehAdmin={active.role === "admin"}
+        podeVerValores={podeVerValores}
+        podeDefinirObjetivo={podeVerValores}
+        canalOficial={canalOficial}
         abaInicial={aba}
         diaDeInicial={diaDe}
         diaAteInicial={diaAte}
@@ -179,8 +242,11 @@ export default async function ResultadosPage({
         funilInicial={funil}
         agendaInicial={agenda}
         atendimentoInicial={atendimento}
+        serieInicial={serie}
+        faturamentoInicial={faturamento}
         conversoes={conversoes}
         linhaDeBaseInicial={linhaDeBase}
+        objetivoInicial={objetivo}
       />
     </div>
   );

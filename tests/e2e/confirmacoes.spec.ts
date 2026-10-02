@@ -68,6 +68,20 @@ async function semLinhaDeBase(): Promise<void> {
     .eq("clinic_id", dados().clinicId);
 }
 
+/**
+ * O cartão de métrica pelo nome (role=group com aria-labelledby no rótulo).
+ * Com getByText, "Aguardando" e "Confirmadas" casariam também com o chip de
+ * status e com o filtro da lista, e o modo estrito quebraria.
+ */
+function cartao(page: Page, rotulo: string) {
+  return page.getByRole("group", { name: rotulo, exact: true });
+}
+
+/** O número grande do cartão (o primeiro cz-num dele). */
+function numeroDoCartao(page: Page, rotulo: string) {
+  return cartao(page, rotulo).locator(".cz-num").first();
+}
+
 /** Preenche a janela de envio e salva. O interruptor só libera depois disto. */
 async function preencherJanela(page: Page): Promise<void> {
   await page.getByLabel("Começa às").fill("08:00");
@@ -90,28 +104,56 @@ test("abre no dia seguinte e o painel mostra as situações do dia", async ({
   await login(page, dados().emails.gestor);
   await page.goto("/confirmacoes");
 
-  // O cartao heroi e o de pendentes, com o total do dia ao lado.
-  await expect(page.getByText("Pendentes", { exact: true })).toBeVisible();
-  await expect(page.getByText(/de \d+ consultas? no dia/)).toBeVisible();
-  await expect(page.getByText("Confirmadas", { exact: true })).toBeVisible();
-  await expect(page.getByText("Canceladas", { exact: true })).toBeVisible();
+  // Os cinco cartões do dia (Fase 3): Agendadas é o total, Confirmadas é o
+  // destaque, Aguardando traz o Cobrar, Canceladas e Não enviadas.
+  for (const rotulo of [
+    "Agendadas",
+    "Confirmadas",
+    "Aguardando",
+    "Canceladas",
+    "Não enviadas",
+  ]) {
+    await expect(cartao(page, rotulo)).toBeVisible();
+  }
+  await expect(numeroDoCartao(page, "Agendadas")).toHaveText(/^\d[\d.]*$/);
+  // O Cobrar mora dentro do cartão Aguardando, visível mesmo desabilitado.
+  await expect(
+    cartao(page, "Aguardando").getByRole("button", { name: /^Cobrar/ }),
+  ).toBeVisible();
 
   // As consultas de amanha aparecem na lista.
   await expect(page.getByText(NOME_PENDENTE)).toBeVisible();
   await expect(page.getByText(NOME_WHATSAPP)).toBeVisible();
 });
 
-test("Recuperadas mostra o que a lista de espera recuperou no dia", async ({
+test("cartões e filtros usam o mesmo predicado, e Recuperadas foi para Resultados", async ({
   page,
 }) => {
-  // A lista de espera existe desde 15/09: o cartao traz o numero real, nao o
-  // aviso de "chega com a lista de espera".
+  apenasDesktop();
   await login(page, dados().emails.gestor);
   await page.goto("/confirmacoes");
 
-  await expect(page.getByText("Recuperadas", { exact: true })).toBeVisible();
-  await expect(page.getByText("pela lista de espera")).toBeVisible();
-  await expect(page.getByText("Chega com a lista de espera")).toHaveCount(0);
+  // O número de cada cartão é o número do filtro de mesmo nome: Confirmadas
+  // (foiConfirmada), Aguardando e Não enviadas (falhouNoEnvio).
+  const filtro = page.getByRole("group", { name: "Filtrar por situação" });
+  await expect(cartao(page, "Agendadas")).toBeVisible();
+  for (const rotulo of ["Confirmadas", "Aguardando", "Não enviadas"]) {
+    const botao = filtro.getByRole("button", {
+      name: new RegExp(`^${rotulo} \\d+$`),
+    });
+    const nome = (await botao.textContent()) ?? "";
+    const quantas = /(\d+)\s*$/.exec(nome)?.[1];
+    expect(quantas).toBeDefined();
+    // O cartão formata o milhar em pt-BR ("1.024"); o filtro mostra cru.
+    await expect(numeroDoCartao(page, rotulo)).toHaveText(
+      Number(quantas).toLocaleString("pt-BR"),
+    );
+  }
+
+  // As recuperadas pela lista de espera saíram da tela (Resultados, aba
+  // Comercial).
+  await expect(cartao(page, "Recuperadas")).toHaveCount(0);
+  await expect(page.getByText("pela lista de espera")).toHaveCount(0);
 });
 
 test("o chip diferencia quem confirmou pelo WhatsApp de quem confirmou na recepção", async ({
@@ -175,14 +217,14 @@ test("a régua não liga sem a clínica informar o horário, e liga depois", asy
 
   try {
     // Sem linha de base, ligar a confirmação avisa e diz onde registrar
-    // (o administrador tem o atalho para Resultados, aba Confirmação).
+    // (o administrador tem o atalho para Resultados, aba Comercial).
     await interruptor.click();
     await expect(
       page.getByText("Antes de ligar, anote a taxa de falta"),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Registrar a taxa de falta" }),
-    ).toHaveAttribute("href", "/relatorios?aba=confirmacao");
+    ).toHaveAttribute("href", "/relatorios?aba=comercial");
     expect(await reguaAtiva("confirmacao")).toBe(false);
 
     // E o aviso não é decoração: confirmar LIGA a régua de verdade. Enquanto
@@ -267,7 +309,7 @@ test("o filtro por situação mostra só as consultas escolhidas, agrupadas como
   await expect(page.getByText(NOME_WHATSAPP)).toHaveCount(0);
 
   // Os cartões do topo continuam contando o dia inteiro.
-  await expect(page.getByText("Confirmadas", { exact: true })).toBeVisible();
+  await expect(cartao(page, "Confirmadas")).toBeVisible();
 });
 
 test("manter o horário tira o pedido de remarcação da lista", async ({

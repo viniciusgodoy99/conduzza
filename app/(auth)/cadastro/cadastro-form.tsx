@@ -21,6 +21,7 @@ import {
   reenviarConfirmacaoAction,
   type ActionState,
 } from "@/app/(auth)/actions";
+import { SenhaComConfirmacao } from "@/app/(auth)/components/senha-com-confirmacao";
 import { Aviso } from "@/components/shared/aviso";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -273,22 +274,9 @@ function CamposPessoais() {
           className="h-11"
         />
       </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor="password">Senha</Label>
-        <Input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={8}
-          aria-describedby="password-dica"
-          className="h-11"
-        />
-        <p id="password-dica" className="text-xs text-text-secondary">
-          Pelo menos 8 caracteres.
-        </p>
-      </div>
+      {/* Senha digitada duas vezes, com o olho nos dois campos (pedido do
+          dono em 02/10/2026). O servidor confere de novo. */}
+      <SenhaComConfirmacao />
     </>
   );
 }

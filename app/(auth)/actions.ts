@@ -13,6 +13,12 @@ import {
   ACTIVE_CLINIC_COOKIE,
   getSessionContext,
 } from "@/lib/auth/active-clinic";
+import {
+  CONFERENCIA_DAS_SENHAS,
+  confirmacaoSchema,
+  senhaNovaSchema,
+  senhasConferem,
+} from "@/lib/auth/senha";
 import { ROLES, can } from "@/lib/domain/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -197,9 +203,15 @@ export async function recoverPasswordAction(
   };
 }
 
-const passwordSchema = z.object({
-  password: z.string().min(8, "A senha precisa de pelo menos 8 caracteres"),
-});
+// Senha nova digitada duas vezes (pedido do dono em 02/10/2026), com as
+// regras de lib/auth/senha.ts. A confirmacao so serve para conferir: nunca vai
+// para o updateUser.
+const passwordSchema = z
+  .object({
+    password: senhaNovaSchema,
+    confirmacao: confirmacaoSchema,
+  })
+  .refine(senhasConferem, CONFERENCIA_DAS_SENHAS);
 
 /**
  * Estado da senha nova. `pedirLinkNovo` marca a falha que so um link novo
@@ -214,7 +226,10 @@ export async function updatePasswordAction(
 ): Promise<SenhaNovaState> {
   const parsed = passwordSchema.safeParse({
     password: formData.get("password"),
+    confirmacao: formData.get("confirmacao"),
   });
+  // Senha curta ou diferente da confirmacao se resolve no proprio campo: sem
+  // pedirLinkNovo, porque o link continua valendo.
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
   }

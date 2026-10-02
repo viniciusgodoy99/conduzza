@@ -17,20 +17,23 @@ import { TableSkeleton } from "@/components/shared/loading-skeleton";
 import { Button } from "@/components/ui/button";
 import {
   filtrarPacientes,
-  indicadoresDaLista,
   type FiltrosDePacientes,
 } from "@/lib/domain/pacientes-ui";
 import {
+  fetchMetricasDePacientes,
   fetchPacientes,
-  PACIENTES_LIMIT,
   pacientesKeys,
+  type MetricasDePacientes,
   type PacienteResumo,
 } from "@/lib/queries/pacientes";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { createClient } from "@/lib/supabase/client";
 
-// Tela 9: UMA query da clinica (a RPC pacientes_resumo) com initialData do
-// servidor, filtros na URL aplicados no cliente (filtrarPacientes, puro).
+// Tela 9: a lista e UMA query da clinica (a RPC pacientes_resumo) com
+// initialData do servidor, filtros na URL aplicados no cliente
+// (filtrarPacientes, puro). Os 4 cartoes do topo sao outra query (a RPC
+// metricas_de_pacientes), independente da lista: um erro num nao apaga o
+// outro.
 // Sem tempo real de proposito: a RPC agrega consulta e pacote, tabelas fora
 // da publicacao de Realtime; a lista se atualiza quando a pessoa volta da
 // ficha, que e quando o dado mudou. Abaixo de 1024px a tabela enxuga as
@@ -55,6 +58,7 @@ export function PacientesClient({
   termoConsulta,
   soDaSuaAgenda,
   pacientesIniciais,
+  metricasIniciais,
   convenios,
   profissionais,
 }: {
@@ -67,6 +71,8 @@ export function PacientesClient({
   /** Profissional: a RLS de appointment recorta a propria agenda */
   soDaSuaAgenda: boolean;
   pacientesIniciais: PacienteResumo[];
+  /** null quando a RPC falhou no servidor: o cliente busca de novo */
+  metricasIniciais: MetricasDePacientes | null;
   convenios: { id: string; name: string }[];
   profissionais: { id: string; name: string }[];
 }) {
@@ -86,6 +92,24 @@ export function PacientesClient({
     initialData: pacientesIniciais,
     staleTime: 30_000,
   });
+
+  // Sem dado do servidor (a RPC falhou la), a query busca ao montar: os
+  // cartoes mostram carregando e, se falhar de novo, o erro.
+  useDadosDoServidor(
+    pacientesKeys.metricas(clinicId),
+    metricasIniciais ?? undefined,
+  );
+  const metricasQuery = useQuery({
+    queryKey: pacientesKeys.metricas(clinicId),
+    queryFn: () => fetchMetricasDePacientes(supabase, clinicId),
+    initialData: metricasIniciais ?? undefined,
+    staleTime: 30_000,
+  });
+  const metricasEm = metricasQuery.dataUpdatedAt;
+  const agoraDasMetricas = useMemo(
+    () => new Date(metricasEm || Date.now()),
+    [metricasEm],
+  );
 
   const valores: ValoresFiltrosPacientes = {
     falta: searchParams.get("falta") === "1",
@@ -153,12 +177,6 @@ export function PacientesClient({
   const vazioInicial = !pacientesQuery.isError && pacientes.length === 0;
   const semDado = pacientesQuery.isError && pacientes.length === 0;
 
-  // Indicadores do topo (decisao C28 do dono) contados sobre a lista INTEIRA,
-  // nao sobre o recorte dos filtros: sao o retrato da clinica.
-  const indicadores = useMemo(
-    () => indicadoresDaLista(pacientes, agora, timezone),
-    [pacientes, agora, timezone],
-  );
   const tentarDeNovo = () => void pacientesQuery.refetch();
 
   return (
@@ -170,17 +188,18 @@ export function PacientesClient({
         </Aviso>
       ) : null}
 
-      {semDado ? null : (
-        <IndicadoresDaLista
-          indicadores={indicadores}
-          agora={agora}
-          timezone={timezone}
-          termoPacientes={termoPacientes}
-          termoConsulta={termoConsulta}
-          soDaSuaAgenda={soDaSuaAgenda}
-          noLimite={pacientes.length >= PACIENTES_LIMIT}
-        />
-      )}
+      {/* Retrato da clinica inteira, nao do recorte dos filtros. */}
+      <IndicadoresDaLista
+        metricas={metricasQuery.data}
+        falhou={metricasQuery.isError}
+        tentando={metricasQuery.isFetching}
+        aoTentarDeNovo={() => void metricasQuery.refetch()}
+        agora={agoraDasMetricas}
+        timezone={timezone}
+        termoPacientes={termoPacientes}
+        termoConsulta={termoConsulta}
+        soDaSuaAgenda={soDaSuaAgenda}
+      />
 
       <div className="flex min-h-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm">
         <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">

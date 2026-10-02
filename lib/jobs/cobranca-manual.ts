@@ -430,10 +430,16 @@ export async function planejarCobrancaManual(
     }
   }
   if (substituidos.length > 0) {
+    // Os mesmos filtros da selecao: run que o motor fechou nesse meio tempo
+    // (enviada, ou falha_envio com motivo_da_falha, que o CHECK so aceita
+    // com falha_envio) sai do conjunto. Sem eles, uma linha so derrubava o
+    // update do lote inteiro e o toque automatico saia depois da cobranca.
     await admin
       .from("cadence_run")
       .update({ skipped_reason: "condicao_parada" })
-      .in("id", substituidos);
+      .in("id", substituidos)
+      .is("sent_at", null)
+      .is("skipped_reason", null);
   }
 
   // A trilha registra o que REALMENTE foi cobrado: consulta que colidiu na

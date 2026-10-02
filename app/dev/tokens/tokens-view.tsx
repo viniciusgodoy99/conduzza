@@ -1,10 +1,21 @@
 "use client";
 
-import { CalendarPlus, Inbox } from "lucide-react";
+import {
+  Banknote,
+  CalendarDays,
+  CalendarPlus,
+  Clock,
+  Inbox,
+  Mails,
+  Sparkles,
+  Users,
+} from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 
+import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";
+import { GraficoDeLinha } from "@/components/shared/grafico-de-linha";
 import {
   CardsSkeleton,
   ListSkeleton,
@@ -14,6 +25,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { StatusChip } from "@/components/shared/status-chip";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   APPOINTMENT_STATUS,
   CONVERSATION_STATUS,
@@ -82,6 +94,14 @@ const DEMO_COLUMNS: ColumnDef<DemoRow, unknown>[] = [
   },
   { accessorKey: "valor", header: "Valor", meta: { align: "right" } },
 ];
+
+// Serie de demonstracao do grafico de linha (14 dias), so para o axe.
+const DEMO_DIAS = Array.from(
+  { length: 14 },
+  (_, indice) => `${String(indice + 1).padStart(2, "0")}/09`,
+);
+const DEMO_LEADS = [12, 18, 9, 22, 15, 6, 4, 19, 25, 17, 21, 11, 8, 16];
+const DEMO_AGENDADAS = [5, 9, 4, 12, 8, 3, 1, 10, 14, 9, 11, 6, 2, 9];
 
 function Swatch({ name, label }: { name: string; label: string }) {
   return (
@@ -293,6 +313,163 @@ export function TokensView() {
             <TableSkeleton rows={2} columns={4} />
             <CardsSkeleton cards={4} />
           </div>
+        </Section>
+
+        {/* Variantes do cartao de metrica unico e da linha com marcadores,
+            para o axe de contraste (tokens.spec.ts) nos dois temas. Esta
+            pagina fica fora do shell: o TooltipProvider da dica de
+            "Ainda não medido" e "Sem acesso" vem daqui. */}
+        <Section title="Cartões de métrica">
+          <TooltipProvider delayDuration={200}>
+            <div className="grid gap-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <CartaoDeMetrica
+                  rotulo="Consultas hoje"
+                  icone={CalendarDays}
+                  valor="147"
+                  rodape="3 unidades"
+                  variacao={{
+                    atual: 147,
+                    anterior: 131,
+                    comparadoCom: "mesmo dia da semana passada",
+                  }}
+                />
+                <CartaoDeMetrica
+                  destaque
+                  rotulo="Confirmadas"
+                  valor="128"
+                  rodape="87,1% do total"
+                  variacao={{
+                    atual: 128,
+                    anterior: 114,
+                    comparadoCom: "mesmo dia da semana passada",
+                  }}
+                />
+                <CartaoDeMetrica
+                  rotulo="Aguardando"
+                  icone={Clock}
+                  tom="warning"
+                  valor="19"
+                  rodape="Último disparo 09:02"
+                  acao={
+                    <Button variant="outline" className="h-10">
+                      Cobrar pendentes
+                    </Button>
+                  }
+                />
+                <CartaoDeMetrica
+                  rotulo="Resolvidas pela IA"
+                  icone={Sparkles}
+                  tom="ai"
+                  estado="nao-medido"
+                  dica="Chega com o agente de IA. Sem o agente atendendo, não existe número para mostrar."
+                />
+                <CartaoDeMetrica
+                  rotulo="Faturamento estimado"
+                  icone={Banknote}
+                  estado="sem-acesso"
+                  dica="Só administrador e gestor veem valores em reais."
+                />
+                <CartaoDeMetrica
+                  rotulo="Pacientes ativos"
+                  icone={Users}
+                  valor="1.248"
+                  variacao={{
+                    atual: 1248,
+                    anterior: 1214,
+                    comparadoCom: "30 dias atrás",
+                    formato: "absoluto",
+                  }}
+                />
+                <CartaoDeMetrica
+                  rotulo="Faltas"
+                  valor="12"
+                  variacao={{
+                    atual: 12,
+                    anterior: 10,
+                    comparadoCom: "período anterior",
+                    polaridade: "menor-melhor",
+                  }}
+                />
+                <CartaoDeMetrica
+                  rotulo="Leads recebidos"
+                  valor="4"
+                  variacao={{
+                    atual: 4,
+                    anterior: 0,
+                    comparadoCom: "período anterior",
+                  }}
+                />
+                <CartaoDeMetrica rotulo="Taxa de conversão" estado="vazio" />
+                <CartaoDeMetrica
+                  rotulo="Consultas agendadas"
+                  estado="erro"
+                  tentarDeNovo={
+                    <Button variant="outline" className="h-10">
+                      Tentar de novo
+                    </Button>
+                  }
+                />
+                <CartaoDeMetrica rotulo="Custo por lead" estado="carregando" />
+              </div>
+              <div className="grid gap-3 rounded-card border border-border bg-card p-5 shadow-sm">
+                <h3 className="text-base font-bold text-text-strong">
+                  Cartões afundados, dentro de outro cartão
+                </h3>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <CartaoDeMetrica
+                    rotulo="Enviados"
+                    icone={Mails}
+                    variante="afundado"
+                    tamanho="md"
+                    valor="1.240"
+                    rodape="nos 1000 toques mais recentes"
+                    variacao={{
+                      atual: 1240,
+                      anterior: 1203,
+                      comparadoCom: "período anterior",
+                    }}
+                  />
+                  <CartaoDeMetrica
+                    rotulo="Não saíram"
+                    variante="afundado"
+                    tamanho="md"
+                    valor="18"
+                    variacao={{
+                      atual: 18,
+                      anterior: 12,
+                      comparadoCom: "período anterior",
+                      polaridade: "menor-melhor",
+                    }}
+                  />
+                  <CartaoDeMetrica
+                    rotulo="Respostas"
+                    variante="afundado"
+                    tamanho="md"
+                    valor="300"
+                    variacao={{
+                      atual: 300,
+                      anterior: 300,
+                      comparadoCom: "período anterior",
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 rounded-card border border-border bg-card p-5 shadow-sm">
+                <h3 className="text-base font-bold text-text-strong">
+                  Leads x consultas agendadas
+                </h3>
+                <GraficoDeLinha
+                  titulo="Leads x consultas agendadas"
+                  rotulos={DEMO_DIAS}
+                  series={[
+                    { nome: "Leads recebidos", valores: DEMO_LEADS },
+                    { nome: "Consultas agendadas", valores: DEMO_AGENDADAS },
+                  ]}
+                />
+              </div>
+            </div>
+          </TooltipProvider>
         </Section>
 
         <Section title="Tabela de dados">

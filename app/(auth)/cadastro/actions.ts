@@ -3,6 +3,12 @@
 import { headers } from "next/headers";
 import { z } from "zod";
 
+import {
+  CONFERENCIA_DAS_SENHAS,
+  confirmacaoSchema,
+  senhaNovaSchema,
+  senhasConferem,
+} from "@/lib/auth/senha";
 import { createClient } from "@/lib/supabase/server";
 
 // Cadastro self-service. Quem cria clinica ou vincula por codigo e o gatilho
@@ -28,27 +34,33 @@ async function destinoDaConfirmacao(): Promise<string> {
 }
 
 const nomeSchema = z.string().trim().min(2, "Informe seu nome");
-const senhaSchema = z
-  .string()
-  .min(8, "A senha precisa de pelo menos 8 caracteres");
 
-const clinicaSchema = z.object({
-  nomeClinica: z.string().trim().min(2, "Informe o nome da clínica"),
-  nome: nomeSchema,
-  email: z.email("Informe um e-mail válido"),
-  password: senhaSchema,
-});
+// A senha vem duas vezes (pedido do dono em 02/10/2026) e as duas tem de ser
+// iguais. A confirmacao so serve para conferir: nunca vai para o signUp nem
+// para os metadados da conta.
+const clinicaSchema = z
+  .object({
+    nomeClinica: z.string().trim().min(2, "Informe o nome da clínica"),
+    nome: nomeSchema,
+    email: z.email("Informe um e-mail válido"),
+    password: senhaNovaSchema,
+    confirmacao: confirmacaoSchema,
+  })
+  .refine(senhasConferem, CONFERENCIA_DAS_SENHAS);
 
-const codigoSchema = z.object({
-  codigo: z
-    .string()
-    .trim()
-    .min(4, "Informe o código da clínica")
-    .max(16, "Código inválido"),
-  nome: nomeSchema,
-  email: z.email("Informe um e-mail válido"),
-  password: senhaSchema,
-});
+const codigoSchema = z
+  .object({
+    codigo: z
+      .string()
+      .trim()
+      .min(4, "Informe o código da clínica")
+      .max(16, "Código inválido"),
+    nome: nomeSchema,
+    email: z.email("Informe um e-mail válido"),
+    password: senhaNovaSchema,
+    confirmacao: confirmacaoSchema,
+  })
+  .refine(senhasConferem, CONFERENCIA_DAS_SENHAS);
 
 const CODIGO_INVALIDO =
   "Código da clínica inválido ou desativado. Confira com quem te passou.";
@@ -119,6 +131,7 @@ export async function cadastrarClinicaAction(
     nome: formData.get("nome"),
     email: formData.get("email"),
     password: formData.get("password"),
+    confirmacao: formData.get("confirmacao"),
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };
@@ -153,6 +166,7 @@ export async function cadastrarPorCodigoAction(
     nome: formData.get("nome"),
     email: formData.get("email"),
     password: formData.get("password"),
+    confirmacao: formData.get("confirmacao"),
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Dados inválidos" };

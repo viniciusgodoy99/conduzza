@@ -422,7 +422,9 @@ function MidiaBody({ message }: { message: MessageItem }) {
         <video
           src={`/api/atendimento/midia/${message.id}`}
           controls
-          preload="metadata"
+          // So baixa quando a pessoa toca (como o audio): a rota entrega aos
+          // pedacos, com a sessao, e nada expira.
+          preload="none"
           className="max-h-[280px] w-[240px] rounded-xl bg-surface-4"
         />
         <Legenda texto={message.body} />

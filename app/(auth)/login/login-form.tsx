@@ -12,6 +12,7 @@ import {
   type LoginState,
 } from "@/app/(auth)/actions";
 import { Aviso } from "@/components/shared/aviso";
+import { CampoDeSenha } from "@/components/shared/campo-de-senha";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -85,18 +86,22 @@ export function LoginForm() {
           />
         </div>
         {/* "Esqueci minha senha" aparece na linha do rotulo, mas vem DEPOIS
-            do campo no codigo: assim o Tab do e-mail cai direto na senha. */}
+            do campo no codigo: assim o Tab do e-mail cai direto na senha. O
+            olho (type="button") fica logo depois do campo: a ordem e e-mail,
+            senha, olho, "Esqueci minha senha", Entrar, e o Enter no campo
+            continua acionando "Entrar". Rotulo "Senha" exato (docs/06 5.13);
+            aqui nao ha confirmacao, a senha ja existe. */}
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5">
           <Label htmlFor="password" className="col-start-1 row-start-1">
             Senha
           </Label>
-          <Input
+          <CampoDeSenha
             id="password"
             name="password"
-            type="password"
             autoComplete="current-password"
             required
-            className="col-span-2 row-start-2 h-11"
+            classNameDoContainer="col-span-2 row-start-2"
+            className="h-11"
           />
           <Link
             href="/recuperar-senha"

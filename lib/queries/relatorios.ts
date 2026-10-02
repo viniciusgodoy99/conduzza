@@ -88,8 +88,14 @@ export type AgendaDoPeriodo = {
   }[];
   /** Horarios do periodo preenchidos pela reoferta (mesma regua do card da
    *  Tela 2: slot_starts_at). receitaCents ignora vinculo sem preco;
-   *  semPreco conta esses a parte, para a tela nunca somar null como zero. */
-  recuperadas: { total: number; receitaCents: number; semPreco: number };
+   *  semPreco conta esses a parte, para a tela nunca somar null como zero.
+   *  receitaCents e null para quem nao e admin nem gestor (Fase 3: reais so
+   *  para a gestao, aplicado NO BANCO): null e "sem acesso", nunca zero. */
+  recuperadas: {
+    total: number;
+    receitaCents: number | null;
+    semPreco: number;
+  };
   /** Faltas do periodo cujo contato criou consulta nova em ate 30 dias.
    *  Factual: "remarcou apos a falta", nunca "recuperada pela regua". */
   remarcadasAposFalta: { faltas: number; remarcadas: number };
@@ -134,6 +140,77 @@ export type LinhaDeBase = {
   createdAt: string;
 } | null;
 
+/**
+ * Faturamento estimado de um periodo (faturamento_do_periodo): so consultas
+ * com status compareceu, recortadas por starts_at. Valor = preco do vinculo,
+ * senao o preco base do procedimento; "Coberto" pelo convenio sem valor NAO
+ * cai no preco base e conta em cobertas; sem preco nenhum conta em semPreco;
+ * preco 0 entra em comValor (gratuito de verdade).
+ */
+export type FaturamentoDoPeriodo = {
+  comparecimentos: number;
+  valorCents: number;
+  comValor: number;
+  cobertas: number;
+  semPreco: number;
+};
+
+/** Um dia civil da clinica na serie "Leads x consultas agendadas". */
+export type PontoDaSerie = {
+  /** aaaa-mm-dd, dia civil no fuso da clinica */
+  dia: string;
+  leads: number;
+  agendadas: number;
+};
+
+/** Sem linha = sem objetivo (o rodape "Objetivo: X%" some). */
+export type ObjetivoDeConversao = {
+  percentual: number;
+  atualizadoEm: string;
+} | null;
+
+// ---------------------------------------------------------------------------
+// Abas da Tela 11 (Fase 3): Visao geral, Marketing, Comercial, Agente de IA
+// ---------------------------------------------------------------------------
+
+export const ABAS_DE_RESULTADOS = [
+  { chave: "geral", rotulo: "Visão geral" },
+  { chave: "marketing", rotulo: "Marketing" },
+  { chave: "comercial", rotulo: "Comercial" },
+  { chave: "ia", rotulo: "Agente de IA" },
+] as const;
+
+export type AbaDeResultados = (typeof ABAS_DE_RESULTADOS)[number]["chave"];
+
+/**
+ * Links antigos (as 5 abas de antes da Fase 3) continuam abrindo a vista
+ * que recebeu o conteudo: Origem foi para Marketing, Agendamentos e
+ * Confirmacao para Comercial, Custos para Agente de IA. "ia" manteve a chave.
+ */
+const ALIAS_DAS_ABAS: Record<string, AbaDeResultados> = {
+  origem: "marketing",
+  agendamentos: "comercial",
+  confirmacao: "comercial",
+  custos: "ia",
+};
+
+/** ?aba= da URL -> aba da tela. Ausente ou desconhecida cai na Visao geral. */
+export function resolverAbaDeResultados(
+  valor: string | null | undefined,
+): AbaDeResultados {
+  if (!valor) {
+    return "geral";
+  }
+  const direta = ABAS_DE_RESULTADOS.find((aba) => aba.chave === valor);
+  if (direta) {
+    return direta.chave;
+  }
+  // hasOwn: "constructor" ou "toString" na URL nao podem achar o prototipo.
+  return Object.prototype.hasOwnProperty.call(ALIAS_DAS_ABAS, valor)
+    ? (ALIAS_DAS_ABAS[valor] ?? "geral")
+    : "geral";
+}
+
 export const relatoriosKeys = {
   funil: (clinicId: string, diaDe: string, diaAte: string) =>
     ["relatorios", clinicId, "funil", diaDe, diaAte] as const,
@@ -148,6 +225,12 @@ export const relatoriosKeys = {
     ["relatorios", clinicId, "atendimento", diaDe, diaAte] as const,
   linhaDeBase: (clinicId: string) =>
     ["relatorios", clinicId, "linha-de-base"] as const,
+  faturamento: (clinicId: string, diaDe: string, diaAte: string) =>
+    ["relatorios", clinicId, "faturamento", diaDe, diaAte] as const,
+  serie: (clinicId: string, diaDe: string, diaAte: string) =>
+    ["relatorios", clinicId, "serie", diaDe, diaAte] as const,
+  objetivo: (clinicId: string) =>
+    ["relatorios", clinicId, "objetivo-de-conversao"] as const,
   proximasAcoes: (clinicId: string) =>
     ["inicio", clinicId, "proximas-acoes"] as const,
 };
@@ -275,7 +358,12 @@ type AgendaRpc = {
     compareceu: number;
     faltou: number;
   }[];
-  recuperadas: { total: number; receita_cents: number; sem_preco: number };
+  /** receita_cents e null para recepcao, leitura e profissional. */
+  recuperadas: {
+    total: number;
+    receita_cents: number | null;
+    sem_preco: number;
+  };
   remarcadas_apos_falta: { faltas: number; remarcadas: number };
 };
 
@@ -502,5 +590,114 @@ export async function fetchLinhaDeBase(
     measuredTo: data.measured_to,
     note: data.note,
     createdAt: data.created_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fase 3: faturamento, serie diaria e objetivo de conversao
+// ---------------------------------------------------------------------------
+
+type FaturamentoRpc = {
+  comparecimentos: number;
+  valor_cents: number;
+  com_valor: number;
+  cobertas: number;
+  sem_preco: number;
+};
+
+function lerFaturamento(bloco: FaturamentoRpc): FaturamentoDoPeriodo {
+  return {
+    comparecimentos: bloco.comparecimentos,
+    valorCents: bloco.valor_cents,
+    comValor: bloco.com_valor,
+    cobertas: bloco.cobertas,
+    semPreco: bloco.sem_preco,
+  };
+}
+
+/**
+ * Faturamento estimado do periodo e do anterior. So chamar para admin e
+ * gestor: a funcao devolve null para qualquer outro papel (e para outra
+ * clinica), e aqui null vira null, que a tela mostra como "Sem acesso".
+ * Nunca zero: zero e um numero medido, null e falta de permissao.
+ */
+export async function fetchFaturamentoDoPeriodo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  timezone: string,
+  diaDe: string,
+  diaAte: string,
+  opcoes: Opcoes = {},
+): Promise<Periodizado<FaturamentoDoPeriodo> | null> {
+  const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
+  const { data, error } = await supabase.rpc("faturamento_do_periodo", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+    ...(opcoes.comparar === false ? {} : { p_de_anterior: janela.deAnterior }),
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (data === null || data === undefined) {
+    return null;
+  }
+  const corpo = data as { atual: FaturamentoRpc; anterior?: FaturamentoRpc };
+  return {
+    atual: lerFaturamento(corpo.atual),
+    anterior: corpo.anterior ? lerFaturamento(corpo.anterior) : null,
+  };
+}
+
+/**
+ * Um ponto por dia civil da clinica no periodo, com zero no dia vazio. Os
+ * criterios sao os do funil_do_periodo (leads por first_contact_at,
+ * agendadas por created_at): a soma bate com os cartoes da Visao geral.
+ */
+export async function fetchSerieDiariaDoPeriodo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  timezone: string,
+  diaDe: string,
+  diaAte: string,
+): Promise<PontoDaSerie[]> {
+  const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
+  const { data, error } = await supabase.rpc("serie_diaria_do_periodo", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (data === null || data === undefined) {
+    // Trava do profissional no banco: recorte indisponivel, nunca serie zerada.
+    throw new Error("Recorte indisponível para este perfil (serie_diaria_do_periodo).");
+  }
+  return (data as PontoDaSerie[]).map((ponto) => ({
+    dia: ponto.dia,
+    leads: ponto.leads,
+    agendadas: ponto.agendadas,
+  }));
+}
+
+export async function fetchObjetivoDeConversao(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<ObjetivoDeConversao> {
+  const { data, error } = await supabase
+    .from("objetivo_de_conversao")
+    .select("percentual, updated_at")
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!data) {
+    return null;
+  }
+  return {
+    percentual: Number(data.percentual),
+    atualizadoEm: data.updated_at as string,
   };
 }

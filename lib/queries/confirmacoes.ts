@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { AppointmentStatus, ConsentStatus } from "@/lib/design/status";
+import {
+  contaComoNaoEnviada,
+  rotuloDoNaoEnvio,
+} from "@/lib/domain/falha-de-envio";
 import { limitesDoDia } from "@/lib/domain/horarios";
 import type { LinhaConsent } from "@/lib/domain/leads-ui";
 
@@ -21,7 +25,17 @@ import type { LinhaConsent } from "@/lib/domain/leads-ui";
 export type EstadoDoToque =
   | { situacao: "enviado"; em: string }
   | { situacao: "na_fila"; para: string }
-  | { situacao: "pulado"; motivo: string }
+  | {
+      situacao: "pulado";
+      /** cadence_run.skipped_reason. */
+      motivo: string;
+      /**
+       * cadence_run.motivo_da_falha: codigo curto do envio que falhou, so com
+       * motivo 'falha_envio' (nulo nos outros e em linha antiga). Nunca texto
+       * do provedor; o rotulo vem de lib/domain/falha-de-envio.
+       */
+      detalhe: string | null;
+    }
   | { situacao: "nenhum" };
 
 export type ConsultaDaConfirmacao = {
@@ -111,8 +125,8 @@ export type ReguaDeConfirmacao = {
   pulados_24h: number;
 };
 
-// Os tres baldes do bento. Ficam aqui porque a contagem da tela, o badge do
-// menu e a Server Action de cobranca precisam do MESMO recorte.
+// Os baldes dos cartoes. Ficam aqui porque a contagem da tela, o filtro, o
+// badge do menu e a Server Action de cobranca precisam do MESMO recorte.
 export const STATUS_PENDENTES: AppointmentStatus[] = [
   "agendado",
   "aguardando_confirmacao",
@@ -125,6 +139,85 @@ export const STATUS_CANCELADOS: AppointmentStatus[] = [
   "cancelado_paciente",
   "cancelado_clinica",
 ];
+
+/**
+ * Situacoes que vem DEPOIS da confirmacao no dia da consulta. Com canal de
+ * confirmacao gravado, a consulta continua contando como confirmada quando o
+ * paciente chega (senao a taxa do dia cairia ao longo do dia).
+ */
+const STATUS_DEPOIS_DA_CONFIRMACAO: readonly string[] = [
+  "na_recepcao",
+  "em_atendimento",
+  "compareceu",
+  "faltou",
+];
+
+/**
+ * O predicado unico de "Confirmada" (decisao do dono em 02/10/2026), espelho
+ * EXATO da funcao SQL consulta_foi_confirmada(p_status, p_canal) da migration
+ * 20261002110000: status confirmado_paciente ou confirmado_recepcao, ou
+ * canal de confirmacao gravado e ja em na_recepcao, em_atendimento,
+ * compareceu ou faltou. Nunca null. O canal e limpo quando a remarcacao
+ * volta a consulta para agendado (preparar_remarcacao), entao a remarcada de
+ * volta nao conta; a cancelada depois de confirmar tambem nao. Canal vazio
+ * ('') conta como gravado, como o "is not null" do SQL.
+ */
+export function foiConfirmada(
+  status: string | null | undefined,
+  canal: string | null | undefined,
+): boolean {
+  if (status === null || status === undefined) {
+    return false;
+  }
+  if ((STATUS_CONFIRMADOS as readonly string[]).includes(status)) {
+    return true;
+  }
+  return (
+    canal !== null &&
+    canal !== undefined &&
+    STATUS_DEPOIS_DA_CONFIRMACAO.includes(status)
+  );
+}
+
+/**
+ * "Nao enviada" (cartao e filtro da Tela 2, o mesmo predicado): a consulta
+ * ainda espera confirmacao, o paciente nao pediu para remarcar (a linha
+ * mostra o pedido no lugar) e o ULTIMO toque foi pulado por um motivo que
+ * deixou o paciente sem a mensagem (lib/domain/falha-de-envio). Pulo
+ * esperado (condicao_parada, consulta_remarcada, remarcacao_pedida,
+ * toque_atrasado) fica de fora. E um subconjunto de Aguardando.
+ */
+export function falhouNoEnvio(
+  consulta: Pick<
+    ConsultaDaConfirmacao,
+    "status" | "remarcacao_pedida_em" | "toque"
+  >,
+): boolean {
+  return (
+    STATUS_PENDENTES.includes(consulta.status) &&
+    consulta.remarcacao_pedida_em === null &&
+    consulta.toque.situacao === "pulado" &&
+    contaComoNaoEnviada(consulta.toque.motivo)
+  );
+}
+
+/**
+ * Rotulo curto do porque o toque desta consulta nao saiu ("Sem
+ * autorização", "WhatsApp recusou a mensagem"); null quando o toque nao foi
+ * pulado. E o que entra na moda do rodape do cartao "Não enviadas".
+ */
+export function rotuloDoNaoEnvioDaConsulta(
+  consulta: Pick<ConsultaDaConfirmacao, "toque" | "consent_estado">,
+): string | null {
+  if (consulta.toque.situacao !== "pulado") {
+    return null;
+  }
+  return rotuloDoNaoEnvio(
+    consulta.toque.motivo,
+    consulta.toque.detalhe,
+    consulta.consent_estado,
+  );
+}
 
 export const confirmacoesKeys = {
   dia: (clinicId: string, diaISO: string) =>
@@ -287,6 +380,9 @@ async function consentimentoDosContatos(
  * mesmo instante. No empate vem a enviada, depois a que esta na fila e, por
  * ultimo, a pulada: a recepcao nao pode ver como pulado o toque de uma
  * mensagem que saiu e cobrar o paciente de novo.
+ *
+ * Erro de leitura LANCA: tratar a falha como "nenhum toque" zeraria o cartao
+ * "Não enviadas" e apagaria os chips (erro nunca vira zero).
  */
 async function toquesDasConsultas(
   supabase: SupabaseClient,
@@ -298,22 +394,26 @@ async function toquesDasConsultas(
   if (appointmentIds.length === 0) {
     return mapa;
   }
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("cadence_run")
     .select(
-      "appointment_id, scheduled_for, sent_at, skipped_reason, cadence_step:cadence_step_id ( cadence:cadence_id ( kind ) )",
+      "appointment_id, scheduled_for, sent_at, skipped_reason, motivo_da_falha, cadence_step:cadence_step_id ( cadence:cadence_id ( kind ) )",
     )
     .eq("clinic_id", clinicId)
     .in("appointment_id", appointmentIds)
     .order("scheduled_for", { ascending: false })
     .order("sent_at", { ascending: false, nullsFirst: false })
     .order("skipped_reason", { ascending: true, nullsFirst: true });
+  if (error) {
+    throw new Error(error.message);
+  }
 
   for (const linha of (data ?? []) as {
     appointment_id: string | null;
     scheduled_for: string | null;
     sent_at: string | null;
     skipped_reason: string | null;
+    motivo_da_falha?: string | null;
     cadence_step: unknown;
   }[]) {
     if (!linha.appointment_id || mapa.has(linha.appointment_id)) {
@@ -337,6 +437,7 @@ async function toquesDasConsultas(
       mapa.set(linha.appointment_id, {
         situacao: "pulado",
         motivo: linha.skipped_reason,
+        detalhe: linha.motivo_da_falha ?? null,
       });
     } else if (linha.scheduled_for) {
       mapa.set(linha.appointment_id, {
@@ -548,25 +649,4 @@ export async function fetchReguasDaClinica(
     fetchReguaPadrao(supabase, clinicId, "pos_falta"),
   ]);
   return { confirmacao, pos_falta: posFalta };
-}
-
-/**
- * Horarios do dia civil preenchidos pela reoferta da lista de espera (4.9):
- * o numero do cartao "Recuperadas" da Tela 2.
- */
-export async function fetchRecuperadasDoDia(
-  supabase: SupabaseClient,
-  clinicId: string,
-  diaISO: string,
-  timezone: string,
-): Promise<number> {
-  const { inicio, fim } = limitesDoDia(timezone, diaISO);
-  const { count } = await supabase
-    .from("waitlist_offer")
-    .select("id", { count: "exact", head: true })
-    .eq("clinic_id", clinicId)
-    .eq("status", "preenchida")
-    .gte("slot_starts_at", inicio.toISOString())
-    .lt("slot_starts_at", fim.toISOString());
-  return count ?? 0;
 }

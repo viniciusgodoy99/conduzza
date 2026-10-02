@@ -1,6 +1,6 @@
 import type { AppointmentStatus, PatientTag } from "@/lib/design/status";
 import { estaInativo, temRiscoDeFalta } from "@/lib/domain/etiquetas";
-import { diaCivil } from "@/lib/domain/horarios";
+import { diaCivil, somarDias } from "@/lib/domain/horarios";
 
 // Regras PURAS da Tela 9 (Pacientes): filtros da barra, indicadores da ficha
 // e etiquetas derivadas. Zero I/O: quem busca dados e lib/queries/pacientes.ts.
@@ -265,49 +265,153 @@ export function porcentagemDeComparecimento(taxa: number | null): string {
   return `${Math.round(taxa * 100)}%`;
 }
 
-/** O minimo de um paciente para os indicadores do topo da lista. */
-export type PacienteContavel = PacienteFiltravel & {
-  primeira_consulta: string | null;
+/**
+ * Linha unica da RPC metricas_de_pacientes (migration 20261002110000), ja
+ * normalizada: as contagens chegam como number e primeiro_comparecimento e
+ * null quando a clinica (ou, para o profissional, a agenda dele) nunca teve
+ * comparecimento. Clinica sem dado devolve zeros e null, nunca linha vazia.
+ */
+export type MetricasDePacientes = {
+  /** Contatos com comparecimento nos ultimos 12 meses (ate o fim de hoje). */
+  ativos: number;
+  /** O mesmo calculo com a janela recuada 30 dias. */
+  ativos_30d_atras: number;
+  /** Primeira consulta nao cancelada no mes civil (passada ou futura). */
+  novos_no_mes: number;
+  /** Comparecimentos da janela madura [12 meses, 90 dias atras). */
+  retorno_base: number;
+  /** Desses, os que tiveram outra consulta viva ou atendida em ate 90 dias. */
+  retorno_voltaram: number;
+  /** Ultimo comparecimento ha mais de 6 meses e nada marcado adiante. */
+  sem_contato_6m: number;
+  primeiro_comparecimento: string | null;
 };
 
-export type IndicadoresDaLista = {
-  total: number;
+/** O que os 4 cartoes do topo da Tela 9 mostram, ja decidido. */
+export type CartoesDePacientes = {
+  ativos: {
+    valor: number;
+    /** Base da variacao absoluta; null esconde a variacao (base zero). */
+    anterior: number | null;
+    /** dd/mm/aaaa do primeiro comparecimento, com menos de 12 meses de historico. */
+    contandoDesde: string | null;
+  };
   novosNoMes: number;
-  comPacoteAtivo: number;
-  inativos: number;
+  retorno:
+    | { medido: true; percentual: number; base: number }
+    | {
+        medido: false;
+        /** dd/mm/aaaa em que a primeira medida sai, quando ainda vai sair. */
+        primeiraMedidaEm: string | null;
+      };
+  semConsulta6m:
+    | { medido: true; valor: number }
+    | {
+        medido: false;
+        /** dd/mm/aaaa em que a contagem comeca, quando ja existe historico. */
+        contaDesde: string | null;
+      };
 };
+
+/** aaaa-mm-dd em dd/mm/aaaa, sem passar por fuso. */
+function diaParaTexto(dia: string): string {
+  const [ano, mes, diaDoMes] = dia.split("-");
+  return `${diaDoMes}/${mes}/${ano}`;
+}
 
 /**
- * Indicadores do topo da Tela 9 (decisao C28 do dono, 24/09/2026): so o que a
- * lista ja sabe contar, com a MESMA regra dos filtros e das etiquetas, sem
- * definicao nova. "Novo no mes" = primeira consulta nao cancelada no mes
- * corrente, comparado no DIA CIVIL da clinica (regra 3.6). "Com pacote
- * ativo" = o filtro "Com pacote". "Inativos" = a etiqueta "Inativo" (sem
- * consulta futura e a ultima ha mais de 90 dias).
+ * Soma meses a um dia civil (aaaa-mm-dd) como o Postgres soma
+ * `date + interval 'N months'`: o dia que nao existe no mes de chegada cai
+ * no ultimo dia dele (31/08 menos 6 meses = 28/02). E o espelho das janelas
+ * de metricas_de_pacientes, para a tela decidir "Ainda não medido" e
+ * "Contando desde" com a mesma fronteira do banco.
  */
-export function indicadoresDaLista(
-  pacientes: readonly PacienteContavel[],
+export function somarMeses(diaLocal: string, meses: number): string {
+  const [ano, mes, dia] = diaLocal.split("-").map(Number);
+  const indice = ano! * 12 + (mes! - 1) + meses;
+  const anoFinal = Math.floor(indice / 12);
+  const mesFinal = indice - anoFinal * 12;
+  const ultimoDia = new Date(Date.UTC(anoFinal, mesFinal + 1, 0)).getUTCDate();
+  const diaFinal = Math.min(dia!, ultimoDia);
+  return `${String(anoFinal).padStart(4, "0")}-${String(mesFinal + 1).padStart(2, "0")}-${String(diaFinal).padStart(2, "0")}`;
+}
+
+/**
+ * Decide o que os 4 cartoes do topo da lista mostram (Fase 3, decisoes do
+ * dono em 02/10/2026), com as MESMAS fronteiras de metricas_de_pacientes no
+ * dia civil da clinica (regra 3.6):
+ * - ativos: variacao absoluta em pessoas contra 30 dias atras, escondida com
+ *   base zero; "Contando desde" enquanto o historico (desde o primeiro
+ *   comparecimento) for menor que a janela de 12 meses, que no banco e
+ *   [amanha menos 12 meses, amanha);
+ * - retorno em 90 dias: sem base e "Ainda não medido" (nunca 0%); o primeiro
+ *   comparecimento do dia D entra na base em D + 91 (a janela madura fecha
+ *   no inicio de hoje menos 90 dias);
+ * - sem consulta ha 6 meses: "Ainda não medido" enquanto o primeiro
+ *   comparecimento nao for anterior a hoje menos 6 meses (antes disso o zero
+ *   e estrutural, nao uma boa noticia).
+ */
+export function cartoesDePacientes(
+  metricas: MetricasDePacientes,
   agora: Date,
   timezone: string,
-): IndicadoresDaLista {
-  const mesAtual = diaCivil(timezone, agora).slice(0, 7);
-  let novosNoMes = 0;
-  let comPacoteAtivo = 0;
-  let inativos = 0;
-  for (const paciente of pacientes) {
-    if (
-      paciente.primeira_consulta !== null &&
-      diaCivil(timezone, new Date(paciente.primeira_consulta)).slice(0, 7) ===
-        mesAtual
-    ) {
-      novosNoMes++;
-    }
-    if (paciente.saldo_sessoes > 0) {
-      comPacoteAtivo++;
-    }
-    if (etiquetasDoPaciente(paciente, agora).includes("inativo")) {
-      inativos++;
-    }
+): CartoesDePacientes {
+  const hoje = diaCivil(timezone, agora);
+  const primeiroDia =
+    metricas.primeiro_comparecimento === null
+      ? null
+      : diaCivil(timezone, new Date(metricas.primeiro_comparecimento));
+
+  const inicioDosDozeMeses = somarMeses(somarDias(hoje, 1), -12);
+  const contandoDesde =
+    primeiroDia !== null && primeiroDia >= inicioDosDozeMeses
+      ? diaParaTexto(primeiroDia)
+      : null;
+
+  let retorno: CartoesDePacientes["retorno"];
+  if (metricas.retorno_base > 0) {
+    retorno = {
+      medido: true,
+      percentual: (metricas.retorno_voltaram / metricas.retorno_base) * 100,
+      base: metricas.retorno_base,
+    };
+  } else {
+    const primeiraMedida =
+      primeiroDia === null ? null : somarDias(primeiroDia, 91);
+    retorno = {
+      medido: false,
+      primeiraMedidaEm:
+        primeiraMedida !== null && primeiraMedida > hoje
+          ? diaParaTexto(primeiraMedida)
+          : null,
+    };
   }
-  return { total: pacientes.length, novosNoMes, comPacoteAtivo, inativos };
+
+  let semConsulta6m: CartoesDePacientes["semConsulta6m"];
+  if (primeiroDia !== null && primeiroDia < somarMeses(hoje, -6)) {
+    semConsulta6m = { medido: true, valor: metricas.sem_contato_6m };
+  } else if (primeiroDia === null) {
+    semConsulta6m = { medido: false, contaDesde: null };
+  } else {
+    // Primeiro dia em que "hoje menos 6 meses" passa do primeiro
+    // comparecimento. Partir de D + 6 meses e andar dia a dia cobre o
+    // arredondamento de fim de mes (no maximo 3 passos).
+    let comeco = somarMeses(primeiroDia, 6);
+    while (somarMeses(comeco, -6) <= primeiroDia) {
+      comeco = somarDias(comeco, 1);
+    }
+    semConsulta6m = { medido: false, contaDesde: diaParaTexto(comeco) };
+  }
+
+  return {
+    ativos: {
+      valor: metricas.ativos,
+      anterior:
+        metricas.ativos_30d_atras > 0 ? metricas.ativos_30d_atras : null,
+      contandoDesde,
+    },
+    novosNoMes: metricas.novos_no_mes,
+    retorno,
+    semConsulta6m,
+  };
 }

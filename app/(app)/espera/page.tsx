@@ -48,7 +48,9 @@ export default async function EsperaPage({
   ] = await Promise.all([
     fetchFilaDeEspera(supabase, active.clinicId),
     fetchOfertasEmAndamento(supabase, active.clinicId),
-    fetchMetricasDaEspera(supabase, active.clinicId),
+    // O desempenho nao derruba a tela: se a RPC falhar aqui, a fila abre e
+    // o painel tenta de novo no cliente (com o erro dele, nunca zero).
+    fetchMetricasDaEspera(supabase, active.clinicId).catch(() => null),
     fetchConfigDaEspera(supabase, active.clinicId),
     supabase
       .from("procedure")

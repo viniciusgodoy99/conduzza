@@ -6,7 +6,10 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { createT } from "@/lib/branding/labels";
 import { fetchCatalogo } from "@/lib/queries/catalogo";
-import { fetchPacientes } from "@/lib/queries/pacientes";
+import {
+  fetchMetricasDePacientes,
+  fetchPacientes,
+} from "@/lib/queries/pacientes";
 import { createClient } from "@/lib/supabase/server";
 
 import { PacientesClient } from "./pacientes-client";
@@ -34,9 +37,13 @@ export default async function PacientesPage() {
     entity: "pacientes",
   });
 
-  const [pacientes, catalogo] = await Promise.all([
+  // Os cartoes do topo (metricas_de_pacientes) nao derrubam a tela: se a
+  // RPC falhar aqui, a lista abre normal e os cartoes tentam de novo no
+  // cliente, com o estado de erro se falharem outra vez (nunca zero).
+  const [pacientes, catalogo, metricas] = await Promise.all([
     fetchPacientes(supabase, active.clinicId),
     fetchCatalogo(supabase, active.clinicId),
+    fetchMetricasDePacientes(supabase, active.clinicId).catch(() => null),
   ]);
 
   const t = createT(active.labels);
@@ -44,8 +51,8 @@ export default async function PacientesPage() {
 
   // Sem acoes no cabecalho (C25): o kit sugere busca, exportar e "Novo
   // paciente", mas paciente nasce da primeira consulta e exportar e dado de
-  // saude em massa. Os indicadores (C28) e a lista moram no cliente, porque
-  // contam sobre a mesma query que a tabela usa.
+  // saude em massa. Os cartoes do topo (Fase 3) e a lista moram no cliente,
+  // cada um com a sua query e o dado inicial do servidor.
   return (
     <div className="flex flex-col gap-3.5 p-6">
       <PageHeader
@@ -60,6 +67,7 @@ export default async function PacientesPage() {
         termoConsulta={t("consulta")}
         soDaSuaAgenda={active.role === "profissional"}
         pacientesIniciais={pacientes}
+        metricasIniciais={metricas}
         convenios={catalogo.convenios.map((convenio) => ({
           id: convenio.id,
           name: convenio.name,

@@ -1,6 +1,7 @@
 import {
   Mail,
   MailCheck,
+  MailMinus,
   MailWarning,
   MailX,
   type LucideIcon,
@@ -11,6 +12,11 @@ import {
   type ConsentStatus,
   type StatusTone,
 } from "@/lib/design/status";
+import {
+  ROTULO_DA_FALHA_GENERICA,
+  contaComoNaoEnviada,
+  rotuloDaFalhaDeEnvio,
+} from "@/lib/domain/falha-de-envio";
 import type { EstadoDoToque } from "@/lib/queries/confirmacoes";
 
 // O que aconteceu com a mensagem automática desta consulta.
@@ -23,8 +29,8 @@ import type { EstadoDoToque } from "@/lib/queries/confirmacoes";
 //
 // Três camadas (seção 5 do CLAUDE.md): ícone com forma distinta, rótulo em
 // texto e cor. Nunca só cor, nunca o mesmo ícone em cores diferentes: os
-// quatro envelopes (MailCheck, Mail, MailWarning, MailX) são exclusivos deste
-// chip, e o TriangleAlert que o "pulado" usava é só do status Faltou (tabela
+// cinco envelopes (MailCheck, Mail, MailWarning, MailMinus, MailX) são
+// exclusivos deste chip, e o TriangleAlert que o "pulado" usava é só do status Faltou (tabela
 // de ícones reservados, docs/06 seção 4.6; achado 65).
 //
 // Forma do StatusChip md (docs/06 seção 5.7), feita aqui porque a hora vai
@@ -51,11 +57,26 @@ const MOTIVO: Record<string, string> = {
  * autorização (achado 57): quem nunca foi registrado não "recusou", e quem
  * pediu para não receber precisa aparecer diferente. Código novo que ainda
  * não tem tradução nunca aparece cru na tela.
+ *
+ * Na falha de envio, o `detalhe` (cadence_run.motivo_da_falha) diz o porquê
+ * com o MESMO rótulo curto do rodapé do cartão "Não enviadas", para a
+ * recepção achar na lista o motivo que o cartão aponta.
  */
 export function motivoDoPulo(
   motivo: string,
   consentimento?: ConsentStatus,
+  detalhe?: string | null,
 ): string {
+  if (motivo === "falha_envio") {
+    const rotulo = rotuloDaFalhaDeEnvio(detalhe);
+    if (rotulo !== ROTULO_DA_FALHA_GENERICA) {
+      // Continua a frase em minúscula, menos a marca ("WhatsApp").
+      const continuacao = rotulo.startsWith("WhatsApp")
+        ? rotulo
+        : rotulo.charAt(0).toLocaleLowerCase("pt-BR") + rotulo.slice(1);
+      return `${MOTIVO.falha_envio}: ${continuacao}`;
+    }
+  }
   if (motivo === "sem_consentimento") {
     if (consentimento === "revogado") {
       return "o paciente pediu para não receber mensagens";
@@ -122,13 +143,24 @@ export function ChipDoToque({
         </Pilula>
       );
     case "pulado":
+      // "Não enviada" (MailWarning, âmbar) só quando o pulo deixou o paciente
+      // sem a mensagem: é o mesmo critério do cartão e do filtro "Não
+      // enviadas" (contaComoNaoEnviada). O pulo esperado (régua que deixou de
+      // valer, consulta remarcada, toque que o seguinte cobriu) não é falha:
+      // "Dispensada", neutro, com o motivo na linha de apoio.
       return (
         <span className="inline-flex min-w-0 flex-col items-start gap-0.5">
-          <Pilula tom="warning" icone={MailWarning}>
-            Não enviada
-          </Pilula>
+          {contaComoNaoEnviada(toque.motivo) ? (
+            <Pilula tom="warning" icone={MailWarning}>
+              Não enviada
+            </Pilula>
+          ) : (
+            <Pilula tom="neutral" icone={MailMinus}>
+              Dispensada
+            </Pilula>
+          )}
           <span className="max-w-[240px] text-[11px] leading-[1.35] text-text-secondary">
-            {motivoDoPulo(toque.motivo, consentimento)}
+            {motivoDoPulo(toque.motivo, consentimento, toque.detalhe)}
           </span>
         </span>
       );

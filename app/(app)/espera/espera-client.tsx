@@ -64,7 +64,8 @@ export function EsperaClient({
   dicaAutorizacao: string;
   filaInicial: EntradaDaEspera[];
   ofertasIniciais: OfertaEmAndamento[];
-  metricasIniciais: MetricasDaEspera;
+  /** null quando a RPC falhou no servidor: o painel busca de novo */
+  metricasIniciais: MetricasDaEspera | null;
   config: ConfigDaEspera;
   procedimentos: OpcaoDeCatalogo[];
   profissionais: OpcaoDeCatalogo[];
@@ -94,15 +95,30 @@ export function EsperaClient({
     queryFn: () => fetchOfertasEmAndamento(supabase, clinicId),
     initialData: ofertasIniciais,
   });
+  // Sem dado do servidor (a RPC falhou la), a query busca ao montar e o
+  // painel mostra carregando e, se falhar de novo, o erro dele.
   const metricasQuery = useQuery({
     queryKey: esperaKeys.metricas(clinicId),
     queryFn: () => fetchMetricasDaEspera(supabase, clinicId),
-    initialData: metricasIniciais,
+    initialData: metricasIniciais ?? undefined,
   });
-  // A carga inicial vem do servidor (erro ali cai no error.tsx); aqui o erro
-  // so pode ser de uma atualizacao, e o dado anterior continua na tela.
+  // O mes civil que o painel conta, no fuso da clinica (regra 3.6), no
+  // instante da carga: virou o mes, a proxima carga ja conta o mes novo.
+  const metricasEm = metricasQuery.dataUpdatedAt;
+  const mesDasMetricas = useMemo(() => {
+    const texto = new Date(metricasEm || Date.now()).toLocaleDateString(
+      "pt-BR",
+      { month: "long", year: "numeric", timeZone: timezone },
+    );
+    return (texto[0]?.toUpperCase() ?? "") + texto.slice(1);
+  }, [metricasEm, timezone]);
+  // A fila e as ofertas vem do servidor (erro ali cai no error.tsx); aqui o
+  // erro so pode ser de uma atualizacao, e o dado anterior continua na tela.
+  // As metricas sem dado nenhum mostram o erro no proprio painel.
   const falhouAoAtualizar =
-    filaQuery.isError || ofertasQuery.isError || metricasQuery.isError;
+    filaQuery.isError ||
+    ofertasQuery.isError ||
+    (metricasQuery.isError && metricasQuery.data !== undefined);
   const atualizando =
     filaQuery.isFetching || ofertasQuery.isFetching || metricasQuery.isFetching;
 
@@ -188,7 +204,13 @@ export function EsperaClient({
             dicaSemPermissao={dicaSemPermissao}
             aoMudar={invalidar}
           />
-          <PainelMetricas metricas={metricasQuery.data} />
+          <PainelMetricas
+            metricas={metricasQuery.data}
+            mes={mesDasMetricas}
+            falhou={metricasQuery.isError}
+            tentando={metricasQuery.isFetching}
+            aoTentarDeNovo={() => void metricasQuery.refetch()}
+          />
         </div>
       </div>
 

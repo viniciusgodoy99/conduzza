@@ -451,6 +451,7 @@ export type Database = {
           created_at: string
           id: string
           message_id: string | null
+          motivo_da_falha: string | null
           scheduled_for: string
           sent_at: string | null
           skipped_reason: string | null
@@ -464,6 +465,7 @@ export type Database = {
           created_at?: string
           id?: string
           message_id?: string | null
+          motivo_da_falha?: string | null
           scheduled_for: string
           sent_at?: string | null
           skipped_reason?: string | null
@@ -477,6 +479,7 @@ export type Database = {
           created_at?: string
           id?: string
           message_id?: string | null
+          motivo_da_falha?: string | null
           scheduled_for?: string
           sent_at?: string | null
           skipped_reason?: string | null
@@ -1782,6 +1785,38 @@ export type Database = {
             foreignKeyName: "no_show_baseline_clinic_id_fkey"
             columns: ["clinic_id"]
             isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      objetivo_de_conversao: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          definido_por: string | null
+          percentual: number
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          definido_por?: string | null
+          percentual: number
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          definido_por?: string | null
+          percentual?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "objetivo_de_conversao_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
             referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
@@ -3146,6 +3181,10 @@ export type Database = {
         Args: { p_channel?: string; p_clinic_id: string; p_contact_id: string }
         Returns: boolean
       }
+      consulta_foi_confirmada: {
+        Args: { p_canal: string; p_status: string }
+        Returns: boolean
+      }
       conta_por_email: {
         Args: { p_email: string }
         Returns: {
@@ -3224,7 +3263,17 @@ export type Database = {
         }
         Returns: undefined
       }
+      faturamento_do_periodo: {
+        Args: {
+          p_ate: string
+          p_clinic_id: string
+          p_de: string
+          p_de_anterior?: string
+        }
+        Returns: Json
+      }
       fechar_runs_orfas: { Args: never; Returns: number }
+      funil_da_jornada: { Args: { p_clinic_id: string }; Returns: Json }
       funil_do_periodo: {
         Args: {
           p_ate: string
@@ -3263,6 +3312,35 @@ export type Database = {
       marcar_aguardando_confirmacao: {
         Args: { p_appointment_id: string; p_clinic_id: string }
         Returns: Json
+      }
+      metricas_da_espera: {
+        Args: { p_clinic_id: string }
+        Returns: {
+          primeira_onda_aceita: number
+          primeira_onda_base: number
+          receita_cents: number
+          tempo_medio_min: number
+          vagas_canceladas: number
+          vagas_cobertas: number
+          vagas_com_valor: number
+          vagas_em_andamento: number
+          vagas_esgotadas: number
+          vagas_oferecidas: number
+          vagas_preenchidas: number
+          vagas_sem_preco: number
+        }[]
+      }
+      metricas_de_pacientes: {
+        Args: { p_clinic_id: string }
+        Returns: {
+          ativos: number
+          ativos_30d_atras: number
+          novos_no_mes: number
+          primeiro_comparecimento: string
+          retorno_base: number
+          retorno_voltaram: number
+          sem_contato_6m: number
+        }[]
       }
       midia_mensagem_do_caminho: {
         Args: { p_caminho: string }
@@ -3380,6 +3458,16 @@ export type Database = {
         Args: { p_clinic_id: string; p_contact_id: string; p_tipo?: string }
         Returns: string
       }
+      resumo_do_dia: {
+        Args: {
+          p_clinic_id: string
+          p_fim: string
+          p_inicios: string[]
+          p_semana_passada_ate: string
+          p_semana_passada_de: string
+        }
+        Returns: Json
+      }
       salvar_pacote: {
         Args: {
           p_active: boolean
@@ -3394,6 +3482,10 @@ export type Database = {
       }
       saude_do_motor: { Args: never; Returns: Json }
       seed_reguas_padrao: { Args: { p_clinic_id: string }; Returns: undefined }
+      serie_diaria_do_periodo: {
+        Args: { p_ate: string; p_clinic_id: string; p_de: string }
+        Returns: Json
+      }
       sincronizar_vinculos_do_procedimento: {
         Args: { p_linhas: Json; p_procedure_id: string }
         Returns: Json

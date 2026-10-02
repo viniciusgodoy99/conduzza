@@ -18,9 +18,10 @@ import { STATUS_TONE_VARS } from "@/lib/design/status";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import { formatarCentavos } from "@/lib/utils/moeda";
 
-// Painel "Conversoes devolvidas a Meta", movido da pagina para a aba Origem.
+// Painel "Conversoes devolvidas a Meta", na aba Marketing (antes Origem).
 // Os numeros sao DESDE O INICIO (a RPC nao recorta periodo de proposito:
-// periodizar conversoes fica para depois), e o rotulo diz isso.
+// periodizar conversoes fica para depois), e o rotulo diz isso. O valor ja
+// enviado e em reais: so admin e gestor veem (Fase 3).
 //
 // Icones pela tabela de icones reservados (docs/06 4.6): falha e
 // OctagonAlert (o CircleAlert e atencao, ambar); enviada e Send com success,
@@ -29,9 +30,12 @@ import { formatarCentavos } from "@/lib/utils/moeda";
 export function ConversoesMetaSecao({
   conversoes,
   timezone,
+  podeVerValores,
 }: {
   conversoes: ConversoesResumo;
   timezone: string;
+  /** admin ou gestor: so com isso o valor em reais aparece */
+  podeVerValores: boolean;
 }) {
   // As 3 camadas da regra de status (forma distinta, rotulo, cor), nunca so
   // cor. Registrada = anotada aqui dentro; enviada = ja chegou na Meta.
@@ -124,7 +128,7 @@ export function ConversoesMetaSecao({
             <span className="cz-num">{conversoes.comCtwa}</span> de{" "}
             <span className="cz-num">{conversoes.total}</span> com identificador
             do anúncio
-            {conversoes.valorEnviadoCents > 0 ? (
+            {podeVerValores && conversoes.valorEnviadoCents > 0 ? (
               <>
                 ,{" "}
                 <span className="cz-num">

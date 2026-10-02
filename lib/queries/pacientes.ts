@@ -2,6 +2,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { AppointmentStatus } from "@/lib/design/status";
 import type { SaldoParaComparecimento } from "@/lib/domain/appointment-status";
+import type { MetricasDePacientes } from "@/lib/domain/pacientes-ui";
+
+export type { MetricasDePacientes } from "@/lib/domain/pacientes-ui";
 
 // Tipos e fetchers da Tela 9 (Pacientes e ficha). Isomorficos como leads.ts:
 // recebem o SupabaseClient e rodam no servidor (carga inicial) e no browser
@@ -28,14 +31,16 @@ export type PacienteResumo = {
   saldo_total: number;
   profissionais_ids: string[];
   /**
-   * Consulta nao cancelada mais antiga (passada ou futura), para o indicador
-   * "Novos no mes". Migration 20260925102000.
+   * Consulta nao cancelada mais antiga (passada ou futura). Migration
+   * 20260925102000. Os cartoes do topo sairam daqui na Fase 3 (contam na
+   * RPC metricas_de_pacientes, sem o teto de linhas da lista).
    */
   primeira_consulta: string | null;
 };
 
 export const pacientesKeys = {
   lista: (clinicId: string) => ["pacientes", clinicId, "lista"] as const,
+  metricas: (clinicId: string) => ["pacientes", clinicId, "metricas"] as const,
   ficha: (contactId: string) => ["pacientes", "ficha", contactId] as const,
 };
 
@@ -96,6 +101,50 @@ export async function fetchPacientes(
   return ((data ?? []) as Record<string, unknown>[])
     .map(normalizarPaciente)
     .sort(compararPorNome);
+}
+
+function contagem(valor: unknown, coluna: string): number {
+  const numero = typeof valor === "string" ? Number(valor) : valor;
+  if (typeof numero !== "number" || !Number.isFinite(numero) || numero < 0) {
+    // Formato inesperado vira erro na tela, nunca zero calado.
+    throw new Error(`metricas_de_pacientes: coluna ${coluna} invalida`);
+  }
+  return numero;
+}
+
+/**
+ * Os 4 cartoes do topo da Tela 9 (Fase 3): UMA linha da RPC
+ * metricas_de_pacientes, que conta a clinica inteira no banco (sem o teto de
+ * PACIENTES_LIMIT da lista). Security invoker: para o profissional a RLS de
+ * appointment recorta a agenda dele, e a tela diz "na sua agenda". Erro ou
+ * linha faltando LANCAM: a tela mostra o estado de erro, nunca zero.
+ */
+export async function fetchMetricasDePacientes(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<MetricasDePacientes> {
+  const { data, error } = await supabase.rpc("metricas_de_pacientes", {
+    p_clinic_id: clinicId,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  const linha = ((data ?? []) as Record<string, unknown>[])[0];
+  if (!linha) {
+    throw new Error("metricas_de_pacientes nao devolveu a linha da clinica");
+  }
+  const primeiro = linha.primeiro_comparecimento;
+  return {
+    ativos: contagem(linha.ativos, "ativos"),
+    ativos_30d_atras: contagem(linha.ativos_30d_atras, "ativos_30d_atras"),
+    novos_no_mes: contagem(linha.novos_no_mes, "novos_no_mes"),
+    retorno_base: contagem(linha.retorno_base, "retorno_base"),
+    retorno_voltaram: contagem(linha.retorno_voltaram, "retorno_voltaram"),
+    sem_contato_6m: contagem(linha.sem_contato_6m, "sem_contato_6m"),
+    // O tipo gerado diz string, mas a coluna e nula sem comparecimento.
+    primeiro_comparecimento:
+      typeof primeiro === "string" && primeiro !== "" ? primeiro : null,
+  };
 }
 
 export type ConsultaDoPaciente = {

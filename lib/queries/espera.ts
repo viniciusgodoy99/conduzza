@@ -33,13 +33,38 @@ export type OfertaEmAndamento = {
   destinatarios: DestinatarioDaOferta[];
 };
 
+/**
+ * "Desempenho da lista" no MES CIVIL da clinica (RPC metricas_da_espera,
+ * Fase 3). Vaga = a consulta cancelada que abriu o horario; ela entra no mes
+ * da sua PRIMEIRA onda (safra). Uma vaga termina preenchida, esgotada (a
+ * ultima onda venceu sem ninguem), cancelada (pela recepcao ou horario
+ * ocupado) ou segue em andamento.
+ */
 export type MetricasDaEspera = {
-  /** Horarios preenchidos pela reoferta nos ultimos 30 dias. */
-  recuperados30d: number;
-  /** Soma do preco dos vinculos das consultas recuperadas (centavos). */
-  receitaCents: number;
-  /** Media entre a vaga abrir (primeira onda) e alguem ficar com ela. */
+  vagasOferecidas: number;
+  vagasPreenchidas: number;
+  vagasEmAndamento: number;
+  vagasCanceladas: number;
+  vagasEsgotadas: number;
+  /** Primeiras ondas resolvidas pelo paciente (aceita ou vencida). */
+  primeiraOndaBase: number;
+  primeiraOndaAceita: number;
+  /** Media da primeira onda ao aceite; null sem vaga preenchida. */
   tempoMedioMin: number | null;
+  /**
+   * Preco das vagas preenchidas (preco do vinculo; sem ele, o base do
+   * procedimento; "Coberto" sem valor fora). null = SEM PERMISSAO: so
+   * administrador e gestor recebem o numero do banco. Nunca vira zero.
+   */
+  receitaCents: number | null;
+  /**
+   * O que ficou fora da soma da receita, como no faturamento: vagas com
+   * valor, de convenio sem valor ("Coberto") e sem preco cadastrado. null
+   * junto com a receita (sem permissao).
+   */
+  vagasComValor: number | null;
+  vagasCobertas: number | null;
+  vagasSemPreco: number | null;
 };
 
 export type ConfigDaEspera = {
@@ -192,83 +217,74 @@ export async function fetchOfertasEmAndamento(
   });
 }
 
+function contagemDaEspera(valor: unknown, coluna: string): number {
+  const numero = typeof valor === "string" ? Number(valor) : valor;
+  if (typeof numero !== "number" || !Number.isFinite(numero) || numero < 0) {
+    // Formato inesperado vira erro na tela, nunca zero calado.
+    throw new Error(`metricas_da_espera: coluna ${coluna} invalida`);
+  }
+  return numero;
+}
+
+function opcional(valor: unknown, coluna: string): number | null {
+  return valor === null || valor === undefined
+    ? null
+    : contagemDaEspera(valor, coluna);
+}
+
+/**
+ * Uma linha da RPC metricas_da_espera (security invoker; a receita sai null
+ * do banco para quem nao e admin nem gestor). Substitui a leitura antiga em
+ * duas idas, que engolia o erro da segunda, mandava ate 500 ids na URL e
+ * zerava a receita do profissional pela RLS sem aviso. Erro ou linha
+ * faltando LANCAM: a tela mostra o erro, nunca zero.
+ */
 export async function fetchMetricasDaEspera(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<MetricasDaEspera> {
-  const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
-  const { data, error } = await supabase
-    .from("waitlist_offer")
-    .select(
-      "source_appointment_id, responded_at, appointment:appointment_id ( service_link:service_link_id ( price_cents ) )",
-    )
-    .eq("clinic_id", clinicId)
-    .eq("status", "preenchida")
-    .gte("responded_at", desde30d)
-    .limit(500);
+  const { data, error } = await supabase.rpc("metricas_da_espera", {
+    p_clinic_id: clinicId,
+  });
   if (error) {
     throw new Error(error.message);
   }
-  const preenchidas = (data ?? []) as Record<string, unknown>[];
-  if (preenchidas.length === 0) {
-    return { recuperados30d: 0, receitaCents: 0, tempoMedioMin: null };
-  }
-
-  let receita = 0;
-  for (const linha of preenchidas) {
-    const appointment = primeiro(
-      linha.appointment as Record<string, unknown> | Record<string, unknown>[],
-    );
-    const vinculo = appointment
-      ? primeiro(
-          appointment.service_link as
-            | { price_cents: number | null }
-            | { price_cents: number | null }[]
-            | null,
-        )
-      : null;
-    receita += vinculo?.price_cents ?? 0;
-  }
-
-  // Tempo ate preencher = respondido menos a PRIMEIRA onda do mesmo horario
-  // (a vaga pode ter passado por varias ondas antes de alguem ficar).
-  const origens = [
-    ...new Set(
-      preenchidas.map((linha) => linha.source_appointment_id as string),
-    ),
-  ];
-  const { data: ondas } = await supabase
-    .from("waitlist_offer")
-    .select("source_appointment_id, created_at")
-    .eq("clinic_id", clinicId)
-    .in("source_appointment_id", origens);
-  const primeiraOnda = new Map<string, number>();
-  for (const linha of (ondas ?? []) as {
-    source_appointment_id: string;
-    created_at: string;
-  }[]) {
-    const atual = primeiraOnda.get(linha.source_appointment_id);
-    const instante = new Date(linha.created_at).getTime();
-    if (atual === undefined || instante < atual) {
-      primeiraOnda.set(linha.source_appointment_id, instante);
-    }
-  }
-  let somaMin = 0;
-  let contadas = 0;
-  for (const linha of preenchidas) {
-    const inicio = primeiraOnda.get(linha.source_appointment_id as string);
-    const fim = linha.responded_at
-      ? new Date(linha.responded_at as string).getTime()
-      : null;
-    if (inicio !== undefined && fim !== null && fim >= inicio) {
-      somaMin += (fim - inicio) / 60_000;
-      contadas += 1;
-    }
+  const linha = ((data ?? []) as Record<string, unknown>[])[0];
+  if (!linha) {
+    throw new Error("metricas_da_espera nao devolveu a linha da clinica");
   }
   return {
-    recuperados30d: preenchidas.length,
-    receitaCents: receita,
-    tempoMedioMin: contadas > 0 ? Math.round(somaMin / contadas) : null,
+    vagasOferecidas: contagemDaEspera(
+      linha.vagas_oferecidas,
+      "vagas_oferecidas",
+    ),
+    vagasPreenchidas: contagemDaEspera(
+      linha.vagas_preenchidas,
+      "vagas_preenchidas",
+    ),
+    vagasEmAndamento: contagemDaEspera(
+      linha.vagas_em_andamento,
+      "vagas_em_andamento",
+    ),
+    vagasCanceladas: contagemDaEspera(
+      linha.vagas_canceladas,
+      "vagas_canceladas",
+    ),
+    vagasEsgotadas: contagemDaEspera(linha.vagas_esgotadas, "vagas_esgotadas"),
+    primeiraOndaBase: contagemDaEspera(
+      linha.primeira_onda_base,
+      "primeira_onda_base",
+    ),
+    primeiraOndaAceita: contagemDaEspera(
+      linha.primeira_onda_aceita,
+      "primeira_onda_aceita",
+    ),
+    // O tipo gerado marca as duas como nao nulas; o banco devolve null.
+    tempoMedioMin: opcional(linha.tempo_medio_min, "tempo_medio_min"),
+    receitaCents: opcional(linha.receita_cents, "receita_cents"),
+    vagasComValor: opcional(linha.vagas_com_valor, "vagas_com_valor"),
+    vagasCobertas: opcional(linha.vagas_cobertas, "vagas_cobertas"),
+    vagasSemPreco: opcional(linha.vagas_sem_preco, "vagas_sem_preco"),
   };
 }
 

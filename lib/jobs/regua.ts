@@ -159,15 +159,49 @@ type MotivoDePulo =
   // mensagem por outro (varios numeros por clinica, docs/07).
   | "numero_removido";
 
-/** Fecha ESTA run, sem tocar em run ja enviada ou ja pulada. */
+const FORMATO_DO_MOTIVO_DA_FALHA = /^[a-z0-9_]{1,64}$/;
+
+/**
+ * Codigo curto que vai para cadence_run.motivo_da_falha (Fase 3: rodape
+ * "motivo mais comum" do cartao "Nao enviadas" de Confirmacoes). Mesma regra
+ * de fechar_runs_orfas no banco (migration 20261002110000): o trecho antes do
+ * primeiro ':', sem espaco nas pontas e em minusculas; ausente ou fora de
+ * ^[a-z0-9_]{1,64}$ vira 'desconhecido' (o CHECK da coluna recusaria). Nunca
+ * texto do provedor nem dado de paciente (regra 3.1).
+ */
+export function motivoDaFalhaDeEnvio(
+  codigo: string | null | undefined,
+): string {
+  const trecho = (codigo ?? "").split(":")[0] ?? "";
+  // So espacos nas pontas, como o btrim do Postgres.
+  const normalizado = trecho.replace(/^ +| +$/g, "").toLowerCase();
+  return FORMATO_DO_MOTIVO_DA_FALHA.test(normalizado)
+    ? normalizado
+    : "desconhecido";
+}
+
+/**
+ * Fecha ESTA run, sem tocar em run ja enviada ou ja pulada. Em 'falha_envio'
+ * grava tambem motivo_da_falha com o codigo do envio (`detalhe`); nos outros
+ * motivos a coluna fica nula (o CHECK
+ * cadence_run_motivo_da_falha_so_em_falha_envio exige).
+ */
 async function pularRun(
   admin: SupabaseClient,
   run: LinhaDaRun,
   motivo: MotivoDePulo,
+  detalhe?: string | null,
 ): Promise<void> {
+  const valores =
+    motivo === "falha_envio"
+      ? {
+          skipped_reason: motivo,
+          motivo_da_falha: motivoDaFalhaDeEnvio(detalhe),
+        }
+      : { skipped_reason: motivo };
   const { error } = await admin
     .from("cadence_run")
-    .update({ skipped_reason: motivo })
+    .update(valores)
     .eq("id", run.id)
     .is("sent_at", null)
     .is("skipped_reason", null);
@@ -1212,7 +1246,7 @@ export async function executarPassoDeRegua(
   // tentativa a run tambem fecha, para nao ficar pendurada para sempre.
   const podeRepetir = falhaPermiteRetry(resultado.code);
   if (!podeRepetir || job.attempts >= job.max_attempts) {
-    await pularRun(admin, run, "falha_envio");
+    await pularRun(admin, run, "falha_envio", resultado.code);
   }
   return {
     ok: false,

@@ -341,8 +341,9 @@ export function ControlesDaRegua({
       </section>
 
       {/* Regua de confirmacao sem linha de base: o aviso diz ONDE registrar
-          (Resultados, aba Confirmacao) e, para quem nao e administrador, a
-          quem pedir, porque so o administrador registra (achado 49). */}
+          (Resultados, aba Comercial, onde mora a Confirmacao com a linha de
+          base desde a Fase 3) e, para quem nao e administrador, a quem
+          pedir, porque so o administrador registra (achado 49). */}
       <Dialog open={avisoAberto} onOpenChange={setAvisoAberto}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
@@ -356,14 +357,14 @@ export function ControlesDaRegua({
           <Aviso tom="warning" role="note">
             <p>
               {ehAdministrador
-                ? "Registre a taxa de falta atual da clínica em Resultados, aba Confirmação."
+                ? "Registre a taxa de falta atual da clínica em Resultados, aba Comercial."
                 : "Peça a quem administra a clínica para registrar a taxa de falta em Resultados."}{" "}
               É ela que prova o resultado depois: sem o número de antes, não
               existe comparação e o ganho da régua fica sem evidência.
             </p>
             {ehAdministrador ? (
               <Link
-                href="/relatorios?aba=confirmacao"
+                href="/relatorios?aba=comercial"
                 className="mt-1 inline-flex min-h-10 items-center gap-1 rounded-sm font-bold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
               >
                 Registrar a taxa de falta

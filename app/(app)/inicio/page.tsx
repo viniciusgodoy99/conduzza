@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ChartColumn, TrendingUp } from "lucide-react";
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 
 import {
   Checklist,
@@ -23,10 +23,14 @@ import { Card } from "@/components/ui/card";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { diaCivil, minutosLocais, somarDias } from "@/lib/domain/horarios";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import { log } from "@/lib/log";
+import {
+  fetchFunilDaJornada,
+  fetchResumoDoDia,
+  type Leitura,
+} from "@/lib/queries/inicio";
 import {
   fetchAgendaDoPeriodo,
-  fetchAtendimentoDoPeriodo,
-  fetchFunilDoPeriodo,
   fetchProximasAcoes,
   type ProximasAcoes,
 } from "@/lib/queries/relatorios";
@@ -37,9 +41,11 @@ import { VisaoDoProfissional } from "../relatorios/visao-do-profissional";
 // Inicio (Tela 5, tarefa 5.1): o resumo do dia da clinica. O checklist de
 // primeiros passos continua aparecendo ACIMA do painel enquanto houver
 // pendencia (ele era a tela inteira antes do painel existir) e some quando
-// tudo esta pronto. Os numeros vem das MESMAS RPCs da tela de Resultados:
-// dois numeros com o mesmo nome contam igual nas duas telas. So agregados,
-// nenhum nome de paciente, entao nao ha leitura a auditar (regra 3.1).
+// tudo esta pronto. Desde a Fase 3 (02/10) o painel mostra o DIA: os
+// cartoes e as barras de 7 dias vem de resumo_do_dia e o funil de
+// funil_da_jornada (lib/queries/inicio.ts); o periodo de 30 dias e o resto
+// dos agregados moram em Resultados. So agregados, nenhum nome de paciente,
+// entao nao ha leitura a auditar (regra 3.1).
 //
 // Cabecalho (decisao do dono C26, docs/06 secao 5.2): a data no fuso da
 // clinica como eyebrow, a saudacao pelo horario local da clinica com o
@@ -63,17 +69,19 @@ function Resumo({ trechos }: { trechos: TrechoDoResumo[] }) {
 
 function cabecalhoDoDia({
   timezone,
+  agora,
   nomeDaSessao,
   emailDaSessao,
   proximasAcoes,
 }: {
   timezone: string;
+  /** O mesmo instante dos numeros do dia, para data e cartoes baterem. */
+  agora: Date;
   nomeDaSessao: string;
   emailDaSessao: string;
   proximasAcoes: ProximasAcoes;
 }) {
   // Regra 3.6: data e hora sempre no fuso da clinica, nunca no do servidor.
-  const agora = new Date();
   const nome = primeiroNome(nomeDaSessao, emailDaSessao);
   return {
     eyebrow: format(new TZDate(agora, timezone), "EEEE, d 'de' MMMM", {
@@ -93,6 +101,27 @@ function cabecalhoDoDia({
   };
 }
 
+/**
+ * Le um bloco do painel sem derrubar a tela: a falha vira o estado de erro
+ * daquele bloco (nunca zero) e um registro no log do servidor, so com o id
+ * da clinica e o nome do bloco (nenhum dado de paciente, regra 3.1).
+ */
+async function lerBloco<T>(
+  bloco: string,
+  clinicId: string,
+  leitura: Promise<T>,
+): Promise<Leitura<T>> {
+  try {
+    return { ok: true, dados: await leitura };
+  } catch (erro) {
+    // Sinal interno do Next (renderizacao dinamica, redirect) nao e falha
+    // do bloco: tem de seguir adiante.
+    unstable_rethrow(erro);
+    log.error("inicio_bloco_falhou", { clinic_id: clinicId, kind: bloco });
+    return { ok: false };
+  }
+}
+
 export default async function InicioPage() {
   const context = await getSessionContext();
   const active = context?.active;
@@ -101,8 +130,8 @@ export default async function InicioPage() {
   }
 
   const supabase = await createClient();
-  const diaAte = diaCivil(active.timezone, new Date());
-  const diaDe = somarDias(diaAte, -29);
+  // O instante da requisicao; todo dia civil sai dele no fuso da clinica.
+  const agora = new Date();
 
   // Matriz de papeis: profissional ve "so os proprios". O painel dele sao os
   // proprios atendimentos + as pendencias que a RLS ja recorta para ele.
@@ -119,6 +148,9 @@ export default async function InicioPage() {
       throw new Error(erroDeVinculo.message);
     }
     const professionalId = (membro?.professional_id ?? null) as string | null;
+    // A visao do profissional continua nos ultimos 30 dias civis.
+    const diaAte = diaCivil(active.timezone, agora);
+    const diaDe = somarDias(diaAte, -29);
 
     const [proximasAcoes, agendaPropria] = await Promise.all([
       fetchProximasAcoes(supabase, active.clinicId, active.timezone),
@@ -136,6 +168,7 @@ export default async function InicioPage() {
 
     const cabecalho = cabecalhoDoDia({
       timezone: active.timezone,
+      agora,
       nomeDaSessao: context.userName,
       emailDaSessao: context.userEmail,
       proximasAcoes,
@@ -171,64 +204,47 @@ export default async function InicioPage() {
   // (administrador e gestor), nao so do administrador.
   const podeConfigurar = canEdit(active.role, "configuracoes");
 
-  const [
-    numeros,
-    conversas,
-    equipe,
-    pedidos,
-    funil,
-    agenda,
-    atendimento,
-    proximasAcoes,
-  ] = await Promise.all([
-    // Os numeros ATIVOS da clinica (docs/07): o passo fica feito com pelo
-    // menos um conectado. So o status, nenhum dado de paciente.
-    supabase
-      .from("whatsapp_account")
-      .select("connection_status")
-      .eq("clinic_id", active.clinicId)
-      .is("removido_em", null),
-    supabase
-      .from("conversation")
-      .select("id", { count: "exact", head: true })
-      .eq("clinic_id", active.clinicId),
-    supabase
-      .from("clinic_member")
-      .select("user_id", { count: "exact", head: true })
-      .eq("clinic_id", active.clinicId)
-      .eq("status", "ativo"),
-    // Pedidos de entrada pelo codigo aguardando liberacao (achados 108 e
-    // 125): so quem libera recebe o numero. So a contagem, nenhum nome.
-    podeConfigurar
-      ? supabase
-          .from("clinic_member")
-          .select("user_id", { count: "exact", head: true })
-          .eq("clinic_id", active.clinicId)
-          .eq("status", "pendente")
-      : Promise.resolve(null),
-    fetchFunilDoPeriodo(
-      supabase,
-      active.clinicId,
-      active.timezone,
-      diaDe,
-      diaAte,
-    ),
-    fetchAgendaDoPeriodo(
-      supabase,
-      active.clinicId,
-      active.timezone,
-      diaDe,
-      diaAte,
-    ),
-    fetchAtendimentoDoPeriodo(
-      supabase,
-      active.clinicId,
-      active.timezone,
-      diaDe,
-      diaAte,
-    ),
-    fetchProximasAcoes(supabase, active.clinicId, active.timezone),
-  ]);
+  const [numeros, conversas, equipe, pedidos, resumo, funil, proximasAcoes] =
+    await Promise.all([
+      // Os numeros ATIVOS da clinica (docs/07): o passo fica feito com pelo
+      // menos um conectado. So o status, nenhum dado de paciente.
+      supabase
+        .from("whatsapp_account")
+        .select("connection_status")
+        .eq("clinic_id", active.clinicId)
+        .is("removido_em", null),
+      supabase
+        .from("conversation")
+        .select("id", { count: "exact", head: true })
+        .eq("clinic_id", active.clinicId),
+      supabase
+        .from("clinic_member")
+        .select("user_id", { count: "exact", head: true })
+        .eq("clinic_id", active.clinicId)
+        .eq("status", "ativo"),
+      // Pedidos de entrada pelo codigo aguardando liberacao (achados 108 e
+      // 125): so quem libera recebe o numero. So a contagem, nenhum nome.
+      podeConfigurar
+        ? supabase
+            .from("clinic_member")
+            .select("user_id", { count: "exact", head: true })
+            .eq("clinic_id", active.clinicId)
+            .eq("status", "pendente")
+        : Promise.resolve(null),
+      // Os dois blocos de numeros nao derrubam a tela (lerBloco); Proximas
+      // acoes continua derrubando, porque monta a frase do cabecalho.
+      lerBloco(
+        "resumo_do_dia",
+        active.clinicId,
+        fetchResumoDoDia(supabase, active.clinicId, active.timezone, agora),
+      ),
+      lerBloco(
+        "funil_da_jornada",
+        active.clinicId,
+        fetchFunilDaJornada(supabase, active.clinicId),
+      ),
+      fetchProximasAcoes(supabase, active.clinicId, active.timezone),
+    ]);
 
   // Leitura que decide o checklist: erro vira a tela de erro, nunca um
   // passo "Pendente" falso nem um pedido de acesso escondido.
@@ -324,6 +340,7 @@ export default async function InicioPage() {
   const tudoPronto = passos.every((passo) => passo.concluido);
   const cabecalho = cabecalhoDoDia({
     timezone: active.timezone,
+    agora,
     nomeDaSessao: context.userName,
     emailDaSessao: context.userEmail,
     proximasAcoes,
@@ -347,9 +364,9 @@ export default async function InicioPage() {
         <Checklist passos={passos} clinicId={active.clinicId} />
       )}
       <Painel
+        timezone={active.timezone}
+        resumo={resumo}
         funil={funil}
-        agenda={agenda}
-        atendimento={atendimento}
         proximasAcoes={proximasAcoes}
         pedidosDeAcesso={pedidosDeAcesso}
       />

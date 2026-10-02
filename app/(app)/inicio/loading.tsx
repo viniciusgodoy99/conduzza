@@ -1,12 +1,9 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
-// Esqueleto na forma REAL do Inicio com painel (Tela 5, docs/06 secao 5.2):
-// cabecalho com eyebrow, a linha do periodo, 4 indicadores e as tres linhas
-// do bento (heroi + atendimento, funil + origem, proximas acoes + mensagens).
-// Nunca giratorio no meio da tela.
-
-const LINHA_DO_BENTO =
-  "grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]";
+// Esqueleto na forma REAL do Inicio da Fase 3 (Tela 5): cabecalho com
+// eyebrow, os 4 cartoes do dia e o bento em duas colunas (Proximas acoes e
+// "Consultas por dia, ultimos 7 dias" a esquerda, "Funil de leads" a
+// direita). Nunca giratorio no meio da tela.
 
 export default function CarregandoInicio() {
   return (
@@ -19,23 +16,17 @@ export default function CarregandoInicio() {
         <Skeleton className="h-7 w-56" />
         <Skeleton className="h-3.5 w-80 max-w-full" />
       </div>
-      <Skeleton className="h-3 w-72 max-w-full" />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, indice) => (
-          <Skeleton key={indice} className="h-[114px] rounded-card" />
+          <Skeleton key={indice} className="h-[118px] rounded-card" />
         ))}
       </div>
-      <div className={LINHA_DO_BENTO}>
-        <Skeleton className="h-[184px] rounded-card" />
-        <Skeleton className="h-[184px] rounded-card" />
-      </div>
-      <div className={LINHA_DO_BENTO}>
-        <Skeleton className="h-[220px] rounded-card" />
-        <Skeleton className="h-[220px] rounded-card" />
-      </div>
-      <div className={LINHA_DO_BENTO}>
-        <Skeleton className="h-[176px] rounded-card" />
-        <Skeleton className="h-[176px] rounded-card" />
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <div className="grid gap-4">
+          <Skeleton className="h-[176px] rounded-card" />
+          <Skeleton className="h-[296px] rounded-card" />
+        </div>
+        <Skeleton className="h-[300px] rounded-card" />
       </div>
     </div>
   );

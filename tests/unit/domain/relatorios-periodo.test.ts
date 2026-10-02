@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { formatarDuracao } from "@/lib/domain/duracao";
-import { variacaoPercentual } from "@/components/relatorios/cartao-kpi";
+import { variacaoPercentual } from "@/lib/domain/variacao";
 import { janelaDoPeriodo } from "@/lib/queries/relatorios";
 
 // A matematica do periodo e da variacao: e ela que garante que o delta do

@@ -2,7 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarAberturaDeMidia } from "@/lib/auth/read-audit";
-import { nomeParaBaixar } from "@/lib/domain/midia-recebida";
+import { intervaloPedido } from "@/lib/domain/intervalo-de-bytes";
+import {
+  exibicaoDaMidiaDeTexto,
+  nomeParaBaixar,
+} from "@/lib/domain/midia-recebida";
+import { buscarPedacoDeMidia } from "@/lib/integrations/storage/pedaco-de-midia";
 import { log } from "@/lib/log";
 import { createClient } from "@/lib/supabase/server";
 
@@ -23,10 +28,18 @@ import { createClient } from "@/lib/supabase/server";
 //      role seria filtrar a clinica no codigo, que a regra 3.1 do CLAUDE.md
 //      proibe: "Se a RLS falhar, o dado nao pode vazar".
 //
-// A resposta e um 302 para a URL assinada, e nao o arquivo em si: o byte nao
-// passa pela funcao (nao ha teto de corpo de resposta a estourar) e o
-// cabecalho Range chega intacto ao storage, que e o que faz o audio ter
-// busca por arrastar.
+// Foto e documento: a resposta e um 302 para a URL assinada, e nao o arquivo
+// em si (o byte nao passa pela funcao). Eles carregam de uma vez.
+//
+// AUDIO (02/10/2026): a rota entrega os bytes ela mesma, pedaco por pedaco.
+// Com o 302, o navegador guardava a URL assinada (5 minutos) e pedia o resto
+// do audio direto a ela: quem abria a conversa e tocava depois de 5 minutos,
+// ou pausava e voltava, ouvia so o que ja tinha carregado (uns 2 segundos) e
+// o audio parava. Agora cada pedaco (cabecalho Range) passa por aqui com a
+// sessao, a RLS e a trilha, e nada expira enquanto a pessoa estiver logada.
+// O arquivo continua privado: link publico ou assinado de longa duracao seria
+// dado de saude acessivel sem login (regra 3.1). Cada resposta leva no maximo
+// 1 MiB (lib/domain/intervalo-de-bytes.ts); o navegador pede o resto.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -138,9 +151,73 @@ export async function GET(
     return NextResponse.json({ error: "sem_acesso" }, { status: 403 });
   }
 
+  // Audio e video tocam aos pedacos (Range): os dois vem pela propria
+  // origem. O criterio e o mesmo da bolha (tipoDaMidia em message-bubble):
+  // content_type 'audio', ou a midia de texto que o mimetype diz ser audio
+  // ou video.
+  const continua =
+    mensagem.content_type === "audio" ||
+    (mensagem.content_type !== "imagem" &&
+      mensagem.content_type !== "documento" &&
+      ["audio", "video"].includes(
+        exibicaoDaMidiaDeTexto(mensagem.media_mimetype),
+      ));
+  if (continua && !baixar) {
+    return entregarPedacoDoAudio(request, assinada.signedUrl, mensagem);
+  }
+
   const resposta = NextResponse.redirect(assinada.signedUrl, 302);
   // Foto e audio de paciente nao ficam no cache de disco do computador
   // compartilhado da recepcao depois que alguem sai do sistema.
   resposta.headers.set("Cache-Control", "private, no-store, max-age=0");
   return resposta;
+}
+
+// O pedaco do audio pela propria origem: 206 com Content-Range (ou 200 com o
+// arquivo inteiro quando o navegador nao pediu intervalo), Accept-Ranges para
+// o navegador poder arrastar, e o mesmo Cache-Control das outras midias.
+async function entregarPedacoDoAudio(
+  request: NextRequest,
+  urlAssinada: string,
+  mensagem: LinhaDaMensagem,
+): Promise<Response> {
+  const intervalo = intervaloPedido(request.headers.get("range"));
+  const pedaco = await buscarPedacoDeMidia(
+    urlAssinada,
+    intervalo,
+    request.signal,
+  );
+  if (!pedaco.ok) {
+    return NextResponse.json(
+      { error: "audio_indisponivel" },
+      { status: pedaco.status === 404 ? 404 : 502 },
+    );
+  }
+  const origem = pedaco.resposta;
+  const cabecalhos = new Headers({
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, no-store, max-age=0",
+    "Content-Type":
+      origem.headers.get("content-type") ??
+      mensagem.media_mimetype ??
+      "audio/mpeg",
+    "X-Content-Type-Options": "nosniff",
+  });
+  for (const nome of ["content-length", "content-range"]) {
+    const valor = origem.headers.get(nome);
+    if (valor) {
+      cabecalhos.set(nome, valor);
+    }
+  }
+  if (origem.status === 416) {
+    // Fim do arquivo: sem corpo, entao sem o Content-Length do corpo de erro
+    // do Storage (o navegador esperaria bytes que nunca chegam).
+    cabecalhos.set("content-length", "0");
+    await origem.body?.cancel();
+    return new Response(null, { status: 416, headers: cabecalhos });
+  }
+  return new Response(origem.body, {
+    status: origem.status,
+    headers: cabecalhos,
+  });
 }

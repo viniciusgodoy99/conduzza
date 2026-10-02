@@ -5,67 +5,58 @@ import { X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
-import {
-  AbaAgendamentos,
-  montarDetalheDaAgenda,
-  type DimensaoDaAgenda,
-} from "@/components/relatorios/aba-agendamentos";
-import { AbaConfirmacao } from "@/components/relatorios/aba-confirmacao";
-import { AbaCustos, AUTOR_ROTULO } from "@/components/relatorios/aba-custos";
-import { AbaIa } from "@/components/relatorios/aba-ia";
-import {
-  AbaOrigem,
-  montarDetalheDeOrigem,
-} from "@/components/relatorios/aba-origem";
-import {
-  ExportarRelatorio,
-  type ExportavelDaAba,
-} from "@/components/relatorios/exportar-relatorio";
+import { AbaAgenteIa } from "@/components/relatorios/aba-agente-ia";
+import { AbaComercial } from "@/components/relatorios/aba-comercial";
+import { AbaMarketing } from "@/components/relatorios/aba-marketing";
+import { AbaVisaoGeral } from "@/components/relatorios/aba-visao-geral";
+import { ExportarRelatorio } from "@/components/relatorios/exportar-relatorio";
 import { Aviso } from "@/components/shared/aviso";
 import { CardsSkeleton } from "@/components/shared/loading-skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatarDuracao } from "@/lib/domain/duracao";
+import {
+  montarExportavelDaAba,
+  type DimensaoDaAgenda,
+  type DimensaoDaOrigem,
+} from "@/lib/domain/exportacao-de-resultados";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import {
+  ABAS_DE_RESULTADOS,
   fetchAgendaDoPeriodo,
   fetchAtendimentoDoPeriodo,
+  fetchFaturamentoDoPeriodo,
   fetchFunilDoPeriodo,
   fetchLinhaDeBase,
+  fetchObjetivoDeConversao,
+  fetchSerieDiariaDoPeriodo,
   relatoriosKeys,
+  resolverAbaDeResultados,
+  type AbaDeResultados,
   type AgendaDoPeriodo,
   type AtendimentoDoPeriodo,
+  type FaturamentoDoPeriodo,
   type FunilDoPeriodo,
   type LinhaDeBase,
+  type ObjetivoDeConversao,
   type Periodizado,
   type PivoDaRegua,
+  type PontoDaSerie,
 } from "@/lib/queries/relatorios";
 import { createClient } from "@/lib/supabase/client";
-import { formatarCentavos } from "@/lib/utils/moeda";
 
-// Tela 11, Relatorios: aba e periodo vivem na URL (?aba=&de=&ate=) para link
-// direto, padrao de Automacoes e Confirmacoes. O periodo e em DIAS CIVIS da
-// clinica; a conversao para instante acontece no fetcher (regra 3.6). A
-// exportacao sempre reflete a aba ATIVA, na dimensao ativa.
-
-const ABAS = [
-  ["origem", "Origem"],
-  ["agendamentos", "Agendamentos"],
-  ["ia", "IA"],
-  ["confirmacao", "Confirmação"],
-  ["custos", "Custos"],
-] as const;
-
-type AbaKey = (typeof ABAS)[number][0];
-const TODAS: AbaKey[] = [
-  "origem",
-  "agendamentos",
-  "ia",
-  "confirmacao",
-  "custos",
-];
+// Tela 11, Resultados: aba e periodo vivem na URL (?aba=&de=&ate=) para link
+// direto, padrao de Automacoes e Confirmacoes. Desde a Fase 3 sao 4 vistas
+// (Visao geral, Marketing, Comercial, Agente de IA) em abas segmentadas com
+// role=tab; as chaves antigas continuam abrindo a vista que recebeu o
+// conteudo (resolverAbaDeResultados). O periodo e em DIAS CIVIS da clinica; a
+// conversao para instante acontece no fetcher (regra 3.6). A exportacao
+// sempre reflete a aba ATIVA, nas dimensoes ativas.
+//
+// Valores em reais (faturamento, receita das recuperadas, custo) so para
+// admin e gestor: podeVerValores vem do servidor, o faturamento so e buscado
+// nesse caso, e o banco devolve null para os outros papeis de qualquer jeito.
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -73,6 +64,9 @@ export function RelatoriosClient({
   clinicId,
   timezone,
   ehAdmin,
+  podeVerValores,
+  podeDefinirObjetivo,
+  canalOficial,
   abaInicial,
   diaDeInicial,
   diaAteInicial,
@@ -81,12 +75,22 @@ export function RelatoriosClient({
   funilInicial,
   agendaInicial,
   atendimentoInicial,
+  serieInicial,
+  faturamentoInicial,
   conversoes,
   linhaDeBaseInicial,
+  objetivoInicial,
 }: {
   clinicId: string;
   timezone: string;
+  /** Registra a linha de base de faltas (so admin). */
   ehAdmin: boolean;
+  /** admin ou gestor: ve valores em reais. */
+  podeVerValores: boolean;
+  /** admin ou gestor: define o objetivo de conversao. */
+  podeDefinirObjetivo: boolean;
+  /** A clinica tem numero no canal oficial (isOfficialChannel). */
+  canalOficial: boolean;
   abaInicial?: string;
   /** Recorte validado que o servidor usou para buscar os dados iniciais. */
   diaDeInicial: string;
@@ -97,8 +101,12 @@ export function RelatoriosClient({
   funilInicial: Periodizado<FunilDoPeriodo>;
   agendaInicial: Periodizado<AgendaDoPeriodo> & { pivo: PivoDaRegua };
   atendimentoInicial: Periodizado<AtendimentoDoPeriodo>;
+  serieInicial: PontoDaSerie[];
+  /** undefined = nao buscado (papel sem acesso a valores); null = recusado */
+  faturamentoInicial?: Periodizado<FaturamentoDoPeriodo> | null;
   conversoes: ConversoesResumo;
   linhaDeBaseInicial: LinhaDeBase;
+  objetivoInicial: ObjetivoDeConversao;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -106,9 +114,9 @@ export function RelatoriosClient({
   const queryClient = useQueryClient();
   const supabase = useMemo(() => createClient(), []);
 
-  const abaAtiva: AbaKey = TODAS.includes(abaInicial as AbaKey)
-    ? (abaInicial as AbaKey)
-    : "origem";
+  const abaAtiva: AbaDeResultados = resolverAbaDeResultados(
+    searchParams.get("aba") ?? abaInicial,
+  );
 
   // Mesma validacao do servidor: dia fora do formato (ou intervalo invertido)
   // cai no padrao, para um link torto nunca virar consulta com recorte
@@ -125,9 +133,8 @@ export function RelatoriosClient({
   const diaAte = recorteDaURLValido ? ateURL : diaAtePadrao;
   const recorteInicial = diaDe === diaDeInicial && diaAte === diaAteInicial;
 
-  const [dimensaoOrigem, setDimensaoOrigem] = useState<"canal" | "campanha">(
-    "canal",
-  );
+  const [dimensaoOrigem, setDimensaoOrigem] =
+    useState<DimensaoDaOrigem>("canal");
   const [dimensaoAgenda, setDimensaoAgenda] =
     useState<DimensaoDaAgenda>("profissional");
 
@@ -144,6 +151,24 @@ export function RelatoriosClient({
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
 
+  // Atalho de dentro de um bloco ("Ver detalhes em Comercial"): troca a aba
+  // e leva ao topo da vista nova, ou a ancora pedida.
+  const irParaAba = (aba: AbaDeResultados, ancora?: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("aba", aba);
+    router.replace(`${pathname}?${params.toString()}${ancora ? `#${ancora}` : ""}`);
+  };
+
+  // O que cada aba precisa. Funil, agenda e atendimento sao o corpo da aba
+  // (sem eles a aba nao abre); serie e faturamento sao blocos com estado
+  // proprio de carregando e erro.
+  const precisaFunil = abaAtiva !== "ia";
+  const precisaAgenda = abaAtiva === "geral" || abaAtiva === "comercial";
+  const precisaAtendimento = abaAtiva === "geral" || abaAtiva === "ia";
+  const precisaSerie = abaAtiva === "geral";
+  const precisaFaturamento =
+    podeVerValores && (abaAtiva === "geral" || abaAtiva === "comercial");
+
   useDadosDoServidor(
     relatoriosKeys.funil(clinicId, diaDeInicial, diaAteInicial),
     funilInicial,
@@ -156,7 +181,16 @@ export function RelatoriosClient({
     relatoriosKeys.atendimento(clinicId, diaDeInicial, diaAteInicial),
     atendimentoInicial,
   );
+  useDadosDoServidor(
+    relatoriosKeys.serie(clinicId, diaDeInicial, diaAteInicial),
+    serieInicial,
+  );
+  useDadosDoServidor(
+    relatoriosKeys.faturamento(clinicId, diaDeInicial, diaAteInicial),
+    faturamentoInicial,
+  );
   useDadosDoServidor(relatoriosKeys.linhaDeBase(clinicId), linhaDeBaseInicial);
+  useDadosDoServidor(relatoriosKeys.objetivo(clinicId), objetivoInicial);
 
   const funilQuery = useQuery({
     queryKey: relatoriosKeys.funil(clinicId, diaDe, diaAte),
@@ -164,7 +198,7 @@ export function RelatoriosClient({
       fetchFunilDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
     initialData: recorteInicial ? funilInicial : undefined,
     staleTime: 60_000,
-    enabled: abaAtiva === "origem",
+    enabled: precisaFunil,
   });
   const agendaQuery = useQuery({
     queryKey: relatoriosKeys.agenda(clinicId, diaDe, diaAte, null),
@@ -172,7 +206,7 @@ export function RelatoriosClient({
       fetchAgendaDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
     initialData: recorteInicial ? agendaInicial : undefined,
     staleTime: 60_000,
-    enabled: abaAtiva === "agendamentos" || abaAtiva === "confirmacao",
+    enabled: precisaAgenda,
   });
   const atendimentoQuery = useQuery({
     queryKey: relatoriosKeys.atendimento(clinicId, diaDe, diaAte),
@@ -180,7 +214,26 @@ export function RelatoriosClient({
       fetchAtendimentoDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
     initialData: recorteInicial ? atendimentoInicial : undefined,
     staleTime: 60_000,
-    enabled: abaAtiva === "ia" || abaAtiva === "custos",
+    enabled: precisaAtendimento,
+  });
+  const serieQuery = useQuery({
+    queryKey: relatoriosKeys.serie(clinicId, diaDe, diaAte),
+    queryFn: () =>
+      fetchSerieDiariaDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
+    initialData: recorteInicial ? serieInicial : undefined,
+    staleTime: 60_000,
+    enabled: precisaSerie,
+  });
+  const faturamentoQuery = useQuery({
+    queryKey: relatoriosKeys.faturamento(clinicId, diaDe, diaAte),
+    queryFn: () =>
+      fetchFaturamentoDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
+    initialData:
+      recorteInicial && faturamentoInicial !== undefined
+        ? faturamentoInicial
+        : undefined,
+    staleTime: 60_000,
+    enabled: precisaFaturamento,
   });
   const linhaDeBaseQuery = useQuery({
     queryKey: relatoriosKeys.linhaDeBase(clinicId),
@@ -188,151 +241,52 @@ export function RelatoriosClient({
     initialData: linhaDeBaseInicial,
     staleTime: 60_000,
   });
+  const objetivoQuery = useQuery({
+    queryKey: relatoriosKeys.objetivo(clinicId),
+    queryFn: () => fetchObjetivoDeConversao(supabase, clinicId),
+    initialData: objetivoInicial,
+    staleTime: 60_000,
+  });
 
   const periodoRotulo = `${formatarDia(diaDe)} a ${formatarDia(diaAte)}`;
   const filtroAtivo = diaDe !== diaDePadrao || diaAte !== diaAtePadrao;
 
-  const montarExportavel = (): ExportavelDaAba => {
-    // A exportacao e o retrato da aba ATIVA, sem linha inventada: quando a
-    // aba e de cartoes, o CSV vira "Indicador;Valor" com os MESMOS numeros.
-    if (abaAtiva === "origem") {
-      const funil = funilQuery.data;
-      const detalhe = funil
-        ? montarDetalheDeOrigem(funil.atual, dimensaoOrigem)
-        : [];
-      return {
-        titulo:
-          dimensaoOrigem === "canal"
-            ? "Resultados por canal"
-            : "Resultados por campanha",
-        linhas: [
-          ["Origem", "Leads", "Agendaram", "Compareceram", "Conversão"],
-          ...detalhe.map((linha) => [
-            linha.rotulo,
-            String(linha.leads),
-            String(linha.agendaram),
-            String(linha.compareceram),
-            linha.conversao,
-          ]),
-        ],
-      };
-    }
-    if (abaAtiva === "agendamentos") {
-      const agenda = agendaQuery.data;
-      const detalhe = agenda
-        ? montarDetalheDaAgenda(agenda.atual, dimensaoAgenda)
-        : [];
-      return {
-        titulo: "Agendamentos no período",
-        linhas: [
-          ["Detalhe", "Consultas", "Compareceram", "Faltaram"],
-          ...detalhe.map((linha) => [
-            linha.rotulo,
-            String(linha.total),
-            linha.compareceu === null ? "" : String(linha.compareceu),
-            linha.faltou === null ? "" : String(linha.faltou),
-          ]),
-        ],
-      };
-    }
-    if (abaAtiva === "confirmacao") {
-      const agenda = agendaQuery.data;
-      const linhaDeBase = linhaDeBaseQuery.data;
-      const atual = agenda?.atual;
-      return {
-        titulo: "Confirmação e faltas no período",
-        linhas: [
-          ["Indicador", "Valor"],
-          ...(atual
-            ? [
-                ["Consultas no período", String(atual.total)],
-                [
-                  "Confirmadas em algum momento",
-                  `${atual.confirmadasAlgumaVez} de ${atual.total}`,
-                ],
-                ["Faltas", String(atual.porStatus.faltou)],
-                [
-                  "Recuperadas pela lista de espera",
-                  String(atual.recuperadas.total),
-                ],
-                [
-                  "Receita recuperada",
-                  formatarCentavos(atual.recuperadas.receitaCents),
-                ],
-                [
-                  "Remarcaram após a falta",
-                  `${atual.remarcadasAposFalta.remarcadas} de ${atual.remarcadasAposFalta.faltas}`,
-                ],
-              ]
-            : []),
-          ...(linhaDeBase
-            ? [
-                [
-                  "Linha de base (informada pela clínica)",
-                  `${linhaDeBase.ratePercent}%`,
-                ],
-              ]
-            : []),
-        ],
-      };
-    }
-    if (abaAtiva === "ia") {
-      const atual = atendimentoQuery.data?.atual;
-      return {
-        titulo: "Atendimento no período",
-        linhas: [
-          ["Indicador", "Valor"],
-          ...(atual
-            ? [
-                ["Conversas iniciadas", String(atual.conversasIniciadas)],
-                [
-                  "Novas conversas respondidas",
-                  `${atual.primeiraResposta.respondidas} de ${atual.primeiraResposta.conversas}`,
-                ],
-                [
-                  "Primeira resposta (mediana)",
-                  formatarDuracao(atual.primeiraResposta.medianaSegundos),
-                ],
-                [
-                  "Primeira resposta (90% em até)",
-                  formatarDuracao(atual.primeiraResposta.p90Segundos),
-                ],
-              ]
-            : []),
-        ],
-      };
-    }
-    const atual = atendimentoQuery.data?.atual;
-    return {
-      titulo: "Mensagens no período",
-      linhas: [
-        ["Indicador", "Valor"],
-        ...(atual
-          ? [
-              ["Mensagens enviadas", String(atual.mensagens.saida)],
-              ["Mensagens recebidas", String(atual.mensagens.entrada)],
-              ["Notas internas", String(atual.mensagens.notasInternas)],
-              // So quem ENVIA: 'paciente' e quem recebe, nao entra como
-              // envio (achado da revisao de 18/09).
-              ...Object.entries(atual.mensagens.porAutor)
-                .filter(([autor]) => autor !== "paciente")
-                .map(([autor, total]) => [
-                  `Enviadas: ${AUTOR_ROTULO[autor] ?? autor}`,
-                  String(total),
-                ]),
-            ]
-          : []),
-      ],
-    };
-  };
+  const consultasDoCorpo = [
+    ...(precisaFunil ? [funilQuery] : []),
+    ...(precisaAgenda ? [agendaQuery] : []),
+    ...(precisaAtendimento ? [atendimentoQuery] : []),
+  ];
+  const comErro = consultasDoCorpo.some((consulta) => consulta.isError);
+  const carregando = consultasDoCorpo.some(
+    (consulta) => consulta.data === undefined,
+  );
+  // Exportar com um bloco ainda carregando, ou em erro, gravaria a trilha de
+  // um arquivo incompleto: o botao espera tudo o que a aba exporta.
+  const blocosProntos =
+    (!precisaSerie || (serieQuery.data !== undefined && !serieQuery.isError)) &&
+    (!precisaFaturamento ||
+      (faturamentoQuery.data !== undefined && !faturamentoQuery.isError));
 
-  const carregando =
-    (abaAtiva === "origem" && !funilQuery.data) ||
-    ((abaAtiva === "agendamentos" || abaAtiva === "confirmacao") &&
-      !agendaQuery.data) ||
-    ((abaAtiva === "ia" || abaAtiva === "custos") && !atendimentoQuery.data);
-  const comErro =
-    funilQuery.isError || agendaQuery.isError || atendimentoQuery.isError;
+  const montarExportavel = () =>
+    montarExportavelDaAba({
+      aba: abaAtiva,
+      podeVerValores,
+      canalOficial,
+      funil: funilQuery.data,
+      agenda: agendaQuery.data,
+      atendimento: atendimentoQuery.data,
+      serie: serieQuery.data,
+      faturamento: podeVerValores ? faturamentoQuery.data : undefined,
+      linhaDeBase: linhaDeBaseQuery.data,
+      objetivo: objetivoQuery.data,
+      conversoes,
+      dimensaoOrigem,
+      dimensaoAgenda,
+    });
+
+  const funil = funilQuery.data;
+  const agenda = agendaQuery.data;
+  const atendimento = atendimentoQuery.data;
 
   return (
     <div className="grid gap-4 print:hidden">
@@ -383,16 +337,22 @@ export function RelatoriosClient({
             aba={abaAtiva}
             periodoRotulo={periodoRotulo}
             montar={montarExportavel}
-            desabilitado={carregando || comErro}
+            desabilitado={carregando || comErro || !blocosProntos}
           />
         </div>
       </div>
 
       <Tabs value={abaAtiva} onValueChange={(aba) => setParams({ aba })}>
-        <TabsList variant="line" aria-label="Vistas de Resultados">
-          {ABAS.map(([key, label]) => (
-            <TabsTrigger key={key} value={key}>
-              {label}
+        {/* No celular as 4 abas quebram linha em vez de rolar: rolagem
+            cortaria a area de toque de 40px (hit-40) dos gatilhos. */}
+        <TabsList
+          variant="segmented"
+          aria-label="Vistas de Resultados"
+          className="max-w-full max-sm:h-auto max-sm:flex-wrap"
+        >
+          {ABAS_DE_RESULTADOS.map((aba) => (
+            <TabsTrigger key={aba.chave} value={aba.chave}>
+              {aba.rotulo}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -408,11 +368,7 @@ export function RelatoriosClient({
               variant="outline"
               size="sm"
               onClick={() => {
-                for (const consulta of [
-                  funilQuery,
-                  agendaQuery,
-                  atendimentoQuery,
-                ]) {
+                for (const consulta of consultasDoCorpo) {
                   if (consulta.isError) {
                     void consulta.refetch();
                   }
@@ -426,32 +382,66 @@ export function RelatoriosClient({
           Tente de novo em instantes.
         </Aviso>
       ) : carregando ? (
-        <CardsSkeleton cards={4} />
+        <CardsSkeleton
+          cards={abaAtiva === "geral" ? 5 : 4}
+          className={
+            abaAtiva === "geral"
+              ? "gap-3 lg:grid-cols-3 xl:grid-cols-5"
+              : "gap-3"
+          }
+        />
       ) : (
         <>
-          {abaAtiva === "origem" && funilQuery.data ? (
-            <AbaOrigem
-              funil={funilQuery.data}
+          {abaAtiva === "geral" && funil && agenda && atendimento ? (
+            <AbaVisaoGeral
+              funil={funil}
+              agenda={agenda}
+              atendimento={atendimento}
+              serie={serieQuery.data}
+              serieComErro={serieQuery.isError}
+              aoTentarSerieDeNovo={() => void serieQuery.refetch()}
+              faturamento={podeVerValores ? faturamentoQuery.data : null}
+              faturamentoComErro={podeVerValores && faturamentoQuery.isError}
+              aoTentarFaturamentoDeNovo={() => void faturamentoQuery.refetch()}
+              linhaDeBase={linhaDeBaseQuery.data ?? null}
+              objetivo={objetivoQuery.data}
+              podeVerValores={podeVerValores}
+              podeDefinirObjetivo={podeDefinirObjetivo}
+              timezone={timezone}
+              aoMudarObjetivo={() =>
+                queryClient.invalidateQueries({
+                  queryKey: relatoriosKeys.objetivo(clinicId),
+                })
+              }
+              irParaAba={(aba) =>
+                irParaAba(aba, aba === "comercial" ? "confirmacao" : undefined)
+              }
+            />
+          ) : null}
+          {abaAtiva === "marketing" && funil ? (
+            <AbaMarketing
+              funil={funil}
               conversoes={conversoes}
               timezone={timezone}
+              podeVerValores={podeVerValores}
               dimensao={dimensaoOrigem}
               aoMudarDimensao={setDimensaoOrigem}
             />
           ) : null}
-          {abaAtiva === "agendamentos" && agendaQuery.data ? (
-            <AbaAgendamentos
-              agenda={agendaQuery.data}
-              dimensao={dimensaoAgenda}
-              aoMudarDimensao={setDimensaoAgenda}
-            />
-          ) : null}
-          {abaAtiva === "confirmacao" && agendaQuery.data ? (
-            <AbaConfirmacao
-              agenda={agendaQuery.data}
-              pivo={agendaQuery.data.pivo}
+          {abaAtiva === "comercial" && funil && agenda ? (
+            <AbaComercial
+              funil={funil}
+              agenda={agenda}
+              pivo={agenda.pivo}
+              faturamento={podeVerValores ? faturamentoQuery.data : null}
+              faturamentoComErro={podeVerValores && faturamentoQuery.isError}
+              aoTentarFaturamentoDeNovo={() => void faturamentoQuery.refetch()}
               linhaDeBase={linhaDeBaseQuery.data ?? null}
               ehAdmin={ehAdmin}
+              podeVerValores={podeVerValores}
               timezone={timezone}
+              dimensao={dimensaoAgenda}
+              aoMudarDimensao={setDimensaoAgenda}
               aoMudarLinhaDeBase={() =>
                 queryClient.invalidateQueries({
                   queryKey: relatoriosKeys.linhaDeBase(clinicId),
@@ -459,11 +449,12 @@ export function RelatoriosClient({
               }
             />
           ) : null}
-          {abaAtiva === "ia" && atendimentoQuery.data ? (
-            <AbaIa atendimento={atendimentoQuery.data} />
-          ) : null}
-          {abaAtiva === "custos" && atendimentoQuery.data ? (
-            <AbaCustos atendimento={atendimentoQuery.data} />
+          {abaAtiva === "ia" && atendimento ? (
+            <AbaAgenteIa
+              atendimento={atendimento}
+              canalOficial={canalOficial}
+              podeVerValores={podeVerValores}
+            />
           ) : null}
         </>
       )}

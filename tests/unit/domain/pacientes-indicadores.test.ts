@@ -1,94 +1,202 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  indicadoresDaLista,
-  type PacienteContavel,
+  cartoesDePacientes,
+  somarMeses,
+  type MetricasDePacientes,
 } from "@/lib/domain/pacientes-ui";
 
-// Indicadores do topo da lista de Pacientes (decisao C28 do dono): so o que a
-// lista ja sabe contar, com a mesma regra dos filtros e das etiquetas. O "novo
-// no mes" compara o DIA CIVIL da clinica (regra 3.6), nunca o dia UTC.
+// Os 4 cartoes do topo da lista de Pacientes (Fase 3, decisoes do dono em
+// 02/10/2026). Os numeros vem da RPC metricas_de_pacientes; aqui se testa a
+// decisao da tela, com as MESMAS fronteiras da funcao no dia civil da
+// clinica (regra 3.6): variacao escondida com base zero, "Contando desde"
+// com menos de 12 meses de historico, retorno e "sem consulta" em "Ainda não
+// medido" enquanto o zero seria estrutural.
 
-const DIA_MS = 24 * 60 * 60 * 1000;
 const FORTALEZA = "America/Fortaleza";
-// 15/09/2026, meio-dia em Fortaleza (UTC-3).
-const agora = new Date("2026-09-15T15:00:00Z");
+// 02/10/2026, meio-dia em Fortaleza (UTC-3).
+const agora = new Date("2026-10-02T15:00:00Z");
 
-function haDias(dias: number): string {
-  return new Date(agora.getTime() - dias * DIA_MS).toISOString();
-}
-
-function paciente(parcial: Partial<PacienteContavel>): PacienteContavel {
+function metricas(parcial: Partial<MetricasDePacientes>): MetricasDePacientes {
   return {
-    total_faltou: 0,
-    ultima_consulta: haDias(10),
-    proxima_consulta: null,
-    saldo_sessoes: 0,
-    insurance_id: null,
-    profissionais_ids: [],
-    primeira_consulta: haDias(200),
+    ativos: 0,
+    ativos_30d_atras: 0,
+    novos_no_mes: 0,
+    retorno_base: 0,
+    retorno_voltaram: 0,
+    sem_contato_6m: 0,
+    primeiro_comparecimento: null,
     ...parcial,
   };
 }
 
-describe("indicadoresDaLista", () => {
-  it("lista vazia zera tudo", () => {
-    expect(indicadoresDaLista([], agora, FORTALEZA)).toEqual({
-      total: 0,
+describe("somarMeses (espelho de date + interval no Postgres)", () => {
+  it("soma e subtrai meses atravessando o ano", () => {
+    expect(somarMeses("2026-01-15", -1)).toBe("2025-12-15");
+    expect(somarMeses("2026-11-15", 3)).toBe("2027-02-15");
+    expect(somarMeses("2026-10-03", -12)).toBe("2025-10-03");
+  });
+
+  it("dia que nao existe no mes de chegada cai no ultimo dia dele", () => {
+    expect(somarMeses("2026-08-31", -6)).toBe("2026-02-28");
+    expect(somarMeses("2024-03-31", -1)).toBe("2024-02-29");
+    expect(somarMeses("2028-02-29", -12)).toBe("2027-02-28");
+    expect(somarMeses("2026-12-31", 2)).toBe("2027-02-28");
+  });
+});
+
+describe("cartoesDePacientes, clinica sem comparecimento", () => {
+  it("zeros e nada medido, sem data nenhuma para prometer", () => {
+    expect(cartoesDePacientes(metricas({}), agora, FORTALEZA)).toEqual({
+      ativos: { valor: 0, anterior: null, contandoDesde: null },
       novosNoMes: 0,
-      comPacoteAtivo: 0,
-      inativos: 0,
+      retorno: { medido: false, primeiraMedidaEm: null },
+      semConsulta6m: { medido: false, contaDesde: null },
+    });
+  });
+});
+
+describe("cartoesDePacientes, pacientes ativos", () => {
+  it("variacao absoluta contra 30 dias atras", () => {
+    const { ativos } = cartoesDePacientes(
+      metricas({
+        ativos: 1248,
+        ativos_30d_atras: 1214,
+        primeiro_comparecimento: "2024-01-10T13:00:00Z",
+      }),
+      agora,
+      FORTALEZA,
+    );
+    expect(ativos).toEqual({
+      valor: 1248,
+      anterior: 1214,
+      contandoDesde: null,
     });
   });
 
-  it("total conta todo mundo da lista", () => {
-    const lista = [paciente({}), paciente({}), paciente({})];
-    expect(indicadoresDaLista(lista, agora, FORTALEZA).total).toBe(3);
-  });
-
-  it("novo no mes: primeira consulta no mes corrente, passada ou futura", () => {
-    const lista = [
-      paciente({ primeira_consulta: "2026-09-02T13:00:00Z" }),
-      paciente({ primeira_consulta: "2026-09-28T13:00:00Z" }),
-      paciente({ primeira_consulta: "2026-08-20T13:00:00Z" }),
-      paciente({ primeira_consulta: null }),
-    ];
-    expect(indicadoresDaLista(lista, agora, FORTALEZA).novosNoMes).toBe(2);
-  });
-
-  it("o mes e o do fuso da clinica: 01/09 as 01h UTC ainda e agosto em Fortaleza", () => {
-    const lista = [
-      // 31/08 as 22h em Fortaleza.
-      paciente({ primeira_consulta: "2026-09-01T01:00:00Z" }),
-      // 01/09 as 00h em Fortaleza.
-      paciente({ primeira_consulta: "2026-09-01T03:00:00Z" }),
-    ];
-    expect(indicadoresDaLista(lista, agora, FORTALEZA).novosNoMes).toBe(1);
-  });
-
-  it("com pacote ativo e o mesmo criterio do filtro Com pacote", () => {
-    const lista = [
-      paciente({ saldo_sessoes: 3 }),
-      paciente({ saldo_sessoes: 0 }),
-      paciente({ saldo_sessoes: 1 }),
-    ];
-    expect(indicadoresDaLista(lista, agora, FORTALEZA).comPacoteAtivo).toBe(2);
-  });
-
-  it("inativos e o mesmo criterio da etiqueta Inativo", () => {
-    const lista = [
-      // Ultima ha 120 dias e nada marcado: inativo.
-      paciente({ ultima_consulta: haDias(120) }),
-      // Ultima ha 120 dias, mas com consulta futura: nao e inativo.
-      paciente({
-        ultima_consulta: haDias(120),
-        proxima_consulta: new Date(agora.getTime() + DIA_MS).toISOString(),
+  it("base zero esconde a variacao (anterior null)", () => {
+    const { ativos } = cartoesDePacientes(
+      metricas({
+        ativos: 1,
+        ativos_30d_atras: 0,
+        primeiro_comparecimento: "2026-09-10T13:00:00Z",
       }),
-      // Exatos 90 dias nao contam.
-      paciente({ ultima_consulta: haDias(90) }),
-      // Sem consulta nenhuma nunca foi ativo.
-      paciente({ ultima_consulta: null }),
-    ];
-    expect(indicadoresDaLista(lista, agora, FORTALEZA).inativos).toBe(1);
+      agora,
+      FORTALEZA,
+    );
+    expect(ativos.anterior).toBeNull();
+    expect(ativos.contandoDesde).toBe("10/09/2026");
+  });
+
+  it("'Contando desde' vale enquanto o historico cabe na janela de 12 meses do banco", () => {
+    // Janela de hoje (02/10/2026): [03/10/2025, 03/10/2026) no fuso da
+    // clinica. 03/10/2025 00:00 em Fortaleza e 03:00 UTC.
+    const dentro = cartoesDePacientes(
+      metricas({ primeiro_comparecimento: "2025-10-03T03:00:00Z" }),
+      agora,
+      FORTALEZA,
+    );
+    expect(dentro.ativos.contandoDesde).toBe("03/10/2025");
+
+    // Um segundo antes ainda e 02/10/2025 em Fortaleza (no UTC ja seria 03).
+    const fora = cartoesDePacientes(
+      metricas({ primeiro_comparecimento: "2025-10-03T02:59:59Z" }),
+      agora,
+      FORTALEZA,
+    );
+    expect(fora.ativos.contandoDesde).toBeNull();
+  });
+});
+
+describe("cartoesDePacientes, retorno em 90 dias", () => {
+  it("com base: percentual cru das consultas que voltaram", () => {
+    const { retorno } = cartoesDePacientes(
+      metricas({
+        retorno_base: 8,
+        retorno_voltaram: 3,
+        primeiro_comparecimento: "2025-01-10T13:00:00Z",
+      }),
+      agora,
+      FORTALEZA,
+    );
+    expect(retorno).toEqual({ medido: true, percentual: 37.5, base: 8 });
+  });
+
+  it("base zero nunca e 0%: 'Ainda não medido' com o dia da primeira medida", () => {
+    // Atendido em 10/09/2026: a janela madura fecha no inicio de hoje menos
+    // 90 dias, entao ele entra na base em 10/09 + 91 = 10/12/2026.
+    const { retorno } = cartoesDePacientes(
+      metricas({
+        retorno_base: 0,
+        primeiro_comparecimento: "2026-09-10T13:00:00Z",
+      }),
+      agora,
+      FORTALEZA,
+    );
+    expect(retorno).toEqual({ medido: false, primeiraMedidaEm: "10/12/2026" });
+  });
+
+  it("historico antigo sem base na janela: nao medido, sem data para prometer", () => {
+    const { retorno } = cartoesDePacientes(
+      metricas({
+        retorno_base: 0,
+        primeiro_comparecimento: "2023-05-10T13:00:00Z",
+      }),
+      agora,
+      FORTALEZA,
+    );
+    expect(retorno).toEqual({ medido: false, primeiraMedidaEm: null });
+  });
+});
+
+describe("cartoesDePacientes, sem consulta ha 6 meses", () => {
+  it("historico de mais de 6 meses: mede (inclusive zero)", () => {
+    // Hoje menos 6 meses = 02/04/2026; atendido em 01/04 ja conta.
+    const { semConsulta6m } = cartoesDePacientes(
+      metricas({
+        sem_contato_6m: 0,
+        primeiro_comparecimento: "2026-04-01T13:00:00Z",
+      }),
+      agora,
+      FORTALEZA,
+    );
+    expect(semConsulta6m).toEqual({ medido: true, valor: 0 });
+  });
+
+  it("historico menor que 6 meses: zero estrutural vira 'Ainda não medido'", () => {
+    const { semConsulta6m } = cartoesDePacientes(
+      metricas({
+        sem_contato_6m: 0,
+        primeiro_comparecimento: "2026-04-02T13:00:00Z",
+      }),
+      agora,
+      FORTALEZA,
+    );
+    // Em 03/10/2026, hoje menos 6 meses (03/04) passa do dia 02/04.
+    expect(semConsulta6m).toEqual({ medido: false, contaDesde: "03/10/2026" });
+  });
+
+  it("fim de mes: a contagem comeca no primeiro dia em que o banco ja contaria", () => {
+    // Atendido em 31/08/2026. Em 28/02/2027 o banco olha 28/08/2026 (ainda
+    // antes do atendimento); em 01/03/2027 olha 01/09/2026 e passa a contar.
+    const { semConsulta6m } = cartoesDePacientes(
+      metricas({ primeiro_comparecimento: "2026-08-31T13:00:00Z" }),
+      agora,
+      FORTALEZA,
+    );
+    expect(semConsulta6m).toEqual({ medido: false, contaDesde: "01/03/2027" });
+  });
+
+  it("o dia do primeiro atendimento e o do fuso da clinica", () => {
+    // 02/04/2026 01:00 UTC ainda e 01/04 em Fortaleza: ja mede.
+    const { semConsulta6m } = cartoesDePacientes(
+      metricas({
+        sem_contato_6m: 4,
+        primeiro_comparecimento: "2026-04-02T01:00:00Z",
+      }),
+      agora,
+      FORTALEZA,
+    );
+    expect(semConsulta6m).toEqual({ medido: true, valor: 4 });
   });
 });
