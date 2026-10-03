@@ -57,6 +57,15 @@ type Params = {
     | "ficha_paciente"
     | "confirmacoes"
     | "lista_espera"
+    // Atividades do lead ou paciente (contact_activity): o texto pode ser
+    // dado de saude. Sem id na tela de lista; com o id do CONTATO quando a
+    // leitura e das atividades de um contato so (painel da conversa).
+    | "atividades"
+    // Historico das automacoes de fluxo (Configuracoes): mostra o nome do
+    // contato de cada execucao, lead ou paciente. Entidade propria para nao
+    // se confundir com a lista de Leads na janela de 5 minutos. Sem id
+    // (tela de lista).
+    | "automacoes_de_fluxo"
     // Abertura de ARQUIVO de paciente (foto, audio, documento). Diferente das
     // demais: a trilha desta e BLOQUEANTE, ver auditarAberturaDeMidia.
     | "midia_conversa";

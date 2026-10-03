@@ -56,6 +56,11 @@ import {
 } from "@/lib/queries/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { canEdit, permissionHint, type Role } from "@/lib/domain/permissions";
+import type { RespostaRapida } from "@/lib/domain/respostas-rapidas";
+import {
+  fetchRespostasAtivas,
+  respostasKeys,
+} from "@/lib/queries/respostas-rapidas";
 import {
   conciliarEnvios,
   enviosDaConversa,
@@ -90,6 +95,8 @@ export function InboxClient({
   nomesDeEtapa,
   jornada,
   etiquetas,
+  respostasRapidas,
+  nomeDaClinica,
   authorNames,
   initialConversations,
   numerosIniciais,
@@ -110,6 +117,13 @@ export function InboxClient({
   jornada: EtapaDaJornada[];
   /** Catalogo de etiquetas de conversa da clinica. */
   etiquetas: EtiquetaDeConversa[];
+  /**
+   * As mensagens padrao ATIVAS da clinica (o "/" do compositor). Nulo: a
+   * leitura do servidor falhou, e o cliente tenta de novo.
+   */
+  respostasRapidas: RespostaRapida[] | null;
+  /** Nome da clinica, para o {{clinica}} das mensagens padrao. */
+  nomeDaClinica: string;
   authorNames: Record<string, string>;
   initialConversations: ConversationListItem[];
   /**
@@ -210,6 +224,32 @@ export function InboxClient({
     staleTime: 60_000,
   });
   const catalogoDeEtiquetas = etiquetasQuery.data ?? etiquetas;
+
+  // Mensagens padrao: mesmo molde das etiquetas. Leitura do servidor que
+  // falhou chega nula e o cliente busca de novo (carregando, depois erro com
+  // Tentar de novo, dentro da propria lista do compositor).
+  useDadosDoServidor(
+    respostasKeys.ativas(clinicId),
+    respostasRapidas ?? undefined,
+  );
+  const respostasQuery = useQuery({
+    queryKey: respostasKeys.ativas(clinicId),
+    queryFn: () => fetchRespostasAtivas(supabase, clinicId),
+    initialData: respostasRapidas ?? undefined,
+    staleTime: 60_000,
+  });
+  const mensagensPadrao = {
+    // "Tentar de novo" volta a mostrar carregando enquanto busca.
+    estado: respostasQuery.data
+      ? ("pronto" as const)
+      : respostasQuery.isError && !respostasQuery.isFetching
+        ? ("erro" as const)
+        : ("carregando" as const),
+    lista: respostasQuery.data ?? [],
+    aoTentarDeNovo: () => void respostasQuery.refetch(),
+    // Cadastrar e de Configuracoes: administrador e gestor.
+    podeCadastrar: canEdit(viewerRole, "configuracoes"),
+  };
   const dicaEtiquetar =
     permissionHint(viewerRole, "atendimento") ??
     "Seu perfil não altera esta conversa";
@@ -968,6 +1008,8 @@ export function InboxClient({
                 aoPerderConversa={perderConversa}
                 travaDoNumero={travaDoSelecionado}
                 podeReconectar={podeReconectar}
+                mensagensPadrao={mensagensPadrao}
+                nomeDaClinica={nomeDaClinica}
               />
             }
           />

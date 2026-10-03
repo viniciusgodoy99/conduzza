@@ -19,8 +19,10 @@ import {
 import {
   catalogoKeys,
   fetchCatalogo,
+  fetchMatrizDeConvenios,
   fetchUsoDosPacotes,
   type Catalogo,
+  type MatrizDeConvenios,
   type UsoDoPacote,
 } from "@/lib/queries/catalogo";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
@@ -30,13 +32,20 @@ import { ABAS_DE_CADASTROS, abaDeCadastros, type AbaDeCadastros } from "./abas";
 
 // Tela 8: as cinco abas do catalogo (lista e motivo em ./abas). A aba vive
 // na URL (?aba=procedimentos) para link direto. O catalogo inteiro vem numa
-// query so (tabelas pequenas) e toda mutacao invalida essa chave unica. Abas
+// query so (tabelas pequenas) e toda mutacao invalida essa chave unica (a
+// matriz de convenios e o uso dos pacotes moram sob o mesmo prefixo). Abas
 // sublinhadas do design system (5 ou mais vistas), com a contagem de cada
 // lista; em tela estreita a fileira rola na horizontal em vez de quebrar
 // linha.
 
 export type TabProps = {
   catalogo: Catalogo;
+  /**
+   * Quem atende e o que cobre (professional_insurance e procedure_insurance),
+   * completos. Usada pelos modais do Profissional e do Procedimento; as
+   * outras abas ignoram.
+   */
+  matriz: MatrizDeConvenios;
   podeEditar: boolean;
   dica: string;
   aoMudar: () => void;
@@ -46,6 +55,7 @@ export type TabProps = {
 export function CadastrosClient({
   clinicId,
   catalogoInicial,
+  matrizInicial,
   usoDosPacotesInicial,
   abaInicial,
   podeEditar,
@@ -54,6 +64,7 @@ export function CadastrosClient({
 }: {
   clinicId: string;
   catalogoInicial: Catalogo;
+  matrizInicial: MatrizDeConvenios;
   // null quando a leitura no servidor falhou: a aba tenta de novo aqui.
   usoDosPacotesInicial: Record<string, UsoDoPacote> | null;
   abaInicial?: string;
@@ -81,6 +92,19 @@ export function CadastrosClient({
   });
   const catalogo = catalogoQuery.data;
 
+  // Matriz de convenios: chave sob o prefixo do catalogo, entao o aoMudar
+  // abaixo recarrega os dois. Se um refetch falhar, fica a ultima matriz
+  // lida; os modais mandam o que leram na abertura e a RPC recusa a aba
+  // parada (CZ409), entao uma matriz velha nunca grava por cima.
+  useDadosDoServidor(catalogoKeys.matriz(clinicId), matrizInicial);
+  const matrizQuery = useQuery({
+    queryKey: catalogoKeys.matriz(clinicId),
+    queryFn: () => fetchMatrizDeConvenios(supabase, clinicId),
+    initialData: matrizInicial,
+    staleTime: 30_000,
+  });
+  const matriz = matrizQuery.data;
+
   // Vendas e pacientes com saldo por pacote (aba Pacotes). A chave comeca
   // com o prefixo do catalogo: o invalidate de aoMudar recarrega os dois.
   useDadosDoServidor(
@@ -94,6 +118,9 @@ export function CadastrosClient({
     staleTime: 30_000,
   });
 
+  // Invalida o PREFIXO ["catalogo", clinicId]: catalogo, matriz de
+  // convenios e uso dos pacotes. As telas chamam tambem quando a RPC recusa
+  // a aba parada (code "cadastro_mudou"), para o modal reabrir com o atual.
   const aoMudar = () => {
     void queryClient.invalidateQueries({
       queryKey: catalogoKeys.tudo(clinicId),
@@ -106,7 +133,14 @@ export function CadastrosClient({
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
-  const tabProps: TabProps = { catalogo, podeEditar, dica, aoMudar, timezone };
+  const tabProps: TabProps = {
+    catalogo,
+    matriz,
+    podeEditar,
+    dica,
+    aoMudar,
+    timezone,
+  };
 
   const contagem: Record<AbaDeCadastros, number> = {
     profissionais: catalogo.profissionais.length,

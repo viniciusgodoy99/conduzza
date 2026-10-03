@@ -10,8 +10,9 @@ export const jornadaKeys = {
   daClinica: (clinicId: string) => ["jornada", clinicId] as const,
 };
 
+// descricao e termos_de_quem: migration 20261002120000 (CRM, Leva A).
 const JORNADA_SELECT =
-  "id, chave, nome, posicao, tom, icone, papel, termos_chave, meta_event_name, conversao_ativa, is_sale, is_first_contact, value_source, value_cents";
+  "id, chave, nome, posicao, tom, icone, papel, descricao, termos_chave, termos_de_quem, meta_event_name, conversao_ativa, is_sale, is_first_contact, value_source, value_cents";
 
 export async function fetchJornada(
   supabase: SupabaseClient,

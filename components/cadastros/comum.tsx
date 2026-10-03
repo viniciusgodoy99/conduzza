@@ -10,6 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { useEffect, useMemo, useRef } from "react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { Aviso } from "@/components/shared/aviso";
@@ -274,21 +275,112 @@ export function RodapeDeSalvar({
   aoCancelar,
   aoSalvar,
   rotuloSalvar = "Salvar",
+  idDoSalvar,
 }: {
   salvando: boolean;
   aoCancelar: () => void;
   aoSalvar: () => void;
   rotuloSalvar?: string;
+  /** Para o foco voltar ao Salvar (useFocoDeVoltaAoSalvar) */
+  idDoSalvar?: string;
 }) {
   return (
     <>
       <Button variant="ghost" onClick={aoCancelar}>
         Cancelar
       </Button>
-      <Button onClick={aoSalvar} disabled={salvando}>
+      <Button id={idDoSalvar} onClick={aoSalvar} disabled={salvando}>
         {salvando ? "Salvando..." : rotuloSalvar}
       </Button>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Foco do teclado nas confirmacoes que tomam o lugar do Salvar (achado de
+// 02/10/2026). O botao que tinha o foco sai da tela junto (o Salvar, quando
+// o aviso entra; o "mesmo assim", quando o aviso sai depois de gravar) e o
+// FocusScope do Radix joga o foco para o proprio modal, a dezenas de Tabs da
+// confirmacao. Estas pecas levam o foco para onde a pessoa precisa dele, e
+// so quando ele se perdeu: quem ja esta num campo ou botao fica onde esta.
+// ---------------------------------------------------------------------------
+
+/**
+ * O foco se perdeu: esta no body, num elemento que saiu da pagina ou num
+ * elemento fora da ordem do Tab (o modal do Radix e os alvos de foco tem
+ * tabIndex -1). Campo, botao, link e caixa de marcar tem tabIndex 0.
+ */
+export function focoPerdido(): boolean {
+  if (typeof document === "undefined" || typeof HTMLElement === "undefined") {
+    return false;
+  }
+  const ativo = document.activeElement;
+  return (
+    !(ativo instanceof HTMLElement) ||
+    ativo === document.body ||
+    !ativo.isConnected ||
+    ativo.tabIndex < 0
+  );
+}
+
+/**
+ * Ref de um alvo de foco (com tabIndex -1) que recebe o foco quando aparece,
+ * se o foco estiver perdido. So na montagem: um aviso que ja estava na tela
+ * nao rouba o foco de quem voltou a editar. Para um aviso novo tomar o lugar
+ * de outro do mesmo tipo, quem monta troca a `key`.
+ */
+export function useFocoAoAparecer<T extends HTMLElement>() {
+  const alvo = useRef<T>(null);
+  useEffect(() => {
+    if (focoPerdido()) {
+      alvo.current?.focus();
+    }
+  }, []);
+  return alvo;
+}
+
+/**
+ * Devolve o foco ao Salvar do rodape quando a confirmacao sai depois de
+ * gravar e o modal continua aberto (erro, cadastro mudou, gravacao parcial):
+ * o botao que tinha o foco saiu com o aviso. Quem chama marca com
+ * `devolver()` no mesmo passo em que tira o aviso. A volta acontece quando o
+ * Salvar esta na tela e habilitado (sem aviso e sem gravacao em curso) e so
+ * se o foco estiver perdido. Aviso novo esquece o pedido (o foco vai para
+ * ele), e quem fecha ou reabre o modal chama `esquecer()`.
+ */
+export function useFocoDeVoltaAoSalvar(
+  idDoSalvar: string,
+  { avisoAberto, salvando }: { avisoAberto: boolean; salvando: boolean },
+) {
+  const pendente = useRef(false);
+  useEffect(() => {
+    if (avisoAberto) {
+      pendente.current = false;
+      return;
+    }
+    if (salvando || !pendente.current) {
+      return;
+    }
+    pendente.current = false;
+    const botao = document.getElementById(idDoSalvar);
+    if (
+      botao instanceof HTMLButtonElement &&
+      !botao.disabled &&
+      focoPerdido()
+    ) {
+      botao.focus();
+    }
+  }, [idDoSalvar, avisoAberto, salvando]);
+  return useMemo(
+    () => ({
+      devolver: () => {
+        pendente.current = true;
+      },
+      esquecer: () => {
+        pendente.current = false;
+      },
+    }),
+    [],
   );
 }
 
@@ -397,7 +489,21 @@ export function CampoDeMarcar({
 
 // Aviso de consultas ja marcadas no periodo afetado (achado 37): bloqueio e
 // desativacao nao desmarcam nada, entao a tela conta, avisa e so segue com
-// confirmacao explicita. Datas no fuso da clinica (regra 3.6).
+// confirmacao explicita. Datas no fuso da clinica (regra 3.6). O `titulo`
+// troca so a frase em negrito (tirar convenio nao e "neste periodo"); sem
+// ele, vale o texto de sempre.
+//
+// Sem consulta (tirar convenio que so tira o profissional de um
+// procedimento, D3 de 02/10/2026), ficam so o titulo e a confirmacao: o
+// corpo ("as consultas continuam valendo...") falaria do que nao existe, e
+// o "Abrir a Agenda" sairia de Cadastros perdendo a edicao sem motivo. A
+// confirmacao, sozinha, vai em outline. Cancelar continua no rodape.
+//
+// Foco do teclado: o aviso entra no lugar do Salvar, que sai com o foco.
+// O proprio aviso recebe o foco (fora da ordem do Tab): o proximo Tab cai na
+// primeira acao e um Enter repetido nao confirma nada sem leitura. Quando a
+// confirmacao termina com o aviso ainda na tela (erro), o foco volta para
+// ela.
 export function AvisoDeConsultas({
   consultas,
   primeira,
@@ -405,6 +511,8 @@ export function AvisoDeConsultas({
   rotuloConfirmar,
   confirmando,
   aoConfirmar,
+  titulo,
+  id,
 }: {
   consultas: number;
   primeira: string | null;
@@ -412,7 +520,22 @@ export function AvisoDeConsultas({
   rotuloConfirmar: string;
   confirmando: boolean;
   aoConfirmar: () => void;
+  /** Substitui "Há N consultas marcadas neste período. Remarque ou cancele." */
+  titulo?: React.ReactNode;
+  /** Id do alvo de foco (o contorno do aviso) */
+  id?: string;
 }) {
+  const temConsultas = consultas > 0;
+  const alvo = useFocoAoAparecer<HTMLDivElement>();
+  const botaoConfirmar = useRef<HTMLButtonElement>(null);
+  const confirmandoAntes = useRef(confirmando);
+  useEffect(() => {
+    // O botao fica desabilitado enquanto grava e perde o foco.
+    if (confirmandoAntes.current && !confirmando && focoPerdido()) {
+      botaoConfirmar.current?.focus();
+    }
+    confirmandoAntes.current = confirmando;
+  }, [confirmando]);
   const quando = primeira
     ? `${new Date(primeira).toLocaleDateString("pt-BR", {
         timeZone: timezone,
@@ -427,32 +550,49 @@ export function AvisoDeConsultas({
   // Atencao e CircleAlert (padrao do Aviso warning): TriangleAlert e so do
   // status Faltou (tabela de icones reservados, docs/06 secao 4.6).
   return (
-    <Aviso tom="warning" role="alert">
-      <p className="text-[13.5px] leading-[1.35] font-bold">
-        Há <span className="cz-num">{consultas}</span>{" "}
-        {consultas === 1 ? "consulta marcada" : "consultas marcadas"} neste
-        período. Remarque ou cancele.
-      </p>
-      <p className="mt-1">
-        {quando ? (
-          <>
-            A primeira é em <span className="cz-num">{quando}</span>.{" "}
-          </>
+    // Alvo do foco com o raio do Aviso (o contorno :focus-visible global
+    // acompanha a caixa).
+    <div ref={alvo} id={id} tabIndex={-1} className="rounded-xl">
+      <Aviso tom="warning" role="alert">
+        <p className="text-[13.5px] leading-[1.35] font-bold">
+          {titulo ?? (
+            <>
+              Há <span className="cz-num">{consultas}</span>{" "}
+              {consultas === 1 ? "consulta marcada" : "consultas marcadas"}{" "}
+              neste período. Remarque ou cancele.
+            </>
+          )}
+        </p>
+        {temConsultas ? (
+          <p className="mt-1">
+            {quando ? (
+              <>
+                A primeira é em <span className="cz-num">{quando}</span>.{" "}
+              </>
+            ) : null}
+            Esta ação não desmarca nada: as consultas continuam valendo e os
+            lembretes continuam saindo para os pacientes.
+          </p>
         ) : null}
-        Esta ação não desmarca nada: as consultas continuam valendo e os
-        lembretes continuam saindo para os pacientes.
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button asChild variant="outline">
-          <Link href="/agenda">
-            <CalendarDays aria-hidden /> Abrir a Agenda
-          </Link>
-        </Button>
-        <Button variant="ghost" onClick={aoConfirmar} disabled={confirmando}>
-          {confirmando ? "Salvando..." : rotuloConfirmar}
-        </Button>
-      </div>
-    </Aviso>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {temConsultas ? (
+            <Button asChild variant="outline">
+              <Link href="/agenda">
+                <CalendarDays aria-hidden /> Abrir a Agenda
+              </Link>
+            </Button>
+          ) : null}
+          <Button
+            ref={botaoConfirmar}
+            variant={temConsultas ? "ghost" : "outline"}
+            onClick={aoConfirmar}
+            disabled={confirmando}
+          >
+            {confirmando ? "Salvando..." : rotuloConfirmar}
+          </Button>
+        </div>
+      </Aviso>
+    </div>
   );
 }
 

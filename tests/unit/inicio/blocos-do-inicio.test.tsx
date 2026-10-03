@@ -41,6 +41,14 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+// As linhas de atividades de Proximas acoes leem a sessao e o banco no
+// servidor (componente assincrono em Suspense): aqui entra um marcador, e o
+// desenho delas tem teste proprio (atividades-em-proximas-acoes.test.tsx).
+vi.mock("@/components/inicio/atividades-em-proximas-acoes", () => ({
+  LinhasDeAtividades: () => <li data-linhas-de-atividades="sim" />,
+  LinhasDeAtividadesCarregando: () => null,
+}));
+
 const { IndicadoresDoDia } =
   await import("@/components/inicio/indicadores-do-dia");
 const { ConsultasPorDia } =
@@ -341,6 +349,8 @@ describe("Painel", () => {
     expect(visivel).toContain("Próximas ações");
     expect(visivel).toContain("Consultas por dia, últimos 7 dias");
     expect(visivel).toContain("Funil de leads");
+    // As linhas de atividades entram no cartao de Proximas acoes.
+    expect(markup).toContain('data-linhas-de-atividades="sim"');
     // Sairam do Inicio na Fase 3.
     for (const fora of [
       "Consultas recuperadas",

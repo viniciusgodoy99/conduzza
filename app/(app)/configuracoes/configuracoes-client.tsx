@@ -3,10 +3,12 @@
 import { Hourglass } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { AutomacoesDeFluxoTab } from "@/components/configuracoes/automacoes-de-fluxo-tab";
 import { ClinicaTab } from "@/components/configuracoes/clinica-tab";
 import { EtiquetasTab } from "@/components/configuracoes/etiquetas-tab";
 import { JornadaTab } from "@/components/configuracoes/jornada-tab";
 import { ListaEquipe } from "@/components/configuracoes/lista-equipe";
+import { MensagensPadraoTab } from "@/components/configuracoes/mensagens-padrao-tab";
 import type {
   MembroEquipe,
   ProfissionalDaAgenda,
@@ -35,8 +37,10 @@ import {
   ListaDeNumeros,
   type ListaDeNumerosProps,
 } from "@/components/whatsapp/lista-de-numeros";
+import type { AutomacaoDeFluxo } from "@/lib/domain/automacoes-de-fluxo";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
+import type { RespostaRapida } from "@/lib/domain/respostas-rapidas";
 
 import { CodigoAcesso, PendentesList } from "./equipe-client";
 import type { Pendente } from "./equipe-client";
@@ -46,7 +50,7 @@ import { InviteForm } from "./invite-form";
 // do navegador funcionar, mesmo padrao de Cadastros. "?aba=conversoes" segue
 // valendo como link antigo: cai na jornada, que absorveu aquela aba.
 //
-// Abas sublinhadas do design system (6 vistas), com contadores. Na equipe, o
+// Abas sublinhadas do design system (8 vistas), com contadores. Na equipe, o
 // segundo contador e o de pedidos aguardando liberacao (ampulheta, tom de
 // atencao e o texto por extenso para leitor de tela). Cada aba mostra o
 // proprio erro de carregamento em vez de derrubar a tela inteira.
@@ -56,7 +60,11 @@ const ABAS = [
   ["clinica", "Clínica"],
   ["whatsapp", "WhatsApp"],
   ["jornada", "Jornada e conversões"],
+  // Automacoes de fluxo (02/10/2026): logo depois da jornada, que e de onde
+  // vem a etapa de toda regra.
+  ["fluxo", "Automações de fluxo"],
   ["etiquetas", "Etiquetas de conversa"],
+  ["mensagens", "Mensagens padrão"],
   ["meta", "Anúncios da Meta"],
 ] as const;
 
@@ -102,7 +110,9 @@ export function ConfiguracoesClient({
   codigoAtivo,
   whatsapp,
   jornada,
+  fluxo,
   etiquetas,
+  mensagens,
   meta,
 }: {
   abaInicial?: string;
@@ -131,9 +141,23 @@ export function ConfiguracoesClient({
     "podeGerenciar" | "ehAdmin" | "dica"
   > | null;
   jornada: EtapaDaJornada[] | null;
+  /**
+   * As automacoes de fluxo e o que a aba precisa da clinica (a chave do
+   * cache e o fuso do historico). Nulo: a leitura das regras falhou.
+   */
+  fluxo: {
+    lista: AutomacaoDeFluxo[];
+    clinicId: string;
+    timezone: string;
+  } | null;
   etiquetas: {
     lista: EtiquetaDeConversa[];
     contagem: Record<string, number>;
+  } | null;
+  /** As mensagens padrao (todas) e o nome da clinica para a previa. */
+  mensagens: {
+    lista: RespostaRapida[];
+    nomeDaClinica: string;
   } | null;
   meta: { conta: ContaMeta | null; temToken: boolean } | null;
 }) {
@@ -179,8 +203,14 @@ export function ConfiguracoesClient({
     if (aba === "jornada" && jornada) {
       return <Contagem valor={jornada.length} rotulo="etapas" />;
     }
+    if (aba === "fluxo" && fluxo) {
+      return <Contagem valor={fluxo.lista.length} rotulo="automações" />;
+    }
     if (aba === "etiquetas" && etiquetas) {
       return <Contagem valor={etiquetas.lista.length} rotulo="etiquetas" />;
+    }
+    if (aba === "mensagens" && mensagens) {
+      return <Contagem valor={mensagens.lista.length} rotulo="mensagens" />;
     }
     return null;
   };
@@ -306,6 +336,28 @@ export function ConfiguracoesClient({
         )}
       </TabsContent>
 
+      <TabsContent value="fluxo" className="grid gap-4">
+        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
+          Regras que andam com o lead sozinhas: quando ele fica parado, deixa de
+          responder, entra numa etapa ou manda mensagem, a automação move de
+          etapa, coloca etiqueta, cria uma atividade ou deixa uma nota interna.
+          Nenhuma delas manda mensagem para o paciente.
+        </p>
+        {fluxo && jornada ? (
+          <AutomacoesDeFluxoTab
+            automacoes={fluxo.lista}
+            jornada={jornada}
+            etiquetas={etiquetas?.lista ?? null}
+            clinicId={fluxo.clinicId}
+            timezone={fluxo.timezone}
+            podeGerenciar={podeGerenciar}
+            dica={dica}
+          />
+        ) : (
+          <ErroDaAba titulo="Não foi possível carregar as automações de fluxo" />
+        )}
+      </TabsContent>
+
       <TabsContent value="etiquetas" className="grid gap-4">
         <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
           As etiquetas que a equipe usa para marcar o estado de uma conversa no
@@ -321,6 +373,25 @@ export function ConfiguracoesClient({
           />
         ) : (
           <ErroDaAba titulo="Não foi possível carregar as etiquetas" />
+        )}
+      </TabsContent>
+
+      <TabsContent value="mensagens" className="grid gap-4">
+        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
+          Textos prontos que a equipe usa no Atendimento: na resposta ao
+          paciente, digite / e escolha um. O texto entra no campo com o nome do
+          contato, para revisar antes de enviar; nada sai sozinho. Criar e
+          editar é da administração.
+        </p>
+        {mensagens ? (
+          <MensagensPadraoTab
+            mensagens={mensagens.lista}
+            nomeDaClinica={mensagens.nomeDaClinica}
+            podeGerenciar={podeGerenciar}
+            dica={dica}
+          />
+        ) : (
+          <ErroDaAba titulo="Não foi possível carregar as mensagens padrão" />
         )}
       </TabsContent>
 

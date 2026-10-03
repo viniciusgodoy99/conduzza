@@ -1,3 +1,4 @@
+import { ListChecks } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -47,6 +48,19 @@ describe("blocos do menu", () => {
     for (const item of NAV_ITEMS) {
       expect(NAV_GROUP_ORDER).toContain(item.group);
     }
+  });
+
+  it("Atividades logo depois de Leads, com a matriz de Leads e Pacientes", () => {
+    const hrefs = NAV_ITEMS.map((item) => item.href);
+    expect(hrefs.indexOf("/atividades")).toBe(hrefs.indexOf("/leads") + 1);
+    const atividades = NAV_ITEMS.find((item) => item.href === "/atividades");
+    expect(atividades?.label).toBe("Atividades");
+    expect(atividades?.icon).toBe(ListChecks);
+    expect(atividades?.group).toBe("principal");
+    expect(atividades?.moduleKey).toBe("leads_pacientes");
+    // Sem contador nesta versao (decisao de 02/10).
+    expect(atividades?.badge).toBeUndefined();
+    expect(itemDaRota("/atividades")?.href).toBe("/atividades");
   });
 
   it("contadores so em Atendimento e Confirmações", () => {

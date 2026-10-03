@@ -70,6 +70,13 @@ export type InboundEvent =
       phone: string;
       waMessageId: string;
       /**
+       * O texto que a clinica escreveu no celular (ou a legenda), aparado;
+       * null sem texto. Serve SO para o termo-chave da jornada escrito pela
+       * clinica (pedido do dono em 02/10/2026): nao e gravado em lugar
+       * nenhum e NUNCA vai para log (regra 3.1).
+       */
+      body: string | null;
+      /**
        * Quando a mensagem saiu do celular (ISO), se o payload trouxe o
        * horario. Serve para reconhecer a resposta AUTOMATICA do app WhatsApp
        * Business (saudacao, ausencia), que sai segundos depois da mensagem do
@@ -361,6 +368,40 @@ export function limiteParaRespostaDePessoa(
   return new Date(base - JANELA_DE_RESPOSTA_AUTOMATICA_MS).toISOString();
 }
 
+/**
+ * Ate quanto tempo depois de sair do celular o eco ainda conta para o
+ * termo-chave da jornada. O eco de verdade chega em segundos; o que passa
+ * disso e eco atrasado, reentregue ou a sincronia de historico do aparelho
+ * reconectando, e mover lead por mensagem velha poderia desfazer o que uma
+ * pessoa ja arrumou a mao.
+ */
+export const JANELA_DO_ECO_PARA_TERMO_MS = 2 * 60 * 1000;
+
+/**
+ * O eco do celular pode andar o lead por termo-chave? Primeiro filtro, pelo
+ * horario de envio do payload: so conta o eco que saiu do celular dentro da
+ * janela (ate 1 minuto no futuro, pela folga de relogio, como em
+ * limiteParaRespostaDePessoa). Sem horario no payload nao da para provar que
+ * e novo, entao nao move.
+ *
+ * A janela sozinha NAO separa o eco novo da reentrega: o eco nao vira
+ * mensagem na conversa, entao nao ha "linha inserida" como na ingestao, e a
+ * reentrega dentro da janela moveria de novo o lead que alguem voltou a mao.
+ * A garantia de "nunca reentrega" e a marca por wa_message_id no banco
+ * (marcar_eco_para_termo, chamada pela rota do webhook depois deste filtro).
+ */
+export function ecoContaParaTermo(
+  enviadaEm: string | null,
+  agoraMs: number,
+): boolean {
+  const enviadaMs = enviadaEm ? Date.parse(enviadaEm) : NaN;
+  return (
+    Number.isFinite(enviadaMs) &&
+    enviadaMs >= agoraMs - JANELA_DO_ECO_PARA_TERMO_MS &&
+    enviadaMs <= agoraMs + 60 * 1000
+  );
+}
+
 function mapConnectionStatus(
   raw: string | undefined,
 ): "desconectado" | "aguardando_qr" | "conectando" | "conectado" {
@@ -623,6 +664,7 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
         kind: "clinic_device_reply",
         phone: destino,
         waMessageId,
+        body: (mensagem.text as string | undefined)?.trim() || null,
         enviadaEm: instanteDoPayload(mensagem.messageTimestamp),
         marcadoresDeEnvioAutomatico: marcadoresDeEnvioAutomatico(mensagem),
         instanceToken,

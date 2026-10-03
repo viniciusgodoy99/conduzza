@@ -118,9 +118,35 @@ export type Catalogo = {
   recursos: Recurso[];
   procedimentos: Procedimento[];
   convenios: Convenio[];
+  /**
+   * So os vinculos ATIVOS (desde 02/10/2026). Todo leitor ja filtrava
+   * `active` (Agenda, modal da consulta, remarcacao e o modal do
+   * Procedimento); o campo `active` fica no tipo, sempre true.
+   */
   vinculos: Vinculo[];
   pacotes: Pacote[];
   unidades: Unidade[];
+};
+
+// Convenio pelo medico (decisao do dono em 02/10/2026; migration
+// 20261002140000_convenio_pelo_medico.sql). Lidos SO por Cadastros e pela
+// sincronia: a Agenda, a IA, o preco e as conversoes continuam lendo so
+// service_link.
+
+/** professional_insurance: o profissional atende o convenio */
+export type Atendimento = { professional_id: string; insurance_id: string };
+
+/** procedure_insurance: o convenio cobre o procedimento */
+export type Cobertura = { procedure_id: string; insurance_id: string };
+
+/**
+ * Os pares das duas tabelas, COMPLETOS. Fica fora do Catalogo de proposito:
+ * o Catalogo e usado pela Agenda, Pacientes e Confirmacoes, que nao precisam
+ * disto e nao podem cair por isto.
+ */
+export type MatrizDeConvenios = {
+  atendimentos: Atendimento[];
+  coberturas: Cobertura[];
 };
 
 export const catalogoKeys = {
@@ -128,13 +154,112 @@ export const catalogoKeys = {
   // Mesmo prefixo: invalidar tudo(clinicId) invalida o uso dos pacotes junto.
   usoDosPacotes: (clinicId: string) =>
     ["catalogo", clinicId, "uso-dos-pacotes"] as const,
+  // Mesmo prefixo de proposito: o aoMudar de Cadastros (invalidate de
+  // tudo(clinicId)) recarrega a matriz junto com o catalogo.
+  matriz: (clinicId: string) =>
+    ["catalogo", clinicId, "matriz-de-convenios"] as const,
 };
+
+// O PostgREST corta toda leitura em max_rows linhas SEM erro
+// (supabase/config.toml, max_rows = 1000). Para as tabelas que podem passar
+// disso e cujo corte silencioso faz mal (vinculos e os pares de convenio:
+// um corte vira aba "parada" para sempre na trava otimista das RPCs e faz o
+// proximo Salvar desativar o que nao veio), a leitura pagina por id.
+const PAGINA = 1000;
+
+type PaginaLida = {
+  data: unknown[] | null;
+  error: { message: string } | null;
+};
+
+/**
+ * Le todas as paginas ate vir uma com menos de PAGINA linhas. Erro em
+ * qualquer pagina LANCA: a lista cortada nunca e entregue (quem chama
+ * derruba a tela inteira, que e melhor do que salvar em cima de dado
+ * incompleto). A consulta tem de vir ordenada por uma chave unica (id).
+ */
+async function lerTodasAsPaginas<T>(
+  pagina: (de: number, ate: number) => PromiseLike<PaginaLida>,
+): Promise<T[]> {
+  const linhas: T[] = [];
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await pagina(de, de + PAGINA - 1);
+    if (error) {
+      throw new Error(error.message);
+    }
+    const lidas = (data ?? []) as T[];
+    linhas.push(...lidas);
+    if (lidas.length < PAGINA) {
+      return linhas;
+    }
+  }
+}
+
+// Vinculos ATIVOS da clinica, paginados. Inativo nao entra: ninguem le (a
+// Agenda so oferece ativo, o modal do Procedimento so mostra ativo, a
+// remarcacao so troca para ativo) e ele so engordava a leitura.
+function lerVinculosAtivos(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<Vinculo[]> {
+  return lerTodasAsPaginas<Vinculo>((de, ate) =>
+    supabase
+      .from("service_link")
+      .select(
+        "id, professional_id, procedure_id, insurance_id, price_cents, covered_by_insurance, duration_min, bookable_by_ai, active",
+      )
+      .eq("clinic_id", clinicId)
+      .eq("active", true)
+      .order("id")
+      .range(de, ate),
+  );
+}
+
+/**
+ * Os pares de convenio da clinica (quem atende e o que cobre), completos.
+ * Filtra pela clinica ativa: a RLS deixa quem e membro de duas clinicas ler
+ * as duas. Erro LANCA (nunca uma matriz vazia ou cortada: a tela abriria os
+ * modais sem os convenios gravados e o proximo Salvar os apagaria).
+ */
+export async function fetchMatrizDeConvenios(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<MatrizDeConvenios> {
+  const [atendimentos, coberturas] = await Promise.all([
+    lerTodasAsPaginas<Atendimento>((de, ate) =>
+      supabase
+        .from("professional_insurance")
+        .select("professional_id, insurance_id")
+        .eq("clinic_id", clinicId)
+        .order("id")
+        .range(de, ate),
+    ),
+    lerTodasAsPaginas<Cobertura>((de, ate) =>
+      supabase
+        .from("procedure_insurance")
+        .select("procedure_id, insurance_id")
+        .eq("clinic_id", clinicId)
+        .order("id")
+        .range(de, ate),
+    ),
+  ]);
+  return {
+    atendimentos: atendimentos.map((par) => ({
+      professional_id: par.professional_id,
+      insurance_id: par.insurance_id,
+    })),
+    coberturas: coberturas.map((par) => ({
+      procedure_id: par.procedure_id,
+      insurance_id: par.insurance_id,
+    })),
+  };
+}
 
 // O catalogo inteiro numa carga so: sao tabelas pequenas (dezenas de linhas
 // por clinica) e as abas, os filtros da Agenda e o modal precisam de tudo
-// junto. Uma requisicao por tabela, em paralelo. Bloqueio nao e catalogo:
-// desde 29/09/2026 ele e acao da Agenda, que o busca por dia
-// (fetchAgendaDia em lib/queries/agenda.ts).
+// junto. Uma requisicao por tabela, em paralelo (os vinculos, paginados).
+// Bloqueio nao e catalogo: desde 29/09/2026 ele e acao da Agenda, que o
+// busca por dia (fetchAgendaDia em lib/queries/agenda.ts).
 export async function fetchCatalogo(
   supabase: SupabaseClient,
   clinicId: string,
@@ -179,12 +304,8 @@ export async function fetchCatalogo(
       .select("id, name, plan_name, requires_card, notes, active")
       .eq("clinic_id", clinicId)
       .order("name"),
-    supabase
-      .from("service_link")
-      .select(
-        "id, professional_id, procedure_id, insurance_id, price_cents, covered_by_insurance, duration_min, bookable_by_ai, active",
-      )
-      .eq("clinic_id", clinicId),
+    // Erro aqui LANCA (dentro de lerTodasAsPaginas) e derruba o Promise.all.
+    lerVinculosAtivos(supabase, clinicId),
     supabase
       .from("package")
       .select(
@@ -205,7 +326,6 @@ export async function fetchCatalogo(
     recursos,
     procedimentos,
     convenios,
-    vinculos,
     pacotes,
     unidades,
   ]) {
@@ -221,7 +341,7 @@ export async function fetchCatalogo(
     recursos: (recursos.data ?? []) as Recurso[],
     procedimentos: listaDeProcedimentos,
     convenios: (convenios.data ?? []) as Convenio[],
-    vinculos: (vinculos.data ?? []) as Vinculo[],
+    vinculos,
     pacotes: ((pacotes.data ?? []) as Record<string, unknown>[]).map((linha) =>
       normalizarPacote(linha, listaDeProcedimentos),
     ),

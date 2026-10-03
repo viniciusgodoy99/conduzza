@@ -34,7 +34,10 @@ import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { instanteLocal } from "@/lib/domain/horarios";
-import type { EtapaDaJornada } from "@/lib/domain/jornada";
+import {
+  algumaEtapaComDescricao,
+  type EtapaDaJornada,
+} from "@/lib/domain/jornada";
 import { filtrarLeads, type FiltrosDeLeads } from "@/lib/domain/leads-ui";
 import {
   fetchLeads,
@@ -410,7 +413,10 @@ export function LeadsClient({
         </Card>
       ) : leadsQuery.isLoading ? (
         visaoEfetiva === "kanban" ? (
-          <ColunasCarregando colunas={jornada.length} />
+          <ColunasCarregando
+            colunas={jornada.length}
+            comDescricao={algumaEtapaComDescricao(jornada)}
+          />
         ) : (
           <TableSkeleton columns={9} />
         )

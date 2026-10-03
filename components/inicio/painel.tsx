@@ -8,6 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { Secao } from "@/components/relatorios/secao";
 import { BotaoRecarregar } from "@/components/shell/botao-recarregar";
@@ -16,6 +17,10 @@ import type { EtapaDoFunil, Leitura, ResumoDoDia } from "@/lib/queries/inicio";
 import type { ProximasAcoes } from "@/lib/queries/relatorios";
 import { cn } from "@/lib/utils";
 
+import {
+  LinhasDeAtividades,
+  LinhasDeAtividadesCarregando,
+} from "./atividades-em-proximas-acoes";
 import { ConsultasPorDia } from "./consultas-por-dia";
 import { FunilDeLeads } from "./funil-de-leads";
 import { IndicadoresDoDia } from "./indicadores-do-dia";
@@ -91,7 +96,10 @@ type ItemDeProximaAcao = {
 
 /** Card de Próximas ações, compartilhado com a visão do profissional (onde
  *  a RLS já recorta as contagens para "as dele"). Cada item leva à pendência
- *  já filtrada (achado 109): o Atendimento lê ?filtro= e abre no recorte. */
+ *  já filtrada (achado 109): o Atendimento lê ?filtro= e abre no recorte.
+ *  As duas linhas de atividades (as suas atrasadas e para hoje) vêm de um
+ *  componente de servidor próprio, em Suspense: a falha delas não derruba o
+ *  cartão nem o Início. */
 export function CartaoProximasAcoes({
   proximasAcoes,
   pedidosDeAcesso = 0,
@@ -163,6 +171,10 @@ export function CartaoProximasAcoes({
             </Link>
           </li>
         ))}
+        {/* Atividades: leitura propria, que chega depois e falha sozinha. */}
+        <Suspense fallback={<LinhasDeAtividadesCarregando />}>
+          <LinhasDeAtividades />
+        </Suspense>
       </ul>
     </Secao>
   );

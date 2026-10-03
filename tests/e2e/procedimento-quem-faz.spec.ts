@@ -14,8 +14,19 @@ import { login } from "./helpers";
 //   Agenda com o procedimento recem configurado (pela Unimed so aparece quem
 //   aceita Unimed);
 // - quem so ve Cadastros le quem faz e por quanto, sem Salvar.
+// Convenio pelo profissional (decisao do dono em 02/10/2026): acima de "Quem
+// faz" fica "Convênios que cobrem este procedimento", e cada profissional so
+// mostra os convenios que cobrem E que ele atende no cadastro dele, ja
+// marcados ao entrar; desmarcar no cartao dele e a excecao deste
+// procedimento. A fixture grava os pares coerentes com os vinculos (Joao e
+// Ana atendem Unimed; Endocrinologia e Dermatologia cobertas pela Unimed).
+// Tirar uma combinacao com consulta marcada pede confirmacao ANTES de
+// gravar (D4).
 
 const PREFIXO_DO_PROCEDIMENTO = "Retorno endócrino E2E";
+const COBREM = "Convênios que cobrem este procedimento";
+const FORA_DO_CADASTRO = "Fora do cadastro do profissional";
+const NOTA_DA_CURA = "Marcado porque já está em uso em Quem faz e convênios.";
 
 function apenasDesktop(): void {
   test.skip(
@@ -36,6 +47,10 @@ async function abrirProcedimento(page: Page, nome: string): Promise<Locator> {
     dialogo.getByRole("heading", { name: "Quem faz e convênios" }),
   ).toBeVisible();
   return dialogo;
+}
+
+function cobremDe(dialogo: Locator): Locator {
+  return dialogo.getByRole("group", { name: COBREM, exact: true });
 }
 
 function cartaoDe(dialogo: Locator, profissional: string): Locator {
@@ -87,16 +102,30 @@ test("o caso do Dr. João no modal do Procedimento", async ({ page }) => {
   await expect(linhaEndo).toContainText("Particular, Unimed");
 
   const dialogo = await abrirProcedimento(page, "Consulta endocrinologia");
+
+  // A Unimed cobre a consulta; o Bradesco nao. Os pares da fixture batem com
+  // os vinculos: nada vem marcado so pela auto cura.
+  const cobrem = cobremDe(dialogo);
+  await expect(
+    cobrem.getByRole("checkbox", { name: "Unimed", exact: true }),
+  ).toBeChecked();
+  await expect(
+    cobrem.getByRole("checkbox", { name: "Bradesco Saúde", exact: true }),
+  ).not.toBeChecked();
+  await expect(dialogo.getByText(NOTA_DA_CURA)).toHaveCount(0);
+
   const joao = cartaoDe(dialogo, "Dr. João Pereira");
   await expect(joao).toBeVisible();
 
-  // Ele aceita Unimed; Bradesco nao.
+  // Ele atende a Unimed e ela cobre: marcada. O Bradesco nao cobre este
+  // procedimento: nem aparece para marcar.
   await expect(
     joao.getByRole("checkbox", { name: "Unimed", exact: true }),
   ).toBeChecked();
   await expect(
     joao.getByRole("checkbox", { name: "Bradesco Saúde", exact: true }),
-  ).not.toBeChecked();
+  ).toHaveCount(0);
+  await expect(joao.getByText(FORA_DO_CADASTRO)).toHaveCount(0);
 
   // Coberto pelo convênio é rótulo, nunca moeda.
   const unimed = linhaDoConvenio(joao, "Unimed");
@@ -140,23 +169,51 @@ test("procedimento novo com quem faz, e a consulta marcada na Agenda", async ({
     dialogo.getByText("Ninguém faz este procedimento ainda."),
   ).toBeVisible();
 
-  // Dr. Joao: Particular pelo padrao e Unimed (Coberto pelo padrao).
+  // Dr. Joao entra pelo Particular. Nenhum convenio cobre ainda: so
+  // Particular para ele.
   await dialogo.getByRole("combobox", { name: "Adicionar quem faz" }).click();
   await page.getByRole("option", { name: "Dr. João Pereira" }).click();
   const joao = cartaoDe(dialogo, "Dr. João Pereira");
   await expect(
     joao.getByRole("checkbox", { name: "Particular", exact: true }),
   ).toBeChecked();
-  await joao.getByRole("checkbox", { name: "Unimed", exact: true }).click();
+  await expect(
+    dialogo.getByText(
+      "Nenhum convênio marcado: este procedimento é só Particular.",
+    ),
+  ).toBeVisible();
+  await expect(
+    joao.getByRole("checkbox", { name: "Unimed", exact: true }),
+  ).toHaveCount(0);
+
+  // A Unimed passa a cobrir: ele a atende no cadastro dele, entao ela entra
+  // ja marcada, Coberto pelo padrao. O Bradesco continua fora.
+  const cobrem = cobremDe(dialogo);
+  await cobrem.getByRole("checkbox", { name: "Unimed", exact: true }).click();
+  await expect(
+    joao.getByRole("checkbox", { name: "Unimed", exact: true }),
+  ).toBeChecked();
   await expect(linhaDoConvenio(joao, "Unimed")).toContainText("Coberto");
   await expect(linhaDoConvenio(joao, "Particular")).toContainText(
     /R\$\s?300,00/u,
   );
+  await expect(
+    joao.getByRole("checkbox", { name: "Bradesco Saúde", exact: true }),
+  ).toHaveCount(0);
 
-  // Dra. Ana: so Particular, com preco e duracao proprios.
+  // Dra. Ana tambem atende a Unimed e entra com ela marcada. Aqui ela so
+  // faz Particular: desmarcar no cartao dela e a excecao deste
+  // procedimento. Particular com preco e duracao proprios.
   await dialogo.getByRole("combobox", { name: "Adicionar quem faz" }).click();
   await page.getByRole("option", { name: "Dra. Ana Costa" }).click();
   const ana = cartaoDe(dialogo, "Dra. Ana Costa");
+  const unimedDaAna = ana.getByRole("checkbox", {
+    name: "Unimed",
+    exact: true,
+  });
+  await expect(unimedDaAna).toBeChecked();
+  await unimedDaAna.click();
+  await expect(unimedDaAna).not.toBeChecked();
   await ana
     .getByRole("button", { name: "Personalizar Particular de Dra. Ana Costa" })
     .click();
@@ -171,8 +228,12 @@ test("procedimento novo com quem faz, e a consulta marcada na Agenda", async ({
   await expect(linha).toContainText("Dra. Ana Costa");
   await expect(linha).toContainText("Particular, Unimed");
 
-  // Reaberto, o modal mostra o que foi gravado.
+  // Reaberto, o modal mostra o que foi gravado: a Unimed cobre, o Joao
+  // atende por ela e a excecao da Ana continua (a caixa existe, desmarcada).
   const reaberto = await abrirProcedimento(page, nome);
+  await expect(
+    cobremDe(reaberto).getByRole("checkbox", { name: "Unimed", exact: true }),
+  ).toBeChecked();
   const joaoGravado = cartaoDe(reaberto, "Dr. João Pereira");
   const anaGravada = cartaoDe(reaberto, "Dra. Ana Costa");
   await expect(
@@ -220,6 +281,49 @@ test("procedimento novo com quem faz, e a consulta marcada na Agenda", async ({
   await modal.getByRole("button", { name: "Marcar consulta" }).click();
   await expect(page.getByText(/Consulta marcada para/)).toBeVisible();
   await expect(modal).not.toBeVisible();
+
+  // Tirar a Unimed de "cobrem" com essa consulta marcada: o aviso vem ANTES
+  // de gravar (D4) e nada muda ate a confirmacao.
+  await page.goto("/cadastros?aba=procedimentos");
+  const semUnimed = await abrirProcedimento(page, nome);
+  await cobremDe(semUnimed)
+    .getByRole("checkbox", { name: "Unimed", exact: true })
+    .click();
+  await expect(
+    semUnimed.getByText(
+      "Ao tirar Unimed, Dr. João Pereira deixa de atender por este convênio neste procedimento.",
+    ),
+  ).toBeVisible();
+  // Pelo teclado: o Salvar sai com o foco quando o aviso entra.
+  await semUnimed.getByRole("button", { name: "Salvar", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(semUnimed.getByText(/Há 1 consulta marcada/u)).toBeVisible();
+  await expect(semUnimed.getByText(/não desmarca nada/u)).toBeVisible();
+  // O rodape fica so com Cancelar; quem confirma e o aviso.
+  await expect(
+    semUnimed.getByRole("button", { name: "Salvar", exact: true }),
+  ).toHaveCount(0);
+  // O foco vai para o aviso (nao para o topo do modal): o proximo Tab cai em
+  // "Abrir a Agenda" e o seguinte na confirmacao.
+  await expect(semUnimed.locator("#proc-aviso-de-consultas")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    semUnimed.getByRole("link", { name: "Abrir a Agenda" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  const salvarMesmoAssim = semUnimed.getByRole("button", {
+    name: "Salvar mesmo assim",
+  });
+  await expect(salvarMesmoAssim).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(semUnimed).toBeHidden();
+  await expect(
+    page.getByText("1 combinação de quem faz e convênio saiu da agenda."),
+  ).toBeVisible();
+  // A Unimed saiu da agenda deste procedimento (a consulta continua).
+  await expect(
+    page.getByRole("row").filter({ hasText: nome }),
+  ).not.toContainText("Unimed");
 });
 
 test("recepção lê quem faz e por quanto, sem poder salvar", async ({
@@ -247,6 +351,10 @@ test("recepção lê quem faz e por quanto, sem poder salvar", async ({
     dialogo.getByRole("heading", { name: "Consulta endocrinologia" }),
   ).toBeVisible();
   await expect(dialogo.getByText("Quem faz e convênios")).toBeVisible();
+  // O que cobre aparece em texto, sem caixa de marcar.
+  await expect(dialogo.getByText(COBREM)).toBeVisible();
+  await expect(dialogo.getByText("Unimed", { exact: true })).toBeVisible();
+  await expect(dialogo.getByRole("checkbox")).toHaveCount(0);
   // A linha do convenio (a do profissional tambem contem o texto, mas
   // comeca pelo nome dele).
   const unimed = dialogo.getByRole("listitem").filter({ hasText: /^Unimed:/u });

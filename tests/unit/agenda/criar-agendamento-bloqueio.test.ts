@@ -149,6 +149,7 @@ beforeEach(() => {
         id: VINCULO,
         clinic_id: CLINICA,
         duration_min: 30,
+        active: true,
         procedure: { resource_id: null },
       },
     ],
@@ -258,6 +259,73 @@ describe("criarAgendamentoAction e os bloqueios do profissional", () => {
     expect(resultado.ok).toBe(false);
     expect(resultado.code).toBeUndefined();
     expect(resultado.error).not.toBe(MENSAGEM_SEM_CONFERIR_AGENDA);
+    expect(consultasGravadas()).toHaveLength(0);
+  });
+});
+
+// D8 (convenio pelo medico, 02/10/2026): o vinculo pode ter sido desativado
+// por outra tela (desmarcar o convenio no cadastro do profissional ou no
+// Procedimento) enquanto a Agenda segura o catalogo em cache. Consulta NOVA
+// so em vinculo ativo; a remarcacao com o mesmo profissional nao passa por
+// aqui (mantem o vinculo da consulta ja marcada).
+describe("criarAgendamentoAction e o vínculo desativado (D8)", () => {
+  it("vínculo desativado é recusado antes de qualquer outra leitura, e nada é gravado", async () => {
+    estado.tabelas.service_link = [
+      { ...estado.tabelas.service_link![0]!, active: false },
+    ];
+    // Se chegasse a ler os bloqueios, o erro abaixo apareceria no lugar.
+    estado.erroNaLeitura.professional_block = { message: "não deveria ler" };
+    const resultado = await marcar();
+    expect(resultado).toEqual({
+      ok: false,
+      code: "sem_vinculo",
+      error:
+        "Este profissional não atende mais este procedimento por este convênio. A lista já foi atualizada: escolha de novo.",
+    });
+    expect(resultado.error).not.toMatch(/[–—]/);
+    expect(consultasGravadas()).toHaveLength(0);
+  });
+
+  it("encaixe também não entra em vínculo desativado", async () => {
+    estado.tabelas.service_link = [
+      { ...estado.tabelas.service_link![0]!, active: false },
+    ];
+    const resultado = await marcar({ is_overbooking: true });
+    expect(resultado).toMatchObject({ ok: false, code: "sem_vinculo" });
+    expect(consultasGravadas()).toHaveLength(0);
+  });
+
+  it("vínculo sem a informação de ativo também é recusado (nunca grava sem conferir)", async () => {
+    estado.tabelas.service_link = [
+      {
+        id: VINCULO,
+        clinic_id: CLINICA,
+        duration_min: 30,
+        procedure: { resource_id: null },
+      },
+    ];
+    const resultado = await marcar();
+    expect(resultado).toMatchObject({ ok: false, code: "sem_vinculo" });
+    expect(consultasGravadas()).toHaveLength(0);
+  });
+
+  it("vínculo ativo continua marcando (anti falso positivo)", async () => {
+    const resultado = await marcar();
+    expect(resultado).toEqual({ ok: true, id: "novo-appointment" });
+    expect(consultasGravadas()).toMatchObject([
+      { service_link_id: VINCULO, status: "agendado" },
+    ]);
+  });
+
+  it("vínculo de outra clínica continua sendo inválido, não desativado", async () => {
+    estado.tabelas.service_link = [
+      { ...estado.tabelas.service_link![0]!, clinic_id: OUTRA_CLINICA },
+    ];
+    const resultado = await marcar();
+    expect(resultado).toEqual({
+      ok: false,
+      error: "Vínculo de atendimento inválido.",
+    });
     expect(consultasGravadas()).toHaveLength(0);
   });
 });

@@ -14,6 +14,7 @@ import {
 } from "@/lib/queries/conversations";
 import { fetchEtiquetasDeConversa } from "@/lib/queries/etiquetas-de-conversa";
 import { fetchJornada } from "@/lib/queries/jornada";
+import { fetchRespostasAtivas } from "@/lib/queries/respostas-rapidas";
 import { createClient } from "@/lib/supabase/server";
 
 import { InboxClient } from "./inbox-client";
@@ -70,6 +71,7 @@ export default async function AtendimentoPage({
     authorNames,
     jornada,
     etiquetas,
+    respostasRapidas,
     conversaDoLink,
   ] = await Promise.all([
     fetchConversations(supabase, active.clinicId),
@@ -85,6 +87,9 @@ export default async function AtendimentoPage({
     fetchClinicAuthorNames(supabase, active.clinicId),
     fetchJornada(supabase, active.clinicId),
     fetchEtiquetasDeConversa(supabase, active.clinicId),
+    // As mensagens padrao ativas (o "/" do compositor). So apoiam a escrita:
+    // se a leitura falhar, a tela abre e o cliente tenta de novo.
+    fetchRespostasAtivas(supabase, active.clinicId).catch(() => null),
     // Pela SESSAO: a RLS decide se a conversa do link existe para esta
     // pessoa. Resolvida ou fora das 300 ativas tambem abre.
     parametros.conversa
@@ -114,6 +119,8 @@ export default async function AtendimentoPage({
         nomesDeEtapa={nomesDeEtapa}
         jornada={jornada}
         etiquetas={etiquetas}
+        respostasRapidas={respostasRapidas}
+        nomeDaClinica={active.clinicName}
         authorNames={authorNames}
         initialConversations={conversations}
         numerosIniciais={{ ativos: numerosAtivos, removidos: numerosRemovidos }}

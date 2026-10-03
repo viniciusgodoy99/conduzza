@@ -152,13 +152,15 @@ Realtime atualiza a tela
 
 | Ferramenta | O que faz | Trava |
 |---|---|---|
-| `buscar_procedimento` | preço, duração, convênios aceitos | lê de `service_link`, nunca de texto livre |
-| `buscar_horario` | primeiros horários livres | respeita `bookable_by_ai` do vínculo |
+| `buscar_procedimento` | preço, duração, convênios aceitos | lê de `service_link` **ativo**, nunca de texto livre; `professional_insurance` e `procedure_insurance` (convênio pelo médico, 02/10/2026) são só do cadastro e não são lidas pela IA |
+| `buscar_horario` | primeiros horários livres | só oferece com `sl.bookable_by_ai and pr.bookable_by_ai` (a chave do vínculo **e** a do procedimento) |
 | `reservar_horario` | cria `slot_hold` de 10 min | expira sozinho |
 | `agendar` | confirma o hold e cria `appointment` | falha se o hold expirou |
 | `remarcar` / `cancelar` | move ou cancela | cancelamento dispara reoferta da lista de espera |
 | `entrar_lista_espera` | adiciona à fila | |
 | `escalar_humano` | muda status para `aguardando_humano` | **obrigatória** em: sintoma, pedido de humano, insatisfação, menor de idade, valor fora da tabela, 2 falhas seguidas |
+
+**Por que as duas chaves (convênio pelo médico, 02/10/2026):** desde então `service_link` tem dois escritores, a RPC do procedimento e a do profissional (cascata do convênio), e o Salvar do procedimento grava a sincronia dos vínculos e a linha do procedimento em passos separados (`docs/04`, seção 2). No meio desse Salvar, a chave do vínculo e a do procedimento podem divergir por um instante; conferindo as duas, qualquer ordem de gravação fica segura. O vínculo continua sendo a fonte do preço, da duração e do convênio aceito: o convênio que o profissional atende e o que cobre o procedimento só decidem quais vínculos existem e estão ativos. O que a IA faz quando o paciente pede um convênio que o profissional não atende ainda não está definido (backlog, entrada "Convênio pelo médico").
 
 ### Filtro de conformidade
 

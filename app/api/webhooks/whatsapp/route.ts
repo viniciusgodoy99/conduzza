@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { chaveDeTelefone } from "@/lib/domain/telefone";
 import {
+  ecoContaParaTermo,
   limiteParaRespostaDePessoa,
   parseInboundEvent,
 } from "@/lib/integrations/whatsapp/inbound";
@@ -18,6 +19,7 @@ import {
   segredosIguais,
   type IdentificacaoDoWebhook,
 } from "@/lib/integrations/whatsapp/segredo-do-webhook";
+import { tentarMoverPorTermo } from "@/lib/integrations/whatsapp/termo-chave";
 import { conferirConexaoDoWebhook } from "@/lib/integrations/whatsapp/trava-celular";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -560,6 +562,56 @@ export async function POST(request: NextRequest) {
         // So derruba se a ultima mensagem do paciente chegou ANTES da
         // janela: eco colado nela e a resposta automatica do app Business.
         .or(`last_inbound_at.is.null,last_inbound_at.lt."${limite}"`);
+
+      // TERMO-CHAVE escrito pela CLINICA no celular conectado (pedido do
+      // dono em 02/10/2026): anda o lead quando a etapa aceita termo da
+      // clinica. A resposta automatica do app Business tambem sai do
+      // celular e conta como texto da clinica. Melhor esforco: o 200 nunca
+      // depende disto.
+      //
+      // NUNCA REENTREGA (regra 3.3): o eco nao vira linha de message, entao
+      // a garantia e a marca por wa_message_id no banco
+      // (marcar_eco_para_termo, tabela termo_eco_visto): so move quando a
+      // marca nasceu agora; a reentrega do mesmo evento volta false, mesmo
+      // que alguem tenha voltado o lead a mao no meio tempo. A janela
+      // (ecoContaParaTermo) fica como defesa extra e poupa a ida ao banco
+      // no eco velho ou da sincronia de historico. Falha ao marcar nao move
+      // (sem a marca nao da para provar que e o primeiro).
+      if (event.body && ecoContaParaTermo(event.enviadaEm, Date.now())) {
+        try {
+          const { data: ecoNovo, error: erroMarca } = await admin.rpc(
+            "marcar_eco_para_termo",
+            {
+              p_clinic_id: clinicId,
+              p_wa_message_id: event.waMessageId,
+            },
+          );
+          if (erroMarca) {
+            log.error("termo_chave_marcar_eco_falhou", {
+              clinic_id: clinicId,
+              whatsapp_account_id: accountId,
+              contact_id: contato.id as string,
+              kind: "clinica",
+              error_code: erroMarca.code ?? null,
+            });
+          } else if (ecoNovo === true) {
+            await tentarMoverPorTermo(admin, {
+              clinicId,
+              contactId: contato.id as string,
+              corpo: event.body,
+              quemEscreveu: "clinica",
+              userId: null,
+            });
+          }
+        } catch {
+          log.error("termo_chave_falhou", {
+            clinic_id: clinicId,
+            whatsapp_account_id: accountId,
+            contact_id: contato.id as string,
+            kind: "clinica",
+          });
+        }
+      }
     }
     return NextResponse.json({ ok: true });
   }

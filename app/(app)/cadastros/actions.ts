@@ -5,6 +5,11 @@ import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import {
+  CODIGO_CADASTRO_MUDOU,
+  MENSAGEM_CADASTRO_MUDOU,
+  MENSAGEM_CONVENIO_INATIVO,
+} from "@/lib/domain/convenios-do-medico";
+import {
   ITENS_POR_PACOTE_MAX,
   NOME_DO_PACOTE_MAX,
   problemaNosItens,
@@ -19,15 +24,52 @@ import { createClient } from "@/lib/supabase/server";
 // vai para audit_log; exclusao e sempre suave (active = false), porque
 // apagar de verdade quebraria agendamentos historicos por FK.
 
+/**
+ * O que o Salvar de "Convenios que atende" mudou (ou mudaria, quando volta
+ * pedindo confirmacao), lido do retorno da RPC
+ * sincronizar_convenios_do_profissional e passado para camelCase. Satisfaz o
+ * ResumoParaTexto de lib/domain/convenios-do-medico.ts (frasesDoResumoDos
+ * Convenios e tituloDoAvisoDosConvenios leem direto daqui).
+ */
+export type ResumoDosConvenios = {
+  /** Convenio novo e os procedimentos em que ele entrou (Coberto ou reativado) */
+  entram: { insuranceId: string; procedureIds: string[] }[];
+  /** Convenio que saiu e os procedimentos em que o vinculo foi desativado */
+  saem: { insuranceId: string; procedureIds: string[] }[];
+  /** Procedimentos que ele deixa de fazer (D3) */
+  deixaDeFazer: string[];
+  /** Consultas futuras nos vinculos que saem (continuam marcadas) */
+  consultasFuturas: number;
+  primeiraConsulta: string | null;
+};
+
 export type CadastroActionResult = {
   ok: boolean;
   error?: string;
   id?: string;
   // code 'consultas_no_periodo': nada foi gravado; ha consultas marcadas no
-  // periodo afetado e a tela precisa pedir confirmacao explicita (achado 37).
-  code?: "consultas_no_periodo";
+  // periodo afetado (ou, nos convenios do profissional, um procedimento que
+  // ele deixa de fazer) e a tela precisa pedir confirmacao explicita (achado
+  // 37; D3 e D4 de 02/10/2026). `motivo` diz qual confirmacao pedir.
+  // code 'cadastro_mudou': a RPC recusou a aba parada (CZ409, D5); nada foi
+  // gravado e a tela invalida o catalogo (aoMudar) para reabrir com o atual.
+  code?: "consultas_no_periodo" | "cadastro_mudou";
   consultas?: number;
   primeiraConsulta?: string | null;
+  /**
+   * Com code 'consultas_no_periodo': "desativar" (profissional ativo para
+   * inativo), "convenios" (Convenios que atende: reenviar com
+   * confirmar_convenios) ou "vinculos" (Quem faz e convenios: reenviar com
+   * extras.confirmar).
+   */
+  motivo?: "desativar" | "convenios" | "vinculos";
+  /**
+   * Uma parte foi gravada e a outra nao (ver `error`). Com `id`: a tela
+   * guarda o id no formulario para o proximo Salvar editar em vez de criar.
+   */
+  parcial?: true;
+  /** Convenios do profissional: o que entrou e saiu, ou o que pede confirmacao */
+  convenios?: ResumoDosConvenios;
 };
 
 // Consultas nao canceladas dos profissionais que ainda nao terminaram e
@@ -118,8 +160,115 @@ const profissionalSchema = z.object({
   active: z.boolean(),
   // Desativar com consultas futuras so passa com confirmacao explicita.
   confirmar_consultas: z.boolean().optional(),
+  // "Convenios que atende" (decisao do dono em 02/10/2026). AUSENTE = nao
+  // mexe nos convenios (a tela so manda quando precisaSalvarConvenios diz
+  // que sim, e um cliente antigo aberto durante a publicacao nao apaga
+  // nada). Presente = a lista INTEIRA desejada, sem o Particular (implicito).
+  insurance_ids: z
+    .array(idSchema)
+    .max(200)
+    .refine((ids) => new Set(ids).size === ids.length)
+    .optional(),
+  // professional_insurance CRU de quando o modal abriu (abertura.gravados,
+  // nunca os marcados com a cura): a RPC compara sob a trava e recusa a aba
+  // parada com CZ409. Ausente = sem conferencia.
+  insurance_ids_na_abertura: z.array(idSchema).max(200).optional(),
+  // Tirar convenio com consulta futura (D4) ou que tira o profissional de
+  // um procedimento (D3) so passa com confirmacao explicita.
+  confirmar_convenios: z.boolean().optional(),
 });
 
+/** Retorno da RPC sincronizar_convenios_do_profissional (migration 20261002140000) */
+const mudancaDoConvenioSchema = z.object({
+  insurance_id: z.string(),
+  procedure_ids: z.array(z.string()),
+});
+const retornoDosConveniosSchema = z.object({
+  aplicado: z.boolean(),
+  entram: z.array(mudancaDoConvenioSchema),
+  saem: z.array(mudancaDoConvenioSchema),
+  deixa_de_fazer: z.array(z.string()),
+  consultas_futuras: z.number().int().min(0),
+  primeira_consulta: z.string().nullable(),
+});
+
+const MENSAGENS_DOS_CONVENIOS: Record<string, string> = {
+  "22023": MENSAGEM_CONVENIO_INATIVO,
+  "23503": "Um convênio escolhido não é desta clínica.",
+  "42501": "Somente administradores e gestores alteram os cadastros.",
+  P0002: "Profissional não encontrado.",
+};
+
+const ERRO_DOS_CONVENIOS =
+  "Não foi possível salvar os convênios do profissional.";
+
+type SincroniaDosConvenios =
+  | { ok: true; aplicado: boolean; resumo: ResumoDosConvenios }
+  | { ok: false; error: string; code?: "cadastro_mudou" };
+
+// Chama a RPC do lado do medico (SECURITY INVOKER: papel, RLS e a trava da
+// clinica valem la dentro) e le o retorno. A cascata nos vinculos e do
+// banco; aqui so traduz erro e formato.
+async function sincronizarConveniosDoProfissional(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  params: {
+    professionalId: string;
+    convenios: string[];
+    naAbertura: string[] | null;
+    confirmar: boolean;
+  },
+): Promise<SincroniaDosConvenios> {
+  const { data, error } = await supabase.rpc(
+    "sincronizar_convenios_do_profissional",
+    {
+      p_professional_id: params.professionalId,
+      p_convenios: params.convenios,
+      p_convenios_na_abertura: params.naAbertura,
+      p_confirmar: params.confirmar,
+    },
+  );
+  if (error) {
+    if (error.code === CODIGO_CADASTRO_MUDOU) {
+      return {
+        ok: false,
+        code: "cadastro_mudou",
+        error: MENSAGEM_CADASTRO_MUDOU,
+      };
+    }
+    return {
+      ok: false,
+      error: MENSAGENS_DOS_CONVENIOS[error.code ?? ""] ?? ERRO_DOS_CONVENIOS,
+    };
+  }
+  const lido = retornoDosConveniosSchema.safeParse(data);
+  if (!lido.success) {
+    return { ok: false, error: ERRO_DOS_CONVENIOS };
+  }
+  const paraTela = (lista: z.infer<typeof mudancaDoConvenioSchema>[]) =>
+    lista.map((mudanca) => ({
+      insuranceId: mudanca.insurance_id,
+      procedureIds: mudanca.procedure_ids,
+    }));
+  return {
+    ok: true,
+    aplicado: lido.data.aplicado,
+    resumo: {
+      entram: paraTela(lido.data.entram),
+      saem: paraTela(lido.data.saem),
+      deixaDeFazer: lido.data.deixa_de_fazer,
+      consultasFuturas: lido.data.consultas_futuras,
+      primeiraConsulta: lido.data.primeira_consulta,
+    },
+  };
+}
+
+// Ordem ao EDITAR (critica §3.4), com toda confirmacao antes de qualquer
+// escrita: guarda e Zod, conferencia de desativacao, RPC dos convenios (so
+// quando insurance_ids veio; sem confirmar_convenios ela devolve
+// aplicado:false e NAO grava nada), UPDATE da linha, trilha. A jornada e
+// outra action, chamada pela tela depois. Ao CRIAR: insert, depois a RPC com
+// confirmar (nao ha vinculo para desativar); se a RPC falhar, o profissional
+// ja existe e volta {ok:false, parcial:true, id}.
 export async function salvarProfissionalAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
@@ -132,7 +281,14 @@ export async function salvarProfissionalAction(
     return { ok: false, error: "Confira os campos do profissional." };
   }
   const supabase = await createClient();
-  const { id, confirmar_consultas, ...campos } = parsed.data;
+  const {
+    id,
+    confirmar_consultas,
+    insurance_ids,
+    insurance_ids_na_abertura,
+    confirmar_convenios,
+    ...campos
+  } = parsed.data;
 
   if (id) {
     // Desativar tira a coluna do profissional da Agenda, mas nao desmarca
@@ -164,12 +320,69 @@ export async function salvarProfissionalAction(
           return {
             ok: false,
             code: "consultas_no_periodo",
+            motivo: "desativar",
             consultas: futuras.total,
             primeiraConsulta: futuras.primeira,
           };
         }
       }
     }
+
+    // Convenios ANTES da linha: com consulta futura ou deixa_de_fazer e sem
+    // confirmar_convenios, a RPC devolve aplicado:false sem gravar nada, e a
+    // linha tambem fica como estava (nada e gravado antes da confirmacao).
+    let convenios: ResumoDosConvenios | undefined;
+    if (insurance_ids !== undefined) {
+      // So o profissional da clinica ATIVA (como na action do procedimento):
+      // a RLS deixa quem e membro de duas clinicas enxergar o da outra, e a
+      // RPC aceitaria (o papel e conferido na clinica do profissional), mas
+      // a trilha iria para a clinica ativa com um id que nao e dela.
+      const { data: doCadastro, error: erroDoCadastro } = await supabase
+        .from("professional")
+        .select("id")
+        .eq("clinic_id", guard.clinicId)
+        .eq("id", id)
+        .maybeSingle();
+      if (erroDoCadastro) {
+        return { ok: false, error: ERRO_DOS_CONVENIOS };
+      }
+      if (!doCadastro) {
+        return { ok: false, error: "Profissional não encontrado." };
+      }
+      const sincronia = await sincronizarConveniosDoProfissional(supabase, {
+        professionalId: id,
+        convenios: insurance_ids,
+        naAbertura: insurance_ids_na_abertura ?? null,
+        confirmar: confirmar_convenios === true,
+      });
+      if (!sincronia.ok) {
+        return sincronia.code
+          ? { ok: false, code: sincronia.code, error: sincronia.error }
+          : { ok: false, error: sincronia.error };
+      }
+      if (!sincronia.aplicado) {
+        return {
+          ok: false,
+          code: "consultas_no_periodo",
+          motivo: "convenios",
+          consultas: sincronia.resumo.consultasFuturas,
+          primeiraConsulta: sincronia.resumo.primeiraConsulta,
+          convenios: sincronia.resumo,
+        };
+      }
+      convenios = sincronia.resumo;
+      // A trilha sai logo depois da gravacao: se a linha falhar abaixo, os
+      // convenios ja mudaram e a mudanca precisa estar no audit_log.
+      await auditar(
+        supabase,
+        guard.clinicId,
+        guard.context.userId,
+        "editou_convenios_do_profissional",
+        "professional",
+        id,
+      );
+    }
+
     const { data } = await supabase
       .from("professional")
       .update(campos)
@@ -177,6 +390,17 @@ export async function salvarProfissionalAction(
       .eq("id", id)
       .select("id");
     if (!data || data.length === 0) {
+      if (convenios) {
+        revalidatePath("/cadastros");
+        return {
+          ok: false,
+          parcial: true,
+          id,
+          error:
+            "Os convênios foram salvos, mas os dados do profissional não. Clique em Salvar de novo.",
+          convenios,
+        };
+      }
       return { ok: false, error: "Não foi possível salvar o profissional." };
     }
     await auditar(
@@ -188,7 +412,7 @@ export async function salvarProfissionalAction(
       id,
     );
     revalidatePath("/cadastros");
-    return { ok: true, id };
+    return convenios ? { ok: true, id, convenios } : { ok: true, id };
   }
 
   const { data, error } = await supabase
@@ -208,7 +432,37 @@ export async function salvarProfissionalAction(
     data.id,
   );
   revalidatePath("/cadastros");
-  return { ok: true, id: data.id };
+
+  // Profissional novo nao faz procedimento nenhum: a RPC so grava os pares
+  // (nada para desativar, entao vai confirmada). Lista vazia nao chama.
+  if (insurance_ids === undefined || insurance_ids.length === 0) {
+    return { ok: true, id: data.id };
+  }
+  const sincronia = await sincronizarConveniosDoProfissional(supabase, {
+    professionalId: data.id,
+    convenios: insurance_ids,
+    naAbertura: null,
+    confirmar: true,
+  });
+  if (!sincronia.ok || !sincronia.aplicado) {
+    return {
+      ok: false,
+      parcial: true,
+      id: data.id,
+      error: `O profissional foi criado, mas os convênios que ele atende não. ${
+        sincronia.ok ? "Clique em Salvar de novo." : sincronia.error
+      }`,
+    };
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "editou_convenios_do_profissional",
+    "professional",
+    data.id,
+  );
+  return { ok: true, id: data.id, convenios: sincronia.resumo };
 }
 
 const faixaSchema = z.object({
@@ -344,11 +598,12 @@ const MENSAGENS_DO_PACOTE: Record<string, string> = {
 /**
  * Mensagem de regra (23514) que o banco levanta ja em portugues. A mensagem
  * crua de CHECK do Postgres (em ingles, com nome de constraint) nunca vai
- * para a tela: vira o texto padrao.
+ * para a tela: vira o texto do mapa do codigo ou o padrao.
  */
 function mensagemDaRegra(
   error: { code?: string; message?: string },
   padrao: string,
+  mensagens: Record<string, string> = MENSAGENS_DO_PACOTE,
 ): string {
   if (
     error.code === "23514" &&
@@ -357,7 +612,7 @@ function mensagemDaRegra(
   ) {
     return error.message;
   }
-  return MENSAGENS_DO_PACOTE[error.code ?? ""] ?? padrao;
+  return mensagens[error.code ?? ""] ?? padrao;
 }
 
 async function vendasDoPacote(
@@ -443,25 +698,48 @@ async function salvarEntidade(
 // preco base, a duracao ou a chave mudaram em relacao a abertura; com o
 // catalogo desatualizado (outro gestor mudou a chave no meio), a comparacao
 // diria "nada mudou" e os vinculos ficariam com a chave antiga. Por isso o
-// Salvar do procedimento alinha a chave dos vinculos aqui, sem criar nem
-// desativar vinculo (a RLS de service_link vale: admin e gestor).
+// Salvar do procedimento ja existente alinha a chave dos vinculos aqui, sem
+// criar nem desativar vinculo (a RLS de service_link vale: admin e gestor).
+//
+// Desde 02/10/2026, ao EDITAR, a tela chama sincronizarVinculosDoProcedimento
+// Action ANTES desta (critica §3.4: nada gravado antes do aviso de consulta).
+// A RPC copia a chave do procedimento como estava gravada, entao, quando a
+// pessoa mudou a chave no mesmo Salvar, e este alinhamento que a leva aos
+// vinculos: o erro dele agora e conferido e volta como gravacao parcial.
 export async function salvarProcedimentoAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
-  const resultado = await salvarEntidade("procedure", procedimentoSchema, input);
+  const resultado = await salvarEntidade(
+    "procedure",
+    procedimentoSchema,
+    input,
+  );
   if (!resultado.ok || !resultado.id) {
     return resultado;
   }
   const parsed = procedimentoSchema.safeParse(input);
-  if (parsed.success) {
+  // So na edicao. Um procedimento recem-criado nao tem vinculo para alinhar
+  // (a sincronia da tela roda depois do insert e a RPC copia a chave da
+  // linha ja gravada), e um parcial aqui faria a tela perder o id e duplicar
+  // o procedimento no proximo Salvar.
+  if (parsed.success && parsed.data.id) {
     const supabase = await createClient();
-    // Falha aqui nao desfaz o Salvar ja gravado: o proximo Salvar ou a
-    // sincronizacao dos vinculos alinham de novo.
-    await supabase
+    const { error } = await supabase
       .from("service_link")
       .update({ bookable_by_ai: parsed.data.bookable_by_ai })
       .eq("procedure_id", resultado.id)
       .neq("bookable_by_ai", parsed.data.bookable_by_ai);
+    if (error) {
+      // A linha do procedimento ja esta gravada: a tela guarda o id e o
+      // proximo Salvar alinha de novo (o UPDATE e idempotente).
+      return {
+        ok: false,
+        parcial: true,
+        id: resultado.id,
+        error:
+          "O procedimento foi salvo, mas a opção IA pode agendar não chegou a quem faz este procedimento. Clique em Salvar de novo.",
+      };
+    }
   }
   return resultado;
 }
@@ -654,6 +932,14 @@ export type ResultadoDosVinculosDoProcedimento = CadastroActionResult & {
     desativados: number;
     /** Consultas futuras que continuam marcadas nos vinculos que sairam */
     consultasFuturas: number;
+    // As tres abaixo so vem no modo novo (com `extras`); sem extras o resumo
+    // tem exatamente as cinco chaves acima, como antes de 02/10/2026.
+    /** Primeira das consultas futuras (para o AvisoDeConsultas) */
+    primeiraConsulta?: string | null;
+    /** Convenios que passaram a cobrir (ou passariam, sem a confirmacao) */
+    planosEntram?: string[];
+    /** Convenios que deixaram de cobrir (ou deixariam) */
+    planosSaem?: string[];
   };
 };
 
@@ -668,13 +954,61 @@ const MENSAGENS_DA_SINCRONIZACAO: Record<string, string> = {
     "Outra pessoa alterou estes vínculos agora. Feche, abra de novo e salve.",
 };
 
+/** A mesma frase da regra (d) da RPC: a action recusa antes do banco */
+const MENSAGEM_CONVENIO_FORA_DOS_QUE_COBREM =
+  "Um convênio marcado para um profissional não está entre os convênios que cobrem este procedimento.";
+
+// O terceiro argumento da action (ExtrasDaSincronizacao de lib/domain/
+// vinculos-do-procedimento.ts, montado por extrasDaSincronizacao). Vai para
+// a RPC como p_planos, p_vinculos_na_abertura, p_planos_na_abertura e
+// p_confirmar. Sem ele, a RPC roda no modo legado (o de 29/09).
+const extrasDaSincronizacaoSchema = z.object({
+  planos: z.array(idSchema).max(200),
+  vinculosNaAbertura: z
+    .array(
+      z.object({
+        professional_id: idSchema,
+        insurance_id: idSchema.nullable(),
+      }),
+    )
+    .max(500),
+  planosNaAbertura: z.array(idSchema).max(200),
+  confirmar: z.boolean(),
+});
+
+// Retorno da RPC nos dois modos (legado: 5 chaves; novo: mais aplicado,
+// primeira_consulta, planos_entram e planos_saem). Leitura tolerante, como
+// era antes: a RPC ja gravou quando chega aqui, e contagem estranha nao
+// vira erro.
+const contagemDaRpc = z.number().int().min(0).catch(0);
+const retornoDosVinculosSchema = z.object({
+  aplicado: z.boolean().optional().catch(undefined),
+  criados: contagemDaRpc,
+  reativados: contagemDaRpc,
+  atualizados: contagemDaRpc,
+  desativados: contagemDaRpc,
+  consultas_futuras: contagemDaRpc,
+  primeira_consulta: z.string().nullable().catch(null),
+  planos_entram: z.array(z.string()).catch([]),
+  planos_saem: z.array(z.string()).catch([]),
+});
+
 // Grava de uma vez quem faz o procedimento e por quais convenios: cria,
 // reativa e atualiza o que esta na lista e DESATIVA (nunca apaga) o que saiu,
 // numa transacao so no banco (RPC sincronizar_vinculos_do_procedimento,
 // SECURITY INVOKER: a RLS e o papel da sessao valem la dentro tambem).
+//
+// Com `extras` (convenio pelo medico, 02/10/2026), o modo novo da RPC:
+// grava tambem "Convenios que cobrem este procedimento" (procedure_insurance
+// = extras.planos), recusa a aba parada (CZ409, code "cadastro_mudou"), o
+// convenio desativado que entra (22023) e as regras da cobertura (23514, com
+// a frase do banco), e, com consulta futura num vinculo que sai e sem
+// extras.confirmar, NAO grava nada e devolve code "consultas_no_periodo",
+// motivo "vinculos". Sem `extras` (ou null), o modo legado, como antes.
 export async function sincronizarVinculosDoProcedimentoAction(
   procedureId: unknown,
   linhas: unknown,
+  extras?: unknown,
 ): Promise<ResultadoDosVinculosDoProcedimento> {
   const guard = await requireEditor();
   if ("error" in guard) {
@@ -702,6 +1036,26 @@ export async function sincronizarVinculosDoProcedimentoAction(
       error: "O mesmo profissional aparece duas vezes no mesmo convênio.",
     };
   }
+  let modoNovo: z.infer<typeof extrasDaSincronizacaoSchema> | null = null;
+  if (extras !== undefined && extras !== null) {
+    const parsedExtras = extrasDaSincronizacaoSchema.safeParse(extras);
+    if (!parsedExtras.success) {
+      return {
+        ok: false,
+        error: "Confira os convênios que cobrem este procedimento.",
+      };
+    }
+    modoNovo = parsedExtras.data;
+    const cobrem = new Set(modoNovo.planos);
+    if (
+      parsedLinhas.data.some(
+        (linha) =>
+          linha.insurance_id !== null && !cobrem.has(linha.insurance_id),
+      )
+    ) {
+      return { ok: false, error: MENSAGEM_CONVENIO_FORA_DOS_QUE_COBREM };
+    }
+  }
 
   const supabase = await createClient();
   // So o procedimento da clinica ATIVA. A RLS deixa quem e membro de duas
@@ -723,31 +1077,77 @@ export async function sincronizarVinculosDoProcedimentoAction(
   if (!procedimento) {
     return { ok: false, error: "Procedimento não encontrado." };
   }
+  // Sem extras, a chamada de sempre (2 argumentos nomeados): a RPC cai no
+  // modo legado, identico ao de 29/09.
   const { data, error } = await supabase.rpc(
     "sincronizar_vinculos_do_procedimento",
-    {
-      p_procedure_id: parsedId.data,
-      p_linhas: parsedLinhas.data,
-    },
+    modoNovo
+      ? {
+          p_procedure_id: parsedId.data,
+          p_linhas: parsedLinhas.data,
+          p_planos: Array.from(new Set(modoNovo.planos)),
+          p_vinculos_na_abertura: modoNovo.vinculosNaAbertura,
+          p_planos_na_abertura: Array.from(new Set(modoNovo.planosNaAbertura)),
+          p_confirmar: modoNovo.confirmar,
+        }
+      : {
+          p_procedure_id: parsedId.data,
+          p_linhas: parsedLinhas.data,
+        },
   );
   if (error) {
+    if (error.code === CODIGO_CADASTRO_MUDOU) {
+      return {
+        ok: false,
+        code: "cadastro_mudou",
+        error: MENSAGEM_CADASTRO_MUDOU,
+      };
+    }
+    // No modo novo, 22023 so sai da conferencia do convenio desativado que
+    // entra: a forma da lista (que tambem e 22023) o Zod acima ja garantiu.
+    if (modoNovo && error.code === "22023") {
+      return { ok: false, error: MENSAGEM_CONVENIO_INATIVO };
+    }
     return {
       ok: false,
-      error:
-        MENSAGENS_DA_SINCRONIZACAO[error.code ?? ""] ??
+      error: mensagemDaRegra(
+        error,
         "Não foi possível salvar quem faz e os convênios.",
+        MENSAGENS_DA_SINCRONIZACAO,
+      ),
     };
   }
-  const contagem = (data ?? {}) as Partial<
-    Record<
-      | "criados"
-      | "reativados"
-      | "atualizados"
-      | "desativados"
-      | "consultas_futuras",
-      number
-    >
-  >;
+  const lido = retornoDosVinculosSchema.safeParse(data ?? {});
+  const contagem = lido.success
+    ? lido.data
+    : retornoDosVinculosSchema.parse({});
+  const resumoBase = {
+    criados: contagem.criados,
+    reativados: contagem.reativados,
+    atualizados: contagem.atualizados,
+    desativados: contagem.desativados,
+    consultasFuturas: contagem.consultas_futuras,
+  };
+  const resumo = modoNovo
+    ? {
+        ...resumoBase,
+        primeiraConsulta: contagem.primeira_consulta,
+        planosEntram: contagem.planos_entram,
+        planosSaem: contagem.planos_saem,
+      }
+    : resumoBase;
+  if (modoNovo && contagem.aplicado === false) {
+    // Nada foi gravado: a tela mostra o aviso (D4) e reenvia com
+    // extras.confirmar = true.
+    return {
+      ok: false,
+      code: "consultas_no_periodo",
+      motivo: "vinculos",
+      consultas: contagem.consultas_futuras,
+      primeiraConsulta: contagem.primeira_consulta,
+      resumo,
+    };
+  }
   await auditar(
     supabase,
     guard.clinicId,
@@ -757,17 +1157,7 @@ export async function sincronizarVinculosDoProcedimentoAction(
     parsedId.data,
   );
   revalidatePath("/cadastros");
-  return {
-    ok: true,
-    id: parsedId.data,
-    resumo: {
-      criados: contagem.criados ?? 0,
-      reativados: contagem.reativados ?? 0,
-      atualizados: contagem.atualizados ?? 0,
-      desativados: contagem.desativados ?? 0,
-      consultasFuturas: contagem.consultas_futuras ?? 0,
-    },
-  };
+  return { ok: true, id: parsedId.data, resumo };
 }
 
 // ---------------------------------------------------------------------------

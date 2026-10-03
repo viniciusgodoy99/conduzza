@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { adminClient } from "../rls/stack";
 import { dados } from "./dados";
 import { login } from "./helpers";
 
@@ -9,6 +10,8 @@ import { login } from "./helpers";
 // acao visivel e desabilitada. Os aceites do vinculo (o caso do Dr. Joao,
 // agora no modal do Procedimento) e do bloqueio em lote (agora na Agenda)
 // vivem nos arquivos das frentes que os levaram para la.
+
+const PREFIXO_DO_PROFISSIONAL = "Dra. Especialidade E2E";
 
 const DICA_DE_QUEM_SO_VE =
   "Somente administradores e gestores alteram os cadastros";
@@ -35,6 +38,15 @@ async function esperarModalCentral(page: Page): Promise<void> {
     })
     .toBeLessThanOrEqual(FOLGA_DO_CENTRO_PX);
 }
+
+test.afterAll(async () => {
+  // O profissional criado pelo teste sai do banco (sem agenda nem vinculo).
+  await adminClient()
+    .from("professional")
+    .delete()
+    .eq("clinic_id", dados().clinicId)
+    .like("name", `${PREFIXO_DO_PROFISSIONAL}%`);
+});
 
 test("as abas que saíram de Cadastros não aparecem e o link antigo leva ao lugar novo", async ({
   page,
@@ -118,4 +130,32 @@ test("recepção vê tudo mas com as ações desabilitadas", async ({ page }) =>
   await expect(
     dialogo.getByRole("button", { name: "Salvar", exact: true }),
   ).toHaveCount(0);
+});
+
+// Relato do dono em 02/10/2026: quem digitava a especialidade e clicava em
+// Salvar sem apertar Enter perdia o texto e o profissional ficava "Sem
+// especialidade". O que ficou digitado entra no Salvar.
+test("especialidade digitada sem Enter é salva com o profissional", async ({
+  page,
+}) => {
+  test.skip(
+    test.info().project.name !== "desktop-1600",
+    "grava no banco: roda uma vez, no desktop",
+  );
+  const nome = `${PREFIXO_DO_PROFISSIONAL} ${Date.now()}`;
+  await login(page, dados().emails.gestor);
+  await page.goto("/cadastros");
+
+  await page.getByRole("button", { name: "Novo profissional" }).click();
+  await esperarModalCentral(page);
+  const dialogo = page.getByRole("dialog");
+  await dialogo.getByLabel("Nome", { exact: true }).fill(nome);
+  await dialogo.getByLabel("Especialidades").fill("Dermatologia");
+  await dialogo.getByRole("button", { name: "Salvar", exact: true }).click();
+  await expect(page.getByText("Profissional criado")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  const linha = page.getByRole("row").filter({ hasText: nome });
+  await expect(linha).toContainText("Dermatologia");
+  await expect(linha).not.toContainText("Sem especialidade");
 });

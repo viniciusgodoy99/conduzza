@@ -14,10 +14,12 @@ import {
   CircleSlash,
   CircleX,
   Clock,
+  ClockAlert,
   ConciergeBell,
   Eye,
   Gauge,
   Hand,
+  Hourglass,
   KeyRound,
   LoaderCircle,
   MessageCircleCheck,
@@ -30,6 +32,8 @@ import {
   ShieldOff,
   ShieldX,
   Sparkles,
+  Square,
+  SquareX,
   Stethoscope,
   Timer,
   TriangleAlert,
@@ -43,6 +47,7 @@ import {
 import type { ComponentType, SVGProps } from "react";
 
 import { BuildingSlash } from "@/components/shared/icons/building-slash";
+import type { SituacaoDaAtividade } from "@/lib/domain/atividades";
 import { ACCESS_LABELS, type Access } from "@/lib/domain/permissions";
 
 // Fonte unica dos status do produto.
@@ -417,6 +422,21 @@ export const CONSENT_STATUS: Record<ConsentStatus, StatusDefinition> = {
   },
 };
 
+// Situacao da ATIVIDADE do lead ou paciente (contact_activity, escopo
+// acrescentado em 02/10/2026). "Atrasada" e "Para hoje" nao sao gravadas: sao
+// o predicado de lib/domain/atividades.ts, espelho de contagem_de_atividades.
+// Icones: Square (a caixa vazia de quem ainda nao fez) e SquareX sao novos e
+// sempre neutral; ClockAlert e novo e so desta situacao (o AlarmClock ja e
+// "Sem contato"); Hourglass segue pendencia em warning; CircleCheck segue
+// sucesso. Nunca o Circle, que e o icone padrao das etapas da jornada.
+export const ATIVIDADE_STATUS: Record<SituacaoDaAtividade, StatusDefinition> = {
+  pendente: { label: "Pendente", tone: "neutral", icon: Square },
+  hoje: { label: "Para hoje", tone: "warning", icon: Hourglass },
+  atrasada: { label: "Atrasada", tone: "alert", icon: ClockAlert },
+  concluida: { label: "Concluída", tone: "success", icon: CircleCheck },
+  cancelada: { label: "Cancelada", tone: "neutral", icon: SquareX },
+};
+
 // Tabela de icones reservados (docs/06 secao 4.6, conflito C18). Um icone,
 // um sentido, uma cor, em qualquer tela, dentro ou fora destes mapas:
 // - TriangleAlert: SO o status Faltou (alert).
@@ -439,6 +459,12 @@ export const CONSENT_STATUS: Record<ConsentStatus, StatusDefinition> = {
 //   encaixe, sempre neutral.
 // - CircleDot: SO "Ligada nas vinculadas" do cartao da aba de Automacoes
 //   (info).
+// - ClockAlert: SO a atividade atrasada (alert). Square e SquareX: entre os
+//   status, SO a atividade pendente e a cancelada (neutral); o SquareX
+//   tambem e o item "Cancelar atividade" do menu da linha, no mesmo sentido
+//   e tambem neutral (nunca destructive); o Square do gravador de audio e o
+//   botao de parar, controle e nao status. ListChecks e o item Atividades do
+//   menu (sem cor semantica).
 // Trocas decorrentes, cada uma no lote da sua tela: toque "pulado" MailWarning
 // e "na fila" Mail; aviso de recurso do modal de agendamento e dialogo da
 // regua CircleAlert; erro de Confirmacoes OctagonAlert; Recuperadas com tom

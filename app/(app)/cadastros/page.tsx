@@ -4,7 +4,11 @@ import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
-import { fetchCatalogo, fetchUsoDosPacotes } from "@/lib/queries/catalogo";
+import {
+  fetchCatalogo,
+  fetchMatrizDeConvenios,
+  fetchUsoDosPacotes,
+} from "@/lib/queries/catalogo";
 import { createClient } from "@/lib/supabase/server";
 
 import { redirecionamentoDeAbaQueSaiu } from "./abas";
@@ -37,8 +41,13 @@ export default async function CadastrosPage({
   // O uso dos pacotes e um detalhe de uma aba: se falhar, a tela carrega o
   // resto e a aba Pacotes tenta de novo no navegador (e mostra o erro se
   // continuar falhando), em vez de derrubar Cadastros inteiro.
-  const [catalogo, usoDosPacotes] = await Promise.all([
+  // A matriz de convenios (quem atende e o que cobre) NAO tem .catch, de
+  // proposito: vazia por erro, os modais do Profissional e do Procedimento
+  // abririam sem os convenios gravados e o proximo Salvar os apagaria. Se
+  // falhar, a tela cai no erro de (app), como o catalogo.
+  const [catalogo, matriz, usoDosPacotes] = await Promise.all([
     fetchCatalogo(supabase, active.clinicId),
+    fetchMatrizDeConvenios(supabase, active.clinicId),
     fetchUsoDosPacotes(supabase, active.clinicId).catch(() => null),
   ]);
 
@@ -57,6 +66,7 @@ export default async function CadastrosPage({
       <CadastrosClient
         clinicId={active.clinicId}
         catalogoInicial={catalogo}
+        matrizInicial={matriz}
         usoDosPacotesInicial={usoDosPacotes}
         abaInicial={typeof aba === "string" ? aba : undefined}
         podeEditar={podeEditar}

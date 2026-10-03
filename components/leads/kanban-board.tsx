@@ -14,7 +14,11 @@ import { toast } from "sonner";
 import { mudarEtapaAction } from "@/app/(app)/leads/actions";
 import { KanbanColuna } from "@/components/leads/kanban-coluna";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
-import { agruparPorJornada, type EtapaDaJornada } from "@/lib/domain/jornada";
+import {
+  agruparPorJornada,
+  algumaEtapaComDescricao,
+  type EtapaDaJornada,
+} from "@/lib/domain/jornada";
 import { compararPorProximaAcao } from "@/lib/domain/leads-ui";
 import {
   leadsKeys,
@@ -29,6 +33,10 @@ import {
 // persiste nada: o modal de motivo decide, e cancelar devolve o cartao,
 // porque nada foi gravado. A coluna cuja etapa tem regua de follow-up ligada
 // diz isso no cabecalho: soltar ali faz o lead autorizado receber a regua.
+//
+// Quando alguma etapa tem descricao (02/10/2026), todas as colunas reservam
+// a altura das 2 linhas dela: o grid e items-start, e sem a reserva os
+// cartoes da coluna com descricao comecariam mais abaixo que os das outras.
 //
 // O id do DndContext vem do useId: sem ele o dnd-kit numera o
 // aria-describedby dos cartoes por um contador global, que diverge entre o
@@ -109,6 +117,7 @@ export function KanbanBoard({
   const reguaPorEtapa = new Map(
     (reguas ?? []).map((regua) => [regua.etapa, regua.nome]),
   );
+  const reservarDescricao = algumaEtapaComDescricao(jornada);
 
   return (
     <DndContext id={dndId} sensors={sensores} onDragEnd={aoSoltar}>
@@ -120,6 +129,7 @@ export function KanbanBoard({
             leads={grupos.get(etapa.chave) ?? []}
             membros={membros}
             reguaNome={reguaPorEtapa.get(etapa.chave) ?? null}
+            reservarDescricao={reservarDescricao}
             podeEditar={podeEditar}
             onAbrirLead={onAbrirLead}
           />

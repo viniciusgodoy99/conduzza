@@ -9,11 +9,19 @@ import {
   ShieldOff,
   ShieldX,
   Smartphone,
+  SquareSlash,
   WifiOff,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 
 import { enviarArquivoAction } from "@/app/(app)/atendimento/actions";
@@ -30,11 +38,33 @@ import {
   dataNaClinica,
   FUSO_PADRAO,
 } from "@/components/atendimento/fuso-da-clinica";
+import {
+  idsDaLista,
+  ListaDeRespostas,
+  type ItemDaLista,
+} from "@/components/atendimento/lista-de-respostas";
 import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { TravaDoNumero } from "@/lib/domain/numeros-do-inbox";
+import {
+  alvoDoBotao,
+  anuncioDaLista,
+  aplicarResposta,
+  chaveDoGatilho,
+  filtrarRespostas,
+  gatilhoDaBarra,
+  MAXIMO_NA_LISTA,
+  renderizarResposta,
+  usaNome,
+  type RespostaRapida,
+} from "@/lib/domain/respostas-rapidas";
 import { conversationKeys } from "@/lib/queries/conversations";
 import type {
   ConsentInfo,
@@ -85,6 +115,139 @@ function temTecladoDeVerdade(): boolean {
   return window.matchMedia("(pointer: fine)").matches;
 }
 
+/** As mensagens padrao da clinica (so as ativas) e o estado da leitura. */
+export type MensagensPadraoDoCompositor = {
+  estado: "carregando" | "erro" | "pronto";
+  lista: RespostaRapida[];
+  aoTentarDeNovo: () => void;
+  /** administrador e gestor: o vazio leva a Configuracoes */
+  podeCadastrar: boolean;
+};
+
+const DICA_DA_BARRA = "Digite / para usar uma mensagem padrão";
+
+/**
+ * O que decide se a lista de mensagens padrao esta aberta, alem do cursor.
+ *
+ * Mora numa funcao pura (e nao em tres useState soltos) porque o defeito que
+ * ela corrige nasceu justamente de um caminho que esquecia um dos tres: o
+ * foco saia do compositor, a lista sumia, mas a marca "aberta pelo botao"
+ * ficava, e a lista voltava SOZINHA quando o foco voltava. Com ela de volta,
+ * o Enter que a pessoa apertava para enviar passava a ESCOLHER a primeira
+ * mensagem, que entrava no meio do rascunho.
+ */
+export type EstadoDaLista = {
+  /** o foco esta no compositor (o campo, a lista ou o Enviar) */
+  focado: boolean;
+  /** aberta pelo botao da barra (toque e leitor de tela), sem "/" */
+  peloBotao: boolean;
+  /** o Esc fechou a lista neste gatilho, e ela fica fechada ate o termo mudar */
+  fechadaEm: string | null;
+};
+
+export type EventoDaLista =
+  | { tipo: "focou" }
+  /** o foco saiu do compositor (clique no fio, Tab para fora, outra janela) */
+  | { tipo: "saiu" }
+  | { tipo: "abriu_pelo_botao" }
+  /** Esc, Shift+Enter ou o botao de novo; `gatilho` e a chave do "/" atual */
+  | { tipo: "fechou"; gatilho: string | null }
+  | { tipo: "digitou" }
+  /** o cursor mudou; `gatilho` e a chave do "/" sob ele, se houver */
+  | { tipo: "moveu_cursor"; gatilho: string | null }
+  /** `seguinte` e a chave do "/" que a mensagem escolhida deixou no fim */
+  | { tipo: "escolheu"; seguinte: string | null }
+  | { tipo: "enviou" }
+  | { tipo: "trocou_de_aba" };
+
+export const LISTA_INICIAL: EstadoDaLista = {
+  focado: false,
+  peloBotao: false,
+  fechadaEm: null,
+};
+
+/** Devolve o MESMO objeto quando nada muda (o useReducer nao re-renderiza). */
+function comMudancas(
+  estado: EstadoDaLista,
+  mudancas: Partial<EstadoDaLista>,
+): EstadoDaLista {
+  const novo = { ...estado, ...mudancas };
+  return novo.focado === estado.focado &&
+    novo.peloBotao === estado.peloBotao &&
+    novo.fechadaEm === estado.fechadaEm
+    ? estado
+    : novo;
+}
+
+export function proximoEstadoDaLista(
+  estado: EstadoDaLista,
+  evento: EventoDaLista,
+): EstadoDaLista {
+  switch (evento.tipo) {
+    case "focou":
+      return comMudancas(estado, { focado: true });
+    case "saiu":
+      // A lista do botao acaba aqui: voltar ao campo e voltar a escrever, e
+      // so um novo toque no botao (ou um "/") abre de novo. O Esc dado num
+      // "/" continua valendo, porque o termo nao mudou.
+      return comMudancas(estado, { focado: false, peloBotao: false });
+    case "abriu_pelo_botao":
+      return comMudancas(estado, { peloBotao: true, fechadaEm: null });
+    case "fechou":
+      return comMudancas(estado, {
+        peloBotao: false,
+        fechadaEm: evento.gatilho ?? estado.fechadaEm,
+      });
+    case "digitou":
+      return comMudancas(estado, { peloBotao: false });
+    case "moveu_cursor":
+      // Qualquer gatilho diferente do que foi fechado (ou nenhum) solta a
+      // trava do Esc.
+      return estado.fechadaEm !== null && evento.gatilho !== estado.fechadaEm
+        ? comMudancas(estado, { fechadaEm: null })
+        : estado;
+    case "escolheu":
+      return comMudancas(estado, {
+        peloBotao: false,
+        fechadaEm: evento.seguinte,
+      });
+    case "enviou":
+      // A caixa esvazia e o foco fica nela: a lista nao pode ficar aberta
+      // sobre o campo vazio, onde o proximo Enter escolheria uma mensagem.
+      return comMudancas(estado, { peloBotao: false, fechadaEm: null });
+    case "trocou_de_aba":
+      return comMudancas(estado, { peloBotao: false });
+  }
+}
+
+// Fora do formato "inicio:termo" do chaveDoGatilho: nunca colide com um "/".
+const CHAVE_DO_BOTAO = "botao";
+
+/**
+ * A chave da lista que deve aparecer agora, ou null com ela fechada. O "/"
+ * vale pelo cursor; sem "/", so a lista pedida pelo botao.
+ */
+export function chaveDaListaAberta(
+  estado: EstadoDaLista,
+  {
+    gatilho,
+    disponivel,
+  }: {
+    /** a chave do "/" sob o cursor (chaveDoGatilho), se houver */
+    gatilho: string | null;
+    /** a lista existe aqui: aba Responder, com escrita e mensagens */
+    disponivel: boolean;
+  },
+): string | null {
+  if (!disponivel) {
+    return null;
+  }
+  const chave = gatilho ?? (estado.peloBotao ? CHAVE_DO_BOTAO : null);
+  return estado.focado && chave !== null && chave !== estado.fechadaEm
+    ? chave
+    : null;
+}
+
 export function Composer({
   conversation,
   viewerId,
@@ -103,6 +266,8 @@ export function Composer({
   aoPerderConversa,
   travaDoNumero = null,
   podeReconectar = false,
+  mensagensPadrao,
+  nomeDaClinica = "",
 }: {
   conversation: ConversationListItem;
   viewerId: string;
@@ -172,6 +337,13 @@ export function Composer({
   travaDoNumero?: TravaDoNumero | null;
   /** Quem pode reconectar o numero (Configuracoes: administrador e gestor) */
   podeReconectar?: boolean;
+  /**
+   * As mensagens padrao ("/" na resposta ao paciente e o botao da barra).
+   * Ausente: o compositor nao oferece a lista.
+   */
+  mensagensPadrao?: MensagensPadraoDoCompositor;
+  /** Nome da clinica, para o {{clinica}} das mensagens padrao. */
+  nomeDaClinica?: string;
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +383,224 @@ export function Composer({
     podeEditar && !isNote && !respostaBloqueada,
   );
 
+  // MENSAGENS PADRAO ("/" na resposta ao paciente; spec 1.11).
+  //
+  // A lista abre pelo VALOR do campo e pela posicao do cursor (onChange e
+  // onSelect), nunca pela tecla: no teclado virtual do Android a tecla chega
+  // como 229. Abre so na aba Responder e com a escrita liberada; na nota
+  // interna a barra e texto comum. A mensagem escolhida entra no campo ja
+  // com o nome do contato e o da clinica, EDITAVEL, e nunca e enviada
+  // sozinha: Enter e Tab com a lista aberta escolhem, e Enter sem nada para
+  // escolher nao faz nada (senao "/obrigado" iria literal ao paciente).
+  //
+  // Os hooks vem aqui, antes dos retornos antecipados por estado da conversa.
+  const baseDaLista = useId();
+  const idsDaListaDeRespostas = idsDaLista(baseDaLista);
+  const idDaDica = `${baseDaLista}-dica`;
+  // A selecao do campo como o navegador informou por ultimo.
+  const [selecao, setSelecao] = useState<{
+    inicio: number;
+    fim: number;
+  } | null>(null);
+  // O foco no compositor, a lista pedida pelo botao e o Esc dado num "/"
+  // (EstadoDaLista). A lista so aparece com o foco no compositor: clicar fora
+  // fecha, e a do botao nao volta sozinha quando o foco volta.
+  const [estadoDaLista, mudarLista] = useReducer(
+    proximoEstadoDaLista,
+    LISTA_INICIAL,
+  );
+  // A opcao ativa vale para UM gatilho: termo novo volta para a primeira.
+  const [ativa, setAtiva] = useState<{ chave: string; indice: number }>({
+    chave: "",
+    indice: 0,
+  });
+  // Onde o cursor vai depois que o texto novo chegar do pai.
+  const cursorPendente = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const cursor = cursorPendente.current;
+    const caixa = caixaRef.current;
+    if (cursor === null || !caixa) {
+      return;
+    }
+    cursorPendente.current = null;
+    caixa.focus();
+    caixa.setSelectionRange(cursor, cursor);
+  }, [texto]);
+
+  const listaDisponivel =
+    mensagensPadrao !== undefined && !isNote && !escritaTravada;
+  const gatilho =
+    listaDisponivel && selecao !== null && selecao.inicio === selecao.fim
+      ? gatilhoDaBarra(texto, selecao.inicio)
+      : null;
+  // Null com a lista fechada.
+  const chaveDaLista = chaveDaListaAberta(estadoDaLista, {
+    gatilho: gatilho ? chaveDoGatilho(gatilho) : null,
+    disponivel: listaDisponivel,
+  });
+  const listaAberta = chaveDaLista !== null;
+  const estadoDasMensagens = mensagensPadrao?.estado ?? "carregando";
+  const cadastradas =
+    estadoDasMensagens === "pronto"
+      ? (mensagensPadrao?.lista.filter((item) => item.ativo).length ?? 0)
+      : 0;
+  // So as visiveis sao renderizadas (o texto tem o nome do contato: fica na
+  // tela, nunca em log). No botao nao ha termo para estreitar: vao todas.
+  const itensDaLista: ItemDaLista[] =
+    listaAberta && estadoDasMensagens === "pronto" && mensagensPadrao
+      ? filtrarRespostas(
+          mensagensPadrao.lista,
+          gatilho?.termo ?? "",
+          gatilho ? MAXIMO_NA_LISTA : Number.POSITIVE_INFINITY,
+        ).map((resposta) => ({
+          resposta,
+          previa: renderizarResposta(resposta.corpo, {
+            nome: conversation.contact.name,
+            clinica: nomeDaClinica,
+          }),
+        }))
+      : [];
+  const indiceAtivo =
+    ativa.chave === chaveDaLista
+      ? Math.max(0, Math.min(ativa.indice, itensDaLista.length - 1))
+      : 0;
+  const contatoSemNome =
+    !conversation.contact.name?.trim() &&
+    itensDaLista.some((item) => usaNome(item.resposta.corpo));
+
+  // Le a selecao do campo (onChange e onSelect). O Esc vale ate o termo
+  // mudar: qualquer gatilho diferente do que foi fechado (ou nenhum) solta a
+  // trava, e a mesma "/conf" digitada de novo depois volta a abrir.
+  const lerSelecao = (caixa: HTMLTextAreaElement) => {
+    const inicio = caixa.selectionStart;
+    const fim = caixa.selectionEnd;
+    setSelecao((atual) =>
+      atual && atual.inicio === inicio && atual.fim === fim
+        ? atual
+        : { inicio, fim },
+    );
+    const atual = inicio === fim ? gatilhoDaBarra(caixa.value, inicio) : null;
+    mudarLista({
+      tipo: "moveu_cursor",
+      gatilho: atual ? chaveDoGatilho(atual) : null,
+    });
+  };
+
+  const fecharLista = () => {
+    mudarLista({
+      tipo: "fechou",
+      gatilho: gatilho ? chaveDoGatilho(gatilho) : null,
+    });
+  };
+
+  const escolherResposta = (indice: number) => {
+    const item = itensDaLista[indice];
+    if (!item) {
+      return;
+    }
+    const alvo =
+      gatilho ??
+      alvoDoBotao(texto, selecao?.inicio ?? null, selecao?.fim ?? null);
+    const resultado = aplicarResposta(texto, alvo, item.previa);
+    if (!resultado) {
+      setError(
+        `Com esta mensagem o texto passaria de ${TETO_DE_CARACTERES} caracteres. Encurte o que já está escrito antes de usar.`,
+      );
+      return;
+    }
+    setError(null);
+    // Se o fim da mensagem escolhida parecer outro "/termo", a lista nao
+    // reabre sozinha em cima dela.
+    const seguinte = gatilhoDaBarra(resultado.texto, resultado.cursor);
+    mudarLista({
+      tipo: "escolheu",
+      seguinte: seguinte ? chaveDoGatilho(seguinte) : null,
+    });
+    setSelecao({ inicio: resultado.cursor, fim: resultado.cursor });
+    cursorPendente.current = resultado.cursor;
+    aoMudarTexto(resultado.texto);
+  };
+
+  const alternarPeloBotao = () => {
+    if (listaAberta) {
+      fecharLista();
+      return;
+    }
+    mudarLista({ tipo: "abriu_pelo_botao" });
+    const caixa = caixaRef.current;
+    if (caixa && document.activeElement !== caixa) {
+      // Sem cursor conhecido, a mensagem entra no fim do que ja esta escrito.
+      caixa.focus();
+      caixa.setSelectionRange(texto.length, texto.length);
+      setSelecao({ inicio: texto.length, fim: texto.length });
+    }
+  };
+
+  /**
+   * Teclas com a lista aberta, tratadas ANTES do envio e da citacao. Devolve
+   * true quando a tecla era da lista (o resto do onKeyDown nao roda).
+   */
+  const teclaDaLista = (
+    evento: React.KeyboardEvent<HTMLTextAreaElement>,
+  ): boolean => {
+    // Compondo acento: a tecla e do teclado, nunca da lista nem do envio.
+    if (evento.nativeEvent.isComposing) {
+      return true;
+    }
+    const total = itensDaLista.length;
+    switch (evento.key) {
+      case "ArrowDown":
+      case "ArrowUp": {
+        if (total === 0) {
+          return true;
+        }
+        evento.preventDefault();
+        const passo = evento.key === "ArrowDown" ? 1 : -1;
+        setAtiva({
+          chave: chaveDaLista ?? "",
+          indice: (indiceAtivo + passo + total) % total,
+        });
+        return true;
+      }
+      case "Enter": {
+        // Shift+Enter fecha a lista e quebra a linha (o padrao do campo).
+        if (evento.shiftKey) {
+          fecharLista();
+          return true;
+        }
+        // Enter, Ctrl+Enter e Cmd+Enter ESCOLHEM; sem resultado, nada.
+        evento.preventDefault();
+        if (total > 0) {
+          escolherResposta(indiceAtivo);
+        }
+        return true;
+      }
+      case "Tab": {
+        if (
+          total === 0 ||
+          evento.shiftKey ||
+          evento.ctrlKey ||
+          evento.metaKey ||
+          evento.altKey
+        ) {
+          return false;
+        }
+        evento.preventDefault();
+        escolherResposta(indiceAtivo);
+        return true;
+      }
+      case "Escape": {
+        // Fecha SO a lista: a citacao pendurada continua.
+        evento.preventDefault();
+        evento.stopPropagation();
+        fecharLista();
+        return true;
+      }
+      default:
+        return false;
+    }
+  };
+
   const refresh = () => {
     void queryClient.invalidateQueries({
       queryKey: conversationKeys.messages(conversation.id),
@@ -242,6 +632,7 @@ export function Composer({
       return;
     }
     setError(null);
+    mudarLista({ tipo: "enviou" });
     aoMudarTexto("");
     caixaRef.current?.focus();
     aoEnviarTexto({ corpo, ehNota: isNote, citandoId: citando?.id ?? null });
@@ -272,6 +663,7 @@ export function Composer({
   // onde o texto vai.
   const trocarModo = (novo: Mode) => {
     aoTrocarModo(novo);
+    mudarLista({ tipo: "trocou_de_aba" });
     if (citando && citando.is_internal_note !== (novo === "nota")) {
       aoCancelarCitacao();
     }
@@ -465,10 +857,52 @@ export function Composer({
               ) : null}
               <div
                 className={cn(
-                  "ml-auto",
+                  "ml-auto flex items-center gap-1",
                   (isNote || respostaBloqueada) && "hidden",
                 )}
               >
+                {mensagensPadrao ? (
+                  podeEditar ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="text-text-secondary"
+                          aria-label="Mensagens padrão"
+                          aria-haspopup="listbox"
+                          aria-expanded={listaAberta}
+                          aria-controls={
+                            listaAberta
+                              ? idsDaListaDeRespostas.painel
+                              : undefined
+                          }
+                          // O foco fica no campo (no celular, o teclado nao
+                          // fecha); sem foco antes, o clique leva para ele.
+                          onMouseDown={(evento) => evento.preventDefault()}
+                          onClick={alternarPeloBotao}
+                        >
+                          <SquareSlash aria-hidden className="size-[18px]" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{DICA_DA_BARRA}</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <DisabledWithHint hint={SO_ACOMPANHA}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-text-secondary"
+                        aria-label="Mensagens padrão"
+                        disabled
+                      >
+                        <SquareSlash aria-hidden className="size-[18px]" />
+                      </Button>
+                    </DisabledWithHint>
+                  )
+                ) : null}
                 {botoes}
               </div>
             </div>
@@ -519,7 +953,7 @@ export function Composer({
 
       <form
         className={cn(
-          "flex items-end gap-2 rounded-card border p-2 cz-transition focus-within:border-focus focus-within:ring-3 focus-within:ring-ring/55",
+          "relative flex items-end gap-2 rounded-card border p-2 cz-transition focus-within:border-focus focus-within:ring-3 focus-within:ring-ring/55",
           isNote
             ? "border-(--warning-text) bg-card"
             : "border-input bg-surface-subtle",
@@ -529,11 +963,25 @@ export function Composer({
           event.preventDefault();
           enviarTexto();
         }}
+        onFocus={() => mudarLista({ tipo: "focou" })}
+        onBlur={(event) => {
+          // O foco que vai para dentro do proprio formulario (uma acao da
+          // lista, o Enviar) nao fecha a lista. Fora dele, fecha, e a lista
+          // do botao acaba: voltar ao campo nao a reabre (EstadoDaLista).
+          if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+            mudarLista({ tipo: "saiu" });
+          }
+        }}
       >
         <textarea
           ref={caixaRef}
           value={texto}
-          onChange={(event) => aoMudarTexto(event.target.value)}
+          onChange={(event) => {
+            aoMudarTexto(event.target.value);
+            lerSelecao(event.target);
+            mudarLista({ tipo: "digitou" });
+          }}
+          onSelect={(event) => lerSelecao(event.currentTarget)}
           maxLength={TETO_DE_CARACTERES}
           rows={2}
           disabled={escritaTravada}
@@ -545,8 +993,27 @@ export function Composer({
                 : "Escreva a resposta"
           }
           aria-label={isNote ? "Nota interna" : "Resposta ao paciente"}
+          // Textbox de varias linhas, sem role=combobox: no ARIA 1.2 o
+          // textbox aceita aria-autocomplete e aria-activedescendant.
+          aria-autocomplete={listaDisponivel ? "list" : undefined}
+          aria-controls={
+            listaAberta
+              ? itensDaLista.length > 0
+                ? idsDaListaDeRespostas.lista
+                : idsDaListaDeRespostas.painel
+              : undefined
+          }
+          aria-activedescendant={
+            listaAberta && itensDaLista.length > 0
+              ? idsDaListaDeRespostas.opcao(indiceAtivo)
+              : undefined
+          }
+          aria-describedby={listaDisponivel ? idDaDica : undefined}
           className="field-sizing-content max-h-[120px] min-h-[52px] min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-[5px] text-base leading-[1.5] text-text-strong outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed md:text-[13.5px]"
           onKeyDown={(event) => {
+            if (listaAberta && teclaDaLista(event)) {
+              return;
+            }
             if (event.key === "Escape" && citando) {
               event.preventDefault();
               aoCancelarCitacao();
@@ -570,6 +1037,44 @@ export function Composer({
             }
           }}
         />
+        {listaAberta && mensagensPadrao ? (
+          // Por cima do fio, logo acima do campo. Depois do campo na ordem
+          // do documento: sem nada para escolher, o Tab chega no "Tentar de
+          // novo" e no caminho para Configuracoes.
+          <div className="absolute inset-x-0 bottom-full z-20 mb-2">
+            <ListaDeRespostas
+              base={baseDaLista}
+              estado={estadoDasMensagens}
+              itens={itensDaLista}
+              ativo={indiceAtivo}
+              cadastradas={cadastradas}
+              podeCadastrar={mensagensPadrao.podeCadastrar}
+              contatoSemNome={contatoSemNome}
+              aoEscolher={escolherResposta}
+              aoApontar={(indice) =>
+                setAtiva({ chave: chaveDaLista ?? "", indice })
+              }
+              aoTentarDeNovo={mensagensPadrao.aoTentarDeNovo}
+            />
+          </div>
+        ) : null}
+        {listaDisponivel ? (
+          <>
+            <span id={idDaDica} className="sr-only">
+              {DICA_DA_BARRA}.
+            </span>
+            {/* Montada sempre: a regiao viva precisa existir antes de mudar. */}
+            <span role="status" className="sr-only">
+              {listaAberta
+                ? anuncioDaLista(
+                    estadoDasMensagens,
+                    itensDaLista.length,
+                    cadastradas,
+                  )
+                : ""}
+            </span>
+          </>
+        ) : null}
         {/* Sem "Enviando...": o envio não bloqueia mais nada. O disabled fica
             só como afordância de que não há o que mandar. Os dois planos se
             distinguem pelo TEXTO e pela pele do botão (lime para o paciente,

@@ -151,6 +151,11 @@ async function auditar(
 // Nao tem guard de escrita: ler a ficha e direito de qualquer papel (a RLS de
 // contact, conversation e message recorta clinica e papel). O que muda aqui e
 // que a leitura deixa rastro.
+//
+// As atividades do contato (contact_activity, o texto pode ser dado de saude)
+// vem DENTRO do detalhe, e a trilha ganha tambem a linha "leu atividades" com
+// o id do contato (a mesma entidade da tela Atividades e do painel da
+// conversa). O drawer nunca le a tabela pelo navegador.
 
 export type DetalheDoContatoResult =
   { ok: true; detalhe: LeadDetalhe } | { ok: false; error: string };
@@ -169,12 +174,20 @@ export async function abrirDetalheDoContatoAction(
 
   const clinicId = context.active.clinicId;
   const supabase = await createClient();
-  await auditarLeituraDePaciente(supabase, {
-    clinicId,
-    userId: context.userId,
-    entity: "ficha_paciente",
-    entityId: parsed.data,
-  });
+  await Promise.all([
+    auditarLeituraDePaciente(supabase, {
+      clinicId,
+      userId: context.userId,
+      entity: "ficha_paciente",
+      entityId: parsed.data,
+    }),
+    auditarLeituraDePaciente(supabase, {
+      clinicId,
+      userId: context.userId,
+      entity: "atividades",
+      entityId: parsed.data,
+    }),
+  ]);
 
   try {
     const detalhe = await fetchLeadDetalhe(supabase, clinicId, parsed.data);

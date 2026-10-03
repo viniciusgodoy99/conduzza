@@ -155,6 +155,32 @@ export async function provisionarDemonstracaoClinica(
   const bradesco = convs!.find((c) => c.name.includes("Bradesco"))!
     .id as string;
 
+  // Convenio pelo profissional (decisao do dono em 02/10/2026): os pares
+  // antes dos vinculos, coerentes com eles. Joao atende Unimed e Bradesco;
+  // Ana atende Unimed; Carla so Particular. Endocrinologia e coberta pela
+  // Unimed e pelo Bradesco; Dermatologia pela Unimed; Nutrologia, laser e
+  // avaliacao por nenhum (so Particular). Por isso a Nutrologia do Joao
+  // continua so particular, mesmo ele atendendo os dois convenios.
+  await admin
+    .from("professional_insurance")
+    .insert([
+      { clinic_id: clinicId, professional_id: joao, insurance_id: unimed },
+      { clinic_id: clinicId, professional_id: joao, insurance_id: bradesco },
+      { clinic_id: clinicId, professional_id: ana, insurance_id: unimed },
+    ])
+    .throwOnError();
+  await admin
+    .from("procedure_insurance")
+    .insert([
+      { clinic_id: clinicId, procedure_id: procEndo, insurance_id: unimed },
+      { clinic_id: clinicId, procedure_id: procEndo, insurance_id: bradesco },
+      { clinic_id: clinicId, procedure_id: procDermato, insurance_id: unimed },
+    ])
+    .throwOnError();
+  feito.push(
+    "convênios que cada profissional atende e que cobrem cada procedimento",
+  );
+
   // O caso canonico do Dr. Joao (spec 3.5): endocrino particular 400/40min,
   // atende Unimed e Bradesco (coberto); nutro particular 500/60min, SO
   // particular. Mais dermato da Ana e laser da Carla, e um zero de verdade.

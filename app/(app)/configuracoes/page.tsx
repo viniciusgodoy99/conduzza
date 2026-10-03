@@ -35,7 +35,9 @@ import {
   fetchContagemDeEtiquetas,
   fetchEtiquetasDeConversa,
 } from "@/lib/queries/etiquetas-de-conversa";
+import { fetchAutomacoesDeFluxo } from "@/lib/queries/automacoes-de-fluxo";
 import { fetchJornada } from "@/lib/queries/jornada";
+import { fetchRespostasRapidas } from "@/lib/queries/respostas-rapidas";
 import type { Pendente } from "./equipe-client";
 
 /**
@@ -97,10 +99,10 @@ async function convidadosQueAindaNaoEntraram(
 // Tela 12, Configuracoes: equipe e permissoes (liberacao de pedidos, papeis,
 // vinculo do profissional com a agenda, convite, codigo da clinica e a tabela
 // do que cada papel faz), dados da clinica (nome e fuso), os numeros de
-// WhatsApp (um cartao por numero; docs/07, Telas), jornada, etiquetas e
-// anuncios da Meta. Administrador e gestor editam (nome e fuso so o
-// administrador); os demais papeis nem chegam aqui (o layout redireciona pela
-// matriz do brief).
+// WhatsApp (um cartao por numero; docs/07, Telas), jornada, automacoes de
+// fluxo, etiquetas, mensagens padrao e anuncios da Meta. Administrador e gestor editam (nome e
+// fuso so o administrador); os demais papeis nem chegam aqui (o layout
+// redireciona pela matriz do brief).
 export default async function ConfiguracoesPage({
   searchParams,
 }: {
@@ -120,8 +122,10 @@ export default async function ConfiguracoesPage({
     codigoResult,
     whatsappResult,
     jornada,
+    automacoesDeFluxo,
     etiquetas,
     contagemDeEtiquetas,
+    mensagensPadrao,
     contaMetaResult,
     unidadesResult,
     politicaDoEnvioResult,
@@ -163,8 +167,13 @@ export default async function ConfiguracoesPage({
       .order("created_at", { ascending: true }),
     // A jornada da clinica (etapas + conversao): a RLS recorta por clinica.
     seguro(fetchJornada(supabase, active.clinicId)),
+    // As automacoes de fluxo (regras, sem paciente): membro ativo le. O uso
+    // e o historico a aba busca sob demanda, so quando aberta.
+    seguro(fetchAutomacoesDeFluxo(supabase, active.clinicId)),
     seguro(fetchEtiquetasDeConversa(supabase, active.clinicId)),
     seguro(fetchContagemDeEtiquetas(supabase, active.clinicId)),
+    // As mensagens padrao, todas (ativas e desativadas): membro ativo le.
+    seguro(fetchRespostasRapidas(supabase, active.clinicId)),
     // Conta de anuncios da Meta: a policy so mostra para admin e gestor.
     supabase
       .from("meta_ads_account")
@@ -391,9 +400,23 @@ export default async function ConfiguracoesPage({
               }
         }
         jornada={jornada}
+        fluxo={
+          automacoesDeFluxo
+            ? {
+                lista: automacoesDeFluxo,
+                clinicId: active.clinicId,
+                timezone: active.timezone,
+              }
+            : null
+        }
         etiquetas={
           etiquetas && contagemDeEtiquetas
             ? { lista: etiquetas, contagem: contagemDeEtiquetas }
+            : null
+        }
+        mensagens={
+          mensagensPadrao
+            ? { lista: mensagensPadrao, nomeDaClinica: active.clinicName }
             : null
         }
         meta={

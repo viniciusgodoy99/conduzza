@@ -5,6 +5,10 @@ import {
   consentimentoVigenteDeLinhas,
   type LinhaConsent,
 } from "@/lib/domain/leads-ui";
+import {
+  fetchAtividadesDoContato,
+  type AtividadesDoContato,
+} from "@/lib/queries/atividades";
 
 // Tipos e fetchers da Tela 4 (Leads). Os da LISTA sao isomorficos como
 // catalogo.ts: recebem o SupabaseClient e rodam no servidor (carga inicial) e
@@ -15,9 +19,9 @@ import {
 // isolamento e papel; a leitura humana da tela passa por
 // auditarLeituraDePaciente na page.
 //
-// fetchLeadDetalhe e a excecao: le conversa de paciente e por isso roda SO no
-// servidor, atras da abrirDetalheDoContatoAction, que grava quem leu a ficha
-// de quem antes de devolver o dado.
+// fetchLeadDetalhe e a excecao: le conversa e atividades de paciente e por
+// isso roda SO no servidor, atras da abrirDetalheDoContatoAction, que grava
+// quem leu a ficha de quem antes de devolver o dado.
 
 export type LeadResumo = {
   id: string;
@@ -52,6 +56,12 @@ export type LeadDetalhe = {
   mensagens: MensagemDoLead[];
   /** Nome amigavel da campanha em campaign_link; null sem campanha casada. */
   campanha_nome: string | null;
+  /**
+   * Atividades do contato (pendentes e ultimas concluidas), lidas na MESMA
+   * action que grava a trilha da ficha. null quando a leitura delas falhou:
+   * a secao mostra o erro sem derrubar o resto do drawer.
+   */
+  atividades: AtividadesDoContato | null;
 };
 
 export const leadsKeys = {
@@ -61,6 +71,8 @@ export const leadsKeys = {
   /** Etapas com regua de follow-up ligada (aviso do Mudar etapa). */
   reguas: (clinicId: string) => ["leads", clinicId, "reguas"] as const,
   detalhe: (contactId: string) => ["leads", "detalhe", contactId] as const,
+  /** Prefixo de todos os detalhes (as atividades vem dentro deles). */
+  detalhes: ["leads", "detalhe"] as const,
   /** Nomes dos membros (fetchClinicAuthorNames) para avatar de responsavel. */
   autores: (clinicId: string) => ["leads", clinicId, "autores"] as const,
 };
@@ -246,7 +258,7 @@ export async function fetchLeadDetalhe(
   const row = data as Record<string, unknown>;
   const sourceCampaign = (row.source_campaign as string | null) ?? null;
 
-  const [conversa, campanha] = await Promise.all([
+  const [conversa, campanha, atividades] = await Promise.all([
     // VARIOS NUMEROS (docs/07): o lead pode ter uma conversa aberta em cada
     // numero da clinica. O drawer mostra e liga a mais recente em QUALQUER
     // numero (o limit(1) nunca quebra com duas); empate de atividade vai para
@@ -270,6 +282,8 @@ export async function fetchLeadDetalhe(
           .limit(1)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    // Falha so das atividades nao derruba a conversa do drawer.
+    fetchAtividadesDoContato(supabase, clinicId, contactId).catch(() => null),
   ]);
   if (conversa.error) {
     throw new Error(conversa.error.message);
@@ -295,5 +309,6 @@ export async function fetchLeadDetalhe(
     conversation_id: conversationId,
     mensagens,
     campanha_nome: (campanha.data as { name: string } | null)?.name ?? null,
+    atividades,
   };
 }

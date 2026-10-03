@@ -2,6 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { AtividadesDaFicha } from "@/components/atividades/atividades-da-ficha";
 import { AcoesPaciente } from "@/components/pacientes/acoes-paciente";
 import { AutorizacaoMensagens } from "@/components/pacientes/autorizacao-mensagens";
 import { CabecalhoPaciente } from "@/components/pacientes/cabecalho-paciente";
@@ -28,6 +29,10 @@ import {
 } from "@/lib/domain/pacientes-ui";
 import { vendasQueJaDescontaram } from "@/lib/domain/pacotes-ui";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import {
+  fetchAtividadesDoContato,
+  fetchEquipeDaAtividade,
+} from "@/lib/queries/atividades";
 import { fetchCatalogo } from "@/lib/queries/catalogo";
 import { fetchFichaPaciente } from "@/lib/queries/pacientes";
 import { createClient } from "@/lib/supabase/server";
@@ -58,14 +63,27 @@ export default async function FichaPacientePage({
   const supabase = await createClient();
 
   // A trilha entra no MESMO Promise.all da carga: as duas comecam juntas, e a
-  // linha do audit_log existe antes de a ficha sair do servidor.
-  const [ficha, catalogo] = await Promise.all([
+  // linha do audit_log existe antes de a ficha sair do servidor. As
+  // atividades (texto que pode ser dado de saude) ganham a linha propria,
+  // "leu atividades" com o id do contato, como no drawer e na conversa; a
+  // falha delas so marca o cartao, nunca derruba a ficha.
+  const [ficha, catalogo, , atividades, equipe] = await Promise.all([
     fetchFichaPaciente(supabase, active.clinicId, id),
     fetchCatalogo(supabase, active.clinicId),
     auditarLeituraDePaciente(supabase, {
       clinicId: active.clinicId,
       userId: context.userId,
       entity: "ficha_paciente",
+      entityId: id,
+    }),
+    fetchAtividadesDoContato(supabase, active.clinicId, id).catch(() => null),
+    fetchEquipeDaAtividade(supabase, active.clinicId, context.userId).catch(
+      () => null,
+    ),
+    auditarLeituraDePaciente(supabase, {
+      clinicId: active.clinicId,
+      userId: context.userId,
+      entity: "atividades",
       entityId: id,
     }),
   ]);
@@ -173,6 +191,20 @@ export default async function FichaPacientePage({
           soDaSuaAgenda={soDaSuaAgenda}
         />
         <div className="grid gap-4">
+          <AtividadesDaFicha
+            clinicId={active.clinicId}
+            contato={{
+              id: ficha.contato.id,
+              nome: ficha.contato.name,
+              telefone: ficha.contato.phone_e164,
+            }}
+            atividades={atividades}
+            equipe={equipe}
+            timezone={active.timezone}
+            podeEditar={podeEditar}
+            dica={dica}
+            agoraInicial={agora.toISOString()}
+          />
           <DadosCadastrais
             contato={ficha.contato}
             convenios={catalogo.convenios.map((convenio) => ({

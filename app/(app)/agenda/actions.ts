@@ -263,6 +263,11 @@ const criarSchema = z.object({
   notes: z.string().trim().max(2000).nullable(),
 });
 
+// Vinculo desativado depois que a tela carregou o catalogo (D8). Nao
+// exportada: arquivo "use server" so exporta funcao assincrona.
+const MENSAGEM_VINCULO_SAIU_DA_AGENDA =
+  "Este profissional não atende mais este procedimento por este convênio. A lista já foi atualizada: escolha de novo.";
+
 // A mensagem certa para cada trava: a exclusion do PROFISSIONAL e a do RECURSO
 // tem o mesmo codigo (23P01), mas o usuario precisa saber qual foi para
 // decidir (encaixe resolve conflito de profissional, nunca de recurso).
@@ -303,12 +308,25 @@ export async function criarAgendamentoAction(
   // furaria a exclusion constraint, que so avalia o range declarado.
   const { data: vinculo } = await supabase
     .from("service_link")
-    .select("duration_min, procedure:procedure_id (resource_id)")
+    .select("duration_min, active, procedure:procedure_id (resource_id)")
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data.service_link_id)
     .maybeSingle();
   if (!vinculo) {
     return { ok: false, error: "Vínculo de atendimento inválido." };
+  }
+  // Consulta NOVA so em vinculo ativo (D8, convenio pelo medico, 02/10/2026).
+  // O catalogo da Agenda fica ate 5 minutos em cache, e o vinculo pode ter
+  // sido desativado nesse meio por outra tela (desmarcar o convenio no
+  // cadastro do profissional ou no Procedimento). So a criacao recusa: a
+  // remarcacao com o mesmo profissional mantem o vinculo da consulta ja
+  // marcada (critica §3.5), e a troca de profissional ja exige vinculo ativo.
+  if (vinculo.active !== true) {
+    return {
+      ok: false,
+      code: "sem_vinculo",
+      error: MENSAGEM_VINCULO_SAIU_DA_AGENDA,
+    };
   }
   const procedure = Array.isArray(vinculo.procedure)
     ? vinculo.procedure[0]

@@ -643,3 +643,294 @@ describe("papel: recepção e leitura não gravam", () => {
     expect(vinculos.filter((v) => v.active)).toHaveLength(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Com `extras` (convenio pelo medico, 02/10/2026; migration
+// 20261002140000_convenio_pelo_medico.sql): o terceiro argumento da action
+// leva a RPC ao modo novo, que grava tambem "Convenios que cobrem este
+// procedimento" (procedure_insurance), recusa a aba parada e as regras da
+// cobertura. Os casos acima (sem extras) provam que o modo legado continua
+// identico. A action do lado do medico esta em
+// tests/integration/convenio-pelo-medico.test.ts.
+// ---------------------------------------------------------------------------
+
+type ExtrasDoTeste = {
+  planos: string[];
+  vinculosNaAbertura: {
+    professional_id: string;
+    insurance_id: string | null;
+  }[];
+  planosNaAbertura: string[];
+  confirmar: boolean;
+};
+
+async function cobremDe(procedureId: string): Promise<string[]> {
+  const { data } = await admin
+    .from("procedure_insurance")
+    .select("insurance_id")
+    .eq("procedure_id", procedureId)
+    .throwOnError();
+  return ((data ?? []) as { insurance_id: string }[])
+    .map((p) => p.insurance_id)
+    .sort();
+}
+
+/** O que um modal recem aberto mandaria: o banco de agora. */
+async function aberturaDe(
+  procedureId: string,
+  planos: string[],
+  confirmar = false,
+): Promise<ExtrasDoTeste> {
+  const vinculos = (await vinculosDo(procedureId)).filter((v) => v.active);
+  return {
+    planos,
+    vinculosNaAbertura: vinculos.map((v) => ({
+      professional_id: v.professional_id,
+      insurance_id: v.insurance_id,
+    })),
+    planosNaAbertura: await cobremDe(procedureId),
+    confirmar,
+  };
+}
+
+describe("com extras: os convênios que cobrem este procedimento (modo novo)", () => {
+  // No modo novo, a linha de convenio que ENTRA exige que o profissional o
+  // atenda: o Joao atende Unimed e Bradesco; a Ana, so a Unimed.
+  beforeAll(async () => {
+    await admin
+      .from("professional_insurance")
+      .upsert(
+        [
+          { clinic_id: clinicaA, professional_id: joao, insurance_id: unimed },
+          {
+            clinic_id: clinicaA,
+            professional_id: joao,
+            insurance_id: bradesco,
+          },
+          { clinic_id: clinicaA, professional_id: ana, insurance_id: unimed },
+        ],
+        { onConflict: "professional_id,insurance_id", ignoreDuplicates: true },
+      )
+      .throwOnError();
+  });
+
+  it("grava procedure_insurance igual a planos, devolve o que entra e sai, e a trilha é a mesma", async () => {
+    const proc = await novoProcedimento();
+    agirComo("admin-a", clinicaA, "admin");
+
+    const criado = await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [
+        particular(joao, 40000),
+        coberto(joao, unimed),
+        coberto(joao, bradesco),
+        particular(ana, 40000),
+        coberto(ana, unimed),
+      ],
+      {
+        planos: [unimed, bradesco],
+        vinculosNaAbertura: [],
+        planosNaAbertura: [],
+        confirmar: false,
+      },
+    );
+    expect(criado.ok, criado.error).toBe(true);
+    expect(criado.resumo).toMatchObject({
+      criados: 5,
+      desativados: 0,
+      consultasFuturas: 0,
+      primeiraConsulta: null,
+      planosSaem: [],
+    });
+    expect([...(criado.resumo?.planosEntram ?? [])].sort()).toEqual(
+      [unimed, bradesco].sort(),
+    );
+    expect(await cobremDe(proc)).toEqual([unimed, bradesco].sort());
+
+    // O Bradesco deixa de cobrir: sai dele e da linha do Joao.
+    const semBradesco = await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [
+        particular(joao, 40000),
+        coberto(joao, unimed),
+        particular(ana, 40000),
+        coberto(ana, unimed),
+      ],
+      await aberturaDe(proc, [unimed]),
+    );
+    expect(semBradesco.ok, semBradesco.error).toBe(true);
+    expect(semBradesco.resumo).toMatchObject({
+      desativados: 1,
+      planosEntram: [],
+      planosSaem: [bradesco],
+    });
+    expect(await cobremDe(proc)).toEqual([unimed]);
+    expect(achar(await vinculosDo(proc), joao, bradesco)?.active).toBe(false);
+
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("action")
+      .eq("clinic_id", clinicaA)
+      .eq("entity_id", proc)
+      .throwOnError();
+    expect(trilha).toEqual([
+      { action: "editou_vinculos_do_procedimento" },
+      { action: "editou_vinculos_do_procedimento" },
+    ]);
+  });
+
+  it("o legado depois do modo novo não mexe nos convênios que cobrem", async () => {
+    const proc = await novoProcedimento();
+    agirComo("admin-a", clinicaA, "admin");
+    await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [particular(joao, 40000), coberto(joao, unimed)],
+      {
+        planos: [unimed],
+        vinculosNaAbertura: [],
+        planosNaAbertura: [],
+        confirmar: false,
+      },
+    );
+    const legado = await acoes.sincronizarVinculosDoProcedimentoAction(proc, [
+      particular(joao, 45000),
+      coberto(joao, unimed),
+    ]);
+    expect(legado.resumo).toEqual({
+      criados: 0,
+      reativados: 0,
+      atualizados: 1,
+      desativados: 0,
+      consultasFuturas: 0,
+    });
+    expect(await cobremDe(proc)).toEqual([unimed]);
+  });
+
+  it("aba parada: code cadastro_mudou e nada muda; com a abertura de agora, grava", async () => {
+    const proc = await novoProcedimento();
+    agirComo("admin-a", clinicaA, "admin");
+    await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [particular(joao, 40000)],
+      {
+        planos: [],
+        vinculosNaAbertura: [],
+        planosNaAbertura: [],
+        confirmar: false,
+      },
+    );
+    const velha = await aberturaDe(proc, [unimed]);
+    // Outra aba inclui a Ana no meio.
+    await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [particular(joao, 40000), particular(ana, 40000)],
+      await aberturaDe(proc, []),
+    );
+
+    const parada = await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [particular(joao, 40000), coberto(joao, unimed)],
+      velha,
+    );
+    expect(parada).toEqual({
+      ok: false,
+      code: "cadastro_mudou",
+      error:
+        "O cadastro mudou enquanto você editava. Feche, abra de novo e salve.",
+    });
+    // A Ana nao foi desativada e a Unimed nao entrou.
+    expect(achar(await vinculosDo(proc), ana, null)?.active).toBe(true);
+    expect(await cobremDe(proc)).toEqual([]);
+
+    const atual = await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [particular(joao, 40000), coberto(joao, unimed), particular(ana, 40000)],
+      await aberturaDe(proc, [unimed]),
+    );
+    expect(atual.ok, atual.error).toBe(true);
+    expect(await cobremDe(proc)).toEqual([unimed]);
+  });
+
+  it("convênio de linha fora dos que cobrem: a action recusa antes do banco, e a RPC direta recusa com 23514", async () => {
+    const proc = await novoProcedimento();
+    agirComo("admin-a", clinicaA, "admin");
+    const linhas = [particular(joao, 40000), coberto(joao, bradesco)];
+    const pelaAcao = await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      linhas,
+      {
+        planos: [unimed],
+        vinculosNaAbertura: [],
+        planosNaAbertura: [],
+        confirmar: false,
+      },
+    );
+    expect(pelaAcao).toEqual({
+      ok: false,
+      error:
+        "Um convênio marcado para um profissional não está entre os convênios que cobrem este procedimento.",
+    });
+
+    const { error } = await usuarios["admin-a"]!.cliente.rpc(
+      "sincronizar_vinculos_do_procedimento",
+      {
+        p_procedure_id: proc,
+        p_linhas: linhas,
+        p_planos: [unimed],
+        p_vinculos_na_abertura: [],
+        p_planos_na_abertura: [],
+        p_confirmar: false,
+      },
+    );
+    expect(error?.code).toBe("23514");
+    expect(await vinculosDo(proc)).toHaveLength(0);
+  });
+
+  it("a cura: convênio desativado em uso num vínculo ativo passa e só ganha a cobertura; o desativado sem uso não entra", async () => {
+    const proc = await novoProcedimento();
+    agirComo("admin-a", clinicaA, "admin");
+    const antigo = await inserirId("insurance", {
+      clinic_id: clinicaA,
+      name: `Convênio antigo ${sufixo}`,
+    });
+    const semUso = await inserirId("insurance", {
+      clinic_id: clinicaA,
+      name: `Convênio sem uso ${sufixo}`,
+      active: false,
+    });
+    // Dado de antes da leva: o vinculo pelo modo legado (sem par, sem
+    // cobertura), e depois o convenio e desativado.
+    await acoes.sincronizarVinculosDoProcedimentoAction(proc, [
+      particular(joao, 40000),
+      coberto(joao, antigo),
+    ]);
+    await admin
+      .from("insurance")
+      .update({ active: false })
+      .eq("id", antigo)
+      .throwOnError();
+
+    // A tela abre com o antigo marcado em "cobrem" (a cura) e salva.
+    const curado = await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [particular(joao, 40000), coberto(joao, antigo)],
+      await aberturaDe(proc, [antigo]),
+    );
+    expect(curado.ok, curado.error).toBe(true);
+    expect(curado.resumo).toMatchObject({ planosEntram: [antigo] });
+    expect(await cobremDe(proc)).toEqual([antigo]);
+    expect(achar(await vinculosDo(proc), joao, antigo)?.active).toBe(true);
+
+    // O desativado sem uso nenhum neste procedimento nao entra.
+    const recusado = await acoes.sincronizarVinculosDoProcedimentoAction(
+      proc,
+      [particular(joao, 40000), coberto(joao, antigo)],
+      await aberturaDe(proc, [antigo, semUso]),
+    );
+    expect(recusado).toEqual({
+      ok: false,
+      error: "Um convênio desativado não pode ser marcado.",
+    });
+    expect(await cobremDe(proc)).toEqual([antigo]);
+  });
+});

@@ -12,6 +12,7 @@ import { useState } from "react";
 
 import { abrirDetalheDoContatoAction } from "@/app/(app)/leads/actions";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { SecaoDeAtividades } from "@/components/atividades/secao-de-atividades";
 import { ChipDeOrigem } from "@/components/leads/chip-de-origem";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
 import {
@@ -42,6 +43,7 @@ import {
 } from "@/lib/domain/jornada";
 import { recencyDe } from "@/lib/domain/leads-ui";
 import { formatarTelefone } from "@/lib/domain/telefone";
+import { atividadesKeys } from "@/lib/queries/atividades";
 import {
   leadsKeys,
   type LeadResumo,
@@ -66,6 +68,10 @@ import {
 // - Agendar: abre a Agenda ja com o agendamento deste contato. Respeita a
 //   permissao da Agenda: sem ela, visivel, desabilitado e com dica, porque a
 //   Agenda nao abre o modal do link para quem nao agenda (achados 6 e 22).
+//
+// Secao Atividades (escopo de 02/10/2026), entre Dados e Conversa: ate 3
+// pendentes, "Nova atividade" e "Ver todas". As atividades vem no MESMO
+// detalhe da action (com trilha); o rodape 2x2 nao ganha botao.
 
 const AUTOR_LABEL: Record<MensagemDoLead["author"], string> = {
   paciente: "Paciente",
@@ -248,6 +254,39 @@ export function DrawerLead({
                     <span className="text-text-secondary">Sem campanha</span>
                   )}
                 </Linha>
+              </section>
+
+              <section className="grid gap-2.5 border-b border-border px-5 py-4">
+                <h3 className="cz-eyebrow text-text-secondary">Atividades</h3>
+                <SecaoDeAtividades
+                  contato={{
+                    id: lead.id,
+                    nome: lead.name,
+                    telefone: lead.phone_e164,
+                  }}
+                  clinicId={clinicId}
+                  timezone={timezone}
+                  estado={
+                    detalheQuery.isLoading
+                      ? "carregando"
+                      : detalheQuery.isError || !detalhe?.atividades
+                        ? "erro"
+                        : "pronto"
+                  }
+                  atividades={detalhe?.atividades ?? null}
+                  aoTentarDeNovo={() => void detalheQuery.refetch()}
+                  aoMudar={() => {
+                    void queryClient.invalidateQueries({
+                      queryKey: leadsKeys.detalhe(lead.id),
+                    });
+                    void queryClient.invalidateQueries({
+                      queryKey: atividadesKeys.todas,
+                    });
+                  }}
+                  nomes={membros}
+                  podeEditar={podeEditar}
+                  dica={dica}
+                />
               </section>
 
               <section className="grid gap-3 px-5 py-4">

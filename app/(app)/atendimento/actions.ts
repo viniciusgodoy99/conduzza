@@ -10,9 +10,11 @@ import {
   sendWhatsAppText,
 } from "@/lib/integrations/whatsapp/send";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 
 import { log } from "@/lib/log";
 import { etapaAposAssumir } from "@/lib/domain/jornada";
+import { tentarMoverPorTermo } from "@/lib/integrations/whatsapp/termo-chave";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -289,7 +291,54 @@ export async function sendMessageAction(
     }
     return { ok: false, error: result.message };
   }
+  moverPorTermoDaClinica({
+    clinicId: context.active!.clinicId,
+    contactId: conversation.contact_id,
+    corpo: parsedBody.data,
+    userId: context.userId,
+  });
   return { ok: true, messageId: result.messageId };
+}
+
+// TERMO-CHAVE escrito pela CLINICA (pedido do dono em 02/10/2026): o texto
+// que a atendente acabou de enviar pelo sistema (mensagem ou legenda de
+// arquivo) anda o lead quando a etapa aceita termo da clinica. As mensagens
+// da IA e da regua de follow-up ficam de fora por ora (estender e decisao do
+// dono). A decisao e o update guardado pela etapa atual vivem em
+// lib/integrations/whatsapp/termo-chave.ts, os mesmos da mensagem do
+// paciente. So depois do envio bem-sucedido, e DEPOIS da resposta
+// (after): mover etapa e bonus e nunca atrasa nem derruba o envio. Cliente
+// admin pelo mesmo motivo do Assumir (o profissional responde, mas nao
+// escreve em contact); a trilha leva quem enviou. Fora de uma requisicao
+// (teste, script) o after nao existe e a tarefa roda solta.
+function moverPorTermoDaClinica(params: {
+  clinicId: string;
+  contactId: string;
+  corpo: string;
+  userId: string;
+}): void {
+  const tarefa = async (): Promise<void> => {
+    try {
+      await tentarMoverPorTermo(createAdminClient(), {
+        clinicId: params.clinicId,
+        contactId: params.contactId,
+        corpo: params.corpo,
+        quemEscreveu: "clinica",
+        userId: params.userId,
+      });
+    } catch {
+      log.warn("termo_chave_falhou", {
+        clinic_id: params.clinicId,
+        contact_id: params.contactId,
+        kind: "clinica",
+      });
+    }
+  };
+  try {
+    after(tarefa);
+  } catch {
+    void tarefa();
+  }
 }
 
 // Tipos que a clinica pode mandar ao paciente, e o teto de cada um.
@@ -430,6 +479,17 @@ export async function enviarArquivoAction(
     // mensagem apontando para ele e dado guardado sem motivo e sem trilha.
     await admin.storage.from("midia-conversas").remove([caminho]);
     return { ok: false, error: result.message };
+  }
+  // A legenda e texto que a recepcao escreveu: anda o lead pelo termo da
+  // clinica como o texto de sendMessageAction (mesma regra, depois do envio
+  // bem-sucedido e da resposta). Sem legenda, nao ha o que testar.
+  if (legenda) {
+    moverPorTermoDaClinica({
+      clinicId,
+      contactId: conversation.contact_id,
+      corpo: legenda,
+      userId: context.userId,
+    });
   }
   return { ok: true };
 }

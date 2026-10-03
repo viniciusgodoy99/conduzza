@@ -4,11 +4,23 @@ import {
 } from "@/components/shared/loading-skeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
-// Esqueleto na forma da tela de Configuracoes (cabecalho com eyebrow, as seis
+// Esqueleto na forma da tela de Configuracoes (cabecalho com eyebrow, as oito
 // abas sublinhadas e os cartoes da aba de equipe: usuarios, convite, codigo
 // e a tabela de papeis), nunca giratorio no meio da tela.
 
-const ABAS = ["w-40", "w-16", "w-20", "w-40", "w-40", "w-32"];
+// Uma barra por aba, na ordem e no tamanho aproximado do rotulo (com o
+// contador, onde a aba tem um) das ABAS de configuracoes-client.tsx. Aba nova
+// la pede barra nova aqui: o teste carregando-configuracoes confere a conta.
+const ABAS = [
+  "w-40", // Equipe e permissões
+  "w-16", // Clínica
+  "w-20", // WhatsApp
+  "w-40", // Jornada e conversões
+  "w-40", // Automações de fluxo
+  "w-40", // Etiquetas de conversa
+  "w-36", // Mensagens padrão
+  "w-32", // Anúncios da Meta
+];
 
 function CabecalhoDeCartao({ largura }: { largura: string }) {
   return (

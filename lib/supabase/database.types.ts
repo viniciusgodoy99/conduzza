@@ -363,6 +363,213 @@ export type Database = {
           },
         ]
       }
+      automacao_execucao: {
+        Row: {
+          acao: string | null
+          atividade_id: string | null
+          automacao_id: string
+          clinic_id: string
+          contact_id: string
+          conversation_id: string | null
+          created_at: string
+          de_etapa: string
+          devida_em: string
+          entrada_na_etapa: string
+          etiqueta: string | null
+          etiqueta_nome: string | null
+          executada_em: string | null
+          id: string
+          message_id: string | null
+          motivo: string | null
+          para_etapa: string | null
+          profundidade: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          acao?: string | null
+          atividade_id?: string | null
+          automacao_id: string
+          clinic_id: string
+          contact_id: string
+          conversation_id?: string | null
+          created_at?: string
+          de_etapa: string
+          devida_em: string
+          entrada_na_etapa: string
+          etiqueta?: string | null
+          etiqueta_nome?: string | null
+          executada_em?: string | null
+          id?: string
+          message_id?: string | null
+          motivo?: string | null
+          para_etapa?: string | null
+          profundidade?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          acao?: string | null
+          atividade_id?: string | null
+          automacao_id?: string
+          clinic_id?: string
+          contact_id?: string
+          conversation_id?: string | null
+          created_at?: string
+          de_etapa?: string
+          devida_em?: string
+          entrada_na_etapa?: string
+          etiqueta?: string | null
+          etiqueta_nome?: string | null
+          executada_em?: string | null
+          id?: string
+          message_id?: string | null
+          motivo?: string | null
+          para_etapa?: string | null
+          profundidade?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automacao_execucao_atividade_id_fkey"
+            columns: ["atividade_id"]
+            isOneToOne: false
+            referencedRelation: "contact_activity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automacao_execucao_automacao_id_fkey"
+            columns: ["automacao_id"]
+            isOneToOne: false
+            referencedRelation: "automacao_fluxo"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automacao_execucao_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automacao_execucao_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automacao_execucao_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversation"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automacao_execucao_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "message"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      automacao_fluxo: {
+        Row: {
+          acao: string
+          ativa: boolean
+          atividade_prazo_dias: number | null
+          atividade_titulo: string | null
+          clinic_id: string
+          created_at: string
+          created_by: string | null
+          espera_minutos: number | null
+          etapa: string
+          etapa_destino: string | null
+          etiqueta: string | null
+          gatilho: string
+          id: string
+          motivo_perda: string | null
+          nome: string
+          nota_texto: string | null
+          updated_at: string
+          updated_by: string | null
+          vigente_desde: string
+        }
+        Insert: {
+          acao: string
+          ativa?: boolean
+          atividade_prazo_dias?: number | null
+          atividade_titulo?: string | null
+          clinic_id: string
+          created_at?: string
+          created_by?: string | null
+          espera_minutos?: number | null
+          etapa: string
+          etapa_destino?: string | null
+          etiqueta?: string | null
+          gatilho: string
+          id?: string
+          motivo_perda?: string | null
+          nome: string
+          nota_texto?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          vigente_desde?: string
+        }
+        Update: {
+          acao?: string
+          ativa?: boolean
+          atividade_prazo_dias?: number | null
+          atividade_titulo?: string | null
+          clinic_id?: string
+          created_at?: string
+          created_by?: string | null
+          espera_minutos?: number | null
+          etapa?: string
+          etapa_destino?: string | null
+          etiqueta?: string | null
+          gatilho?: string
+          id?: string
+          motivo_perda?: string | null
+          nome?: string
+          nota_texto?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          vigente_desde?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automacao_fluxo_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automacao_fluxo_etapa_destino_fkey"
+            columns: ["clinic_id", "etapa_destino"]
+            isOneToOne: false
+            referencedRelation: "funnel_stage_def"
+            referencedColumns: ["clinic_id", "chave"]
+          },
+          {
+            foreignKeyName: "automacao_fluxo_etapa_fkey"
+            columns: ["clinic_id", "etapa"]
+            isOneToOne: false
+            referencedRelation: "funnel_stage_def"
+            referencedColumns: ["clinic_id", "chave"]
+          },
+          {
+            foreignKeyName: "automacao_fluxo_etiqueta_fkey"
+            columns: ["clinic_id", "etiqueta"]
+            isOneToOne: false
+            referencedRelation: "conversation_tag_def"
+            referencedColumns: ["clinic_id", "chave"]
+          },
+        ]
+      }
       cadence: {
         Row: {
           active: boolean
@@ -950,6 +1157,101 @@ export type Database = {
           },
         ]
       }
+      contact_activity: {
+        Row: {
+          assignee_user_id: string | null
+          automacao_id: string | null
+          canceled_at: string | null
+          canceled_by: string | null
+          clinic_id: string
+          completed_at: string | null
+          completed_by: string | null
+          contact_id: string
+          conversation_id: string | null
+          created_at: string
+          created_by: string | null
+          detalhes: string | null
+          due_at: string | null
+          due_on: string
+          id: string
+          origem: string
+          status: string
+          titulo: string
+          updated_at: string
+        }
+        Insert: {
+          assignee_user_id?: string | null
+          automacao_id?: string | null
+          canceled_at?: string | null
+          canceled_by?: string | null
+          clinic_id: string
+          completed_at?: string | null
+          completed_by?: string | null
+          contact_id: string
+          conversation_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          detalhes?: string | null
+          due_at?: string | null
+          due_on: string
+          id?: string
+          origem?: string
+          status?: string
+          titulo: string
+          updated_at?: string
+        }
+        Update: {
+          assignee_user_id?: string | null
+          automacao_id?: string | null
+          canceled_at?: string | null
+          canceled_by?: string | null
+          clinic_id?: string
+          completed_at?: string | null
+          completed_by?: string | null
+          contact_id?: string
+          conversation_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          detalhes?: string | null
+          due_at?: string | null
+          due_on?: string
+          id?: string
+          origem?: string
+          status?: string
+          titulo?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_activity_automacao_id_fkey"
+            columns: ["automacao_id"]
+            isOneToOne: false
+            referencedRelation: "automacao_fluxo"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_activity_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_activity_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_activity_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_consent: {
         Row: {
           active: boolean | null
@@ -1202,6 +1504,7 @@ export type Database = {
           clinic_id: string
           conversao_ativa: boolean
           created_at: string
+          descricao: string | null
           icone: string
           id: string
           is_first_contact: boolean
@@ -1211,6 +1514,7 @@ export type Database = {
           papel: string | null
           posicao: number
           termos_chave: string[]
+          termos_de_quem: string
           tom: string
           updated_at: string
           value_cents: number | null
@@ -1221,6 +1525,7 @@ export type Database = {
           clinic_id: string
           conversao_ativa?: boolean
           created_at?: string
+          descricao?: string | null
           icone?: string
           id?: string
           is_first_contact?: boolean
@@ -1230,6 +1535,7 @@ export type Database = {
           papel?: string | null
           posicao: number
           termos_chave?: string[]
+          termos_de_quem?: string
           tom?: string
           updated_at?: string
           value_cents?: number | null
@@ -1240,6 +1546,7 @@ export type Database = {
           clinic_id?: string
           conversao_ativa?: boolean
           created_at?: string
+          descricao?: string | null
           icone?: string
           id?: string
           is_first_contact?: boolean
@@ -1249,6 +1556,7 @@ export type Database = {
           papel?: string | null
           posicao?: number
           termos_chave?: string[]
+          termos_de_quem?: string
           tom?: string
           updated_at?: string
           value_cents?: number | null
@@ -2204,6 +2512,52 @@ export type Database = {
           },
         ]
       }
+      procedure_insurance: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          insurance_id: string
+          procedure_id: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          insurance_id: string
+          procedure_id: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          insurance_id?: string
+          procedure_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "procedure_insurance_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "procedure_insurance_insurance_id_fkey"
+            columns: ["insurance_id"]
+            isOneToOne: false
+            referencedRelation: "insurance"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "procedure_insurance_procedure_id_fkey"
+            columns: ["procedure_id"]
+            isOneToOne: false
+            referencedRelation: "procedure"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_admin: {
         Row: {
           created_at: string
@@ -2313,6 +2667,52 @@ export type Database = {
           },
           {
             foreignKeyName: "professional_block_professional_id_fkey"
+            columns: ["professional_id"]
+            isOneToOne: false
+            referencedRelation: "professional"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      professional_insurance: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          id: string
+          insurance_id: string
+          professional_id: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          id?: string
+          insurance_id: string
+          professional_id: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          insurance_id?: string
+          professional_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "professional_insurance_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "professional_insurance_insurance_id_fkey"
+            columns: ["insurance_id"]
+            isOneToOne: false
+            referencedRelation: "insurance"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "professional_insurance_professional_id_fkey"
             columns: ["professional_id"]
             isOneToOne: false
             referencedRelation: "professional"
@@ -2440,6 +2840,56 @@ export type Database = {
             columns: ["unit_id"]
             isOneToOne: false
             referencedRelation: "unit"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      resposta_rapida: {
+        Row: {
+          atalho: string
+          ativo: boolean
+          clinic_id: string
+          corpo: string
+          created_at: string
+          created_by: string | null
+          id: string
+          posicao: number
+          titulo: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          atalho: string
+          ativo?: boolean
+          clinic_id: string
+          corpo: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          posicao?: number
+          titulo: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          atalho?: string
+          ativo?: boolean
+          clinic_id?: string
+          corpo?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          posicao?: number
+          titulo?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "resposta_rapida_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
         ]
@@ -2575,6 +3025,32 @@ export type Database = {
             columns: ["professional_id"]
             isOneToOne: false
             referencedRelation: "professional"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      termo_eco_visto: {
+        Row: {
+          clinic_id: string
+          created_at: string
+          wa_message_id: string
+        }
+        Insert: {
+          clinic_id: string
+          created_at?: string
+          wa_message_id: string
+        }
+        Update: {
+          clinic_id?: string
+          created_at?: string
+          wa_message_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "termo_eco_visto_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
         ]
@@ -3192,6 +3668,7 @@ export type Database = {
           user_id: string
         }[]
       }
+      contagem_de_atividades: { Args: { p_clinic_id: string }; Returns: Json }
       contagem_de_etiquetas_de_conversa: {
         Args: { p_clinic_id: string }
         Returns: {
@@ -3254,6 +3731,14 @@ export type Database = {
         }
         Returns: string[]
       }
+      executar_automacoes_de_fluxo: {
+        Args: {
+          p_clinic_id?: string
+          p_incluir_teste?: boolean
+          p_limite?: number
+        }
+        Returns: Json
+      }
       falhar_job: {
         Args: {
           p_definitivo: boolean
@@ -3312,6 +3797,10 @@ export type Database = {
       marcar_aguardando_confirmacao: {
         Args: { p_appointment_id: string; p_clinic_id: string }
         Returns: Json
+      }
+      marcar_eco_para_termo: {
+        Args: { p_clinic_id: string; p_wa_message_id: string }
+        Returns: boolean
       }
       metricas_da_espera: {
         Args: { p_clinic_id: string }
@@ -3393,7 +3882,24 @@ export type Database = {
           ultima_consulta: string
         }[]
       }
+      planejar_automacoes_de_fluxo: {
+        Args: {
+          p_clinic_id?: string
+          p_incluir_teste?: boolean
+          p_limite?: number
+        }
+        Returns: number
+      }
       planejar_reguas: { Args: never; Returns: Json }
+      previa_da_automacao_de_fluxo: {
+        Args: {
+          p_clinic_id: string
+          p_espera_minutos?: number
+          p_etapa: string
+          p_gatilho: string
+        }
+        Returns: Json
+      }
       recusar_oferta_de_espera: {
         Args: { p_clinic_id: string; p_contact_id: string; p_offer_id: string }
         Returns: Json
@@ -3486,8 +3992,24 @@ export type Database = {
         Args: { p_ate: string; p_clinic_id: string; p_de: string }
         Returns: Json
       }
+      sincronizar_convenios_do_profissional: {
+        Args: {
+          p_confirmar?: boolean
+          p_convenios: string[]
+          p_convenios_na_abertura?: string[]
+          p_professional_id: string
+        }
+        Returns: Json
+      }
       sincronizar_vinculos_do_procedimento: {
-        Args: { p_linhas: Json; p_procedure_id: string }
+        Args: {
+          p_confirmar?: boolean
+          p_linhas: Json
+          p_planos?: string[]
+          p_planos_na_abertura?: string[]
+          p_procedure_id: string
+          p_vinculos_na_abertura?: Json
+        }
         Returns: Json
       }
       substituir_jornada: {

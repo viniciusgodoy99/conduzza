@@ -71,7 +71,7 @@ import {
   type AgendaDia,
   type ConsultaDaAgenda,
 } from "@/lib/queries/agenda";
-import type { Vinculo } from "@/lib/queries/catalogo";
+import { catalogoKeys, type Vinculo } from "@/lib/queries/catalogo";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -637,6 +637,16 @@ export function AgendamentoModal({
       if (!modoEncaixe) {
         setSlot(null);
       }
+    }
+    if (resultado.code === "sem_vinculo") {
+      // O vinculo saiu da agenda depois que o catalogo entrou em cache (D8:
+      // convenio tirado do profissional ou do procedimento em Cadastros):
+      // refaz o catalogo (prefixo da clinica) para a combinacao sair das
+      // listas sem recarregar a pagina. As escolhas que ficarem invalidas
+      // sao limpas pelos efeitos de saneamento acima.
+      void queryClient.invalidateQueries({
+        queryKey: catalogoKeys.tudo(clinicId),
+      });
     }
     setErroGeral(resultado.error ?? "Não foi possível marcar a consulta.");
   };

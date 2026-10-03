@@ -228,6 +228,8 @@ Anel de foco: 2px, cor primária, offset de 2px, com no mínimo 3:1 contra o fun
 
 **Badges de contagem:** em Atendimento (conversas aguardando humano) e em Confirmações (pendentes de amanhã). Na cor de alerta se houver item vencido.
 
+**Atividades no menu (escopo acrescentado em 02/10/2026, decisão do dono):** item próprio, logo depois de Leads, com o ícone `list-checks`, a mesma permissão de Leads e Pacientes e **sem contador nesta versão** (o contador de atividades fica para depois). Leva à Tela 15.
+
 **Barra superior, da direita para a esquerda:** avatar com menu, sino, chave de tema, busca global, seletor de unidade (só aparece se a clínica tiver mais de uma).
 
 ---
@@ -239,6 +241,7 @@ Anel de foco: 2px, cor primária, offset de 2px, com no mínimo 3:1 contra o fun
 | Atendimento | tudo | tudo | tudo | só as próprias conversas | ver |
 | Agenda | tudo | tudo | tudo | só a própria agenda | ver |
 | Leads e Pacientes | tudo | tudo | tudo | ver | ver |
+| Atividades (02/10/2026) | tudo | tudo | tudo | ver | ver |
 | Confirmações e Lista de espera | tudo | tudo | tudo | ver | ver |
 | Relatórios | tudo | tudo | ver | só os próprios | ver |
 | Agente de IA | tudo | tudo | ver | nada | nada |
@@ -247,6 +250,11 @@ Anel de foco: 2px, cor primária, offset de 2px, com no mínimo 3:1 contra o fun
 | Configurações e Assinatura | tudo | ver | nada | nada | nada |
 
 **Regra visual:** ação sem permissão fica **visível e desabilitada**, com dica explicando por quê. Esconder confunde mais do que desabilitar. Módulo inteiro sem permissão some do rail.
+
+**O que entrou em 02/10/2026 (escopo acrescentado):**
+- **Atividades** segue a linha de Leads e Pacientes, no banco e na tela: Admin, Gestor e Recepção criam, editam, concluem, adiam e cancelam qualquer atividade da clínica (inclusive as criadas por automação); Profissional e Leitura veem a lista, a seção do drawer, do painel da conversa e da ficha, com "Nova atividade", o botão de concluir e, no menu da linha, Editar, Adiar, Reabrir e Cancelar atividade visíveis e desabilitados, com a dica (Abrir conversa e Abrir ficha continuam liberados, porque só levam a outra tela).
+- **Mensagens padrão:** o cadastro (aba de Configurações) é de Admin e Gestor; Recepção, Profissional e Leitura não alteram. O **uso** no compositor é de quem pode responder a conversa (a linha de Atendimento): para quem só acompanha, o botão "Mensagens padrão" da barra fica desabilitado com a dica. Na lista vazia, "Cadastrar em Configurações" é link para Admin e Gestor e fica desabilitado com a dica "Somente administradores e gestores cadastram mensagens padrão." para os outros.
+- **Automações de fluxo** (aba de Configurações): Admin e Gestor criam, editam, ligam, desligam e excluem (o gestor gerencia, como na divergência de 25/08/2026 registrada no backlog); sem permissão, tudo fica visível e desabilitado com a dica de Configurações ("Somente administradores e gestores alteram as configurações"); "Somente administradores e gestores mudam as automações de fluxo." é a mensagem mostrada quando o banco recusa a escrita (42501). Na prática, em 02/10/2026 nenhum papel vê esse estado desabilitado: Recepção, Profissional e Leitura não veem a aba, porque Configurações não aparece para eles (a página redireciona para o Início).
 
 **Valores em reais só para Admin e Gestor (decisão do dono em 02/10/2026, Fase 3 das métricas).** Dentro de Relatórios (Resultados) e da Lista de espera, quem tem "ver" não vê dinheiro: faturamento estimado, custo por lead, receita das consultas recuperadas, receita associada da Lista de espera, valor das conversões devolvidas à Meta e custo de mensagens só têm número para Admin e Gestor. Para Recepção, Profissional e Leitura, o cartão ou a linha que é só o valor (faturamento, custo por lead, receita associada da espera, custo de mensagens) fica **visível e desabilitado**, escrito "Sem acesso", com a dica "Só administrador e gestor veem valores em reais."; nas frases que citam um valor (receita das recuperadas, valor das conversões já enviadas), o valor simplesmente não aparece; e a exportação sai sem essas linhas. Esconder na tela não basta: o faturamento, a receita das recuperadas e a receita da Lista de espera saem **nulos do banco** para os outros papéis. O valor das conversões devolvidas à Meta, em 02/10/2026, ainda só é escondido na tela (a leitura das conversões não recorta por papel): ponto aberto para o dono, registrado no backlog. O objetivo de conversão de Resultados segue a mesma divisão: Admin e Gestor definem, os demais só leem.
 
@@ -332,9 +340,22 @@ Quatro regiões.
   3. **Janela expirada:** o campo some e vira um bloco: "Fora da janela de 24 horas. Só é possível enviar um modelo aprovado." com botão **Escolher modelo**. Isso é regra da Meta e precisa ser visível o tempo todo, não escondido em erro.
 - Barra de ferramentas: emoji, anexo, áudio, respostas rápidas (`zap`), nota interna (`lock`).
 
+- **Mensagens padrão com "/" (spec 1.11, construído em 02/10/2026).** As respostas rápidas se chamam "Mensagens padrão" na tela. Valem só na aba Responder (não na Nota interna) e só para quem pode escrever na conversa.
+  - **Abrir:** digitar "/" no começo do texto ou depois de espaço ou quebra de linha, com o cursor no fim do trecho. Não abre em URL, data, "e/ou" nem "//", e fecha ao digitar espaço. A detecção é pelo valor do campo, então funciona no teclado do celular. O botão **"Mensagens padrão"** da barra (ícone `square-slash`, no lugar do `zap`; dica "Digite / para usar uma mensagem padrão") abre a mesma lista com todas as ativas, para quem usa toque ou leitor de tela, e insere no ponto do cursor. A lista aberta pelo botão fecha quando o foco sai do formulário, depois do envio e na troca entre Responder e Nota interna: voltar ao campo, clicar em Responder numa bolha ou clicar em Enviar não a reabre, e o Enter seguinte volta a enviar.
+  - **Lista:** painel acima do campo, com o cabeçalho "Mensagens padrão" e "Enter escolhe, Esc fecha"; cada item mostra o título, o "/atalho" e o começo do texto já com os campos trocados. Filtra pelo atalho e pelo título, sem diferenciar acento, e mostra no máximo 8.
+  - **Teclado com a lista aberta:** setas navegam (da última volta à primeira); Enter, Ctrl+Enter e Cmd+Enter **escolhem e nunca enviam**; Tab escolhe; Shift+Enter fecha a lista e quebra a linha; Esc fecha **só a lista** (a citação, se houver, continua) e ela fica fechada até o termo mudar.
+  - **Escolher:** a mensagem entra no campo já com `{{nome}}` (o nome do contato da conversa) e `{{clinica}}` (o nome da clínica) trocados, **editável**, com o cursor no fim. **Nunca envia sozinha.** Se o texto passar de 4096 caracteres, aparece o erro e nada é cortado. Contato sem nome: a lista avisa "Contato sem nome: o nome sai do texto.".
+  - **Estados da lista:** "Carregando as mensagens padrão..."; erro "Não foi possível carregar as mensagens padrão." com "Tentar de novo"; "Nenhuma mensagem padrão cadastrada." com "Cadastrar em Configurações" (link para Admin e Gestor, desabilitado com a dica para os outros); "Nenhuma mensagem com esse atalho.". O leitor de tela ouve a contagem ("3 mensagens. Use as setas e Enter.") ou o estado.
+
 **Coluna 4, contexto (320px, colapsável):**
 
 Blocos com título em micro tipografia maiúscula: Identificação · **Origem** (canal, campanha, data, método de captura) · Dados (convênio, etapa, procedimento de interesse, **estado do opt-in com botão de descadastrar**) · **Próxima consulta** (card com chip de status, ou botão Agendar em destaque se vazio) · **Saldo de pacote** (quando houver) · Histórico · **Ações** (Agendar, Adicionar à lista de espera, Marcar como perdido, Ver ficha).
+
+**Atividades no painel (o "criar lembrete" da spec 1.9, 02/10/2026):** seção "Atividades" logo depois de "Etapa da jornada", com até 3 pendentes do contato (chip de situação, prazo e responsável), "E mais N pendentes em Ver todas", **"Nova atividade"** (o mesmo diálogo da Tela 15; a atividade criada aqui guarda a conversa) e **"Ver todas"** (abre a Tela 15 só com este contato). Concluir pelo botão da linha, com "Desfazer" no aviso. Carregando, erro só na seção com "Tentar de novo", e vazio. A leitura vai para a trilha de auditoria.
+
+**Termo da jornada escrito pela clínica (02/10/2026):** quando a etapa aceita termo da clínica (Tela 12, Jornada), o texto enviado pelo Atendimento (e a legenda do arquivo enviado por ele) e o que a equipe escreve no celular conectado também andam o lead, sem nada mudar no compositor. Cada mensagem do celular anda o lead uma vez só: a reentrega da mesma mensagem pelo provedor não move de novo. Mensagens da IA e da régua de follow-up não andam o lead por termo da clínica.
+
+**Nota interna de automação (02/10/2026):** a automação de fluxo pode deixar uma nota interna na conversa mais recente do lead (nenhuma pessoa é autora). A bolha tem a pele de nota e a linha de autor "Automação · Nota interna, o paciente não vê", com o cadeado e o tom âmbar das notas (ícone, texto e cor). A mensagem automática ao paciente (régua, confirmação) continua sem linha de autor. Pendência: quem responde citando essa nota vê a citação assinada "Sistema" (registrada no backlog).
 
 **Estados obrigatórios:** nenhuma conversa selecionada, aba vazia, busca sem resultado, e **WhatsApp desconectado** (faixa vermelha fixa no topo de todas as telas, com botão Reconectar, impossível de ignorar).
 
@@ -426,6 +447,8 @@ Primeira tela que a recepcionista abre de manhã. **A mais simples do sistema.**
 8. Observação.
 9. Chave "Enviar confirmação automática", ligada por padrão.
 
+**Combinação que saiu enquanto a Agenda estava aberta (02/10/2026, convênio pelo médico, Tela 8):** o catálogo da Agenda fica alguns minutos em cache, e outra tela pode tirar o convênio do profissional ou do procedimento nesse meio. O servidor recusa a consulta **nova** nessa combinação com "Este profissional não atende mais este procedimento por este convênio. A lista já foi atualizada: escolha de novo.", a mensagem fica à vista e as listas do modal se atualizam sozinhas (a escolha que ficou inválida é limpa). A remarcação com o mesmo profissional mantém a combinação da consulta já marcada.
+
 ---
 
 ### TELA 4. LEADS `PRIORIDADE ALTA`
@@ -433,6 +456,8 @@ Primeira tela que a recepcionista abre de manhã. **A mais simples do sistema.**
 **Toggle Lista e Kanban preservando o filtro.**
 
 **Kanban:** colunas Novo, Em contato, Aguardando resposta, Agendou, **Compareceu**, Perdido. Cabeçalho com nome, **contagem em cinza** e menu.
+
+**Descrição da etapa no cabeçalho da coluna (02/10/2026):** quando a etapa tem descrição (Tela 12, Jornada), ela aparece logo abaixo do nome da coluna, em texto secundário pequeno, em **até 2 linhas**. O texto inteiro aparece na dica, que abre no hover e no foco do teclado (a descrição recebe foco), e entra no `aria-describedby` da coluna; o nome acessível da coluna continua "{etapa}, {n} leads". Quando **alguma** etapa tem descrição, todas as colunas reservam a mesma altura, para os cartões começarem alinhados; sem nenhuma descrição, nada muda. O esqueleto da lista reserva a mesma altura quando a jornada já é conhecida; o esqueleto do carregamento da rota ainda não conhece a jornada e não reserva essa altura (com descrição, os cartões descem um pouco quando a lista chega). **A descrição nunca entra no cartão.**
 
 **Cartão com exatamente 5 elementos, nem um a mais:**
 1. Nome, 14px semibold
@@ -446,6 +471,10 @@ Campo vazio some, nunca mostra rótulo sem valor. Arrastar entre colunas. Soltar
 **Lista:** tabela densa, linhas de 44px, colunas Nome, Telefone, Origem, Campanha, Etapa, Responsável, Último contato, Entrou em, **Opt-in**. Seleção múltipla com barra de ações em massa flutuando na base.
 
 **Drawer de detalhe (480px)** ao clicar: dados, origem, conversa resumida, botões Abrir conversa, Agendar, Marcar perdido.
+
+**Atividades no drawer (02/10/2026):** seção "Atividades" entre "Dados" e "Conversa", igual à do painel da conversa (Tela 1): até 3 pendentes, "E mais N pendentes em Ver todas", "Nova atividade" e "Ver todas". As atividades vêm no mesmo carregamento do drawer, com a trilha de leitura; se a leitura delas falhar, só a seção mostra o erro com "Tentar de novo". O rodapé não ganha botão. **Nada de atividade no cartão do Kanban** (regra dos 5 elementos).
+
+**Ação em massa "Mudar etapa" (02/10/2026):** o popover ganhou a linha "Mover também pode disparar as automações de fluxo da etapa de destino, para cada lead." e o diálogo de confirmação, "Se {etapa} tiver automação de fluxo ligada, ela também roda para cada lead movido.", ao lado do aviso que já existia sobre a régua da etapa.
 
 **Modal de importação por planilha:** upload, mapeamento de colunas, pré-visualização, e um **passo obrigatório de declaração de consentimento** ("de onde veio a autorização desses contatos?") com opções e campo de observação. Sem esse passo, o botão de importar fica desabilitado. Aviso em caixa: "Disparar mensagem para quem não autorizou derruba a nota do seu número no WhatsApp e pode travar os envios da clínica inteira."
 
@@ -466,12 +495,14 @@ Bento, um ponto focal só, leitura em F.
 4. **Resolvidas pela IA** (`sparkles`, cor da IA): "Ainda não medido", com a dica de que o número chega com o agente de IA.
 
 **Linha 2, duas colunas:**
-- À esquerda, **Próximas ações** (pendências de confirmação, leads sem resposta há mais de 24h, conversas aguardando humano; cada item é link para a tela já filtrada) e, embaixo, **"Consultas por dia, últimos 7 dias"**: 7 barras deitadas, uma por dia, de seis dias atrás até hoje sem pular dia (domingo com zero aparece), com "Hoje" escrito no rótulo e a barra de hoje em destaque; os outros dias ficam neutros. A contagem é a mesma de "Consultas hoje", então a barra de hoje bate com o cartão. Coluna vertical é proibida (C12 do `docs/06`).
+- À esquerda, **Próximas ações** (pendências de confirmação, leads sem resposta há mais de 24h, conversas aguardando humano e, desde 02/10/2026, as duas linhas de atividades descritas abaixo; cada item é link para a tela já filtrada) e, embaixo, **"Consultas por dia, últimos 7 dias"**: 7 barras deitadas, uma por dia, de seis dias atrás até hoje sem pular dia (domingo com zero aparece), com "Hoje" escrito no rótulo e a barra de hoje em destaque; os outros dias ficam neutros. A contagem é a mesma de "Consultas hoje", então a barra de hoje bate com o cartão. Coluna vertical é proibida (C12 do `docs/06`).
 - À direita, **Funil de leads**: uma barra por etapa da jornada da clínica, na ordem dela, com quantos contatos estão em cada etapa **agora** (o mesmo número do Kanban de Leads, não a coorte do período). "Perdido" fica neutro, as outras etapas em destaque. Botão de ícone "Abrir Leads" no cabeçalho.
 
 **Estados:** cada bloco carrega sozinho. Se um falha, só ele mostra o erro (nunca zero) e um aviso no topo, "Alguns números não carregaram", oferece "Tentar de novo"; o resto da tela continua. Vazios: "Nenhuma consulta nos últimos 7 dias" e "Nenhum lead na jornada ainda".
 
-**Profissional:** continua com a visão própria (a agenda dele nos últimos 30 dias) e "Suas próximas ações". Os números da clínica não chegam a ele: o banco devolve nulo.
+**Profissional:** continua com a visão própria (a agenda dele nos últimos 30 dias) e "Suas próximas ações". Os números da clínica não chegam a ele: o banco devolve nulo. As duas linhas de atividades também aparecem para ele.
+
+**Linhas de atividades em Próximas ações (02/10/2026):** **"Suas atividades atrasadas"** (`clock-alert`, alerta, link para a Tela 15 com o filtro de atrasadas) e **"Suas atividades para hoje"** (`list-checks`, neutro, filtro de para hoje), contando só as atividades de quem está usando. Têm leitura própria, que chega depois do resto do cartão (duas linhas de esqueleto enquanto isso) e falha sozinha: "Não foi possível contar suas atividades." com "Tentar de novo", sem derrubar o cartão nem o Início. O "hoje" é o dia no fuso da clínica, e a atrasada nunca conta também como de hoje.
 
 **Histórico: o desenho até 01/10/2026** (últimos 30 dias contra os 30 anteriores):
 - Faixa de 4 indicadores: `Leads no período` · `Agendamentos` · `Comparecimentos` · `Taxa de lead para comparecimento`.
@@ -545,10 +576,37 @@ Abas: Profissionais · Procedimentos · Convênios · Pacotes · Unidades. A aba
 **Todo cadastro abre em modal central** (criar, editar ou ver detalhes), nunca em painel lateral: 520px, ou 640px quando o formulário tem tabela dentro (jornada do profissional, quem faz o procedimento). Cabeçalho com título e descrição, corpo que rola por dentro (o modal vai até 86% da altura da tela), aviso e erro fixos logo acima do rodapé, rodapé fixo com Cancelar e Salvar. Esc e o X fecham. Quem só vê abre o mesmo modal em modo leitura, sem Salvar.
 
 **O vínculo é a parte mais importante e a mais difícil, e agora mora no Procedimento.** A matriz de três pontas (profissional x procedimento x convênio, com preço e duração próprios) é feita no modal do procedimento, na seção "Quem faz e convênios":
-- quem faz (vários profissionais) e convênios aceitos (vários; "Particular" sempre disponível);
+- quem faz (vários profissionais) e, para cada um, os convênios aceitos ("Particular" sempre disponível); desde 02/10/2026 os convênios de cada profissional são os que **cobrem o procedimento e que ele atende** no cadastro dele, já marcados (ver "Convênio pelo médico", abaixo);
 - preço e duração do procedimento valem como padrão; a exceção por profissional ou convênio (preço próprio, "Coberto" ou duração própria) é feita ali mesmo;
 - a chave "IA pode agendar" é a do procedimento, e o vínculo segue essa chave (uma fonte só);
 - vínculo que já tem consulta não é apagado, é desativado.
+
+**Convênio pelo médico (decisão do dono em 02/10/2026; spec 3.4 e 3.5).** A clínica cadastra todos os convênios na aba Convênios; o profissional diz quais atende; o procedimento diz quais o cobrem; e o convênio do profissional entra sozinho só onde ele faz o procedimento e o convênio cobre. As duas listas de marcar são iguais (grupo com legenda e ajuda, uma linha de 40px por convênio com "Nome · Plano", o convênio desativado só quando já estava marcado, sempre no fim e com a situação "Inativo", e duas colunas a partir de 5 convênios, em tela de 640px ou mais).
+
+*Modal do Profissional, seção "Convênios que atende"* (logo depois de Especialidades):
+- Ajuda: "O Particular vale sempre e não precisa ser marcado. O convênio marcado aqui entra sozinho nos procedimentos que este profissional faz e que o convênio cobre." O Particular não tem caixa.
+- Sem convênio ativo na clínica, só o texto "Nenhum convênio ativo. Cadastre ou reative um na aba Convênios para marcar quais este profissional atende.", sem atalho (trocar de aba fecharia o modal).
+- Convênio que já estava numa combinação ativa dele sem estar no cadastro vem marcado, com a nota "Marcado porque já está em uso em um procedimento deste profissional."
+- Na edição, quando o Salvar vai de fato mandar a lista, a prévia "Ao salvar" diz o que acontece, uma frase por convênio: "Unimed entra em 3 procedimentos: Consulta, Retorno e Ultrassom.", "Unimed fica no cadastro e ainda não entra em nenhum procedimento deste profissional.", "Bradesco Saúde sai de 2 procedimentos: A e B.", "Bradesco Saúde sai do cadastro, sem mudar nenhum procedimento." e, quando for o caso, quem deixa de fazer (abaixo). Profissional novo não tem prévia, porque ainda não faz nenhum procedimento.
+- **Aviso antes de gravar**, no lugar do Salvar (o rodapé fica só com Cancelar, que fecha sem gravar; mexer nos convênios tira o aviso e devolve o Salvar): com consulta futura nas combinações que saem, "Há N consultas marcadas com este profissional pelos convênios desmarcados. Remarque ou cancele, se for o caso." (no singular, "pelo convênio desmarcado"), a primeira consulta, "Esta ação não desmarca nada: as consultas continuam valendo e os lembretes continuam saindo para os pacientes.", "Abrir a Agenda" e **"Tirar o convênio mesmo assim"**; sem consulta, mas com procedimento que ele deixa de fazer, só a frase "Este profissional deixa de fazer 1 procedimento, porque só atendia nele pelo convênio desmarcado: Retorno. Para voltar, inclua o profissional em Quem faz, no cadastro do procedimento." e o botão (com as duas coisas, quem deixa de fazer vai como complemento). Nada é gravado antes da confirmação.
+- Depois de salvar, o toast "Profissional atualizado" (ou "Profissional criado") traz o resumo do que o banco fez de verdade, não o da prévia. Quando o Salvar grava só uma parte (o profissional novo foi criado, mas os convênios não; ou os convênios foram gravados, mas os dados do profissional não), o modal continua aberto e o erro diz o que aconteceu, inclusive com a jornada ("A jornada foi salva." ou "A jornada também não foi salva."), e termina em "Clique em Salvar de novo." (ou "Confira os convênios e clique em Salvar de novo."); se os convênios foram gravados, sai também o toast "Convênios salvos" com o resumo, e o próximo Salvar não manda a lista de novo.
+- Quem só vê (Ver detalhes) vê a mesma lista desabilitada, com a dica do papel; sem convênio, "Atende só Particular. A clínica não tem convênio ativo."
+
+*Modal do Procedimento, seção "Convênios que cobrem este procedimento"* (logo acima de "Quem faz e convênios"):
+- Ajuda: "Quem faz este procedimento e atende o convênio no cadastro do profissional recebe o convênio já marcado, em Quem faz e convênios." Sem convênio para oferecer, "Nenhum convênio ativo. Cadastre ou reative um na aba Convênios para marcar quais cobrem este procedimento.", sem atalho.
+- Convênio que já estava numa combinação ativa do procedimento sem estar marcado como cobertura vem marcado, com a nota "Marcado porque já está em uso em Quem faz e convênios."
+- Frases ao vivo: "Nenhum convênio marcado: este procedimento é só Particular." e, ao desmarcar um convênio que estava marcado na abertura, "Ao tirar Unimed, Dr. João e Dra. Ana deixam de atender por este convênio neste procedimento."
+- Marcar um convênio deixa o convênio marcado para quem faz e o atende; desmarcar o tira de todos; desmarcar e marcar de novo no mesmo modal, sem salvar, volta ao que estava na abertura (a exceção não se perde).
+- Em "Quem faz e convênios", cada profissional mostra o Particular (sempre, e desmarcável) e os convênios que cobrem e que ele atende, já marcados; desmarcar ali é a exceção daquele procedimento. Convênio marcado que ele não atende no cadastro aparece com "Fora do cadastro do profissional"; o convênio ativo que cobre e que ele não atende não aparece para marcar, e o cartão explica: "Dr. João não atende Bradesco no cadastro do profissional. Para incluir, marque em Convênios que atende, na aba Profissionais." "Adicionar quem faz" já traz a interseção marcada. A ajuda da seção passa a: "Cada profissional mostra os convênios que cobrem este procedimento e que ele atende no cadastro dele, já marcados. Desmarcar aqui vale só para este procedimento. Preço e duração vêm do procedimento: Particular pelo preço base e convênio como Coberto. Personalize só o que for diferente. A chave "IA pode agendar" vale para todos."
+- **Aviso antes de salvar** (antes, era um aviso depois de gravar): quando o Salvar tira uma combinação com consulta futura (remover alguém, desmarcar uma exceção ou tirar uma cobertura), "Há N consultas marcadas em combinações de quem faz e convênio que saem deste procedimento. Remarque ou cancele, se for o caso.", com "Abrir a Agenda" e **"Salvar mesmo assim"**, no lugar do Salvar. Nada é gravado antes; depois, o toast diz quantas combinações saíram da agenda ("1 combinação de quem faz e convênio saiu da agenda.").
+- Na edição, quem faz e os convênios são gravados antes dos dados do procedimento; se a segunda parte falhar, o erro diz "Quem faz e os convênios foram salvos, mas os dados do procedimento não.", o motivo e "Clique em Salvar de novo." Por isso o nome em branco é recusado na tela ("Informe o nome do procedimento.") antes de qualquer gravação.
+- Quem só vê vê "Convênios que cobrem este procedimento" em texto, com os ativos ou "Nenhum convênio cobre: este procedimento é só Particular." (e "Convênios inativos não aparecem aqui, porque a Agenda não os oferece." quando algum fica de fora).
+
+*Nos dois modais:*
+- **Aba desatualizada:** se o cadastro mudou enquanto a pessoa editava (outra aba, outra pessoa), o Salvar é recusado com "O cadastro mudou enquanto você editava. Feche, abra de novo e salve." e os dados da tela se recarregam.
+- Convênio desativado não pode ser marcado ("Um convênio desativado não pode ser marcado.").
+- **Foco quando o aviso entra no lugar do Salvar:** o foco vai para o aviso (fora da ordem do Tab); o Tab seguinte cai em "Abrir a Agenda", quando há consulta, e o outro no botão de confirmar. Nada confirma sozinho. Se a confirmação termina em erro, o foco volta ao botão de confirmar ou ao Salvar.
+- Sem coluna nova nas tabelas (C25 do `docs/06`).
 
 No modal de agendamento (Tela 3), quando a clínica ainda não definiu quem faz nenhum procedimento, o aviso manda para Cadastros > Procedimentos.
 
@@ -602,6 +660,8 @@ No desenho de então, a coluna **IA** era a chave "o agente pode agendar isso so
 Três cards de indicador: Total de consultas (atendidas mais faltas) · Faltas · Taxa de comparecimento. Desde 02/10/2026 no cartão de métrica único; sem consulta atendida nem falta, a taxa diz "Ainda não medido" com a dica, nunca 0%.
 
 Duas colunas: à esquerda **linha do tempo de agendamentos** (data, profissional, procedimento, valor, chip de status); à direita dados cadastrais, **saldo de pacote com barra de sessões**, **estado do consentimento** (origem, data, botão de descadastrar), origem preservada desde o lead, e botões Abrir conversa, Agendar, Adicionar à lista de espera.
+
+**Cartão Atividades na ficha (02/10/2026):** no topo da coluna da direita, com **todas** as pendentes do paciente e as **últimas 5 concluídas** ("Concluídas recentemente"), "Nova atividade" e "Ver todas" (Tela 15 só com este paciente). Carregado junto com a ficha, com a trilha de leitura própria; se a leitura das atividades falhar, só o cartão mostra o erro. Depois de cada ação a ficha recarrega.
 
 **Saldo de pacote (pacote com vários procedimentos, desde 29/09/2026):** **um cartão por venda**, com o nome do pacote, as sessões restantes da venda, a validade ("Vale até", ou "Venceu em" com ícone, rótulo e cor de alerta) e **uma barra por procedimento** ("Botox, 1 de 2 usadas"; a barra diz o procedimento para quem ouve). Ações do cartão: **Ajustar saldo** (um campo de sessões usadas por procedimento, a validade da venda e um motivo só) e **Cancelar venda** (só administrador e gestor, e só enquanto nenhuma consulta descontou da venda; fora disso, visível e desabilitado com a dica). **Vender pacote** escolhe o pacote pelo nome, com o que ele inclui na própria opção ("Harmonização (Botox 2x + Facelift 1x)"), e mostra preço, validade e os procedimentos; "Pacote em andamento, comprado antes do sistema" acrescenta o campo "Já usadas" em cada procedimento (de 0 até as sessões dele, com ao menos 1 sessão sobrando no pacote) e a data de início. Na **Agenda**, o diálogo do Compareceu diz de onde sai a sessão: "Desconta 1 sessão de Botox do pacote Harmonização (2 de 3 usadas)." e o que sobra daquele procedimento.
 
@@ -660,6 +720,26 @@ Cada aba: faixa de cartões, gráficos só em barras horizontais ou linha com ma
 
 Abas: Clínica · **Marca** · Usuários e permissões · Modelos de mensagem · Limite de gastos · **Privacidade e LGPD** · Assinatura.
 
+**Abas construídas em 02/10/2026** (a tarefa 5.3 do backlog segue aberta para as que faltam, como Marca, Limite de gastos, Privacidade e LGPD e Assinatura), cada uma na URL (`?aba=`), nesta ordem: Equipe e permissões · Clínica · WhatsApp · Jornada e conversões · **Automações de fluxo** (`fluxo`, nova) · Etiquetas de conversa · **Mensagens padrão** (`mensagens`, nova) · Anúncios da Meta. As duas novas têm contador e o próprio estado de erro (a falha de uma não derruba a tela).
+
+**Jornada e conversões, o que mudou em 02/10/2026:** no formulário da etapa,
+- **"Quem escreve o termo"** (lista com Paciente, Clínica e Qualquer um; padrão Paciente), dentro do bloco de termos-chave, com a ajuda "Paciente: a mensagem que chega dele. Clínica: o que a equipe envia pelo sistema ou pelo celular conectado. Qualquer um: os dois lados." A explicação dos termos muda conforme a escolha (por exemplo, "Quando a clínica escrever um destes termos para o paciente, pelo sistema ou pelo celular conectado, o contato anda sozinho para esta etapa (só para frente na jornada, nunca para a etapa de perda)."). Na linha recolhida, "3 termos escritos pela clínica".
+- **"Descrição (aparece no Kanban)"**: texto opcional de até 140 caracteres, com contador "n/140", o exemplo "Por exemplo: pediu o valor e ainda não marcou a consulta" e a ajuda de que aparece abaixo do nome da coluna, em até duas linhas. Espaços e quebras de linha repetidos viram um espaço, e em branco é "sem descrição". Passou de 140: "A descrição da etapa cabe em até 140 caracteres.". Na linha recolhida, "No Kanban: {texto}".
+- Excluir etapa com régua de follow-up passa a dizer "Esta etapa tem uma régua de follow-up. Exclua a régua em Automações antes de excluir a etapa."; etapa usada por automação de fluxo (como origem ou destino) é recusada pelo banco, e a tela mostra "Esta etapa é usada por uma automação de fluxo. Exclua a automação ou troque a etapa dela na aba Automações de fluxo antes de excluir a etapa." (o mesmo vale em Etiquetas de conversa: "Esta etiqueta é usada por uma automação de fluxo. Exclua a automação ou troque a etiqueta dela na aba Automações de fluxo antes de excluir a etiqueta.").
+
+**Automações de fluxo (aba nova, logo depois de Jornada e conversões; spec Módulo 14):**
+- Cartão **"Automações de fluxo da clínica"** com "Nova automação". Uma linha por regra: nome; situação **Ligada** ou **Desligada** em 3 camadas; "Quando:" e "Faz:" em português ("Ficou 48 h sem responder em Aguardando resposta", "Move para Perdido (Não respondeu)", "Etiqueta: Retorno", "Cria atividade: Ligar para o paciente, em 2 dias", "Nota interna"); quantas vezes rodou e a última vez, no fuso da clínica (busca depois de abrir a aba, com esqueleto). Na linha, o interruptor "Ligar {nome}" ou "Desligar {nome}", "Editar" e "Excluir". Vazio: "Nenhuma automação de fluxo ainda", com o exemplo "quem ficou 3 dias sem responder em Aguardando resposta vai para Perdido, ou quem entrou em Em contato ganha uma atividade de ligar.".
+- **Ligar pede confirmação** ("Ligar {nome}?") com a prévia: "N leads já passaram do tempo e não serão afetados" nos gatilhos de tempo, "N leads já estão em {etapa} e não serão afetados: a automação vale para quem entrar daqui em diante" na entrada, "A automação vale a partir da próxima mensagem de cada lead" na mensagem, mais os importados que ficam de fora. Se ligar fecharia um ciclo com outra regra ligada, o botão fica desabilitado e o aviso mostra o caminho das etapas. **Desligar é direto.**
+- **Criar e editar** num diálogo ("Nova automação de fluxo" ou "Editar {nome}", com "Quando o lead está numa etapa e algo acontece, a automação faz uma coisa por ele. Roda sozinha, em até 1 minuto."): nome; etapa; gatilho, cada um com a sua ajuda (em "Ficou um tempo sem responder na etapa", "O tempo conta da entrada na etapa ou da última mensagem do lead, o que for mais recente. Mensagem da clínica não zera o tempo."; em "Mandou mensagem estando na etapa", "As mensagens dos primeiros 2 minutos de um contato novo não contam: são a primeira fala dele, que costuma vir em várias mensagens. Se a mensagem tiver um termo da jornada, o termo vence."); o tempo em horas ou dias (de 1 hora a 90 dias), só nos gatilhos de tempo; a ação, com os campos dela: **etapa de destino** (sem Agendou, Compareceu e a própria etapa; para a etapa de perda, "Motivo da perda: Não respondeu (fixo). Quem tem consulta marcada fica onde está."; quando o destino envia conversão para a Meta, o aviso "{etapa} registra conversão para os anúncios da Meta: cada lead movido pela automação conta como conversão."), **etiqueta** do catálogo (com link para a aba Etiquetas quando o catálogo está vazio), **título e prazo da atividade**, ou **texto da nota interna** com contador; e a caixa de marcar "Ligada" (nasce desligada), com a descrição "Desmarcada, a automação fica guardada e não roda." (caixa de marcar, e não interruptor, porque só vale depois do Salvar; o interruptor da linha da lista liga e desliga na hora). A prévia aparece sempre que a regra passa a valer de novo (regra nova, ao ligar ou ao mudar gatilho, etapa ou tempo), e o ciclo bloqueia o Salvar de uma regra ligada, mostrando o caminho.
+- Cartão **"Como as automações de fluxo funcionam"**: "Rodam sozinhas, em até 1 minuto depois do que aconteceu, e cada uma roda uma vez por entrada do lead na etapa.", com os avisos fixos (só leads; Agendou e Compareceu não são destino; mover para fora de uma etapa encerra o follow-up dela; cadeia até o 3º salto e no máximo 10 movimentos por lead em 24 horas; não é retroativa) e o aviso "A mensagem para o paciente ao entrar na etapa fica em Automações > Follow-up, com horário de envio e autorização para receber mensagens." com o botão **"Abrir o follow-up"**.
+- Cartão **"Histórico"**: as últimas 50 execuções, com filtro "Todas as automações" ou uma só e o botão "Atualizar o histórico". Cada linha: situação em 3 camadas (Aguardando, Feita, Pulada, Falhou), o nome do lead, o nome da regra, o que fez naquela execução ("Moveu de {etapa} para {etapa}", "Etiquetou a conversa com {etiqueta} (em {etapa})" com o nome que a etiqueta tinha na hora, "Criou uma atividade (em {etapa})", "Deixou uma nota interna na conversa (em {etapa})"; editar a ação ou a etiqueta da regra depois não reescreve o que já aconteceu) ou o motivo da pulada em português ("Não fez nada: o lead já tinha mudado de etapa") ou o código do erro, e quando foi, no fuso da clínica. Carregando, erro com "Tentar de novo" e vazio ("Nenhuma execução ainda"). Nunca mostra conteúdo de mensagem; a leitura vai para a trilha de auditoria.
+- **Excluir** pede confirmação ("Excluir {nome}?", "A automação para de rodar na hora.") e diz o que acontece: o histórico dela é apagado junto; as atividades e as notas que ela criou continuam; os leads que ela moveu ficam onde estão.
+
+**Mensagens padrão (aba nova, logo depois de Etiquetas de conversa; spec 1.11):**
+- Cartão **"Mensagens padrão da clínica"** com "Nova mensagem". Uma linha por mensagem: título, "/atalho", situação **Ativa** ou **Desativada** em 3 camadas, o começo do texto, "Editar" e as setas "Subir" e "Descer" (a ordem é a da lista do compositor). Vazio: "Nenhuma mensagem padrão ainda", com "Textos prontos, como o endereço da clínica ou a confirmação de um horário. No Atendimento, digite / na resposta ao paciente para usar um.".
+- **Editor na própria linha**: "Título" (2 a 60, sem repetir na clínica); "Atalho" (acompanha o título até ser editado; letras minúsculas, números e sublinhado, até 30, sem repetir na clínica); "Texto" com contador "n/4096"; os campos `{{nome}}` e `{{clinica}}` para tocar e inserir, com o aviso de campo desconhecido ("O campo ... sai em branco"); o aviso informativo "Texto da clínica para o paciente." (não prometer resultado nem orientar sobre sintoma, remédio ou diagnóstico, regra do CFM para toda mensagem da clínica); a caixa de marcar "Ativa: aparece na lista do Atendimento", com a descrição "Desmarcada, sai da lista e continua guardada aqui." (caixa de marcar, e não interruptor, porque só vale depois do Salvar); Salvar, Cancelar e Excluir (com confirmação). Ao lado, **"Como o paciente vê"** no balão do WhatsApp, com um nome fictício, e a versão para contato sem nome.
+- Atalho ou título repetido, e as outras recusas do banco, viram mensagem em português. Sem permissão, tudo visível e desabilitado com a dica.
+
 **Marca:** upload de logo em duas versões (horizontal 160x32 e ícone 32x32), cada uma para tema claro e escuro. Seletor de cor primária com **pré-visualização ao vivo do rail e do botão**. Nome do produto. Bloco de **nomenclatura** com campos para "profissional", "procedimento", "paciente", "consulta", e ao lado uma pré-visualização mostrando uma frase real mudando conforme digita.
 
 **Limite de gastos:** teto mensal em reais, chave "pausar envios automáticos ao atingir o teto", alertas em 50%, 80% e 95%.
@@ -690,6 +770,34 @@ Tela só para o Administrador do produto, fora do contexto de uma clínica.
 - Indicadores: clínicas ativas, MRR, churn, inadimplência, custo total de mensagens contra receita.
 - Ações: entrar como a clínica (com registro na auditoria), suspender, reativar, mudar plano.
 - **Alerta de quality rating baixo** em destaque, porque isso é incidente de produto e precisa aparecer antes de a clínica reclamar.
+
+---
+
+### TELA 15. ATIVIDADES (escopo acrescentado em 02/10/2026)
+
+Fora das 14 telas originais (spec Módulo 15). Item "Atividades" no menu, logo depois de Leads. Mesma permissão de Leads e Pacientes (Seção 5).
+
+**Cabeçalho:** título "Atividades" e a frase com as pendências reais ("Nada seu atrasado nem para hoje." em Minhas, "Nada atrasado nem para hoje." em Todas, ou as contagens), e **"Nova atividade"** (primário), com busca de paciente própria dentro do diálogo.
+
+**Filtros, todos na URL** (digitar na busca não recarrega a página):
+- **De quem:** controle segmentado Minhas (padrão) e Todas. Minhas mostra as atividades em que a pessoa é a responsável; atividade sem responsável só aparece em Todas.
+- **Situação:** Todas as pendentes (padrão), Atrasadas, Para hoje, Próximas, Concluídas (30 dias).
+- **Responsável** (só em Todas): todos, cada membro, ou "Sem responsável".
+- **Busca:** "Paciente, telefone ou atividade" (sem diferenciar acento; pedaço do telefone vale).
+- **Chip "Só de {contato}"**, quando a tela foi aberta pelo "Ver todas" do drawer, da conversa ou da ficha, com o X "Ver de todos os contatos".
+- Links prontos: `/atividades?filtro=atrasadas` e `?filtro=hoje` (Início) e `?quem=todas&contato={id}` (Ver todas).
+
+**Lista** em cartões por prazo: **Atrasadas**, **Hoje**, **Amanhã**, **Próximos 7 dias**, **Depois** e **Concluídas**. Cada linha: o botão de concluir de 40px ("Concluir: {o que fazer}"), o que fazer, os detalhes, o nome do paciente (link para a ficha), o prazo como a recepção fala ("Hoje, 14:00", "Amanhã", "Ontem", "01/12", com o ano quando muda), o chip de situação e o responsável ("Você", o nome, "Sem responsável", ou o nome com "(sem acesso)" quando a pessoa saiu da equipe). Atividade de automação diz "Criada por automação". Menu da linha: Editar, Adiar (para amanhã, daqui a 7 dias, daqui a 30 dias, mantendo a hora), Abrir conversa, Abrir ficha e Cancelar atividade; na concluída ou cancelada, Reabrir no lugar de Editar, Adiar e Cancelar. Todos os itens do menu são neutros, inclusive "Cancelar atividade" (ele usa o ícone da situação Cancelada, que é neutra, e cancelar não apaga nada).
+
+**Situação em 3 camadas** (ícone, rótulo e cor): Pendente (`square`, neutro), Para hoje (`hourglass`, âmbar), Atrasada (`clock-alert`, alerta), Concluída (`circle-check`, sucesso) e Cancelada (`square-x`, neutro). Atrasada: com hora, a hora já passou; sem hora, o dia já passou. Para hoje: o dia é hoje e ainda não atrasou. O "hoje" é sempre o da clínica. Com hora, o dia acompanha o instante: se a clínica troca de fuso em Configurações > Clínica, a atividade passa a aparecer no dia e na hora do fuso novo; sem hora, o dia escolhido não muda.
+
+**Concluir** muda a tela na hora e mostra o aviso "Atividade concluída" com **"Desfazer"**; cancelar também tem "Desfazer" ("Atividade cancelada"). Concluir de novo o que alguém já concluiu não dá erro.
+
+**Diálogo "Nova atividade" / "Editar atividade"** (modal central de 520px, o mesmo da conversa, do drawer e da ficha): **"O que fazer"** (exemplo "Ex.: Ligar para lembrar do retorno"), **"Detalhes (opcional)"**, **"Para quando"** com os atalhos Amanhã, Em 7 dias e Em 30 dias mais a data, **"Hora (opcional)"** e **"Responsável"** (padrão você, os membros ativos, "Sem responsável"; o responsável que saiu aparece marcado "(sem acesso)"). Só a pendente se edita.
+
+**Estados:** carregando com esqueleto; erro "Não foi possível carregar as atividades" ("Confira a conexão e tente de novo. Nada foi perdido.") com "Tentar de novo", nunca virando lista vazia; vazio inicial "Nenhuma atividade ainda" ("Crie pelo lead, pela conversa ou pela ficha do paciente, ou aqui mesmo. Ela aparece nesta lista com o prazo."); vazio por filtro com "Limpar filtros" e, em Minhas, "Ver as da equipe"; aviso quando a lista passa do limite carregado; aviso de "melhor no computador" no celular. Sem permissão (Profissional e Leitura): "Nova atividade", o concluir e os itens Editar, Adiar, Reabrir e Cancelar atividade do menu da linha visíveis e desabilitados, com a dica (no menu, escrita no próprio item); o menu abre, e Abrir conversa e Abrir ficha continuam liberados.
+
+**Dado de paciente:** abrir a tela, o drawer, o painel da conversa e a ficha grava a leitura na trilha de auditoria; o texto nunca vai para log. Não há apagar: cancela-se.
 
 ---
 

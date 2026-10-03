@@ -391,6 +391,12 @@ export function BarraAcoesMassa({
                   ? "Etapa com Régua manda mensagens automáticas para quem tem autorização."
                   : "Nenhuma etapa tem régua de follow-up ligada."}
             </p>
+            {/* Automacoes de fluxo (02/10/2026): o gatilho "entrou na etapa"
+                vale para todo movimento, inclusive o em massa. */}
+            <p className="px-[9px] pb-1 text-[11px] leading-[1.4] text-text-secondary">
+              Mover também pode disparar as automações de fluxo da etapa de
+              destino, para cada lead.
+            </p>
           </div>
         </AcaoComPopover>
 
@@ -494,6 +500,10 @@ export function BarraAcoesMassa({
             {n - recebem > 0
               ? ` Os outros ${n - recebem} não recebem nada por esta mudança (estão sem autorização ou já estavam nesta etapa).`
               : null}
+          </p>
+          <p className="text-[13px] leading-[1.5] text-text-secondary">
+            Se {confirmacao?.nome} tiver automação de fluxo ligada, ela também
+            roda para cada lead movido.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmacao(null)}>

@@ -1,8 +1,11 @@
 import {
+  AlarmClock,
+  Circle,
   CircleCheck,
   CircleDashed,
   CirclePause,
   Clock,
+  ClockAlert,
   TriangleAlert,
 } from "lucide-react";
 import { describe, expect, it } from "vitest";
@@ -10,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { initialsOf } from "@/components/atendimento/contact-avatar";
 import {
   ACCESS_LEVEL_STATUS,
+  ATIVIDADE_STATUS,
   APPOINTMENT_FLAG,
   APPOINTMENT_STATUS,
   CONSENT_STATUS,
@@ -41,6 +45,7 @@ const MAPAS_NOVOS = {
   CONVERSAO_STATUS,
   TOKEN_META_STATUS,
   CONSENT_STATUS,
+  ATIVIDADE_STATUS,
 };
 
 const TODOS: StatusDefinition[] = [
@@ -87,6 +92,21 @@ describe("mapas novos de estado", () => {
         ACCESS_LABELS[acesso as keyof typeof ACCESS_LABELS],
       );
     }
+  });
+
+  it("atividade: atrasada é alerta com ícone próprio, nunca o da jornada", () => {
+    expect(ATIVIDADE_STATUS.atrasada.tone).toBe("alert");
+    expect(ATIVIDADE_STATUS.atrasada.icon).toBe(ClockAlert);
+    expect(ATIVIDADE_STATUS.hoje.tone).toBe("warning");
+    expect(ATIVIDADE_STATUS.concluida.tone).toBe("success");
+    const icones = Object.values(ATIVIDADE_STATUS).map((d) => d.icon);
+    // AlarmClock e "Sem contato"; Circle e o icone padrao das etapas.
+    expect(icones).not.toContain(AlarmClock);
+    expect(icones).not.toContain(Circle);
+    // ClockAlert so desta situacao, em todos os mapas.
+    expect(TODOS.filter((d) => d.icon === ClockAlert)).toEqual([
+      ATIVIDADE_STATUS.atrasada,
+    ]);
   });
 
   it("consentimento revogado é alerta, nunca neutro", () => {

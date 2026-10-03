@@ -20,6 +20,7 @@ import {
   dataNaClinica,
   FUSO_PADRAO,
 } from "@/components/atendimento/fuso-da-clinica";
+import { AtividadesDaConversa } from "@/components/atividades/atividades-da-conversa";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
@@ -40,9 +41,10 @@ import {
 
 // Painel de contexto (design system Conduzza, docs/06 secao 5.3): a
 // identidade do contato com as acoes de agenda e espera, as etiquetas, a
-// etapa da jornada, a autorizacao de mensagens (tres estados, CONSENT_STATUS),
-// a origem e os atalhos para a ficha e a agenda (que ja existem; este painel
-// aponta, nao duplica). Sem fio entre secoes: o respiro separa.
+// etapa da jornada, as atividades (o "criar lembrete" da spec 1.9), a
+// autorizacao de mensagens (tres estados, CONSENT_STATUS), a origem e os
+// atalhos para a ficha e a agenda (que ja existem; este painel aponta, nao
+// duplica). Sem fio entre secoes: o respiro separa.
 
 const CONSENT_SOURCE_LABEL: Record<string, string> = {
   formulario_site: "Formulário do site",
@@ -329,6 +331,18 @@ export function ContextPanel({
           podeEditar={podeEditarLeads}
           dicaSemPermissao={dicaLeads}
           aoMudar={aoMudarEtapa}
+        />
+      </Secao>
+
+      {/* Atividades seguem a matriz de Leads e Pacientes (a mesma da etapa):
+          admin, gestor e recepcao criam e concluem; os outros so veem. */}
+      <Secao titulo="Atividades">
+        <AtividadesDaConversa
+          contato={contact}
+          conversationId={conversationId}
+          timezone={timezone}
+          podeEditar={podeEditarLeads}
+          dica={dicaLeads}
         />
       </Secao>
 

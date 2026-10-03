@@ -510,6 +510,45 @@ export async function provisionar(): Promise<DadosE2E> {
     .throwOnError();
   const unimedId = convsE2e!.find((c) => c.name === "Unimed")!.id as string;
 
+  // Convenio pelo profissional (decisao do dono em 02/10/2026): os pares
+  // coerentes com os vinculos logo abaixo, e SO eles. Joao e Ana atendem a
+  // Unimed (professional_insurance); Endocrinologia e Dermatologia sao
+  // cobertas pela Unimed (procedure_insurance). Nenhum vinculo novo: a
+  // Agenda dos outros specs continua a mesma. Sem os pares, os modais de
+  // Cadastros abririam com a nota da auto cura e o Salvar do profissional
+  // gravaria os pares no meio de outro teste. O Bradesco fica sem par: nao
+  // e atendido nem cobre nada.
+  await admin
+    .from("professional_insurance")
+    .insert([
+      {
+        clinic_id: clinica.id,
+        professional_id: profJoaoId,
+        insurance_id: unimedId,
+      },
+      {
+        clinic_id: clinica.id,
+        professional_id: profAnaId,
+        insurance_id: unimedId,
+      },
+    ])
+    .throwOnError();
+  await admin
+    .from("procedure_insurance")
+    .insert([
+      {
+        clinic_id: clinica.id,
+        procedure_id: procEndoId,
+        insurance_id: unimedId,
+      },
+      {
+        clinic_id: clinica.id,
+        procedure_id: procDermatoId,
+        insurance_id: unimedId,
+      },
+    ])
+    .throwOnError();
+
   const { data: vinculosE2e } = await admin
     .from("service_link")
     .insert([

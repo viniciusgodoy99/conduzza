@@ -54,6 +54,38 @@ type LinhaDoFio =
   | { tipo: "historico"; chave: string; data: string }
   | { tipo: "item"; chave: string; item: ThreadItem };
 
+/**
+ * Quem assina a nota interna que uma automacao de fluxo deixa na conversa
+ * (author 'sistema', sem pessoa; docs/04 secao 12.8). Na linha de autor ela
+ * sai com o cadeado da nota e o texto "Automação · Nota interna, o paciente
+ * não vê": icone, texto e cor, nunca so a pele ambar da bolha.
+ */
+export const AUTOR_DA_AUTOMACAO = "Automação";
+
+/**
+ * O nome da linha de autor acima da bolha, ou null para nao desenhar a linha.
+ *
+ * A IA assina como "Assistente"; a mensagem de uma pessoa, pelo nome dela
+ * (sem o nome no mapa, a linha nao aparece, como sempre). Sem pessoa, so a
+ * nota interna ganha assinatura: a unica nota sem autor e a da automacao. A
+ * mensagem automatica ao paciente (regua, confirmacao) segue sem linha.
+ */
+export function autorDaBolha(
+  message: Pick<MessageItem, "author" | "author_user_id" | "is_internal_note">,
+  authorNames: Record<string, string>,
+): string | null {
+  if (message.author === "ia") {
+    return "Assistente";
+  }
+  if (message.author_user_id) {
+    return authorNames[message.author_user_id] ?? null;
+  }
+  if (message.author === "sistema" && message.is_internal_note) {
+    return AUTOR_DA_AUTOMACAO;
+  }
+  return null;
+}
+
 function quandoDo(item: ThreadItem): string {
   return item.type === "message"
     ? item.message.created_at
@@ -520,13 +552,7 @@ export function Thread({
                 <MessageBubble
                   key={linha.chave}
                   message={item.message}
-                  authorName={
-                    item.message.author === "ia"
-                      ? "Assistente"
-                      : item.message.author_user_id
-                        ? (authorNames[item.message.author_user_id] ?? null)
-                        : null
-                  }
+                  authorName={autorDaBolha(item.message, authorNames)}
                   authorNames={authorNames}
                   contato={
                     conversation.contact.name ??

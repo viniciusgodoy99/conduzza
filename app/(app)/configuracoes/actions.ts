@@ -7,7 +7,17 @@ import { z } from "zod";
 
 import { dadosDaClinicaSchema } from "@/components/configuracoes/dados-da-clinica";
 import { getSessionContext } from "@/lib/auth/active-clinic";
-import { ICONES_DE_ETAPA } from "@/lib/domain/jornada";
+import {
+  recusaDaEtapaUsadaPorAutomacao,
+  recusaDaEtiquetaUsadaPorAutomacao,
+} from "@/lib/domain/automacoes-de-fluxo";
+import {
+  ICONES_DE_ETAPA,
+  LIMITE_DA_DESCRICAO,
+  TERMOS_DE_QUEM,
+  normalizarDescricaoDaEtapa,
+  traduzirRecusaDaJornada,
+} from "@/lib/domain/jornada";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -738,6 +748,21 @@ const etapaDaJornadaSchema = z.object({
   // Termos que movem o lead para esta etapa sozinhos (fase 4). Mesmos limites
   // das palavras-chave de campanha, que sao o molde.
   termos_chave: z.array(z.string().trim().min(2).max(40)).max(20),
+  // Quem escreve o termo (02/10/2026): o check termos_de_quem_valido do
+  // banco aceita exatamente estes tres.
+  termos_de_quem: z.enum(TERMOS_DE_QUEM),
+  // Descricao do Kanban (02/10/2026): espacos colapsados e vazio vira null,
+  // porque o check descricao_de_etapa_com_tamanho recusa string vazia. O
+  // refine (e nao um max) faz a mensagem chegar na tela: so issue custom
+  // vira texto para a pessoa.
+  descricao: z
+    .string()
+    .max(2000)
+    .nullable()
+    .transform(normalizarDescricaoDaEtapa)
+    .refine((texto) => texto === null || texto.length <= LIMITE_DA_DESCRICAO, {
+      message: `A descrição da etapa cabe em até ${LIMITE_DA_DESCRICAO} caracteres.`,
+    }),
   conversao: conversaoDaEtapaSchema,
 });
 
@@ -753,16 +778,9 @@ function chaveDoNome(nome: string): string {
   return base.length > 0 ? base : "etapa";
 }
 
-function traduzirRecusaDaJornada(message: string | undefined): string | null {
-  const recusas = [
-    "Etapa de sistema não pode ser excluída",
-    "Mova os contatos desta etapa",
-    "A chave de uma etapa não muda",
-    "O papel de sistema de uma etapa não muda",
-  ];
-  if (!message) return null;
-  return recusas.find((recusa) => message.includes(recusa)) ? message : null;
-}
+// traduzirRecusaDaJornada vive em lib/domain/jornada.ts (pura e testada em
+// unidade): la fica a lista das recusas do gatilho proteger_jornada e dos
+// checks da tabela que a tela mostra.
 
 export async function salvarEtapaDaJornadaAction(
   entrada: unknown,
@@ -800,7 +818,9 @@ export async function salvarEtapaDaJornadaAction(
         nome: dados.nome,
         tom: dados.tom,
         icone: dados.icone,
+        descricao: dados.descricao,
         termos_chave: dados.termos_chave,
+        termos_de_quem: dados.termos_de_quem,
         ...conversao,
       })
       .eq("clinic_id", guard.clinicId)
@@ -855,7 +875,9 @@ export async function salvarEtapaDaJornadaAction(
         posicao: maiorPosicao + 10,
         tom: dados.tom,
         icone: dados.icone,
+        descricao: dados.descricao,
         termos_chave: dados.termos_chave,
+        termos_de_quem: dados.termos_de_quem,
         ...conversao,
       })
       .select("id")
@@ -863,7 +885,9 @@ export async function salvarEtapaDaJornadaAction(
     if (error || !nova) {
       return {
         ok: false,
-        error: mensagemDeErro(error, "Não foi possível criar a etapa."),
+        error:
+          traduzirRecusaDaJornada(error?.message) ??
+          mensagemDeErro(error, "Não foi possível criar a etapa."),
       };
     }
     await supabase.from("audit_log").insert({
@@ -959,7 +983,10 @@ export async function excluirEtapaDaJornadaAction(
   if (error || !removidas || removidas.length === 0) {
     return {
       ok: false,
+      // Etapa usada por automacao de fluxo: pelo hint que o banco devolve
+      // (etapa_usada_por_automacao), dizendo onde resolver.
       error:
+        recusaDaEtapaUsadaPorAutomacao(error) ??
         traduzirRecusaDaJornada(error?.message) ??
         "Não foi possível excluir a etapa.",
     };
@@ -1129,7 +1156,15 @@ export async function excluirEtiquetaDeConversaAction(
     .eq("chave", parsed.data)
     .select("id");
   if (error || !removidas || removidas.length === 0) {
-    return { ok: false, error: "Não foi possível excluir a etiqueta." };
+    // Etiqueta usada por automacao de fluxo: proteger_etiqueta_de_conversa
+    // recusa com o hint etiqueta_usada_por_automacao; a tela diz onde
+    // resolver em vez do generico.
+    return {
+      ok: false,
+      error:
+        recusaDaEtiquetaUsadaPorAutomacao(error) ??
+        "Não foi possível excluir a etiqueta.",
+    };
   }
 
   await supabase.from("audit_log").insert({

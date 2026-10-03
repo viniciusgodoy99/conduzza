@@ -35,6 +35,28 @@ import { normalizarTexto } from "@/lib/domain/attribution";
 
 export type PapelDeEtapa = "entrada" | "agendou" | "compareceu" | "perdido";
 
+/**
+ * Quem escreve o termo-chave que anda o contato para a etapa (pedido do dono
+ * em 02/10/2026; coluna funnel_stage_def.termos_de_quem, check no banco).
+ * 'paciente' e o comportamento original e o padrao de toda etapa que ja
+ * existia; 'clinica' vale para o texto que a equipe envia pelo sistema e para
+ * o que sai do celular conectado; 'qualquer' vale para os dois lados.
+ */
+export type TermosDeQuem = "paciente" | "clinica" | "qualquer";
+
+/** De que lado da conversa veio o texto que esta sendo testado. */
+export type QuemEscreveu = "paciente" | "clinica";
+
+/** Os valores aceitos pelo check termos_de_quem_valido, na ordem da tela. */
+export const TERMOS_DE_QUEM = [
+  "paciente",
+  "clinica",
+  "qualquer",
+] as const satisfies readonly TermosDeQuem[];
+
+/** Teto da descricao da etapa (check descricao_de_etapa_com_tamanho). */
+export const LIMITE_DA_DESCRICAO = 140;
+
 export type EtapaDaJornada = {
   id: string;
   chave: string;
@@ -43,7 +65,13 @@ export type EtapaDaJornada = {
   tom: StatusTone;
   icone: string;
   papel: PapelDeEtapa | null;
+  /**
+   * Texto curto que o Kanban mostra abaixo do nome da coluna (ate 140).
+   * Nunca vai no cartao do lead (regra dos 5 elementos). Nulo sem descricao.
+   */
+  descricao: string | null;
   termos_chave: string[];
+  termos_de_quem: TermosDeQuem;
   meta_event_name: string | null;
   conversao_ativa: boolean;
   is_sale: boolean;
@@ -131,30 +159,40 @@ export function etapaPorPapel(
   return jornada.find((etapa) => etapa.papel === papel) ?? null;
 }
 
-/**
- * Agrupa itens com funnel_stage pelas etapas DA JORNADA, na ordem de posicao.
- *
- * Item cuja etapa nao esta na jornada nao some em silencio: cai na etapa de
- * entrada, que existe garantidamente. (Na pratica o banco impede o caso, mas
- * um cache momentaneamente velho na troca de jornada nao pode derrubar o
- * Kanban.)
- */
 /** O que a decisao por termo-chave precisa saber de cada etapa. */
 type EtapaParaTermo = Pick<
   EtapaDaJornada,
-  "chave" | "posicao" | "papel" | "termos_chave"
+  "chave" | "posicao" | "papel" | "termos_chave" | "termos_de_quem"
 >;
 
 /**
- * Decide se um corpo de mensagem move o contato de etapa por TERMO-CHAVE
- * (fase 4 da jornada configuravel). Pura, zero I/O; quem le a jornada e grava
- * o contato e o ingest.
+ * A etapa aceita termo escrito por este lado da conversa?
+ *
+ * 'qualquer' aceita os dois; 'paciente' e 'clinica' so o proprio lado. Valor
+ * desconhecido (nao passa no check do banco, mas um cache velho nao pode
+ * mover ninguem) nao aceita nada.
+ */
+export function termoValePara(
+  termosDeQuem: TermosDeQuem,
+  quemEscreveu: QuemEscreveu,
+): boolean {
+  return termosDeQuem === "qualquer" || termosDeQuem === quemEscreveu;
+}
+
+/**
+ * Decide se um texto move o contato de etapa por TERMO-CHAVE (fase 4 da
+ * jornada configuravel; "quem escreve o termo" pedido em 02/10/2026). Pura,
+ * zero I/O; quem le a jornada e grava o contato e
+ * lib/integrations/whatsapp/termo-chave.ts.
  *
  * Regras, na ordem em que eliminam:
  * - corpo vazio, jornada vazia ou etapa atual desconhecida: nao move (etapa
  *   fora da jornada e cache velho; ser conservador aqui nao perde nada).
  * - contato em etapa de perda NUNCA sai por termo: reativar quem se perdeu e
  *   decisao de gente (ou do gatilho de agendamento), nao de palavra solta.
+ * - so entram as etapas cujo termos_de_quem aceita QUEM ESCREVEU: o termo da
+ *   etapa "da clinica" nao anda o lead quando e o paciente que o escreve, e
+ *   vice versa.
  * - so anda PARA FRENTE (posicao maior que a atual) e nunca PARA a etapa de
  *   perda: "nao quero mais, era so o valor" nao pode perder ninguem.
  * - entre os termos que casaram, vence o mais longo (mais especifico), como
@@ -167,6 +205,7 @@ export function etapaPorTermoChave<T extends EtapaParaTermo>(
   corpo: string | null,
   etapaAtual: string,
   jornada: readonly T[],
+  quemEscreveu: QuemEscreveu,
 ): T | null {
   if (!corpo) {
     return null;
@@ -183,7 +222,11 @@ export function etapaPorTermoChave<T extends EtapaParaTermo>(
   let vencedora: T | null = null;
   let maiorComprimento = 0;
   for (const etapa of [...jornada].sort((a, b) => a.posicao - b.posicao)) {
-    if (etapa.papel === "perdido" || etapa.posicao <= atual.posicao) {
+    if (
+      etapa.papel === "perdido" ||
+      etapa.posicao <= atual.posicao ||
+      !termoValePara(etapa.termos_de_quem, quemEscreveu)
+    ) {
       continue;
     }
     for (const termo of etapa.termos_chave) {
@@ -201,6 +244,155 @@ export function etapaPorTermoChave<T extends EtapaParaTermo>(
   return vencedora;
 }
 
+// ---------------------------------------------------------------------------
+// Textos da tela Jornada sobre "quem escreve o termo". Aqui, e nao no
+// componente, para o teste de unidade conferir cada combinacao (e a regra de
+// nenhum travessao) sem renderizar nada.
+
+/** As opcoes do campo "Quem escreve o termo", na ordem do banco. */
+export const OPCOES_TERMOS_DE_QUEM: readonly {
+  valor: TermosDeQuem;
+  rotulo: string;
+}[] = [
+  { valor: "paciente", rotulo: "Paciente" },
+  { valor: "clinica", rotulo: "Clínica" },
+  { valor: "qualquer", rotulo: "Qualquer um" },
+];
+
+const POR_QUEM: Record<TermosDeQuem, string> = {
+  paciente: "pelo paciente",
+  clinica: "pela clínica",
+  qualquer: "por qualquer um",
+};
+
+/**
+ * O que vem depois do numero na linha recolhida da etapa:
+ * "3 termos escritos pela clínica". Quem chama poe o numero (com a classe
+ * de numeral tabular) na frente.
+ */
+export function resumoDosTermos(
+  quantidade: number,
+  termosDeQuem: TermosDeQuem,
+): string {
+  const substantivo = quantidade === 1 ? "termo escrito" : "termos escritos";
+  return `${substantivo} ${POR_QUEM[termosDeQuem] ?? POR_QUEM.paciente}`;
+}
+
+const QUANDO_ESCREVE: Record<TermosDeQuem, string> = {
+  paciente: "Quando o paciente escrever um destes termos na conversa",
+  clinica:
+    "Quando a clínica escrever um destes termos para o paciente, pelo sistema ou pelo celular conectado",
+  qualquer:
+    "Quando o paciente ou a clínica escrever um destes termos na conversa",
+};
+
+/** A explicacao do bloco "Termos que movem o contato para cá". */
+export function ajudaDosTermos(termosDeQuem: TermosDeQuem): string {
+  const quando = QUANDO_ESCREVE[termosDeQuem] ?? QUANDO_ESCREVE.paciente;
+  return `${quando}, o contato anda sozinho para esta etapa (só para frente na jornada, nunca para a etapa de perda).`;
+}
+
+/** A explicacao do campo "Quem escreve o termo". */
+export const AJUDA_QUEM_ESCREVE =
+  "Paciente: a mensagem que chega dele. Clínica: o que a equipe envia pelo sistema ou pelo celular conectado. Qualquer um: os dois lados.";
+
+// ---------------------------------------------------------------------------
+// Descricao da etapa (pedido do dono em 02/10/2026).
+
+/**
+ * A descricao como o banco guarda: espacos e quebras de linha colapsados num
+ * espaco so (o Kanban mostra em ate 2 linhas; quebra manual so desperdica
+ * uma), pontas aparadas, e vazio vira null. O check do banco recusa string
+ * vazia ou so de espacos, entao vazio NUNCA pode seguir como "".
+ */
+export function normalizarDescricaoDaEtapa(
+  texto: string | null | undefined,
+): string | null {
+  if (texto === null || texto === undefined) {
+    return null;
+  }
+  const limpo = texto.replace(/\s+/g, " ").trim();
+  return limpo === "" ? null : limpo;
+}
+
+/**
+ * Alguma etapa tem descricao? Quando sim, TODAS as colunas do Kanban (e do
+ * esqueleto) reservam a altura das 2 linhas, para os cartoes comecarem na
+ * mesma altura em todas (o grid e items-start).
+ */
+export function algumaEtapaComDescricao(
+  jornada: readonly Pick<EtapaDaJornada, "descricao">[],
+): boolean {
+  return jornada.some((etapa) => Boolean(etapa.descricao));
+}
+
+// ---------------------------------------------------------------------------
+// Recusas do banco ao salvar ou excluir etapa.
+
+/**
+ * O gatilho proteger_jornada e os checks de funnel_stage_def recusam em
+ * portugues. Mensagem nula: a do banco ja explica e vai como esta. Mensagem
+ * preenchida: a do banco fala de outro jeito (nome de constraint, ou termo
+ * tecnico) e a tela mostra esta. Recusa nova de exclusao (por exemplo, etapa
+ * usada por automacao de fluxo) entra nesta lista.
+ */
+const RECUSAS_DA_JORNADA: readonly {
+  trecho: string;
+  mensagem: string | null;
+}[] = [
+  { trecho: "Etapa de sistema não pode ser excluída", mensagem: null },
+  { trecho: "Mova os contatos desta etapa", mensagem: null },
+  { trecho: "A chave de uma etapa não muda", mensagem: null },
+  { trecho: "O papel de sistema de uma etapa não muda", mensagem: null },
+  {
+    // migration 20260914180000 (motor de follow-up): faltava aqui, e quem
+    // tentava excluir uma etapa com regua via so o generico.
+    trecho: "Exclua a régua de follow-up desta etapa",
+    mensagem:
+      "Esta etapa tem uma régua de follow-up. Exclua a régua em Automações antes de excluir a etapa.",
+  },
+  {
+    // migration 20261002130000 (automacoes de fluxo): etapa que e origem ou
+    // destino de uma automacao nao se exclui (hint etapa_usada_por_automacao).
+    // Mesmo texto de RECUSA_DA_ETAPA_USADA (lib/domain/automacoes-de-fluxo).
+    trecho: "Esta etapa é usada por uma automação de fluxo",
+    mensagem:
+      "Esta etapa é usada por uma automação de fluxo. Exclua a automação ou troque a etapa dela na aba Automações de fluxo antes de excluir a etapa.",
+  },
+  {
+    trecho: "descricao_de_etapa_com_tamanho",
+    mensagem: `A descrição da etapa cabe em até ${LIMITE_DA_DESCRICAO} caracteres.`,
+  },
+  {
+    trecho: "termos_de_quem_valido",
+    mensagem: "Escolha quem escreve o termo: paciente, clínica ou qualquer um.",
+  },
+];
+
+/** A recusa do banco que a tela mostra, ou null para cair no generico. */
+export function traduzirRecusaDaJornada(
+  message: string | null | undefined,
+): string | null {
+  if (!message) {
+    return null;
+  }
+  const recusa = RECUSAS_DA_JORNADA.find(({ trecho }) =>
+    message.includes(trecho),
+  );
+  if (!recusa) {
+    return null;
+  }
+  return recusa.mensagem ?? message;
+}
+
+/**
+ * Agrupa itens com funnel_stage pelas etapas DA JORNADA, na ordem de posicao.
+ *
+ * Item cuja etapa nao esta na jornada nao some em silencio: cai na etapa de
+ * entrada, que existe garantidamente. (Na pratica o banco impede o caso, mas
+ * um cache momentaneamente velho na troca de jornada nao pode derrubar o
+ * Kanban.)
+ */
 export function agruparPorJornada<T extends { funnel_stage: string }>(
   itens: readonly T[],
   jornada: readonly EtapaDaJornada[],

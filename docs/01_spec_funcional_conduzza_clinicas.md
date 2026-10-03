@@ -249,8 +249,14 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 1.7. Etiquetas por conversa, com tela de gestão de etiquetas.
 1.8. Painel de contexto com dados do contato, origem da campanha, tipo (lead ou paciente), histórico de agendamentos, próxima consulta, procedimentos de interesse.
 1.9. Ações rápidas: agendar, adicionar à lista de espera, marcar como paciente, criar lembrete.
+
+   > **"Criar lembrete" é uma atividade (escopo acrescentado em 02/10/2026):** no painel de contexto da conversa, a seção **Atividades** mostra as pendentes do contato e cria uma atividade nova ("O que fazer", detalhes, para quando no fuso da clínica com hora opcional, responsável), que guarda a conversa de onde saiu. É a mesma atividade do drawer do lead, da ficha do paciente e da página Atividades (Módulo 15). Quem cria e conclui segue a matriz de Leads e Pacientes: administrador, gestor e recepção; profissional e leitura só veem.
+
 1.10. Notas internas (nunca visíveis ao paciente).
 1.11. Respostas rápidas salvas.
+
+   > **Mensagens padrão (escopo da spec construído em 02/10/2026):** na tela se chamam **"Mensagens padrão"** (para não confundir com os "Modelos de mensagem" da Meta). São da clínica, cadastradas por **administrador e gestor** em Configurações, **só texto** (decisão do dono em 02/10), com título, atalho (letras minúsculas, números e sublinhado, até 30), texto até 4096 caracteres com os campos `{{nome}}` e `{{clinica}}`, ativa ou desativada e uma ordem. No Atendimento, na resposta ao paciente (não na nota interna), quem pode responder digita **"/"** no começo de uma palavra e a lista abre filtrada pelo atalho e pelo título (no máximo 8 itens); o botão "Mensagens padrão" da barra abre a mesma lista. A escolhida entra no campo já com o nome do contato e o nome da clínica, **editável**, e **nunca é enviada sozinha**: passa pelo Enviar como qualquer mensagem humana (autorização para receber mensagens, custo e trilha de sempre). Contato sem nome: o nome sai do texto. Anexo fica para depois. O filtro de conformidade (2.8) ainda não existe; a regra "Nenhuma mensagem sai sem passar pelo filtro" (Regras, abaixo) contra a mensagem humana é ponto aberto para o dono, registrado no backlog (entrada de 02/10/2026).
+
 1.12. Envio de mídia: imagem, áudio, documento.
 1.13. **Indicador de janela de 24h com contador regressivo.** Fora da janela, o compositor bloqueia texto livre e exige template.
 1.14. Histórico completo pesquisável.
@@ -289,12 +295,25 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 3.1. **Profissionais:** nome, foto, **conselho de classe em campo livre** (CRM, CRO, CREFITO, CRBM, CRN, ou "sem conselho" para esteticista), número, especialidades, unidade, cor na agenda, ativo ou inativo.
 3.2. **Horário de atendimento por profissional**, por dia da semana, com intervalos, por unidade.
 3.3. **Procedimentos:** nome, descrição, duração padrão, preço particular, exige avaliação prévia, orientação de preparo, agendável pela IA, **recurso necessário** (sala, cabine, equipamento). Desde 29/09/2026 o campo "recurso necessário" não aparece mais na tela (ver 3.7).
-3.4. **Convênios:** nome, plano, carteirinha obrigatória, observações.
+3.4. **Convênios:** nome, plano, carteirinha obrigatória, observações. Desde 02/10/2026 a clínica cadastra aqui todos os convênios e marca **quais cada profissional atende** (no cadastro do profissional) e **quais cobrem cada procedimento** (no cadastro do procedimento), ver 3.5.
 3.5. **A matriz de vínculo** (o item mais enfatizado na reunião): relação de três pontas entre profissional, procedimento e convênio, cada combinação com preço e duração próprios.
 
    Exemplo que precisa funcionar: Dr. João, Endocrinologia, particular R$ 400, 40 min, atende Unimed e Bradesco. O mesmo Dr. João, Nutrologia, particular R$ 500, 60 min, só particular.
 
    > **Onde fica (decisão do dono em 29/09/2026):** a função continua a mesma, o lugar mudou. A matriz é feita **dentro do cadastro do Procedimento**, na seção "Quem faz e convênios": quem faz (vários profissionais), convênios aceitos (Particular sempre disponível), o preço e a duração do procedimento como padrão e a exceção por profissional ou convênio (preço próprio, "Coberto" ou duração própria) ali mesmo. "Agendável pela IA" é a chave do procedimento, e o vínculo segue essa chave (uma fonte só). Vínculo que já tem consulta é desativado, nunca apagado. A tela própria de vínculos saiu de Cadastros. O exemplo do Dr. João continua sendo o aceite, agora cadastrado pelo Procedimento.
+
+   > **Convênio pelo médico (decisão do dono em 02/10/2026):** "O plano de saúde depende do médico: a gente cadastra todos os planos e, na hora de criar o médico, adiciona quais ele atende." A matriz continua a mesma (profissional, procedimento e convênio, com preço e duração) e continua sendo a fonte da agenda, da IA, do preço e das conversões. O que muda é **de onde vem o convênio** de cada combinação:
+   > - **O profissional diz quais convênios atende** ("Convênios que atende", no cadastro do profissional). O Particular vale sempre e não é marcado.
+   > - **O procedimento diz quais convênios o cobrem** ("Convênios que cobrem este procedimento", no cadastro do procedimento). Nem todo convênio cobre todo procedimento: procedimento sem nenhum é só Particular (ex.: Botox).
+   > - **O convênio do profissional entra sozinho só onde ele faz o procedimento e o convênio cobre.** Marcar um convênio no profissional cria, em cada procedimento que ele faz e que o convênio cobre, a combinação "Coberto" com a duração do procedimento (se a combinação já existiu e foi desativada, ela volta com o preço e a duração que tinha). Marcar um convênio em "Convênios que cobrem" deixa o convênio já marcado, em "Quem faz e convênios", para cada profissional que faz o procedimento e atende o convênio.
+   > - **O cadastro do profissional é o padrão; a exceção é por procedimento.** No procedimento, os convênios do profissional vêm marcados e dá para desmarcar só ali. A exceção fica enquanto o convênio não mudar; ela só deixa de valer quando o convênio é desmarcado e marcado de novo, e salvo, no profissional ou em "Convênios que cobrem". Preço próprio, "Coberto" e duração continuam por profissional e convênio, no procedimento. O Particular também pode ser desmarcado por procedimento, como antes.
+   > - **Desmarcar um convênio** (no profissional ou no procedimento) desativa as combinações dele, nunca apaga: a consulta já marcada continua valendo. Antes de gravar, a tela diz quantas consultas futuras estão nessas combinações (e quando é a primeira) e só grava com a confirmação. Se o profissional só fazia um procedimento por aquele convênio, ele **deixa de fazer** o procedimento, também com confirmação antes; marcar o convênio de novo no profissional não o devolve ao procedimento (para voltar, inclui-se o profissional em "Quem faz", no procedimento).
+   > - **Convênio desativado não entra** em lugar nenhum; se já estava marcado, continua à vista, com a situação "Inativo", e pode ser desmarcado.
+   > - **Cadastro aberto em duas abas:** se o cadastro mudou enquanto alguém editava, o Salvar é recusado e pede para fechar, abrir de novo e salvar (antes, a última gravação vencia).
+   > - **A Agenda não marca consulta nova numa combinação que acabou de sair** (outra tela tirou o convênio enquanto a Agenda estava aberta); a remarcação com o mesmo profissional mantém a combinação da consulta já marcada.
+   > - **No dia da publicação nada muda na tela nem na agenda:** a carga inicial copia para os dois cadastros os convênios das combinações ativas de hoje.
+   >
+   > O aceite continua o do Dr. João, agora pelos dois cadastros: ele atende Unimed e Bradesco; Endocrinologia, coberta pelos dois, fica com particular R$ 400 e 40 min, mais Unimed e Bradesco; Nutrologia fica só particular, R$ 500 e 60 min, porque nenhum convênio a cobre ou, se a Unimed cobrir a Nutrologia, porque a Unimed foi desmarcada para ele só nesse procedimento (a exceção). Escolhas assumidas na recomendação do levantamento, que o dono pode rever, e o que ficou de fora: backlog, entrada "Convênio pelo médico".
 
 3.6. **Unidades.**
 3.7. **Recursos** (sala, cabine, equipamento). Exigência do nicho de estética: dois procedimentos podem precisar do mesmo aparelho de laser e não podem ser marcados no mesmo horário mesmo com profissionais diferentes.
@@ -348,7 +367,10 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 5.1. Base de leads separada da base de pacientes (decisão da reunião, e está correta).
 5.2. **Lista e Kanban do mesmo dado, com toggle preservando o filtro.**
 5.3. **Etapas padrão (editáveis):** Novo, Em contato, Aguardando resposta, Agendou, **Compareceu**, Perdido. A etapa Compareceu é o que o produto vende, não pode faltar no funil.
-5.4. **Cartão de lead com no máximo 5 elementos:** nome, telefone, badge de origem, badge de tempo desde o último contato, avatar do responsável.
+
+   > **Jornada da clínica (09/09/2026) e o que mudou em 02/10/2026.** As etapas são dados de cada clínica (tela "Jornada e conversões", em Configurações), e uma etapa pode ter **termos-chave**: quando um termo aparece na mensagem, o contato anda sozinho para a etapa (o termo mais longo vence, só para frente na jornada, nunca entra nem sai de Perdido). Desde 02/10/2026 (pedido do dono), cada etapa diz **quem escreve o termo**: **Paciente** (a mensagem que chega dele; o padrão, e o comportamento de toda etapa que já existia), **Clínica** (o texto ou a legenda de arquivo que a equipe envia pelo Atendimento, ou o que ela escreve no celular conectado) ou **Qualquer um**. A mesma regra vale para os dois lados. Cada mensagem do celular conectado anda o lead uma vez só (a reentrega do provedor não move de novo), e as mensagens da IA e da régua de follow-up não andam o lead por termo da clínica. Também desde 02/10, cada etapa pode ter uma **descrição** de até 140 caracteres, que aparece no Kanban logo abaixo do nome da coluna (nunca no cartão).
+
+5.4. **Cartão de lead com no máximo 5 elementos:** nome, telefone, badge de origem, badge de tempo desde o último contato, avatar do responsável. A descrição da etapa e as atividades do lead (02/10/2026) não entram no cartão: ficam no cabeçalho da coluna e no drawer.
 5.5. **Badge de tempo com cor, ícone e rótulo:** verde até 4h, âmbar de 4h a 24h, vermelho acima de 24h.
 5.6. **Ordenação padrão por próxima ação**, não por data de criação.
 5.7. Filtros: origem, etapa, responsável, período, procedimento de interesse.
@@ -357,6 +379,8 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 5.10. Criação manual de lead.
 5.11. **Importação por planilha com captura obrigatória de opt-in.** A tela exige que o gestor declare de onde veio o consentimento antes de permitir qualquer disparo para a base importada.
 5.12. Conversão para paciente automática ao criar o agendamento, preservando o histórico do lead.
+
+   > **Desde 02/10/2026:** o lead pode ser movido de etapa, etiquetado, ganhar atividade ou nota interna por uma **automação de fluxo** da clínica (Módulo 14). O drawer do lead ganhou a seção **Atividades** (Módulo 15). O "Mudar etapa" em massa avisa que mover também pode disparar as automações de fluxo da etapa de destino, para cada lead.
 
 ---
 
@@ -374,6 +398,8 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 6.9. **Estado de consentimento visível na ficha** (opt-in ativo, origem do consentimento, data, opção de descadastrar).
 6.10. **Não tem prontuário.** Decisão consciente: prontuário puxa responsabilidade de guarda e certificação. Vira argumento de posicionamento: "não substituímos seu sistema, nós enchemos a agenda dele".
 
+   > **Atividades na ficha (02/10/2026):** a ficha do paciente tem o cartão **Atividades**, com todas as pendentes e as últimas 5 concluídas, e cria atividade nova (Módulo 15). Atividade não é prontuário: é o que a equipe precisa fazer (ligar, retornar, conferir), com prazo e responsável.
+
 ---
 
 ### MÓDULO 7. FOLLOW-UP AUTOMÁTICO DE LEADS
@@ -389,6 +415,8 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 7.6. **Bloqueio de envio para contato sem opt-in**, com contagem de quantos foram bloqueados.
 7.7. Teste de envio para número interno antes de publicar.
 7.8. Métricas por régua: enviadas, entregues, respondidas, agendadas, descadastros, custo.
+
+   > **Follow-up e automações de fluxo (02/10/2026):** "quando o lead entrar na etapa, enviar mensagem" continua sendo a régua de follow-up da etapa (passo com espera zero), com janela de envio, autorização, número por tipo e métricas. As **automações de fluxo** (Módulo 14) **nunca** enviam mensagem ao paciente (decisão do dono em 02/10): elas movem de etapa, etiquetam, criam atividade ou deixam nota interna, e a tela delas leva até o follow-up. Mover o lead para fora de uma etapa, por pessoa ou por automação, encerra o follow-up daquela etapa.
 
 ---
 
@@ -488,6 +516,51 @@ Não estava previsto e vai doer no mês 3 se ficar de fora. Com 9 a 15 tenants, 
 
 ---
 
+### MÓDULO 14. AUTOMAÇÕES DE FLUXO (escopo acrescentado em 02/10/2026)
+
+Pedido do dono em 02/10/2026. Fica em Configurações, na aba "Automações de fluxo", ao lado de "Jornada e conversões", porque toda regra parte de uma etapa da jornada. Administrador e gestor criam, editam, ligam e excluem; recepção, profissional e leitura não veem a aba (Configurações não aparece para eles).
+
+14.1. **Uma regra é: quando o lead está na etapa X e acontece o gatilho, a automação faz uma ação.** Regra em campos fixos, sem linguagem de programação.
+14.2. **Gatilhos:**
+   - **Ficou um tempo na etapa:** de 1 hora a 90 dias, contados da entrada na etapa.
+   - **Ficou um tempo sem responder na etapa:** de 1 hora a 90 dias, contados da entrada na etapa ou da última mensagem do lead, o que for mais recente (quem escreveu antes de entrar na etapa conta da entrada). Mensagem da clínica não zera o tempo.
+   - **Entrou na etapa:** qualquer entrada (Kanban, Atendimento, ação em massa, termo-chave, Agenda, outra automação) e o lead novo que já nasce na etapa.
+   - **Mandou mensagem estando na etapa:** a primeira fala do contato novo não conta: a mensagem que cria o contato e as que chegam até 2 minutos depois do nascimento dele (o lead costuma dividir a primeira fala em várias mensagens). Se a mensagem tiver um termo da jornada, o termo vence.
+14.3. **Ações (decisão do dono em 02/10/2026):**
+   - **Mover para outra etapa.** Agendou e Compareceu nunca são destino (são marcados pela Agenda, e mover para lá viraria conversão falsa para os anúncios da Meta). Para a etapa de perda, o motivo é sempre "Não respondeu", e quem tem consulta futura marcada fica onde está. Quando a etapa de destino envia conversão para a Meta, a tela avisa que cada lead movido conta como conversão.
+   - **Colocar etiqueta** do catálogo da clínica na **conversa mais recente** do lead. Lead sem conversa fica sem a etiqueta, e o histórico mostra o motivo.
+   - **Criar atividade** (Módulo 15) com o título da regra e prazo em N dias (de 0 a 365) contados de hoje no fuso da clínica. O responsável é quem atende a conversa mais recente do lead, se ainda está ativo na equipe; senão, a atividade fica sem responsável.
+   - **Deixar nota interna** com um texto fixo da regra na conversa mais recente, sem pessoa como autora: no Atendimento ela aparece assinada "Automação". O paciente nunca vê.
+   - **Enviar mensagem ao paciente não é ação desta tela**, nem vai ser: é a régua de follow-up da etapa (Módulo 7), e a tela mostra o atalho "Abrir o follow-up".
+14.4. **Travas** (do plano aprovado; o dono pode ajustar):
+   - **Uma vez por entrada na etapa.** Sair e voltar à etapa conta como entrada nova e rearma a regra.
+   - **Não é retroativa.** Vale para o que vencer ou acontecer depois de ligada (ou de mudar o gatilho, a etapa ou o tempo). Ao ligar, a tela mostra quantos leads já passaram do ponto e não serão afetados.
+   - **Só leads.** Paciente nunca é movido por automação, e os importados que nunca mudaram de etapa ficam de fora.
+   - **O movimento humano vence.** Se alguém (ou o termo-chave) mudou o lead de etapa antes de a automação rodar, ela não faz nada e o histórico diz por quê.
+   - **Sem laço.** Uma regra ligada que fecharia um ciclo com outra (o lead indo e voltando entre etapas sozinho) é recusada ao salvar e ao ligar, e a tela mostra o caminho das etapas. Automações em cadeia param no 3º salto, e um lead é movido por automação no máximo 10 vezes em 24 horas.
+   - **Etapa ou etiqueta usada por automação não se exclui**, com mensagem dizendo para excluir a automação ou trocar a etapa (ou a etiqueta) dela na aba Automações de fluxo antes.
+14.5. **Quando roda:** sozinha, pelo motor da plataforma, em até 1 minuto depois do que aconteceu (a mensagem recebida espera uns 15 segundos a mais, para o termo da jornada andar antes). A regra nasce desligada.
+14.6. **Histórico:** as últimas 50 execuções, com filtro por automação: Aguardando, Feita (o que fez naquela execução: de onde para onde, a etiqueta com o nome que tinha na hora, a atividade criada ou a nota; editar a regra depois não muda o que o histórico conta), Pulada (o motivo em português, como "o lead já tinha mudado de etapa" ou "o lead tem consulta marcada") e Falhou (com um código para o suporte). Nunca mostra conteúdo de mensagem. Cada linha mostra o nome do lead, por isso a leitura do histórico vai para a trilha de auditoria.
+14.7. **Trilha:** toda ação da automação vai para o `audit_log` como ação do sistema (sem usuário e sem conteúdo): moveu de etapa, etiquetou, criou atividade, deixou nota. Criar, editar, ligar, desligar e excluir uma regra também vão para a trilha, sem o texto.
+
+---
+
+### MÓDULO 15. ATIVIDADES (escopo acrescentado em 02/10/2026)
+
+O que a equipe precisa fazer por um lead ou paciente, com prazo e responsável: "ligar para lembrar do retorno", "conferir a carteirinha". Cumpre o "criar lembrete" do 1.9. Item próprio no menu lateral, logo depois de Leads (decisão do dono em 02/10/2026), porque vale para lead e paciente.
+
+15.1. **Campos:** o que fazer (2 a 120 caracteres), detalhes (opcional, até 2000), para quando (dia obrigatório, no fuso da clínica; hora opcional; com hora, o dia acompanha o instante, inclusive quando a clínica troca de fuso, e sem hora o dia escolhido não muda), responsável (padrão: quem criou; pode ficar sem responsável) e a conversa de onde saiu, quando foi criada pela conversa.
+15.2. **Situação:** pendente, concluída ou cancelada. Na tela, a pendente aparece como **Atrasada** (com hora, a hora já passou; sem hora, o dia já passou), **Para hoje** (o dia é hoje no fuso da clínica e ainda não atrasou) ou **Pendente**. Quem concluiu ou cancelou, e quando, fica gravado.
+15.3. **Onde se cria:** no drawer do lead, no painel da conversa e na ficha do paciente, além da própria página. A automação de fluxo também cria (Módulo 14), marcada "Criada por automação".
+15.4. **Página Atividades:** filtros Minhas e Todas; situação (todas as pendentes, atrasadas, para hoje, próximas, concluídas dos últimos 30 dias); responsável, em Todas (inclusive "Sem responsável"); busca por paciente, telefone ou texto; e o recorte de um contato só (o "Ver todas" do drawer, da conversa e da ficha). Lista agrupada por prazo: Atrasadas, Hoje, Amanhã, Próximos 7 dias, Depois e Concluídas.
+15.5. **Ações:** concluir (com "Desfazer"), reabrir, editar, adiar (para amanhã, daqui a 7 e daqui a 30 dias, mantendo a hora), cancelar (com "Desfazer"), abrir a conversa e abrir a ficha. **Não existe apagar:** cancela-se. A atividade sai junto com o contato quando ele é excluído (11.11).
+15.6. **Início:** em Próximas ações, "Suas atividades atrasadas" e "Suas atividades para hoje", com link para a página já filtrada. Também na visão do profissional.
+15.7. **Quem faz o quê:** a matriz de Leads e Pacientes. Administrador, gestor e recepção criam, editam, concluem e cancelam qualquer atividade da clínica; profissional e leitura só veem.
+15.8. **Dado sensível:** o texto da atividade pode ser dado de saúde. Fica isolado por clínica no banco, toda leitura por pessoa vai para a trilha de auditoria e o texto nunca vai para log.
+15.9. **Fora desta versão:** contador no menu (fica para depois) e marca no cartão do Kanban (regra dos 5 elementos).
+
+---
+
 ## 5. MODELO DE DADOS (mínimo do V1)
 
 ```
@@ -510,8 +583,10 @@ Procedimento (duracao, preco_base, exige_avaliacao, agendavel_por_ia, preparo, r
 Pacote (nome, preco, validade, ativo)       <- desde 29/09/2026
  |- ItemPacote (procedimento_id, qtd_sessoes) <- 1 ou mais; procedimento unico no pacote
 Convenio (nome, plano, exige_carteirinha)
+ConvenioDoProfissional (profissional_id, convenio_id)   <- desde 02/10/2026: o profissional atende o convenio
+ConvenioDoProcedimento (procedimento_id, convenio_id)   <- desde 02/10/2026: o convenio cobre o procedimento
 
-VinculoAtendimento          <- a matriz de tres pontas
+VinculoAtendimento          <- a matriz de tres pontas (continua a fonte da agenda, da IA e do preco)
  |- profissional_id, procedimento_id, convenio_id (nulo = particular)
  |- preco, duracao, agendavel_por_ia, ativo
 
@@ -547,6 +622,14 @@ Regua (tipo: followup | confirmacao | pos_falta | reativacao)
 
 EventoAtribuicao (contato_id, canal, origem, midia, campanha, capturado_em, metodo)
 LogAuditoria (usuario_id, acao, entidade, entidade_id, quando, ip)
+
+EtapaDaJornada (chave, nome, papel, termos_chave[], termos_de_quem, descricao)  <- termos_de_quem e descricao desde 02/10/2026
+MensagemPadrao (atalho, titulo, corpo, ativo, posicao)                        <- 02/10/2026, so texto
+Atividade (contato_id, conversa_id, titulo, detalhes, para_o_dia, hora, responsavel_id,
+           status: pendente | concluida | cancelada, origem: manual | automacao)  <- 02/10/2026
+AutomacaoDeFluxo (etapa, gatilho, espera, acao, destino | etiqueta | atividade | nota, ativa)  <- 02/10/2026
+ |- Execucao (contato_id, entrada_na_etapa, status, motivo, acao, etiqueta)  <- uma por entrada na etapa;
+                                                                   acao e etiqueta: o que fez naquela execucao
 ```
 
 ---
@@ -561,7 +644,7 @@ LogAuditoria (usuario_id, acao, entidade, entidade_id, quando, ip)
 |---|---|
 | 1. Inbox | Completo, com takeover, estados, contador de janela 24h, transcrição de áudio, log da IA |
 | 2. Agente IA | Persona, conhecimento, habilidades, horário, simulador, guardrail de conformidade, versionamento |
-| 3. Cadastro | Profissionais, horários, procedimentos, convênios, matriz de vínculo, recursos, pacotes, bloqueios, unidades. Desde 29/09/2026 as funções continuam e o lugar mudou: a matriz de vínculo é feita dentro do Procedimento, o bloqueio é ação da Agenda e os recursos ficam só no banco, com a trava, sem tela |
+| 3. Cadastro | Profissionais, horários, procedimentos, convênios, matriz de vínculo, recursos, pacotes, bloqueios, unidades. Desde 29/09/2026 as funções continuam e o lugar mudou: a matriz de vínculo é feita dentro do Procedimento, o bloqueio é ação da Agenda e os recursos ficam só no banco, com a trava, sem tela. Desde 02/10/2026 o convênio é marcado no profissional (quais atende) e no procedimento (quais cobrem) |
 | 4. Agenda | Visão dia multi profissional, visão semana individual, arrastar e soltar, 10 status, reserva temporária, log |
 | 5. Leads | Lista e kanban, 6 etapas, filtros, motivo de perda, importação com opt-in |
 | 6. Pacientes | Ficha, linha do tempo, indicadores, etiquetas de risco e inativo, saldo de pacote, consentimento |
@@ -571,6 +654,8 @@ LogAuditoria (usuario_id, acao, entidade, entidade_id, quando, ip)
 | 10. Dashboard | 4 indicadores, funil, origem por canal, desempenho da IA, custo |
 | 11. Config | Multi-tenant, white-label, perfis, Cloud API, verificação Meta, templates, teto de gasto, opt-in, auditoria |
 | 12. Assinatura | Planos, gateway, inadimplência, cancelamento autoatendido, painel do dono |
+| 14. Automações de fluxo | Escopo acrescentado em 02/10/2026: mover de etapa, etiquetar, criar atividade e nota interna por gatilho de etapa, sem envio ao paciente |
+| 15. Atividades | Escopo acrescentado em 02/10/2026: atividades do lead e do paciente, página própria, Início e "criar lembrete" do Inbox |
 
 ### V2 (não entra, e precisa estar escrito no contrato)
 

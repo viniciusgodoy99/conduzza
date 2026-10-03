@@ -5,6 +5,7 @@ import {
   FolderCog,
   Hourglass,
   House,
+  ListChecks,
   MessagesSquare,
   Settings,
   Sparkles,
@@ -80,6 +81,17 @@ export const NAV_ITEMS: NavItem[] = [
     href: "/leads",
     label: "Leads",
     icon: UserPlus,
+    group: "principal",
+    moduleKey: "leads_pacientes",
+  },
+  // Atividades (escopo de 02/10/2026): vale para lead e paciente, por isso
+  // item proprio e nao aba de Leads; mesma matriz de Leads e Pacientes.
+  // ListChecks porque ListTodo ja e o icone de Proximas acoes do Inicio. Sem
+  // contador nesta versao.
+  {
+    href: "/atividades",
+    label: "Atividades",
+    icon: ListChecks,
     group: "principal",
     moduleKey: "leads_pacientes",
   },

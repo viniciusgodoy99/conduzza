@@ -42,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   CONVERSAO_STATUS,
   STATUS_TONE_VARS,
@@ -49,9 +50,17 @@ import {
   type StatusTone,
 } from "@/lib/design/status";
 import {
+  AJUDA_QUEM_ESCREVE,
   ICONES_DE_ETAPA,
+  LIMITE_DA_DESCRICAO,
+  OPCOES_TERMOS_DE_QUEM,
+  TERMOS_DE_QUEM,
+  ajudaDosTermos,
   definicaoDaEtapa,
+  normalizarDescricaoDaEtapa,
+  resumoDosTermos,
   type EtapaDaJornada,
+  type TermosDeQuem,
 } from "@/lib/domain/jornada";
 import {
   EVENTOS_META_PADRAO,
@@ -72,6 +81,11 @@ import { centavosParaReais, reaisParaCentavos } from "@/lib/utils/moeda";
 // Desenho do design system (docs/06 secao 5.12): cada etapa e uma linha
 // afundada; a aberta vira cartao com o formulario. As marcas da conversao
 // sao Checkbox, porque so valem quando se clica em Salvar (C31).
+//
+// 02/10/2026 (pedido do dono): cada etapa ganha "Quem escreve o termo"
+// (paciente, clinica ou qualquer um) e uma descricao curta, que o Kanban
+// mostra abaixo do nome da coluna. Os textos que dependem de quem escreve
+// moram em lib/domain/jornada.ts, testados em unidade.
 
 const ETAPA_DE_SISTEMA: StatusDefinition = {
   label: "Sistema",
@@ -132,7 +146,9 @@ type Rascunho = {
   nome: string;
   tom: StatusTone;
   icone: string;
+  descricao: string;
   termos: string[];
+  termosDeQuem: TermosDeQuem;
   termoNovo: string;
   evento: string;
   eventoPersonalizado: string;
@@ -149,7 +165,9 @@ function rascunhoDaEtapa(etapa: EtapaDaJornada | null): Rascunho {
       nome: "",
       tom: "neutral",
       icone: "circle",
+      descricao: "",
       termos: [],
+      termosDeQuem: "paciente",
       termoNovo: "",
       evento: SEM_EVENTO,
       eventoPersonalizado: "",
@@ -165,7 +183,15 @@ function rascunhoDaEtapa(etapa: EtapaDaJornada | null): Rascunho {
     nome: etapa.nome,
     tom: etapa.tom,
     icone: etapa.icone in ICONES_DE_ETAPA ? etapa.icone : "circle",
+    descricao: etapa.descricao ?? "",
     termos: etapa.termos_chave,
+    // Valor fora do catalogo (nao passa no check do banco) volta ao padrao
+    // em vez de deixar o campo sem opcao marcada.
+    termosDeQuem: (TERMOS_DE_QUEM as readonly string[]).includes(
+      etapa.termos_de_quem,
+    )
+      ? etapa.termos_de_quem
+      : "paciente",
     termoNovo: "",
     evento: !evento
       ? SEM_EVENTO
@@ -219,6 +245,13 @@ export function JornadaTab({
         : rascunho.evento === EVENTO_PERSONALIZADO
           ? rascunho.eventoPersonalizado.trim() || null
           : rascunho.evento;
+    const descricao = normalizarDescricaoDaEtapa(rascunho.descricao);
+    if (descricao && descricao.length > LIMITE_DA_DESCRICAO) {
+      setErro(
+        `A descrição da etapa cabe em até ${LIMITE_DA_DESCRICAO} caracteres.`,
+      );
+      return;
+    }
     if (rascunho.evento === EVENTO_PERSONALIZADO && !evento) {
       setErro("Digite o nome do evento personalizado, ou escolha um da lista.");
       return;
@@ -248,7 +281,9 @@ export function JornadaTab({
         nome,
         tom: rascunho.tom,
         icone: rascunho.icone,
+        descricao,
         termos_chave: termos,
+        termos_de_quem: rascunho.termosDeQuem,
         conversao: {
           meta_event_name: evento,
           conversao_ativa: rascunho.conversaoAtiva,
@@ -370,7 +405,10 @@ export function JornadaTab({
                 {etapa.termos_chave.length > 0 ? (
                   <span className="text-xs text-text-secondary">
                     <span className="cz-num">{etapa.termos_chave.length}</span>{" "}
-                    {etapa.termos_chave.length === 1 ? "termo" : "termos"}
+                    {resumoDosTermos(
+                      etapa.termos_chave.length,
+                      etapa.termos_de_quem,
+                    )}
                   </span>
                 ) : null}
                 <div className="ml-auto flex items-center gap-1">
@@ -408,6 +446,15 @@ export function JornadaTab({
 
               {explicacao ? (
                 <p className="pl-7 text-xs text-text-secondary">{explicacao}</p>
+              ) : null}
+
+              {etapa.descricao && !aberta ? (
+                <p className="pl-7 text-xs break-words text-text-secondary">
+                  <span className="font-semibold text-text-strong">
+                    No Kanban:
+                  </span>{" "}
+                  {etapa.descricao}
+                </p>
               ) : null}
 
               {aberta ? (
@@ -566,6 +613,42 @@ function FormularioDaEtapa({
         </div>
       </div>
 
+      {/* Descricao curta do Kanban (02/10/2026). O teto e o mesmo do check
+          descricao_de_etapa_com_tamanho; o contador entra no
+          aria-describedby para o leitor de tela dizer quanto falta. */}
+      <div className="grid gap-1.5">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <Label htmlFor={`descricao-${id}`}>
+            Descrição (aparece no Kanban)
+          </Label>
+          <span
+            id={`descricao-contador-${id}`}
+            className="cz-num text-xs text-text-secondary"
+          >
+            {rascunho.descricao.length}/{LIMITE_DA_DESCRICAO}
+          </span>
+        </div>
+        <Textarea
+          id={`descricao-${id}`}
+          value={rascunho.descricao}
+          onChange={(evento) =>
+            setRascunho((atual) => ({
+              ...atual,
+              descricao: evento.target.value,
+            }))
+          }
+          maxLength={LIMITE_DA_DESCRICAO}
+          rows={2}
+          placeholder="Por exemplo: pediu o valor e ainda não marcou a consulta"
+          aria-describedby={`descricao-ajuda-${id} descricao-contador-${id}`}
+          className="min-h-10"
+        />
+        <p id={`descricao-ajuda-${id}`} className="text-xs text-text-secondary">
+          Opcional. Aparece abaixo do nome da coluna, em até duas linhas, e o
+          texto inteiro fica na dica.
+        </p>
+      </div>
+
       {/* A etapa de perda nao recebe termo: palavra solta nao perde ninguem
           (a decisao pura em lib/domain/jornada.ts ignora termos dela). */}
       {etapa?.papel === "perdido" ? null : (
@@ -574,10 +657,38 @@ function FormularioDaEtapa({
             Termos que movem o contato para cá
           </Label>
           <p className="text-xs text-text-secondary">
-            Quando o paciente escrever um destes termos na conversa, o contato
-            anda sozinho para esta etapa (só para frente na jornada, nunca para
-            a etapa de perda).
+            {ajudaDosTermos(rascunho.termosDeQuem)}
           </p>
+          <div className="grid gap-1.5 pt-1 sm:max-w-sm">
+            <Label htmlFor={`quem-${id}`}>Quem escreve o termo</Label>
+            <Select
+              value={rascunho.termosDeQuem}
+              onValueChange={(valor) =>
+                setRascunho((atual) => ({
+                  ...atual,
+                  termosDeQuem: valor as TermosDeQuem,
+                }))
+              }
+            >
+              <SelectTrigger
+                id={`quem-${id}`}
+                className="min-h-10"
+                aria-describedby={`quem-ajuda-${id}`}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {OPCOES_TERMOS_DE_QUEM.map((opcao) => (
+                  <SelectItem key={opcao.valor} value={opcao.valor}>
+                    {opcao.rotulo}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p id={`quem-ajuda-${id}`} className="text-xs text-text-secondary">
+              {AJUDA_QUEM_ESCREVE}
+            </p>
+          </div>
           {rascunho.termos.length > 0 ? (
             <div className="flex flex-wrap gap-2.5">
               {rascunho.termos.map((termo) => (
