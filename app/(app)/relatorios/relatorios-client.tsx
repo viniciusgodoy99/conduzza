@@ -26,6 +26,7 @@ import {
   ABAS_DE_RESULTADOS,
   fetchAgendaDoPeriodo,
   fetchAtendimentoDoPeriodo,
+  fetchCampanhasDoPeriodo,
   fetchFaturamentoDoPeriodo,
   fetchFunilDoPeriodo,
   fetchLinhaDeBase,
@@ -36,6 +37,7 @@ import {
   type AbaDeResultados,
   type AgendaDoPeriodo,
   type AtendimentoDoPeriodo,
+  type CampanhasDoPeriodo,
   type FaturamentoDoPeriodo,
   type FunilDoPeriodo,
   type LinhaDeBase,
@@ -57,6 +59,8 @@ import { createClient } from "@/lib/supabase/client";
 // Valores em reais (faturamento, receita das recuperadas, custo) so para
 // admin e gestor: podeVerValores vem do servidor, o faturamento so e buscado
 // nesse caso, e o banco devolve null para os outros papeis de qualquer jeito.
+// Fase 4: campanhas_do_periodo (Custo por lead, Campanhas e o detalhe por
+// campanha) e buscada para todos; o investimento vem null fora da gestao.
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -77,6 +81,7 @@ export function RelatoriosClient({
   atendimentoInicial,
   serieInicial,
   faturamentoInicial,
+  campanhasInicial,
   conversoes,
   linhaDeBaseInicial,
   objetivoInicial,
@@ -104,6 +109,8 @@ export function RelatoriosClient({
   serieInicial: PontoDaSerie[];
   /** undefined = nao buscado (papel sem acesso a valores); null = recusado */
   faturamentoInicial?: Periodizado<FaturamentoDoPeriodo> | null;
+  /** undefined = o servidor nao conseguiu (o cliente busca de novo) */
+  campanhasInicial?: Periodizado<CampanhasDoPeriodo>;
   conversoes: ConversoesResumo;
   linhaDeBaseInicial: LinhaDeBase;
   objetivoInicial: ObjetivoDeConversao;
@@ -168,6 +175,7 @@ export function RelatoriosClient({
   const precisaSerie = abaAtiva === "geral";
   const precisaFaturamento =
     podeVerValores && (abaAtiva === "geral" || abaAtiva === "comercial");
+  const precisaCampanhas = abaAtiva === "geral" || abaAtiva === "marketing";
 
   useDadosDoServidor(
     relatoriosKeys.funil(clinicId, diaDeInicial, diaAteInicial),
@@ -188,6 +196,10 @@ export function RelatoriosClient({
   useDadosDoServidor(
     relatoriosKeys.faturamento(clinicId, diaDeInicial, diaAteInicial),
     faturamentoInicial,
+  );
+  useDadosDoServidor(
+    relatoriosKeys.campanhas(clinicId, diaDeInicial, diaAteInicial),
+    campanhasInicial,
   );
   useDadosDoServidor(relatoriosKeys.linhaDeBase(clinicId), linhaDeBaseInicial);
   useDadosDoServidor(relatoriosKeys.objetivo(clinicId), objetivoInicial);
@@ -235,6 +247,17 @@ export function RelatoriosClient({
     staleTime: 60_000,
     enabled: precisaFaturamento,
   });
+  const campanhasQuery = useQuery({
+    queryKey: relatoriosKeys.campanhas(clinicId, diaDe, diaAte),
+    queryFn: () =>
+      fetchCampanhasDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
+    initialData:
+      recorteInicial && campanhasInicial !== undefined
+        ? campanhasInicial
+        : undefined,
+    staleTime: 60_000,
+    enabled: precisaCampanhas,
+  });
   const linhaDeBaseQuery = useQuery({
     queryKey: relatoriosKeys.linhaDeBase(clinicId),
     queryFn: () => fetchLinhaDeBase(supabase, clinicId),
@@ -265,7 +288,9 @@ export function RelatoriosClient({
   const blocosProntos =
     (!precisaSerie || (serieQuery.data !== undefined && !serieQuery.isError)) &&
     (!precisaFaturamento ||
-      (faturamentoQuery.data !== undefined && !faturamentoQuery.isError));
+      (faturamentoQuery.data !== undefined && !faturamentoQuery.isError)) &&
+    (!precisaCampanhas ||
+      (campanhasQuery.data !== undefined && !campanhasQuery.isError));
 
   const montarExportavel = () =>
     montarExportavelDaAba({
@@ -280,6 +305,8 @@ export function RelatoriosClient({
       linhaDeBase: linhaDeBaseQuery.data,
       objetivo: objetivoQuery.data,
       conversoes,
+      campanhas: campanhasQuery.data,
+      timezone,
       dimensaoOrigem,
       dimensaoAgenda,
     });
@@ -403,6 +430,9 @@ export function RelatoriosClient({
               faturamento={podeVerValores ? faturamentoQuery.data : null}
               faturamentoComErro={podeVerValores && faturamentoQuery.isError}
               aoTentarFaturamentoDeNovo={() => void faturamentoQuery.refetch()}
+              campanhas={campanhasQuery.data}
+              campanhasComErro={campanhasQuery.isError}
+              aoTentarCampanhasDeNovo={() => void campanhasQuery.refetch()}
               linhaDeBase={linhaDeBaseQuery.data ?? null}
               objetivo={objetivoQuery.data}
               podeVerValores={podeVerValores}
@@ -421,6 +451,9 @@ export function RelatoriosClient({
           {abaAtiva === "marketing" && funil ? (
             <AbaMarketing
               funil={funil}
+              campanhas={campanhasQuery.data}
+              campanhasComErro={campanhasQuery.isError}
+              aoTentarCampanhasDeNovo={() => void campanhasQuery.refetch()}
               conversoes={conversoes}
               timezone={timezone}
               podeVerValores={podeVerValores}

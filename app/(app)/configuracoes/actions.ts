@@ -18,6 +18,7 @@ import {
   normalizarDescricaoDaEtapa,
   traduzirRecusaDaJornada,
 } from "@/lib/domain/jornada";
+import { normalizarContaDeAnuncios } from "@/lib/domain/meta-anuncios";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -1190,17 +1191,32 @@ export async function excluirEtiquetaDeConversaAction(
 // eventos registrados da janela de 7 dias da CAPI; os mais antigos sao
 // descartados com codigo, nunca em silencio.
 
+const MENSAGEM_DA_CONTA_DE_ANUNCIOS =
+  "Confira a conta de anúncios: são só números, com ou sem act_ na frente.";
+
 const contaMetaSchema = z.object({
   pixel_id: z
     .string()
     .trim()
     .regex(/^\d{5,20}$/)
     .nullable(),
+  // Sempre act_<digitos> (CHECK ad_account_id_formato, migration
+  // 20261003100000): aceita so numeros, act_ ou ACT_ na frente, espacos no
+  // meio e o link do Gerenciador de Anuncios com ?act=, e grava normalizado.
   ad_account_id: z
     .string()
-    .trim()
-    .regex(/^(act_)?\d{5,20}$/)
-    .nullable(),
+    .nullable()
+    .transform((valor, ctx) => {
+      if (valor === null || valor.trim() === "") {
+        return null;
+      }
+      const conta = normalizarContaDeAnuncios(valor);
+      if (!conta) {
+        ctx.addIssue({ code: "custom", message: MENSAGEM_DA_CONTA_DE_ANUNCIOS });
+        return z.NEVER;
+      }
+      return conta;
+    }),
   whatsapp_business_account_id: z
     .string()
     .trim()
@@ -1213,18 +1229,27 @@ const contaMetaSchema = z.object({
   modo_user_data: z.enum(["ctwa_apenas", "telefone_hasheado"]).nullable(),
 });
 
+export type ResultadoDaContaMeta =
+  | { ok: true; adAccountId: string | null }
+  | { ok: false; error: string };
+
 export async function salvarContaMetaAction(
   entrada: unknown,
-): Promise<TeamActionResult> {
+): Promise<ResultadoDaContaMeta> {
   const guard = await requireGestorOuAdmin();
   if ("error" in guard) {
-    return { ok: false, error: guard.error };
+    return { ok: false, error: guard.error ?? "Sessão expirada. Entre de novo." };
   }
   const parsed = contaMetaSchema.safeParse(entrada);
   if (!parsed.success) {
+    const contaRecusada = parsed.error.issues.some(
+      (issue) => issue.path[0] === "ad_account_id",
+    );
     return {
       ok: false,
-      error: "Confira os campos: os identificadores da Meta são só números.",
+      error: contaRecusada
+        ? MENSAGEM_DA_CONTA_DE_ANUNCIOS
+        : "Confira os campos: os identificadores da Meta são só números.",
     };
   }
 
@@ -1252,7 +1277,11 @@ export async function salvarContaMetaAction(
     entity_id: guard.clinicId,
   });
   revalidatePath("/configuracoes");
-  return { ok: true };
+  // Trocar a conta volta a leitura do investimento para "nao testada"
+  // (gatilho reiniciar_leitura_do_gasto_meta): Resultados muda junto.
+  revalidatePath("/relatorios");
+  // O valor normalizado volta para o campo mostrar act_... depois de salvar.
+  return { ok: true, adAccountId: parsed.data.ad_account_id };
 }
 
 export async function salvarTokenMetaAction(

@@ -22,6 +22,7 @@ import type {
   AbaDeResultados,
   AgendaDoPeriodo,
   AtendimentoDoPeriodo,
+  CampanhasDoPeriodo,
   FaturamentoDoPeriodo,
   FunilDoPeriodo,
   LinhaDeBase,
@@ -35,6 +36,8 @@ import type {
 // conversao em lime, Custo por lead, Faturamento estimado), a serie diaria,
 // a origem em barras, o funil de coorte, o resumo da confirmacao, o agente
 // de IA e as campanhas. A Taxa de conversao e o unico lime da aba (C17).
+// Fase 4: Custo por lead e Campanhas leem campanhas_do_periodo (bloco com
+// estado proprio de carregando e erro, como a serie e o faturamento).
 
 export const DICA_SEM_PAPEL_DO_OBJETIVO =
   "Só administrador e gestor definem o objetivo de conversão.";
@@ -57,6 +60,9 @@ export function AbaVisaoGeral({
   faturamento,
   faturamentoComErro,
   aoTentarFaturamentoDeNovo,
+  campanhas,
+  campanhasComErro,
+  aoTentarCampanhasDeNovo,
   linhaDeBase,
   objetivo,
   podeVerValores,
@@ -76,6 +82,10 @@ export function AbaVisaoGeral({
   faturamento: Periodizado<FaturamentoDoPeriodo> | null | undefined;
   faturamentoComErro: boolean;
   aoTentarFaturamentoDeNovo: () => void;
+  /** undefined = carregando (campanhas_do_periodo) */
+  campanhas: Periodizado<CampanhasDoPeriodo> | undefined;
+  campanhasComErro: boolean;
+  aoTentarCampanhasDeNovo: () => void;
   linhaDeBase: LinhaDeBase;
   objetivo: ObjetivoDeConversao | undefined;
   podeVerValores: boolean;
@@ -147,7 +157,13 @@ export function AbaVisaoGeral({
             )
           }
         />
-        <CartaoCustoPorLead podeVerValores={podeVerValores} />
+        <CartaoCustoPorLead
+          podeVerValores={podeVerValores}
+          campanhas={campanhas}
+          timezone={timezone}
+          erro={campanhasComErro}
+          tentarDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}
+        />
         <CartaoFaturamento
           podeVerValores={podeVerValores}
           faturamento={faturamento}
@@ -179,7 +195,13 @@ export function AbaVisaoGeral({
         />
       </div>
 
-      <CampanhasSecao funil={atual} />
+      <CampanhasSecao
+        campanhas={campanhas}
+        podeVerValores={podeVerValores}
+        timezone={timezone}
+        erro={campanhasComErro}
+        tentarDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}
+      />
 
       {podeDefinirObjetivo ? (
         <DialogObjetivoDeConversao

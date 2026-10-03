@@ -12,6 +12,7 @@ import { fetchConversoesDevolvidas } from "@/lib/queries/conversoes-meta";
 import {
   fetchAgendaDoPeriodo,
   fetchAtendimentoDoPeriodo,
+  fetchCampanhasDoPeriodo,
   fetchFaturamentoDoPeriodo,
   fetchFunilDoPeriodo,
   fetchLinhaDeBase,
@@ -32,6 +33,11 @@ import { VisaoDoProfissional } from "./visao-do-profissional";
 // Fase 3: 4 vistas (Visao geral, Marketing, Comercial, Agente de IA). Os
 // valores em reais sao so de admin e gestor, decidido AQUI no servidor: para
 // os outros papeis o faturamento nem e buscado (e o banco devolveria null).
+//
+// Fase 4: campanhas_do_periodo e buscada para todo papel que chega aqui (as
+// contagens de leads por campanha sao de todos); o investimento da Meta vem
+// null do banco para quem nao e admin nem gestor, e a tela nem olha para ele
+// sem podeVerValores.
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -171,6 +177,7 @@ export default async function ResultadosPage({
     linhaDeBase,
     objetivo,
     canalOficial,
+    campanhas,
   ] = await Promise.all([
     fetchFunilDoPeriodo(
       supabase,
@@ -213,6 +220,16 @@ export default async function ResultadosPage({
     fetchLinhaDeBase(supabase, active.clinicId),
     fetchObjetivoDeConversao(supabase, active.clinicId),
     temCanalOficial(supabase, active.clinicId),
+    // Bloco com estado proprio: se falhar aqui, o cliente busca de novo e
+    // mostra o erro so no Custo por lead e em Campanhas, com "Tentar de
+    // novo", em vez de derrubar a tela inteira.
+    fetchCampanhasDoPeriodo(
+      supabase,
+      active.clinicId,
+      active.timezone,
+      diaDe,
+      diaAte,
+    ).catch(() => undefined),
   ]);
 
   const recortePadrao = diaDe === diaDePadrao && diaAte === diaAtePadrao;
@@ -244,6 +261,7 @@ export default async function ResultadosPage({
         atendimentoInicial={atendimento}
         serieInicial={serie}
         faturamentoInicial={faturamento}
+        campanhasInicial={campanhas}
         conversoes={conversoes}
         linhaDeBaseInicial={linhaDeBase}
         objetivoInicial={objetivo}

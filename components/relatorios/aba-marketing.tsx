@@ -8,19 +8,37 @@ import { ConversoesMetaSecao } from "@/components/relatorios/conversoes-meta-sec
 import { DetalheDaOrigem } from "@/components/relatorios/detalhe-da-origem";
 import { OrigemDosLeads } from "@/components/relatorios/origem-dos-leads";
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
+import { Button } from "@/components/ui/button";
 import type { DimensaoDaOrigem } from "@/lib/domain/exportacao-de-resultados";
 import { formatarPercentual, percentualDe } from "@/lib/domain/formato-compacto";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
-import type { FunilDoPeriodo, Periodizado } from "@/lib/queries/relatorios";
+import type {
+  CampanhasDoPeriodo,
+  FunilDoPeriodo,
+  Periodizado,
+} from "@/lib/queries/relatorios";
 
 // Aba Marketing (Fase 3, recebe a antiga Origem): de qual canal e de qual
 // campanha vem o lead, quanto dele tem origem identificada e quanto da coorte
 // ja compareceu. Sem lime nesta aba: nenhum numero aqui e o destaque da tela.
 // Taxas de coorte nao ganham variacao (a coorte anterior teve mais tempo
 // para maturar). Sem drill-down nominal: so contagens.
+// Fase 4: Custo por lead, Campanhas e o detalhe por campanha leem
+// campanhas_do_periodo (uma verdade so: as mesmas linhas nos tres).
+
+function tentarDeNovo(acao: () => void) {
+  return (
+    <Button variant="outline" className="h-10" onClick={acao}>
+      Tentar de novo
+    </Button>
+  );
+}
 
 export function AbaMarketing({
   funil,
+  campanhas,
+  campanhasComErro,
+  aoTentarCampanhasDeNovo,
   conversoes,
   timezone,
   podeVerValores,
@@ -28,6 +46,10 @@ export function AbaMarketing({
   aoMudarDimensao,
 }: {
   funil: Periodizado<FunilDoPeriodo>;
+  /** undefined = carregando (campanhas_do_periodo) */
+  campanhas: Periodizado<CampanhasDoPeriodo> | undefined;
+  campanhasComErro: boolean;
+  aoTentarCampanhasDeNovo: () => void;
   conversoes: ConversoesResumo;
   timezone: string;
   podeVerValores: boolean;
@@ -98,16 +120,31 @@ export function AbaMarketing({
             rodape="dos leads do período; quem chegou há pouco ainda pode comparecer"
           />
         )}
-        <CartaoCustoPorLead podeVerValores={podeVerValores} />
+        <CartaoCustoPorLead
+          podeVerValores={podeVerValores}
+          campanhas={campanhas}
+          timezone={timezone}
+          erro={campanhasComErro}
+          tentarDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}
+        />
       </section>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
         <OrigemDosLeads funil={atual} />
-        <CampanhasSecao funil={atual} />
+        <CampanhasSecao
+          campanhas={campanhas}
+          podeVerValores={podeVerValores}
+          timezone={timezone}
+          erro={campanhasComErro}
+          tentarDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}
+        />
       </div>
 
       <DetalheDaOrigem
         funil={atual}
+        campanhas={campanhas?.atual}
+        campanhasComErro={campanhasComErro}
+        tentarCampanhasDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}
         dimensao={dimensao}
         aoMudarDimensao={aoMudarDimensao}
       />

@@ -16,6 +16,7 @@ import {
   FATURAMENTO,
   FUNIL,
   agenda,
+  campanhasPeriodizadas,
 } from "./dados-de-exemplo";
 
 // A exportacao da Tela 11 (CSV e impressao) por aba, em secoes. A regra que
@@ -49,6 +50,10 @@ function entrada(
     },
     objetivo: { percentual: 35.5, atualizadoEm: "2026-10-01T12:00:00Z" },
     conversoes: CONVERSOES,
+    // Dado da GESTAO de proposito (com investimento): para quem nao pode ver
+    // valores, nada em reais pode sair mesmo que o dado chegue por engano.
+    campanhas: campanhasPeriodizadas(),
+    timezone: "America/Fortaleza",
     dimensaoOrigem: "canal",
     dimensaoAgenda: "profissional",
     ...extra,
@@ -77,6 +82,10 @@ describe("montarExportavelDaAba: valores em reais", () => {
       expect(celulas).not.toContain("Custo do período");
       expect(celulas).not.toContain("Receita associada às recuperadas");
       expect(celulas).not.toContain("Valor já enviado");
+      expect(celulas).not.toContain("Investimento no período");
+      expect(celulas).not.toContain("Investimento");
+      expect(celulas).not.toContain("Investimento atualizado em");
+      expect(celulas.some((celula) => celula.startsWith("Investimento sem lead casado"))).toBe(false);
     },
   );
 
@@ -97,6 +106,8 @@ describe("montarExportavelDaAba: valores em reais", () => {
     (aba) => {
       const semPreco = todasAsCelulas(aba, {
         podeVerValores: true,
+        // So o faturamento: o investimento da Meta tem os proprios testes.
+        campanhas: undefined,
         faturamento: {
           atual: { ...FATURAMENTO, comparecimentos: 1, valorCents: 0, comValor: 0, cobertas: 0, semPreco: 1 },
           anterior: null,
@@ -180,18 +191,31 @@ describe("montarExportavelDaAba: seções e números", () => {
     expect(detalhe?.linhas[1]).toEqual(["Compareceu", "30", "", ""]);
   });
 
-  it("Marketing troca o detalhe entre canal e campanha", () => {
+  it("Marketing troca o detalhe entre canal e campanha (as linhas da tabela Campanhas)", () => {
     const porCampanha = montarExportavelDaAba(
       entrada("marketing", { dimensaoOrigem: "campanha" }),
     );
     const detalhe = porCampanha.secoes.find(
       (secao) => secao.titulo === "Detalhe por campanha",
     );
-    expect(detalhe?.linhas.map((linha) => linha[0])).toEqual([
-      "Origem",
-      "Check-up 2026",
-      "Sem campanha",
+    // Fase 4: casado por id (campanhas_do_periodo), a campanha sem lead
+    // nao entra no detalhe e "Sem campanha" fecha a soma dos 486 leads.
+    expect(detalhe?.linhas).toEqual([
+      ["Origem", "Leads", "Agendaram", "Compareceram", "Comparecimento"],
+      ["Implante Dentário", "120", "80", "60", "50,0%"],
+      ["Campanha 120000000000000020", "30", "20", "10", "33,3%"],
+      ["Check-up 2026", "186", "112", "90", "48,4%"],
+      ["Sem campanha", "150", "100", "90", "60,0%"],
     ]);
+  });
+
+  it("detalhe por campanha sem as campanhas carregadas fica fora, nunca vazio falso", () => {
+    const exportavel = montarExportavelDaAba(
+      entrada("marketing", { dimensaoOrigem: "campanha", campanhas: undefined }),
+    );
+    const titulos = exportavel.secoes.map((secao) => secao.titulo);
+    expect(titulos).not.toContain("Detalhe por campanha");
+    expect(titulos).not.toContain("Campanhas");
   });
 
   it("taxa sem denominador sai como 'sem dados', nunca 0%", () => {
@@ -209,6 +233,183 @@ describe("montarExportavelDaAba: seções e números", () => {
       "Taxa de conversão",
       "sem dados",
     ]);
+  });
+});
+
+describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
+  function secao(aba: AbaDeResultados, titulo: string, extra: Partial<EntradaDaExportacao>) {
+    return montarExportavelDaAba(entrada(aba, extra)).secoes.find(
+      (s) => s.titulo === titulo,
+    );
+  }
+
+  function semNbsp(linhas: string[][] | undefined): string[][] {
+    return (linhas ?? []).map((linha) =>
+      linha.map((celula) => celula.replace(/\u00a0/g, " ")),
+    );
+  }
+
+  it.each(["geral", "marketing"] as const)(
+    "admin na aba %s: custo por lead, investimento, divisor e quando foi lido",
+    (aba) => {
+      const indicadores = semNbsp(
+        secao(aba, "Indicadores do período", { podeVerValores: true })?.linhas,
+      );
+      expect(indicadores).toContainEqual(["Custo por lead", "R$ 30,00"]);
+      expect(indicadores).toContainEqual(["Investimento no período", "R$ 4.860,00"]);
+      expect(indicadores).toContainEqual(["Leads de anúncio", "162"]);
+      expect(indicadores).toContainEqual(["Investimento lido a partir de", "04/08/2026"]);
+      expect(indicadores).toContainEqual(["Investimento lido até", "02/10/2026"]);
+      // No fuso da clinica (America/Fortaleza): 09:00 UTC = 06:00.
+      expect(indicadores).toContainEqual(["Investimento atualizado em", "02/10 às 06:00"]);
+      // Conta em America/Sao_Paulo: o mesmo deslocamento, sem aviso de fuso.
+      expect(indicadores.map((linha) => linha[0])).not.toContain("Fuso do investimento");
+    },
+  );
+
+  it("leitura parada: Ainda não medido no custo e no investimento, até quando foi lido, Não medido nas células", () => {
+    const extra = {
+      podeVerValores: true,
+      campanhas: campanhasPeriodizadas({
+        situacao: "com_problema",
+        problema: "token_invalido",
+        lidoAte: "2026-09-13",
+        investimentoCents: 100_000,
+      }),
+    };
+    const indicadores = secao("geral", "Indicadores do período", extra)?.linhas;
+    expect(indicadores).toContainEqual(["Custo por lead", "Ainda não medido"]);
+    expect(indicadores).toContainEqual(["Investimento no período", "Ainda não medido"]);
+    expect(indicadores).toContainEqual(["Investimento lido até", "13/09/2026"]);
+    const campanhas = secao("geral", "Campanhas", extra)?.linhas;
+    expect(campanhas?.[1]).toEqual([
+      "Implante Dentário",
+      "Não medido",
+      "120",
+      "Não medido",
+      "80",
+      "66,7%",
+    ]);
+    expect(
+      campanhas?.flat().some((celula) => celula.startsWith("Investimento sem lead casado")),
+    ).toBe(false);
+  });
+
+  it("conta em outro fuso: a linha Fuso do investimento só para a gestão", () => {
+    const campanhas = campanhasPeriodizadas({ fusoDaConta: "America/New_York" });
+    const indicadores = secao("geral", "Indicadores do período", {
+      podeVerValores: true,
+      campanhas,
+    })?.linhas;
+    expect(indicadores).toContainEqual([
+      "Fuso do investimento",
+      "Os dias do investimento seguem o fuso da conta de anúncios, diferente do fuso da clínica.",
+    ]);
+    const daRecepcao = todasAsCelulas("geral", { podeVerValores: false, campanhas });
+    expect(daRecepcao).not.toContain("Fuso do investimento");
+    // Sem fuso da clinica, nada de aviso (nunca o fuso do servidor).
+    const semFuso = secao("geral", "Indicadores do período", {
+      podeVerValores: true,
+      campanhas,
+      timezone: undefined,
+    })?.linhas;
+    expect(semFuso?.map((linha) => linha[0])).not.toContain("Fuso do investimento");
+  });
+
+  it("admin: a tabela Campanhas com as colunas e as células do contrato", () => {
+    const linhas = semNbsp(
+      secao("geral", "Campanhas", { podeVerValores: true })?.linhas,
+    );
+    expect(linhas).toEqual([
+      ["Campanha", "Investimento", "Leads", "Custo por lead", "Agendados", "Conversão"],
+      ["Implante Dentário", "R$ 3.420,00", "120", "R$ 28,50", "80", "66,7%"],
+      ["Campanha 120000000000000020", "R$ 600,00", "30", "R$ 20,00", "20", "66,7%"],
+      ["Remarketing Botox", "R$ 500,00", "0", "Sem leads", "0", "sem dados"],
+      ["Check-up 2026", "Fora da Meta", "186", "Fora da Meta", "112", "60,2%"],
+      ["Investimento sem lead casado: R$ 500,00 em 1 campanha"],
+      ["Leads sem campanha: 150 de 486"],
+      ["Leads de anúncio sem campanha reconhecida: 12"],
+    ]);
+  });
+
+  it("recepção: a tabela sem as colunas em reais, com a nota e sem a campanha de 0 lead", () => {
+    const linhas = secao("marketing", "Campanhas", { podeVerValores: false })?.linhas;
+    expect(linhas).toEqual([
+      ["Campanha", "Leads", "Agendados", "Conversão"],
+      ["Implante Dentário", "120", "80", "66,7%"],
+      ["Campanha 120000000000000020", "30", "20", "66,7%"],
+      ["Check-up 2026", "186", "112", "60,2%"],
+      ["Leads sem campanha: 150 de 486"],
+      ["Leads de anúncio sem campanha reconhecida: 12"],
+      ["Investimento e custo por lead: só administrador e gestor."],
+    ]);
+  });
+
+  it("recepção com o retrato que o banco devolve (investimento null): nenhum R$ no CSV", () => {
+    const campanhas = campanhasPeriodizadas(null);
+    const celulas = todasAsCelulas("geral", { podeVerValores: false, campanhas });
+    expect(celulas.filter((celula) => celula.includes("R$"))).toEqual([]);
+    expect(celulas).not.toContain("Custo por lead");
+  });
+
+  it("gestor que o banco tratou como sem acesso (investimento null): nada em reais", () => {
+    const celulas = todasAsCelulas("geral", {
+      podeVerValores: true,
+      faturamento: null,
+      agenda: { atual: agenda(null), anterior: null },
+      campanhas: campanhasPeriodizadas(null),
+    });
+    expect(celulas.filter((celula) => celula.includes("R$"))).toEqual([]);
+    expect(celulas).not.toContain("Custo por lead");
+    expect(celulas).toContain("Investimento e custo por lead: só administrador e gestor.");
+  });
+
+  it("sem leitura configurada: Ainda não medido no custo e Não medido nas células da Meta", () => {
+    const extra = {
+      podeVerValores: true,
+      campanhas: campanhasPeriodizadas({ configurada: false, lidoDesde: null, sincronizadoEm: null }),
+    };
+    const indicadores = secao("geral", "Indicadores do período", extra)?.linhas;
+    expect(indicadores).toContainEqual(["Custo por lead", "Ainda não medido"]);
+    expect(indicadores).toContainEqual(["Investimento no período", "Ainda não medido"]);
+    expect(indicadores?.map((linha) => linha[0])).not.toContain("Investimento atualizado em");
+    const campanhas = secao("geral", "Campanhas", extra)?.linhas;
+    expect(campanhas?.[1]).toEqual([
+      "Implante Dentário",
+      "Não medido",
+      "120",
+      "Não medido",
+      "80",
+      "66,7%",
+    ]);
+    // Sem medida, a conferencia em reais some (nao vira R$ 0,00).
+    expect(campanhas?.flat().some((celula) => celula.startsWith("Investimento sem lead casado"))).toBe(false);
+  });
+
+  it("outra moeda: o mesmo texto do cartão, sem número", () => {
+    const indicadores = secao("geral", "Indicadores do período", {
+      podeVerValores: true,
+      campanhas: campanhasPeriodizadas({ moeda: "USD", outraMoeda: true }),
+    })?.linhas;
+    expect(indicadores).toContainEqual(["Custo por lead", "Conta em outra moeda"]);
+    expect(indicadores).toContainEqual(["Investimento no período", "Conta em outra moeda"]);
+  });
+
+  it("período antes da leitura: Ainda não medido e o dia a partir do qual é lido", () => {
+    const indicadores = secao("geral", "Indicadores do período", {
+      podeVerValores: true,
+      campanhas: campanhasPeriodizadas({ lidoDesde: "2026-09-20" }),
+    })?.linhas;
+    expect(indicadores).toContainEqual(["Custo por lead", "Ainda não medido"]);
+    expect(indicadores).toContainEqual(["Investimento lido a partir de", "20/09/2026"]);
+  });
+
+  it("sem fuso informado, o Atualizado em fica fora (nunca no fuso do servidor)", () => {
+    const indicadores = secao("geral", "Indicadores do período", {
+      podeVerValores: true,
+      timezone: undefined,
+    })?.linhas;
+    expect(indicadores?.map((linha) => linha[0])).not.toContain("Investimento atualizado em");
   });
 });
 

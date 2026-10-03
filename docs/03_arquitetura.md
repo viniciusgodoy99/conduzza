@@ -54,12 +54,18 @@ lib/
 ├── supabase/                     client, server, middleware
 ├── integrations/
 │   ├── whatsapp/                 Cloud API: envio, template, webhook, custo
+│   ├── meta/                     Graph da Meta: capi.ts (devolução de conversões), payload.ts,
+│   │                             insights.ts (leitura do investimento, Fase 4) e versao.ts (versão única da Graph)
 │   ├── llm/                      agente, ferramentas, filtro de conformidade
 │   └── billing/                  gateway de pagamento
+├── jobs/                         motor da fila (motor.ts, worker.ts) e executores (regua.ts, conversao-meta.ts,
+│                                 lista-espera.ts e gasto-meta.ts, o sincronizar_gasto_meta da Fase 4)
 ├── domain/                       regras de negócio puras, sem I/O, testáveis
 │   ├── scheduling.ts             disponibilidade, hold, conflito
 │   ├── cadence.ts                cálculo de quando disparar cada passo de régua
-│   └── attribution.ts            origem do lead
+│   ├── attribution.ts            origem do lead
+│   ├── meta-anuncios.ts          conta act_, problemas da leitura do investimento, dias lidos (Fase 4)
+│   └── custo-por-lead.ts         divisor, cobertura e textos do custo por lead (Fase 4)
 └── utils/                        formatadores pt-BR, datas, moeda
 
 supabase/
@@ -109,7 +115,7 @@ create policy "membro escreve na propria clinica" on contact
 
 RLS garante o isolamento entre clínicas. **Permissão por papel** (Admin, Gestor, Recepção, Profissional, Leitura) é uma segunda camada, aplicada em policy específica ou na Server Action. A matriz está na seção 5 do brief de telas.
 
-O Service Role Key ignora RLS. **Só pode ser usado dentro de Edge Function**, nunca em código que chegue ao browser.
+O Service Role Key ignora RLS. **Nunca em código que chegue ao browser.** Na prática ele roda no servidor: no motor da fila e nas Server Actions que gravam o que a sessão não pode gravar (por exemplo, os segredos da seção 10 e a situação da leitura do investimento da Meta), sempre **depois** da guarda de papel.
 
 ---
 
@@ -249,7 +255,9 @@ Ordem de integração quando chegar a hora (justificada no benchmark): Feegow (A
 | Homologação | Projeto Supabase separado, **dados fictícios**. Nunca testar régua com telefone de paciente real |
 | Produção | Projeto Supabase em `sa-east-1`, backup diário, restauração testada |
 
-Segredos só em variável de ambiente. `.env.example` versionado, `.env` nunca.
+**Segredos.** Segredo da plataforma (chave de serviço do Supabase, token de administração do provedor de WhatsApp, segredos do motor) fica em variável de ambiente: `.env.example` versionado, `.env` nunca. Segredo **de cada clínica** fica no banco, numa tabela irmã `*_secret` (`whatsapp_account_secret`, com o token da instância do WhatsApp e o segredo do webhook; `meta_ads_account_secret`, com o token da API de conversões e, desde a Fase 4, o token de leitura de anúncios `insights_access_token`), com RLS ligada e **nenhuma** policy, lida e escrita só pela service role, depois da guarda de papel. Em `meta_ads_account_secret`, desde a migration `20261003100000`, `anon` e `authenticated` não têm grant nenhum (a sessão recebe 42501 até no `select`).
+
+**O token fica em texto puro na coluna** (sem criptografia no banco): a proteção é a sessão não enxergar a tabela (sem policy e, no segredo da Meta, sem grant) e a regra de nunca devolver o valor. O valor nunca volta para a tela (o campo é só de escrita e a tela recebe só se existe), nunca vai para log nem para `job_queue.last_error`, e nenhuma função do banco o devolve: as que gravam a leitura do investimento recebem só o sha256 dele, para recusar a escrita de uma leitura feita com o token antigo. Na chamada à Meta, o token de leitura vai no cabeçalho `Authorization` e o da API de conversões no corpo do POST; nunca na URL.
 
 ---
 
@@ -258,3 +266,37 @@ Segredos só em variável de ambiente. `.env.example` versionado, `.env` nunca.
 Monitorar, com alerta: disponibilidade, taxa de erro do webhook, tamanho da `job_queue` (fila crescendo é régua parando), **quality rating do número por clínica** (rebaixamento é incidente de produto, precisa aparecer antes de a clínica reclamar), gasto contra teto, e latência do LLM.
 
 Log de aplicação **nunca** contém conteúdo de mensagem de paciente. Guardar identificador, não texto.
+
+---
+
+## 12. Leitura do investimento da Meta (Fase 4 das métricas, 03/10/2026)
+
+Construída, publicação pendente. Modelo no `docs/04` (seção 14), operação no `supabase/operacao/motor-por-cron.md` ("Leitura do investimento da Meta").
+
+```
+manutenção (pg_cron, a cada minuto)       "Testar leitura" que deu certo      "Atualizar agora"
+  enfileirar_gasto_meta_do_dia()              (Server Action)                    (Server Action, 10 min)
+        \                                          |                                 /
+         +---------> enfileirar_sincronizacao_de_gasto_meta(clinica, origem) <-----+
+                      um job vivo por clínica; recusa clínica de teste,
+                      leitura pausada (menos na origem do teste) e pedido cedo demais
+                                   |
+                                   v
+                job_queue: sincronizar_gasto_meta (até 5 tentativas)
+                                   |
+             motor (Vercel): reivindicação própria, 2 por passagem,
+             cada job num grupo só dele, fora da raia da clínica
+                                   |
+                                   v
+             lib/jobs/gasto-meta.ts: lê conta e token pela service role,
+             lib/integrations/meta/insights.ts lê a Meta (prazo de 35 s)
+                                   |
+             ok -> regravar_gasto_meta (uma transação)   falha -> registrar_falha_do_gasto_meta
+```
+
+- **Integração** (`lib/integrations/meta/insights.ts`): token só no cabeçalho `Authorization`, conta conferida contra `^act_[0-9]{5,20}$` antes de entrar na URL, host fixo, paginação pelo cursor `after` (o `paging.next` da resposta nunca é seguido), até 500 linhas por página e 40 páginas. Consulta que a Meta acusa como pesada, que passa de 40 páginas ou que não responde no tempo é dividida ao meio, até 2 vezes. Repete na hora até 2 vezes só quando a Meta está indisponível, com backoff (metade fixa, metade sorteada); limite de chamadas nunca repete na hora e devolve a espera lida dos cabeçalhos. A partir de 75% do uso informado pela Meta espera entre chamadas, e a partir de 95% para. O resultado carrega só códigos: a mensagem da Meta nunca sai da função que a classifica. Versão da Graph num lugar só (`versao.ts`, `v26.0`), usada também pela devolução de conversões.
+- **Janela:** lê por anúncio e por dia e o total da conta por dia, no fuso **da conta**. `DIAS_DA_LEITURA_DIARIA` (30) dias por leitura; `DIAS_DA_PRIMEIRA_LEITURA` (60) na primeira leitura, na troca de conta e na volta depois de mais de 30 dias parada (constantes em `lib/domain/meta-anuncios.ts`, decisão D4 do dono pendente).
+- **Desfecho por tipo de problema:** a Meta recusou o token, a permissão ou a conta: grava o problema e **pausa** o diário; pedido recusado: grava o problema, sem pausa; Meta fora do ar, prazo esgotado, resposta que não se reconhece, consulta pesada: repete pelo backoff do motor e grava o problema só na última tentativa; limite de chamadas: devolve o job para daqui a 5 a 60 minutos; a gestão trocou a conta ou o token durante a leitura: devolve na hora e nada velho é gravado.
+- **Por que reivindicação e grupo próprios:** o job não tem número de WhatsApp, então a raia dele seria a clínica, e uma leitura de até 40 segundos em série com a integração da mesma clínica faria a segunda tarefa voltar por falta de orçamento da passagem.
+- **Resultados** lê pela sessão a função `campanhas_do_periodo` (`SECURITY INVOKER`): as contagens de leads são as mesmas para todo papel e o investimento sai nulo fora de administrador e gestor. O custo por lead é calculado no TypeScript (`lib/domain/custo-por-lead.ts`), com o divisor numa constante (decisão D2 do dono pendente).
+

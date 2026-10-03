@@ -170,6 +170,85 @@ export type ObjetivoDeConversao = {
 } | null;
 
 // ---------------------------------------------------------------------------
+// Fase 4: campanhas do periodo e investimento da Meta (campanhas_do_periodo)
+// ---------------------------------------------------------------------------
+
+/**
+ * Uma linha da tabela Campanhas. "meta" = campanha da Meta com lead casado
+ * POR ID (anuncio do contato em meta_anuncio, ou id de campanha conhecido),
+ * ou, so para a gestao, campanha com gasto e 0 lead. "texto" = so o nome
+ * digitado ou importado em source_campaign: conta lead, nunca casa com gasto.
+ */
+export type LinhaDeCampanhaDoPeriodo = {
+  /** "meta:<campaign_id>" ou "texto:<rotulo>" */
+  chave: string;
+  tipo: "meta" | "texto";
+  metaCampaignId: string | null;
+  /** Nome mais recente da campanha na Meta (pode faltar) ou o texto. */
+  rotulo: string | null;
+  leads: number;
+  agendaram: number;
+  compareceram: number;
+  /** Centavos de real. null fora da gestao e sempre null em "texto". */
+  investimentoCents: number | null;
+};
+
+/** Situacao da leitura do investimento (meta_gasto_leitura.situacao). */
+export type SituacaoDaLeitura = "nao_testada" | "funcionando" | "com_problema";
+
+/**
+ * Bloco do investimento, so para admin e gestor (o banco devolve null para
+ * os outros papeis). Dias em aaaa-mm-dd: lidoDesde e lidoAte no fuso da
+ * CONTA de anuncios; diaDe e diaAte sao os dias civis da clinica do periodo.
+ */
+export type InvestimentoDoPeriodo = {
+  /** Conta de anuncios salva e linha de leitura criada (token salvo). */
+  configurada: boolean;
+  situacao: SituacaoDaLeitura | null;
+  /** Um dos 12 codigos de problema da leitura, ou null. */
+  problema: string | null;
+  moeda: string | null;
+  fusoDaConta: string | null;
+  lidoDesde: string | null;
+  lidoAte: string | null;
+  /** Instante (ISO) da ultima regravacao que deu certo. */
+  sincronizadoEm: string | null;
+  diaDe: string;
+  diaAte: string;
+  /**
+   * Dia civil de HOJE no fuso da clinica (calculado aqui, nao no banco):
+   * com ele a tela confere se a leitura esta em dia (leitura parada vira
+   * "Ainda não medido", nunca custo baixo demais nem zero falso).
+   */
+  hoje: string;
+  /** Total da conta em real no periodo (level=account). */
+  investimentoCents: number;
+  /** Soma das campanhas com lead casado no periodo. */
+  investimentoCasadoCents: number;
+  /** Soma das campanhas sem lead casado no periodo. */
+  investimentoSemLeadCents: number;
+  campanhasSemLead: number;
+  /** Ha gasto em outra moeda no periodo: nada e convertido nem somado. */
+  outraMoeda: boolean;
+};
+
+export type CampanhasDoPeriodo = {
+  /** Leads que chegaram no periodo (o mesmo numero do funil). */
+  leads: number;
+  /** Com ctwa_clid, source_ad_id ou source_campaign_id. */
+  leadsDeAnuncio: number;
+  /** Casados por id com uma campanha da Meta. */
+  leadsCasados: number;
+  /** De anuncio, mas sem campanha reconhecida. */
+  leadsDeAnuncioSemCampanha: number;
+  /** Fora de qualquer linha (nem Meta, nem texto). */
+  leadsSemCampanha: number;
+  linhas: LinhaDeCampanhaDoPeriodo[];
+  /** null = sem acesso a valores (fora de admin e gestor). */
+  investimento: InvestimentoDoPeriodo | null;
+};
+
+// ---------------------------------------------------------------------------
 // Abas da Tela 11 (Fase 3): Visao geral, Marketing, Comercial, Agente de IA
 // ---------------------------------------------------------------------------
 
@@ -231,6 +310,8 @@ export const relatoriosKeys = {
     ["relatorios", clinicId, "serie", diaDe, diaAte] as const,
   objetivo: (clinicId: string) =>
     ["relatorios", clinicId, "objetivo-de-conversao"] as const,
+  campanhas: (clinicId: string, diaDe: string, diaAte: string) =>
+    ["relatorios", clinicId, "campanhas", diaDe, diaAte] as const,
   proximasAcoes: (clinicId: string) =>
     ["inicio", clinicId, "proximas-acoes"] as const,
 };
@@ -699,5 +780,131 @@ export async function fetchObjetivoDeConversao(
   return {
     percentual: Number(data.percentual),
     atualizadoEm: data.updated_at as string,
+  };
+}
+
+type LinhaDeCampanhaRpc = {
+  chave: string;
+  tipo: "meta" | "texto";
+  meta_campaign_id: string | null;
+  rotulo: string | null;
+  leads: number;
+  agendaram: number;
+  compareceram: number;
+  investimento_cents: number | null;
+};
+
+type InvestimentoRpc = {
+  configurada: boolean;
+  situacao: SituacaoDaLeitura | null;
+  problema: string | null;
+  moeda: string | null;
+  fuso_da_conta: string | null;
+  lido_desde: string | null;
+  lido_ate: string | null;
+  sincronizado_em: string | null;
+  dia_de: string;
+  dia_ate: string;
+  investimento_cents: number;
+  investimento_casado_cents: number;
+  investimento_sem_lead_cents: number;
+  campanhas_sem_lead: number;
+  outra_moeda: boolean;
+};
+
+type CampanhasRpc = {
+  leads: number;
+  leads_de_anuncio: number;
+  leads_casados: number;
+  leads_de_anuncio_sem_campanha: number;
+  leads_sem_campanha: number;
+  linhas: LinhaDeCampanhaRpc[];
+  investimento: InvestimentoRpc | null;
+};
+
+function lerInvestimento(
+  bruto: InvestimentoRpc | null,
+  hoje: string,
+): InvestimentoDoPeriodo | null {
+  if (!bruto) {
+    return null;
+  }
+  return {
+    configurada: bruto.configurada === true,
+    situacao: bruto.situacao,
+    problema: bruto.problema,
+    moeda: bruto.moeda,
+    fusoDaConta: bruto.fuso_da_conta,
+    lidoDesde: bruto.lido_desde,
+    lidoAte: bruto.lido_ate,
+    sincronizadoEm: bruto.sincronizado_em,
+    diaDe: bruto.dia_de,
+    diaAte: bruto.dia_ate,
+    hoje,
+    investimentoCents: Number(bruto.investimento_cents),
+    investimentoCasadoCents: Number(bruto.investimento_casado_cents),
+    investimentoSemLeadCents: Number(bruto.investimento_sem_lead_cents),
+    campanhasSemLead: Number(bruto.campanhas_sem_lead),
+    outraMoeda: bruto.outra_moeda === true,
+  };
+}
+
+function lerCampanhas(bloco: CampanhasRpc, hoje: string): CampanhasDoPeriodo {
+  return {
+    leads: Number(bloco.leads),
+    leadsDeAnuncio: Number(bloco.leads_de_anuncio),
+    leadsCasados: Number(bloco.leads_casados),
+    leadsDeAnuncioSemCampanha: Number(bloco.leads_de_anuncio_sem_campanha),
+    leadsSemCampanha: Number(bloco.leads_sem_campanha),
+    linhas: bloco.linhas.map((linha) => ({
+      chave: linha.chave,
+      tipo: linha.tipo,
+      metaCampaignId: linha.meta_campaign_id,
+      rotulo: linha.rotulo,
+      leads: Number(linha.leads),
+      agendaram: Number(linha.agendaram),
+      compareceram: Number(linha.compareceram),
+      investimentoCents:
+        linha.investimento_cents === null
+          ? null
+          : Number(linha.investimento_cents),
+    })),
+    investimento: lerInvestimento(bloco.investimento, hoje),
+  };
+}
+
+/**
+ * Campanhas do periodo e do anterior (campanhas_do_periodo, Fase 4): as
+ * linhas da tabela Campanhas, as contagens de leads (as MESMAS em todo
+ * papel) e o investimento da Meta, que o banco devolve null para quem nao e
+ * admin nem gestor (null e "sem acesso", nunca zero). Chamar para todo papel
+ * menos o profissional: para ele o banco devolve null no corpo inteiro, e
+ * aqui isso vira erro de recorte, nunca tabela vazia.
+ */
+export async function fetchCampanhasDoPeriodo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  timezone: string,
+  diaDe: string,
+  diaAte: string,
+  opcoes: Opcoes = {},
+): Promise<Periodizado<CampanhasDoPeriodo>> {
+  const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
+  const { data, error } = await supabase.rpc("campanhas_do_periodo", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+    ...(opcoes.comparar === false ? {} : { p_de_anterior: janela.deAnterior }),
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  const corpo = exigirCorpo<CampanhasRpc>(data, "campanhas_do_periodo");
+  // Hoje no fuso da CLINICA (regra 3.6): a referencia para conferir se a
+  // leitura do investimento esta em dia (coberturaDoInvestimento).
+  const hoje = diaCivil(timezone, new Date());
+  return {
+    atual: lerCampanhas(corpo.atual, hoje),
+    anterior: corpo.anterior ? lerCampanhas(corpo.anterior, hoje) : null,
   };
 }

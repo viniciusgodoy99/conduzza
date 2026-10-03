@@ -1,5 +1,18 @@
 import { rotuloDoCanal } from "@/components/leads/rotulos";
 import { APPOINTMENT_STATUS } from "@/lib/design/status";
+import {
+  DIVISOR_DO_CUSTO_POR_LEAD,
+  TEXTOS_DO_DIVISOR,
+  avisoDeFusoDaConta,
+  coberturaDoInvestimento,
+  custoPorLeadCents,
+  diaPorExtenso,
+  estadoDoCustoPorLead,
+  leadsDoDivisor,
+  formatarAtualizadoEm,
+  textoDoCustoPorLead,
+  type DivisorDoCustoPorLead,
+} from "@/lib/domain/custo-por-lead";
 import { formatarDuracao } from "@/lib/domain/duracao";
 import {
   formatarPercentual,
@@ -11,9 +24,11 @@ import type {
   AbaDeResultados,
   AgendaDoPeriodo,
   AtendimentoDoPeriodo,
+  CampanhasDoPeriodo,
   FaturamentoDoPeriodo,
   FunilDoPeriodo,
   LinhaDeBase,
+  LinhaDeCampanhaDoPeriodo,
   ObjetivoDeConversao,
   Periodizado,
   PontoDaSerie,
@@ -27,6 +42,12 @@ import type {
 // Regra de valores (Fase 3): reais so para admin e gestor. O banco ja devolve
 // null para os outros papeis; aqui, com podeVerValores falso, nenhuma linha
 // com "R$" entra na exportacao, nem mesmo "Sem acesso" no lugar do valor.
+//
+// Fase 4 (investimento da Meta): a tabela Campanhas, o detalhe por campanha
+// e o Custo por lead saem de campanhas_do_periodo (lead casado com a campanha
+// so por id, nunca por nome). As colunas Investimento e Custo por lead so
+// existem para a gestao; para os outros papeis a tabela tem a nota
+// NOTA_DOS_VALORES_DAS_CAMPANHAS no lugar delas.
 
 // ---------------------------------------------------------------------------
 // Faturamento: o mesmo estado no cartao e no CSV
@@ -119,25 +140,35 @@ export type DimensaoDaAgenda = "profissional" | "procedimento" | "status";
 export type LinhaDeOrigem = {
   rotulo: string;
   leads: number;
-  agendaram: number;
-  compareceram: number;
-  /** compareceram / leads, "64,2%" ou "sem dados" */
+  /** null = nao da para saber sem mentir (celula vazia, como no status) */
+  agendaram: number | null;
+  compareceram: number | null;
+  /** compareceram / leads, "64,2%", "sem dados" ou "" quando null */
   comparecimento: string;
 };
 
-function rotuloDaCampanha(linha: FunilDoPeriodo["porCampanha"][number]): string {
-  // Nome legivel quando o link ou a palavra-chave gravou; senao o id numerico
-  // da campanha na Meta (CTWA cru); senao "Sem campanha".
+/** Rotulo de uma linha de campanha: o nome, senao "Campanha {id}". */
+export function rotuloDaLinhaDeCampanha(linha: LinhaDeCampanhaDoPeriodo): string {
   return (
-    linha.campanha ??
-    (linha.campanhaId ? `Campanha ${linha.campanhaId}` : "Sem campanha")
+    linha.rotulo ??
+    (linha.metaCampaignId ? `Campanha ${linha.metaCampaignId}` : "Sem campanha")
   );
 }
 
+/**
+ * Detalhe da origem (Marketing). Por canal: o funil. Por campanha: as MESMAS
+ * linhas da tabela Campanhas (uma verdade so na aba), mais "Sem campanha"
+ * com os leads de leads_sem_campanha. Agendaram e compareceram de "Sem
+ * campanha" saem da coorte do funil menos as linhas; so quando os dois
+ * retratos batem (mesmo total de leads e diferencas validas), senao a celula
+ * fica vazia em vez de um numero errado. Por campanha sem as campanhas
+ * carregadas: null (a tela mostra carregando; a exportacao pula a secao).
+ */
 export function montarDetalheDeOrigem(
   funil: FunilDoPeriodo,
   dimensao: DimensaoDaOrigem,
-): LinhaDeOrigem[] {
+  campanhas: CampanhasDoPeriodo | undefined,
+): LinhaDeOrigem[] | null {
   if (dimensao === "canal") {
     return funil.porCanal.map((linha) => ({
       rotulo: rotuloDoCanal(linha.canal) ?? "Sem atribuição",
@@ -147,34 +178,215 @@ export function montarDetalheDeOrigem(
       comparecimento: percentualOuSemDados(linha.compareceram, linha.leads),
     }));
   }
-  return funil.porCampanha.map((linha) => ({
-    rotulo: rotuloDaCampanha(linha),
-    leads: linha.leads,
-    agendaram: linha.agendaram,
-    compareceram: linha.compareceram,
-    comparecimento: percentualOuSemDados(linha.compareceram, linha.leads),
-  }));
+  if (!campanhas) {
+    return null;
+  }
+  const linhas: LinhaDeOrigem[] = campanhas.linhas
+    .filter((linha) => linha.leads > 0)
+    .map((linha) => ({
+      rotulo: rotuloDaLinhaDeCampanha(linha),
+      leads: linha.leads,
+      agendaram: linha.agendaram,
+      compareceram: linha.compareceram,
+      comparecimento: percentualOuSemDados(linha.compareceram, linha.leads),
+    }));
+  if (campanhas.leadsSemCampanha > 0) {
+    const somaAgendaram = linhas.reduce((soma, l) => soma + (l.agendaram ?? 0), 0);
+    const somaCompareceram = linhas.reduce(
+      (soma, l) => soma + (l.compareceram ?? 0),
+      0,
+    );
+    const agendaram = funil.coorte.agendaram - somaAgendaram;
+    const compareceram = funil.coorte.compareceram - somaCompareceram;
+    const batem =
+      funil.coorte.leads === campanhas.leads &&
+      agendaram >= 0 &&
+      compareceram >= 0 &&
+      agendaram <= campanhas.leadsSemCampanha &&
+      compareceram <= agendaram;
+    linhas.push({
+      rotulo: "Sem campanha",
+      leads: campanhas.leadsSemCampanha,
+      agendaram: batem ? agendaram : null,
+      compareceram: batem ? compareceram : null,
+      comparecimento: batem
+        ? percentualOuSemDados(compareceram, campanhas.leadsSemCampanha)
+        : "",
+    });
+  }
+  return linhas;
 }
 
+// ---------------------------------------------------------------------------
+// Tabela Campanhas (Fase 4)
+// ---------------------------------------------------------------------------
+
+export const CELULA_FORA_DA_META = "Fora da Meta";
+export const CELULA_SEM_LEADS = "Sem leads";
+export const CELULA_NAO_MEDIDO = "Não medido";
+export const NOTA_DOS_VALORES_DAS_CAMPANHAS =
+  "Investimento e custo por lead: só administrador e gestor.";
+
+/** Celula de dinheiro: o valor, ou um estado escrito (nunca R$ 0,00 falso). */
+export type CelulaDeCampanha = {
+  texto: string;
+  /** true = texto de estado ("Fora da Meta"), nao numero */
+  estado: boolean;
+};
+
 export type LinhaDeCampanhaDaTela = {
+  chave: string;
   rotulo: string;
+  /** null = a coluna nao existe para este papel */
+  investimento: CelulaDeCampanha | null;
   leads: number;
+  custoPorLead: CelulaDeCampanha | null;
   agendaram: number;
   /** agendaram / leads, a mesma regra da Taxa de conversao */
   conversao: string;
 };
 
+/** As colunas Investimento e Custo por lead existem para este retrato? */
+export function campanhasComValores(
+  campanhas: CampanhasDoPeriodo,
+  podeVerValores: boolean,
+): boolean {
+  return podeVerValores && campanhas.investimento !== null;
+}
+
+function celulaDeEstado(texto: string): CelulaDeCampanha {
+  return { texto, estado: true };
+}
+
+function celulaEmReais(centavos: number): CelulaDeCampanha {
+  return { texto: formatarReaisCompleto(centavos), estado: false };
+}
+
 /**
- * Campanhas do periodo: leads, agendados e conversao. Investimento e custo
- * por lead chegam na Fase 4 (leitura do investimento na Meta).
+ * Linhas da tabela Campanhas, na ordem do banco (Meta antes de texto,
+ * investimento, leads). Celulas de dinheiro, so para a gestao:
+ * - linha de texto (campanha da clinica fora da Meta): "Fora da Meta";
+ * - Meta com o periodo inteiro lido: o investimento da campanha e o custo
+ *   por lead dela (investimento / leads casados), ou "Sem leads";
+ * - Meta sem medida (sem leitura, antes da primeira, periodo antes do
+ *   primeiro dia lido, leitura parada antes do fim, outra moeda): "Não
+ *   medido", nunca R$ 0,00.
+ * Para os outros papeis as duas celulas sao null e a linha com 0 lead (que
+ * so existe para a gestao) nunca entra.
  */
-export function montarCampanhas(funil: FunilDoPeriodo): LinhaDeCampanhaDaTela[] {
-  return funil.porCampanha.map((linha) => ({
-    rotulo: rotuloDaCampanha(linha),
-    leads: linha.leads,
-    agendaram: linha.agendaram,
-    conversao: percentualOuSemDados(linha.agendaram, linha.leads),
-  }));
+export function montarCampanhas(
+  campanhas: CampanhasDoPeriodo,
+  podeVerValores: boolean,
+): LinhaDeCampanhaDaTela[] {
+  const comValores = campanhasComValores(campanhas, podeVerValores);
+  const medido =
+    comValores && coberturaDoInvestimento(campanhas.investimento) === "completa";
+  return campanhas.linhas
+    .filter((linha) => comValores || linha.leads > 0)
+    .map((linha) => {
+      let investimento: CelulaDeCampanha | null = null;
+      let custoPorLead: CelulaDeCampanha | null = null;
+      if (comValores) {
+        if (linha.tipo === "texto") {
+          investimento = celulaDeEstado(CELULA_FORA_DA_META);
+          custoPorLead = celulaDeEstado(CELULA_FORA_DA_META);
+        } else {
+          investimento = medido
+            ? celulaEmReais(linha.investimentoCents ?? 0)
+            : celulaDeEstado(CELULA_NAO_MEDIDO);
+          const custo = custoPorLeadCents(linha.investimentoCents ?? 0, linha.leads);
+          custoPorLead =
+            linha.leads === 0
+              ? celulaDeEstado(CELULA_SEM_LEADS)
+              : medido && custo !== null
+                ? celulaEmReais(custo)
+                : celulaDeEstado(CELULA_NAO_MEDIDO);
+        }
+      }
+      return {
+        chave: linha.chave,
+        rotulo: rotuloDaLinhaDeCampanha(linha),
+        investimento,
+        leads: linha.leads,
+        custoPorLead,
+        agendaram: linha.agendaram,
+        conversao: percentualOuSemDados(linha.agendaram, linha.leads),
+      };
+    });
+}
+
+/** Os dois estados vazios da tabela Campanhas. Sem travessao. */
+export const TEXTOS_DO_VAZIO_DAS_CAMPANHAS = {
+  semLead: {
+    titulo: "Nenhum lead no período",
+    descricao:
+      "As campanhas aparecem quando os primeiros contatos chegarem no período escolhido.",
+  },
+  semCampanha: {
+    titulo: "Nenhum lead com campanha no período",
+    descricao:
+      "Os leads deste período chegaram sem campanha reconhecida. A contagem está logo abaixo.",
+  },
+} as const;
+
+/**
+ * O estado vazio da tabela (so aparece sem nenhuma linha). Com leads no
+ * periodo, todos chegaram sem campanha: "Nenhum lead no período" seria
+ * falso, e a contagem esta no rodape ("Leads sem campanha: N de N").
+ */
+export function estadoVazioDasCampanhas(
+  campanhas: Pick<CampanhasDoPeriodo, "leads">,
+): { titulo: string; descricao: string } {
+  return campanhas.leads > 0
+    ? TEXTOS_DO_VAZIO_DAS_CAMPANHAS.semCampanha
+    : TEXTOS_DO_VAZIO_DAS_CAMPANHAS.semLead;
+}
+
+function plural(n: number, singular: string, pluralizado: string): string {
+  return `${n.toLocaleString("pt-BR")} ${n === 1 ? singular : pluralizado}`;
+}
+
+/**
+ * Linhas de conferencia embaixo da tabela, para o custo por lead nao mentir:
+ * - "Investimento sem lead casado: R$ X em N campanhas" (so a gestao, com o
+ *   periodo inteiro lido e alguma campanha nessa situacao);
+ * - "Leads sem campanha: N de M" (todo papel, as contagens sao as mesmas);
+ * - "Leads de anúncio sem campanha reconhecida: K" (todo papel, quando ha):
+ *   entram no divisor do custo por lead, mas em nenhuma linha da Meta.
+ */
+export function rodapesDasCampanhas(
+  campanhas: CampanhasDoPeriodo,
+  podeVerValores: boolean,
+): string[] {
+  const linhas: string[] = [];
+  const investimento = campanhas.investimento;
+  if (
+    campanhasComValores(campanhas, podeVerValores) &&
+    investimento &&
+    coberturaDoInvestimento(investimento) === "completa" &&
+    investimento.campanhasSemLead > 0
+  ) {
+    linhas.push(
+      `Investimento sem lead casado: ${formatarReaisCompleto(
+        investimento.investimentoSemLeadCents,
+      )} em ${plural(investimento.campanhasSemLead, "campanha", "campanhas")}`,
+    );
+  }
+  if (campanhas.leads > 0) {
+    linhas.push(
+      `Leads sem campanha: ${campanhas.leadsSemCampanha.toLocaleString(
+        "pt-BR",
+      )} de ${campanhas.leads.toLocaleString("pt-BR")}`,
+    );
+  }
+  if (campanhas.leadsDeAnuncioSemCampanha > 0) {
+    linhas.push(
+      `Leads de anúncio sem campanha reconhecida: ${campanhas.leadsDeAnuncioSemCampanha.toLocaleString(
+        "pt-BR",
+      )}`,
+    );
+  }
+  return linhas;
 }
 
 export type LinhaDaAgenda = {
@@ -364,6 +576,10 @@ export type EntradaDaExportacao = {
   linhaDeBase?: LinhaDeBase;
   objetivo?: ObjetivoDeConversao;
   conversoes?: ConversoesResumo;
+  /** Fase 4: campanhas_do_periodo (investimento null fora da gestao) */
+  campanhas?: Periodizado<CampanhasDoPeriodo>;
+  /** Fuso da clinica: o "Atualizado em" do investimento sai nele */
+  timezone?: string;
   dimensaoOrigem: DimensaoDaOrigem;
   dimensaoAgenda: DimensaoDaAgenda;
 };
@@ -414,19 +630,97 @@ function secaoDoFunil(funil: FunilDoPeriodo): SecaoExportavel {
   };
 }
 
-function secaoDeCampanhas(funil: FunilDoPeriodo): SecaoExportavel {
+function celula(valor: CelulaDeCampanha | null): string {
+  return valor?.texto ?? "";
+}
+
+/** A tabela Campanhas como na tela, com as linhas de conferencia no fim. */
+function secaoDeCampanhas(
+  campanhas: CampanhasDoPeriodo,
+  podeVerValores: boolean,
+): SecaoExportavel {
+  const comValores = campanhasComValores(campanhas, podeVerValores);
+  const linhas = montarCampanhas(campanhas, podeVerValores);
+  const cabecalho = comValores
+    ? ["Campanha", "Investimento", "Leads", "Custo por lead", "Agendados", "Conversão"]
+    : ["Campanha", "Leads", "Agendados", "Conversão"];
   return {
     titulo: "Campanhas",
     linhas: [
-      ["Campanha", "Leads", "Agendados", "Conversão"],
-      ...montarCampanhas(funil).map((linha) => [
-        linha.rotulo,
-        numero(linha.leads),
-        numero(linha.agendaram),
-        linha.conversao,
-      ]),
+      cabecalho,
+      ...linhas.map((linha) =>
+        comValores
+          ? [
+              linha.rotulo,
+              celula(linha.investimento),
+              numero(linha.leads),
+              celula(linha.custoPorLead),
+              numero(linha.agendaram),
+              linha.conversao,
+            ]
+          : [
+              linha.rotulo,
+              numero(linha.leads),
+              numero(linha.agendaram),
+              linha.conversao,
+            ],
+      ),
+      ...rodapesDasCampanhas(campanhas, podeVerValores).map((texto) => [texto]),
+      ...(comValores ? [] : [[NOTA_DOS_VALORES_DAS_CAMPANHAS]]),
     ],
   };
+}
+
+/**
+ * As linhas do investimento nos Indicadores, so para a gestao: o custo por
+ * lead com o MESMO texto do cartao (textoDoCustoPorLead), o investimento do
+ * periodo (cheio, ou o estado quando nao ha medida), o divisor, de quando a
+ * quando o investimento foi lido, quando foi atualizado (no fuso da
+ * clinica) e o aviso de fuso da conta, o mesmo do cartao.
+ */
+function linhasDoInvestimento(
+  podeVerValores: boolean,
+  campanhas: Periodizado<CampanhasDoPeriodo> | undefined,
+  timezone: string | undefined,
+  divisor: DivisorDoCustoPorLead = DIVISOR_DO_CUSTO_POR_LEAD,
+): string[][] {
+  const atual = campanhas?.atual;
+  const investimento = atual?.investimento;
+  if (!podeVerValores || !atual || !investimento) {
+    return [];
+  }
+  const estadoDoCusto = estadoDoCustoPorLead(atual, divisor);
+  const cobertura = coberturaDoInvestimento(investimento);
+  const linhas: string[][] = [
+    ["Custo por lead", textoDoCustoPorLead(estadoDoCusto)],
+    [
+      "Investimento no período",
+      cobertura === "completa"
+        ? formatarReaisCompleto(investimento.investimentoCents)
+        : textoDoCustoPorLead(estadoDoCusto),
+    ],
+    [TEXTOS_DO_DIVISOR[divisor].rotulo, numero(leadsDoDivisor(atual, divisor))],
+  ];
+  if (investimento.lidoDesde) {
+    linhas.push([
+      "Investimento lido a partir de",
+      diaPorExtenso(investimento.lidoDesde),
+    ]);
+  }
+  if (investimento.lidoAte) {
+    linhas.push(["Investimento lido até", diaPorExtenso(investimento.lidoAte)]);
+  }
+  const atualizado = timezone
+    ? formatarAtualizadoEm(investimento.sincronizadoEm, timezone)
+    : null;
+  if (atualizado) {
+    linhas.push(["Investimento atualizado em", atualizado]);
+  }
+  const avisoDeFuso = timezone ? avisoDeFusoDaConta(investimento, timezone) : null;
+  if (avisoDeFuso) {
+    linhas.push(["Fuso do investimento", avisoDeFuso]);
+  }
+  return linhas;
 }
 
 function linhasDoFaturamento(
@@ -511,9 +805,13 @@ function montarGeral(entrada: EntradaDaExportacao): SecaoExportavel[] {
         `${formatarPercentualDoObjetivo(entrada.objetivo.percentual)}%`,
       ]);
     }
-    if (entrada.podeVerValores) {
-      indicadores.push(["Custo por lead", "Ainda não medido"]);
-    }
+    indicadores.push(
+      ...linhasDoInvestimento(
+        entrada.podeVerValores,
+        entrada.campanhas,
+        entrada.timezone,
+      ),
+    );
     indicadores.push(
       ...linhasDoFaturamento(entrada.podeVerValores, entrada.faturamento),
     );
@@ -564,8 +862,10 @@ function montarGeral(entrada: EntradaDaExportacao): SecaoExportavel[] {
       ],
     });
   }
-  if (funil) {
-    secoes.push(secaoDeCampanhas(funil));
+  if (entrada.campanhas) {
+    secoes.push(
+      secaoDeCampanhas(entrada.campanhas.atual, entrada.podeVerValores),
+    );
   }
   return secoes;
 }
@@ -588,28 +888,43 @@ function montarMarketing(entrada: EntradaDaExportacao): SecaoExportavel[] {
         percentualOuSemDados(funil.coorte.compareceram, funil.coorte.leads),
       ],
     ];
-    if (entrada.podeVerValores) {
-      indicadores.push(["Custo por lead", "Ainda não medido"]);
-    }
+    indicadores.push(
+      ...linhasDoInvestimento(
+        entrada.podeVerValores,
+        entrada.campanhas,
+        entrada.timezone,
+      ),
+    );
     secoes.push({ titulo: "Indicadores do período", linhas: indicadores });
     secoes.push(secaoDeOrigem(funil));
-    secoes.push({
-      titulo:
-        entrada.dimensaoOrigem === "canal"
-          ? "Detalhe por canal"
-          : "Detalhe por campanha",
-      linhas: [
-        ["Origem", "Leads", "Agendaram", "Compareceram", "Comparecimento"],
-        ...montarDetalheDeOrigem(funil, entrada.dimensaoOrigem).map((linha) => [
-          linha.rotulo,
-          numero(linha.leads),
-          numero(linha.agendaram),
-          numero(linha.compareceram),
-          linha.comparecimento,
-        ]),
-      ],
-    });
-    secoes.push(secaoDeCampanhas(funil));
+    const detalhe = montarDetalheDeOrigem(
+      funil,
+      entrada.dimensaoOrigem,
+      entrada.campanhas?.atual,
+    );
+    if (detalhe) {
+      secoes.push({
+        titulo:
+          entrada.dimensaoOrigem === "canal"
+            ? "Detalhe por canal"
+            : "Detalhe por campanha",
+        linhas: [
+          ["Origem", "Leads", "Agendaram", "Compareceram", "Comparecimento"],
+          ...detalhe.map((linha) => [
+            linha.rotulo,
+            numero(linha.leads),
+            linha.agendaram === null ? "" : numero(linha.agendaram),
+            linha.compareceram === null ? "" : numero(linha.compareceram),
+            linha.comparecimento,
+          ]),
+        ],
+      });
+    }
+    if (entrada.campanhas) {
+      secoes.push(
+        secaoDeCampanhas(entrada.campanhas.atual, entrada.podeVerValores),
+      );
+    }
   }
   const conversoes = entrada.conversoes;
   if (conversoes) {

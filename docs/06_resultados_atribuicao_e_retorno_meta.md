@@ -212,6 +212,8 @@ create table funnel_conversion_map (
 
 ### 5.3 Conta de anúncios e segredo (só se o CAPI for feito no Conduzza)
 
+> **Esquema real no `docs/04`, seção 14.1** (conferido na produção em 03/10/2026): a conta saiu com `envio_ativado`, `modo_user_data` e `whatsapp_business_account_id` no lugar de `enabled` e `business_id`, e `send_unmatched` nasce falso. Desde a Fase 4 das métricas (seção 14 do `docs/04`), `ad_account_id` é sempre `act_` seguido dos números, o segredo ganhou o token de leitura de anúncios (`insights_access_token`) e perdeu todo grant da sessão. O SQL abaixo fica como o esboço de 08/09.
+
 ```sql
 create table meta_ads_account (
   clinic_id uuid primary key references clinic(id) on delete cascade,
@@ -296,6 +298,7 @@ Cada tarefa fecha pela Definição de Pronto do `CLAUDE.md` seção 6 (build/typ
 
 ### R0. Verificar o referral da uazapi `[PENDENTE]` (Caminho B, ver seção 4)
 Capturar payload real de anúncio CTWA e ver se tem `ctwa_clid`. Sem código de produção.
+> **Resultado em produção (01 e 02/10/2026) `[OK]`:** com a estrutura de captura do R1 já ligada, 8 contatos de uma clínica chegaram com `ctwa_clid` e o id do anúncio, todos do mesmo anúncio, e nenhum com o id do conjunto ou da campanha. A uazapi entrega o clique e o anúncio; a campanha vem da leitura do investimento (R7), que liga o anúncio à campanha pelos dados da própria Meta. Detalhe no `docs/07_r0_captura_ctwa_uazapi.md`.
 
 ### R1. Persistir o referral da uazapi `P` (Caminho B, se R0 der positivo)
 Estender `inbound.ts` + `ingest.ts` para extrair e gravar `ctwa_clid` e ids do anúncio no nascimento do contato.
@@ -316,6 +319,9 @@ Implementar `app/(app)/relatorios` seguindo Módulo 10 e Telas 5/11: 4 indicador
 
 ### R6. Configurações da Meta `M`
 Aba para `pixel_id`, `ad_account_id`, `capi_access_token`, `test_event_code`, interruptor `send_unmatched`. Só admin/gestor; token só na tabela-secret.
+
+### R7. Investimento da Meta e custo por lead `G` (Fase 4 do plano "Métricas do design", construída em 03/10/2026, publicação pendente)
+Fora deste plano original: o escopo foi decidido pelo dono em 29/09/2026 (backlog, entrada "Métricas do design", Fase 4). O investimento é lido sozinho da conta de anúncios da clínica (Marketing API, Insights), por anúncio e por dia e o total da conta, com um **token de leitura de anúncios** próprio (ads_read), separado do token da CAPI. O lead é ligado à campanha só por identificador: o `source_ad_id` capturado do clique (R1) aponta o anúncio, e o anúncio aponta a campanha pelos dados da própria Meta (tabela `meta_anuncio`). Preenche o Custo por lead e as colunas Investimento e Custo por lead de Campanhas em Resultados, só para administrador e gestor. Ler o investimento não manda dado pessoal para a Meta, então **não depende da D6**. Modelo no `docs/04` (seção 14), arquitetura no `docs/03` (seção 12), telas no `docs/02` (Telas 11 e 12), operação no `supabase/operacao/motor-por-cron.md`. Decisões do dono pendentes no backlog (D1 a D4): o caminho do lead de link pelo `campaign_link` não foi construído, nem a origem gravada do lead de anúncio.
 
 **Ordem sugerida (Caminho B):** **R0 primeiro** (decide a viabilidade). Em paralelo, R2 e R5 (mapa de conversão e tela de Resultados, que não dependem do R0). Se R0 der positivo: R1 -> R3 -> R4 -> R6. Ponte opcional enquanto isso: RA1, para não perder a atribuição que ainda vem do Tintim. Quando o Conduzza capturar e disparar sozinho, desligar o n8n e o Tintim.
 

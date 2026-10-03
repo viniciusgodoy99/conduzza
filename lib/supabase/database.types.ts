@@ -1956,23 +1956,220 @@ export type Database = {
           capi_access_token: string | null
           clinic_id: string
           created_at: string
+          insights_access_token: string | null
           updated_at: string
         }
         Insert: {
           capi_access_token?: string | null
           clinic_id: string
           created_at?: string
+          insights_access_token?: string | null
           updated_at?: string
         }
         Update: {
           capi_access_token?: string | null
           clinic_id?: string
           created_at?: string
+          insights_access_token?: string | null
           updated_at?: string
         }
         Relationships: [
           {
             foreignKeyName: "meta_ads_account_secret_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_anuncio: {
+        Row: {
+          ad_account_id: string
+          ad_id: string
+          adset_id: string | null
+          atualizado_em: string
+          campaign_id: string
+          campaign_name: string | null
+          clinic_id: string
+          ultimo_dia_com_entrega: string
+        }
+        Insert: {
+          ad_account_id: string
+          ad_id: string
+          adset_id?: string | null
+          atualizado_em?: string
+          campaign_id: string
+          campaign_name?: string | null
+          clinic_id: string
+          ultimo_dia_com_entrega: string
+        }
+        Update: {
+          ad_account_id?: string
+          ad_id?: string
+          adset_id?: string | null
+          atualizado_em?: string
+          campaign_id?: string
+          campaign_name?: string | null
+          clinic_id?: string
+          ultimo_dia_com_entrega?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_anuncio_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_gasto_conta_diario: {
+        Row: {
+          ad_account_id: string
+          clinic_id: string
+          currency: string
+          dia: string
+          sincronizado_em: string
+          spend_cents: number
+        }
+        Insert: {
+          ad_account_id: string
+          clinic_id: string
+          currency: string
+          dia: string
+          sincronizado_em?: string
+          spend_cents: number
+        }
+        Update: {
+          ad_account_id?: string
+          clinic_id?: string
+          currency?: string
+          dia?: string
+          sincronizado_em?: string
+          spend_cents?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_gasto_conta_diario_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_gasto_diario: {
+        Row: {
+          ad_account_id: string
+          ad_id: string
+          adset_id: string | null
+          campaign_id: string
+          campaign_name: string | null
+          clinic_id: string
+          currency: string
+          dia: string
+          sincronizado_em: string
+          spend_cents: number
+        }
+        Insert: {
+          ad_account_id: string
+          ad_id: string
+          adset_id?: string | null
+          campaign_id: string
+          campaign_name?: string | null
+          clinic_id: string
+          currency: string
+          dia: string
+          sincronizado_em?: string
+          spend_cents: number
+        }
+        Update: {
+          ad_account_id?: string
+          ad_id?: string
+          adset_id?: string | null
+          campaign_id?: string
+          campaign_name?: string | null
+          clinic_id?: string
+          currency?: string
+          dia?: string
+          sincronizado_em?: string
+          spend_cents?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_gasto_diario_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_gasto_leitura: {
+        Row: {
+          ad_account_id: string | null
+          atualizacao_pedida_em: string | null
+          clinic_id: string
+          codigo_da_meta: number | null
+          conta_ativa: boolean | null
+          created_at: string
+          fuso_da_conta: string | null
+          lido_ate: string | null
+          lido_desde: string | null
+          moeda: string | null
+          nome_da_conta: string | null
+          problema: string | null
+          sincronizado_em: string | null
+          situacao: string
+          tentado_em: string | null
+          testada_em: string | null
+          ultimo_diario_dia: string | null
+          updated_at: string
+        }
+        Insert: {
+          ad_account_id?: string | null
+          atualizacao_pedida_em?: string | null
+          clinic_id: string
+          codigo_da_meta?: number | null
+          conta_ativa?: boolean | null
+          created_at?: string
+          fuso_da_conta?: string | null
+          lido_ate?: string | null
+          lido_desde?: string | null
+          moeda?: string | null
+          nome_da_conta?: string | null
+          problema?: string | null
+          sincronizado_em?: string | null
+          situacao?: string
+          tentado_em?: string | null
+          testada_em?: string | null
+          ultimo_diario_dia?: string | null
+          updated_at?: string
+        }
+        Update: {
+          ad_account_id?: string | null
+          atualizacao_pedida_em?: string | null
+          clinic_id?: string
+          codigo_da_meta?: number | null
+          conta_ativa?: boolean | null
+          created_at?: string
+          fuso_da_conta?: string | null
+          lido_ate?: string | null
+          lido_desde?: string | null
+          moeda?: string | null
+          nome_da_conta?: string | null
+          problema?: string | null
+          sincronizado_em?: string | null
+          situacao?: string
+          tentado_em?: string | null
+          testada_em?: string | null
+          ultimo_diario_dia?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_gasto_leitura_clinic_id_fkey"
             columns: ["clinic_id"]
             isOneToOne: true
             referencedRelation: "clinic"
@@ -3539,6 +3736,15 @@ export type Database = {
         }
         Returns: Json
       }
+      campanhas_do_periodo: {
+        Args: {
+          p_ate: string
+          p_clinic_id: string
+          p_de: string
+          p_de_anterior?: string
+        }
+        Returns: Json
+      }
       cancelar_reoferta_de_espera: {
         Args: { p_clinic_id: string; p_offer_id: string }
         Returns: boolean
@@ -3701,6 +3907,24 @@ export type Database = {
         Returns: boolean
       }
       expirar_ofertas_de_espera: { Args: never; Returns: number }
+      enfileirar_gasto_meta_do_dia: {
+        Args: {
+          p_agora?: string
+          p_clinic_ids?: string[]
+          p_incluir_teste?: boolean
+          p_limite?: number
+        }
+        Returns: number
+      }
+      enfileirar_sincronizacao_de_gasto_meta: {
+        Args: {
+          p_agora?: string
+          p_clinic_id: string
+          p_incluir_teste?: boolean
+          p_origem: string
+        }
+        Returns: Json
+      }
       encerrar_envios_da_oferta: {
         Args: { p_clinic_id: string; p_offer_id: string }
         Returns: number
@@ -3933,6 +4157,24 @@ export type Database = {
         Args: { p_appointment_id: string; p_kind: string }
         Returns: string
       }
+      regravar_gasto_meta: {
+        Args: {
+          p_ad_account_id: string
+          p_ate: string
+          p_clinic_id: string
+          p_conta_ativa: boolean
+          p_da_conta: Json
+          p_desde: string
+          p_fuso: string
+          p_job_id: string
+          p_moeda: string
+          p_nome_da_conta: string
+          p_por_anuncio: Json
+          p_token_sha256: string
+          p_worker: string
+        }
+        Returns: string
+      }
       registrar_apagamento_do_whatsapp: {
         Args: {
           p_clinic_id: string
@@ -3940,6 +4182,18 @@ export type Database = {
           p_whatsapp_account_id?: string
         }
         Returns: Json
+      }
+      registrar_falha_do_gasto_meta: {
+        Args: {
+          p_ad_account_id: string
+          p_clinic_id: string
+          p_codigo?: number
+          p_job_id: string
+          p_problema: string
+          p_token_sha256: string
+          p_worker: string
+        }
+        Returns: string
       }
       remover_numero: {
         Args: {

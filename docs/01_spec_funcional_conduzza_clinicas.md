@@ -465,6 +465,15 @@ Não foi citada na reunião. Entra no V1 porque é o recurso de maior ROI da lis
 10.9. **Bloco de custo:** mensagens enviadas, custo do mês, comparação com o teto.
 10.10. Comparação com o período anterior.
 10.11. Exportação em CSV e PDF.
+10.12. **Investimento em anúncio e custo por lead** (escopo decidido pelo dono em 29/09/2026; construído em 03/10/2026 na Fase 4 das métricas, publicação pendente). O investimento é lido sozinho da conta de anúncios da Meta da clínica (11.14): por anúncio e por dia, mais o total da conta por dia.
+   - **Quando lê:** uma vez por dia, a partir das 06:00 no fuso da clínica; logo depois de um teste de leitura que dá certo; e quando administrador ou gestor pede "Atualizar agora" em Configurações (no máximo um pedido a cada 10 minutos). Cada leitura regrava os últimos 30 dias, porque a Meta ainda ajusta o gasto até 28 dias depois. A primeira leitura, a de uma conta nova e a da volta depois de mais de 30 dias parada leem 60 dias (decisão do dono pendente, backlog D4).
+   - **Fuso:** os dias do investimento são os da conta de anúncios, que é como a Meta entrega. Quando o fuso da conta tem outro horário que o da clínica, a tela avisa.
+   - **Ligação com o lead só por identificador, nunca por nome:** o anúncio de onde o lead veio (capturado do clique no anúncio Click-to-WhatsApp) e, sem ele, o id da campanha. A campanha de cada anúncio vem dos dados da própria Meta. O primeiro anúncio vence: um clique seguinte em outro anúncio não muda a campanha do lead. O lead que chega por link com código ou palavra-chave não é ligado ao investimento (decisão do dono pendente, backlog D1).
+   - **Custo por lead** = investimento total da conta no período ÷ leads de anúncio do período, isto é, os que chegaram com o clique do anúncio ou com o id do anúncio ou da campanha (decisão do dono pendente, backlog D2; trocar o divisor é trocar uma constante). Só há número quando o período inteiro foi lido e a conta é em real; senão a tela diz "Ainda não medido" e o porquê. Conta em outra moeda nunca é convertida.
+   - **Tabela de campanhas:** por campanha da Meta, investimento, leads, custo por lead, agendados e conversão. A campanha da clínica que não é da Meta (nome digitado ou importado) conta leads, sem investimento. Embaixo, as linhas de conferência: o investimento que não casou com lead nenhum, os leads sem campanha e os leads de anúncio sem campanha reconhecida.
+   - **Valores em reais só para administrador e gestor**, no banco e na tela. As contagens de leads são as mesmas para todo papel.
+   - Ler o investimento não envia dado de paciente à Meta: a leitura só pede números da conta de anúncios.
+   - O lead de anúncio ainda não ganha origem gravada (canal Tráfego pago): decisão do dono pendente (backlog D3).
 
 ---
 
@@ -484,6 +493,11 @@ Não foi citada na reunião. Entra no V1 porque é o recurso de maior ROI da lis
 11.11. Exportação e exclusão de dados do titular (LGPD, arts. 18 e 19).
 11.12. Termo de uso e política de privacidade por clínica, com aceite registrado.
 11.13. Retenção configurável de conversa.
+11.14. **Conta de anúncios da Meta e token de leitura** (aba Anúncios da Meta; a leitura do investimento foi construída em 03/10/2026, Fase 4 das métricas). Uma conta de anúncios por clínica, gravada sempre como `act_` seguido dos números: a tela aceita só os números, com ou sem act_ na frente, e o link do Gerenciador de Anúncios. A mesma conta serve à devolução de conversões e à leitura do investimento (10.12).
+   - O **token de leitura de anúncios** (permissão ads_read na conta) é um segredo próprio, separado do token da API de conversões. Pode ser o mesmo valor, se esse token tiver a permissão. Só se cola: nunca volta para a tela nem para log, e só o servidor o lê.
+   - **"Testar leitura"** confere na hora o token e a conta, e mostra o nome da conta, a moeda e os avisos (outra moeda, conta inativa, fuso com outro horário). Salvar um token novo testa em seguida.
+   - Se a Meta recusa o token, a permissão ou a conta, a leitura diária para até o teste dar certo, um token novo ser salvo ou a conta mudar.
+   - Administrador e gestor. Salvar, testar, remover o token e pedir atualização vão para a trilha de auditoria, sem o valor do token.
 
 ---
 
@@ -623,6 +637,12 @@ Regua (tipo: followup | confirmacao | pos_falta | reativacao)
 EventoAtribuicao (contato_id, canal, origem, midia, campanha, capturado_em, metodo)
 LogAuditoria (usuario_id, acao, entidade, entidade_id, quando, ip)
 
+ContaDeAnuncios (conta act_..., pixel, token_conversoes*, token_leitura*)   <- * segredo, so o servidor le
+ |- LeituraDoInvestimento (situacao, problema, lido_desde, lido_ate, atualizado_em)  <- 03/10/2026, so o sistema escreve
+ |- GastoPorAnuncioNoDia (dia da conta, anuncio, campanha, valor)                    <- 03/10/2026, so admin e gestor leem
+ |- GastoDaContaNoDia (dia da conta, valor)                                           <- 03/10/2026, total da conta
+ |- Anuncio (anuncio, campanha, nome da campanha)                                     <- 03/10/2026, sem valor
+
 EtapaDaJornada (chave, nome, papel, termos_chave[], termos_de_quem, descricao)  <- termos_de_quem e descricao desde 02/10/2026
 MensagemPadrao (atalho, titulo, corpo, ativo, posicao)                        <- 02/10/2026, so texto
 Atividade (contato_id, conversa_id, titulo, detalhes, para_o_dia, hora, responsavel_id,
@@ -651,7 +671,7 @@ AutomacaoDeFluxo (etapa, gatilho, espera, acao, destino | etiqueta | atividade |
 | 7. Follow-up | Réguas por etapa, texto fixo ou IA, janela de envio, bloqueio sem opt-in, métricas |
 | 8. Confirmação | Régua geral por clínica e régua vinculada a médico, especialidade ou procedimento (confirmação e pós falta, desde 29/09/2026), botões de resposta rápida, painel do dia, régua pós falta, relatório de eficácia |
 | 9. Lista de espera | Fila, reoferta automática ao cancelar, métrica de recuperação |
-| 10. Dashboard | 4 indicadores, funil, origem por canal, desempenho da IA, custo |
+| 10. Dashboard | 4 indicadores, funil, origem por canal, desempenho da IA, custo. Desde 03/10/2026 (construído, publicação pendente): investimento lido da conta de anúncios da Meta, custo por lead e as colunas de investimento da tabela de campanhas (10.12) |
 | 11. Config | Multi-tenant, white-label, perfis, Cloud API, verificação Meta, templates, teto de gasto, opt-in, auditoria |
 | 12. Assinatura | Planos, gateway, inadimplência, cancelamento autoatendido, painel do dono |
 | 14. Automações de fluxo | Escopo acrescentado em 02/10/2026: mover de etapa, etiquetar, criar atividade e nota interna por gatilho de etapa, sem envio ao paciente |

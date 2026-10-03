@@ -223,6 +223,9 @@ create table contact (
   -- atribuição de origem, preservada para sempre
   source_channel text, source_origin text, source_medium text, source_campaign text,
   source_captured_at timestamptz, source_method text,
+  -- ids do anúncio da Meta (08/09/2026; só a ingestão grava, o primeiro
+  -- anúncio vence e a sessão não reescreve desde a Fase 4): seção 14
+  ctwa_clid text, source_ad_id text, source_adset_id text, source_campaign_id text,
   first_contact_at timestamptz not null default now(),
   last_contact_at timestamptz,
   inactive_since timestamptz,
@@ -634,19 +637,43 @@ create table cadence_run (
     (cadence_step_id, contact_id, appointment_id, scheduled_for)
 );
 
+-- Conferida na produção em 03/10/2026 (substitui o esboço original, que
+-- tinha id bigserial, completed_at e os tipos process_inbound,
+-- run_cadence_step, expire_holds e waitlist_offer). Executada pelo motor por
+-- pg_cron (supabase/operacao/motor-por-cron.md).
 create table job_queue (
-  id bigserial primary key,
-  clinic_id uuid references clinic(id) on delete cascade,
-  kind text not null,                       -- process_inbound | run_cadence_step | expire_holds | waitlist_offer
-  payload jsonb not null,
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  kind text not null check (kind in (
+    'enviar_mensagem_ativa', 'baixar_midia', 'executar_passo_de_regua',
+    'enviar_conversao_meta', 'oferecer_lista_espera',
+    'sincronizar_gasto_meta')),             -- o último desde 20261003100000 (seção 14)
+  payload jsonb not null default '{}',
+  status text not null default 'pendente'
+    check (status in ('pendente','executando','concluido','falhou','cancelado')),
   run_at timestamptz not null default now(),
   attempts integer not null default 0,
-  max_attempts integer not null default 5,
+  max_attempts integer not null default 8,  -- o job de gasto da Meta nasce com 5
+  locked_by text,                           -- lease do motor
   locked_at timestamptz,
-  completed_at timestamptz,
-  last_error text
+  last_error text,                          -- só código curto, nunca conteúdo de mensagem nem token
+  devolucoes integer not null default 0,    -- voltas sem queimar tentativa (reagendar_job)
+  ultimo_motivo_devolucao text,             -- ex.: orcamento_da_passagem, limite_da_meta, config_mudou
+  prioridade smallint not null default 0 check (prioridade in (0, 1)),
+  whatsapp_account_id uuid references whatsapp_account(id), -- raia do envio (docs/07); nulo = raia da clínica
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
-create index on job_queue (run_at) where completed_at is null;
+create index job_queue_prontos_idx on job_queue (run_at) where status = 'pendente';
+create index job_queue_lease_idx on job_queue (locked_at) where status = 'executando';
+create index job_queue_clinic_idx on job_queue (clinic_id);
+create index job_queue_clinica_pendente_idx on job_queue (clinic_id, run_at) where status = 'pendente';
+create index job_queue_clinica_prioridade_idx on job_queue (clinic_id, prioridade, run_at) where status = 'pendente';
+create index job_queue_numero_prioridade_idx on job_queue (whatsapp_account_id, prioridade, run_at)
+  where status = 'pendente' and whatsapp_account_id is not null;
+-- Fase 4 (seção 14): no máximo UM job de gasto da Meta vivo por clínica.
+create unique index job_queue_gasto_meta_vivo on job_queue (clinic_id)
+  where kind = 'sincronizar_gasto_meta' and status in ('pendente', 'executando');
 ```
 
 > **Régua vinculada (decisão do dono em 29/09/2026, migration `20260929110000_regua_vinculada.sql`).** Cada régua de confirmação ou de pós falta pode ter **um** vínculo: um procedimento (`procedure_id`, que já existia), um profissional (`professional_id`) ou uma especialidade (`specialty`). Sem vínculo, é a régua geral, que o código lê como `procedure_id is null and professional_id is null and specialty is null and not for_no_show_history`. Follow-up não tem vínculo (`followup_sem_excecao`).
@@ -850,6 +877,11 @@ create index professional_insurance_clinic_id_idx on professional_insurance (cli
 create index professional_insurance_insurance_id_idx on professional_insurance (insurance_id);
 create index procedure_insurance_clinic_id_idx on procedure_insurance (clinic_id);
 create index procedure_insurance_insurance_id_idx on procedure_insurance (insurance_id);
+-- Investimento da Meta (Fase 4, 03/10/2026, migration 20261003100000), seção 14.
+-- Gasto por campanha no período e anúncios de uma campanha. O índice único
+-- job_queue_gasto_meta_vivo está na seção 7.
+create index meta_gasto_diario_campanha_idx on meta_gasto_diario (clinic_id, campaign_id, dia);
+create index meta_anuncio_campanha_idx on meta_anuncio (clinic_id, campaign_id);
 ```
 
 ---
@@ -1222,7 +1254,7 @@ As duas são `SECURITY DEFINER`, com `execute` só para `service_role`, e rodam 
 
 ## 13. Convênio pelo médico (02/10/2026)
 
-Pedido e decisão do dono em 02/10/2026 (spec 3.4 e 3.5; backlog, entrada "Convênio pelo médico"): o profissional diz quais convênios atende, o procedimento diz quais convênios o cobrem, e o convênio do profissional entra sozinho só onde ele faz o procedimento e o convênio cobre. Migration `20261002140000_convenio_pelo_medico.sql`, ensaiada em transação desfeita e **não aplicada em 02/10** (a produção está na `20261002110000`); pressupõe as duas do CRM (seção 12) e não edita nenhuma delas. Os tipos de `lib/supabase/database.types.ts` (as duas tabelas, a RPC nova e a assinatura nova da RPC do procedimento) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar as três.
+Pedido e decisão do dono em 02/10/2026 (spec 3.4 e 3.5; backlog, entrada "Convênio pelo médico"): o profissional diz quais convênios atende, o procedimento diz quais convênios o cobrem, e o convênio do profissional entra sozinho só onde ele faz o procedimento e o convênio cobre. Migration `20261002140000_convenio_pelo_medico.sql`, ensaiada em transação desfeita e **aplicada em produção em 02/10/2026**, depois das duas do CRM e seguida da correção `20261002150000` (seção 13.5); pressupõe as duas do CRM (seção 12) e não edita nenhuma delas. Os tipos de `lib/supabase/database.types.ts` (as duas tabelas, a RPC nova e a assinatura nova da RPC do procedimento) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar as três.
 
 **`service_link` continua sendo a fonte** da agenda, da IA, do preço, dos relatórios e das conversões. As tabelas novas são lidas só pelo cadastro e pelas duas RPCs. Nenhum gatilho novo em `service_link`, nem de recusa nem de espelho: a recusa quebraria o código publicado e as fixtures durante a transição, e o espelho faria uma aba parada remarcar o convênio no profissional sem ninguém ver.
 
@@ -1279,3 +1311,175 @@ Regras comuns: `SECURITY INVOKER` (a RLS de `service_link`, das tabelas novas e 
 **Ordem:** aplicar depois da `20261002120000` e da `20261002130000`, **antes** do código novo. A migration é compatível com o código publicado (modo legado, parâmetros opcionais): sem ela, o código novo quebra Cadastros (a matriz não tem `.catch`, de propósito), e o `scripts/dev/demo-catalogo.ts` e as fixtures do e2e, que gravam os pares, param no meio.
 
 **Rollback** (cabeçalho da migration): apagar `sincronizar_convenios_do_profissional(uuid, uuid[], uuid[], boolean)` e `sincronizar_vinculos_do_procedimento(uuid, jsonb, uuid[], jsonb, uuid[], boolean)`; rodar de novo o `create`, o `revoke`/`grant` e o `comment` da função de 2 argumentos de `20260929100000_vinculos_do_procedimento.sql`; apagar `procedure_insurance`, `professional_insurance` e `exigir_convenio_da_mesma_clinica()`. Os vínculos criados ou desativados pela cascata ficam como estão (são `service_link` comum).
+
+---
+
+## 14. Investimento da Meta (Fase 4 das métricas, 03/10/2026)
+
+Escopo decidido pelo dono em 29/09/2026 (spec 10.12 e 11.14; backlog, entrada "Métricas do design", Fase 4). Duas migrations, ensaiadas em transação desfeita e **aplicadas em produção em 03/10/2026**, depois da `20261002150000`:
+
+- **A**, `20261003100000_investimento_da_meta.sql`: o token de leitura, o formato da conta, as quatro tabelas, o tipo novo da fila, as quatro funções do job, o gatilho da troca de conta e `motor_manutencao` com o diário.
+- **B**, `20261003110000_campanhas_do_periodo.sql`: a proteção da atribuição de anúncio no contato e `campanhas_do_periodo`, que Resultados lê.
+
+Os tipos de `lib/supabase/database.types.ts` (as quatro tabelas, a coluna nova e as cinco funções) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar as duas.
+
+### 14.1 O que já existia e não estava neste documento
+
+Registro do que as frentes da Meta de 25/08 a 10/09/2026 criaram (conferido na produção em 03/10/2026):
+
+- **`campaign_link`** (`20260825100000`): a regra de atribuição por texto de cada campanha da clínica (`name`, `token` do link, `channel`, `origin`, `medium`, `campaign`, `default_message`, `keywords`, `active`), único por `(clinic_id, upper(token))`. Membro ativo lê; administrador e gestor gravam. Em 03/10/2026 tem 0 linhas e não tem tela (as actions `salvarCampanhaAction` e `desativarCampanhaAction` existem sem uso); o contato guarda só o texto da campanha (`source_campaign`), não o id da regra.
+- **`contact.ctwa_clid`, `source_ad_id`, `source_adset_id`, `source_campaign_id`** (`20260908150000`): os ids do clique no anúncio Click-to-WhatsApp e do anúncio, do conjunto e da campanha na Meta, gravados pela ingestão (service role). O primeiro anúncio vence: o update da ingestão só acontece enquanto `ctwa_clid` **e** `source_ad_id` estão nulos (o segundo filtro entrou na Fase 4). Os `source_*` de nome (`source_channel`, `source_origin`, `source_medium`, `source_campaign`, `source_method`, `source_captured_at`) continuam sendo a origem por texto, vigiada por `impedir_reatribuicao_de_origem`.
+- **`meta_ads_account`** (`20260910100000` e `20260910120000`): uma linha por clínica, com `pixel_id`, `ad_account_id`, `test_event_code`, `envio_ativado`, `modo_user_data` (nulo até a decisão D6 de LGPD), `send_unmatched` e `whatsapp_business_account_id`. Administrador e gestor leem e gravam (policy `for all`).
+- **`meta_ads_account_secret`**: o token da API de conversões (`capi_access_token`). RLS ligada sem policy; só a service role.
+- **`conversion_event`** (`20260910110000`): a conversão registrada no movimento do funil (`stage_chave`, `event_name`, `event_id`, `value_cents`, `currency`, `ctwa_clid`, `status`, `sent_at`, `erro`), uma por contato por etapa, enviada pelo job `enviar_conversao_meta` quando o envio for ligado.
+
+### 14.2 O que a migration A muda nas tabelas que existiam
+
+```sql
+alter table meta_ads_account_secret add column insights_access_token text
+  check (insights_access_token is null or char_length(insights_access_token) between 20 and 500);
+-- Token de leitura de anúncios (ads_read), separado do token da CAPI de propósito.
+revoke all on meta_ads_account_secret from anon, authenticated;  -- a sessão recebe 42501
+
+alter table meta_ads_account add constraint ad_account_id_formato
+  check (ad_account_id is null or ad_account_id ~ '^act_[0-9]{5,20}$');  -- 0 linhas em produção em 03/10
+```
+
+A Server Action da conta normaliza antes de gravar (`normalizarContaDeAnuncios`, `lib/domain/meta-anuncios.ts`): aceita só os números, `act_` ou `ACT_` na frente, espaços no meio e o link do Gerenciador de Anúncios com `?act=`. O que não bate com o CHECK é recusado (23514).
+
+### 14.3 As quatro tabelas novas
+
+Todas com `clinic_id not null` e cascata da clínica, RLS ligada e **nenhuma escrita pela sessão**: `anon` sem privilégio; `authenticated` sem `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES` e `TRIGGER`. Quem escreve: o job e as Server Actions de Configurações pelo cliente de serviço (depois da guarda de papel) e as funções `SECURITY DEFINER` de 14.4.
+
+```sql
+create table meta_gasto_leitura (          -- situação da leitura, uma linha por clínica
+  clinic_id uuid primary key references clinic(id) on delete cascade,
+  ad_account_id text,                      -- conta dos dados lidos (act_...); só regravar_gasto_meta escreve
+  situacao text not null default 'nao_testada'
+    check (situacao in ('nao_testada', 'funcionando', 'com_problema')),
+  problema text check (problema in (
+    'token_invalido', 'sem_permissao', 'conta_sem_acesso', 'exige_prova_do_app',
+    'parametro_recusado', 'versao_descontinuada', 'consulta_pesada', 'limite_da_meta',
+    'meta_indisponivel', 'resposta_invalida', 'prazo_esgotado', 'outro')),
+  codigo_da_meta integer,                  -- error.code da Meta, para o suporte; nunca a mensagem
+  nome_da_conta text,                      -- até 200
+  moeda text,                              -- ^[A-Z]{3}$
+  fuso_da_conta text,                      -- até 64
+  conta_ativa boolean,
+  testada_em timestamptz,
+  lido_desde date, lido_ate date,          -- dias no fuso da CONTA
+  sincronizado_em timestamptz,             -- última leitura que deu certo
+  tentado_em timestamptz,                  -- última tentativa do job (certa ou não)
+  atualizacao_pedida_em timestamptz,       -- último "Atualizar agora"
+  ultimo_diario_dia date,                  -- dia no fuso da CLÍNICA em que o diário já enfileirou
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),   -- set_updated_at
+  constraint problema_so_com_problema check ((situacao = 'com_problema') = (problema is not null)),
+  constraint janela_lida check (lido_desde is null or lido_ate is null or lido_desde <= lido_ate)
+);
+-- SELECT: user_has_role(clinic_id, array['admin','gestor']).
+
+create table meta_gasto_diario (           -- gasto por anúncio e por dia
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  ad_account_id text not null,             -- act_...
+  dia date not null,                       -- date_start do insights: dia civil no fuso da CONTA
+  ad_id text not null, adset_id text, campaign_id text not null,   -- só dígitos, até 32
+  campaign_name text,                      -- até 400
+  spend_cents bigint not null check (spend_cents >= 0),            -- centésimos da moeda da conta, nunca convertido
+  currency text not null,                  -- ^[A-Z]{3}$
+  sincronizado_em timestamptz not null default now(),
+  primary key (clinic_id, dia, ad_id)
+);
+-- SELECT: admin e gestor.
+
+create table meta_gasto_conta_diario (     -- total da conta por dia (insights level=account)
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  ad_account_id text not null, dia date not null,
+  spend_cents bigint not null check (spend_cents >= 0), currency text not null,
+  sincronizado_em timestamptz not null default now(),
+  primary key (clinic_id, dia)
+);
+-- SELECT: admin e gestor. Cobre anúncio arquivado ou apagado e post impulsionado,
+-- que podem sumir do level=ad: é o numerador do custo por lead.
+
+create table meta_anuncio (                -- anúncio -> campanha, SEM dinheiro
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  ad_id text not null, ad_account_id text not null,
+  adset_id text, campaign_id text not null, campaign_name text,
+  ultimo_dia_com_entrega date not null,
+  atualizado_em timestamptz not null default now(),
+  primary key (clinic_id, ad_id)
+);
+-- SELECT: todo membro ativo (user_active_clinic_ids), para a recepção ver o lead
+-- de anúncio na mesma campanha que a gestão vê. Pendente não lê.
+```
+
+**Pausa** não é coluna: é `situacao = 'com_problema'` com `problema` em `token_invalido`, `sem_permissao`, `conta_sem_acesso` ou `exige_prova_do_app` (a mesma lista em `PROBLEMAS_QUE_PAUSAM`, `lib/domain/meta-anuncios.ts`, e nas funções). Sai quando o teste dá certo, quando um token novo é salvo (as actions gravam `nao_testada`) ou quando a conta muda (gatilho de 14.5).
+
+**Por que a situação não mora em `meta_ads_account`:** lá a policy da gestão é `for all`, e um gestor poderia gravar "funcionando" direto pela API.
+
+### 14.4 As funções do job (migration A)
+
+Todas `SECURITY DEFINER`, `search_path` vazio, `execute` revogado de `public`, `anon` e `authenticated` e dado só a `service_role` (neste banco, função nova nasce com `execute` para `anon` e `authenticated`). **Nenhuma devolve o token:** o job lê o segredo pelo cliente de serviço e manda só o sha256 hexadecimal dele (`encode(sha256(convert_to(token, 'UTF8')), 'hex')`; maiúsculas também valem) para conferir se a configuração mudou.
+
+**`enfileirar_sincronizacao_de_gasto_meta(p_clinic_id uuid, p_origem text, p_agora timestamptz default now(), p_incluir_teste boolean default false) returns jsonb`**. Devolve `{ codigo, liberado_em? }`. Conferências, nesta ordem:
+- origem fora de `diario`, `manual` e `configuracao`: erro 22023;
+- clínica inexistente: `sem_configuracao`; clínica de teste: `clinica_de_teste` (o claim de produção nunca a enxerga, e o job pendente acenderia `fila_atrasada`); `p_incluir_teste` existe só para os testes de integração;
+- sem `ad_account_id` ou sem `insights_access_token`: `sem_configuracao`;
+- cria a linha de leitura se faltar e a trava (`for update`), o que serializa cliques simultâneos e o diário;
+- pausada: `pausada`, menos na origem `configuracao` (o teste que deu certo);
+- origem `manual` com `atualizacao_pedida_em` há menos de 10 minutos: `aguarde`, com `liberado_em = atualizacao_pedida_em + 10 min`; senão grava `atualizacao_pedida_em = p_agora`;
+- insere o job (`max_attempts` 5, `payload {origem}`, `run_at = now()` real) com `on conflict ... do nothing` no índice parcial: `enfileirado` ou `ja_na_fila`;
+- origem `diario`: grava `ultimo_diario_dia` (dia local da clínica) nos dois casos.
+Quem insere direto na fila (sem a função) trata 23505 como "já na fila": o PostgREST não usa índice parcial em `on_conflict`.
+
+**`enfileirar_gasto_meta_do_dia(p_agora timestamptz default now(), p_limite integer default 3, p_clinic_ids uuid[] default null, p_incluir_teste boolean default false) returns integer`** (o diário). Elegível: não é de teste, tem conta e token, situação diferente de `nao_testada` (o diário só roda depois do primeiro teste), fora da pausa, já passou das 06:00 no fuso da clínica e ainda sem diário no dia local. Ordem `ultimo_diario_dia nulls first, id`; para em `p_limite` clínicas atendidas (enfileirado ou já na fila) e devolve quantas foram. Cada clínica num bloco próprio: fuso inválido ou falha vira `raise warning` e não derruba as outras. `p_clinic_ids` e `p_incluir_teste` só para os testes (clínica de teste só entra com os dois). `motor_manutencao` chama sem argumentos.
+
+**`regravar_gasto_meta(p_job_id uuid, p_worker text, p_clinic_id uuid, p_ad_account_id text, p_token_sha256 text, p_desde date, p_ate date, p_moeda text, p_fuso text, p_nome_da_conta text, p_conta_ativa boolean, p_por_anuncio jsonb, p_da_conta jsonb) returns text`**: `ok`, `sem_posse`, `config_mudou` ou `janela_invalida`. Numa transação só:
+1. **posse:** o job com esse id, clínica e tipo está `executando` com `locked_by = p_worker` (trava a linha do job); senão `sem_posse` e nada é gravado;
+2. **configuração:** trava conta e segredo em modo compartilhado (a troca de conta espera esta gravação); conta salva diferente de `p_ad_account_id`, token nulo ou sha256 diferente: `config_mudou`;
+3. **janela:** `p_desde` e `p_ate` no fuso da conta, inclusivos, de 1 a 92 dias; senão `janela_invalida`;
+4. apaga as linhas de **outra conta** nas três tabelas de dados (é assim que a conta antiga some);
+5. apaga a janela e insere as linhas novas. Formato: `p_por_anuncio = [{dia, ad_id, adset_id|null, campaign_id, campaign_name|null, spend_cents}]` e `p_da_conta = [{dia, spend_cents}]`; linha fora da janela é ignorada; `(dia, ad_id)` repetido dá 23505 (o job deduplica antes); valor que não é array dá 22023; a moeda de todas as linhas é `p_moeda`;
+6. upsert de `meta_anuncio`, com o nome do dia mais recente e o maior `ultimo_dia_com_entrega`;
+7. a leitura vira `funcionando`, sem problema nem código, com `ad_account_id`, nome (vazio vira nulo), moeda, fuso, `conta_ativa`, `sincronizado_em = tentado_em = now()`. `lido_desde` recomeça em `p_desde` na primeira leitura, com conta nova ou quando a janela nova não encosta na anterior (`p_desde > lido_ate + 1`); senão fica o menor. `lido_ate` fica o maior. Não mexe em `testada_em`.
+
+**`registrar_falha_do_gasto_meta(p_job_id uuid, p_worker text, p_clinic_id uuid, p_ad_account_id text, p_token_sha256 text, p_problema text, p_codigo integer default null) returns text`**: `ok`, `sem_posse` ou `config_mudou`, com a mesma posse e a mesma conferência da regravação (um job que leu com o token velho não pausa a clínica que acabou de salvar um token novo). Problema fora dos 12 códigos: 22023. Grava `com_problema`, o problema, `codigo_da_meta` e `tentado_em`; preserva `lido_*` e `sincronizado_em` (o investimento já lido continua valendo).
+
+### 14.5 Gatilhos
+
+- **`reiniciar_leitura_do_gasto_meta`** em `meta_ads_account` (`SECURITY DEFINER`, `execute` revogado): `after update of ad_account_id` quando ele muda, e `after insert or delete` (apagar a conta e criar de novo pela API também é troca de conta). Volta a leitura para `nao_testada` e limpa `problema` e `codigo_da_meta`; não mexe em `lido_*`, `sincronizado_em`, no `ad_account_id` da leitura nem nos dados. Erro vira `raise warning` e nunca bloqueia a gravação da conta. O gasto da conta antiga continua em Resultados até a primeira regravação da conta nova, que o apaga.
+- **`proteger_atribuicao_de_anuncio`** em `contact` (migration B; `before insert or update of ctwa_clid, source_ad_id, source_adset_id, source_campaign_id`): com sessão (`auth.uid()` não nulo), o INSERT zera e o UPDATE preserva os quatro ids, sem erro. A service role (a ingestão) continua livre. Antes, administrador, gestor e recepção podiam reescrever esses ids pela API e mover o lead de campanha. Nenhum código da sessão grava esses campos (conferido em 03/10). A regra "o primeiro anúncio vence" é da ingestão (14.1), não do gatilho.
+
+### 14.6 `motor_manutencao`
+
+Recriada a partir do corpo de **produção** (`pg_get_functiondef` em 03/10/2026; a última definição em arquivo é a `20261002130000`), com o que é novo entre os marcadores `-- [gasto meta]`: chama `enfileirar_gasto_meta_do_dia()` num bloco protegido, devolve também `"gasto_meta": int` (clínicas atendidas na passagem) e um erro estrutural vira `gasto_meta:<sqlstate>` em `planner_erro` (o monitor responde `planner_com_erro`). Fora dos marcadores, idêntica (o ensaio compara); grants mantidos (`postgres` e `service_role`). Frente nova que recriar `motor_manutencao` tem de partir deste corpo.
+
+### 14.7 `campanhas_do_periodo` (migration B)
+
+**`campanhas_do_periodo(p_clinic_id uuid, p_de timestamptz, p_ate timestamptz, p_de_anterior timestamptz default null) returns jsonb`**: a tabela Campanhas, o custo por lead e o detalhe por campanha de Resultados. `SECURITY INVOKER` (a RLS recorta clínica e papel), `execute` revogado de `public` e `anon` e dado a `authenticated` e `service_role`. **Nulo para o profissional** (como `funil_do_periodo`; a página nem chama a função para ele).
+
+- Formato `{ atual: Bloco, anterior?: Bloco }`, com `anterior` só quando `p_de_anterior` vem (janela `[p_de_anterior, p_de)`).
+- `Bloco = { leads, leads_de_anuncio, leads_casados, leads_de_anuncio_sem_campanha, leads_sem_campanha, linhas, investimento }`.
+- **Lead** entra pela chegada (`first_contact_at` em `[p_de, p_ate)`), o critério de "Leads recebidos" do funil. **Lead de anúncio** tem `ctwa_clid`, `source_ad_id` ou `source_campaign_id`.
+- **Casamento só por id, nunca por nome:** primeiro `source_ad_id` em `meta_anuncio`; senão `source_campaign_id`, se for campanha conhecida em `meta_anuncio`.
+- Cada lead cai numa linha só: `meta` (casado), `texto` (só tem `source_campaign` digitado ou importado: conta lead, nunca casa com gasto) ou `leads_sem_campanha`. **Invariante:** soma dos leads das linhas + `leads_sem_campanha` = `leads` = leads do `funil_do_periodo`.
+- `Linha = { chave ('meta:<campaign_id>' ou 'texto:<rótulo>'), tipo, meta_campaign_id, rotulo, leads, agendaram, compareceram, investimento_cents }`. `rotulo` da linha meta é o nome mais recente da campanha e pode ser nulo (a tela mostra "Campanha {id}"). `agendaram` = tem alguma consulta; `compareceram` = tem consulta com `compareceu`. Linha meta com 0 lead só aparece para a gestão, quando a campanha teve gasto em real no período. Linha texto tem sempre `investimento_cents` nulo. Ordem: meta antes de texto, maior investimento, mais leads, chave.
+- **As contagens de leads são as mesmas em todos os papéis:** dependem só de `contact`, `appointment` e `meta_anuncio`, que todo membro ativo lê.
+- **`investimento`** é nulo fora de administrador, gestor e service role (`auth.uid() is null or user_has_role(...)`, o padrão da seção 11), e fora da gestão o `investimento_cents` das linhas também. Para a gestão: `{ configurada, situacao, problema, moeda, fuso_da_conta, lido_desde, lido_ate, sincronizado_em, dia_de, dia_ate, investimento_cents, investimento_casado_cents, investimento_sem_lead_cents, campanhas_sem_lead, outra_moeda }`.
+  - `configurada` = conta salva **e** linha de leitura existente (a sessão não lê o token). Remover o token não apaga a linha de leitura, então a leitura continua "configurada" e o investimento já lido continua aparecendo, até a leitura ficar atrasada (Resultados, abaixo).
+  - `dia_de` e `dia_ate` são os dias civis da clínica tocados pela janela; o dia do gasto é o rótulo do dia da conta, sem conversão por hora.
+  - `investimento_cents` é o **total da conta** em real (`meta_gasto_conta_diario`) entre `dia_de` e `dia_ate`; `investimento_casado_cents` e `investimento_sem_lead_cents` são somas por campanha (`meta_gasto_diario`), das campanhas com e sem lead no período.
+  - Só linhas em `BRL` entram nas somas; havendo linha em outra moeda no período, `outra_moeda = true`. Nunca converte.
+- O que a função **não** decide, de propósito (fica no TypeScript, `lib/domain/custo-por-lead.ts`): o divisor do custo por lead (`DIVISOR_DO_CUSTO_POR_LEAD = 'leads_de_anuncio'`, decisão D2 do dono pendente; as três contagens vêm prontas), a cobertura (o período é medido só se `lido_desde <= dia_de` e se `lido_ate` não está mais de `DIAS_DE_FOLGA_DA_LEITURA` = 2 dias antes do menor entre `dia_ate` e hoje) e o aviso de fuso.
+- **Fora de propósito:** o caminho do lead de link (`campaign_link.meta_campaign_id` e o id da regra no contato, decisão D1) e a origem gravada do lead de anúncio (`source_channel` Tráfego pago e um `source_method` novo, decisão D3). Nada disso foi construído.
+
+### 14.8 Ensaio, ordem de publicação e rollback
+
+**Ensaio (03/10/2026):** as duas migrations em transação desfeita, com asserts de RLS por papel e isolamento A contra B nas quatro tabelas e no segredo; ninguém escreve pela sessão; 42501 nas funções para `anon` e `authenticated`; os CHECKs; deduplicação (23505 e `ja_na_fila`); `aguarde` de 10 minutos; `clinica_de_teste`; pausa; o diário às 06:00 no fuso da clínica (Fortaleza e Tóquio), o limite e o fuso inválido isolado; a regravação (troca só a janela, apaga a conta antiga, `sem_posse`, `config_mudou` pelo sha256, `janela_invalida`, buraco de leitura, teto de 92 dias); o registro de falha; o gatilho da conta; a proteção da atribuição; `campanhas_do_periodo` (a invariante de soma contra o funil, 23h30 do último dia, outra moeda, cobertura parcial, Tóquio e todos os papéis); e `motor_manutencao` comparada com a de produção. 41 sabotagens, uma por bloco crítico, todas pegas. Os asserts das levas anteriores (CRM e convênio) passaram de novo depois destas migrations.
+
+**Ordem:** aplicar a A e depois a B, **junto com o código** da Fase 4. A migration A troca o CHECK de `job_queue` (`alter table`, trava exclusiva por instantes): no ensaio, uma de 47 rodadas bateu num deadlock com o motor de produção, que roda a cada 20 s (o Postgres abortou o ensaio e o motor seguiu normal). Aplicar num horário calmo, com `lock_timeout` curto, e repetir se der timeout. Depois rodar as provas de RLS, integração e e2e, regenerar os tipos (o diff tem de sumir) e publicar.
+- Sem as migrations, o código novo mostra o erro da aba Anúncios da Meta (a página lê `meta_gasto_leitura` e o token de leitura) e, em Resultados, o erro só no Custo por lead e em Campanhas, com "Tentar de novo" (o Exportar das abas Visão geral e Marketing fica desabilitado).
+- Com as migrations e o código antigo, o Salvar da conta sem `act_` é recusado pelo CHECK (23514; há 0 contas em produção) e o segredo dá 42501 para a sessão (o código antigo já o lia só pelo cliente de serviço).
+
+**Rollback** (cabeçalhos das migrations): B, `drop function campanhas_do_periodo`, `drop trigger proteger_atribuicao_de_anuncio on contact` e `drop function proteger_atribuicao_de_anuncio`. A, nesta ordem: cancelar os jobs `sincronizar_gasto_meta`; apagar as quatro tabelas e as quatro funções, o gatilho e a função `reiniciar_leitura_do_gasto_meta` e o índice `job_queue_gasto_meta_vivo`; recriar `job_queue_kind_check` sem o tipo novo; apagar `ad_account_id_formato` e a coluna `insights_access_token`; reaplicar `motor_manutencao` da `20261002130000`. Devolver os grants de `meta_ads_account_secret` à sessão não é recomendado.

@@ -13,6 +13,7 @@ import type {
   MembroEquipe,
   ProfissionalDaAgenda,
 } from "@/components/configuracoes/lista-equipe";
+import type { LeituraDoInvestimento } from "@/components/configuracoes/investimento-meta";
 import {
   MetaAdsTab,
   type ContaMeta,
@@ -159,7 +160,18 @@ export function ConfiguracoesClient({
     lista: RespostaRapida[];
     nomeDaClinica: string;
   } | null;
-  meta: { conta: ContaMeta | null; temToken: boolean } | null;
+  /**
+   * A aba Anuncios da Meta: a conta, se existe cada token (nunca o valor) e
+   * a situacao da leitura do investimento. Nulo: alguma leitura falhou.
+   */
+  meta: {
+    conta: ContaMeta | null;
+    temToken: boolean;
+    temTokenDeLeitura: boolean;
+    leitura: LeituraDoInvestimento | null;
+    timezone: string;
+    agoraMs: number;
+  } | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -397,14 +409,19 @@ export function ConfiguracoesClient({
 
       <TabsContent value="meta" className="grid gap-4">
         <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          A conta de anúncios que recebe as conversões de volta: quando um
-          contato chega numa etapa com evento configurado na Jornada, a clínica
-          devolve a conversão para a Meta medir o anúncio.
+          A conta de anúncios da clínica serve a duas coisas: ler quanto foi
+          investido, para o custo por lead em Resultados, e devolver as
+          conversões para a Meta medir o anúncio quando um contato chega numa
+          etapa com evento configurado na Jornada.
         </p>
         {meta ? (
           <MetaAdsTab
             conta={meta.conta}
             temToken={meta.temToken}
+            temTokenDeLeitura={meta.temTokenDeLeitura}
+            leitura={meta.leitura}
+            timezone={meta.timezone}
+            agoraMs={meta.agoraMs}
             podeGerenciar={podeGerenciar}
             dica={dica}
           />

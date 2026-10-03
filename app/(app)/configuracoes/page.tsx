@@ -10,6 +10,11 @@ import {
   temNomeProprio,
   ultimoConvitePorPessoa,
 } from "@/components/configuracoes/convite-na-equipe";
+import {
+  COLUNAS_DA_LEITURA,
+  leituraDaLinha,
+  type LinhaDaLeitura,
+} from "@/components/configuracoes/investimento-meta";
 import type {
   MembroEquipe,
   ProfissionalDaAgenda,
@@ -39,6 +44,11 @@ import { fetchAutomacoesDeFluxo } from "@/lib/queries/automacoes-de-fluxo";
 import { fetchJornada } from "@/lib/queries/jornada";
 import { fetchRespostasRapidas } from "@/lib/queries/respostas-rapidas";
 import type { Pendente } from "./equipe-client";
+
+// O "Testar leitura" e o "Salvar token" da aba Anuncios da Meta falam com a
+// Meta durante a Server Action (pior caso perto de 15 s), e a action herda o
+// limite da pagina (L10 da Fase 4).
+export const maxDuration = 30;
 
 /**
  * Leitura que lanca (as de lib/queries) vira nulo: a falha de uma aba mostra
@@ -127,6 +137,7 @@ export default async function ConfiguracoesPage({
     contagemDeEtiquetas,
     mensagensPadrao,
     contaMetaResult,
+    leituraMetaResult,
     unidadesResult,
     politicaDoEnvioResult,
     limiteDeNumerosResult,
@@ -182,6 +193,13 @@ export default async function ConfiguracoesPage({
       )
       .eq("clinic_id", active.clinicId)
       .maybeSingle(),
+    // Situacao da leitura do investimento da Meta: a policy so mostra para
+    // admin e gestor, e so o sistema escreve.
+    supabase
+      .from("meta_gasto_leitura")
+      .select(COLUNAS_DA_LEITURA)
+      .eq("clinic_id", active.clinicId)
+      .maybeSingle(),
     // Aba de WhatsApp: unidades para o numero, a escolha de numero de cada
     // tipo de mensagem automatica (etiqueta do numero fixo de algum tipo) e o
     // limite do plano. Leituras separadas, para a falha de uma nao derrubar
@@ -229,7 +247,13 @@ export default async function ConfiguracoesPage({
         )
         .map((numero) => numero.id)
     : [];
-  const [nameById, emailsResult, tokenMetaResult, motivos] = await Promise.all([
+  const [
+    nameById,
+    emailsResult,
+    tokenMetaResult,
+    tokenDeLeituraResult,
+    motivos,
+  ] = await Promise.all([
     fetchProfileNames(supabase, memberIds),
     admin.rpc("emails_da_equipe", { p_clinic_id: active.clinicId }),
     // A tabela-secret nao tem policy: SO o booleano "existe token" sai daqui,
@@ -239,6 +263,13 @@ export default async function ConfiguracoesPage({
       .select("clinic_id")
       .eq("clinic_id", active.clinicId)
       .not("capi_access_token", "is", null)
+      .maybeSingle(),
+    // Idem para o token de leitura de anuncios: so o "existe".
+    admin
+      .from("meta_ads_account_secret")
+      .select("clinic_id")
+      .eq("clinic_id", active.clinicId)
+      .not("insights_access_token", "is", null)
       .maybeSingle(),
     motivosDaRecusaVigentes(admin, active.clinicId, desconectadosParaOMotivo),
   ]);
@@ -420,11 +451,20 @@ export default async function ConfiguracoesPage({
             : null
         }
         meta={
-          contaMetaResult.error || tokenMetaResult.error
+          contaMetaResult.error ||
+          tokenMetaResult.error ||
+          tokenDeLeituraResult.error ||
+          leituraMetaResult.error
             ? null
             : {
                 conta: contaMetaResult.data ?? null,
                 temToken: tokenMetaResult.data !== null,
+                temTokenDeLeitura: tokenDeLeituraResult.data !== null,
+                leitura: leituraDaLinha(
+                  (leituraMetaResult.data ?? null) as LinhaDaLeitura | null,
+                ),
+                timezone: active.timezone,
+                agoraMs: Date.now(),
               }
         }
       />

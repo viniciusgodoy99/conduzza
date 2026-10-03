@@ -193,8 +193,9 @@ export async function ingerirMensagemRecebida(
   // CAPTURA DO ANUNCIO (estrutura do R1, com o R0 dispensado pelo dono em
   // 08/09/2026): se o canal entregou qualquer vestigio do clique de anuncio,
   // grava no contato. PRIMEIRO CLIQUE VENCE: o update so acontece enquanto
-  // ctwa_clid esta nulo, no mesmo espirito da origem imutavel. Melhor esforco:
-  // falha vira log sem conteudo de paciente, a mensagem ja esta salva.
+  // ctwa_clid E source_ad_id estao nulos, no mesmo espirito da origem
+  // imutavel. Melhor esforco: falha vira log sem conteudo de paciente, a
+  // mensagem ja esta salva.
   if (event.anuncio && resultado?.contact_id) {
     const patch: Record<string, string> = {};
     if (event.anuncio.ctwaClid) patch.ctwa_clid = event.anuncio.ctwaClid;
@@ -209,7 +210,11 @@ export async function ingerirMensagemRecebida(
         .update(patch)
         .eq("clinic_id", clinicId)
         .eq("id", resultado.contact_id)
-        .is("ctwa_clid", null);
+        .is("ctwa_clid", null)
+        // L8 (Fase 4): o referral sem clid nao pode deixar o anuncio de um
+        // segundo clique trocar o primeiro. O casamento com o investimento
+        // e pelo source_ad_id, e o primeiro anuncio vence.
+        .is("source_ad_id", null);
       if (erroAnuncio) {
         log.error("captura_ctwa_falhou", {
           clinic_id: clinicId,

@@ -25,6 +25,7 @@ import {
   MessageCircleCheck,
   MessageSquareText,
   MoonStar,
+  OctagonAlert,
   QrCode,
   Send,
   ShieldAlert,
@@ -398,6 +399,55 @@ export const TOKEN_META_STATUS: Record<TokenMetaStatus, StatusDefinition> = {
   salvo: { label: "Token salvo", tone: "success", icon: KeyRound },
   ausente: { label: "Sem token", tone: "neutral", icon: CircleDashed },
 };
+
+// Leitura do investimento da Meta (Configuracoes, anuncios; Fase 4). So
+// icones que ja tem dono, no mesmo sentido e na mesma cor (C15 da critica,
+// conferido contra a tabela de icones reservados abaixo):
+// - nao_configurada: CircleDashed neutral, o "nada aqui ainda" (como "Sem
+//   token");
+// - nao_testada: Hourglass warning, pendencia (falta testar a leitura);
+// - funcionando: CircleCheck success;
+// - com_problema: OctagonAlert alert, erro ou falha. NUNCA o TriangleAlert,
+//   que e so do status Faltou (a C15 citava o triangulo; a tabela vence);
+// - atualizando: LoaderCircle info girando, o mesmo do "Conectando".
+// "Leitura com problema" cobre a pausa (a Meta recusou o token ou a conta):
+// o texto do problema, ao lado do chip, diz qual e o caso.
+export type LeituraMetaStatus =
+  | "nao_configurada"
+  | "nao_testada"
+  | "funcionando"
+  | "com_problema"
+  | "atualizando";
+
+export const LEITURA_META_STATUS: Record<LeituraMetaStatus, StatusDefinition> =
+  {
+    nao_configurada: {
+      label: "Leitura não configurada",
+      tone: "neutral",
+      icon: CircleDashed,
+    },
+    nao_testada: {
+      label: "Ainda não testada",
+      tone: "warning",
+      icon: Hourglass,
+    },
+    funcionando: {
+      label: "Lendo o investimento",
+      tone: "success",
+      icon: CircleCheck,
+    },
+    com_problema: {
+      label: "Leitura com problema",
+      tone: "alert",
+      icon: OctagonAlert,
+    },
+    atualizando: {
+      label: "Atualizando",
+      tone: "info",
+      icon: LoaderCircle,
+      iconClassName: "motion-safe:animate-spin",
+    },
+  };
 
 // Autorizacao do paciente para receber mensagens (ficha, painel do
 // Atendimento). Revogado e definitivo ate o paciente autorizar de novo

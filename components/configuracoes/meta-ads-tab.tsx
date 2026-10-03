@@ -9,6 +9,8 @@ import {
   salvarContaMetaAction,
   salvarTokenMetaAction,
 } from "@/app/(app)/configuracoes/actions";
+import { InvestimentoMetaCard } from "@/components/configuracoes/investimento-meta-card";
+import type { LeituraDoInvestimento } from "@/components/configuracoes/investimento-meta";
 import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -35,7 +37,10 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { TOKEN_META_STATUS } from "@/lib/design/status";
 
-// Aba Anuncios da Meta (R6): a conta que recebe as conversoes de volta.
+// Aba Anuncios da Meta (R6): a conta que recebe as conversoes de volta e,
+// desde a Fase 4, de onde a clinica le o investimento nos anuncios (cartao
+// "Investimento nos anuncios", que usa a MESMA conta deste cartao, sem
+// repetir o campo).
 //
 // O TOKEN E WRITE-ONLY: o servidor nunca manda o valor para ca, so o fato de
 // existir (temToken). O campo sempre nasce vazio e salvar substitui.
@@ -72,11 +77,23 @@ const CONTA_VAZIA: ContaMeta = {
 export function MetaAdsTab({
   conta,
   temToken,
+  temTokenDeLeitura,
+  leitura,
+  timezone,
+  agoraMs,
   podeGerenciar,
   dica,
 }: {
   conta: ContaMeta | null;
   temToken: boolean;
+  /** Existe token de leitura de anuncios (o valor nunca vem para ca). */
+  temTokenDeLeitura: boolean;
+  /** Situacao da leitura do investimento; nula enquanto nao existe. */
+  leitura: LeituraDoInvestimento | null;
+  /** Fuso da clinica, para o "Atualizado em". */
+  timezone: string;
+  /** Instante da renderizacao no servidor (ms). */
+  agoraMs: number;
   podeGerenciar: boolean;
   dica: string;
 }) {
@@ -113,9 +130,11 @@ export function MetaAdsTab({
             : null,
       });
       if (!resultado.ok) {
-        setErro(resultado.error ?? "Não foi possível salvar.");
+        setErro(resultado.error);
         return;
       }
+      // O servidor grava sempre act_<digitos>: o campo mostra o que ficou.
+      setContaAnuncios(resultado.adAccountId ?? "");
       toast.success("Conta de anúncios salva.");
     });
   };
@@ -191,7 +210,7 @@ export function MetaAdsTab({
         </Aviso>
       ) : null}
 
-      <Card className="lg:row-span-2">
+      <Card className="lg:row-span-3">
         <CardHeader>
           <div className="flex min-w-0 items-center gap-3">
             {/* Ladrilho da Meta: decorativo, a cor nao diz estado. */}
@@ -204,8 +223,9 @@ export function MetaAdsTab({
             <div className="grid min-w-0 gap-[3px]">
               <CardTitle>Conta de anúncios</CardTitle>
               <CardDescription>
-                Os identificadores ficam no Gerenciador de Eventos e no
-                Gerenciador de Negócios da Meta.
+                Usada para ler o investimento nos anúncios e para devolver as
+                conversões. Os identificadores ficam no Gerenciador de Eventos
+                e no Gerenciador de Negócios da Meta.
               </CardDescription>
             </div>
           </div>
@@ -228,7 +248,7 @@ export function MetaAdsTab({
                 disabled={!podeGerenciar}
               />
             </div>
-            <div className="grid gap-1.5">
+            <div className="grid content-start gap-1.5">
               <Label htmlFor="meta-conta">Conta de anúncios</Label>
               <Input
                 id="meta-conta"
@@ -236,8 +256,13 @@ export function MetaAdsTab({
                 onChange={(evento) => setContaAnuncios(evento.target.value)}
                 placeholder="act_1234567890"
                 className="cz-num"
+                aria-describedby="meta-conta-ajuda"
                 disabled={!podeGerenciar}
               />
+              <p id="meta-conta-ajuda" className="text-[11px] text-text-secondary">
+                Só os números, com ou sem act_ na frente. Também vale colar o
+                link do Gerenciador de Anúncios.
+              </p>
             </div>
             <div className="grid content-start gap-1.5">
               <Label htmlFor="meta-waba">
@@ -302,6 +327,16 @@ export function MetaAdsTab({
           )}
         </CardFooter>
       </Card>
+
+      <InvestimentoMetaCard
+        adAccountId={atual.ad_account_id}
+        temTokenDeLeitura={temTokenDeLeitura}
+        leitura={leitura}
+        timezone={timezone}
+        agoraMs={agoraMs}
+        podeGerenciar={podeGerenciar}
+        dica={dica}
+      />
 
       <Card>
         <CardHeader>

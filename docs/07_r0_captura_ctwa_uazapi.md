@@ -8,6 +8,8 @@ Decisão tomada: **replicar e largar o Tintim** (Caminho B, ver `docs/06`). Para
 
 > **Decisão do dono (08/09/2026): o teste com anúncio de laboratório foi dispensado.** Em vez dele, a estrutura de captura nasceu pronta e defensiva (migration `20260908150000_captura_ctwa.sql` + `extrairAnuncio` em `lib/integrations/whatsapp/inbound.ts` + escrita de primeiro clique em `ingest.ts`): se a uazapi entregar qualquer vestígio de anúncio, ele é gravado em `contact`. **A produção é o próprio teste.** A tabela de leitura abaixo continua valendo, agora aplicada às colunas: enquanto `ctwa_clid` não encher com anúncio real rodando, vale a linha "não aparece nada". O laboratório deste runbook (`scripts/dev/r0-laboratorio.mts`) fica disponível se um dia o teste controlado for desejado; a instância criada em 08/09 foi apagada.
 
+> **Resultado em produção (01 e 02/10/2026): positivo em parte.** 8 contatos de uma clínica, entre 01/10 e 02/10, chegaram com `ctwa_clid` e `source_ad_id` preenchidos, todos do mesmo anúncio; nenhum com `source_adset_id` nem `source_campaign_id`. Na tabela de leitura abaixo, vale a primeira linha (o clique chega). O conjunto e a campanha não vêm pela uazapi: a campanha passa a sair da leitura do investimento da Meta (Fase 4 das métricas, `docs/04` seção 14), que liga cada anúncio à sua campanha pelos dados da própria Meta. Desligar o Tintim continua decisão do dono.
+
 ---
 
 ## Método A (recomendado): webhook de laboratório, sem tocar em produção

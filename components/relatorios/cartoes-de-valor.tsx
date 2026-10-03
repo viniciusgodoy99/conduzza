@@ -3,6 +3,15 @@ import type { ReactNode } from "react";
 
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import {
+  avisoDeFusoDaConta,
+  dicaDoCustoPorLead,
+  estadoDoCustoPorLead,
+  rodapeDoCustoPorLead,
+  textoAtualizadoEm,
+  textoDoCustoPorLead,
+  variacaoDoCustoPorLead,
+} from "@/lib/domain/custo-por-lead";
+import {
   TEXTO_SEM_COMPARECIMENTO,
   TEXTO_SEM_PRECO_PARA_SOMAR,
   estadoDoFaturamento,
@@ -12,6 +21,7 @@ import {
   formatarReaisCompleto,
 } from "@/lib/domain/formato-compacto";
 import type {
+  CampanhasDoPeriodo,
   FaturamentoDoPeriodo,
   Periodizado,
 } from "@/lib/queries/relatorios";
@@ -24,30 +34,135 @@ import type {
 export const DICA_SEM_ACESSO_A_VALORES =
   "Só administrador e gestor veem valores em reais.";
 
-export const DICA_CUSTO_POR_LEAD =
-  "Chega com a leitura do investimento nos anúncios da Meta. Sem o investimento, não existe custo para mostrar.";
+/** Rodape em linhas: cada parte numa linha propria, sem juntar com sinal. */
+function linhasDoRodape(partes: (string | null)[]): ReactNode {
+  const presentes = partes.filter((parte): parte is string => Boolean(parte));
+  if (presentes.length === 0) {
+    return undefined;
+  }
+  return presentes.map((parte) => (
+    <span key={parte} className="block">
+      {parte}
+    </span>
+  ));
+}
 
-/** Custo por lead: "Ainda não medido" ate a Fase 4 (investimento da Meta). */
+/**
+ * Custo por lead (Fase 4): investimento total da conta de anuncios no
+ * periodo dividido pelo divisor da decisao D2 (DIVISOR_DO_CUSTO_POR_LEAD).
+ * Estados (lib/domain/custo-por-lead.ts, o mesmo texto do CSV):
+ * - sem acesso (outros papeis): "Sem acesso", sem numero no HTML;
+ * - sem leitura configurada, antes da primeira leitura, periodo antes do
+ *   primeiro dia lido e leitura parada antes do fim do periodo: "Ainda não
+ *   medido", com o porque na dica;
+ * - outra moeda, sem investimento, nenhum lead de anuncio: o estado escrito;
+ * - valor: "R$ 18,40", rodape "R$ 3.420,00 em N leads de anúncio" e
+ *   "Atualizado em", variacao so com os dois periodos medidos por inteiro
+ *   (cair e bom);
+ * - conta de anuncios em outro fuso (deslocamento diferente do da clinica):
+ *   uma linha a mais no rodape, so com o periodo medido.
+ */
 export function CartaoCustoPorLead({
   podeVerValores,
+  campanhas,
+  timezone,
+  erro = false,
+  tentarDeNovo,
+  className,
 }: {
   podeVerValores: boolean;
+  /** undefined = carregando */
+  campanhas: Periodizado<CampanhasDoPeriodo> | undefined;
+  /** Fuso da clinica, para o "Atualizado em" */
+  timezone: string;
+  erro?: boolean;
+  tentarDeNovo?: ReactNode;
+  className?: string;
 }) {
-  return podeVerValores ? (
-    <CartaoDeMetrica
-      rotulo="Custo por lead"
-      icone={Wallet}
-      estado="nao-medido"
-      dica={DICA_CUSTO_POR_LEAD}
-    />
-  ) : (
-    <CartaoDeMetrica
-      rotulo="Custo por lead"
-      icone={Wallet}
-      estado="sem-acesso"
-      dica={DICA_SEM_ACESSO_A_VALORES}
-    />
+  const casca = { rotulo: "Custo por lead", icone: Wallet, className } as const;
+
+  if (!podeVerValores) {
+    return (
+      <CartaoDeMetrica
+        {...casca}
+        estado="sem-acesso"
+        dica={DICA_SEM_ACESSO_A_VALORES}
+      />
+    );
+  }
+  if (erro) {
+    return (
+      <CartaoDeMetrica {...casca} estado="erro" tentarDeNovo={tentarDeNovo} />
+    );
+  }
+  if (campanhas === undefined) {
+    return <CartaoDeMetrica {...casca} estado="carregando" />;
+  }
+
+  const estado = estadoDoCustoPorLead(campanhas.atual);
+  const atualizado = textoAtualizadoEm(
+    campanhas.atual.investimento?.sincronizadoEm ?? null,
+    timezone,
   );
+  // null fora do periodo medido (outra moeda, Ainda não medido): so acende
+  // quando ha numero para o fuso distorcer.
+  const avisoDeFuso = avisoDeFusoDaConta(campanhas.atual.investimento, timezone);
+
+  switch (estado.tipo) {
+    case "sem-acesso":
+      // O banco recusou mesmo a pagina achando que podia (papel mudou no
+      // meio do caminho): sem acesso, nunca zero.
+      return (
+        <CartaoDeMetrica
+          {...casca}
+          estado="sem-acesso"
+          dica={DICA_SEM_ACESSO_A_VALORES}
+        />
+      );
+    case "nao-configurado":
+    case "aguardando-primeira-leitura":
+    case "antes-da-leitura":
+    case "leitura-atrasada":
+      return (
+        <CartaoDeMetrica
+          {...casca}
+          estado="nao-medido"
+          dica={dicaDoCustoPorLead(estado) ?? ""}
+        />
+      );
+    case "outra-moeda":
+    case "sem-investimento":
+    case "sem-lead":
+      return (
+        <CartaoDeMetrica
+          {...casca}
+          estado="vazio"
+          texto={textoDoCustoPorLead(estado)}
+          rodape={linhasDoRodape([
+            rodapeDoCustoPorLead(estado),
+            estado.tipo === "outra-moeda" ? null : atualizado,
+            avisoDeFuso,
+          ])}
+        />
+      );
+    case "valor": {
+      const compacto = formatarReaisCompacto(estado.custoCents);
+      const cheio = formatarReaisCompleto(estado.custoCents);
+      return (
+        <CartaoDeMetrica
+          {...casca}
+          valor={compacto}
+          valorFalado={compacto === cheio ? undefined : cheio}
+          variacao={variacaoDoCustoPorLead(campanhas)}
+          rodape={linhasDoRodape([
+            rodapeDoCustoPorLead(estado),
+            atualizado,
+            avisoDeFuso,
+          ])}
+        />
+      );
+    }
+  }
 }
 
 function plural(n: number, singular: string, pluralizado: string): string {

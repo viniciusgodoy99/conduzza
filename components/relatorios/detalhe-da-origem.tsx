@@ -2,8 +2,10 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { TableProperties } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Secao } from "@/components/relatorios/secao";
+import { Aviso } from "@/components/shared/aviso";
 import { DataTable } from "@/components/shared/data-table";
 import {
   Select,
@@ -17,21 +19,37 @@ import {
   type DimensaoDaOrigem,
   type LinhaDeOrigem,
 } from "@/lib/domain/exportacao-de-resultados";
-import type { FunilDoPeriodo } from "@/lib/queries/relatorios";
+import type {
+  CampanhasDoPeriodo,
+  FunilDoPeriodo,
+} from "@/lib/queries/relatorios";
 
 // Detalhe da origem (Marketing, 10.7): por canal ou por campanha, com a
 // dimensao trocavel por Select (C33). A dimensao vive no pai: a exportacao da
 // aba usa a MESMA dimensao da tabela. "Comparecimento" = compareceram
 // dividido por leads (a Conversao das campanhas e outra regra: agendaram).
+// Fase 4: por campanha usa as MESMAS linhas da tabela Campanhas
+// (campanhas_do_periodo, casamento so por id), mais "Sem campanha".
+
+function celulaOpcional({ getValue }: { getValue: () => unknown }) {
+  const valor = getValue() as number | null;
+  return valor === null ? "" : valor;
+}
 
 const COLUNAS: ColumnDef<LinhaDeOrigem, unknown>[] = [
   { accessorKey: "rotulo", header: "Origem" },
   { accessorKey: "leads", header: "Leads", meta: { align: "right" } },
-  { accessorKey: "agendaram", header: "Agendaram", meta: { align: "right" } },
+  {
+    accessorKey: "agendaram",
+    header: "Agendaram",
+    meta: { align: "right" },
+    cell: celulaOpcional,
+  },
   {
     accessorKey: "compareceram",
     header: "Compareceram",
     meta: { align: "right" },
+    cell: celulaOpcional,
   },
   {
     accessorKey: "comparecimento",
@@ -42,13 +60,24 @@ const COLUNAS: ColumnDef<LinhaDeOrigem, unknown>[] = [
 
 export function DetalheDaOrigem({
   funil,
+  campanhas,
+  campanhasComErro = false,
+  tentarCampanhasDeNovo,
   dimensao,
   aoMudarDimensao,
 }: {
   funil: FunilDoPeriodo;
+  /** Atual de campanhas_do_periodo; undefined = carregando */
+  campanhas: CampanhasDoPeriodo | undefined;
+  campanhasComErro?: boolean;
+  tentarCampanhasDeNovo?: ReactNode;
   dimensao: DimensaoDaOrigem;
   aoMudarDimensao: (dimensao: DimensaoDaOrigem) => void;
 }) {
+  const porCampanhaComErro = dimensao === "campanha" && campanhasComErro;
+  const linhas = porCampanhaComErro
+    ? null
+    : montarDetalheDeOrigem(funil, dimensao, campanhas);
   return (
     <Secao
       titulo="Detalhe da origem"
@@ -74,13 +103,27 @@ export function DetalheDaOrigem({
         </div>
       }
     >
-      <DataTable
-        variant="bare"
-        columns={COLUNAS}
-        data={montarDetalheDeOrigem(funil, dimensao)}
-        emptyTitle="Sem leads no período"
-        emptyDescription="Os detalhes aparecem quando os primeiros contatos chegarem no período escolhido."
-      />
+      {porCampanhaComErro ? (
+        <div className="p-4">
+          <Aviso
+            tom="alert"
+            role="alert"
+            titulo="Não foi possível carregar as campanhas."
+            acao={tentarCampanhasDeNovo}
+          >
+            Tente de novo em instantes.
+          </Aviso>
+        </div>
+      ) : (
+        <DataTable
+          variant="bare"
+          columns={COLUNAS}
+          data={linhas ?? []}
+          isLoading={linhas === null}
+          emptyTitle="Sem leads no período"
+          emptyDescription="Os detalhes aparecem quando os primeiros contatos chegarem no período escolhido."
+        />
+      )}
     </Secao>
   );
 }

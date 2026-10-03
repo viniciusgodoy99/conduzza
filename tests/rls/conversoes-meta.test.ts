@@ -291,12 +291,15 @@ describe("meta_ads_account", () => {
 describe("meta_ads_account_secret", () => {
   it("o token é ilegível e inescrevível pela sessão, até para o admin da clínica", async () => {
     const cliente = await logado(email("admin-a"));
+    // Desde a 20261003100000 a tabela nao tem grant nenhum para anon e
+    // authenticated: a sessao recebe 42501 (antes, a RLS sem policy devolvia
+    // lista vazia).
     const { data, error } = await cliente
       .from("meta_ads_account_secret")
       .select("capi_access_token")
       .eq("clinic_id", clinicaA);
-    expect(error).toBeNull();
-    expect(data).toHaveLength(0);
+    expect(error?.code).toBe(RLS_VIOLATION);
+    expect(data).toBeNull();
     // Contraprova: o token existe.
     const { data: prova } = await admin
       .from("meta_ads_account_secret")

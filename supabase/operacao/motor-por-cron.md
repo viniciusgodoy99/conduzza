@@ -12,11 +12,22 @@ Três entradas no `pg_cron`, dentro do próprio Supabase:
 
 | Entrada            | Cadência                          | O que faz                                                                               | Onde executa                  |
 | ------------------ | --------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------- |
-| `motor-manutencao` | 60 segundos                       | limpa reservas vencidas, fecha execuções órfãs, expira ofertas, planeja réguas, higiene | **dentro do banco**, SQL puro |
+| `motor-manutencao` | 60 segundos                       | limpa reservas vencidas, fecha execuções órfãs, expira ofertas, planeja réguas, higiene, enfileira a leitura diária do investimento da Meta | **dentro do banco**, SQL puro |
 | `motor-fila`       | 20 segundos                       | chama a rota na Vercel, que processa a fila de tarefas                                  | Vercel, região de São Paulo   |
 | `poda-do-cron`     | 1 vez por dia, 03:17 de Fortaleza | apaga de `cron.job_run_details` as execuções com mais de 7 dias                         | **dentro do banco**, SQL puro |
 
-A manutenção não depende da rede: é só chamada de função. Só a fila precisa de Node, porque fala com o uazapi e com o Storage.
+A manutenção não depende da rede: é só chamada de função. Só a fila precisa de Node, porque fala com o uazapi, com o Storage e com a Meta.
+
+A rota da fila faz **quatro** reivindicações em paralelo a cada passagem, cada uma com seus tipos de tarefa:
+
+| Trilho | Tipos | Raias por passagem |
+| --- | --- | --- |
+| Envio | `enviar_mensagem_ativa`, `executar_passo_de_regua` | 8 (`MOTOR_MAX_CLINICAS`) |
+| Mídia | `baixar_midia` | 2 |
+| Integração | `enviar_conversao_meta`, `oferecer_lista_espera` | 2 |
+| Investimento da Meta | `sincronizar_gasto_meta` | 2 |
+
+O trilho do investimento é explicado em "Leitura do investimento da Meta", abaixo.
 
 As duas primeiras são ligadas e desligadas pela operação (`motor_agendar()` e `motor_desagendar()`), nunca por migration: num banco de laptop elas virariam um segundo motor chamando a produção. A poda é agendada pela migration `20260924120000_poda_do_cron.sql`, porque não chama nada fora do banco.
 
@@ -144,6 +155,8 @@ from job_queue group by 1,2 order by 3 desc;
 
 Desde 25/09/2026 a fila é reivindicada por **raia**: cada número de WhatsApp é uma raia (`coalesce(whatsapp_account_id, clinic_id)`), então dois números da mesma clínica enviam em paralelo e o mesmo número serializa. `MOTOR_MAX_CLINICAS` conta **raias** por passagem (padrão 8; o nome ficou por compatibilidade). Job com `last_error = 'numero_removido'` é o eco de uma resposta ao toque cujo número foi removido: foi cancelado de propósito, não é defeito do motor.
 
+`ultimo_motivo_devolucao = 'limite_da_meta'` ou `'config_mudou'` é do trilho do investimento da Meta: ver a seção seguinte.
+
 **`cron.job_run_details` diz `succeeded` mas nada chegou na Vercel.** O worker de fundo do `pg_net` travou. Ele é um processo à parte do agendador, e o cron considera sucesso só por ter enfileirado:
 
 ```sql
@@ -151,6 +164,61 @@ select net.worker_restart();
 ```
 
 **Nada disso explica.** Os logs da rota estão na Vercel, em Functions, filtrando por `/api/webhooks/motor`. Eles trazem só contadores e códigos, nunca conteúdo de mensagem de paciente.
+
+---
+
+## Leitura do investimento da Meta
+
+Desde a Fase 4 (03/10/2026) a fila lê, uma vez por dia, quanto a clínica investiu nos anúncios da Meta, para o custo por lead em Resultados. A tarefa é `sincronizar_gasto_meta`: lê a conta de anúncios na Marketing API (Insights) e regrava a janela no banco (`meta_gasto_diario`, `meta_gasto_conta_diario`, `meta_anuncio` e a situação em `meta_gasto_leitura`), numa transação só (`regravar_gasto_meta`). Repetir é sempre seguro: a tarefa só lê na Meta e substitui a janela inteira.
+
+**Quem enfileira.** Uma tarefa viva por clínica (índice único `job_queue_gasto_meta_vivo`); um segundo pedido com uma na fila responde "já na fila".
+
+- O diário: `motor_manutencao()` chama `enfileirar_gasto_meta_do_dia()`, que atende até 3 clínicas por minuto, a partir das 06:00 no fuso **da clínica**, uma vez por dia local (`ultimo_diario_dia`). Pula clínica de teste, leitura ainda não testada e leitura pausada. O retorno da manutenção ganha `gasto_meta` (quantas clínicas foram atendidas na passagem); um erro estrutural vira `gasto_meta:<SQLSTATE>` em `planner_erro` e acende `planner_com_erro` no monitor.
+- O botão "Atualizar agora" em Configurações: no máximo um pedido a cada 10 minutos por clínica.
+- O "Testar leitura" que dá certo: enfileira na hora (essa origem ignora a pausa).
+
+**Quanto lê.** `DIAS_DA_PRIMEIRA_LEITURA` (60) dias na primeira leitura, na troca de conta e na volta depois de mais de `DIAS_DA_LEITURA_DIARIA` (30) dias sem ler; `DIAS_DA_LEITURA_DIARIA` por dia depois disso (a Meta ainda ajusta o gasto até 28 dias depois). As duas constantes ficam em `lib/domain/meta-anuncios.ts`. Os dias seguem o fuso **da conta de anúncios**, que é como a Meta entrega.
+
+**Conta grande.** Uma consulta do Insights que a Meta acusa como pesada, que passa de 40 páginas ou que não responde em 15 segundos é dividida ao meio, até 2 vezes, dentro da mesma tentativa; o silêncio de uma página não é repetido na hora, porque repetir a mesma consulta só gastaria o prazo de 35 s. Se nem as metades couberem, a tarefa volta pelo backoff com `meta_indisponivel` ou `prazo_esgotado`. `meta_indisponivel` todo dia na mesma clínica, com `lido_desde` vazio, é sinal de conta grande demais para a primeira leitura.
+
+**Por que trilho e grupo próprios.** A leitura dura até cerca de 40 segundos (custo estimado de 40 s; prazo de 35 s na Meta). A tarefa não tem número, então a raia dela seria a clínica: se rodasse na raia, ficaria em série com a integração ou o envio sem número da mesma clínica, e a segunda tarefa voltaria com `orcamento_da_passagem`, gastando o teto de 20 devoluções. Por isso ela tem reivindicação própria e cada uma roda sozinha, em paralelo com as raias. Como a reivindicação do investimento disputa com a de integração a trava da linha da clínica (`skip locked`), no pior caso uma clínica espera uma passagem (20 s) para ser servida; é aceito.
+
+**Clínica de teste.** `enfileirar_sincronizacao_de_gasto_meta` responde `clinica_de_teste` e não cria tarefa: uma tarefa pendente de clínica de teste nunca seria reivindicada e acenderia `fila_atrasada` em 5 minutos. Só os testes de integração passam `p_incluir_teste`, e eles adiam a tarefa e apagam a clínica no fim.
+
+**Desfechos.**
+
+| O que aconteceu | Tarefa | `meta_gasto_leitura` |
+| --- | --- | --- |
+| Leu e gravou | `concluido` | `situacao = 'funcionando'`, `sincronizado_em`, `lido_desde` e `lido_ate` |
+| Configuração removida depois de enfileirar | `concluido`, sem chamar a Meta | não muda |
+| Meta recusou o token, a permissão ou a conta (`token_invalido`, `sem_permissao`, `conta_sem_acesso`, `exige_prova_do_app`) | `falhou` na hora | `com_problema` com o problema: **pausa** o diário até o teste dar certo, um token novo ser salvo ou a conta mudar |
+| Pedido recusado pela Meta (`parametro_recusado`, `versao_descontinuada`, `outro`) | `falhou` na hora | `com_problema`, sem pausa (o diário do dia seguinte tenta de novo) |
+| Meta fora do ar, prazo esgotado, resposta torta, consulta pesada | volta pelo backoff, até 5 tentativas | `com_problema` só na última tentativa |
+| Limite de chamadas da Meta | devolvida em 5 a 60 minutos, sem queimar tentativa (`ultimo_motivo_devolucao = 'limite_da_meta'`; conta no teto de 20 devoluções) | não muda |
+| A gestão trocou a conta ou o token durante a leitura | devolvida na hora (`'config_mudou'`) e lida de novo com a configuração nova; nada velho é gravado | não muda |
+
+O `last_error` leva só códigos: o problema e o número da Meta (`token_invalido:190`, `meta_indisponivel`, `prazo_esgotado`), ou o SQLSTATE de uma escrita que falhou (`config_ilegivel:<código>`, `gravar_gasto_falhou:<código>`, `registrar_falha_falhou:<código>`). A mensagem da Meta nunca é guardada.
+
+**Diagnóstico:**
+
+```sql
+-- situação da leitura por clínica
+select clinic_id, situacao, problema, codigo_da_meta, sincronizado_em, tentado_em,
+       lido_desde, lido_ate, ultimo_diario_dia, atualizacao_pedida_em
+from meta_gasto_leitura order by tentado_em desc nulls last;
+
+-- tarefas recentes do trilho
+select clinic_id, status, attempts, max_attempts, last_error,
+       ultimo_motivo_devolucao, devolucoes, run_at, payload->>'origem' as origem
+from job_queue where kind = 'sincronizar_gasto_meta'
+order by created_at desc limit 20;
+```
+
+Para ler de novo uma clínica fora do horário, use o "Testar leitura" ou o "Atualizar agora" na tela de Configurações, que conferem o token antes. Pelo SQL Editor, `select enfileirar_sincronizacao_de_gasto_meta('<clinic_id>', 'manual');` respeita a pausa e o intervalo de 10 minutos.
+
+**Segredo.** O token de leitura (`meta_ads_account_secret.insights_access_token`) só é lido pela service role, dentro da tarefa e da Server Action do teste. Nenhuma função do banco devolve o token: as que gravam recebem só o sha256 dele, para recusar a escrita de uma leitura feita com o token antigo. Ele vai no cabeçalho `Authorization` da chamada à Meta, nunca na URL, e não aparece em log, em `last_error` nem na tela.
+
+**Versão da Graph.** Fica em `lib/integrations/meta/versao.ts` (`v26.0`), usada pela leitura e pela devolução de conversões. Se a Meta recusar a versão (problema `versao_descontinuada`, código 2635), troque ali.
 
 ---
 

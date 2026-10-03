@@ -1,4 +1,5 @@
 import type { EventoCapi } from "@/lib/integrations/meta/payload";
+import { GRAPH_VERSION } from "@/lib/integrations/meta/versao";
 
 // Adaptador HTTP da Conversions API da Meta, no molde do request do uazapi
 // (lib/integrations/whatsapp/uazapi.ts): timeout explicito com
@@ -11,7 +12,7 @@ import type { EventoCapi } from "@/lib/integrations/meta/payload";
 //
 // REGRA ABSOLUTA: nunca logar o corpo (carrega hash de telefone). So codigos.
 
-const GRAPH_VERSION = "v25.0"; // piso suportado em 09/2026 e v24; v25 e a recomendada
+// A versao da Graph vive em lib/integrations/meta/versao.ts (C10 da Fase 4).
 const CAPI_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 2;
 
