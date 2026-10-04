@@ -7,6 +7,7 @@ Os e-mails de cadastro, convite e senha nova saem do Supabase Auth (pelo SMTP do
 | `confirmacao-de-cadastro.html` | Confirm signup   | Confirme seu e-mail no Conduzza Clínicas    | `{{ .SiteURL }}/confirm?token_hash={{ .TokenHash }}&type=email&next=/inicio`             | área logada   |
 | `convite.html`                 | Invite user      | Você foi convidado para o Conduzza Clínicas | `{{ .SiteURL }}/confirm?token_hash={{ .TokenHash }}&type=invite&next=/convite`           | criar a senha |
 | `redefinicao-de-senha.html`    | Reset password   | Crie uma senha nova no Conduzza Clínicas    | `{{ .SiteURL }}/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/redefinir-senha` | senha nova    |
+| `senha-alterada.html`          | Password changed (aviso de segurança) | Sua senha do Conduzza Clínicas foi alterada | `https://conduzza.grupoclimb.ai/recuperar-senha` (aviso só tem `{{ .Email }}`) | pedir senha nova |
 
 Os modelos Magic Link, Change Email Address e Reauthentication não são usados pelo app: podem ficar como estão.
 
