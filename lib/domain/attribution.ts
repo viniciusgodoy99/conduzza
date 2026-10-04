@@ -168,6 +168,29 @@ export function removerCodigosDoClique(
   return limpo;
 }
 
+/**
+ * O texto que sobrou e so a frase que o script do site escreve quando o botao
+ * do WhatsApp nao tem mensagem pronta (as frases da clinica, a padrao ou o
+ * "Ola!" da primeira versao do script). Com o codigo do clique perdido
+ * (vencido, nao achado, so vinculado), esse texto e do sistema, nao do
+ * paciente: nao pode virar origem por mensagem padrao nem por palavra-chave
+ * (uma palavra-chave "site" casaria "Vim pelo site" para sempre).
+ */
+export function eFraseDoBotao(
+  corpo: string | null,
+  codigos: readonly string[],
+  frases: readonly string[],
+): boolean {
+  if (!corpo || codigos.length === 0) {
+    return false;
+  }
+  const resto = normalizarTexto(removerCodigosDoClique(corpo, codigos));
+  if (resto === "") {
+    return false;
+  }
+  return frases.some((frase) => normalizarTexto(frase) === resto);
+}
+
 /** Token de 6 chars do alfabeto. RNG injetavel para teste deterministico. */
 export function gerarToken(aleatorio: () => number = Math.random): string {
   let token = "";

@@ -6,7 +6,9 @@ import {
   extrairToken,
   type CampaignRule,
   type SourceChannel,
+  eFraseDoBotao,
 } from "@/lib/domain/attribution";
+import { FRASE_PADRAO } from "@/lib/domain/rastreio-do-site";
 import type {
   AnuncioDeOrigem,
   InboundEvent,
@@ -74,6 +76,35 @@ const RESULTADOS_DO_CLIQUE: readonly ResultadoDoCliqueDoSite[] = [
 
 function lerResultadoDoClique(dado: unknown): ResultadoDoCliqueDoSite | null {
   return RESULTADOS_DO_CLIQUE.find((resultado) => resultado === dado) ?? null;
+}
+
+/**
+ * Le as frases do botao do site da clinica (rastreio_do_site.frases) e diz se
+ * o texto, sem os codigos do clique, e uma delas, a padrao ou o "Ola!" da v1.
+ * Falha na leitura: considera que e frase (na duvida, nada de origem por
+ * texto gravada para sempre). Sem linha de rastreio: so as frases de fabrica.
+ */
+async function textoEFraseDoBotao(
+  admin: SupabaseClient,
+  clinicId: string,
+  corpo: string | null,
+  codigos: readonly string[],
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from("rastreio_do_site")
+    .select("frases")
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if (error) {
+    log.error("atribuicao_buscar_frases_falhou", {
+      clinic_id: clinicId,
+      error_code: error.code ?? null,
+    });
+    return true;
+  }
+  const daClinica = ((data as { frases?: string[] | null } | null)?.frases ??
+    []) as string[];
+  return eFraseDoBotao(corpo, codigos, [...daClinica, FRASE_PADRAO, "Olá!"]);
 }
 
 /**
@@ -196,6 +227,12 @@ async function tentarAtribuirOrigem(
     // prazo vencido) tiraria a mensagem padrao e deixaria a palavra-chave,
     // de precedencia menor, gravar para sempre.
     if (clique === "origem_gravada" || clique === null) {
+      return;
+    }
+    // Botao do site sem mensagem pronta: o texto que sobra e a frase que o
+    // script escreveu (frases da clinica em rastreio_do_site, a padrao ou o
+    // "Ola!" da v1). Com o clique perdido, esse texto nao atribui nada.
+    if (await textoEFraseDoBotao(admin, clinicId, corpo, codigos)) {
       return;
     }
   }

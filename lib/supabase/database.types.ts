@@ -3130,6 +3130,7 @@ export type Database = {
           chave: string
           chave_trocada_em: string
           clinic_id: string
+          frases: string[]
           ultimo_clique_em: string | null
         }
         Insert: {
@@ -3137,6 +3138,7 @@ export type Database = {
           chave?: string
           chave_trocada_em?: string
           clinic_id: string
+          frases?: string[]
           ultimo_clique_em?: string | null
         }
         Update: {
@@ -3144,6 +3146,7 @@ export type Database = {
           chave?: string
           chave_trocada_em?: string
           clinic_id?: string
+          frases?: string[]
           ultimo_clique_em?: string | null
         }
         Relationships: [
@@ -4168,6 +4171,7 @@ export type Database = {
         Returns: Json
       }
       fechar_runs_orfas: { Args: never; Returns: number }
+      frases_do_rastreio: { Args: { p_chave: string }; Returns: string[] }
       funil_da_jornada: { Args: { p_clinic_id: string }; Returns: Json }
       funil_do_periodo: {
         Args: {

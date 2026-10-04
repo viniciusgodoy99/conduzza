@@ -17,12 +17,18 @@ import type { Database } from "@/lib/supabase/database.types";
 // e avisa a rota publica app/api/publico/clique. A rota valida o corpo com o
 // schema daqui e chama registrar_clique_do_site com a service role.
 //
+// Botao sem mensagem pronta (ajuste de 04/10/2026): o texto antes do codigo
+// e uma das frases da clinica (de 1 a 5, sorteada por clique). O script
+// busca as frases ao carregar, so com sinal do Google, na rota publica
+// app/api/publico/rastreio/[chave] (que chama frases_do_rastreio com a
+// service role), e usa FRASE_PADRAO se a busca falhar ou nao voltar a tempo.
+//
 // O SCRIPT NAO IMPORTA ESTE MODULO: ele e um arquivo estatico, sem build e
 // sem dependencia, que roda no site da clinica. Por isso as regras que ele
-// tambem aplica (sinais da URL e o link com o codigo) existem nos dois
-// lugares, e tests/unit/rastreio/script-v1.test.ts roda o script de verdade
-// e confere que ele faz EXATAMENTE o que as funcoes daqui fazem. Mudou uma,
-// muda a outra.
+// tambem aplica (sinais da URL, frases da resposta, sorteio e o link com o
+// codigo) existem nos dois lugares, e tests/unit/rastreio/script-v1.test.ts
+// roda o script de verdade e confere que ele faz EXATAMENTE o que as funcoes
+// daqui fazem. Mudou uma, muda a outra.
 //
 // Os formatos sao os mesmos dos CHECKs e da validacao de
 // registrar_clique_do_site (supabase/migrations/20261005100000): o que passa
@@ -46,12 +52,27 @@ export const SUFIXO_DE_URL_FINAL =
   "cz_campanha={campaignid}&cz_grupo={adgroupid}";
 
 /**
- * Texto que vai antes do codigo quando o botao do site nao tem mensagem
- * pronta. PROVISORIO: pergunta aberta ao dono (critica.md, secao 5). O
- * script tem a mesma constante (escrita com escape unicode, para nao
- * depender do charset da pagina da clinica).
+ * Frase de fabrica: vai antes do codigo quando o botao do site nao tem
+ * mensagem pronta e a clinica nao cadastrou outras, ou quando a busca das
+ * frases falha ou nao volta a tempo (pedido do dono em 04/10/2026). E
+ * IDENTICA ao default de rastreio_do_site.frases (migration 20261005110000)
+ * e a FRASE_PADRAO do script (la escrita com escape unicode, para nao
+ * depender do charset da pagina da clinica). Os testes conferem os tres.
  */
-export const TEXTO_SEM_MENSAGEM_PRONTA = "Olá!";
+export const FRASE_PADRAO =
+  "Olá! Vim pelo site e gostaria de agendar uma consulta.";
+
+/** Nome antigo de FRASE_PADRAO (contrato do banco, item 6). */
+export const TEXTO_SEM_MENSAGEM_PRONTA = FRASE_PADRAO;
+
+/** Quantas frases a clinica cadastra, no maximo (check do banco). */
+export const LIMITE_DE_FRASES = 5;
+
+/** Tamanho maximo de uma frase, em caracteres (check do banco). */
+export const TAMANHO_MAXIMO_DA_FRASE = 300;
+
+/** Onde o script busca as frases da clinica (seguido da chave). */
+export const CAMINHO_DAS_FRASES = "/api/publico/rastreio/";
 
 export const FORMATO_DA_CHAVE = /^[0-9a-f]{20}$/;
 export const FORMATO_DO_CODIGO = new RegExp(
@@ -252,6 +273,141 @@ export function argumentosDoRegistro(
 }
 
 // ---------------------------------------------------------------------------
+// Frases do botao sem mensagem pronta (o script aplica as mesmas regras)
+// ---------------------------------------------------------------------------
+//
+// Regras dos checks de rastreio_do_site.frases (migration 20261005110000):
+// de 1 a 5 frases; cada uma com pelo menos um caractere alem de espaco, ate
+// 300 caracteres (code points: emoji conta 1), sem quebra de linha (nem
+// U+2028 e U+2029), sem caractere de controle (C0, DEL e C1) e sem '[', ']'
+// ou '#'. Colchete e cerquilha ficam fora para nenhuma frase virar candidata
+// a codigo: a ingestao procura "#XXXXXX" no texto inteiro.
+
+/** O que nao pode aparecer numa frase. */
+const PROIBIDO_NA_FRASE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029[\]#]/;
+const SEM_PROIBIDO_NA_FRASE =
+  /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029[\]#]*$/;
+
+/** Par substituto UTF-16 (um emoji, por exemplo): conta como 1 caractere. */
+const PAR_SUBSTITUTO = /[\uD800-\uDBFF][\uDC00-\uDFFF]/g;
+
+/** Caracteres como o banco conta (char_length, em code points). */
+export function caracteresDaFrase(frase: string): number {
+  return frase.replace(PAR_SUBSTITUTO, "_").length;
+}
+
+/**
+ * A frase passa no check do banco, exatamente: e o que a rota confere na
+ * saida da funcao e o que o script confere na resposta da rota. Nao apara:
+ * quem grava (a acao) apara antes, com frasesDoRastreioSchema.
+ */
+export function fraseNoFormato(frase: unknown): frase is string {
+  return (
+    typeof frase === "string" &&
+    /[^ ]/.test(frase) &&
+    caracteresDaFrase(frase) <= TAMANHO_MAXIMO_DA_FRASE &&
+    !PROIBIDO_NA_FRASE.test(frase)
+  );
+}
+
+/**
+ * A lista de frases, copiada, se ela inteira passa nos checks do banco; null
+ * se nao for lista, tiver 0 ou mais de 5 itens ou algum item fora da regra.
+ * Tudo ou nada: com qualquer item estranho, o script fica com FRASE_PADRAO.
+ */
+export function frasesNoFormato(lista: unknown): string[] | null {
+  if (
+    !Array.isArray(lista) ||
+    lista.length < 1 ||
+    lista.length > LIMITE_DE_FRASES
+  ) {
+    return null;
+  }
+  const frases: string[] = [];
+  for (const frase of lista as unknown[]) {
+    if (!fraseNoFormato(frase)) {
+      return null;
+    }
+    frases.push(frase);
+  }
+  return frases;
+}
+
+/**
+ * As frases do corpo que a rota GET devolve ({"frases": [...]}), ou null.
+ * Campo a mais no objeto e ignorado (uma rota mais nova nao quebra um script
+ * que ficou no cache do navegador).
+ */
+export function frasesDaResposta(corpo: unknown): string[] | null {
+  if (!corpo || typeof corpo !== "object" || Array.isArray(corpo)) {
+    return null;
+  }
+  return frasesNoFormato((corpo as { frases?: unknown }).frases);
+}
+
+/**
+ * Entrada da tela (Server Action): apara cada frase e confere as regras do
+ * banco antes do 23514, com a mensagem certa. O .max do Zod conta unidades
+ * UTF-16, entao e igual ou mais estrito que o banco (emoji conta 2 aqui e 1
+ * la): nunca aceita o que o banco recusa.
+ */
+export const fraseDoRastreioSchema = z
+  .string()
+  .trim()
+  .min(1, "Escreva a frase.")
+  .max(
+    TAMANHO_MAXIMO_DA_FRASE,
+    `Use até ${TAMANHO_MAXIMO_DA_FRASE} caracteres.`,
+  )
+  .regex(
+    SEM_PROIBIDO_NA_FRASE,
+    "A frase não pode ter quebra de linha, colchetes nem o sinal #.",
+  );
+
+export const frasesDoRastreioSchema = z
+  .array(fraseDoRastreioSchema)
+  .min(1, "Cadastre pelo menos uma frase.")
+  .max(LIMITE_DE_FRASES, `Cadastre no máximo ${LIMITE_DE_FRASES} frases.`);
+
+/** Tentativas do sorteio antes de desistir e ficar com a primeira frase. */
+const TENTATIVAS_DO_SORTEIO = 32;
+
+/**
+ * Uma frase sorteada da lista, um byte por tentativa de `preencher` (no
+ * script, crypto.getRandomValues). Byte de `limite` para cima e descartado,
+ * para nao viciar o sorteio (256 nao divide por 3 nem por 5). Uma frase so:
+ * nem sorteia. Lista fora da regra: FRASE_PADRAO.
+ */
+export function sortearFrase(
+  frases: readonly string[],
+  preencher: (bytes: Uint8Array) => void,
+): string {
+  const lista = frasesNoFormato(frases);
+  if (!lista) {
+    return FRASE_PADRAO;
+  }
+  const primeira = lista[0] ?? FRASE_PADRAO;
+  if (lista.length < 2) {
+    return primeira;
+  }
+  const limite = 256 - (256 % lista.length);
+  const byte = new Uint8Array(1);
+  for (let tentativa = 0; tentativa < TENTATIVAS_DO_SORTEIO; tentativa++) {
+    preencher(byte);
+    const valor = byte[0] ?? 255;
+    if (valor < limite) {
+      return lista[valor % lista.length] ?? primeira;
+    }
+  }
+  return primeira;
+}
+
+/** O caminho da rota GET das frases para a chave (null fora do formato). */
+export function caminhoDasFrases(chave: string): string | null {
+  return FORMATO_DA_CHAVE.test(chave) ? `${CAMINHO_DAS_FRASES}${chave}` : null;
+}
+
+// ---------------------------------------------------------------------------
 // Link do WhatsApp com o codigo (o script aplica a mesma regra no clique)
 // ---------------------------------------------------------------------------
 
@@ -282,11 +438,13 @@ function decodificar(valor: string): string | null {
  * O texto da clinica fica byte a byte como estava: o sufixo codificado e
  * colado no fim do valor bruto, sem decodificar e recodificar (um `+` ou um
  * `%20` do site continuam iguais). Sem texto, ou com texto em branco, vai
- * TEXTO_SEM_MENSAGEM_PRONTA antes do codigo.
+ * `frase` antes do codigo (no script, a sorteada entre as da clinica; fora
+ * da regra, ou sem ela, FRASE_PADRAO). Com texto pronto, a frase nao entra.
  */
 export function linkComCodigo(
   hrefDoSite: string,
   codigo: string,
+  frase: string = FRASE_PADRAO,
 ): string | null {
   const href = hrefDoSite.trim();
   const inicio = LINK_DO_WHATSAPP.exec(href);
@@ -300,7 +458,8 @@ export function linkComCodigo(
   const busca = posicaoDoHash >= 0 ? cauda.slice(0, posicaoDoHash) : cauda;
   const partes = busca.length > 1 ? busca.slice(1).split("&") : [];
   const sufixo = ` [#${codigo}]`;
-  const textoNovo = `text=${encodeURIComponent(TEXTO_SEM_MENSAGEM_PRONTA + sufixo)}`;
+  const antes = fraseNoFormato(frase) ? frase : FRASE_PADRAO;
+  const textoNovo = `text=${encodeURIComponent(antes + sufixo)}`;
 
   let achou = false;
   for (let indice = 0; indice < partes.length; indice++) {

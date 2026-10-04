@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   atribuirOrigem,
   codigosDoCliqueDoSite,
+  eFraseDoBotao,
   extrairToken,
   extrairTokens,
   MAX_CODIGOS_DE_CLIQUE,
   removerCodigosDoClique,
   type CampaignRule,
 } from "@/lib/domain/attribution";
+import { FRASE_PADRAO } from "@/lib/domain/rastreio-do-site";
 import type {
   AnuncioDeOrigem,
   InboundEvent,
@@ -67,6 +69,9 @@ class BancoFalso {
   contato: Linha = {};
   campanhas: Linha[] = [];
   erroNasCampanhas: ErroFalso | null = null;
+  /** Linha de rastreio_do_site da clinica (null = sem linha). */
+  rastreio: { frases: string[] } | null = null;
+  erroNasFrases: ErroFalso | null = null;
   cliques: CliqueFalso[] = [];
   ingestao: Linha = {};
   /** Erro forcado em toda chamada de casar_clique_do_site. */
@@ -81,6 +86,8 @@ class BancoFalso {
   }
 
   limpar(): void {
+    this.rastreio = null;
+    this.erroNasFrases = null;
     this.contato = {
       id: CONTATO,
       clinic_id: CLINICA,
@@ -283,7 +290,17 @@ class ConsultaFalsa implements PromiseLike<Resultado> {
     return this;
   }
 
+  maybeSingle(): this {
+    return this;
+  }
+
   private executar(): Resultado {
+    if (this.tabela === "rastreio_do_site") {
+      if (this.banco.erroNasFrases) {
+        return { data: null, error: this.banco.erroNasFrases };
+      }
+      return { data: this.banco.rastreio, error: null };
+    }
     if (this.tabela === "campaign_link") {
       if (this.banco.erroNasCampanhas) {
         return { data: null, error: this.banco.erroNasCampanhas };
@@ -766,6 +783,109 @@ describe("ingestão com código de clique do site", () => {
       (evento) => evento.evento === "clique_do_site_na_ingestao",
     );
     expect(linha).toMatchObject({ status: "expirado", count: 1 });
+  });
+
+  describe("frase que o script escreve no botão sem texto, com o clique perdido", () => {
+    // O texto e do sistema (frases da clinica, a padrao ou o "Ola!" da v1),
+    // nao do paciente: nunca vira origem por palavra-chave nem por mensagem
+    // padrao, mesmo que case ("site" casaria "Vim pelo site").
+    function campanhaComPalavraSite(): Linha {
+      return campanhaFixa({
+        token: null,
+        channel: "busca_organica",
+        keywords: ["site"],
+      });
+    }
+
+    it("frase padrão de fábrica: nenhuma origem gravada", async () => {
+      banco.campanhas = [campanhaComPalavraSite()];
+      banco.clique({ vencido: true });
+
+      await ingerir(mensagem(`${FRASE_PADRAO} [#K7Q2MX]`));
+
+      expect(banco.contato.source_channel).toBeNull();
+      expect(banco.contato.source_method).toBeNull();
+    });
+
+    it("frase cadastrada pela clínica: nenhuma origem gravada", async () => {
+      banco.campanhas = [
+        campanhaFixa({
+          token: null,
+          channel: "busca_organica",
+          keywords: ["implante"],
+        }),
+      ];
+      banco.rastreio = {
+        frases: ["Oi! Vi o site e quero saber do implante."],
+      };
+      banco.clique({ vencido: true });
+
+      await ingerir(
+        mensagem("oi! vi o site e quero saber do implante. [#K7Q2MX]"),
+      );
+
+      expect(banco.contato.source_channel).toBeNull();
+    });
+
+    it("o 'Olá!' da primeira versão do script também não atribui", async () => {
+      banco.campanhas = [
+        campanhaFixa({
+          token: null,
+          channel: "busca_organica",
+          default_message: "Olá!",
+        }),
+      ];
+      banco.clique({ vencido: true });
+
+      await ingerir(mensagem("Olá! [#K7Q2MX]"));
+
+      expect(banco.contato.source_channel).toBeNull();
+    });
+
+    it("falha ao ler as frases: na dúvida, nenhuma origem por texto", async () => {
+      banco.campanhas = [campanhaComPalavraSite()];
+      banco.erroNasFrases = { code: "XX000", message: "falhou" };
+      banco.clique({ vencido: true });
+
+      await ingerir(mensagem(`${FRASE_PADRAO} [#K7Q2MX]`));
+
+      expect(banco.contato.source_channel).toBeNull();
+    });
+
+    it("texto do próprio botão (não é frase do script) continua valendo para a palavra-chave", async () => {
+      banco.campanhas = [campanhaComPalavraSite()];
+      banco.clique({ vencido: true });
+
+      await ingerir(mensagem("Vim pelo site, quero um horário [#K7Q2MX]"));
+
+      expect(banco.contato).toMatchObject({
+        source_channel: "busca_organica",
+        source_method: "palavra_chave",
+      });
+    });
+  });
+
+  describe("eFraseDoBotao (decisão pura)", () => {
+    it("só com código do clique; compara o texto sem o código e normalizado", () => {
+      expect(
+        eFraseDoBotao(`${FRASE_PADRAO} [#K7Q2MX]`, ["K7Q2MX"], [FRASE_PADRAO]),
+      ).toBe(true);
+      expect(
+        eFraseDoBotao(
+          `  ${FRASE_PADRAO.toUpperCase()}  [#k7q2mx]`,
+          ["K7Q2MX"],
+          [FRASE_PADRAO],
+        ),
+      ).toBe(true);
+      expect(eFraseDoBotao(FRASE_PADRAO, [], [FRASE_PADRAO])).toBe(false);
+      expect(
+        eFraseDoBotao("Outra coisa [#K7Q2MX]", ["K7Q2MX"], [FRASE_PADRAO]),
+      ).toBe(false);
+      expect(eFraseDoBotao("[#K7Q2MX]", ["K7Q2MX"], [FRASE_PADRAO])).toBe(
+        false,
+      );
+      expect(eFraseDoBotao(null, ["K7Q2MX"], [FRASE_PADRAO])).toBe(false);
+    });
   });
 
   describe("mensagem padrão igual ao texto do botão do site, com o clique perdido", () => {

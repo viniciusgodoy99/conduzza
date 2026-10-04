@@ -8,7 +8,11 @@ import {
   Copy,
   Globe,
   Hourglass,
+  OctagonAlert,
+  Plus,
   RefreshCw,
+  RotateCcw,
+  Trash2,
   Watch,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState, useTransition } from "react";
@@ -16,6 +20,7 @@ import { toast } from "sonner";
 
 import {
   alternarRastreioDoSiteAction,
+  salvarFrasesDoRastreioAction,
   trocarChaveDoRastreioAction,
 } from "@/app/(app)/configuracoes/rastreio-do-site-actions";
 import { focoPerdido } from "@/components/cadastros/comum";
@@ -31,12 +36,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { StatusDefinition } from "@/lib/design/status";
 import {
+  FRASE_PADRAO,
+  frasesDoRastreioSchema,
+  frasesNoFormato,
+  LIMITE_DE_FRASES,
   linhaDoScript,
   SUFIXO_DE_URL_FINAL,
+  TAMANHO_MAXIMO_DA_FRASE,
 } from "@/lib/domain/rastreio-do-site";
 
 // Cartao "Rastreio do site" (Configuracoes, aba Anuncios do Google; F1 do
@@ -76,6 +87,16 @@ import {
 //   Meta: a confirmacao recebe o foco ao aparecer e, ao cancelar ou quando a
 //   troca falha, o foco volta ao botao.
 // - Toda acao fica visivel; sem permissao, desabilitada com a dica.
+// - "Mensagem do botao sem texto pronto" (ajuste do dono em 04/10/2026,
+//   migration 20261005110000): de 1 a 5 frases que o script poe antes do
+//   codigo quando o botao do site nao tem texto pronto (com mais de uma, o
+//   script sorteia uma por clique). As regras de cada frase sao as do modulo
+//   do rastreio (frasesDoRastreioSchema, os mesmos checks do banco): a tela
+//   confere antes de mandar e a acao confere de novo. O site busca as frases
+//   pela chave, entao salvar nao exige colar a linha de novo. Com o rastreio
+//   desligado, a busca nao devolve nada e o site usa a FRASE_PADRAO: a tela
+//   avisa. Sem linha, a gestao ve a frase padrao (o que o site usaria) e
+//   salvar cria a linha desligada.
 //
 // Modulo "use client": as regras puras abaixo sao exportadas para os testes.
 // A pagina (servidor) nao importa nada daqui alem de tipos: ela manda a
@@ -87,6 +108,8 @@ export type LinhaDoRastreio = {
   ativo: boolean;
   chave_trocada_em: string;
   ultimo_clique_em: string | null;
+  /** As frases do botao sem texto pronto (de 1 a 5; default do banco). */
+  frases: string[];
 };
 
 /** Os totais de situacao_do_rastreio (nunca a chave, o gclid ou o contato). */
@@ -100,10 +123,7 @@ export type SituacaoDoRastreio = {
 };
 
 export type EstadoDoRastreio =
-  | "desligado"
-  | "esperando"
-  | "recebendo"
-  | "sem_cliques_recentes";
+  "desligado" | "esperando" | "recebendo" | "sem_cliques_recentes";
 
 /** A janela do "recebendo": a mesma dos totais de situacao_do_rastreio. */
 export const JANELA_DE_CLIQUES_MS = 7 * 24 * 60 * 60 * 1000;
@@ -380,6 +400,135 @@ export function dicasDoRastreio(entrada: {
       : temLinha
         ? null
         : TEXTOS_DO_RASTREIO.chaveNasceAoLigar,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Frases do botao sem texto pronto (regras puras)
+// ---------------------------------------------------------------------------
+
+export const TEXTOS_DAS_FRASES = {
+  titulo: "Mensagem do botão sem texto pronto",
+  quandoUsa:
+    "Quando o botão do WhatsApp do site não traz texto pronto, a conversa já abre com uma destas frases e o código no fim. Botão com texto pronto continua com o texto dele.",
+  semColarDeNovo:
+    "Não precisa colar a linha de novo no site. Se o site não conseguir buscar as frases a tempo, vale a frase padrão.",
+  desligado:
+    "Com o rastreio desligado, o site usa a frase padrão. As frases abaixo passam a valer quando o rastreio estiver ligado.",
+  sorteio: "Com mais de uma frase, o sistema sorteia uma a cada clique.",
+  semAcesso: "As frases aparecem para administradores e gestores.",
+  limite: `São no máximo ${LIMITE_DE_FRASES} frases. Remova uma para adicionar outra.`,
+  minimo: "A lista precisa de pelo menos uma frase.",
+  jaEPadrao: "A lista já tem só a frase padrão.",
+  semAlteracao: "Nenhuma alteração para salvar.",
+  confira: "Confira as frases marcadas antes de salvar.",
+  salvas:
+    "Frases salvas. O site passa a usar as frases novas, sem colar a linha de novo.",
+  naoSalvas: "Alterações ainda não salvas.",
+  previaTitulo: "Como chega no WhatsApp da clínica",
+  previaVazia: "Escreva uma frase para ver como ela chega.",
+  previaCodigo: "O código muda a cada clique.",
+} as const;
+
+/**
+ * As frases da linha como o site as usa: as gravadas, se passam nas regras
+ * do banco; sem linha ou fora da regra, a FRASE_PADRAO (a rota confere a
+ * saida com a mesma regra e, fora dela, o script fica com a padrao).
+ */
+export function frasesDaLinha(linha: LinhaDoRastreio | null): string[] {
+  return (linha ? frasesNoFormato(linha.frases) : null) ?? [FRASE_PADRAO];
+}
+
+/** "Frase [#K7Q2MX]": como a mensagem chega. Frase em branco: nula. */
+export function previaDaFrase(frase: string): string | null {
+  const limpa = frase.trim();
+  return limpa ? `${limpa} ${EXEMPLO_DO_CODIGO}` : null;
+}
+
+export type ErrosDasFrases = {
+  /** Uma mensagem por frase (nula = a frase passa), na ordem da lista. */
+  porFrase: (string | null)[];
+  /** Problema da lista inteira (nenhuma frase, mais de cinco). */
+  daLista: string | null;
+};
+
+/**
+ * O que impede salvar, pelas regras do modulo do rastreio (o mesmo schema
+ * que a acao usa): nulo quando a lista passa. Por frase, a primeira regra
+ * quebrada, no texto do proprio schema.
+ */
+export function errosDasFrases(
+  lista: readonly string[],
+): ErrosDasFrases | null {
+  const resultado = frasesDoRastreioSchema.safeParse(lista);
+  if (resultado.success) {
+    return null;
+  }
+  const porFrase: (string | null)[] = lista.map(() => null);
+  let daLista: string | null = null;
+  for (const problema of resultado.error.issues) {
+    const [indice] = problema.path;
+    if (typeof indice === "number" && indice < porFrase.length) {
+      porFrase[indice] ??= problema.message;
+    } else {
+      daLista ??= problema.message;
+    }
+  }
+  return { porFrase, daLista };
+}
+
+/** Mesma lista, item a item (sem aparar: espaco a mais ainda nao foi salvo). */
+export function mesmasFrases(
+  a: readonly string[],
+  b: readonly string[],
+): boolean {
+  return a.length === b.length && a.every((frase, i) => frase === b[i]);
+}
+
+/**
+ * O que o bloco faz quando as frases que vem do servidor mudam depois da
+ * montagem (outra pessoa, ou outra aba, salvou, e uma acao do cartao
+ * revalidou a pagina). Sem alteracao local, a lista acompanha o servidor;
+ * com alteracao, a edicao fica e so a referencia do que esta salvo muda
+ * (o "Salvar" passa a comparar com o que vale de verdade). Depois do proprio
+ * salvar, o servidor traz o que a acao ja devolveu: nada muda.
+ */
+export function acompanharOServidor(entrada: {
+  textos: readonly string[];
+  salvas: readonly string[];
+  doServidor: readonly string[];
+}): { trocarItens: boolean; trocarSalvas: boolean } {
+  const { textos, salvas, doServidor } = entrada;
+  return {
+    trocarItens:
+      mesmasFrases(textos, salvas) && !mesmasFrases(textos, doServidor),
+    trocarSalvas: !mesmasFrases(salvas, doServidor),
+  };
+}
+
+export type AcaoDasFrases = "adicionar" | "remover" | "restaurar" | "salvar";
+
+/**
+ * A dica de cada controle das frases desabilitado (nula = liberado): a
+ * permissao primeiro, depois o que falta. Exportada para o teste, porque a
+ * dica so aparece no HTML quando o tooltip abre.
+ */
+export function dicasDasFrases(entrada: {
+  podeGerenciar: boolean;
+  dica: string;
+  quantidade: number;
+  soAPadrao: boolean;
+  alterou: boolean;
+}): Record<AcaoDasFrases, string | null> {
+  const { podeGerenciar, dica, quantidade, soAPadrao, alterou } = entrada;
+  if (!podeGerenciar) {
+    return { adicionar: dica, remover: dica, restaurar: dica, salvar: dica };
+  }
+  return {
+    adicionar: quantidade >= LIMITE_DE_FRASES ? TEXTOS_DAS_FRASES.limite : null,
+    remover: quantidade <= 1 ? TEXTOS_DAS_FRASES.minimo : null,
+    restaurar: soAPadrao ? TEXTOS_DAS_FRASES.jaEPadrao : null,
+    salvar: alterou ? null : TEXTOS_DAS_FRASES.semAlteracao,
   };
 }
 
@@ -733,6 +882,15 @@ export function RastreioDoSiteCard({
           ) : null}
         </div>
 
+        <FrasesDoBotao
+          // A gestao sem linha ve a padrao (o que o site usaria); quem nao
+          // le a linha (a RLS so mostra para a gestao) nao ve conteudo.
+          frases={linha || podeGerenciar ? frasesDaLinha(linha) : null}
+          ligado={ligado}
+          podeGerenciar={podeGerenciar}
+          dica={dica}
+        />
+
         <section className="grid gap-2.5" aria-labelledby={situacaoTituloId}>
           <h3
             id={situacaoTituloId}
@@ -853,5 +1011,399 @@ export function RastreioDoSiteCard({
         </section>
       </CardContent>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bloco "Mensagem do botao sem texto pronto"
+// ---------------------------------------------------------------------------
+
+/**
+ * Uma frase da lista em edicao; o id estavel mantem foco e erro no lugar.
+ * "n<numero>" nasce no proprio bloco; "s<geracao>-<posicao>" nasce quando
+ * a lista acompanha o servidor (nunca colidem).
+ */
+type ItemDaFrase = { id: string; texto: string };
+
+export type FrasesDoBotaoProps = {
+  /**
+   * As frases gravadas (ou a padrao, para a gestao sem linha). Nulas quando
+   * o papel nao le a linha: o bloco mostra as acoes presas, sem o conteudo.
+   */
+  frases: string[] | null;
+  /** O rastreio esta ligado? Desligado, o site usa a frase padrao. */
+  ligado: boolean;
+  podeGerenciar: boolean;
+  dica: string;
+};
+
+export function FrasesDoBotao({
+  frases,
+  ligado,
+  podeGerenciar,
+  dica,
+}: FrasesDoBotaoProps) {
+  const ids = useId();
+  const tituloId = `${ids}-frases-titulo`;
+  const explicacaoId = `${ids}-frases-explicacao`;
+  const previaTituloId = `${ids}-frases-previa`;
+
+  const iniciais = frases ?? [];
+  // O estado nasce das props. Depois do proprio salvar, o que ficou gravado
+  // vem da resposta da acao. Quando as props mudam depois da montagem (outra
+  // pessoa salvou e ligar, desligar ou trocar a chave revalidou a pagina),
+  // a lista acompanha logo abaixo, sem remontar o bloco: remontar apagaria
+  // o "Frases salvas." da regiao anunciada.
+  const [itens, setItens] = useState<ItemDaFrase[]>(() =>
+    iniciais.map((texto, i) => ({ id: `n${i}`, texto })),
+  );
+  const [salvas, setSalvas] = useState<string[]>(iniciais);
+  const [erros, setErros] = useState<ErrosDasFrases | null>(null);
+  const [resultado, setResultado] = useState<Resultado | null>(null);
+  const [pendente, startTransition] = useTransition();
+  const proximoId = useRef(iniciais.length);
+  const versao = JSON.stringify(frases);
+  const [vista, setVista] = useState({ versao, geracao: 0 });
+
+  // Foco depois de adicionar, remover, restaurar ou de um salvar recusado:
+  // o controle que tinha o foco pode ter saido da tela.
+  const campos = useRef(new Map<string, HTMLInputElement>());
+  const focarNoItem = useRef<string | null>(null);
+  useEffect(() => {
+    const alvo = focarNoItem.current;
+    if (alvo === null) {
+      return;
+    }
+    focarNoItem.current = null;
+    campos.current.get(alvo)?.focus();
+  });
+
+  const textos = itens.map((item) => item.texto);
+
+  // Estado derivado das props (o padrao do React para "ajustar o estado
+  // quando a prop muda"): roda no render, uma vez por versao do servidor.
+  if (vista.versao !== versao) {
+    const geracao = vista.geracao + 1;
+    setVista({ versao, geracao });
+    const doServidor = frases ?? [];
+    const passo = acompanharOServidor({ textos, salvas, doServidor });
+    if (passo.trocarItens) {
+      // A mesma posicao fica com o mesmo id: o campo nao remonta e quem
+      // estava nele nao perde o foco.
+      setItens(
+        doServidor.map((texto, i) => ({
+          id: itens[i]?.id ?? `s${geracao}-${i}`,
+          texto,
+        })),
+      );
+      setErros(null);
+    }
+    if (passo.trocarSalvas) {
+      setSalvas(doServidor);
+    }
+  }
+
+  const alterou = !mesmasFrases(textos, salvas);
+  const soAPadrao = mesmasFrases(textos, [FRASE_PADRAO]);
+  const dicas = dicasDasFrases({
+    podeGerenciar,
+    dica,
+    quantidade: itens.length,
+    soAPadrao,
+    alterou,
+  });
+  const previas = textos
+    .map(previaDaFrase)
+    .filter((previa): previa is string => previa !== null);
+
+  const limparRetorno = () => {
+    setResultado(null);
+  };
+
+  const mudar = (id: string, texto: string) => {
+    limparRetorno();
+    const indice = itens.findIndex((item) => item.id === id);
+    setItens((atuais) =>
+      atuais.map((item) => (item.id === id ? { ...item, texto } : item)),
+    );
+    if (erros && indice >= 0) {
+      setErros({
+        porFrase: erros.porFrase.map((erro, i) => (i === indice ? null : erro)),
+        daLista: erros.daLista,
+      });
+    }
+  };
+
+  const adicionar = () => {
+    if (itens.length >= LIMITE_DE_FRASES) {
+      return;
+    }
+    limparRetorno();
+    const id = `n${proximoId.current++}`;
+    setItens((atuais) => [...atuais, { id, texto: "" }]);
+    setErros((atuais) =>
+      atuais ? { porFrase: [...atuais.porFrase, null], daLista: null } : null,
+    );
+    focarNoItem.current = id;
+  };
+
+  const remover = (id: string) => {
+    if (itens.length <= 1) {
+      return;
+    }
+    limparRetorno();
+    const indice = itens.findIndex((item) => item.id === id);
+    const restantes = itens.filter((item) => item.id !== id);
+    setItens(restantes);
+    setErros((atuais) =>
+      atuais
+        ? {
+            porFrase: atuais.porFrase.filter((_, i) => i !== indice),
+            daLista: null,
+          }
+        : null,
+    );
+    // O botao de remover sai da tela com o foco: vai para a frase que ficou
+    // no lugar (ou a anterior, quando era a ultima).
+    const vizinha = restantes[Math.min(indice, restantes.length - 1)];
+    focarNoItem.current = vizinha?.id ?? null;
+  };
+
+  const restaurar = () => {
+    limparRetorno();
+    const id = `n${proximoId.current++}`;
+    setItens([{ id, texto: FRASE_PADRAO }]);
+    setErros(null);
+    focarNoItem.current = id;
+  };
+
+  const salvar = () => {
+    limparRetorno();
+    const problemas = errosDasFrases(textos);
+    if (problemas) {
+      setErros(problemas);
+      setResultado({
+        tom: "alert",
+        texto: problemas.daLista ?? TEXTOS_DAS_FRASES.confira,
+      });
+      const primeiro = problemas.porFrase.findIndex((erro) => erro !== null);
+      focarNoItem.current =
+        primeiro >= 0 ? (itens[primeiro]?.id ?? null) : null;
+      return;
+    }
+    setErros(null);
+    startTransition(async () => {
+      try {
+        const r = await salvarFrasesDoRastreioAction({ frases: textos });
+        if (!r.ok) {
+          setResultado({ tom: "alert", texto: r.error });
+          return;
+        }
+        // As frases como ficaram gravadas (aparadas).
+        setSalvas(r.frases);
+        setItens(
+          r.frases.map((texto) => ({ id: `n${proximoId.current++}`, texto })),
+        );
+        setResultado({ tom: "success", texto: TEXTOS_DAS_FRASES.salvas });
+      } catch {
+        setResultado({ tom: "alert", texto: TEXTOS_DO_RASTREIO.semResposta });
+      }
+    });
+  };
+
+  const travado = !podeGerenciar || frases === null;
+
+  const botaoAdicionar = (
+    <Button
+      variant="outline"
+      onClick={adicionar}
+      disabled={travado || dicas.adicionar !== null || pendente}
+    >
+      <Plus aria-hidden />
+      Adicionar frase
+    </Button>
+  );
+  const botaoRestaurar = (
+    <Button
+      variant="ghost"
+      onClick={restaurar}
+      disabled={travado || dicas.restaurar !== null || pendente}
+    >
+      <RotateCcw aria-hidden />
+      Restaurar a frase padrão
+    </Button>
+  );
+  const botaoSalvar = (
+    <Button
+      onClick={salvar}
+      disabled={travado || dicas.salvar !== null || pendente}
+      aria-busy={pendente || undefined}
+    >
+      {pendente ? "Salvando..." : "Salvar frases"}
+    </Button>
+  );
+
+  return (
+    <section
+      className="grid gap-3"
+      aria-labelledby={tituloId}
+      aria-describedby={explicacaoId}
+    >
+      <div className="grid gap-1">
+        <h3
+          id={tituloId}
+          className="text-[13.5px] font-semibold text-text-strong"
+        >
+          {TEXTOS_DAS_FRASES.titulo}
+        </h3>
+        <p id={explicacaoId} className="text-[13px] text-text-secondary">
+          {TEXTOS_DAS_FRASES.quandoUsa}
+        </p>
+      </div>
+
+      {frases === null ? (
+        <p className="rounded-lg border border-dashed border-border-strong bg-surface-2 px-3.5 py-3 text-[13px] text-text-secondary">
+          {TEXTOS_DAS_FRASES.semAcesso}
+        </p>
+      ) : (
+        <ol className="grid gap-3">
+          {itens.map((item, indice) => {
+            const campoId = `${ids}-frase-${item.id}`;
+            const erroId = `${campoId}-erro`;
+            const erro = erros?.porFrase[indice] ?? null;
+            const botaoRemover = (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Remover a frase ${indice + 1}`}
+                onClick={() => remover(item.id)}
+                disabled={travado || dicas.remover !== null || pendente}
+              >
+                <Trash2 aria-hidden />
+              </Button>
+            );
+            return (
+              // O li fica list-item: a grade vai num div por dentro.
+              <li key={item.id}>
+                <div className="grid gap-1.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <Label htmlFor={campoId}>Frase {indice + 1}</Label>
+                    <span
+                      aria-hidden
+                      className="cz-num text-[11px] text-text-secondary"
+                    >
+                      {item.texto.length}/{TAMANHO_MAXIMO_DA_FRASE}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      ref={(campo) => {
+                        if (campo) {
+                          campos.current.set(item.id, campo);
+                        } else {
+                          campos.current.delete(item.id);
+                        }
+                      }}
+                      id={campoId}
+                      type="text"
+                      value={item.texto}
+                      maxLength={TAMANHO_MAXIMO_DA_FRASE}
+                      onChange={(evento) => mudar(item.id, evento.target.value)}
+                      disabled={travado}
+                      readOnly={pendente}
+                      aria-invalid={erro ? true : undefined}
+                      aria-describedby={erro ? erroId : undefined}
+                      className="flex-1"
+                    />
+                    {comDica(botaoRemover, dicas.remover)}
+                  </div>
+                  {erro ? (
+                    <p
+                      id={erroId}
+                      className="flex items-center gap-1.5 text-[12px] font-medium text-alert-text"
+                    >
+                      <OctagonAlert className="size-3.5 shrink-0" aria-hidden />
+                      {erro}
+                    </p>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {comDica(botaoAdicionar, dicas.adicionar)}
+        {comDica(botaoRestaurar, dicas.restaurar)}
+      </div>
+
+      {frases !== null && itens.length > 1 ? (
+        <Aviso tom="info" role="note">
+          {TEXTOS_DAS_FRASES.sorteio}
+        </Aviso>
+      ) : null}
+      {!ligado ? (
+        <p className="text-[13px] text-text-secondary">
+          {TEXTOS_DAS_FRASES.desligado}
+        </p>
+      ) : null}
+
+      {frases !== null ? (
+        <div
+          className="grid gap-2"
+          role="group"
+          aria-labelledby={previaTituloId}
+        >
+          <span
+            id={previaTituloId}
+            className="text-xs font-semibold text-foreground"
+          >
+            {TEXTOS_DAS_FRASES.previaTitulo}
+          </span>
+          <div className="grid gap-2 rounded-card bg-surface-4 p-3.5">
+            {previas.length > 0 ? (
+              previas.map((previa, indice) => (
+                <p
+                  key={`${indice}-${previa}`}
+                  className="w-full max-w-[420px] justify-self-start rounded-bubble rounded-bl-[6px] border border-border bg-card px-3 py-2 text-[13.5px] leading-[1.5] break-words text-foreground shadow-xs"
+                >
+                  {previa}
+                </p>
+              ))
+            ) : (
+              <p className="text-[13px] text-text-secondary italic">
+                {TEXTOS_DAS_FRASES.previaVazia}
+              </p>
+            )}
+          </div>
+          <p className="text-[11.5px] text-text-secondary">
+            {TEXTOS_DAS_FRASES.previaCodigo} {TEXTOS_DAS_FRASES.semColarDeNovo}
+          </p>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {comDica(botaoSalvar, dicas.salvar)}
+        {alterou && !pendente && frases !== null ? (
+          <span className="text-[12px] text-text-secondary">
+            {TEXTOS_DAS_FRASES.naoSalvas}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Sempre montada: o leitor de tela anuncia o resultado novo. */}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className="grid gap-2 empty:-mt-3"
+      >
+        {resultado ? (
+          <Aviso tom={resultado.tom} role="note">
+            {resultado.texto}
+          </Aviso>
+        ) : null}
+      </div>
+    </section>
   );
 }

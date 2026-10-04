@@ -96,6 +96,8 @@ type LinhaDoRastreio = {
   ativo: boolean;
   chave_trocada_em: string;
   ultimo_clique_em: string | null;
+  /** Migration 20261005110000 (frases do botao sem texto pronto). */
+  frases: string[];
 };
 
 type EstadoAnterior = { linha: LinhaDoRastreio | null; inicio: string };
@@ -179,9 +181,13 @@ function cartaoDoRastreio(page: Page): Locator {
   return page.getByRole("region", { name: TITULO_DO_CARTAO });
 }
 
-/** A regiao aria-live do resultado das acoes do cartao. */
+/**
+ * A regiao aria-live do resultado das acoes do cartao. E filha direta do
+ * CardContent; a do bloco de frases fica dentro da section dele e nao entra
+ * (sem isso, o modo estrito do Playwright acha duas regioes).
+ */
 function resultado(cartao: Locator): Locator {
-  return cartao.locator('[aria-live="polite"]');
+  return cartao.locator('[data-slot="card-content"] > [aria-live="polite"]');
 }
 
 async function abrirAba(page: Page, email: string): Promise<Locator> {
@@ -313,7 +319,9 @@ test("sem linha: Desligado, ações presas com a dica; ligar cria a linha com a 
     await expect(cartao).toContainText(
       "Com o rastreio desligado, nenhum clique é registrado, mas a linha que está no site continua acrescentando o código",
     );
-    await expect(cartao).toContainText("Para parar de vez, tire a linha do site.");
+    await expect(cartao).toContainText(
+      "Para parar de vez, tire a linha do site.",
+    );
     const desligada = await lerLinha();
     expect(desligada?.ativo).toBe(false);
     expect(desligada?.chave).toBe(linha?.chave);
@@ -703,6 +711,460 @@ for (const tema of ["claro", "escuro"] as const) {
           await contrasteDoElemento(cartao.locator("pre")),
         ).toBeGreaterThanOrEqual(4.5);
       }
+    } finally {
+      await restaurar(anterior);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mensagem do botao sem texto pronto (frases do rastreio, 04/10/2026)
+// ---------------------------------------------------------------------------
+//
+// A clinica cadastra de 1 a 5 frases que o script poe antes do codigo quando
+// o botao do WhatsApp do site nao tem texto pronto. Salvar grava pela sessao
+// (UPDATE de frases; sem linha, a linha nasce desligada), e o que o site
+// recebe e conferido pela funcao frases_do_rastreio com o cliente de servico
+// (o que a rota publica GET chama). A rota em si nao e chamada daqui.
+//
+// Precisa da migration 20261005110000 aplicada.
+
+const FRASE_PADRAO = "Olá! Vim pelo site e gostaria de agendar uma consulta.";
+const TITULO_DAS_FRASES = "Mensagem do botão sem texto pronto";
+const AVISO_DO_SORTEIO =
+  "Com mais de uma frase, o sistema sorteia uma a cada clique.";
+const FRASES_SALVAS =
+  "Frases salvas. O site passa a usar as frases novas, sem colar a linha de novo.";
+const AVISO_DO_DESLIGADO =
+  "Com o rastreio desligado, o site usa a frase padrão.";
+
+async function gravarFrases(frases: string[]): Promise<void> {
+  await adminClient()
+    .from("rastreio_do_site")
+    .update({ frases })
+    .eq("clinic_id", dados().clinicId)
+    .throwOnError();
+}
+
+/** O que o site receberia pela rota publica (null: o script usa a padrao). */
+async function frasesQueOSiteRecebe(chave: string): Promise<string[] | null> {
+  const { data, error } = await adminClient().rpc("frases_do_rastreio", {
+    p_chave: chave,
+  });
+  expect(error).toBeNull();
+  return (data as string[] | null) ?? null;
+}
+
+/**
+ * Contraste do texto do elemento contra o fundo do cartao (o erro do campo
+ * nao tem fundo proprio), com as cores convertidas pelo navegador como em
+ * contrasteDoElemento.
+ */
+async function contrasteSobreOCartao(alvo: Locator): Promise<number> {
+  return alvo.evaluate((no) => {
+    const paraRgb = (cor: string): number[] => {
+      const tela = document.createElement("canvas");
+      tela.width = 1;
+      tela.height = 1;
+      const contexto = tela.getContext("2d");
+      if (!contexto) {
+        return [0, 0, 0];
+      }
+      contexto.fillStyle = cor;
+      contexto.fillRect(0, 0, 1, 1);
+      const [r = 0, g = 0, b = 0] = contexto.getImageData(0, 0, 1, 1).data;
+      return [r, g, b];
+    };
+    const luminancia = ([r = 0, g = 0, b = 0]: number[]): number => {
+      const canal = (valor: number) => {
+        const v = valor / 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * canal(r) + 0.7152 * canal(g) + 0.0722 * canal(b);
+    };
+    const cartao = no.closest("[data-slot=card]");
+    if (!cartao) {
+      return 0;
+    }
+    const texto = luminancia(paraRgb(getComputedStyle(no).color));
+    const fundo = luminancia(paraRgb(getComputedStyle(cartao).backgroundColor));
+    return (Math.max(texto, fundo) + 0.05) / (Math.min(texto, fundo) + 0.05);
+  });
+}
+
+function blocoDasFrases(cartao: Locator): Locator {
+  return cartao.getByRole("region", { name: TITULO_DAS_FRASES });
+}
+
+function campoDaFrase(bloco: Locator, numero: number): Locator {
+  return bloco.getByLabel(`Frase ${numero}`, { exact: true });
+}
+
+function botaoDoBloco(bloco: Locator, nome: string): Locator {
+  return bloco.getByRole("button", { name: nome, exact: true });
+}
+
+test("frases: o padrão de fábrica, editar e adicionar, salvar aparado, e o site recebe as frases novas sem colar a linha de novo", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const anterior = await lerEstadoAnterior();
+  try {
+    await montar({ ativo: true });
+    await gravarFrases([FRASE_PADRAO]);
+    const chave = (await lerLinha())?.chave ?? "";
+    const cartao = await abrirAba(page, dados().emails.admin);
+    const bloco = blocoDasFrases(cartao);
+    await expect(bloco).toBeVisible();
+    await expect(bloco).toContainText(
+      "Quando o botão do WhatsApp do site não traz texto pronto",
+    );
+
+    // Padrao: uma frase, nada para salvar, a unica frase nao sai.
+    await expect(campoDaFrase(bloco, 1)).toHaveValue(FRASE_PADRAO);
+    await expect(campoDaFrase(bloco, 2)).toHaveCount(0);
+    await expect(bloco).toContainText(`${FRASE_PADRAO.length}/300`);
+    await expect(botaoDoBloco(bloco, "Remover a frase 1")).toBeDisabled();
+    await verDica(
+      page,
+      bloco,
+      "Remover a frase 1",
+      "A lista precisa de pelo menos uma frase.",
+    );
+    await expect(botaoDoBloco(bloco, "Salvar frases")).toBeDisabled();
+    await verDica(
+      page,
+      bloco,
+      "Salvar frases",
+      "Nenhuma alteração para salvar.",
+    );
+    await expect(
+      botaoDoBloco(bloco, "Restaurar a frase padrão"),
+    ).toBeDisabled();
+    const previa = bloco.getByRole("group", {
+      name: "Como chega no WhatsApp da clínica",
+    });
+    await expect(previa).toContainText(`${FRASE_PADRAO} [#K7Q2MX]`);
+    await expect(bloco).not.toContainText(AVISO_DO_SORTEIO);
+
+    // Editar a primeira (com espaco nas pontas) e adicionar a segunda: o
+    // campo novo recebe o foco.
+    await campoDaFrase(bloco, 1).fill("  Oi! Vim pelo anúncio do Google.  ");
+    await expect(bloco).toContainText("Alterações ainda não salvas.");
+    await botaoDoBloco(bloco, "Adicionar frase").click();
+    await expect(campoDaFrase(bloco, 2)).toBeFocused();
+    await page.keyboard.type("Quero agendar. Tem horário amanhã?");
+    await expect(bloco).toContainText(AVISO_DO_SORTEIO);
+    await expect(previa).toContainText(
+      "Oi! Vim pelo anúncio do Google. [#K7Q2MX]",
+    );
+    await expect(previa).toContainText(
+      "Quero agendar. Tem horário amanhã? [#K7Q2MX]",
+    );
+
+    await botaoDoBloco(bloco, "Salvar frases").click();
+    await expect(bloco.locator('[aria-live="polite"]')).toContainText(
+      FRASES_SALVAS,
+    );
+    const salvas = [
+      "Oi! Vim pelo anúncio do Google.",
+      "Quero agendar. Tem horário amanhã?",
+    ];
+    // Aparadas no banco e na tela; o site recebe as novas pela mesma chave.
+    expect((await lerLinha())?.frases).toEqual(salvas);
+    await expect(campoDaFrase(bloco, 1)).toHaveValue(salvas[0] ?? "");
+    expect((await lerLinha())?.chave).toBe(chave);
+    expect(await frasesQueOSiteRecebe(chave)).toEqual(salvas);
+    await expect(botaoDoBloco(bloco, "Salvar frases")).toBeDisabled();
+
+    // A trilha: quem alterou, sem o texto das frases.
+    const trilha = await acoesNaTrilha(anterior.inicio);
+    expect(trilha.map((t) => t.action)).toEqual(["alterou_frases_do_rastreio"]);
+    expect(JSON.stringify(trilha)).not.toContain("anúncio");
+
+    // Recarregar mostra o que ficou gravado.
+    await page.reload();
+    await expect(campoDaFrase(blocoDasFrases(cartao), 1)).toHaveValue(
+      salvas[0] ?? "",
+    );
+    await expect(campoDaFrase(blocoDasFrases(cartao), 2)).toHaveValue(
+      salvas[1] ?? "",
+    );
+  } finally {
+    await restaurar(anterior);
+  }
+});
+
+test("frases: frase em branco ou com # não salva, o campo diz o porquê e recebe o foco; corrigida, salva", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const anterior = await lerEstadoAnterior();
+  try {
+    await montar({ ativo: true });
+    await gravarFrases([FRASE_PADRAO]);
+    const cartao = await abrirAba(page, dados().emails.admin);
+    const bloco = blocoDasFrases(cartao);
+
+    await campoDaFrase(bloco, 1).fill("Agende já #PROMO");
+    await botaoDoBloco(bloco, "Adicionar frase").click();
+    await botaoDoBloco(bloco, "Salvar frases").click();
+
+    await expect(bloco.locator('[aria-live="polite"]')).toContainText(
+      "Confira as frases marcadas antes de salvar.",
+    );
+    await expect(campoDaFrase(bloco, 1)).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(campoDaFrase(bloco, 1)).toBeFocused();
+    await expect(campoDaFrase(bloco, 1)).toHaveAccessibleDescription(
+      /o sinal #/,
+    );
+    await expect(campoDaFrase(bloco, 2)).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(campoDaFrase(bloco, 2)).toHaveAccessibleDescription(
+      /Escreva a frase/,
+    );
+    // Nada foi gravado.
+    expect((await lerLinha())?.frases).toEqual([FRASE_PADRAO]);
+
+    // Corrigir tira a marca daquele campo; remover o vazio leva o foco para
+    // a frase que ficou.
+    await campoDaFrase(bloco, 1).fill("Agende já, promoção da semana!");
+    await expect(campoDaFrase(bloco, 1)).not.toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await botaoDoBloco(bloco, "Remover a frase 2").click();
+    await expect(campoDaFrase(bloco, 2)).toHaveCount(0);
+    await expect(campoDaFrase(bloco, 1)).toBeFocused();
+    await botaoDoBloco(bloco, "Salvar frases").click();
+    await expect(bloco.locator('[aria-live="polite"]')).toContainText(
+      FRASES_SALVAS,
+    );
+    expect((await lerLinha())?.frases).toEqual([
+      "Agende já, promoção da semana!",
+    ]);
+  } finally {
+    await restaurar(anterior);
+  }
+});
+
+test("frases: no máximo cinco (adicionar preso com a dica), e restaurar a padrão grava uma frase só", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const anterior = await lerEstadoAnterior();
+  try {
+    await montar({ ativo: true });
+    await gravarFrases(["Um.", "Dois.", "Três.", "Quatro."]);
+    const chave = (await lerLinha())?.chave ?? "";
+    const cartao = await abrirAba(page, dados().emails.admin);
+    const bloco = blocoDasFrases(cartao);
+
+    await expect(campoDaFrase(bloco, 4)).toHaveValue("Quatro.");
+    await botaoDoBloco(bloco, "Adicionar frase").click();
+    await page.keyboard.type("Cinco.");
+    await expect(botaoDoBloco(bloco, "Adicionar frase")).toBeDisabled();
+    await verDica(
+      page,
+      bloco,
+      "Adicionar frase",
+      "São no máximo 5 frases. Remova uma para adicionar outra.",
+    );
+    await botaoDoBloco(bloco, "Remover a frase 5").click();
+    await expect(botaoDoBloco(bloco, "Adicionar frase")).toBeEnabled();
+    // Removida a ultima, o foco vai para a anterior.
+    await expect(campoDaFrase(bloco, 4)).toBeFocused();
+
+    // Restaurar: uma frase so, a de fabrica; salvar grava e o site recebe.
+    await botaoDoBloco(bloco, "Restaurar a frase padrão").click();
+    await expect(campoDaFrase(bloco, 1)).toHaveValue(FRASE_PADRAO);
+    await expect(campoDaFrase(bloco, 2)).toHaveCount(0);
+    await expect(campoDaFrase(bloco, 1)).toBeFocused();
+    await expect(bloco).not.toContainText(AVISO_DO_SORTEIO);
+    await botaoDoBloco(bloco, "Salvar frases").click();
+    await expect(bloco.locator('[aria-live="polite"]')).toContainText(
+      FRASES_SALVAS,
+    );
+    expect((await lerLinha())?.frases).toEqual([FRASE_PADRAO]);
+    expect(await frasesQueOSiteRecebe(chave)).toEqual([FRASE_PADRAO]);
+  } finally {
+    await restaurar(anterior);
+  }
+});
+
+test("frases: sem linha, salvar cria o rastreio desligado com as frases; desligado, o site fica com a padrão", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const anterior = await lerEstadoAnterior();
+  try {
+    await montar(null);
+    const cartao = await abrirAba(page, dados().emails.admin);
+    const bloco = blocoDasFrases(cartao);
+
+    await expect(campoDaFrase(bloco, 1)).toHaveValue(FRASE_PADRAO);
+    await expect(bloco).toContainText(AVISO_DO_DESLIGADO);
+    await campoDaFrase(bloco, 1).fill("Olá! Quero marcar uma avaliação.");
+    await botaoDoBloco(bloco, "Salvar frases").click();
+    await expect(bloco.locator('[aria-live="polite"]')).toContainText(
+      FRASES_SALVAS,
+    );
+
+    const linha = await lerLinha();
+    expect(linha?.ativo).toBe(false);
+    expect(linha?.chave).toMatch(/^[0-9a-f]{20}$/);
+    expect(linha?.frases).toEqual(["Olá! Quero marcar uma avaliação."]);
+    await expect(cartao.getByRole("switch")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    // Desligado: a funcao nao devolve nada e o script usa a padrao.
+    expect(await frasesQueOSiteRecebe(linha?.chave ?? "")).toBeNull();
+    await expect(bloco).toContainText(AVISO_DO_DESLIGADO);
+
+    // Ligado, as frases passam a valer, e o aviso some.
+    await cartao.getByRole("switch").click();
+    await expect(cartao).toContainText("Esperando o primeiro clique");
+    await expect(bloco).not.toContainText(AVISO_DO_DESLIGADO);
+    expect(await frasesQueOSiteRecebe(linha?.chave ?? "")).toEqual([
+      "Olá! Quero marcar uma avaliação.",
+    ]);
+  } finally {
+    await restaurar(anterior);
+  }
+});
+
+test("frases: o gestor também edita e salva", async ({ page }) => {
+  apenasDesktop();
+  const anterior = await lerEstadoAnterior();
+  try {
+    await montar({ ativo: true });
+    await gravarFrases([FRASE_PADRAO]);
+    const cartao = await abrirAba(page, dados().emails.gestor);
+    const bloco = blocoDasFrases(cartao);
+    await expect(campoDaFrase(bloco, 1)).toBeEnabled();
+    await botaoDoBloco(bloco, "Adicionar frase").click();
+    await page.keyboard.type("Oi! Vim pelo site.");
+    await botaoDoBloco(bloco, "Salvar frases").click();
+    await expect(bloco.locator('[aria-live="polite"]')).toContainText(
+      FRASES_SALVAS,
+    );
+    expect((await lerLinha())?.frases).toEqual([
+      FRASE_PADRAO,
+      "Oi! Vim pelo site.",
+    ]);
+  } finally {
+    await restaurar(anterior);
+  }
+});
+
+test("frases: as salvas por outra pessoa aparecem quando uma ação do cartão atualiza a página, e a edição em andamento fica", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const anterior = await lerEstadoAnterior();
+  try {
+    await montar({ ativo: true });
+    await gravarFrases([FRASE_PADRAO]);
+    const cartao = await abrirAba(page, dados().emails.admin);
+    const bloco = blocoDasFrases(cartao);
+    const interruptor = cartao.getByRole("switch");
+    const anunciado = bloco.locator('[aria-live="polite"]');
+    await expect(campoDaFrase(bloco, 1)).toHaveValue(FRASE_PADRAO);
+    await expect(
+      botaoDoBloco(bloco, "Restaurar a frase padrão"),
+    ).toBeDisabled();
+
+    // Outra pessoa da gestao salva duas frases (pelo cliente de servico,
+    // com a aba aberta); desligar revalida a pagina e a lista acompanha.
+    const deOutraPessoa = ["Oi! Vim pelo site.", "Quero marcar uma avaliação."];
+    await gravarFrases(deOutraPessoa);
+    await interruptor.click();
+    await expect(interruptor).toHaveAttribute("aria-checked", "false");
+    await expect(campoDaFrase(bloco, 1)).toHaveValue(deOutraPessoa[0] ?? "");
+    await expect(campoDaFrase(bloco, 2)).toHaveValue(deOutraPessoa[1] ?? "");
+    await expect(bloco).toContainText(AVISO_DO_SORTEIO);
+    await expect(bloco).not.toContainText("Alterações ainda não salvas.");
+    await expect(botaoDoBloco(bloco, "Salvar frases")).toBeDisabled();
+    await expect(botaoDoBloco(bloco, "Restaurar a frase padrão")).toBeEnabled();
+
+    // Voltar para a padrao agora funciona sem recarregar.
+    await botaoDoBloco(bloco, "Restaurar a frase padrão").click();
+    await expect(botaoDoBloco(bloco, "Salvar frases")).toBeEnabled();
+    await botaoDoBloco(bloco, "Salvar frases").click();
+    await expect(anunciado).toContainText(FRASES_SALVAS);
+    expect((await lerLinha())?.frases).toEqual([FRASE_PADRAO]);
+
+    // Ligar revalida com as mesmas frases: o bloco nao remonta e o
+    // "Frases salvas." continua anunciado.
+    await interruptor.click();
+    await expect(interruptor).toHaveAttribute("aria-checked", "true");
+    await expect(cartao).toContainText("Esperando o primeiro clique");
+    await expect(anunciado).toContainText(FRASES_SALVAS);
+    await expect(campoDaFrase(bloco, 1)).toHaveValue(FRASE_PADRAO);
+
+    // Com uma edicao em andamento, o que a outra pessoa salva nao apaga a
+    // edicao: o Salvar compara com o que vale agora.
+    await campoDaFrase(bloco, 1).fill("Olá! Vi o anúncio.");
+    await gravarFrases(["Frase de outra pessoa."]);
+    await interruptor.click();
+    await expect(interruptor).toHaveAttribute("aria-checked", "false");
+    await expect(cartao).toContainText("Desligado");
+    await expect(campoDaFrase(bloco, 1)).toHaveValue("Olá! Vi o anúncio.");
+    await expect(bloco).toContainText("Alterações ainda não salvas.");
+    await expect(botaoDoBloco(bloco, "Salvar frases")).toBeEnabled();
+  } finally {
+    await restaurar(anterior);
+  }
+});
+
+for (const tema of ["claro", "escuro"] as const) {
+  test(`frases, tema ${tema}: prévia, erro do campo e aviso do sorteio com contraste AA`, async ({
+    page,
+  }) => {
+    apenasDesktop();
+    const anterior = await lerEstadoAnterior();
+    try {
+      await montar({ ativo: true });
+      await gravarFrases([FRASE_PADRAO, "Oi! Vim pelo site."]);
+      if (tema === "escuro") {
+        await page.addInitScript(() => {
+          try {
+            window.localStorage.setItem("theme", "dark");
+          } catch {
+            // sem armazenamento, a conferencia da classe logo abaixo falha
+          }
+        });
+      }
+      const cartao = await abrirAba(page, dados().emails.admin);
+      if (tema === "escuro") {
+        await expect(page.locator("html")).toHaveClass(/dark/);
+      } else {
+        await expect(page.locator("html")).not.toHaveClass(/dark/);
+      }
+      const bloco = blocoDasFrases(cartao);
+      const bolha = bloco
+        .getByRole("group", { name: "Como chega no WhatsApp da clínica" })
+        .getByText(`${FRASE_PADRAO} [#K7Q2MX]`);
+      expect(await contrasteDoElemento(bolha)).toBeGreaterThanOrEqual(4.5);
+      const sorteio = bloco.getByRole("note").filter({
+        hasText: AVISO_DO_SORTEIO,
+      });
+      await expect(sorteio).toBeVisible();
+      expect(await contrasteDoElemento(sorteio)).toBeGreaterThanOrEqual(4.5);
+
+      // O erro do campo: icone, texto e cor, com contraste AA sobre o cartao.
+      await campoDaFrase(bloco, 2).fill("");
+      await botaoDoBloco(bloco, "Salvar frases").click();
+      const erro = bloco.getByText(/Escreva a frase/);
+      await expect(erro).toBeVisible();
+      await expect(erro.locator("svg")).toHaveCount(1);
+      expect(await contrasteSobreOCartao(erro)).toBeGreaterThanOrEqual(4.5);
     } finally {
       await restaurar(anterior);
     }

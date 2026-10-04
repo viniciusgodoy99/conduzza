@@ -573,3 +573,201 @@ describe("contact: origem clique_site e ids do Google", () => {
     expect(data).toEqual([]);
   });
 });
+
+// Frases do rastreio (migration 20261005110000): o que o script do site poe
+// antes do codigo quando o botao do WhatsApp nao tem mensagem pronta. A
+// sessao edita por UPDATE na coluna frases (mesma policy de ativo:
+// administrador e gestor ativos da propria clinica); INSERT continua so
+// (clinic_id, ativo). frases_do_rastreio (o que a rota publica chama) e so
+// da service role. Mesmos cenarios do ensaio
+// (scratchpad/google/banco-frases/asserts.sql).
+
+const FRASE_DE_FABRICA =
+  "Olá! Vim pelo site e gostaria de agendar uma consulta.";
+
+async function frasesDe(clinicId: string): Promise<string[] | null> {
+  const { data } = await admin
+    .from("rastreio_do_site")
+    .select("frases")
+    .eq("clinic_id", clinicId)
+    .maybeSingle()
+    .throwOnError();
+  return data?.frases ?? null;
+}
+
+describe("frases do rastreio", () => {
+  it("a linha nasceu com a frase de fabrica; so a gestao da A le", async () => {
+    expect(await frasesDe(clinicaA)).toEqual([FRASE_DE_FABRICA]);
+    for (const papel of ["admin-a", "gestor-a"]) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente
+        .from("rastreio_do_site")
+        .select("frases")
+        .eq("clinic_id", clinicaA);
+      expect(error).toBeNull();
+      expect(data).toEqual([{ frases: [FRASE_DE_FABRICA] }]);
+    }
+    for (const papel of NAO_GESTAO_DA_A) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente
+        .from("rastreio_do_site")
+        .select("frases")
+        .eq("clinic_id", clinicaA);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    }
+  });
+
+  it("administrador e gestor da A editam as frases; os demais e a B nao mudam nada", async () => {
+    const doAdmin = [
+      "Olá! Vim pelo site e quero marcar uma avaliação.",
+      "Oi! Quero agendar uma consulta, por favor.",
+    ];
+    const adminA = await logado("admin-a");
+    const { data: peloAdmin, error: erroDoAdmin } = await adminA
+      .from("rastreio_do_site")
+      .update({ frases: doAdmin })
+      .eq("clinic_id", clinicaA)
+      .select("frases");
+    expect(erroDoAdmin).toBeNull();
+    expect(peloAdmin).toEqual([{ frases: doAdmin }]);
+
+    const doGestor = ["Frase do gestor. Com duas sentenças!"];
+    const gestor = await logado("gestor-a");
+    const { data: peloGestor, error: erroDoGestor } = await gestor
+      .from("rastreio_do_site")
+      .update({ frases: doGestor })
+      .eq("clinic_id", clinicaA)
+      .select("frases");
+    expect(erroDoGestor).toBeNull();
+    expect(peloGestor).toEqual([{ frases: doGestor }]);
+
+    // recepcao, leitura, profissional, gestor pendente e a B: a RLS filtra
+    // (zero linhas, sem erro) e nada muda
+    for (const papel of NAO_GESTAO_DA_A) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente
+        .from("rastreio_do_site")
+        .update({ frases: ["Frase forjada."] })
+        .eq("clinic_id", clinicaA)
+        .select("clinic_id");
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    }
+    expect(await frasesDe(clinicaA)).toEqual(doGestor);
+
+    // contraprova da B: edita as proprias
+    const b = await logado("admin-b");
+    const { data: daB, error: erroDaB } = await b
+      .from("rastreio_do_site")
+      .update({ frases: ["Frase da B."] })
+      .eq("clinic_id", clinicaB)
+      .select("frases");
+    expect(erroDaB).toBeNull();
+    expect(daB).toEqual([{ frases: ["Frase da B."] }]);
+    expect(await frasesDe(clinicaA)).toEqual(doGestor);
+  });
+
+  it("frase fora do formato: 23514 tambem pela sessao; cinco de 300 passam", async () => {
+    const antes = await frasesDe(clinicaA);
+    const gestor = await logado("gestor-a");
+    const recusadas: string[][] = [
+      [],
+      ["1", "2", "3", "4", "5", "6"],
+      [""],
+      ["   "],
+      ["Oi.", " "],
+      ["a".repeat(301)],
+      ["Oi!\nQuero agendar."],
+      ["Oi!\rQuero agendar."],
+      ["Oi!\tQuero agendar."],
+      ["Oi! Quero agendar."],
+      ["Oi!\u0085Quero agendar."],
+      ["Agende pelo #AGENDA"],
+      ["Olá [site"],
+      ["Olá site]"],
+      ["Olá! [#K7Q2MX]"],
+    ];
+    for (const frases of recusadas) {
+      const { error } = await gestor
+        .from("rastreio_do_site")
+        .update({ frases })
+        .eq("clinic_id", clinicaA);
+      expect(error?.code).toBe("23514");
+    }
+    expect(await frasesDe(clinicaA)).toEqual(antes);
+
+    // contraprova: 5 frases de exatamente 300 caracteres (acento e emoji
+    // contam 1 no banco)
+    const noLimite = [
+      "a".repeat(300),
+      "é".repeat(300),
+      "😊".repeat(300),
+      "Olá. ".repeat(60),
+      "Oi! Vim pelo site.".padEnd(300, "!"),
+    ];
+    const { error } = await gestor
+      .from("rastreio_do_site")
+      .update({ frases: noLimite })
+      .eq("clinic_id", clinicaA);
+    expect(error).toBeNull();
+    expect(await frasesDe(clinicaA)).toEqual(noLimite);
+    await gestor
+      .from("rastreio_do_site")
+      .update({ frases: antes! })
+      .eq("clinic_id", clinicaA)
+      .throwOnError();
+  });
+
+  it("a sessao nao cria a linha ja com frases nem grava frases junto com a chave (42501)", async () => {
+    const antes = await rastreioDaA();
+    const frasesAntes = await frasesDe(clinicaA);
+    const adminA = await logado("admin-a");
+    const tentativas = [
+      adminA.from("rastreio_do_site").insert({
+        clinic_id: clinicaA,
+        ativo: true,
+        frases: ["Frase na criação."],
+      }),
+      adminA
+        .from("rastreio_do_site")
+        .update({ frases: ["Oi."], chave: "c".repeat(20) })
+        .eq("clinic_id", clinicaA),
+      adminA
+        .from("rastreio_do_site")
+        .update({
+          frases: ["Oi."],
+          ultimo_clique_em: new Date().toISOString(),
+        })
+        .eq("clinic_id", clinicaA),
+    ];
+    for (const tentativa of tentativas) {
+      const { error } = await tentativa;
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    expect(await rastreioDaA()).toEqual(antes);
+    expect(await frasesDe(clinicaA)).toEqual(frasesAntes);
+  });
+
+  it("frases_do_rastreio: 42501 para qualquer sessao e para anon; o sistema le", async () => {
+    const { chave } = (await rastreioDaA())!;
+    for (const papel of ["admin-a", "gestor-a", "recepcao-a", "admin-b"]) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente.rpc("frases_do_rastreio", {
+        p_chave: chave,
+      });
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+      expect(data).toBeNull();
+    }
+    const { error: erroAnon } = await anonClient().rpc("frases_do_rastreio", {
+      p_chave: chave,
+    });
+    expect(erroAnon?.code).toBe(PERMISSAO_NEGADA);
+    // contraprova: a service role (a rota publica) le as frases da A
+    const { data, error } = await admin.rpc("frases_do_rastreio", {
+      p_chave: chave,
+    });
+    expect(error).toBeNull();
+    expect(data).toEqual(await frasesDe(clinicaA));
+  });
+});

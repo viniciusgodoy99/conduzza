@@ -6,23 +6,31 @@ import { describe, expect, it, vi } from "vitest";
 // puras importam.
 vi.mock("@/app/(app)/configuracoes/rastreio-do-site-actions", () => ({
   alternarRastreioDoSiteAction: vi.fn(),
+  salvarFrasesDoRastreioAction: vi.fn(),
   trocarChaveDoRastreioAction: vi.fn(),
 }));
 
 import { EXECUCAO_STATUS } from "@/components/configuracoes/automacoes-de-fluxo/status-da-execucao";
 import { GoogleAdsTab } from "@/components/configuracoes/google-ads-tab";
 import {
+  acompanharOServidor,
   chegouCliqueComAChaveAtual,
+  dicasDasFrases,
   dicasDoRastreio,
   enderecoDeTeste,
+  errosDasFrases,
   estadoDoRastreio,
+  frasesDaLinha,
   JANELA_DE_CLIQUES_MS,
   linhaParaColar,
+  mesmasFrases,
   origemDoSistema,
+  previaDaFrase,
   RASTREIO_DO_SITE_STATUS,
   RastreioDoSiteCard,
   situacaoDaResposta,
   SUFIXO_DO_GOOGLE_ADS,
+  TEXTOS_DAS_FRASES,
   TEXTOS_DO_RASTREIO,
   textoDaChaveEmUso,
   textoDoUltimoClique,
@@ -50,10 +58,15 @@ import {
   type StatusDefinition,
 } from "@/lib/design/status";
 import {
+  FRASE_PADRAO,
+  fraseDoRastreioSchema,
+  frasesDoRastreioSchema,
+  LIMITE_DE_FRASES,
   linhaDoScript,
   linkComCodigo,
   PARAMETROS_DO_GOOGLE,
   SUFIXO_DE_URL_FINAL,
+  TAMANHO_MAXIMO_DA_FRASE,
 } from "@/lib/domain/rastreio-do-site";
 
 // Cartao "Rastreio do site" e aba Anuncios do Google (F1 do Google): o chip
@@ -84,6 +97,7 @@ function linha(campos: Partial<LinhaDoRastreio> = {}): LinhaDoRastreio {
     ativo: true,
     chave_trocada_em: "2026-10-01T12:00:00+00:00",
     ultimo_clique_em: null,
+    frases: [FRASE_PADRAO],
     ...campos,
   };
 }
@@ -260,9 +274,9 @@ describe("estado do rastreio", () => {
   });
 
   it("ligado com clique da chave atual há 3 dias: recebendo", () => {
-    expect(
-      estadoDoRastreio(linha({ ultimo_clique_em: antes(3) }), AGORA),
-    ).toBe("recebendo");
+    expect(estadoDoRastreio(linha({ ultimo_clique_em: antes(3) }), AGORA)).toBe(
+      "recebendo",
+    );
   });
 
   it("a janela é de 7 dias, inclusive (a mesma dos totais da situação)", () => {
@@ -590,7 +604,10 @@ describe("cartão Rastreio do site", () => {
 
   it("último clique há mais de 7 dias: chip de atenção e o aviso de conferir o site", () => {
     const html = cartao({
-      linha: linha({ chave_trocada_em: antes(60), ultimo_clique_em: antes(10) }),
+      linha: linha({
+        chave_trocada_em: antes(60),
+        ultimo_clique_em: antes(10),
+      }),
       situacao: situacao({ ultimoCliqueEm: antes(10), cliques7Dias: 0 }),
     });
     expect(html).toContain("Sem cliques nos últimos 7 dias");
@@ -675,7 +692,9 @@ describe("cartão Rastreio do site", () => {
     expect(html).toContain("https://wa.me/5584999990000");
     expect(html).toContain("sem o sinal de mais");
     expect(html).toContain("https://api.whatsapp.com/send");
-    expect(html).toMatch(/WhatsApp Business \(<code[^>]*>wa\.me\/message\/\.\.\.<\/code>\)/);
+    expect(html).toMatch(
+      /WhatsApp Business \(<code[^>]*>wa\.me\/message\/\.\.\.<\/code>\)/,
+    );
     expect(html).toContain("não recebem o código");
     expect(html).toContain("Sufixo de URL final");
     // A origem e imutavel: a mensagem de teste nao pode ser enviada.
@@ -695,7 +714,10 @@ describe("cartão Rastreio do site", () => {
     const codigo = "K7Q2MX";
     expect(linkComCodigo("https://wa.me/5584999990000", codigo)).not.toBeNull();
     expect(
-      linkComCodigo("https://api.whatsapp.com/send?phone=5584999990000", codigo),
+      linkComCodigo(
+        "https://api.whatsapp.com/send?phone=5584999990000",
+        codigo,
+      ),
     ).not.toBeNull();
     expect(linkComCodigo("https://wa.me/message/ABCDEF123", codigo)).toBeNull();
     expect(linkComCodigo("https://wa.me/+5584999990000", codigo)).toBeNull();
@@ -721,7 +743,10 @@ describe("cartão Rastreio do site", () => {
       cartao({ linha: linha({ ativo: false }) }),
       cartao({ linha: linha({ ultimo_clique_em: "2026-10-04T17:32:00Z" }) }),
       cartao({
-        linha: linha({ chave_trocada_em: antes(60), ultimo_clique_em: antes(9) }),
+        linha: linha({
+          chave_trocada_em: antes(60),
+          ultimo_clique_em: antes(9),
+        }),
       }),
       cartao({
         linha: linha({
@@ -811,5 +836,486 @@ describe("aba Anúncios do Google", () => {
   it("nenhum travessão na aba", () => {
     expect(aba()).not.toMatch(/[—–]/);
     expect(aba({ podeGerenciar: false })).not.toMatch(/[—–]/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mensagem do botao sem texto pronto (frases do rastreio, 04/10/2026)
+// ---------------------------------------------------------------------------
+//
+// As regras de cada frase sao as do modulo do rastreio (o mesmo schema da
+// acao e dos checks do banco): os textos esperados aqui saem do proprio
+// schema, para o teste provar que a tela nao tem regra propria.
+
+/** A mensagem que o schema do modulo da para uma frase (ou nula). */
+function mensagemDoModulo(frase: string): string | null {
+  const resultado = fraseDoRastreioSchema.safeParse(frase);
+  return resultado.success
+    ? null
+    : (resultado.error.issues[0]?.message ?? null);
+}
+
+/** A mensagem que o schema do modulo da para a lista inteira (ou nula). */
+function mensagemDaListaNoModulo(lista: string[]): string | null {
+  const resultado = frasesDoRastreioSchema.safeParse(lista);
+  if (resultado.success) {
+    return null;
+  }
+  const daLista = resultado.error.issues.find(
+    (problema) => problema.path.length === 0,
+  );
+  return daLista?.message ?? null;
+}
+
+/** O botao com aquele aria-label (os de remover sao so icone). */
+function botaoPorRotulo(html: string, rotulo: string): string {
+  const indice = html.indexOf(`aria-label="${rotulo}"`);
+  expect(indice, `botão "${rotulo}"`).toBeGreaterThan(-1);
+  const abertura = html.lastIndexOf("<button", indice);
+  return html.slice(abertura, html.indexOf(">", indice));
+}
+
+/** O botao so de icone esta dentro do span da dica? */
+function rotuloComDica(html: string, rotulo: string): boolean {
+  const indice = html.indexOf(`aria-label="${rotulo}"`);
+  const abertura = html.lastIndexOf("<button", indice);
+  const antes = html.slice(Math.max(0, abertura - 200), abertura);
+  return /<span[^>]*tabindex="0"[^>]*>$/.test(antes);
+}
+
+/** Os campos de frase (input de texto do bloco), na ordem. */
+function camposDeFrase(html: string): string[] {
+  return [...html.matchAll(/<input type="text"[^>]*\/>/g)].map((m) => m[0]);
+}
+
+/** O HTML do bloco das frases (do titulo ate a regiao do resultado dele). */
+function blocoDasFrases(html: string): string {
+  const inicio = html.indexOf(TEXTOS_DAS_FRASES.titulo);
+  expect(inicio).toBeGreaterThan(-1);
+  const abertura = html.lastIndexOf("<section", inicio);
+  return html.slice(abertura, html.indexOf("</section>", inicio));
+}
+
+const DUAS_SENTENCAS =
+  "Oi! Vi o anúncio no Google. Quero saber os horários da semana.";
+
+describe("frases: regras puras", () => {
+  it("o padrão do bloco é a frase de fábrica do módulo (o default do banco)", () => {
+    expect(FRASE_PADRAO).toBe(
+      "Olá! Vim pelo site e gostaria de agendar uma consulta.",
+    );
+    expect(frasesDaLinha(null)).toEqual([FRASE_PADRAO]);
+  });
+
+  it("frasesDaLinha: as gravadas, na ordem, quando passam nas regras do banco", () => {
+    const frases = ["Primeira.", DUAS_SENTENCAS, "Terceira frase 😀"];
+    expect(frasesDaLinha(linha({ frases }))).toEqual(frases);
+  });
+
+  it.each([
+    ["lista vazia", []],
+    ["seis frases", ["a", "b", "c", "d", "e", "f"]],
+    ["frase com #", ["Agende #AGORA"]],
+    ["frase com colchete", ["Olá [site]"]],
+    ["frase em branco", ["   "]],
+    ["frase com quebra de linha", ["Olá\ntudo bem"]],
+  ])(
+    "frasesDaLinha: fora da regra (%s) vira a padrão, como o site faria",
+    (_caso, frases) => {
+      expect(frasesDaLinha(linha({ frases }))).toEqual([FRASE_PADRAO]);
+    },
+  );
+
+  it("previaDaFrase: a frase aparada e o código de exemplo no fim", () => {
+    expect(previaDaFrase(FRASE_PADRAO)).toBe(`${FRASE_PADRAO} [#K7Q2MX]`);
+    expect(previaDaFrase("  Oi, tudo bem?  ")).toBe("Oi, tudo bem? [#K7Q2MX]");
+    expect(previaDaFrase("")).toBeNull();
+    expect(previaDaFrase("   ")).toBeNull();
+  });
+
+  it("a prévia é o texto que o script põe no link do WhatsApp", () => {
+    for (const frase of [FRASE_PADRAO, DUAS_SENTENCAS, "Oi 😀 tudo bem?"]) {
+      const link = linkComCodigo(
+        "https://wa.me/5584999990000",
+        "K7Q2MX",
+        frase,
+      );
+      expect(link).not.toBeNull();
+      const texto = new URL(link ?? "").searchParams.get("text");
+      expect(texto).toBe(previaDaFrase(frase));
+    }
+  });
+
+  it("errosDasFrases: lista válida passa (várias sentenças, emoji, espaço nas pontas)", () => {
+    expect(errosDasFrases([FRASE_PADRAO])).toBeNull();
+    expect(errosDasFrases([DUAS_SENTENCAS, "  Oi!  ", "Olá 😀"])).toBeNull();
+    expect(
+      errosDasFrases(
+        Array.from({ length: LIMITE_DE_FRASES }, () =>
+          "a".repeat(TAMANHO_MAXIMO_DA_FRASE),
+        ),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["em branco", ""],
+    ["só espaços", "    "],
+    ["com 301 caracteres", "a".repeat(TAMANHO_MAXIMO_DA_FRASE + 1)],
+    ["com cerquilha", "Agende já #promo"],
+    ["com colchete", "Olá [site]"],
+    ["com tabulação", "Olá\ttudo bem"],
+    ["com separador de linha", "Olá\u2028tudo bem"],
+  ])("errosDasFrases: frase %s leva a mensagem do módulo", (_caso, frase) => {
+    const esperada = mensagemDoModulo(frase);
+    expect(esperada).not.toBeNull();
+    expect(errosDasFrases(["Frase boa.", frase])).toEqual({
+      porFrase: [null, esperada],
+      daLista: null,
+    });
+  });
+
+  it("errosDasFrases: nenhuma frase ou mais de cinco é problema da lista", () => {
+    expect(errosDasFrases([])).toEqual({
+      porFrase: [],
+      daLista: mensagemDaListaNoModulo([]),
+    });
+    const seis = ["a", "b", "c", "d", "e", "f"];
+    expect(errosDasFrases(seis)?.daLista).toBe(mensagemDaListaNoModulo(seis));
+    expect(errosDasFrases(seis)?.daLista).not.toBeNull();
+  });
+
+  it("as mensagens das frases não têm travessão nem jargão", () => {
+    const mensagens = [
+      mensagemDoModulo(""),
+      mensagemDoModulo("a".repeat(301)),
+      mensagemDoModulo("#"),
+      mensagemDaListaNoModulo([]),
+      mensagemDaListaNoModulo(["a", "b", "c", "d", "e", "f"]),
+    ];
+    for (const mensagem of mensagens) {
+      expect(mensagem).not.toBeNull();
+      expect(mensagem).not.toMatch(/[—–]/);
+      expect(mensagem).not.toMatch(/regex|string|array|Invalid/i);
+    }
+  });
+
+  it("mesmasFrases compara item a item, sem aparar", () => {
+    expect(mesmasFrases(["a", "b"], ["a", "b"])).toBe(true);
+    expect(mesmasFrases(["a", "b"], ["b", "a"])).toBe(false);
+    expect(mesmasFrases(["a"], ["a", "b"])).toBe(false);
+    expect(mesmasFrases(["a "], ["a"])).toBe(false);
+  });
+
+  describe("acompanharOServidor (outra pessoa salvou e a página revalidou)", () => {
+    const X = "Oi! Vim pelo site.";
+    const Y = "Quero marcar uma avaliação.";
+
+    it("sem alteração local, a lista acompanha o servidor e Restaurar fica liberado", () => {
+      const passo = acompanharOServidor({
+        textos: [FRASE_PADRAO],
+        salvas: [FRASE_PADRAO],
+        doServidor: [X, Y],
+      });
+      expect(passo).toEqual({ trocarItens: true, trocarSalvas: true });
+      // Depois da troca, a lista e o salvo sao [X, Y]: restaurar liberado,
+      // salvar preso com a dica verdadeira.
+      const dicas = dicasDasFrases({
+        podeGerenciar: true,
+        dica: "",
+        quantidade: 2,
+        soAPadrao: mesmasFrases([X, Y], [FRASE_PADRAO]),
+        alterou: !mesmasFrases([X, Y], [X, Y]),
+      });
+      expect(dicas.restaurar).toBeNull();
+      expect(dicas.salvar).toBe(TEXTOS_DAS_FRASES.semAlteracao);
+      // Restaurada a padrao, salvar libera (antes ficava preso).
+      expect(
+        dicasDasFrases({
+          podeGerenciar: true,
+          dica: "",
+          quantidade: 1,
+          soAPadrao: true,
+          alterou: !mesmasFrases([FRASE_PADRAO], [X, Y]),
+        }).salvar,
+      ).toBeNull();
+    });
+
+    it("com alteração local, a edição fica e só o que está salvo muda", () => {
+      expect(
+        acompanharOServidor({
+          textos: ["Olá! Vi o anúncio."],
+          salvas: [FRASE_PADRAO],
+          doServidor: [X],
+        }),
+      ).toEqual({ trocarItens: false, trocarSalvas: true });
+    });
+
+    it("depois do próprio salvar, o servidor traz o mesmo: nada muda (o Frases salvas. fica)", () => {
+      expect(
+        acompanharOServidor({
+          textos: [X, Y],
+          salvas: [X, Y],
+          doServidor: [X, Y],
+        }),
+      ).toEqual({ trocarItens: false, trocarSalvas: false });
+    });
+
+    it("o servidor chega antes da resposta do salvar: a edição não aparada fica até a resposta", () => {
+      expect(
+        acompanharOServidor({
+          textos: [`  ${X}  `],
+          salvas: [FRASE_PADRAO],
+          doServidor: [X],
+        }),
+      ).toEqual({ trocarItens: false, trocarSalvas: true });
+    });
+
+    it("a edição já igual ao servidor: nada a trocar na lista", () => {
+      expect(
+        acompanharOServidor({
+          textos: [X],
+          salvas: [FRASE_PADRAO],
+          doServidor: [X],
+        }),
+      ).toEqual({ trocarItens: false, trocarSalvas: true });
+    });
+
+    it("quem passa a ler a linha (sem frases antes) recebe a lista do servidor", () => {
+      expect(
+        acompanharOServidor({ textos: [], salvas: [], doServidor: [X] }),
+      ).toEqual({ trocarItens: true, trocarSalvas: true });
+    });
+  });
+
+  it("dicasDasFrases: sem permissão, a dica do papel em tudo", () => {
+    expect(
+      dicasDasFrases({
+        podeGerenciar: false,
+        dica: DICA,
+        quantidade: 3,
+        soAPadrao: false,
+        alterou: true,
+      }),
+    ).toEqual({
+      adicionar: DICA,
+      remover: DICA,
+      restaurar: DICA,
+      salvar: DICA,
+    });
+  });
+
+  it("dicasDasFrases: uma frase só não sai; cinco não deixam adicionar", () => {
+    expect(
+      dicasDasFrases({
+        podeGerenciar: true,
+        dica: DICA,
+        quantidade: 1,
+        soAPadrao: true,
+        alterou: false,
+      }),
+    ).toEqual({
+      adicionar: null,
+      remover: TEXTOS_DAS_FRASES.minimo,
+      restaurar: TEXTOS_DAS_FRASES.jaEPadrao,
+      salvar: TEXTOS_DAS_FRASES.semAlteracao,
+    });
+    expect(
+      dicasDasFrases({
+        podeGerenciar: true,
+        dica: DICA,
+        quantidade: LIMITE_DE_FRASES,
+        soAPadrao: false,
+        alterou: true,
+      }),
+    ).toEqual({
+      adicionar: TEXTOS_DAS_FRASES.limite,
+      remover: null,
+      restaurar: null,
+      salvar: null,
+    });
+    expect(TEXTOS_DAS_FRASES.limite).toContain(`${LIMITE_DE_FRASES} frases`);
+  });
+});
+
+describe("frases: bloco no cartão", () => {
+  it("padrão de fábrica: uma frase, contador, prévia e as ações certas", () => {
+    const html = blocoDasFrases(cartao());
+    expect(html).toContain(TEXTOS_DAS_FRASES.titulo);
+    expect(html).toContain(TEXTOS_DAS_FRASES.quandoUsa);
+    const campos = camposDeFrase(html);
+    expect(campos).toHaveLength(1);
+    expect(campos[0]).toContain(`value="${escapado(FRASE_PADRAO)}"`);
+    expect(campos[0]).toContain(`maxLength="${TAMANHO_MAXIMO_DA_FRASE}"`);
+    expect(campos[0]).not.toContain('disabled=""');
+    // O rotulo aponta para o campo.
+    const id = /id="([^"]+)"/.exec(campos[0] ?? "")?.[1];
+    expect(html).toContain(`for="${id}">Frase 1</label>`);
+    expect(html).toContain(
+      `>${FRASE_PADRAO.length}/${TAMANHO_MAXIMO_DA_FRASE}</span>`,
+    );
+    // A unica frase nao sai; a padrao ja esta; nada para salvar.
+    expect(botaoPorRotulo(html, "Remover a frase 1")).toContain('disabled=""');
+    expect(rotuloComDica(html, "Remover a frase 1")).toBe(true);
+    expect(botaoDesabilitado(html, "Adicionar frase")).toBe(false);
+    expect(botaoDesabilitado(html, "Restaurar a frase padrão")).toBe(true);
+    expect(botaoComDica(html, "Restaurar a frase padrão")).toBe(true);
+    expect(botaoDesabilitado(html, "Salvar frases")).toBe(true);
+    expect(botaoComDica(html, "Salvar frases")).toBe(true);
+    // A previa como chega no WhatsApp, com o codigo de exemplo.
+    expect(html).toContain(TEXTOS_DAS_FRASES.previaTitulo);
+    expect(html).toContain(`${escapado(FRASE_PADRAO)} [#K7Q2MX]`);
+    expect(html).toContain(TEXTOS_DAS_FRASES.semColarDeNovo);
+    // Uma frase: nada de sorteio.
+    expect(html).not.toContain(TEXTOS_DAS_FRASES.sorteio);
+    expect(html).not.toContain(TEXTOS_DAS_FRASES.desligado);
+  });
+
+  it("várias frases: um campo por frase, na ordem, o aviso do sorteio e uma prévia por frase", () => {
+    const frases = ["Primeira.", DUAS_SENTENCAS, "Terceira."];
+    const html = blocoDasFrases(cartao({ linha: linha({ frases }) }));
+    const campos = camposDeFrase(html);
+    expect(campos).toHaveLength(3);
+    frases.forEach((frase, i) => {
+      expect(campos[i]).toContain(`value="${escapado(frase)}"`);
+      expect(html).toContain(`>Frase ${i + 1}</label>`);
+      expect(html).toContain(`${escapado(frase)} [#K7Q2MX]</p>`);
+      expect(botaoPorRotulo(html, `Remover a frase ${i + 1}`)).not.toContain(
+        'disabled=""',
+      );
+    });
+    expect(html).toContain(TEXTOS_DAS_FRASES.sorteio);
+    expect(botaoDesabilitado(html, "Restaurar a frase padrão")).toBe(false);
+    expect(botaoDesabilitado(html, "Adicionar frase")).toBe(false);
+  });
+
+  it("cinco frases: adicionar fica preso, com a dica do limite", () => {
+    const frases = ["Um.", "Dois.", "Três.", "Quatro.", "Cinco."];
+    const html = blocoDasFrases(cartao({ linha: linha({ frases }) }));
+    expect(camposDeFrase(html)).toHaveLength(LIMITE_DE_FRASES);
+    expect(botaoDesabilitado(html, "Adicionar frase")).toBe(true);
+    expect(botaoComDica(html, "Adicionar frase")).toBe(true);
+  });
+
+  it("frases gravadas fora da regra: o bloco mostra a padrão (o que o site usa)", () => {
+    const html = blocoDasFrases(
+      cartao({ linha: linha({ frases: ["Agende #AGORA"] }) }),
+    );
+    const campos = camposDeFrase(html);
+    expect(campos).toHaveLength(1);
+    expect(campos[0]).toContain(`value="${escapado(FRASE_PADRAO)}"`);
+    expect(html).not.toContain("AGORA");
+  });
+
+  it("sem linha, a gestão vê a padrão e pode editar (salvar cria a linha desligada)", () => {
+    const html = blocoDasFrases(cartao({ linha: null }));
+    const campos = camposDeFrase(html);
+    expect(campos).toHaveLength(1);
+    expect(campos[0]).toContain(`value="${escapado(FRASE_PADRAO)}"`);
+    expect(campos[0]).not.toContain('disabled=""');
+    expect(botaoDesabilitado(html, "Adicionar frase")).toBe(false);
+    expect(html).toContain(TEXTOS_DAS_FRASES.desligado);
+  });
+
+  it("rastreio desligado: avisa que o site usa a frase padrão até ligar", () => {
+    const html = blocoDasFrases(
+      cartao({ linha: linha({ ativo: false, frases: ["Oi!", "Olá!"] }) }),
+    );
+    expect(html).toContain(TEXTOS_DAS_FRASES.desligado);
+    expect(camposDeFrase(html)).toHaveLength(2);
+  });
+
+  it("sem permissão e sem linha: nenhum conteúdo, ações visíveis, presas e com a dica", () => {
+    const html = blocoDasFrases(cartao({ linha: null, podeGerenciar: false }));
+    expect(html).toContain(TEXTOS_DAS_FRASES.semAcesso);
+    expect(camposDeFrase(html)).toHaveLength(0);
+    expect(html).not.toContain(escapado(FRASE_PADRAO));
+    expect(html).not.toContain(TEXTOS_DAS_FRASES.previaTitulo);
+    for (const botao of [
+      "Adicionar frase",
+      "Restaurar a frase padrão",
+      "Salvar frases",
+    ]) {
+      expect(botaoDesabilitado(html, botao)).toBe(true);
+      expect(botaoComDica(html, botao)).toBe(true);
+    }
+  });
+
+  it("sem permissão e com linha: as frases ficam visíveis, com os campos e as ações presos", () => {
+    const html = blocoDasFrases(
+      cartao({
+        podeGerenciar: false,
+        linha: linha({ frases: ["Oi!", "Olá!"] }),
+      }),
+    );
+    const campos = camposDeFrase(html);
+    expect(campos).toHaveLength(2);
+    for (const campo of campos) {
+      expect(campo).toContain('disabled=""');
+    }
+    expect(botaoPorRotulo(html, "Remover a frase 1")).toContain('disabled=""');
+    expect(rotuloComDica(html, "Remover a frase 1")).toBe(true);
+    for (const botao of [
+      "Adicionar frase",
+      "Restaurar a frase padrão",
+      "Salvar frases",
+    ]) {
+      expect(botaoDesabilitado(html, botao)).toBe(true);
+      expect(botaoComDica(html, botao)).toBe(true);
+    }
+  });
+
+  it("os botões do bloco têm 40px (alvo de toque)", () => {
+    const html = blocoDasFrases(
+      cartao({ linha: linha({ frases: ["a", "b"] }) }),
+    );
+    const botoes = [...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
+    expect(botoes.length).toBeGreaterThanOrEqual(5);
+    for (const botao of botoes) {
+      expect(botao).toMatch(/data-size="(default|icon)"/);
+    }
+    for (const campo of camposDeFrase(html)) {
+      expect(campo).toContain("h-10");
+    }
+  });
+
+  it("a região do resultado do bloco está sempre montada", () => {
+    expect(blocoDasFrases(cartao())).toMatch(/aria-live="polite"/);
+    expect(
+      blocoDasFrases(cartao({ linha: null, podeGerenciar: false })),
+    ).toMatch(/aria-live="polite"/);
+  });
+
+  it("nenhum travessão no bloco, em nenhum estado, nem nos textos", () => {
+    const estados = [
+      cartao(),
+      cartao({ linha: null }),
+      cartao({ linha: linha({ ativo: false }) }),
+      cartao({ linha: linha({ frases: ["a", "b", "c", "d", "e"] }) }),
+      cartao({ linha: null, podeGerenciar: false }),
+      cartao({ podeGerenciar: false }),
+    ];
+    for (const html of estados) {
+      expect(blocoDasFrases(html)).not.toMatch(/[—–]/);
+    }
+    for (const texto of Object.values(TEXTOS_DAS_FRASES)) {
+      expect(texto).not.toMatch(/[—–]/);
+    }
+  });
+
+  it("linguagem de recepção no bloco", () => {
+    const html = blocoDasFrases(
+      cartao({ linha: linha({ frases: ["a", "b"] }) }),
+    );
+    for (const termo of [
+      "tenant",
+      "opt-in",
+      "string",
+      "array",
+      "API",
+      "fallback",
+    ]) {
+      expect(html).not.toContain(termo);
+    }
   });
 });

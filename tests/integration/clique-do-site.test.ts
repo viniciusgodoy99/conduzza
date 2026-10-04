@@ -869,3 +869,204 @@ describe("anon nao chega em nada", () => {
     expect(chaveB).toMatch(/^[0-9a-f]{20}$/);
   });
 });
+
+// Frases do rastreio (migration 20261005110000), com o cliente de servico:
+// - a linha nasce com a frase de fabrica (tambem a criada pela troca de
+//   chave); frases_do_rastreio (o que a rota publica GET chama) devolve as
+//   frases na ordem gravada, so com o rastreio ligado e a chave certa;
+//   desligado, chave inexistente ou fora do formato: null (a rota responde
+//   sem corpo e o script cai no padrao);
+// - check: de 1 a 5 frases, cada uma de 1 a 300 caracteres (sem contar so
+//   espacos), sem quebra de linha, caractere de controle, colchete ou
+//   cerquilha (23514);
+// - anon: 42501.
+// Mesmos cenarios do ensaio (scratchpad/google/banco-frases/asserts.sql).
+// Clinicas proprias (nao mexe nas da suite da F1).
+
+const FRASE_DE_FABRICA =
+  "Olá! Vim pelo site e gostaria de agendar uma consulta.";
+
+async function frasesPelaChave(chave: string): Promise<string[] | null> {
+  const { data, error } = await admin.rpc("frases_do_rastreio", {
+    p_chave: chave,
+  });
+  expect(error).toBeNull();
+  return data ?? null;
+}
+
+async function frasesGravadas(clinicId: string): Promise<string[] | null> {
+  const { data } = await admin
+    .from("rastreio_do_site")
+    .select("frases")
+    .eq("clinic_id", clinicId)
+    .maybeSingle()
+    .throwOnError();
+  return data?.frases ?? null;
+}
+
+async function gravarFrases(clinicId: string, frases: string[]) {
+  return admin
+    .from("rastreio_do_site")
+    .update({ frases })
+    .eq("clinic_id", clinicId);
+}
+
+describe("frases_do_rastreio", () => {
+  it("a linha nova nasce com a frase de fabrica e a rota le as frases pela chave, na ordem", async () => {
+    const clinica = await novaClinica("Frases1");
+    const chave = await ligarRastreio(clinica);
+    expect(await frasesGravadas(clinica)).toEqual([FRASE_DE_FABRICA]);
+    expect(await frasesPelaChave(chave)).toEqual([FRASE_DE_FABRICA]);
+
+    const frases = [
+      "Oi! Vim pelo site. Quero agendar uma avaliação, tudo bem?",
+      "Olá! Gostaria de marcar uma consulta (pode ser à tarde).",
+      "Bom dia! Vim pelo site e quero saber os horários.",
+    ];
+    const { error } = await gravarFrases(clinica, frases);
+    expect(error).toBeNull();
+    expect(await frasesPelaChave(chave)).toEqual(frases);
+  });
+
+  it("desligado, chave inexistente ou fora do formato: null (a rota cai no padrao)", async () => {
+    const clinica = await novaClinica("Frases2");
+    const chave = await ligarRastreio(clinica);
+    await gravarFrases(clinica, ["Frase da clínica."]).then(({ error }) =>
+      expect(error).toBeNull(),
+    );
+
+    await admin
+      .from("rastreio_do_site")
+      .update({ ativo: false })
+      .eq("clinic_id", clinica)
+      .throwOnError();
+    expect(await frasesPelaChave(chave)).toBeNull();
+    await admin
+      .from("rastreio_do_site")
+      .update({ ativo: true })
+      .eq("clinic_id", clinica)
+      .throwOnError();
+    expect(await frasesPelaChave(chave)).toEqual(["Frase da clínica."]);
+
+    // inexistente no formato (troca um caractere da chave real)
+    const inexistente = chave.slice(0, 19) + (chave.endsWith("0") ? "1" : "0");
+    expect(await frasesPelaChave(inexistente)).toBeNull();
+    // fora do formato, mesmo parecida com a chave real
+    const foraDoFormato = [
+      chave.toUpperCase(),
+      ` ${chave}`,
+      `${chave} `,
+      `${chave}\n`,
+      chave.slice(0, 19),
+      `${chave}0`,
+      `${chave.slice(0, 19)}%`,
+      "%",
+      "",
+    ].filter((variante) => variante !== chave);
+    for (const variante of foraDoFormato) {
+      expect(await frasesPelaChave(variante)).toBeNull();
+    }
+  });
+
+  it("chave trocada: a velha null, a nova as frases; cada chave so as frases da propria clinica", async () => {
+    const clinica = await novaClinica("Frases3");
+    const outra = await novaClinica("Frases4");
+    const chave = await ligarRastreio(clinica);
+    const chaveDaOutra = await ligarRastreio(outra);
+    await gravarFrases(clinica, ["Frase da primeira."]).then(({ error }) =>
+      expect(error).toBeNull(),
+    );
+    await gravarFrases(outra, ["Frase da outra."]).then(({ error }) =>
+      expect(error).toBeNull(),
+    );
+    expect(await frasesPelaChave(chaveDaOutra)).toEqual(["Frase da outra."]);
+
+    const { data: nova, error } = await admin.rpc("trocar_chave_do_rastreio", {
+      p_clinic_id: clinica,
+    });
+    expect(error).toBeNull();
+    expect(nova).toMatch(/^[0-9a-f]{20}$/);
+    expect(await frasesPelaChave(chave)).toBeNull();
+    expect(await frasesPelaChave(nova as string)).toEqual([
+      "Frase da primeira.",
+    ]);
+    expect(await frasesPelaChave(chaveDaOutra)).toEqual(["Frase da outra."]);
+  });
+
+  it("a troca de chave sem linha cria desligada com a frase de fabrica (e a rota nao le)", async () => {
+    const clinica = await novaClinica("Frases5");
+    const { data: chave, error } = await admin.rpc("trocar_chave_do_rastreio", {
+      p_clinic_id: clinica,
+    });
+    expect(error).toBeNull();
+    expect(await frasesGravadas(clinica)).toEqual([FRASE_DE_FABRICA]);
+    expect(await frasesPelaChave(chave as string)).toBeNull();
+  });
+
+  it("check: de 1 a 5 frases, de 1 a 300 caracteres, sem quebra, controle, colchete ou cerquilha (23514)", async () => {
+    const clinica = await novaClinica("Frases6");
+    await ligarRastreio(clinica);
+    const recusadas: string[][] = [
+      [],
+      ["1", "2", "3", "4", "5", "6"],
+      [""],
+      ["   "],
+      ["Oi.", " "],
+      ["a".repeat(301)],
+      ["Oi.", "é".repeat(301)],
+      [` ${"a".repeat(300)}`],
+      ["Oi!\nQuero agendar."],
+      ["Oi.", "Quero\nagendar."],
+      ["Oi.\n"],
+      ["Oi!\r\nQuero agendar."],
+      ["Oi!\tQuero agendar."],
+      ["Oi! Quero agendar."],
+      ["Oi! Quero agendar."],
+      ["Oi!\u0085Quero agendar."],
+      ["Oi!\u007f"],
+      ["\u0001Oi!"],
+      ["Olá [site"],
+      ["Olá site]"],
+      ["Oi.", "Agende pelo #AGENDA"],
+      ["Olá! [#K7Q2MX]"],
+    ];
+    for (const frases of recusadas) {
+      const { error } = await gravarFrases(clinica, frases);
+      expect(error?.code).toBe("23514");
+    }
+    expect(await frasesGravadas(clinica)).toEqual([FRASE_DE_FABRICA]);
+
+    // contraprovas: 5 de exatamente 300 (acento e emoji contam 1); varias
+    // sentencas e pontuacao; espaco nas pontas dentro dos 300; 1 caractere
+    const aceitas: string[][] = [
+      [
+        "a".repeat(300),
+        "é".repeat(300),
+        "😊".repeat(300),
+        "Olá. ".repeat(60),
+        "Oi! Vim pelo site.".padEnd(300, "!"),
+      ],
+      [
+        "Olá! Vim pelo site. Quero agendar uma avaliação, tudo bem? Obrigado (até logo): 10% \"já\"; é 'urgente'.",
+      ],
+      [" Oi! Quero agendar. ", "a"],
+    ];
+    for (const frases of aceitas) {
+      const { error } = await gravarFrases(clinica, frases);
+      expect(error).toBeNull();
+      expect(await frasesGravadas(clinica)).toEqual(frases);
+    }
+  });
+
+  it("anon: 42501 em frases_do_rastreio", async () => {
+    const clinica = await novaClinica("Frases7");
+    const chave = await ligarRastreio(clinica);
+    const { data, error } = await anonClient().rpc("frases_do_rastreio", {
+      p_chave: chave,
+    });
+    expect(error?.code).toBe("42501");
+    expect(data).toBeNull();
+    // contraprova: a service role le
+    expect(await frasesPelaChave(chave)).toEqual([FRASE_DE_FABRICA]);
+  });
+});

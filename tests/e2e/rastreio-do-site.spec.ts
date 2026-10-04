@@ -1,4 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Page,
+  type Response as RespostaDaRede,
+} from "@playwright/test";
 
 import { adminClient } from "../rls/stack";
 import { dados } from "./dados";
@@ -18,12 +23,17 @@ import { dados } from "./dados";
 // - o sinal da pagina do anuncio vale na pagina seguinte (sessionStorage);
 // - o sinal guardado e da chave: a pagina de OUTRA clinica no mesmo site
 //   (mesma origem, mesma aba) nao leva o anuncio da primeira;
-// - com sessionStorage bloqueado, o link continua funcionando.
+// - com sessionStorage bloqueado, o link continua funcionando;
+// - frases da clinica (04/10/2026): o link sem texto pronto leva a frase que
+//   a clinica cadastrou, o script sorteia entre duas, e se a busca das
+//   frases falhar vai a frase de fabrica. A rota GET das frases responde sem
+//   sessao, so as frases, e 404 sem corpo para chave que nao serve.
 //
 // Banco: a suite roda no banco de operacao real (global-setup.ts). Este
-// arquivo liga o rastreio da clinica E2E e, no fim, apaga os cliques que
-// criou e devolve o rastreio como estava. Precisa da migration
-// 20261005100000_clique_do_site aplicada. Roda so no desktop-1600.
+// arquivo liga o rastreio da clinica E2E, troca as frases dela e, no fim,
+// apaga os cliques que criou e devolve o rastreio (ligado e frases) como
+// estava. Precisa das migrations 20261005100000_clique_do_site e
+// 20261005110000_frases_do_rastreio aplicadas. Roda so no desktop-1600.
 //
 // Por que 127.0.0.1 para o site e localhost para o sistema: sao origens
 // diferentes (o aviso e entre sites, como na clinica de verdade) e as duas
@@ -39,6 +49,10 @@ const PAGINAS_DO_SITE = new RegExp(
   `^${SITE.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}/site-de-teste/`,
 );
 const WHATSAPP = /^https:\/\/(wa\.me|api\.whatsapp\.com)\//;
+/** A rota GET das frases (no sistema, nao no site). */
+const ROTA_DAS_FRASES = new RegExp(
+  `^${APP.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}/api/publico/rastreio/`,
+);
 
 const WA = "https://wa.me/5584999990000?text=Quero%20agendar";
 const WA_SEM_TEXTO = "https://wa.me/5584999990000";
@@ -52,9 +66,14 @@ const CHAVE_DE_OUTRA_CLINICA = "ffffffffffffffffffff";
 // Mesmos formatos de lib/domain/rastreio-do-site.ts (a suite e2e nao importa
 // codigo da aplicacao).
 const CODIGO_NO_TEXTO = / \[#([23456789ABCDEFGHJKMNPQRSTUVWXYZ]{6})\]$/;
+// FRASE_PADRAO de lib/domain/rastreio-do-site.ts e default da coluna no banco.
+const FRASE_PADRAO = "Olá! Vim pelo site e gostaria de agendar uma consulta.";
+const FRASE_DA_CLINICA =
+  "Oi! Vi o anúncio no site. Quero marcar uma avaliação, pode ser à tarde?";
+const OUTRA_FRASE = "Bom dia! Gostaria de saber os horários & valores.";
 
 let chave = "";
-let rastreioAntes: { ativo: boolean } | null = null;
+let rastreioAntes: { ativo: boolean; frases: string[] } | null = null;
 // So desfaz o que este arquivo fez: se o beforeAll falhar antes de ligar, o
 // afterAll nao mexe no rastreio da clinica.
 let liguei = false;
@@ -68,15 +87,16 @@ test.beforeAll(async () => {
   const clinicId = dados().clinicId;
   const antes = await admin
     .from("rastreio_do_site")
-    .select("ativo")
+    .select("ativo, frases")
     .eq("clinic_id", clinicId)
     .maybeSingle();
   if (antes.error) {
     throw new Error(
-      `rastreio_do_site ilegivel (${antes.error.code}): a migration 20261005100000 foi aplicada?`,
+      `rastreio_do_site ilegivel (${antes.error.code}): as migrations 20261005100000 e 20261005110000 foram aplicadas?`,
     );
   }
-  rastreioAntes = (antes.data as { ativo: boolean } | null) ?? null;
+  rastreioAntes =
+    (antes.data as { ativo: boolean; frases: string[] } | null) ?? null;
   const ligar = rastreioAntes
     ? await admin
         .from("rastreio_do_site")
@@ -111,12 +131,38 @@ test.afterAll(async () => {
   if (rastreioAntes) {
     await admin
       .from("rastreio_do_site")
-      .update({ ativo: rastreioAntes.ativo })
+      .update({ ativo: rastreioAntes.ativo, frases: rastreioAntes.frases })
       .eq("clinic_id", clinicId);
   } else {
     await admin.from("rastreio_do_site").delete().eq("clinic_id", clinicId);
   }
 });
+
+/** Grava as frases da clinica E2E (service role, como a acao gravaria). */
+async function gravarFrases(frases: string[]): Promise<void> {
+  const { error } = await adminClient()
+    .from("rastreio_do_site")
+    .update({ frases })
+    .eq("clinic_id", dados().clinicId);
+  if (error) {
+    throw new Error(`nao gravei as frases da clinica E2E (${error.code})`);
+  }
+}
+
+/**
+ * Espera o script receber as frases (a busca sai logo que ele carrega) e
+ * terminar de ler a resposta. Registrar ANTES do goto.
+ */
+async function esperarFrases(
+  page: Page,
+  pronta: Promise<RespostaDaRede>,
+): Promise<void> {
+  const resposta = await pronta;
+  expect(resposta.status()).toBe(200);
+  await resposta.finished();
+  // O .then do script roda depois da resposta: uma volta no navegador.
+  await page.evaluate(() => new Promise((fim) => setTimeout(fim, 100)));
+}
 
 function paginaDoSite(chaveDoSite: string): string {
   return `<!doctype html>
@@ -268,6 +314,71 @@ test.describe("rota e script sem sessao", () => {
   });
 });
 
+test.describe("rota das frases sem sessao", () => {
+  test("200 so com as frases da chave ligada; 404 sem corpo para chave que nao serve", async ({
+    request,
+  }) => {
+    await gravarFrases([FRASE_DA_CLINICA, OUTRA_FRASE]);
+    const resposta = await request.get(`${APP}/api/publico/rastreio/${chave}`, {
+      maxRedirects: 0,
+    });
+    expect(resposta.status()).toBe(200);
+    expect(await resposta.json()).toEqual({
+      frases: [FRASE_DA_CLINICA, OUTRA_FRASE],
+    });
+    expect(resposta.headers()["cache-control"]).toBe("public, max-age=300");
+    expect(resposta.headers()["access-control-allow-origin"]).toBe("*");
+    expect(resposta.headers()["set-cookie"]).toBeUndefined();
+
+    for (const chaveRuim of [
+      CHAVE_DE_OUTRA_CLINICA,
+      chave.toUpperCase(),
+      "slug-da-clinica",
+    ]) {
+      const ruim = await request.get(
+        `${APP}/api/publico/rastreio/${chaveRuim}`,
+        { maxRedirects: 0 },
+      );
+      expect(ruim.status(), chaveRuim).toBe(404);
+      expect(await ruim.text(), chaveRuim).toBe("");
+      expect(ruim.headers()["cache-control"]).toBe("no-store");
+    }
+
+    const pergunta = await request.fetch(
+      `${APP}/api/publico/rastreio/${chave}`,
+      { method: "OPTIONS", maxRedirects: 0 },
+    );
+    expect(pergunta.status()).toBe(204);
+    expect(pergunta.headers()["access-control-allow-origin"]).toBe("*");
+  });
+
+  test("rastreio desligado: 404 sem corpo, igual a chave que nao existe", async ({
+    request,
+  }) => {
+    const admin = adminClient();
+    const clinicId = dados().clinicId;
+    await admin
+      .from("rastreio_do_site")
+      .update({ ativo: false })
+      .eq("clinic_id", clinicId)
+      .throwOnError();
+    try {
+      const resposta = await request.get(
+        `${APP}/api/publico/rastreio/${chave}`,
+        { maxRedirects: 0 },
+      );
+      expect(resposta.status()).toBe(404);
+      expect(await resposta.text()).toBe("");
+    } finally {
+      await admin
+        .from("rastreio_do_site")
+        .update({ ativo: true })
+        .eq("clinic_id", clinicId)
+        .throwOnError();
+    }
+  });
+});
+
 test.describe("site da clinica", () => {
   test("com gclid, o codigo vai no texto e o clique chega ao banco", async ({
     page,
@@ -320,15 +431,18 @@ test.describe("site da clinica", () => {
     expect(avisos).toHaveLength(0);
   });
 
-  test("link sem texto pronto ganha o texto padrao com o codigo", async ({
+  test("link sem texto pronto, com as frases de fabrica: a frase padrao com o codigo", async ({
     page,
   }) => {
+    await gravarFrases([FRASE_PADRAO]);
     await prepararSite(page);
+    const pronta = page.waitForResponse(ROTA_DAS_FRASES);
     await page.goto(`${SITE}/site-de-teste/?gad_source=1&gad_campaignid=444`);
+    await esperarFrases(page, pronta);
     const endereco = await clicarNoWhatsApp(page, "#whatsapp-sem-texto span");
     const texto = textoDoLink(endereco);
     const codigo = CODIGO_NO_TEXTO.exec(texto)?.[1] ?? "";
-    expect(texto).toBe(`Olá! [#${codigo}]`);
+    expect(texto).toBe(`${FRASE_PADRAO} [#${codigo}]`);
     const linha = await cliqueNoBanco(codigo);
     expect(linha).toMatchObject({
       gclid: null,
@@ -384,6 +498,111 @@ test.describe("site da clinica", () => {
       gclid: "E2Eteste_deB",
     });
     expect(avisos[0]?.corpo).not.toContain("E2Eteste_outra");
+  });
+
+  test("a frase da clinica vai no link sem texto pronto, e o clique chega ao banco", async ({
+    page,
+  }) => {
+    await gravarFrases([FRASE_DA_CLINICA]);
+    const avisos = await prepararSite(page);
+    const pronta = page.waitForResponse(ROTA_DAS_FRASES);
+    await page.goto(`${SITE}/site-de-teste/?gclid=E2Eteste_frase-1`);
+    await esperarFrases(page, pronta);
+    const endereco = await clicarNoWhatsApp(page, "#whatsapp-sem-texto span");
+    expect(endereco.startsWith(`${WA_SEM_TEXTO}?text=`)).toBe(true);
+    const texto = textoDoLink(endereco);
+    const codigo = CODIGO_NO_TEXTO.exec(texto)?.[1] ?? "";
+    expect(texto).toBe(`${FRASE_DA_CLINICA} [#${codigo}]`);
+    await expect.poll(() => avisos.length).toBe(1);
+    expect(await cliqueNoBanco(codigo)).toMatchObject({
+      gclid: "E2Eteste_frase-1",
+    });
+  });
+
+  test("link com texto pronto: a frase da clinica nao entra", async ({
+    page,
+  }) => {
+    await gravarFrases([FRASE_DA_CLINICA]);
+    await prepararSite(page);
+    const pronta = page.waitForResponse(ROTA_DAS_FRASES);
+    await page.goto(`${SITE}/site-de-teste/?gclid=E2Eteste_frase-2`);
+    await esperarFrases(page, pronta);
+    const endereco = await clicarNoWhatsApp(page, "#whatsapp");
+    const texto = textoDoLink(endereco);
+    const codigo = CODIGO_NO_TEXTO.exec(texto)?.[1] ?? "";
+    expect(texto).toBe(`Quero agendar [#${codigo}]`);
+  });
+
+  test("com duas frases, o script sorteia uma por clique", async ({ page }) => {
+    await gravarFrases([FRASE_DA_CLINICA, OUTRA_FRASE]);
+    await prepararSite(page);
+    // Os cliques deste teste nao vao ao banco (o aviso para aqui): sao 24 e
+    // o banco limita 30 por minuto por clinica, o que derrubaria os outros
+    // testes. O que se prova aqui e so o texto do link.
+    await page.addInitScript(() => {
+      navigator.sendBeacon = () => true;
+    });
+    const pronta = page.waitForResponse(ROTA_DAS_FRASES);
+    await page.goto(`${SITE}/site-de-teste/?gclid=E2Eteste_sorteio`);
+    await esperarFrases(page, pronta);
+    // Segura a navegacao DEPOIS do script (ele ouve na captura; este ouvinte
+    // e da fase de bolha) e guarda o endereco que o navegador abriria.
+    await page.evaluate(() => {
+      const enderecos: string[] = [];
+      (window as unknown as { __enderecos: string[] }).__enderecos = enderecos;
+      document.addEventListener("click", (evento) => {
+        const alvo = evento.target as Element | null;
+        const link = alvo?.closest("a");
+        if (link?.id === "whatsapp-sem-texto") {
+          evento.preventDefault();
+          enderecos.push(link.href);
+        }
+      });
+    });
+    for (let vez = 0; vez < 24; vez++) {
+      await page.locator("#whatsapp-sem-texto span").click();
+    }
+    const enderecos = await page.evaluate(
+      () => (window as unknown as { __enderecos: string[] }).__enderecos,
+    );
+    expect(enderecos).toHaveLength(24);
+    const frases = new Set<string>();
+    const codigos = new Set<string>();
+    for (const endereco of enderecos) {
+      const texto = textoDoLink(endereco);
+      const codigo = CODIGO_NO_TEXTO.exec(texto)?.[1] ?? "";
+      expect(codigo).not.toBe("");
+      codigos.add(codigo);
+      frases.add(texto.slice(0, -` [#${codigo}]`.length));
+    }
+    // Um codigo novo por clique e, em 24 cliques, as duas frases (a chance
+    // de uma nao sair e de 2 em 16 milhoes).
+    expect(codigos.size).toBe(24);
+    expect([...frases].sort()).toEqual([FRASE_DA_CLINICA, OUTRA_FRASE].sort());
+  });
+
+  test("se a busca das frases falha, vai a frase de fabrica e o link funciona", async ({
+    page,
+  }) => {
+    await gravarFrases([FRASE_DA_CLINICA]);
+    const avisos = await prepararSite(page);
+    await page.route(ROTA_DAS_FRASES, (route) => route.abort("failed"));
+    const falhou = page.waitForEvent("requestfailed", (pedido) =>
+      ROTA_DAS_FRASES.test(pedido.url()),
+    );
+    await page.goto(`${SITE}/site-de-teste/?gclid=E2Eteste_frase-falha`);
+    await falhou;
+    await page.evaluate(() => new Promise((fim) => setTimeout(fim, 100)));
+    const endereco = await clicarNoWhatsApp(page, "#whatsapp-sem-texto span");
+    const texto = textoDoLink(endereco);
+    const codigo = CODIGO_NO_TEXTO.exec(texto)?.[1] ?? "";
+    expect(texto).toBe(`${FRASE_PADRAO} [#${codigo}]`);
+    expect(texto).not.toContain(FRASE_DA_CLINICA);
+    // O aviso do clique nao depende da busca das frases.
+    await expect.poll(() => avisos.length).toBe(1);
+    expect(await cliqueNoBanco(codigo)).toMatchObject({
+      gclid: "E2Eteste_frase-falha",
+    });
   });
 
   test.describe("com sessionStorage bloqueado", () => {

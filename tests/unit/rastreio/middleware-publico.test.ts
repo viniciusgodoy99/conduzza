@@ -17,6 +17,12 @@ describe("matcher do middleware e o rastreio do site", () => {
     expect(passaPeloMiddleware("/api/publico/clique")).toBe(false);
   });
 
+  it("a rota das frases (GET pela chave) tambem fica fora", () => {
+    expect(
+      passaPeloMiddleware("/api/publico/rastreio/0123456789abcdef0123"),
+    ).toBe(false);
+  });
+
   it("o resto continua protegido", () => {
     expect(passaPeloMiddleware("/inicio")).toBe(true);
     expect(passaPeloMiddleware("/configuracoes")).toBe(true);

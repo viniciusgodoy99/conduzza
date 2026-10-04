@@ -224,10 +224,12 @@ export default async function ConfiguracoesPage({
     // Rastreio do site (aba Anuncios do Google, F1): a policy so mostra a
     // linha para admin e gestor. A chave e publica (vai no HTML do site da
     // clinica); o gclid e os cliques ficam em clique_do_site, que a sessao
-    // nem alcanca.
+    // nem alcanca. As frases do botao sem texto pronto vem junto (migration
+    // 20261005110000: sem ela aplicada, a coluna nao existe e a aba mostra o
+    // erro de leitura).
     supabase
       .from("rastreio_do_site")
-      .select("chave, ativo, chave_trocada_em, ultimo_clique_em")
+      .select("chave, ativo, chave_trocada_em, ultimo_clique_em, frases")
       .eq("clinic_id", active.clinicId)
       .maybeSingle(),
     // Os totais do rastreio (so agregados: nunca a chave, o gclid ou o

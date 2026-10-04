@@ -2,9 +2,11 @@
  * Conduzza: rastreio do clique de anuncio do Google no site da clinica (v1).
  * Uso: <script src="https://<sistema>/rastreio/v1.js" data-chave="<chave>"
  *        referrerpolicy="no-referrer" async></script>
- * So age em visita vinda de anuncio do Google. No clique do link do WhatsApp,
- * acrescenta um codigo ao texto (" [#K7Q2MX]") e avisa o sistema. Nunca
- * impede o link, nunca guarda IP, pagina ou dado de quem visita.
+ * So age em visita vinda de anuncio do Google. Ao carregar, busca as frases
+ * da clinica. No clique do link do WhatsApp, acrescenta um codigo ao texto
+ * (" [#K7Q2MX]"; sem texto pronto, antes vai uma das frases, sorteada) e
+ * avisa o sistema. Nunca impede o link, nunca guarda IP, pagina ou dado de
+ * quem visita.
  * Regras espelhadas em lib/domain/rastreio-do-site.ts (o teste confere).
  */
 /* eslint-disable @typescript-eslint/no-unused-vars -- catch (e) em vez de
@@ -13,7 +15,11 @@
   "use strict";
   try {
     var ALFABETO = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
-    var TEXTO_PADRAO = "Ol\u00e1!";
+    var FRASE_PADRAO =
+      "Ol\u00e1! Vim pelo site e gostaria de agendar uma consulta.";
+    // Fora da frase: quebra de linha, controle, colchete e cerquilha.
+    var PROIBIDO = /[\u0000-\u001f\u007f-\u009f\u2028\u2029[\]#]/;
+    var PAR = /[\uD800-\uDBFF][\uDC00-\uDFFF]/g;
     var ID = /^[A-Za-z0-9._~+\/=-]{1,512}$/;
     var NUMERO = /^[0-9]{1,20}$/;
     var FORMATOS = {
@@ -74,8 +80,62 @@
         }
       } catch (e) {}
     }
-    // Sem sinal do Google: nada de ouvinte, nada de aviso.
+    // Sem sinal do Google: nada de ouvinte, nada de aviso, nada de busca.
     if (!sinais) return;
+
+    // As frases da clinica, buscadas uma vez, sem cookie e sem referrer.
+    // Falhou, demorou ou veio fora da regra: fica a frase de fabrica.
+    var frases = [FRASE_PADRAO];
+    var fraseValida = function (frase) {
+      return (
+        typeof frase === "string" &&
+        /[^ ]/.test(frase) &&
+        frase.replace(PAR, "_").length <= 300 &&
+        !PROIBIDO.test(frase)
+      );
+    };
+    try {
+      var opcoes = {
+        method: "GET",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      };
+      if (typeof AbortController === "function") {
+        var controle = new AbortController();
+        opcoes.signal = controle.signal;
+        setTimeout(function () {
+          try {
+            controle.abort();
+          } catch (e) {}
+        }, 4000);
+      }
+      fetch(new URL("/api/publico/rastreio/" + chave, script.src).href, opcoes)
+        .then(function (resposta) {
+          return resposta.status === 200 ? resposta.json() : null;
+        })
+        .then(function (corpo) {
+          var lista = corpo && typeof corpo === "object" ? corpo.frases : null;
+          if (!Array.isArray(lista) || lista.length < 1 || lista.length > 5)
+            return;
+          for (var i = 0; i < lista.length; i++) {
+            if (!fraseValida(lista[i])) return;
+          }
+          frases = lista.slice();
+        })
+        .catch(function () {});
+    } catch (e) {}
+
+    // 256 nao divide por 3 nem por 5: byte de `limite` para cima e descartado.
+    var sortear = function () {
+      if (frases.length < 2) return frases[0];
+      var limite = 256 - (256 % frases.length);
+      var byte = new Uint8Array(1);
+      for (var i = 0; i < 32; i++) {
+        window.crypto.getRandomValues(byte);
+        if (byte[0] < limite) return frases[byte[0] % frases.length];
+      }
+      return frases[0];
+    };
 
     var gerarCodigo = function () {
       var codigo = "";
@@ -99,7 +159,7 @@
     };
 
     // O texto da clinica fica como estava: o sufixo vai colado no valor bruto.
-    var comCodigo = function (href, codigo) {
+    var comCodigo = function (href, codigo, frase) {
       href = href.trim();
       var inicio = LINK.exec(href);
       if (!inicio) return null;
@@ -110,7 +170,7 @@
       var query = posHash >= 0 ? cauda.slice(0, posHash) : cauda;
       var partes = query.length > 1 ? query.slice(1).split("&") : [];
       var sufixo = " [#" + codigo + "]";
-      var textoNovo = "text=" + encodeURIComponent(TEXTO_PADRAO + sufixo);
+      var textoNovo = "text=" + encodeURIComponent(frase + sufixo);
       var achou = false;
       for (var i = 0; i < partes.length; i++) {
         var igual = partes[i].indexOf("=");
@@ -185,7 +245,7 @@
         var original =
           anterior && anterior.aplicado === atual ? anterior.original : atual;
         var codigo = gerarCodigo();
-        var novo = comCodigo(original, codigo);
+        var novo = comCodigo(original, codigo, sortear());
         if (!novo) return;
         link.setAttribute("href", novo);
         if (aplicados)
