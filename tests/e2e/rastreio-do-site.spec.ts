@@ -30,9 +30,14 @@ import { dados } from "./dados";
 // sao loopback, entao o Chromium nao bloqueia o pedido do site ao sistema
 // como acesso a rede privada.
 
-const APP = "http://localhost:3000";
-const SITE = "http://127.0.0.1:3000";
-const PAGINAS_DO_SITE = /^http:\/\/127\.0\.0\.1:3000\/site-de-teste\//;
+// O endereco do app vem do ambiente (E2E_APP_URL) quando a suite roda em
+// outra porta; o padrao e o do playwright.config.ts. O "site da clinica" e o
+// mesmo servidor por 127.0.0.1, para ser outra origem.
+const APP = process.env.E2E_APP_URL ?? "http://localhost:3000";
+const SITE = APP.replace("localhost", "127.0.0.1");
+const PAGINAS_DO_SITE = new RegExp(
+  `^${SITE.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}/site-de-teste/`,
+);
 const WHATSAPP = /^https:\/\/(wa\.me|api\.whatsapp\.com)\//;
 
 const WA = "https://wa.me/5584999990000?text=Quero%20agendar";
@@ -136,6 +141,15 @@ type Aviso = { url: string; corpo: string };
  * corpo mesmo depois de a pagina navegar para o WhatsApp.
  */
 async function prepararSite(page: Page): Promise<Aviso[]> {
+  // O Chromium novo (Local Network Access) bloqueia a pagina em 127.0.0.1 de
+  // carregar o script de localhost sem permissao. Isso so acontece no teste,
+  // onde site e sistema sao enderecos locais; no site real da clinica, que e
+  // publico, carregando o script do sistema, nao ha esse bloqueio. Navegador
+  // que nao conhece a permissao ignora.
+  await page
+    .context()
+    .grantPermissions(["local-network-access"])
+    .catch(() => undefined);
   const avisos: Aviso[] = [];
   await page.exposeFunction(
     "__avisoDoRastreio",
