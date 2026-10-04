@@ -21,9 +21,13 @@ Com `token_hash`, a rota `/confirm` chama `verifyOtp`, que não depende do naveg
 
 ## Antes de colar
 
-1. **Site URL** (Authentication, URL Configuration): tem de ser o endereço de produção, com `https://`. Os três modelos usam `{{ .SiteURL }}` para o link **e** para a imagem da marca.
+1. **Site URL** (Authentication, URL Configuration): tem de ser o endereço de produção, com `https://`. Os três modelos usam `{{ .SiteURL }}` para o link. A imagem da marca aponta direto para `https://conduzza.grupoclimb.ai/brand/email/conduzza-lockup-on-dark@2x.png` (desde 04/10/2026): o Site URL do painel termina em barra, o que vira `//brand/...` e depende de redirecionamento, e alguns programas de e-mail não seguem redirecionamento de imagem. O link `//confirm` funciona (a produção redireciona com 308 sem perder o token). Se o domínio de produção mudar, trocar a imagem nos três arquivos.
 2. **Redirect URLs**, na mesma tela: incluir `https://<endereço de produção>/confirm` (o código ainda manda `redirectTo` e `emailRedirectTo` apontando para `/confirm`) e manter os de `http://localhost:3000` para desenvolvimento.
 3. **Imagem da marca publicada:** abrir `https://<endereço de produção>/brand/email/conduzza-lockup-on-dark@2x.png` no navegador. Ela só existe depois que o commit com `public/brand/email/` chegar à produção. Sem ela, o e-mail mostra o texto alternativo "Conduzza" em creme sobre a faixa escura (legível, mas sem o logo).
+
+## Situação em 04/10/2026
+
+Conferido pela Management API (só leitura): **Invite user** e **Reset password** ainda estavam com o modelo padrão do Supabase, em inglês e com `{{ .ConfirmationURL }}` (o convite caía em "link vencido"); **Confirm signup** estava com uma versão antiga, também com `{{ .ConfirmationURL }}`, e os três assuntos em inglês. O remetente aparecia como "Plataforma de Agendamento"; o dono escolheu "Conduzza Clínicas" (Authentication, Emails, SMTP Settings, campo Sender name). A conta da CLI desta máquina não tem permissão de escrita na configuração de auth (a API devolve 403), então a troca é feita no painel por quem é dono ou administrador do projeto.
 
 ## Como colar
 
