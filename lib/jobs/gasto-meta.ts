@@ -89,6 +89,39 @@ export function diasDaLeitura(
   return DIAS_DA_LEITURA_DIARIA;
 }
 
+/**
+ * Fim da leitura que deu certo: pede a consulta por id dos anuncios dos
+ * contatos que ainda nao tem campanha e conjunto (resolver_anuncio_meta,
+ * origem 'gasto'). A funcao do banco respeita a pausa, recusa clinica de
+ * teste, nao cria job sem anuncio pendente e deduplica com o que ja estiver
+ * na fila. Melhor esforco: o investimento ja esta gravado, e uma falha aqui
+ * nao pode virar retry da leitura inteira.
+ */
+async function pedirConsultaDosAnuncios(
+  admin: SupabaseClient,
+  job: Job,
+): Promise<void> {
+  try {
+    const { error } = await admin.rpc("enfileirar_resolucao_de_anuncios_meta", {
+      p_clinic_id: job.clinic_id,
+      p_origem: "gasto",
+    });
+    if (error) {
+      log.warn("resolver_anuncio_meta_nao_pedido", {
+        clinic_id: job.clinic_id,
+        job_id: job.id,
+        error_code: codigoDoErro(error),
+      });
+    }
+  } catch {
+    log.warn("resolver_anuncio_meta_nao_pedido", {
+      clinic_id: job.clinic_id,
+      job_id: job.id,
+      error_code: "excecao",
+    });
+  }
+}
+
 function limitar(valor: number, minimo: number, maximo: number): number {
   return Math.min(maximo, Math.max(minimo, valor));
 }
@@ -301,6 +334,7 @@ export async function executarSincronizacaoDeGastoMeta(
         count: porAnuncio.size,
         duration_ms: agora() - inicio,
       });
+      await pedirConsultaDosAnuncios(admin, job);
       return { ok: true };
     case "config_mudou":
       return reagendarJa();

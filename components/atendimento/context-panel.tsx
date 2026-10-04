@@ -1,6 +1,8 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useMemo } from "react";
 
 import {
   CalendarClock,
@@ -32,12 +34,25 @@ import {
 } from "@/lib/design/status";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
+import {
+  campanhaDoContato,
+  conjuntoDoContato,
+  ehLeadDeAnuncio,
+  idDeAnuncioValido,
+  LEITURA_SEM_ANUNCIO,
+  rotuloDoMetodo,
+  textoDaOrigem,
+  type LeituraDoAnuncio,
+  type TextoDeAtribuicao,
+} from "@/lib/domain/leads-ui";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import {
   estadoDoConsentimento,
   type ConsentInfo,
   type ContactSummary,
 } from "@/lib/queries/conversations";
+import { anuncioDaMetaKeys, fetchAnunciosDaMeta } from "@/lib/queries/leads";
+import { createClient } from "@/lib/supabase/client";
 
 // Painel de contexto (design system Conduzza, docs/06 secao 5.3): a
 // identidade do contato com as acoes de agenda e espera, as etiquetas, a
@@ -45,6 +60,12 @@ import {
 // autorizacao de mensagens (tres estados, CONSENT_STATUS), a origem e os
 // atalhos para a ficha e a agenda (que ja existem; este painel aponta, nao
 // duplica). Sem fio entre secoes: o respiro separa.
+//
+// Origem (docs/02: canal, campanha, data e metodo de captura; origem real do
+// anuncio, 04/10/2026): o Canal sai pelo rotulo humano, nunca a chave crua
+// do banco ("Tráfego pago, Meta (Instagram)", e nao trafego_pago). Campanha
+// e conjunto do lead de anuncio vem de meta_anuncio pelo id do anuncio,
+// lidos pela sessao (RLS de membro ativo) com carregando e erro proprios.
 
 const CONSENT_SOURCE_LABEL: Record<string, string> = {
   formulario_site: "Formulário do site",
@@ -108,6 +129,102 @@ function Linha({
         {valor}
       </span>
     </div>
+  );
+}
+
+/** Campanha ou conjunto, com o carregando e o tom secundario do que falta. */
+function LinhaDeAtribuicao({
+  rotulo,
+  valor,
+}: {
+  rotulo: string;
+  valor: TextoDeAtribuicao;
+}) {
+  return (
+    <div className="grid grid-cols-[120px_minmax(0,1fr)] items-baseline gap-2 text-[13px]">
+      <span className="text-text-secondary">{rotulo}</span>
+      {valor.tipo === "carregando" ? (
+        <span role="status" className="min-w-0">
+          <span className="sr-only">{valor.texto}</span>
+          <Skeleton
+            aria-hidden
+            className="inline-block h-3.5 w-36 align-middle"
+          />
+        </span>
+      ) : (
+        <span
+          className={
+            valor.tipo === "nome"
+              ? "min-w-0 break-words text-foreground"
+              : "min-w-0 break-words text-text-secondary"
+          }
+        >
+          {valor.texto}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * O bloco Origem, puro: recebe a leitura do anuncio pronta (o ContextPanel
+ * faz a consulta). Exportado para o teste de rotulo.
+ */
+export function BlocoDeOrigem({
+  contact,
+  leitura,
+  timezone,
+  aoTentarDeNovo,
+}: {
+  contact: ContactSummary;
+  leitura: LeituraDoAnuncio;
+  timezone: string;
+  aoTentarDeNovo: () => void;
+}) {
+  const origem = textoDaOrigem(contact);
+  const deAnuncio = ehLeadDeAnuncio(contact);
+  const campanha = campanhaDoContato(contact, leitura);
+  const conjunto = conjuntoDoContato(contact, leitura);
+  const metodo = rotuloDoMetodo(contact.source_method);
+  // "Sem campanha" de quem nao veio de anuncio some, como antes.
+  const mostrarCampanha = campanha.tipo !== "nenhuma" || deAnuncio;
+  return (
+    <Secao titulo="Origem">
+      <div className="grid gap-1.5">
+        <Linha rotulo="Canal" valor={origem} />
+        {mostrarCampanha ? (
+          <LinhaDeAtribuicao rotulo="Campanha" valor={campanha} />
+        ) : null}
+        {conjunto ? (
+          <LinhaDeAtribuicao rotulo="Conjunto" valor={conjunto} />
+        ) : null}
+        <Linha rotulo="Método" valor={metodo} />
+        <Linha
+          rotulo="Primeiro contato"
+          valor={
+            contact.first_contact_at
+              ? dataNaClinica(contact.first_contact_at, timezone)
+              : null
+          }
+          numerico
+        />
+      </div>
+      {campanha.tipo === "erro" ? (
+        <div>
+          <Button variant="outline" size="sm" onClick={aoTentarDeNovo}>
+            <RotateCcw aria-hidden />
+            Tentar de novo
+          </Button>
+        </div>
+      ) : null}
+      {!origem && !mostrarCampanha ? (
+        <p className="text-[12.5px] text-text-secondary">
+          Origem ainda não identificada. Ela é capturada sozinha quando o
+          contato chega por anúncio de clique para WhatsApp, link com código,
+          mensagem padrão do anúncio ou palavra-chave.
+        </p>
+      ) : null}
+    </Secao>
   );
 }
 
@@ -248,6 +365,35 @@ export function ContextPanel({
   /** fuso da clinica, para as datas */
   timezone?: string;
 }) {
+  // Anuncio da Meta do contato: so le quando ha id valido e a clinica do
+  // contato veio no select (o mesmo anuncio pode estar em duas clinicas).
+  const supabase = useMemo(() => createClient(), []);
+  const clinicaDoContato = contact.clinic_id ?? null;
+  const adId = idDeAnuncioValido(contact.source_ad_id);
+  const anuncioQuery = useQuery({
+    queryKey: anuncioDaMetaKeys.doAnuncio(clinicaDoContato ?? "", adId ?? ""),
+    queryFn: async () => {
+      if (!clinicaDoContato || !adId) {
+        return null;
+      }
+      const mapa = await fetchAnunciosDaMeta(supabase, clinicaDoContato, [
+        adId,
+      ]);
+      return mapa.get(adId) ?? null;
+    },
+    enabled: clinicaDoContato !== null && adId !== null,
+    staleTime: 60_000,
+  });
+  const leituraDoAnuncio: LeituraDoAnuncio = !adId
+    ? LEITURA_SEM_ANUNCIO
+    : !clinicaDoContato
+      ? { estado: "erro" }
+      : anuncioQuery.isPending
+        ? { estado: "carregando" }
+        : anuncioQuery.isError
+          ? { estado: "erro" }
+          : { estado: "lida", anuncio: anuncioQuery.data ?? null };
+
   const marcarConsulta = (
     <>
       <CalendarPlus aria-hidden />
@@ -356,28 +502,12 @@ export function ContextPanel({
         />
       </Secao>
 
-      <Secao titulo="Origem">
-        <div className="grid gap-1.5">
-          <Linha rotulo="Canal" valor={contact.source_channel} />
-          <Linha rotulo="Campanha" valor={contact.source_campaign} />
-          <Linha
-            rotulo="Primeiro contato"
-            valor={
-              contact.first_contact_at
-                ? dataNaClinica(contact.first_contact_at, timezone)
-                : null
-            }
-            numerico
-          />
-        </div>
-        {!contact.source_channel && !contact.source_campaign ? (
-          <p className="text-[12.5px] text-text-secondary">
-            Origem ainda não identificada. Ela é capturada sozinha quando o
-            contato chega por link de campanha, mensagem de anúncio ou
-            palavra-chave.
-          </p>
-        ) : null}
-      </Secao>
+      <BlocoDeOrigem
+        contact={contact}
+        leitura={leituraDoAnuncio}
+        timezone={timezone}
+        aoTentarDeNovo={() => void anuncioQuery.refetch()}
+      />
 
       <Secao titulo="Agendamentos e histórico">
         {contact.kind === "paciente" ? (

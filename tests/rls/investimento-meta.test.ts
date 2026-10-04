@@ -683,3 +683,374 @@ describe("troca da conta de anúncios pela sessão", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Origem real do lead de anuncio (migration 20261004100000)
+// ---------------------------------------------------------------------------
+// - as colunas novas de meta_anuncio (adset_name, ad_name, origem,
+//   consultado_em) seguem a policy do mapa: todo membro ativo da propria
+//   clinica, nunca pendente nem outra clinica;
+// - meta_anuncio_recusado nao e lida por sessao nenhuma (42501, nem o
+//   admin); so o sistema;
+// - as funcoes do resolvedor sao so da service role;
+// - a sessao nao forja lead de anuncio (source_method anuncio_ctwa: 42501),
+//   mas edita o contato reenviando o metodo que ja estava gravado.
+// Linhas proprias (anuncios 7101 e 7102): os casos de cima nao mudam.
+
+describe("origem real: colunas novas de meta_anuncio", () => {
+  beforeAll(async () => {
+    const agora = new Date().toISOString();
+    await admin
+      .from("meta_anuncio")
+      .insert([
+        {
+          clinic_id: clinicaA,
+          ad_id: "7101",
+          ad_account_id: "act_1234567",
+          campaign_id: "8101",
+          campaign_name: "Campanha da consulta A",
+          adset_name: "Conjunto A",
+          ad_name: "Anúncio A",
+          ultimo_dia_com_entrega: null,
+          origem: "consulta",
+          consultado_em: agora,
+        },
+        {
+          clinic_id: clinicaB,
+          ad_id: "7102",
+          ad_account_id: "act_2222222",
+          campaign_id: "8102",
+          campaign_name: "Campanha da consulta B",
+          adset_name: "Conjunto B",
+          ad_name: "Anúncio B",
+          ultimo_dia_com_entrega: null,
+          origem: "consulta",
+          consultado_em: agora,
+        },
+      ])
+      .throwOnError();
+  });
+
+  it("todo membro ativo de A lê as colunas novas da própria clínica; pendente não; A não lê as da B", async () => {
+    for (const papel of [
+      "admin-a",
+      "gestor-a",
+      "recepcao-a",
+      "leitura-a",
+      "prof-a",
+    ]) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente
+        .from("meta_anuncio")
+        .select("ad_id, adset_name, ad_name, origem, consultado_em")
+        .eq("ad_id", "7101");
+      expect(error, papel).toBeNull();
+      expect(data, papel).toHaveLength(1);
+      expect(data![0]).toMatchObject({
+        adset_name: "Conjunto A",
+        ad_name: "Anúncio A",
+        origem: "consulta",
+      });
+      expect(data![0]!.consultado_em).not.toBeNull();
+      // Tudo o que a sessao enxerga e da A: nada do anuncio, do conjunto ou
+      // do nome da B.
+      const { data: visiveis } = await cliente
+        .from("meta_anuncio")
+        .select("clinic_id, ad_id, adset_name, ad_name");
+      expect(visiveis!.length, papel).toBeGreaterThan(0);
+      for (const linha of visiveis!) {
+        expect(linha.clinic_id, papel).toBe(clinicaA);
+        expect(linha.ad_id, papel).not.toBe("7102");
+        expect(linha.adset_name, papel).not.toBe("Conjunto B");
+        expect(linha.ad_name, papel).not.toBe("Anúncio B");
+      }
+    }
+    const pendente = await logado("pendente-a");
+    const { data: doPendente } = await pendente
+      .from("meta_anuncio")
+      .select("adset_name");
+    expect(doPendente).toEqual([]);
+    // Contraprova: o admin da B le o proprio conjunto e nada da A.
+    const b = await logado("admin-b");
+    const { data: daPropria } = await b
+      .from("meta_anuncio")
+      .select("adset_name")
+      .eq("ad_id", "7102");
+    expect(daPropria).toEqual([{ adset_name: "Conjunto B" }]);
+    const { data: daA } = await b
+      .from("meta_anuncio")
+      .select("ad_id")
+      .eq("clinic_id", clinicaA);
+    expect(daA).toEqual([]);
+  });
+
+  it("a sessão não grava o conjunto nem cria linha da consulta (42501), nem o admin", async () => {
+    const cliente = await logado("admin-a");
+    const tentativas = [
+      cliente
+        .from("meta_anuncio")
+        .update({ adset_name: "Forjado" })
+        .eq("ad_id", "7101"),
+      cliente.from("meta_anuncio").insert({
+        clinic_id: clinicaA,
+        ad_id: "7109",
+        ad_account_id: "act_1234567",
+        campaign_id: "8109",
+        origem: "consulta",
+        consultado_em: new Date().toISOString(),
+      }),
+    ];
+    for (const tentativa of tentativas) {
+      const { error } = await tentativa;
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    const { data } = await admin
+      .from("meta_anuncio")
+      .select("adset_name")
+      .eq("clinic_id", clinicaA)
+      .eq("ad_id", "7101")
+      .single();
+    expect(data).toEqual({ adset_name: "Conjunto A" });
+  });
+});
+
+describe("origem real: meta_anuncio_recusado (só o sistema)", () => {
+  beforeAll(async () => {
+    await admin
+      .from("meta_anuncio_recusado")
+      .insert([
+        {
+          clinic_id: clinicaA,
+          ad_id: "7201",
+          motivo: "inacessivel",
+          codigo_da_meta: 100,
+          ad_account_id: "act_1234567",
+          token_sha256: "a".repeat(64),
+        },
+        {
+          clinic_id: clinicaB,
+          ad_id: "7202",
+          motivo: "inacessivel",
+          codigo_da_meta: 100,
+          ad_account_id: "act_2222222",
+          token_sha256: "b".repeat(64),
+        },
+      ])
+      .throwOnError();
+  });
+
+  it("nenhuma sessão lê (42501), nem o admin; anon também não; o sistema lê as duas", async () => {
+    const sessoesDoTeste = [
+      ...(await Promise.all(
+        [
+          "admin-a",
+          "gestor-a",
+          "recepcao-a",
+          "leitura-a",
+          "prof-a",
+          "pendente-a",
+          "admin-b",
+        ].map((papel) => logado(papel)),
+      )),
+      anonClient(),
+    ];
+    for (const cliente of sessoesDoTeste) {
+      const { data, error } = await cliente
+        .from("meta_anuncio_recusado")
+        .select("clinic_id, ad_id, token_sha256");
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+      expect(data).toBeNull();
+    }
+    const { data } = await admin
+      .from("meta_anuncio_recusado")
+      .select("ad_id")
+      .in("clinic_id", [clinicaA, clinicaB])
+      .order("ad_id");
+    expect(data).toEqual([{ ad_id: "7201" }, { ad_id: "7202" }]);
+  });
+
+  it("a sessão não grava, não altera e não apaga recusa (42501)", async () => {
+    const cliente = await logado("admin-a");
+    const tentativas = [
+      cliente.from("meta_anuncio_recusado").insert({
+        clinic_id: clinicaA,
+        ad_id: "7209",
+        motivo: "inacessivel",
+        ad_account_id: "act_1234567",
+        token_sha256: "c".repeat(64),
+      }),
+      cliente
+        .from("meta_anuncio_recusado")
+        .update({ tentativas: 9 })
+        .eq("clinic_id", clinicaA),
+      cliente.from("meta_anuncio_recusado").delete().eq("clinic_id", clinicaA),
+    ];
+    for (const tentativa of tentativas) {
+      const { error } = await tentativa;
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    const { data } = await admin
+      .from("meta_anuncio_recusado")
+      .select("ad_id, tentativas")
+      .eq("clinic_id", clinicaA);
+    expect(data).toEqual([{ ad_id: "7201", tentativas: 1 }]);
+  });
+});
+
+describe("origem real: funções do resolvedor (só a service role)", () => {
+  it("authenticated e anon recebem 42501; nada nasce na fila", async () => {
+    const chamadas = (cliente: ReturnType<typeof anonClient>) => [
+      cliente.rpc("enfileirar_resolucao_de_anuncios_meta", {
+        p_clinic_id: clinicaA,
+        p_origem: "teste",
+      }),
+      // O parametro dos testes de integracao tambem nao abre a porta.
+      cliente.rpc("enfileirar_resolucao_de_anuncios_meta", {
+        p_clinic_id: clinicaA,
+        p_origem: "ingestao",
+        p_incluir_teste: true,
+      }),
+      cliente.rpc("anuncios_meta_a_resolver", {
+        p_clinic_id: clinicaA,
+        p_ad_account_id: "act_1234567",
+        p_token_sha256: "0".repeat(64),
+      }),
+      cliente.rpc("gravar_resolucao_de_anuncios_meta", {
+        p_job_id: crypto.randomUUID(),
+        p_worker: "sessao",
+        p_clinic_id: clinicaA,
+        p_ad_account_id: "act_1234567",
+        p_token_sha256: "0".repeat(64),
+        p_resolvidos: [],
+        p_recusas: [],
+      }),
+    ];
+    const sessao = await logado("admin-a");
+    for (const cliente of [sessao, anonClient()]) {
+      for (const chamada of chamadas(cliente)) {
+        const { error } = await chamada;
+        expect(error?.code).toBe(PERMISSAO_NEGADA);
+      }
+    }
+    const { data: jobs } = await admin
+      .from("job_queue")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("kind", "resolver_anuncio_meta");
+    expect(jobs).toEqual([]);
+  });
+});
+
+describe("origem real: a sessão não forja lead de anúncio", () => {
+  let leadDeAnuncio = "";
+  let semOrigem = "";
+  const fone = (prefixo: string, preenchimento: string) =>
+    `+55849${prefixo}${sufixo.replace(/\D/g, "").padEnd(6, preenchimento).slice(0, 6)}`;
+
+  beforeAll(async () => {
+    // Gravados pelo sistema: um lead de anuncio com origem real e um sem
+    // origem nenhuma.
+    const { data } = await admin
+      .from("contact")
+      .insert([
+        {
+          clinic_id: clinicaA,
+          phone_e164: fone("81", "5"),
+          name: "Lead de anuncio com origem",
+          first_contact_at: "2026-09-08T15:00:00.000Z",
+          ctwa_clid: `clid-origem-${sufixo}`,
+          source_ad_id: "7101",
+          source_channel: "trafego_pago",
+          source_origin: "Meta",
+          source_method: "anuncio_ctwa",
+          source_captured_at: "2026-09-08T15:00:00.000Z",
+        },
+        {
+          clinic_id: clinicaA,
+          phone_e164: fone("82", "6"),
+          name: "Lead sem origem",
+          first_contact_at: "2026-09-09T15:00:00.000Z",
+        },
+      ])
+      .select("id, name")
+      .throwOnError();
+    leadDeAnuncio = data!.find((c) => c.name === "Lead de anuncio com origem")!
+      .id as string;
+    semOrigem = data!.find((c) => c.name === "Lead sem origem")!.id as string;
+  });
+
+  it("insert ou update para anuncio_ctwa devolve 42501 para recepção, gestor e admin", async () => {
+    for (const papel of ["recepcao-a", "gestor-a", "admin-a"]) {
+      const cliente = await logado(papel);
+      const { error: criar } = await cliente.from("contact").insert({
+        clinic_id: clinicaA,
+        phone_e164: fone("83", "7"),
+        name: "Forjado",
+        source_channel: "trafego_pago",
+        source_origin: "Meta",
+        source_medium: "Instagram",
+        source_method: "anuncio_ctwa",
+      });
+      expect(criar?.code, papel).toBe(PERMISSAO_NEGADA);
+      const { error: mudar } = await cliente
+        .from("contact")
+        .update({
+          source_channel: "trafego_pago",
+          source_origin: "Meta",
+          source_method: "anuncio_ctwa",
+          source_captured_at: new Date().toISOString(),
+        })
+        .eq("id", semOrigem);
+      expect(mudar?.code, papel).toBe(PERMISSAO_NEGADA);
+    }
+    const { data: depois } = await admin
+      .from("contact")
+      .select("source_channel, source_method")
+      .eq("id", semOrigem)
+      .single();
+    expect(depois).toEqual({ source_channel: null, source_method: null });
+    const { data: forjado } = await admin
+      .from("contact")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("phone_e164", fone("83", "7"));
+    expect(forjado).toEqual([]);
+  });
+
+  it("contraprova: a recepção edita o lead de anúncio reenviando o método e grava origem manual", async () => {
+    const cliente = await logado("recepcao-a");
+    const { data: editado, error } = await cliente
+      .from("contact")
+      .update({
+        name: "Lead de anuncio renomeado",
+        source_channel: "trafego_pago",
+        source_origin: "Meta",
+        source_method: "anuncio_ctwa",
+      })
+      .eq("id", leadDeAnuncio)
+      .select("id");
+    expect(error).toBeNull();
+    expect(editado).toHaveLength(1);
+    const { data: depois } = await admin
+      .from("contact")
+      .select("name, source_method, source_ad_id")
+      .eq("id", leadDeAnuncio)
+      .single();
+    expect(depois).toEqual({
+      name: "Lead de anuncio renomeado",
+      source_method: "anuncio_ctwa",
+      source_ad_id: "7101",
+    });
+    const { error: manual } = await cliente.from("contact").insert({
+      clinic_id: clinicaA,
+      phone_e164: fone("84", "8"),
+      name: "Origem manual",
+      source_channel: "trafego_pago",
+      source_origin: "Meta",
+      source_medium: "Instagram",
+      source_method: "manual",
+      source_captured_at: new Date().toISOString(),
+    });
+    expect(manual).toBeNull();
+  });
+});

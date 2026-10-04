@@ -406,12 +406,17 @@ describe("salvar o token de leitura", () => {
         .every((c) => c.cliente === "admin"),
     ).toBe(true);
 
-    // A funcao do banco, pelo cliente de servico, com a origem certa e sem
-    // o parametro dos testes de integracao.
+    // As funcoes do banco, pelo cliente de servico, com a origem certa e sem
+    // o parametro dos testes de integracao: a leitura do investimento e a
+    // consulta dos anuncios (origem 'teste', que passa pela pausa).
     expect(registro.rpcs).toEqual([
       {
         nome: "enfileirar_sincronizacao_de_gasto_meta",
         args: { p_clinic_id: CLINICA, p_origem: "configuracao" },
+      },
+      {
+        nome: "enfileirar_resolucao_de_anuncios_meta",
+        args: { p_clinic_id: CLINICA, p_origem: "teste" },
       },
     ]);
 

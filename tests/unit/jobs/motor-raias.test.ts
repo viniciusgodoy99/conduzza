@@ -126,7 +126,7 @@ describe("executarPassagemDoMotor com leitura de gasto", () => {
       ["enviar_mensagem_ativa", "executar_passo_de_regua"],
       ["baixar_midia"],
       ["enviar_conversao_meta", "oferecer_lista_espera"],
-      ["sincronizar_gasto_meta"],
+      ["sincronizar_gasto_meta", "resolver_anuncio_meta"],
     ]);
     expect(claims[3]).toMatchObject({
       p_max_clinicas: 2,
@@ -153,7 +153,9 @@ describe("executarPassagemDoMotor com leitura de gasto", () => {
       "enviar_conversao_meta,oferecer_lista_espera": [
         umJob("i1", "enviar_conversao_meta"),
       ],
-      sincronizar_gasto_meta: [umJob("g1", "sincronizar_gasto_meta")],
+      "sincronizar_gasto_meta,resolver_anuncio_meta": [
+        umJob("g1", "sincronizar_gasto_meta"),
+      ],
     });
 
     const passagem = executarPassagemDoMotor(db.admin, { executorId: "motor-teste" });
@@ -177,7 +179,9 @@ describe("executarPassagemDoMotor com leitura de gasto", () => {
   it("o gasto cabe no orçamento da passagem (40 s estimados, começa perto de 0)", async () => {
     vi.mocked(executarJobComPosse).mockResolvedValue("concluido");
     const db = bancoDoMotor({
-      sincronizar_gasto_meta: [umJob("g1", "sincronizar_gasto_meta")],
+      "sincronizar_gasto_meta,resolver_anuncio_meta": [
+        umJob("g1", "sincronizar_gasto_meta"),
+      ],
     });
     const resultado = await executarPassagemDoMotor(db.admin, {
       executorId: "motor-teste",

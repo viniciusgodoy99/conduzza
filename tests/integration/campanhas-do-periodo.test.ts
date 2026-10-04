@@ -479,3 +479,138 @@ describe("campanhas_do_periodo", () => {
     expect(outubro.investimento!.investimento_cents).toBe(5000);
   });
 });
+
+// Origem real do lead de anuncio (migration 20261004100000): a linha do mapa
+// criada pela consulta por id (ultimo_dia_com_entrega nulo) entra como
+// campanha conhecida, mas no nome perde para a linha com entrega (NULLS
+// LAST); o lead com origem de anuncio gravada (anuncio_ctwa, source_campaign
+// nulo) casa pelo id do anuncio. Clinica propria: as contagens dos casos de
+// cima nao mudam.
+describe("campanhas_do_periodo com a linha da consulta por id", () => {
+  let clinica = "";
+
+  beforeAll(async () => {
+    const { data } = await admin
+      .from("clinic")
+      .insert({
+        name: `Campanhas Consulta ${sufixo}`,
+        slug: `campanhas-consulta-${sufixo}`,
+        e_de_teste: true,
+        timezone: "America/Fortaleza",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    clinica = data!.id as string;
+    const antes = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    const agora = new Date().toISOString();
+    await admin
+      .from("meta_anuncio")
+      .insert([
+        // Mesma campanha: a linha com entrega (mais antiga) e a da consulta
+        // (atualizada agora, sem dia). O nome vem da linha com entrega.
+        {
+          clinic_id: clinica,
+          ad_id: "5101",
+          ad_account_id: CONTA,
+          campaign_id: "9600",
+          campaign_name: "Nome com entrega",
+          ultimo_dia_com_entrega: "2026-09-01",
+          origem: "insights",
+          atualizado_em: antes,
+        },
+        {
+          clinic_id: clinica,
+          ad_id: "5102",
+          ad_account_id: CONTA,
+          campaign_id: "9600",
+          campaign_name: "Nome da consulta",
+          ultimo_dia_com_entrega: null,
+          origem: "consulta",
+          consultado_em: agora,
+          atualizado_em: agora,
+        },
+        // Campanha conhecida so pela consulta.
+        {
+          clinic_id: clinica,
+          ad_id: "5201",
+          ad_account_id: CONTA,
+          campaign_id: "9700",
+          campaign_name: "So consulta",
+          adset_name: "Conjunto da consulta",
+          ultimo_dia_com_entrega: null,
+          origem: "consulta",
+          consultado_em: agora,
+        },
+      ])
+      .throwOnError();
+    await admin
+      .from("contact")
+      .insert([
+        {
+          clinic_id: clinica,
+          phone_e164: "+5584979890001",
+          name: "Lead com origem de anuncio",
+          first_contact_at: "2026-09-15T15:00:00.000Z",
+          ctwa_clid: `clid-consulta-${sufixo}`,
+          source_ad_id: "5102",
+          source_channel: "trafego_pago",
+          source_origin: "Meta",
+          source_medium: "Instagram",
+          source_method: "anuncio_ctwa",
+          source_captured_at: "2026-09-15T15:00:00.000Z",
+        },
+        {
+          clinic_id: clinica,
+          phone_e164: "+5584979890002",
+          name: "Lead so com o anuncio",
+          first_contact_at: "2026-09-16T15:00:00.000Z",
+          source_ad_id: "5201",
+        },
+      ])
+      .throwOnError();
+  });
+
+  afterAll(async () => {
+    await admin.from("clinic").delete().eq("id", clinica);
+  });
+
+  it("o nome prefere a linha com entrega; a campanha só da consulta aparece com o próprio nome", async () => {
+    const { data, error } = await admin.rpc("campanhas_do_periodo", {
+      p_clinic_id: clinica,
+      p_de: P_DE,
+      p_ate: P_ATE,
+    });
+    expect(error).toBeNull();
+    const { atual } = data as Campanhas;
+    expect(atual.leads).toBe(2);
+    expect(atual.leads_de_anuncio).toBe(2);
+    expect(atual.leads_casados).toBe(2);
+    expect(atual.leads_de_anuncio_sem_campanha).toBe(0);
+    expect(atual.leads_sem_campanha).toBe(0);
+    expect(atual.linhas).toEqual([
+      {
+        chave: "meta:9600",
+        tipo: "meta",
+        meta_campaign_id: "9600",
+        rotulo: "Nome com entrega",
+        leads: 1,
+        agendaram: 0,
+        compareceram: 0,
+        investimento_cents: 0,
+      },
+      {
+        chave: "meta:9700",
+        tipo: "meta",
+        meta_campaign_id: "9700",
+        rotulo: "So consulta",
+        leads: 1,
+        agendaram: 0,
+        compareceram: 0,
+        investimento_cents: 0,
+      },
+    ]);
+    // Nenhuma linha de texto: a origem de anuncio nao usa source_campaign.
+    expect(atual.linhas.some((linha) => linha.tipo === "texto")).toBe(false);
+  });
+});

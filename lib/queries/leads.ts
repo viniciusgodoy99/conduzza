@@ -3,6 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   compararPorProximaAcao,
   consentimentoVigenteDeLinhas,
+  idDeAnuncioValido,
+  LEITURA_SEM_ANUNCIO,
+  type AnuncioDaMeta,
+  type LeituraDoAnuncio,
   type LinhaConsent,
 } from "@/lib/domain/leads-ui";
 import {
@@ -34,10 +38,24 @@ export type LeadResumo = {
   tags: string[];
   source_channel: string | null;
   source_campaign: string | null;
+  /** Origem livre ("Meta" no lead de anuncio). */
+  source_origin: string | null;
+  /** Plataforma do anuncio ("Facebook", "Instagram") ou meio do link. */
+  source_medium: string | null;
+  /** Metodo de captura (METODO_LABELS em lib/domain/leads-ui.ts). */
+  source_method: string | null;
+  /** Id do anuncio da Meta gravado pela ingestao; chave de meta_anuncio. */
+  source_ad_id: string | null;
   first_contact_at: string;
   last_contact_at: string | null;
   insurance: { id: string; name: string } | null;
   consent_ativo: boolean;
+  /**
+   * Campanha e conjunto da Meta pelo source_ad_id (meta_anuncio, lida pela
+   * sessao com a RLS de membro ativo). Erro na leitura nao derruba a lista:
+   * so a coluna Campanha diz que nao carregou.
+   */
+  anuncio_meta: LeituraDoAnuncio;
 };
 
 export type MensagemDoLead = {
@@ -56,6 +74,11 @@ export type LeadDetalhe = {
   mensagens: MensagemDoLead[];
   /** Nome amigavel da campanha em campaign_link; null sem campanha casada. */
   campanha_nome: string | null;
+  /**
+   * Campanha e conjunto da Meta lidos AGORA (a lista pode estar velha: o
+   * resolvedor de anuncios grava meta_anuncio sem tempo real).
+   */
+  anuncio_meta: LeituraDoAnuncio;
   /**
    * Atividades do contato (pendentes e ultimas concluidas), lidas na MESMA
    * action que grava a trilha da ficha. null quando a leitura delas falhou:
@@ -77,8 +100,130 @@ export const leadsKeys = {
   autores: (clinicId: string) => ["leads", clinicId, "autores"] as const,
 };
 
+/** Chave do anuncio da Meta de UM contato (painel do Atendimento). */
+export const anuncioDaMetaKeys = {
+  doAnuncio: (clinicId: string, adId: string) =>
+    ["anuncio-meta", clinicId, adId] as const,
+};
+
+// So o que as telas mostram. Ate a migration 20261004100000 ser aplicada,
+// adset_name nao existe e a leitura falha: quem chama trata como erro da
+// linha Campanha, nunca da tela inteira.
+const ANUNCIO_SELECT =
+  "ad_id, campaign_id, campaign_name, adset_id, adset_name";
+
+// Lote de ids por consulta: 100 ids de ate 32 digitos cabem com folga na URL
+// do PostgREST.
+const ANUNCIOS_POR_CONSULTA = 100;
+
+function normalizarAnuncio(row: Record<string, unknown>): AnuncioDaMeta {
+  return {
+    ad_id: row.ad_id as string,
+    campaign_id: row.campaign_id as string,
+    campaign_name: (row.campaign_name as string | null) ?? null,
+    adset_id: (row.adset_id as string | null) ?? null,
+    adset_name: (row.adset_name as string | null) ?? null,
+  };
+}
+
+/**
+ * As linhas de meta_anuncio dos anuncios pedidos, da clinica pedida (o
+ * filtro de clinica importa: o mesmo anuncio pode estar no mapa de duas
+ * clinicas, e a RLS deixa ler todas as clinicas ativas da pessoa). Id fora
+ * do formato do mapa nunca casa e nem vai na consulta. LANCA em erro.
+ */
+export async function fetchAnunciosDaMeta(
+  supabase: SupabaseClient,
+  clinicId: string,
+  adIds: readonly (string | null | undefined)[],
+): Promise<Map<string, AnuncioDaMeta>> {
+  const validos = [
+    ...new Set(
+      adIds
+        .map((adId) => idDeAnuncioValido(adId))
+        .filter((adId): adId is string => adId !== null),
+    ),
+  ];
+  const mapa = new Map<string, AnuncioDaMeta>();
+  for (let i = 0; i < validos.length; i += ANUNCIOS_POR_CONSULTA) {
+    const lote = validos.slice(i, i + ANUNCIOS_POR_CONSULTA);
+    const { data, error } = await supabase
+      .from("meta_anuncio")
+      .select(ANUNCIO_SELECT)
+      .eq("clinic_id", clinicId)
+      .in("ad_id", lote);
+    if (error) {
+      throw new Error(error.message);
+    }
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      const anuncio = normalizarAnuncio(row);
+      mapa.set(anuncio.ad_id, anuncio);
+    }
+  }
+  return mapa;
+}
+
+/**
+ * A leitura do anuncio de UM contato, que nunca lanca: sem id valido e
+ * "lida" sem anuncio; falha da consulta e "erro" (a tela mostra so na linha
+ * Campanha).
+ */
+export async function lerAnuncioDaMeta(
+  supabase: SupabaseClient,
+  clinicId: string,
+  adId: string | null | undefined,
+): Promise<LeituraDoAnuncio> {
+  const valido = idDeAnuncioValido(adId);
+  if (!valido) {
+    return LEITURA_SEM_ANUNCIO;
+  }
+  try {
+    const mapa = await fetchAnunciosDaMeta(supabase, clinicId, [valido]);
+    return { estado: "lida", anuncio: mapa.get(valido) ?? null };
+  } catch {
+    return { estado: "erro" };
+  }
+}
+
+/**
+ * Preenche anuncio_meta dos leads com UMA leitura de meta_anuncio por lote
+ * de ids. Falha da leitura vira "erro" so nos leads que tem anuncio.
+ */
+async function anexarAnunciosDaMeta(
+  supabase: SupabaseClient,
+  clinicId: string,
+  leads: LeadResumo[],
+): Promise<LeadResumo[]> {
+  const comAnuncio = leads.filter(
+    (lead) => idDeAnuncioValido(lead.source_ad_id) !== null,
+  );
+  if (comAnuncio.length === 0) {
+    return leads;
+  }
+  let mapa: Map<string, AnuncioDaMeta> | null = null;
+  try {
+    mapa = await fetchAnunciosDaMeta(
+      supabase,
+      clinicId,
+      comAnuncio.map((lead) => lead.source_ad_id),
+    );
+  } catch {
+    mapa = null;
+  }
+  return leads.map((lead) => {
+    const adId = idDeAnuncioValido(lead.source_ad_id);
+    if (!adId) {
+      return lead;
+    }
+    const leitura: LeituraDoAnuncio = mapa
+      ? { estado: "lida", anuncio: mapa.get(adId) ?? null }
+      : { estado: "erro" };
+    return { ...lead, anuncio_meta: leitura };
+  });
+}
+
 const LEAD_SELECT =
-  "id, name, phone_e164, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
+  "id, name, phone_e164, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
 
 // Sem tipos gerados, o supabase-js devolve embed como array: normaliza no
 // padrao de normalizarConsulta (lib/queries/agenda.ts) e ja deriva
@@ -103,10 +248,16 @@ function normalizarLead(row: Record<string, unknown>): LeadResumo {
     tags: (row.tags as string[] | null) ?? [],
     source_channel: (row.source_channel as string | null) ?? null,
     source_campaign: (row.source_campaign as string | null) ?? null,
+    source_origin: (row.source_origin as string | null) ?? null,
+    source_medium: (row.source_medium as string | null) ?? null,
+    source_method: (row.source_method as string | null) ?? null,
+    source_ad_id: (row.source_ad_id as string | null) ?? null,
     first_contact_at: row.first_contact_at as string,
     last_contact_at: (row.last_contact_at as string | null) ?? null,
     insurance: (insuranceBruto ?? null) as LeadResumo["insurance"],
     consent_ativo: consentimentoVigenteDeLinhas(linhas),
+    // anexarAnunciosDaMeta troca nos leads que tem anuncio.
+    anuncio_meta: LEITURA_SEM_ANUNCIO,
   };
 }
 
@@ -143,9 +294,10 @@ export async function fetchLeads(
   if (error) {
     throw new Error(error.message);
   }
-  return ((data ?? []) as Record<string, unknown>[])
-    .map(normalizarLead)
-    .sort(compararPorProximaAcao);
+  const leads = ((data ?? []) as Record<string, unknown>[]).map(normalizarLead);
+  return (await anexarAnunciosDaMeta(supabase, clinicId, leads)).sort(
+    compararPorProximaAcao,
+  );
 }
 
 /**
@@ -210,27 +362,35 @@ export async function fetchReguasDeFollowup(
     }));
 }
 
-/** Busca um contato so, com os embeds (usada pelo tempo real em INSERT). */
+/**
+ * Busca um contato so, com os embeds e o anuncio da Meta (usada pelo tempo
+ * real em INSERT e quando o anuncio do contato muda).
+ */
 export async function fetchLead(
   supabase: SupabaseClient,
+  clinicId: string,
   contactId: string,
 ): Promise<LeadResumo | null> {
   const { data, error } = await supabase
     .from("contact")
     .select(LEAD_SELECT)
+    .eq("clinic_id", clinicId)
     .eq("id", contactId)
     .maybeSingle();
   if (error || !data) {
     return null;
   }
-  return normalizarLead(data as Record<string, unknown>);
+  const [lead] = await anexarAnunciosDaMeta(supabase, clinicId, [
+    normalizarLead(data as Record<string, unknown>),
+  ]);
+  return lead ?? null;
 }
 
 // So o que a tela desenha: o drawer ja recebe o resumo do lead por prop e o
 // resto do cadastro (cpf, e-mail, nascimento, carteirinha) nao aparece em
 // lugar nenhum. Dado sensivel que ninguem renderiza nao viaja para o
 // navegador.
-const DETALHE_SELECT = "id, source_campaign";
+const DETALHE_SELECT = "id, source_campaign, source_ad_id";
 
 /**
  * Detalhe do drawer da Tela 4: ultimas 3 mensagens da conversa NAO resolvida
@@ -257,8 +417,9 @@ export async function fetchLeadDetalhe(
   }
   const row = data as Record<string, unknown>;
   const sourceCampaign = (row.source_campaign as string | null) ?? null;
+  const sourceAdId = (row.source_ad_id as string | null) ?? null;
 
-  const [conversa, campanha, atividades] = await Promise.all([
+  const [conversa, campanha, atividades, anuncioMeta] = await Promise.all([
     // VARIOS NUMEROS (docs/07): o lead pode ter uma conversa aberta em cada
     // numero da clinica. O drawer mostra e liga a mais recente em QUALQUER
     // numero (o limit(1) nunca quebra com duas); empate de atividade vai para
@@ -284,6 +445,8 @@ export async function fetchLeadDetalhe(
       : Promise.resolve({ data: null, error: null }),
     // Falha so das atividades nao derruba a conversa do drawer.
     fetchAtividadesDoContato(supabase, clinicId, contactId).catch(() => null),
+    // Nem a do anuncio: lerAnuncioDaMeta nunca lanca.
+    lerAnuncioDaMeta(supabase, clinicId, sourceAdId),
   ]);
   if (conversa.error) {
     throw new Error(conversa.error.message);
@@ -309,6 +472,7 @@ export async function fetchLeadDetalhe(
     conversation_id: conversationId,
     mensagens,
     campanha_nome: (campanha.data as { name: string } | null)?.name ?? null,
+    anuncio_meta: anuncioMeta,
     atividades,
   };
 }

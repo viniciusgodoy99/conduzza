@@ -986,3 +986,548 @@ export async function lerGastoParaSincronizar(
     paginas: porAnuncio.paginas + daConta.paginas,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Resolucao de anuncio por id (origem real do lead de anuncio, 04/10/2026)
+// ---------------------------------------------------------------------------
+//
+// O WhatsApp entrega so o id do anuncio (contact.source_ad_id); campanha e
+// conjunto saem da Meta, pelo id. Ate duas chamadas por anuncio:
+// 1. GET /{ad_id}/insights?fields=account_id,ad_id,ad_name,adset_id,
+//    adset_name,campaign_id,campaign_name&date_preset=maximum&limit=1.
+//    E o caminho documentado para ads_read e funciona para anuncio arquivado
+//    ou apagado, que o act_X/insights?level=ad da leitura diaria nao devolve.
+// 2. So quando a 1 volta sem linha (anuncio sem entrega ainda), pesada demais
+//    ou sem resposta dentro do nosso timeout: GET /{ad_id}?fields=account_id,
+//    name,adset_id,campaign_id,adset{name},campaign{name}.
+//
+// Classificacao. A falha de UM anuncio nunca pausa a leitura diaria e nunca
+// trava o lote (o mesmo anuncio voltaria primeiro em toda execucao):
+// - 100/33, 803 e HTTP 404 na 1: inacessivel, so daquele anuncio. Nao passam
+//   pelo conta_sem_acesso do problemaDoErro, que pausaria o gasto.
+// - Permissao recusada na 1 (10, 200-299, 294, 100/3191001, HTTP 403): pode
+//   ser so daquele anuncio (anuncio na conta de uma agencia, post impulsionado
+//   por outra conta) ou do token inteiro. Uma vez por lote, confere a conta
+//   salva com a mesma leitura do "Testar leitura" (act_X/insights, level
+//   account, spend, last_30d, limit 1). A conta responde: inacessivel so
+//   daquele anuncio, com o codigo da Meta, e o lote segue (os seguintes com
+//   permissao recusada nem repetem a conferencia). A conta tambem recusa: o
+//   lote para com a FalhaDeLeitura DA CONTA, e quem chama segue a mesma acao
+//   do gasto. Sem a conferencia, um token sem permissao gravaria inacessivel
+//   em todos os anuncios com o sha atual, e eles nunca mais seriam
+//   consultados se a permissao voltasse sem trocar o token.
+// - Conta do anuncio diferente da conta salva: outra_conta (fora do mapa).
+// - Outro codigo que pode ser do proprio anuncio na 1 (100 generico, 2500,
+//   codigo desconhecido) ou linha torta: resposta_invalida. O banco tenta de
+//   novo em 24 h, entao um erro nosso se conserta sozinho depois da correcao.
+// - A 2 recusada por qualquer codigo que nao seja de token, limite, versao
+//   ou Meta fora do ar: sem_entrega_ainda. Quando a 2 roda, a 1 ja mostrou
+//   que o token le a conta; a recusa da 2 (expansao de campo com so ads_read,
+//   por exemplo) nao pode pausar a leitura do gasto.
+// - 190, 102, prova do app, limite da Meta e 2635 na 1 interrompem o lote com
+//   a FalhaDeLeitura, e quem chama segue a mesma acao do gasto. Na 2, so
+//   token, limite e versao interrompem.
+// - Meta indisponivel depois das novas tentativas locais, ou resposta que nao
+//   e objeto JSON: interrompe com acao repetir (o backoff do job repete).
+// - Prazo: o anuncio em curso e os seguintes voltam em naoTentados. Se o prazo
+//   acabar antes de QUALQUER anuncio terminar, e falha prazo_esgotado
+//   (repetir): devolver tudo em naoTentados faria o job se reagendar na hora,
+//   em ciclo, com a Meta lenta.
+//
+// Limites: ate 20 anuncios distintos por execucao, 8 s por requisicao e 15 s
+// de prazo total (o menor entre isso e o prazoEm de quem chama), com a
+// conferencia da conta dentro do mesmo prazo. Id fora de
+// ^[0-9]{1,32}$ nunca entra na URL nem em lista nenhuma (o banco so devolve id
+// numerico). Nada aqui loga. O resultado leva ids, nomes do anuncio e codigos
+// numericos; nunca a mensagem da Meta, a URL ou o token. Os nomes sao dado da
+// clinica: vao para o banco, nunca para log.
+
+/** Anuncios distintos consultados por execucao; o resto volta em naoTentados. */
+export const RESOLVER_MAX_ANUNCIOS = 20;
+/** Timeout de cada requisicao da resolucao (teto, mesmo que quem chama passe mais). */
+export const RESOLVER_TIMEOUT_MS = 8_000;
+/** Prazo total da resolucao, contado do inicio da chamada (teto). */
+export const RESOLVER_PRAZO_MS = 15_000;
+/** Tamanho maximo dos nomes, o mesmo dos CHECKs de meta_anuncio. */
+const TAMANHO_MAXIMO_DO_NOME = 400;
+/** Maior codigo que o banco aceita em p_recusas (^-?[0-9]{1,9}$). */
+const MAIOR_CODIGO_GRAVAVEL = 999_999_999;
+
+const CAMPOS_DO_ANUNCIO_NO_INSIGHTS = [
+  "account_id",
+  "ad_id",
+  "ad_name",
+  "adset_id",
+  "adset_name",
+  "campaign_id",
+  "campaign_name",
+].join(",");
+const CAMPOS_DO_OBJETO_DO_ANUNCIO =
+  "account_id,name,adset_id,campaign_id,adset{name},campaign{name}";
+/**
+ * Conferencia da conta salva quando um anuncio tem a permissao recusada: os
+ * mesmos parametros da segunda chamada do "Testar leitura", a leitura que a
+ * sincronizacao diaria precisa.
+ */
+const PARAMS_DA_CONFERENCIA_DA_CONTA: Readonly<Record<string, string>> = {
+  level: "account",
+  fields: "spend",
+  date_preset: "last_30d",
+  limit: "1",
+};
+
+/** Os motivos de recusa, na ordem do CHECK de meta_anuncio_recusado.motivo. */
+export const MOTIVOS_DA_RECUSA = [
+  "sem_entrega_ainda",
+  "inacessivel",
+  "outra_conta",
+  "resposta_invalida",
+] as const;
+
+export type MotivoDaRecusa = (typeof MOTIVOS_DA_RECUSA)[number];
+
+export type AnuncioResolvido = {
+  adId: string;
+  adName: string | null;
+  adsetId: string | null;
+  adsetName: string | null;
+  campaignId: string;
+  campaignName: string | null;
+  /** Sempre a conta salva da clinica (anuncio de outra conta vira recusa). */
+  adAccountId: AdAccountId;
+};
+
+export type AnuncioRecusado = {
+  adId: string;
+  motivo: MotivoDaRecusa;
+  /** error.code da Meta (null quando a recusa e nossa: conta, linha torta). */
+  codigo: number | null;
+};
+
+export type ResolucaoDeAnuncios = {
+  ok: true;
+  resolvidos: AnuncioResolvido[];
+  recusados: AnuncioRecusado[];
+  /** Validos que nao couberam (acima de 20 ou sem prazo), na ordem recebida. */
+  naoTentados: string[];
+};
+
+/** Dependencias injetaveis; quando presentes, valem mais que as da config. */
+export type DepsDaResolucao = Pick<
+  ConfigDeLeitura,
+  "fetchFn" | "agora" | "dormir" | "aleatorio"
+>;
+
+/**
+ * O que fazer com a falha de uma chamada da resolucao:
+ * - interromper: devolve a FalhaDeLeitura como veio (o lote para);
+ * - sem_tempo: o anuncio volta em naoTentados (prazo);
+ * - ler_objeto: so na chamada 1, tenta a chamada 2;
+ * - conferir_conta: so na chamada 1, permissao recusada; le a conta salva
+ *   (uma vez por lote). Ela responde: recusa inacessivel com `codigo`. Ela
+ *   recusa: o lote para com a falha da conta;
+ * - recusar: recusa so daquele anuncio.
+ */
+export type DesfechoDaFalhaDoAnuncio =
+  | { tipo: "interromper" }
+  | { tipo: "sem_tempo" }
+  | { tipo: "ler_objeto" }
+  | { tipo: "conferir_conta"; codigo: number | null }
+  | { tipo: "recusar"; motivo: MotivoDaRecusa; codigo: number | null };
+
+/**
+ * Classifica a falha de uma chamada da resolucao pelos codigos numericos e
+ * pelo problema ja classificado. Nunca devolve conta_sem_acesso por um
+ * anuncio: 100/33, 803 e 404 sao recusa daquele anuncio so, e a permissao
+ * recusada so interrompe depois que a conta salva tambem recusar.
+ */
+export function desfechoDaFalhaDoAnuncio(
+  f: FalhaDeLeitura,
+  chamada: "insights" | "objeto",
+): DesfechoDaFalhaDoAnuncio {
+  switch (f.problema) {
+    case "prazo_esgotado":
+      return { tipo: "sem_tempo" };
+    case "token_invalido":
+    case "limite_da_meta":
+    case "versao_descontinuada":
+      return { tipo: "interromper" };
+    case "meta_indisponivel":
+      // Na 1, o silencio do NOSSO timer pode ser so este anuncio pesado
+      // (date_preset=maximum): a chamada 2 nao depende do Insights.
+      return chamada === "insights" && SEM_RESPOSTA_A_TEMPO.has(f)
+        ? { tipo: "ler_objeto" }
+        : { tipo: "interromper" };
+    case "resposta_invalida":
+      // 2xx que nao e objeto JSON (ou cursor 2642): nao e do anuncio.
+      return { tipo: "interromper" };
+    default:
+      break;
+  }
+  if (chamada === "objeto") {
+    return { tipo: "recusar", motivo: "sem_entrega_ainda", codigo: f.codigoDaMeta };
+  }
+  if (f.problema === "exige_prova_do_app") {
+    // Configuracao do app: toda chamada seria recusada.
+    return { tipo: "interromper" };
+  }
+  if (f.problema === "sem_permissao") {
+    return { tipo: "conferir_conta", codigo: f.codigoDaMeta };
+  }
+  if (
+    (f.codigoDaMeta === 100 && f.subcodigoDaMeta === 33) ||
+    f.codigoDaMeta === 803 ||
+    f.http === 404
+  ) {
+    return { tipo: "recusar", motivo: "inacessivel", codigo: f.codigoDaMeta };
+  }
+  if (f.problema === "consulta_pesada") {
+    return { tipo: "ler_objeto" };
+  }
+  return { tipo: "recusar", motivo: "resposta_invalida", codigo: f.codigoDaMeta };
+}
+
+type AnuncioBruto = {
+  id: unknown;
+  conta: unknown;
+  adName: unknown;
+  adsetId: unknown;
+  adsetName: unknown;
+  campaignId: unknown;
+  campaignName: unknown;
+};
+
+type DesfechoDoAnuncio =
+  | { tipo: "resolvido"; anuncio: AnuncioResolvido }
+  | { tipo: "recusado"; recusa: AnuncioRecusado }
+  | { tipo: "sem_tempo"; falha: FalhaDeLeitura }
+  | { tipo: "falha"; falha: FalhaDeLeitura };
+
+function recusado(
+  adId: string,
+  motivo: MotivoDaRecusa,
+  codigo: number | null,
+): DesfechoDoAnuncio {
+  return { tipo: "recusado", recusa: { adId, motivo, codigo } };
+}
+
+/** Nome da Meta: sem espaco nas pontas, sem NUL, ate 400 caracteres. */
+function nomeDoAnuncio(valor: unknown): string | null {
+  if (typeof valor !== "string") {
+    return null;
+  }
+  // Corta por caractere (nao por unidade UTF-16): nunca sobra meio emoji,
+  // que o jsonb do banco recusaria e travaria a gravacao do lote.
+  const limpo = valor.replace(/\u0000/g, "").trim();
+  return Array.from(limpo).slice(0, TAMANHO_MAXIMO_DO_NOME).join("").trim() || null;
+}
+
+function vazio(valor: unknown): boolean {
+  return valor === undefined || valor === null || valor === "";
+}
+
+function brutoDoInsights(linha: unknown): AnuncioBruto | null {
+  if (!eObjeto(linha)) return null;
+  return {
+    id: linha.ad_id,
+    conta: linha.account_id,
+    adName: linha.ad_name,
+    adsetId: linha.adset_id,
+    adsetName: linha.adset_name,
+    campaignId: linha.campaign_id,
+    campaignName: linha.campaign_name,
+  };
+}
+
+function brutoDoObjeto(corpo: Record<string, unknown>): AnuncioBruto {
+  const adset = eObjeto(corpo.adset) ? corpo.adset : null;
+  const campanha = eObjeto(corpo.campaign) ? corpo.campaign : null;
+  return {
+    id: corpo.id,
+    conta: corpo.account_id,
+    adName: corpo.name,
+    adsetId: vazio(corpo.adset_id) ? adset?.id : corpo.adset_id,
+    adsetName: adset?.name,
+    campaignId: vazio(corpo.campaign_id) ? campanha?.id : corpo.campaign_id,
+    campaignName: campanha?.name,
+  };
+}
+
+function validarAnuncio(
+  ctx: Contexto,
+  adId: string,
+  bruto: AnuncioBruto | null,
+): DesfechoDoAnuncio {
+  if (!bruto || bruto.id !== adId) {
+    return recusado(adId, "resposta_invalida", null);
+  }
+  const conta =
+    typeof bruto.conta === "string" ? normalizarContaDeAnuncios(bruto.conta) : null;
+  if (!conta) {
+    return recusado(adId, "resposta_invalida", null);
+  }
+  if (conta !== ctx.adAccountId) {
+    return recusado(adId, "outra_conta", null);
+  }
+  const campaignId = idNumerico(bruto.campaignId);
+  if (!campaignId) {
+    return recusado(adId, "resposta_invalida", null);
+  }
+  let adsetId: string | null = null;
+  if (!vazio(bruto.adsetId)) {
+    adsetId = idNumerico(bruto.adsetId);
+    if (!adsetId) {
+      return recusado(adId, "resposta_invalida", null);
+    }
+  }
+  return {
+    tipo: "resolvido",
+    anuncio: {
+      adId,
+      adName: nomeDoAnuncio(bruto.adName),
+      adsetId,
+      adsetName: nomeDoAnuncio(bruto.adsetName),
+      campaignId,
+      campaignName: nomeDoAnuncio(bruto.campaignName),
+      adAccountId: conta,
+    },
+  };
+}
+
+function desfechoDaFalha(
+  adId: string,
+  f: FalhaDeLeitura,
+  d: Exclude<DesfechoDaFalhaDoAnuncio, { tipo: "ler_objeto" | "conferir_conta" }>,
+): DesfechoDoAnuncio {
+  switch (d.tipo) {
+    case "interromper":
+      return { tipo: "falha", falha: f };
+    case "sem_tempo":
+      return { tipo: "sem_tempo", falha: f };
+    case "recusar":
+      return recusado(adId, d.motivo, d.codigo);
+  }
+}
+
+/** Estado de uma execucao de resolverAnuncios (vive so durante ela). */
+type EstadoDaResolucao = {
+  /** A conta salva ja respondeu a conferencia neste lote. */
+  contaConfirmada: boolean;
+};
+
+/**
+ * Le a conta salva como o "Testar leitura". So devolve ok quando a Meta
+ * entrega a lista de dados; qualquer outra coisa e a falha da conta, com a
+ * acao que a leitura diaria teria.
+ */
+async function conferirConta(ctx: Contexto): Promise<{ ok: true } | FalhaDeLeitura> {
+  const resposta = await pedir(
+    ctx,
+    `${ctx.adAccountId}/insights`,
+    PARAMS_DA_CONFERENCIA_DA_CONTA,
+  );
+  if (!resposta.ok) {
+    return resposta;
+  }
+  return Array.isArray(resposta.corpo.data) ? { ok: true } : falha("resposta_invalida");
+}
+
+/**
+ * Permissao recusada na chamada 1: o anuncio so fica inacessivel se a conta
+ * salva responder. A conta recusou: o lote para com a falha DA CONTA (o
+ * anuncio volta em naoTentados se o que faltou foi prazo).
+ */
+async function recusaPorPermissao(
+  ctx: Contexto,
+  estado: EstadoDaResolucao,
+  adId: string,
+  codigo: number | null,
+): Promise<DesfechoDoAnuncio> {
+  if (!estado.contaConfirmada) {
+    const conta = await conferirConta(ctx);
+    if (!conta.ok) {
+      return conta.problema === "prazo_esgotado"
+        ? { tipo: "sem_tempo", falha: conta }
+        : { tipo: "falha", falha: conta };
+    }
+    estado.contaConfirmada = true;
+  }
+  return recusado(adId, "inacessivel", codigo);
+}
+
+async function resolverUmAnuncio(
+  ctx: Contexto,
+  estado: EstadoDaResolucao,
+  adId: string,
+): Promise<DesfechoDoAnuncio> {
+  // Chamada 1: o timeout do nosso timer volta na hora (sem retry local) para
+  // a chamada 2 ainda caber no prazo.
+  const doInsights = await pedir(
+    ctx,
+    `${adId}/insights`,
+    {
+      fields: CAMPOS_DO_ANUNCIO_NO_INSIGHTS,
+      date_preset: "maximum",
+      limit: "1",
+    },
+    { repetirSemResposta: false },
+  );
+  if (doInsights.ok) {
+    const dados = doInsights.corpo.data;
+    if (!Array.isArray(dados)) {
+      return recusado(adId, "resposta_invalida", null);
+    }
+    if (dados.length > 0) {
+      return validarAnuncio(ctx, adId, brutoDoInsights(dados[0]));
+    }
+    // Sem linha: o anuncio ainda nao teve entrega. Le o objeto.
+  } else {
+    const d = desfechoDaFalhaDoAnuncio(doInsights, "insights");
+    if (d.tipo === "conferir_conta") {
+      return recusaPorPermissao(ctx, estado, adId, d.codigo);
+    }
+    if (d.tipo !== "ler_objeto") {
+      return desfechoDaFalha(adId, doInsights, d);
+    }
+  }
+
+  // Chamada 2: o objeto do anuncio, com conjunto e campanha expandidos.
+  const doObjeto = await pedir(ctx, adId, { fields: CAMPOS_DO_OBJETO_DO_ANUNCIO });
+  if (!doObjeto.ok) {
+    const d = desfechoDaFalhaDoAnuncio(doObjeto, "objeto");
+    // Na chamada 2 nao existe ler_objeto nem conferir_conta; a guarda so
+    // satisfaz o tipo.
+    return d.tipo === "ler_objeto" || d.tipo === "conferir_conta"
+      ? recusado(adId, "sem_entrega_ainda", doObjeto.codigoDaMeta)
+      : desfechoDaFalha(adId, doObjeto, d);
+  }
+  return validarAnuncio(ctx, adId, brutoDoObjeto(doObjeto.corpo));
+}
+
+/**
+ * Resolve anuncio -> campanha e conjunto pela Meta, um anuncio por vez, na
+ * ordem recebida (a ordem de prioridade de anuncios_meta_a_resolver). Ids
+ * repetidos contam uma vez; id que nao e numerico e ignorado. Devolve
+ * FalhaDeLeitura quando o lote inteiro para (token, permissao recusada
+ * tambem na conta salva, prova do app, limite, versao, Meta fora do ar ou
+ * prazo sem nenhum anuncio terminado).
+ */
+export async function resolverAnuncios(
+  config: ConfigDeLeitura,
+  adIds: readonly string[],
+  deps: DepsDaResolucao = {},
+): Promise<ResolucaoDeAnuncios | FalhaDeLeitura> {
+  const agora = deps.agora ?? config.agora ?? Date.now;
+  const inicio = agora();
+  const prazoDeQuemChama = Number.isFinite(config.prazoEm)
+    ? config.prazoEm
+    : Number.POSITIVE_INFINITY;
+  const ctx = criarContexto({
+    ...config,
+    fetchFn: deps.fetchFn ?? config.fetchFn,
+    agora,
+    dormir: deps.dormir ?? config.dormir,
+    aleatorio: deps.aleatorio ?? config.aleatorio,
+    timeoutMs: Math.min(config.timeoutMs ?? RESOLVER_TIMEOUT_MS, RESOLVER_TIMEOUT_MS),
+    prazoEm: Math.min(prazoDeQuemChama, inicio + RESOLVER_PRAZO_MS),
+  });
+  if ("ok" in ctx) {
+    return ctx;
+  }
+
+  const unicos: string[] = [];
+  const vistos = new Set<string>();
+  for (const adId of adIds) {
+    if (typeof adId !== "string" || !ID_NUMERICO.test(adId) || vistos.has(adId)) {
+      continue;
+    }
+    vistos.add(adId);
+    unicos.push(adId);
+  }
+  const aTentar = unicos.slice(0, RESOLVER_MAX_ANUNCIOS);
+  const acimaDoTeto = unicos.slice(RESOLVER_MAX_ANUNCIOS);
+
+  const resolvidos: AnuncioResolvido[] = [];
+  const recusados: AnuncioRecusado[] = [];
+  const estado: EstadoDaResolucao = { contaConfirmada: false };
+  for (let i = 0; i < aTentar.length; i += 1) {
+    const adId = aTentar[i] as string;
+    const terminados = resolvidos.length + recusados.length;
+    let semTempo: FalhaDeLeitura | null = null;
+    if (ctx.prazoEm - ctx.agora() < TEMPO_MINIMO_DA_REQUISICAO_MS) {
+      semTempo = falha("prazo_esgotado");
+    } else {
+      const desfecho = await resolverUmAnuncio(ctx, estado, adId);
+      if (desfecho.tipo === "falha") {
+        return desfecho.falha;
+      }
+      if (desfecho.tipo === "sem_tempo") {
+        semTempo = desfecho.falha;
+      } else if (desfecho.tipo === "resolvido") {
+        resolvidos.push(desfecho.anuncio);
+      } else {
+        recusados.push(desfecho.recusa);
+      }
+    }
+    if (semTempo) {
+      if (terminados === 0) {
+        return semTempo;
+      }
+      return {
+        ok: true,
+        resolvidos,
+        recusados,
+        naoTentados: [...aTentar.slice(i), ...acimaDoTeto],
+      };
+    }
+  }
+  return { ok: true, resolvidos, recusados, naoTentados: acimaDoTeto };
+}
+
+export type ResolvidoParaGravar = {
+  ad_id: string;
+  ad_account_id: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  adset_id: string | null;
+  adset_name: string | null;
+  ad_name: string | null;
+};
+
+export type RecusaParaGravar = {
+  ad_id: string;
+  motivo: MotivoDaRecusa;
+  codigo: number | null;
+};
+
+/**
+ * O resultado no formato de p_resolvidos e p_recusas da
+ * gravar_resolucao_de_anuncios_meta (snake_case). Codigo fora do inteiro que
+ * o banco aceita vira null (senao a RPC daria 22023 e travaria o lote).
+ */
+export function paraGravarResolucao(resolucao: {
+  resolvidos: readonly AnuncioResolvido[];
+  recusados: readonly AnuncioRecusado[];
+}): { p_resolvidos: ResolvidoParaGravar[]; p_recusas: RecusaParaGravar[] } {
+  return {
+    p_resolvidos: resolucao.resolvidos.map((r) => ({
+      ad_id: r.adId,
+      ad_account_id: r.adAccountId,
+      campaign_id: r.campaignId,
+      campaign_name: r.campaignName,
+      adset_id: r.adsetId,
+      adset_name: r.adsetName,
+      ad_name: r.adName,
+    })),
+    p_recusas: resolucao.recusados.map((r) => ({
+      ad_id: r.adId,
+      motivo: r.motivo,
+      codigo:
+        r.codigo !== null &&
+        Number.isInteger(r.codigo) &&
+        Math.abs(r.codigo) <= MAIOR_CODIGO_GRAVAVEL
+          ? r.codigo
+          : null,
+    })),
+  };
+}

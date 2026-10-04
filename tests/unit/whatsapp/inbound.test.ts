@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  extrairAnuncio,
   JANELA_DE_RESPOSTA_AUTOMATICA_MS,
   limiteParaRespostaDePessoa,
   normalizarMimetype,
+  normalizarPlataforma,
+  normalizarTipoDoAnuncio,
   parseInboundEvent,
   sanearNomeDeArquivo,
 } from "@/lib/integrations/whatsapp/inbound";
@@ -728,5 +731,480 @@ describe("extração do anúncio CTWA", () => {
       },
     });
     expect(evento).toMatchObject({ anuncio: null });
+  });
+});
+
+// Origem real do anuncio (D3, 04/10/2026): plataforma, tipo e os nomes de
+// chave do diagnostico. A origem gravada e imutavel, entao o que o parser
+// devolve aqui precisa estar certo: valor desconhecido vira null, a
+// plataforma nunca e deduzida pela URL e post e reconhecido como post.
+describe("anúncio: plataforma, tipo e chaves vistas", () => {
+  const base = {
+    EventType: "messages",
+    token: "token-da-instancia",
+  };
+
+  /** Mensagem uazapi no formato whatsmeow, com contextInfo montavel. */
+  function mensagemDeAnuncio(
+    externalAdReply: Record<string, unknown>,
+    extrasDoContexto: Record<string, unknown> = {},
+  ) {
+    return {
+      ...base,
+      message: {
+        messageid: "AD-PLAT",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "Olá! Quero saber mais",
+        content: {
+          text: "Olá! Quero saber mais",
+          contextInfo: {
+            externalAdReply,
+            ...extrasDoContexto,
+          },
+        },
+      },
+    };
+  }
+
+  function anuncioDe(payload: unknown) {
+    const evento = parseInboundEvent(payload);
+    if (evento?.kind !== "message_received") {
+      throw new Error("esperava mensagem recebida");
+    }
+    return evento.anuncio;
+  }
+
+  it("normaliza a plataforma: só Facebook e Instagram, sem diferença de maiúscula", () => {
+    expect(normalizarPlataforma("instagram")).toBe("Instagram");
+    expect(normalizarPlataforma("INSTAGRAM")).toBe("Instagram");
+    expect(normalizarPlataforma(" Facebook ")).toBe("Facebook");
+    expect(normalizarPlataforma("facebook")).toBe("Facebook");
+    expect(normalizarPlataforma("whatsapp")).toBeNull();
+    expect(normalizarPlataforma("messenger")).toBeNull();
+    expect(normalizarPlataforma("fb")).toBeNull();
+    expect(normalizarPlataforma("")).toBeNull();
+    expect(normalizarPlataforma(null)).toBeNull();
+    expect(normalizarPlataforma(1)).toBeNull();
+  });
+
+  it("normaliza o tipo: ad e post; o resto vira null", () => {
+    expect(normalizarTipoDoAnuncio("ad")).toBe("ad");
+    expect(normalizarTipoDoAnuncio("AD")).toBe("ad");
+    expect(normalizarTipoDoAnuncio(" post ")).toBe("post");
+    expect(normalizarTipoDoAnuncio("reel")).toBeNull();
+    expect(normalizarTipoDoAnuncio("CTWA")).toBeNull();
+    expect(normalizarTipoDoAnuncio(undefined)).toBeNull();
+  });
+
+  it("plataforma pelo sourceApp do externalAdReply", () => {
+    const anuncio = anuncioDe(
+      mensagemDeAnuncio({
+        sourceID: "120240624148610289",
+        ctwaClid: "Af-CLIQUE-1",
+        sourceType: "ad",
+        sourceApp: "instagram",
+      }),
+    );
+    expect(anuncio).toMatchObject({
+      adId: "120240624148610289",
+      ctwaClid: "Af-CLIQUE-1",
+      plataforma: "Instagram",
+      tipo: "ad",
+    });
+  });
+
+  it("plataforma pelo entryPointConversionApp do contextInfo quando falta o sourceApp", () => {
+    const anuncio = anuncioDe(
+      mensagemDeAnuncio(
+        { sourceID: "120240624148610289", ctwaClid: "Af-CLIQUE-2" },
+        { entryPointConversionApp: "facebook", conversionSource: "FB_Ads" },
+      ),
+    );
+    expect(anuncio?.plataforma).toBe("Facebook");
+  });
+
+  it("sourceApp desconhecido cai para o entryPointConversionApp", () => {
+    const anuncio = anuncioDe(
+      mensagemDeAnuncio(
+        { sourceID: "120240624148610289", sourceApp: "messenger" },
+        { entryPointConversionApp: "INSTAGRAM" },
+      ),
+    );
+    expect(anuncio?.plataforma).toBe("Instagram");
+  });
+
+  it("sourceApp reconhecido vence o entryPointConversionApp", () => {
+    const anuncio = anuncioDe(
+      mensagemDeAnuncio(
+        { sourceID: "120240624148610289", sourceApp: "facebook" },
+        { entryPointConversionApp: "instagram" },
+      ),
+    );
+    expect(anuncio?.plataforma).toBe("Facebook");
+  });
+
+  it("valor desconhecido nos dois campos vira null", () => {
+    const anuncio = anuncioDe(
+      mensagemDeAnuncio(
+        { sourceID: "120240624148610289", sourceApp: "whatsapp" },
+        { entryPointConversionApp: "whatsapp" },
+      ),
+    );
+    expect(anuncio).not.toBeNull();
+    expect(anuncio?.plataforma).toBeNull();
+  });
+
+  it("a plataforma nunca é deduzida pela URL", () => {
+    // fb.me serve ao Facebook e ao Instagram; instagram.com no link tambem
+    // nao prova onde o anuncio apareceu.
+    const anuncioFb = anuncioDe(
+      mensagemDeAnuncio({
+        sourceID: "120240624148610289",
+        sourceURL: "https://fb.me/abcXYZ",
+      }),
+    );
+    const anuncioIg = anuncioDe(
+      mensagemDeAnuncio({
+        sourceID: "120240624148610289",
+        sourceURL: "https://www.instagram.com/p/abc/",
+      }),
+    );
+    expect(anuncioFb?.plataforma).toBeNull();
+    expect(anuncioFb?.sourceUrl).toBe("https://fb.me/abcXYZ");
+    expect(anuncioIg?.plataforma).toBeNull();
+  });
+
+  it("sourceType post é reconhecido (inclusive na forma da Cloud API)", () => {
+    const whatsmeow = anuncioDe(
+      mensagemDeAnuncio({ sourceID: "1789000000000001", sourceType: "post" }),
+    );
+    expect(whatsmeow?.tipo).toBe("post");
+
+    const oficial = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "AD-POST-OFICIAL",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "oi",
+        referral: { source_id: "1789000000000002", source_type: "POST" },
+      },
+    });
+    expect(oficial).toMatchObject({ anuncio: { tipo: "post" } });
+  });
+
+  it("sem sourceType o tipo fica null; valor estranho também", () => {
+    expect(
+      anuncioDe(mensagemDeAnuncio({ sourceID: "120240624148610289" }))?.tipo,
+    ).toBeNull();
+    expect(
+      anuncioDe(
+        mensagemDeAnuncio({
+          sourceID: "120240624148610289",
+          sourceType: "story",
+        }),
+      )?.tipo,
+    ).toBeNull();
+  });
+
+  /**
+   * Mensagem com citacao NA ORDEM REAL do whatsmeow: o ContextInfo serializa
+   * quotedMessage (campo 3) antes de externalAdReply (campo 28), e o
+   * JSON.parse preserva essa ordem. Montada a mao, sem mensagemDeAnuncio
+   * (que poe o externalAdReply primeiro e esconderia o problema).
+   */
+  function mensagemQueCitaUmPost(
+    externalAdReplyProprio: Record<string, unknown> | null,
+  ) {
+    const citada = {
+      extendedTextMessage: {
+        text: "mensagem antiga",
+        contextInfo: {
+          externalAdReply: {
+            sourceID: "1789000000000009",
+            sourceType: "post",
+            sourceApp: "facebook",
+            ctwaClid: "Af-DA-CITADA",
+          },
+          entryPointConversionApp: "facebook",
+        },
+      },
+    };
+    return {
+      ...base,
+      message: {
+        messageid: "AD-CITA",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "oi",
+        quoted: "ID-DA-CITADA",
+        content: {
+          text: "oi",
+          contextInfo: {
+            stanzaID: "ID-DA-CITADA",
+            quotedMessage: citada,
+            ...(externalAdReplyProprio
+              ? { externalAdReply: externalAdReplyProprio }
+              : {}),
+          },
+        },
+      },
+    };
+  }
+
+  it("plataforma e tipo vêm só do anúncio desta mensagem, nunca de uma mensagem citada (ordem real do whatsmeow)", () => {
+    const payload = mensagemQueCitaUmPost({
+      sourceID: "120240624148610289",
+      ctwaClid: "Af-CLIQUE-3",
+    });
+    // Garante que o teste prova o que diz: a citada vem antes do anuncio.
+    const chaves = Object.keys(payload.message.content.contextInfo);
+    expect(chaves.indexOf("quotedMessage")).toBeLessThan(
+      chaves.indexOf("externalAdReply"),
+    );
+
+    const anuncio = anuncioDe(payload);
+    expect(anuncio).toMatchObject({
+      adId: "120240624148610289",
+      ctwaClid: "Af-CLIQUE-3",
+      tipo: null,
+      plataforma: null,
+    });
+    // Nem o nome de chave da citada entra no diagnostico como anuncio.
+    expect(anuncio?.chavesVistas.anuncio).toEqual(["ctwaClid", "sourceID"]);
+  });
+
+  it("anúncio só na mensagem citada não é anúncio desta mensagem", () => {
+    const evento = parseInboundEvent(mensagemQueCitaUmPost(null));
+    expect(evento).toMatchObject({
+      kind: "message_received",
+      quotedWaMessageId: "ID-DA-CITADA",
+      anuncio: null,
+    });
+  });
+
+  it("a citação é ignorada em qualquer forma de chave (quotedMessage, quoted_message, quotedAd)", () => {
+    const anuncio = extrairAnuncio({
+      content: {
+        contextInfo: {
+          quoted_message: {
+            contextInfo: {
+              externalAdReply: { sourceID: "1789000000000010", sourceType: "post" },
+            },
+          },
+          quotedAd: { ctwaClid: "Af-QUOTED-AD" },
+          externalAdReply: {
+            sourceID: "120240624148610289",
+            sourceType: "ad",
+            sourceApp: "instagram",
+          },
+        },
+      },
+    });
+    expect(anuncio).toMatchObject({
+      adId: "120240624148610289",
+      ctwaClid: null,
+      tipo: "ad",
+      plataforma: "Instagram",
+    });
+  });
+
+  it("a mensagem embrulhada (efêmera, visualização única) continua sendo lida", () => {
+    // So a citacao e cortada; os involucros legitimos da propria mensagem
+    // continuam sendo percorridos.
+    const anuncio = extrairAnuncio({
+      content: {
+        ephemeralMessage: {
+          message: {
+            extendedTextMessage: {
+              contextInfo: {
+                externalAdReply: {
+                  sourceID: "120240624148610289",
+                  ctwaClid: "Af-EFEMERA",
+                  sourceType: "ad",
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(anuncio).toMatchObject({
+      adId: "120240624148610289",
+      ctwaClid: "Af-EFEMERA",
+      tipo: "ad",
+    });
+  });
+
+  it("plataforma ou tipo sozinhos não fazem um anúncio", () => {
+    // Conversa organica aberta pelo botao do perfil do Instagram traz
+    // entryPointConversionApp sem anuncio nenhum.
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "ORGANICO",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "oi",
+        content: {
+          contextInfo: {
+            entryPointConversionApp: "instagram",
+            entryPointConversionSource: "global_search_new_chat",
+            externalAdReply: { sourceApp: "instagram", sourceType: "ad" },
+          },
+        },
+      },
+    });
+    expect(evento).toMatchObject({ anuncio: null });
+  });
+
+  it("ctwaClid solto ainda lê a plataforma do objeto onde estava", () => {
+    const anuncio = anuncioDe({
+      ...base,
+      message: {
+        messageid: "AD-SOLTO",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "oi",
+        content: {
+          contextInfo: {
+            ctwaClid: "Af-SOLTO",
+            entryPointConversionApp: "instagram",
+          },
+        },
+      },
+    });
+    expect(anuncio).toMatchObject({
+      ctwaClid: "Af-SOLTO",
+      adId: null,
+      plataforma: "Instagram",
+      tipo: null,
+      chavesVistas: {
+        anuncio: [],
+        contexto: ["ctwaClid", "entryPointConversionApp"],
+      },
+    });
+  });
+
+  it("chaves vistas: só os nomes, em ordem, sem nenhum valor do anúncio", () => {
+    const anuncio = anuncioDe(
+      mensagemDeAnuncio(
+        {
+          title: "Agende já sua avaliação",
+          body: "Texto do anúncio da clínica",
+          sourceURL: "https://fb.me/abcXYZ",
+          sourceID: "120240624148610289",
+          ctwaClid: "Af-CLIQUE-SECRETO",
+          sourceType: "ad",
+          sourceApp: "instagram",
+          // Chave com cara de texto livre nao entra no diagnostico.
+          "chave com espaço": "x",
+          "a.b": "y",
+        },
+        { entryPointConversionApp: "instagram", conversionSource: "FB_Ads" },
+      ),
+    );
+    expect(anuncio?.chavesVistas).toEqual({
+      anuncio: [
+        "body",
+        "ctwaClid",
+        "sourceApp",
+        "sourceID",
+        "sourceType",
+        "sourceURL",
+        "title",
+      ],
+      contexto: [
+        "conversionSource",
+        "entryPointConversionApp",
+        "externalAdReply",
+      ],
+    });
+    const serializado = JSON.stringify(anuncio?.chavesVistas);
+    for (const valor of [
+      "Agende",
+      "Texto do anúncio",
+      "fb.me",
+      "120240624148610289",
+      "Af-CLIQUE-SECRETO",
+      "FB_Ads",
+      "instagram",
+    ]) {
+      expect(serializado).not.toContain(valor);
+    }
+  });
+
+  it("chaves vistas têm teto por objeto", () => {
+    const muitas: Record<string, unknown> = { sourceID: "120240624148610289" };
+    for (let i = 0; i < 60; i++) {
+      muitas[`campo${String(i).padStart(2, "0")}`] = "v";
+    }
+    const anuncio = extrairAnuncio({
+      content: { contextInfo: { externalAdReply: muitas } },
+    });
+    expect(anuncio?.chavesVistas.anuncio).toHaveLength(40);
+  });
+
+  it("formato canônico aceita os campos novos e normaliza", () => {
+    const evento = parseInboundEvent({
+      kind: "message_received",
+      phone: "+5584999990000",
+      waMessageId: "sim:ad:1",
+      body: "vi o anúncio",
+      anuncio: {
+        ctwaClid: "CLID-SIM",
+        adId: "120240624148610289",
+        plataforma: "instagram",
+        tipo: "AD",
+        chavesVistas: {
+          anuncio: ["sourceID", "ctwaClid"],
+          contexto: ["externalAdReply"],
+        },
+      },
+    });
+    expect(evento).toMatchObject({
+      kind: "message_received",
+      anuncio: {
+        ctwaClid: "CLID-SIM",
+        adId: "120240624148610289",
+        adsetId: null,
+        campaignId: null,
+        sourceUrl: null,
+        plataforma: "Instagram",
+        tipo: "ad",
+        chavesVistas: {
+          anuncio: ["ctwaClid", "sourceID"],
+          contexto: ["externalAdReply"],
+        },
+      },
+    });
+  });
+
+  it("formato canônico com valor desconhecido não derruba a mensagem", () => {
+    // Um enum no schema faria a mensagem do paciente ser ignorada por causa
+    // de um campo de anuncio. Desconhecido vira null e a mensagem segue.
+    const evento = parseInboundEvent({
+      kind: "message_received",
+      phone: "+5584999990000",
+      waMessageId: "sim:ad:2",
+      body: "oi",
+      anuncio: {
+        ctwaClid: "CLID-SIM-2",
+        plataforma: "tiktok",
+        tipo: "reel",
+        chavesVistas: "isto não é lista",
+      },
+    });
+    expect(evento).toMatchObject({
+      kind: "message_received",
+      body: "oi",
+      anuncio: {
+        ctwaClid: "CLID-SIM-2",
+        plataforma: null,
+        tipo: null,
+        chavesVistas: { anuncio: [], contexto: [] },
+      },
+    });
   });
 });

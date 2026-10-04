@@ -4,11 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
-import {
-  dataLocal,
-  rotuloDoCanal,
-  tempoRelativo,
-} from "@/components/leads/rotulos";
+import { dataLocal, tempoRelativo } from "@/components/leads/rotulos";
 import { DataTable } from "@/components/shared/data-table";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Card } from "@/components/ui/card";
@@ -19,6 +15,11 @@ import {
   porChave,
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
+import {
+  campanhaDoContato,
+  ehLeadDeAnuncio,
+  textoDaOrigem,
+} from "@/lib/domain/leads-ui";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import type { LeadResumo } from "@/lib/queries/leads";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,13 @@ import { cn } from "@/lib/utils";
 // clique na linha continua valendo, e o botao segura o evento (o
 // stopPropagation) para o drawer nao abrir duas vezes. Botao, e nao link,
 // porque o drawer nao tem URL propria.
+//
+// Origem e Campanha (origem real do anuncio, 04/10/2026): a Origem junta
+// canal, origem e plataforma ("Tráfego pago, Meta (Instagram)"); a Campanha
+// do lead de anuncio vem de meta_anuncio pelo id do anuncio (lida junto com
+// a lista, em fetchLeads) e, sem ela, diz que a Meta ainda nao identificou.
+// Nome de campanha da Meta pode ser longo: a celula corta com reticencias e
+// o texto inteiro fica no title e no drawer. Campo vazio continua vazio.
 
 function Autorizacao({ autorizado }: { autorizado: boolean }) {
   const definicao = autorizado
@@ -152,20 +160,38 @@ export function ListaLeads({
       {
         accessorKey: "source_channel",
         header: "Origem",
-        cell: ({ row }) => (
-          <span className="text-text-secondary">
-            {rotuloDoCanal(row.original.source_channel) ?? ""}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const texto = textoDaOrigem(row.original) ?? "";
+          return (
+            <span
+              className="block max-w-[220px] truncate text-text-secondary"
+              title={texto || undefined}
+            >
+              {texto}
+            </span>
+          );
+        },
       },
       {
         accessorKey: "source_campaign",
         header: "Campanha",
-        cell: ({ row }) => (
-          <span className="text-text-secondary">
-            {row.original.source_campaign ?? ""}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const lead = row.original;
+          const campanha = campanhaDoContato(lead, lead.anuncio_meta);
+          // "Sem campanha" de quem nao veio de anuncio fica vazio, como antes.
+          const texto =
+            campanha.tipo === "nenhuma" && !ehLeadDeAnuncio(lead)
+              ? ""
+              : campanha.texto;
+          return (
+            <span
+              className="block max-w-[240px] truncate text-text-secondary"
+              title={texto || undefined}
+            >
+              {texto}
+            </span>
+          );
+        },
       },
       {
         accessorKey: "funnel_stage",

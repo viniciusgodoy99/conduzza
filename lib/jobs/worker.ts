@@ -31,6 +31,7 @@ import { espacamentoDeMassaMs } from "./espacamento";
 import { executarSincronizacaoDeGastoMeta } from "./gasto-meta";
 import { numeroDoJob } from "./numero-de-envio";
 import { executarPassoDeRegua } from "./regua";
+import { executarResolucaoDeAnunciosMeta } from "./resolver-anuncio-meta";
 
 // Worker da job_queue (Etapa B da auditoria de escala). Executa disparo ativo
 // (confirmacao de atendimento, reguas da Fase 4) e download de midia, fora do
@@ -65,7 +66,8 @@ export type Job = {
     | "executar_passo_de_regua"
     | "enviar_conversao_meta"
     | "oferecer_lista_espera"
-    | "sincronizar_gasto_meta";
+    | "sincronizar_gasto_meta"
+    | "resolver_anuncio_meta";
   payload: Record<string, unknown>;
   attempts: number;
   max_attempts: number;
@@ -644,6 +646,8 @@ async function executarJob(
       return executarOfertaDeEspera(admin, job);
     case "sincronizar_gasto_meta":
       return executarSincronizacaoDeGastoMeta(admin, job, workerId);
+    case "resolver_anuncio_meta":
+      return executarResolucaoDeAnunciosMeta(admin, job, workerId);
     default:
       return { ok: false, erro: "tipo_desconhecido", definitivo: true };
   }

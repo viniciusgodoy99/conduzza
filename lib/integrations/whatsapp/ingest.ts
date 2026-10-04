@@ -6,7 +6,11 @@ import {
   type CampaignRule,
   type SourceChannel,
 } from "@/lib/domain/attribution";
-import type { InboundEvent } from "@/lib/integrations/whatsapp/inbound";
+import type {
+  AnuncioDeOrigem,
+  InboundEvent,
+  PlataformaDoAnuncio,
+} from "@/lib/integrations/whatsapp/inbound";
 import { tentarMoverPorTermo } from "@/lib/integrations/whatsapp/termo-chave";
 import { log } from "@/lib/log";
 
@@ -15,6 +19,10 @@ import { log } from "@/lib/log";
 // de nascer, roda a atribuicao de origem (tarefa 4.2). A atribuicao inteira e
 // melhor esforco: qualquer falha vira log e a ingestao segue, porque a
 // mensagem ja esta salva quando ela roda.
+//
+// Precedencia da origem (D3, 04/10/2026): anuncio, depois codigo de
+// campanha, depois mensagem padrao, depois palavra-chave. O anuncio grava
+// primeiro e a atribuicao por texto encontra o canal ja preenchido.
 //
 // REGRA ABSOLUTA: nenhum conteudo de mensagem de paciente em log. So ids.
 
@@ -123,6 +131,240 @@ async function tentarAtribuirOrigem(
 }
 
 /**
+ * Colunas de id do anuncio que vao para o contato (so as que vieram). null
+ * quando nao veio nenhuma ou quando e post: post nao grava id (ver
+ * capturarAnuncio).
+ */
+export function idsDoAnuncio(
+  anuncio: AnuncioDeOrigem,
+): Record<string, string> | null {
+  if (anuncio.tipo === "post") {
+    return null;
+  }
+  const ids: Record<string, string> = {};
+  if (anuncio.ctwaClid) ids.ctwa_clid = anuncio.ctwaClid;
+  if (anuncio.adId) ids.source_ad_id = anuncio.adId;
+  if (anuncio.adsetId) ids.source_adset_id = anuncio.adsetId;
+  if (anuncio.campaignId) ids.source_campaign_id = anuncio.campaignId;
+  return Object.keys(ids).length > 0 ? ids : null;
+}
+
+/**
+ * Origem de anuncio a gravar no contato (D3, 04/10/2026), ou null quando o
+ * anuncio nao prova clique em anuncio PAGO. A origem e imutavel (gatilho
+ * impedir_reatribuicao_de_origem), entao so grava com prova:
+ * - tipo 'post' (publicacao, nao anuncio pago): nunca;
+ * - tipo 'ad': sim;
+ * - sem tipo: so com o id do clique (ctwa_clid), que a Meta gera para
+ *   anuncio. Id de anuncio sem clique e sem tipo pode ser post: fica sem
+ *   origem (os ids continuam gravados, como antes), a mesma regra da
+ *   correcao dos contatos antigos na migration 20261004100000.
+ *
+ * Coerente com o CHECK contact_origem_de_anuncio_coerente: canal
+ * trafego_pago, origem Meta, meio = plataforma (Facebook, Instagram ou nulo)
+ * e NUNCA source_campaign. Campanha e conjunto vem de meta_anuncio pelo
+ * source_ad_id.
+ */
+export function origemDoAnuncio(
+  anuncio: AnuncioDeOrigem,
+  capturadaEm: string,
+): {
+  source_channel: "trafego_pago";
+  source_origin: "Meta";
+  source_medium: PlataformaDoAnuncio | null;
+  source_method: "anuncio_ctwa";
+  source_captured_at: string;
+} | null {
+  if (anuncio.tipo === "post") {
+    return null;
+  }
+  if (anuncio.tipo !== "ad" && anuncio.ctwaClid === null) {
+    return null;
+  }
+  return {
+    source_channel: "trafego_pago",
+    source_origin: "Meta",
+    source_medium: anuncio.plataforma,
+    source_method: "anuncio_ctwa",
+    source_captured_at: capturadaEm,
+  };
+}
+
+/**
+ * Nomes de chave do anuncio para o log de diagnostico, no formato
+ * "anuncio=a,b;contexto=c,d". So nomes (ja saneados no parser), nunca valor.
+ */
+export function chavesDoAnuncioParaLog(anuncio: AnuncioDeOrigem): {
+  path: string;
+  count: number;
+} {
+  const { anuncio: doAnuncio, contexto } = anuncio.chavesVistas;
+  return {
+    path: `anuncio=${doAnuncio.join(",")};contexto=${contexto.join(",")}`,
+    count: doAnuncio.length + contexto.length,
+  };
+}
+
+type CapturaDeAnuncio = {
+  clinicId: string;
+  contactId: string;
+  whatsappAccountId: string | null;
+  /** A mensagem acabou de ser gravada (false na reentrega do webhook). */
+  mensagemNova: boolean;
+  anuncio: AnuncioDeOrigem;
+};
+
+/**
+ * Diagnostico do anuncio recebido: quais campos o canal entrega de fato
+ * (e o que vai mostrar se o uazapi manda a plataforma). So nomes de chave,
+ * tipo e se a plataforma foi reconhecida; nenhum valor de campo do anuncio.
+ */
+function registrarAnuncioRecebido(captura: CapturaDeAnuncio): void {
+  const { anuncio } = captura;
+  log.info("anuncio_recebido", {
+    clinic_id: captura.clinicId,
+    whatsapp_account_id: captura.whatsappAccountId,
+    contact_id: captura.contactId,
+    kind: anuncio.tipo ?? "sem_tipo",
+    status: anuncio.plataforma ? "com_plataforma" : "sem_plataforma",
+    ...chavesDoAnuncioParaLog(anuncio),
+  });
+}
+
+/**
+ * Pede a consulta da campanha e do conjunto do anuncio na Meta (job
+ * resolver_anuncio_meta). Melhor esforco: sem conta da Meta configurada a
+ * RPC so responde sem_configuracao, e qualquer falha vira log com codigo.
+ */
+async function pedirResolucaoDaCampanha(
+  admin: SupabaseClient,
+  clinicId: string,
+): Promise<void> {
+  try {
+    const { data, error } = await admin.rpc(
+      "enfileirar_resolucao_de_anuncios_meta",
+      { p_clinic_id: clinicId, p_origem: "ingestao" },
+    );
+    if (error) {
+      log.error("resolucao_de_anuncio_nao_pedida", {
+        clinic_id: clinicId,
+        error_code: error.code ?? null,
+      });
+      return;
+    }
+    const codigo =
+      data && typeof data === "object" && !Array.isArray(data)
+        ? (data as Record<string, unknown>).codigo
+        : null;
+    log.info("resolucao_de_anuncio_pedida", {
+      clinic_id: clinicId,
+      status: typeof codigo === "string" ? codigo : null,
+    });
+  } catch {
+    log.error("resolucao_de_anuncio_nao_pedida", { clinic_id: clinicId });
+  }
+}
+
+/**
+ * Grava no contato o anuncio de onde a mensagem veio, em tres passos:
+ *
+ * 1. Ids do clique. PRIMEIRO CLIQUE VENCE: o update so acontece enquanto
+ *    ctwa_clid E source_ad_id estao nulos. O .select("id") diz se este foi
+ *    o primeiro clique (linha devolvida) ou nao (lista vazia).
+ * 2. Origem real (D3), num update SEPARADO: juntar os dois impediria gravar
+ *    os ids de quem ja tem origem (manual, por exemplo), o que sempre
+ *    funcionou. So preenche origem vazia: canal, metodo e campanha nulos. O
+ *    filtro de campanha e metodo deixa de fora o contato importado com
+ *    campanha em texto (source_method importacao), que o CHECK de coerencia
+ *    recusaria com 23514. Roda a cada anuncio, nao so no primeiro clique:
+ *    se a gravacao falhar uma vez, o proximo anuncio do mesmo contato
+ *    completa (sem origem, o anuncio e a melhor prova que existe).
+ *    Por isso a origem NAO exige que os ids do contato sejam deste clique:
+ *    canal, origem, meio, metodo e hora (as colunas imutaveis) saem todos do
+ *    clique que provou o anuncio e sao verdade juntos. Os ids podem ser de
+ *    outro clique quando o primeiro clique venceu antes (regra L8 da Fase 4),
+ *    inclusive um id sem clique e sem tipo, que grava o id mas nao a origem
+ *    e, por L8, segura os ids de um anuncio real que chegue depois: a origem
+ *    vem do anuncio real e a campanha mostrada sai do primeiro id. Tratar
+ *    esse id como post (nao gravar) muda a Fase 4 e espera decisao do dono.
+ *    Os ids, ao contrario da origem, o sistema ainda pode regravar.
+ * 3. No primeiro clique: log de diagnostico e, se veio id de anuncio, o
+ *    pedido de resolucao da campanha na Meta.
+ *
+ * POST nao grava nada (nem ids, nem origem). Nao e anuncio pago, e o
+ * ctwa_clid de um post gravado no contato faria o primeiro clique num
+ * anuncio de verdade, depois, perder o "primeiro clique vence".
+ */
+async function capturarAnuncio(
+  admin: SupabaseClient,
+  captura: CapturaDeAnuncio,
+): Promise<void> {
+  const { anuncio, clinicId, contactId } = captura;
+  const camposDoErro = {
+    clinic_id: clinicId,
+    whatsapp_account_id: captura.whatsappAccountId,
+    contact_id: contactId,
+  };
+
+  if (anuncio.tipo === "post") {
+    if (captura.mensagemNova) {
+      registrarAnuncioRecebido(captura);
+    }
+    return;
+  }
+
+  const ids = idsDoAnuncio(anuncio);
+  let primeiroClique = false;
+  if (ids) {
+    const { data, error } = await admin
+      .from("contact")
+      .update(ids)
+      .eq("clinic_id", clinicId)
+      .eq("id", contactId)
+      .is("ctwa_clid", null)
+      // L8 (Fase 4): o referral sem clid nao pode deixar o anuncio de um
+      // segundo clique trocar o primeiro. O casamento com o investimento e
+      // pelo source_ad_id, e o primeiro anuncio vence.
+      .is("source_ad_id", null)
+      .select("id");
+    if (error) {
+      log.error("captura_ctwa_falhou", {
+        ...camposDoErro,
+        error_code: error.code ?? null,
+      });
+    } else {
+      primeiroClique = Array.isArray(data) && data.length > 0;
+    }
+  }
+
+  const origem = origemDoAnuncio(anuncio, new Date().toISOString());
+  if (origem) {
+    const { error } = await admin
+      .from("contact")
+      .update(origem)
+      .eq("clinic_id", clinicId)
+      .eq("id", contactId)
+      .is("source_channel", null)
+      .is("source_method", null)
+      .is("source_campaign", null);
+    if (error) {
+      log.error("origem_do_anuncio_falhou", {
+        ...camposDoErro,
+        error_code: error.code ?? null,
+      });
+    }
+  }
+
+  if (!primeiroClique) {
+    return;
+  }
+  registrarAnuncioRecebido(captura);
+  if (ids?.source_ad_id) {
+    await pedirResolucaoDaCampanha(admin, clinicId);
+  }
+}
+
+/**
  * Grava a mensagem recebida pelo NUMERO `accountId` da clinica.
  *
  * O webhook sempre sabe o numero (resolvido pela URL). `accountId` nulo so
@@ -190,39 +432,24 @@ export async function ingerirMensagemRecebida(
     }
   }
 
-  // CAPTURA DO ANUNCIO (estrutura do R1, com o R0 dispensado pelo dono em
-  // 08/09/2026): se o canal entregou qualquer vestigio do clique de anuncio,
-  // grava no contato. PRIMEIRO CLIQUE VENCE: o update so acontece enquanto
-  // ctwa_clid E source_ad_id estao nulos, no mesmo espirito da origem
-  // imutavel. Melhor esforco: falha vira log sem conteudo de paciente, a
-  // mensagem ja esta salva.
+  // CAPTURA DO ANUNCIO: ids do clique e, desde 04/10/2026 (D3), a origem
+  // real. Roda ANTES da atribuicao por texto, entao o anuncio vence o codigo
+  // de campanha. Melhor esforco: a mensagem ja esta salva.
   if (event.anuncio && resultado?.contact_id) {
-    const patch: Record<string, string> = {};
-    if (event.anuncio.ctwaClid) patch.ctwa_clid = event.anuncio.ctwaClid;
-    if (event.anuncio.adId) patch.source_ad_id = event.anuncio.adId;
-    if (event.anuncio.adsetId) patch.source_adset_id = event.anuncio.adsetId;
-    if (event.anuncio.campaignId) {
-      patch.source_campaign_id = event.anuncio.campaignId;
-    }
-    if (Object.keys(patch).length > 0) {
-      const { error: erroAnuncio } = await admin
-        .from("contact")
-        .update(patch)
-        .eq("clinic_id", clinicId)
-        .eq("id", resultado.contact_id)
-        .is("ctwa_clid", null)
-        // L8 (Fase 4): o referral sem clid nao pode deixar o anuncio de um
-        // segundo clique trocar o primeiro. O casamento com o investimento
-        // e pelo source_ad_id, e o primeiro anuncio vence.
-        .is("source_ad_id", null);
-      if (erroAnuncio) {
-        log.error("captura_ctwa_falhou", {
-          clinic_id: clinicId,
-          whatsapp_account_id: resultado.whatsapp_account_id ?? accountId,
-          contact_id: resultado.contact_id,
-          error_code: erroAnuncio.code ?? null,
-        });
-      }
+    try {
+      await capturarAnuncio(admin, {
+        clinicId,
+        contactId: resultado.contact_id,
+        whatsappAccountId: resultado.whatsapp_account_id ?? accountId,
+        mensagemNova: resultado.inserted,
+        anuncio: event.anuncio,
+      });
+    } catch {
+      log.error("captura_ctwa_falhou", {
+        clinic_id: clinicId,
+        whatsapp_account_id: resultado.whatsapp_account_id ?? accountId,
+        contact_id: resultado.contact_id,
+      });
     }
   }
 

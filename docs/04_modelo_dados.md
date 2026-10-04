@@ -223,6 +223,13 @@ create table contact (
   -- atribuição de origem, preservada para sempre
   source_channel text, source_origin text, source_medium text, source_campaign text,
   source_captured_at timestamptz, source_method text,
+  -- source_method: link_token | mensagem_padrao | palavra_chave | manual |
+  -- importacao | anuncio_ctwa (o último desde 20261004100000, ainda não
+  -- aplicada em 04/10/2026). Com anuncio_ctwa, o CHECK
+  -- contact_origem_de_anuncio_coerente exige canal trafego_pago, origem Meta,
+  -- meio Facebook, Instagram ou nulo e source_campaign NULO: a campanha e o
+  -- conjunto do lead de anúncio vêm de meta_anuncio por source_ad_id, nunca
+  -- de texto no contato (seção 14.9).
   -- ids do anúncio da Meta (08/09/2026; só a ingestão grava, o primeiro
   -- anúncio vence e a sessão não reescreve desde a Fase 4): seção 14
   ctwa_clid text, source_ad_id text, source_adset_id text, source_campaign_id text,
@@ -647,18 +654,19 @@ create table job_queue (
   kind text not null check (kind in (
     'enviar_mensagem_ativa', 'baixar_midia', 'executar_passo_de_regua',
     'enviar_conversao_meta', 'oferecer_lista_espera',
-    'sincronizar_gasto_meta')),             -- o último desde 20261003100000 (seção 14)
+    'sincronizar_gasto_meta',               -- desde 20261003100000 (seção 14)
+    'resolver_anuncio_meta')),              -- desde 20261004100000 (seção 14.9, não aplicada em 04/10)
   payload jsonb not null default '{}',
   status text not null default 'pendente'
     check (status in ('pendente','executando','concluido','falhou','cancelado')),
   run_at timestamptz not null default now(),
   attempts integer not null default 0,
-  max_attempts integer not null default 8,  -- o job de gasto da Meta nasce com 5
+  max_attempts integer not null default 8,  -- os dois jobs da Meta (gasto e consulta dos anúncios) nascem com 5
   locked_by text,                           -- lease do motor
   locked_at timestamptz,
   last_error text,                          -- só código curto, nunca conteúdo de mensagem nem token
   devolucoes integer not null default 0,    -- voltas sem queimar tentativa (reagendar_job)
-  ultimo_motivo_devolucao text,             -- ex.: orcamento_da_passagem, limite_da_meta, config_mudou
+  ultimo_motivo_devolucao text,             -- ex.: orcamento_da_passagem, limite_da_meta, config_mudou, mais_anuncios, nova_tentativa
   prioridade smallint not null default 0 check (prioridade in (0, 1)),
   whatsapp_account_id uuid references whatsapp_account(id), -- raia do envio (docs/07); nulo = raia da clínica
   created_at timestamptz not null default now(),
@@ -674,6 +682,9 @@ create index job_queue_numero_prioridade_idx on job_queue (whatsapp_account_id, 
 -- Fase 4 (seção 14): no máximo UM job de gasto da Meta vivo por clínica.
 create unique index job_queue_gasto_meta_vivo on job_queue (clinic_id)
   where kind = 'sincronizar_gasto_meta' and status in ('pendente', 'executando');
+-- Origem real do anúncio (seção 14.9): no máximo UMA consulta de anúncios viva por clínica.
+create unique index job_queue_resolver_anuncio_meta_vivo on job_queue (clinic_id)
+  where kind = 'resolver_anuncio_meta' and status in ('pendente', 'executando');
 ```
 
 > **Régua vinculada (decisão do dono em 29/09/2026, migration `20260929110000_regua_vinculada.sql`).** Cada régua de confirmação ou de pós falta pode ter **um** vínculo: um procedimento (`procedure_id`, que já existia), um profissional (`professional_id`) ou uma especialidade (`specialty`). Sem vínculo, é a régua geral, que o código lê como `procedure_id is null and professional_id is null and specialty is null and not for_no_show_history`. Follow-up não tem vínculo (`followup_sem_excecao`).
@@ -878,8 +889,9 @@ create index professional_insurance_insurance_id_idx on professional_insurance (
 create index procedure_insurance_clinic_id_idx on procedure_insurance (clinic_id);
 create index procedure_insurance_insurance_id_idx on procedure_insurance (insurance_id);
 -- Investimento da Meta (Fase 4, 03/10/2026, migration 20261003100000), seção 14.
--- Gasto por campanha no período e anúncios de uma campanha. O índice único
--- job_queue_gasto_meta_vivo está na seção 7.
+-- Gasto por campanha no período e anúncios de uma campanha. Os índices únicos
+-- job_queue_gasto_meta_vivo e job_queue_resolver_anuncio_meta_vivo (14.9)
+-- estão na seção 7.
 create index meta_gasto_diario_campanha_idx on meta_gasto_diario (clinic_id, campaign_id, dia);
 create index meta_anuncio_campanha_idx on meta_anuncio (clinic_id, campaign_id);
 ```
@@ -1328,7 +1340,7 @@ Os tipos de `lib/supabase/database.types.ts` (as quatro tabelas, a coluna nova e
 Registro do que as frentes da Meta de 25/08 a 10/09/2026 criaram (conferido na produção em 03/10/2026):
 
 - **`campaign_link`** (`20260825100000`): a regra de atribuição por texto de cada campanha da clínica (`name`, `token` do link, `channel`, `origin`, `medium`, `campaign`, `default_message`, `keywords`, `active`), único por `(clinic_id, upper(token))`. Membro ativo lê; administrador e gestor gravam. Em 03/10/2026 tem 0 linhas e não tem tela (as actions `salvarCampanhaAction` e `desativarCampanhaAction` existem sem uso); o contato guarda só o texto da campanha (`source_campaign`), não o id da regra.
-- **`contact.ctwa_clid`, `source_ad_id`, `source_adset_id`, `source_campaign_id`** (`20260908150000`): os ids do clique no anúncio Click-to-WhatsApp e do anúncio, do conjunto e da campanha na Meta, gravados pela ingestão (service role). O primeiro anúncio vence: o update da ingestão só acontece enquanto `ctwa_clid` **e** `source_ad_id` estão nulos (o segundo filtro entrou na Fase 4). Os `source_*` de nome (`source_channel`, `source_origin`, `source_medium`, `source_campaign`, `source_method`, `source_captured_at`) continuam sendo a origem por texto, vigiada por `impedir_reatribuicao_de_origem`.
+- **`contact.ctwa_clid`, `source_ad_id`, `source_adset_id`, `source_campaign_id`** (`20260908150000`): os ids do clique no anúncio Click-to-WhatsApp e do anúncio, do conjunto e da campanha na Meta, gravados pela ingestão (service role). O primeiro anúncio vence: o update da ingestão só acontece enquanto `ctwa_clid` **e** `source_ad_id` estão nulos (o segundo filtro entrou na Fase 4). Os `source_*` de nome (`source_channel`, `source_origin`, `source_medium`, `source_campaign`, `source_method`, `source_captured_at`) são a origem, vigiada por `impedir_reatribuicao_de_origem` (depois que `source_channel` tem valor, nenhum deles muda): por texto (código do link, mensagem padrão, palavra-chave, cadastro e importação) e, desde a `20261004100000` (seção 14.9, ainda não aplicada em 04/10/2026), também pelo anúncio (`source_method = 'anuncio_ctwa'`, gravado só pela ingestão, num update separado do dos ids). No código da mesma frente (publicação pendente), o clique numa publicação (`sourceType` `post`) não grava id nenhum.
 - **`meta_ads_account`** (`20260910100000` e `20260910120000`): uma linha por clínica, com `pixel_id`, `ad_account_id`, `test_event_code`, `envio_ativado`, `modo_user_data` (nulo até a decisão D6 de LGPD), `send_unmatched` e `whatsapp_business_account_id`. Administrador e gestor leem e gravam (policy `for all`).
 - **`meta_ads_account_secret`**: o token da API de conversões (`capi_access_token`). RLS ligada sem policy; só a service role.
 - **`conversion_event`** (`20260910110000`): a conversão registrada no movimento do funil (`stage_chave`, `event_name`, `event_id`, `value_cents`, `currency`, `ctwa_clid`, `status`, `sent_at`, `erro`), uma por contato por etapa, enviada pelo job `enviar_conversao_meta` quando o envio for ligado.
@@ -1406,12 +1418,14 @@ create table meta_anuncio (                -- anúncio -> campanha, SEM dinheiro
   clinic_id uuid not null references clinic(id) on delete cascade,
   ad_id text not null, ad_account_id text not null,
   adset_id text, campaign_id text not null, campaign_name text,
-  ultimo_dia_com_entrega date not null,
+  ultimo_dia_com_entrega date not null,    -- aceita nulo desde 20261004100000, só com origem 'consulta' (14.9)
   atualizado_em timestamptz not null default now(),
   primary key (clinic_id, ad_id)
 );
 -- SELECT: todo membro ativo (user_active_clinic_ids), para a recepção ver o lead
 -- de anúncio na mesma campanha que a gestão vê. Pendente não lê.
+-- Desde 20261004100000 (14.9): adset_name, ad_name, origem ('insights' ou
+-- 'consulta') e consultado_em; a consulta do anúncio pelo id também grava aqui.
 ```
 
 **Pausa** não é coluna: é `situacao = 'com_problema'` com `problema` em `token_invalido`, `sem_permissao`, `conta_sem_acesso` ou `exige_prova_do_app` (a mesma lista em `PROBLEMAS_QUE_PAUSAM`, `lib/domain/meta-anuncios.ts`, e nas funções). Sai quando o teste dá certo, quando um token novo é salvo (as actions gravam `nao_testada`) ou quando a conta muda (gatilho de 14.5).
@@ -1444,12 +1458,12 @@ Quem insere direto na fila (sem a função) trata 23505 como "já na fila": o Po
 6. upsert de `meta_anuncio`, com o nome do dia mais recente e o maior `ultimo_dia_com_entrega`;
 7. a leitura vira `funcionando`, sem problema nem código, com `ad_account_id`, nome (vazio vira nulo), moeda, fuso, `conta_ativa`, `sincronizado_em = tentado_em = now()`. `lido_desde` recomeça em `p_desde` na primeira leitura, com conta nova ou quando a janela nova não encosta na anterior (`p_desde > lido_ate + 1`); senão fica o menor. `lido_ate` fica o maior. Não mexe em `testada_em`.
 
-**`registrar_falha_do_gasto_meta(p_job_id uuid, p_worker text, p_clinic_id uuid, p_ad_account_id text, p_token_sha256 text, p_problema text, p_codigo integer default null) returns text`**: `ok`, `sem_posse` ou `config_mudou`, com a mesma posse e a mesma conferência da regravação (um job que leu com o token velho não pausa a clínica que acabou de salvar um token novo). Problema fora dos 12 códigos: 22023. Grava `com_problema`, o problema, `codigo_da_meta` e `tentado_em`; preserva `lido_*` e `sincronizado_em` (o investimento já lido continua valendo).
+**`registrar_falha_do_gasto_meta(p_job_id uuid, p_worker text, p_clinic_id uuid, p_ad_account_id text, p_token_sha256 text, p_problema text, p_codigo integer default null) returns text`**: `ok`, `sem_posse` ou `config_mudou`, com a mesma posse e a mesma conferência da regravação (um job que leu com o token velho não pausa a clínica que acabou de salvar um token novo). Problema fora dos 12 códigos: 22023. Grava `com_problema`, o problema, `codigo_da_meta` e `tentado_em`; preserva `lido_*` e `sincronizado_em` (o investimento já lido continua valendo). Desde a `20261004100000` (14.9), a posse aceita também o job `resolver_anuncio_meta`: o token ou a conta recusados na consulta dos anúncios pausam a leitura igual ao gasto.
 
 ### 14.5 Gatilhos
 
 - **`reiniciar_leitura_do_gasto_meta`** em `meta_ads_account` (`SECURITY DEFINER`, `execute` revogado): `after update of ad_account_id` quando ele muda, e `after insert or delete` (apagar a conta e criar de novo pela API também é troca de conta). Volta a leitura para `nao_testada` e limpa `problema` e `codigo_da_meta`; não mexe em `lido_*`, `sincronizado_em`, no `ad_account_id` da leitura nem nos dados. Erro vira `raise warning` e nunca bloqueia a gravação da conta. O gasto da conta antiga continua em Resultados até a primeira regravação da conta nova, que o apaga.
-- **`proteger_atribuicao_de_anuncio`** em `contact` (migration B; `before insert or update of ctwa_clid, source_ad_id, source_adset_id, source_campaign_id`): com sessão (`auth.uid()` não nulo), o INSERT zera e o UPDATE preserva os quatro ids, sem erro. A service role (a ingestão) continua livre. Antes, administrador, gestor e recepção podiam reescrever esses ids pela API e mover o lead de campanha. Nenhum código da sessão grava esses campos (conferido em 03/10). A regra "o primeiro anúncio vence" é da ingestão (14.1), não do gatilho.
+- **`proteger_atribuicao_de_anuncio`** em `contact` (migration B; `before insert or update of ctwa_clid, source_ad_id, source_adset_id, source_campaign_id`): com sessão (`auth.uid()` não nulo), o INSERT zera e o UPDATE preserva os quatro ids, sem erro. A service role (a ingestão) continua livre. Antes, administrador, gestor e recepção podiam reescrever esses ids pela API e mover o lead de campanha. Nenhum código da sessão grava esses campos (conferido em 03/10). A regra "o primeiro anúncio vence" é da ingestão (14.1), não do gatilho. Desde a `20261004100000` (14.9), o gatilho também vigia `source_method`: a sessão que grava `anuncio_ctwa` recebe 42501.
 
 ### 14.6 `motor_manutencao`
 
@@ -1464,15 +1478,15 @@ Recriada a partir do corpo de **produção** (`pg_get_functiondef` em 03/10/2026
 - **Lead** entra pela chegada (`first_contact_at` em `[p_de, p_ate)`), o critério de "Leads recebidos" do funil. **Lead de anúncio** tem `ctwa_clid`, `source_ad_id` ou `source_campaign_id`.
 - **Casamento só por id, nunca por nome:** primeiro `source_ad_id` em `meta_anuncio`; senão `source_campaign_id`, se for campanha conhecida em `meta_anuncio`.
 - Cada lead cai numa linha só: `meta` (casado), `texto` (só tem `source_campaign` digitado ou importado: conta lead, nunca casa com gasto) ou `leads_sem_campanha`. **Invariante:** soma dos leads das linhas + `leads_sem_campanha` = `leads` = leads do `funil_do_periodo`.
-- `Linha = { chave ('meta:<campaign_id>' ou 'texto:<rótulo>'), tipo, meta_campaign_id, rotulo, leads, agendaram, compareceram, investimento_cents }`. `rotulo` da linha meta é o nome mais recente da campanha e pode ser nulo (a tela mostra "Campanha {id}"). `agendaram` = tem alguma consulta; `compareceram` = tem consulta com `compareceu`. Linha meta com 0 lead só aparece para a gestão, quando a campanha teve gasto em real no período. Linha texto tem sempre `investimento_cents` nulo. Ordem: meta antes de texto, maior investimento, mais leads, chave.
+- `Linha = { chave ('meta:<campaign_id>' ou 'texto:<rótulo>'), tipo, meta_campaign_id, rotulo, leads, agendaram, compareceram, investimento_cents }`. `rotulo` da linha meta é o nome mais recente da campanha e pode ser nulo (a tela mostra "Campanha {id}"); desde a `20261004100000` (14.9) a escolha é por `ultimo_dia_com_entrega desc nulls last`, então a linha que só veio da consulta por id (sem dia de entrega) fica por último. `agendaram` = tem alguma consulta; `compareceram` = tem consulta com `compareceu`. Linha meta com 0 lead só aparece para a gestão, quando a campanha teve gasto em real no período. Linha texto tem sempre `investimento_cents` nulo. Ordem: meta antes de texto, maior investimento, mais leads, chave.
 - **As contagens de leads são as mesmas em todos os papéis:** dependem só de `contact`, `appointment` e `meta_anuncio`, que todo membro ativo lê.
 - **`investimento`** é nulo fora de administrador, gestor e service role (`auth.uid() is null or user_has_role(...)`, o padrão da seção 11), e fora da gestão o `investimento_cents` das linhas também. Para a gestão: `{ configurada, situacao, problema, moeda, fuso_da_conta, lido_desde, lido_ate, sincronizado_em, dia_de, dia_ate, investimento_cents, investimento_casado_cents, investimento_sem_lead_cents, campanhas_sem_lead, outra_moeda }`.
   - `configurada` = conta salva **e** linha de leitura existente (a sessão não lê o token). Remover o token não apaga a linha de leitura, então a leitura continua "configurada" e o investimento já lido continua aparecendo, até a leitura ficar atrasada (Resultados, abaixo).
   - `dia_de` e `dia_ate` são os dias civis da clínica tocados pela janela; o dia do gasto é o rótulo do dia da conta, sem conversão por hora.
   - `investimento_cents` é o **total da conta** em real (`meta_gasto_conta_diario`) entre `dia_de` e `dia_ate`; `investimento_casado_cents` e `investimento_sem_lead_cents` são somas por campanha (`meta_gasto_diario`), das campanhas com e sem lead no período.
   - Só linhas em `BRL` entram nas somas; havendo linha em outra moeda no período, `outra_moeda = true`. Nunca converte.
-- O que a função **não** decide, de propósito (fica no TypeScript, `lib/domain/custo-por-lead.ts`): o divisor do custo por lead (`DIVISOR_DO_CUSTO_POR_LEAD = 'leads_de_anuncio'`, decisão D2 do dono pendente; as três contagens vêm prontas), a cobertura (o período é medido só se `lido_desde <= dia_de` e se `lido_ate` não está mais de `DIAS_DE_FOLGA_DA_LEITURA` = 2 dias antes do menor entre `dia_ate` e hoje) e o aviso de fuso.
-- **Fora de propósito:** o caminho do lead de link (`campaign_link.meta_campaign_id` e o id da regra no contato, decisão D1) e a origem gravada do lead de anúncio (`source_channel` Tráfego pago e um `source_method` novo, decisão D3). Nada disso foi construído.
+- O que a função **não** decide, de propósito (fica no TypeScript, `lib/domain/custo-por-lead.ts`): o divisor do custo por lead (`DIVISOR_DO_CUSTO_POR_LEAD = 'leads_de_anuncio'`, decisão D2, mantida pelo dono em 04/10/2026; as três contagens vêm prontas), a cobertura (o período é medido só se `lido_desde <= dia_de` e se `lido_ate` não está mais de `DIAS_DE_FOLGA_DA_LEITURA` = 2 dias antes do menor entre `dia_ate` e hoje) e o aviso de fuso.
+- **Fora de propósito na Fase 4:** o caminho do lead de link (`campaign_link.meta_campaign_id` e o id da regra no contato, decisão D1) e a origem gravada do lead de anúncio (`source_channel` Tráfego pago e um `source_method` novo, decisão D3). Respostas do dono em 04/10/2026: a D1 **não** será construída (não haverá cadastro manual de campanhas; `campaign_link` fica como está e o lead de link continua na linha `texto`, sem investimento); a D3 foi construída na seção 14.9, sem mudar o SQL desta função além do `nulls last`.
 
 ### 14.8 Ensaio, ordem de publicação e rollback
 
@@ -1483,3 +1497,52 @@ Recriada a partir do corpo de **produção** (`pg_get_functiondef` em 03/10/2026
 - Com as migrations e o código antigo, o Salvar da conta sem `act_` é recusado pelo CHECK (23514; há 0 contas em produção) e o segredo dá 42501 para a sessão (o código antigo já o lia só pelo cliente de serviço).
 
 **Rollback** (cabeçalhos das migrations): B, `drop function campanhas_do_periodo`, `drop trigger proteger_atribuicao_de_anuncio on contact` e `drop function proteger_atribuicao_de_anuncio`. A, nesta ordem: cancelar os jobs `sincronizar_gasto_meta`; apagar as quatro tabelas e as quatro funções, o gatilho e a função `reiniciar_leitura_do_gasto_meta` e o índice `job_queue_gasto_meta_vivo`; recriar `job_queue_kind_check` sem o tipo novo; apagar `ad_account_id_formato` e a coluna `insights_access_token`; reaplicar `motor_manutencao` da `20261002130000`. Devolver os grants de `meta_ads_account_secret` à sessão não é recomendado.
+
+### 14.9 Origem real do lead de anúncio (04/10/2026, migration `20261004100000_origem_real_do_anuncio.sql`)
+
+Pedido do dono em 04/10/2026 ("tire realmente da Meta ou do Google; no uazapi ele sabe a origem e campanha") e decisão D3 (backlog, entrada "Origem real do lead de anúncio"). Ensaiada em transação desfeita contra a produção e **ainda não aplicada em 04/10/2026** (sha256 `889e897b40796fb733a4f38484f5a127234eb025969b203734a9f209f8a290e5`). Pressupõe as duas migrations da Fase 4 e não edita nenhuma delas. Os tipos de `lib/supabase/database.types.ts` (as colunas novas de `meta_anuncio`, a tabela `meta_anuncio_recusado` e as três funções novas) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar.
+
+**Os fatos que moldam o desenho** (conferidos em 04/10/2026): o canal do WhatsApp (uazapi) entrega o clique (`ctwa_clid`) e o id do anúncio, nunca o conjunto nem a campanha; a campanha só sai da Meta, pelo id do anúncio; e a leitura diária da Fase 4 (`act_X/insights?level=ad`) não devolve anúncio arquivado nem apagado, nem anúncio sem entrega na janela lida. Por isso existe a consulta do anúncio pelo id.
+
+**`contact`**
+- `contact_source_method_valido` aceita `anuncio_ctwa`.
+- CHECK novo **`contact_origem_de_anuncio_coerente`** (23514): com `source_method = 'anuncio_ctwa'`, exige `source_channel = 'trafego_pago'`, `source_origin = 'Meta'`, `source_medium` nulo, `Facebook` ou `Instagram`, e **`source_campaign` nulo** (comparações com `is not distinct from`, porque um CHECK com NULL passaria). É a D3 garantida pelo banco: a origem é imutável, então o banco recusa em vez de gravar errado para sempre.
+- `proteger_atribuicao_de_anuncio` passa a vigiar `source_method`: a sessão que insere `anuncio_ctwa`, ou muda para ele num UPDATE, recebe 42501 ("A origem de anúncio é registrada só pelo sistema."); reenviar o valor já gravado passa. Os ids do anúncio seguem como na Fase 4 (14.5).
+- **Quem grava:** só a ingestão (service role), num update **separado** do dos ids, com `.is('source_channel', null)`, `.is('source_method', null)` e `.is('source_campaign', null)`: canal `trafego_pago`, origem `Meta`, meio = plataforma ou nulo, método `anuncio_ctwa` e `source_captured_at` = hora da ingestão. Nunca grava `source_campaign`. Depois de gravada, qualquer mudança na origem dá P0001 (`impedir_reatribuicao_de_origem`). O banco aceitaria sobrescrever um método `importacao` com canal nulo; o filtro de `source_method` da ingestão e o da correção abaixo são mais estritos de propósito.
+- **Regra da ingestão** (`origemDoAnuncio`, `lib/integrations/whatsapp/ingest.ts`): `sourceType` `post` nunca grava (nem origem, nem ids, nem o clique); `ad` sempre; sem tipo, só com `ctwa_clid`. Id de anúncio sem clique e sem tipo grava o id (como na Fase 4), mas não a origem. A plataforma vem do `sourceApp` do referral ou, na falta, do `entryPointConversionApp` do contexto; valor fora de `facebook` e `instagram` vira nulo, e a plataforma nunca é deduzida pela URL. A origem é tentada em toda mensagem de anúncio enquanto estiver vazia; o log de diagnóstico `anuncio_recebido` (só nomes de chave, tipo e se a plataforma foi reconhecida) e o pedido de consulta (`enfileirar_resolucao_de_anuncios_meta`, origem `ingestao`) acontecem só no primeiro clique que gravou os ids. A captura do anúncio roda antes da atribuição por texto: o anúncio vence o código do link, a mensagem padrão e a palavra-chave.
+
+**`meta_anuncio`**
+- `ultimo_dia_com_entrega` aceita nulo, só na linha com `origem = 'consulta'` (CHECK `meta_anuncio_sem_entrega_so_da_consulta`); linha de consulta sempre tem `consultado_em` (CHECK `meta_anuncio_consulta_tem_hora`).
+- Colunas novas: `adset_name` e `ad_name` (até 400 caracteres), `origem` (`insights` ou `consulta`, padrão `insights`: quem **criou** a linha, nunca muda) e `consultado_em` (última consulta pelo id; nulo = nunca consultado).
+- RLS igual à da Fase 4: todo membro ativo lê a própria clínica e ninguém escreve pela sessão.
+- **A campanha e o conjunto do lead** saem da linha com `ad_id = contact.source_ad_id`, de qualquer origem (o dia pode ser nulo): campanha = `campaign_name` (sem nome, "Campanha {id}"), conjunto = `adset_name`. Telas em `lib/domain/leads-ui.ts` e `lib/queries/leads.ts`.
+- **Troca de conta:** `regravar_gasto_meta` continua apagando as linhas de outra conta (14.4, passo 4), inclusive as que vieram da consulta. Os leads antigos perdem o nome da campanha e voltam a ficar pendentes; consultado com a conta nova, o anúncio da conta antiga vira recusa (`outra_conta` quando a Meta ainda o mostra ao token, senão `inacessivel`) e não volta ao mapa. É a regra "uma conta por clínica" da Fase 4.
+
+**`meta_anuncio_recusado`** (tabela nova, só o sistema): `clinic_id`, `ad_id` (`^[0-9]{1,32}$`), PK nos dois; `motivo` (`sem_entrega_ainda`, `inacessivel`, `outra_conta` ou `resposta_invalida`); `codigo_da_meta` (o código numérico da Meta, nunca a mensagem); `ad_account_id` (`act_`) e `token_sha256` (hexadecimal de 64) do momento da recusa; `tentativas`, `primeira_recusa_em`, `recusado_em` e `tentar_de_novo_em` (nulo = só com outra conta ou outro token; CHECK: só `sem_entrega_ainda` e `resposta_invalida` têm nova tentativa). RLS ligada, nenhuma policy e nenhum grant para `anon` e `authenticated`: toda sessão recebe 42501. **A recusa vale só para a mesma conta e o mesmo sha256 do token**: trocar um dos dois libera nova tentativa sem mexer na tela.
+
+**Novas tentativas** (calculadas por `gravar_resolucao_de_anuncios_meta`; contadas só com a mesma conta, o mesmo sha256 e o mesmo motivo, senão recomeçam em 1): `sem_entrega_ainda` depois de 1 h, 6 h e 24 h, depois a cada 24 h até 7 dias da primeira recusa, depois nunca mais (nulo); `resposta_invalida` a cada 24 h; `inacessivel` e `outra_conta` só com outra conta ou outro token.
+
+**`job_queue`:** tipo `resolver_anuncio_meta`, `payload {origem}`, `max_attempts` 5, e o índice único parcial `job_queue_resolver_anuncio_meta_vivo` (um job vivo por clínica; insert direto duplicado dá 23505).
+
+**Anúncio pendente:** `source_ad_id` numérico de contato da clínica sem linha em `meta_anuncio`, **ou com linha nunca consultada pelo id** (linha só do insights, que não traz o nome do conjunto), e sem recusa válida (mesma conta, mesmo sha256 e nova tentativa no futuro ou nula). Não existe tabela de "anúncio visto": o que está pendente vive nos contatos, não no job.
+
+**As três funções novas** (todas `SECURITY DEFINER`, `search_path` vazio, `execute` revogado de `public`, `anon` e `authenticated` e dado só à `service_role`; nenhuma devolve o token, todas comparam o sha256 hexadecimal, maiúsculas também valem):
+- **`anuncios_meta_a_resolver(p_clinic_id uuid, p_ad_account_id text, p_token_sha256 text, p_limite integer default 20, p_agora timestamptz default now()) returns jsonb`**, só leitura: `{codigo: 'config_mudou'}` quando a conta salva ou o sha256 do token salvo são outros; senão `{codigo: 'ok', ad_ids, restantes, proxima_tentativa_em}`. `p_limite` fica entre 1 e 50. Ordem: os nunca recusados (ou recusados com outra conta ou outro token) primeiro, depois as novas tentativas vencidas; dentro de cada grupo, o contato mais recente primeiro. `proxima_tentativa_em` é a menor nova tentativa ainda no futuro.
+- **`enfileirar_resolucao_de_anuncios_meta(p_clinic_id uuid, p_origem text, p_run_at timestamptz default null, p_incluir_teste boolean default false) returns jsonb`**. Origem em `ingestao`, `gasto` ou `teste`; fora disso, 22023. Devolve `{codigo}`: `enfileirado` (com `run_at` = o maior entre `p_run_at` e agora, se há anúncio devido, ou a próxima nova tentativa), `ja_na_fila` (puxa o job pendente para mais cedo, nunca empurra), `sem_configuracao` (clínica inexistente, sem conta ou sem token de leitura), `pausada` (a leitura do gasto está `com_problema` com `token_invalido`, `sem_permissao`, `conta_sem_acesso` ou `exige_prova_do_app`; a origem `teste` ignora a pausa, e `nao_testada` não pausa), `nada_a_resolver` ou `clinica_de_teste` (salvo com `p_incluir_teste`, que só os testes de integração passam).
+- **`gravar_resolucao_de_anuncios_meta(p_job_id uuid, p_worker text, p_clinic_id uuid, p_ad_account_id text, p_token_sha256 text, p_resolvidos jsonb, p_recusas jsonb) returns text`**: `ok`, `sem_posse` (exige job `resolver_anuncio_meta` executando com `locked_by = p_worker` e da mesma clínica) ou `config_mudou` (nada é gravado). Formato: `p_resolvidos = [{ad_id, ad_account_id ('act_N' ou só os dígitos), campaign_id (numérico, obrigatório), campaign_name|null, adset_id (numérico)|null, adset_name|null, ad_name|null}]` e `p_recusas = [{ad_id, motivo, codigo: inteiro|null}]`; id inválido, motivo fora da lista, código não inteiro, item que não é objeto ou lista que não é array dão 22023; listas nulas valem como vazias. Resolvido de outra conta vira recusa `outra_conta` e **não** entra no mapa; sem campanha válida, ou com conta ilegível, vira `resposta_invalida`; resolvido da conta salva faz upsert com `origem = 'consulta'` (na linha nova), `consultado_em = now()` e nomes por `coalesce` (nunca apaga nome); o resolvido perde a recusa e vence uma recusa do mesmo anúncio na mesma chamada.
+
+**Funções recriadas** (mesma assinatura e mesmo retorno; corpo de **produção**, conferido por `pg_get_functiondef` no ensaio, com o que é novo entre os marcadores `[origem real]` ou numa única linha trocada; grants mantidos):
+- `proteger_atribuicao_de_anuncio` e o gatilho (agora também `update of source_method`), acima;
+- `regravar_gasto_meta`: a linha com dia nulo (só da consulta) recebe o nome e o dia do insights; não mexe em `adset_name`, `ad_name`, `origem` nem `consultado_em`;
+- `registrar_falha_do_gasto_meta`: a posse aceita também o job `resolver_anuncio_meta` (14.4);
+- `campanhas_do_periodo`: nome da campanha por `ultimo_dia_com_entrega desc nulls last` (14.7).
+
+**Correção dos contatos que já existiam** (bloco `DO` no fim da migration, entre os marcadores `[correcao dos contatos de anuncio]`): UPDATE idempotente, por condição e sem id fixo, que só roda sem sessão de usuário (com sessão, levanta exceção). Pega só o contato com `ctwa_clid` e **todos** os campos de origem nulos (canal, método, origem, meio, campanha e `source_captured_at`), e grava `trafego_pago`, `Meta`, meio nulo, `anuncio_ctwa` e `source_captured_at = first_contact_at`. Id de anúncio ou de campanha sem clique fica de fora, porque pode ser publicação gravada pela ingestão anterior a esta frente. Em 04/10/2026 (SELECT na produção): 8 contatos com clique, todos de uma clínica e todos com a origem vazia, e nenhum com id de anúncio sem clique. **Não rodar o bloco de novo depois de aplicado**: um contato antigo que clicasse num anúncio no intervalo ganharia como hora de captura a do primeiro contato, falsa e permanente (backlog, ordem de publicação).
+
+**Códigos de erro:** só 42501, 22023, 23514, 23505 e P0001. 40001 e 40P01 nunca são levantados de propósito.
+
+**Ensaio (04/10/2026):** em transação desfeita contra a produção: retrato da produção, a migration, asserts sobre os dados reais (a correção pega exatamente os 8 contatos e nenhum outro, e o ensaio para se aparecer contato com id de anúncio sem clique), os asserts da Fase 4 adaptados, a correção rodada duas vezes (a segunda não muda nada, nem o `updated_at`) e os asserts da origem real: os CHECKs, o 42501 da sessão ao gravar `anuncio_ctwa` ou ids, as colunas novas, isolamento A contra B nas colunas novas, `meta_anuncio_recusado` ilegível para sessão e `anon`, grants revogados e `search_path` vazio, um job vivo por clínica, todos os códigos do enfileirar, a lista de pendentes, a gravação (`ok`, `sem_posse`, `config_mudou`, `outra_conta` fora do mapa, novas tentativas, troca de token), a regravação com dia nulo, o `nulls last` e a cascata ao apagar a clínica. As funções recriadas foram comparadas com as de produção. 43 sabotagens, uma ou mais por bloco crítico, todas pegas.
+
+**Ordem de publicação:** decisão pendente do dono (backlog, entrada "Origem real do lead de anúncio"). O que limita a escolha: a correção roda uma vez só; com o código novo e sem a migration, a gravação da origem falha com 23514 (só log), o lead fica com os ids e a correção o pega depois, as telas mostram "Não foi possível carregar a campanha" nos leads de anúncio e os pedidos de consulta só deixam log; com a migration e o código antigo, o lead de anúncio que chegar fica sem origem e só uma correção filtrada pela hora da aplicação o recupera. Antes de aplicar, conferir por SELECT que o alvo da correção continua sendo só contato com clique. Depois de aplicar: rodar as provas de RLS e integração escritas para esta frente e regenerar os tipos.
+
+**Rollback** (cabeçalho da migration, manual): cancelar os jobs `resolver_anuncio_meta`; apagar as três funções novas, a tabela `meta_anuncio_recusado` e o índice `job_queue_resolver_anuncio_meta_vivo`; recriar `job_queue_kind_check` sem o tipo novo; reaplicar `proteger_atribuicao_de_anuncio` (e o gatilho) e `campanhas_do_periodo` da `20261003110000`, `regravar_gasto_meta` e `registrar_falha_do_gasto_meta` da `20261003100000`; apagar de `meta_anuncio` as linhas com origem `consulta` e dia nulo, depois as colunas novas, e voltar o NOT NULL. **A origem gravada nos contatos não volta**: `impedir_reatribuicao_de_origem` a preserva para sempre.

@@ -25,9 +25,9 @@ A rota da fila faz **quatro** reivindicações em paralelo a cada passagem, cada
 | Envio | `enviar_mensagem_ativa`, `executar_passo_de_regua` | 8 (`MOTOR_MAX_CLINICAS`) |
 | Mídia | `baixar_midia` | 2 |
 | Integração | `enviar_conversao_meta`, `oferecer_lista_espera` | 2 |
-| Investimento da Meta | `sincronizar_gasto_meta` | 2 |
+| Leituras da Meta | `sincronizar_gasto_meta`, `resolver_anuncio_meta` | 2 |
 
-O trilho do investimento é explicado em "Leitura do investimento da Meta", abaixo.
+O trilho das leituras da Meta é explicado em "Leitura do investimento da Meta" e em "Consulta dos anúncios da Meta", abaixo.
 
 As duas primeiras são ligadas e desligadas pela operação (`motor_agendar()` e `motor_desagendar()`), nunca por migration: num banco de laptop elas virariam um segundo motor chamando a produção. A poda é agendada pela migration `20260924120000_poda_do_cron.sql`, porque não chama nada fora do banco.
 
@@ -155,7 +155,7 @@ from job_queue group by 1,2 order by 3 desc;
 
 Desde 25/09/2026 a fila é reivindicada por **raia**: cada número de WhatsApp é uma raia (`coalesce(whatsapp_account_id, clinic_id)`), então dois números da mesma clínica enviam em paralelo e o mesmo número serializa. `MOTOR_MAX_CLINICAS` conta **raias** por passagem (padrão 8; o nome ficou por compatibilidade). Job com `last_error = 'numero_removido'` é o eco de uma resposta ao toque cujo número foi removido: foi cancelado de propósito, não é defeito do motor.
 
-`ultimo_motivo_devolucao = 'limite_da_meta'` ou `'config_mudou'` é do trilho do investimento da Meta: ver a seção seguinte.
+`ultimo_motivo_devolucao = 'limite_da_meta'` ou `'config_mudou'` é do trilho das leituras da Meta; `'nova_tentativa'` e `'mais_anuncios'` são só da consulta dos anúncios. Ver as duas seções seguintes.
 
 **`cron.job_run_details` diz `succeeded` mas nada chegou na Vercel.** O worker de fundo do `pg_net` travou. Ele é um processo à parte do agendador, e o cron considera sucesso só por ter enfileirado:
 
@@ -218,7 +218,71 @@ Para ler de novo uma clínica fora do horário, use o "Testar leitura" ou o "Atu
 
 **Segredo.** O token de leitura (`meta_ads_account_secret.insights_access_token`) só é lido pela service role, dentro da tarefa e da Server Action do teste. Nenhuma função do banco devolve o token: as que gravam recebem só o sha256 dele, para recusar a escrita de uma leitura feita com o token antigo. Ele vai no cabeçalho `Authorization` da chamada à Meta, nunca na URL, e não aparece em log, em `last_error` nem na tela.
 
-**Versão da Graph.** Fica em `lib/integrations/meta/versao.ts` (`v26.0`), usada pela leitura e pela devolução de conversões. Se a Meta recusar a versão (problema `versao_descontinuada`, código 2635), troque ali.
+**Versão da Graph.** Fica em `lib/integrations/meta/versao.ts` (`v26.0`), usada pela leitura, pela consulta dos anúncios e pela devolução de conversões. Se a Meta recusar a versão (problema `versao_descontinuada`, código 2635), troque ali.
+
+---
+
+## Consulta dos anúncios da Meta (origem real do lead)
+
+Desde 04/10/2026 (migration `20261004100000_origem_real_do_anuncio.sql`) o lead que chega por anúncio de clique para WhatsApp ganha origem gravada (Tráfego pago, Meta, plataforma quando o canal informa, método `anuncio_ctwa`), e a campanha e o conjunto vêm **da própria Meta**, pelo id do anúncio que chega no clique. O WhatsApp não traz campanha nem conjunto, só o id do anúncio.
+
+A tarefa é `resolver_anuncio_meta` (`lib/jobs/resolver-anuncio-meta.ts`). Ela pergunta à Meta, anúncio por anúncio, de que conta, campanha e conjunto ele é, e grava em `meta_anuncio` com `origem = 'consulta'`. Essa tabela é a **fonte única** do nome da campanha do lead: o contato guarda só o `source_ad_id`, nunca o nome (`source_campaign` fica nulo, e o banco recusa com 23514 se alguém tentar). A consulta por id cobre o que a leitura do investimento não cobre: anúncio sem gasto na janela, anúncio arquivado ou apagado, e o nome do conjunto.
+
+**O que é "pendente".** Um `source_ad_id` numérico de contato da clínica sem linha em `meta_anuncio`, ou com linha que nunca foi consultada por id (`consultado_em` nulo, linha que só veio da leitura do investimento), e sem recusa válida. Cada anúncio é consultado **uma vez na vida**: depois de gravado, não volta à Meta. O pendente vive no banco, não na tarefa, então perder uma tarefa nunca perde anúncio.
+
+**Quem enfileira.** Uma tarefa viva por clínica (índice único `job_queue_resolver_anuncio_meta_vivo`), sempre pela função `enfileirar_resolucao_de_anuncios_meta`, que não cria tarefa sem anúncio pendente, sem conta ou token, com a leitura pausada (salvo a origem `teste`) nem para clínica de teste. Três caminhos, todos em melhor esforço (uma falha só deixa log com o código):
+
+- `ingestao`: o primeiro clique de um contato num anúncio (Inbox).
+- `gasto`: o fim de cada `sincronizar_gasto_meta` que deu certo. É a rede de segurança diária: se a tarefa da consulta falhar de vez, a leitura do dia seguinte cria outra.
+- `teste`: o "Testar leitura" que deu certo em Configurações (inclusive o teste que roda logo depois de salvar um token novo).
+
+**Uma execução.** Lê a conta e o token como a leitura do investimento; sem configuração, conclui sem chamar a Meta; com a leitura pausada (`token_invalido`, `sem_permissao`, `conta_sem_acesso`, `exige_prova_do_app`), conclui sem chamar a Meta. Depois pega até 20 anúncios devidos (`anuncios_meta_a_resolver`), consulta a Meta com prazo de 15 s (8 s por requisição; o que não couber fica para a volta seguinte) e grava pela `gravar_resolucao_de_anuncios_meta`. Custo estimado no motor: 20 s, num grupo só dela, como a leitura do investimento. A tarefa e o investimento da mesma clínica nunca saem na mesma passagem (um por clínica no claim) e, se correrem juntos em passagens que se sobrepõem, as duas gravações se serializam no banco.
+
+**Recusas e novas tentativas.** Ficam em `meta_anuncio_recusado`, que nenhuma sessão lê (só o sistema, pelas funções). Uma recusa vale só para a mesma conta e o mesmo token: trocar um dos dois libera a consulta de novo, sem mexer em nada.
+
+| Recusa | Quando | Nova tentativa |
+| --- | --- | --- |
+| `sem_entrega_ainda` | o anúncio ainda não tem entrega registrada na Meta, ou a leitura do objeto do anúncio (consulta 2) foi recusada por código que não é de token, limite, versão nem Meta fora do ar | 1 h, 6 h e 24 h; depois uma vez por dia, até 7 dias da primeira recusa; depois nunca |
+| `resposta_invalida` | a Meta respondeu sem campanha válida, ou recusou a consulta do Insights daquele anúncio (consulta 1) com `parametro_recusado` ou `outro` (100 genérico, 2500, código desconhecido; o número fica em `codigo_da_meta`); a tarefa segue com os outros anúncios | 24 h |
+| `inacessivel` | o token não enxerga o anúncio (apagado de verdade, de outra pessoa, sem permissão) | só com outra conta ou outro token |
+| `outra_conta` | o anúncio é de outra conta de anúncios, não da salva na clínica (agência, impulsionamento pela conta pessoal) | só com outra conta ou outro token; nunca entra no mapa |
+
+**Como a tarefa volta.** Se depois de gravar ainda há anúncio devido, ela volta **na hora** (`ultimo_motivo_devolucao = 'mais_anuncios'`); se há nova tentativa marcada, volta **nessa hora** (`'nova_tentativa'`); senão conclui. A volta é por `reagendar_job`, que não queima tentativa mas conta no teto de 20 devoluções: uma tarefa `falhou` com `last_error = 'nova_tentativa'` ou `'mais_anuncios'` só bateu o teto (muitos anúncios esperando entrega, por exemplo). Não é defeito: o próximo pedido (clique, leitura do dia ou teste) cria outra.
+
+**Desfechos.**
+
+| O que aconteceu | Tarefa | `meta_gasto_leitura` |
+| --- | --- | --- |
+| Consultou e gravou, nada mais devido | `concluido` | não muda |
+| Configuração removida, ou leitura pausada | `concluido`, sem chamar a Meta | não muda |
+| Meta recusou o token (em qualquer consulta) ou a prova do app (consulta 1), ou a conta salva recusou a conferência por permissão ou acesso. Permissão recusada num anúncio com a conta salva respondendo vira só a recusa `inacessivel` dele | `falhou` na hora, gravando o problema por `registrar_falha_do_gasto_meta` | `com_problema`: **pausa** a leitura diária e a consulta, igual à leitura do investimento |
+| Pedido recusado pela Meta para o lote todo: versão recusada (`versao_descontinuada`) em qualquer consulta, ou `parametro_recusado`/`outro` na conferência da conta salva (feita quando um anúncio tem a permissão recusada) | `falhou` na hora | não muda (a leitura do investimento grava o dela) |
+| Pedido recusado num anúncio só (`parametro_recusado`, `outro`) | segue com os outros; o anúncio vira recusa `resposta_invalida` (consulta 1, nova tentativa em 24 h) ou `sem_entrega_ainda` (consulta 2); procure em `meta_anuncio_recusado`, não em tarefa falhada | não muda |
+| Meta fora do ar, prazo esgotado antes de consultar qualquer anúncio, resposta torta | volta pelo backoff, até 5 tentativas | não muda |
+| Limite de chamadas da Meta | devolvida em 5 a 60 minutos (`'limite_da_meta'`) | não muda |
+| A gestão trocou a conta ou o token durante a consulta | devolvida na hora (`'config_mudou'`); nada velho é gravado | não muda |
+
+O `last_error` leva só códigos: o problema e o número da Meta (`token_invalido:190`), ou o SQLSTATE de uma escrita que falhou (`config_ilegivel:<código>`, `listar_anuncios_falhou:<código>`, `gravar_resolucao_falhou:<código>`, `registrar_falha_falhou:<código>`). `lista_invalida`, `gravar_resolucao_falhou:22023` e `conta_fora_do_formato` são defeito nosso (param de vez). O log traz só contagens (`resolver_anuncio_meta_gravado` e `resolver_anuncio_meta_recusados`, com `count`): nunca o token, o id ou o nome do anúncio, nem a mensagem da Meta.
+
+**Diagnóstico:**
+
+```sql
+-- tarefas recentes da consulta
+select clinic_id, status, attempts, last_error, ultimo_motivo_devolucao,
+       devolucoes, run_at, payload->>'origem' as origem
+from job_queue where kind = 'resolver_anuncio_meta'
+order by created_at desc limit 20;
+
+-- recusas por clínica e motivo (sem id de anúncio na tela de quem consulta)
+select clinic_id, motivo, codigo_da_meta, count(*), min(tentar_de_novo_em)
+from meta_anuncio_recusado group by 1, 2, 3 order by 4 desc;
+
+-- anúncios do mapa por origem e se já foram consultados por id
+select clinic_id, origem, (consultado_em is not null) as consultado, count(*)
+from meta_anuncio group by 1, 2, 3;
+```
+
+Para consultar de novo uma clínica, use o "Testar leitura" em Configurações. Pelo SQL Editor, `select enfileirar_resolucao_de_anuncios_meta('<clinic_id>', 'gasto');` respeita a pausa. Para liberar já um anúncio recusado com a mesma conta e o mesmo token, apague a linha dele em `meta_anuncio_recusado` e enfileire.
 
 ---
 

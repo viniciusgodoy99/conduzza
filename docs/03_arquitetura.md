@@ -55,11 +55,13 @@ lib/
 ├── integrations/
 │   ├── whatsapp/                 Cloud API: envio, template, webhook, custo
 │   ├── meta/                     Graph da Meta: capi.ts (devolução de conversões), payload.ts,
-│   │                             insights.ts (leitura do investimento, Fase 4) e versao.ts (versão única da Graph)
+│   │                             insights.ts (leitura do investimento, Fase 4, e consulta do anúncio pelo id,
+│   │                             04/10/2026) e versao.ts (versão única da Graph)
 │   ├── llm/                      agente, ferramentas, filtro de conformidade
 │   └── billing/                  gateway de pagamento
 ├── jobs/                         motor da fila (motor.ts, worker.ts) e executores (regua.ts, conversao-meta.ts,
-│                                 lista-espera.ts e gasto-meta.ts, o sincronizar_gasto_meta da Fase 4)
+│                                 lista-espera.ts, gasto-meta.ts, o sincronizar_gasto_meta da Fase 4, e
+│                                 resolver-anuncio-meta.ts, a consulta dos anúncios pelo id de 04/10/2026)
 ├── domain/                       regras de negócio puras, sem I/O, testáveis
 │   ├── scheduling.ts             disponibilidade, hold, conflito
 │   ├── cadence.ts                cálculo de quando disparar cada passo de régua
@@ -271,7 +273,7 @@ Log de aplicação **nunca** contém conteúdo de mensagem de paciente. Guardar 
 
 ## 12. Leitura do investimento da Meta (Fase 4 das métricas, 03/10/2026)
 
-Construída, publicação pendente. Modelo no `docs/04` (seção 14), operação no `supabase/operacao/motor-por-cron.md` ("Leitura do investimento da Meta").
+Construída e publicada em 03/10/2026. Modelo no `docs/04` (seção 14), operação no `supabase/operacao/motor-por-cron.md` ("Leitura do investimento da Meta"). A consulta dos anúncios pelo id (04/10/2026, publicação pendente) está no fim desta seção.
 
 ```
 manutenção (pg_cron, a cada minuto)       "Testar leitura" que deu certo      "Atualizar agora"
@@ -295,8 +297,40 @@ manutenção (pg_cron, a cada minuto)       "Testar leitura" que deu certo      
 ```
 
 - **Integração** (`lib/integrations/meta/insights.ts`): token só no cabeçalho `Authorization`, conta conferida contra `^act_[0-9]{5,20}$` antes de entrar na URL, host fixo, paginação pelo cursor `after` (o `paging.next` da resposta nunca é seguido), até 500 linhas por página e 40 páginas. Consulta que a Meta acusa como pesada, que passa de 40 páginas ou que não responde no tempo é dividida ao meio, até 2 vezes. Repete na hora até 2 vezes só quando a Meta está indisponível, com backoff (metade fixa, metade sorteada); limite de chamadas nunca repete na hora e devolve a espera lida dos cabeçalhos. A partir de 75% do uso informado pela Meta espera entre chamadas, e a partir de 95% para. O resultado carrega só códigos: a mensagem da Meta nunca sai da função que a classifica. Versão da Graph num lugar só (`versao.ts`, `v26.0`), usada também pela devolução de conversões.
-- **Janela:** lê por anúncio e por dia e o total da conta por dia, no fuso **da conta**. `DIAS_DA_LEITURA_DIARIA` (30) dias por leitura; `DIAS_DA_PRIMEIRA_LEITURA` (60) na primeira leitura, na troca de conta e na volta depois de mais de 30 dias parada (constantes em `lib/domain/meta-anuncios.ts`, decisão D4 do dono pendente).
+- **Janela:** lê por anúncio e por dia e o total da conta por dia, no fuso **da conta**. `DIAS_DA_LEITURA_DIARIA` (30) dias por leitura; `DIAS_DA_PRIMEIRA_LEITURA` (60) na primeira leitura, na troca de conta e na volta depois de mais de 30 dias parada (constantes em `lib/domain/meta-anuncios.ts`, decisão D4, mantida pelo dono em 04/10/2026).
 - **Desfecho por tipo de problema:** a Meta recusou o token, a permissão ou a conta: grava o problema e **pausa** o diário; pedido recusado: grava o problema, sem pausa; Meta fora do ar, prazo esgotado, resposta que não se reconhece, consulta pesada: repete pelo backoff do motor e grava o problema só na última tentativa; limite de chamadas: devolve o job para daqui a 5 a 60 minutos; a gestão trocou a conta ou o token durante a leitura: devolve na hora e nada velho é gravado.
 - **Por que reivindicação e grupo próprios:** o job não tem número de WhatsApp, então a raia dele seria a clínica, e uma leitura de até 40 segundos em série com a integração da mesma clínica faria a segunda tarefa voltar por falta de orçamento da passagem.
-- **Resultados** lê pela sessão a função `campanhas_do_periodo` (`SECURITY INVOKER`): as contagens de leads são as mesmas para todo papel e o investimento sai nulo fora de administrador e gestor. O custo por lead é calculado no TypeScript (`lib/domain/custo-por-lead.ts`), com o divisor numa constante (decisão D2 do dono pendente).
+- **Resultados** lê pela sessão a função `campanhas_do_periodo` (`SECURITY INVOKER`): as contagens de leads são as mesmas para todo papel e o investimento sai nulo fora de administrador e gestor. O custo por lead é calculado no TypeScript (`lib/domain/custo-por-lead.ts`), com o divisor numa constante (decisão D2, mantida pelo dono em 04/10/2026).
 
+### Consulta dos anúncios pelo id (origem real do lead de anúncio, 04/10/2026)
+
+Construída, publicação pendente (migration `20261004100000` ainda não aplicada). Modelo no `docs/04` (seção 14.9), operação no `supabase/operacao/motor-por-cron.md` ("Consulta dos anúncios da Meta"), plano e pontos para o dono no backlog. O canal do WhatsApp entrega só o clique e o id do anúncio; a leitura diária acima não devolve anúncio arquivado nem apagado. Este caminho pergunta à Meta, pelo id, a campanha e o conjunto de cada anúncio de onde um lead veio, e grava no mesmo mapa `meta_anuncio`, que é a fonte única do nome da campanha do lead (o contato guarda só o `source_ad_id`).
+
+```
+primeiro clique de um anúncio     fim do sincronizar_gasto_meta     "Testar leitura" que deu certo
+  (ingestão, service role)            que deu certo (gasto-meta.ts)   (Server Action; ignora a pausa)
+        \                                  |                                 /
+         +---> enfileirar_resolucao_de_anuncios_meta(clinica, origem) <-----+
+                um job vivo por clínica; recusa clínica de teste, falta de conta ou token,
+                leitura pausada e "nada a resolver"; todos em melhor esforço (falha só vira log)
+                                   |
+                                   v
+              job_queue: resolver_anuncio_meta (até 5 tentativas)
+                                   |
+             motor (Vercel): o mesmo 4º trilho do gasto (KINDS_DE_GASTO),
+             2 por passagem, cada job num grupo só dele (custo estimado 20 s)
+                                   |
+                                   v
+             lib/jobs/resolver-anuncio-meta.ts: lê conta e token pela service role,
+             anuncios_meta_a_resolver (até 20) -> resolverAnuncios (insights.ts, 15 s)
+                                   |
+             gravar_resolucao_de_anuncios_meta (sha256 do token)   falha da conta -> registrar_falha_do_gasto_meta
+                                   |
+             ainda há anúncio devido: volta já; nova tentativa marcada: volta nessa hora; senão conclui
+```
+
+- **Integração** (`resolverAnuncios` em `lib/integrations/meta/insights.ts`, reaproveitando o contexto e o `pedir` da leitura): até duas chamadas por anúncio, `GET /v26.0/{ad_id}/insights` com `date_preset=maximum` e, quando ela volta sem linha, pesada demais ou sem resposta, `GET /v26.0/{ad_id}` com as expansões de conjunto e campanha. Até 20 anúncios distintos por execução, 8 s por requisição e 15 s no total; o que não cabe volta como "não tentado" e continua pendente no banco. Id fora de `^[0-9]{1,32}$` nunca entra na URL. Nada é logado, e o resultado leva só ids, nomes e códigos numéricos.
+- **A falha de um anúncio nunca pausa a leitura diária:** 100/33, 803 e HTTP 404 viram recusa `inacessivel` daquele anúncio; permissão recusada (10, 200 a 299, 294, 100/3191001, HTTP 403) leva a uma conferência da conta salva por lote (a mesma chamada do "Testar leitura"): a conta responde, o anúncio fica `inacessivel`; a conta também recusa, o lote para com a falha da conta e o job segue a ação do gasto (pausar, pela `registrar_falha_do_gasto_meta`). Conta do anúncio diferente da salva vira `outra_conta` e não entra no mapa; 100 genérico, código desconhecido ou linha torta viram `resposta_invalida`; a segunda chamada recusada vira `sem_entrega_ainda`. Token, limite da Meta, versão encerrada e Meta fora do ar interrompem o lote como no gasto.
+- **Novas tentativas** calculadas pelo banco (`sem_entrega_ainda` 1 h, 6 h, 24 h e depois diária até 7 dias; `resposta_invalida` 24 h; `inacessivel` e `outra_conta` só com outra conta ou outro token). O job só segue a `proxima_tentativa_em` devolvida. A volta é por `reagendar_job` (não queima tentativa, conta no teto de 20 devoluções); no teto o job falha, e o próximo pedido cria outro, porque o pendente vive nos contatos, não no job.
+- **Segredo:** o token fica no job e no cabeçalho `Authorization`; no banco vai só o sha256, com que as funções conferem se a configuração mudou no meio (`config_mudou`: nada é gravado). Log e `last_error` só com códigos e contagens: nem token, nem id ou nome de anúncio, nem mensagem da Meta.
+- **Ingestão** (`lib/integrations/whatsapp/ingest.ts`): a captura do anúncio roda antes da atribuição por texto. Grava os ids do clique (primeiro clique vence) e, num update separado, a origem de anúncio, só com canal, método e campanha vazios. No primeiro clique registra o diagnóstico `anuncio_recebido` (só nomes de chave) e pede a consulta.

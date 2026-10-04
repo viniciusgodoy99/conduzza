@@ -41,7 +41,16 @@ import {
   porChave,
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
-import { recencyDe } from "@/lib/domain/leads-ui";
+import {
+  campanhaDoContato,
+  conjuntoDoContato,
+  melhorLeitura,
+  recencyDe,
+  rotuloDoMetodo,
+  textoDaOrigem,
+  type LeituraDoAnuncio,
+  type TextoDeAtribuicao,
+} from "@/lib/domain/leads-ui";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import { atividadesKeys } from "@/lib/queries/atividades";
 import {
@@ -72,6 +81,13 @@ import {
 // Secao Atividades (escopo de 02/10/2026), entre Dados e Conversa: ate 3
 // pendentes, "Nova atividade" e "Ver todas". As atividades vem no MESMO
 // detalhe da action (com trilha); o rodape 2x2 nao ganha botao.
+//
+// Secao Origem (origem real do anuncio, 04/10/2026; docs/02 "dados, origem,
+// conversa resumida"): Canal ("Tráfego pago, Meta (Instagram)"), Campanha,
+// Conjunto (so lead de anuncio) e Metodo. Campanha e conjunto do lead de
+// anuncio vem de meta_anuncio pelo id do anuncio: a leitura do detalhe (mais
+// nova) vence a da lista. So leitura: nenhum papel edita a origem aqui (o
+// banco a congela depois de gravada).
 
 const AUTOR_LABEL: Record<MensagemDoLead["author"], string> = {
   paciente: "Paciente",
@@ -92,6 +108,15 @@ function Linha({
       <span className="text-text-secondary">{rotulo}</span>
       <span className="min-w-0 text-foreground">{children}</span>
     </div>
+  );
+}
+
+/** Campanha ou conjunto: nome em texto normal, o que falta em tom secundario. */
+function ValorDeAtribuicao({ valor }: { valor: TextoDeAtribuicao }) {
+  return valor.tipo === "nome" ? (
+    <span className="break-words">{valor.texto}</span>
+  ) : (
+    <span className="text-text-secondary">{valor.texto}</span>
   );
 }
 
@@ -159,6 +184,24 @@ export function DrawerLead({
 
   const recencia = lead ? recencyDe(lead.last_contact_at, new Date()) : null;
   const origem = lead ? rotuloDoCanal(lead.source_channel) : null;
+  // Leitura do anuncio: a do detalhe (lida agora) vence a da lista; com a
+  // lista em erro e o detalhe ainda correndo, e "carregando", nao erro.
+  const leituraDaLista: LeituraDoAnuncio | null = lead
+    ? detalheQuery.isLoading && lead.anuncio_meta.estado === "erro"
+      ? { estado: "carregando" }
+      : lead.anuncio_meta
+    : null;
+  const leituraDoAnuncio = leituraDaLista
+    ? melhorLeitura(detalhe?.anuncio_meta, leituraDaLista)
+    : null;
+  const campanha =
+    lead && leituraDoAnuncio
+      ? campanhaDoContato(lead, leituraDoAnuncio, detalhe?.campanha_nome)
+      : null;
+  const conjunto =
+    lead && leituraDoAnuncio ? conjuntoDoContato(lead, leituraDoAnuncio) : null;
+  const textoOrigem = lead ? textoDaOrigem(lead) : null;
+  const metodo = lead ? rotuloDoMetodo(lead.source_method) : null;
   const defs = porChave(jornada);
   const defDoLead = lead ? defs.get(lead.funnel_stage) : undefined;
   const jaPerdido = defDoLead?.papel === "perdido";
@@ -249,11 +292,40 @@ export function DrawerLead({
                     <span className="text-text-secondary">Nenhuma</span>
                   )}
                 </Linha>
-                <Linha rotulo="Campanha">
-                  {detalhe?.campanha_nome ?? lead.source_campaign ?? (
-                    <span className="text-text-secondary">Sem campanha</span>
+              </section>
+
+              <section className="grid gap-2.5 border-b border-border px-5 py-4">
+                <h3 className="cz-eyebrow text-text-secondary">Origem</h3>
+                <Linha rotulo="Canal">
+                  {textoOrigem ?? (
+                    <span className="text-text-secondary">Não informado</span>
                   )}
                 </Linha>
+                {campanha ? (
+                  <Linha rotulo="Campanha">
+                    <ValorDeAtribuicao valor={campanha} />
+                  </Linha>
+                ) : null}
+                {conjunto ? (
+                  <Linha rotulo="Conjunto">
+                    <ValorDeAtribuicao valor={conjunto} />
+                  </Linha>
+                ) : null}
+                {metodo ? <Linha rotulo="Método">{metodo}</Linha> : null}
+                {/* Com o detalhe inteiro em erro, o Tentar de novo da Conversa
+                    ja refaz a mesma leitura. */}
+                {campanha?.tipo === "erro" && !detalheQuery.isError ? (
+                  <div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={detalheQuery.isFetching}
+                      onClick={() => void detalheQuery.refetch()}
+                    >
+                      Tentar de novo
+                    </Button>
+                  </div>
+                ) : null}
               </section>
 
               <section className="grid gap-2.5 border-b border-border px-5 py-4">

@@ -15,6 +15,17 @@ export type ContactSummary = {
   source_channel: string | null;
   source_campaign: string | null;
   first_contact_at: string | null;
+  /**
+   * Origem real do anuncio (04/10/2026). Opcionais so para os testes que
+   * montam o contato na mao; o select traz sempre. A clinica do contato e a
+   * chave da leitura de meta_anuncio pelo painel (o mesmo anuncio pode estar
+   * no mapa de duas clinicas da mesma pessoa).
+   */
+  clinic_id?: string;
+  source_origin?: string | null;
+  source_medium?: string | null;
+  source_method?: string | null;
+  source_ad_id?: string | null;
 };
 
 /** Tipo da ultima mensagem visivel ao paciente (coluna last_preview_kind). */
@@ -153,7 +164,7 @@ export function estadoDoConsentimento(
 }
 
 const CONVERSATION_SELECT =
-  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, first_contact_at)";
+  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, clinic_id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, first_contact_at)";
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,

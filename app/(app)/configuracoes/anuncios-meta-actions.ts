@@ -233,15 +233,34 @@ async function testarEGravar(
   // A primeira leitura (ou a releitura com a configuracao nova). A origem
   // 'configuracao' passa pela pausa; a funcao recusa clinica de teste e
   // deduplica com o job que ja estiver na fila.
-  const { data: fila, error: erroDaFila } = await admin.rpc(
-    "enfileirar_sincronizacao_de_gasto_meta",
-    { p_clinic_id: guard.clinicId, p_origem: "configuracao" },
-  );
+  // Junto, a consulta por id dos anuncios dos contatos que ainda nao tem
+  // campanha e conjunto (resolver_anuncio_meta, origem 'teste', que ignora a
+  // pausa: o teste acabou de dar certo). A funcao nao cria job sem anuncio
+  // pendente. Melhor esforco: nao muda o resultado do teste.
+  const [
+    { data: fila, error: erroDaFila },
+    { error: erroDaConsulta },
+  ] = await Promise.all([
+    admin.rpc("enfileirar_sincronizacao_de_gasto_meta", {
+      p_clinic_id: guard.clinicId,
+      p_origem: "configuracao",
+    }),
+    admin.rpc("enfileirar_resolucao_de_anuncios_meta", {
+      p_clinic_id: guard.clinicId,
+      p_origem: "teste",
+    }),
+  ]);
   const codigo = (fila as { codigo?: unknown } | null)?.codigo;
   if (erroDaFila) {
     log.warn("leitura_meta_fila_falhou", {
       clinic_id: guard.clinicId,
       error_code: erroDaFila.code,
+    });
+  }
+  if (erroDaConsulta) {
+    log.warn("resolver_anuncio_meta_nao_pedido", {
+      clinic_id: guard.clinicId,
+      error_code: erroDaConsulta.code,
     });
   }
 

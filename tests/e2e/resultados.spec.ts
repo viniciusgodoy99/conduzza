@@ -534,3 +534,76 @@ test("recepção não vê nenhum R$ em Resultados nem no CSV, com o investimento
     await limparInvestimento(anterior);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Origem real do anuncio (frente E, 04/10/2026): o lead de anuncio aparece
+// em Leads com a origem escrita ("Tráfego pago, Meta (Instagram)") e com a
+// campanha e o conjunto tirados de meta_anuncio pelo id do anuncio, nunca de
+// source_campaign. Pelo papel leitura: todo membro ativo le o mapa (RLS) e a
+// origem e so leitura na tela. A origem e o conjunto entram pelo cliente de
+// servico, como a ingestao (frente D) e o resolvedor (frente C) gravam.
+// ---------------------------------------------------------------------------
+
+const CONJUNTO_E2E = "120000000000009911";
+
+test("lead de anúncio mostra Tráfego pago, a campanha e o conjunto da Meta na lista e no drawer", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const anterior = await lerEstadoMetaAnterior();
+  try {
+    await montarInvestimento();
+    const admin = adminClient();
+    const clinicId = dados().clinicId;
+    await admin
+      .from("meta_anuncio")
+      .update({ adset_id: CONJUNTO_E2E, adset_name: "Conjunto E2E Mulheres 30+" })
+      .eq("clinic_id", clinicId)
+      .eq("ad_id", ANUNCIO_COM_LEAD)
+      .throwOnError();
+    // So o primeiro dos dois ganha a origem real; o segundo fica so com o id
+    // do anuncio (contato anterior a ingestao nova) e mesmo assim mostra a
+    // campanha da Meta, que sai do mapa pelo id.
+    await admin
+      .from("contact")
+      .update({
+        source_channel: "trafego_pago",
+        source_origin: "Meta",
+        source_medium: "Instagram",
+        source_method: "anuncio_ctwa",
+        source_captured_at: new Date().toISOString(),
+      })
+      .eq("clinic_id", clinicId)
+      .eq("phone_e164", TELEFONES_DE_ANUNCIO[0]!)
+      .throwOnError();
+
+    await login(page, dados().emails.leitura);
+    await page.goto("/leads?visao=lista");
+
+    const comOrigem = page
+      .getByRole("row")
+      .filter({ hasText: "(84) 97000-0091" });
+    await expect(comOrigem).toContainText("Tráfego pago, Meta (Instagram)");
+    await expect(comOrigem).toContainText("Campanha E2E Implante");
+    await expect(comOrigem).not.toContainText("trafego_pago");
+
+    const soComAnuncio = page
+      .getByRole("row")
+      .filter({ hasText: "(84) 97000-0092" });
+    await expect(soComAnuncio).toContainText("Campanha E2E Implante");
+
+    await page
+      .getByRole("button", { name: "Abrir Sem nome, (84) 97000-0091" })
+      .click();
+    const drawer = page.getByRole("dialog");
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toContainText("Tráfego pago, Meta (Instagram)");
+    await expect(drawer).toContainText("Campanha E2E Implante");
+    await expect(drawer).toContainText("Conjunto E2E Mulheres 30+");
+    await expect(drawer).toContainText("Anúncio de clique para WhatsApp");
+    await expect(drawer).not.toContainText("trafego_pago");
+    await expect(drawer).not.toContainText("ainda não identificada");
+  } finally {
+    await limparInvestimento(anterior);
+  }
+});

@@ -15,6 +15,12 @@ import { fetchLead, leadsKeys, type LeadResumo } from "@/lib/queries/leads";
 // SEM assinatura de DELETE: o filtro de coluna nao vale para DELETE no
 // Supabase e vazaria evento entre clinicas. Contato nao some da lista por
 // tempo real; remocao fisica e caso raro e a proxima carga resolve.
+//
+// Anuncio da Meta (origem real do anuncio, 04/10/2026): a campanha e o
+// conjunto vem de meta_anuncio, que o payload do contact nao traz. Quando o
+// source_ad_id muda (primeiro clique de um contato que ja existia), a linha
+// e buscada de novo inteira, com a leitura do anuncio; nas outras mudancas a
+// leitura ja feita e preservada.
 
 type ContactRow = {
   id: string;
@@ -27,6 +33,11 @@ type ContactRow = {
   tags: string[] | null;
   source_channel: string | null;
   source_campaign: string | null;
+  // Opcionais: coluna fora do payload (privilegio de coluna) vira null.
+  source_origin?: string | null;
+  source_medium?: string | null;
+  source_method?: string | null;
+  source_ad_id?: string | null;
   first_contact_at: string;
   last_contact_at: string | null;
 };
@@ -43,13 +54,25 @@ export function useLeadsChannel(
     const reordenar = (lista: LeadResumo[]): LeadResumo[] =>
       [...lista].sort(compararPorProximaAcao);
 
+    const substituir = (completo: LeadResumo) => {
+      queryClient.setQueryData<LeadResumo[]>(chave, (atual) =>
+        atual
+          ? reordenar([
+              ...atual.filter((lead) => lead.id !== completo.id),
+              completo,
+            ])
+          : atual,
+      );
+    };
+
     const mesclar = async (row: ContactRow) => {
       const dados = queryClient.getQueryData<LeadResumo[]>(chave);
       if (!dados) {
         return;
       }
       const existente = dados.find((lead) => lead.id === row.id);
-      if (existente) {
+      const adIdNovo = row.source_ad_id ?? null;
+      if (existente && existente.source_ad_id === adIdNovo) {
         // Caso comum: mescla as colunas mutaveis preservando o convenio e o
         // consentimento embutidos (o payload do contact nao os traz).
         const atualizado: LeadResumo = {
@@ -63,35 +86,30 @@ export function useLeadsChannel(
           tags: row.tags ?? [],
           source_channel: row.source_channel,
           source_campaign: row.source_campaign,
+          source_origin: row.source_origin ?? null,
+          source_medium: row.source_medium ?? null,
+          source_method: row.source_method ?? null,
           last_contact_at: row.last_contact_at,
         };
-        queryClient.setQueryData<LeadResumo[]>(chave, (atual) =>
-          atual
-            ? reordenar([
-                ...atual.filter((lead) => lead.id !== row.id),
-                atualizado,
-              ])
-            : atual,
-        );
+        substituir(atualizado);
         // Drawer aberto acompanha a mudanca.
         void queryClient.invalidateQueries({
           queryKey: leadsKeys.detalhe(row.id),
         });
         return;
       }
-      // Linha nova: o payload nao traz os embeds; busca SO ela.
-      const completo = await fetchLead(supabase, row.id);
+      // Linha nova (o payload nao traz os embeds) ou anuncio novo (a
+      // campanha precisa ser lida de novo): busca SO ela.
+      const completo = await fetchLead(supabase, clinicId, row.id);
       if (completo) {
-        queryClient.setQueryData<LeadResumo[]>(chave, (atual) =>
-          atual
-            ? reordenar([
-                ...atual.filter((lead) => lead.id !== row.id),
-                completo,
-              ])
-            : atual,
-        );
+        substituir(completo);
       } else {
         void queryClient.invalidateQueries({ queryKey: chave });
+      }
+      if (existente) {
+        void queryClient.invalidateQueries({
+          queryKey: leadsKeys.detalhe(row.id),
+        });
       }
     };
 

@@ -41,6 +41,15 @@ import { log } from "@/lib/log";
 // dele roda no seu proprio grupo, fora do agruparPorRaia. Nao disputa slot de
 // envio (nao envia mensagem), entao rodar em paralelo com a raia da clinica
 // e seguro.
+//
+// A CONSULTA DOS ANUNCIOS DA META VAI NO MESMO TRILHO (origem real do lead de
+// anuncio, 04/10/2026). O resolver_anuncio_meta pergunta a Meta a campanha e
+// o conjunto de cada anuncio pelo id, com prazo de 15 s: e outra leitura da
+// mesma conta, com o mesmo token, e pelo mesmo motivo nao pode ficar em serie
+// com a integracao da clinica. Divide o claim do gasto (2 raias, um job por
+// clinica por passagem: o gasto e a consulta da mesma clinica se alternam) e
+// tambem roda num grupo so dele. As duas funcoes de gravacao se serializam no
+// banco pela linha de meta_gasto_leitura da clinica.
 
 /** Tipos que disputam o slot de envio do numero. */
 const KINDS_DE_ENVIO = ["enviar_mensagem_ativa", "executar_passo_de_regua"];
@@ -49,8 +58,9 @@ const KINDS_DE_MIDIA = ["baixar_midia"];
 /** Integracoes externas (Meta CAPI): nao disputam o slot anti-ban nem
  * atrasam confirmacao de consulta. */
 const KINDS_DE_INTEGRACAO = ["enviar_conversao_meta", "oferecer_lista_espera"];
-/** Leitura do investimento da Meta: claim proprio e grupo proprio (L1). */
-const KINDS_DE_GASTO = ["sincronizar_gasto_meta"];
+/** Leituras da Meta (investimento e consulta de anuncio por id): claim
+ * proprio e grupo proprio (L1). */
+const KINDS_DE_GASTO = ["sincronizar_gasto_meta", "resolver_anuncio_meta"];
 
 /**
  * Quanto tempo um job do tipo pode consumir, no pior caso analitico.
@@ -71,6 +81,9 @@ const CUSTO_ESTIMADO_MS: Record<string, number> = {
   // 35 s de prazo da leitura na Meta (PRAZO_DA_LEITURA_MS) + as RPCs de
   // configuracao e de regravacao.
   sincronizar_gasto_meta: 40_000,
+  // 15 s de prazo da consulta na Meta (RESOLVER_PRAZO_MS) + as leituras de
+  // configuracao, as duas listas e a gravacao.
+  resolver_anuncio_meta: 20_000,
 };
 const CUSTO_PADRAO_MS = 25_000;
 
@@ -88,9 +101,10 @@ const CUSTO_PADRAO_MS = 25_000;
  * ate 45 s; senao volta para a fila sem queimar tentativa. Sobram 15 s para
  * as RPCs de fechamento e a batida de ponto. Subir as raias de 4 para 8 so
  * aumenta o paralelismo: ate 8 envios, 2 midias, 2 integracoes e 2 leituras
- * de gasto da Meta ao mesmo tempo numa invocacao. A leitura de gasto (40 s
- * estimados) roda sempre sozinha no seu grupo, entao comeca perto de 0 s e
- * cabe; se as RPCs de claim travarem mais de 5 s, ela volta para a fila.
+ * da Meta (gasto ou consulta de anuncio) ao mesmo tempo numa invocacao. A
+ * leitura de gasto (40 s estimados) e a consulta de anuncio (20 s) rodam
+ * sempre sozinhas no seu grupo, entao comecam perto de 0 s e cabem; se as
+ * RPCs de claim travarem mais de 5 s, a leitura de gasto volta para a fila.
  */
 const ORCAMENTO_MS = 45_000;
 
@@ -130,9 +144,9 @@ export type ResultadoDaPassagem = {
 /**
  * Os grupos que rodam em paralelo numa passagem. Envio, midia e integracao
  * se agrupam por raia (numero, ou clinica para job sem numero) e correm em
- * serie dentro dela. Cada leitura de gasto da Meta e um grupo so dela (L1):
- * nunca fica em serie com a integracao ou o envio sem numero da mesma
- * clinica.
+ * serie dentro dela. Cada leitura da Meta (gasto ou consulta de anuncio) e
+ * um grupo so dela (L1): nunca fica em serie com a integracao ou o envio sem
+ * numero da mesma clinica.
  */
 export function montarGruposDaPassagem(lotes: {
   envios: Job[];

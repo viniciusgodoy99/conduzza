@@ -1,7 +1,11 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { ingerirMensagemRecebida } from "@/lib/integrations/whatsapp/ingest";
-import type { InboundEvent } from "@/lib/integrations/whatsapp/inbound";
+import type {
+  AnuncioDeOrigem,
+  InboundEvent,
+} from "@/lib/integrations/whatsapp/inbound";
 import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
@@ -647,6 +651,9 @@ describe("captura do ctwa_clid na ingestão", () => {
         adsetId: "238500000000000001",
         campaignId: "6720000000000001",
         sourceUrl: "https://fb.me/abc",
+        plataforma: null,
+        tipo: null,
+        chavesVistas: { anuncio: [], contexto: [] },
       },
     };
     const { data, error } = await ingerirMensagemRecebida(
@@ -678,6 +685,9 @@ describe("captura do ctwa_clid na ingestão", () => {
         adsetId: null,
         campaignId: null,
         sourceUrl: null,
+        plataforma: null,
+        tipo: null,
+        chavesVistas: { anuncio: [], contexto: [] },
       },
     };
     await ingerirMensagemRecebida(admin, clinicId, null, segundo);
@@ -706,5 +716,307 @@ describe("captura do ctwa_clid na ingestão", () => {
       .single();
     expect(contato!.ctwa_clid).toBeNull();
     expect(contato!.source_ad_id).toBeNull();
+  });
+});
+
+// Origem real do lead de anuncio (D3, 04/10/2026, frente D). O anuncio
+// Click-to-WhatsApp grava canal trafego_pago, origem Meta, meio = plataforma
+// (Facebook, Instagram ou nulo) e metodo anuncio_ctwa, NUNCA source_campaign
+// (campanha e conjunto vem de meta_anuncio pelo source_ad_id). A origem e
+// imutavel, entao cada caso confere tambem o que NAO pode mudar. Depende da
+// migration 20261004100000 aplicada.
+describe("origem real do anúncio na ingestão", () => {
+  const ANUNCIO_A = "120240624148610289";
+  const ANUNCIO_B = "120240624148619999";
+
+  function anuncio(parcial: Partial<AnuncioDeOrigem> = {}): AnuncioDeOrigem {
+    return {
+      ctwaClid: `Af-CLIQUE-A-${sufixo}`,
+      adId: ANUNCIO_A,
+      adsetId: null,
+      campaignId: null,
+      sourceUrl: "https://fb.me/abcXYZ",
+      plataforma: null,
+      tipo: "ad",
+      chavesVistas: {
+        anuncio: ["ctwaClid", "sourceApp", "sourceID", "sourceType"],
+        contexto: ["entryPointConversionApp", "externalAdReply"],
+      },
+      ...parcial,
+    };
+  }
+
+  function mensagemDeAnuncio(
+    telefone: string,
+    waMessageId: string,
+    corpo: string,
+    comAnuncio: AnuncioDeOrigem,
+  ): MensagemRecebida {
+    return { ...evento(telefone, waMessageId, corpo), anuncio: comAnuncio };
+  }
+
+  async function origemCompletaDe(contactId: string) {
+    const { data } = await admin
+      .from("contact")
+      .select(
+        "ctwa_clid, source_ad_id, source_channel, source_origin, source_medium, source_campaign, source_method, source_captured_at",
+      )
+      .eq("id", contactId)
+      .single()
+      .throwOnError();
+    return data!;
+  }
+
+  /** O cliente admin de verdade, anotando o nome de cada RPC chamada. */
+  function adminQueAnotaRpcs(rpcs: string[]): SupabaseClient {
+    const cliente = {
+      from: (tabela: string) => admin.from(tabela),
+      rpc: (nome: string, args?: Record<string, unknown>) => {
+        rpcs.push(nome);
+        return admin.rpc(nome, args);
+      },
+    };
+    return cliente as unknown as SupabaseClient;
+  }
+
+  it("anúncio novo recebe canal, origem, plataforma e método, com source_campaign nulo", async () => {
+    const clinicId = await criarClinica("adnovo");
+    const { data, error } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      mensagemDeAnuncio(
+        "+5584978880001",
+        `orig-1-${sufixo}`,
+        "Olá! Quero saber mais",
+        anuncio({ plataforma: "Instagram" }),
+      ),
+    );
+    expect(error).toBeNull();
+    expect(data?.contact_created).toBe(true);
+
+    const origem = await origemCompletaDe(data!.contact_id!);
+    expect(origem).toMatchObject({
+      ctwa_clid: `Af-CLIQUE-A-${sufixo}`,
+      source_ad_id: ANUNCIO_A,
+      source_channel: "trafego_pago",
+      source_origin: "Meta",
+      source_medium: "Instagram",
+      source_method: "anuncio_ctwa",
+      source_campaign: null,
+    });
+    expect(origem.source_captured_at).not.toBeNull();
+  });
+
+  it("sem plataforma informada, o meio fica nulo", async () => {
+    const clinicId = await criarClinica("adsemplat");
+    const { data } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      mensagemDeAnuncio(
+        "+5584978880002",
+        `orig-2-${sufixo}`,
+        "oi",
+        anuncio({ plataforma: null }),
+      ),
+    );
+    const origem = await origemCompletaDe(data!.contact_id!);
+    expect(origem).toMatchObject({
+      source_channel: "trafego_pago",
+      source_origin: "Meta",
+      source_medium: null,
+      source_method: "anuncio_ctwa",
+      source_campaign: null,
+    });
+  });
+
+  it("um segundo anúncio não muda a origem nem os ids", async () => {
+    const clinicId = await criarClinica("adsegundo");
+    const telefone = "+5584978880003";
+    const primeira = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      mensagemDeAnuncio(
+        telefone,
+        `orig-3a-${sufixo}`,
+        "primeiro",
+        anuncio({ plataforma: "Instagram" }),
+      ),
+    );
+    const contatoId = primeira.data!.contact_id!;
+    const antes = await origemCompletaDe(contatoId);
+
+    const segunda = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      mensagemDeAnuncio(
+        telefone,
+        `orig-3b-${sufixo}`,
+        "segundo",
+        anuncio({
+          ctwaClid: `Af-CLIQUE-B-${sufixo}`,
+          adId: ANUNCIO_B,
+          plataforma: "Facebook",
+        }),
+      ),
+    );
+    expect(segunda.error).toBeNull();
+    expect(segunda.data?.contact_id).toBe(contatoId);
+
+    expect(await origemCompletaDe(contatoId)).toEqual(antes);
+  });
+
+  it("origem manual se mantém e os ids do anúncio continuam sendo gravados", async () => {
+    const clinicId = await criarClinica("admanual");
+    const telefone = "+5584978880004";
+    const capturadaEm = "2026-09-01T10:00:00+00:00";
+    const contatoId = await criarContato(clinicId, telefone, {
+      source_channel: "indicacao",
+      source_method: "manual",
+      source_captured_at: capturadaEm,
+    });
+
+    const { error } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      mensagemDeAnuncio(
+        telefone,
+        `orig-4-${sufixo}`,
+        "vi o anúncio",
+        anuncio({ plataforma: "Facebook" }),
+      ),
+    );
+    expect(error).toBeNull();
+
+    const origem = await origemCompletaDe(contatoId);
+    expect(origem).toMatchObject({
+      ctwa_clid: `Af-CLIQUE-A-${sufixo}`,
+      source_ad_id: ANUNCIO_A,
+      source_channel: "indicacao",
+      source_method: "manual",
+      source_origin: null,
+      source_medium: null,
+      source_campaign: null,
+    });
+    expect(Date.parse(origem.source_captured_at as string)).toBe(
+      Date.parse(capturadaEm),
+    );
+  });
+
+  it("contato antigo sem origem ganha a origem do anúncio", async () => {
+    const clinicId = await criarClinica("adantigo");
+    const telefone = "+5584978880005";
+    const contatoId = await criarContato(clinicId, telefone);
+
+    const { data } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      mensagemDeAnuncio(telefone, `orig-5-${sufixo}`, "oi", anuncio()),
+    );
+    expect(data?.contact_created).toBe(false);
+    expect(await origemCompletaDe(contatoId)).toMatchObject({
+      source_channel: "trafego_pago",
+      source_origin: "Meta",
+      source_method: "anuncio_ctwa",
+      source_campaign: null,
+    });
+  });
+
+  it("anúncio e código de campanha na mesma mensagem: vence o anúncio", async () => {
+    const clinicId = await criarClinica("adcodigo");
+    await admin
+      .from("campaign_link")
+      .insert({
+        clinic_id: clinicId,
+        name: "Botox Outubro",
+        token: "K4M7Q2",
+        channel: "redes_sociais",
+        campaign: "Botox Outubro",
+      })
+      .throwOnError();
+
+    const { data, error } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      mensagemDeAnuncio(
+        "+5584978880006",
+        `orig-6-${sufixo}`,
+        "Quero agendar [#K4M7Q2]",
+        anuncio({ plataforma: "Instagram" }),
+      ),
+    );
+    expect(error).toBeNull();
+    expect(await origemCompletaDe(data!.contact_id!)).toMatchObject({
+      source_channel: "trafego_pago",
+      source_origin: "Meta",
+      source_medium: "Instagram",
+      source_method: "anuncio_ctwa",
+      source_campaign: null,
+    });
+  });
+
+  it("post não vira Tráfego pago e não grava id nenhum", async () => {
+    const clinicId = await criarClinica("adpost");
+    const { data, error } = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      mensagemDeAnuncio(
+        "+5584978880007",
+        `orig-7-${sufixo}`,
+        "vi a publicação",
+        anuncio({ tipo: "post", adId: "1789000000000001" }),
+      ),
+    );
+    expect(error).toBeNull();
+    expect(await origemCompletaDe(data!.contact_id!)).toMatchObject({
+      ctwa_clid: null,
+      source_ad_id: null,
+      source_channel: null,
+      source_origin: null,
+      source_method: null,
+    });
+  });
+
+  it("só o primeiro clique pede a campanha à Meta, e sem conta configurada nenhum job nasce", async () => {
+    const clinicId = await criarClinica("adfila");
+    const telefone = "+5584978880008";
+    const rpcs: string[] = [];
+    const cliente = adminQueAnotaRpcs(rpcs);
+
+    await ingerirMensagemRecebida(
+      cliente,
+      clinicId,
+      null,
+      mensagemDeAnuncio(telefone, `orig-8a-${sufixo}`, "oi", anuncio()),
+    );
+    await ingerirMensagemRecebida(
+      cliente,
+      clinicId,
+      null,
+      mensagemDeAnuncio(
+        telefone,
+        `orig-8b-${sufixo}`,
+        "de novo",
+        anuncio({ ctwaClid: `Af-CLIQUE-B-${sufixo}`, adId: ANUNCIO_B }),
+      ),
+    );
+
+    expect(
+      rpcs.filter((nome) => nome === "enfileirar_resolucao_de_anuncios_meta"),
+    ).toHaveLength(1);
+    const { data: jobs } = await admin
+      .from("job_queue")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("kind", "resolver_anuncio_meta")
+      .throwOnError();
+    expect(jobs).toEqual([]);
   });
 });

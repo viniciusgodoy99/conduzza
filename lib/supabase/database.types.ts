@@ -1987,36 +1987,95 @@ export type Database = {
         Row: {
           ad_account_id: string
           ad_id: string
+          ad_name: string | null
           adset_id: string | null
+          adset_name: string | null
           atualizado_em: string
           campaign_id: string
           campaign_name: string | null
           clinic_id: string
-          ultimo_dia_com_entrega: string
+          consultado_em: string | null
+          origem: string
+          ultimo_dia_com_entrega: string | null
         }
         Insert: {
           ad_account_id: string
           ad_id: string
+          ad_name?: string | null
           adset_id?: string | null
+          adset_name?: string | null
           atualizado_em?: string
           campaign_id: string
           campaign_name?: string | null
           clinic_id: string
-          ultimo_dia_com_entrega: string
+          consultado_em?: string | null
+          origem?: string
+          ultimo_dia_com_entrega?: string | null
         }
         Update: {
           ad_account_id?: string
           ad_id?: string
+          ad_name?: string | null
           adset_id?: string | null
+          adset_name?: string | null
           atualizado_em?: string
           campaign_id?: string
           campaign_name?: string | null
           clinic_id?: string
-          ultimo_dia_com_entrega?: string
+          consultado_em?: string | null
+          origem?: string
+          ultimo_dia_com_entrega?: string | null
         }
         Relationships: [
           {
             foreignKeyName: "meta_anuncio_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_anuncio_recusado: {
+        Row: {
+          ad_account_id: string
+          ad_id: string
+          clinic_id: string
+          codigo_da_meta: number | null
+          motivo: string
+          primeira_recusa_em: string
+          recusado_em: string
+          tentar_de_novo_em: string | null
+          tentativas: number
+          token_sha256: string
+        }
+        Insert: {
+          ad_account_id: string
+          ad_id: string
+          clinic_id: string
+          codigo_da_meta?: number | null
+          motivo: string
+          primeira_recusa_em?: string
+          recusado_em?: string
+          tentar_de_novo_em?: string | null
+          tentativas?: number
+          token_sha256: string
+        }
+        Update: {
+          ad_account_id?: string
+          ad_id?: string
+          clinic_id?: string
+          codigo_da_meta?: number | null
+          motivo?: string
+          primeira_recusa_em?: string
+          recusado_em?: string
+          tentar_de_novo_em?: string | null
+          tentativas?: number
+          token_sha256?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_anuncio_recusado_clinic_id_fkey"
             columns: ["clinic_id"]
             isOneToOne: false
             referencedRelation: "clinic"
@@ -3701,6 +3760,16 @@ export type Database = {
             }
             Returns: undefined
           }
+      anuncios_meta_a_resolver: {
+        Args: {
+          p_ad_account_id: string
+          p_agora?: string
+          p_clinic_id: string
+          p_limite?: number
+          p_token_sha256: string
+        }
+        Returns: Json
+      }
       atendimento_do_periodo: {
         Args: {
           p_ate: string
@@ -3916,6 +3985,15 @@ export type Database = {
         }
         Returns: number
       }
+      enfileirar_resolucao_de_anuncios_meta: {
+        Args: {
+          p_clinic_id: string
+          p_incluir_teste?: boolean
+          p_origem: string
+          p_run_at?: string
+        }
+        Returns: Json
+      }
       enfileirar_sincronizacao_de_gasto_meta: {
         Args: {
           p_agora?: string
@@ -3997,6 +4075,18 @@ export type Database = {
           p_clinic_id: string
           p_contact_id: string
           p_whatsapp_account_id?: string
+        }
+        Returns: string
+      }
+      gravar_resolucao_de_anuncios_meta: {
+        Args: {
+          p_ad_account_id: string
+          p_clinic_id: string
+          p_job_id: string
+          p_recusas: Json
+          p_resolvidos: Json
+          p_token_sha256: string
+          p_worker: string
         }
         Returns: string
       }
