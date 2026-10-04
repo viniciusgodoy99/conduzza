@@ -587,7 +587,9 @@ describe("casar_clique_do_site", () => {
     const agora = Date.now();
     await cliqueAntigo(clinicaA, {
       codigo: cod,
-      criado_em: new Date(agora - 8 * DIA).toISOString(),
+      // Validade maxima e 7 dias (check clique_do_site_validade): criado ha
+      // 7 dias, venceu ha 1 minuto.
+      criado_em: new Date(agora - 7 * DIA).toISOString(),
       valido_ate: new Date(agora - 60_000).toISOString(),
       gclid: "g-exp",
     });
