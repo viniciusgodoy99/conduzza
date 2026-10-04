@@ -294,7 +294,7 @@ Pedido do dono em 04/10/2026: "tire realmente da Meta ou do Google; no uazapi el
 
 **Registro nos docs:** 01 (10.1, 10.12 e 11.14), 02 (Telas 1, 4, 9, 11 e 12), 03 (árvore e seção 12), 04 (seções 3, 7, 9, 14.1, 14.3, 14.4, 14.5, 14.7 e a 14.9 nova), `06_resultados_atribuicao_e_retorno_meta.md` (resumo, 3.1, R0, R7, R8 novo e D4), `07_r0_captura_ctwa_uazapi.md` (resultado em produção) e o runbook `supabase/operacao/motor-por-cron.md` (feito pela frente do job).
 
-### [ ] Origem e campanha do Google Ads `G` (pedido do dono em 04/10/2026; F1 construída, migration não aplicada e nada publicado; F2 e F3 pendentes de decisão do dono)
+### [ ] Origem e campanha do Google Ads `G` (pedido do dono em 04/10/2026; F1 publicada em 04/10, migration 20261005100000 aplicada; F2 e F3 adiadas pelo dono em 04/10: "fica para depois")
 A parte "Google" do pedido de 04/10/2026 ("tire realmente da Meta ou do Google"), respondida pelo dono no mesmo dia. É a resposta à D4 do `docs/06_resultados_atribuicao_e_retorno_meta.md` ("Google Ads também, ou só Meta?", aberta desde 08/09): sim, origem e campanha também do Google, e o gasto no custo por lead separado por plataforma; a devolução de conversão por gclid continua sem resposta e depende da D6 (LGPD). Levantamento e crítica de 04/10/2026, só leitura (com SELECT na produção).
 
 **Respostas do dono em 04/10/2026** (o pedido do dia, ligado pela crítica às quatro perguntas que esta entrada tinha):
