@@ -541,6 +541,9 @@ describe("campanhas_do_periodo com a linha da consulta por id", () => {
           ultimo_dia_com_entrega: null,
           origem: "consulta",
           consultado_em: agora,
+          // Insert de varias linhas: coluna ausente em uma delas vira null
+          // (nao o default) no PostgREST.
+          atualizado_em: agora,
         },
       ])
       .throwOnError();
