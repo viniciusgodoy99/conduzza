@@ -16,6 +16,12 @@ export const config = {
     // matcher, o middleware devolveria um redirecionamento para /login, e uma
     // tag <img> ou <audio> recebendo HTML de login simplesmente quebra, sem
     // nenhum erro que alguem consiga diagnosticar olhando a tela.
-    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/atendimento/midia|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    //
+    // api/publico/ e rastreio/ (F1 do Google) ficam fora porque quem chama e
+    // o VISITANTE do site da clinica, sem sessao nenhuma: o script
+    // rastreio/v1.js e o aviso do clique em api/publico/clique. Dentro do
+    // matcher, os dois virariam um redirecionamento para /login e o rastreio
+    // pararia calado.
+    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/atendimento/midia|api/publico/|rastreio/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

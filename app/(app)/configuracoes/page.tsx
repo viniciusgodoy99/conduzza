@@ -110,9 +110,10 @@ async function convidadosQueAindaNaoEntraram(
 // vinculo do profissional com a agenda, convite, codigo da clinica e a tabela
 // do que cada papel faz), dados da clinica (nome e fuso), os numeros de
 // WhatsApp (um cartao por numero; docs/07, Telas), jornada, automacoes de
-// fluxo, etiquetas, mensagens padrao e anuncios da Meta. Administrador e gestor editam (nome e
-// fuso so o administrador); os demais papeis nem chegam aqui (o layout
-// redireciona pela matriz do brief).
+// fluxo, etiquetas, mensagens padrao e anuncios da Meta e do Google (rastreio
+// do site). Administrador e gestor editam (nome e fuso so o administrador);
+// os demais papeis nem chegam aqui (o layout redireciona pela matriz do
+// brief).
 export default async function ConfiguracoesPage({
   searchParams,
 }: {
@@ -141,6 +142,8 @@ export default async function ConfiguracoesPage({
     unidadesResult,
     politicaDoEnvioResult,
     limiteDeNumerosResult,
+    rastreioResult,
+    situacaoDoRastreioResult,
   ] = await Promise.all([
     supabase
       .from("clinic_member")
@@ -218,6 +221,18 @@ export default async function ConfiguracoesPage({
       .select("limite_de_numeros")
       .eq("id", active.clinicId)
       .maybeSingle(),
+    // Rastreio do site (aba Anuncios do Google, F1): a policy so mostra a
+    // linha para admin e gestor. A chave e publica (vai no HTML do site da
+    // clinica); o gclid e os cliques ficam em clique_do_site, que a sessao
+    // nem alcanca.
+    supabase
+      .from("rastreio_do_site")
+      .select("chave, ativo, chave_trocada_em, ultimo_clique_em")
+      .eq("clinic_id", active.clinicId)
+      .maybeSingle(),
+    // Os totais do rastreio (so agregados: nunca a chave, o gclid ou o
+    // contato). A funcao confere admin ou gestor ativo.
+    supabase.rpc("situacao_do_rastreio", { p_clinic_id: active.clinicId }),
   ]);
 
   type MemberRow = {
@@ -464,6 +479,26 @@ export default async function ConfiguracoesPage({
                   (leituraMetaResult.data ?? null) as LinhaDaLeitura | null,
                 ),
                 timezone: active.timezone,
+                agoraMs: Date.now(),
+              }
+        }
+        google={
+          rastreioResult.error
+            ? null
+            : {
+                linha: rastreioResult.data ?? null,
+                // Falha dos totais nao derruba a aba: o cartao diz que a
+                // situacao nao carregou e o resto continua funcionando.
+                situacao: situacaoDoRastreioResult.error
+                  ? null
+                  : situacaoDoRastreioResult.data,
+                // O endereco publico do sistema (o mesmo do webhook do
+                // WhatsApp). O cartao so monta a linha com https (http so
+                // em localhost, para desenvolvimento).
+                enderecoDoSistema: process.env.PUBLIC_APP_URL ?? null,
+                timezone: active.timezone,
+                // A hora de referencia do chip ("Recebendo cliques" so com
+                // clique nos ultimos 7 dias), do servidor como a da Meta.
                 agoraMs: Date.now(),
               }
         }

@@ -6,6 +6,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AutomacoesDeFluxoTab } from "@/components/configuracoes/automacoes-de-fluxo-tab";
 import { ClinicaTab } from "@/components/configuracoes/clinica-tab";
 import { EtiquetasTab } from "@/components/configuracoes/etiquetas-tab";
+import {
+  GoogleAdsTab,
+  type DadosDoRastreio,
+} from "@/components/configuracoes/google-ads-tab";
 import { JornadaTab } from "@/components/configuracoes/jornada-tab";
 import { ListaEquipe } from "@/components/configuracoes/lista-equipe";
 import { MensagensPadraoTab } from "@/components/configuracoes/mensagens-padrao-tab";
@@ -51,7 +55,7 @@ import { InviteForm } from "./invite-form";
 // do navegador funcionar, mesmo padrao de Cadastros. "?aba=conversoes" segue
 // valendo como link antigo: cai na jornada, que absorveu aquela aba.
 //
-// Abas sublinhadas do design system (8 vistas), com contadores. Na equipe, o
+// Abas sublinhadas do design system (9 vistas), com contadores. Na equipe, o
 // segundo contador e o de pedidos aguardando liberacao (ampulheta, tom de
 // atencao e o texto por extenso para leitor de tela). Cada aba mostra o
 // proprio erro de carregamento em vez de derrubar a tela inteira.
@@ -67,6 +71,9 @@ const ABAS = [
   ["etiquetas", "Etiquetas de conversa"],
   ["mensagens", "Mensagens padrão"],
   ["meta", "Anúncios da Meta"],
+  // Anuncios do Google (F1, 04/10/2026): o rastreio do site e, em breve, a
+  // conexao com o Google Ads. Logo depois da Meta.
+  ["google", "Anúncios do Google"],
 ] as const;
 
 type AbaKey = (typeof ABAS)[number][0];
@@ -115,6 +122,7 @@ export function ConfiguracoesClient({
   etiquetas,
   mensagens,
   meta,
+  google,
 }: {
   abaInicial?: string;
   /** nulo: a leitura da equipe falhou */
@@ -172,6 +180,12 @@ export function ConfiguracoesClient({
     timezone: string;
     agoraMs: number;
   } | null;
+  /**
+   * A aba Anuncios do Google: a linha do rastreio do site (com a chave, que
+   * e publica), a resposta crua dos totais e o endereco do sistema. Nulo: a
+   * leitura do rastreio falhou.
+   */
+  google: DadosDoRastreio | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -427,6 +441,24 @@ export function ConfiguracoesClient({
           />
         ) : (
           <ErroDaAba titulo="Não foi possível carregar a conta de anúncios" />
+        )}
+      </TabsContent>
+
+      <TabsContent value="google" className="grid gap-4">
+        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
+          Quando o anúncio do Google leva ao site da clínica, o rastreio do site
+          marca o clique no botão do WhatsApp, e o lead chega com a origem e a
+          campanha do Google, sem cadastro manual. O investimento em cada
+          campanha chega com a conexão com o Google, em breve.
+        </p>
+        {google ? (
+          <GoogleAdsTab
+            rastreio={google}
+            podeGerenciar={podeGerenciar}
+            dica={dica}
+          />
+        ) : (
+          <ErroDaAba titulo="Não foi possível carregar o rastreio do site" />
         )}
       </TabsContent>
     </Tabs>

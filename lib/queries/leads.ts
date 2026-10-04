@@ -46,6 +46,12 @@ export type LeadResumo = {
   source_method: string | null;
   /** Id do anuncio da Meta gravado pela ingestao; chave de meta_anuncio. */
   source_ad_id: string | null;
+  /**
+   * Id da campanha do Google Ads do clique rastreado pelo site (metodo
+   * clique_site, migration 20261005100000): "Campanha do Google {id}".
+   * Obrigatorio de proposito: consulta que esquecer a coluna nao compila.
+   */
+  source_google_campaign_id: string | null;
   first_contact_at: string;
   last_contact_at: string | null;
   insurance: { id: string; name: string } | null;
@@ -222,8 +228,10 @@ async function anexarAnunciosDaMeta(
   });
 }
 
+// source_google_campaign_id so existe depois da migration 20261005100000:
+// ela e aplicada ANTES de publicar este codigo, senao a lista inteira falha.
 const LEAD_SELECT =
-  "id, name, phone_e164, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
+  "id, name, phone_e164, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
 
 // Sem tipos gerados, o supabase-js devolve embed como array: normaliza no
 // padrao de normalizarConsulta (lib/queries/agenda.ts) e ja deriva
@@ -252,6 +260,8 @@ function normalizarLead(row: Record<string, unknown>): LeadResumo {
     source_medium: (row.source_medium as string | null) ?? null,
     source_method: (row.source_method as string | null) ?? null,
     source_ad_id: (row.source_ad_id as string | null) ?? null,
+    source_google_campaign_id:
+      (row.source_google_campaign_id as string | null) ?? null,
     first_contact_at: row.first_contact_at as string,
     last_contact_at: (row.last_contact_at as string | null) ?? null,
     insurance: (insuranceBruto ?? null) as LeadResumo["insurance"],

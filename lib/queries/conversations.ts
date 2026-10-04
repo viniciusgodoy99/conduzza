@@ -26,6 +26,8 @@ export type ContactSummary = {
   source_medium?: string | null;
   source_method?: string | null;
   source_ad_id?: string | null;
+  /** Campanha do Google do clique no site (migration 20261005100000). */
+  source_google_campaign_id?: string | null;
 };
 
 /** Tipo da ultima mensagem visivel ao paciente (coluna last_preview_kind). */
@@ -164,7 +166,7 @@ export function estadoDoConsentimento(
 }
 
 const CONVERSATION_SELECT =
-  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, clinic_id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, first_contact_at)";
+  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, clinic_id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at)";
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,

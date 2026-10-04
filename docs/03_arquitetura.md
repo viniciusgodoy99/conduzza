@@ -43,7 +43,11 @@ app/
 ├── (onboarding)/whatsapp/        Tela 13
 ├── (admin)/                      Tela 14, visão do dono do produto
 └── api/
-    └── webhooks/whatsapp/        fallback, o principal é Edge Function
+    ├── webhooks/whatsapp/        fallback, o principal é Edge Function
+    └── publico/clique/           aviso do clique rastreado pelo site (F1 do Google, 04/10/2026), sem login
+
+public/
+└── rastreio/v1.js                a linha de script que a clínica cola no site (F1 do Google), estática
 
 components/
 ├── ui/                           shadcn, não editar à mão sem necessidade
@@ -56,7 +60,10 @@ lib/
 │   ├── whatsapp/                 Cloud API: envio, template, webhook, custo
 │   ├── meta/                     Graph da Meta: capi.ts (devolução de conversões), payload.ts,
 │   │                             insights.ts (leitura do investimento, Fase 4, e consulta do anúncio pelo id,
-│   │                             04/10/2026) e versao.ts (versão única da Graph)
+│   │                             04/10/2026) e versao.ts (versão única da Graph); login.ts (login da Meta,
+│   │                             04/10/2026, ainda sem uso: é da F3, Conectar com a Meta)
+│   ├── google/                   Google Ads (ads.ts, conta-de-servico.ts, oauth.ts, erros.ts, versao.ts),
+│   │                             04/10/2026, ainda sem uso: é da F2; a F1 (seção 13) não usa nada daqui
 │   ├── llm/                      agente, ferramentas, filtro de conformidade
 │   └── billing/                  gateway de pagamento
 ├── jobs/                         motor da fila (motor.ts, worker.ts) e executores (regua.ts, conversao-meta.ts,
@@ -65,7 +72,8 @@ lib/
 ├── domain/                       regras de negócio puras, sem I/O, testáveis
 │   ├── scheduling.ts             disponibilidade, hold, conflito
 │   ├── cadence.ts                cálculo de quando disparar cada passo de régua
-│   ├── attribution.ts            origem do lead
+│   ├── attribution.ts            origem do lead (inclui os códigos de clique do site, F1 do Google)
+│   ├── rastreio-do-site.ts       formatos, corpo do aviso, link com o código e a linha do script (F1 do Google)
 │   ├── meta-anuncios.ts          conta act_, problemas da leitura do investimento, dias lidos (Fase 4)
 │   └── custo-por-lead.ts         divisor, cobertura e textos do custo por lead (Fase 4)
 └── utils/                        formatadores pt-BR, datas, moeda
@@ -117,7 +125,7 @@ create policy "membro escreve na propria clinica" on contact
 
 RLS garante o isolamento entre clínicas. **Permissão por papel** (Admin, Gestor, Recepção, Profissional, Leitura) é uma segunda camada, aplicada em policy específica ou na Server Action. A matriz está na seção 5 do brief de telas.
 
-O Service Role Key ignora RLS. **Nunca em código que chegue ao browser.** Na prática ele roda no servidor: no motor da fila e nas Server Actions que gravam o que a sessão não pode gravar (por exemplo, os segredos da seção 10 e a situação da leitura do investimento da Meta), sempre **depois** da guarda de papel.
+O Service Role Key ignora RLS. **Nunca em código que chegue ao browser.** Na prática ele roda no servidor: no motor da fila, na ingestão do WhatsApp, na rota pública do clique do site (seção 13, que não tem sessão e só chama uma função de registro com o corpo validado) e nas Server Actions que gravam o que a sessão não pode gravar (por exemplo, os segredos da seção 10 e a situação da leitura do investimento da Meta), sempre **depois** da guarda de papel.
 
 ---
 
@@ -273,7 +281,7 @@ Log de aplicação **nunca** contém conteúdo de mensagem de paciente. Guardar 
 
 ## 12. Leitura do investimento da Meta (Fase 4 das métricas, 03/10/2026)
 
-Construída e publicada em 03/10/2026. Modelo no `docs/04` (seção 14), operação no `supabase/operacao/motor-por-cron.md` ("Leitura do investimento da Meta"). A consulta dos anúncios pelo id (04/10/2026, publicação pendente) está no fim desta seção.
+Construída e publicada em 03/10/2026. Modelo no `docs/04` (seção 14), operação no `supabase/operacao/motor-por-cron.md` ("Leitura do investimento da Meta"). A consulta dos anúncios pelo id (publicada em 04/10/2026) está no fim desta seção.
 
 ```
 manutenção (pg_cron, a cada minuto)       "Testar leitura" que deu certo      "Atualizar agora"
@@ -304,7 +312,7 @@ manutenção (pg_cron, a cada minuto)       "Testar leitura" que deu certo      
 
 ### Consulta dos anúncios pelo id (origem real do lead de anúncio, 04/10/2026)
 
-Construída, publicação pendente (migration `20261004100000` ainda não aplicada). Modelo no `docs/04` (seção 14.9), operação no `supabase/operacao/motor-por-cron.md` ("Consulta dos anúncios da Meta"), plano e pontos para o dono no backlog. O canal do WhatsApp entrega só o clique e o id do anúncio; a leitura diária acima não devolve anúncio arquivado nem apagado. Este caminho pergunta à Meta, pelo id, a campanha e o conjunto de cada anúncio de onde um lead veio, e grava no mesmo mapa `meta_anuncio`, que é a fonte única do nome da campanha do lead (o contato guarda só o `source_ad_id`).
+Construída e publicada em 04/10/2026 (migration `20261004100000` aplicada na produção, conferido em `supabase_migrations.schema_migrations`). Modelo no `docs/04` (seção 14.9), operação no `supabase/operacao/motor-por-cron.md` ("Consulta dos anúncios da Meta"), plano e pontos para o dono no backlog. O canal do WhatsApp entrega só o clique e o id do anúncio; a leitura diária acima não devolve anúncio arquivado nem apagado. Este caminho pergunta à Meta, pelo id, a campanha e o conjunto de cada anúncio de onde um lead veio, e grava no mesmo mapa `meta_anuncio`, que é a fonte única do nome da campanha do lead (o contato guarda só o `source_ad_id`).
 
 ```
 primeiro clique de um anúncio     fim do sincronizar_gasto_meta     "Testar leitura" que deu certo
@@ -334,3 +342,45 @@ primeiro clique de um anúncio     fim do sincronizar_gasto_meta     "Testar lei
 - **Novas tentativas** calculadas pelo banco (`sem_entrega_ainda` 1 h, 6 h, 24 h e depois diária até 7 dias; `resposta_invalida` 24 h; `inacessivel` e `outra_conta` só com outra conta ou outro token). O job só segue a `proxima_tentativa_em` devolvida. A volta é por `reagendar_job` (não queima tentativa, conta no teto de 20 devoluções); no teto o job falha, e o próximo pedido cria outro, porque o pendente vive nos contatos, não no job.
 - **Segredo:** o token fica no job e no cabeçalho `Authorization`; no banco vai só o sha256, com que as funções conferem se a configuração mudou no meio (`config_mudou`: nada é gravado). Log e `last_error` só com códigos e contagens: nem token, nem id ou nome de anúncio, nem mensagem da Meta.
 - **Ingestão** (`lib/integrations/whatsapp/ingest.ts`): a captura do anúncio roda antes da atribuição por texto. Grava os ids do clique (primeiro clique vence) e, num update separado, a origem de anúncio, só com canal, método e campanha vazios. No primeiro clique registra o diagnóstico `anuncio_recebido` (só nomes de chave) e pede a consulta.
+
+---
+
+## 13. Google: clique rastreado pelo site (F1 do Google, 04/10/2026)
+
+Construída em 04/10/2026; **migration `20261005100000_clique_do_site.sql` ainda não aplicada e nada publicado**. Pedido do dono no mesmo dia: o anúncio do Google leva ao **site** da clínica, e a origem e a campanha do lead vêm do Google, sem cadastro manual. Modelo no `docs/04` (seção 15), regra na spec (10.13 e 11.15), tela no brief (Tela 12, aba Anúncios do Google), plano e pendências no backlog (entrada "Origem e campanha do Google Ads").
+
+**Sem credencial nenhuma do Google e sem serviço externo:** nada desta seção fala com a API do Google, então nada vai para `lib/integrations/`. As bibliotecas de `lib/integrations/google/` (nome e gasto das campanhas) são da F2 e continuam sem uso.
+
+**Por que script com aviso, e não redirecionador** (o levantamento anterior propunha a rota `/r/[clinica]`, que gravava e redirecionava): o link do site continua indo direto ao `wa.me`. Se a Vercel ou o Supabase caírem, o paciente chega ao WhatsApp do mesmo jeito e só a atribuição se perde; não há redirecionamento aberto nem telefone na nossa URL; e nada nosso entra no anúncio (o Google reprova destino que redireciona para outro domínio, "Destination mismatch"). O endereço do Conduzza **nunca** é destino de anúncio: só o botão do site usa a linha.
+
+```
+anúncio do Google -> site da clínica (?gclid=... &gad_campaignid=... &cz_campanha=...)
+                         |
+        public/rastreio/v1.js (a linha que a clínica cola; estático, ES5, sem dependência)
+        só age com sinal do Google na URL ou no sessionStorage da aba
+                         |
+   toque no link do WhatsApp: " [#CODIGO]" no fim do text  ------>  wa.me (o paciente segue direto)
+                         |
+   aviso: sendBeacon (text/plain, sem preflight) ou fetch keepalive no-cors
+                         v
+   POST /api/publico/clique (sem login; fora do middleware)
+   corpo até 2 KB, UTF-8 estrito, Zod estrito; responde SEMPRE 204
+                         |
+   registrar_clique_do_site (service role)  ->  clique_do_site (só o sistema)
+                         .
+                         .  (o paciente envia a mensagem com o código)
+                         v
+   ingestão (ingest.ts): anúncio da Meta, código fixo, casar_clique_do_site, mensagem padrão, palavra-chave
+                         |
+   origem_gravada: Tráfego pago, Google, clique_site, ids da campanha e do grupo (gravados pela função)
+```
+
+- **Script `public/rastreio/v1.js`** (estático, servido pela CDN, não importa nada do app): lê `data-chave` do próprio `<script>` (20 caracteres hexadecimais; fora disso, não faz nada). Lê da URL `gclid`, `gbraid`, `wbraid`, `gad_source`, `gad_campaignid`, `cz_campanha` e `cz_grupo`, cada um validado sozinho com os formatos do banco (o inválido sai sem levar os outros). Os sinais ficam no `sessionStorage` com o item `conduzza_rastreio_v1_<chave>`, preso à chave (outra clínica na mesma origem não o lê), e valem nas páginas seguintes da aba. **Sem sinal, nenhum ouvinte e nenhum aviso.** Com sinal, ouve `click` e `auxclick` (só o botão do meio) na fase de captura, nos links `wa.me/<número>`, `api.whatsapp.com/send`, `web.whatsapp.com/send` e `whatsapp://send` (fora: `wa.me/message/...`, `wa.link` e grupos). O código tem 6 caracteres do alfabeto de `attribution.ts`, sorteados por `crypto.getRandomValues` sem viés, e entra como " [#CODIGO]" colado no valor bruto do `text` (o texto da clínica fica byte a byte como estava); sem texto, ou em branco, vai "Olá! [#CODIGO]" (texto provisório). Texto que já tem um código `#XXXXXX` (código fixo de `campaign_link`) ou está mal codificado não é tocado. O `href` original volta 1,5 s depois do clique. Nunca chama `preventDefault`, tudo roda em `try/catch` e o link segue intacto com `sessionStorage` bloqueado ou sem `crypto`. Não lê IP, user agent, caminho, `href` da página, cookie, referrer nem `localStorage`.
+- **A linha que a clínica cola** sai de `linhaDoScript(PUBLIC_APP_URL, chave)` (`lib/domain/rastreio-do-site.ts`): `<script src="https://<app>/rastreio/v1.js" data-chave="<chave>" referrerpolicy="no-referrer" async></script>`, só com https (http só para `localhost` e `127.0.0.1`). O `referrerpolicy` vale só para a carga do script; o aviso segue a política de referrer da página da clínica (ponto aberto para o dono no backlog). Como o endereço fica gravado no site de cada clínica, trocar o domínio do sistema obriga todas a recolar a linha.
+- **Rota `app/api/publico/clique/route.ts`** (POST e OPTIONS, `runtime = "nodejs"`, `force-dynamic`, `maxDuration = 5`): o `Content-Length` declarado acima de 2048 bytes corta antes de ler, e a leitura aos pedaços para no primeiro pedaço que estoura; o corpo precisa ser UTF-8 válido e passar por `corpoDoCliqueSchema` (campo a mais, formato errado ou nenhum sinal recusam). `argumentosDoRegistro` monta a chamada: `p_google_campaign_id` = `cz_campanha` ou, sem ele, `gad_campaignid`; `p_google_adgroup_id` = `cz_grupo`; `p_site_host` = só o host do cabeçalho `Origin` (nunca o caminho). Chama `registrar_clique_do_site` pela service role com prazo de 4 s. **Responde sempre 204**, com CORS `*` e `no-store`, para não revelar se a chave existe. Log só com `status` (lista fechada de resultados, ou `desconhecido`), `count` (quantos sinais vieram) e `error_code`: eventos `clique_do_site`, `clique_do_site_recusado` e `clique_do_site_falhou`. Nunca a chave, o gclid, o código, o IP, o user agent ou a página.
+- **Middleware:** o matcher de `middleware.ts` exclui `api/publico/` e `rastreio/`. Sem isso, o visitante do site, que não tem sessão, seria redirecionado para `/login` e o rastreio pararia calado. Rota pública nova vai em `/api/publico/`.
+- **Limite e teto no banco** (não existe limite de requisições na Vercel neste projeto): 30 cliques por minuto por clínica e até 2.000 cliques vivos (não casados e no prazo) por clínica, com despejo do que vence primeiro quando enche. Risco proposto como aceito (a confirmar pelo dono, backlog): a chave é pública e o desenho não guarda IP, então, durante um ataque com a chave, o limite por minuto é disputado com o atacante e um clique real pode ser despejado; a origem fica vazia (preenche-se depois), nunca errada, e a perda acaba quando o ataque para.
+- **Ingestão** (`lib/integrations/whatsapp/ingest.ts`, `tentarAtribuirOrigem`): depois do bloco do anúncio da Meta e da leitura de `campaign_link`, `codigosDoCliqueDoSite` (`attribution.ts`) escolhe até 3 códigos da mensagem, do último para o primeiro, e devolve vazio quando algum é código fixo de `campaign_link` (o código fixo vence em qualquer posição do texto). Para cada um, `admin.rpc('casar_clique_do_site')` até o primeiro `origem_gravada` ou `vinculado`. `origem_gravada` encerra; erro ou resposta fora do contrato também encerra, sem cair para mensagem padrão nem palavra-chave (na dúvida, a origem fica vazia); `vinculado`, `nao_achado` e `expirado` seguem para `atribuirOrigem`, que compara a mensagem padrão também com o texto sem o sufixo " [#CODIGO]" desses códigos. Se a leitura de `campaign_link` falhar, o clique não é tentado. A ingestão nunca grava `clique_site`, `Google` nem os ids do Google por conta própria: quem grava é a função. Logs: `clique_do_site_na_ingestao` (status e count), `clique_do_site_casar_falhou` (error_code) e `clique_do_site_resposta_inesperada`, só com ids, nunca o código nem o texto.
+- **Configurações** (`components/configuracoes/google-ads-tab.tsx` e `rastreio-do-site-card.tsx`; `app/(app)/configuracoes/rastreio-do-site-actions.ts`): tudo pela sessão. A página lê `rastreio_do_site` (a policy só mostra a linha para administrador e gestor) e a função `situacao_do_rastreio` (só totais). Ligar é `update` de `ativo` e, sem linha, `insert` só de `{clinic_id, ativo: true}`; um 23505 nesse insert refaz o update. **Nunca upsert**: o `ON CONFLICT` do PostgREST grava `clinic_id`, que não tem grant de update (42501). Gerar chave nova chama `trocar_chave_do_rastreio`. Trilha em `audit_log` (entity `rastreio_do_site`), sem a chave.
+- **Retenção:** a poda roda no `motor_manutencao` a cada minuto (`podar_cliques_do_site`): clique não casado sai 1 dia depois de vencer; o casado perde gclid, gbraid e wbraid 90 dias depois do clique, e a linha fica.
+- **Service role:** além do motor e das Server Actions (seção 3), a rota pública e a ingestão usam a service role para chamar as duas funções do clique, que não têm grant para `anon` nem `authenticated`.

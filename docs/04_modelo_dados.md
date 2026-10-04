@@ -224,15 +224,21 @@ create table contact (
   source_channel text, source_origin text, source_medium text, source_campaign text,
   source_captured_at timestamptz, source_method text,
   -- source_method: link_token | mensagem_padrao | palavra_chave | manual |
-  -- importacao | anuncio_ctwa (o último desde 20261004100000, ainda não
-  -- aplicada em 04/10/2026). Com anuncio_ctwa, o CHECK
-  -- contact_origem_de_anuncio_coerente exige canal trafego_pago, origem Meta,
-  -- meio Facebook, Instagram ou nulo e source_campaign NULO: a campanha e o
-  -- conjunto do lead de anúncio vêm de meta_anuncio por source_ad_id, nunca
-  -- de texto no contato (seção 14.9).
+  -- importacao | anuncio_ctwa (desde 20261004100000, aplicada em 04/10/2026)
+  -- | clique_site (desde 20261005100000, ainda não aplicada). Com
+  -- anuncio_ctwa, o CHECK contact_origem_de_anuncio_coerente exige canal
+  -- trafego_pago, origem Meta, meio Facebook, Instagram ou nulo e
+  -- source_campaign NULO: a campanha e o conjunto do lead de anúncio vêm de
+  -- meta_anuncio por source_ad_id, nunca de texto no contato (seção 14.9).
+  -- Com clique_site, o CHECK contact_origem_do_clique_do_site_coerente exige
+  -- canal trafego_pago, origem Google, meio e source_campaign NULOS (seção 15).
   -- ids do anúncio da Meta (08/09/2026; só a ingestão grava, o primeiro
   -- anúncio vence e a sessão não reescreve desde a Fase 4): seção 14
   ctwa_clid text, source_ad_id text, source_adset_id text, source_campaign_id text,
+  -- ids da campanha e do grupo de anúncios do Google (só dígitos), gravados
+  -- por casar_clique_do_site junto com a origem clique_site e só com ela
+  -- (20261005100000, ainda não aplicada): seção 15
+  source_google_campaign_id text, source_google_adgroup_id text,
   first_contact_at timestamptz not null default now(),
   last_contact_at timestamptz,
   inactive_since timestamptz,
@@ -894,6 +900,14 @@ create index procedure_insurance_insurance_id_idx on procedure_insurance (insura
 -- estão na seção 7.
 create index meta_gasto_diario_campanha_idx on meta_gasto_diario (clinic_id, campaign_id, dia);
 create index meta_anuncio_campanha_idx on meta_anuncio (clinic_id, campaign_id);
+-- Clique rastreado pelo site (F1 do Google, 04/10/2026, migration
+-- 20261005100000, ainda não aplicada), seção 15.4.
+create index clique_do_site_por_hora on clique_do_site (clinic_id, criado_em);
+create index clique_do_site_vivos on clique_do_site (clinic_id, valido_ate) where contact_id is null;
+create index clique_do_site_vencidos on clique_do_site (valido_ate) where contact_id is null;
+create index clique_do_site_ids_a_zerar on clique_do_site (criado_em)
+  where contact_id is not null and (gclid is not null or gbraid is not null or wbraid is not null);
+create index clique_do_site_contato on clique_do_site (contact_id) where contact_id is not null;
 ```
 
 ---
@@ -1340,7 +1354,7 @@ Os tipos de `lib/supabase/database.types.ts` (as quatro tabelas, a coluna nova e
 Registro do que as frentes da Meta de 25/08 a 10/09/2026 criaram (conferido na produção em 03/10/2026):
 
 - **`campaign_link`** (`20260825100000`): a regra de atribuição por texto de cada campanha da clínica (`name`, `token` do link, `channel`, `origin`, `medium`, `campaign`, `default_message`, `keywords`, `active`), único por `(clinic_id, upper(token))`. Membro ativo lê; administrador e gestor gravam. Em 03/10/2026 tem 0 linhas e não tem tela (as actions `salvarCampanhaAction` e `desativarCampanhaAction` existem sem uso); o contato guarda só o texto da campanha (`source_campaign`), não o id da regra.
-- **`contact.ctwa_clid`, `source_ad_id`, `source_adset_id`, `source_campaign_id`** (`20260908150000`): os ids do clique no anúncio Click-to-WhatsApp e do anúncio, do conjunto e da campanha na Meta, gravados pela ingestão (service role). O primeiro anúncio vence: o update da ingestão só acontece enquanto `ctwa_clid` **e** `source_ad_id` estão nulos (o segundo filtro entrou na Fase 4). Os `source_*` de nome (`source_channel`, `source_origin`, `source_medium`, `source_campaign`, `source_method`, `source_captured_at`) são a origem, vigiada por `impedir_reatribuicao_de_origem` (depois que `source_channel` tem valor, nenhum deles muda): por texto (código do link, mensagem padrão, palavra-chave, cadastro e importação) e, desde a `20261004100000` (seção 14.9, ainda não aplicada em 04/10/2026), também pelo anúncio (`source_method = 'anuncio_ctwa'`, gravado só pela ingestão, num update separado do dos ids). No código da mesma frente (publicação pendente), o clique numa publicação (`sourceType` `post`) não grava id nenhum.
+- **`contact.ctwa_clid`, `source_ad_id`, `source_adset_id`, `source_campaign_id`** (`20260908150000`): os ids do clique no anúncio Click-to-WhatsApp e do anúncio, do conjunto e da campanha na Meta, gravados pela ingestão (service role). O primeiro anúncio vence: o update da ingestão só acontece enquanto `ctwa_clid` **e** `source_ad_id` estão nulos (o segundo filtro entrou na Fase 4). Os `source_*` de nome (`source_channel`, `source_origin`, `source_medium`, `source_campaign`, `source_method`, `source_captured_at`) são a origem, vigiada por `impedir_reatribuicao_de_origem` (depois que `source_channel` tem valor, nenhum deles muda): por texto (código do link, mensagem padrão, palavra-chave, cadastro e importação) e, desde a `20261004100000` (seção 14.9, aplicada em 04/10/2026), também pelo anúncio (`source_method = 'anuncio_ctwa'`, gravado só pela ingestão, num update separado do dos ids). No código da mesma frente (publicado em 04/10/2026), o clique numa publicação (`sourceType` `post`) não grava id nenhum. A `20261005100000` (seção 15, ainda não aplicada) acrescenta a origem pelo clique rastreado no site (`source_method = 'clique_site'`), gravada só por `casar_clique_do_site`.
 - **`meta_ads_account`** (`20260910100000` e `20260910120000`): uma linha por clínica, com `pixel_id`, `ad_account_id`, `test_event_code`, `envio_ativado`, `modo_user_data` (nulo até a decisão D6 de LGPD), `send_unmatched` e `whatsapp_business_account_id`. Administrador e gestor leem e gravam (policy `for all`).
 - **`meta_ads_account_secret`**: o token da API de conversões (`capi_access_token`). RLS ligada sem policy; só a service role.
 - **`conversion_event`** (`20260910110000`): a conversão registrada no movimento do funil (`stage_chave`, `event_name`, `event_id`, `value_cents`, `currency`, `ctwa_clid`, `status`, `sent_at`, `erro`), uma por contato por etapa, enviada pelo job `enviar_conversao_meta` quando o envio for ligado.
@@ -1463,11 +1477,11 @@ Quem insere direto na fila (sem a função) trata 23505 como "já na fila": o Po
 ### 14.5 Gatilhos
 
 - **`reiniciar_leitura_do_gasto_meta`** em `meta_ads_account` (`SECURITY DEFINER`, `execute` revogado): `after update of ad_account_id` quando ele muda, e `after insert or delete` (apagar a conta e criar de novo pela API também é troca de conta). Volta a leitura para `nao_testada` e limpa `problema` e `codigo_da_meta`; não mexe em `lido_*`, `sincronizado_em`, no `ad_account_id` da leitura nem nos dados. Erro vira `raise warning` e nunca bloqueia a gravação da conta. O gasto da conta antiga continua em Resultados até a primeira regravação da conta nova, que o apaga.
-- **`proteger_atribuicao_de_anuncio`** em `contact` (migration B; `before insert or update of ctwa_clid, source_ad_id, source_adset_id, source_campaign_id`): com sessão (`auth.uid()` não nulo), o INSERT zera e o UPDATE preserva os quatro ids, sem erro. A service role (a ingestão) continua livre. Antes, administrador, gestor e recepção podiam reescrever esses ids pela API e mover o lead de campanha. Nenhum código da sessão grava esses campos (conferido em 03/10). A regra "o primeiro anúncio vence" é da ingestão (14.1), não do gatilho. Desde a `20261004100000` (14.9), o gatilho também vigia `source_method`: a sessão que grava `anuncio_ctwa` recebe 42501.
+- **`proteger_atribuicao_de_anuncio`** em `contact` (migration B; `before insert or update of ctwa_clid, source_ad_id, source_adset_id, source_campaign_id`): com sessão (`auth.uid()` não nulo), o INSERT zera e o UPDATE preserva os quatro ids, sem erro. A service role (a ingestão) continua livre. Antes, administrador, gestor e recepção podiam reescrever esses ids pela API e mover o lead de campanha. Nenhum código da sessão grava esses campos (conferido em 03/10). A regra "o primeiro anúncio vence" é da ingestão (14.1), não do gatilho. Desde a `20261004100000` (14.9), o gatilho também vigia `source_method`: a sessão que grava `anuncio_ctwa` recebe 42501. A `20261005100000` (seção 15, ainda não aplicada) acrescenta os blocos do clique do site e as duas colunas do Google.
 
 ### 14.6 `motor_manutencao`
 
-Recriada a partir do corpo de **produção** (`pg_get_functiondef` em 03/10/2026; a última definição em arquivo é a `20261002130000`), com o que é novo entre os marcadores `-- [gasto meta]`: chama `enfileirar_gasto_meta_do_dia()` num bloco protegido, devolve também `"gasto_meta": int` (clínicas atendidas na passagem) e um erro estrutural vira `gasto_meta:<sqlstate>` em `planner_erro` (o monitor responde `planner_com_erro`). Fora dos marcadores, idêntica (o ensaio compara); grants mantidos (`postgres` e `service_role`). Frente nova que recriar `motor_manutencao` tem de partir deste corpo.
+Recriada a partir do corpo de **produção** (`pg_get_functiondef` em 03/10/2026; a última definição em arquivo é a `20261002130000`), com o que é novo entre os marcadores `-- [gasto meta]`: chama `enfileirar_gasto_meta_do_dia()` num bloco protegido, devolve também `"gasto_meta": int` (clínicas atendidas na passagem) e um erro estrutural vira `gasto_meta:<sqlstate>` em `planner_erro` (o monitor responde `planner_com_erro`). Fora dos marcadores, idêntica (o ensaio compara); grants mantidos (`postgres` e `service_role`). Frente nova que recriar `motor_manutencao` tem de partir do corpo de produção do momento: a `20261005100000` (seção 15, ainda não aplicada) parte deste e acrescenta o bloco `-- [clique do site]`; depois que ela for aplicada, a F2 do Google parte do `pg_get_functiondef` com esse bloco.
 
 ### 14.7 `campanhas_do_periodo` (migration B)
 
@@ -1500,7 +1514,7 @@ Recriada a partir do corpo de **produção** (`pg_get_functiondef` em 03/10/2026
 
 ### 14.9 Origem real do lead de anúncio (04/10/2026, migration `20261004100000_origem_real_do_anuncio.sql`)
 
-Pedido do dono em 04/10/2026 ("tire realmente da Meta ou do Google; no uazapi ele sabe a origem e campanha") e decisão D3 (backlog, entrada "Origem real do lead de anúncio"). Ensaiada em transação desfeita contra a produção e **ainda não aplicada em 04/10/2026** (sha256 `889e897b40796fb733a4f38484f5a127234eb025969b203734a9f209f8a290e5`). Pressupõe as duas migrations da Fase 4 e não edita nenhuma delas. Os tipos de `lib/supabase/database.types.ts` (as colunas novas de `meta_anuncio`, a tabela `meta_anuncio_recusado` e as três funções novas) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar.
+Pedido do dono em 04/10/2026 ("tire realmente da Meta ou do Google; no uazapi ele sabe a origem e campanha") e decisão D3 (backlog, entrada "Origem real do lead de anúncio"). Ensaiada em transação desfeita contra a produção e **aplicada na produção em 04/10/2026** (sha256 `889e897b40796fb733a4f38484f5a127234eb025969b203734a9f209f8a290e5`; conferido por SELECT em `supabase_migrations.schema_migrations`, e os 8 contatos com clique estão com `anuncio_ctwa`). Pressupõe as duas migrations da Fase 4 e não edita nenhuma delas. Os tipos de `lib/supabase/database.types.ts` (as colunas novas de `meta_anuncio`, a tabela `meta_anuncio_recusado` e as três funções novas) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar.
 
 **Os fatos que moldam o desenho** (conferidos em 04/10/2026): o canal do WhatsApp (uazapi) entrega o clique (`ctwa_clid`) e o id do anúncio, nunca o conjunto nem a campanha; a campanha só sai da Meta, pelo id do anúncio; e a leitura diária da Fase 4 (`act_X/insights?level=ad`) não devolve anúncio arquivado nem apagado, nem anúncio sem entrega na janela lida. Por isso existe a consulta do anúncio pelo id.
 
@@ -1543,6 +1557,102 @@ Pedido do dono em 04/10/2026 ("tire realmente da Meta ou do Google; no uazapi el
 
 **Ensaio (04/10/2026):** em transação desfeita contra a produção: retrato da produção, a migration, asserts sobre os dados reais (a correção pega exatamente os 8 contatos e nenhum outro, e o ensaio para se aparecer contato com id de anúncio sem clique), os asserts da Fase 4 adaptados, a correção rodada duas vezes (a segunda não muda nada, nem o `updated_at`) e os asserts da origem real: os CHECKs, o 42501 da sessão ao gravar `anuncio_ctwa` ou ids, as colunas novas, isolamento A contra B nas colunas novas, `meta_anuncio_recusado` ilegível para sessão e `anon`, grants revogados e `search_path` vazio, um job vivo por clínica, todos os códigos do enfileirar, a lista de pendentes, a gravação (`ok`, `sem_posse`, `config_mudou`, `outra_conta` fora do mapa, novas tentativas, troca de token), a regravação com dia nulo, o `nulls last` e a cascata ao apagar a clínica. As funções recriadas foram comparadas com as de produção. 43 sabotagens, uma ou mais por bloco crítico, todas pegas.
 
-**Ordem de publicação:** decisão pendente do dono (backlog, entrada "Origem real do lead de anúncio"). O que limita a escolha: a correção roda uma vez só; com o código novo e sem a migration, a gravação da origem falha com 23514 (só log), o lead fica com os ids e a correção o pega depois, as telas mostram "Não foi possível carregar a campanha" nos leads de anúncio e os pedidos de consulta só deixam log; com a migration e o código antigo, o lead de anúncio que chegar fica sem origem e só uma correção filtrada pela hora da aplicação o recupera. Antes de aplicar, conferir por SELECT que o alvo da correção continua sendo só contato com clique. Depois de aplicar: rodar as provas de RLS e integração escritas para esta frente e regenerar os tipos.
+**Ordem de publicação:** publicada em 04/10/2026 (migration aplicada e o código no commit `65a6c85`). O que se pesou antes (backlog, entrada "Origem real do lead de anúncio"): a correção roda uma vez só; com o código novo e sem a migration, a gravação da origem falha com 23514 (só log), o lead fica com os ids e a correção o pega depois, as telas mostram "Não foi possível carregar a campanha" nos leads de anúncio e os pedidos de consulta só deixam log; com a migration e o código antigo, o lead de anúncio que chegar fica sem origem e só uma correção filtrada pela hora da aplicação o recupera. Antes de aplicar, conferir por SELECT que o alvo da correção continua sendo só contato com clique. Depois de aplicar: rodar as provas de RLS e integração escritas para esta frente e regenerar os tipos.
 
 **Rollback** (cabeçalho da migration, manual): cancelar os jobs `resolver_anuncio_meta`; apagar as três funções novas, a tabela `meta_anuncio_recusado` e o índice `job_queue_resolver_anuncio_meta_vivo`; recriar `job_queue_kind_check` sem o tipo novo; reaplicar `proteger_atribuicao_de_anuncio` (e o gatilho) e `campanhas_do_periodo` da `20261003110000`, `regravar_gasto_meta` e `registrar_falha_do_gasto_meta` da `20261003100000`; apagar de `meta_anuncio` as linhas com origem `consulta` e dia nulo, depois as colunas novas, e voltar o NOT NULL. **A origem gravada nos contatos não volta**: `impedir_reatribuicao_de_origem` a preserva para sempre.
+
+---
+
+## 15. Clique rastreado pelo site (F1 do Google, 04/10/2026, migration `20261005100000_clique_do_site.sql`)
+
+Pedido do dono em 04/10/2026: o anúncio do Google leva ao **site** da clínica, e a origem e a campanha do lead vêm do Google, sem cadastro manual (backlog, entrada "Origem e campanha do Google Ads", F1; spec 10.13 e 11.15; arquitetura no `docs/03`, seção 13). Ensaiada em transação desfeita contra a produção e **ainda não aplicada** em 04/10/2026 (sha256 `9e1cb85bc706ddf70d549aeb8aac2005e30aa5a90a13d00d81effe4a758734f9`). Tudo que ela recria parte do `pg_get_functiondef` e do `pg_get_constraintdef` de produção de 04/10/2026, já depois da `20261004100000`. Os tipos de `lib/supabase/database.types.ts` (as duas colunas de `contact`, as duas tabelas e as cinco funções) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar.
+
+### 15.1 Decisões registradas
+
+- **Validade do código: 7 dias.** `valido_ate` nasce como `now() + 7 dias`, e o CHECK `clique_do_site_validade` não deixa passar disso. Depois de 7 dias o código não grava origem (`expirado`).
+- **Retenção do gclid: 90 dias.** No clique casado, `gclid`, `gbraid` e `wbraid` são zerados 90 dias depois do **clique** (`criado_em`), e a linha fica (campanha, grupo e o vínculo com o contato). 90 dias é o alcance do `click_view` do Google, o que serve à F2 e a uma futura devolução de conversão pelo gclid (G3, que depende da D6). O clique **não casado** é apagado 1 dia depois de vencer, isto é, 8 dias depois do clique.
+- **De quem é a decisão:** as duas regras acima são a recomendação da crítica de 04/10/2026 e foram construídas assim. **O dono ainda não as confirmou** (pergunta aberta no backlog, entrada "Origem e campanha do Google Ads"). Mudar é trocar o intervalo em `podar_cliques_do_site` e o default e o CHECK de `valido_ate`.
+- **Código único por clínica em qualquer estado** (`clique_do_site_codigo_unico`, sem filtro): um código casado nunca volta a casar nem a ser registrado. Desvio consciente do contrato da crítica, que pedia índice único só enquanto não casado.
+- **As colunas de anúncio não se misturam:** o Google nunca grava `ctwa_clid`, `source_ad_id`, `source_adset_id` nem `source_campaign_id` (o divisor do custo por lead da Meta não incha), e os ids do Google só existem com o método `clique_site`.
+- **Origem sem meio:** a origem do Google nasce com `source_medium` nulo (não separa Pesquisa, YouTube ou Display). Como a origem é imutável, separar depois só valeria para leads novos (ponto para o dono).
+- **Na dúvida, origem vazia:** contato que já tem origem, campanha em texto ou sinal de anúncio da Meta só ganha o vínculo com o clique. Origem vazia se preenche depois; errada nunca se desfaz.
+- **Sem IP, sem user agent, sem caminho da página** (o caminho pode revelar interesse de saúde). Do site, só o host, tirado do cabeçalho `Origin`.
+
+### 15.2 `contact`
+
+```sql
+alter table contact
+  add column source_google_campaign_id text,   -- só dígitos, até 20
+  add column source_google_adgroup_id text;    -- só dígitos, até 20
+-- contact_source_method_valido: os 6 de produção (link_token, mensagem_padrao,
+--   palavra_chave, manual, importacao, anuncio_ctwa) mais clique_site
+-- contact_ids_do_google_validos: ^[0-9]{1,20}$ nas duas colunas
+-- contact_origem_do_clique_do_site_coerente: com clique_site, canal
+--   trafego_pago, origem 'Google', source_medium e source_campaign nulos
+--   (comparações com is not distinct from); e os ids do Google só existem
+--   com source_method = 'clique_site'
+```
+
+- **Leitura:** todo membro ativo lê as duas colunas pela RLS de `contact` (o número da campanha aparece no lead para todo papel).
+- **`proteger_atribuicao_de_anuncio`** (recriado a partir do corpo de produção, o da `20261004100000`), com dois blocos `-- [clique do site]`: (1) com sessão, gravar `clique_site` no INSERT ou mudar para ele no UPDATE, ou gravar ou mudar os ids do Google, dá 42501; reenviar o valor que já estava gravado passa. (2) Num contato com origem `clique_site`, ninguém troca os ids do Google, nem o sistema: P0001 com a mesma mensagem do `impedir_reatribuicao_de_origem` ("A origem do contato é capturada uma vez e preservada para sempre."), porque aquele gatilho não vigia estas colunas. O gatilho passa a disparar também em `update of source_google_campaign_id, source_google_adgroup_id`. `impedir_reatribuicao_de_origem` e `campanhas_do_periodo` não foram tocados.
+- **Quem grava:** só `casar_clique_do_site` (15.5). A ingestão nunca grava `clique_site`, `Google` nem os ids.
+
+### 15.3 `rastreio_do_site` (a chave do site de cada clínica)
+
+| Coluna | Tipo | Regra |
+|---|---|---|
+| `clinic_id` | uuid | PK, FK `clinic` com cascade |
+| `chave` | text not null | única, `^[0-9a-f]{20}$` (80 bits de `gen_random_uuid`), nasce no banco |
+| `ativo` | boolean not null | padrão `false` |
+| `chave_trocada_em` | timestamptz not null | padrão `now()`: quando a chave atual nasceu |
+| `ultimo_clique_em` | timestamptz | gravado por `registrar_clique_do_site` só quando o resultado é `ok` |
+
+- A chave vai no HTML do site: é **pública**, não é segredo. Serve só para achar a clínica sem expor o slug nem o código de cadastro, e troca quando a clínica quiser.
+- **RLS:** administrador e gestor ativos leem (`user_has_role(clinic_id, ['admin','gestor'])`); criam e ligam ou desligam com `user_has_role` mais `user_can_write`. Recepção, leitura, profissional, pendente e outra clínica veem nada.
+- **Grants por coluna:** `select` para `authenticated`; `insert (clinic_id, ativo)`; `update (ativo)`; sem `delete`; nada para `anon`. Gravar a chave, as datas ou o `clinic_id` dá 42501. **Nunca upsert pelo PostgREST:** o `ON CONFLICT DO UPDATE` grava `clinic_id`, que não tem grant de update (42501); a Server Action faz update e, sem linha, insert, e refaz o update num 23505.
+
+### 15.4 `clique_do_site` (só o sistema)
+
+| Coluna | Regra |
+|---|---|
+| `id` | uuid, PK |
+| `clinic_id` | not null, FK `clinic` com cascade |
+| `codigo` | not null, `^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{6}$` (o alfabeto e o tamanho de `attribution.ts`, em maiúsculas); único por clínica em qualquer estado |
+| `criado_em`, `valido_ate` | `valido_ate` padrão `now() + 7 dias`; CHECK `valido_ate > criado_em` e `<= criado_em + 7 dias` |
+| `gclid`, `gbraid`, `wbraid` | `^[A-Za-z0-9._~+/=-]+$`, até 512 caracteres (o Google não publica o máximo); zerados 90 dias depois do clique, se casado |
+| `gad_source` | `^[A-Za-z0-9_-]{1,32}$` |
+| `google_campaign_id`, `google_adgroup_id` | `^[0-9]{1,20}$` |
+| `site_host` | `^[a-z0-9.-]{1,253}$`, só o host |
+| `contact_id`, `casado_em` | FK `contact` com cascade (apagar o contato, LGPD, leva o clique); CHECK: os dois nulos ou os dois preenchidos |
+
+- CHECK `clique_do_site_tem_sinal_do_google`: ao nascer, pelo menos um de gclid, gbraid, wbraid, gad_source, campanha ou grupo (o casado fica livre, porque a poda zera os identificadores).
+- **RLS ligada, nenhuma policy e `revoke all` de `anon` e `authenticated`:** a sessão recebe 42501 até no `select`. Nenhum humano vê gclid, então não há leitura a auditar.
+- Índices parciais: `clique_do_site_por_hora (clinic_id, criado_em)` (limite por minuto e totais de 7 dias), `clique_do_site_vivos (clinic_id, valido_ate) where contact_id is null` (teto de vivos), `clique_do_site_vencidos (valido_ate) where contact_id is null` (poda), `clique_do_site_ids_a_zerar (criado_em)` nos casados com identificador (poda de 90 dias) e `clique_do_site_contato (contact_id)` (cascata).
+
+### 15.5 As cinco funções
+
+Todas `SECURITY DEFINER`, `search_path` vazio, `execute` revogado de `public`, `anon` e `authenticated` e dado só a quem precisa.
+
+- **`registrar_clique_do_site(p_chave, p_codigo, p_gclid, p_gbraid, p_wbraid, p_gad_source, p_google_campaign_id, p_google_adgroup_id, p_site_host text, os sete últimos com default null) returns text`**, só `service_role` (a rota pública). Devolve `ok`, `chave_invalida`, `desligado`, `limite`, `duplicado` ou `codigo_reservado`. Dado fora do formato, ou nenhum dos 6 sinais, dá 22023; o host fora do formato vira nulo. Ordem: chave (formato e existência), ligado, código reservado (igual, sem diferenciar caixa, a um token de `campaign_link` da clínica, ativo ou não), duplicado (o mesmo código em qualquer estado: o aviso repetido é idempotente), limite de **30 por minuto por clínica** (contado sem trava e de novo com a linha do rastreio travada, o que serializa os cliques da mesma clínica sem deadlock; se a chave trocou ou o rastreio desligou entre a leitura e a trava, vale o estado novo), grava, e só então o **teto de 2.000 vivos** (não casados e no prazo) por clínica: cheio, o clique novo entra e sai o vivo que vence primeiro, nunca o recém-gravado. O teto nunca recusa, porque a chave é pública: recusar deixaria a clínica dias sem origem do Google depois de uma enxurrada de cliques falsos, sem a troca de chave resolver. Por último, `ultimo_clique_em`.
+- **`casar_clique_do_site(p_clinic_id uuid, p_contact_id uuid, p_codigo text) returns text`**, só `service_role` (a ingestão). Clínica ou contato nulos dão 22023; o código é normalizado com `upper` e `trim`. Numa transação: trava o contato (`for no key update`, da clínica) e depois o clique (da mesma clínica, pelo código), sempre nessa ordem. Devolve:
+  - `nao_achado`: código fora do formato, inexistente, de outra clínica, já usado por outro contato, ou contato de outra clínica;
+  - `expirado`: clique da clínica, não casado e vencido; nada muda;
+  - `vinculado`: o clique ficou (ou já estava) ligado a este contato, sem gravar origem, porque o contato já tinha canal, método, campanha em texto ou sinal da Meta (`ctwa_clid`, `source_ad_id`, `source_adset_id` ou `source_campaign_id`);
+  - `origem_gravada`: clique ligado e o contato com `source_channel = 'trafego_pago'`, `source_origin = 'Google'`, `source_medium` e `source_campaign` nulos, `source_method = 'clique_site'`, `source_captured_at = now()` e os dois ids do clique.
+- **`trocar_chave_do_rastreio(p_clinic_id uuid) returns text`**, para `authenticated` (administrador ou gestor ativo que escreve; os demais recebem 42501) e `service_role`. Devolve a chave nova; cria a linha desligada se não existir e mantém o `ativo`. A chave velha passa a dar `chave_invalida`; os cliques já registrados continuam valendo.
+- **`situacao_do_rastreio(p_clinic_id uuid) returns jsonb`**, `stable`, mesmas permissões (administrador ou gestor ativo): `{configurado, ativo, chave_trocada_em, ultimo_clique_em, cliques_7_dias, casados_7_dias}`. Só agregados: nunca a chave, o gclid ou o contato.
+- **`podar_cliques_do_site(p_agora timestamptz default now(), p_clinic_ids uuid[] default null) returns jsonb`**, só `service_role`: `{apagados, zerados}`, até 5.000 de cada por passagem. `p_agora` e `p_clinic_ids` são só para testes: data futura sem a lista de clínicas dá 22023 (nenhuma clínica real é podada antes da hora).
+
+### 15.6 `motor_manutencao`
+
+Recriada byte a byte a partir do corpo de **produção** de 04/10/2026 (o mesmo da `20261003100000`, seção 14.6), com o que é novo entre os marcadores `-- [clique do site]`: chama `podar_cliques_do_site()` num bloco protegido, devolve também `"cliques_do_site": {apagados, zerados}`, e um erro vira `cliques_do_site:<sqlstate>` em `planner_erro`. Fora dos marcadores, idêntica (o ensaio compara); grants mantidos. A F2 recria a partir do `pg_get_functiondef` depois desta aplicada.
+
+### 15.7 Códigos de erro, ensaio, ordem de publicação e rollback
+
+**Códigos:** 42501, 22023, 23514, 23505 (insert direto duplicado, como o de `rastreio_do_site` criado ao mesmo tempo por duas abas) e P0001. 40001 e 40P01 nunca são levantados de propósito.
+
+**Ensaio (04/10/2026):** em transação desfeita contra a produção: retrato de antes, a migration, os asserts da F1 e, em seguida, a suíte inteira da origem real (preparo, correção duas vezes e asserts), com o resultado "TODOS OS ASSERTS DO CLIQUE DO SITE PASSARAM | TODOS OS ASSERTS DA ORIGEM REAL PASSARAM" e ROLLBACK. Blocos: funções recriadas idênticas fora dos blocos novos, demais restrições intactas, ACL e gatilho, nenhum contato real mudou; coerência e imutabilidade no contato; 42501 da sessão e o reenvio; grants e RLS (a gestão lê `rastreio_do_site`, nenhuma sessão nem `anon` chega em `clique_do_site`); 42501 nas funções para sessão e `anon`; registrar (chave inválida ou trocada, desligado, duplicado, reservado, limite por minuto, teto de vivos com despejo, 22023); casar (prazo vencido, código já usado, código da A na B, contato de outra clínica, Meta e origem já gravada, normalização); trocar e situação; poda de 1 e de 90 dias; cascata. **71 sabotagens, todas pegas.**
+
+**Ordem de publicação:** aplicar a migration **antes** do código da F1, ou junto. Sem a coluna no banco, as consultas de Leads, da ficha do paciente e do Atendimento, que passam a ler `source_google_campaign_id`, falham inteiras (42703), e a ingestão loga `clique_do_site_casar_falhou` (PGRST202) e não atribui a mensagem com código que não é de `campaign_link` (0 linhas em produção em 04/10/2026). A aplicação segura por instantes um lock exclusivo em `contact` (`alter table`): aplicar num momento de pouco movimento no WhatsApp. Depois, rodar as provas de RLS e integração (`tests/rls/clique-do-site.test.ts`, `tests/integration/clique-do-site.test.ts` e `tests/integration/atribuicao-clique-do-site.test.ts`) e o e2e, e regenerar os tipos (o diff tem de sumir).
+
+**Rollback** (cabeçalho da migration, manual): reaplicar `motor_manutencao` da `20261003100000` e `proteger_atribuicao_de_anuncio` (com o gatilho) da `20261004100000`; apagar as cinco funções novas e as tabelas `clique_do_site` e `rastreio_do_site`; recriar `contact_source_method_valido` sem `clique_site`, apagar os CHECKs `contact_origem_do_clique_do_site_coerente` e `contact_ids_do_google_validos` e as colunas `source_google_*`. **Contato que já ganhou origem `clique_site` impede recriar o CHECK sem o método:** a origem é imutável e não volta.

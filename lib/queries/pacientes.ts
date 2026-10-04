@@ -224,6 +224,8 @@ export type ContatoDaFicha = {
   source_method: string | null;
   /** Id do anuncio da Meta gravado pela ingestao; chave de meta_anuncio. */
   source_ad_id: string | null;
+  /** Id da campanha do Google do clique no site ("Campanha do Google {id}"). */
+  source_google_campaign_id: string | null;
   /**
    * Campanha e conjunto da Meta pelo source_ad_id (meta_anuncio, pela
    * sessao). Falha da leitura e "erro" e nao derruba a ficha.
@@ -277,7 +279,7 @@ function consentimentoVigenteDaFicha(
 }
 
 const CONTATO_SELECT =
-  "id, clinic_id, name, phone_e164, cpf, email, birth_date, insurance_card, notes, kind, tags, no_show_count, source_channel, source_origin, source_medium, source_campaign, source_captured_at, source_method, source_ad_id, first_contact_at, last_contact_at, created_at, insurance:insurance_id (id, name)";
+  "id, clinic_id, name, phone_e164, cpf, email, birth_date, insurance_card, notes, kind, tags, no_show_count, source_channel, source_origin, source_medium, source_campaign, source_captured_at, source_method, source_ad_id, source_google_campaign_id, first_contact_at, last_contact_at, created_at, insurance:insurance_id (id, name)";
 
 // Molde do CONSULTA_SELECT da Agenda, mais o nome do profissional e o preco do
 // vinculo, que a linha do tempo mostra.
@@ -479,6 +481,8 @@ export async function fetchFichaPaciente(
       tags: (row.tags as string[] | null) ?? [],
       no_show_count: (row.no_show_count as number | null) ?? 0,
       source_ad_id: sourceAdId,
+      source_google_campaign_id:
+        (row.source_google_campaign_id as string | null) ?? null,
       anuncio_meta: anuncioMeta,
       insurance: desembrulhar(row.insurance) as ContatoDaFicha["insurance"],
     },

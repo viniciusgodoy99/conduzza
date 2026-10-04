@@ -4,7 +4,7 @@ import {
 } from "@/components/shared/loading-skeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
-// Esqueleto na forma da tela de Configuracoes (cabecalho com eyebrow, as oito
+// Esqueleto na forma da tela de Configuracoes (cabecalho com eyebrow, as nove
 // abas sublinhadas e os cartoes da aba de equipe: usuarios, convite, codigo
 // e a tabela de papeis), nunca giratorio no meio da tela.
 
@@ -20,6 +20,7 @@ const ABAS = [
   "w-40", // Etiquetas de conversa
   "w-36", // Mensagens padrão
   "w-32", // Anúncios da Meta
+  "w-36", // Anúncios do Google
 ];
 
 function CabecalhoDeCartao({ largura }: { largura: string }) {

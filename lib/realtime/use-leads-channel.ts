@@ -22,7 +22,7 @@ import { fetchLead, leadsKeys, type LeadResumo } from "@/lib/queries/leads";
 // e buscada de novo inteira, com a leitura do anuncio; nas outras mudancas a
 // leitura ja feita e preservada.
 
-type ContactRow = {
+export type ContactRow = {
   id: string;
   name: string | null;
   phone_e164: string;
@@ -38,9 +38,43 @@ type ContactRow = {
   source_medium?: string | null;
   source_method?: string | null;
   source_ad_id?: string | null;
+  source_google_campaign_id?: string | null;
   first_contact_at: string;
   last_contact_at: string | null;
 };
+
+/**
+ * Caso comum do tempo real (mesmo anuncio da Meta): as colunas mutaveis da
+ * linha nova sobre o lead da lista, preservando o convenio, o consentimento
+ * e a leitura do anuncio (o payload do contact nao os traz). Pura, para o
+ * teste.
+ */
+export function mesclarLinhaNoLead(
+  existente: LeadResumo,
+  row: ContactRow,
+): LeadResumo {
+  return {
+    ...existente,
+    name: row.name,
+    phone_e164: row.phone_e164,
+    funnel_stage: row.funnel_stage,
+    lost_reason: row.lost_reason,
+    lost_reason_note: row.lost_reason_note,
+    owner_user_id: row.owner_user_id,
+    tags: row.tags ?? [],
+    source_channel: row.source_channel,
+    source_campaign: row.source_campaign,
+    source_origin: row.source_origin ?? null,
+    source_medium: row.source_medium ?? null,
+    source_method: row.source_method ?? null,
+    // Clique no site: casar_clique_do_site grava a origem por UPDATE num
+    // contato que ja existe, com source_ad_id nulo igual ao de antes (cai
+    // aqui). Sem esta linha a lista aberta ficaria em "Campanha do Google
+    // não informada" ate recarregar.
+    source_google_campaign_id: row.source_google_campaign_id ?? null,
+    last_contact_at: row.last_contact_at,
+  };
+}
 
 export function useLeadsChannel(
   supabase: SupabaseClient,
@@ -75,23 +109,7 @@ export function useLeadsChannel(
       if (existente && existente.source_ad_id === adIdNovo) {
         // Caso comum: mescla as colunas mutaveis preservando o convenio e o
         // consentimento embutidos (o payload do contact nao os traz).
-        const atualizado: LeadResumo = {
-          ...existente,
-          name: row.name,
-          phone_e164: row.phone_e164,
-          funnel_stage: row.funnel_stage,
-          lost_reason: row.lost_reason,
-          lost_reason_note: row.lost_reason_note,
-          owner_user_id: row.owner_user_id,
-          tags: row.tags ?? [],
-          source_channel: row.source_channel,
-          source_campaign: row.source_campaign,
-          source_origin: row.source_origin ?? null,
-          source_medium: row.source_medium ?? null,
-          source_method: row.source_method ?? null,
-          last_contact_at: row.last_contact_at,
-        };
-        substituir(atualizado);
+        substituir(mesclarLinhaNoLead(existente, row));
         // Drawer aberto acompanha a mudanca.
         void queryClient.invalidateQueries({
           queryKey: leadsKeys.detalhe(row.id),

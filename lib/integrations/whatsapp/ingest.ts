@@ -2,6 +2,7 @@ import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 
 import {
   atribuirOrigem,
+  codigosDoCliqueDoSite,
   extrairToken,
   type CampaignRule,
   type SourceChannel,
@@ -20,9 +21,12 @@ import { log } from "@/lib/log";
 // melhor esforco: qualquer falha vira log e a ingestao segue, porque a
 // mensagem ja esta salva quando ela roda.
 //
-// Precedencia da origem (D3, 04/10/2026): anuncio, depois codigo de
-// campanha, depois mensagem padrao, depois palavra-chave. O anuncio grava
-// primeiro e a atribuicao por texto encontra o canal ja preenchido.
+// Precedencia da origem (D3, 04/10/2026, e F1 do Google, 05/10/2026):
+// anuncio da Meta, depois codigo fixo de campanha, depois clique do site,
+// depois mensagem padrao, depois palavra-chave. O anuncio grava primeiro e a
+// atribuicao por texto encontra o canal ja preenchido. Codigo de clique que
+// nao gravou origem nao atrapalha a mensagem padrao (o sufixo do script do
+// site sai da comparacao).
 //
 // REGRA ABSOLUTA: nenhum conteudo de mensagem de paciente em log. So ids.
 
@@ -57,6 +61,84 @@ type LinhaCampanha = {
   default_message: string | null;
   keywords: string[] | null;
 };
+
+export type ResultadoDoCliqueDoSite =
+  "origem_gravada" | "vinculado" | "nao_achado" | "expirado";
+
+const RESULTADOS_DO_CLIQUE: readonly ResultadoDoCliqueDoSite[] = [
+  "origem_gravada",
+  "vinculado",
+  "nao_achado",
+  "expirado",
+];
+
+function lerResultadoDoClique(dado: unknown): ResultadoDoCliqueDoSite | null {
+  return RESULTADOS_DO_CLIQUE.find((resultado) => resultado === dado) ?? null;
+}
+
+/**
+ * Casa os codigos da mensagem (na ordem dada) com um clique do site da
+ * clinica pela RPC casar_clique_do_site. O banco faz tudo numa transacao:
+ * so casa clique da mesma clinica, nao casado e no prazo, e so grava a
+ * origem (Trafego pago, Google, clique_site, ids da campanha e do grupo) em
+ * contato sem origem e sem sinal de anuncio da Meta.
+ *
+ * Para no primeiro origem_gravada ou vinculado; senao devolve expirado (se
+ * algum codigo era clique vencido) ou nao_achado. Devolve null quando a RPC
+ * falha ou responde fora do contrato.
+ *
+ * Log so com ids, status e contagem: NUNCA o codigo (ele liga a mensagem do
+ * paciente ao clique).
+ */
+async function casarCliqueDoSite(
+  admin: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+  codigos: readonly string[],
+): Promise<ResultadoDoCliqueDoSite | null> {
+  let resultadoFinal: ResultadoDoCliqueDoSite = "nao_achado";
+  let tentativas = 0;
+  for (const codigo of codigos) {
+    tentativas += 1;
+    const { data, error } = await admin.rpc("casar_clique_do_site", {
+      p_clinic_id: clinicId,
+      p_contact_id: contactId,
+      p_codigo: codigo,
+    });
+    if (error) {
+      log.error("clique_do_site_casar_falhou", {
+        clinic_id: clinicId,
+        contact_id: contactId,
+        error_code: error.code ?? null,
+        count: tentativas,
+      });
+      return null;
+    }
+    const resultado = lerResultadoDoClique(data);
+    if (resultado === null) {
+      log.error("clique_do_site_resposta_inesperada", {
+        clinic_id: clinicId,
+        contact_id: contactId,
+        count: tentativas,
+      });
+      return null;
+    }
+    if (resultado === "origem_gravada" || resultado === "vinculado") {
+      resultadoFinal = resultado;
+      break;
+    }
+    if (resultado === "expirado") {
+      resultadoFinal = "expirado";
+    }
+  }
+  log.info("clique_do_site_na_ingestao", {
+    clinic_id: clinicId,
+    contact_id: contactId,
+    status: resultadoFinal,
+    count: tentativas,
+  });
+  return resultadoFinal;
+}
 
 async function tentarAtribuirOrigem(
   admin: SupabaseClient,
@@ -95,11 +177,34 @@ async function tentarAtribuirOrigem(
     }),
   );
 
+  // CLIQUE DO SITE (F1 do Google): codigo que NAO casa com campaign_link.
+  // Depois do codigo fixo (codigosDoCliqueDoSite devolve vazio quando algum
+  // token e de campaign_link) e antes de mensagem padrao e palavra-chave.
+  // Nao depende de atribuirOrigem, que devolve null sem regras. Vale tambem
+  // para contato pre-existente: o codigo e por clique, sinal explicito como
+  // o token, e quem ja tem origem so ganha o vinculo com o clique.
+  const codigos = codigosDoCliqueDoSite(corpo, regras);
+  if (codigos.length > 0) {
+    const clique = await casarCliqueDoSite(admin, clinicId, contactId, codigos);
+    // origem_gravada: a origem e esta. null (falha): na duvida a origem fica
+    // vazia, nunca uma de precedencia menor gravada para sempre.
+    // vinculado (a origem nao foi gravada de proposito), nao_achado e
+    // expirado seguem para mensagem padrao e palavra-chave, como sem o
+    // script do site: a mensagem padrao compara o texto sem o sufixo
+    // " [#XXXXXX]" desses codigos (atribuirOrigem recebe a lista), senao o
+    // clique perdido (rastreio desligado, aviso que falhou, limite, despejo,
+    // prazo vencido) tiraria a mensagem padrao e deixaria a palavra-chave,
+    // de precedencia menor, gravar para sempre.
+    if (clique === "origem_gravada" || clique === null) {
+      return;
+    }
+  }
+
   // Contato pre-existente sem origem: SO o token atribui (sinal explicito e
   // valido a qualquer momento). Mensagem padrao e palavra-chave valem apenas
   // na primeira mensagem da vida do contato, senao conversa comum viraria
-  // atribuicao errada.
-  const atribuicao = atribuirOrigem(corpo, regras);
+  // atribuicao errada. `codigos` vazio (sem codigo de clique) nao muda nada.
+  const atribuicao = atribuirOrigem(corpo, regras, codigos);
   if (!atribuicao) {
     return;
   }
@@ -477,10 +582,11 @@ export async function ingerirMensagemRecebida(
     }
   }
 
-  // Atribuicao roda no nascimento do contato (os 3 mecanismos) OU quando uma
-  // mensagem posterior traz token de campanha (contato pre-existente sem
-  // origem; o update e guardado por source_channel is null, entao e barato e
-  // idempotente).
+  // Atribuicao roda no nascimento do contato (os 3 mecanismos e o clique do
+  // site) OU quando uma mensagem posterior traz token (codigo fixo de
+  // campanha ou codigo de clique do site, para contato pre-existente; o
+  // update e guardado por source_channel is null e o casamento do clique e
+  // idempotente, entao a reentrega e barata).
   const deveAtribuir =
     resultado?.contact_id &&
     event.body &&

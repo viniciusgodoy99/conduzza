@@ -164,10 +164,21 @@ export function filtrarLeads<T extends LeadFiltravel>(
 //   Meta pelo anuncio, senao "Campanha da Meta ainda nao identificada" para o
 //   lead de anuncio. Sem nome na Meta: "Campanha {id}", a mesma regra de
 //   Resultados (rotuloDaLinhaDeCampanha).
+//
+// Clique rastreado pelo site (F1 do Google, migration 20261005100000): o
+// lead que chegou pelo botao de WhatsApp do site, vindo de anuncio do
+// Google, tem source_method 'clique_site', canal trafego_pago, origem
+// 'Google', meio e source_campaign nulos (check
+// contact_origem_do_clique_do_site_coerente). textoDaOrigem ja da "Trafego
+// pago, Google" sem regra nova. A campanha vem de source_google_campaign_id
+// ("Campanha do Google {id}"; o nome so chega na F2, com a conexao com o
+// Google). O Google nunca grava source_ad_id, entao ehLeadDeAnuncio (que e
+// o lead de anuncio DA META, o divisor do custo por lead dela) nao muda.
 
 /** Metodos do check contact_source_method_valido, em linguagem de recepcao. */
 export const METODO_LABELS: Readonly<Record<string, string>> = {
   anuncio_ctwa: "Anúncio de clique para WhatsApp",
+  clique_site: "Clique no site",
   link_token: "Link com código",
   mensagem_padrao: "Mensagem padrão do anúncio",
   palavra_chave: "Palavra-chave na primeira mensagem",
@@ -177,6 +188,9 @@ export const METODO_LABELS: Readonly<Record<string, string>> = {
 
 /** O metodo de quem chegou por anuncio Click-to-WhatsApp da Meta. */
 export const METODO_ANUNCIO_CTWA = "anuncio_ctwa";
+
+/** O metodo de quem chegou pelo botao do site, vindo de anuncio do Google. */
+export const METODO_CLIQUE_SITE = "clique_site";
 
 /**
  * Rotulo do metodo de captura; nulo some. Metodo desconhecido volta como
@@ -201,6 +215,16 @@ export type OrigemDoContato = {
   source_medium?: string | null;
   source_method?: string | null;
   source_ad_id?: string | null;
+  /**
+   * Id da campanha do Google Ads (so digitos), gravado junto com a origem
+   * clique_site. Toda consulta que alimenta as telas de origem le a coluna
+   * (lib/queries/leads.ts, pacientes.ts e conversations.ts, e o tempo real
+   * de use-leads-channel.ts); no tipo da lista e da ficha ela e obrigatoria,
+   * para o compilador pegar quem esquecer. Opcional aqui so porque esta
+   * forma tambem serve a contatos montados na mao. Nulo e o clique que
+   * chegou sem o numero da campanha: "Campanha do Google não informada".
+   */
+  source_google_campaign_id?: string | null;
 };
 
 function textoLimpo(valor: string | null | undefined): string | null {
@@ -254,6 +278,31 @@ export function ehLeadDeAnuncio(
     textoLimpo(contato.source_ad_id) !== null
   );
 }
+
+/**
+ * Lead do clique rastreado pelo site: anuncio do Google que levou ao site da
+ * clinica e dali ao WhatsApp (metodo clique_site).
+ */
+export function ehLeadDoCliqueNoSite(
+  contato: Pick<OrigemDoContato, "source_method">,
+): boolean {
+  return contato.source_method === METODO_CLIQUE_SITE;
+}
+
+/** O id de campanha do Google que o banco aceita (check ^[0-9]{1,20}$). */
+export function idDeCampanhaDoGoogle(
+  id: string | null | undefined,
+): string | null {
+  const limpo = textoLimpo(id);
+  return limpo && /^[0-9]{1,20}$/.test(limpo) ? limpo : null;
+}
+
+/** "Campanha do Google {id}": o nome so chega com a conexao com o Google. */
+export function rotuloDaCampanhaDoGoogle(id: string): string {
+  return `Campanha do Google ${id}`;
+}
+
+export const CAMPANHA_DO_GOOGLE_SEM_ID = "Campanha do Google não informada";
 
 /** O id de anuncio que meta_anuncio aceita (check ^[0-9]{1,32}$). */
 export function idDeAnuncioValido(
@@ -329,6 +378,14 @@ export function campanhaDoContato(
   const digitada = textoLimpo(contato.source_campaign);
   if (digitada) {
     return { texto: textoLimpo(nomeDoLink) ?? digitada, tipo: "nome" };
+  }
+  if (ehLeadDoCliqueNoSite(contato)) {
+    // Antes da Meta: a origem e imutavel e e do Google, entao a campanha
+    // mostrada e a do clique que deu a origem (o nome chega na F2).
+    const id = idDeCampanhaDoGoogle(contato.source_google_campaign_id);
+    return id
+      ? { texto: rotuloDaCampanhaDoGoogle(id), tipo: "nome" }
+      : { texto: CAMPANHA_DO_GOOGLE_SEM_ID, tipo: "nenhuma" };
   }
   if (!ehLeadDeAnuncio(contato)) {
     return { texto: "Sem campanha", tipo: "nenhuma" };

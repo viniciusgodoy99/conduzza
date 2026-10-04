@@ -37,6 +37,12 @@ describe("esqueleto de Configurações", () => {
     const abas = abasDaTela();
     expect(abas).toContain("fluxo");
     expect(abas).toContain("mensagens");
+    expect(abas).toContain("google");
     expect(barrasDoEsqueleto()).toBe(abas.length);
+  });
+
+  it("Anúncios do Google vem logo depois de Anúncios da Meta", () => {
+    const abas = abasDaTela();
+    expect(abas.indexOf("google")).toBe(abas.indexOf("meta") + 1);
   });
 });

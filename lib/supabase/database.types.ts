@@ -1028,6 +1028,72 @@ export type Database = {
           },
         ]
       }
+      clique_do_site: {
+        Row: {
+          casado_em: string | null
+          clinic_id: string
+          codigo: string
+          contact_id: string | null
+          criado_em: string
+          gad_source: string | null
+          gbraid: string | null
+          gclid: string | null
+          google_adgroup_id: string | null
+          google_campaign_id: string | null
+          id: string
+          site_host: string | null
+          valido_ate: string
+          wbraid: string | null
+        }
+        Insert: {
+          casado_em?: string | null
+          clinic_id: string
+          codigo: string
+          contact_id?: string | null
+          criado_em?: string
+          gad_source?: string | null
+          gbraid?: string | null
+          gclid?: string | null
+          google_adgroup_id?: string | null
+          google_campaign_id?: string | null
+          id?: string
+          site_host?: string | null
+          valido_ate?: string
+          wbraid?: string | null
+        }
+        Update: {
+          casado_em?: string | null
+          clinic_id?: string
+          codigo?: string
+          contact_id?: string | null
+          criado_em?: string
+          gad_source?: string | null
+          gbraid?: string | null
+          gclid?: string | null
+          google_adgroup_id?: string | null
+          google_campaign_id?: string | null
+          id?: string
+          site_host?: string | null
+          valido_ate?: string
+          wbraid?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clique_do_site_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clique_do_site_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact: {
         Row: {
           birth_date: string | null
@@ -1060,6 +1126,8 @@ export type Database = {
           source_campaign: string | null
           source_captured_at: string | null
           source_channel: string | null
+          source_google_adgroup_id: string | null
+          source_google_campaign_id: string | null
           source_medium: string | null
           source_method: string | null
           source_origin: string | null
@@ -1097,6 +1165,8 @@ export type Database = {
           source_campaign?: string | null
           source_captured_at?: string | null
           source_channel?: string | null
+          source_google_adgroup_id?: string | null
+          source_google_campaign_id?: string | null
           source_medium?: string | null
           source_method?: string | null
           source_origin?: string | null
@@ -1134,6 +1204,8 @@ export type Database = {
           source_campaign?: string | null
           source_captured_at?: string | null
           source_channel?: string | null
+          source_google_adgroup_id?: string | null
+          source_google_campaign_id?: string | null
           source_medium?: string | null
           source_method?: string | null
           source_origin?: string | null
@@ -3052,6 +3124,38 @@ export type Database = {
         }
         Relationships: []
       }
+      rastreio_do_site: {
+        Row: {
+          ativo: boolean
+          chave: string
+          chave_trocada_em: string
+          clinic_id: string
+          ultimo_clique_em: string | null
+        }
+        Insert: {
+          ativo?: boolean
+          chave?: string
+          chave_trocada_em?: string
+          clinic_id: string
+          ultimo_clique_em?: string | null
+        }
+        Update: {
+          ativo?: boolean
+          chave?: string
+          chave_trocada_em?: string
+          clinic_id?: string
+          ultimo_clique_em?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rastreio_do_site_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       resource: {
         Row: {
           active: boolean
@@ -3814,6 +3918,10 @@ export type Database = {
         }
         Returns: Json
       }
+      casar_clique_do_site: {
+        Args: { p_clinic_id: string; p_codigo: string; p_contact_id: string }
+        Returns: string
+      }
       cancelar_reoferta_de_espera: {
         Args: { p_clinic_id: string; p_offer_id: string }
         Returns: boolean
@@ -4205,6 +4313,10 @@ export type Database = {
         Returns: number
       }
       planejar_reguas: { Args: never; Returns: Json }
+      podar_cliques_do_site: {
+        Args: { p_agora?: string; p_clinic_ids?: string[] }
+        Returns: Json
+      }
       previa_da_automacao_de_fluxo: {
         Args: {
           p_clinic_id: string
@@ -4262,6 +4374,20 @@ export type Database = {
           p_por_anuncio: Json
           p_token_sha256: string
           p_worker: string
+        }
+        Returns: string
+      }
+      registrar_clique_do_site: {
+        Args: {
+          p_chave: string
+          p_codigo: string
+          p_gad_source?: string
+          p_gbraid?: string
+          p_gclid?: string
+          p_google_adgroup_id?: string
+          p_google_campaign_id?: string
+          p_site_host?: string
+          p_wbraid?: string
         }
         Returns: string
       }
@@ -4336,6 +4462,7 @@ export type Database = {
         Args: { p_ate: string; p_clinic_id: string; p_de: string }
         Returns: Json
       }
+      situacao_do_rastreio: { Args: { p_clinic_id: string }; Returns: Json }
       sincronizar_convenios_do_profissional: {
         Args: {
           p_confirmar?: boolean
@@ -4362,6 +4489,10 @@ export type Database = {
       }
       tipo_de_envio_do_job: {
         Args: { p_kind: string; p_payload: Json }
+        Returns: string
+      }
+      trocar_chave_do_rastreio: {
+        Args: { p_clinic_id: string }
         Returns: string
       }
       user_active_clinic_ids: { Args: never; Returns: string[] }
