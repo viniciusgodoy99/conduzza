@@ -34,48 +34,158 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_agent_config: {
+        Row: {
+          agent_name: string
+          clinic_id: string
+          closing: string | null
+          created_at: string
+          escalation_rules: Json
+          fallback_minutes: number | null
+          greeting: string | null
+          id: string
+          operating_hours: Json | null
+          operating_mode: string
+          published_at: string | null
+          published_by: string | null
+          skills: Json
+          status: string
+          tone: string
+          updated_at: string
+          use_emoji: boolean
+          version: number
+        }
+        Insert: {
+          agent_name?: string
+          clinic_id: string
+          closing?: string | null
+          created_at?: string
+          escalation_rules?: Json
+          fallback_minutes?: number | null
+          greeting?: string | null
+          id?: string
+          operating_hours?: Json | null
+          operating_mode?: string
+          published_at?: string | null
+          published_by?: string | null
+          skills?: Json
+          status?: string
+          tone?: string
+          updated_at?: string
+          use_emoji?: boolean
+          version?: number
+        }
+        Update: {
+          agent_name?: string
+          clinic_id?: string
+          closing?: string | null
+          created_at?: string
+          escalation_rules?: Json
+          fallback_minutes?: number | null
+          greeting?: string | null
+          id?: string
+          operating_hours?: Json | null
+          operating_mode?: string
+          published_at?: string | null
+          published_by?: string | null
+          skills?: Json
+          status?: string
+          tone?: string
+          updated_at?: string
+          use_emoji?: boolean
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_agent_config_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_decision_log: {
         Row: {
+          agente_modelo: string | null
+          aprovado: boolean | null
           blocked_draft: string | null
+          camada: string | null
           clinic_id: string
           compliance_blocked: boolean
           compliance_rule: string | null
+          config_version: number | null
           context_read: Json | null
           conversation_id: string
           created_at: string
           escalation_reason: string | null
+          gatilho_entrada: string | null
           id: string
+          job_id: string | null
           latency_ms: number | null
           message_id: string | null
+          texto_sha256: string | null
+          tokens_cache: number | null
+          tokens_entrada: number | null
+          tokens_saida: number | null
           tool_used: string | null
+          verificador_modelo: string | null
+          versao_filtro: string | null
+          versao_prompt: string | null
         }
         Insert: {
+          agente_modelo?: string | null
+          aprovado?: boolean | null
           blocked_draft?: string | null
+          camada?: string | null
           clinic_id: string
           compliance_blocked?: boolean
           compliance_rule?: string | null
+          config_version?: number | null
           context_read?: Json | null
           conversation_id: string
           created_at?: string
           escalation_reason?: string | null
+          gatilho_entrada?: string | null
           id?: string
+          job_id?: string | null
           latency_ms?: number | null
           message_id?: string | null
+          texto_sha256?: string | null
+          tokens_cache?: number | null
+          tokens_entrada?: number | null
+          tokens_saida?: number | null
           tool_used?: string | null
+          verificador_modelo?: string | null
+          versao_filtro?: string | null
+          versao_prompt?: string | null
         }
         Update: {
+          agente_modelo?: string | null
+          aprovado?: boolean | null
           blocked_draft?: string | null
+          camada?: string | null
           clinic_id?: string
           compliance_blocked?: boolean
           compliance_rule?: string | null
+          config_version?: number | null
           context_read?: Json | null
           conversation_id?: string
           created_at?: string
           escalation_reason?: string | null
+          gatilho_entrada?: string | null
           id?: string
+          job_id?: string | null
           latency_ms?: number | null
           message_id?: string | null
+          texto_sha256?: string | null
+          tokens_cache?: number | null
+          tokens_entrada?: number | null
+          tokens_saida?: number | null
           tool_used?: string | null
+          verificador_modelo?: string | null
+          versao_filtro?: string | null
+          versao_prompt?: string | null
         }
         Relationships: [
           {
@@ -1662,6 +1772,223 @@ export type Database = {
         }
         Relationships: []
       }
+      ia_contato_liberado: {
+        Row: {
+          alterado_por: string | null
+          ativo: boolean
+          clinic_id: string
+          created_at: string
+          id: string
+          phone_key: string
+          rotulo: string | null
+          updated_at: string
+        }
+        Insert: {
+          alterado_por?: string | null
+          ativo?: boolean
+          clinic_id: string
+          created_at?: string
+          id?: string
+          phone_key: string
+          rotulo?: string | null
+          updated_at?: string
+        }
+        Update: {
+          alterado_por?: string | null
+          ativo?: boolean
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          phone_key?: string
+          rotulo?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_contato_liberado_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "ia_liberacao"
+            referencedColumns: ["clinic_id"]
+          },
+        ]
+      }
+      ia_interruptor: {
+        Row: {
+          alterado_em: string
+          alterado_por: string | null
+          id: boolean
+          ligado: boolean
+          motivo: string | null
+        }
+        Insert: {
+          alterado_em?: string
+          alterado_por?: string | null
+          id?: boolean
+          ligado?: boolean
+          motivo?: string | null
+        }
+        Update: {
+          alterado_em?: string
+          alterado_por?: string | null
+          id?: boolean
+          ligado?: boolean
+          motivo?: string | null
+        }
+        Relationships: []
+      }
+      ia_liberacao: {
+        Row: {
+          alterado_por: string | null
+          clinic_id: string
+          created_at: string
+          liberada: boolean
+          modo: string
+          motivo: string | null
+          pausada_pela_clinica: boolean
+          teto_diario_centavos_usd: number
+          teto_respostas_por_conversa_hora: number
+          updated_at: string
+        }
+        Insert: {
+          alterado_por?: string | null
+          clinic_id: string
+          created_at?: string
+          liberada?: boolean
+          modo?: string
+          motivo?: string | null
+          pausada_pela_clinica?: boolean
+          teto_diario_centavos_usd?: number
+          teto_respostas_por_conversa_hora?: number
+          updated_at?: string
+        }
+        Update: {
+          alterado_por?: string | null
+          clinic_id?: string
+          created_at?: string
+          liberada?: boolean
+          modo?: string
+          motivo?: string | null
+          pausada_pela_clinica?: boolean
+          teto_diario_centavos_usd?: number
+          teto_respostas_por_conversa_hora?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_liberacao_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ia_numero_liberado: {
+        Row: {
+          alterado_por: string | null
+          ativo: boolean
+          clinic_id: string
+          created_at: string
+          updated_at: string
+          whatsapp_account_id: string
+        }
+        Insert: {
+          alterado_por?: string | null
+          ativo?: boolean
+          clinic_id: string
+          created_at?: string
+          updated_at?: string
+          whatsapp_account_id: string
+        }
+        Update: {
+          alterado_por?: string | null
+          ativo?: boolean
+          clinic_id?: string
+          created_at?: string
+          updated_at?: string
+          whatsapp_account_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_numero_liberado_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "ia_liberacao"
+            referencedColumns: ["clinic_id"]
+          },
+          {
+            foreignKeyName: "ia_numero_liberado_whatsapp_account_id_fkey"
+            columns: ["whatsapp_account_id"]
+            isOneToOne: true
+            referencedRelation: "whatsapp_account"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ia_uso: {
+        Row: {
+          clinic_id: string
+          conversation_id: string | null
+          created_at: string
+          custo_microdolar: number
+          id: string
+          job_id: string | null
+          modelo: string
+          origem: string
+          papel: string
+          tokens_cache_gravados: number
+          tokens_cache_lidos: number
+          tokens_entrada: number
+          tokens_saida: number
+        }
+        Insert: {
+          clinic_id: string
+          conversation_id?: string | null
+          created_at?: string
+          custo_microdolar: number
+          id?: string
+          job_id?: string | null
+          modelo: string
+          origem: string
+          papel: string
+          tokens_cache_gravados?: number
+          tokens_cache_lidos?: number
+          tokens_entrada?: number
+          tokens_saida?: number
+        }
+        Update: {
+          clinic_id?: string
+          conversation_id?: string | null
+          created_at?: string
+          custo_microdolar?: number
+          id?: string
+          job_id?: string | null
+          modelo?: string
+          origem?: string
+          papel?: string
+          tokens_cache_gravados?: number
+          tokens_cache_lidos?: number
+          tokens_entrada?: number
+          tokens_saida?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_uso_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ia_uso_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       insurance: {
         Row: {
           active: boolean
@@ -1780,6 +2107,86 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      knowledge_item: {
+        Row: {
+          active: boolean
+          answer: string
+          clinic_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          question: string
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          answer: string
+          clinic_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          question: string
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          answer?: string
+          clinic_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          question?: string
+          source?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_item_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      llm_preco: {
+        Row: {
+          cache_escrita_microdolar_por_milhao: number
+          cache_leitura_microdolar_por_milhao: number
+          created_at: string
+          entrada_microdolar_por_milhao: number
+          fonte: string
+          modelo: string
+          saida_microdolar_por_milhao: number
+          updated_at: string
+          vigente_desde: string
+        }
+        Insert: {
+          cache_escrita_microdolar_por_milhao: number
+          cache_leitura_microdolar_por_milhao: number
+          created_at?: string
+          entrada_microdolar_por_milhao: number
+          fonte: string
+          modelo: string
+          saida_microdolar_por_milhao: number
+          updated_at?: string
+          vigente_desde: string
+        }
+        Update: {
+          cache_escrita_microdolar_por_milhao?: number
+          cache_leitura_microdolar_por_milhao?: number
+          created_at?: string
+          entrada_microdolar_por_milhao?: number
+          fonte?: string
+          modelo?: string
+          saida_microdolar_por_milhao?: number
+          updated_at?: string
+          vigente_desde?: string
+        }
+        Relationships: []
       }
       message: {
         Row: {
@@ -4092,6 +4499,36 @@ export type Database = {
         }
         Returns: string
       }
+      definir_contato_liberado_da_ia: {
+        Args: {
+          p_ativo: boolean
+          p_clinic_id: string
+          p_rotulo: string
+          p_telefone_e164: string
+        }
+        Returns: boolean
+      }
+      definir_interruptor_da_ia: {
+        Args: { p_ligado: boolean; p_motivo?: string }
+        Returns: boolean
+      }
+      definir_liberacao_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_liberada: boolean
+          p_modo?: string
+          p_motivo?: string
+        }
+        Returns: boolean
+      }
+      definir_numero_da_ia: {
+        Args: {
+          p_ativo: boolean
+          p_clinic_id: string
+          p_whatsapp_account_id: string
+        }
+        Returns: boolean
+      }
       definir_numero_principal: {
         Args: { p_account_id: string; p_clinic_id: string }
         Returns: string
@@ -4225,6 +4662,23 @@ export type Database = {
         }
         Returns: string
       }
+      ia_clinica_liberada: { Args: { p_clinic_id: string }; Returns: boolean }
+      ia_clinicas_da_fase_controlada: { Args: never; Returns: string[] }
+      ia_desligar: { Args: { p_clinic_ids: string[] }; Returns: Json }
+      ia_exigir_equipe_conduzza: { Args: never; Returns: undefined }
+      ia_liberacao_vigente: {
+        Args: { p_clinic_id: string; p_modos: string[] }
+        Returns: boolean
+      }
+      ia_pode_atender: {
+        Args: {
+          p_clinic_id: string
+          p_phone_key: string
+          p_whatsapp_account_id: string
+        }
+        Returns: boolean
+      }
+      ia_pode_simular: { Args: { p_clinic_id: string }; Returns: boolean }
       ingest_inbound_message: {
         Args: {
           p_body?: string

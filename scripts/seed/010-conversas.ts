@@ -838,7 +838,9 @@ export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
         conversation_id: conversationId(6),
         message_id: messageId(6, 3),
         tool_used: "escalar_humano",
-        escalation_reason: "paciente descreveu sintoma pós-procedimento",
+        // codigo do CHECK de ai_decision_log.escalation_reason (migration
+        // 20261006100000), nunca texto livre
+        escalation_reason: "sintoma",
         compliance_blocked: true,
         compliance_rule: "triagem",
         blocked_draft:

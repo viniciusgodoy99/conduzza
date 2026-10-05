@@ -436,9 +436,9 @@ create table ai_decision_log (
   message_id uuid references message(id),
   tool_used text,
   context_read jsonb,
-  escalation_reason text,
+  escalation_reason text,                  -- codigo com CHECK (secao 17.9), nunca texto livre
   compliance_blocked boolean not null default false,
-  compliance_rule text,                    -- triagem | promessa_resultado | medicamento | oferta_casada
+  compliance_rule text,                    -- categoria do filtro com CHECK (secao 17.9)
   blocked_draft text,                      -- o que a IA ia responder, para auditoria
   latency_ms integer,
   created_at timestamptz not null default now()
@@ -545,36 +545,13 @@ create table waitlist_offer (
 
 ## 6. Agente de IA
 
-```sql
-create table ai_agent_config (
-  id uuid primary key default gen_random_uuid(),
-  clinic_id uuid not null references clinic(id) on delete cascade,
-  version integer not null default 1,
-  published boolean not null default false,
-  agent_name text not null default 'Assistente',
-  tone text not null default 'cordial' check (tone in ('formal','cordial','proximo')),
-  use_emoji boolean not null default false,
-  greeting text, closing text,
-  skills jsonb not null default '{}',       -- { "agendar": true, "informar_preco": true, ... }
-  operating_mode text not null default '24h' check (operating_mode in ('24h','fora_expediente','fallback')),
-  fallback_minutes integer default 5,
-  operating_hours jsonb,
-  escalation_rules jsonb not null default '{}',
-  published_at timestamptz,
-  published_by uuid references auth.users(id),
-  created_at timestamptz not null default now(),
-  unique (clinic_id, version)
-);
+**Este desenho original foi substituído pela seção 17** (migration `20261006100000_ia_liberacao_e_schema.sql`, Fase 3, E0). Não crie nada a partir do bloco antigo: as tabelas reais estão em 17.8 (`ai_agent_config` e `knowledge_item`) e 17.9 (colunas e CHECKs novos de `ai_decision_log`), e as travas de liberação da IA em 17.2 a 17.6.
 
-create table knowledge_item (
-  id uuid primary key default gen_random_uuid(),
-  clinic_id uuid not null references clinic(id) on delete cascade,
-  question text not null,
-  answer text not null,
-  source text not null default 'manual',    -- manual | correcao_humano | documento
-  active boolean not null default true
-);
-```
+O que mudou em relação ao desenho original desta seção:
+
+- `ai_agent_config.published boolean` virou `status` (`rascunho` ou `publicada`), com a versão publicada imutável por gatilho (P0001 para qualquer papel) e `published_at`/`published_by` carimbados pelo banco. Ganhou `updated_at` e CHECKs (`version > 0`, `skills` e `escalation_rules` objetos, `fallback_minutes` positivo). A sessão não publica: publicar é do sistema (E5).
+- `knowledge_item.source` é `manual`, `correcao_humana` ou `documento` (o desenho dizia `correcao_humano`), com CHECK; ganhou `created_by` (default `auth.uid()`), `created_at` e `updated_at`.
+- RLS das duas: membro ativo lê; administrador e gestor que escrevem criam, editam e apagam (em `ai_agent_config`, só rascunho).
 
 ---
 
@@ -1779,3 +1756,111 @@ Resultado "TODOS OS ASSERTS PASSARAM" e ROLLBACK. **Sabotagens:** 27 novas, nos 
 **Ordem de publicação:** a migration **antes** do código. Com ela e o código antigo nada muda (colunas com default `false` e nula, funções sem chamador; a chamada antiga de `reclassificar_resposta_automatica` com 2 argumentos continua valendo pelo default). Com o código novo e sem ela, a lista e o fio do Atendimento, que passam a pedir `pelo_celular`, falham com 42703, o webhook responde 500 a toda mensagem do celular (PGRST202) e a ingestão grava o log `reclassificar_automatica_falhou` (PGRST202) em toda mensagem do paciente, sem derrubar a ingestão. Depois de aplicar: rodar as provas acima e regenerar os tipos (o diff tem de sumir).
 
 **Rollback** (manual): apagar `registrar_mensagem_do_celular`, `adotar_eco_do_envio`, `reclassificar_resposta_automatica` e `espera_pelo_celular_sem_linha`, o CHECK `message_pelo_celular_coerente` e as colunas `pelo_celular` e `enviada_no_aparelho_em`. As linhas já gravadas pelo celular **ficam** (saída, `usuario` ou `sistema`, sem pessoa) e só perdem o rótulo; o código antigo as mostra como bolha da clínica sem autor.
+
+---
+
+## 17. Agente de IA: liberação controlada e schema (Fase 3, E0, 06/10/2026, migration `20261006100000_ia_liberacao_e_schema.sql`)
+
+Plano aprovado pelo dono em 05/10/2026: a IA conversa **só** nas duas clínicas dele, **teste123** (`acd9c539-585e-4f2a-a195-712c70099564`) e **Conduzza Teste** (`f0c115dd-e98c-4767-a1bb-93d517844852`), e só com telefones da equipe. A salud-care nunca pode ser atingida. Esta migration é só aditiva e **não liga nada**: nenhuma linha de liberação nasce nela, o interruptor global nasce desligado e nenhum código de produção lê as tabelas novas (só os testes). Ensaiada três vezes em transação desfeita contra a produção (a terceira depois da revisão adversarial de 05/10/2026) e **ainda não aplicada** (sha256 da versão ensaiada por último: `0ab729e1abe48864a0706870debe1dc52f3f7b290439693f01fedc0c65485143`; qualquer mudança no arquivo depois disso exige novo ensaio). Os tipos de `lib/supabase/database.types.ts` foram escritos à mão no formato gerado; conferir com o gerado depois de aplicar.
+
+### 17.1 Decisões registradas
+
+- **Defesa em profundidade:** basta uma trava dizer não para a IA não agir. No ambiente (`lib/ia/liberacao.ts`): T1 `IA_AGENTE_LIGADO=sim` com `VERCEL_ENV=production` e `ANTHROPIC_API_KEY`; T2 `IA_CLINICAS_LIBERADAS` cruzada com a constante `CLINICAS_DA_FASE_CONTROLADA` (o ambiente só estreita; um valor que não é uuid derruba a lista inteira). No banco: T3a lista fechada, T3b `ia_liberacao`, T4 `ia_numero_liberado`, T5 `ia_contato_liberado`, T6 `ia_interruptor`, T7 `ia_liberacao.pausada_pela_clinica`.
+- **Escrita só pelo super admin** (`is_product_admin()`), pelo SQL editor ou pela service role, sempre pelas RPCs `definir_*_da_ia`, que gravam `audit_log`. Nenhuma sessão da clínica escreve, nem o administrador dela.
+- **Desligar nunca envia nada**, nem a frase fixa: desligar é parar a automação. As conversas que perderam a liberação voltam para a equipe.
+- **Clínica `e_de_teste` fora da lista** passa em T3a e não depende do interruptor global, para as suítes provarem a tabela verdade sem tocar no interruptor (o banco é o da produção); em troca, `ia_pode_atender` só aceita, nela, número de provedor `fake`. **Clínica da lista obedece sempre ao interruptor**, mesmo marcada `e_de_teste` (revisão adversarial de 05/10/2026: antes, marcar teste123 como de teste a tirava do kill switch). O motor de produção ignora clínica de teste. Por isso `e_de_teste` passou a ser do produto (17.6).
+- **Teto das últimas 24 horas** (janela móvel, `ia_uso.created_at >= now() - interval '24 hours'`), no lugar do teto "do dia" no fuso da clínica que o contrato (item 9) previa. Troca feita em 05/10/2026 depois da revisão adversarial: o dia civil dependia de `clinic.timezone`, que o administrador da clínica edita na tela de Configurações; um fuso POSIX escolhido a dedo punha o início do "dia" minutos antes de agora e zerava a soma, e um fuso inválido (`Foo/Bar`, aceito pelo banco em clínica sem atividade agendada) fazia a decisão levantar 22023 e derrubava `ia_desligar`. O nome da coluna (`teto_diario_centavos_usd`) ficou. **O dono precisa saber:** "US$ 5 por dia" passou a ser "US$ 5 a cada 24 horas corridas"; quando o teto é atingido, a IA volta quando o gasto mais antigo sair da janela, não à meia-noite.
+- **Modo `numero_inteiro`** (todos os contatos do número) fica barrado pelo CHECK de `ia_liberacao.modo` até uma migration futura, como `cadence_step.use_ai`.
+- **Preço em tabela** (`llm_preco`), nunca no código, como `message_pricing`. Semeado com a tabela oficial da Anthropic do guia claude-api (cache de 24/06/2026).
+
+### 17.2 T3a: `ia_clinicas_da_fase_controlada()`
+
+`immutable`, devolve `uuid[]` com as duas ids, na ordem teste123 e Conduzza Teste. Espelho exato de `CLINICAS_DA_FASE_CONTROLADA` em `lib/ia/liberacao.ts` (o teste de integração compara). Mudar a lista exige migration revisada **e** commit. `execute` só para `service_role`.
+
+O gatilho `ia_liberacao_so_na_lista` (before insert or update em `ia_liberacao`) recusa com **42501**, para qualquer papel (service role e super admin inclusive), linha de clínica que não está na lista e não é `e_de_teste`. No UPDATE, só recusa o que liga (`liberada = true`) ou troca a clínica: desligar sempre passa, mesmo se a lista encolher no futuro. Por isso as RPCs fazem UPDATE e só depois INSERT (o `ON CONFLICT` dispararia o gatilho de INSERT mesmo com a linha existente).
+
+### 17.3 As quatro tabelas da liberação
+
+Todas com RLS, `select` só para `is_product_admin()`, nenhuma policy de escrita, `revoke all` de `anon` e `revoke insert, update, delete` (e `truncate`, `references`, `trigger`) de `authenticated`. A sessão da clínica lê zero linhas e recebe 42501 ao escrever; anon recebe 42501 até no `select`.
+
+| Tabela | Colunas | Regras |
+|---|---|---|
+| `ia_interruptor` (T6) | `id boolean` PK default `true` com `check (id)`, `ligado` (default `false`), `motivo`, `alterado_por`, `alterado_em` | linha única, inserida desligada pela migration |
+| `ia_liberacao` (T3b, T7) | `clinic_id` PK (FK `clinic`, cascade), `modo` (`simulador` ou `contatos`, default `simulador`), `liberada` (default `false`), `pausada_pela_clinica` (default `false`), `teto_diario_centavos_usd` (default 500, > 0; vale para as últimas 24 horas, 17.1), `teto_respostas_por_conversa_hora` (default 20, > 0), `motivo`, `alterado_por`, `created_at`, `updated_at` | gatilho T3a (17.2); os tetos só mudam pelo SQL editor; o teto por conversa é conferido pelo job do E3 |
+| `ia_numero_liberado` (T4) | `whatsapp_account_id` PK (FK `whatsapp_account`, cascade), `clinic_id` (FK `ia_liberacao`, cascade), `ativo` (default `false`), `alterado_por`, `created_at`, `updated_at` | gatilho `ia_numero_liberado_coerente`: clínica liberada antes (23503), número da mesma clínica (23503) e, ao ligar, não removido (23514) |
+| `ia_contato_liberado` (T5) | `id`, `clinic_id` (FK `ia_liberacao`, cascade), `phone_key` (E.164), `rotulo` (até 80), `ativo` (default `false`), `alterado_por`, `created_at`, `updated_at`; único `(clinic_id, phone_key)` | gatilho `ia_contato_liberado_coerente` grava sempre `chave_telefone(phone_key)` (com e sem o nono dígito são a mesma linha) e exige a clínica liberada (23503) |
+
+**Por que `phone_key` e não `contact_id`:** o admin da clínica edita `contact.phone_e164`. A checagem é no telefone que enviou (na ingestão, E3) e no de destino, logo antes do provedor (E3).
+
+### 17.4 Funções de decisão
+
+- **`ia_liberacao_vigente(p_clinic_id, p_modos text[])`**, interna (sem `execute` para ninguém, nem `service_role`): clínica da lista **com o interruptor ligado**, ou clínica `e_de_teste` **fora** da lista (que não depende dele); `liberada`; não pausada; `modo` entre `p_modos`; gasto das últimas 24 horas abaixo do teto. Gasto = soma de `ia_uso.custo_microdolar` com `created_at >= now() - interval '24 hours'` (não lê `clinic.timezone`), comparada com `teto_diario_centavos_usd × 10.000`. Sem clínica, sem linha ou sem a linha do interruptor: falso.
+- **`ia_pode_atender(p_clinic_id, p_whatsapp_account_id, p_phone_key) returns boolean`**, `stable`, security definer, só `service_role`: `ia_liberacao_vigente(..., ['contatos'])`, número liberado e ativo, da clínica e não removido (e, em clínica fora da lista, de provedor `fake`: uma clínica de teste nunca atende pelo WhatsApp real), e telefone liberado e ativo pela chave canônica (`chave_telefone(p_phone_key)`, então o E.164 sem o nono dígito também serve). Qualquer argumento nulo: falso. É a função que o E3 confere na ingestão, ao enfileirar, no job antes do modelo e logo antes do provedor.
+- **`ia_pode_simular(p_clinic_id)`**, mesmas permissões: `ia_liberacao_vigente(..., ['simulador','contatos'])`, sem número nem telefone (simulador da Tela 6, E2).
+- **`ia_clinica_liberada(p_clinic_id)`**, para a tela, `execute` para `authenticated` e `service_role`: falso para quem não é membro ativo da clínica nem super admin (e para anon, que nem executa); verdadeiro com a clínica da lista e o interruptor ligado (ou `e_de_teste` fora da lista) e `liberada`. Não olha pausa, modo nem teto (a tela mostra a clínica liberada mesmo pausada; o cartão Ativo/Pausado é do E5).
+
+### 17.5 RPCs de escrita e `ia_desligar`
+
+Todas security definer, `search_path` vazio, `execute` para `authenticated` e `service_role` (a função recusa quem não é super admin). Guarda comum `ia_exigir_equipe_conduzza()` (interna): com sessão, 42501 se não é `is_product_admin()`; sem sessão, só `service_role` ou conexão direta (SQL editor); anon recebe 42501. Cada chamada grava `audit_log` com `action = 'editou'`.
+
+| RPC | Faz | Erros | `audit_log` |
+|---|---|---|---|
+| `definir_interruptor_da_ia(p_ligado, p_motivo default null) returns boolean` | grava a linha única; desligar chama `ia_desligar` com todas as clínicas que têm linha, num bloco à parte: se a varredura falhar, **a flag desligada fica gravada** mesmo assim | 22004 (`p_ligado` nulo), 22023 (motivo > 500) | `entity 'ia_interruptor'`, sem clínica; e `entity 'ia_interruptor_varredura_falhou'` (sem texto) quando a varredura falha |
+| `definir_liberacao_da_ia(p_clinic_id, p_liberada, p_modo default null, p_motivo default null) returns boolean` | UPDATE e, sem linha, INSERT; `p_modo` nulo mantém o atual (ou `simulador` na criação) | 22004, 22023 (modo ou motivo), P0002 (clínica), 42501 (T3a) | `entity 'ia_liberacao'`, `entity_id` = clínica |
+| `definir_numero_da_ia(p_clinic_id, p_whatsapp_account_id, p_ativo) returns boolean` | idem por número | 22004, 23503, 23514 | `entity 'ia_numero_liberado'`, `entity_id` = número |
+| `definir_contato_liberado_da_ia(p_clinic_id, p_telefone_e164, p_rotulo, p_ativo) returns boolean` | normaliza com `chave_telefone`; rótulo nulo mantém o atual | 22004, 22023 (fora de `^\+[1-9][0-9]{7,14}$` ou rótulo > 80), 23503 | `entity 'ia_contato_liberado'`, `entity_id` = linha |
+
+Antes de gravar, as três últimas travam a linha da clínica em `ia_liberacao` (`FOR UPDATE`) e, depois de gravar, chamam **`ia_desligar(array[p_clinic_id])`** na mesma transação. `ia_desligar(p_clinic_ids uuid[]) returns jsonb` (interna, sem `execute` para ninguém) reavalia cada conversa em `ia_atendendo` das clínicas com `ia_pode_atender` e devolve para `aguardando_humano` **só a que perdeu a liberação** (clínica, interruptor, número, telefone, modo ou teto), ligando `awaiting_reply` quando a última mensagem sem nota interna e sem evento é do paciente. Desligar a clínica ou o interruptor devolve todas (no interruptor, a clínica `e_de_teste` fora da lista não depende dele e fica). Jobs `responder_com_ia` pendentes de conversa que não está mais na IA, ou sem `payload.conversation_id`, viram `cancelado` com `last_error = 'ia_desligada'`; o kind nasce no E3 e, até lá, o update não acha nada. **O E3 precisa gravar `conversation_id` no payload do job.** Devolve `{conversas, jobs}`. Nada é enviado.
+
+**Varredura do interruptor à prova de falha.** Em `definir_interruptor_da_ia(false)`, a chamada a `ia_desligar` roda num bloco `begin ... exception when others` com `lock_timeout` de 2 segundos (o valor anterior volta no fim): conversa travada por outra transação, erro numa clínica ou impasse com uma sessão caem no bloco, a flag desligada continua gravada e o `audit_log` ganha `ia_interruptor_varredura_falhou`. O prazo curto existe porque o `statement_timeout` da API (8 s) é um cancelamento que nenhum bloco pega e desfaria a flag junto. Com a flag desligada nada responde, mesmo com conversas ainda em `ia_atendendo`: o E3 reconfere `ia_pode_atender` antes do modelo e antes do envio. As RPCs por clínica continuam sem esse bloco (desligar uma clínica é tudo ou nada).
+
+**Corrida com a sessão (fechada no banco).** As RPCs travam a linha da clínica em `ia_liberacao` (`FOR UPDATE`; o interruptor trava a própria linha no upsert) antes de gravar, e o gatilho `proteger_status_ia_atendendo` trava as mesmas linhas `FOR SHARE` antes de perguntar a `ia_pode_atender`. Quem chega depois espera o commit do outro e, em READ COMMITTED, lê o estado novo (cada comando do plpgsql tira um retrato novo): ou a sessão já vê a liberação desligada (42501), ou a varredura já vê a conversa na IA e a devolve. Sem isso, uma sessão que pusesse a conversa na IA entre a varredura e o commit da RPC a deixava na IA depois do desligamento. Caso raro: se o super admin desliga no mesmo instante em que alguém troca o contato de uma conversa que já está na IA, as duas transações podem se esperar em ordem inversa; o Postgres desfaz uma delas (impasse detectado) e, no interruptor, isso cai no bloco acima. **O E3 precisa tomar as mesmas travas `FOR SHARE`** quando o servidor puser conversa na IA (o gatilho deixa a service role passar).
+
+**Runbook: como desligar.**
+- Todas as clínicas: no SQL editor (ou pela tela do super admin, quando existir), `select public.definir_interruptor_da_ia(false, 'motivo');`. Depois, conferir `select ligado from public.ia_interruptor;` (falso) e `select count(*) from public.conversation where status = 'ia_atendendo' and clinic_id = any (public.ia_clinicas_da_fase_controlada());` (zero). Se o `audit_log` mostrar `ia_interruptor_varredura_falhou`, a flag está desligada mas sobraram conversas na IA: repetir a chamada (a varredura roda de novo) ou, no SQL editor, `select public.ia_desligar(array(select clinic_id from public.ia_liberacao));`.
+- Uma clínica: `select public.definir_liberacao_da_ia('<clinic_id>', false, null, 'motivo');`. Um número ou um telefone: `definir_numero_da_ia(..., false)` e `definir_contato_liberado_da_ia(..., false)`.
+- **Desligar é sempre pela RPC.** `update public.ia_interruptor set ligado = false`, `delete from public.ia_liberacao ...` ou `update public.ia_numero_liberado set ativo = false` direto no SQL editor são **só recuo** (se a RPC não existir ou falhar): desligam sem devolver as conversas, que ficam em `ia_atendendo` sem ninguém responder até alguém rodar `ia_desligar` como acima.
+
+### 17.6 Gatilhos que fecham buracos de hoje
+
+- **`proteger_status_ia_atendendo`** em `conversation` (`before insert or update of status, contact_id`, `when (new.status = 'ia_atendendo')`, security definer): com **sessão** (`auth.uid()` preenchido), entrar em `ia_atendendo` (INSERT, ou UPDATE vindo de outro status) **ou trocar o `contact_id` de conversa que já está nele** exige `ia_pode_atender(clinic_id, whatsapp_account_id, phone_key do contato)`; senão 42501. Antes de perguntar, trava `FOR SHARE` a linha da clínica em `ia_liberacao` e a do interruptor (corrida, 17.5). Vale para todo papel da sessão: administrador, gestor e recepção da clínica liberada quando o telefone (ou o número) não está liberado, o administrador da clínica sem liberação e até o super admin, e também **dentro de RPC security definer** chamada pela sessão (o `auth.uid()` vem do JWT, não do dono da função). Fecha o buraco de hoje: o membro com escrita gravava esse status pelo PostgREST.
+  - **Sem sessão passa** (service role, SQL editor; `auth.uid()` nulo), como no molde `proteger_limite_de_numeros`. O servidor é guardado nos outros pontos: nenhum caminho dele faz a IA agir sem passar de novo por `ia_pode_atender`, ao enfileirar, no job antes do modelo e imediatamente antes do envio (E3); e `ia_desligar` devolve para a equipe a conversa que está em `ia_atendendo` sem liberação. Assim as fixtures, o seed e os testes que montam conversa da IA pela service role em clínica fora do programa (onde o status não faz nada: nenhuma IA responde ali) continuam funcionando.
+  - Confere a **entrada** no status e a **troca de contato**: a sessão tem UPDATE em `conversation.contact_id` (policy "membro com escrita atualiza conversa"), e sem isso a conversa do telefone da equipe, já na IA, passava a apontar para um paciente sem sair dela (revisão adversarial de 05/10/2026). Mandar `{status: 'ia_atendendo', contact_id: X}` numa conversa que já está na IA também é conferido. O número e a clínica da conversa não mudam depois de definidos (`conversa_ganha_numero`). Conversa que já estava em `ia_atendendo` e não trocou de contato não é reavaliada aqui (isso é `ia_desligar` e o job do E3). Roda depois de `conversa_ganha_numero` (ordem alfabética), que preenche o número no INSERT.
+  - **Editar `contact.phone_e164`** (tela Pacientes: recepção, gestão e administrador) muda o `phone_key` do contato sem passar por este gatilho: uma conversa já na IA continuaria nela com um telefone fora de `ia_contato_liberado`. Isso fica **barrado no envio** (E3): a checagem do telefone de destino, logo antes do provedor, usa o `phone_key` atual do contato. Nenhuma mudança em `contact` nesta migration. As funções de produção só tiram conversas de `ia_atendendo` (`ingest_inbound_message`, `pedir_remarcacao_pelo_paciente`) e nenhuma conversa estava nesse status no último ensaio.
+- **`proteger_e_de_teste`** em `clinic` (`before insert or update of e_de_teste`, molde `proteger_limite_de_numeros`): com sessão e sem `is_product_admin()`, criar clínica com `e_de_teste = true` ou mudar o valor dá 42501. Service role e o cadastro (`auth.uid()` nulo) passam. T3a confia nesse campo.
+
+### 17.7 `ia_uso` e `llm_preco`
+
+- **`ia_uso`**: uma linha por chamada ao modelo, inclusive do simulador. `clinic_id` (FK cascade), `conversation_id` (FK `conversation`, `on delete set null`), `origem` (`whatsapp`, `simulador`, `avaliacao`), `papel` (`agente`, `verificador`, `classificador`), `modelo` (1 a 100), `tokens_entrada`, `tokens_saida`, `tokens_cache_lidos`, `tokens_cache_gravados` (≥ 0, default 0), `custo_microdolar bigint` (≥ 0; 1 US$ = 1.000.000), `job_id` (sem FK: a fila é podada), `created_at`. Índices `(clinic_id, created_at)` e `conversation_id` parcial. Só o sistema escreve; o super admin lê. Nada de texto.
+- **`llm_preco`**: `modelo` PK (`^[a-z0-9][a-z0-9.-]{0,99}$`), `entrada_`, `saida_`, `cache_leitura_` e `cache_escrita_microdolar_por_milhao` (bigint ≥ 0), `vigente_desde`, `fonte` (obrigatória), `created_at`, `updated_at`. Todo autenticado lê; ninguém da sessão escreve; anon não chega. Semeado com `claude-opus-5` (5.000.000 / 25.000.000 / 500.000 / 6.250.000), `claude-sonnet-5` (2.000.000 / 10.000.000 / 200.000 / 2.500.000) e `claude-haiku-4-5` (1.000.000 / 5.000.000 / 100.000 / 1.250.000), vigentes desde 24/06/2026: leitura de cache 0,1x e escrita de cache de 5 minutos 1,25x da entrada.
+
+### 17.8 3.1: `ai_agent_config` e `knowledge_item`
+
+- **`ai_agent_config`**: `id`, `clinic_id` (FK `clinic`, cascade), `version` (default 1), `status` (`rascunho` ou `publicada`, default `rascunho`; substitui o `published` do desenho original da seção 6), `agent_name` (default `Assistente`, não vazio), `tone` (`formal`, `cordial`, `proximo`), `use_emoji`, `greeting`, `closing`, `skills` (jsonb), `operating_mode` (`24h`, `fora_expediente`, `fallback`), `fallback_minutes` (default 5), `operating_hours` (jsonb), `escalation_rules` (jsonb), `published_at`, `published_by`, `created_at` e `updated_at`. `version > 0`, único `(clinic_id, version)`; `skills` e `escalation_rules` objetos JSON; `fallback_minutes` positivo; CHECK `ai_agent_config_publicacao_coerente` (publicada se e só se `published_at` preenchido). O gatilho `proteger_versao_publicada_do_agente` recusa com **P0001** qualquer UPDATE de versão publicada, para qualquer papel (inclusive voltar a rascunho), e carimba `published_at = now()` e `published_by = auth.uid()` ao publicar (o que o cliente mandar é ignorado). RLS: membro ativo lê; administrador e gestor ativos que escrevem criam, editam e apagam **só rascunho** (a publicada não aparece para UPDATE nem DELETE da sessão; o cascade da clínica a leva). Grants por coluna: a sessão não grava `status`, `published_at` nem `published_by`. **Publicar é do sistema** (E5, depois do filtro de conformidade).
+- **`knowledge_item`**: `question` e `answer` não vazias, `source` (`manual`, `correcao_humana`, `documento`), `active`, `created_by` (default `auth.uid()`, a sessão não grava a coluna), `created_at`, `updated_at`. Membro ativo lê; administrador e gestor escrevem e apagam.
+
+### 17.9 `ai_decision_log` (tabela fria, 0 linhas em 06/10/2026)
+
+Colunas novas: `aprovado`, `camada` (`regra`, `modelo`, `falha`), `texto_sha256` (`^[0-9a-f]{64}$`), `agente_modelo`, `verificador_modelo`, `versao_filtro`, `versao_prompt`, `config_version`, `job_id` (índice parcial; o gatilho de `message` do E3 procura por ele), `tokens_entrada`, `tokens_saida`, `tokens_cache` (≥ 0) e `gatilho_entrada`. CHECKs:
+- `compliance_rule`: `triagem`, `orientacao_clinica`, `promessa_resultado`, `medicamento`, `dosagem`, `diagnostico`, `oferta_casada`, `antes_depois`, `preco_nao_verificado`, `formato_invalido`, `falha_verificador` (as categorias do filtro do E1);
+- `escalation_reason`: `sintoma`, `pedido_humano`, `insatisfacao`, `menor_de_idade`, `valor_fora_da_tabela`, `falhas_seguidas`, `assunto_clinico`, `midia_nao_suportada`, `tentativa_de_manipulacao`, `conformidade`, `agente_pediu`, `teto_atingido`, `regra_do_procedimento`;
+- `gatilho_entrada`: `sintoma`, `assunto_clinico`, `pedido_humano`, `insatisfacao`, `menor_de_idade`, `valor_fora_da_tabela`, `manipulacao`, `midia`, `mensagem_longa` (os gatilhos de entrada do E1);
+- `ai_decision_log_aprovado_coerente`: aprovado exige `texto_sha256`, `compliance_blocked = false` e `compliance_rule` nula.
+
+### 17.10 Códigos de erro, ensaio, provas, ordem de publicação e rollback
+
+**Códigos:** 42501, 22004, 22023, 23503, 23514, 23505 (versão repetida), P0001 e P0002. 40001 e 40P01 nunca são levantados de propósito. Nenhuma mensagem de erro leva telefone.
+
+**Ensaios (três; o terceiro autorizado depois da revisão adversarial, e o último):** em transação desfeita contra a produção, a migration e um bloco de asserts (`scratchpad/e0/asserts.sql`): grants e RLS (`has_function_privilege`, `has_table_privilege`, `has_column_privilege`), lista fechada sem a salud-care, interruptor desligado, `ia_liberacao` vazia, preços; numa clínica `e_de_teste` e numa clínica comum criadas ali, T3a pela RPC e pelo insert direto, a tabela verdade, o teto (do dia nos dois primeiros, de 24 horas no terceiro), o gatilho de status, o desligamento com `awaiting_reply`, o `audit_log`, a versão publicada imutável, os CHECKs de `ai_decision_log` e o cascade da clínica. No segundo ensaio (versão final do gatilho de status), o caso do gatilho prova os dois lados: sem sessão, a conversa de telefone não liberado entra em `ia_atendendo` por INSERT e por UPDATE; com uma sessão simulada (`request.jwt.claims` local à transação), INSERT e UPDATE com telefone não liberado e INSERT em número não liberado dão 42501, e a contraprova (telefone e número liberados) entra. Resultado: todos passaram e ROLLBACK; nada ficou na produção (conferido depois). Antes do ensaio, o mesmo bloco foi rodado num Postgres 17 local (PGlite) com um esboço do schema, inclusive contra duas versões sabotadas do gatilho (uma que deixa a sessão passar e outra que barra a service role): as duas reprovaram. Os caminhos de sessão por papel (admin, recepção, outra clínica, super admin, anon) também foram provados no PGlite, refeitos com a versão final.
+
+**Terceiro ensaio (05/10/2026, depois da revisão adversarial; 2,6 s de transação, ROLLBACK, nada ficou: conferido que a tabela, a função, o gatilho, as colunas novas e as clínicas de ensaio não existem).** O bloco de asserts ganhou uma prova para cada correção: número `uazapi` liberado na clínica `e_de_teste` dá `ia_pode_atender` falso (o `fake` da mesma clínica, verdadeiro); gasto de 25 horas atrás fica fora do teto e o de 23 horas atrás entra; com `clinic.timezone = 'Foo/Bar'` na clínica de ensaio a decisão responde normalmente (antes: 22023); a sessão não troca o `contact_id` de conversa já na IA para telefone fora da lista, nem junto com o status (42501), e o mesmo contato passa; e o gatilho trava `FOR SHARE` a linha do interruptor (o `xmax` dela passa a ser a transação do ensaio). O que não cabe no ensaio foi provado só no PGlite, que não é a produção: a clínica da lista (id de teste123 no esboço) marcada `e_de_teste` obedece ao interruptor (desligado: não atende, não simula, a tela não a mostra liberada e a sessão recebe 42501; ligado: atende, inclusive em número `uazapi`); a varredura do interruptor que falha (gatilho de teste que levanta erro na devolução) deixa a flag desligada gravada, um `audit_log` `ia_interruptor_varredura_falhou` e o `lock_timeout` da transação como estava, e a segunda chamada devolve a conversa; e as travas das RPCs (`FOR UPDATE`) e do gatilho na linha de `ia_liberacao` (`FOR SHARE`), vistas pelo `xmax` entre transações (dentro de uma transação só, as FKs do próprio ensaio já deixam um multixact ali). **Doze sabotagens** da migration, cada uma desfazendo uma das correções (atalho `e_de_teste` antigo na decisão e na tela, sem o filtro de provedor, gatilho só em `status`, retorno cedo sem olhar o contato, teto no fuso, varredura sem bloco, `lock_timeout` sem volta, e cada uma das quatro travas), reprovaram todas. Corrida de verdade (duas conexões) não dá para ensaiar sem aplicar: fica para depois de aplicar, se o dono quiser.
+
+**Provas para rodar depois de aplicar:** `tests/rls/ia-liberacao.test.ts` (nenhum papel lê nem escreve as travas e o gasto; 42501 nas RPCs e nas funções de decisão; `ia_clinica_liberada` por papel; status pela sessão, 42501 para admin, gestor e recepção da clínica liberada com telefone fora da lista e para o admin da clínica sem liberação, com as contraprovas da recepção com telefone liberado e da service role; troca do `contact_id` de conversa já na IA, 42501 para admin, gestor e recepção, com a contraprova do mesmo contato; `e_de_teste`; 3.1 por papel) e `tests/integration/ia-liberacao.test.ts` (lista igual à constante; T3a até para a service role; tabela verdade, inclusive número `uazapi` na clínica de teste e o teto de 24 horas com gasto de 25 e de 23 horas atrás; a service role põe a conversa em `ia_atendendo` sem liberação e o desligamento a devolve; desligamento por telefone, número e clínica, nunca pelo interruptor; `audit_log`; 3.1; preços; CHECKs). Unidade: `tests/unit/ia/liberacao-ambiente.test.ts` (T1 e T2).
+
+**Ordem de publicação:** a migration pode ir **antes** do código: nenhum código lê as tabelas novas e as funções não têm chamador. Aplicar num momento calmo do WhatsApp: `CREATE TRIGGER` em `conversation` e `clinic` e as FKs novas para `conversation` e `whatsapp_account` seguram por instantes um lock nessas tabelas.
+
+**Testes e seed existentes conferidos:**
+- `tests/integration/telefone-canonico.test.ts` ("mensagem nova tira a conversa de 'ia_atendendo'"), `tests/e2e/takeover-realtime.spec.ts`, `tests/e2e/fixtures.ts` (conversa "Juliana Dermato") e `scripts/seed/010-conversas.ts` (cinco conversas) põem a conversa em `ia_atendendo` pela **service role**: continuam passando, porque o gatilho barra só sessão (17.6).
+- `ai_decision_log.escalation_reason` agora é código com CHECK: `tests/e2e/fixtures.ts` e `scripts/seed/010-conversas.ts` gravavam texto livre (`'paciente descreveu sintoma'` e `'... pós-procedimento'`, que dariam 23514) e passaram a gravar `sintoma`. Os demais que gravam na tabela (`tests/rls/conversas.test.ts`, o seed e o e2e) usam `compliance_rule = 'triagem'`, que está na lista.
+
+**Rollback** (cabeçalho da migration, manual): apagar os gatilhos `proteger_status_ia_atendendo` e `proteger_e_de_teste`; as funções `definir_*_da_ia`, `ia_exigir_equipe_conduzza`, `ia_desligar`, `ia_clinica_liberada`, `ia_pode_simular`, `ia_pode_atender`, `ia_liberacao_vigente` e as de gatilho; as tabelas `ia_contato_liberado`, `ia_numero_liberado`, `ia_liberacao`, `ia_interruptor`, `ia_uso`, `llm_preco`, `knowledge_item` e `ai_agent_config`; `ia_clinicas_da_fase_controlada`; e, em `ai_decision_log`, os CHECKs novos, o índice `ai_decision_log_job_idx` e as colunas novas.

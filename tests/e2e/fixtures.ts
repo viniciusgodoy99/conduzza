@@ -412,7 +412,9 @@ export async function provisionar(): Promise<DadosE2E> {
       compliance_rule: "triagem",
       blocked_draft:
         "Parece reação normal do peeling. Pode passar uma pomada cicatrizante que melhora.",
-      escalation_reason: "paciente descreveu sintoma",
+      // codigo do CHECK de ai_decision_log.escalation_reason (migration
+      // 20261006100000), nunca texto livre
+      escalation_reason: "sintoma",
     })
     .throwOnError();
 
