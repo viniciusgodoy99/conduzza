@@ -24,6 +24,14 @@ const tsxAutomatico: Plugin = {
   },
 };
 
+// Guarda da Fase 3: "@anthropic-ai/sdk" (so o nome EXATO) vira um modulo cujo
+// construtor lanca. Nenhum teste chama a Anthropic; subcaminhos como
+// "@anthropic-ai/sdk/helpers/zod" continuam reais.
+const guardaDaAnthropic = {
+  find: /^@anthropic-ai\/sdk$/,
+  replacement: path.resolve(__dirname, "tests/stubs/anthropic-proibido.ts"),
+};
+
 export default defineConfig({
   plugins: [tsxAutomatico],
   test: {
@@ -31,8 +39,9 @@ export default defineConfig({
     environment: "node",
   },
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "."),
-    },
+    alias: [
+      guardaDaAnthropic,
+      { find: "@", replacement: path.resolve(__dirname, ".") },
+    ],
   },
 });

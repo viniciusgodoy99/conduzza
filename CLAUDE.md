@@ -40,6 +40,7 @@ SaaS multi-tenant que coloca uma recepcionista de IA no WhatsApp de clínicas m�
 | Ícones | Lucide, traço 2px (padrão da biblioteca; decisão de 24/09/2026, alinhada ao design system) |
 | Datas | date-fns com locale pt-BR |
 | Testes | Vitest (unidade) + Playwright (fluxo crítico) |
+| LLM (agente de IA) | Anthropic pelo SDK oficial `@anthropic-ai/sdk`, em `lib/integrations/llm/`. Agente `claude-opus-5` (alternativa `claude-sonnet-5` por configuração); verificador do CFM e classificador de entrada `claude-haiku-4-5`. Liberado só para as clínicas da fase controlada (decisão de 05/10/2026; travas no `docs/04`, seção 17) |
 
 ---
 
@@ -61,7 +62,7 @@ O agente de IA **não pode**, em hipótese alguma:
 - indicar medicamento, dosagem ou diagnóstico
 - fazer oferta casada de procedimento
 
-Isso é implementado como **filtro na saída**, rodando depois do LLM e antes do envio, não como instrução de prompt. Prompt não é garantia. Ao bloquear: não envia, escala para humano, grava em `ai_decision_log`.
+Isso é implementado como **filtro na saída**, rodando depois do LLM e antes do envio, não como instrução de prompt. Prompt não é garantia. Ao bloquear: não envia, escala para humano, grava em `ai_decision_log`. O filtro tem duas camadas (`lib/domain/conformidade/`): regras determinísticas, que só bloqueiam, e o verificador por modelo; aprovar exige as duas. **Falha fechada:** verificador fora do ar, prazo estourado, recusa ou saída inválida bloqueiam. Ao bloquear ou escalar, o paciente recebe uma frase fixa aprovada pelo dono, nunca escrita pela IA.
 
 ### 3.3 Canal WhatsApp
 
@@ -143,6 +144,7 @@ Uma tarefa só está pronta quando **tudo** abaixo é verdade:
 - [ ] Nenhum dado de paciente em log
 - [ ] Se mexeu em envio de mensagem: opt-in verificado e custo gravado
 - [ ] Se mexeu em agenda: teste de duas marcações simultâneas no mesmo slot
+- [ ] Se mexeu no agente de IA ou no filtro: bateria de conformidade verde (`tests/unit/conformidade`, roda no prebuild) e nenhum teste chama a Anthropic (o SDK é trocado por um stub nas configs do vitest)
 
 ---
 

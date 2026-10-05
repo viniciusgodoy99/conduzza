@@ -595,6 +595,14 @@ Os 10 status com autoria e canal, `appointment_status_history`, tela de históri
 
 ## FASE 3. Agente de IA
 
+> **Plano aprovado pelo dono em 05/10/2026: liberação controlada só para a teste123 (`acd9c539`) e a Conduzza Teste (`f0c115dd`).** A IA fala só com telefones da equipe (lista que só o super admin edita); a salud-care e as clínicas de teste automático nunca são atingidas. Anthropic pelo SDK oficial (agente `claude-opus-5`, verificador e classificador `claude-haiku-4-5`); ao bloquear ou escalar, frase fixa. A fase foi reorganizada em etapas publicáveis: **E0** travas e schema, **E1** filtro do CFM isolado, **E2** agente no simulador, **E3** WhatsApp só para contatos liberados, **E4** agenda, **E5** Tela 6 completa, **E6** número inteiro (só com o ok do dono). Plano completo: `~/.claude/plans/fa-a-o-plano-considerando-refactored-lark.md`.
+>
+> **E0 (05/10/2026, commit `6dbb9d6`, migration `20261006100000` aplicada; nada liga):** lista fechada no banco, interruptor desligado, tabelas de liberação escritas só pelo super admin, `ia_pode_atender`, teto das últimas 24 h; fecha dois buracos de hoje (a sessão punha conversa em "IA atendendo" pelo PostgREST; o admin da clínica mudava `e_de_teste`). 3.1 parcial: `ai_agent_config`, `knowledge_item`, `ia_uso`, `llm_preco`. Revisão adversarial: 5 achados baixos, corrigidos. Provas: RLS e integração do E0 verdes, suítes inteiras verdes (as quedas por limite de login do Supabase passaram isoladas), e2e do atendimento verde.
+>
+> **E1 (05/10/2026; filtro isolado, nenhuma rota o chama ainda):** `lib/domain/conformidade/` (normalização contra acento, invisível, homóglifo, letras soltas, números no lugar de letras; regras por categoria do CFM; preço só do turno; formato; portão de entrada com os gatilhos de escalonamento) e `lib/integrations/llm/` (cliente Anthropic com prazo e falha fechada, verificador e classificador Haiku com saída estruturada). Bateria de 1.602 testes no prebuild; nenhum teste chama a Anthropic. Medido num conjunto cego que quem corrigiu não viu: respostas normais barradas 4 de 150 (3 de propósito: link e telefone), mensagens normais de paciente escaladas 0 de 80, respostas proibidas pegas só pelas regras 68 de 80 e mensagens que precisam escalar 44 de 50 (o resto fica para o modelo). A primeira correção da revisão tinha passado do ponto (27 de 70 falsos positivos); duas rodadas de precisão com conjuntos cegos trouxeram de volta.
+>
+> **Pendências do dono para seguir:** texto final da frase fixa (proposta em `lib/domain/conformidade/frase-fixa.ts`); fonte oficial da lista de remédios (Anvisa/CMED); orçamento e chave de avaliação da rodada paga (script pronto em `scripts/ia/avaliar-conformidade.ts`, não rodado; aceite do E1 depende dela); criar o workspace da Anthropic com ZDR e contrato; decisões 5 a 14 do plano.
+
 ### [ ] 3.1 Schema do agente `P`
 `ai_agent_config`, `knowledge_item`, com versionamento.
 

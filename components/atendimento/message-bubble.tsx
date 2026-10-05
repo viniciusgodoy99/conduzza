@@ -22,6 +22,7 @@ import {
   horaNaClinica,
 } from "@/components/atendimento/fuso-da-clinica";
 import { Aviso } from "@/components/shared/aviso";
+import type { CategoriaDeConformidade } from "@/lib/domain/conformidade/categorias";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -109,12 +110,26 @@ export function ComplianceBlockCard({
 }: {
   decision: ComplianceDecision;
 }) {
-  const RULE_LABEL: Record<string, string> = {
+  // Uma entrada por categoria do filtro (lib/domain/conformidade): o tipo
+  // obriga a cobrir todas, e o banco tem CHECK com a mesma lista.
+  const RULE_LABEL: Record<CategoriaDeConformidade, string> = {
     triagem: "triagem de sintoma",
-    promessa_resultado: "promessa de resultado",
+    diagnostico: "diagnóstico",
+    orientacao_clinica: "orientação clínica",
     medicamento: "indicação de medicamento",
+    dosagem: "indicação de dose",
+    promessa_resultado: "promessa de resultado",
     oferta_casada: "oferta casada",
+    antes_depois: "imagem de antes e depois",
+    preco_nao_verificado: "preço fora do cadastro",
+    formato_invalido: "formato de resposta não permitido",
+    falha_verificador: "verificação de conformidade indisponível",
   };
+  const regra = decision.compliance_rule;
+  const rotulo =
+    regra !== null && Object.hasOwn(RULE_LABEL, regra)
+      ? RULE_LABEL[regra as CategoriaDeConformidade]
+      : "regra de conformidade";
   return (
     <div className="flex justify-center">
       <Aviso
@@ -123,12 +138,7 @@ export function ComplianceBlockCard({
         titulo="Resposta da IA bloqueada pela conformidade"
         className="w-full max-w-md"
       >
-        <p>
-          Motivo:{" "}
-          {RULE_LABEL[decision.compliance_rule ?? ""] ??
-            "regra de conformidade"}
-          . A conversa foi passada para a recepção.
-        </p>
+        <p>Motivo: {rotulo}. A conversa foi passada para a recepção.</p>
         {decision.blocked_draft ? (
           <Dialog>
             <DialogTrigger asChild>

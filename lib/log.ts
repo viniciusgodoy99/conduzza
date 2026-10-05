@@ -35,6 +35,10 @@ const CAMPOS_PERMITIDOS = new Set([
   "attempt",
   "job_id",
   "kind",
+  // Agente de IA (Fase 3): o id do modelo que respondeu e o stop_reason da
+  // API (enum fechado). Nunca o texto da resposta nem error.message.
+  "modelo",
+  "stop_reason",
 ]);
 
 export type CamposDeLog = Record<

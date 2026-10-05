@@ -25,6 +25,14 @@ const tsxAutomatico: Plugin = {
   },
 };
 
+// Guarda da Fase 3: "@anthropic-ai/sdk" (so o nome EXATO) vira um modulo cujo
+// construtor lanca. Nenhum teste chama a Anthropic; subcaminhos como
+// "@anthropic-ai/sdk/helpers/zod" continuam reais.
+const guardaDaAnthropic = {
+  find: /^@anthropic-ai\/sdk$/,
+  replacement: path.resolve(__dirname, "tests/stubs/anthropic-proibido.ts"),
+};
+
 export default defineConfig({
   plugins: [tsxAutomatico],
   test: {
@@ -35,12 +43,16 @@ export default defineConfig({
     hookTimeout: 30000,
   },
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "."),
+    alias: [
+      guardaDaAnthropic,
+      { find: "@", replacement: path.resolve(__dirname, ".") },
       // O marcador "server-only" lanca erro fora do React Server Components:
       // trocado por um modulo vazio para testar o codigo de servidor real
       // (trilha de leitura) sem tirar o marcador da aplicacao.
-      "server-only": path.resolve(__dirname, "tests/stubs/server-only.ts"),
-    },
+      {
+        find: "server-only",
+        replacement: path.resolve(__dirname, "tests/stubs/server-only.ts"),
+      },
+    ],
   },
 });
