@@ -22,11 +22,13 @@ import { adminClient } from "../rls/stack";
 // tentarMoverPorTermo com 'clinica') so anda etapa da clinica ou de
 // qualquer um, com a trilha termo_chave_moveu_etapa_clinica.
 //
-// Eco do celular, "nunca reentrega" (mesma migration): o eco nao vira linha
-// de message, entao a rota marca o wa_message_id em termo_eco_visto por
-// marcar_eco_para_termo e so move quando a marca nasce. Aqui: a marca e
-// unica por clinica e id, nem nasce sem etapa com termo da clinica, e a poda
-// e por clinica.
+// Eco do celular, "nunca reentrega" (mesma migration): a rota marca o
+// wa_message_id em termo_eco_visto por marcar_eco_para_termo e so move quando
+// a marca nasce. A marca nasceu quando o eco nao virava linha de message;
+// desde 05/10/2026 ele vira (registrar_mensagem_do_celular), mas o termo
+// continua decidido pela marca, nao pelo "inserted" da gravacao. Aqui: a
+// marca e unica por clinica e id, nem nasce sem etapa com termo da clinica,
+// e a poda e por clinica.
 
 const admin = adminClient();
 const sufixo = Date.now().toString(36);

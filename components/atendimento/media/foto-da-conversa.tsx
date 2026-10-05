@@ -5,7 +5,9 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
-// Foto recebida do paciente: miniatura na bolha, tela cheia ao clicar.
+// Foto da conversa: miniatura na bolha, tela cheia ao clicar. Quase sempre
+// e do paciente; a da clinica (enviada pelo sistema ou direto pelo WhatsApp)
+// usa a mesma tela, e o texto alternativo sem legenda diz de quem e.
 //
 // TAMANHO FIXO de proposito. O fio rola para o fim quando chega mensagem nova
 // (thread.tsx:78), e imagem sem altura reservada faz o conteudo pular na cara
@@ -20,13 +22,19 @@ const ALTURA = 180;
 export function FotoDaConversa({
   messageId,
   legenda,
+  daClinica = false,
 }: {
   messageId: string;
   legenda: string | null;
+  /** foto de saida: sem legenda, o leitor de tela ouve "pela clinica" */
+  daClinica?: boolean;
 }) {
   const [aberta, setAberta] = useState(false);
   const [falhou, setFalhou] = useState(false);
   const src = `/api/atendimento/midia/${messageId}`;
+  const textoAlternativo =
+    legenda ??
+    (daClinica ? "Foto enviada pela clínica" : "Foto enviada pelo paciente");
 
   if (falhou) {
     return (
@@ -54,7 +62,7 @@ export function FotoDaConversa({
             precisaria de dominio fixo e guardaria copia de foto de paciente. */}
         <img
           src={src}
-          alt={legenda ?? "Foto enviada pelo paciente"}
+          alt={textoAlternativo}
           width={LARGURA}
           height={ALTURA}
           className="size-full bg-surface-4 object-cover"
@@ -85,7 +93,7 @@ export function FotoDaConversa({
             {/* eslint-disable-next-line @next/next/no-img-element -- mesmo motivo */}
             <img
               src={src}
-              alt={legenda ?? "Foto enviada pelo paciente"}
+              alt={textoAlternativo}
               className="max-h-[80vh] w-auto rounded-xl object-contain"
             />
             <div className="flex flex-wrap items-center justify-between gap-3">

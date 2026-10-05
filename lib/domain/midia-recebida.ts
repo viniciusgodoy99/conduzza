@@ -266,6 +266,12 @@ export type ArquivoDaMensagem = {
   media_mimetype?: string | null;
   /** 'entrada' (do paciente) ou 'saida' (da clinica) */
   direction?: string | null;
+  /**
+   * Enviada direto pelo WhatsApp da clinica, fora do sistema (celular,
+   * WhatsApp Web). E saida, mas o arquivo nao passou pelos nossos filtros de
+   * anexo: pode ser qualquer coisa.
+   */
+  pelo_celular?: boolean | null;
 };
 
 /**
@@ -300,18 +306,25 @@ function rotuloDoArquivo(mensagem: ArquivoDaMensagem): string {
  * Extensao quando o tipo guardado nao diz nada (nulo ou fora da lista).
  *
  * - Foto: .jpg, porque o WhatsApp sempre recomprime foto em JPEG.
- * - Documento que a CLINICA enviou: .pdf. A linha de saida nasce sem
- *   media_mimetype (send.ts so repassa o tipo ao provedor), e o unico
- *   documento que sai e PDF: o anexo do Inbox (MIMES_ACEITOS em
+ * - Documento que a CLINICA enviou PELO SISTEMA: .pdf. A linha de saida
+ *   nasce sem media_mimetype (send.ts so repassa o tipo ao provedor), e o
+ *   unico documento que sai e PDF: o anexo do Inbox (MIMES_ACEITOS em
  *   atendimento/actions.ts) e o do passo da regua (MIMES_DO_ANEXO em
  *   automacoes/actions.ts) so aceitam application/pdf. Sem isto o PDF enviado
  *   baixava como "conduzza-documento", sem extensao.
  * - Documento do PACIENTE sem tipo: nenhuma. Pode ser planilha, e .pdf fixo a
  *   faria abrir num leitor de PDF e dar erro.
+ * - Documento enviado direto pelo WhatsApp da clinica (pelo_celular): nenhuma,
+ *   pelo mesmo motivo do paciente. Ele e saida, mas nao passou pelo anexo do
+ *   sistema: o celular manda planilha, Word, qualquer coisa.
  */
 function extensaoDeReserva(mensagem: ArquivoDaMensagem): string | null {
   if (mensagem.content_type === "imagem") return "jpg";
-  if (mensagem.content_type === "documento" && mensagem.direction === "saida") {
+  if (
+    mensagem.content_type === "documento" &&
+    mensagem.direction === "saida" &&
+    mensagem.pelo_celular !== true
+  ) {
     return "pdf";
   }
   return null;
@@ -322,7 +335,7 @@ function extensaoDeReserva(mensagem: ArquivoDaMensagem): string | null {
  *
  * Ordem: o nome original (com a extensao do tipo real quando faltar), e
  * depois "conduzza-<tipo>" com a extensao do tipo real. Sem tipo que sirva,
- * vale a extensao de reserva (foto .jpg, PDF enviado pela clinica .pdf).
+ * vale a extensao de reserva (foto .jpg, PDF enviado pelo sistema .pdf).
  */
 export function nomeParaBaixar(mensagem: ArquivoDaMensagem): string {
   const extensao =

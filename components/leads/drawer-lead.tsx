@@ -12,6 +12,7 @@ import { useState } from "react";
 
 import { abrirDetalheDoContatoAction } from "@/app/(app)/leads/actions";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { MarcaPeloCelular } from "@/components/atendimento/pelo-celular";
 import { SecaoDeAtividades } from "@/components/atividades/secao-de-atividades";
 import { ChipDeOrigem } from "@/components/leads/chip-de-origem";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
@@ -95,6 +96,24 @@ const AUTOR_LABEL: Record<MensagemDoLead["author"], string> = {
   usuario: "Equipe",
   sistema: "Sistema",
 };
+
+/**
+ * Quem escreveu a mensagem do resumo da conversa. A enviada direto pelo
+ * WhatsApp da clinica (pelo_celular) diz "Pelo WhatsApp" com o icone do
+ * aparelho, como a bolha do Atendimento: "Equipe" esconderia que ela nao
+ * passou pelo sistema, e "Sistema" (a resposta automatica do app) a
+ * confundiria com a regua.
+ */
+export function AutorDaMensagemDoLead({
+  mensagem,
+}: {
+  mensagem: Pick<MensagemDoLead, "author" | "pelo_celular">;
+}) {
+  if (mensagem.pelo_celular === true) {
+    return <MarcaPeloCelular />;
+  }
+  return <span>{AUTOR_LABEL[mensagem.author]}</span>;
+}
 
 function Linha({
   rotulo,
@@ -393,9 +412,9 @@ export function DrawerLead({
                         key={mensagem.id}
                         className="grid gap-0.5 rounded-xl bg-surface-4 px-3 py-2"
                       >
-                        <span className="text-[11px] font-semibold text-text-secondary">
-                          {AUTOR_LABEL[mensagem.author]}
-                          {" · "}
+                        <span className="flex flex-wrap items-center gap-1 text-[11px] font-semibold text-text-secondary">
+                          <AutorDaMensagemDoLead mensagem={mensagem} />
+                          <span>·</span>
                           <span className="cz-num font-medium">
                             {new Date(mensagem.created_at).toLocaleString(
                               "pt-BR",

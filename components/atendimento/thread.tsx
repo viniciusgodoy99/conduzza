@@ -16,6 +16,7 @@ import {
   ComplianceBlockCard,
   MessageBubble,
 } from "@/components/atendimento/message-bubble";
+import { AUTOR_PELO_CELULAR } from "@/components/atendimento/pelo-celular";
 import {
   ConexaoDoNumero,
   SeloDoNumero,
@@ -69,13 +70,27 @@ export const AUTOR_DA_AUTOMACAO = "Automação";
  * (sem o nome no mapa, a linha nao aparece, como sempre). Sem pessoa, so a
  * nota interna ganha assinatura: a unica nota sem autor e a da automacao. A
  * mensagem automatica ao paciente (regua, confirmacao) segue sem linha.
+ *
+ * A enviada direto pelo WhatsApp da clinica (pelo_celular) assina "Pelo
+ * WhatsApp", seja de uma pessoa (author 'usuario', sem author_user_id: o
+ * sistema nao sabe quem digitou) ou da resposta automatica do app WhatsApp
+ * Business (author 'sistema'). Sem isto, a fala da equipe pelo celular
+ * apareceria sem linha nenhuma, igual a regua.
  */
 export function autorDaBolha(
-  message: Pick<MessageItem, "author" | "author_user_id" | "is_internal_note">,
+  message: Pick<
+    MessageItem,
+    "author" | "author_user_id" | "is_internal_note" | "pelo_celular"
+  >,
   authorNames: Record<string, string>,
 ): string | null {
   if (message.author === "ia") {
     return "Assistente";
+  }
+  // O banco so aceita a marca em saida que nao e nota; o teste da nota aqui
+  // mantem a linha igual a da bolha mesmo com um dado montado na mao.
+  if (message.pelo_celular === true && !message.is_internal_note) {
+    return AUTOR_PELO_CELULAR;
   }
   if (message.author_user_id) {
     return authorNames[message.author_user_id] ?? null;

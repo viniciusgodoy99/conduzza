@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ORIGEM_DO_RASTREIO } from "@/lib/integrations/whatsapp/rastreio";
+
 // Normalizador de eventos do webhook. E o UNICO lugar que conhece o formato
 // do uazapi; o provedor falso e o simulador emitem direto o formato canonico.
 // Payload desconhecido vira null (o webhook responde 200 ignorando, para nao
@@ -56,13 +58,16 @@ export type PlataformaDoAnuncio = "Facebook" | "Instagram";
 export type TipoDoAnuncio = "ad" | "post";
 export type ChavesDoAnuncio = { anuncio: string[]; contexto: string[] };
 
+/** Tipo de conteudo que a conversa grava (message.content_type), sem evento. */
+export type TipoDeConteudo = "texto" | "audio" | "imagem" | "documento";
+
 export type InboundEvent =
   | {
       kind: "message_received";
       phone: string;
       name: string | null;
       waMessageId: string;
-      contentType: "texto" | "audio" | "imagem" | "documento";
+      contentType: TipoDeConteudo;
       body: string | null;
       mediaUrl: string | null;
       /**
@@ -79,6 +84,20 @@ export type InboundEvent =
        * "respondendo a" que o paciente fez sumia da conversa da clinica.
        */
       quotedWaMessageId: string | null;
+      /**
+       * Quando o paciente enviou (ISO), se o payload trouxe o horario
+       * (messageTimestamp), lido como no eco do celular. A ingestao o repassa
+       * a reclassificar_resposta_automatica, que o grava na linha
+       * (message.enviada_no_aparelho_em): com o horario de envio dos dois
+       * lados, o banco separa a resposta automatica do app WhatsApp Business
+       * da fala de pessoa mesmo quando as mensagens chegam fora de ordem ou
+       * em rajada (reconexao). A posicao no fio continua sendo a hora de
+       * chegada. null quando nao veio.
+       *
+       * Opcional no tipo so para quem monta o evento a mao (testes e
+       * ferramentas de desenvolvimento); o parser sempre preenche.
+       */
+      enviadaEm?: string | null;
       /** referral de anuncio CTWA, quando o canal o repassa; null no comum */
       anuncio: AnuncioDeOrigem | null;
       /** token da instancia que recebeu; confere contra o guardado */
@@ -86,27 +105,45 @@ export type InboundEvent =
     }
   | {
       /**
-       * A clinica respondeu pelo PROPRIO CELULAR pareado, fora do sistema.
-       * Nao e mensagem recebida (nao entra na conversa como fala do paciente)
-       * e nao e eco do nosso envio: e alguem de carne e osso atendendo por
-       * fora. O sistema precisa saber para nao continuar dizendo que aquela
-       * conversa espera resposta.
+       * A clinica enviou pelo PROPRIO CELULAR pareado (celular, WhatsApp Web,
+       * outro aparelho vinculado), fora do sistema. Nao e mensagem recebida
+       * (nao entra como fala do paciente) e nao e eco do nosso envio (esse
+       * vem com wasSentByApi ou com a nossa marca de rastreio e e
+       * descartado): e alguem atendendo por fora, ou a resposta automatica
+       * do app WhatsApp Business. Vira linha de SAIDA na conversa daquele
+       * numero, marcada pelo_celular (RPC registrar_mensagem_do_celular),
+       * para a conversa mostrar o que o paciente leu e sair da espera.
        */
       kind: "clinic_device_reply";
+      /** Telefone do PACIENTE (o destino), nunca o da clinica. */
       phone: string;
       waMessageId: string;
+      contentType: TipoDeConteudo;
       /**
        * O texto que a clinica escreveu no celular (ou a legenda), aparado;
-       * null sem texto. Serve SO para o termo-chave da jornada escrito pela
-       * clinica (pedido do dono em 02/10/2026): nao e gravado em lugar
-       * nenhum e NUNCA vai para log (regra 3.1).
+       * null sem texto. E gravado na conversa (message.body) e alimenta o
+       * termo-chave da jornada escrito pela clinica (pedido do dono em
+       * 02/10/2026). NUNCA vai para log (regra 3.1).
        */
       body: string | null;
+      /** Referencia do arquivo no provedor; o download e por job. */
+      mediaUrl: string | null;
+      /** Nome do arquivo (so documento), saneado como na entrada. */
+      mediaFilename: string | null;
+      /** Tipo declarado, sem parametros, como na entrada. */
+      mediaMimetype: string | null;
+      /** Id NO WHATSAPP da mensagem que a clinica citou ao responder. */
+      quotedWaMessageId: string | null;
       /**
        * Quando a mensagem saiu do celular (ISO), se o payload trouxe o
        * horario. Serve para reconhecer a resposta AUTOMATICA do app WhatsApp
        * Business (saudacao, ausencia), que sai segundos depois da mensagem do
-       * paciente. null quando nao veio: quem usa cai na hora da chegada.
+       * paciente, para decidir se a espera desce (as duas regras vivem na
+       * RPC, que grava o horario em message.enviada_no_aparelho_em), para a
+       * janela do termo-chave (ecoContaParaTermo) e para a nova tentativa da
+       * saudacao para paciente novo (ecoEsperaPeloContatoNovo). A posicao no
+       * fio NAO sai daqui: a linha nasce com a hora de chegada, como a da
+       * ingestao. null quando nao veio: vale a hora da chegada.
        */
       enviadaEm: string | null;
       /**
@@ -156,6 +193,8 @@ const canonicalSchema = z.discriminatedUnion("kind", [
     mediaFilename: z.string().nullish(),
     mediaMimetype: z.string().nullish(),
     quotedWaMessageId: z.string().nullish(),
+    // Horario de envio (texto de data, com fuso), como no clinic_device_reply.
+    enviadaEm: z.string().nullish(),
     anuncio: z
       .object({
         ctwaClid: z.string().nullish(),
@@ -171,6 +210,22 @@ const canonicalSchema = z.discriminatedUnion("kind", [
         chavesVistas: z.unknown().optional(),
       })
       .nullish(),
+  }),
+  // Mensagem enviada pelo celular da clinica, no formato canonico (simulador
+  // e e2e): o mesmo conteudo da recebida, mais o horario de envio (ISO).
+  z.object({
+    kind: z.literal("clinic_device_reply"),
+    phone: z.string().min(8),
+    waMessageId: z.string().min(1),
+    contentType: z
+      .enum(["texto", "audio", "imagem", "documento"])
+      .default("texto"),
+    body: z.string().nullish(),
+    mediaUrl: z.string().nullish(),
+    mediaFilename: z.string().nullish(),
+    mediaMimetype: z.string().nullish(),
+    quotedWaMessageId: z.string().nullish(),
+    enviadaEm: z.string().nullish(),
   }),
   z.object({
     kind: z.literal("message_deleted"),
@@ -248,9 +303,55 @@ function phoneFromJid(jid: string | undefined): string | null {
   return `+${digitos}`;
 }
 
-function mapContentType(
-  ...candidatos: (string | undefined)[]
-): "texto" | "audio" | "imagem" | "documento" {
+const SUFIXO_DE_TELEFONE = "@s.whatsapp.net";
+
+/**
+ * Telefone de um JID que E de telefone: "@s.whatsapp.net" ou sem sufixo.
+ * Qualquer outro sufixo (@lid, @g.us, @broadcast, @newsletter) nao e
+ * telefone: o numero do @lid e um identificador interno e, lido como
+ * telefone, gravaria a mensagem num contato que nao existe.
+ */
+function telefoneDeJidDeTelefone(jid: unknown): string | null {
+  if (typeof jid !== "string" || jid === "") {
+    return null;
+  }
+  const arroba = jid.indexOf("@");
+  if (arroba >= 0 && jid.slice(arroba) !== SUFIXO_DE_TELEFONE) {
+    return null;
+  }
+  return phoneFromJid(jid);
+}
+
+/**
+ * Para quem a clinica mandou a mensagem que saiu do celular (o PACIENTE). O
+ * sender_pn de uma mensagem de saida e o numero da propria clinica, entao o
+ * destino vem da conversa: o chatid. Quando o chatid e @lid, o telefone so
+ * pode vir do retrato da conversa que acompanha o evento (`chat`, irmao de
+ * `message`): wa_chatid, se for de telefone, ou phone. Sem nenhum deles,
+ * null: melhor nao gravar do que gravar no contato errado.
+ */
+function destinoDaSaida(
+  mensagem: Record<string, unknown>,
+  chat: Record<string, unknown> | null,
+): string | null {
+  const chatid = typeof mensagem.chatid === "string" ? mensagem.chatid : "";
+  if (!chatid.endsWith("@lid")) {
+    return telefoneDeJidDeTelefone(chatid);
+  }
+  if (!chat) {
+    return null;
+  }
+  const doChat = telefoneDeJidDeTelefone(chat.wa_chatid);
+  if (doChat) {
+    return doChat;
+  }
+  // chat.phone e o numero solto; com "@" seria outro JID, que nao vale aqui.
+  return typeof chat.phone === "string" && !chat.phone.includes("@")
+    ? phoneFromJid(chat.phone)
+    : null;
+}
+
+function mapContentType(...candidatos: (string | undefined)[]): TipoDeConteudo {
   const valor = candidatos.filter(Boolean).join(" ").toLowerCase();
   if (valor.includes("audio") || valor.includes("ptt")) return "audio";
   // Figurinha (mediaType "sticker", messageType "StickerMessage") e uma
@@ -330,6 +431,18 @@ function instanteDoPayload(bruto: unknown): string | null {
   return Number.isNaN(data.getTime()) ? null : data.toISOString();
 }
 
+/**
+ * Horario de envio do formato canonico (texto de data, com fuso). Vira ISO
+ * em UTC; texto que nao e data vira null, como o horario ausente.
+ */
+function instanteCanonico(bruto: string | null | undefined): string | null {
+  if (!bruto) {
+    return null;
+  }
+  const ms = Date.parse(bruto);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
 // Nomes de chave que PODEM marcar envio automatico do app WhatsApp Business.
 // Ninguem confirmou ainda se o uazapi traz algum (a captura com a ausencia
 // ligada esta pendente); por isso isto so alimenta log de depuracao.
@@ -373,32 +486,24 @@ export function marcadoresDeEnvioAutomatico(
 /**
  * A resposta automatica do app WhatsApp Business (saudacao, ausencia) sai do
  * celular pareado poucos segundos depois da mensagem do paciente. Uma pessoa
- * nao le e responde em menos de 8 segundos. Por isso eco do celular que sai
- * DENTRO desta janela depois da ultima mensagem do paciente e tratado como
- * automatico e NAO derruba o "Aguardando voce".
+ * nao le e responde em menos de 8 segundos. Por isso a mensagem do celular
+ * que sai DENTRO desta janela depois da ultima mensagem do paciente e tratada
+ * como automatica: grava como 'sistema' e NAO derruba o "Aguardando voce".
+ *
+ * A regra vive no banco, em dois lados:
+ *  - registrar_mensagem_do_celular: com o horario de envio do eco e o da
+ *    ultima mensagem do paciente (message.enviada_no_aparelho_em), decide
+ *    pelos HORARIOS DE ENVIO (o paciente enviou de 8 s antes a 2 s depois do
+ *    eco); sem um deles, pela chegada (last_inbound_at de 8 s antes a 10 s
+ *    depois do envio do eco, ou de now() sem ele);
+ *  - reclassificar_resposta_automatica (a ingestao chama, com o enviadaEm do
+ *    paciente), quando o eco grava antes da mensagem do paciente: eco de
+ *    pessoa que chegou de 8 s antes a 2 s depois dela e, com os dois
+ *    horarios de envio, saiu de 2 s antes a 8 s depois do paciente.
+ * Esta constante e o espelho dos 8 s aqui, para documentacao e teste: mudar
+ * uma exige mudar a outra.
  */
 export const JANELA_DE_RESPOSTA_AUTOMATICA_MS = 8_000;
-
-/**
- * Instante limite para o eco do celular contar como resposta de pessoa: a
- * conversa so sai da espera se a ultima mensagem do paciente chegou ANTES
- * dele. Usa o horario de envio do payload quando e plausivel (ultimos 7 dias,
- * no maximo 1 minuto no futuro), porque um eco atrasado ou reentregue nao pode
- * apagar a espera de uma mensagem que o paciente mandou DEPOIS dele. Sem
- * horario plausivel, usa a hora da chegada.
- */
-export function limiteParaRespostaDePessoa(
-  enviadaEm: string | null,
-  agoraMs: number,
-): string {
-  const enviadaMs = enviadaEm ? Date.parse(enviadaEm) : NaN;
-  const plausivel =
-    Number.isFinite(enviadaMs) &&
-    enviadaMs >= agoraMs - 7 * 24 * 60 * 60 * 1000 &&
-    enviadaMs <= agoraMs + 60 * 1000;
-  const base = plausivel ? enviadaMs : agoraMs;
-  return new Date(base - JANELA_DE_RESPOSTA_AUTOMATICA_MS).toISOString();
-}
 
 /**
  * Ate quanto tempo depois de sair do celular o eco ainda conta para o
@@ -412,15 +517,17 @@ export const JANELA_DO_ECO_PARA_TERMO_MS = 2 * 60 * 1000;
 /**
  * O eco do celular pode andar o lead por termo-chave? Primeiro filtro, pelo
  * horario de envio do payload: so conta o eco que saiu do celular dentro da
- * janela (ate 1 minuto no futuro, pela folga de relogio, como em
- * limiteParaRespostaDePessoa). Sem horario no payload nao da para provar que
- * e novo, entao nao move.
+ * janela (ate 1 minuto no futuro, pela folga de relogio, a mesma da RPC que
+ * grava a mensagem). Sem horario no payload nao da para provar que e novo,
+ * entao nao move.
  *
- * A janela sozinha NAO separa o eco novo da reentrega: o eco nao vira
- * mensagem na conversa, entao nao ha "linha inserida" como na ingestao, e a
- * reentrega dentro da janela moveria de novo o lead que alguem voltou a mao.
- * A garantia de "nunca reentrega" e a marca por wa_message_id no banco
- * (marcar_eco_para_termo, chamada pela rota do webhook depois deste filtro).
+ * A janela sozinha NAO separa o eco novo da reentrega: a reentrega dentro da
+ * janela moveria de novo o lead que alguem voltou a mao. A garantia de
+ * "nunca reentrega" continua sendo a marca por wa_message_id no banco
+ * (marcar_eco_para_termo, chamada pela rota do webhook depois deste filtro),
+ * como antes de a mensagem do celular virar linha na conversa: o termo-chave
+ * ficou como estava (decisao de 05/10/2026), sem depender do "inserted" da
+ * gravacao.
  */
 export function ecoContaParaTermo(
   enviadaEm: string | null,
@@ -430,6 +537,35 @@ export function ecoContaParaTermo(
   return (
     Number.isFinite(enviadaMs) &&
     enviadaMs >= agoraMs - JANELA_DO_ECO_PARA_TERMO_MS &&
+    enviadaMs <= agoraMs + 60 * 1000
+  );
+}
+
+/**
+ * Ate quanto tempo depois de sair do celular o eco de contato desconhecido
+ * ainda espera a ingestao criar o contato (a saudacao do app WhatsApp
+ * Business para paciente novo, ver a rota do webhook). A saudacao sai 1 ou
+ * 2 s depois da primeira mensagem do paciente e o eco chega em segundos;
+ * passou disso, o contato nao vai nascer na proxima espera.
+ */
+export const JANELA_DO_ECO_PARA_ESPERAR_CONTATO_MS = 60 * 1000;
+
+/**
+ * O eco do celular que voltou contato_desconhecido vale uma nova tentativa?
+ * So com horario de envio no payload e dentro da janela (ate 1 minuto no
+ * futuro, pela folga de relogio, a mesma da RPC). Sem horario nao da para
+ * saber se e a saudacao que acabou de sair; e o eco velho (reentrega,
+ * sincronia de historico) ou a mensagem para quem nao e paciente nao podem
+ * segurar o webhook a toa.
+ */
+export function ecoEsperaPeloContatoNovo(
+  enviadaEm: string | null,
+  agoraMs: number,
+): boolean {
+  const enviadaMs = enviadaEm ? Date.parse(enviadaEm) : NaN;
+  return (
+    Number.isFinite(enviadaMs) &&
+    enviadaMs >= agoraMs - JANELA_DO_ECO_PARA_ESPERAR_CONTATO_MS &&
     enviadaMs <= agoraMs + 60 * 1000
   );
 }
@@ -674,10 +810,91 @@ export function extrairAnuncio(
   return achado;
 }
 
+type ConteudoDaMensagem = {
+  contentType: TipoDeConteudo;
+  mediaUrl: string | null;
+  mediaFilename: string | null;
+  mediaMimetype: string | null;
+  quotedWaMessageId: string | null;
+};
+
+/**
+ * Tipo, arquivo e citacao de uma mensagem do uazapi. O MESMO para a recebida
+ * e para a que saiu do celular da clinica: as duas viram linha de message, e
+ * a bolha, o download e a citacao leem as mesmas colunas.
+ */
+function conteudoDaMensagem(
+  mensagem: Record<string, unknown>,
+): ConteudoDaMensagem {
+  const conteudo = (mensagem.content ?? {}) as Record<string, unknown>;
+  const contentType = mapContentType(
+    mensagem.mediaType as string | undefined,
+    mensagem.messageType as string | undefined,
+    mensagem.type as string | undefined,
+  );
+  return {
+    contentType,
+    // A URL vem criptografada (.enc): baixar exige POST /message/download.
+    // Guardamos a referencia; o download e feito pelo job baixar_midia.
+    mediaUrl: (conteudo.URL as string | undefined) ?? null,
+    // Nome do arquivo so de DOCUMENTO: em texto com previa de link, `title`
+    // e o titulo da pagina, nao nome de arquivo. fileName primeiro; title e
+    // o que alguns clientes mandam no lugar dele.
+    mediaFilename:
+      contentType === "documento"
+        ? (sanearNomeDeArquivo(conteudo.fileName) ??
+          sanearNomeDeArquivo(conteudo.title))
+        : null,
+    mediaMimetype: normalizarMimetype(conteudo.mimetype),
+    // Na especificacao, `quoted` e simplesmente o id da mensagem citada.
+    // Vem string vazia quando nao ha citacao, e "" nao pode virar busca.
+    quotedWaMessageId: (mensagem.quoted as string | undefined) || null,
+  };
+}
+
+/**
+ * ACOES feitas no celular da clinica que chegam como evento "messages" com
+ * fromMe, mas nao sao mensagem nova, em minusculas como em tipoBruto:
+ *  - pininchatmessage: fixar ou desafixar uma mensagem (/message/pin);
+ *  - keepinchatmessage: manter uma mensagem na conversa temporaria;
+ *  - pollupdatemessage: voto em enquete;
+ *  - eventresponsemessage: resposta a convite de evento (escolha em `vote`);
+ *  - call: registro de ligacao (messageType "call").
+ * PinInChatMessage, EventResponseMessage e "call" estao na especificacao do
+ * uazapi; KeepInChatMessage e PollUpdateMessage sao os nomes do whatsmeow,
+ * que o uazapi repassa como messageType, sem exemplo na especificacao. O
+ * "call" so vale como palavra inteira (inicio do tipo).
+ */
+const TIPO_DE_ACAO_NO_CELULAR =
+  /pininchat|keepinchat|pollupdate|eventresponse|\bcall/;
+
+/**
+ * Mensagem de saida sem texto e sem arquivo que E resposta ao paciente:
+ * localizacao (LocationMessage, LiveLocationMessage) e cartao de contato
+ * (ContactMessage, ContactsArrayMessage), em minusculas como em tipoBruto.
+ */
+const TIPO_SEM_TEXTO_QUE_E_RESPOSTA = /location|contact/;
+
 export function parseInboundEvent(payload: unknown): InboundEvent | null {
   const canonical = canonicalSchema.safeParse(payload);
   if (canonical.success) {
     const evento = canonical.data;
+    if (evento.kind === "clinic_device_reply") {
+      return {
+        kind: "clinic_device_reply",
+        phone: evento.phone,
+        waMessageId: evento.waMessageId,
+        contentType: evento.contentType,
+        body: evento.body?.trim() || null,
+        mediaUrl: evento.mediaUrl ?? null,
+        mediaFilename: sanearNomeDeArquivo(evento.mediaFilename),
+        mediaMimetype: normalizarMimetype(evento.mediaMimetype),
+        quotedWaMessageId: evento.quotedWaMessageId || null,
+        enviadaEm: instanteCanonico(evento.enviadaEm),
+        marcadoresDeEnvioAutomatico: [],
+        instanceToken: null,
+      };
+    }
     if (evento.kind === "message_received") {
       return {
         kind: "message_received",
@@ -690,6 +907,7 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
         mediaFilename: sanearNomeDeArquivo(evento.mediaFilename),
         mediaMimetype: normalizarMimetype(evento.mediaMimetype),
         quotedWaMessageId: evento.quotedWaMessageId ?? null,
+        enviadaEm: instanteCanonico(evento.enviadaEm),
         anuncio: evento.anuncio
           ? {
               ctwaClid: evento.anuncio.ctwaClid ?? null,
@@ -781,6 +999,11 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
 
   if (tipoEvento === "messages" && dados.message) {
     const mensagem = dados.message as Record<string, unknown>;
+    // Retrato da conversa que pode acompanhar o evento (irmao de `message`).
+    const chat =
+      dados.chat && typeof dados.chat === "object" && !Array.isArray(dados.chat)
+        ? (dados.chat as Record<string, unknown>)
+        : null;
     const waMessageId =
       (mensagem.messageid as string | undefined) ??
       (mensagem.id as string | undefined);
@@ -817,26 +1040,64 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
       tipoBruto.includes("reaction") || Boolean(mensagem.reaction);
 
     // Mensagem SAINDO do numero da clinica sem ter passado pela API: alguem
-    // respondeu pelo celular pareado. Antes isto era descartado igual ao eco,
-    // e a conversa continuava marcada como esperando resposta: outra atendente
-    // abria o Inbox, via a pergunta "sem resposta" e respondia de novo. O
-    // paciente recebia duas respostas para a mesma pergunta.
+    // respondeu pelo celular pareado (ou outro aparelho vinculado). Antes isto
+    // era descartado igual ao eco, e a conversa continuava marcada como
+    // esperando resposta: outra atendente abria o Inbox, via a pergunta "sem
+    // resposta" e respondia de novo. Depois passou a derrubar a espera, mas o
+    // conteudo continuava jogado fora, e a clinica nao via na conversa o que
+    // o paciente tinha lido. Agora o conteudo vai junto e a rota grava a
+    // mensagem na conversa daquele numero.
     //
-    // Para mensagem de saida, o telefone do PACIENTE esta no chatid (o
-    // sender_pn e o numero da propria clinica).
+    // Para mensagem de saida, o telefone do PACIENTE vem da conversa (o
+    // sender_pn e o numero da propria clinica): destinoDaSaida.
     if (mensagem.fromMe === true) {
+      // Eco de envio NOSSO que escapou do wasSentByApi: todo envio do
+      // sistema leva a nossa marca de rastreio (track_source), e o provedor a
+      // devolve no evento. Sem este corte a mesma mensagem apareceria duas
+      // vezes na conversa (a do sistema e a "do celular").
+      if (mensagem.track_source === ORIGEM_DO_RASTREIO) {
+        return null;
+      }
       // Mensagem de PROTOCOLO (edicao ou apagamento de uma mensagem ja
-      // enviada) nao e resposta nova: a clinica so corrigiu ou retirou o que
-      // tinha dito. Reacao tambem nao. Nenhuma das duas tira a conversa da
-      // espera.
+      // enviada) nao e mensagem nova: a clinica so corrigiu ou retirou o que
+      // tinha dito. Reacao tambem nao. Nenhuma das duas vira linha nem tira a
+      // conversa da espera. Pela especificacao, `edited` e TEXTO (o
+      // historico de edicoes, "" quando nao houve): a comparacao antiga com
+      // true nunca batia, e a edicao feita no celular passaria como mensagem
+      // nova. O true continua aceito por defesa.
+      const editada =
+        mensagem.edited === true ||
+        (typeof mensagem.edited === "string" && mensagem.edited.trim() !== "");
       const ehProtocolo =
         /protocol|edit|revoke|delete/.test(tipoBruto) ||
         mensagem.isEdit === true ||
-        mensagem.edited === true;
-      if (ehReacao || ehProtocolo) {
+        editada;
+      // ACAO no celular (fixar, manter, votar, responder evento, ligar):
+      // tambem nao responde o paciente. Antes virava linha "Pelo WhatsApp"
+      // vazia e tirava a conversa de "Aguardando voce".
+      const ehAcao = TIPO_DE_ACAO_NO_CELULAR.test(tipoBruto);
+      if (ehReacao || ehProtocolo || ehAcao) {
         return null;
       }
-      const destino = phoneFromJid(mensagem.chatid as string | undefined);
+      const conteudo = conteudoDaMensagem(mensagem);
+      // Sem escolha de botao: a clinica nao "toca" botao no proprio envio.
+      const body = (mensagem.text as string | undefined)?.trim() || null;
+      // Defesa para a acao de tipo que ainda nao conhecemos: "texto" sem
+      // texto e sem referencia de arquivo nao tem o que mostrar, e gravado
+      // viraria bolha vazia que derruba a espera. Imagem, audio e documento
+      // sem URL continuam: o worker baixa pelo wa_message_id, nao pela URL.
+      // Localizacao e cartao de contato tambem continuam: sao resposta de
+      // verdade ao paciente (antes desta frente ja tiravam a conversa da
+      // espera), e a bolha fica como a do paciente que manda localizacao.
+      if (
+        conteudo.contentType === "texto" &&
+        !body &&
+        !conteudo.mediaUrl &&
+        !TIPO_SEM_TEXTO_QUE_E_RESPOSTA.test(tipoBruto)
+      ) {
+        return null;
+      }
+      const destino = destinoDaSaida(mensagem, chat);
       if (!destino) {
         return null;
       }
@@ -844,7 +1105,8 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
         kind: "clinic_device_reply",
         phone: destino,
         waMessageId,
-        body: (mensagem.text as string | undefined)?.trim() || null,
+        ...conteudo,
+        body,
         enviadaEm: instanteDoPayload(mensagem.messageTimestamp),
         marcadoresDeEnvioAutomatico: marcadoresDeEnvioAutomatico(mensagem),
         instanceToken,
@@ -876,11 +1138,13 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
       (conteudo.selectedRowId as string | undefined) ??
       null;
 
-    const contentType = mapContentType(
-      mensagem.mediaType as string | undefined,
-      mensagem.messageType as string | undefined,
-      mensagem.type as string | undefined,
-    );
+    const {
+      contentType,
+      mediaUrl,
+      mediaFilename,
+      mediaMimetype,
+      quotedWaMessageId,
+    } = conteudoDaMensagem(mensagem);
 
     return {
       kind: "message_received",
@@ -890,21 +1154,11 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
       contentType,
       body:
         (mensagem.text as string | undefined)?.trim() || escolhaDeBotao || null,
-      // A URL vem criptografada (.enc): baixar exige POST /message/download.
-      // Guardamos a referencia; o download entra quando houver midia de fato.
-      mediaUrl: (conteudo.URL as string | undefined) ?? null,
-      // Nome do arquivo so de DOCUMENTO: em texto com previa de link, `title`
-      // e o titulo da pagina, nao nome de arquivo. fileName primeiro; title e
-      // o que alguns clientes mandam no lugar dele.
-      mediaFilename:
-        contentType === "documento"
-          ? (sanearNomeDeArquivo(conteudo.fileName) ??
-            sanearNomeDeArquivo(conteudo.title))
-          : null,
-      mediaMimetype: normalizarMimetype(conteudo.mimetype),
-      // Na especificacao, `quoted` e simplesmente o id da mensagem citada.
-      // Vem string vazia quando nao ha citacao, e "" nao pode virar busca.
-      quotedWaMessageId: (mensagem.quoted as string | undefined) || null,
+      mediaUrl,
+      mediaFilename,
+      mediaMimetype,
+      quotedWaMessageId,
+      enviadaEm: instanteDoPayload(mensagem.messageTimestamp),
       anuncio: extrairAnuncio(mensagem),
       instanceToken,
     };

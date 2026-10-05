@@ -11,6 +11,7 @@ import type {
   WhatsAppProvider,
   MidiaParaEnviar,
 } from "./provider";
+import { ORIGEM_DO_RASTREIO } from "./rastreio";
 
 // Cliente uazapi (API nao oficial; decisao registrada no CLAUDE.md 3.3).
 //
@@ -238,7 +239,7 @@ export class UazapiProvider implements WhatsAppProvider {
         ref,
         PATHS.sendText,
         {
-          payload: { number: to, text: body, ...comCitacao(extra) },
+          payload: { number: to, text: body, ...camposDoExtra(extra) },
           semRetry: true,
         },
       );
@@ -275,7 +276,7 @@ export class UazapiProvider implements WhatsAppProvider {
         type: midia.tipo,
         file: midia.base64,
         mimetype: midia.mimetype,
-        ...comCitacao(extra),
+        ...camposDoExtra(extra),
       };
       if (midia.legenda) {
         payload.text = midia.legenda;
@@ -320,7 +321,7 @@ export class UazapiProvider implements WhatsAppProvider {
             type: "button",
             text: body,
             choices,
-            ...comCitacao(extra),
+            ...camposDoExtra(extra),
           },
           semRetry: true,
         },
@@ -334,7 +335,7 @@ export class UazapiProvider implements WhatsAppProvider {
         payload: {
           number: to,
           text: textoNumerado(body, options),
-          ...comCitacao(extra),
+          ...camposDoExtra(extra),
         },
         semRetry: true,
       });
@@ -511,6 +512,39 @@ export class UazapiProvider implements WhatsAppProvider {
     exigir2xx(status, "webhook");
   }
 
+  /**
+   * O que a instancia tem configurado de webhook (GET /webhook). SO LEITURA.
+   *
+   * Existe para a conferencia de operacao (scripts/ops/conferir-webhooks.ts):
+   * ninguem reconfigura instancia ja pareada, entao o que o servidor
+   * COMPARTILHADO guarda pode ter envelhecido (configuracao de antes, alguem
+   * mexendo no painel). A especificacao diz que a resposta e sempre uma
+   * lista, mesmo com um webhook so.
+   *
+   * ATENCAO: a `url` devolvida carrega o segredo do webhook na query. Quem
+   * chama nunca a imprime nem a loga inteira.
+   */
+  async lerWebhooks(
+    ref: InstanceRef,
+    opcoes: OpcoesDeConsulta = {},
+  ): Promise<WebhookDaInstancia[]> {
+    const { status, body } = await this.request(ref, PATHS.webhook, {
+      method: "GET",
+      semRetry: opcoes.semRetry,
+      timeoutMs: opcoes.timeoutMs,
+    });
+    exigir2xx(status, "webhook");
+    // request() tipa o corpo como objeto, mas aqui ele e uma lista. Objeto
+    // nao vazio cobre um servidor que devolva o webhook unico sem a lista.
+    const bruto: unknown = body;
+    const lista = Array.isArray(bruto)
+      ? bruto
+      : bruto && typeof bruto === "object" && Object.keys(bruto).length > 0
+        ? [bruto]
+        : [];
+    return lista.map(lerWebhookDaInstancia);
+  }
+
   async disconnect(ref: InstanceRef): Promise<void> {
     // So 2xx e desligamento confirmado. Antes 401, 409 e 429 voltavam como
     // sucesso, e a trava do mesmo celular gravava "desconectado" com a
@@ -597,6 +631,69 @@ export type ExclusaoDeInstancia =
   | { ok: false; errorCode: string; message: string };
 
 /**
+ * Um webhook da instancia, como GET /webhook devolve. A `url` traz o segredo
+ * na query: nunca imprimir nem logar inteira.
+ */
+export type WebhookDaInstancia = {
+  id: string | null;
+  enabled: boolean | null;
+  url: string | null;
+  events: string[];
+  excludeMessages: string[];
+  addUrlEvents: boolean | null;
+  addUrlTypesMessages: boolean | null;
+};
+
+function listaDeTextos(valor: unknown): string[] {
+  if (Array.isArray(valor)) {
+    return valor.filter((item): item is string => typeof item === "string");
+  }
+  // Tolerancia: um servidor que devolva "a,b" em vez de lista.
+  if (typeof valor === "string" && valor.trim().length > 0) {
+    return valor
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  return [];
+}
+
+function lerWebhookDaInstancia(item: unknown): WebhookDaInstancia {
+  const w =
+    item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+  const booleano = (valor: unknown): boolean | null =>
+    typeof valor === "boolean" ? valor : null;
+  return {
+    id: typeof w.id === "string" ? w.id : null,
+    enabled: booleano(w.enabled),
+    url: typeof w.url === "string" ? w.url : null,
+    events: listaDeTextos(w.events),
+    excludeMessages: listaDeTextos(w.excludeMessages),
+    addUrlEvents: booleano(w.addUrlEvents),
+    addUrlTypesMessages: booleano(w.addUrlTypesMessages),
+  };
+}
+
+/**
+ * Os filtros do webhook deixam passar o que a clinica manda pelo celular e
+ * cortam o eco da API, que e o que configureWebhook grava:
+ *   - events tem "messages" (o que sai do aparelho chega por ele);
+ *   - excludeMessages tem "wasSentByApi" (sem isso, laco infinito);
+ *   - excludeMessages NAO tem "fromMeYes" (cortaria tudo que sai do numero,
+ *     celular incluido) nem "wasNotSentByApi" (cortaria o celular E o que o
+ *     paciente manda).
+ * Nao olha url nem enabled: isso a conferencia mostra a parte.
+ */
+export function filtrosDoWebhookConferem(webhook: WebhookDaInstancia): boolean {
+  return (
+    webhook.events.includes("messages") &&
+    webhook.excludeMessages.includes("wasSentByApi") &&
+    !webhook.excludeMessages.includes("fromMeYes") &&
+    !webhook.excludeMessages.includes("wasNotSentByApi")
+  );
+}
+
+/**
  * O trecho `replyid` do corpo, quando ha citacao.
  *
  * Devolve objeto VAZIO quando nao ha, em vez de `replyid: null`: o provedor
@@ -605,6 +702,29 @@ export type ExclusaoDeInstancia =
  */
 function comCitacao(extra: EnvioExtra): Record<string, string> {
   return extra.replyToWaMessageId ? { replyid: extra.replyToWaMessageId } : {};
+}
+
+/**
+ * O trecho `track_source` + `track_id` do corpo, quando o envio tem linha de
+ * message.
+ *
+ * O uazapi devolve os dois no eco do evento "messages", e e por eles que o
+ * webhook descarta o eco de uma mensagem nossa (lib/integrations/whatsapp/
+ * rastreio.ts). Sem id, nenhum dos dois vai: um track_id vazio marcaria o eco
+ * como nosso sem dizer de qual linha, e nada no corpo pode sair vazio.
+ */
+function comRastreio(extra: EnvioExtra): Record<string, string> {
+  const id = extra.rastreioId?.trim();
+  return id ? { track_source: ORIGEM_DO_RASTREIO, track_id: id } : {};
+}
+
+/**
+ * Tudo o que o EnvioExtra acrescenta ao corpo, igual nos quatro envios
+ * (texto, midia, menu e o texto numerado de reserva do menu). Um ponto so,
+ * para que nenhum deles fique para tras na proxima marca.
+ */
+function camposDoExtra(extra: EnvioExtra): Record<string, string> {
+  return { ...comCitacao(extra), ...comRastreio(extra) };
 }
 
 function toSendResult(

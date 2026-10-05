@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ecoEsperaPeloContatoNovo,
   extrairAnuncio,
   JANELA_DE_RESPOSTA_AUTOMATICA_MS,
-  limiteParaRespostaDePessoa,
+  JANELA_DO_ECO_PARA_ESPERAR_CONTATO_MS,
   normalizarMimetype,
   normalizarPlataforma,
   normalizarTipoDoAnuncio,
@@ -35,8 +36,84 @@ describe("formato canônico (simulador de desenvolvimento)", () => {
       mediaFilename: null,
       mediaMimetype: null,
       quotedWaMessageId: null,
+      enviadaEm: null,
       anuncio: null,
       instanceToken: null,
+    });
+  });
+
+  it("mensagem recebida com horário de envio: vira ISO em UTC; texto que não é data vira null", () => {
+    const recebida = {
+      kind: "message_received",
+      phone: "+5584999990000",
+      waMessageId: "sim:2",
+      body: "Oi",
+    };
+    expect(
+      parseInboundEvent({
+        ...recebida,
+        enviadaEm: "2026-10-05T09:00:00-03:00",
+      }),
+    ).toMatchObject({
+      kind: "message_received",
+      enviadaEm: "2026-10-05T12:00:00.000Z",
+    });
+    expect(
+      parseInboundEvent({ ...recebida, enviadaEm: "ontem" }),
+    ).toMatchObject({ kind: "message_received", enviadaEm: null });
+    expect(parseInboundEvent({ ...recebida, enviadaEm: null })).toMatchObject({
+      kind: "message_received",
+      enviadaEm: null,
+    });
+  });
+
+  it("mensagem enviada pelo celular da clínica (simulador e e2e)", () => {
+    expect(
+      parseInboundEvent({
+        kind: "clinic_device_reply",
+        phone: "+5584999990000",
+        waMessageId: "sim:celular:1",
+        body: "  Pode vir às 15h  ",
+        quotedWaMessageId: "",
+        enviadaEm: "2026-10-05T09:00:00-03:00",
+      }),
+    ).toEqual({
+      kind: "clinic_device_reply",
+      phone: "+5584999990000",
+      waMessageId: "sim:celular:1",
+      contentType: "texto",
+      body: "Pode vir às 15h",
+      mediaUrl: null,
+      mediaFilename: null,
+      mediaMimetype: null,
+      quotedWaMessageId: null,
+      enviadaEm: "2026-10-05T12:00:00.000Z",
+      marcadoresDeEnvioAutomatico: [],
+      instanceToken: null,
+    });
+  });
+
+  it("canônico do celular: arquivo saneado e horário que não é data vira null", () => {
+    expect(
+      parseInboundEvent({
+        kind: "clinic_device_reply",
+        phone: "+5584999990000",
+        waMessageId: "sim:celular:2",
+        contentType: "documento",
+        mediaUrl: "https://exemplo.test/doc.enc",
+        mediaFilename: "../laudo.pdf",
+        mediaMimetype: "Application/PDF; q=1",
+        quotedWaMessageId: "WA-CITADA",
+        enviadaEm: "ontem",
+      }),
+    ).toMatchObject({
+      contentType: "documento",
+      body: null,
+      mediaUrl: "https://exemplo.test/doc.enc",
+      mediaFilename: "..laudo.pdf",
+      mediaMimetype: "application/pdf",
+      quotedWaMessageId: "WA-CITADA",
+      enviadaEm: null,
     });
   });
 });
@@ -79,6 +156,7 @@ describe("formato uazapi: mensagens", () => {
       mediaFilename: null,
       mediaMimetype: null,
       quotedWaMessageId: null,
+      enviadaEm: null,
       anuncio: null,
       instanceToken: "token-da-instancia",
     });
@@ -134,6 +212,9 @@ describe("formato uazapi: mensagens", () => {
   });
 
   it("ignora eco da própria mensagem (fromMe e wasSentByApi)", () => {
+    // fromMe sem chatid: o destino da saída vem da conversa, nunca do
+    // sender_pn (que é o número da própria clínica), então não há para quem
+    // gravar.
     expect(
       parseInboundEvent({
         ...base,
@@ -440,6 +521,7 @@ describe("canal real", () => {
       message: {
         ...base.message,
         fromMe: true,
+        text: "Pode vir",
         messageTimestamp: 1_790_000_000_000,
       },
     });
@@ -448,12 +530,13 @@ describe("canal real", () => {
       message: {
         ...base.message,
         fromMe: true,
+        text: "Pode vir",
         messageTimestamp: 1_790_000_000,
       },
     });
     const semHorario = parseInboundEvent({
       ...base,
-      message: { ...base.message, fromMe: true },
+      message: { ...base.message, fromMe: true, text: "Pode vir" },
     });
     const esperado = new Date(1_790_000_000_000).toISOString();
     expect(emMs).toMatchObject({
@@ -462,6 +545,41 @@ describe("canal real", () => {
     });
     expect(emSegundos).toMatchObject({ enviadaEm: esperado });
     expect(semHorario).toMatchObject({ enviadaEm: null });
+  });
+
+  it("mensagem do paciente traz o horário de envio (ms, segundos ou texto de dígitos); sem ele, null", () => {
+    // Vai para reclassificar_resposta_automatica, que o grava na linha: e
+    // por ele que o banco separa a resposta automatica do app da fala de
+    // pessoa quando as mensagens chegam fora de ordem.
+    const doPaciente = (messageTimestamp: unknown) =>
+      parseInboundEvent({
+        ...base,
+        message: {
+          ...base.message,
+          fromMe: false,
+          text: "Bom dia",
+          messageTimestamp,
+        },
+      });
+    const esperado = new Date(1_790_000_000_000).toISOString();
+    expect(doPaciente(1_790_000_000_000)).toMatchObject({
+      kind: "message_received",
+      body: "Bom dia",
+      enviadaEm: esperado,
+    });
+    expect(doPaciente(1_790_000_000)).toMatchObject({
+      kind: "message_received",
+      enviadaEm: esperado,
+    });
+    expect(doPaciente("1790000000000")).toMatchObject({
+      enviadaEm: esperado,
+    });
+    for (const ausente of [undefined, null, 0, -5, "ontem", Number.NaN]) {
+      expect(doPaciente(ausente)).toMatchObject({
+        kind: "message_received",
+        enviadaEm: null,
+      });
+    }
   });
 
   it("marcador de envio automático vira só caminho de chave, nunca texto", () => {
@@ -559,6 +677,364 @@ describe("canal real", () => {
   });
 });
 
+// Mensagem que a clínica enviou pelo celular pareado (fromMe sem
+// wasSentByApi). Desde 05/10/2026 ela vira linha na conversa ("Pelo
+// WhatsApp"), então o parser leva o conteúdo inteiro, extraído pelas MESMAS
+// regras da mensagem recebida.
+describe("mensagem enviada pelo celular da clínica", () => {
+  const PACIENTE = "5584970000001@s.whatsapp.net";
+  const base = {
+    EventType: "messages",
+    token: "tok-1",
+    message: {
+      messageid: "wa-cel-1",
+      chatid: PACIENTE,
+      // O sender_pn de mensagem de saída é o número da PRÓPRIA clínica.
+      sender_pn: "5584911112222@s.whatsapp.net",
+      fromMe: true,
+      messageTimestamp: 1_790_000_000_000,
+    },
+  };
+  const doCelular = (
+    message: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+  ) =>
+    parseInboundEvent({
+      ...base,
+      ...extra,
+      message: { ...base.message, ...message },
+    });
+
+  it("texto: evento completo, com o telefone do paciente e o horário de envio", () => {
+    expect(
+      doCelular({
+        type: "text",
+        messageType: "ExtendedTextMessage",
+        text: "  Oi! O retorno fica em R$ 150.  ",
+        quoted: "",
+      }),
+    ).toEqual({
+      kind: "clinic_device_reply",
+      phone: "+5584970000001",
+      waMessageId: "wa-cel-1",
+      contentType: "texto",
+      body: "Oi! O retorno fica em R$ 150.",
+      mediaUrl: null,
+      mediaFilename: null,
+      mediaMimetype: null,
+      quotedWaMessageId: null,
+      enviadaEm: new Date(1_790_000_000_000).toISOString(),
+      marcadoresDeEnvioAutomatico: [],
+      instanceToken: "tok-1",
+    });
+  });
+
+  it("imagem com legenda: a legenda vai no body e o arquivo na referência", () => {
+    expect(
+      doCelular({
+        type: "media",
+        messageType: "ImageMessage",
+        mediaType: "image",
+        text: "segue o preparo",
+        content: {
+          URL: "https://mmg.whatsapp.net/foto.enc",
+          mimetype: "image/jpeg",
+          title: "não é nome de arquivo",
+        },
+      }),
+    ).toMatchObject({
+      kind: "clinic_device_reply",
+      contentType: "imagem",
+      body: "segue o preparo",
+      mediaUrl: "https://mmg.whatsapp.net/foto.enc",
+      mediaFilename: null,
+      mediaMimetype: "image/jpeg",
+    });
+  });
+
+  it("áudio gravado (ptt) vira áudio, sem texto", () => {
+    expect(
+      doCelular({
+        type: "media",
+        messageType: "AudioMessage",
+        mediaType: "ptt",
+        content: {
+          URL: "https://mmg.whatsapp.net/voz.enc",
+          mimetype: "audio/ogg; codecs=opus",
+        },
+      }),
+    ).toMatchObject({
+      kind: "clinic_device_reply",
+      contentType: "audio",
+      body: null,
+      mediaMimetype: "audio/ogg",
+    });
+  });
+
+  it("documento traz o nome saneado e o tipo; a legenda segue no body", () => {
+    expect(
+      doCelular({
+        type: "media",
+        messageType: "DocumentMessage",
+        mediaType: "document",
+        text: "orçamento",
+        content: {
+          URL: "https://mmg.whatsapp.net/doc.enc",
+          fileName: "pasta/orça\\mento‮fdp.exe",
+          mimetype: "application/pdf",
+        },
+      }),
+    ).toMatchObject({
+      contentType: "documento",
+      body: "orçamento",
+      mediaFilename: "pastaorçamentofdp.exe",
+      mediaMimetype: "application/pdf",
+    });
+  });
+
+  it("figurinha vira imagem", () => {
+    expect(
+      doCelular({
+        type: "media",
+        messageType: "StickerMessage",
+        mediaType: "sticker",
+        content: {
+          URL: "https://mmg.whatsapp.net/f.enc",
+          mimetype: "image/webp",
+        },
+      }),
+    ).toMatchObject({ contentType: "imagem", mediaMimetype: "image/webp" });
+  });
+
+  it("citação: leva o id da mensagem que a clínica citou", () => {
+    expect(
+      doCelular({ text: "isso mesmo", quoted: "WA-DO-PACIENTE" }),
+    ).toMatchObject({ quotedWaMessageId: "WA-DO-PACIENTE" });
+  });
+
+  it("botão não se aplica: a escolha de botão não vira texto da clínica", () => {
+    expect(
+      doCelular({ text: "certo", buttonOrListid: "confirmar" }),
+    ).toMatchObject({ kind: "clinic_device_reply", body: "certo" });
+    // Sem texto, a escolha também não salva o eco: texto vazio sem arquivo
+    // não tem o que mostrar.
+    expect(doCelular({ text: "", buttonOrListid: "confirmar" })).toBeNull();
+  });
+
+  describe("destino quando o chatid é @lid (identificador interno, não telefone)", () => {
+    const LID = "138401042923712@lid";
+    const TEXTO = { text: "Pode vir às 15h" };
+
+    it("usa o wa_chatid do retrato da conversa, quando é de telefone", () => {
+      expect(
+        doCelular({ ...TEXTO, chatid: LID }, { chat: { wa_chatid: PACIENTE } }),
+      ).toMatchObject({ kind: "clinic_device_reply", phone: "+5584970000001" });
+    });
+
+    it("sem wa_chatid de telefone, usa o phone do retrato", () => {
+      expect(
+        doCelular(
+          { ...TEXTO, chatid: LID },
+          { chat: { wa_chatid: LID, phone: "+55 84 97000-0001" } },
+        ),
+      ).toMatchObject({ phone: "+5584970000001" });
+    });
+
+    it("sem retrato (ou sem telefone nele) não vira evento: o número do @lid não é telefone", () => {
+      expect(doCelular({ ...TEXTO, chatid: LID })).toBeNull();
+      expect(
+        doCelular({ ...TEXTO, chatid: LID }, { chat: { wa_chatid: LID } }),
+      ).toBeNull();
+      expect(
+        doCelular({ ...TEXTO, chatid: LID }, { chat: { phone: "x@lid" } }),
+      ).toBeNull();
+    });
+
+    it("chatid sem sufixo continua valendo como telefone", () => {
+      expect(doCelular({ ...TEXTO, chatid: "5584970000001" })).toMatchObject({
+        phone: "+5584970000001",
+      });
+    });
+  });
+
+  it("grupo, status e canal continuam fora", () => {
+    expect(doCelular({ isGroup: true, text: "oi grupo" })).toBeNull();
+    expect(
+      doCelular({ chatid: "120363000000000000@g.us", text: "oi" }),
+    ).toBeNull();
+    expect(
+      doCelular({ chatid: "status@broadcast", text: "novidade" }),
+    ).toBeNull();
+    expect(
+      doCelular({ chatid: "120363000000000001@newsletter", text: "x" }),
+    ).toBeNull();
+  });
+
+  it("edição feita no celular (edited é texto pela especificação) não vira mensagem nova", () => {
+    expect(
+      doCelular({ text: "valor corrigido", edited: "valor errado" }),
+    ).toBeNull();
+    // Vazio é o padrão de mensagem que nunca foi editada.
+    expect(doCelular({ text: "nova", edited: "" })).toMatchObject({
+      kind: "clinic_device_reply",
+    });
+    expect(doCelular({ text: "nova", edited: true })).toBeNull();
+  });
+
+  it("eco do NOSSO envio pela marca de rastreio é descartado, mesmo sem wasSentByApi", () => {
+    expect(
+      doCelular({
+        text: "Lembrete da consulta",
+        track_source: "conduzza",
+        track_id: "uuid-da-linha",
+      }),
+    ).toBeNull();
+    // Marca de outra integração não é nossa: segue como mensagem do celular.
+    expect(
+      doCelular({ text: "oi", track_source: "outra-integracao" }),
+    ).toMatchObject({ kind: "clinic_device_reply" });
+  });
+
+  it("wasSentByApi, reação e protocolo continuam null", () => {
+    expect(doCelular({ text: "eco", wasSentByApi: true })).toBeNull();
+    expect(doCelular({ text: "👍", reaction: "WA-REAGIDA" })).toBeNull();
+    expect(
+      doCelular({ messageType: "ReactionMessage", text: "👍" }),
+    ).toBeNull();
+    expect(doCelular({ messageType: "ProtocolMessage" })).toBeNull();
+    expect(doCelular({ messageType: "EditedMessage", text: "x" })).toBeNull();
+  });
+
+  // Ações feitas no celular que o uazapi entrega como "messages" com fromMe
+  // (nomes da especificação e do whatsmeow). Nenhuma responde o paciente:
+  // antes viravam bolha "Pelo WhatsApp" vazia e tiravam a conversa da espera.
+  describe("ação no celular que não é mensagem não vira linha", () => {
+    const ACOES: [string, Record<string, unknown>][] = [
+      [
+        "fixar ou desafixar (PinInChatMessage)",
+        { messageType: "PinInChatMessage", content: { type: 1 } },
+      ],
+      [
+        "manter na conversa temporária (KeepInChatMessage)",
+        { messageType: "KeepInChatMessage", content: { keepType: 1 } },
+      ],
+      [
+        "voto em enquete (PollUpdateMessage)",
+        { messageType: "PollUpdateMessage", vote: "Sim" },
+      ],
+      [
+        "resposta a convite de evento (EventResponseMessage)",
+        { messageType: "EventResponseMessage", vote: "going" },
+      ],
+      ["registro de ligação (messageType call)", { messageType: "call" }],
+    ];
+
+    it.each(ACOES)("%s", (_nome, campos) => {
+      expect(doCelular(campos)).toBeNull();
+      // Pelo TIPO, não pela falta de texto: com texto continua fora.
+      expect(doCelular({ ...campos, text: "Sim" })).toBeNull();
+    });
+
+    it("o tipo vale em qualquer caixa e em qualquer campo de tipo", () => {
+      expect(doCelular({ type: "PININCHATMESSAGE", text: "x" })).toBeNull();
+      expect(doCelular({ type: "Call", text: "x" })).toBeNull();
+    });
+  });
+
+  it("texto vazio sem arquivo não vira linha (defesa para ação de tipo desconhecido)", () => {
+    expect(
+      doCelular({ type: "text", messageType: "Conversation", text: "" }),
+    ).toBeNull();
+    expect(doCelular({ messageType: "Conversation", text: "   " })).toBeNull();
+    expect(doCelular({ messageType: "TipoNovoQualquer" })).toBeNull();
+    // URL vazia não conta como arquivo.
+    expect(
+      doCelular({ messageType: "Conversation", content: { URL: "" } }),
+    ).toBeNull();
+  });
+
+  it("localização e cartão de contato sem texto continuam: são resposta ao paciente", () => {
+    for (const messageType of [
+      "LocationMessage",
+      "LiveLocationMessage",
+      "ContactMessage",
+      "ContactsArrayMessage",
+    ]) {
+      expect(doCelular({ messageType })).toMatchObject({
+        kind: "clinic_device_reply",
+        contentType: "texto",
+        body: null,
+        mediaUrl: null,
+      });
+    }
+  });
+
+  it("imagem, áudio e documento sem URL continuam: o worker baixa pelo id", () => {
+    expect(
+      doCelular({
+        type: "media",
+        messageType: "ImageMessage",
+        mediaType: "image",
+      }),
+    ).toMatchObject({
+      kind: "clinic_device_reply",
+      contentType: "imagem",
+      body: null,
+      mediaUrl: null,
+    });
+    expect(
+      doCelular({
+        type: "media",
+        messageType: "AudioMessage",
+        mediaType: "ptt",
+      }),
+    ).toMatchObject({ contentType: "audio", body: null, mediaUrl: null });
+    expect(
+      doCelular({
+        type: "media",
+        messageType: "DocumentMessage",
+        mediaType: "document",
+        content: { fileName: "laudo.pdf" },
+      }),
+    ).toMatchObject({
+      contentType: "documento",
+      mediaUrl: null,
+      mediaFilename: "laudo.pdf",
+    });
+  });
+
+  it("vídeo (texto com arquivo) sem legenda continua, pela referência do arquivo", () => {
+    expect(
+      doCelular({
+        type: "media",
+        messageType: "VideoMessage",
+        mediaType: "video",
+        content: { URL: "https://mmg.whatsapp.net/v.enc" },
+      }),
+    ).toMatchObject({
+      kind: "clinic_device_reply",
+      contentType: "texto",
+      body: null,
+      mediaUrl: "https://mmg.whatsapp.net/v.enc",
+    });
+  });
+
+  it("o ramo do paciente não muda: a mensagem recebida sem texto continua chegando", () => {
+    expect(
+      parseInboundEvent({
+        ...base,
+        message: {
+          ...base.message,
+          fromMe: false,
+          sender_pn: PACIENTE,
+          messageType: "Conversation",
+          text: "",
+        },
+      }),
+    ).toMatchObject({ kind: "message_received", body: null });
+  });
+});
+
 describe("saneamento do nome e do tipo do arquivo", () => {
   it("tira barras e caracteres de controle e corta em 200", () => {
     expect(sanearNomeDeArquivo("../../etc/passwd")).toBe("....etcpasswd");
@@ -571,11 +1047,7 @@ describe("saneamento do nome e do tipo do arquivo", () => {
   it("tira caractere de formatação invisível, inclusive o bidirecional", () => {
     // U+202E (RLO): 'laudo<RLO>fdp.exe' apareceria na tela como 'laudoexe.pdf'.
     expect(sanearNomeDeArquivo("laudo‮fdp.exe")).toBe("laudofdp.exe");
-    expect(
-      sanearNomeDeArquivo(
-        "⁦exame⁩‎‏‪‫‬‭⁧⁨​﻿.pdf",
-      ),
-    ).toBe("exame.pdf");
+    expect(sanearNomeDeArquivo("⁦exame⁩‎‏‪‫‬‭⁧⁨​﻿.pdf")).toBe("exame.pdf");
     expect(sanearNomeDeArquivo("‮⁦‏")).toBeNull();
   });
 
@@ -593,34 +1065,38 @@ describe("saneamento do nome e do tipo do arquivo", () => {
   });
 });
 
-describe("resposta automática do app WhatsApp Business", () => {
-  const agora = Date.parse("2026-09-24T12:00:00.000Z");
+describe("saudação para paciente novo: o eco de contato desconhecido espera?", () => {
+  // A rota do webhook tenta de novo (ate 2 vezes, 1,5 s cada) o eco que
+  // voltou contato_desconhecido, porque a saudacao do app pode chegar antes
+  // de a ingestao criar o contato. So o eco recente, com horario.
+  const AGORA = Date.UTC(2026, 9, 5, 12, 0, 0);
+  const iso = (ms: number) => new Date(ms).toISOString();
 
+  it("eco recente espera; o da beira da janela de 60 s também", () => {
+    expect(JANELA_DO_ECO_PARA_ESPERAR_CONTATO_MS).toBe(60_000);
+    expect(ecoEsperaPeloContatoNovo(iso(AGORA - 2_000), AGORA)).toBe(true);
+    expect(ecoEsperaPeloContatoNovo(iso(AGORA - 60_000), AGORA)).toBe(true);
+    // Folga de relogio: ate 1 minuto no futuro.
+    expect(ecoEsperaPeloContatoNovo(iso(AGORA + 30_000), AGORA)).toBe(true);
+  });
+
+  it("eco velho, do futuro distante ou sem horário não espera", () => {
+    expect(ecoEsperaPeloContatoNovo(iso(AGORA - 60_001), AGORA)).toBe(false);
+    expect(ecoEsperaPeloContatoNovo(iso(AGORA - 3_600_000), AGORA)).toBe(false);
+    expect(ecoEsperaPeloContatoNovo(iso(AGORA + 5 * 60_000), AGORA)).toBe(
+      false,
+    );
+    expect(ecoEsperaPeloContatoNovo(null, AGORA)).toBe(false);
+    expect(ecoEsperaPeloContatoNovo("nao e data", AGORA)).toBe(false);
+  });
+});
+
+describe("resposta automática do app WhatsApp Business", () => {
+  // A regra (eco que sai até 8 s depois da última mensagem do paciente é a
+  // resposta automática do app) vive na RPC registrar_mensagem_do_celular. A
+  // constante é o espelho dela no código: mudar uma exige mudar a outra.
   it("a janela é de 8 segundos", () => {
     expect(JANELA_DE_RESPOSTA_AUTOMATICA_MS).toBe(8_000);
-  });
-
-  it("sem horário no payload, o limite é a chegada menos a janela", () => {
-    expect(limiteParaRespostaDePessoa(null, agora)).toBe(
-      "2026-09-24T11:59:52.000Z",
-    );
-  });
-
-  it("com horário plausível, o limite parte do envio", () => {
-    // Eco atrasado: saiu às 11:00 e chegou ao meio-dia. Uma mensagem que o
-    // paciente mandou às 11:30 continua esperando resposta.
-    expect(limiteParaRespostaDePessoa("2026-09-24T11:00:00.000Z", agora)).toBe(
-      "2026-09-24T10:59:52.000Z",
-    );
-  });
-
-  it("horário absurdo (futuro ou muito antigo) cai na hora da chegada", () => {
-    expect(limiteParaRespostaDePessoa("2026-09-25T12:00:00.000Z", agora)).toBe(
-      "2026-09-24T11:59:52.000Z",
-    );
-    expect(limiteParaRespostaDePessoa("2020-01-01T00:00:00.000Z", agora)).toBe(
-      "2026-09-24T11:59:52.000Z",
-    );
   });
 });
 
@@ -990,7 +1466,10 @@ describe("anúncio: plataforma, tipo e chaves vistas", () => {
         contextInfo: {
           quoted_message: {
             contextInfo: {
-              externalAdReply: { sourceID: "1789000000000010", sourceType: "post" },
+              externalAdReply: {
+                sourceID: "1789000000000010",
+                sourceType: "post",
+              },
             },
           },
           quotedAd: { ctwaClid: "Af-QUOTED-AD" },

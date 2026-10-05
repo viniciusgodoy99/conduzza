@@ -493,12 +493,21 @@ async function baixarEGuardarMidia(
     return { ok: false, erro: "payload_invalido", definitivo: true };
   }
 
-  const { data: mensagem } = await admin
+  const { data: mensagem, error: erroLeitura } = await admin
     .from("message")
-    .select("id, content_type, transcript, deleted_at, whatsapp_account_id")
+    .select(
+      "id, content_type, transcript, deleted_at, whatsapp_account_id, pelo_celular",
+    )
     .eq("clinic_id", job.clinic_id)
     .eq("id", messageId)
     .maybeSingle();
+  // Leitura que falhou nao e mensagem sumida: antes o erro era ignorado e o
+  // job morria de vez como 'mensagem_nao_encontrada', e o arquivo do
+  // paciente nunca mais era baixado (o provedor o apaga em poucos dias).
+  // Volta para a fila com retry.
+  if (erroLeitura) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
   if (!mensagem) {
     return { ok: false, erro: "mensagem_nao_encontrada", definitivo: true };
   }
@@ -534,6 +543,12 @@ async function baixarEGuardarMidia(
     return { ok: false, erro: "numero_removido", definitivo: true };
   }
 
+  // Audio que a CLINICA mandou direto pelo WhatsApp (pelo_celular) nao vai
+  // para a transcricao: minimizacao (a clinica sabe o que falou, e mandar a
+  // voz da equipe a um terceiro nao serve a nada), e o audio enviado pelo
+  // Atendimento tambem nunca e transcrito. Transcricao e so do paciente.
+  const transcrever =
+    mensagem.content_type === "audio" && mensagem.pelo_celular !== true;
   const { provider, ref } = await carregarInstancia(
     admin,
     job.clinic_id,
@@ -541,7 +556,7 @@ async function baixarEGuardarMidia(
   );
   const baixado = await provider
     .downloadMedia(ref, waMessageId, {
-      transcribe: mensagem.content_type === "audio",
+      transcribe: transcrever,
     })
     .catch(() => ({
       ok: false as const,
@@ -607,7 +622,9 @@ async function baixarEGuardarMidia(
     .update({
       media_url: `storage://${MIDIA_BUCKET}/${caminho}`,
       ...(tipoReal ? { media_mimetype: tipoReal } : {}),
-      ...(baixado.transcript && !mensagem.transcript
+      // `transcrever` de novo: um provedor que transcreva sem ser pedido nao
+      // grava texto do audio da clinica.
+      ...(transcrever && baixado.transcript && !mensagem.transcript
         ? { transcript: baixado.transcript }
         : {}),
     })

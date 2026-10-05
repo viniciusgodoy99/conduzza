@@ -8,6 +8,7 @@ import {
   Video,
 } from "lucide-react";
 
+import { AUTOR_PELO_CELULAR } from "@/components/atendimento/pelo-celular";
 import type { MessageItem, QuotedMessage } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +46,7 @@ export function resumoDaCitacao(
 
 /** Quem escreveu a citada, do jeito que a recepção fala. */
 export function autorDaCitacao(
-  mensagem: Pick<QuotedMessage, "author" | "author_user_id">,
+  mensagem: Pick<QuotedMessage, "author" | "author_user_id" | "pelo_celular">,
   contato: string,
   nomes: Record<string, string>,
 ): string {
@@ -54,6 +55,11 @@ export function autorDaCitacao(
   }
   if (mensagem.author === "ia") {
     return "Assistente";
+  }
+  // Enviada direto pelo WhatsApp da clínica: sem pessoa no sistema, e não é
+  // a régua. "Sistema" aqui diria que foi mensagem automática do Conduzza.
+  if (mensagem.pelo_celular === true) {
+    return AUTOR_PELO_CELULAR;
   }
   if (mensagem.author_user_id) {
     // Nome genérico, e não "Você", quando o mapa não tem a pessoa. O mapa vem

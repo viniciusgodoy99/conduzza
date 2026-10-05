@@ -83,6 +83,8 @@ export type QuotedMessage = {
   body: string | null;
   is_internal_note: boolean;
   deleted_at: string | null;
+  /** enviada direto pelo WhatsApp da clinica (ver MessageItem.pelo_celular) */
+  pelo_celular?: boolean;
 };
 
 export type MessageItem = {
@@ -125,6 +127,17 @@ export type MessageItem = {
   deleted_escopo: "todos" | "local" | null;
   reply_to_message_id: string | null;
   reply_to_wa_message_id: string | null;
+  /**
+   * Enviada direto pelo WhatsApp do numero conectado (celular, WhatsApp Web,
+   * outro aparelho), fora do sistema. O webhook grava como saida, sem pessoa
+   * (author 'usuario' quando foi gente da clinica, 'sistema' quando foi a
+   * resposta automatica do app WhatsApp Business), e o banco so aceita a
+   * marca nessa forma (check message_pelo_celular_coerente): a sessao nao
+   * consegue forjar. A bolha assina "Pelo WhatsApp" no lugar do nome.
+   * Opcional so para os testes que montam mensagem na mao; o select traz
+   * sempre.
+   */
+  pelo_celular?: boolean;
   /**
    * A citada, embutida na mesma consulta.
    *
@@ -390,13 +403,13 @@ export async function contarConversasResolvidas(
 }
 
 const MESSAGE_SELECT =
-  "id, conversation_id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, " +
+  "id, conversation_id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, pelo_celular, " +
   // Auto-juncao: a citada e outra linha da MESMA tabela. O apelido aponta para
   // a COLUNA, nao para o nome da chave estrangeira: numa relacao de uma tabela
   // com ela mesma, o nome da chave nao diz qual ponta seguir, e o PostgREST
   // devolve a lista das mensagens que citam esta, que e o contrario do que a
   // bolha precisa. Conferido contra o banco em 02/09/2026.
-  "reply_to:reply_to_message_id(id, author, author_user_id, content_type, body, is_internal_note, deleted_at)";
+  "reply_to:reply_to_message_id(id, author, author_user_id, content_type, body, is_internal_note, deleted_at, pelo_celular)";
 
 export const MESSAGES_PAGE_SIZE = 50;
 

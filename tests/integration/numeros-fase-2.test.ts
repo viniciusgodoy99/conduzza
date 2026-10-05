@@ -217,6 +217,18 @@ function recebida(
   };
 }
 
+/** As linhas gravadas para uma mensagem enviada pelo celular da clinica. */
+async function linhasDoCelular(waMessageId: string) {
+  const { data } = await admin
+    .from("message")
+    .select(
+      "clinic_id, conversation_id, whatsapp_account_id, direction, author, author_user_id, pelo_celular, body, billable, cost_cents, delivery_status",
+    )
+    .eq("wa_message_id", waMessageId)
+    .throwOnError();
+  return (data ?? []) as Record<string, unknown>[];
+}
+
 async function numeroDaConversa(
   conversationId: string,
 ): Promise<string | null> {
@@ -501,7 +513,10 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
     expect(data?.connection_status).toBe("conectado");
   });
 
-  it("resposta pelo celular tira da espera só a conversa daquele número", async () => {
+  // Desde 05/10/2026 a mensagem do celular VIRA LINHA na conversa daquele
+  // numero (pelo_celular), gravada pela RPC registrar_mensagem_do_celular,
+  // que tambem derruba a espera.
+  it("mensagem pelo celular grava na conversa daquele número e tira da espera só ela", async () => {
     const a = await clinicaComNumero("eco-celular-a");
     const b = await clinicaComNumero("eco-celular-b");
     const phone = telefone();
@@ -518,10 +533,11 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
       conversas.push(conversa);
     }
 
-    const { status } = await postar(caminhoDoWebhook(a.numero), {
+    const waId = `num2:${sufixo}:eco-celular`;
+    const { status, corpo } = await postar(caminhoDoWebhook(a.numero), {
       EventType: "messages",
       message: {
-        messageid: `num2:${sufixo}:eco-celular`,
+        messageid: waId,
         chatid: jid(phone),
         fromMe: true,
         messageType: "Conversation",
@@ -529,6 +545,12 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
       },
     });
     expect(status).toBe(200);
+    expect(corpo).toMatchObject({
+      inserted: true,
+      conversation_id: conversas[0],
+      whatsapp_account_id: a.numero.id,
+      automatica: false,
+    });
 
     const { data } = await admin
       .from("conversation")
@@ -540,12 +562,31 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
     expect(espera(conversas[0]!)).toBe(false);
     // O mesmo paciente, no numero de outra clinica: continua esperando.
     expect(espera(conversas[1]!)).toBe(true);
+
+    // Uma linha so, de SAIDA, na conversa do numero A da clinica A: pessoa
+    // da clinica sem usuario do sistema, custo zero e nao cobravel (regra
+    // 3.3), enviada (os recibos sobem para entregue e lida).
+    expect(await linhasDoCelular(waId)).toEqual([
+      {
+        clinic_id: a.clinicId,
+        conversation_id: conversas[0],
+        whatsapp_account_id: a.numero.id,
+        direction: "saida",
+        author: "usuario",
+        author_user_id: null,
+        pelo_celular: true,
+        body: "Respondido pelo celular",
+        billable: false,
+        cost_cents: 0,
+        delivery_status: "enviada",
+      },
+    ]);
   });
 
   // O mesmo paciente com uma conversa em cada numero da clinica (decisao 1
   // do dono). A resposta dada pelo celular do A nao responde a pergunta
   // feita no B.
-  it("eco do celular do número A não mexe na conversa do mesmo paciente no B", async () => {
+  it("mensagem do celular do número A grava na conversa do A, não na do mesmo paciente no B", async () => {
     const { clinicId, numero: a } = await clinicaComNumero("eco-celular-2");
     const b = await criarNumeroDeTeste(admin, clinicId, { nome: "Segundo" });
     const phone = telefone();
@@ -559,15 +600,22 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
       .update({ awaiting_reply: true, last_inbound_at: umaHoraAtras })
       .in("id", [conversaA, conversaB])
       .throwOnError();
-    await postar(caminhoDoWebhook(a), {
+    const waId = `num2:${sufixo}:eco-celular-2`;
+    const evento = {
       EventType: "messages",
       message: {
-        messageid: `num2:${sufixo}:eco-celular-2`,
+        messageid: waId,
         chatid: jid(phone),
         fromMe: true,
         messageType: "Conversation",
         text: "Respondido pelo celular do A",
       },
+    };
+    const primeira = await postar(caminhoDoWebhook(a), evento);
+    expect(primeira.status).toBe(200);
+    expect(primeira.corpo).toMatchObject({
+      inserted: true,
+      conversation_id: conversaA,
     });
     const { data } = await admin
       .from("conversation")
@@ -577,6 +625,19 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
       (data ?? []).find((c) => c.id === id)?.awaiting_reply;
     expect(espera(conversaA)).toBe(false);
     expect(espera(conversaB)).toBe(true);
+
+    // Reentrega do provedor: nenhuma linha a mais.
+    const reentrega = await postar(caminhoDoWebhook(a), evento);
+    expect(reentrega.status).toBe(200);
+    expect(reentrega.corpo).toMatchObject({ inserted: false });
+
+    const linhas = await linhasDoCelular(waId);
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]).toMatchObject({
+      conversation_id: conversaA,
+      whatsapp_account_id: a.id,
+      pelo_celular: true,
+    });
   });
 
   it("recibo de entrega marca só a mensagem do número que o recebeu", async () => {

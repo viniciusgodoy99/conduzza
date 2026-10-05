@@ -42,6 +42,7 @@ import { impedimentoParaTodos } from "@/components/atendimento/dialogo-apagar";
 import { CitacaoDaBolha } from "@/components/atendimento/citacao";
 import { FotoDaConversa } from "@/components/atendimento/media/foto-da-conversa";
 import { PlayerDeAudio } from "@/components/atendimento/media/player-de-audio";
+import { MarcaPeloCelular } from "@/components/atendimento/pelo-celular";
 import {
   estadoDaMidia,
   exibicaoDaMidiaDeTexto,
@@ -61,7 +62,9 @@ import { cn } from "@/lib/utils";
 // Paciente a esquerda em branco; atendente a direita em lime suave
 // (--bubble-out); IA a direita em tinta (--bubble-ai), sempre com o selo
 // textual "IA"; nota interna a direita em ambar, com cadeado e o aviso de que
-// o paciente nao ve. Autoria nunca so por cor: lado, rotulo e pele.
+// o paciente nao ve; a enviada direto pelo WhatsApp da clinica (pelo_celular)
+// a direita na pele da atendente, assinada "Pelo WhatsApp" com o icone do
+// aparelho no lugar do nome. Autoria nunca so por cor: lado, rotulo e pele.
 //
 // --bolha-meta e a cor de apoio de cada pele (hora, legenda, rotulos de
 // midia). Tudo o que fica DENTRO da bolha usa ela, e nao text-text-secondary:
@@ -257,7 +260,7 @@ function AudioBody({ message }: { message: MessageItem }) {
       ) : (
         <MidiaChegando
           Icone={AudioLines}
-          rotulo={fromPatient ? "Áudio recebido" : "Áudio"}
+          rotulo={fromPatient ? "Áudio recebido" : "Áudio enviado"}
           demonstracao={estado.tipo === "demonstracao"}
         />
       )}
@@ -324,11 +327,16 @@ function tipoDaMidia(message: MessageItem): TipoDaMidia {
   return exibicao === "foto" ? "imagem" : exibicao;
 }
 
+// `enviado` e o rotulo do arquivo de SAIDA que ainda esta baixando. Isso so
+// acontece com a mensagem enviada pelo WhatsApp da clinica (pelo_celular): o
+// envio pelo sistema ja nasce no acervo (storage://). Sem ele, a foto que a
+// clinica mandou pelo celular aparecia como "Foto recebida".
 const ROTULOS: Record<
   TipoDaMidia,
   {
     Icone: typeof ImageIcon;
     recebido: string;
+    enviado: string;
     naoRecebido: string;
     nome: string;
   }
@@ -336,30 +344,35 @@ const ROTULOS: Record<
   foto: {
     Icone: ImageIcon,
     recebido: "Foto recebida",
+    enviado: "Foto enviada",
     naoRecebido: "Foto não recebida",
     nome: "Foto",
   },
   imagem: {
     Icone: ImageIcon,
     recebido: "Imagem recebida",
+    enviado: "Imagem enviada",
     naoRecebido: "Imagem não recebida",
     nome: "Imagem",
   },
   documento: {
     Icone: FileText,
     recebido: "Documento recebido",
+    enviado: "Documento enviado",
     naoRecebido: "Documento não recebido",
     nome: "Documento",
   },
   video: {
     Icone: Video,
     recebido: "Vídeo recebido",
+    enviado: "Vídeo enviado",
     naoRecebido: "Vídeo não recebido",
     nome: "Vídeo",
   },
   audio: {
     Icone: AudioLines,
     recebido: "Áudio recebido",
+    enviado: "Áudio enviado",
     naoRecebido: "Áudio não recebido",
     nome: "Áudio",
   },
@@ -404,7 +417,11 @@ function MidiaBody({ message }: { message: MessageItem }) {
     if (tipo === "foto" || tipo === "imagem") {
       return (
         <div className="grid gap-1.5">
-          <FotoDaConversa messageId={message.id} legenda={message.body} />
+          <FotoDaConversa
+            messageId={message.id}
+            legenda={message.body}
+            daClinica={message.direction === "saida"}
+          />
           <Legenda texto={message.body} />
         </div>
       );
@@ -459,6 +476,7 @@ function MidiaBody({ message }: { message: MessageItem }) {
   }
 
   const { Icone } = rotulos;
+  const rotuloChegando = fromPatient ? rotulos.recebido : rotulos.enviado;
   const demonstracao = estado.tipo === "demonstracao";
   // Foto e video reservam os 240x180 que vao ocupar quando chegarem: o fio
   // rola para o fim a cada mensagem, e um arquivo sem altura reservada faria
@@ -470,7 +488,7 @@ function MidiaBody({ message }: { message: MessageItem }) {
           <span className="grid justify-items-center gap-1.5 px-4 text-center">
             <Icone aria-hidden className="size-6" />
             <span className="text-[12.5px] font-semibold">
-              {rotulos.recebido}
+              {rotuloChegando}
             </span>
             <span className="text-[11.5px]">
               {demonstracao
@@ -487,7 +505,7 @@ function MidiaBody({ message }: { message: MessageItem }) {
     <div className="grid gap-1">
       <MidiaChegando
         Icone={Icone}
-        rotulo={rotulos.recebido}
+        rotulo={rotuloChegando}
         demonstracao={demonstracao}
       />
       {nomeVisivel}
@@ -546,16 +564,35 @@ function Lapide({
 const MOTIVO_SEM_APAGAR =
   "Só quem escreveu a mensagem pode apagar. Um administrador ou gestor também pode.";
 
+const MOTIVO_SEM_APAGAR_PELO_CELULAR =
+  "Mensagem enviada direto pelo WhatsApp da clínica: só um administrador ou gestor pode apagar.";
+
+/**
+ * A dica do "Apagar" desabilitado para quem escreve mas não pode apagar ESTA
+ * mensagem. A enviada direto pelo WhatsApp da clínica não tem autor no
+ * sistema (author_user_id nulo), então "só quem escreveu" não vale para
+ * ninguém: só a chefia apaga, como no banco (pode_apagar_mensagem).
+ */
+export function motivoParaNaoApagar(
+  message: Pick<MessageItem, "pelo_celular">,
+): string {
+  return message.pelo_celular === true
+    ? MOTIVO_SEM_APAGAR_PELO_CELULAR
+    : MOTIVO_SEM_APAGAR;
+}
+
 function AcoesDaBolha({
   podeResponder,
   podeApagar,
   motivoSemPermissao,
+  motivoSemApagar,
   onResponder,
   onApagar,
 }: {
   podeResponder: boolean;
   podeApagar: boolean;
   motivoSemPermissao: string;
+  motivoSemApagar: string;
   onResponder: () => void;
   onApagar: () => void;
 }) {
@@ -598,7 +635,7 @@ function AcoesDaBolha({
             inalcançável para todo mundo. */}
         {!podeResponder || !podeApagar ? (
           <p className="border-t border-border px-2 pt-1.5 pb-1 text-[11.5px] leading-snug text-text-secondary">
-            {!podeResponder ? motivoSemPermissao : MOTIVO_SEM_APAGAR}
+            {!podeResponder ? motivoSemPermissao : motivoSemApagar}
           </p>
         ) : null}
       </DropdownMenuContent>
@@ -664,6 +701,11 @@ export function MessageBubble({
   const fromIa = message.author === "ia";
   const note = message.is_internal_note;
   const apagada = message.deleted_at !== null;
+  // Enviada direto pelo WhatsApp da clínica, fora do sistema. Cai na pele
+  // "atendente" (é fala da clínica ao paciente) e troca o nome, que o sistema
+  // não sabe, por "Pelo WhatsApp" com o ícone do aparelho.
+  const peloCelular =
+    message.pelo_celular === true && !fromPatient && !fromIa && !note;
   const pele: keyof typeof PELES = fromPatient
     ? "paciente"
     : note
@@ -700,6 +742,7 @@ export function MessageBubble({
     <AcoesDaBolha
       podeResponder={podeResponder && !apagada && !deConversaAnterior}
       podeApagar={podeApagar}
+      motivoSemApagar={motivoParaNaoApagar(message)}
       motivoSemPermissao={
         apagada
           ? "Mensagem apagada não pode ser citada."
@@ -743,7 +786,10 @@ export function MessageBubble({
             </span>
           </span>
         ) : null}
-        {!fromPatient && !fromIa && authorName && !apagada ? (
+        {peloCelular && !apagada ? (
+          <MarcaPeloCelular className="px-1 text-[11px] font-semibold text-text-secondary" />
+        ) : null}
+        {!fromPatient && !fromIa && !peloCelular && authorName && !apagada ? (
           <span
             className={cn(
               "flex items-center gap-1 px-1 text-[11px] font-semibold",

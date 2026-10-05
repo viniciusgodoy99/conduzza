@@ -32,7 +32,8 @@ import type {
 //   3. reserva do slot anti-ban no banco (falha FECHADA: sem slot, sem envio)
 //   4. espera do slot e RECONFERENCIA do consentimento (revogacao durante a
 //      espera cancela o envio)
-//   5. provider envia; a linha vira 'enviada' ou 'falhou'
+//   5. provider envia, marcado com o id da linha (rastreio do eco, ver
+//      rastreio.ts); a linha vira 'enviada' ou 'falhou'
 //
 // Custo no uazapi/fake e 0 e billable false; o calculo por message_pricing
 // entra com o canal oficial (isOfficialChannel).
@@ -198,6 +199,60 @@ async function marcarFalha(
     .from("message")
     .update({ delivery_status: "falhou", error_code: code })
     .eq("id", messageId);
+}
+
+/**
+ * Rede de seguranca contra o eco duplicado (adotar_eco_do_envio, so service
+ * role). Devolve true so quando o banco adotou: a linha "pelo celular" com
+ * este wa_message_id, da mesma clinica e do mesmo numero, sumiu e a nossa
+ * linha ficou com o id e o recibo mais avancado dela.
+ *
+ * NUNCA lanca. Isto roda depois de o envio SAIR: uma excecao aqui subiria
+ * como falha do envio, e o retry do motor mandaria a mesma mensagem de novo
+ * ao paciente. O log so leva ids e codigos.
+ */
+async function adotarEcoDoEnvio(
+  supabase: SupabaseClient,
+  clinicId: string,
+  whatsappAccountId: string,
+  messageId: string,
+  waMessageId: string,
+): Promise<boolean> {
+  const ids = {
+    clinic_id: clinicId,
+    whatsapp_account_id: whatsappAccountId,
+    message_id: messageId,
+  };
+  try {
+    const { data, error } = await supabase.rpc("adotar_eco_do_envio", {
+      p_clinic_id: clinicId,
+      p_message_id: messageId,
+      p_wa_message_id: waMessageId,
+    });
+    if (error) {
+      log.warn("envio_adocao_do_eco", {
+        ...ids,
+        status: "falhou",
+        error_code: error.code ?? null,
+      });
+      return false;
+    }
+    const adotou = data === true;
+    // Adotar e sinal de que os DOIS filtros do eco falharam: warn, para
+    // aparecer na leitura do log mesmo dando certo.
+    log.warn("envio_adocao_do_eco", {
+      ...ids,
+      status: adotou ? "adotado" : "nada_adotado",
+    });
+    return adotou;
+  } catch {
+    log.warn("envio_adocao_do_eco", {
+      ...ids,
+      status: "falhou",
+      error_code: "excecao",
+    });
+    return false;
+  }
 }
 
 export type SendMenuInput = SendTextInput & {
@@ -761,9 +816,15 @@ async function enviarPeloCanal(
     ),
     instanceId: ativo.instance_id,
   };
+  // A marca de rastreio e o id DESTA linha. Os dois caminhos acima garantem
+  // que ele existe aqui (a linha reaproveitada do job ou a recem-inserida),
+  // entao o envio sempre sai marcado: o eco volta do provedor com o mesmo id
+  // e o webhook o reconhece como nosso, sem grava-lo de novo como "enviada
+  // pelo celular".
   const result = await despacho
     .enviar(provider, ref, contact.phone_e164, {
       replyToWaMessageId: input.replyTo?.waMessageId ?? null,
+      rastreioId: messageId,
     })
     .catch((erro: unknown) => {
       const texto = erro instanceof Error ? erro.message : "";
@@ -818,12 +879,30 @@ async function enviarPeloCanal(
     .update({ delivery_status: "enviada", wa_message_id: result.waMessageId })
     .eq("id", messageId);
   if (erroUpdate) {
-    log.error("envio_saiu_sem_confirmar_registro", {
-      clinic_id: input.clinicId,
-      whatsapp_account_id: ativo.id,
-      message_id: messageId,
-      error_code: erroUpdate.code ?? null,
-    });
+    // 23505 (unique de wa_message_id): o eco deste envio escapou dos filtros
+    // (wasSentByApi e a marca de rastreio) e o webhook o gravou como
+    // "enviada pelo celular" ANTES deste update. A rede de seguranca adota o
+    // eco: apaga a linha do celular e passa o wa_message_id para a nossa.
+    // Sem adocao (falhou, ou a colisao e com outra coisa, como a entrada de
+    // outra clinica da plataforma), fica o log de antes.
+    const adotou =
+      erroUpdate.code === "23505"
+        ? await adotarEcoDoEnvio(
+            supabase,
+            input.clinicId,
+            ativo.id,
+            messageId,
+            result.waMessageId,
+          )
+        : false;
+    if (!adotou) {
+      log.error("envio_saiu_sem_confirmar_registro", {
+        clinic_id: input.clinicId,
+        whatsapp_account_id: ativo.id,
+        message_id: messageId,
+        error_code: erroUpdate.code ?? null,
+      });
+    }
   }
 
   // awaiting_reply so cai quando quem escreveu foi GENTE. Toque automatico de

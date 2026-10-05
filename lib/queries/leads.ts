@@ -71,6 +71,12 @@ export type MensagemDoLead = {
   content_type: string;
   body: string | null;
   created_at: string;
+  /**
+   * Enviada direto pelo WhatsApp da clinica, fora do sistema (o mesmo campo
+   * de MessageItem): a gaveta diz "Pelo WhatsApp", e nao "Equipe" ou
+   * "Sistema". Opcional so para quem monta a mensagem na mao.
+   */
+  pelo_celular?: boolean;
 };
 
 export type LeadDetalhe = {
@@ -467,7 +473,9 @@ export async function fetchLeadDetalhe(
   if (conversationId) {
     const { data: msgs, error: erroMsgs } = await supabase
       .from("message")
-      .select("id, direction, author, content_type, body, created_at")
+      .select(
+        "id, direction, author, content_type, body, created_at, pelo_celular",
+      )
       .eq("conversation_id", conversationId)
       .eq("is_internal_note", false)
       .order("created_at", { ascending: false })

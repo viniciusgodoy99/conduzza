@@ -7,8 +7,11 @@ import {
   resetFakeProvider,
 } from "@/lib/integrations/whatsapp/fake";
 import {
+  filtrosDoWebhookConferem,
   nomeDaInstancia,
+  UazapiHttpError,
   UazapiProvider,
+  type WebhookDaInstancia,
 } from "@/lib/integrations/whatsapp/uazapi";
 import type { InstanceRef } from "@/lib/integrations/whatsapp/provider";
 import { textoNumerado } from "@/lib/integrations/whatsapp/menu-texto";
@@ -535,6 +538,314 @@ describe("responder citando (replyid)", () => {
       replyToWaMessageId: "CITADA-999",
     });
     expect(fakeSentMessages()[0]?.replyToWaMessageId).toBe("CITADA-999");
+  });
+});
+
+// Marca de rastreio: o eco de uma mensagem nossa volta do uazapi com o
+// track_source e o track_id que mandamos, e e por eles que o webhook o
+// descarta mesmo quando o filtro wasSentByApi falha. Se um dos quatro envios
+// perder a marca, o eco dele vira "mensagem enviada pelo celular" e a
+// conversa mostra a mesma mensagem duas vezes.
+describe("marca de rastreio (track_source e track_id)", () => {
+  const LINHA = "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f";
+
+  function corpo(call: { body: unknown } | undefined): Record<string, unknown> {
+    return call?.body as Record<string, unknown>;
+  }
+
+  it("texto, mídia e menu levam a origem conduzza e o id da linha", async () => {
+    const stub = fetchStub([
+      { status: 200, body: { messageid: "M1" } },
+      { status: 200, body: { messageid: "M2" } },
+      { status: 200, body: { messageid: "M3" } },
+    ]);
+    const provider = testProvider(stub.fn);
+    const extra = { rastreioId: LINHA };
+
+    await provider.sendText(REF, "5511999999999", "oi", extra);
+    await provider.sendMedia(
+      REF,
+      "5511999999999",
+      { tipo: "image", base64: "AAAA", mimetype: "image/png", legenda: "foto" },
+      extra,
+    );
+    await provider.sendMenu(
+      REF,
+      "5511999999999",
+      "confirma?",
+      [{ id: "sim", text: "Confirmar" }],
+      extra,
+    );
+
+    expect(stub.calls.map((call) => new URL(call.url).pathname)).toEqual([
+      "/send/text",
+      "/send/media",
+      "/send/menu",
+    ]);
+    for (const call of stub.calls) {
+      expect(corpo(call).track_source).toBe("conduzza");
+      expect(corpo(call).track_id).toBe(LINHA);
+    }
+    // A marca nao toma o lugar de nada: a legenda e o texto continuam.
+    expect(corpo(stub.calls[1]).text).toBe("foto");
+    expect(corpo(stub.calls[2]).text).toBe("confirma?");
+  });
+
+  it("o texto numerado de reserva do menu leva a mesma marca", async () => {
+    const stub = fetchStub([
+      { status: 400, body: { error: "buttons not supported" } },
+      { status: 200, body: { messageid: "M-RESERVA" } },
+    ]);
+    const resultado = await testProvider(stub.fn).sendMenu(
+      REF,
+      "5511999999999",
+      "Confirma?",
+      MENU_CONFIRMACAO,
+      { rastreioId: LINHA },
+    );
+
+    expect(resultado).toEqual({ ok: true, waMessageId: "M-RESERVA" });
+    expect(stub.calls).toHaveLength(2);
+    expect(stub.calls[1]?.url).toContain("/send/text");
+    expect(corpo(stub.calls[1]).track_source).toBe("conduzza");
+    expect(corpo(stub.calls[1]).track_id).toBe(LINHA);
+  });
+
+  it("a marca convive com a citação no mesmo corpo", async () => {
+    const stub = fetchStub([{ status: 200, body: { messageid: "M1" } }]);
+    await testProvider(stub.fn).sendText(REF, "5511999999999", "oi", {
+      replyToWaMessageId: "CITADA-1",
+      rastreioId: LINHA,
+    });
+    expect(corpo(stub.calls[0])).toMatchObject({
+      replyid: "CITADA-1",
+      track_source: "conduzza",
+      track_id: LINHA,
+    });
+  });
+
+  it("sem id, nenhum dos dois campos vai (nunca track_id vazio)", async () => {
+    const semId = [undefined, null, "", "   "];
+    const stub = fetchStub(
+      semId.flatMap(() => [
+        { status: 200, body: { messageid: "T" } },
+        { status: 200, body: { messageid: "D" } },
+        { status: 400, body: {} },
+        { status: 200, body: { messageid: "R" } },
+      ]),
+    );
+    const provider = testProvider(stub.fn);
+
+    for (const rastreioId of semId) {
+      const extra = { rastreioId };
+      await provider.sendText(REF, "5511999999999", "oi", extra);
+      await provider.sendMedia(
+        REF,
+        "5511999999999",
+        { tipo: "document", base64: "AAAA", mimetype: "application/pdf" },
+        extra,
+      );
+      // menu recusado + reserva numerada: os dois corpos sem marca
+      await provider.sendMenu(
+        REF,
+        "5511999999999",
+        "confirma?",
+        [{ id: "sim", text: "Confirmar" }],
+        extra,
+      );
+    }
+
+    expect(stub.calls).toHaveLength(semId.length * 4);
+    for (const call of stub.calls) {
+      expect(call.body).not.toHaveProperty("track_source");
+      expect(call.body).not.toHaveProperty("track_id");
+    }
+  });
+
+  it("sem extra nenhum, o corpo é o de antes", async () => {
+    const stub = fetchStub([{ status: 200, body: { messageid: "M1" } }]);
+    await testProvider(stub.fn).sendText(REF, "5511999999999", "oi");
+    expect(stub.calls[0]?.body).toEqual({
+      number: "5511999999999",
+      text: "oi",
+    });
+  });
+
+  it("o provedor falso registra a marca nos três envios", async () => {
+    resetFakeProvider();
+    const fake = new FakeProvider();
+    await fake.sendText(REF, "5584", "texto", { rastreioId: "linha-t" });
+    await fake.sendMedia(
+      REF,
+      "5584",
+      { tipo: "image", base64: "AAAA", mimetype: "image/png" },
+      { rastreioId: "linha-m" },
+    );
+    await fake.sendMenu(REF, "5584", "menu", [{ id: "sim", text: "Ok" }], {
+      rastreioId: "linha-b",
+    });
+    await fake.sendText(REF, "5584", "sem marca");
+    expect(fakeSentMessages().map((m) => m.rastreioId)).toEqual([
+      "linha-t",
+      "linha-m",
+      "linha-b",
+      null,
+    ]);
+  });
+});
+
+// Conferencia dos webhooks em producao (scripts/ops/conferir-webhooks.ts): so
+// leitura, e a url devolvida carrega o segredo.
+describe("ler o webhook da instância (GET /webhook)", () => {
+  function stubDeLeitura(respostas: Array<{ status: number; body?: unknown }>) {
+    const chamadas: Array<{
+      url: string;
+      method: string | undefined;
+      token: string | undefined;
+      body: unknown;
+    }> = [];
+    const fn = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      chamadas.push({
+        url: String(url),
+        method: init?.method,
+        token: (init?.headers as Record<string, string> | undefined)?.token,
+        body: init?.body ?? null,
+      });
+      const proxima = respostas.shift() ?? { status: 200, body: [] };
+      return new Response(JSON.stringify(proxima.body ?? []), {
+        status: proxima.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+    return { fn, chamadas };
+  }
+
+  it("usa GET com o token da instância, sem corpo, e lê a lista", async () => {
+    const { fn, chamadas } = stubDeLeitura([
+      {
+        status: 200,
+        body: [
+          {
+            id: "w1",
+            enabled: true,
+            url: "https://app.exemplo/api/webhooks/whatsapp?clinic=c&account=a&secret=s",
+            events: ["messages", "messages_update", "connection"],
+            excludeMessages: ["wasSentByApi"],
+            addUrlEvents: false,
+            addUrlTypesMessages: false,
+          },
+        ],
+      },
+    ]);
+    const webhooks = await testProvider(fn).lerWebhooks(REF);
+
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0]?.url).toBe("https://uazapi.exemplo/webhook");
+    expect(chamadas[0]?.method).toBe("GET");
+    expect(chamadas[0]?.token).toBe("token-instancia");
+    expect(chamadas[0]?.body).toBeNull();
+    expect(webhooks).toEqual([
+      {
+        id: "w1",
+        enabled: true,
+        url: "https://app.exemplo/api/webhooks/whatsapp?clinic=c&account=a&secret=s",
+        events: ["messages", "messages_update", "connection"],
+        excludeMessages: ["wasSentByApi"],
+        addUrlEvents: false,
+        addUrlTypesMessages: false,
+      },
+    ]);
+  });
+
+  it("lista vazia e campos ausentes não quebram a leitura", async () => {
+    const vazio = stubDeLeitura([{ status: 200, body: [] }]);
+    expect(await testProvider(vazio.fn).lerWebhooks(REF)).toEqual([]);
+
+    const incompleto = stubDeLeitura([{ status: 200, body: [{ url: 7 }] }]);
+    expect(await testProvider(incompleto.fn).lerWebhooks(REF)).toEqual([
+      {
+        id: null,
+        enabled: null,
+        url: null,
+        events: [],
+        excludeMessages: [],
+        addUrlEvents: null,
+        addUrlTypesMessages: null,
+      },
+    ]);
+  });
+
+  it("recusa do servidor vira erro tipado, sem o corpo da resposta", async () => {
+    const { fn } = stubDeLeitura([
+      { status: 401, body: { error: "segredo-que-nao-pode-vazar" } },
+    ]);
+    const erro = await testProvider(fn)
+      .lerWebhooks(REF)
+      .catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(UazapiHttpError);
+    expect((erro as UazapiHttpError).motivo).toBe("instancia_invalida");
+    expect((erro as Error).message).not.toContain("segredo-que-nao-pode-vazar");
+  });
+});
+
+describe("filtros do webhook deixam passar o celular", () => {
+  function webhook(
+    parcial: Partial<WebhookDaInstancia> = {},
+  ): WebhookDaInstancia {
+    return {
+      id: "w1",
+      enabled: true,
+      url: null,
+      events: ["messages", "messages_update", "connection"],
+      excludeMessages: ["wasSentByApi"],
+      addUrlEvents: false,
+      addUrlTypesMessages: false,
+      ...parcial,
+    };
+  }
+
+  it("a configuração que configureWebhook grava confere", async () => {
+    const { fn, calls } = fetchStub([{ status: 200, body: {} }]);
+    await testProvider(fn).configureWebhook(REF, "https://exemplo/webhook");
+    const gravado = calls[0]?.body as {
+      events: string[];
+      excludeMessages: string[];
+    };
+    expect(
+      filtrosDoWebhookConferem(
+        webhook({
+          events: gravado.events,
+          excludeMessages: gravado.excludeMessages,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("sem messages, sem wasSentByApi, ou cortando o celular, não confere", () => {
+    expect(filtrosDoWebhookConferem(webhook({ events: ["connection"] }))).toBe(
+      false,
+    );
+    expect(filtrosDoWebhookConferem(webhook({ excludeMessages: [] }))).toBe(
+      false,
+    );
+    expect(
+      filtrosDoWebhookConferem(
+        webhook({ excludeMessages: ["wasSentByApi", "fromMeYes"] }),
+      ),
+    ).toBe(false);
+    expect(
+      filtrosDoWebhookConferem(
+        webhook({ excludeMessages: ["wasSentByApi", "wasNotSentByApi"] }),
+      ),
+    ).toBe(false);
+  });
+
+  it("filtro de grupo a mais não atrapalha", () => {
+    expect(
+      filtrosDoWebhookConferem(
+        webhook({ excludeMessages: ["wasSentByApi", "isGroupYes"] }),
+      ),
+    ).toBe(true);
   });
 });
 

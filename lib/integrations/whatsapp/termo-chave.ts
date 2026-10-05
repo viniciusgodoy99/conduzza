@@ -22,7 +22,9 @@ import { log } from "@/lib/log";
 // Cada porta evita passar o mesmo texto duas vezes: a ingestao so com
 // mensagem inserida (reentrega volta inserted=false), o envio so depois de
 // sair, o eco so quando saiu do celular ha pouco (ecoContaParaTermo em
-// inbound.ts, porque o eco nao vira linha de mensagem). E uma segunda
+// inbound.ts) e com a marca nova por wa_message_id (marcar_eco_para_termo).
+// Desde 05/10/2026 o eco tambem vira linha de mensagem (pelo_celular), mas a
+// garantia do termo continua sendo a marca, como antes. E uma segunda
 // passada do mesmo texto quase nunca muda nada: o contato ja esta na etapa
 // do termo e "so para frente" nao o move de novo (so moveria se alguem o
 // tivesse voltado a mao no meio tempo).

@@ -23,6 +23,10 @@ import { log } from "@/lib/log";
 // melhor esforco: qualquer falha vira log e a ingestao segue, porque a
 // mensagem ja esta salva quando ela roda.
 //
+// A mensagem que a CLINICA enviou pelo celular pareado tambem passa por aqui
+// (registrarMensagemDoCelular, no fim do arquivo), sem atribuicao, anuncio
+// nem consentimento: ela nao diz nada sobre de onde o paciente veio.
+//
 // Precedencia da origem (D3, 04/10/2026, e F1 do Google, 05/10/2026):
 // anuncio da Meta, depois codigo fixo de campanha, depois clique do site,
 // depois mensagem padrao, depois palavra-chave. O anuncio grava primeiro e a
@@ -52,6 +56,60 @@ export type IngestResultado = {
 };
 
 type MensagemRecebida = Extract<InboundEvent, { kind: "message_received" }>;
+type MensagemDoCelular = Extract<InboundEvent, { kind: "clinic_device_reply" }>;
+
+/**
+ * Resultado da RPC registrar_mensagem_do_celular (mensagem que a clinica
+ * enviou pelo celular pareado, fora do sistema).
+ */
+export type RegistroDoCelular = {
+  /** false na reentrega e quando a linha ja existia (envio nosso gravado). */
+  inserted: boolean;
+  /**
+   * Presente quando a RPC NAO gravou nada de proposito, e isso nao e erro:
+   * - numero_removido: o numero foi removido no meio do caminho;
+   * - numero_proprio: o destino e outro numero ativo da propria clinica;
+   * - numero_da_plataforma: o destino e um numero ativo de OUTRA clinica da
+   *   plataforma. O wa_message_id e o mesmo dos dois lados e o unique ainda
+   *   e global (docs/07): ele fica com a ingestao de quem RECEBEU, senao a
+   *   mensagem que a outra clinica recebeu sumiria sem aviso;
+   * - colisao_wa_message_id: o id ja existe em OUTRA clinica (o unique de
+   *   wa_message_id ainda e global, docs/07);
+   * - contato_desconhecido: a clinica escreveu para alguem que nao esta no
+   *   sistema. O contato NAO e criado por mensagem de saida (nasceria lead
+   *   sem consentimento e sem origem).
+   *
+   * Em numero_da_plataforma e colisao_wa_message_id o eco nao vira linha (o
+   * id e da outra clinica), mas continua sendo a equipe respondendo pelo
+   * celular: a RPC ja derrubou a espera da conversa aberta daquele numero
+   * (espera_pelo_celular_sem_linha) e devolve o contact_id quando o contato
+   * existe, para a rota rodar o termo-chave. Nas outras, contact_id e nulo.
+   */
+  ignorada?:
+    | "numero_removido"
+    | "numero_proprio"
+    | "numero_da_plataforma"
+    | "colisao_wa_message_id"
+    | "contato_desconhecido";
+  /**
+   * O contato da conversa. Na ignorada, so em numero_da_plataforma e
+   * colisao_wa_message_id (quando o contato existe); ver `ignorada`.
+   */
+  contact_id: string | null;
+  conversation_id: string | null;
+  message_id: string | null;
+  whatsapp_account_id: string | null;
+  /**
+   * A RPC reconheceu a resposta automatica do app WhatsApp Business: gravada
+   * como 'sistema'. Com o horario de envio do eco e o da ultima mensagem do
+   * paciente, decide por eles (o paciente enviou de 8 s antes a 2 s depois
+   * do eco); sem um deles, pela chegada (a ultima mensagem do paciente
+   * chegou de 8 s antes a 10 s depois do envio). Nulo quando nada foi
+   * decidido agora. Se o eco gravou antes da mensagem do paciente, a
+   * correcao vem depois, na ingestao dela (reclassificarRespostaAutomatica).
+   */
+  automatica: boolean | null;
+};
 
 type LinhaCampanha = {
   id: string;
@@ -507,6 +565,82 @@ async function capturarAnuncio(
 }
 
 /**
+ * Corrige a RESPOSTA AUTOMATICA do app WhatsApp Business (saudacao,
+ * ausencia) que correu NA FRENTE desta ingestao.
+ *
+ * Ela sai do celular 1 ou 2 s depois da mensagem do paciente, e os dois
+ * webhooks correm em paralelo. Quando o eco grava primeiro (a ingestao e
+ * mais longa, ou pegou partida a frio a noite, justo quando a ausencia esta
+ * ligada), registrar_mensagem_do_celular ainda nao ve a mensagem do paciente
+ * e grava a ausencia como fala de PESSOA ('usuario'). Sem esta correcao, o
+ * interceptador, que a rota chama logo depois da ingestao, leria a ausencia
+ * como "a clinica falou depois do toque" e calaria a confirmacao: o
+ * "Confirmar" tocado pelo paciente deixaria de confirmar a consulta sozinho.
+ * A ausencia tambem contaria como primeira resposta da equipe.
+ *
+ * A RPC reclassificar_resposta_automatica troca para 'sistema' o eco de
+ * pessoa da mesma conversa que chegou de 8 s antes a 2 s depois desta
+ * mensagem e, quando os dois horarios de envio existem, saiu de 2 s antes a
+ * 8 s depois dela (a fala da equipe enviada meia hora antes, que chega
+ * colada na rajada de reconexao, continua de pessoa). A regra e o relogio
+ * vivem no banco. Por isso roda logo depois da insercao, ANTES de a ingestao
+ * devolver.
+ *
+ * Ela tambem grava o horario de envio desta mensagem (enviadaEm, do payload)
+ * na linha (message.enviada_no_aparelho_em): e por ele que
+ * registrar_mensagem_do_celular decide os ecos que chegarem DEPOIS. Sem
+ * horario no payload vai null, e o banco fica com a regra da chegada.
+ *
+ * Melhor esforco: a mensagem ja esta salva. Erro ou excecao vira log so com
+ * ids e codigo, nunca erro da ingestao (o 500 faria o provedor reenviar uma
+ * mensagem ja gravada).
+ */
+async function reclassificarRespostaAutomatica(
+  admin: SupabaseClient,
+  alvo: {
+    clinicId: string;
+    whatsappAccountId: string | null;
+    conversationId: string | null;
+    messageId: string;
+    /** Horario de envio do payload (ISO), ou null quando nao veio. */
+    enviadaEm: string | null;
+  },
+): Promise<void> {
+  const campos = {
+    clinic_id: alvo.clinicId,
+    whatsapp_account_id: alvo.whatsappAccountId,
+    conversation_id: alvo.conversationId,
+    message_id: alvo.messageId,
+  };
+  try {
+    const { data, error } = await admin.rpc(
+      "reclassificar_resposta_automatica",
+      {
+        p_clinic_id: alvo.clinicId,
+        p_message_id: alvo.messageId,
+        p_enviada_em: alvo.enviadaEm,
+      },
+    );
+    if (error) {
+      log.error("reclassificar_automatica_falhou", {
+        ...campos,
+        error_code: error.code ?? null,
+      });
+      return;
+    }
+    // Diagnostico da corrida: quantas vezes o eco corre na frente.
+    if (typeof data === "number" && data > 0) {
+      log.info("resposta_automatica_reclassificada", {
+        ...campos,
+        count: data,
+      });
+    }
+  } catch {
+    log.error("reclassificar_automatica_falhou", campos);
+  }
+}
+
+/**
  * Grava a mensagem recebida pelo NUMERO `accountId` da clinica.
  *
  * O webhook sempre sabe o numero (resolvido pela URL). `accountId` nulo so
@@ -546,6 +680,19 @@ export async function ingerirMensagemRecebida(
   // citacao, anuncio, jornada nem origem a mexer. Sai sem erro.
   if (resultado?.ignorada) {
     return { data: resultado, error: null };
+  }
+
+  // RESPOSTA AUTOMATICA que correu na frente: logo depois da insercao, para
+  // terminar antes do interceptador que a rota chama em seguida. So na
+  // primeira entrega: a reentrega (inserted=false) ja passou por aqui.
+  if (resultado?.inserted && resultado.message_id) {
+    await reclassificarRespostaAutomatica(admin, {
+      clinicId,
+      whatsappAccountId: resultado.whatsapp_account_id ?? accountId,
+      conversationId: resultado.conversation_id,
+      messageId: resultado.message_id,
+      enviadaEm: event.enviadaEm ?? null,
+    });
   }
 
   // CITACAO, num passo separado da ingestao de proposito.
@@ -642,6 +789,71 @@ export async function ingerirMensagemRecebida(
       log.error("atribuicao_origem_falhou", {
         clinic_id: clinicId,
         contact_id: resultado.contact_id,
+      });
+    }
+  }
+
+  return { data: resultado, error: null };
+}
+
+/**
+ * Grava na conversa do NUMERO `accountId` a mensagem que a clinica enviou
+ * pelo celular pareado (ou outro aparelho vinculado), fora do sistema.
+ *
+ * Tudo o que decide vive na RPC registrar_mensagem_do_celular, numa
+ * transacao: idempotencia por wa_message_id, numero proprio, contato (nunca
+ * criado nem atualizado), conversa aberta daquele numero, resposta
+ * automatica do app Business (janela de 8 s) e a descida da espera. Custo
+ * zero e nao cobravel (regra 3.3): a mensagem nao saiu pelo sistema.
+ *
+ * A citacao e resolvida DEPOIS, como na entrada (vincular_citacao_recebida):
+ * se falhar, a bolha perde o "respondendo a", nao a mensagem.
+ *
+ * REGRA ABSOLUTA: o texto vai so para a RPC; log leva so ids e codigos.
+ */
+export async function registrarMensagemDoCelular(
+  admin: SupabaseClient,
+  clinicId: string,
+  accountId: string,
+  event: MensagemDoCelular,
+): Promise<{ data: RegistroDoCelular | null; error: PostgrestError | null }> {
+  const { data, error } = await admin.rpc("registrar_mensagem_do_celular", {
+    p_clinic_id: clinicId,
+    p_whatsapp_account_id: accountId,
+    p_phone_e164: event.phone,
+    p_wa_message_id: event.waMessageId,
+    p_content_type: event.contentType,
+    p_body: event.body,
+    p_media_url: event.mediaUrl,
+    p_media_filename: event.mediaFilename,
+    p_media_mimetype: event.mediaMimetype,
+    p_quoted_wa_message_id: event.quotedWaMessageId,
+    p_enviada_em: event.enviadaEm,
+  });
+  if (error) {
+    return { data: null, error };
+  }
+
+  const resultado = (data ?? null) as RegistroDoCelular | null;
+  if (resultado?.ignorada) {
+    return { data: resultado, error: null };
+  }
+
+  if (event.quotedWaMessageId && resultado?.inserted && resultado.message_id) {
+    const { error: erroCitacao } = await admin.rpc(
+      "vincular_citacao_recebida",
+      {
+        p_clinic_id: clinicId,
+        p_message_id: resultado.message_id,
+        p_quoted_wa_id: event.quotedWaMessageId,
+      },
+    );
+    if (erroCitacao) {
+      log.error("citacao_do_celular_falhou", {
+        clinic_id: clinicId,
+        whatsapp_account_id: resultado.whatsapp_account_id ?? accountId,
+        message_id: resultado.message_id,
+        error_code: erroCitacao.code ?? null,
       });
     }
   }

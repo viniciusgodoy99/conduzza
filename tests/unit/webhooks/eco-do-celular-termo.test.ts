@@ -8,16 +8,23 @@ import {
 } from "@/lib/integrations/whatsapp/inbound";
 
 // Termo-chave escrito pela CLINICA no celular conectado (pedido do dono em
-// 02/10/2026, item 0 do plano "Automacoes de fluxo e CRM"). O eco (fromMe)
-// nao vira mensagem na conversa, entao nao existe a "linha inserida" que na
-// ingestao separa mensagem nova de reentrega: a separacao e pelo horario de
-// envio do payload (ecoContaParaTermo). O que se prova aqui:
-//   - o parser leva o texto do eco (so para o termo; nunca para log);
+// 02/10/2026, item 0 do plano "Automacoes de fluxo e CRM"). Desde 05/10/2026
+// o eco (fromMe) vira linha na conversa (registrar_mensagem_do_celular), mas
+// o termo-chave ficou como estava: a separacao entre eco novo e reentrega
+// continua sendo o horario de envio do payload (ecoContaParaTermo) mais a
+// marca por wa_message_id, sem depender do "inserted" da gravacao. O que se
+// prova aqui:
+//   - o parser leva o texto do eco (para a conversa e o termo; nunca para
+//     log);
 //   - a janela: eco recente conta; atrasado, reentregue tarde ou sem
 //     horario nao conta (e nem chega a ir ao banco);
 //   - "nunca reentrega": a rota marca o eco por wa_message_id no banco
 //     (marcar_eco_para_termo) ANTES de mover e so move quando a marca nasceu
 //     agora; reentrega (false) ou falha ao marcar nao movem;
+//   - o contato e o que a RPC da gravacao devolveu; sem contato (a RPC
+//     ignorou a mensagem) nada marca nem move. O eco de numero da
+//     plataforma ou de colisao de id, que nao vira linha, ainda move com o
+//     contato que a RPC devolveu (casos em whatsapp-route.test.ts);
 //   - a rota chama o movimento com quem escreveu = clinica, sem autor (nao
 //     ha pessoa do sistema por tras do celular), e o 200 nunca depende dele.
 // A marca em si (unica por clinica e wa_message_id, poda, so service role)
@@ -49,17 +56,23 @@ function eco(campos: Record<string, unknown> = {}) {
 }
 
 describe("eco do celular: texto e janela", () => {
-  it("o parser leva o texto aparado do eco; sem texto vira null", () => {
+  it("o parser leva o texto aparado do eco (vai para a conversa); sem texto, o body é null", () => {
     const comTexto = parseInboundEvent(eco());
     expect(comTexto).toMatchObject({
       kind: "clinic_device_reply",
       body: "Olá! Seja bem-vinda à Clínica Salud Care",
     });
-    const semTexto = parseInboundEvent(eco({ text: "   " }));
+    // Arquivo sem legenda: o eco segue, com body nulo.
+    const semTexto = parseInboundEvent(
+      eco({ text: "   ", messageType: "AudioMessage" }),
+    );
     expect(semTexto).toMatchObject({
       kind: "clinic_device_reply",
+      contentType: "audio",
       body: null,
     });
+    // Texto em branco sem arquivo não tem o que mostrar: nem vira evento.
+    expect(parseInboundEvent(eco({ text: "   " }))).toBeNull();
   });
 
   it("eco recente conta; o da beira da janela também", () => {
@@ -134,19 +147,39 @@ function responder(tabela: string): Resultado {
       error: null,
     };
   }
-  if (tabela === "contact") {
-    return { data: { id: CONTATO }, error: null };
-  }
   return { data: null, error: null };
 }
 
 const mover = vi.fn();
-// A marca do eco no banco: true = eco novo. Outras RPCs da rota ficam como
-// antes (sem resposta).
+// A marca do eco no banco: true = eco novo.
 const marcar = vi.fn<(args: unknown) => Promise<Resultado>>();
-const rpc = vi.fn((nome: string, args: unknown) =>
-  nome === "marcar_eco_para_termo" ? marcar(args) : undefined,
+// A gravacao da mensagem do celular: devolve o contato que a RPC achou.
+const registrar = vi.fn<(args: unknown) => Promise<Resultado>>();
+const rpc = vi.fn((nome: string, args: unknown): Promise<Resultado> =>
+  nome === "marcar_eco_para_termo"
+    ? marcar(args)
+    : nome === "registrar_mensagem_do_celular"
+      ? registrar(args)
+      : Promise.resolve({ data: null, error: null }),
 );
+
+function registroCom(
+  contato: string | null,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    data: {
+      inserted: true,
+      contact_id: contato,
+      conversation_id: "conversa-1",
+      message_id: "mensagem-1",
+      whatsapp_account_id: NUMERO,
+      automatica: false,
+      ...extra,
+    },
+    error: null,
+  };
+}
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
@@ -157,12 +190,19 @@ vi.mock("@/lib/supabase/admin", () => ({
 vi.mock("@/lib/integrations/whatsapp/termo-chave", () => ({
   tentarMoverPorTermo: mover,
 }));
-vi.mock("@/lib/integrations/whatsapp/ingest", () => ({
+// A gravacao da mensagem do celular e a de verdade (com o rpc dublado).
+vi.mock("@/lib/integrations/whatsapp/ingest", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/integrations/whatsapp/ingest")
+  >()),
   ingerirMensagemRecebida: vi.fn(),
 }));
 vi.mock("@/lib/integrations/whatsapp/interceptar-resposta", () => ({
   interceptarRespostaDePaciente: vi.fn(),
 }));
+// A espera da nova tentativa da saudacao para paciente novo, sem esperar.
+const esperar = vi.fn<(ms: number) => Promise<void>>();
+vi.mock("@/lib/utils/esperar", () => ({ esperar }));
 
 const { POST } = await import("@/app/api/webhooks/whatsapp/route");
 
@@ -184,7 +224,11 @@ beforeEach(() => {
   mover.mockResolvedValue(null);
   marcar.mockReset();
   marcar.mockResolvedValue({ data: true, error: null });
+  registrar.mockReset();
+  registrar.mockResolvedValue(registroCom(CONTATO));
   rpc.mockClear();
+  esperar.mockReset();
+  esperar.mockResolvedValue(undefined);
   saida = [];
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(AGORA);
@@ -276,6 +320,70 @@ describe("POST /api/webhooks/whatsapp: termo da clínica no eco do celular", () 
     expect(resposta.status).toBe(200);
     expect(marcar).not.toHaveBeenCalled();
     expect(mover).not.toHaveBeenCalled();
+  });
+
+  it("o contato do termo é o que a RPC da gravação devolveu", async () => {
+    registrar.mockResolvedValue(registroCom("contato-achado-pela-rpc"));
+
+    const resposta = await POST(pedido(eco()));
+
+    expect(resposta.status).toBe(200);
+    // A gravacao vem antes da marca: sem contato da RPC nao ha termo.
+    expect(registrar.mock.invocationCallOrder[0]!).toBeLessThan(
+      marcar.mock.invocationCallOrder[0]!,
+    );
+    expect(mover.mock.calls[0]![1]).toMatchObject({
+      contactId: "contato-achado-pela-rpc",
+    });
+  });
+
+  it("reentrega da gravação (inserted=false) ainda passa pela marca, que decide", async () => {
+    registrar.mockResolvedValue(registroCom(CONTATO, { inserted: false }));
+    marcar.mockResolvedValue({ data: false, error: null });
+
+    const resposta = await POST(pedido(eco()));
+
+    expect(resposta.status).toBe(200);
+    expect(marcar).toHaveBeenCalledTimes(1);
+    expect(mover).not.toHaveBeenCalled();
+  });
+
+  it("contato desconhecido (a RPC ignorou, mesmo depois das novas tentativas): não marca nem move", async () => {
+    registrar.mockResolvedValue({
+      data: {
+        inserted: false,
+        ignorada: "contato_desconhecido",
+        contact_id: null,
+        conversation_id: null,
+        message_id: null,
+        whatsapp_account_id: NUMERO,
+        automatica: null,
+      },
+      error: null,
+    });
+
+    const resposta = await POST(pedido(eco()));
+
+    expect(resposta.status).toBe(200);
+    // Eco recente: a saudacao para paciente novo tenta mais 2 vezes.
+    expect(registrar).toHaveBeenCalledTimes(3);
+    expect(esperar).toHaveBeenCalledTimes(2);
+    expect(marcar).not.toHaveBeenCalled();
+    expect(mover).not.toHaveBeenCalled();
+  });
+
+  it("falha da gravação: 500, sem termo, e o log não leva o texto", async () => {
+    registrar.mockResolvedValue({ data: null, error: { code: "XX000" } });
+
+    const resposta = await POST(pedido(eco()));
+
+    expect(resposta.status).toBe(500);
+    expect(marcar).not.toHaveBeenCalled();
+    expect(mover).not.toHaveBeenCalled();
+    const tudo = saida.join("");
+    expect(tudo).toContain("webhook_mensagem_do_celular_falhou");
+    expect(tudo).not.toContain("bem-vinda");
+    expect(tudo).not.toContain("Salud");
   });
 
   it("falha do movimento não derruba o 200 e o log não leva o texto", async () => {

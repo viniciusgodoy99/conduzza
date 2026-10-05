@@ -36,6 +36,12 @@ export type FakeSentMessage = {
   waMessageId: string;
   /** id da mensagem citada; os testes conferem que o replyid foi adiante */
   replyToWaMessageId?: string | null;
+  /**
+   * Marca de rastreio do envio (o id da linha de message), como o uazapi a
+   * receberia em track_id; nulo quando quem chamou nao informou. Os testes
+   * conferem que o orquestrador marcou o envio com a linha certa.
+   */
+  rastreioId?: string | null;
 };
 
 /** Ids revogados por deleteMessage, na ordem, para os testes conferirem. */
@@ -86,6 +92,7 @@ export class FakeProvider implements WhatsAppProvider {
       body,
       waMessageId,
       replyToWaMessageId: extra.replyToWaMessageId ?? null,
+      rastreioId: extra.rastreioId ?? null,
     });
     return { ok: true, waMessageId };
   }
@@ -110,6 +117,7 @@ export class FakeProvider implements WhatsAppProvider {
       },
       waMessageId,
       replyToWaMessageId: extra.replyToWaMessageId ?? null,
+      rastreioId: extra.rastreioId ?? null,
     });
     return { ok: true, waMessageId };
   }
@@ -130,6 +138,7 @@ export class FakeProvider implements WhatsAppProvider {
       menuOptions: options,
       waMessageId,
       replyToWaMessageId: extra.replyToWaMessageId ?? null,
+      rastreioId: extra.rastreioId ?? null,
     });
     return { ok: true, waMessageId };
   }

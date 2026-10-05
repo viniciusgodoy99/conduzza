@@ -1798,6 +1798,7 @@ export type Database = {
           deleted_source: string | null
           delivery_status: string | null
           direction: string
+          enviada_no_aparelho_em: string | null
           error_code: string | null
           id: string
           is_internal_note: boolean
@@ -1805,6 +1806,7 @@ export type Database = {
           media_filename: string | null
           media_mimetype: string | null
           media_url: string | null
+          pelo_celular: boolean
           pricing_category: string | null
           reply_to_message_id: string | null
           reply_to_wa_message_id: string | null
@@ -1830,6 +1832,7 @@ export type Database = {
           deleted_source?: string | null
           delivery_status?: string | null
           direction: string
+          enviada_no_aparelho_em?: string | null
           error_code?: string | null
           id?: string
           is_internal_note?: boolean
@@ -1837,6 +1840,7 @@ export type Database = {
           media_filename?: string | null
           media_mimetype?: string | null
           media_url?: string | null
+          pelo_celular?: boolean
           pricing_category?: string | null
           reply_to_message_id?: string | null
           reply_to_wa_message_id?: string | null
@@ -1862,6 +1866,7 @@ export type Database = {
           deleted_source?: string | null
           delivery_status?: string | null
           direction?: string
+          enviada_no_aparelho_em?: string | null
           error_code?: string | null
           id?: string
           is_internal_note?: boolean
@@ -1869,6 +1874,7 @@ export type Database = {
           media_filename?: string | null
           media_mimetype?: string | null
           media_url?: string | null
+          pelo_celular?: boolean
           pricing_category?: string | null
           reply_to_message_id?: string | null
           reply_to_wa_message_id?: string | null
@@ -3838,6 +3844,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      adotar_eco_do_envio: {
+        Args: {
+          p_clinic_id: string
+          p_message_id: string
+          p_wa_message_id: string
+        }
+        Returns: boolean
+      }
       agenda_do_periodo: {
         Args: {
           p_ate: string
@@ -4126,6 +4140,15 @@ export type Database = {
           user_id: string
         }[]
       }
+      espera_pelo_celular_sem_linha: {
+        Args: {
+          p_base: string
+          p_clinic_id: string
+          p_phone_e164: string
+          p_whatsapp_account_id: string
+        }
+        Returns: string
+      }
       etiquetar_contatos: {
         Args: {
           p_adicionar: string[]
@@ -4355,6 +4378,14 @@ export type Database = {
         Args: { p_conversation_id: string }
         Returns: undefined
       }
+      reclassificar_resposta_automatica: {
+        Args: {
+          p_clinic_id: string
+          p_enviada_em?: string
+          p_message_id: string
+        }
+        Returns: number
+      }
       redistribuir_jobs_do_numero: {
         Args: { p_account_id: string; p_tipos?: string[] }
         Returns: number
@@ -4414,6 +4445,22 @@ export type Database = {
           p_worker: string
         }
         Returns: string
+      }
+      registrar_mensagem_do_celular: {
+        Args: {
+          p_body?: string
+          p_clinic_id: string
+          p_content_type?: string
+          p_enviada_em?: string
+          p_media_filename?: string
+          p_media_mimetype?: string
+          p_media_url?: string
+          p_phone_e164: string
+          p_quoted_wa_message_id?: string
+          p_wa_message_id: string
+          p_whatsapp_account_id: string
+        }
+        Returns: Json
       }
       remover_numero: {
         Args: {

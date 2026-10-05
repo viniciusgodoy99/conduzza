@@ -1,13 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { chaveDeTelefone } from "@/lib/domain/telefone";
 import {
   ecoContaParaTermo,
-  limiteParaRespostaDePessoa,
+  ecoEsperaPeloContatoNovo,
   parseInboundEvent,
+  type InboundEvent,
+  type TipoDeConteudo,
 } from "@/lib/integrations/whatsapp/inbound";
-import { ingerirMensagemRecebida } from "@/lib/integrations/whatsapp/ingest";
+import {
+  ingerirMensagemRecebida,
+  registrarMensagemDoCelular,
+  type RegistroDoCelular,
+} from "@/lib/integrations/whatsapp/ingest";
 import { interceptarRespostaDePaciente } from "@/lib/integrations/whatsapp/interceptar-resposta";
 import type {
   ConnectionStatus,
@@ -23,11 +28,13 @@ import { tentarMoverPorTermo } from "@/lib/integrations/whatsapp/termo-chave";
 import { conferirConexaoDoWebhook } from "@/lib/integrations/whatsapp/trava-celular";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { esperar } from "@/lib/utils/esperar";
 
 // Webhook de entrada do WhatsApp (tarefa 1.3). O uazapi nao assina as
 // chamadas, entao a validacao e pelo webhook_secret NOSSO, por NUMERO, na
 // URL configurada na conexao. Idempotencia e concorrencia vivem no banco
-// (RPC ingest_inbound_message + unique de wa_message_id).
+// (RPCs ingest_inbound_message e registrar_mensagem_do_celular + unique de
+// wa_message_id).
 //
 // VARIOS NUMEROS POR CLINICA (docs/07, Fase 2): todo evento pertence a UM
 // numero (whatsapp_account.id), e tudo o que ele toca e filtrado por esse
@@ -356,6 +363,216 @@ async function barrarAntesDaTrava(
   );
 }
 
+/**
+ * A mensagem gravada tem arquivo a baixar? Toda imagem, documento e audio,
+ * com ou sem URL: o worker baixa pelo wa_message_id (POST /message/download),
+ * nao pela URL. Antes a trava era a URL, e foto que chegava sem ela nunca
+ * entrava na fila: a bolha dizia "Baixando o arquivo" para sempre. Com URL
+ * vale tambem para o que o parser chama de texto (video).
+ */
+function temArquivoParaBaixar(
+  contentType: TipoDeConteudo,
+  mediaUrl: string | null,
+): boolean {
+  return (
+    contentType === "imagem" ||
+    contentType === "documento" ||
+    contentType === "audio" ||
+    Boolean(mediaUrl)
+  );
+}
+
+/**
+ * Enfileira o download do arquivo de uma mensagem recem-gravada (recebida do
+ * paciente ou enviada pelo celular da clinica: o mesmo job serve as duas).
+ *
+ * Midia NUNCA e baixada aqui: a URL do provedor e criptografada e o
+ * download demora segundos, o que estouraria o timeout do webhook e
+ * provocaria reenvio. Vira job; o worker baixa e guarda no Storage.
+ *
+ * O job leva o NUMERO da mensagem (na coluna e no payload): o arquivo so
+ * baixa pela instancia daquele numero. Falha ao enfileirar nao derruba o
+ * 200: a mensagem ja esta salva, so o arquivo fica pendente.
+ */
+async function enfileirarDownloadDaMidia(
+  admin: SupabaseClient,
+  alvo: {
+    clinicId: string;
+    accountId: string;
+    messageId: string;
+    waMessageId: string;
+  },
+): Promise<void> {
+  const { error } = await admin.from("job_queue").insert({
+    clinic_id: alvo.clinicId,
+    kind: "baixar_midia",
+    whatsapp_account_id: alvo.accountId,
+    payload: {
+      message_id: alvo.messageId,
+      wa_message_id: alvo.waMessageId,
+      whatsapp_account_id: alvo.accountId,
+    },
+  });
+  if (error) {
+    log.error("webhook_enfileirar_midia_falhou", {
+      clinic_id: alvo.clinicId,
+      whatsapp_account_id: alvo.accountId,
+      message_id: alvo.messageId,
+      error_code: error.code ?? null,
+    });
+  }
+}
+
+type MensagemDoCelular = Extract<InboundEvent, { kind: "clinic_device_reply" }>;
+
+/**
+ * SAUDACAO PARA PACIENTE NOVO. O app WhatsApp Business manda a saudacao
+ * justamente quando o contato e novo: o paciente escreve pela primeira vez e
+ * o celular responde sozinho 1 ou 2 s depois. Os dois webhooks correm em
+ * paralelo, e o eco da saudacao pode chegar antes de a ingestao da mensagem
+ * do paciente criar o contato. A RPC nunca cria contato por mensagem de
+ * saida (nasceria lead sem consentimento e sem origem), entao devolve
+ * contato_desconhecido, e a saudacao, que o paciente leu, sumiria da
+ * conversa. Por isso o eco RECENTE de contato desconhecido espera um pouco
+ * pela ingestao e tenta de novo: ate 2 vezes, 1,5 s cada (3 s no pior caso,
+ * folgado no teto de 60 s da rota).
+ *
+ * Sem horario no payload ou com eco velho (ecoEsperaPeloContatoNovo) nao ha
+ * nova tentativa: a mensagem para quem nao e paciente (fornecedor, colega)
+ * tambem cai em contato_desconhecido e nao deve atrasar, e o eco velho
+ * (reentrega, sincronia de historico) nao vai ganhar contato em 3 s.
+ */
+const ESPERA_PELO_CONTATO_NOVO_MS = 1_500;
+const NOVAS_TENTATIVAS_PELO_CONTATO_NOVO = 2;
+
+/**
+ * Grava o eco do celular (registrarMensagemDoCelular) e, na saudacao para
+ * paciente novo, faz as novas tentativas descritas acima. Erro em qualquer
+ * chamada volta como erro (a rota responde 500 e o provedor reenvia; a RPC e
+ * idempotente).
+ */
+async function registrarEsperandoContatoNovo(
+  admin: SupabaseClient,
+  clinicId: string,
+  accountId: string,
+  event: MensagemDoCelular,
+): ReturnType<typeof registrarMensagemDoCelular> {
+  let registro = await registrarMensagemDoCelular(
+    admin,
+    clinicId,
+    accountId,
+    event,
+  );
+  if (
+    registro.error ||
+    registro.data?.ignorada !== "contato_desconhecido" ||
+    !ecoEsperaPeloContatoNovo(event.enviadaEm, Date.now())
+  ) {
+    return registro;
+  }
+  let tentativas = 0;
+  while (
+    tentativas < NOVAS_TENTATIVAS_PELO_CONTATO_NOVO &&
+    !registro.error &&
+    registro.data?.ignorada === "contato_desconhecido"
+  ) {
+    await esperar(ESPERA_PELO_CONTATO_NOVO_MS);
+    tentativas += 1;
+    registro = await registrarMensagemDoCelular(
+      admin,
+      clinicId,
+      accountId,
+      event,
+    );
+  }
+  // Diagnostico da corrida, so ids: quantas vezes a saudacao chega antes do
+  // contato e se a espera basta. O erro tem o log proprio na rota.
+  if (!registro.error) {
+    log.info("webhook_eco_esperou_contato_novo", {
+      clinic_id: clinicId,
+      whatsapp_account_id: accountId,
+      wa_message_id: event.waMessageId,
+      attempt: tentativas,
+      status: registro.data?.ignorada ?? "contato_achado",
+    });
+  }
+  return registro;
+}
+
+/**
+ * Ignoradas em que o eco NAO vira linha porque o wa_message_id e de outra
+ * clinica (destino que e numero de outra clinica da plataforma, ou colisao
+ * do id), mas que continuam sendo a equipe respondendo pelo celular. A RPC
+ * ja derrubou a espera da conversa aberta daquele numero e devolve o
+ * contact_id quando o contato existe: o termo-chave roda como rodava antes
+ * de a mensagem do celular virar linha. Nas outras ignoradas nao ha contato
+ * (contato_desconhecido) ou nao e conversa com paciente (numero proprio,
+ * numero removido).
+ */
+const IGNORADAS_QUE_SEGUEM_PARA_O_TERMO: ReadonlySet<
+  NonNullable<RegistroDoCelular["ignorada"]>
+> = new Set(["numero_da_plataforma", "colisao_wa_message_id"]);
+
+/**
+ * TERMO-CHAVE escrito pela CLINICA no celular conectado (pedido do dono em
+ * 02/10/2026): anda o lead quando a etapa aceita termo da clinica. A
+ * resposta automatica do app Business tambem sai do celular e conta como
+ * texto da clinica. O contato e o que a RPC achou (pela chave do telefone, a
+ * mesma da ingestao). Melhor esforco: o 200 nunca depende disto.
+ *
+ * NUNCA REENTREGA (regra 3.3): a garantia continua sendo a marca por
+ * wa_message_id no banco (marcar_eco_para_termo, tabela termo_eco_visto),
+ * como antes de a mensagem virar linha: so move quando a marca nasceu agora;
+ * a reentrega do mesmo evento volta false, mesmo que alguem tenha voltado o
+ * lead a mao no meio tempo. A janela (ecoContaParaTermo) fica como defesa
+ * extra e poupa a ida ao banco no eco velho ou da sincronia de historico.
+ * Falha ao marcar nao move (sem a marca nao da para provar que e o
+ * primeiro).
+ */
+async function moverPorTermoDoCelular(
+  admin: SupabaseClient,
+  alvo: { clinicId: string; accountId: string; contactId: string },
+  event: MensagemDoCelular,
+): Promise<void> {
+  const { clinicId, accountId, contactId } = alvo;
+  if (!event.body || !ecoContaParaTermo(event.enviadaEm, Date.now())) {
+    return;
+  }
+  try {
+    const { data: ecoNovo, error: erroMarca } = await admin.rpc(
+      "marcar_eco_para_termo",
+      {
+        p_clinic_id: clinicId,
+        p_wa_message_id: event.waMessageId,
+      },
+    );
+    if (erroMarca) {
+      log.error("termo_chave_marcar_eco_falhou", {
+        clinic_id: clinicId,
+        whatsapp_account_id: accountId,
+        contact_id: contactId,
+        kind: "clinica",
+        error_code: erroMarca.code ?? null,
+      });
+    } else if (ecoNovo === true) {
+      await tentarMoverPorTermo(admin, {
+        clinicId,
+        contactId,
+        corpo: event.body,
+        quemEscreveu: "clinica",
+        userId: null,
+      });
+    }
+  } catch {
+    log.error("termo_chave_falhou", {
+      clinic_id: clinicId,
+      whatsapp_account_id: accountId,
+      contact_id: contactId,
+      kind: "clinica",
+    });
+  }
+}
+
 export async function POST(request: NextRequest) {
   const ident = lerIdentificacaoDoWebhook(request.nextUrl.searchParams);
   if (!ident) {
@@ -447,45 +664,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(data);
     }
 
-    // Midia NUNCA e baixada aqui: a URL do provedor e criptografada e o
-    // download demora segundos, o que estouraria o timeout do webhook e
-    // provocaria reenvio. Vira job; o worker baixa e guarda no Storage.
-    //
-    // O job nasce para TODA imagem, documento e audio, com ou sem URL: o
-    // worker baixa pelo wa_message_id (POST /message/download), nao pela URL.
-    // Antes a trava era a URL, e foto que chegava sem ela nunca entrava na
-    // fila: a bolha dizia "Baixando o arquivo" para sempre. Com URL vale
-    // tambem para o que o parser chama de texto (video).
-    //
-    // O job leva o NUMERO que recebeu (na coluna e no payload): o arquivo so
-    // baixa pela instancia que recebeu a mensagem.
-    const ehMidia =
-      event.contentType === "imagem" ||
-      event.contentType === "documento" ||
-      event.contentType === "audio";
-    if ((ehMidia || event.mediaUrl) && data?.inserted && data.message_id) {
-      const { error: erroJob } = await admin.from("job_queue").insert({
-        clinic_id: clinicId,
-        kind: "baixar_midia",
-        whatsapp_account_id: accountId,
-        payload: {
-          message_id: data.message_id,
-          wa_message_id: event.waMessageId,
-          whatsapp_account_id: accountId,
-        },
+    // Arquivo vira job (enfileirarDownloadDaMidia), so na primeira entrega:
+    // a reentrega (inserted=false) ja tem o job dela.
+    if (
+      temArquivoParaBaixar(event.contentType, event.mediaUrl) &&
+      data?.inserted &&
+      data.message_id
+    ) {
+      await enfileirarDownloadDaMidia(admin, {
+        clinicId,
+        accountId,
+        messageId: data.message_id,
+        waMessageId: event.waMessageId,
       });
-      if (erroJob) {
-        // A mensagem ja esta salva; so o arquivo fica pendente. Log e segue.
-        log.error("webhook_enfileirar_midia_falhou", {
-          clinic_id: clinicId,
-          whatsapp_account_id: accountId,
-          message_id: data.message_id,
-          error_code: erroJob.code ?? null,
-        });
-      }
     }
     // Resposta ao toque de confirmacao (tarefa 4.7): "1", "Confirmar" ou um
-    // joinha mudam o status da agenda sozinhos. Guardado por data.inserted
+    // joinha mudam o status da agenda sozinhos. A resposta automatica do app
+    // Business que gravou antes desta mensagem ja foi corrigida dentro de
+    // ingerirMensagemRecebida, entao nao conta como fala da clinica aqui.
+    // Guardado por data.inserted
     // porque o provedor reentrega o mesmo evento, e reentrega nao pode
     // confirmar duas vezes. Nunca derruba o 200: a mensagem ja esta salva e
     // um erro aqui viraria reenvio em loop.
@@ -515,105 +712,121 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(data);
   }
 
-  // A clinica respondeu pelo celular pareado, por fora do sistema. Nao vira
-  // mensagem na conversa (nao temos o corpo de forma confiavel e ele nao passou
-  // por aqui), mas a conversa PRECISA sair do contador de espera: senao outra
-  // atendente ve a pergunta como "sem resposta" e responde de novo, e o
-  // paciente recebe duas respostas para a mesma coisa.
+  // A clinica enviou pelo celular pareado (ou outro aparelho vinculado), por
+  // fora do sistema. A mensagem VIRA LINHA na conversa daquele numero
+  // (pelo_celular): a clinica ve no Inbox o que o paciente leu, e a conversa
+  // sai do contador de espera (senao outra atendente ve a pergunta como "sem
+  // resposta" e responde de novo, e o paciente recebe duas respostas).
   //
-  // RESPOSTA AUTOMATICA do app WhatsApp Business (saudacao, ausencia) tambem
-  // sai do celular pareado e chega aqui igual. Ela NAO e ninguem atendendo:
-  // derrubar a espera por ela fazia toda conversa da noite sumir de
-  // "Aguardando voce" na manha seguinte. Reconhecida pelo tempo: sai poucos
-  // segundos depois da mensagem do paciente (limiteParaRespostaDePessoa).
+  // Tudo o que decide vive na RPC registrar_mensagem_do_celular, numa
+  // transacao: a idempotencia, o contato (so o que ja existe), a conversa do
+  // numero e a RESPOSTA AUTOMATICA do app WhatsApp Business (saudacao,
+  // ausencia), que sai do celular poucos segundos depois da mensagem do
+  // paciente e nao e ninguem atendendo: ela grava como 'sistema' e nao
+  // derruba a espera (derrubar fazia toda conversa da noite sumir de
+  // "Aguardando voce" na manha seguinte).
   if (event.kind === "clinic_device_reply") {
+    // A mesma porta da mensagem recebida: agora o conteudo e gravado, e a
+    // instancia pareada com o celular de outra clinica gravaria aqui as
+    // conversas de la.
+    const barrada = await barrarAntesDaTrava(
+      admin,
+      resolucao.numero,
+      event.waMessageId,
+    );
+    if (barrada) {
+      return barrada;
+    }
+    // A saudacao para paciente novo pode chegar antes de o contato existir:
+    // registrarEsperandoContatoNovo tenta de novo (ver la).
+    const { data, error } = await registrarEsperandoContatoNovo(
+      admin,
+      clinicId,
+      accountId,
+      event,
+    );
+    if (error) {
+      // So ids e codigo de erro: nenhum conteudo de mensagem sai daqui. O 500
+      // faz o provedor reenviar; a RPC e idempotente.
+      log.error("webhook_mensagem_do_celular_falhou", {
+        clinic_id: clinicId,
+        whatsapp_account_id: accountId,
+        wa_message_id: event.waMessageId,
+        error_code: error.code ?? null,
+      });
+      return NextResponse.json({ error: "registro_falhou" }, { status: 500 });
+    }
+
+    const contactId = data?.contact_id ?? null;
+
+    // Contato que nao esta no sistema, numero proprio, numero de outra
+    // clinica da plataforma, numero removido ou id de outra clinica: nada foi
+    // gravado, e isso nao e erro. 200 para o provedor nao reenviar. Sem midia
+    // (nao ha linha) e sem marcador. Numero da plataforma e colisao com o
+    // contato achado ainda passam pelo termo-chave
+    // (IGNORADAS_QUE_SEGUEM_PARA_O_TERMO).
+    if (data?.ignorada) {
+      log.info("webhook_mensagem_ignorada", {
+        clinic_id: clinicId,
+        whatsapp_account_id: accountId,
+        wa_message_id: event.waMessageId,
+        status: data.ignorada,
+        kind: "celular",
+      });
+      if (contactId && IGNORADAS_QUE_SEGUEM_PARA_O_TERMO.has(data.ignorada)) {
+        await moverPorTermoDoCelular(
+          admin,
+          { clinicId, accountId, contactId },
+          event,
+        );
+      }
+      return NextResponse.json(data);
+    }
+
+    if (
+      temArquivoParaBaixar(event.contentType, event.mediaUrl) &&
+      data?.inserted &&
+      data.message_id
+    ) {
+      await enfileirarDownloadDaMidia(admin, {
+        clinicId,
+        accountId,
+        messageId: data.message_id,
+        waMessageId: event.waMessageId,
+      });
+    }
+
     // Depuracao: se o payload trouxer alguma chave que pareca marcar envio
-    // automatico, registra SO o caminho da chave (nunca texto), para decidir
-    // depois se da para filtrar por ela em vez de pelo tempo.
+    // automatico, registra SO o caminho da chave (nunca texto), ao lado do
+    // que a regra do tempo decidiu, para saber depois se da para filtrar
+    // pela chave em vez de pelo tempo.
     if (event.marcadoresDeEnvioAutomatico.length > 0) {
       log.info("whatsapp_eco_do_celular_com_marcador", {
         clinic_id: clinicId,
         whatsapp_account_id: accountId,
         wa_message_id: event.waMessageId,
+        message_id: data?.message_id ?? null,
         path: event.marcadoresDeEnvioAutomatico.join(","),
         count: event.marcadoresDeEnvioAutomatico.length,
+        kind:
+          data?.automatica === true
+            ? "automatica"
+            : data?.automatica === false
+              ? "pessoa"
+              : null,
       });
     }
-    // Pela CHAVE do telefone: o chatid vem na forma do WhatsApp, que pode
-    // nao ter o nono digito que o cadastro tem.
-    const { data: contato } = await admin
-      .from("contact")
-      .select("id")
-      .eq("clinic_id", clinicId)
-      .eq("phone_key", chaveDeTelefone(event.phone))
-      .maybeSingle();
-    if (contato) {
-      const limite = limiteParaRespostaDePessoa(event.enviadaEm, Date.now());
-      // So as conversas DESTE numero: a resposta dada pelo celular do numero
-      // A nao responde a pergunta que o paciente fez no numero B (uma
-      // conversa por numero, decisao 1 do dono).
-      await admin
-        .from("conversation")
-        .update({ awaiting_reply: false })
-        .eq("clinic_id", clinicId)
-        .eq("whatsapp_account_id", accountId)
-        .eq("contact_id", contato.id)
-        .neq("status", "resolvida")
-        // So derruba se a ultima mensagem do paciente chegou ANTES da
-        // janela: eco colado nela e a resposta automatica do app Business.
-        .or(`last_inbound_at.is.null,last_inbound_at.lt."${limite}"`);
 
-      // TERMO-CHAVE escrito pela CLINICA no celular conectado (pedido do
-      // dono em 02/10/2026): anda o lead quando a etapa aceita termo da
-      // clinica. A resposta automatica do app Business tambem sai do
-      // celular e conta como texto da clinica. Melhor esforco: o 200 nunca
-      // depende disto.
-      //
-      // NUNCA REENTREGA (regra 3.3): o eco nao vira linha de message, entao
-      // a garantia e a marca por wa_message_id no banco
-      // (marcar_eco_para_termo, tabela termo_eco_visto): so move quando a
-      // marca nasceu agora; a reentrega do mesmo evento volta false, mesmo
-      // que alguem tenha voltado o lead a mao no meio tempo. A janela
-      // (ecoContaParaTermo) fica como defesa extra e poupa a ida ao banco
-      // no eco velho ou da sincronia de historico. Falha ao marcar nao move
-      // (sem a marca nao da para provar que e o primeiro).
-      if (event.body && ecoContaParaTermo(event.enviadaEm, Date.now())) {
-        try {
-          const { data: ecoNovo, error: erroMarca } = await admin.rpc(
-            "marcar_eco_para_termo",
-            {
-              p_clinic_id: clinicId,
-              p_wa_message_id: event.waMessageId,
-            },
-          );
-          if (erroMarca) {
-            log.error("termo_chave_marcar_eco_falhou", {
-              clinic_id: clinicId,
-              whatsapp_account_id: accountId,
-              contact_id: contato.id as string,
-              kind: "clinica",
-              error_code: erroMarca.code ?? null,
-            });
-          } else if (ecoNovo === true) {
-            await tentarMoverPorTermo(admin, {
-              clinicId,
-              contactId: contato.id as string,
-              corpo: event.body,
-              quemEscreveu: "clinica",
-              userId: null,
-            });
-          }
-        } catch {
-          log.error("termo_chave_falhou", {
-            clinic_id: clinicId,
-            whatsapp_account_id: accountId,
-            contact_id: contato.id as string,
-            kind: "clinica",
-          });
-        }
-      }
+    // Termo-chave da clinica, com o contato que a RPC achou
+    // (moverPorTermoDoCelular). Melhor esforco: o 200 nunca depende disto.
+    if (contactId) {
+      await moverPorTermoDoCelular(
+        admin,
+        { clinicId, accountId, contactId },
+        event,
+      );
     }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json(data ?? { ok: true });
   }
 
   // Uma mensagem foi apagada para todos no WhatsApp. A conversa da clinica

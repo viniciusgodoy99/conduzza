@@ -40,6 +40,18 @@ export type MenuOption = { id: string; text: string };
 export type EnvioExtra = {
   /** id NO WHATSAPP da mensagem citada; vira `replyid` no provedor */
   replyToWaMessageId?: string | null;
+  /**
+   * Marca de rastreio do envio: o id da linha de message (uuid), nunca
+   * conteudo. No uazapi vira `track_source: "conduzza"` + `track_id`, que o
+   * provedor devolve no eco do evento "messages". E por ela que o webhook
+   * reconhece o eco de uma mensagem NOSSA e nao a grava de novo como
+   * "enviada pelo celular", mesmo que o filtro wasSentByApi falhe.
+   *
+   * Ausente ou vazia, o envio sai sem marca (nunca com track_id vazio): e o
+   * caso de quem fala com o provedor sem linha de message, como o teste de
+   * envio da Tela 7.
+   */
+  rastreioId?: string | null;
 };
 
 export type DeleteResult =

@@ -1,11 +1,26 @@
-// Simulador de mensagem recebida: faz o papel do uazapi chamando o webhook
-// local com o formato canonico.
+// Simulador de mensagem recebida (e, com --do-celular, da enviada pelo
+// celular da clinica): faz o papel do uazapi chamando o webhook local com o
+// formato canonico.
 //
 // Uso:
 //   npx tsx scripts/dev/simulate-inbound.ts --phone +5584999998888 --text "Oi, quero agendar"
 //   npx tsx scripts/dev/simulate-inbound.ts --phone +5584999998888 --text "..." --name "Maria" --clinic beleza
 //   npx tsx scripts/dev/simulate-inbound.ts --phone +5584999998888 --text "..." --account principal
 //   npx tsx scripts/dev/simulate-inbound.ts --phone +5584999998888 --text "..." --account <id do numero>
+//   npx tsx scripts/dev/simulate-inbound.ts --phone +5584999998888 --text "Pode vir as 15h" --do-celular
+//
+// Com --do-celular, simula a mensagem que a CLINICA mandou pelo celular
+// pareado, fora do sistema (formato canonico clinic_device_reply): --phone e
+// o PACIENTE (o destino), e a mensagem aparece na conversa como "Pelo
+// WhatsApp". O horario de envio e o de agora, entao uma mensagem do paciente
+// enviada ha menos de 8 s faz esta contar como resposta automatica do app.
+// So grava para contato que ja existe (senao a resposta diz
+// contato_desconhecido, depois das novas tentativas de ate 3 s da saudacao
+// para paciente novo); --name nao se aplica.
+//
+// A mensagem do paciente tambem leva o horario de envio (o de agora), como o
+// uazapi: o banco o grava na linha e decide pelos horarios de envio dos dois
+// lados quem e resposta automatica.
 //
 // Sem --account, usa a URL LEGADA (?clinic=&secret=) com o webhook_secret fixo
 // do seed: e o caminho das instancias configuradas antes dos varios numeros
@@ -94,10 +109,11 @@ async function main() {
   const clinicKey = (argValue("--clinic") ?? "vitalis") as keyof typeof CLINICS;
   const conta = argValue("--account");
   const baseUrl = argValue("--url") ?? "http://localhost:3000";
+  const doCelular = process.argv.includes("--do-celular");
 
   if (!phone || !text) {
     console.error(
-      'Uso: npx tsx scripts/dev/simulate-inbound.ts --phone +5584999998888 --text "mensagem" [--name "Nome"] [--clinic vitalis|beleza] [--account principal|<id do número>]',
+      'Uso: npx tsx scripts/dev/simulate-inbound.ts --phone +5584999998888 --text "mensagem" [--name "Nome"] [--clinic vitalis|beleza] [--account principal|<id do número>] [--do-celular]',
     );
     process.exit(1);
   }
@@ -123,17 +139,29 @@ async function main() {
     });
     url = `${baseUrl}/api/webhooks/whatsapp?${parametros.toString()}`;
   }
+  const sorteio = `${Date.now()}:${Math.floor(Math.random() * 1e6)}`;
+  const evento = doCelular
+    ? {
+        kind: "clinic_device_reply",
+        phone,
+        waMessageId: `sim:celular:${sorteio}`,
+        contentType: "texto",
+        body: text,
+        enviadaEm: new Date().toISOString(),
+      }
+    : {
+        kind: "message_received",
+        phone,
+        name,
+        waMessageId: `sim:${sorteio}`,
+        contentType: "texto",
+        body: text,
+        enviadaEm: new Date().toISOString(),
+      };
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      kind: "message_received",
-      phone,
-      name,
-      waMessageId: `sim:${Date.now()}:${Math.floor(Math.random() * 1e6)}`,
-      contentType: "texto",
-      body: text,
-    }),
+    body: JSON.stringify(evento),
   });
   const result = await response.text();
   console.log(`HTTP ${response.status}: ${result}`);
