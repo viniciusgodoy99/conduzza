@@ -55,7 +55,7 @@ export default async function CadastrosPage({
   const dica = permissionHint(active.role, "cadastros");
 
   return (
-    <div className="mx-auto grid w-full max-w-content content-start gap-4 p-6">
+    <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
       <PageHeader
         eyebrow="Administração"
         title="Cadastros"

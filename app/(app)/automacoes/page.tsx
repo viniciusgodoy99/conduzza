@@ -78,7 +78,7 @@ export default async function AutomacoesPage({
   const { aba } = await searchParams;
 
   return (
-    <div className="mx-auto grid w-full max-w-content content-start gap-4 p-6">
+    <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
       <PageHeader
         eyebrow={NAV_GROUPS.inteligencia ?? undefined}
         title="Automações"

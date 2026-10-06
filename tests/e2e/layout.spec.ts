@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { dados } from "./dados";
 import { login } from "./helpers";
@@ -61,4 +61,74 @@ test("menu lateral conforme o viewport", async ({ page, context }) => {
     await page.getByRole("button", { name: "Fechar menu" }).click();
     await expect(navegacao).toBeHidden();
   }
+});
+
+// Nenhuma tela rola de lado (defeito de 06/10/2026). A grade das paginas
+// tinha uma coluna automatica, que nunca encolhe abaixo do conteudo mais
+// largo: a fileira de abas de Configuracoes (com a 10a, Agente de IA, nas
+// duas clinicas da fase controlada) empurrava tudo para fora da tela e
+// cortava a coluna da direita. A fileira de abas rola por dentro (docs/06,
+// abas "line"); a pagina nunca. Quem rola e o <main> do shell (a janela
+// nunca rola), entao a medida vale nos dois.
+async function conferirSemRolagemLateral(page: Page, onde: string) {
+  const medida = await page.evaluate(() => {
+    const main = document.querySelector("main");
+    return {
+      main: main ? main.scrollWidth - main.clientWidth : -1,
+      janela:
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    };
+  });
+  expect(medida.main, `<main> ausente em ${onde}`).toBeGreaterThanOrEqual(0);
+  expect(medida.main, `rolagem lateral em ${onde}`).toBe(0);
+  expect(medida.janela, `janela rolando em ${onde}`).toBe(0);
+}
+
+for (const rota of [
+  "/inicio",
+  "/cadastros",
+  "/relatorios",
+  "/automacoes",
+  "/configuracoes",
+]) {
+  test(`${rota} não rola de lado em nenhuma aba`, async ({ page }) => {
+    await login(page, dados().emails.admin);
+    await page.goto(rota);
+    await expect(page.locator("main h1").first()).toBeVisible();
+    await conferirSemRolagemLateral(page, rota);
+
+    const abas = page.locator("main").getByRole("tab");
+    const total = await abas.count();
+    for (let i = 0; i < total; i++) {
+      const aba = abas.nth(i);
+      const nome = (await aba.textContent())?.trim() || `aba ${i + 1}`;
+      await aba.click();
+      await expect(aba).toHaveAttribute("aria-selected", "true");
+      await conferirSemRolagemLateral(page, `${rota}, aba ${nome}`);
+    }
+  });
+}
+
+test("aba aberta por link aparece na fileira mesmo quando a fileira rola", async ({
+  page,
+}) => {
+  // A ultima aba de Configuracoes, aberta pela URL: sem rolar a fileira ate
+  // ela, a aba ativa nasceria escondida depois da borda.
+  await login(page, dados().emails.admin);
+  await page.goto("/configuracoes?aba=google");
+  const lista = page.locator("main").getByRole("tablist").first();
+  const ativa = lista.getByRole("tab", { selected: true });
+  await expect(ativa).toHaveText(/Anúncios do Google/);
+  await expect
+    .poll(async () => {
+      const caixa = await lista.boundingBox();
+      const aba = await ativa.boundingBox();
+      if (!caixa || !aba) return false;
+      // 1px de folga: a largura da fileira e fracionaria e a rolagem nao.
+      return (
+        aba.x >= caixa.x - 1 && aba.x + aba.width <= caixa.x + caixa.width + 1
+      );
+    })
+    .toBe(true);
 });

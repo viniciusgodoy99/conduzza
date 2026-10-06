@@ -40,7 +40,7 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        line: "inline-flex h-auto w-full justify-start gap-0.5 overflow-x-auto rounded-none border-b border-border bg-transparent p-0",
+        line: "inline-flex h-auto w-full cz-scroll justify-start gap-0.5 overflow-x-auto rounded-none border-b border-border bg-transparent p-0",
         segmented:
           "inline-flex h-10 w-fit gap-0.5 rounded-lg bg-surface-4 p-[3px]",
         cartoes: "grid h-auto w-full gap-3 bg-transparent p-0",
@@ -69,16 +69,59 @@ const tabsTriggerVariants = cva(
   },
 );
 
+// Na line, a fileira que nao cabe rola por dentro, e a aba ativa precisa
+// estar a vista: aberta por link (?aba=ia, a 10a de Configuracoes) ela
+// nasceria escondida depois da borda. Mexe so na rolagem da propria lista,
+// nunca na da pagina, e de novo a cada troca de aba (setas do teclado).
+function mostrarAbaAtiva(lista: HTMLElement) {
+  const ativa = lista.querySelector<HTMLElement>(
+    '[role="tab"][aria-selected="true"]',
+  );
+  if (!ativa) return;
+  const caixa = lista.getBoundingClientRect();
+  const aba = ativa.getBoundingClientRect();
+  if (aba.left < caixa.left) {
+    lista.scrollLeft -= caixa.left - aba.left;
+  } else if (aba.right > caixa.right) {
+    lista.scrollLeft += aba.right - caixa.right;
+  }
+}
+
 function TabsList({
   className,
   variant,
+  ref,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> &
   VariantProps<typeof tabsListVariants>) {
   const variante = variant ?? "line";
+  const lista = React.useRef<HTMLDivElement | null>(null);
+  const juntarRef = React.useCallback(
+    (no: HTMLDivElement | null) => {
+      lista.current = no;
+      if (typeof ref === "function") ref(no);
+      else if (ref) ref.current = no;
+    },
+    [ref],
+  );
+
+  React.useEffect(() => {
+    const no = lista.current;
+    if (!no || variante !== "line") return;
+    mostrarAbaAtiva(no);
+    const vigia = new MutationObserver(() => mostrarAbaAtiva(no));
+    vigia.observe(no, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["aria-selected"],
+    });
+    return () => vigia.disconnect();
+  }, [variante]);
+
   return (
     <TabsVariantContext.Provider value={variante}>
       <TabsPrimitive.List
+        ref={juntarRef}
         data-slot="tabs-list"
         data-variant={variante}
         className={cn(tabsListVariants({ variant: variante }), className)}

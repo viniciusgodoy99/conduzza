@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CarregandoAgente() {
   return (
     <div
-      className="mx-auto grid w-full max-w-content content-start gap-4 p-6"
+      className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
       <div className="grid gap-2">
