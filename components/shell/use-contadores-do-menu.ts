@@ -8,6 +8,7 @@ import {
 } from "@/components/shell/contadores-do-menu";
 import type { ContadoresDoMenu } from "@/components/shell/tipos";
 import { createClient } from "@/lib/supabase/client";
+import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
 // Vigia dos contadores do menu (Atendimento e Confirmacoes) no CLIENTE, no
 // mesmo padrao do MotorStatus e do WhatsappStatus. O layout da area logada e
@@ -115,7 +116,7 @@ export function useContadoresDoMenu({
         agendarRecontagem,
       );
     }
-    canal.subscribe((status) => {
+    const parar = assinarComSessao(supabase, canal, (status) => {
       // O que mudou entre a contagem do servidor e o canal ficar de pe (ou
       // durante uma queda) nao gerou evento para esta aba: reconta ao
       // (re)conectar.
@@ -134,7 +135,7 @@ export function useContadoresDoMenu({
       if (agendado) {
         clearTimeout(agendado);
       }
-      void supabase.removeChannel(canal);
+      parar();
     };
   }, [clinicId, timezone, vigiarConversas, vigiarConfirmacoes]);
 

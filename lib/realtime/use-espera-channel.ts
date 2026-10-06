@@ -5,6 +5,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { esperaKeys } from "@/lib/queries/espera";
+import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
 // Tempo real da Tela 10: INSERT e UPDATE de waitlist e waitlist_offer com
 // filtro por clinica. SEM assinatura de DELETE, de proposito: nada aqui e
@@ -19,7 +20,9 @@ export function useEsperaChannel(
 ): void {
   useEffect(() => {
     const invalidar = () => {
-      void queryClient.invalidateQueries({ queryKey: esperaKeys.fila(clinicId) });
+      void queryClient.invalidateQueries({
+        queryKey: esperaKeys.fila(clinicId),
+      });
       void queryClient.invalidateQueries({
         queryKey: esperaKeys.oferta(clinicId),
       });
@@ -68,14 +71,11 @@ export function useEsperaChannel(
           filter: `clinic_id=eq.${clinicId}`,
         },
         invalidar,
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          invalidar();
-        }
-      });
-    return () => {
-      void supabase.removeChannel(canal);
-    };
+      );
+    return assinarComSessao(supabase, canal, (status) => {
+      if (status === "SUBSCRIBED") {
+        invalidar();
+      }
+    });
   }, [supabase, queryClient, clinicId]);
 }

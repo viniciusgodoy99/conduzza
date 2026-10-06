@@ -309,13 +309,20 @@ export function InboxClient({
   useInboxChannel(supabase, clinicId);
 
   // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
-  // da visita anterior (initialData so vale na criacao da entrada).
-  useDadosDoServidor(conversationKeys.list(clinicId), initialConversations);
+  // da visita anterior (initialData so vale na criacao da entrada). Com a
+  // tela aberta, o tempo real mantem a lista: retrato que chega depois (a
+  // resposta de uma action que revalida) so manda reler do banco, nunca
+  // grava por cima (defeito da previa de 06/10/2026).
+  useDadosDoServidor(conversationKeys.list(clinicId), initialConversations, {
+    vivoPorTempoReal: true,
+  });
 
   // Os numeros da clinica (docs/07): o servidor traz na carga e o tempo real
   // aplica cada mudanca de status na linha do numero (useInboxChannel), sem
   // recarregar a pagina. A consulta so volta ao banco ao reconectar o canal.
-  useDadosDoServidor(numerosKeys.doInbox(clinicId), numerosIniciais);
+  useDadosDoServidor(numerosKeys.doInbox(clinicId), numerosIniciais, {
+    vivoPorTempoReal: true,
+  });
   const numerosQuery = useQuery({
     queryKey: numerosKeys.doInbox(clinicId),
     queryFn: () => fetchNumerosDoInbox(supabase, clinicId),

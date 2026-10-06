@@ -22,6 +22,7 @@ import {
 } from "@/lib/domain/conexao-dos-numeros";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
 // Vigia da CONEXAO do WhatsApp no cliente, irmao do MotorStatus e pelo mesmo
 // motivo: o layout e preservado em navegacao suave, entao a faixa renderizada
@@ -143,8 +144,8 @@ export function WhatsappStatus({
           filter: `clinic_id=eq.${clinicId}`,
         },
         aplicar,
-      )
-      .subscribe();
+      );
+    const parar = assinarComSessao(supabase, canal);
     const consultar = async () => {
       const { data, error } = await supabase
         .from("whatsapp_account")
@@ -163,7 +164,7 @@ export function WhatsappStatus({
     return () => {
       ativo = false;
       clearInterval(timer);
-      void supabase.removeChannel(canal);
+      parar();
     };
   }, [clinicId]);
 

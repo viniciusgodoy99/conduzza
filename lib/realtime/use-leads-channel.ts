@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { compararPorProximaAcao } from "@/lib/domain/leads-ui";
 import { fetchLead, leadsKeys, type LeadResumo } from "@/lib/queries/leads";
+import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
 // Tempo real da Tela 4: canal por clinica em contact, filtrado por
 // clinic_id, mesma licao de escala da Agenda e do Inbox: mesclar a LINHA
@@ -159,19 +160,17 @@ export function useLeadsChannel(
           filter: `clinic_id=eq.${clinicId}`,
         },
         aoReceber,
-      )
-      .subscribe((status) => {
-        // Catch-up: contato criado entre a busca do servidor e o canal ficar
-        // de pe (ou durante uma queda) nao gerou evento para esta aba.
-        if (status === "SUBSCRIBED") {
-          void queryClient.invalidateQueries({
-            queryKey: leadsKeys.lista(clinicId),
-          });
-        }
-      });
+      );
+    const parar = assinarComSessao(supabase, channel, (status) => {
+      // Catch-up: contato criado entre a busca do servidor e o canal ficar
+      // de pe (ou durante uma queda) nao gerou evento para esta aba.
+      if (status === "SUBSCRIBED") {
+        void queryClient.invalidateQueries({
+          queryKey: leadsKeys.lista(clinicId),
+        });
+      }
+    });
 
-    return () => {
-      void supabase.removeChannel(channel);
-    };
+    return parar;
   }, [supabase, clinicId, queryClient]);
 }

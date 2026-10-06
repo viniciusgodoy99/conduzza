@@ -12,6 +12,7 @@ import {
   type ConsultaDaAgenda,
   type HoldDaAgenda,
 } from "@/lib/queries/agenda";
+import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
 // Tempo real da Agenda: canal por clinica em appointment e slot_hold,
 // filtrado por clinic_id. A RLS aplica POR ASSINANTE (o recorte do papel
@@ -173,20 +174,18 @@ export function useAgendaChannel(
             mesclarHold(hold);
           }
         },
-      )
-      .subscribe((status) => {
-        // Catch-up: consulta marcada entre a busca do servidor e o canal
-        // ficar de pe (ou durante uma queda) nao gerou evento para esta aba.
-        // O prefixo cobre dia e pendencias; so as queries ativas refazem.
-        if (status === "SUBSCRIBED") {
-          void queryClient.invalidateQueries({
-            queryKey: ["agenda", clinicId],
-          });
-        }
-      });
+      );
+    const parar = assinarComSessao(supabase, channel, (status) => {
+      // Catch-up: consulta marcada entre a busca do servidor e o canal
+      // ficar de pe (ou durante uma queda) nao gerou evento para esta aba.
+      // O prefixo cobre dia e pendencias; so as queries ativas refazem.
+      if (status === "SUBSCRIBED") {
+        void queryClient.invalidateQueries({
+          queryKey: ["agenda", clinicId],
+        });
+      }
+    });
 
-    return () => {
-      void supabase.removeChannel(channel);
-    };
+    return parar;
   }, [supabase, clinicId, timezone, queryClient]);
 }

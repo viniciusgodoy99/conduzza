@@ -14,6 +14,7 @@ import {
   type ConversationListItem,
   type NumerosDoInbox,
 } from "@/lib/queries/conversations";
+import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
 // Tempo real do Inbox (tarefa 1.7): postgres_changes em conversation, message
 // e whatsapp_account, filtrado por clinica. A RLS aplica POR ASSINANTE nos
@@ -240,25 +241,23 @@ export function useInboxChannel(
             aplicarNumero(linha);
           }
         },
-      )
-      .subscribe((status) => {
-        // Catch-up: o que chegou entre a busca do servidor e o canal ficar de
-        // pe (ou durante uma queda de conexao) nao gerou evento para esta
-        // aba. Ao (re)conectar, refaz a lista, o fio aberto e os numeros; sem
-        // isto, a mensagem da janela do handshake so aparecia no proximo
-        // gatilho, e um numero que caiu durante a queda ficava "conectado".
-        if (status === "SUBSCRIBED") {
-          void queryClient.invalidateQueries({
-            queryKey: conversationKeys.list(clinicId),
-          });
-          invalidarTotalDeResolvidas();
-          void queryClient.invalidateQueries({ queryKey: ["messages"] });
-          void queryClient.invalidateQueries({ queryKey: numerosKey });
-        }
-      });
+      );
+    const parar = assinarComSessao(supabase, channel, (status) => {
+      // Catch-up: o que chegou entre a busca do servidor e o canal ficar de
+      // pe (ou durante uma queda de conexao) nao gerou evento para esta
+      // aba. Ao (re)conectar, refaz a lista, o fio aberto e os numeros; sem
+      // isto, a mensagem da janela do handshake so aparecia no proximo
+      // gatilho, e um numero que caiu durante a queda ficava "conectado".
+      if (status === "SUBSCRIBED") {
+        void queryClient.invalidateQueries({
+          queryKey: conversationKeys.list(clinicId),
+        });
+        invalidarTotalDeResolvidas();
+        void queryClient.invalidateQueries({ queryKey: ["messages"] });
+        void queryClient.invalidateQueries({ queryKey: numerosKey });
+      }
+    });
 
-    return () => {
-      void supabase.removeChannel(channel);
-    };
+    return parar;
   }, [supabase, clinicId, queryClient]);
 }
