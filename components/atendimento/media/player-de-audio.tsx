@@ -22,6 +22,36 @@ import { useEffect, useRef, useState } from "react";
 // um registro de "leu a midia" na trilha, para cada um. A duracao aparece
 // depois do primeiro toque.
 
+// Velocidade, como no WhatsApp (pedido do dono em 06/10/2026): o botao ao
+// lado do tempo gira 1x, 1,5x e 2x. O navegador mantem o tom da voz
+// (preservesPitch e o padrao). A escolha vale para todos os audios e fica
+// guardada neste navegador (conveniencia de quem escuta; sem storage, volta
+// a 1x). defaultPlaybackRate junto do playbackRate: a recuperacao de soluco
+// chama load(), que devolveria o audio a 1x no meio da escuta.
+export const VELOCIDADES_DO_AUDIO = [1, 1.5, 2] as const;
+export type VelocidadeDoAudio = (typeof VELOCIDADES_DO_AUDIO)[number];
+const CHAVE_DA_VELOCIDADE = "cz-audio-velocidade";
+
+/** A proxima velocidade do giro (2x volta para 1x). */
+export function proximaVelocidade(atual: VelocidadeDoAudio): VelocidadeDoAudio {
+  const indice = VELOCIDADES_DO_AUDIO.indexOf(atual);
+  return VELOCIDADES_DO_AUDIO[(indice + 1) % VELOCIDADES_DO_AUDIO.length] ?? 1;
+}
+
+/** "1x", "1,5x", "2x": a virgula decimal da recepcao. */
+export function rotuloDaVelocidade(velocidade: VelocidadeDoAudio): string {
+  return `${String(velocidade).replace(".", ",")}x`;
+}
+
+function velocidadeGuardada(): VelocidadeDoAudio {
+  try {
+    const salva = Number(window.localStorage.getItem(CHAVE_DA_VELOCIDADE));
+    return VELOCIDADES_DO_AUDIO.find((v) => v === salva) ?? 1;
+  } catch {
+    return 1;
+  }
+}
+
 function tempo(segundos: number): string {
   if (!Number.isFinite(segundos) || segundos < 0) {
     return "0:00";
@@ -37,6 +67,8 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
   const [posicao, setPosicao] = useState(0);
   const [duracao, setDuracao] = useState(0);
   const [falhou, setFalhou] = useState(false);
+  // Comeca em 1x no servidor e na hidratacao; a guardada entra no efeito.
+  const [velocidade, setVelocidade] = useState<VelocidadeDoAudio>(1);
   // Recuperacao de soluco no meio do audio: cada pedaco passa pela rota (sessao,
   // RLS, trilha, Storage), e um pedaco que falha faz o navegador desistir do
   // elemento. Ate 2 vezes, o player recarrega e volta ao mesmo ponto; o
@@ -45,6 +77,29 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
   const tocandoRef = useRef(false);
   const posicaoRef = useRef(0);
   const tentativasRef = useRef(0);
+
+  useEffect(() => {
+    setVelocidade(velocidadeGuardada());
+  }, []);
+
+  useEffect(() => {
+    const elemento = audioRef.current;
+    if (!elemento) {
+      return;
+    }
+    elemento.defaultPlaybackRate = velocidade;
+    elemento.playbackRate = velocidade;
+  }, [velocidade]);
+
+  const trocarVelocidade = () => {
+    const proxima = proximaVelocidade(velocidade);
+    setVelocidade(proxima);
+    try {
+      window.localStorage.setItem(CHAVE_DA_VELOCIDADE, String(proxima));
+    } catch {
+      // sem storage: vale so ate recarregar
+    }
+  };
 
   useEffect(() => {
     const elemento = audioRef.current;
@@ -172,6 +227,22 @@ export function PlayerDeAudio({ messageId }: { messageId: string }) {
       <span className="shrink-0 cz-num text-[11px] text-(--bolha-meta,var(--text-secondary))">
         {duracao > 0 ? `${tempo(posicao)} / ${tempo(duracao)}` : tempo(posicao)}
       </span>
+      <button
+        type="button"
+        onClick={trocarVelocidade}
+        aria-label={`Velocidade do áudio: ${rotuloDaVelocidade(velocidade)}. Trocar para ${rotuloDaVelocidade(proximaVelocidade(velocidade))}`}
+        title="Velocidade do áudio"
+        // Alvo de 40px com a pilula pequena dentro (hit-40 nao funciona
+        // dentro de overflow-hidden, e a bolha pode cortar).
+        className="group/velocidade -my-1 grid size-10 shrink-0 place-items-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+      >
+        <span
+          aria-hidden
+          className="inline-flex h-6 min-w-9 items-center justify-center rounded-full bg-surface-4 px-1.5 cz-num text-[11px] font-bold text-text-strong cz-transition group-hover/velocidade:bg-surface-5"
+        >
+          {rotuloDaVelocidade(velocidade)}
+        </span>
+      </button>
     </div>
   );
 }

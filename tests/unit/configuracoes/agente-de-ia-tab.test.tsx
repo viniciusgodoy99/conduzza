@@ -74,6 +74,7 @@ function numero(campos: Partial<NumeroDoWhatsapp> = {}): NumeroDoWhatsapp {
     status: "conectado",
     connectedAt: null,
     provider: "uazapi",
+    cor: "azul",
     ...campos,
   };
 }

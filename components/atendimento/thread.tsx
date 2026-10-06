@@ -17,10 +17,7 @@ import {
   MessageBubble,
 } from "@/components/atendimento/message-bubble";
 import { AUTOR_PELO_CELULAR } from "@/components/atendimento/pelo-celular";
-import {
-  ConexaoDoNumero,
-  SeloDoNumero,
-} from "@/components/atendimento/selo-do-numero";
+import { FaixaDoNumero } from "@/components/atendimento/selo-do-numero";
 import { Aviso } from "@/components/shared/aviso";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
@@ -393,52 +390,21 @@ export function Thread({
           />
         </span>
         <div className="grid min-w-0 flex-1">
-          {/* Com mais de um numero (docs/07): a primeira linha e do paciente
-              (o nome, e a conexao do numero quando ele esta fora); o numero
-              da clinica vai na linha de baixo, como no cartao da lista. O
-              nome do paciente nunca disputa espaco com o selo. */}
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="min-w-0 truncate text-sm font-bold text-text-strong">
-              {conversation.contact.name ??
-                formatarTelefone(conversation.contact.phone_e164)}
-            </span>
-            {numero ? (
-              // Abaixo de 760px de fio (1366, e 1600 com o painel aberto) o
-              // chip tiraria o espaco do nome: a conexao fica na faixa do
-              // topo e no aviso do compositor.
-              <ConexaoDoNumero
-                numero={numero}
-                className="@max-[759px]/fio:hidden"
-              />
-            ) : null}
+          {/* O cabecalho e do paciente. O numero da clinica (docs/07), com
+              a cor, o telefone e a conexao, mora na faixa logo abaixo
+              (FaixaDoNumero, pedido do dono em 06/10/2026). */}
+          <span className="min-w-0 truncate text-sm font-bold text-text-strong">
+            {conversation.contact.name ??
+              formatarTelefone(conversation.contact.phone_e164)}
           </span>
           <span className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[11.5px] text-text-secondary">
-            <span
-              // Com selo, no fio de celular o telefone do paciente sai (fica
-              // no painel do contato) para o nome do numero caber.
-              className={cn(
-                "shrink-0 cz-num",
-                numero ? "@max-[479px]/fio:hidden" : undefined,
-              )}
-            >
+            <span className="shrink-0 cz-num">
               {formatarTelefone(conversation.contact.phone_e164)}
             </span>
-            <span
-              // Fio apertado e com selo: o nome do numero vale mais que
-              // "Lead/Paciente", que continua no painel do contato.
-              className={cn(
-                "flex min-w-0 items-center gap-1.5",
-                numero ? "shrink-0 @max-[659px]/fio:hidden" : undefined,
-              )}
-            >
-              <span aria-hidden>·</span>
-              <span className="min-w-0 truncate">
-                {conversation.contact.kind === "paciente" ? "Paciente" : "Lead"}
-              </span>
+            <span aria-hidden>·</span>
+            <span className="min-w-0 truncate">
+              {conversation.contact.kind === "paciente" ? "Paciente" : "Lead"}
             </span>
-            {numero ? (
-              <SeloDoNumero numero={numero} comTelefone className="min-w-0" />
-            ) : null}
           </span>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -470,6 +436,8 @@ export function Thread({
           </Button>
         </div>
       </header>
+
+      {numero ? <FaixaDoNumero numero={numero} /> : null}
 
       <div
         ref={scrollRef}

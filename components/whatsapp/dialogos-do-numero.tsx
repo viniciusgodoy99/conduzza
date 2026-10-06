@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { Aviso } from "@/components/shared/aviso";
+import { MarcadorDoNumero } from "@/components/shared/marcador-do-numero";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -34,6 +35,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { ConnectState } from "@/lib/actions/whatsapp-connect";
+import {
+  CORES_DO_NUMERO,
+  NOME_DA_COR,
+  primeiraCorLivre,
+  type CorDoNumero,
+} from "@/lib/domain/cor-do-numero";
 
 import { ConnectClient } from "./connect-client";
 import {
@@ -66,14 +73,22 @@ const formularioSchema = z.object({
     .min(1, "Dê um nome ao número.")
     .max(40, "Use até 40 caracteres."),
   unidade: z.string(),
+  cor: z.enum(CORES_DO_NUMERO),
 });
 
 type ValoresDoFormulario = z.infer<typeof formularioSchema>;
 
 /** O que o formulario entrega a acao. */
-export type DadosDoNumero = { nome: string; unitId: string | null };
+export type DadosDoNumero = {
+  nome: string;
+  unitId: string | null;
+  cor: CorDoNumero;
+};
 
-export type ModoDoFormulario = "adicionar" | "renomear" | "unidade";
+/** Os numeros ativos da clinica, para a cor dizer quem ja a usa. */
+export type CorEmUso = { id: string; nome: string; cor: CorDoNumero };
+
+export type ModoDoFormulario = "adicionar" | "renomear" | "unidade" | "cor";
 
 const TEXTOS: Record<
   ModoDoFormulario,
@@ -104,30 +119,49 @@ const TEXTOS: Record<
     enviar: "Salvar",
     enviando: "Salvando...",
   },
+  cor: {
+    titulo: (nome) => `Cor de ${nome}`,
+    descricao:
+      "A cor marca as conversas deste número no Atendimento, sempre junto com o nome.",
+    enviar: "Salvar",
+    enviando: "Salvando...",
+  },
 };
 
 function FormularioDoNumero({
   modo,
   numero,
   unidades,
+  coresEmUso,
   aoEnviar,
 }: {
   modo: ModoDoFormulario;
   numero: NumeroDoWhatsapp | null;
   unidades: UnidadeDaClinica[];
+  coresEmUso: CorEmUso[];
   aoEnviar: (dados: DadosDoNumero) => Promise<string | null>;
 }) {
   const [erro, setErro] = useState<string | null>(null);
+  // Os OUTROS numeros: a cor do proprio numero editado nao conta como usada.
+  const outros = coresEmUso.filter((uso) => uso.id !== numero?.id);
   const form = useForm<ValoresDoFormulario>({
     resolver: zodResolver(formularioSchema),
     defaultValues: {
       nome: numero?.nome ?? "",
       unidade: numero?.unitId ?? SEM_UNIDADE,
+      // Numero novo: a primeira cor que ninguem usa (decisao do dono).
+      cor: numero?.cor ?? primeiraCorLivre(outros.map((uso) => uso.cor)),
     },
   });
   const textos = TEXTOS[modo];
   const opcoes = unidadesParaEscolher(unidades, numero?.unitId ?? null);
-  const mostraNome = modo !== "unidade";
+  const mostraNome = modo === "adicionar" || modo === "renomear";
+  const mostraCor = modo === "adicionar" || modo === "cor";
+  const corEscolhida = form.watch("cor");
+  const nomeDaPrevia = form.watch("nome").trim() || "Novo número";
+  const quemUsa = (cor: CorDoNumero) =>
+    outros.filter((uso) => uso.cor === cor).map((uso) => uso.nome);
+  const usadaPor = quemUsa(corEscolhida);
   // "Unidade (opcional)" so aparece ao adicionar quando a clinica tem
   // unidades; no modo unidade, e o unico campo.
   const mostraUnidade =
@@ -139,6 +173,7 @@ function FormularioDoNumero({
     const falha = await aoEnviar({
       nome: valores.nome,
       unitId: valores.unidade === SEM_UNIDADE ? null : valores.unidade,
+      cor: valores.cor,
     });
     if (falha) {
       setErro(falha);
@@ -210,6 +245,60 @@ function FormularioDoNumero({
           />
         ) : null}
 
+        {mostraCor ? (
+          <FormField
+            control={form.control}
+            name="cor"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Cor</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {CORES_DO_NUMERO.map((cor) => {
+                      const usuarios = quemUsa(cor);
+                      return (
+                        <SelectItem key={cor} value={cor}>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <MarcadorDoNumero cor={cor} className="size-2.5" />
+                            {NOME_DA_COR[cor]}
+                            {usuarios.length > 0 ? (
+                              <span className="truncate text-text-secondary">
+                                (usada por {usuarios.join(", ")})
+                              </span>
+                            ) : null}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-xs text-text-secondary">
+                    Fica assim no Atendimento:
+                  </span>
+                  <span className="inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-sm border border-border-strong bg-card px-2 text-xs font-medium text-foreground">
+                    <MarcadorDoNumero cor={corEscolhida} />
+                    <span className="truncate">
+                      {modo === "cor" ? (numero?.nome ?? "") : nomeDaPrevia}
+                    </span>
+                  </span>
+                </div>
+                {usadaPor.length > 0 ? (
+                  <p className="text-xs text-text-secondary">
+                    {`Esta cor já é de ${usadaPor.join(", ")}. Dá para usar, mas uma cor diferente evita confundir as conversas.`}
+                  </p>
+                ) : null}
+              </FormItem>
+            )}
+          />
+        ) : null}
+
         {erro ? (
           <Aviso tom="alert" role="alert">
             {erro}
@@ -236,12 +325,13 @@ function FormularioDoNumero({
   );
 }
 
-/** Adicionar, renomear ou escolher a unidade de um numero. */
+/** Adicionar, renomear, trocar a cor ou escolher a unidade de um numero. */
 export function DialogoDoFormulario({
   aberto,
   modo,
   numero,
   unidades,
+  coresEmUso,
   aoFechar,
   aoEnviar,
 }: {
@@ -250,6 +340,8 @@ export function DialogoDoFormulario({
   /** o numero editado; nulo ao adicionar */
   numero: NumeroDoWhatsapp | null;
   unidades: UnidadeDaClinica[];
+  /** os numeros ativos da clinica e suas cores */
+  coresEmUso: CorEmUso[];
   aoFechar: () => void;
   aoEnviar: (dados: DadosDoNumero) => Promise<string | null>;
 }) {
@@ -260,6 +352,7 @@ export function DialogoDoFormulario({
           modo={modo}
           numero={numero}
           unidades={unidades}
+          coresEmUso={coresEmUso}
           aoEnviar={aoEnviar}
         />
       </DialogContent>
@@ -374,7 +467,12 @@ export function DialogoDeConexao({
         {numero ? (
           <>
             <DialogHeader>
-              <DialogTitle>{`Conectar ${numero.nome}`}</DialogTitle>
+              <DialogTitle className="flex min-w-0 items-center gap-2">
+                {/* A cor do numero (06/10/2026): quem conecta ve de qual
+                    numero e o QR antes de ler. */}
+                <MarcadorDoNumero cor={numero.cor} className="size-2.5" />
+                <span className="truncate">{`Conectar ${numero.nome}`}</span>
+              </DialogTitle>
               <DialogDescription>
                 O número é pareado com a plataforma, como no WhatsApp Web: leia
                 o QR code no celular em Aparelhos conectados.

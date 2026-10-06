@@ -209,6 +209,35 @@ describe("leitura dos números", () => {
       .single();
     expect(depois?.nome).toBe("Número principal");
   });
+
+  it("nem a cor do número (06/10/2026): só pelas ações de Configurações", async () => {
+    const { data: antes } = await admin
+      .from("whatsapp_account")
+      .select("cor")
+      .eq("id", numeroA)
+      .single();
+    const outra = antes?.cor === "laranja" ? "roxo" : "laranja";
+    const { data } = await adminA
+      .from("whatsapp_account")
+      .update({ cor: outra })
+      .eq("id", numeroA)
+      .select("id");
+    expect(data ?? []).toHaveLength(0);
+    const { data: depois } = await admin
+      .from("whatsapp_account")
+      .select("cor")
+      .eq("id", numeroA)
+      .single();
+    expect(depois?.cor).toBe(antes?.cor);
+  });
+
+  it("o banco recusa cor fora da paleta, até para o service role", async () => {
+    const { error } = await admin
+      .from("whatsapp_account")
+      .update({ cor: "dourado" })
+      .eq("id", numeroA);
+    expect(error?.code).toBe("23514");
+  });
 });
 
 describe("limite de números do plano", () => {

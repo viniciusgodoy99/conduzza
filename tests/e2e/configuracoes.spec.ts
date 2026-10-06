@@ -210,6 +210,11 @@ test("com dois números, a aba mostra um cartão por número, renomeia e remove 
     await expect(
       dialogoNovo.getByRole("button", { name: "Criar e conectar" }),
     ).toBeVisible();
+    // Cor do numero (06/10/2026): os dois numeros da clinica estao azuis, e
+    // o novo ja vem com a primeira cor que ninguem usa.
+    await expect(
+      dialogoNovo.getByRole("combobox", { name: "Cor" }),
+    ).toContainText("Rosa");
     await dialogoNovo.getByRole("button", { name: "Cancelar" }).click();
     await expect(dialogoNovo).toBeHidden();
 
@@ -241,6 +246,37 @@ test("com dois números, a aba mostra um cartão por número, renomeia e remove 
     await dialogoRenomear.getByRole("button", { name: "Salvar" }).click();
     const renomeado = cartaoDoNumero(page, novoNome);
     await expect(renomeado).toBeVisible();
+
+    // Trocar a cor pelo menu: o dialogo avisa quem ja usa a cor atual, e o
+    // cartao passa a dizer o nome da cor nova.
+    await expect(
+      renomeado.getByText("Cor Azul", { exact: true }),
+    ).toBeVisible();
+    await renomeado
+      .getByRole("button", { name: `Mais ações do número ${novoNome}` })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Trocar cor", exact: true })
+      .click();
+    const dialogoCor = page.getByRole("dialog", { name: `Cor de ${novoNome}` });
+    await expect(dialogoCor).toContainText(
+      `Esta cor já é de ${NUMERO_PRINCIPAL}.`,
+    );
+    await dialogoCor.getByRole("combobox", { name: "Cor" }).click();
+    await page.getByRole("option", { name: /^Verde/ }).click();
+    await expect(dialogoCor).not.toContainText("Esta cor já é de");
+    await dialogoCor.getByRole("button", { name: "Salvar" }).click();
+    await expect(dialogoCor).toBeHidden();
+    await expect(
+      renomeado.getByText("Cor Verde", { exact: true }),
+    ).toBeVisible();
+    const { data: comCor } = await admin
+      .from("whatsapp_account")
+      .select("cor")
+      .eq("id", segundoId)
+      .single()
+      .throwOnError();
+    expect((comCor as { cor: string }).cor).toBe("verde");
 
     // Remover (administrador, numero que nao e o principal nem o fixo das
     // automaticas): o dialogo diz o que acontece, e o cartao sai da lista.

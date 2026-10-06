@@ -33,6 +33,7 @@ function numero(campos: Partial<NumeroDaClinica> = {}): NumeroDaClinica {
     connection_status: "conectado",
     principal: true,
     connected_at: "2026-09-01T12:00:00Z",
+    cor: "azul",
     ...campos,
   };
 }

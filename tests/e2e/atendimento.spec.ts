@@ -336,10 +336,11 @@ test.describe("clínica com dois números", () => {
         display_phone: "+55 84 90000-0102",
       })
     ).id;
-    // Ja conectou uma vez: e vigiado pela faixa (D6).
+    // Ja conectou uma vez: e vigiado pela faixa (D6). E tem a sua cor (06/10/2026),
+    // diferente da Recepcao, como a clinica escolheria.
     await admin
       .from("whatsapp_account")
-      .update({ connected_at: minutosAtras(120) })
+      .update({ connected_at: minutosAtras(120), cor: "rosa" })
       .eq("id", centroId)
       .throwOnError();
 
@@ -496,11 +497,15 @@ test.describe("clínica com dois números", () => {
       .getByText("Bruno Pelo Centro")
       .click();
     const fio = page.getByRole("region", { name: "Conversa aberta" });
-    // Cabecalho: o nome do numero da conversa, e o telefone dele na dica (no
-    // fio estreito o telefone sai da linha para o nome do paciente caber).
-    const selo = fio.getByTitle("Número Unidade Centro, (84) 90000-0102");
-    await expect(selo).toBeVisible();
-    await expect(selo.getByText("Unidade Centro")).toBeVisible();
+    // Faixa do numero no topo da conversa (pedido do dono em 06/10/2026):
+    // o nome, o telefone e a conexao, com a cor do numero.
+    const faixa = fio.locator('[data-slot="faixa-do-numero"]');
+    await expect(faixa).toContainText("Conversa pelo número Unidade Centro");
+    await expect(faixa).toContainText("(84) 90000-0102");
+    await expect(faixa).toHaveAttribute("data-cor", "rosa");
+    await expect(
+      faixa.getByText("Desconectado", { exact: true }),
+    ).toBeVisible();
     // Compositor: o motivo, a caixa travada e o caminho para reconectar.
     await expect(
       fio.getByText("O número Unidade Centro está desconectado."),
@@ -514,5 +519,9 @@ test.describe("clínica com dois números", () => {
       .getByText("Ana Pela Recepção")
       .click();
     await expect(fio.getByLabel("Resposta ao paciente")).toBeEnabled();
+    // E diz por qual numero a resposta sai.
+    await expect(fio.getByText("Respondendo pelo número")).toContainText(
+      "Recepção",
+    );
   });
 });

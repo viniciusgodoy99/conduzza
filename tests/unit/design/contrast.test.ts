@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { CORES_DO_NUMERO } from "@/lib/domain/cor-do-numero";
+
 // Verificacao automatizada de contraste (aceite da tarefa 0.3, WCAG AA do
 // CLAUDE.md). Parseia os tokens de app/globals.css, compoe cores rgba sobre a
 // superficie de base e afirma: texto >= 4.5:1, pares de chip >= 4.5:1, borda
@@ -276,6 +278,40 @@ describe.each(Object.entries(themes))("tema %s", (_themeName, tokens) => {
 
   it("borda de campo (--input) tem 3.0:1 sobre a superfície de card", () => {
     expect(contrast(tokens, "input", "surface-2")).toBeGreaterThanOrEqual(3.0);
+  });
+
+  // Cor do numero de WhatsApp (06/10/2026): o marcador e indicador nao
+  // textual (3:1) onde ele aparece (cartao da lista em repouso, hover e
+  // selecionado; canvas; afundado; o chip ligado do filtro, em tinta cheia;
+  // a propria faixa do topo da conversa) e a faixa leva texto normal e
+  // secundario (4.5:1).
+  it.each(
+    CORES_DO_NUMERO.flatMap((cor) =>
+      [
+        "surface-2",
+        "background",
+        "surface-subtle",
+        "surface-3",
+        "surface-4",
+        "primary-soft",
+        "inverse",
+        `numero-${cor}-bg`,
+      ].map((bg) => [cor, bg] as const),
+    ),
+  )("marcador do número %s tem 3.0:1 sobre --%s", (cor, bg) => {
+    expect(contrast(tokens, `numero-${cor}`, bg)).toBeGreaterThanOrEqual(3.0);
+  });
+
+  it.each(
+    CORES_DO_NUMERO.flatMap((cor) =>
+      ["foreground", "text-strong", "text-secondary"].map(
+        (fg) => [cor, fg] as const,
+      ),
+    ),
+  )("faixa do número %s: --%s tem 4.5:1", (cor, fg) => {
+    expect(contrast(tokens, fg, `numero-${cor}-bg`)).toBeGreaterThanOrEqual(
+      4.5,
+    );
   });
 });
 

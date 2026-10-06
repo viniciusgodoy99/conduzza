@@ -3,6 +3,7 @@
 import {
   Ellipsis,
   MapPin,
+  Palette,
   Pencil,
   Plug,
   RefreshCw,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { Aviso } from "@/components/shared/aviso";
+import { MarcadorDoNumero } from "@/components/shared/marcador-do-numero";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
@@ -25,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { WHATSAPP_CONNECTION_STATUS } from "@/lib/design/status";
+import { NOME_DA_COR } from "@/lib/domain/cor-do-numero";
 
 import { IdentidadeDoWhatsapp } from "./connect-client";
 import {
@@ -141,6 +144,7 @@ export type CartaoDoNumeroProps = {
   aoConectar: () => void;
   aoDesconectar: () => void;
   aoRenomear: () => void;
+  aoTrocarCor: () => void;
   aoEscolherUnidade: () => void;
   aoTornarPrincipal: () => void;
   aoRemover: () => void;
@@ -159,6 +163,7 @@ export function CartaoDoNumero({
   aoConectar,
   aoDesconectar,
   aoRenomear,
+  aoTrocarCor,
   aoEscolherUnidade,
   aoTornarPrincipal,
   aoRemover,
@@ -200,9 +205,11 @@ export function CartaoDoNumero({
           <h2
             id={idDoNome}
             title={numero.nome}
-            className="truncate text-base leading-[1.3] font-bold tracking-[-0.01em] text-text-strong"
+            className="flex min-w-0 items-center gap-2 text-base leading-[1.3] font-bold tracking-[-0.01em] text-text-strong"
           >
-            {numero.nome}
+            {/* A cor do numero (06/10/2026): a mesma do Atendimento. */}
+            <MarcadorDoNumero cor={numero.cor} className="size-2.5" />
+            <span className="truncate">{numero.nome}</span>
           </h2>
           {unidade ? (
             <p className="truncate text-xs text-text-secondary">{unidade}</p>
@@ -243,6 +250,12 @@ export function CartaoDoNumero({
               aoEscolher={aoRenomear}
             />
             <ItemDoMenu
+              icone={Palette}
+              rotulo="Trocar cor"
+              motivo={podeGerenciar ? null : dica}
+              aoEscolher={aoTrocarCor}
+            />
+            <ItemDoMenu
               icone={MapPin}
               rotulo="Unidade"
               motivo={podeGerenciar ? motivoParaNaoEscolherUnidade : dica}
@@ -274,6 +287,13 @@ export function CartaoDoNumero({
 
       <div className="flex flex-wrap items-center gap-1.5">
         <StatusChip definition={WHATSAPP_CONNECTION_STATUS[numero.status]} />
+        {/* O nome da cor por escrito: quem nao distingue as cores casa o
+            numero com o Atendimento pelo nome dela. */}
+        <span className="inline-flex h-6 items-center gap-1.5 rounded-sm border border-border-strong bg-card px-2 text-xs font-medium text-foreground">
+          <MarcadorDoNumero cor={numero.cor} />
+          <span className="sr-only">Cor </span>
+          {NOME_DA_COR[numero.cor]}
+        </span>
         {numero.principal ? <Etiqueta icone={Star}>Principal</Etiqueta> : null}
         {fixoDasAutomaticas ? (
           <Etiqueta icone={Workflow}>Mensagens automáticas</Etiqueta>

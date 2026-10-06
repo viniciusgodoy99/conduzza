@@ -710,6 +710,7 @@ create table whatsapp_account (
   nome text not null default 'Número principal', -- livre, 1 a 40, único por clínica entre os ativos
   unit_id uuid references unit(id) on delete set null, -- opcional, mesma clínica por gatilho
   principal boolean not null default false, -- um por clínica entre os ativos (índice único parcial)
+  cor text not null default 'azul',         -- 06/10/2026: azul | rosa | verde | roxo | turquesa | laranja (CHECK); só identifica, sem índice único
   removido_em timestamptz, removido_por uuid,
   provider text not null default 'fake',    -- fake | uazapi | cloud_api
   server_url text, instance_id text,        -- único (provider, instance_id) entre os ativos

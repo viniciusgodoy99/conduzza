@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { ConversationStatus } from "@/lib/design/status";
+import { corDoNumero, type CorDoNumero } from "@/lib/domain/cor-do-numero";
 
 // Tipos e fetchers do Inbox. Sem tipos gerados do banco (pendencia
 // registrada), as formas sao declaradas aqui e os selects fazem cast; a RLS
@@ -296,6 +297,8 @@ export type NumeroDaClinica = {
   principal: boolean;
   /** ultima vez que conectou; nulo = nunca foi pareado */
   connected_at: string | null;
+  /** cor escolhida em Configuracoes (paleta fixa, lib/domain/cor-do-numero) */
+  cor: CorDoNumero;
 };
 
 // Os numeros ATIVOS da clinica (removido_em nulo), o principal primeiro e os
@@ -310,7 +313,7 @@ export async function fetchNumerosDaClinica(
   const { data, error } = await supabase
     .from("whatsapp_account")
     .select(
-      "id, nome, display_phone, connection_status, principal, connected_at",
+      "id, nome, display_phone, connection_status, principal, connected_at, cor",
     )
     .eq("clinic_id", clinicId)
     .is("removido_em", null)
@@ -319,7 +322,9 @@ export async function fetchNumerosDaClinica(
   if (error) {
     throw new Error(error.message);
   }
-  return (data ?? []) as NumeroDaClinica[];
+  return (
+    (data ?? []) as (Omit<NumeroDaClinica, "cor"> & { cor: string })[]
+  ).map((numero) => ({ ...numero, cor: corDoNumero(numero.cor) }));
 }
 
 /** Um numero que saiu da clinica: so o nome, para o historico dizer de onde era. */

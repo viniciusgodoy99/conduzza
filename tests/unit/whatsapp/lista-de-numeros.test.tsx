@@ -73,6 +73,7 @@ function numero(campos: Partial<Numero> = {}): Numero {
     status: "conectado",
     connectedAt: "2026-09-02T14:01:00.000Z",
     provider: "uazapi",
+    cor: "azul",
     ...campos,
   };
 }
@@ -98,6 +99,7 @@ function cartao(
         aoConectar={semAcao}
         aoDesconectar={semAcao}
         aoRenomear={semAcao}
+        aoTrocarCor={semAcao}
         aoEscolherUnidade={semAcao}
         aoTornarPrincipal={semAcao}
         aoRemover={semAcao}

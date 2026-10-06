@@ -23,6 +23,7 @@ import {
   disconnectWhatsAppAction,
   removerNumeroAction,
 } from "@/lib/actions/whatsapp-connect";
+import type { CorDoNumero } from "@/lib/domain/cor-do-numero";
 
 import { CartaoDoNumero } from "./cartao-do-numero";
 import { OrientacaoDoWhatsappBusiness } from "./connect-client";
@@ -65,6 +66,7 @@ type Alvo =
       conectarAoAbrir: boolean;
     }
   | { tipo: "renomear"; numero: NumeroDoWhatsapp }
+  | { tipo: "cor"; numero: NumeroDoWhatsapp }
   | { tipo: "unidade"; numero: NumeroDoWhatsapp }
   | { tipo: "remover"; numero: NumeroDoWhatsapp }
   | { tipo: "desconectar"; numero: NumeroDoWhatsapp };
@@ -155,6 +157,7 @@ export function ListaDeNumeros({
     const resultado = await adicionarNumeroAction({
       nome: dados.nome,
       unitId: dados.unitId,
+      cor: dados.cor,
     });
     if (!resultado.ok || !resultado.accountId) {
       return (
@@ -175,6 +178,7 @@ export function ListaDeNumeros({
         status: "desconectado",
         connectedAt: null,
         provider: providerDoAmbiente,
+        cor: dados.cor,
       },
     });
     recarregar();
@@ -189,7 +193,7 @@ export function ListaDeNumeros({
    */
   const atualizar = async (
     numero: NumeroDoWhatsapp,
-    dados: { nome?: string; unitId?: string | null },
+    dados: { nome?: string; unitId?: string | null; cor?: CorDoNumero },
     mensagem: string,
   ): Promise<string | null> => {
     const resultado = await atualizarNumeroAction({
@@ -286,6 +290,13 @@ export function ListaDeNumeros({
     (total === 0 && providerDoAmbiente === "fake");
 
   const numeroDoAlvo = alvo && alvo.tipo !== "adicionar" ? alvo.numero : null;
+  // As cores dos numeros ativos: o dialogo sugere a primeira livre e diz
+  // quem ja usa cada uma.
+  const coresEmUso = numeros.map((numero) => ({
+    id: numero.id,
+    nome: numero.nome,
+    cor: numero.cor,
+  }));
 
   return (
     <div className="grid gap-4">
@@ -343,6 +354,7 @@ export function ListaDeNumeros({
                 }
                 aoDesconectar={() => abrir({ tipo: "desconectar", numero })}
                 aoRenomear={() => abrir({ tipo: "renomear", numero })}
+                aoTrocarCor={() => abrir({ tipo: "cor", numero })}
                 aoEscolherUnidade={() => abrir({ tipo: "unidade", numero })}
                 aoTornarPrincipal={() => void tornarPrincipal(numero)}
                 aoRemover={() => abrir({ tipo: "remover", numero })}
@@ -382,6 +394,7 @@ export function ListaDeNumeros({
         modo="adicionar"
         numero={null}
         unidades={listaDeUnidades}
+        coresEmUso={coresEmUso}
         aoFechar={fechar}
         aoEnviar={adicionar}
       />
@@ -390,6 +403,7 @@ export function ListaDeNumeros({
         modo="renomear"
         numero={alvo?.tipo === "renomear" ? alvo.numero : null}
         unidades={listaDeUnidades}
+        coresEmUso={coresEmUso}
         aoFechar={fechar}
         aoEnviar={(dados) =>
           alvo?.tipo === "renomear"
@@ -406,6 +420,7 @@ export function ListaDeNumeros({
         modo="unidade"
         numero={alvo?.tipo === "unidade" ? alvo.numero : null}
         unidades={listaDeUnidades}
+        coresEmUso={coresEmUso}
         aoFechar={fechar}
         aoEnviar={(dados) =>
           alvo?.tipo === "unidade"
@@ -413,6 +428,23 @@ export function ListaDeNumeros({
                 alvo.numero,
                 { unitId: dados.unitId },
                 "Unidade do número atualizada",
+              )
+            : Promise.resolve(null)
+        }
+      />
+      <DialogoDoFormulario
+        aberto={aberto && alvo?.tipo === "cor"}
+        modo="cor"
+        numero={alvo?.tipo === "cor" ? alvo.numero : null}
+        unidades={listaDeUnidades}
+        coresEmUso={coresEmUso}
+        aoFechar={fechar}
+        aoEnviar={(dados) =>
+          alvo?.tipo === "cor"
+            ? atualizar(
+                alvo.numero,
+                { cor: dados.cor },
+                "Cor do número atualizada",
               )
             : Promise.resolve(null)
         }

@@ -132,6 +132,10 @@ pareamento enquanto a trava do mesmo celular não decide, e o uazapi reenvia o w
   - `check (not (principal and removido_em is not null))`.
 - `removido_em timestamptz null` e `removido_por uuid null`: remoção lógica.
 - Unique `(provider, instance_id) where instance_id is not null and removido_em is null`.
+- `cor text not null default 'azul'` (06/10/2026, migration `20261006130000`): paleta fixa com nome, CHECK
+  `whatsapp_account_cor_da_paleta` (azul, rosa, verde, roxo, turquesa, laranja), a mesma lista de
+  `lib/domain/cor-do-numero.ts`. Sem índice único (a clínica não tem limite de números). Os números que existiam
+  receberam as cores pela ordem (ativos primeiro, o principal, depois por cadastro).
 - **Temporário:** `constraint whatsapp_account_uma_por_clinica unique (clinic_id)`. Nasce na 1A e sai na Fase 3.
 - Gatilho `antes_de_criar_numero` (BEFORE INSERT, e UPDATE de `removido_em` para nulo):
   - `pg_advisory_xact_lock` por clínica;
@@ -298,6 +302,16 @@ where j.id in (select id from escolhidos) returning j.*;
   29/09/2026 (ver a decisão no topo).
 - **Inbox:** selo, cabeçalho, filtro por número e compositor desabilitado com o motivo, tudo só com mais de um número.
 - **Faixa:** nomeia o número e diz quantas automáticas esperam por ele.
+- **Cor por número (pedido do dono em 06/10/2026):** clínica com um número por médica confundia as conversas. Cada
+  número tem uma cor da paleta fixa, escolhida em Configurações > WhatsApp (o "Adicionar número" sugere a primeira cor
+  livre; "Trocar cor" no menu do cartão avisa quando outro número já usa a escolhida). Aparece, só com mais de um número
+  ativo (a mesma regra do selo): na **faixa do topo da conversa** ("Conversa pelo número X", telefone, conexão, fundo e
+  filete na cor), no **selo do cartão** (filete à esquerda), em **"Respondendo pelo número X"** ao lado de
+  Responder/Nota interna, no **filtro "Número"** (marcador no lugar do celular; a escolha fica guardada no navegador de
+  cada pessoa) e no **diálogo de conectar**. O cartão de Configurações mostra o nome da cor por escrito. Número removido
+  perde a cor (neutro). A cor nunca vai no ícone `Smartphone` e nunca carrega sozinha o sentido: o nome vem sempre
+  escrito. Resultados por número fica para depois: conversa e mensagem já têm número, mas lead e consulta precisam de
+  uma regra de atribuição (por exemplo, o número da primeira conversa do contato).
 - **Início:** conta como feito se houver ao menos um número conectado.
 
 Depois da Fase 4 não há rollback de código para clínica com dois números.

@@ -2,6 +2,7 @@ import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 
 import type { ConnectState } from "@/lib/actions/whatsapp-connect";
+import type { CorDoNumero } from "@/lib/domain/cor-do-numero";
 import { formatarTelefone } from "@/lib/domain/telefone";
 
 // Regras da tela de numeros de WhatsApp (Configuracoes > WhatsApp; docs/07,
@@ -26,6 +27,8 @@ export type NumeroDoWhatsapp = {
   connectedAt: string | null;
   /** provedor da conta ('fake', 'uazapi'...) */
   provider: string | null;
+  /** cor do numero nas telas (paleta fixa, lib/domain/cor-do-numero) */
+  cor: CorDoNumero;
   /**
    * Por que o numero caiu, quando a trava recusou o celular dele (o mesmo
    * texto do dialogo de conexao). So vem para administrador e gestor, e so

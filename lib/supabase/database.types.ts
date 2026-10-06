@@ -4042,6 +4042,7 @@ export type Database = {
           clinic_id: string
           connected_at: string | null
           connection_status: string
+          cor: string
           created_at: string
           disconnected_at: string | null
           display_phone: string | null
@@ -4067,6 +4068,7 @@ export type Database = {
           clinic_id: string
           connected_at?: string | null
           connection_status?: string
+          cor?: string
           created_at?: string
           disconnected_at?: string | null
           display_phone?: string | null
@@ -4092,6 +4094,7 @@ export type Database = {
           clinic_id?: string
           connected_at?: string | null
           connection_status?: string
+          cor?: string
           created_at?: string
           disconnected_at?: string | null
           display_phone?: string | null

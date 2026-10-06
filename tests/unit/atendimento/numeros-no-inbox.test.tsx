@@ -12,10 +12,22 @@ vi.mock("@/app/(app)/atendimento/actions", () => ({
   transferirConversaAction: vi.fn(),
 }));
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { Composer } from "@/components/atendimento/composer";
 import { ConversationCard } from "@/components/atendimento/conversation-card";
+import {
+  FaixaDoNumero,
+  SeloDoNumero,
+} from "@/components/atendimento/selo-do-numero";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { estadoVisualDaConversa } from "@/lib/design/status";
+import {
+  CORES_DO_NUMERO,
+  corDoNumero,
+  primeiraCorLivre,
+} from "@/lib/domain/cor-do-numero";
 import {
   aplicarLinhaAosNumeros,
   casaNumero,
@@ -49,6 +61,7 @@ function numero(campos: Partial<NumeroDaClinica> = {}): NumeroDaClinica {
     connection_status: "conectado",
     principal: true,
     connected_at: "2026-09-20T12:00:00.000Z",
+    cor: "azul",
     ...campos,
   };
 }
@@ -58,6 +71,7 @@ const recepcao = numero({
   nome: "Recepção",
   display_phone: "558432558800",
   principal: false,
+  cor: "rosa",
 });
 
 const DOIS: NumerosDoInbox = { ativos: [numero(), recepcao], removidos: [] };
@@ -181,8 +195,20 @@ describe("filtro Numero", () => {
       conversa({ id: "3", whatsapp_account_id: PRINCIPAL }),
     ];
     expect(opcoesDoFiltroDeNumero(lista, DOIS)).toEqual([
-      { id: PRINCIPAL, nome: "Número principal", removido: false, total: 1 },
-      { id: RECEPCAO, nome: "Recepção", removido: false, total: 2 },
+      {
+        id: PRINCIPAL,
+        nome: "Número principal",
+        removido: false,
+        cor: "azul",
+        total: 1,
+      },
+      {
+        id: RECEPCAO,
+        nome: "Recepção",
+        removido: false,
+        cor: "rosa",
+        total: 2,
+      },
     ]);
     expect(lista.filter((c) => casaNumero(c, RECEPCAO))).toHaveLength(2);
     expect(lista.filter((c) => casaNumero(c, null))).toHaveLength(3);
@@ -488,5 +514,186 @@ describe("historico do fio por numero (decisao 1 do dono)", () => {
     expect(filtros.some((c) => c.args[0] === "whatsapp_account_id")).toBe(
       false,
     );
+  });
+});
+
+// Cor do numero (pedido do dono em 06/10/2026): paleta fixa, faixa no topo da
+// conversa, filete no selo, "Respondendo pelo numero" no compositor e o
+// marcador no filtro. A cor so acompanha: o nome vem sempre escrito.
+describe("cor do numero", () => {
+  it("a paleta do codigo e a mesma do CHECK do banco", () => {
+    const sql = readFileSync(
+      join(
+        process.cwd(),
+        "supabase/migrations/20261006130000_cor_do_numero.sql",
+      ),
+      "utf-8",
+    );
+    const check = sql.match(/check \(cor in \(([^)]*)\)\)/);
+    expect(check?.[1]).toBeDefined();
+    const doBanco = (check?.[1] ?? "")
+      .split(",")
+      .map((cor) => cor.trim().replace(/'/g, ""));
+    expect(doBanco).toEqual([...CORES_DO_NUMERO]);
+  });
+
+  it("sugere a primeira cor livre e, com todas em uso, gira a paleta", () => {
+    expect(primeiraCorLivre([])).toBe("azul");
+    expect(primeiraCorLivre(["azul"])).toBe("rosa");
+    expect(primeiraCorLivre(["rosa", "azul"])).toBe("verde");
+    expect(primeiraCorLivre([...CORES_DO_NUMERO])).toBe("azul");
+    expect(primeiraCorLivre([...CORES_DO_NUMERO, "azul"])).toBe("rosa");
+  });
+
+  it("valor fora da paleta nunca quebra a tela: vira azul", () => {
+    expect(corDoNumero("vermelho")).toBe("azul");
+    expect(corDoNumero(null)).toBe("azul");
+    expect(corDoNumero("roxo")).toBe("roxo");
+  });
+
+  it("trocar a cor em Configuracoes chega pelo Realtime e redesenha", () => {
+    const depois = aplicarLinhaAosNumeros(DOIS, {
+      id: RECEPCAO,
+      cor: "laranja",
+    });
+    expect(depois).not.toBe(DOIS);
+    expect(depois.ativos.find((n) => n.id === RECEPCAO)?.cor).toBe("laranja");
+    // A mesma cor (reserva de slot de envio) nao redesenha nada.
+    expect(aplicarLinhaAosNumeros(DOIS, { id: RECEPCAO, cor: "rosa" })).toBe(
+      DOIS,
+    );
+  });
+
+  it("numero novo pelo Realtime com cor estranha entra azul", () => {
+    const depois = aplicarLinhaAosNumeros(DOIS, {
+      id: CENTRO,
+      nome: "Centro",
+      connection_status: "conectado",
+      cor: "dourado",
+    });
+    expect(depois.ativos.find((n) => n.id === CENTRO)?.cor).toBe("azul");
+  });
+
+  it("no filtro, o removido fica sem cor", () => {
+    const opcoes = opcoesDoFiltroDeNumero(
+      [conversa({ whatsapp_account_id: CENTRO })],
+      { ...DOIS, removidos: [{ id: CENTRO, nome: "Centro" }] },
+    );
+    expect(opcoes.find((o) => o.id === CENTRO)?.cor).toBeNull();
+  });
+
+  it("a faixa do topo diz o numero, o telefone e leva a cor dele", () => {
+    const mostrado = numeroParaMostrar(conversa(), DOIS);
+    expect(mostrado).not.toBeNull();
+    const html = renderToStaticMarkup(<FaixaDoNumero numero={mostrado!} />);
+    expect(html).toContain("Conversa pelo número ");
+    expect(html).toContain("Recepção");
+    expect(html).toContain("(84) 3255-8800");
+    expect(html).toContain('data-cor="rosa"');
+    expect(html).toContain("var(--numero-rosa-bg)");
+    expect(html).toContain("var(--numero-rosa)");
+    // Conectado e o normal: nenhum chip de conexao.
+    expect(html).not.toContain("Desconectado");
+  });
+
+  it("a faixa mostra a conexao quando o numero caiu", () => {
+    const caido: NumerosDoInbox = {
+      ativos: [numero(), { ...recepcao, connection_status: "desconectado" }],
+      removidos: [],
+    };
+    const html = renderToStaticMarkup(
+      <TooltipProvider>
+        <FaixaDoNumero numero={numeroParaMostrar(conversa(), caido)!} />
+      </TooltipProvider>,
+    );
+    expect(html).toContain("Desconectado");
+  });
+
+  it("numero removido: faixa neutra, sem cor, dizendo que saiu", () => {
+    const html = renderToStaticMarkup(
+      <FaixaDoNumero
+        numero={numeroParaMostrar(conversa({ whatsapp_account_id: CENTRO }), {
+          ativos: [numero()],
+          removidos: [{ id: CENTRO, nome: "Centro" }],
+        })!}
+      />,
+    );
+    expect(html).toContain("Conversa do número ");
+    expect(html).toContain("(removido da clínica)");
+    expect(html).toContain('data-cor="nenhuma"');
+    expect(html).not.toContain("var(--numero-");
+  });
+
+  it("o selo do cartao ganha o filete na cor, com o nome escrito", () => {
+    const html = renderToStaticMarkup(
+      <SeloDoNumero numero={numeroParaMostrar(conversa(), DOIS)!} />,
+    );
+    expect(html).toContain('data-cor="rosa"');
+    expect(html).toContain("border-left-color:var(--numero-rosa)");
+    expect(html).toContain("Recepção");
+  });
+
+  describe("compositor diz por qual numero a resposta sai", () => {
+    const renderizar = (
+      numeros: NumerosDoInbox,
+      modo: "responder" | "nota" = "responder",
+    ) => {
+      const c = conversa();
+      const mostrado = numeroParaMostrar(c, numeros);
+      return renderToStaticMarkup(
+        <QueryClientProvider client={new QueryClient()}>
+          <TooltipProvider>
+            <Composer
+              conversation={c}
+              viewerId={EU}
+              podeEditar
+              autorizacao={{
+                source: "whatsapp",
+                granted_at: "2026-09-01T12:00:00.000Z",
+                revoked_at: null,
+              }}
+              citando={null}
+              aoCancelarCitacao={() => undefined}
+              aoCancelarCitacaoSeFor={() => undefined}
+              authorNames={{}}
+              modo={modo}
+              aoTrocarModo={() => undefined}
+              texto=""
+              aoMudarTexto={() => undefined}
+              aoEnviarTexto={() => undefined}
+              travaDoNumero={travaDoNumero(mostrado)}
+              numero={mostrado}
+              podeReconectar
+            />
+          </TooltipProvider>
+        </QueryClientProvider>,
+      );
+    };
+
+    it("com dois numeros: Respondendo pelo numero, com a cor", () => {
+      const html = renderizar(DOIS);
+      expect(html).toContain("Respondendo pelo número");
+      expect(html).toContain("Recepção");
+      expect(html).toContain('data-cor="rosa"');
+    });
+
+    it("com um numero so, nada muda", () => {
+      expect(renderizar(UM)).not.toContain("Respondendo pelo número");
+    });
+
+    it("na nota interna, o aviso e o da nota", () => {
+      const html = renderizar(DOIS, "nota");
+      expect(html).not.toContain("Respondendo pelo número");
+      expect(html).toContain("Nota interna: o paciente não vê.");
+    });
+
+    it("com o numero fora do ar, quem fala e o aviso de desconectado", () => {
+      const html = renderizar({
+        ativos: [numero(), { ...recepcao, connection_status: "desconectado" }],
+        removidos: [],
+      });
+      expect(html).not.toContain("Respondendo pelo número");
+      expect(html).toContain("O número Recepção está desconectado.");
+    });
   });
 });

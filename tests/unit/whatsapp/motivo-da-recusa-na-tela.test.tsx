@@ -568,6 +568,7 @@ describe("cartão do número: o motivo embaixo do chip", () => {
       status: "desconectado",
       connectedAt: null,
       provider: "uazapi",
+      cor: "azul",
       motivoDaDesconexao: TEXTO_OUTRA_CONTA,
       ...campos,
     };
@@ -589,6 +590,7 @@ describe("cartão do número: o motivo embaixo do chip", () => {
           aoConectar={semAcao}
           aoDesconectar={semAcao}
           aoRenomear={semAcao}
+          aoTrocarCor={semAcao}
           aoEscolherUnidade={semAcao}
           aoTornarPrincipal={semAcao}
           aoRemover={semAcao}

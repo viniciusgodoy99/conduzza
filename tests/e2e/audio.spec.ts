@@ -135,6 +135,55 @@ test("áudio recebido toca além dos primeiros segundos, até o fim", async ({
   }
 });
 
+test("áudio em 2x toca mais rápido e a escolha fica para os próximos", async ({
+  page,
+}) => {
+  // Velocidade como no WhatsApp (pedido do dono em 06/10/2026).
+  test.setTimeout(90_000);
+  const audio = await criarAudio(12);
+  try {
+    await login(page, dados().emails.admin);
+    await page.evaluate(() =>
+      window.localStorage.removeItem("cz-audio-velocidade"),
+    );
+    await page.goto(`/atendimento?conversa=${dados().conversas.comAudio}`);
+    const velocidade = page
+      .getByRole("button", { name: /^Velocidade do áudio: / })
+      .last();
+    await expect(velocidade).toHaveAccessibleName(
+      "Velocidade do áudio: 1x. Trocar para 1,5x",
+    );
+    await velocidade.click();
+    await expect(velocidade).toHaveAccessibleName(
+      "Velocidade do áudio: 1,5x. Trocar para 2x",
+    );
+    await velocidade.click();
+    await expect(velocidade).toHaveText("2x");
+
+    await page.getByRole("button", { name: "Tocar o áudio" }).last().click();
+    await expect
+      .poll(async () => (await estadoDoAudio(page)).tempo, { timeout: 15_000 })
+      .toBeGreaterThan(1);
+    const rate = await page
+      .locator("audio")
+      .last()
+      .evaluate((a: HTMLAudioElement) => a.playbackRate);
+    expect(rate).toBe(2);
+
+    // A conversa aberta de novo (o Inbox limpa o ?conversa= depois de
+    // abrir, entao e pelo link outra vez): continua em 2x.
+    await page.goto(`/atendimento?conversa=${dados().conversas.comAudio}`);
+    await expect(
+      page.getByRole("button", { name: /^Velocidade do áudio: / }).last(),
+    ).toHaveText("2x");
+  } finally {
+    await page
+      .evaluate(() => window.localStorage.removeItem("cz-audio-velocidade"))
+      .catch(() => undefined);
+    await apagarAudio(audio);
+  }
+});
+
 test("áudio longo tocado um tempo depois de abrir a conversa não para no que já carregou", async ({
   page,
 }) => {
@@ -145,14 +194,20 @@ test("áudio longo tocado um tempo depois de abrir a conversa não para no que j
   const pedidos: string[] = [];
   page.on("response", (resposta) => {
     const url = resposta.url();
-    if (url.includes("/api/atendimento/midia/") || url.includes("/storage/v1/object/")) {
+    if (
+      url.includes("/api/atendimento/midia/") ||
+      url.includes("/storage/v1/object/")
+    ) {
       pedidos.push(
         `${url.includes("/api/") ? "rota" : "storage"} ${resposta.status()} range=${resposta.request().headers()["range"] ?? "-"}`,
       );
     }
   });
   page.on("requestfailed", (pedido) => {
-    if (pedido.url().includes("/storage/v1/object/") || pedido.url().includes("/api/atendimento/midia/")) {
+    if (
+      pedido.url().includes("/storage/v1/object/") ||
+      pedido.url().includes("/api/atendimento/midia/")
+    ) {
       pedidos.push(`FALHOU ${pedido.failure()?.errorText ?? "?"}`);
     }
   });

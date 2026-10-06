@@ -5,6 +5,7 @@ import {
   WHATSAPP_CONNECTION_STATUS,
   type WhatsAppConnectionStatus,
 } from "@/lib/design/status";
+import { COR_DO_NUMERO_VARS } from "@/lib/domain/cor-do-numero";
 import {
   telefoneDoNumero,
   type NumeroDaConversa,
@@ -19,6 +20,12 @@ import { cn } from "@/lib/utils";
 // E uma ETIQUETA de origem, nao um status: fundo de cartao, fio e tinta
 // neutros, com o icone de celular. O estado da conexao, quando importa, vem
 // no ConexaoDoNumero, com as 3 camadas do mapa WHATSAPP_CONNECTION_STATUS.
+//
+// Cor do numero (pedido do dono em 06/10/2026, whatsapp_account.cor): um
+// filete na borda esquerda do selo, um marcador quadrado ao lado do nome e a
+// faixa no topo da conversa. A cor so identifica; quem diz qual numero e o
+// nome, sempre escrito, e o icone de celular continua neutro (docs/06). O
+// numero removido perde a cor (fio neutro).
 
 export function SeloDoNumero({
   numero,
@@ -41,13 +48,18 @@ export function SeloDoNumero({
     : telefone
       ? `Número ${nome}, ${telefone}`
       : `Número ${nome}`;
+  const cor = numero.estado === "ativo" ? numero.numero.cor : null;
   return (
     <span
       title={titulo}
+      data-cor={cor ?? "nenhuma"}
       className={cn(
-        "inline-flex h-[18px] max-w-full min-w-0 shrink items-center gap-1 overflow-hidden rounded-[4px] border border-border bg-card px-1.5 text-[11px] font-medium whitespace-nowrap text-foreground",
+        "inline-flex h-[18px] max-w-full min-w-0 shrink items-center gap-1 overflow-hidden rounded-[4px] border border-l-[3px] border-border bg-card px-1.5 text-[11px] font-medium whitespace-nowrap text-foreground",
         className,
       )}
+      style={
+        cor ? { borderLeftColor: COR_DO_NUMERO_VARS[cor].marcador } : undefined
+      }
     >
       <Smartphone aria-hidden className="size-3 shrink-0 text-text-secondary" />
       <span className="sr-only">Número da clínica: </span>
@@ -71,6 +83,56 @@ export function SeloDoNumero({
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * A faixa no topo da conversa (pedido do dono em 06/10/2026): de qual numero
+ * da clinica e esta conversa, com a cor, o nome e o telefone, para a
+ * recepcao nao responder achando que esta no numero de outra medica. Larga,
+ * logo abaixo do cabecalho, e com a conexao quando o numero esta fora. Some
+ * nas mesmas condicoes do selo (numeroParaMostrar).
+ */
+export function FaixaDoNumero({ numero }: { numero: NumeroDaConversa }) {
+  const { nome } = numero.numero;
+  const ativo = numero.estado === "ativo" ? numero.numero : null;
+  const telefone = ativo ? telefoneDoNumero(ativo.display_phone) : null;
+  const cor = ativo ? COR_DO_NUMERO_VARS[ativo.cor] : null;
+  return (
+    <div
+      data-slot="faixa-do-numero"
+      data-cor={ativo?.cor ?? "nenhuma"}
+      className={cn(
+        "flex min-h-9 shrink-0 items-center gap-2 border-b border-l-4 border-border px-4 py-1.5 text-[12.5px] text-foreground",
+        cor ? undefined : "border-l-border-strong bg-surface-subtle",
+      )}
+      style={
+        cor
+          ? { background: cor.fundo, borderLeftColor: cor.marcador }
+          : undefined
+      }
+    >
+      <Smartphone
+        aria-hidden
+        className="size-3.5 shrink-0 text-text-secondary"
+      />
+      <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="min-w-0">
+          {ativo ? "Conversa pelo número " : "Conversa do número "}
+          <strong className="font-bold text-text-strong">{nome}</strong>
+          {ativo ? null : (
+            <span className="text-text-secondary"> (removido da clínica)</span>
+          )}
+        </span>
+        {telefone ? (
+          <span className="cz-num text-text-secondary">
+            <span className="sr-only">, telefone </span>
+            {telefone}
+          </span>
+        ) : null}
+      </p>
+      <ConexaoDoNumero numero={numero} className="ml-auto" />
+    </div>
   );
 }
 

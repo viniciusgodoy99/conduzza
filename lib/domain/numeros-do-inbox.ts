@@ -10,6 +10,7 @@
 // clinica tinha mais de um quando ela nasceu, e a resposta dela nao sai mais
 // por lugar nenhum.
 
+import { corDoNumero, type CorDoNumero } from "@/lib/domain/cor-do-numero";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import type {
   NumeroDaClinica,
@@ -105,6 +106,8 @@ export type OpcaoDeNumero = {
   id: string;
   nome: string;
   removido: boolean;
+  /** a cor do numero; removido nao tem (o chip fica neutro) */
+  cor: CorDoNumero | null;
   /** conversas carregadas deste numero: o chip conta o que ele filtra */
   total: number;
 };
@@ -130,6 +133,7 @@ export function opcoesDoFiltroDeNumero(
     id: numero.id,
     nome: numero.nome,
     removido: false,
+    cor: numero.cor,
     total: porNumero.get(numero.id) ?? 0,
   }));
   const removidos = numeros.removidos
@@ -138,6 +142,7 @@ export function opcoesDoFiltroDeNumero(
       id: numero.id,
       nome: numero.nome,
       removido: true,
+      cor: null,
       total: porNumero.get(numero.id) ?? 0,
     }));
   return [...ativos, ...removidos];
@@ -163,6 +168,7 @@ export type LinhaDoNumeroNoInbox = {
   principal?: boolean;
   connected_at?: string | null;
   removido_em?: string | null;
+  cor?: string | null;
 };
 
 function mesmoNumero(a: NumeroDaClinica, b: NumeroDaClinica): boolean {
@@ -171,7 +177,8 @@ function mesmoNumero(a: NumeroDaClinica, b: NumeroDaClinica): boolean {
     a.display_phone === b.display_phone &&
     a.connection_status === b.connection_status &&
     a.principal === b.principal &&
-    a.connected_at === b.connected_at
+    a.connected_at === b.connected_at &&
+    a.cor === b.cor
   );
 }
 
@@ -238,6 +245,7 @@ export function aplicarLinhaAosNumeros(
       connection_status: linha.connection_status,
       principal: linha.principal === true,
       connected_at: linha.connected_at ?? null,
+      cor: corDoNumero(linha.cor),
     };
     return {
       // Voltou de removido (o banco aceita desfazer a remocao): sai da lista
@@ -264,6 +272,9 @@ export function aplicarLinhaAosNumeros(
       linha.connected_at !== undefined
         ? linha.connected_at
         : atual.connected_at,
+    // A troca de cor em Configuracoes chega por aqui (Realtime) e precisa
+    // redesenhar o Inbox: mesmoNumero compara a cor.
+    cor: typeof linha.cor === "string" ? corDoNumero(linha.cor) : atual.cor,
   };
   if (mesmoNumero(atual, proximo)) {
     return numeros;

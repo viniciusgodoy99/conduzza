@@ -27,6 +27,7 @@ import {
   type UnidadeDaClinica,
 } from "@/components/whatsapp/numeros";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { corDoNumero } from "@/lib/domain/cor-do-numero";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import { iaLiberadaNoAmbiente, lerConfigDaIa } from "@/lib/ia/liberacao";
@@ -180,7 +181,7 @@ export default async function ConfiguracoesPage({
     supabase
       .from("whatsapp_account")
       .select(
-        "id, nome, principal, unit_id, connection_status, display_phone, connected_at, provider",
+        "id, nome, principal, unit_id, connection_status, display_phone, connected_at, provider, cor",
       )
       .eq("clinic_id", active.clinicId)
       .is("removido_em", null)
@@ -397,6 +398,7 @@ export default async function ConfiguracoesPage({
       status: situacaoDaConexao(numero.connection_status),
       connectedAt: numero.connected_at,
       provider: numero.provider,
+      cor: corDoNumero(numero.cor),
       motivoDaDesconexao: motivos[numero.id] ?? null,
     }),
   );

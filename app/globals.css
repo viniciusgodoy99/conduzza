@@ -326,6 +326,26 @@
   --neutral: var(--cz-ink-500);
   --neutral-text: var(--cz-ink-700);
   --neutral-bg: var(--cz-ink-050);
+
+  /* Cor do numero de WhatsApp (pedido do dono em 06/10/2026; paleta fixa,
+     whatsapp_account.cor). Identifica o numero, nao e status: vai so em
+     marcador e na faixa do topo da conversa, com o nome sempre escrito, e
+     nunca no icone. Marcador igual nos dois temas, com 3:1 sobre card,
+     canvas, hover, afundado, cartao selecionado e a propria faixa; faixa
+     (-bg) com 4.5:1 para o texto e o texto secundario. Claro: 10% da cor
+     sobre o branco */
+  --numero-azul: #3d78c6;
+  --numero-azul-bg: #ecf2f9;
+  --numero-rosa: #cf4f8b;
+  --numero-rosa-bg: #faedf3;
+  --numero-verde: #2b9455;
+  --numero-verde-bg: #eaf4ee;
+  --numero-roxo: #8763cf;
+  --numero-roxo-bg: #f3effa;
+  --numero-turquesa: #1b8e99;
+  --numero-turquesa-bg: #e8f4f5;
+  --numero-laranja: #c56c22;
+  --numero-laranja-bg: #f9f0e9;
   --destructive: var(--alert-text);
   --destructive-foreground: var(--on-alert);
 
@@ -442,6 +462,13 @@
   --neutral: var(--cz-ink-400);
   --neutral-text: var(--cz-ink-200);
   --neutral-bg: var(--cz-ink-800);
+  /* Faixa do numero: ink-900 com 16% da cor (marcador herdado do claro) */
+  --numero-azul-bg: #0e2730;
+  --numero-rosa-bg: #252126;
+  --numero-verde-bg: #0b2c1e;
+  --numero-roxo-bg: #1a2431;
+  --numero-turquesa-bg: #092b28;
+  --numero-laranja-bg: #242515;
   --destructive: var(--alert-text);
   --destructive-foreground: var(--on-alert);
 }

@@ -5,6 +5,12 @@ import { headers } from "next/headers";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import {
+  COR_PADRAO,
+  CORES_DO_NUMERO,
+  primeiraCorLivre,
+  type CorDoNumero,
+} from "@/lib/domain/cor-do-numero";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import {
@@ -129,9 +135,14 @@ type Guard = {
 const idDoNumero = z.uuid();
 const idDoNumeroOuNulo = z.uuid().nullable();
 const nomeDoNumero = z.string().trim().min(1).max(40);
+// Cor do numero (pedido do dono em 06/10/2026): a paleta fixa, a mesma do
+// CHECK whatsapp_account_cor_da_paleta.
+const corDoNumeroSchema = z.enum(CORES_DO_NUMERO);
 const numeroNovoSchema = z.object({
   nome: nomeDoNumero,
   unitId: z.uuid().nullable().optional(),
+  /** ausente: a primeira cor que nenhum numero ativo da clinica usa */
+  cor: corDoNumeroSchema.optional(),
 });
 // So o campo que veio e gravado: o dialogo de Unidade manda so a unidade e o
 // de Renomear so o nome. Regravar o nome do retrato da tela desfazia um
@@ -143,8 +154,15 @@ const numeroEditadoSchema = z
     nome: nomeDoNumero.optional(),
     /** ausente: a unidade fica como esta; nulo: tira a unidade */
     unitId: z.uuid().nullable().optional(),
+    /** ausente: a cor fica como esta */
+    cor: corDoNumeroSchema.optional(),
   })
-  .refine((dados) => dados.nome !== undefined || dados.unitId !== undefined);
+  .refine(
+    (dados) =>
+      dados.nome !== undefined ||
+      dados.unitId !== undefined ||
+      dados.cor !== undefined,
+  );
 const TEXTO_NOME_INVALIDO =
   "Dê um nome ao número, com até 40 caracteres, e escolha a unidade da lista.";
 
@@ -1166,6 +1184,8 @@ export async function adicionarNumeroAction(
   }
 
   const admin = createAdminClient();
+  const cor =
+    parsed.data.cor ?? (await corLivreDaClinica(admin, guard.clinicId));
   const { data: novo, error } = await admin
     .from("whatsapp_account")
     .insert({
@@ -1173,6 +1193,7 @@ export async function adicionarNumeroAction(
       provider: provedor,
       nome: parsed.data.nome,
       unit_id: parsed.data.unitId ?? null,
+      cor,
     })
     .select("id")
     .single();
@@ -1205,8 +1226,30 @@ export async function adicionarNumeroAction(
 }
 
 /**
- * Renomeia o numero e/ou troca (ou tira) a unidade dele. Grava so os campos
- * que vieram; sem nenhum dos dois, recusa.
+ * A cor de um numero novo quando a tela nao mandou: a primeira que nenhum
+ * numero ATIVO da clinica usa. Leitura que falha nao impede o cadastro: fica
+ * a padrao, e a clinica troca depois em "Trocar cor".
+ */
+async function corLivreDaClinica(
+  admin: AdminClient,
+  clinicId: string,
+): Promise<CorDoNumero> {
+  const { data, error } = await admin
+    .from("whatsapp_account")
+    .select("cor")
+    .eq("clinic_id", clinicId)
+    .is("removido_em", null);
+  if (error) {
+    return COR_PADRAO;
+  }
+  return primeiraCorLivre(
+    ((data ?? []) as { cor: string | null }[]).map((linha) => linha.cor),
+  );
+}
+
+/**
+ * Renomeia o numero, troca (ou tira) a unidade dele e/ou troca a cor. Grava
+ * so os campos que vieram; sem nenhum, recusa.
  */
 export async function atualizarNumeroAction(
   input: unknown,
@@ -1219,7 +1262,7 @@ export async function atualizarNumeroAction(
   if (!parsed.success) {
     return { ok: false, error: TEXTO_NOME_INVALIDO };
   }
-  const { accountId, nome, unitId } = parsed.data;
+  const { accountId, nome, unitId, cor } = parsed.data;
 
   const admin = createAdminClient();
   const { data, error } = await admin
@@ -1227,6 +1270,7 @@ export async function atualizarNumeroAction(
     .update({
       ...(nome !== undefined ? { nome } : {}),
       ...(unitId !== undefined ? { unit_id: unitId } : {}),
+      ...(cor !== undefined ? { cor } : {}),
     })
     .eq("clinic_id", guard.clinicId)
     .eq("id", accountId)

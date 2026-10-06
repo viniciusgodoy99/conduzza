@@ -1007,6 +1007,7 @@ export function InboxClient({
                 aoEnviarTexto={enviarTexto}
                 aoPerderConversa={perderConversa}
                 travaDoNumero={travaDoSelecionado}
+                numero={numeroDoSelecionado}
                 podeReconectar={podeReconectar}
                 mensagensPadrao={mensagensPadrao}
                 nomeDaClinica={nomeDaClinica}

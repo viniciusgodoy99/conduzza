@@ -45,6 +45,7 @@ import {
 } from "@/components/atendimento/lista-de-respostas";
 import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { MarcadorDoNumero } from "@/components/shared/marcador-do-numero";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,7 +53,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { TravaDoNumero } from "@/lib/domain/numeros-do-inbox";
+import type {
+  NumeroDaConversa,
+  TravaDoNumero,
+} from "@/lib/domain/numeros-do-inbox";
 import {
   alvoDoBotao,
   anuncioDaLista,
@@ -265,6 +269,7 @@ export function Composer({
   aoEnviarTexto,
   aoPerderConversa,
   travaDoNumero = null,
+  numero = null,
   podeReconectar = false,
   mensagensPadrao,
   nomeDaClinica = "",
@@ -335,6 +340,12 @@ export function Composer({
    * do topo, e o envio no servidor recusa com o motivo, como sempre).
    */
   travaDoNumero?: TravaDoNumero | null;
+  /**
+   * O numero da conversa, so quando a clinica tem mais de um ativo
+   * (numeroParaMostrar): a resposta diz por qual numero sai, com a cor dele
+   * (pedido do dono em 06/10/2026). Null com um numero so.
+   */
+  numero?: NumeroDaConversa | null;
   /** Quem pode reconectar o numero (Configuracoes: administrador e gestor) */
   podeReconectar?: boolean;
   /**
@@ -853,6 +864,18 @@ export function Composer({
                 <p className="flex items-center gap-1.5 text-[11.5px] font-semibold text-warning-text">
                   <Lock aria-hidden className="size-3" />
                   Nota interna: o paciente não vê.
+                </p>
+              ) : numero?.estado === "ativo" && !respostaBloqueada ? (
+                // Por qual numero a resposta sai, com a cor dele. Com o
+                // numero fora do ar quem fala e o AvisoDoNumero, abaixo.
+                <p className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-text-secondary">
+                  <MarcadorDoNumero cor={numero.numero.cor} />
+                  <span className="min-w-0 truncate">
+                    Respondendo pelo número{" "}
+                    <strong className="font-semibold text-text-strong">
+                      {numero.numero.nome}
+                    </strong>
+                  </span>
                 </p>
               ) : null}
               <div

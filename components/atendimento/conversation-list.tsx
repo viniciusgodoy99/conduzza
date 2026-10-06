@@ -8,7 +8,6 @@ import {
   MessagesSquare,
   OctagonAlert,
   Search,
-  Smartphone,
   Tag,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -16,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ConversationCard } from "@/components/atendimento/conversation-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ListSkeleton } from "@/components/shared/loading-skeleton";
+import { MarcadorDoNumero } from "@/components/shared/marcador-do-numero";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
 import {
@@ -67,6 +67,9 @@ type OwnFilter = "minhas" | "sem_atendente" | "todas";
 // Ordem dos chips de situacao. "IA atendendo" so aparece quando existe
 // conversa com a IA (o Agente e da Fase 3; hoje o chip viraria um zero
 // permanente na tela da recepcao).
+// Chave do filtro "Numero" guardado neste navegador, por pessoa.
+const chaveDoNumero = (viewerId: string) => `cz-inbox-numero:${viewerId}`;
+
 const SITUACOES: FiltroDeSituacao[] = [
   "ia_atendendo",
   "aguardando_humano",
@@ -154,6 +157,32 @@ export function ConversationList({
   const [own, setOwn] = useState<OwnFilter>("todas");
   // null = Todos. Guarda o id do numero escolhido.
   const [numeroEscolhido, setNumeroEscolhido] = useState<string | null>(null);
+  // A recepcao que cuida do numero de uma medica so filtra uma vez: a escolha
+  // fica guardada neste navegador, por pessoa (conveniencia; o que vale e a
+  // escolha efetiva abaixo, que ignora numero que nao esta mais na lista).
+  // Storage bloqueado ou vazio nunca quebra: o filtro volta a "Todos".
+  useEffect(() => {
+    try {
+      const salvo = window.localStorage.getItem(chaveDoNumero(viewerId));
+      if (salvo) {
+        setNumeroEscolhido(salvo);
+      }
+    } catch {
+      // sem storage: comeca em Todos
+    }
+  }, [viewerId]);
+  const escolherNumero = (id: string | null) => {
+    setNumeroEscolhido(id);
+    try {
+      if (id) {
+        window.localStorage.setItem(chaveDoNumero(viewerId), id);
+      } else {
+        window.localStorage.removeItem(chaveDoNumero(viewerId));
+      }
+    } catch {
+      // sem storage: vale so nesta aba
+    }
+  };
   const [situacao, setSituacao] = useState<FiltroDeSituacao | null>(
     filtroInicial,
   );
@@ -288,7 +317,7 @@ export function ConversationList({
     escolherSituacao(null);
     setSearch("");
     setEtiquetasEscolhidas([]);
-    setNumeroEscolhido(null);
+    escolherNumero(null);
   };
 
   // Resolvidas: o numero so existe depois de o arquivo chegar. Antes disso o
@@ -384,6 +413,7 @@ export function ConversationList({
                 id: null,
                 nome: "Todos",
                 removido: false,
+                cor: null,
                 total: counts.all,
               },
               ...opcoesDeNumero,
@@ -395,9 +425,7 @@ export function ConversationList({
                   type="button"
                   aria-pressed={ativo}
                   onClick={() =>
-                    setNumeroEscolhido(
-                      opcao.id === null || ativo ? null : opcao.id,
-                    )
+                    escolherNumero(opcao.id === null || ativo ? null : opcao.id)
                   }
                   title={opcao.id === null ? undefined : `Número ${opcao.nome}`}
                   className={cn(
@@ -410,7 +438,9 @@ export function ConversationList({
                   )}
                 >
                   {opcao.id !== null ? (
-                    <Smartphone aria-hidden className="size-3 shrink-0" />
+                    // A cor do numero (06/10/2026) no lugar do celular: o
+                    // rotulo "Numero" do grupo ja diz o que o chip e.
+                    <MarcadorDoNumero cor={opcao.cor} />
                   ) : null}
                   <span className="min-w-0 truncate">{opcao.nome}</span>
                   {opcao.removido ? (
