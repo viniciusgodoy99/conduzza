@@ -1,9 +1,11 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { agendadasKeys } from "@/lib/domain/mensagem-agendada";
+import { recencia } from "@/lib/domain/filtros-da-conversa";
 import {
   aplicarLinhaAosNumeros,
   type LinhaDoNumeroNoInbox,
@@ -16,11 +18,20 @@ import {
 } from "@/lib/queries/conversations";
 import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
-// Tempo real do Inbox (tarefa 1.7): postgres_changes em conversation, message
-// e whatsapp_account, filtrado por clinica. A RLS aplica POR ASSINANTE nos
-// eventos de INSERT/UPDATE (por isso a policy fina do papel profissional vive
-// no banco); nao deletamos conversa nem mensagem, entao a limitacao de DELETE
-// sem filtro nao nos alcanca.
+// Tempo real do Inbox (tarefa 1.7): postgres_changes em conversation,
+// message, contact e whatsapp_account, filtrado por clinica. A RLS aplica
+// POR ASSINANTE nos eventos de INSERT/UPDATE (por isso a policy fina do papel
+// profissional vive no banco); nao deletamos conversa nem mensagem, entao a
+// limitacao de DELETE sem filtro nao nos alcanca.
+//
+// MENSAGEM AGENDADA NAO ESTA NO CANAL (achados 12, 15 e 30 da revisao): o
+// Realtime desta instancia usa wal2json, que ignora a lista de colunas da
+// publicacao e entregaria o texto da agendada a toda aba aberta, sem trilha
+// de leitura. A tabela saiu da publicacao. A lista das agendadas do contato
+// aberto e a autoria das bolhas do fio se releem pela sessao (RLS e trilha)
+// quando chega evento de message ou conversation daquele contato
+// (chavesDaAgendadaNoEvento), de 30 em 30 segundos com a conversa aberta e a
+// aba a vista (InboxClient) e depois de cada acao propria.
 //
 // ESCALA: antes, toda mensagem invalidava a lista INTEIRA de conversas em
 // cada aba aberta. Uma clinica movimentada com varios atendentes recarregava
@@ -33,6 +44,8 @@ import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
 type ConversationRow = {
   id: string;
+  /** O contato da conversa: diz se o evento mexe nas agendadas abertas */
+  contact_id?: string;
   status: string;
   assignee_user_id: string | null;
   unread_count: number;
@@ -58,9 +71,66 @@ function colunaOu<T>(novo: T | undefined, atual: T): T {
   return novo !== undefined ? novo : atual;
 }
 
+/**
+ * Janela que junta as releituras das agendadas: uma mensagem gera varios
+ * eventos seguidos (INSERT, UPDATE de status, UPDATE da conversa), e cada um
+ * custaria uma ida ao servidor. A espera tambem da tempo para a reconciliacao
+ * da agendada ligar a mensagem a ela antes da leitura da autoria.
+ */
+export const JANELA_DAS_AGENDADAS_MS = 1_000;
+
+/** A conversa aberta na tela, para o canal saber o que reler das agendadas. */
+export type ConversaAbertaNoCanal = {
+  conversationId: string;
+  contactId: string;
+};
+
+/**
+ * O que um evento de message ou conversation pede para reler das agendadas
+ * (achado 26/34 e F9 da revisao): a lista do contato ABERTO, quando o evento
+ * e de uma conversa dele (inclusive a de outro numero), e a autoria das
+ * bolhas do fio, quando e da propria conversa aberta. Evento de outro
+ * contato nao rele nada: a leitura da lista grava trilha e custa uma ida ao
+ * servidor.
+ *
+ * `contactId` vem no evento de conversation; o de message nao traz o
+ * contato, e `contatoDaConversa` procura a conversa no cache da lista.
+ */
+export function chavesDaAgendadaNoEvento(params: {
+  clinicId: string;
+  aberta: ConversaAbertaNoCanal | null;
+  conversationId: string | null | undefined;
+  contactId?: string | null;
+  contatoDaConversa?: (conversationId: string) => string | null;
+}): QueryKey[] {
+  const { aberta, conversationId } = params;
+  if (!aberta || !conversationId) {
+    return [];
+  }
+  const daAberta = conversationId === aberta.conversationId;
+  const contato =
+    params.contactId ??
+    (daAberta
+      ? aberta.contactId
+      : (params.contatoDaConversa?.(conversationId) ?? null));
+  const chaves: QueryKey[] = [];
+  if (contato === aberta.contactId) {
+    chaves.push(agendadasKeys.doContato(params.clinicId, aberta.contactId));
+  }
+  if (daAberta) {
+    chaves.push(agendadasKeys.doFio(aberta.conversationId));
+  }
+  return chaves;
+}
+
 export function useInboxChannel(
   supabase: SupabaseClient,
   clinicId: string,
+  /**
+   * A conversa aberta, lida na hora de cada evento (ref: trocar de conversa
+   * nao refaz a assinatura do canal).
+   */
+  aberta?: { readonly current: ConversaAbertaNoCanal | null },
 ): void {
   const queryClient = useQueryClient();
 
@@ -74,6 +144,52 @@ export function useInboxChannel(
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.totalResolvidas(clinicId),
       });
+
+    // O contato de uma conversa pelo que a tela ja carregou (a lista ativa, o
+    // arquivo e a conversa do link moram sob a chave-mae da lista).
+    const contatoDaConversa = (conversationId: string): string | null => {
+      for (const [, lista] of queryClient.getQueriesData<
+        ConversationListItem[]
+      >({ queryKey: listKey })) {
+        if (!Array.isArray(lista)) {
+          continue;
+        }
+        const conversa = lista.find((c) => c.id === conversationId);
+        if (conversa) {
+          return conversa.contact.id;
+        }
+      }
+      return null;
+    };
+
+    // Relê as agendadas da conversa aberta quando o evento e dela (ou de
+    // outra conversa do mesmo contato), uma vez por janela e por chave.
+    // Invalidar so refaz consulta ativa.
+    const releituras = new Map<string, number>();
+    const avisarAgendadas = (
+      conversationId: string | null | undefined,
+      contactId?: string | null,
+    ) => {
+      for (const queryKey of chavesDaAgendadaNoEvento({
+        clinicId,
+        aberta: aberta?.current ?? null,
+        conversationId,
+        contactId,
+        contatoDaConversa,
+      })) {
+        const id = JSON.stringify(queryKey);
+        if (releituras.has(id)) {
+          continue;
+        }
+        releituras.set(
+          id,
+          window.setTimeout(() => {
+            releituras.delete(id);
+            void queryClient.invalidateQueries({ queryKey });
+          }, JANELA_DAS_AGENDADAS_MS),
+        );
+      }
+    };
 
     const aplicarConversa = (row: ConversationRow) => {
       const atual =
@@ -108,7 +224,7 @@ export function useInboxChannel(
       }
 
       // Caso comum: mescla as colunas novas mantendo o contato ja carregado, e
-      // reordena por last_inbound_at desc (ordem de recebimento).
+      // reordena pela mensagem mais recente, enviada ou recebida (recencia).
       const atualizada: ConversationListItem = {
         ...existente,
         status: row.status as ConversationListItem["status"],
@@ -143,9 +259,9 @@ export function useInboxChannel(
       };
       const proxima = atual
         .map((c) => (c.id === row.id ? atualizada : c))
-        .sort((a, b) =>
-          (b.last_inbound_at ?? "").localeCompare(a.last_inbound_at ?? ""),
-        );
+        // A mesma ordem da lista: a mensagem mais recente, enviada ou
+        // recebida, primeiro (recencia, como no WhatsApp).
+        .sort((a, b) => recencia(b) - recencia(a));
       queryClient.setQueryData<ConversationListItem[]>(listKey, proxima);
     };
 
@@ -183,6 +299,9 @@ export function useInboxChannel(
           const row = payload.new as ConversationRow | null;
           if (row?.id) {
             aplicarConversa(row);
+            // A reconciliacao da agendada atribui a conversa a quem assina
+            // na mesma transacao em que liga a mensagem a agendada.
+            avisarAgendadas(row.id, row.contact_id ?? null);
           }
         },
       )
@@ -204,6 +323,9 @@ export function useInboxChannel(
             void queryClient.invalidateQueries({
               queryKey: conversationKeys.messages(conversationId),
             });
+            // A agendada que saiu (ou nao saiu), a entrada do paciente (o
+            // aviso "escreveu depois") e a autoria da bolha nova.
+            avisarAgendadas(conversationId);
           }
         },
       )
@@ -255,9 +377,21 @@ export function useInboxChannel(
         invalidarTotalDeResolvidas();
         void queryClient.invalidateQueries({ queryKey: ["messages"] });
         void queryClient.invalidateQueries({ queryKey: numerosKey });
+        // As agendadas de qualquer contato aberto nesta aba, e a autoria
+        // das bolhas do fio.
+        void queryClient.invalidateQueries({
+          queryKey: ["agendadas", clinicId],
+        });
+        void queryClient.invalidateQueries({ queryKey: ["agendadas-do-fio"] });
       }
     });
 
-    return parar;
-  }, [supabase, clinicId, queryClient]);
+    return () => {
+      for (const espera of releituras.values()) {
+        window.clearTimeout(espera);
+      }
+      releituras.clear();
+      parar();
+    };
+  }, [supabase, clinicId, queryClient, aberta]);
 }

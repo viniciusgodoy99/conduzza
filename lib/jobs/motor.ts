@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  KINDS_DE_ENVIO,
+  KINDS_DE_GASTO,
+  KINDS_DE_INTEGRACAO,
+  KINDS_DE_MIDIA,
+} from "@/lib/jobs/kinds";
 import { agruparPorRaia } from "@/lib/jobs/numero-de-envio";
 import { executarJobComPosse, type Job } from "@/lib/jobs/worker";
 import { log } from "@/lib/log";
@@ -51,16 +57,9 @@ import { log } from "@/lib/log";
 // tambem roda num grupo so dele. As duas funcoes de gravacao se serializam no
 // banco pela linha de meta_gasto_leitura da clinica.
 
-/** Tipos que disputam o slot de envio do numero. */
-const KINDS_DE_ENVIO = ["enviar_mensagem_ativa", "executar_passo_de_regua"];
-/** Mídia nao toca o slot de envio: trilho proprio. */
-const KINDS_DE_MIDIA = ["baixar_midia"];
-/** Integracoes externas (Meta CAPI): nao disputam o slot anti-ban nem
- * atrasam confirmacao de consulta. */
-const KINDS_DE_INTEGRACAO = ["enviar_conversao_meta", "oferecer_lista_espera"];
-/** Leituras da Meta (investimento e consulta de anuncio por id): claim
- * proprio e grupo proprio (L1). */
-const KINDS_DE_GASTO = ["sincronizar_gasto_meta", "resolver_anuncio_meta"];
+// Os kinds de cada trilho (envio, midia, integracao e gasto) vivem em
+// lib/jobs/kinds.ts, junto com a faixa de mensagens esperando, que conta os
+// mesmos kinds de envio.
 
 /**
  * Quanto tempo um job do tipo pode consumir, no pior caso analitico.
@@ -70,9 +69,13 @@ const KINDS_DE_GASTO = ["sincronizar_gasto_meta", "resolver_anuncio_meta"];
  * (sendMenu faz DOIS requests de 10s quando o botao degrada para texto).
  * Midia: 25s de orcamento de download + parse + upload.
  */
-const CUSTO_ESTIMADO_MS: Record<string, number> = {
+export const CUSTO_ESTIMADO_MS: Record<string, number> = {
   enviar_mensagem_ativa: 25_000,
   executar_passo_de_regua: 25_000,
+  // Mesmo pior caso do envio ativo (um texto, 3 s de espera curta do slot e
+  // 10 s de provedor), mais as leituras da agendada, do numero e do fuso e a
+  // reconciliacao no fechamento.
+  enviar_mensagem_agendada: 25_000,
   baixar_midia: 30_000,
   // 10s de timeout da CAPI + 2 retries com backoff curto + RPCs.
   enviar_conversao_meta: 15_000,
@@ -167,7 +170,7 @@ export function montarGruposDaPassagem(lotes: {
 async function reivindicar(
   admin: SupabaseClient,
   executorId: string,
-  kinds: string[],
+  kinds: readonly string[],
   /** Quantas raias (numero, ou clinica para job sem numero). */
   maxRaias: number,
   incluirTeste: boolean,
@@ -176,7 +179,7 @@ async function reivindicar(
     p_worker: executorId,
     // O nome do parametro ficou de quando a raia era a clinica.
     p_max_clinicas: maxRaias,
-    p_kinds: kinds,
+    p_kinds: [...kinds],
     p_incluir_teste: incluirTeste,
   });
   if (error) {

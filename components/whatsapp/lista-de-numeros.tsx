@@ -8,9 +8,10 @@ import {
   Unplug,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { contarAgendadasDoNumero } from "@/components/atendimento/agendadas/contagens";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -24,6 +25,7 @@ import {
   removerNumeroAction,
 } from "@/lib/actions/whatsapp-connect";
 import type { CorDoNumero } from "@/lib/domain/cor-do-numero";
+import { createClient } from "@/lib/supabase/client";
 
 import { CartaoDoNumero } from "./cartao-do-numero";
 import { OrientacaoDoWhatsappBusiness } from "./connect-client";
@@ -41,6 +43,7 @@ import {
   motivoParaNaoRemover,
   nomeDaUnidade,
   textoDaRemocao,
+  textoDasAgendadasDoNumero,
   unidadesParaEscolher,
   type NumeroDoWhatsapp,
   type UnidadeDaClinica,
@@ -290,6 +293,36 @@ export function ListaDeNumeros({
     (total === 0 && providerDoAmbiente === "fake");
 
   const numeroDoAlvo = alvo && alvo.tipo !== "adicionar" ? alvo.numero : null;
+
+  // Quantas mensagens agendadas deste numero deixam de sair (secao 4.6 do
+  // desenho da mensagem agendada). Lida pela sessao quando o dialogo de
+  // remover abre; sem a contagem (lendo ou com erro), o dialogo fica como
+  // sempre, sem a frase.
+  const removendo = aberto && alvo?.tipo === "remover" ? alvo.numero.id : null;
+  const [agendadasDoNumero, setAgendadasDoNumero] = useState<{
+    id: string;
+    n: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!removendo) {
+      return;
+    }
+    let vigente = true;
+    contarAgendadasDoNumero(createClient(), removendo)
+      .then((n) => {
+        if (vigente) {
+          setAgendadasDoNumero({ id: removendo, n });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      vigente = false;
+    };
+  }, [removendo]);
+  const fraseDasAgendadas =
+    numeroDoAlvo && agendadasDoNumero?.id === numeroDoAlvo.id
+      ? textoDasAgendadasDoNumero(agendadasDoNumero.n)
+      : null;
   // As cores dos numeros ativos: o dialogo sugere a primeira livre e diz
   // quem ja usa cada uma.
   const coresEmUso = numeros.map((numero) => ({
@@ -468,7 +501,12 @@ export function ListaDeNumeros({
         titulo={`Remover o número ${numeroDoAlvo?.nome ?? ""}?`}
         descricao={
           numeroDoAlvo
-            ? descricaoDaRemocao(numeroDoAlvo, numerosDasAutomaticas, total)
+            ? [
+                descricaoDaRemocao(numeroDoAlvo, numerosDasAutomaticas, total),
+                fraseDasAgendadas,
+              ]
+                .filter(Boolean)
+                .join(" ")
             : ""
         }
         rotulo="Remover número"

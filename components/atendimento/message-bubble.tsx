@@ -2,7 +2,10 @@
 
 import {
   AudioLines,
+  Check,
+  CheckCheck,
   CircleSlash,
+  ClockFading,
   CloudOff,
   CornerUpLeft,
   Ellipsis,
@@ -10,6 +13,7 @@ import {
   Image as ImageIcon,
   Lock,
   OctagonAlert,
+  SendHorizonal,
   ShieldBan,
   Sparkles,
   Trash2,
@@ -18,11 +22,21 @@ import {
 import { useEffect, useState } from "react";
 
 import {
+  ROTULO_DO_TIQUE,
+  tiqueDaMensagem,
+  type TiqueDaMensagem,
+} from "@/lib/domain/tique-da-mensagem";
+
+import {
   FUSO_PADRAO,
   horaNaClinica,
 } from "@/components/atendimento/fuso-da-clinica";
 import { Aviso } from "@/components/shared/aviso";
 import type { CategoriaDeConformidade } from "@/lib/domain/conformidade/categorias";
+import {
+  autoriaDaBolha,
+  type AgendadaDoFio,
+} from "@/lib/domain/mensagem-agendada";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -307,6 +321,41 @@ function AudioBody({ message }: { message: MessageItem }) {
  * Sem esta checagem, todo video recebido continuaria como bolha vazia, que e
  * exatamente o defeito que este componente esta corrigindo.
  */
+// Tique de entrega da mensagem enviada, como no WhatsApp (pedido do dono em
+// 06/10/2026): um tique enviada, dois entregue, dois azuis lida. Na cor de
+// apoio da bolha; o azul de "lida" (--tique-lido) e excecao autorizada a
+// regra de mesmo icone em outra cor, e o texto ("Enviada", "Entregue",
+// "Lida") vai na dica e no leitor de tela. "Enviando" usa o icone de envio
+// (Clock e reservado para Aguardando, C18).
+function TiqueDaBolha({ tique }: { tique: TiqueDaMensagem | null }) {
+  if (!tique) {
+    return null;
+  }
+  const rotulo = ROTULO_DO_TIQUE[tique];
+  const Icone =
+    tique === "enviando"
+      ? SendHorizonal
+      : tique === "enviada"
+        ? Check
+        : CheckCheck;
+  return (
+    <span
+      title={rotulo}
+      data-tique={tique}
+      className="inline-flex shrink-0 items-center"
+    >
+      <Icone
+        aria-hidden
+        className={cn(
+          tique === "enviando" ? "size-3" : "size-3.5",
+          tique === "lida" && "text-(--tique-lido)",
+        )}
+      />
+      <span className="sr-only">{`, ${rotulo}`}</span>
+    </span>
+  );
+}
+
 function ehMidia(message: MessageItem): boolean {
   if (
     message.content_type === "imagem" ||
@@ -668,6 +717,7 @@ export function MessageBubble({
   citadaEstaNaTela = false,
   deConversaAnterior = false,
   timezone = FUSO_PADRAO,
+  agendada: agendadaDoFio = null,
 }: {
   message: MessageItem;
   authorName: string | null;
@@ -702,6 +752,11 @@ export function MessageBubble({
   deConversaAnterior?: boolean;
   /** fuso da clínica, para a hora da bolha */
   timezone?: string;
+  /**
+   * A agendada de onde a mensagem saiu (quem criou e quem editou por último),
+   * da consulta separada do fio (fetchAgendadasDoFio). Nula: resposta comum.
+   */
+  agendada?: AgendadaDoFio | null;
 }) {
   if (message.content_type === "evento") {
     return <SystemEventCard message={message} timezone={timezone} />;
@@ -716,6 +771,17 @@ export function MessageBubble({
   // não sabe, por "Pelo WhatsApp" com o ícone do aparelho.
   const peloCelular =
     message.pelo_celular === true && !fromPatient && !fromIa && !note;
+  // Saiu de uma mensagem agendada (A1 do desenho final): a linha de autor
+  // diz quem assina e que ela saiu sozinha na hora marcada, com o relogio
+  // da agendada (neutro). Quem editou por ultimo assina; quem criou aparece
+  // entre parenteses quando foi outra pessoa.
+  // A autoria vem de fora da mensagem: o fio nao embute a agendada, e se a
+  // consulta dela falhar a bolha so fica como uma resposta comum.
+  const agendada =
+    !fromPatient && !fromIa && !note && !peloCelular ? agendadaDoFio : null;
+  const autoriaAgendada = agendada
+    ? autoriaDaBolha(agendada, authorNames)
+    : null;
   const pele: keyof typeof PELES = fromPatient
     ? "paciente"
     : note
@@ -799,7 +865,19 @@ export function MessageBubble({
         {peloCelular && !apagada ? (
           <MarcaPeloCelular className="px-1 text-[11px] font-semibold text-text-secondary" />
         ) : null}
-        {!fromPatient && !fromIa && !peloCelular && authorName && !apagada ? (
+        {autoriaAgendada && !apagada ? (
+          <span className="flex items-center gap-1 px-1 text-[11px] font-semibold text-text-secondary">
+            <ClockFading aria-hidden className="size-3" />
+            <span aria-hidden>{autoriaAgendada.linha}</span>
+            <span className="sr-only">{autoriaAgendada.acessivel}</span>
+          </span>
+        ) : null}
+        {!fromPatient &&
+        !fromIa &&
+        !peloCelular &&
+        !autoriaAgendada &&
+        authorName &&
+        !apagada ? (
           <span
             className={cn(
               "flex items-center gap-1 px-1 text-[11px] font-semibold",
@@ -852,6 +930,7 @@ export function MessageBubble({
 
           <span className="mt-[3px] flex items-center justify-end gap-1 cz-num text-[11px] text-(--bolha-meta)">
             {horaNaClinica(message.created_at, timezone)}
+            <TiqueDaBolha tique={tiqueDaMensagem(message)} />
           </span>
         </div>
 

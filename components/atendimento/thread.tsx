@@ -4,6 +4,10 @@ import { ArrowLeft, History, UserRoundSearch } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import { AcoesDaConversa } from "@/components/atendimento/acoes-da-conversa";
+import {
+  agendadaDaMensagem,
+  SEM_AGENDADAS_DO_FIO,
+} from "@/components/atendimento/agendadas/da-mensagem";
 import { BolhaEmVoo } from "@/components/atendimento/bolha-em-voo";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import {
@@ -24,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { estadoVisualDaConversa } from "@/lib/design/status";
 import type { EnvioEmVoo } from "@/lib/domain/envios-em-voo";
+import type { AgendadasDoFio } from "@/lib/domain/mensagem-agendada";
 import type { NumeroDaConversa } from "@/lib/domain/numeros-do-inbox";
 import type { Role } from "@/lib/domain/permissions";
 import { formatarTelefone } from "@/lib/domain/telefone";
@@ -229,6 +234,7 @@ export function Thread({
   aoPerderConversa,
   timezone = FUSO_PADRAO,
   numero = null,
+  agendadasDoFio = SEM_AGENDADAS_DO_FIO,
 }: {
   conversation: ConversationListItem;
   messages: MessageItem[];
@@ -266,6 +272,12 @@ export function Thread({
    * (numeroParaMostrar): mais de um número ativo, ou número removido.
    */
   numero?: NumeroDaConversa | null;
+  /**
+   * Por message_id, as mensagens do fio que sairam de uma agendada (bolha
+   * "Mensagem agendada"). Consulta separada do fio: vazia, a bolha fica como
+   * uma resposta comum.
+   */
+  agendadasDoFio?: AgendadasDoFio;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const ultimaId = messages[messages.length - 1]?.id;
@@ -554,6 +566,7 @@ export function Thread({
                     carregadas.has(item.message.reply_to.id)
                   }
                   timezone={timezone}
+                  agendada={agendadaDaMensagem(agendadasDoFio, item.message.id)}
                 />
               );
             })}

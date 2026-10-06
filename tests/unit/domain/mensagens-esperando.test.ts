@@ -89,10 +89,11 @@ describe("contarMensagensEsperando", () => {
     });
   });
 
-  it("os kinds sao os de envio do motor", () => {
+  it("os kinds sao os de envio do motor, com a mensagem agendada", () => {
     expect([...KINDS_DE_ENVIO_AUTOMATICO]).toEqual([
       "enviar_mensagem_ativa",
       "executar_passo_de_regua",
+      "enviar_mensagem_agendada",
     ]);
   });
 

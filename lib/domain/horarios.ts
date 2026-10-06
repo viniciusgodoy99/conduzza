@@ -71,6 +71,27 @@ export function somarDias(diaLocal: string, dias: number): string {
   return `${a}-${m}-${d}`;
 }
 
+/**
+ * Soma meses a um dia civil (aaaa-mm-dd), sem envolver fuso. O dia que nao
+ * existe no mes de chegada prende no ultimo dia desse mes: 31/01 + 1 mes =
+ * 28/02 (29/02 no ano bissexto), 31/03 + 6 = 30/09 e 29/02/2028 + 12 =
+ * 28/02/2029. E a mesma regra do Postgres para date + interval 'N months'
+ * (e '1 year'), que o gatilho da mensagem agendada usa no teto: o calculo da
+ * tela e o do banco nunca divergem.
+ */
+export function somarMeses(diaLocal: string, meses: number): string {
+  const [ano, mes, dia] = diaLocal.split("-").map(Number);
+  const indice = ano! * 12 + ((mes ?? 1) - 1) + meses;
+  const novoAno = Math.floor(indice / 12);
+  const novoMes = indice - novoAno * 12;
+  // Dia 0 do mes seguinte = ultimo dia do mes de chegada.
+  const ultimoDia = new Date(Date.UTC(novoAno, novoMes + 1, 0)).getUTCDate();
+  const novoDia = Math.min(dia ?? 1, ultimoDia);
+  const m = String(novoMes + 1).padStart(2, "0");
+  const d = String(novoDia).padStart(2, "0");
+  return `${novoAno}-${m}-${d}`;
+}
+
 /** Quantos dias civis separam dois dias no formato aaaa-mm-dd (b menos a). */
 export function diasEntre(diaA: string, diaB: string): number {
   const emUTC = (dia: string) => {

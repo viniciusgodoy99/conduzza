@@ -95,15 +95,18 @@ test("mensagem enviada pelo WhatsApp da clínica aparece no fio como Pelo WhatsA
       .conversation_id;
 
     // Com a recepcao, para o menu da bolha mostrar a dica do Apagar (sem a
-    // posse ele mostra "Assuma a conversa"). A fala do paciente fica 10
-    // minutos para tras: a mensagem do celular e de uma PESSOA, nao a
+    // posse ele mostra "Assuma a conversa"). A fala do paciente fica 3
+    // horas para tras: a mensagem do celular e de uma PESSOA, nao a
     // resposta automatica do app (que sai ate 8 s depois do paciente).
     const { error: erroDaConversa } = await admin
       .from("conversation")
       .update({
         status: "em_atendimento",
         assignee_user_id: await idDoMembro("recepcao"),
-        last_inbound_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+        last_inbound_at: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+        // A conversa fica 3 horas para tras na lista: a mensagem do celular
+        // tem de traze-la para o topo (ordem do WhatsApp, 06/10/2026).
+        last_message_at: new Date(Date.now() - 3 * 3_600_000).toISOString(),
       })
       .eq("id", conversationId);
     expect(erroDaConversa).toBeNull();
@@ -191,6 +194,17 @@ test("mensagem enviada pelo WhatsApp da clínica aparece no fio como Pelo WhatsA
     await expect(cartao.getByText("Clínica:", { exact: true })).toBeVisible({
       timeout: 8000,
     });
+    // Como no WhatsApp (pedido do dono em 06/10/2026): a mensagem mandada
+    // pelo celular sobe a conversa para o topo e a hora do cartao passa a ser
+    // a dela, sem recarregar.
+    const primeiro = page
+      .getByRole("complementary", { name: "Conversas" })
+      .getByRole("button", { name: /Última mensagem (às|em) / })
+      .first();
+    await expect(primeiro).toHaveAccessibleName(new RegExp(CONTACT_NAME), {
+      timeout: 8000,
+    });
+    await expect(cartao).toHaveAccessibleName(/Última mensagem às \d{2}:\d{2}/);
 
     // Sem pessoa no sistema: so a chefia apaga, e a dica diz isso.
     await linha.hover();

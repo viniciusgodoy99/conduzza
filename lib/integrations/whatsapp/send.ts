@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { canSendDecision } from "@/lib/domain/messaging";
 import { log } from "@/lib/log";
+import { falhaPermiteRetry } from "./falhas-do-envio";
 import { textoNumerado } from "./menu-texto";
 import { getWhatsAppProvider } from "./provider";
 import type {
@@ -122,6 +123,20 @@ export type SendTextInput = {
    * que numero_do_job resolveu; ausente ou nulo, nao ha o que conferir.
    */
   whatsappAccountId?: string | null;
+  /**
+   * Mantem o "Aguardando voce" (conversation.awaiting_reply) mesmo com author
+   * 'usuario'. E a mensagem agendada (lib/jobs/mensagem-agendada.ts): sai em
+   * nome de uma pessoa, mas foi escrita antes, e a pergunta que o paciente
+   * fez depois continua sem resposta. Ausente, vale a regra de sempre (gente
+   * respondeu, a espera cai).
+   */
+  manterAguardando?: boolean;
+  /**
+   * O bloqueio por falta de autorizacao vai para a trilha (audit_log) SEM
+   * pessoa (user_id nulo), mesmo com authorUserId. Quem decidiu enviar
+   * naquela hora foi o motor, nao a pessoa que assina a mensagem agendada.
+   */
+  trilhaDoSistema?: boolean;
 };
 
 /** Traduz o tipo do provedor para o content_type do banco. */
@@ -173,22 +188,17 @@ export type SendTextResult =
       message: string;
     };
 
-// Codigos de falha em que o provedor COM CERTEZA nao chegou a enviar: o retry
-// e seguro. O unico ambiguo e 'envio_incerto' (a mensagem pode ter chegado e
-// so a resposta se perdido): esse NUNCA entra em retry automatico.
-const FALHAS_SEM_ENVIO = new Set([
-  "slot_indisponivel",
-  "leitura_falhou",
-  "canal_ocupado",
-  "sem_consentimento_no_envio",
-  "sem_instancia",
-  "configuracao_ausente",
-  "provider_indisponivel",
-]);
-
-export function falhaPermiteRetry(code: string | undefined): boolean {
-  return code !== undefined && FALHAS_SEM_ENVIO.has(code);
-}
+// Codigos de falha em que o provedor COM CERTEZA nao chegou a enviar
+// (FALHAS_SEM_ENVIO: o retry e seguro; o unico ambiguo e 'envio_incerto',
+// que NUNCA entra em retry automatico) e a pergunta "esta falha garante que
+// nada chegou ao paciente?" (envioCertamenteNaoSaiu). Moram num modulo puro,
+// ./falhas-do-envio, para quem so decide nao carregar o provedor; a lista e
+// cruzada por teste com a do SQL da mensagem agendada.
+export {
+  envioCertamenteNaoSaiu,
+  FALHAS_SEM_ENVIO,
+  falhaPermiteRetry,
+} from "./falhas-do-envio";
 
 async function marcarFalha(
   supabase: SupabaseClient,
@@ -493,17 +503,15 @@ async function enviarPeloCanal(
   // receber, bastando alguem inserir uma linha nova.
   //
   // O numero vem DA CONVERSA, junto com ela: e por ele que a mensagem sai.
-  const [
-    { data: consentimentoVigente, error: erroDoConsentimento },
-    conversa,
-  ] = await Promise.all([
-    supabase.rpc("consentimento_vigente", {
-      p_clinic_id: input.clinicId,
-      p_contact_id: input.contactId,
-      p_channel: "whatsapp",
-    }),
-    lerNumeroDaConversa(supabase, input.clinicId, input.conversationId),
-  ]);
+  const [{ data: consentimentoVigente, error: erroDoConsentimento }, conversa] =
+    await Promise.all([
+      supabase.rpc("consentimento_vigente", {
+        p_clinic_id: input.clinicId,
+        p_contact_id: input.contactId,
+        p_channel: "whatsapp",
+      }),
+      lerNumeroDaConversa(supabase, input.clinicId, input.conversationId),
+    ]);
 
   // Sem resposta nao e revogacao: nada de "sem autorizacao" nem de registro
   // na trilha de um bloqueio que o paciente nao pediu. 'leitura_falhou' e
@@ -551,7 +559,7 @@ async function enviarPeloCanal(
   if (!decision.allowed && decision.reason === "sem_consentimento") {
     await supabase.from("audit_log").insert({
       clinic_id: input.clinicId,
-      user_id: input.authorUserId,
+      user_id: input.trilhaDoSistema ? null : input.authorUserId,
       action: "envio_bloqueado_sem_autorizacao",
       entity: "contact",
       entity_id: input.contactId,
@@ -607,7 +615,14 @@ async function enviarPeloCanal(
   // IDEMPOTENCIA POR JOB: se este job ja tem mensagem, um retry esta rodando.
   // So e seguro reenviar quando o codigo da falha anterior garante que o
   // provedor nao chegou a enviar; em qualquer outro estado, nao reenvia.
+  //
+  // A linha reaproveitada CONTINUA 'falhou' (com o codigo que garante que
+  // nada saiu) ate logo antes do provedor. Se ela virasse 'enviando' aqui e
+  // o slot voltasse adiado ou indisponivel, ela ficaria 'enviando' sem envio
+  // nenhum, e a tentativa seguinte a leria como "pode ter chegado"
+  // (envio_incerto: a agendada fechava como nao confirmada sem ter saido).
   let messageId: string | null = null;
+  let reaproveitada = false;
   if (input.jobId) {
     const { data: existente } = await supabase
       .from("message")
@@ -628,10 +643,7 @@ async function enviarPeloCanal(
         };
       }
       messageId = existente.id as string;
-      await supabase
-        .from("message")
-        .update({ delivery_status: "enviando", error_code: null })
-        .eq("id", messageId);
+      reaproveitada = true;
     }
   }
 
@@ -788,7 +800,7 @@ async function enviarPeloCanal(
       await marcarFalha(supabase, messageId, "sem_consentimento_no_envio");
       await supabase.from("audit_log").insert({
         clinic_id: input.clinicId,
-        user_id: input.authorUserId,
+        user_id: input.trilhaDoSistema ? null : input.authorUserId,
         action: "envio_bloqueado_sem_autorizacao",
         entity: "contact",
         entity_id: input.contactId,
@@ -799,6 +811,25 @@ async function enviarPeloCanal(
         code: "sem_consentimento_no_envio",
         message:
           "Este contato não autoriza mais receber mensagens. O envio foi cancelado.",
+      };
+    }
+  }
+
+  // A linha reaproveitada so agora vira 'enviando', com o slot reservado e a
+  // autorizacao reconferida: daqui em diante o envio pode sair. Sem essa
+  // marca, nada sai: uma linha 'falhou' (codigo retentavel) com o envio
+  // feito faria o retry mandar de novo.
+  if (reaproveitada) {
+    const { error: erroDaMarca } = await supabase
+      .from("message")
+      .update({ delivery_status: "enviando", error_code: null })
+      .eq("id", messageId);
+    if (erroDaMarca) {
+      return {
+        ok: false,
+        reason: "falha_envio",
+        code: "registro_falhou",
+        message: "Não foi possível registrar a mensagem.",
       };
     }
   }
@@ -908,12 +939,14 @@ async function enviarPeloCanal(
   // awaiting_reply so cai quando quem escreveu foi GENTE. Toque automatico de
   // regua sai com author 'sistema' e nao pode apagar a pergunta que o paciente
   // fez e ninguem respondeu: seria a recepcao perdendo a conversa justamente
-  // porque a maquina falou por cima.
+  // porque a maquina falou por cima. A mensagem agendada sai com author
+  // 'usuario' (assina quem a escreveu), mas foi escrita ANTES da pergunta:
+  // manterAguardando segura a espera pelo mesmo motivo.
   await supabase
     .from("conversation")
     .update({
       last_message_at: new Date().toISOString(),
-      ...((input.author ?? "usuario") === "usuario"
+      ...((input.author ?? "usuario") === "usuario" && !input.manterAguardando
         ? { awaiting_reply: false }
         : {}),
     })

@@ -12,7 +12,7 @@ Três entradas no `pg_cron`, dentro do próprio Supabase:
 
 | Entrada            | Cadência                          | O que faz                                                                               | Onde executa                  |
 | ------------------ | --------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------- |
-| `motor-manutencao` | 60 segundos                       | limpa reservas vencidas, fecha execuções órfãs, expira ofertas, planeja réguas, higiene, enfileira a leitura diária do investimento da Meta | **dentro do banco**, SQL puro |
+| `motor-manutencao` | 60 segundos                       | limpa reservas vencidas, fecha execuções órfãs, expira ofertas, planeja réguas, higiene, enfileira a leitura diária do investimento da Meta, planeja e fecha as mensagens agendadas | **dentro do banco**, SQL puro |
 | `motor-fila`       | 20 segundos                       | chama a rota na Vercel, que processa a fila de tarefas                                  | Vercel, região de São Paulo   |
 | `poda-do-cron`     | 1 vez por dia, 03:17 de Fortaleza | apaga de `cron.job_run_details` as execuções com mais de 7 dias                         | **dentro do banco**, SQL puro |
 
@@ -22,12 +22,12 @@ A rota da fila faz **quatro** reivindicações em paralelo a cada passagem, cada
 
 | Trilho | Tipos | Raias por passagem |
 | --- | --- | --- |
-| Envio | `enviar_mensagem_ativa`, `executar_passo_de_regua` | 8 (`MOTOR_MAX_CLINICAS`) |
+| Envio | `enviar_mensagem_ativa`, `executar_passo_de_regua`, `enviar_mensagem_agendada` | 8 (`MOTOR_MAX_CLINICAS`) |
 | Mídia | `baixar_midia` | 2 |
 | Integração | `enviar_conversao_meta`, `oferecer_lista_espera` | 2 |
 | Leituras da Meta | `sincronizar_gasto_meta`, `resolver_anuncio_meta` | 2 |
 
-O trilho das leituras da Meta é explicado em "Leitura do investimento da Meta" e em "Consulta dos anúncios da Meta", abaixo.
+O trilho das leituras da Meta é explicado em "Leitura do investimento da Meta" e em "Consulta dos anúncios da Meta", abaixo. A mensagem agendada, em "Mensagem agendada".
 
 As duas primeiras são ligadas e desligadas pela operação (`motor_agendar()` e `motor_desagendar()`), nunca por migration: num banco de laptop elas virariam um segundo motor chamando a produção. A poda é agendada pela migration `20260924120000_poda_do_cron.sql`, porque não chama nada fora do banco.
 
@@ -283,6 +283,73 @@ from meta_anuncio group by 1, 2, 3;
 ```
 
 Para consultar de novo uma clínica, use o "Testar leitura" em Configurações. Pelo SQL Editor, `select enfileirar_resolucao_de_anuncios_meta('<clinic_id>', 'gasto');` respeita a pausa. Para liberar já um anúncio recusado com a mesma conta e o mesmo token, apague a linha dele em `meta_anuncio_recusado` e enfileire.
+
+---
+
+## Mensagem agendada
+
+Desde 06/10/2026 (migration `20261006140000_mensagem_agendada.sql`) quem está com a conversa pode agendar uma mensagem para sair sozinha numa data e hora. A agendada vive em `mensagem_agendada`; o texto **nunca** vai para a fila, para `last_error` nem para log.
+
+**Quem faz o quê.**
+
+- `motor_manutencao()` chama, por último, `planejar_mensagens_agendadas()`: a agendada vencida vira a tarefa `enviar_mensagem_agendada` (payload só com `contact_id` e `mensagem_agendada_id`), uma por vez por contato e número, na ordem da hora marcada. A que espera a anterior do mesmo contato e número nem entra no lote (o limite de 200 conta só o que dá para planejar). Vencida há mais de 12 horas não sai (`atrasou`); a do número removido não sai (`numero_removido`). Cada agendada roda no próprio bloco: uma linha com erro não para as outras (`erros_por_linha`). O retorno da manutenção ganha `mensagens_agendadas` (contagens da planejadora e da reconciliação, com `erros_por_linha` somado).
+- A tarefa roda no trilho de envio (`lib/jobs/mensagem-agendada.ts`), sempre pelo número da conversa, nunca outro. Número desconectado: espera até o limite real da agendada (12 horas depois da hora marcada, ou as 21:00 antes disso quando dali em diante ela cairia de madrugada) e desiste com `desconectado` ou `madrugada`. A atrasada (mais de 15 minutos depois da hora marcada) que cairia entre 21:00 e 08:00 no fuso da clínica espera as 08:00 (`ultimo_motivo_devolucao = 'silencio_noturno'`) se as 08:00 couberem nas 12 horas, inclusive (a das 20:00 espera as 08:00; o executor só desiste por prazo depois de 12 horas e 5 minutos); senão desiste com `madrugada`.
+- Só o motor (`claim_jobs_por_clinica`) reivindica esta tarefa. O claim legado `claim_jobs` (do `npm run worker` e das suítes de integração que rodam contra a produção) não a reivindica nem a enterra, para um teste local nunca enviar uma agendada real da máquina de quem desenvolve.
+- Depois de concluir ou falhar a tarefa, o executor chama `reconciliar_mensagem_agendada`; o que escapar, `reconciliar_mensagens_agendadas()` fecha na passagem seguinte da manutenção. Enviada: a conversa aguardando e sem atendente fica com quem assina a agendada (quem editou por último, senão quem agendou), se ainda tem acesso com escrita. Não saiu: `encerrar_agendada_sem_envio` fecha e cria **uma** atividade ("Mensagem agendada não saiu" ou "Conferir se a mensagem agendada chegou") para quem assina.
+- A mesma reconciliação aplica a retenção: a não enviada ou não confirmada que ninguém dispensou em 30 dias perde o texto e sai da lista.
+- Revogar a autorização do contato e remover o número encerram as agendadas na hora (gatilho em `contact_consent` e `remover_numero`), cada uma com a sua atividade, inclusive a que já está na fila com a tarefa `pendente`, que é cancelada (`sem_consentimento` ou `numero_removido`) quando nada pode ter saído: sem mensagem da tarefa, ou mensagem `falhou` com um código de `falhas_sem_envio()`. A que já está `executando` fica com a reconferência do envio. A revogação nunca falha por causa de uma agendada: se fechar com a atividade der erro, fecha sem ela (aviso `agendadas_param_na_revogacao: agendada <id> fechada sem atividade (<SQLSTATE>)` no log do Postgres), e o cancelamento da tarefa nunca é desfeito.
+
+**Códigos no `planner_erro`** (acendem `planner_com_erro` no monitor):
+
+| Código | O que é | O que fazer |
+| --- | --- | --- |
+| `mensagem_agendada:<SQLSTATE>` | erro estrutural da planejadora (fora das linhas: a função ou a tabela, por exemplo): nenhuma agendada vencida virou tarefa nesta passagem | some sozinho na passagem seguinte se foi soluço. Se repete, `select planejar_mensagens_agendadas(1);` no SQL Editor mostra o erro (e planeja uma, como o motor faria) |
+| `agendada_reconciliar:<SQLSTATE>` | erro estrutural da reconciliação ou da retenção nesta passagem | se repete, `select reconciliar_mensagens_agendadas(1);` mostra o erro |
+| `agendadas_erros:<n>` | `n` agendadas deram erro **na própria linha** nesta passagem (soma da planejadora e da reconciliação). As outras seguiram normais; só essas ficaram como estavam e voltam a ser tentadas na passagem seguinte | se aparece uma vez e some, foi soluço (trava, corrida): nada a fazer. Se repete, é a mesma linha quebrada: diagnóstico abaixo |
+| `agendadas_presas:<n>` | `n` agendadas em `enviando` com a hora marcada há mais de 13 horas: a tarefa delas não terminou e nada as fechou. O executor desiste em 12 horas, então isso é trilho de envio parado ou defeito | diagnóstico abaixo |
+
+**Diagnóstico de `agendadas_erros`** (sem o texto):
+
+1. Ache o id no log do Postgres (Dashboard > Logs > Postgres, nível WARNING). Cada linha com erro deixa um aviso só com o id e o SQLSTATE: `planejar_mensagens_agendadas: agendada <id> (<SQLSTATE>)` ou `reconciliar_mensagens_agendadas: agendada <id> (<SQLSTATE>)`.
+2. Olhe a linha:
+
+```sql
+select a.id, a.clinic_id, a.situacao, a.enviar_em, a.job_id,
+       a.conversation_id, c.contact_id = a.contact_id as conversa_do_contato,
+       j.status, j.last_error
+from mensagem_agendada a
+left join conversation c on c.id = a.conversation_id
+left join job_queue j on j.id = a.job_id
+where a.id = '<id>';
+```
+
+3. Na reconciliação, `select reconciliar_mensagem_agendada('<id>');` no SQL Editor mostra o erro inteiro (e, se passar, fecha a agendada como o motor faria). Na planejadora não há chamada de uma linha só: o SQLSTATE do aviso e a consulta acima guiam.
+4. **Caso conhecido (ensaiado em 06/10/2026):** SQLSTATE `23514` com `conversa_do_contato = false`. Alguém trocou o contato da conversa da agendada (nenhuma tela faz isso: só uma chamada direta à API), e a atividade de "não saiu", que leva a conversa, é recusada por `validar_atividade`. Corrigida a conversa, a passagem seguinte fecha a agendada com a atividade, sozinha. Se a troca do contato foi intencional, não a desfaça só por isso: anote o id e trate com o desenvolvimento.
+5. **Nunca** mude `mensagem_agendada.situacao` direto, nem aqui: a atividade, a ordem por contato e a retirada do texto dependem das funções. Enquanto a linha estiver quebrada, as outras agendadas da clínica e das outras clínicas continuam saindo.
+
+Clínica `e_de_teste` fica fora da planejadora, da reconciliação e da contagem de presas do motor (só os testes de integração passam `p_incluir_teste`).
+
+**Diagnóstico das presas** (sem o texto):
+
+```sql
+select a.id, a.clinic_id, a.enviar_em, a.job_id, j.status, j.last_error,
+       j.ultimo_motivo_devolucao, j.devolucoes, j.run_at
+from mensagem_agendada a
+left join job_queue j on j.id = a.job_id
+where a.situacao = 'enviando' and a.enviar_em < now() - interval '13 hours';
+```
+
+- Tarefa `pendente` com `run_at` no passado: o trilho de envio não anda (ver "A faixa não apareceu, mas nada sai").
+- Tarefa `executando`: o lease vence em 180 segundos e o claim a retoma ou a enterra (`lease_expirado`); a reconciliação fecha depois.
+- Para encerrar à mão, cancele a tarefa pendente: `update job_queue set status = 'cancelado', last_error = 'cancelada_pela_operacao' where id = '<job_id>' and status = 'pendente';`. A passagem seguinte fecha a agendada como não enviada e cria a atividade. **Nunca** mude `mensagem_agendada.situacao` direto: a atividade, a ordem por contato e a retirada do texto dependem das funções.
+
+`last_error` da tarefa é só código: `agendada_encerrada` (a agendada foi excluída ou fechada antes de a tarefa rodar; normal), `cancelada_pela_clinica` (excluída enquanto estava na fila), `numero_removido`, `desconectado`, `atrasou`, `madrugada` (atrasou e cairia entre 21:00 e 08:00 com as 08:00 depois do prazo), `sem_consentimento` (também quando a revogação cancela a tarefa na fila), `rollback` (passo 2 do rollback da migration), `envio_incerto` (pode ter chegado: a agendada fecha como "Envio não confirmado", nunca reenvia sozinha), `conta_divergente`, `payload_invalido`, `leitura_falhou`, `conversa_indisponivel`, `consentimento_ilegivel:<código>`.
+
+Visão geral:
+
+```sql
+select situacao, motivo, count(*) from mensagem_agendada group by 1, 2 order by 3 desc;
+```
 
 ---
 

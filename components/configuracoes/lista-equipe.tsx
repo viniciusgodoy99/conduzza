@@ -1,20 +1,29 @@
 "use client";
 
 import { CircleAlert, UserMinus, UserPlus, Users } from "lucide-react";
-import { useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
+import { cancelarAgendadasDaPessoaAction } from "@/app/(app)/atendimento/agendadas-actions";
 import {
   desativarMembroAction,
   mudarPapelAction,
   reativarMembroAction,
   vincularProfissionalAction,
 } from "@/app/(app)/configuracoes/actions";
+import {
+  ajudaDeCancelarAgendadas,
+  contarAgendadasDaPessoa,
+  rotuloDeCancelarAgendadas,
+  textoDasAgendadasDaPessoa,
+} from "@/components/atendimento/agendadas/contagens";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +32,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -34,8 +44,9 @@ import {
   ACCESS_LEVEL_STATUS,
   type StatusDefinition,
 } from "@/lib/design/status";
-import { ROLE_OPTIONS } from "@/lib/domain/permissions";
+import { ROLE_DESCRIPTIONS, ROLE_OPTIONS } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 // Lista da equipe da clinica: quem tem acesso, com qual papel, e quem esta
@@ -45,6 +56,13 @@ import { cn } from "@/lib/utils";
 // Tres travas, iguais as do banco, aqui so para explicar antes de tentar:
 // ninguem mexe na propria linha, gestor nao mexe em administrador, e o unico
 // administrador ativo nao pode ser rebaixado nem desativado.
+//
+// Mensagens agendadas (A5 do desenho final da mensagem agendada, 06/10/2026):
+// tirar o acesso ou trocar para Somente leitura de quem ASSINA mensagens
+// agendadas (editou por ultimo, ou criou e ninguem editou) mostra quantas
+// sao e oferece cancelar todas, com a caixa desmarcada. Sem cancelar, elas
+// saem em nome da pessoa e a conversa fica Sem atendente. A contagem e lida
+// pela sessao (a RLS recorta), so quando o dialogo precisa dela.
 //
 // Papel Profissional (achados 1, 31 e 120): a linha ganha o seletor
 // "Profissional da agenda". Sem esse vinculo a Agenda, o Inicio e os
@@ -61,6 +79,81 @@ export type MembroEquipe = {
   /** cadastro de profissional da agenda (so vale para o papel Profissional) */
   professionalId: string | null;
 };
+
+/** Quantas mensagens agendadas a pessoa do dialogo assina. */
+export type ContagemDeAgendadas =
+  | { estado: "carregando" }
+  | { estado: "erro" }
+  | { estado: "pronto"; n: number };
+
+/** O bloco do dialogo: a contagem e a caixa de cancelar (A5). */
+export function AgendadasDaPessoa({
+  contagem,
+  cancelar,
+  aoMarcar,
+  desabilitado = false,
+}: {
+  contagem: ContagemDeAgendadas | null;
+  cancelar: boolean;
+  aoMarcar: (marcado: boolean) => void;
+  desabilitado?: boolean;
+}) {
+  const base = useId();
+  if (!contagem) {
+    return null;
+  }
+  if (contagem.estado === "carregando") {
+    return (
+      <p role="status" className="text-[13px] text-text-secondary">
+        Conferindo as mensagens agendadas desta pessoa.
+      </p>
+    );
+  }
+  if (contagem.estado === "erro") {
+    return (
+      <Aviso tom="warning">
+        Não foi possível conferir se esta pessoa assina mensagens agendadas. Se
+        assinar, elas saem em nome dela e a conversa fica Sem atendente.
+      </Aviso>
+    );
+  }
+  if (contagem.n === 0) {
+    return null;
+  }
+  return (
+    <div className="grid gap-2.5">
+      <p className="text-[13.5px] font-semibold text-text-strong">
+        {textoDasAgendadasDaPessoa(contagem.n)}
+      </p>
+      <div className="flex items-start gap-2.5">
+        <Checkbox
+          id={`${base}-cancelar`}
+          checked={cancelar}
+          disabled={desabilitado}
+          onCheckedChange={(valor) => aoMarcar(valor === true)}
+          aria-describedby={`${base}-ajuda`}
+          className="mt-px"
+        />
+        <div className="grid gap-1">
+          <Label htmlFor={`${base}-cancelar`} className="text-[13.5px]">
+            {rotuloDeCancelarAgendadas(contagem.n)}
+          </Label>
+          <p id={`${base}-ajuda`} className="text-[12.5px] text-text-secondary">
+            {ajudaDeCancelarAgendadas(contagem.n)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A caixa so vale com a contagem lida e maior que zero. */
+function vaiCancelar(
+  contagem: ContagemDeAgendadas | null,
+  cancelar: boolean,
+): boolean {
+  return cancelar && contagem?.estado === "pronto" && contagem.n > 0;
+}
 
 /** Cadastro de profissional que um usuario de papel Profissional pode ser. */
 export type ProfissionalDaAgenda = {
@@ -113,6 +206,7 @@ export function ListaEquipe({
   ehAdmin,
   dica,
   profissionais,
+  clinicId,
 }: {
   membros: MembroEquipe[];
   meuUserId: string;
@@ -121,9 +215,137 @@ export function ListaEquipe({
   dica: string;
   /** nulo: a leitura dos profissionais falhou */
   profissionais: ProfissionalDaAgenda[] | null;
+  /**
+   * A clinica ativa: a contagem das mensagens agendadas de quem perde a
+   * escrita. Ausente, os dialogos nao contam (nem oferecem cancelar).
+   */
+  clinicId?: string;
 }) {
   const [pending, startTransition] = useTransition();
   const [confirmar, setConfirmar] = useState<MembroEquipe | null>(null);
+  // Trocar para Somente leitura de quem assina mensagens agendadas.
+  const [paraLeitura, setParaLeitura] = useState<MembroEquipe | null>(null);
+  const [agendadas, setAgendadas] = useState<ContagemDeAgendadas | null>(null);
+  const [cancelarAgendadas, setCancelarAgendadas] = useState(false);
+  // A contagem que vale e a do ultimo pedido (abrir o dialogo de outra
+  // pessoa antes da primeira voltar nao mistura as duas).
+  const pedidoDaContagem = useRef(0);
+
+  const contarAgendadas = async (
+    userId: string,
+  ): Promise<ContagemDeAgendadas> => {
+    if (!clinicId) {
+      return { estado: "pronto", n: 0 };
+    }
+    try {
+      const n = await contarAgendadasDaPessoa(createClient(), clinicId, userId);
+      return { estado: "pronto", n };
+    } catch {
+      return { estado: "erro" };
+    }
+  };
+
+  const cancelarAgendadasDe = async (alvo: MembroEquipe) => {
+    const resultado = await cancelarAgendadasDaPessoaAction({
+      userId: alvo.userId,
+    }).catch(() => null);
+    if (!resultado?.ok) {
+      toast.error(
+        resultado?.error ??
+          "Não foi possível cancelar as mensagens agendadas desta pessoa. Tente de novo.",
+      );
+      return;
+    }
+    toast.success(
+      resultado.canceladas === 1
+        ? "1 mensagem agendada cancelada"
+        : `${resultado.canceladas} mensagens agendadas canceladas`,
+    );
+  };
+
+  const abrirTirarAcesso = (membro: MembroEquipe) => {
+    const pedido = ++pedidoDaContagem.current;
+    setConfirmar(membro);
+    setCancelarAgendadas(false);
+    setAgendadas(clinicId ? { estado: "carregando" } : null);
+    if (!clinicId) {
+      return;
+    }
+    void contarAgendadas(membro.userId).then((contagem) => {
+      if (pedidoDaContagem.current === pedido) {
+        setAgendadas(contagem);
+      }
+    });
+  };
+
+  const fecharDialogos = () => {
+    pedidoDaContagem.current += 1;
+    setConfirmar(null);
+    setParaLeitura(null);
+    setAgendadas(null);
+    setCancelarAgendadas(false);
+  };
+
+  const mudarPapel = (membro: MembroEquipe, papel: string) => {
+    executar(
+      () => mudarPapelAction({ user_id: membro.userId, papel }),
+      `Papel de ${membro.nome} atualizado`,
+      "Não foi possível mudar o papel.",
+    );
+  };
+
+  // Para Somente leitura: confere primeiro se a pessoa assina agendadas. Sem
+  // nenhuma, troca direto (como os outros papeis); com alguma, ou sem
+  // conseguir conferir, o dialogo explica antes.
+  const pedirLeitura = (membro: MembroEquipe) => {
+    const pedido = ++pedidoDaContagem.current;
+    setCancelarAgendadas(false);
+    startTransition(async () => {
+      const contagem = await contarAgendadas(membro.userId);
+      if (pedidoDaContagem.current !== pedido) {
+        return;
+      }
+      if (contagem.estado === "pronto" && contagem.n === 0) {
+        const resultado = await mudarPapelAction({
+          user_id: membro.userId,
+          papel: "leitura",
+        });
+        if (!resultado.ok) {
+          toast.error(resultado.error ?? "Não foi possível mudar o papel.");
+          return;
+        }
+        toast.success(`Papel de ${membro.nome} atualizado`);
+        return;
+      }
+      setAgendadas(contagem);
+      setParaLeitura(membro);
+    });
+  };
+
+  const confirmarLeitura = () => {
+    const alvo = paraLeitura;
+    if (!alvo) {
+      return;
+    }
+    const cancelar = vaiCancelar(agendadas, cancelarAgendadas);
+    startTransition(async () => {
+      const resultado = await mudarPapelAction({
+        user_id: alvo.userId,
+        papel: "leitura",
+      });
+      if (!resultado.ok) {
+        toast.error(resultado.error ?? "Não foi possível mudar o papel.");
+        return;
+      }
+      fecharDialogos();
+      toast.success(`Papel de ${alvo.nome} atualizado`);
+      // Depois da troca: se o cancelamento falhar, a troca ja valeu e as
+      // mensagens seguem como o padrao (saem em nome dela).
+      if (cancelar) {
+        await cancelarAgendadasDe(alvo);
+      }
+    });
+  };
 
   const adminsAtivos = membros.filter(
     (membro) => membro.ativo && membro.papel === "admin",
@@ -173,14 +395,20 @@ export function ListaEquipe({
     if (!alvo) {
       return;
     }
+    const cancelar = vaiCancelar(agendadas, cancelarAgendadas);
     startTransition(async () => {
       const resultado = await desativarMembroAction({ user_id: alvo.userId });
       if (!resultado.ok) {
         toast.error(resultado.error ?? "Não foi possível tirar o acesso.");
         return;
       }
-      setConfirmar(null);
+      fecharDialogos();
       toast.success(`${alvo.nome} ficou sem acesso`);
+      // Depois de tirar o acesso (que volta com um clique); o cancelamento
+      // nao volta, entao so acontece se o acesso de fato saiu.
+      if (cancelar) {
+        await cancelarAgendadasDe(alvo);
+      }
     });
   };
 
@@ -225,12 +453,9 @@ export function ListaEquipe({
             <Select
               value={membro.papel}
               onValueChange={(valor) =>
-                executar(
-                  () =>
-                    mudarPapelAction({ user_id: membro.userId, papel: valor }),
-                  `Papel de ${membro.nome} atualizado`,
-                  "Não foi possível mudar o papel.",
-                )
+                valor === "leitura" && membro.papel !== "leitura" && clinicId
+                  ? pedirLeitura(membro)
+                  : mudarPapel(membro, valor)
               }
               disabled={motivoPapel !== null || pending}
             >
@@ -308,7 +533,7 @@ export function ListaEquipe({
               disabled={motivoAcesso !== null || pending}
               onClick={() =>
                 membro.ativo
-                  ? setConfirmar(membro)
+                  ? abrirTirarAcesso(membro)
                   : executar(
                       () => reativarMembroAction({ user_id: membro.userId }),
                       `${membro.nome} voltou a ter acesso`,
@@ -390,7 +615,7 @@ export function ListaEquipe({
         open={confirmar !== null}
         onOpenChange={(aberto) => {
           if (!aberto) {
-            setConfirmar(null);
+            fecharDialogos();
           }
         }}
       >
@@ -405,16 +630,57 @@ export function ListaEquipe({
               pode devolver o acesso quando quiser.
             </DialogDescription>
           </DialogHeader>
+          <AgendadasDaPessoa
+            contagem={agendadas}
+            cancelar={cancelarAgendadas}
+            aoMarcar={setCancelarAgendadas}
+            desabilitado={pending}
+          />
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setConfirmar(null)}>
-              Cancelar
+            {/* "Voltar", e nao "Cancelar": a caixa acima ja fala em
+                cancelar as mensagens, e os dois nomes iguais confundiriam. */}
+            <Button variant="ghost" onClick={fecharDialogos}>
+              Voltar
             </Button>
             <Button
               variant="destructive"
-              disabled={pending}
+              // Espera a contagem: confirmar antes dela pularia a escolha.
+              disabled={pending || agendadas?.estado === "carregando"}
               onClick={confirmarDesativacao}
             >
               {pending ? "Tirando..." : "Tirar acesso"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={paraLeitura !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto) {
+            fecharDialogos();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>
+              Trocar {paraLeitura?.nome ?? "esta pessoa"} para Somente leitura?
+            </DialogTitle>
+            <DialogDescription>{ROLE_DESCRIPTIONS.leitura}</DialogDescription>
+          </DialogHeader>
+          <AgendadasDaPessoa
+            contagem={agendadas}
+            cancelar={cancelarAgendadas}
+            aoMarcar={setCancelarAgendadas}
+            desabilitado={pending}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={fecharDialogos}>
+              Voltar
+            </Button>
+            <Button disabled={pending} onClick={confirmarLeitura}>
+              {pending ? "Trocando..." : "Trocar para Somente leitura"}
             </Button>
           </DialogFooter>
         </DialogContent>

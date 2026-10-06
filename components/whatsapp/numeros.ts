@@ -195,6 +195,20 @@ export function textoDaRemocao(
     : base;
 }
 
+/**
+ * A frase das mensagens agendadas no dialogo de remover (secao 4.6 do
+ * desenho da mensagem agendada): remover_numero encerra as que ainda iam
+ * sair por este numero. Nulo sem nenhuma.
+ */
+export function textoDasAgendadasDoNumero(n: number): string | null {
+  if (!Number.isInteger(n) || n <= 0) {
+    return null;
+  }
+  return n === 1
+    ? "1 mensagem agendada deste número não vai sair."
+    : `${n} mensagens agendadas deste número não vão sair.`;
+}
+
 /** Nome da unidade do numero, quando ele tem uma e ela esta na lista. */
 export function nomeDaUnidade(
   unitId: string | null,

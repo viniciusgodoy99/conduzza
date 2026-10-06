@@ -283,15 +283,15 @@ export function ConversationList({
           // o 9, com e sem mascara): lib/domain/filtros-da-conversa.ts.
           return casaBusca(conversation.contact, search);
         })
-        // ORDEM DE RECEBIMENTO, uma regra só: a fala mais recente do paciente
-        // primeiro. Antes a chave primária era o booleano "esperando
+        // ORDEM DA ÚLTIMA MENSAGEM, uma regra só: a conversa com a mensagem
+        // mais recente, enviada ou recebida, primeiro (recencia), como no
+        // WhatsApp. Antes a chave primária era o booleano "esperando
         // resposta", o que empilhava a lista em dois blocos e fazia a coluna
         // de horários parecer embaralhada sem motivo visível.
         //
-        // O sinal que aquele critério carregava não se perdeu: ele vive no
-        // chip "Aguardando você", que é filtro, e é o lugar certo dele. Assim
-        // um disparo de 40 confirmações continua não escondendo a conversa em
-        // que o paciente escreveu, e quem quer ver só quem espera, filtra.
+        // Quem espera resposta nunca fica fora do lote: fetchConversations
+        // junta as 300 mais recentes com as que aguardam resposta, e o chip
+        // "Aguardando você" filtra só elas.
         .sort((a, b) => recencia(b) - recencia(a))
     );
   }, [

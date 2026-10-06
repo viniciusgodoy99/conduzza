@@ -644,7 +644,10 @@ create table job_queue (
     'enviar_mensagem_ativa', 'baixar_midia', 'executar_passo_de_regua',
     'enviar_conversao_meta', 'oferecer_lista_espera',
     'sincronizar_gasto_meta',               -- desde 20261003100000 (seção 14)
-    'resolver_anuncio_meta')),              -- desde 20261004100000 (seção 14.9, não aplicada em 04/10)
+    'resolver_anuncio_meta',                -- desde 20261004100000 (seção 14.9, não aplicada em 04/10)
+    'enviar_mensagem_agendada')),           -- desde 20261006140000 (seção 18, não aplicada em 06/10)
+  -- NOTA PARA O E3: a migration do 'responder_com_ia' redefine este CHECK
+  -- inteiro e precisa manter 'enviar_mensagem_agendada' (seção 18.11).
   payload jsonb not null default '{}',
   status text not null default 'pendente'
     check (status in ('pendente','executando','concluido','falhou','cancelado')),
@@ -773,7 +776,15 @@ volta a `ultimo_usado` (`remover_numero`). Trocar a escolha de um tipo
 recarimba só os pendentes daquele tipo (`redistribuir_jobs_do_numero(numero,
 p_tipos)`). O motor reivindica por **raia**
 (`coalesce(whatsapp_account_id, clinic_id)`), então dois números da mesma
-clínica enviam em paralelo e o mesmo número serializa.
+clínica enviam em paralelo e o mesmo número serializa. **Exceção, a mensagem
+agendada (seção 18, 06/10/2026):** o job `enviar_mensagem_agendada` nasce com
+o número da própria agendada (o da conversa onde ela foi escrita), fica fora
+de `redistribuir_jobs_do_numero` (lista explícita de kinds) e de
+`job_ganha_numero`, nunca passa por `numero_do_job` e nunca é recarimbado;
+com o número removido, o job pendente é cancelado, e não redistribuído. Só o
+motor (`claim_jobs_por_clinica`) o reivindica: o claim legado `claim_jobs`
+(do `npm run worker` e das suítes de integração) o exclui nos dois ramos
+(18.10).
 
 ```sql
 
@@ -1109,7 +1120,7 @@ create table contact_activity (
 - **Dado de paciente:** o texto pode ser dado de saúde. Toda leitura por pessoa vai para `audit_log` (entidade `atividades` em `lib/auth/read-audit.ts`: a página sem id; drawer, painel da conversa e ficha com o id do contato); mutações com `entity = 'contact_activity'` e o id (`criou_atividade`, `editou_atividade`, também ao adiar, `concluiu_atividade`, `reabriu_atividade`, `cancelou_atividade`), nunca o texto. Nunca em log.
 - **Prazo (regra 3.6):** `due_on` é o dia civil, no precedente de `package_balance.expires_at`; com hora, quem manda é `due_at`, e `due_on` é só o dia dele no fuso da clínica: o gatilho **recalcula `due_on` de `due_at` no fuso da clínica** a cada INSERT, a cada UPDATE que mexe em `due_at` ou `due_on` e **quando a clínica troca de fuso** (revisão de 02/10/2026). Esse último caso é o gatilho **`recalcular_dia_das_atividades`** (`AFTER UPDATE OF timezone ON clinic`, `when (new.timezone is distinct from old.timezone)`; função `SECURITY DEFINER`, `search_path` vazio, sem `execute` para `public`, `anon` e `authenticated`): recalcula o dia de **toda** atividade com hora da clínica, inclusive concluídas e canceladas (a reaberta volta com o dia certo, e o texto do prazo também fica certo); cada linha passa pelo `validar_atividade` com o fuso novo já gravado, e os carimbos ficam como estavam. Atividade sem hora mantém o dia escolhido. Sem isso, a lista dizia "Amanhã, 23:30" para o que vence hoje e a contagem não o via em "hoje". O contorno "fuso da clínica mudou" de `lib/domain/atividades.ts` fica só como defesa. Criar sem hora manda só `due_on`; com hora, os dois. Adiar: `{ due_on }` sem hora, `{ due_at }` com hora, `{ due_at: null, due_on }` para tirar a hora.
 - **Gatilhos:** `set_updated_at`; `exigir_contato_da_mesma_clinica` (o mesmo de waitlist, appointment e contact_consent; contato de outra clínica dá P0001); e **`validar_atividade`** (`SECURITY DEFINER`, `search_path = public`):
-  - no INSERT com sessão: origem tem de ser `manual` (senão 42501), `created_by` vira `auth.uid()` quando vem nulo e é recusado se for outra pessoa (42501), `created_at = now()`; sem sessão (o motor), origem `automacao` exige `automacao_id` (23514); toda atividade nasce `pendente` (23514) e sem carimbos;
+  - no INSERT com sessão: origem tem de ser `manual` (senão 42501), `created_by` vira `auth.uid()` quando vem nulo e é recusado se for outra pessoa (42501), `created_at = now()`; sem sessão (o motor), origem `automacao` exige `automacao_id` (23514); toda atividade nasce `pendente` (23514) e sem carimbos; **exceção desde a `20261006140000` (seção 18.10):** com a GUC `conduzza.agendada_pelo_sistema = 'sim'`, que só as funções `SECURITY DEFINER` da mensagem agendada ligam, a atividade "a mensagem agendada não saiu" passa com origem `automacao`, sem `automacao_id` e sem `created_by`, mesmo nascendo dentro de uma sessão (a revogação da autorização pela ficha roda com a sessão de quem revoga);
   - no UPDATE: `clinic_id`, `contact_id`, `created_by`, `created_at` e `origem` imutáveis (23514); `automacao_id` só pode virar nulo; mudou o status, o gatilho carimba `completed_at/by` ou `canceled_at/by` com a sessão (nula para a service role) e limpa ao reabrir; com o status igual, os carimbos ficam como estavam (o cliente não forja);
   - o responsável tem de ser membro **ativo** da clínica, conferido só quando é definido ou trocado (quem saiu da equipe depois não trava concluir, adiar nem reatribuir);
   - a conversa tem de ser da mesma clínica e do mesmo contato (23514).
@@ -1885,3 +1896,210 @@ Decisão do dono em 05/10/2026: ligar a IA na clínica, escolher o número e cad
 **Ordem de publicação:** a migration vai **antes** do código da aba (sem as policies, a aba lê zero linhas e mostraria a clínica como desligada). Sem lock em tabela quente.
 
 **Rollback** (cabeçalho da migration, manual): tirar a aba do ar; apagar as três policies novas (`"gestao le ..."`), `ia_membro_ve_a_liberacao(uuid)` e `ia_interruptor_ligado()`; recriar as três RPCs com o corpo e o comentário de `20261006100000` (guarda `ia_exigir_equipe_conduzza()`, sem o bloco de um número por vez); apagar `ia_exigir_quem_libera(uuid)`.
+
+---
+
+## 18. Mensagem agendada na conversa (06/10/2026, migration `20261006140000_mensagem_agendada.sql`)
+
+Pedido do dono em 06/10/2026 (backlog, entrada "Mensagem agendada na conversa"): a pessoa que está com a conversa escreve uma mensagem para sair **sozinha** numa data e hora, até 1 ano à frente. O motor envia na hora marcada, pelo **mesmo número** da conversa, em nome de quem **assina** a agendada, e a conversa fica com quem assina depois que a mensagem sai. É texto escrito por uma pessoa, nunca modelo nem IA: exceção decidida pelo dono a "mensagem padrão nunca é enviada sozinha" (spec 1.11). Depois da construção, passou por uma revisão adversarial em 06/10/2026 (backlog, entrada "Mensagem agendada na conversa") e o próprio arquivo foi corrigido (nada de migration nova); esta seção descreve o arquivo corrigido. Ensaiada quatro vezes em transação desfeita contra a produção e **ainda não aplicada** em 06/10/2026 (sha256 do arquivo atual, o mesmo do quarto ensaio, `b324ec6e8e5e8f8c3b0c98e0d1d9f46e7c102641336e1f5c02ffe3640eab53b9`). Os tipos de `lib/supabase/database.types.ts` (a tabela e as seis funções chamáveis; `falhas_sem_envio` entra quando forem regenerados) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar.
+
+### 18.1 Decisões registradas
+
+- **Do pedido (06/10/2026):** a lista das agendadas fica em cima da caixa de escrever; se o paciente escrever antes, a agendada **não** se cancela sozinha (a tela avisa e a equipe decide); quando sai, a conversa fica com quem assina, e Sem atendente se essa pessoa saiu da equipe; teto de 1 ano à frente, contado no dia civil da clínica.
+- **A1, quem assina:** qualquer pessoa que escreve na clínica (`user_can_write`) e **vê** a agendada pela RLS edita texto e hora enquanto ela está `agendada`. O **assinante** é `coalesce(editada_por, criada_por)`: quem editou por último, senão quem criou. Ele é o `author_user_id` da mensagem que sai, a pessoa que fica com a conversa depois do envio e a responsável pela atividade quando a mensagem não sai, sempre que ainda for **membro ativo com escrita** (administrador, gestor, recepção ou profissional; Somente leitura conta como "saiu da equipe").
+- **A1, Enviar agora:** quem escreve e está **com** a conversa do número da agendada (`em_atendimento` e responsável = ela) retira a agendada e envia o texto pelo trilho 1:1, em nome **dela**, como resposta digitada.
+- **A2, madrugada:** a atrasada (mais de 15 minutos depois da hora marcada) não sai entre 21:00 e 08:00 no fuso da clínica: espera as 08:00 seguintes quando elas caem **até** o prazo (`enviar_em + 12 h`, inclusive: a das 20:00 espera as 08:00, que são o próprio prazo); senão desiste com o motivo **`madrugada`** ("o envio atrasou e cairia de madrugada"; `atrasou` fica só para mais de 12 horas). O executor só desiste por prazo depois de `enviar_em + 12 h + 5 min` (`FOLGA_DA_JANELA_MS`), para a que esperou as 08:00 não morrer por segundos na vez do motor. É regra do executor (`decidirJanelaDaAgendada`, `lib/domain/mensagem-agendada.ts`); o banco só ganhou o motivo `madrugada` (CHECK, texto da atividade e `motivo_da_agendada`), e a planejadora continua criando o job na hora.
+- **A3, atividade:** quando a agendada não sai (`nao_enviada` ou `nao_confirmada`), nasce **uma** atividade do CRM para o assinante conferir (18.5).
+- **A4, termo da jornada:** a agendada **não** anda o lead; o Enviar agora anda, como qualquer resposta digitada.
+- **A5, padrões assumidos que o dono pode trocar:** teto de **10** agendadas ativas por contato (`v_teto` no gatilho; espelho `TETO_DE_AGENDADAS_POR_CONTATO`); **retenção de 30 dias** para a não enviada e a não confirmada que ninguém dispensou; Somente leitura conta como "saiu da equipe"; em Configurações > Equipe, quem gerencia pode cancelar as agendadas de quem perde a escrita (sessão, 18.4).
+- **Número fixo:** a agendada nunca troca de número. Número removido não sai; número desconectado espera até o **prazo efetivo** e depois desiste (`prazoEfetivoDaAgendada`: o prazo de `enviar_em + 12 h`, ou as 21:00 antes dele quando dali em diante ela cairia de madrugada; desiste com `desconectado` no primeiro caso e com `madrugada` no segundo). A lista mostra esse mesmo limite.
+
+### 18.2 `mensagem_agendada`
+
+| Coluna | Regra |
+|---|---|
+| `id` | uuid, PK. A tela gera o id ao abrir o diálogo: o duplo envio cai na mesma linha |
+| `clinic_id` | not null, FK `clinic` com cascade |
+| `contact_id` | not null, FK `contact` com cascade (a exclusão LGPD leva junto); gatilho `exigir_contato_da_mesma_clinica` no INSERT |
+| `whatsapp_account_id` | not null, FK `whatsapp_account` sem ação (só a cascata da clínica apaga): o número é fixo |
+| `conversation_id` | FK `conversation` com `on delete set null`: a conversa onde foi agendada; depois de sair, a da mensagem enviada |
+| `texto` | dado de paciente. CHECK `texto_da_agendada`: nulo, ou de 1 a 4096 caracteres depois de `btrim` (`char_length`, pontos de código). CHECK `texto_enquanto_vale`: não nulo em `agendada` e `enviando`. Vira nulo quando sai, quando é excluída, quando é dispensada e na retenção: depois de sair, o texto vive em `message`. O CHECK é **mais frouxo** que o código: o domínio, o diálogo e as Server Actions contam em unidades UTF-16 (`texto.length`, a mesma régua do envio 1:1; um emoji conta 2 lá e 1 aqui), para o Enviar agora nunca recusar o que o agendamento aceitou |
+| `enviar_em` | timestamptz not null. Futuro e teto ficam no gatilho: nenhum CHECK usa `now()` |
+| `situacao` | `agendada` (padrão), `enviando` (o job existe), `enviada`, `nao_enviada` (com certeza não saiu), `nao_confirmada` (pode ter chegado) ou `cancelada`; CHECK `situacao_da_agendada` |
+| `motivo` | nulo ou `sem_autorizacao`, `numero_removido`, `numero_desconectado`, `atrasou`, `madrugada`, `canal_ocupado`, `falha_no_envio`, `envio_incerto`, `enviada_agora`; CHECK `motivo_da_agendada`, a mesma lista de `MOTIVOS_DA_AGENDADA` (`tests/unit/agendada/listas-do-banco.test.ts` cruza as duas). `madrugada` (revisão de 06/10/2026): atrasou e cairia na faixa de silêncio com as 08:00 seguintes depois do prazo |
+| `criada_por`, `criada_em` | not null, carimbados pelo gatilho (o cliente não manda nem forja) |
+| `editada_por`, `editada_em` | quem editou por último (A1) |
+| `cancelada_por`, `cancelada_em` | exclusão, Enviar agora e o cancelamento por Equipe |
+| `dispensada_por`, `dispensada_em` | dispensar; na retenção, `dispensada_por` fica nulo |
+| `job_id` | FK `job_queue` com `on delete set null`; índice único parcial `mensagem_agendada_job` |
+| `message_id` | FK `message` com `on delete set null`: a mensagem que saiu, ou a que falhou |
+| `atividade_id` | FK `contact_activity` com `on delete set null`; índice único parcial `mensagem_agendada_atividade`. A atividade de "não saiu" (A3); coluna que o desenho não tinha, para a idempotência |
+| `enviada_em`, `encerrada_em`, `updated_at` | `enviada_em` é o `created_at` da mensagem que saiu; `encerrada_em` marca o fim (base da retenção) |
+
+- As colunas de usuário apontam para `auth.users` sem ação de exclusão, como `message.author_user_id`.
+- **Índices:** `mensagem_agendada_contato (clinic_id, contact_id)` (a lista); `_vencendo (enviar_em) where situacao = 'agendada'` (planejadora); `_enviando (clinic_id, contact_id, whatsapp_account_id) where situacao = 'enviando'` (uma por vez); `_numero (whatsapp_account_id) where situacao in ('agendada','enviando')` (`remover_numero` e a contagem do diálogo de remover); `_autor (clinic_id, coalesce(editada_por, criada_por)) where situacao = 'agendada'` (Equipe); `_conversa` e `_mensagem` parciais (as FKs com `set null`); `_para_reter (encerrada_em)` nas não enviadas e não confirmadas não dispensadas; e o único **`mensagem_agendada_sem_duplicata`** `(clinic_id, contact_id, whatsapp_account_id, enviar_em, md5(texto)) where situacao in ('agendada','enviando')`: a mesma mensagem para o mesmo contato, pelo mesmo número e na mesma hora só existe uma vez enquanto vale (23505).
+
+### 18.2a `falhas_sem_envio() returns text[]` (revisão de 06/10/2026)
+
+Primeira coisa da migration, depois das travas. SQL `immutable parallel safe`, `search_path` vazio, `execute` só para `service_role` (as funções `SECURITY DEFINER` daqui a chamam como donas). Devolve os códigos de falha que **garantem que a mensagem não saiu**, um por linha: `slot_indisponivel`, `leitura_falhou`, `canal_ocupado`, `sem_consentimento_no_envio`, `sem_instancia`, `configuracao_ausente` e `provider_indisponivel`. É a mesma lista de `FALHAS_SEM_ENVIO` (`lib/integrations/whatsapp/falhas-do-envio.ts`, reexportada por `send.ts`): uma `message` `falhou` com um destes códigos certamente não chegou ao paciente, e o job volta a `pendente` para nova tentativa. `tests/unit/agendada/listas-do-banco.test.ts` cruza as duas listas e confere que todo predicado de mensagem `falhou` da migration usa a função, nunca uma cópia da lista.
+
+**O predicado de cancelamento**, igual nos três lugares que cancelam o job pendente de uma agendada `enviando` (a exclusão pela sessão, 18.3; a revogação, 18.9; e `remover_numero`, 18.10):
+
+```sql
+j.status = 'pendente'
+and not exists (
+  select 1 from public.message m
+   where m.job_id = j.id
+     and not coalesce(
+       m.delivery_status = 'falhou'
+         and m.error_code = any (public.falhas_sem_envio()),
+       false)
+)
+```
+
+Ou seja: o job não tem mensagem, ou a mensagem dele é `falhou` com código da lista. `envio_incerto`, código fora da lista ou nulo, `enviando` e os estados de saída contam como "pode ter saído", e o job não é cancelado.
+
+### 18.3 Gatilho `proteger_mensagem_agendada` (BEFORE INSERT OR UPDATE)
+
+`SECURITY DEFINER`, `search_path` vazio, molde de `validar_atividade`. O WITH CHECK da RLS roda depois dos gatilhos BEFORE, então o `criada_por` carimbado satisfaz a policy.
+
+- **O sistema passa:** sem sessão, ou com a GUC `conduzza.agendada_pelo_sistema = 'sim'` (só as funções `SECURITY DEFINER` desta seção a ligam, cada uma guardando e devolvendo o valor anterior, para a chamada aninhada não desligar a de quem chamou; o PostgREST não expõe `set_config`). Só `updated_at` muda.
+- **Cascata de FK:** dentro de outro gatilho (`pg_trigger_depth() > 1`), um UPDATE cuja única mudança é `conversation_id`, `job_id`, `message_id` ou `atividade_id` virando nulo passa. Sem isso, apagar uma conversa, um job, uma mensagem ou uma atividade dentro de uma sessão esbarraria na trava abaixo (o primeiro ensaio provou o caso).
+- **INSERT pela sessão:** carimba autoria e estado (`criada_por = auth.uid()`, `situacao = 'agendada'`, o resto nulo) e confere, nesta ordem:
+  1. `user_can_write` primeiro: "Sem permissão para agendar mensagens nesta clínica." (42501). Vem antes de tudo para quem é de outra clínica não descobrir, pelas mensagens seguintes, se um número ou uma conversa existe;
+  2. texto: "Escreva a mensagem (até 4096 caracteres)." (23514);
+  3. hora futura: "Essa hora já passou. Escolha outra." (23514);
+  4. teto: `(enviar_em at time zone fuso)::date > (hoje + interval '1 year')::date` dá "Mais de 1 ano à frente não dá para agendar." (23514). O dia do teto vale inteiro, e 29/02 mais 1 ano vira 28/02, a mesma regra de `somarMeses` (`lib/domain/horarios.ts`);
+  5. número ativo da clínica: "O número desta conversa foi removido. Não dá para agendar por ele." (23514);
+  6. a conversa é da clínica, do contato e do número, `em_atendimento` e com quem agenda: "Assuma a conversa antes de agendar." (42501);
+  7. `consentimento_vigente`: "Este contato não autorizou receber mensagens. Registre a autorização na ficha antes de agendar." (23514);
+  8. teto de 10 `agendada` por contato: "Este contato já tem muitas mensagens agendadas. Exclua uma antes de agendar outra." (23514). **Com trava por contato** (revisão de 06/10/2026): antes da contagem, `pg_advisory_xact_lock(hashtextextended('mensagem_agendada:' || contact_id, 0))`; duas inserções simultâneas do mesmo contato (duas abas, dois números) contam uma depois da outra, e a segunda, com retrato novo (READ COMMITTED), vê a linha da primeira. A trava dura só até o fim da transação.
+- **UPDATE pela sessão:** `id`, `clinic_id`, `contact_id`, `whatsapp_account_id`, `conversation_id`, `criada_por`, `criada_em`, `job_id`, `message_id`, `atividade_id`, `enviada_em`, `encerrada_em` e `motivo` não mudam ("Só o texto, a hora, a exclusão e o dispensar mudam por aqui.", 42501); os carimbos voltam ao que eram; uma mudança de cada vez ("Faça uma mudança de cada vez.", 42501).
+  - **Excluir:** só para `cancelada`, a partir de `agendada` ou `enviando` ("Só dá para excluir uma mensagem agendada ou na fila para sair.", 42501). Em `enviando`, o mesmo comando cancela o job (`last_error = 'cancelada_pela_clinica'`) se ele ainda está `pendente` **e nada pode ter saído**: não existe mensagem do job, ou a única é `falhou` com código de `falhas_sem_envio()` (18.2a). Atômico com o claim, que só reivindica `pendente`. Qualquer outra mensagem (`enviando`, `enviada`, `envio_incerto`, código fora da lista ou nulo) pode ter chegado, e a exclusão perde: "Esta mensagem já começou a sair e não dá mais para excluir. Confira a conversa." (CZ409). Antes da revisão, qualquer mensagem do job bloqueava, e a agendada que falhou sem sair (e ia tentar de novo) não podia ser excluída e saía na tentativa seguinte. Carimba `cancelada_por`, `cancelada_em` e `encerrada_em` e apaga o texto.
+  - **Dispensar** (`dispensada_em` de nulo para preenchido): só em `nao_enviada` ou `nao_confirmada` ("Só uma mensagem que não saiu pode ser dispensada.", 42501); carimba quem e quando e apaga o texto.
+  - **Editar** (texto ou hora): só em `agendada` ("Esta mensagem já começou a sair e a mudança não foi salva. Confira a conversa.", CZ409); sem checagem de autor (A1); texto, hora futura e teto como no INSERT (a hora só é conferida quando muda); carimba `editada_por` com a sessão, que **passa a assinar**.
+- As recusas acima são frases fixas, sem dado de paciente: a Server Action mostra cada uma como veio (`RECUSAS_DO_GATILHO`), e qualquer outra mensagem do banco vira a frase padrão da ação.
+
+### 18.4 RLS e privilégios da tabela
+
+- **SELECT** `"membro ativo le agendadas conforme papel"`: membro ativo da clínica (`user_active_clinic_ids`; pendente não). O **profissional** só vê a agendada de uma conversa dele: a da própria `conversation_id` ou, do mesmo contato e número, uma conversa dele que não está resolvida (a agendada de uma conversa resolvida continua visível na conversa nova). É a mesma régua de `message`.
+- **INSERT** `"quem responde agenda"`: `user_can_write`, `criada_por = auth.uid()`, `situacao = 'agendada'` e a conversa da clínica, do contato e do número em atendimento com quem agenda.
+- **UPDATE** `"quem escreve mexe na agendada que ve"`: `user_can_write`, a situação em `agendada`, `enviando`, `nao_enviada` ou `nao_confirmada` e, para o profissional, o mesmo predicado da leitura; `with check (user_can_write(clinic_id))`. O que cada um muda fica no gatilho. Cancelada e enviada não mudam mais.
+- **Sem DELETE:** `revoke delete, truncate, references, trigger` de `authenticated`; exclui-se cancelando, como atividade. A cascata do contato e da clínica não depende do privilégio. `anon` sem privilégio nenhum.
+- **Cancelar as agendadas de uma pessoa (Configurações > Equipe, A5):** é um UPDATE de sessão de administrador ou gestor (`situacao = 'cancelada'` nas `agendada` em que `coalesce(editada_por, criada_por)` é a pessoa), que a policy e o gatilho já permitem; a Server Action confere `canEdit(papel, 'configuracoes')` antes.
+
+### 18.5 `encerrar_agendada_sem_envio(p_agendada_id uuid, p_situacao text, p_motivo text) returns boolean` (A3)
+
+`SECURITY DEFINER`, `search_path` vazio, `execute` só para `service_role`. É o caminho para `nao_enviada` e `nao_confirmada`: a planejadora (`atrasou`, `numero_removido`), a reconciliação, a revogação da autorização (uma atividade por agendada) e `remover_numero` passam todos por ela. **Uma exceção** (revisão de 06/10/2026): se ela falhar dentro da revogação depois de o job ter sido cancelado, a revogação fecha a agendada sem a atividade (18.9), para o cancelamento nunca ser desfeito.
+
+- `p_situacao` fora de `nao_enviada` e `nao_confirmada` dá 22023. Trava a linha (`for update`); se ela já não está `agendada` nem `enviando`, devolve `false` e não faz nada (idempotente: encerrar de novo não cria outra atividade). Devolve `true` quando fechou agora.
+- Se a agendada ainda não tem atividade, cria **uma** em `contact_activity`:
+  - **O que fazer:** "Mensagem agendada não saiu" (`nao_enviada`) ou "Conferir se a mensagem agendada chegou" (`nao_confirmada`);
+  - **Detalhes**, com a hora marcada no fuso da clínica (`dd/mm/aaaa às HH:MM`): "A mensagem agendada para {quando} não saiu: {motivo}. Confira a conversa e, se ainda fizer sentido, agende de novo."; sem autorização, só "A mensagem agendada para {quando} não saiu: o contato não autoriza receber mensagens."; na não confirmada, "A mensagem agendada para {quando} pode ter chegado ao paciente. Confira a conversa antes de mandar de novo.". O motivo em texto: "o contato não autoriza receber mensagens", "o número {nome} foi removido da clínica", "o número {nome} ficou desconectado por mais de 12 horas" (sem nome, "o número da conversa"), "o envio atrasou mais de 12 horas", "o envio atrasou e cairia de madrugada" (`madrugada`), "o número ficou ocupado com outros envios por tempo demais" e, para o resto, "erro do sistema no envio". **Nunca** o texto da mensagem, o nome ou o telefone do contato;
+  - **Prazo:** hoje, dia todo (`due_on` no fuso da clínica, sem `due_at`);
+  - **Responsável:** o assinante, se ainda é membro ativo com escrita; senão, sem responsável;
+  - **Conversa:** a da agendada; **origem** `automacao` sem `automacao_id` e sem `created_by` (aceito por `validar_atividade` pela GUC, 18.10);
+  - trilha `agendada_criou_atividade` com `user_id` nulo, `entity = 'contact_activity'` e o id da atividade, no molde de `automacao_criou_atividade`.
+- Depois grava `situacao`, `motivo`, `encerrada_em` e `atividade_id`. O texto da agendada fica até alguém dispensar, ou até a retenção (18.7).
+
+### 18.6 Planejadora: `planejar_mensagens_agendadas(p_limite integer default 200, p_clinic_id uuid default null, p_incluir_teste boolean default false) returns jsonb`
+
+`SECURITY DEFINER`, `search_path` vazio, só `service_role`; chamada por `motor_manutencao` (18.10). Pega as `agendada` com `enviar_em <= now()`, fora das clínicas de teste automático (`clinic.e_de_teste`; os testes de integração chamam com `p_clinic_id` e `p_incluir_teste = true` e não competem com o cron, o mesmo molde das automações de fluxo), na ordem `enviar_em, criada_em, id`, no máximo `p_limite` (entre 1 e 1000), com `for update of a skip locked for key share of w skip locked` (a trava compartilhada no número faz a planejadora pular as agendadas de um número que `remover_numero` está removendo, em vez de formar um deadlock no FK do job; a passagem seguinte as fecha como `numero_removido`).
+
+**A vez entra no WHERE** (revisão de 06/10/2026): só entra no lote a vencida há mais de 12 horas, a do número removido, ou a que **não** espera outra do mesmo contato e número (nenhuma `enviando`, nenhuma `agendada` antes dela na ordem). O `LIMIT` conta só o que dá para planejar: antes, 200 agendadas presas atrás de um número caído gastavam o lote de todas as clínicas a cada passagem. A antecessora `agendada` também está vencida e vem antes na ordem, então entra no mesmo lote; a sucessora vai na passagem seguinte. Para cada uma do lote:
+
+1. vencida há mais de 12 horas: `encerrar_agendada_sem_envio(..., 'nao_enviada', 'atrasou')`;
+2. número removido: `encerrar_agendada_sem_envio(..., 'nao_enviada', 'numero_removido')`;
+3. outra do mesmo contato e número ainda `enviando`, ou `agendada` antes dela na mesma ordem: espera. É a **segunda trava**, para a anterior que surgiu depois da consulta (uma por vez por contato e número, na ordem);
+4. senão, cria o job `enviar_mensagem_agendada` com `payload {contact_id, mensagem_agendada_id}` (**nunca o texto**), o número da agendada, prioridade 0 e `run_at = now()`, e marca a agendada `enviando` com o `job_id`.
+
+**Erro por linha isolado** (revisão de 06/10/2026): cada agendada roda no próprio `begin ... exception`. Um erro numa linha (por exemplo, a atividade recusada por `validar_atividade` porque a conversa da agendada passou a ser de outro contato) desfaz só ela, conta em `erros_por_linha` e as outras seguem; o aviso (`raise warning`) leva só o id da agendada e o SQLSTATE. Antes, uma linha assim parava a planejadora de todas as clínicas a cada passagem.
+
+A contagem `esperando_a_anterior` (vencidas há até 12 horas que esperam a anterior, fora do lote) é só para o monitor. Devolve `{planejadas, atrasadas, numero_removido, esperando_a_anterior, erros_por_linha}`.
+
+### 18.7 Reconciliação e retenção
+
+- **`motivo_da_agendada(p_codigo text) returns text`** (`immutable`, SQL, só `service_role`): o código curto do job ou da mensagem para o motivo da tela. `sem_consentimento` e `sem_consentimento_no_envio` dão `sem_autorizacao`; `numero_removido` dá `numero_removido`; `desconectado` e `sem_numero` dão `numero_desconectado`; `atrasou` dá `atrasou`; `madrugada` dá `madrugada`; `canal_ocupado` e `devolucoes_demais` dão `canal_ocupado`; `envio_incerto` dá `envio_incerto`; o resto, `falha_no_envio`. `tests/unit/agendada/servidor-kinds.test.ts` confere os códigos do executor contra o SQL.
+- **`reconciliar_mensagem_agendada(p_agendada_id uuid) returns text`** (`SECURITY DEFINER`, só `service_role`). Trava a agendada `enviando` com `skip locked` (travada por outro caminho fica para a passagem seguinte), lê o job e a mensagem do job (`message.job_id`) e decide:
+  - mensagem `enviada`, `entregue` ou `lida`: `enviada`, com `message_id`, `conversation_id` e `enviada_em` da mensagem e o texto apagado. A conversa dessa mensagem, **se** está `aguardando_humano` e sem responsável, passa a `em_atendimento` com o assinante, desde que ele seja membro ativo com escrita: nunca rouba de colega nem da IA;
+  - com o job acabado (`falhou`, `cancelado` ou `concluido`) ou sumido, primeiro escolhe o **código do desfecho** (revisão de 06/10/2026): com o job encerrado de vez (`falhou` ou `cancelado`), `coalesce(job.last_error, message.error_code)`, porque o motivo **final** do job vence o código da mensagem, que pode ser de uma tentativa antiga (`leitura_falhou` na primeira; `sem_consentimento`, `numero_removido` ou `atrasou` na segunda, que não toca a mensagem); com o job `concluido`, `coalesce(message.error_code, job.last_error)`, porque concluir não limpa um `last_error` velho. Antes, o código velho da mensagem vencia, e a tela e a atividade mostravam "erro do sistema no envio" no lugar do motivo real;
+  - sem mensagem: `nao_enviada`, com o motivo desse código;
+  - mensagem `falhou` e nem ela nem o código do desfecho são `envio_incerto`: grava `message_id` e fecha `nao_enviada`, com o motivo desse código;
+  - o resto (mensagem parada em `enviando`, ou `envio_incerto`): grava `message_id` e fecha `nao_confirmada`, motivo `envio_incerto`.
+
+  Devolve `enviada`, `nao_enviada`, `nao_confirmada` ou `sem_mudanca`. O worker chama depois de `concluir_job` ou `falhar_job` (`fecharAgendadaDoJob`, em `lib/jobs/mensagem-agendada.ts`; nunca lança, e em erro loga só `agendada_fechamento_falhou` com ids e código); no reagendamento, não chama.
+- **`reconciliar_mensagens_agendadas(p_limite integer default 200, p_clinic_id uuid default null, p_incluir_teste boolean default false) returns jsonb`** (`SECURITY DEFINER`, só `service_role`; chamada pelo motor): fecha, pela função acima, as `enviando` cujo job acabou ou sumiu, ou cuja mensagem já saiu; aplica a **retenção de 30 dias** (A5: a `nao_enviada` e a `nao_confirmada` não dispensadas com `encerrada_em` de mais de 30 dias perdem o texto e ganham `dispensada_em`, com `dispensada_por` nulo, até `p_limite` por passagem, `skip locked`); e conta as **presas** (`enviando` com `enviar_em` de mais de 13 horas). Cada agendada do laço roda no próprio `begin ... exception` (revisão de 06/10/2026): um erro numa linha desfaz só ela, conta em `erros_por_linha` e o aviso leva só o id e o SQLSTATE, como na planejadora. Devolve `{fechadas_enviadas, fechadas_sem_envio, retidas, presas, erros_por_linha}`.
+
+### 18.8 Enviar agora: `tirar_agendada_para_enviar_agora(p_id uuid) returns jsonb`
+
+`SECURITY DEFINER`, `search_path` vazio, `execute` para `authenticated` e `service_role` (não `anon`). Trava a agendada e devolve um de quatro estados, sem oráculo de existência:
+
+- `nao_encontrada`: sem sessão, id que não existe, quem não escreve na clínica, profissional que não vê a agendada (o mesmo predicado da leitura) e agendada já encerrada;
+- `ja_saindo`: a agendada está `enviando`;
+- `assuma_a_conversa`: quem pede não está com a conversa aberta daquele contato **naquele número** (`em_atendimento` e responsável = ela);
+- `ok`: marca a agendada `cancelada` com motivo `enviada_agora` e `cancelada_por` = quem pediu, apaga o texto, grava a trilha **`retirou_agendada_para_enviar_agora`** (`entity = 'mensagem_agendada'`; é a retirada, não o envio) e devolve `{estado, texto, conversation_id}`.
+
+**A Server Action** (`enviarAgendadaAgoraAction`, `app/(app)/atendimento/agendadas-actions.ts`; revisão de 06/10/2026). Antes de retirar, lê a agendada pela sessão e recusa **sem retirar** em dois casos: texto acima de 4096 unidades UTF-16 ("A mensagem tem {n} caracteres e o limite é 4096. Encurte antes de enviar.") e número **da agendada** desconectado (a mesma dica do botão: "O número {nome} está desconectado. A mensagem continua agendada e espera a reconexão."; o envio 1:1 recusaria depois de retirar, e a agendada, que esperaria a reconexão sozinha, deixaria de existir). Depois chama a função acima e envia o texto por `enviarComoAtendente` (o núcleo do `sendMessageAction`, no trilho 1:1, em nome de quem clicou; o termo da jornada anda, A4). A ordem é retirar e depois enviar: o pior caso é nada sair, nunca o paciente receber em dobro. Sem a checagem de autor (A1).
+
+O desfecho vai para a trilha (sempre `entity = 'mensagem_agendada'` e o id, nunca o texto) e a tela recebe uma de três respostas:
+
+- **saiu:** trilha `enviou_agora_mensagem_agendada`; `{ ok: true, conversationId, messageId }`;
+- **certamente não saiu** (retirada sem texto ou sem conversa, recusa antes do canal, ou falha que `envioCertamenteNaoSaiu` garante sem envio: sem autorização, número desconectado ou removido, canal ocupado, as recusas antes do provedor e os códigos de `FALHAS_SEM_ENVIO`): trilha `enviar_agora_nao_saiu`; `{ ok: false, error: "A mensagem não saiu e não está mais agendada. O texto voltou para o campo.", texto }`, e o texto volta para a tela;
+- **pode ter saído** (`envio_incerto`, resposta do provedor como `uazapi_500`, código desconhecido, exceção do envio): trilha `enviar_agora_incerto`; `{ ok: false, incerto: true, error: "Não deu para confirmar se a mensagem chegou ao paciente. Confira a conversa antes de mandar de novo." }`, **sem o texto**. Antes da revisão, essa falha dizia "não saiu" e devolvia o texto ao campo, e um Enter mandava a mesma mensagem duas vezes.
+
+### 18.9 Revogação: gatilho `agendadas_param_na_revogacao` em `contact_consent`
+
+`AFTER INSERT OR UPDATE OF revoked_at`, função `SECURITY DEFINER` sem `execute` para ninguém. Quando a autorização de WhatsApp é revogada e o contato fica sem consentimento vigente, trava as agendadas `agendada` e `enviando` do contato (`for update`, em ordem de id; depois o job, a mesma ordem da exclusão e de `remover_numero`, sem deadlock) e, uma a uma (revisão de 06/10/2026):
+
+- **`agendada`:** fecha na hora por `encerrar_agendada_sem_envio(..., 'nao_enviada', 'sem_autorizacao')`, com a atividade;
+- **`enviando` com o job `pendente`** (esperando o número, a madrugada, o canal ou nova tentativa): cancela o job com o predicado de 18.2a e `last_error = 'sem_consentimento'`, e fecha a agendada do mesmo jeito. Antes da revisão ela ficava viva, e uma reautorização antes da execução soltava a mensagem escrita antes do descadastro;
+- **`enviando` com o job `executando`** (ou com mensagem que pode ter saído): fica com a reconferência da autorização no `send.ts` e com a reconciliação, que a fecha com `sem_autorizacao`.
+
+**O cancelamento nunca é desfeito:** o fechamento com a atividade roda num bloco próprio; se ele falhar (a atividade recusada, por exemplo), a agendada é fechada **sem** a atividade (`nao_enviada`, `sem_autorizacao`, `encerrada_em`, pela GUC), com um aviso só com o id e o SQLSTATE. **A revogação nunca falha por causa de uma agendada:** cada uma roda no próprio bloco, e o laço inteiro em outro (o executor confere a autorização de qualquer jeito). Vale também quando a revogação vem da ficha, pela sessão de quem revoga. Reautorizar não revive nada: o descadastro é definitivo (regra 3.4 do CLAUDE.md).
+
+### 18.10 Funções recriadas a partir do corpo de produção
+
+As cinco partem do `pg_get_functiondef` de produção de 06/10/2026, com o que é novo entre marcadores `-- [mensagem agendada]`; fora deles, idênticas. Os corpos de antes, lidos da produção, estão em `supabase/operacao/rollback/20261006140000-corpos-anteriores.sql` (passo 3 do rollback, 18.13).
+
+- **`remover_numero`:** depois do cancelamento dos ecos, com a GUC ligada, trava as agendadas do número (`agendada` e `enviando`, em ordem de id) e só depois os jobs (a mesma ordem da exclusão pela sessão, sem deadlock); cancela os jobs `enviar_mensagem_agendada` pendentes do número pelo predicado de 18.2a (sem mensagem, ou mensagem `falhou` com código de `falhas_sem_envio()`; `last_error = 'numero_removido'`); e encerra, por `encerrar_agendada_sem_envio(..., 'numero_removido')`, as `agendada` e as `enviando` cujo job ficou cancelado. O job já em `executando` morre no executor com `numero_removido`, e a reconciliação fecha a agendada. O retorno ganha `agendadas_encerradas`.
+- **`motor_manutencao`:** um bloco novo, **por último** (as linhas travadas pela planejadora só soltam no fim da transação): `planejar_mensagens_agendadas()` e depois `reconciliar_mensagens_agendadas()`, cada um no seu `begin ... exception`. Códigos novos em `planner_erro`: `mensagem_agendada:<sqlstate>` (erro estrutural da planejadora), `agendada_reconciliar:<sqlstate>` (erro estrutural da reconciliação), **`agendadas_erros:<n>`** (as linhas que deram erro nesta passagem, a soma do `erros_por_linha` das duas; revisão de 06/10/2026) e `agendadas_presas:<n>` (há `enviando` de mais de 13 horas). O retorno ganha `mensagens_agendadas` (as chaves das duas funções juntas, com `erros_por_linha` somado). Diagnóstico no runbook `supabase/operacao/motor-por-cron.md`, seção "Mensagem agendada".
+- **`atendimento_do_periodo`:** a subconsulta de `resposta_em` ignora a mensagem ligada a uma agendada (`not exists (select 1 from mensagem_agendada ma where ma.message_id = m.id)`): a agendada saiu sozinha e não é primeira resposta. O Enviar agora não fica ligado à agendada e conta, porque é resposta de verdade.
+- **`validar_atividade`:** com a GUC `conduzza.agendada_pelo_sistema = 'sim'`, o INSERT pula a regra de sessão (origem `manual` e `created_by` de quem usa) e aceita origem `automacao` sem `automacao_id`. Sem a GUC, tudo como antes (12.3).
+- **`claim_jobs`** (o claim **legado**, revisão de 06/10/2026): é o que o `npm run worker` (ferramenta local) e as suítes de integração que rodam contra a produção usam, e ele não filtra clínica de teste nem kind. Os dois ramos (enterrar o que travou sem tentativas e reivindicar) passam a excluir `kind = 'enviar_mensagem_agendada'`. Sem isso, um teste local reivindicaria a agendada real de uma clínica e a enviaria da máquina de quem desenvolve, ou a mataria com `tipo_desconhecido` num checkout sem o executor. Agendada, só o motor (`claim_jobs_por_clinica`) reivindica e enterra.
+
+### 18.11 `job_queue`: o kind novo e a nota para o E3
+
+- `job_queue_kind_check` passa a aceitar **`enviar_mensagem_agendada`** (seção 7). O ALTER fica perto do fim, antes do `claim_jobs`, e a trava dele (ACCESS EXCLUSIVE em `job_queue`) já é pega no topo da migration (18.13). `max_attempts` padrão; prioridade 0; o número vem sempre da agendada. O claim legado `claim_jobs` não reivindica nem enterra este kind (18.10).
+- No código, o kind entra em `KINDS_DE_ENVIO` (`lib/jobs/kinds.ts`), que o motor e a faixa "mensagens esperando" usam juntos; `CUSTO_ESTIMADO_MS.enviar_mensagem_agendada = 25_000`. O teste `tests/unit/agendada/servidor-kinds.test.ts` cruza o CHECK da **migration mais recente** que o define com a união dos trilhos do motor.
+- **NOTA PARA O E3:** a migration do `responder_com_ia` (Fase 3 do agente) redefine o CHECK inteiro e **precisa manter `enviar_mensagem_agendada`**. Se esquecer, o teste acima reprova, e em produção a planejadora passa a falhar com 23514 (vira `mensagem_agendada:23514` em `planner_erro`).
+
+### 18.12 Leitura, trilha e tempo real
+
+- **Leitura pela sessão, só no servidor:** `fetchMensagensAgendadas` (`lib/queries/mensagens-agendadas.ts`, `server-only`) lê as agendadas do contato em todos os números (as `agendada` e `enviando`; as `nao_enviada` e `nao_confirmada` não dispensadas; as `enviada` das últimas 24 horas), com o contexto: a última entrada do contato por número (o aviso "escreveu depois"), a conexão, o nome e a cor de cada número e quem é membro ativo com escrita. Quem chama é `listarAgendadasAction`, que grava a trilha `leu` com `entity = 'mensagem_agendada'` e o id do **contato** (`lib/auth/read-audit.ts`, uma linha a cada 5 minutos por pessoa e contato).
+- **Fio, sem embed** (revisão de 06/10/2026): a consulta das mensagens **não** embute mais `mensagem_agendada`. Embutida, uma tabela que faltasse (código publicado antes da migration, ou o rollback) ou um embed recusado pelo PostgREST derrubava o fio de **todas** as conversas. No lugar, a autoria da bolha vem de uma consulta **separada e tolerante**: `fetchAgendadasDoFio(supabase, clinicId, messageIds)` (`lib/queries/agendadas-do-fio.ts`), pela sessão e com a RLS, só `message_id, criada_por, editada_por` (nunca o texto), em lotes de 100 ids, só ids de mensagem válidos (a bolha otimista não derruba a consulta); qualquer erro vira mapa vazio, e só a marca da bolha some. Chave do TanStack Query `['agendadas-do-fio', conversationId]` (`agendadasKeys.doFio`, no domínio), com a assinatura dos ids no fim.
+- **Trilha das mutações** (sempre `entity = 'mensagem_agendada'` e o id, nunca o texto): `agendou_mensagem`, `editou_mensagem_agendada`, `excluiu_mensagem_agendada` (também uma por agendada cancelada em Equipe), `dispensou_mensagem_agendada`; no Enviar agora, `retirou_agendada_para_enviar_agora` (pela função, 18.8) e o desfecho pela Server Action: `enviou_agora_mensagem_agendada`, `enviar_agora_nao_saiu` ou `enviar_agora_incerto`. Do sistema: `agendada_criou_atividade` (18.5) e, no executor, `envio_bloqueado_sem_autorizacao` com `user_id` nulo e `entity = 'contact'`.
+- **Fora do tempo real** (revisão de 06/10/2026): a tabela **não** entra na publicação `supabase_realtime`. O Realtime desta instância lê o WAL pelo wal2json, que **ignora a lista de colunas** da publicação: o texto de cada INSERT e edição iria pelo websocket a toda aba do Atendimento, sem trilha de leitura (a primeira versão publicava "sem o texto" e não segurava). A tela relê pela sessão (RLS e trilha): a lista do contato aberto (`['agendadas', clinicId, contactId]`) e a autoria do fio (`['agendadas-do-fio', conversationId]`) a cada evento de `message` ou `conversation` daquele contato (`chavesDaAgendadaNoEvento`, `lib/realtime/use-inbox-channel.ts`, com uma janela de 1 s que junta os eventos seguidos), a lista também a cada 30 s com a conversa aberta e a aba à vista e quando a janela volta ao foco, e as duas depois de cada ação própria e ao (re)conectar o canal.
+
+### 18.13 Códigos de erro, ensaio, provas, ordem de publicação e rollback
+
+**Códigos:** 42501 e 23514 (gatilho, com as frases de 18.3), 23505 (`mensagem_agendada_sem_duplicata` e o id repetido), CZ409 (editar ou excluir em corrida com o envio) e 22023 (`encerrar_agendada_sem_envio` com situação inválida). 40001 e 40P01 nunca são levantados de propósito (o PostgREST os repete sem limite). Nenhuma mensagem de erro, `last_error`, payload de job ou trilha leva texto, nome ou telefone de paciente.
+
+**Avisos no log do Postgres** (revisão de 06/10/2026): a planejadora, a reconciliação e a revogação registram o erro de uma linha com `raise warning`, só com o id da agendada (ou do contato, no laço inteiro da revogação) e o SQLSTATE, nunca o texto: `planejar_mensagens_agendadas: agendada <id> (<sqlstate>)`, `reconciliar_mensagens_agendadas: agendada <id> (<sqlstate>)`, `agendadas_param_na_revogacao: agendada <id> fechada sem atividade (<sqlstate>)`, `... agendada <id> sem fechar (<sqlstate>)`, `... agendada <id> (<sqlstate>)` e `... contato <id> (<sqlstate>)`. O motor resume os da planejadora e da reconciliação em `agendadas_erros:<n>` (runbook).
+
+**Ensaios (06/10/2026, 4):** em transação desfeita contra a produção, com uma clínica de teste criada na própria transação e a sessão simulada por `request.jwt.claims`. Os dois primeiros foram antes da revisão (o segundo, com a versão de então, deu 35 checagens verdadeiras). Depois das correções: o terceiro deu 52 verdadeiras e 1 falsa ("reautorizar não revive": com a atividade recusada, a falha ao fechar a agendada desfazia o cancelamento do job), o que levou ao fechamento sem atividade da revogação (18.9); uma rodada anterior a ele parou num erro do próprio cenário, antes de qualquer checagem. O **quarto**, com o arquivo atual (o sha256 do começo desta seção), deu **52 checagens verdadeiras e nenhuma falsa**: 12 de catálogo (RLS, as 3 policies, o kind no CHECK, a tabela **fora** da publicação do tempo real, funções novas `SECURITY DEFINER` com `search_path` vazio, `authenticated` sem as funções de sistema, Enviar agora sem `anon`, tabela sem `select` para `anon` e sem `delete` para `authenticated`, motor e `remover_numero` com o bloco, as travas no modo certo, `falhas_sem_envio()` igual a `FALHAS_SEM_ENVIO`, o motor com `agendadas_erros` e o `claim_jobs` sem o kind nos dois ramos), 39 de comportamento (as 26 de antes e as das correções: motivo e texto da atividade de `madrugada`; excluir com mensagem `falhou` por `leitura_falhou` cancela o job, e com `envio_incerto` ou sem código dá CZ409; revogação fecha a `enviando` com job pendente e deixa a que executa; reautorizar não revive; a linha quebrada erra sozinha na planejadora e na reconciliação, e a revogação grava mesmo com ela; consertada a conversa, as duas fecham; com limite 1, a planejadora planeja a outra e a que espera fica; o motivo do job vence o da mensagem; o `claim_jobs` pula a agendada e pega o job seguinte; a trava por contato no INSERT da sessão) e a do tempo. Migration e cenário em cerca de 0,56 s.
+
+**Provas para rodar depois de aplicar:** `npm run test:rls -- mensagem-agendada` (`tests/rls/mensagem-agendada.test.ts`: A e B, cada papel, profissional, carimbos forjados, A1, exclusão e cancelada que não volta, dispensar, conversa, número, autorização, bordas do teto, texto, teto de 10 e o teto com duas inserções ao mesmo tempo, duplicata, sem DELETE, `anon`, funções de sistema (com a lista de falhas), Enviar agora sem oráculo, excluir na fila depois de uma falha que certamente não enviou, cancelamento por Equipe e a revogação pela sessão, com a atividade e com a da fila); `npm run test:integration -- mensagem-agendada` (`tests/integration/mensagem-agendada.test.ts`: planejadora, com o limite que conta só o que dá para planejar e o erro numa linha que não para as outras; executor pelo provedor fake; revogação com a da fila; corridas; excluir depois de uma falha que certamente não enviou; queda e reexecução, com o motivo do job vencendo o da mensagem; `remover_numero`; madrugada, com o motivo `madrugada`; retenção; CHECKs; o claim legado que não pega a agendada; `atendimento_do_periodo` e as Server Actions); o e2e `tests/e2e/mensagem-agendada.spec.ts`; e regenerar os tipos (o diff tem de sumir).
+
+**Ordem de publicação:** a migration vai **antes** do código. Sem ela, a lista e as ações falham (a lista mostra "Não foi possível carregar as mensagens agendadas." e o botão do compositor fica desabilitado), mas o fio **não** cai mais: a autoria da bolha é uma consulta separada e tolerante (18.12). Com a migration e o código antigo, nada muda (nenhuma agendada existe). **Aplicar em horário calmo (madrugada):** `lock_timeout` de 5 s e, logo abaixo, **todas as travas das tabelas quentes numa ordem fixa, antes de qualquer DDL e já no modo mais forte que a migration vai usar** (revisão de 06/10/2026; sem subir de modo no meio): primeiro `lock table public.job_queue in access exclusive mode` (a troca do CHECK, cerca de 1100 linhas), depois `message`, `conversation`, `contact`, `whatsapp_account`, `contact_consent` e `contact_activity` em SHARE ROW EXCLUSIVE (as FKs do CREATE TABLE e o CREATE TRIGGER em `contact_consent`). O CREATE TABLE ainda pega SHARE ROW EXCLUSIVE em `clinic` e `auth.users` (FKs de autoria), que quase não recebem escrita. Enquanto espera uma trava, a migration segura as que já pegou e as escritas nelas esperam (até o `lock_timeout`); um envio em curso pode formar ciclo com ela, e o detector derruba um dos dois em 1 s. Se a migration cair (55P03 ou 40P01), nada fica gravado: tentar de novo minutos depois. Nada aqui faz ALTER em `message`, `conversation` ou `contact`.
+
+**Rollback** (cabeçalho da migration, manual, nesta ordem):
+
+0. **antes de tudo, publicar o código sem a mensagem agendada** (lista, ações, executor e Enviar agora): com a tabela fora, essas chamadas falham;
+1. apagar os gatilhos `agendadas_param_na_revogacao` (em `contact_consent`) e `proteger_mensagem_agendada`;
+2. cancelar os jobs `enviar_mensagem_agendada` pendentes e executando (`last_error = 'rollback'`);
+3. reaplicar os corpos **anteriores** de `remover_numero`, `motor_manutencao`, `atendimento_do_periodo`, `validar_atividade` e `claim_jobs`, lidos da produção antes desta migration e guardados em `supabase/operacao/rollback/20261006140000-corpos-anteriores.sql`;
+4. apagar a tabela e as nove funções novas (`proteger_mensagem_agendada`, `agendadas_param_na_revogacao`, `encerrar_agendada_sem_envio`, `planejar_mensagens_agendadas`, `reconciliar_mensagem_agendada`, `reconciliar_mensagens_agendadas`, `motivo_da_agendada`, `tirar_agendada_para_enviar_agora` e `falhas_sem_envio`);
+5. recriar `job_queue_kind_check` sem o kind, só depois do passo 2 e de apagar as linhas dele;
+6. `notify pgrst, 'reload schema'`.
+
+Não há passo de publicação: a tabela nunca entrou nela. As atividades criadas pela agendada ficam (são do CRM).

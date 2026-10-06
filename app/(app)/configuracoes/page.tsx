@@ -434,7 +434,14 @@ export default async function ConfiguracoesPage({
       <ConfiguracoesClient
         abaInicial={aba}
         equipe={
-          memberResult.error ? null : { membros, pendentes, profissionais }
+          memberResult.error
+            ? null
+            : {
+                membros,
+                pendentes,
+                profissionais,
+                clinicId: active.clinicId,
+              }
         }
         meuUserId={context.userId}
         podeGerenciar={podeGerenciar}

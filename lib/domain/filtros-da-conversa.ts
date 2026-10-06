@@ -83,11 +83,16 @@ export function casaSituacao(
 }
 
 /**
- * Chave de ordem da lista: a fala mais recente do paciente primeiro. A MESMA
- * chave que o servidor usa no order by e que o cartao exibe como horario.
+ * Chave de ordem da lista: a conversa com a mensagem mais recente primeiro,
+ * enviada OU recebida, como no WhatsApp (pedido do dono em 06/10/2026; antes
+ * era so a fala do paciente). last_message_at so anda com mensagem de
+ * verdade (paciente, equipe, pelo celular, IA e automaticas); nota interna e
+ * evento ("assumiu a conversa") nao mexem nele, entao nao sobem conversa. A
+ * MESMA chave que o servidor usa no order by, que o tempo real usa ao
+ * reordenar e que o cartao exibe como horario.
  */
 export function recencia(conversa: ConversaFiltravel): number {
-  const quando = conversa.last_inbound_at ?? conversa.last_message_at;
+  const quando = conversa.last_message_at ?? conversa.last_inbound_at;
   if (!quando) {
     return 0;
   }

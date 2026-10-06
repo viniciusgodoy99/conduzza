@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { EsperandoPorNumero } from "@/lib/domain/conexao-dos-numeros";
+import { KINDS_DE_ENVIO } from "@/lib/jobs/kinds";
 
 // Quantas mensagens automaticas esperam por um numero desconectado (faixa do
 // topo, docs/07 Fase 4). A fila (job_queue) so e legivel pelo administrador
@@ -12,13 +13,11 @@ import type { EsperandoPorNumero } from "@/lib/domain/conexao-dos-numeros";
 // conteudo, nenhum paciente.
 
 /**
- * Os kinds que mandam mensagem pelo numero: os mesmos KINDS_DE_ENVIO do motor
- * (lib/jobs/motor.ts), que nao os exporta. Mudou la, muda aqui.
+ * Os kinds que mandam mensagem pelo numero: a MESMA lista de envio do motor
+ * (lib/jobs/kinds.ts). Inclui a mensagem agendada: com o numero caido, ela
+ * espera a reconexao como o toque de regua, e a faixa conta as duas.
  */
-export const KINDS_DE_ENVIO_AUTOMATICO = [
-  "enviar_mensagem_ativa",
-  "executar_passo_de_regua",
-] as const;
+export const KINDS_DE_ENVIO_AUTOMATICO = KINDS_DE_ENVIO;
 
 /** Teto de numeros por consulta: a faixa nunca conta mais do que isto. */
 export const MAX_NUMEROS_CONTADOS = 20;
@@ -27,11 +26,12 @@ export const MAX_NUMEROS_CONTADOS = 20;
  * Conta, por numero, os envios automaticos PENDENTES que ja deveriam ter
  * saido: a hora chegou (run_at no passado) ou o motor ja tentou e devolveu
  * para a fila (attempts ou devolucoes acima de zero). Com o numero
- * desconectado, o toque de regua e o envio ativo do worker esperam a
- * reconexao: sao devolvidos em esperas crescentes de 5 ate 30 minutos, sem
- * gastar tentativa, entao o run_at fica sempre no futuro e eles entram por
- * devolucoes. A confirmacao marcada para a semana que vem nao "espera" a
- * reconexao e fica de fora.
+ * desconectado, o toque de regua, o envio ativo do worker e a mensagem
+ * agendada esperam a reconexao: sao devolvidos em esperas crescentes de 5 ate
+ * 30 minutos, sem gastar tentativa, entao o run_at fica sempre no futuro e
+ * eles entram por devolucoes. A confirmacao marcada para a semana que vem nao
+ * "espera" a reconexao e fica de fora. A agendada que a planejadora acabou de
+ * enfileirar (run_at agora) tambem entra: ela ja devia estar saindo.
  *
  * Uma contagem por numero (head, sem trazer linha), no indice
  * job_queue_numero_prioridade_idx. Falha de leitura de um numero: ele fica

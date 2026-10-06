@@ -145,6 +145,8 @@ export function ConfiguracoesClient({
     membros: MembroEquipe[];
     pendentes: Pendente[];
     profissionais: ProfissionalDaAgenda[] | null;
+    /** A clinica ativa (contagem das agendadas de quem perde a escrita) */
+    clinicId: string;
   } | null;
   meuUserId: string;
   podeGerenciar: boolean;
@@ -307,6 +309,7 @@ export function ConfiguracoesClient({
                 ehAdmin={ehAdmin}
                 dica={dica}
                 profissionais={equipe.profissionais}
+                clinicId={equipe.clinicId}
               />
             </Card>
           </>

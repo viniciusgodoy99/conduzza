@@ -66,6 +66,9 @@ type Params = {
     // se confundir com a lista de Leads na janela de 5 minutos. Sem id
     // (tela de lista).
     | "automacoes_de_fluxo"
+    // Mensagens agendadas de um contato (lista acima da caixa de escrever):
+    // o texto e escrito para o paciente. Com o id do CONTATO.
+    | "mensagem_agendada"
     // Abertura de ARQUIVO de paciente (foto, audio, documento). Diferente das
     // demais: a trilha desta e BLOQUEANTE, ver auditarAberturaDeMidia.
     | "midia_conversa";

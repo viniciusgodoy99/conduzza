@@ -287,6 +287,11 @@
   --bubble-ai-foreground: var(--cz-cream-050);
   --bubble-ai-meta: rgba(251, 252, 232, 0.66);
   --bubble-ai-border: rgba(5, 24, 19, 0);
+  /* Tique azul de "lida" na bolha enviada, como no WhatsApp (pedido do dono
+     em 06/10/2026; excecao autorizada a regra de mesmo icone em outra cor: o
+     texto "Lida" fica na dica e no leitor de tela). 3:1 sobre as duas peles
+     de saida (atendente e IA) */
+  --tique-lido: #2b7bd0;
 
   /* Elevacao em tinta a 4 a 14% */
   --elev-xs: 0 1px 2px rgba(5, 24, 19, 0.05);
@@ -431,6 +436,8 @@
   --bubble-ai-foreground: var(--cz-cream-050);
   --bubble-ai-meta: rgba(251, 252, 232, 0.66);
   --bubble-ai-border: rgba(178, 229, 79, 0.4);
+  /* O azul do proprio WhatsApp: 3:1 sobre as duas peles escuras */
+  --tique-lido: #53bdeb;
 
   /* Elevacao tonal, sem sombra em repouso. Sombra vazia em vez de "none"
      porque o Tailwind junta sombra e anel (ring) numa lista so, e o "none"

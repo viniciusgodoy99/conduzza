@@ -106,20 +106,10 @@ describe("prefixo de autoria da prévia (L2)", () => {
   });
 });
 
-describe("rótulo da hora do cartão (L2)", () => {
-  it("diz que a hora é da última fala do paciente", () => {
-    expect(rotuloDaHora(conversa(), "09:10")).toBe(
-      "Última mensagem do paciente às 09:10",
-    );
-    expect(rotuloDaHora(conversa(), "12/09")).toBe(
-      "Última mensagem do paciente em 12/09",
-    );
-  });
-
-  it("sem fala do paciente, é a última mensagem da conversa", () => {
-    expect(rotuloDaHora(conversa({ last_inbound_at: null }), "09:10")).toBe(
-      "Última mensagem às 09:10",
-    );
+describe("rótulo da hora do cartão (06/10/2026: última mensagem, como no WhatsApp)", () => {
+  it("diz que a hora é da última mensagem, enviada ou recebida", () => {
+    expect(rotuloDaHora("09:10")).toBe("Última mensagem às 09:10");
+    expect(rotuloDaHora("12/09")).toBe("Última mensagem em 12/09");
   });
 });
 
@@ -149,17 +139,19 @@ describe("cartão da conversa (L2 e ajuste da captura)", () => {
     expect(html.indexOf("Você:")).toBeLessThan(html.indexOf("Custa R$ 200."));
   });
 
-  it("a hora vem com o rótulo acessível de que mensagem ela é", () => {
+  it("a hora é a da última mensagem, enviada ou recebida (como no WhatsApp)", () => {
     const html = cartao(conversa());
-    // 12:10Z e 09:10 em Fortaleza (UTC-3), hoje.
-    expect(html).toContain(">09:10<");
-    expect(html).toContain("Última mensagem do paciente às 09:10");
+    // A resposta da clinica (14:30Z, 11:30 em Fortaleza) e mais nova que a
+    // fala do paciente (12:10Z): vale a resposta.
+    expect(html).toContain(">11:30<");
+    expect(html).toContain("Última mensagem às 11:30");
+    expect(html).not.toContain(">09:10<");
   });
 
   it("a coluna do texto é limitada: prévia longa trunca e a hora fica", () => {
     const html = cartao(conversa({ last_preview: "x".repeat(120) }));
     expect(html).toContain("grid-cols-[minmax(0,1fr)]");
-    expect(html).toContain("09:10");
+    expect(html).toContain("11:30");
   });
 });
 

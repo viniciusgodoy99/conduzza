@@ -29,13 +29,18 @@ import {
 } from "./lista-espera";
 import { espacamentoDeMassaMs } from "./espacamento";
 import { executarSincronizacaoDeGastoMeta } from "./gasto-meta";
+import type { KindDeJob } from "./kinds";
+import {
+  executarMensagemAgendada,
+  fecharAgendadaDoJob,
+} from "./mensagem-agendada";
 import { numeroDoJob } from "./numero-de-envio";
 import { executarPassoDeRegua } from "./regua";
 import { executarResolucaoDeAnunciosMeta } from "./resolver-anuncio-meta";
 
 // Worker da job_queue (Etapa B da auditoria de escala). Executa disparo ativo
-// (confirmacao de atendimento, reguas da Fase 4) e download de midia, fora do
-// caminho de request do usuario e fora do webhook.
+// (confirmacao de atendimento, reguas da Fase 4, mensagem agendada) e
+// download de midia, fora do caminho de request do usuario e fora do webhook.
 //
 // O contrato (claim atomico, lease, retry com backoff) vive no banco, nas
 // funcoes claim_jobs/concluir_job/falhar_job: este arquivo e um executor
@@ -60,14 +65,8 @@ const MIMETYPES_ACEITOS = /^(audio|image|video)\/[\w.+-]+$|^application\/pdf$/;
 export type Job = {
   id: string;
   clinic_id: string;
-  kind:
-    | "enviar_mensagem_ativa"
-    | "baixar_midia"
-    | "executar_passo_de_regua"
-    | "enviar_conversao_meta"
-    | "oferecer_lista_espera"
-    | "sincronizar_gasto_meta"
-    | "resolver_anuncio_meta";
+  /** Os kinds do motor (lib/jobs/kinds.ts, = CHECK job_queue_kind_check). */
+  kind: KindDeJob;
   payload: Record<string, unknown>;
   attempts: number;
   max_attempts: number;
@@ -665,6 +664,8 @@ async function executarJob(
       return executarSincronizacaoDeGastoMeta(admin, job, workerId);
     case "resolver_anuncio_meta":
       return executarResolucaoDeAnunciosMeta(admin, job, workerId);
+    case "enviar_mensagem_agendada":
+      return executarMensagemAgendada(admin, job);
     default:
       return { ok: false, erro: "tipo_desconhecido", definitivo: true };
   }
@@ -793,6 +794,7 @@ export async function executarJobComPosse(
       clinic_id: job.clinic_id,
       duration_ms: Date.now() - inicio,
     });
+    await fecharDepoisDoJob(admin, job);
     return "concluido";
   }
 
@@ -809,7 +811,23 @@ export async function executarJobComPosse(
     error_code: resultado.erro,
     attempt: job.attempts,
   });
+  await fecharDepoisDoJob(admin, job);
   return "falhou";
+}
+
+/**
+ * O que fecha junto com o job, depois de concluir_job ou falhar_job. Hoje so
+ * a mensagem agendada: a reconciliacao le o job e a message e fecha a
+ * agendada (enviada, nao enviada ou nao confirmada). Falha com retry deixa o
+ * job pendente, e a reconciliacao nao mexe em nada. Nunca lanca.
+ */
+async function fecharDepoisDoJob(
+  admin: SupabaseClient,
+  job: Job,
+): Promise<void> {
+  if (job.kind === "enviar_mensagem_agendada") {
+    await fecharAgendadaDoJob(admin, job);
+  }
 }
 
 /** Garante o bucket privado de midia (idempotente; roda na subida do worker). */

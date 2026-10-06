@@ -7,6 +7,7 @@ import {
   CalendarPlus,
   CalendarSync,
   CheckCheck,
+  CircleAlert,
   CircleCheck,
   CircleDashed,
   CircleDot,
@@ -15,6 +16,7 @@ import {
   CircleX,
   Clock,
   ClockAlert,
+  ClockFading,
   ConciergeBell,
   Eye,
   Gauge,
@@ -28,6 +30,7 @@ import {
   OctagonAlert,
   QrCode,
   Send,
+  SendHorizonal,
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
@@ -49,6 +52,7 @@ import type { ComponentType, SVGProps } from "react";
 
 import { BuildingSlash } from "@/components/shared/icons/building-slash";
 import type { SituacaoDaAtividade } from "@/lib/domain/atividades";
+import type { EstadoDoItemDaAgendada } from "@/lib/domain/mensagem-agendada";
 import { ACCESS_LABELS, type Access } from "@/lib/domain/permissions";
 
 // Fonte unica dos status do produto.
@@ -487,6 +491,45 @@ export const ATIVIDADE_STATUS: Record<SituacaoDaAtividade, StatusDefinition> = {
   cancelada: { label: "Cancelada", tone: "neutral", icon: SquareX },
 };
 
+// Estado do item da lista de mensagens agendadas (Atendimento, acima da caixa
+// de escrever; lib/domain/mensagem-agendada.ts, estadoDoItem). Icones da
+// tabela de reservados abaixo, no mesmo sentido e na mesma cor:
+// - ClockFading e novo e so deste estado (neutral). O Clock e so do
+//   Aguardando; ClockAlert e a atividade atrasada; ClockPlus e so o botao
+//   "Agendar mensagem", sem cor.
+// - SendHorizonal e o "enviando" (neutral), o mesmo da bolha em voo.
+// - WifiOff e o numero desconectado (alert), como no status de conexao.
+// - CircleCheck sucesso, OctagonAlert falha (alert) e CircleAlert atencao
+//   (warning), como em toda tela.
+// O silencio noturno (atrasada esperando as 08:00, A2) usa o MESMO chip da
+// fila (o mesmo objeto): so a linha do item muda.
+const AGENDADA_NA_FILA: StatusDefinition = {
+  label: "Na fila para sair",
+  tone: "neutral",
+  icon: SendHorizonal,
+};
+
+export const MENSAGEM_AGENDADA_STATUS: Record<
+  EstadoDoItemDaAgendada,
+  StatusDefinition
+> = {
+  agendada: { label: "Agendada", tone: "neutral", icon: ClockFading },
+  na_fila: AGENDADA_NA_FILA,
+  silencio_noturno: AGENDADA_NA_FILA,
+  esperando_numero: {
+    label: "Esperando o número reconectar",
+    tone: "alert",
+    icon: WifiOff,
+  },
+  enviada: { label: "Enviada", tone: "success", icon: CircleCheck },
+  nao_enviada: { label: "Não enviada", tone: "alert", icon: OctagonAlert },
+  nao_confirmada: {
+    label: "Envio não confirmado",
+    tone: "warning",
+    icon: CircleAlert,
+  },
+};
+
 // Tabela de icones reservados (docs/06 secao 4.6, conflito C18). Um icone,
 // um sentido, uma cor, em qualquer tela, dentro ou fora destes mapas:
 // - TriangleAlert: SO o status Faltou (alert).
@@ -509,6 +552,8 @@ export const ATIVIDADE_STATUS: Record<SituacaoDaAtividade, StatusDefinition> = {
 //   encaixe, sempre neutral.
 // - CircleDot: SO "Ligada nas vinculadas" do cartao da aba de Automacoes
 //   (info).
+// - ClockFading: SO a mensagem agendada (neutral). ClockPlus: SO o botao
+//   "Agendar mensagem" do compositor (sem cor semantica).
 // - ClockAlert: SO a atividade atrasada (alert). Square e SquareX: entre os
 //   status, SO a atividade pendente e a cancelada (neutral); o SquareX
 //   tambem e o item "Cancelar atividade" do menu da linha, no mesmo sentido

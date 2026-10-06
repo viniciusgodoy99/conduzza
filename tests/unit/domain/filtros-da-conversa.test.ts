@@ -124,14 +124,20 @@ describe("filtro pela URL", () => {
   });
 });
 
-describe("ordem de recebimento", () => {
-  it("usa a fala do paciente e cai para a última atividade", () => {
-    expect(recencia(conversa({ last_inbound_at: horasAtras(2) }))).toBe(
-      AGORA - 2 * 3_600_000,
-    );
+describe("ordem da lista: a última mensagem, enviada ou recebida (06/10/2026)", () => {
+  it("usa a última mensagem da conversa e cai para a fala do paciente", () => {
+    // A clinica respondeu depois do paciente: a conversa sobe pela resposta.
     expect(
       recencia(
-        conversa({ last_inbound_at: null, last_message_at: horasAtras(3) }),
+        conversa({
+          last_inbound_at: horasAtras(5),
+          last_message_at: horasAtras(2),
+        }),
+      ),
+    ).toBe(AGORA - 2 * 3_600_000);
+    expect(
+      recencia(
+        conversa({ last_inbound_at: horasAtras(3), last_message_at: null }),
       ),
     ).toBe(AGORA - 3 * 3_600_000);
     expect(

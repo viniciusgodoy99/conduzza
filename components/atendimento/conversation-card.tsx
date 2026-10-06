@@ -98,19 +98,14 @@ export function prefixoDaPrevia(
 }
 
 /**
- * Rotulo acessivel (e dica) da hora do cartao. A hora e a da ultima fala do
- * PACIENTE, que e a chave de ordenacao da lista; quando a previa e de outra
- * pessoa, o prefixo da previa ja diz isso, e a dica deixa claro de que
- * mensagem e a hora.
+ * Rotulo acessivel (e dica) da hora do cartao. Desde 06/10/2026 a hora e a da
+ * ultima mensagem da conversa, enviada ou recebida, como no WhatsApp: a chave
+ * de ordenacao da lista (recencia). O prefixo da previa ("Voce:", "Clinica:",
+ * "IA:") diz quem escreveu.
  */
-export function rotuloDaHora(
-  conversation: Pick<ConversationListItem, "last_inbound_at">,
-  hora: string,
-): string {
+export function rotuloDaHora(hora: string): string {
   const quando = hora.includes("/") ? `em ${hora}` : `às ${hora}`;
-  return conversation.last_inbound_at
-    ? `Última mensagem do paciente ${quando}`
-    : `Última mensagem ${quando}`;
+  return `Última mensagem ${quando}`;
 }
 
 function Previa({
@@ -187,11 +182,11 @@ export function ConversationCard({
   const prefixo = prefixoDaPrevia(conversation, viewerId);
   // Com o selo do numero na linha 3, cabe uma etiqueta so antes do "+N".
   const etiquetasVisiveis = numero ? 1 : 2;
-  // A hora exibida e a MESMA que ordena a lista. Mostrar a atividade e
-  // ordenar pelo recebimento faria a coluna parecer embaralhada; o prefixo
-  // da previa e o rotulo da hora dizem de que mensagem e cada uma.
+  // A hora exibida e a MESMA que ordena a lista (recencia): a ultima
+  // mensagem, enviada ou recebida, como no WhatsApp. O prefixo da previa diz
+  // quem escreveu.
   const hora = horaDoCartao(
-    conversation.last_inbound_at ?? conversation.last_message_at,
+    conversation.last_message_at ?? conversation.last_inbound_at,
     timezone,
     agora,
   );
@@ -232,12 +227,10 @@ export function ConversationCard({
           {hora ? (
             <span
               className="shrink-0 cz-num text-[11px] text-text-tertiary"
-              title={rotuloDaHora(conversation, hora)}
+              title={rotuloDaHora(hora)}
             >
               <span aria-hidden>{hora}</span>
-              <span className="sr-only">
-                {`, ${rotuloDaHora(conversation, hora)}`}
-              </span>
+              <span className="sr-only">{`, ${rotuloDaHora(hora)}`}</span>
             </span>
           ) : null}
         </span>

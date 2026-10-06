@@ -2,6 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  ClockPlus,
   Eye,
   Hand,
   Lock,
@@ -53,6 +54,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { DICAS_DA_AGENDADA } from "@/lib/domain/mensagem-agendada";
 import type {
   NumeroDaConversa,
   TravaDoNumero,
@@ -129,6 +131,23 @@ export type MensagensPadraoDoCompositor = {
 };
 
 const DICA_DA_BARRA = "Digite / para usar uma mensagem padrão";
+
+/**
+ * O botao "Agendar mensagem" da barra (secao 4.1 do desenho da mensagem
+ * agendada). Ausente: o compositor nao oferece o botao.
+ */
+export type AgendamentoDoCompositor = {
+  /** A leitura da lista de agendadas do contato (com erro, o botao trava) */
+  estado: "carregando" | "erro" | "pronto";
+  /**
+   * Abre o dialogo com o texto do campo. O campo so esvazia depois do ok, e
+   * quem esvazia e o InboxClient. Os avisos dizem o que fica para tras: a
+   * citacao pendurada e o arquivo anexado.
+   */
+  aoAgendar: (contexto: { semCitacao: boolean; comAnexo: boolean }) => void;
+};
+
+const DICA_DO_AGENDAR = "Agendar mensagem";
 
 /**
  * O que decide se a lista de mensagens padrao esta aberta, alem do cursor.
@@ -273,6 +292,7 @@ export function Composer({
   podeReconectar = false,
   mensagensPadrao,
   nomeDaClinica = "",
+  agendamento,
 }: {
   conversation: ConversationListItem;
   viewerId: string;
@@ -355,6 +375,12 @@ export function Composer({
   mensagensPadrao?: MensagensPadraoDoCompositor;
   /** Nome da clinica, para o {{clinica}} das mensagens padrao. */
   nomeDaClinica?: string;
+  /**
+   * "Agendar mensagem" ao lado de Mensagens padrao: so em Responder, so com a
+   * conversa em atendimento com quem ve, e some junto com a barra quando a
+   * resposta esta bloqueada (os avisos de autorizacao e de numero explicam).
+   */
+  agendamento?: AgendamentoDoCompositor;
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
@@ -704,7 +730,7 @@ export function Composer({
       <AvisoDoCompositor>
         <Aviso tom="success" titulo="Conversa resolvida.">
           {podeEditar
-            ? "Para responder de novo, use Reabrir e responder, no topo da conversa."
+            ? "Para responder ou agendar uma mensagem, use Reabrir e responder, no topo da conversa."
             : SO_ACOMPANHA}
         </Aviso>
       </AvisoDoCompositor>
@@ -926,6 +952,14 @@ export function Composer({
                     </DisabledWithHint>
                   )
                 ) : null}
+                {agendamento ? (
+                  <BotaoDeAgendar
+                    agendamento={agendamento}
+                    podeEditar={podeEditar}
+                    semCitacao={citando !== null}
+                    comAnexo={Boolean(previa)}
+                  />
+                ) : null}
                 {botoes}
               </div>
             </div>
@@ -1032,6 +1066,9 @@ export function Composer({
               : undefined
           }
           aria-describedby={listaDisponivel ? idDaDica : undefined}
+          // Para quem precisa devolver o foco a caixa (a lista de agendadas,
+          // quando o ultimo item sai dela).
+          data-caixa-do-compositor
           className="field-sizing-content max-h-[120px] min-h-[52px] min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-[5px] text-base leading-[1.5] text-text-strong outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed md:text-[13.5px]"
           onKeyDown={(event) => {
             if (listaAberta && teclaDaLista(event)) {
@@ -1132,6 +1169,64 @@ export function Composer({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * "Agendar mensagem" (ClockPlus, sem cor: o icone e so deste botao). Somente
+ * leitura ve o botao desabilitado com o porque; com erro na leitura da lista
+ * de agendadas tambem, para ninguem agendar sem ver o que ja esta marcado.
+ */
+function BotaoDeAgendar({
+  agendamento,
+  podeEditar,
+  semCitacao,
+  comAnexo,
+}: {
+  agendamento: AgendamentoDoCompositor;
+  podeEditar: boolean;
+  semCitacao: boolean;
+  comAnexo: boolean;
+}) {
+  const dicaDesabilitado = !podeEditar
+    ? SO_ACOMPANHA
+    : agendamento.estado === "erro"
+      ? DICAS_DA_AGENDADA.agendarComErroNaLista
+      : null;
+  const icone = <ClockPlus aria-hidden className="size-[18px]" />;
+  if (dicaDesabilitado) {
+    return (
+      <DisabledWithHint hint={dicaDesabilitado}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="text-text-secondary"
+          aria-label={DICA_DO_AGENDAR}
+          disabled
+        >
+          {icone}
+        </Button>
+      </DisabledWithHint>
+    );
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="text-text-secondary"
+          aria-label={DICA_DO_AGENDAR}
+          aria-haspopup="dialog"
+          onClick={() => agendamento.aoAgendar({ semCitacao, comAnexo })}
+        >
+          {icone}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{DICA_DO_AGENDAR}</TooltipContent>
+    </Tooltip>
   );
 }
 

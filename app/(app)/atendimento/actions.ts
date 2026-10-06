@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit } from "@/lib/domain/permissions";
+import { envioCertamenteNaoSaiu } from "@/lib/integrations/whatsapp/falhas-do-envio";
 import {
   carregarInstancia,
   sendWhatsAppMedia,
@@ -55,6 +56,20 @@ export type InboxActionResult = {
    * o fio e explica, em vez de mostrar uma falha de envio sem motivo.
    */
   conversaIndisponivel?: boolean;
+  /**
+   * So na falha que veio do CANAL (send.ts), e sempre junto com naoSaiu: o
+   * codigo curto da falha (o code do envio, ou o reason quando ele nao tem
+   * code). Nunca dado de paciente.
+   */
+  codigo?: string;
+  /**
+   * So na falha que veio do CANAL: true quando send.ts garante que nada
+   * chegou ao paciente (envioCertamenteNaoSaiu), false quando a mensagem
+   * PODE ter chegado (envio_incerto, resposta do provedor, 'ja_enviado'). A
+   * recusa ANTES do canal (validacao, sessao, posse, citacao) nao traz este
+   * campo nem o codigo: nada foi enviado.
+   */
+  naoSaiu?: boolean;
 };
 
 // O TypeScript normaliza a uniao de retornos de loadVisibleConversation com
@@ -237,6 +252,27 @@ export async function sendMessageAction(
   body: string,
   replyToMessageId?: string | null,
 ): Promise<InboxActionResult> {
+  return enviarComoAtendente(conversationId, body, { replyToMessageId });
+}
+
+/**
+ * A resposta DIGITADA pela atendente, pelo trilho 1:1: confere de novo, com
+ * a sessao, que a conversa esta em atendimento com quem envia, envia em nome
+ * dela e anda o termo-chave da clinica, como qualquer resposta.
+ *
+ * E o nucleo do sendMessageAction, e tambem o do "Enviar agora" da mensagem
+ * agendada (agendadas-actions.ts): o texto que saiu da agendada e uma
+ * resposta da atendente, com a mesma regra e o mesmo efeito. Exportada, ela
+ * e tambem uma Server Action, entao valida tudo como se viesse do cliente
+ * (Zod na entrada, papel, posse da conversa).
+ */
+export async function enviarComoAtendente(
+  conversationId: string,
+  body: string,
+  opcoes: { replyToMessageId?: string | null } = {},
+): Promise<InboxActionResult> {
+  // Opcional ate no formato: chamada direta do cliente pode mandar nulo.
+  const replyToMessageId = opcoes?.replyToMessageId ?? null;
   const parsedBody = bodySchema.safeParse(body);
   if (!parsedBody.success) {
     return { ok: false, error: "Escreva a mensagem antes de enviar." };
@@ -279,6 +315,13 @@ export async function sendMessageAction(
     replyTo: citacao.replyTo,
   });
   if (!result.ok) {
+    // O codigo e se e CERTO que nada saiu: o "Enviar agora" da mensagem
+    // agendada so devolve o texto ao campo quando nada chegou ao paciente
+    // (achado 1 da revisao: envio incerto nao e "nao saiu").
+    const falhaDoCanal = {
+      codigo: result.code ?? result.reason,
+      naoSaiu: envioCertamenteNaoSaiu(result),
+    };
     // "O envio foi remarcado" é verdade para o worker, que reagenda o job, e
     // MENTIRA aqui: no caminho da atendente ninguém reagenda nada e a mensagem
     // nem chegou a nascer.
@@ -287,9 +330,10 @@ export async function sendMessageAction(
         ok: false,
         error:
           "O número da clínica está enviando outras mensagens agora. Tente de novo em instantes.",
+        ...falhaDoCanal,
       };
     }
-    return { ok: false, error: result.message };
+    return { ok: false, error: result.message, ...falhaDoCanal };
   }
   moverPorTermoDaClinica({
     clinicId: context.active!.clinicId,

@@ -1,12 +1,18 @@
 import {
   AlarmClock,
   Circle,
+  CircleAlert,
   CircleCheck,
   CircleDashed,
   CirclePause,
   Clock,
   ClockAlert,
+  ClockFading,
+  ClockPlus,
+  OctagonAlert,
+  SendHorizonal,
   TriangleAlert,
+  WifiOff,
 } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
@@ -22,6 +28,7 @@ import {
   CONVERSATION_STATUS,
   FUNNEL_STAGE,
   IA_AGENDA_STATUS,
+  MENSAGEM_AGENDADA_STATUS,
   PATIENT_TAG,
   RECORD_STATUS,
   REGUA_STATUS,
@@ -46,6 +53,7 @@ const MAPAS_NOVOS = {
   TOKEN_META_STATUS,
   CONSENT_STATUS,
   ATIVIDADE_STATUS,
+  MENSAGEM_AGENDADA_STATUS,
 };
 
 const TODOS: StatusDefinition[] = [
@@ -71,8 +79,11 @@ describe("mapas novos de estado", () => {
   );
 
   it("dentro de cada mapa, nenhum ícone se repete", () => {
+    // Duas chaves com a MESMA definicao (o mesmo objeto) sao um sinonimo, nao
+    // uma repeticao: o silencio noturno da agendada mostra o chip da fila.
     for (const mapa of Object.values(MAPAS_NOVOS)) {
-      const icones = Object.values(mapa).map((definicao) => definicao.icon);
+      const definicoes = [...new Set(Object.values(mapa))];
+      const icones = definicoes.map((definicao) => definicao.icon);
       expect(new Set(icones).size).toBe(icones.length);
     }
   });
@@ -107,6 +118,61 @@ describe("mapas novos de estado", () => {
     expect(TODOS.filter((d) => d.icon === ClockAlert)).toEqual([
       ATIVIDADE_STATUS.atrasada,
     ]);
+  });
+
+  it("mensagem agendada: ícones e tons do desenho, silêncio noturno igual à fila", () => {
+    const m = MENSAGEM_AGENDADA_STATUS;
+    expect(m.agendada).toMatchObject({
+      label: "Agendada",
+      tone: "neutral",
+      icon: ClockFading,
+    });
+    expect(m.na_fila).toMatchObject({
+      label: "Na fila para sair",
+      tone: "neutral",
+      icon: SendHorizonal,
+    });
+    expect(m.silencio_noturno).toBe(m.na_fila);
+    expect(m.esperando_numero).toMatchObject({
+      label: "Esperando o número reconectar",
+      tone: "alert",
+      icon: WifiOff,
+    });
+    expect(m.enviada).toMatchObject({
+      label: "Enviada",
+      tone: "success",
+      icon: CircleCheck,
+    });
+    expect(m.nao_enviada).toMatchObject({
+      label: "Não enviada",
+      tone: "alert",
+      icon: OctagonAlert,
+    });
+    expect(m.nao_confirmada).toMatchObject({
+      label: "Envio não confirmado",
+      tone: "warning",
+      icon: CircleAlert,
+    });
+  });
+
+  it("ClockFading é só da mensagem agendada e ClockPlus não é status", () => {
+    expect(TODOS.filter((d) => d.icon === ClockFading)).toEqual([
+      MENSAGEM_AGENDADA_STATUS.agendada,
+    ]);
+    expect(TODOS.some((d) => d.icon === ClockPlus)).toBe(false);
+    // WifiOff e sempre o numero desconectado, em alerta.
+    for (const definicao of TODOS.filter((d) => d.icon === WifiOff)) {
+      expect(definicao.tone).toBe("alert");
+    }
+    // OctagonAlert e sempre falha (alert) e CircleAlert sempre atencao.
+    for (const definicao of TODOS) {
+      if (definicao.icon === OctagonAlert) {
+        expect(definicao.tone).toBe("alert");
+      }
+      if (definicao.icon === CircleAlert) {
+        expect(definicao.tone).toBe("warning");
+      }
+    }
   });
 
   it("consentimento revogado é alerta, nunca neutro", () => {

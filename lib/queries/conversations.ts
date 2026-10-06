@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { ConversationStatus } from "@/lib/design/status";
 import { corDoNumero, type CorDoNumero } from "@/lib/domain/cor-do-numero";
+import { recencia } from "@/lib/domain/filtros-da-conversa";
 
 // Tipos e fetchers do Inbox. Sem tipos gerados do banco (pendencia
 // registrada), as formas sao declaradas aqui e os selects fazem cast; a RLS
@@ -147,6 +148,9 @@ export type MessageItem = {
    * apagada depois (o ON DELETE SET NULL zera o vinculo).
    */
   reply_to: QuotedMessage | null;
+  // A mensagem agendada de onde esta mensagem saiu (bolha "Mensagem
+  // agendada") NAO vem no fio: e a consulta separada fetchAgendadasDoFio
+  // (lib/queries/agendadas-do-fio.ts), que falha sozinha sem derrubar o fio.
 };
 
 export type ComplianceDecision = {
@@ -209,32 +213,61 @@ function normalizeConversation(
 // uma clinica movimentada traria milhares de linhas em toda carga da tela.
 export const CONVERSATIONS_ATIVAS_LIMIT = 300;
 
-// Lista ativa: tudo que NAO esta resolvida. Ordenada e limitada, batendo com
-// o indice conversation(clinic_id, status, last_message_at desc).
-//
-// A ordem do SERVIDOR continua sendo por recencia: e ela que decide QUAIS 300
-// conversas chegam ao browser, e trocar o criterio faria uma clinica com
-// centenas de leads antigos por ler empurrar para fora do lote as conversas
-// que a equipe esta trabalhando hoje. Quem espera resposta vem primeiro DENTRO
-// do lote, no cliente.
+// Lista ativa: tudo que NAO esta resolvida. As 300 com a mensagem mais
+// recente (indice conversation(clinic_id, status, last_message_at desc))
+// UNIDAS as que esperam resposta (awaiting_reply, ate 300, pela ultima fala
+// do paciente), sem repetir, na ordem da lista (recencia). O lote pode
+// passar de 300: quem espera resposta nunca fica de fora por causa de um
+// disparo grande.
 export async function fetchConversations(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<ConversationListItem[]> {
-  const { data, error } = await supabase
-    .from("conversation")
-    .select(CONVERSATION_SELECT)
-    .eq("clinic_id", clinicId)
-    .neq("status", "resolvida")
-    // Ordem de RECEBIMENTO, nao de atividade: last_message_at sobe tambem
-    // quando a clinica responde (send.ts:457-466), o que jogava a conversa
-    // respondida para o topo e embaralhava a coluna de horarios.
-    .order("last_inbound_at", { ascending: false, nullsFirst: false })
-    .limit(CONVERSATIONS_ATIVAS_LIMIT);
-  if (error) {
-    throw new Error(error.message);
+  const [recentes, esperando] = await Promise.all([
+    supabase
+      .from("conversation")
+      .select(CONVERSATION_SELECT)
+      .eq("clinic_id", clinicId)
+      .neq("status", "resolvida")
+      // A mensagem mais recente, enviada OU recebida, primeiro, como no
+      // WhatsApp (pedido do dono em 06/10/2026; antes era a ordem de
+      // recebimento). A mesma chave de recencia
+      // (lib/domain/filtros-da-conversa) e o indice conversation(clinic_id,
+      // status, last_message_at desc).
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    // Quem ESPERA resposta entra sempre, mesmo fora das 300 mais recentes.
+    // last_message_at anda com todo envio (regua, confirmacao, agendada):
+    // numa manha de 300 toques, a conversa em que o paciente escreveu ontem
+    // e ninguem respondeu sairia do lote, do "Aguardando voce" e do "Ha mais
+    // de 24h" sem aviso (achado 25 da revisao).
+    supabase
+      .from("conversation")
+      .select(CONVERSATION_SELECT)
+      .eq("clinic_id", clinicId)
+      .neq("status", "resolvida")
+      .eq("awaiting_reply", true)
+      .order("last_inbound_at", { ascending: false, nullsFirst: false })
+      .limit(CONVERSATIONS_ATIVAS_LIMIT),
+  ]);
+  if (recentes.error) {
+    throw new Error(recentes.error.message);
   }
-  return ((data ?? []) as Record<string, unknown>[]).map(normalizeConversation);
+  if (esperando.error) {
+    throw new Error(esperando.error.message);
+  }
+  // As duas listas juntas, sem repetir, na ordem da lista (recencia).
+  const porId = new Map<string, ConversationListItem>();
+  for (const linha of [
+    ...((recentes.data ?? []) as Record<string, unknown>[]),
+    ...((esperando.data ?? []) as Record<string, unknown>[]),
+  ]) {
+    const conversa = normalizeConversation(linha);
+    if (!porId.has(conversa.id)) {
+      porId.set(conversa.id, conversa);
+    }
+  }
+  return [...porId.values()].sort((a, b) => recencia(b) - recencia(a));
 }
 
 // Teto do arquivo de resolvidas carregado de uma vez. A lista precisa dele
@@ -253,7 +286,7 @@ export async function fetchResolvedConversations(
     .select(CONVERSATION_SELECT)
     .eq("clinic_id", clinicId)
     .eq("status", "resolvida")
-    .order("last_inbound_at", { ascending: false, nullsFirst: false })
+    .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(limit);
   if (error) {
     throw new Error(error.message);
@@ -415,6 +448,9 @@ const MESSAGE_SELECT =
   // devolve a lista das mensagens que citam esta, que e o contrario do que a
   // bolha precisa. Conferido contra o banco em 02/09/2026.
   "reply_to:reply_to_message_id(id, author, author_user_id, content_type, body, is_internal_note, deleted_at, pelo_celular)";
+// SEM embed de mensagem_agendada, de proposito (achado 16 da revisao): uma
+// tabela que falte ou um embed recusado pelo PostgREST derrubaria o fio de
+// todas as conversas. A autoria da agendada vem de fetchAgendadasDoFio.
 
 export const MESSAGES_PAGE_SIZE = 50;
 

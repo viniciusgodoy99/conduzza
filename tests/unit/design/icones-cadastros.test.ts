@@ -18,6 +18,7 @@ import {
   CONVERSATION_STATUS,
   FUNNEL_STAGE,
   IA_AGENDA_STATUS,
+  MENSAGEM_AGENDADA_STATUS,
   PATIENT_TAG,
   RECORD_STATUS,
   REGUA_STATUS,
@@ -48,6 +49,7 @@ const GLOBAIS: StatusDefinition[] = [
   CONVERSAO_STATUS,
   TOKEN_META_STATUS,
   CONSENT_STATUS,
+  MENSAGEM_AGENDADA_STATUS,
 ].flatMap((mapa) => Object.values(mapa) as StatusDefinition[]);
 
 const DOS_CADASTROS: StatusDefinition[] = [

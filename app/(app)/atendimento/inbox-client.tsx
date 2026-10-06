@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
@@ -16,6 +17,21 @@ import {
   useTransition,
 } from "react";
 
+import { useAnuncio } from "@/components/atendimento/agendadas/anuncio";
+import {
+  assinaturaDosIds,
+  idsQuePodemTerSaidoDeAgendada,
+} from "@/components/atendimento/agendadas/da-mensagem";
+import {
+  DialogoDeAgendada,
+  type ConclusaoDoAgendamento,
+  type PedidoDeAgendada,
+} from "@/components/atendimento/agendadas/dialogo-de-agendada";
+import {
+  planoDaDevolucao,
+  type DevolucaoDoTexto,
+} from "@/components/atendimento/agendadas/enviar-agora";
+import { ListaDeAgendadas } from "@/components/atendimento/agendadas/lista-de-agendadas";
 import { Composer, type Mode } from "@/components/atendimento/composer";
 import { ContextPanel } from "@/components/atendimento/context-panel";
 import { ConversationList } from "@/components/atendimento/conversation-list";
@@ -46,9 +62,15 @@ import {
   type NumerosDoInbox,
 } from "@/lib/queries/conversations";
 import {
+  agendadasKeys,
+  textoDoSucessoDoAgendamento,
+} from "@/lib/domain/mensagem-agendada";
+import {
   numeroParaMostrar,
   travaDoNumero,
+  variosNumeros,
 } from "@/lib/domain/numeros-do-inbox";
+import { formatarTelefone } from "@/lib/domain/telefone";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import {
   etiquetasKeys,
@@ -67,7 +89,11 @@ import {
   type EnvioEmVoo,
 } from "@/lib/domain/envios-em-voo";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
-import { useInboxChannel } from "@/lib/realtime/use-inbox-channel";
+import { fetchAgendadasDoFio } from "@/lib/queries/agendadas-do-fio";
+import {
+  useInboxChannel,
+  type ConversaAbertaNoCanal,
+} from "@/lib/realtime/use-inbox-channel";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -77,6 +103,15 @@ import {
   markConversationReadAction,
   sendMessageAction,
 } from "./actions";
+import { listarAgendadasAction } from "./agendadas-actions";
+
+/** De onde saiu o pedido do dialogo de agendar ou editar. */
+type OrigemDoAgendamento = {
+  conversationId: string;
+  contactId: string;
+  /** o texto veio do campo do compositor (que esvazia no ok) */
+  doCompositor: boolean;
+};
 
 // Tela 1, Atendimento (design system Conduzza, docs/06 secao 5.3): lista
 // 336px, fio flexivel, contexto 320px. O painel de contexto segue a largura
@@ -306,7 +341,11 @@ export function InboxClient({
     permissionHint(viewerRole, "agenda") ?? "Seu perfil só consulta a agenda";
   const ehChefia = viewerRole === "admin" || viewerRole === "gestor";
 
-  useInboxChannel(supabase, clinicId);
+  // A conversa aberta, para o canal reler as agendadas dela a cada evento
+  // de message ou conversation (a tabela da agendada nao esta no canal).
+  // Atualizada num efeito, depois que `selected` existe (mais abaixo).
+  const conversaAbertaNoCanal = useRef<ConversaAbertaNoCanal | null>(null);
+  useInboxChannel(supabase, clinicId, conversaAbertaNoCanal);
 
   // Revisita usa o dado que o servidor acabou de buscar, nao o cache parado
   // da visita anterior (initialData so vale na criacao da entrada). Com a
@@ -508,6 +547,81 @@ export function InboxClient({
     enabled: selected !== null,
   });
 
+  // MENSAGENS AGENDADAS do contato aberto, em todos os numeros (a lista acima
+  // da caixa de escrever e o botao "Agendar mensagem" do compositor). Lidas
+  // pela Server Action, que grava a trilha de leitura (o texto e dado de
+  // paciente, uma linha por contato a cada 5 minutos) e le pela sessao, com
+  // RLS. A tabela da agendada NAO esta no tempo real (o wal2json entregaria
+  // o texto a toda aba): a lista relê a cada evento de message ou
+  // conversation deste contato (useInboxChannel), de 30 em 30 segundos com a
+  // aba a vista, quando a janela volta ao foco e depois de cada acao propria.
+  const contatoAberto = selected?.contact.id ?? null;
+  useEffect(() => {
+    conversaAbertaNoCanal.current = selected
+      ? { conversationId: selected.id, contactId: selected.contact.id }
+      : null;
+  });
+  const agendadasQuery = useQuery({
+    queryKey: agendadasKeys.doContato(clinicId, contatoAberto ?? "nenhum"),
+    queryFn: async () => {
+      const resultado = await listarAgendadasAction({
+        contactId: contatoAberto,
+      });
+      if (!resultado.ok) {
+        // Sem o motivo no erro: a tela so precisa saber que nao leu.
+        throw new Error("agendadas_ilegiveis");
+      }
+      return { itens: resultado.itens, contexto: resultado.contexto };
+    },
+    enabled: contatoAberto !== null,
+    refetchOnWindowFocus: true,
+    // So com a aba a vista (refetchIntervalInBackground fica desligado).
+    refetchInterval: 30_000,
+  });
+  // A AUTORIA das bolhas que sairam de uma agendada ("{Ana} · Mensagem
+  // agendada"): consulta SEPARADA do fio e tolerante a erro (falhando, a
+  // bolha so fica como resposta comum; o fio nunca cai por ela). So vao os
+  // ids que podem ter saido de agendada. A assinatura do recorte entra na
+  // chave: mensagem nova ou pagina antiga pede leitura com os ids certos; o
+  // canal invalida pela chave da conversa (agendadasKeys.doFio).
+  const idsDoFio = useMemo(
+    () => idsQuePodemTerSaidoDeAgendada(messages),
+    [messages],
+  );
+  const agendadasDoFioQuery = useQuery({
+    queryKey: [
+      ...agendadasKeys.doFio(selected?.id ?? "nenhuma"),
+      assinaturaDosIds(idsDoFio),
+    ] as const,
+    queryFn: () => fetchAgendadasDoFio(supabase, clinicId, idsDoFio),
+    enabled: selected !== null && idsDoFio.length > 0,
+    // Entre uma leitura e a outra, as marcas que ja existiam continuam.
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+  });
+  // "Tentar de novo" volta a mostrar carregando enquanto busca.
+  const estadoDasAgendadas = agendadasQuery.data
+    ? ("pronto" as const)
+    : agendadasQuery.isError && !agendadasQuery.isFetching
+      ? ("erro" as const)
+      : ("carregando" as const);
+  const { anuncio, anunciar } = useAnuncio();
+  // O dialogo de agendar e de editar. De onde o pedido saiu (a conversa, o
+  // contato e se o texto veio do campo) fica guardado no clique, JUNTO do
+  // pedido: reler `selected` quando a acao voltar e o defeito que este
+  // arquivo ja teve, e a resposta de um envio usa a origem do proprio
+  // dialogo, mesmo que outro tenha sido aberto depois (achado 29).
+  const [agendamentoAberto, setAgendamentoAberto] = useState<{
+    pedido: PedidoDeAgendada;
+    origem: OrigemDoAgendamento;
+  } | null>(null);
+  // O rascunho vigente, para o "Enviar agora" que falhou devolver o texto ao
+  // campo sem passar por cima do que a pessoa escreveu depois.
+  const rascunho = useRef({ texto, modo, citando });
+  useEffect(() => {
+    rascunho.current = { texto, modo, citando };
+  });
+
   const handleSelect = (id: string) => {
     setSelectedId(id);
     // Pela MESMA razão que o compositor é recriado com key: a citação carrega
@@ -596,6 +710,9 @@ export function InboxClient({
         queryKey: conversationKeys.totalResolvidas(clinicId),
       });
       setConversaAvulsaId((atual) => (atual === id ? null : atual));
+      setAgendamentoAberto((atual) =>
+        atual?.origem.conversationId === id ? null : atual,
+      );
       if (selecaoAtual.current === id) {
         selecaoAtual.current = null;
         setSelectedId(null);
@@ -841,6 +958,92 @@ export function InboxClient({
     });
   };
 
+  const abrirAgendamento = (
+    conversa: ConversationListItem,
+    pedido: PedidoDeAgendada,
+    doCompositor: boolean,
+  ) => {
+    setAgendamentoAberto({
+      pedido,
+      origem: {
+        conversationId: conversa.id,
+        contactId: conversa.contact.id,
+        doCompositor,
+      },
+    });
+  };
+
+  const recarregarAgendadasDe = (origem: OrigemDoAgendamento) => {
+    void queryClient.invalidateQueries({
+      queryKey: agendadasKeys.doContato(clinicId, origem.contactId),
+    });
+  };
+
+  // Depois do ok do dialogo. O campo do compositor so esvazia aqui, e so
+  // quando o texto agendado veio dele e a tela ainda esta na mesma conversa.
+  // A citacao vai junto: a agendada sai sem ela (o dialogo avisou).
+  const concluirAgendamento = (
+    conclusao: ConclusaoDoAgendamento,
+    origem: OrigemDoAgendamento,
+  ) => {
+    recarregarAgendadasDe(origem);
+    if (
+      conclusao.tipo === "agendar" &&
+      origem.doCompositor &&
+      selecaoAtual.current === origem.conversationId
+    ) {
+      setTexto("");
+      setCitando(null);
+    }
+    toast.success(textoDoSucessoDoAgendamento(conclusao.enviarEm, timezone));
+    if (conclusao.tipo === "agendar") {
+      anunciar("Mensagem agendada.");
+    }
+  };
+
+  /**
+   * "Enviar agora" retirou a agendada e o texto volta (planoDaDevolucao):
+   * para o campo da mesma conversa, quando ele pode receber; senao, um aviso
+   * que diz PARA QUEM era a mensagem e oferece copiar. Com o envio sem
+   * confirmacao (a resposta se perdeu), o aviso manda conferir a conversa.
+   */
+  const devolverTexto = (
+    origem: { conversationId: string; contato: string | null },
+    devolucao: DevolucaoDoTexto,
+  ) => {
+    const atual = rascunho.current;
+    const plano = planoDaDevolucao({
+      devolucao,
+      contato: origem.contato,
+      mesmaConversa: selecaoAtual.current === origem.conversationId,
+      rascunho: { texto: atual.texto, modo: atual.modo },
+    });
+    const avisar = plano.certeza === "incerto" ? toast.warning : toast.error;
+    if (plano.tipo === "no_campo") {
+      if (plano.voltarParaResposta) {
+        setModo("responder");
+        if (atual.citando?.is_internal_note) {
+          setCitando(null);
+        }
+      }
+      setTexto(plano.texto);
+      avisar(plano.aviso, { duration: 10_000 });
+      return;
+    }
+    avisar(plano.titulo, {
+      description: plano.descricao,
+      duration: Number.POSITIVE_INFINITY,
+      action: {
+        label: "Copiar a mensagem",
+        onClick: () => {
+          void navigator.clipboard
+            ?.writeText(plano.texto)
+            .catch(() => undefined);
+        },
+      },
+    });
+  };
+
   // Sem WhatsApp e sem nada para mostrar, o passo e conectar. Com WhatsApp, a
   // lista aparece SEMPRE, com os filtros, mesmo sem conversa ativa (achado 10
   // da revisao): antes o vazio tomava a tela inteira e o arquivo de
@@ -949,6 +1152,7 @@ export function InboxClient({
             loadingOlder={messagesQuery.isFetchingNextPage}
             onLoadOlder={() => void messagesQuery.fetchNextPage()}
             authorNames={authorNames}
+            agendadasDoFio={agendadasDoFioQuery.data}
             onBack={() => setSelectedId(null)}
             onToggleContext={abrirContexto}
             viewerId={viewerId}
@@ -985,40 +1189,121 @@ export function InboxClient({
               setApagando(mensagem);
             }}
             footer={
-              // key OBRIGATORIA: sem ela o React so troca a prop e o
-              // compositor mantem o estado. Com anexo, isso significa a
-              // foto de um paciente ficar carregada ao abrir a conversa de
-              // outro, e o proximo clique em Enviar manda o arquivo errado
-              // para o WhatsApp errado.
-              <Composer
-                key={selected.id}
-                conversation={selected}
-                viewerId={viewerId}
-                podeEditar={podeEditar}
-                // So trava a resposta com a autorizacao CONFERIDA: carregando
-                // ou com erro, quem decide e o envio no servidor.
-                autorizacao={
-                  consentQuery.isSuccess ? consentQuery.data : undefined
-                }
-                timezone={timezone}
-                citando={citandoVivo}
-                aoCancelarCitacao={() => setCitando(null)}
-                aoCancelarCitacaoSeFor={(id) =>
-                  setCitando((atual) => (atual?.id === id ? null : atual))
-                }
-                authorNames={authorNames}
-                modo={modo}
-                aoTrocarModo={setModo}
-                texto={texto}
-                aoMudarTexto={setTexto}
-                aoEnviarTexto={enviarTexto}
-                aoPerderConversa={perderConversa}
-                travaDoNumero={travaDoSelecionado}
-                numero={numeroDoSelecionado}
-                podeReconectar={podeReconectar}
-                mensagensPadrao={mensagensPadrao}
-                nomeDaClinica={nomeDaClinica}
-              />
+              <>
+                {/* A lista das agendadas e IRMA do compositor, fora dos
+                    retornos antecipados dele: aparece em toda conversa do
+                    contato (aberta, resolvida, com a IA, de colega, de
+                    numero removido). key: estado da lista (aberta, a
+                    confirmacao em curso) e por conversa. */}
+                <ListaDeAgendadas
+                  key={`agendadas-${selected.id}`}
+                  clinicId={clinicId}
+                  estado={estadoDasAgendadas}
+                  dados={agendadasQuery.data}
+                  aoTentarDeNovo={() => void agendadasQuery.refetch()}
+                  conversa={{
+                    id: selected.id,
+                    status: selected.status,
+                    assigneeUserId: selected.assignee_user_id,
+                    whatsappAccountId: selected.whatsapp_account_id ?? null,
+                    contactId: selected.contact.id,
+                    contato:
+                      selected.contact.name ??
+                      formatarTelefone(selected.contact.phone_e164),
+                  }}
+                  viewerId={viewerId}
+                  podeEscrever={podeEditar}
+                  nomes={authorNames}
+                  timezone={timezone}
+                  mostrarNumero={variosNumeros(numeros)}
+                  anuncio={anuncio}
+                  anunciar={anunciar}
+                  aoEditar={(agendada) =>
+                    abrirAgendamento(
+                      selected,
+                      { tipo: "editar", agendada },
+                      false,
+                    )
+                  }
+                  aoAgendarDeNovo={(agendada) =>
+                    abrirAgendamento(
+                      selected,
+                      {
+                        tipo: "agendar",
+                        conversationId: selected.id,
+                        texto: agendada.texto ?? "",
+                        substitui: agendada.id,
+                        semCitacao: false,
+                        comAnexo: false,
+                      },
+                      false,
+                    )
+                  }
+                  aoDevolverTexto={(devolucao) =>
+                    devolverTexto(
+                      {
+                        conversationId: selected.id,
+                        contato:
+                          selected.contact.name ??
+                          formatarTelefone(selected.contact.phone_e164),
+                      },
+                      devolucao,
+                    )
+                  }
+                  aoIrParaConversa={irParaConversa}
+                  numerosAoVivo={numeros}
+                />
+                {/* key OBRIGATORIA: sem ela o React so troca a prop e o
+                  compositor mantem o estado. Com anexo, isso significa a
+                  foto de um paciente ficar carregada ao abrir a conversa de
+                  outro, e o proximo clique em Enviar manda o arquivo errado
+                  para o WhatsApp errado. */}
+                <Composer
+                  key={selected.id}
+                  conversation={selected}
+                  viewerId={viewerId}
+                  podeEditar={podeEditar}
+                  // So trava a resposta com a autorizacao CONFERIDA: carregando
+                  // ou com erro, quem decide e o envio no servidor.
+                  autorizacao={
+                    consentQuery.isSuccess ? consentQuery.data : undefined
+                  }
+                  timezone={timezone}
+                  citando={citandoVivo}
+                  aoCancelarCitacao={() => setCitando(null)}
+                  aoCancelarCitacaoSeFor={(id) =>
+                    setCitando((atual) => (atual?.id === id ? null : atual))
+                  }
+                  authorNames={authorNames}
+                  modo={modo}
+                  aoTrocarModo={setModo}
+                  texto={texto}
+                  aoMudarTexto={setTexto}
+                  aoEnviarTexto={enviarTexto}
+                  aoPerderConversa={perderConversa}
+                  travaDoNumero={travaDoSelecionado}
+                  numero={numeroDoSelecionado}
+                  podeReconectar={podeReconectar}
+                  mensagensPadrao={mensagensPadrao}
+                  nomeDaClinica={nomeDaClinica}
+                  agendamento={{
+                    estado: estadoDasAgendadas,
+                    aoAgendar: ({ semCitacao, comAnexo }) =>
+                      abrirAgendamento(
+                        selected,
+                        {
+                          tipo: "agendar",
+                          conversationId: selected.id,
+                          texto,
+                          substitui: null,
+                          semCitacao,
+                          comAnexo,
+                        },
+                        true,
+                      ),
+                  }}
+                />
+              </>
             }
           />
         ) : (
@@ -1063,6 +1348,40 @@ export function InboxClient({
         aoApagar={confirmarApagar}
         pendente={apagandoPendente}
         erro={erroAoApagar}
+      />
+
+      <DialogoDeAgendada
+        pedido={agendamentoAberto?.pedido ?? null}
+        // A origem DESTE dialogo, presa no fechamento: a resposta de um
+        // envio em curso nunca le a de outro pedido, nem fecha um dialogo
+        // aberto depois dele.
+        aoFechar={() => {
+          const desteDialogo = agendamentoAberto;
+          setAgendamentoAberto((atual) =>
+            atual === desteDialogo ? null : atual,
+          );
+        }}
+        aoConcluir={(conclusao) => {
+          if (agendamentoAberto) {
+            concluirAgendamento(conclusao, agendamentoAberto.origem);
+          }
+        }}
+        aoRecarregarLista={() => {
+          if (agendamentoAberto) {
+            recarregarAgendadasDe(agendamentoAberto.origem);
+          }
+        }}
+        timezone={timezone}
+        viewerId={viewerId}
+        // Por qual numero sai, so com mais de um numero ativo.
+        numero={
+          numeroDoSelecionado?.estado === "ativo"
+            ? {
+                nome: numeroDoSelecionado.numero.nome,
+                cor: numeroDoSelecionado.numero.cor,
+              }
+            : null
+        }
       />
 
       <Sheet open={contextOpen} onOpenChange={setContextOpen}>

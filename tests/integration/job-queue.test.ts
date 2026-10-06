@@ -484,7 +484,9 @@ describe("mecânica da fila", () => {
         billable: false,
         cost_cents: 0,
         delivery_status: "enviada",
-        wa_message_id: "fake:ja-saiu",
+        // Unico por execucao: uma rodada interrompida antes do afterAll deixa
+        // a linha para tras, e um id fixo quebraria a seguinte (06/10/2026).
+        wa_message_id: `fake:ja-saiu:${sufixo}`,
       })
       .throwOnError();
 

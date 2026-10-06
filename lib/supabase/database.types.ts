@@ -2188,6 +2188,134 @@ export type Database = {
         }
         Relationships: []
       }
+      mensagem_agendada: {
+        Row: {
+          atividade_id: string | null
+          cancelada_em: string | null
+          cancelada_por: string | null
+          clinic_id: string
+          contact_id: string
+          conversation_id: string | null
+          criada_em: string
+          criada_por: string
+          dispensada_em: string | null
+          dispensada_por: string | null
+          editada_em: string | null
+          editada_por: string | null
+          encerrada_em: string | null
+          enviada_em: string | null
+          enviar_em: string
+          id: string
+          job_id: string | null
+          message_id: string | null
+          motivo: string | null
+          situacao: string
+          texto: string | null
+          updated_at: string
+          whatsapp_account_id: string
+        }
+        Insert: {
+          atividade_id?: string | null
+          cancelada_em?: string | null
+          cancelada_por?: string | null
+          clinic_id: string
+          contact_id: string
+          conversation_id?: string | null
+          criada_em?: string
+          criada_por: string
+          dispensada_em?: string | null
+          dispensada_por?: string | null
+          editada_em?: string | null
+          editada_por?: string | null
+          encerrada_em?: string | null
+          enviada_em?: string | null
+          enviar_em: string
+          id?: string
+          job_id?: string | null
+          message_id?: string | null
+          motivo?: string | null
+          situacao?: string
+          texto?: string | null
+          updated_at?: string
+          whatsapp_account_id: string
+        }
+        Update: {
+          atividade_id?: string | null
+          cancelada_em?: string | null
+          cancelada_por?: string | null
+          clinic_id?: string
+          contact_id?: string
+          conversation_id?: string | null
+          criada_em?: string
+          criada_por?: string
+          dispensada_em?: string | null
+          dispensada_por?: string | null
+          editada_em?: string | null
+          editada_por?: string | null
+          encerrada_em?: string | null
+          enviada_em?: string | null
+          enviar_em?: string
+          id?: string
+          job_id?: string | null
+          message_id?: string | null
+          motivo?: string | null
+          situacao?: string
+          texto?: string | null
+          updated_at?: string
+          whatsapp_account_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mensagem_agendada_atividade_id_fkey"
+            columns: ["atividade_id"]
+            isOneToOne: false
+            referencedRelation: "contact_activity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mensagem_agendada_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mensagem_agendada_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mensagem_agendada_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversation"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mensagem_agendada_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "job_queue"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mensagem_agendada_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "message"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mensagem_agendada_whatsapp_account_id_fkey"
+            columns: ["whatsapp_account_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_account"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       message: {
         Row: {
           author: string
@@ -4568,6 +4696,10 @@ export type Database = {
         }
         Returns: Json
       }
+      encerrar_agendada_sem_envio: {
+        Args: { p_agendada_id: string; p_motivo: string; p_situacao: string }
+        Returns: boolean
+      }
       encerrar_envios_da_oferta: {
         Args: { p_clinic_id: string; p_offer_id: string }
         Returns: number
@@ -4759,6 +4891,7 @@ export type Database = {
       }
       motor_agendar: { Args: never; Returns: string }
       motor_desagendar: { Args: never; Returns: string }
+      motivo_da_agendada: { Args: { p_codigo: string }; Returns: string }
       motor_manutencao: { Args: never; Returns: Json }
       numero_do_job: {
         Args: { p_job_id: string; p_worker: string }
@@ -4805,6 +4938,14 @@ export type Database = {
         }
         Returns: number
       }
+      planejar_mensagens_agendadas: {
+        Args: {
+          p_clinic_id?: string
+          p_incluir_teste?: boolean
+          p_limite?: number
+        }
+        Returns: Json
+      }
       planejar_reguas: { Args: never; Returns: Json }
       podar_cliques_do_site: {
         Args: { p_agora?: string; p_clinic_ids?: string[] }
@@ -4843,6 +4984,18 @@ export type Database = {
       recalcular_previa_da_conversa: {
         Args: { p_conversation_id: string }
         Returns: undefined
+      }
+      reconciliar_mensagem_agendada: {
+        Args: { p_agendada_id: string }
+        Returns: string
+      }
+      reconciliar_mensagens_agendadas: {
+        Args: {
+          p_clinic_id?: string
+          p_incluir_teste?: boolean
+          p_limite?: number
+        }
+        Returns: Json
       }
       reclassificar_resposta_automatica: {
         Args: {
@@ -5007,6 +5160,10 @@ export type Database = {
       tipo_de_envio_do_job: {
         Args: { p_kind: string; p_payload: Json }
         Returns: string
+      }
+      tirar_agendada_para_enviar_agora: {
+        Args: { p_id: string }
+        Returns: Json
       }
       trocar_chave_do_rastreio: {
         Args: { p_clinic_id: string }

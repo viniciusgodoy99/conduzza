@@ -123,7 +123,11 @@ describe("executarPassagemDoMotor com leitura de gasto", () => {
     await executarPassagemDoMotor(db.admin, { executorId: "motor-teste" });
     const claims = db.chamadasDe("claim_jobs_por_clinica");
     expect(claims.map((c) => c.p_kinds)).toEqual([
-      ["enviar_mensagem_ativa", "executar_passo_de_regua"],
+      [
+        "enviar_mensagem_ativa",
+        "executar_passo_de_regua",
+        "enviar_mensagem_agendada",
+      ],
       ["baixar_midia"],
       ["enviar_conversao_meta", "oferecer_lista_espera"],
       ["sincronizar_gasto_meta", "resolver_anuncio_meta"],

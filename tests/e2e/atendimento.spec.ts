@@ -69,8 +69,9 @@ test("prévia escrita pela clínica ou pela IA diz quem escreveu", async ({
     .getByRole("button", { name: /Juliana Dermato/ });
   await expect(cartao.getByText("IA:", { exact: true })).toBeVisible();
   await expect(cartao.getByText(/Quer ver os próximos horários/)).toBeVisible();
-  // A hora é a da última fala da PACIENTE (a que ordena a lista), e diz isso.
-  await expect(cartao).toHaveAccessibleName(/Última mensagem do paciente/);
+  // A hora é a da última mensagem, enviada ou recebida (a que ordena a lista,
+  // como no WhatsApp desde 06/10/2026), e diz isso.
+  await expect(cartao).toHaveAccessibleName(/Última mensagem (às|em) /);
 });
 
 test("link ?conversa= abre a conversa já selecionada (Confirmações, ficha)", async ({
