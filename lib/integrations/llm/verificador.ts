@@ -1,47 +1,63 @@
 // Verificador de conformidade por modelo: a segunda camada do filtro do CFM
-// (CLAUDE.md 3.2, plano de seguranca 2.3). Claude Haiku 4.5 com saida
-// estruturada (messages.parse + zodOutputFormat, zod 4).
+// (CLAUDE.md 3.2, plano de seguranca 2.3). gpt-6-luna da OpenAI pela
+// Responses API, com saida estruturada (responses.parse + zodTextFormat,
+// zod 4).
 //
 // O filtro (lib/domain/conformidade/filtro.ts) recebe este verificador
 // injetado e so aprova quando as regras estao limpas E ele aprova. Aqui
 // toda anomalia vira { tipo: "falha" }, que o filtro trata como bloqueio:
-// erro do SDK, recusa, max_tokens, parada inesperada, saida fora do
-// esquema, resposta nula e excecao inesperada (inclusive sincrona). A
-// funcao devolvida nunca rejeita.
+// erro do SDK, recusa (item "refusal"), resposta incompleta
+// (max_output_tokens, content_filter), status diferente de "completed",
+// item inesperado na saida, saida fora do esquema, resposta nula e excecao
+// inesperada (inclusive sincrona). A funcao devolvida nunca rejeita.
 //
-// Parametros que NAO vao: output_config.effort (o Haiku 4.5 recusa) e
-// thinking. inference_geo tambem nao (o Haiku 4.5 nao aceita).
+// Parametros fixos (PARAMETROS_FIXOS_DE_CLASSIFICACAO): reasoning.effort
+// "none" (sem raciocinio, entao temperature 0 vale e nao ha
+// reasoning.encrypted_content para incluir), store false, service_tier
+// "default" (o preco de llm_preco e o Standard) e cache de prompt em modo
+// explicito sem ponto de corte: o envelope muda a cada chamada (nonce), e o
+// modo implicito pagaria 1,25x para gravar no cache o que nunca e relido. A
+// politica (cerca de 750 tokens) fica abaixo do minimo de cache de 1.024
+// tokens; se passar dele, o caminho e uma mensagem developer com
+// prompt_cache_breakpoint no fim dela. Sem prompt_cache_key, porque nao ha
+// cache.
 //
 // LGPD: as mensagens do paciente e o rascunho vao minimizados (CPF,
 // telefone, e-mail, numeros longos viram marcador) e no maximo as ultimas
-// cinco mensagens. Nada de texto em log: so motivo, status e modelo.
+// cinco mensagens. O esquema da saida nao tem dado de paciente (a OpenAI o
+// trata como dado de sistema, fora da regiao). Nada de texto em log: so
+// motivo, status e modelo.
 
 import { createHash, randomBytes } from "node:crypto";
 
-import type Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import type OpenAI from "openai";
+import { zodTextFormat } from "openai/helpers/zod";
 
 import { MAXIMO_DE_MENSAGENS_NO_CONTEXTO } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import { minimizarParaLlm } from "@/lib/domain/conformidade/minimizar";
 import {
   EsquemaDoVeredicto,
+  type MotivoDaFalha,
   type ResultadoDoVerificador,
   type UsoDoLlm,
   type Verificador,
 } from "@/lib/domain/conformidade/veredicto";
-import { classificarErroDoLlm } from "@/lib/integrations/llm/anthropic";
+import {
+  classificarErroDoLlm,
+  idDaRequisicao,
+} from "@/lib/integrations/llm/openai";
 import { log } from "@/lib/log";
 
-/** Lista fechada: o ambiente so escolhe entre estes (alias ou versao fixa). */
-export const MODELOS_DO_VERIFICADOR = [
-  "claude-haiku-4-5",
-  "claude-haiku-4-5-20251001",
-] as const;
+/**
+ * Lista fechada: o ambiente so escolhe entre estes. A OpenAI publica um
+ * unico id para o gpt-6-luna (sem versao datada, pagina do modelo em
+ * 05/10/2026).
+ */
+export const MODELOS_DO_VERIFICADOR = ["gpt-6-luna"] as const;
 
 export type ModeloDoVerificador = (typeof MODELOS_DO_VERIFICADOR)[number];
 
-export const MODELO_PADRAO_DO_VERIFICADOR: ModeloDoVerificador =
-  "claude-haiku-4-5";
+export const MODELO_PADRAO_DO_VERIFICADOR: ModeloDoVerificador = "gpt-6-luna";
 
 /** Prazo de uma chamada do verificador (plano de execucao: 8 s). */
 export const PRAZO_DO_VERIFICADOR_NO_SDK_MS = 8_000;
@@ -64,6 +80,18 @@ export function modeloDoVerificador(
     ? (valor as ModeloDoVerificador)
     : null;
 }
+
+/**
+ * O que vai em toda chamada do verificador e do classificador (motivos no
+ * cabecalho). Nunca previous_response_id, conversation, metadata ou tools.
+ */
+export const PARAMETROS_FIXOS_DE_CLASSIFICACAO = {
+  reasoning: { effort: "none" },
+  temperature: 0,
+  store: false,
+  service_tier: "default",
+  prompt_cache_options: { mode: "explicit" },
+} as const;
 
 export const POLITICA_DO_VERIFICADOR = `Você é o verificador de conformidade de uma recepcionista virtual de clínica médica e de estética no Brasil. A recepcionista conversa com pacientes pelo WhatsApp. Antes de cada envio, você decide se o RASCUNHO dela pode ser enviado ao paciente.
 
@@ -92,7 +120,10 @@ export const VERSAO_DA_POLITICA = `verificador-${createHash("sha256")
   .digest("hex")
   .slice(0, 12)}`;
 
-const FORMATO_DO_VEREDICTO = zodOutputFormat(EsquemaDoVeredicto);
+const FORMATO_DO_VEREDICTO = zodTextFormat(
+  EsquemaDoVeredicto,
+  "veredicto_de_conformidade",
+);
 
 /** Neutraliza qualquer coisa parecida com marcador dentro do conteudo. */
 export function semMarcadores(texto: string): string {
@@ -138,58 +169,181 @@ export function montarEnvelope(entrada: {
   ].join("\n");
 }
 
-export type ClienteDoVerificador = Pick<Anthropic, "messages">;
+export type ClienteDoVerificador = Pick<OpenAI, "responses">;
 
+/** usage da Responses API: input_tokens ja inclui o cache lido e gravado. */
 type UsoDaApi = {
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_input_tokens: number | null;
-  cache_creation_input_tokens: number | null;
+  input_tokens?: unknown;
+  output_tokens?: unknown;
+  input_tokens_details?: {
+    cached_tokens?: unknown;
+    cache_write_tokens?: unknown;
+  } | null;
 };
 
-export function usoDaResposta(
-  uso: UsoDaApi | null | undefined,
-): UsoDoLlm | null {
-  if (!uso) {
-    return null;
-  }
-  return {
-    tokensEntrada: uso.input_tokens,
-    tokensSaida: uso.output_tokens,
-    tokensCacheLidos: uso.cache_read_input_tokens ?? 0,
-    tokensCacheGravados: uso.cache_creation_input_tokens ?? 0,
-  };
-}
-
-const PARADAS_CONHECIDAS = new Set([
-  "end_turn",
-  "max_tokens",
-  "stop_sequence",
-  "tool_use",
-  "pause_turn",
-  "refusal",
-  "model_context_window_exceeded",
-]);
-
-/** stop_reason so vai para log se for um valor conhecido da API. */
-export function paradaParaLog(parada: unknown): string | undefined {
-  return typeof parada === "string" && PARADAS_CONHECIDAS.has(parada)
-    ? parada
-    : undefined;
+function contagem(valor: unknown): number {
+  return typeof valor === "number" && Number.isFinite(valor) && valor > 0
+    ? Math.floor(valor)
+    : 0;
 }
 
 /**
- * Monta o verificador para o filtro. cliente null (sem chave) ou modelo
- * null (configuracao invalida) produzem um verificador que sempre falha:
- * bloqueia e escala, nunca aprova.
+ * Uso no formato do livro de gasto. tokensEntrada e so a entrada comum
+ * (input_tokens menos o lido e o gravado no cache, como na conta do guia de
+ * cache da OpenAI); tokensSaida inclui os tokens de raciocinio, cobrados
+ * como saida.
+ */
+export function usoDaResposta(
+  uso: UsoDaApi | null | undefined,
+): UsoDoLlm | null {
+  if (!uso || typeof uso !== "object") {
+    return null;
+  }
+  const lidos = contagem(uso.input_tokens_details?.cached_tokens);
+  const gravados = contagem(uso.input_tokens_details?.cache_write_tokens);
+  return {
+    tokensEntrada: Math.max(0, contagem(uso.input_tokens) - lidos - gravados),
+    tokensSaida: contagem(uso.output_tokens),
+    tokensCacheLidos: lidos,
+    tokensCacheGravados: gravados,
+  };
+}
+
+const STATUS_CONHECIDOS: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "in_progress",
+  "cancelled",
+  "queued",
+  "incomplete",
+]);
+
+const RAZOES_DE_INCOMPLETO: ReadonlySet<string> = new Set([
+  "max_output_tokens",
+  "max_messages",
+  "content_filter",
+  "steered",
+]);
+
+/** status da resposta so vai para log se for um valor conhecido da API. */
+export function statusParaLog(status: unknown): string | undefined {
+  return typeof status === "string" && STATUS_CONHECIDOS.has(status)
+    ? status
+    : undefined;
+}
+
+export type ParadaAnomala = {
+  motivo: Extract<MotivoDaFalha, "recusa" | "max_tokens" | "parada_inesperada">;
+  /** Rotulo de lista fechada, para o campo stop_reason do log. */
+  parada: string;
+};
+
+type RespostaParaConferir = {
+  status?: unknown;
+  incomplete_details?: unknown;
+  output?: unknown;
+};
+
+/**
+ * A resposta terminou do jeito esperado? Devolve null so com status
+ * "completed", sem recusa e com saida feita apenas de mensagem (e item de
+ * raciocinio, que nao aparece com effort "none"). Qualquer outra coisa e
+ * anomalia, e a anomalia bloqueia.
+ */
+export function paradaAnomala(
+  resposta: RespostaParaConferir,
+): ParadaAnomala | null {
+  const { status } = resposta;
+  if (status === "incomplete") {
+    const detalhes = resposta.incomplete_details;
+    const razao =
+      typeof detalhes === "object" && detalhes !== null
+        ? (detalhes as { reason?: unknown }).reason
+        : undefined;
+    if (razao === "max_output_tokens") {
+      return { motivo: "max_tokens", parada: "max_output_tokens" };
+    }
+    if (razao === "content_filter") {
+      return { motivo: "recusa", parada: "content_filter" };
+    }
+    return {
+      motivo: "parada_inesperada",
+      parada:
+        typeof razao === "string" && RAZOES_DE_INCOMPLETO.has(razao)
+          ? razao
+          : "incomplete",
+    };
+  }
+  if (status !== "completed") {
+    return {
+      motivo: "parada_inesperada",
+      parada: statusParaLog(status) ?? "sem_status",
+    };
+  }
+  if (!Array.isArray(resposta.output)) {
+    return { motivo: "parada_inesperada", parada: "sem_saida" };
+  }
+  for (const item of resposta.output as unknown[]) {
+    const tipo =
+      typeof item === "object" && item !== null
+        ? (item as { type?: unknown }).type
+        : undefined;
+    if (tipo === "reasoning") {
+      continue;
+    }
+    if (tipo !== "message") {
+      return { motivo: "parada_inesperada", parada: "item_inesperado" };
+    }
+    const conteudo = (item as { content?: unknown }).content;
+    if (
+      Array.isArray(conteudo) &&
+      conteudo.some(
+        (parte: unknown) =>
+          typeof parte === "object" &&
+          parte !== null &&
+          (parte as { type?: unknown }).type === "refusal",
+      )
+    ) {
+      return { motivo: "recusa", parada: "refusal" };
+    }
+  }
+  return null;
+}
+
+/** safety_identifier aceito: so o HMAC de identificadorDeSeguranca. */
+const FORMATO_DO_IDENTIFICADOR = /^[0-9a-f]{64}$/;
+
+/**
+ * Confere o safety_identifier antes de mandar: so o HMAC (64 hex) passa.
+ * undefined e null nao mandam nada; qualquer outro valor (um telefone, por
+ * engano) e configuracao invalida e falha fechado, sem chamar.
+ */
+export function identificadorValido(
+  identificador: string | null | undefined,
+): { ok: true; valor: string | null } | { ok: false } {
+  if (identificador === undefined || identificador === null) {
+    return { ok: true, valor: null };
+  }
+  return FORMATO_DO_IDENTIFICADOR.test(identificador)
+    ? { ok: true, valor: identificador }
+    : { ok: false };
+}
+
+/**
+ * Monta o verificador para o filtro. cliente null (sem chave), modelo null
+ * (configuracao invalida) ou identificador fora do formato produzem um
+ * verificador que sempre falha: bloqueia e escala, nunca aprova.
  */
 export function criarVerificador(opcoes: {
   cliente: ClienteDoVerificador | null;
   modelo: ModeloDoVerificador | null;
   timeoutMs?: number;
+  /** HMAC de clinica e contato (identificadorDeSeguranca), nunca telefone. */
+  identificadorDeSeguranca?: string | null;
 }): Verificador {
   const { cliente, modelo } = opcoes;
   const timeoutMs = opcoes.timeoutMs ?? PRAZO_DO_VERIFICADOR_NO_SDK_MS;
+  const identificador = identificadorValido(opcoes.identificadorDeSeguranca);
 
   const verificar: Verificador = async ({
     rascunho,
@@ -213,23 +367,29 @@ export function criarVerificador(opcoes: {
     if (modelo === null) {
       return falha("modelo_invalido");
     }
+    if (!identificador.ok) {
+      return falha("requisicao_invalida");
+    }
 
     const nonce = randomBytes(12).toString("hex");
     const inicio = Date.now();
-    const chamada = await cliente.messages
+    const chamada = await cliente.responses
       .parse(
         {
+          ...PARAMETROS_FIXOS_DE_CLASSIFICACAO,
           model: modelo,
-          max_tokens: MAX_TOKENS_DO_VERIFICADOR,
-          temperature: 0,
-          system: POLITICA_DO_VERIFICADOR,
-          messages: [
+          max_output_tokens: MAX_TOKENS_DO_VERIFICADOR,
+          instructions: POLITICA_DO_VERIFICADOR,
+          input: [
             {
               role: "user",
               content: montarEnvelope({ rascunho, mensagensDoPaciente, nonce }),
             },
           ],
-          output_config: { format: FORMATO_DO_VEREDICTO },
+          text: { format: FORMATO_DO_VEREDICTO },
+          ...(identificador.valor === null
+            ? {}
+            : { safety_identifier: identificador.valor }),
         },
         { timeout: timeoutMs, maxRetries: 1, signal: sinal },
       )
@@ -241,11 +401,12 @@ export function criarVerificador(opcoes: {
     if (!chamada.ok) {
       const classificado = classificarErroDoLlm(chamada.erro);
       const campos = {
-        provider: "anthropic",
+        provider: "openai",
         kind: "verificador",
         modelo,
         error_code: classificado.codigo ?? classificado.motivo,
         http_status: classificado.httpStatus ?? undefined,
+        request_id: classificado.requestId ?? undefined,
         duration_ms: Date.now() - inicio,
       };
       if (classificado.grave) {
@@ -261,41 +422,42 @@ export function criarVerificador(opcoes: {
     const { resposta } = chamada;
     if (!resposta || typeof resposta !== "object") {
       log.warn("ia_verificador_saida_invalida", {
-        provider: "anthropic",
+        provider: "openai",
         kind: "verificador",
         modelo,
       });
       return falha("saida_invalida");
     }
     const uso = usoDaResposta(resposta.usage);
+    // x-request-id da resposta (o SDK poe em _request_id): so o id, para o
+    // suporte da OpenAI achar a chamada sem nenhum conteudo no log.
+    const requestId = idDaRequisicao(resposta._request_id) ?? undefined;
     const modeloQueRespondeu =
       typeof resposta.model === "string" ? resposta.model : modelo;
 
-    if (resposta.stop_reason !== "end_turn") {
+    const parada = paradaAnomala(resposta);
+    if (parada !== null) {
       log.warn("ia_verificador_parada", {
-        provider: "anthropic",
+        provider: "openai",
         kind: "verificador",
         modelo: modeloQueRespondeu,
-        stop_reason: paradaParaLog(resposta.stop_reason),
+        status: statusParaLog(resposta.status),
+        stop_reason: parada.parada,
+        request_id: requestId,
         duration_ms: Date.now() - inicio,
       });
-      if (resposta.stop_reason === "refusal") {
-        return falha("recusa", { uso });
-      }
-      if (resposta.stop_reason === "max_tokens") {
-        return falha("max_tokens", { uso });
-      }
-      return falha("parada_inesperada", { uso });
+      return falha(parada.motivo, { uso });
     }
 
     // O SDK ja validou com o mesmo esquema; validar de novo nao custa e
-    // protege contra parsed_output null (texto vazio, bloco ausente).
-    const lido = EsquemaDoVeredicto.safeParse(resposta.parsed_output);
+    // protege contra output_parsed null (texto vazio, mensagem ausente).
+    const lido = EsquemaDoVeredicto.safeParse(resposta.output_parsed);
     if (!lido.success) {
       log.warn("ia_verificador_saida_invalida", {
-        provider: "anthropic",
+        provider: "openai",
         kind: "verificador",
         modelo: modeloQueRespondeu,
+        request_id: requestId,
       });
       return falha("saida_invalida", { uso });
     }
@@ -316,7 +478,7 @@ export function criarVerificador(opcoes: {
       return await verificar(entrada);
     } catch {
       log.warn("ia_verificador_falhou", {
-        provider: "anthropic",
+        provider: "openai",
         kind: "verificador",
         modelo: modelo ?? undefined,
         error_code: "desconhecida",

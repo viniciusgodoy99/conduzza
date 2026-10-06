@@ -1,18 +1,21 @@
-// Rodada PAGA da bateria de conformidade contra o Claude Haiku 4.5 real
+// Rodada PAGA da bateria de conformidade contra o gpt-6-luna real da OpenAI
 // (plano da Fase 3, E1: "rodada paga, 3 repeticoes, zero vazamento,
 // resultado assinado pelo dono em docs/avaliacoes/ia/").
 //
 // So roda com o ok do dono. Gasta dinheiro de verdade, com teto duro:
 //
-//   ANTHROPIC_API_KEY_AVALIACAO=sk-ant-... npx tsx scripts/ia/avaliar-conformidade.ts \
-//     --orcamento-usd 2 --preco-entrada-usd-mtok 1 --preco-saida-usd-mtok 5
+//   OPENAI_API_KEY_AVALIACAO=sk-... npx tsx scripts/ia/avaliar-conformidade.ts \
+//     --orcamento-usd 2 --preco-entrada-usd-mtok 0.1 --preco-saida-usd-mtok 0.5
 //
-// - A chave vem SO do ambiente da linha de comando, de um workspace de
-//   avaliacao com limite de gasto (nunca a de producao, nunca no .env.local).
-// - Os precos vem por parametro, conferidos na tabela oficial da Anthropic no
-//   dia (preco nao mora no codigo). Com eles, o script estima o pior caso de
-//   cada chamada ANTES de fazer, e para quando a proxima estouraria o
-//   orcamento.
+// - A chave vem SO do ambiente da linha de comando, do projeto "avaliacao"
+//   da OpenAI (limite rigido de gasto, expiracao curta, revogar ao terminar).
+//   Nunca a de producao (OPENAI_API_KEY), nunca a da transcricao
+//   (UAZAPI_OPENAI_KEY), nunca no .env.local, nunca com VERCEL_ENV=production.
+// - Os precos vem por parametro, conferidos na tabela oficial da OpenAI no
+//   dia (developers.openai.com/api/docs/pricing; preco nao mora no codigo).
+//   Com eles, o script estima o pior caso de cada chamada ANTES de fazer, e
+//   para quando a proxima estouraria o orcamento. A conta e pessimista: cache
+//   lido sai a preco de entrada cheia e o gravado a 1,25x.
 // - Dados 100% sinteticos (tests/fixtures/ia/conformidade/casos.ts).
 // - O relatorio tem so ids, hash do texto, categorias e veredictos. Nenhum
 //   texto de caso, nenhuma resposta do modelo.
@@ -39,7 +42,7 @@ import type {
   ResultadoDoVerificador,
   Verificador,
 } from "../../lib/domain/conformidade/veredicto";
-import { criarClienteAnthropic } from "../../lib/integrations/llm/anthropic";
+import { criarClienteOpenAi } from "../../lib/integrations/llm/openai";
 import {
   criarClassificadorDeEntrada,
   decidirPeloClassificador,
@@ -97,7 +100,7 @@ function lerParametros() {
   const orcamentoUsd = numeroPositivo("--orcamento-usd", true) ?? 0;
   if (orcamentoUsd > TETO_DO_ORCAMENTO_USD) {
     throw new Error(
-      `--orcamento-usd acima de US$ ${TETO_DO_ORCAMENTO_USD}: confira o valor (a estimativa da bateria e de uns US$ 2).`,
+      `--orcamento-usd acima de US$ ${TETO_DO_ORCAMENTO_USD}: confira o valor (a estimativa da bateria inteira no gpt-6-luna, 3 repeticoes, e de menos de US$ 1).`,
     );
   }
   const precoEntrada = numeroPositivo("--preco-entrada-usd-mtok", true) ?? 0;
@@ -111,15 +114,20 @@ function lerParametros() {
   if (process.env.VERCEL_ENV === "production") {
     throw new Error("Rodada de avaliacao nao roda em producao.");
   }
-  const chave = process.env.ANTHROPIC_API_KEY_AVALIACAO?.trim();
+  const chave = process.env.OPENAI_API_KEY_AVALIACAO?.trim();
   if (!chave) {
     throw new Error(
-      "Defina ANTHROPIC_API_KEY_AVALIACAO na linha de comando (chave do workspace de avaliacao).",
+      "Defina OPENAI_API_KEY_AVALIACAO na linha de comando (chave do projeto avaliacao da OpenAI).",
     );
   }
-  if (chave === process.env.ANTHROPIC_API_KEY?.trim()) {
+  if (chave === process.env.OPENAI_API_KEY?.trim()) {
     throw new Error(
-      "A chave de avaliacao e igual a ANTHROPIC_API_KEY: use a chave do workspace de avaliacao.",
+      "A chave de avaliacao e igual a OPENAI_API_KEY: use a chave do projeto avaliacao.",
+    );
+  }
+  if (chave === process.env.UAZAPI_OPENAI_KEY?.trim()) {
+    throw new Error(
+      "A chave de avaliacao e igual a UAZAPI_OPENAI_KEY: use a chave do projeto avaliacao.",
     );
   }
   const modelo = modeloDoVerificador(process.env);
@@ -143,11 +151,14 @@ function lerParametros() {
 
 class OrcamentoEsgotado extends Error {}
 
+/** usage da Responses API: input_tokens ja inclui o cache lido e gravado. */
 type Uso = {
   input_tokens: number;
   output_tokens: number;
-  cache_read_input_tokens: number | null;
-  cache_creation_input_tokens: number | null;
+  input_tokens_details?: {
+    cached_tokens?: number | null;
+    cache_write_tokens?: number | null;
+  } | null;
 };
 
 function criarControleDeGasto(opcoes: {
@@ -178,11 +189,11 @@ function criarControleDeGasto(opcoes: {
     },
     registrar(uso: Uso) {
       chamadas += 1;
-      // Cache lido ou gravado cobrado como entrada cheia (pessimista).
+      // Cache lido cobrado como entrada cheia e o gravado a 1,25x
+      // (pessimista). output_tokens ja inclui o raciocinio.
       const entrada =
         uso.input_tokens +
-        (uso.cache_read_input_tokens ?? 0) +
-        (uso.cache_creation_input_tokens ?? 0) * 1.25;
+        (uso.input_tokens_details?.cache_write_tokens ?? 0) * 0.25;
       maiorEntrada = Math.max(maiorEntrada, entrada);
       gastoUsd += custo(entrada, uso.output_tokens);
     },
@@ -207,14 +218,11 @@ function clienteComOrcamento(
   maxTokens: number,
   sistema: string,
 ): ClienteDoVerificador {
-  const parse = async (
-    params: { messages: Array<{ content: unknown }> },
-    opcoes: unknown,
-  ) => {
-    const conteudo = JSON.stringify(params.messages);
+  const parse = async (params: { input: unknown }, opcoes: unknown) => {
+    const conteudo = JSON.stringify(params.input);
     gasto.reservar(sistema.length + conteudo.length, maxTokens);
     const resposta = await (
-      real.messages.parse as unknown as (
+      real.responses.parse as unknown as (
         p: unknown,
         o: unknown,
       ) => Promise<{ usage: Uso }>
@@ -222,7 +230,7 @@ function clienteComOrcamento(
     gasto.registrar(resposta.usage);
     return resposta;
   };
-  return { messages: { parse } } as unknown as ClienteDoVerificador;
+  return { responses: { parse } } as unknown as ClienteDoVerificador;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +276,7 @@ type LinhaDeEntrada = {
 async function main(): Promise<number> {
   const p = lerParametros();
   const gasto = criarControleDeGasto(p);
-  const cliente = criarClienteAnthropic({ apiKey: p.chave });
+  const cliente = criarClienteOpenAi({ apiKey: p.chave });
 
   const verificador = criarVerificador({
     cliente: clienteComOrcamento(

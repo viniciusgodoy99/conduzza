@@ -4666,8 +4666,17 @@ export type Database = {
       ia_clinicas_da_fase_controlada: { Args: never; Returns: string[] }
       ia_desligar: { Args: { p_clinic_ids: string[] }; Returns: Json }
       ia_exigir_equipe_conduzza: { Args: never; Returns: undefined }
+      ia_exigir_quem_libera: {
+        Args: { p_clinic_id: string }
+        Returns: undefined
+      }
+      ia_interruptor_ligado: { Args: never; Returns: boolean }
       ia_liberacao_vigente: {
         Args: { p_clinic_id: string; p_modos: string[] }
+        Returns: boolean
+      }
+      ia_membro_ve_a_liberacao: {
+        Args: { p_clinic_id: string }
         Returns: boolean
       }
       ia_pode_atender: {

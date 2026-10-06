@@ -24,23 +24,28 @@ const tsxAutomatico: Plugin = {
   },
 };
 
-// Guarda da Fase 3: "@anthropic-ai/sdk" (so o nome EXATO) vira um modulo cujo
-// construtor lanca. Nenhum teste chama a Anthropic; subcaminhos como
-// "@anthropic-ai/sdk/helpers/zod" continuam reais.
-const guardaDaAnthropic = {
-  find: /^@anthropic-ai\/sdk$/,
-  replacement: path.resolve(__dirname, "tests/stubs/anthropic-proibido.ts"),
+// Guarda da Fase 3: "openai" (so o nome EXATO) vira um modulo cujo
+// construtor lanca. Nenhum teste chama a OpenAI; subcaminhos como
+// "openai/helpers/zod" continuam reais.
+const guardaDaOpenAi = {
+  find: /^openai$/,
+  replacement: path.resolve(__dirname, "tests/stubs/openai-proibido.ts"),
 };
+
+// Segunda guarda, independente do caminho de import: o fetch dos testes
+// lanca para qualquer host da OpenAI ou da Anthropic (tests/setup).
+const travaDeRede = path.resolve(__dirname, "tests/setup/sem-rede-de-llm.ts");
 
 export default defineConfig({
   plugins: [tsxAutomatico],
   test: {
     include: ["tests/unit/**/*.test.ts", "tests/unit/**/*.test.tsx"],
     environment: "node",
+    setupFiles: [travaDeRede],
   },
   resolve: {
     alias: [
-      guardaDaAnthropic,
+      guardaDaOpenAi,
       { find: "@", replacement: path.resolve(__dirname, ".") },
     ],
   },

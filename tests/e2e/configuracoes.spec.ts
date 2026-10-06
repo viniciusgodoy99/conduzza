@@ -87,6 +87,32 @@ test("abrir a URL da aba de WhatsApp já cai na aba certa", async ({ page }) => 
   await expect(principal.getByText("Principal", { exact: true })).toBeVisible();
 });
 
+// Aba Agente de IA (Fase 3): so existe na teste123 e na Conduzza Teste,
+// decidido no servidor. A clinica do e2e nao esta na lista: a aba nao
+// aparece, nem pela URL (?aba=ia cai na equipe, como aba desconhecida). O
+// lado positivo nao roda aqui (as duas clinicas sao reais); a renderizacao
+// da aba esta nos testes de unidade de components/configuracoes.
+test("a aba Agente de IA não existe fora das clínicas da fase controlada", async ({
+  page,
+}) => {
+  apenasDesktop();
+  await login(page, dados().emails.admin);
+  await page.goto("/configuracoes?aba=ia");
+
+  await expect(
+    page.getByRole("tab", { name: /^Equipe e permissões/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  // contraprova: a fileira de abas esta la, terminando no Google
+  await expect(
+    page.getByRole("tab", { name: "Anúncios do Google", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("tab", { name: "Agente de IA", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Assistente de IA nesta clínica")).toHaveCount(0);
+  await expect(page.getByText("Interruptor geral")).toHaveCount(0);
+});
+
 test("clínica desconectada vê o cartão do número com Conectar liberado", async ({
   page,
 }) => {

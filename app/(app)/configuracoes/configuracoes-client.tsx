@@ -3,6 +3,11 @@
 import { Hourglass } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { TEXTOS_DA_IA } from "@/components/configuracoes/agente-de-ia";
+import {
+  AgenteDeIaTab,
+  type DadosDaAbaDaIa,
+} from "@/components/configuracoes/agente-de-ia-tab";
 import { AutomacoesDeFluxoTab } from "@/components/configuracoes/automacoes-de-fluxo-tab";
 import { ClinicaTab } from "@/components/configuracoes/clinica-tab";
 import { EtiquetasTab } from "@/components/configuracoes/etiquetas-tab";
@@ -55,7 +60,8 @@ import { InviteForm } from "./invite-form";
 // do navegador funcionar, mesmo padrao de Cadastros. "?aba=conversoes" segue
 // valendo como link antigo: cai na jornada, que absorveu aquela aba.
 //
-// Abas sublinhadas do design system (9 vistas), com contadores. Na equipe, o
+// Abas sublinhadas do design system (9 vistas, mais a do Agente de IA nas
+// duas clinicas da fase controlada), com contadores. Na equipe, o
 // segundo contador e o de pedidos aguardando liberacao (ampulheta, tom de
 // atencao e o texto por extenso para leitor de tela). Cada aba mostra o
 // proprio erro de carregamento em vez de derrubar a tela inteira.
@@ -76,7 +82,15 @@ const ABAS = [
   ["google", "Anúncios do Google"],
 ] as const;
 
-type AbaKey = (typeof ABAS)[number][0];
+// Agente de IA (Fase 3, decisao do dono em 05/10/2026): a liberacao do
+// assistente de IA, so na teste123 e na Conduzza Teste. Fica FORA de ABAS de
+// proposito: a pagina decide no servidor se a aba existe (agenteDeIa nulo
+// nas outras clinicas) e ela entra no fim da fileira. O esqueleto de
+// loading.tsx desenha as 9 abas fixas (o teste carregando-configuracoes
+// conta ABAS); nas duas clinicas a fileira ganha uma aba quando carrega.
+const ABA_DO_AGENTE = ["ia", "Agente de IA"] as const;
+
+type AbaKey = (typeof ABAS)[number][0] | (typeof ABA_DO_AGENTE)[0];
 
 function ErroDaAba({ titulo }: { titulo: string }) {
   return (
@@ -123,6 +137,7 @@ export function ConfiguracoesClient({
   mensagens,
   meta,
   google,
+  agenteDeIa,
 }: {
   abaInicial?: string;
   /** nulo: a leitura da equipe falhou */
@@ -186,12 +201,23 @@ export function ConfiguracoesClient({
    * leitura do rastreio falhou.
    */
   google: DadosDoRastreio | null;
+  /**
+   * A aba Agente de IA. Nulo: a aba NAO existe nesta clinica (decisao do
+   * servidor). Com a aba, dados nulo e o erro de leitura dela.
+   */
+  agenteDeIa: DadosDaAbaDaIa | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const abaAtiva: AbaKey = ABAS.some(([key]) => key === abaInicial)
+  // A fileira desta clinica: a do agente so quando o servidor mandou.
+  const abas: readonly (readonly [AbaKey, string])[] = agenteDeIa
+    ? [...ABAS, ABA_DO_AGENTE]
+    : ABAS;
+
+  // ?aba=ia numa clinica sem a aba cai na equipe, como aba desconhecida.
+  const abaAtiva: AbaKey = abas.some(([key]) => key === abaInicial)
     ? (abaInicial as AbaKey)
     : abaInicial === "conversoes" // link antigo, antes de a jornada absorver
       ? "jornada"
@@ -244,7 +270,7 @@ export function ConfiguracoesClient({
   return (
     <Tabs value={abaAtiva} onValueChange={trocarAba} className="gap-4">
       <TabsList>
-        {ABAS.map(([key, label]) => (
+        {abas.map(([key, label]) => (
           <TabsTrigger key={key} value={key}>
             {label}
             {contador(key)}
@@ -461,6 +487,19 @@ export function ConfiguracoesClient({
           <ErroDaAba titulo="Não foi possível carregar o rastreio do site" />
         )}
       </TabsContent>
+
+      {agenteDeIa ? (
+        <TabsContent value="ia" className="grid gap-4">
+          <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
+            {TEXTOS_DA_IA.descricaoDaAba}
+          </p>
+          {agenteDeIa.dados ? (
+            <AgenteDeIaTab {...agenteDeIa} dados={agenteDeIa.dados} />
+          ) : (
+            <ErroDaAba titulo="Não foi possível carregar o assistente de IA" />
+          )}
+        </TabsContent>
+      ) : null}
     </Tabs>
   );
 }

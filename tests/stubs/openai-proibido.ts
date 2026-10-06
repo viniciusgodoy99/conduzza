@@ -1,38 +1,44 @@
-// Substituto de "@anthropic-ai/sdk" em TODOS os testes (alias exato nas
-// configs do vitest: unidade, integracao e RLS). Guarda da Fase 3: nenhum
-// teste chama a Anthropic, nem por engano, nem com chave no ambiente.
+// Substituto de "openai" em TODOS os testes (alias exato nas configs do
+// vitest: unidade, integracao e RLS). Guarda da Fase 3: nenhum teste chama a
+// OpenAI, nem por engano, nem com chave no ambiente.
 //
-// O construtor lanca. As classes de erro sao equivalentes as do SDK (mesmos
-// nomes, mesma heranca, mesmos campos), para os testes de classificacao de
-// erro construirem o erro que o SDK lancaria. Subcaminhos como
-// "@anthropic-ai/sdk/helpers/zod" NAO passam por aqui: continuam reais, e
-// nao fazem rede.
+// Todo construtor de cliente lanca (OpenAI, AzureOpenAI, BedrockOpenAI). As
+// classes de erro sao equivalentes as do SDK 7.x (mesmos nomes, mesma
+// heranca, mesmo construtor e os mesmos campos: status, headers, error,
+// code, param, type, requestID), para os testes de classificacao de erro
+// construirem o erro que o SDK lancaria. Subcaminhos como
+// "openai/helpers/zod" NAO passam por aqui: continuam reais, e nao fazem
+// rede.
 
 export const MENSAGEM_DA_GUARDA =
-  "Teste tentou criar um cliente da Anthropic. Nenhum teste chama a API: injete um cliente falso.";
+  "Teste tentou criar um cliente da OpenAI. Nenhum teste chama a API: injete um cliente falso.";
 
-export class AnthropicError extends Error {}
+export class OpenAIError extends Error {}
 
-export class APIError extends AnthropicError {
+export class APIError extends OpenAIError {
   readonly status: number | undefined;
   readonly headers: Headers | undefined;
-  readonly error: unknown;
+  readonly error: object | undefined;
+  readonly code: string | null | undefined;
+  readonly param: string | null | undefined;
+  readonly type: string | undefined;
   readonly requestID: string | null | undefined;
-  readonly type: string | null;
 
   constructor(
     status: number | undefined,
-    error: unknown,
+    error: object | undefined,
     message: string | undefined,
     headers: Headers | undefined,
-    type?: string | null,
   ) {
     super(message ?? "(sem mensagem)");
     this.status = status;
-    this.error = error;
     this.headers = headers;
-    this.requestID = headers?.get("request-id");
-    this.type = type ?? null;
+    this.requestID = headers?.get("x-request-id");
+    this.error = error;
+    const dados = error as Record<string, unknown> | undefined;
+    this.code = dados?.code as string | null | undefined;
+    this.param = dados?.param as string | null | undefined;
+    this.type = dados?.type as string | undefined;
   }
 }
 
@@ -43,7 +49,7 @@ export class APIUserAbortError extends APIError {
 }
 
 export class APIConnectionError extends APIError {
-  constructor({ message }: { message?: string; cause?: Error } = {}) {
+  constructor({ message }: { message?: string; cause?: Error }) {
     super(undefined, undefined, message ?? "Connection error.", undefined);
   }
 }
@@ -54,7 +60,6 @@ export class APIConnectionTimeoutError extends APIConnectionError {
   }
 }
 
-export class RetryableError extends AnthropicError {}
 export class BadRequestError extends APIError {}
 export class AuthenticationError extends APIError {}
 export class PermissionDeniedError extends APIError {}
@@ -64,8 +69,12 @@ export class UnprocessableEntityError extends APIError {}
 export class RateLimitError extends APIError {}
 export class InternalServerError extends APIError {}
 
-export class Anthropic {
-  static AnthropicError = AnthropicError;
+export class LengthFinishReasonError extends OpenAIError {}
+export class ContentFilterFinishReasonError extends OpenAIError {}
+export class InvalidWebhookSignatureError extends Error {}
+
+export class OpenAI {
+  static OpenAIError = OpenAIError;
   static APIError = APIError;
   static APIUserAbortError = APIUserAbortError;
   static APIConnectionError = APIConnectionError;
@@ -84,4 +93,7 @@ export class Anthropic {
   }
 }
 
-export default Anthropic;
+export class AzureOpenAI extends OpenAI {}
+export class BedrockOpenAI extends OpenAI {}
+
+export default OpenAI;

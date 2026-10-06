@@ -1,6 +1,6 @@
 // Contrato entre o filtro (dominio) e o verificador por modelo (integracao).
 // O filtro recebe o verificador INJETADO: nos testes, um falso; em producao,
-// o Haiku (lib/integrations/llm/verificador.ts). PURO.
+// o gpt-6-luna da OpenAI (lib/integrations/llm/verificador.ts). PURO.
 
 import { z } from "zod";
 
@@ -49,7 +49,11 @@ export const MOTIVOS_DA_FALHA = [
   "timeout",
   "conexao",
   "abortado",
+  // 429 de ritmo (repetivel; o SDK ja tentou de novo).
   "limite",
+  // 429 de cobranca ou cota (credito acabou, limite de gasto ou de uso):
+  // nao melhora tentando de novo, e falha de credencial.
+  "cota",
   "sobrecarga",
   "servidor",
   "requisicao_invalida",

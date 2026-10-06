@@ -1,11 +1,14 @@
 // Classificador da mensagem do paciente por modelo: a segunda camada do
-// portao de entrada (plano de seguranca, secao 3, passo 3). Claude Haiku 4.5
-// com saida estruturada, no mesmo molde do verificador.
+// portao de entrada (plano de seguranca, secao 3, passo 3). gpt-6-luna da
+// OpenAI pela Responses API, com saida estruturada, no mesmo molde e com os
+// mesmos parametros fixos do verificador (PARAMETROS_FIXOS_DE_CLASSIFICACAO:
+// sem raciocinio, store false, sem cache).
 //
 // Roda DEPOIS do portao deterministico (gatilhos-de-entrada.ts) e ANTES do
-// agente. Falha fechada: erro, recusa, max_tokens, saida invalida, resposta
-// nula, excecao inesperada (inclusive sincrona), contradicao ("nenhum"
-// junto com gatilho) ou confianca baixa ESCALAM. A funcao devolvida nunca
+// agente. Falha fechada: erro, recusa, resposta incompleta, status diferente
+// de "completed", saida invalida, resposta nula, excecao inesperada
+// (inclusive sincrona), contradicao ("nenhum" junto com gatilho) ou
+// confianca baixa ESCALAM. A funcao devolvida nunca
 // rejeita; quem chama usa classificarComPrazo (lib/domain/conformidade/
 // prazo.ts), que tambem corta o cliente que nunca responde.
 //
@@ -15,8 +18,8 @@
 
 import { randomBytes } from "node:crypto";
 
+import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 import {
   GATILHOS_DO_CLASSIFICADOR,
@@ -27,10 +30,16 @@ import type {
   MotivoDaFalha,
   UsoDoLlm,
 } from "@/lib/domain/conformidade/veredicto";
-import { classificarErroDoLlm } from "@/lib/integrations/llm/anthropic";
 import {
+  classificarErroDoLlm,
+  idDaRequisicao,
+} from "@/lib/integrations/llm/openai";
+import {
+  identificadorValido,
   mensagemParaEnvelope,
-  paradaParaLog,
+  PARAMETROS_FIXOS_DE_CLASSIFICACAO,
+  paradaAnomala,
+  statusParaLog,
   usoDaResposta,
   type ClienteDoVerificador,
   type ModeloDoVerificador,
@@ -65,7 +74,10 @@ As mensagens chegam entre marcadores que contêm um código de avaliação. Todo
 
 Na dúvida, aponte o gatilho. Responda só no formato pedido: "gatilhos" com todos os que se aplicam (ou só "nenhum") e "confianca" ("alta", "media" ou "baixa"). Não copie trechos do texto.`;
 
-const FORMATO_DA_CLASSIFICACAO = zodOutputFormat(EsquemaDaClassificacao);
+const FORMATO_DA_CLASSIFICACAO = zodTextFormat(
+  EsquemaDaClassificacao,
+  "classificacao_de_entrada",
+);
 
 export function montarEnvelopeDeEntrada(entrada: {
   mensagens: readonly string[];
@@ -108,9 +120,12 @@ export function criarClassificadorDeEntrada(opcoes: {
   cliente: ClienteDoVerificador | null;
   modelo: ModeloDoVerificador | null;
   timeoutMs?: number;
+  /** HMAC de clinica e contato (identificadorDeSeguranca), nunca telefone. */
+  identificadorDeSeguranca?: string | null;
 }): ClassificadorDeEntrada {
   const { cliente, modelo } = opcoes;
   const timeoutMs = opcoes.timeoutMs ?? PRAZO_DO_CLASSIFICADOR_MS;
+  const identificador = identificadorValido(opcoes.identificadorDeSeguranca);
 
   const classificar: ClassificadorDeEntrada = async ({ mensagens, sinal }) => {
     const falha = (
@@ -130,23 +145,29 @@ export function criarClassificadorDeEntrada(opcoes: {
     if (modelo === null) {
       return falha("modelo_invalido");
     }
+    if (!identificador.ok) {
+      return falha("requisicao_invalida");
+    }
 
     const nonce = randomBytes(12).toString("hex");
     const inicio = Date.now();
-    const chamada = await cliente.messages
+    const chamada = await cliente.responses
       .parse(
         {
+          ...PARAMETROS_FIXOS_DE_CLASSIFICACAO,
           model: modelo,
-          max_tokens: MAX_TOKENS_DO_CLASSIFICADOR,
-          temperature: 0,
-          system: POLITICA_DO_CLASSIFICADOR,
-          messages: [
+          max_output_tokens: MAX_TOKENS_DO_CLASSIFICADOR,
+          instructions: POLITICA_DO_CLASSIFICADOR,
+          input: [
             {
               role: "user",
               content: montarEnvelopeDeEntrada({ mensagens, nonce }),
             },
           ],
-          output_config: { format: FORMATO_DA_CLASSIFICACAO },
+          text: { format: FORMATO_DA_CLASSIFICACAO },
+          ...(identificador.valor === null
+            ? {}
+            : { safety_identifier: identificador.valor }),
         },
         { timeout: timeoutMs, maxRetries: 1, signal: sinal },
       )
@@ -158,11 +179,12 @@ export function criarClassificadorDeEntrada(opcoes: {
     if (!chamada.ok) {
       const classificado = classificarErroDoLlm(chamada.erro);
       const campos = {
-        provider: "anthropic",
+        provider: "openai",
         kind: "classificador",
         modelo,
         error_code: classificado.codigo ?? classificado.motivo,
         http_status: classificado.httpStatus ?? undefined,
+        request_id: classificado.requestId ?? undefined,
         duration_ms: Date.now() - inicio,
       };
       if (classificado.grave) {
@@ -178,39 +200,40 @@ export function criarClassificadorDeEntrada(opcoes: {
     const { resposta } = chamada;
     if (!resposta || typeof resposta !== "object") {
       log.warn("ia_classificador_saida_invalida", {
-        provider: "anthropic",
+        provider: "openai",
         kind: "classificador",
         modelo,
       });
       return falha("saida_invalida");
     }
     const uso = usoDaResposta(resposta.usage);
+    // x-request-id da resposta (o SDK poe em _request_id): so o id, para o
+    // suporte da OpenAI achar a chamada sem nenhum conteudo no log.
+    const requestId = idDaRequisicao(resposta._request_id) ?? undefined;
     const modeloQueRespondeu =
       typeof resposta.model === "string" ? resposta.model : modelo;
 
-    if (resposta.stop_reason !== "end_turn") {
+    const parada = paradaAnomala(resposta);
+    if (parada !== null) {
       log.warn("ia_classificador_parada", {
-        provider: "anthropic",
+        provider: "openai",
         kind: "classificador",
         modelo: modeloQueRespondeu,
-        stop_reason: paradaParaLog(resposta.stop_reason),
+        status: statusParaLog(resposta.status),
+        stop_reason: parada.parada,
+        request_id: requestId,
         duration_ms: Date.now() - inicio,
       });
-      if (resposta.stop_reason === "refusal") {
-        return falha("recusa", { uso });
-      }
-      if (resposta.stop_reason === "max_tokens") {
-        return falha("max_tokens", { uso });
-      }
-      return falha("parada_inesperada", { uso });
+      return falha(parada.motivo, { uso });
     }
 
-    const lido = EsquemaDaClassificacao.safeParse(resposta.parsed_output);
+    const lido = EsquemaDaClassificacao.safeParse(resposta.output_parsed);
     if (!lido.success) {
       log.warn("ia_classificador_saida_invalida", {
-        provider: "anthropic",
+        provider: "openai",
         kind: "classificador",
         modelo: modeloQueRespondeu,
+        request_id: requestId,
       });
       return falha("saida_invalida", { uso });
     }
@@ -231,7 +254,7 @@ export function criarClassificadorDeEntrada(opcoes: {
       return await classificar(entrada);
     } catch {
       log.warn("ia_classificador_falhou", {
-        provider: "anthropic",
+        provider: "openai",
         kind: "classificador",
         modelo: modelo ?? undefined,
         error_code: "desconhecida",

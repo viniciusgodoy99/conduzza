@@ -29,6 +29,7 @@ import {
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
+import { iaLiberadaNoAmbiente, lerConfigDaIa } from "@/lib/ia/liberacao";
 import { provedorDoAmbiente } from "@/lib/integrations/whatsapp/provider";
 import { motivosDaRecusaVigentes } from "@/lib/integrations/whatsapp/trava-celular";
 import { fetchProfileNames } from "@/lib/queries/profiles";
@@ -41,6 +42,7 @@ import {
   fetchEtiquetasDeConversa,
 } from "@/lib/queries/etiquetas-de-conversa";
 import { fetchAutomacoesDeFluxo } from "@/lib/queries/automacoes-de-fluxo";
+import { abaDaIaVisivel, fetchLiberacaoDaIa } from "@/lib/queries/ia-liberacao";
 import { fetchJornada } from "@/lib/queries/jornada";
 import { fetchRespostasRapidas } from "@/lib/queries/respostas-rapidas";
 import type { Pendente } from "./equipe-client";
@@ -113,7 +115,10 @@ async function convidadosQueAindaNaoEntraram(
 // fluxo, etiquetas, mensagens padrao e anuncios da Meta e do Google (rastreio
 // do site). Administrador e gestor editam (nome e fuso so o administrador);
 // os demais papeis nem chegam aqui (o layout redireciona pela matriz do
-// brief).
+// brief). A aba Agente de IA (Fase 3) so existe nas duas clinicas da fase
+// controlada, decidido AQUI no servidor (abaDaIaVisivel): nas outras, nada
+// dela e lido nem vai para o cliente. Nela, so o administrador da clinica e
+// o super admin alteram.
 export default async function ConfiguracoesPage({
   searchParams,
 }: {
@@ -126,6 +131,7 @@ export default async function ConfiguracoesPage({
   }
 
   const supabase = await createClient();
+  const comAbaDaIa = abaDaIaVisivel(active.clinicId);
   const [
     memberResult,
     profissionaisResult,
@@ -144,6 +150,7 @@ export default async function ConfiguracoesPage({
     limiteDeNumerosResult,
     rastreioResult,
     situacaoDoRastreioResult,
+    liberacaoDaIa,
   ] = await Promise.all([
     supabase
       .from("clinic_member")
@@ -235,6 +242,13 @@ export default async function ConfiguracoesPage({
     // Os totais do rastreio (so agregados: nunca a chave, o gclid ou o
     // contato). A funcao confere admin ou gestor ativo.
     supabase.rpc("situacao_do_rastreio", { p_clinic_id: active.clinicId }),
+    // Aba Agente de IA: a liberacao, o numero, os telefones da equipe e o
+    // interruptor geral (so o booleano). A RLS so mostra a administrador ou
+    // gestor ativo das clinicas da fase controlada; fora delas, nem se
+    // pergunta.
+    comAbaDaIa
+      ? seguro(fetchLiberacaoDaIa(supabase, active.clinicId))
+      : Promise.resolve(null),
   ]);
 
   type MemberRow = {
@@ -483,6 +497,22 @@ export default async function ConfiguracoesPage({
                 timezone: active.timezone,
                 agoraMs: Date.now(),
               }
+        }
+        agenteDeIa={
+          comAbaDaIa
+            ? {
+                dados: liberacaoDaIa,
+                numeros: whatsappResult.error ? null : numerosDoWhatsapp,
+                // T1 e T2 (Vercel) para esta clinica: so o booleano, nunca
+                // o valor de variavel nenhuma.
+                ambienteLigado: iaLiberadaNoAmbiente(
+                  lerConfigDaIa(),
+                  active.clinicId,
+                ),
+                podeEditar: active.role === "admin" || context.isProductAdmin,
+                superAdmin: context.isProductAdmin,
+              }
+            : null
         }
         google={
           rastreioResult.error

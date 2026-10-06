@@ -5,8 +5,8 @@ import {
   InternalServerError,
   PermissionDeniedError,
   RateLimitError,
-} from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+} from "openai";
+import { zodTextFormat } from "openai/helpers/zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { filtrarSaida } from "@/lib/domain/conformidade/filtro";
@@ -16,17 +16,20 @@ import {
   MAX_TOKENS_DO_VERIFICADOR,
   modeloDoVerificador,
   montarEnvelope,
+  paradaAnomala,
   POLITICA_DO_VERIFICADOR,
   PRAZO_DO_VERIFICADOR_NO_SDK_MS,
+  usoDaResposta,
   VERSAO_DA_POLITICA,
   type ClienteDoVerificador,
 } from "@/lib/integrations/llm/verificador";
 import { CONTEXTO_PADRAO } from "@/tests/fixtures/ia/conformidade/casos";
 
 // O verificador real (lib/integrations/llm/verificador.ts) com um cliente
-// FALSO no lugar do SDK: prova os parametros da chamada, o envelope com
-// nonce, a minimizacao, e que toda resposta anomala do SDK bloqueia no
-// filtro. Nada aqui fala com a rede.
+// FALSO no lugar do SDK da OpenAI: prova os parametros da chamada (Responses
+// API, store false, sem raciocinio, sem cache), o envelope com nonce, a
+// minimizacao, e que toda resposta anomala do SDK bloqueia no filtro. Nada
+// aqui fala com a rede.
 
 const RASCUNHO = "Tenho horário amanhã às 10h. Pode ser?";
 // O que nao pode aparecer em log: o texto do paciente (com CPF) e o eco que
@@ -34,34 +37,68 @@ const RASCUNHO = "Tenho horário amanhã às 10h. Pode ser?";
 const SEGREDO_DO_PACIENTE =
   "meu cpf e 123.456.789-09, quero marcar com a Dra. Fernanda";
 const SEGREDO = "eco do servidor: paciente toma dipirona";
+const IDENTIFICADOR = "a".repeat(64);
 
 type Resposta = {
   model: string;
-  stop_reason: string | null;
-  parsed_output: unknown;
+  status: string | undefined;
+  incomplete_details: { reason: string } | null;
+  output: unknown;
+  output_parsed: unknown;
   usage: {
     input_tokens: number;
     output_tokens: number;
-    cache_read_input_tokens: number | null;
-    cache_creation_input_tokens: number | null;
+    input_tokens_details: { cached_tokens: number; cache_write_tokens: number };
+    output_tokens_details: { reasoning_tokens: number };
   };
-  content: unknown[];
 };
+
+const VEREDICTO_APROVADO = {
+  aprovado: true,
+  violacoes: [],
+  confianca: "alta",
+};
+
+function mensagem(conteudo: unknown[]) {
+  return {
+    type: "message",
+    role: "assistant",
+    status: "completed",
+    content: conteudo,
+  };
+}
 
 function resposta(sobrescreve: Partial<Resposta> = {}): Resposta {
   return {
-    model: "claude-haiku-4-5-20251001",
-    stop_reason: "end_turn",
-    parsed_output: { aprovado: true, violacoes: [], confianca: "alta" },
+    model: "gpt-6-luna",
+    status: "completed",
+    incomplete_details: null,
+    output: [
+      mensagem([
+        {
+          type: "output_text",
+          text: JSON.stringify(VEREDICTO_APROVADO),
+          annotations: [],
+        },
+      ]),
+    ],
+    output_parsed: VEREDICTO_APROVADO,
     usage: {
       input_tokens: 1200,
       output_tokens: 25,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: null,
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+      output_tokens_details: { reasoning_tokens: 0 },
     },
-    content: [],
     ...sobrescreve,
   };
+}
+
+/** Como o SDK faz: _request_id nao enumeravel na resposta. */
+function comIdDaRequisicao<T extends object>(valor: T, id: string): T {
+  return Object.defineProperty(valor, "_request_id", {
+    value: id,
+    enumerable: false,
+  });
 }
 
 function clienteFalso(
@@ -71,7 +108,7 @@ function clienteFalso(
   ) => Promise<unknown>,
 ) {
   const parse = vi.fn(impl);
-  const cliente = { messages: { parse } } as unknown as ClienteDoVerificador;
+  const cliente = { responses: { parse } } as unknown as ClienteDoVerificador;
   return { cliente, parse };
 }
 
@@ -92,32 +129,38 @@ function capturarLog() {
   return { escritas, restaurar: () => (out.mockRestore(), err.mockRestore()) };
 }
 
+function entradaPadrao() {
+  return {
+    rascunho: RASCUNHO,
+    mensagensDoPaciente: ["tem horário amanhã?"],
+    sinal: new AbortController().signal,
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("modelo pelo ambiente (lista fechada)", () => {
-  it("vazio usa o Haiku 4.5", () => {
-    expect(modeloDoVerificador({})).toBe("claude-haiku-4-5");
+  it("vazio usa o gpt-6-luna", () => {
+    expect(modeloDoVerificador({})).toBe("gpt-6-luna");
     expect(modeloDoVerificador({ IA_MODELO_VERIFICADOR: " " })).toBe(
-      "claude-haiku-4-5",
+      "gpt-6-luna",
     );
-  });
-
-  it("aceita a versao fixa", () => {
-    expect(
-      modeloDoVerificador({
-        IA_MODELO_VERIFICADOR: "claude-haiku-4-5-20251001",
-      }),
-    ).toBe("claude-haiku-4-5-20251001");
+    expect(modeloDoVerificador({ IA_MODELO_VERIFICADOR: " gpt-6-luna " })).toBe(
+      "gpt-6-luna",
+    );
   });
 
   it("fora da lista devolve null (falha fechada, nunca um modelo nao avaliado)", () => {
     for (const valor of [
-      "claude-opus-5",
-      "claude-sonnet-5",
-      "gpt-5",
-      "haiku",
+      "claude-haiku-4-5",
+      "claude-haiku-4-5-20251001",
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+      "gpt-5-mini",
+      "GPT-6-LUNA",
+      "luna",
     ]) {
       expect(
         modeloDoVerificador({ IA_MODELO_VERIFICADOR: valor }),
@@ -128,23 +171,16 @@ describe("modelo pelo ambiente (lista fechada)", () => {
 });
 
 describe("chamada ao SDK", () => {
-  it("usa messages.parse com Haiku, saida estruturada, sem thinking e sem effort", async () => {
+  it("usa responses.parse com gpt-6-luna, store false, sem raciocinio e sem cache", async () => {
     const { cliente, parse } = clienteFalso(async () => resposta());
-    const verificador = criarVerificador({
-      cliente,
-      modelo: "claude-haiku-4-5",
-    });
-    const sinal = new AbortController().signal;
-    const resultado = await verificador({
-      rascunho: RASCUNHO,
-      mensagensDoPaciente: ["tem horário amanhã?"],
-      sinal,
-    });
+    const verificador = criarVerificador({ cliente, modelo: "gpt-6-luna" });
+    const entrada = entradaPadrao();
+    const resultado = await verificador(entrada);
 
     expect(resultado).toEqual({
       tipo: "veredicto",
-      veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
-      modelo: "claude-haiku-4-5-20251001",
+      veredicto: VEREDICTO_APROVADO,
+      modelo: "gpt-6-luna",
       uso: {
         tokensEntrada: 1200,
         tokensSaida: 25,
@@ -156,31 +192,75 @@ describe("chamada ao SDK", () => {
     expect(parse).toHaveBeenCalledTimes(1);
     const [params, opcoes] = parse.mock.calls[0] ?? [];
     expect(params).toMatchObject({
-      model: "claude-haiku-4-5",
-      max_tokens: MAX_TOKENS_DO_VERIFICADOR,
+      model: "gpt-6-luna",
+      max_output_tokens: MAX_TOKENS_DO_VERIFICADOR,
       temperature: 0,
-      system: POLITICA_DO_VERIFICADOR,
+      instructions: POLITICA_DO_VERIFICADOR,
+      store: false,
+      reasoning: { effort: "none" },
+      service_tier: "default",
+      prompt_cache_options: { mode: "explicit" },
     });
-    expect(params).not.toHaveProperty("thinking");
-    expect(params).not.toHaveProperty("inference_geo");
-    expect(params).not.toHaveProperty("stream");
-    const outputConfig = (params as { output_config: Record<string, unknown> })
-      .output_config;
-    expect(outputConfig).not.toHaveProperty("effort");
-    expect(outputConfig.format).toMatchObject({ type: "json_schema" });
+    // Nada que guarde estado na OpenAI ou que mude o desenho do verificador.
+    for (const proibido of [
+      "previous_response_id",
+      "conversation",
+      "background",
+      "metadata",
+      "tools",
+      "stream",
+      "include",
+      "prompt_cache_key",
+      "safety_identifier",
+      "user",
+    ]) {
+      expect(params, proibido).not.toHaveProperty(proibido);
+    }
+    const formato = (params as { text: { format: Record<string, unknown> } })
+      .text.format;
+    expect(formato).toMatchObject({
+      type: "json_schema",
+      strict: true,
+      name: "veredicto_de_conformidade",
+    });
     expect(opcoes).toEqual({
       timeout: PRAZO_DO_VERIFICADOR_NO_SDK_MS,
       maxRetries: 1,
-      signal: sinal,
+      signal: entrada.sinal,
     });
+  });
+
+  it("manda o safety_identifier so quando e o HMAC (64 hex)", async () => {
+    const { cliente, parse } = clienteFalso(async () => resposta());
+    await criarVerificador({
+      cliente,
+      modelo: "gpt-6-luna",
+      identificadorDeSeguranca: IDENTIFICADOR,
+    })(entradaPadrao());
+    expect(parse.mock.calls[0]?.[0]).toMatchObject({
+      safety_identifier: IDENTIFICADOR,
+    });
+  });
+
+  it("identificador fora do formato (um telefone, por engano) bloqueia sem chamar", async () => {
+    const { cliente, parse } = clienteFalso(async () => resposta());
+    for (const ruim of ["+5585999990000", "A".repeat(64), "a".repeat(63), ""]) {
+      const resultado = await criarVerificador({
+        cliente,
+        modelo: "gpt-6-luna",
+        identificadorDeSeguranca: ruim,
+      })(entradaPadrao());
+      expect(resultado, ruim).toMatchObject({
+        tipo: "falha",
+        motivo: "requisicao_invalida",
+      });
+    }
+    expect(parse).not.toHaveBeenCalled();
   });
 
   it("envelope: nonce novo a cada chamada, marcadores e dados minimizados", async () => {
     const { cliente, parse } = clienteFalso(async () => resposta());
-    const verificador = criarVerificador({
-      cliente,
-      modelo: "claude-haiku-4-5",
-    });
+    const verificador = criarVerificador({ cliente, modelo: "gpt-6-luna" });
     const entrada = {
       rascunho: RASCUNHO,
       mensagensDoPaciente: [SEGREDO_DO_PACIENTE],
@@ -190,9 +270,12 @@ describe("chamada ao SDK", () => {
     await verificador(entrada);
 
     const conteudos = parse.mock.calls.map(([params]) => {
-      const mensagens = (params as { messages: Array<{ content: string }> })
-        .messages;
-      return mensagens[0]?.content ?? "";
+      const itens = (
+        params as { input: Array<{ role: string; content: string }> }
+      ).input;
+      expect(itens).toHaveLength(1);
+      expect(itens[0]?.role).toBe("user");
+      return itens[0]?.content ?? "";
     });
     const nonces = conteudos.map(
       (c) => /RASCUNHO_([0-9a-f]{24})>>>/.exec(c)?.[1] ?? null,
@@ -237,11 +320,11 @@ describe("chamada ao SDK", () => {
       ]) {
         const parse = vi.fn(impl);
         const cliente = {
-          messages: { parse },
+          responses: { parse },
         } as unknown as ClienteDoVerificador;
         const resultado = await criarVerificador({
           cliente,
-          modelo: "claude-haiku-4-5",
+          modelo: "gpt-6-luna",
         })({
           rascunho: RASCUNHO,
           mensagensDoPaciente: [],
@@ -272,10 +355,51 @@ describe("chamada ao SDK", () => {
   });
 });
 
+describe("uso da resposta (livro de gasto)", () => {
+  it("entrada comum e a total menos o cache lido e o gravado", () => {
+    expect(
+      usoDaResposta({
+        input_tokens: 3000,
+        output_tokens: 300,
+        input_tokens_details: { cached_tokens: 2000, cache_write_tokens: 500 },
+      }),
+    ).toEqual({
+      tokensEntrada: 500,
+      tokensSaida: 300,
+      tokensCacheLidos: 2000,
+      tokensCacheGravados: 500,
+    });
+  });
+
+  it("valores ausentes, negativos ou estranhos viram zero; sem uso, null", () => {
+    expect(usoDaResposta({ input_tokens: 10, output_tokens: 2 })).toEqual({
+      tokensEntrada: 10,
+      tokensSaida: 2,
+      tokensCacheLidos: 0,
+      tokensCacheGravados: 0,
+    });
+    expect(
+      usoDaResposta({
+        input_tokens: Number.NaN,
+        output_tokens: -5,
+        input_tokens_details: { cached_tokens: "9", cache_write_tokens: null },
+      }),
+    ).toEqual({
+      tokensEntrada: 0,
+      tokensSaida: 0,
+      tokensCacheLidos: 0,
+      tokensCacheGravados: 0,
+    });
+    expect(usoDaResposta(null)).toBeNull();
+    expect(usoDaResposta(undefined)).toBeNull();
+  });
+});
+
 describe("saida estruturada com o zod 4 do projeto", () => {
-  it("o esquema vira JSON schema fechado e o parse valida", () => {
-    const formato = zodOutputFormat(EsquemaDoVeredicto);
+  it("o esquema vira JSON schema estrito e fechado, e o parse valida", () => {
+    const formato = zodTextFormat(EsquemaDoVeredicto, "veredicto");
     expect(formato.type).toBe("json_schema");
+    expect(formato.strict).toBe(true);
     const esquema = formato.schema as {
       additionalProperties: boolean;
       required: string[];
@@ -287,7 +411,7 @@ describe("saida estruturada com o zod 4 do projeto", () => {
       "violacoes",
     ]);
     expect(
-      formato.parse(
+      formato.$parseRaw(
         '{"aprovado":false,"violacoes":[{"categoria":"triagem","gravidade":"alta"}],"confianca":"alta"}',
       ),
     ).toEqual({
@@ -295,7 +419,84 @@ describe("saida estruturada com o zod 4 do projeto", () => {
       violacoes: [{ categoria: "triagem", gravidade: "alta" }],
       confianca: "alta",
     });
-    expect(() => formato.parse('{"aprovado":"sim"}')).toThrow();
+    expect(() => formato.$parseRaw('{"aprovado":"sim"}')).toThrow();
+    expect(() => formato.$parseRaw("nao e json")).toThrow();
+  });
+});
+
+describe("parada anomala (lista fechada)", () => {
+  it("so completed com mensagem (e raciocinio) passa", () => {
+    expect(paradaAnomala(resposta())).toBeNull();
+    expect(
+      paradaAnomala(
+        resposta({
+          output: [
+            { type: "reasoning", summary: [] },
+            mensagem([{ type: "output_text", text: "{}", annotations: [] }]),
+          ],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    [
+      "max_output_tokens",
+      {
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+      },
+      { motivo: "max_tokens", parada: "max_output_tokens" },
+    ],
+    [
+      "content_filter",
+      {
+        status: "incomplete",
+        incomplete_details: { reason: "content_filter" },
+      },
+      { motivo: "recusa", parada: "content_filter" },
+    ],
+    [
+      "incompleto por razao desconhecida",
+      { status: "incomplete", incomplete_details: { reason: "dipirona" } },
+      { motivo: "parada_inesperada", parada: "incomplete" },
+    ],
+    [
+      "failed",
+      { status: "failed" },
+      { motivo: "parada_inesperada", parada: "failed" },
+    ],
+    [
+      "status desconhecido",
+      { status: "dipirona" },
+      { motivo: "parada_inesperada", parada: "sem_status" },
+    ],
+    [
+      "sem status",
+      { status: undefined },
+      { motivo: "parada_inesperada", parada: "sem_status" },
+    ],
+    [
+      "saida que nao e lista",
+      { output: null },
+      { motivo: "parada_inesperada", parada: "sem_saida" },
+    ],
+    [
+      "recusa",
+      { output: [mensagem([{ type: "refusal", refusal: SEGREDO }])] },
+      { motivo: "recusa", parada: "refusal" },
+    ],
+    [
+      "chamada de ferramenta",
+      { output: [{ type: "function_call", name: "x", arguments: "{}" }] },
+      { motivo: "parada_inesperada", parada: "item_inesperado" },
+    ],
+  ] as const)("%s", (_nome, sobrescreve, esperado) => {
+    const anomalia = paradaAnomala(
+      resposta(sobrescreve as unknown as Partial<Resposta>),
+    );
+    expect(anomalia).toEqual(esperado);
+    expect(JSON.stringify(anomalia)).not.toContain("dipirona");
   });
 });
 
@@ -313,24 +514,38 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
         Promise.reject(
           new RateLimitError(
             429,
-            undefined,
+            { type: "rate_limit_error", code: "rate_limit_exceeded" },
             SEGREDO,
             cabecalhos,
-            "rate_limit_error",
           ),
         ),
       "limite",
     ],
     [
-      "529 sobrecarga",
+      "429 de cota",
+      async () =>
+        Promise.reject(
+          new RateLimitError(
+            429,
+            {
+              type: "insufficient_quota",
+              code: "project_spend_limit_exceeded",
+            },
+            SEGREDO,
+            cabecalhos,
+          ),
+        ),
+      "cota",
+    ],
+    [
+      "503 sobrecarga",
       async () =>
         Promise.reject(
           new InternalServerError(
-            529,
-            undefined,
+            503,
+            { type: "service_unavailable_error", code: "server_is_overloaded" },
             SEGREDO,
             cabecalhos,
-            "overloaded_error",
           ),
         ),
       "sobrecarga",
@@ -339,13 +554,7 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
       "500",
       async () =>
         Promise.reject(
-          new InternalServerError(
-            500,
-            undefined,
-            SEGREDO,
-            cabecalhos,
-            "api_error",
-          ),
+          new InternalServerError(500, undefined, SEGREDO, cabecalhos),
         ),
       "servidor",
     ],
@@ -355,10 +564,9 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
         Promise.reject(
           new BadRequestError(
             400,
-            undefined,
+            { type: "invalid_request_error", message: SEGREDO },
             SEGREDO,
             cabecalhos,
-            "invalid_request_error",
           ),
         ),
       "requisicao_invalida",
@@ -367,13 +575,7 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
       "401",
       async () =>
         Promise.reject(
-          new AuthenticationError(
-            401,
-            undefined,
-            SEGREDO,
-            cabecalhos,
-            "authentication_error",
-          ),
+          new AuthenticationError(401, undefined, SEGREDO, cabecalhos),
         ),
       "autenticacao",
     ],
@@ -381,15 +583,14 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
       "403",
       async () =>
         Promise.reject(
-          new PermissionDeniedError(
-            403,
-            undefined,
-            SEGREDO,
-            cabecalhos,
-            "permission_error",
-          ),
+          new PermissionDeniedError(403, undefined, SEGREDO, cabecalhos),
         ),
       "permissao",
+    ],
+    [
+      "saida que nao e JSON (o parse do SDK lanca SyntaxError)",
+      async () => Promise.reject(new SyntaxError(SEGREDO)),
+      "saida_invalida",
     ],
     [
       "erro qualquer",
@@ -398,32 +599,64 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
     ],
     [
       "recusa",
-      async () => resposta({ stop_reason: "refusal", parsed_output: null }),
+      async () =>
+        resposta({
+          output: [mensagem([{ type: "refusal", refusal: SEGREDO }])],
+          output_parsed: null,
+        }),
       "recusa",
     ],
     [
-      "max_tokens",
-      async () => resposta({ stop_reason: "max_tokens" }),
+      "incompleta por max_output_tokens",
+      async () =>
+        resposta({
+          status: "incomplete",
+          incomplete_details: { reason: "max_output_tokens" },
+          output_parsed: null,
+        }),
       "max_tokens",
     ],
     [
-      "parada por ferramenta",
-      async () => resposta({ stop_reason: "tool_use" }),
+      "incompleta por content_filter",
+      async () =>
+        resposta({
+          status: "incomplete",
+          incomplete_details: { reason: "content_filter" },
+          output_parsed: null,
+        }),
+      "recusa",
+    ],
+    [
+      "status failed",
+      async () => resposta({ status: "failed" }),
       "parada_inesperada",
     ],
     [
-      "stop_reason null",
-      async () => resposta({ stop_reason: null }),
+      "status em andamento",
+      async () => resposta({ status: "in_progress" }),
       "parada_inesperada",
     ],
     [
-      "parsed_output null",
-      async () => resposta({ parsed_output: null }),
+      "sem status",
+      async () => resposta({ status: undefined }),
+      "parada_inesperada",
+    ],
+    [
+      "chamada de ferramenta",
+      async () =>
+        resposta({
+          output: [{ type: "function_call", name: "x", arguments: "{}" }],
+        }),
+      "parada_inesperada",
+    ],
+    [
+      "output_parsed null",
+      async () => resposta({ output_parsed: null }),
       "saida_invalida",
     ],
     [
-      "parsed_output fora do esquema",
-      async () => resposta({ parsed_output: { aprovado: "sim" } }),
+      "output_parsed fora do esquema",
+      async () => resposta({ output_parsed: { aprovado: "sim" } }),
       "saida_invalida",
     ],
   ];
@@ -438,7 +671,7 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
           ...CONTEXTO_PADRAO,
           mensagensDoPaciente: [SEGREDO_DO_PACIENTE],
         },
-        verificador: criarVerificador({ cliente, modelo: "claude-haiku-4-5" }),
+        verificador: criarVerificador({ cliente, modelo: "gpt-6-luna" }),
       });
       expect(decisao).toMatchObject({
         aprovado: false,
@@ -446,7 +679,8 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
         camada: "falha",
         motivoDaFalha: motivo,
       });
-      // Nenhum texto em log: nem o rascunho, nem o paciente, nem error.message.
+      // Nenhum texto em log: nem o rascunho, nem o paciente, nem
+      // error.message, nem a recusa do modelo.
       const tudo = log.escritas.join("");
       expect(tudo).not.toContain("dipirona");
       expect(tudo).not.toContain("123.456.789");
@@ -467,12 +701,12 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
       { aprovado: true, violacoes: [], confianca: "baixa" },
     ]) {
       const { cliente } = clienteFalso(async () =>
-        resposta({ parsed_output: parsed }),
+        resposta({ output_parsed: parsed }),
       );
       const decisao = await filtrarSaida({
         rascunho: RASCUNHO,
         contexto: CONTEXTO_PADRAO,
-        verificador: criarVerificador({ cliente, modelo: "claude-haiku-4-5" }),
+        verificador: criarVerificador({ cliente, modelo: "gpt-6-luna" }),
       });
       expect(decisao).toMatchObject({ aprovado: false, camada: "falha" });
     }
@@ -482,10 +716,7 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
     const decisao = await filtrarSaida({
       rascunho: RASCUNHO,
       contexto: CONTEXTO_PADRAO,
-      verificador: criarVerificador({
-        cliente: null,
-        modelo: "claude-haiku-4-5",
-      }),
+      verificador: criarVerificador({ cliente: null, modelo: "gpt-6-luna" }),
     });
     expect(decisao).toMatchObject({
       aprovado: false,
@@ -507,40 +738,161 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
     expect(parse).not.toHaveBeenCalled();
   });
 
-  it("erro grave (401) vai para log.error, com status e sem texto", async () => {
+  const comId = new Headers({ "x-request-id": "req_0a1b2c3d" });
+
+  it.each([
+    [
+      "401",
+      new AuthenticationError(
+        401,
+        { type: "invalid_request_error", code: "invalid_api_key" },
+        SEGREDO,
+        comId,
+      ),
+      "autenticacao",
+      {
+        error_code: "invalid_request_error",
+        http_status: 401,
+        request_id: "req_0a1b2c3d",
+      },
+    ],
+    [
+      "429 de cota",
+      new RateLimitError(
+        429,
+        { type: "insufficient_quota", code: "credit_balance_exhausted" },
+        SEGREDO,
+        comId,
+      ),
+      "cota",
+      {
+        error_code: "credit_balance_exhausted",
+        http_status: 429,
+        request_id: "req_0a1b2c3d",
+      },
+    ],
+  ])(
+    "erro grave (%s) vai para log.error, com codigo, id da requisicao e sem texto",
+    async (_nome, erro, motivo, esperado) => {
+      const log = capturarLog();
+      try {
+        const { cliente } = clienteFalso(async () => Promise.reject(erro));
+        const resultado = await criarVerificador({
+          cliente,
+          modelo: "gpt-6-luna",
+        })({
+          rascunho: RASCUNHO,
+          mensagensDoPaciente: [],
+          sinal: new AbortController().signal,
+        });
+        expect(resultado).toMatchObject({ tipo: "falha", motivo });
+        const linhas = log.escritas.map(
+          (l) => JSON.parse(l) as Record<string, unknown>,
+        );
+        expect(linhas).toHaveLength(1);
+        expect(linhas[0]).toMatchObject({
+          nivel: "error",
+          evento: "ia_verificador_falhou",
+          provider: "openai",
+          kind: "verificador",
+          modelo: "gpt-6-luna",
+          ...esperado,
+        });
+        expect(log.escritas.join("")).not.toContain("dipirona");
+      } finally {
+        log.restaurar();
+      }
+    },
+  );
+
+  it("429 de ritmo continua limite, em log.warn", async () => {
     const log = capturarLog();
     try {
       const { cliente } = clienteFalso(async () =>
         Promise.reject(
-          new AuthenticationError(
-            401,
-            undefined,
+          new RateLimitError(
+            429,
+            { type: "rate_limit_error", code: "rate_limit_exceeded" },
             SEGREDO,
-            cabecalhos,
-            "authentication_error",
+            comId,
           ),
         ),
       );
-      await criarVerificador({ cliente, modelo: "claude-haiku-4-5" })({
-        rascunho: RASCUNHO,
-        mensagensDoPaciente: [],
-        sinal: new AbortController().signal,
+      const resultado = await criarVerificador({
+        cliente,
+        modelo: "gpt-6-luna",
+      })(entradaPadrao());
+      expect(resultado).toMatchObject({ tipo: "falha", motivo: "limite" });
+      const linhas = log.escritas.map(
+        (l) => JSON.parse(l) as Record<string, unknown>,
+      );
+      expect(linhas[0]).toMatchObject({
+        nivel: "warn",
+        error_code: "rate_limit_exceeded",
+        request_id: "req_0a1b2c3d",
       });
+    } finally {
+      log.restaurar();
+    }
+  });
+
+  it("parada anomala vai para log.warn com status, razao de lista fechada e id da requisicao", async () => {
+    const log = capturarLog();
+    try {
+      const { cliente } = clienteFalso(async () =>
+        comIdDaRequisicao(
+          resposta({
+            output: [mensagem([{ type: "refusal", refusal: SEGREDO }])],
+            output_parsed: null,
+          }),
+          "req_9f8e7d",
+        ),
+      );
+      await criarVerificador({ cliente, modelo: "gpt-6-luna" })(
+        entradaPadrao(),
+      );
       const linhas = log.escritas.map(
         (l) => JSON.parse(l) as Record<string, unknown>,
       );
       expect(linhas).toHaveLength(1);
       expect(linhas[0]).toMatchObject({
-        nivel: "error",
-        evento: "ia_verificador_falhou",
-        provider: "anthropic",
-        kind: "verificador",
-        modelo: "claude-haiku-4-5",
-        error_code: "authentication_error",
-        http_status: 401,
+        nivel: "warn",
+        evento: "ia_verificador_parada",
+        provider: "openai",
+        status: "completed",
+        stop_reason: "refusal",
+        request_id: "req_9f8e7d",
       });
     } finally {
       log.restaurar();
+    }
+  });
+
+  it("saida invalida loga o id da requisicao; id fora do formato nao vai", async () => {
+    for (const [id, esperado] of [
+      ["req_123abc", "req_123abc"],
+      ["paciente: toma dipirona", undefined],
+    ] as const) {
+      const log = capturarLog();
+      try {
+        const { cliente } = clienteFalso(async () =>
+          comIdDaRequisicao(resposta({ output_parsed: null }), id),
+        );
+        await criarVerificador({ cliente, modelo: "gpt-6-luna" })(
+          entradaPadrao(),
+        );
+        const linhas = log.escritas.map(
+          (l) => JSON.parse(l) as Record<string, unknown>,
+        );
+        expect(linhas).toHaveLength(1);
+        expect(linhas[0]).toMatchObject({
+          evento: "ia_verificador_saida_invalida",
+        });
+        expect(linhas[0]?.request_id).toBe(esperado);
+        expect(log.escritas.join("")).not.toContain("dipirona");
+      } finally {
+        log.restaurar();
+      }
     }
   });
 
@@ -549,7 +901,7 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
     const decisao = await filtrarSaida({
       rascunho: RASCUNHO,
       contexto: CONTEXTO_PADRAO,
-      verificador: criarVerificador({ cliente, modelo: "claude-haiku-4-5" }),
+      verificador: criarVerificador({ cliente, modelo: "gpt-6-luna" }),
     });
     expect(decisao.aprovado).toBe(true);
   });

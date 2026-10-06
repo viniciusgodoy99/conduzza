@@ -39,6 +39,9 @@ const CAMPOS_PERMITIDOS = new Set([
   // API (enum fechado). Nunca o texto da resposta nem error.message.
   "modelo",
   "stop_reason",
+  // Id da requisicao na OpenAI (cabecalho x-request-id, formato conferido
+  // antes de logar): e o que o suporte deles pede. Nunca o corpo.
+  "request_id",
 ]);
 
 export type CamposDeLog = Record<

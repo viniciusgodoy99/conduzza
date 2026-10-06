@@ -7,7 +7,7 @@ import {
 } from "@/lib/ia/liberacao";
 
 // Travas de ambiente da IA (T1 e T2, Fase 3 E0), sem banco e sem chave real.
-// A chave abaixo e um texto qualquer: nenhum teste chama a Anthropic.
+// A chave abaixo e um texto qualquer: nenhum teste chama a OpenAI.
 
 const TESTE123 = "acd9c539-585e-4f2a-a195-712c70099564";
 const CONDUZZA_TESTE = "f0c115dd-e98c-4767-a1bb-93d517844852";
@@ -17,7 +17,7 @@ const ALEATORIA = "3f2b8c1e-9d4a-4b7e-8c2f-1a6d5e9b0c7d";
 const LIGADO = {
   IA_AGENTE_LIGADO: "sim",
   VERCEL_ENV: "production",
-  ANTHROPIC_API_KEY: "chave-de-mentira",
+  OPENAI_API_KEY: "chave-de-mentira",
   IA_CLINICAS_LIBERADAS: `${TESTE123},${CONDUZZA_TESTE}`,
 } as const;
 
@@ -57,9 +57,17 @@ describe("T1: interruptor de ambiente", () => {
     ["VERCEL_ENV=preview", { VERCEL_ENV: "preview" }],
     ["VERCEL_ENV=development", { VERCEL_ENV: "development" }],
     ["VERCEL_ENV=Production", { VERCEL_ENV: "Production" }],
-    ["sem chave", { ANTHROPIC_API_KEY: undefined }],
-    ["chave vazia", { ANTHROPIC_API_KEY: "" }],
-    ["chave so com espacos", { ANTHROPIC_API_KEY: "   " }],
+    ["sem chave", { OPENAI_API_KEY: undefined }],
+    ["chave vazia", { OPENAI_API_KEY: "" }],
+    ["chave so com espacos", { OPENAI_API_KEY: "   " }],
+    [
+      "so a chave da transcricao (UAZAPI_OPENAI_KEY) nao liga",
+      { OPENAI_API_KEY: undefined, UAZAPI_OPENAI_KEY: "chave-da-uazapi" },
+    ],
+    [
+      "chave antiga da Anthropic nao liga mais",
+      { OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: "chave-antiga" },
+    ],
   ])("desligada: %s", (_caso, troca) => {
     const config = lerConfigDaIa({ ...LIGADO, ...troca });
     expect(config.ligado).toBe(false);
@@ -80,7 +88,7 @@ describe("T1: interruptor de ambiente", () => {
 
   it("nunca devolve o valor da chave", () => {
     const config = lerConfigDaIa(LIGADO);
-    expect(JSON.stringify(config)).not.toContain(LIGADO.ANTHROPIC_API_KEY);
+    expect(JSON.stringify(config)).not.toContain(LIGADO.OPENAI_API_KEY);
   });
 });
 

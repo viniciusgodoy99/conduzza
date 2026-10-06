@@ -4,14 +4,29 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
-// Agente de IA, E0: travas de liberacao e schema (migration 20261006100000),
-// pela API com JWT real de cada papel. O que esta em jogo:
-//   - ia_interruptor, ia_liberacao, ia_numero_liberado, ia_contato_liberado
-//     e ia_uso: nenhuma sessao da clinica le (so o super admin) nem escreve
-//     (42501), e anon nem chega (42501). llm_preco: todo autenticado le,
-//     ninguem escreve;
-//   - definir_*_da_ia: 42501 para qualquer sessao que nao e super admin
-//     (inclusive o admin da propria clinica) e para anon; ia_pode_atender,
+// Agente de IA: travas de liberacao e schema (E0, migration 20261006100000)
+// e a liberacao pela tela (aba Agente de IA de Configuracoes, migration
+// 20261006120000), pela API com JWT real de cada papel. O que esta em jogo:
+//   - ia_liberacao, ia_numero_liberado e ia_contato_liberado: o
+//     ADMINISTRADOR e o GESTOR ativos da propria clinica leem as linhas dela
+//     quando a clinica esta na lista fechada ou e e_de_teste (a A e a B sao
+//     de teste); recepcao e leitura da propria clinica, pendente, admin de
+//     outra clinica e admin de clinica fora da lista (a F, que tem linha e,
+//     SO DENTRO dos testes que precisam, deixa de ser de teste) leem zero
+//     linhas. ia_interruptor e ia_uso: so o super admin le. Nenhuma sessao
+//     escreve direto (42501), e anon nem chega (42501). llm_preco: todo
+//     autenticado le, ninguem escreve. ia_interruptor_ligado: todo
+//     autenticado le so o booleano, anon nao;
+//   - definir_liberacao_da_ia, definir_numero_da_ia e
+//     definir_contato_liberado_da_ia: o ADMINISTRADOR ativo da propria
+//     clinica (da lista ou de teste) escreve, com a trilha no nome dele, e
+//     um numero por vez (ligar um desliga o outro na mesma chamada; com
+//     erro, nada muda); gestor, recepcao, leitura, pendente, admin de outra
+//     clinica, admin de clinica fora da lista e anon: 42501 (na F, o 42501
+//     vem do guarda: o sistema desliga a mesma linha sem erro).
+//     definir_interruptor_da_ia:
+//     42501 para todo papel da clinica, inclusive o administrador (so o
+//     super admin, que nao tem sessao aqui). ia_pode_atender,
 //     ia_pode_simular e ia_clinicas_da_fase_controlada nem sao executaveis
 //     pela sessao;
 //   - ia_clinica_liberada: verdadeiro so para membro ativo da clinica
@@ -33,10 +48,27 @@ import { adminClient, anonClient } from "./stack";
 // Toda negacao tem o caso positivo ao lado (anti falso positivo).
 //
 // CUIDADO, o banco e o da producao: clinicas e_de_teste, apagadas no
-// afterAll. O interruptor global NUNCA e tocado: as tentativas contra ele
-// usam filtro que nao casa com linha nenhuma (id = false) ou p_ligado nulo
-// (um guarda com defeito pararia no 22004, antes de gravar). Nada aqui usa a
-// id da salud-care.
+// afterAll. A F nasce de teste e ganha a linha DESLIGADA (nunca liga; nao
+// tem numero nem contato). Ela so deixa de ser de teste DENTRO dos testes
+// que precisam de uma clinica fora da lista (foraDeTeste), e volta a ser de
+// teste no finally, antes do proximo teste: o motor de producao ignora
+// clinica e_de_teste, entao uma execucao que falha no meio nao deixa uma
+// clinica sintetica "de verdade" para tras.
+// O interruptor global NUNCA e tocado: as tentativas contra ele usam filtro
+// que nao casa com linha nenhuma (id = false) ou p_ligado nulo (um guarda
+// com defeito pararia no 22004, antes de gravar). Nada aqui usa a id da
+// salud-care, da teste123 nem da Conduzza Teste.
+//
+// LIMPEZA MANUAL, se uma execucao morrer antes do afterAll (processo
+// derrubado, sem finally): no SQL editor, conferir e depois apagar.
+//   select id, name, e_de_teste from public.clinic
+//    where slug like 'ia-liberacao-%';
+//   update public.clinic set e_de_teste = true
+//    where slug like 'ia-liberacao-%' and not e_de_teste;
+//   delete from public.clinic where slug like 'ia-liberacao-%' and e_de_teste;
+// e os usuarios sinteticos (auth.users com email like
+// 'ia-liberacao-%@teste.dev'), pelo painel do Supabase ou pela API de
+// administracao, como o afterAll faz.
 
 const PERMISSAO_NEGADA = "42501";
 const REGRA_DO_BANCO = "P0001";
@@ -50,10 +82,17 @@ const TELEFONE_DA_EQUIPE = `+5584975${digitos}`;
 const TELEFONE_DO_PACIENTE = `+5584976${digitos}`;
 const TELEFONE_SEM_CONVERSA = `+5584977${digitos}`;
 const TELEFONE_DA_B = `+5584978${digitos}`;
+const TELEFONE_DA_F = `+5584979${digitos}`;
+// O telefone que o administrador da A cadastra pela tela, sem o nono digito
+// (o banco grava a chave canonica, com o 9).
+const TELEFONE_DO_ADMIN_SEM_NONO = `+558497${digitos}`;
+const TELEFONE_DO_ADMIN = `+5584997${digitos}`;
 
 let clinicaA = "";
 let clinicaB = "";
+let clinicaF = "";
 let numeroA = "";
+let segundoNumeroA = "";
 let numeroB = "";
 let conversaDaEquipe = "";
 let conversaDoPaciente = "";
@@ -74,10 +113,13 @@ const MEMBROS_ATIVOS_DA_A = [
   "recepcao-a",
   "leitura-a",
 ] as const;
+/** Os papeis que chegam a Configuracoes: leem as tabelas da liberacao. */
+const GESTAO_DA_A = ["admin-a", "gestor-a"] as const;
 const TODAS_AS_SESSOES = [
   ...MEMBROS_ATIVOS_DA_A,
   "pendente-a",
   "admin-b",
+  "admin-f",
 ] as const;
 const SEM_ESCRITA_NO_AGENTE = [
   "recepcao-a",
@@ -160,6 +202,43 @@ async function conversaCom(
   return (data as { id: string }).id;
 }
 
+/**
+ * A F fora da lista e SEM e_de_teste so durante o corpo (o caso de clinica
+ * fora da lista com linha); volta a ser de teste no finally, falhe o corpo
+ * ou nao. Pela service role (so a equipe do Conduzza muda e_de_teste).
+ */
+async function foraDeTeste(corpo: () => Promise<void>): Promise<void> {
+  await admin
+    .from("clinic")
+    .update({ e_de_teste: false })
+    .eq("id", clinicaF)
+    .throwOnError();
+  try {
+    await corpo();
+  } finally {
+    await admin
+      .from("clinic")
+      .update({ e_de_teste: true })
+      .eq("id", clinicaF)
+      .throwOnError();
+  }
+}
+
+/** ativo de cada numero liberado da A, por id (lido pelo sistema). */
+async function numerosDaA(): Promise<Record<string, boolean>> {
+  const { data } = await admin
+    .from("ia_numero_liberado")
+    .select("whatsapp_account_id, ativo")
+    .eq("clinic_id", clinicaA)
+    .throwOnError();
+  return Object.fromEntries(
+    (data as { whatsapp_account_id: string; ativo: boolean }[]).map((linha) => [
+      linha.whatsapp_account_id,
+      linha.ativo,
+    ]),
+  );
+}
+
 /** Retrato da liberacao da A (lido pelo sistema), para provar que nada mudou. */
 async function liberacaoDaA() {
   const [liberacao, numeros, contatos] = await Promise.all([
@@ -199,8 +278,13 @@ async function statusDa(conversationId: string): Promise<string> {
 beforeAll(async () => {
   clinicaA = await criarClinica("A");
   clinicaB = await criarClinica("B");
+  clinicaF = await criarClinica("F");
   numeroA = (await criarNumeroDeTeste(admin, clinicaA, { nome: "Recepção" }))
     .id;
+  // So entra em ia_numero_liberado no teste do administrador (um por vez).
+  segundoNumeroA = (
+    await criarNumeroDeTeste(admin, clinicaA, { nome: "Segundo" })
+  ).id;
   numeroB = (await criarNumeroDeTeste(admin, clinicaB, { nome: "Recepção" }))
     .id;
 
@@ -210,6 +294,7 @@ beforeAll(async () => {
   await criarPessoa("leitura-a", clinicaA, "leitura");
   await criarPessoa("pendente-a", clinicaA, "gestor", "pendente");
   await criarPessoa("admin-b", clinicaB, "admin");
+  await criarPessoa("admin-f", clinicaF, "admin");
 
   contatoDaEquipe = await contatoCom(clinicaA, TELEFONE_DA_EQUIPE);
   contatoDoPaciente = await contatoCom(clinicaA, TELEFONE_DO_PACIENTE);
@@ -249,10 +334,35 @@ beforeAll(async () => {
     expect(error).toBeNull();
     expect(data).toBe(true);
   }
+
+  // A F ganha a linha DESLIGADA e um telefone desligado enquanto e de
+  // teste, e CONTINUA de teste: so os testes que precisam a tiram da lista
+  // (foraDeTeste), e T3a deixa a linha ficar. E o caso que prova o filtro
+  // "lista ou e_de_teste" da leitura e do guarda: a linha existe, o admin
+  // dela nao le nem mexe enquanto a F nao e de teste.
+  for (const [rpc, args] of [
+    [
+      "definir_liberacao_da_ia",
+      { p_clinic_id: clinicaF, p_liberada: false, p_motivo: "teste de RLS" },
+    ],
+    [
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaF,
+        p_telefone_e164: TELEFONE_DA_F,
+        p_rotulo: "Equipe da F",
+        p_ativo: false,
+      },
+    ],
+  ] as const) {
+    const { data, error } = await admin.rpc(rpc, args);
+    expect(error).toBeNull();
+    expect(data).toBe(false);
+  }
 });
 
 afterAll(async () => {
-  await admin.from("clinic").delete().in("id", [clinicaA, clinicaB]);
+  await admin.from("clinic").delete().in("id", [clinicaA, clinicaB, clinicaF]);
   for (let pagina = 1; pagina <= 10; pagina++) {
     const { data } = await admin.auth.admin.listUsers({
       page: pagina,
@@ -270,16 +380,16 @@ afterAll(async () => {
   }
 });
 
-describe("tabelas da liberacao: so o super admin le, nenhuma sessao escreve", () => {
-  const TABELAS = [
-    "ia_interruptor",
+describe("tabelas da liberacao: administrador e gestor da propria clinica leem, nenhuma sessao escreve", () => {
+  const TRAVAS_DA_CLINICA = [
     "ia_liberacao",
     "ia_numero_liberado",
     "ia_contato_liberado",
-    "ia_uso",
   ] as const;
+  const SO_DO_SUPER_ADMIN = ["ia_interruptor", "ia_uso"] as const;
+  const TABELAS = [...TRAVAS_DA_CLINICA, ...SO_DO_SUPER_ADMIN] as const;
 
-  it("nenhum papel da clinica le as travas nem o gasto (nem da propria clinica)", async () => {
+  it("administrador e gestor da A leem a liberacao, o numero e os telefones da A; ninguem le o interruptor nem o gasto", async () => {
     await admin
       .from("ia_uso")
       .insert({
@@ -290,10 +400,32 @@ describe("tabelas da liberacao: so o super admin le, nenhuma sessao escreve", ()
         custo_microdolar: 1,
       })
       .throwOnError();
-    for (const apelido of TODAS_AS_SESSOES) {
-      for (const tabela of TABELAS) {
-        const { data, error } = await como(apelido).from(tabela).select("*");
-        expect(error).toBeNull();
+    for (const apelido of GESTAO_DA_A) {
+      const cliente = como(apelido);
+      const { data: liberacao, error } = await cliente
+        .from("ia_liberacao")
+        .select("clinic_id, modo, liberada");
+      expect(error).toBeNull();
+      expect(liberacao).toEqual([
+        { clinic_id: clinicaA, modo: "contatos", liberada: true },
+      ]);
+      const { data: numeros } = await cliente
+        .from("ia_numero_liberado")
+        .select("whatsapp_account_id, ativo");
+      expect(numeros).toEqual([{ whatsapp_account_id: numeroA, ativo: true }]);
+      const { data: telefones } = await cliente
+        .from("ia_contato_liberado")
+        .select("phone_key, rotulo, ativo");
+      expect(telefones).toEqual([
+        {
+          phone_key: TELEFONE_DA_EQUIPE,
+          rotulo: "Equipe de teste",
+          ativo: true,
+        },
+      ]);
+      for (const tabela of SO_DO_SUPER_ADMIN) {
+        const { data, error: erro } = await cliente.from(tabela).select("*");
+        expect(erro).toBeNull();
         expect(data).toEqual([]);
       }
     }
@@ -320,6 +452,95 @@ describe("tabelas da liberacao: so o super admin le, nenhuma sessao escreve", ()
       .eq("clinic_id", clinicaA)
       .throwOnError();
     expect(uso).toEqual([{ custo_microdolar: 1 }]);
+  });
+
+  it("recepcao e leitura da A (a propria clinica), pendente da A e admin da B nao leem nada", async () => {
+    for (const apelido of [
+      "recepcao-a",
+      "leitura-a",
+      "pendente-a",
+      "admin-b",
+    ] as const) {
+      for (const tabela of TABELAS) {
+        const { data, error } = await como(apelido).from(tabela).select("*");
+        expect(error).toBeNull();
+        expect(data, `${apelido} em ${tabela}`).toEqual([]);
+      }
+    }
+    // contraprova: a A tem a linha, o numero e o telefone (o administrador le)
+    const { data: doAdmin } = await como("admin-a")
+      .from("ia_contato_liberado")
+      .select("phone_key");
+    expect(doAdmin).toEqual([{ phone_key: TELEFONE_DA_EQUIPE }]);
+  });
+
+  it("admin da F: le a propria enquanto ela e de teste; fora da lista (com linha), nada", async () => {
+    // contraprova primeiro: de teste, o admin da F le a linha e o telefone
+    const { data: deTeste } = await como("admin-f")
+      .from("ia_liberacao")
+      .select("clinic_id, liberada");
+    expect(deTeste).toEqual([{ clinic_id: clinicaF, liberada: false }]);
+    await foraDeTeste(async () => {
+      for (const tabela of TABELAS) {
+        const { data, error } = await como("admin-f").from(tabela).select("*");
+        expect(error).toBeNull();
+        expect(data, tabela).toEqual([]);
+      }
+      // a linha e o telefone continuam la (o sistema le)
+      const { data: daF } = await admin
+        .from("ia_liberacao")
+        .select("clinic_id, liberada")
+        .eq("clinic_id", clinicaF)
+        .throwOnError();
+      expect(daF).toEqual([{ clinic_id: clinicaF, liberada: false }]);
+      const { data: telefoneDaF } = await admin
+        .from("ia_contato_liberado")
+        .select("phone_key")
+        .eq("clinic_id", clinicaF)
+        .throwOnError();
+      expect(telefoneDaF).toEqual([{ phone_key: TELEFONE_DA_F }]);
+    });
+  });
+
+  it("ia_membro_ve_a_liberacao: so administrador ou gestor ativo, so da propria clinica da lista ou de teste", async () => {
+    const confere = async (
+      casos: readonly (readonly [string, string, boolean])[],
+    ) => {
+      for (const [apelido, clinica, esperado] of casos) {
+        const { data, error } = await como(apelido).rpc(
+          "ia_membro_ve_a_liberacao",
+          { p_clinic_id: clinica },
+        );
+        expect(error).toBeNull();
+        expect(data, `${apelido} na ${clinica}`).toBe(esperado);
+      }
+    };
+    await confere([
+      ["admin-a", clinicaA, true],
+      ["gestor-a", clinicaA, true],
+      ["recepcao-a", clinicaA, false],
+      ["leitura-a", clinicaA, false],
+      ["admin-a", clinicaB, false],
+      ["pendente-a", clinicaA, false],
+      ["admin-b", clinicaA, false],
+      ["admin-f", clinicaF, true],
+    ]);
+    await foraDeTeste(() => confere([["admin-f", clinicaF, false]]));
+  });
+
+  it("ia_interruptor_ligado: todo autenticado le so o booleano; anon nao", async () => {
+    const { data: linha } = await admin
+      .from("ia_interruptor")
+      .select("ligado")
+      .single()
+      .throwOnError();
+    for (const apelido of TODAS_AS_SESSOES) {
+      const { data, error } = await como(apelido).rpc("ia_interruptor_ligado");
+      expect(error).toBeNull();
+      expect(data).toBe((linha as { ligado: boolean }).ligado);
+    }
+    const { error } = await anonClient().rpc("ia_interruptor_ligado");
+    expect(error?.code).toBe(PERMISSAO_NEGADA);
   });
 
   it("nenhum papel insere, muda ou apaga (42501); nada muda", async () => {
@@ -430,24 +651,16 @@ describe("tabelas da liberacao: so o super admin le, nenhuma sessao escreve", ()
   });
 });
 
-describe("RPCs de liberacao: so o super admin", () => {
-  it("definir_*_da_ia dao 42501 para todo papel da clinica e para anon; nada muda", async () => {
-    const antes = await liberacaoDaA();
-    const sessoes = [
-      ...TODAS_AS_SESSOES.map((apelido) => como(apelido)),
-      anonClient(),
-    ];
-    for (const cliente of sessoes) {
-      const chamadas = [
+describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de teste)", () => {
+  it("gestor, recepcao, leitura e pendente da A, admin da B na A, admin da F na F e anon: 42501; nada muda", async () => {
+    // a F fora da lista so durante este teste (volta a ser de teste no finally)
+    await foraDeTeste(async () => {
+      const antes = await liberacaoDaA();
+      const naA = (cliente: SupabaseClient) => [
         cliente.rpc("definir_liberacao_da_ia", {
           p_clinic_id: clinicaA,
           p_liberada: false,
           p_motivo: "forjado",
-        }),
-        cliente.rpc("definir_liberacao_da_ia", {
-          p_clinic_id: clinicaB,
-          p_liberada: true,
-          p_modo: "contatos",
         }),
         cliente.rpc("definir_numero_da_ia", {
           p_clinic_id: clinicaA,
@@ -460,24 +673,267 @@ describe("RPCs de liberacao: so o super admin", () => {
           p_rotulo: "forjado",
           p_ativo: true,
         }),
-        // p_ligado nulo: o interruptor global nunca e tocado pelo teste
-        cliente.rpc("definir_interruptor_da_ia", {
-          p_ligado: null,
+      ];
+      const chamadas = [
+        ...(
+          [
+            "gestor-a",
+            "recepcao-a",
+            "leitura-a",
+            "pendente-a",
+            "admin-b",
+          ] as const
+        ).flatMap((apelido) => naA(como(apelido))),
+        ...naA(anonClient()),
+        // o admin da A noutra clinica (a B, de teste): o guarda olha o papel
+        // na clinica informada
+        como("admin-a").rpc("definir_liberacao_da_ia", {
+          p_clinic_id: clinicaB,
+          p_liberada: true,
+          p_modo: "contatos",
+        }),
+        // a F tem a linha e nao esta na lista nem e de teste: o admin dela nem
+        // desliga (T3a deixaria desligar; o 42501 e do guarda)
+        como("admin-f").rpc("definir_liberacao_da_ia", {
+          p_clinic_id: clinicaF,
+          p_liberada: false,
           p_motivo: "forjado",
+        }),
+        como("admin-f").rpc("definir_contato_liberado_da_ia", {
+          p_clinic_id: clinicaF,
+          p_telefone_e164: TELEFONE_DA_F,
+          p_rotulo: "forjado",
+          p_ativo: true,
         }),
       ];
       for (const chamada of chamadas) {
         const { error } = await chamada;
         expect(error?.code).toBe(PERMISSAO_NEGADA);
       }
+      expect(await liberacaoDaA()).toEqual(antes);
+      const { data: daB } = await admin
+        .from("ia_liberacao")
+        .select("clinic_id")
+        .eq("clinic_id", clinicaB)
+        .throwOnError();
+      expect(daB).toEqual([]);
+      const { data: daF } = await admin
+        .from("ia_contato_liberado")
+        .select("ativo, rotulo")
+        .eq("clinic_id", clinicaF)
+        .throwOnError();
+      expect(daF).toEqual([{ ativo: false, rotulo: "Equipe da F" }]);
+      // contraprova: o sistema desliga a mesma linha da F sem erro (T3a deixa
+      // desligar), entao o 42501 do admin da F veio do guarda
+      const { data, error } = await admin.rpc("definir_liberacao_da_ia", {
+        p_clinic_id: clinicaF,
+        p_liberada: false,
+        p_motivo: "contraprova",
+      });
+      expect(error).toBeNull();
+      expect(data).toBe(false);
+    });
+  });
+
+  it("ninguem da clinica mexe no interruptor geral, nem o administrador (42501)", async () => {
+    for (const cliente of [
+      ...TODAS_AS_SESSOES.map((apelido) => como(apelido)),
+      anonClient(),
+    ]) {
+      // p_ligado nulo: o interruptor global nunca e tocado pelo teste
+      const { error } = await cliente.rpc("definir_interruptor_da_ia", {
+        p_ligado: null,
+        p_motivo: "forjado",
+      });
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
     }
-    expect(await liberacaoDaA()).toEqual(antes);
-    const { data: daB } = await admin
+  });
+
+  it("o administrador da A escreve nas tres RPCs da A, com a trilha no nome dele", async () => {
+    const adminA = como("admin-a");
+    const ok = async (
+      nome: string,
+      args: Record<string, unknown>,
+      esperado: boolean,
+    ) => {
+      const { data, error } = await adminA.rpc(nome, args);
+      expect(error, nome).toBeNull();
+      expect(data).toBe(esperado);
+    };
+    const antes = await liberacaoDaA();
+
+    // modo: simulador e de volta para contatos
+    await ok(
+      "definir_liberacao_da_ia",
+      { p_clinic_id: clinicaA, p_liberada: true, p_modo: "simulador" },
+      true,
+    );
+    const { data: noSimulador } = await admin
       .from("ia_liberacao")
-      .select("clinic_id")
-      .eq("clinic_id", clinicaB)
+      .select("modo, alterado_por")
+      .eq("clinic_id", clinicaA)
+      .single()
       .throwOnError();
-    expect(daB).toEqual([]);
+    expect(noSimulador).toEqual({
+      modo: "simulador",
+      alterado_por: ids.get("admin-a"),
+    });
+    await ok(
+      "definir_liberacao_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_liberada: true,
+        p_modo: "contatos",
+        p_motivo: "teste de RLS",
+      },
+      true,
+    );
+
+    // numero, um por vez: ligar o segundo desliga o da A na mesma chamada;
+    // religar o da A desliga o segundo; desligar nao mexe nos outros
+    await ok(
+      "definir_numero_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_whatsapp_account_id: segundoNumeroA,
+        p_ativo: true,
+      },
+      true,
+    );
+    expect(await numerosDaA()).toEqual({
+      [numeroA]: false,
+      [segundoNumeroA]: true,
+    });
+    await ok(
+      "definir_numero_da_ia",
+      { p_clinic_id: clinicaA, p_whatsapp_account_id: numeroA, p_ativo: true },
+      true,
+    );
+    expect(await numerosDaA()).toEqual({
+      [numeroA]: true,
+      [segundoNumeroA]: false,
+    });
+    await ok(
+      "definir_numero_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_whatsapp_account_id: segundoNumeroA,
+        p_ativo: false,
+      },
+      false,
+    );
+    expect(await numerosDaA()).toEqual({
+      [numeroA]: true,
+      [segundoNumeroA]: false,
+    });
+    // o numero da B pela A: o gatilho recusa (numero de outra clinica) e
+    // nada muda, nem o desligar do numero da A que vinha antes na chamada
+    const { error: numeroDaB } = await adminA.rpc("definir_numero_da_ia", {
+      p_clinic_id: clinicaA,
+      p_whatsapp_account_id: numeroB,
+      p_ativo: true,
+    });
+    expect(numeroDaB?.code).toBe("23503");
+    expect(await numerosDaA()).toEqual({
+      [numeroA]: true,
+      [segundoNumeroA]: false,
+    });
+
+    // telefone novo sem o nono digito: gravado pela chave canonica; e
+    // desligado em seguida (fica na lista, nao conversa)
+    await ok(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_ADMIN_SEM_NONO,
+        p_rotulo: "Admin pela tela",
+        p_ativo: true,
+      },
+      true,
+    );
+    await ok(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_ADMIN,
+        p_rotulo: "",
+        p_ativo: false,
+      },
+      false,
+    );
+
+    const depois = await liberacaoDaA();
+    expect(depois.liberacao).toEqual(antes.liberacao);
+    expect(depois.numeros).toEqual(
+      expect.arrayContaining([
+        ...(antes.numeros ?? []),
+        { whatsapp_account_id: segundoNumeroA, ativo: false },
+      ]),
+    );
+    expect(depois.numeros).toHaveLength((antes.numeros ?? []).length + 1);
+    expect(depois.contatos).toEqual(
+      expect.arrayContaining([
+        ...(antes.contatos ?? []),
+        {
+          phone_key: TELEFONE_DO_ADMIN,
+          rotulo: "Admin pela tela",
+          ativo: false,
+        },
+      ]),
+    );
+    expect(depois.contatos).toHaveLength((antes.contatos ?? []).length + 1);
+
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("entity, action, entity_id")
+      .eq("clinic_id", clinicaA)
+      .eq("user_id", ids.get("admin-a")!)
+      .in("entity", [
+        "ia_liberacao",
+        "ia_numero_liberado",
+        "ia_contato_liberado",
+      ])
+      .throwOnError();
+    const linhas = trilha as {
+      entity: string;
+      action: string;
+      entity_id: string | null;
+    }[];
+    expect(linhas.filter((l) => l.entity === "ia_liberacao")).toHaveLength(2);
+    // numeros: ligar o segundo (ele e o da A, desligado junto), religar o da
+    // A (ele e o segundo, desligado junto) e desligar o segundo; o 23503 nao
+    // deixou trilha
+    const doNumero = linhas.filter((l) => l.entity === "ia_numero_liberado");
+    expect(doNumero.filter((l) => l.entity_id === numeroA)).toHaveLength(2);
+    expect(doNumero.filter((l) => l.entity_id === segundoNumeroA)).toHaveLength(
+      3,
+    );
+    expect(doNumero).toHaveLength(5);
+    expect(
+      linhas.filter((l) => l.entity === "ia_contato_liberado"),
+    ).toHaveLength(2);
+    expect(linhas.every((l) => l.action === "editou")).toBe(true);
+  });
+
+  it("o administrador da B (de teste) escreve e le so a propria; nao chega na A", async () => {
+    const adminB = como("admin-b");
+    const { data, error } = await adminB.rpc("definir_liberacao_da_ia", {
+      p_clinic_id: clinicaB,
+      p_liberada: false,
+      p_motivo: "teste de RLS",
+    });
+    expect(error).toBeNull();
+    expect(data).toBe(false);
+    const { data: visiveis } = await adminB
+      .from("ia_liberacao")
+      .select("clinic_id, liberada");
+    expect(visiveis).toEqual([{ clinic_id: clinicaB, liberada: false }]);
+    const { error: naA } = await adminB.rpc("definir_numero_da_ia", {
+      p_clinic_id: clinicaA,
+      p_whatsapp_account_id: numeroA,
+      p_ativo: false,
+    });
+    expect(naA?.code).toBe(PERMISSAO_NEGADA);
   });
 
   it("as funcoes de decisao nao sao da sessao (42501)", async () => {

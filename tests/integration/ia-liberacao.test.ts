@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { CLINICAS_DA_FASE_CONTROLADA } from "@/lib/ia/liberacao";
+import {
+  abaDaIaVisivel,
+  fetchLiberacaoDaIa,
+  fetchNumeroDaClinica,
+} from "@/lib/queries/ia-liberacao";
 import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
@@ -18,13 +23,26 @@ import { adminClient } from "../rls/stack";
 //   movel, sem o fuso da clinica) e a chave canonica do telefone;
 // - desligar (telefone, numero, clinica) devolve para a equipe so as
 //   conversas que perderam a liberacao, com awaiting_reply, e nada e enviado;
+// - um numero por vez (migration 20261006120000): ligar um numero desliga
+//   os outros da clinica na mesma chamada, com a trilha de cada um (a
+//   devolucao das conversas do numero desligado e a do ia_desligar, provada
+//   no bloco de desligar); desligar nao mexe nos outros; com erro, nada
+//   muda; a outra clinica nunca e tocada;
 // - o gatilho de status barra so SESSAO: a service role (o servidor, as
 //   fixtures e o seed) poe a conversa em 'ia_atendendo' mesmo sem liberacao,
 //   porque o servidor e guardado por ia_pode_atender ao enfileirar, antes do
 //   modelo e antes do envio (E3). A sessao barrada (42501) esta em
 //   tests/rls/ia-liberacao.test.ts;
 // - erros de entrada (22004, 22023, 23503, P0002), audit_log, 3.1
-//   (versao publicada imutavel), llm_preco e os CHECKs de ai_decision_log.
+//   (versao publicada imutavel), llm_preco e os CHECKs de ai_decision_log;
+// - a aba Agente de IA (migration 20261006120000): a leitura que a tela faz
+//   (lib/queries/ia-liberacao) contra o banco real, numa clinica e_de_teste
+//   sem linha e depois liberada; ia_interruptor_ligado igual a linha do
+//   interruptor; e a aba so existe nas duas clinicas da lista (clinica de
+//   teste nunca ganha a aba, mesmo com o banco aceitando a escrita dela).
+//   O guarda novo das RPCs nao muda nada para a service role (todas as
+//   chamadas daqui seguem passando); quem a sessao pode ou nao pode chamar
+//   esta em tests/rls/ia-liberacao.test.ts.
 // Mesmos cenarios do ensaio (scratchpad/e0/asserts.sql). Quem le o que esta
 // em tests/rls/ia-liberacao.test.ts.
 //
@@ -133,6 +151,21 @@ async function podeAtender(
     p_whatsapp_account_id: whatsappAccountId,
     p_phone_key: phoneKey,
   })) as boolean;
+}
+
+/** ativo de cada numero liberado da T, por id. */
+async function ativos(): Promise<Record<string, boolean>> {
+  const { data } = await admin
+    .from("ia_numero_liberado")
+    .select("whatsapp_account_id, ativo")
+    .eq("clinic_id", clinicaT)
+    .throwOnError();
+  return Object.fromEntries(
+    (data as { whatsapp_account_id: string; ativo: boolean }[]).map((linha) => [
+      linha.whatsapp_account_id,
+      linha.ativo,
+    ]),
+  );
 }
 
 async function podeSimular(clinicId = clinicaT): Promise<boolean> {
@@ -301,9 +334,56 @@ describe("tabela verdade (clinica e_de_teste)", () => {
       .throwOnError();
     expect(data).toEqual({ ativo: true });
     expect(await podeAtender(numeroUazapi, EQUIPE)).toBe(false);
-    // contraprova: o numero fake da mesma clinica atende o mesmo telefone
+    // contraprova: o numero fake da mesma clinica, de volta (um por vez: o
+    // uazapi desliga junto), atende o mesmo telefone
+    expect(await numero(numero1, true)).toBe(true);
+    expect(await ativos()).toEqual({
+      [numero1]: true,
+      [numeroUazapi]: false,
+    });
     expect(await podeAtender(numero1, EQUIPE)).toBe(true);
-    expect(await numero(numeroUazapi, false)).toBe(false);
+  });
+
+  it("um numero por vez: ligar um desliga os outros, com trilha; desligar nao mexe; erro nao muda nada", async () => {
+    const { count: trilhaAntes } = await admin
+      .from("audit_log")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicaT)
+      .eq("entity", "ia_numero_liberado");
+    expect(await numero(numero2, true)).toBe(true);
+    expect(await ativos()).toEqual({
+      [numero1]: false,
+      [numero2]: true,
+      [numeroUazapi]: false,
+    });
+    expect(await podeAtender(numero1, EQUIPE)).toBe(false);
+    expect(await podeAtender(numero2, EQUIPE)).toBe(true);
+    // o numero 2 ligado e o 1 desligado junto: duas linhas na trilha
+    const { count: trilhaDepois } = await admin
+      .from("audit_log")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicaT)
+      .eq("entity", "ia_numero_liberado");
+    expect((trilhaDepois ?? 0) - (trilhaAntes ?? 0)).toBe(2);
+    // erro adiante (numero de outra clinica, 23503): o 2 continua ligado
+    const daOutra = await rpc("definir_numero_da_ia", {
+      p_clinic_id: clinicaT,
+      p_whatsapp_account_id: numeroDaU,
+      p_ativo: true,
+    });
+    expect(daOutra.codigo).toBe("23503");
+    expect((await ativos())[numero2]).toBe(true);
+    // desligar o 1 (ja desligado) nao mexe no 2
+    expect(await numero(numero1, false)).toBe(false);
+    expect((await ativos())[numero2]).toBe(true);
+    // de volta ao 1 (o 2 desliga junto)
+    expect(await numero(numero1, true)).toBe(true);
+    expect(await ativos()).toEqual({
+      [numero1]: true,
+      [numero2]: false,
+      [numeroUazapi]: false,
+    });
+    expect(await podeAtender(numero1, EQUIPE)).toBe(true);
   });
 
   it("outro numero, outro telefone, numero de outra clinica e nulos: falso", async () => {
@@ -397,6 +477,7 @@ describe("tabela verdade (clinica e_de_teste)", () => {
   });
 
   it("numero removido deixa de atender, mesmo liberado", async () => {
+    // ligar o 2 desliga o 1 (um por vez); o 1 volta no fim
     await numero(numero2, true);
     expect(await podeAtender(numero2, EQUIPE)).toBe(true);
     await admin
@@ -414,6 +495,7 @@ describe("tabela verdade (clinica e_de_teste)", () => {
     expect(religar.codigo).toBe("23514");
     // desligar passa
     expect(await numero(numero2, false)).toBe(false);
+    expect(await numero(numero1, true)).toBe(true);
     expect(await podeAtender(numero1, EQUIPE)).toBe(true);
   });
 
@@ -640,6 +722,111 @@ describe("interruptor global (so leitura)", () => {
       .select("id")
       .throwOnError();
     expect(data).toEqual([{ id: true }]);
+  });
+
+  it("ia_interruptor_ligado devolve o booleano da linha", async () => {
+    const { data } = await admin
+      .from("ia_interruptor")
+      .select("ligado")
+      .single()
+      .throwOnError();
+    expect(await rpcOk("ia_interruptor_ligado", {})).toBe(
+      (data as { ligado: boolean }).ligado,
+    );
+  });
+});
+
+describe("aba Agente de IA: a leitura da tela", () => {
+  // Celular sintetico da equipe da U, sem o nono digito (a tela mostra a
+  // chave canonica, com o 9).
+  const EQUIPE_DA_U_SEM_NONO = `+558498${digitos}`;
+  const EQUIPE_DA_U = `+5584998${digitos}`;
+
+  it("a aba so existe nas duas clinicas da lista; clinica de teste nunca", () => {
+    for (const id of CLINICAS_DA_FASE_CONTROLADA) {
+      expect(abaDaIaVisivel(id)).toBe(true);
+    }
+    expect(abaDaIaVisivel(clinicaT)).toBe(false);
+    expect(abaDaIaVisivel(clinicaU)).toBe(false);
+    expect(abaDaIaVisivel(SALUD_CARE)).toBe(false);
+  });
+
+  it("clinica sem linha: liberacao nula e listas vazias, com o interruptor", async () => {
+    const { data } = await admin
+      .from("ia_interruptor")
+      .select("ligado")
+      .single()
+      .throwOnError();
+    expect(await fetchLiberacaoDaIa(admin, clinicaU)).toEqual({
+      liberacao: null,
+      numeros: [],
+      telefones: [],
+      interruptorLigado: (data as { ligado: boolean }).ligado,
+    });
+  });
+
+  it("clinica liberada: o modo, o teto, o numero e o telefone pela chave canonica", async () => {
+    for (const [nome, args] of [
+      [
+        "definir_liberacao_da_ia",
+        {
+          p_clinic_id: clinicaU,
+          p_liberada: true,
+          p_modo: "simulador",
+          p_motivo: "teste de integracao da aba",
+        },
+      ],
+      [
+        "definir_numero_da_ia",
+        {
+          p_clinic_id: clinicaU,
+          p_whatsapp_account_id: numeroDaU,
+          p_ativo: true,
+        },
+      ],
+      [
+        "definir_contato_liberado_da_ia",
+        {
+          p_clinic_id: clinicaU,
+          p_telefone_e164: EQUIPE_DA_U_SEM_NONO,
+          p_rotulo: "Equipe da U",
+          p_ativo: true,
+        },
+      ],
+    ] as const) {
+      expect(await rpcOk(nome, args)).toBe(true);
+    }
+    const dados = await fetchLiberacaoDaIa(admin, clinicaU);
+    expect(dados.liberacao).toEqual({
+      liberada: true,
+      modo: "simulador",
+      pausadaPelaClinica: false,
+      tetoDiarioCentavosUsd: 500,
+    });
+    expect(dados.numeros).toEqual([
+      { whatsappAccountId: numeroDaU, ativo: true },
+    ]);
+    expect(dados.telefones).toEqual([
+      {
+        id: expect.any(String),
+        telefone: EQUIPE_DA_U,
+        rotulo: "Equipe da U",
+        ativo: true,
+      },
+    ]);
+    // a leitura e por clinica: nada da T aparece na U
+    expect(
+      dados.numeros.some((numero) => numero.whatsappAccountId === numero1),
+    ).toBe(false);
+  });
+
+  it("o numero da acao de escolher: so numero ativo da propria clinica", async () => {
+    expect(await fetchNumeroDaClinica(admin, clinicaU, numeroDaU)).toEqual({
+      id: numeroDaU,
+      connectionStatus: expect.any(String),
+    });
+    // numero da T pedido como da U: nulo
+    expect(await fetchNumeroDaClinica(admin, clinicaU, numero1)).toBeNull();
   });
 });
 

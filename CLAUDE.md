@@ -40,7 +40,7 @@ SaaS multi-tenant que coloca uma recepcionista de IA no WhatsApp de clínicas m�
 | Ícones | Lucide, traço 2px (padrão da biblioteca; decisão de 24/09/2026, alinhada ao design system) |
 | Datas | date-fns com locale pt-BR |
 | Testes | Vitest (unidade) + Playwright (fluxo crítico) |
-| LLM (agente de IA) | Anthropic pelo SDK oficial `@anthropic-ai/sdk`, em `lib/integrations/llm/`. Agente `claude-opus-5` (alternativa `claude-sonnet-5` por configuração); verificador do CFM e classificador de entrada `claude-haiku-4-5`. Liberado só para as clínicas da fase controlada (decisão de 05/10/2026; travas no `docs/04`, seção 17) |
+| LLM (agente de IA) | OpenAI pelo SDK oficial `openai`, em `lib/integrations/llm/` (decisão de 05/10/2026, no lugar da Anthropic). Responses API com `store: false` sempre; nada de Conversations, `previous_response_id`, Files, Vector Stores, Evals, Batch ou Agents. Agente `gpt-6-luna` (alternativa `gpt-6.1-sol` por configuração); verificador do CFM e classificador de entrada `gpt-6-luna` sem raciocínio. `safety_identifier` é um HMAC de clínica e contato, nunca telefone. Liberado só para as clínicas da fase controlada (travas no `docs/04`, seção 17; LGPD e pendências no `docs/03`, seção do LLM) |
 
 ---
 
@@ -144,7 +144,7 @@ Uma tarefa só está pronta quando **tudo** abaixo é verdade:
 - [ ] Nenhum dado de paciente em log
 - [ ] Se mexeu em envio de mensagem: opt-in verificado e custo gravado
 - [ ] Se mexeu em agenda: teste de duas marcações simultâneas no mesmo slot
-- [ ] Se mexeu no agente de IA ou no filtro: bateria de conformidade verde (`tests/unit/conformidade`, roda no prebuild) e nenhum teste chama a Anthropic (o SDK é trocado por um stub nas configs do vitest)
+- [ ] Se mexeu no agente de IA ou no filtro: bateria de conformidade verde (`tests/unit/conformidade`, roda no prebuild) e nenhum teste chama a OpenAI (o pacote `openai` é trocado por um stub nas configs do vitest e, por qualquer caminho de import, o fetch dos testes recusa host da OpenAI ou da Anthropic: `tests/setup/sem-rede-de-llm.ts`)
 
 ---
 

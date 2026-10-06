@@ -25,26 +25,31 @@ const tsxAutomatico: Plugin = {
   },
 };
 
-// Guarda da Fase 3: "@anthropic-ai/sdk" (so o nome EXATO) vira um modulo cujo
-// construtor lanca. Nenhum teste chama a Anthropic; subcaminhos como
-// "@anthropic-ai/sdk/helpers/zod" continuam reais.
-const guardaDaAnthropic = {
-  find: /^@anthropic-ai\/sdk$/,
-  replacement: path.resolve(__dirname, "tests/stubs/anthropic-proibido.ts"),
+// Guarda da Fase 3: "openai" (so o nome EXATO) vira um modulo cujo
+// construtor lanca. Nenhum teste chama a OpenAI; subcaminhos como
+// "openai/helpers/zod" continuam reais.
+const guardaDaOpenAi = {
+  find: /^openai$/,
+  replacement: path.resolve(__dirname, "tests/stubs/openai-proibido.ts"),
 };
+
+// Segunda guarda, independente do caminho de import: o fetch dos testes
+// lanca para qualquer host da OpenAI ou da Anthropic (tests/setup).
+const travaDeRede = path.resolve(__dirname, "tests/setup/sem-rede-de-llm.ts");
 
 export default defineConfig({
   plugins: [tsxAutomatico],
   test: {
     include: ["tests/integration/**/*.test.ts"],
     environment: "node",
+    setupFiles: [travaDeRede],
     fileParallelism: false,
     testTimeout: 30000,
     hookTimeout: 30000,
   },
   resolve: {
     alias: [
-      guardaDaAnthropic,
+      guardaDaOpenAi,
       { find: "@", replacement: path.resolve(__dirname, ".") },
       // O marcador "server-only" lanca erro fora do React Server Components:
       // trocado por um modulo vazio para testar o codigo de servidor real

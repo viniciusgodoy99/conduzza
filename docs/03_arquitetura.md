@@ -18,7 +18,7 @@
 
 `[DECISÃO PENDENTE]` A spec (seção 7.1) recomenda datacenter no Brasil, porque isso remove a discussão de transferência internacional da LGPD (art. 33) para tudo que não seja o LLM. **Ao criar o projeto Supabase, escolher a região `sa-east-1` (São Paulo).** Se a região escolhida for outra, isso vira uma cláusula contratual obrigatória e um item do RIPD.
 
-A chamada ao LLM é transferência internacional de qualquer forma. Isso precisa estar no termo de uso da clínica e no RIPD. Não é impeditivo, é obrigação de transparência.
+A chamada ao LLM é transferência internacional de qualquer forma (o provedor, a OpenAI, não tem região no Brasil nem na América do Sul; seção 14). Isso precisa estar no termo de uso da clínica e no RIPD. Não é impeditivo, é obrigação de transparência.
 
 ---
 
@@ -384,3 +384,43 @@ anúncio do Google -> site da clínica (?gclid=... &gad_campaignid=... &cz_campa
 - **Configurações** (`components/configuracoes/google-ads-tab.tsx` e `rastreio-do-site-card.tsx`; `app/(app)/configuracoes/rastreio-do-site-actions.ts`): tudo pela sessão. A página lê `rastreio_do_site` (a policy só mostra a linha para administrador e gestor) e a função `situacao_do_rastreio` (só totais). Ligar é `update` de `ativo` e, sem linha, `insert` só de `{clinic_id, ativo: true}`; um 23505 nesse insert refaz o update. **Nunca upsert**: o `ON CONFLICT` do PostgREST grava `clinic_id`, que não tem grant de update (42501). Gerar chave nova chama `trocar_chave_do_rastreio`. Trilha em `audit_log` (entity `rastreio_do_site`), sem a chave.
 - **Retenção:** a poda roda no `motor_manutencao` a cada minuto (`podar_cliques_do_site`): clique não casado sai 1 dia depois de vencer; o casado perde gclid, gbraid e wbraid 90 dias depois do clique, e a linha fica.
 - **Service role:** além do motor e das Server Actions (seção 3), a rota pública e a ingestão usam a service role para chamar as duas funções do clique, que não têm grant para `anon` nem `authenticated`.
+
+---
+
+## 14. Agente de IA: provedor de LLM (OpenAI, desde 05/10/2026)
+
+Decisão do dono em 05/10/2026: **OpenAI no lugar da Anthropic**, para ser mais barato. A pesquisa usou só fontes oficiais (developers.openai.com, cdn.openai.com, trust.openai.com e o repositório `openai/openai-node`), consultadas em 05/10/2026. O filtro do CFM (regras determinísticas e bateria de conformidade) não mudou: mudou só a camada que fala com o modelo.
+
+**Onde vive:** `lib/integrations/llm/openai.ts` (cliente, erros, identificador de segurança, modelo do agente), `lib/integrations/llm/verificador.ts` e `lib/integrations/llm/classificador-de-entrada.ts`. SDK oficial `openai` (7.28.x, exige Node 22 ou mais), **Responses API** com saída estruturada (`responses.parse` e `zodTextFormat` de `openai/helpers/zod`).
+
+**Modelos (lista fechada por variável de ambiente; fora dela, falha fechada):**
+
+| Uso | Modelo | Raciocínio | Variável |
+|---|---|---|---|
+| Verificador do CFM e classificador de entrada | `gpt-6-luna` | `none`, com `temperature: 0` | `IA_MODELO_VERIFICADOR` |
+| Agente (E2; hoje só a configuração) | `gpt-6-luna` (padrão) ou `gpt-6.1-sol` | `low` (o `gpt-6.1-sol` não aceita `none`) | `IA_MODELO_AGENTE` |
+
+Preço por modelo em `llm_preco` (migration `20261006110000`, faixa Standard). Pela pesquisa, trocar o Sonnet 5 pelo `gpt-6.1-sol` barateia uns 6%; a economia de verdade vem do `gpt-6-luna` (cerca de 20 vezes mais barato), cuja qualidade como agente em português com ferramentas **não está confirmada**: medir na bateria de conformidade e no simulador antes de escolher.
+
+**Regras de chamada** (todas provadas por teste, sem rede):
+
+- `store: false` sempre. A OpenAI guardaria a resposta por 30 dias. O histórico vai inteiro em cada chamada; com raciocínio ligado, `include: ["reasoning.encrypted_content"]`.
+- Proibido com dado de paciente: Conversations, `previous_response_id`, Files, Vector Stores, Evals, Batch, `/v1/agents`, o Agents SDK (tracing ligado por padrão) e o modo `background`.
+- `service_tier: "default"`: o preço em `llm_preco` é o Standard; um projeto configurado para prioridade cobraria o dobro sem o livro de gasto saber.
+- `safety_identifier` = HMAC-SHA256 de `clinic_id` e `contact_id` com `IA_SEGREDO_DO_IDENTIFICADOR` (64 caracteres hex). Nunca telefone; outro formato falha fechado sem chamar. Um bloqueio da OpenAI por abuso cai só naquele contato, não na organização.
+- `prompt_cache_key` por clínica (`conduzza:<papel>:<clinic_id>`) no agente. Verificador e classificador rodam com o cache desligado (`prompt_cache_options.mode = "explicit"` sem ponto de corte): o envelope muda a cada chamada (nonce) e o modo implícito pagaria 1,25x para gravar o que nunca é relido.
+- O esquema da saída estruturada não tem dado de paciente (a OpenAI o trata como dado de sistema, fora de qualquer região).
+- Cliente: chave explícita, URL fixa `https://api.openai.com/v1` (ignora `OPENAI_BASE_URL`), `organization` e `project` nulos (ignora `OPENAI_ORG_ID` e `OPENAI_PROJECT_ID`), prazo explícito, uma tentativa extra, log do SDK desligado.
+- 429 de cobrança ou cota (`credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`, `organization_usage_limit_exceeded`, ou tipo `insufficient_quota`) **não é repetido**: o `fetch` do cliente marca `x-should-retry: false`, que o SDK obedece, e a classificação trata como grave (conta para o desligamento automático).
+- Recusa (item `refusal`), resposta incompleta (`max_output_tokens`, `content_filter`), status diferente de `completed`, item inesperado na saída e `output_parsed` nulo ou fora do esquema: falha fechada (bloqueia e escala).
+- Nos testes, o pacote `openai` (só o nome exato) é trocado por `tests/stubs/openai-proibido.ts` nas três configs do vitest; `openai/helpers/zod` continua real.
+
+**Dados e LGPD (o que a pesquisa achou):**
+
+- **Treino:** a API não treina com os dados enviados, salvo opt-in (contrato OSA, item 4.2).
+- **Retenção:** sem ZDR, o log de abuso guarda prompts e respostas por até 30 dias. ZDR (ou Modified Abuse Monitoring) depende de aprovação comercial da OpenAI. `[PENDENTE]` pedir e ligar antes de paciente real.
+- **Região:** não existe região Brasil nem América do Sul, então é sempre transferência internacional (LGPD art. 33). As opções são Global (país de processamento indefinido) ou EUA (com acréscimo de 10% nos modelos lançados a partir de 05/03/2026). `[DECISÃO PENDENTE]` do dono; o código hoje usa Global.
+- **Contrato:** o DPA (v.010126) põe a OpenAI OpCo, LLC (EUA) como operadora, mas diz no Anexo 1, item 5, que não se pretende transferir dado sensível, e não tem cláusula para Brasil ou LGPD. `[PENDENTE]` aditivo para dado de saúde e mecanismo de transferência válido pela LGPD (validar com o advogado).
+- **Transcrição de áudio:** o áudio de paciente já vai à OpenAI hoje, pela uazapi (`UAZAPI_OPENAI_KEY`). Pela especificação da uazapi, sem chave na chamada ela usa a chave salva na instância, então deixar a variável vazia não garante que o áudio não saia. `[PENDENTE]` correção no código (pedir transcrição só com a nossa chave) e chave num projeto próprio da OpenAI.
+
+O checklist do dono antes de qualquer paciente real está no `docs/05`, Fase 3.

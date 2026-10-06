@@ -2,8 +2,10 @@
 // scratchpad/fase3/plano-seguranca.md, secao 1.
 //
 // T1, interruptor de ambiente: a IA so existe com IA_AGENTE_LIGADO=sim,
-//     VERCEL_ENV=production e ANTHROPIC_API_KEY presente (variaveis so no
-//     escopo Production da Vercel; nunca no .env.local).
+//     VERCEL_ENV=production e OPENAI_API_KEY presente (chave do projeto
+//     producao-agente da OpenAI; variaveis so no escopo Production da
+//     Vercel, nunca no .env.local). UAZAPI_OPENAI_KEY, a da transcricao,
+//     nao conta.
 // T2, lista de clinicas: IA_CLINICAS_LIBERADAS (uuids separados por
 //     virgula) CRUZADA com CLINICAS_DA_FASE_CONTROLADA. O ambiente so
 //     estreita, nunca amplia: uma id fora da constante e descartada, e um
@@ -51,7 +53,7 @@ function interruptorDeAmbiente(env: Ambiente): boolean {
   return (
     env.IA_AGENTE_LIGADO === "sim" &&
     env.VERCEL_ENV === "production" &&
-    (env.ANTHROPIC_API_KEY ?? "").trim() !== ""
+    (env.OPENAI_API_KEY ?? "").trim() !== ""
   );
 }
 
