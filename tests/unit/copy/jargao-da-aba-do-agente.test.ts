@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Linguagem de recepcionista na aba "Agente de IA" de Configuracoes (CLAUDE.md
@@ -13,10 +14,23 @@ import { describe, expect, it } from "vitest";
 // Os comentarios entram na varredura de proposito: nenhum deles precisa
 // desses termos.
 
+// Os arquivos de uma pasta inteira (Tela 6, 06/10/2026): arquivo novo nela
+// entra na varredura sem ninguem lembrar de listar.
+function arquivosDe(pasta: string): string[] {
+  return readdirSync(pasta, { recursive: true, encoding: "utf-8" })
+    .filter((nome) => /\.(ts|tsx)$/.test(nome))
+    .map((nome) => join(pasta, nome));
+}
+
 const ARQUIVOS_DA_ABA = [
   "components/configuracoes/agente-de-ia.ts",
   "components/configuracoes/agente-de-ia-tab.tsx",
   "app/(app)/configuracoes/ia-liberacao-actions.ts",
+  // Tela 6 (configuracao do agente, motor e simulador; 06/10/2026)
+  ...arquivosDe("app/(app)/agente"),
+  ...arquivosDe("components/agente"),
+  ...arquivosDe("lib/agente"),
+  ...arquivosDe("lib/domain/agente"),
 ];
 
 const JARGAO: readonly RegExp[] = [

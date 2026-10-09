@@ -43,8 +43,9 @@ import { adminClient, anonClient } from "./stack";
 //     do modelo e antes do envio (E3);
 //   - clinic.e_de_teste: so a equipe do Conduzza muda (42501 para o admin);
 //   - ai_agent_config e knowledge_item: membro ativo le; admin e gestor
-//     escrevem; a versao publicada nao muda nem sai; a sessao nao publica nem
-//     forja autor.
+//     escrevem a base e editam o rascunho (que so nasce pela RPC: nenhuma
+//     sessao cria nem apaga versao); a versao publicada nao muda nem sai; a
+//     sessao nao publica nem forja autor.
 // Toda negacao tem o caso positivo ao lado (anti falso positivo).
 //
 // CUIDADO, o banco e o da producao: clinicas e_de_teste, apagadas no
@@ -1157,24 +1158,51 @@ describe("clinic.e_de_teste: so a equipe do Conduzza muda", () => {
 
 describe("ai_agent_config: versoes do agente", () => {
   let versaoDoAdmin = "";
+  let versaoDoGestor = "";
 
-  it("admin e gestor criam rascunho; membro ativo le; a B e o pendente nao", async () => {
-    const { data: doAdmin, error } = await como("admin-a")
-      .from("ai_agent_config")
-      .insert({ clinic_id: clinicaA, version: 1, greeting: "Olá!" })
-      .select("id, status, published_at, published_by")
-      .single();
+  it("admin e gestor abrem o rascunho pela RPC e o editam; membro ativo le; a B e o pendente nao", async () => {
+    // A sessao nao cria versao (migration 20261006150000): o rascunho nasce
+    // so por garantir_rascunho_do_agente.
+    const { data: garantido, error } = await como("admin-a").rpc(
+      "garantir_rascunho_do_agente",
+      { p_clinic_id: clinicaA },
+    );
     expect(error).toBeNull();
+    versaoDoAdmin = garantido as string;
+    const { data: doAdmin, error: erroEdicao } = await como("admin-a")
+      .from("ai_agent_config")
+      .update({ greeting: "Olá!" })
+      .eq("id", versaoDoAdmin)
+      .select("version, status, published_at, published_by")
+      .single();
+    expect(erroEdicao).toBeNull();
     expect(doAdmin).toMatchObject({
+      version: 1,
       status: "rascunho",
       published_at: null,
       published_by: null,
     });
-    versaoDoAdmin = (doAdmin as { id: string }).id;
-    const { error: doGestor } = await como("gestor-a")
+    // Um rascunho por clinica: o sistema publica a versao 1 antes de o
+    // gestor abrir a 2.
+    await admin
       .from("ai_agent_config")
-      .insert({ clinic_id: clinicaA, version: 2, tone: "formal" });
-    expect(doGestor).toBeNull();
+      .update({ status: "publicada" })
+      .eq("id", versaoDoAdmin)
+      .throwOnError();
+    const { data: doGestor, error: erroDoGestor } = await como("gestor-a").rpc(
+      "garantir_rascunho_do_agente",
+      { p_clinic_id: clinicaA },
+    );
+    expect(erroDoGestor).toBeNull();
+    versaoDoGestor = doGestor as string;
+    const { data: editado, error: erroTom } = await como("gestor-a")
+      .from("ai_agent_config")
+      .update({ tone: "formal" })
+      .eq("id", versaoDoGestor)
+      .select("version, greeting, tone");
+    expect(erroTom).toBeNull();
+    // a 2 nasce copiando a publicada (a saudacao veio da 1)
+    expect(editado).toEqual([{ version: 2, greeting: "Olá!", tone: "formal" }]);
 
     for (const apelido of MEMBROS_ATIVOS_DA_A) {
       const { data, error: erro } = await como(apelido)
@@ -1193,25 +1221,26 @@ describe("ai_agent_config: versoes do agente", () => {
     }
   });
 
-  it("recepcao, leitura, pendente e a B nao criam, nao editam e nao apagam", async () => {
-    for (const apelido of SEM_ESCRITA_NO_AGENTE) {
+  it("ninguem cria nem apaga versao pela sessao (42501), nem admin e gestor; recepcao, leitura, pendente e a B tambem nao editam", async () => {
+    for (const apelido of [...GESTAO_DA_A, ...SEM_ESCRITA_NO_AGENTE]) {
       const cliente = como(apelido);
       const { error } = await cliente
         .from("ai_agent_config")
         .insert({ clinic_id: clinicaA, version: 9 });
       expect(error?.code).toBe(PERMISSAO_NEGADA);
-      const { data: editadas } = await cliente
+      const { error: aoApagar } = await cliente
+        .from("ai_agent_config")
+        .delete()
+        .eq("clinic_id", clinicaA);
+      expect(aoApagar?.code).toBe(PERMISSAO_NEGADA);
+    }
+    for (const apelido of SEM_ESCRITA_NO_AGENTE) {
+      const { data: editadas } = await como(apelido)
         .from("ai_agent_config")
         .update({ greeting: "Forjado" })
         .eq("clinic_id", clinicaA)
         .select("id");
       expect(editadas ?? []).toEqual([]);
-      const { data: apagadas } = await cliente
-        .from("ai_agent_config")
-        .delete()
-        .eq("clinic_id", clinicaA)
-        .select("id");
-      expect(apagadas ?? []).toEqual([]);
     }
     const { data } = await admin
       .from("ai_agent_config")
@@ -1221,7 +1250,7 @@ describe("ai_agent_config: versoes do agente", () => {
       .throwOnError();
     expect(data).toEqual([
       { version: 1, greeting: "Olá!" },
-      { version: 2, greeting: null },
+      { version: 2, greeting: "Olá!" },
     ]);
   });
 
@@ -1231,7 +1260,7 @@ describe("ai_agent_config: versoes do agente", () => {
       adminA
         .from("ai_agent_config")
         .update({ status: "publicada" })
-        .eq("id", versaoDoAdmin),
+        .eq("id", versaoDoGestor),
       adminA.from("ai_agent_config").insert({
         clinic_id: clinicaA,
         version: 3,
@@ -1240,7 +1269,7 @@ describe("ai_agent_config: versoes do agente", () => {
       adminA
         .from("ai_agent_config")
         .update({ published_by: ids.get("admin-a") })
-        .eq("id", versaoDoAdmin),
+        .eq("id", versaoDoGestor),
     ];
     for (const tentativa of tentativas) {
       const { error } = await tentativa;
@@ -1249,11 +1278,12 @@ describe("ai_agent_config: versoes do agente", () => {
   });
 
   it("publicada pelo sistema: carimbada, imutavel e fora do alcance da sessao", async () => {
+    // Publicada no primeiro teste (um rascunho por clinica): aqui so confere
+    // o carimbo; publicar de novo daria P0001.
     const { data: publicada, error } = await admin
       .from("ai_agent_config")
-      .update({ status: "publicada" })
-      .eq("id", versaoDoAdmin)
       .select("status, published_at")
+      .eq("id", versaoDoAdmin)
       .single();
     expect(error).toBeNull();
     expect(
@@ -1267,12 +1297,11 @@ describe("ai_agent_config: versoes do agente", () => {
       .eq("id", versaoDoAdmin)
       .select("id");
     expect(editadas).toEqual([]);
-    const { data: apagadas } = await adminA
+    const { error: aoApagar } = await adminA
       .from("ai_agent_config")
       .delete()
-      .eq("id", versaoDoAdmin)
-      .select("id");
-    expect(apagadas).toEqual([]);
+      .eq("id", versaoDoAdmin);
+    expect(aoApagar?.code).toBe(PERMISSAO_NEGADA);
 
     // nem o sistema muda a publicada
     const { error: peloSistema } = await admin

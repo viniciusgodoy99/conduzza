@@ -291,6 +291,8 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 2.10. **Aprendizado supervisionado leve:** o humano corrige a IA e transforma a correção em item da base de conhecimento com um clique.
 2.11. **Versionamento com reversão.**
 
+**Nota (decisão do dono em 06/10/2026): instruções do assistente só da equipe Conduzza.** Além dos campos acima, cada clínica tem as "Instruções do assistente": um texto livre de até 2.000 caracteres que **só a equipe Conduzza (super admin)** escreve e lê, junto com a "Prévia do prompt". A clínica (administrador, gestor e recepção) não vê nem edita esse texto: ela configura só pelos campos. O texto passa pelas regras do filtro de conformidade ao salvar e ao publicar e não substitui nenhuma trava: o filtro de saída (2.8) continua valendo sempre.
+
 ---
 
 ### MÓDULO 3. CADASTRO CLÍNICO

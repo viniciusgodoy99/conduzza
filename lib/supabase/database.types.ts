@@ -39,11 +39,13 @@ export type Database = {
           agent_name: string
           clinic_id: string
           closing: string | null
+          conhecimento: Json
           created_at: string
           escalation_rules: Json
           fallback_minutes: number | null
           greeting: string | null
           id: string
+          instrucoes: string | null
           operating_hours: Json | null
           operating_mode: string
           published_at: string | null
@@ -59,11 +61,13 @@ export type Database = {
           agent_name?: string
           clinic_id: string
           closing?: string | null
+          conhecimento?: Json
           created_at?: string
           escalation_rules?: Json
           fallback_minutes?: number | null
           greeting?: string | null
           id?: string
+          instrucoes?: string | null
           operating_hours?: Json | null
           operating_mode?: string
           published_at?: string | null
@@ -79,11 +83,13 @@ export type Database = {
           agent_name?: string
           clinic_id?: string
           closing?: string | null
+          conhecimento?: Json
           created_at?: string
           escalation_rules?: Json
           fallback_minutes?: number | null
           greeting?: string | null
           id?: string
+          instrucoes?: string | null
           operating_hours?: Json | null
           operating_mode?: string
           published_at?: string | null
@@ -1937,6 +1943,7 @@ export type Database = {
           modelo: string
           origem: string
           papel: string
+          reserva: boolean
           tokens_cache_gravados: number
           tokens_cache_lidos: number
           tokens_entrada: number
@@ -1952,6 +1959,7 @@ export type Database = {
           modelo: string
           origem: string
           papel: string
+          reserva?: boolean
           tokens_cache_gravados?: number
           tokens_cache_lidos?: number
           tokens_entrada?: number
@@ -1967,6 +1975,7 @@ export type Database = {
           modelo?: string
           origem?: string
           papel?: string
+          reserva?: boolean
           tokens_cache_gravados?: number
           tokens_cache_lidos?: number
           tokens_entrada?: number
@@ -4382,6 +4391,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      acertar_gasto_da_ia: {
+        Args: { p_linhas: Json; p_reserva: string }
+        Returns: undefined
+      }
       adotar_eco_do_envio: {
         Args: {
           p_clinic_id: string
@@ -4419,6 +4432,19 @@ export type Database = {
             }
             Returns: undefined
           }
+      agente_exigir_equipe_conduzza: { Args: never; Returns: undefined }
+      agente_exigir_fase_controlada: {
+        Args: { p_clinic_id: string }
+        Returns: undefined
+      }
+      agente_exigir_quem_configura: {
+        Args: { p_clinic_id: string }
+        Returns: undefined
+      }
+      agente_garantir_rascunho: {
+        Args: { p_clinic_id: string }
+        Returns: string
+      }
       anuncios_meta_a_resolver: {
         Args: {
           p_ad_account_id: string
@@ -4639,6 +4665,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      definir_instrucoes_do_agente: {
+        Args: { p_clinic_id: string; p_instrucoes: string }
+        Returns: undefined
+      }
       definir_interruptor_da_ia: {
         Args: { p_ligado: boolean; p_motivo?: string }
         Returns: boolean
@@ -4785,6 +4815,10 @@ export type Database = {
         }
         Returns: string
       }
+      garantir_rascunho_do_agente: {
+        Args: { p_clinic_id: string }
+        Returns: string
+      }
       gravar_resolucao_de_anuncios_meta: {
         Args: {
           p_ad_account_id: string
@@ -4839,6 +4873,7 @@ export type Database = {
         }
         Returns: Json
       }
+      instrucoes_do_agente: { Args: { p_clinic_id: string }; Returns: string }
       is_product_admin: { Args: never; Returns: boolean }
       limpar_holds_vencidos: { Args: never; Returns: number }
       marcar_aguardando_confirmacao: {
@@ -4958,6 +4993,10 @@ export type Database = {
           p_etapa: string
           p_gatilho: string
         }
+        Returns: Json
+      }
+      publicar_agente: {
+        Args: { p_autor: string; p_clinic_id: string; p_conferido_em: string }
         Returns: Json
       }
       recusar_oferta_de_espera: {
@@ -5089,6 +5128,14 @@ export type Database = {
         }
         Returns: Json
       }
+      reservar_gasto_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_custo_microdolar: number
+          p_origem: string
+        }
+        Returns: string
+      }
       reservar_slot_envio_v2: {
         Args: {
           p_clinic_id: string
@@ -5102,6 +5149,10 @@ export type Database = {
       }
       resolver_conta_de_envio: {
         Args: { p_clinic_id: string; p_contact_id: string; p_tipo?: string }
+        Returns: string
+      }
+      restaurar_versao_do_agente: {
+        Args: { p_clinic_id: string; p_versao: number }
         Returns: string
       }
       resumo_do_dia: {

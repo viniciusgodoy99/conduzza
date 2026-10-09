@@ -84,8 +84,12 @@ import { cn } from "@/lib/utils";
 // --bolha-meta e a cor de apoio de cada pele (hora, legenda, rotulos de
 // midia). Tudo o que fica DENTRO da bolha usa ela, e nao text-text-secondary:
 // na bolha de tinta da IA o cinza do tema claro sumiria.
+//
+// As peles e a casca sao exportadas para o simulador do Agente de IA (Tela
+// 6), que desenha bolhas leves sem MessageItem nem acoes, com a mesma
+// aparencia das do Atendimento.
 
-const PELES = {
+export const PELES_DA_BOLHA = {
   paciente:
     "rounded-bl-[6px] border-border bg-card text-foreground [--bolha-meta:var(--text-secondary)]",
   atendente:
@@ -93,6 +97,10 @@ const PELES = {
   ia: "rounded-br-[6px] border-(--bubble-ai-border) bg-bubble-ai text-bubble-ai-foreground [--bolha-meta:var(--bubble-ai-meta)]",
   nota: "rounded-br-[6px] border-warning/20 bg-warning-bg text-warning-text [--bolha-meta:var(--warning-text)]",
 } as const;
+
+/** A casca comum a toda bolha (raio, borda, respiro e tipografia). */
+export const CASCA_DA_BOLHA =
+  "grid max-w-full min-w-24 gap-1 rounded-bubble border px-3 pt-[9px] pb-[7px] text-[13.5px] leading-[1.5] shadow-xs";
 
 // Ladrilho de arquivo (documento, audio, arquivo que nao veio): fundo de
 // cartao dentro de qualquer pele, entao zera a cor herdada da bolha.
@@ -782,7 +790,7 @@ export function MessageBubble({
   const autoriaAgendada = agendada
     ? autoriaDaBolha(agendada, authorNames)
     : null;
-  const pele: keyof typeof PELES = fromPatient
+  const pele: keyof typeof PELES_DA_BOLHA = fromPatient
     ? "paciente"
     : note
       ? "nota"
@@ -893,8 +901,8 @@ export function MessageBubble({
         <div
           data-bolha
           className={cn(
-            "grid max-w-full min-w-24 gap-1 rounded-bubble border px-3 pt-[9px] pb-[7px] text-[13.5px] leading-[1.5] shadow-xs",
-            PELES[pele],
+            CASCA_DA_BOLHA,
+            PELES_DA_BOLHA[pele],
             // Mensagem apagada perde a cor de autoria: ela não é mais fala de
             // ninguém, é o registro de que houve uma.
             apagada &&
