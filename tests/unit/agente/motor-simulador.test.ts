@@ -54,9 +54,7 @@ const {
 
 const AMBIENTE = {
   OPENAI_API_KEY: "sk-teste",
-  IA_AGENTE_LIGADO: "sim",
   VERCEL_ENV: "production",
-  IA_CLINICAS_LIBERADAS: CLINICA,
   IA_SEGREDO_DO_IDENTIFICADOR: SEGREDO,
 };
 
@@ -218,21 +216,31 @@ describe("motivoDoAmbiente (T1 e T2)", () => {
       motivoDoAmbiente(CLINICA, { ...AMBIENTE, OPENAI_API_KEY: " " }),
     ).toBe(TEXTOS_DO_SIMULADOR.semChave);
     expect(
-      motivoDoAmbiente(CLINICA, { ...AMBIENTE, IA_AGENTE_LIGADO: "nao" }),
-    ).toBe(TEXTOS_DO_SIMULADOR.desligadoNoAmbiente);
-    expect(
       motivoDoAmbiente(CLINICA, { ...AMBIENTE, VERCEL_ENV: "preview" }),
     ).toBe(TEXTOS_DO_SIMULADOR.soEmProducao);
+    // Fora da lista fechada do codigo, nada libera.
     expect(
-      motivoDoAmbiente(CLINICA, { ...AMBIENTE, IA_CLINICAS_LIBERADAS: "" }),
-    ).toBe(TEXTOS_DO_SIMULADOR.clinicaForaDoAmbiente);
-    // Fora da lista fechada, o ambiente nao amplia.
+      motivoDoAmbiente("99999999-9999-4999-8999-999999999999", AMBIENTE),
+    ).toBe(TEXTOS_DO_SIMULADOR.clinicaForaDaFase);
+  });
+
+  it("as variaveis antigas de ligar e de lista nao mudam nada", () => {
+    // Decisao do dono em 13/10/2026: ligar e desligar e no sistema.
+    for (const antigas of [
+      { IA_AGENTE_LIGADO: "nao" },
+      { IA_AGENTE_LIGADO: undefined },
+      { IA_CLINICAS_LIBERADAS: "" },
+      { IA_CLINICAS_LIBERADAS: "99999999-9999-4999-8999-999999999999" },
+    ]) {
+      expect(motivoDoAmbiente(CLINICA, { ...AMBIENTE, ...antigas })).toBeNull();
+    }
     expect(
       motivoDoAmbiente("99999999-9999-4999-8999-999999999999", {
         ...AMBIENTE,
+        IA_AGENTE_LIGADO: "sim",
         IA_CLINICAS_LIBERADAS: "99999999-9999-4999-8999-999999999999",
       }),
-    ).toBe(TEXTOS_DO_SIMULADOR.clinicaForaDoAmbiente);
+    ).toBe(TEXTOS_DO_SIMULADOR.clinicaForaDaFase);
   });
 });
 

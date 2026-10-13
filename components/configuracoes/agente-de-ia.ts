@@ -75,7 +75,7 @@ export type ContextoDaIa = {
    * a leitura falhou, e a aba nao afirma nada sobre a conexao.
    */
   numeros: readonly NumeroDoWhatsapp[] | null;
-  /** As travas de ambiente T1 e T2 (Vercel) para esta clinica. */
+  /** T1 e T2: producao com a chave da OpenAI e a clinica na lista fechada. */
   ambienteLigado: boolean;
 };
 

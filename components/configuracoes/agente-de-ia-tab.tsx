@@ -98,7 +98,7 @@ export type DadosDaAbaDaIa = {
   dados: DadosDaIa | null;
   /** Os numeros ATIVOS da clinica (a leitura da aba WhatsApp); nulo: falhou. */
   numeros: NumeroDoWhatsapp[] | null;
-  /** As travas de ambiente (T1 e T2) para esta clinica. */
+  /** T1 e T2: producao com a chave da OpenAI e a clinica na lista fechada. */
   ambienteLigado: boolean;
   /** Administrador da clinica ou super admin. */
   podeEditar: boolean;

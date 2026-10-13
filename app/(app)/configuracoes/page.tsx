@@ -512,8 +512,8 @@ export default async function ConfiguracoesPage({
             ? {
                 dados: liberacaoDaIa,
                 numeros: whatsappResult.error ? null : numerosDoWhatsapp,
-                // T1 e T2 (Vercel) para esta clinica: so o booleano, nunca
-                // o valor de variavel nenhuma.
+                // T1 e T2 (producao com a chave e a lista fechada) para esta
+                // clinica: so o booleano, nunca o valor de variavel nenhuma.
                 ambienteLigado: iaLiberadaNoAmbiente(
                   lerConfigDaIa(),
                   active.clinicId,

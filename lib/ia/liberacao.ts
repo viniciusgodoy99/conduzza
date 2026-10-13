@@ -1,15 +1,18 @@
 // Travas de AMBIENTE da IA (Fase 3, E0). Desenho em
 // scratchpad/fase3/plano-seguranca.md, secao 1.
 //
-// T1, interruptor de ambiente: a IA so existe com IA_AGENTE_LIGADO=sim,
-//     VERCEL_ENV=production e OPENAI_API_KEY presente (chave do projeto
-//     producao-agente da OpenAI; variaveis so no escopo Production da
-//     Vercel, nunca no .env.local). UAZAPI_OPENAI_KEY, a da transcricao,
-//     nao conta.
-// T2, lista de clinicas: IA_CLINICAS_LIBERADAS (uuids separados por
-//     virgula) CRUZADA com CLINICAS_DA_FASE_CONTROLADA. O ambiente so
-//     estreita, nunca amplia: uma id fora da constante e descartada, e um
-//     valor que nao e uuid derruba a lista inteira (falha fechada).
+// T1, ambiente: a IA so existe na producao da Vercel (VERCEL_ENV=production)
+//     e com OPENAI_API_KEY presente (chave do projeto producao-agente da
+//     OpenAI; so no escopo Production da Vercel, nunca no .env.local).
+//     UAZAPI_OPENAI_KEY, a da transcricao, nao conta. Apagar ou revogar a
+//     chave desliga tudo.
+// T2, lista fechada: CLINICAS_DA_FASE_CONTROLADA, espelho da funcao imutavel
+//     do banco. Mudar exige commit E migration revisados.
+//
+// Ligar e desligar e no sistema, nao em variavel (decisao do dono em
+// 13/10/2026): IA_AGENTE_LIGADO e IA_CLINICAS_LIBERADAS sairam, porque
+// repetiam o interruptor geral e a liberacao por clinica do banco, que o
+// super admin muda em segundos pela aba Agente de IA de Configuracoes.
 //
 // As travas do banco (T3 a T7: ia_clinicas_da_fase_controlada,
 // ia_liberacao, ia_numero_liberado, ia_contato_liberado, ia_interruptor e a
@@ -30,19 +33,16 @@ export const CLINICAS_DA_FASE_CONTROLADA: readonly string[] = Object.freeze([
 ]);
 
 export type ConfigDaIa = {
-  /** T1: interruptor de ambiente. */
+  /** T1: producao da Vercel com a chave da OpenAI. */
   readonly ligado: boolean;
   /**
-   * T2: clinicas liberadas pelo ambiente, ja cruzadas com a constante, em
-   * minusculas e sem repeticao. Vazia quando T1 esta desligado ou quando a
-   * lista do ambiente tem qualquer valor que nao e uuid.
+   * T2: as clinicas da lista fechada, em minusculas. Vazia quando T1 esta
+   * desligado.
    */
   readonly clinicas: readonly string[];
 };
 
 type Ambiente = Readonly<Record<string, string | undefined>>;
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const DESLIGADA: ConfigDaIa = Object.freeze({
   ligado: false,
@@ -51,40 +51,23 @@ const DESLIGADA: ConfigDaIa = Object.freeze({
 
 function interruptorDeAmbiente(env: Ambiente): boolean {
   return (
-    env.IA_AGENTE_LIGADO === "sim" &&
-    env.VERCEL_ENV === "production" &&
-    (env.OPENAI_API_KEY ?? "").trim() !== ""
+    env.VERCEL_ENV === "production" && (env.OPENAI_API_KEY ?? "").trim() !== ""
   );
 }
 
-/**
- * Lista do ambiente cruzada com a constante. Um item que nao e uuid
- * derruba a lista inteira: um erro de digitacao nunca libera "o resto".
- */
-function clinicasDoAmbiente(valor: string | undefined): readonly string[] {
-  const itens = (valor ?? "")
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter((item) => item !== "");
-  if (itens.some((item) => !UUID.test(item))) {
-    return [];
-  }
-  return CLINICAS_DA_FASE_CONTROLADA.filter((id) => itens.includes(id));
-}
-
-/** Le T1 e T2 do ambiente. Sem argumento, le process.env. */
+/** Le T1 e T2. Sem argumento, le process.env. */
 export function lerConfigDaIa(env: Ambiente = process.env): ConfigDaIa {
   if (!interruptorDeAmbiente(env)) {
     return DESLIGADA;
   }
   return Object.freeze({
     ligado: true,
-    clinicas: Object.freeze(clinicasDoAmbiente(env.IA_CLINICAS_LIBERADAS)),
+    clinicas: CLINICAS_DA_FASE_CONTROLADA,
   });
 }
 
 /**
- * T1 e T2 para uma clinica. So o ambiente: o banco (ia_pode_atender,
+ * T1 e T2 para uma clinica. So o ambiente e a lista fechada: o banco (ia_pode_atender,
  * ia_pode_simular, ia_clinica_liberada) continua obrigatorio depois disto.
  */
 export function iaLiberadaNoAmbiente(

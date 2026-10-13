@@ -72,10 +72,9 @@ type Ambiente = Readonly<Record<string, string | undefined>>;
 
 export const TEXTOS_DO_SIMULADOR = {
   semChave: "A chave da OpenAI ainda não está configurada.",
-  desligadoNoAmbiente: "O assistente de IA está desligado neste ambiente.",
   soEmProducao: "O simulador só responde no ambiente de produção.",
-  clinicaForaDoAmbiente:
-    "Esta clínica ainda não foi liberada para o assistente neste ambiente.",
+  clinicaForaDaFase:
+    "O assistente ainda não está disponível para esta clínica.",
   interruptor: "O interruptor geral da IA está desligado.",
   desligadoNaClinica:
     "O assistente está desligado nesta clínica. Ligue em Configurações, na aba Agente de IA.",
@@ -140,13 +139,10 @@ export function motivoDoAmbiente(
   if ((env.OPENAI_API_KEY ?? "").trim() === "") {
     return TEXTOS_DO_SIMULADOR.semChave;
   }
-  if (env.IA_AGENTE_LIGADO !== "sim") {
-    return TEXTOS_DO_SIMULADOR.desligadoNoAmbiente;
-  }
   if (env.VERCEL_ENV !== "production") {
     return TEXTOS_DO_SIMULADOR.soEmProducao;
   }
-  return TEXTOS_DO_SIMULADOR.clinicaForaDoAmbiente;
+  return TEXTOS_DO_SIMULADOR.clinicaForaDaFase;
 }
 
 /**
