@@ -27,6 +27,9 @@ export const MOTIVOS_DO_AGENTE = [
   "regra_do_procedimento",
   "falhas_seguidas",
   "agente_pediu",
+  // D41 (E3): pedido de agenda tem motivo proprio, para a equipe ler "o
+  // paciente quer marcar, remarcar ou cancelar" em vez do generico.
+  "pedido_de_agenda",
 ] as const satisfies readonly MotivoDeEscalonamento[];
 
 export type MotivoDoAgente = (typeof MOTIVOS_DO_AGENTE)[number];

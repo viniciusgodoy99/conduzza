@@ -61,9 +61,11 @@ export function dataEHoraNaClinica(instante: string, fuso: string): string {
 }
 
 /**
- * A ultima versao publicada, para o rodape. "Ultima publicada" e nao "em
- * uso": nesta leva nenhuma conversa de verdade usa a versao publicada (o
- * WhatsApp vem no E3), e o simulador sempre usa o rascunho (achado 30).
+ * A ultima versao publicada, para o rodape. "Em uso no WhatsApp" SO quando a
+ * aba Agente de IA de Configuracoes diz que o assistente esta conversando
+ * com a equipe, sem nenhum motivo de parada (D39, E3): fora disso,
+ * "Ultima publicada", porque nenhuma conversa de verdade usa a versao (o
+ * simulador sempre usa o rascunho, achado 30).
  *
  * `ultima` vem do historico das Versões; `versaoPublicada`, da leitura da
  * configuracao (que nao falha sozinha: sem ela a pagina e o erro). Quando o
@@ -74,7 +76,16 @@ export function textoDaUltimaPublicada(
   ultima: { versao: number; publicadaEm: string } | null,
   versaoPublicada: number | null,
   fuso: string,
+  emUsoNoWhatsapp = false,
 ): string {
+  if (emUsoNoWhatsapp) {
+    if (ultima) {
+      return `Em uso no WhatsApp: versão ${ultima.versao}, publicada em ${dataEHoraNaClinica(ultima.publicadaEm, fuso)}.`;
+    }
+    if (versaoPublicada !== null) {
+      return `Em uso no WhatsApp: versão ${versaoPublicada}.`;
+    }
+  }
   if (ultima) {
     return `Última publicada: versão ${ultima.versao}, em ${dataEHoraNaClinica(ultima.publicadaEm, fuso)}.`;
   }
@@ -158,6 +169,10 @@ export const TEXTOS_DO_AGENTE = {
   // simulador nunca usa a publicada (sempre o rascunho).
   publicarDescricao:
     "A nova versão fica guardada em Versões e passa a valer nas conversas quando o assistente for ligado no WhatsApp. O simulador sempre usa o rascunho.",
+  // Com o assistente conversando com a equipe pelo WhatsApp (D39): a versao
+  // publicada vale nas conversas assim que sai.
+  publicarDescricaoEmUso:
+    "A nova versão fica guardada em Versões e passa a valer nas conversas do WhatsApp assim que for publicada. O simulador sempre usa o rascunho.",
   publicarSemSalvar: "Salve ou descarte o que não foi salvo antes de publicar",
   naoSalvasTitulo: "Há alterações que não foram salvas",
   naoSalvasTexto: (abas: string) =>

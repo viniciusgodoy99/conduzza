@@ -14,7 +14,19 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 
 import { log } from "@/lib/log";
+import { agenteAtendeAgora, horarioDoBanco } from "@/lib/domain/agente/config";
 import { etapaAposAssumir } from "@/lib/domain/jornada";
+import {
+  CLINICAS_DA_FASE_CONTROLADA,
+  iaLiberadaNoAmbiente,
+  lerConfigDaIa,
+} from "@/lib/ia/liberacao";
+import { motorParadoDaSituacao } from "@/lib/queries/ia-liberacao";
+import {
+  consentimentoVigente,
+  respostasDaIaDesde,
+  tetoDeRespostasPorHora,
+} from "@/lib/agente/whatsapp";
 import { tentarMoverPorTermo } from "@/lib/integrations/whatsapp/termo-chave";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -1004,15 +1016,377 @@ export async function etiquetarConversaAction(
 }
 
 /**
- * Devolver para a IA: RECUSADO enquanto o agente de IA nao existir (Fase 3).
+ * O que a tela mostra no Devolver: os motivos de ia_devolver_disponivel e,
+ * depois do "pode" do banco, os que so o servidor sabe (revisao do E3,
+ * contrato 10.1): assistente_parado (ambiente, motor da IA parado ou modo de
+ * horario que nao funciona no WhatsApp), fora_do_horario (a versao publicada
+ * nao atende agora), numero_desconectado, sem_autorizacao (o contato revogou
+ * a autorizacao para receber mensagens: o executor passa a conversa sem
+ * resposta, S5) e teto_de_respostas (a conversa ja teve o teto de respostas
+ * da IA na ultima hora: o executor escala de novo sem o modelo).
+ */
+export type MotivoDoDevolver =
+  | "fora_da_fase"
+  | "sem_permissao"
+  | "nao_e_sua"
+  | "pergunta_pendente"
+  | "assistente_desligado"
+  | "nao_liberada"
+  | "contato_de_paciente"
+  | "nao_disponivel"
+  | "assistente_parado"
+  | "fora_do_horario"
+  | "numero_desconectado"
+  | "sem_autorizacao"
+  | "teto_de_respostas";
+
+export type ElegibilidadeDoDevolver =
+  | { ok: true; pode: true }
+  | { ok: true; pode: false; motivo: MotivoDoDevolver }
+  | { ok: false; error: string };
+
+const MOTIVOS_DO_DEVOLVER: readonly MotivoDoDevolver[] = [
+  "fora_da_fase",
+  "sem_permissao",
+  "nao_e_sua",
+  "pergunta_pendente",
+  "assistente_desligado",
+  "nao_liberada",
+  "contato_de_paciente",
+  "nao_disponivel",
+];
+
+const TEXTOS_DO_DEVOLVER = {
+  sessaoExpirada: "Sessão expirada. Entre de novo.",
+  conversaInvalida: "Conversa inválida.",
+  naoConferiu: "Não foi possível conferir agora. Tente de novo.",
+  semPermissao: "Você não pode devolver esta conversa para a IA.",
+  naoPodeAgora: "Esta conversa não pode voltar para a IA agora.",
+  mudou: "A conversa mudou enquanto você devolvia. Atualize e tente de novo.",
+  naoEncontrada: "Conversa não encontrada. Atualize a lista.",
+  naoDevolveu: "Não foi possível devolver a conversa para a IA. Tente de novo.",
+} as const;
+
+/** A IA so existe nas clinicas da fase controlada (lib/ia/liberacao.ts). */
+function clinicaDaFase(clinicId: string): boolean {
+  return CLINICAS_DA_FASE_CONTROLADA.includes(clinicId.trim().toLowerCase());
+}
+
+/** O assistente responderia esta conversa agora? */
+type ConferenciaDoAssistente =
+  | { tipo: "de_pe" }
+  | {
+      tipo: "parado";
+      motivo: Extract<
+        MotivoDoDevolver,
+        | "assistente_parado"
+        | "assistente_desligado"
+        | "fora_do_horario"
+        | "numero_desconectado"
+        | "sem_autorizacao"
+        | "teto_de_respostas"
+      >;
+    }
+  | { tipo: "nao_conferiu" };
+
+/**
+ * situacao_da_ia_na_clinica(clinica).motor_parado pela service role
+ * (contrato 10.3, B8): a sessao comum nao ve os detalhes da IA em
+ * saude_do_motor, e a recepcao (quem mais devolve) nao le
+ * situacao_da_ia_na_clinica. Sem dado de paciente; a sessao ja conferiu a
+ * clinica e a conversa antes. null: nao conferiu.
+ */
+async function motorDaIaParadoPeloServidor(
+  clinicId: string,
+): Promise<boolean | null> {
+  try {
+    const { data, error } = await createAdminClient().rpc(
+      "situacao_da_ia_na_clinica",
+      { p_clinic_id: clinicId },
+    );
+    return error ? null : motorParadoDaSituacao(data);
+  } catch {
+    return null;
+  }
+}
+
+/** A janela do teto de respostas por conversa (a mesma do executor). */
+const UMA_HORA_MS = 60 * 60 * 1000;
+
+/**
+ * O contato da conversa ainda autoriza receber mensagens, e a conversa nao
+ * chegou ao teto de respostas da IA na ultima hora? As MESMAS leituras do
+ * executor (lib/agente/whatsapp.ts, passos 5b e 8 de responder-com-ia.ts),
+ * pela service role: consentimento_vigente pela sessao do super admin que
+ * nao e membro da clinica devolveria falso, e a recepcao nao le
+ * ia_liberacao. Sem dado de paciente: so booleano e contagem, com a clinica
+ * explicita (a sessao ja conferiu a clinica e a conversa). null: nao
+ * conferiu. Conferencia N1 e N2 da revisao do E3.
+ */
+async function contatoETetoPeloServidor(entrada: {
+  clinicId: string;
+  conversationId: string;
+  contactId: string;
+}): Promise<"de_pe" | "sem_autorizacao" | "teto_de_respostas" | null> {
+  try {
+    const admin = createAdminClient();
+    if (
+      !(await consentimentoVigente(admin, {
+        clinicId: entrada.clinicId,
+        contactId: entrada.contactId,
+      }))
+    ) {
+      return "sem_autorizacao";
+    }
+    const teto = await tetoDeRespostasPorHora(admin, entrada.clinicId);
+    if (teto !== null) {
+      const respostas = await respostasDaIaDesde(admin, {
+        clinicId: entrada.clinicId,
+        conversationId: entrada.conversationId,
+        desdeIso: new Date(Date.now() - UMA_HORA_MS).toISOString(),
+      });
+      if (respostas >= teto) {
+        return "teto_de_respostas";
+      }
+    }
+    return "de_pe";
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Depois do "pode" do banco (clinica, papel, responsavel, pergunta
+ * pendente, liberacao, teto, versao publicada, numero e telefone liberados),
+ * o que o executor ainda exige e o banco nao ve (revisao do E3, T1): o
+ * ambiente (producao, chave e segredo do identificador), o motor da IA, o
+ * modo e o horario da versao PUBLICADA agora, no fuso da clinica, o numero
+ * da conversa conectado, a autorizacao do contato para receber mensagens e
+ * o teto de respostas da IA na conversa na ultima hora. Sem isso o botao
+ * prometia uma resposta que nao vinha. Leitura que falha: nao conferiu (o
+ * botao nao habilita). A conversa, a versao publicada e o numero vem pela
+ * SESSAO (RLS); o motor, a autorizacao e o teto vem pela service role.
+ */
+async function conferirAssistenteDePe(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  entrada: { clinicId: string; conversationId: string; fuso: string },
+): Promise<ConferenciaDoAssistente> {
+  if (!iaLiberadaNoAmbiente(lerConfigDaIa(), entrada.clinicId)) {
+    return { tipo: "parado", motivo: "assistente_parado" };
+  }
+  const [conversa, publicada, motorParado] = await Promise.all([
+    supabase
+      .from("conversation")
+      .select("whatsapp_account_id, contact_id")
+      .eq("id", entrada.conversationId)
+      .eq("clinic_id", entrada.clinicId)
+      .maybeSingle(),
+    supabase
+      .from("ai_agent_config")
+      .select("operating_mode, fallback_minutes, operating_hours")
+      .eq("clinic_id", entrada.clinicId)
+      .eq("status", "publicada")
+      .order("version", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    motorDaIaParadoPeloServidor(entrada.clinicId),
+  ]);
+  if (
+    conversa.error ||
+    publicada.error ||
+    !conversa.data ||
+    motorParado === null
+  ) {
+    return { tipo: "nao_conferiu" };
+  }
+  if (motorParado) {
+    return { tipo: "parado", motivo: "assistente_parado" };
+  }
+  const linha = publicada.data as {
+    operating_mode: string;
+    fallback_minutes: number | null;
+    operating_hours: unknown;
+  } | null;
+  if (linha === null) {
+    // O banco acabou de dizer que ha versao publicada: mesma resposta dele.
+    return { tipo: "parado", motivo: "assistente_desligado" };
+  }
+  const horario = horarioDoBanco(linha);
+  if (horario.modo === "fallback") {
+    return { tipo: "parado", motivo: "assistente_parado" };
+  }
+  if (!agenteAtendeAgora(horario, Date.now(), entrada.fuso).atende) {
+    return { tipo: "parado", motivo: "fora_do_horario" };
+  }
+  const numeroId = (conversa.data as { whatsapp_account_id: string | null })
+    .whatsapp_account_id;
+  if (numeroId === null) {
+    return { tipo: "parado", motivo: "numero_desconectado" };
+  }
+  const numero = await supabase
+    .from("whatsapp_account")
+    .select("connection_status, removido_em")
+    .eq("id", numeroId)
+    .eq("clinic_id", entrada.clinicId)
+    .maybeSingle();
+  if (numero.error) {
+    return { tipo: "nao_conferiu" };
+  }
+  const dadosDoNumero = numero.data as {
+    connection_status: string | null;
+    removido_em: string | null;
+  } | null;
+  if (
+    dadosDoNumero === null ||
+    dadosDoNumero.removido_em !== null ||
+    dadosDoNumero.connection_status !== "conectado"
+  ) {
+    return { tipo: "parado", motivo: "numero_desconectado" };
+  }
+  const contactId = (conversa.data as { contact_id: string | null }).contact_id;
+  if (contactId === null) {
+    return { tipo: "nao_conferiu" };
+  }
+  const contatoETeto = await contatoETetoPeloServidor({
+    clinicId: entrada.clinicId,
+    conversationId: entrada.conversationId,
+    contactId,
+  });
+  if (contatoETeto === null) {
+    return { tipo: "nao_conferiu" };
+  }
+  if (contatoETeto !== "de_pe") {
+    return { tipo: "parado", motivo: contatoETeto };
+  }
+  return { tipo: "de_pe" };
+}
+
+/**
+ * Quem nao e administrador, gestor nem super admin nao recebe o motivo do
+ * assistente parado ou desligado (como o banco faz com assistente_desligado):
+ * recebe o generico. Horario, numero desconectado, autorizacao do contato e
+ * teto de respostas da conversa servem a todos (nao expoem lista nenhuma).
+ */
+function motivoParaOPapel(
+  motivo: Extract<
+    MotivoDoDevolver,
+    | "assistente_parado"
+    | "assistente_desligado"
+    | "fora_do_horario"
+    | "numero_desconectado"
+    | "sem_autorizacao"
+    | "teto_de_respostas"
+  >,
+  papel: string,
+  superAdmin: boolean,
+): MotivoDoDevolver {
+  const veOMotivo = superAdmin || papel === "admin" || papel === "gestor";
+  if (
+    !veOMotivo &&
+    (motivo === "assistente_parado" || motivo === "assistente_desligado")
+  ) {
+    return "nao_disponivel";
+  }
+  return motivo;
+}
+
+/**
+ * Se o botao Devolver para a IA fica habilitado, e por que nao. Le
+ * ia_devolver_disponivel com a SESSAO: o banco confere a clinica, o papel, o
+ * responsavel, a pergunta pendente e a liberacao, e para quem nao e
+ * administrador nem gestor troca o motivo da liberacao pelo generico
+ * (nao_disponivel), sem expor a lista de telefones. Fora das duas clinicas
+ * da fase, fora_da_fase sem ir ao banco.
+ */
+export async function elegibilidadeDoDevolverAction(
+  conversationId: string,
+): Promise<ElegibilidadeDoDevolver> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: TEXTOS_DO_DEVOLVER.sessaoExpirada };
+  }
+  const parsed = idSchema.safeParse(conversationId);
+  if (!parsed.success) {
+    return { ok: false, error: TEXTOS_DO_DEVOLVER.conversaInvalida };
+  }
+  if (!clinicaDaFase(context.active.clinicId)) {
+    return { ok: true, pode: false, motivo: "fora_da_fase" };
+  }
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("ia_devolver_disponivel", {
+    p_conversation_id: parsed.data,
+  });
+  if (error) {
+    log.warn("devolver_para_ia_nao_conferido", {
+      clinic_id: context.active.clinicId,
+      conversation_id: parsed.data,
+      error_code: error.code ?? null,
+    });
+    return { ok: false, error: TEXTOS_DO_DEVOLVER.naoConferiu };
+  }
+  const resposta = data as { pode?: unknown; motivo?: unknown } | null;
+  if (resposta?.pode === true) {
+    const conferencia = await conferirAssistenteDePe(supabase, {
+      clinicId: context.active.clinicId,
+      conversationId: parsed.data,
+      fuso: context.active.timezone,
+    });
+    if (conferencia.tipo === "nao_conferiu") {
+      log.warn("devolver_para_ia_nao_conferido", {
+        clinic_id: context.active.clinicId,
+        conversation_id: parsed.data,
+        error_code: "assistente_nao_conferido",
+      });
+      return { ok: false, error: TEXTOS_DO_DEVOLVER.naoConferiu };
+    }
+    if (conferencia.tipo === "parado") {
+      return {
+        ok: true,
+        pode: false,
+        motivo: motivoParaOPapel(
+          conferencia.motivo,
+          context.active.role,
+          context.isProductAdmin,
+        ),
+      };
+    }
+    return { ok: true, pode: true };
+  }
+  const motivo = MOTIVOS_DO_DEVOLVER.find((m) => m === resposta?.motivo);
+  if (resposta?.pode === false && motivo !== undefined) {
+    return { ok: true, pode: false, motivo };
+  }
+  return { ok: false, error: TEXTOS_DO_DEVOLVER.naoConferiu };
+}
+
+/** O erro de devolver_para_ia em texto de recepcionista (contrato 4.4). */
+function textoDoErroDoDevolver(erro: {
+  code?: string;
+  message?: string;
+}): string {
+  const chave = (erro.message ?? "").trim();
+  if (erro.code === "42501") {
+    return chave === "nao_liberada" || chave === "contato_de_paciente"
+      ? TEXTOS_DO_DEVOLVER.naoPodeAgora
+      : TEXTOS_DO_DEVOLVER.semPermissao;
+  }
+  if (erro.code === "CZ409") {
+    return TEXTOS_DO_DEVOLVER.mudou;
+  }
+  if (erro.code === "P0002") {
+    return TEXTOS_DO_DEVOLVER.naoEncontrada;
+  }
+  return TEXTOS_DO_DEVOLVER.naoDevolveu;
+}
+
+/**
+ * Devolver para a IA (E3). A conversa precisa ser de quem chama, sem
+ * pergunta pendente, de telefone da equipe liberado e sem sinal de
+ * paciente: tudo conferido pelo banco, numa transacao, em devolver_para_ia
+ * (a unica porta pela qual a sessao poe conversa em ia_atendendo). A
+ * janela da conversa recomeca agora: a IA nao le o que veio antes.
  *
- * Achados 8 e 105 da revisao: a conversa ia para 'ia_atendendo' sem
- * responsavel, nenhum agente respondia, e o ingest nao tira a conversa desse
- * estado quando o paciente volta a escrever. Ela saia do contador do menu e
- * de "Aguardando voce", e o paciente ficava sem resposta sem ninguem notar.
- * O botao aparece desabilitado com dica, mas botao desabilitado nao protege
- * nada: a recusa mora aqui. Quando o agente chegar, esta acao volta a gravar
- * status 'ia_atendendo' com update condicional ao responsavel atual.
+ * Sem revalidatePath: a lista e o fio sao cache de cliente com tempo real.
  */
 export async function devolverParaIaAction(
   conversationId: string,
@@ -1023,11 +1397,98 @@ export async function devolverParaIaAction(
   if ("error" in loaded) {
     return recusaDaCarga(loaded);
   }
-  return {
-    ok: false,
-    error:
-      "O agente de IA ainda não está ativo nesta clínica. Use Resolver quando terminar o atendimento.",
-  };
+  const { context, supabase, conversation } = loaded;
+  // O que o banco nao ve (ambiente, motor, horario agora, numero): a mesma
+  // conferencia do botao, antes de gravar qualquer coisa.
+  const conferencia = await conferirAssistenteDePe(supabase, {
+    clinicId: context.active!.clinicId,
+    conversationId: conversation.id,
+    fuso: context.active!.timezone,
+  });
+  if (conferencia.tipo !== "de_pe") {
+    log.warn("devolver_para_ia_recusado", {
+      clinic_id: context.active!.clinicId,
+      conversation_id: conversation.id,
+      error_code:
+        conferencia.tipo === "parado"
+          ? conferencia.motivo
+          : "assistente_nao_conferido",
+    });
+    return {
+      ok: false,
+      error:
+        conferencia.tipo === "parado"
+          ? TEXTOS_DO_DEVOLVER.naoPodeAgora
+          : TEXTOS_DO_DEVOLVER.naoConferiu,
+    };
+  }
+  const { error } = await supabase.rpc("devolver_para_ia", {
+    p_conversation_id: conversation.id,
+  });
+  if (error) {
+    log.warn("devolver_para_ia_recusado", {
+      clinic_id: context.active!.clinicId,
+      conversation_id: conversation.id,
+      error_code: error.code ?? null,
+    });
+    return { ok: false, error: textoDoErroDoDevolver(error) };
+  }
+  return { ok: true };
+}
+
+export type LeituraDoRascunho =
+  { ok: true; texto: string | null } | { ok: false; error: string };
+
+const TEXTOS_DO_RASCUNHO = {
+  soEquipeConduzza: "Só a equipe Conduzza vê o rascunho bloqueado.",
+  naoExiste: "Este registro não existe mais.",
+  naoCarregou: "Não foi possível carregar o rascunho. Tente de novo.",
+} as const;
+
+/**
+ * O texto que a conformidade barrou (dado de saude em potencial). Ate o
+ * dono decidir (D25), so o super admin le; o banco confere de novo
+ * (ler_rascunho_bloqueado) e grava a leitura no audit_log. Nunca vai a log.
+ */
+export async function lerRascunhoBloqueadoAction(
+  decisionId: string,
+): Promise<LeituraDoRascunho> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: TEXTOS_DO_DEVOLVER.sessaoExpirada };
+  }
+  if (!context.isProductAdmin) {
+    return { ok: false, error: TEXTOS_DO_RASCUNHO.soEquipeConduzza };
+  }
+  const parsed = idSchema.safeParse(decisionId);
+  if (!parsed.success) {
+    return { ok: false, error: TEXTOS_DO_RASCUNHO.naoExiste };
+  }
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("ler_rascunho_bloqueado", {
+    p_decision_id: parsed.data,
+  });
+  if (error) {
+    log.warn("rascunho_bloqueado_nao_lido", {
+      clinic_id: context.active.clinicId,
+      error_code: error.code ?? null,
+    });
+    if (error.code === "42501") {
+      return { ok: false, error: TEXTOS_DO_RASCUNHO.soEquipeConduzza };
+    }
+    if (error.code === "P0002") {
+      return { ok: false, error: TEXTOS_DO_RASCUNHO.naoExiste };
+    }
+    return { ok: false, error: TEXTOS_DO_RASCUNHO.naoCarregou };
+  }
+  const texto = (data as { texto?: unknown } | null)?.texto;
+  if (texto === null || texto === undefined) {
+    return { ok: true, texto: null };
+  }
+  if (typeof texto !== "string") {
+    return { ok: false, error: TEXTOS_DO_RASCUNHO.naoCarregou };
+  }
+  return { ok: true, texto };
 }
 
 // Quem passa conversa para outra pessoa: a matriz da recepcao para cima. O

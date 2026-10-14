@@ -9,6 +9,10 @@ import {
   SEM_AGENDADAS_DO_FIO,
 } from "@/components/atendimento/agendadas/da-mensagem";
 import { BolhaEmVoo } from "@/components/atendimento/bolha-em-voo";
+import {
+  ComplianceBlockCard,
+  ERRO_DAS_DECISOES,
+} from "@/components/atendimento/cartao-de-bloqueio";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import {
   dataCurtaNaClinica,
@@ -16,10 +20,7 @@ import {
   FUSO_PADRAO,
   rotuloDoDia,
 } from "@/components/atendimento/fuso-da-clinica";
-import {
-  ComplianceBlockCard,
-  MessageBubble,
-} from "@/components/atendimento/message-bubble";
+import { MessageBubble } from "@/components/atendimento/message-bubble";
 import { AUTOR_PELO_CELULAR } from "@/components/atendimento/pelo-celular";
 import { FaixaDoNumero } from "@/components/atendimento/selo-do-numero";
 import { Aviso } from "@/components/shared/aviso";
@@ -235,6 +236,10 @@ export function Thread({
   timezone = FUSO_PADRAO,
   numero = null,
   agendadasDoFio = SEM_AGENDADAS_DO_FIO,
+  iaNaFase = false,
+  podeVerRascunho = false,
+  erroNasDecisoes = false,
+  aoRecarregarDecisoes,
 }: {
   conversation: ConversationListItem;
   messages: MessageItem[];
@@ -278,6 +283,16 @@ export function Thread({
    * uma resposta comum.
    */
   agendadasDoFio?: AgendadasDoFio;
+  /** Clinica da fase controlada do agente de IA (o Devolver pergunta). */
+  iaNaFase?: boolean;
+  /** Super admin: abre o rascunho bloqueado pela conformidade (D25). */
+  podeVerRascunho?: boolean;
+  /**
+   * A leitura das decisoes da IA falhou: o fio diz, em vez de mostrar a
+   * conversa sem o bloqueio como se nada tivesse acontecido.
+   */
+  erroNasDecisoes?: boolean;
+  aoRecarregarDecisoes?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const ultimaId = messages[messages.length - 1]?.id;
@@ -436,6 +451,7 @@ export function Thread({
             authorNames={authorNames}
             aoIrParaConversa={aoIrParaConversa}
             aoPerderConversa={aoPerderConversa}
+            iaNaFase={iaNaFase}
           />
           <Button
             variant="outline"
@@ -475,6 +491,24 @@ export function Thread({
               >
                 A conversa continua salva. Tente de novo em instantes.
               </Aviso>
+            ) : null}
+            {erroNasDecisoes && !erroAoCarregar ? (
+              <Aviso
+                tom="alert"
+                role="alert"
+                titulo={ERRO_DAS_DECISOES}
+                acao={
+                  aoRecarregarDecisoes ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={aoRecarregarDecisoes}
+                    >
+                      Tentar de novo
+                    </Button>
+                  ) : null
+                }
+              />
             ) : null}
             {hasOlder ? (
               <div className="flex justify-center pb-1">
@@ -537,6 +571,7 @@ export function Thread({
                   <ComplianceBlockCard
                     key={linha.chave}
                     decision={item.decision}
+                    podeVerRascunho={podeVerRascunho}
                   />
                 );
               }

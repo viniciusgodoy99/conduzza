@@ -38,6 +38,7 @@ describe("formato canônico (simulador de desenvolvimento)", () => {
       quotedWaMessageId: null,
       enviadaEm: null,
       anuncio: null,
+      individual: true,
       instanceToken: null,
     });
   });
@@ -158,6 +159,7 @@ describe("formato uazapi: mensagens", () => {
       quotedWaMessageId: null,
       enviadaEm: null,
       anuncio: null,
+      individual: true,
       instanceToken: "token-da-instancia",
     });
   });

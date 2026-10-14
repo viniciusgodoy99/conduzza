@@ -5,7 +5,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { agenteAtendeAgora } from "@/lib/domain/agente/config";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
-import { iaLiberadaNoAmbiente, lerConfigDaIa } from "@/lib/ia/liberacao";
+import {
+  iaLiberadaNoAmbiente,
+  lerConfigDaIa,
+  segredoDoIdentificadorValido,
+} from "@/lib/ia/liberacao";
 import {
   criarClassificadorDeEntrada,
   type ClassificadorDeEntrada,
@@ -141,6 +145,10 @@ export function motivoDoAmbiente(
   }
   if (env.VERCEL_ENV !== "production") {
     return TEXTOS_DO_SIMULADOR.soEmProducao;
+  }
+  // T1 tambem exige o segredo do identificador (lerConfigDaIa).
+  if (!segredoDoIdentificadorValido(env)) {
+    return TEXTOS_DO_SIMULADOR.semIdentificador;
   }
   return TEXTOS_DO_SIMULADOR.clinicaForaDaFase;
 }

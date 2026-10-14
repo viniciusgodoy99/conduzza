@@ -8,9 +8,13 @@ import { adminClient, anonClient } from "./stack";
 // segredo invisivel ate para admin da propria clinica, papel profissional
 // vendo SO as proprias conversas (a policy alimenta o Realtime), e
 // idempotencia estrutural por wa_message_id unique.
+// E3 (migration 20261013100000): o rascunho que o filtro do CFM barrou mora
+// em ai_rascunho_bloqueado (sem policy: nenhuma sessao le), e a sessao le
+// ai_decision_log por coluna, sem blocked_draft (42501 ao pedir a coluna).
 // Clinicas descartaveis proprias: nao toca no seed.
 
 const UNIQUE_VIOLATION = "23505";
+const PERMISSAO_NEGADA = "42501";
 const suffix = crypto.randomUUID().slice(0, 8);
 const PASSWORD = `Rls-conv-${suffix}!`;
 
@@ -25,6 +29,7 @@ let clinicA: { id: string };
 let clinicB: { id: string };
 let convUnassignedA: string;
 let convAssignedToProfA: string;
+let decisaoBloqueadaA: string;
 
 async function createPerson(email: string): Promise<User> {
   const { data, error } = await admin.auth.admin.createUser({
@@ -212,22 +217,38 @@ beforeAll(async () => {
     "message",
   );
 
-  await mustInsert(
-    admin.from("ai_decision_log").insert([
-      {
-        clinic_id: clinicA.id,
-        conversation_id: convUnassignedA,
-        compliance_blocked: true,
-        compliance_rule: "triagem",
-        blocked_draft: "rascunho",
-      },
-      {
-        clinic_id: clinicB.id,
-        conversation_id: convB,
-        compliance_blocked: false,
-      },
-    ]),
+  const decisoes = await mustInsert(
+    admin
+      .from("ai_decision_log")
+      .insert([
+        {
+          clinic_id: clinicA.id,
+          conversation_id: convUnassignedA,
+          compliance_blocked: true,
+          compliance_rule: "triagem",
+        },
+        {
+          clinic_id: clinicB.id,
+          conversation_id: convB,
+          compliance_blocked: false,
+        },
+      ])
+      .select("id, clinic_id"),
     "ai_decision_log",
+  );
+  decisaoBloqueadaA = decisoes!.find(
+    (d: { clinic_id: string }) => d.clinic_id === clinicA.id,
+  )!.id;
+  // O rascunho mora fora de ai_decision_log (E3); a sessao nunca le.
+  await mustInsert(
+    admin.from("ai_rascunho_bloqueado").insert({
+      clinic_id: clinicA.id,
+      decision_id: decisaoBloqueadaA,
+      conversation_id: convUnassignedA,
+      job_id: crypto.randomUUID(),
+      texto: "rascunho",
+    }),
+    "ai_rascunho_bloqueado",
   );
 
   await mustInsert(
@@ -303,6 +324,41 @@ describe("isolamento entre clínicas", () => {
       .eq("clinic_id", clinicB.id);
     expect(error).toBeNull();
     expect(data).toHaveLength(1);
+  });
+});
+
+describe("rascunho bloqueado: nenhuma sessao le", () => {
+  it("nem o admin da propria clinica le blocked_draft (42501) nem ai_rascunho_bloqueado", async () => {
+    const { error: coluna } = await adminA.client
+      .from("ai_decision_log")
+      .select("id, blocked_draft")
+      .eq("id", decisaoBloqueadaA);
+    expect(coluna?.code).toBe(PERMISSAO_NEGADA);
+    const { error: tudo } = await adminA.client
+      .from("ai_decision_log")
+      .select("*")
+      .eq("id", decisaoBloqueadaA);
+    expect(tudo?.code).toBe(PERMISSAO_NEGADA);
+    const { error: rascunho } = await adminA.client
+      .from("ai_rascunho_bloqueado")
+      .select("texto");
+    expect(rascunho?.code).toBe(PERMISSAO_NEGADA);
+  });
+
+  it("contraprova: as outras colunas da decisao seguem legiveis, e a service role le o rascunho", async () => {
+    const { data, error } = await adminA.client
+      .from("ai_decision_log")
+      .select("id, compliance_rule, escalation_reason, desfecho, created_at")
+      .eq("id", decisaoBloqueadaA);
+    expect(error).toBeNull();
+    expect(data).toHaveLength(1);
+    const { data: rascunho } = await admin
+      .from("ai_rascunho_bloqueado")
+      .select("texto")
+      .eq("decision_id", decisaoBloqueadaA)
+      .single()
+      .throwOnError();
+    expect(rascunho).toEqual({ texto: "rascunho" });
   });
 });
 

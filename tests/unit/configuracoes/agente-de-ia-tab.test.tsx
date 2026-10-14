@@ -29,6 +29,7 @@ import {
 } from "@/components/configuracoes/agente-de-ia-tab";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
+import { expedientePadrao } from "@/lib/domain/agente/config";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 
 // Aba "Agente de IA" de Configuracoes (Fase 3): o estado em 3 camadas com os
@@ -60,6 +61,19 @@ function dados(campos: Partial<DadosDaIa> = {}): DadosDaIa {
       { id: "t2", telefone: "+5584999990002", rotulo: "Ana", ativo: false },
     ],
     interruptorLigado: true,
+    situacao: {
+      tetoAtingido: false,
+      versaoPublicada: 1,
+      telefonesInvalidos: [],
+      telefonesSemAutorizacao: [],
+      telefonesComConversaAberta: [],
+      horarioPublicado: {
+        modo: "24h",
+        minutosSemResposta: 10,
+        expediente: expedientePadrao(),
+      },
+      motorParado: false,
+    },
     ...campos,
   };
 }
@@ -90,6 +104,8 @@ function aba(
         ambienteLigado
         podeEditar
         superAdmin={false}
+        agoraMs={Date.parse("2026-10-13T15:00:00.000Z")}
+        fuso="America/Fortaleza"
         {...props}
       />
     </TooltipProvider>,
@@ -156,6 +172,7 @@ describe("estado do assistente", () => {
 
   it("desligado: chip Desligado; sem número nem telefone, a equipe fica presa e o porquê aparece", () => {
     const html = aba({
+      superAdmin: true,
       dados: dados({ liberacao: null, numeros: [], telefones: [] }),
     });
     expect(html).toContain("Desligado");
@@ -185,6 +202,7 @@ describe("estado do assistente", () => {
 describe("número do assistente", () => {
   it("o escolhido: Em uso e Parar de usar; o outro conectado: Usar este número", () => {
     const html = aba({
+      superAdmin: true,
       numeros: [numero(), numero({ id: SEGUNDO, nome: "Unidade Centro" })],
     });
     expect(html).toContain("Em uso pelo assistente");
@@ -196,6 +214,7 @@ describe("número do assistente", () => {
 
   it("desconectado e não escolhido: preso com a dica de conectar antes", () => {
     const html = aba({
+      superAdmin: true,
       dados: dados({ numeros: [] }),
       numeros: [numero({ status: "desconectado" })],
     });
@@ -219,11 +238,30 @@ describe("número do assistente", () => {
     expect(erro).toContain("Não foi possível carregar os números de WhatsApp");
     expect(erro).not.toContain("Nenhum número de WhatsApp na clínica");
   });
+
+  it("leitura dos números que falhou: o cabeçalho não fica verde (T3)", () => {
+    const html = aba({ numeros: null });
+    expect(html).not.toContain("Conversando com a equipe");
+    expect(html).toContain("Não deu para conferir agora");
+    expect(html).toContain(escapado(TEXTOS_DA_IA.naoConferido.numero));
+    // nao afirma que parou: sem a lista dos motivos
+    expect(html).not.toContain("Ligado, mas parado");
+    expect(html).not.toContain("Por que o assistente ainda não responde");
+    // nem a linha do telefone diz que conversa (T4)
+    expect(html).not.toContain("Conversa com o assistente");
+  });
+
+  it("leitura dos números que falhou com um motivo conhecido: Ligado, mas parado", () => {
+    const html = aba({ numeros: null, ambienteLigado: false });
+    expect(html).toContain("Ligado, mas parado");
+    expect(html).toContain(escapado(TEXTOS_DA_IA.motivos.servidor));
+    expect(html).not.toContain(escapado(TEXTOS_DA_IA.naoConferido.numero));
+  });
 });
 
 describe("telefones da equipe", () => {
   it("lista com rótulo, telefone formatado e situação; o aviso de que só eles conversam", () => {
-    const html = aba();
+    const html = aba({ superAdmin: true });
     expect(html).toContain(escapado(TEXTOS_DA_IA.soEstesTelefones));
     expect(html).toContain("Vinicius, equipe");
     expect(html).toContain("(84) 99999-0001");
@@ -251,9 +289,10 @@ describe("telefones da equipe", () => {
   });
 
   it("a confirmação de contato da clínica só aparece depois do aviso da ação", () => {
-    const html = aba();
+    const html = aba({ superAdmin: true });
     expect(html).not.toContain(escapado(TEXTOS_DA_IA.confirmarContato));
-    expect(html).not.toContain('role="checkbox"');
+    // a única caixa de marcar é a do aviso da OpenAI (LGPD, sempre)
+    expect(html.match(/role="checkbox"/g) ?? []).toHaveLength(1);
   });
 });
 
@@ -273,11 +312,19 @@ describe("permissão", () => {
     }
     expect(botaoComDica(html, "Adicionar")).toBe(true);
     expect(botaoComDica(html, "Parar de usar")).toBe(true);
-    // os campos do telefone tambem presos
-    const campos = html.match(/<input[^>]*>/g) ?? [];
+    // os campos do telefone tambem presos (fora a caixa escondida do
+    // Checkbox, que so espelha o botao)
+    const campos = (html.match(/<input[^>]*>/g) ?? []).filter(
+      (campo) => !campo.includes('aria-hidden="true"'),
+    );
     expect(campos).toHaveLength(2);
     for (const campo of campos) {
       expect(campo).toContain('disabled=""');
+    }
+    const caixas = html.match(/<button[^>]*role="checkbox"[^>]*>/g) ?? [];
+    expect(caixas).toHaveLength(1);
+    for (const caixa of caixas) {
+      expect(caixa).toContain('disabled=""');
     }
   });
 
@@ -363,6 +410,231 @@ describe("teto e textos", () => {
       expect(html).not.toMatch(/[—–]/);
       expect(html).not.toMatch(/janela de 24 horas/i);
       expect(html).not.toMatch(/\bno servidor\b/i);
+    }
+  });
+});
+
+// E3 (13/10/2026): nesta fase, ligar o WhatsApp e so da equipe Conduzza. O
+// administrador ve os controles de ligar desabilitados, com a dica; desligar
+// continua com ele. A aba diz a verdade (motivos novos), a linha do telefone
+// que nao aciona o assistente tem estado proprio, e o formulario pede sempre
+// a confirmacao do aviso da OpenAI.
+describe("ligar só pela equipe Conduzza (E3)", () => {
+  const DOIS_NUMEROS = [
+    numero(),
+    numero({ id: SEGUNDO, nome: "Unidade Centro" }),
+  ];
+
+  it("administrador: ligar visível e preso, com a dica; desligar livre", () => {
+    const html = aba({ numeros: DOIS_NUMEROS });
+    // o modo equipe ja gravado continua pressionado; a troca para equipe so
+    // e possivel saindo dele, e ai fica presa (ver o teste seguinte)
+    expect(botaoDesabilitado(html, "Desligado")).toBe(false);
+    expect(botaoDesabilitado(html, "Só simulador")).toBe(false);
+    // numero: parar de usar livre; usar outro, preso com a dica
+    expect(botaoDesabilitado(html, "Parar de usar")).toBe(false);
+    expect(botaoDesabilitado(html, "Usar este número")).toBe(true);
+    expect(botaoComDica(html, "Usar este número")).toBe(true);
+    // telefone: desligar livre; adicionar e ligar de novo, presos
+    expect(botaoDesabilitado(html, "Desligar")).toBe(false);
+    expect(botaoDesabilitado(html, "Ligar de novo")).toBe(true);
+    expect(botaoComDica(html, "Ligar de novo")).toBe(true);
+    expect(botaoDesabilitado(html, "Adicionar")).toBe(true);
+    expect(botaoComDica(html, "Adicionar")).toBe(true);
+    const campos = (html.match(/<input[^>]*>/g) ?? []).filter(
+      (campo) => !campo.includes('aria-hidden="true"'),
+    );
+    for (const campo of campos) {
+      expect(campo).toContain('disabled=""');
+    }
+  });
+
+  it("administrador com o assistente desligado: Conversar com a equipe preso, e a frase visível", () => {
+    const html = aba({
+      dados: dados({ liberacao: null }),
+    });
+    expect(botaoDesabilitado(html, "Conversar com a equipe")).toBe(true);
+    expect(botaoDesabilitado(html, "Só simulador")).toBe(false);
+    expect(html).toContain(escapado(TEXTOS_DA_IA.soEquipeConduzzaLiga));
+    expect(html).not.toContain(escapado(TEXTOS_DA_IA.faltaParaAEquipe));
+  });
+
+  it("super admin: liga tudo", () => {
+    const html = aba({
+      superAdmin: true,
+      numeros: DOIS_NUMEROS,
+      dados: dados({ liberacao: null }),
+    });
+    expect(botaoDesabilitado(html, "Conversar com a equipe")).toBe(false);
+    expect(botaoDesabilitado(html, "Usar este número")).toBe(false);
+    expect(botaoDesabilitado(html, "Adicionar")).toBe(false);
+    expect(botaoDesabilitado(html, "Ligar de novo")).toBe(false);
+    expect(html).not.toContain(escapado(TEXTOS_DA_IA.soEquipeConduzzaLiga));
+  });
+});
+
+describe("a aba diz a verdade (E3)", () => {
+  it("o verde só sem nenhum motivo: sem versão publicada fica parado, com o texto", () => {
+    const html = aba({
+      dados: dados({
+        situacao: {
+          ...dados().situacao,
+          versaoPublicada: null,
+          horarioPublicado: null,
+        },
+      }),
+    });
+    expect(html).toContain("Ligado, mas parado");
+    expect(html).not.toContain("Conversando com a equipe");
+    expect(html).toContain(escapado(TEXTOS_DA_IA.motivos.sem_versao_publicada));
+  });
+
+  it("teto, motor e horário viram motivos em texto", () => {
+    const html = aba({
+      dados: dados({
+        situacao: {
+          ...dados().situacao,
+          tetoAtingido: true,
+          motorParado: true,
+          horarioPublicado: {
+            modo: "fallback",
+            minutosSemResposta: 10,
+            expediente: expedientePadrao(),
+          },
+        },
+      }),
+    });
+    for (const motivo of [
+      "teto_atingido",
+      "motor_parado",
+      "horario_nao_suportado",
+    ] as const) {
+      expect(html).toContain(escapado(TEXTOS_DA_IA.motivos[motivo]));
+    }
+  });
+
+  it("telefone que não aciona o assistente: 3 camadas na linha e Ligar de novo preso", () => {
+    const html = aba({
+      superAdmin: true,
+      dados: dados({
+        situacao: { ...dados().situacao, telefonesInvalidos: ["t2"] },
+      }),
+    });
+    expect(html).toContain("Não aciona o assistente");
+    expect(html).toContain(escapado(TEXTOS_DA_IA.telefoneInvalidoNaLinha));
+    // o chip da linha: icone (svg), rotulo e tom de aviso
+    const indice = html.indexOf("Não aciona o assistente");
+    const antes = html.slice(Math.max(0, indice - 1500), indice);
+    expect(antes).toContain("<svg");
+    expect(antes).toMatch(/warning/);
+    // o telefone que nao aciona nunca e ligado de novo (o banco recusa)
+    expect(botaoDesabilitado(html, "Ligar de novo")).toBe(true);
+    expect(botaoComDica(html, "Ligar de novo")).toBe(true);
+  });
+
+  it("telefone cujo contato revogou a autorização: Não aciona o assistente, com a frase própria (conferência telas N1)", () => {
+    const html = aba({
+      dados: dados({
+        situacao: { ...dados().situacao, telefonesSemAutorizacao: ["t1"] },
+      }),
+    });
+    expect(html).toContain("Não aciona o assistente");
+    expect(html).toContain(
+      escapado(TEXTOS_DA_IA.telefoneSemAutorizacaoNaLinha),
+    );
+    expect(html).not.toContain(escapado(TEXTOS_DA_IA.telefoneInvalidoNaLinha));
+    // a linha nunca diz que conversa com o assistente
+    expect(html).not.toContain("Conversa com o assistente");
+    expect(html).not.toContain("Conversando com a equipe");
+  });
+
+  it("telefone com conversa aberta com a equipe no número: o aviso na linha", () => {
+    const html = aba({
+      dados: dados({
+        situacao: {
+          ...dados().situacao,
+          telefonesComConversaAberta: ["t1"],
+        },
+      }),
+    });
+    expect(html).toContain(escapado(TEXTOS_DA_IA.conversaAbertaNoNumero));
+    // nao e motivo de parada
+    expect(html).toContain("Conversando com a equipe");
+    expect(aba()).not.toContain(escapado(TEXTOS_DA_IA.conversaAbertaNoNumero));
+  });
+
+  it("confirmação do aviso da OpenAI sempre presente; Usar mesmo assim só depois da recusa", () => {
+    for (const html of [aba(), aba({ superAdmin: true })]) {
+      expect(html).toContain(escapado(TEXTOS_DA_IA.confirmarAvisoDaOpenai));
+      expect(html).not.toContain(
+        escapado(TEXTOS_DA_IA.forcarContatoDePaciente),
+      );
+    }
+  });
+
+  it("nenhum travessão nos estados novos", () => {
+    const estados = [
+      aba({
+        dados: dados({
+          situacao: {
+            ...dados().situacao,
+            tetoAtingido: true,
+            versaoPublicada: null,
+            telefonesInvalidos: ["t1", "t2"],
+            telefonesComConversaAberta: ["t1"],
+            motorParado: true,
+          },
+        }),
+      }),
+      aba({ superAdmin: true, dados: dados({ liberacao: null }) }),
+    ];
+    for (const html of estados) {
+      expect(html).not.toMatch(/[—–]/);
+    }
+  });
+});
+
+// Achado T4 da revisao do E3: com o assistente fora de uso (Desligado, So
+// simulador ou Ligado, mas parado), a linha do telefone ligado diz so
+// "Ligado" e o numero escolhido, "Escolhido para o assistente". So no
+// estado "Conversando com a equipe" eles dizem que o assistente conversa.
+describe("telefone e número fora de uso (T4)", () => {
+  const SIMULADOR = {
+    liberada: true,
+    modo: "simulador" as const,
+    pausadaPelaClinica: false,
+    tetoDiarioCentavosUsd: 500,
+  };
+
+  it("em uso: Conversa com o assistente e Em uso pelo assistente", () => {
+    const html = aba();
+    expect(html).toContain("Conversando com a equipe");
+    expect(html).toContain("Conversa com o assistente");
+    expect(html).toContain("Em uso pelo assistente");
+    expect(html).not.toContain("Escolhido para o assistente");
+  });
+
+  it("desligado, só simulador ou parado: Ligado e Escolhido para o assistente", () => {
+    const casos = {
+      desligado: aba({
+        dados: dados({
+          liberacao: { ...SIMULADOR, liberada: false },
+        }),
+      }),
+      simulador: aba({ dados: dados({ liberacao: SIMULADOR }) }),
+      parado: aba({ ambienteLigado: false }),
+    };
+    for (const [caso, html] of Object.entries(casos)) {
+      expect(html, caso).not.toContain("Conversando com a equipe");
+      expect(html, caso).not.toContain("Conversa com o assistente");
+      expect(html, caso).not.toContain("Em uso pelo assistente");
+      expect(html, caso).toContain("Escolhido para o assistente");
+      // o telefone t1 (ligado) com o rotulo do contrato, perto do numero dele
+      const linha = html.slice(
+        html.indexOf("(84) 99999-0001"),
+        html.indexOf("(84) 99999-0002"),
+      );
+      expect(linha, caso).toContain(">Ligado<");
     }
   });
 });

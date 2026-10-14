@@ -137,11 +137,27 @@ export async function provisionar(): Promise<DadosE2E> {
   const clinicasCriadas = (
     await admin
       .from("clinic")
+      // e_de_teste SO durante o provisionamento (E3, migrations 20261013100000
+      // e 20261013110000): o gatilho de message so deixa gravar autor 'ia'
+      // sem job aprovado em clinica de teste (a mensagem "Atendemos sim!"
+      // abaixo). No fim do provisionamento as duas voltam a ser clinicas
+      // comuns (fora da lista da fase, como a salud-care): o motor de
+      // producao continua executando os jobs delas como antes do E3 (com
+      // e_de_teste, um job pendente da clinica do e2e nunca sairia da fila e
+      // a saude acusaria fila_atrasada), e a varredura da IA nao toca a
+      // "Juliana Dermato" (so varre clinica da lista ou de teste com janela).
+      // A aba Agente de IA e o Devolver ficam fora da fase (a tela decide
+      // pela lista fechada do codigo).
       .insert([
-        { name: "Clínica E2E", slug: `${E2E_PREFIXO}-principal-${sufixo}` },
+        {
+          name: "Clínica E2E",
+          slug: `${E2E_PREFIXO}-principal-${sufixo}`,
+          e_de_teste: true,
+        },
         {
           name: "Espaço E2E Offline",
           slug: `${E2E_PREFIXO}-offline-${sufixo}`,
+          e_de_teste: true,
         },
       ])
       .select("id, slug")
@@ -403,18 +419,33 @@ export async function provisionar(): Promise<DadosE2E> {
     )
     .throwOnError();
 
-  await admin
+  const { data: decisaoBloqueada } = await admin
     .from("ai_decision_log")
     .insert({
       clinic_id: clinica.id,
       conversation_id: conversaDe("Patrícia Sintoma"),
       compliance_blocked: true,
       compliance_rule: "triagem",
-      blocked_draft:
-        "Parece reação normal do peeling. Pode passar uma pomada cicatrizante que melhora.",
       // codigo do CHECK de ai_decision_log.escalation_reason (migration
       // 20261006100000), nunca texto livre
       escalation_reason: "sintoma",
+      desfecho: "bloqueou",
+    })
+    .select("id")
+    .single()
+    .throwOnError();
+  // O rascunho bloqueado mora em ai_rascunho_bloqueado (E3, migration
+  // 20261013100000): blocked_draft deixou de ser legivel pela sessao, e so a
+  // equipe Conduzza le o rascunho (ler_rascunho_bloqueado).
+  await admin
+    .from("ai_rascunho_bloqueado")
+    .insert({
+      clinic_id: clinica.id,
+      decision_id: (decisaoBloqueada as { id: string }).id,
+      conversation_id: conversaDe("Patrícia Sintoma"),
+      job_id: crypto.randomUUID(),
+      texto:
+        "Parece reação normal do peeling. Pode passar uma pomada cicatrizante que melhora.",
     })
     .throwOnError();
 
@@ -1073,6 +1104,15 @@ export async function provisionar(): Promise<DadosE2E> {
         revoked_at: linha.revogada ? minutosAtras(3 * 24 * 60) : null,
       })),
     )
+    .throwOnError();
+
+  // As duas voltam a ser clinicas comuns (ver o comentario do insert das
+  // clinicas): a fala da IA ja gravada continua (o gatilho de message so
+  // confere linha nova ou alterada), e os jobs delas voltam ao motor.
+  await admin
+    .from("clinic")
+    .update({ e_de_teste: false })
+    .in("id", [clinica.id, clinicaDesconectada.id])
     .throwOnError();
 
   return {

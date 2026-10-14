@@ -19,8 +19,11 @@ import { adminClient, anonClient } from "./stack";
 //     autenticado le so o booleano, anon nao;
 //   - definir_liberacao_da_ia, definir_numero_da_ia e
 //     definir_contato_liberado_da_ia: o ADMINISTRADOR ativo da propria
-//     clinica (da lista ou de teste) escreve, com a trilha no nome dele, e
-//     um numero por vez (ligar um desliga o outro na mesma chamada; com
+//     clinica (da lista ou de teste) DESLIGA e poe em "So simulador", com a
+//     trilha no nome dele; LIGAR o WhatsApp (modo contatos, numero, telefone)
+//     e so da equipe Conduzza nesta fase (E3, decisao do dono de 13/10/2026,
+//     migration 20261013100000): o administrador recebe 42501 e o sistema
+//     liga. Um numero por vez (ligar um desliga o outro na mesma chamada; com
 //     erro, nada muda); gestor, recepcao, leitura, pendente, admin de outra
 //     clinica, admin de clinica fora da lista e anon: 42501 (na F, o 42501
 //     vem do guarda: o sistema desliga a mesma linha sem erro).
@@ -31,16 +34,14 @@ import { adminClient, anonClient } from "./stack";
 //     pela sessao;
 //   - ia_clinica_liberada: verdadeiro so para membro ativo da clinica
 //     liberada; falso para pendente e para outra clinica;
-//   - conversation.status = 'ia_atendendo' pela SESSAO: 42501 quando a IA
-//     nao esta liberada para aquele telefone naquele numero (UPDATE e
-//     INSERT), para todo papel, inclusive o admin da clinica liberada (com o
-//     telefone fora da lista) e o da clinica sem liberacao. A trava e a
-//     LIBERACAO, nao o papel: com o telefone liberado, a recepcao devolve para
-//     a IA (contraprova). Com a conversa ja na IA, a sessao tambem nao troca
-//     o contact_id para um telefone fora da lista (42501). O gatilho barra
-//     so sessao: a service role (o servidor, as fixtures e o seed) passa,
-//     porque o servidor e guardado por ia_pode_atender ao enfileirar, antes
-//     do modelo e antes do envio (E3);
+//   - conversation.status = 'ia_atendendo' pela SESSAO: 42501 SEMPRE (UPDATE
+//     e INSERT), para todo papel, com ou sem liberacao (E3, migration
+//     20261013100000): pela sessao, so devolver_para_ia poe a conversa na IA
+//     (a contraprova do Devolver mora em tests/rls/ia-whatsapp.test.ts). Com
+//     a conversa ja na IA, a sessao tambem nao troca o contact_id (42501). O
+//     gatilho barra so sessao: a service role (o servidor, as fixtures e o
+//     seed) passa, porque o servidor e guardado por ia_atende_no_whatsapp e
+//     ia_pode_falar_com ao enfileirar, antes do modelo e antes do envio;
 //   - clinic.e_de_teste: so a equipe do Conduzza muda (42501 para o admin);
 //   - ai_agent_config e knowledge_item: membro ativo le; admin e gestor
 //     escrevem a base e editam o rascunho (que so nasce pela RPC: nenhuma
@@ -750,21 +751,29 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
     }
   });
 
-  it("o administrador da A escreve nas tres RPCs da A, com a trilha no nome dele", async () => {
+  it("o administrador da A desliga e poe em So simulador; ligar o WhatsApp (modo contatos, numero, telefone) e so da equipe Conduzza (42501)", async () => {
     const adminA = como("admin-a");
     const ok = async (
+      cliente: SupabaseClient,
       nome: string,
       args: Record<string, unknown>,
       esperado: boolean,
     ) => {
-      const { data, error } = await adminA.rpc(nome, args);
+      const { data, error } = await cliente.rpc(nome, args);
       expect(error, nome).toBeNull();
       expect(data).toBe(esperado);
     };
+    const negado = async (nome: string, args: Record<string, unknown>) => {
+      const { error } = await adminA.rpc(nome, args);
+      expect(error?.code, nome).toBe(PERMISSAO_NEGADA);
+    };
     const antes = await liberacaoDaA();
 
-    // modo: simulador e de volta para contatos
+    // modo: o administrador poe em simulador; voltar para contatos (com o
+    // modo informado ou religando com o modo nulo numa linha em contatos) e
+    // so da equipe Conduzza; o sistema religa
     await ok(
+      adminA,
       "definir_liberacao_da_ia",
       { p_clinic_id: clinicaA, p_liberada: true, p_modo: "simulador" },
       true,
@@ -779,7 +788,36 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       modo: "simulador",
       alterado_por: ids.get("admin-a"),
     });
+    await negado("definir_liberacao_da_ia", {
+      p_clinic_id: clinicaA,
+      p_liberada: true,
+      p_modo: "contatos",
+    });
     await ok(
+      admin,
+      "definir_liberacao_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_liberada: true,
+        p_modo: "contatos",
+        p_motivo: "teste de RLS",
+      },
+      true,
+    );
+    await negado("definir_liberacao_da_ia", {
+      p_clinic_id: clinicaA,
+      p_liberada: true,
+      p_modo: null,
+    });
+    // desligar continua com o administrador; o sistema religa
+    await ok(
+      adminA,
+      "definir_liberacao_da_ia",
+      { p_clinic_id: clinicaA, p_liberada: false, p_motivo: "teste de RLS" },
+      false,
+    );
+    await ok(
+      admin,
       "definir_liberacao_da_ia",
       {
         p_clinic_id: clinicaA,
@@ -790,9 +828,10 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       true,
     );
 
-    // numero, um por vez: ligar o segundo desliga o da A na mesma chamada;
-    // religar o da A desliga o segundo; desligar nao mexe nos outros
+    // numero, um por vez (pelo sistema): ligar o segundo desliga o da A na
+    // mesma chamada; o administrador nao liga nenhum, mas desliga
     await ok(
+      admin,
       "definir_numero_da_ia",
       {
         p_clinic_id: clinicaA,
@@ -805,16 +844,17 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       [numeroA]: false,
       [segundoNumeroA]: true,
     });
-    await ok(
-      "definir_numero_da_ia",
-      { p_clinic_id: clinicaA, p_whatsapp_account_id: numeroA, p_ativo: true },
-      true,
-    );
+    await negado("definir_numero_da_ia", {
+      p_clinic_id: clinicaA,
+      p_whatsapp_account_id: numeroA,
+      p_ativo: true,
+    });
     expect(await numerosDaA()).toEqual({
-      [numeroA]: true,
-      [segundoNumeroA]: false,
+      [numeroA]: false,
+      [segundoNumeroA]: true,
     });
     await ok(
+      adminA,
       "definir_numero_da_ia",
       {
         p_clinic_id: clinicaA,
@@ -823,13 +863,19 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       },
       false,
     );
+    await ok(
+      admin,
+      "definir_numero_da_ia",
+      { p_clinic_id: clinicaA, p_whatsapp_account_id: numeroA, p_ativo: true },
+      true,
+    );
     expect(await numerosDaA()).toEqual({
       [numeroA]: true,
       [segundoNumeroA]: false,
     });
-    // o numero da B pela A: o gatilho recusa (numero de outra clinica) e
-    // nada muda, nem o desligar do numero da A que vinha antes na chamada
-    const { error: numeroDaB } = await adminA.rpc("definir_numero_da_ia", {
+    // o numero da B pela A (pelo sistema): o gatilho recusa (numero de outra
+    // clinica) e nada muda, nem o desligar do numero da A que vinha antes
+    const { error: numeroDaB } = await admin.rpc("definir_numero_da_ia", {
       p_clinic_id: clinicaA,
       p_whatsapp_account_id: numeroB,
       p_ativo: true,
@@ -840,9 +886,16 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       [segundoNumeroA]: false,
     });
 
-    // telefone novo sem o nono digito: gravado pela chave canonica; e
-    // desligado em seguida (fica na lista, nao conversa)
+    // telefone: o administrador nao liga; o sistema liga sem o nono digito
+    // (gravado pela chave canonica) e o administrador desliga
+    await negado("definir_contato_liberado_da_ia", {
+      p_clinic_id: clinicaA,
+      p_telefone_e164: TELEFONE_DO_ADMIN_SEM_NONO,
+      p_rotulo: "Admin pela tela",
+      p_ativo: true,
+    });
     await ok(
+      admin,
       "definir_contato_liberado_da_ia",
       {
         p_clinic_id: clinicaA,
@@ -853,6 +906,7 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       true,
     );
     await ok(
+      adminA,
       "definir_contato_liberado_da_ia",
       {
         p_clinic_id: clinicaA,
@@ -884,6 +938,9 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
     );
     expect(depois.contatos).toHaveLength((antes.contatos ?? []).length + 1);
 
+    // trilha no nome do administrador: so o que ele fez (simulador e
+    // desligar, desligar o segundo numero, desligar o telefone); os 42501
+    // nao deixaram trilha
     const { data: trilha } = await admin
       .from("audit_log")
       .select("entity, action, entity_id")
@@ -901,18 +958,17 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       entity_id: string | null;
     }[];
     expect(linhas.filter((l) => l.entity === "ia_liberacao")).toHaveLength(2);
-    // numeros: ligar o segundo (ele e o da A, desligado junto), religar o da
-    // A (ele e o segundo, desligado junto) e desligar o segundo; o 23503 nao
-    // deixou trilha
     const doNumero = linhas.filter((l) => l.entity === "ia_numero_liberado");
-    expect(doNumero.filter((l) => l.entity_id === numeroA)).toHaveLength(2);
-    expect(doNumero.filter((l) => l.entity_id === segundoNumeroA)).toHaveLength(
-      3,
-    );
-    expect(doNumero).toHaveLength(5);
+    expect(doNumero).toEqual([
+      {
+        entity: "ia_numero_liberado",
+        action: "editou",
+        entity_id: segundoNumeroA,
+      },
+    ]);
     expect(
       linhas.filter((l) => l.entity === "ia_contato_liberado"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(linhas.every((l) => l.action === "editou")).toBe(true);
   });
 
@@ -996,8 +1052,8 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
   });
 });
 
-describe("conversation: a sessao so entra em 'ia_atendendo' com a IA liberada", () => {
-  it("clinica liberada, telefone nao liberado: UPDATE e INSERT da sessao dao 42501", async () => {
+describe("conversation: pela sessao, nenhuma entrada direta em 'ia_atendendo' (so devolver_para_ia)", () => {
+  it("clinica liberada, telefone nao liberado: UPDATE e INSERT da sessao dao 42501 (so_pelo_devolver)", async () => {
     for (const apelido of ["admin-a", "gestor-a", "recepcao-a"] as const) {
       const cliente = como(apelido);
       const { error: naUpdate } = await cliente
@@ -1041,12 +1097,23 @@ describe("conversation: a sessao so entra em 'ia_atendendo' com a IA liberada", 
     expect(await statusDa(conversaDaB)).toBe("em_atendimento");
   });
 
-  it("contraprova: telefone liberado no numero liberado, a recepcao devolve para a IA", async () => {
-    const { error } = await como("recepcao-a")
+  it("telefone liberado no numero liberado: o PATCH direto da sessao tambem da 42501 (so o Devolver poe na IA)", async () => {
+    for (const apelido of ["admin-a", "gestor-a", "recepcao-a"] as const) {
+      const { error } = await como(apelido)
+        .from("conversation")
+        .update({ status: "ia_atendendo", assignee_user_id: null })
+        .eq("id", conversaDaEquipe);
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+      expect(error?.message).toBe("so_pelo_devolver");
+    }
+    expect(await statusDa(conversaDaEquipe)).toBe("aguardando_humano");
+    // O servidor poe na IA (o Devolver pela sessao, com janela, evento e
+    // trilha, e provado em tests/rls/ia-whatsapp.test.ts).
+    await admin
       .from("conversation")
       .update({ status: "ia_atendendo", assignee_user_id: null })
-      .eq("id", conversaDaEquipe);
-    expect(error).toBeNull();
+      .eq("id", conversaDaEquipe)
+      .throwOnError();
     expect(await statusDa(conversaDaEquipe)).toBe("ia_atendendo");
   });
 

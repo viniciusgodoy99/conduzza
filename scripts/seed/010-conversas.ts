@@ -699,6 +699,9 @@ const CONVERSATIONS: Conv[] = [
 // A conversa 6 tem o bloqueio de conformidade registrado (a IA ia orientar
 // clinicamente e o filtro barrou). O rascunho bloqueado fica para auditoria.
 const COMPLIANCE_LOG_ID = "00000000-0000-4000-e000-000000000001";
+// Job ficticio do rascunho bloqueado do seed (ai_rascunho_bloqueado.job_id
+// e obrigatorio e nao tem FK: a fila e podada).
+const COMPLIANCE_JOB_ID = "00000000-0000-4000-e000-000000000002";
 
 export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
   const log: string[] = [];
@@ -822,13 +825,31 @@ export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
       created_at: minutesAgo(m.minutesBefore),
     })),
   );
+  // As falas da IA vao em separado (E3, migration 20261013110000): o gatilho
+  // de message so aceita autor 'ia' com job e decisao aprovada, ou em
+  // clinica e_de_teste. A Vitalis do seed nao e de teste (o worker local a
+  // processa), entao as falas da IA de demonstracao sao recusadas; o resto
+  // do seed segue e o log diz o que ficou de fora.
+  const daIa = messages.filter((m) => m.author === "ia");
+  const semIa = messages.filter((m) => m.author !== "ia");
   const { error: messageError } = await admin
     .from("message")
-    .upsert(messages, { onConflict: "id" });
+    .upsert(semIa, { onConflict: "id" });
   if (messageError) throw new Error(`message: ${messageError.message}`);
+  const { error: iaError } = await admin
+    .from("message")
+    .upsert(daIa, { onConflict: "id" });
+  if (iaError && iaError.code !== "CZIA1" && iaError.code !== "CZIA2") {
+    throw new Error(`message (IA): ${iaError.message}`);
+  }
   log.push(
-    `${messages.length} mensagens (1 áudio com transcrição, 2 notas internas)`,
+    `${semIa.length + (iaError ? 0 : daIa.length)} mensagens (1 áudio com transcrição, 2 notas internas)`,
   );
+  if (iaError) {
+    log.push(
+      `${daIa.length} falas da IA de demonstração não gravadas: o banco só aceita fala da IA com resposta aprovada (ou em clínica de teste)`,
+    );
+  }
 
   const { error: aiLogError } = await admin.from("ai_decision_log").upsert(
     [
@@ -843,14 +864,38 @@ export async function seedConversas(admin: SupabaseClient): Promise<string[]> {
         escalation_reason: "sintoma",
         compliance_blocked: true,
         compliance_rule: "triagem",
-        blocked_draft:
-          "Pelo que você descreveu, parece uma reação normal do peeling. Pode passar uma pomada cicatrizante e um anti-inflamatório leve que em dois dias melhora.",
+        desfecho: "bloqueou",
         latency_ms: 1840,
+        // Num banco ja semeado, o upsert so atualiza as colunas enviadas: o
+        // nulo explicito tira o rascunho antigo da coluna (ele mora em
+        // ai_rascunho_bloqueado, abaixo).
+        blocked_draft: null,
       },
     ],
     { onConflict: "id" },
   );
   if (aiLogError) throw new Error(`ai_decision_log: ${aiLogError.message}`);
+  // O rascunho bloqueado mora em ai_rascunho_bloqueado (E3, migration
+  // 20261013100000): blocked_draft deixou de ser legivel pela sessao e so a
+  // equipe Conduzza le o rascunho. Uma linha por decisao (unique).
+  const { error: rascunhoError } = await admin
+    .from("ai_rascunho_bloqueado")
+    .upsert(
+      [
+        {
+          clinic_id: VITALIS,
+          decision_id: COMPLIANCE_LOG_ID,
+          conversation_id: conversationId(6),
+          job_id: COMPLIANCE_JOB_ID,
+          texto:
+            "Pelo que você descreveu, parece uma reação normal do peeling. Pode passar uma pomada cicatrizante e um anti-inflamatório leve que em dois dias melhora.",
+        },
+      ],
+      { onConflict: "decision_id" },
+    );
+  if (rascunhoError) {
+    throw new Error(`ai_rascunho_bloqueado: ${rascunhoError.message}`);
+  }
   log.push("1 bloqueio de conformidade registrado (triagem)");
 
   const { error: templateError } = await admin.from("message_template").upsert(

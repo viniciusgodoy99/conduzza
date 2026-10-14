@@ -246,6 +246,9 @@ export async function acertarGasto(
     origem: OrigemDoUso;
     usos: readonly UsoDoModelo[];
     precos: readonly PrecoDoModelo[];
+    /** WhatsApp (E3): a conversa e o job do turno, em cada linha de ia_uso. */
+    conversationId?: string | null;
+    jobId?: string | null;
   },
 ): Promise<boolean> {
   try {
@@ -254,6 +257,8 @@ export async function acertarGasto(
       origem: entrada.origem,
       usos: entrada.usos,
       precos: entrada.precos,
+      conversationId: entrada.conversationId ?? null,
+      jobId: entrada.jobId ?? null,
     });
     for (const modelo of new Set(semPreco)) {
       log.warn("ia_preco_ausente", { clinic_id: entrada.clinicId, modelo });

@@ -14,7 +14,6 @@ import {
   Lock,
   OctagonAlert,
   SendHorizonal,
-  ShieldBan,
   Sparkles,
   Trash2,
   Video,
@@ -31,21 +30,11 @@ import {
   FUSO_PADRAO,
   horaNaClinica,
 } from "@/components/atendimento/fuso-da-clinica";
-import { Aviso } from "@/components/shared/aviso";
-import type { CategoriaDeConformidade } from "@/lib/domain/conformidade/categorias";
 import {
   autoriaDaBolha,
   type AgendadaDoFio,
 } from "@/lib/domain/mensagem-agendada";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,10 +55,7 @@ import {
   type EstadoDaMidia,
   type MotivoDeIndisponivel,
 } from "@/lib/domain/midia-recebida";
-import type {
-  ComplianceDecision,
-  MessageItem,
-} from "@/lib/queries/conversations";
+import type { MessageItem } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
 // Bolhas da conversa na pele do ChatBubble do design system Conduzza (docs/06
@@ -123,66 +109,6 @@ export function SystemEventCard({
           {horaNaClinica(message.created_at, timezone)}
         </span>
       </span>
-    </div>
-  );
-}
-
-export function ComplianceBlockCard({
-  decision,
-}: {
-  decision: ComplianceDecision;
-}) {
-  // Uma entrada por categoria do filtro (lib/domain/conformidade): o tipo
-  // obriga a cobrir todas, e o banco tem CHECK com a mesma lista.
-  const RULE_LABEL: Record<CategoriaDeConformidade, string> = {
-    triagem: "triagem de sintoma",
-    diagnostico: "diagnóstico",
-    orientacao_clinica: "orientação clínica",
-    medicamento: "indicação de medicamento",
-    dosagem: "indicação de dose",
-    promessa_resultado: "promessa de resultado",
-    oferta_casada: "oferta casada",
-    antes_depois: "imagem de antes e depois",
-    preco_nao_verificado: "preço fora do cadastro",
-    formato_invalido: "formato de resposta não permitido",
-    falha_verificador: "verificação de conformidade indisponível",
-  };
-  const regra = decision.compliance_rule;
-  const rotulo =
-    regra !== null && Object.hasOwn(RULE_LABEL, regra)
-      ? RULE_LABEL[regra as CategoriaDeConformidade]
-      : "regra de conformidade";
-  return (
-    <div className="flex justify-center">
-      <Aviso
-        tom="alert"
-        icone={ShieldBan}
-        titulo="Resposta da IA bloqueada pela conformidade"
-        className="w-full max-w-md"
-      >
-        <p>Motivo: {rotulo}. A conversa foi passada para a recepção.</p>
-        {decision.blocked_draft ? (
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="mt-2 w-fit">
-                Ver o que a IA ia responder
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Rascunho bloqueado</DialogTitle>
-                <DialogDescription>
-                  Registrado para auditoria. Este texto nunca foi enviado ao
-                  paciente.
-                </DialogDescription>
-              </DialogHeader>
-              <p className="rounded-xl bg-surface-4 p-3 text-sm">
-                {decision.blocked_draft}
-              </p>
-            </DialogContent>
-          </Dialog>
-        ) : null}
-      </Aviso>
     </div>
   );
 }

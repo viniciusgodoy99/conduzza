@@ -45,6 +45,7 @@ export function Painel({
   funil,
   proximasAcoes,
   pedidosDeAcesso = 0,
+  iaNaFase = false,
 }: {
   /** Fuso da clinica: o "Ultimo disparo HH:mm" sai nele (regra 3.6). */
   timezone: string;
@@ -54,6 +55,8 @@ export function Painel({
   /** Pedidos de entrada pelo codigo aguardando liberacao (so quem gerencia
    *  a equipe recebe o numero; para os outros papeis fica 0). */
   pedidosDeAcesso?: number;
+  /** Clinica da fase controlada do agente de IA: muda so a dica da IA. */
+  iaNaFase?: boolean;
 }) {
   const algumaFalha = !resumo.ok || !funil.ok;
 
@@ -69,7 +72,11 @@ export function Painel({
         </Aviso>
       ) : null}
 
-      <IndicadoresDoDia resumo={resumo} timezone={timezone} />
+      <IndicadoresDoDia
+        resumo={resumo}
+        timezone={timezone}
+        iaNaFase={iaNaFase}
+      />
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <div className="grid min-w-0 gap-4">

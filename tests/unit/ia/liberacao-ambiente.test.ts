@@ -4,7 +4,9 @@ import {
   CLINICAS_DA_FASE_CONTROLADA,
   iaLiberadaNoAmbiente,
   lerConfigDaIa,
+  TAMANHO_MINIMO_DO_SEGREDO_DO_IDENTIFICADOR,
 } from "@/lib/ia/liberacao";
+import { identificadorDeSeguranca } from "@/lib/integrations/llm/openai";
 
 // Travas de ambiente da IA (T1 e T2, Fase 3 E0), sem banco e sem chave real.
 // Desde 13/10/2026 o ambiente so diz "producao com chave"; ligar e escolher
@@ -16,9 +18,12 @@ const CONDUZZA_TESTE = "f0c115dd-e98c-4767-a1bb-93d517844852";
 const SALUD_CARE = "682edca6-cc7d-4bb7-8db6-4c68e2510549";
 const ALEATORIA = "3f2b8c1e-9d4a-4b7e-8c2f-1a6d5e9b0c7d";
 
+const SEGREDO = "s".repeat(40);
+
 const LIGADO = {
   VERCEL_ENV: "production",
   OPENAI_API_KEY: "chave-de-mentira",
+  IA_SEGREDO_DO_IDENTIFICADOR: SEGREDO,
 } as const;
 
 describe("CLINICAS_DA_FASE_CONTROLADA", () => {
@@ -39,8 +44,8 @@ describe("CLINICAS_DA_FASE_CONTROLADA", () => {
   });
 });
 
-describe("T1: producao da Vercel com a chave", () => {
-  it("liga com VERCEL_ENV=production e a chave, com as duas clinicas da lista fechada", () => {
+describe("T1: producao da Vercel com a chave e o segredo do identificador", () => {
+  it("liga com VERCEL_ENV=production, a chave e o segredo, com as duas clinicas da lista fechada", () => {
     const config = lerConfigDaIa(LIGADO);
     expect(config.ligado).toBe(true);
     expect(config.clinicas).toEqual([TESTE123, CONDUZZA_TESTE]);
@@ -62,6 +67,18 @@ describe("T1: producao da Vercel com a chave", () => {
       "chave antiga da Anthropic nao liga mais",
       { OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: "chave-antiga" },
     ],
+    // Revisao do E3 (T3): sem o segredo do identificador todo turno falha
+    // em sem_identificador; a aba e a Tela 6 nao podem dizer que esta de pe.
+    [
+      "sem o segredo do identificador",
+      { IA_SEGREDO_DO_IDENTIFICADOR: undefined },
+    ],
+    ["segredo vazio", { IA_SEGREDO_DO_IDENTIFICADOR: "" }],
+    ["segredo curto (31)", { IA_SEGREDO_DO_IDENTIFICADOR: "s".repeat(31) }],
+    [
+      "segredo curto com espacos nas pontas",
+      { IA_SEGREDO_DO_IDENTIFICADOR: `  ${"s".repeat(31)}  ` },
+    ],
   ])("desligada: %s", (_caso, troca) => {
     const config = lerConfigDaIa({ ...LIGADO, ...troca });
     expect(config.ligado).toBe(false);
@@ -80,9 +97,29 @@ describe("T1: producao da Vercel com a chave", () => {
     expect(lerConfigDaIa().ligado).toBe(false);
   });
 
-  it("nunca devolve o valor da chave", () => {
+  it("nunca devolve o valor da chave nem o do segredo", () => {
     const config = lerConfigDaIa(LIGADO);
     expect(JSON.stringify(config)).not.toContain(LIGADO.OPENAI_API_KEY);
+    expect(JSON.stringify(config)).not.toContain(SEGREDO);
+  });
+
+  it("o minimo do segredo e o mesmo do safety_identifier: liga exatamente quando o identificador existe", () => {
+    for (const tamanho of [0, 31, 32, 64]) {
+      const segredo = "s".repeat(tamanho);
+      const ligado = lerConfigDaIa({
+        ...LIGADO,
+        IA_SEGREDO_DO_IDENTIFICADOR: segredo,
+      }).ligado;
+      const identificador = identificadorDeSeguranca({
+        clinicId: TESTE123,
+        contactId: CONDUZZA_TESTE,
+        segredo,
+      });
+      expect(ligado).toBe(identificador !== null);
+      expect(ligado).toBe(
+        tamanho >= TAMANHO_MINIMO_DO_SEGREDO_DO_IDENTIFICADOR,
+      );
+    }
   });
 });
 

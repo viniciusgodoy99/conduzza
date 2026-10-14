@@ -40,7 +40,11 @@ import { adminClient, stackCredentials } from "../rls/stack";
 // eco do celular vira linha, a midia vira job, o eco marcado com a nossa
 // origem de rastreio nao vira nada, a ausencia que chega antes da mensagem
 // do paciente vira 'sistema' quando ela chega, a ingestao grava o horario de
-// envio do paciente e a fala de pessoa da rajada continua de pessoa.
+// envio do paciente e a fala de pessoa da rajada continua de pessoa. A rota
+// responde ao provedor SO { ok: true } (o servidor do uazapi e compartilhado
+// com outras empresas, revisao do E3): o que a porta real gravou, ou deixou
+// de gravar, e lido no banco pelo service role, pela linha do wa_message_id
+// que o proprio teste montou.
 //
 // Horarios relativos (envio, chegada do paciente) sao montados a partir do
 // last_inbound_at e do created_at que o BANCO gravou, nunca do relogio desta
@@ -436,6 +440,15 @@ async function chegouEm(messageId: string, instante: number): Promise<void> {
 async function contarMensagensDaClinica(clinicId: string): Promise<number> {
   const { count } = await admin
     .from("message")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", clinicId)
+    .throwOnError();
+  return count ?? 0;
+}
+
+async function contarContatosDaClinica(clinicId: string): Promise<number> {
+  const { count } = await admin
+    .from("contact")
     .select("id", { count: "exact", head: true })
     .eq("clinic_id", clinicId)
     .throwOnError();
@@ -2197,17 +2210,16 @@ describe("pela rota do webhook (payload do uazapi)", () => {
       doCelular(phone, id, { text: "  Pode sim, te espero  " }),
     );
     expect(status).toBe(200);
-    expect(corpo).toMatchObject({
-      inserted: true,
-      contact_id: contactId,
-      conversation_id: conversaA,
-      whatsapp_account_id: a.id,
-      automatica: false,
-    });
+    expect(corpo).toEqual({ ok: true });
+    // O que o corpo trazia, lido no banco: UMA linha nova com o id do evento
+    // (inserted), na conversa do paciente (contato e conversa) no numero da
+    // URL, de pessoa (automatica false = author usuario).
     const linhas = await linhasCom(id);
     expect(linhas).toHaveLength(1);
     expect(linhas[0]).toMatchObject({
+      clinic_id: x,
       conversation_id: conversaA,
+      whatsapp_account_id: a.id,
       direction: "saida",
       author: "usuario",
       author_user_id: null,
@@ -2217,16 +2229,23 @@ describe("pela rota do webhook (payload do uazapi)", () => {
       cost_cents: 0,
       delivery_status: "enviada",
     });
-    expect((await conversa(conversaA)).awaiting_reply).toBe(false);
+    expect(await conversa(conversaA)).toMatchObject({
+      contact_id: contactId,
+      whatsapp_account_id: a.id,
+      awaiting_reply: false,
+    });
 
-    // Reentrega do provedor: 200 e nenhuma linha a mais.
+    // Reentrega do provedor: 200, so { ok: true }, e a MESMA linha (nada
+    // inserido).
     const reentrega = await postar(
       caminhoDoWebhook(a),
       doCelular(phone, id, { text: "  Pode sim, te espero  " }),
     );
     expect(reentrega.status).toBe(200);
-    expect(reentrega.corpo).toMatchObject({ inserted: false });
-    expect(await linhasCom(id)).toHaveLength(1);
+    expect(reentrega.corpo).toEqual({ ok: true });
+    expect((await linhasCom(id)).map((linha) => linha.id)).toEqual([
+      linhas[0]!.id,
+    ]);
   });
 
   it("imagem enviada pelo celular: linha de imagem e o download vira job do número", async () => {
@@ -2248,9 +2267,13 @@ describe("pela rota do webhook (payload do uazapi)", () => {
       }),
     );
     expect(status).toBe(200);
-    expect(corpo.inserted).toBe(true);
-    const [linha] = await linhasCom(id);
+    expect(corpo).toEqual({ ok: true });
+    // A linha nova (o inserted de antes), do numero da URL.
+    const linhas = await linhasCom(id);
+    expect(linhas).toHaveLength(1);
+    const [linha] = linhas;
     expect(linha).toMatchObject({
+      whatsapp_account_id: a.id,
       content_type: "imagem",
       body: null,
       media_url: "https://mmg.whatsapp.net/teste-do-celular.enc",
@@ -2292,19 +2315,21 @@ describe("pela rota do webhook (payload do uazapi)", () => {
     });
   });
 
-  it("contato desconhecido: 200 com o motivo, nada gravado", async () => {
+  it("contato desconhecido: 200 só com ok, nada gravado e nenhum contato criado", async () => {
     const { x, a } = await cenario();
     const id = waId("rota-desconhecido");
     const mensagensAntes = await contarMensagensDaClinica(x);
+    const contatosAntes = await contarContatosDaClinica(x);
     const { status, corpo } = await postar(
       caminhoDoWebhook(a),
       doCelular(telefone(), id),
     );
     expect(status).toBe(200);
-    expect(corpo).toMatchObject({
-      inserted: false,
-      ignorada: "contato_desconhecido",
-    });
+    expect(corpo).toEqual({ ok: true });
+    // O motivo (contato_desconhecido) fica no servidor. No banco ele e isto:
+    // o telefone, novo, nao virou contato (a saida nunca cria contato) e
+    // nada foi gravado, nem com o id do evento nem na clinica.
+    expect(await contarContatosDaClinica(x)).toBe(contatosAntes);
     expect(await linhasCom(id)).toEqual([]);
     expect(await contarMensagensDaClinica(x)).toBe(mensagensAntes);
   });
@@ -2348,8 +2373,12 @@ describe("pela rota do webhook (payload do uazapi)", () => {
       }),
     );
     expect(eco.status).toBe(200);
-    expect(eco.corpo).toMatchObject({ inserted: true, automatica: false });
-    expect((await linhasCom(ecoId))[0]).toMatchObject({ author: "usuario" });
+    expect(eco.corpo).toEqual({ ok: true });
+    // Gravado agora (inserted), na conversa do numero A, como pessoa
+    // (automatica false = author usuario).
+    expect(await linhasCom(ecoId)).toMatchObject([
+      { conversation_id: conversaA, author: "usuario" },
+    ]);
     expect((await conversa(conversaA)).awaiting_reply).toBe(false);
 
     // A mensagem do paciente chega logo depois (bem dentro dos 8 s), pela
@@ -2360,10 +2389,16 @@ describe("pela rota do webhook (payload do uazapi)", () => {
       doPaciente(phone, entradaId, envioDoPaciente),
     );
     expect(entrada.status).toBe(200);
-    expect(entrada.corpo).toMatchObject({
-      inserted: true,
-      conversation_id: conversaA,
-    });
+    expect(entrada.corpo).toEqual({ ok: true });
+    // Gravada (inserted) na mesma conversa (o conversation_id de antes).
+    expect(await linhasCom(entradaId)).toMatchObject([
+      {
+        conversation_id: conversaA,
+        whatsapp_account_id: a.id,
+        direction: "entrada",
+        author: "paciente",
+      },
+    ]);
     expect((await linhasCom(ecoId))[0]).toMatchObject({
       author: "sistema",
       author_user_id: null,
@@ -2385,18 +2420,30 @@ describe("pela rota do webhook (payload do uazapi)", () => {
       caminhoDoWebhook(a),
       doCelular(phone, ecoId, { text: "Pode trazer os exames" }),
     );
-    expect(eco.corpo).toMatchObject({ inserted: true, automatica: false });
+    expect(eco.status).toBe(200);
+    expect(eco.corpo).toEqual({ ok: true });
+    // Gravado agora (inserted), de pessoa (automatica false).
+    const ecoGravado = await linhasCom(ecoId);
+    expect(ecoGravado).toMatchObject([
+      { conversation_id: conversaA, author: "usuario" },
+    ]);
     // Recua a chegada do eco 20 s pelo relogio do banco (o que o teste nao
     // pode esperar de verdade).
-    const [linha] = await linhasCom(ecoId);
+    const [linha] = ecoGravado;
     await chegouEm(linha!.id, Date.parse(linha!.created_at) - 20 * SEGUNDO);
 
+    const entradaId = waId("rota-paciente-bem-depois");
     const entrada = await postar(
       caminhoDoWebhook(a),
-      doPaciente(phone, waId("rota-paciente-bem-depois")),
+      doPaciente(phone, entradaId),
     );
     expect(entrada.status).toBe(200);
-    expect(entrada.corpo).toMatchObject({ inserted: true });
+    expect(entrada.corpo).toEqual({ ok: true });
+    // A mensagem do paciente gravou (inserted) na mesma conversa: a
+    // correcao rodou e deixou a fala antiga como estava.
+    expect(await linhasCom(entradaId)).toMatchObject([
+      { conversation_id: conversaA, direction: "entrada" },
+    ]);
     expect(await autorDe(linha!.id)).toBe("usuario");
   });
 
@@ -2411,8 +2458,13 @@ describe("pela rota do webhook (payload do uazapi)", () => {
       doPaciente(phone, id, enviadaEm),
     );
     expect(status).toBe(200);
-    expect(corpo).toMatchObject({ inserted: true });
-    const [linha] = await linhasCom(id);
+    expect(corpo).toEqual({ ok: true });
+    // A linha nova (o inserted de antes) e a do paciente, no numero da URL.
+    const linhas = await linhasCom(id);
+    expect(linhas).toMatchObject([
+      { whatsapp_account_id: a.id, direction: "entrada", author: "paciente" },
+    ]);
+    const [linha] = linhas;
     expect(Date.parse(linha!.enviada_no_aparelho_em!)).toBe(enviadaEm);
   });
 
@@ -2431,20 +2483,30 @@ describe("pela rota do webhook (payload do uazapi)", () => {
         messageTimestamp: envioDoPaciente - 3 * MINUTO,
       }),
     );
-    expect(eco.corpo).toMatchObject({ inserted: true, automatica: false });
+    expect(eco.status).toBe(200);
+    expect(eco.corpo).toEqual({ ok: true });
+    // Gravado agora (inserted), de pessoa (automatica false).
+    expect(await linhasCom(ecoId)).toMatchObject([
+      { conversation_id: conversaA, author: "usuario" },
+    ]);
 
+    const entradaId = waId("rota-rajada-paciente");
     const entrada = await postar(
       caminhoDoWebhook(a),
-      doPaciente(phone, waId("rota-rajada-paciente"), envioDoPaciente),
+      doPaciente(phone, entradaId, envioDoPaciente),
     );
     expect(entrada.status).toBe(200);
-    expect(entrada.corpo).toMatchObject({ inserted: true });
+    expect(entrada.corpo).toEqual({ ok: true });
+    // A mensagem do paciente gravou (inserted) na mesma conversa.
+    expect(await linhasCom(entradaId)).toMatchObject([
+      { conversation_id: conversaA, direction: "entrada" },
+    ]);
     const [linha] = await linhasCom(ecoId);
     expect(linha!.author).toBe("usuario");
     expect((await conversa(conversaA)).awaiting_reply).toBe(true);
   });
 
-  it("número da plataforma pela rota: 200 com o contato, sem linha, e a conversa aberta daquele número sai da espera", async () => {
+  it("número da plataforma pela rota: 200 só com ok, sem linha, e a conversa aberta do contato naquele número sai da espera", async () => {
     const { x, a } = await cenario();
     const outra = await clinica("plataforma-rota");
     const final = String(Date.now() + 13).slice(-7);
@@ -2459,6 +2521,7 @@ describe("pela rota do webhook (payload do uazapi)", () => {
     const contatoId = contato!.id as string;
     const conversaA = await conversaNoNumero(x, contatoId, a.id);
     await esperandoHaUmaHora(conversaA);
+    const contatosAntes = await contarContatosDaClinica(x);
     const id = waId("rota-plataforma");
 
     const { status, corpo } = await postar(
@@ -2466,13 +2529,20 @@ describe("pela rota do webhook (payload do uazapi)", () => {
       doCelular(destino, id, { text: "Oi, aqui é da clínica" }),
     );
     expect(status).toBe(200);
-    expect(corpo).toMatchObject({
-      inserted: false,
-      ignorada: "numero_da_plataforma",
-      contact_id: contatoId,
-      message_id: null,
-    });
+    expect(corpo).toEqual({ ok: true });
+    // O que o corpo trazia, lido no banco. Nenhuma linha com o id do evento,
+    // em clinica nenhuma (inserted false, message_id nulo; e nao e colisao
+    // de id). O contato achado e o que ja existia (nenhum criado), e a
+    // espera que desceu e a da conversa aberta DELE no numero da URL. Sem
+    // linha e com a espera derrubada e a marca da numero_da_plataforma:
+    // contato_desconhecido, numero_proprio e numero_removido nao mexem em
+    // conversa nenhuma.
     expect(await linhasCom(id)).toEqual([]);
-    expect((await conversa(conversaA)).awaiting_reply).toBe(false);
+    expect(await contarContatosDaClinica(x)).toBe(contatosAntes);
+    expect(await conversa(conversaA)).toMatchObject({
+      contact_id: contatoId,
+      whatsapp_account_id: a.id,
+      awaiting_reply: false,
+    });
   });
 });

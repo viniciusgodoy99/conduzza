@@ -8,7 +8,11 @@
 // o CHECK): kind que o banco aceita e nenhum trilho reivindica ficaria
 // pendente para sempre, sem last_error e sem aparecer em lugar nenhum.
 //
-// NOTA PARA O E3: o 'responder_com_ia' entra no CHECK e num trilho daqui.
+// E3: o 'responder_com_ia' entrou no CHECK (migration 20261013100000) e tem
+// trilho proprio, KINDS_DA_IA: claim proprio (claim_jobs_da_ia), rota propria
+// (/api/webhooks/motor-ia) e nunca o slot de massa. O claim do motor de
+// envio, de midia, de integracao e de gasto nao o pede, e o claim legado
+// (claim_jobs) o exclui no banco.
 
 /**
  * Tipos que disputam o slot de envio do numero (reservar_slot_envio_v2) e
@@ -41,12 +45,20 @@ export const KINDS_DE_GASTO = [
   "resolver_anuncio_meta",
 ] as const;
 
+/**
+ * A resposta da IA no WhatsApp (E3). Trilho e motor proprios: nao disputa o
+ * slot de massa (sai pelo trilho 1:1) e nao entra em KINDS_DE_ENVIO, que
+ * conta as "mensagens esperando" da faixa da recepcao.
+ */
+export const KINDS_DA_IA = ["responder_com_ia"] as const;
+
 /** Todos os kinds que o motor reivindica (= CHECK job_queue_kind_check). */
 export const KINDS_DO_MOTOR = [
   ...KINDS_DE_ENVIO,
   ...KINDS_DE_MIDIA,
   ...KINDS_DE_INTEGRACAO,
   ...KINDS_DE_GASTO,
+  ...KINDS_DA_IA,
 ] as const;
 
 export type KindDeJob = (typeof KINDS_DO_MOTOR)[number];

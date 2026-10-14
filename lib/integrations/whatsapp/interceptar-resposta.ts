@@ -159,9 +159,7 @@ function passoDoToque(linha: LinhaDeToque): {
   kind: string | null;
   offsetMinutes: number | null;
 } {
-  const passo = um(
-    linha.cadence_step as PassoDaLinha | PassoDaLinha[] | null,
-  );
+  const passo = um(linha.cadence_step as PassoDaLinha | PassoDaLinha[] | null);
   const regua = um(passo?.cadence ?? null);
   return {
     kind: regua?.kind ?? null,
@@ -701,8 +699,7 @@ async function completarToques(
   citacao: Citacao,
   desde: string,
 ): Promise<{ toques: ToqueEnviado[]; citacao: Citacao } | null> {
-  const todos =
-    citacao.tipo === "toque" ? [...toques, citacao.toque] : toques;
+  const todos = citacao.tipo === "toque" ? [...toques, citacao.toque] : toques;
   // So a run que NAO bate com a conta do passo precisa saber se e manual: a
   // automatica que bate ja vale, e a leitura do job fica fora do caminho
   // comum da resposta.
@@ -1009,14 +1006,28 @@ const ECO_DA_INTENCAO = {
   remarcar: RESPOSTA_REMARCAR,
 } as const;
 
+/**
+ * O que o interceptador fez com a mensagem (E3). A rota so enfileira o turno
+ * da IA quando ele NAO respondeu nada ao paciente: "tratou_com_eco" (mudou a
+ * agenda ou a oferta e mandou o eco, ou pediu remarcacao) fica sem turno.
+ * Os outros desfechos deixam a mensagem para quem atende (a IA ou a equipe).
+ */
+export type DesfechoDoInterceptador =
+  | "nao_texto"
+  | "sem_intencao"
+  | "alvo_nenhum"
+  | "fatos_ilegiveis"
+  | "tratou_com_eco"
+  | "reconheceu_sem_efeito";
+
 export async function interceptarRespostaDePaciente(
   admin: SupabaseClient,
   entrada: EntradaDaResposta,
-): Promise<void> {
+): Promise<DesfechoDoInterceptador> {
   // Audio, imagem e documento nao viram decisao automatica: quem le e a
   // recepcao. Botao interativo chega como texto (o id ou o rotulo).
   if (entrada.contentType !== "texto" || !entrada.body) {
-    return;
+    return "nao_texto";
   }
 
   // A leitura pura vem ANTES das consultas: mensagem comum ("bom dia") sai
@@ -1027,13 +1038,16 @@ export async function interceptarRespostaDePaciente(
   const intencaoDeOferta = ehRespostaDoMenuDeConfirmacao(entrada.body)
     ? "nao_reconhecida"
     : interpretarRespostaDeOferta(entrada.body);
-  if (intencao === "nao_reconhecida" && intencaoDeOferta === "nao_reconhecida") {
-    return;
+  if (
+    intencao === "nao_reconhecida" &&
+    intencaoDeOferta === "nao_reconhecida"
+  ) {
+    return "sem_intencao";
   }
 
   const coletado = await reunirFatos(admin, entrada);
   if (!coletado) {
-    return;
+    return "fatos_ilegiveis";
   }
   // Daqui para baixo a entrada leva o numero que RECEBEU, ja resolvido (o do
   // webhook ou o da conversa): e por ele que o eco sai (D4).
@@ -1050,12 +1064,12 @@ export async function interceptarRespostaDePaciente(
   if (pergunta.alvo === "nenhum") {
     // A conversa ja esta esperando a recepcao (a ingestao marcou), e e ela
     // quem le e decide.
-    return;
+    return "alvo_nenhum";
   }
 
   if (pergunta.alvo === "oferta") {
     if (intencaoDeOferta === "nao_reconhecida") {
-      return;
+      return "reconheceu_sem_efeito";
     }
     const oferta =
       coletado.oferta?.id === pergunta.offerId
@@ -1063,8 +1077,9 @@ export async function interceptarRespostaDePaciente(
         : await buscarOferta(admin, entrada.clinicId, pergunta.offerId);
     if (oferta) {
       await tratarRespostaDeOferta(admin, daResposta, oferta, intencaoDeOferta);
+      return "tratou_com_eco";
     }
-    return;
+    return "reconheceu_sem_efeito";
   }
 
   const { data, error } = await admin.rpc(RPC_DA_INTENCAO[pergunta.intencao], {
@@ -1074,7 +1089,7 @@ export async function interceptarRespostaDePaciente(
     p_conversation_id: entrada.conversationId,
   });
   if (error) {
-    return;
+    return "reconheceu_sem_efeito";
   }
   // 'ja_tratado': alguem (ou a propria pessoa, duas vezes) chegou antes. Sem
   // eco, para o paciente nao receber dois agradecimentos pela mesma consulta.
@@ -1084,7 +1099,7 @@ export async function interceptarRespostaDePaciente(
     timezone?: string;
   } | null;
   if (resultado?.ok !== true) {
-    return;
+    return "reconheceu_sem_efeito";
   }
 
   // O eco diz QUAL consulta: com duas no mesmo dia, "sua consulta foi
@@ -1105,7 +1120,7 @@ export async function interceptarRespostaDePaciente(
   // Remarcar termina em "nossa recepcao vai falar com voce": alguem TEM de
   // agir, e a RPC deixou a conversa esperando a recepcao.
   if (pergunta.intencao === "remarcar") {
-    return;
+    return "tratou_com_eco";
   }
 
   // O sistema resolveu sozinho: mudou o status da consulta e respondeu ao
@@ -1118,4 +1133,5 @@ export async function interceptarRespostaDePaciente(
   // O cancelamento libera um horario, e a reoferta da lista de espera parte
   // SOZINHA: o gatilho oferecer_ao_cancelar (banco) enfileira o job quando o
   // status vira cancelado, cobrindo este caminho e todos os outros.
+  return "tratou_com_eco";
 }

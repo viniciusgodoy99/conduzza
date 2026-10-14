@@ -38,6 +38,14 @@ import { createClient } from "@/lib/supabase/server";
 // pagina) e so o administrador da clinica ou o super admin chega a RPC.
 // Cada RPC grava a trilha (audit_log) sozinha, sem telefone.
 //
+// LIGAR O WHATSAPP E SO DA EQUIPE CONDUZZA NESTA FASE (E3, decisao do dono
+// em 13/10/2026): escolher "Conversar com a equipe", usar um numero e
+// adicionar ou ligar um telefone exigem o super admin, aqui e no banco
+// (ia_exigir_equipe_conduzza). Desligar continua com o administrador da
+// clinica. O telefone novo exige a confirmacao do aviso da OpenAI (LGPD,
+// D32), gravada em audit_log; telefone de paciente e numero de WhatsApp do
+// Conduzza sao recusados pelo banco, e so o super admin forca o primeiro.
+//
 // Nada daqui vai para log alem do codigo do erro, da clinica, do numero e
 // do tipo de acao: nunca telefone, rotulo nem nome de contato.
 //
@@ -47,9 +55,17 @@ import { createClient } from "@/lib/supabase/server";
 /**
  * pedeConfirmacao: o telefone novo ja e de um contato da clinica; a tela
  * mostra o aviso e o campo de confirmacao, e so grava com ele marcado.
+ * pedeForcar: o banco recusou o telefone por ser de paciente e quem chama e
+ * o super admin; a tela mostra "Usar mesmo assim (fica registrado)".
  */
 export type ResultadoDaIa =
-  { ok: true } | { ok: false; error: string; pedeConfirmacao?: true };
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      pedeConfirmacao?: true;
+      pedeForcar?: true;
+    };
 
 const TEXTOS = {
   sessaoExpirada: "Sessão expirada. Entre de novo.",
@@ -110,8 +126,18 @@ async function guarda(): Promise<Guarda | { error: string }> {
   };
 }
 
+/**
+ * Ligar o WhatsApp (modo "equipe", numero, telefone) e so do super admin
+ * nesta fase. null: pode.
+ */
+function recusaDeLigar(guardaOk: Guarda): ResultadoDaIa | null {
+  return guardaOk.superAdmin
+    ? null
+    : { ok: false, error: TEXTOS_DA_IA.soEquipeConduzzaLiga };
+}
+
 type Supabase = Awaited<ReturnType<typeof createClient>>;
-type ErroDoBanco = { code?: string } | null;
+type ErroDoBanco = { code?: string; message?: string } | null;
 
 function falhou(
   guardaOk: Guarda,
@@ -135,8 +161,23 @@ function falhou(
  */
 function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
   const codigo = error?.code;
+  const chave = (error?.message ?? "").trim();
   if (codigo === "42501") {
-    return TEXTOS_DA_IA.semPermissao;
+    // Ligar (modo equipe, numero, telefone) e so da equipe Conduzza.
+    return kind === "escolha_equipe" ||
+      kind === "numero_usar" ||
+      kind === "telefone_adicionar" ||
+      kind === "telefone_ligar"
+      ? TEXTOS_DA_IA.soEquipeConduzzaLiga
+      : TEXTOS_DA_IA.semPermissao;
+  }
+  if (kind.startsWith("telefone_") && codigo === "23514") {
+    if (chave === "telefone_invalido_para_equipe") {
+      return TEXTOS_DA_IA.telefoneDaPlataforma;
+    }
+    if (chave === "contato_de_paciente") {
+      return TEXTOS_DA_IA.contatoDePaciente;
+    }
   }
   if (kind.startsWith("telefone_") && codigo === "22023") {
     return TEXTOS_DA_IA.telefoneInvalido;
@@ -199,6 +240,12 @@ export async function definirEscolhaDaIaAction(
     return { ok: false, error: TEXTOS.dadosInvalidos };
   }
   const { escolha } = parsed.data;
+  if (escolha === "equipe") {
+    const recusa = recusaDeLigar(guardaOk);
+    if (recusa) {
+      return recusa;
+    }
+  }
   const supabase = await createClient();
 
   if (escolha === "equipe") {
@@ -268,6 +315,12 @@ export async function escolherNumeroDaIaAction(
     return { ok: false, error: TEXTOS.dadosInvalidos };
   }
   const { whatsappAccountId, usar } = parsed.data;
+  if (usar) {
+    const recusa = recusaDeLigar(guardaOk);
+    if (recusa) {
+      return recusa;
+    }
+  }
   const supabase = await createClient();
 
   const definir = (id: string, ativo: boolean) =>
@@ -371,7 +424,12 @@ export async function adicionarTelefoneDaIaAction(
           : TEXTOS.dadosInvalidos,
     };
   }
-  const { rotulo, telefone, confirmarContato } = parsed.data;
+  const recusa = recusaDeLigar(guardaOk);
+  if (recusa) {
+    return recusa;
+  }
+  const { rotulo, telefone, confirmarContato, forcarContatoDePaciente } =
+    parsed.data;
   const supabase = await createClient();
 
   if (confirmarContato !== true) {
@@ -408,17 +466,69 @@ export async function adicionarTelefoneDaIaAction(
   if (linha !== "ok") {
     return falhou(guardaOk, "telefone_linha", linha, TEXTOS.naoAlterou);
   }
+  // Sempre por nome de parametro: a assinatura nova (E3) tem o forcar.
   const { error } = await supabase.rpc("definir_contato_liberado_da_ia", {
     p_clinic_id: guardaOk.clinicId,
     p_telefone_e164: telefone,
     p_rotulo: rotulo,
     p_ativo: true,
+    p_forcar_contato_existente: forcarContatoDePaciente === true,
   });
   if (error) {
-    return falhou(guardaOk, "telefone_adicionar", error, TEXTOS.naoAlterou);
+    const resultado = falhou(
+      guardaOk,
+      "telefone_adicionar",
+      error,
+      TEXTOS.naoAlterou,
+    );
+    // Telefone de paciente: so o super admin ve a opcao de forcar (o banco
+    // confere de novo e grava a trilha propria).
+    if (
+      !resultado.ok &&
+      error.code === "23514" &&
+      (error.message ?? "").trim() === "contato_de_paciente" &&
+      guardaOk.superAdmin
+    ) {
+      return { ...resultado, pedeForcar: true };
+    }
+    return resultado;
   }
+  await registrarAvisoDaOpenai(supabase, guardaOk, telefone);
   revalidatePath("/configuracoes");
   return { ok: true };
+}
+
+/**
+ * A confirmacao do aviso da OpenAI (LGPD, D32) na trilha, com a linha do
+ * telefone relida pela chave canonica. Sem telefone na trilha. Um erro aqui
+ * nao desfaz o cadastro (o banco ja gravou a trilha da alteracao), mas fica
+ * no log.
+ */
+async function registrarAvisoDaOpenai(
+  supabase: Supabase,
+  guardaOk: Guarda,
+  telefone: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("ia_contato_liberado")
+    .select("id")
+    .eq("clinic_id", guardaOk.clinicId)
+    .eq("phone_key", chaveDeTelefone(telefone))
+    .maybeSingle();
+  const id = (data as { id?: unknown } | null)?.id;
+  const { error: erroDaTrilha } = await supabase.from("audit_log").insert({
+    clinic_id: guardaOk.clinicId,
+    user_id: guardaOk.userId,
+    action: "confirmou_aviso_da_openai",
+    entity: "ia_contato_liberado",
+    entity_id: typeof id === "string" ? id : null,
+  });
+  if (error || erroDaTrilha) {
+    log.warn("ia_aviso_da_openai_sem_trilha", {
+      clinic_id: guardaOk.clinicId,
+      error_code: (erroDaTrilha ?? error)?.code ?? null,
+    });
+  }
 }
 
 /**
@@ -435,6 +545,12 @@ export async function alternarTelefoneDaIaAction(
   const parsed = alternarTelefoneSchema.safeParse(entrada);
   if (!parsed.success) {
     return { ok: false, error: TEXTOS.dadosInvalidos };
+  }
+  if (parsed.data.ligado) {
+    const recusa = recusaDeLigar(guardaOk);
+    if (recusa) {
+      return recusa;
+    }
   }
   const supabase = await createClient();
   const { error } = await supabase.rpc("definir_contato_liberado_da_ia", {

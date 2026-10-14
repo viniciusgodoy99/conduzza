@@ -8,6 +8,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/jobs/worker", () => ({ executarJobComPosse: vi.fn() }));
 
 import {
+  KINDS_DA_IA,
   KINDS_DE_ENVIO,
   KINDS_DE_GASTO,
   KINDS_DE_INTEGRACAO,
@@ -65,8 +66,25 @@ describe("kinds da fila", () => {
       ...KINDS_DE_MIDIA,
       ...KINDS_DE_INTEGRACAO,
       ...KINDS_DE_GASTO,
+      ...KINDS_DA_IA,
     ];
     expect(new Set(todos).size).toBe(todos.length);
+    expect([...todos].sort()).toEqual([...KINDS_DO_MOTOR].sort());
+  });
+
+  it("E3: a resposta da IA tem trilho proprio, fora do slot de massa e da faixa", () => {
+    expect([...KINDS_DA_IA]).toEqual(["responder_com_ia"]);
+    expect(KINDS_DE_ENVIO as readonly string[]).not.toContain(
+      "responder_com_ia",
+    );
+    expect(KINDS_DE_ENVIO_AUTOMATICO as readonly string[]).not.toContain(
+      "responder_com_ia",
+    );
+    // A agendada continua no CHECK (nao pode sair com o E3).
+    const { arquivo, sql } = ultimaDefinicaoDoCheck();
+    expect(arquivo).toBe("20261013100000_ia_whatsapp_fila.sql");
+    expect(kindsDoCheck(sql)).toContain("enviar_mensagem_agendada");
+    expect(kindsDoCheck(sql)).toContain("responder_com_ia");
   });
 
   it("a mensagem agendada disputa o slot de envio e entra na faixa de mensagens esperando", () => {

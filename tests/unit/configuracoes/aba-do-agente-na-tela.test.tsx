@@ -31,11 +31,22 @@ const DA_IA: DadosDaAbaDaIa = {
     numeros: [],
     telefones: [],
     interruptorLigado: false,
+    situacao: {
+      tetoAtingido: false,
+      versaoPublicada: null,
+      telefonesInvalidos: [],
+      telefonesSemAutorizacao: [],
+      telefonesComConversaAberta: [],
+      horarioPublicado: null,
+      motorParado: false,
+    },
   },
   numeros: [],
   ambienteLigado: false,
   podeEditar: true,
   superAdmin: false,
+  agoraMs: Date.parse("2026-10-13T15:00:00.000Z"),
+  fuso: "America/Fortaleza",
 };
 
 function tela(

@@ -100,6 +100,20 @@ export type InboundEvent =
       enviadaEm?: string | null;
       /** referral de anuncio CTWA, quando o canal o repassa; null no comum */
       anuncio: AnuncioDeOrigem | null;
+      /**
+       * Conversa de UMA pessoa com a clinica (E3): o chatid termina em
+       * "@s.whatsapp.net", ou em "@lid" com sender_pn de telefone. Grupo
+       * (@g.us), status e lista (@broadcast, inclui status@broadcast) e canal
+       * (@newsletter) sao false, e chatid ausente tambem (falha fechada). So
+       * decide se a mensagem pode virar turno da IA: nenhuma mensagem deixa
+       * de ser ingerida por isto. O formato canonico (provedor falso,
+       * simulador) e individual, salvo `individual: false` explicito.
+       *
+       * Opcional no tipo so para quem monta o evento a mao (testes e
+       * ferramentas); o parser sempre preenche. Ausente conta como false na
+       * rota (falha fechada: nunca vira turno da IA).
+       */
+      individual?: boolean;
       /** token da instancia que recebeu; confere contra o guardado */
       instanceToken: string | null;
     }
@@ -195,6 +209,9 @@ const canonicalSchema = z.discriminatedUnion("kind", [
     quotedWaMessageId: z.string().nullish(),
     // Horario de envio (texto de data, com fuso), como no clinic_device_reply.
     enviadaEm: z.string().nullish(),
+    // Ausente: conversa individual (o simulador e o provedor falso so falam
+    // com uma pessoa). Os testes mandam false para simular grupo.
+    individual: z.boolean().optional(),
     anuncio: z
       .object({
         ctwaClid: z.string().nullish(),
@@ -320,6 +337,23 @@ function telefoneDeJidDeTelefone(jid: unknown): string | null {
     return null;
   }
   return phoneFromJid(jid);
+}
+
+/**
+ * A mensagem recebida e de uma conversa INDIVIDUAL (E3)? Verdadeiro so com
+ * chatid de telefone ("@s.whatsapp.net") ou "@lid" com sender_pn de
+ * telefone. Grupo, status, lista de transmissao, canal e chatid ausente ou
+ * desconhecido: false (a IA nunca transforma isso em turno).
+ */
+export function conversaIndividual(mensagem: Record<string, unknown>): boolean {
+  const chatid = typeof mensagem.chatid === "string" ? mensagem.chatid : "";
+  if (chatid.endsWith(SUFIXO_DE_TELEFONE)) {
+    return telefoneDeJidDeTelefone(chatid) !== null;
+  }
+  if (chatid.endsWith("@lid")) {
+    return telefoneDeJidDeTelefone(mensagem.sender_pn) !== null;
+  }
+  return false;
 }
 
 /**
@@ -920,6 +954,7 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
               chavesVistas: chavesVistasCanonicas(evento.anuncio.chavesVistas),
             }
           : null,
+        individual: evento.individual ?? true,
         instanceToken: null,
       };
     }
@@ -1160,6 +1195,7 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
       quotedWaMessageId,
       enviadaEm: instanteDoPayload(mensagem.messageTimestamp),
       anuncio: extrairAnuncio(mensagem),
+      individual: conversaIndividual(mensagem),
       instanceToken,
     };
   }

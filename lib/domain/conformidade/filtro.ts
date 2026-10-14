@@ -300,3 +300,106 @@ export async function filtrarSaida(
     verificador: chamada,
   };
 }
+
+/** A regra do preco que depende do turno (precos que a busca devolveu). */
+const REGRA_DO_PRECO_DO_TURNO = "valor_fora_do_turno";
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * A linha de ai_decision_log que o EXECUTOR le do banco (por id, clinica e
+ * job) para retomar o envio. Os campos chegam crus (unknown): a funcao
+ * confere cada um, nunca confia em quem chama.
+ */
+export type DecisaoParaRetomar = {
+  job_id: unknown;
+  desfecho: unknown;
+  aprovado: unknown;
+  compliance_blocked: unknown;
+  texto_sha256: unknown;
+};
+
+export type EntradaDaRetomada = {
+  /** O job que esta retomando (a decisao tem de ser dele). */
+  jobId: string;
+  /** ai_turno.texto */
+  texto: string;
+  /** ai_turno.texto_sha256 */
+  sha256DoTurno: string;
+  /**
+   * A decisao APROVADA do mesmo job, lida pelo executor em ai_decision_log
+   * (nunca de ai_turno). null: nao achou, e nao retoma.
+   */
+  decisao: DecisaoParaRetomar | null;
+  /** Nomes do Cadastro, mascarados como na aprovacao. */
+  nomesDoCatalogo?: readonly string[];
+};
+
+/**
+ * Retomada do envio (E3): o texto que este filtro ja aprovou num turno
+ * anterior do mesmo job, guardado em ai_turno, volta a ser TextoAprovado SEM
+ * chamar o verificador de novo, so se:
+ *  - a decisao e a APROVADA do mesmo job (desfecho 'respondeu', aprovado,
+ *    sem bloqueio de conformidade, com hash valido), lida de ai_decision_log
+ *    pelo executor. O hash de ai_turno sozinho nao vale: um texto trocado em
+ *    ai_turno com o hash recalculado na mesma linha passaria (revisao do E3,
+ *    achado 3 do executor);
+ *  - o sha256 do texto, o de ai_turno e o da decisao sao o MESMO (o gatilho
+ *    de message confere de novo);
+ *  - as regras deterministicas continuam limpas. A unica que fica de fora e
+ *    a do preco do turno (valor_fora_do_turno): os precos que a busca
+ *    devolveu naquele turno ja foram conferidos na aprovacao e o hash prende
+ *    o texto a ela. Moeda estrangeira e valor ilegivel continuam valendo.
+ * Quem chama: SO lib/jobs/responder-com-ia.ts (o teste de varredura de
+ * tests/unit/ia-whatsapp/retomar-texto-aprovado.test.ts confere; os testes
+ * geram TextoAprovado pelo proprio filtrarSaida). null: nao retoma (quem
+ * chama passa a conversa para a equipe).
+ */
+export function retomarTextoAprovado(
+  entrada: EntradaDaRetomada,
+): TextoAprovado | null {
+  if (typeof entrada !== "object" || entrada === null) {
+    return null;
+  }
+  const { jobId, texto, sha256DoTurno, decisao } = entrada;
+  if (
+    typeof jobId !== "string" ||
+    typeof texto !== "string" ||
+    typeof sha256DoTurno !== "string"
+  ) {
+    return null;
+  }
+  if (typeof decisao !== "object" || decisao === null) {
+    return null;
+  }
+  if (
+    decisao.job_id !== jobId ||
+    decisao.desfecho !== "respondeu" ||
+    decisao.aprovado !== true ||
+    decisao.compliance_blocked !== false ||
+    typeof decisao.texto_sha256 !== "string" ||
+    !SHA256_HEX.test(decisao.texto_sha256)
+  ) {
+    return null;
+  }
+  const sha256Aprovado = decisao.texto_sha256;
+  if (sha256DoTurno !== sha256Aprovado) {
+    return null;
+  }
+  if (sha256DoTexto(texto) !== sha256Aprovado) {
+    return null;
+  }
+  const regras = avaliarRegras(texto, {
+    precosDoTurno: [],
+    nomesDoCatalogo: (entrada.nomesDoCatalogo ?? []).filter(
+      (nome): nome is string => typeof nome === "string",
+    ),
+    mensagensDoPaciente: [],
+  });
+  if (
+    regras.achados.some((achado) => achado.regra !== REGRA_DO_PRECO_DO_TURNO)
+  ) {
+    return null;
+  }
+  return aprovar(texto);
+}

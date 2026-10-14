@@ -20,12 +20,25 @@ import {
 const DICA_DA_IA =
   "Chega com o agente de IA. Sem o agente atendendo, não existe número para mostrar.";
 
+// Nas duas clinicas da fase controlada (teste123 e Conduzza Teste) o agente
+// ja existe, so com os telefones da equipe (E3): "chega com o agente" deixa
+// de ser verdade, mas a medicao ainda nao existe.
+const DICA_DA_IA_NA_FASE = "Medição da IA ainda não disponível.";
+
+/** A dica do cartao "Resolvidas pela IA". */
+export function dicaDaIaNoInicio(iaNaFase: boolean): string {
+  return iaNaFase ? DICA_DA_IA_NA_FASE : DICA_DA_IA;
+}
+
 export function IndicadoresDoDia({
   resumo,
   timezone,
+  iaNaFase = false,
 }: {
   resumo: Leitura<ResumoDoDia>;
   timezone: string;
+  /** Clinica da fase controlada do agente de IA (decidido no servidor). */
+  iaNaFase?: boolean;
 }) {
   return (
     <section
@@ -55,7 +68,7 @@ export function IndicadoresDoDia({
         icone={Sparkles}
         tom="ai"
         estado="nao-medido"
-        dica={DICA_DA_IA}
+        dica={dicaDaIaNoInicio(iaNaFase)}
       />
     </section>
   );

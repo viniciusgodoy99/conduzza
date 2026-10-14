@@ -1,7 +1,15 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Bot, Phone, Plus, Power, PowerOff, Smartphone } from "lucide-react";
+import {
+  Bot,
+  CircleQuestionMark,
+  Phone,
+  Plus,
+  Power,
+  PowerOff,
+  Smartphone,
+} from "lucide-react";
 import { useId, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -21,20 +29,32 @@ import {
   ESCOLHAS_DA_IA,
   escolhaAtual,
   estadoDaIa,
+  estadoDoTelefone,
   faltasParaAEquipe,
   IA_NA_CLINICA_STATUS,
   LIGADO_DESLIGADO_STATUS,
   LIMITE_DO_ROTULO,
+  motorDaIaParadoNaAba,
   motivosDaParada,
   numeroDaIa,
+  oQueNaoDeuParaConferir,
+  porQueNaoAciona,
   quantosTelefonesLigados,
   ROTULO_DA_ESCOLHA,
+  rotuloDoNumeroEscolhido,
+  rotuloDoTelefoneLigado,
+  TELEFONE_DA_EQUIPE_STATUS,
+  telefoneComConversaAberta,
   telefoneDaEquipeSchema,
   telefoneParaExibir,
   TEXTOS_DA_IA,
+  temTelefoneQueNaoAciona,
+  textoDoTelefoneQueNaoAciona,
   textoDoTeto,
   textosDosMotivos,
+  type AcaoDaIa,
   type EscolhaDaIa,
+  type EstadoDaIa,
 } from "@/components/configuracoes/agente-de-ia";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -80,12 +100,21 @@ import type { DadosDaIa, TelefoneDaIa } from "@/lib/queries/ia-liberacao";
 // servidor (abaDaIaVisivel) e nem monta a aba nas outras clinicas.
 //
 // - "Assistente de IA nesta clinica": o estado em 3 camadas (Desligado, So
-//   simulador, Conversando com a equipe, ou "Ligado, mas parado" com os
-//   motivos), e o seletor do modo. Ligar pede confirmacao; desligar e na
+//   simulador, Conversando com a equipe, "Ligado, mas parado" com os
+//   motivos, ou "Não deu para conferir agora" quando uma leitura falhou e
+//   nenhum motivo e conhecido; achado T3), e o seletor do modo. Ligar pede confirmacao; desligar e na
 //   hora (e o lado seguro). "Conversar com a equipe" so com o numero
 //   escolhido e ao menos um telefone ligado (a acao confere de novo).
 // - "Numero do assistente": um numero por vez, so numero conectado.
-// - "Telefones da equipe": so eles conversam com o assistente.
+// - "Telefones da equipe": so eles conversam com o assistente. O formulario
+//   pede sempre a confirmacao do aviso da OpenAI (LGPD, D32); recusa numero
+//   de WhatsApp do Conduzza e telefone de paciente (so o super admin usa
+//   "Usar mesmo assim", e fica registrado). A linha do telefone que nao
+//   aciona o assistente tem estado proprio, e a do telefone com conversa
+//   aberta com a equipe avisa que o assistente comeca na proxima conversa.
+// - Ligar o WhatsApp (modo equipe, usar numero, adicionar ou ligar
+//   telefone) e so da equipe Conduzza nesta fase: o administrador ve os
+//   controles desabilitados, com a dica; desligar continua com ele.
 // - "Interruptor geral": botao so para o super admin; os demais veem o
 //   estado e quem liga.
 // - "Teto de gasto": so leitura nesta fase.
@@ -103,6 +132,10 @@ export type DadosDaAbaDaIa = {
   /** Administrador da clinica ou super admin. */
   podeEditar: boolean;
   superAdmin: boolean;
+  /** Relogio do servidor na carga (epoch ms): o horario do assistente. */
+  agoraMs: number;
+  /** Fuso da clinica (CLAUDE.md 3.6). */
+  fuso: string;
 };
 
 type Resultado = { tom: "alert" | "success"; texto: string };
@@ -166,6 +199,8 @@ export function AgenteDeIaTab({
   ambienteLigado,
   podeEditar,
   superAdmin,
+  agoraMs,
+  fuso,
 }: DadosDaAbaDaIa & { dados: DadosDaIa }) {
   const ids = useId();
   const [pendente, startTransition] = useTransition();
@@ -177,10 +212,11 @@ export function AgenteDeIaTab({
   > | null>(null);
   const [confirmandoInterruptor, setConfirmandoInterruptor] = useState(false);
 
-  const contexto = { dados, numeros, ambienteLigado };
+  const contexto = { dados, numeros, ambienteLigado, agoraMs, fuso };
   const escolha = escolhaAtual(dados.liberacao);
   const estado = estadoDaIa(contexto);
   const motivos = motivosDaParada(contexto);
+  const naoConferido = oQueNaoDeuParaConferir(contexto);
   const faltas = faltasParaAEquipe(dados, numeros);
   const escolhido = numeroDaIa(dados, numeros);
   const telefonesLigados = quantosTelefonesLigados(dados);
@@ -193,12 +229,17 @@ export function AgenteDeIaTab({
   const avisosDoLigar = avisosAoLigar({
     ambienteLigado,
     interruptorLigado: dados.interruptorLigado,
+    versaoPublicada: dados.situacao.versaoPublicada,
+    motorParado: motorDaIaParadoNaAba(dados),
+    temTelefoneInvalido: temTelefoneQueNaoAciona(dados),
+    modo: confirmando ?? "equipe",
   });
 
   // sempre: roda no fim, deu certo ou nao (fechar o dialogo). seDerCerto:
   // so quando a acao deu certo (limpar o formulario do telefone).
   // sePedirConfirmacao: a acao recusou pedindo a confirmacao explicita
-  // (telefone que ja e de um contato da clinica).
+  // (telefone que ja e de um contato da clinica). sePedirForcar: a acao
+  // recusou telefone de paciente e quem pediu e o super admin (D43).
   const executar = (
     qual: string,
     tarefa: () => Promise<ResultadoDaIa>,
@@ -207,6 +248,7 @@ export function AgenteDeIaTab({
       sempre?: () => void;
       seDerCerto?: () => void;
       sePedirConfirmacao?: () => void;
+      sePedirForcar?: () => void;
     } = {},
   ) => {
     setResultado(null);
@@ -217,8 +259,13 @@ export function AgenteDeIaTab({
         depois.sempre?.();
         if (r.ok) {
           depois.seDerCerto?.();
-        } else if (r.pedeConfirmacao) {
-          depois.sePedirConfirmacao?.();
+        } else {
+          if (r.pedeConfirmacao) {
+            depois.sePedirConfirmacao?.();
+          }
+          if (r.pedeForcar) {
+            depois.sePedirForcar?.();
+          }
         }
         setResultado(anunciar(r, sucesso));
       } catch {
@@ -266,8 +313,9 @@ export function AgenteDeIaTab({
     : null;
 
   // O segmentado: sem permissao, tudo preso (e a dica no grupo inteiro);
-  // "Conversar com a equipe" preso sem numero ou sem telefone, salvo se ja e
-  // a escolha gravada (a opcao ligada nao some debaixo de quem a ve).
+  // "Conversar com a equipe" preso para quem nao e a equipe Conduzza (nesta
+  // fase) e sem numero ou sem telefone, salvo se ja e a escolha gravada (a
+  // opcao ligada nao some debaixo de quem a ve; desligar segue livre).
   const seletor = (
     <SegmentedControl<EscolhaDaIa>
       ariaLabel="Como o assistente funciona nesta clínica"
@@ -282,7 +330,7 @@ export function AgenteDeIaTab({
         disabled:
           !podeEditar ||
           pendente ||
-          (valor === "equipe" && escolha !== "equipe" && faltas.length > 0),
+          (valor === "equipe" && escolha !== "equipe" && dicas.equipe !== null),
       }))}
     />
   );
@@ -331,6 +379,19 @@ export function AgenteDeIaTab({
                   ))}
                 </ul>
               </Aviso>
+            ) : estado === "nao_conferido" ? (
+              <Aviso
+                tom="neutral"
+                icone={CircleQuestionMark}
+                role="note"
+                titulo={TEXTOS_DA_IA.naoConferidoTitulo}
+              >
+                <ul className="grid list-disc gap-1 pl-4">
+                  {naoConferido.map((qual) => (
+                    <li key={qual}>{TEXTOS_DA_IA.naoConferido[qual]}</li>
+                  ))}
+                </ul>
+              </Aviso>
             ) : null}
 
             <div className="flex min-h-10 flex-wrap items-center gap-3">
@@ -370,7 +431,8 @@ export function AgenteDeIaTab({
         <CartaoDoNumero
           numeros={numeros}
           escolhidoId={escolhido?.id ?? null}
-          podeEditar={podeEditar}
+          estadoDoAssistente={estado}
+          dicas={dicas}
           pendente={pendente}
           ocupado={ocupado}
           aoUsar={(numero, usar) =>
@@ -389,8 +451,10 @@ export function AgenteDeIaTab({
         />
 
         <CartaoDosTelefones
-          telefones={dados.telefones}
-          podeEditar={podeEditar}
+          dados={dados}
+          estadoDoAssistente={estado}
+          superAdmin={superAdmin}
+          dicas={dicas}
           pendente={pendente}
           ocupado={ocupado}
           aoAlternar={(telefone, ligado) =>
@@ -404,12 +468,16 @@ export function AgenteDeIaTab({
               ligado ? "Telefone ligado." : "Telefone desligado.",
             )
           }
-          aoAdicionar={(valores, { limpar, pedirConfirmacao }) =>
+          aoAdicionar={(valores, { limpar, pedirConfirmacao, pedirForcar }) =>
             executar(
               "telefone-novo",
               () => adicionarTelefoneDaIaAction(valores),
               "Telefone da equipe adicionado.",
-              { seDerCerto: limpar, sePedirConfirmacao: pedirConfirmacao },
+              {
+                seDerCerto: limpar,
+                sePedirConfirmacao: pedirConfirmacao,
+                sePedirForcar: pedirForcar,
+              },
             )
           }
         />
@@ -614,14 +682,18 @@ export function AgenteDeIaTab({
 function CartaoDoNumero({
   numeros,
   escolhidoId,
-  podeEditar,
+  estadoDoAssistente,
+  dicas,
   pendente,
   ocupado,
   aoUsar,
 }: {
   numeros: NumeroDoWhatsapp[] | null;
   escolhidoId: string | null;
-  podeEditar: boolean;
+  /** "Em uso pelo assistente" so no estado equipe (achado T4). */
+  estadoDoAssistente: EstadoDaIa;
+  /** escolha: parar de usar (so permissao); numero: usar (equipe Conduzza). */
+  dicas: Record<AcaoDaIa, string | null>;
   pendente: boolean;
   ocupado: (qual: string) => boolean;
   aoUsar: (numero: NumeroDoWhatsapp, usar: boolean) => void;
@@ -665,11 +737,12 @@ function CartaoDoNumero({
               const emUso = numero.id === escolhidoId;
               const conectado = numero.status === "conectado";
               const telefone = telefoneFormatado(numero.displayPhone);
-              const dica = !podeEditar
-                ? TEXTOS_DA_IA.semPermissao
-                : !emUso && !conectado
-                  ? TEXTOS_DA_IA.conecteAntes
-                  : null;
+              // Parar de usar e desligar: so a permissao. Usar e ligar: so a
+              // equipe Conduzza nesta fase, e so numero conectado.
+              const dica = emUso
+                ? dicas.escolha
+                : (dicas.numero ??
+                  (!conectado ? TEXTOS_DA_IA.conecteAntes : null));
               const botao = (
                 <Button
                   variant="outline"
@@ -706,7 +779,7 @@ function CartaoDoNumero({
                           <StatusChip
                             size="sm"
                             definition={LIGADO_DESLIGADO_STATUS.ligado}
-                            label="Em uso pelo assistente"
+                            label={rotuloDoNumeroEscolhido(estadoDoAssistente)}
                           />
                         ) : null}
                       </span>
@@ -729,42 +802,67 @@ function CartaoDoNumero({
 }
 
 function CartaoDosTelefones({
-  telefones,
-  podeEditar,
+  dados,
+  estadoDoAssistente,
+  superAdmin,
+  dicas,
   pendente,
   ocupado,
   aoAlternar,
   aoAdicionar,
 }: {
-  telefones: readonly TelefoneDaIa[];
-  podeEditar: boolean;
+  dados: DadosDaIa;
+  /** "Conversa com o assistente" so no estado equipe (achado T4). */
+  estadoDoAssistente: EstadoDaIa;
+  superAdmin: boolean;
+  /** escolha: desligar (so permissao); telefone: adicionar e ligar. */
+  dicas: Record<AcaoDaIa, string | null>;
   pendente: boolean;
   ocupado: (qual: string) => boolean;
   aoAlternar: (telefone: TelefoneDaIa, ligado: boolean) => void;
   aoAdicionar: (
     valores: TelefoneValidado,
-    retorno: { limpar: () => void; pedirConfirmacao: () => void },
+    retorno: {
+      limpar: () => void;
+      pedirConfirmacao: () => void;
+      pedirForcar: () => void;
+    },
   ) => void;
 }) {
   const tituloId = useId();
-  const vazio = { rotulo: "", telefone: "", confirmarContato: false };
+  const telefones = dados.telefones;
+  // Sem confirmarAvisoDaOpenai: a caixa nasce desmarcada (o schema so aceita
+  // true, e o formulario mostra a mensagem quando falta).
+  const vazio = {
+    rotulo: "",
+    telefone: "",
+    confirmarContato: false,
+    forcarContatoDePaciente: false,
+  };
   const form = useForm<ValoresDoTelefone, unknown, TelefoneValidado>({
     resolver: zodResolver(telefoneDaEquipeSchema),
     defaultValues: vazio,
   });
-  const dica = podeEditar ? null : TEXTOS_DA_IA.semPermissao;
+  // Adicionar e ligar: so a equipe Conduzza nesta fase (dicas.telefone).
+  const dica = dicas.telefone;
+  const podeAdicionar = dica === null;
   // O telefone (como digitado) para o qual a acao pediu a confirmacao: o
   // campo de confirmacao so aparece enquanto o telefone e esse. Trocar o
   // telefone desmarca (a confirmacao vale para um telefone so).
   const [confirmacaoPara, setConfirmacaoPara] = useState<string | null>(null);
+  // O mesmo para o "Usar mesmo assim" (so o super admin, depois da recusa
+  // de telefone de paciente).
+  const [forcarPara, setForcarPara] = useState<string | null>(null);
   const telefoneDigitado = form.watch("telefone");
   const pedindoConfirmacao =
     confirmacaoPara !== null && confirmacaoPara === telefoneDigitado;
+  const pedindoForcar =
+    superAdmin && forcarPara !== null && forcarPara === telefoneDigitado;
 
   const botaoAdicionar = (
     <Button
       type="submit"
-      disabled={!podeEditar || pendente}
+      disabled={!podeAdicionar || pendente}
       aria-busy={ocupado("telefone-novo") || undefined}
     >
       <Plus aria-hidden />
@@ -804,15 +902,22 @@ function CartaoDosTelefones({
                     // Marcado escondido (de outro telefone) nao vale.
                     confirmarContato:
                       pedindoConfirmacao && valores.confirmarContato === true,
+                    forcarContatoDePaciente:
+                      pedindoForcar && valores.forcarContatoDePaciente === true,
                   },
                   {
                     limpar: () => {
                       form.reset(vazio);
                       setConfirmacaoPara(null);
+                      setForcarPara(null);
                     },
                     pedirConfirmacao: () => {
                       form.setValue("confirmarContato", false);
                       setConfirmacaoPara(digitado);
+                    },
+                    pedirForcar: () => {
+                      form.setValue("forcarContatoDePaciente", false);
+                      setForcarPara(digitado);
                     },
                   },
                 );
@@ -831,7 +936,7 @@ function CartaoDosTelefones({
                       maxLength={LIMITE_DO_ROTULO}
                       placeholder="Por exemplo: Vinicius, recepção"
                       autoComplete="off"
-                      disabled={!podeEditar}
+                      disabled={!podeAdicionar}
                     />
                   </FormControl>
                   <FormMessage />
@@ -850,12 +955,13 @@ function CartaoDosTelefones({
                       onChange={(evento) => {
                         field.onChange(evento);
                         form.setValue("confirmarContato", false);
+                        form.setValue("forcarContatoDePaciente", false);
                       }}
                       type="tel"
                       inputMode="tel"
                       placeholder="(84) 99999-0000"
                       autoComplete="off"
-                      disabled={!podeEditar}
+                      disabled={!podeAdicionar}
                     />
                   </FormControl>
                   <FormMessage />
@@ -863,6 +969,58 @@ function CartaoDosTelefones({
               )}
             />
             <div className="sm:pt-[22px]">{comDica(botaoAdicionar, dica)}</div>
+            {/* LGPD (D32): sempre presente, nunca marcada sozinha. */}
+            <FormField
+              control={form.control}
+              name="confirmarAvisoDaOpenai"
+              render={({ field }) => (
+                <FormItem className="grid gap-1 sm:col-span-3">
+                  <div className="flex min-h-10 items-center gap-3">
+                    <FormControl>
+                      <Checkbox
+                        checked={field.value === true}
+                        onCheckedChange={(valor) =>
+                          field.onChange(valor === true ? true : undefined)
+                        }
+                        onBlur={field.onBlur}
+                        disabled={!podeAdicionar || pendente}
+                      />
+                    </FormControl>
+                    <FormLabel className="font-normal">
+                      {TEXTOS_DA_IA.confirmarAvisoDaOpenai}
+                    </FormLabel>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            {/* So o super admin, depois da recusa de telefone de paciente
+                (o motivo ja esta no aviso do topo e no toast). */}
+            {pedindoForcar ? (
+              <div className="grid gap-2 sm:col-span-3">
+                <FormField
+                  control={form.control}
+                  name="forcarContatoDePaciente"
+                  render={({ field }) => (
+                    <FormItem className="flex min-h-10 items-center gap-3">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value === true}
+                          onCheckedChange={(valor) =>
+                            field.onChange(valor === true)
+                          }
+                          onBlur={field.onBlur}
+                          disabled={pendente}
+                        />
+                      </FormControl>
+                      <FormLabel className="font-normal">
+                        {TEXTOS_DA_IA.forcarContatoDePaciente}
+                      </FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </div>
+            ) : null}
             {pedindoConfirmacao ? (
               <FormField
                 control={form.control}
@@ -876,7 +1034,7 @@ function CartaoDosTelefones({
                           field.onChange(valor === true)
                         }
                         onBlur={field.onBlur}
-                        disabled={!podeEditar || pendente}
+                        disabled={!podeAdicionar || pendente}
                       />
                     </FormControl>
                     <FormLabel className="font-normal">
@@ -900,10 +1058,28 @@ function CartaoDosTelefones({
           <ul className="grid gap-2" aria-label="Telefones cadastrados">
             {telefonesNaOrdem(telefones).map((telefone) => {
               const qual = `telefone-${telefone.id}`;
+              const estado = estadoDoTelefone(dados, telefone.id);
+              const invalido = estado === "invalido";
+              const naoAciona = porQueNaoAciona(dados, telefone.id);
+              const textoDeQueNaoAciona =
+                naoAciona === null
+                  ? null
+                  : textoDoTelefoneQueNaoAciona(naoAciona);
+              const conversaAberta =
+                telefone.ativo &&
+                !invalido &&
+                telefoneComConversaAberta(dados, telefone.id);
+              // Desligar: so a permissao (nunca recusado). Ligar de novo: so
+              // a equipe Conduzza, e nunca o telefone que nao aciona o
+              // assistente (o invalido o banco recusa; o do contato sem
+              // autorizacao ligaria sem nunca conversar).
+              const dicaDaLinha = telefone.ativo
+                ? dicas.escolha
+                : (dicas.telefone ?? textoDeQueNaoAciona);
               const botao = (
                 <Button
                   variant={telefone.ativo ? "ghost" : "outline"}
-                  disabled={!podeEditar || pendente}
+                  disabled={dicaDaLinha !== null || pendente}
                   aria-busy={ocupado(qual) || undefined}
                   onClick={() => aoAlternar(telefone, !telefone.ativo)}
                 >
@@ -918,35 +1094,43 @@ function CartaoDosTelefones({
                 <li
                   key={telefone.id}
                   className={
-                    telefone.ativo
-                      ? "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3.5 py-3"
-                      : "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-3.5 py-3"
+                    telefone.ativo && !invalido
+                      ? "grid gap-2 rounded-lg border border-border px-3.5 py-3"
+                      : "grid gap-2 rounded-lg border border-border bg-surface-2 px-3.5 py-3"
                   }
                 >
-                  <div className="grid min-w-0 gap-1">
-                    <span className="font-semibold break-words text-text-strong">
-                      {telefone.rotulo ?? "Sem nome"}
-                    </span>
-                    <span className="flex flex-wrap items-center gap-2 text-[13px] text-text-secondary">
-                      <span className="cz-num">
-                        {telefoneParaExibir(telefone.telefone)}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="grid min-w-0 gap-1">
+                      <span className="font-semibold break-words text-text-strong">
+                        {telefone.rotulo ?? "Sem nome"}
                       </span>
-                      <StatusChip
-                        size="sm"
-                        definition={
-                          LIGADO_DESLIGADO_STATUS[
-                            telefone.ativo ? "ligado" : "desligado"
-                          ]
-                        }
-                        label={
-                          telefone.ativo
-                            ? "Conversa com o assistente"
-                            : "Desligado"
-                        }
-                      />
-                    </span>
+                      <span className="flex flex-wrap items-center gap-2 text-[13px] text-text-secondary">
+                        <span className="cz-num">
+                          {telefoneParaExibir(telefone.telefone)}
+                        </span>
+                        <StatusChip
+                          size="sm"
+                          definition={TELEFONE_DA_EQUIPE_STATUS[estado]}
+                          label={
+                            estado === "ligado"
+                              ? rotuloDoTelefoneLigado(estadoDoAssistente)
+                              : undefined
+                          }
+                        />
+                      </span>
+                    </div>
+                    {comDica(botao, dicaDaLinha)}
                   </div>
-                  {comDica(botao, dica)}
+                  {textoDeQueNaoAciona !== null ? (
+                    <Aviso tom="warning" role="note">
+                      {textoDeQueNaoAciona}
+                    </Aviso>
+                  ) : null}
+                  {conversaAberta ? (
+                    <Aviso tom="info" role="note">
+                      {TEXTOS_DA_IA.conversaAbertaNoNumero}
+                    </Aviso>
+                  ) : null}
                 </li>
               );
             })}

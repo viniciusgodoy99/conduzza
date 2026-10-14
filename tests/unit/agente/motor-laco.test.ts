@@ -250,6 +250,33 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("executarTurnoDoAgente: resposta", () => {
+  // Conferencia da revisao do E3 (executor N2): a marca do nome do contato
+  // ("Fulano", historico do WhatsApp) nunca chega ao telefone como vocativo.
+  it("a marca do nome some da resposta antes do filtro, e o prompt avisa o modelo", async () => {
+    expect(TEXTO_FIXO_DO_AGENTE).toContain(
+      "nunca chame a pessoa de Fulano nem repita essa palavra",
+    );
+    const { cliente } = clienteComRoteiro([
+      final("Olá, Fulano! Temos sim, na rua ao lado."),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, config: config({ saudacao: null }) }),
+    );
+    expect(r.tipo).toBe("resposta");
+    expect(r.resposta).toBe("Olá! Temos sim, na rua ao lado.");
+    expect(aprovador).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(aprovador.mock.calls[0])).not.toContain("Fulano");
+  });
+
+  it("resposta que era só a marca do nome vira falha fechada, sem chamar o verificador", async () => {
+    const { cliente } = clienteComRoteiro([final("Fulana!")]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, config: config({ saudacao: null }) }),
+    );
+    expect(r.desfecho).toEqual({ tipo: "falhou", motivo: "saida_invalida" });
+    expect(aprovador).not.toHaveBeenCalled();
+  });
+
   it("responde com o texto aprovado e os parâmetros fixos da chamada", async () => {
     const { cliente, chamadas } = clienteComRoteiro([
       final("Temos sim, na rua ao lado.", { perguntas: ["b1", "b9"] }),

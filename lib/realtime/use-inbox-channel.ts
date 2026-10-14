@@ -123,6 +123,38 @@ export function chavesDaAgendadaNoEvento(params: {
   return chaves;
 }
 
+/**
+ * Chave da elegibilidade do "Devolver para a IA", por conversa (E3). Mora
+ * aqui, e nao no componente, para o canal nao importar a tela (nem as
+ * Server Actions que ela chama).
+ */
+export const devolverKeys = {
+  daConversa: (conversationId: string) =>
+    ["devolver-para-ia", conversationId] as const,
+};
+
+/**
+ * O que um evento de message ou conversation de UMA conversa pede para reler
+ * no fio (E3): as mensagens (so no evento de message), as decisoes da IA (o
+ * bloqueio de conformidade e gravado logo antes do evento e da frase, e o
+ * cartao tem de aparecer para quem esta com o fio aberto) e a elegibilidade
+ * do Devolver (a liberacao e a resposta ao paciente mudam o "pode").
+ * Invalidar so refaz consulta ativa: conversa fechada nao custa nada.
+ */
+export function chavesDoFioNoEvento(
+  conversationId: string,
+  origem: "message" | "conversation",
+): QueryKey[] {
+  const chaves: QueryKey[] = [
+    conversationKeys.decisions(conversationId),
+    devolverKeys.daConversa(conversationId),
+  ];
+  if (origem === "message") {
+    chaves.unshift(conversationKeys.messages(conversationId));
+  }
+  return chaves;
+}
+
 export function useInboxChannel(
   supabase: SupabaseClient,
   clinicId: string,
@@ -299,6 +331,13 @@ export function useInboxChannel(
           const row = payload.new as ConversationRow | null;
           if (row?.id) {
             aplicarConversa(row);
+            // A IA tirou ou devolveu a conversa: as decisoes e o Devolver.
+            for (const queryKey of chavesDoFioNoEvento(
+              row.id,
+              "conversation",
+            )) {
+              void queryClient.invalidateQueries({ queryKey });
+            }
             // A reconciliacao da agendada atribui a conversa a quem assina
             // na mesma transacao em que liga a mensagem a agendada.
             avisarAgendadas(row.id, row.contact_id ?? null);
@@ -320,9 +359,13 @@ export function useInboxChannel(
             payload.new as { conversation_id?: string } | null
           )?.conversation_id;
           if (conversationId) {
-            void queryClient.invalidateQueries({
-              queryKey: conversationKeys.messages(conversationId),
-            });
+            // O fio, o registro da IA (bloqueio) e o Devolver da conversa.
+            for (const queryKey of chavesDoFioNoEvento(
+              conversationId,
+              "message",
+            )) {
+              void queryClient.invalidateQueries({ queryKey });
+            }
             // A agendada que saiu (ou nao saiu), a entrada do paciente (o
             // aviso "escreveu depois") e a autoria da bolha nova.
             avisarAgendadas(conversationId);
@@ -376,6 +419,8 @@ export function useInboxChannel(
         });
         invalidarTotalDeResolvidas();
         void queryClient.invalidateQueries({ queryKey: ["messages"] });
+        void queryClient.invalidateQueries({ queryKey: ["decisions"] });
+        void queryClient.invalidateQueries({ queryKey: ["devolver-para-ia"] });
         void queryClient.invalidateQueries({ queryKey: numerosKey });
         // As agendadas de qualquer contato aberto nesta aba, e a autoria
         // das bolhas do fio.

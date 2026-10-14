@@ -40,6 +40,18 @@ const RECUSAS_ANTES_DO_PROVEDOR: ReadonlySet<string> = new Set([
   "conta_divergente",
   "contato_inexistente",
   "registro_falhou",
+  // Portas da IA (E3): a guarda ia_pode_enviar_agora recusou (o job perdeu a
+  // posse, a conversa saiu da IA, a janela ou a liberacao nao conferem), a
+  // linha do job tem outro conteudo, ou o gatilho de message recusou a
+  // linha (sem decisao aprovada, fora da liberacao, frase diferente da
+  // fixa). Em todos o provedor nao foi chamado.
+  "sem_posse",
+  "fora_da_ia",
+  "janela_invalida",
+  "ia_nao_liberada",
+  "conteudo_divergente",
+  "ia_sem_aprovacao",
+  "frase_divergente",
 ]);
 
 /**

@@ -24,6 +24,17 @@ let contatoOutraClinica = "";
 let consultaJoao = "";
 let consultaAna = "";
 
+// As consultas do arquivo eram de 06/10/2026 (uma terca) e ficaram no
+// passado: "falta antes do horario" depende de a consulta da Ana ser futura.
+// A proxima terca a pelo menos 7 dias, em UTC (mesmo dia da semana de antes).
+const TERCA_FUTURA = (() => {
+  const dia = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  while (dia.getUTCDay() !== 2) {
+    dia.setUTCDate(dia.getUTCDate() + 1);
+  }
+  return dia.toISOString().slice(0, 10);
+})();
+
 async function logado(email: string) {
   const cliente = anonClient();
   const { error } = await cliente.auth.signInWithPassword({
@@ -151,16 +162,16 @@ beforeAll(async () => {
         contact_id: contato,
         professional_id: profJoao,
         service_link_id: vinculoJoao,
-        starts_at: "2026-10-06T12:00:00Z",
-        ends_at: "2026-10-06T12:30:00Z",
+        starts_at: `${TERCA_FUTURA}T12:00:00Z`,
+        ends_at: `${TERCA_FUTURA}T12:30:00Z`,
       },
       {
         clinic_id: clinicaA,
         contact_id: contato,
         professional_id: profAna,
         service_link_id: vinculoAna,
-        starts_at: "2026-10-06T12:00:00Z",
-        ends_at: "2026-10-06T12:30:00Z",
+        starts_at: `${TERCA_FUTURA}T12:00:00Z`,
+        ends_at: `${TERCA_FUTURA}T12:30:00Z`,
       },
     ])
     .select("id, professional_id")
@@ -210,8 +221,8 @@ describe("papel profissional: só a própria agenda", () => {
       contact_id: contato,
       professional_id: profAna,
       service_link_id: vinculoAna,
-      starts_at: "2026-10-06T15:00:00Z",
-      ends_at: "2026-10-06T15:30:00Z",
+      starts_at: `${TERCA_FUTURA}T15:00:00Z`,
+      ends_at: `${TERCA_FUTURA}T15:30:00Z`,
     });
     expect(error?.code).toBe(RLS_VIOLATION);
   });
@@ -259,8 +270,8 @@ describe("recepção e isolamento entre clínicas", () => {
       contact_id: contato,
       professional_id: profJoao,
       service_link_id: vinculoJoao,
-      starts_at: "2026-10-06T16:00:00Z",
-      ends_at: "2026-10-06T16:30:00Z",
+      starts_at: `${TERCA_FUTURA}T16:00:00Z`,
+      ends_at: `${TERCA_FUTURA}T16:30:00Z`,
     });
     expect(error).toBeNull();
   });
@@ -272,8 +283,8 @@ describe("recepção e isolamento entre clínicas", () => {
         clinic_id: clinicaA,
         professional_id: profJoao,
         contact_id: contato,
-        starts_at: "2026-10-06T17:00:00Z",
-        ends_at: "2026-10-06T17:30:00Z",
+        starts_at: `${TERCA_FUTURA}T17:00:00Z`,
+        ends_at: `${TERCA_FUTURA}T17:30:00Z`,
         expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
       })
       .throwOnError();
@@ -382,7 +393,7 @@ describe("faltas: o banco conta e o banco trava", () => {
   it("falta antes do horário é recusada pelo banco, mesmo direto pela API", async () => {
     const recepcao = await logado(`agr-recep-${sufixo}@teste.dev`);
     const antes = await contadorDe(contato);
-    // consultaAna e de 06/10/2026: futura.
+    // consultaAna e da TERCA_FUTURA: sempre futura.
     const { error } = await recepcao
       .from("appointment")
       .update({ status: "faltou" })

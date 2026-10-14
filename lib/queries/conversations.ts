@@ -153,12 +153,17 @@ export type MessageItem = {
   // (lib/queries/agendadas-do-fio.ts), que falha sozinha sem derrubar o fio.
 };
 
+/**
+ * Um bloqueio da conformidade no fio. Sem o rascunho: desde o E3 a sessao
+ * nao le ai_decision_log.blocked_draft (grant por coluna) e o texto barrado
+ * mora em ai_rascunho_bloqueado, que so o super admin le, pela acao
+ * lerRascunhoBloqueadoAction, ao abrir o dialogo.
+ */
 export type ComplianceDecision = {
   id: string;
   message_id: string | null;
   compliance_rule: string | null;
   escalation_reason: string | null;
-  blocked_draft: string | null;
   created_at: string;
 };
 
@@ -558,11 +563,11 @@ export async function fetchComplianceDecisions(
   supabase: SupabaseClient,
   conversationId: string,
 ): Promise<ComplianceDecision[]> {
+  // blocked_draft fica de fora: com o grant por coluna do E3, pedir a coluna
+  // daria 42501 e a lista inteira falharia.
   const { data, error } = await supabase
     .from("ai_decision_log")
-    .select(
-      "id, message_id, compliance_rule, escalation_reason, blocked_draft, created_at",
-    )
+    .select("id, message_id, compliance_rule, escalation_reason, created_at")
     .eq("conversation_id", conversationId)
     .eq("compliance_blocked", true);
   if (error) {

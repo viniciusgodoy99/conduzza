@@ -8,24 +8,25 @@ Ligado em 02/09/2026. **Não existe mais processo de worker em servidor nenhum.*
 
 ## O desenho
 
-Três entradas no `pg_cron`, dentro do próprio Supabase:
+Três entradas no `pg_cron`, dentro do próprio Supabase, mais a quarta, `motor-ia`, que só existe depois de ligar a IA no WhatsApp (E3; ver "Resposta da IA no WhatsApp (motor-ia)", abaixo):
 
-| Entrada            | Cadência                          | O que faz                                                                               | Onde executa                  |
-| ------------------ | --------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------- |
+| Entrada            | Cadência                          | O que faz                                                                                                                                                                           | Onde executa                  |
+| ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
 | `motor-manutencao` | 60 segundos                       | limpa reservas vencidas, fecha execuções órfãs, expira ofertas, planeja réguas, higiene, enfileira a leitura diária do investimento da Meta, planeja e fecha as mensagens agendadas | **dentro do banco**, SQL puro |
-| `motor-fila`       | 20 segundos                       | chama a rota na Vercel, que processa a fila de tarefas                                  | Vercel, região de São Paulo   |
-| `poda-do-cron`     | 1 vez por dia, 03:17 de Fortaleza | apaga de `cron.job_run_details` as execuções com mais de 7 dias                         | **dentro do banco**, SQL puro |
+| `motor-fila`       | 20 segundos                       | chama a rota na Vercel, que processa a fila de tarefas                                                                                                                              | Vercel, região de São Paulo   |
+| `poda-do-cron`     | 1 vez por dia, 03:17 de Fortaleza | apaga de `cron.job_run_details` as execuções com mais de 7 dias                                                                                                                     | **dentro do banco**, SQL puro |
+| `motor-ia` (E3)    | 10 segundos, com guarda           | só quando há resposta da IA devida de clínica da lista, chama a rota `/api/webhooks/motor-ia`, que roda o turno da IA                                                               | Vercel, região de São Paulo   |
 
 A manutenção não depende da rede: é só chamada de função. Só a fila precisa de Node, porque fala com o uazapi, com o Storage e com a Meta.
 
 A rota da fila faz **quatro** reivindicações em paralelo a cada passagem, cada uma com seus tipos de tarefa:
 
-| Trilho | Tipos | Raias por passagem |
-| --- | --- | --- |
-| Envio | `enviar_mensagem_ativa`, `executar_passo_de_regua`, `enviar_mensagem_agendada` | 8 (`MOTOR_MAX_CLINICAS`) |
-| Mídia | `baixar_midia` | 2 |
-| Integração | `enviar_conversao_meta`, `oferecer_lista_espera` | 2 |
-| Leituras da Meta | `sincronizar_gasto_meta`, `resolver_anuncio_meta` | 2 |
+| Trilho           | Tipos                                                                          | Raias por passagem       |
+| ---------------- | ------------------------------------------------------------------------------ | ------------------------ |
+| Envio            | `enviar_mensagem_ativa`, `executar_passo_de_regua`, `enviar_mensagem_agendada` | 8 (`MOTOR_MAX_CLINICAS`) |
+| Mídia            | `baixar_midia`                                                                 | 2                        |
+| Integração       | `enviar_conversao_meta`, `oferecer_lista_espera`                               | 2                        |
+| Leituras da Meta | `sincronizar_gasto_meta`, `resolver_anuncio_meta`                              | 2                        |
 
 O trilho das leituras da Meta é explicado em "Leitura do investimento da Meta" e em "Consulta dos anúncios da Meta", abaixo. A mensagem agendada, em "Mensagem agendada".
 
@@ -53,7 +54,7 @@ from net._http_response order by created desc limit 5;
 select saude_do_motor();
 ```
 
-O que esperar de `saude_do_motor()`: `fila` batida há menos de 20 segundos, `planner` há menos de 60, `atrasados` em zero. A tolerância da faixa na tela é de 3 minutos.
+O que esperar de `saude_do_motor()`: `fila` batida há menos de 20 segundos, `planner` há menos de 60, `atrasados` em zero. A tolerância da faixa na tela é de 3 minutos. Depois da M1 do E3, a saúde ganha a chave `ia` (ver "Resposta da IA no WhatsApp"): com a IA desligada, `vigiado` é falso e `alerta` também.
 
 Pela interface: a faixa "as mensagens automáticas estão paradas" **não** deve aparecer.
 
@@ -71,15 +72,16 @@ Ele precisa ser externo. Um alerta disparado de dentro do banco sairia pelo `pg_
 
 `GET /api/webhooks/saude` chama `saude_do_motor()` com a service role e aplica a regra `alertasDoMotor()` de `lib/domain/motor.ts`:
 
-| Resposta | Quando | O que fazer |
-| --- | --- | --- |
-| **200** | as duas batidas em dia, nada atrasado, planner sem erro | nada |
-| **503** com `fila_parada` | a rota da fila não bate ponto há mais de 3 minutos | a corrente cron → Vercel quebrou: "A faixa apareceu na tela", abaixo |
-| **503** com `planner_parado` | `motor-manutencao` não roda há mais de 3 minutos | `select * from cron.job` e `cron.job_run_details` |
-| **503** com `fila_atrasada` | há tarefa pendente há mais de 5 minutos (`atrasados > 0`) | "A faixa não apareceu, mas nada sai", abaixo |
-| **503** com `planner_com_erro` | a última passagem da manutenção falhou em alguma rotina | o código está em `planner_erro` (rotina e SQLSTATE) |
-| **503** com `saude_ilegivel` | a rota não conseguiu ler a saúde no banco | banco fora do ar ou service role errada na Vercel |
-| **401** | segredo errado, ou `MOTOR_SAUDE_SECRET` ausente na Vercel | o monitor está mal configurado; também precisa alertar |
+| Resposta                       | Quando                                                                                                                              | O que fazer                                                          |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **200**                        | as duas batidas em dia, nada atrasado, planner sem erro                                                                             | nada                                                                 |
+| **503** com `fila_parada`      | a rota da fila não bate ponto há mais de 3 minutos                                                                                  | a corrente cron → Vercel quebrou: "A faixa apareceu na tela", abaixo |
+| **503** com `planner_parado`   | `motor-manutencao` não roda há mais de 3 minutos                                                                                    | `select * from cron.job` e `cron.job_run_details`                    |
+| **503** com `fila_atrasada`    | há tarefa pendente há mais de 5 minutos (`atrasados > 0`)                                                                           | "A faixa não apareceu, mas nada sai", abaixo                         |
+| **503** com `planner_com_erro` | a última passagem da manutenção falhou em alguma rotina                                                                             | o código está em `planner_erro` (rotina e SQLSTATE)                  |
+| **503** com `ia_parada` (E3)   | a IA está ligada para a equipe (`ia.vigiado`) e há resposta da IA devida há mais de 60 s, ou a entrada `motor-ia` não está agendada | "Resposta da IA no WhatsApp", abaixo                                 |
+| **503** com `saude_ilegivel`   | a rota não conseguiu ler a saúde no banco                                                                                           | banco fora do ar ou service role errada na Vercel                    |
+| **401**                        | segredo errado, ou `MOTOR_SAUDE_SECRET` ausente na Vercel                                                                           | o monitor está mal configurado; também precisa alertar               |
 
 O corpo é curto e não tem dado de paciente: `ok`, `alertas`, `fila_ha_s` e `planner_ha_s` (segundos desde cada batida), `atrasados` e `planner_erro`.
 
@@ -187,15 +189,15 @@ Desde a Fase 4 (03/10/2026) a fila lê, uma vez por dia, quanto a clínica inves
 
 **Desfechos.**
 
-| O que aconteceu | Tarefa | `meta_gasto_leitura` |
-| --- | --- | --- |
-| Leu e gravou | `concluido` | `situacao = 'funcionando'`, `sincronizado_em`, `lido_desde` e `lido_ate` |
-| Configuração removida depois de enfileirar | `concluido`, sem chamar a Meta | não muda |
-| Meta recusou o token, a permissão ou a conta (`token_invalido`, `sem_permissao`, `conta_sem_acesso`, `exige_prova_do_app`) | `falhou` na hora | `com_problema` com o problema: **pausa** o diário até o teste dar certo, um token novo ser salvo ou a conta mudar |
-| Pedido recusado pela Meta (`parametro_recusado`, `versao_descontinuada`, `outro`) | `falhou` na hora | `com_problema`, sem pausa (o diário do dia seguinte tenta de novo) |
-| Meta fora do ar, prazo esgotado, resposta torta, consulta pesada | volta pelo backoff, até 5 tentativas | `com_problema` só na última tentativa |
-| Limite de chamadas da Meta | devolvida em 5 a 60 minutos, sem queimar tentativa (`ultimo_motivo_devolucao = 'limite_da_meta'`; conta no teto de 20 devoluções) | não muda |
-| A gestão trocou a conta ou o token durante a leitura | devolvida na hora (`'config_mudou'`) e lida de novo com a configuração nova; nada velho é gravado | não muda |
+| O que aconteceu                                                                                                            | Tarefa                                                                                                                            | `meta_gasto_leitura`                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Leu e gravou                                                                                                               | `concluido`                                                                                                                       | `situacao = 'funcionando'`, `sincronizado_em`, `lido_desde` e `lido_ate`                                          |
+| Configuração removida depois de enfileirar                                                                                 | `concluido`, sem chamar a Meta                                                                                                    | não muda                                                                                                          |
+| Meta recusou o token, a permissão ou a conta (`token_invalido`, `sem_permissao`, `conta_sem_acesso`, `exige_prova_do_app`) | `falhou` na hora                                                                                                                  | `com_problema` com o problema: **pausa** o diário até o teste dar certo, um token novo ser salvo ou a conta mudar |
+| Pedido recusado pela Meta (`parametro_recusado`, `versao_descontinuada`, `outro`)                                          | `falhou` na hora                                                                                                                  | `com_problema`, sem pausa (o diário do dia seguinte tenta de novo)                                                |
+| Meta fora do ar, prazo esgotado, resposta torta, consulta pesada                                                           | volta pelo backoff, até 5 tentativas                                                                                              | `com_problema` só na última tentativa                                                                             |
+| Limite de chamadas da Meta                                                                                                 | devolvida em 5 a 60 minutos, sem queimar tentativa (`ultimo_motivo_devolucao = 'limite_da_meta'`; conta no teto de 20 devoluções) | não muda                                                                                                          |
+| A gestão trocou a conta ou o token durante a leitura                                                                       | devolvida na hora (`'config_mudou'`) e lida de novo com a configuração nova; nada velho é gravado                                 | não muda                                                                                                          |
 
 O `last_error` leva só códigos: o problema e o número da Meta (`token_invalido:190`, `meta_indisponivel`, `prazo_esgotado`), ou o SQLSTATE de uma escrita que falhou (`config_ilegivel:<código>`, `gravar_gasto_falhou:<código>`, `registrar_falha_falhou:<código>`). A mensagem da Meta nunca é guardada.
 
@@ -240,27 +242,27 @@ A tarefa é `resolver_anuncio_meta` (`lib/jobs/resolver-anuncio-meta.ts`). Ela p
 
 **Recusas e novas tentativas.** Ficam em `meta_anuncio_recusado`, que nenhuma sessão lê (só o sistema, pelas funções). Uma recusa vale só para a mesma conta e o mesmo token: trocar um dos dois libera a consulta de novo, sem mexer em nada.
 
-| Recusa | Quando | Nova tentativa |
-| --- | --- | --- |
-| `sem_entrega_ainda` | o anúncio ainda não tem entrega registrada na Meta, ou a leitura do objeto do anúncio (consulta 2) foi recusada por código que não é de token, limite, versão nem Meta fora do ar | 1 h, 6 h e 24 h; depois uma vez por dia, até 7 dias da primeira recusa; depois nunca |
-| `resposta_invalida` | a Meta respondeu sem campanha válida, ou recusou a consulta do Insights daquele anúncio (consulta 1) com `parametro_recusado` ou `outro` (100 genérico, 2500, código desconhecido; o número fica em `codigo_da_meta`); a tarefa segue com os outros anúncios | 24 h |
-| `inacessivel` | o token não enxerga o anúncio (apagado de verdade, de outra pessoa, sem permissão) | só com outra conta ou outro token |
-| `outra_conta` | o anúncio é de outra conta de anúncios, não da salva na clínica (agência, impulsionamento pela conta pessoal) | só com outra conta ou outro token; nunca entra no mapa |
+| Recusa              | Quando                                                                                                                                                                                                                                                       | Nova tentativa                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `sem_entrega_ainda` | o anúncio ainda não tem entrega registrada na Meta, ou a leitura do objeto do anúncio (consulta 2) foi recusada por código que não é de token, limite, versão nem Meta fora do ar                                                                            | 1 h, 6 h e 24 h; depois uma vez por dia, até 7 dias da primeira recusa; depois nunca |
+| `resposta_invalida` | a Meta respondeu sem campanha válida, ou recusou a consulta do Insights daquele anúncio (consulta 1) com `parametro_recusado` ou `outro` (100 genérico, 2500, código desconhecido; o número fica em `codigo_da_meta`); a tarefa segue com os outros anúncios | 24 h                                                                                 |
+| `inacessivel`       | o token não enxerga o anúncio (apagado de verdade, de outra pessoa, sem permissão)                                                                                                                                                                           | só com outra conta ou outro token                                                    |
+| `outra_conta`       | o anúncio é de outra conta de anúncios, não da salva na clínica (agência, impulsionamento pela conta pessoal)                                                                                                                                                | só com outra conta ou outro token; nunca entra no mapa                               |
 
 **Como a tarefa volta.** Se depois de gravar ainda há anúncio devido, ela volta **na hora** (`ultimo_motivo_devolucao = 'mais_anuncios'`); se há nova tentativa marcada, volta **nessa hora** (`'nova_tentativa'`); senão conclui. A volta é por `reagendar_job`, que não queima tentativa mas conta no teto de 20 devoluções: uma tarefa `falhou` com `last_error = 'nova_tentativa'` ou `'mais_anuncios'` só bateu o teto (muitos anúncios esperando entrega, por exemplo). Não é defeito: o próximo pedido (clique, leitura do dia ou teste) cria outra.
 
 **Desfechos.**
 
-| O que aconteceu | Tarefa | `meta_gasto_leitura` |
-| --- | --- | --- |
-| Consultou e gravou, nada mais devido | `concluido` | não muda |
-| Configuração removida, ou leitura pausada | `concluido`, sem chamar a Meta | não muda |
-| Meta recusou o token (em qualquer consulta) ou a prova do app (consulta 1), ou a conta salva recusou a conferência por permissão ou acesso. Permissão recusada num anúncio com a conta salva respondendo vira só a recusa `inacessivel` dele | `falhou` na hora, gravando o problema por `registrar_falha_do_gasto_meta` | `com_problema`: **pausa** a leitura diária e a consulta, igual à leitura do investimento |
-| Pedido recusado pela Meta para o lote todo: versão recusada (`versao_descontinuada`) em qualquer consulta, ou `parametro_recusado`/`outro` na conferência da conta salva (feita quando um anúncio tem a permissão recusada) | `falhou` na hora | não muda (a leitura do investimento grava o dela) |
-| Pedido recusado num anúncio só (`parametro_recusado`, `outro`) | segue com os outros; o anúncio vira recusa `resposta_invalida` (consulta 1, nova tentativa em 24 h) ou `sem_entrega_ainda` (consulta 2); procure em `meta_anuncio_recusado`, não em tarefa falhada | não muda |
-| Meta fora do ar, prazo esgotado antes de consultar qualquer anúncio, resposta torta | volta pelo backoff, até 5 tentativas | não muda |
-| Limite de chamadas da Meta | devolvida em 5 a 60 minutos (`'limite_da_meta'`) | não muda |
-| A gestão trocou a conta ou o token durante a consulta | devolvida na hora (`'config_mudou'`); nada velho é gravado | não muda |
+| O que aconteceu                                                                                                                                                                                                                              | Tarefa                                                                                                                                                                                             | `meta_gasto_leitura`                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Consultou e gravou, nada mais devido                                                                                                                                                                                                         | `concluido`                                                                                                                                                                                        | não muda                                                                                 |
+| Configuração removida, ou leitura pausada                                                                                                                                                                                                    | `concluido`, sem chamar a Meta                                                                                                                                                                     | não muda                                                                                 |
+| Meta recusou o token (em qualquer consulta) ou a prova do app (consulta 1), ou a conta salva recusou a conferência por permissão ou acesso. Permissão recusada num anúncio com a conta salva respondendo vira só a recusa `inacessivel` dele | `falhou` na hora, gravando o problema por `registrar_falha_do_gasto_meta`                                                                                                                          | `com_problema`: **pausa** a leitura diária e a consulta, igual à leitura do investimento |
+| Pedido recusado pela Meta para o lote todo: versão recusada (`versao_descontinuada`) em qualquer consulta, ou `parametro_recusado`/`outro` na conferência da conta salva (feita quando um anúncio tem a permissão recusada)                  | `falhou` na hora                                                                                                                                                                                   | não muda (a leitura do investimento grava o dela)                                        |
+| Pedido recusado num anúncio só (`parametro_recusado`, `outro`)                                                                                                                                                                               | segue com os outros; o anúncio vira recusa `resposta_invalida` (consulta 1, nova tentativa em 24 h) ou `sem_entrega_ainda` (consulta 2); procure em `meta_anuncio_recusado`, não em tarefa falhada | não muda                                                                                 |
+| Meta fora do ar, prazo esgotado antes de consultar qualquer anúncio, resposta torta                                                                                                                                                          | volta pelo backoff, até 5 tentativas                                                                                                                                                               | não muda                                                                                 |
+| Limite de chamadas da Meta                                                                                                                                                                                                                   | devolvida em 5 a 60 minutos (`'limite_da_meta'`)                                                                                                                                                   | não muda                                                                                 |
+| A gestão trocou a conta ou o token durante a consulta                                                                                                                                                                                        | devolvida na hora (`'config_mudou'`); nada velho é gravado                                                                                                                                         | não muda                                                                                 |
 
 O `last_error` leva só códigos: o problema e o número da Meta (`token_invalido:190`), ou o SQLSTATE de uma escrita que falhou (`config_ilegivel:<código>`, `listar_anuncios_falhou:<código>`, `gravar_resolucao_falhou:<código>`, `registrar_falha_falhou:<código>`). `lista_invalida`, `gravar_resolucao_falhou:22023` e `conta_fora_do_formato` são defeito nosso (param de vez). O log traz só contagens (`resolver_anuncio_meta_gravado` e `resolver_anuncio_meta_recusados`, com `count`): nunca o token, o id ou o nome do anúncio, nem a mensagem da Meta.
 
@@ -301,12 +303,12 @@ Desde 06/10/2026 (migration `20261006140000_mensagem_agendada.sql`) quem está c
 
 **Códigos no `planner_erro`** (acendem `planner_com_erro` no monitor):
 
-| Código | O que é | O que fazer |
-| --- | --- | --- |
-| `mensagem_agendada:<SQLSTATE>` | erro estrutural da planejadora (fora das linhas: a função ou a tabela, por exemplo): nenhuma agendada vencida virou tarefa nesta passagem | some sozinho na passagem seguinte se foi soluço. Se repete, `select planejar_mensagens_agendadas(1);` no SQL Editor mostra o erro (e planeja uma, como o motor faria) |
-| `agendada_reconciliar:<SQLSTATE>` | erro estrutural da reconciliação ou da retenção nesta passagem | se repete, `select reconciliar_mensagens_agendadas(1);` mostra o erro |
-| `agendadas_erros:<n>` | `n` agendadas deram erro **na própria linha** nesta passagem (soma da planejadora e da reconciliação). As outras seguiram normais; só essas ficaram como estavam e voltam a ser tentadas na passagem seguinte | se aparece uma vez e some, foi soluço (trava, corrida): nada a fazer. Se repete, é a mesma linha quebrada: diagnóstico abaixo |
-| `agendadas_presas:<n>` | `n` agendadas em `enviando` com a hora marcada há mais de 13 horas: a tarefa delas não terminou e nada as fechou. O executor desiste em 12 horas, então isso é trilho de envio parado ou defeito | diagnóstico abaixo |
+| Código                            | O que é                                                                                                                                                                                                       | O que fazer                                                                                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mensagem_agendada:<SQLSTATE>`    | erro estrutural da planejadora (fora das linhas: a função ou a tabela, por exemplo): nenhuma agendada vencida virou tarefa nesta passagem                                                                     | some sozinho na passagem seguinte se foi soluço. Se repete, `select planejar_mensagens_agendadas(1);` no SQL Editor mostra o erro (e planeja uma, como o motor faria) |
+| `agendada_reconciliar:<SQLSTATE>` | erro estrutural da reconciliação ou da retenção nesta passagem                                                                                                                                                | se repete, `select reconciliar_mensagens_agendadas(1);` mostra o erro                                                                                                 |
+| `agendadas_erros:<n>`             | `n` agendadas deram erro **na própria linha** nesta passagem (soma da planejadora e da reconciliação). As outras seguiram normais; só essas ficaram como estavam e voltam a ser tentadas na passagem seguinte | se aparece uma vez e some, foi soluço (trava, corrida): nada a fazer. Se repete, é a mesma linha quebrada: diagnóstico abaixo                                         |
+| `agendadas_presas:<n>`            | `n` agendadas em `enviando` com a hora marcada há mais de 13 horas: a tarefa delas não terminou e nada as fechou. O executor desiste em 12 horas, então isso é trilho de envio parado ou defeito              | diagnóstico abaixo                                                                                                                                                    |
 
 **Diagnóstico de `agendadas_erros`** (sem o texto):
 
@@ -353,6 +355,65 @@ select situacao, motivo, count(*) from mensagem_agendada group by 1, 2 order by 
 
 ---
 
+## Resposta da IA no WhatsApp (motor-ia)
+
+Construída no E3 (13/10/2026; migrations `20261013100000`, `20261013110000` e `20261013120000`, **não aplicadas**). Só na teste123 e na Conduzza Teste, só com os telefones da equipe. Contrato no `docs/04`, 17.13; turno no `docs/03`, seção 14; ligar, desligar, auditoria e incidentes em `supabase/operacao/agente-ia.md`.
+
+**Separada do motor principal, de propósito.** O turno da IA leva até 60 s (modelo, verificador e envio) e não pode disputar a passagem com as réguas. Por isso:
+
+- O kind `responder_com_ia` fica **fora** dos quatro trilhos da rota `/api/webhooks/motor` (`KINDS_DA_IA` em `lib/jobs/kinds.ts`). O claim legado `claim_jobs` (do `npm run worker` e das suítes) não o reivindica nem o enterra.
+- A entrada `motor-ia` roda `disparar_ciclo_da_ia()` a cada 10 s. A função **só chama a Vercel quando há trabalho devido** (job pendente vencido, ou executando com o lease de 90 s vencido e tentativa sobrando) de clínica da lista e que não é `e_de_teste`. Sem trabalho, não sai nada do banco.
+- A URL é a do Vault (`motor_tick_url`) com `/api/webhooks/motor` trocado por `/api/webhooks/motor-ia`, e o segredo é o mesmo `motor_tick_secret` (decisão D15: nada novo no Vault nem na Vercel). Se a URL não terminar em `/api/webhooks/motor`, a função lança: conferir antes de agendar (abaixo).
+- A rota `POST /api/webhooks/motor-ia` usa o bearer `MOTOR_TICK_SECRET` (sem ele, 401), `maxDuration = 60`, bate ponto como `motor-ia` em `worker_heartbeat` e reivindica até 4 jobs (`claim_jobs_da_ia`), um executor por invocação (`motor-ia:<uuid>`). Resposta: `ok`, `motor: "ia"` e as contagens (`reivindicados`, `concluidos`, `falhos`, `reagendados`, `semPosse`), nunca texto.
+- **uazapi:** cada job envia no máximo uma mensagem (a resposta ou a frase fixa), pelo trilho 1:1 com o espaçamento anti-banimento do número. Com só os telefones da equipe nas duas clínicas, o volume é desprezível perto do teto de requisições do motor principal.
+
+**Agendar e tirar** (só a operação; nenhuma migration agenda):
+
+```sql
+-- antes de agendar: a URL do Vault tem o formato que a função espera
+select decrypted_secret ~ '/api/webhooks/motor$' as url_ok
+from vault.decrypted_secrets where name = 'motor_tick_url';
+
+select public.motor_ia_agendar();     -- 'motor-ia (10s) agendado'
+select public.motor_ia_desagendar();  -- 'motor-ia desagendado'
+```
+
+Agendar sem a IA ligada é inerte: a guarda não acha trabalho e não chama nada. Tirar a entrada não mexe nas réguas.
+
+**Conferir que está vivo** (com a IA ligada):
+
+```sql
+select saude_do_motor() -> 'ia';
+-- batida_em, ultimo_erro, agendado, vigiado, devidos, alerta
+select jobname, schedule, active from cron.job where jobname = 'motor-ia';
+```
+
+`vigiado` é verdadeiro quando alguma clínica da lista está em "Conversar com a equipe", ligada e não pausada, com o interruptor geral ligado. Esperado nesse caso: `agendado` verdadeiro, `devidos` em zero e `alerta` falso. `batida_em` só anda quando há trabalho (a guarda não chama a Vercel à toa), então batida antiga **não** é alerta: o alerta é job devido há mais de 60 s (ou executando com o lease vencido há 150 s) ou a entrada não agendada. A faixa da recepção ("as mensagens automáticas estão paradas") não muda com isso; o alerta vai só para o monitor externo (`ia_parada`) e para a aba Agente de IA, que mostra "O motor do assistente não está rodando. Avise a equipe Conduzza.".
+
+**A fila da IA** (sem texto: o payload tem só ids):
+
+```sql
+select j.status, j.last_error, j.ultimo_motivo_devolucao, count(*)
+from job_queue j
+where j.kind = 'responder_com_ia'
+group by 1, 2, 3 order by 4 desc;
+```
+
+`last_error` é só código: `conversa_fora_da_ia` (a conversa saiu da IA antes de o job rodar; normal depois de Assumir ou desligar), `devolvida_para_ia` (um Devolver cancelou o pendente antigo), `ia_desligada` (o desligamento cancelou), `ia_fora_do_ambiente` (rodou fora da produção da Vercel ou fora da lista: defeito de configuração, olhar T1 e T2), `lease_expirado` e os códigos do envio. `ultimo_motivo_devolucao = 'retomar_envio'` é o turno que ficou sem tempo para enviar e volta na passagem seguinte, sem chamar o modelo de novo; `'canal_ocupado'` é o número com fila.
+
+**Varredura de 3 minutos** (último bloco de `motor_manutencao`, depois da agendada): devolve para a equipe, com evento e sem mensagem ao contato, a conversa da IA com o paciente esperando há mais de 3 minutos e a que perdeu a liberação ou a janela. Códigos no `planner_erro` (acendem `planner_com_erro`):
+
+| Código                       | O que é                                                                                                | O que fazer                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ia_sem_resposta:<n>`        | `n` conversas da IA (de clínica da lista) voltaram para a equipe porque ninguém respondeu em 3 minutos | o motor da IA não está dando conta: `saude_do_motor() -> 'ia'`, a fila acima e os logs da rota `/api/webhooks/motor-ia` na Vercel. Some na passagem seguinte |
+| `ia_sem_resposta:<SQLSTATE>` | o bloco da varredura deu erro estrutural nesta passagem                                                | se repete, rode `select motor_manutencao();` no SQL Editor e veja o erro                                                                                     |
+
+**Diagnóstico rápido:**
+
+- `ia_parada` com `agendado` falso: a entrada foi tirada (ou nunca agendada). `select public.motor_ia_agendar();`.
+- `ia_parada` com `devidos` > 0 e a entrada ativa: a corrente cron, `pg_net`, Vercel quebrou. Olhar `cron.job_run_details` (a entrada `motor-ia`), `net._http_response` (401 é segredo divergente; 404 é deploy sem a rota) e os logs da rota na Vercel. `select net.worker_restart();` se o `pg_net` travou.
+- Muitos `falhos` na resposta da rota: os logs da Vercel trazem só ids e códigos; o detalhe de cada turno está em `ai_decision_log` (`desfecho`, `motivo_da_falha`).
+
 ## Desligar (rollback)
 
 **A ordem importa.** Desagende primeiro: reverter a Vercel com o cron ligado deixa o agendador chamando uma rota que não existe mais, e o único sintoma aparece três minutos depois, na faixa.
@@ -360,6 +421,8 @@ select situacao, motivo, count(*) from mensagem_agendada group by 1, 2 order by 
 ```sql
 select motor_desagendar();
 ```
+
+`motor_desagendar()` não mexe na entrada `motor-ia` (E3). Para parar só a IA, `select public.motor_ia_desagendar();`; para desligar a IA de verdade (as conversas voltam para a equipe), siga `supabase/operacao/agente-ia.md`, "Desligar em segundos". A ponte `npm run worker` **não** roda a IA: o claim legado ignora o kind e o ambiente local não passa em T1.
 
 Depois, se precisar do motor rodando enquanto conserta, o laço local serve de ponte:
 
@@ -385,7 +448,7 @@ A URL e o segredo do tick vivem no **Vault**, não no comando do agendador (que 
 select name from vault.secrets where name like 'motor_%';
 ```
 
-Para rotacionar: atualize `motor_tick_secret` no Vault **e** a variável `MOTOR_TICK_SECRET` na Vercel. As duas precisam bater.
+Para rotacionar: atualize `motor_tick_secret` no Vault **e** a variável `MOTOR_TICK_SECRET` na Vercel. As duas precisam bater. O mesmo segredo e a mesma URL servem à entrada `motor-ia` (E3), então a rotação vale para as duas.
 
 O segredo do monitor externo, `MOTOR_SAUDE_SECRET`, vive só na Vercel e no serviço de monitor. Ele é outro, de propósito: ver "Alerta externo".
 

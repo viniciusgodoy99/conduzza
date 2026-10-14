@@ -76,32 +76,50 @@ test("payload que não é JSON é recusado com 400", async ({ request }) => {
 });
 
 test("o mesmo evento 3 vezes cria 1 mensagem", async ({ request }) => {
+  const waMessageId = `e2e:${suffix}:1`;
   const event = {
     kind: "message_received",
     phone: PHONE,
     name: "Paciente Webhook",
-    waMessageId: `e2e:${suffix}:1`,
+    waMessageId,
     contentType: "texto",
     body: "Olá, teste de webhook",
   };
   const url = dados().webhookUrl;
+  const admin = adminClient();
+  // A rota responde ao provedor so { ok: true } (o servidor do uazapi e
+  // compartilhado, revisao do E3): o que cada entrega gravou e lido no
+  // banco, pelo wa_message_id do evento.
+  const idsGravados = async (): Promise<string[]> => {
+    const { data, error } = await admin
+      .from("message")
+      .select("id")
+      .eq("clinic_id", dados().clinicId)
+      .eq("wa_message_id", waMessageId);
+    expect(error).toBeNull();
+    return ((data ?? []) as { id: string }[]).map((linha) => linha.id);
+  };
 
   const first = await request.post(url, { data: event });
   expect(first.status()).toBe(200);
-  expect((await first.json()).inserted).toBe(true);
+  expect(await first.json()).toEqual({ ok: true });
+  // A primeira entrega grava a linha (o inserted de antes).
+  const gravados = await idsGravados();
+  expect(gravados).toHaveLength(1);
 
   for (let i = 0; i < 2; i++) {
     const repeat = await request.post(url, { data: event });
     expect(repeat.status()).toBe(200);
-    expect((await repeat.json()).inserted).toBe(false);
+    expect(await repeat.json()).toEqual({ ok: true });
+    // A reentrega nao grava nada: a mesma linha, nenhuma a mais.
+    expect(await idsGravados()).toEqual(gravados);
   }
 
-  const admin = adminClient();
   const { data: mensagens } = await admin
     .from("message")
     .select("whatsapp_account_id")
     .eq("clinic_id", dados().clinicId)
-    .eq("wa_message_id", `e2e:${suffix}:1`);
+    .eq("wa_message_id", waMessageId);
   // Uma mensagem so, e do numero que a URL nomeia.
   expect(mensagens).toEqual([
     { whatsapp_account_id: dados().whatsappAccountId },
@@ -123,15 +141,19 @@ test("a URL legada (sem o número) continua entregando no número certo", async 
     },
   });
   expect(response.status()).toBe(200);
-  expect((await response.json()).inserted).toBe(true);
+  // So { ok: true } (revisao do E3): a entrega e conferida no banco.
+  expect(await response.json()).toEqual({ ok: true });
 
+  // Gravada (o inserted de antes): uma linha so com o id do evento (o
+  // single erra com zero ou duas), do numero que o segredo achou.
   const admin = adminClient();
-  const { data: mensagem } = await admin
+  const { data: mensagem, error } = await admin
     .from("message")
     .select("whatsapp_account_id, conversation_id")
     .eq("clinic_id", dados().clinicId)
     .eq("wa_message_id", waMessageId)
     .single();
+  expect(error).toBeNull();
   expect(mensagem?.whatsapp_account_id).toBe(dados().whatsappAccountId);
   const { data: conversa } = await admin
     .from("conversation")

@@ -468,6 +468,7 @@ export function PainelDoAgente({
                 dica={dica}
                 pendente={pendente}
                 ocupado={ocupado}
+                emUsoNoWhatsapp={dados.emUsoNoWhatsapp}
                 aoRestaurar={(versao, retorno) =>
                   executar(
                     `restaurar-${versao}`,
@@ -506,6 +507,7 @@ export function PainelDoAgente({
               ultimaPublicada,
               publicada?.versao ?? null,
               dados.timezone,
+              dados.emUsoNoWhatsapp,
             )}
           </span>
         </div>
@@ -533,7 +535,11 @@ export function PainelDoAgente({
                 ? "Publicar 1 alteração?"
                 : `Publicar ${mudancas.length} alterações?`}
             </DialogTitle>
-            <DialogDescription>{T.publicarDescricao}</DialogDescription>
+            <DialogDescription>
+              {dados.emUsoNoWhatsapp
+                ? T.publicarDescricaoEmUso
+                : T.publicarDescricao}
+            </DialogDescription>
           </DialogHeader>
           <ul className="grid cz-scroll max-h-56 list-disc gap-0.5 overflow-y-auto pl-5 text-[13px]">
             {mudancas.map((mudanca, indice) => (

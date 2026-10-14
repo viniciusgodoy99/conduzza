@@ -11,9 +11,13 @@ import {
 import {
   ingerirMensagemRecebida,
   registrarMensagemDoCelular,
+  type IngestResultado,
   type RegistroDoCelular,
 } from "@/lib/integrations/whatsapp/ingest";
-import { interceptarRespostaDePaciente } from "@/lib/integrations/whatsapp/interceptar-resposta";
+import {
+  interceptarRespostaDePaciente,
+  type DesfechoDoInterceptador,
+} from "@/lib/integrations/whatsapp/interceptar-resposta";
 import type {
   ConnectionStatus,
   OpcoesDeConsulta,
@@ -573,6 +577,110 @@ async function moverPorTermoDoCelular(
   }
 }
 
+/**
+ * A mensagem recebida numa conversa da IA (E3): enfileira o turno, ou tira a
+ * conversa da IA. Decide pelo que a ingestao devolveu (ia_atendendo), pelo
+ * parser (individual) e pelo interceptador (desfecho). O banco confere tudo
+ * de novo (enfileirar_resposta_da_ia e tirar_conversa_da_ia_pelo_servidor,
+ * service role). Nunca lanca e nunca derruba o 200: a mensagem ja esta
+ * salva, e a varredura de 3 minutos (motor_manutencao) e a rede de
+ * seguranca. Log so com ids e codigos.
+ */
+async function encaminharParaAIa(
+  admin: SupabaseClient,
+  entrada: {
+    clinicId: string;
+    accountId: string;
+    individual: boolean;
+    data: IngestResultado | null;
+    desfecho: DesfechoDoInterceptador | "erro" | null;
+  },
+): Promise<void> {
+  const { clinicId, accountId, data, desfecho } = entrada;
+  if (data?.ia_atendendo !== true || !data.conversation_id) {
+    return;
+  }
+  const ids = {
+    clinic_id: clinicId,
+    whatsapp_account_id: accountId,
+    conversation_id: data.conversation_id,
+    message_id: data.message_id,
+  };
+  const tirar = async (motivo: "nao_individual" | "falha_tecnica") => {
+    try {
+      const { error } = await admin.rpc("tirar_conversa_da_ia_pelo_servidor", {
+        p_clinic_id: clinicId,
+        p_conversation_id: data.conversation_id,
+        p_motivo: motivo,
+      });
+      if (error) {
+        log.warn("webhook_ia_conversa_nao_tirada", {
+          ...ids,
+          status: motivo,
+          error_code: error.code ?? null,
+        });
+      }
+    } catch {
+      log.warn("webhook_ia_conversa_nao_tirada", {
+        ...ids,
+        status: motivo,
+        error_code: "excecao",
+      });
+    }
+  };
+
+  // Grupo, status e canal nunca viram turno: a conversa vai para a equipe.
+  if (!entrada.individual) {
+    await tirar("nao_individual");
+    return;
+  }
+  // O interceptador quebrou: ninguem sabe se a mensagem mudou a agenda. A
+  // equipe le, sem frase.
+  if (desfecho === "erro") {
+    await tirar("falha_tecnica");
+    return;
+  }
+  if (
+    !data.inserted ||
+    data.ignorada ||
+    !data.message_id ||
+    desfecho === "tratou_com_eco"
+  ) {
+    return;
+  }
+  try {
+    const { data: resposta, error } = await admin.rpc(
+      "enfileirar_resposta_da_ia",
+      {
+        p_clinic_id: clinicId,
+        p_conversation_id: data.conversation_id,
+        p_message_id: data.message_id,
+      },
+    );
+    if (error) {
+      log.warn("webhook_ia_nao_enfileirada", {
+        ...ids,
+        error_code: error.code ?? null,
+      });
+      return;
+    }
+    const codigo = (resposta as { codigo?: unknown } | null)?.codigo;
+    const jobId = (resposta as { job_id?: unknown } | null)?.job_id;
+    const status = typeof codigo === "string" ? codigo : "desconhecido";
+    if (status === "enfileirado" || status === "juntou") {
+      log.info("webhook_ia_enfileirada", {
+        ...ids,
+        status,
+        job_id: typeof jobId === "string" ? jobId : null,
+      });
+    } else {
+      log.warn("webhook_ia_nao_enfileirada", { ...ids, status });
+    }
+  } catch {
+    log.warn("webhook_ia_nao_enfileirada", { ...ids, error_code: "excecao" });
+  }
+}
+
 export async function POST(request: NextRequest) {
   const ident = lerIdentificacaoDoWebhook(request.nextUrl.searchParams);
   if (!ident) {
@@ -661,7 +769,7 @@ export async function POST(request: NextRequest) {
         wa_message_id: event.waMessageId,
         status: data.ignorada,
       });
-      return NextResponse.json(data);
+      return NextResponse.json({ ok: true });
     }
 
     // Arquivo vira job (enfileirarDownloadDaMidia), so na primeira entrega:
@@ -686,9 +794,10 @@ export async function POST(request: NextRequest) {
     // porque o provedor reentrega o mesmo evento, e reentrega nao pode
     // confirmar duas vezes. Nunca derruba o 200: a mensagem ja esta salva e
     // um erro aqui viraria reenvio em loop.
+    let desfecho: DesfechoDoInterceptador | "erro" | null = null;
     if (data?.inserted && data.contact_id && data.conversation_id) {
       try {
-        await interceptarRespostaDePaciente(admin, {
+        desfecho = await interceptarRespostaDePaciente(admin, {
           clinicId,
           contactId: data.contact_id,
           conversationId: data.conversation_id,
@@ -702,6 +811,7 @@ export async function POST(request: NextRequest) {
           whatsappAccountId: accountId,
         });
       } catch {
+        desfecho = "erro";
         log.error("webhook_interceptar_resposta_falhou", {
           clinic_id: clinicId,
           whatsapp_account_id: accountId,
@@ -709,7 +819,17 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-    return NextResponse.json(data);
+    await encaminharParaAIa(admin, {
+      clinicId,
+      accountId,
+      individual: event.individual === true,
+      data,
+      desfecho,
+    });
+    // SO { ok: true }: o resultado da ingestao (ids, e com o E3 se a conversa
+    // e da IA) nao volta para o servidor do provedor, que e compartilhado
+    // com outras empresas. Ele so precisa saber que pode parar de reenviar.
+    return NextResponse.json({ ok: true });
   }
 
   // A clinica enviou pelo celular pareado (ou outro aparelho vinculado), por
@@ -780,7 +900,9 @@ export async function POST(request: NextRequest) {
           event,
         );
       }
-      return NextResponse.json(data);
+      // So o 200: o resultado da RPC (ids internos) nao volta para o
+      // servidor do provedor, que e compartilhado (revisao do E3).
+      return NextResponse.json({ ok: true });
     }
 
     if (
@@ -826,7 +948,9 @@ export async function POST(request: NextRequest) {
         event,
       );
     }
-    return NextResponse.json(data ?? { ok: true });
+    // So o 200, como no ramo message_received: contact_id, conversation_id,
+    // message_id e o numero ficam aqui dentro (provedor compartilhado).
+    return NextResponse.json({ ok: true });
   }
 
   // Uma mensagem foi apagada para todos no WhatsApp. A conversa da clinica

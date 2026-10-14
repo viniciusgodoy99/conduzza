@@ -139,6 +139,8 @@ export function InboxClient({
   conversaDoLink,
   linkIndisponivel,
   filtroInicial,
+  iaNaFase = false,
+  podeVerRascunho = false,
 }: {
   clinicId: string;
   viewerId: string;
@@ -174,6 +176,13 @@ export function InboxClient({
   linkIndisponivel: boolean;
   /** /atendimento?filtro=: chip de situacao marcado na chegada. */
   filtroInicial: FiltroDaUrl | null;
+  /**
+   * A clinica e uma das duas da fase controlada do agente de IA (decidido
+   * no servidor). Fora delas, o Devolver nem pergunta ao servidor.
+   */
+  iaNaFase?: boolean;
+  /** Super admin: le o rascunho bloqueado pela conformidade (D25). */
+  podeVerRascunho?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
@@ -1139,6 +1148,10 @@ export function InboxClient({
             conversation={selected}
             messages={messages}
             decisions={decisionsQuery.data ?? []}
+            erroNasDecisoes={decisionsQuery.isError}
+            aoRecarregarDecisoes={() => void decisionsQuery.refetch()}
+            iaNaFase={iaNaFase}
+            podeVerRascunho={podeVerRascunho}
             isLoading={messagesQuery.isPending}
             erroAoCarregar={messagesQuery.isError}
             aoRecarregar={() => void messagesQuery.refetch()}

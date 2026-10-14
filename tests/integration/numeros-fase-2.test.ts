@@ -49,6 +49,11 @@ import { adminClient, anonClient, stackCredentials } from "../rls/stack";
 // um usuario real logado (so getSessionContext e createClient sao dublados:
 // fora do Next nao ha cookie).
 //
+// A rota do webhook responde ao provedor SO { ok: true } nas mensagens (o
+// servidor do uazapi e compartilhado com outras empresas, revisao do E3):
+// em que numero e conversa a mensagem entrou e lido no banco, pela linha do
+// wa_message_id que o proprio teste montou.
+//
 // Desde o contrato da Fase 3 (migration 20260925140000) a clinica pode ter
 // dois numeros: os casos negativos rodam com o "outro numero" em outra
 // clinica E com o segundo numero da MESMA clinica.
@@ -244,11 +249,14 @@ async function numeroDaConversa(
 async function mensagensComWaId(waMessageId: string) {
   const { data } = await admin
     .from("message")
-    .select("id, whatsapp_account_id, delivery_status, deleted_at")
+    .select(
+      "id, conversation_id, whatsapp_account_id, delivery_status, deleted_at",
+    )
     .eq("wa_message_id", waMessageId)
     .throwOnError();
   return (data ?? []) as {
     id: string;
+    conversation_id: string;
     whatsapp_account_id: string | null;
     delivery_status: string | null;
     deleted_at: string | null;
@@ -311,14 +319,13 @@ describe("webhook: qual número está chamando", () => {
       recebida(telefone(), waId),
     );
     expect(status).toBe(200);
-    expect(corpo.inserted).toBe(true);
-    expect(corpo.whatsapp_account_id).toBe(numero.id);
-    expect(await numeroDaConversa(corpo.conversation_id as string)).toBe(
-      numero.id,
-    );
-    expect((await mensagensComWaId(waId))[0]?.whatsapp_account_id).toBe(
-      numero.id,
-    );
+    expect(corpo).toEqual({ ok: true });
+    // Gravada (inserted): uma linha com o id do evento, do numero da URL,
+    // numa conversa desse numero.
+    const linhas = await mensagensComWaId(waId);
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]!.whatsapp_account_id).toBe(numero.id);
+    expect(await numeroDaConversa(linhas[0]!.conversation_id)).toBe(numero.id);
   });
 
   it("a URL legada (sem o número) acha o número pelo segredo e entrega nele", async () => {
@@ -329,11 +336,12 @@ describe("webhook: qual número está chamando", () => {
       recebida(telefone(), waId),
     );
     expect(status).toBe(200);
-    expect(corpo.inserted).toBe(true);
-    expect(corpo.whatsapp_account_id).toBe(numero.id);
-    expect(await numeroDaConversa(corpo.conversation_id as string)).toBe(
-      numero.id,
-    );
+    expect(corpo).toEqual({ ok: true });
+    // Gravada (inserted) no numero que o segredo achou, numa conversa dele.
+    const linhas = await mensagensComWaId(waId);
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]!.whatsapp_account_id).toBe(numero.id);
+    expect(await numeroDaConversa(linhas[0]!.conversation_id)).toBe(numero.id);
   });
 
   it("segredo errado é 401 nos dois formatos, e nada é gravado", async () => {
@@ -399,7 +407,11 @@ describe("webhook: qual número está chamando", () => {
       eventoUazapi(`tok-certo-${sufixo}`, `num2:${sufixo}:tok-3`),
     );
     expect(certo.status).toBe(200);
-    expect(certo.corpo.whatsapp_account_id).toBe(numero.id);
+    expect(certo.corpo).toEqual({ ok: true });
+    // Entregue no numero daquele token: a linha do evento e dele.
+    const linhas = await mensagensComWaId(`num2:${sufixo}:tok-3`);
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]!.whatsapp_account_id).toBe(numero.id);
   });
 
   it("número removido é 401 na URL nova e na legada, até com o segredo girado", async () => {
@@ -441,12 +453,19 @@ describe("webhook: qual número está chamando", () => {
     const segundo = await criarNumeroDeTeste(admin, clinicId, {
       nome: "Segundo",
     });
-    const { corpo } = await postar(
+    const waId = `num2:${sufixo}:legada-2`;
+    const { status, corpo } = await postar(
       caminhoDoWebhook(segundo, { legado: true }),
-      recebida(telefone(), `num2:${sufixo}:legada-2`),
+      recebida(telefone(), waId),
     );
-    expect(corpo.whatsapp_account_id).toBe(segundo.id);
-    expect(corpo.whatsapp_account_id).not.toBe(principal.id);
+    expect(status).toBe(200);
+    expect(corpo).toEqual({ ok: true });
+    // A linha do evento (e a conversa dela) e do segundo, nao do principal.
+    const linhas = await mensagensComWaId(waId);
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]!.whatsapp_account_id).toBe(segundo.id);
+    expect(linhas[0]!.whatsapp_account_id).not.toBe(principal.id);
+    expect(await numeroDaConversa(linhas[0]!.conversation_id)).toBe(segundo.id);
   });
 
   // O token da instancia do numero A nao passa na URL do B, da mesma clinica.
@@ -545,12 +564,10 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
       },
     });
     expect(status).toBe(200);
-    expect(corpo).toMatchObject({
-      inserted: true,
-      conversation_id: conversas[0],
-      whatsapp_account_id: a.numero.id,
-      automatica: false,
-    });
+    // So { ok: true }: o inserted, a conversa, o numero e o automatica de
+    // antes sao provados pela linha do evento, no fim (uma so, na conversa
+    // do numero A, author usuario).
+    expect(corpo).toEqual({ ok: true });
 
     const { data } = await admin
       .from("conversation")
@@ -613,10 +630,12 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
     };
     const primeira = await postar(caminhoDoWebhook(a), evento);
     expect(primeira.status).toBe(200);
-    expect(primeira.corpo).toMatchObject({
-      inserted: true,
-      conversation_id: conversaA,
-    });
+    expect(primeira.corpo).toEqual({ ok: true });
+    // Gravada agora (inserted), na conversa do A (o conversation_id de antes).
+    const gravadas = await mensagensComWaId(waId);
+    expect(gravadas).toMatchObject([
+      { conversation_id: conversaA, whatsapp_account_id: a.id },
+    ]);
     const { data } = await admin
       .from("conversation")
       .select("id, awaiting_reply")
@@ -626,10 +645,14 @@ describe("webhook: tudo o que o evento toca é daquele número", () => {
     expect(espera(conversaA)).toBe(false);
     expect(espera(conversaB)).toBe(true);
 
-    // Reentrega do provedor: nenhuma linha a mais.
+    // Reentrega do provedor: so { ok: true } e a MESMA linha (nada inserido,
+    // nenhuma linha a mais).
     const reentrega = await postar(caminhoDoWebhook(a), evento);
     expect(reentrega.status).toBe(200);
-    expect(reentrega.corpo).toMatchObject({ inserted: false });
+    expect(reentrega.corpo).toEqual({ ok: true });
+    expect((await mensagensComWaId(waId)).map((linha) => linha.id)).toEqual([
+      gravadas[0]!.id,
+    ]);
 
     const linhas = await linhasDoCelular(waId);
     expect(linhas).toHaveLength(1);
@@ -722,7 +745,13 @@ describe("mídia e apagar pelo número", () => {
       recebida(telefone(), waId, { contentType: "imagem", body: null }),
     );
     expect(status).toBe(200);
-    const messageId = corpo.message_id as string;
+    expect(corpo).toEqual({ ok: true });
+    // O message_id que a rota nao devolve mais: a linha do evento, gravada
+    // no numero que recebeu.
+    const recebidas = await mensagensComWaId(waId);
+    expect(recebidas).toHaveLength(1);
+    expect(recebidas[0]!.whatsapp_account_id).toBe(numero.id);
+    const messageId = recebidas[0]!.id;
     arquivosCriados.push(`${clinicId}/${messageId}`);
 
     // O job nasce com o numero que recebeu, na coluna e no payload.
@@ -1410,12 +1439,17 @@ describe("régua e eco pelo número", () => {
       numero.id,
     );
 
+    const waId = `num2:${sufixo}:eco-toque`;
     const { status, corpo } = await postar(
       caminhoDoWebhook(numero),
-      recebida(phone, `num2:${sufixo}:eco-toque`, { body: "1" }),
+      recebida(phone, waId, { body: "1" }),
     );
     expect(status).toBe(200);
-    expect(corpo.inserted).toBe(true);
+    expect(corpo).toEqual({ ok: true });
+    // A resposta do paciente gravou (inserted), no numero que a recebeu.
+    const respostas = await mensagensComWaId(waId);
+    expect(respostas).toHaveLength(1);
+    expect(respostas[0]!.whatsapp_account_id).toBe(numero.id);
 
     const { data: consulta } = await admin
       .from("appointment")

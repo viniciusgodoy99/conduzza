@@ -4,7 +4,12 @@ import { redirect } from "next/navigation";
 import { PainelDoAgente } from "@/components/agente/painel-do-agente";
 import { TEXTOS_DO_AGENTE } from "@/components/agente/textos";
 import type { DadosDoPainel, VersaoDoAgente } from "@/components/agente/tipos";
+import { versaoEmUsoNoWhatsapp } from "@/components/configuracoes/agente-de-ia";
 import { AvisoCelular } from "@/components/shared/aviso-celular";
+import {
+  situacaoDaConexao,
+  type NumeroDoWhatsapp,
+} from "@/components/whatsapp/numeros";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card } from "@/components/ui/card";
@@ -15,12 +20,14 @@ import {
 } from "@/lib/agente/simulador";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { comMudancaDasInstrucoes } from "@/lib/domain/agente/config";
+import { corDoNumero } from "@/lib/domain/cor-do-numero";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   fetchConfigDoAgente,
   fetchVersoesDoAgente,
 } from "@/lib/queries/agente";
-import { abaDaIaVisivel } from "@/lib/queries/ia-liberacao";
+import { iaLiberadaNoAmbiente, lerConfigDaIa } from "@/lib/ia/liberacao";
+import { abaDaIaVisivel, fetchLiberacaoDaIa } from "@/lib/queries/ia-liberacao";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -79,6 +86,60 @@ function Vazio() {
   );
 }
 
+/**
+ * A versao publicada esta mesmo em uso no WhatsApp (D39)? A mesma regra da
+ * aba Agente de IA de Configuracoes (versaoEmUsoNoWhatsapp): so o estado
+ * "equipe", sem nenhum motivo de parada e com tudo conferido. Qualquer
+ * leitura que falha (inclusive a da liberacao, que a RLS so mostra a
+ * administrador e gestor) diz que nao: a tela fica com "Última publicada",
+ * nunca afirma o que nao conferiu. A lista de numeros que falha vai como
+ * nula, como na aba ("Não deu para conferir agora" la, fora de uso aqui).
+ */
+async function emUsoNoWhatsapp(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  fuso: string,
+): Promise<boolean> {
+  // As duas leituras viram promessas antes do Promise.all: um erro sincrono
+  // numa delas nao deixa a outra rejeitar sem ninguem ouvir.
+  const lerNumeros = async () =>
+    supabase
+      .from("whatsapp_account")
+      .select(
+        "id, nome, principal, unit_id, connection_status, display_phone, connected_at, provider, cor",
+      )
+      .eq("clinic_id", clinicId)
+      .is("removido_em", null);
+  try {
+    const [dados, numeros] = await Promise.all([
+      fetchLiberacaoDaIa(supabase, clinicId),
+      lerNumeros(),
+    ]);
+    const ativos: NumeroDoWhatsapp[] | null = numeros.error
+      ? null
+      : (numeros.data ?? []).map((numero) => ({
+          id: numero.id,
+          nome: numero.nome,
+          principal: numero.principal,
+          unitId: numero.unit_id,
+          displayPhone: numero.display_phone,
+          status: situacaoDaConexao(numero.connection_status),
+          connectedAt: numero.connected_at,
+          provider: numero.provider,
+          cor: corDoNumero(numero.cor),
+        }));
+    return versaoEmUsoNoWhatsapp({
+      dados,
+      numeros: ativos,
+      ambienteLigado: iaLiberadaNoAmbiente(lerConfigDaIa(), clinicId),
+      agoraMs: Date.now(),
+      fuso,
+    });
+  } catch {
+    return false;
+  }
+}
+
 /** Nulo: pode tentar (a acao confere de novo a cada rodada). */
 async function motivoDoSimulador(clinicId: string): Promise<string | null> {
   try {
@@ -135,7 +196,7 @@ export default async function AgentePage({
   const podeEditar = superAdmin || canEdit(active.role, "agente");
 
   const supabase = await createClient();
-  const [lido, versoes, extras, motivo] = await Promise.all([
+  const [lido, versoes, extras, motivo, emUso] = await Promise.all([
     seguro(
       fetchConfigDoAgente(supabase, clinicId, { lerInstrucoes: superAdmin }),
     ),
@@ -150,6 +211,11 @@ export default async function AgentePage({
     }),
     // A recepcao nao usa o simulador: nem se confere.
     podeEditar ? motivoDoSimulador(clinicId) : Promise.resolve(null),
+    // "Em uso no WhatsApp" (D39): a RLS da liberacao so mostra a quem
+    // configura; para a recepcao, nem se pergunta.
+    podeEditar
+      ? emUsoNoWhatsapp(supabase, clinicId, active.timezone)
+      : Promise.resolve(false),
   ]);
 
   if (lido === null) {
@@ -201,6 +267,7 @@ export default async function AgentePage({
     superAdmin,
     previaDoPrompt: superAdmin ? extras.previa : null,
     motivoDoSimulador: motivo,
+    emUsoNoWhatsapp: emUso,
   };
 
   return cascaDoPainel(<PainelDoAgente dados={dados} abaInicial={aba} />);

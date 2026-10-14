@@ -1,17 +1,25 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, Check, RotateCcw, Undo2 } from "lucide-react";
+import { ArrowRightLeft, Check, RotateCcw } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import {
   assumirConversaAction,
+  devolverParaIaAction,
   reabrirConversaAction,
   resolverConversaAction,
   transferirConversaAction,
   type InboxActionResult,
 } from "@/app/(app)/atendimento/actions";
+import {
+  BotaoDevolverParaIa,
+  DialogoDoDevolver,
+  estadoDoDevolver,
+  TEXTOS_DO_DEVOLVER,
+  useElegibilidadeDoDevolver,
+} from "@/components/atendimento/devolver-para-ia";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +40,7 @@ import {
   conversationKeys,
   type ConversationListItem,
 } from "@/lib/queries/conversations";
+import { devolverKeys } from "@/lib/realtime/use-inbox-channel";
 import { createClient } from "@/lib/supabase/client";
 
 // Acoes da conversa no CABECALHO do fio (decisao do dono, C29): Assumir,
@@ -47,8 +56,6 @@ import { createClient } from "@/lib/supabase/client";
 const ROTULO_RECOLHIVEL = "@max-[759px]/fio:sr-only";
 const BOTAO_RECOLHIVEL = "@max-[759px]/fio:w-10 @max-[759px]/fio:px-0";
 
-const DICA_DEVOLVER =
-  "Chega com o agente de IA. Até lá, use Resolver quando terminar o atendimento.";
 const DICA_TRANSFERIR =
   "Só administrador, gestor e recepção passam a conversa para outra pessoa.";
 
@@ -70,7 +77,7 @@ const PAPEIS_QUE_RECEBEM: readonly Role[] = [
 
 type Membro = { user_id: string; role: Role };
 
-type Acao = "assumir" | "resolver" | "reabrir" | "transferir";
+type Acao = "assumir" | "resolver" | "reabrir" | "transferir" | "devolver";
 
 export function AcoesDaConversa({
   conversation,
@@ -80,12 +87,19 @@ export function AcoesDaConversa({
   authorNames,
   aoIrParaConversa,
   aoPerderConversa,
+  iaNaFase = false,
 }: {
   conversation: ConversationListItem;
   clinicId: string;
   viewerId: string;
   viewerRole: Role;
   authorNames: Record<string, string>;
+  /**
+   * A clinica e uma das duas da fase controlada do agente de IA (decidido
+   * no servidor, abaDaIaVisivel). Fora delas o Devolver nem pergunta ao
+   * servidor: fica desabilitado com a dica de sempre.
+   */
+  iaNaFase?: boolean;
   /** Leva a tela ate outra conversa (a aberta do mesmo paciente, ao reabrir) */
   aoIrParaConversa: (conversationId: string) => void;
   /**
@@ -100,6 +114,7 @@ export function AcoesDaConversa({
   const [pendente, iniciar] = useTransition();
   const [acaoEmCurso, setAcaoEmCurso] = useState<Acao | null>(null);
   const [menuAberto, setMenuAberto] = useState(false);
+  const [confirmandoDevolver, setConfirmandoDevolver] = useState(false);
 
   const podeEditar = canEdit(viewerRole, "atendimento");
   // Unico papel sem escrita no Atendimento e o Somente leitura: a mesma frase
@@ -114,6 +129,15 @@ export function AcoesDaConversa({
     conversation.status === "em_atendimento" &&
     conversation.assignee_user_id !== null &&
     conversation.assignee_user_id !== viewerId;
+  // A elegibilidade do Devolver: so consulta na conversa "minha", na fase e
+  // com escrita (os hooks rodam sempre; a consulta e que desliga).
+  const { leitura: elegibilidade, tentarDeNovo: conferirDevolverDeNovo } =
+    useElegibilidadeDoDevolver({
+      conversation,
+      iaNaFase,
+      podeEditar,
+      minha,
+    });
 
   // A equipe que pode receber a conversa, lida com a sessao (a policy de
   // clinic_member deixa o membro ativo ver o time). So quando o menu abre:
@@ -155,6 +179,9 @@ export function AcoesDaConversa({
     // Resolver e reabrir mudam o total do chip "Resolvida".
     void queryClient.invalidateQueries({
       queryKey: conversationKeys.totalResolvidas(clinicId),
+    });
+    void queryClient.invalidateQueries({
+      queryKey: devolverKeys.daConversa(conversation.id),
     });
   };
 
@@ -319,11 +346,36 @@ export function AcoesDaConversa({
     </DisabledWithHint>
   );
 
-  // MINHA: devolver (desabilitado ate o agente existir), transferir, resolver.
-  // "Minha" nao garante escrita: o papel pode ter virado Somente leitura com
-  // a conversa atribuida (achado L5). Ai Resolver fica visivel e desabilitado
-  // com o motivo, como Assumir e Reabrir.
+  // MINHA: devolver (so quando o servidor diz que pode; E3), transferir,
+  // resolver. "Minha" nao garante escrita: o papel pode ter virado Somente
+  // leitura com a conversa atribuida (achado L5). Ai Resolver fica visivel e
+  // desabilitado com o motivo, como Assumir e Reabrir.
   if (minha) {
+    const estadoDevolver = estadoDoDevolver({
+      iaNaFase,
+      podeEditar,
+      dicaSemPermissao,
+      leitura: elegibilidade,
+    });
+    // O dialogo fica aberto com "Devolvendo..." e fecha com qualquer
+    // resposta: no erro, o motivo sai no toast (a conversa pode ter mudado).
+    const devolver = () =>
+      executar(
+        "devolver",
+        async () => {
+          try {
+            return await devolverParaIaAction(conversation.id);
+          } finally {
+            setConfirmandoDevolver(false);
+            // Deu certo ou nao, o "pode" pode ter mudado (CZ409, liberacao
+            // desligada no meio): o botao confere de novo.
+            void queryClient.invalidateQueries({
+              queryKey: devolverKeys.daConversa(conversation.id),
+            });
+          }
+        },
+        () => toast.success(TEXTOS_DO_DEVOLVER.sucesso),
+      );
     const botaoResolver = (
       <Button
         variant="outline"
@@ -341,12 +393,19 @@ export function AcoesDaConversa({
     );
     return (
       <div className="flex items-center gap-1.5">
-        <DisabledWithHint hint={DICA_DEVOLVER}>
-          <Button variant="ghost" className={BOTAO_RECOLHIVEL} disabled>
-            <Undo2 aria-hidden />
-            <span className={ROTULO_RECOLHIVEL}>Devolver para a IA</span>
-          </Button>
-        </DisabledWithHint>
+        <BotaoDevolverParaIa
+          estado={estadoDevolver}
+          emCurso={acaoEmCurso === "devolver"}
+          ocupado={pendente}
+          aoClicar={() => setConfirmandoDevolver(true)}
+          aoTentarDeNovo={conferirDevolverDeNovo}
+        />
+        <DialogoDoDevolver
+          aberto={confirmandoDevolver}
+          pendente={acaoEmCurso === "devolver"}
+          aoConfirmar={devolver}
+          aoFechar={() => setConfirmandoDevolver(false)}
+        />
         {transferirComDica}
         {podeEditar ? (
           <Tooltip>

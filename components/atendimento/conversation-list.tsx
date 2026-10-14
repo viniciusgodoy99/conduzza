@@ -64,6 +64,22 @@ import { cn } from "@/lib/utils";
 
 type OwnFilter = "minhas" | "sem_atendente" | "todas";
 
+/**
+ * A posse "Sem atendente": sem responsavel e ainda nao resolvida, FORA a
+ * conversa que a IA esta atendendo (D27, docs/01 1.5): ela tem dono (o
+ * assistente) e mora no chip "IA atendendo". O numero do segmento e a lista
+ * usam esta mesma regra.
+ */
+export function semAtendente(
+  conversation: Pick<ConversationListItem, "assignee_user_id" | "status">,
+): boolean {
+  return (
+    conversation.assignee_user_id === null &&
+    conversation.status !== "resolvida" &&
+    conversation.status !== "ia_atendendo"
+  );
+}
+
 // Ordem dos chips de situacao. "IA atendendo" so aparece quando existe
 // conversa com a IA (o Agente e da Fase 3; hoje o chip viraria um zero
 // permanente na tela da recepcao).
@@ -239,9 +255,7 @@ export function ConversationList({
     const mine = conversations.filter(
       (c) => c.assignee_user_id === viewerId,
     ).length;
-    const unassigned = conversations.filter(
-      (c) => c.assignee_user_id === null && c.status !== "resolvida",
-    ).length;
+    const unassigned = conversations.filter(semAtendente).length;
     // Cada chip conta EXATAMENTE o conjunto que ele filtra (casaSituacao).
     const porSituacao = Object.fromEntries(
       SITUACOES.map((alvo) => [
@@ -260,11 +274,7 @@ export function ConversationList({
           if (own === "minhas" && conversation.assignee_user_id !== viewerId) {
             return false;
           }
-          if (
-            own === "sem_atendente" &&
-            (conversation.assignee_user_id !== null ||
-              conversation.status === "resolvida")
-          ) {
+          if (own === "sem_atendente" && !semAtendente(conversation)) {
             return false;
           }
           // O chip filtra o mesmo conjunto que ele conta: número e lista têm

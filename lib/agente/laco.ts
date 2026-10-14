@@ -109,6 +109,7 @@ import {
   usoEstimadoDoClassificador,
   usoEstimadoDoVerificador,
 } from "./gasto";
+import { semAMarcaDoNome } from "./marca-do-nome";
 import {
   agoraNaClinica,
   FORMATO_DA_RESPOSTA,
@@ -516,10 +517,18 @@ function argumentosDe(item: ItemDaSaida): unknown {
 // Historico para o modelo
 // ---------------------------------------------------------------------------
 
+/** O marcador de midia (ou mensagem sem texto) de cada lado da conversa. */
+export const MARCADOR_DE_MIDIA = {
+  paciente: "(o paciente mandou um conteúdo que não é texto)",
+  // No WhatsApp (E3) o historico traz tambem o que a clinica mandou (modelo
+  // de mensagem, arquivo do Atendimento): nao foi o paciente quem mandou.
+  assistente: "(a clínica mandou um conteúdo que não é texto)",
+} as const;
+
 /** Mensagem pronta para o modelo: minimizada (LGPD), sem marcador, cortada. */
 export function mensagemParaOModelo(mensagem: MensagemDaConversa): string {
   if ((mensagem.tipo ?? "texto") !== "texto" || mensagem.texto === null) {
-    return "(o paciente mandou um conteúdo que não é texto)";
+    return MARCADOR_DE_MIDIA[mensagem.autor];
   }
   return Array.from(semMarcadores(minimizarParaLlm(mensagem.texto)))
     .slice(0, CARACTERES_POR_MENSAGEM)
@@ -1057,9 +1066,15 @@ export async function executarTurnoDoAgente(
       trilha.push({ tipo: "outro", texto: PASSO_SEM_CONSULTA });
     }
 
-    // 5. Saudacao e encerramento antes do filtro.
+    // 5. Saudacao e encerramento antes do filtro. A marca do nome do
+    // contato (historico do WhatsApp) nunca vira vocativo na resposta; se
+    // so sobrar pontuacao ("Fulano!" vira "!"), falha fechada.
+    const mensagemSemMarca = semAMarcaDoNome(final.mensagem);
+    if (!/\p{L}/u.test(mensagemSemMarca)) {
+      return falhar("saida_invalida");
+    }
     const rascunho = comporResposta({
-      mensagem: final.mensagem,
+      mensagem: mensagemSemMarca,
       saudacao: entrada.config.saudacao,
       encerramento: entrada.config.encerramento,
       primeiraResposta: !entrada.mensagens.some(

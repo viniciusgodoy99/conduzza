@@ -100,6 +100,16 @@ export async function GET(request: NextRequest) {
     // Codigo curto do tipo "planejar_reguas:42P01" (rotina e SQLSTATE),
     // gravado por motor_manutencao(). Nunca carrega conteudo.
     planner_erro: saude?.planner?.ultimo_erro ?? null,
+    // Motor da IA (E3): respostas devidas ha mais de 60 s e se a entrada
+    // motor-ia esta agendada. Nulo com o banco antes da M1.
+    ia: saude?.ia
+      ? {
+          agendado: saude.ia.agendado === true,
+          vigiado: saude.ia.vigiado === true,
+          devidos: Number(saude.ia.devidos ?? 0),
+          batida_ha_s: segundosDesde(saude.ia.batida_em, agora),
+        }
+      : null,
   };
 
   if (alertas.length > 0) {

@@ -78,6 +78,7 @@ export function dadosDeTeste(
     superAdmin: false,
     previaDoPrompt: null,
     motivoDoSimulador: null,
+    emUsoNoWhatsapp: false,
     ...campos,
   };
 }

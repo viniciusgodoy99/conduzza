@@ -7,8 +7,9 @@ import { E2E_PREFIXO, E2E_SENHA } from "./fixtures";
 import { login } from "./helpers";
 
 // Aceite da tarefa 1.5 sobre o seed: lista com segmentos e chips, fio com
-// selo de IA, nota interna, cartao de bloqueio de conformidade com o rascunho
-// auditavel, e a faixa vermelha de desconectado. Leitura pura, nao muta nada.
+// selo de IA, nota interna, cartao de bloqueio de conformidade (o rascunho so
+// para a equipe Conduzza desde o E3), e a faixa vermelha de desconectado.
+// Leitura pura, nao muta nada.
 
 test.beforeEach(() => {
   test.skip(
@@ -101,22 +102,22 @@ test("link do Início com ?filtro=aguardando chega com o chip marcado", async ({
   await expect(lista.getByText("Roberto Recibo")).toHaveCount(0);
 });
 
-test("bloqueio de conformidade aparece no fio com o rascunho auditável", async ({
+test("bloqueio de conformidade aparece no fio, com o rascunho fechado para a recepção", async ({
   page,
 }) => {
+  // E3 (D25): o rascunho pode conter dado de saude e so a equipe Conduzza
+  // le, buscado ao abrir. Para os outros papeis o botao fica visivel e
+  // desabilitado com a dica (tests/e2e/ia-whatsapp.spec.ts cobre os papeis).
   await login(page, dados().emails.recepcao);
   await page.goto("/atendimento");
   await page.getByText("Patrícia Sintoma").click();
   await expect(
     page.getByText("Resposta da IA bloqueada pela conformidade"),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Ver o que a IA ia responder" })
-    .click();
   await expect(
-    page.getByRole("heading", { name: "Rascunho bloqueado" }),
-  ).toBeVisible();
-  await expect(page.getByText(/pomada cicatrizante/)).toBeVisible();
+    page.getByRole("button", { name: "Ver o que a IA ia responder" }),
+  ).toBeDisabled();
+  await expect(page.getByText(/pomada cicatrizante/)).toHaveCount(0);
 });
 
 test("bolha da IA carrega selo textual, nunca só cor", async ({ page }) => {

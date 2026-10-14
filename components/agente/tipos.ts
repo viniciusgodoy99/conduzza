@@ -61,6 +61,13 @@ export type DadosDoPainel = {
    * teto do dia).
    */
   motivoDoSimulador: string | null;
+  /**
+   * A versao publicada esta mesmo em uso no WhatsApp: a aba Agente de IA de
+   * Configuracoes diz "Conversando com a equipe", sem motivo de parada (D39,
+   * E3). Falso em qualquer duvida (leitura que falhou, papel que nao le a
+   * liberacao): a tela fica com "Última publicada".
+   */
+  emUsoNoWhatsapp: boolean;
 };
 
 /** Quem falou na conversa do simulador. */

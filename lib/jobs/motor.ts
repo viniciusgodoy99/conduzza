@@ -87,6 +87,11 @@ export const CUSTO_ESTIMADO_MS: Record<string, number> = {
   // 15 s de prazo da consulta na Meta (RESOLVER_PRAZO_MS) + as leituras de
   // configuracao, as duas listas e a gravacao.
   resolver_anuncio_meta: 20_000,
+  // A resposta da IA (E3) roda no motor proprio (lib/jobs/motor-ia.ts), que
+  // reserva o prazo da invocacao inteira (turno de ate 45 s mais o envio):
+  // os trilhos daqui nunca a reivindicam. O valor so cobre "todo kind tem
+  // custo".
+  responder_com_ia: 60_000,
 };
 const CUSTO_PADRAO_MS = 25_000;
 

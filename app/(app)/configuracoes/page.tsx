@@ -520,6 +520,10 @@ export default async function ConfiguracoesPage({
                 ),
                 podeEditar: active.role === "admin" || context.isProductAdmin,
                 superAdmin: context.isProductAdmin,
+                // O horario do assistente ("Agora está fora do horário")
+                // no relogio e no fuso da clinica (regra 3.6).
+                agoraMs: Date.now(),
+                fuso: active.timezone,
               }
             : null
         }

@@ -43,6 +43,15 @@ import { adminClient } from "../rls/stack";
 //   O guarda novo das RPCs nao muda nada para a service role (todas as
 //   chamadas daqui seguem passando); quem a sessao pode ou nao pode chamar
 //   esta em tests/rls/ia-liberacao.test.ts.
+// - E3 (migration 20261013100000): ligar o WhatsApp (modo contatos, numero,
+//   telefone) passou a ser so da equipe Conduzza. A service role continua
+//   ligando (ela e o servidor e o SQL editor), entao as chamadas daqui nao
+//   mudam; o administrador recebendo 42501 ao ligar esta em
+//   tests/rls/ia-liberacao.test.ts e tests/rls/ia-whatsapp.test.ts. Desligar
+//   agora grava o evento "O assistente foi desligado..." em cada conversa
+//   devolvida (nenhuma mensagem ao contato), a leitura da aba ganha a
+//   situacao (situacao_da_ia_na_clinica) e ai_decision_log ganha desfecho e
+//   motivo_da_falha com CHECK.
 // Mesmos cenarios do ensaio (scratchpad/e0/asserts.sql). Quem le o que esta
 // em tests/rls/ia-liberacao.test.ts.
 //
@@ -618,7 +627,7 @@ describe("gatilho de status e desligamento", () => {
     expect((await conversa(daOutra)).status).toBe("aguardando_humano");
   });
 
-  it("desligar um telefone devolve so a conversa dele, com espera e sem envio", async () => {
+  it("desligar um telefone devolve so a conversa dele, com espera, com o evento e sem envio", async () => {
     await telefone(SEGUNDA_EQUIPE, true, "Segunda pessoa da equipe");
     conversaDaEquipe = await conversaNaIa(equipe, numero1);
     conversaDaSegunda = await conversaNaIa(segunda, numero1);
@@ -635,7 +644,8 @@ describe("gatilho de status e desligamento", () => {
     const { count: antes } = await admin
       .from("message")
       .select("id", { count: "exact", head: true })
-      .eq("clinic_id", clinicaT);
+      .eq("clinic_id", clinicaT)
+      .neq("content_type", "evento");
 
     await telefone(SEGUNDA_EQUIPE, false);
 
@@ -653,11 +663,33 @@ describe("gatilho de status e desligamento", () => {
       .single()
       .throwOnError();
     expect(linha).toEqual({ rotulo: "Segunda pessoa da equipe", ativo: false });
+    // nada a mais alem dos eventos: desligar nao envia nada ao contato
     const { count: depois } = await admin
       .from("message")
       .select("id", { count: "exact", head: true })
-      .eq("clinic_id", clinicaT);
+      .eq("clinic_id", clinicaT)
+      .neq("content_type", "evento");
     expect(depois).toBe(antes);
+    // o evento so na conversa devolvida (E3): sistema, sem envio
+    const { data: eventos } = await admin
+      .from("message")
+      .select(
+        "conversation_id, direction, author, body, wa_message_id, delivery_status",
+      )
+      .eq("clinic_id", clinicaT)
+      .eq("content_type", "evento")
+      .in("conversation_id", [conversaDaSegunda, conversaDaEquipe])
+      .throwOnError();
+    expect(eventos).toEqual([
+      {
+        conversation_id: conversaDaSegunda,
+        direction: "saida",
+        author: "sistema",
+        body: "O assistente foi desligado. A conversa voltou para a equipe.",
+        wa_message_id: null,
+        delivery_status: null,
+      },
+    ]);
   });
 
   it("desligar o numero e depois a clinica devolve o resto", async () => {
@@ -762,6 +794,17 @@ describe("aba Agente de IA: a leitura da tela", () => {
       numeros: [],
       telefones: [],
       interruptorLigado: (data as { ligado: boolean }).ligado,
+      // E3: a situacao da aba (situacao_da_ia_na_clinica, com o booleano
+      // motor_parado desde a revisao: o motor e global, entao so o tipo)
+      situacao: {
+        tetoAtingido: false,
+        versaoPublicada: null,
+        telefonesInvalidos: [],
+        telefonesSemAutorizacao: [],
+        telefonesComConversaAberta: [],
+        horarioPublicado: null,
+        motorParado: expect.any(Boolean),
+      },
     });
   });
 
@@ -966,6 +1009,11 @@ describe("3.1, precos e ai_decision_log", () => {
       { gatilho_entrada: "qualquer" },
       { texto_sha256: "abc" },
       { tokens_entrada: -1 },
+      // E3: desfecho e motivo da falha so da lista, e coerentes
+      { desfecho: "inventado" },
+      { motivo_da_falha: "inventado" },
+      { desfecho: "respondeu" },
+      { desfecho: "bloqueou" },
       { aprovado: true },
       {
         aprovado: true,

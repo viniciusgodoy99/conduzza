@@ -222,6 +222,16 @@ describe("motivoDoAmbiente (T1 e T2)", () => {
     expect(
       motivoDoAmbiente("99999999-9999-4999-8999-999999999999", AMBIENTE),
     ).toBe(TEXTOS_DO_SIMULADOR.clinicaForaDaFase);
+    // T1 tambem exige o segredo do identificador (revisao do E3): o motivo
+    // e o da configuracao de seguranca, nao "fora da fase".
+    for (const segredo of [undefined, "", "curto"]) {
+      expect(
+        motivoDoAmbiente(CLINICA, {
+          ...AMBIENTE,
+          IA_SEGREDO_DO_IDENTIFICADOR: segredo,
+        }),
+      ).toBe(TEXTOS_DO_SIMULADOR.semIdentificador);
+    }
   });
 
   it("as variaveis antigas de ligar e de lista nao mudam nada", () => {

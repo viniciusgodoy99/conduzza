@@ -550,7 +550,8 @@ describe("POST /api/webhooks/whatsapp: tudo filtrado pelo numero", () => {
       }),
     );
     expect(resposta.status).toBe(200);
-    expect((await resposta.json()).ignorada).toBe("numero_proprio");
+    // E3: o provedor so recebe { ok: true } (nada da ingestao volta a ele).
+    expect(await resposta.json()).toEqual({ ok: true });
     expect(consultasDe("job_queue", "insert")).toHaveLength(0);
     expect(interceptar).not.toHaveBeenCalled();
   });
@@ -709,10 +710,8 @@ describe("POST /api/webhooks/whatsapp: mensagem enviada pelo celular da clínica
     // O contato e a conversa sao da RPC: a rota nao procura nada por fora.
     expect(consultasDe("contact", "select")).toHaveLength(0);
     expect(consultasDe("conversation", "update")).toHaveLength(0);
-    expect(await resposta.json()).toMatchObject({
-      inserted: true,
-      message_id: "mensagem-cel-1",
-    });
+    // So o 200: o resultado da RPC nao volta ao provedor (revisao do E3).
+    expect(await resposta.json()).toEqual({ ok: true });
   });
 
   it("URL legada: grava pelo número que o segredo achou", async () => {
@@ -788,7 +787,7 @@ describe("POST /api/webhooks/whatsapp: mensagem enviada pelo celular da clínica
       );
 
       expect(resposta.status).toBe(200);
-      expect((await resposta.json()).ignorada).toBe(motivo);
+      expect(await resposta.json()).toEqual({ ok: true });
       expect(consultasDe("job_queue", "insert")).toHaveLength(0);
       expect(chamadasDaRpc("vincular_citacao_recebida")).toHaveLength(0);
       expect(chamadasDaRpc("marcar_eco_para_termo")).toHaveLength(0);
@@ -1150,10 +1149,8 @@ describe("POST /api/webhooks/whatsapp: eco ignorado com contato segue para o ter
       );
 
       expect(resposta.status).toBe(200);
-      expect(await resposta.json()).toMatchObject({
-        ignorada: motivo,
-        contact_id: "contato-desta-clinica",
-      });
+      // A ignorada e o contato achado ficam aqui dentro: so o 200.
+      expect(await resposta.json()).toEqual({ ok: true });
       expect(chamadasDaRpc("marcar_eco_para_termo")).toEqual([
         { p_clinic_id: CLINICA, p_wa_message_id: "wa-cel-1" },
       ]);
@@ -1273,7 +1270,7 @@ describe("POST /api/webhooks/whatsapp: saudação para paciente novo (eco antes 
     );
 
     expect(resposta.status).toBe(200);
-    expect((await resposta.json()).ignorada).toBe("contato_desconhecido");
+    expect(await resposta.json()).toEqual({ ok: true });
     expect(linhaDoTempo()).toEqual([
       "registrar",
       "esperar 1500",
@@ -1330,10 +1327,7 @@ describe("POST /api/webhooks/whatsapp: saudação para paciente novo (eco antes 
     );
 
     expect(resposta.status).toBe(200);
-    expect(await resposta.json()).toMatchObject({
-      inserted: true,
-      contact_id: "contato-novo",
-    });
+    expect(await resposta.json()).toEqual({ ok: true });
     expect(linhaDoTempo()).toEqual(["registrar", "esperar 1500", "registrar"]);
     expect(consultasDe("job_queue", "insert")).toHaveLength(1);
     expect(mover).toHaveBeenCalledTimes(1);
@@ -1389,7 +1383,7 @@ describe("POST /api/webhooks/whatsapp: saudação para paciente novo (eco antes 
     );
 
     expect(resposta.status).toBe(200);
-    expect((await resposta.json()).ignorada).toBe("contato_desconhecido");
+    expect(await resposta.json()).toEqual({ ok: true });
     expect(chamadasDaRpc("registrar_mensagem_do_celular")).toHaveLength(1);
     expect(esperar).not.toHaveBeenCalled();
   });

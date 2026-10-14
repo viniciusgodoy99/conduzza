@@ -24,6 +24,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { diaCivil, minutosLocais, somarDias } from "@/lib/domain/horarios";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { log } from "@/lib/log";
+import { abaDaIaVisivel } from "@/lib/queries/ia-liberacao";
 import {
   fetchFunilDaJornada,
   fetchResumoDoDia,
@@ -369,6 +370,7 @@ export default async function InicioPage() {
         funil={funil}
         proximasAcoes={proximasAcoes}
         pedidosDeAcesso={pedidosDeAcesso}
+        iaNaFase={abaDaIaVisivel(active.clinicId)}
       />
     </div>
   );

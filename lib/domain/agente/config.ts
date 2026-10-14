@@ -535,8 +535,15 @@ export function agenteAtendeAgora(
 // ---------------------------------------------------------------------------
 
 /**
- * Espelho EXATO do CHECK ai_decision_log_escalation_reason_valida (migration
- * 20261006100000). Um teste cruza esta lista com a da migration.
+ * Espelho EXATO do CHECK ai_decision_log_escalation_reason_valida (redefinido
+ * na migration 20261013100000_ia_whatsapp_fila.sql, E3). Um teste cruza esta
+ * lista com a da migration.
+ *
+ * Os quatro do E3: falha_tecnica (o turno falhou por tecnica e a conversa foi
+ * para a equipe), teto_de_respostas (limite de respostas da conversa na
+ * ultima hora), nao_individual (mensagem de grupo, status ou canal numa
+ * conversa da IA) e pedido_de_agenda (D41: o paciente quer marcar, remarcar
+ * ou cancelar, e a IA ainda nao agenda).
  */
 export const MOTIVOS_DE_ESCALONAMENTO = [
   "sintoma",
@@ -552,6 +559,10 @@ export const MOTIVOS_DE_ESCALONAMENTO = [
   "agente_pediu",
   "teto_atingido",
   "regra_do_procedimento",
+  "falha_tecnica",
+  "teto_de_respostas",
+  "nao_individual",
+  "pedido_de_agenda",
 ] as const;
 export type MotivoDeEscalonamento = (typeof MOTIVOS_DE_ESCALONAMENTO)[number];
 
@@ -577,6 +588,86 @@ export const ROTULO_DO_MOTIVO_DE_ESCALONAMENTO: Readonly<
   agente_pediu: "o assistente preferiu passar para a equipe",
   teto_atingido: "o limite de gasto de hoje acabou",
   regra_do_procedimento: "o procedimento pede contato da equipe",
+  falha_tecnica: "o assistente teve uma falha técnica",
+  teto_de_respostas:
+    "o limite de respostas desta conversa na última hora acabou",
+  nao_individual: "a mensagem veio de um grupo, de um status ou de um canal",
+  pedido_de_agenda: "o paciente quer marcar, remarcar ou cancelar",
+};
+
+/**
+ * Motivos do evento no fio da conversa que NAO sao escalation_reason: a IA
+ * saiu da conversa (ou nao entrou) por uma trava do sistema, sem decisao do
+ * turno. So o fio (message, content_type 'evento'); nunca ai_decision_log.
+ */
+export const MOTIVOS_DE_SISTEMA_DA_IA = [
+  "fora_do_horario",
+  "horario_nao_suportado",
+  "sem_versao_publicada",
+  "liberacao_perdida",
+  "numero_desconectado",
+  "envio_incerto",
+  "aviso_nao_enviado",
+  "celular",
+  "sem_resposta",
+  "desligada",
+  "parada",
+  // Revisao do E3 (S5): o telefone da equipe revogou a autorizacao para
+  // receber mensagens. O executor confere antes do modelo e passa sem frase.
+  "sem_autorizacao",
+] as const;
+export type MotivoDeSistemaDaIa = (typeof MOTIVOS_DE_SISTEMA_DA_IA)[number];
+export type MotivoDoEventoDaIa = MotivoDeEscalonamento | MotivoDeSistemaDaIa;
+
+/** O prefixo do evento de passagem (rotulo de cada motivo depois dele). */
+const PASSAGEM_DA_IA = "A IA passou a conversa para a equipe: ";
+
+function passagemDaIa(motivo: MotivoDeEscalonamento): string {
+  return `${PASSAGEM_DA_IA}${ROTULO_DO_MOTIVO_DE_ESCALONAMENTO[motivo]}.`;
+}
+
+/**
+ * O corpo do evento no fio para cada motivo (contrato do E3, secao 4.1).
+ * Espelho EXATO de rotulo_do_motivo_da_ia() da migration 20261013100000: um
+ * teste cruza os dois. O banco grava o evento; este espelho existe para o
+ * teste e para quem precisar mostrar o mesmo texto sem ir ao banco.
+ */
+export const TEXTO_DO_EVENTO_DA_IA: Readonly<
+  Record<MotivoDoEventoDaIa, string>
+> = {
+  sintoma: passagemDaIa("sintoma"),
+  pedido_humano: passagemDaIa("pedido_humano"),
+  insatisfacao: passagemDaIa("insatisfacao"),
+  menor_de_idade: passagemDaIa("menor_de_idade"),
+  valor_fora_da_tabela: passagemDaIa("valor_fora_da_tabela"),
+  falhas_seguidas: passagemDaIa("falhas_seguidas"),
+  assunto_clinico: passagemDaIa("assunto_clinico"),
+  midia_nao_suportada: passagemDaIa("midia_nao_suportada"),
+  tentativa_de_manipulacao: passagemDaIa("tentativa_de_manipulacao"),
+  conformidade: passagemDaIa("conformidade"),
+  agente_pediu: passagemDaIa("agente_pediu"),
+  teto_atingido: passagemDaIa("teto_atingido"),
+  regra_do_procedimento: passagemDaIa("regra_do_procedimento"),
+  falha_tecnica: passagemDaIa("falha_tecnica"),
+  teto_de_respostas: passagemDaIa("teto_de_respostas"),
+  pedido_de_agenda: passagemDaIa("pedido_de_agenda"),
+  nao_individual:
+    "Chegou uma mensagem de grupo ou de status. A conversa voltou para a equipe.",
+  fora_do_horario: `${PASSAGEM_DA_IA}agora está fora do horário escolhido para o assistente.`,
+  horario_nao_suportado: `${PASSAGEM_DA_IA}o modo de horário escolhido ainda não funciona no WhatsApp.`,
+  sem_versao_publicada: `${PASSAGEM_DA_IA}o assistente ainda não tem versão publicada.`,
+  liberacao_perdida: `${PASSAGEM_DA_IA}o assistente deixou de estar liberado para este telefone ou este número.`,
+  numero_desconectado: `${PASSAGEM_DA_IA}o número do assistente está desconectado.`,
+  envio_incerto:
+    "A IA pode não ter enviado a última resposta. A conversa voltou para a equipe.",
+  aviso_nao_enviado: "O aviso automático ao contato não foi enviado.",
+  celular:
+    "Alguém respondeu pelo celular. A IA parou de responder nesta conversa.",
+  sem_resposta: "A IA não respondeu a tempo. A conversa voltou para a equipe.",
+  desligada: "O assistente foi desligado. A conversa voltou para a equipe.",
+  parada:
+    "O assistente não atendeu esta mensagem: ele está parado nesta clínica.",
+  sem_autorizacao: `${PASSAGEM_DA_IA}o contato não tem autorização para receber mensagens.`,
 };
 
 /**

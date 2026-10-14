@@ -30,6 +30,7 @@ import {
 import { espacamentoDeMassaMs } from "./espacamento";
 import { executarSincronizacaoDeGastoMeta } from "./gasto-meta";
 import type { KindDeJob } from "./kinds";
+import type { DependenciasDoExecutorDaIa } from "./responder-com-ia";
 import {
   executarMensagemAgendada,
   fecharAgendadaDoJob,
@@ -643,11 +644,42 @@ async function baixarEGuardarMidia(
   return { ok: true };
 }
 
+/** O que so o job da IA (E3) usa; os outros kinds ignoram. */
+export type OpcoesDoJob = {
+  /** Epoch ms do fim da invocacao (o executor da IA reserva o envio). */
+  prazoFinalMs?: number;
+  /** Troca de dependencias do executor da IA (so as suites). */
+  dependenciasDaIa?: Partial<DependenciasDoExecutorDaIa>;
+};
+
+/** Sem prazo de quem chama (o laco local): o maxDuration da rota da IA. */
+const PRAZO_PADRAO_DA_IA_MS = 55_000;
+
+async function executarRespostaDaIaNoJob(
+  admin: SupabaseClient,
+  job: Job,
+  workerId: string,
+  opcoes: OpcoesDoJob,
+): Promise<ResultadoDeJob> {
+  // Import tardio: o executor da IA carrega o contexto do agente (que e
+  // server-only) e o cliente da OpenAI. O laco local (npm run worker) e os
+  // outros kinds nunca precisam disso, e o claim legado nunca traz o kind.
+  const { dependenciasPadraoDaIa, executarRespostaComIa } =
+    await import("./responder-com-ia");
+  const prazoFinalMs =
+    opcoes.prazoFinalMs ?? Date.now() + PRAZO_PADRAO_DA_IA_MS;
+  return executarRespostaComIa(job, workerId, {
+    ...dependenciasPadraoDaIa({ admin, prazoFinalMs }),
+    ...opcoes.dependenciasDaIa,
+  });
+}
+
 async function executarJob(
   admin: SupabaseClient,
   job: Job,
   // A posse do job: numero_do_job so responde ao executor que o reivindicou.
   workerId: string,
+  opcoes: OpcoesDoJob = {},
 ): Promise<ResultadoDeJob> {
   switch (job.kind) {
     case "enviar_mensagem_ativa":
@@ -666,6 +698,8 @@ async function executarJob(
       return executarResolucaoDeAnunciosMeta(admin, job, workerId);
     case "enviar_mensagem_agendada":
       return executarMensagemAgendada(admin, job);
+    case "responder_com_ia":
+      return executarRespostaDaIaNoJob(admin, job, workerId, opcoes);
     default:
       return { ok: false, erro: "tipo_desconhecido", definitivo: true };
   }
@@ -719,6 +753,7 @@ export async function executarJobComPosse(
   admin: SupabaseClient,
   workerId: string,
   job: Job,
+  opcoes: OpcoesDoJob = {},
 ): Promise<DesfechoDoJob> {
   // POSSE + HEARTBEAT: renova o lease e confirma que este worker ainda e o
   // dono. Se o lease venceu no meio do lote e outro worker assumiu, PULAR:
@@ -739,7 +774,7 @@ export async function executarJobComPosse(
   const inicio = Date.now();
   let resultado: ResultadoDeJob;
   try {
-    resultado = await executarJob(admin, job, workerId);
+    resultado = await executarJob(admin, job, workerId, opcoes);
   } catch (erro) {
     // So o codigo seguro de ErroComCodigoDeJob sai do processo (last_error e
     // log); qualquer outra excecao vira 'excecao_no_worker' (regra 3.1).
@@ -794,7 +829,7 @@ export async function executarJobComPosse(
       clinic_id: job.clinic_id,
       duration_ms: Date.now() - inicio,
     });
-    await fecharDepoisDoJob(admin, job);
+    await fecharDepoisDoJob(admin, job, resultado);
     return "concluido";
   }
 
@@ -811,22 +846,134 @@ export async function executarJobComPosse(
     error_code: resultado.erro,
     attempt: job.attempts,
   });
-  await fecharDepoisDoJob(admin, job);
+  await fecharDepoisDoJob(admin, job, resultado);
   return "falhou";
 }
 
 /**
- * O que fecha junto com o job, depois de concluir_job ou falhar_job. Hoje so
- * a mensagem agendada: a reconciliacao le o job e a message e fecha a
- * agendada (enviada, nao enviada ou nao confirmada). Falha com retry deixa o
- * job pendente, e a reconciliacao nao mexe em nada. Nunca lanca.
+ * O que fecha junto com o job, depois de concluir_job ou falhar_job. Nunca
+ * lanca.
+ * - Mensagem agendada: a reconciliacao le o job e a message e fecha a
+ *   agendada (enviada, nao enviada ou nao confirmada). Falha com retry deixa
+ *   o job pendente, e a reconciliacao nao mexe em nada.
+ * - Resposta da IA (E3): na falha definitiva ou nas tentativas esgotadas
+ *   (sem_posse e ia_fora_do_ambiente nao: outro executor e o dono, ou a
+ *   clinica nem podia ter a IA), o texto pendente sai de
+ *   ai_turno, o turno vira 'sem_envio' e a conversa, se ainda estiver na
+ *   IA, volta para a equipe com o evento de falha tecnica, SEM frase.
  */
 async function fecharDepoisDoJob(
   admin: SupabaseClient,
   job: Job,
+  resultado: ResultadoDeJob,
 ): Promise<void> {
   if (job.kind === "enviar_mensagem_agendada") {
     await fecharAgendadaDoJob(admin, job);
+    return;
+  }
+  if (
+    job.kind === "responder_com_ia" &&
+    "ok" in resultado &&
+    !resultado.ok &&
+    // Fora do ambiente ou da lista: a conversa fica intocada (contrato 3.6).
+    resultado.erro !== "sem_posse" &&
+    resultado.erro !== "ia_fora_do_ambiente" &&
+    (resultado.definitivo === true || job.attempts >= job.max_attempts)
+  ) {
+    await fecharRespostaDaIaQueDesistiu(admin, job);
+  }
+}
+
+/**
+ * D-A (revisao do E3): o job que desistiu so tira a conversa da IA se ele e
+ * da janela ATUAL. Job criado antes do `desde` (alguem assumiu e devolveu
+ * depois dele) esta morto: tirar a conversa desfaria o Devolver e cancelaria
+ * os jobs da sessao nova. Sem conseguir ler a janela, tambem nao tira: a
+ * varredura de 3 minutos devolve a conversa que ficar sem resposta.
+ */
+async function podeTirarAConversaDoJob(
+  admin: SupabaseClient,
+  job: Job,
+  conversa: string,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from("ia_janela_da_conversa")
+    .select("desde")
+    .eq("clinic_id", job.clinic_id)
+    .eq("conversation_id", conversa)
+    .maybeSingle();
+  if (error) {
+    log.warn("ia_conversa_nao_tirada", {
+      job_id: job.id,
+      clinic_id: job.clinic_id,
+      error_code: error.code ?? "janela_nao_lida",
+    });
+    return false;
+  }
+  const desde = (data as { desde?: unknown } | null)?.desde;
+  if (typeof desde !== "string" || typeof job.created_at !== "string") {
+    return true;
+  }
+  const criado = new Date(job.created_at).getTime();
+  const inicio = new Date(desde).getTime();
+  if (!Number.isNaN(criado) && !Number.isNaN(inicio) && criado < inicio) {
+    log.info("ia_job_anterior_a_janela", {
+      job_id: job.id,
+      clinic_id: job.clinic_id,
+    });
+    return false;
+  }
+  return true;
+}
+
+async function fecharRespostaDaIaQueDesistiu(
+  admin: SupabaseClient,
+  job: Job,
+): Promise<void> {
+  try {
+    const { error } = await admin
+      .from("ai_turno")
+      .update({ estado: "sem_envio", texto: null })
+      .eq("clinic_id", job.clinic_id)
+      .eq("job_id", job.id)
+      .in("estado", ["reservado", "decidido"]);
+    if (error) {
+      log.warn("ia_turno_nao_fechado", {
+        job_id: job.id,
+        clinic_id: job.clinic_id,
+        error_code: error.code ?? null,
+      });
+    }
+    const conversa = job.payload.conversation_id;
+    if (
+      typeof conversa === "string" &&
+      (await podeTirarAConversaDoJob(admin, job, conversa))
+    ) {
+      const { error: erroDaConversa } = await admin.rpc(
+        "tirar_conversa_da_ia_pelo_servidor",
+        {
+          p_clinic_id: job.clinic_id,
+          p_conversation_id: conversa,
+          p_motivo: "falha_tecnica",
+          // D-A no banco tambem (contrato 10.3): job anterior a janela
+          // devolve false sem efeito, atomico com a passagem.
+          p_job_id: job.id,
+        },
+      );
+      if (erroDaConversa) {
+        log.warn("ia_conversa_nao_tirada", {
+          job_id: job.id,
+          clinic_id: job.clinic_id,
+          error_code: erroDaConversa.code ?? null,
+        });
+      }
+    }
+  } catch {
+    log.warn("ia_turno_nao_fechado", {
+      job_id: job.id,
+      clinic_id: job.clinic_id,
+      error_code: "excecao",
+    });
   }
 }
 

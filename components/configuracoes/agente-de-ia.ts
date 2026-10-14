@@ -1,6 +1,7 @@
 import {
   CircleCheck,
   CirclePause,
+  CircleQuestionMark,
   FlaskConical,
   Hourglass,
 } from "lucide-react";
@@ -8,6 +9,7 @@ import { z } from "zod";
 
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import type { StatusDefinition } from "@/lib/design/status";
+import { agenteAtendeAgora } from "@/lib/domain/agente/config";
 import { formatarTelefone, normalizarTelefone } from "@/lib/domain/telefone";
 import type {
   DadosDaIa,
@@ -24,10 +26,18 @@ import type {
 //   lib/queries/ia-liberacao.ts, decidida no servidor).
 // - Quem altera: o administrador da clinica e o super admin. Gestor ve tudo
 //   desabilitado, com a dica. O interruptor geral e so do super admin.
+// - Nesta fase (E3, 13/10/2026), LIGAR o WhatsApp e so da equipe Conduzza:
+//   escolher "Conversar com a equipe", usar um numero e adicionar ou ligar um
+//   telefone. O administrador ve esses controles desabilitados, com a dica
+//   soEquipeConduzzaLiga; desligar continua com ele. O banco confere de novo
+//   (ia_exigir_equipe_conduzza).
 // - O estado diz a verdade de HOJE: "Ligado, mas parado" quando a escolha
-//   da clinica e ligar, mas alguma trava ainda diz nao (servidor,
-//   interruptor geral, pausa, numero, telefone). O teto de gasto nao entra:
-//   o gasto das ultimas 24 horas so o super admin le (ia_uso).
+//   da clinica e ligar, mas alguma trava ainda diz nao (ambiente, interruptor
+//   geral, pausa, teto de gasto, versao publicada, horario, motor da IA,
+//   numero, telefone). O verde so aparece sem nenhum motivo e com tudo
+//   conferido: leitura que falhou vira "Não deu para conferir agora" (achado
+//   T3 da revisao). O teto e a versao vem de situacao_da_ia_na_clinica (so o
+//   booleano do teto: ia_uso continua so do super admin).
 
 /** O que a clinica escolhe na aba. "equipe" e o modo 'contatos' do banco. */
 export type EscolhaDaIa = "desligado" | "simulador" | "equipe";
@@ -64,6 +74,11 @@ export type MotivoDaParada =
   | "servidor"
   | "interruptor"
   | "pausada"
+  | "sem_versao_publicada"
+  | "horario_nao_suportado"
+  | "fora_do_horario_agora"
+  | "teto_atingido"
+  | "motor_parado"
   | "sem_numero"
   | "numero_desconectado"
   | "sem_telefone";
@@ -77,6 +92,10 @@ export type ContextoDaIa = {
   numeros: readonly NumeroDoWhatsapp[] | null;
   /** T1 e T2: producao com a chave da OpenAI e a clinica na lista fechada. */
   ambienteLigado: boolean;
+  /** Agora (epoch ms), para fora_do_horario_agora. */
+  agoraMs: number;
+  /** Fuso da clinica (CLAUDE.md 3.6), para o horario de operacao. */
+  fuso: string;
 };
 
 /**
@@ -104,8 +123,77 @@ export function numeroDaIa(
   return null;
 }
 
+/**
+ * Por que o telefone nao aciona o assistente, ou null (aciona quando
+ * ligado). "invalido" (situacao.telefonesInvalidos): numero de WhatsApp do
+ * Conduzza, ou contato com sinal de paciente sem o "forcar" (D-B),
+ * inclusive o forcado depois de desligado (o gatilho zera o forcado; so
+ * volta pelo formulario de adicionar com o forcar). "sem_autorizacao"
+ * (situacao.telefonesSemAutorizacao): o contato revogou a autorizacao para
+ * receber mensagens, e o executor passa a conversa sem responder.
+ */
+export function porQueNaoAciona(
+  dados: DadosDaIa,
+  telefoneId: string,
+): "invalido" | "sem_autorizacao" | null {
+  if (dados.situacao.telefonesInvalidos.includes(telefoneId)) {
+    return "invalido";
+  }
+  if (dados.situacao.telefonesSemAutorizacao.includes(telefoneId)) {
+    return "sem_autorizacao";
+  }
+  return null;
+}
+
+/** A frase da linha do telefone que nao aciona o assistente. */
+export function textoDoTelefoneQueNaoAciona(
+  motivo: "invalido" | "sem_autorizacao",
+): string {
+  return motivo === "invalido"
+    ? TEXTOS_DA_IA.telefoneInvalidoNaLinha
+    : TEXTOS_DA_IA.telefoneSemAutorizacaoNaLinha;
+}
+
+/** Algum telefone cadastrado nao aciona o assistente? */
+export function temTelefoneQueNaoAciona(dados: DadosDaIa): boolean {
+  return (
+    dados.situacao.telefonesInvalidos.length > 0 ||
+    dados.situacao.telefonesSemAutorizacao.length > 0
+  );
+}
+
+/**
+ * Telefones ATIVOS que acionam o assistente: o que nao aciona
+ * (porQueNaoAciona) nao conta, nem ligado (o banco recusa ligar o
+ * invalido; a linha antiga pode existir).
+ */
 export function quantosTelefonesLigados(dados: DadosDaIa): number {
-  return dados.telefones.filter((telefone) => telefone.ativo).length;
+  return dados.telefones.filter(
+    (telefone) =>
+      telefone.ativo && porQueNaoAciona(dados, telefone.id) === null,
+  ).length;
+}
+
+/** O estado da linha do telefone na lista da aba. */
+export type EstadoDoTelefone = "ligado" | "desligado" | "invalido";
+
+export function estadoDoTelefone(
+  dados: DadosDaIa,
+  telefoneId: string,
+): EstadoDoTelefone {
+  if (porQueNaoAciona(dados, telefoneId) !== null) {
+    return "invalido";
+  }
+  const telefone = dados.telefones.find((linha) => linha.id === telefoneId);
+  return telefone?.ativo ? "ligado" : "desligado";
+}
+
+/** O telefone tem conversa aberta com a equipe no numero escolhido? */
+export function telefoneComConversaAberta(
+  dados: DadosDaIa,
+  telefoneId: string,
+): boolean {
+  return dados.situacao.telefonesComConversaAberta.includes(telefoneId);
 }
 
 /**
@@ -126,9 +214,25 @@ export function faltasParaAEquipe(
   return faltas;
 }
 
-/** Na ordem em que a tela lista. Vazio com a IA desligada pela clinica. */
+/**
+ * O motor da IA esta parado? Vem de situacao_da_ia_na_clinica (motor_parado,
+ * revisao do E3, B8): leitura obrigatoria, entao nao existe mais o motor
+ * "que nao deu para ler" tratado como motor de pe. Se a leitura falha, a aba
+ * mostra o erro, nunca o verde (achado T3).
+ */
+export function motorDaIaParadoNaAba(dados: DadosDaIa): boolean {
+  return dados.situacao.motorParado;
+}
+
+/**
+ * Na ordem em que a tela lista. Vazio com a IA desligada pela clinica.
+ *
+ * O teto vale tambem no simulador (a reserva do simulador usa o mesmo
+ * teto). Versao publicada, horario e motor so no modo equipe: o simulador
+ * usa o rascunho e roda dentro da tela.
+ */
 export function motivosDaParada(contexto: ContextoDaIa): MotivoDaParada[] {
-  const { dados, numeros, ambienteLigado } = contexto;
+  const { dados, numeros, ambienteLigado, agoraMs, fuso } = contexto;
   const escolha = escolhaAtual(dados.liberacao);
   if (escolha === "desligado") {
     return [];
@@ -143,7 +247,24 @@ export function motivosDaParada(contexto: ContextoDaIa): MotivoDaParada[] {
   if (dados.liberacao?.pausadaPelaClinica) {
     motivos.push("pausada");
   }
+  if (dados.situacao.tetoAtingido) {
+    motivos.push("teto_atingido");
+  }
   if (escolha === "equipe") {
+    const { versaoPublicada, horarioPublicado } = dados.situacao;
+    if (versaoPublicada === null) {
+      motivos.push("sem_versao_publicada");
+    }
+    if (horarioPublicado !== null) {
+      if (horarioPublicado.modo === "fallback") {
+        motivos.push("horario_nao_suportado");
+      } else if (!agenteAtendeAgora(horarioPublicado, agoraMs, fuso).atende) {
+        motivos.push("fora_do_horario_agora");
+      }
+    }
+    if (motorDaIaParadoNaAba(dados)) {
+      motivos.push("motor_parado");
+    }
     const escolhido = numeroDaIa(dados, numeros);
     if (!escolhido) {
       motivos.push("sem_numero");
@@ -157,14 +278,55 @@ export function motivosDaParada(contexto: ContextoDaIa): MotivoDaParada[] {
   return motivos;
 }
 
-export type EstadoDaIa = "desligado" | "simulador" | "equipe" | "parado";
+/**
+ * O que a aba nao conseguiu conferir agora (achado T3 da revisao do E3).
+ * So no modo equipe: com a leitura dos numeros de WhatsApp falhando, nao da
+ * para saber se o numero escolhido ainda e da clinica nem se esta
+ * conectado, e o executor exige as duas coisas. Sem numero liberado, o
+ * motivo e sem_numero (isso a aba sabe sem a lista).
+ */
+export type ConferenciaQueFalhou = "numero";
 
+export function oQueNaoDeuParaConferir(
+  contexto: ContextoDaIa,
+): ConferenciaQueFalhou[] {
+  const { dados, numeros } = contexto;
+  if (escolhaAtual(dados.liberacao) !== "equipe" || numeros !== null) {
+    return [];
+  }
+  return numeroDaIa(dados, numeros) ? ["numero"] : [];
+}
+
+export type EstadoDaIa =
+  "desligado" | "simulador" | "equipe" | "parado" | "nao_conferido";
+
+/**
+ * O estado do cabecalho. Um motivo conhecido vence ("Ligado, mas parado":
+ * isso a aba sabe); sem motivo, mas com alguma leitura que falhou, "Não deu
+ * para conferir agora" (nunca o verde: a aba nao afirma o que nao
+ * conferiu). O verde so com tudo conferido e nenhum motivo.
+ */
 export function estadoDaIa(contexto: ContextoDaIa): EstadoDaIa {
   const escolha = escolhaAtual(contexto.dados.liberacao);
   if (escolha === "desligado") {
     return "desligado";
   }
-  return motivosDaParada(contexto).length > 0 ? "parado" : escolha;
+  if (motivosDaParada(contexto).length > 0) {
+    return "parado";
+  }
+  if (oQueNaoDeuParaConferir(contexto).length > 0) {
+    return "nao_conferido";
+  }
+  return escolha;
+}
+
+/**
+ * A Tela 6 diz "Em uso no WhatsApp" so quando a aba diria o verde
+ * (contrato 3.13): a mesma regra, para as duas telas nunca divergirem
+ * (achado T3 da revisao). Leitura que falhou nunca vira "em uso".
+ */
+export function versaoEmUsoNoWhatsapp(contexto: ContextoDaIa): boolean {
+  return estadoDaIa(contexto) === "equipe";
 }
 
 // Tres camadas, com icones que ja tem dono no mesmo sentido e na mesma cor
@@ -173,7 +335,9 @@ export function estadoDaIa(contexto: ContextoDaIa): EstadoDaIa {
 // - simulador: FlaskConical info, o mesmo sentido (teste, nada sai para o
 //   paciente) e a mesma cor dos avisos de numero de teste da aba WhatsApp;
 // - equipe: CircleCheck success, ativo;
-// - parado: Hourglass warning, pendencia (ligado, esperando uma trava).
+// - parado: Hourglass warning, pendencia (ligado, esperando uma trava);
+// - nao_conferido: CircleQuestionMark neutral, a aba nao sabe (leitura que
+//   falhou); icone sem outro dono nos mapas do produto.
 export const IA_NA_CLINICA_STATUS: Record<EstadoDaIa, StatusDefinition> = {
   desligado: { label: "Desligado", tone: "neutral", icon: CirclePause },
   simulador: { label: "Só simulador", tone: "info", icon: FlaskConical },
@@ -183,6 +347,11 @@ export const IA_NA_CLINICA_STATUS: Record<EstadoDaIa, StatusDefinition> = {
     icon: CircleCheck,
   },
   parado: { label: "Ligado, mas parado", tone: "warning", icon: Hourglass },
+  nao_conferido: {
+    label: "Não deu para conferir agora",
+    tone: "neutral",
+    icon: CircleQuestionMark,
+  },
 };
 
 /** Interruptor geral e telefone da equipe: ligado ou desligado. */
@@ -194,17 +363,71 @@ export const LIGADO_DESLIGADO_STATUS: Record<
   desligado: { label: "Desligado", tone: "neutral", icon: CirclePause },
 };
 
+/**
+ * A linha do telefone da equipe, em 3 camadas. "Nao aciona o assistente"
+ * (porQueNaoAciona: numero de WhatsApp do Conduzza, contato com sinal de
+ * paciente sem o "forcar", inclusive o forcado depois de desligado, ou
+ * contato que revogou a autorizacao para receber mensagens) e pendencia:
+ * Hourglass warning, o mesmo par do "Ligado, mas parado" (um icone, uma
+ * cor). A frase da linha diz qual (textoDoTelefoneQueNaoAciona).
+ */
+export const TELEFONE_DA_EQUIPE_STATUS: Record<
+  EstadoDoTelefone,
+  StatusDefinition
+> = {
+  ligado: LIGADO_DESLIGADO_STATUS.ligado,
+  desligado: LIGADO_DESLIGADO_STATUS.desligado,
+  invalido: {
+    label: "Não aciona o assistente",
+    tone: "warning",
+    icon: Hourglass,
+  },
+};
+
+/**
+ * O rotulo da linha do telefone ligado e o do numero escolhido (achado T4
+ * da revisao do E3). "Conversa com o assistente" e "Em uso pelo assistente"
+ * so quando o assistente esta mesmo conversando (estado "equipe", sem
+ * nenhum motivo de parada). Desligado, So simulador ou Ligado, mas parado:
+ * o telefone diz so "Ligado" (TELEFONE_DA_EQUIPE_STATUS, contrato 3.11) e
+ * o numero, "Escolhido para o assistente". A linha nunca afirma o que o
+ * cabecalho da aba nega.
+ */
+export function rotuloDoTelefoneLigado(estado: EstadoDaIa): string {
+  return estado === "equipe"
+    ? TEXTOS_DA_IA.telefoneConversaComOAssistente
+    : TELEFONE_DA_EQUIPE_STATUS.ligado.label;
+}
+
+export function rotuloDoNumeroEscolhido(estado: EstadoDaIa): string {
+  return estado === "equipe"
+    ? TEXTOS_DA_IA.numeroEmUso
+    : TEXTOS_DA_IA.numeroEscolhido;
+}
+
 export const TEXTOS_DA_IA = {
   descricaoDaAba:
     "Fase de teste controlado: o assistente de IA conversa só com os telefones da equipe cadastrados aqui, por um número da clínica. Os pacientes continuam sendo atendidos pela equipe, como hoje.",
   semPermissao: "Somente o administrador da clínica altera o assistente de IA.",
   soEquipeConduzza: "A equipe Conduzza liga e desliga.",
+  soEquipeConduzzaLiga:
+    "Nesta fase, só a equipe Conduzza liga o atendimento pelo WhatsApp.",
   motivos: {
     servidor:
       "A equipe Conduzza ainda não ativou o assistente para esta clínica.",
     interruptor:
       "O interruptor geral está desligado. A equipe Conduzza liga e desliga.",
     pausada: "A clínica pausou o assistente.",
+    sem_versao_publicada:
+      "Publique a primeira versão do assistente na tela Agente de IA.",
+    horario_nao_suportado:
+      "Este modo de horário ainda não funciona no WhatsApp. Use 24 horas ou Só fora do expediente.",
+    fora_do_horario_agora:
+      "Agora está fora do horário escolhido para o assistente.",
+    teto_atingido:
+      "O gasto do dia chegou ao limite. O assistente volta sozinho quando o gasto das últimas 24 horas baixar.",
+    motor_parado:
+      "O motor do assistente não está rodando. Avise a equipe Conduzza.",
     sem_numero: "Nenhum número escolhido para o assistente.",
     numero_desconectado:
       "O número do assistente está desconectado. Conecte o número na aba WhatsApp.",
@@ -228,6 +451,31 @@ export const TEXTOS_DA_IA = {
   aindaNaoResponde: "Ele ainda não começa a responder",
   confirmarContato: "Confirmo que este telefone é de alguém da equipe",
   semResposta: "O servidor não respondeu. Confira a conexão e tente de novo.",
+  telefoneDaPlataforma:
+    "Este telefone não pode ser usado como telefone da equipe. Use o celular pessoal de alguém da equipe.",
+  telefoneInvalidoNaLinha:
+    "Este telefone não pode ser usado como telefone da equipe.",
+  telefoneSemAutorizacaoNaLinha:
+    "Este contato não autorizou receber mensagens. O assistente não conversa com ele.",
+  contatoDePaciente:
+    "Este telefone é de um paciente da clínica. A IA só conversa com telefones da equipe.",
+  forcarContatoDePaciente: "Usar mesmo assim (fica registrado)",
+  confirmarAvisoDaOpenai:
+    "Quem usa este celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar só dados de teste.",
+  avisoDaOpenaiObrigatorio:
+    "Confirme o aviso sobre a OpenAI antes de adicionar o telefone.",
+  conversaAbertaNoNumero:
+    "Tem conversa aberta com a equipe neste número: o assistente começa na próxima conversa.",
+  avisoTelefoneInvalido:
+    "Há telefone da equipe que não aciona o assistente. Veja a lista de telefones.",
+  naoConferidoTitulo: "Não deu para conferir agora",
+  naoConferido: {
+    numero:
+      "Não foi possível carregar os números de WhatsApp, então não dá para saber se o número do assistente está conectado. Recarregue a página.",
+  } satisfies Record<ConferenciaQueFalhou, string>,
+  telefoneConversaComOAssistente: "Conversa com o assistente",
+  numeroEmUso: "Em uso pelo assistente",
+  numeroEscolhido: "Escolhido para o assistente",
 } as const;
 
 /** Os motivos, em texto, na ordem da tela. */
@@ -236,12 +484,20 @@ export function textosDosMotivos(motivos: readonly MotivoDaParada[]): string[] {
 }
 
 /**
- * O aviso do dialogo de ligar: as travas da equipe Conduzza que ainda dizem
- * nao (as mesmas frases dos motivos da parada). Vazio: nada a avisar.
+ * O aviso do dialogo de ligar: as travas que ainda dizem nao (as mesmas
+ * frases dos motivos da parada), mais o telefone que nao aciona o
+ * assistente. Vazio: nada a avisar.
+ *
+ * `modo` (padrao "equipe"): no "Só simulador" so valem o ambiente e o
+ * interruptor; versao publicada, motor e telefones sao do WhatsApp.
  */
 export function avisosAoLigar(entrada: {
   ambienteLigado: boolean;
   interruptorLigado: boolean;
+  versaoPublicada: number | null;
+  motorParado: boolean;
+  temTelefoneInvalido: boolean;
+  modo?: Exclude<EscolhaDaIa, "desligado">;
 }): string[] {
   const motivos: MotivoDaParada[] = [];
   if (!entrada.ambienteLigado) {
@@ -250,7 +506,20 @@ export function avisosAoLigar(entrada: {
   if (!entrada.interruptorLigado) {
     motivos.push("interruptor");
   }
-  return textosDosMotivos(motivos);
+  if ((entrada.modo ?? "equipe") === "simulador") {
+    return textosDosMotivos(motivos);
+  }
+  if (entrada.versaoPublicada === null) {
+    motivos.push("sem_versao_publicada");
+  }
+  if (entrada.motorParado) {
+    motivos.push("motor_parado");
+  }
+  const textos = textosDosMotivos(motivos);
+  if (entrada.temTelefoneInvalido) {
+    textos.push(TEXTOS_DA_IA.avisoTelefoneInvalido);
+  }
+  return textos;
 }
 
 /**
@@ -315,6 +584,20 @@ export const telefoneDaEquipeSchema = z
      * clinica (avisoDeContatoDaClinica). Sem ele, a acao confere e recusa.
      */
     confirmarContato: z.boolean().optional(),
+    /**
+     * Confirmacao de LGPD, sempre presente no formulario: quem usa o
+     * celular sabe que o texto vai para a OpenAI, nos EUA, e usa so dado de
+     * teste (D32). A acao grava a confirmacao em audit_log.
+     */
+    confirmarAvisoDaOpenai: z.literal(true, {
+      message: TEXTOS_DA_IA.avisoDaOpenaiObrigatorio,
+    }),
+    /**
+     * So o super admin ve a opcao, depois da recusa de contato de paciente
+     * (D43). O banco confere de novo (ia_exigir_equipe_conduzza) e grava a
+     * trilha.
+     */
+    forcarContatoDePaciente: z.boolean().optional(),
   })
   .strict();
 
@@ -323,8 +606,14 @@ export type AcaoDaIa =
 
 /**
  * A dica de cada controle desabilitado (nula = liberado): a permissao
- * primeiro, depois o que falta. Exportada para o teste, porque a dica so
- * aparece no HTML quando o tooltip abre.
+ * primeiro, depois quem liga nesta fase, depois o que falta. Exportada para
+ * o teste, porque a dica so aparece no HTML quando o tooltip abre.
+ *
+ * Sentido de cada acao: `escolha` = mudar o modo (desligar e "Só
+ * simulador"), e tambem desligar um numero ou um telefone; `equipe` =
+ * escolher "Conversar com a equipe"; `numero` = USAR um numero; `telefone` =
+ * ADICIONAR ou LIGAR um telefone. Ligar o WhatsApp e so da equipe Conduzza
+ * nesta fase: o administrador recebe soEquipeConduzzaLiga nos tres.
  */
 export function dicasDaIa(entrada: {
   podeEditar: boolean;
@@ -333,12 +622,14 @@ export function dicasDaIa(entrada: {
 }): Record<AcaoDaIa, string | null> {
   const { podeEditar, superAdmin, faltasParaAEquipe: faltas } = entrada;
   const permissao = podeEditar ? null : TEXTOS_DA_IA.semPermissao;
+  const quemLiga =
+    permissao ?? (superAdmin ? null : TEXTOS_DA_IA.soEquipeConduzzaLiga);
   return {
     escolha: permissao,
     equipe:
-      permissao ?? (faltas.length > 0 ? TEXTOS_DA_IA.faltaParaAEquipe : null),
-    numero: permissao,
-    telefone: permissao,
+      quemLiga ?? (faltas.length > 0 ? TEXTOS_DA_IA.faltaParaAEquipe : null),
+    numero: quemLiga,
+    telefone: quemLiga,
     interruptor: superAdmin ? null : TEXTOS_DA_IA.soEquipeConduzza,
   };
 }

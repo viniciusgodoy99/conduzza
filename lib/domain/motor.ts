@@ -23,6 +23,23 @@ export type BatidaDoMotor = {
   ultimo_erro?: string | null;
 } | null;
 
+/**
+ * O motor da IA no WhatsApp (E3), como saude_do_motor() devolve na chave
+ * "ia" (migration 20261013100000). O alerta vem pronto do banco: vigiado
+ * (alguma clínica liberada em "Conversar com a equipe" com o interruptor
+ * ligado) e (resposta devida há mais de 60 segundos, ou a entrada motor-ia
+ * não agendada). Nunca pela idade da batida: a guarda do pg_cron não chama a
+ * rota sem trabalho, então batida velha é o normal.
+ */
+export type SaudeDaIa = {
+  batida_em: string | null;
+  ultimo_erro: string | null;
+  agendado: boolean;
+  vigiado: boolean;
+  devidos: number;
+  alerta: boolean;
+};
+
 export type SaudeDoMotor = {
   /** quem executa a fila (a rota chamada pelo agendador) */
   fila: BatidaDoMotor;
@@ -30,16 +47,15 @@ export type SaudeDoMotor = {
   planner: BatidaDoMotor;
   /** tarefas pendentes há mais de 5 minutos */
   atrasados?: number | null;
+  /** Ausente: banco antes da M1 do E3. */
+  ia?: SaudeDaIa | null;
 };
 
 /**
  * A batida está velha demais? Batida nenhuma conta como velha: ou o executor
  * nunca subiu, ou está fora do ar desde antes de existir o carimbo.
  */
-export function batidaVencida(
-  batida: BatidaDoMotor,
-  agora: Date,
-): boolean {
+export function batidaVencida(batida: BatidaDoMotor, agora: Date): boolean {
   const carimbo = batida?.batida_em;
   if (!carimbo) {
     return true;
@@ -64,7 +80,9 @@ export function motorParado(saude: SaudeDoMotor | null, agora: Date): boolean {
   if (!saude) {
     return true;
   }
-  return batidaVencida(saude.fila, agora) || batidaVencida(saude.planner, agora);
+  return (
+    batidaVencida(saude.fila, agora) || batidaVencida(saude.planner, agora)
+  );
 }
 
 /**
@@ -82,7 +100,17 @@ export type AlertaDoMotor =
   | "fila_parada"
   | "planner_parado"
   | "fila_atrasada"
-  | "planner_com_erro";
+  | "planner_com_erro"
+  | "ia_parada";
+
+/**
+ * O motor da IA parou com trabalho esperando (ou nem está agendado) numa
+ * clínica em que a IA atende pelo WhatsApp. Não muda a faixa da recepção
+ * (motorParado): é para o monitor externo e para a aba Agente de IA.
+ */
+export function motorDaIaParado(saude: SaudeDoMotor | null): boolean {
+  return saude?.ia?.alerta === true;
+}
 
 /**
  * Tudo o que justifica acordar o dono do produto, para o monitor externo
@@ -115,6 +143,9 @@ export function alertasDoMotor(
   }
   if (saude?.planner?.ultimo_erro) {
     alertas.push("planner_com_erro");
+  }
+  if (motorDaIaParado(saude)) {
+    alertas.push("ia_parada");
   }
   return alertas;
 }

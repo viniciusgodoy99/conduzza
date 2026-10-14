@@ -53,6 +53,12 @@ export type IngestResultado = {
   message_id: string | null;
   /** O numero que recebeu. Nulo so em clinica sem numero ativo. */
   whatsapp_account_id: string | null;
+  /**
+   * A conversa ficou (ou continua) com a IA depois desta mensagem (E3,
+   * migration 20261013120000). Ausente (banco antes da M2) = false. Fica
+   * dentro do servidor: a rota nao devolve isto ao provedor.
+   */
+  ia_atendendo?: boolean;
 };
 
 type MensagemRecebida = Extract<InboundEvent, { kind: "message_received" }>;

@@ -535,8 +535,10 @@ describe("horario de operacao", () => {
 
 describe("escalonamento e conformidade", () => {
   it("os motivos espelham o CHECK de escalation_reason da migration", () => {
+    // O CHECK foi redefinido no E3 (falha_tecnica, teto_de_respostas,
+    // nao_individual e pedido_de_agenda).
     const sql = readFileSync(
-      "supabase/migrations/20261006100000_ia_liberacao_e_schema.sql",
+      "supabase/migrations/20261013100000_ia_whatsapp_fila.sql",
       "utf-8",
     );
     const bloco = sql.match(

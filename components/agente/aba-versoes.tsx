@@ -44,14 +44,23 @@ import type { Mudanca } from "@/lib/domain/agente/config";
 
 /**
  * A ultima versao publicada: 3 camadas (icone, rotulo e cor). "Última
- * publicada" e nao "Em uso": nesta leva nada usa a versao publicada. Nenhuma
- * conversa de verdade roda o assistente ainda, e o simulador usa SEMPRE o
- * rascunho (achado 30).
+ * publicada" quando nenhuma conversa de verdade usa a versao (o simulador
+ * usa SEMPRE o rascunho, achado 30).
  */
 export const VERSAO_EM_USO: StatusDefinition = {
   label: "Última publicada",
   tone: "success",
   icon: CircleCheck,
+};
+
+/**
+ * A mesma versao quando o assistente esta conversando com a equipe pelo
+ * WhatsApp, sem motivo de parada na aba de Configuracoes (D39): o mesmo
+ * icone e a mesma cor, so o rotulo diz que esta em uso.
+ */
+export const VERSAO_EM_USO_NO_WHATSAPP: StatusDefinition = {
+  ...VERSAO_EM_USO,
+  label: "Em uso no WhatsApp",
 };
 
 /** O rascunho com alteracoes: neutro, com o lapis de "em edicao". */
@@ -89,6 +98,7 @@ export function AbaVersoes({
   pendente,
   ocupado,
   aoRestaurar,
+  emUsoNoWhatsapp = false,
 }: {
   /** Nulo: a leitura falhou. */
   versoes: VersaoDoAgente[] | null;
@@ -100,6 +110,8 @@ export function AbaVersoes({
   pendente: boolean;
   ocupado: (qual: string) => boolean;
   aoRestaurar: (versao: number, retorno: { seDerCerto: () => void }) => void;
+  /** A aba de Configuracoes diz "Conversando com a equipe" (D39). */
+  emUsoNoWhatsapp?: boolean;
 }) {
   const [restaurando, setRestaurando] = useState<VersaoDoAgente | null>(null);
 
@@ -172,7 +184,14 @@ export function AbaVersoes({
                     Versão <span className="cz-num">{versao.versao}</span>
                   </span>
                   {versao.emUso ? (
-                    <StatusChip size="sm" definition={VERSAO_EM_USO} />
+                    <StatusChip
+                      size="sm"
+                      definition={
+                        emUsoNoWhatsapp
+                          ? VERSAO_EM_USO_NO_WHATSAPP
+                          : VERSAO_EM_USO
+                      }
+                    />
                   ) : null}
                 </div>
                 <p className="text-xs text-text-secondary">

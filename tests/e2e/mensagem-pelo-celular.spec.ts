@@ -60,6 +60,35 @@ async function idDoMembro(papel: string): Promise<string> {
   return (data as { user_id: string }).user_id;
 }
 
+type LinhaDoCelular = {
+  id: string;
+  conversation_id: string;
+  direction: string;
+  author: string;
+  author_user_id: string | null;
+  pelo_celular: boolean;
+  billable: boolean;
+  cost_cents: number | null;
+  delivery_status: string | null;
+};
+
+/**
+ * As linhas gravadas com o wa_message_id do evento. A rota responde ao
+ * provedor so { ok: true } (o servidor do uazapi e compartilhado, revisao do
+ * E3): o que ela gravou e lido aqui, no banco.
+ */
+async function linhasDoEvento(waMessageId: string): Promise<LinhaDoCelular[]> {
+  const { data, error } = await admin
+    .from("message")
+    .select(
+      "id, conversation_id, direction, author, author_user_id, pelo_celular, billable, cost_cents, delivery_status",
+    )
+    .eq("clinic_id", dados().clinicId)
+    .eq("wa_message_id", waMessageId);
+  expect(error).toBeNull();
+  return (data ?? []) as LinhaDoCelular[];
+}
+
 /** A linha da mensagem no fio passa no axe (contraste) no tema da tela. */
 async function semViolacaoDeContraste(
   page: Page,
@@ -123,11 +152,12 @@ test("mensagem enviada pelo WhatsApp da clínica aparece no fio como Pelo WhatsA
     });
 
     // O evento do celular, no formato do uazapi.
+    const waMessageId = `E2ECELULAR${suffix.toUpperCase()}${tentativa}`;
     const resposta = await request.post(dados().webhookUrl, {
       data: {
         EventType: "messages",
         message: {
-          messageid: `E2ECELULAR${suffix.toUpperCase()}${tentativa}`,
+          messageid: waMessageId,
           chatid: `${PHONE.slice(1)}@s.whatsapp.net`,
           fromMe: true,
           messageType: "Conversation",
@@ -137,27 +167,16 @@ test("mensagem enviada pelo WhatsApp da clínica aparece no fio como Pelo WhatsA
       },
     });
     expect(resposta.status()).toBe(200);
-    const corpo = (await resposta.json()) as {
-      inserted?: boolean;
-      message_id?: string;
-      conversation_id?: string;
-      automatica?: boolean;
-    };
-    expect(corpo.inserted).toBe(true);
-    expect(corpo.conversation_id).toBe(conversationId);
-    expect(corpo.automatica).toBe(false);
-    const messageId = corpo.message_id!;
+    expect(await resposta.json()).toEqual({ ok: true });
 
-    // Gravada como saida de pessoa da clinica, sem pessoa no sistema, sem
-    // custo (regra 3.3).
-    const { data: linhaNoBanco } = await admin
-      .from("message")
-      .select(
-        "direction, author, author_user_id, pelo_celular, billable, cost_cents, delivery_status",
-      )
-      .eq("id", messageId)
-      .single();
+    // Gravada agora (uma linha com o id do evento), na conversa do teste,
+    // como saida de pessoa da clinica (automatica false = author usuario),
+    // sem pessoa no sistema, sem custo (regra 3.3).
+    const gravadas = await linhasDoEvento(waMessageId);
+    expect(gravadas).toHaveLength(1);
+    const { id: messageId, ...linhaNoBanco } = gravadas[0]!;
     expect(linhaNoBanco).toEqual({
+      conversation_id: conversationId,
       direction: "saida",
       author: "usuario",
       author_user_id: null,
@@ -228,7 +247,7 @@ test("mensagem enviada pelo WhatsApp da clínica aparece no fio como Pelo WhatsA
       data: {
         EventType: "messages",
         message: {
-          messageid: `E2ECELULAR${suffix.toUpperCase()}${tentativa}`,
+          messageid: waMessageId,
           chatid: `${PHONE.slice(1)}@s.whatsapp.net`,
           fromMe: true,
           messageType: "Conversation",
@@ -238,9 +257,11 @@ test("mensagem enviada pelo WhatsApp da clínica aparece no fio como Pelo WhatsA
       },
     });
     expect(repetida.status()).toBe(200);
-    expect(((await repetida.json()) as { inserted?: boolean }).inserted).toBe(
-      false,
-    );
+    expect(await repetida.json()).toEqual({ ok: true });
+    // Nada inserido: no banco, a mesma linha e nenhuma a mais.
+    expect(
+      (await linhasDoEvento(waMessageId)).map((linha) => linha.id),
+    ).toEqual([messageId]);
     await expect(fio.getByText(TEXTO_DO_CELULAR)).toHaveCount(1);
   } finally {
     await limpar();

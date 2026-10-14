@@ -19,6 +19,12 @@ import { createClient } from "@/lib/supabase/client";
 // Motor parado tem precedencia sobre o fallback (faixa de WhatsApp): com ele
 // fora do ar nem reconectar adianta. Duas faixas seriam ruido; a mais grave
 // manda.
+//
+// A chave `ia` de saude_do_motor (o motor da IA, E3) chega junto e fica no
+// estado, mas NAO vira faixa para a recepcao nesta leva: quem conserta ve
+// pelo monitor externo (alerta ia_parada em /api/webhooks/saude) e a aba
+// Agente de IA de Configuracoes diz "O motor do assistente não está
+// rodando." A faixa continua so a do motor principal (motorParado).
 
 const INTERVALO_MS = 60_000;
 

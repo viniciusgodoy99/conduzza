@@ -124,12 +124,14 @@ export type Database = {
           context_read: Json | null
           conversation_id: string
           created_at: string
+          desfecho: string | null
           escalation_reason: string | null
           gatilho_entrada: string | null
           id: string
           job_id: string | null
           latency_ms: number | null
           message_id: string | null
+          motivo_da_falha: string | null
           texto_sha256: string | null
           tokens_cache: number | null
           tokens_entrada: number | null
@@ -151,12 +153,14 @@ export type Database = {
           context_read?: Json | null
           conversation_id: string
           created_at?: string
+          desfecho?: string | null
           escalation_reason?: string | null
           gatilho_entrada?: string | null
           id?: string
           job_id?: string | null
           latency_ms?: number | null
           message_id?: string | null
+          motivo_da_falha?: string | null
           texto_sha256?: string | null
           tokens_cache?: number | null
           tokens_entrada?: number | null
@@ -178,12 +182,14 @@ export type Database = {
           context_read?: Json | null
           conversation_id?: string
           created_at?: string
+          desfecho?: string | null
           escalation_reason?: string | null
           gatilho_entrada?: string | null
           id?: string
           job_id?: string | null
           latency_ms?: number | null
           message_id?: string | null
+          motivo_da_falha?: string | null
           texto_sha256?: string | null
           tokens_cache?: number | null
           tokens_entrada?: number | null
@@ -213,6 +219,107 @@ export type Database = {
             columns: ["message_id"]
             isOneToOne: false
             referencedRelation: "message"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_rascunho_bloqueado: {
+        Row: {
+          clinic_id: string
+          conversation_id: string
+          created_at: string
+          decision_id: string
+          id: string
+          job_id: string
+          texto: string
+        }
+        Insert: {
+          clinic_id: string
+          conversation_id: string
+          created_at?: string
+          decision_id: string
+          id?: string
+          job_id: string
+          texto: string
+        }
+        Update: {
+          clinic_id?: string
+          conversation_id?: string
+          created_at?: string
+          decision_id?: string
+          id?: string
+          job_id?: string
+          texto?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_rascunho_bloqueado_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_rascunho_bloqueado_decision_id_fkey"
+            columns: ["decision_id"]
+            isOneToOne: true
+            referencedRelation: "ai_decision_log"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_turno: {
+        Row: {
+          clinic_id: string
+          conversation_id: string
+          created_at: string
+          decision_id: string | null
+          estado: string
+          job_id: string
+          mensagens_lidas: string[]
+          reserva_id: string | null
+          reservas_perdidas: string[]
+          saida: string | null
+          texto: string | null
+          texto_sha256: string | null
+          updated_at: string
+        }
+        Insert: {
+          clinic_id: string
+          conversation_id: string
+          created_at?: string
+          decision_id?: string | null
+          estado: string
+          job_id: string
+          mensagens_lidas?: string[]
+          reserva_id?: string | null
+          reservas_perdidas?: string[]
+          saida?: string | null
+          texto?: string | null
+          texto_sha256?: string | null
+          updated_at?: string
+        }
+        Update: {
+          clinic_id?: string
+          conversation_id?: string
+          created_at?: string
+          decision_id?: string | null
+          estado?: string
+          job_id?: string
+          mensagens_lidas?: string[]
+          reserva_id?: string | null
+          reservas_perdidas?: string[]
+          saida?: string | null
+          texto?: string | null
+          texto_sha256?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_turno_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
         ]
@@ -1784,6 +1891,7 @@ export type Database = {
           ativo: boolean
           clinic_id: string
           created_at: string
+          forcado: boolean
           id: string
           phone_key: string
           rotulo: string | null
@@ -1794,6 +1902,7 @@ export type Database = {
           ativo?: boolean
           clinic_id: string
           created_at?: string
+          forcado?: boolean
           id?: string
           phone_key: string
           rotulo?: string | null
@@ -1804,6 +1913,7 @@ export type Database = {
           ativo?: boolean
           clinic_id?: string
           created_at?: string
+          forcado?: boolean
           id?: string
           phone_key?: string
           rotulo?: string | null
@@ -1842,6 +1952,44 @@ export type Database = {
           motivo?: string | null
         }
         Relationships: []
+      }
+      ia_janela_da_conversa: {
+        Row: {
+          aberta_por: string
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          desde: string
+          phone_key: string
+          updated_at: string
+        }
+        Insert: {
+          aberta_por: string
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          desde: string
+          phone_key: string
+          updated_at?: string
+        }
+        Update: {
+          aberta_por?: string
+          clinic_id?: string
+          contact_id?: string
+          conversation_id?: string
+          desde?: string
+          phone_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_janela_da_conversa_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       ia_liberacao: {
         Row: {
@@ -4539,6 +4687,39 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_jobs_da_ia: {
+        Args: {
+          p_clinic_ids: string[]
+          p_incluir_teste?: boolean
+          p_max: number
+          p_worker: string
+        }
+        Returns: {
+          attempts: number
+          clinic_id: string
+          created_at: string
+          devolucoes: number
+          id: string
+          kind: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          max_attempts: number
+          payload: Json
+          prioridade: number
+          run_at: string
+          status: string
+          ultimo_motivo_devolucao: string | null
+          updated_at: string
+          whatsapp_account_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "job_queue"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_jobs_por_clinica: {
         Args: {
           p_incluir_teste?: boolean
@@ -4590,6 +4771,10 @@ export type Database = {
           nome: string
           whatsapp_account_id: string
         }[]
+      }
+      contato_tem_sinal_de_paciente: {
+        Args: { p_clinic_id: string; p_phone_key: string }
+        Returns: boolean
       }
       contato_do_job: {
         Args: { p_clinic_id: string; p_payload: Json }
@@ -4660,6 +4845,7 @@ export type Database = {
         Args: {
           p_ativo: boolean
           p_clinic_id: string
+          p_forcar_contato_existente?: boolean
           p_rotulo: string
           p_telefone_e164: string
         }
@@ -4734,7 +4920,18 @@ export type Database = {
         Args: { p_clinic_id: string; p_offer_id: string }
         Returns: number
       }
+      devolver_para_ia: { Args: { p_conversation_id: string }; Returns: Json }
+      disparar_ciclo_da_ia: { Args: never; Returns: boolean }
       disparar_ciclo_do_motor: { Args: never; Returns: undefined }
+      enfileirar_resposta_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_incluir_teste?: boolean
+          p_message_id: string
+        }
+        Returns: Json
+      }
       emails_da_equipe: {
         Args: { p_clinic_id: string }
         Returns: {
@@ -4796,6 +4993,7 @@ export type Database = {
         Returns: Json
       }
       fechar_runs_orfas: { Args: never; Returns: number }
+      frase_de_escalonamento_da_ia: { Args: never; Returns: string }
       frases_do_rastreio: { Args: { p_chave: string }; Returns: string[] }
       funil_da_jornada: { Args: { p_clinic_id: string }; Returns: Json }
       funil_do_periodo: {
@@ -4819,6 +5017,10 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: string
       }
+      gravar_evento_da_ia: {
+        Args: { p_job_id: string; p_motivo: string; p_worker: string }
+        Returns: boolean
+      }
       gravar_resolucao_de_anuncios_meta: {
         Args: {
           p_ad_account_id: string
@@ -4831,17 +5033,42 @@ export type Database = {
         }
         Returns: string
       }
+      ia_atende_no_whatsapp: {
+        Args: {
+          p_clinic_id: string
+          p_telefone: string
+          p_whatsapp_account_id: string
+        }
+        Returns: boolean
+      }
       ia_clinica_liberada: { Args: { p_clinic_id: string }; Returns: boolean }
       ia_clinicas_da_fase_controlada: { Args: never; Returns: string[] }
       ia_desligar: { Args: { p_clinic_ids: string[] }; Returns: Json }
+      ia_devolver_disponivel: {
+        Args: { p_conversation_id: string }
+        Returns: Json
+      }
+      ia_estado_do_motor: { Args: never; Returns: Json }
       ia_exigir_equipe_conduzza: { Args: never; Returns: undefined }
       ia_exigir_quem_libera: {
         Args: { p_clinic_id: string }
         Returns: undefined
       }
       ia_interruptor_ligado: { Args: never; Returns: boolean }
+      ia_jobs_devidos: {
+        Args: {
+          p_clinic_ids: string[]
+          p_folga: string
+          p_incluir_teste: boolean
+        }
+        Returns: string[]
+      }
       ia_liberacao_vigente: {
         Args: { p_clinic_id: string; p_modos: string[] }
+        Returns: boolean
+      }
+      ia_marcar_respondida: {
+        Args: { p_job_id: string; p_worker: string }
         Returns: boolean
       }
       ia_membro_ve_a_liberacao: {
@@ -4856,7 +5083,34 @@ export type Database = {
         }
         Returns: boolean
       }
+      ia_pode_enviar_agora: {
+        Args: {
+          p_conversation_id: string
+          p_job_id: string
+          p_telefone: string
+          p_tipo: string
+          p_whatsapp_account_id: string
+          p_worker: string
+        }
+        Returns: string
+      }
+      ia_pode_falar_com: {
+        Args: {
+          p_clinic_id: string
+          p_telefone: string
+          p_whatsapp_account_id: string
+        }
+        Returns: boolean
+      }
       ia_pode_simular: { Args: { p_clinic_id: string }; Returns: boolean }
+      ia_tirar_conversa: {
+        Args: {
+          p_aguardando: boolean
+          p_conversation_id: string
+          p_motivo: string
+        }
+        Returns: boolean
+      }
       ingest_inbound_message: {
         Args: {
           p_body?: string
@@ -4875,6 +5129,10 @@ export type Database = {
       }
       instrucoes_do_agente: { Args: { p_clinic_id: string }; Returns: string }
       is_product_admin: { Args: never; Returns: boolean }
+      ler_rascunho_bloqueado: {
+        Args: { p_decision_id: string }
+        Returns: Json
+      }
       limpar_holds_vencidos: { Args: never; Returns: number }
       marcar_aguardando_confirmacao: {
         Args: { p_appointment_id: string; p_clinic_id: string }
@@ -4926,6 +5184,8 @@ export type Database = {
       }
       motor_agendar: { Args: never; Returns: string }
       motor_desagendar: { Args: never; Returns: string }
+      motor_ia_agendar: { Args: never; Returns: string }
+      motor_ia_desagendar: { Args: never; Returns: string }
       motivo_da_agendada: { Args: { p_codigo: string }; Returns: string }
       motor_manutencao: { Args: never; Returns: Json }
       numero_do_job: {
@@ -4935,6 +5195,10 @@ export type Database = {
       mover_na_lista_de_espera: {
         Args: { p_clinic_id: string; p_id: string; p_nova_posicao: number }
         Returns: string
+      }
+      passar_conversa_da_ia_para_equipe: {
+        Args: { p_job_id: string; p_motivo: string; p_worker: string }
+        Returns: Json
       }
       pedir_remarcacao_pelo_paciente: {
         Args: {
@@ -5147,6 +5411,7 @@ export type Database = {
         }
         Returns: Json
       }
+      rotulo_do_motivo_da_ia: { Args: { p_motivo: string }; Returns: string }
       resolver_conta_de_envio: {
         Args: { p_clinic_id: string; p_contact_id: string; p_tipo?: string }
         Returns: string
@@ -5183,6 +5448,10 @@ export type Database = {
         Args: { p_ate: string; p_clinic_id: string; p_de: string }
         Returns: Json
       }
+      situacao_da_ia_na_clinica: {
+        Args: { p_clinic_id: string }
+        Returns: Json
+      }
       situacao_do_rastreio: { Args: { p_clinic_id: string }; Returns: Json }
       sincronizar_convenios_do_profissional: {
         Args: {
@@ -5208,9 +5477,22 @@ export type Database = {
         Args: { p_clinic_id: string; p_faixas: Json; p_professional_id: string }
         Returns: undefined
       }
+      telefone_e_numero_da_plataforma: {
+        Args: { p_telefone: string }
+        Returns: boolean
+      }
       tipo_de_envio_do_job: {
         Args: { p_kind: string; p_payload: Json }
         Returns: string
+      }
+      tirar_conversa_da_ia_pelo_servidor: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_job_id?: string
+          p_motivo: string
+        }
+        Returns: boolean
       }
       tirar_agendada_para_enviar_agora: {
         Args: { p_id: string }

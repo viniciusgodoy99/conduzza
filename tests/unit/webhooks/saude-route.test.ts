@@ -18,7 +18,10 @@ const URL_BASE = "https://exemplo.test/api/webhooks/saude";
 function saudavel() {
   const agora = Date.now();
   return {
-    fila: { batida_em: new Date(agora - 10_000).toISOString(), ultimo_erro: null },
+    fila: {
+      batida_em: new Date(agora - 10_000).toISOString(),
+      ultimo_erro: null,
+    },
     planner: {
       batida_em: new Date(agora - 30_000).toISOString(),
       ultimo_erro: null,
@@ -84,6 +87,7 @@ describe("GET /api/webhooks/saude", () => {
         "alertas",
         "atrasados",
         "fila_ha_s",
+        "ia",
         "ok",
         "planner_erro",
         "planner_ha_s",

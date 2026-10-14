@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
+import type { TextoAprovado } from "@/lib/domain/conformidade/texto-aprovado";
 import { canSendDecision } from "@/lib/domain/messaging";
 import { log } from "@/lib/log";
 import { falhaPermiteRetry } from "./falhas-do-envio";
@@ -284,6 +287,106 @@ type Despacho = {
   ): Promise<SendResult>;
 };
 
+/**
+ * O autor que so as portas da IA usam. SendTextInput.author continua
+ * "usuario" | "sistema": nenhum chamador de fora grava "ia" por aqui.
+ */
+type EntradaDoCanal = Omit<SendTextInput, "author"> & {
+  author?: "usuario" | "sistema" | "ia";
+};
+
+/**
+ * As portas da IA (E3): a guarda ia_pode_enviar_agora confere a posse do
+ * job, a conversa (na IA para a resposta, ja com a equipe para a frase), a
+ * janela e a liberacao com o MESMO telefone que vai ao provedor.
+ */
+type GuardaDaIa = {
+  tipo: "resposta" | "frase";
+  jobId: string;
+  workerId: string;
+};
+
+/** Prazo da guarda: sem resposta do banco, nada sai (falha fechada). */
+const PRAZO_DA_GUARDA_DA_IA_MS = 3_000;
+
+/** O que ia_pode_enviar_agora devolve, como codigo do envio. */
+const CODIGO_DA_GUARDA: Readonly<Record<string, string>> = {
+  sem_posse: "sem_posse",
+  fora_da_ia: "fora_da_ia",
+  janela_invalida: "janela_invalida",
+  nao_liberada: "ia_nao_liberada",
+};
+
+/**
+ * A guarda da IA. null: pode enviar. Qualquer outra coisa (recusa, erro,
+ * prazo, resposta fora da lista) e o codigo da recusa: falha FECHADA.
+ */
+async function conferirGuardaDaIa(
+  supabase: SupabaseClient,
+  guarda: GuardaDaIa,
+  entrada: {
+    clinicId: string;
+    conversationId: string;
+    whatsappAccountId: string;
+    telefone: string;
+  },
+): Promise<string | null> {
+  const corrida = await correrComPrazo(async () => {
+    const { data, error } = await supabase.rpc("ia_pode_enviar_agora", {
+      p_job_id: guarda.jobId,
+      p_worker: guarda.workerId,
+      p_conversation_id: entrada.conversationId,
+      p_whatsapp_account_id: entrada.whatsappAccountId,
+      p_telefone: entrada.telefone,
+      p_tipo: guarda.tipo,
+    });
+    if (error) {
+      return { erro: (error as { code?: string }).code ?? null };
+    }
+    return { valor: data as unknown };
+  }, PRAZO_DA_GUARDA_DA_IA_MS);
+  if (corrida.tipo !== "resultado" || "erro" in corrida.valor) {
+    log.warn("envio_da_ia_guarda_ilegivel", {
+      clinic_id: entrada.clinicId,
+      conversation_id: entrada.conversationId,
+      job_id: guarda.jobId,
+      error_code:
+        corrida.tipo === "resultado" && "erro" in corrida.valor
+          ? corrida.valor.erro
+          : corrida.tipo,
+    });
+    return "ia_nao_liberada";
+  }
+  const valor = corrida.valor.valor;
+  if (valor === "ok") {
+    return null;
+  }
+  return (
+    (typeof valor === "string" && CODIGO_DA_GUARDA[valor]) || "ia_nao_liberada"
+  );
+}
+
+function recusaDaGuarda(code: string): SendTextResult {
+  return {
+    ok: false,
+    reason: "falha_envio",
+    code,
+    message: "A IA não pode enviar nesta conversa agora. Nada foi enviado.",
+  };
+}
+
+/**
+ * O gatilho de message (migration 20261013110000) recusa a linha da IA com
+ * SQLSTATE proprio: CZIA1 sem decisao aprovada do mesmo job e hash, CZIA2
+ * fora da liberacao, CZIA3 frase diferente da fixa. O resto continua
+ * 'registro_falhou'.
+ */
+const CODIGO_DO_GATILHO_DA_IA: Readonly<Record<string, string>> = {
+  CZIA1: "ia_sem_aprovacao",
+  CZIA2: "ia_nao_liberada",
+  CZIA3: "frase_divergente",
+};
+
 /** Envio simples de texto. */
 export async function sendWhatsAppText(
   supabase: SupabaseClient,
@@ -495,8 +598,9 @@ export async function carregarInstancia(
 
 async function enviarPeloCanal(
   supabase: SupabaseClient,
-  input: SendTextInput,
+  input: EntradaDoCanal,
   despacho: Despacho,
+  guardaDaIa: GuardaDaIa | null = null,
 ): Promise<SendTextResult> {
   // Consentimento VIGENTE: o registro mais recente manda. Perguntar "existe
   // alguma linha ativa" deixava o paciente que pediu descadastro voltar a
@@ -611,6 +715,21 @@ async function enviarPeloCanal(
       message: "Contato não encontrado.",
     };
   }
+  const telefoneDoDestino = contact.phone_e164 as string;
+
+  // IA (E3), primeira guarda: cedo, antes do slot e da linha, para nao
+  // reservar o canal nem gravar nada para quem nao esta liberado.
+  if (guardaDaIa) {
+    const recusa = await conferirGuardaDaIa(supabase, guardaDaIa, {
+      clinicId: input.clinicId,
+      conversationId: input.conversationId,
+      whatsappAccountId: ativo.id,
+      telefone: telefoneDoDestino,
+    });
+    if (recusa !== null) {
+      return recusaDaGuarda(recusa);
+    }
+  }
 
   // IDEMPOTENCIA POR JOB: se este job ja tem mensagem, um retry esta rodando.
   // So e seguro reenviar quando o codigo da falha anterior garante que o
@@ -626,9 +745,25 @@ async function enviarPeloCanal(
   if (input.jobId) {
     const { data: existente } = await supabase
       .from("message")
-      .select("id, delivery_status, error_code")
+      .select("id, delivery_status, error_code, author, body")
       .eq("job_id", input.jobId)
       .maybeSingle();
+    // IA (E3): a linha do job tem de ser a MESMA coisa que este envio (autor
+    // e corpo). Um retry nunca troca a resposta pela frase, nem o contrario.
+    if (
+      existente &&
+      guardaDaIa &&
+      (existente.author !== input.author ||
+        existente.body !== despacho.bodyRegistrado)
+    ) {
+      return {
+        ok: false,
+        reason: "falha_envio",
+        code: "conteudo_divergente",
+        message:
+          "A mensagem já registrada para este envio é outra. Nada foi enviado.",
+      };
+    }
     if (existente) {
       const podeReusar =
         existente.delivery_status === "falhou" &&
@@ -759,11 +894,17 @@ async function enviarPeloCanal(
       .select("id")
       .single();
     if (erroInsert || !nova) {
+      const doGatilho =
+        CODIGO_DO_GATILHO_DA_IA[
+          (erroInsert as { code?: string } | null)?.code ?? ""
+        ];
       return {
         ok: false,
         reason: "falha_envio",
-        code: "registro_falhou",
-        message: "Não foi possível registrar a mensagem.",
+        code: doGatilho ?? "registro_falhou",
+        message: doGatilho
+          ? "A IA não pode enviar nesta conversa agora. Nada foi enviado."
+          : "Não foi possível registrar a mensagem.",
       };
     }
     messageId = nova.id as string;
@@ -847,13 +988,30 @@ async function enviarPeloCanal(
     ),
     instanceId: ativo.instance_id,
   };
+  // IA (E3), segunda guarda: IMEDIATAMENTE antes do provedor, com o mesmo
+  // telefone e o mesmo numero que vao a ele. Assumir, desligar ou trocar o
+  // telefone do contato durante a espera do slot param aqui; a janela que
+  // sobra sao os milissegundos ate a chamada HTTP (risco aceito no plano).
+  if (guardaDaIa) {
+    const recusa = await conferirGuardaDaIa(supabase, guardaDaIa, {
+      clinicId: input.clinicId,
+      conversationId: input.conversationId,
+      whatsappAccountId: ativo.id,
+      telefone: telefoneDoDestino,
+    });
+    if (recusa !== null) {
+      await marcarFalha(supabase, messageId, recusa);
+      return recusaDaGuarda(recusa);
+    }
+  }
+
   // A marca de rastreio e o id DESTA linha. Os dois caminhos acima garantem
   // que ele existe aqui (a linha reaproveitada do job ou a recem-inserida),
   // entao o envio sempre sai marcado: o eco volta do provedor com o mesmo id
   // e o webhook o reconhece como nosso, sem grava-lo de novo como "enviada
   // pelo celular".
   const result = await despacho
-    .enviar(provider, ref, contact.phone_e164, {
+    .enviar(provider, ref, telefoneDoDestino, {
       replyToWaMessageId: input.replyTo?.waMessageId ?? null,
       rastreioId: messageId,
     })
@@ -941,7 +1099,9 @@ async function enviarPeloCanal(
   // fez e ninguem respondeu: seria a recepcao perdendo a conversa justamente
   // porque a maquina falou por cima. A mensagem agendada sai com author
   // 'usuario' (assina quem a escreveu), mas foi escrita ANTES da pergunta:
-  // manterAguardando segura a espera pelo mesmo motivo.
+  // manterAguardando segura a espera pelo mesmo motivo. A resposta da IA
+  // ('ia') tambem nao mexe aqui: quem derruba a espera dela e
+  // ia_marcar_respondida, por id das mensagens que o turno leu.
   await supabase
     .from("conversation")
     .update({
@@ -954,4 +1114,125 @@ async function enviarPeloCanal(
     .eq("id", input.conversationId);
 
   return { ok: true, messageId };
+}
+
+// ---------------------------------------------------------------------------
+// Portas da IA (E3)
+// ---------------------------------------------------------------------------
+
+export type EnvioDaIaInput = {
+  clinicId: string;
+  conversationId: string;
+  contactId: string;
+  jobId: string;
+  /** locked_by do job (motor-ia:<uuid>); vai para ia_pode_enviar_agora. */
+  workerId: string;
+  /** O numero da conversa (assercao, como hoje). */
+  whatsappAccountId: string;
+};
+
+/** Teto curto da espera do slot: adiar nao custa nada (o motor reagenda). */
+const ESPERA_MAXIMA_DA_IA_MS = 3_000;
+
+/**
+ * ia_marcar_respondida (service role): derruba "Aguardando voce" so se nao
+ * sobrou mensagem do paciente da janela fora das que os turnos leram (por
+ * id). Roda depois de o envio SAIR: nunca lanca, so registra (ids).
+ */
+async function marcarRespondida(
+  supabase: SupabaseClient,
+  input: EnvioDaIaInput,
+): Promise<void> {
+  try {
+    const { error } = await supabase.rpc("ia_marcar_respondida", {
+      p_job_id: input.jobId,
+      p_worker: input.workerId,
+    });
+    if (error) {
+      log.warn("envio_da_ia_espera_nao_atualizada", {
+        clinic_id: input.clinicId,
+        conversation_id: input.conversationId,
+        job_id: input.jobId,
+        error_code: (error as { code?: string }).code ?? null,
+      });
+    }
+  } catch {
+    log.warn("envio_da_ia_espera_nao_atualizada", {
+      clinic_id: input.clinicId,
+      conversation_id: input.conversationId,
+      job_id: input.jobId,
+      error_code: "excecao",
+    });
+  }
+}
+
+/**
+ * A resposta da IA (author 'ia'). So aceita TextoAprovado (so o filtro de
+ * conformidade produz um), pelo trilho 1:1 (envioAutomatico false), com a
+ * guarda ia_pode_enviar_agora antes do slot e logo antes do provedor. O
+ * gatilho de message ainda confere a decisao aprovada do mesmo job e hash.
+ */
+export async function enviarRespostaDaIa(
+  admin: SupabaseClient,
+  input: EnvioDaIaInput & { texto: TextoAprovado },
+): Promise<SendTextResult> {
+  const texto: string = input.texto;
+  const resultado = await enviarPeloCanal(
+    admin,
+    {
+      clinicId: input.clinicId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      body: texto,
+      authorUserId: null,
+      author: "ia",
+      envioAutomatico: false,
+      esperaMaximaMs: ESPERA_MAXIMA_DA_IA_MS,
+      jobId: input.jobId,
+      whatsappAccountId: input.whatsappAccountId,
+    },
+    {
+      bodyRegistrado: texto,
+      enviar: (provider, ref, to, extra) =>
+        provider.sendText(ref, to, texto, extra),
+    },
+    { tipo: "resposta", jobId: input.jobId, workerId: input.workerId },
+  );
+  if (resultado.ok) {
+    await marcarRespondida(admin, input);
+  }
+  return resultado;
+}
+
+/**
+ * A frase fixa de escalonamento (author 'sistema'), com o mesmo job_id. O
+ * corpo e SEMPRE FRASE_DE_ESCALONAMENTO: nunca parametro, entao texto da IA
+ * nao sai por esta porta. Tentativa unica: slot adiado ou qualquer falha
+ * volta para quem chamou, que nunca reagenda (a conversa ja saiu da IA).
+ */
+export async function enviarFraseFixaDaIa(
+  admin: SupabaseClient,
+  input: EnvioDaIaInput,
+): Promise<SendTextResult> {
+  return enviarPeloCanal(
+    admin,
+    {
+      clinicId: input.clinicId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      body: FRASE_DE_ESCALONAMENTO,
+      authorUserId: null,
+      author: "sistema",
+      envioAutomatico: false,
+      esperaMaximaMs: ESPERA_MAXIMA_DA_IA_MS,
+      jobId: input.jobId,
+      whatsappAccountId: input.whatsappAccountId,
+    },
+    {
+      bodyRegistrado: FRASE_DE_ESCALONAMENTO,
+      enviar: (provider, ref, to, extra) =>
+        provider.sendText(ref, to, FRASE_DE_ESCALONAMENTO, extra),
+    },
+    { tipo: "frase", jobId: input.jobId, workerId: input.workerId },
+  );
 }

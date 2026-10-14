@@ -1,11 +1,13 @@
 // Travas de AMBIENTE da IA (Fase 3, E0). Desenho em
 // scratchpad/fase3/plano-seguranca.md, secao 1.
 //
-// T1, ambiente: a IA so existe na producao da Vercel (VERCEL_ENV=production)
-//     e com OPENAI_API_KEY presente (chave do projeto producao-agente da
-//     OpenAI; so no escopo Production da Vercel, nunca no .env.local).
-//     UAZAPI_OPENAI_KEY, a da transcricao, nao conta. Apagar ou revogar a
-//     chave desliga tudo.
+// T1, ambiente: a IA so existe na producao da Vercel (VERCEL_ENV=production),
+//     com OPENAI_API_KEY presente (chave do projeto producao-agente da
+//     OpenAI; so no escopo Production da Vercel, nunca no .env.local) e com
+//     IA_SEGREDO_DO_IDENTIFICADOR de 32 caracteres ou mais (o segredo do
+//     safety_identifier: sem ele todo turno falha em sem_identificador, entao
+//     a IA nao esta de pe; revisao do E3). UAZAPI_OPENAI_KEY, a da
+//     transcricao, nao conta. Apagar ou revogar a chave desliga tudo.
 // T2, lista fechada: CLINICAS_DA_FASE_CONTROLADA, espelho da funcao imutavel
 //     do banco. Mudar exige commit E migration revisados.
 //
@@ -33,7 +35,7 @@ export const CLINICAS_DA_FASE_CONTROLADA: readonly string[] = Object.freeze([
 ]);
 
 export type ConfigDaIa = {
-  /** T1: producao da Vercel com a chave da OpenAI. */
+  /** T1: producao da Vercel com a chave da OpenAI e o segredo do identificador. */
   readonly ligado: boolean;
   /**
    * T2: as clinicas da lista fechada, em minusculas. Vazia quando T1 esta
@@ -49,9 +51,25 @@ const DESLIGADA: ConfigDaIa = Object.freeze({
   clinicas: Object.freeze([]) as readonly string[],
 });
 
+/**
+ * Minimo do segredo do identificador: o mesmo de identificadorDeSeguranca
+ * (lib/integrations/llm/openai.ts; o teste de ambiente confere os dois).
+ */
+export const TAMANHO_MINIMO_DO_SEGREDO_DO_IDENTIFICADOR = 32;
+
+/** IA_SEGREDO_DO_IDENTIFICADOR presente e longo o bastante (sem as pontas). */
+export function segredoDoIdentificadorValido(env: Ambiente): boolean {
+  return (
+    (env.IA_SEGREDO_DO_IDENTIFICADOR ?? "").trim().length >=
+    TAMANHO_MINIMO_DO_SEGREDO_DO_IDENTIFICADOR
+  );
+}
+
 function interruptorDeAmbiente(env: Ambiente): boolean {
   return (
-    env.VERCEL_ENV === "production" && (env.OPENAI_API_KEY ?? "").trim() !== ""
+    env.VERCEL_ENV === "production" &&
+    (env.OPENAI_API_KEY ?? "").trim() !== "" &&
+    segredoDoIdentificadorValido(env)
   );
 }
 

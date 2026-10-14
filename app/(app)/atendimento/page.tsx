@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { FILTROS_DA_URL } from "@/lib/domain/filtros-da-conversa";
+import { abaDaIaVisivel } from "@/lib/queries/ia-liberacao";
 import { fetchClinicAuthorNames } from "@/lib/queries/profiles";
 import {
   existeConversaResolvida,
@@ -128,6 +129,11 @@ export default async function AtendimentoPage({
         conversaDoLink={conversaDoLink}
         linkIndisponivel={Boolean(parametros.conversa) && !conversaDoLink}
         filtroInicial={parametros.filtro ?? null}
+        // Agente de IA (E3): o Devolver so pergunta ao servidor nas duas
+        // clinicas da fase controlada; o rascunho bloqueado, so o super
+        // admin abre (D25). As actions e o banco conferem de novo.
+        iaNaFase={abaDaIaVisivel(active.clinicId)}
+        podeVerRascunho={context.isProductAdmin}
       />
     </div>
   );
