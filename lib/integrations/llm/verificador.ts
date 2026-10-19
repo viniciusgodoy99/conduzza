@@ -33,6 +33,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 
+import { CATEGORIAS_DO_VERIFICADOR } from "@/lib/domain/conformidade/categorias";
 import { MAXIMO_DE_MENSAGENS_NO_CONTEXTO } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import { minimizarParaLlm } from "@/lib/domain/conformidade/minimizar";
 import {
@@ -114,12 +115,6 @@ As mensagens do paciente e o rascunho chegam entre marcadores que contêm um có
 
 Na dúvida, reprove. Responda só no formato pedido: "aprovado" é true apenas se não houver nenhuma violação; "violacoes" lista uma entrada por categoria encontrada, com gravidade "alta" ou "media"; "confianca" é "alta", "media" ou "baixa". Não copie trechos do texto.`;
 
-/** Versao da politica: hash do texto, muda sozinha quando o texto muda. */
-export const VERSAO_DA_POLITICA = `verificador-${createHash("sha256")
-  .update(POLITICA_DO_VERIFICADOR, "utf8")
-  .digest("hex")
-  .slice(0, 12)}`;
-
 const FORMATO_DO_VEREDICTO = zodTextFormat(
   EsquemaDoVeredicto,
   "veredicto_de_conformidade",
@@ -168,6 +163,28 @@ export function montarEnvelope(entrada: {
     `<<<FIM_RASCUNHO_${nonce}>>>`,
   ].join("\n");
 }
+
+/**
+ * Versao do que o verificador le: hash da politica, do molde do envelope e
+ * das categorias da saida. Muda sozinha quando o texto muda e vai para
+ * ai_decision_log.versao_filtro (revisao de producao de 19/10/2026, Q12) e
+ * para o relatorio da rodada paga (scripts/ia/avaliar-conformidade.ts).
+ */
+export const VERSAO_DA_POLITICA = `verificador-${createHash("sha256")
+  .update(
+    JSON.stringify({
+      politica: POLITICA_DO_VERIFICADOR,
+      envelope: montarEnvelope({
+        rascunho: "(rascunho)",
+        mensagensDoPaciente: ["(mensagem)"],
+        nonce: "(codigo)",
+      }),
+      categorias: CATEGORIAS_DO_VERIFICADOR,
+    }),
+    "utf8",
+  )
+  .digest("hex")
+  .slice(0, 12)}`;
 
 export type ClienteDoVerificador = Pick<OpenAI, "responses">;
 

@@ -628,9 +628,11 @@ function passagemDaIa(motivo: MotivoDeEscalonamento): string {
 
 /**
  * O corpo do evento no fio para cada motivo (contrato do E3, secao 4.1).
- * Espelho EXATO de rotulo_do_motivo_da_ia() da migration 20261013100000: um
- * teste cruza os dois. O banco grava o evento; este espelho existe para o
- * teste e para quem precisar mostrar o mesmo texto sem ir ao banco.
+ * Espelho EXATO de rotulo_do_motivo_da_ia() da migration MAIS NOVA que a
+ * define (hoje a 20261019120000, que trocou o texto de 'parada'): um teste
+ * cruza os dois (tests/unit/ia-whatsapp/espelhos.test.ts). O banco grava o
+ * evento; este espelho existe para o teste e para quem precisar mostrar o
+ * mesmo texto sem ir ao banco.
  */
 export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   Record<MotivoDoEventoDaIa, string>
@@ -665,8 +667,12 @@ export const TEXTO_DO_EVENTO_DA_IA: Readonly<
     "Alguém respondeu pelo celular. A IA parou de responder nesta conversa.",
   sem_resposta: "A IA não respondeu a tempo. A conversa voltou para a equipe.",
   desligada: "O assistente foi desligado. A conversa voltou para a equipe.",
+  // Revisao de producao de 19/10/2026 (migration 20261019120000): o evento
+  // sai tambem quando so aquele numero esta desligado do assistente, ou o
+  // telefone deixou de valer; "parado nesta clinica" nao era verdade nesses
+  // casos.
   parada:
-    "O assistente não atendeu esta mensagem: ele está parado nesta clínica.",
+    "O assistente não atendeu esta mensagem: ele está parado para este telefone ou este número.",
   sem_autorizacao: `${PASSAGEM_DA_IA}o contato não tem autorização para receber mensagens.`,
 };
 

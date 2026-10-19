@@ -327,19 +327,43 @@ function montarConfigDoRascunho(
 }
 
 /**
+ * O nome cadastrado da clinica (clinic.name), pela chave da propria clinica.
+ * Lanca na leitura que falha (como o resto do catalogo). Sem linha: null.
+ */
+async function linhaDaClinica(
+  admin: Cliente,
+  clinicId: string,
+): Promise<{ name: string | null } | null> {
+  const { data, error } = await admin
+    .from("clinic")
+    .select("name")
+    .eq("id", clinicId)
+    .maybeSingle();
+  if (error) {
+    throw new Error("leitura do agente falhou");
+  }
+  const nome = (data as { name?: unknown } | null)?.name;
+  return data === null ? null : { name: typeof nome === "string" ? nome : null };
+}
+
+/**
  * O catalogo que o agente enxerga (indice e vinculos de buscar_procedimento):
  * so procedimento e vinculo ativos com "IA pode agendar" nas duas chaves,
  * profissional ativo e convenio ativo (montarCatalogoDoAgente). Os convenios
  * sao TODOS os ativos da clinica, com e sem vinculo do agente: viram
  * `conveniosDoCadastro` (so nome e plano; a tabela de convenios nao tem
- * preco), para a busca contar e listar os planos de uma operadora.
+ * preco), para a busca contar e listar os planos de uma operadora. Traz
+ * tambem o nome cadastrado da clinica (revisao de producao de 19/10/2026,
+ * Q7): o mesmo carregador serve ao WhatsApp, a retomada do envio, ao
+ * simulador e a previa do prompt, entao o nome e a mascara do filtro nunca
+ * divergem entre eles.
  */
 export async function carregarCatalogoDoAgente(
   admin: Cliente,
   clinicId: string,
 ): Promise<CatalogoDoAgente> {
-  const [procedimentos, vinculos, profissionais, convenios] = await Promise.all(
-    [
+  const [procedimentos, vinculos, profissionais, convenios, clinica] =
+    await Promise.all([
       todasAsPaginas<LinhasDoCatalogo["procedimentos"][number]>((de, ate) =>
         admin
           .from("procedure")
@@ -380,12 +404,13 @@ export async function carregarCatalogoDoAgente(
           .order("id", { ascending: true })
           .range(de, ate),
       ),
-    ],
-  );
+      linhaDaClinica(admin, clinicId),
+    ]);
   return montarCatalogoDoAgente({
     procedimentos,
     vinculos,
     profissionais,
     convenios,
+    clinica,
   });
 }

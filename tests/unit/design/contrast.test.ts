@@ -246,8 +246,10 @@ describe.each(Object.entries(themes))("tema %s", (_themeName, tokens) => {
   );
 
   // Tique de "lida" (06/10/2026): indicador nao textual, 3:1 sobre as peles
-  // de saida (o tique neutro usa a cor de apoio da bolha, ja testada).
-  it.each(["bubble-out", "bubble-ai"])(
+  // de saida (o tique neutro usa a cor de apoio da bolha, ja testada). Desde
+  // a revisao de producao de 19/10/2026, tambem a pele do aviso automatico
+  // (a frase fixa da IA ao contato), na superficie 4.
+  it.each(["bubble-out", "bubble-ai", "surface-4"])(
     "tique azul de lida (--tique-lido) tem 3.0:1 sobre --%s",
     (bg) => {
       expect(contrast(tokens, "tique-lido", bg)).toBeGreaterThanOrEqual(3.0);

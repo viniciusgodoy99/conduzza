@@ -80,8 +80,12 @@ const registro = vi.hoisted(() => ({
   /** O contato da clinica com o telefone consultado (nulo: nenhum). */
   contato: null as null | { id: string; name: string | null },
   contatoFalha: false,
-  /** A linha de ia_contato_liberado relida depois de gravar o telefone. */
+  /**
+   * A linha de ia_contato_liberado do telefone (o "Ligar de novo" confere
+   * que ele esta na lista). Nula: fora da lista.
+   */
   linhaDoTelefone: { id: "t-novo" } as null | { id: string },
+  linhaDoTelefoneFalha: false,
   /** INSERTs diretos (audit_log), com a tabela. */
   inseridos: [] as { tabela: string; valores: unknown }[],
   /** Cada consulta direta a uma tabela: a tabela e os filtros eq. */
@@ -107,7 +111,9 @@ vi.mock("@/lib/supabase/server", () => ({
         },
         maybeSingle: async () => {
           if (tabela === "ia_contato_liberado") {
-            return { data: registro.linhaDoTelefone, error: null };
+            return registro.linhaDoTelefoneFalha
+              ? { data: null, error: { code: "XX000" } }
+              : { data: registro.linhaDoTelefone, error: null };
           }
           return registro.contatoFalha
             ? { data: null, error: { code: "XX000" } }
@@ -236,6 +242,7 @@ beforeEach(() => {
   registro.contato = null;
   registro.contatoFalha = false;
   registro.linhaDoTelefone = { id: "t-novo" };
+  registro.linhaDoTelefoneFalha = false;
   registro.inseridos = [];
   registro.consultas = [];
   registro.auditorias = [];
@@ -688,6 +695,7 @@ describe("telefones da equipe", () => {
           p_rotulo: "Ana, recepção",
           p_ativo: true,
           p_forcar_contato_existente: false,
+          p_confirmou_aviso_da_openai: true,
         },
       },
     ]);
@@ -796,6 +804,7 @@ describe("telefones da equipe", () => {
           p_rotulo: "Ana, recepção",
           p_ativo: true,
           p_forcar_contato_existente: false,
+          p_confirmou_aviso_da_openai: true,
         },
       },
     ]);
@@ -979,7 +988,7 @@ describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
 });
 
 describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)", () => {
-  it("adiciona: a RPC com a sessão, sem o forçar, e a confirmação da OpenAI na trilha no nome dele", async () => {
+  it("adiciona: a RPC com a sessão, sem o forçar, com a confirmação da OpenAI para o banco gravar a trilha", async () => {
     expect(
       await adicionarTelefoneDaIaAction({
         rotulo: "Ana, recepção",
@@ -996,21 +1005,13 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
           p_rotulo: "Ana, recepção",
           p_ativo: true,
           p_forcar_contato_existente: false,
+          p_confirmou_aviso_da_openai: true,
         },
       },
     ]);
-    expect(registro.inseridos).toEqual([
-      {
-        tabela: "audit_log",
-        valores: {
-          clinic_id: TESTE123,
-          user_id: USUARIO,
-          action: "confirmou_aviso_da_openai",
-          entity: "ia_contato_liberado",
-          entity_id: "t-novo",
-        },
-      },
-    ]);
+    // A trilha da confirmacao e do banco, na mesma transacao (migration
+    // 20261019120000): a action nao grava audit_log nenhum.
+    expect(registro.inseridos).toEqual([]);
     expect(registro.revalidados).toEqual(["/configuracoes"]);
   });
 
@@ -1175,7 +1176,7 @@ describe("E3: telefone novo da equipe", () => {
     expect(registro.rpcs).toEqual([]);
   });
 
-  it("gravou: a confirmação vai para a trilha com a linha relida pela chave, sem telefone", async () => {
+  it("gravou: a confirmação vai ao banco, que grava a trilha; a action não relê a linha nem grava audit_log", async () => {
     expect(
       await adicionarTelefoneDaIaAction({
         rotulo: "Ana",
@@ -1183,26 +1184,13 @@ describe("E3: telefone novo da equipe", () => {
         confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({ ok: true });
+    expect(registro.rpcs.at(-1)?.args).toMatchObject({
+      p_confirmou_aviso_da_openai: true,
+    });
     expect(
-      registro.consultas.find((c) => c.tabela === "ia_contato_liberado")
-        ?.filtros,
-    ).toEqual([
-      ["clinic_id", TESTE123],
-      ["phone_key", "+5584999990002"],
-    ]);
-    expect(registro.inseridos).toEqual([
-      {
-        tabela: "audit_log",
-        valores: {
-          clinic_id: TESTE123,
-          user_id: USUARIO,
-          action: "confirmou_aviso_da_openai",
-          entity: "ia_contato_liberado",
-          entity_id: "t-novo",
-        },
-      },
-    ]);
-    expect(JSON.stringify(registro.inseridos)).not.toContain("99999");
+      registro.consultas.filter((c) => c.tabela === "ia_contato_liberado"),
+    ).toEqual([]);
+    expect(registro.inseridos).toEqual([]);
   });
 
   it("o banco recusou o número da plataforma: o texto genérico, nada na trilha", async () => {
@@ -1262,7 +1250,142 @@ describe("E3: telefone novo da equipe", () => {
         p_rotulo: "Ana",
         p_ativo: true,
         p_forcar_contato_existente: true,
+        p_confirmou_aviso_da_openai: true,
       },
     });
+  });
+});
+
+// Revisao de producao de 19/10/2026 (mudancas-1910.md A2; migration
+// 20261019120000): telefone novo so entra pelo formulario de adicionar, com
+// a confirmacao do aviso da OpenAI no banco; o "Ligar de novo" so vale para
+// telefone que ja esta na lista.
+describe("confirmação da OpenAI no banco e Ligar de novo só da lista (19/10/2026)", () => {
+  it("ligar telefone fora da lista: recusado antes do banco, com o texto do formulário", async () => {
+    registro.linhaDoTelefone = null;
+    expect(
+      await alternarTelefoneDaIaAction({
+        telefone: "+5584999990009",
+        ligado: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        "Este telefone não está na lista da equipe. Adicione o telefone pelo formulário.",
+    });
+    expect(registro.rpcs).toEqual([]);
+    expect(registro.revalidados).toEqual([]);
+    // a conferencia e pela chave canonica, na clinica ativa
+    expect(
+      registro.consultas.find((c) => c.tabela === "ia_contato_liberado")
+        ?.filtros,
+    ).toEqual([
+      ["clinic_id", TESTE123],
+      ["phone_key", "+5584999990009"],
+    ]);
+  });
+
+  it("a conferência da lista pela chave: sem o nono dígito acha a mesma linha", async () => {
+    expect(
+      await alternarTelefoneDaIaAction({
+        telefone: "+558499990001",
+        ligado: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      registro.consultas.find((c) => c.tabela === "ia_contato_liberado")
+        ?.filtros,
+    ).toContainEqual(["phone_key", "+5584999990001"]);
+    expect(registro.rpcs).toHaveLength(1);
+  });
+
+  it("a leitura da lista falhou: não liga às cegas", async () => {
+    registro.linhaDoTelefoneFalha = true;
+    expect(
+      await alternarTelefoneDaIaAction({
+        telefone: "+5584999990001",
+        ligado: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        "Não foi possível conferir a configuração do assistente. Recarregue a página e tente de novo.",
+    });
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("desligar vai direto ao banco (que não cria linha para telefone fora da lista)", async () => {
+    registro.linhaDoTelefone = null;
+    expect(
+      await alternarTelefoneDaIaAction({
+        telefone: "+5584999990009",
+        ligado: false,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      registro.consultas.filter((c) => c.tabela === "ia_contato_liberado"),
+    ).toEqual([]);
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_contato_liberado_da_ia",
+        args: {
+          p_clinic_id: TESTE123,
+          p_telefone_e164: "+5584999990009",
+          p_rotulo: "",
+          p_ativo: false,
+        },
+      },
+    ]);
+  });
+
+  it("o Ligar de novo nunca manda a confirmação (ela é do formulário de adicionar)", async () => {
+    await alternarTelefoneDaIaAction({
+      telefone: "+5584999990001",
+      ligado: true,
+    });
+    expect(registro.rpcs.at(-1)?.args).not.toHaveProperty(
+      "p_confirmou_aviso_da_openai",
+    );
+  });
+
+  it("o banco recusa telefone novo sem a confirmação: o texto do campo, nada na trilha", async () => {
+    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+      code: "23514",
+      message: "aviso_da_openai_nao_confirmado",
+    });
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.avisoDaOpenaiObrigatorio });
+    expect(registro.inseridos).toEqual([]);
+    expect(registro.logs).toEqual([
+      [
+        "ia_liberacao_nao_alterada",
+        {
+          clinic_id: TESTE123,
+          kind: "telefone_adicionar",
+          error_code: "23514",
+        },
+      ],
+    ]);
+  });
+
+  it("o super admin também manda a confirmação, e a action nunca grava a trilha sozinha", async () => {
+    registro.superAdmin = true;
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs.at(-1)?.args).toMatchObject({
+      p_ativo: true,
+      p_confirmou_aviso_da_openai: true,
+    });
+    expect(registro.inseridos).toEqual([]);
   });
 });

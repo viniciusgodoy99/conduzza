@@ -5,9 +5,12 @@ import {
   type CategoriaDoVerificador,
 } from "@/lib/domain/conformidade/categorias";
 import {
+  calcularVersaoDoPortao,
   filtrarSaida,
+  fontesDoPortao,
   sha256DoTexto,
   versaoDasRegras,
+  versaoDoPortao,
 } from "@/lib/domain/conformidade/filtro";
 import type {
   ResultadoDoVerificador,
@@ -519,5 +522,28 @@ describe("hash e versao", () => {
       verificador: verificadorQueSempreAprova(),
     });
     expect(decisao.versaoDasRegras).toBe(versaoDasRegras());
+  });
+
+  // Revisao de producao de 19/10/2026 (Q12): o portao de entrada tem versao
+  // propria, que vai para ai_decision_log.versao_filtro.
+  it("versao do portao e estavel, marcada e muda quando o portao muda", () => {
+    expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
+    expect(versaoDoPortao()).toBe(versaoDoPortao());
+    expect(calcularVersaoDoPortao(fontesDoPortao())).toBe(versaoDoPortao());
+    const fontes = fontesDoPortao();
+    // Um padrao a menos (um afrouxamento), uma troca a menos ou uma regra
+    // de codigo diferente: outra versao.
+    expect(
+      calcularVersaoDoPortao({ ...fontes, padroes: fontes.padroes.slice(1) }),
+    ).not.toBe(versaoDoPortao());
+    expect(
+      calcularVersaoDoPortao({
+        ...fontes,
+        neutralizacoes: fontes.neutralizacoes.slice(0, -1),
+      }),
+    ).not.toBe(versaoDoPortao());
+    expect(
+      calcularVersaoDoPortao({ ...fontes, codigo: [...fontes.codigo, "x"] }),
+    ).not.toBe(versaoDoPortao());
   });
 });

@@ -25,6 +25,7 @@ const CLINICA = "acd9c539-585e-4f2a-a195-712c70099564";
 const CONVERSA = "c0000000-0000-4000-8000-000000000001";
 const JOB = "10000000-0000-4000-8000-000000000001";
 const UM_ID = "e0000000-0000-4000-8000-000000000001";
+const OUTRO_ID = "e0000000-0000-4000-8000-000000000002";
 
 describe("interceptador: desfecho", () => {
   const entrada = {
@@ -187,6 +188,7 @@ describe("situação da IA para a aba", () => {
         telefones_invalidos: [UM_ID],
         telefones_sem_autorizacao: [UM_ID],
         telefones_com_conversa_aberta: [],
+        conversas_abertas: [],
         motor_parado: false,
       }),
     ).toEqual({
@@ -194,7 +196,7 @@ describe("situação da IA para a aba", () => {
       versaoPublicada: 3,
       telefonesInvalidos: [UM_ID],
       telefonesSemAutorizacao: [UM_ID],
-      telefonesComConversaAberta: [],
+      conversasAbertas: [],
       motorParado: false,
     });
     expect(
@@ -204,9 +206,22 @@ describe("situação da IA para a aba", () => {
         telefones_invalidos: [],
         telefones_sem_autorizacao: [],
         telefones_com_conversa_aberta: [UM_ID],
+        conversas_abertas: [
+          {
+            telefone_id: UM_ID,
+            whatsapp_account_id: OUTRO_ID,
+            conversation_id: CONVERSA,
+          },
+        ],
         motor_parado: true,
       }),
-    ).toMatchObject({ versaoPublicada: null, motorParado: true });
+    ).toMatchObject({
+      versaoPublicada: null,
+      motorParado: true,
+      conversasAbertas: [
+        { telefoneId: UM_ID, numeroId: OUTRO_ID, conversaId: CONVERSA },
+      ],
+    });
     for (const ruim of [
       null,
       {},
@@ -258,11 +273,59 @@ describe("situação da IA para a aba", () => {
         telefones_invalidos: [],
         telefones_sem_autorizacao: [],
         telefones_com_conversa_aberta: [],
+        conversas_abertas: [],
         motor_parado: null,
+      },
+      // Revisao de producao de 19/10/2026: sem conversas_abertas (o banco
+      // de antes da migration 20261019120000), a aba nao afirma nada sobre
+      // a conversa aberta: lanca e a pagina mostra o erro, nunca o verde.
+      {
+        teto_atingido: false,
+        versao_publicada: 3,
+        telefones_invalidos: [],
+        telefones_sem_autorizacao: [],
+        telefones_com_conversa_aberta: [],
+        motor_parado: false,
+      },
+      {
+        teto_atingido: false,
+        versao_publicada: 3,
+        telefones_invalidos: [],
+        telefones_sem_autorizacao: [],
+        telefones_com_conversa_aberta: [],
+        conversas_abertas: null,
+        motor_parado: false,
       },
     ]) {
       expect(() => lerSituacaoDoBanco(ruim)).toThrow();
     }
+  });
+
+  it("lerSituacaoDoBanco: item de conversas_abertas fora do formato fica de fora", () => {
+    const valido = {
+      telefone_id: UM_ID,
+      whatsapp_account_id: OUTRO_ID,
+      conversation_id: CONVERSA,
+    };
+    expect(
+      lerSituacaoDoBanco({
+        teto_atingido: false,
+        versao_publicada: 1,
+        telefones_invalidos: [],
+        telefones_sem_autorizacao: [],
+        conversas_abertas: [
+          valido,
+          null,
+          "texto",
+          { ...valido, conversation_id: "nao-e-uuid" },
+          { ...valido, telefone_id: null },
+          { whatsapp_account_id: OUTRO_ID, conversation_id: CONVERSA },
+        ],
+        motor_parado: false,
+      }).conversasAbertas,
+    ).toEqual([
+      { telefoneId: UM_ID, numeroId: OUTRO_ID, conversaId: CONVERSA },
+    ]);
   });
 
   it("motorParadoDaSituacao: o booleano, ou null quando não dá para afirmar (o Devolver trata como não conferido)", () => {
@@ -283,6 +346,7 @@ describe("situação da IA para a aba", () => {
         telefones_invalidos: [],
         telefones_sem_autorizacao: [],
         telefones_com_conversa_aberta: [],
+        conversas_abertas: [],
         motor_parado: true,
       },
       error: null,

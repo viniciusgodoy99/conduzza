@@ -9,6 +9,7 @@ import {
   montarEnvelopeDeEntrada,
   POLITICA_DO_CLASSIFICADOR,
   PRAZO_DO_CLASSIFICADOR_MS,
+  VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
 } from "@/lib/integrations/llm/classificador-de-entrada";
 import type { ClienteDoVerificador } from "@/lib/integrations/llm/verificador";
 
@@ -523,5 +524,45 @@ describe("decisao fechada", () => {
       });
     }
     expect(parse).not.toHaveBeenCalled();
+  });
+});
+
+// Revisao de producao de 19/10/2026.
+describe("politica do classificador alinhada as decisoes de 05/10 e 19/10", () => {
+  it("parcelamento e forma de pagamento sao recepcao; desconto e negociacao, nao (Q8)", () => {
+    const linha = POLITICA_DO_CLASSIFICADOR.split("\n").find((l) =>
+      l.startsWith("- valor_fora_da_tabela:"),
+    );
+    expect(linha).toBe(
+      "- valor_fora_da_tabela: pede desconto, abatimento, negociação, outro preço ou uma condição especial.",
+    );
+    expect(linha).not.toContain("parcel");
+    expect(linha).not.toContain("condição de pagamento");
+    expect(POLITICA_DO_CLASSIFICADOR).toContain(
+      "perguntar se aceita pix, cartão ou dinheiro, se dá para parcelar ou em quantas vezes",
+    );
+  });
+
+  it("o que o portao deixou de escalar tambem e recepcao para o classificador (Q1 a Q4 e Q9)", () => {
+    for (const trecho of [
+      "perguntar o preço de um exame ou se a clínica faz um exame",
+      "perguntar se tem alguém aí ou se ainda vai demorar, sem reclamar e sem pedir uma pessoa",
+      "a pessoa dizer o próprio nome, mesmo que seja Socorro, Dores, Dolores ou Remédios",
+      "pontuação repetida ou letra maiúscula sem reclamação",
+    ]) {
+      expect(POLITICA_DO_CLASSIFICADOR).toContain(trecho);
+    }
+    // O exame comentado continua clinico, e a duvida continua escalando.
+    expect(POLITICA_DO_CLASSIFICADOR).toContain(
+      "o resultado de um exame ou se precisa fazer um exame",
+    );
+    expect(POLITICA_DO_CLASSIFICADOR).toContain("Na dúvida, aponte o gatilho.");
+    expect(POLITICA_DO_CLASSIFICADOR).not.toMatch(/[–—]/);
+  });
+
+  it("a versao do texto do classificador e marcada (Q12)", () => {
+    expect(VERSAO_DA_POLITICA_DO_CLASSIFICADOR).toMatch(
+      /^classificador-[0-9a-f]{12}$/,
+    );
   });
 });

@@ -9,8 +9,11 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  apoioAoDesligar,
+  apoioAoDesligarOWhatsapp,
   avisoDeContatoDaClinica,
   avisosAoLigar,
+  conversasAbertasDoTelefone,
   dicasDaIa,
   escolhaAtual,
   estadoDaIa,
@@ -19,6 +22,7 @@ import {
   faltasParaAEquipe,
   IA_NA_CLINICA_STATUS,
   LIGADO_DESLIGADO_STATUS,
+  linkDaConversa,
   MODO_DA_ESCOLHA,
   motivoDoNumeroDesconectado,
   motorDaIaParadoNaAba,
@@ -27,9 +31,11 @@ import {
   numerosDoDialogo,
   numerosLigados,
   numerosLigadosDesconectados,
+  numerosLivresDoTelefone,
   oQueNaoDeuParaConferir,
   porQueNaoAciona,
   quantosTelefonesLigados,
+  rotuloDoLinkDaConversa,
   rotuloDoNumeroLigado,
   rotuloDoTelefoneLigado,
   TELEFONE_DA_EQUIPE_STATUS,
@@ -38,6 +44,8 @@ import {
   telefoneParaExibir,
   TEXTOS_DA_IA,
   temTelefoneQueNaoAciona,
+  textoDaConversaAberta,
+  textoDoMotivo,
   textoDoTelefoneQueNaoAciona,
   textoDoTeto,
   textosDaParada,
@@ -83,6 +91,8 @@ const CONDUZZA_TESTE = "f0c115dd-e98c-4767-a1bb-93d517844852";
 const SALUD_CARE = "682edca6-cc7d-4bb7-8db6-4c68e2510549";
 const NUMERO = "11111111-1111-4111-8111-111111111111";
 const OUTRO_NUMERO = "22222222-2222-4222-8222-222222222222";
+const CONVERSA = "c1111111-1111-4111-8111-111111111111";
+const OUTRA_CONVERSA = "c2222222-2222-4222-8222-222222222222";
 
 function liberacao(
   campos: Partial<LiberacaoDaClinica> = {},
@@ -112,7 +122,7 @@ function situacao(campos: Partial<SituacaoDaIa> = {}): SituacaoDaIa {
     versaoPublicada: 1,
     telefonesInvalidos: [],
     telefonesSemAutorizacao: [],
-    telefonesComConversaAberta: [],
+    conversasAbertas: [],
     horarioPublicado: horario("24h"),
     motorParado: false,
     ...campos,
@@ -897,15 +907,17 @@ describe("telefone que não aciona o assistente", () => {
 
   it("conversa aberta com a equipe num dos números ligados (vários desde 19/10/2026)", () => {
     const aberta = dados({
-      situacao: situacao({ telefonesComConversaAberta: ["t1"] }),
+      situacao: situacao({
+        conversasAbertas: [
+          { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
+        ],
+      }),
     });
     expect(telefoneComConversaAberta(aberta, "t1")).toBe(true);
+    expect(telefoneComConversaAberta(aberta, "t2")).toBe(false);
     expect(telefoneComConversaAberta(dados(), "t1")).toBe(false);
-    // não para o assistente: ele começa na próxima conversa
+    // não é motivo de parada: a linha do telefone diz o que fazer
     expect(motivosDaParada(contexto({ dados: aberta }))).toEqual([]);
-    expect(TEXTOS_DA_IA.conversaAbertaNoNumero).toBe(
-      "Tem conversa aberta com a equipe num dos números ligados: nesse número, o assistente começa na próxima conversa.",
-    );
   });
 });
 
@@ -987,7 +999,9 @@ describe("rótulo do telefone ligado e do número ligado (T4)", () => {
   ];
 
   it("só no estado equipe: Conversa com o assistente e Em uso pelo assistente", () => {
-    expect(rotuloDoTelefoneLigado("equipe")).toBe("Conversa com o assistente");
+    expect(rotuloDoTelefoneLigado("equipe", 1)).toBe(
+      "Conversa com o assistente",
+    );
     expect(rotuloDoNumeroLigado("equipe", true)).toBe("Em uso pelo assistente");
   });
 
@@ -997,8 +1011,8 @@ describe("rótulo do telefone ligado e do número ligado (T4)", () => {
 
   it("desligado, só simulador ou parado: Ligado (contrato 3.11) e Ligado ao assistente", () => {
     for (const estado of FORA_DE_USO) {
-      expect(rotuloDoTelefoneLigado(estado), estado).toBe("Ligado");
-      expect(rotuloDoTelefoneLigado(estado)).toBe(
+      expect(rotuloDoTelefoneLigado(estado, 1), estado).toBe("Ligado");
+      expect(rotuloDoTelefoneLigado(estado, 1)).toBe(
         TELEFONE_DA_EQUIPE_STATUS.ligado.label,
       );
       for (const conectado of [true, false]) {
@@ -1015,11 +1029,11 @@ describe("rótulo do telefone ligado e do número ligado (T4)", () => {
     });
     expect(estadoDaIa(desligada)).toBe("desligado");
     expect(estadoDoTelefone(desligada.dados, "t1")).toBe("ligado");
-    expect(rotuloDoTelefoneLigado(estadoDaIa(desligada))).toBe("Ligado");
+    expect(rotuloDoTelefoneLigado(estadoDaIa(desligada), 1)).toBe("Ligado");
     // parada por uma trava qualquer
     const parada = contexto({ ambienteLigado: false });
     expect(estadoDaIa(parada)).toBe("parado");
-    expect(rotuloDoTelefoneLigado(estadoDaIa(parada))).toBe("Ligado");
+    expect(rotuloDoTelefoneLigado(estadoDaIa(parada), 1)).toBe("Ligado");
     expect(rotuloDoNumeroLigado(estadoDaIa(parada), true)).toBe(
       "Ligado ao assistente",
     );
@@ -1078,13 +1092,14 @@ describe("não conferido (T3)", () => {
       tone: "neutral",
       icon: CircleQuestionMark,
     });
+    // no plural desde a revisao de producao de 19/10/2026 (varios numeros)
     expect(TEXTOS_DA_IA.naoConferido.numero).toBe(
-      "Não foi possível carregar os números de WhatsApp, então não dá para saber se o número do assistente está conectado. Recarregue a página.",
+      "Não foi possível carregar os números de WhatsApp, então não dá para saber se os números ligados ao assistente estão conectados. Recarregue a página.",
     );
   });
 
   it("o telefone e o número fora de uso também no não conferido (T4)", () => {
-    expect(rotuloDoTelefoneLigado("nao_conferido")).toBe("Ligado");
+    expect(rotuloDoTelefoneLigado("nao_conferido", 1)).toBe("Ligado");
     expect(rotuloDoNumeroLigado("nao_conferido", true)).toBe(
       "Ligado ao assistente",
     );
@@ -1294,5 +1309,236 @@ describe("vários números ligados (19/10/2026)", () => {
       expect(texto).not.toMatch(/um número por vez/i);
       expect(texto).not.toMatch(/número escolhido/i);
     }
+  });
+});
+
+// Revisao de producao de 19/10/2026 (migration 20261019120000;
+// mudancas-1910.md A1, A4 e A6; operacao.md 3, 5 e 10; caminho.md A3 e A4).
+describe("revisão de produção (19/10/2026)", () => {
+  const PRINCIPAL = numero();
+  const SEGUNDO = numero({
+    id: OUTRO_NUMERO,
+    nome: "Numero 2 teste pessoal",
+    principal: false,
+    displayPhone: "5584999999018",
+  });
+  const DOIS_LIGADOS = { numerosLigados: [NUMERO, OUTRO_NUMERO] };
+
+  describe("conversa aberta com a equipe: o número e o que fazer", () => {
+    it("uma linha por número ligado com conversa aberta, na ordem da lista de números, com o id da conversa", () => {
+      const d = dados({
+        ...DOIS_LIGADOS,
+        situacao: situacao({
+          conversasAbertas: [
+            { telefoneId: "t1", numeroId: OUTRO_NUMERO, conversaId: OUTRA_CONVERSA },
+            { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
+            { telefoneId: "t2", numeroId: NUMERO, conversaId: "c3333333-3333-4333-8333-333333333333" },
+          ],
+        }),
+      });
+      expect(conversasAbertasDoTelefone(d, [PRINCIPAL, SEGUNDO], "t1")).toEqual([
+        { numeroId: NUMERO, numero: PRINCIPAL, conversaId: CONVERSA },
+        { numeroId: OUTRO_NUMERO, numero: SEGUNDO, conversaId: OUTRA_CONVERSA },
+      ]);
+      // sem a lista de números: a ordem do banco, sem o nome
+      expect(conversasAbertasDoTelefone(d, null, "t1")).toEqual([
+        { numeroId: OUTRO_NUMERO, numero: null, conversaId: OUTRA_CONVERSA },
+        { numeroId: NUMERO, numero: null, conversaId: CONVERSA },
+      ]);
+      // número que saiu da lista entre as leituras: no fim, sem o nome
+      expect(conversasAbertasDoTelefone(d, [PRINCIPAL], "t1")).toEqual([
+        { numeroId: NUMERO, numero: PRINCIPAL, conversaId: CONVERSA },
+        { numeroId: OUTRO_NUMERO, numero: null, conversaId: OUTRA_CONVERSA },
+      ]);
+      expect(conversasAbertasDoTelefone(dados(), [PRINCIPAL], "t1")).toEqual([]);
+    });
+
+    it("os textos, palavra por palavra: o número pelo nome, a ação e o link", () => {
+      expect(textoDaConversaAberta(PRINCIPAL)).toBe(
+        "Tem conversa aberta com a equipe no número Número principal.",
+      );
+      expect(textoDaConversaAberta(null)).toBe(
+        "Tem conversa aberta com a equipe num dos números ligados.",
+      );
+      expect(TEXTOS_DA_IA.conversaAbertaAcao).toBe(
+        "Para o assistente começar neste número, assuma e resolva a conversa aberta no Atendimento.",
+      );
+      expect(TEXTOS_DA_IA.abrirConversa).toBe("Abrir conversa");
+      expect(linkDaConversa(CONVERSA)).toBe(`/atendimento?conversa=${CONVERSA}`);
+      expect(rotuloDoLinkDaConversa(SEGUNDO)).toBe(
+        "Abrir no Atendimento a conversa do número Numero 2 teste pessoal",
+      );
+      expect(rotuloDoLinkDaConversa(null)).toBe(
+        "Abrir no Atendimento a conversa aberta",
+      );
+      // o texto antigo, que dizia "começa na próxima conversa" sem dizer
+      // como, não existe mais
+      const todos = Object.values(TEXTOS_DA_IA).flatMap((valor) =>
+        typeof valor === "string" ? [valor] : Object.values(valor),
+      );
+      expect(todos.join(" ")).not.toMatch(/começa na próxima conversa/);
+    });
+
+    it("Conversa com o assistente só com um número ligado e conectado SEM conversa aberta para o telefone", () => {
+      const ctxDe = (conversasAbertas: SituacaoDaIa["conversasAbertas"], numeros = [PRINCIPAL, SEGUNDO]) =>
+        contexto({
+          dados: dados({ ...DOIS_LIGADOS, situacao: situacao({ conversasAbertas }) }),
+          numeros,
+        });
+      // aberta nos dois: a mensagem dele cai numa delas, fica com a equipe
+      const nosDois = ctxDe([
+        { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
+        { telefoneId: "t1", numeroId: OUTRO_NUMERO, conversaId: OUTRA_CONVERSA },
+      ]);
+      expect(estadoDaIa(nosDois)).toBe("equipe");
+      expect(numerosLivresDoTelefone(nosDois.dados, nosDois.numeros, "t1")).toEqual([]);
+      expect(
+        rotuloDoTelefoneLigado(
+          estadoDaIa(nosDois),
+          numerosLivresDoTelefone(nosDois.dados, nosDois.numeros, "t1").length,
+        ),
+      ).toBe("Ligado");
+      // aberta só num: no outro, a conversa nova nasce com o assistente
+      const numSo = ctxDe([
+        { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
+      ]);
+      expect(numerosLivresDoTelefone(numSo.dados, numSo.numeros, "t1")).toEqual([
+        SEGUNDO,
+      ]);
+      expect(
+        rotuloDoTelefoneLigado(
+          estadoDaIa(numSo),
+          numerosLivresDoTelefone(numSo.dados, numSo.numeros, "t1").length,
+        ),
+      ).toBe("Conversa com o assistente");
+      // o número livre caiu: não conta (o assistente não responde por ele)
+      const livreCaido = ctxDe(
+        [{ telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA }],
+        [PRINCIPAL, { ...SEGUNDO, status: "desconectado" }],
+      );
+      expect(estadoDaIa(livreCaido)).toBe("equipe");
+      expect(
+        numerosLivresDoTelefone(livreCaido.dados, livreCaido.numeros, "t1"),
+      ).toEqual([]);
+      // a conversa aberta de OUTRO telefone não tira o número deste
+      const deOutro = ctxDe([
+        { telefoneId: "t2", numeroId: NUMERO, conversaId: CONVERSA },
+      ]);
+      expect(
+        numerosLivresDoTelefone(deOutro.dados, deOutro.numeros, "t1"),
+      ).toEqual([PRINCIPAL, SEGUNDO]);
+      // sem a lista de números, nenhum livre (a aba não afirma a conexão)
+      expect(numerosLivresDoTelefone(dados(DOIS_LIGADOS), null, "t1")).toEqual([]);
+      // fora do estado equipe, nunca
+      expect(rotuloDoTelefoneLigado("parado", 2)).toBe("Ligado");
+    });
+  });
+
+  describe("desligar sem volta para o administrador", () => {
+    it("a linha de apoio: só para quem desliga e não liga de novo", () => {
+      expect(apoioAoDesligar({ podeEditar: true, superAdmin: false })).toBe(
+        "Depois de desligar, só a equipe Conduzza liga de novo.",
+      );
+      expect(TEXTOS_DA_IA.depoisDeDesligar).toBe(
+        "Depois de desligar, só a equipe Conduzza liga de novo.",
+      );
+      // o super admin liga de novo; quem não altera não desliga
+      expect(apoioAoDesligar({ podeEditar: true, superAdmin: true })).toBeNull();
+      expect(apoioAoDesligar({ podeEditar: false, superAdmin: false })).toBeNull();
+    });
+
+    it("no seletor e no diálogo do Só simulador: só com o WhatsApp ligado", () => {
+      const administrador = { podeEditar: true, superAdmin: false };
+      expect(
+        apoioAoDesligarOWhatsapp({ ...administrador, escolha: "equipe" }),
+      ).toBe(TEXTOS_DA_IA.depoisDeDesligar);
+      // o simulador o administrador religa sozinho
+      expect(
+        apoioAoDesligarOWhatsapp({ ...administrador, escolha: "simulador" }),
+      ).toBeNull();
+      expect(
+        apoioAoDesligarOWhatsapp({ ...administrador, escolha: "desligado" }),
+      ).toBeNull();
+      expect(
+        apoioAoDesligarOWhatsapp({
+          podeEditar: true,
+          superAdmin: true,
+          escolha: "equipe",
+        }),
+      ).toBeNull();
+    });
+  });
+
+  describe("motivos para o super admin (a equipe Conduzza)", () => {
+    it("servidor, interruptor e motor dizem o que conferir, sem mandar avisar a equipe Conduzza", () => {
+      expect(textoDoMotivo("servidor", true)).toBe(
+        "A chave da OpenAI ou o segredo do identificador não estão no ambiente de produção da Vercel.",
+      );
+      expect(textoDoMotivo("interruptor", true)).toBe(
+        "O interruptor geral está desligado. Ligue no cartão Interruptor geral.",
+      );
+      expect(textoDoMotivo("motor_parado", true)).toBe(
+        "O motor do assistente não está rodando. Siga o diagnóstico rápido do motor-ia em supabase/operacao/motor-por-cron.md.",
+      );
+      const motivos = Object.keys(TEXTOS_DA_IA.motivos) as (keyof typeof TEXTOS_DA_IA.motivos)[];
+      for (const motivo of motivos) {
+        expect(textoDoMotivo(motivo, true), motivo).not.toMatch(/[Aa]vise a equipe Conduzza/);
+        expect(textoDoMotivo(motivo, true), motivo).not.toMatch(/A equipe Conduzza/);
+        expect(textoDoMotivo(motivo, true), motivo).not.toMatch(/[—–]/);
+      }
+    });
+
+    it("os outros papéis leem o texto de hoje", () => {
+      const motivos = Object.keys(TEXTOS_DA_IA.motivos) as (keyof typeof TEXTOS_DA_IA.motivos)[];
+      for (const motivo of motivos) {
+        expect(textoDoMotivo(motivo), motivo).toBe(TEXTOS_DA_IA.motivos[motivo]);
+        expect(textoDoMotivo(motivo, false), motivo).toBe(TEXTOS_DA_IA.motivos[motivo]);
+      }
+      expect(TEXTOS_DA_IA.motivos.servidor).toBe(
+        "A equipe Conduzza ainda não ativou o assistente para esta clínica.",
+      );
+      // os motivos sem texto próprio são os mesmos para o super admin
+      expect(textoDoMotivo("sem_telefone", true)).toBe(
+        TEXTOS_DA_IA.motivos.sem_telefone,
+      );
+    });
+
+    it("a lista da aba e o aviso do diálogo de ligar usam o texto de quem lê", () => {
+      const parado = contexto({
+        ambienteLigado: false,
+        dados: dados({
+          interruptorLigado: false,
+          situacao: situacao({ motorParado: true }),
+        }),
+      });
+      expect(textosDaParada(parado, true)).toEqual([
+        TEXTOS_DA_IA.motivosParaAEquipeConduzza.servidor,
+        TEXTOS_DA_IA.motivosParaAEquipeConduzza.interruptor,
+        TEXTOS_DA_IA.motivosParaAEquipeConduzza.motor_parado,
+      ]);
+      expect(textosDaParada(parado)).toEqual([
+        TEXTOS_DA_IA.motivos.servidor,
+        TEXTOS_DA_IA.motivos.interruptor,
+        TEXTOS_DA_IA.motivos.motor_parado,
+      ]);
+      const entrada = {
+        ambienteLigado: false,
+        interruptorLigado: true,
+        versaoPublicada: 1,
+        motorParado: true,
+        temTelefoneInvalido: false,
+      };
+      expect(avisosAoLigar({ ...entrada, superAdmin: true })).toEqual([
+        TEXTOS_DA_IA.motivosParaAEquipeConduzza.servidor,
+        TEXTOS_DA_IA.motivosParaAEquipeConduzza.motor_parado,
+      ]);
+      expect(avisosAoLigar(entrada)).toEqual([
+        TEXTOS_DA_IA.motivos.servidor,
+        TEXTOS_DA_IA.motivos.motor_parado,
+      ]);
+      expect(textosDosMotivos(["servidor"], true)).toEqual([
+        TEXTOS_DA_IA.motivosParaAEquipeConduzza.servidor,
+      ]);
+    });
   });
 });

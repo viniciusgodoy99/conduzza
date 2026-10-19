@@ -4,12 +4,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Bot,
   CircleQuestionMark,
+  MessageSquareText,
   Phone,
   Plus,
   Power,
   PowerOff,
   Smartphone,
 } from "lucide-react";
+import Link from "next/link";
 import { useId, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -24,7 +26,10 @@ import {
   type ResultadoDaIa,
 } from "@/app/(app)/configuracoes/ia-liberacao-actions";
 import {
+  apoioAoDesligar,
+  apoioAoDesligarOWhatsapp,
   avisosAoLigar,
+  conversasAbertasDoTelefone,
   dicasDaIa,
   ESCOLHAS_DA_IA,
   escolhaAtual,
@@ -35,23 +40,26 @@ import {
   IA_NA_CLINICA_STATUS,
   LIGADO_DESLIGADO_STATUS,
   LIMITE_DO_ROTULO,
+  linkDaConversa,
   motorDaIaParadoNaAba,
   motivosDaParada,
   NUMERO_DO_ASSISTENTE_STATUS,
   numerosDoDialogo,
   numerosLigados,
+  numerosLivresDoTelefone,
   oQueNaoDeuParaConferir,
   porQueNaoAciona,
   quantosTelefonesLigados,
   ROTULO_DA_ESCOLHA,
+  rotuloDoLinkDaConversa,
   rotuloDoNumeroLigado,
   rotuloDoTelefoneLigado,
   TELEFONE_DA_EQUIPE_STATUS,
-  telefoneComConversaAberta,
   telefoneDaEquipeSchema,
   telefoneParaExibir,
   TEXTOS_DA_IA,
   temTelefoneQueNaoAciona,
+  textoDaConversaAberta,
   textoDoTelefoneQueNaoAciona,
   textoDoTeto,
   textosDaParada,
@@ -117,7 +125,13 @@ import type { DadosDaIa, TelefoneDaIa } from "@/lib/queries/ia-liberacao";
 //   de WhatsApp do Conduzza e telefone de paciente (so o super admin usa
 //   "Usar mesmo assim", e fica registrado). A linha do telefone que nao
 //   aciona o assistente tem estado proprio, e a do telefone com conversa
-//   aberta com a equipe avisa que o assistente comeca na proxima conversa.
+//   aberta com a equipe diz em QUAL numero e o que fazer (assumir e
+//   resolver no Atendimento), com o link para a conversa (revisao de
+//   producao de 19/10/2026).
+// - Quem desliga e nao liga de novo (o administrador da clinica) le "Depois
+//   de desligar, só a equipe Conduzza liga de novo." junto do seletor (com
+//   o WhatsApp ligado), no dialogo do "Só simulador" e em cada numero
+//   ligado (revisao de producao de 19/10/2026).
 // - Ligar o atendimento pelo WhatsApp (modo equipe e ligar numero) e so da
 //   equipe Conduzza nesta fase: o administrador ve esses controles
 //   desabilitados, com a dica; desligar continua com ele. Adicionar telefone
@@ -241,6 +255,16 @@ export function AgenteDeIaTab({
     motorParado: motorDaIaParadoNaAba(dados),
     temTelefoneInvalido: temTelefoneQueNaoAciona(dados),
     modo: confirmando ?? "equipe",
+    superAdmin,
+  });
+  // "Depois de desligar, só a equipe Conduzza liga de novo.": para quem
+  // desliga e nao liga de novo (o administrador). No seletor e no dialogo
+  // do "Só simulador", so com o WhatsApp ligado (o simulador ele religa).
+  const apoioDoDesligar = apoioAoDesligar({ podeEditar, superAdmin });
+  const apoioNoSeletor = apoioAoDesligarOWhatsapp({
+    escolha,
+    podeEditar,
+    superAdmin,
   });
 
   // sempre: roda no fim, deu certo ou nao (fechar o dialogo). seDerCerto:
@@ -376,7 +400,7 @@ export function AgenteDeIaTab({
                 titulo="Por que o assistente ainda não responde"
               >
                 <ul className="grid list-disc gap-1 pl-4">
-                  {textosDaParada(contexto).map((texto) => (
+                  {textosDaParada(contexto, superAdmin).map((texto) => (
                     <li key={texto}>{texto}</li>
                   ))}
                 </ul>
@@ -407,6 +431,11 @@ export function AgenteDeIaTab({
             {podeEditar && escolha !== "equipe" && dicas.equipe ? (
               <p className="text-[13px] text-text-secondary">{dicas.equipe}</p>
             ) : null}
+            {apoioNoSeletor ? (
+              <p className="text-[13px] text-text-secondary">
+                {apoioNoSeletor}
+              </p>
+            ) : null}
 
             <dl className="grid gap-2 text-[13px] sm:grid-cols-2">
               <div className="grid content-start gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3">
@@ -435,6 +464,7 @@ export function AgenteDeIaTab({
           numeros={numeros}
           estadoDoAssistente={estado}
           dicas={dicas}
+          apoioDoDesligar={apoioDoDesligar}
           pendente={pendente}
           ocupado={ocupado}
           aoAlternar={(numero, ligado) =>
@@ -454,6 +484,7 @@ export function AgenteDeIaTab({
 
         <CartaoDosTelefones
           dados={dados}
+          numeros={numeros}
           estadoDoAssistente={estado}
           superAdmin={superAdmin}
           dicas={dicas}
@@ -604,6 +635,13 @@ export function AgenteDeIaTab({
                 : "O assistente responde só no simulador, dentro do sistema. Ninguém recebe mensagem dele pelo WhatsApp."}
             </DialogDescription>
           </DialogHeader>
+          {confirmando === "simulador" && apoioNoSeletor ? (
+            // Com o WhatsApp ligado, "Só simulador" desliga o atendimento
+            // pelo WhatsApp, e o administrador nao liga de novo.
+            <Aviso tom="warning" role="note">
+              {apoioNoSeletor}
+            </Aviso>
+          ) : null}
           {avisosDoLigar.length > 0 ? (
             <Aviso
               tom="info"
@@ -686,6 +724,7 @@ function CartaoDosNumeros({
   numeros,
   estadoDoAssistente,
   dicas,
+  apoioDoDesligar,
   pendente,
   ocupado,
   aoAlternar,
@@ -696,6 +735,11 @@ function CartaoDosNumeros({
   estadoDoAssistente: EstadoDaIa;
   /** escolha: desligar (so permissao); numero: ligar (equipe Conduzza). */
   dicas: Record<AcaoDaIa, string | null>;
+  /**
+   * A linha de apoio junto do "Desligar" de cada numero ligado, para quem
+   * nao liga de novo (apoioAoDesligar). Nula: sem linha.
+   */
+  apoioDoDesligar: string | null;
   pendente: boolean;
   ocupado: (qual: string) => boolean;
   aoAlternar: (numero: NumeroDoWhatsapp, ligado: boolean) => void;
@@ -801,6 +845,11 @@ function CartaoDosNumeros({
                     </div>
                     {comDica(botao, dica)}
                   </div>
+                  {ligado && apoioDoDesligar ? (
+                    <p className="text-[12px] text-text-secondary">
+                      {apoioDoDesligar}
+                    </p>
+                  ) : null}
                   {ligado && !conectado ? (
                     <Aviso tom="warning" role="note">
                       {TEXTOS_DA_IA.numeroDesconectado}
@@ -818,6 +867,7 @@ function CartaoDosNumeros({
 
 function CartaoDosTelefones({
   dados,
+  numeros,
   estadoDoAssistente,
   superAdmin,
   dicas,
@@ -827,7 +877,16 @@ function CartaoDosTelefones({
   aoAdicionar,
 }: {
   dados: DadosDaIa;
-  /** "Conversa com o assistente" so no estado equipe (achado T4). */
+  /**
+   * Os numeros ATIVOS da clinica: o nome do numero com conversa aberta e os
+   * ligados e conectados sem conversa aberta (o rotulo). Nulo: a leitura
+   * falhou (a linha diz "num dos números ligados").
+   */
+  numeros: NumeroDoWhatsapp[] | null;
+  /**
+   * "Conversa com o assistente" so no estado equipe (achado T4) e com um
+   * numero ligado e conectado sem conversa aberta para o telefone.
+   */
   estadoDoAssistente: EstadoDaIa;
   superAdmin: boolean;
   /** escolha: desligar (so permissao); telefone: adicionar e ligar. */
@@ -1081,10 +1140,13 @@ function CartaoDosTelefones({
                 naoAciona === null
                   ? null
                   : textoDoTelefoneQueNaoAciona(naoAciona);
-              const conversaAberta =
-                telefone.ativo &&
-                !invalido &&
-                telefoneComConversaAberta(dados, telefone.id);
+              // A conversa aberta com a equipe em cada numero ligado: a linha
+              // diz qual numero e leva a conversa (o assistente so comeca
+              // nesse numero depois que alguem assumir e resolver).
+              const conversasAbertas =
+                telefone.ativo && !invalido
+                  ? conversasAbertasDoTelefone(dados, numeros, telefone.id)
+                  : [];
               // Desligar: so a permissao (nunca recusado). Ligar de novo: a
               // permissao (administrador ou super admin, desde 19/10/2026),
               // e nunca o telefone que nao aciona o assistente (o invalido o
@@ -1130,7 +1192,14 @@ function CartaoDosTelefones({
                           definition={TELEFONE_DA_EQUIPE_STATUS[estado]}
                           label={
                             estado === "ligado"
-                              ? rotuloDoTelefoneLigado(estadoDoAssistente)
+                              ? rotuloDoTelefoneLigado(
+                                  estadoDoAssistente,
+                                  numerosLivresDoTelefone(
+                                    dados,
+                                    numeros,
+                                    telefone.id,
+                                  ).length,
+                                )
                               : undefined
                           }
                         />
@@ -1143,11 +1212,28 @@ function CartaoDosTelefones({
                       {textoDeQueNaoAciona}
                     </Aviso>
                   ) : null}
-                  {conversaAberta ? (
-                    <Aviso tom="info" role="note">
-                      {TEXTOS_DA_IA.conversaAbertaNoNumero}
+                  {conversasAbertas.map((conversa) => (
+                    <Aviso
+                      key={conversa.conversaId}
+                      tom="info"
+                      role="note"
+                      titulo={textoDaConversaAberta(conversa.numero)}
+                      acao={
+                        <Button variant="outline" size="sm" asChild>
+                          <Link
+                            href={linkDaConversa(conversa.conversaId)}
+                            prefetch={false}
+                            aria-label={rotuloDoLinkDaConversa(conversa.numero)}
+                          >
+                            <MessageSquareText aria-hidden />
+                            {TEXTOS_DA_IA.abrirConversa}
+                          </Link>
+                        </Button>
+                      }
+                    >
+                      {TEXTOS_DA_IA.conversaAbertaAcao}
                     </Aviso>
-                  ) : null}
+                  ))}
                 </li>
               );
             })}

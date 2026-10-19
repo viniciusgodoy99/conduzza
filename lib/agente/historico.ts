@@ -28,12 +28,21 @@ import { MARCA_DO_NOME } from "./marca-do-nome";
 //    transcricao (escala como midia);
 //  - o nome do contato (inteiro e o primeiro nome, sem diferenciar
 //    maiusculas e acentos) vira MARCA_DO_NOME ("Fulano") em todas as
-//    mensagens. Palavra comum, SEM colchete nem sinal de marcacao: o portao
-//    de entrada (manipulacao/marcacao) e a regra de saida
-//    (formato_invalido/marcacao) tratam "[", "]", "<", ">", "{", "}" como
-//    tentativa de mexer no envelope. Com "[nome]", toda mensagem em que a
-//    pessoa escrevia o proprio nome escalava como manipulacao, e o modelo
-//    repetindo o marcador tinha a resposta barrada.
+//    mensagens, no `texto`, que e o que vai a OpenAI. Palavra comum, SEM
+//    colchete nem sinal de marcacao: o portao de entrada
+//    (manipulacao/marcacao) e a regra de saida (formato_invalido/marcacao)
+//    tratam "[", "]", "<", ">", "{", "}" como tentativa de mexer no
+//    envelope. Com "[nome]", toda mensagem em que a pessoa escrevia o
+//    proprio nome escalava como manipulacao, e o modelo repetindo o
+//    marcador tinha a resposta barrada;
+//  - a mensagem de texto do contato leva tambem o texto ORIGINAL
+//    (textoOriginal), que so o portao de entrada deterministico le (laco.ts,
+//    local e sem rede). Revisao de producao de 19/10/2026 (achado de
+//    seguranca): com o portao no texto mascarado, uma contato chamada
+//    Socorro que escrevia "socorro, me ajuda" chegava ao portao como
+//    "Fulano, me ajuda" e nao escalava. O original nunca vai para a OpenAI
+//    nem para log; as neutralizacoes do portao (Q4: "aqui e a Socorro")
+//    valem nele.
 //
 // PENDENTE e a mensagem do paciente da janela que nenhum turno encerrado
 // respondeu: o id nao esta em ai_turno.mensagens_lidas de um turno 'enviado'
@@ -199,6 +208,9 @@ export function mascararNome(texto: string, nome: string | null): string {
 /**
  * Uma linha de message como o laco a ve. Midia disfarcada de texto (video,
  * localizacao, cartao de contato com media_url ou corpo vazio) vira "midia".
+ * O `texto` vai com o nome do contato mascarado (e o que a OpenAI le); a
+ * mensagem de texto do contato leva tambem o `textoOriginal`, so para o
+ * portao de entrada deterministico (local).
  */
 export function mensagemDaLinha(
   linha: Pick<
@@ -217,7 +229,10 @@ export function mensagemDaLinha(
       tipo: ehTexto ? "midia" : linha.content_type,
     };
   }
-  return { autor, texto: mascararNome(corpo, nomeDoContato), tipo: "texto" };
+  const texto = mascararNome(corpo, nomeDoContato);
+  return autor === "paciente"
+    ? { autor, texto, tipo: "texto", textoOriginal: corpo }
+    : { autor, texto, tipo: "texto" };
 }
 
 /**

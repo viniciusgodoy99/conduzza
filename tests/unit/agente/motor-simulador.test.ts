@@ -33,11 +33,14 @@ vi.mock("@/lib/agente/contexto", () => ({
     rascunhoId: null,
     publicada: null,
   }),
+  // O nome cadastrado da clinica vem no catalogo (Q7 da revisao de producao
+  // de 19/10/2026), lido pela chave da clinica (motor-contexto.test.ts).
   carregarCatalogoDoAgente: async () => ({
     procedimentos: [],
     vinculos: [],
     convenios: [],
     conveniosDoCadastro: [],
+    nomeDaClinica: "Clínica Bem Estar",
   }),
 }));
 
@@ -326,8 +329,12 @@ describe("simularTurno", () => {
     expect(create).toHaveBeenCalledTimes(1);
     // O HMAC da clinica com quem testa, nunca telefone.
     const [corpo] = create.mock.calls[0] as unknown as [
-      { safety_identifier: string },
+      { safety_identifier: string; instructions: string },
     ];
+    // O nome cadastrado da clinica abre o bloco <atendimento> (Q7).
+    expect(corpo.instructions).toContain(
+      "<atendimento>\nClínica: Clínica Bem Estar.\n",
+    );
     expect(corpo.safety_identifier).toBe(
       identificadorDeSeguranca({
         clinicId: CLINICA,

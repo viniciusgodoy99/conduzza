@@ -31,11 +31,19 @@ import {
   FONTES_DAS_REGRAS_EM_CODIGO,
   type ContextoDasRegras,
 } from "@/lib/domain/conformidade/filtro-deterministico";
-import { MAXIMO_DE_MENSAGENS_NO_CONTEXTO } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import {
-  PADROES_DE_SAIDA,
+  FONTES_DO_PORTAO_EM_CODIGO,
+  MAXIMO_DE_MENSAGENS_NO_CONTEXTO,
+} from "@/lib/domain/conformidade/gatilhos-de-entrada";
+import { FONTES_DA_NORMALIZACAO } from "@/lib/domain/conformidade/normalizar";
+import {
+  IDADES_POR_EXTENSO,
   LEXICO_APROXIMADO,
   LEXICO_COMPACTO,
+  LEXICO_COMPACTO_DE_ENTRADA,
+  NEUTRALIZACOES_DE_ENTRADA,
+  PADROES_DE_ENTRADA,
+  PADROES_DE_SAIDA,
 } from "@/lib/domain/conformidade/padroes";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 import type { TextoAprovado } from "@/lib/domain/conformidade/texto-aprovado";
@@ -117,6 +125,46 @@ export function versaoDasRegras(): string {
     versaoCalculada = `regras-${sha256DoTexto(fonte).slice(0, 12)}`;
   }
   return versaoCalculada;
+}
+
+/**
+ * O que define o portao de entrada: os padroes de entrada, as expressoes
+ * permitidas, o lexico compacto, as idades por extenso, as regras em codigo
+ * (idade, caixa alta, limites) e a normalizacao.
+ */
+export function fontesDoPortao() {
+  return {
+    padroes: PADROES_DE_ENTRADA.map((p) => [p.gatilho, p.nome, p.regex.source]),
+    neutralizacoes: NEUTRALIZACOES_DE_ENTRADA.map(({ nome, fonte, troca }) => [
+      nome,
+      fonte,
+      troca,
+    ]),
+    compacto: LEXICO_COMPACTO_DE_ENTRADA,
+    idades: [...IDADES_POR_EXTENSO],
+    codigo: FONTES_DO_PORTAO_EM_CODIGO,
+    normalizacao: FONTES_DA_NORMALIZACAO,
+  };
+}
+
+/** O hash de 12 caracteres das fontes do portao ("portao-..."). */
+export function calcularVersaoDoPortao(fontes: unknown): string {
+  return `portao-${sha256DoTexto(JSON.stringify(fontes)).slice(0, 12)}`;
+}
+
+let versaoDoPortaoCalculada: string | null = null;
+
+/**
+ * Versao do portao de entrada (revisao de producao de 19/10/2026, Q12). Muda
+ * sozinha quando o portao muda (por exemplo, quando um falso positivo e
+ * afrouxado), para separar as decisoes de antes e de depois. A regra de
+ * contexto do filtro de saida usa o mesmo portao.
+ */
+export function versaoDoPortao(): string {
+  if (versaoDoPortaoCalculada === null) {
+    versaoDoPortaoCalculada = calcularVersaoDoPortao(fontesDoPortao());
+  }
+  return versaoDoPortaoCalculada;
 }
 
 // A UNICA conversao para TextoAprovado no codigo inteiro. Nao exportada.

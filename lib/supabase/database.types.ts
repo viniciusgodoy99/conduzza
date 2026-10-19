@@ -4845,6 +4845,7 @@ export type Database = {
         Args: {
           p_ativo: boolean
           p_clinic_id: string
+          p_confirmou_aviso_da_openai?: boolean
           p_forcar_contato_existente?: boolean
           p_rotulo: string
           p_telefone_e164: string

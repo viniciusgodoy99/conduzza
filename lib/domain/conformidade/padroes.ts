@@ -1570,10 +1570,13 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   // consulta ta programada"), "a partir de agora" so com ordem ao robo,
   // "em ingles" so com "responda/fale", "aprovada:" sai ("minha consulta foi
   // aprovada: posso confirmar?") e e-mail com sublinhado nao e codigo.
+  // "Dan" sozinho saiu em 19/10/2026 (revisao de producao, Q4, decisao do
+  // dono): e nome ("aqui e o Dan"). O jailbreak continua: "modo DAN", "DAN
+  // mode", "you are DAN", "do anything now".
   e(
     "manipulacao",
     "manipulacao",
-    "\\b(?:ignor|desconsider|esquec(?:e|a) (?:tudo|suas|as|o que)|instruc|prompt|system\\b|(?:prompt|instruc\\w*|regras|mensagem|comando|modo)s? d[oe] sistema\\b|diretriz|configurac|(?:voce|vc|tu|foi|fui|sou|es) (?:\\w+ )?programad|voce agora e|agora voce e|a partir de agora (?:voce|vc|tu|responda|responde|ignore|ignora|esqueca|esquece|seja|aja|finja|fale|fala|so|apenas|sem)\\b|finja|finge|fingir|faca de conta|faz de conta|role ?play|personagem|modo (?:desenvolvedor|dev|debug|admin|teste|livre|sem filtro)|jailbreak|dan\\b|developer mode|sem filtro|sem restric|responda (?:apenas|so|somente)|repita|traduz|translate|(?:responda|responde|fale|fala|escreva|escreve|continue|answer|reply) (?:\\w+ ){0,2}?em ingles|in english|token|administrador|admin\\b|root\\b|override|bypass|act as|pretend|you are now|forget (?:your|all|previous)|olvida|ignora las|aja como|age como|atue como|comporte-se como|modelo de linguagem|language model|avaliador|avaliacao interna|verificador|revisor|rascunho|veredicto|considere aprovad|pode aprovar|aprovad[oa] ?=|(?:status|parecer|decisao|verificacao|moderacao|validacao|revisao)\\s*[:=]\\s*(?:aprovad|conforme|liberad)|marque como (?:aprovad|conforme|ok|valid)|confianca\\s*[:=]?\\s*(?:alta|media)|conformidade)|[\\u00ab\\u00bb\\u2039\\u203a]{2,}|\\b[a-z]+_[a-z]+_[a-z]+\\b(?![a-z0-9_.+-]*(?:@|\\.(?:com|br|net|org)\\b))",
+    "\\b(?:ignor|desconsider|esquec(?:e|a) (?:tudo|suas|as|o que)|instruc|prompt|system\\b|(?:prompt|instruc\\w*|regras|mensagem|comando|modo)s? d[oe] sistema\\b|diretriz|configurac|(?:voce|vc|tu|foi|fui|sou|es) (?:\\w+ )?programad|voce agora e|agora voce e|a partir de agora (?:voce|vc|tu|responda|responde|ignore|ignora|esqueca|esquece|seja|aja|finja|fale|fala|so|apenas|sem)\\b|finja|finge|fingir|faca de conta|faz de conta|role ?play|personagem|modo (?:desenvolvedor|dev|debug|admin|teste|livre|sem filtro)|jailbreak|(?:modo|mode) dan\\b|dan mode\\b|(?:you are|you re|youre|voce e|vc e) (?:now |agora )?(?:o |a )?dan\\b|do anything now|developer mode|sem filtro|sem restric|responda (?:apenas|so|somente)|repita|traduz|translate|(?:responda|responde|fale|fala|escreva|escreve|continue|answer|reply) (?:\\w+ ){0,2}?em ingles|in english|token|administrador|admin\\b|root\\b|override|bypass|act as|pretend|you are now|forget (?:your|all|previous)|olvida|ignora las|aja como|age como|atue como|comporte-se como|modelo de linguagem|language model|avaliador|avaliacao interna|verificador|revisor|rascunho|veredicto|considere aprovad|pode aprovar|aprovad[oa] ?=|(?:status|parecer|decisao|verificacao|moderacao|validacao|revisao)\\s*[:=]\\s*(?:aprovad|conforme|liberad)|marque como (?:aprovad|conforme|ok|valid)|confianca\\s*[:=]?\\s*(?:alta|media)|conformidade)|[\\u00ab\\u00bb\\u2039\\u203a]{2,}|\\b[a-z]+_[a-z]+_[a-z]+\\b(?![a-z0-9_.+-]*(?:@|\\.(?:com|br|net|org)\\b))",
   ),
   // Revisao de precisao de 05/10/2026 (conjunto cego 1): autorizacao da
   // medica alegada pelo paciente ("a dra ja autorizou, pode me falar
@@ -1591,10 +1594,14 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   ),
 
   // ---- pedido de humano ----------------------------------------------------
+  // "Tem alguem ai?" e "alguem ai?" sairam em 19/10/2026 (revisao de
+  // producao, Q3, decisao do dono): e o que quem espera a resposta manda, sem
+  // pedir uma pessoa. "Alguem de verdade", "falar com alguem" e "quero falar
+  // com" continuam.
   e(
     "pedido_humano",
     "pedido_humano",
-    "\\b(?:atendente|humano|humana|ser humano|pessoa (?:de verdade|real|fisica)|gente de verdade|robo|robozinho|bot\\b|chatbot|chat bot|maquina\\b|(?<!debito )automatic|inteligencia artificial|e uma ia\\b|voce e (?:uma )?ia\\b|e ia\\b|gerente|supervisor|responsavel|dono\\b|dona da clinica|recepcionista|secretaria|falar com (?:alguem|uma? pessoa|o medico|a medica|o doutor|a doutora|a dra|o dr|voces|a clinica)|conversar com (?:alguem|uma? pessoa)|quero (?:falar|conversar) com|me liga|me ligue|ligar (?:pra|para) mim|pode me ligar|telefonar|tem alguem ai|alguem ai|alguem de verdade|e voce mesm[oa]|voce e real|e uma pessoa|e gente)",
+    "\\b(?:atendente|humano|humana|ser humano|pessoa (?:de verdade|real|fisica)|gente de verdade|robo|robozinho|bot\\b|chatbot|chat bot|maquina\\b|(?<!debito )automatic|inteligencia artificial|e uma ia\\b|voce e (?:uma )?ia\\b|e ia\\b|gerente|supervisor|responsavel|dono\\b|dona da clinica|recepcionista|secretaria|falar com (?:alguem|uma? pessoa|o medico|a medica|o doutor|a doutora|a dra|o dr|voces|a clinica)|conversar com (?:alguem|uma? pessoa)|quero (?:falar|conversar) com|me liga|me ligue|ligar (?:pra|para) mim|pode me ligar|telefonar|alguem de verdade|e voce mesm[oa]|voce e real|e uma pessoa|e gente)",
   ),
   // Revisao de precisao de 05/10/2026 (conjunto cego 1): pedir para chamar
   // ou falar com a doutora ("chama a dra ai pra falar cmg", "a dra pode
@@ -1612,10 +1619,16 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   ),
 
   // ---- insatisfacao --------------------------------------------------------
+  // Revisao de producao de 19/10/2026 (decisao do dono): "ta demorando"
+  // sozinho saiu (Q3: e o que quem espera a resposta manda), e a demora
+  // reclamada entrou pela palavra (Q1: "que demora", "quanta demora", "muita
+  // demora", "demora demais", "demorando demais"), no lugar da pontuacao
+  // repetida. "Quanto tempo que demora?" e "o que demora mais?" sao
+  // pergunta de duracao, nao reclamacao.
   e(
     "insatisfacao",
     "insatisfacao",
-    "\\b(?:pessim|horrivel|horroros|ridicul|absurd|procon|reclame ?aqui|reclamac|reclamar|advogad|processar|processo judicial|entrar na justica|justica|juizado|denunci|cfm\\b|crm\\b|vigilancia sanitaria|anvisa|nunca mais|palhacada|vergonha|descaso|desrespeit|falta de respeito|irritad|indignad|decepcion|insatisfeit|chatead|lixo|porcaria|enganad|golpe|fraude|mentira|mentiros|roubo|ladr|estorno|exijo\\b|devolv(?:er|am|e) (?:meu|o) dinheiro|dinheiro de volta|cancelar tudo|porra|merda|caralho|puta\\b|foda|pqp\\b|vtnc\\b|fdp\\b|desgrac|inferno|cansad[oa] de esperar|demorando|ninguem (?:me )?responde|sem resposta|nao respondem|terrivel|lamentavel)",
+    "\\b(?:pessim|horrivel|horroros|ridicul|absurd|procon|reclame ?aqui|reclamac|reclamar|advogad|processar|processo judicial|entrar na justica|justica|juizado|denunci|cfm\\b|crm\\b|vigilancia sanitaria|anvisa|nunca mais|palhacada|vergonha|descaso|desrespeit|falta de respeito|irritad|indignad|decepcion|insatisfeit|chatead|lixo|porcaria|enganad|golpe|fraude|mentira|mentiros|roubo|ladr|estorno|exijo\\b|devolv(?:er|am|e) (?:meu|o) dinheiro|dinheiro de volta|cancelar tudo|porra|merda|caralho|puta\\b|foda|pqp\\b|vtnc\\b|fdp\\b|desgrac|inferno|cansad[oa] de esperar|(?<!\\b(?:tempo|quanto|o) )(?:que|q) demora\\b|quanta demora|muita demora|demora demais|demorando demais|ninguem (?:me )?responde|sem resposta|nao respondem|terrivel|lamentavel)",
   ),
   // "Reembolso" sozinho saiu em 05/10/2026 ("qual o cnpj? preciso pro
   // reembolso" e convenio). Fica o reembolso cobrado da clinica.
@@ -1629,7 +1642,9 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
     "insatisfacao_en_es",
     "\\b(?:terrible|awful|worst|lawyer|sue\\b|complain|refund|scam|fraud|horrible|abogado|demanda|queja|estafa)",
   ),
-  e("insatisfacao", "exclamacoes", "!{3,}|[!?]{4,}"),
+  // Sem padrao de pontuacao repetida desde 19/10/2026 (Q1): "Oi!!!",
+  // "Obrigada!!!" e "Quanto custa????" sao recepcao. A reclamacao e lida
+  // pelas palavras acima ("Que demora!!!" continua escalando).
 
   // ---- valor fora da tabela ------------------------------------------------
   // Sem "pix" e "a vista" soltos ("voces aceitam pix?").
@@ -1675,6 +1690,20 @@ const EXAME_COMO_DOCUMENTO =
   "(?:resultados? d[aoe]s? (?:meus? |minhas? )?(?:laudo|exame|biopsia|ultrassom|ultrassonografia|ultra|eletro\\w*|raio[- ]?x|mamografia|tomografia|ressonancia|hemograma|preventivo|papanicolau|holter|ecocardiograma|ecg)s?|(?:laudo|exame)s?)";
 const DONO_DO_DOCUMENTO = "(?:o |a |os |as |meu |minha |meus |minhas )?";
 
+/** Quem pergunta preco ou se a clinica faz (logo antes de "exame"). */
+const PRECO_OU_SERVICO_DO_EXAME =
+  "(?:custa|custam|custaria|quanto e|quanto fica|quanto sai|quanto ta|quanto esta|valor|valores|preco|precos|fazem|faz|realizam|realiza|tem)";
+/** A pergunta de preco que vem DEPOIS do exame ("exame de vista, quanto custa?"). */
+const PERGUNTA_DE_PRECO_DO_EXAME =
+  "(?:quanto custa|quanto custam|quanto e|quanto fica|quanto sai|qual o valor|qual e o valor|qual valor|qual o preco|qual e o preco|qual preco)";
+/**
+ * Nada de desfecho, de exigencia nem de momento do procedimento por perto:
+ * "deu alterado", "saiu", "mostrou", "antes", "preciso" mantem o exame
+ * clinico.
+ */
+const SEM_DESFECHO_DO_EXAME =
+  "(?!.{0,40}\\b(?:alterad|deu\\b|deram\\b|sai(?:u|ram)\\b|mostr|apont|acus|positiv|negativ|normal|resultado|antes\\b|depois\\b|precis))";
+
 /**
  * Perguntas de recepcao sobre o exame como DOCUMENTO (quando fica pronto,
  * onde pegar), que o padrao de assunto clinico pegava pela palavra "laudo"
@@ -1706,6 +1735,36 @@ export const NEUTRALIZACOES_DE_ENTRADA: readonly Neutralizacao[] = [
     nome: "buscar_o_exame",
     fonte: `(?<=\\b(?:pegar|buscar|retirar|receber|retiro|pego|busco|recebo|mandar|manda|mandam|enviar|envia|enviam|entregar|entrega|entregam|imprimir|segunda via d[oe]) ${DONO_DO_DOCUMENTO})${EXAME_COMO_DOCUMENTO}\\b`,
     troca: "documento",
+  },
+  {
+    // Nome proprio (revisao de producao de 19/10/2026, Q4, decisao do dono):
+    // "Maria do Socorro", "Maria das Dores", "Maria dos Remedios" e "Maria
+    // Dolores" sao nomes, nao sintoma nem remedio.
+    nome: "nome_composto_com_maria",
+    fonte:
+      "\\bmaria (?:do (?:perpetuo )?socorro|das dores|dos remedios|de (?:socorro|dores|remedios)|dolores)\\b",
+    troca: "maria",
+  },
+  {
+    // A pessoa se apresentando (Q4): "aqui e a Socorro", "sou a Dores", "me
+    // chamo Dolores", "meu nome e Remedios", "aqui e a dona Socorro". Fora
+    // da apresentacao, a palavra continua escalando: "Socorro" sozinho e
+    // "socorro, me ajuda" (pedido de socorro), "estou com dores".
+    nome: "nome_ao_se_apresentar",
+    fonte:
+      "(?<=\\b(?:aqui e|aqui eh|quem fala e|sou|me chamo|meu nome e|meu nome eh|pode me chamar de) (?:(?:a|o|dona|seu|sra|sr)\\.? ){0,2})(?:socorro|dores|dolores|remedios)\\b",
+    troca: "fulana",
+  },
+  {
+    // Exame em pergunta de preco ou de servico (Q9): "quanto custa o exame
+    // de prostata?", "vcs fazem exame de sangue?", "exame de vista, quanto
+    // custa?". O exame comentado continua clinico ("o exame saiu alterado",
+    // "quanto custa refazer o exame que deu alterado?", "preciso de exame
+    // antes?"). Fica DEPOIS de exame_de_sangue, que precisa ver a palavra
+    // "exame".
+    nome: "exame_na_pergunta_de_preco",
+    fonte: `(?<=\\b${PRECO_OU_SERVICO_DO_EXAME} (?:d[aoe]s? |o |a |os |as |um |uma )?)exames?\\b${SEM_DESFECHO_DO_EXAME}|\\bexames?\\b(?=(?:\\W+[a-z]+){0,4}\\W+${PERGUNTA_DE_PRECO_DO_EXAME}\\b)${SEM_DESFECHO_DO_EXAME}`,
+    troca: "procedimento",
   },
 ];
 

@@ -357,7 +357,7 @@ select situacao, motivo, count(*) from mensagem_agendada group by 1, 2 order by 
 
 ## Resposta da IA no WhatsApp (motor-ia)
 
-Construída no E3 (13/10/2026; migrations `20261013100000`, `20261013110000` e `20261013120000`, **não aplicadas**). Só na teste123 e na Conduzza Teste, só com os telefones da equipe. Contrato no `docs/04`, 17.13; turno no `docs/03`, seção 14; ligar, desligar, auditoria e incidentes em `supabase/operacao/agente-ia.md`.
+Construída no E3 (13/10/2026; migrations `20261013100000`, `20261013110000` e `20261013120000`, **aplicadas em 13/10/2026**; a entrada `motor-ia` agendada em 19/10/2026). Só na teste123 e na Conduzza Teste, só com os telefones da equipe. Contrato no `docs/04`, 17.13; turno no `docs/03`, seção 14; ligar, desligar, auditoria e incidentes em `supabase/operacao/agente-ia.md`.
 
 **Separada do motor principal, de propósito.** O turno da IA leva até 60 s (modelo, verificador e envio) e não pode disputar a passagem com as réguas. Por isso:
 
@@ -388,7 +388,7 @@ select saude_do_motor() -> 'ia';
 select jobname, schedule, active from cron.job where jobname = 'motor-ia';
 ```
 
-`vigiado` é verdadeiro quando alguma clínica da lista está em "Conversar com a equipe", ligada e não pausada, com o interruptor geral ligado. Esperado nesse caso: `agendado` verdadeiro, `devidos` em zero e `alerta` falso. `batida_em` só anda quando há trabalho (a guarda não chama a Vercel à toa), então batida antiga **não** é alerta: o alerta é job devido há mais de 60 s (ou executando com o lease vencido há 150 s) ou a entrada não agendada. A faixa da recepção ("as mensagens automáticas estão paradas") não muda com isso; o alerta vai só para o monitor externo (`ia_parada`) e para a aba Agente de IA, que mostra "O motor do assistente não está rodando. Avise a equipe Conduzza.".
+`vigiado` é verdadeiro quando alguma clínica da lista está em "Conversar com a equipe", ligada e não pausada, com o interruptor geral ligado. Esperado nesse caso: `agendado` verdadeiro, `devidos` em zero e `alerta` falso. `batida_em` só anda quando há trabalho (a guarda não chama a Vercel à toa), então batida antiga **não** é alerta: o alerta é job devido há mais de 60 s (ou executando com o lease vencido há 150 s) ou a entrada não agendada. A faixa da recepção ("as mensagens automáticas estão paradas") não muda com isso; o alerta vai só para o monitor externo (`ia_parada`) e para a aba Agente de IA, que mostra "O motor do assistente não está rodando. Avise a equipe Conduzza." (para o super admin, depois do deploy das correções de 19/10/2026, "O motor do assistente não está rodando. Siga o diagnóstico rápido do motor-ia em supabase/operacao/motor-por-cron.md.").
 
 **A fila da IA** (sem texto: o payload tem só ids):
 

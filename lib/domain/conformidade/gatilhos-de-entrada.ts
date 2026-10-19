@@ -108,15 +108,34 @@ function idadeMenorDeclarada(texto: string): boolean {
   return idadesDeclaradas(texto).some((idade) => idade < 18);
 }
 
+// Caixa alta como grito (insatisfacao). Revisao de producao de 19/10/2026
+// (Q2, decisao do dono): so com 5 palavras ou mais e sem "?". "OI BOA TARDE"
+// e "QUANTO CUSTA A CONSULTA?" sao recepcao (paciente mais velho escreve
+// assim); "QUERO SABER O QUE ACONTECEU COM MEU HORARIO" continua escalando.
+const MINIMO_DE_LETRAS_DA_CAIXA_ALTA = 10;
+const PROPORCAO_DA_CAIXA_ALTA = 0.8;
+const MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA = 5;
+/** Interrogacao comum, de largura cheia e a invertida. */
+const INTERROGACAO = /[?\uff1f\u00bf]/u;
+
 function caixaAlta(bruto: string): boolean {
   const letras = bruto.match(/\p{L}/gu) ?? [];
-  if (letras.length < 10) {
+  if (letras.length < MINIMO_DE_LETRAS_DA_CAIXA_ALTA) {
+    return false;
+  }
+  if (INTERROGACAO.test(bruto)) {
+    return false;
+  }
+  const palavras = bruto
+    .split(/\s+/u)
+    .filter((parte) => /\p{L}/u.test(parte));
+  if (palavras.length < MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA) {
     return false;
   }
   const maiusculas = letras.filter(
     (letra) => letra !== letra.toLowerCase() && letra === letra.toUpperCase(),
   );
-  return maiusculas.length / letras.length >= 0.8;
+  return maiusculas.length / letras.length >= PROPORCAO_DA_CAIXA_ALTA;
 }
 
 // "O laudo fica pronto quando?" e documento, nao assunto clinico.
@@ -206,6 +225,21 @@ export function detectarGatilhosDeEntrada(
 
   return ordenarPorPrioridade(GATILHOS_DE_ENTRADA, achados);
 }
+
+/**
+ * As regras do portao que vivem em codigo (idade declarada, caixa alta,
+ * limites), para a versao do portao (versaoDoPortao, filtro.ts) mudar quando
+ * elas mudarem. Os padroes, as trocas e o lexico vem de padroes.ts. Sem
+ * hash aqui: este modulo tambem roda no navegador.
+ */
+export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
+  IDADE_DECLARADA,
+  IDADE_ROTULADA,
+  IDADE_EM_INGLES,
+  `caixa alta: ${MINIMO_DE_LETRAS_DA_CAIXA_ALTA} letras, ${PROPORCAO_DA_CAIXA_ALTA}, ${MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA} palavras, sem ${INTERROGACAO.source}`,
+  `limites: ${LIMITE_DE_MENSAGEM}, ${LIMITE_DA_RAJADA}, ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO}`,
+  "midia escala",
+];
 
 /** Atalho para o filtro de saida: gatilhos de um conjunto de textos. */
 export function gatilhosDosTextos(

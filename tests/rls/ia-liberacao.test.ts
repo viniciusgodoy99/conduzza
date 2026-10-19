@@ -26,6 +26,10 @@ import { adminClient, anonClient } from "./stack";
 //     o sistema liga. TELEFONE da equipe (decisao do dono de 19/10/2026,
 //     migration 20261019100000): o administrador liga (sem o nono digito,
 //     gravado pela chave canonica) e desliga; o forcar dele da 42501.
+//     Telefone NOVO exige a confirmacao do aviso da OpenAI, que o banco
+//     grava na trilha no nome de quem liga (migration 20261019120000; a F
+//     ganha o telefone ligado e logo desligado, porque desligar telefone
+//     fora da lista nao cria linha).
 //     Varios numeros ao mesmo tempo (decisao do dono de 19/10/2026,
 //     migration 20261019110000): o sistema liga o segundo e o primeiro
 //     continua ligado; o administrador desliga um sem mexer no outro e nao
@@ -56,8 +60,9 @@ import { adminClient, anonClient } from "./stack";
 // Toda negacao tem o caso positivo ao lado (anti falso positivo).
 //
 // CUIDADO, o banco e o da producao: clinicas e_de_teste, apagadas no
-// afterAll. A F nasce de teste e ganha a linha DESLIGADA (nunca liga; nao
-// tem numero nem contato). Ela so deixa de ser de teste DENTRO dos testes
+// afterAll. A F nasce de teste e ganha a linha DESLIGADA (nunca liga a
+// clinica; o telefone dela so liga um instante, antes de ser desligado, e
+// ela nao tem numero nem contato). Ela so deixa de ser de teste DENTRO dos testes
 // que precisam de uma clinica fora da lista (foraDeTeste), e volta a ser de
 // teste no finally, antes do proximo teste: o motor de producao ignora
 // clinica e_de_teste, entao uma execucao que falha no meio nao deixa uma
@@ -336,6 +341,9 @@ beforeAll(async () => {
         p_telefone_e164: TELEFONE_DA_EQUIPE,
         p_rotulo: "Equipe de teste",
         p_ativo: true,
+        // telefone novo exige a confirmacao do aviso da OpenAI (migration
+        // 20261019120000), ate para o servidor
+        p_confirmou_aviso_da_openai: true,
       },
     ],
   ] as const) {
@@ -349,24 +357,28 @@ beforeAll(async () => {
   // (foraDeTeste), e T3a deixa a linha ficar. E o caso que prova o filtro
   // "lista ou e_de_teste" da leitura e do guarda: a linha existe, o admin
   // dela nao le nem mexe enquanto a F nao e de teste.
-  for (const [rpc, args] of [
-    [
-      "definir_liberacao_da_ia",
-      { p_clinic_id: clinicaF, p_liberada: false, p_motivo: "teste de RLS" },
-    ],
-    [
-      "definir_contato_liberado_da_ia",
-      {
-        p_clinic_id: clinicaF,
-        p_telefone_e164: TELEFONE_DA_F,
-        p_rotulo: "Equipe da F",
-        p_ativo: false,
-      },
-    ],
-  ] as const) {
-    const { data, error } = await admin.rpc(rpc, args);
+  {
+    const { data, error } = await admin.rpc("definir_liberacao_da_ia", {
+      p_clinic_id: clinicaF,
+      p_liberada: false,
+      p_motivo: "teste de RLS",
+    });
     expect(error).toBeNull();
     expect(data).toBe(false);
+  }
+  // O telefone da F nasce ligado (com a confirmacao do aviso da OpenAI) e e
+  // desligado em seguida: desde a migration 20261019120000 o banco nao cria
+  // linha ao desligar telefone que nao esta na lista.
+  for (const ativo of [true, false]) {
+    const { data, error } = await admin.rpc("definir_contato_liberado_da_ia", {
+      p_clinic_id: clinicaF,
+      p_telefone_e164: TELEFONE_DA_F,
+      p_rotulo: "Equipe da F",
+      p_ativo: ativo,
+      p_confirmou_aviso_da_openai: true,
+    });
+    expect(error).toBeNull();
+    expect(data).toBe(ativo);
   }
 });
 
@@ -901,6 +913,9 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
         p_telefone_e164: TELEFONE_DO_ADMIN_SEM_NONO,
         p_rotulo: "Admin pela tela",
         p_ativo: true,
+        // telefone novo: a confirmacao do aviso da OpenAI, que o banco grava
+        // na trilha no nome dele (migration 20261019120000)
+        p_confirmou_aviso_da_openai: true,
       },
       true,
     );
@@ -974,7 +989,13 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       },
     ]);
     const doTelefone = linhas.filter((l) => l.entity === "ia_contato_liberado");
-    expect(doTelefone).toHaveLength(2);
+    // ligar (com a confirmacao do aviso da OpenAI, gravada pelo banco na
+    // mesma transacao desde a migration 20261019120000) e desligar
+    expect(doTelefone.map((l) => l.action).sort()).toEqual([
+      "confirmou_aviso_da_openai",
+      "editou",
+      "editou",
+    ]);
     // o numero da A nunca foi desligado junto: na trilha dele, so a linha do
     // sistema ao ligar no beforeAll (antes de 19/10/2026, ligar o segundo
     // gravava mais uma, a do numero da A desligado na mesma chamada)
@@ -987,7 +1008,11 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       .throwOnError();
     expect(doNumeroA).toEqual([{ user_id: null }]);
     expect(new Set(doTelefone.map((l) => l.entity_id)).size).toBe(1);
-    expect(linhas.every((l) => l.action === "editou")).toBe(true);
+    expect(
+      linhas
+        .filter((l) => l.action !== "confirmou_aviso_da_openai")
+        .every((l) => l.action === "editou"),
+    ).toBe(true);
   });
 
   it("o administrador da B (de teste) escreve e le so a propria; nao chega na A", async () => {

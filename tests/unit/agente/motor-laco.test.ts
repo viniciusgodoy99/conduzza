@@ -1,4 +1,8 @@
-import { APIConnectionError, BadRequestError } from "openai";
+import {
+  APIConnectionError,
+  AuthenticationError,
+  BadRequestError,
+} from "openai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { montarCatalogoDoAgente } from "@/lib/agente/ferramentas/buscar-procedimento";
@@ -11,7 +15,10 @@ import {
   MAX_TOKENS_DO_AGENTE,
   MAXIMO_DE_RODADAS,
   mensagensPendentes,
+  PASSO_DA_PASSAGEM_EM_TEXTO,
   PASSO_SEM_CONSULTA,
+  PRAZO_DA_RODADA_MS,
+  TEXTO_DA_FALHA,
   type ClienteDoAgente,
   type EntradaDoTurno,
   type MensagemDaConversa,
@@ -1124,5 +1131,237 @@ describe("revisão: custo máximo do turno (achados 7 e 15)", () => {
     expect(
       custoMaximoDoTurno({ ...base, modelo: "gpt-desconhecido" }),
     ).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revisao de producao de 19/10/2026
+// ---------------------------------------------------------------------------
+
+describe("revisão de produção: resposta que promete passar para a equipe (Q5)", () => {
+  it("vira passagem (agente_pediu) sem o texto do modelo e sem chamar o verificador", async () => {
+    const promessa =
+      "Ainda não tenho esse valor. Vou passar sua conversa para a equipe, que te informa.";
+    const { cliente } = clienteComRoteiro([
+      ferramenta("buscar_procedimento", { procedimento: "p1", convenio: null }),
+      final(promessa),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({
+        cliente,
+        config: config({ saudacao: null }),
+        mensagens: [paciente("Quanto custa a consulta?")],
+      }),
+    );
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
+    expect(r.desfecho).toEqual({
+      tipo: "escalou",
+      motivo: "agente_pediu",
+      gatilho: null,
+      origem: "texto_do_agente",
+    });
+    expect(aprovador).not.toHaveBeenCalled();
+    expect(r.filtro).toBeNull();
+    expect(r.rascunhoBloqueado).toBeNull();
+    expect(r.trilha.map((p) => p.texto)).toEqual([
+      "A mensagem foi conferida antes de chegar ao assistente.",
+      "Consultou o preço de Consulta",
+      PASSO_DA_PASSAGEM_EM_TEXTO,
+      "Passou para a equipe: o assistente preferiu passar para a equipe",
+    ]);
+    // O texto do modelo nao vai a lugar nenhum (nem a trilha, nem o log).
+    expect(`${JSON.stringify(r)}${escrito.join("")}`).not.toContain(
+      "te informa",
+    );
+  });
+
+  it("promessa de retorno, oferta de passar e a própria frase fixa também passam", async () => {
+    for (const texto of [
+      "Vou confirmar com a equipe e já te retorno.",
+      "Quer que eu passe sua conversa para a equipe?",
+      "Um atendente já vai falar com você.",
+      FRASE_DE_ESCALONAMENTO,
+    ]) {
+      const { cliente } = clienteComRoteiro([final(texto)]);
+      const r = await executarTurnoDoAgente(
+        entrada({ cliente, config: config({ saudacao: null }) }),
+      );
+      expect(r.desfecho, texto).toMatchObject({
+        tipo: "escalou",
+        origem: "texto_do_agente",
+      });
+    }
+  });
+
+  it("falar da equipe sem prometer passagem continua resposta", async () => {
+    const { cliente } = clienteComRoteiro([
+      final("Temos sim, na rua ao lado. Nossa equipe atende de segunda a sexta."),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, config: config({ saudacao: null }) }),
+    );
+    expect(r.tipo).toBe("resposta");
+    expect(aprovador).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("revisão de produção: texto da trilha para cada falha (A5)", () => {
+  it("o 400 da OpenAI diz que ela recusou o pedido, não que a IA não está configurada", async () => {
+    const { cliente } = clienteComRoteiro([
+      new BadRequestError(
+        400,
+        { type: "invalid_request_error", message: "x" },
+        "x",
+        new Headers(),
+      ),
+    ]);
+    const r = await executarTurnoDoAgente(entrada({ cliente }));
+    expect(r.desfecho).toEqual({ tipo: "falhou", motivo: "requisicao_invalida" });
+    expect(r.trilha.at(-1)).toEqual({
+      tipo: "equipe",
+      texto:
+        "Passou para a equipe: a OpenAI recusou o pedido do assistente como inválido (erro 400)",
+    });
+    expect(JSON.stringify(r.trilha)).not.toContain("não está configurada");
+  });
+
+  it("chave recusada (401) e falta de chave no servidor têm textos diferentes", async () => {
+    const { cliente } = clienteComRoteiro([
+      new AuthenticationError(
+        401,
+        { type: "invalid_request_error", message: "x" },
+        "x",
+        new Headers(),
+      ),
+    ]);
+    const r401 = await executarTurnoDoAgente(entrada({ cliente }));
+    expect(r401.trilha.at(-1)?.texto).toBe(
+      `Passou para a equipe: ${TEXTO_DA_FALHA.autenticacao}`,
+    );
+    const semChave = await executarTurnoDoAgente(entrada({ cliente: null }));
+    expect(semChave.trilha.at(-1)?.texto).toBe(
+      `Passou para a equipe: ${TEXTO_DA_FALHA.sem_cliente}`,
+    );
+    expect(TEXTO_DA_FALHA.autenticacao).not.toBe(TEXTO_DA_FALHA.sem_cliente);
+  });
+
+  it("cada motivo de configuração e da OpenAI leva a um problema diferente, sem travessão", () => {
+    const daConfiguracaoEDaOpenAi = [
+      "sem_cliente",
+      "modelo_invalido",
+      "sem_identificador",
+      "requisicao_invalida",
+      "autenticacao",
+      "permissao",
+      "nao_encontrado",
+      "cota",
+      "limite",
+      "sobrecarga",
+      "servidor",
+      "outro_http",
+      "conexao",
+      "abortado",
+    ] as const;
+    const textos = daConfiguracaoEDaOpenAi.map((m) => TEXTO_DA_FALHA[m]);
+    expect(new Set(textos).size).toBe(textos.length);
+    for (const texto of Object.values(TEXTO_DA_FALHA)) {
+      expect(texto).not.toMatch(/[–—]/);
+      expect(texto).not.toContain("não está configurada neste ambiente");
+      expect(texto.trim()).not.toBe("");
+    }
+  });
+});
+
+describe("revisão de produção: teto de saída do agente", () => {
+  it("cabe o raciocínio e a resposta curta: 8.192 tokens, o mesmo da reserva", async () => {
+    expect(MAX_TOKENS_DO_AGENTE).toBe(8_192);
+    // O teto antigo (2.048) cortava o raciocínio antes da resposta.
+    expect(MAX_TOKENS_DO_AGENTE).toBeGreaterThan(2_048);
+    // Acima do que cabe no prazo da rodada nao ganha nada.
+    expect(PRAZO_DA_RODADA_MS).toBe(20_000);
+    const { cliente, chamadas } = clienteComRoteiro([final("Temos sim.")]);
+    await executarTurnoDoAgente(entrada({ cliente }));
+    expect(chamadas[0]?.corpo.max_output_tokens).toBe(MAX_TOKENS_DO_AGENTE);
+    const custo =
+      custoMaximoDoTurno({
+        config: config(),
+        catalogo: CATALOGO,
+        mensagens: [paciente("Oi")],
+        agoraMs: Date.UTC(2026, 9, 19, 17, 30),
+        fuso: "America/Fortaleza",
+        modelo: "gpt-6-luna",
+        modeloDosClassificadores: "gpt-6-luna",
+        precos: PRECOS,
+      }) ?? 0;
+    // A reserva cobre o teto novo em todas as rodadas (saida a US$ 0,50).
+    expect(custo).toBeGreaterThanOrEqual(
+      Math.ceil((MAXIMO_DE_RODADAS * 8_192 * 500_000) / 1e6),
+    );
+    // E continua bem abaixo do teto diario de US$ 5 (5.000.000).
+    expect(custo).toBeLessThan(100_000);
+  });
+});
+
+describe("revisão de produção: nomes do Cadastro no filtro (Q7 e Q11)", () => {
+  const PROSTOTA = "22222222-2222-4222-8222-222222222222";
+  const MEDICA = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const comNomes = montarCatalogoDoAgente({
+    procedimentos: [
+      { id: PROSTOTA, name: "Prostota", active: true, bookable_by_ai: true },
+    ],
+    vinculos: [
+      {
+        procedure_id: PROSTOTA,
+        professional_id: MEDICA,
+        insurance_id: null,
+        price_cents: 50_000,
+        covered_by_insurance: false,
+        bookable_by_ai: true,
+        active: true,
+      },
+    ],
+    profissionais: [
+      { id: MEDICA, name: "Dra. Maria das Dores", active: true },
+    ],
+    convenios: [],
+    clinica: { name: "Clínica da Dor Fortaleza" },
+  });
+
+  it("o nome da clínica vai ao bloco <atendimento> e a resposta com ele e com a profissional passa nas regras", async () => {
+    const { cliente, chamadas } = clienteComRoteiro([
+      ferramenta("buscar_procedimento", { procedimento: "p1", convenio: null }),
+      final(
+        "Olá! Aqui é a Ana, da Clínica da Dor Fortaleza. A Prostota custa R$ 500,00 com a Dra. Maria das Dores.",
+      ),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({
+        cliente,
+        catalogo: comNomes,
+        config: config({ saudacao: null }),
+        mensagens: [paciente("Quanto custa a Prostota?")],
+      }),
+    );
+    expect(String(chamadas[0]?.corpo.instructions)).toContain(
+      "<atendimento>\nClínica: Clínica da Dor Fortaleza.\n",
+    );
+    expect(r.tipo).toBe("resposta");
+    expect(aprovador).toHaveBeenCalledTimes(1);
+  });
+
+  it("sem os nomes no Cadastro, a mesma resposta seria barrada como triagem", async () => {
+    const semNomes = { ...comNomes, nomeDaClinica: null, vinculos: [] };
+    const { cliente } = clienteComRoteiro([
+      final("Olá! Aqui é a Ana, da Clínica da Dor Fortaleza."),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({
+        cliente,
+        catalogo: semNomes,
+        config: config({ saudacao: null }),
+      }),
+    );
+    expect(r.desfecho).toMatchObject({ tipo: "bloqueou", categoria: "triagem" });
   });
 });

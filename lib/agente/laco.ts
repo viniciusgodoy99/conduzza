@@ -4,7 +4,10 @@
 //
 // Ordem (plano de seguranca, secao 3, e especificacao da Tela 6, secao 3):
 //  1. Portao de entrada deterministico (gatilhos-de-entrada.ts) nas
-//     mensagens do paciente ainda nao respondidas. Gatilho escala.
+//     mensagens do paciente ainda nao respondidas. Gatilho escala. No
+//     WhatsApp ele le o texto ORIGINAL do contato (textoOriginal, sem a
+//     mascara do nome; revisao de producao de 19/10/2026); classificador,
+//     agente e verificador leem so o texto mascarado.
 //  2. Configuracao: sem cliente, sem modelo valido ou com identificador de
 //     seguranca fora do formato, falha fechada (frase fixa).
 //  3. Classificador de entrada por modelo, com prazo duro. Gatilho, falha,
@@ -16,7 +19,9 @@
 //     ia_pode_atender, que inclui o teto diario) e o prazo. escalar_humano
 //     encerra na hora. Qualquer anomalia (erro, recusa, incompleta, item
 //     inesperado, saida fora do formato, ferramenta desconhecida, rodadas
-//     esgotadas) e falha fechada.
+//     esgotadas) e falha fechada. Resposta final que promete passar para a
+//     equipe sem ter chamado escalar_humano tambem passa (agente_pediu): o
+//     texto nao sai (passagem-prometida.ts, revisao de 19/10/2026).
 //  5. Saudacao (so na primeira resposta da conversa) e encerramento (so
 //     quando o modelo diz que a conversa terminou) colados ANTES do filtro;
 //     se a soma passar do limite do filtro, sai o encerramento e depois a
@@ -110,6 +115,7 @@ import {
   usoEstimadoDoVerificador,
 } from "./gasto";
 import { semAMarcaDoNome } from "./marca-do-nome";
+import { prometePassagemParaAEquipe } from "./passagem-prometida";
 import {
   agoraNaClinica,
   FORMATO_DA_RESPOSTA,
@@ -139,8 +145,25 @@ export const PRAZO_DO_TURNO_MS = 45_000;
 export const PRAZO_DA_RODADA_MS = 20_000;
 /** Tempo guardado para o verificador do filtro depois do agente. */
 export const RESERVA_DO_FILTRO_MS = 10_000;
-/** Raciocinio baixo + a resposta curta em JSON. */
-export const MAX_TOKENS_DO_AGENTE = 2_048;
+/**
+ * Teto de saida de UMA rodada do agente: o raciocinio (esforco low) mais a
+ * resposta curta em JSON ou a chamada de ferramenta. Revisao de producao de
+ * 19/10/2026: era 2.048, e o raciocinio conta dentro do teto. A resposta em
+ * si cabe em uns 250 tokens (500 caracteres de mensagem e o JSON; uma
+ * chamada de ferramenta, menos de 100), mas o raciocinio de uma rodada com o
+ * texto fixo inteiro, a escolha da ferramenta e um convenio com opcoes pode
+ * passar de 2 mil mesmo no esforco low, e o corte por max_output_tokens vem
+ * antes de qualquer texto visivel: o turno falha (max_tokens, frase fixa) e o
+ * raciocinio e cobrado do mesmo jeito. A OpenAI recomenda folga larga para
+ * raciocinio e saida juntos. 8.192 da quatro vezes o teto antigo e fica no
+ * que o modelo gera dentro do prazo da rodada (PRAZO_DA_RODADA_MS, 20 s):
+ * acima disso o prazo corta antes do teto, e subir mais so engordaria a
+ * reserva. A reserva do turno acompanha sozinha (custoMaximoDoTurno usa este
+ * teto em toda rodada e no crescimento da entrada): no gpt-6-luna, cerca de
+ * US$ 0,03 por turno no pior caso, contra o teto de US$ 5 por dia; cobrado e
+ * so o uso real (acertarGasto).
+ */
+export const MAX_TOKENS_DO_AGENTE = 8_192;
 /** Mensagens da conversa que vao ao modelo (as mais recentes). */
 export const MENSAGENS_NO_HISTORICO = 20;
 /** Uma mensagem no historico do modelo (o portao escala acima disto). */
@@ -155,10 +178,24 @@ export type ClienteDoAgente = Pick<OpenAI, "responses">;
 
 export type MensagemDaConversa = {
   autor: "paciente" | "assistente";
-  /** null para midia sem texto. */
+  /**
+   * null para midia sem texto. No historico do WhatsApp, com o nome do
+   * contato trocado pela marca (lib/agente/historico.ts): e o texto que os
+   * modelos da OpenAI (classificador, agente e verificador) leem.
+   */
   texto: string | null;
   /** message.content_type; ausente = "texto". */
   tipo?: string;
+  /**
+   * O texto do contato como chegou, SEM a mascara do nome (so no historico
+   * do WhatsApp, so nas mensagens de texto do contato). Quem le e so o
+   * portao de entrada deterministico, local e sem rede: o nome mascarado
+   * escondia o gatilho ("socorro, me ajuda" de uma contato chamada Socorro
+   * chegava ao portao como "Fulano, me ajuda" e nao escalava). Nunca vai
+   * para a OpenAI nem para log. Ausente (simulador, que nao mascara): o
+   * portao le `texto`.
+   */
+  textoOriginal?: string | null;
 };
 
 /**
@@ -170,6 +207,10 @@ export type TipoDoPasso = "preco" | "base" | "equipe" | "bloqueio" | "outro";
 
 /** Um passo do "Por que a IA respondeu isso". Nunca texto do paciente. */
 export type PassoDoTurno = { tipo: TipoDoPasso; texto: string };
+
+/** Quem decidiu passar a conversa para a equipe. */
+export type OrigemDoEscalonamento =
+  "portao" | "classificador" | "agente" | "texto_do_agente";
 
 /** Falhas do turno alem das do verificador e do classificador. */
 export type FalhaDoAgente =
@@ -187,7 +228,12 @@ export type DesfechoDoTurno =
       motivo: MotivoDeEscalonamento;
       /** O gatilho de entrada, quando foi o portao (ai_decision_log). */
       gatilho: GatilhoDeEntrada | null;
-      origem: "portao" | "classificador" | "agente";
+      /**
+       * "agente": chamou escalar_humano. "texto_do_agente": a resposta final
+       * prometia passar para a equipe sem chamar a ferramenta (Q5 da revisao
+       * de producao de 19/10/2026); o texto nao sai.
+       */
+      origem: OrigemDoEscalonamento;
     }
   | {
       tipo: "bloqueou";
@@ -311,11 +357,35 @@ function textoDoGatilho(gatilho: GatilhoDeEntrada): string {
     : ROTULO_DO_MOTIVO_DE_ESCALONAMENTO[MOTIVO_DO_GATILHO[gatilho]];
 }
 
-const TEXTO_DA_FALHA: Readonly<Partial<Record<FalhaDoAgente, string>>> = {
-  sem_cliente: "a IA não está configurada neste ambiente",
-  modelo_invalido: "a IA não está configurada neste ambiente",
-  sem_identificador: "a IA não está configurada neste ambiente",
-  requisicao_invalida: "a IA não está configurada neste ambiente",
+/**
+ * O que a trilha diz de cada falha, um texto por motivo, que leve ao
+ * problema certo (revisao de producao de 19/10/2026, achado A5: o 400 da
+ * OpenAI aparecia como "a IA não está configurada neste ambiente" e mandava
+ * procurar uma variavel que existia). Record inteiro: motivo novo sem texto
+ * nao compila. O codigo HTTP fica entre parenteses, para a equipe Conduzza
+ * achar a chamada no log (ia_agente_falhou, ia_classificador_falhou).
+ */
+export const TEXTO_DA_FALHA: Readonly<Record<FalhaDoAgente, string>> = {
+  sem_cliente:
+    "o servidor está sem a chave da OpenAI, ou a configuração dele recusou a chave",
+  modelo_invalido:
+    "o modelo de IA escolhido na configuração do servidor não é aceito",
+  sem_identificador:
+    "o servidor está sem o segredo do identificador de segurança da IA",
+  requisicao_invalida:
+    "a OpenAI recusou o pedido do assistente como inválido (erro 400)",
+  autenticacao: "a OpenAI recusou a chave do servidor (erro 401)",
+  permissao:
+    "a chave do servidor não tem acesso a este modelo na OpenAI (erro 403)",
+  nao_encontrado: "a OpenAI não encontrou o modelo pedido (erro 404)",
+  cota: "a conta da OpenAI está sem crédito ou chegou ao limite de gasto (erro 429)",
+  limite:
+    "a OpenAI recebeu pedidos demais em pouco tempo e pediu para esperar (erro 429)",
+  sobrecarga: "a OpenAI está sobrecarregada agora (erro 503)",
+  servidor: "a OpenAI teve um erro interno",
+  outro_http: "a OpenAI respondeu com um erro inesperado",
+  conexao: "não foi possível conectar à OpenAI",
+  abortado: "o pedido à OpenAI foi interrompido antes da resposta",
   liberacao_suspensa:
     "a IA deixou de estar liberada nesta clínica (teto de gasto ou interruptor)",
   rodadas_esgotadas: "o assistente não chegou a uma resposta",
@@ -324,15 +394,21 @@ const TEXTO_DA_FALHA: Readonly<Partial<Record<FalhaDoAgente, string>>> = {
   prazo: "o tempo de resposta acabou",
   timeout: "o tempo de resposta acabou",
   recusa: "o assistente se recusou a responder",
-  max_tokens: "a resposta do assistente ficou incompleta",
-  parada_inesperada: "a resposta do assistente ficou incompleta",
+  max_tokens:
+    "a resposta do assistente passou do tamanho máximo e ficou incompleta",
+  parada_inesperada:
+    "a resposta do assistente parou no meio ou veio com algo inesperado",
   saida_invalida: "a resposta do assistente veio fora do formato",
   incoerente: "a checagem da mensagem deu um resultado incoerente",
   confianca_baixa: "a checagem da mensagem ficou em dúvida",
+  contexto_truncado: "havia mensagens demais sem resposta para conferir",
+  desconhecida: "o assistente teve uma falha inesperada",
 };
 
 function textoDaFalha(motivo: FalhaDoAgente): string {
-  return TEXTO_DA_FALHA[motivo] ?? "a IA não respondeu";
+  // O tipo ja garante o texto; o "??" so protege de um codigo que chegue
+  // de fora do tipo em tempo de execucao.
+  return TEXTO_DA_FALHA[motivo] ?? TEXTO_DA_FALHA.desconhecida;
 }
 
 /**
@@ -341,6 +417,13 @@ function textoDaFalha(motivo: FalhaDoAgente): string {
  */
 export const PASSO_SEM_CONSULTA =
   "Respondeu só com a configuração, sem consultar nada.";
+
+/**
+ * O passo de quando a resposta do assistente prometia passar para a equipe
+ * sem passar de fato (Q5): a resposta nao sai e a conversa passa.
+ */
+export const PASSO_DA_PASSAGEM_EM_TEXTO =
+  "A resposta do assistente dizia que a conversa ia para a equipe. Ela não foi enviada, e a conversa passou para a equipe.";
 
 const LIMITE_DO_TRECHO = 60;
 
@@ -710,7 +793,7 @@ export async function executarTurnoDoAgente(
   });
   const escalar = (
     motivo: MotivoDeEscalonamento,
-    origem: "portao" | "classificador" | "agente",
+    origem: OrigemDoEscalonamento,
     gatilho: GatilhoDeEntrada | null,
     texto: string,
   ) => {
@@ -731,11 +814,13 @@ export async function executarTurnoDoAgente(
       return falhar("sem_mensagem");
     }
 
-    // 1. Portao deterministico.
+    // 1. Portao deterministico, no texto ORIGINAL do contato (local, sem
+    // rede): a mascara do nome so existe para a OpenAI e nao pode esconder
+    // um gatilho. Os passos 3, 4 e 6 continuam so com o texto mascarado.
     const gatilhos = detectarGatilhosDeEntrada({
       mensagens: pendentes.map((m): MensagemDeEntrada => ({
         tipo: m.tipo ?? "texto",
-        texto: m.texto,
+        texto: m.textoOriginal ?? m.texto,
       })),
       dataDeNascimento: entrada.dataDeNascimento ?? null,
       hojeNaClinica:
@@ -1043,6 +1128,20 @@ export async function executarTurnoDoAgente(
 
     if (final === null) {
       return falhar("rodadas_esgotadas");
+    }
+
+    // Q5 (revisao de producao de 19/10/2026): a resposta que promete passar
+    // para a equipe sem ter chamado escalar_humano e uma passagem. O texto do
+    // modelo nunca sai (a conversa ficaria na IA sem ninguem avisado); sai a
+    // frase fixa, e a conversa vai para a equipe como em toda passagem.
+    if (prometePassagemParaAEquipe(final.mensagem)) {
+      trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
+      return escalar(
+        "agente_pediu",
+        "texto_do_agente",
+        null,
+        ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.agente_pediu,
+      );
     }
 
     // A base que o modelo disse que usou (codigos conhecidos, sem repetir).

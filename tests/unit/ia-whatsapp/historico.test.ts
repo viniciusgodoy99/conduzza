@@ -392,9 +392,17 @@ describe("a marca do nome não dispara o portão nem as regras de saída", () =>
     );
     const [lida] = historico.mensagens;
     expect(lida?.texto).toContain(MARCA_DO_NOME);
+    // O texto mascarado (o que a OpenAI e a regra de contexto do filtro de
+    // saida leem) e o original (o que o portao le, desde 19/10/2026).
     expect(
       detectarGatilhosDeEntrada({
         mensagens: [{ tipo: "texto", texto: lida?.texto ?? null }],
+      }),
+    ).toEqual([]);
+    expect(lida?.textoOriginal).toBe(texto);
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [{ tipo: "texto", texto: lida?.textoOriginal ?? null }],
       }),
     ).toEqual([]);
   });
@@ -475,6 +483,7 @@ describe("a marca do nome não dispara o portão nem as regras de saída", () =>
         vinculos: [],
         convenios: [],
         conveniosDoCadastro: [],
+        nomeDaClinica: null,
       },
       mensagens: historico.mensagens,
       agoraMs: Date.UTC(2026, 9, 13, 15, 0),
@@ -493,5 +502,173 @@ describe("a marca do nome não dispara o portão nem as regras de saída", () =>
     expect(resultado.desfecho).not.toMatchObject({
       motivo: "tentativa_de_manipulacao",
     });
+  });
+});
+
+// Revisao de producao de 19/10/2026 (achado de seguranca): a mascara do nome
+// existe so para a OpenAI. Com o portao no texto mascarado, uma contato
+// chamada Socorro que escrevia "socorro, me ajuda" chegava ao portao como
+// "Fulano, me ajuda" e nao escalava. O portao deterministico (local, sem
+// rede) le o texto original; classificador, agente e verificador continuam
+// so com o mascarado. A prova pelo executor, com o cliente falso da OpenAI,
+// esta em ponta-a-ponta.test.ts.
+describe("o portão lê o texto original do contato; a OpenAI, só o mascarado", () => {
+  function doContato(body: string, nome: string) {
+    return montarHistorico(
+      [
+        {
+          id: "m1",
+          author: "paciente",
+          content_type: "texto",
+          body,
+          media_url: null,
+          created_at: "2026-10-13T15:00:00.000Z",
+        },
+      ],
+      new Set(),
+      nome,
+    );
+  }
+
+  function falhaDoModelo() {
+    return {
+      tipo: "falha" as const,
+      motivo: "sem_cliente" as const,
+      modelo: null,
+      uso: null,
+      httpStatus: null,
+    };
+  }
+
+  function turno(
+    mensagens: ReturnType<typeof doContato>["mensagens"],
+    classificador: ClassificadorDeEntrada,
+  ) {
+    const create = vi.fn();
+    const parse = vi.fn();
+    const verificador = vi.fn(async () => falhaDoModelo());
+    const resultado = executarTurnoDoAgente({
+      cliente: { responses: { create, parse } } as unknown as ClienteDoAgente,
+      modelo: "gpt-6-luna",
+      clinicId: CLINICA,
+      identificadorDeSeguranca: "a".repeat(64),
+      config: { ...configPadraoDoAgente(), status: "publicada", versao: 1 },
+      catalogo: {
+        procedimentos: [],
+        vinculos: [],
+        convenios: [],
+        conveniosDoCadastro: [],
+        nomeDaClinica: null,
+      },
+      mensagens,
+      agoraMs: Date.UTC(2026, 9, 13, 15, 0),
+      fuso: "America/Fortaleza",
+      verificador,
+      classificador,
+    });
+    return { resultado, create, parse, verificador };
+  }
+
+  it("mensagemDaLinha: o texto mascarado vai para a OpenAI; o original, só na mensagem de texto do contato", () => {
+    expect(
+      mensagemDaLinha(
+        {
+          author: "paciente",
+          content_type: "texto",
+          body: "socorro, me ajuda",
+          media_url: null,
+        },
+        "Socorro",
+      ),
+    ).toEqual({
+      autor: "paciente",
+      texto: `${MARCA_DO_NOME}, me ajuda`,
+      tipo: "texto",
+      textoOriginal: "socorro, me ajuda",
+    });
+    // A fala da clinica e a midia nao levam o original (o portao so le as
+    // mensagens do contato, e midia ja escala).
+    const daClinica = mensagemDaLinha(
+      {
+        author: "usuario",
+        content_type: "texto",
+        body: "Olá Socorro, tudo bem?",
+        media_url: null,
+      },
+      "Socorro",
+    );
+    expect(daClinica).toEqual({
+      autor: "assistente",
+      texto: `Olá ${MARCA_DO_NOME}, tudo bem?`,
+      tipo: "texto",
+    });
+    expect(daClinica).not.toHaveProperty("textoOriginal");
+    expect(
+      mensagemDaLinha(
+        {
+          author: "paciente",
+          content_type: "audio",
+          body: null,
+          media_url: null,
+        },
+        "Socorro",
+      ),
+    ).not.toHaveProperty("textoOriginal");
+  });
+
+  it.each([
+    ["Socorro", "socorro, me ajuda"],
+    ["Socorro Lima", "Socorro"],
+    ["Socorro", "SOCORRO"],
+  ])(
+    "contato %s escrevendo %j: o portão escala (sintoma) sem chamar a OpenAI",
+    async (nome, texto) => {
+      const historico = doContato(texto, nome);
+      const [lida] = historico.mensagens;
+      // A mascara escondia o gatilho: so pelo texto mascarado, nada escala.
+      expect(lida?.texto).not.toMatch(/socorro/i);
+      expect(
+        detectarGatilhosDeEntrada({
+          mensagens: [{ tipo: "texto", texto: lida?.texto ?? null }],
+        }),
+      ).toEqual([]);
+      const classificador = vi.fn<ClassificadorDeEntrada>(async () =>
+        falhaDoModelo(),
+      );
+      const { resultado, create, parse, verificador } = turno(
+        historico.mensagens,
+        classificador,
+      );
+      const r = await resultado;
+      expect(r.tipo).toBe("frase_fixa");
+      expect(r.desfecho).toEqual({
+        tipo: "escalou",
+        motivo: "sintoma",
+        gatilho: "sintoma",
+        origem: "portao",
+      });
+      expect(classificador).not.toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
+      expect(parse).not.toHaveBeenCalled();
+      expect(verificador).not.toHaveBeenCalled();
+      expect(r.uso).toEqual([]);
+    },
+  );
+
+  it("'Aqui é a Socorro, quanto custa a consulta?' passa no portão (Q4 no texto original) e o classificador recebe só o mascarado", async () => {
+    const historico = doContato(
+      "Aqui é a Socorro, quanto custa a consulta?",
+      "Socorro",
+    );
+    const classificador = vi.fn<ClassificadorDeEntrada>(async () =>
+      falhaDoModelo(),
+    );
+    const { resultado } = turno(historico.mensagens, classificador);
+    const r = await resultado;
+    expect(r.desfecho).not.toMatchObject({ origem: "portao" });
+    expect(classificador).toHaveBeenCalledTimes(1);
+    expect(classificador.mock.calls[0]![0].mensagens).toEqual([
+      `Aqui é a ${MARCA_DO_NOME}, quanto custa a consulta?`,
+    ]);
   });
 });

@@ -48,10 +48,14 @@ import { createClient } from "@/lib/supabase/server";
 // (decisao do dono em 19/10/2026, migration 20261019100000): adicionar e
 // ligar de novo voltam para quem passa na guarda (o administrador da clinica
 // ou o super admin), como no banco (ia_exigir_quem_libera). O telefone novo
-// exige a confirmacao do aviso da OpenAI (LGPD, D32), gravada em audit_log
-// no nome de quem adicionou; telefone de paciente e numero de WhatsApp do
-// Conduzza sao recusados pelo banco, e so o super admin forca o primeiro
-// (aqui e no banco: o forcar de quem nao e super admin para antes do banco).
+// exige a confirmacao do aviso da OpenAI (LGPD, D32); desde a revisao de
+// producao de 19/10/2026 (migration 20261019120000) ela vai ao BANCO
+// (p_confirmou_aviso_da_openai), que recusa telefone novo sem ela e grava a
+// trilha 'confirmou_aviso_da_openai' na mesma transacao, no nome de quem
+// adicionou. "Ligar de novo" so vale para telefone que ja esta na lista.
+// Telefone de paciente e numero de WhatsApp do Conduzza sao recusados pelo
+// banco, e so o super admin forca o primeiro (aqui e no banco: o forcar de
+// quem nao e super admin para antes do banco).
 //
 // Nada daqui vai para log alem do codigo do erro, da clinica, do numero e
 // do tipo de acao: nunca telefone, rotulo nem nome de contato.
@@ -85,6 +89,8 @@ const TEXTOS = {
   numeroForaDaClinica:
     "Este número não está mais entre os números da clínica. Recarregue a página.",
   numeroRemovido: "Este número foi removido da clínica. Recarregue a página.",
+  telefoneForaDaLista:
+    "Este telefone não está na lista da equipe. Adicione o telefone pelo formulário.",
   interruptorNaoAlterou:
     "Não foi possível alterar o interruptor geral. Tente de novo.",
 } as const;
@@ -197,6 +203,11 @@ function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
     }
     if (chave === "contato_de_paciente") {
       return TEXTOS_DA_IA.contatoDePaciente;
+    }
+    // Telefone novo sem a confirmacao do aviso da OpenAI (migration
+    // 20261019120000): o mesmo texto do campo do formulario.
+    if (chave === "aviso_da_openai_nao_confirmado") {
+      return TEXTOS_DA_IA.avisoDaOpenaiObrigatorio;
     }
   }
   if (kind.startsWith("telefone_") && codigo === "22023") {
@@ -494,13 +505,17 @@ export async function adicionarTelefoneDaIaAction(
   if (linha !== "ok") {
     return falhou(guardaOk, "telefone_linha", linha, TEXTOS.naoAlterou);
   }
-  // Sempre por nome de parametro: a assinatura nova (E3) tem o forcar.
+  // Sempre por nome de parametro: a assinatura tem o forcar (E3) e a
+  // confirmacao do aviso da OpenAI (migration 20261019120000). O schema so
+  // aceita a confirmacao marcada; o banco grava a trilha dela na mesma
+  // transacao, no nome de quem adiciona.
   const { error } = await supabase.rpc("definir_contato_liberado_da_ia", {
     p_clinic_id: guardaOk.clinicId,
     p_telefone_e164: telefone,
     p_rotulo: rotulo,
     p_ativo: true,
     p_forcar_contato_existente: forcarContatoDePaciente === true,
+    p_confirmou_aviso_da_openai: parsed.data.confirmarAvisoDaOpenai,
   });
   if (error) {
     const resultado = falhou(
@@ -521,42 +536,29 @@ export async function adicionarTelefoneDaIaAction(
     }
     return resultado;
   }
-  await registrarAvisoDaOpenai(supabase, guardaOk, telefone);
   revalidatePath("/configuracoes");
   return { ok: true };
 }
 
 /**
- * A confirmacao do aviso da OpenAI (LGPD, D32) na trilha, com a linha do
- * telefone relida pela chave canonica. Sem telefone na trilha. Um erro aqui
- * nao desfaz o cadastro (o banco ja gravou a trilha da alteracao), mas fica
- * no log.
+ * O telefone ja esta na lista da equipe desta clinica (pela chave canonica,
+ * a mesma do banco)? Lanca se a leitura falhar.
  */
-async function registrarAvisoDaOpenai(
+async function telefoneEstaNaLista(
   supabase: Supabase,
-  guardaOk: Guarda,
+  clinicId: string,
   telefone: string,
-): Promise<void> {
+): Promise<boolean> {
   const { data, error } = await supabase
     .from("ia_contato_liberado")
     .select("id")
-    .eq("clinic_id", guardaOk.clinicId)
+    .eq("clinic_id", clinicId)
     .eq("phone_key", chaveDeTelefone(telefone))
     .maybeSingle();
-  const id = (data as { id?: unknown } | null)?.id;
-  const { error: erroDaTrilha } = await supabase.from("audit_log").insert({
-    clinic_id: guardaOk.clinicId,
-    user_id: guardaOk.userId,
-    action: "confirmou_aviso_da_openai",
-    entity: "ia_contato_liberado",
-    entity_id: typeof id === "string" ? id : null,
-  });
-  if (error || erroDaTrilha) {
-    log.warn("ia_aviso_da_openai_sem_trilha", {
-      clinic_id: guardaOk.clinicId,
-      error_code: (erroDaTrilha ?? error)?.code ?? null,
-    });
+  if (error) {
+    throw new Error("leitura do telefone falhou");
   }
+  return data !== null;
 }
 
 /**
@@ -565,6 +567,11 @@ async function registrarAvisoDaOpenai(
  * novo, desde 19/10/2026, basta a guarda (administrador da clinica ou super
  * admin), sem o forcar: telefone de paciente volta so pelo formulario de
  * adicionar, com o forcar do super admin.
+ *
+ * Revisao de producao de 19/10/2026: ligar so telefone que JA esta na lista.
+ * Telefone novo entra so pelo formulario de adicionar, com a confirmacao do
+ * aviso da OpenAI (o banco tambem recusa criar linha sem ela, e desligar
+ * telefone fora da lista nao cria linha).
  */
 export async function alternarTelefoneDaIaAction(
   entrada: unknown,
@@ -578,6 +585,21 @@ export async function alternarTelefoneDaIaAction(
     return { ok: false, error: TEXTOS.dadosInvalidos };
   }
   const supabase = await createClient();
+  if (parsed.data.ligado) {
+    let naLista: boolean;
+    try {
+      naLista = await telefoneEstaNaLista(
+        supabase,
+        guardaOk.clinicId,
+        parsed.data.telefone,
+      );
+    } catch {
+      return { ok: false, error: TEXTOS.naoLeu };
+    }
+    if (!naLista) {
+      return { ok: false, error: TEXTOS.telefoneForaDaLista };
+    }
+  }
   const { error } = await supabase.rpc("definir_contato_liberado_da_ia", {
     p_clinic_id: guardaOk.clinicId,
     p_telefone_e164: parsed.data.telefone,

@@ -36,7 +36,7 @@ const DA_IA: DadosDaAbaDaIa = {
       versaoPublicada: null,
       telefonesInvalidos: [],
       telefonesSemAutorizacao: [],
-      telefonesComConversaAberta: [],
+      conversasAbertas: [],
       horarioPublicado: null,
       motorParado: false,
     },

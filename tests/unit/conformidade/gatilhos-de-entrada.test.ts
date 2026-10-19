@@ -143,12 +143,40 @@ describe("regras do portao", () => {
     expect(de("fiz uma limpeza semana passada")).toEqual([]);
   });
 
-  it("caixa alta longa e exclamacoes escalam como insatisfacao", () => {
+  it("caixa alta longa e demora reclamada escalam como insatisfacao", () => {
     const de = (texto: string) =>
       detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
     expect(de("NINGUEM ME AVISOU DO HORARIO")).toContain("insatisfacao");
     expect(de("Que demora!!!")).toContain("insatisfacao");
     expect(de("OK")).toEqual([]);
+  });
+
+  // Revisao de producao de 19/10/2026 (decisao do dono, Q1 e Q2).
+  it("pontuacao repetida sozinha nao escala; caixa alta so com 5 palavras e sem pergunta", () => {
+    const de = (texto: string) =>
+      detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
+    for (const texto of ["Oi!!!", "Obrigada!!!", "Oi????", "Quanto custa????"]) {
+      expect(de(texto), texto).toEqual([]);
+    }
+    // Quatro palavras, ou cinco com pergunta (inclusive a de largura cheia).
+    expect(de("QUANTO CUSTA A CONSULTA")).toEqual([]);
+    expect(de("QUANTO CUSTA A LIMPEZA DE PELE?")).toEqual([]);
+    expect(de("QUANTO CUSTA A LIMPEZA DE PELE？")).toEqual([]);
+    // Cinco palavras sem pergunta: continua grito.
+    expect(de("QUANTO CUSTA A LIMPEZA DE PELE")).toEqual(["insatisfacao"]);
+    // Pontuacao nao conta como palavra.
+    expect(de("OI BOA TARDE !!! !!")).toEqual([]);
+  });
+
+  // Q4: nome de quem se apresenta.
+  it("nome de quem se apresenta nao e sintoma; o pedido de socorro continua", () => {
+    const de = (texto: string) =>
+      detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
+    expect(de("Aqui é a Socorro")).toEqual([]);
+    expect(de("sou a Dores")).toEqual([]);
+    expect(de("Socorro")).toEqual(["sintoma"]);
+    expect(de("socorro, me ajuda")).toEqual(["sintoma"]);
+    expect(de("me chamo Socorro e estou com dor")).toEqual(["sintoma"]);
   });
 
   it("texto com letra de outro alfabeto ou invisivel e tentativa de manipulacao", () => {

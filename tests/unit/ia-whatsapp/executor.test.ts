@@ -8,9 +8,15 @@ import {
   expedientePadrao,
   type ConfigDoAgente,
 } from "@/lib/domain/agente/config";
-import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
+import { versaoDoFiltroDoTurno } from "@/lib/agente/whatsapp";
+import {
+  sha256DoTexto,
+  versaoDoPortao,
+} from "@/lib/domain/conformidade/filtro";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import type { TextoAprovado } from "@/lib/domain/conformidade/texto-aprovado";
+import { VERSAO_DA_POLITICA_DO_CLASSIFICADOR } from "@/lib/integrations/llm/classificador-de-entrada";
+import { VERSAO_DA_POLITICA } from "@/lib/integrations/llm/verificador";
 import type { SendTextResult } from "@/lib/integrations/whatsapp/send";
 import type { Job } from "@/lib/jobs/worker";
 
@@ -503,7 +509,13 @@ describe("antes do modelo", () => {
       desfecho: "escalou",
       escalation_reason: "teto_de_respostas",
       aprovado: false,
+      // Sem filtro no turno, a versao das regras e a do codigo de agora,
+      // com o portao, o classificador e o verificador (Q12).
+      versao_filtro: versaoDoFiltroDoTurno(),
     });
+    expect(String(decisoes()[0]?.versao_filtro)).toMatch(
+      /^regras-[0-9a-f]{12} portao-[0-9a-f]{12} classificador-[0-9a-f]{12} verificador-[0-9a-f]{12}$/,
+    );
     expect(passagens).toEqual(["teto_de_respostas"]);
     expect(enviarFrase).toHaveBeenCalledTimes(1);
     expect(decisoesNoEnvio).toEqual([1]);
@@ -563,7 +575,9 @@ describe("o turno e a saída", () => {
       escalation_reason: null,
       config_version: 3,
       versao_prompt: "agente-teste",
-      versao_filtro: "regras-teste",
+      // Q12 (revisao de producao de 19/10/2026): as regras de saida do
+      // filtro do turno, o portao, o classificador e o verificador.
+      versao_filtro: versaoDoFiltroDoTurno("regras-teste"),
       agente_modelo: "gpt-6-luna-2026",
       verificador_modelo: "gpt-6-luna",
       tokens_entrada: 2000,
@@ -573,6 +587,12 @@ describe("o turno e a saída", () => {
       message_id: "msg-1",
     });
     expect(decisao).not.toHaveProperty("blocked_draft");
+    expect(String(decisao?.versao_filtro).split(" ")).toEqual([
+      "regras-teste",
+      versaoDoPortao(),
+      VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
+      VERSAO_DA_POLITICA,
+    ]);
     expect(enviarResposta.mock.calls[0]![1]).toEqual({
       clinicId: CLINICA,
       conversationId: CONVERSA,
@@ -646,6 +666,30 @@ describe("o turno e a saída", () => {
       estado: "passou_para_equipe",
       saida: "frase",
     });
+  });
+
+  // Q5 (revisao de producao de 19/10/2026): a resposta que prometia passar
+  // para a equipe vira passagem de verdade, com a frase fixa. tool_used nao
+  // diz escalar_humano (o modelo nao chamou a ferramenta).
+  it("escalou pela resposta que prometia passar: passagem, frase e tool_used da busca", async () => {
+    turno.mockResolvedValue(
+      frase({
+        tipo: "escalou",
+        motivo: "agente_pediu",
+        gatilho: null,
+        origem: "texto_do_agente",
+      }),
+    );
+    expect(await rodar()).toEqual({ ok: true });
+    expect(decisoes()[0]).toMatchObject({
+      desfecho: "escalou",
+      escalation_reason: "agente_pediu",
+      tool_used: "buscar_procedimento",
+      aprovado: false,
+    });
+    expect(passagens).toEqual(["agente_pediu"]);
+    expect(enviarFrase).toHaveBeenCalledTimes(1);
+    expect(enviarResposta).not.toHaveBeenCalled();
   });
 
   it("bloqueou: rascunho só em ai_rascunho_bloqueado, nunca na decisão", async () => {

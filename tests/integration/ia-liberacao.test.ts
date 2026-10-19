@@ -149,12 +149,15 @@ const numero = (whatsappAccountId: string, ativo: boolean) =>
     p_ativo: ativo,
   });
 
+// Sempre com a confirmacao do aviso da OpenAI: telefone novo so entra com
+// ela (migration 20261019120000), e ao desligar ou religar ela nao muda nada.
 const telefone = (e164: string, ativo: boolean, rotulo: string | null = null) =>
   rpcOk("definir_contato_liberado_da_ia", {
     p_clinic_id: clinicaT,
     p_telefone_e164: e164,
     p_rotulo: rotulo,
     p_ativo: ativo,
+    p_confirmou_aviso_da_openai: true,
   });
 
 async function podeAtender(
@@ -292,11 +295,14 @@ describe("tabela verdade (clinica e_de_teste)", () => {
       p_ativo: true,
     });
     expect(antes.codigo).toBe("23503");
+    // com a confirmacao (migration 20261019120000), para chegar ao INSERT:
+    // sem a linha de liberacao, a chave estrangeira recusa
     const telefoneAntes = await rpc("definir_contato_liberado_da_ia", {
       p_clinic_id: clinicaT,
       p_telefone_e164: EQUIPE,
       p_rotulo: null,
       p_ativo: true,
+      p_confirmou_aviso_da_openai: true,
     });
     expect(telefoneAntes.codigo).toBe("23503");
   });
@@ -787,7 +793,19 @@ describe("gatilho de status e desligamento", () => {
       user_id: string | null;
     }[];
     expect(linhas.length).toBeGreaterThanOrEqual(10);
-    expect(linhas.every((linha) => linha.action === "editou")).toBe(true);
+    // editou em toda mudanca; e, desde a migration 20261019120000, a
+    // confirmacao do aviso da OpenAI de cada ligar de telefone com ela
+    expect(
+      linhas.every(
+        (linha) =>
+          linha.action === "editou" ||
+          (linha.action === "confirmou_aviso_da_openai" &&
+            linha.entity === "ia_contato_liberado"),
+      ),
+    ).toBe(true);
+    expect(
+      linhas.some((linha) => linha.action === "confirmou_aviso_da_openai"),
+    ).toBe(true);
     expect(linhas.every((linha) => linha.user_id === null)).toBe(true);
     expect(
       linhas
@@ -857,7 +875,7 @@ describe("aba Agente de IA: a leitura da tela", () => {
         versaoPublicada: null,
         telefonesInvalidos: [],
         telefonesSemAutorizacao: [],
-        telefonesComConversaAberta: [],
+        conversasAbertas: [],
         horarioPublicado: null,
         motorParado: expect.any(Boolean),
       },
@@ -890,6 +908,7 @@ describe("aba Agente de IA: a leitura da tela", () => {
           p_telefone_e164: EQUIPE_DA_U_SEM_NONO,
           p_rotulo: "Equipe da U",
           p_ativo: true,
+          p_confirmou_aviso_da_openai: true,
         },
       ],
     ] as const) {

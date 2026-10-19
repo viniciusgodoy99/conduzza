@@ -5,6 +5,10 @@ import { useEffect, useRef } from "react";
 
 import { AcoesDaConversa } from "@/components/atendimento/acoes-da-conversa";
 import {
+  AUTOR_DO_AVISO_AUTOMATICO,
+  ehAvisoAutomaticoDaIa,
+} from "@/components/atendimento/aviso-automatico";
+import {
   agendadaDaMensagem,
   SEM_AGENDADAS_DO_FIO,
 } from "@/components/atendimento/agendadas/da-mensagem";
@@ -79,12 +83,18 @@ export const AUTOR_DA_AUTOMACAO = "Automação";
  * sistema nao sabe quem digitou) ou da resposta automatica do app WhatsApp
  * Business (author 'sistema'). Sem isto, a fala da equipe pelo celular
  * apareceria sem linha nenhuma, igual a regua.
+ *
+ * A frase fixa que o contato recebe quando a IA passa a conversa para a
+ * equipe (author 'sistema', o corpo da FRASE_DE_ESCALONAMENTO) assina
+ * "Aviso automático" (revisao de producao de 19/10/2026): sem a linha, ela
+ * parecia fala de alguem da equipe.
  */
 export function autorDaBolha(
   message: Pick<
     MessageItem,
     "author" | "author_user_id" | "is_internal_note" | "pelo_celular"
-  >,
+  > &
+    Partial<Pick<MessageItem, "body" | "direction" | "content_type">>,
   authorNames: Record<string, string>,
 ): string | null {
   if (message.author === "ia") {
@@ -100,6 +110,12 @@ export function autorDaBolha(
   }
   if (message.author === "sistema" && message.is_internal_note) {
     return AUTOR_DA_AUTOMACAO;
+  }
+  if (
+    message.body !== undefined &&
+    ehAvisoAutomaticoDaIa({ ...message, body: message.body })
+  ) {
+    return AUTOR_DO_AVISO_AUTOMATICO;
   }
   return null;
 }

@@ -31,6 +31,14 @@
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
+import {
+  CATEGORIAS_CLINICAS,
+  type CategoriaDeConformidade,
+} from "@/lib/domain/conformidade/categorias";
+import {
+  avaliarRegras,
+  CATEGORIAS_SEM_MASCARA,
+} from "@/lib/domain/conformidade/filtro-deterministico";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 import { formatarCentavos } from "@/lib/utils/moeda";
 
@@ -69,6 +77,15 @@ export type CatalogoDoAgente = {
    * procedimento e "sem informacao", nunca "coberto" nem "nao cobre".
    */
   conveniosDoCadastro: ConvenioDoAgente[];
+  /**
+   * O nome cadastrado da clinica (clinic.name), lido pelo servidor com o
+   * clinic_id explicito (revisao de producao de 19/10/2026, Q7, decisao do
+   * dono): vai ao bloco <atendimento> ("Clinica: ...") e o filtro de saida o
+   * mascara como os nomes do Cadastro. null sem nome, ou com um nome que o
+   * filtro barraria por algo que a mascara nao cobre
+   * (nomeDaClinicaParaOAgente).
+   */
+  nomeDaClinica: string | null;
 };
 
 export const CATALOGO_VAZIO: CatalogoDoAgente = {
@@ -76,7 +93,71 @@ export const CATALOGO_VAZIO: CatalogoDoAgente = {
   vinculos: [],
   convenios: [],
   conveniosDoCadastro: [],
+  nomeDaClinica: null,
 };
+
+/** O maximo do nome da clinica que vai ao modelo (o da aba Clinica e 80). */
+export const LIMITE_DO_NOME_DA_CLINICA = 80;
+
+/**
+ * O que a mascara do Cadastro cobre no filtro de saida: as vedacoes clinicas
+ * que rodam so no texto mascarado ("Clinica da Dor" e nome, como "Tratamento
+ * da dor lombar"). Promessa, oferta casada e antes e depois rodam tambem sem
+ * a mascara; formato e preco sao lidos no texto mascarado, entao um
+ * telefone ou um link dentro do nome sairia escondido.
+ */
+function cobertaPelaMascara(categoria: CategoriaDeConformidade): boolean {
+  return (
+    (CATEGORIAS_CLINICAS as readonly string[]).includes(categoria) &&
+    !CATEGORIAS_SEM_MASCARA.has(
+      categoria as Exclude<CategoriaDeConformidade, "falha_verificador">,
+    )
+  );
+}
+
+/**
+ * O nome da clinica como o agente usa: numa linha, aparado e ate 80
+ * caracteres. Fica de fora (null) o nome que as regras do filtro barrariam
+ * por algo que a mascara nao cobre: telefone, link, e-mail, valor, promessa
+ * ("Clinica Sem Dor"), oferta ou antes e depois. Com ele, a mascara
+ * esconderia o telefone, ou toda saudacao com o nome seria barrada. Sem
+ * nome, o agente atende sem ele.
+ */
+export function nomeDaClinicaParaOAgente(
+  nome: string | null | undefined,
+): string | null {
+  const umaLinha = (nome ?? "").replace(/\s+/g, " ").trim();
+  const cortado = Array.from(umaLinha)
+    .slice(0, LIMITE_DO_NOME_DA_CLINICA)
+    .join("")
+    .trim();
+  if (cortado === "") {
+    return null;
+  }
+  return podeMascarar(cortado) ? cortado : null;
+}
+
+/**
+ * O nome pode entrar na mascara do filtro: as regras, lidas no nome sem
+ * mascara nenhuma, so acham o que a mascara cobre (ou nada). Nome com
+ * palavra clinica so com duas palavras ou mais: "Maria das Dores" e nome,
+ * mas uma palavra solta ("Dores") mascarada esconderia o sintoma de toda a
+ * resposta.
+ */
+function podeMascarar(nome: string): boolean {
+  const { categorias } = avaliarRegras(nome, {
+    precosDoTurno: [],
+    nomesDoCatalogo: [],
+    mensagensDoPaciente: [],
+  });
+  if (categorias.length === 0) {
+    return true;
+  }
+  const palavras = nome
+    .split(/\s+/u)
+    .filter((parte) => /\p{L}/u.test(parte)).length;
+  return palavras >= 2 && categorias.every(cobertaPelaMascara);
+}
 
 /** As linhas cruas do banco, como contexto.ts le (colunas explicitas). */
 export type LinhasDoCatalogo = {
@@ -102,6 +183,8 @@ export type LinhasDoCatalogo = {
     plan_name: string | null;
     active: boolean;
   }[];
+  /** A linha da clinica (so o nome). Ausente: o agente atende sem o nome. */
+  clinica?: { name: string | null } | null;
 };
 
 function porNome<T extends { nome: string; id: string }>(a: T, b: T): number {
@@ -186,6 +269,7 @@ export function montarCatalogoDoAgente(
       .filter((c) => usados.has(c.id))
       .sort(porNome),
     conveniosDoCadastro: [...convenios.values()].sort(porNome),
+    nomeDaClinica: nomeDaClinicaParaOAgente(linhas.clinica?.name),
   };
 }
 
@@ -201,16 +285,59 @@ function conveniosConhecidos(catalogo: CatalogoDoAgente): ConvenioDoAgente[] {
   ];
 }
 
+/** Titulo na frente do nome do profissional ("Dra. ", "Doutor "). */
+const TITULO_DO_PROFISSIONAL =
+  /^(?:dr|dra|doutor|doutora|prof|profa|professor|professora)\.?\s+/iu;
+
+/**
+ * Os nomes dos profissionais do catalogo (os que a busca devolve ao modelo)
+ * e, quando o nome comeca com titulo, o mesmo nome sem ele, so se ainda tiver
+ * duas palavras ou mais: "Dra. Maria das Dores" tambem vale como "Maria das
+ * Dores", mas "Dra. Dores" nunca vira "Dores" (uma palavra solta de sintoma
+ * mascarada esconderia a triagem do resto da resposta). Nome com algo que a
+ * mascara nao cobre (telefone, link, promessa) nao entra: o filtro continua
+ * lendo esse nome inteiro.
+ */
+function nomesDosProfissionais(catalogo: CatalogoDoAgente): string[] {
+  const nomes = new Set<string>();
+  const vistos = new Set<string>();
+  for (const v of catalogo.vinculos) {
+    const nome = v.profissional.replace(/\s+/g, " ").trim();
+    if (nome === "" || vistos.has(nome)) {
+      continue;
+    }
+    vistos.add(nome);
+    if (!podeMascarar(nome)) {
+      continue;
+    }
+    nomes.add(nome);
+    const semTitulo = nome.replace(TITULO_DO_PROFISSIONAL, "");
+    if (semTitulo !== nome && semTitulo.split(" ").length >= 2) {
+      nomes.add(semTitulo);
+    }
+  }
+  return [...nomes];
+}
+
 /**
  * Nomes do catalogo que o filtro de saida mascara antes dos padroes
- * (nomesDoCatalogo): procedimentos e convenios, com o plano. Todos os
- * convenios ativos do Cadastro: a busca pode citar qualquer plano da
- * operadora.
+ * (nomesDoCatalogo): o nome da clinica (Q7), os procedimentos, os
+ * profissionais (Q11: "A Prostota custa R$ 500,00 com a Dra. Maria das
+ * Dores." nao e triagem) e os convenios, com o plano. Todos os convenios
+ * ativos do Cadastro: a busca pode citar qualquer plano da operadora.
+ * Promessa, oferta casada e antes e depois continuam rodando tambem sem a
+ * mascara (filtro-deterministico.ts).
  */
 export function nomesDoCatalogo(catalogo: CatalogoDoAgente): string[] {
   const nomes = new Set<string>();
+  if (catalogo.nomeDaClinica) {
+    nomes.add(catalogo.nomeDaClinica);
+  }
   for (const p of catalogo.procedimentos) {
     nomes.add(p.nome);
+  }
+  for (const nome of nomesDosProfissionais(catalogo)) {
+    nomes.add(nome);
   }
   for (const c of conveniosConhecidos(catalogo)) {
     nomes.add(c.nome);

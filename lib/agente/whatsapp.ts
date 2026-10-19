@@ -5,8 +5,13 @@ import type {
   DecisaoDoFiltro,
   DecisaoParaRetomar,
 } from "@/lib/domain/conformidade/filtro";
-import { versaoDasRegras } from "@/lib/domain/conformidade/filtro";
+import {
+  versaoDasRegras,
+  versaoDoPortao,
+} from "@/lib/domain/conformidade/filtro";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
+import { VERSAO_DA_POLITICA_DO_CLASSIFICADOR } from "@/lib/integrations/llm/classificador-de-entrada";
+import { VERSAO_DA_POLITICA } from "@/lib/integrations/llm/verificador";
 import { ErroComCodigoDeJob } from "@/lib/jobs/erro-de-job";
 import { log } from "@/lib/log";
 
@@ -647,6 +652,25 @@ export type DecisaoParaGravar = {
   latenciaMs: number | null;
 };
 
+/**
+ * O que vai em ai_decision_log.versao_filtro (revisao de producao de
+ * 19/10/2026, Q12): a versao de cada camada da conformidade do turno, nesta
+ * ordem e separadas por espaco: as regras de saida (regras-), o portao de
+ * entrada (portao-), o texto do classificador (classificador-) e o do
+ * verificador (verificador-). Cada uma muda sozinha quando a sua fonte muda,
+ * entao da para separar as decisoes de antes e de depois de um ajuste. Sem
+ * coluna nova: versao_filtro e texto livre. A versao do texto do agente
+ * (com as frases do bloco <atendimento>) continua em versao_prompt.
+ */
+export function versaoDoFiltroDoTurno(regras: string = versaoDasRegras()): string {
+  return [
+    regras,
+    versaoDoPortao(),
+    VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
+    VERSAO_DA_POLITICA,
+  ].join(" ");
+}
+
 /** Falhas que nao sao tecnicas: nao viram falha_tecnica (contrato 3.6). */
 const FALHAS_SEM_ESCALONAMENTO: ReadonlySet<string> = new Set([
   "liberacao_suspensa",
@@ -691,7 +715,9 @@ export function linhaDaDecisao(d: DecisaoParaGravar): Record<string, unknown> {
     camada: null,
     config_version: d.configVersion,
     versao_prompt: d.versaoDoPrompt,
-    versao_filtro: d.filtro?.versaoDasRegras ?? versaoDasRegras(),
+    versao_filtro: versaoDoFiltroDoTurno(
+      d.filtro?.versaoDasRegras ?? versaoDasRegras(),
+    ),
     agente_modelo: agenteModelo,
     verificador_modelo: d.filtro?.verificador?.modelo ?? null,
     tokens_entrada: somar("tokensEntrada"),

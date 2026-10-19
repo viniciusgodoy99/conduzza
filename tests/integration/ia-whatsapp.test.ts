@@ -244,12 +244,15 @@ async function eventos(conversationId: string): Promise<string[]> {
   return (data as { body: string }[]).map((linha) => linha.body);
 }
 
+// Sempre com a confirmacao do aviso da OpenAI: telefone novo so entra com
+// ela (migration 20261019120000); ao desligar ou religar ela nao muda nada.
 async function liberarTelefone(telefone: string, ativo = true): Promise<void> {
   await rpcOk("definir_contato_liberado_da_ia", {
     p_clinic_id: clinicaT,
     p_telefone_e164: telefone,
     p_rotulo: "Equipe sintética",
     p_ativo: ativo,
+    p_confirmou_aviso_da_openai: true,
   });
 }
 
@@ -287,8 +290,10 @@ async function sha256(texto: string): Promise<string> {
     .join("");
 }
 
+// O texto de 'parada' desde a migration 20261019120000 (revisao de producao
+// de 19/10/2026), como os outros pedidos desta suite que dependem dela.
 const PARADA =
-  "O assistente não atendeu esta mensagem: ele está parado nesta clínica.";
+  "O assistente não atendeu esta mensagem: ele está parado para este telefone ou este número.";
 const FRASE =
   "Recebi sua mensagem. Vou passar sua conversa para alguém da nossa equipe, que vai te responder por aqui assim que possível.";
 
@@ -1170,6 +1175,7 @@ describe("varredura e frase que nao sai", () => {
       p_rotulo: "Equipe sintética",
       p_ativo: true,
       p_forcar_contato_existente: true,
+      p_confirmou_aviso_da_openai: true,
     });
     const r = await ingerir(EQ7, "Alguém aí?");
     expect(r.ia_atendendo).toBe(true);
@@ -1333,6 +1339,7 @@ describe("fora da lista nunca (X2 da revisao)", () => {
       p_telefone_e164: EQ_F,
       p_rotulo: "Equipe sintética",
       p_ativo: true,
+      p_confirmou_aviso_da_openai: true,
     });
     await admin
       .from("ai_agent_config")
@@ -1549,6 +1556,7 @@ describe("D-B: sinal de paciente sem o forcar barra em todo lugar; o forcado ent
       p_rotulo: "Equipe sintética",
       p_ativo: true,
       p_forcar_contato_existente: true,
+      p_confirmou_aviso_da_openai: true,
     });
     const r = await ingerir(EQ_FORCADO, "Oi");
     expect(r.ia_atendendo).toBe(true);

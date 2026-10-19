@@ -317,9 +317,8 @@ function limiteDeAproximacao(termo: string): number {
  * depois para dentro da resposta. Triagem, diagnostico, medicamento, dosagem
  * e orientacao continuam mascarados ("Tratamento da dor lombar").
  */
-const CATEGORIAS_SEM_MASCARA: ReadonlySet<AchadoDaRegra["categoria"]> = new Set(
-  ["promessa_resultado", "oferta_casada", "antes_depois"],
-);
+export const CATEGORIAS_SEM_MASCARA: ReadonlySet<AchadoDaRegra["categoria"]> =
+  new Set(["promessa_resultado", "oferta_casada", "antes_depois"]);
 
 // Emoji que diz remedio, injecao, gelo, bebida, cigarro ou urgencia. O sol
 // fica de fora (cumprimento "bom dia" usa); ele so conta como habito, em

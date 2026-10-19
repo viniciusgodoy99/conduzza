@@ -322,6 +322,9 @@ beforeAll(async () => {
       p_telefone_e164: telefone,
       p_rotulo: "Equipe sintética",
       p_ativo: true,
+      // telefone novo: a confirmacao do aviso da OpenAI (migration
+      // 20261019120000)
+      p_confirmou_aviso_da_openai: true,
     });
   }
   // Versao publicada, 24 horas (o padrao do banco).

@@ -8,6 +8,7 @@ import {
   limiteDaSaidaDaBusca,
   MAXIMO_DE_OPCOES,
   montarCatalogoDoAgente,
+  nomeDaClinicaParaOAgente,
   nomesDoCatalogo,
   PALAVRAS_DE_LIGACAO,
   PALAVRAS_QUE_NAO_DISTINGUEM,
@@ -286,6 +287,90 @@ describe("montarCatalogoDoAgente", () => {
         "Amil",
       ]),
     );
+  });
+
+  // Revisao de producao de 19/10/2026 (Q11): os profissionais que a busca
+  // devolve ao modelo tambem entram na mascara do filtro.
+  it("nomes do catálogo para o filtro: os profissionais do catálogo, com e sem o título", () => {
+    const nomes = nomesDoCatalogo(
+      montarCatalogoDoAgente({
+        ...LINHAS,
+        profissionais: [
+          { id: PROF.helena, name: "Dra. Maria das Dores", active: true },
+          { id: PROF.joao, name: "Dr. João", active: true },
+          { id: PROF.saiu, name: "Dra. Antiga", active: false },
+        ],
+      }),
+    );
+    expect(nomes).toEqual(
+      expect.arrayContaining([
+        "Dra. Maria das Dores",
+        "Maria das Dores",
+        "Dr. João",
+      ]),
+    );
+    // Sem titulo so com duas palavras ou mais ("Dr. João" nao vira "João").
+    expect(nomes).not.toContain("João");
+    // Profissional inativo nao esta no catalogo.
+    expect(nomes).not.toContain("Dra. Antiga");
+  });
+
+  it("profissional com algo que a máscara não cobre (telefone, promessa) fica fora da máscara", () => {
+    const nomes = nomesDoCatalogo(
+      montarCatalogoDoAgente({
+        ...LINHAS,
+        profissionais: [
+          { id: PROF.helena, name: "Dra. Helena (85) 99999-8888", active: true },
+          { id: PROF.joao, name: "Dr. João Resultado Garantido", active: true },
+        ],
+      }),
+    );
+    expect(nomes).not.toContain("Dra. Helena (85) 99999-8888");
+    expect(nomes).not.toContain("Dr. João Resultado Garantido");
+  });
+
+  it("palavra clínica solta nunca vira máscara: 'Dores' sozinho fica de fora, 'Dra. Dores' só inteiro", () => {
+    const nomes = nomesDoCatalogo(
+      montarCatalogoDoAgente({
+        ...LINHAS,
+        profissionais: [
+          { id: PROF.helena, name: "Dores", active: true },
+          { id: PROF.joao, name: "Dra. Dores", active: true },
+        ],
+      }),
+    );
+    expect(nomes).not.toContain("Dores");
+    expect(nomes).toContain("Dra. Dores");
+    expect(nomeDaClinicaParaOAgente("Dores")).toBeNull();
+  });
+
+  // Q7 (decisao do dono): o nome cadastrado da clinica.
+  it("nome da clínica: entra no catálogo e na máscara, numa linha e até 80 caracteres", () => {
+    const catalogo = montarCatalogoDoAgente({
+      ...LINHAS,
+      clinica: { name: "  Clínica da Dor\n Fortaleza  " },
+    });
+    expect(catalogo.nomeDaClinica).toBe("Clínica da Dor Fortaleza");
+    expect(nomesDoCatalogo(catalogo)).toContain("Clínica da Dor Fortaleza");
+    expect(montarCatalogoDoAgente(LINHAS).nomeDaClinica).toBeNull();
+    expect(nomeDaClinicaParaOAgente("a".repeat(120))).toHaveLength(80);
+    for (const nome of ["teste123", "Conduzza Teste", "Clínica Maria das Dores"]) {
+      expect(nomeDaClinicaParaOAgente(nome), nome).toBe(nome);
+    }
+  });
+
+  it("nome da clínica com telefone, link, valor ou promessa fica de fora (a máscara esconderia)", () => {
+    for (const nome of [
+      "Clínica Bela (85) 99999-8888",
+      "www.clinicabela.com.br",
+      "Clínica Sem Dor",
+      "Clínica Resultado Garantido",
+      "Clínica R$ 99",
+      "   ",
+      null,
+    ]) {
+      expect(nomeDaClinicaParaOAgente(nome), String(nome)).toBeNull();
+    }
   });
 });
 

@@ -60,6 +60,13 @@ import { adminClient, anonClient } from "./stack";
 //     nenhum (42501, mesmo com o outro ligado); a situacao ve a conversa
 //     aberta com a equipe em qualquer numero ligado e deixa de ver a do
 //     numero desligado.
+//   - revisao de producao de 19/10/2026 (migration 20261019120000): a
+//     situacao diz em QUAL numero e qual conversa (conversas_abertas, com a
+//     chave antiga ao lado); telefone NOVO exige a confirmacao do aviso da
+//     OpenAI (23514 aviso_da_openai_nao_confirmado, ate para o servidor), e
+//     o banco grava a trilha dela no nome de quem liga; desligar telefone
+//     fora da lista nao cria linha; o Devolver confere a liberacao ANTES da
+//     pergunta pendente (conversa de paciente nunca diz pergunta_pendente).
 // disparar_ciclo_da_ia, motor_ia_agendar e motor_ia_desagendar NUNCA sao
 // chamados aqui pela API: se o grant regredisse, a chamada mexeria no pg_cron
 // e no pg_net da producao antes de a assercao falhar. O grant deles e
@@ -100,6 +107,9 @@ const TELEFONE_DO_ADMIN = `+5584987${digitos}`;
 // Telefone da equipe com conversa aberta com a recepcao no SEGUNDO numero da
 // A (varios numeros, decisao do dono de 19/10/2026).
 const TELEFONE_DO_SEGUNDO_NUMERO = `+5584988${digitos}`;
+// Sem contato: a confirmacao do aviso da OpenAI no banco (migration
+// 20261019120000); desligado no fim.
+const TELEFONE_DA_CONFIRMACAO = `+5584989${digitos}`;
 // O numero fake da A, com display_phone de 12 digitos: e "numero da
 // plataforma" para definir_contato_liberado_da_ia.
 const DISPLAY_DA_A = `+55 84 3${digitos}-0`;
@@ -289,11 +299,14 @@ beforeAll(async () => {
     p_whatsapp_account_id: numeroA,
     p_ativo: true,
   });
+  // Telefone novo exige a confirmacao do aviso da OpenAI, ate para o
+  // servidor (migration 20261019120000).
   await rpcDoSistema("definir_contato_liberado_da_ia", {
     p_clinic_id: clinicaA,
     p_telefone_e164: TELEFONE_DA_EQUIPE,
     p_rotulo: "Equipe de teste",
     p_ativo: true,
+    p_confirmou_aviso_da_openai: true,
   });
   // Ligado ainda como lead (sem sinal de paciente: sem o forcar).
   await rpcDoSistema("definir_contato_liberado_da_ia", {
@@ -301,6 +314,7 @@ beforeAll(async () => {
     p_telefone_e164: TELEFONE_VIROU_PACIENTE,
     p_rotulo: "Vira paciente",
     p_ativo: true,
+    p_confirmou_aviso_da_openai: true,
   });
   await admin
     .from("ai_agent_config")
@@ -797,6 +811,48 @@ describe("devolver_para_ia e ia_devolver_disponivel", () => {
     ).toBe(false);
   });
 
+  it("pergunta pendente em conversa de paciente: nunca pergunta_pendente, a liberacao vem antes (migration 20261019120000)", async () => {
+    const conversas = [conversaFora, conversaVirouPaciente];
+    await admin
+      .from("conversation")
+      .update({ awaiting_reply: true, assignee_user_id: ids.get("admin-a") })
+      .in("id", conversas)
+      .throwOnError();
+    try {
+      // o administrador: o motivo de verdade da liberacao
+      const { data: fora } = await como("admin-a").rpc(
+        "ia_devolver_disponivel",
+        { p_conversation_id: conversaFora },
+      );
+      expect(fora).toEqual({ pode: false, motivo: "nao_liberada" });
+      const { data: virou } = await como("admin-a").rpc(
+        "ia_devolver_disponivel",
+        { p_conversation_id: conversaVirouPaciente },
+      );
+      expect(virou).toEqual({ pode: false, motivo: "contato_de_paciente" });
+      // a recepcao: o generico, nunca "Responda o paciente antes de
+      // devolver para a IA."
+      await admin
+        .from("conversation")
+        .update({ assignee_user_id: ids.get("recepcao-a") })
+        .in("id", conversas)
+        .throwOnError();
+      for (const id of conversas) {
+        const { data } = await como("recepcao-a").rpc(
+          "ia_devolver_disponivel",
+          { p_conversation_id: id },
+        );
+        expect(data).toEqual({ pode: false, motivo: "nao_disponivel" });
+      }
+    } finally {
+      await admin
+        .from("conversation")
+        .update({ awaiting_reply: false, assignee_user_id: ids.get("admin-a") })
+        .in("id", conversas)
+        .throwOnError();
+    }
+  });
+
   it("telefone de paciente FORCADO pela equipe Conduzza: o Devolver passa (D-B); a sessao nao forca", async () => {
     // so o servidor (equipe Conduzza para o banco) forca, com trilha propria
     const { error: semForcar } = await admin.rpc(
@@ -817,6 +873,7 @@ describe("devolver_para_ia e ia_devolver_disponivel", () => {
         p_rotulo: "Paciente",
         p_ativo: true,
         p_forcar_contato_existente: true,
+        p_confirmou_aviso_da_openai: true,
       }),
     ).toBe(true);
     const { data: forcou } = await admin
@@ -1087,7 +1144,16 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
       };
     };
 
-    await chamar({ p_rotulo: "Admin pela tela", p_ativo: true }, true);
+    // telefone novo: com a confirmacao do aviso da OpenAI (migration
+    // 20261019120000), que o banco grava na trilha no nome dele
+    await chamar(
+      {
+        p_rotulo: "Admin pela tela",
+        p_ativo: true,
+        p_confirmou_aviso_da_openai: true,
+      },
+      true,
+    );
     expect(await linhaDoAdmin()).toMatchObject({
       ativo: true,
       forcado: false,
@@ -1112,11 +1178,11 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
       .eq("entity", "ia_contato_liberado")
       .eq("entity_id", religado.id)
       .throwOnError();
-    expect(trilha).toEqual([
-      { action: "editou" },
-      { action: "editou" },
-      { action: "editou" },
-    ]);
+    // ligar (com a confirmacao), desligar e ligar de novo (sem ela: o
+    // "Ligar de novo" nao grava outra confirmacao)
+    expect(
+      (trilha as { action: string }[]).map((linha) => linha.action).sort(),
+    ).toEqual(["confirmou_aviso_da_openai", "editou", "editou", "editou"]);
     // desligado no fim: o resto da suite nao conta com este telefone
     await chamar({ p_rotulo: null, p_ativo: false }, false);
   });
@@ -1163,7 +1229,8 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
     expect(peloAdmin?.code).toBe(CHECK);
     expect(peloAdmin?.message).toBe("telefone_invalido_para_equipe");
     expect(peloAdmin?.message).not.toContain(digitos);
-    // desligar nunca e recusado
+    // desligar nunca e recusado; fora da lista, nao cria linha (migration
+    // 20261019120000)
     expect(
       await rpcDoSistema("definir_contato_liberado_da_ia", {
         p_clinic_id: clinicaB,
@@ -1172,6 +1239,104 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
         p_ativo: false,
       }),
     ).toBe(false);
+    const { data: semLinha } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("clinic_id", clinicaB)
+      .throwOnError();
+    expect(semLinha).toEqual([]);
+  });
+});
+
+describe("confirmacao do aviso da OpenAI no banco (migration 20261019120000)", () => {
+  it("telefone novo sem a confirmacao: 23514 para o administrador e para o servidor, sem linha; desligar fora da lista nao cria linha; com ela, a linha e a trilha no nome de quem liga", async () => {
+    const adminA = como("admin-a");
+    const linhas = async () => {
+      const { data } = await admin
+        .from("ia_contato_liberado")
+        .select("id, ativo")
+        .eq("clinic_id", clinicaA)
+        .eq("phone_key", TELEFONE_DA_CONFIRMACAO)
+        .throwOnError();
+      return data as { id: string; ativo: boolean }[];
+    };
+    for (const [quem, cliente, confirmou] of [
+      ["administrador sem o parametro", adminA, undefined],
+      ["administrador com falso", adminA, false],
+      ["servidor sem o parametro", admin, undefined],
+    ] as const) {
+      const { error } = await cliente.rpc("definir_contato_liberado_da_ia", {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DA_CONFIRMACAO,
+        p_rotulo: "Sem confirmar",
+        p_ativo: true,
+        ...(confirmou === undefined
+          ? {}
+          : { p_confirmou_aviso_da_openai: confirmou }),
+      });
+      expect(error?.code, quem).toBe(CHECK);
+      expect(error?.message, quem).toBe("aviso_da_openai_nao_confirmado");
+      expect(error?.message, quem).not.toContain(digitos);
+    }
+    expect(await linhas()).toEqual([]);
+
+    // desligar telefone fora da lista: passa, sem linha nem trilha
+    const { data: desligou, error: erroAoDesligar } = await adminA.rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DA_CONFIRMACAO,
+        p_rotulo: "Fora da lista",
+        p_ativo: false,
+      },
+    );
+    expect(erroAoDesligar).toBeNull();
+    expect(desligou).toBe(false);
+    expect(await linhas()).toEqual([]);
+
+    // com a confirmacao: a linha e a trilha (editou e confirmou), no nome
+    // do administrador, na mesma transacao
+    const { data: ligou, error: erroAoLigar } = await adminA.rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DA_CONFIRMACAO,
+        p_rotulo: "Confirmado",
+        p_ativo: true,
+        p_confirmou_aviso_da_openai: true,
+      },
+    );
+    expect(erroAoLigar).toBeNull();
+    expect(ligou).toBe(true);
+    const [criada] = await linhas();
+    expect(criada?.ativo).toBe(true);
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("action, user_id")
+      .eq("clinic_id", clinicaA)
+      .eq("entity", "ia_contato_liberado")
+      .eq("entity_id", criada!.id)
+      .throwOnError();
+    expect(
+      (trilha as { action: string; user_id: string | null }[])
+        .map((linha) => `${linha.action}|${linha.user_id}`)
+        .sort(),
+    ).toEqual([
+      `confirmou_aviso_da_openai|${ids.get("admin-a")}`,
+      `editou|${ids.get("admin-a")}`,
+    ]);
+
+    // desligado no fim: o resto da suite nao conta com este telefone
+    const { error: erroNoFim } = await adminA.rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DA_CONFIRMACAO,
+        p_rotulo: null,
+        p_ativo: false,
+      },
+    );
+    expect(erroNoFim).toBeNull();
   });
 });
 
@@ -1199,6 +1364,21 @@ describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
     expect(error).toBeNull();
     return (data as { telefones_com_conversa_aberta: string[] })
       .telefones_com_conversa_aberta;
+  }
+
+  type ConversaAberta = {
+    telefone_id: string;
+    whatsapp_account_id: string;
+    conversation_id: string;
+  };
+
+  async function conversasAbertasNaSituacao(): Promise<ConversaAberta[]> {
+    const { data, error } = await como("admin-a").rpc(
+      "situacao_da_ia_na_clinica",
+      { p_clinic_id: clinicaA },
+    );
+    expect(error).toBeNull();
+    return (data as { conversas_abertas: ConversaAberta[] }).conversas_abertas;
   }
 
   it("o servidor liga o segundo sem desligar o primeiro; o administrador desliga um sem mexer no outro e nao liga (42501); a situacao acompanha o numero", async () => {
@@ -1232,8 +1412,12 @@ describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
       p_telefone_e164: TELEFONE_DO_SEGUNDO_NUMERO,
       p_rotulo: "Equipe do segundo numero",
       p_ativo: true,
+      p_confirmou_aviso_da_openai: true,
     });
-    await conversaComARecepcao(contato, segundoNumeroA);
+    const conversaDoSegundo = await conversaComARecepcao(
+      contato,
+      segundoNumeroA,
+    );
     const { data: linha } = await admin
       .from("ia_contato_liberado")
       .select("id")
@@ -1243,6 +1427,12 @@ describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
       .throwOnError();
     const idDoTelefone = (linha as { id: string }).id;
     expect(await abertasNaSituacao()).toContain(idDoTelefone);
+    // e diz em QUAL numero, com a conversa (migration 20261019120000)
+    expect(await conversasAbertasNaSituacao()).toContainEqual({
+      telefone_id: idDoTelefone,
+      whatsapp_account_id: segundoNumeroA,
+      conversation_id: conversaDoSegundo,
+    });
 
     // o administrador desliga o segundo: o primeiro continua ligado
     const { data: desligou, error: erroAoDesligar } = await adminA.rpc(
@@ -1261,6 +1451,11 @@ describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
     });
     // a conversa aberta do numero desligado sai da situacao
     expect(await abertasNaSituacao()).not.toContain(idDoTelefone);
+    expect(
+      (await conversasAbertasNaSituacao()).filter(
+        (aberta) => aberta.telefone_id === idDoTelefone,
+      ),
+    ).toEqual([]);
 
     // o administrador nao liga de novo, mesmo com o outro ligado: 42501, a
     // mensagem de hoje, e nada muda

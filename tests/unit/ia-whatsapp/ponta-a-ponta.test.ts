@@ -15,10 +15,19 @@ vi.mock("@/lib/agente/contexto", () => ({
   }),
 }));
 
+import { MARCA_DO_NOME } from "@/lib/agente/historico";
 import { executarTurnoDoAgente, type ClienteDoAgente } from "@/lib/agente/laco";
 import { configPadraoDoAgente } from "@/lib/domain/agente/config";
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  criarClassificadorDeEntrada,
+  POLITICA_DO_CLASSIFICADOR,
+} from "@/lib/integrations/llm/classificador-de-entrada";
+import {
+  criarVerificador,
+  POLITICA_DO_VERIFICADOR,
+} from "@/lib/integrations/llm/verificador";
 import {
   fakeSentMessages,
   resetFakeProvider,
@@ -95,7 +104,7 @@ function respostaFinal(mensagem: string) {
 
 let banco: BancoEmMemoria;
 
-function montar(pergunta: string) {
+function montar(pergunta: string, nomeDoContato: string | null = null) {
   banco = new BancoEmMemoria();
   banco.linhas("clinic").push({
     id: CLINICA,
@@ -125,7 +134,7 @@ function montar(pergunta: string) {
     clinic_id: CLINICA,
     phone_key: TELEFONE,
     phone_e164: TELEFONE,
-    name: null,
+    name: nomeDoContato,
     birth_date: null,
   });
   banco.linhas("whatsapp_account_secret").push({
@@ -263,6 +272,82 @@ function rodar(roteiro: unknown[]) {
   ).then((resultado) => ({ resultado, create }));
 }
 
+/** Resposta do responses.parse (classificador e verificador) com o objeto lido. */
+function respostaLida(lido: unknown) {
+  return {
+    model: "gpt-6-luna",
+    status: "completed",
+    incomplete_details: null,
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [
+          { type: "output_text", text: JSON.stringify(lido), annotations: [] },
+        ],
+      },
+    ],
+    output_parsed: lido,
+    usage: USO_DA_API,
+  };
+}
+
+/**
+ * Um cliente FALSO da OpenAI para as tres chamadas do turno: o classificador
+ * e o verificador de verdade (criarClassificadorDeEntrada e criarVerificador,
+ * por responses.parse) e o agente (responses.create). Guarda o corpo de toda
+ * chamada, para o teste conferir o que sairia para a OpenAI. Nada vai a rede.
+ */
+function openAiFalsa(respostaDoAgente: string) {
+  const corpos: Record<string, unknown>[] = [];
+  const create = vi.fn(async (corpo: Record<string, unknown>) => {
+    corpos.push(corpo);
+    return respostaFinal(respostaDoAgente);
+  });
+  const parse = vi.fn(async (corpo: Record<string, unknown>) => {
+    corpos.push(corpo);
+    const formato = (corpo.text as { format?: { name?: unknown } } | undefined)
+      ?.format?.name;
+    return respostaLida(
+      formato === "classificacao_de_entrada"
+        ? { gatilhos: ["nenhum"], confianca: "alta" }
+        : { aprovado: true, violacoes: [], confianca: "alta" },
+    );
+  });
+  const cliente = {
+    responses: { create, parse },
+  } as unknown as ClienteDoAgente;
+  return { cliente, create, parse, corpos };
+}
+
+/** As dependencias com o classificador e o verificador de verdade sobre a OpenAI falsa. */
+function dependenciasComOpenAiFalsa(
+  openAi: ReturnType<typeof openAiFalsa>,
+): DependenciasDoExecutorDaIa {
+  return {
+    ...dependencias(openAi.create),
+    clienteDoAgente: () => openAi.cliente,
+    criarVerificador: (identificador) =>
+      criarVerificador({
+        cliente: openAi.cliente,
+        modelo: "gpt-6-luna",
+        identificadorDeSeguranca: identificador,
+      }),
+    criarClassificador: (identificador) =>
+      criarClassificadorDeEntrada({
+        cliente: openAi.cliente,
+        modelo: "gpt-6-luna",
+        identificadorDeSeguranca: identificador,
+      }),
+  };
+}
+
+/** Minusculo e sem acento, para procurar o nome de qualquer jeito que ele venha. */
+function semAcento(texto: string): string {
+  return texto.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
 beforeEach(() => {
   resetFakeProvider();
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -356,5 +441,91 @@ describe("ponta a ponta com LLM falso", () => {
     expect(banco.linhas("ai_turno")[0]).toMatchObject({
       estado: "passou_para_equipe",
     });
+  });
+});
+
+// Revisao de producao de 19/10/2026 (achado de seguranca): o executor le o
+// nome do contato e o historico troca o nome pela marca no texto que vai a
+// OpenAI. O portao deterministico (local) le o texto ORIGINAL: o nome nao
+// esconde mais o gatilho. Classificador, agente e verificador continuam so
+// com o texto mascarado. Aqui pelo executor de verdade, com o classificador
+// e o verificador de verdade sobre um cliente falso da OpenAI.
+describe("o nome do contato: o portão lê o original, a OpenAI só a marca", () => {
+  it("contato Socorro escrevendo 'socorro, me ajuda': o portão escala (sintoma) sem nenhuma chamada à OpenAI", async () => {
+    montar("socorro, me ajuda", "Socorro");
+    const openAi = openAiFalsa("não deveria ser chamado");
+    const resultado = await executarRespostaComIa(
+      { ...JOB_DO_TESTE, payload: { ...JOB_DO_TESTE.payload } },
+      EXECUTOR,
+      dependenciasComOpenAiFalsa(openAi),
+    );
+    expect(resultado).toEqual({ ok: true });
+    expect(openAi.create).not.toHaveBeenCalled();
+    expect(openAi.parse).not.toHaveBeenCalled();
+    expect(openAi.corpos).toEqual([]);
+    expect(banco.linhas("ai_decision_log")[0]).toMatchObject({
+      desfecho: "escalou",
+      escalation_reason: "sintoma",
+      gatilho_entrada: "sintoma",
+    });
+    // A reserva do turno e acertada sem nenhuma linha de uso: nada foi
+    // cobrado porque nada saiu para a OpenAI.
+    expect(banco.chamadasDe("acertar_gasto_da_ia")).toEqual([
+      { p_reserva: "30000000-0000-4000-8000-000000000001", p_linhas: [] },
+    ]);
+    expect(fakeSentMessages().map((m) => m.body)).toEqual([
+      FRASE_DE_ESCALONAMENTO,
+    ]);
+    expect(banco.linhas("conversation")[0]?.status).toBe("aguardando_humano");
+  });
+
+  it("'Aqui é a Socorro, quanto custa a consulta?' passa no portão, e nada do que vai à OpenAI leva o nome do contato", async () => {
+    montar("Aqui é a Socorro, quanto custa a consulta?", "Socorro");
+    const resposta = "Atendemos de segunda a sexta. Posso ajudar em algo mais?";
+    const openAi = openAiFalsa(resposta);
+    const resultado = await executarRespostaComIa(
+      { ...JOB_DO_TESTE, payload: { ...JOB_DO_TESTE.payload } },
+      EXECUTOR,
+      dependenciasComOpenAiFalsa(openAi),
+    );
+    expect(resultado).toEqual({ ok: true });
+    // As tres chamadas do turno: classificador, agente e verificador.
+    expect(openAi.parse).toHaveBeenCalledTimes(2);
+    expect(openAi.create).toHaveBeenCalledTimes(1);
+    expect(openAi.corpos).toHaveLength(3);
+    expect(fakeSentMessages().map((m) => m.body)).toEqual([resposta]);
+    expect(banco.linhas("ai_decision_log")[0]).toMatchObject({
+      desfecho: "respondeu",
+    });
+
+    const mascarada = `Aqui é a ${MARCA_DO_NOME}, quanto custa a consulta?`;
+    const [classificador, agente, verificador] = openAi.corpos;
+    // O texto do contato foi, mascarado, para os tres.
+    for (const corpo of [classificador, agente, verificador]) {
+      expect(JSON.stringify(corpo?.input)).toContain(mascarada);
+    }
+    // Nenhum texto que sai para a OpenAI tem o nome do contato. A unica
+    // ocorrencia da palavra e a politica FIXA do classificador (que da
+    // "Socorro" de exemplo de nome) e do verificador ("pronto-socorro"):
+    // conferidas palavra por palavra, sem nada do contato.
+    expect(classificador?.instructions).toBe(POLITICA_DO_CLASSIFICADOR);
+    expect(verificador?.instructions).toBe(POLITICA_DO_VERIFICADOR);
+    for (const corpo of openAi.corpos) {
+      const semAPoliticaFixa = Object.fromEntries(
+        Object.entries(corpo).filter(
+          ([campo]) =>
+            !(
+              campo === "instructions" &&
+              (corpo.instructions === POLITICA_DO_CLASSIFICADOR ||
+                corpo.instructions === POLITICA_DO_VERIFICADOR)
+            ),
+        ),
+      );
+      expect(semAcento(JSON.stringify(semAPoliticaFixa))).not.toContain(
+        "socorro",
+      );
+    }
+    // O agente nao tem politica fixa com a palavra: o corpo inteiro limpo.
+    expect(semAcento(JSON.stringify(agente))).not.toContain("socorro");
   });
 });

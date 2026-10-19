@@ -152,8 +152,11 @@ describe("eventos da IA no fio", () => {
 // nao abre; o "parada" diz so o que aconteceu.
 describe("eventos da IA servem a todos os papéis (T6)", () => {
   it("o evento parada, palavra por palavra, sem mandar para Configurações", () => {
+    // Revisao de producao de 19/10/2026 (migration 20261019120000): o texto
+    // nao diz mais "parado nesta clinica", que nao era verdade quando so
+    // aquele numero estava desligado do assistente.
     const texto =
-      "O assistente não atendeu esta mensagem: ele está parado nesta clínica.";
+      "O assistente não atendeu esta mensagem: ele está parado para este telefone ou este número.";
     expect(TEXTO_DO_EVENTO_DA_IA.parada).toBe(texto);
     const html = renderToStaticMarkup(
       <SystemEventCard

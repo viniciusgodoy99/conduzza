@@ -1156,8 +1156,9 @@ async function contatoETetoPeloServidor(entrada: {
 }
 
 /**
- * Depois do "pode" do banco (clinica, papel, responsavel, pergunta
- * pendente, liberacao, teto, versao publicada, numero e telefone liberados),
+ * Depois do "pode" do banco (clinica, papel, responsavel, liberacao, teto,
+ * versao publicada, numero e telefone liberados e, so com tudo isso, a
+ * pergunta pendente),
  * o que o executor ainda exige e o banco nao ve (revisao do E3, T1): o
  * ambiente (producao, chave e segredo do identificador), o motor da IA, o
  * modo e o horario da versao PUBLICADA agora, no fuso da clinica, o numero
@@ -1293,10 +1294,12 @@ function motivoParaOPapel(
 /**
  * Se o botao Devolver para a IA fica habilitado, e por que nao. Le
  * ia_devolver_disponivel com a SESSAO: o banco confere a clinica, o papel, o
- * responsavel, a pergunta pendente e a liberacao, e para quem nao e
- * administrador nem gestor troca o motivo da liberacao pelo generico
- * (nao_disponivel), sem expor a lista de telefones. Fora das duas clinicas
- * da fase, fora_da_fase sem ir ao banco.
+ * responsavel, a liberacao e, so depois dela, a pergunta pendente (revisao
+ * de producao de 19/10/2026, migration 20261019120000: conversa de paciente
+ * nunca diz "Responda o paciente antes de devolver para a IA."), e para
+ * quem nao e administrador nem gestor troca o motivo da liberacao pelo
+ * generico (nao_disponivel), sem expor a lista de telefones. Fora das duas
+ * clinicas da fase, fora_da_fase sem ir ao banco.
  */
 export async function elegibilidadeDoDevolverAction(
   conversationId: string,

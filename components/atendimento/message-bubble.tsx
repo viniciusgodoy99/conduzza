@@ -16,6 +16,7 @@ import {
   SendHorizonal,
   Sparkles,
   Trash2,
+  UsersRound,
   Video,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -41,6 +42,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AUTOR_DO_AVISO_AUTOMATICO,
+  ehAvisoAutomaticoDaIa,
+  EXPLICACAO_DO_AVISO_AUTOMATICO,
+} from "@/components/atendimento/aviso-automatico";
 import { CartaoDeDocumento } from "@/components/atendimento/media/cartao-de-documento";
 import { impedimentoParaTodos } from "@/components/atendimento/dialogo-apagar";
 import { CitacaoDaBolha } from "@/components/atendimento/citacao";
@@ -65,7 +71,11 @@ import { cn } from "@/lib/utils";
 // textual "IA"; nota interna a direita em ambar, com cadeado e o aviso de que
 // o paciente nao ve; a enviada direto pelo WhatsApp da clinica (pelo_celular)
 // a direita na pele da atendente, assinada "Pelo WhatsApp" com o icone do
-// aparelho no lugar do nome. Autoria nunca so por cor: lado, rotulo e pele.
+// aparelho no lugar do nome; a frase fixa que o contato recebe quando a IA
+// passa a conversa para a equipe (revisao de producao de 19/10/2026) a
+// direita na pele neutra do sistema (a mesma superficie do evento no fio),
+// assinada "Aviso automático" com o UsersRound neutro (o "passou para a
+// equipe" da tabela 4.6). Autoria nunca so por cor: lado, rotulo e pele.
 //
 // --bolha-meta e a cor de apoio de cada pele (hora, legenda, rotulos de
 // midia). Tudo o que fica DENTRO da bolha usa ela, e nao text-text-secondary:
@@ -82,6 +92,10 @@ export const PELES_DA_BOLHA = {
     "rounded-br-[6px] border-transparent bg-bubble-out text-bubble-out-foreground [--bolha-meta:var(--bubble-out-meta)]",
   ia: "rounded-br-[6px] border-(--bubble-ai-border) bg-bubble-ai text-bubble-ai-foreground [--bolha-meta:var(--bubble-ai-meta)]",
   nota: "rounded-br-[6px] border-warning/20 bg-warning-bg text-warning-text [--bolha-meta:var(--warning-text)]",
+  // A frase fixa da IA (aviso automatico do sistema): neutra, a superficie
+  // do evento do fio, nunca a pele da atendente nem a da IA.
+  aviso:
+    "rounded-br-[6px] border-border bg-surface-4 text-foreground [--bolha-meta:var(--text-secondary)]",
 } as const;
 
 /** A casca comum a toda bolha (raio, borda, respiro e tipografia). */
@@ -705,6 +719,9 @@ export function MessageBubble({
   // não sabe, por "Pelo WhatsApp" com o ícone do aparelho.
   const peloCelular =
     message.pelo_celular === true && !fromPatient && !fromIa && !note;
+  // A frase fixa da IA ao contato: mensagem automatica do sistema, com pele
+  // e linha de autor proprias (nunca a pele da atendente).
+  const avisoAutomatico = !fromPatient && ehAvisoAutomaticoDaIa(message);
   // Saiu de uma mensagem agendada (A1 do desenho final): a linha de autor
   // diz quem assina e que ela saiu sozinha na hora marcada, com o relogio
   // da agendada (neutro). Quem editou por ultimo assina; quem criou aparece
@@ -712,7 +729,9 @@ export function MessageBubble({
   // A autoria vem de fora da mensagem: o fio nao embute a agendada, e se a
   // consulta dela falhar a bolha so fica como uma resposta comum.
   const agendada =
-    !fromPatient && !fromIa && !note && !peloCelular ? agendadaDoFio : null;
+    !fromPatient && !fromIa && !note && !peloCelular && !avisoAutomatico
+      ? agendadaDoFio
+      : null;
   const autoriaAgendada = agendada
     ? autoriaDaBolha(agendada, authorNames)
     : null;
@@ -722,7 +741,9 @@ export function MessageBubble({
       ? "nota"
       : fromIa
         ? "ia"
-        : "atendente";
+        : avisoAutomatico
+          ? "aviso"
+          : "atendente";
 
   // Apagada SÓ AQUI ainda pode ser tirada do celular do paciente.
   //
@@ -799,6 +820,26 @@ export function MessageBubble({
         {peloCelular && !apagada ? (
           <MarcaPeloCelular className="px-1 text-[11px] font-semibold text-text-secondary" />
         ) : null}
+        {avisoAutomatico && !apagada ? (
+          // "Aviso automático" sozinho e pouco para quem ouve: o leitor de
+          // tela ouve a explicacao inteira, e o mouse ve a mesma no title.
+          <span
+            data-aviso-automatico
+            className="flex min-w-0 items-center px-1 text-[11px] font-semibold text-text-secondary"
+          >
+            <span
+              aria-hidden
+              title={EXPLICACAO_DO_AVISO_AUTOMATICO}
+              className="flex min-w-0 items-center gap-1"
+            >
+              <UsersRound className="size-3 shrink-0" />
+              {AUTOR_DO_AVISO_AUTOMATICO}
+            </span>
+            <span className="sr-only">
+              {`${AUTOR_DO_AVISO_AUTOMATICO}: ${EXPLICACAO_DO_AVISO_AUTOMATICO}`}
+            </span>
+          </span>
+        ) : null}
         {autoriaAgendada && !apagada ? (
           <span className="flex items-center gap-1 px-1 text-[11px] font-semibold text-text-secondary">
             <ClockFading aria-hidden className="size-3" />
@@ -809,6 +850,7 @@ export function MessageBubble({
         {!fromPatient &&
         !fromIa &&
         !peloCelular &&
+        !avisoAutomatico &&
         !autoriaAgendada &&
         authorName &&
         !apagada ? (

@@ -29,9 +29,11 @@ import { devolverKeys } from "@/lib/realtime/use-inbox-channel";
 // "Devolver para a IA" no cabecalho do fio (E3, 13/10/2026). O botao so
 // existe na conversa "minha" e so habilita quando o SERVIDOR diz que pode
 // (ia_devolver_disponivel, pela action): clinica da fase controlada, quem
-// pede escreve e atende a conversa, a ultima mensagem do paciente ja foi
-// respondida, o assistente esta ligado e o telefone e da equipe (nunca de
-// paciente), e o assistente responderia AGORA (horario publicado, numero
+// pede escreve e atende a conversa, o assistente esta ligado e o telefone e
+// da equipe (nunca de paciente), a ultima mensagem do contato ja foi
+// respondida (conferida so DEPOIS da liberacao desde a revisao de producao
+// de 19/10/2026: conversa de paciente nunca mostra a dica da pergunta
+// pendente), e o assistente responderia AGORA (horario publicado, numero
 // conectado, ambiente e motor; achado T1 da revisao: antes o botao
 // habilitava e a confirmacao prometia resposta com a aba dizendo "Ligado,
 // mas parado"). Fora das duas clinicas a tela nem pergunta: a dica e a de

@@ -42,6 +42,8 @@ import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 
 const NUMERO = "11111111-1111-4111-8111-111111111111";
 const SEGUNDO = "22222222-2222-4222-8222-222222222222";
+const CONVERSA = "c1111111-1111-4111-8111-111111111111";
+const OUTRA_CONVERSA = "c2222222-2222-4222-8222-222222222222";
 
 function dados(campos: Partial<DadosDaIa> = {}): DadosDaIa {
   return {
@@ -67,7 +69,7 @@ function dados(campos: Partial<DadosDaIa> = {}): DadosDaIa {
       versaoPublicada: 1,
       telefonesInvalidos: [],
       telefonesSemAutorizacao: [],
-      telefonesComConversaAberta: [],
+      conversasAbertas: [],
       horarioPublicado: {
         modo: "24h",
         minutosSemResposta: 10,
@@ -627,19 +629,95 @@ describe("a aba diz a verdade (E3)", () => {
     expect(html).not.toContain("Conversando com a equipe");
   });
 
-  it("telefone com conversa aberta com a equipe no número: o aviso na linha", () => {
+  it("telefone com conversa aberta com a equipe no número: a linha diz o número, o que fazer e leva à conversa", () => {
     const html = aba({
       dados: dados({
         situacao: {
           ...dados().situacao,
-          telefonesComConversaAberta: ["t1"],
+          conversasAbertas: [
+            { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
+          ],
         },
       }),
     });
-    expect(html).toContain(escapado(TEXTOS_DA_IA.conversaAbertaNoNumero));
-    // nao e motivo de parada
+    expect(html).toContain(
+      escapado("Tem conversa aberta com a equipe no número Número principal."),
+    );
+    expect(html).toContain(escapado(TEXTOS_DA_IA.conversaAbertaAcao));
+    expect(html).toContain(`href="/atendimento?conversa=${CONVERSA}"`);
+    expect(html).toContain(
+      escapado("Abrir no Atendimento a conversa do número Número principal"),
+    );
+    expect(html).toContain("Abrir conversa");
+    // nao e motivo de parada, mas o unico numero ligado tem a conversa
+    // aberta: a linha do telefone nao diz que conversa com o assistente
     expect(html).toContain("Conversando com a equipe");
-    expect(aba()).not.toContain(escapado(TEXTOS_DA_IA.conversaAbertaNoNumero));
+    expect(html).not.toContain("Conversa com o assistente");
+    // sem conversa aberta, nada disso
+    const semAberta = aba();
+    expect(semAberta).not.toContain(escapado(TEXTOS_DA_IA.conversaAbertaAcao));
+    expect(semAberta).not.toContain("/atendimento?conversa=");
+    expect(semAberta).toContain("Conversa com o assistente");
+  });
+
+  it("dois números ligados, conversa aberta só num: diz qual e continua Conversa com o assistente (o outro está livre)", () => {
+    const html = aba({
+      dados: dados({
+        numerosLigados: [NUMERO, SEGUNDO],
+        situacao: {
+          ...dados().situacao,
+          conversasAbertas: [
+            { telefoneId: "t1", numeroId: SEGUNDO, conversaId: OUTRA_CONVERSA },
+          ],
+        },
+      }),
+      numeros: [numero(), numero({ id: SEGUNDO, nome: "Numero 2 teste pessoal" })],
+    });
+    expect(html).toContain(
+      escapado(
+        "Tem conversa aberta com a equipe no número Numero 2 teste pessoal.",
+      ),
+    );
+    expect(html).not.toContain(
+      escapado("Tem conversa aberta com a equipe no número Número principal."),
+    );
+    expect(html).toContain(`href="/atendimento?conversa=${OUTRA_CONVERSA}"`);
+    expect(html).toContain("Conversa com o assistente");
+  });
+
+  it("conversa aberta com a lista de números que falhou: o texto sem o nome e o link", () => {
+    const html = aba({
+      numeros: null,
+      dados: dados({
+        situacao: {
+          ...dados().situacao,
+          conversasAbertas: [
+            { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
+          ],
+        },
+      }),
+    });
+    expect(html).toContain(escapado(TEXTOS_DA_IA.conversaAbertaNumDosNumeros));
+    expect(html).toContain(`href="/atendimento?conversa=${CONVERSA}"`);
+    expect(html).toContain(
+      escapado("Abrir no Atendimento a conversa aberta"),
+    );
+  });
+
+  it("a conversa aberta do telefone desligado ou que não aciona não aparece", () => {
+    const html = aba({
+      dados: dados({
+        situacao: {
+          ...dados().situacao,
+          telefonesInvalidos: ["t1"],
+          conversasAbertas: [
+            { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
+            { telefoneId: "t2", numeroId: NUMERO, conversaId: OUTRA_CONVERSA },
+          ],
+        },
+      }),
+    });
+    expect(html).not.toContain("/atendimento?conversa=");
   });
 
   it("confirmação do aviso da OpenAI sempre presente; Usar mesmo assim só depois da recusa", () => {
@@ -659,8 +737,10 @@ describe("a aba diz a verdade (E3)", () => {
             ...dados().situacao,
             tetoAtingido: true,
             versaoPublicada: null,
-            telefonesInvalidos: ["t1", "t2"],
-            telefonesComConversaAberta: ["t1"],
+            telefonesInvalidos: ["t2"],
+            conversasAbertas: [
+              { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
+            ],
             motorParado: true,
           },
         }),
@@ -845,6 +925,97 @@ describe("vários números ligados (19/10/2026)", () => {
     for (const html of estados) {
       expect(html).not.toMatch(/[—–]/);
       expect(html).not.toMatch(/um número por vez/i);
+    }
+  });
+});
+
+// Revisao de producao de 19/10/2026: o administrador desliga e nao liga de
+// novo (A4); para o super admin, os motivos sem "avise a equipe Conduzza"
+// (A3 do caminho).
+describe("revisão de produção (19/10/2026)", () => {
+  const APOIO = "Depois de desligar, só a equipe Conduzza liga de novo.";
+
+  it("administrador com o WhatsApp ligado: a linha de apoio junto do seletor e de cada número ligado", () => {
+    const html = aba({
+      dados: dados({ numerosLigados: [NUMERO, SEGUNDO] }),
+      numeros: [numero(), numero({ id: SEGUNDO, nome: "Unidade Centro" })],
+    });
+    // o seletor (antes do cartao dos numeros) e as duas linhas
+    const antesDosNumeros = html.slice(0, html.indexOf("Números do assistente"));
+    expect(antesDosNumeros).toContain(escapado(APOIO));
+    expect(linhaDoNumero(html, "Número principal")).toContain(escapado(APOIO));
+    expect(linhaDoNumero(html, "Unidade Centro")).toContain(escapado(APOIO));
+  });
+
+  it("número desligado do assistente: sem a linha (o Ligar já diz quem liga)", () => {
+    const html = aba({
+      superAdmin: false,
+      numeros: [numero(), numero({ id: SEGUNDO, nome: "Unidade Centro" })],
+    });
+    expect(linhaDoNumero(html, "Unidade Centro")).not.toContain(
+      escapado(APOIO),
+    );
+  });
+
+  it("super admin e gestor: sem a linha de apoio", () => {
+    expect(aba({ superAdmin: true })).not.toContain(escapado(APOIO));
+    expect(aba({ podeEditar: false })).not.toContain(escapado(APOIO));
+  });
+
+  it("só simulador: o seletor sem a linha (o simulador ele religa); os números ligados com ela", () => {
+    const html = aba({
+      dados: dados({
+        liberacao: {
+          liberada: true,
+          modo: "simulador",
+          pausadaPelaClinica: false,
+          tetoDiarioCentavosUsd: 500,
+        },
+      }),
+    });
+    const antesDosNumeros = html.slice(0, html.indexOf("Números do assistente"));
+    expect(antesDosNumeros).not.toContain(escapado(APOIO));
+    expect(linhaDoNumero(html, "Número principal")).toContain(escapado(APOIO));
+  });
+
+  it("super admin: os motivos dizem o que conferir; os outros papéis, o texto de sempre", () => {
+    const parado = {
+      ambienteLigado: false,
+      dados: dados({
+        interruptorLigado: false,
+        situacao: { ...dados().situacao, motorParado: true },
+      }),
+    };
+    const doSuperAdmin = aba({ ...parado, superAdmin: true });
+    expect(doSuperAdmin).toContain(
+      escapado(TEXTOS_DA_IA.motivosParaAEquipeConduzza.servidor),
+    );
+    expect(doSuperAdmin).toContain(
+      escapado(TEXTOS_DA_IA.motivosParaAEquipeConduzza.interruptor),
+    );
+    expect(doSuperAdmin).toContain(
+      escapado(TEXTOS_DA_IA.motivosParaAEquipeConduzza.motor_parado),
+    );
+    expect(doSuperAdmin).not.toContain("Avise a equipe Conduzza");
+    expect(doSuperAdmin).not.toContain(
+      escapado(TEXTOS_DA_IA.motivos.servidor),
+    );
+    const doAdministrador = aba(parado);
+    expect(doAdministrador).toContain(escapado(TEXTOS_DA_IA.motivos.servidor));
+    expect(doAdministrador).toContain(
+      escapado(TEXTOS_DA_IA.motivos.motor_parado),
+    );
+    expect(doAdministrador).not.toContain(
+      escapado(TEXTOS_DA_IA.motivosParaAEquipeConduzza.servidor),
+    );
+  });
+
+  it("nenhum travessão nos estados novos", () => {
+    for (const html of [
+      aba({ dados: dados({ numerosLigados: [NUMERO, SEGUNDO] }) }),
+      aba({ superAdmin: true, ambienteLigado: false }),
+    ]) {
+      expect(html).not.toMatch(/[—–]/);
     }
   });
 });

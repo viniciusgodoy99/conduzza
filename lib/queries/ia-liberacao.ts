@@ -52,6 +52,25 @@ export type TelefoneDaIa = {
 };
 
 /**
+ * Uma conversa aberta com a equipe (aguardando ou em atendimento) de um
+ * telefone ATIVO da lista num numero LIGADO e nao removido da clinica
+ * (situacao_da_ia_na_clinica.conversas_abertas, migration 20261019120000).
+ * A ingestao so poe na IA a conversa NOVA: enquanto esta estiver aberta, a
+ * mensagem desse telefone nesse numero fica com a equipe. No maximo uma
+ * por telefone e numero. O id da conversa leva ao Atendimento
+ * (/atendimento?conversa=<id>); nao e dado de paciente, e quem le a
+ * situacao (administrador, gestor, super admin) ja ve as conversas.
+ */
+export type ConversaAbertaDaIa = {
+  /** ia_contato_liberado.id */
+  telefoneId: string;
+  /** whatsapp_account.id do numero ligado */
+  numeroId: string;
+  /** conversation.id */
+  conversaId: string;
+};
+
+/**
  * O que a aba precisa para dizer a verdade sobre o WhatsApp (E3), sem ler
  * ia_uso nem numero de outra clinica: situacao_da_ia_na_clinica (banco, com
  * o motor da IA desde a revisao do E3) e o horario da versao PUBLICADA.
@@ -75,10 +94,15 @@ export type SituacaoDaIa = {
    */
   telefonesSemAutorizacao: string[];
   /**
-   * Ids de ia_contato_liberado ativos com conversa aberta com a equipe em
-   * algum dos numeros ligados (nao removidos) da clinica.
+   * Por telefone ativo e numero ligado (nao removido), a conversa aberta com
+   * a equipe (situacao_da_ia_na_clinica.conversas_abertas, revisao de
+   * producao de 19/10/2026). Leitura OBRIGATORIA, como as outras listas: a
+   * aba diz QUAL numero e leva a conversa. A chave antiga
+   * telefones_com_conversa_aberta (so os ids dos telefones) continua no
+   * banco para o codigo de antes e para as consultas de acompanhamento; a
+   * aba nao le mais ela.
    */
-  telefonesComConversaAberta: string[];
+  conversasAbertas: ConversaAbertaDaIa[];
   /** O horario da versao PUBLICADA (horarioDoBanco de config.ts), ou null sem versao. */
   horarioPublicado: HorarioDeOperacao | null;
   /**
@@ -145,6 +169,38 @@ function listaDeIds(valor: unknown): string[] {
   );
 }
 
+function ehUuid(valor: unknown): valor is string {
+  return typeof valor === "string" && UUID.test(valor);
+}
+
+/**
+ * conversas_abertas: a lista e obrigatoria (sem ela, lanca: a aba mostra o
+ * erro, nunca uma linha que afirma o que nao conferiu); item fora do
+ * formato fica de fora, como os ids das outras listas.
+ */
+function listaDeConversasAbertas(valor: unknown): ConversaAbertaDaIa[] {
+  if (!Array.isArray(valor)) {
+    throw new Error("situacao da IA ilegivel");
+  }
+  return valor.flatMap((item: unknown) => {
+    if (typeof item !== "object" || item === null) {
+      return [];
+    }
+    const linha = item as Record<string, unknown>;
+    return ehUuid(linha.telefone_id) &&
+      ehUuid(linha.whatsapp_account_id) &&
+      ehUuid(linha.conversation_id)
+      ? [
+          {
+            telefoneId: linha.telefone_id,
+            numeroId: linha.whatsapp_account_id,
+            conversaId: linha.conversation_id,
+          },
+        ]
+      : [];
+  });
+}
+
 /** O jsonb de situacao_da_ia_na_clinica. Formato estranho: lanca. */
 export function lerSituacaoDoBanco(
   valor: unknown,
@@ -171,7 +227,7 @@ export function lerSituacaoDoBanco(
     versaoPublicada: versao,
     telefonesInvalidos: listaDeIds(s.telefones_invalidos),
     telefonesSemAutorizacao: listaDeIds(s.telefones_sem_autorizacao),
-    telefonesComConversaAberta: listaDeIds(s.telefones_com_conversa_aberta),
+    conversasAbertas: listaDeConversasAbertas(s.conversas_abertas),
     motorParado: s.motor_parado,
   };
 }

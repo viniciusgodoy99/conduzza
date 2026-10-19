@@ -8,6 +8,10 @@ import {
   Video,
 } from "lucide-react";
 
+import {
+  AUTOR_DO_AVISO_AUTOMATICO,
+  ehAvisoAutomaticoDaIa,
+} from "@/components/atendimento/aviso-automatico";
 import { AUTOR_PELO_CELULAR } from "@/components/atendimento/pelo-celular";
 import type { MessageItem, QuotedMessage } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
@@ -46,7 +50,10 @@ export function resumoDaCitacao(
 
 /** Quem escreveu a citada, do jeito que a recepção fala. */
 export function autorDaCitacao(
-  mensagem: Pick<QuotedMessage, "author" | "author_user_id" | "pelo_celular">,
+  mensagem: Pick<
+    QuotedMessage,
+    "author" | "author_user_id" | "pelo_celular" | "body" | "is_internal_note"
+  >,
   contato: string,
   nomes: Record<string, string>,
 ): string {
@@ -67,6 +74,11 @@ export function autorDaCitacao(
     // aprovada depois de a tela carregar cairia aqui: a citação da mensagem
     // DELA apareceria assinada como se fosse sua.
     return nomes[mensagem.author_user_id] ?? "Atendente";
+  }
+  // A frase fixa que o contato recebe quando a IA passa a conversa para a
+  // equipe: a mesma assinatura da bolha (revisao de producao de 19/10/2026).
+  if (ehAvisoAutomaticoDaIa(mensagem)) {
+    return AUTOR_DO_AVISO_AUTOMATICO;
   }
   return "Sistema";
 }

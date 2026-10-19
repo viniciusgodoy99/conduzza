@@ -202,7 +202,7 @@ describe("Em uso no WhatsApp: a mesma regra do verde da aba (T3)", () => {
         versaoPublicada: 2,
         telefonesInvalidos: [],
         telefonesSemAutorizacao: [],
-        telefonesComConversaAberta: [],
+        conversasAbertas: [],
         horarioPublicado: {
           modo: "24h",
           minutosSemResposta: 10,

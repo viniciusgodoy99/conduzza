@@ -122,12 +122,71 @@ describe("contexto do motor (service role)", () => {
     await carregarCatalogoDoAgente(cliente, CLINICA);
     expect(consultas.length).toBeGreaterThan(0);
     for (const consulta of consultas) {
+      // A linha da propria clinica e lida pela chave dela (id = clinic_id).
       expect(consulta.filtros, consulta.tabela).toContainEqual([
-        "clinic_id",
+        consulta.tabela === "clinic" ? "id" : "clinic_id",
         CLINICA,
       ]);
       expect(consulta.colunas).not.toContain("*");
     }
+  });
+
+  // Revisao de producao de 19/10/2026 (Q7, decisao do dono): o nome
+  // cadastrado da clinica vem no catalogo, que serve ao WhatsApp, a
+  // retomada, ao simulador e a previa.
+  it("catálogo traz o nome cadastrado da clínica, lido só pela chave dela", async () => {
+    const OUTRA = "bbbbbbbb-0000-4000-8000-000000000000";
+    const { cliente, consultas } = bancoFalso({
+      clinic: [
+        { id: OUTRA, name: "Outra Clínica" },
+        { id: CLINICA, name: "  Clínica   Bem Estar  " },
+      ],
+    });
+    const catalogo = await carregarCatalogoDoAgente(cliente, CLINICA);
+    expect(catalogo.nomeDaClinica).toBe("Clínica Bem Estar");
+    const daClinica = consultas.filter((c) => c.tabela === "clinic");
+    expect(daClinica).toHaveLength(1);
+    expect(daClinica[0]?.colunas).toBe("name");
+    expect(daClinica[0]?.filtros).toEqual([["id", CLINICA]]);
+
+    // Sem a linha (ou com um nome que o filtro barraria por telefone), o
+    // agente atende sem o nome.
+    expect(
+      (await carregarCatalogoDoAgente(bancoFalso({}).cliente, CLINICA))
+        .nomeDaClinica,
+    ).toBeNull();
+    expect(
+      (
+        await carregarCatalogoDoAgente(
+          bancoFalso({
+            clinic: [{ id: CLINICA, name: "Clínica Bela (85) 99999-8888" }],
+          }).cliente,
+          CLINICA,
+        )
+      ).nomeDaClinica,
+    ).toBeNull();
+  });
+
+  it("leitura da clínica que falha derruba o catálogo (nada pela metade)", async () => {
+    const { cliente } = bancoFalso({});
+    const comErro = {
+      from: (tabela: string) =>
+        tabela === "clinic"
+          ? {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: null,
+                    error: { code: "XX000" },
+                  }),
+                }),
+              }),
+            }
+          : cliente.from(tabela),
+    } as unknown as SupabaseClient;
+    await expect(carregarCatalogoDoAgente(comErro, CLINICA)).rejects.toThrow(
+      "leitura do agente falhou",
+    );
   });
 
   it("rascunho com instruções e a base viva; sem rascunho, copia a publicada", async () => {

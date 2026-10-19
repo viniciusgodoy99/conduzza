@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -17,32 +17,48 @@ import {
   type MotivoDaFalha,
 } from "@/lib/domain/conformidade/veredicto";
 
-// Espelhos do E3 entre o TS e a migration 20261013100000 (M1): a frase fixa,
-// o corpo de cada evento no fio, os motivos de escalonamento, os codigos de
+// Espelhos do E3 entre o TS e o banco: a frase fixa e o corpo de cada evento
+// no fio (lidos da migration MAIS NOVA que define cada funcao, que e o corpo
+// que vale com todas aplicadas), os motivos de escalonamento, os codigos de
 // motivo_da_falha e o grant de colunas de ai_decision_log (todas menos
-// blocked_draft). Mudou de um lado, o teste quebra ate mudar do outro.
+// blocked_draft; estes tres da migration 20261013100000, M1). Mudou de um
+// lado, o teste quebra ate mudar do outro.
 
-const M1 = readFileSync(
-  "supabase/migrations/20261013100000_ia_whatsapp_fila.sql",
-  "utf-8",
-);
+const PASTA_DAS_MIGRATIONS = "supabase/migrations";
+const ARQUIVO_DA_M1 = "20261013100000_ia_whatsapp_fila.sql";
+
+const M1 = readFileSync(`${PASTA_DAS_MIGRATIONS}/${ARQUIVO_DA_M1}`, "utf-8");
+
+/** As migrations em ordem de aplicacao (o nome comeca pela data e hora). */
+const MIGRATIONS = readdirSync(PASTA_DAS_MIGRATIONS)
+  .filter((arquivo) => arquivo.endsWith(".sql"))
+  .sort();
 
 /** Os literais entre aspas simples de um trecho de SQL. */
 function literais(trecho: string): string[] {
   return [...trecho.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
 }
 
-/** O corpo de uma funcao da M1 ($function$ ... $function$). */
-function corpoDaFuncao(nome: string): string {
-  const corpo = M1.match(
-    new RegExp(
-      `create function public\\.${nome}\\([\\s\\S]*?\\$function\\$([\\s\\S]*?)\\$function\\$`,
-    ),
-  )?.[1];
-  if (!corpo) {
-    throw new Error(`${nome} nao encontrada na M1`);
+/**
+ * O corpo ($function$ ... $function$) de uma funcao na migration MAIS NOVA
+ * que a cria ou recria (create ou create or replace): o banco aplica as
+ * migrations em ordem, entao e esse o corpo que vale. Devolve tambem o
+ * arquivo, para o teste dizer de onde leu.
+ */
+function corpoMaisNovo(nome: string): { arquivo: string; corpo: string } {
+  const definicao = new RegExp(
+    `create (?:or replace )?function public\\.${nome}\\([\\s\\S]*?\\$function\\$([\\s\\S]*?)\\$function\\$`,
+    "gi",
+  );
+  for (const arquivo of [...MIGRATIONS].reverse()) {
+    const sql = readFileSync(`${PASTA_DAS_MIGRATIONS}/${arquivo}`, "utf-8");
+    // A ultima definicao do arquivo, se ele tiver mais de uma.
+    const corpo = [...sql.matchAll(definicao)].at(-1)?.[1];
+    if (corpo !== undefined) {
+      return { arquivo, corpo };
+    }
   }
-  return corpo;
+  throw new Error(`${nome} nao encontrada nas migrations`);
 }
 
 // As falhas do turno alem das do verificador (FalhaDoAgente), conferidas
@@ -60,15 +76,24 @@ type Sobra = Exclude<
 >;
 const semSobra: [Sobra] extends [never] ? true : false = true;
 
-describe("espelhos do E3 com a M1", () => {
+describe("espelhos do E3 com as migrations", () => {
   it("a frase fixa do SQL é a do TS, palavra por palavra", () => {
-    const corpo = corpoDaFuncao("frase_de_escalonamento_da_ia");
+    const { corpo } = corpoMaisNovo("frase_de_escalonamento_da_ia");
     const frase = corpo.match(/select '([^']*)'::text/)?.[1];
     expect(frase).toBe(FRASE_DE_ESCALONAMENTO);
   });
 
+  it("rotulo_do_motivo_da_ia vem da migration mais nova que o define, não da M1", () => {
+    const { arquivo } = corpoMaisNovo("rotulo_do_motivo_da_ia");
+    expect(arquivo).not.toBe(ARQUIVO_DA_M1);
+    // A 20261019120000 (revisao de producao de 19/10/2026) recriou a funcao
+    // com o texto novo de 'parada'; uma migration posterior que a recrie
+    // passa a valer no lugar dela.
+    expect(arquivo >= "20261019120000").toBe(true);
+  });
+
   it("rotulo_do_motivo_da_ia é TEXTO_DO_EVENTO_DA_IA, motivo a motivo", () => {
-    const corpo = corpoDaFuncao("rotulo_do_motivo_da_ia");
+    const { corpo } = corpoMaisNovo("rotulo_do_motivo_da_ia");
     const doBanco = Object.fromEntries(
       [...corpo.matchAll(/when '([a-z_]+)' then '([^']*)'/g)].map((m) => [
         m[1]!,
