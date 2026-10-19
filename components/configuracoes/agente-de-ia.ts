@@ -26,11 +26,16 @@ import type {
 //   lib/queries/ia-liberacao.ts, decidida no servidor).
 // - Quem altera: o administrador da clinica e o super admin. Gestor ve tudo
 //   desabilitado, com a dica. O interruptor geral e so do super admin.
-// - Nesta fase (E3, 13/10/2026), LIGAR o WhatsApp e so da equipe Conduzza:
-//   escolher "Conversar com a equipe", usar um numero e adicionar ou ligar um
-//   telefone. O administrador ve esses controles desabilitados, com a dica
+// - Nesta fase (E3, 13/10/2026), LIGAR o atendimento pelo WhatsApp e so da
+//   equipe Conduzza: escolher "Conversar com a equipe" e usar um numero. O
+//   administrador ve esses controles desabilitados, com a dica
 //   soEquipeConduzzaLiga; desligar continua com ele. O banco confere de novo
 //   (ia_exigir_equipe_conduzza).
+// - Telefone da equipe (decisao do dono de 19/10/2026, migration
+//   20261019100000): adicionar e "Ligar de novo" voltam para o
+//   administrador da clinica (e o super admin), com a mesma confirmacao do
+//   aviso da OpenAI. O "Usar mesmo assim" do telefone de paciente (o forcar)
+//   continua so do super admin, aqui, na action e no banco.
 // - O estado diz a verdade de HOJE: "Ligado, mas parado" quando a escolha
 //   da clinica e ligar, mas alguma trava ainda diz nao (ambiente, interruptor
 //   geral, pausa, teto de gasto, versao publicada, horario, motor da IA,
@@ -460,6 +465,8 @@ export const TEXTOS_DA_IA = {
   contatoDePaciente:
     "Este telefone é de um paciente da clínica. A IA só conversa com telefones da equipe.",
   forcarContatoDePaciente: "Usar mesmo assim (fica registrado)",
+  soEquipeConduzzaForca:
+    "Somente a equipe Conduzza usa o telefone de um paciente como telefone da equipe.",
   confirmarAvisoDaOpenai:
     "Quem usa este celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar só dados de teste.",
   avisoDaOpenaiObrigatorio:
@@ -594,8 +601,9 @@ export const telefoneDaEquipeSchema = z
     }),
     /**
      * So o super admin ve a opcao, depois da recusa de contato de paciente
-     * (D43). O banco confere de novo (ia_exigir_equipe_conduzza) e grava a
-     * trilha.
+     * (D43). A action recusa o forcar de quem nao e super admin
+     * (soEquipeConduzzaForca, sem banco), e o banco confere de novo
+     * (ia_exigir_equipe_conduzza) e grava a trilha.
      */
     forcarContatoDePaciente: z.boolean().optional(),
   })
@@ -612,8 +620,10 @@ export type AcaoDaIa =
  * Sentido de cada acao: `escolha` = mudar o modo (desligar e "Só
  * simulador"), e tambem desligar um numero ou um telefone; `equipe` =
  * escolher "Conversar com a equipe"; `numero` = USAR um numero; `telefone` =
- * ADICIONAR ou LIGAR um telefone. Ligar o WhatsApp e so da equipe Conduzza
- * nesta fase: o administrador recebe soEquipeConduzzaLiga nos tres.
+ * ADICIONAR ou LIGAR um telefone. Ligar o atendimento pelo WhatsApp (modo e
+ * numero) e so da equipe Conduzza nesta fase: o administrador recebe
+ * soEquipeConduzzaLiga nos dois. O telefone, desde 19/10/2026 (decisao do
+ * dono), so pede a permissao, como desligar.
  */
 export function dicasDaIa(entrada: {
   podeEditar: boolean;
@@ -629,7 +639,7 @@ export function dicasDaIa(entrada: {
     equipe:
       quemLiga ?? (faltas.length > 0 ? TEXTOS_DA_IA.faltaParaAEquipe : null),
     numero: quemLiga,
-    telefone: quemLiga,
+    telefone: permissao,
     interruptor: superAdmin ? null : TEXTOS_DA_IA.soEquipeConduzza,
   };
 }

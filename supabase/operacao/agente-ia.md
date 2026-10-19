@@ -2,7 +2,7 @@
 
 Como ligar a IA no WhatsApp na teste123, como desligar em segundos, o que conferir todo dia, o que fazer em cada incidente e como voltar atrás.
 
-Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode"). **As migrations ainda não estão aplicadas** (M1 `20261013100000_ia_whatsapp_fila.sql`, M3 `20261013110000_ia_whatsapp_gatilho_mensagem.sql`, M2 `20261013120000_ia_whatsapp_funcoes_quentes.sql`, nessa ordem). Contrato do banco no `docs/04`, 17.13; turno e travas no `docs/03`, seção 14; estado e decisões no `docs/05`, Fase 3, entrada "E3"; o motor da IA em `supabase/operacao/motor-por-cron.md`, "Resposta da IA no WhatsApp (motor-ia)".
+Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicado em 19/10/2026. **As migrations foram aplicadas em 13/10/2026** (M1 `20261013100000_ia_whatsapp_fila.sql`, M3 `20261013110000_ia_whatsapp_gatilho_mensagem.sql`, M2 `20261013120000_ia_whatsapp_funcoes_quentes.sql`, nessa ordem). Contrato do banco no `docs/04`, 17.13; turno e travas no `docs/03`, seção 14; estado e decisões no `docs/05`, Fase 3, entrada "E3"; o motor da IA em `supabase/operacao/motor-por-cron.md`, "Resposta da IA no WhatsApp (motor-ia)".
 
 ---
 
@@ -13,7 +13,7 @@ Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode"). **As migr
 - A IA conversa só com os **telefones da equipe** ligados na aba Agente de IA. Paciente nenhum.
 - **Nunca imprima telefone** no SQL editor, em chat, ticket ou print: as consultas abaixo devolvem contagens, ids e o rótulo do telefone ("De quem é").
 - **Nunca copie texto de conversa nem o rascunho bloqueado** para fora do sistema (chat, ticket, log, planilha). Conversa de paciente é dado de saúde (LGPD, art. 5º, II).
-- Ligar é **só da equipe Conduzza** (super admin) nesta fase. Desligar, qualquer administrador da clínica também pode, e deve, em caso de dúvida.
+- Ligar o modo "Conversar com a equipe" e o número é **só da equipe Conduzza** (super admin) nesta fase. **Telefone da equipe:** desde 19/10/2026 (decisão do dono; vale depois da migration `20261019100000` aplicada), o **administrador da clínica** também cadastra e liga ("Adicionar" e "Ligar de novo"), sempre com a confirmação do aviso da OpenAI; o "Usar mesmo assim" do telefone de paciente continua **só da equipe Conduzza**. Desligar, qualquer administrador da clínica também pode, e deve, em caso de dúvida.
 - Nenhum comando aqui levanta 40001 ou 40P01. Não rode `update` direto em `conversation.status`, `ai_turno`, `ia_janela_da_conversa` nem `job_queue` fora do que este arquivo manda.
 
 ---
@@ -27,6 +27,13 @@ Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode"). **As migr
 3. Tipos gerados (`supabase gen types typescript --project-id imizkroxevcawomvgrbn`) e comparados com os escritos à mão.
 4. Código publicado na Vercel (inerte até a operação).
 5. RLS, integração e e2e do E3 verdes contra o banco.
+6. **Telefone pelo administrador (19/10/2026):** o ensaio `~/.claude/plans/e3-whatsapp/ensaios/ensaio-m4-20261019100000.sql` ('ENSAIO OK'), a migration `20261019100000_ia_telefone_pelo_administrador.sql` (sem trava de tabela) e **só depois** o código da aba que habilita "Adicionar" e "Ligar de novo" para o administrador. Corpo anterior em `supabase/operacao/rollback/20261019100000-corpos-anteriores.sql`. Conferir depois de aplicar:
+
+   ```sql
+   select md5(prosrc) = '277d6a2d9d9570d053cc0f5babf2c464' as telefone_pelo_administrador
+   from pg_proc
+   where oid = 'public.definir_contato_liberado_da_ia(uuid, text, text, boolean, boolean)'::regprocedure;
+   ```
 
 Conferir que as três migrations estão no banco:
 
@@ -46,9 +53,9 @@ select
 **Do dono (bloqueiam o ligar):**
 
 - **D1:** o celular de teste, que não pode ser o número da clínica.
-- **D5:** a frase fixa aprovada por escrito. Hoje é provisória: "Recebi sua mensagem. Vou passar sua conversa para alguém da nossa equipe, que vai te responder por aqui assim que possível." Se o texto mudar, ele muda no código (`lib/domain/conformidade/frase-fixa.ts`) e no banco (`frase_de_escalonamento_da_ia()`) na mesma leva.
+- **D5:** a frase fixa, aprovada pelo dono em 19/10/2026: "Recebi sua mensagem. Vou passar sua conversa para alguém da nossa equipe, que vai te responder por aqui assim que possível." Se o texto mudar, ele muda no código (`lib/domain/conformidade/frase-fixa.ts`) e no banco (`frase_de_escalonamento_da_ia()`) na mesma leva.
 - **D32:** o aviso por escrito a quem usa o celular de teste: o que escrever vai para a OpenAI, nos EUA, e só dados de teste.
-- **D34:** a rodada paga de aceite do filtro do CFM, salvo dispensa por escrito.
+- **D34:** a rodada paga de aceite do filtro do CFM, salvo dispensa por escrito. **Dispensada pelo dono em 19/10/2026 para esta fase** (só telefones da equipe); **obrigatória antes de qualquer paciente.**
 - Também: a confirmação das ids (D38) e o interruptor geral só no passo 6 abaixo (D33).
 
 ---
@@ -59,10 +66,10 @@ Na ordem. Cada passo só depois do anterior conferido.
 
 1. **Publicar a primeira versão do assistente** (Tela 6 da teste123, por administrador, gestor ou super admin). Modo de horário **24 horas** ou **Só fora do expediente** ("Se a equipe não responder" ainda não funciona no WhatsApp: a conversa passaria para a equipe).
 
-2. **Trocar o telefone da equipe** (super admin, aba Agente de IA da teste123):
+2. **Trocar o telefone da equipe** (super admin ou, depois da migration `20261019100000`, o administrador da teste123; aba Agente de IA da teste123):
    - desligar o telefone cadastrado hoje: é o número da própria clínica e aparece como "Não aciona o assistente";
    - adicionar o celular de quem vai testar, com "De quem é" e marcando a confirmação "Quem usa este celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar só dados de teste." (vai para a trilha);
-   - se a aba recusar com "Este telefone é de um paciente da clínica...", **pare** e fale com o dono. "Usar mesmo assim (fica registrado)" só com o ok dele, e fica na trilha.
+   - se a aba recusar com "Este telefone é de um paciente da clínica...", **pare** e fale com o dono. "Usar mesmo assim (fica registrado)" só com o ok dele, só pelo super admin (o administrador da clínica nunca vê a opção), e fica na trilha.
 
 3. **Conferir conversa aberta** do celular de teste no número que será escolhido. Conversa aberta com a equipe não passa para a IA; a IA começa na próxima conversa nova.
 
@@ -94,7 +101,7 @@ Na ordem. Cada passo só depois do anterior conferido.
 
    Agendar é inerte enquanto não houver resposta devida: a guarda não chama a Vercel.
 
-6. **Ligar o interruptor geral** (super admin, aba Agente de IA, cartão "Interruptor geral"). Isso também libera o simulador da teste123. A **Conduzza Teste continua parada**: só a equipe Conduzza a liga, e ela não tem modo, número nem telefone ligados.
+6. **Ligar o interruptor geral** (super admin, aba Agente de IA, cartão "Interruptor geral"). Isso também libera o simulador da teste123. A **Conduzza Teste continua parada**: só a equipe Conduzza liga o modo e o número dela, e ela não tem nenhum dos dois ligado (o administrador de lá pode cadastrar telefones desde a migration `20261019100000`, mas sem o modo e o número eles não acionam o assistente).
 
 7. **Conferir:**
    - a aba da teste123 em "Conversando com a equipe", **sem nenhum motivo** de parada;
@@ -125,7 +132,7 @@ Na ordem. Cada passo só depois do anterior conferido.
 
 9. **Primeira semana:** o dono revisa 100% das conversas, bloqueios e escalonamentos (consultas de "Acompanhamento", abaixo).
 
-10. **Conduzza Teste**, só depois de 3 a 5 dias limpos na teste123 e das 20 conversas revisadas: os mesmos passos, pela equipe Conduzza, com o número `d73d3e43-e299-4433-8f52-9f9cde6da5b9` (D37). O administrador de lá não liga nada. **Antes do passo 2**, o super admin entra como membro ativo da Conduzza Teste (D37): a confirmação do aviso da OpenAI vai para a trilha com a sessão de quem adiciona o telefone, e a política do `audit_log` só aceita membro ativo. Sem isso, o telefone é gravado, mas a confirmação fica só no log da aplicação (`ia_aviso_da_openai_sem_trilha`), sem linha na trilha. Na teste123 ele já é membro ativo.
+10. **Conduzza Teste**, só depois de 3 a 5 dias limpos na teste123 e das 20 conversas revisadas: os mesmos passos, com o número `d73d3e43-e299-4433-8f52-9f9cde6da5b9` (D37). **Quem cadastra os telefones (passo 2):** o administrador de lá (decisão do dono de 19/10/2026, depois da migration `20261019100000`), pela aba, com a confirmação do aviso da OpenAI, que vai para a trilha no nome dele (ele é membro ativo). Telefone de paciente ("Usar mesmo assim") continua só com o super admin e o ok do dono. Os passos 4 em diante (número, modo, motor e interruptor) continuam **só da equipe Conduzza**. Se for o super admin quem cadastra algum telefone de lá, **antes do passo 2** ele entra como membro ativo da Conduzza Teste (D37): a confirmação do aviso da OpenAI vai para a trilha com a sessão de quem adiciona o telefone, e a política do `audit_log` só aceita membro ativo. Sem isso, o telefone é gravado, mas a confirmação fica só no log da aplicação (`ia_aviso_da_openai_sem_trilha`), sem linha na trilha. Na teste123 ele já é membro ativo.
 
 ---
 
@@ -163,7 +170,7 @@ Desligar **nunca envia nada** ao contato: as conversas da IA voltam para a equip
 
 **Desligar é sempre pela RPC ou pela aba.** `update` direto em `ia_interruptor`, `ia_liberacao` ou `ia_numero_liberado` é só recuo (se a RPC falhar): desliga sem devolver as conversas, que ficam em `ia_atendendo` até a varredura ou até alguém rodar `select public.ia_desligar(array['<clinic_id>']::uuid[]);` no SQL editor.
 
-**Religar** é só da equipe Conduzza, pelos passos de "Ligar", e só depois de entender o que fez desligar.
+**Religar** o modo e o número é só da equipe Conduzza, pelos passos de "Ligar", e só depois de entender o que fez desligar. Um telefone da equipe desligado o administrador da clínica também religa ("Ligar de novo", desde a migration `20261019100000`); sem o modo e o número ligados, ele não aciona o assistente.
 
 ---
 
@@ -336,6 +343,8 @@ Nesta fase a IA não resolve conversa sozinha e o botão Resolver não aparece p
 ## Rollback
 
 Na ordem. Detalhe e lista exata de objetos no `docs/04`, 17.13, "Rollback".
+
+**Só o telefone pelo administrador (migration `20261019100000`, sem desfazer o E3):** reaplicar o corpo de `supabase/operacao/rollback/20261019100000-corpos-anteriores.sql` (sem trava de tabela); ligar telefone volta a ser só da equipe Conduzza. Os telefones que o administrador ligou continuam ligados: desligar pela aba se o dono quiser. O código novo sem a migration mostra o texto de permissão ao administrador que tenta ligar; nada é gravado. Para desfazer o E3 inteiro, este passo não é preciso: o passo 6 apaga a função de cinco argumentos de qualquer jeito.
 
 1. Desligar tudo ("Desligar em segundos": interruptor geral) e `select public.motor_ia_desagendar();`.
 2. Conferir zero conversas na IA e zero `responder_com_ia` pendentes ou executando; cancelar os pendentes que sobrarem.

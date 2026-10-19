@@ -414,18 +414,21 @@ describe("teto e textos", () => {
   });
 });
 
-// E3 (13/10/2026): nesta fase, ligar o WhatsApp e so da equipe Conduzza. O
-// administrador ve os controles de ligar desabilitados, com a dica; desligar
-// continua com ele. A aba diz a verdade (motivos novos), a linha do telefone
-// que nao aciona o assistente tem estado proprio, e o formulario pede sempre
-// a confirmacao do aviso da OpenAI.
+// E3 (13/10/2026): nesta fase, ligar o atendimento pelo WhatsApp (modo
+// equipe e usar numero) e so da equipe Conduzza. O administrador ve esses
+// controles desabilitados, com a dica; desligar continua com ele. Telefone
+// da equipe (decisao do dono de 19/10/2026): adicionar e "Ligar de novo"
+// habilitados para o administrador; "Usar mesmo assim" so para o super
+// admin. A aba diz a verdade (motivos novos), a linha do telefone que nao
+// aciona o assistente tem estado proprio, e o formulario pede sempre a
+// confirmacao do aviso da OpenAI.
 describe("ligar só pela equipe Conduzza (E3)", () => {
   const DOIS_NUMEROS = [
     numero(),
     numero({ id: SEGUNDO, nome: "Unidade Centro" }),
   ];
 
-  it("administrador: ligar visível e preso, com a dica; desligar livre", () => {
+  it("administrador: modo equipe e número visíveis e presos, com a dica; desligar livre", () => {
     const html = aba({ numeros: DOIS_NUMEROS });
     // o modo equipe ja gravado continua pressionado; a troca para equipe so
     // e possivel saindo dele, e ai fica presa (ver o teste seguinte)
@@ -435,18 +438,41 @@ describe("ligar só pela equipe Conduzza (E3)", () => {
     expect(botaoDesabilitado(html, "Parar de usar")).toBe(false);
     expect(botaoDesabilitado(html, "Usar este número")).toBe(true);
     expect(botaoComDica(html, "Usar este número")).toBe(true);
-    // telefone: desligar livre; adicionar e ligar de novo, presos
+    // telefone: desligar livre
     expect(botaoDesabilitado(html, "Desligar")).toBe(false);
-    expect(botaoDesabilitado(html, "Ligar de novo")).toBe(true);
-    expect(botaoComDica(html, "Ligar de novo")).toBe(true);
-    expect(botaoDesabilitado(html, "Adicionar")).toBe(true);
-    expect(botaoComDica(html, "Adicionar")).toBe(true);
+  });
+
+  it("administrador: adicionar telefone e Ligar de novo habilitados (19/10/2026), com os campos e a confirmação da OpenAI livres", () => {
+    const html = aba({ numeros: DOIS_NUMEROS });
+    expect(botaoDesabilitado(html, "Adicionar")).toBe(false);
+    expect(botaoComDica(html, "Adicionar")).toBe(false);
+    expect(botaoDesabilitado(html, "Ligar de novo")).toBe(false);
+    expect(botaoComDica(html, "Ligar de novo")).toBe(false);
     const campos = (html.match(/<input[^>]*>/g) ?? []).filter(
       (campo) => !campo.includes('aria-hidden="true"'),
     );
+    expect(campos).toHaveLength(2);
     for (const campo of campos) {
-      expect(campo).toContain('disabled=""');
+      expect(campo).not.toContain('disabled=""');
     }
+    const caixas = html.match(/<button[^>]*role="checkbox"[^>]*>/g) ?? [];
+    expect(caixas).toHaveLength(1);
+    expect(caixas[0]).not.toContain('disabled=""');
+    expect(html).toContain(escapado(TEXTOS_DA_IA.confirmarAvisoDaOpenai));
+    // o forcar nunca aparece de saida (e, para o administrador, nem depois
+    // da recusa: a action so devolve pedeForcar ao super admin)
+    expect(html).not.toContain(escapado(TEXTOS_DA_IA.forcarContatoDePaciente));
+  });
+
+  it("administrador: telefone que não aciona o assistente continua com Ligar de novo preso, com a frase da linha", () => {
+    const html = aba({
+      dados: dados({
+        situacao: { ...dados().situacao, telefonesInvalidos: ["t2"] },
+      }),
+    });
+    expect(botaoDesabilitado(html, "Ligar de novo")).toBe(true);
+    expect(botaoComDica(html, "Ligar de novo")).toBe(true);
+    expect(html).toContain(escapado(TEXTOS_DA_IA.telefoneInvalidoNaLinha));
   });
 
   it("administrador com o assistente desligado: Conversar com a equipe preso, e a frase visível", () => {

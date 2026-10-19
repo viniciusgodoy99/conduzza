@@ -44,10 +44,13 @@ import { adminClient } from "../rls/stack";
 //   chamadas daqui seguem passando); quem a sessao pode ou nao pode chamar
 //   esta em tests/rls/ia-liberacao.test.ts.
 // - E3 (migration 20261013100000): ligar o WhatsApp (modo contatos, numero,
-//   telefone) passou a ser so da equipe Conduzza. A service role continua
-//   ligando (ela e o servidor e o SQL editor), entao as chamadas daqui nao
-//   mudam; o administrador recebendo 42501 ao ligar esta em
-//   tests/rls/ia-liberacao.test.ts e tests/rls/ia-whatsapp.test.ts. Desligar
+//   telefone) passou a ser so da equipe Conduzza; desde 19/10/2026 (decisao
+//   do dono, migration 20261019100000) o telefone volta a ser ligado tambem
+//   pelo administrador da clinica, e o forcar continua so da equipe
+//   Conduzza. A service role continua ligando (ela e o servidor e o SQL
+//   editor), entao as chamadas daqui nao mudam; o que o administrador pode
+//   ou nao ao ligar esta em tests/rls/ia-liberacao.test.ts e
+//   tests/rls/ia-whatsapp.test.ts. Desligar
 //   agora grava o evento "O assistente foi desligado..." em cada conversa
 //   devolvida (nenhuma mensagem ao contato), a leitura da aba ganha a
 //   situacao (situacao_da_ia_na_clinica) e ai_decision_log ganha desfecho e

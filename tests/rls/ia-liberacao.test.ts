@@ -20,10 +20,13 @@ import { adminClient, anonClient } from "./stack";
 //   - definir_liberacao_da_ia, definir_numero_da_ia e
 //     definir_contato_liberado_da_ia: o ADMINISTRADOR ativo da propria
 //     clinica (da lista ou de teste) DESLIGA e poe em "So simulador", com a
-//     trilha no nome dele; LIGAR o WhatsApp (modo contatos, numero, telefone)
-//     e so da equipe Conduzza nesta fase (E3, decisao do dono de 13/10/2026,
-//     migration 20261013100000): o administrador recebe 42501 e o sistema
-//     liga. Um numero por vez (ligar um desliga o outro na mesma chamada; com
+//     trilha no nome dele; LIGAR o atendimento pelo WhatsApp (modo contatos
+//     e numero) e so da equipe Conduzza nesta fase (E3, decisao do dono de
+//     13/10/2026, migration 20261013100000): o administrador recebe 42501 e
+//     o sistema liga. TELEFONE da equipe (decisao do dono de 19/10/2026,
+//     migration 20261019100000): o administrador liga (sem o nono digito,
+//     gravado pela chave canonica) e desliga; o forcar dele da 42501. Um
+//     numero por vez (ligar um desliga o outro na mesma chamada; com
 //     erro, nada muda); gestor, recepcao, leitura, pendente, admin de outra
 //     clinica, admin de clinica fora da lista e anon: 42501 (na F, o 42501
 //     vem do guarda: o sistema desliga a mesma linha sem erro).
@@ -751,7 +754,7 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
     }
   });
 
-  it("o administrador da A desliga e poe em So simulador; ligar o WhatsApp (modo contatos, numero, telefone) e so da equipe Conduzza (42501)", async () => {
+  it("o administrador da A desliga e poe em So simulador; ligar o modo contatos e o numero e so da equipe Conduzza (42501); telefone, o administrador liga e desliga (19/10/2026)", async () => {
     const adminA = como("admin-a");
     const ok = async (
       cliente: SupabaseClient,
@@ -886,16 +889,12 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       [segundoNumeroA]: false,
     });
 
-    // telefone: o administrador nao liga; o sistema liga sem o nono digito
-    // (gravado pela chave canonica) e o administrador desliga
-    await negado("definir_contato_liberado_da_ia", {
-      p_clinic_id: clinicaA,
-      p_telefone_e164: TELEFONE_DO_ADMIN_SEM_NONO,
-      p_rotulo: "Admin pela tela",
-      p_ativo: true,
-    });
+    // telefone (decisao do dono de 19/10/2026, migration 20261019100000):
+    // o administrador liga sem o nono digito (gravado pela chave canonica)
+    // e desliga; o forcar dele continua 42501 (so a equipe Conduzza), mesmo
+    // sem sinal de paciente
     await ok(
-      admin,
+      adminA,
       "definir_contato_liberado_da_ia",
       {
         p_clinic_id: clinicaA,
@@ -905,6 +904,13 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       },
       true,
     );
+    await negado("definir_contato_liberado_da_ia", {
+      p_clinic_id: clinicaA,
+      p_telefone_e164: TELEFONE_DO_ADMIN,
+      p_rotulo: "",
+      p_ativo: true,
+      p_forcar_contato_existente: true,
+    });
     await ok(
       adminA,
       "definir_contato_liberado_da_ia",
@@ -939,8 +945,8 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
     expect(depois.contatos).toHaveLength((antes.contatos ?? []).length + 1);
 
     // trilha no nome do administrador: so o que ele fez (simulador e
-    // desligar, desligar o segundo numero, desligar o telefone); os 42501
-    // nao deixaram trilha
+    // desligar, desligar o segundo numero, ligar e desligar o telefone); os
+    // 42501 nao deixaram trilha
     const { data: trilha } = await admin
       .from("audit_log")
       .select("entity, action, entity_id")
@@ -966,9 +972,9 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
         entity_id: segundoNumeroA,
       },
     ]);
-    expect(
-      linhas.filter((l) => l.entity === "ia_contato_liberado"),
-    ).toHaveLength(1);
+    const doTelefone = linhas.filter((l) => l.entity === "ia_contato_liberado");
+    expect(doTelefone).toHaveLength(2);
+    expect(new Set(doTelefone.map((l) => l.entity_id)).size).toBe(1);
     expect(linhas.every((l) => l.action === "editou")).toBe(true);
   });
 

@@ -112,9 +112,11 @@ import type { DadosDaIa, TelefoneDaIa } from "@/lib/queries/ia-liberacao";
 //   "Usar mesmo assim", e fica registrado). A linha do telefone que nao
 //   aciona o assistente tem estado proprio, e a do telefone com conversa
 //   aberta com a equipe avisa que o assistente comeca na proxima conversa.
-// - Ligar o WhatsApp (modo equipe, usar numero, adicionar ou ligar
-//   telefone) e so da equipe Conduzza nesta fase: o administrador ve os
-//   controles desabilitados, com a dica; desligar continua com ele.
+// - Ligar o atendimento pelo WhatsApp (modo equipe e usar numero) e so da
+//   equipe Conduzza nesta fase: o administrador ve esses controles
+//   desabilitados, com a dica; desligar continua com ele. Adicionar telefone
+//   e "Ligar de novo" ficam com o administrador desde 19/10/2026 (decisao do
+//   dono); "Usar mesmo assim" (o forcar) continua so do super admin.
 // - "Interruptor geral": botao so para o super admin; os demais veem o
 //   estado e quem liga.
 // - "Teto de gasto": so leitura nesta fase.
@@ -843,7 +845,8 @@ function CartaoDosTelefones({
     resolver: zodResolver(telefoneDaEquipeSchema),
     defaultValues: vazio,
   });
-  // Adicionar e ligar: so a equipe Conduzza nesta fase (dicas.telefone).
+  // Adicionar e ligar: o administrador da clinica e o super admin (desde
+  // 19/10/2026; dicas.telefone so pede a permissao).
   const dica = dicas.telefone;
   const podeAdicionar = dica === null;
   // O telefone (como digitado) para o qual a acao pediu a confirmacao: o
@@ -1069,10 +1072,11 @@ function CartaoDosTelefones({
                 telefone.ativo &&
                 !invalido &&
                 telefoneComConversaAberta(dados, telefone.id);
-              // Desligar: so a permissao (nunca recusado). Ligar de novo: so
-              // a equipe Conduzza, e nunca o telefone que nao aciona o
-              // assistente (o invalido o banco recusa; o do contato sem
-              // autorizacao ligaria sem nunca conversar).
+              // Desligar: so a permissao (nunca recusado). Ligar de novo: a
+              // permissao (administrador ou super admin, desde 19/10/2026),
+              // e nunca o telefone que nao aciona o assistente (o invalido o
+              // banco recusa; o do contato sem autorizacao ligaria sem nunca
+              // conversar).
               const dicaDaLinha = telefone.ativo
                 ? dicas.escolha
                 : (dicas.telefone ?? textoDeQueNaoAciona);

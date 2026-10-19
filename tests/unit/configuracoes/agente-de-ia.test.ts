@@ -507,8 +507,10 @@ describe("teto e dicas", () => {
       telefone: TEXTOS_DA_IA.semPermissao,
       interruptor: TEXTOS_DA_IA.soEquipeConduzza,
     });
-    // E3: o administrador desliga, mas ligar o WhatsApp é só da equipe
-    // Conduzza (modo equipe, usar número, adicionar ou ligar telefone).
+    // E3: o administrador desliga, mas ligar o atendimento pelo WhatsApp
+    // (modo equipe e usar número) é só da equipe Conduzza. Telefone
+    // (adicionar e ligar de novo): o administrador também, desde 19/10/2026
+    // (decisão do dono).
     expect(
       dicasDaIa({
         podeEditar: true,
@@ -519,9 +521,11 @@ describe("teto e dicas", () => {
       escolha: null,
       equipe: TEXTOS_DA_IA.soEquipeConduzzaLiga,
       numero: TEXTOS_DA_IA.soEquipeConduzzaLiga,
-      telefone: TEXTOS_DA_IA.soEquipeConduzzaLiga,
+      telefone: null,
       interruptor: TEXTOS_DA_IA.soEquipeConduzza,
     });
+    // a dica de hoje não fala de telefone (ela continua no modo e no número)
+    expect(TEXTOS_DA_IA.soEquipeConduzzaLiga).not.toMatch(/telefone/i);
     expect(TEXTOS_DA_IA.soEquipeConduzzaLiga).toBe(
       "Nesta fase, só a equipe Conduzza liga o atendimento pelo WhatsApp.",
     );
@@ -942,6 +946,10 @@ describe("formulário do telefone: LGPD e recusas", () => {
     );
     expect(TEXTOS_DA_IA.forcarContatoDePaciente).toBe(
       "Usar mesmo assim (fica registrado)",
+    );
+    // o forcar de quem não é a equipe Conduzza (19/10/2026)
+    expect(TEXTOS_DA_IA.soEquipeConduzzaForca).toBe(
+      "Somente a equipe Conduzza usa o telefone de um paciente como telefone da equipe.",
     );
     expect(TEXTOS_DA_IA.avisoTelefoneInvalido).toBe(
       "Há telefone da equipe que não aciona o assistente. Veja a lista de telefones.",

@@ -17,12 +17,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //     entra com a confirmacao explicita: sem ela, o aviso com o nome e a
 //     leitura na trilha, sem gravar;
 //   - 42501 vira texto de permissao; telefone e nome nunca vao para log;
-//   - E3: ligar o WhatsApp (modo equipe, usar numero, adicionar ou ligar
-//     telefone) e so do super admin; o administrador recebe
-//     soEquipeConduzzaLiga sem banco e continua desligando. O telefone novo
-//     exige a confirmacao do aviso da OpenAI, que vai para audit_log; a
-//     recusa do banco por numero da plataforma ou telefone de paciente vira
-//     o texto certo, e so o super admin recebe pedeForcar.
+//   - E3: ligar o atendimento pelo WhatsApp (modo equipe e usar numero) e
+//     so do super admin; o administrador recebe soEquipeConduzzaLiga sem
+//     banco e continua desligando. O telefone novo exige a confirmacao do
+//     aviso da OpenAI, que vai para audit_log; a recusa do banco por numero
+//     da plataforma ou telefone de paciente vira o texto certo, e so o super
+//     admin recebe pedeForcar;
+//   - decisao do dono de 19/10/2026: o administrador da clinica adiciona e
+//     liga de novo telefone da equipe (com a confirmacao da OpenAI na trilha
+//     no nome dele); o forcar de quem nao e super admin para antes do banco
+//     (soEquipeConduzzaForca), sem ler o contato; 42501 do banco no telefone
+//     vira o texto de permissao.
 // A autorizacao de verdade (guarda no banco, policies) esta em
 // tests/rls/ia-liberacao.test.ts e tests/integration/ia-liberacao.test.ts.
 
@@ -761,10 +766,13 @@ describe("telefones da equipe", () => {
   });
 });
 
-describe("E3: ligar o WhatsApp é só da equipe Conduzza", () => {
-  const ligar = [
+describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
+  const ligarOAtendimento = [
     () => definirEscolhaDaIaAction({ escolha: "equipe" }),
     () => escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true }),
+  ] as const;
+  const ligarTudo = [
+    ...ligarOAtendimento,
     () =>
       adicionarTelefoneDaIaAction({
         rotulo: "Ana",
@@ -775,8 +783,8 @@ describe("E3: ligar o WhatsApp é só da equipe Conduzza", () => {
       alternarTelefoneDaIaAction({ telefone: "+5584999990001", ligado: true }),
   ] as const;
 
-  it("administrador da clínica: a dica da equipe Conduzza, sem banco", async () => {
-    for (const acao of ligar) {
+  it("administrador da clínica: modo equipe e número com a dica da equipe Conduzza, sem banco", async () => {
+    for (const acao of ligarOAtendimento) {
       expect(await acao()).toEqual({
         ok: false,
         error: TEXTOS_DA_IA.soEquipeConduzzaLiga,
@@ -811,32 +819,251 @@ describe("E3: ligar o WhatsApp é só da equipe Conduzza", () => {
     ]);
   });
 
-  it("super admin liga os três", async () => {
+  it("super admin liga modo, número e telefone", async () => {
     registro.superAdmin = true;
-    for (const acao of ligar) {
+    for (const acao of ligarTudo) {
       expect(await acao()).toEqual({ ok: true });
     }
   });
 
-  it("42501 do banco ao ligar vira a dica da equipe Conduzza", async () => {
+  it("42501 do banco ao ligar o modo ou o número vira a dica da equipe Conduzza", async () => {
     registro.superAdmin = true;
-    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+    registro.errosDoRpc.set("definir_liberacao_da_ia", {
       code: "42501",
       message: "Somente a equipe do Conduzza libera a IA.",
     });
+    registro.errosDoRpc.set("definir_numero_da_ia", {
+      code: "42501",
+      message: "Somente a equipe do Conduzza libera a IA.",
+    });
+    for (const acao of ligarOAtendimento) {
+      expect(await acao()).toEqual({
+        ok: false,
+        error: TEXTOS_DA_IA.soEquipeConduzzaLiga,
+      });
+    }
+    // Desligar recusado continua com o texto de permissao.
+    expect(
+      await escolherNumeroDaIaAction({
+        whatsappAccountId: NUMERO,
+        usar: false,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.semPermissao });
+  });
+
+  it("42501 do banco no telefone (adicionar, ligar ou desligar): o texto de permissão", async () => {
+    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+      code: "42501",
+      message:
+        "Somente o administrador da clínica ou a equipe do Conduzza libera a IA.",
+    });
+    for (const acao of [
+      () =>
+        adicionarTelefoneDaIaAction({
+          rotulo: "Ana",
+          telefone: "84999990002",
+          confirmarAvisoDaOpenai: true,
+        }),
+      () =>
+        alternarTelefoneDaIaAction({
+          telefone: "+5584999990001",
+          ligado: true,
+        }),
+      () =>
+        alternarTelefoneDaIaAction({
+          telefone: "+5584999990001",
+          ligado: false,
+        }),
+    ]) {
+      expect(await acao()).toEqual({
+        ok: false,
+        error: TEXTOS_DA_IA.semPermissao,
+      });
+    }
+    // sem gravacao: nem a confirmacao da OpenAI vai para a trilha
+    expect(registro.inseridos).toEqual([]);
+    expect(registro.revalidados).toEqual([]);
+  });
+});
+
+describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)", () => {
+  it("adiciona: a RPC com a sessão, sem o forçar, e a confirmação da OpenAI na trilha no nome dele", async () => {
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana, recepção",
+        telefone: "(84) 99999-0002",
+        confirmarAvisoDaOpenai: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_contato_liberado_da_ia",
+        args: {
+          p_clinic_id: TESTE123,
+          p_telefone_e164: "+5584999990002",
+          p_rotulo: "Ana, recepção",
+          p_ativo: true,
+          p_forcar_contato_existente: false,
+        },
+      },
+    ]);
+    expect(registro.inseridos).toEqual([
+      {
+        tabela: "audit_log",
+        valores: {
+          clinic_id: TESTE123,
+          user_id: USUARIO,
+          action: "confirmou_aviso_da_openai",
+          entity: "ia_contato_liberado",
+          entity_id: "t-novo",
+        },
+      },
+    ]);
+    expect(registro.revalidados).toEqual(["/configuracoes"]);
+  });
+
+  it("sem a confirmação do aviso da OpenAI: o texto do campo, sem banco", async () => {
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: false,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.avisoDaOpenaiObrigatorio });
+    expect(registro.rpcs).toEqual([]);
+    expect(registro.inseridos).toEqual([]);
+  });
+
+  it("liga de novo: a RPC com a sessão, ligado, sem o forçar e com o rótulo gravado", async () => {
     expect(
       await alternarTelefoneDaIaAction({
         telefone: "+5584999990001",
         ligado: true,
       }),
-    ).toEqual({ ok: false, error: TEXTOS_DA_IA.soEquipeConduzzaLiga });
-    // Desligar recusado continua com o texto de permissao.
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_contato_liberado_da_ia",
+        args: {
+          p_clinic_id: TESTE123,
+          p_telefone_e164: "+5584999990001",
+          p_rotulo: "",
+          p_ativo: true,
+        },
+      },
+    ]);
+    expect(registro.revalidados).toEqual(["/configuracoes"]);
+  });
+
+  it("o forçar de quem não é super admin para antes do banco, sem ler o contato", async () => {
+    registro.contato = { id: "c-maria", name: "Maria Souza" };
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+        forcarContatoDePaciente: true,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.soEquipeConduzzaForca });
+    expect(registro.rpcs).toEqual([]);
+    expect(registro.consultas).toEqual([]);
+    expect(registro.auditorias).toEqual([]);
+    expect(registro.inseridos).toEqual([]);
+    // o forcar desmarcado segue o caminho normal
+    registro.contato = null;
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+        forcarContatoDePaciente: false,
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs.at(-1)?.args).toMatchObject({
+      p_forcar_contato_existente: false,
+    });
+  });
+
+  it("telefone de paciente: o texto, sem a opção de forçar", async () => {
+    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+      code: "23514",
+      message: "contato_de_paciente",
+    });
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarContato: true,
+        confirmarAvisoDaOpenai: true,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.contatoDePaciente });
     expect(
       await alternarTelefoneDaIaAction({
         telefone: "+5584999990001",
-        ligado: false,
+        ligado: true,
       }),
-    ).toEqual({ ok: false, error: TEXTOS_DA_IA.semPermissao });
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.contatoDePaciente });
+    expect(registro.inseridos).toEqual([]);
+  });
+
+  it("número de WhatsApp do Conduzza: o texto, nada na trilha", async () => {
+    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+      code: "23514",
+      message: "telefone_invalido_para_equipe",
+    });
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.telefoneDaPlataforma });
+    expect(registro.inseridos).toEqual([]);
+  });
+
+  it("telefone de um contato da clínica: o aviso com o nome e a leitura na trilha, como para o super admin", async () => {
+    registro.contato = { id: "c-maria", name: "Maria Souza" };
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error: avisoDeContatoDaClinica("Maria Souza"),
+      pedeConfirmacao: true,
+    });
+    expect(registro.rpcs).toEqual([]);
+    expect(registro.auditorias).toEqual([
+      {
+        clinicId: TESTE123,
+        userId: USUARIO,
+        entity: "ficha_paciente",
+        entityId: "c-maria",
+      },
+    ]);
+  });
+
+  it("gestor e os demais papéis continuam sem adicionar e sem ligar", async () => {
+    for (const papel of ["gestor", "recepcao", "profissional", "leitura"]) {
+      registro.papel = papel;
+      expect(
+        await alternarTelefoneDaIaAction({
+          telefone: "+5584999990001",
+          ligado: true,
+        }),
+      ).toEqual({ ok: false, error: TEXTOS_DA_IA.semPermissao });
+      expect(
+        await adicionarTelefoneDaIaAction({
+          rotulo: "Ana",
+          telefone: "84999990002",
+          confirmarAvisoDaOpenai: true,
+        }),
+      ).toEqual({ ok: false, error: TEXTOS_DA_IA.semPermissao });
+    }
+    expect(registro.rpcs).toEqual([]);
+    expect(registro.consultas).toEqual([]);
   });
 });
 

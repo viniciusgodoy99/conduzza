@@ -5,9 +5,8 @@
 // resposta para descobrir o que dispara o filtro. Nunca e escrita pela IA e
 // sai como autor "sistema" (plano de seguranca 2.5).
 //
-// Texto proposto no plano; vale ate o dono decidir (decisao 5). Um teste
-// exige igualdade exata e outro exige que ela passe pelo filtro
-// deterministico. Citar o 192 em caso de sintoma so com aval do responsavel
-// tecnico.
+// Texto aprovado pelo dono em 19/10/2026 (decisao 5). Um teste exige
+// igualdade exata e outro exige que ela passe pelo filtro deterministico.
+// Citar o 192 em caso de sintoma so com aval do responsavel tecnico.
 export const FRASE_DE_ESCALONAMENTO =
   "Recebi sua mensagem. Vou passar sua conversa para alguém da nossa equipe, que vai te responder por aqui assim que possível.";

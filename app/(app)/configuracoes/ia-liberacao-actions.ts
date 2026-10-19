@@ -38,13 +38,17 @@ import { createClient } from "@/lib/supabase/server";
 // pagina) e so o administrador da clinica ou o super admin chega a RPC.
 // Cada RPC grava a trilha (audit_log) sozinha, sem telefone.
 //
-// LIGAR O WHATSAPP E SO DA EQUIPE CONDUZZA NESTA FASE (E3, decisao do dono
-// em 13/10/2026): escolher "Conversar com a equipe", usar um numero e
-// adicionar ou ligar um telefone exigem o super admin, aqui e no banco
-// (ia_exigir_equipe_conduzza). Desligar continua com o administrador da
-// clinica. O telefone novo exige a confirmacao do aviso da OpenAI (LGPD,
-// D32), gravada em audit_log; telefone de paciente e numero de WhatsApp do
-// Conduzza sao recusados pelo banco, e so o super admin forca o primeiro.
+// LIGAR O ATENDIMENTO PELO WHATSAPP E SO DA EQUIPE CONDUZZA NESTA FASE (E3,
+// decisao do dono em 13/10/2026): escolher "Conversar com a equipe" e usar
+// um numero exigem o super admin, aqui e no banco (ia_exigir_equipe_conduzza).
+// Desligar continua com o administrador da clinica. TELEFONE DA EQUIPE
+// (decisao do dono em 19/10/2026, migration 20261019100000): adicionar e
+// ligar de novo voltam para quem passa na guarda (o administrador da clinica
+// ou o super admin), como no banco (ia_exigir_quem_libera). O telefone novo
+// exige a confirmacao do aviso da OpenAI (LGPD, D32), gravada em audit_log
+// no nome de quem adicionou; telefone de paciente e numero de WhatsApp do
+// Conduzza sao recusados pelo banco, e so o super admin forca o primeiro
+// (aqui e no banco: o forcar de quem nao e super admin para antes do banco).
 //
 // Nada daqui vai para log alem do codigo do erro, da clinica, do numero e
 // do tipo de acao: nunca telefone, rotulo nem nome de contato.
@@ -127,13 +131,28 @@ async function guarda(): Promise<Guarda | { error: string }> {
 }
 
 /**
- * Ligar o WhatsApp (modo "equipe", numero, telefone) e so do super admin
- * nesta fase. null: pode.
+ * Ligar o atendimento pelo WhatsApp (modo "equipe" e numero) e so do super
+ * admin nesta fase. O telefone nao passa por aqui desde 19/10/2026: basta a
+ * guarda. null: pode.
  */
 function recusaDeLigar(guardaOk: Guarda): ResultadoDaIa | null {
   return guardaOk.superAdmin
     ? null
     : { ok: false, error: TEXTOS_DA_IA.soEquipeConduzzaLiga };
+}
+
+/**
+ * O forcar do telefone de paciente ("Usar mesmo assim") continua so do super
+ * admin: o de quem nao e para aqui, antes de ler o contato e antes do banco
+ * (que tambem recusa, com ia_exigir_equipe_conduzza). null: pode.
+ */
+function recusaDoForcar(
+  guardaOk: Guarda,
+  forcar: boolean | undefined,
+): ResultadoDaIa | null {
+  return forcar === true && !guardaOk.superAdmin
+    ? { ok: false, error: TEXTOS_DA_IA.soEquipeConduzzaForca }
+    : null;
 }
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -163,11 +182,9 @@ function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
   const codigo = error?.code;
   const chave = (error?.message ?? "").trim();
   if (codigo === "42501") {
-    // Ligar (modo equipe, numero, telefone) e so da equipe Conduzza.
-    return kind === "escolha_equipe" ||
-      kind === "numero_usar" ||
-      kind === "telefone_adicionar" ||
-      kind === "telefone_ligar"
+    // Ligar o modo equipe e usar um numero e so da equipe Conduzza. Telefone
+    // (desde 19/10/2026) e o resto: o texto de permissao.
+    return kind === "escolha_equipe" || kind === "numero_usar"
       ? TEXTOS_DA_IA.soEquipeConduzzaLiga
       : TEXTOS_DA_IA.semPermissao;
   }
@@ -405,6 +422,9 @@ async function contatoComOTelefone(
  * (pedeConfirmacao) e so grava quando a tela devolve confirmarContato
  * marcado. Mostrar o nome e leitura de dado de paciente por pessoa: vai
  * para a trilha (ficha_paciente, com o id do contato) antes de sair daqui.
+ *
+ * Desde 19/10/2026 (decisao do dono) o administrador da clinica tambem
+ * adiciona; o forcar continua so do super admin (recusaDoForcar).
  */
 export async function adicionarTelefoneDaIaAction(
   entrada: unknown,
@@ -424,12 +444,12 @@ export async function adicionarTelefoneDaIaAction(
           : TEXTOS.dadosInvalidos,
     };
   }
-  const recusa = recusaDeLigar(guardaOk);
+  const { rotulo, telefone, confirmarContato, forcarContatoDePaciente } =
+    parsed.data;
+  const recusa = recusaDoForcar(guardaOk, forcarContatoDePaciente);
   if (recusa) {
     return recusa;
   }
-  const { rotulo, telefone, confirmarContato, forcarContatoDePaciente } =
-    parsed.data;
   const supabase = await createClient();
 
   if (confirmarContato !== true) {
@@ -533,7 +553,10 @@ async function registrarAvisoDaOpenai(
 
 /**
  * Liga ou desliga um telefone que ja esta na lista (o rotulo fica como
- * esta). Desligar devolve para a equipe a conversa desse telefone.
+ * esta). Desligar devolve para a equipe a conversa desse telefone. Ligar de
+ * novo, desde 19/10/2026, basta a guarda (administrador da clinica ou super
+ * admin), sem o forcar: telefone de paciente volta so pelo formulario de
+ * adicionar, com o forcar do super admin.
  */
 export async function alternarTelefoneDaIaAction(
   entrada: unknown,
@@ -545,12 +568,6 @@ export async function alternarTelefoneDaIaAction(
   const parsed = alternarTelefoneSchema.safeParse(entrada);
   if (!parsed.success) {
     return { ok: false, error: TEXTOS.dadosInvalidos };
-  }
-  if (parsed.data.ligado) {
-    const recusa = recusaDeLigar(guardaOk);
-    if (recusa) {
-      return recusa;
-    }
   }
   const supabase = await createClient();
   const { error } = await supabase.rpc("definir_contato_liberado_da_ia", {

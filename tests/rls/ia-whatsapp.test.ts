@@ -38,13 +38,20 @@ import { adminClient, anonClient } from "./stack";
 //   - conversation em 'ia_atendendo' pela sessao: 42501 (so_pelo_devolver)
 //     no UPDATE e no INSERT, mesmo com tudo liberado; troca de contact_id
 //     com a conversa na IA tambem 42501;
-//   - ligar o WhatsApp (modo contatos, numero, telefone) so pela equipe
-//     Conduzza: o administrador recebe 42501 e consegue desligar; o
+//   - ligar o atendimento pelo WhatsApp (modo contatos e numero) so pela
+//     equipe Conduzza: o administrador recebe 42501 e consegue desligar; o
 //     servidor (service role) liga;
+//   - telefone da equipe (decisao do dono de 19/10/2026, migration
+//     20261019100000): o administrador da clinica liga (sem forcar),
+//     desliga e liga de novo, com a trilha no nome dele; gestor, recepcao,
+//     leitura e o administrador da outra clinica recebem 42501; o forcar
+//     do administrador da 42501 (so a equipe Conduzza), com e sem sinal de
+//     paciente;
 //   - definir_contato_liberado_da_ia recusa numero de WhatsApp da
 //     plataforma (23514 telefone_invalido_para_equipe) e contato com sinal
-//     de paciente (23514 contato_de_paciente); o forcar passa so por quem e
-//     equipe Conduzza (aqui, o servidor) e grava audit_log proprio;
+//     de paciente (23514 contato_de_paciente), para o servidor e para o
+//     administrador; o forcar passa so por quem e equipe Conduzza (aqui, o
+//     servidor) e grava audit_log proprio;
 //   - situacao_da_ia_na_clinica: administrador e gestor da propria clinica
 //     (com o booleano motor_parado); recepcao e outra clinica 42501.
 // disparar_ciclo_da_ia, motor_ia_agendar e motor_ia_desagendar NUNCA sao
@@ -81,6 +88,9 @@ const TELEFONE_DO_PACIENTE = `+5584983${digitos}`;
 const TELEFONE_DA_B = `+5584984${digitos}`;
 // Ligado como telefone da equipe quando ainda era lead; vira paciente depois.
 const TELEFONE_VIROU_PACIENTE = `+5584986${digitos}`;
+// Sem contato: o administrador da A liga, desliga e liga de novo (decisao
+// do dono de 19/10/2026, migration 20261019100000); desligado no fim.
+const TELEFONE_DO_ADMIN = `+5584987${digitos}`;
 // O numero fake da A, com display_phone de 12 digitos: e "numero da
 // plataforma" para definir_contato_liberado_da_ia.
 const DISPLAY_DA_A = `+55 84 3${digitos}-0`;
@@ -918,8 +928,10 @@ describe("devolver_para_ia e ia_devolver_disponivel", () => {
   });
 });
 
-describe("ligar o WhatsApp: so a equipe Conduzza", () => {
-  it("o administrador recebe 42501 ao ligar modo contatos, numero e telefone, e desliga", async () => {
+describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tambem pelo administrador", () => {
+  const SO_A_EQUIPE = "Somente a equipe do Conduzza libera a IA.";
+
+  it("o administrador recebe 42501 ao ligar modo contatos e numero e ao forcar telefone (com e sem sinal de paciente), e desliga", async () => {
     const adminA = como("admin-a");
     for (const [nome, args] of [
       [
@@ -934,15 +946,7 @@ describe("ligar o WhatsApp: so a equipe Conduzza", () => {
           p_ativo: true,
         },
       ],
-      [
-        "definir_contato_liberado_da_ia",
-        {
-          p_clinic_id: clinicaA,
-          p_telefone_e164: TELEFONE_FORA,
-          p_rotulo: "Forjado",
-          p_ativo: true,
-        },
-      ],
+      // o forcar continua so da equipe Conduzza, mesmo sem sinal de paciente
       [
         "definir_contato_liberado_da_ia",
         {
@@ -956,6 +960,7 @@ describe("ligar o WhatsApp: so a equipe Conduzza", () => {
     ] as const) {
       const { error } = await adminA.rpc(nome, args);
       expect(error?.code, nome).toBe(PERMISSAO_NEGADA);
+      expect(error?.message, nome).toBe(SO_A_EQUIPE);
     }
     // desligar: o administrador consegue (o telefone do paciente, forcado antes)
     const { data, error } = await adminA.rpc("definir_contato_liberado_da_ia", {
@@ -966,12 +971,139 @@ describe("ligar o WhatsApp: so a equipe Conduzza", () => {
     });
     expect(error).toBeNull();
     expect(data).toBe(false);
+    // religar o paciente: sem o forcar, a recusa de paciente (o administrador
+    // ja passa no guarda); com o forcar, 42501 (so a equipe Conduzza)
+    const { error: semForcar } = await adminA.rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_PACIENTE,
+        p_rotulo: "",
+        p_ativo: true,
+      },
+    );
+    expect(semForcar?.code).toBe(CHECK);
+    expect(semForcar?.message).toBe("contato_de_paciente");
+    const { error: comForcar } = await adminA.rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_PACIENTE,
+        p_rotulo: "",
+        p_ativo: true,
+        p_forcar_contato_existente: true,
+      },
+    );
+    expect(comForcar?.code).toBe(PERMISSAO_NEGADA);
+    expect(comForcar?.message).toBe(SO_A_EQUIPE);
+    const { data: doPaciente } = await admin
+      .from("ia_contato_liberado")
+      .select("ativo, forcado")
+      .eq("clinic_id", clinicaA)
+      .eq("phone_key", TELEFONE_DO_PACIENTE)
+      .single()
+      .throwOnError();
+    expect(doPaciente).toEqual({ ativo: false, forcado: false });
     const { data: linha } = await admin
       .from("ia_contato_liberado")
       .select("ativo")
       .eq("clinic_id", clinicaA)
       .eq("phone_key", TELEFONE_FORA);
     expect(linha).toEqual([]);
+    // o forcar so existe na trilha do servidor (o teste do D-B, acima)
+    const { data: forcou } = await admin
+      .from("audit_log")
+      .select("user_id")
+      .eq("clinic_id", clinicaA)
+      .eq("action", "forcou_telefone_de_paciente_na_ia")
+      .throwOnError();
+    expect(forcou).toEqual([{ user_id: null }]);
+  });
+
+  it("telefone da equipe (19/10/2026): o administrador liga sem forcar, desliga e liga de novo, com a trilha no nome dele; gestor, recepcao, leitura e o administrador da B: 42501", async () => {
+    for (const apelido of [
+      "gestor-a",
+      "recepcao-a",
+      "leitura-a",
+      "admin-b",
+    ] as const) {
+      const { error } = await como(apelido).rpc(
+        "definir_contato_liberado_da_ia",
+        {
+          p_clinic_id: clinicaA,
+          p_telefone_e164: TELEFONE_DO_ADMIN,
+          p_rotulo: "Forjado",
+          p_ativo: true,
+        },
+      );
+      expect(error?.code, apelido).toBe(PERMISSAO_NEGADA);
+    }
+    const { data: nenhuma } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("phone_key", TELEFONE_DO_ADMIN)
+      .throwOnError();
+    expect(nenhuma).toEqual([]);
+
+    const adminA = como("admin-a");
+    const chamar = async (args: Record<string, unknown>, esperado: boolean) => {
+      const { data, error } = await adminA.rpc(
+        "definir_contato_liberado_da_ia",
+        { p_clinic_id: clinicaA, p_telefone_e164: TELEFONE_DO_ADMIN, ...args },
+      );
+      expect(error).toBeNull();
+      expect(data).toBe(esperado);
+    };
+    const linhaDoAdmin = async () => {
+      const { data } = await admin
+        .from("ia_contato_liberado")
+        .select("id, ativo, forcado, rotulo, alterado_por")
+        .eq("clinic_id", clinicaA)
+        .eq("phone_key", TELEFONE_DO_ADMIN)
+        .single()
+        .throwOnError();
+      return data as {
+        id: string;
+        ativo: boolean;
+        forcado: boolean;
+        rotulo: string | null;
+        alterado_por: string | null;
+      };
+    };
+
+    await chamar({ p_rotulo: "Admin pela tela", p_ativo: true }, true);
+    expect(await linhaDoAdmin()).toMatchObject({
+      ativo: true,
+      forcado: false,
+      rotulo: "Admin pela tela",
+      alterado_por: ids.get("admin-a"),
+    });
+    await chamar({ p_rotulo: null, p_ativo: false }, false);
+    expect((await linhaDoAdmin()).ativo).toBe(false);
+    // "Ligar de novo": rotulo vazio mantem o gravado
+    await chamar({ p_rotulo: "", p_ativo: true }, true);
+    const religado = await linhaDoAdmin();
+    expect(religado).toMatchObject({
+      ativo: true,
+      forcado: false,
+      rotulo: "Admin pela tela",
+    });
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("action")
+      .eq("clinic_id", clinicaA)
+      .eq("user_id", ids.get("admin-a")!)
+      .eq("entity", "ia_contato_liberado")
+      .eq("entity_id", religado.id)
+      .throwOnError();
+    expect(trilha).toEqual([
+      { action: "editou" },
+      { action: "editou" },
+      { action: "editou" },
+    ]);
+    // desligado no fim: o resto da suite nao conta com este telefone
+    await chamar({ p_rotulo: null, p_ativo: false }, false);
   });
 
   it("numero de WhatsApp da plataforma: 23514 ate para o servidor, sem o telefone na mensagem; desligar passa", async () => {
@@ -1003,6 +1135,19 @@ describe("ligar o WhatsApp: so a equipe Conduzza", () => {
       },
     );
     expect(daPropria?.message).toBe("telefone_invalido_para_equipe");
+    // e para o administrador, que agora liga telefone (19/10/2026)
+    const { error: peloAdmin } = await como("admin-a").rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: NUMERO_DA_A_E164,
+        p_rotulo: "Numero da A",
+        p_ativo: true,
+      },
+    );
+    expect(peloAdmin?.code).toBe(CHECK);
+    expect(peloAdmin?.message).toBe("telefone_invalido_para_equipe");
+    expect(peloAdmin?.message).not.toContain(digitos);
     // desligar nunca e recusado
     expect(
       await rpcDoSistema("definir_contato_liberado_da_ia", {
