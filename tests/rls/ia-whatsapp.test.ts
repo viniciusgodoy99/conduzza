@@ -53,7 +53,13 @@ import { adminClient, anonClient } from "./stack";
 //     administrador; o forcar passa so por quem e equipe Conduzza (aqui, o
 //     servidor) e grava audit_log proprio;
 //   - situacao_da_ia_na_clinica: administrador e gestor da propria clinica
-//     (com o booleano motor_parado); recepcao e outra clinica 42501.
+//     (com o booleano motor_parado); recepcao e outra clinica 42501;
+//   - varios numeros (decisao do dono de 19/10/2026, migration
+//     20261019110000): o servidor liga o segundo numero da A sem desligar o
+//     primeiro; o administrador desliga um sem mexer no outro e nao liga
+//     nenhum (42501, mesmo com o outro ligado); a situacao ve a conversa
+//     aberta com a equipe em qualquer numero ligado e deixa de ver a do
+//     numero desligado.
 // disparar_ciclo_da_ia, motor_ia_agendar e motor_ia_desagendar NUNCA sao
 // chamados aqui pela API: se o grant regredisse, a chamada mexeria no pg_cron
 // e no pg_net da producao antes de a assercao falhar. O grant deles e
@@ -91,6 +97,9 @@ const TELEFONE_VIROU_PACIENTE = `+5584986${digitos}`;
 // Sem contato: o administrador da A liga, desliga e liga de novo (decisao
 // do dono de 19/10/2026, migration 20261019100000); desligado no fim.
 const TELEFONE_DO_ADMIN = `+5584987${digitos}`;
+// Telefone da equipe com conversa aberta com a recepcao no SEGUNDO numero da
+// A (varios numeros, decisao do dono de 19/10/2026).
+const TELEFONE_DO_SEGUNDO_NUMERO = `+5584988${digitos}`;
 // O numero fake da A, com display_phone de 12 digitos: e "numero da
 // plataforma" para definir_contato_liberado_da_ia.
 const DISPLAY_DA_A = `+55 84 3${digitos}-0`;
@@ -99,6 +108,9 @@ const NUMERO_DA_A_E164 = `+55843${digitos}0`;
 let clinicaA = "";
 let clinicaB = "";
 let numeroA = "";
+// O segundo numero fake da A (sem display_phone): so o teste de varios
+// numeros o liga, e ele termina desligado.
+let segundoNumeroA = "";
 let numeroB = "";
 let contatoDaEquipe = "";
 let contatoFora = "";
@@ -235,6 +247,9 @@ beforeAll(async () => {
       nome: "Recepção",
       display_phone: DISPLAY_DA_A,
     })
+  ).id;
+  segundoNumeroA = (
+    await criarNumeroDeTeste(admin, clinicaA, { nome: "Segundo" })
   ).id;
   numeroB = (await criarNumeroDeTeste(admin, clinicaB, { nome: "Recepção" }))
     .id;
@@ -1157,6 +1172,129 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
         p_ativo: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
+  const SO_A_EQUIPE = "Somente a equipe do Conduzza libera a IA.";
+
+  async function numerosDaA(): Promise<Record<string, boolean>> {
+    const { data } = await admin
+      .from("ia_numero_liberado")
+      .select("whatsapp_account_id, ativo")
+      .eq("clinic_id", clinicaA)
+      .throwOnError();
+    return Object.fromEntries(
+      (data as { whatsapp_account_id: string; ativo: boolean }[]).map(
+        (linha) => [linha.whatsapp_account_id, linha.ativo],
+      ),
+    );
+  }
+
+  async function abertasNaSituacao(): Promise<string[]> {
+    const { data, error } = await como("admin-a").rpc(
+      "situacao_da_ia_na_clinica",
+      { p_clinic_id: clinicaA },
+    );
+    expect(error).toBeNull();
+    return (data as { telefones_com_conversa_aberta: string[] })
+      .telefones_com_conversa_aberta;
+  }
+
+  it("o servidor liga o segundo sem desligar o primeiro; o administrador desliga um sem mexer no outro e nao liga (42501); a situacao acompanha o numero", async () => {
+    const adminA = como("admin-a");
+    const { count: trilhaDoPrimeiroAntes } = await admin
+      .from("audit_log")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicaA)
+      .eq("entity", "ia_numero_liberado")
+      .eq("entity_id", numeroA);
+
+    // o servidor (equipe Conduzza para o banco) liga o segundo: os dois
+    // ficam ligados ao mesmo tempo
+    expect(
+      await rpcDoSistema("definir_numero_da_ia", {
+        p_clinic_id: clinicaA,
+        p_whatsapp_account_id: segundoNumeroA,
+        p_ativo: true,
+      }),
+    ).toBe(true);
+    expect(await numerosDaA()).toEqual({
+      [numeroA]: true,
+      [segundoNumeroA]: true,
+    });
+
+    // um telefone da equipe com conversa aberta com a recepcao no segundo
+    // numero: a situacao conta (todos os numeros ligados)
+    const contato = await contatoCom(clinicaA, TELEFONE_DO_SEGUNDO_NUMERO);
+    await rpcDoSistema("definir_contato_liberado_da_ia", {
+      p_clinic_id: clinicaA,
+      p_telefone_e164: TELEFONE_DO_SEGUNDO_NUMERO,
+      p_rotulo: "Equipe do segundo numero",
+      p_ativo: true,
+    });
+    await conversaComARecepcao(contato, segundoNumeroA);
+    const { data: linha } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("phone_key", TELEFONE_DO_SEGUNDO_NUMERO)
+      .single()
+      .throwOnError();
+    const idDoTelefone = (linha as { id: string }).id;
+    expect(await abertasNaSituacao()).toContain(idDoTelefone);
+
+    // o administrador desliga o segundo: o primeiro continua ligado
+    const { data: desligou, error: erroAoDesligar } = await adminA.rpc(
+      "definir_numero_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_whatsapp_account_id: segundoNumeroA,
+        p_ativo: false,
+      },
+    );
+    expect(erroAoDesligar).toBeNull();
+    expect(desligou).toBe(false);
+    expect(await numerosDaA()).toEqual({
+      [numeroA]: true,
+      [segundoNumeroA]: false,
+    });
+    // a conversa aberta do numero desligado sai da situacao
+    expect(await abertasNaSituacao()).not.toContain(idDoTelefone);
+
+    // o administrador nao liga de novo, mesmo com o outro ligado: 42501, a
+    // mensagem de hoje, e nada muda
+    const { error: aoLigar } = await adminA.rpc("definir_numero_da_ia", {
+      p_clinic_id: clinicaA,
+      p_whatsapp_account_id: segundoNumeroA,
+      p_ativo: true,
+    });
+    expect(aoLigar?.code).toBe(PERMISSAO_NEGADA);
+    expect(aoLigar?.message).toBe(SO_A_EQUIPE);
+    expect(await numerosDaA()).toEqual({
+      [numeroA]: true,
+      [segundoNumeroA]: false,
+    });
+
+    // a trilha do segundo: a do servidor ao ligar e a do administrador ao
+    // desligar; nenhuma do primeiro (ninguem o desligou junto)
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("user_id")
+      .eq("clinic_id", clinicaA)
+      .eq("entity", "ia_numero_liberado")
+      .eq("entity_id", segundoNumeroA)
+      .throwOnError();
+    expect(
+      (trilha as { user_id: string | null }[]).map((l) => l.user_id).sort(),
+    ).toEqual([ids.get("admin-a")!, null].sort());
+    const { count: trilhaDoPrimeiroDepois } = await admin
+      .from("audit_log")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicaA)
+      .eq("entity", "ia_numero_liberado")
+      .eq("entity_id", numeroA);
+    expect(trilhaDoPrimeiroDepois).toBe(trilhaDoPrimeiroAntes);
   });
 });
 

@@ -7,9 +7,11 @@ import {
 import { CLINICAS_DA_FASE_CONTROLADA } from "@/lib/ia/liberacao";
 
 // Leitura da aba "Agente de IA" de Configuracoes (Fase 3; decisao do dono em
-// 05/10/2026): a liberacao da IA na clinica, o numero escolhido, os
-// telefones da equipe e o estado do interruptor geral. Contrato do banco na
-// migration 20261006120000_ia_liberacao_pela_tela.sql: administrador ou
+// 05/10/2026): a liberacao da IA na clinica, os numeros ligados ao
+// assistente (varios desde a decisao do dono de 19/10/2026, migration
+// 20261019110000), os telefones da equipe e o estado do interruptor geral.
+// Contrato do banco na migration
+// 20261006120000_ia_liberacao_pela_tela.sql: administrador ou
 // gestor ATIVO da propria clinica le as tres tabelas da liberacao quando ela
 // esta na lista fechada (ou e e_de_teste, nas suites); o interruptor geral chega so como
 // booleano (ia_interruptor_ligado). A escrita nunca passa por aqui: e das
@@ -39,9 +41,6 @@ export type LiberacaoDaClinica = {
   /** Teto das ultimas 24 horas, em centavos de dolar. */
   tetoDiarioCentavosUsd: number;
 };
-
-/** Uma linha de ia_numero_liberado. */
-export type NumeroDaIa = { whatsappAccountId: string; ativo: boolean };
 
 /** Uma linha de ia_contato_liberado (telefone da equipe). */
 export type TelefoneDaIa = {
@@ -75,7 +74,10 @@ export type SituacaoDaIa = {
    * (sem_autorizacao), entao tambem nao acionam o assistente.
    */
   telefonesSemAutorizacao: string[];
-  /** Ids de ia_contato_liberado ativos com conversa aberta com a equipe no numero escolhido. */
+  /**
+   * Ids de ia_contato_liberado ativos com conversa aberta com a equipe em
+   * algum dos numeros ligados (nao removidos) da clinica.
+   */
   telefonesComConversaAberta: string[];
   /** O horario da versao PUBLICADA (horarioDoBanco de config.ts), ou null sem versao. */
   horarioPublicado: HorarioDeOperacao | null;
@@ -92,7 +94,16 @@ export type SituacaoDaIa = {
 export type DadosDaIa = {
   /** Nula: a clinica nunca ganhou linha de liberacao (nunca foi ligada). */
   liberacao: LiberacaoDaClinica | null;
-  numeros: NumeroDaIa[];
+  /**
+   * Os ids dos numeros de WhatsApp LIGADOS ao assistente nesta clinica
+   * (ia_numero_liberado.ativo), na ordem de criacao da linha (a tela mostra
+   * na ordem da lista de numeros). Varios ao mesmo tempo desde a decisao do
+   * dono de 19/10/2026. Pode
+   * trazer numero removido da clinica (o banco nao desliga ao remover; as
+   * funcoes de decisao conferem removido_em na hora): a aba so conta os que
+   * ainda estao na lista de numeros ativos.
+   */
+  numerosLigados: string[];
   telefones: TelefoneDaIa[];
   interruptorLigado: boolean;
   situacao: SituacaoDaIa;
@@ -105,7 +116,7 @@ type LinhaDaLiberacao = {
   teto_diario_centavos_usd: number;
 };
 
-type LinhaDoNumero = { whatsapp_account_id: string; ativo: boolean };
+type LinhaDoNumero = { whatsapp_account_id: string };
 
 type LinhaDoTelefone = {
   id: string;
@@ -206,8 +217,10 @@ export async function fetchLiberacaoDaIa(
         .maybeSingle(),
       supabase
         .from("ia_numero_liberado")
-        .select("whatsapp_account_id, ativo")
-        .eq("clinic_id", clinicId),
+        .select("whatsapp_account_id")
+        .eq("clinic_id", clinicId)
+        .eq("ativo", true)
+        .order("created_at", { ascending: true }),
       supabase
         .from("ia_contato_liberado")
         .select("id, phone_key, rotulo, ativo")
@@ -250,10 +263,9 @@ export async function fetchLiberacaoDaIa(
           tetoDiarioCentavosUsd: linha.teto_diario_centavos_usd,
         }
       : null,
-    numeros: ((numeros.data ?? []) as LinhaDoNumero[]).map((numero) => ({
-      whatsappAccountId: numero.whatsapp_account_id,
-      ativo: numero.ativo,
-    })),
+    numerosLigados: ((numeros.data ?? []) as LinhaDoNumero[]).map(
+      (numero) => numero.whatsapp_account_id,
+    ),
     telefones: ((telefones.data ?? []) as LinhaDoTelefone[]).map(
       (telefone) => ({
         id: telefone.id,
@@ -273,8 +285,10 @@ export async function fetchLiberacaoDaIa(
 /**
  * Um numero ATIVO (nao removido) desta clinica, com a situacao da conexao
  * crua; nulo quando nao existe, e removido ou e de outra clinica. Para a
- * acao de escolher o numero (a RLS de whatsapp_account recorta por clinica;
- * o filtro por clinic_id e a segunda camada).
+ * acao de ligar um numero ao assistente e para conferir, antes de
+ * "Conversar com a equipe", que algum numero ligado ainda e da clinica (a
+ * RLS de whatsapp_account recorta por clinica; o filtro por clinic_id e a
+ * segunda camada).
  */
 export async function fetchNumeroDaClinica(
   supabase: SupabaseClient,

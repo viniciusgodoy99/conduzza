@@ -15,10 +15,10 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/app/(app)/configuracoes/ia-liberacao-actions", () => ({
   adicionarTelefoneDaIaAction: vi.fn(),
+  alternarNumeroDaIaAction: vi.fn(),
   alternarTelefoneDaIaAction: vi.fn(),
   definirEscolhaDaIaAction: vi.fn(),
   definirInterruptorGeralAction: vi.fn(),
-  escolherNumeroDaIaAction: vi.fn(),
 }));
 
 import { ConfiguracoesClient } from "@/app/(app)/configuracoes/configuracoes-client";
@@ -28,7 +28,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 const DA_IA: DadosDaAbaDaIa = {
   dados: {
     liberacao: null,
-    numeros: [],
+    numerosLigados: [],
     telefones: [],
     interruptorLigado: false,
     situacao: {

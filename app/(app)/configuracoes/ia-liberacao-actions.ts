@@ -24,10 +24,11 @@ import { createClient } from "@/lib/supabase/server";
 
 // Aba "Agente de IA" de Configuracoes (Fase 3; decisao do dono em
 // 05/10/2026): ligar e desligar o assistente na clinica e escolher o modo,
-// escolher o numero, cadastrar e desligar os telefones da equipe e, so para
-// o super admin, o interruptor geral. Contrato do banco nas migrations
-// 20261006100000_ia_liberacao_e_schema.sql e
-// 20261006120000_ia_liberacao_pela_tela.sql.
+// ligar e desligar cada numero (varios ao mesmo tempo desde a decisao do
+// dono de 19/10/2026, migration 20261019110000), cadastrar e desligar os
+// telefones da equipe e, so para o super admin, o interruptor geral.
+// Contrato do banco nas migrations 20261006100000_ia_liberacao_e_schema.sql
+// e 20261006120000_ia_liberacao_pela_tela.sql.
 //
 // A AUTORIZACAO VIVE NO BANCO: toda escrita passa pelas RPCs definir_*_da_ia,
 // com a sessao. O guarda ia_exigir_quem_libera deixa passar so o
@@ -39,9 +40,11 @@ import { createClient } from "@/lib/supabase/server";
 // Cada RPC grava a trilha (audit_log) sozinha, sem telefone.
 //
 // LIGAR O ATENDIMENTO PELO WHATSAPP E SO DA EQUIPE CONDUZZA NESTA FASE (E3,
-// decisao do dono em 13/10/2026): escolher "Conversar com a equipe" e usar
+// decisao do dono em 13/10/2026): escolher "Conversar com a equipe" e ligar
 // um numero exigem o super admin, aqui e no banco (ia_exigir_equipe_conduzza).
-// Desligar continua com o administrador da clinica. TELEFONE DA EQUIPE
+// Desligar continua com o administrador da clinica. Cada numero liga e
+// desliga sozinho: ligar um nao desliga os outros (decisao do dono de
+// 19/10/2026; antes, o banco desligava os outros). TELEFONE DA EQUIPE
 // (decisao do dono em 19/10/2026, migration 20261019100000): adicionar e
 // ligar de novo voltam para quem passa na guarda (o administrador da clinica
 // ou o super admin), como no banco (ia_exigir_quem_libera). O telefone novo
@@ -96,8 +99,8 @@ const escolhaSchema = z
   .object({ escolha: z.enum(["desligado", "simulador", "equipe"]) })
   .strict();
 
-const numeroSchema = z
-  .object({ whatsappAccountId: z.uuid(), usar: z.boolean() })
+const alternarNumeroSchema = z
+  .object({ whatsappAccountId: z.uuid(), ligado: z.boolean() })
   .strict();
 
 const alternarTelefoneSchema = z
@@ -131,9 +134,9 @@ async function guarda(): Promise<Guarda | { error: string }> {
 }
 
 /**
- * Ligar o atendimento pelo WhatsApp (modo "equipe" e numero) e so do super
- * admin nesta fase. O telefone nao passa por aqui desde 19/10/2026: basta a
- * guarda. null: pode.
+ * Ligar o atendimento pelo WhatsApp (modo "equipe" e ligar um numero) e so
+ * do super admin nesta fase. O telefone nao passa por aqui desde 19/10/2026:
+ * basta a guarda. null: pode.
  */
 function recusaDeLigar(guardaOk: Guarda): ResultadoDaIa | null {
   return guardaOk.superAdmin
@@ -182,9 +185,9 @@ function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
   const codigo = error?.code;
   const chave = (error?.message ?? "").trim();
   if (codigo === "42501") {
-    // Ligar o modo equipe e usar um numero e so da equipe Conduzza. Telefone
-    // (desde 19/10/2026) e o resto: o texto de permissao.
-    return kind === "escolha_equipe" || kind === "numero_usar"
+    // Ligar o modo equipe e ligar um numero e so da equipe Conduzza.
+    // Telefone (desde 19/10/2026) e o resto: o texto de permissao.
+    return kind === "escolha_equipe" || kind === "numero_ligar"
       ? TEXTOS_DA_IA.soEquipeConduzzaLiga
       : TEXTOS_DA_IA.semPermissao;
   }
@@ -242,8 +245,10 @@ async function garantirLinha(
 
 /**
  * Liga ou desliga o assistente nesta clinica e escolhe o modo. "equipe"
- * (modo contatos do banco) exige um numero escolhido e ao menos um telefone
- * ligado, conferidos de novo aqui com a leitura do banco.
+ * (modo contatos do banco) exige ao menos um numero ligado que ainda e
+ * numero ativo da clinica e ao menos um telefone ligado, conferidos de novo
+ * aqui com a leitura do banco. Numero ligado e desconectado nao e falta (a
+ * aba mostra o motivo da parada; reconectar nao pede ligar de novo).
  */
 export async function definirEscolhaDaIaAction(
   entrada: unknown,
@@ -272,12 +277,12 @@ export async function definirEscolhaDaIaAction(
     }
     const temTelefone = dados.telefones.some((telefone) => telefone.ativo);
     let temNumero = false;
-    for (const linha of dados.numeros.filter((numero) => numero.ativo)) {
+    for (const whatsappAccountId of dados.numerosLigados) {
       try {
         const numero = await fetchNumeroDaClinica(
           supabase,
           guardaOk.clinicId,
-          linha.whatsappAccountId,
+          whatsappAccountId,
         );
         if (numero) {
           temNumero = true;
@@ -315,24 +320,27 @@ export async function definirEscolhaDaIaAction(
 }
 
 /**
- * Usa (ou para de usar) um numero da clinica para o assistente. Um numero
- * por vez nesta fase, garantido pelo BANCO: definir_numero_da_ia com
- * p_ativo verdadeiro desliga os outros numeros da clinica na mesma
- * transacao (com erro, nada muda). So numero conectado pode ser escolhido.
+ * Liga ou desliga UM numero da clinica para o assistente, sem mexer nos
+ * outros: a clinica pode ter varios numeros ligados ao mesmo tempo (decisao
+ * do dono de 19/10/2026; o banco deixou de desligar os outros ao ligar,
+ * migration 20261019110000). Ligar: so o super admin nesta fase, e so
+ * numero conectado da clinica. Desligar: o administrador da clinica tambem,
+ * mesmo com o numero desconectado; o banco devolve para a equipe so as
+ * conversas DESTE numero.
  */
-export async function escolherNumeroDaIaAction(
+export async function alternarNumeroDaIaAction(
   entrada: unknown,
 ): Promise<ResultadoDaIa> {
   const guardaOk = await guarda();
   if ("error" in guardaOk) {
     return { ok: false, error: guardaOk.error };
   }
-  const parsed = numeroSchema.safeParse(entrada);
+  const parsed = alternarNumeroSchema.safeParse(entrada);
   if (!parsed.success) {
     return { ok: false, error: TEXTOS.dadosInvalidos };
   }
-  const { whatsappAccountId, usar } = parsed.data;
-  if (usar) {
+  const { whatsappAccountId, ligado } = parsed.data;
+  if (ligado) {
     const recusa = recusaDeLigar(guardaOk);
     if (recusa) {
       return recusa;
@@ -340,15 +348,15 @@ export async function escolherNumeroDaIaAction(
   }
   const supabase = await createClient();
 
-  const definir = (id: string, ativo: boolean) =>
+  const definir = (ativo: boolean) =>
     supabase.rpc("definir_numero_da_ia", {
       p_clinic_id: guardaOk.clinicId,
-      p_whatsapp_account_id: id,
+      p_whatsapp_account_id: whatsappAccountId,
       p_ativo: ativo,
     });
 
-  if (!usar) {
-    const { error } = await definir(whatsappAccountId, false);
+  if (!ligado) {
+    const { error } = await definir(false);
     if (error) {
       return falhou(guardaOk, "numero_desligar", error, TEXTOS.naoAlterou);
     }
@@ -381,9 +389,9 @@ export async function escolherNumeroDaIaAction(
   if (linha !== "ok") {
     return falhou(guardaOk, "numero_linha", linha, TEXTOS.naoAlterou);
   }
-  const { error } = await definir(whatsappAccountId, true);
+  const { error } = await definir(true);
   if (error) {
-    return falhou(guardaOk, "numero_usar", error, TEXTOS.naoAlterou);
+    return falhou(guardaOk, "numero_ligar", error, TEXTOS.naoAlterou);
   }
   revalidatePath("/configuracoes");
   return { ok: true };

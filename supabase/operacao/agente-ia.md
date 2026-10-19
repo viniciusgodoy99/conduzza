@@ -14,6 +14,7 @@ Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicad
 - **Nunca imprima telefone** no SQL editor, em chat, ticket ou print: as consultas abaixo devolvem contagens, ids e o rótulo do telefone ("De quem é").
 - **Nunca copie texto de conversa nem o rascunho bloqueado** para fora do sistema (chat, ticket, log, planilha). Conversa de paciente é dado de saúde (LGPD, art. 5º, II).
 - Ligar o modo "Conversar com a equipe" e o número é **só da equipe Conduzza** (super admin) nesta fase. **Telefone da equipe:** desde 19/10/2026 (decisão do dono; vale depois da migration `20261019100000` aplicada), o **administrador da clínica** também cadastra e liga ("Adicionar" e "Ligar de novo"), sempre com a confirmação do aviso da OpenAI; o "Usar mesmo assim" do telefone de paciente continua **só da equipe Conduzza**. Desligar, qualquer administrador da clínica também pode, e deve, em caso de dúvida.
+- **Vários números** (decisão do dono de 19/10/2026; vale depois da migration `20261019110000` aplicada): a clínica pode ter mais de um número ligado ao assistente, e o mesmo telefone da equipe tem uma conversa em cada número. Cada número liga e desliga sozinho: ligar continua **só da equipe Conduzza**; desligar, também o administrador da clínica. O assistente responde por qualquer número ligado e conectado.
 - Nenhum comando aqui levanta 40001 ou 40P01. Não rode `update` direto em `conversation.status`, `ai_turno`, `ia_janela_da_conversa` nem `job_queue` fora do que este arquivo manda.
 
 ---
@@ -33,6 +34,15 @@ Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicad
    select md5(prosrc) = '277d6a2d9d9570d053cc0f5babf2c464' as telefone_pelo_administrador
    from pg_proc
    where oid = 'public.definir_contato_liberado_da_ia(uuid, text, text, boolean, boolean)'::regprocedure;
+   ```
+
+7. **Vários números (19/10/2026):** o ensaio `~/.claude/plans/e3-whatsapp/ensaios/ensaio-m5-20261019110000.sql` ('ENSAIO OK'; recusa se o corpo ou o comentário de `definir_numero_da_ia` mudou desde a leitura), a migration `20261019110000_ia_varios_numeros.sql` (sem trava de tabela) e **só depois** o código da aba "Números do assistente" (com o código antigo, "Usar este número" passaria a somar o número em vez de trocar, e o cartão antigo mostraria só um deles). Corpo e comentário anteriores em `supabase/operacao/rollback/20261019110000-corpos-anteriores.sql`. Conferir depois de aplicar:
+
+   ```sql
+   select md5(prosrc) = 'd9652bcf92f369fd9c84f7578690b6ac' as varios_numeros,
+          md5(obj_description(oid, 'pg_proc')) = '06f03c959ff4426654aaf9b3bccd4e11' as comentario
+   from pg_proc
+   where oid = 'public.definir_numero_da_ia(uuid, uuid, boolean)'::regprocedure;
    ```
 
 Conferir que as três migrations estão no banco:
@@ -86,7 +96,7 @@ Na ordem. Cada passo só depois do anterior conferido.
 
    Com alguma linha: no Atendimento, **Assumir** e **Resolver** essa conversa.
 
-4. **Escolher o número e o modo** (super admin, na aba): "Usar este número" no `2067be80` e depois "Conversar com a equipe". A aba vai mostrar "Ligado, mas parado" com os motivos que ainda faltam (interruptor, motor): é o esperado neste passo.
+4. **Ligar o número e o modo** (super admin, na aba): "Ligar" no `2067be80`, no cartão "Números do assistente" (antes da migration `20261019110000`, o botão era "Usar este número" e trocava o número), e depois "Conversar com a equipe". A aba vai mostrar "Ligado, mas parado" com os motivos que ainda faltam (interruptor, motor): é o esperado neste passo.
 
 5. **Agendar o motor da IA** (SQL editor):
 
@@ -113,7 +123,7 @@ Na ordem. Cada passo só depois do anterior conferido.
      from public.ia_contato_liberado l
      join public.ia_numero_liberado n on n.clinic_id = l.clinic_id and n.ativo
      where l.clinic_id = 'acd9c539-585e-4f2a-a195-712c70099564' and l.ativo;
-     -- atende = true
+     -- atende = true (uma linha por telefone e por número ligado)
      ```
 
    - a saúde do motor: `select saude_do_motor() -> 'ia';` (no SQL editor, que é o servidor; pela sessão de quem não é super admin a chave vem nula desde a revisão de 13/10/2026) com `agendado` e `vigiado` verdadeiros, `devidos` 0 e `alerta` falso; e a aba sem o motivo "motor parado" (`situacao_da_ia_na_clinica(...) ->> 'motor_parado'` falso);
@@ -132,7 +142,7 @@ Na ordem. Cada passo só depois do anterior conferido.
 
 9. **Primeira semana:** o dono revisa 100% das conversas, bloqueios e escalonamentos (consultas de "Acompanhamento", abaixo).
 
-10. **Conduzza Teste**, só depois de 3 a 5 dias limpos na teste123 e das 20 conversas revisadas: os mesmos passos, com o número `d73d3e43-e299-4433-8f52-9f9cde6da5b9` (D37). **Quem cadastra os telefones (passo 2):** o administrador de lá (decisão do dono de 19/10/2026, depois da migration `20261019100000`), pela aba, com a confirmação do aviso da OpenAI, que vai para a trilha no nome dele (ele é membro ativo). Telefone de paciente ("Usar mesmo assim") continua só com o super admin e o ok do dono. Os passos 4 em diante (número, modo, motor e interruptor) continuam **só da equipe Conduzza**. Se for o super admin quem cadastra algum telefone de lá, **antes do passo 2** ele entra como membro ativo da Conduzza Teste (D37): a confirmação do aviso da OpenAI vai para a trilha com a sessão de quem adiciona o telefone, e a política do `audit_log` só aceita membro ativo. Sem isso, o telefone é gravado, mas a confirmação fica só no log da aplicação (`ia_aviso_da_openai_sem_trilha`), sem linha na trilha. Na teste123 ele já é membro ativo.
+10. **Conduzza Teste**, só depois de 3 a 5 dias limpos na teste123 e das 20 conversas revisadas: os mesmos passos, com o número `d73d3e43-e299-4433-8f52-9f9cde6da5b9` ("Numero 2 teste pessoal", D37) e, desde a decisão do dono de 19/10/2026 e **depois da migration `20261019110000`**, também o `35fa44ef-6761-4293-88f9-b492f065f48f` ("Número principal"): "Ligar" nos dois, pela equipe Conduzza, um de cada vez (ligar um não desliga o outro). O passo 3 vale para os dois números (`c.whatsapp_account_id in ('d73d3e43-e299-4433-8f52-9f9cde6da5b9', '35fa44ef-6761-4293-88f9-b492f065f48f')`), e o passo 8 se repete escrevendo para cada número: cada um abre a própria conversa. **Quem cadastra os telefones (passo 2):** o administrador de lá (decisão do dono de 19/10/2026, depois da migration `20261019100000`), pela aba, com a confirmação do aviso da OpenAI, que vai para a trilha no nome dele (ele é membro ativo). Telefone de paciente ("Usar mesmo assim") continua só com o super admin e o ok do dono. Os passos 4 em diante (número, modo, motor e interruptor) continuam **só da equipe Conduzza**. Se for o super admin quem cadastra algum telefone de lá, **antes do passo 2** ele entra como membro ativo da Conduzza Teste (D37): a confirmação do aviso da OpenAI vai para a trilha com a sessão de quem adiciona o telefone, e a política do `audit_log` só aceita membro ativo. Sem isso, o telefone é gravado, mas a confirmação fica só no log da aplicação (`ia_aviso_da_openai_sem_trilha`), sem linha na trilha. Na teste123 ele já é membro ativo.
 
 ---
 
@@ -146,7 +156,7 @@ Desligar **nunca envia nada** ao contato: as conversas da IA voltam para a equip
   select public.definir_liberacao_da_ia('acd9c539-585e-4f2a-a195-712c70099564', false, null, 'motivo curto');
   ```
 
-- **Só o número ou só um telefone:** "Parar de usar" ou "Desligar" na aba (ou `definir_numero_da_ia(..., false)` e `definir_contato_liberado_da_ia(p_clinic_id => ..., p_telefone_e164 => ..., p_rotulo => null, p_ativo => false)`, sempre por nome de parâmetro).
+- **Só um número ou só um telefone:** "Desligar" na linha do número (cartão "Números do assistente"; antes da migration `20261019110000`, "Parar de usar") ou do telefone (ou `definir_numero_da_ia(p_clinic_id => ..., p_whatsapp_account_id => ..., p_ativo => false)` e `definir_contato_liberado_da_ia(p_clinic_id => ..., p_telefone_e164 => ..., p_rotulo => null, p_ativo => false)`, sempre por nome de parâmetro). Desligar um número devolve só as conversas dele e **não mexe nos outros números ligados**: para parar a clínica inteira, "Desligado" no modo.
 - **Tudo, nas duas clínicas:** o interruptor geral na aba (super admin) ou:
 
   ```sql
@@ -317,7 +327,7 @@ A revisão das conversas é pelo Atendimento (aba "IA atendendo" e o fio de cada
 
 **"O aviso automático ao contato não foi enviado."**: a conversa passou para a equipe, mas a frase fixa não saiu (canal ocupado ou falha). Nunca é tentada de novo: a equipe responde o contato.
 
-**Número desconectado:** as conversas da IA voltam para a equipe ("o número do assistente está desconectado"); a IA não espera a reconexão. Reconectar na aba WhatsApp. A aba Agente de IA mostra o motivo até lá.
+**Número desconectado:** as conversas da IA naquele número voltam para a equipe ("o número do assistente está desconectado"); a IA não espera a reconexão. Reconectar na aba WhatsApp. Com outro número ligado e conectado (vários números, desde 19/10/2026), o assistente continua respondendo por ele: a aba fica em "Conversando com a equipe" e só a linha do número caído mostra o aviso. Com nenhum ligado conectado, a aba mostra "Ligado, mas parado" com o motivo de cada número, pelo nome, até reconectar.
 
 **Teto de gasto atingido:** conversa nova do telefone da equipe nasce com a equipe (evento "parada"); a conversa que já estava na IA recebe a frase fixa e passa ("o limite de gasto de hoje acabou"). Volta sozinho quando o gasto mais antigo sai da janela de 24 horas. Mudar o teto é só com o ok do dono, pelo SQL editor, na clínica da lista: `update public.ia_liberacao set teto_diario_centavos_usd = <centavos> where clinic_id = '<id da clínica>';`.
 
@@ -343,6 +353,8 @@ Nesta fase a IA não resolve conversa sozinha e o botão Resolver não aparece p
 ## Rollback
 
 Na ordem. Detalhe e lista exata de objetos no `docs/04`, 17.13, "Rollback".
+
+**Só os vários números (migration `20261019110000`, sem desfazer o E3):** primeiro desligar pela aba ("Desligar" em "Números do assistente") os números que sobrarem, deixando **um só** ligado por clínica (o corpo antigo só mexe nos outros ao ligar: os que ficaram ligados juntos continuam ligados, e a IA continua respondendo por todos). Conferir: `select clinic_id, count(*) filter (where ativo) as ligados from public.ia_numero_liberado group by clinic_id;` (nenhuma com mais de um). Depois reaplicar o corpo e o comentário de `supabase/operacao/rollback/20261019110000-corpos-anteriores.sql` (sem trava de tabela) e voltar o código da aba. O código novo sem a migration: ligar um segundo número desligaria o primeiro na mesma operação (o banco de antes), e a aba mostraria isso depois de recarregar; nada se perde.
 
 **Só o telefone pelo administrador (migration `20261019100000`, sem desfazer o E3):** reaplicar o corpo de `supabase/operacao/rollback/20261019100000-corpos-anteriores.sql` (sem trava de tabela); ligar telefone volta a ser só da equipe Conduzza. Os telefones que o administrador ligou continuam ligados: desligar pela aba se o dono quiser. O código novo sem a migration mostra o texto de permissão ao administrador que tenta ligar; nada é gravado. Para desfazer o E3 inteiro, este passo não é preciso: o passo 6 apaga a função de cinco argumentos de qualquer jeito.
 

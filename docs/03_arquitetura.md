@@ -504,7 +504,7 @@ O gasto do simulador conta no teto de 24 horas da clínica. `registrarUso` (INSE
 
 ### O turno no WhatsApp (E3, 13/10/2026; construído, migrations aplicadas em 13/10/2026, nada ligado)
 
-Plano aprovado pelo dono em 13/10/2026 ("pode"). O mesmo motor do E2 passa a responder no WhatsApp, **só** quando alguém da equipe escreve do próprio celular para o número escolhido na aba Agente de IA, e **só** na teste123 e na Conduzza Teste. Paciente nenhum entra na IA. Contrato do banco no `docs/04`, 17.13; telas no brief (Telas 1, 6 e 12); operação em `supabase/operacao/agente-ia.md`. Diferente do simulador, o turno do WhatsApp usa a versão **publicada** (`carregarConfigPublicada`) e honra o horário de operação (24 horas ou Só fora do expediente; "Se a equipe não responder" ainda não atende no WhatsApp e a conversa passa para a equipe).
+Plano aprovado pelo dono em 13/10/2026 ("pode"). O mesmo motor do E2 passa a responder no WhatsApp, **só** quando alguém da equipe escreve do próprio celular para um dos números ligados ao assistente na aba Agente de IA (mais de um por clínica desde 19/10/2026), e **só** na teste123 e na Conduzza Teste. Paciente nenhum entra na IA. Contrato do banco no `docs/04`, 17.13; telas no brief (Telas 1, 6 e 12); operação em `supabase/operacao/agente-ia.md`. Diferente do simulador, o turno do WhatsApp usa a versão **publicada** (`carregarConfigPublicada`) e honra o horário de operação (24 horas ou Só fora do expediente; "Se a equipe não responder" ainda não atende no WhatsApp e a conversa passa para a equipe).
 
 **Onde vive:**
 

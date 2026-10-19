@@ -15,10 +15,10 @@ vi.mock("sonner", () => ({
 // A aba importa as Server Actions; aqui so a renderizacao importa.
 vi.mock("@/app/(app)/configuracoes/ia-liberacao-actions", () => ({
   adicionarTelefoneDaIaAction: vi.fn(),
+  alternarNumeroDaIaAction: vi.fn(),
   alternarTelefoneDaIaAction: vi.fn(),
   definirEscolhaDaIaAction: vi.fn(),
   definirInterruptorGeralAction: vi.fn(),
-  escolherNumeroDaIaAction: vi.fn(),
 }));
 
 import { TEXTOS_DA_IA } from "@/components/configuracoes/agente-de-ia";
@@ -33,9 +33,10 @@ import { expedientePadrao } from "@/lib/domain/agente/config";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 
 // Aba "Agente de IA" de Configuracoes (Fase 3): o estado em 3 camadas com os
-// motivos, o seletor do modo, o numero (so conectado, um por vez), os
-// telefones da equipe, o interruptor geral (botao so para o super admin) e o
-// teto; sem permissao (gestor), tudo visivel e desabilitado com a dica;
+// motivos, o seletor do modo, os numeros (varios ligados ao mesmo tempo
+// desde 19/10/2026, cada um com o proprio estado e botao; ligar so numero
+// conectado), os telefones da equipe, o interruptor geral (botao so para o
+// super admin) e o teto; sem permissao (gestor), tudo visivel e desabilitado com a dica;
 // vazios e erro de leitura; nenhum travessao em estado nenhum; o fim de cada
 // acao no toast (sucesso e erro) e, no erro, na regiao sempre montada.
 
@@ -50,7 +51,7 @@ function dados(campos: Partial<DadosDaIa> = {}): DadosDaIa {
       pausadaPelaClinica: false,
       tetoDiarioCentavosUsd: 500,
     },
-    numeros: [{ whatsappAccountId: NUMERO, ativo: true }],
+    numerosLigados: [NUMERO],
     telefones: [
       {
         id: "t1",
@@ -133,6 +134,27 @@ function botaoDesabilitado(html: string, texto: string): boolean {
   return /disabled=""/.test(aberturaDoBotao(html, texto));
 }
 
+/**
+ * So o cartao "Números do assistente" (o titulo ate o cartao dos
+ * telefones): "Desligar" existe nos dois cartoes.
+ */
+function cartaoDosNumeros(html: string): string {
+  const inicio = html.indexOf("Números do assistente");
+  const fim = html.indexOf("Telefones da equipe", inicio);
+  expect(inicio, "cartão dos números").toBeGreaterThan(-1);
+  expect(fim, "cartão dos telefones depois").toBeGreaterThan(inicio);
+  return html.slice(inicio, fim);
+}
+
+/** A linha (li) de um numero, pelo nome dele, no cartao dos numeros. */
+function linhaDoNumero(html: string, nome: string): string {
+  const cartao = cartaoDosNumeros(html);
+  const indice = cartao.indexOf(`>${nome}<`);
+  expect(indice, `linha do número ${nome}`).toBeGreaterThan(-1);
+  const inicio = cartao.lastIndexOf("<li", indice);
+  return cartao.slice(inicio, cartao.indexOf("</li>", indice) + 5);
+}
+
 /** O botao esta dentro do span com tabIndex da dica (DisabledWithHint)? */
 function botaoComDica(html: string, texto: string): boolean {
   const indice = html.indexOf(`${texto}</button>`);
@@ -173,7 +195,7 @@ describe("estado do assistente", () => {
   it("desligado: chip Desligado; sem número nem telefone, a equipe fica presa e o porquê aparece", () => {
     const html = aba({
       superAdmin: true,
-      dados: dados({ liberacao: null, numeros: [], telefones: [] }),
+      dados: dados({ liberacao: null, numerosLigados: [], telefones: [] }),
     });
     expect(html).toContain("Desligado");
     expect(botaoDesabilitado(html, "Conversar com a equipe")).toBe(true);
@@ -199,40 +221,58 @@ describe("estado do assistente", () => {
   });
 });
 
-describe("número do assistente", () => {
-  it("o escolhido: Em uso e Parar de usar; o outro conectado: Usar este número", () => {
+describe("números do assistente", () => {
+  it("o ligado: Em uso e Desligar; o outro conectado: Desligado do assistente e Ligar", () => {
     const html = aba({
       superAdmin: true,
       numeros: [numero(), numero({ id: SEGUNDO, nome: "Unidade Centro" })],
     });
-    expect(html).toContain("Em uso pelo assistente");
-    expect(botaoDesabilitado(html, "Parar de usar")).toBe(false);
-    expect(botaoDesabilitado(html, "Usar este número")).toBe(false);
-    expect(html).toContain("(84) 99999-0000");
-    expect(html).toContain("Conectado");
+    const cartao = cartaoDosNumeros(html);
+    expect(cartao).toContain("Números do assistente");
+    expect(cartao).toContain(escapado(TEXTOS_DA_IA.descricaoDosNumeros));
+    expect(cartao).not.toMatch(/um número por vez/i);
+    const ligado = linhaDoNumero(html, "Número principal");
+    expect(ligado).toContain("Em uso pelo assistente");
+    expect(botaoDesabilitado(ligado, "Desligar")).toBe(false);
+    const outro = linhaDoNumero(html, "Unidade Centro");
+    expect(outro).toContain("Desligado do assistente");
+    expect(outro).not.toContain("Em uso pelo assistente");
+    expect(botaoDesabilitado(outro, "Ligar")).toBe(false);
+    expect(cartao).toContain("(84) 99999-0000");
+    expect(cartao).toContain("Conectado");
   });
 
-  it("desconectado e não escolhido: preso com a dica de conectar antes", () => {
+  it("desconectado e não ligado: Ligar preso com a dica de conectar antes", () => {
     const html = aba({
       superAdmin: true,
-      dados: dados({ numeros: [] }),
+      dados: dados({ numerosLigados: [] }),
       numeros: [numero({ status: "desconectado" })],
     });
-    expect(botaoDesabilitado(html, "Usar este número")).toBe(true);
-    expect(botaoComDica(html, "Usar este número")).toBe(true);
-    expect(html).toContain("Desconectado");
+    const cartao = cartaoDosNumeros(html);
+    expect(botaoDesabilitado(cartao, "Ligar")).toBe(true);
+    expect(botaoComDica(cartao, "Ligar")).toBe(true);
+    expect(cartao).toContain("Desconectado");
+    expect(cartao).toContain("Desligado do assistente");
   });
 
-  it("escolhido e desconectado: o aviso e o motivo da parada", () => {
+  it("o único ligado e desconectado: o aviso na linha e o motivo da parada com o nome", () => {
     const html = aba({ numeros: [numero({ status: "desconectado" })] });
     expect(html).toContain(escapado(TEXTOS_DA_IA.numeroDesconectado));
-    expect(html).toContain(escapado(TEXTOS_DA_IA.motivos.numero_desconectado));
-    expect(botaoDesabilitado(html, "Parar de usar")).toBe(false);
+    expect(html).toContain(
+      escapado(
+        "O número Número principal está desconectado. Conecte o número na aba WhatsApp.",
+      ),
+    );
+    expect(html).toContain("Ligado, mas parado");
+    const linha = linhaDoNumero(html, "Número principal");
+    expect(linha).toContain("Ligado ao assistente");
+    expect(botaoDesabilitado(linha, "Desligar")).toBe(false);
   });
 
   it("sem números: vazio com o caminho; leitura que falhou: erro, nunca vazio", () => {
     const vazio = aba({ numeros: [] });
     expect(vazio).toContain("Nenhum número de WhatsApp na clínica");
+    expect(vazio).toContain("Depois, ligue o número aqui.");
     expect(vazio).toContain('href="/configuracoes?aba=whatsapp"');
     const erro = aba({ numeros: null });
     expect(erro).toContain("Não foi possível carregar os números de WhatsApp");
@@ -298,12 +338,14 @@ describe("telefones da equipe", () => {
 
 describe("permissão", () => {
   it("gestor: tudo visível e preso, com a dica do administrador", () => {
-    const html = aba({ podeEditar: false });
+    const html = aba({
+      podeEditar: false,
+      numeros: [numero(), numero({ id: SEGUNDO, nome: "Unidade Centro" })],
+    });
     for (const texto of [
       "Desligado",
       "Só simulador",
       "Conversar com a equipe",
-      "Parar de usar",
       "Adicionar",
       "Desligar",
       "Ligar de novo",
@@ -311,7 +353,12 @@ describe("permissão", () => {
       expect(botaoDesabilitado(html, texto), texto).toBe(true);
     }
     expect(botaoComDica(html, "Adicionar")).toBe(true);
-    expect(botaoComDica(html, "Parar de usar")).toBe(true);
+    // os dois botoes de numero: desligar e ligar, presos com a dica
+    const cartao = cartaoDosNumeros(html);
+    for (const texto of ["Desligar", "Ligar"]) {
+      expect(botaoDesabilitado(cartao, texto), texto).toBe(true);
+      expect(botaoComDica(cartao, texto), texto).toBe(true);
+    }
     // os campos do telefone tambem presos (fora a caixa escondida do
     // Checkbox, que so espelha o botao)
     const campos = (html.match(/<input[^>]*>/g) ?? []).filter(
@@ -401,7 +448,9 @@ describe("teto e textos", () => {
         ambienteLigado: false,
         dados: dados({ interruptorLigado: false }),
       }),
-      aba({ dados: dados({ liberacao: null, numeros: [], telefones: [] }) }),
+      aba({
+        dados: dados({ liberacao: null, numerosLigados: [], telefones: [] }),
+      }),
       aba({ numeros: [] }),
       aba({ numeros: null }),
       aba({ numeros: [numero({ status: "desconectado" })] }),
@@ -434,12 +483,16 @@ describe("ligar só pela equipe Conduzza (E3)", () => {
     // e possivel saindo dele, e ai fica presa (ver o teste seguinte)
     expect(botaoDesabilitado(html, "Desligado")).toBe(false);
     expect(botaoDesabilitado(html, "Só simulador")).toBe(false);
-    // numero: parar de usar livre; usar outro, preso com a dica
-    expect(botaoDesabilitado(html, "Parar de usar")).toBe(false);
-    expect(botaoDesabilitado(html, "Usar este número")).toBe(true);
-    expect(botaoComDica(html, "Usar este número")).toBe(true);
+    // numero: desligar livre; ligar outro, preso com a dica
+    const ligado = linhaDoNumero(html, "Número principal");
+    expect(botaoDesabilitado(ligado, "Desligar")).toBe(false);
+    expect(botaoComDica(ligado, "Desligar")).toBe(false);
+    const outro = linhaDoNumero(html, "Unidade Centro");
+    expect(botaoDesabilitado(outro, "Ligar")).toBe(true);
+    expect(botaoComDica(outro, "Ligar")).toBe(true);
     // telefone: desligar livre
-    expect(botaoDesabilitado(html, "Desligar")).toBe(false);
+    const telefones = html.slice(html.indexOf("Telefones da equipe"));
+    expect(botaoDesabilitado(telefones, "Desligar")).toBe(false);
   });
 
   it("administrador: adicionar telefone e Ligar de novo habilitados (19/10/2026), com os campos e a confirmação da OpenAI livres", () => {
@@ -492,7 +545,7 @@ describe("ligar só pela equipe Conduzza (E3)", () => {
       dados: dados({ liberacao: null }),
     });
     expect(botaoDesabilitado(html, "Conversar com a equipe")).toBe(false);
-    expect(botaoDesabilitado(html, "Usar este número")).toBe(false);
+    expect(botaoDesabilitado(cartaoDosNumeros(html), "Ligar")).toBe(false);
     expect(botaoDesabilitado(html, "Adicionar")).toBe(false);
     expect(botaoDesabilitado(html, "Ligar de novo")).toBe(false);
     expect(html).not.toContain(escapado(TEXTOS_DA_IA.soEquipeConduzzaLiga));
@@ -622,8 +675,10 @@ describe("a aba diz a verdade (E3)", () => {
 
 // Achado T4 da revisao do E3: com o assistente fora de uso (Desligado, So
 // simulador ou Ligado, mas parado), a linha do telefone ligado diz so
-// "Ligado" e o numero escolhido, "Escolhido para o assistente". So no
-// estado "Conversando com a equipe" eles dizem que o assistente conversa.
+// "Ligado" e a do numero ligado, "Ligado ao assistente". So no estado
+// "Conversando com a equipe" eles dizem que o assistente conversa (e o
+// numero, so se ELE esta conectado: com varios numeros, o verde pode vir de
+// outro).
 describe("telefone e número fora de uso (T4)", () => {
   const SIMULADOR = {
     liberada: true,
@@ -637,10 +692,10 @@ describe("telefone e número fora de uso (T4)", () => {
     expect(html).toContain("Conversando com a equipe");
     expect(html).toContain("Conversa com o assistente");
     expect(html).toContain("Em uso pelo assistente");
-    expect(html).not.toContain("Escolhido para o assistente");
+    expect(html).not.toContain("Ligado ao assistente");
   });
 
-  it("desligado, só simulador ou parado: Ligado e Escolhido para o assistente", () => {
+  it("desligado, só simulador ou parado: Ligado e Ligado ao assistente", () => {
     const casos = {
       desligado: aba({
         dados: dados({
@@ -654,13 +709,142 @@ describe("telefone e número fora de uso (T4)", () => {
       expect(html, caso).not.toContain("Conversando com a equipe");
       expect(html, caso).not.toContain("Conversa com o assistente");
       expect(html, caso).not.toContain("Em uso pelo assistente");
-      expect(html, caso).toContain("Escolhido para o assistente");
+      expect(html, caso).toContain("Ligado ao assistente");
       // o telefone t1 (ligado) com o rotulo do contrato, perto do numero dele
       const linha = html.slice(
         html.indexOf("(84) 99999-0001"),
         html.indexOf("(84) 99999-0002"),
       );
       expect(linha, caso).toContain(">Ligado<");
+    }
+  });
+});
+
+// Decisao do dono de 19/10/2026 (migration 20261019110000): varios numeros
+// ligados ao mesmo tempo. Cada linha do cartao "Números do assistente" tem o
+// proprio estado em 3 camadas (icone, rotulo e cor) e o proprio botao;
+// ligar e so da equipe Conduzza (o administrador ve preso, com a dica de
+// hoje) e desligar e tambem do administrador, sem mexer nos outros. O verde
+// exige pelo menos um ligado e conectado.
+describe("vários números ligados (19/10/2026)", () => {
+  const DOIS_NUMEROS = [
+    numero(),
+    numero({ id: SEGUNDO, nome: "Numero 2 teste pessoal", principal: false }),
+  ];
+  const DOIS_LIGADOS = dados({ numerosLigados: [NUMERO, SEGUNDO] });
+
+  it("os dois ligados e conectados: os dois Em uso, cada um com Desligar livre", () => {
+    const html = aba({ dados: DOIS_LIGADOS, numeros: DOIS_NUMEROS });
+    expect(html).toContain("Conversando com a equipe");
+    for (const nome of ["Número principal", "Numero 2 teste pessoal"]) {
+      const linha = linhaDoNumero(html, nome);
+      expect(linha, nome).toContain("Em uso pelo assistente");
+      // 3 camadas: o chip (do inicio dele ao rotulo) com icone (svg),
+      // rotulo e tom de sucesso
+      const rotulo = linha.indexOf("Em uso pelo assistente");
+      const chip = linha.slice(
+        linha.lastIndexOf("<span data-size", rotulo),
+        rotulo,
+      );
+      expect(chip, nome).toContain("<svg");
+      expect(chip, nome).toMatch(/success/);
+      expect(botaoDesabilitado(linha, "Desligar"), nome).toBe(false);
+      expect(botaoComDica(linha, "Desligar"), nome).toBe(false);
+    }
+    expect(cartaoDosNumeros(html)).not.toContain("Ligar</button>");
+  });
+
+  it("um ligado conectado e o outro caído: o verde fica; só a linha do caído avisa e não diz Em uso", () => {
+    const html = aba({
+      dados: DOIS_LIGADOS,
+      numeros: [
+        DOIS_NUMEROS[0]!,
+        { ...DOIS_NUMEROS[1]!, status: "desconectado" },
+      ],
+    });
+    expect(html).toContain("Conversando com a equipe");
+    expect(html).not.toContain("Por que o assistente ainda não responde");
+    const conectado = linhaDoNumero(html, "Número principal");
+    expect(conectado).toContain("Em uso pelo assistente");
+    expect(conectado).not.toContain(escapado(TEXTOS_DA_IA.numeroDesconectado));
+    const caido = linhaDoNumero(html, "Numero 2 teste pessoal");
+    expect(caido).toContain("Ligado ao assistente");
+    expect(caido).not.toContain("Em uso pelo assistente");
+    expect(caido).toContain(escapado(TEXTOS_DA_IA.numeroDesconectado));
+    expect(caido).toContain("Desconectado");
+  });
+
+  it("ligados, mas nenhum conectado: Ligado, mas parado, dizendo quais", () => {
+    const html = aba({
+      dados: DOIS_LIGADOS,
+      numeros: DOIS_NUMEROS.map((n) => ({
+        ...n,
+        status: "desconectado" as const,
+      })),
+    });
+    expect(html).toContain("Ligado, mas parado");
+    expect(html).toContain(
+      escapado(
+        "O número Número principal está desconectado. Conecte o número na aba WhatsApp.",
+      ),
+    );
+    expect(html).toContain(
+      escapado(
+        "O número Numero 2 teste pessoal está desconectado. Conecte o número na aba WhatsApp.",
+      ),
+    );
+    expect(html).not.toContain("Em uso pelo assistente");
+  });
+
+  it("nenhum ligado: Ligado, mas parado, com Nenhum número ligado ao assistente; as duas linhas Desligado do assistente", () => {
+    const html = aba({
+      superAdmin: true,
+      dados: dados({ numerosLigados: [] }),
+      numeros: DOIS_NUMEROS,
+    });
+    expect(html).toContain("Ligado, mas parado");
+    expect(html).toContain(escapado(TEXTOS_DA_IA.motivos.sem_numero));
+    for (const nome of ["Número principal", "Numero 2 teste pessoal"]) {
+      const linha = linhaDoNumero(html, nome);
+      expect(linha, nome).toContain("Desligado do assistente");
+      expect(botaoDesabilitado(linha, "Ligar"), nome).toBe(false);
+    }
+  });
+
+  it("administrador: desliga qualquer um; ligar o outro fica preso com a dica de hoje", () => {
+    const html = aba({
+      dados: dados({ numerosLigados: [NUMERO] }),
+      numeros: DOIS_NUMEROS,
+    });
+    const ligado = linhaDoNumero(html, "Número principal");
+    expect(botaoDesabilitado(ligado, "Desligar")).toBe(false);
+    const desligado = linhaDoNumero(html, "Numero 2 teste pessoal");
+    expect(botaoDesabilitado(desligado, "Ligar")).toBe(true);
+    expect(botaoComDica(desligado, "Ligar")).toBe(true);
+    expect(TEXTOS_DA_IA.soEquipeConduzzaLiga).toBe(
+      "Nesta fase, só a equipe Conduzza liga o atendimento pelo WhatsApp.",
+    );
+  });
+
+  it("nenhum travessão com vários números", () => {
+    const estados = [
+      aba({ dados: DOIS_LIGADOS, numeros: DOIS_NUMEROS }),
+      aba({
+        dados: DOIS_LIGADOS,
+        numeros: DOIS_NUMEROS.map((n) => ({
+          ...n,
+          status: "desconectado" as const,
+        })),
+      }),
+      aba({
+        superAdmin: true,
+        dados: dados({ numerosLigados: [] }),
+        numeros: DOIS_NUMEROS,
+      }),
+    ];
+    for (const html of estados) {
+      expect(html).not.toMatch(/[—–]/);
+      expect(html).not.toMatch(/um número por vez/i);
     }
   });
 });

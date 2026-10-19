@@ -9,15 +9,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //     geral, so o super admin;
 //   - o Zod estrito de cada entrada;
 //   - cada acao vira a RPC certa, com a sessao; "Conversar com a equipe"
-//     exige numero e telefone; numero so conectado, e uma RPC so para
-//     trocar (o banco desliga os outros na mesma transacao); numero e
-//     telefone criam a linha desligada quando ela falta; o telefone vira
-//     E.164 com o 55;
+//     exige ao menos um numero ligado (ainda da clinica) e um telefone;
+//     cada numero liga e desliga sozinho (decisao do dono de 19/10/2026:
+//     varios numeros ligados ao mesmo tempo), uma RPC so, sem tocar nos
+//     outros; ligar so numero conectado; numero e telefone criam a linha
+//     desligada quando ela falta; o telefone vira E.164 com o 55;
 //   - telefone que ja e de um contato da clinica (pela chave canonica) so
 //     entra com a confirmacao explicita: sem ela, o aviso com o nome e a
 //     leitura na trilha, sem gravar;
 //   - 42501 vira texto de permissao; telefone e nome nunca vao para log;
-//   - E3: ligar o atendimento pelo WhatsApp (modo equipe e usar numero) e
+//   - E3: ligar o atendimento pelo WhatsApp (modo equipe e ligar numero) e
 //     so do super admin; o administrador recebe soEquipeConduzzaLiga sem
 //     banco e continua desligando. O telefone novo exige a confirmacao do
 //     aviso da OpenAI, que vai para audit_log; a recusa do banco por numero
@@ -44,7 +45,8 @@ type DadosFalsos = {
     pausadaPelaClinica: boolean;
     tetoDiarioCentavosUsd: number;
   } | null;
-  numeros: { whatsappAccountId: string; ativo: boolean }[];
+  /** Os ids dos numeros ligados (varios desde 19/10/2026). */
+  numerosLigados: string[];
   telefones: {
     id: string;
     telefone: string;
@@ -67,6 +69,14 @@ const registro = vi.hoisted(() => ({
   dados: null as unknown,
   dadosFalham: false,
   numeroDaClinica: null as null | { id: string; connectionStatus: string },
+  /**
+   * Quando definido, a leitura do numero da clinica responde por id (nulo:
+   * removido ou de outra clinica); sem ele, numeroDaClinica para todos.
+   */
+  numerosPorId: null as null | Map<
+    string,
+    { id: string; connectionStatus: string }
+  >,
   /** O contato da clinica com o telefone consultado (nulo: nenhum). */
   contato: null as null | { id: string; name: string | null },
   contatoFalha: false,
@@ -156,7 +166,14 @@ vi.mock("@/lib/queries/ia-liberacao", async (original) => {
       }
       return registro.dados;
     },
-    fetchNumeroDaClinica: async () => registro.numeroDaClinica,
+    fetchNumeroDaClinica: async (
+      _supabase: unknown,
+      _clinicId: string,
+      whatsappAccountId: string,
+    ) =>
+      registro.numerosPorId
+        ? (registro.numerosPorId.get(whatsappAccountId) ?? null)
+        : registro.numeroDaClinica,
   };
 });
 vi.mock("@/lib/auth/read-audit", () => ({
@@ -177,10 +194,10 @@ vi.mock("@/lib/log", () => ({
 
 import {
   adicionarTelefoneDaIaAction,
+  alternarNumeroDaIaAction,
   alternarTelefoneDaIaAction,
   definirEscolhaDaIaAction,
   definirInterruptorGeralAction,
-  escolherNumeroDaIaAction,
 } from "@/app/(app)/configuracoes/ia-liberacao-actions";
 import {
   avisoDeContatoDaClinica,
@@ -195,7 +212,7 @@ function dadosCompletos(campos: Partial<DadosFalsos> = {}): DadosFalsos {
       pausadaPelaClinica: false,
       tetoDiarioCentavosUsd: 500,
     },
-    numeros: [{ whatsappAccountId: NUMERO, ativo: true }],
+    numerosLigados: [NUMERO],
     telefones: [
       { id: "t1", telefone: "+5584999990001", rotulo: "Equipe", ativo: true },
     ],
@@ -215,6 +232,7 @@ beforeEach(() => {
   registro.dados = dadosCompletos();
   registro.dadosFalham = false;
   registro.numeroDaClinica = { id: NUMERO, connectionStatus: "conectado" };
+  registro.numerosPorId = null;
   registro.contato = null;
   registro.contatoFalha = false;
   registro.linhaDoTelefone = { id: "t-novo" };
@@ -227,7 +245,7 @@ beforeEach(() => {
 
 const todasAsAcoes = [
   () => definirEscolhaDaIaAction({ escolha: "simulador" }),
-  () => escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true }),
+  () => alternarNumeroDaIaAction({ whatsappAccountId: NUMERO, ligado: true }),
   () =>
     adicionarTelefoneDaIaAction({
       rotulo: "Ana",
@@ -334,8 +352,10 @@ describe("entradas estritas", () => {
       () => definirEscolhaDaIaAction({ escolha: "numero_inteiro" }),
       () => definirEscolhaDaIaAction({ escolha: "simulador", extra: 1 }),
       () => definirEscolhaDaIaAction("simulador"),
-      () => escolherNumeroDaIaAction({ whatsappAccountId: "x", usar: true }),
-      () => escolherNumeroDaIaAction({ whatsappAccountId: NUMERO }),
+      () => alternarNumeroDaIaAction({ whatsappAccountId: "x", ligado: true }),
+      () => alternarNumeroDaIaAction({ whatsappAccountId: NUMERO }),
+      // o nome antigo do campo (ate 19/10/2026) nao passa mais
+      () => alternarNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true }),
       () =>
         alternarTelefoneDaIaAction({ telefone: "84999990001", ligado: true }),
       () =>
@@ -412,13 +432,10 @@ describe("ligar e desligar na clínica", () => {
     ]);
   });
 
-  it("conversar com a equipe sem número, sem telefone ou com número que saiu: recusado", async () => {
+  it("conversar com a equipe sem número ligado, sem telefone ou com número que saiu: recusado", async () => {
     registro.superAdmin = true;
     for (const dados of [
-      dadosCompletos({ numeros: [] }),
-      dadosCompletos({
-        numeros: [{ whatsappAccountId: NUMERO, ativo: false }],
-      }),
+      dadosCompletos({ numerosLigados: [] }),
       dadosCompletos({ telefones: [] }),
       dadosCompletos({
         telefones: [
@@ -434,6 +451,28 @@ describe("ligar e desligar na clínica", () => {
     }
     registro.dados = dadosCompletos();
     registro.numeroDaClinica = null;
+    expect(await definirEscolhaDaIaAction({ escolha: "equipe" })).toEqual({
+      ok: false,
+      error: TEXTOS_DA_IA.faltaParaAEquipe,
+    });
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("conversar com a equipe com dois ligados, um removido e outro ativo: liga (basta um)", async () => {
+    registro.superAdmin = true;
+    registro.dados = dadosCompletos({ numerosLigados: [OUTRO_NUMERO, NUMERO] });
+    registro.numerosPorId = new Map([
+      [NUMERO, { id: NUMERO, connectionStatus: "desconectado" }],
+    ]);
+    expect(await definirEscolhaDaIaAction({ escolha: "equipe" })).toEqual({
+      ok: true,
+    });
+    expect(registro.rpcs.map((r) => r.nome)).toEqual([
+      "definir_liberacao_da_ia",
+    ]);
+    // os dois ligados removidos: falta o numero
+    registro.rpcs = [];
+    registro.numerosPorId = new Map();
     expect(await definirEscolhaDaIaAction({ escolha: "equipe" })).toEqual({
       ok: false,
       error: TEXTOS_DA_IA.faltaParaAEquipe,
@@ -469,17 +508,18 @@ describe("ligar e desligar na clínica", () => {
   });
 });
 
-describe("número do assistente", () => {
+describe("números do assistente (vários desde 19/10/2026)", () => {
   beforeEach(() => {
     registro.superAdmin = true;
   });
 
-  it("usar com outro ligado: uma RPC só (o banco desliga os outros na mesma transação)", async () => {
-    registro.dados = dadosCompletos({
-      numeros: [{ whatsappAccountId: OUTRO_NUMERO, ativo: true }],
-    });
+  it("ligar com outro já ligado: uma RPC só, deste número (o outro continua ligado)", async () => {
+    registro.dados = dadosCompletos({ numerosLigados: [OUTRO_NUMERO] });
     expect(
-      await escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true }),
+      await alternarNumeroDaIaAction({
+        whatsappAccountId: NUMERO,
+        ligado: true,
+      }),
     ).toEqual({ ok: true });
     expect(registro.rpcs).toEqual([
       {
@@ -491,13 +531,59 @@ describe("número do assistente", () => {
         },
       },
     ]);
+    // nenhuma chamada para o outro numero (nem desligar, nem religar)
+    expect(
+      registro.rpcs.some((r) => r.args.p_whatsapp_account_id === OUTRO_NUMERO),
+    ).toBe(false);
     expect(registro.revalidados).toEqual(["/configuracoes"]);
+  });
+
+  it("desligar um com outro ligado: uma RPC só, deste número", async () => {
+    registro.dados = dadosCompletos({ numerosLigados: [NUMERO, OUTRO_NUMERO] });
+    expect(
+      await alternarNumeroDaIaAction({
+        whatsappAccountId: OUTRO_NUMERO,
+        ligado: false,
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_numero_da_ia",
+        args: {
+          p_clinic_id: TESTE123,
+          p_whatsapp_account_id: OUTRO_NUMERO,
+          p_ativo: false,
+        },
+      },
+    ]);
+  });
+
+  it("erro do banco ao ligar: o log só com o código e o tipo numero_ligar, nunca o telefone", async () => {
+    registro.errosDoRpc.set("definir_numero_da_ia", { code: "XX000" });
+    expect(
+      await alternarNumeroDaIaAction({
+        whatsappAccountId: NUMERO,
+        ligado: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error: "Não foi possível alterar o assistente de IA. Tente de novo.",
+    });
+    expect(registro.logs).toEqual([
+      [
+        "ia_liberacao_nao_alterada",
+        { clinic_id: TESTE123, kind: "numero_ligar", error_code: "XX000" },
+      ],
+    ]);
   });
 
   it("se o banco recusa, nada muda na tela: o erro, sem revalidar", async () => {
     registro.erroNoNumero = { id: NUMERO, ativo: true, code: "23514" };
     expect(
-      await escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true }),
+      await alternarNumeroDaIaAction({
+        whatsappAccountId: NUMERO,
+        ligado: true,
+      }),
     ).toEqual({
       ok: false,
       error: "Este número foi removido da clínica. Recarregue a página.",
@@ -507,8 +593,8 @@ describe("número do assistente", () => {
   });
 
   it("sem a linha de liberação: cria desligada antes do número", async () => {
-    registro.dados = dadosCompletos({ liberacao: null, numeros: [] });
-    await escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true });
+    registro.dados = dadosCompletos({ liberacao: null, numerosLigados: [] });
+    await alternarNumeroDaIaAction({ whatsappAccountId: NUMERO, ligado: true });
     expect(registro.rpcs.map((r) => [r.nome, r.args.p_liberada])).toEqual([
       ["definir_liberacao_da_ia", false],
       ["definir_numero_da_ia", undefined],
@@ -516,38 +602,44 @@ describe("número do assistente", () => {
   });
 
   it("com a linha: nunca religa nem desliga a clínica", async () => {
-    registro.dados = dadosCompletos({ numeros: [] });
-    await escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true });
+    registro.dados = dadosCompletos({ numerosLigados: [] });
+    await alternarNumeroDaIaAction({ whatsappAccountId: NUMERO, ligado: true });
     expect(registro.rpcs.map((r) => r.nome)).toEqual(["definir_numero_da_ia"]);
   });
 
   it("número desconectado ou fora da clínica: recusado sem banco", async () => {
     registro.numeroDaClinica = { id: NUMERO, connectionStatus: "desconectado" };
     expect(
-      await escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true }),
+      await alternarNumeroDaIaAction({
+        whatsappAccountId: NUMERO,
+        ligado: true,
+      }),
     ).toEqual({ ok: false, error: TEXTOS_DA_IA.conecteAntes });
     registro.numeroDaClinica = {
       id: NUMERO,
       connectionStatus: "aguardando_qr",
     };
     expect(
-      await escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true }),
+      await alternarNumeroDaIaAction({
+        whatsappAccountId: NUMERO,
+        ligado: true,
+      }),
     ).toEqual({ ok: false, error: TEXTOS_DA_IA.conecteAntes });
     registro.numeroDaClinica = null;
-    const r = await escolherNumeroDaIaAction({
+    const r = await alternarNumeroDaIaAction({
       whatsappAccountId: NUMERO,
-      usar: true,
+      ligado: true,
     });
     expect(r.ok).toBe(false);
     expect(registro.rpcs).toEqual([]);
   });
 
-  it("parar de usar: uma RPC só, mesmo desconectado", async () => {
+  it("desligar: uma RPC só, mesmo desconectado", async () => {
     registro.numeroDaClinica = { id: NUMERO, connectionStatus: "desconectado" };
     expect(
-      await escolherNumeroDaIaAction({
+      await alternarNumeroDaIaAction({
         whatsappAccountId: NUMERO,
-        usar: false,
+        ligado: false,
       }),
     ).toEqual({ ok: true });
     expect(registro.rpcs).toEqual([
@@ -769,7 +861,7 @@ describe("telefones da equipe", () => {
 describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
   const ligarOAtendimento = [
     () => definirEscolhaDaIaAction({ escolha: "equipe" }),
-    () => escolherNumeroDaIaAction({ whatsappAccountId: NUMERO, usar: true }),
+    () => alternarNumeroDaIaAction({ whatsappAccountId: NUMERO, ligado: true }),
   ] as const;
   const ligarTudo = [
     ...ligarOAtendimento,
@@ -799,9 +891,9 @@ describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
       ok: true,
     });
     expect(
-      await escolherNumeroDaIaAction({
+      await alternarNumeroDaIaAction({
         whatsappAccountId: NUMERO,
-        usar: false,
+        ligado: false,
       }),
     ).toEqual({ ok: true });
     expect(
@@ -844,9 +936,9 @@ describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
     }
     // Desligar recusado continua com o texto de permissao.
     expect(
-      await escolherNumeroDaIaAction({
+      await alternarNumeroDaIaAction({
         whatsappAccountId: NUMERO,
-        usar: false,
+        ligado: false,
       }),
     ).toEqual({ ok: false, error: TEXTOS_DA_IA.semPermissao });
   });

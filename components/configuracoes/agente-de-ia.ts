@@ -7,7 +7,10 @@ import {
 } from "lucide-react";
 import { z } from "zod";
 
-import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
+import {
+  telefoneFormatado,
+  type NumeroDoWhatsapp,
+} from "@/components/whatsapp/numeros";
 import type { StatusDefinition } from "@/lib/design/status";
 import { agenteAtendeAgora } from "@/lib/domain/agente/config";
 import { formatarTelefone, normalizarTelefone } from "@/lib/domain/telefone";
@@ -27,10 +30,16 @@ import type {
 // - Quem altera: o administrador da clinica e o super admin. Gestor ve tudo
 //   desabilitado, com a dica. O interruptor geral e so do super admin.
 // - Nesta fase (E3, 13/10/2026), LIGAR o atendimento pelo WhatsApp e so da
-//   equipe Conduzza: escolher "Conversar com a equipe" e usar um numero. O
+//   equipe Conduzza: escolher "Conversar com a equipe" e ligar um numero. O
 //   administrador ve esses controles desabilitados, com a dica
 //   soEquipeConduzzaLiga; desligar continua com ele. O banco confere de novo
 //   (ia_exigir_equipe_conduzza).
+// - Numeros do assistente (decisao do dono de 19/10/2026, migration
+//   20261019110000): a clinica pode ter VARIOS numeros ligados ao mesmo
+//   tempo, e cada um liga e desliga sozinho. O assistente responde por
+//   qualquer numero ligado e conectado; o verde exige pelo menos um. Nenhum
+//   ligado e "Nenhum número ligado ao assistente."; ligados, mas nenhum
+//   conectado, um motivo por numero, com o nome dele.
 // - Telefone da equipe (decisao do dono de 19/10/2026, migration
 //   20261019100000): adicionar e "Ligar de novo" voltam para o
 //   administrador da clinica (e o super admin), com a mesma confirmacao do
@@ -39,7 +48,7 @@ import type {
 // - O estado diz a verdade de HOJE: "Ligado, mas parado" quando a escolha
 //   da clinica e ligar, mas alguma trava ainda diz nao (ambiente, interruptor
 //   geral, pausa, teto de gasto, versao publicada, horario, motor da IA,
-//   numero, telefone). O verde so aparece sem nenhum motivo e com tudo
+//   numeros, telefone). O verde so aparece sem nenhum motivo e com tudo
 //   conferido: leitura que falhou vira "Não deu para conferir agora" (achado
 //   T3 da revisao). O teto e a versao vem de situacao_da_ia_na_clinica (so o
 //   booleano do teto: ia_uso continua so do super admin).
@@ -103,29 +112,51 @@ export type ContextoDaIa = {
   fuso: string;
 };
 
+/** Um numero ligado ao assistente: o id e, com a lista de numeros, os detalhes. */
+export type NumeroLigado = { id: string; numero: NumeroDoWhatsapp | null };
+
 /**
- * O numero que a IA usa: o liberado e ativo que ainda e um numero ativo da
- * clinica (numero removido nao atende: ia_pode_atender confere). Sem a
- * lista de numeros, o id liberado sem os detalhes da conexao.
+ * Os numeros que a IA usa: os ligados que ainda sao numeros ativos da
+ * clinica (numero removido nao atende: ia_pode_atender confere), na ordem
+ * da lista de numeros (a da aba WhatsApp). Sem a lista (leitura que
+ * falhou), os ids ligados, sem os detalhes da conexao. Vazia: nenhum.
  */
-export function numeroDaIa(
+export function numerosLigados(
   dados: DadosDaIa,
   numeros: readonly NumeroDoWhatsapp[] | null,
-): { id: string; numero: NumeroDoWhatsapp | null } | null {
-  const ativos = dados.numeros.filter((linha) => linha.ativo);
+): NumeroLigado[] {
   if (numeros === null) {
-    const primeiro = ativos[0];
-    return primeiro ? { id: primeiro.whatsappAccountId, numero: null } : null;
+    return dados.numerosLigados.map((id) => ({ id, numero: null }));
   }
-  for (const linha of ativos) {
-    const numero = numeros.find(
-      (candidato) => candidato.id === linha.whatsappAccountId,
-    );
-    if (numero) {
-      return { id: numero.id, numero };
-    }
-  }
-  return null;
+  return numeros
+    .filter((numero) => dados.numerosLigados.includes(numero.id))
+    .map((numero) => ({ id: numero.id, numero }));
+}
+
+/**
+ * Os ligados que NAO estao conectados (so com a lista de numeros: sem ela, a
+ * aba nao afirma nada sobre a conexao). Cada um ganha o aviso na propria
+ * linha; se nenhum ligado esta conectado, viram o motivo da parada.
+ */
+export function numerosLigadosDesconectados(
+  dados: DadosDaIa,
+  numeros: readonly NumeroDoWhatsapp[] | null,
+): NumeroDoWhatsapp[] {
+  return numerosLigados(dados, numeros).flatMap((ligado) =>
+    ligado.numero && ligado.numero.status !== "conectado"
+      ? [ligado.numero]
+      : [],
+  );
+}
+
+/** O numero na lista "Números do assistente": ligado ao assistente ou nao. */
+export type EstadoDoNumero = "ligado" | "desligado";
+
+export function estadoDoNumero(
+  dados: DadosDaIa,
+  numeroId: string,
+): EstadoDoNumero {
+  return dados.numerosLigados.includes(numeroId) ? "ligado" : "desligado";
 }
 
 /**
@@ -193,7 +224,7 @@ export function estadoDoTelefone(
   return telefone?.ativo ? "ligado" : "desligado";
 }
 
-/** O telefone tem conversa aberta com a equipe no numero escolhido? */
+/** O telefone tem conversa aberta com a equipe em algum numero ligado? */
 export function telefoneComConversaAberta(
   dados: DadosDaIa,
   telefoneId: string,
@@ -203,14 +234,15 @@ export function telefoneComConversaAberta(
 
 /**
  * O que falta para "Conversar com a equipe" (a opcao fica desabilitada e a
- * acao recusa): um numero escolhido e ao menos um telefone ligado.
+ * acao recusa): ao menos um numero ligado e ao menos um telefone ligado.
+ * Numero ligado e desconectado nao e falta (a aba avisa; o motivo e outro).
  */
 export function faltasParaAEquipe(
   dados: DadosDaIa,
   numeros: readonly NumeroDoWhatsapp[] | null,
 ): ("sem_numero" | "sem_telefone")[] {
   const faltas: ("sem_numero" | "sem_telefone")[] = [];
-  if (!numeroDaIa(dados, numeros)) {
+  if (numerosLigados(dados, numeros).length === 0) {
     faltas.push("sem_numero");
   }
   if (quantosTelefonesLigados(dados) === 0) {
@@ -235,6 +267,11 @@ export function motorDaIaParadoNaAba(dados: DadosDaIa): boolean {
  * O teto vale tambem no simulador (a reserva do simulador usa o mesmo
  * teto). Versao publicada, horario e motor so no modo equipe: o simulador
  * usa o rascunho e roda dentro da tela.
+ *
+ * Numeros (varios desde 19/10/2026): sem_numero quando nenhum esta ligado;
+ * numero_desconectado quando ha ligados, mas NENHUM conectado (o texto diz
+ * quais, textosDaParada). Com pelo menos um ligado e conectado, o assistente
+ * responde por ele: o ligado que caiu e aviso na linha dele, nao parada.
  */
 export function motivosDaParada(contexto: ContextoDaIa): MotivoDaParada[] {
   const { dados, numeros, ambienteLigado, agoraMs, fuso } = contexto;
@@ -270,10 +307,13 @@ export function motivosDaParada(contexto: ContextoDaIa): MotivoDaParada[] {
     if (motorDaIaParadoNaAba(dados)) {
       motivos.push("motor_parado");
     }
-    const escolhido = numeroDaIa(dados, numeros);
-    if (!escolhido) {
+    const ligados = numerosLigados(dados, numeros);
+    if (ligados.length === 0) {
       motivos.push("sem_numero");
-    } else if (escolhido.numero && escolhido.numero.status !== "conectado") {
+    } else if (
+      numeros !== null &&
+      !ligados.some((ligado) => ligado.numero?.status === "conectado")
+    ) {
       motivos.push("numero_desconectado");
     }
     if (quantosTelefonesLigados(dados) === 0) {
@@ -286,9 +326,9 @@ export function motivosDaParada(contexto: ContextoDaIa): MotivoDaParada[] {
 /**
  * O que a aba nao conseguiu conferir agora (achado T3 da revisao do E3).
  * So no modo equipe: com a leitura dos numeros de WhatsApp falhando, nao da
- * para saber se o numero escolhido ainda e da clinica nem se esta
- * conectado, e o executor exige as duas coisas. Sem numero liberado, o
- * motivo e sem_numero (isso a aba sabe sem a lista).
+ * para saber se algum numero ligado ainda e da clinica nem se esta
+ * conectado, e o executor exige as duas coisas. Sem numero ligado, o motivo
+ * e sem_numero (isso a aba sabe sem a lista).
  */
 export type ConferenciaQueFalhou = "numero";
 
@@ -299,7 +339,7 @@ export function oQueNaoDeuParaConferir(
   if (escolhaAtual(dados.liberacao) !== "equipe" || numeros !== null) {
     return [];
   }
-  return numeroDaIa(dados, numeros) ? ["numero"] : [];
+  return numerosLigados(dados, numeros).length > 0 ? ["numero"] : [];
 }
 
 export type EstadoDaIa =
@@ -390,13 +430,38 @@ export const TELEFONE_DA_EQUIPE_STATUS: Record<
 };
 
 /**
- * O rotulo da linha do telefone ligado e o do numero escolhido (achado T4
- * da revisao do E3). "Conversa com o assistente" e "Em uso pelo assistente"
- * so quando o assistente esta mesmo conversando (estado "equipe", sem
- * nenhum motivo de parada). Desligado, So simulador ou Ligado, mas parado:
- * o telefone diz so "Ligado" (TELEFONE_DA_EQUIPE_STATUS, contrato 3.11) e
- * o numero, "Escolhido para o assistente". A linha nunca afirma o que o
- * cabecalho da aba nega.
+ * A linha de cada numero em "Números do assistente" (decisao do dono de
+ * 19/10/2026: varios numeros, cada um com o proprio estado), em 3 camadas,
+ * ao lado do chip da conexao: ligado, CircleCheck success (o mesmo par do
+ * telefone ligado); desligado, CirclePause neutral (o mesmo par do
+ * "Desligado"). O rotulo do ligado muda com rotuloDoNumeroLigado; o ligado
+ * que caiu tem ainda o aviso na linha (TEXTOS_DA_IA.numeroDesconectado).
+ */
+export const NUMERO_DO_ASSISTENTE_STATUS: Record<
+  EstadoDoNumero,
+  StatusDefinition
+> = {
+  ligado: {
+    label: "Ligado ao assistente",
+    tone: "success",
+    icon: CircleCheck,
+  },
+  desligado: {
+    label: "Desligado do assistente",
+    tone: "neutral",
+    icon: CirclePause,
+  },
+};
+
+/**
+ * O rotulo da linha do telefone ligado e o do numero ligado (achado T4 da
+ * revisao do E3). "Conversa com o assistente" e "Em uso pelo assistente" so
+ * quando o assistente esta mesmo conversando (estado "equipe", sem nenhum
+ * motivo de parada) e, no numero, so se ELE esta conectado (com varios
+ * numeros, o verde pode vir de outro). Desligado, So simulador, Ligado, mas
+ * parado ou o numero que caiu: o telefone diz so "Ligado"
+ * (TELEFONE_DA_EQUIPE_STATUS, contrato 3.11) e o numero, "Ligado ao
+ * assistente". A linha nunca afirma o que o cabecalho da aba nega.
  */
 export function rotuloDoTelefoneLigado(estado: EstadoDaIa): string {
   return estado === "equipe"
@@ -404,15 +469,18 @@ export function rotuloDoTelefoneLigado(estado: EstadoDaIa): string {
     : TELEFONE_DA_EQUIPE_STATUS.ligado.label;
 }
 
-export function rotuloDoNumeroEscolhido(estado: EstadoDaIa): string {
-  return estado === "equipe"
+export function rotuloDoNumeroLigado(
+  estado: EstadoDaIa,
+  conectado: boolean,
+): string {
+  return estado === "equipe" && conectado
     ? TEXTOS_DA_IA.numeroEmUso
-    : TEXTOS_DA_IA.numeroEscolhido;
+    : NUMERO_DO_ASSISTENTE_STATUS.ligado.label;
 }
 
 export const TEXTOS_DA_IA = {
   descricaoDaAba:
-    "Fase de teste controlado: o assistente de IA conversa só com os telefones da equipe cadastrados aqui, por um número da clínica. Os pacientes continuam sendo atendidos pela equipe, como hoje.",
+    "Fase de teste controlado: o assistente de IA conversa só com os telefones da equipe cadastrados aqui, pelos números da clínica ligados a ele. Os pacientes continuam sendo atendidos pela equipe, como hoje.",
   semPermissao: "Somente o administrador da clínica altera o assistente de IA.",
   soEquipeConduzza: "A equipe Conduzza liga e desliga.",
   soEquipeConduzzaLiga:
@@ -433,13 +501,16 @@ export const TEXTOS_DA_IA = {
       "O gasto do dia chegou ao limite. O assistente volta sozinho quando o gasto das últimas 24 horas baixar.",
     motor_parado:
       "O motor do assistente não está rodando. Avise a equipe Conduzza.",
-    sem_numero: "Nenhum número escolhido para o assistente.",
+    sem_numero: "Nenhum número ligado ao assistente.",
+    // So quando o nome do numero nao esta a mao; a aba diz qual
+    // (motivoDoNumeroDesconectado, por numero ligado que caiu).
     numero_desconectado:
-      "O número do assistente está desconectado. Conecte o número na aba WhatsApp.",
+      "Nenhum número ligado ao assistente está conectado. Conecte um número na aba WhatsApp.",
     sem_telefone: "Nenhum telefone da equipe ligado.",
   } satisfies Record<MotivoDaParada, string>,
-  faltaParaAEquipe:
-    "Escolha o número e ligue ao menos um telefone da equipe antes.",
+  faltaParaAEquipe: "Ligue ao menos um número e um telefone da equipe antes.",
+  descricaoDosNumeros:
+    "O assistente responde só pelos números ligados aqui, e só para os telefones da equipe.",
   conecteAntes: "Conecte este número em WhatsApp antes.",
   numeroDesconectado:
     "Este número está desconectado. Conecte o número na aba WhatsApp para o assistente responder.",
@@ -472,7 +543,7 @@ export const TEXTOS_DA_IA = {
   avisoDaOpenaiObrigatorio:
     "Confirme o aviso sobre a OpenAI antes de adicionar o telefone.",
   conversaAbertaNoNumero:
-    "Tem conversa aberta com a equipe neste número: o assistente começa na próxima conversa.",
+    "Tem conversa aberta com a equipe num dos números ligados: nesse número, o assistente começa na próxima conversa.",
   avisoTelefoneInvalido:
     "Há telefone da equipe que não aciona o assistente. Veja a lista de telefones.",
   naoConferidoTitulo: "Não deu para conferir agora",
@@ -482,12 +553,63 @@ export const TEXTOS_DA_IA = {
   } satisfies Record<ConferenciaQueFalhou, string>,
   telefoneConversaComOAssistente: "Conversa com o assistente",
   numeroEmUso: "Em uso pelo assistente",
-  numeroEscolhido: "Escolhido para o assistente",
 } as const;
 
 /** Os motivos, em texto, na ordem da tela. */
 export function textosDosMotivos(motivos: readonly MotivoDaParada[]): string[] {
   return motivos.map((motivo) => TEXTOS_DA_IA.motivos[motivo]);
+}
+
+/** O motivo numero_desconectado de UM numero ligado, com o nome dele. */
+export function motivoDoNumeroDesconectado(nome: string): string {
+  return `O número ${nome} está desconectado. Conecte o número na aba WhatsApp.`;
+}
+
+/**
+ * Os motivos da parada como a aba mostra: os mesmos textos de
+ * textosDosMotivos, mas numero_desconectado diz QUAL numero caiu (um item
+ * por numero ligado que nao esta conectado; com varios numeros, "o numero
+ * do assistente" nao diz nada).
+ */
+export function textosDaParada(contexto: ContextoDaIa): string[] {
+  return motivosDaParada(contexto).flatMap((motivo) => {
+    if (motivo !== "numero_desconectado") {
+      return [TEXTOS_DA_IA.motivos[motivo]];
+    }
+    const caidos = numerosLigadosDesconectados(
+      contexto.dados,
+      contexto.numeros,
+    );
+    return caidos.length > 0
+      ? caidos.map((numero) => motivoDoNumeroDesconectado(numero.nome))
+      : [TEXTOS_DA_IA.motivos.numero_desconectado];
+  });
+}
+
+/**
+ * Os numeros ligados como o dialogo de ligar diz: um so, com o telefone
+ * ("do número Recepção, (84) 99999-0000"); varios, pelos nomes ("dos
+ * números Recepção e Unidade Centro"). Nulo sem nomes (a lista de numeros
+ * falhou): o dialogo nao cita numero.
+ */
+export function numerosDoDialogo(
+  ligados: readonly NumeroLigado[],
+): string | null {
+  const comDetalhes = ligados.flatMap((ligado) =>
+    ligado.numero ? [ligado.numero] : [],
+  );
+  const [unico] = comDetalhes;
+  if (comDetalhes.length === 1 && unico) {
+    return `do número ${[unico.nome, telefoneFormatado(unico.displayPhone)]
+      .filter(Boolean)
+      .join(", ")}`;
+  }
+  if (comDetalhes.length > 1) {
+    const nomes = comDetalhes.map((numero) => numero.nome);
+    const ultimo = nomes.pop();
+    return `dos números ${nomes.join(", ")} e ${ultimo}`;
+  }
+  return null;
 }
 
 /**
@@ -619,11 +741,12 @@ export type AcaoDaIa =
  *
  * Sentido de cada acao: `escolha` = mudar o modo (desligar e "Só
  * simulador"), e tambem desligar um numero ou um telefone; `equipe` =
- * escolher "Conversar com a equipe"; `numero` = USAR um numero; `telefone` =
- * ADICIONAR ou LIGAR um telefone. Ligar o atendimento pelo WhatsApp (modo e
- * numero) e so da equipe Conduzza nesta fase: o administrador recebe
- * soEquipeConduzzaLiga nos dois. O telefone, desde 19/10/2026 (decisao do
- * dono), so pede a permissao, como desligar.
+ * escolher "Conversar com a equipe"; `numero` = LIGAR um numero (cada um
+ * sozinho, desde 19/10/2026); `telefone` = ADICIONAR ou LIGAR um telefone.
+ * Ligar o atendimento pelo WhatsApp (modo e numero) e so da equipe Conduzza
+ * nesta fase: o administrador recebe soEquipeConduzzaLiga nos dois. O
+ * telefone, desde 19/10/2026 (decisao do dono), so pede a permissao, como
+ * desligar.
  */
 export function dicasDaIa(entrada: {
   podeEditar: boolean;

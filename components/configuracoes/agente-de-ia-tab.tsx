@@ -17,10 +17,10 @@ import type { z } from "zod";
 
 import {
   adicionarTelefoneDaIaAction,
+  alternarNumeroDaIaAction,
   alternarTelefoneDaIaAction,
   definirEscolhaDaIaAction,
   definirInterruptorGeralAction,
-  escolherNumeroDaIaAction,
   type ResultadoDaIa,
 } from "@/app/(app)/configuracoes/ia-liberacao-actions";
 import {
@@ -29,6 +29,7 @@ import {
   ESCOLHAS_DA_IA,
   escolhaAtual,
   estadoDaIa,
+  estadoDoNumero,
   estadoDoTelefone,
   faltasParaAEquipe,
   IA_NA_CLINICA_STATUS,
@@ -36,12 +37,14 @@ import {
   LIMITE_DO_ROTULO,
   motorDaIaParadoNaAba,
   motivosDaParada,
-  numeroDaIa,
+  NUMERO_DO_ASSISTENTE_STATUS,
+  numerosDoDialogo,
+  numerosLigados,
   oQueNaoDeuParaConferir,
   porQueNaoAciona,
   quantosTelefonesLigados,
   ROTULO_DA_ESCOLHA,
-  rotuloDoNumeroEscolhido,
+  rotuloDoNumeroLigado,
   rotuloDoTelefoneLigado,
   TELEFONE_DA_EQUIPE_STATUS,
   telefoneComConversaAberta,
@@ -51,7 +54,7 @@ import {
   temTelefoneQueNaoAciona,
   textoDoTelefoneQueNaoAciona,
   textoDoTeto,
-  textosDosMotivos,
+  textosDaParada,
   type AcaoDaIa,
   type EscolhaDaIa,
   type EstadoDaIa,
@@ -103,16 +106,19 @@ import type { DadosDaIa, TelefoneDaIa } from "@/lib/queries/ia-liberacao";
 //   simulador, Conversando com a equipe, "Ligado, mas parado" com os
 //   motivos, ou "Não deu para conferir agora" quando uma leitura falhou e
 //   nenhum motivo e conhecido; achado T3), e o seletor do modo. Ligar pede confirmacao; desligar e na
-//   hora (e o lado seguro). "Conversar com a equipe" so com o numero
-//   escolhido e ao menos um telefone ligado (a acao confere de novo).
-// - "Numero do assistente": um numero por vez, so numero conectado.
+//   hora (e o lado seguro). "Conversar com a equipe" so com ao menos um
+//   numero ligado e um telefone ligado (a acao confere de novo).
+// - "Números do assistente" (decisao do dono de 19/10/2026): varios numeros
+//   ligados ao mesmo tempo, cada um com o proprio estado em 3 camadas e o
+//   proprio botao (ligar so numero conectado e so pela equipe Conduzza;
+//   desligar tambem pelo administrador, sem mexer nos outros).
 // - "Telefones da equipe": so eles conversam com o assistente. O formulario
 //   pede sempre a confirmacao do aviso da OpenAI (LGPD, D32); recusa numero
 //   de WhatsApp do Conduzza e telefone de paciente (so o super admin usa
 //   "Usar mesmo assim", e fica registrado). A linha do telefone que nao
 //   aciona o assistente tem estado proprio, e a do telefone com conversa
 //   aberta com a equipe avisa que o assistente comeca na proxima conversa.
-// - Ligar o atendimento pelo WhatsApp (modo equipe e usar numero) e so da
+// - Ligar o atendimento pelo WhatsApp (modo equipe e ligar numero) e so da
 //   equipe Conduzza nesta fase: o administrador ve esses controles
 //   desabilitados, com a dica; desligar continua com ele. Adicionar telefone
 //   e "Ligar de novo" ficam com o administrador desde 19/10/2026 (decisao do
@@ -220,7 +226,7 @@ export function AgenteDeIaTab({
   const motivos = motivosDaParada(contexto);
   const naoConferido = oQueNaoDeuParaConferir(contexto);
   const faltas = faltasParaAEquipe(dados, numeros);
-  const escolhido = numeroDaIa(dados, numeros);
+  const numerosNoDialogo = numerosDoDialogo(numerosLigados(dados, numeros));
   const telefonesLigados = quantosTelefonesLigados(dados);
   const dicas = dicasDaIa({
     podeEditar,
@@ -308,12 +314,6 @@ export function AgenteDeIaTab({
     );
   };
 
-  const nomeDoNumero = escolhido?.numero
-    ? [escolhido.numero.nome, telefoneFormatado(escolhido.numero.displayPhone)]
-        .filter(Boolean)
-        .join(", ")
-    : null;
-
   // O segmentado: sem permissao, tudo preso (e a dica no grupo inteiro);
   // "Conversar com a equipe" preso para quem nao e a equipe Conduzza (nesta
   // fase) e sem numero ou sem telefone, salvo se ja e a escolha gravada (a
@@ -359,8 +359,8 @@ export function AgenteDeIaTab({
                 </CardTitle>
                 <CardDescription>
                   Ligue só no simulador para testar sem WhatsApp, ou deixe o
-                  assistente conversar com os telefones da equipe pelo número
-                  escolhido.
+                  assistente conversar com os telefones da equipe pelos números
+                  ligados.
                 </CardDescription>
               </div>
             </div>
@@ -376,7 +376,7 @@ export function AgenteDeIaTab({
                 titulo="Por que o assistente ainda não responde"
               >
                 <ul className="grid list-disc gap-1 pl-4">
-                  {textosDosMotivos(motivos).map((texto) => (
+                  {textosDaParada(contexto).map((texto) => (
                     <li key={texto}>{texto}</li>
                   ))}
                 </ul>
@@ -421,7 +421,7 @@ export function AgenteDeIaTab({
                   Conversar com a equipe
                 </dt>
                 <dd className="text-text-secondary">
-                  O assistente responde pelo WhatsApp do número escolhido, só
+                  O assistente responde pelo WhatsApp dos números ligados, só
                   para os telefones da equipe abaixo. Os pacientes continuam com
                   a equipe.
                 </dd>
@@ -430,24 +430,24 @@ export function AgenteDeIaTab({
           </CardContent>
         </Card>
 
-        <CartaoDoNumero
+        <CartaoDosNumeros
+          dados={dados}
           numeros={numeros}
-          escolhidoId={escolhido?.id ?? null}
           estadoDoAssistente={estado}
           dicas={dicas}
           pendente={pendente}
           ocupado={ocupado}
-          aoUsar={(numero, usar) =>
+          aoAlternar={(numero, ligado) =>
             executar(
               `numero-${numero.id}`,
               () =>
-                escolherNumeroDaIaAction({
+                alternarNumeroDaIaAction({
                   whatsappAccountId: numero.id,
-                  usar,
+                  ligado,
                 }),
-              usar
-                ? `O assistente passa a usar o número ${numero.nome}.`
-                : `O assistente parou de usar o número ${numero.nome}.`,
+              ligado
+                ? `Número ${numero.nome} ligado ao assistente.`
+                : `Número ${numero.nome} desligado do assistente.`,
             )
           }
         />
@@ -595,7 +595,7 @@ export function AgenteDeIaTab({
             <DialogDescription>
               {confirmando === "equipe"
                 ? `O assistente passa a responder pelo WhatsApp${
-                    nomeDoNumero ? ` do número ${nomeDoNumero}` : ""
+                    numerosNoDialogo ? ` ${numerosNoDialogo}` : ""
                   }, só para ${
                     telefonesLigados === 1
                       ? "o telefone da equipe ligado"
@@ -681,24 +681,24 @@ export function AgenteDeIaTab({
   );
 }
 
-function CartaoDoNumero({
+function CartaoDosNumeros({
+  dados,
   numeros,
-  escolhidoId,
   estadoDoAssistente,
   dicas,
   pendente,
   ocupado,
-  aoUsar,
+  aoAlternar,
 }: {
+  dados: DadosDaIa;
   numeros: NumeroDoWhatsapp[] | null;
-  escolhidoId: string | null;
-  /** "Em uso pelo assistente" so no estado equipe (achado T4). */
+  /** "Em uso pelo assistente" so no estado equipe e no numero conectado (achado T4). */
   estadoDoAssistente: EstadoDaIa;
-  /** escolha: parar de usar (so permissao); numero: usar (equipe Conduzza). */
+  /** escolha: desligar (so permissao); numero: ligar (equipe Conduzza). */
   dicas: Record<AcaoDaIa, string | null>;
   pendente: boolean;
   ocupado: (qual: string) => boolean;
-  aoUsar: (numero: NumeroDoWhatsapp, usar: boolean) => void;
+  aoAlternar: (numero: NumeroDoWhatsapp, ligado: boolean) => void;
 }) {
   const tituloId = useId();
   return (
@@ -707,10 +707,9 @@ function CartaoDoNumero({
         <div className="flex min-w-0 items-center gap-3">
           <Ladrilho icone={Smartphone} />
           <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={tituloId}>Número do assistente</CardTitle>
+            <CardTitle id={tituloId}>Números do assistente</CardTitle>
             <CardDescription>
-              Um número por vez nesta fase. O assistente responde só por ele, e
-              só para os telefones da equipe.
+              {TEXTOS_DA_IA.descricaoDosNumeros}
             </CardDescription>
           </div>
         </div>
@@ -726,7 +725,7 @@ function CartaoDoNumero({
             compact
             icon={Smartphone}
             title="Nenhum número de WhatsApp na clínica"
-            description="Adicione e conecte um número na aba WhatsApp. Depois, escolha o número aqui."
+            description="Adicione e conecte um número na aba WhatsApp. Depois, ligue o número aqui."
             action={{
               label: "Ir para WhatsApp",
               href: "/configuracoes?aba=whatsapp",
@@ -734,39 +733,46 @@ function CartaoDoNumero({
             }}
           />
         ) : (
-          <ul className="grid gap-2">
+          <ul className="grid gap-2" aria-label="Números da clínica">
             {numeros.map((numero) => {
-              const emUso = numero.id === escolhidoId;
+              const qual = `numero-${numero.id}`;
+              const estadoNoAssistente = estadoDoNumero(dados, numero.id);
+              const ligado = estadoNoAssistente === "ligado";
               const conectado = numero.status === "conectado";
               const telefone = telefoneFormatado(numero.displayPhone);
-              // Parar de usar e desligar: so a permissao. Usar e ligar: so a
-              // equipe Conduzza nesta fase, e so numero conectado.
-              const dica = emUso
+              // Cada numero sozinho (19/10/2026): desligar, so a permissao;
+              // ligar, so a equipe Conduzza nesta fase, e so numero
+              // conectado. Nenhum dos dois mexe nos outros numeros.
+              const dica = ligado
                 ? dicas.escolha
                 : (dicas.numero ??
                   (!conectado ? TEXTOS_DA_IA.conecteAntes : null));
               const botao = (
                 <Button
-                  variant="outline"
+                  variant={ligado ? "ghost" : "outline"}
                   disabled={dica !== null || pendente}
-                  aria-busy={ocupado(`numero-${numero.id}`) || undefined}
-                  onClick={() => aoUsar(numero, !emUso)}
+                  aria-busy={ocupado(qual) || undefined}
+                  onClick={() => aoAlternar(numero, !ligado)}
                 >
-                  {ocupado(`numero-${numero.id}`)
+                  {ocupado(qual)
                     ? "Salvando..."
-                    : emUso
-                      ? "Parar de usar"
-                      : "Usar este número"}
+                    : ligado
+                      ? "Desligar"
+                      : "Ligar"}
                 </Button>
               );
               return (
                 <li
                   key={numero.id}
-                  className="grid gap-2 rounded-lg border border-border px-3.5 py-3"
+                  className={
+                    ligado
+                      ? "grid gap-2 rounded-lg border border-border px-3.5 py-3"
+                      : "grid gap-2 rounded-lg border border-border bg-surface-2 px-3.5 py-3"
+                  }
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="grid min-w-0 gap-1">
-                      <span className="font-semibold text-text-strong">
+                      <span className="font-semibold break-words text-text-strong">
                         {numero.nome}
                       </span>
                       <span className="flex flex-wrap items-center gap-2 text-[13px] text-text-secondary">
@@ -777,18 +783,25 @@ function CartaoDoNumero({
                           size="sm"
                           definition={WHATSAPP_CONNECTION_STATUS[numero.status]}
                         />
-                        {emUso ? (
-                          <StatusChip
-                            size="sm"
-                            definition={LIGADO_DESLIGADO_STATUS.ligado}
-                            label={rotuloDoNumeroEscolhido(estadoDoAssistente)}
-                          />
-                        ) : null}
+                        <StatusChip
+                          size="sm"
+                          definition={
+                            NUMERO_DO_ASSISTENTE_STATUS[estadoNoAssistente]
+                          }
+                          label={
+                            ligado
+                              ? rotuloDoNumeroLigado(
+                                  estadoDoAssistente,
+                                  conectado,
+                                )
+                              : undefined
+                          }
+                        />
                       </span>
                     </div>
                     {comDica(botao, dica)}
                   </div>
-                  {emUso && !conectado ? (
+                  {ligado && !conectado ? (
                     <Aviso tom="warning" role="note">
                       {TEXTOS_DA_IA.numeroDesconectado}
                     </Aviso>

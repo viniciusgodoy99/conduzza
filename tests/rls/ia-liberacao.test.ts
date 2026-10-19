@@ -25,11 +25,14 @@ import { adminClient, anonClient } from "./stack";
 //     13/10/2026, migration 20261013100000): o administrador recebe 42501 e
 //     o sistema liga. TELEFONE da equipe (decisao do dono de 19/10/2026,
 //     migration 20261019100000): o administrador liga (sem o nono digito,
-//     gravado pela chave canonica) e desliga; o forcar dele da 42501. Um
-//     numero por vez (ligar um desliga o outro na mesma chamada; com
-//     erro, nada muda); gestor, recepcao, leitura, pendente, admin de outra
-//     clinica, admin de clinica fora da lista e anon: 42501 (na F, o 42501
-//     vem do guarda: o sistema desliga a mesma linha sem erro).
+//     gravado pela chave canonica) e desliga; o forcar dele da 42501.
+//     Varios numeros ao mesmo tempo (decisao do dono de 19/10/2026,
+//     migration 20261019110000): o sistema liga o segundo e o primeiro
+//     continua ligado; o administrador desliga um sem mexer no outro e nao
+//     liga nenhum (42501); com erro, nada muda; gestor, recepcao, leitura,
+//     pendente, admin de outra clinica, admin de clinica fora da lista e
+//     anon: 42501 (na F, o 42501 vem do guarda: o sistema desliga a mesma
+//     linha sem erro).
 //     definir_interruptor_da_ia:
 //     42501 para todo papel da clinica, inclusive o administrador (so o
 //     super admin, que nao tem sessao aqui). ia_pode_atender,
@@ -286,7 +289,8 @@ beforeAll(async () => {
   clinicaF = await criarClinica("F");
   numeroA = (await criarNumeroDeTeste(admin, clinicaA, { nome: "Recepção" }))
     .id;
-  // So entra em ia_numero_liberado no teste do administrador (um por vez).
+  // So entra em ia_numero_liberado no teste do administrador (varios
+  // numeros ligados ao mesmo tempo, desde 19/10/2026).
   segundoNumeroA = (
     await criarNumeroDeTeste(admin, clinicaA, { nome: "Segundo" })
   ).id;
@@ -831,8 +835,10 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       true,
     );
 
-    // numero, um por vez (pelo sistema): ligar o segundo desliga o da A na
-    // mesma chamada; o administrador nao liga nenhum, mas desliga
+    // numeros (decisao do dono de 19/10/2026, migration 20261019110000):
+    // o sistema liga o segundo e o da A CONTINUA ligado (os dois ao mesmo
+    // tempo); o administrador desliga o segundo sem mexer no da A e nao
+    // liga nenhum (42501, nem com o outro ligado)
     await ok(
       admin,
       "definir_numero_da_ia",
@@ -844,16 +850,7 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       true,
     );
     expect(await numerosDaA()).toEqual({
-      [numeroA]: false,
-      [segundoNumeroA]: true,
-    });
-    await negado("definir_numero_da_ia", {
-      p_clinic_id: clinicaA,
-      p_whatsapp_account_id: numeroA,
-      p_ativo: true,
-    });
-    expect(await numerosDaA()).toEqual({
-      [numeroA]: false,
+      [numeroA]: true,
       [segundoNumeroA]: true,
     });
     await ok(
@@ -866,12 +863,15 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       },
       false,
     );
-    await ok(
-      admin,
-      "definir_numero_da_ia",
-      { p_clinic_id: clinicaA, p_whatsapp_account_id: numeroA, p_ativo: true },
-      true,
-    );
+    expect(await numerosDaA()).toEqual({
+      [numeroA]: true,
+      [segundoNumeroA]: false,
+    });
+    await negado("definir_numero_da_ia", {
+      p_clinic_id: clinicaA,
+      p_whatsapp_account_id: segundoNumeroA,
+      p_ativo: true,
+    });
     expect(await numerosDaA()).toEqual({
       [numeroA]: true,
       [segundoNumeroA]: false,
@@ -946,7 +946,8 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
 
     // trilha no nome do administrador: so o que ele fez (simulador e
     // desligar, desligar o segundo numero, ligar e desligar o telefone); os
-    // 42501 nao deixaram trilha
+    // 42501 nao deixaram trilha, e ligar o segundo pelo sistema nao gravou
+    // linha de "numero desligado junto" no nome de ninguem
     const { data: trilha } = await admin
       .from("audit_log")
       .select("entity, action, entity_id")
@@ -974,6 +975,17 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
     ]);
     const doTelefone = linhas.filter((l) => l.entity === "ia_contato_liberado");
     expect(doTelefone).toHaveLength(2);
+    // o numero da A nunca foi desligado junto: na trilha dele, so a linha do
+    // sistema ao ligar no beforeAll (antes de 19/10/2026, ligar o segundo
+    // gravava mais uma, a do numero da A desligado na mesma chamada)
+    const { data: doNumeroA } = await admin
+      .from("audit_log")
+      .select("user_id")
+      .eq("clinic_id", clinicaA)
+      .eq("entity", "ia_numero_liberado")
+      .eq("entity_id", numeroA)
+      .throwOnError();
+    expect(doNumeroA).toEqual([{ user_id: null }]);
     expect(new Set(doTelefone.map((l) => l.entity_id)).size).toBe(1);
     expect(linhas.every((l) => l.action === "editou")).toBe(true);
   });

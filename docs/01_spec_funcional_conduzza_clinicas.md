@@ -293,14 +293,14 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 
 **Nota (decisão do dono em 06/10/2026): instruções do assistente só da equipe Conduzza.** Além dos campos acima, cada clínica tem as "Instruções do assistente": um texto livre de até 2.000 caracteres que **só a equipe Conduzza (super admin)** escreve e lê, junto com a "Prévia do prompt". A clínica (administrador, gestor e recepção) não vê nem edita esse texto: ela configura só pelos campos. O texto passa pelas regras do filtro de conformidade ao salvar e ao publicar e não substitui nenhuma trava: o filtro de saída (2.8) continua valendo sempre.
 
-**Nota (decisões do dono em 13/10/2026, E3, fase controlada): a IA no WhatsApp só com os telefones da equipe.** Na teste123 e na Conduzza Teste, a IA passa a responder no WhatsApp **só** as conversas de telefones da equipe cadastrados na aba Agente de IA, pelo número escolhido; paciente nenhum entra na IA, inclusive o que escreve para o mesmo número. Regras desta fase:
+**Nota (decisões do dono em 13/10/2026, E3, fase controlada): a IA no WhatsApp só com os telefones da equipe.** Na teste123 e na Conduzza Teste, a IA passa a responder no WhatsApp **só** as conversas de telefones da equipe cadastrados na aba Agente de IA, pelos números ligados ao assistente (mais de um por clínica desde 19/10/2026); paciente nenhum entra na IA, inclusive o que escreve para esses números. Regras desta fase:
 - **Só a equipe Conduzza liga** o atendimento pelo WhatsApp: o modo "Conversar com a equipe" e o número. Os telefones da equipe, desde 19/10/2026 (decisão do dono), também o administrador da clínica cadastra e liga; usar como telefone da equipe o telefone de um paciente (o "forçar") continua só da equipe Conduzza. O administrador da clínica vê e desliga.
 - **Telefone de paciente não pode ser telefone da equipe** (quem tem consulta, está cadastrado como paciente, veio de campanha ou anúncio, ou foi importado), nem número de WhatsApp de qualquer clínica do Conduzza. Só a equipe Conduzza força o telefone de paciente, e fica registrado.
 - **O rascunho que o filtro de conformidade barrou (2.9) só a equipe Conduzza lê**, porque pode conter dado de saúde; cada leitura fica registrada e o texto é apagado em 90 dias.
 - Conversa já aberta com a equipe **não** passa para a IA: só a conversa nova do telefone da equipe ou o **Devolver para a IA** (1.3), e a IA só lê o que veio depois de a conversa entrar nela.
 - **Responder pelo celular conectado tira a conversa da IA** (a IA nunca volta sozinha, 1.3); a resposta automática do app WhatsApp Business não tira.
 - Pedido de agenda (marcar, remarcar, cancelar) passa para a equipe até o E4. Ao passar, o contato recebe a frase fixa (aprovada pelo dono em 19/10/2026) e a conversa volta para "Aguardando você".
-- As respostas automáticas do app WhatsApp Business continuam ligadas no número escolhido, porque a IA ainda não atende paciente.
+- As respostas automáticas do app WhatsApp Business continuam ligadas nos números ligados ao assistente, porque a IA ainda não atende paciente.
 
 ---
 

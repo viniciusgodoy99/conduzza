@@ -192,7 +192,7 @@ describe("Em uso no WhatsApp: a mesma regra do verde da aba (T3)", () => {
         pausadaPelaClinica: false,
         tetoDiarioCentavosUsd: 500,
       },
-      numeros: [{ whatsappAccountId: NUMERO, ativo: true }],
+      numerosLigados: [NUMERO],
       telefones: [
         { id: "t1", telefone: "+5584999990001", rotulo: "Ana", ativo: true },
       ],
@@ -282,6 +282,50 @@ describe("Em uso no WhatsApp: a mesma regra do verde da aba (T3)", () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it("vários números (19/10/2026): em uso com pelo menos um ligado e conectado, a mesma regra da aba", () => {
+    const SEGUNDO: NumeroDoWhatsapp = {
+      ...CONECTADO,
+      id: "22222222-2222-4222-8222-222222222222",
+      nome: "Numero 2 teste pessoal",
+      principal: false,
+    };
+    const doisLigados = dadosDaIa({ numerosLigados: [NUMERO, SEGUNDO.id] });
+    // os dois conectados, ou um conectado e o outro caido: em uso
+    expect(
+      versaoEmUsoNoWhatsapp(
+        contexto({ dados: doisLigados, numeros: [CONECTADO, SEGUNDO] }),
+      ),
+    ).toBe(true);
+    expect(
+      versaoEmUsoNoWhatsapp(
+        contexto({
+          dados: doisLigados,
+          numeros: [CONECTADO, { ...SEGUNDO, status: "desconectado" }],
+        }),
+      ),
+    ).toBe(true);
+    // nenhum conectado, ou nenhum ligado: fora de uso
+    expect(
+      versaoEmUsoNoWhatsapp(
+        contexto({
+          dados: doisLigados,
+          numeros: [
+            { ...CONECTADO, status: "desconectado" },
+            { ...SEGUNDO, status: "desconectado" },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      versaoEmUsoNoWhatsapp(
+        contexto({
+          dados: dadosDaIa({ numerosLigados: [] }),
+          numeros: [CONECTADO, SEGUNDO],
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("número desconectado ou nunca publicado: fora de uso", () => {

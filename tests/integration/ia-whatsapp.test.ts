@@ -49,7 +49,13 @@ import { adminClient, anonClient } from "../rls/stack";
 //   vira paciente sai da IA; telefone forcado entra e volta pelo Devolver);
 //   D-A (job de antes do Devolver nao mexe na sessao nova, e o claim o
 //   cancela); a ingestao devolve a conversa que perdeu a liberacao (evento
-//   'parada'); o caminho positivo de tirar_conversa_da_ia_pelo_servidor.
+//   'parada'); o caminho positivo de tirar_conversa_da_ia_pelo_servidor;
+// - varios numeros (decisao do dono de 19/10/2026, migration
+//   20261019110000): com dois numeros ligados, o telefone da equipe entra
+//   na IA pelos dois, numa conversa por numero (a mesma pessoa, duas
+//   conversas, cada uma com a propria janela e a propria fila); telefone
+//   fora da lista nunca; desligar um numero devolve so a conversa dele (com
+//   o evento e o pendente cancelado) e o outro continua atendendo.
 // O claim LEGADO nunca e chamado com limite (ele reivindicaria jobs reais
 // de outras clinicas): so com p_limit 0, para provar que nao enterra o kind.
 // Que ele nao REIVINDICA o kind e provado no harness local e no ensaio.
@@ -89,6 +95,8 @@ const EQ_F = `+5584965${digitos}`;
 const EQ_ECO = `+5584966${digitos}`;
 const EQ_DESLIGA = `+5584967${digitos}`;
 const EQ_SERVIDOR = `+5584968${digitos}`;
+// Varios numeros ligados (decisao do dono de 19/10/2026)
+const EQ_VARIOS = `+5584969${digitos}`;
 const DISPLAY_T = `+55 84 2${digitos}-1`;
 const NUMERO_T_E164 = `+55842${digitos}1`;
 const DISPLAY_U = `+55 84 2${digitos}-2`;
@@ -1756,5 +1764,152 @@ describe("ingestao e celular (X7 e B3 da revisao)", () => {
       .update({ status: "concluido", locked_by: null, locked_at: null })
       .eq("id", emVoo)
       .throwOnError();
+  });
+});
+
+describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
+  const DESLIGADA =
+    "O assistente foi desligado. A conversa voltou para a equipe.";
+
+  it("o telefone da equipe entra na IA pelos dois numeros, numa conversa por numero; fora da lista nunca; desligar um devolve so a conversa dele", async () => {
+    // um terceiro numero fake da T, ligado JUNTO com o da recepcao (o
+    // segundo continua desligado: e o do teste do numero nao liberado)
+    const numeroT3 = (
+      await criarNumeroDeTeste(admin, clinicaT, { nome: "Terceiro" })
+    ).id;
+    await liberarTelefone(EQ_VARIOS);
+    expect(
+      await rpcOk<boolean>("definir_numero_da_ia", {
+        p_clinic_id: clinicaT,
+        p_whatsapp_account_id: numeroT3,
+        p_ativo: true,
+      }),
+    ).toBe(true);
+    const { data: ligados } = await admin
+      .from("ia_numero_liberado")
+      .select("whatsapp_account_id")
+      .eq("clinic_id", clinicaT)
+      .eq("ativo", true)
+      .throwOnError();
+    expect(
+      (ligados as { whatsapp_account_id: string }[])
+        .map((linha) => linha.whatsapp_account_id)
+        .sort(),
+    ).toEqual([numeroT, numeroT3].sort());
+
+    // a mesma pessoa pelos dois numeros: duas conversas, as duas na IA
+    const peloPrimeiro = await ingerir(
+      EQ_VARIOS,
+      "Mensagem sintética pelo primeiro número",
+      numeroT,
+    );
+    const peloTerceiro = await ingerir(
+      EQ_VARIOS,
+      "Mensagem sintética pelo terceiro número",
+      numeroT3,
+    );
+    expect(peloPrimeiro).toMatchObject({ inserted: true, ia_atendendo: true });
+    expect(peloTerceiro).toMatchObject({
+      inserted: true,
+      ia_atendendo: true,
+      contact_id: peloPrimeiro.contact_id,
+    });
+    expect(peloTerceiro.conversation_id).not.toBe(peloPrimeiro.conversation_id);
+    const { data: conversas } = await admin
+      .from("conversation")
+      .select("id, whatsapp_account_id, status")
+      .in("id", [peloPrimeiro.conversation_id!, peloTerceiro.conversation_id!])
+      .throwOnError();
+    expect(conversas).toEqual(
+      expect.arrayContaining([
+        {
+          id: peloPrimeiro.conversation_id,
+          whatsapp_account_id: numeroT,
+          status: "ia_atendendo",
+        },
+        {
+          id: peloTerceiro.conversation_id,
+          whatsapp_account_id: numeroT3,
+          status: "ia_atendendo",
+        },
+      ]),
+    );
+    const { data: janelas } = await admin
+      .from("ia_janela_da_conversa")
+      .select("conversation_id, phone_key, aberta_por")
+      .in("conversation_id", [
+        peloPrimeiro.conversation_id!,
+        peloTerceiro.conversation_id!,
+      ])
+      .throwOnError();
+    expect(janelas).toHaveLength(2);
+    for (const janela of janelas as {
+      phone_key: string;
+      aberta_por: string;
+    }[]) {
+      expect(janela).toMatchObject({
+        phone_key: EQ_VARIOS,
+        aberta_por: "ingestao",
+      });
+    }
+    // a fila confere pelo numero da conversa: o terceiro enfileira
+    const naFila = await enfileirar(
+      peloTerceiro.conversation_id!,
+      peloTerceiro.message_id!,
+    );
+    expect(naFila.codigo).toBe("enfileirado");
+
+    // telefone fora da lista, pelo terceiro numero: equipe, sem janela nem
+    // evento
+    const fora = await ingerir(OUTRA, "Mensagem sintética de fora", numeroT3);
+    expect(fora.ia_atendendo).toBe(false);
+    expect((await conversa(fora.conversation_id!)).status).toBe(
+      "aguardando_humano",
+    );
+    expect(await eventos(fora.conversation_id!)).toEqual([]);
+
+    // desligar o terceiro: so a conversa dele volta para a equipe, com o
+    // evento e o pendente cancelado; a do primeiro continua na IA
+    expect(
+      await rpcOk<boolean>("definir_numero_da_ia", {
+        p_clinic_id: clinicaT,
+        p_whatsapp_account_id: numeroT3,
+        p_ativo: false,
+      }),
+    ).toBe(false);
+    expect((await conversa(peloTerceiro.conversation_id!)).status).toBe(
+      "aguardando_humano",
+    );
+    expect(await eventos(peloTerceiro.conversation_id!)).toEqual([DESLIGADA]);
+    expect(await job(naFila.job_id!)).toMatchObject({
+      status: "cancelado",
+      last_error: "ia_desligada",
+    });
+    expect((await conversa(peloPrimeiro.conversation_id!)).status).toBe(
+      "ia_atendendo",
+    );
+    expect(await eventos(peloPrimeiro.conversation_id!)).toEqual([]);
+
+    // a mensagem nova pelo primeiro continua na IA; pelo terceiro, com a
+    // equipe, na mesma conversa
+    expect(
+      await ingerir(EQ_VARIOS, "De novo pelo primeiro número", numeroT),
+    ).toMatchObject({
+      ia_atendendo: true,
+      conversation_id: peloPrimeiro.conversation_id,
+    });
+    expect(
+      await ingerir(EQ_VARIOS, "De novo pelo terceiro número", numeroT3),
+    ).toMatchObject({
+      ia_atendendo: false,
+      conversation_id: peloTerceiro.conversation_id,
+    });
+    const { data: primeiro } = await admin
+      .from("ia_numero_liberado")
+      .select("ativo")
+      .eq("whatsapp_account_id", numeroT)
+      .single()
+      .throwOnError();
+    expect(primeiro).toEqual({ ativo: true });
   });
 });

@@ -1,4 +1,6 @@
 import {
+  CircleCheck,
+  CirclePause,
   CircleQuestionMark,
   Clock,
   Hourglass,
@@ -12,18 +14,23 @@ import {
   dicasDaIa,
   escolhaAtual,
   estadoDaIa,
+  estadoDoNumero,
   estadoDoTelefone,
   faltasParaAEquipe,
   IA_NA_CLINICA_STATUS,
   LIGADO_DESLIGADO_STATUS,
   MODO_DA_ESCOLHA,
+  motivoDoNumeroDesconectado,
   motorDaIaParadoNaAba,
   motivosDaParada,
-  numeroDaIa,
+  NUMERO_DO_ASSISTENTE_STATUS,
+  numerosDoDialogo,
+  numerosLigados,
+  numerosLigadosDesconectados,
   oQueNaoDeuParaConferir,
   porQueNaoAciona,
   quantosTelefonesLigados,
-  rotuloDoNumeroEscolhido,
+  rotuloDoNumeroLigado,
   rotuloDoTelefoneLigado,
   TELEFONE_DA_EQUIPE_STATUS,
   telefoneComConversaAberta,
@@ -33,6 +40,7 @@ import {
   temTelefoneQueNaoAciona,
   textoDoTelefoneQueNaoAciona,
   textoDoTeto,
+  textosDaParada,
   textosDosMotivos,
   type ContextoDaIa,
   type EstadoDaIa,
@@ -114,7 +122,7 @@ function situacao(campos: Partial<SituacaoDaIa> = {}): SituacaoDaIa {
 function dados(campos: Partial<DadosDaIa> = {}): DadosDaIa {
   return {
     liberacao: liberacao(),
-    numeros: [{ whatsappAccountId: NUMERO, ativo: true }],
+    numerosLigados: [NUMERO],
     telefones: [
       {
         id: "t1",
@@ -211,7 +219,7 @@ describe("estado e motivos", () => {
     const simulador = contexto({
       dados: dados({
         liberacao: liberacao({ modo: "simulador" }),
-        numeros: [],
+        numerosLigados: [],
         telefones: [],
       }),
     });
@@ -223,7 +231,7 @@ describe("estado e motivos", () => {
     const parado = contexto({
       dados: dados({
         liberacao: liberacao({ pausadaPelaClinica: true }),
-        numeros: [],
+        numerosLigados: [],
         telefones: [],
         interruptorLigado: false,
       }),
@@ -257,18 +265,21 @@ describe("estado e motivos", () => {
     expect(estadoDaIa(simulador)).toBe("parado");
   });
 
-  it("número escolhido desconectado: motivo próprio", () => {
+  it("o único número ligado desconectado: motivo próprio, dizendo qual", () => {
     const desconectado = contexto({
       numeros: [numero({ status: "desconectado" })],
     });
     expect(motivosDaParada(desconectado)).toEqual(["numero_desconectado"]);
     expect(estadoDaIa(desconectado)).toBe("parado");
+    expect(textosDaParada(desconectado)).toEqual([
+      "O número Número principal está desconectado. Conecte o número na aba WhatsApp.",
+    ]);
   });
 
   it("telefone desligado não conta; número desligado não conta", () => {
     const semLigados = contexto({
       dados: dados({
-        numeros: [{ whatsappAccountId: NUMERO, ativo: false }],
+        numerosLigados: [],
         telefones: [
           { id: "t1", telefone: "+5584999990001", rotulo: null, ativo: false },
         ],
@@ -277,14 +288,16 @@ describe("estado e motivos", () => {
     expect(motivosDaParada(semLigados)).toEqual(["sem_numero", "sem_telefone"]);
   });
 
-  it("número liberado que saiu da clínica (removido) não é o número da IA", () => {
+  it("número ligado que saiu da clínica (removido) não conta", () => {
     const removido = contexto({ numeros: [numero({ id: OUTRO_NUMERO })] });
-    expect(numeroDaIa(removido.dados, removido.numeros)).toBeNull();
+    expect(numerosLigados(removido.dados, removido.numeros)).toEqual([]);
     expect(motivosDaParada(removido)).toEqual(["sem_numero"]);
   });
 
-  it("sem a lista de números: usa o id liberado e não afirma nada da conexão", () => {
-    expect(numeroDaIa(dados(), null)).toEqual({ id: NUMERO, numero: null });
+  it("sem a lista de números: usa os ids ligados e não afirma nada da conexão", () => {
+    expect(numerosLigados(dados(), null)).toEqual([
+      { id: NUMERO, numero: null },
+    ]);
     expect(motivosDaParada(contexto({ numeros: null }))).toEqual([]);
     // e nunca o verde (achado T3): "Não deu para conferir agora"
     expect(estadoDaIa(contexto({ numeros: null }))).toBe("nao_conferido");
@@ -294,9 +307,9 @@ describe("estado e motivos", () => {
 describe("o que falta para conversar com a equipe", () => {
   it("número e ao menos um telefone ligado", () => {
     expect(faltasParaAEquipe(dados(), [numero()])).toEqual([]);
-    expect(faltasParaAEquipe(dados({ numeros: [] }), [numero()])).toEqual([
-      "sem_numero",
-    ]);
+    expect(
+      faltasParaAEquipe(dados({ numerosLigados: [] }), [numero()]),
+    ).toEqual(["sem_numero"]);
     expect(faltasParaAEquipe(dados({ telefones: [] }), [numero()])).toEqual([
       "sem_telefone",
     ]);
@@ -324,6 +337,7 @@ describe("status em 3 camadas", () => {
     ...Object.values(IA_NA_CLINICA_STATUS),
     ...Object.values(LIGADO_DESLIGADO_STATUS),
     ...Object.values(TELEFONE_DA_EQUIPE_STATUS),
+    ...Object.values(NUMERO_DO_ASSISTENTE_STATUS),
   ];
 
   it("os rótulos fixos", () => {
@@ -617,6 +631,8 @@ describe("teto e dicas", () => {
         temTelefoneInvalido: true,
       }),
       ...Object.values(TELEFONE_DA_EQUIPE_STATUS).map((d) => d.label),
+      ...Object.values(NUMERO_DO_ASSISTENTE_STATUS).map((d) => d.label),
+      motivoDoNumeroDesconectado("Recepção"),
       avisoDeContatoDaClinica("Maria"),
       avisoDeContatoDaClinica(null),
     ];
@@ -640,7 +656,7 @@ describe("mapa de estados do E3", () => {
     const tudoParado = contexto({
       dados: dados({
         liberacao: liberacao({ pausadaPelaClinica: true }),
-        numeros: [],
+        numerosLigados: [],
         telefones: [],
         interruptorLigado: false,
         situacao: situacao({
@@ -669,7 +685,7 @@ describe("mapa de estados do E3", () => {
     const simulador = contexto({
       dados: dados({
         liberacao: liberacao({ modo: "simulador" }),
-        numeros: [],
+        numerosLigados: [],
         telefones: [],
         situacao: situacao({
           tetoAtingido: true,
@@ -879,7 +895,7 @@ describe("telefone que não aciona o assistente", () => {
     );
   });
 
-  it("conversa aberta com a equipe no número escolhido", () => {
+  it("conversa aberta com a equipe num dos números ligados (vários desde 19/10/2026)", () => {
     const aberta = dados({
       situacao: situacao({ telefonesComConversaAberta: ["t1"] }),
     });
@@ -888,7 +904,7 @@ describe("telefone que não aciona o assistente", () => {
     // não para o assistente: ele começa na próxima conversa
     expect(motivosDaParada(contexto({ dados: aberta }))).toEqual([]);
     expect(TEXTOS_DA_IA.conversaAbertaNoNumero).toBe(
-      "Tem conversa aberta com a equipe neste número: o assistente começa na próxima conversa.",
+      "Tem conversa aberta com a equipe num dos números ligados: nesse número, o assistente começa na próxima conversa.",
     );
   });
 });
@@ -957,12 +973,13 @@ describe("formulário do telefone: LGPD e recusas", () => {
   });
 });
 
-// Achado T4 da revisao do E3: a linha do telefone ligado e o numero
-// escolhido so dizem que o assistente conversa quando ele conversa mesmo
-// (estado equipe). Antes, com a clinica Desligada, em So simulador ou
-// parada, cada telefone dizia em verde "Conversa com o assistente" e o
-// numero, "Em uso pelo assistente".
-describe("rótulo do telefone ligado e do número escolhido (T4)", () => {
+// Achado T4 da revisao do E3: a linha do telefone ligado e a do numero
+// ligado so dizem que o assistente conversa quando ele conversa mesmo
+// (estado equipe) e, no numero, so se ELE esta conectado (com varios
+// numeros, desde 19/10/2026, o verde pode vir de outro). Antes, com a
+// clinica Desligada, em So simulador ou parada, cada telefone dizia em
+// verde "Conversa com o assistente" e o numero, "Em uso pelo assistente".
+describe("rótulo do telefone ligado e do número ligado (T4)", () => {
   const FORA_DE_USO: readonly EstadoDaIa[] = [
     "desligado",
     "simulador",
@@ -971,18 +988,24 @@ describe("rótulo do telefone ligado e do número escolhido (T4)", () => {
 
   it("só no estado equipe: Conversa com o assistente e Em uso pelo assistente", () => {
     expect(rotuloDoTelefoneLigado("equipe")).toBe("Conversa com o assistente");
-    expect(rotuloDoNumeroEscolhido("equipe")).toBe("Em uso pelo assistente");
+    expect(rotuloDoNumeroLigado("equipe", true)).toBe("Em uso pelo assistente");
   });
 
-  it("desligado, só simulador ou parado: Ligado (contrato 3.11) e Escolhido para o assistente", () => {
+  it("no estado equipe, o número ligado que caiu não diz Em uso", () => {
+    expect(rotuloDoNumeroLigado("equipe", false)).toBe("Ligado ao assistente");
+  });
+
+  it("desligado, só simulador ou parado: Ligado (contrato 3.11) e Ligado ao assistente", () => {
     for (const estado of FORA_DE_USO) {
       expect(rotuloDoTelefoneLigado(estado), estado).toBe("Ligado");
       expect(rotuloDoTelefoneLigado(estado)).toBe(
         TELEFONE_DA_EQUIPE_STATUS.ligado.label,
       );
-      expect(rotuloDoNumeroEscolhido(estado), estado).toBe(
-        "Escolhido para o assistente",
-      );
+      for (const conectado of [true, false]) {
+        expect(rotuloDoNumeroLigado(estado, conectado), estado).toBe(
+          "Ligado ao assistente",
+        );
+      }
     }
   });
 
@@ -997,8 +1020,8 @@ describe("rótulo do telefone ligado e do número escolhido (T4)", () => {
     const parada = contexto({ ambienteLigado: false });
     expect(estadoDaIa(parada)).toBe("parado");
     expect(rotuloDoTelefoneLigado(estadoDaIa(parada))).toBe("Ligado");
-    expect(rotuloDoNumeroEscolhido(estadoDaIa(parada))).toBe(
-      "Escolhido para o assistente",
+    expect(rotuloDoNumeroLigado(estadoDaIa(parada), true)).toBe(
+      "Ligado ao assistente",
     );
   });
 });
@@ -1023,7 +1046,7 @@ describe("não conferido (T3)", () => {
     // sem número liberado, a aba sabe sem a lista: sem_numero
     const semNumero = contexto({
       numeros: null,
-      dados: dados({ numeros: [] }),
+      dados: dados({ numerosLigados: [] }),
     });
     expect(oQueNaoDeuParaConferir(semNumero)).toEqual([]);
     expect(motivosDaParada(semNumero)).toEqual(["sem_numero"]);
@@ -1062,8 +1085,214 @@ describe("não conferido (T3)", () => {
 
   it("o telefone e o número fora de uso também no não conferido (T4)", () => {
     expect(rotuloDoTelefoneLigado("nao_conferido")).toBe("Ligado");
-    expect(rotuloDoNumeroEscolhido("nao_conferido")).toBe(
-      "Escolhido para o assistente",
+    expect(rotuloDoNumeroLigado("nao_conferido", true)).toBe(
+      "Ligado ao assistente",
     );
+  });
+});
+
+// Decisao do dono de 19/10/2026 (migration 20261019110000): a IA pode
+// atender MAIS DE UM numero da mesma clinica. Cada numero liga e desliga
+// sozinho; o assistente responde por qualquer numero ligado e conectado, e o
+// verde exige pelo menos um. Nenhum ligado: "Nenhum número ligado ao
+// assistente."; ligados, mas nenhum conectado: um motivo por numero, com o
+// nome dele. O ligado que caiu, com outro conectado, e aviso na linha dele.
+describe("vários números ligados (19/10/2026)", () => {
+  const PRINCIPAL = numero();
+  const SEGUNDO = numero({
+    id: OUTRO_NUMERO,
+    nome: "Numero 2 teste pessoal",
+    principal: false,
+    displayPhone: "5584999999018",
+  });
+  const TERCEIRO_ID = "33333333-3333-4333-8333-333333333333";
+  const TERCEIRO = numero({
+    id: TERCEIRO_ID,
+    nome: "Unidade Centro",
+    principal: false,
+    displayPhone: "5584999990003",
+  });
+  const DOIS_LIGADOS = dados({ numerosLigados: [NUMERO, OUTRO_NUMERO] });
+
+  it("dois ligados e conectados: os dois na ordem da lista, e o verde", () => {
+    const ctx = contexto({
+      dados: DOIS_LIGADOS,
+      numeros: [PRINCIPAL, SEGUNDO],
+    });
+    expect(numerosLigados(ctx.dados, ctx.numeros)).toEqual([
+      { id: NUMERO, numero: PRINCIPAL },
+      { id: OUTRO_NUMERO, numero: SEGUNDO },
+    ]);
+    expect(motivosDaParada(ctx)).toEqual([]);
+    expect(estadoDaIa(ctx)).toBe("equipe");
+    // a ordem e a da lista de numeros, nao a de quando foram ligados
+    expect(
+      numerosLigados(dados({ numerosLigados: [OUTRO_NUMERO, NUMERO] }), [
+        PRINCIPAL,
+        SEGUNDO,
+      ]).map((ligado) => ligado.id),
+    ).toEqual([NUMERO, OUTRO_NUMERO]);
+  });
+
+  it("um ligado conectado e outro caído: o verde continua; o caído não é motivo, é aviso da linha", () => {
+    const ctx = contexto({
+      dados: DOIS_LIGADOS,
+      numeros: [PRINCIPAL, { ...SEGUNDO, status: "desconectado" }],
+    });
+    expect(motivosDaParada(ctx)).toEqual([]);
+    expect(estadoDaIa(ctx)).toBe("equipe");
+    expect(numerosLigadosDesconectados(ctx.dados, ctx.numeros)).toEqual([
+      { ...SEGUNDO, status: "desconectado" },
+    ]);
+    // a linha do caído nunca diz Em uso (o verde vem do outro)
+    expect(rotuloDoNumeroLigado(estadoDaIa(ctx), true)).toBe(
+      "Em uso pelo assistente",
+    );
+    expect(rotuloDoNumeroLigado(estadoDaIa(ctx), false)).toBe(
+      "Ligado ao assistente",
+    );
+  });
+
+  it("ligados, mas nenhum conectado: Ligado, mas parado, dizendo quais", () => {
+    const ctx = contexto({
+      dados: DOIS_LIGADOS,
+      numeros: [
+        { ...PRINCIPAL, status: "desconectado" },
+        { ...SEGUNDO, status: "aguardando_qr" },
+      ],
+    });
+    expect(motivosDaParada(ctx)).toEqual(["numero_desconectado"]);
+    expect(estadoDaIa(ctx)).toBe("parado");
+    expect(textosDaParada(ctx)).toEqual([
+      "O número Número principal está desconectado. Conecte o número na aba WhatsApp.",
+      "O número Numero 2 teste pessoal está desconectado. Conecte o número na aba WhatsApp.",
+    ]);
+    // o desligado que caiu nao entra: so os ligados
+    const comUmDesligado = contexto({
+      dados: dados({ numerosLigados: [NUMERO] }),
+      numeros: [
+        { ...PRINCIPAL, status: "desconectado" },
+        { ...SEGUNDO, status: "desconectado" },
+      ],
+    });
+    expect(textosDaParada(comUmDesligado)).toEqual([
+      motivoDoNumeroDesconectado("Número principal"),
+    ]);
+  });
+
+  it("nenhum ligado, com números na clínica: Nenhum número ligado ao assistente", () => {
+    const ctx = contexto({
+      dados: dados({ numerosLigados: [] }),
+      numeros: [PRINCIPAL, SEGUNDO],
+    });
+    expect(motivosDaParada(ctx)).toEqual(["sem_numero"]);
+    expect(textosDaParada(ctx)).toEqual([
+      "Nenhum número ligado ao assistente.",
+    ]);
+    expect(faltasParaAEquipe(ctx.dados, ctx.numeros)).toEqual(["sem_numero"]);
+  });
+
+  it("um ligado removido e outro ativo: conta só o ativo", () => {
+    const ctx = contexto({
+      dados: dados({ numerosLigados: [TERCEIRO_ID, NUMERO] }),
+      numeros: [PRINCIPAL, SEGUNDO],
+    });
+    expect(numerosLigados(ctx.dados, ctx.numeros)).toEqual([
+      { id: NUMERO, numero: PRINCIPAL },
+    ]);
+    expect(estadoDaIa(ctx)).toBe("equipe");
+    const soRemovidos = contexto({
+      dados: dados({ numerosLigados: [TERCEIRO_ID] }),
+      numeros: [PRINCIPAL, SEGUNDO],
+    });
+    expect(motivosDaParada(soRemovidos)).toEqual(["sem_numero"]);
+  });
+
+  it("sem a lista de números, com dois ligados: Não deu para conferir agora", () => {
+    const ctx = contexto({ dados: DOIS_LIGADOS, numeros: null });
+    expect(numerosLigados(ctx.dados, null)).toEqual([
+      { id: NUMERO, numero: null },
+      { id: OUTRO_NUMERO, numero: null },
+    ]);
+    expect(motivosDaParada(ctx)).toEqual([]);
+    expect(oQueNaoDeuParaConferir(ctx)).toEqual(["numero"]);
+    expect(estadoDaIa(ctx)).toBe("nao_conferido");
+  });
+
+  it("ligado e desconectado não é falta para conversar com a equipe", () => {
+    expect(
+      faltasParaAEquipe(DOIS_LIGADOS, [
+        { ...PRINCIPAL, status: "desconectado" },
+        { ...SEGUNDO, status: "desconectado" },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("estado de cada número, em 3 camadas: ligado e desligado com forma, rótulo e cor próprios", () => {
+    expect(estadoDoNumero(DOIS_LIGADOS, NUMERO)).toBe("ligado");
+    expect(estadoDoNumero(DOIS_LIGADOS, OUTRO_NUMERO)).toBe("ligado");
+    expect(estadoDoNumero(DOIS_LIGADOS, TERCEIRO_ID)).toBe("desligado");
+    expect(NUMERO_DO_ASSISTENTE_STATUS).toEqual({
+      ligado: {
+        label: "Ligado ao assistente",
+        tone: "success",
+        icon: CircleCheck,
+      },
+      desligado: {
+        label: "Desligado do assistente",
+        tone: "neutral",
+        icon: CirclePause,
+      },
+    });
+    // o mesmo par do ligado e do desligado do resto da aba
+    expect(NUMERO_DO_ASSISTENTE_STATUS.ligado.icon).toBe(
+      LIGADO_DESLIGADO_STATUS.ligado.icon,
+    );
+    expect(NUMERO_DO_ASSISTENTE_STATUS.desligado.icon).toBe(
+      LIGADO_DESLIGADO_STATUS.desligado.icon,
+    );
+  });
+
+  it("o diálogo de ligar cita os números ligados", () => {
+    expect(numerosDoDialogo([{ id: NUMERO, numero: PRINCIPAL }])).toBe(
+      "do número Número principal, (84) 99999-0000",
+    );
+    expect(
+      numerosDoDialogo([
+        { id: NUMERO, numero: PRINCIPAL },
+        { id: OUTRO_NUMERO, numero: SEGUNDO },
+      ]),
+    ).toBe("dos números Número principal e Numero 2 teste pessoal");
+    expect(
+      numerosDoDialogo([
+        { id: NUMERO, numero: PRINCIPAL },
+        { id: OUTRO_NUMERO, numero: SEGUNDO },
+        { id: TERCEIRO_ID, numero: TERCEIRO },
+      ]),
+    ).toBe(
+      "dos números Número principal, Numero 2 teste pessoal e Unidade Centro",
+    );
+    // sem a lista de numeros (nomes desconhecidos), nao cita numero
+    expect(numerosDoDialogo([{ id: NUMERO, numero: null }])).toBeNull();
+    expect(numerosDoDialogo([])).toBeNull();
+  });
+
+  it("os textos novos, palavra por palavra, sem um número por vez", () => {
+    expect(TEXTOS_DA_IA.descricaoDosNumeros).toBe(
+      "O assistente responde só pelos números ligados aqui, e só para os telefones da equipe.",
+    );
+    expect(TEXTOS_DA_IA.motivos.sem_numero).toBe(
+      "Nenhum número ligado ao assistente.",
+    );
+    expect(TEXTOS_DA_IA.faltaParaAEquipe).toBe(
+      "Ligue ao menos um número e um telefone da equipe antes.",
+    );
+    const todos = Object.values(TEXTOS_DA_IA).flatMap((valor) =>
+      typeof valor === "string" ? [valor] : Object.values(valor),
+    );
+    for (const texto of todos) {
+      expect(texto).not.toMatch(/um número por vez/i);
+      expect(texto).not.toMatch(/número escolhido/i);
+    }
   });
 });

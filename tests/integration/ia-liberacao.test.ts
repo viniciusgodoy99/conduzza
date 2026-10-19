@@ -23,11 +23,12 @@ import { adminClient } from "../rls/stack";
 //   movel, sem o fuso da clinica) e a chave canonica do telefone;
 // - desligar (telefone, numero, clinica) devolve para a equipe so as
 //   conversas que perderam a liberacao, com awaiting_reply, e nada e enviado;
-// - um numero por vez (migration 20261006120000): ligar um numero desliga
-//   os outros da clinica na mesma chamada, com a trilha de cada um (a
-//   devolucao das conversas do numero desligado e a do ia_desligar, provada
-//   no bloco de desligar); desligar nao mexe nos outros; com erro, nada
-//   muda; a outra clinica nunca e tocada;
+// - varios numeros (decisao do dono de 19/10/2026, migration
+//   20261019110000; antes, de 06/10 ate ela, um numero por vez): ligar um
+//   numero NAO desliga os outros da clinica, com uma linha de trilha por
+//   chamada; desligar um nao mexe nos outros e devolve so as conversas
+//   dele (bloco de desligar); com erro, nada muda; a outra clinica nunca e
+//   tocada;
 // - o gatilho de status barra so SESSAO: a service role (o servidor, as
 //   fixtures e o seed) poe a conversa em 'ia_atendendo' mesmo sem liberacao,
 //   porque o servidor e guardado por ia_pode_atender ao enfileirar, antes do
@@ -82,6 +83,9 @@ let clinicaT = "";
 let clinicaU = "";
 let numero1 = "";
 let numero2 = "";
+// O terceiro numero fake da T: so o bloco de desligar o liga (varios
+// numeros, 19/10/2026).
+let numero3 = "";
 let numeroUazapi = "";
 let numeroDaU = "";
 
@@ -216,6 +220,7 @@ beforeAll(async () => {
   clinicaU = await novaClinica("U");
   numero1 = (await criarNumeroDeTeste(admin, clinicaT, { nome: "Um" })).id;
   numero2 = (await criarNumeroDeTeste(admin, clinicaT, { nome: "Dois" })).id;
+  numero3 = (await criarNumeroDeTeste(admin, clinicaT, { nome: "Tres" })).id;
   // So a linha no banco: sem instancia nem token, nada fala com o uazapi.
   numeroUazapi = (
     await criarNumeroDeTeste(admin, clinicaT, {
@@ -346,9 +351,15 @@ describe("tabela verdade (clinica e_de_teste)", () => {
       .throwOnError();
     expect(data).toEqual({ ativo: true });
     expect(await podeAtender(numeroUazapi, EQUIPE)).toBe(false);
-    // contraprova: o numero fake da mesma clinica, de volta (um por vez: o
-    // uazapi desliga junto), atende o mesmo telefone
-    expect(await numero(numero1, true)).toBe(true);
+    // contraprova: o numero fake da mesma clinica continuou ligado junto
+    // (varios numeros, 19/10/2026) e atende o mesmo telefone
+    expect(await ativos()).toEqual({
+      [numero1]: true,
+      [numeroUazapi]: true,
+    });
+    expect(await podeAtender(numero1, EQUIPE)).toBe(true);
+    // o uazapi sai, e o 1 continua
+    expect(await numero(numeroUazapi, false)).toBe(false);
     expect(await ativos()).toEqual({
       [numero1]: true,
       [numeroUazapi]: false,
@@ -356,13 +367,40 @@ describe("tabela verdade (clinica e_de_teste)", () => {
     expect(await podeAtender(numero1, EQUIPE)).toBe(true);
   });
 
-  it("um numero por vez: ligar um desliga os outros, com trilha; desligar nao mexe; erro nao muda nada", async () => {
-    const { count: trilhaAntes } = await admin
-      .from("audit_log")
-      .select("id", { count: "exact", head: true })
-      .eq("clinic_id", clinicaT)
-      .eq("entity", "ia_numero_liberado");
+  it("varios numeros: ligar um nao desliga os outros, uma linha de trilha por chamada; desligar um nao mexe no outro; erro nao muda nada", async () => {
+    const trilha = async () => {
+      const { count } = await admin
+        .from("audit_log")
+        .select("id", { count: "exact", head: true })
+        .eq("clinic_id", clinicaT)
+        .eq("entity", "ia_numero_liberado");
+      return count ?? 0;
+    };
+    const trilhaAntes = await trilha();
     expect(await numero(numero2, true)).toBe(true);
+    expect(await ativos()).toEqual({
+      [numero1]: true,
+      [numero2]: true,
+      [numeroUazapi]: false,
+    });
+    expect(await podeAtender(numero1, EQUIPE)).toBe(true);
+    expect(await podeAtender(numero2, EQUIPE)).toBe(true);
+    // so o 2 ligado: uma linha na trilha (nenhuma de "desligado junto")
+    expect((await trilha()) - trilhaAntes).toBe(1);
+    // erro adiante (numero de outra clinica, 23503): os dois continuam
+    const daOutra = await rpc("definir_numero_da_ia", {
+      p_clinic_id: clinicaT,
+      p_whatsapp_account_id: numeroDaU,
+      p_ativo: true,
+    });
+    expect(daOutra.codigo).toBe("23503");
+    expect(await ativos()).toEqual({
+      [numero1]: true,
+      [numero2]: true,
+      [numeroUazapi]: false,
+    });
+    // desligar o 1 nao mexe no 2, e o 2 continua atendendo
+    expect(await numero(numero1, false)).toBe(false);
     expect(await ativos()).toEqual({
       [numero1]: false,
       [numero2]: true,
@@ -370,32 +408,16 @@ describe("tabela verdade (clinica e_de_teste)", () => {
     });
     expect(await podeAtender(numero1, EQUIPE)).toBe(false);
     expect(await podeAtender(numero2, EQUIPE)).toBe(true);
-    // o numero 2 ligado e o 1 desligado junto: duas linhas na trilha
-    const { count: trilhaDepois } = await admin
-      .from("audit_log")
-      .select("id", { count: "exact", head: true })
-      .eq("clinic_id", clinicaT)
-      .eq("entity", "ia_numero_liberado");
-    expect((trilhaDepois ?? 0) - (trilhaAntes ?? 0)).toBe(2);
-    // erro adiante (numero de outra clinica, 23503): o 2 continua ligado
-    const daOutra = await rpc("definir_numero_da_ia", {
-      p_clinic_id: clinicaT,
-      p_whatsapp_account_id: numeroDaU,
-      p_ativo: true,
-    });
-    expect(daOutra.codigo).toBe("23503");
-    expect((await ativos())[numero2]).toBe(true);
-    // desligar o 1 (ja desligado) nao mexe no 2
-    expect(await numero(numero1, false)).toBe(false);
-    expect((await ativos())[numero2]).toBe(true);
-    // de volta ao 1 (o 2 desliga junto)
+    // o 1 de volta, e o 2 sai (os dois sozinhos, cada um na sua chamada)
     expect(await numero(numero1, true)).toBe(true);
+    expect(await numero(numero2, false)).toBe(false);
     expect(await ativos()).toEqual({
       [numero1]: true,
       [numero2]: false,
       [numeroUazapi]: false,
     });
     expect(await podeAtender(numero1, EQUIPE)).toBe(true);
+    expect((await trilha()) - trilhaAntes).toBe(4);
   });
 
   it("outro numero, outro telefone, numero de outra clinica e nulos: falso", async () => {
@@ -489,9 +511,10 @@ describe("tabela verdade (clinica e_de_teste)", () => {
   });
 
   it("numero removido deixa de atender, mesmo liberado", async () => {
-    // ligar o 2 desliga o 1 (um por vez); o 1 volta no fim
+    // o 2 ligado junto com o 1 (varios numeros); o 1 nunca sai
     await numero(numero2, true);
     expect(await podeAtender(numero2, EQUIPE)).toBe(true);
+    expect(await podeAtender(numero1, EQUIPE)).toBe(true);
     await admin
       .from("whatsapp_account")
       .update({ removido_em: new Date().toISOString() })
@@ -695,6 +718,36 @@ describe("gatilho de status e desligamento", () => {
     ]);
   });
 
+  it("varios numeros: desligar um devolve so as conversas dele; a do outro numero ligado continua na IA", async () => {
+    expect(await numero(numero3, true)).toBe(true);
+    // o mesmo telefone da equipe, uma conversa por numero
+    const conversaNoTres = await conversaNaIa(equipe, numero3);
+    expect((await conversa(conversaDaEquipe)).status).toBe("ia_atendendo");
+    await numero(numero3, false);
+    expect(await conversa(conversaNoTres)).toEqual({
+      status: "aguardando_humano",
+      awaiting_reply: false,
+    });
+    expect((await conversa(conversaDaEquipe)).status).toBe("ia_atendendo");
+    expect((await ativos())[numero1]).toBe(true);
+    expect(await podeAtender(numero1, EQUIPE)).toBe(true);
+    expect(await podeAtender(numero3, EQUIPE)).toBe(false);
+    // o evento so na conversa do numero desligado
+    const { data: eventos } = await admin
+      .from("message")
+      .select("conversation_id, body")
+      .eq("clinic_id", clinicaT)
+      .eq("content_type", "evento")
+      .in("conversation_id", [conversaNoTres, conversaDaEquipe])
+      .throwOnError();
+    expect(eventos).toEqual([
+      {
+        conversation_id: conversaNoTres,
+        body: "O assistente foi desligado. A conversa voltou para a equipe.",
+      },
+    ]);
+  });
+
   it("desligar o numero e depois a clinica devolve o resto", async () => {
     await numero(numero1, false);
     expect(await conversa(conversaDaEquipe)).toEqual({
@@ -794,7 +847,7 @@ describe("aba Agente de IA: a leitura da tela", () => {
       .throwOnError();
     expect(await fetchLiberacaoDaIa(admin, clinicaU)).toEqual({
       liberacao: null,
-      numeros: [],
+      numerosLigados: [],
       telefones: [],
       interruptorLigado: (data as { ligado: boolean }).ligado,
       // E3: a situacao da aba (situacao_da_ia_na_clinica, com o booleano
@@ -849,9 +902,7 @@ describe("aba Agente de IA: a leitura da tela", () => {
       pausadaPelaClinica: false,
       tetoDiarioCentavosUsd: 500,
     });
-    expect(dados.numeros).toEqual([
-      { whatsappAccountId: numeroDaU, ativo: true },
-    ]);
+    expect(dados.numerosLigados).toEqual([numeroDaU]);
     expect(dados.telefones).toEqual([
       {
         id: expect.any(String),
@@ -861,12 +912,55 @@ describe("aba Agente de IA: a leitura da tela", () => {
       },
     ]);
     // a leitura e por clinica: nada da T aparece na U
-    expect(
-      dados.numeros.some((numero) => numero.whatsappAccountId === numero1),
-    ).toBe(false);
+    expect(dados.numerosLigados).not.toContain(numero1);
   });
 
-  it("o numero da acao de escolher: so numero ativo da propria clinica", async () => {
+  it("varios numeros ligados: a lista dos ligados, na ordem de criacao da linha; o desligado sai da lista", async () => {
+    const segundoDaU = (
+      await criarNumeroDeTeste(admin, clinicaU, { nome: "Dois da U" })
+    ).id;
+    expect(
+      await rpcOk("definir_numero_da_ia", {
+        p_clinic_id: clinicaU,
+        p_whatsapp_account_id: segundoDaU,
+        p_ativo: true,
+      }),
+    ).toBe(true);
+    expect((await fetchLiberacaoDaIa(admin, clinicaU)).numerosLigados).toEqual([
+      numeroDaU,
+      segundoDaU,
+    ]);
+    expect(
+      await rpcOk("definir_numero_da_ia", {
+        p_clinic_id: clinicaU,
+        p_whatsapp_account_id: numeroDaU,
+        p_ativo: false,
+      }),
+    ).toBe(false);
+    expect((await fetchLiberacaoDaIa(admin, clinicaU)).numerosLigados).toEqual([
+      segundoDaU,
+    ]);
+    // de volta ao estado do teste anterior (so o primeiro da U ligado)
+    expect(
+      await rpcOk("definir_numero_da_ia", {
+        p_clinic_id: clinicaU,
+        p_whatsapp_account_id: numeroDaU,
+        p_ativo: true,
+      }),
+    ).toBe(true);
+    expect(
+      await rpcOk("definir_numero_da_ia", {
+        p_clinic_id: clinicaU,
+        p_whatsapp_account_id: segundoDaU,
+        p_ativo: false,
+      }),
+    ).toBe(false);
+    expect((await fetchLiberacaoDaIa(admin, clinicaU)).numerosLigados).toEqual([
+      numeroDaU,
+    ]);
+  });
+
+  it("o numero da acao de ligar: so numero ativo da propria clinica", async () => {
     expect(await fetchNumeroDaClinica(admin, clinicaU, numeroDaU)).toEqual({
       id: numeroDaU,
       connectionStatus: expect.any(String),
