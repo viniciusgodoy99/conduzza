@@ -33,6 +33,7 @@ import {
   conferirHistorico,
   type FalaAssinavel,
 } from "./assinatura";
+import { portaDaAgendaDoSimulador } from "./agenda";
 import { carregarCatalogoDoAgente, carregarConfigDoRascunho } from "./contexto";
 import { acertarGasto, reservarGasto } from "./gasto";
 import {
@@ -56,6 +57,12 @@ import { lerPrecos, type PrecoDoModelo } from "./uso";
 // fechada, interruptor geral, liberacao da clinica, pausa e teto das ultimas
 // 24 horas). A trava do banco e conferida de novo antes de cada rodada do
 // modelo. Quando nao pode rodar, o motivo em texto de recepcionista.
+//
+// E4 (20/10/2026, contrato da E4 secao 2): com a habilidade Agendar consulta
+// ligada no rascunho, buscar_horario le a Agenda de verdade (so horarios);
+// reservar_horario, agendar e confirmar_presenca devolvem a resposta
+// simulada e NAO gravam nada (portaDaAgendaDoSimulador, sem RPC). A trilha
+// diz "No simulador, nada foi gravado.".
 //
 // Revisao de 06/10/2026:
 //  - o historico que o navegador manda e conferido pela assinatura da
@@ -417,6 +424,10 @@ export async function simularTurno(
     verificador,
     classificador,
     conferirTrava: () => iaPodeSimular(admin, clinicId),
+    agenda: portaDaAgendaDoSimulador(admin, {
+      clinicId,
+      agora: () => entrada.agoraMs,
+    }),
     modeloDosClassificadores,
   });
 

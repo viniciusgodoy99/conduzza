@@ -3,6 +3,7 @@ import {
   excluirItemDaBaseAction,
   publicarAgenteAction,
   restaurarVersaoAction,
+  salvarAgendaAction,
   salvarHabilidadesAction,
   salvarHorarioAction,
   salvarInstrucoesAction,
@@ -17,6 +18,7 @@ import type {
   ResultadoDaSimulacao,
 } from "@/components/agente/tipos";
 import type {
+  AgendaDoAgente,
   HabilidadesDoAgente,
   HorarioDeOperacao,
   InstrucoesEntrada,
@@ -39,6 +41,8 @@ export type AcoesDoAgente = {
     habilidades: HabilidadesDoAgente,
   ) => Promise<ResultadoDaAcao>;
   salvarHorario: (horario: HorarioDeOperacao) => Promise<ResultadoDaAcao>;
+  /** Limites para marcar consulta (E4, D13). */
+  salvarAgenda: (agenda: AgendaDoAgente) => Promise<ResultadoDaAcao>;
   salvarItemDaBase: (item: ItemDaBaseEntrada) => Promise<ResultadoDaAcao>;
   ativarItemDaBase: (id: string, ativo: boolean) => Promise<ResultadoDaAcao>;
   excluirItemDaBase: (id: string) => Promise<ResultadoDaAcao>;
@@ -62,6 +66,7 @@ export const acoesDoAgente: AcoesDoAgente = {
     resultado(await salvarHabilidadesAction(habilidades)),
   salvarHorario: async (horario) =>
     resultado(await salvarHorarioAction(horario)),
+  salvarAgenda: async (agenda) => resultado(await salvarAgendaAction(agenda)),
   salvarItemDaBase: async (item) =>
     resultado(await salvarItemDaBaseAction(item)),
   ativarItemDaBase: async (id, ativo) =>

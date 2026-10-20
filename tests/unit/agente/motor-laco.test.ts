@@ -604,7 +604,13 @@ describe("executarTurnoDoAgente: falha fechada do modelo", () => {
     ["resposta nula", null, "saida_invalida"],
     [
       "ferramenta desconhecida",
-      ferramenta("agendar", { dia: "amanhã" }),
+      ferramenta("remarcar", { dia: "amanhã" }),
+      "ferramenta_invalida",
+    ],
+    [
+      // E4: conhecida, mas com a habilidade Agendar consulta desligada.
+      "ferramenta de agenda sem a habilidade",
+      ferramenta("agendar", {}),
       "ferramenta_invalida",
     ],
   ];

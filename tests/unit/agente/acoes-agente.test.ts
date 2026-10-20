@@ -420,8 +420,9 @@ describe("persona, habilidades e horário", () => {
     expect(banco.escritas()).toEqual([]);
   });
 
-  it("habilidades: junta com o que está gravado (chave do E4 não se perde) e trava as obrigatórias", async () => {
-    banco.skills = { agendar: true, informar_preco_e_convenio: true };
+  it("habilidades: junta com o que está gravado (chave que esta leva não conhece não se perde) e trava as obrigatórias", async () => {
+    // "agendar" virou chave conhecida no E4; "remarcar" ainda nao e.
+    banco.skills = { remarcar: true, informar_preco_e_convenio: true };
     expect(
       await acoes.salvarHabilidadesAction({
         informar_preco_e_convenio: false,
@@ -432,7 +433,7 @@ describe("persona, habilidades e horário", () => {
     const [escrita] = banco.escritas();
     expect(escrita?.dados).toEqual({
       skills: {
-        agendar: true,
+        remarcar: true,
         ...habilidadesEfetivas({ informar_preco_e_convenio: false }),
       },
     });

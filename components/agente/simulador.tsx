@@ -2,6 +2,7 @@
 
 import {
   BookOpenText,
+  CalendarDays,
   CircleDollarSign,
   RotateCcw,
   Send,
@@ -102,9 +103,13 @@ export type EntradaDaSimulacao = {
   cenario: CenarioDoSimulador | null;
 };
 
+// O passo de agenda (E4: buscou horario, reservou, marcou, confirmou
+// presenca) usa o CalendarDays, o mesmo icone do menu da Agenda, neutro como
+// os outros icones da trilha (so ilustram o tipo do passo, C47).
 const ICONE_DO_PASSO: Record<PassoDaTrilha["tipo"], LucideIcon> = {
   preco: CircleDollarSign,
   base: BookOpenText,
+  agenda: CalendarDays,
   equipe: UsersRound,
   bloqueio: ShieldBan,
   outro: Sparkles,
@@ -114,6 +119,7 @@ const ICONE_DO_PASSO: Record<PassoDaTrilha["tipo"], LucideIcon> = {
 const COR_DO_PASSO: Record<PassoDaTrilha["tipo"], string> = {
   preco: "text-text-secondary",
   base: "text-text-secondary",
+  agenda: "text-text-secondary",
   equipe: "text-text-secondary",
   bloqueio: "text-alert-text",
   outro: "text-text-secondary",

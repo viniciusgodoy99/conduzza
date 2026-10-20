@@ -650,7 +650,42 @@ export type DecisaoParaGravar = {
   versaoDoPrompt: string | null;
   configVersion: number | null;
   latenciaMs: number | null;
+  /**
+   * As ferramentas que rodaram no turno (ResultadoDoTurno.ferramentasUsadas).
+   * Ausente: so a trilha diz (decisao sem turno, ou de antes do E4).
+   */
+  ferramentasUsadas?: readonly string[];
 };
+
+/**
+ * O tool_used de ai_decision_log (texto livre, uma ferramenta): a que mais
+ * pesa no turno. Efeito na agenda primeiro (marcou, confirmou presenca,
+ * reservou), depois a passagem pelo agente, depois a consulta (horario,
+ * preco). Sem a lista, o preco sai da trilha, como antes do E4.
+ */
+const PESO_DA_FERRAMENTA: readonly string[] = [
+  "agendar",
+  "confirmar_presenca",
+  "reservar_horario",
+  "escalar_humano",
+  "buscar_horario",
+  "buscar_procedimento",
+];
+
+export function ferramentaDoTurno(d: {
+  desfecho: DesfechoDoTurno;
+  trilha: readonly PassoDoTurno[];
+  ferramentasUsadas?: readonly string[];
+}): string | null {
+  const usadas = new Set(d.ferramentasUsadas ?? []);
+  if (d.desfecho.tipo === "escalou" && d.desfecho.origem === "agente") {
+    usadas.add("escalar_humano");
+  }
+  if (d.trilha.some((passo) => passo.tipo === "preco")) {
+    usadas.add("buscar_procedimento");
+  }
+  return PESO_DA_FERRAMENTA.find((nome) => usadas.has(nome)) ?? null;
+}
 
 /**
  * O que vai em ai_decision_log.versao_filtro (revisao de producao de
@@ -692,13 +727,7 @@ export function linhaDaDecisao(d: DecisaoParaGravar): Record<string, unknown> {
   const agentes = d.uso.filter((item) => item.papel === "agente");
   const agenteModelo = agentes[agentes.length - 1]?.modelo ?? null;
   const desfecho = d.desfecho;
-  const usouABusca = d.trilha.some((passo) => passo.tipo === "preco");
-  const toolUsed =
-    desfecho.tipo === "escalou" && desfecho.origem === "agente"
-      ? "escalar_humano"
-      : usouABusca
-        ? "buscar_procedimento"
-        : null;
+  const toolUsed = ferramentaDoTurno(d);
 
   const comum: Record<string, unknown> = {
     clinic_id: d.clinicId,

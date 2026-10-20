@@ -365,6 +365,84 @@ describe("contexto do motor (service role)", () => {
     ).toBe("convenio_sem_informacao");
   });
 
+  // Revisao da E4 (D14): o vinculo ATIVO que a IA nao marca vem so com ids,
+  // nunca preco, e vira conveniosSoComAEquipe (a agenda passa para a equipe
+  // em vez de dizer "nao atende"). Nada dele entra no que o agente informa.
+  it("catálogo: vínculo ativo sem 'IA pode agendar' vem só com ids e não informa nada", async () => {
+    const { cliente, consultas } = bancoFalso({
+      procedure: [
+        {
+          clinic_id: CLINICA,
+          id: "proc",
+          name: "Consulta",
+          active: true,
+          bookable_by_ai: true,
+          resource_id: null,
+        },
+      ],
+      professional: [
+        { clinic_id: CLINICA, id: "prof", name: "Dra. Helena", active: true },
+      ],
+      service_link: [
+        {
+          clinic_id: CLINICA,
+          id: "sl-particular",
+          procedure_id: "proc",
+          professional_id: "prof",
+          insurance_id: null,
+          price_cents: 30_000,
+          covered_by_insurance: false,
+          bookable_by_ai: true,
+          active: true,
+          duration_min: 30,
+        },
+        {
+          clinic_id: CLINICA,
+          id: "sl-unimed",
+          procedure_id: "proc",
+          professional_id: "prof",
+          insurance_id: "enf",
+          price_cents: 9_900,
+          covered_by_insurance: false,
+          bookable_by_ai: false,
+          active: true,
+          duration_min: 30,
+        },
+      ],
+      insurance: [
+        {
+          clinic_id: CLINICA,
+          id: "enf",
+          name: "Unimed",
+          plan_name: "Enfermaria",
+          active: true,
+        },
+      ],
+    });
+    const catalogo = await carregarCatalogoDoAgente(cliente, CLINICA);
+    expect(catalogo.conveniosSoComAEquipe).toEqual([
+      { procedimentoId: "proc", profissionalId: "prof", convenioId: "enf" },
+    ]);
+    expect(catalogo.vinculos.map((v) => v.id)).toEqual(["sl-particular"]);
+    expect(catalogo.convenios).toEqual([]);
+    const soDaEquipe = consultas.filter(
+      (c) =>
+        c.tabela === "service_link" &&
+        c.filtros.some(
+          ([coluna, valor]) => coluna === "bookable_by_ai" && !valor,
+        ),
+    );
+    expect(soDaEquipe.length).toBeGreaterThan(0);
+    for (const consulta of soDaEquipe) {
+      expect(consulta.colunas).toBe(
+        "procedure_id, professional_id, insurance_id",
+      );
+      expect(consulta.colunas).not.toContain("price");
+      expect(consulta.filtros).toContainEqual(["clinic_id", CLINICA]);
+      expect(consulta.filtros).toContainEqual(["active", true]);
+    }
+  });
+
   it("base viva lê por páginas até a última", async () => {
     const itens = Array.from({ length: 1_500 }, (_, i) => ({
       clinic_id: CLINICA,

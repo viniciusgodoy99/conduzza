@@ -1,9 +1,15 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  agendaCompleta,
+  agendaDoAgenteSchema,
+  agendaDoBanco,
+  agendaPadrao,
+  agendaParaOBanco,
   agenteAtendeAgora,
   agenteKeys,
+  ANTECEDENCIA_DA_AGENDA,
   baseDoConhecimento,
   CAMPOS_DE_TEXTO_DO_AGENTE,
   comMudancaDasInstrucoes,
@@ -11,14 +17,21 @@ import {
   configPadraoDoAgente,
   descricaoDoModo,
   DIAS_DA_SEMANA,
+  DICA_DA_AGENDA_INCOMPLETA,
   diferencasDoRascunho,
   EXEMPLO_DO_TOM,
   expedientePadrao,
+  ehFerramentaDeAgenda,
+  FERRAMENTAS_DE_AGENDA,
+  FERRAMENTAS_DO_AGENTE,
   ferramentasDoAgente,
   GATILHOS_OBRIGATORIOS,
   HABILIDADES_DO_AGENTE,
+  habilidadesComAgenda,
+  habilidadesComAgendaSchema,
   habilidadesEfetivas,
   habilidadesSchema,
+  HORIZONTE_DA_AGENDA,
   horarioDoBanco,
   horarioPadrao,
   horarioParaOBanco,
@@ -40,6 +53,7 @@ import {
   problemasNoTextoDoAgente,
   problemasParaQuemPublica,
   ROTULO_CURTO_DO_DIA,
+  ROTULO_DA_AGENDA,
   ROTULO_DA_TRAVA,
   ROTULO_DO_CAMPO_DE_TEXTO,
   ROTULO_DO_DIA,
@@ -71,6 +85,7 @@ const CONTEXTO_VAZIO = {
 } as const;
 
 const TRAVESSAO = /[–—]/;
+const MIGRATION_DA_AGENDA = "supabase/migrations/20261020130000_ia_agenda.sql";
 // Linguagem de recepcionista (CLAUDE.md 5 e especificacao da Tela 6).
 const JARGAO = /\b(prompt|token|llm|skill|tenant|handoff|opt-in)\b/i;
 
@@ -149,23 +164,54 @@ describe("tom de voz", () => {
 });
 
 describe("habilidades", () => {
-  it("e a lista fechada desta leva", () => {
+  it("e a lista fechada (E4: agendar e confirmar presenca)", () => {
     expect(HABILIDADES_DO_AGENTE.map((h) => h.chave)).toEqual([
       "responder_duvidas",
       "informar_preco_e_convenio",
+      "agendar",
+      "confirmar_presenca",
       "passar_para_equipe",
     ]);
     const porChave = Object.fromEntries(
       HABILIDADES_DO_AGENTE.map((h) => [h.chave, h]),
     );
     expect(porChave.responder_duvidas?.travada).toBe(true);
-    expect(porChave.responder_duvidas?.ferramenta).toBeNull();
+    expect(porChave.responder_duvidas?.ferramentas).toEqual([]);
     expect(porChave.informar_preco_e_convenio?.travada).toBe(false);
-    expect(porChave.informar_preco_e_convenio?.ferramenta).toBe(
+    expect(porChave.informar_preco_e_convenio?.ferramentas).toEqual([
       "buscar_procedimento",
-    );
+    ]);
+    expect(porChave.agendar).toMatchObject({
+      titulo: "Agendar consulta",
+      travada: false,
+      padrao: false,
+      precisaDaAgenda: true,
+      ferramentas: ["buscar_horario", "reservar_horario", "agendar"],
+    });
+    expect(porChave.confirmar_presenca).toMatchObject({
+      titulo: "Confirmar presença",
+      travada: false,
+      padrao: false,
+      precisaDaAgenda: false,
+      ferramentas: ["confirmar_presenca"],
+    });
     expect(porChave.passar_para_equipe?.travada).toBe(true);
-    expect(porChave.passar_para_equipe?.ferramenta).toBe("escalar_humano");
+    expect(porChave.passar_para_equipe?.ferramentas).toEqual([
+      "escalar_humano",
+    ]);
+    // Toda ferramenta conhecida vem de uma habilidade, e as de agenda sao
+    // as das duas habilidades novas.
+    expect(
+      HABILIDADES_DO_AGENTE.flatMap((h) => [...h.ferramentas]).sort(),
+    ).toEqual([...FERRAMENTAS_DO_AGENTE].sort());
+    expect([...FERRAMENTAS_DE_AGENDA]).toEqual([
+      "buscar_horario",
+      "reservar_horario",
+      "agendar",
+      "confirmar_presenca",
+    ]);
+    expect(ehFerramentaDeAgenda("agendar")).toBe(true);
+    expect(ehFerramentaDeAgenda("buscar_procedimento")).toBe(false);
   });
 
   it("travada vale sempre, desconhecida e ignorada, ausente vale o padrao", () => {
@@ -175,15 +221,20 @@ describe("habilidades", () => {
         passar_para_equipe: false,
         informar_preco_e_convenio: false,
         agendar: true,
+        remarcar: true,
       }),
     ).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: false,
+      agendar: true,
+      confirmar_presenca: false,
       passar_para_equipe: true,
     });
     expect(habilidadesEfetivas({})).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: true,
+      agendar: false,
+      confirmar_presenca: false,
       passar_para_equipe: true,
     });
   });
@@ -199,16 +250,45 @@ describe("habilidades", () => {
   });
 
   it("as ferramentas seguem as habilidades, e escalar_humano sempre vem", () => {
-    expect(ferramentasDoAgente({})).toEqual([
+    const semAgenda = agendaPadrao();
+    expect(ferramentasDoAgente({}, semAgenda)).toEqual([
       "buscar_procedimento",
       "escalar_humano",
     ]);
-    expect(ferramentasDoAgente({ informar_preco_e_convenio: false })).toEqual([
+    expect(
+      ferramentasDoAgente({ informar_preco_e_convenio: false }, semAgenda),
+    ).toEqual(["escalar_humano"]);
+    expect(
+      ferramentasDoAgente({ passar_para_equipe: false }, semAgenda),
+    ).toContain("escalar_humano");
+  });
+
+  it("agendar so da as ferramentas com a antecedencia e o horizonte (falha fechada)", () => {
+    const completa = { antecedenciaHoras: 2, horizonteDias: 30 };
+    const ligadas = { agendar: true, confirmar_presenca: true };
+    expect(ferramentasDoAgente(ligadas, completa)).toEqual([
+      "buscar_procedimento",
+      "buscar_horario",
+      "reservar_horario",
+      "agendar",
+      "confirmar_presenca",
       "escalar_humano",
     ]);
-    expect(ferramentasDoAgente({ passar_para_equipe: false })).toContain(
-      "escalar_humano",
-    );
+    for (const agenda of [
+      agendaPadrao(),
+      { antecedenciaHoras: 2, horizonteDias: null },
+      { antecedenciaHoras: null, horizonteDias: 30 },
+      // Fora da faixa do CHECK: nao vale como preenchida.
+      { antecedenciaHoras: 2, horizonteDias: 0 },
+      { antecedenciaHoras: 721, horizonteDias: 30 },
+      { antecedenciaHoras: 1.5, horizonteDias: 30 },
+    ]) {
+      expect(ferramentasDoAgente(ligadas, agenda)).toEqual([
+        "buscar_procedimento",
+        "confirmar_presenca",
+        "escalar_humano",
+      ]);
+    }
   });
 
   it("o schema descarta chave desconhecida, liga as travadas e recusa nao booleano", () => {
@@ -221,11 +301,153 @@ describe("habilidades", () => {
     ).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: false,
+      agendar: false,
+      confirmar_presenca: false,
       passar_para_equipe: true,
     });
     expect(
       habilidadesSchema.safeParse({ informar_preco_e_convenio: "sim" }).success,
     ).toBe(false);
+    expect(habilidadesSchema.safeParse({ agendar: "sim" }).success).toBe(false);
+  });
+
+  it("ligar Agendar consulta sem a agenda completa e recusado, com a dica da tela", () => {
+    const incompleta = { antecedenciaHoras: 4, horizonteDias: null };
+    const recusado = habilidadesComAgendaSchema(incompleta).safeParse({
+      agendar: true,
+    });
+    expect(recusado.success).toBe(false);
+    expect(recusado.error?.issues[0]?.message).toBe(DICA_DA_AGENDA_INCOMPLETA);
+    expect(recusado.error?.issues[0]?.path).toEqual(["agendar"]);
+    // Desligar (ou nao mexer) passa; com a agenda completa, ligar passa.
+    expect(
+      habilidadesComAgendaSchema(incompleta).parse({ agendar: false }).agendar,
+    ).toBe(false);
+    expect(
+      habilidadesComAgendaSchema(incompleta).parse({ confirmar_presenca: true })
+        .confirmar_presenca,
+    ).toBe(true);
+    expect(
+      habilidadesComAgendaSchema({
+        antecedenciaHoras: 0,
+        horizonteDias: 1,
+      }).parse({ agendar: true }).agendar,
+    ).toBe(true);
+    expect(DICA_DA_AGENDA_INCOMPLETA).not.toMatch(TRAVESSAO);
+  });
+
+  it("o que vale de fato desliga agendar sem a agenda completa", () => {
+    expect(
+      habilidadesComAgenda({ agendar: true }, agendaPadrao()).agendar,
+    ).toBe(false);
+    expect(
+      habilidadesComAgenda(
+        { agendar: true },
+        { antecedenciaHoras: 24, horizonteDias: 60 },
+      ).agendar,
+    ).toBe(true);
+    // As outras nao dependem da agenda.
+    expect(
+      habilidadesComAgenda({ confirmar_presenca: true }, agendaPadrao())
+        .confirmar_presenca,
+    ).toBe(true);
+  });
+});
+
+describe("agenda da IA (antecedencia e horizonte)", () => {
+  it("as faixas sao as do contrato da E4", () => {
+    expect(ANTECEDENCIA_DA_AGENDA).toEqual({ minimo: 0, maximo: 720 });
+    expect(HORIZONTE_DA_AGENDA).toEqual({ minimo: 1, maximo: 365 });
+  });
+
+  // A migration e da frente de banco desta leva: enquanto ela nao existe no
+  // disco, o cruzamento fica pulado (e aparece como pulado na saida).
+  it.skipIf(!existsSync(MIGRATION_DA_AGENDA))(
+    "as faixas espelham o CHECK da migration",
+    () => {
+      const sql = readFileSync(MIGRATION_DA_AGENDA, "utf-8");
+      for (const [coluna, faixa] of [
+        ["agenda_antecedencia_horas", ANTECEDENCIA_DA_AGENDA],
+        ["agenda_horizonte_dias", HORIZONTE_DA_AGENDA],
+      ] as const) {
+        const checks = [
+          ...sql.matchAll(/check\s*\(([^;]*?)\)\s*[,;)]/gi),
+        ].filter((m) => (m[1] ?? "").includes(coluna));
+        expect(checks.length, coluna).toBeGreaterThan(0);
+        const numeros = checks.flatMap((m) =>
+          [...(m[1] ?? "").matchAll(/\b\d+\b/g)].map((n) => Number(n[0])),
+        );
+        expect(numeros, coluna).toContain(faixa.minimo);
+        expect(numeros, coluna).toContain(faixa.maximo);
+      }
+    },
+  );
+
+  it("o schema aceita inteiros nas faixas e nulo, e recusa o resto", () => {
+    expect(
+      agendaDoAgenteSchema.parse({ antecedenciaHoras: 0, horizonteDias: 1 }),
+    ).toEqual({ antecedenciaHoras: 0, horizonteDias: 1 });
+    expect(
+      agendaDoAgenteSchema.parse({
+        antecedenciaHoras: 720,
+        horizonteDias: 365,
+      }),
+    ).toEqual({ antecedenciaHoras: 720, horizonteDias: 365 });
+    expect(
+      agendaDoAgenteSchema.parse({
+        antecedenciaHoras: null,
+        horizonteDias: null,
+      }),
+    ).toEqual(agendaPadrao());
+    for (const entrada of [
+      { antecedenciaHoras: -1, horizonteDias: 30 },
+      { antecedenciaHoras: 721, horizonteDias: 30 },
+      { antecedenciaHoras: 2.5, horizonteDias: 30 },
+      { antecedenciaHoras: 2, horizonteDias: 0 },
+      { antecedenciaHoras: 2, horizonteDias: 366 },
+      { antecedenciaHoras: 2, horizonteDias: 7.5 },
+      { antecedenciaHoras: "2", horizonteDias: 30 },
+      { antecedenciaHoras: Number.NaN, horizonteDias: 30 },
+      { antecedenciaHoras: 2 },
+    ]) {
+      const lido = agendaDoAgenteSchema.safeParse(entrada);
+      expect(lido.success, JSON.stringify(entrada)).toBe(false);
+      for (const problema of lido.error?.issues ?? []) {
+        expect(problema.message).not.toMatch(TRAVESSAO);
+        expect(problema.message).toMatch(/^Use um número inteiro de /);
+      }
+    }
+  });
+
+  it("le as colunas do banco com falha fechada e grava de volta", () => {
+    expect(
+      agendaDoBanco({
+        agenda_antecedencia_horas: 12,
+        agenda_horizonte_dias: 45,
+      }),
+    ).toEqual({ antecedenciaHoras: 12, horizonteDias: 45 });
+    // Coluna fora do select, fora da faixa ou de outro tipo: nulo.
+    expect(agendaDoBanco({})).toEqual(agendaPadrao());
+    expect(
+      agendaDoBanco({
+        agenda_antecedencia_horas: "12",
+        agenda_horizonte_dias: 400,
+      }),
+    ).toEqual(agendaPadrao());
+    expect(
+      agendaParaOBanco({ antecedenciaHoras: 3, horizonteDias: null }),
+    ).toEqual({ agenda_antecedencia_horas: 3, agenda_horizonte_dias: null });
+    expect(agendaCompleta(agendaPadrao())).toBe(false);
+    expect(agendaCompleta({ antecedenciaHoras: 0, horizonteDias: 1 })).toBe(
+      true,
+    );
+  });
+
+  it("os rotulos da agenda sao os da aba Regras e limites", () => {
+    expect(ROTULO_DA_AGENDA).toEqual({
+      antecedenciaHoras: "Antecedência mínima para marcar",
+      horizonteDias: "Até quantos dias à frente",
+    });
   });
 });
 
@@ -966,6 +1188,63 @@ describe("diferencasDoRascunho", () => {
     ]);
   });
 
+  it("conta cada campo da agenda e a habilidade como vale de fato", () => {
+    const rascunho = config({
+      ...publicada,
+      status: "rascunho",
+      habilidades: { agendar: true, confirmar_presenca: true },
+      agenda: { antecedenciaHoras: 1, horizonteDias: 30 },
+    });
+    expect(diferencasDoRascunho(rascunho, publicada)).toEqual([
+      { campo: "habilidades", rotulo: "Agendar consulta: ligada" },
+      { campo: "habilidades", rotulo: "Confirmar presença: ligada" },
+      { campo: "agenda", rotulo: "Antecedência mínima para marcar: 1 hora" },
+      { campo: "agenda", rotulo: "Até quantos dias à frente: 30 dias" },
+    ]);
+    // Agendar ligada no jsonb sem a agenda completa nao conta como ligada.
+    const semHorizonte = config({
+      ...publicada,
+      status: "rascunho",
+      habilidades: { agendar: true },
+      agenda: { antecedenciaHoras: 0, horizonteDias: null },
+    });
+    expect(diferencasDoRascunho(semHorizonte, publicada)).toEqual([
+      { campo: "agenda", rotulo: "Antecedência mínima para marcar: 0 horas" },
+    ]);
+    // Apagar um campo da publicada desliga a habilidade.
+    const publicadaComAgenda = config({
+      ...publicada,
+      habilidades: { agendar: true },
+      agenda: { antecedenciaHoras: 2, horizonteDias: 1 },
+    });
+    expect(
+      diferencasDoRascunho(
+        {
+          ...publicadaComAgenda,
+          status: "rascunho",
+          agenda: { antecedenciaHoras: 2, horizonteDias: null },
+        },
+        publicadaComAgenda,
+      ),
+    ).toEqual([
+      { campo: "habilidades", rotulo: "Agendar consulta: desligada" },
+      { campo: "agenda", rotulo: "Até quantos dias à frente: não preenchido" },
+    ]);
+    expect(
+      diferencasDoRascunho(
+        {
+          ...publicadaComAgenda,
+          status: "rascunho",
+          agenda: { antecedenciaHoras: null, horizonteDias: 1 },
+        },
+        publicadaComAgenda,
+      ).map((m) => m.rotulo),
+    ).toEqual([
+      "Agendar consulta: desligada",
+      "Antecedência mínima para marcar: não preenchida",
+    ]);
+  });
+
   it("instrucoes contam so quando foram lidas e mudaram", () => {
     const rascunho = config({ ...publicada, status: "rascunho" });
     expect(
@@ -1060,6 +1339,8 @@ describe("leitura do banco", () => {
     operating_mode: "fallback",
     fallback_minutes: 15,
     operating_hours: null,
+    agenda_antecedencia_horas: null,
+    agenda_horizonte_dias: null,
   };
 
   it("monta a configuracao com a base e as instrucoes de fora", () => {
@@ -1072,15 +1353,38 @@ describe("leitura do banco", () => {
       usarEmoji: true,
       saudacao: "Olá!",
       encerramento: null,
+      // agendar esta ligada no jsonb, mas a agenda nao foi preenchida: vale
+      // desligada (D13).
       habilidades: {
         responder_duvidas: true,
         informar_preco_e_convenio: false,
+        agendar: false,
+        confirmar_presenca: false,
         passar_para_equipe: true,
       },
       horario: { ...horarioPadrao(), modo: "fallback", minutosSemResposta: 15 },
+      agenda: { antecedenciaHoras: null, horizonteDias: null },
       instrucoes: "Seja breve.",
       base,
     });
+  });
+
+  it("le a agenda das duas colunas, e com ela agendar vale ligada", () => {
+    const lida = configDaLinha(
+      { ...linha, agenda_antecedencia_horas: 24, agenda_horizonte_dias: 30 },
+      { base: [] },
+    );
+    expect(lida.agenda).toEqual({ antecedenciaHoras: 24, horizonteDias: 30 });
+    expect(lida.habilidades.agendar).toBe(true);
+    // Coluna fora do select (linha antiga em cache): falha fechada.
+    const semColunas = { ...linha } as Partial<LinhaDaConfigDoAgente>;
+    delete semColunas.agenda_antecedencia_horas;
+    delete semColunas.agenda_horizonte_dias;
+    const antiga = configDaLinha(semColunas as LinhaDaConfigDoAgente, {
+      base: [],
+    });
+    expect(antiga.agenda).toEqual(agendaPadrao());
+    expect(antiga.habilidades.agendar).toBe(false);
   });
 
   it("sem instrucoes (papel que nao le) chega nulo; valor fora do formato vira padrao", () => {
@@ -1120,6 +1424,8 @@ describe("leitura do banco", () => {
       habilidades: {
         responder_duvidas: true,
         informar_preco_e_convenio: true,
+        agendar: false,
+        confirmar_presenca: false,
         passar_para_equipe: true,
       },
       horario: {
@@ -1127,6 +1433,7 @@ describe("leitura do banco", () => {
         minutosSemResposta: 5,
         expediente: expedientePadrao(),
       },
+      agenda: { antecedenciaHoras: null, horizonteDias: null },
       instrucoes: null,
       base: [],
     });
@@ -1187,6 +1494,8 @@ describe("texto de interface", () => {
       TEXTO_DA_CONFORMIDADE.dica,
       ...Object.values(ROTULO_DO_MOTIVO_DE_ESCALONAMENTO),
       ...Object.values(ROTULO_DO_CAMPO_DE_TEXTO),
+      ...Object.values(ROTULO_DA_AGENDA),
+      DICA_DA_AGENDA_INCOMPLETA,
     ];
   }
 

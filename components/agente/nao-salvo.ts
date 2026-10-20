@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-import { ABAS_DO_AGENTE } from "@/components/agente/textos";
+import { ABAS_DO_AGENTE, type AbaDoAgente } from "@/components/agente/textos";
 
 // Edicao nao salva da Tela 6 (achados 10 e 27): cada formulario avisa o
 // painel quando tem o que nao foi salvo, e o painel nao publica ate a pessoa
@@ -8,12 +8,18 @@ import { ABAS_DO_AGENTE } from "@/components/agente/textos";
 // Ao desmontar (salvou e remontou, descartou, fechou o editor), o formulario
 // avisa que nao tem mais nada pendente. As regras ficam em funcoes puras
 // (testadas sem navegador); o hook so liga o formulario ao painel.
+//
+// E4 (20/10/2026): a aba Regras e limites tem dois formularios, o horario
+// ("regras") e os limites para marcar consulta ("agenda"), cada um com o
+// proprio Salvar. Cada um avisa e remonta sozinho; a lista do publicar diz a
+// aba uma vez so (abasNaoSalvas).
 
 /** Os formularios com Salvar (Habilidades grava no toque, sem Salvar). */
 export const FORMULARIOS_DO_AGENTE = [
   "persona",
   "conhecimento",
   "regras",
+  "agenda",
   "instrucoes",
 ] as const;
 
@@ -31,6 +37,7 @@ export const NADA_NAO_SALVO: EstadoNaoSalvo = {
   persona: false,
   conhecimento: false,
   regras: false,
+  agenda: false,
   instrucoes: false,
 };
 
@@ -38,7 +45,17 @@ export const GERACAO_INICIAL: GeracaoDosFormularios = {
   persona: 0,
   conhecimento: 0,
   regras: 0,
+  agenda: 0,
   instrucoes: 0,
+};
+
+/** A aba de cada formulario: o horario e a agenda moram em Regras e limites. */
+const ABA_DO_FORMULARIO: Readonly<Record<FormularioDoAgente, AbaDoAgente>> = {
+  persona: "persona",
+  conhecimento: "conhecimento",
+  regras: "regras",
+  agenda: "regras",
+  instrucoes: "instrucoes",
 };
 
 /**
@@ -69,9 +86,19 @@ export function geracaoDepoisDeDescartar(
 
 /** O rotulo da aba de cada formulario, para a lista do que nao foi salvo. */
 export function rotuloDoFormulario(formulario: FormularioDoAgente): string {
-  return (
-    ABAS_DO_AGENTE.find((aba) => aba.chave === formulario)?.rotulo ?? formulario
-  );
+  const aba = ABA_DO_FORMULARIO[formulario];
+  return ABAS_DO_AGENTE.find((item) => item.chave === aba)?.rotulo ?? aba;
+}
+
+/**
+ * As abas com edicao nao salva, na ordem, sem repetir: o horario e os
+ * limites para marcar consulta, os dois pendentes, dizem "Regras e limites"
+ * uma vez.
+ */
+export function abasNaoSalvas(
+  pendentes: readonly FormularioDoAgente[],
+): string[] {
+  return [...new Set(pendentes.map(rotuloDoFormulario))];
 }
 
 /**

@@ -132,12 +132,37 @@ export const INSTRUCAO_DO_EMOJI = {
 // Habilidades
 // ---------------------------------------------------------------------------
 
-/** As ferramentas que o motor sabe dar ao modelo nesta leva (E2). */
+/**
+ * As ferramentas que o motor sabe dar ao modelo. As de agenda (buscar_horario,
+ * reservar_horario, agendar e confirmar_presenca) entraram no E4 (contrato
+ * da E4, secao 2).
+ */
 export const FERRAMENTAS_DO_AGENTE = [
   "buscar_procedimento",
+  "buscar_horario",
+  "reservar_horario",
+  "agendar",
+  "confirmar_presenca",
   "escalar_humano",
 ] as const;
 export type FerramentaDoAgente = (typeof FERRAMENTAS_DO_AGENTE)[number];
+
+/**
+ * As ferramentas de agenda: gravam (reservar_horario, agendar,
+ * confirmar_presenca) ou leem a Agenda (buscar_horario). O laco da mais
+ * rodadas ao turno que usa uma delas.
+ */
+export const FERRAMENTAS_DE_AGENDA = [
+  "buscar_horario",
+  "reservar_horario",
+  "agendar",
+  "confirmar_presenca",
+] as const satisfies readonly FerramentaDoAgente[];
+export type FerramentaDeAgenda = (typeof FERRAMENTAS_DE_AGENDA)[number];
+
+export function ehFerramentaDeAgenda(nome: string): nome is FerramentaDeAgenda {
+  return (FERRAMENTAS_DE_AGENDA as readonly string[]).includes(nome);
+}
 
 export type HabilidadeDoAgente = {
   chave: string;
@@ -145,21 +170,35 @@ export type HabilidadeDoAgente = {
   descricao: string;
   /** Travada = sempre ligada, a tela mostra a chave ligada com cadeado. */
   travada: boolean;
-  /** A ferramenta que o modelo recebe quando a habilidade esta ligada. */
-  ferramenta: FerramentaDoAgente | null;
+  /**
+   * As ferramentas que o modelo recebe quando a habilidade esta ligada, na
+   * ordem em que vao ao modelo (estavel para o cache).
+   */
+  ferramentas: readonly FerramentaDoAgente[];
   /** O valor quando a clinica ainda nao escolheu (chave ausente em skills). */
   padrao: boolean;
+  /**
+   * So liga com a antecedencia e o horizonte preenchidos (decisao D13 do
+   * dono, 20/10/2026): sem os dois, ninguem inventa valor e a habilidade fica
+   * desligada, na tela (desabilitada com DICA_DA_AGENDA_INCOMPLETA), no
+   * motor e no banco (reservar_horario_da_ia recusa).
+   */
+  precisaDaAgenda: boolean;
 };
 
 /**
- * Lista FECHADA desta leva. As de agenda (agendar, remarcar, cancelar, lista
- * de espera) entram no E4, quando o motor souber fazer: habilidade que o
- * motor nao faz nao aparece na tela.
+ * Lista FECHADA. Habilidade que o motor nao faz nao aparece na tela:
+ * remarcar, cancelar, lista de espera e encaixe continuam com a equipe (o
+ * pedido passa com o motivo pedido_de_agenda).
  *
  * "Informar preco e convenio" nasce ligada: o preco vem do Cadastro, nunca
  * de texto livre, e a spec 2.3 diz que procedimento cadastrado com preco a
  * IA ja sabe responder. "Passar para a equipe" e travada porque e seguranca:
  * o agente sempre pode escalar.
+ *
+ * E4 (20/10/2026): "Agendar consulta" (buscar, reservar e marcar; a consulta
+ * nasce pendente da aprovacao da equipe, D12) e "Confirmar presenca" nascem
+ * desligadas. A primeira so liga com a antecedencia e o horizonte (D13).
  */
 export const HABILIDADES_DO_AGENTE = [
   {
@@ -168,8 +207,9 @@ export const HABILIDADES_DO_AGENTE = [
     descricao:
       "Responde dúvidas sobre a clínica com as perguntas e respostas do Conhecimento.",
     travada: true,
-    ferramenta: null,
+    ferramentas: [],
     padrao: true,
+    precisaDaAgenda: false,
   },
   {
     chave: "informar_preco_e_convenio",
@@ -177,8 +217,29 @@ export const HABILIDADES_DO_AGENTE = [
     descricao:
       "Consulta no Cadastro o preço do procedimento e se o convênio do paciente cobre.",
     travada: false,
-    ferramenta: "buscar_procedimento",
+    ferramentas: ["buscar_procedimento"],
     padrao: true,
+    precisaDaAgenda: false,
+  },
+  {
+    chave: "agendar",
+    titulo: "Agendar consulta",
+    descricao:
+      "Oferece horários livres da Agenda e marca a consulta, que fica pendente até a equipe aprovar.",
+    travada: false,
+    ferramentas: ["buscar_horario", "reservar_horario", "agendar"],
+    padrao: false,
+    precisaDaAgenda: true,
+  },
+  {
+    chave: "confirmar_presenca",
+    titulo: "Confirmar presença",
+    descricao:
+      "Registra a confirmação quando o paciente avisa que vai à consulta marcada.",
+    travada: false,
+    ferramentas: ["confirmar_presenca"],
+    padrao: false,
+    precisaDaAgenda: false,
   },
   {
     chave: "passar_para_equipe",
@@ -186,8 +247,9 @@ export const HABILIDADES_DO_AGENTE = [
     descricao:
       "Passa a conversa para a recepção quando não pode ou não deve responder.",
     travada: true,
-    ferramenta: "escalar_humano",
+    ferramentas: ["escalar_humano"],
     padrao: true,
+    precisaDaAgenda: false,
   },
 ] as const satisfies readonly HabilidadeDoAgente[];
 
@@ -220,17 +282,26 @@ export function habilidadesEfetivas(valor: unknown): HabilidadesDoAgente {
 
 /**
  * As ferramentas que o modelo recebe, na ordem da lista (estavel para o
- * cache). escalar_humano sempre vem: a habilidade e travada.
+ * cache). escalar_humano sempre vem: a habilidade e travada. A habilidade
+ * que precisa da agenda (agendar) so entra com a antecedencia e o horizonte
+ * preenchidos (agendaCompleta): sem eles, falha fechada, mesmo que o jsonb
+ * diga ligada.
  */
 export function ferramentasDoAgente(
   habilidades: Readonly<Record<string, boolean>>,
+  agenda: AgendaDoAgente,
 ): FerramentaDoAgente[] {
   const efetivas = habilidadesEfetivas(habilidades);
+  const comAgenda = agendaCompleta(agenda);
   const ferramentas: FerramentaDoAgente[] = [];
   for (const habilidade of HABILIDADES_DO_AGENTE) {
-    if (habilidade.ferramenta !== null && efetivas[habilidade.chave]) {
-      ferramentas.push(habilidade.ferramenta);
+    if (!efetivas[habilidade.chave]) {
+      continue;
     }
+    if (habilidade.precisaDaAgenda && !comAgenda) {
+      continue;
+    }
+    ferramentas.push(...habilidade.ferramentas);
   }
   return ferramentas;
 }
@@ -255,6 +326,163 @@ export const habilidadesSchema = z
     }
   })
   .transform((valor) => habilidadesEfetivas(valor));
+
+// ---------------------------------------------------------------------------
+// Agenda da IA (E4): antecedencia minima e horizonte
+// ---------------------------------------------------------------------------
+
+/**
+ * Espelho dos CHECK de ai_agent_config (migration 20261020130000):
+ * agenda_antecedencia_horas de 0 a 720 e agenda_horizonte_dias de 1 a 365,
+ * inteiros, nulos enquanto a clinica nao preencher.
+ */
+export const ANTECEDENCIA_DA_AGENDA = { minimo: 0, maximo: 720 } as const;
+export const HORIZONTE_DA_AGENDA = { minimo: 1, maximo: 365 } as const;
+
+/**
+ * O que a clinica configura para a IA marcar (decisao D13 do dono,
+ * 20/10/2026, aba Regras e limites). Ninguem inventa valor: sem os dois, a
+ * habilidade "Agendar consulta" nao liga.
+ */
+export type AgendaDoAgente = {
+  /** Antecedencia minima para a IA marcar, em horas. Nulo = nao preenchida. */
+  antecedenciaHoras: number | null;
+  /** Ate quantos dias a frente a IA oferece horario. Nulo = nao preenchido. */
+  horizonteDias: number | null;
+};
+
+/** Os padroes do banco (as duas colunas nulas). */
+export function agendaPadrao(): AgendaDoAgente {
+  return { antecedenciaHoras: null, horizonteDias: null };
+}
+
+/** Verdadeiro so com os dois valores preenchidos (e dentro das faixas). */
+export function agendaCompleta(
+  agenda: AgendaDoAgente | null | undefined,
+): agenda is { antecedenciaHoras: number; horizonteDias: number } {
+  return (
+    agenda !== null &&
+    agenda !== undefined &&
+    inteiroNaFaixa(agenda.antecedenciaHoras, ANTECEDENCIA_DA_AGENDA) !== null &&
+    inteiroNaFaixa(agenda.horizonteDias, HORIZONTE_DA_AGENDA) !== null
+  );
+}
+
+/** A dica da chave "Agendar consulta" enquanto a agenda nao esta completa. */
+export const DICA_DA_AGENDA_INCOMPLETA =
+  "Preencha a antecedência e o horizonte em Regras e limites.";
+
+const ERRO_DA_ANTECEDENCIA = `Use um número inteiro de ${ANTECEDENCIA_DA_AGENDA.minimo} a ${ANTECEDENCIA_DA_AGENDA.maximo} horas.`;
+const ERRO_DO_HORIZONTE = `Use um número inteiro de ${HORIZONTE_DA_AGENDA.minimo} a ${HORIZONTE_DA_AGENDA.maximo} dias.`;
+
+function inteiroNaFaixa(
+  valor: unknown,
+  faixa: { minimo: number; maximo: number },
+): number | null {
+  return typeof valor === "number" &&
+    Number.isInteger(valor) &&
+    valor >= faixa.minimo &&
+    valor <= faixa.maximo
+    ? valor
+    : null;
+}
+
+/**
+ * Entrada dos dois campos de Regras e limites: inteiros nas faixas do CHECK,
+ * ou nulo (campo vazio; a habilidade Agendar desliga). Quem monta o
+ * formulario converte o campo vazio em nulo.
+ */
+export const agendaDoAgenteSchema = z.object({
+  antecedenciaHoras: z
+    .number({ error: ERRO_DA_ANTECEDENCIA })
+    .int({ error: ERRO_DA_ANTECEDENCIA })
+    .min(ANTECEDENCIA_DA_AGENDA.minimo, { error: ERRO_DA_ANTECEDENCIA })
+    .max(ANTECEDENCIA_DA_AGENDA.maximo, { error: ERRO_DA_ANTECEDENCIA })
+    .nullable(),
+  horizonteDias: z
+    .number({ error: ERRO_DO_HORIZONTE })
+    .int({ error: ERRO_DO_HORIZONTE })
+    .min(HORIZONTE_DA_AGENDA.minimo, { error: ERRO_DO_HORIZONTE })
+    .max(HORIZONTE_DA_AGENDA.maximo, { error: ERRO_DO_HORIZONTE })
+    .nullable(),
+});
+
+/**
+ * As duas colunas para a agenda. Valor fora da faixa, nao inteiro ou ausente
+ * (coluna fora do select) vira nulo: falha fechada, a IA nao marca. Nunca
+ * lanca.
+ */
+export function agendaDoBanco(linha: {
+  agenda_antecedencia_horas?: unknown;
+  agenda_horizonte_dias?: unknown;
+}): AgendaDoAgente {
+  return {
+    antecedenciaHoras: inteiroNaFaixa(
+      linha.agenda_antecedencia_horas,
+      ANTECEDENCIA_DA_AGENDA,
+    ),
+    horizonteDias: inteiroNaFaixa(
+      linha.agenda_horizonte_dias,
+      HORIZONTE_DA_AGENDA,
+    ),
+  };
+}
+
+/** A agenda nas colunas do banco (o inverso de agendaDoBanco). */
+export function agendaParaOBanco(agenda: AgendaDoAgente): {
+  agenda_antecedencia_horas: number | null;
+  agenda_horizonte_dias: number | null;
+} {
+  return {
+    agenda_antecedencia_horas: agenda.antecedenciaHoras,
+    agenda_horizonte_dias: agenda.horizonteDias,
+  };
+}
+
+/**
+ * As habilidades que valem DE FATO com a agenda: a que precisa da agenda
+ * fica desligada enquanto ela nao estiver completa, mesmo que o jsonb diga
+ * ligada (a clinica apagou um dos campos depois de ligar). E o que a tela
+ * mostra, o que o "o que mudou" compara e o que o motor usa.
+ */
+export function habilidadesComAgenda(
+  habilidades: unknown,
+  agenda: AgendaDoAgente,
+): HabilidadesDoAgente {
+  const efetivas = habilidadesEfetivas(habilidades);
+  if (agendaCompleta(agenda)) {
+    return efetivas;
+  }
+  for (const habilidade of HABILIDADES_DO_AGENTE) {
+    if (habilidade.precisaDaAgenda) {
+      efetivas[habilidade.chave] = false;
+    }
+  }
+  return efetivas;
+}
+
+/**
+ * A entrada da aba Habilidades conferida contra a agenda do rascunho: ligar
+ * "Agendar consulta" sem a antecedencia e o horizonte e erro, com a mesma
+ * dica da tela. A Server Action le a agenda do rascunho no servidor e usa
+ * este schema no lugar de habilidadesSchema.
+ */
+export function habilidadesComAgendaSchema(agenda: AgendaDoAgente) {
+  return habilidadesSchema.superRefine((habilidades, ctx) => {
+    if (agendaCompleta(agenda)) {
+      return;
+    }
+    for (const habilidade of HABILIDADES_DO_AGENTE) {
+      if (habilidade.precisaDaAgenda && habilidades[habilidade.chave]) {
+        ctx.addIssue({
+          code: "custom",
+          path: [habilidade.chave],
+          message: DICA_DA_AGENDA_INCOMPLETA,
+        });
+      }
+    }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Horario de operacao
@@ -1160,9 +1388,18 @@ export type ConfigDoAgente = {
   usarEmoji: boolean;
   saudacao: string | null;
   encerramento: string | null;
-  /** Ja efetivas (habilidadesEfetivas): travadas ligadas, chaves conhecidas. */
+  /**
+   * Ja efetivas (habilidadesComAgenda): travadas ligadas, chaves conhecidas,
+   * e "agendar" desligada enquanto a agenda nao estiver completa.
+   */
   habilidades: Record<string, boolean>;
   horario: HorarioDeOperacao;
+  /**
+   * Antecedencia minima e horizonte da IA (E4, D13): colunas
+   * agenda_antecedencia_horas e agenda_horizonte_dias. Nulos = a clinica nao
+   * preencheu, e a IA nao marca.
+   */
+  agenda: AgendaDoAgente;
   /**
    * So no servidor (motor) e para o super admin. Para os outros papeis chega
    * nulo: a sessao nao tem grant na coluna.
@@ -1185,14 +1422,19 @@ export function configPadraoDoAgente(): ConfigDoAgente {
     usarEmoji: false,
     saudacao: null,
     encerramento: null,
-    habilidades: habilidadesEfetivas({}),
+    habilidades: habilidadesComAgenda({}, agendaPadrao()),
     horario: horarioPadrao(),
+    agenda: agendaPadrao(),
     instrucoes: null,
     base: [],
   };
 }
 
-/** A linha de ai_agent_config como o banco devolve (colunas explicitas). */
+/**
+ * A linha de ai_agent_config como o banco devolve (colunas explicitas). As
+ * duas da agenda (E4) entram em todo select que monta a configuracao; se
+ * faltarem, agendaDoBanco le nulo e a IA nao marca (falha fechada).
+ */
 export type LinhaDaConfigDoAgente = {
   version: number;
   status: string;
@@ -1205,6 +1447,8 @@ export type LinhaDaConfigDoAgente = {
   operating_mode: string;
   fallback_minutes: number | null;
   operating_hours: unknown;
+  agenda_antecedencia_horas: number | null;
+  agenda_horizonte_dias: number | null;
 };
 
 function ehTom(valor: unknown): valor is TomDoAgente {
@@ -1361,6 +1605,7 @@ export function configDaLinha(
   extras: { base: ItemDaBase[]; instrucoes?: string | null },
 ): ConfigDoAgente {
   const padrao = configPadraoDoAgente();
+  const agenda = agendaDoBanco(linha);
   return {
     versao: linha.version,
     status: linha.status === "publicada" ? "publicada" : "rascunho",
@@ -1369,8 +1614,9 @@ export function configDaLinha(
     usarEmoji: linha.use_emoji === true,
     saudacao: textoOuNulo(linha.greeting),
     encerramento: textoOuNulo(linha.closing),
-    habilidades: habilidadesEfetivas(linha.skills),
+    habilidades: habilidadesComAgenda(linha.skills, agenda),
     horario: horarioDoBanco(linha),
+    agenda,
     instrucoes: textoOuNulo(extras.instrucoes),
     base: extras.base,
   };
@@ -1527,6 +1773,7 @@ export type CampoDaMudanca =
   | "encerramento"
   | "habilidades"
   | "horario"
+  | "agenda"
   | "instrucoes"
   | "base"
   | "primeira_publicacao";
@@ -1665,12 +1912,53 @@ function mudancasDoHorario(
   return mudancas;
 }
 
+/** Os rotulos dos dois campos da agenda (os mesmos da aba Regras e limites). */
+export const ROTULO_DA_AGENDA = {
+  antecedenciaHoras: "Antecedência mínima para marcar",
+  horizonteDias: "Até quantos dias à frente",
+} as const;
+
+function textoDeHoras(horas: number | null): string {
+  if (horas === null) {
+    return "não preenchida";
+  }
+  return horas === 1 ? "1 hora" : `${horas} horas`;
+}
+
+function textoDeDias(dias: number | null): string {
+  if (dias === null) {
+    return "não preenchido";
+  }
+  return dias === 1 ? "1 dia" : `${dias} dias`;
+}
+
+function mudancasDaAgenda(
+  rascunho: AgendaDoAgente,
+  publicada: AgendaDoAgente,
+): Mudanca[] {
+  const mudancas: Mudanca[] = [];
+  if (rascunho.antecedenciaHoras !== publicada.antecedenciaHoras) {
+    mudancas.push({
+      campo: "agenda",
+      rotulo: `${ROTULO_DA_AGENDA.antecedenciaHoras}: ${textoDeHoras(rascunho.antecedenciaHoras)}`,
+    });
+  }
+  if (rascunho.horizonteDias !== publicada.horizonteDias) {
+    mudancas.push({
+      campo: "agenda",
+      rotulo: `${ROTULO_DA_AGENDA.horizonteDias}: ${textoDeDias(rascunho.horizonteDias)}`,
+    });
+  }
+  return mudancas;
+}
+
 /**
  * O que o rascunho muda em relacao a versao publicada, para "N alterações
  * não publicadas" e para o "o que mudou" das Versões. Cada habilidade, cada
- * dia do expediente e cada item da base conta como uma mudanca. A base e
- * comparada pelo snapshot da publicada: item criado, reativado, editado,
- * desativado ou excluido conta uma vez.
+ * dia do expediente, cada campo da agenda e cada item da base conta como uma
+ * mudanca. As habilidades sao comparadas como valem de fato
+ * (habilidadesComAgenda). A base e comparada pelo snapshot da publicada:
+ * item criado, reativado, editado, desativado ou excluido conta uma vez.
  *
  * Sem versao publicada, compara com os padroes; se nada mudou, devolve uma
  * mudanca "Primeira versão do assistente" (sempre ha o que publicar).
@@ -1707,8 +1995,16 @@ export function diferencasDoRascunho(
   if (!mesmoTexto(rascunho.encerramento, referencia.encerramento)) {
     mudancas.push({ campo: "encerramento", rotulo: "Encerramento" });
   }
-  const habilidadesNovas = habilidadesEfetivas(rascunho.habilidades);
-  const habilidadesAntigas = habilidadesEfetivas(referencia.habilidades);
+  const agendaNova = rascunho.agenda;
+  const agendaAntiga = referencia.agenda;
+  const habilidadesNovas = habilidadesComAgenda(
+    rascunho.habilidades,
+    agendaNova,
+  );
+  const habilidadesAntigas = habilidadesComAgenda(
+    referencia.habilidades,
+    agendaAntiga,
+  );
   for (const habilidade of HABILIDADES_DO_AGENTE) {
     const ligada = habilidadesNovas[habilidade.chave];
     if (ligada !== habilidadesAntigas[habilidade.chave]) {
@@ -1719,6 +2015,7 @@ export function diferencasDoRascunho(
     }
   }
   mudancas.push(...mudancasDoHorario(rascunho.horario, referencia.horario));
+  mudancas.push(...mudancasDaAgenda(agendaNova, agendaAntiga));
   if (!mesmoTexto(rascunho.instrucoes, referencia.instrucoes)) {
     mudancas.push(MUDANCA_DAS_INSTRUCOES);
   }

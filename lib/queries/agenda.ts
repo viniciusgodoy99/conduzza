@@ -49,6 +49,14 @@ export type HoldDaAgenda = {
   ends_at: string;
   expires_at: string;
   created_by: string;
+  /**
+   * A conversa da reserva da IA (E4): o tempo real tira do cache a reserva
+   * anterior da mesma conversa quando chega a nova (a RPC apaga a anterior,
+   * e o DELETE nao e assinado). Nulo na reserva da recepcao.
+   */
+  conversation_id?: string | null;
+  /** A reserva que virou consulta (agendar_pela_ia) sai da tela na hora. */
+  consumido_em?: string | null;
 };
 
 export type AgendaDia = {
@@ -215,11 +223,15 @@ export async function fetchAgendaDia(
       .gt("ends_at", inicio.toISOString()),
     supabase
       .from("slot_hold")
-      .select("id, professional_id, starts_at, ends_at, expires_at, created_by")
+      .select(
+        "id, professional_id, starts_at, ends_at, expires_at, created_by, conversation_id, consumido_em",
+      )
       .eq("clinic_id", clinicId)
       .lt("starts_at", fim.toISOString())
       .gt("ends_at", inicio.toISOString())
-      .gt("expires_at", new Date().toISOString()),
+      .gt("expires_at", new Date().toISOString())
+      // A reserva consumida (virou consulta) nao ocupa: a consulta ocupa.
+      .is("consumido_em", null),
   ]);
   for (const resultado of [consultas, bloqueios, holds]) {
     if (resultado.error) {
@@ -240,7 +252,42 @@ export function diasDaSemana(diaISO: string): string[] {
   return Array.from({ length: 7 }, (_, i) => somarDias(diaISO, i));
 }
 
-/** Encaixes da IA aguardando aprovacao (painel "Pendente de voce"). */
+/**
+ * A pendencia e uma consulta que a IA marcou pelo WhatsApp (E4, decisao D12
+ * do dono de 20/10/2026: nasce 'pendente'), e nao um encaixe: created_by
+ * 'ia' e sem is_overbooking. O resto do painel e encaixe (o "Encaixe da IA"
+ * de sempre). Modulo comum: o painel (navegador) e as Server Actions de
+ * aprovar e recusar (servidor) usam a mesma regra.
+ */
+export function ehConsultaDaIa(consulta: {
+  created_by: string;
+  is_overbooking: boolean;
+}): boolean {
+  return consulta.created_by === "ia" && !consulta.is_overbooking;
+}
+
+/**
+ * Cancelar pela Agenda uma pendencia da IA (criada pela IA e ainda pendente:
+ * a consulta que ela marcou ou o encaixe) conta como recusar (decisao do
+ * dono de 20/10/2026): mudarStatusAction grava o resultado do Recusar, que
+ * nunca oferece o horario a lista de espera. A acao le a pendencia do banco;
+ * a tela usa esta regra so para nao perguntar o que a recusa ignora.
+ */
+export function cancelarContaComoRecusa(consulta: {
+  created_by: string;
+  approval_status: string | null;
+}): boolean {
+  return (
+    consulta.created_by === "ia" && consulta.approval_status === "pendente"
+  );
+}
+
+/**
+ * O que aguarda aprovacao da equipe (painel "Pendente de voce"): os
+ * encaixes da IA e, desde o E4, as consultas que a IA marcou (ehConsultaDaIa).
+ * As duas vem com created_by e is_overbooking (CONSULTA_SELECT), que o
+ * painel usa para dizer qual e qual.
+ */
 export async function fetchPendencias(
   supabase: SupabaseClient,
   clinicId: string,

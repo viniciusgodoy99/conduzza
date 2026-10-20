@@ -36,6 +36,8 @@ export type Database = {
     Tables: {
       ai_agent_config: {
         Row: {
+          agenda_antecedencia_horas: number | null
+          agenda_horizonte_dias: number | null
           agent_name: string
           clinic_id: string
           closing: string | null
@@ -58,6 +60,8 @@ export type Database = {
           version: number
         }
         Insert: {
+          agenda_antecedencia_horas?: number | null
+          agenda_horizonte_dias?: number | null
           agent_name?: string
           clinic_id: string
           closing?: string | null
@@ -80,6 +84,8 @@ export type Database = {
           version?: number
         }
         Update: {
+          agenda_antecedencia_horas?: number | null
+          agenda_horizonte_dias?: number | null
           agent_name?: string
           clinic_id?: string
           closing?: string | null
@@ -4081,42 +4087,67 @@ export type Database = {
       }
       slot_hold: {
         Row: {
+          appointment_id: string | null
           clinic_id: string
+          consumido_em: string | null
           contact_id: string | null
+          conversation_id: string | null
           created_at: string
           created_by: string
           ends_at: string
           expires_at: string
           id: string
+          job_id: string | null
+          job_id_do_agendar: string | null
           professional_id: string
+          service_link_id: string | null
           starts_at: string
           updated_at: string
         }
         Insert: {
+          appointment_id?: string | null
           clinic_id: string
+          consumido_em?: string | null
           contact_id?: string | null
+          conversation_id?: string | null
           created_at?: string
           created_by?: string
           ends_at: string
           expires_at: string
           id?: string
+          job_id?: string | null
+          job_id_do_agendar?: string | null
           professional_id: string
+          service_link_id?: string | null
           starts_at: string
           updated_at?: string
         }
         Update: {
+          appointment_id?: string | null
           clinic_id?: string
+          consumido_em?: string | null
           contact_id?: string | null
+          conversation_id?: string | null
           created_at?: string
           created_by?: string
           ends_at?: string
           expires_at?: string
           id?: string
+          job_id?: string | null
+          job_id_do_agendar?: string | null
           professional_id?: string
+          service_link_id?: string | null
           starts_at?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "slot_hold_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointment"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "slot_hold_clinic_id_fkey"
             columns: ["clinic_id"]
@@ -4132,10 +4163,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "slot_hold_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversation"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "slot_hold_professional_id_fkey"
             columns: ["professional_id"]
             isOneToOne: false
             referencedRelation: "professional"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "slot_hold_service_link_id_fkey"
+            columns: ["service_link_id"]
+            isOneToOne: false
+            referencedRelation: "service_link"
             referencedColumns: ["id"]
           },
         ]
@@ -4643,6 +4688,14 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: string
       }
+      agendar_pela_ia: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_job_id: string
+        }
+        Returns: Json
+      }
       anuncios_do_periodo: {
         Args: { p_ate: string; p_clinic_id: string; p_de: string }
         Returns: Json
@@ -4834,6 +4887,17 @@ export type Database = {
         Args: { p_clinic_id: string; p_payload: Json }
         Returns: string
       }
+      conferir_horario_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_ends_at: string
+          p_reserva_propria: string
+          p_service_link_id: string
+          p_starts_at: string
+        }
+        Returns: Record<string, unknown>
+      }
       confirmar_pelo_paciente: {
         Args: {
           p_appointment_id: string
@@ -4934,6 +4998,10 @@ export type Database = {
       definir_numero_principal: {
         Args: { p_account_id: string; p_clinic_id: string }
         Returns: string
+      }
+      devolver_conversa_da_consulta_recusada: {
+        Args: { p_appointment_id: string; p_clinic_id: string }
+        Returns: boolean
       }
       definir_entrada_por_codigo: {
         Args: { p_ativo: boolean; p_clinic_id: string }
@@ -5467,6 +5535,16 @@ export type Database = {
           p_origem: string
         }
         Returns: string
+      }
+      reservar_horario_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_job_id: string
+          p_service_link_id: string
+          p_starts_at: string
+        }
+        Returns: Json
       }
       reservar_slot_envio_v2: {
         Args: {

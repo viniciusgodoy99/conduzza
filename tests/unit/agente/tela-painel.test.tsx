@@ -28,6 +28,7 @@ vi.mock("@/components/agente/acoes", () => ({
     salvarPersona: vi.fn(),
     salvarHabilidades: vi.fn(),
     salvarHorario: vi.fn(),
+    salvarAgenda: vi.fn(),
     salvarItemDaBase: vi.fn(),
     ativarItemDaBase: vi.fn(),
     excluirItemDaBase: vi.fn(),
@@ -340,6 +341,7 @@ describe("recepção", () => {
     for (const rotulo of [
       "Salvar persona",
       "Salvar horário",
+      "Salvar limites",
       "Publicar alterações",
     ]) {
       expect(visivel).toContain(rotulo);
@@ -350,12 +352,15 @@ describe("recepção", () => {
     }
   });
 
-  it("a chave livre de habilidade fica desabilitada; os formulários, travados", () => {
+  it("as chaves livres de habilidade ficam desabilitadas; os formulários, travados", () => {
+    // Informar preço e convênio, Agendar consulta e Confirmar presença (E4).
     const livre = tags(html, "switch").filter(
       (tag) => !tag.includes('aria-disabled="true"'),
     );
-    expect(livre).toHaveLength(1);
-    expect(livre[0]).toContain('disabled=""');
+    expect(livre).toHaveLength(3);
+    for (const tag of livre) {
+      expect(tag).toContain('disabled=""');
+    }
     expect(html).toMatch(/<fieldset disabled=""/);
   });
 
@@ -400,10 +405,16 @@ describe("travas da Conformidade e dos gatilhos (C24)", () => {
     const livre = tags(html, "switch").filter(
       (tag) => !tag.includes('aria-disabled="true"'),
     );
-    expect(livre).toHaveLength(1);
-    expect(livre[0]).toContain('aria-checked="true"');
-    expect(livre[0]).toContain('data-state="checked"');
-    expect(livre[0]).not.toMatch(/ disabled=""/);
+    // Informar preço e convênio, Agendar consulta e Confirmar presença (E4).
+    expect(livre).toHaveLength(3);
+    const preco = livre.find((tag) =>
+      tag.includes(
+        'aria-labelledby="agente-habilidade-informar_preco_e_convenio"',
+      ),
+    );
+    expect(preco).toContain('aria-checked="true"');
+    expect(preco).toContain('data-state="checked"');
+    expect(preco).not.toMatch(/ disabled=""/);
     expect(texto(html)).toContain("Informar preço e convênio");
   });
 });

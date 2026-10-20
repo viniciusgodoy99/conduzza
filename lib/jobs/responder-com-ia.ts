@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { portaDaAgendaDoWhatsapp } from "@/lib/agente/agenda";
 import { nomesDoCatalogo } from "@/lib/agente/ferramentas/buscar-procedimento";
 import {
   carregarCatalogoDoAgente,
@@ -109,7 +110,10 @@ import type { Job, ResultadoDeJob } from "./worker";
 //  8. Teto de respostas da conversa na ultima hora.
 //  9. Reserva do custo maximo do turno (origem whatsapp).
 // 10. O turno (portao, classificador, agente, filtro), com a trava do
-//     WhatsApp entre as rodadas e o prazo da invocacao menos o envio.
+//     WhatsApp entre as rodadas e o prazo da invocacao menos o envio. As
+//     ferramentas de agenda (E4) gravam pelas RPCs com o id DESTE job
+//     (portaDaAgendaDoWhatsapp): repetir o job devolve a mesma reserva e a
+//     mesma consulta, nunca uma segunda.
 // 11. Acerto do gasto, com a conversa e o job.
 // 12. ANTES de enviar: ai_decision_log (nunca blocked_draft), o rascunho
 //     bloqueado no lugar restrito e ai_turno 'decidido'.
@@ -586,6 +590,13 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
           workerId: c.workerId,
           jobCriadoEm: c.job.created_at ?? "",
         }),
+      agenda: portaDaAgendaDoWhatsapp(admin, {
+        clinicId,
+        conversationId: c.conversationId,
+        contactId: conversa.contact_id,
+        jobId: c.job.id,
+        agora: c.deps.agora,
+      }),
       modeloDosClassificadores,
       prazoMs: prazoDoTurno,
       agora: c.deps.agora,
@@ -724,6 +735,7 @@ async function decidirEEnviar(
     versaoDoPrompt: resultado.versaoDoPrompt,
     configVersion: config.versao,
     latenciaMs,
+    ferramentasUsadas: resultado.ferramentasUsadas ?? [],
   });
   if (desfecho.tipo === "bloqueou" && resultado.rascunhoBloqueado !== null) {
     await gravarRascunhoBloqueado(c.admin, {

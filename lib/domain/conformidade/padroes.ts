@@ -954,6 +954,17 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
   ),
   p(
     "promessa_resultado",
+    "resultado_na_primeira_sessao",
+    // E4 (20/10/2026): a IA marca consulta, e a promessa vem colada na
+    // agenda ("marquei sua consulta e o resultado vem ja na primeira
+    // sessao", "na primeira sessao voce ja sai sem rugas"). So com verbo de
+    // resultado entre "resultado" e a sessao, e com o sujeito sendo a pessoa
+    // (nunca "a doutora ve o resultado do exame na primeira consulta"); a
+    // primeira consulta como agenda ("sua primeira consulta e terca") passa.
+    "\\bresultados? (?:(?:ja|logo|tambem|so|vem|vira|aparece|aparecem|chega|chegam|sai|saem|acontece|acontecem|surge|surgem|comeca|comecam|e|fica|ficam|sera|serao|vai|vao|ser|aparecer|vir|sair|chegar|e visto|e notado) ){1,3}(?:na|no|numa|logo na|ja na) (?:primeir[oa]|1a|unic[oa]) (?:sessao|consulta|aplicacao|visita|atendimento|vez)\\b|\\b(?:ja |logo )?(?:na|numa|em uma|com uma|com a|depois da|apos a|so com a) (?:primeir[oa]|1a|unic[oa]|so uma|uma so|uma unica) (?:sessao|consulta|aplicacao|visita|atendimento)\\b,? (?:(?:voce|vc|a senhora|o senhor) )?(?:ja |logo )?(?:sai|sair|fica|ficar|ve|ver|nota|notar|percebe|perceber|sente|sentir|tem|ter|consegue ver)\\b (?:\\w+ ){0,2}?(?:sem (?:rugas?|manchas?|marcas?|celulite|flacidez|gordur\\w*|papada|olheiras?|acne|espinhas?|cicatriz\\w*|vincos?|estrias?|pelos?|linhas de expressao)|(?:a |o |um |uma )?(?:diferenca|resultado|melhora|efeito)\\b|rejuvenescid\\w*|renovad\\w*|lind[oa]s?\\b|outr[ao] (?:pessoa|mulher|homem)|mais (?:jovem|nov[ao]|bonit\\w*|magr\\w*))",
+  ),
+  p(
+    "promessa_resultado",
     "voce_vai_ficar",
     // Sem "fica perfeito e" ("fica perfeito e ja esta confirmado" e agenda).
     "\\b(?:voce|vc|a senhora|o senhor|sua pele|seu rosto|sua aparencia|seu sorriso|seus labios|sua barriga|seu corpo|o resultado|ela|ele)\\b (?:\\w+ )?(?:vai|ira)\\b (?:\\w+ )?(?:ficar|sair|parecer|estar) (?:\\w+ )?(?:lind|bel[oa]|perfeit|maravilhos|jovem|mais jovem|mais nov|renovad|rejuvenescid|incrivel|otim|satisfeit|feliz|realizad|outra pessoa|diferente|sem ruga|sem mancha|magr|natural)|\\b(?:fica|ficam|ficou|ficaram|vai ficar|vao ficar|ficara) (?:\\w+ ){0,2}?(?:lind[oa]s?|maravilhos[oa]s?|naturais|natural|rejuvenescid\\w*)\\b|\\b(?:sai|sair|saira|vai sair) (?:\\w+ ){0,2}?outr[ao] (?:mulher|pessoa|homem)\\b|\\b(?:tchau|adeus),? (?:as |aos )?(?:ruga|mancha|gordur|flacid|celulit|papada|olheira)",
@@ -1169,6 +1180,32 @@ const DETERMINANTE =
 const NAO_E_RESULTADO = "(?:resultado|efeito|melhora|sucesso)";
 /** Nada de resultado no resto da frase ("sua vaga, e o resultado tambem"). */
 const SEM_RESULTADO_NA_FRASE = `(?![^.!?]{0,40}\\b${NAO_E_RESULTADO})`;
+/** O mesmo, na frase inteira (a garantia condicionada pode ser longa). */
+const SEM_RESULTADO_ATE_O_FIM = `(?![^.!?]*\\b${NAO_E_RESULTADO})`;
+/** O objeto de agenda colado no verbo ("garantir o mesmo horario"). */
+const ATE_O_OBJETO = `(?= (?:te |lhe )?(?:${DETERMINANTE} ){0,2}(?:mesm[oa]s? |propri[oa]s? )?${OBJETO_DE_AGENDA}\\b${SEM_RESULTADO_NA_FRASE})`;
+/**
+ * O que vem antes de "garantir" quando a frase nao diz que ja esta
+ * garantido: a finalidade ("pra garantir sua vaga"), a oferta ao paciente
+ * ("quer garantir o horario?") e a negacao ("nao consigo garantir").
+ */
+const ANTES_DE_GARANTIR =
+  "(?:para|pra|quer|quiser|queria|queira|deseja|desejar|gostaria de|prefere|preferir|nao (?:consigo|conseguimos|consegue|conseguiria|conseguiriamos|posso|podemos|pode|poderia|poderiamos|da para|da pra|tenho como|temos como|tem como|ha como|e possivel|vou|vamos|vai|sei se (?:consigo|da para|da pra)))";
+const QUEM_GARANTE =
+  "(?:(?:eu|voce|vc|a senhora|o senhor|a gente|gente|nos|ela|ele) )?(?:te |lhe )?";
+/** O que fica garantido so depois: o verbo no futuro ou com condicao. */
+const FICA_GARANTIDO =
+  "(?:fica|ficara|vai ficar|estara|vai estar|sera|vai ser)";
+const SO = "(?:(?:so|somente|apenas) )?";
+const EQUIPE = "(?:equipe|clinica|recepcao)";
+/**
+ * A condicao que garante: a confirmacao ou a aprovacao DA EQUIPE (a consulta
+ * da IA nasce pendente), sem "nao" no meio. "Se voce confirmar" e "com o
+ * pagamento do sinal" nao servem: nenhum dos dois garante a consulta da IA.
+ */
+const CONDICAO_DA_EQUIPE = `(?:(?:assim que|logo que|quando|depois que|uma vez que|se) (?:(?:a|o) )?${EQUIPE}(?: d[ao] \\w+)? (?:confirmar|confirmarem|confirma|aprovar|aprovarem|aprova)\\b|(?:assim que|logo que|quando|depois que|uma vez que|se) (?:(?:ela|ele) )?(?:for|estiver) (?:aprovad[oa]s?\\b|confirmad[oa]s? pela ${EQUIPE}\\b)|(?:depois d[ao]|apos a|com a|mediante a|a partir d[ao]) (?:aprovacao|confirmacao d[ao] ${EQUIPE})\\b)`;
+/** Depois da condicao e antes da virgula, sem negar ("ou nao"). */
+const ATE_A_VIRGULA = "(?:(?!\\b(?:nao|nem|sem)\\b)[^.!?;:,]){0,30}";
 const LUGAR_DO_CARRO = "(?:estacionamento|ticket|valet|manobrista|garagem)";
 const TEMPO_DE_CORTESIA = "\\d+ ?(?:h|hs|horas?|min|minutos) de ";
 
@@ -1179,18 +1216,65 @@ const TEMPO_DE_CORTESIA = "\\d+ ?(?:h|hs|horas?|min|minutos) de ";
  * lexico compacto e do aproximado, em todas as visoes de frase. Cada troca e
  * estreita, com o objeto colado na palavra: "garantir sua vaga" sai, e
  * "garantir resultado" ou "garanto o horario e o resultado" continuam.
+ *
+ * GARANTIA DE AGENDA (decisao do dono de 20/10/2026, E4): a consulta que a
+ * IA marca nasce pendente e quem confirma e a equipe, entao a resposta que
+ * AFIRMA que a consulta, a vaga ou o horario ja esta (ou vai ficar, pela
+ * propria IA) garantido BLOQUEIA: "sua consulta esta garantida", "seu
+ * horario esta garantido", "garanto o seu horario", "garantimos sua vaga",
+ * "ja garanti", "vou garantir", "consigo garantir", "consulta garantida",
+ * "fica garantido" sem condicao, e "esta garantido" sem objeto, como
+ * sempre. Nenhuma troca abaixo pega essas frases: o padrao "garantia"
+ * (promessa_resultado) le "garant" e bloqueia. O criterio da troca e a
+ * frase NAO afirmar a garantia como fato de agora; so saem:
+ *  - a finalidade, a oferta e a negacao com o verbo no infinitivo ("pra
+ *    garantir sua vaga, confirme por aqui", "quer garantir o horario?",
+ *    "nao consigo garantir o mesmo horario");
+ *  - a negacao direta ("nao garantimos encaixe", "sua vaga ainda nao esta
+ *    garantida");
+ *  - a garantia que depende da confirmacao ou da aprovacao DA EQUIPE, na
+ *    mesma frase ("assim que a equipe confirmar, sua consulta fica
+ *    garantida", "seu horario so fica garantido depois da aprovacao da
+ *    equipe"). Condicao do paciente ("se voce confirmar, esta garantida")
+ *    ou do sinal ("fica garantida com o pagamento") bloqueia: nenhuma das
+ *    duas garante a consulta da IA.
+ * Ate 20/10/2026 (politica de 05/10/2026), "sua vaga esta garantida" e
+ * "garanto o horario" tambem saiam: o controle B134 virou o caso AG-S13.
  */
 export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
   {
-    // "Pra garantir sua vaga", "nao consigo garantir o mesmo horario".
+    // "Pra garantir sua vaga", "quer garantir o horario?", "nao consigo
+    // garantir o mesmo horario". "Consigo garantir" e "vou garantir" nao.
     nome: "garantir_vaga",
-    fonte: `\\bgarant\\w*(?= (?:te |lhe )?(?:${DETERMINANTE} ){0,2}(?:mesm[oa]s? |propri[oa]s? )?${OBJETO_DE_AGENDA}\\b${SEM_RESULTADO_NA_FRASE})`,
+    fonte: `(?<=\\b${ANTES_DE_GARANTIR} ${QUEM_GARANTE})garantir${ATE_O_OBJETO}`,
     troca: "reservar",
   },
   {
-    // "Sua vaga esta garantida", "horario garantido".
-    nome: "vaga_garantida",
-    fonte: `(?<=\\b${OBJETO_DE_AGENDA} (?:(?!${NAO_E_RESULTADO})\\w+ ){0,2})garantid(?=[oa]s?\\b${SEM_RESULTADO_NA_FRASE})`,
+    // "Nao garantimos encaixe", "nao te garanto o mesmo horario". "Nao so
+    // garantimos sua vaga" nao: o "nao" tem de estar colado.
+    nome: "vaga_sem_garantia",
+    fonte: `(?<=\\bnao (?:te |lhe )?)garant\\w*${ATE_O_OBJETO}`,
+    troca: "reservar",
+  },
+  {
+    // "Sua vaga ainda nao esta garantida", "o horario nao fica garantido".
+    nome: "vaga_nao_garantida",
+    fonte: `(?<=\\b${OBJETO_DE_AGENDA} (?:ainda )?nao (?:(?:esta|estao|estara|fica|ficam|ficou|ficara|e|sao|sera|foi|vai ficar|vai estar|ta) )?(?:(?:ainda|mais) )?)garantid(?=[oa]s?\\b${SEM_RESULTADO_NA_FRASE})`,
+    troca: "reservad",
+  },
+  {
+    // "Sua consulta fica garantida assim que a equipe confirmar", "o
+    // horario so fica garantido depois da aprovacao da equipe".
+    nome: "vaga_garantida_depois_da_equipe",
+    fonte: `(?<=\\b${OBJETO_DE_AGENDA} ${SO}${FICA_GARANTIDO} ${SO})garantid(?=[oa]s? ${SO}${CONDICAO_DA_EQUIPE}${SEM_RESULTADO_ATE_O_FIM})`,
+    troca: "reservad",
+  },
+  {
+    // "Assim que a equipe confirmar, sua consulta fica garantida", "quando
+    // a equipe aprovar, seu horario esta garantido": a condicao abre a
+    // frase e a garantia vem logo depois da virgula, sem "ja".
+    nome: "depois_da_equipe_vaga_garantida",
+    fonte: `(?<=(?:^|[.!?;:] )(?:(?:e|mas|entao|ai) )?${CONDICAO_DA_EQUIPE}${ATE_A_VIRGULA}, (?:\\w+ ){0,2}?${OBJETO_DE_AGENDA} ${SO}(?:${FICA_GARANTIDO}|esta|e) ${SO})garantid(?=[oa]s?\\b${SEM_RESULTADO_ATE_O_FIM})`,
     troca: "reservad",
   },
   {

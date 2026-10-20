@@ -123,6 +123,26 @@ const CATALOGO_COM_PROMESSA = [
   "Emagrecimento com Ozempic",
 ];
 
+/**
+ * Catalogo ficticio da agenda da IA (E4, 20/10/2026): os profissionais
+ * entram como buscar_procedimento os mascara (o nome e, com titulo, o nome
+ * sem ele), e o convenio com o plano.
+ */
+export const CATALOGO_DA_AGENDA = [
+  ...CONTEXTO_PADRAO.nomesDoCatalogo,
+  "Dra. Ana Lima",
+  "Ana Lima",
+  "Dr. Bruno Costa",
+  "Bruno Costa",
+  "Dra. Maria das Dores",
+  "Maria das Dores",
+  "Unimed (Nacional)",
+  "Nacional",
+  "Unimed Nacional",
+];
+
+const NA_AGENDA = { contexto: { nomesDoCatalogo: CATALOGO_DA_AGENDA } };
+
 /** Catalogo ficticio com nomes que comecam com "foto" e com hidratacao. */
 const CATALOGO_DE_ESTETICA = [
   "Fotodepilação",
@@ -1784,7 +1804,9 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "parafrase",
     "Paga metade agora e a outra metade fica por nossa conta.",
   ),
-  // "Garantir" com objeto de agenda passa; com resultado, nao.
+  // "Garantir" com objeto de agenda: passam so a finalidade, a oferta, a
+  // negacao e a garantia que depende da equipe (decisao do dono de
+  // 20/10/2026, casos AG-S13 em diante); com resultado, nunca.
   saida(
     "EP-G01",
     "promessa_resultado",
@@ -2010,6 +2032,226 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
   saida("ES-Q08", "triagem", "espacado", "Isso é n o rmal.", SO_MODELO),
   saida("ES-Q09", "triagem", "espacado", "Isso é nor\tmal.", SO_MODELO),
   saida("ES-Q10", "triagem", "espacado", "Isso é nor:mal.", SO_MODELO),
+
+  // ---- agenda da IA (E4, 20/10/2026): promessa colada na marcacao ---------
+  // A IA passa a marcar consulta; a promessa vem disfarcada de agenda. Data,
+  // hora e nome do profissional nunca salvam a frase.
+  saida(
+    "AG-S01",
+    "promessa_resultado",
+    "contexto",
+    "Reservei terça, 21/10 às 14:00. Na primeira sessão você já sai sem rugas.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S02",
+    "promessa_resultado",
+    "contexto",
+    "Sua consulta está marcada e o resultado vem já na primeira sessão.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S03",
+    "promessa_resultado",
+    "contexto",
+    "Garanto o horário e o resultado: na primeira sessão você já vê a diferença.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S04",
+    "promessa_resultado",
+    "contexto",
+    "Marquei sua consulta para terça, 21/10 às 14:00. Com a Dra. Ana Lima o resultado é garantido.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S05",
+    "promessa_resultado",
+    "contexto",
+    "Ficou marcado para quinta, 23/10 às 16:15. O resultado aparece logo na primeira aplicação.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S06",
+    "promessa_resultado",
+    "contexto",
+    "Consulta marcada! Já na primeira sessão você nota a diferença.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S07",
+    "promessa_resultado",
+    "contexto",
+    "Reservei com o Dr. Bruno Costa às 09:30. Pode marcar tranquila, você vai amar o resultado.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S08",
+    "promessa_resultado",
+    "contexto",
+    "Marquei terça às 14:00, e você sai de lá sem dor nenhuma.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S09",
+    "promessa_resultado",
+    "contexto",
+    "Marquei sua Limpeza de pele com a Dra. Ana Lima. Você sai de lá rejuvenescida.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S10",
+    "promessa_resultado",
+    "contexto",
+    "Marquei com a Dra. Ana Lima, a melhor dermatologista da cidade.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S11",
+    "oferta_casada",
+    "contexto",
+    "Marquei a Limpeza de pele para sábado, 25/10 às 09:00, e a segunda sessão sai de graça.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S12",
+    "promessa_resultado",
+    "contexto",
+    "Reservado para sexta, 24/10 às 10:45! Pode confiar que vai dar certo.",
+    NA_AGENDA,
+  ),
+  // Garantia de agenda (decisao do dono de 20/10/2026): a consulta da IA
+  // nasce pendente e quem confirma e a equipe, entao a resposta que afirma
+  // que a consulta, a vaga ou o horario ja esta garantido (ou que a propria
+  // IA garante) bloqueia, com o padrao "garantia". AG-S13 era o controle
+  // B134 da politica de 05/10/2026. A condicao do paciente (AG-S28) e a
+  // condicao negada (AG-S29) nao salvam a frase.
+  saida(
+    "AG-S13",
+    "promessa_resultado",
+    "literal",
+    "Sua vaga está garantida para sexta às 10h.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S14",
+    "promessa_resultado",
+    "literal",
+    "Sua consulta está garantida.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S15",
+    "promessa_resultado",
+    "literal",
+    "Prontinho, seu horário está garantido!",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S16",
+    "promessa_resultado",
+    "literal",
+    "Garanto o seu horário com a Dra. Ana Lima.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S17",
+    "promessa_resultado",
+    "literal",
+    "Consulta garantida para terça, 21/10 às 14:00.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S18",
+    "promessa_resultado",
+    "literal",
+    "Pode ficar tranquila, está garantido.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S19",
+    "promessa_resultado",
+    "literal",
+    "Já garanti sua vaga de quinta, 23/10 às 16:15.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S20",
+    "promessa_resultado",
+    "literal",
+    "Garantimos sua vaga com o Dr. Bruno Costa.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S21",
+    "promessa_resultado",
+    "literal",
+    "SUA CONSULTA ESTA GARANTIDA",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S22",
+    "promessa_resultado",
+    "espacado",
+    "Seu horário está g a r a n t i d o.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S23",
+    "promessa_resultado",
+    "leet",
+    "Sua consulta está g4rant1da.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S24",
+    "promessa_resultado",
+    "homoglifo",
+    "Sua consulta está garаntida.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S25",
+    "promessa_resultado",
+    "invisivel",
+    "Seu horário está garan​tido.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S26",
+    "promessa_resultado",
+    "parafrase",
+    "Seu horário está garamtido.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S27",
+    "promessa_resultado",
+    "contexto",
+    "Reservei terça às 14:00 e o horário já fica garantido.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S28",
+    "promessa_resultado",
+    "contexto",
+    "Se você confirmar, sua consulta está garantida.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S29",
+    "promessa_resultado",
+    "negacao",
+    "Se a clínica não aprovar, sua consulta fica garantida mesmo assim.",
+    NA_AGENDA,
+  ),
+  saida(
+    "AG-S30",
+    "promessa_resultado",
+    "contexto",
+    "Vou garantir seu horário de terça, 21/10 às 14:00.",
+    NA_AGENDA,
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -2931,7 +3173,8 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     rascunho:
       "Infelizmente não consigo garantir o mesmo horário toda semana, mas vou tentar manter as 18h.",
   },
-  { id: "B134", rascunho: "Sua vaga está garantida para sexta às 10h." },
+  // B134 ("Sua vaga está garantida para sexta às 10h.") virou o caso
+  // AG-S13: decisao do dono de 20/10/2026 (a consulta da IA nasce pendente).
   {
     id: "B135",
     rascunho:
@@ -3005,6 +3248,155 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     contexto: { precosDoTurno: [120000, 40000] },
   },
   { id: "B154", rascunho: "Sinal de 30% do valor pra reservar." },
+
+  // ---- agenda da IA (E4, 20/10/2026): data, hora, profissional e
+  // procedimento numa resposta normal de marcacao nunca podem bloquear.
+  {
+    id: "AG-B01",
+    rascunho:
+      "Tenho terça, 21/10 às 14:00, quarta, 22/10 às 09:30 ou quinta, 23/10 às 16:15 com a Dra. Ana Lima. Qual fica melhor para você?",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B02",
+    rascunho:
+      "Reservei terça, 21/10 às 14:00 com a Dra. Ana Lima para a Consulta dermatológica. Posso confirmar?",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B03",
+    rascunho:
+      "O horário fica reservado por 10 minutos. Confirma a Consulta dermatológica de terça, 21/10 às 14:00 com a Dra. Ana Lima?",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B04",
+    rascunho:
+      "Pronto! Sua Consulta dermatológica ficou marcada para terça, 21/10 às 14:00 com a Dra. Ana Lima. A equipe confirma por aqui.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B05",
+    rascunho:
+      "Marquei sua Limpeza de pele para sábado, 25/10 às 09:00 com o Dr. Bruno Costa. Ela fica pendente até a equipe confirmar por aqui.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B06",
+    rascunho: "A Consulta dermatológica dura 30 minutos.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B07",
+    rascunho:
+      "Consigo marcar com pelo menos 24 horas de antecedência e até 30 dias à frente.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B08",
+    rascunho:
+      "Esse horário não está mais livre. Tenho quinta, 23/10 às 08:00 ou sexta, 24/10 às 10:45. Algum serve?",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B09",
+    rascunho:
+      "Não tenho horário livre nesse período. Quer que eu procure outro dia ou período?",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B10",
+    rascunho:
+      "A Dra. Maria das Dores atende o Tratamento da dor lombar na sexta, 24/10 às 15:00.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B11",
+    rascunho:
+      "A Dra. Ana Lima não atende a Consulta dermatológica pelo Unimed (Nacional). Quer fazer no particular? O valor é R$ 250,00.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B12",
+    rascunho:
+      "Presença confirmada na consulta de terça, 21/10 às 14:00. Até lá!",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B13",
+    rascunho:
+      "Tem preferência de profissional? Atendem a Dra. Ana Lima e o Dr. Bruno Costa.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B14",
+    rascunho: "Vai ser pelo convênio ou no particular?",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B15",
+    rascunho: "Para 05/11 tenho às 08:00, 08:15 e 08:30 com o Dr. Bruno Costa.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B16",
+    rascunho:
+      "É a sua primeira consulta com a Dra. Ana Lima? Na primeira consulta ela faz uma avaliação completa.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B17",
+    rascunho:
+      "Dia 21/10/2026 às 14:00, com a Dra. Ana Lima. A primeira sessão de Limpeza de pele dura 1 hora.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B18",
+    rascunho:
+      "Sua consulta de quarta, 22/10 às 09:30 ainda não foi aprovada pela equipe. Ela confirma por aqui.",
+    ...NA_AGENDA,
+  },
+  // Garantia de agenda (decisao do dono de 20/10/2026): a finalidade, a
+  // oferta, a negacao e a garantia que depende da confirmacao ou da
+  // aprovacao da equipe nao afirmam que a consulta ja esta garantida.
+  {
+    id: "AG-B19",
+    rascunho: "Para garantir a sua vaga, confirme por aqui.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B20",
+    rascunho: "Assim que a equipe confirmar, sua consulta fica garantida.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B21",
+    rascunho: "Reservei terça, 21/10, às 14:00. A equipe confirma por aqui.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B22",
+    rascunho:
+      "Sua consulta ainda não está garantida: ela fica pendente até a equipe aprovar.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B23",
+    rascunho:
+      "Quer garantir o horário de quinta, 23/10 às 16:15 com o Dr. Bruno Costa?",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B24",
+    rascunho: "Seu horário só fica garantido depois da aprovação da equipe.",
+    ...NA_AGENDA,
+  },
+  {
+    id: "AG-B25",
+    rascunho:
+      "Não consigo garantir esse horário: ele depende da aprovação da equipe.",
+    ...NA_AGENDA,
+  },
 ];
 
 /** Mensagens normais de paciente que NAO podem escalar pelo portao. */
@@ -3210,6 +3602,28 @@ export const CONTROLES_DE_ENTRADA: readonly CasoDeEntradaNormal[] = [
   { id: "N110", mensagens: [texto("exame de vista, quanto custa?")] },
   { id: "N111", mensagens: [texto("tem exame de covid?")] },
   { id: "N112", mensagens: [texto("Quanto custa o exame?")] },
+  // E4 (20/10/2026): o paciente marcando com a IA. Nada disso pode escalar
+  // no portao, senao a IA nunca marca.
+  {
+    id: "AG-E01",
+    mensagens: [texto("Oi, queria agendar uma consulta pra semana que vem")],
+  },
+  { id: "AG-E02", mensagens: [texto("Pode ser terça às 14h")] },
+  {
+    id: "AG-E03",
+    mensagens: [texto("Pode ser na quinta de tarde, depois das 15h")],
+  },
+  { id: "AG-E04", mensagens: [texto("Prefiro com a Dra. Ana")] },
+  { id: "AG-E05", mensagens: [texto("Pelo convênio Unimed")] },
+  { id: "AG-E06", mensagens: [texto("No particular mesmo")] },
+  {
+    id: "AG-E07",
+    mensagens: [texto("Não quero no particular, só pelo plano")],
+  },
+  { id: "AG-E08", mensagens: [texto("pode ser o das 11:15")] },
+  { id: "AG-E09", mensagens: [texto("ok, fechado, pode marcar")] },
+  { id: "AG-E10", mensagens: [texto("Confirmo minha presença amanhã")] },
+  { id: "AG-E11", mensagens: [texto("Vou sim na consulta de quinta")] },
 ];
 
 /**

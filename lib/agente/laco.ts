@@ -29,6 +29,13 @@
 //  6. filtrarSaida (regras + verificador, falha fechada). So ele produz
 //     TextoAprovado; bloqueio vira a frase fixa.
 //
+// E4 (agenda, contrato da E4 secao 2): as ferramentas de agenda
+// (buscar_horario, reservar_horario, agendar e confirmar_presenca) rodam pela
+// porta da agenda (entrada.agenda): no WhatsApp gravam pelas RPCs com o
+// job_id do turno (a idempotencia), no simulador nao gravam. O turno que usa
+// uma delas ganha ate MAXIMO_DE_RODADAS_COM_AGENDA rodadas; reservar, agendar
+// e confirmar valem uma vez por turno (ferramentas/agenda-do-turno.ts).
+//
 // A trilha ("Por que a IA respondeu isso") diz o que foi consultado, com
 // nomes do Cadastro e da base da clinica, NUNCA texto do paciente. Log so com
 // ids, codigos, modelo e duracao.
@@ -42,9 +49,11 @@ import type {
 import { z } from "zod";
 
 import {
+  ehFerramentaDeAgenda,
   ferramentasDoAgente,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
   type ConfigDoAgente,
+  type FerramentaDoAgente,
   type MotivoDeEscalonamento,
 } from "@/lib/domain/agente/config";
 import type {
@@ -96,6 +105,11 @@ import {
 import { log } from "@/lib/log";
 
 import {
+  criarAgendaDoTurno,
+  type PortaDaAgenda,
+} from "./ferramentas/agenda-do-turno";
+import { limiteDaSaidaDaBuscaDeHorario } from "./ferramentas/buscar-horario";
+import {
   buscarProcedimento,
   limiteDaSaidaDaBusca,
   nomesDoCatalogo,
@@ -136,6 +150,11 @@ import type { PrecoDoModelo, UsoDoModelo } from "./uso";
 
 /** Rodadas do modelo por turno (ferramenta, ferramenta, resposta...). */
 export const MAXIMO_DE_RODADAS = 4;
+/**
+ * Rodadas do turno que usa uma ferramenta de agenda (contrato da E4): buscar
+ * o preco, buscar o horario, buscar de novo, reservar e responder cabem.
+ */
+export const MAXIMO_DE_RODADAS_COM_AGENDA = 6;
 /**
  * Prazo do turno inteiro. A rota que chama precisa de maxDuration acima
  * disto (a pagina /agente exporta 60 s).
@@ -200,10 +219,12 @@ export type MensagemDaConversa = {
 
 /**
  * O tipo de cada passo, que escolhe o icone na tela (components/agente/
- * simulador.tsx): consulta de preco, pergunta da base, passagem para a
- * equipe, bloqueio da conformidade e o resto.
+ * simulador.tsx): consulta de preco, pergunta da base, agenda (buscar,
+ * reservar, marcar e confirmar presenca, E4), passagem para a equipe,
+ * bloqueio da conformidade e o resto.
  */
-export type TipoDoPasso = "preco" | "base" | "equipe" | "bloqueio" | "outro";
+export type TipoDoPasso =
+  "preco" | "base" | "agenda" | "equipe" | "bloqueio" | "outro";
 
 /** Um passo do "Por que a IA respondeu isso". Nunca texto do paciente. */
 export type PassoDoTurno = { tipo: TipoDoPasso; texto: string };
@@ -260,6 +281,12 @@ type Comum = {
    * passarem mais nas regras (so quando o agente rodou). So contagem.
    */
   descartados: TextoDescartado;
+  /**
+   * As ferramentas que rodaram no turno, na ordem (repetidas inclusive):
+   * o tool_used de ai_decision_log sai daqui (lib/agente/whatsapp.ts).
+   * Ausente = nenhuma.
+   */
+  ferramentasUsadas?: FerramentaDoAgente[];
 };
 
 export type ResultadoDoTurno =
@@ -301,6 +328,12 @@ export type EntradaDoTurno = {
   hojeNaClinica?: string | null;
   /** Antes de cada rodada do agente; false para o turno (teto, interruptor). */
   conferirTrava?: () => Promise<boolean>;
+  /**
+   * A porta da agenda (E4): a Agenda e as RPCs do WhatsApp, ou a do
+   * simulador, que nao grava. Sem porta, ferramenta de agenda e falha
+   * fechada.
+   */
+  agenda?: PortaDaAgenda | null;
   /**
    * O modelo do classificador e do verificador, para estimar o gasto da
    * chamada que falhou sem dizer o modelo (o corte por prazo).
@@ -686,10 +719,11 @@ export function comporResposta(entrada: {
 /**
  * O teto do que um turno pode custar, em microdolar, para reservar ANTES de
  * chamar qualquer modelo: o classificador, o verificador (com o maior
- * rascunho) e MAXIMO_DE_RODADAS rodadas do agente, cada uma com o corpo
- * inteiro desta configuracao, o teto de saida e, a partir da segunda, a
- * saida das rodadas anteriores e a maior resposta possivel da ferramenta.
- * null quando nao ha preco (quem chama falha fechado).
+ * rascunho) e MAXIMO_DE_RODADAS rodadas do agente (MAXIMO_DE_RODADAS_COM_
+ * AGENDA quando a configuracao da as ferramentas de agenda), cada uma com o
+ * corpo inteiro desta configuracao, o teto de saida e, a partir da segunda,
+ * a saida das rodadas anteriores e a maior resposta possivel de uma
+ * ferramenta. null quando nao ha preco (quem chama falha fechado).
  */
 export function custoMaximoDoTurno(entrada: {
   config: ConfigDoAgente;
@@ -715,17 +749,26 @@ export function custoMaximoDoTurno(entrada: {
     text: { format: FORMATO_DA_RESPOSTA },
   };
   const primeira = usoEstimadoDaRodada(corpo, MAX_TOKENS_DO_AGENTE);
+  const ferramentas = ferramentasDoAgente(
+    entrada.config.habilidades,
+    entrada.config.agenda,
+  );
+  const comAgenda = ferramentas.some(ehFerramentaDeAgenda);
   const crescimento =
     MAX_TOKENS_DO_AGENTE +
-    limiteDaSaidaDaBusca(entrada.catalogo) +
+    Math.max(
+      limiteDaSaidaDaBusca(entrada.catalogo),
+      comAgenda ? limiteDaSaidaDaBuscaDeHorario(entrada.catalogo) : 0,
+    ) +
     FOLGA_DA_CHAMADA;
+  const rodadas = comAgenda ? MAXIMO_DE_RODADAS_COM_AGENDA : MAXIMO_DE_RODADAS;
   const classificadores =
     entrada.modeloDosClassificadores?.trim() || "desconhecido";
   const chamadas: [UsoDoLlm, string][] = [
     [usoEstimadoDoClassificador(pendentes), classificadores],
     [usoEstimadoDoVerificador(null, pendentes), classificadores],
   ];
-  for (let rodada = 0; rodada < MAXIMO_DE_RODADAS; rodada += 1) {
+  for (let rodada = 0; rodada < rodadas; rodada += 1) {
     chamadas.push([
       {
         ...primeira,
@@ -772,6 +815,7 @@ export async function executarTurnoDoAgente(
   const prazoEm = inicio + (entrada.prazoMs ?? PRAZO_DO_TURNO_MS);
   const trilha: PassoDoTurno[] = [];
   const uso: UsoDoModelo[] = [];
+  const ferramentasUsadas: FerramentaDoAgente[] = [];
   let filtro: DecisaoDoFiltro | null = null;
   let descartados: TextoDescartado = { instrucoes: false, itensDaBase: 0 };
   const modeloDosClassificadores =
@@ -789,6 +833,7 @@ export async function executarTurnoDoAgente(
     versaoDoPrompt: VERSAO_DO_PROMPT,
     filtro,
     descartados,
+    ferramentasUsadas,
     rascunhoBloqueado,
   });
   const escalar = (
@@ -918,7 +963,18 @@ export async function executarTurnoDoAgente(
 
     // 4. O agente.
     const ferramentas: FunctionTool[] = ferramentasDaChamada(entrada.config);
-    const permitidas = new Set(ferramentasDoAgente(entrada.config.habilidades));
+    const permitidas: ReadonlySet<string> = new Set(
+      ferramentasDoAgente(entrada.config.habilidades, entrada.config.agenda),
+    );
+    const agendaDoTurno = criarAgendaDoTurno({
+      porta: entrada.agenda ?? null,
+      catalogo: entrada.catalogo,
+      config: entrada.config,
+      agoraMs: entrada.agoraMs,
+      fuso: entrada.fuso,
+    });
+    // Sobe para MAXIMO_DE_RODADAS_COM_AGENDA quando o turno usa a agenda.
+    let maximoDeRodadas = MAXIMO_DE_RODADAS;
     const fixos = parametrosFixosDoAgente(modelo);
     const instrucoes = montarInstrucoes({
       config: entrada.config,
@@ -949,7 +1005,7 @@ export async function executarTurnoDoAgente(
     const precosDoTurno: number[] = [];
     let final: RespostaFinal | null = null;
 
-    for (let rodada = 1; rodada <= MAXIMO_DE_RODADAS; rodada += 1) {
+    for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
       if (entrada.conferirTrava) {
         const liberada = await entrada.conferirTrava().catch(() => false);
         if (!liberada) {
@@ -1106,22 +1162,55 @@ export async function executarTurnoDoAgente(
       for (const chamada of chamadas) {
         const nome = chamada.name;
         if (
-          nome !== NOME_DA_BUSCA ||
-          !permitidas.has("buscar_procedimento") ||
+          typeof nome !== "string" ||
+          !permitidas.has(nome) ||
           typeof chamada.call_id !== "string"
         ) {
           return falhar("ferramenta_invalida");
         }
-        const busca = buscarProcedimento(
-          entrada.catalogo,
+        if (nome === NOME_DA_BUSCA) {
+          const busca = buscarProcedimento(
+            entrada.catalogo,
+            argumentosDe(chamada),
+          );
+          precosDoTurno.push(...busca.precos);
+          trilha.push({ tipo: "preco", texto: busca.passo });
+          ferramentasUsadas.push("buscar_procedimento");
+          historico.push({
+            type: "function_call_output",
+            call_id: chamada.call_id,
+            output: busca.saida,
+          });
+          continue;
+        }
+        if (!ehFerramentaDeAgenda(nome)) {
+          return falhar("ferramenta_invalida");
+        }
+        // Agenda (E4): leitura e efeito pela porta; o turno ganha rodadas.
+        maximoDeRodadas = MAXIMO_DE_RODADAS_COM_AGENDA;
+        const efeito = await agendaDoTurno.executar(
+          nome,
           argumentosDe(chamada),
         );
-        precosDoTurno.push(...busca.precos);
-        trilha.push({ tipo: "preco", texto: busca.passo });
+        ferramentasUsadas.push(nome);
+        if (efeito.tipo === "liberacao_suspensa") {
+          trilha.push({ tipo: "agenda", texto: efeito.passo });
+          return falhar("liberacao_suspensa");
+        }
+        if (efeito.tipo === "falha") {
+          trilha.push({ tipo: "agenda", texto: efeito.passo });
+          log.warn("ia_agente_agenda_falhou", {
+            kind: nome,
+            clinic_id: entrada.clinicId,
+          });
+          return falhar("desconhecida");
+        }
+        precosDoTurno.push(...efeito.precos);
+        trilha.push({ tipo: "agenda", texto: efeito.passo });
         historico.push({
           type: "function_call_output",
           call_id: chamada.call_id,
-          output: busca.saida,
+          output: efeito.saida,
         });
       }
     }
@@ -1160,7 +1249,12 @@ export async function executarTurnoDoAgente(
     }
 
     if (
-      !trilha.some((passo) => passo.tipo === "preco" || passo.tipo === "base")
+      !trilha.some(
+        (passo) =>
+          passo.tipo === "preco" ||
+          passo.tipo === "base" ||
+          passo.tipo === "agenda",
+      )
     ) {
       trilha.push({ tipo: "outro", texto: PASSO_SEM_CONSULTA });
     }
@@ -1247,6 +1341,7 @@ export async function executarTurnoDoAgente(
       versaoDoPrompt: VERSAO_DO_PROMPT,
       filtro,
       descartados,
+      ferramentasUsadas,
       rascunhoBloqueado: null,
     };
   } catch {

@@ -53,6 +53,11 @@ import {
 //   expediente, se a equipe nao responder em X minutos), os minutos e a
 //   grade do expediente por dia (molde da janela de envio da regua, com
 //   inicio e fim type=time). Salvar grava no RASCUNHO.
+// - Limites para marcar consulta (E4, D13): o cartao da agenda
+//   (cartao-da-agenda.tsx), com o proprio Salvar, logo abaixo do horario. O
+//   painel monta o cartao (com a chave dele) e passa pronto: salvar o
+//   horario nunca remonta o formulario da agenda, e vice-versa (por isso a
+//   chave do horario fica no cartao do horario, e nao na aba).
 // - Os 6 gatilhos obrigatorios de passar para a equipe, travados (so
 //   exibicao: quem decide e o codigo do agente, nao esta lista).
 // - A caixa de Conformidade do brief: Aviso ambar com cadeado, o texto
@@ -177,6 +182,8 @@ export function errosDoHorario(erros: FieldErrors<ValoresDoHorario>): string[] {
 
 export function AbaRegras({
   horario,
+  chaveDoHorario,
+  limitesDaAgenda,
   podeEditar,
   dica,
   pendente,
@@ -185,6 +192,14 @@ export function AbaRegras({
   aoMudarNaoSalvo,
 }: {
   horario: HorarioDeOperacao;
+  /**
+   * Muda quando o servidor manda outro horario (salvou, restaurou) ou quando
+   * a pessoa descarta: o formulario do horario remonta com os valores novos.
+   * Sem ela, o proprio horario.
+   */
+  chaveDoHorario?: string;
+  /** O cartao dos limites para marcar consulta (E4), montado pelo painel. */
+  limitesDaAgenda?: React.ReactNode;
   podeEditar: boolean;
   dica: string | null;
   pendente: boolean;
@@ -196,6 +211,7 @@ export function AbaRegras({
   return (
     <div className="grid gap-4">
       <CartaoDoHorario
+        key={chaveDoHorario ?? JSON.stringify(horario)}
         horario={horario}
         podeEditar={podeEditar}
         dica={dica}
@@ -204,6 +220,8 @@ export function AbaRegras({
         aoSalvar={aoSalvar}
         aoMudarNaoSalvo={aoMudarNaoSalvo}
       />
+
+      {limitesDaAgenda}
 
       <Card role="region" aria-labelledby="agente-gatilhos-titulo">
         <CardHeader>

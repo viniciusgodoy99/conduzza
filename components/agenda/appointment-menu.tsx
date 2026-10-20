@@ -17,6 +17,7 @@ import {
   mudarStatusAction,
   recusarEncaixeAction,
   remarcarAgendamentoAction,
+  type AgendaActionResult,
 } from "@/app/(app)/agenda/actions";
 import { DICA_REMOVER_SEM_PERMISSAO } from "@/components/agenda/bloqueio-comum";
 import {
@@ -24,6 +25,12 @@ import {
   podeRemoverBloqueio,
   ResumoDoBloqueio,
 } from "@/components/agenda/detalhe-do-bloqueio";
+import {
+  mostrarRetornoDaPendencia,
+  retornoDaPendencia,
+  type AcaoDaPendencia,
+  type RetornoNaTela,
+} from "@/components/agenda/pending-panel";
 import {
   ChaveAvisarPaciente,
   ERROS_CORRIGIVEIS_NA_REMARCACAO,
@@ -84,6 +91,8 @@ import {
 import { formatarTelefone } from "@/lib/domain/telefone";
 import {
   agendaKeys,
+  cancelarContaComoRecusa,
+  ehConsultaDaIa,
   fetchListaDeEsperaDaClinica,
   type BloqueioDaAgenda,
   type ConsultaDaAgenda,
@@ -105,6 +114,84 @@ import { createClient } from "@/lib/supabase/client";
 // que cruza o horario (criado "mesmo assim" por cima da consulta) fica
 // coberto pelo bloco na grade: o menu mostra a secao "Horario bloqueado"
 // com o mesmo detalhe e o mesmo "Remover bloqueio" da faixa.
+
+// Pendencia (revisao da E4): a consulta que a IA marcou (ehConsultaDaIa) nao
+// e encaixe. O menu, unico caminho em tela menor que 1280 px (o painel
+// "Pendente de voce" so aparece de xl para cima), diz qual e qual e mostra o
+// mesmo retorno do painel: o aviso da conversa que nao voltou para a equipe
+// e warning por 10 s, nunca sucesso calado. Cancelar a pendencia da IA pela
+// mudanca de situacao conta como recusar (decisao do dono de 20/10/2026): o
+// retorno e o do Recusar (retornoDaMudancaDeSituacao) e o dialogo de
+// cancelar nao pergunta da lista de espera, que a recusa nunca aciona.
+
+/** Os textos do grupo de pendencia do menu, pelo tipo da pendencia. */
+export function rotulosDaPendenciaNoMenu(daIa: boolean): {
+  grupo: string;
+  aprovar: string;
+  recusar: string;
+} {
+  return daIa
+    ? {
+        grupo: "Consulta marcada pela IA",
+        aprovar: "Aprovar consulta",
+        recusar: "Recusar consulta",
+      }
+    : {
+        grupo: "Encaixe pendente",
+        aprovar: "Aprovar encaixe",
+        recusar: "Recusar encaixe",
+      };
+}
+
+/**
+ * Aprova ou recusa pela acao e devolve o que a tela diz, como o painel
+ * (retornoDaPendencia). A acao que lanca vira o erro de sempre.
+ */
+export async function tratarPendenciaNoMenu(
+  consulta: Pick<ConsultaDaAgenda, "id" | "created_by" | "is_overbooking">,
+  decisao: AcaoDaPendencia,
+): Promise<RetornoNaTela> {
+  const daIa = ehConsultaDaIa(consulta);
+  try {
+    const resultado =
+      decisao === "aprovar"
+        ? await aprovarEncaixeAction(consulta.id)
+        : await recusarEncaixeAction(consulta.id);
+    return retornoDaPendencia(resultado, decisao, daIa);
+  } catch {
+    return retornoDaPendencia({ ok: false }, decisao, daIa);
+  }
+}
+
+/**
+ * O que a tela diz depois de mudar a situacao. Cancelar uma pendencia da IA
+ * conta como recusar (decisao do dono de 20/10/2026; a acao devolve
+ * `recusada`): o retorno e o do Recusar (retornoDaPendencia), com o aviso da
+ * conversa que nao voltou para a equipe como atencao, nunca sucesso calado.
+ * O resto, como sempre.
+ */
+export function retornoDaMudancaDeSituacao(
+  resultado: AgendaActionResult,
+  novoStatus: AppointmentStatus,
+): RetornoNaTela {
+  if (resultado.ok && resultado.recusada) {
+    return retornoDaPendencia(
+      resultado,
+      "recusar",
+      resultado.recusada === "consulta_da_ia",
+    );
+  }
+  if (resultado.ok) {
+    return {
+      tipo: "success",
+      texto: `Situação mudada para ${APPOINTMENT_STATUS[novoStatus].label}.`,
+    };
+  }
+  return {
+    tipo: "error",
+    texto: resultado.error ?? "Não foi possível mudar a situação.",
+  };
+}
 
 /** "quinta-feira, 25/09 às 10:00" no fuso da clinica. */
 function diaEHoraNoFuso(timezone: string, instante: string): string {
@@ -268,13 +355,11 @@ export function AppointmentMenu({
         canal,
         ...(oferecerVaga === undefined ? {} : { oferecer_vaga: oferecerVaga }),
       });
+      mostrarRetornoDaPendencia(
+        retornoDaMudancaDeSituacao(resultado, novoStatus),
+      );
       if (resultado.ok) {
-        toast.success(
-          `Situação mudada para ${APPOINTMENT_STATUS[novoStatus].label}.`,
-        );
         await atualizarAgenda();
-      } else {
-        toast.error(resultado.error ?? "Não foi possível mudar a situação.");
       }
       aoTerminar?.();
     });
@@ -326,20 +411,11 @@ export function AppointmentMenu({
     });
   };
 
-  const tratarEncaixe = (decisao: "aprovar" | "recusar") => {
+  const rotulosDaPendencia = rotulosDaPendenciaNoMenu(ehConsultaDaIa(consulta));
+  const tratarPendencia = (decisao: AcaoDaPendencia) => {
     iniciarTransicao(async () => {
-      const resultado =
-        decisao === "aprovar"
-          ? await aprovarEncaixeAction(consulta.id)
-          : await recusarEncaixeAction(consulta.id);
-      if (resultado.ok) {
-        toast.success(
-          decisao === "aprovar" ? "Encaixe aprovado." : "Encaixe recusado.",
-        );
-        await atualizarAgenda();
-      } else {
-        toast.error(resultado.error ?? "Não foi possível tratar o encaixe.");
-      }
+      mostrarRetornoDaPendencia(await tratarPendenciaNoMenu(consulta, decisao));
+      await atualizarAgenda();
     });
   };
 
@@ -433,23 +509,23 @@ export function AppointmentMenu({
             <>
               <DropdownMenuGroup>
                 <DropdownMenuLabel className="cz-eyebrow text-[10px] text-text-tertiary">
-                  Encaixe pendente
+                  {rotulosDaPendencia.grupo}
                 </DropdownMenuLabel>
                 <DropdownMenuItem
                   disabled={!contexto.podeEditar || pendente}
                   className="h-10"
-                  onSelect={() => tratarEncaixe("aprovar")}
+                  onSelect={() => tratarPendencia("aprovar")}
                 >
                   <Check className="size-4 shrink-0" aria-hidden />
-                  <span>Aprovar encaixe</span>
+                  <span>{rotulosDaPendencia.aprovar}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!contexto.podeEditar || pendente}
                   className="h-10"
-                  onSelect={() => tratarEncaixe("recusar")}
+                  onSelect={() => tratarPendencia("recusar")}
                 >
                   <X className="size-4 shrink-0" aria-hidden />
-                  <span>Recusar encaixe</span>
+                  <span>{rotulosDaPendencia.recusar}</span>
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
@@ -994,8 +1070,11 @@ function CancelarDialog({
   const [abertoEm] = useState(() => Date.now());
   const idOferecer = useId();
 
-  // Encaixe nao e reoferecido (o gatilho de reoferta ignora encaixe).
-  const podeIrParaALista = !consulta.is_overbooking;
+  // Encaixe nao e reoferecido (o gatilho de reoferta ignora encaixe), nem a
+  // pendencia da IA: cancelar conta como recusar, e a recusa nunca oferece
+  // o horario (decisao do dono de 20/10/2026).
+  const podeIrParaALista =
+    !consulta.is_overbooking && !cancelarContaComoRecusa(consulta);
   const esperaQuery = useQuery({
     queryKey: agendaKeys.listaDeEspera(contexto.clinicId),
     queryFn: () => fetchListaDeEsperaDaClinica(supabase, contexto.clinicId),

@@ -30,7 +30,7 @@ type Cliente = SupabaseClient;
 
 /** Todas as colunas que o motor usa (instrucoes inclusive: service role). */
 const COLUNAS_DA_CONFIG =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, instrucoes, conhecimento, updated_at";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, instrucoes, conhecimento, updated_at";
 
 type LinhaDoMotor = LinhaDaConfigDoAgente & {
   id: string;
@@ -343,7 +343,9 @@ async function linhaDaClinica(
     throw new Error("leitura do agente falhou");
   }
   const nome = (data as { name?: unknown } | null)?.name;
-  return data === null ? null : { name: typeof nome === "string" ? nome : null };
+  return data === null
+    ? null
+    : { name: typeof nome === "string" ? nome : null };
 }
 
 /**
@@ -356,61 +358,85 @@ async function linhaDaClinica(
  * tambem o nome cadastrado da clinica (revisao de producao de 19/10/2026,
  * Q7): o mesmo carregador serve ao WhatsApp, a retomada do envio, ao
  * simulador e a previa do prompt, entao o nome e a mascara do filtro nunca
- * divergem entre eles.
+ * divergem entre eles. Do E4 em diante, o vinculo traz tambem o id e a
+ * duracao, e o procedimento o recurso (sala ou equipamento): e o que a
+ * agenda da IA usa (lib/agente/agenda.ts), sem nada disso ir ao modelo.
+ * Correcao da E4 (D14): os vinculos ATIVOS sem "IA pode agendar" vem so com
+ * ids (nunca preco), para a agenda nunca dizer que o profissional nao atende
+ * um convenio que ele atende (so a equipe marca por ele).
  */
 export async function carregarCatalogoDoAgente(
   admin: Cliente,
   clinicId: string,
 ): Promise<CatalogoDoAgente> {
-  const [procedimentos, vinculos, profissionais, convenios, clinica] =
-    await Promise.all([
-      todasAsPaginas<LinhasDoCatalogo["procedimentos"][number]>((de, ate) =>
-        admin
-          .from("procedure")
-          .select("id, name, active, bookable_by_ai")
-          .eq("clinic_id", clinicId)
-          .eq("active", true)
-          .eq("bookable_by_ai", true)
-          .order("id", { ascending: true })
-          .range(de, ate),
-      ),
-      todasAsPaginas<LinhasDoCatalogo["vinculos"][number]>((de, ate) =>
+  const [
+    procedimentos,
+    vinculos,
+    profissionais,
+    convenios,
+    clinica,
+    vinculosSoDaEquipe,
+  ] = await Promise.all([
+    todasAsPaginas<LinhasDoCatalogo["procedimentos"][number]>((de, ate) =>
+      admin
+        .from("procedure")
+        .select("id, name, active, bookable_by_ai, resource_id")
+        .eq("clinic_id", clinicId)
+        .eq("active", true)
+        .eq("bookable_by_ai", true)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
+    todasAsPaginas<LinhasDoCatalogo["vinculos"][number]>((de, ate) =>
+      admin
+        .from("service_link")
+        .select(
+          "id, procedure_id, professional_id, insurance_id, price_cents, covered_by_insurance, bookable_by_ai, active, duration_min",
+        )
+        .eq("clinic_id", clinicId)
+        .eq("active", true)
+        .eq("bookable_by_ai", true)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
+    todasAsPaginas<LinhasDoCatalogo["profissionais"][number]>((de, ate) =>
+      admin
+        .from("professional")
+        .select("id, name, active")
+        .eq("clinic_id", clinicId)
+        .eq("active", true)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
+    todasAsPaginas<LinhasDoCatalogo["convenios"][number]>((de, ate) =>
+      admin
+        .from("insurance")
+        .select("id, name, plan_name, active")
+        .eq("clinic_id", clinicId)
+        .eq("active", true)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
+    linhaDaClinica(admin, clinicId),
+    // So ids: o vinculo que a IA nao marca nunca traz preco ao motor.
+    todasAsPaginas<NonNullable<LinhasDoCatalogo["vinculosSoDaEquipe"]>[number]>(
+      (de, ate) =>
         admin
           .from("service_link")
-          .select(
-            "procedure_id, professional_id, insurance_id, price_cents, covered_by_insurance, bookable_by_ai, active",
-          )
+          .select("procedure_id, professional_id, insurance_id")
           .eq("clinic_id", clinicId)
           .eq("active", true)
-          .eq("bookable_by_ai", true)
+          .eq("bookable_by_ai", false)
           .order("id", { ascending: true })
           .range(de, ate),
-      ),
-      todasAsPaginas<LinhasDoCatalogo["profissionais"][number]>((de, ate) =>
-        admin
-          .from("professional")
-          .select("id, name, active")
-          .eq("clinic_id", clinicId)
-          .eq("active", true)
-          .order("id", { ascending: true })
-          .range(de, ate),
-      ),
-      todasAsPaginas<LinhasDoCatalogo["convenios"][number]>((de, ate) =>
-        admin
-          .from("insurance")
-          .select("id, name, plan_name, active")
-          .eq("clinic_id", clinicId)
-          .eq("active", true)
-          .order("id", { ascending: true })
-          .range(de, ate),
-      ),
-      linhaDaClinica(admin, clinicId),
-    ]);
+    ),
+  ]);
   return montarCatalogoDoAgente({
     procedimentos,
     vinculos,
     profissionais,
     convenios,
     clinica,
+    vinculosSoDaEquipe,
   });
 }

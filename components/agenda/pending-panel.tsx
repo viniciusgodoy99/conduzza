@@ -1,13 +1,14 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Sparkles } from "lucide-react";
+import { CalendarCog, Loader2, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import {
   aprovarEncaixeAction,
   recusarEncaixeAction,
+  type AgendaActionResult,
 } from "@/app/(app)/agenda/actions";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -19,19 +20,117 @@ import {
   type AppointmentStatus,
   type StatusDefinition,
 } from "@/lib/design/status";
-import type { ConsultaDaAgenda } from "@/lib/queries/agenda";
+import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 // Painel lateral "Pendente de voce" (264px, cartao do design system, docs/06
-// secao 5.6): encaixes sugeridos pela IA aguardando aprovacao humana. Abaixo,
-// a legenda compacta dos 10 status da agenda (3 camadas: icone, rotulo e
-// cor). "Aprovar" vai no botao suave: o unico lime cheio da tela e o "Novo
+// secao 5.6): o que a IA deixou para a equipe aprovar. Abaixo, a legenda
+// compacta dos 10 status da agenda (3 camadas: icone, rotulo e cor).
+// "Aprovar" vai no botao suave: o unico lime cheio da tela e o "Novo
 // agendamento".
+//
+// Duas pendencias, cada uma com o seu chip em 3 camadas, os dois no tom da
+// IA (lime suave, reservado a IA) e com icones de forma distinta:
+// - "Encaixe da IA" (Sparkles): o encaixe sugerido pela IA, como sempre;
+// - "Marcada pela IA" (CalendarCog, E4 de 20/10/2026, decisao D12 do dono):
+//   a consulta que a IA marcou pelo WhatsApp (created_by 'ia', sem encaixe).
+//   CalendarCog nao tinha dono em nenhuma tela nem mapa (tabela de icones
+//   reservados, docs/06 secao 4.6): a agenda que se marca sozinha.
+// Aprovar a consulta da IA liga a confirmacao automatica; recusar devolve a
+// conversa para a equipe avisar o paciente (as duas regras moram na acao).
+// Se a conversa nao voltou, a recusa vale do mesmo jeito e a tela mostra o
+// aviso por mais tempo, para a recepcao agir.
+//
+// O cartao traz paciente, procedimento com o convenio (ou "Particular"),
+// profissional e o dia com a hora no fuso da clinica: e o que a equipe
+// confere antes de aprovar o que a IA escolheu.
 
-const CHIP_ENCAIXE_IA: StatusDefinition = {
+export const CHIP_ENCAIXE_IA: StatusDefinition = {
   label: "Encaixe da IA",
   tone: "ai",
   icon: Sparkles,
 };
+
+export const CHIP_MARCADA_PELA_IA: StatusDefinition = {
+  label: "Marcada pela IA",
+  tone: "ai",
+  icon: CalendarCog,
+};
+
+/** O chip de cada pendencia: a consulta que a IA marcou ou o encaixe. */
+export function chipDaPendencia(
+  consulta: Pick<ConsultaDaAgenda, "created_by" | "is_overbooking">,
+): StatusDefinition {
+  return ehConsultaDaIa(consulta) ? CHIP_MARCADA_PELA_IA : CHIP_ENCAIXE_IA;
+}
+
+export const TEXTOS_DO_PAINEL = {
+  titulo: "Pendente de você",
+  vazioTitulo: "Nada pendente de você",
+  vazioTexto:
+    "Quando a IA marcar uma consulta ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
+  semProcedimento: "Procedimento não informado",
+  particular: "Particular",
+  paciente: "Paciente",
+  aprovar: "Aprovar",
+  recusar: "Recusar",
+  legenda: "Legenda de situações",
+} as const;
+
+export type AcaoDaPendencia = "aprovar" | "recusar";
+
+/** O toast de cada resultado, pelo tipo da pendencia. */
+export type RetornoNaTela = {
+  tipo: "success" | "info" | "warning" | "error";
+  texto: string;
+};
+
+/**
+ * O que a tela diz depois de aprovar ou recusar. A consulta da IA pede que a
+ * equipe avise o paciente (a IA disse a ele que a equipe confirma por aqui).
+ * Aviso da acao (a conversa nao voltou para a equipe) e warning, nunca
+ * sucesso calado.
+ */
+export function retornoDaPendencia(
+  resultado: AgendaActionResult,
+  acao: AcaoDaPendencia,
+  daIa: boolean,
+): RetornoNaTela {
+  if (resultado.ok) {
+    if (resultado.aviso) {
+      return { tipo: "warning", texto: resultado.aviso };
+    }
+    if (daIa) {
+      return {
+        tipo: "success",
+        texto:
+          acao === "aprovar"
+            ? "Consulta aprovada. Avise o paciente pelo Atendimento."
+            : "Consulta recusada. Avise o paciente pelo Atendimento.",
+      };
+    }
+    return {
+      tipo: "success",
+      texto: acao === "aprovar" ? "Encaixe aprovado" : "Encaixe recusado",
+    };
+  }
+  if (resultado.code === "ja_tratado") {
+    return {
+      tipo: "info",
+      texto:
+        resultado.error ??
+        (daIa
+          ? "Esta consulta já foi tratada."
+          : "Este encaixe já foi tratado."),
+    };
+  }
+  return { tipo: "error", texto: resultado.error ?? semResposta(daIa) };
+}
+
+function semResposta(daIa: boolean): string {
+  return daIa
+    ? "Não foi possível tratar a consulta. Tente de novo."
+    : "Não foi possível tratar o encaixe. Tente de novo.";
+}
 
 function diaEHora(instante: string, timezone: string): string {
   const data = new Date(instante);
@@ -48,6 +147,23 @@ function diaEHora(instante: string, timezone: string): string {
   return `${dia} · ${hora}`;
 }
 
+/**
+ * O toast de cada retorno, o mesmo no painel e no menu da consulta (revisao
+ * da E4: o menu mostrava sucesso calado quando a conversa nao voltava).
+ */
+export function mostrarRetornoDaPendencia(retorno: RetornoNaTela): void {
+  if (retorno.tipo === "success") {
+    toast.success(retorno.texto);
+  } else if (retorno.tipo === "info") {
+    toast.info(retorno.texto);
+  } else if (retorno.tipo === "warning") {
+    // A recusa valeu, mas a conversa nao voltou: a recepcao precisa ler.
+    toast.warning(retorno.texto, { duration: 10_000 });
+  } else {
+    toast.error(retorno.texto);
+  }
+}
+
 export function PendingPanel({
   contexto,
   pendencias,
@@ -58,27 +174,20 @@ export function PendingPanel({
   const queryClient = useQueryClient();
   const [emAndamento, setEmAndamento] = useState<{
     id: string;
-    acao: "aprovar" | "recusar";
+    acao: AcaoDaPendencia;
   } | null>(null);
 
-  async function tratar(id: string, acao: "aprovar" | "recusar") {
-    setEmAndamento({ id, acao });
+  async function tratar(consulta: ConsultaDaAgenda, acao: AcaoDaPendencia) {
+    const daIa = ehConsultaDaIa(consulta);
+    setEmAndamento({ id: consulta.id, acao });
     try {
       const resultado =
         acao === "aprovar"
-          ? await aprovarEncaixeAction(id)
-          : await recusarEncaixeAction(id);
-      if (resultado.ok) {
-        toast.success(
-          acao === "aprovar" ? "Encaixe aprovado" : "Encaixe recusado",
-        );
-      } else if (resultado.code === "ja_tratado") {
-        toast.info(resultado.error ?? "Este encaixe já foi tratado.");
-      } else {
-        toast.error(resultado.error ?? "Não foi possível tratar o encaixe.");
-      }
+          ? await aprovarEncaixeAction(consulta.id)
+          : await recusarEncaixeAction(consulta.id);
+      mostrarRetornoDaPendencia(retornoDaPendencia(resultado, acao, daIa));
     } catch {
-      toast.error("Não foi possível tratar o encaixe. Tente de novo.");
+      toast.error(semResposta(daIa));
     } finally {
       setEmAndamento(null);
       await queryClient.invalidateQueries({
@@ -87,54 +196,69 @@ export function PendingPanel({
     }
   }
 
+  const nomeDoProfissional = (id: string): string | null =>
+    contexto.catalogo.profissionais.find((p) => p.id === id)?.name ?? null;
+
   return (
     <aside
-      aria-label="Pendente de você"
+      aria-label={TEXTOS_DO_PAINEL.titulo}
       className="hidden w-[264px] shrink-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm xl:flex"
     >
       <div className="flex h-12 shrink-0 items-center border-b border-border px-4">
         <h2 className="text-base font-bold tracking-[-0.01em]">
-          Pendente de você
+          {TEXTOS_DO_PAINEL.titulo}
         </h2>
       </div>
 
       <div className="relative flex cz-scroll min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-4">
         {pendencias.length === 0 ? (
           // Vazio compacto no tom da IA (ladrilho lime suave com o Sparkles):
-          // quem sugere encaixe e a IA.
+          // quem deixa pendencia aqui e a IA.
           <div className="flex flex-col items-center justify-center gap-2 px-2 py-7 text-center">
             <span className="grid size-[38px] shrink-0 place-items-center rounded-card bg-ai-bg">
               <Sparkles className="size-[18px] text-ai-text" aria-hidden />
             </span>
             <p className="text-sm font-bold tracking-[-0.01em] text-text-strong">
-              Nada pendente de você
+              {TEXTOS_DO_PAINEL.vazioTitulo}
             </p>
             <p className="text-[13px] text-text-secondary">
-              Quando a IA sugerir um encaixe, ele aparece aqui para aprovação.
+              {TEXTOS_DO_PAINEL.vazioTexto}
             </p>
           </div>
         ) : (
           <ul className="flex flex-col gap-3">
             {pendencias.map((consulta) => {
               const ocupado = emAndamento?.id === consulta.id;
+              const profissional = nomeDoProfissional(consulta.professional_id);
               return (
                 <li
                   key={consulta.id}
                   className="flex flex-col gap-2.5 rounded-xl border border-border p-3"
                 >
                   <span className="flex">
-                    <StatusChip size="sm" definition={CHIP_ENCAIXE_IA} />
+                    <StatusChip
+                      size="sm"
+                      definition={chipDaPendencia(consulta)}
+                    />
                   </span>
                   <div className="grid gap-0.5">
                     <p className="truncate text-[13px] font-semibold text-text-strong">
                       {consulta.contact?.name ??
                         consulta.contact?.phone_e164 ??
-                        "Paciente"}
+                        TEXTOS_DO_PAINEL.paciente}
                     </p>
                     <p className="truncate text-xs text-text-secondary">
                       {consulta.service_link?.procedure?.name ??
-                        "Procedimento não informado"}
+                        TEXTOS_DO_PAINEL.semProcedimento}
+                      {" · "}
+                      {consulta.service_link?.insurance?.name ??
+                        TEXTOS_DO_PAINEL.particular}
                     </p>
+                    {profissional ? (
+                      <p className="truncate text-xs text-text-secondary">
+                        {profissional}
+                      </p>
+                    ) : null}
                     <p className="cz-num text-xs text-text-secondary">
                       {diaEHora(consulta.starts_at, contexto.timezone)}
                     </p>
@@ -146,23 +270,31 @@ export function PendingPanel({
                           variant="secondary"
                           className="h-10 flex-1"
                           disabled={ocupado}
-                          onClick={() => tratar(consulta.id, "aprovar")}
+                          aria-busy={
+                            (ocupado && emAndamento?.acao === "aprovar") ||
+                            undefined
+                          }
+                          onClick={() => tratar(consulta, "aprovar")}
                         >
                           {ocupado && emAndamento?.acao === "aprovar" ? (
                             <Loader2 className="animate-spin" aria-hidden />
                           ) : null}
-                          Aprovar
+                          {TEXTOS_DO_PAINEL.aprovar}
                         </Button>
                         <Button
                           variant="outline"
                           className="h-10 flex-1"
                           disabled={ocupado}
-                          onClick={() => tratar(consulta.id, "recusar")}
+                          aria-busy={
+                            (ocupado && emAndamento?.acao === "recusar") ||
+                            undefined
+                          }
+                          onClick={() => tratar(consulta, "recusar")}
                         >
                           {ocupado && emAndamento?.acao === "recusar" ? (
                             <Loader2 className="animate-spin" aria-hidden />
                           ) : null}
-                          Recusar
+                          {TEXTOS_DO_PAINEL.recusar}
                         </Button>
                       </>
                     ) : (
@@ -176,7 +308,7 @@ export function PendingPanel({
                             className="h-10 w-full"
                             disabled
                           >
-                            Aprovar
+                            {TEXTOS_DO_PAINEL.aprovar}
                           </Button>
                         </DisabledWithHint>
                         <DisabledWithHint
@@ -188,7 +320,7 @@ export function PendingPanel({
                             className="h-10 w-full"
                             disabled
                           >
-                            Recusar
+                            {TEXTOS_DO_PAINEL.recusar}
                           </Button>
                         </DisabledWithHint>
                       </>
@@ -202,7 +334,7 @@ export function PendingPanel({
 
         <div className="grid gap-2 border-t border-border pt-4">
           <h3 className="cz-eyebrow text-text-secondary">
-            Legenda de situações
+            {TEXTOS_DO_PAINEL.legenda}
           </h3>
           <ul className="grid gap-1.5">
             {(

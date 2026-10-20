@@ -28,9 +28,14 @@ import { fetchProfileNames } from "@/lib/queries/profiles";
 // chama passa o sinal nas opcoes e a linha "Instruções da equipe Conduzza"
 // entra sem conteudo (comMudancaDasInstrucoes).
 
-/** Colunas da configuracao que a sessao le (todas menos instrucoes). */
+/**
+ * Colunas da configuracao que a sessao le (todas menos instrucoes). As duas
+ * da agenda da IA (E4, D13: antecedencia minima e horizonte) tem o mesmo
+ * grant por coluna de skills (migration 20261020130000): sem elas a tela
+ * leria a agenda nula e mostraria "Agendar consulta" desligada sem motivo.
+ */
 export const COLUNAS_DA_CONFIG_DO_AGENTE =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, conhecimento, published_at, published_by";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, conhecimento, published_at, published_by";
 
 type LinhaDaSessao = LinhaDaConfigDoAgente & {
   id: string;

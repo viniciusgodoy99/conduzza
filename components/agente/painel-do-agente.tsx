@@ -15,12 +15,13 @@ import {
   type AcoesDoAgente,
   type ResultadoDaPublicacao,
 } from "@/components/agente/acoes";
+import { CartaoDaAgenda } from "@/components/agente/cartao-da-agenda";
 import {
+  abasNaoSalvas,
   formulariosNaoSalvos,
   GERACAO_INICIAL,
   geracaoDepoisDeDescartar,
   NADA_NAO_SALVO,
-  rotuloDoFormulario,
   type AvisarNaoSalvo,
   type FormularioDoAgente,
 } from "@/components/agente/nao-salvo";
@@ -83,7 +84,11 @@ import {
 //   do navegador nunca decide sobre as instrucoes (achados 16, 35 e 38);
 // - o que foi digitado e nao salvo nao vai junto sem a pessoa saber: o
 //   dialogo de publicar lista as abas com edicao pendente e so publica
-//   depois de salvar ou descartar (achado 27).
+//   depois de salvar ou descartar (achado 27);
+// - E4 (20/10/2026): Regras e limites ganha o cartao dos limites para
+//   marcar consulta (antecedencia e horizonte, D13), formulario proprio com
+//   a propria chave, e a aba Habilidades recebe a agenda do rascunho para
+//   travar "Agendar consulta" enquanto ela estiver incompleta.
 //
 // Toda gravacao vai para o RASCUNHO (o paciente so ve depois de publicar).
 // Uma acao por vez: enquanto uma roda, os outros controles esperam. O
@@ -95,11 +100,13 @@ import {
  * A chave de cada formulario: muda quando o servidor manda outra versao
  * daquela parte (salvou, restaurou), e o formulario remonta com os valores
  * novos (o useForm so le os valores iniciais na montagem). Mudanca em outra
- * parte nao mexe no formulario aberto.
+ * parte nao mexe no formulario aberto: o horario e os limites para marcar
+ * consulta (E4) moram na mesma aba, cada um com a sua chave.
  */
 export function chavesDosFormularios(config: DadosDoPainel["config"]): {
   persona: string;
   horario: string;
+  agenda: string;
   instrucoes: string;
 } {
   return {
@@ -111,6 +118,10 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
       config.encerramento,
     ]),
     horario: JSON.stringify(config.horario),
+    agenda: JSON.stringify([
+      config.agenda.antecedenciaHoras,
+      config.agenda.horizonteDias,
+    ]),
     instrucoes: JSON.stringify(config.instrucoes),
   };
 }
@@ -153,6 +164,7 @@ export function PainelDoAgente({
       persona: avisar("persona"),
       conhecimento: avisar("conhecimento"),
       regras: avisar("regras"),
+      agenda: avisar("agenda"),
       instrucoes: avisar("instrucoes"),
     } satisfies Record<FormularioDoAgente, AvisarNaoSalvo>;
   }, []);
@@ -350,6 +362,7 @@ export function PainelDoAgente({
             >
               <AbaHabilidades
                 habilidades={config.habilidades}
+                agenda={config.agenda}
                 podeEditar={podeEditar}
                 dica={dica}
                 pendente={pendente}
@@ -410,8 +423,27 @@ export function PainelDoAgente({
               className="data-[state=inactive]:hidden"
             >
               <AbaRegras
-                key={`${chaves.horario}:${geracao.regras}`}
+                chaveDoHorario={`${chaves.horario}:${geracao.regras}`}
                 horario={config.horario}
+                limitesDaAgenda={
+                  <CartaoDaAgenda
+                    key={`${chaves.agenda}:${geracao.agenda}`}
+                    agenda={config.agenda}
+                    podeEditar={podeEditar}
+                    dica={dica}
+                    pendente={pendente}
+                    salvando={ocupado("agenda")}
+                    aoSalvar={(agenda, retorno) =>
+                      executar(
+                        "agenda",
+                        () => acoes.salvarAgenda(agenda),
+                        T.agendaSalva,
+                        retorno,
+                      )
+                    }
+                    aoMudarNaoSalvo={avisos.agenda}
+                  />
+                }
                 podeEditar={podeEditar}
                 dica={dica}
                 pendente={pendente}
@@ -561,7 +593,7 @@ export function PainelDoAgente({
             </Aviso>
           ) : null}
           <NaoSalvosNoPublicar
-            abas={pendentes.map(rotuloDoFormulario)}
+            abas={abasNaoSalvas(pendentes)}
             pendente={pendente}
             aoDescartar={descartarNaoSalvos}
           />

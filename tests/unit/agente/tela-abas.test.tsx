@@ -755,6 +755,12 @@ describe("edição não salva (achados 10 e 27)", () => {
   it("descartar remonta só os formulários pendentes", () => {
     expect(
       geracaoDepoisDeDescartar(GERACAO_INICIAL, ["persona", "conhecimento"]),
-    ).toEqual({ persona: 1, conhecimento: 1, regras: 0, instrucoes: 0 });
+    ).toEqual({
+      persona: 1,
+      conhecimento: 1,
+      regras: 0,
+      agenda: 0,
+      instrucoes: 0,
+    });
   });
 });

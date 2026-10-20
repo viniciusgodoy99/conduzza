@@ -56,7 +56,19 @@ export type VinculoDoAgente = {
   convenioId: string | null;
   precoCentavos: number | null;
   cobertoPeloConvenio: boolean;
+  // E4 (agenda). Nada daqui vai ao modelo: so o codigo e o nome do
+  // profissional (indiceDosProfissionais) e o codigo do horario.
+  /** service_link.id; null so em linha sem ele (o vinculo nao agenda). */
+  id: string | null;
+  profissionalId: string;
+  /** service_link.duration_min; null fora do formato (o vinculo nao agenda). */
+  duracaoMin: number | null;
+  /** procedure.resource_id: a sala ou o equipamento que o procedimento ocupa. */
+  recursoId: string | null;
 };
+
+/** Um profissional do indice: o codigo curto (r1, r2...) vai ao modelo. */
+export type ProfissionalDoIndice = { codigo: string; id: string; nome: string };
 
 export type ConvenioDoAgente = {
   id: string;
@@ -64,10 +76,28 @@ export type ConvenioDoAgente = {
   plano: string | null;
 };
 
+/**
+ * Um vinculo ATIVO de convenio que o agente nao marca (sem "IA pode agendar"
+ * no vinculo), so com ids: nunca preco nem cobertura. Existe para a agenda
+ * (D14) nunca dizer que o profissional nao atende um convenio que ele
+ * atende: so a equipe marca por ele.
+ */
+export type ConvenioSoComAEquipe = {
+  procedimentoId: string;
+  profissionalId: string;
+  convenioId: string;
+};
+
 export type CatalogoDoAgente = {
   /** Ordenado por nome (e id): a ordem estavel e a do cache do prompt. */
   procedimentos: ProcedimentoDoIndice[];
   vinculos: VinculoDoAgente[];
+  /**
+   * E4 (D14): os vinculos ativos de convenio sem "IA pode agendar", de
+   * procedimento do indice, profissional ativo e convenio ativo. Nada daqui
+   * vai ao modelo. Ausente (catalogo montado a mao) e o mesmo que nenhum.
+   */
+  conveniosSoComAEquipe?: ConvenioSoComAEquipe[];
   /** Os convenios com pelo menos um vinculo do agente. */
   convenios: ConvenioDoAgente[];
   /**
@@ -159,15 +189,22 @@ function podeMascarar(nome: string): boolean {
   return palavras >= 2 && categorias.every(cobertaPelaMascara);
 }
 
-/** As linhas cruas do banco, como contexto.ts le (colunas explicitas). */
+/**
+ * As linhas cruas do banco, como contexto.ts le (colunas explicitas). As
+ * colunas da agenda (E4: id e duration_min do vinculo, resource_id do
+ * procedimento) sao opcionais so para as linhas montadas a mao: sem elas o
+ * vinculo continua informando preco, mas nao agenda.
+ */
 export type LinhasDoCatalogo = {
   procedimentos: readonly {
     id: string;
     name: string;
     active: boolean;
     bookable_by_ai: boolean;
+    resource_id?: string | null;
   }[];
   vinculos: readonly {
+    id?: string;
     procedure_id: string;
     professional_id: string;
     insurance_id: string | null;
@@ -175,6 +212,7 @@ export type LinhasDoCatalogo = {
     covered_by_insurance: boolean;
     bookable_by_ai: boolean;
     active: boolean;
+    duration_min?: number | null;
   }[];
   profissionais: readonly { id: string; name: string; active: boolean }[];
   convenios: readonly {
@@ -185,6 +223,15 @@ export type LinhasDoCatalogo = {
   }[];
   /** A linha da clinica (so o nome). Ausente: o agente atende sem o nome. */
   clinica?: { name: string | null } | null;
+  /**
+   * E4 (D14): os vinculos ATIVOS sem "IA pode agendar", lidos so com ids
+   * (nunca preco). Viram conveniosSoComAEquipe. Ausente: nenhum.
+   */
+  vinculosSoDaEquipe?: readonly {
+    procedure_id: string;
+    professional_id: string;
+    insurance_id: string | null;
+  }[];
 };
 
 function porNome<T extends { nome: string; id: string }>(a: T, b: T): number {
@@ -221,6 +268,14 @@ export function montarCatalogoDoAgente(
       .filter((p) => p.active && p.bookable_by_ai && p.name.trim() !== "")
       .map((p) => [p.id, p.name.trim()]),
   );
+  const recursos = new Map(
+    linhas.procedimentos.map((p) => [
+      p.id,
+      typeof p.resource_id === "string" && p.resource_id !== ""
+        ? p.resource_id
+        : null,
+    ]),
+  );
 
   const vinculos: VinculoDoAgente[] = [];
   for (const v of linhas.vinculos) {
@@ -245,6 +300,15 @@ export function montarCatalogoDoAgente(
           ? v.price_cents
           : null,
       cobertoPeloConvenio: v.insurance_id !== null && v.covered_by_insurance,
+      id: typeof v.id === "string" && v.id !== "" ? v.id : null,
+      profissionalId: v.professional_id,
+      duracaoMin:
+        typeof v.duration_min === "number" &&
+        Number.isInteger(v.duration_min) &&
+        v.duration_min > 0
+          ? v.duration_min
+          : null,
+      recursoId: recursos.get(v.procedure_id) ?? null,
     });
   }
 
@@ -258,19 +322,61 @@ export function montarCatalogoDoAgente(
   const usados = new Set(
     vinculos.flatMap((v) => (v.convenioId === null ? [] : [v.convenioId])),
   );
+  // D14 (E4): o convenio que o profissional atende, mas por um vinculo que a
+  // IA nao marca. So vinculo ATIVO (inativo e "nao atende"), de procedimento
+  // do indice, profissional ativo e convenio ativo; so ids.
+  const conveniosSoComAEquipe: ConvenioSoComAEquipe[] = (
+    linhas.vinculosSoDaEquipe ?? []
+  ).flatMap((v) =>
+    v.insurance_id !== null &&
+    convenios.has(v.insurance_id) &&
+    profissionais.has(v.professional_id) &&
+    comVinculo.has(v.procedure_id)
+      ? [
+          {
+            procedimentoId: v.procedure_id,
+            profissionalId: v.professional_id,
+            convenioId: v.insurance_id,
+          },
+        ]
+      : [],
+  );
   return {
     procedimentos,
     vinculos: vinculos.sort(
       (a, b) =>
         a.procedimentoId.localeCompare(b.procedimentoId) ||
-        a.profissional.localeCompare(b.profissional, "pt-BR"),
+        a.profissional.localeCompare(b.profissional, "pt-BR") ||
+        (a.id ?? "").localeCompare(b.id ?? ""),
     ),
+    conveniosSoComAEquipe,
     convenios: [...convenios.values()]
       .filter((c) => usados.has(c.id))
       .sort(porNome),
     conveniosDoCadastro: [...convenios.values()].sort(porNome),
     nomeDaClinica: nomeDaClinicaParaOAgente(linhas.clinica?.name),
   };
+}
+
+/**
+ * Os profissionais com vinculo do agente, por nome (e id), com o codigo
+ * curto r1, r2... que vai ao modelo (bloco <profissionais> e o parametro
+ * profissional de buscar_horario). Derivado dos vinculos: o mesmo catalogo
+ * da sempre os mesmos codigos, e a ordem estavel e a do cache do prompt.
+ */
+export function indiceDosProfissionais(
+  catalogo: Pick<CatalogoDoAgente, "vinculos">,
+): ProfissionalDoIndice[] {
+  const porId = new Map<string, string>();
+  for (const v of catalogo.vinculos) {
+    if (!porId.has(v.profissionalId)) {
+      porId.set(v.profissionalId, v.profissional);
+    }
+  }
+  return [...porId.entries()]
+    .map(([id, nome]) => ({ id, nome }))
+    .sort(porNome)
+    .map((p, indice) => ({ codigo: `r${indice + 1}`, id: p.id, nome: p.nome }));
 }
 
 /**
@@ -1378,4 +1484,101 @@ export function buscarProcedimento(
     passo: `Consultou o preço de ${procedimento.nome} pelo convênio ${nomeDoConvenio(casado)}`,
     resultado: "convenio",
   };
+}
+
+// ---------------------------------------------------------------------------
+// Para a agenda (E4): o mesmo convenio e o mesmo particular de cima
+// ---------------------------------------------------------------------------
+
+/** Uma opcao de convenio para o paciente escolher (sem valor). */
+export type OpcaoDeConvenio = { convenio: string; chamar_com: string };
+
+/**
+ * O convenio que o modelo mandou para buscar_horario, pela MESMA regra de
+ * buscar_procedimento (identificar e o seletor exato): nulo, vazio e as
+ * palavras do particular sao o particular; o resto ou identifica
+ * exatamente um convenio do Cadastro (casou) ou volta como opcoes, sem
+ * valor, para o modelo perguntar ao paciente. A agenda nunca escolhe pelo
+ * paciente.
+ */
+export type ConvenioDaAgenda =
+  | { tipo: "particular" }
+  | { tipo: "casou"; convenio: ConvenioDoAgente; nome: string }
+  | { tipo: "convenio_nao_informado" }
+  | { tipo: "convenio_nao_encontrado" }
+  | {
+      tipo: "convenio_nao_confirmado";
+      opcoes: OpcaoDeConvenio[];
+      maisOpcoes: boolean;
+      /** Os nomes do Cadastro, para a trilha (nunca o que o paciente disse). */
+      nomes: string[];
+    }
+  | {
+      tipo: "plano_nao_informado";
+      operadora: string;
+      opcoes: OpcaoDeConvenio[];
+    };
+
+export function convenioParaAgenda(
+  catalogo: CatalogoDoAgente,
+  dito: string | null,
+): ConvenioDaAgenda {
+  const entradas = entradasDe(conveniosConhecidos(catalogo));
+  if (
+    dito === null ||
+    dito.trim() === "" ||
+    (seletorExato(entradas, dito) === undefined && ehParticular(dito))
+  ) {
+    return { tipo: "particular" };
+  }
+  const opcao = (c: ConvenioDoAgente): OpcaoDeConvenio => ({
+    convenio: nomeDoConvenio(c),
+    chamar_com: textoParaChamar(entradas, c),
+  });
+  const identificacao = identificar(entradas, dito);
+  switch (identificacao.tipo) {
+    case "casou":
+      return {
+        tipo: "casou",
+        convenio: identificacao.convenio,
+        nome: nomeDoConvenio(identificacao.convenio),
+      };
+    case "convenio_nao_informado":
+    case "convenio_nao_encontrado":
+      return { tipo: identificacao.tipo };
+    case "convenio_nao_confirmado":
+      return {
+        tipo: "convenio_nao_confirmado",
+        opcoes: identificacao.convenios.map(opcao),
+        maisOpcoes: identificacao.maisOpcoes,
+        nomes: [...new Set(identificacao.convenios.map(nomeDoConvenio))],
+      };
+    case "plano_nao_informado":
+      return {
+        tipo: "plano_nao_informado",
+        operadora: identificacao.operadora,
+        opcoes: identificacao.convenios.map(opcao),
+      };
+  }
+}
+
+/**
+ * O valor particular de cada vinculo, como buscar_procedimento devolve
+ * ({ profissional, situacao, valor }), e os centavos de todo valor que sai
+ * (precosDoTurno do filtro). So valor do Cadastro: sem preco, a situacao e
+ * "sem_valor_cadastrado" e nada e estimado.
+ */
+export function valoresDosVinculos(vinculos: readonly VinculoDoAgente[]): {
+  linhas: Record<string, string>[];
+  precos: number[];
+} {
+  const precos: number[] = [];
+  const linhas = vinculos.map((v) => {
+    const s = situacaoDoVinculo(v);
+    if (s.situacao === "valor") {
+      precos.push(s.centavos);
+    }
+    return linhaParaOModelo(v, s);
+  });
+  return { linhas, precos };
 }

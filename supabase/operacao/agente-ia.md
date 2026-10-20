@@ -2,6 +2,8 @@
 
 Como está ligado hoje, como fazer o primeiro teste, como desligar em segundos e religar, o que acompanhar, o que fazer em cada incidente e como voltar atrás.
 
+**E4 (20/10/2026; construída e revisada, migration `20261020130000` NÃO aplicada, nada publicado):** a IA marca consulta. Como ligar a agenda numa das duas clínicas, o que conferir e como desligar: seção "Agenda pela IA (E4)", abaixo de "Encerrar uma conversa da IA".
+
 Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicado em 19/10/2026 (`1c36327`; o telefone pelo administrador em `24058b1` e os vários números em `a87e01e`). **Migrations aplicadas:** M1 `20261013100000_ia_whatsapp_fila.sql`, M3 `20261013110000_ia_whatsapp_gatilho_mensagem.sql` e M2 `20261013120000_ia_whatsapp_funcoes_quentes.sql` em 13/10/2026, nessa ordem; `20261019100000_ia_telefone_pelo_administrador.sql` e `20261019110000_ia_varios_numeros.sql` em 19/10/2026 (md5 conferidos na produção: "Como foi ligado"). Contrato do banco no `docs/04`, 17.13; turno e travas no `docs/03`, seção 14; estado e decisões no `docs/05`, Fase 3, entrada "E3"; o motor da IA em `supabase/operacao/motor-por-cron.md`, "Resposta da IA no WhatsApp (motor-ia)".
 
 ---
@@ -130,6 +132,7 @@ Ninguém preenche estes dados no lugar do dono. Sem eles, a IA não tem o que re
 4. **Nome do assistente:** hoje "Assistente", o padrão (sem título de profissional de saúde).
 5. **Saudação e encerramento:** hoje nenhum dos dois (texto do dono, se quiser; com saudação, a IA para de cumprimentar sozinha).
 6. **Nomes no Cadastro que a IA repete ao contato:** os procedimentos ("Prostota"; "Colocar o osso no lugar", que descreve uma lesão e pode levar o classificador a apontar sintoma numa simples pergunta de preço), os profissionais ("VInicius", com a caixa trocada, e "Teste profissional") e, quando a correção do nome da clínica no prompt for publicada (decisão de 19/10/2026), o nome cadastrado da clínica (hoje "teste123" e "Conduzza Teste").
+7. **Para a agenda pela IA (E4, depois da migration e do código):** profissionais com horário de atendimento, procedimentos com "IA pode agendar" (a chave do procedimento, que os vínculos seguem), com quem faz e a duração, o preço particular, os convênios que cada profissional atende, a antecedência mínima e o horizonte da Tela 6 e a versão publicada com "Agendar consulta" ligada ("Agenda pela IA (E4)", passos 1 a 5).
 
 ---
 
@@ -752,6 +755,149 @@ Nesta fase a IA não resolve conversa sozinha e o botão Resolver não aparece p
 
 ---
 
+## Agenda pela IA (E4)
+
+A IA marca consulta pelo WhatsApp: oferece até 3 horários livres da Agenda, reserva o escolhido por 10 minutos, pergunta "Confirma ...?" com dia, hora, profissional e procedimento e marca quando a pessoa confirma numa mensagem nova. A consulta nasce **pendente** e aparece em "Pendente de você", na Agenda, como "Marcada pela IA": a equipe aprova (liga a confirmação automática) ou recusa (a conversa volta para a equipe com "A equipe recusou a consulta marcada pela IA. Avise o paciente."). "Confirmar presença" confirma a consulta já marcada, quando há uma só aguardando confirmação. Remarcar, cancelar, lista de espera e encaixe continuam com a equipe. Decisões do dono de 20/10/2026 e pendências: `docs/05`, Fase 3, entrada "E4"; banco no `docs/04`, seção 21; motor no `docs/03`, seção 14, "A IA marca consulta".
+
+**Nada disto vale ainda.** Construída e revisada em 20/10/2026; antes de ligar, nesta ordem e cada passo com o ok do dono: (1) o ensaio `~/.claude/plans/e4-agenda/ensaio-20261020130000.sql` na produção, em horário calmo, por `ferramentas/executar.js` ou o SQL editor (segura ACCESS EXCLUSIVE em `ai_agent_config` e `slot_hold` e SHARE ROW EXCLUSIVE em `service_link`, `conversation` e `appointment` por alguns segundos, até o ROLLBACK); (2) a migration `20261020130000_ia_agenda.sql`; (3) os tipos regenerados; (4) `npm run test:rls -- tests/rls/ia-agenda.test.ts` e `npm run test:integration -- tests/integration/ia-agenda-concorrencia.test.ts` verdes; (5) o código publicado. **Nunca o código antes da migration:** a Tela 6 e o turno da IA no WhatsApp leem as colunas novas, e a IA das duas clínicas pararia de responder.
+
+**Conferir que a migration está no banco** (`true` nas cinco):
+
+```sql
+select
+  exists (select 1 from information_schema.columns
+           where table_schema = 'public' and table_name = 'ai_agent_config'
+             and column_name = 'agenda_horizonte_dias') as limites_na_config,
+  exists (select 1 from information_schema.columns
+           where table_schema = 'public' and table_name = 'slot_hold'
+             and column_name = 'job_id_do_agendar') as reserva_da_ia,
+  to_regprocedure('public.reservar_horario_da_ia(uuid, uuid, uuid, timestamptz, uuid)') is not null as reservar,
+  to_regprocedure('public.agendar_pela_ia(uuid, uuid, uuid)') is not null as agendar,
+  to_regprocedure('public.devolver_conversa_da_consulta_recusada(uuid, uuid)') is not null as devolver;
+```
+
+### Antes de ligar: o telefone de teste precisa ser forçado
+
+**Decisão do dono de 20/10/2026: nesta fase de teste, a agenda pela IA ("Agendar consulta" e "Confirmar presença") é só com telefone forçado pela equipe Conduzza** (a Tela 6 mostra a nota embaixo das duas habilidades; a migration em que a consulta pendente não converte o lead é pré-requisito para pacientes reais: `docs/05`, entrada "E4", decisão 6). O motivo: a consulta que a IA marca faz o contato virar paciente, e a trava do E3 (decisão D-B de 13/10/2026) tira da IA o telefone da equipe que **não** foi forçado pela equipe Conduzza. Com telefone não forçado, depois do "sim" a consulta fica marcada, mas a resposta não sai, a conversa volta para a equipe sem a frase fixa ("A IA passou a conversa para a equipe: o assistente deixou de estar liberado para este telefone ou este número.") e o telefone passa a "Não aciona o assistente" para sempre, mesmo se a equipe recusar a consulta. "Confirmar presença" só funciona com telefone forçado. Por isso:
+
+- **Conduzza Teste:** testar só com a linha "Victor" (`d07b3a0b-fa28-420b-94c7-ce84b8365dfc`), que já é `forcado` (a consulta I mostra `forcado` verdadeiro).
+- **teste123:** **não** ligar "Agendar consulta" (em 19/10/2026, o único telefone de lá era o próprio final 1318, que nunca aciona o assistente; um telefone de teste novo, sem o forçar, cairia na trava depois da primeira consulta). Forçar um telefone é só com o ok do dono, pela equipe Conduzza.
+
+### Ligar numa das duas clínicas
+
+Na Conduzza Teste quem faz é o administrador de lá (o dono não é membro); na teste123, o dono. Valores e dados são do dono: ninguém inventa.
+
+1. **Cadastro** (Cadastros): pelo menos um profissional ativo com **horário de atendimento** e um procedimento ativo com **"IA pode agendar"** marcado (a chave do procedimento, que os vínculos seguem), com esse profissional em "Quem faz e convênios" e a duração; o preço particular, para a IA dizer o valor quando o convênio não é atendido; os convênios que cada profissional atende, se o teste for passar por convênio. A consulta K mostra o que a IA enxerga.
+2. **Tela 6, Regras e limites, "Limites para marcar consulta":** preencher "Antecedência mínima para marcar (horas)" (0 a 720) e "Até quantos dias à frente" (1 a 365) e "Salvar limites". Com um dos dois vazio, "Agendar consulta" não liga.
+3. **Tela 6, Habilidades:** ligar "Agendar consulta" (e, se o dono quiser, "Confirmar presença"). Sem os limites, a chave fica desabilitada com "Preencha a antecedência e o horizonte em Regras e limites.".
+4. **Simular** (simulador da Tela 6, cenário "Paciente querendo agendar"): a busca lê a Agenda de verdade e reservar e marcar **não gravam nada** ("No simulador, nada foi gravado." na trilha). Em "Por que a IA respondeu isso", conferir "Consultou a agenda de ...: encontrou ..." com horários dentro da jornada, depois da antecedência e antes do horizonte. Cada rodada conta no teto de gasto. **Só siga se os horários fizerem sentido.**
+5. **Publicar alterações:** o WhatsApp usa só a versão publicada. A lista tem de trazer "Agendar consulta: ligada", "Antecedência mínima para marcar: N horas" e "Até quantos dias à frente: N dias".
+6. **Conferir** a consulta K (`agendar_ligada` verdadeiro, os dois limites preenchidos, vínculos e profissionais com jornada acima de zero) e a consulta I (o telefone de teste com `conversa_nova_entra_na_ia` e `forcado` verdadeiros).
+7. **O teste com o celular** (o do Victor, na Conduzza Teste), uma mensagem por vez, esperando até 1 minuto: pedir para marcar um procedimento; escolher um dos horários oferecidos; a IA reserva (o bloco "Reservado pela IA" aparece na Agenda) e pergunta "Confirma ...?"; responder "sim"; a IA diz que a consulta ficou marcada, pendente da aprovação da equipe, e que a confirmação chega por aqui; no fio, o evento "A IA marcou ..., pendente de aprovação da equipe."; na Agenda, a consulta em "Pendente de você" como "Marcada pela IA" (painel a partir de 1280px de largura; abaixo disso, pelo menu da consulta). Depois, **Aprovar** (a confirmação automática passa a valer) ou **Recusar** (a conversa volta para "Aguardando você" com o evento; avisar o paciente pelo Atendimento). Também vale testar: o convênio que o profissional não atende (a IA oferece o particular), demorar mais de 10 minutos para confirmar (a IA busca de novo) e pedir para remarcar ou cancelar (passa para a equipe).
+
+### Acompanhar: consultas K a N
+
+Rodar no SQL editor. Nenhuma escreve e nenhuma devolve nome, telefone nem texto de mensagem. Os eventos novos ("A IA marcou ..." e "A equipe recusou ...") aparecem na consulta E como `outro_evento`.
+
+**K. A agenda da IA em cada clínica** (o que a versão publicada liga e o que a IA enxerga no Cadastro)
+
+```sql
+select c.name as clinica,
+       v.version as versao_publicada,
+       (v.skills ->> 'agendar') = 'true' as agendar_ligada,
+       (v.skills ->> 'confirmar_presenca') = 'true' as confirmar_ligada,
+       v.agenda_antecedencia_horas as antecedencia_horas,
+       v.agenda_horizonte_dias as horizonte_dias,
+       (select count(*) from public.service_link sl
+          join public.procedure pr on pr.id = sl.procedure_id and pr.clinic_id = sl.clinic_id
+          join public.professional pf on pf.id = sl.professional_id and pf.clinic_id = sl.clinic_id
+         where sl.clinic_id = c.id and sl.active and sl.bookable_by_ai
+           and pr.active and pr.bookable_by_ai and pf.active) as vinculos_que_a_ia_marca,
+       (select count(distinct s.professional_id) from public.professional_schedule s
+          join public.professional pf on pf.id = s.professional_id and pf.clinic_id = s.clinic_id
+         where s.clinic_id = c.id and pf.active) as profissionais_com_jornada
+from public.clinic c
+left join lateral (
+  select a.version, a.skills, a.agenda_antecedencia_horas, a.agenda_horizonte_dias
+    from public.ai_agent_config a
+   where a.clinic_id = c.id and a.status = 'publicada'
+   order by a.version desc
+   limit 1) v on true
+where c.id = any (public.ia_clinicas_da_fase_controlada())
+order by c.name;
+```
+
+`agendar_ligada` verdadeiro com um limite nulo não marca nada (o banco diz `agenda_nao_configurada` e a IA passa para a equipe).
+
+**L. Reservas da IA nas últimas 24 horas** (e no que viraram)
+
+```sql
+select c.name as clinica,
+       to_char(h.created_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI:SS') as reservou_em,
+       to_char(h.starts_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI') as horario,
+       case when h.consumido_em is not null then 'virou consulta'
+            when h.expires_at > now() then 'viva'
+            else 'vencida' end as reserva,
+       a.status as consulta, a.approval_status as aprovacao,
+       'https://conduzza.vercel.app/atendimento?conversa=' || h.conversation_id as link
+from public.slot_hold h
+join public.clinic c on c.id = h.clinic_id
+left join public.appointment a on a.id = h.appointment_id
+where h.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+  and h.created_by = 'ia'
+  and h.created_at >= now() - interval '24 hours'
+order by h.created_at desc;
+```
+
+A reserva vencida não consumida sai sozinha na manutenção do motor (a cada minuto); a que virou consulta fica (é o elo com a conversa). Mais de uma reserva `viva` na mesma conversa não pode existir: se aparecer, desligue a agenda ("Desligar a agenda", abaixo) e avise o desenvolvimento.
+
+**M. Consultas que a IA marcou** (últimos 7 dias)
+
+```sql
+select c.name as clinica,
+       to_char(a.created_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI') as marcada_em,
+       to_char(a.starts_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI') as horario,
+       a.status, a.approval_status as aprovacao,
+       a.send_confirmation as confirmacao_automatica,
+       a.oferecer_vaga_ao_cancelar as oferece_a_vaga
+from public.appointment a
+join public.clinic c on c.id = a.clinic_id
+where a.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+  and a.created_by = 'ia' and not a.is_overbooking
+  and a.created_at >= now() - interval '7 days'
+order by a.created_at desc;
+```
+
+Como ler: `pendente` com `confirmacao_automatica` falso é o normal até a equipe decidir; `aprovado` tem de ter `confirmacao_automatica` e `oferece_a_vaga` verdadeiros; `recusado` vem com `cancelado_clinica` e `oferece_a_vaga` falso. Uma `pendente` que ninguém aprova nem recusa não recebe a régua de confirmação: cobrar a equipe.
+
+**N. Turnos de agenda** (a ferramenta que mais pesou em cada turno)
+
+```sql
+select to_char(d.created_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI:SS') as quando,
+       c.name as clinica,
+       d.tool_used,          -- agendar | confirmar_presenca | reservar_horario | buscar_horario
+       d.desfecho, d.escalation_reason, d.motivo_da_falha, d.latency_ms,
+       'https://conduzza.vercel.app/atendimento?conversa=' || d.conversation_id as link
+from public.ai_decision_log d
+join public.clinic c on c.id = d.clinic_id
+where d.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+  and d.tool_used in ('buscar_horario', 'reservar_horario', 'agendar', 'confirmar_presenca')
+  and d.created_at >= now() - interval '24 hours'
+order by d.created_at desc;
+```
+
+Como ler: `desfecho` `falhou` com `motivo_da_falha` `desconhecida` num turno de agenda é leitura da agenda ou RPC que falhou (falha fechada: a frase fixa e a equipe); `liberacao_suspensa` logo depois de um `agendar` é a trava do ponto 1 (telefone não forçado). Turno de agenda perto de 45 s (`latency_ms`) é o risco de prazo: anotar para a simulação paga.
+
+### Desligar a agenda (sem desligar a IA)
+
+- **Pela Tela 6** (administrador ou gestor da clínica; na Conduzza Teste, o administrador de lá): desligar "Agendar consulta" (e "Confirmar presença") e **Publicar alterações**. Salvar no rascunho não basta: o WhatsApp e o banco olham a versão publicada. Depois de publicar, a IA passa para a equipe quem pedir para marcar, e as RPCs recusam com `agenda_nao_configurada` qualquer reserva ou marcação.
+- **Pelo SQL editor não há receita só da agenda:** a versão publicada é imutável (P0001), e não se mexe em `ai_agent_config`, `slot_hold` nem `appointment` à mão. Para parar já, sem esperar a tela: desligar a clínica inteira ("Desligar em segundos").
+- **O que fica:** as reservas vivas vencem sozinhas em até 10 minutos; as consultas pendentes continuam em "Pendente de você" para a equipe aprovar ou recusar (recusar devolve a conversa, com o evento).
+
+**Rollback da E4:** primeiro voltar o código; depois `supabase/operacao/rollback/20261020130000-corpos-anteriores.sql` inteiro, numa transação, em horário calmo (`docs/04`, seção 21.10). As consultas que a IA marcou ficam.
+
+---
+
 ## Como foi ligado (referência para ligar do zero)
 
 Para ligar de novo depois de um rollback ou de um desligamento total: cada passo com o ok do dono, por id, e só depois do anterior conferido. A ordem segura deixa o interruptor geral por último (D33); em 19/10/2026 o dono ligou o interruptor antes do telefone.
@@ -841,6 +987,8 @@ select
 ## Rollback
 
 Na ordem. Detalhe e lista exata de objetos no `docs/04`, 17.13, "Rollback".
+
+**Só a agenda pela IA (migration `20261020130000`, depois de aplicada; sem desfazer o E3):** primeiro voltar o código para o de antes da E4 (o novo lê e grava as colunas da agenda e chama as três RPCs); depois rodar `supabase/operacao/rollback/20261020130000-corpos-anteriores.sql` inteiro, numa transação, no SQL editor, em horário calmo (`lock_timeout` de 3 s; ACCESS EXCLUSIVE em `ai_agent_config` e `slot_hold`), e conferir os quatro md5 do cabeçalho do arquivo, nenhuma das quatro funções novas e nenhuma das oito colunas novas. As consultas que a IA marcou ficam; os limites preenchidos se perdem. Detalhe no `docs/04`, 21.10. Se o E3 também for desfeito, este vem antes.
 
 **Só os ajustes da revisão de produção (migration `20261019120000`, depois de aplicada):** primeiro voltar o código para o de antes das correções (o novo lê a chave `conversas_abertas` como obrigatória e chama `definir_contato_liberado_da_ia` com `p_confirmou_aviso_da_openai`); depois rodar `supabase/operacao/rollback/20261019120000-corpos-anteriores.sql` inteiro no SQL editor (sem trava de tabela: apaga a função de seis parâmetros, recria a de cinco com os grants de hoje e devolve às outras três o corpo de antes) e conferir os quatro md5 do cabeçalho do arquivo. As linhas de telefone e as trilhas gravadas no meio continuam válidas. Com a migration aplicada, este rollback vem **antes** de qualquer outro deste bloco: o corpo do rollback do telefone pelo administrador recria a função de cinco parâmetros, e com a de seis ainda no banco ficariam as duas.
 

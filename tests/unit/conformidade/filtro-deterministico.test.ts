@@ -10,6 +10,7 @@ import {
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 import {
   CASOS_DE_SAIDA,
+  CATALOGO_DA_AGENDA,
   CONTEXTO_PADRAO,
   CONTROLES_DE_SAIDA,
   contextoDo,
@@ -227,7 +228,13 @@ describe("expressoes permitidas: cada uma tem a vizinha que continua pega", () =
 
   it.each([
     ["Pra garantir sua vaga preciso do seu nome.", "Garantimos o resultado."],
-    ["Sua vaga está garantida.", "O resultado está garantido."],
+    // Ate 20/10/2026, "Sua vaga está garantida." passava (decisao do dono:
+    // a consulta da IA nasce pendente; bloco "garantia de agenda" abaixo).
+    ["Sua vaga ainda não está garantida.", "O resultado está garantido."],
+    [
+      "Assim que a equipe confirmar, sua vaga fica garantida.",
+      "Sua vaga está garantida.",
+    ],
     ["A agenda está 100% lotada.", "O procedimento é 100% eficaz."],
     ["Fica do lado da farmácia.", "Compra na farmácia mesmo."],
     ["Pode remarcar sim, sem custo.", "A avaliação sai sem custo."],
@@ -262,6 +269,154 @@ describe("expressoes permitidas: cada uma tem a vizinha que continua pega", () =
       "garantia",
     );
     expect(regras("Pra g a r a n t i r sua vaga.")).not.toEqual([]);
+  });
+});
+
+// Decisao do dono de 20/10/2026 (E4): a consulta que a IA marca nasce
+// pendente e quem confirma e a equipe. A resposta que AFIRMA que a consulta,
+// a vaga ou o horario ja esta garantido (ou que a propria IA garante)
+// bloqueia como promessa; a que nao afirma (finalidade, oferta, negacao e a
+// garantia que depende da equipe) passa. O criterio esta em padroes.ts,
+// NEUTRALIZACOES_DE_SAIDA.
+describe("garantia de agenda (decisao do dono de 20/10/2026)", () => {
+  const contexto = {
+    ...CONTEXTO_PADRAO,
+    nomesDoCatalogo: CATALOGO_DA_AGENDA,
+  };
+  const avaliar = (texto: string) => avaliarRegras(texto, contexto);
+
+  it.each([
+    // As frases do dono.
+    "Sua consulta está garantida",
+    "seu horário está garantido",
+    "Garanto o seu horário",
+    "consulta garantida para terça",
+    "pode ficar tranquila, está garantido",
+    // A IA garantindo por conta propria, em qualquer tempo.
+    "Garantimos sua vaga para quinta, 23/10 às 16:15.",
+    "Já garanti sua vaga com a Dra. Ana Lima.",
+    "Vou garantir seu horário de terça.",
+    "Consigo garantir o horário das 14h pra você.",
+    "Quer que eu garanta o horário das 14h?",
+    "Pode ficar tranquila que garanto o horário.",
+    // O participio, com e sem objeto, antes ou depois dele.
+    "Horário garantido!",
+    "Vaga garantida!",
+    "Consulta marcada e garantida!",
+    "Pronto, está garantida sua vaga!",
+    "Seus horários estão garantidos.",
+    "Sua reserva está garantida por 10 minutos.",
+    "O encaixe está garantido.",
+    "Sua consulta de terça está garantida.",
+    "Sua consulta com a Dra. Ana Lima está garantida.",
+    "A consulta tá garantida sim.",
+    "Sua consulta está garantidíssima.",
+    // "Fica garantida" sem condicao, ou com a condicao que nao garante.
+    "Sua vaga fica garantida, pode confiar.",
+    "Reservei terça às 14:00 e o horário já fica garantido.",
+    "Fica garantido para terça às 14:00, pode vir tranquila.",
+    "Se você confirmar, sua consulta está garantida.",
+    "Assim que você confirmar, seu horário fica garantido.",
+    "Sua consulta fica garantida assim que você confirmar.",
+    "Sua consulta fica garantida com a confirmação.",
+    "Sua vaga fica garantida com o pagamento do sinal.",
+    "Sua consulta fica garantida antes da aprovação da equipe.",
+    "Fica garantida assim que a equipe confirmar.",
+    // Condicao negada, "ja", virgula e frase separada nao salvam.
+    "Se a clínica não aprovar, sua consulta fica garantida mesmo assim.",
+    "Sua consulta fica garantida se a equipe não confirmar.",
+    "Com ou sem a aprovação da equipe, sua consulta está garantida.",
+    "Assim que a equipe confirmar ou não, sua consulta fica garantida.",
+    "Mesmo que a equipe não confirme, sua consulta está garantida.",
+    "Assim que a equipe confirmar, sua consulta já está garantida.",
+    "Sua consulta está garantida, assim que a equipe confirmar te aviso.",
+    "Assim que a equipe confirmar te aviso; sua consulta está garantida.",
+    "Sua vaga fica garantida com a Dra. Ana Lima, a equipe confirmou.",
+    "Sua vaga fica garantida com a Dra. Ana Lima e a equipe confirma por aqui.",
+    // A frase permitida nao protege a vizinha.
+    "Para garantir sua vaga, já reservei e está garantida.",
+    "Quer garantir o horário? Já está garantido!",
+    "Sua vaga não está só reservada, está garantida.",
+    "Não só reservei, como sua consulta está garantida.",
+    "Não garanto o resultado, mas o horário está garantido.",
+    "Não posso garantir mais nada além da sua vaga, que está garantida.",
+    "Assim que a equipe confirmar, sua consulta fica garantida e o resultado também.",
+  ])("bloqueia como promessa: %s", (texto) => {
+    expect(avaliar(texto).categorias).toContain("promessa_resultado");
+  });
+
+  it("as normalizacoes de sempre valem: caixa, acento, espaco, leet, homoglifo, invisivel, hifen e erro de digitacao", () => {
+    for (const texto of [
+      "SUA CONSULTA ESTA GARANTIDA",
+      "Seu horario esta garantido",
+      "Seu horário está garantído.",
+      "Seu horário está g a r a n t i d o.",
+      "Seu horário está g.a.r.a.n.t.i.d.o.",
+      "Sua consulta está g4rant1da.",
+      "Sua consulta está garаntida.",
+      "Seu horário está garan​tido.",
+      "Seu horário está garan-tido.",
+      "Seu horário está garan-\ntido.",
+      "Seu horário está garamtido.",
+    ]) {
+      expect(avaliar(texto).categorias, texto).toContain("promessa_resultado");
+    }
+  });
+
+  it("a regra que pega e a de garantia (o rotulo da categoria e promessa de resultado)", () => {
+    for (const texto of [
+      "Sua consulta está garantida",
+      "seu horário está garantido",
+      "Garanto o seu horário",
+      "consulta garantida para terça",
+      "pode ficar tranquila, está garantido",
+    ]) {
+      expect(
+        avaliar(texto).achados.map((a) => a.regra),
+        texto,
+      ).toContain("garantia");
+    }
+  });
+
+  it.each([
+    // Os controles do dono.
+    "Para garantir a sua vaga, confirme por aqui.",
+    "Assim que a equipe confirmar, sua consulta fica garantida.",
+    "Reservei terça, 21/10, às 14:00. A equipe confirma por aqui.",
+    // Finalidade e oferta, com o verbo no infinitivo.
+    "Pra garantir sua vaga preciso só do seu nome completo e data de nascimento.",
+    "Para a gente garantir o seu horário, preciso do seu nome completo.",
+    "Pra te garantir uma vaga, preciso que você confirme o dia.",
+    "Pra garantir o horário com a Dra. Ana Lima, preciso que você confirme por aqui.",
+    "Quer garantir o horário de quinta, 23/10 às 16:15?",
+    "Gostaria de garantir o horário das 10h?",
+    "Prefere garantir a vaga de sexta?",
+    // Negacao.
+    "Infelizmente não consigo garantir o mesmo horário toda semana, mas vou tentar manter as 18h.",
+    "Não dá pra garantir o mesmo horário.",
+    "Não tem como garantir o mesmo horário toda semana.",
+    "Não é possível garantir a vaga sem o sinal.",
+    "Não sei se consigo garantir esse horário.",
+    "Não te garanto o mesmo horário, mas vou tentar.",
+    "Não garantimos encaixe.",
+    "Sua vaga ainda não está garantida.",
+    "Sua consulta ainda não está garantida: ela fica pendente até a equipe aprovar.",
+    "O horário não fica garantido sem a aprovação da equipe.",
+    // A garantia que depende da equipe, antes ou depois da condicao.
+    "Sua consulta fica garantida assim que a equipe confirmar.",
+    "Sua vaga só fica garantida depois que a equipe confirmar.",
+    "Seu horário só fica garantido depois da aprovação da equipe.",
+    "Sua consulta fica garantida depois que a equipe aprovar.",
+    "Sua consulta fica garantida com a aprovação da equipe.",
+    "Sua consulta fica garantida após a confirmação da equipe.",
+    "Sua consulta fica garantida assim que for aprovada.",
+    "Sua consulta vai ficar garantida quando a equipe aprovar.",
+    "Se a equipe aprovar, sua consulta está garantida.",
+    "Quando a equipe da clínica aprovar, sua consulta fica garantida.",
+    "Assim que a equipe confirmar por aqui, sua consulta fica garantida.",
+    "Quando a equipe aprovar, seu horário fica garantido e a confirmação chega por aqui.",
+  ])("passa (nao afirma que ja esta garantido): %s", (texto) => {
+    expect(avaliar(texto).achados).toEqual([]);
   });
 });
 

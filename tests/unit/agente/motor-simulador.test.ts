@@ -814,3 +814,100 @@ describe("revisão: texto descartado na trilha só do super admin (achados 24 e 
     expect(textoDasPerguntasDescartadas(2)).toContain("2 perguntas ativas");
   });
 });
+
+describe("E4: agenda no simulador (resposta simulada, nada gravado)", () => {
+  it("com Agendar consulta ligada, marcar devolve a resposta simulada sem RPC nem escrita", async () => {
+    configDoRascunho = {
+      ...configPadraoDoAgente(),
+      habilidades: {
+        ...configPadraoDoAgente().habilidades,
+        agendar: true,
+      },
+      agenda: { antecedenciaHoras: 2, horizonteDias: 14 },
+    };
+    const { admin, rpc, inseridos } = adminFalso(LIBERADA);
+    const roteiro = [
+      {
+        model: "gpt-6-luna",
+        status: "completed",
+        incomplete_details: null,
+        output: [
+          {
+            type: "function_call",
+            id: "fc_1",
+            call_id: "call_1",
+            name: "agendar",
+            arguments: "{}",
+            status: "completed",
+          },
+        ],
+        usage: { input_tokens: 100, output_tokens: 10 },
+      },
+      {
+        model: "gpt-6-luna",
+        status: "completed",
+        incomplete_details: null,
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            status: "completed",
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({
+                  mensagem:
+                    "Pronto, sua consulta ficou marcada. A equipe confirma por aqui.",
+                  encerra_a_conversa: false,
+                  perguntas_da_base: [],
+                }),
+              },
+            ],
+          },
+        ],
+        usage: { input_tokens: 100, output_tokens: 10 },
+      },
+    ];
+    const create = vi.fn(async () => roteiro.shift());
+    const cliente = { responses: { create } } as unknown as ClienteDoAgente;
+    const r = await simularTurno(
+      {
+        admin,
+        clinicId: CLINICA,
+        userId: USUARIO,
+        fuso: "America/Fortaleza",
+        mensagens: [{ autor: "paciente", texto: "Pode confirmar, sim" }],
+        agoraMs: Date.UTC(2026, 9, 20, 12, 0),
+        env: AMBIENTE,
+      },
+      { cliente, verificador, classificador, precos: PRECOS },
+    );
+    expect(r).toMatchObject({ ok: true, tipo: "resposta" });
+    expect(create).toHaveBeenCalledTimes(2);
+    // O modelo recebeu as ferramentas de agenda do rascunho.
+    const corpo = (
+      create.mock.calls[0] as unknown as [{ tools: { name: string }[] }]
+    )[0];
+    expect(corpo.tools.map((t) => t.name)).toContain("agendar");
+    if (r.ok) {
+      expect(r.trilha.some((p) => p.tipo === "agenda")).toBe(true);
+      expect(r.trilha.map((p) => p.texto).join(" ")).toContain(
+        "No simulador, nada foi gravado.",
+      );
+    }
+    // Nenhuma RPC da agenda e nenhuma escrita: so as travas e o gasto.
+    expect(
+      rpc.mock.calls
+        .map((chamada) => chamada[0])
+        .filter(
+          (nome) =>
+            ![
+              "ia_pode_simular",
+              "reservar_gasto_da_ia",
+              "acertar_gasto_da_ia",
+            ].includes(nome),
+        ),
+    ).toEqual([]);
+    expect(inseridos).toEqual([]);
+  });
+});

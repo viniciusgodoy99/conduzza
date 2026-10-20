@@ -180,7 +180,7 @@ export const TEXTOS_DO_AGENTE = {
   descartarNaoSalvas: "Descartar o que não foi salvo",
   nadaParaPublicar: "Não há alteração para publicar.",
   semRascunho:
-    "Salve a persona, as habilidades, o horário ou uma pergunta. Depois, publique.",
+    "Salve a persona, as habilidades, o horário, os limites para marcar consulta ou uma pergunta. Depois, publique.",
   baseSemLeitura:
     "As perguntas do Conhecimento não carregaram. Recarregue a página antes de publicar.",
   conferirAntes: "Corrija antes de publicar",
@@ -203,8 +203,18 @@ export const TEXTOS_DO_AGENTE = {
   personaSalva: "Persona salva no rascunho.",
   // Habilidades
   habilidadesTitulo: "Habilidades",
+  // E4 (20/10/2026): o assistente marca consulta (pendente da aprovacao da
+  // equipe, D12); remarcar, cancelar, lista de espera e encaixe continuam
+  // com a equipe (o pedido passa para ela).
   habilidadesDescricao:
-    "O que o assistente pode fazer na conversa. Por enquanto, quem agenda, remarca e cancela é a equipe.",
+    "O que o assistente pode fazer na conversa. Remarcar, cancelar, lista de espera e encaixe continuam com a equipe.",
+  // Decisao do dono de 20/10/2026 (E4): a consulta marcada transforma o
+  // contato em paciente, e o telefone da equipe que nao foi cadastrado pela
+  // equipe Conduzza (o "forcado") deixa de acionar o assistente. Nota, nao
+  // status: texto embaixo da descricao de "Agendar consulta" e de
+  // "Confirmar presença" (HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA).
+  habilidadeNaFaseDeTeste:
+    "Nesta fase de teste, só com telefone da equipe cadastrado pela equipe Conduzza: a consulta marcada transforma o contato em paciente, e um telefone comum deixa de acionar o assistente.",
   habilidadeLigada: (titulo: string) => `${titulo}: ligada no rascunho.`,
   habilidadeDesligada: (titulo: string) => `${titulo}: desligada no rascunho.`,
   // Conhecimento
@@ -247,6 +257,21 @@ export const TEXTOS_DO_AGENTE = {
   fim: "Fim",
   horarioSalvo: "Horário salvo no rascunho.",
   horarioComErro: "Corrija antes de salvar",
+  // Limites para marcar consulta (E4, D13): a clinica preenche; ninguem
+  // inventa valor. Sem os dois, "Agendar consulta" nao liga.
+  agendaTitulo: "Limites para marcar consulta",
+  agendaDescricao:
+    "A habilidade Agendar consulta só liga com os dois preenchidos. A consulta que o assistente marca fica pendente até a equipe aprovar na Agenda.",
+  antecedencia: "Antecedência mínima para marcar (horas)",
+  antecedenciaDica: (minimo: number, maximo: number) =>
+    `De ${minimo} a ${maximo} horas. O assistente só oferece horário que começa depois desse tempo.`,
+  horizonte: "Até quantos dias à frente",
+  horizonteDica: (minimo: number, maximo: number) =>
+    `De ${minimo} a ${maximo} dias. O assistente não oferece horário além disso.`,
+  agendaIncompleta:
+    "Com um dos campos vazio, a habilidade Agendar consulta fica desligada.",
+  salvarAgenda: "Salvar limites",
+  agendaSalva: "Limites para marcar consulta salvos no rascunho.",
   gatilhosTitulo: "Quando o assistente passa para a equipe",
   gatilhosDescricao:
     "Nestes casos a conversa sempre vai para a equipe, e o paciente recebe uma frase fixa, nunca escrita pelo assistente. Não podem ser desligados.",
@@ -274,14 +299,16 @@ export const TEXTOS_DO_AGENTE = {
   // tambem as instrucoes da equipe Conduzza daquela versao (achados 3, 16,
   // 25 e 28): o dialogo diz as duas coisas, sem mostrar o texto.
   restaurarDescricao:
-    "O rascunho passa a ter a persona, as habilidades, o horário, as instruções da equipe Conduzza e as perguntas desta versão. As perguntas que não estão nesta versão ficam desativadas, não são apagadas: dá para reativar no Conhecimento. As outras alterações que ainda não foram publicadas se perdem. Para o paciente, nada muda até você publicar.",
+    "O rascunho passa a ter a persona, as habilidades, o horário, os limites para marcar consulta, as instruções da equipe Conduzza e as perguntas desta versão. As perguntas que não estão nesta versão ficam desativadas, não são apagadas: dá para reativar no Conhecimento. As outras alterações que ainda não foram publicadas se perdem. Para o paciente, nada muda até você publicar.",
   restaurada: (versao: number) =>
     `Versão ${versao} restaurada no rascunho. Confira e publique.`,
   autorDesconhecido: "Pessoa fora da equipe",
   // Simulador
   simuladorTitulo: "Simulador",
+  // O buscar horario le a Agenda de verdade; reservar e marcar no simulador
+  // so devolvem a resposta simulada, sem gravar (contrato da E4, secao 2).
   simuladorDescricao:
-    "Converse como se fosse o paciente. Usa o rascunho e nada vai para o WhatsApp.",
+    "Converse como se fosse o paciente. Usa o rascunho e nada vai para o WhatsApp: os horários vêm da Agenda, mas reservar e marcar aqui não gravam nada.",
   simuladorAviso: "Use dados de teste. Não escreva dados de pacientes reais.",
   cenario: "Cenário",
   cenarioPlaceholder: "Escolha um cenário",

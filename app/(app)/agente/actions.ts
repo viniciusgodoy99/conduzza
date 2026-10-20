@@ -12,7 +12,11 @@ import { agoraNaClinica, previaDoPrompt } from "@/lib/agente/prompt";
 import { simularTurno } from "@/lib/agente/simulador";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import {
+  agendaDoAgenteSchema,
+  agendaDoBanco,
+  agendaParaOBanco,
   diferencasDoRascunho,
+  habilidadesComAgendaSchema,
   habilidadesSchema,
   horarioParaOBanco,
   horarioSchema,
@@ -58,7 +62,12 @@ import { createClient } from "@/lib/supabase/server";
 //    instrucoes so aparece com o tipo para o super admin;
 //  - texto da clinica passa por problemaNoTextoDoAgente ao salvar (a tela
 //    ja confere antes; aqui e a segunda vez, porque o cliente nao e
-//    confiavel).
+//    confiavel);
+//  - E4 (20/10/2026, D13): os limites para marcar consulta (antecedencia e
+//    horizonte) gravam as duas colunas do rascunho pelo mesmo caminho; ligar
+//    "Agendar consulta" sem os dois e recusado aqui, contra a agenda lida do
+//    proprio rascunho (habilidadesComAgendaSchema), nunca contra o que a
+//    tela diz.
 // Trilha: audit_log sem texto nenhum (so a acao, a entidade e o id); as
 // RPCs gravam a propria. Log so com clinica, tipo da acao e codigo do erro.
 
@@ -381,7 +390,13 @@ export async function salvarPersonaAction(
 
 /**
  * Habilidades do rascunho. Junta com o `skills` gravado: chave que esta
- * leva nao conhece (as de agenda do E4) nao se perde.
+ * leva nao conhece nao se perde.
+ *
+ * E4 (D13): "Agendar consulta" so liga com a antecedencia e o horizonte do
+ * RASCUNHO preenchidos. A agenda e lida junto com o `skills`, do proprio
+ * rascunho, e a entrada passa de novo por habilidadesComAgendaSchema: a tela
+ * ja deixa a chave desabilitada, mas o cliente nao e confiavel. A recusa usa
+ * a mesma dica da tela.
  */
 export async function salvarHabilidadesAction(
   entrada: unknown,
@@ -390,9 +405,10 @@ export async function salvarHabilidadesAction(
   if ("error" in quem) {
     return { ok: false, error: quem.error };
   }
-  const parsed = habilidadesSchema.safeParse(entrada);
-  if (!parsed.success) {
-    return { ok: false, error: erroDaEntrada(parsed.error) };
+  // O formato antes de tocar o banco; a agenda vem depois, do rascunho.
+  const formato = habilidadesSchema.safeParse(entrada);
+  if (!formato.success) {
+    return { ok: false, error: erroDaEntrada(formato.error) };
   }
   const supabase = await createClient();
   const rascunho = await garantirRascunho(supabase, quem.clinicId);
@@ -406,14 +422,25 @@ export async function salvarHabilidadesAction(
   }
   const { data: atual, error: erroDaLeitura } = await supabase
     .from("ai_agent_config")
-    .select("skills")
+    .select("skills, agenda_antecedencia_horas, agenda_horizonte_dias")
     .eq("id", rascunho.id)
     .eq("clinic_id", quem.clinicId)
     .maybeSingle();
   if (erroDaLeitura) {
     return falhou(quem, "habilidades_leitura", erroDaLeitura, TEXTOS.naoSalvou);
   }
-  const gravado = (atual as { skills?: unknown } | null)?.skills;
+  const linha = (atual ?? {}) as {
+    skills?: unknown;
+    agenda_antecedencia_horas?: unknown;
+    agenda_horizonte_dias?: unknown;
+  };
+  const parsed = habilidadesComAgendaSchema(agendaDoBanco(linha)).safeParse(
+    entrada,
+  );
+  if (!parsed.success) {
+    return { ok: false, error: erroDaEntrada(parsed.error) };
+  }
+  const gravado = linha.skills;
   const existente =
     typeof gravado === "object" && gravado !== null && !Array.isArray(gravado)
       ? (gravado as Record<string, unknown>)
@@ -421,6 +448,35 @@ export async function salvarHabilidadesAction(
   return gravarNoRascunho(supabase, quem, "habilidades", {
     skills: { ...existente, ...parsed.data },
   });
+}
+
+/**
+ * Limites para marcar consulta do rascunho (E4, D13): a antecedencia minima
+ * (horas) e o horizonte (dias) que a IA respeita. Inteiros nas faixas do
+ * CHECK do banco (agendaDoAgenteSchema); campo vazio chega nulo e grava
+ * nulo (ninguem inventa valor). Com um dos dois nulo, "Agendar consulta"
+ * fica desligada de fato (habilidadesComAgenda), na tela, no motor e no
+ * banco. Mesmo caminho de permissao das outras partes: a guarda daqui, o
+ * grant por coluna e o CHECK do banco.
+ */
+export async function salvarAgendaAction(
+  entrada: unknown,
+): Promise<ResultadoDoAgente> {
+  const quem = await exigirQuemConfigura();
+  if ("error" in quem) {
+    return { ok: false, error: quem.error };
+  }
+  const parsed = agendaDoAgenteSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: erroDaEntrada(parsed.error) };
+  }
+  const supabase = await createClient();
+  return gravarNoRascunho(
+    supabase,
+    quem,
+    "agenda",
+    agendaParaOBanco(parsed.data),
+  );
 }
 
 /** Modo de operacao, minutos de espera e expediente por dia do rascunho. */

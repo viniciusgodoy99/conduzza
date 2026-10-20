@@ -44,6 +44,8 @@ import {
   fraseDeNumerosDesconectados,
   nomesParaATela,
 } from "@/lib/jobs/numero-de-envio";
+import { log } from "@/lib/log";
+import { ehConsultaDaIa } from "@/lib/queries/agenda";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -82,6 +84,14 @@ export type AgendaActionResult = {
    * mostra como aviso, nunca como sucesso silencioso.
    */
   aviso?: string;
+  /**
+   * Cancelar pela Agenda uma pendencia da IA (criada pela IA e ainda
+   * pendente: a consulta que ela marcou ou o encaixe) conta como recusar
+   * (decisao do dono de 20/10/2026). A acao diz qual foi recusada, para a
+   * tela dizer o mesmo que o Recusar ("Consulta recusada. Avise o paciente
+   * pelo Atendimento."), e nao a situacao escolhida no menu.
+   */
+  recusada?: "consulta_da_ia" | "encaixe";
   /**
    * Cadastro rapido: o telefone ja era de um contato (casado pela chave, com
    * ou sem o nono digito) e o id devolvido e o DELE. `nome` e `telefone` sao
@@ -884,6 +894,34 @@ export async function mudarStatusAction(
 
   const supabase = await createClient();
 
+  // Cancelar uma pendencia da IA (created_by 'ia' e ainda pendente) conta
+  // como recusar (decisao do dono de 20/10/2026): o resultado e o do Recusar
+  // (gravarRecusa: recusada, cancelada pela clinica, na consulta da IA sem
+  // oferecer o horario a lista de espera, historico e trilha da recusa) e,
+  // na consulta da IA, a conversa volta para a equipe. Sem isso a consulta
+  // cancelada continuava em "Pendente de voce" e a conversa, com a IA. A
+  // pendencia e lida do BANCO, nunca da tela; o status que a tela viu vai
+  // no filtro do update, como em toda mudanca de situacao.
+  if (eCancelamento(novo_status)) {
+    const lida = await lerPendencia(supabase, guard.clinicId, id);
+    if ("erro" in lida) {
+      return { ok: false, error: TEXTOS_DA_PENDENCIA.semConferir };
+    }
+    if (lida.pendencia !== null && lida.pendencia.created_by === "ia") {
+      const daIa = ehConsultaDaIa(lida.pendencia);
+      const resultado = await gravarRecusa(
+        supabase,
+        guard,
+        id,
+        daIa,
+        status_atual,
+      );
+      return resultado.ok
+        ? { ...resultado, recusada: daIa ? "consulta_da_ia" : "encaixe" }
+        : resultado;
+    }
+  }
+
   // Falta so a partir do horario da consulta (achado 81). O horario vem do
   // BANCO, nunca da tela. O gatilho impedir_falta_antes_do_horario recusa de
   // novo, para qualquer caminho.
@@ -990,8 +1028,74 @@ export async function mudarStatusAction(
 }
 
 // ---------------------------------------------------------------------------
-// Encaixe da IA: aprovar e recusar (painel "Pendente de voce")
+// Pendente de voce: aprovar e recusar (painel e menu da consulta)
 // ---------------------------------------------------------------------------
+//
+// Duas pendencias passam por aqui: o encaixe da IA (de sempre) e, desde o E4
+// (20/10/2026), a consulta que a IA marcou pelo WhatsApp (ehConsultaDaIa:
+// created_by 'ia' e sem encaixe), que nasce 'pendente' (D12) com a
+// confirmacao automatica desligada (send_confirmation false). Decisoes do
+// dono de 20/10/2026:
+// - a regua de confirmacao so comeca depois que a equipe aprova: aprovar a
+//   consulta da IA volta send_confirmation para true NO MESMO update (o
+//   planejador da regua le a coluna a cada rodada). No mesmo update,
+//   oferecer_vaga_ao_cancelar volta ao padrao da coluna (true): o false com
+//   que a IA marca existe so para a recusa (que o grava de novo); a
+//   consulta aprovada e uma consulta como as outras, e o paciente que
+//   cancela pela regua libera o horario para a lista de espera (revisao da
+//   E4: sem isto, o gatilho oferecer_ao_cancelar pulava para sempre);
+// - recusar devolve a conversa para a equipe: depois da recusa (cancelado
+//   pela clinica, sem oferecer o horario a lista de espera), a RPC
+//   devolver_conversa_da_consulta_recusada poe a conversa em "Aguardando
+//   voce" e grava o evento para a equipe avisar o paciente. Erro nela NAO
+//   desfaz a recusa: a acao volta ok com o aviso, e o log leva so ids e o
+//   codigo do erro;
+// - cancelar pelo menu a pendencia da IA (a consulta ou o encaixe) conta
+//   como recusar: mudarStatusAction grava a mesma recusa (gravarRecusa).
+// O tipo e lido do BANCO (nunca da tela) e repetido no filtro do update: a
+// corrida perde educadamente ("ja foi tratada").
+
+type PendenciaLida = { created_by: string; is_overbooking: boolean };
+
+const TEXTOS_DA_PENDENCIA = {
+  invalida: "Consulta inválida.",
+  semConferir: "Não foi possível conferir esta consulta. Tente de novo.",
+  consultaTratada: "Esta consulta já foi tratada.",
+  encaixeTratado: "Este encaixe já foi tratado.",
+  naoAprovou: "Não foi possível aprovar. Tente de novo.",
+  naoRecusou: "Não foi possível recusar. Tente de novo.",
+  conversaNaoDevolvida:
+    "A consulta foi recusada, mas a conversa não voltou para a equipe. Abra a conversa no Atendimento e avise o paciente.",
+  conversaNaoEncontrada:
+    "A consulta foi recusada, mas a conversa do paciente não foi encontrada. Avise o paciente pelo Atendimento.",
+} as const;
+
+/** A pendencia como esta no banco; null quando nao esta mais pendente. */
+async function lerPendencia(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  id: string,
+): Promise<{ pendencia: PendenciaLida | null } | { erro: true }> {
+  const { data, error } = await supabase
+    .from("appointment")
+    .select("created_by, is_overbooking")
+    .eq("clinic_id", clinicId)
+    .eq("id", id)
+    .eq("approval_status", "pendente")
+    .maybeSingle();
+  if (error) {
+    return { erro: true };
+  }
+  const linha = data as Partial<PendenciaLida> | null;
+  return {
+    pendencia: linha
+      ? {
+          created_by: String(linha.created_by ?? ""),
+          is_overbooking: linha.is_overbooking === true,
+        }
+      : null,
+  };
+}
 
 export async function aprovarEncaixeAction(
   id: unknown,
@@ -1002,32 +1106,103 @@ export async function aprovarEncaixeAction(
   }
   const parsed = idSchema.safeParse(id);
   if (!parsed.success) {
-    return { ok: false, error: "Encaixe inválido." };
+    return { ok: false, error: TEXTOS_DA_PENDENCIA.invalida };
   }
   const supabase = await createClient();
-  const { data } = await supabase
+  const lida = await lerPendencia(supabase, guard.clinicId, parsed.data);
+  if ("erro" in lida) {
+    return { ok: false, error: TEXTOS_DA_PENDENCIA.semConferir };
+  }
+  if (lida.pendencia === null) {
+    return {
+      ok: false,
+      code: "ja_tratado",
+      error: TEXTOS_DA_PENDENCIA.consultaTratada,
+    };
+  }
+  const daIa = ehConsultaDaIa(lida.pendencia);
+
+  let aprovar = supabase
     .from("appointment")
-    .update({ approval_status: "aprovado" })
+    .update(
+      daIa
+        ? {
+            approval_status: "aprovado",
+            send_confirmation: true,
+            oferecer_vaga_ao_cancelar: true,
+          }
+        : { approval_status: "aprovado" },
+    )
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data)
-    .eq("approval_status", "pendente")
-    .select("id");
+    .eq("approval_status", "pendente");
+  if (daIa) {
+    aprovar = aprovar.eq("created_by", "ia").eq("is_overbooking", false);
+  }
+  const { data, error } = await aprovar.select("id");
+  if (error) {
+    return { ok: false, error: TEXTOS_DA_PENDENCIA.naoAprovou };
+  }
   if (!data || data.length === 0) {
     return {
       ok: false,
       code: "ja_tratado",
-      error: "Este encaixe já foi tratado.",
+      error: daIa
+        ? TEXTOS_DA_PENDENCIA.consultaTratada
+        : TEXTOS_DA_PENDENCIA.encaixeTratado,
     };
   }
   await supabase.from("audit_log").insert({
     clinic_id: guard.clinicId,
     user_id: guard.context.userId,
-    action: "aprovou_encaixe",
+    action: daIa ? "aprovou_consulta_da_ia" : "aprovou_encaixe",
     entity: "appointment",
     entity_id: parsed.data,
   });
   revalidatePath("/agenda");
   return { ok: true };
+}
+
+/**
+ * Depois da recusa da consulta da IA: a conversa volta para a equipe pela
+ * RPC (que acha a conversa pela reserva da IA). Nunca lanca e nunca desfaz
+ * a recusa: o que nao deu certo volta como aviso para a tela.
+ */
+async function devolverConversaDaRecusada(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  userId: string,
+  appointmentId: string,
+): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.rpc(
+      "devolver_conversa_da_consulta_recusada",
+      { p_clinic_id: clinicId, p_appointment_id: appointmentId },
+    );
+    if (error) {
+      log.warn("agenda_conversa_nao_devolvida", {
+        clinic_id: clinicId,
+        user_id: userId,
+        error_code: error.code ?? null,
+      });
+      return TEXTOS_DA_PENDENCIA.conversaNaoDevolvida;
+    }
+    if (data !== true) {
+      log.warn("agenda_recusa_sem_conversa", {
+        clinic_id: clinicId,
+        user_id: userId,
+      });
+      return TEXTOS_DA_PENDENCIA.conversaNaoEncontrada;
+    }
+    return null;
+  } catch {
+    log.warn("agenda_conversa_nao_devolvida", {
+      clinic_id: clinicId,
+      user_id: userId,
+      error_code: "excecao",
+    });
+    return TEXTOS_DA_PENDENCIA.conversaNaoDevolvida;
+  }
 }
 
 export async function recusarEncaixeAction(
@@ -1039,39 +1214,101 @@ export async function recusarEncaixeAction(
   }
   const parsed = idSchema.safeParse(id);
   if (!parsed.success) {
-    return { ok: false, error: "Encaixe inválido." };
+    return { ok: false, error: TEXTOS_DA_PENDENCIA.invalida };
   }
   const supabase = await createClient();
-  const { data } = await supabase
+  const lida = await lerPendencia(supabase, guard.clinicId, parsed.data);
+  if ("erro" in lida) {
+    return { ok: false, error: TEXTOS_DA_PENDENCIA.semConferir };
+  }
+  if (lida.pendencia === null) {
+    return {
+      ok: false,
+      code: "ja_tratado",
+      error: TEXTOS_DA_PENDENCIA.consultaTratada,
+    };
+  }
+  return gravarRecusa(
+    supabase,
+    guard,
+    parsed.data,
+    ehConsultaDaIa(lida.pendencia),
+  );
+}
+
+/**
+ * A recusa gravada, a mesma no Recusar (painel e menu) e no Cancelar da
+ * pendencia da IA pelo menu (mudarStatusAction): o update condicional, o
+ * historico, a trilha e, so na consulta da IA, a conversa devolvida para a
+ * equipe DEPOIS da recusa. `statusAtual` (o do Cancelar, que a tela viu)
+ * entra no filtro do update: a corrida perde educadamente.
+ */
+async function gravarRecusa(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: { clinicId: string; context: { userId: string } },
+  id: string,
+  daIa: boolean,
+  statusAtual?: AppointmentStatus,
+): Promise<AgendaActionResult> {
+  // A consulta da IA ja nasce sem oferecer o horario a lista de espera; vai
+  // de novo no MESMO update (o gatilho da reoferta le a linha nova).
+  let recusar = supabase
     .from("appointment")
-    .update({ approval_status: "recusado", status: "cancelado_clinica" })
+    .update(
+      daIa
+        ? {
+            approval_status: "recusado",
+            status: "cancelado_clinica",
+            oferecer_vaga_ao_cancelar: false,
+          }
+        : { approval_status: "recusado", status: "cancelado_clinica" },
+    )
     .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data)
-    .eq("approval_status", "pendente")
-    .select("id");
+    .eq("id", id)
+    .eq("approval_status", "pendente");
+  if (daIa) {
+    recusar = recusar.eq("created_by", "ia").eq("is_overbooking", false);
+  }
+  if (statusAtual !== undefined) {
+    recusar = recusar.eq("status", statusAtual);
+  }
+  const { data, error } = await recusar.select("id");
+  if (error) {
+    return { ok: false, error: TEXTOS_DA_PENDENCIA.naoRecusou };
+  }
   if (!data || data.length === 0) {
     return {
       ok: false,
       code: "ja_tratado",
-      error: "Este encaixe já foi tratado.",
+      error: daIa
+        ? TEXTOS_DA_PENDENCIA.consultaTratada
+        : TEXTOS_DA_PENDENCIA.encaixeTratado,
     };
   }
   await registrarHistorico(
     supabase,
     guard.clinicId,
-    parsed.data,
+    id,
     "cancelado_clinica",
     guard.context.userId,
   );
   await supabase.from("audit_log").insert({
     clinic_id: guard.clinicId,
     user_id: guard.context.userId,
-    action: "recusou_encaixe",
+    action: daIa ? "recusou_consulta_da_ia" : "recusou_encaixe",
     entity: "appointment",
-    entity_id: parsed.data,
+    entity_id: id,
   });
+  const aviso = daIa
+    ? await devolverConversaDaRecusada(
+        supabase,
+        guard.clinicId,
+        guard.context.userId,
+        id,
+      )
+    : null;
   revalidatePath("/agenda");
-  return { ok: true };
+  return aviso ? { ok: true, aviso } : { ok: true };
 }
 
 // ---------------------------------------------------------------------------

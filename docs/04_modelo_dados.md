@@ -542,6 +542,8 @@ create table waitlist_offer (
 );
 ```
 
+**`slot_hold` e a consulta da IA desde o E4 (20/10/2026, migration `20261020130000`, NÃO aplicada):** a reserva ganha `service_link_id`, `conversation_id`, `job_id`, `consumido_em`, `appointment_id` e `job_id_do_agendar`, sem exclusion constraint (a exclusão mútua vem de travas dentro das RPCs da IA), e a IA marca a consulta pendente (`created_by 'ia'`, `approval_status 'pendente'`, `send_confirmation false`). Detalhe na seção 21.
+
 ---
 
 ## 6. Agente de IA
@@ -2460,3 +2462,142 @@ Pedido do dono em 20/10/2026: "conseguir exportar os leads e não só importar" 
 **Ordem de publicação (cumprida em 20/10/2026):** ensaio, migration, tipos e o código. Enquanto a coluna não existia, o código gravava a linha de novo sem `detalhes` quando o PostgREST a recusava (PGRST204); esse caminho provisório saiu depois da aplicação: hoje qualquer erro ao gravar a trilha recusa o arquivo (503), sem segunda tentativa.
 
 **Rollback** (manual): o código não precisa voltar; `alter table public.audit_log drop column detalhes;` leva o CHECK e os detalhes gravados.
+
+---
+
+## 21. A IA marca consulta pelo WhatsApp (E4, 20/10/2026, migration `20261020130000_ia_agenda.sql`; construída e ensaiada só num Postgres local, **NÃO aplicada**)
+
+Pedido do dono em 20/10/2026, depois do primeiro teste no WhatsApp ("O intuito do agente é marcar reunião e ele delegou para um atendente e não marcou"). É a seção 1 do contrato entre as frentes (`~/.claude/plans/e4-agenda/contrato.md`; plano em `~/.claude/plans/e4-agenda/plano.md`). Vale só onde a IA já atende (`ia_pode_atender`, 17.4): a teste123 e a Conduzza Teste, com os telefones da equipe, e as clínicas `e_de_teste` no WhatsApp falso. Motor no `docs/03`, seção 14, "A IA marca consulta"; telas no brief (Telas 1, 3 e 6); operação em `supabase/operacao/agente-ia.md`, "Agenda pela IA (E4)"; backlog, Fase 3, entrada "E4". **Nada liga sozinho:** a habilidade nasce desligada (`skills` sem a chave `agendar`) e as duas colunas nulas; sem as duas e a chave, as RPCs dizem `agenda_nao_configurada`.
+
+### 21.1 Decisões registradas
+
+- **Do dono (20/10/2026):** a consulta da IA nasce `approval_status = 'pendente'` (D12); a antecedência mínima e o horizonte são da clínica, na aba do agente, e sem os dois a habilidade Agendar não liga, porque ninguém inventa valor (D13); convênio que o profissional não atende: a IA avisa e oferece o particular, e não quis ou não ficou claro, passa para a equipe (D14, só no código); a régua de confirmação só começa depois que a equipe aprova (`send_confirmation false` até aprovar); recusar devolve a conversa para a equipe.
+- **`source 'interna'`, e não `'ia'`:** o CHECK `appointment_source_check` da produção só aceita `interna` e `externa` (conferido em 20/10/2026, só leitura). A origem IA fica em `created_by 'ia'`.
+- **`slot_hold.job_id_do_agendar`** (o contrato deixava criar "se precisar"): o `job_id` é o do reservar, e o reservar e o agendar podem ser jobs diferentes; com índice único parcial, é a idempotência do agendar.
+- **Idempotência do agendar:** "já consumida por este job" é a reserva com `job_id_do_agendar = p_job_id`, e ela devolve a consulta (`reutilizado: true`); se a consulta do job foi apagada depois, `reserva_inexistente`. A leitura "ou já consumida e com consulta", sozinha, impediria uma segunda consulta na mesma conversa.
+- **Trava por conversa** (`hashtextextended('slot_hold_conversa:' || conversation_id, 0)`), além da do profissional, sempre antes dela, nas duas RPCs: sem ela, a mesma conversa reservando em dois profissionais ao mesmo tempo ficava com duas reservas vivas (provado com conexões reais). **Revisão da E4:** quando o procedimento tem recurso, uma terceira trava (`'slot_hold_recurso:' || resource_id`), sempre depois da do profissional, e a conferência conta a reserva viva de outra conversa em vínculo de qualquer profissional que usa o mesmo recurso. Ordem fixa (conversa, profissional, recurso): sem ciclo de espera.
+- **Sem exclusion constraint em `slot_hold`:** o vencimento não é imutável (a reserva vencida continua na linha até a limpeza). A exclusão mútua vem das travas.
+- **No agendar, a consulta que passou a ocupar o horário durante a reserva é `conflito`**, como o 23P01 (a recepção marcou por cima): é o motivo que o plano dá ao caso. O reservar continua dizendo `ocupado`.
+- **Revisão da E4, a confirmação depois da pergunta:** o agendar exige uma mensagem do paciente posterior à **pergunta da IA**, que é a primeira resposta da IA (`direction 'saida'`, `author 'ia'`) gravada depois da reserva e que não falhou (`delivery_status` diferente de `falhou`). A mensagem que chegou entre a reserva e a pergunta não vale: o paciente ainda não tinha visto dia, hora, profissional e procedimento. O motivo continua `sem_confirmacao_do_paciente` (nenhum espelho no TypeScript mudou).
+- **`vinculo_invalido` também com profissional inativo:** o catálogo do agente só oferece profissional ativo.
+- **A limpeza não apaga a reserva consumida:** o passo 10 do reservar e `limpar_holds_vencidos` (função de produção que o contrato não listava; o corpo anterior está no rollback) só apagam reserva vencida **não consumida**. A consumida é o elo entre a consulta e a conversa, que a recusa usa, e a idempotência; sem isso, a manutenção do motor (a cada minuto) a apagaria.
+- **Ao consumir, `expires_at = least(expires_at, now())`** (fora do contrato): a Agenda só filtrava `expires_at > now()` e desenharia a reserva por cima da consulta por até 10 minutos. O código da Agenda também passou a filtrar `consumido_em is null`.
+- **O gatilho de clínica da `slot_hold`** confere `service_link_id` (da clínica **e** do mesmo profissional), `conversation_id` e `appointment_id` (da clínica), e passa a disparar também quando essas colunas mudam. CHECK novo `slot_hold_consumo_coerente` e índices parciais nas FKs.
+- **`devolver_conversa_da_consulta_recusada`:** o gatilho em `conversation` que o contrato cita não existe; quem cancela os jobs é `ia_tirar_conversa`, interna e que exige um motivo de `rotulo_do_motivo_da_ia`. Um motivo novo obrigaria mudar o espelho `TEXTO_DO_EVENTO_DA_IA` (`lib/domain/agente/config.ts`) e `espelhos.test.ts`; por isso a função repete os dois passos (`aguardando_humano` com `awaiting_reply` e os jobs pendentes de `responder_com_ia` da conversa cancelados com `conversa_fora_da_ia`) e grava **um** evento, com a frase do contrato. O profissional só age na própria agenda (como a policy de `appointment`); consulta que não é da IA, não está recusada ou não tem reserva devolve `false`, não exceção; cada chamada grava um evento.
+- **Função interna nova `conferir_horario_da_ia`:** as conferências 4 a 9 do contrato numa função só, para o reservar e o agendar conferirem exatamente o mesmo; nenhum papel da API a executa.
+- **Job de outra conversa ou clínica** (no reservar e no agendar): 22023 `job_de_outra_conversa`, e não o 23505 do índice único.
+- **Plano e contrato divergiam** na assinatura do agendar (o plano tinha `p_hold_id`): vale o contrato, 3 parâmetros, com a reserva viva da conversa.
+- Os comentários de `agente_garantir_rascunho` e `restaurar_versao_do_agente` passam a citar a antecedência e o horizonte; o rollback devolve os textos de antes.
+
+### 21.2 `ai_agent_config`: antecedência mínima e horizonte
+
+| Coluna | Tipo | Regra |
+|---|---|---|
+| `agenda_antecedencia_horas` | integer, nula | CHECK `ai_agent_config_agenda_antecedencia_faixa` (0 a 720). Só oferece e só reserva horário que começa a partir de agora mais isto |
+| `agenda_horizonte_dias` | integer, nula | CHECK `ai_agent_config_agenda_horizonte_faixa` (1 a 365). O início do horário vai até agora mais isto |
+
+Nula é "a clínica ainda não escolheu". **Permissão por coluna, como `skills`:** `grant select` e `update` nas duas para `authenticated` (a tabela não tem grant de tabela para a sessão, nem nada para `anon`); a policy de UPDATE continua só o rascunho, só do administrador e do gestor (17.12). `agente_garantir_rascunho` e `restaurar_versao_do_agente` (CREATE OR REPLACE com o corpo de produção e as duas colunas, marca `[agenda da ia]`; mesmas assinaturas, segurança e grants) copiam as duas: sem isso, o valor publicado se perderia no próximo rascunho. `publicar_agente` não muda (publica a própria linha do rascunho), e `proteger_versao_publicada_do_agente` compara a linha inteira: a versão publicada também não muda nas colunas novas.
+
+### 21.3 `slot_hold`: a reserva da IA
+
+| Coluna nova | Tipo | Regra |
+|---|---|---|
+| `service_link_id` | uuid, nula | FK `service_link`, `on delete cascade`; o vínculo que a IA reservou, da clínica e do mesmo profissional (gatilho) |
+| `conversation_id` | uuid, nula | FK `conversation`, `on delete cascade`; uma reserva viva por conversa |
+| `job_id` | uuid, nula | o job do reservar; sem FK (a fila é podada); único parcial `slot_hold_job_id_unico` |
+| `consumido_em` | timestamptz, nula | quando a reserva virou consulta |
+| `appointment_id` | uuid, nula | FK `appointment`, `on delete set null`; a consulta que a reserva virou (a recusa acha a conversa por aqui) |
+| `job_id_do_agendar` | uuid, nula | o job do agendar; único parcial `slot_hold_job_id_do_agendar_unico` |
+
+CHECKs: `slot_hold_reserva_da_ia_completa` (reserva com `created_by 'ia'` e conversa tem vínculo e job) e `slot_hold_consumo_coerente` (consulta e job do agendar só em reserva consumida). Índices: os dois únicos parciais, `slot_hold_reserva_viva_da_conversa` (`conversation_id` onde `consumido_em is null`) e os parciais das FKs (`slot_hold_service_link_id_idx`, `slot_hold_appointment_id_idx`). O gatilho `exigir_cadastro_da_mesma_clinica` (CREATE OR REPLACE da função, marca `[reserva da ia]`) dispara em `insert or update of clinic_id, professional_id, service_link_id, conversation_id, appointment_id` e recusa com 23503 o vínculo de outro profissional ou clínica, a conversa e a consulta de outra clínica. `limpar_holds_vencidos` (CREATE OR REPLACE, uma linha trocada dentro da marca) só apaga vencida com `consumido_em is null`. Em 20/10/2026, `slot_hold` tinha 0 linhas.
+
+### 21.4 `conferir_horario_da_ia(p_clinic_id, p_conversation_id, p_service_link_id, p_starts_at, p_ends_at, p_reserva_propria)` (interna)
+
+`STABLE`, `search_path` vazio, EXECUTE revogado de `public`, `anon`, `authenticated` e `service_role` (só o dono, de dentro das RPCs). Devolve o primeiro motivo de recusa, nesta ordem, ou nulo, mais o contato, o profissional, o fim, o recurso, o fuso e os nomes que o chamador usa:
+1. a conversa é da clínica, está em `ia_atendendo` e `ia_pode_atender(clínica, número da conversa, phone_key do contato)` diz sim; senão `ia_desligada`;
+2. a versão **publicada em uso** (a última publicada) tem `skills->>'agendar' = 'true'` e as duas colunas preenchidas; senão `agenda_nao_configurada`;
+3. o vínculo é ativo, da clínica, com `bookable_by_ai`, de procedimento ativo com `bookable_by_ai` e de profissional ativo; senão `vinculo_invalido` (também com fim menor ou igual ao início);
+4. fim = início + `service_link.duration_min` (no agendar, o fim da reserva); início antes de `now()` + antecedência: `antes_da_antecedencia`; depois de `now()` + horizonte: `depois_do_horizonte`;
+5. cabe inteiro numa janela de `professional_schedule` do profissional (todas as unidades) no dia e na hora **locais** do fuso da clínica (`clinic.timezone`, padrão `America/Fortaleza`), com a regra do motor da Agenda (`lib/domain/scheduling.ts`): `weekday` 0 é domingo, a janela com fim menor ou igual ao início vira o dia, janelas encostadas se somam (`range_agg`); senão `fora_da_jornada`;
+6. sobreposição com `professional_block` do profissional: `bloqueado`; com consulta não cancelada do profissional (o encaixe conta) ou de qualquer profissional no recurso do procedimento: `ocupado`; com reserva viva (`expires_at > now()` e não consumida) de **outra** conversa no mesmo profissional (a reserva sem conversa, da recepção, inclusive) ou, revisão da E4, num vínculo de qualquer profissional cujo procedimento usa o mesmo recurso: `reservado_por_outra_conversa`. `p_reserva_propria` fica fora da conferência de reservas.
+
+### 21.5 `reservar_horario_da_ia(p_clinic_id uuid, p_conversation_id uuid, p_service_link_id uuid, p_starts_at timestamptz, p_job_id uuid) returns jsonb`
+
+`SECURITY DEFINER`, `search_path` vazio, EXECUTE **só** da `service_role` (revogado de `public`, `anon` e `authenticated`). Na ordem:
+1. parâmetro nulo: 22004 `parametro_nulo`;
+2. trava da conversa; a do profissional do vínculo; a do recurso, quando o procedimento tem (vínculo de outra clínica fica sem as duas últimas e cai em `vinculo_invalido`);
+3. **idempotência:** já existe reserva com este `p_job_id`, viva ou consumida: devolve ela, com `reutilizado: true` (de outra conversa ou clínica: 22023 `job_de_outra_conversa`);
+4. `conferir_horario_da_ia`; motivo: `{ ok: false, motivo }`; o vínculo que trocou de profissional ou o procedimento que trocou de recurso entre a trava e a conferência: `vinculo_invalido`;
+5. apaga, com `FOR UPDATE SKIP LOCKED`, as reservas vencidas não consumidas do profissional e as não consumidas desta conversa (uma por conversa; a consumida fica);
+6. insere a reserva: `created_by 'ia'`, o contato da conversa, o vínculo, a conversa, o job e `expires_at = now() + 10 minutos`;
+7. devolve `{ ok: true, hold_id, starts_at, ends_at, expires_at, reutilizado: false }`.
+
+### 21.6 `agendar_pela_ia(p_clinic_id uuid, p_conversation_id uuid, p_job_id uuid) returns jsonb`
+
+`SECURITY DEFINER`, `search_path` vazio, EXECUTE **só** da `service_role`. Sem `p_hold_id`: usa a reserva viva da conversa. Na ordem:
+1. parâmetro nulo: 22004;
+2. trava da conversa;
+3. **idempotência:** a reserva com `job_id_do_agendar = p_job_id` devolve a consulta dela, com `reutilizado: true` (de outra conversa: 22023; consulta apagada depois: `reserva_inexistente`);
+4. a reserva não consumida mais nova da conversa; sem ela, `reserva_inexistente`; vencida, `reserva_vencida`;
+5. trava do profissional, a reserva travada (`FOR UPDATE`) e lida de novo (consumida no meio: `reserva_inexistente`; vencida: `reserva_vencida`) e a trava do recurso, quando o procedimento tem;
+6. `conferir_horario_da_ia` sem a própria reserva e com o fim dela; `ocupado` vira `conflito`; vínculo que trocou de profissional ou recurso: `vinculo_invalido`;
+7. a **confirmação depois da pergunta** (21.1); sem ela, `sem_confirmacao_do_paciente`;
+8. a consulta: `status 'agendado'`, `created_by 'ia'`, `approval_status 'pendente'`, `send_confirmation false` (o `planejar_reguas` só planeja consulta com `send_confirmation`), `oferecer_vaga_ao_cancelar false`, `is_overbooking false`, `source 'interna'`, o contato da conversa, o profissional e o vínculo da reserva, o recurso do procedimento, o início e o fim da reserva. 23P01 (`exclusion_violation`): `{ ok: false, motivo: 'conflito' }`, nada gravado. Os gatilhos de `appointment` rodam como em qualquer consulta (histórico inicial, conversão do lead e etapa do funil; 21.10, pontos abertos);
+9. a reserva consumida: `consumido_em = now()`, `appointment_id`, `job_id_do_agendar` e `expires_at = least(expires_at, now())`;
+10. o evento na conversa (`direction 'saida'`, `author 'sistema'`, `content_type 'evento'`, `billable false`, `cost_cents 0`): "A IA marcou {DD/MM} às {HH24:MI} ({procedimento}, {profissional}), pendente de aprovação da equipe.", no fuso da clínica;
+11. devolve `{ ok: true, appointment_id, starts_at, ends_at, reutilizado: false }`.
+
+**Aprovar e recusar** são da Agenda, pela sessão (`app/(app)/agenda/actions.ts`): aprovar a consulta da IA grava, no mesmo update, `approval_status 'aprovado'`, `send_confirmation true` e `oferecer_vaga_ao_cancelar true` (o padrão da coluna; correção da revisão, que o contrato não cobria: confirmar com o dono); recusar grava `approval_status 'recusado'`, `status 'cancelado_clinica'` e `oferecer_vaga_ao_cancelar false` e, depois do histórico e da trilha, chama a RPC de 21.7. As duas leem antes se a consulta é da IA e repetem `created_by` e `is_overbooking` no filtro do update. Trilha: `aprovou_consulta_da_ia` e `recusou_consulta_da_ia` (o encaixe continua com `aprovou_encaixe` e `recusou_encaixe`).
+
+### 21.7 `devolver_conversa_da_consulta_recusada(p_clinic_id uuid, p_appointment_id uuid) returns boolean`
+
+`SECURITY DEFINER`, `search_path` vazio, EXECUTE para `authenticated` e `service_role` (nada para `public` e `anon`). Parâmetro nulo: 22004. A sessão precisa de `user_can_write(p_clinic_id)` (o papel leitura não devolve), e o profissional só na própria agenda; senão 42501 `sem_permissao`. A consulta tem de ser da clínica, `created_by 'ia'` e `approval_status 'recusado'`; a conversa vem da reserva (`slot_hold.appointment_id`). Não achou: `false`. Conversa em `ia_atendendo`: vai para `aguardando_humano` com `awaiting_reply true`, e os jobs pendentes de `responder_com_ia` dela são cancelados (`last_error 'conversa_fora_da_ia'`, `FOR UPDATE SKIP LOCKED`). Em qualquer caso, o evento "A equipe recusou a consulta marcada pela IA. Avise o paciente." e `true`. Quem chama: `recusarEncaixeAction`, só para a consulta da IA (nunca para o encaixe); erro, exceção ou `false` não desfazem a recusa: a action volta com aviso e a tela o mostra (brief, Tela 3).
+
+### 21.8 Motivos e o que a IA faz com eles
+
+| Motivo | Quem devolve | O que a IA faz (prompt) |
+|---|---|---|
+| `ia_desligada` | as duas | o turno para como a trava entre rodadas (passagem sem frase) |
+| `agenda_nao_configurada`, `vinculo_invalido` | as duas | passa para a equipe com `pedido_de_agenda` |
+| `antes_da_antecedencia`, `depois_do_horizonte`, `fora_da_jornada`, `bloqueado`, `ocupado`, `reservado_por_outra_conversa`, `conflito` (só o agendar) | as duas | diz que o horário não está mais disponível e oferece outros |
+| `reserva_inexistente`, `reserva_vencida` | o agendar | busca de novo o mesmo dia e período; se o horário vier, reserva e pede a confirmação outra vez |
+| `sem_confirmacao_do_paciente` | o agendar | pede a confirmação e só marca depois da resposta |
+
+A lista é fechada nos dois lados: `MOTIVOS_DA_RESERVA` e `MOTIVOS_DO_AGENDAR` (`lib/agente/ferramentas/`), e um teste de unidade confere que todo motivo da migration é conhecido do código. Motivo desconhecido é falha fechada.
+
+### 21.9 Leitura, Agenda, tempo real e tipos
+
+- **Tela 6:** `COLUNAS_DA_CONFIG_DO_AGENTE` (`lib/queries/agente.ts`) e o carregador do motor (`lib/agente/contexto.ts`) leem as duas colunas; `salvarAgendaAction` grava só no rascunho, pelo caminho das outras partes (guarda de papel, `gravarNoRascunho`, trilha sem valor); `salvarHabilidadesAction` lê a agenda do rascunho junto com `skills` e recusa ligar Agendar sem os dois valores.
+- **Agenda:** `fetchAgendaDia` lê `conversation_id` e `consumido_em` da reserva e filtra `consumido_em is null`; `fetchPendencias` continua listando toda consulta `pendente`, e `ehConsultaDaIa` (`created_by 'ia'` e sem encaixe) separa a consulta da IA do encaixe no painel, no menu e nas actions.
+- **Tempo real** (`lib/realtime/use-agenda-channel.ts`): além do INSERT, o UPDATE de `slot_hold` (filtro `clinic_id`); a reserva consumida ou vencida sai do cache, e a reserva nova de uma conversa tira a anterior da mesma conversa, sem assinar DELETE (que vazaria entre clínicas).
+- **Tipos** (`lib/supabase/database.types.ts`): escritos à mão no formato gerado, as seis colunas de `slot_hold` com as três FKs, as duas de `ai_agent_config` e as três RPCs (`reservar_horario_da_ia` e `agendar_pela_ia` devolvem `Json`; `devolver_conversa_da_consulta_recusada`, `boolean`). Depois de aplicar, regenerar (`supabase gen types typescript --project-id imizkroxevcawomvgrbn`): o gerado também lista `conferir_horario_da_ia` e substitui os escritos à mão.
+
+### 21.10 Códigos de erro, ensaio, provas, ordem de publicação, rollback e pontos abertos
+
+**Códigos:** 22004 (parâmetro nulo), 22023 (`job_de_outra_conversa`), 42501 (sessão sem permissão, ou executando o reservar e o agendar), 23514 (CHECKs), 23503 (o gatilho de clínica), 55P03 (`lock_timeout`). O 23P01 do insert da consulta vira o motivo `conflito`, sem gravar nada. Resultado de negócio volta em JSON, nunca em exceção; 40001 e 40P01 nunca são levantados de propósito (o PostgREST repetiria sem limite). Nenhum ALTER em `message`, `conversation` nem `contact`. Nenhum texto de paciente em erro, log ou evento: os eventos levam data, hora, procedimento e profissional.
+
+**Travas da migration:** `lock_timeout` de 3 s. Ordem fixa: `ai_agent_config` em ACCESS EXCLUSIVE (fria, poucas linhas; ADD COLUMN nula com CHECK), depois as funções e, **por último**, `slot_hold` em ACCESS EXCLUSIVE (0 linhas) com SHARE ROW EXCLUSIVE em `service_link`, `conversation` e `appointment` pelas FKs novas, para a escrita nessas três esperar só o fim da migration (alvo: bem menos de 1 s). Se cair por 55P03, nada fica gravado: tentar de novo minutos depois. Horário calmo.
+
+**Ensaio** (`~/.claude/plans/e4-agenda/ensaio-20261020130000.sql`, regenerado na revisão de 20/10/2026): a migration do repositório copiada sem mudança (conferido byte a byte de novo na fase final: o trecho copiado e o arquivo têm o mesmo md5, `2c72f55c547b84f3bc3b2e0657d68a67`; se o arquivo mudar, regenerar o ensaio), numa transação que termina em ROLLBACK, com duas clínicas `e_de_teste` criadas nela (A em Fortaleza, número `fake`, liberada em contatos com telefones fictícios da equipe, versão publicada com Agendar, antecedência de 2 h e horizonte de 30 dias, quatro profissionais, quatro procedimentos, dois recursos, oito vínculos, jornadas, bloqueio e consultas; B só com o mínimo), cinco usuários sintéticos e a sessão simulada por `request.jwt.claims`. As pré-condições conferem o md5 de **32 funções** lidas na produção em 20/10/2026 (as quatro trocadas e as que a migration chama ou o ensaio atravessa) e recusam com a migration já aplicada; se alguma mudou, **pare**: ler de novo, refazer o rollback e o ensaio. Prova o reservar (fuso, janelas encostadas, a janela que vira o dia, cada motivo, a idempotência, uma reserva por conversa, a vencida que sai, a reserva de outra conversa no mesmo recurso), o agendar (cada motivo, a pergunta e a confirmação, a pergunta que falhou, a consulta pendente com as colunas certas, a reserva consumida, o evento, a idempotência, a recepção por cima, o 23P01 de verdade por um gatilho de ensaio), a devolução (com e sem a conversa na IA, quem pode e quem não pode), a limpeza, a cópia das colunas no rascunho e na restauração, o gatilho, os CHECKs, os grants e o catálogo. **Validado só num Postgres 18 local descartável** (as 104 migrations do repositório sobre stubs do Supabase, com o catálogo conferido contra o da produção): `ENSAIO OK` com 88 chamadas conferidas; 44 sabotagens (a migration com um defeito cada: travas da conversa, do profissional e do recurso, antecedência, horizonte, as duas idempotências, a mensagem do paciente, a pergunta da IA, consulta aprovada, `send_confirmation`, a oferta da vaga, o fuso, a janela que vira o dia, o encaixe, o recurso, o bloqueio, a versão em uso, os grants e outras), todas pegas por um assert de comportamento antes do md5; migration e rollback devolvem o catálogo igual. **Não rodado na produção.** Enquanto roda, segura ACCESS EXCLUSIVE em `ai_agent_config` e `slot_hold` e SHARE ROW EXCLUSIVE em `service_link`, `conversation` e `appointment` até o ROLLBACK (alguns segundos; `statement_timeout` de 30 s): só com o ok do dono e em horário calmo, por `ferramentas/executar.js` ou o SQL editor, nunca pela API.
+
+**Concorrência de verdade** (o que um ensaio de uma transação só não alcança): `scripts/dev/prova-e4-concorrencia-local.mjs`, com os dados em `scripts/dev/prova-e4-concorrencia-dados.sql`, só contra um Postgres local (`127.0.0.1`; o `pg` vem por `PG_MODULE`, não é dependência do projeto), com duas conexões e a transação aberta de propósito: 10 cenários (a segunda conversa espera a trava e perde; cinco ao mesmo tempo, uma reserva; o mesmo job no reservar e no agendar espera e reutiliza; o 23P01 de verdade vira `conflito`; a IA primeiro e a recepção recebe 23P01; dois turnos da conversa no mesmo profissional e em dois profissionais deixam uma reserva; duas conversas em dois profissionais da mesma sala, a segunda espera a trava do recurso e perde; o agendar espera a trava do recurso). Rodada em 20/10/2026: `CONCORRENCIA LOCAL OK`; sem a trava do profissional, da conversa ou do recurso, ela falha.
+
+**Provas para rodar depois de aplicar (escritas, NÃO rodadas, porque gravam no banco):** `npm run test:rls -- tests/rls/ia-agenda.test.ts` (14 casos: as duas colunas por papel e por clínica, o CHECK pela sessão, a versão publicada intocável, as reservas por clínica e pelo profissional, a sessão sem consumir nem reapontar reserva e sem criar reserva com vínculo, conversa ou consulta de outra clínica, as RPCs só para o servidor, a devolução por papel e por clínica) e `npm run test:integration -- tests/integration/ia-agenda-concorrencia.test.ts` (12 casos: a corrida de duas e de cinco conversas, a recepção por cima, a IA e a recepção ao mesmo tempo, a reserva vencida, as duas idempotências ao mesmo tempo, o job repetido, dois turnos da conversa, a conversa em dois profissionais, a mensagem entre a reserva e a pergunta, a sala de dois profissionais). Os casos "ao mesmo tempo" desse arquivo disparam as RPCs por HTTP e conferem o resultado final, sem forçar a sobreposição dentro do Postgres; a prova da espera na trava é a do script local acima.
+
+**Ordem de publicação:**
+1. **Ensaio na produção**, só com o ok do dono e em horário calmo; `ENSAIO OK`.
+2. **Aplicar a migration, só com o ok do dono**, logo depois do ensaio.
+3. Regenerar os tipos e comparar com os escritos à mão.
+4. Rodar a RLS e a integração acima.
+5. **Só depois o código.** O código novo antes da migration quebra: a Tela 6 não carrega (42703 nas colunas novas: "Não foi possível carregar o assistente de IA") e o turno da IA no WhatsApp falha ao ler a versão publicada (a mesma lista de colunas), então a IA das duas clínicas para de responder e as conversas voltam para a equipe pela retentativa e pela varredura. A migration com o código de hoje não muda nada (colunas nulas, RPCs sem chamador, a mesma limpeza para a reserva não consumida).
+6. Ligar na clínica (operação, com o ok do dono): `supabase/operacao/agente-ia.md`, "Agenda pela IA (E4)".
+
+**Rollback** (manual; cabeçalho da migration e de `supabase/operacao/rollback/20261020130000-corpos-anteriores.sql`): **primeiro** voltar o código (o novo lê e grava as colunas e chama as três RPCs); depois rodar o arquivo de rollback inteiro, numa transação, no SQL editor: (1) apaga as quatro funções novas; (2) devolve os quatro corpos e os dois comentários de antes (`agente_garantir_rascunho` `5739f4a3…`, `restaurar_versao_do_agente` `49967736…`, `exigir_cadastro_da_mesma_clinica` `63fd7012…`, `limpar_holds_vencidos` `5d6c4724…`), **antes** de apagar as colunas; (3) o gatilho de clínica da `slot_hold` como era (só `clinic_id` e `professional_id`); (4) apaga as colunas novas de `slot_hold` (com índices e CHECKs) e de `ai_agent_config` (com os grants). Mesmas travas (`lock_timeout` de 3 s, horário calmo). Ficam as consultas que a IA marcou (são consultas como as outras, com `created_by 'ia'`) e as reservas, sem o elo com a conversa; perdem-se a antecedência e o horizonte que as clínicas preencheram. Conferir no fim os quatro md5, nenhuma das quatro funções novas e nenhuma das oito colunas novas. Testado no Postgres local: migration e rollback devolvem o catálogo idêntico.
+
+**Pontos abertos (para o dono, antes de ligar):**
+- **A trava K corta a IA depois de marcar** (achado alto da revisão): o insert da consulta pendente dispara `converter_lead_em_paciente` (o contato vira `kind 'paciente'`) e `contato_tem_sinal_de_paciente` conta qualquer consulta, até cancelada. Pela D-B de 13/10/2026 (17.13), `ia_pode_falar_com` e `ia_atende_no_whatsapp` passam a dizer não para o telefone da equipe que não foi forçado: a resposta depois do agendar não sai, o telefone deixa de acionar o assistente para sempre e "Confirmar presença" só funciona com telefone forçado. Provado no Postgres local. Saídas propostas, as duas mudam regra do dono: (a) migration nova em que o sinal ignora a consulta da IA e os gatilhos de conversão e de funil pulam a consulta pendente (convertendo na aprovação), com ensaio; (b) regra operacional: Agendar e Confirmar presença só com telefone forçado pela equipe Conduzza.
+- **Conversão e funil antes da aprovação:** os gatilhos AFTER INSERT de `appointment` (`converter_lead_em_paciente` e `avancar_funil_ao_agendar`) rodam no insert da consulta pendente: o lead vira paciente e vai para "agendou" antes de a equipe aprovar, e a recusa não desfaz (Leads e Resultados contam). Ligado ao ponto anterior.
+- **Consulta da IA cancelada pelo menu, sem Recusar,** continua em "Pendente de você" e a conversa continua com a IA, sem evento (o encaixe já se comportava assim): decidir se cancelar a pendente equivale a recusar.
+- **`oferecer_vaga_ao_cancelar true` ao aprovar:** a correção da revisão volta ao padrão da coluna; o contrato não cobria (confirmar).
+- **O evento "A IA reservou ..."** do plano não é gravado por nenhuma RPC: decidir quem grava, ou se fica só "A IA marcou ...".
+- **`skills->>'agendar' = 'true'`** segue o contrato à letra e aceita também a string `"true"`; a tela grava booleano, então só importa se alguém gravar `skills` por fora.

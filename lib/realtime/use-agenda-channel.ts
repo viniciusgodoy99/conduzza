@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { diaCivil } from "@/lib/domain/horarios";
+import { diaCivil, limitesDoDia } from "@/lib/domain/horarios";
 import {
   agendaKeys,
   fetchConsulta,
@@ -23,6 +23,38 @@ import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 // slot_hold: sem assinatura de DELETE (o filtro de coluna nao vale para
 // DELETE no Supabase e vazaria evento entre clinicas). A expiracao do hold e
 // timer no cliente sobre expires_at; a limpeza fisica e do worker.
+//
+// Reserva da IA (revisao da E4): INSERT e UPDATE. O UPDATE e o consumo pelo
+// agendar_pela_ia (a reserva virou consulta: sai da tela na hora, em vez de
+// ficar por baixo do bloco da consulta ate o vencimento original). A troca
+// de reserva da conversa (reservar_horario_da_ia apaga a anterior) chega
+// como o INSERT da nova: a anterior da MESMA conversa sai de todo dia em
+// cache, sem assinar DELETE.
+
+/**
+ * As reservas de um dia em cache depois de um evento de reserva (INSERT ou
+ * UPDATE). PURO. Sai a propria linha (vai de novo so se continua viva e e
+ * deste dia), sai a vencida, e a reserva viva de uma conversa tira a
+ * anterior da mesma conversa.
+ */
+export function reservasDepoisDoEvento(
+  atuais: readonly HoldDaAgenda[],
+  evento: HoldDaAgenda,
+  e: { agoraMs: number; doDia: boolean },
+): HoldDaAgenda[] {
+  const viva = (h: HoldDaAgenda) =>
+    (h.consumido_em ?? null) === null &&
+    new Date(h.expires_at).getTime() > e.agoraMs;
+  const conversa = evento.conversation_id ?? null;
+  const eventoVivo = viva(evento);
+  const ficam = atuais.filter(
+    (h) =>
+      h.id !== evento.id &&
+      viva(h) &&
+      !(eventoVivo && conversa !== null && h.conversation_id === conversa),
+  );
+  return eventoVivo && e.doDia ? [...ficam, evento] : ficam;
+}
 
 type AppointmentRow = {
   id: string;
@@ -128,19 +160,32 @@ export function useAgendaChannel(
     };
 
     const mesclarHold = (hold: HoldDaAgenda) => {
-      const dia = diaCivil(timezone, new Date(hold.starts_at));
-      const chave = agendaKeys.dia(clinicId, dia);
-      queryClient.setQueryData<AgendaDia>(chave, (atual) =>
-        atual
-          ? {
-              ...atual,
-              holds: [
-                ...atual.holds.filter((h) => h.id !== hold.id),
-                hold,
-              ].filter((h) => new Date(h.expires_at).getTime() > Date.now()),
-            }
-          : atual,
-      );
+      const agoraMs = Date.now();
+      const inicioDoHold = new Date(hold.starts_at).getTime();
+      const fimDoHold = new Date(hold.ends_at).getTime();
+      // Todo dia em cache: a reserva anterior da conversa pode ser de outro
+      // dia, e a consumida sai de onde estiver. A reserva entra em todo dia
+      // que ela toca (como fetchAgendaDia), no fuso da clinica.
+      const caches = queryClient.getQueriesData<AgendaDia>({
+        queryKey: ["agenda", clinicId, "dia"],
+      });
+      for (const [chave, dados] of caches) {
+        const dia = chave[3];
+        if (!dados || typeof dia !== "string") {
+          continue;
+        }
+        const { inicio, fim } = limitesDoDia(timezone, dia);
+        const holds = reservasDepoisDoEvento(dados.holds, hold, {
+          agoraMs,
+          doDia: inicioDoHold < fim.getTime() && fimDoHold > inicio.getTime(),
+        });
+        const mudou =
+          holds.length !== dados.holds.length ||
+          holds.some((h, i) => h !== dados.holds[i]);
+        if (mudou) {
+          queryClient.setQueryData<AgendaDia>(chave, { ...dados, holds });
+        }
+      }
     };
 
     const channel = supabase
@@ -164,6 +209,21 @@ export function useAgendaChannel(
         "postgres_changes",
         {
           event: "INSERT",
+          schema: "public",
+          table: "slot_hold",
+          filter: `clinic_id=eq.${clinicId}`,
+        },
+        (payload) => {
+          const hold = payload.new as HoldDaAgenda | null;
+          if (hold?.id) {
+            mesclarHold(hold);
+          }
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
           schema: "public",
           table: "slot_hold",
           filter: `clinic_id=eq.${clinicId}`,
