@@ -17,6 +17,7 @@ import {
   type DetalhesDaTrilhaDaExportacao,
   type LeadParaExportar,
 } from "@/lib/domain/exportacao-de-leads";
+import { indexarMapaDeAtribuicao } from "@/lib/domain/campanha-e-anuncio-do-lead";
 import {
   compararNaOrdemDaTela,
   filtrarLeads,
@@ -32,6 +33,7 @@ import {
   aplicarFiltrosDeLeads,
   consultaDosLeads,
   fetchAnunciosDaMeta,
+  fetchMapaDeAtribuicao,
   LEAD_SELECT,
   linhasDeConsentimentoDoLead,
   linhasDosLeads,
@@ -53,7 +55,9 @@ import { gerarCsv } from "@/lib/utils/csv";
 // 2. a clinica da tela igual a ativa (senao 409: trocou em outra aba);
 // 3. filtros validados (Zod);
 // 4. leitura paginada com a contagem na primeira pagina (acima do teto,
-//    recusa antes de ler o resto);
+//    recusa antes de ler o resto); campanha e anuncio (as chaves de
+//    Resultados, 20/10/2026) nao vao para o banco: o recorte deles e o
+//    proprio filtrarLeads no fim, com o mesmo mapa da clinica da tela;
 // 5. anuncios (campanha, conjunto e nome na Meta; titulo guardado) e a
 //    jornada, para os rotulos;
 // 6. o CSV inteiro montado;
@@ -201,7 +205,16 @@ export async function lerLeadsParaExportar(
   }
 
   // A decisao final e a MESMA funcao da tela: o banco so adiantou o recorte.
-  const lidos = filtrarLeads(linhas.map(normalizarLeadDaExportacao), filtros);
+  // O filtro de campanha precisa do mapa da clinica, lido pela mesma sessao
+  // com a mesma funcao da tela (falha derruba o arquivo inteiro).
+  const mapa = filtros.campanha
+    ? indexarMapaDeAtribuicao(await fetchMapaDeAtribuicao(supabase, clinicId))
+    : undefined;
+  const lidos = filtrarLeads(
+    linhas.map(normalizarLeadDaExportacao),
+    filtros,
+    mapa,
+  );
   if (lidos.length === 0) {
     return { tipo: "lidos", leads: [], etapas: new Map() };
   }
@@ -332,7 +345,10 @@ export async function exportarLeads({
       return {
         tipo: "recusada",
         status: 422,
-        mensagem: mensagemAcimaDoTeto(leitura.total),
+        mensagem: mensagemAcimaDoTeto(
+          leitura.total,
+          Boolean(filtros.campanha || filtros.anuncio),
+        ),
       };
     }
     if (leitura.leads.length === 0) {

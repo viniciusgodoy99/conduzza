@@ -8,6 +8,10 @@ import {
   ROTULO_ANUNCIO_NAO_IDENTIFICADO,
   rotuloDoAnuncio,
 } from "@/lib/domain/anuncio-do-whatsapp";
+import {
+  ehChaveDeAnuncio,
+  ehChaveDeCampanha,
+} from "@/lib/domain/campanha-e-anuncio-do-lead";
 import { diaCivil } from "@/lib/domain/horarios";
 import {
   campanhaDoContato,
@@ -85,14 +89,23 @@ const numero = new Intl.NumberFormat("pt-BR");
 
 /**
  * Recusa acima do teto, com o tamanho de verdade quando o banco contou.
- * Sem travessao: virgula e ponto.
+ * Sem travessao: virgula e ponto. Com filtro de campanha ou de anuncio, o
+ * banco conta ANTES desse recorte (ele acontece no codigo, depois da
+ * leitura), e a frase diz isso em vez de culpar a campanha.
  */
-export function mensagemAcimaDoTeto(total: number | null): string {
+export function mensagemAcimaDoTeto(
+  total: number | null,
+  comCampanhaOuAnuncio = false,
+): string {
+  const teto = numero.format(TETO_DA_EXPORTACAO_DE_LEADS);
   const quantos =
     total !== null && total > TETO_DA_EXPORTACAO_DE_LEADS
-      ? `São ${numero.format(total)} leads com esses filtros`
-      : `São mais de ${numero.format(TETO_DA_EXPORTACAO_DE_LEADS)} leads com esses filtros`;
-  return `${quantos}, e cada arquivo leva até ${numero.format(TETO_DA_EXPORTACAO_DE_LEADS)}. Filtre por etapa, origem, responsável ou período e exporte em partes.`;
+      ? numero.format(total)
+      : `mais de ${teto}`;
+  if (comCampanhaOuAnuncio) {
+    return `Sem contar campanha e anúncio, são ${quantos} leads com esses filtros, e cada arquivo leva até ${teto}. Filtre também por etapa, origem, responsável ou período e exporte em partes.`;
+  }
+  return `São ${quantos} leads com esses filtros, e cada arquivo leva até ${teto}. Filtre por etapa, origem, responsável ou período e exporte em partes.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,12 +131,37 @@ const diaSchema = z.preprocess(
 );
 
 /**
+ * Teto da chave de campanha no pedido ("texto:" e o nome digitado da
+ * campanha, sem limite no banco): folga para qualquer nome de verdade.
+ */
+export const LIMITE_DA_CHAVE_DE_CAMPANHA = 1000;
+
+// As chaves das linhas de Resultados (lib/domain/campanha-e-anuncio-do-lead.ts):
+// campanha "sem", "meta:<id>" ou "texto:<nome>"; anuncio "sem",
+// "nao_identificado" ou o id. Chave que nao existe no formato recusa (a tela
+// nunca manda; um link editado a mao mostra "não reconhecida" la).
+const campanhaSchema = z.preprocess(
+  vazioViraAusente,
+  z
+    .string()
+    .max(LIMITE_DA_CHAVE_DE_CAMPANHA)
+    .refine(ehChaveDeCampanha)
+    .optional(),
+);
+const anuncioSchema = z.preprocess(
+  vazioViraAusente,
+  z.string().refine(ehChaveDeAnuncio).optional(),
+);
+
+/**
  * O corpo do pedido de exportacao: os valores da barra de filtros, como na
  * URL da tela (vazio ou ausente = sem filtro). Campo a mais recusa.
  */
 export const filtrosDaExportacaoSchema = z.strictObject({
   etapa: chaveSchema,
   origem: chaveSchema,
+  campanha: campanhaSchema,
+  anuncio: anuncioSchema,
   resp: z.preprocess(vazioViraAusente, z.guid().optional()),
   de: diaSchema,
   ate: diaSchema,
@@ -138,6 +176,8 @@ export function valoresDaExportacao(
   return {
     etapa: filtros.etapa ?? "",
     origem: filtros.origem ?? "",
+    campanha: filtros.campanha ?? "",
+    anuncio: filtros.anuncio ?? "",
     resp: filtros.resp ?? "",
     de: filtros.de ?? "",
     ate: filtros.ate ?? "",
@@ -159,6 +199,12 @@ export function corpoDoPedidoDeExportacao(
   if (valores.origem) {
     corpo.origem = valores.origem;
   }
+  if (valores.campanha) {
+    corpo.campanha = valores.campanha;
+  }
+  if (valores.anuncio) {
+    corpo.anuncio = valores.anuncio;
+  }
   if (valores.resp) {
     corpo.resp = valores.resp;
   }
@@ -179,6 +225,14 @@ export function corpoDoPedidoDeExportacao(
 export type ResumoDosFiltrosDaExportacao = {
   etapa?: string;
   origem?: string;
+  /**
+   * Chave da campanha ("meta:<id>", "texto:<nome da campanha>" ou "sem"):
+   * dado da clinica, nunca de paciente. Cortada em
+   * CARACTERES_DA_CAMPANHA_NA_TRILHA, para a linha caber no teto de 2 KB.
+   */
+  campanha?: string;
+  /** Chave do anuncio (o id do anuncio, "nao_identificado" ou "sem"). */
+  anuncio?: string;
   /** Id do membro da equipe (nunca de paciente). */
   responsavel?: string;
   de?: string;
@@ -189,6 +243,20 @@ export type DetalhesDaTrilhaDaExportacao = {
   quantidade: number;
   filtros: ResumoDosFiltrosDaExportacao;
 };
+
+/**
+ * Caracteres da chave de campanha na trilha. audit_log.detalhes tem CHECK
+ * de 2.048 bytes (migration 20261020120000): 200 caracteres, mesmo os que o
+ * JSON escreve com 6 bytes, deixam folga para os outros filtros.
+ */
+export const CARACTERES_DA_CAMPANHA_NA_TRILHA = 200;
+
+function cortarParaATrilha(texto: string): string {
+  const caracteres = Array.from(texto);
+  return caracteres.length <= CARACTERES_DA_CAMPANHA_NA_TRILHA
+    ? texto
+    : `${caracteres.slice(0, CARACTERES_DA_CAMPANHA_NA_TRILHA).join("")}…`;
+}
 
 /**
  * O que a linha de audit_log da exportacao guarda alem de quem, quando e
@@ -206,6 +274,12 @@ export function detalhesDaTrilhaDaExportacao(
   }
   if (filtros.origem) {
     resumo.origem = filtros.origem;
+  }
+  if (filtros.campanha) {
+    resumo.campanha = cortarParaATrilha(filtros.campanha);
+  }
+  if (filtros.anuncio) {
+    resumo.anuncio = filtros.anuncio;
   }
   if (filtros.resp) {
     resumo.responsavel = filtros.resp;

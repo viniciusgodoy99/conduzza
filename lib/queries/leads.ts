@@ -2,6 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { LeituraDosDetalhes } from "@/lib/domain/anuncio-do-whatsapp";
 import {
+  ORIGEM_SEM_ATRIBUICAO,
+  type AnuncioDoMapa,
+  type MapaDeAtribuicaoLido,
+  type TituloDoMapa,
+} from "@/lib/domain/campanha-e-anuncio-do-lead";
+import {
   compararPorProximaAcao,
   consentimentoVigenteDeLinhas,
   idDeAnuncioValido,
@@ -55,6 +61,17 @@ export type LeadResumo = {
    * Obrigatorio de proposito: consulta que esquecer a coluna nao compila.
    */
   source_google_campaign_id: string | null;
+  /**
+   * Id da campanha, id do conjunto e o clique do anuncio da Meta, gravados
+   * pela ingestao: com eles a lista separa campanha e anuncio como
+   * Resultados conta (lib/domain/campanha-e-anuncio-do-lead.ts). Toda
+   * leitura daqui traz (LEAD_SELECT); opcionais no tipo so para o lead
+   * montado a mao continuar valendo (ausente vale nulo). Do clique so fica
+   * o fato de existir, nunca o identificador.
+   */
+  source_campaign_id?: string | null;
+  source_adset_id?: string | null;
+  com_ctwa_clid?: boolean;
   first_contact_at: string;
   last_contact_at: string | null;
   insurance: { id: string; name: string } | null;
@@ -119,6 +136,12 @@ export const leadsKeys = {
   detalhes: ["leads", "detalhe"] as const,
   /** Nomes dos membros (fetchClinicAuthorNames) para avatar de responsavel. */
   autores: (clinicId: string) => ["leads", clinicId, "autores"] as const,
+  /**
+   * Mapa da clinica (meta_anuncio e anuncio_do_whatsapp) para separar
+   * campanha e anuncio como Resultados (fetchMapaDeAtribuicao).
+   */
+  mapa: (clinicId: string) =>
+    ["leads", clinicId, "mapa-de-atribuicao"] as const,
 };
 
 /** Chave do anuncio da Meta de UM contato (painel do Atendimento). */
@@ -257,8 +280,11 @@ async function anexarAnunciosDaMeta(
 // source_google_campaign_id so existe depois da migration 20261005100000:
 // ela e aplicada ANTES de publicar este codigo, senao a lista inteira falha.
 // A exportacao de leads le este MESMO select (mais o tipo do contato).
+// source_campaign_id, source_adset_id e ctwa_clid (migration
+// 20260908150000, aplicada) sao o que Resultados le para separar campanha e
+// anuncio; o clique vira so com_ctwa_clid em normalizarLead.
 export const LEAD_SELECT =
-  "id, name, phone_e164, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
+  "id, name, phone_e164, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, source_campaign_id, source_adset_id, ctwa_clid, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
 
 /**
  * A consulta dos contatos da clinica, a base da lista (fetchLeads), do tempo
@@ -292,6 +318,7 @@ export function linhasDosLeads(data: unknown): Record<string, unknown>[] {
 /** O minimo do construtor do PostgREST que os filtros da barra usam. */
 type ConsultaFiltravel<Q> = {
   eq(coluna: string, valor: string): Q;
+  is(coluna: string, valor: null): Q;
   gte(coluna: string, valor: string): Q;
   lt(coluna: string, valor: string): Q;
 };
@@ -301,11 +328,16 @@ type ConsultaFiltravel<Q> = {
  * conversao, filtrosDeLeadsDosValores) aplicados no banco, para a
  * exportacao recortar a clinica inteira sem trazer tudo. Mesmo resultado de
  * filtrarLeads: igualdade exata em etapa, origem e responsavel (contato sem
- * canal ou sem responsavel nunca casa), e o periodo sobre first_contact_at,
- * inclusivo nas duas pontas. O navegador compara em milissegundos e o banco
- * guarda microssegundos: o inicio vale como "a partir do instante" e o fim
- * vira "antes do milissegundo seguinte", que e exatamente o que o
- * new Date(...).getTime() da lista aceita (ele corta, nao arredonda).
+ * canal ou sem responsavel nunca casa; "Sem atribuição" e o canal nulo), e
+ * o periodo sobre first_contact_at, inclusivo nas duas pontas. O navegador
+ * compara em milissegundos e o banco guarda microssegundos: o inicio vale
+ * como "a partir do instante" e o fim vira "antes do milissegundo
+ * seguinte", que e exatamente o que o new Date(...).getTime() da lista
+ * aceita (ele corta, nao arredonda).
+ *
+ * Campanha e anuncio NAO vao para o banco: as chaves de Resultados (o id
+ * aparado como no JavaScript, o mapa da clinica) so existem no codigo. A
+ * exportacao os aplica no fim, com o proprio filtrarLeads.
  */
 export function aplicarFiltrosDeLeads<Q extends ConsultaFiltravel<Q>>(
   consulta: Q,
@@ -316,7 +348,10 @@ export function aplicarFiltrosDeLeads<Q extends ConsultaFiltravel<Q>>(
     filtrada = filtrada.eq("funnel_stage", filtros.etapa);
   }
   if (filtros.origem) {
-    filtrada = filtrada.eq("source_channel", filtros.origem);
+    filtrada =
+      filtros.origem === ORIGEM_SEM_ATRIBUICAO
+        ? filtrada.is("source_channel", null)
+        : filtrada.eq("source_channel", filtros.origem);
   }
   if (filtros.responsavel) {
     filtrada = filtrada.eq("owner_user_id", filtros.responsavel);
@@ -367,6 +402,10 @@ export function normalizarLead(row: Record<string, unknown>): LeadResumo {
     source_ad_id: (row.source_ad_id as string | null) ?? null,
     source_google_campaign_id:
       (row.source_google_campaign_id as string | null) ?? null,
+    source_campaign_id: (row.source_campaign_id as string | null) ?? null,
+    source_adset_id: (row.source_adset_id as string | null) ?? null,
+    // "Nao nulo", como o SQL de Resultados (texto vazio conta).
+    com_ctwa_clid: row.ctwa_clid !== null && row.ctwa_clid !== undefined,
     first_contact_at: row.first_contact_at as string,
     last_contact_at: (row.last_contact_at as string | null) ?? null,
     insurance: (insuranceBruto ?? null) as LeadResumo["insurance"],
@@ -428,6 +467,114 @@ export async function fetchTotalDeLeads(
     throw new Error(error.message);
   }
   return count ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Mapa da clinica para separar campanha e anuncio como Resultados (20/10/2026)
+// ---------------------------------------------------------------------------
+
+/** Linhas por pagina do mapa: o teto de linhas por resposta do PostgREST. */
+const PAGINA_DO_MAPA = 1000;
+
+const MAPA_DA_META_SELECT =
+  "ad_id, campaign_id, campaign_name, ad_name, ultimo_dia_com_entrega, atualizado_em";
+const MAPA_DOS_TITULOS_SELECT = "ad_id, titulo";
+
+/**
+ * Todas as linhas de uma tabela de anuncios DA CLINICA PEDIDA (a RLS deixa
+ * ler todas as clinicas ativas da pessoa, e o mesmo anuncio pode estar em
+ * duas), paginadas pelo ad_id, a chave da tabela dentro da clinica. A
+ * contagem da primeira pagina diz quando acabou: o "Max rows" do projeto
+ * pode cortar a pagina antes de 1.000, e parar na pagina curta deixaria o
+ * mapa pela metade sem erro. LANCA em erro.
+ */
+async function lerTodasAsLinhasDaClinica(
+  supabase: SupabaseClient,
+  tabela: "meta_anuncio" | "anuncio_do_whatsapp",
+  colunas: string,
+  clinicId: string,
+): Promise<Record<string, unknown>[]> {
+  const linhas: Record<string, unknown>[] = [];
+  let cursor: string | null = null;
+  let contadas: number | null = null;
+  for (let pagina = 0; ; pagina += 1) {
+    let consulta = supabase
+      .from(tabela)
+      .select(colunas, pagina === 0 ? { count: "exact" } : undefined)
+      .eq("clinic_id", clinicId);
+    if (cursor !== null) {
+      consulta = consulta.gt("ad_id", cursor);
+    }
+    const { data, error, count } = await consulta
+      .order("ad_id", { ascending: true })
+      .limit(PAGINA_DO_MAPA);
+    if (error) {
+      throw new Error(error.message);
+    }
+    if (pagina === 0 && typeof count === "number") {
+      contadas = count;
+    }
+    // As colunas vem de variavel: o supabase-js so tipa select literal.
+    const lote = (Array.isArray(data) ? data : []) as unknown as Record<
+      string,
+      unknown
+    >[];
+    linhas.push(...lote);
+    const ultima = lote[lote.length - 1];
+    // Sem contagem, so a pagina vazia prova o fim.
+    if (!ultima || (contadas !== null && linhas.length >= contadas)) {
+      break;
+    }
+    cursor = ultima.ad_id as string;
+  }
+  return linhas;
+}
+
+/**
+ * O mapa da clinica que separa campanha e anuncio como Resultados conta
+ * (lib/domain/campanha-e-anuncio-do-lead.ts): TODAS as linhas de
+ * meta_anuncio (o casamento por id do anuncio e por id da campanha, e o
+ * nome da campanha) e de anuncio_do_whatsapp (o titulo do anuncio, so para
+ * o rotulo). Pela sessao: todo membro ativo le as duas (RLS). Isomorfica,
+ * como fetchLeads. LANCA em erro: mapa pela metade separaria errado calado.
+ */
+export async function fetchMapaDeAtribuicao(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<MapaDeAtribuicaoLido> {
+  const [daMeta, titulos] = await Promise.all([
+    lerTodasAsLinhasDaClinica(
+      supabase,
+      "meta_anuncio",
+      MAPA_DA_META_SELECT,
+      clinicId,
+    ),
+    lerTodasAsLinhasDaClinica(
+      supabase,
+      "anuncio_do_whatsapp",
+      MAPA_DOS_TITULOS_SELECT,
+      clinicId,
+    ),
+  ]);
+  return {
+    anuncios: daMeta.map(
+      (row): AnuncioDoMapa => ({
+        ad_id: row.ad_id as string,
+        campaign_id: row.campaign_id as string,
+        campaign_name: (row.campaign_name as string | null) ?? null,
+        ad_name: (row.ad_name as string | null) ?? null,
+        ultimo_dia_com_entrega:
+          (row.ultimo_dia_com_entrega as string | null) ?? null,
+        atualizado_em: row.atualizado_em as string,
+      }),
+    ),
+    titulos: titulos.map(
+      (row): TituloDoMapa => ({
+        ad_id: row.ad_id as string,
+        titulo: (row.titulo as string | null) ?? null,
+      }),
+    ),
+  };
 }
 
 /** Regua de follow-up LIGADA de uma etapa da jornada. */

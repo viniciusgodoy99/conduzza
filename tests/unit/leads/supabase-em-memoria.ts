@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Um PostgREST de mentira, em memoria, para os testes da exportacao de
 // leads: guarda as tabelas, aplica os filtros que o construtor do
-// supabase-js monta (eq, gt, gte, lt, lte, in), a ordem, o limite e a
+// supabase-js monta (eq, is, gt, gte, lt, lte, in), a ordem, o limite e a
 // contagem exata, e registra cada consulta e cada insert. Compara instantes
 // como o Postgres: com MICROSSEGUNDOS (o timestamptz que a API devolve), e
 // nao com os milissegundos do JavaScript; e isso que deixa o teste pegar a
@@ -13,7 +13,7 @@ export type Linha = Record<string, unknown>;
 export type ErroDoBanco = { code?: string; message: string };
 
 type Filtro = {
-  operador: "eq" | "gt" | "gte" | "lt" | "lte" | "in";
+  operador: "eq" | "is" | "gt" | "gte" | "lt" | "lte" | "in";
   coluna: string;
   valor: unknown;
 };
@@ -61,6 +61,10 @@ function comparar(a: unknown, b: unknown): number {
 
 function passa(linha: Linha, filtro: Filtro): boolean {
   const valor = linha[filtro.coluna];
+  if (filtro.operador === "is") {
+    // IS NULL (o unico uso: "Sem atribuição"); coluna ausente vale nulo.
+    return filtro.valor === null && (valor === null || valor === undefined);
+  }
   if (filtro.operador === "in") {
     return (filtro.valor as unknown[]).some(
       (item) =>
@@ -129,6 +133,9 @@ class Consulta implements PromiseLike<Resultado> {
 
   eq(coluna: string, valor: unknown): this {
     return this.filtro("eq", coluna, valor);
+  }
+  is(coluna: string, valor: null): this {
+    return this.filtro("is", coluna, valor);
   }
   gt(coluna: string, valor: unknown): this {
     return this.filtro("gt", coluna, valor);

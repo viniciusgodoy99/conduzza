@@ -9,6 +9,7 @@ import { DetalheDaOrigem } from "@/components/relatorios/detalhe-da-origem";
 import { OrigemDosLeads } from "@/components/relatorios/origem-dos-leads";
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import { Button } from "@/components/ui/button";
+import type { PeriodoDaLista } from "@/lib/domain/campanha-e-anuncio-do-lead";
 import type { DimensaoDaOrigem } from "@/lib/domain/exportacao-de-resultados";
 import { formatarPercentual, percentualDe } from "@/lib/domain/formato-compacto";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
@@ -23,11 +24,14 @@ import type {
 // campanha vem o lead, quanto dele tem origem identificada e quanto da coorte
 // ja compareceu. Sem lime nesta aba: nenhum numero aqui e o destaque da tela.
 // Taxas de coorte nao ganham variacao (a coorte anterior teve mais tempo
-// para maturar). Sem drill-down nominal: so contagens.
+// para maturar). Aqui so contagens, nenhum nome: o drill-down e a lista de
+// Leads, outra tela, com a trilha de leitura dela.
 // Fase 4: Custo por lead, Campanhas e o detalhe por campanha leem
 // campanhas_do_periodo (uma verdade so: as mesmas linhas nos tres).
 // O detalhe por anuncio (20/10/2026) le anuncios_do_periodo, buscada pelo
 // pai so quando essa dimensao esta escolhida.
+// Os rotulos da Origem dos leads e do Detalhe da origem abrem essa lista com
+// o mesmo periodo e os mesmos leads da linha (pedido do dono em 20/10/2026).
 
 function tentarDeNovo(acao: () => void) {
   return (
@@ -39,6 +43,7 @@ function tentarDeNovo(acao: () => void) {
 
 export function AbaMarketing({
   funil,
+  periodo,
   campanhas,
   campanhasComErro,
   aoTentarCampanhasDeNovo,
@@ -52,6 +57,8 @@ export function AbaMarketing({
   aoMudarDimensao,
 }: {
   funil: Periodizado<FunilDoPeriodo>;
+  /** O periodo da tela (dias civis da clinica), para os links da lista. */
+  periodo: PeriodoDaLista;
   /** undefined = carregando (campanhas_do_periodo) */
   campanhas: Periodizado<CampanhasDoPeriodo> | undefined;
   campanhasComErro: boolean;
@@ -140,7 +147,7 @@ export function AbaMarketing({
       </section>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-        <OrigemDosLeads funil={atual} />
+        <OrigemDosLeads funil={atual} periodo={periodo} />
         <CampanhasSecao
           campanhas={campanhas}
           podeVerValores={podeVerValores}
@@ -152,6 +159,7 @@ export function AbaMarketing({
 
       <DetalheDaOrigem
         funil={atual}
+        periodo={periodo}
         campanhas={campanhas?.atual}
         campanhasComErro={campanhasComErro}
         tentarCampanhasDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}

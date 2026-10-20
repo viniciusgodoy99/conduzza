@@ -1,8 +1,10 @@
 "use client";
 
 import { X } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { CANAIS } from "@/components/leads/rotulos";
+import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,15 +14,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  ORIGEM_SEM_ATRIBUICAO,
+  ROTULO_SEM_ATRIBUICAO,
+  type OpcaoDoFiltro,
+} from "@/lib/domain/campanha-e-anuncio-do-lead";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import type { ValoresDosFiltrosDeLeads } from "@/lib/domain/leads-ui";
 
-// Filtros da Tela 4: etapa, origem, responsavel e periodo de entrada. Os
-// valores vivem na URL (o pai grava); aqui e so a barra, solta na pagina
-// (fora de cartao), no desenho do design system Conduzza (docs/06 secao
-// 5.4). O sentinela evita value="" no Radix Select, mesmo padrao do
-// SelectFiltro da Agenda. Os mesmos valores vao para a exportacao (o
-// arquivo sai com os leads que estes filtros mostram).
+// Filtros da Tela 4: etapa, origem, campanha, anuncio, responsavel e
+// periodo de entrada. Os valores vivem na URL (o pai grava); aqui e so a
+// barra, solta na pagina (fora de cartao), no desenho do design system
+// Conduzza (docs/06 secao 5.4). O sentinela evita value="" no Radix Select,
+// mesmo padrao do SelectFiltro da Agenda. Os mesmos valores vao para a
+// exportacao (o arquivo sai com os leads que estes filtros mostram).
+//
+// Campanha e Anúncio (pedido do dono em 20/10/2026) separam os leads como
+// Resultados conta (lib/domain/campanha-e-anuncio-do-lead.ts); as opcoes
+// vem do pai, a partir dos leads carregados. A Origem ganhou "Sem
+// atribuição" (o canal vazio, a mesma linha de Resultados). No fim da
+// barra, o resumo que o pai manda (quantos leads batem com os filtros).
 
 const TODOS = "__todos__";
 
@@ -34,21 +47,31 @@ export type ValoresFiltros = ValoresDosFiltrosDeLeads;
 /** Membro que aparece numa lista de responsavel (filtro, Reatribuir, Novo lead). */
 export type OpcaoDeResponsavel = { id: string; nome: string };
 
+/** A Origem: os 8 canais e, no fim, o canal vazio. */
+const OPCOES_DE_ORIGEM: OpcaoDoFiltro[] = [
+  ...CANAIS.map((canal) => ({ value: canal.valor, label: canal.rotulo })),
+  { value: ORIGEM_SEM_ATRIBUICAO, label: ROTULO_SEM_ATRIBUICAO },
+];
+
 function SelectFiltro({
   placeholder,
   value,
   onChange,
   opcoes,
+  dicaDeIndisponivel = null,
 }: {
   placeholder: string;
   value: string;
   onChange: (v: string) => void;
-  opcoes: { value: string; label: string }[];
+  opcoes: OpcaoDoFiltro[];
+  /** Filtro que nao funciona agora: visivel, desabilitado e com a dica. */
+  dicaDeIndisponivel?: string | null;
 }) {
-  return (
+  const select = (
     <Select
       value={value || TODOS}
       onValueChange={(v) => onChange(v === TODOS ? "" : v)}
+      disabled={dicaDeIndisponivel !== null}
     >
       <SelectTrigger
         className="h-10 w-auto max-w-[200px] min-w-[128px] text-[13px] shadow-xs"
@@ -56,15 +79,26 @@ function SelectFiltro({
       >
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
-      <SelectContent>
+      {/* Nome de campanha e titulo de anuncio podem ser longos: a lista
+          quebra a linha em vez de passar da largura da tela. */}
+      <SelectContent className="max-w-[min(28rem,calc(100vw-2rem))]">
         <SelectItem value={TODOS}>{placeholder}</SelectItem>
         {opcoes.map((opcao) => (
-          <SelectItem key={opcao.value} value={opcao.value}>
+          <SelectItem
+            key={opcao.value}
+            value={opcao.value}
+            className="break-words"
+          >
             {opcao.label}
           </SelectItem>
         ))}
       </SelectContent>
     </Select>
+  );
+  return dicaDeIndisponivel === null ? (
+    select
+  ) : (
+    <DisabledWithHint hint={dicaDeIndisponivel}>{select}</DisabledWithHint>
   );
 }
 
@@ -72,6 +106,10 @@ export function FiltrosLeads({
   valores,
   responsaveis,
   jornada,
+  opcoesDeCampanha,
+  dicaDaCampanha = null,
+  opcoesDeAnuncio,
+  resumo,
   aoMudar,
   aoLimpar,
 }: {
@@ -79,6 +117,17 @@ export function FiltrosLeads({
   /** Ja ordenados; o pai decide quem entra (ativos e donos atuais) */
   responsaveis: OpcaoDeResponsavel[];
   jornada: EtapaDaJornada[];
+  /** Campanhas dos leads carregados, mais leads primeiro (opcoesDeCampanha) */
+  opcoesDeCampanha: OpcaoDoFiltro[];
+  /**
+   * Por que o filtro de campanha nao funciona agora (o mapa da clinica
+   * carregando ou com erro); null quando funciona.
+   */
+  dicaDaCampanha?: string | null;
+  /** Anuncios dos leads carregados, mais leads primeiro (opcoesDeAnuncio) */
+  opcoesDeAnuncio: OpcaoDoFiltro[];
+  /** Quantos leads batem com os filtros (regiao viva, no fim da barra) */
+  resumo?: ReactNode;
   aoMudar: (campo: keyof ValoresFiltros, valor: string) => void;
   aoLimpar: () => void;
 }) {
@@ -89,6 +138,8 @@ export function FiltrosLeads({
   const temAtivo = Boolean(
     valores.etapa ||
     valores.origem ||
+    valores.campanha ||
+    valores.anuncio ||
     valores.resp ||
     valores.de ||
     valores.ate,
@@ -106,10 +157,20 @@ export function FiltrosLeads({
         placeholder="Origem"
         value={valores.origem}
         onChange={(v) => aoMudar("origem", v)}
-        opcoes={CANAIS.map((canal) => ({
-          value: canal.valor,
-          label: canal.rotulo,
-        }))}
+        opcoes={OPCOES_DE_ORIGEM}
+      />
+      <SelectFiltro
+        placeholder="Campanha"
+        value={valores.campanha}
+        onChange={(v) => aoMudar("campanha", v)}
+        opcoes={opcoesDeCampanha}
+        dicaDeIndisponivel={dicaDaCampanha}
+      />
+      <SelectFiltro
+        placeholder="Anúncio"
+        value={valores.anuncio}
+        onChange={(v) => aoMudar("anuncio", v)}
+        opcoes={opcoesDeAnuncio}
       />
       <SelectFiltro
         placeholder="Responsável"
@@ -144,6 +205,7 @@ export function FiltrosLeads({
           <X className="size-4" /> Limpar filtros
         </Button>
       ) : null}
+      {resumo !== undefined ? <div className="ml-auto">{resumo}</div> : null}
     </div>
   );
 }

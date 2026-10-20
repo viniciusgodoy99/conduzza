@@ -4,6 +4,11 @@ import { BarraHorizontal } from "@/components/relatorios/barra-horizontal";
 import { Secao } from "@/components/relatorios/secao";
 import { EmptyState } from "@/components/shared/empty-state";
 import {
+  hrefDaListaDeLeads,
+  nomeDoLinkDaLista,
+  type PeriodoDaLista,
+} from "@/lib/domain/campanha-e-anuncio-do-lead";
+import {
   linhasDaOrigem,
   percentualOuSemDados,
 } from "@/lib/domain/exportacao-de-resultados";
@@ -13,12 +18,18 @@ import type { FunilDoPeriodo } from "@/lib/queries/relatorios";
 // e a participacao escrita (" · 44,0%"), maior volume primeiro. E o
 // substituto da rosca do prototipo, proibida (C12). "Sem atribuição" vai em
 // tom neutro: e magnitude sem canal, nao um canal.
+//
+// Cada rotulo abre a lista de Leads com o MESMO periodo e os mesmos leads
+// da barra (pedido do dono em 20/10/2026): origem=<canal> ou sem_atribuicao.
 
 export function OrigemDosLeads({
   funil,
+  periodo,
   className,
 }: {
   funil: FunilDoPeriodo;
+  /** O periodo da tela (dias civis da clinica): o mesmo vai para a lista. */
+  periodo: PeriodoDaLista;
   className?: string;
 }) {
   const linhas = linhasDaOrigem(funil);
@@ -59,6 +70,10 @@ export function OrigemDosLeads({
             maximo={maior}
             total={total}
             destaque={linha.destaque}
+            link={{
+              href: hrefDaListaDeLeads(periodo, linha.filtro),
+              nome: nomeDoLinkDaLista(linha.rotulo, linha.leads),
+            }}
           />
         ))
       )}

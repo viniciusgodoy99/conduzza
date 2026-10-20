@@ -258,7 +258,16 @@ describe("os mesmos filtros da lista", () => {
     valores: Partial<ValoresDosFiltrosDeLeads>,
   ): FiltrosDeLeads {
     return filtrosDeLeadsDosValores(
-      { etapa: "", origem: "", resp: "", de: "", ate: "", ...valores },
+      {
+        etapa: "",
+        origem: "",
+        campanha: "",
+        anuncio: "",
+        resp: "",
+        de: "",
+        ate: "",
+        ...valores,
+      },
       FORTALEZA,
     );
   }

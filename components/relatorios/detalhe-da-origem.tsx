@@ -1,8 +1,9 @@
 "use client";
 
-import type { ColumnDef } from "@tanstack/react-table";
+import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { TableProperties } from "lucide-react";
-import type { ReactNode } from "react";
+import Link from "next/link";
+import { useMemo, type ReactNode } from "react";
 
 import { Secao } from "@/components/relatorios/secao";
 import { Aviso } from "@/components/shared/aviso";
@@ -15,11 +16,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  hrefDaListaDeLeads,
+  nomeDoLinkDaLista,
+  type PeriodoDaLista,
+} from "@/lib/domain/campanha-e-anuncio-do-lead";
+import {
   DIMENSOES_DA_ORIGEM,
   lerDimensaoDaOrigem,
-  montarDetalheDeOrigem,
+  montarDetalheDeOrigemDaTela,
   type DimensaoDaOrigem,
-  type LinhaDeOrigem,
+  type LinhaDeOrigemDaTela,
 } from "@/lib/domain/exportacao-de-resultados";
 import type {
   AnunciosDoPeriodo,
@@ -38,6 +44,11 @@ import type {
 // "Anúncio sem título (id 120240624148610289)"; rotulos repetidos ganham o id
 // inteiro), mais "Anúncio não identificado" e "Sem anúncio da Meta". So e
 // buscada quando a dimensao e escolhida.
+//
+// De Resultados para a lista (pedido do dono em 20/10/2026): o rotulo de
+// cada linha e um link para a lista de Leads com o MESMO periodo e os mesmos
+// leads da linha (o filtro sai da chave que o banco agrupou,
+// montarDetalheDeOrigemDaTela). A exportacao continua igual.
 
 function celulaOpcional({ getValue }: { getValue: () => unknown }) {
   const valor = getValue() as number | null;
@@ -45,39 +56,57 @@ function celulaOpcional({ getValue }: { getValue: () => unknown }) {
 }
 
 // O rotulo pode ser longo (titulo de anuncio, nome de campanha): quebra a
-// linha em vez de esticar a tabela para os lados.
-function celulaDoRotulo({ getValue }: { getValue: () => unknown }) {
-  return (
-    <span className="block max-w-[28rem] min-w-40 py-2 break-words whitespace-normal">
-      {getValue() as string}
-    </span>
-  );
+// linha em vez de esticar a tabela para os lados. O link tem 40px de altura
+// no minimo e o nome acessivel diz o destino.
+function celulaDoRotulo(periodo: PeriodoDaLista) {
+  return function CelulaDoRotulo({
+    row,
+  }: CellContext<LinhaDeOrigemDaTela, unknown>) {
+    const linha = row.original;
+    return (
+      <Link
+        href={hrefDaListaDeLeads(periodo, linha.filtro)}
+        // Um link por linha, todos para /leads: sem prefetch, a lista
+        // carrega no clique.
+        prefetch={false}
+        aria-label={nomeDoLinkDaLista(linha.rotulo, linha.leads)}
+        className="flex min-h-10 max-w-[28rem] min-w-40 items-center rounded-sm py-1.5 font-medium whitespace-normal text-primary-text underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+      >
+        <span className="min-w-0 break-words">{linha.rotulo}</span>
+      </Link>
+    );
+  };
 }
 
-const COLUNAS: ColumnDef<LinhaDeOrigem, unknown>[] = [
-  { accessorKey: "rotulo", header: "Origem", cell: celulaDoRotulo },
-  { accessorKey: "leads", header: "Leads", meta: { align: "right" } },
-  {
-    accessorKey: "agendaram",
-    header: "Agendaram",
-    meta: { align: "right" },
-    cell: celulaOpcional,
-  },
-  {
-    accessorKey: "compareceram",
-    header: "Compareceram",
-    meta: { align: "right" },
-    cell: celulaOpcional,
-  },
-  {
-    accessorKey: "comparecimento",
-    header: "Comparecimento",
-    meta: { align: "right" },
-  },
-];
+function colunas(
+  periodo: PeriodoDaLista,
+): ColumnDef<LinhaDeOrigemDaTela, unknown>[] {
+  return [
+    { accessorKey: "rotulo", header: "Origem", cell: celulaDoRotulo(periodo) },
+    { accessorKey: "leads", header: "Leads", meta: { align: "right" } },
+    {
+      accessorKey: "agendaram",
+      header: "Agendaram",
+      meta: { align: "right" },
+      cell: celulaOpcional,
+    },
+    {
+      accessorKey: "compareceram",
+      header: "Compareceram",
+      meta: { align: "right" },
+      cell: celulaOpcional,
+    },
+    {
+      accessorKey: "comparecimento",
+      header: "Comparecimento",
+      meta: { align: "right" },
+    },
+  ];
+}
 
 export function DetalheDaOrigem({
   funil,
+  periodo,
   campanhas,
   campanhasComErro = false,
   tentarCampanhasDeNovo,
@@ -88,6 +117,8 @@ export function DetalheDaOrigem({
   aoMudarDimensao,
 }: {
   funil: FunilDoPeriodo;
+  /** O periodo da tela (dias civis da clinica): o mesmo vai para a lista. */
+  periodo: PeriodoDaLista;
   /** Atual de campanhas_do_periodo; undefined = carregando */
   campanhas: CampanhasDoPeriodo | undefined;
   campanhasComErro?: boolean;
@@ -115,7 +146,12 @@ export function DetalheDaOrigem({
         : null;
   const linhas = erro
     ? null
-    : montarDetalheDeOrigem(funil, dimensao, campanhas, anuncios);
+    : montarDetalheDeOrigemDaTela(funil, dimensao, campanhas, anuncios);
+  const { diaDe, diaAte } = periodo;
+  const colunasDaTabela = useMemo(
+    () => colunas({ diaDe, diaAte }),
+    [diaDe, diaAte],
+  );
   return (
     <Secao
       titulo="Detalhe da origem"
@@ -153,7 +189,7 @@ export function DetalheDaOrigem({
       ) : (
         <DataTable
           variant="bare"
-          columns={COLUNAS}
+          columns={colunasDaTabela}
           data={linhas ?? []}
           isLoading={linhas === null}
           emptyTitle="Sem leads no período"

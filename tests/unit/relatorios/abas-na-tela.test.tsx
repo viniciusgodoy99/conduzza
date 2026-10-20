@@ -43,6 +43,7 @@ const { AbaAgenteIa } = await import("@/components/relatorios/aba-agente-ia");
 
 const TZ = "America/Fortaleza";
 const nada = () => undefined;
+const PERIODO = { diaDe: "2026-10-01", diaAte: "2026-10-20" };
 
 /** Texto sem tags, com espacos (inclusive o NBSP do Intl) normalizados. */
 function texto(markup: string): string {
@@ -56,6 +57,7 @@ function visaoGeral(podeVerValores: boolean): string {
   return renderToStaticMarkup(
     <AbaVisaoGeral
       funil={{ atual: FUNIL, anterior: FUNIL }}
+      periodo={PERIODO}
       agenda={{ atual: agenda(podeVerValores ? 15_000 : null), anterior: null }}
       atendimento={{ atual: ATENDIMENTO, anterior: null }}
       serie={[
@@ -159,6 +161,7 @@ describe("Visão geral", () => {
     const html = renderToStaticMarkup(
       <AbaVisaoGeral
         funil={{ atual: FUNIL, anterior: null }}
+        periodo={PERIODO}
         agenda={{ atual: agenda(null), anterior: null }}
         atendimento={{ atual: ATENDIMENTO, anterior: null }}
         serie={[{ dia: "2026-09-01", leads: 0, agendadas: 0 }]}
@@ -239,6 +242,7 @@ describe("Marketing e Agente de IA", () => {
     const html = renderToStaticMarkup(
       <AbaMarketing
         funil={{ atual: FUNIL, anterior: null }}
+        periodo={PERIODO}
         campanhas={campanhasPeriodizadas()}
         campanhasComErro={false}
         aoTentarCampanhasDeNovo={nada}
@@ -258,6 +262,7 @@ describe("Marketing e Agente de IA", () => {
     const html = renderToStaticMarkup(
       <AbaMarketing
         funil={{ atual: FUNIL, anterior: null }}
+        periodo={PERIODO}
         campanhas={campanhasPeriodizadas()}
         campanhasComErro={false}
         aoTentarCampanhasDeNovo={nada}
@@ -283,6 +288,7 @@ describe("Marketing e Agente de IA", () => {
       const html = renderToStaticMarkup(
         <AbaMarketing
           funil={{ atual: FUNIL, anterior: null }}
+          periodo={PERIODO}
           campanhas={campanhasPeriodizadas(null, {
             linhas: [],
             leadsCasados: 0,
@@ -313,6 +319,7 @@ describe("Marketing e Agente de IA", () => {
     const html = renderToStaticMarkup(
       <AbaMarketing
         funil={{ atual: FUNIL, anterior: null }}
+        periodo={PERIODO}
         campanhas={campanhasPeriodizadas(null, {
           leads: 0,
           leadsDeAnuncio: 0,
@@ -339,6 +346,7 @@ describe("Marketing e Agente de IA", () => {
     const html = renderToStaticMarkup(
       <AbaMarketing
         funil={{ atual: FUNIL, anterior: null }}
+        periodo={PERIODO}
         campanhas={campanhasPeriodizadas({
           situacao: "com_problema",
           problema: "token_invalido",
@@ -369,6 +377,7 @@ describe("Marketing e Agente de IA", () => {
     const html = renderToStaticMarkup(
       <AbaMarketing
         funil={{ atual: FUNIL, anterior: null }}
+        periodo={PERIODO}
         campanhas={campanhasPeriodizadas({ fusoDaConta: "Europe/Lisbon" })}
         campanhasComErro={false}
         aoTentarCampanhasDeNovo={nada}

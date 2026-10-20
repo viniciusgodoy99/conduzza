@@ -354,18 +354,66 @@ export function idEntreParenteses(adId: string): string {
 export const ROTULO_ANUNCIO_NAO_IDENTIFICADO = "Anúncio não identificado";
 
 /**
+ * O resto dos leads: nao vieram de anuncio da Meta. O lead do clique no site
+ * (anuncio do Google) tambem cai aqui, por isso "da Meta". A linha de
+ * Resultados e a opcao do filtro de anuncio da lista de Leads.
+ */
+export const ROTULO_SEM_ANUNCIO = "Sem anúncio da Meta";
+
+/** O que o rotulo de um anuncio precisa saber dele. */
+export type AnuncioParaRotular = {
+  adId: string;
+  titulo: string | null;
+  nomeNaMeta: string | null;
+};
+
+/**
  * Rotulo de um anuncio em Resultados e na exportacao de leads: o titulo
  * guardado; senao o nome do anuncio na Meta; senao "Anúncio sem título (id
  * 120240624148610289)".
  */
-export function rotuloDoAnuncio(linha: {
-  adId: string;
-  titulo: string | null;
-  nomeNaMeta: string | null;
-}): string {
+export function rotuloDoAnuncio(linha: AnuncioParaRotular): string {
   return (
     linha.titulo?.trim() ||
     linha.nomeNaMeta?.trim() ||
     `Anúncio sem título ${idEntreParenteses(linha.adId)}`
   );
+}
+
+/**
+ * Rotulos de varios anuncios lado a lado (as linhas da dimensao Anuncio de
+ * Resultados e as opcoes do filtro de anuncio da lista de Leads):
+ * rotuloDoAnuncio de cada um, e dois anuncios com o mesmo rotulo (sem
+ * diferenca de maiuscula: o mesmo titulo, o mesmo nome na Meta) ganham o id
+ * INTEIRO, para cada linha ser distinguivel e achavel no Gerenciador (os ids
+ * de uma mesma conta costumam terminar igual). O rotulo que ja termina no
+ * proprio id nao repete; o desempate roda ate nao sobrar rotulo repetido
+ * (cada linha ganha o id uma vez so, e dois ids diferentes nunca dao o mesmo
+ * rotulo).
+ */
+export function rotulosDosAnuncios(
+  linhas: readonly AnuncioParaRotular[],
+): string[] {
+  const rotulos = linhas.map((linha) => rotuloDoAnuncio(linha));
+  const chave = (rotulo: string) => rotulo.toLocaleLowerCase("pt-BR");
+  let mudou = true;
+  while (mudou) {
+    mudou = false;
+    const vezes = new Map<string, number>();
+    for (const rotulo of rotulos) {
+      vezes.set(chave(rotulo), (vezes.get(chave(rotulo)) ?? 0) + 1);
+    }
+    rotulos.forEach((rotulo, indice) => {
+      const linha = linhas[indice];
+      if (!linha || (vezes.get(chave(rotulo)) ?? 0) < 2) {
+        return;
+      }
+      const id = idEntreParenteses(linha.adId);
+      if (!rotulo.endsWith(id)) {
+        rotulos[indice] = `${rotulo} ${id}`;
+        mudou = true;
+      }
+    });
+  }
+  return rotulos;
 }

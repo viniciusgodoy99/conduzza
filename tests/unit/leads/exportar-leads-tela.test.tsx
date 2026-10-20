@@ -224,6 +224,8 @@ const CLINICA_DA_TELA = "c1111111-1111-4111-8111-111111111111";
 const SEM_FILTROS: ValoresDosFiltrosDeLeads = {
   etapa: "",
   origem: "",
+  campanha: "",
+  anuncio: "",
   resp: "",
   de: "",
   ate: "",
@@ -425,6 +427,7 @@ function telaDeLeads(podeExportar: boolean, visao: "lista" | "kanban"): string {
         leadsIniciais={[LEAD]}
         totalInicial={1}
         reguasIniciais={[]}
+        mapaInicial={{ anuncios: [], titulos: [] }}
         jornada={JORNADA}
         membros={{}}
         responsaveisAtivos={[]}

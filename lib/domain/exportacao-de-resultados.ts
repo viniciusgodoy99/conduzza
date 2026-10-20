@@ -1,10 +1,20 @@
 import { rotuloDoCanal } from "@/components/leads/rotulos";
 import { APPOINTMENT_STATUS } from "@/lib/design/status";
 import {
-  idEntreParenteses,
   ROTULO_ANUNCIO_NAO_IDENTIFICADO,
+  ROTULO_SEM_ANUNCIO,
   rotuloDoAnuncio,
+  rotulosDosAnuncios,
 } from "@/lib/domain/anuncio-do-whatsapp";
+import {
+  ANUNCIO_NAO_IDENTIFICADO,
+  ANUNCIO_SEM,
+  CAMPANHA_SEM,
+  ORIGEM_SEM_ATRIBUICAO,
+  ROTULO_SEM_ATRIBUICAO,
+  ROTULO_SEM_CAMPANHA,
+  type FiltroDaListaDeLeads,
+} from "@/lib/domain/campanha-e-anuncio-do-lead";
 import {
   DIVISOR_DO_CUSTO_POR_LEAD,
   TEXTOS_DO_DIVISOR,
@@ -33,7 +43,6 @@ import type {
   CampanhasDoPeriodo,
   FaturamentoDoPeriodo,
   FunilDoPeriodo,
-  LinhaDeAnuncioDoPeriodo,
   LinhaDeBase,
   LinhaDeCampanhaDoPeriodo,
   ObjetivoDeConversao,
@@ -169,12 +178,11 @@ export const TITULO_DO_DETALHE_DA_ORIGEM: Record<DimensaoDaOrigem, string> = {
   anuncio: "Detalhe por anúncio",
 };
 
-// "Anúncio não identificado" mora em lib/domain/anuncio-do-whatsapp.ts (a
-// exportacao de leads usa o mesmo); reexportado aqui para quem ja importava.
-export { ROTULO_ANUNCIO_NAO_IDENTIFICADO };
-// O resto dos leads: nao vieram de anuncio da Meta. O lead do clique no site
-// (anuncio do Google) tambem cai aqui, por isso "da Meta".
-export const ROTULO_SEM_ANUNCIO = "Sem anúncio da Meta";
+// "Anúncio não identificado", "Sem anúncio da Meta" e os rotulos dos
+// anuncios moram em lib/domain/anuncio-do-whatsapp.ts (a lista e a
+// exportacao de leads usam os mesmos); reexportados aqui para quem ja
+// importava.
+export { ROTULO_ANUNCIO_NAO_IDENTIFICADO, ROTULO_SEM_ANUNCIO, rotulosDosAnuncios };
 
 export type LinhaDeOrigem = {
   rotulo: string;
@@ -186,49 +194,23 @@ export type LinhaDeOrigem = {
   comparecimento: string;
 };
 
+/**
+ * Uma linha do Detalhe da origem na TELA: a linha de sempre e o filtro da
+ * lista de Leads com os mesmos leads dela (o link do rotulo, pedido do dono
+ * em 20/10/2026). A exportacao usa so a LinhaDeOrigem.
+ */
+export type LinhaDeOrigemDaTela = LinhaDeOrigem & {
+  filtro: FiltroDaListaDeLeads;
+};
+
 /** Rotulo de uma linha de campanha: o nome, senao "Campanha {id}". */
 export function rotuloDaLinhaDeCampanha(linha: LinhaDeCampanhaDoPeriodo): string {
   return (
     linha.rotulo ??
-    (linha.metaCampaignId ? `Campanha ${linha.metaCampaignId}` : "Sem campanha")
+    (linha.metaCampaignId
+      ? `Campanha ${linha.metaCampaignId}`
+      : ROTULO_SEM_CAMPANHA)
   );
-}
-
-/**
- * Rotulos das linhas da dimensao Anuncio: rotuloDoAnuncio (o titulo; senao o
- * nome do anuncio na Meta; senao "Anúncio sem título (id 120240624148610289)").
- * Dois anuncios com o mesmo rotulo (sem diferenca de maiuscula: o mesmo
- * titulo, o mesmo nome na Meta) ganham o id INTEIRO, para cada linha ser
- * distinguivel e achavel no Gerenciador (os ids de uma mesma conta costumam
- * terminar igual). O rotulo que ja termina no proprio id nao repete; o
- * desempate roda ate nao sobrar rotulo repetido (cada linha ganha o id uma
- * vez so, e dois ids diferentes nunca dao o mesmo rotulo).
- */
-export function rotulosDosAnuncios(
-  linhas: readonly LinhaDeAnuncioDoPeriodo[],
-): string[] {
-  const rotulos = linhas.map((linha) => rotuloDoAnuncio(linha));
-  const chave = (rotulo: string) => rotulo.toLocaleLowerCase("pt-BR");
-  let mudou = true;
-  while (mudou) {
-    mudou = false;
-    const vezes = new Map<string, number>();
-    for (const rotulo of rotulos) {
-      vezes.set(chave(rotulo), (vezes.get(chave(rotulo)) ?? 0) + 1);
-    }
-    rotulos.forEach((rotulo, indice) => {
-      const linha = linhas[indice];
-      if (!linha || (vezes.get(chave(rotulo)) ?? 0) < 2) {
-        return;
-      }
-      const id = idEntreParenteses(linha.adId);
-      if (!rotulo.endsWith(id)) {
-        rotulos[indice] = `${rotulo} ${id}`;
-        mudou = true;
-      }
-    });
-  }
-  return rotulos;
 }
 
 /**
@@ -244,6 +226,9 @@ export function rotulosDosAnuncios(
  * (rotulosDosAnuncios), mais "Anúncio não identificado" (lead de anuncio sem
  * id valido) e "Sem anúncio da Meta", que o banco ja conta junto (as tres
  * somam os leads do periodo). Sem os anuncios carregados: null.
+ *
+ * Esta e a forma da EXPORTACAO (CSV e impressao): as mesmas linhas de
+ * montarDetalheDeOrigemDaTela, sem o filtro do link.
  */
 export function montarDetalheDeOrigem(
   funil: FunilDoPeriodo,
@@ -251,23 +236,61 @@ export function montarDetalheDeOrigem(
   campanhas: CampanhasDoPeriodo | undefined,
   anuncios?: AnunciosDoPeriodo,
 ): LinhaDeOrigem[] | null {
+  const linhas = montarDetalheDeOrigemDaTela(
+    funil,
+    dimensao,
+    campanhas,
+    anuncios,
+  );
+  return (
+    linhas?.map(
+      ({ rotulo, leads, agendaram, compareceram, comparecimento }) => ({
+        rotulo,
+        leads,
+        agendaram,
+        compareceram,
+        comparecimento,
+      }),
+    ) ?? null
+  );
+}
+
+/**
+ * As linhas do Detalhe da origem (montarDetalheDeOrigem) com o filtro da
+ * lista de Leads de cada uma (pedido do dono em 20/10/2026: clicar em
+ * "Tráfego pago 16" abre os mesmos 16 leads). O filtro sai da chave que o
+ * banco ja agrupou, nunca do rotulo: canal (ou sem_atribuicao), a chave da
+ * linha de campanhas_do_periodo ("meta:<id>" ou "texto:<rotulo>"; "Sem
+ * campanha" = sem), o id do anuncio ("Anúncio não identificado" =
+ * nao_identificado, "Sem anúncio da Meta" = sem). A lista separa os leads
+ * com as MESMAS regras (lib/domain/campanha-e-anuncio-do-lead.ts).
+ */
+export function montarDetalheDeOrigemDaTela(
+  funil: FunilDoPeriodo,
+  dimensao: DimensaoDaOrigem,
+  campanhas: CampanhasDoPeriodo | undefined,
+  anuncios?: AnunciosDoPeriodo,
+): LinhaDeOrigemDaTela[] | null {
   if (dimensao === "anuncio") {
     if (!anuncios) {
       return null;
     }
     const rotulos = rotulosDosAnuncios(anuncios.linhas);
-    const linhas: LinhaDeOrigem[] = anuncios.linhas.map((linha, indice) => ({
-      rotulo: rotulos[indice] ?? rotuloDoAnuncio(linha),
-      leads: linha.leads,
-      agendaram: linha.agendaram,
-      compareceram: linha.compareceram,
-      comparecimento: percentualOuSemDados(linha.compareceram, linha.leads),
-    }));
+    const linhas: LinhaDeOrigemDaTela[] = anuncios.linhas.map(
+      (linha, indice) => ({
+        rotulo: rotulos[indice] ?? rotuloDoAnuncio(linha),
+        leads: linha.leads,
+        agendaram: linha.agendaram,
+        compareceram: linha.compareceram,
+        comparecimento: percentualOuSemDados(linha.compareceram, linha.leads),
+        filtro: { campo: "anuncio", valor: linha.adId },
+      }),
+    );
     const restos = [
-      [ROTULO_ANUNCIO_NAO_IDENTIFICADO, anuncios.naoIdentificado],
-      [ROTULO_SEM_ANUNCIO, anuncios.semAnuncio],
+      [ROTULO_ANUNCIO_NAO_IDENTIFICADO, ANUNCIO_NAO_IDENTIFICADO, anuncios.naoIdentificado],
+      [ROTULO_SEM_ANUNCIO, ANUNCIO_SEM, anuncios.semAnuncio],
     ] as const;
-    for (const [rotulo, contagem] of restos) {
+    for (const [rotulo, valor, contagem] of restos) {
       if (contagem.leads > 0) {
         linhas.push({
           rotulo,
@@ -278,6 +301,7 @@ export function montarDetalheDeOrigem(
             contagem.compareceram,
             contagem.leads,
           ),
+          filtro: { campo: "anuncio", valor },
         });
       }
     }
@@ -285,17 +309,18 @@ export function montarDetalheDeOrigem(
   }
   if (dimensao === "canal") {
     return funil.porCanal.map((linha) => ({
-      rotulo: rotuloDoCanal(linha.canal) ?? "Sem atribuição",
+      rotulo: rotuloDoCanal(linha.canal) ?? ROTULO_SEM_ATRIBUICAO,
       leads: linha.leads,
       agendaram: linha.agendaram,
       compareceram: linha.compareceram,
       comparecimento: percentualOuSemDados(linha.compareceram, linha.leads),
+      filtro: { campo: "origem", valor: linha.canal ?? ORIGEM_SEM_ATRIBUICAO },
     }));
   }
   if (!campanhas) {
     return null;
   }
-  const linhas: LinhaDeOrigem[] = campanhas.linhas
+  const linhas: LinhaDeOrigemDaTela[] = campanhas.linhas
     .filter((linha) => linha.leads > 0)
     .map((linha) => ({
       rotulo: rotuloDaLinhaDeCampanha(linha),
@@ -303,6 +328,7 @@ export function montarDetalheDeOrigem(
       agendaram: linha.agendaram,
       compareceram: linha.compareceram,
       comparecimento: percentualOuSemDados(linha.compareceram, linha.leads),
+      filtro: { campo: "campanha", valor: linha.chave },
     }));
   if (campanhas.leadsSemCampanha > 0) {
     const somaAgendaram = linhas.reduce((soma, l) => soma + (l.agendaram ?? 0), 0);
@@ -319,13 +345,14 @@ export function montarDetalheDeOrigem(
       agendaram <= campanhas.leadsSemCampanha &&
       compareceram <= agendaram;
     linhas.push({
-      rotulo: "Sem campanha",
+      rotulo: ROTULO_SEM_CAMPANHA,
       leads: campanhas.leadsSemCampanha,
       agendaram: batem ? agendaram : null,
       compareceram: batem ? compareceram : null,
       comparecimento: batem
         ? percentualOuSemDados(compareceram, campanhas.leadsSemCampanha)
         : "",
+      filtro: { campo: "campanha", valor: CAMPANHA_SEM },
     });
   }
   return linhas;
@@ -554,18 +581,24 @@ export type LinhaDoCanal = {
   leads: number;
   /** false = tom neutro ("Sem atribuição" e magnitude sem canal) */
   destaque: boolean;
+  /** A lista de Leads com os mesmos leads da barra (o link do rotulo). */
+  filtro: FiltroDaListaDeLeads;
 };
 
 /** Barras da Origem dos leads, maior volume primeiro. */
 export function linhasDaOrigem(funil: FunilDoPeriodo): LinhaDoCanal[] {
   return [...funil.porCanal]
     .sort((a, b) => b.leads - a.leads)
-    .map((linha) => ({
-      chave: linha.canal ?? "sem_atribuicao",
-      rotulo: rotuloDoCanal(linha.canal) ?? "Sem atribuição",
-      leads: linha.leads,
-      destaque: linha.canal !== null,
-    }));
+    .map((linha) => {
+      const chave = linha.canal ?? ORIGEM_SEM_ATRIBUICAO;
+      return {
+        chave,
+        rotulo: rotuloDoCanal(linha.canal) ?? ROTULO_SEM_ATRIBUICAO,
+        leads: linha.leads,
+        destaque: linha.canal !== null,
+        filtro: { campo: "origem", valor: chave },
+      };
+    });
 }
 
 export type EtapaDoFunilComercial = {

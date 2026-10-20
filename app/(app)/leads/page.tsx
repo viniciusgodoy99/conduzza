@@ -7,6 +7,7 @@ import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { fetchJornada } from "@/lib/queries/jornada";
 import {
   fetchLeads,
+  fetchMapaDeAtribuicao,
   fetchReguasDeFollowup,
   fetchTotalDeLeads,
 } from "@/lib/queries/leads";
@@ -41,17 +42,20 @@ export default async function LeadsPage() {
     entity: "leads",
   });
 
-  // O total e as reguas sao acessorios: se falharem, a tela abre sem eles e
-  // o cliente tenta de novo (o aviso de corte some; o Mudar etapa pede
-  // confirmacao dizendo que nao conseguiu conferir as reguas).
-  const [leads, membros, ativos, jornada, total, reguas] = await Promise.all([
-    fetchLeads(supabase, active.clinicId),
-    fetchClinicAuthorNames(supabase, active.clinicId),
-    fetchResponsaveisAtivos(supabase, active.clinicId),
-    fetchJornada(supabase, active.clinicId),
-    fetchTotalDeLeads(supabase, active.clinicId).catch(() => null),
-    fetchReguasDeFollowup(supabase, active.clinicId).catch(() => null),
-  ]);
+  // O total, as reguas e o mapa de campanhas sao acessorios: se falharem, a
+  // tela abre sem eles e o cliente tenta de novo (o aviso de corte some; o
+  // Mudar etapa pede confirmacao dizendo que nao conseguiu conferir as
+  // reguas; o filtro de campanha espera o mapa).
+  const [leads, membros, ativos, jornada, total, reguas, mapa] =
+    await Promise.all([
+      fetchLeads(supabase, active.clinicId),
+      fetchClinicAuthorNames(supabase, active.clinicId),
+      fetchResponsaveisAtivos(supabase, active.clinicId),
+      fetchJornada(supabase, active.clinicId),
+      fetchTotalDeLeads(supabase, active.clinicId).catch(() => null),
+      fetchReguasDeFollowup(supabase, active.clinicId).catch(() => null),
+      fetchMapaDeAtribuicao(supabase, active.clinicId).catch(() => null),
+    ]);
 
   return (
     <LeadsClient
@@ -60,6 +64,7 @@ export default async function LeadsPage() {
       leadsIniciais={leads}
       totalInicial={total}
       reguasIniciais={reguas}
+      mapaInicial={mapa}
       jornada={jornada}
       membros={membros}
       responsaveisAtivos={ativos}

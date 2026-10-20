@@ -455,6 +455,8 @@ describe("filtros do pedido", () => {
       corpoDoPedidoDeExportacao({
         etapa: "novo",
         origem: "",
+        campanha: "",
+        anuncio: "",
         resp: "",
         de: "2026-02-30",
         ate: "2026-10-20",
@@ -462,7 +464,15 @@ describe("filtros do pedido", () => {
     ).toEqual({ etapa: "novo", ate: "2026-10-20" });
     expect(
       filtrosDeLeadsDosValores(
-        { etapa: "", origem: "", resp: "", de: "2026-02-30", ate: "" },
+        {
+          etapa: "",
+          origem: "",
+          campanha: "",
+          anuncio: "",
+          resp: "",
+          de: "2026-02-30",
+          ate: "",
+        },
         FORTALEZA,
       ).deISO,
     ).toBeUndefined();
@@ -481,6 +491,8 @@ describe("filtros do pedido", () => {
     expect(valoresDaExportacao(ok.success ? ok.data : {})).toEqual({
       etapa: "em_contato",
       origem: "trafego_pago",
+      campanha: "",
+      anuncio: "",
       resp,
       de: "2026-10-01",
       ate: "",

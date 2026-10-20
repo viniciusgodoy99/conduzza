@@ -1,5 +1,13 @@
 import { rotuloDoCanal } from "@/components/leads/rotulos";
 import type { ContactRecency } from "@/lib/design/status";
+import {
+  chaveDaCampanhaDoLead,
+  chaveDoAnuncioDoLead,
+  METODO_ANUNCIO_CTWA,
+  ORIGEM_SEM_ATRIBUICAO,
+  type AtribuicaoDoLead,
+  type MapaDeAtribuicao,
+} from "@/lib/domain/campanha-e-anuncio-do-lead";
 import { instanteLocal } from "@/lib/domain/horarios";
 
 // Regras PURAS da Tela 4 (Leads): recencia de contato, consentimento vigente,
@@ -158,8 +166,12 @@ export const LOST_REASONS: readonly { codigo: string; rotulo: string }[] = [
   { codigo: "outro", rotulo: "Outro" },
 ];
 
-/** O minimo que um lead precisa ter para os filtros e o Kanban puros. */
-export type LeadFiltravel = {
+/**
+ * O minimo que um lead precisa ter para os filtros e o Kanban puros. Os
+ * campos de atribuicao (campanha e anuncio como Resultados conta) sao
+ * opcionais no tipo; ausente vale nulo.
+ */
+export type LeadFiltravel = AtribuicaoDoLead & {
   funnel_stage: string;
   source_channel: string | null;
   owner_user_id: string | null;
@@ -169,7 +181,15 @@ export type LeadFiltravel = {
 
 export type FiltrosDeLeads = {
   etapa?: string;
+  /** Canal; sem_atribuicao = canal nulo ("Sem atribuição"). */
   origem?: string;
+  /**
+   * Chave de campanha de Resultados ("meta:<id>", "texto:<texto>" ou
+   * "sem"): precisa do mapa da clinica (lib/domain/campanha-e-anuncio-do-lead.ts).
+   */
+  campanha?: string;
+  /** Chave de anuncio de Resultados (o id, "nao_identificado" ou "sem"). */
+  anuncio?: string;
   responsavel?: string;
   /** Inicio do periodo (instante ISO), inclusivo, sobre first_contact_at. */
   deISO?: string;
@@ -179,12 +199,16 @@ export type FiltrosDeLeads = {
 
 /**
  * Os valores da barra de filtros como vivem na URL da Tela 4 (string vazia =
- * sem filtro): etapa (chave da jornada), origem (canal), resp (id do
- * membro) e o periodo de entrada em dias civis da clinica (aaaa-mm-dd).
+ * sem filtro): etapa (chave da jornada), origem (canal ou sem_atribuicao),
+ * campanha e anuncio (as chaves das linhas de Resultados, pedido do dono em
+ * 20/10/2026), resp (id do membro) e o periodo de entrada em dias civis da
+ * clinica (aaaa-mm-dd). O nome de cada campo e o do parametro na URL.
  */
 export type ValoresDosFiltrosDeLeads = {
   etapa: string;
   origem: string;
+  campanha: string;
+  anuncio: string;
   resp: string;
   de: string;
   ate: string;
@@ -225,6 +249,8 @@ export function filtrosDeLeadsDosValores(
   return {
     etapa: valores.etapa || undefined,
     origem: valores.origem || undefined,
+    campanha: valores.campanha || undefined,
+    anuncio: valores.anuncio || undefined,
     responsavel: valores.resp || undefined,
     deISO: ehDiaCivilValido(valores.de)
       ? instanteLocal(timezone, valores.de, "00:00").toISOString()
@@ -244,18 +270,39 @@ export function filtrosDeLeadsDosValores(
  * chamador (filtrosDeLeadsDosValores), respeitando a regra 3.6 de fuso. A
  * exportacao aplica os mesmos filtros no banco (aplicarFiltrosDeLeads, em
  * lib/queries/leads.ts) e passa o resultado por aqui de novo.
+ *
+ * Campanha e anuncio (20/10/2026) separam os leads com as chaves de
+ * Resultados (lib/domain/campanha-e-anuncio-do-lead.ts). A campanha precisa
+ * do mapa da clinica: sem ele nao da para decidir, e filtrar errado calado
+ * seria pior que falhar (LANCA; a tela espera o mapa antes de chamar).
  */
 export function filtrarLeads<T extends LeadFiltravel>(
   leads: readonly T[],
   filtros: FiltrosDeLeads,
+  mapa?: MapaDeAtribuicao,
 ): T[] {
+  if (filtros.campanha && !mapa) {
+    throw new Error("O filtro de campanha precisa do mapa da clinica.");
+  }
+  const canal =
+    filtros.origem === ORIGEM_SEM_ATRIBUICAO ? null : filtros.origem;
   const de = filtros.deISO ? new Date(filtros.deISO).getTime() : null;
   const ate = filtros.ateISO ? new Date(filtros.ateISO).getTime() : null;
   return leads.filter((lead) => {
     if (filtros.etapa && lead.funnel_stage !== filtros.etapa) {
       return false;
     }
-    if (filtros.origem && lead.source_channel !== filtros.origem) {
+    if (filtros.origem && lead.source_channel !== canal) {
+      return false;
+    }
+    if (
+      filtros.campanha &&
+      mapa &&
+      chaveDaCampanhaDoLead(lead, mapa) !== filtros.campanha
+    ) {
+      return false;
+    }
+    if (filtros.anuncio && chaveDoAnuncioDoLead(lead) !== filtros.anuncio) {
       return false;
     }
     if (filtros.responsavel && lead.owner_user_id !== filtros.responsavel) {
@@ -270,6 +317,25 @@ export function filtrarLeads<T extends LeadFiltravel>(
     }
     return true;
   });
+}
+
+/**
+ * Quantos leads batem com os filtros, ao lado da barra (pedido do dono em
+ * 20/10/2026: o cliente compara com o numero de Resultados). `carregados` so
+ * quando o teto da lista cortou (LEADS_LIMIT): ai o numero e dos carregados,
+ * e o texto diz isso em vez de prometer a clinica inteira.
+ */
+export function textoDaContagemDeLeads(
+  quantidade: number,
+  carregados: number | null = null,
+): string {
+  const quantos =
+    quantidade === 0
+      ? "Nenhum lead"
+      : `${quantidade.toLocaleString("pt-BR")} ${quantidade === 1 ? "lead" : "leads"}`;
+  return carregados === null
+    ? quantos
+    : `${quantos} entre os ${carregados.toLocaleString("pt-BR")} carregados`;
 }
 
 // ---------------------------------------------------------------------------
@@ -310,8 +376,9 @@ export const METODO_LABELS: Readonly<Record<string, string>> = {
   importacao: "Importação de planilha",
 };
 
-/** O metodo de quem chegou por anuncio Click-to-WhatsApp da Meta. */
-export const METODO_ANUNCIO_CTWA = "anuncio_ctwa";
+// O metodo de quem chegou por anuncio Click-to-WhatsApp da Meta. Mora em
+// campanha-e-anuncio-do-lead.ts (as chaves de Resultados tambem o usam).
+export { METODO_ANUNCIO_CTWA };
 
 /** O metodo de quem chegou pelo botao do site, vindo de anuncio do Google. */
 export const METODO_CLIQUE_SITE = "clique_site";

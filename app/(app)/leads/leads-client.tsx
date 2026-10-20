@@ -39,16 +39,24 @@ import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
+  indexarMapaDeAtribuicao,
+  opcoesDeAnuncio,
+  opcoesDeCampanha,
+  type MapaDeAtribuicaoLido,
+} from "@/lib/domain/campanha-e-anuncio-do-lead";
+import {
   algumaEtapaComDescricao,
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
 import {
   filtrarLeads,
   filtrosDeLeadsDosValores,
+  textoDaContagemDeLeads,
   type FiltrosDeLeads,
 } from "@/lib/domain/leads-ui";
 import {
   fetchLeads,
+  fetchMapaDeAtribuicao,
   fetchReguasDeFollowup,
   fetchTotalDeLeads,
   LEADS_LIMIT,
@@ -75,6 +83,14 @@ import { createClient } from "@/lib/supabase/client";
 // com TODOS os leads que batem com os filtros da URL, nao so os carregados
 // aqui (components/leads/exportar-leads.tsx). So administrador e gestor; os
 // outros papeis veem o botao desabilitado, com a dica.
+//
+// Campanha e Anúncio (pedido do dono em 20/10/2026, para o cliente bater
+// com Resultados): os leads sao separados com as chaves de Resultados
+// (lib/domain/campanha-e-anuncio-do-lead.ts), e cada linha de Resultados
+// abre esta tela ja filtrada (?visao=lista&de=&ate=&campanha=...). O filtro
+// de campanha precisa do mapa da clinica (meta_anuncio e
+// anuncio_do_whatsapp): sem ele a lista espera ou diz que nao deu, nunca
+// filtra errado. Ao lado da barra, quantos leads batem com os filtros.
 
 type Visao = "kanban" | "lista";
 
@@ -117,6 +133,7 @@ export function LeadsClient({
   leadsIniciais,
   totalInicial,
   reguasIniciais,
+  mapaInicial,
   jornada,
   membros,
   responsaveisAtivos,
@@ -134,6 +151,11 @@ export function LeadsClient({
   totalInicial: number | null;
   /** Etapas com regua de follow-up ligada; null se a leitura falhou */
   reguasIniciais: ReguaDaEtapa[] | null;
+  /**
+   * Mapa da clinica para separar campanha e anuncio como Resultados; null
+   * se a leitura falhou no servidor (o navegador tenta de novo).
+   */
+  mapaInicial: MapaDeAtribuicaoLido | null;
   jornada: EtapaDaJornada[];
   /** Nomes de todos os membros, inclusive antigos (exibicao) */
   membros: Record<string, string>;
@@ -163,6 +185,7 @@ export function LeadsClient({
   useDadosDoServidor(leadsKeys.lista(clinicId), leadsIniciais);
   useDadosDoServidor(leadsKeys.total(clinicId), totalInicial ?? undefined);
   useDadosDoServidor(leadsKeys.reguas(clinicId), reguasIniciais ?? undefined);
+  useDadosDoServidor(leadsKeys.mapa(clinicId), mapaInicial ?? undefined);
 
   const leadsQuery = useQuery({
     queryKey: leadsKeys.lista(clinicId),
@@ -190,6 +213,18 @@ export function LeadsClient({
   });
   // null = nao deu para conferir (carregando ou erro): o Mudar etapa avisa.
   const reguas = reguasQuery.data ?? null;
+  // O mapa muda sem tempo real (o resolvedor de anuncios grava meta_anuncio
+  // no servidor): vale por um minuto, como Resultados.
+  const mapaQuery = useQuery({
+    queryKey: leadsKeys.mapa(clinicId),
+    queryFn: () => fetchMapaDeAtribuicao(supabase, clinicId),
+    initialData: mapaInicial ?? undefined,
+    staleTime: 60_000,
+  });
+  const mapa = useMemo(
+    () => (mapaQuery.data ? indexarMapaDeAtribuicao(mapaQuery.data) : null),
+    [mapaQuery.data],
+  );
 
   const visao: Visao =
     searchParams.get("visao") === "lista" ? "lista" : "kanban";
@@ -198,6 +233,8 @@ export function LeadsClient({
   const valores: ValoresFiltros = {
     etapa: searchParams.get("etapa") ?? "",
     origem: searchParams.get("origem") ?? "",
+    campanha: searchParams.get("campanha") ?? "",
+    anuncio: searchParams.get("anuncio") ?? "",
     resp: searchParams.get("resp") ?? "",
     de: searchParams.get("de") ?? "",
     ate: searchParams.get("ate") ?? "",
@@ -224,6 +261,8 @@ export function LeadsClient({
         {
           etapa: valores.etapa,
           origem: valores.origem,
+          campanha: valores.campanha,
+          anuncio: valores.anuncio,
           resp: valores.resp,
           de: valores.de,
           ate: valores.ate,
@@ -233,6 +272,8 @@ export function LeadsClient({
     [
       valores.etapa,
       valores.origem,
+      valores.campanha,
+      valores.anuncio,
       valores.resp,
       valores.de,
       valores.ate,
@@ -242,10 +283,31 @@ export function LeadsClient({
 
   // Com initialData a query sempre tem dados definidos.
   const leads = leadsQuery.data;
+  // O filtro de campanha sem o mapa (carregando ou erro) nao decide nada: a
+  // lista mostra o carregando ou o erro, nunca um recorte errado.
+  const campanhaSemMapa = Boolean(filtros.campanha) && mapa === null;
   const leadsFiltrados = useMemo(
-    () => filtrarLeads(leads, filtros),
-    [leads, filtros],
+    () =>
+      campanhaSemMapa ? [] : filtrarLeads(leads, filtros, mapa ?? undefined),
+    [leads, filtros, mapa, campanhaSemMapa],
   );
+
+  // Opcoes a partir de TODOS os leads carregados (nao so os filtrados): o
+  // valor da URL fora deles aparece com o rotulo de reserva.
+  const opcoesDaCampanha = useMemo(
+    () => opcoesDeCampanha(leads, mapa, valores.campanha),
+    [leads, mapa, valores.campanha],
+  );
+  const opcoesDoAnuncio = useMemo(
+    () => opcoesDeAnuncio(leads, mapa, valores.anuncio),
+    [leads, mapa, valores.anuncio],
+  );
+  const dicaDaCampanha =
+    mapa !== null
+      ? null
+      : mapaQuery.isError
+        ? "Não foi possível carregar as campanhas. Tente de novo."
+        : "Carregando as campanhas.";
 
   const [selecionados, setSelecionados] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -272,7 +334,15 @@ export function LeadsClient({
 
   const limparFiltros = () => {
     limparSelecao();
-    setParams({ etapa: null, origem: null, resp: null, de: null, ate: null });
+    setParams({
+      etapa: null,
+      origem: null,
+      campanha: null,
+      anuncio: null,
+      resp: null,
+      de: null,
+      ate: null,
+    });
   };
 
   const trocarVisao = (nova: Visao) => {
@@ -338,6 +408,29 @@ export function LeadsClient({
   const cortado =
     total !== undefined && leads.length >= LEADS_LIMIT && total > leads.length;
 
+  // Quantos leads batem com os filtros, para comparar com Resultados. So
+  // quando a lista diz algo de verdade (nem carregando, nem erro sem dado,
+  // nem esperando o mapa da campanha). A regiao viva fica sempre montada:
+  // o leitor de tela so anuncia mudanca em regiao que ja existia.
+  const contagemVisivel =
+    !leadsQuery.isLoading &&
+    !(leadsQuery.isError && leads.length === 0) &&
+    !campanhaSemMapa;
+  const resumo = (
+    <p
+      aria-live="polite"
+      aria-atomic="true"
+      className="text-[13px] whitespace-nowrap text-text-secondary"
+    >
+      {contagemVisivel
+        ? textoDaContagemDeLeads(
+            leadsFiltrados.length,
+            cortado ? leads.length : null,
+          )
+        : null}
+    </p>
+  );
+
   return (
     <div className="flex flex-col gap-3.5 p-6">
       <PageHeader
@@ -387,9 +480,34 @@ export function LeadsClient({
         jornada={jornada}
         valores={valores}
         responsaveis={responsaveisDoFiltro}
+        opcoesDeCampanha={opcoesDaCampanha}
+        dicaDaCampanha={dicaDaCampanha}
+        opcoesDeAnuncio={opcoesDoAnuncio}
+        resumo={resumo}
         aoMudar={mudarFiltro}
         aoLimpar={limparFiltros}
       />
+
+      {/* O mapa nao carregou e nenhuma campanha esta filtrada: so o filtro
+          de campanha fica de fora (com o filtro ativo, o erro ocupa o lugar
+          da lista, abaixo). */}
+      {mapa === null && mapaQuery.isError && !campanhaSemMapa ? (
+        <Aviso
+          tom="warning"
+          acao={
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void mapaQuery.refetch()}
+            >
+              Tentar de novo
+            </Button>
+          }
+        >
+          Não foi possível carregar as campanhas. O filtro de campanha fica
+          indisponível até carregar.
+        </Aviso>
+      ) : null}
 
       <AvisoDaExportacaoDeLeads
         aviso={exportacao.aviso}
@@ -441,7 +559,8 @@ export function LeadsClient({
             }}
           />
         </Card>
-      ) : leadsQuery.isLoading ? (
+      ) : leadsQuery.isLoading ||
+        (campanhaSemMapa && !mapaQuery.isError) ? (
         visaoEfetiva === "kanban" ? (
           <ColunasCarregando
             colunas={jornada.length}
@@ -450,6 +569,20 @@ export function LeadsClient({
         ) : (
           <TableSkeleton columns={9} />
         )
+      ) : campanhaSemMapa ? (
+        <Card>
+          <EmptyState
+            tom="erro"
+            title="Não foi possível filtrar por campanha"
+            description="As campanhas da clínica não carregaram. Tente de novo ou limpe os filtros."
+            action={{
+              label: "Tentar de novo",
+              onClick: () => void mapaQuery.refetch(),
+              variant: "outline",
+            }}
+            onClearFilters={limparFiltros}
+          />
+        </Card>
       ) : vazioInicial ? (
         <Card>
           <EmptyState

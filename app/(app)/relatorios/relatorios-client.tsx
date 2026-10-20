@@ -142,6 +142,10 @@ export function RelatoriosClient({
   const diaDe = recorteDaURLValido ? deURL : diaDePadrao;
   const diaAte = recorteDaURLValido ? ateURL : diaAtePadrao;
   const recorteInicial = diaDe === diaDeInicial && diaAte === diaAteInicial;
+  // O MESMO recorte vai para a lista de Leads quando uma linha da origem e
+  // clicada (pedido do dono em 20/10/2026): os dias civis da clinica, que a
+  // lista converte no mesmo fuso.
+  const periodo = useMemo(() => ({ diaDe, diaAte }), [diaDe, diaAte]);
 
   const [dimensaoOrigem, setDimensaoOrigem] =
     useState<DimensaoDaOrigem>("canal");
@@ -437,6 +441,7 @@ export function RelatoriosClient({
           {abaAtiva === "geral" && funil && agenda && atendimento ? (
             <AbaVisaoGeral
               funil={funil}
+              periodo={periodo}
               agenda={agenda}
               atendimento={atendimento}
               serie={serieQuery.data}
@@ -466,6 +471,7 @@ export function RelatoriosClient({
           {abaAtiva === "marketing" && funil ? (
             <AbaMarketing
               funil={funil}
+              periodo={periodo}
               campanhas={campanhasQuery.data}
               campanhasComErro={campanhasQuery.isError}
               aoTentarCampanhasDeNovo={() => void campanhasQuery.refetch()}

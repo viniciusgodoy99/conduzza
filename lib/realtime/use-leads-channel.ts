@@ -40,6 +40,9 @@ export type ContactRow = {
   source_method?: string | null;
   source_ad_id?: string | null;
   source_google_campaign_id?: string | null;
+  source_campaign_id?: string | null;
+  source_adset_id?: string | null;
+  ctwa_clid?: string | null;
   first_contact_at: string;
   last_contact_at: string | null;
 };
@@ -73,6 +76,12 @@ export function mesclarLinhaNoLead(
     // aqui). Sem esta linha a lista aberta ficaria em "Campanha do Google
     // não informada" ate recarregar.
     source_google_campaign_id: row.source_google_campaign_id ?? null,
+    // O que separa campanha e anuncio como Resultados (filtros da lista): a
+    // ingestao pode gravar o clique ou os ids num contato que ja existe sem
+    // trocar o source_ad_id. Do clique so fica o fato de existir.
+    source_campaign_id: row.source_campaign_id ?? null,
+    source_adset_id: row.source_adset_id ?? null,
+    com_ctwa_clid: row.ctwa_clid !== null && row.ctwa_clid !== undefined,
     last_contact_at: row.last_contact_at,
   };
 }

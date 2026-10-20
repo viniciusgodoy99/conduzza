@@ -18,6 +18,7 @@ import { SerieLeadsAgendadas } from "@/components/relatorios/serie-leads-agendad
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
+import type { PeriodoDaLista } from "@/lib/domain/campanha-e-anuncio-do-lead";
 import type {
   AbaDeResultados,
   AgendaDoPeriodo,
@@ -52,6 +53,7 @@ function tentarDeNovo(acao: () => void) {
 
 export function AbaVisaoGeral({
   funil,
+  periodo,
   agenda,
   atendimento,
   serie,
@@ -72,6 +74,8 @@ export function AbaVisaoGeral({
   irParaAba,
 }: {
   funil: Periodizado<FunilDoPeriodo>;
+  /** O periodo da tela (dias civis da clinica), para os links da lista. */
+  periodo: PeriodoDaLista;
   agenda: Periodizado<AgendaDoPeriodo>;
   atendimento: Periodizado<AtendimentoDoPeriodo>;
   /** undefined = carregando */
@@ -179,7 +183,7 @@ export function AbaVisaoGeral({
           erro={serieComErro}
           tentarDeNovo={tentarDeNovo(aoTentarSerieDeNovo)}
         />
-        <OrigemDosLeads funil={atual} />
+        <OrigemDosLeads funil={atual} periodo={periodo} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

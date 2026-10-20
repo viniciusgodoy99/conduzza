@@ -63,6 +63,7 @@ const { DetalheDaOrigem } =
 const { AbaMarketing } = await import("@/components/relatorios/aba-marketing");
 
 const nada = () => undefined;
+const PERIODO = { diaDe: "2026-10-01", diaAte: "2026-10-20" };
 
 /** Texto sem tags, com espacos normalizados. */
 function texto(markup: string): string {
@@ -433,6 +434,7 @@ describe("Detalhe da origem na tela, dimensão Anúncio", () => {
     return renderToStaticMarkup(
       <DetalheDaOrigem
         funil={FUNIL}
+        periodo={PERIODO}
         campanhas={campanhasPeriodizadas(null).atual}
         anuncios={anunciosDoPeriodo()}
         dimensao="anuncio"
@@ -496,6 +498,7 @@ describe("Detalhe da origem na tela, dimensão Anúncio", () => {
     const html = renderToStaticMarkup(
       <AbaMarketing
         funil={{ atual: FUNIL, anterior: null }}
+        periodo={PERIODO}
         campanhas={campanhasPeriodizadas(null)}
         campanhasComErro={false}
         aoTentarCampanhasDeNovo={nada}
