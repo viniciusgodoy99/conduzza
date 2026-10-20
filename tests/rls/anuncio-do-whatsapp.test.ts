@@ -507,7 +507,10 @@ describe("registrar_anuncio_do_whatsapp (o sistema)", () => {
     });
     expect(mesmoTexto).toMatchObject({ data: "sem_mudanca", error: null });
     const depois = await linhaDoNovo();
-    expect(depois).toMatchObject({ titulo: "Título 2", plataforma: "Instagram" });
+    expect(depois).toMatchObject({
+      titulo: "Título 2",
+      plataforma: "Instagram",
+    });
     expect(Date.parse(depois!.texto_visto_em as string)).toBe(Date.parse(T3));
   });
 
@@ -579,7 +582,13 @@ describe("registrar_anuncio_do_whatsapp (o sistema)", () => {
       const { error } = await registrar({ p_clinic_id: clinicaB, ...args });
       expect(error?.code).toBe("23514");
     }
-    const { error } = await registrar({ p_ad_id: ANUNCIO_NOVO, p_titulo: "x" });
+    // Clinica nula explicita: sem o argumento, o PostgREST nem acha a
+    // funcao (PGRST202) e a regra do banco nao chega a rodar.
+    const { error } = await registrar({
+      p_clinic_id: null,
+      p_ad_id: ANUNCIO_NOVO,
+      p_titulo: "x",
+    });
     expect(error?.code).toBe("22023");
   });
 });
