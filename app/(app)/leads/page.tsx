@@ -8,6 +8,7 @@ import {
   podeIniciarConversa,
 } from "@/lib/domain/iniciar-conversa";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import { fetchEtiquetasDeConversa } from "@/lib/queries/etiquetas-de-conversa";
 import { fetchJornada } from "@/lib/queries/jornada";
 import {
   fetchLeads,
@@ -46,11 +47,12 @@ export default async function LeadsPage() {
     entity: "leads",
   });
 
-  // O total, as reguas e o mapa de campanhas sao acessorios: se falharem, a
-  // tela abre sem eles e o cliente tenta de novo (o aviso de corte some; o
-  // Mudar etapa pede confirmacao dizendo que nao conseguiu conferir as
-  // reguas; o filtro de campanha espera o mapa).
-  const [leads, membros, ativos, jornada, total, reguas, mapa] =
+  // O total, as reguas, o mapa de campanhas e as etiquetas cadastradas sao
+  // acessorios: se falharem, a tela abre sem eles e o cliente tenta de novo
+  // (o aviso de corte some; o Mudar etapa pede confirmacao dizendo que nao
+  // conseguiu conferir as reguas; o filtro de campanha espera o mapa; os
+  // chips de etiqueta saem neutros e o Etiquetar lead fica com as em uso).
+  const [leads, membros, ativos, jornada, total, reguas, mapa, etiquetas] =
     await Promise.all([
       fetchLeads(supabase, active.clinicId),
       fetchClinicAuthorNames(supabase, active.clinicId),
@@ -59,6 +61,7 @@ export default async function LeadsPage() {
       fetchTotalDeLeads(supabase, active.clinicId).catch(() => null),
       fetchReguasDeFollowup(supabase, active.clinicId).catch(() => null),
       fetchMapaDeAtribuicao(supabase, active.clinicId).catch(() => null),
+      fetchEtiquetasDeConversa(supabase, active.clinicId).catch(() => null),
     ]);
 
   return (
@@ -95,6 +98,7 @@ export default async function LeadsPage() {
       // conversation): o drawer diz isso em vez de afirmar que nao ha
       // conversa (achado 7), como a ficha faz.
       soAtribuidas={active.role === "profissional"}
+      etiquetasIniciais={etiquetas}
     />
   );
 }

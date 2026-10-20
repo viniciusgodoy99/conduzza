@@ -44,6 +44,12 @@ import {
   opcoesDeCampanha,
   type MapaDeAtribuicaoLido,
 } from "@/lib/domain/campanha-e-anuncio-do-lead";
+import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
+import {
+  opcoesDeEtiqueta,
+  tonsDasEtiquetas,
+  type LeituraDasEtiquetas,
+} from "@/lib/domain/etiquetas-do-lead";
 import {
   algumaEtapaComDescricao,
   type EtapaDaJornada,
@@ -54,6 +60,10 @@ import {
   textoDaContagemDeLeads,
   type FiltrosDeLeads,
 } from "@/lib/domain/leads-ui";
+import {
+  etiquetasKeys,
+  fetchEtiquetasDeConversa,
+} from "@/lib/queries/etiquetas-de-conversa";
 import {
   fetchLeads,
   fetchMapaDeAtribuicao,
@@ -91,6 +101,13 @@ import { createClient } from "@/lib/supabase/client";
 // de campanha precisa do mapa da clinica (meta_anuncio e
 // anuncio_do_whatsapp): sem ele a lista espera ou diz que nao deu, nunca
 // filtra errado. Ao lado da barra, quantos leads batem com os filtros.
+//
+// Etiquetas (relato do dono em 20/10/2026): as cadastradas da clinica
+// (conversation_tag_def, pela sessao, com a RLS) vem do servidor e ficam na
+// MESMA consulta do Atendimento. Dao o tom dos chips da lista, do cartao e
+// da gaveta, e, com as que ja estao em uso nos leads carregados, as opcoes
+// do "Etiquetar lead". Sem a leitura (carregando ou erro), os chips saem
+// neutros e o popover fica com as em uso, avisando; a tela nao cai.
 
 type Visao = "kanban" | "lista";
 
@@ -145,6 +162,7 @@ export function LeadsClient({
   podeIniciarConversa = false,
   dicaIniciarConversa = "",
   soAtribuidas,
+  etiquetasIniciais,
 }: {
   clinicId: string;
   timezone: string;
@@ -175,6 +193,11 @@ export function LeadsClient({
   dicaIniciarConversa?: string;
   /** Profissional: a RLS so mostra as conversas atribuidas a ele */
   soAtribuidas: boolean;
+  /**
+   * Etiquetas cadastradas da clinica; null se a leitura falhou no servidor
+   * (o navegador tenta de novo).
+   */
+  etiquetasIniciais?: EtiquetaDeConversa[] | null;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
@@ -191,6 +214,10 @@ export function LeadsClient({
   useDadosDoServidor(leadsKeys.total(clinicId), totalInicial ?? undefined);
   useDadosDoServidor(leadsKeys.reguas(clinicId), reguasIniciais ?? undefined);
   useDadosDoServidor(leadsKeys.mapa(clinicId), mapaInicial ?? undefined);
+  useDadosDoServidor(
+    etiquetasKeys.daClinica(clinicId),
+    etiquetasIniciais ?? undefined,
+  );
 
   const leadsQuery = useQuery({
     queryKey: leadsKeys.lista(clinicId),
@@ -229,6 +256,25 @@ export function LeadsClient({
   const mapa = useMemo(
     () => (mapaQuery.data ? indexarMapaDeAtribuicao(mapaQuery.data) : null),
     [mapaQuery.data],
+  );
+  // Etiquetas cadastradas: o gestor pode criar uma em Configuracoes a
+  // qualquer hora; vale por um minuto, como no Atendimento.
+  const etiquetasQuery = useQuery({
+    queryKey: etiquetasKeys.daClinica(clinicId),
+    queryFn: () => fetchEtiquetasDeConversa(supabase, clinicId),
+    initialData: etiquetasIniciais ?? undefined,
+    staleTime: 60_000,
+  });
+  const catalogoDeEtiquetas = etiquetasQuery.data;
+  // "Tentar de novo" volta a mostrar carregando enquanto busca.
+  const leituraDasEtiquetas: LeituraDasEtiquetas = catalogoDeEtiquetas
+    ? "pronto"
+    : etiquetasQuery.isError && !etiquetasQuery.isFetching
+      ? "erro"
+      : "carregando";
+  const tonsDeEtiqueta = useMemo(
+    () => tonsDasEtiquetas(catalogoDeEtiquetas ?? []),
+    [catalogoDeEtiquetas],
   );
 
   const visao: Visao =
@@ -288,6 +334,12 @@ export function LeadsClient({
 
   // Com initialData a query sempre tem dados definidos.
   const leads = leadsQuery.data;
+  // As etiquetas do "Etiquetar lead": as cadastradas e as em uso em TODOS
+  // os leads carregados (nao so nos filtrados), sem repetir.
+  const etiquetasDaClinica = useMemo(
+    () => opcoesDeEtiqueta(catalogoDeEtiquetas ?? [], leads),
+    [catalogoDeEtiquetas, leads],
+  );
   // O filtro de campanha sem o mapa (carregando ou erro) nao decide nada: a
   // lista mostra o carregando ou o erro, nunca um recorte errado.
   const campanhaSemMapa = Boolean(filtros.campanha) && mapa === null;
@@ -564,15 +616,14 @@ export function LeadsClient({
             }}
           />
         </Card>
-      ) : leadsQuery.isLoading ||
-        (campanhaSemMapa && !mapaQuery.isError) ? (
+      ) : leadsQuery.isLoading || (campanhaSemMapa && !mapaQuery.isError) ? (
         visaoEfetiva === "kanban" ? (
           <ColunasCarregando
             colunas={jornada.length}
             comDescricao={algumaEtapaComDescricao(jornada)}
           />
         ) : (
-          <TableSkeleton columns={9} />
+          <TableSkeleton columns={10} />
         )
       ) : campanhaSemMapa ? (
         <Card>
@@ -639,6 +690,7 @@ export function LeadsClient({
           leads={leadsFiltrados}
           membros={membros}
           timezone={timezone}
+          tonsDeEtiqueta={tonsDeEtiqueta}
           selecionados={selecionados}
           onSelecionar={selecionar}
           onSelecionarTodos={selecionarTodos}
@@ -655,6 +707,9 @@ export function LeadsClient({
           reguas={reguas}
           podeEditar={podeEditar}
           dica={dica}
+          etiquetasDaClinica={etiquetasDaClinica}
+          leituraDasEtiquetas={leituraDasEtiquetas}
+          aoTentarDeNovoAsEtiquetas={() => void etiquetasQuery.refetch()}
           onLimpar={limparSelecao}
           aoConcluir={(restantes) => setSelecionados(new Set(restantes))}
         />
@@ -673,6 +728,7 @@ export function LeadsClient({
         podeIniciarConversa={podeIniciarConversa}
         dicaIniciarConversa={dicaIniciarConversa}
         soAtribuidas={soAtribuidas}
+        tonsDeEtiqueta={tonsDeEtiqueta}
         onFechar={() => setLeadAbertoId(null)}
       />
 

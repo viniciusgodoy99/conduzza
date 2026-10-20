@@ -4,12 +4,17 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { EtiquetasDoLead } from "@/components/leads/etiquetas-do-lead";
 import { dataLocal, tempoRelativo } from "@/components/leads/rotulos";
 import { DataTable } from "@/components/shared/data-table";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CONSENT_STATUS, STATUS_TONE_VARS } from "@/lib/design/status";
+import {
+  SEM_TONS,
+  type TonsDasEtiquetas,
+} from "@/lib/domain/etiquetas-do-lead";
 import {
   definicaoDaEtapa,
   porChave,
@@ -42,6 +47,11 @@ import { cn } from "@/lib/utils";
 // a lista, em fetchLeads) e, sem ela, diz que a Meta ainda nao identificou.
 // Nome de campanha da Meta pode ser longo: a celula corta com reticencias e
 // o texto inteiro fica no title e no drawer. Campo vazio continua vazio.
+//
+// Etiquetas (relato do dono em 20/10/2026: a etiqueta gravava, mas a lista
+// nao mostrava): ate 2 chips e "+N", no tom da etiqueta cadastrada com o
+// mesmo nome (sem ela, neutro). A lista inteira fica no title e no nome
+// acessivel (etiquetas-do-lead.tsx). Sem etiqueta, a celula fica vazia.
 
 function Autorizacao({ autorizado }: { autorizado: boolean }) {
   const definicao = autorizado
@@ -64,6 +74,7 @@ export function ListaLeads({
   membros,
   jornada,
   timezone,
+  tonsDeEtiqueta = SEM_TONS,
   selecionados,
   onSelecionar,
   onSelecionarTodos,
@@ -73,6 +84,8 @@ export function ListaLeads({
   membros: Record<string, string>;
   jornada: EtapaDaJornada[];
   timezone: string;
+  /** Tom das etiquetas cadastradas, pelo nome; sem catalogo, tudo neutro */
+  tonsDeEtiqueta?: TonsDasEtiquetas;
   selecionados: ReadonlySet<string>;
   onSelecionar: (id: string, marcado: boolean) => void;
   onSelecionarTodos: (ids: string[], marcado: boolean) => void;
@@ -211,6 +224,17 @@ export function ListaLeads({
         },
       },
       {
+        id: "etiquetas",
+        header: "Etiquetas",
+        cell: ({ row }) => (
+          <EtiquetasDoLead
+            tags={row.original.tags}
+            tons={tonsDeEtiqueta}
+            className="max-w-[240px]"
+          />
+        ),
+      },
+      {
         accessorKey: "owner_user_id",
         header: "Responsável",
         cell: ({ row }) => (
@@ -262,6 +286,7 @@ export function ListaLeads({
     onSelecionarTodos,
     onAbrirLead,
     defs,
+    tonsDeEtiqueta,
   ]);
 
   return (

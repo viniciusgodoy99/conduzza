@@ -26,6 +26,7 @@ import {
   type ResultadoDaAcao,
   type ResultadoEmLotes,
 } from "@/components/leads/em-lotes";
+import { PainelEtiquetarLead } from "@/components/leads/etiquetar-lead";
 import type { OpcaoDeResponsavel } from "@/components/leads/filtros-leads";
 import {
   DialogoMarcarComoPaciente,
@@ -43,13 +44,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { STATUS_TONE_VARS } from "@/lib/design/status";
+import {
+  outrasGrafias,
+  type LeituraDasEtiquetas,
+  type OpcaoDeEtiqueta,
+} from "@/lib/domain/etiquetas-do-lead";
 import { definicaoDaEtapa, type EtapaDaJornada } from "@/lib/domain/jornada";
 import {
   leadsKeys,
@@ -78,6 +83,15 @@ import { cn } from "@/lib/utils";
 // A confirmacao diz quantos mudam e quantos ja sao pacientes (esses ficam
 // como estao e nem vao para o servidor); depois, em lotes de 100 com o
 // progresso, como as outras acoes.
+//
+// "Etiquetar lead" (relato do dono em 20/10/2026, "nao aparecem as que ja
+// existem"): o popover (etiquetar-lead.tsx) oferece as etiquetas da clinica,
+// as cadastradas em Configuracoes e as que ja estao em uso nos leads, sem
+// repetir. A etiqueta continua em contact.tags, pelo mesmo etiquetar. Quem
+// adiciona "LEAD" tira, no mesmo pedido, outra grafia da mesma etiqueta
+// ("lead") dos selecionados: o lead nao fica com as duas.
+
+const SEM_OPCOES: readonly OpcaoDeEtiqueta[] = [];
 
 const DICA_JA_SAO_PACIENTES = "Os contatos selecionados já são pacientes.";
 
@@ -155,6 +169,9 @@ export function BarraAcoesMassa({
   reguas,
   podeEditar,
   dica,
+  etiquetasDaClinica = SEM_OPCOES,
+  leituraDasEtiquetas = "pronto",
+  aoTentarDeNovoAsEtiquetas,
   onLimpar,
   aoConcluir,
 }: {
@@ -167,6 +184,11 @@ export function BarraAcoesMassa({
   reguas: ReguaDaEtapa[] | null;
   podeEditar: boolean;
   dica: string;
+  /** Cadastradas e em uso nos leads carregados, sem repetir */
+  etiquetasDaClinica?: readonly OpcaoDeEtiqueta[];
+  /** Leitura das cadastradas: sem ela, o popover avisa e fica com as em uso */
+  leituraDasEtiquetas?: LeituraDasEtiquetas;
+  aoTentarDeNovoAsEtiquetas?: () => void;
   onLimpar: () => void;
   /** Fim de uma acao: a selecao passa a ser so os que nao mudaram */
   aoConcluir: (restantes: string[]) => void;
@@ -271,7 +293,11 @@ export function BarraAcoesMassa({
     void moverPara(def.chave, def.nome);
   };
 
-  const etiquetar = async (adicionar: string[], remover: string[]) => {
+  const etiquetar = async (
+    adicionar: string[],
+    remover: string[],
+    sucesso: string,
+  ) => {
     const resultado = await rodar("Etiquetando", (lote) =>
       etiquetarAction({ contact_ids: lote, adicionar, remover }),
     );
@@ -279,13 +305,23 @@ export function BarraAcoesMassa({
       setNovaEtiqueta("");
       setEtiquetarAberto(false);
     }
-    concluir(
-      resultado,
-      adicionar.length > 0
-        ? `Etiqueta adicionada em ${contarLeads(n)}`
-        : `Etiqueta removida de ${contarLeads(n)}`,
-    );
+    concluir(resultado, sucesso);
   };
+
+  // A grafia ja vem resolvida pelo popover (a da clinica, quando existe).
+  const adicionarEtiqueta = (nome: string) =>
+    void etiquetar(
+      [nome],
+      outrasGrafias(nome, selecionados),
+      `Etiqueta ${nome} adicionada em ${contarLeads(n)}`,
+    );
+
+  const removerEtiqueta = (nome: string) =>
+    void etiquetar(
+      [],
+      [nome],
+      `Etiqueta ${nome} removida de ${contarLeads(n)}`,
+    );
 
   const marcarComoPacientes = async () => {
     setPacientesAberto(false);
@@ -480,58 +516,17 @@ export function BarraAcoesMassa({
           onAberto={setEtiquetarAberto}
           larguraClassName="w-72"
         >
-          <div className="grid gap-3 p-[5px]">
-            <p className="text-[11px] leading-[1.4] text-text-secondary">
-              Estas etiquetas ficam no lead. As etiquetas da conversa ficam no
-              Atendimento.
-            </p>
-            <div className="flex gap-1.5">
-              <Input
-                value={novaEtiqueta}
-                onChange={(e) => setNovaEtiqueta(e.target.value)}
-                placeholder="Nova etiqueta do lead"
-                maxLength={40}
-                aria-label="Nova etiqueta"
-              />
-              <Button
-                variant="solid"
-                disabled={ocupado || novaEtiqueta.trim().length === 0}
-                onClick={() => void etiquetar([novaEtiqueta.trim()], [])}
-              >
-                Adicionar
-              </Button>
-            </div>
-            {etiquetasAtuais.length > 0 ? (
-              <div className="grid gap-1.5">
-                <p className="text-xs text-text-secondary">
-                  Etiquetas do lead nos selecionados (toque no X para remover)
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {etiquetasAtuais.map((etiqueta) => (
-                    <span
-                      key={etiqueta}
-                      className="inline-flex h-7 max-w-full items-center gap-1 rounded-sm border border-input bg-card pr-1 pl-2.5 text-xs font-medium text-foreground"
-                    >
-                      <span className="truncate">{etiqueta}</span>
-                      <button
-                        type="button"
-                        disabled={ocupado}
-                        onClick={() => void etiquetar([], [etiqueta])}
-                        aria-label={`Remover etiqueta ${etiqueta}`}
-                        className="hit-40 relative grid size-5 shrink-0 place-items-center rounded-[4px] text-text-secondary cz-transition hover:bg-surface-3 hover:text-text-strong focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid disabled:pointer-events-none disabled:opacity-45"
-                      >
-                        <X className="size-3" aria-hidden />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-text-secondary">
-                Os leads selecionados ainda não têm etiquetas.
-              </p>
-            )}
-          </div>
+          <PainelEtiquetarLead
+            novaEtiqueta={novaEtiqueta}
+            aoDigitar={setNovaEtiqueta}
+            opcoes={etiquetasDaClinica}
+            leitura={leituraDasEtiquetas}
+            aoTentarDeNovo={aoTentarDeNovoAsEtiquetas}
+            etiquetasDosSelecionados={etiquetasAtuais}
+            ocupado={ocupado}
+            aoAdicionar={adicionarEtiqueta}
+            aoRemover={removerEtiqueta}
+          />
         </AcaoComPopover>
 
         {podeEditar && idsDeLeads.length > 0 ? (

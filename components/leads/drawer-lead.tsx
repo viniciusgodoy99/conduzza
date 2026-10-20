@@ -24,6 +24,7 @@ import {
   rotuloDoCanal,
   tempoRelativo,
 } from "@/components/leads/rotulos";
+import { ChipDeEtiqueta } from "@/components/shared/chip-de-etiqueta";
 import { ListSkeleton } from "@/components/shared/loading-skeleton";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -44,6 +45,11 @@ import {
   LEITURA_SEM_DETALHES,
   type LeituraDosDetalhes,
 } from "@/lib/domain/anuncio-do-whatsapp";
+import {
+  etiquetasDoLead,
+  SEM_TONS,
+  type TonsDasEtiquetas,
+} from "@/lib/domain/etiquetas-do-lead";
 import {
   definicaoDaEtapa,
   porChave,
@@ -112,6 +118,9 @@ import {
 // titulo, descricao e link do anuncio (anuncio_do_whatsapp, lido no MESMO
 // detalhe da action) e a campanha e o conjunto da Meta, que sairam das
 // linhas. A campanha do link ou do Google continua nas linhas.
+//
+// Etiquetas do lead (20/10/2026): o mesmo ChipDeEtiqueta da lista e do
+// cartao, no tom da etiqueta cadastrada com o mesmo nome (sem ela, neutro).
 
 const AUTOR_LABEL: Record<MensagemDoLead["author"], string> = {
   paciente: "Paciente",
@@ -193,6 +202,7 @@ export function DrawerLead({
   podeIniciarConversa = false,
   dicaIniciarConversa = "",
   soAtribuidas,
+  tonsDeEtiqueta = SEM_TONS,
   onFechar,
 }: {
   clinicId: string;
@@ -211,6 +221,8 @@ export function DrawerLead({
   dicaIniciarConversa?: string;
   /** Profissional: a RLS so mostra as conversas atribuidas a ele */
   soAtribuidas: boolean;
+  /** Tom das etiquetas cadastradas, pelo nome; sem catalogo, tudo neutro */
+  tonsDeEtiqueta?: TonsDasEtiquetas;
   onFechar: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -383,14 +395,15 @@ export function DrawerLead({
                 <Linha rotulo="Etiquetas do lead">
                   {lead.tags.length > 0 ? (
                     <span className="flex flex-wrap gap-1">
-                      {lead.tags.map((etiqueta) => (
-                        <span
-                          key={etiqueta}
-                          className="inline-flex h-6 max-w-full items-center rounded-sm border border-border-strong bg-card px-2.5 text-xs font-medium text-foreground"
-                        >
-                          <span className="truncate">{etiqueta}</span>
-                        </span>
-                      ))}
+                      {etiquetasDoLead(lead.tags, tonsDeEtiqueta).map(
+                        (etiqueta) => (
+                          <ChipDeEtiqueta
+                            key={etiqueta.nome}
+                            nome={etiqueta.nome}
+                            tom={etiqueta.tom}
+                          />
+                        ),
+                      )}
                     </span>
                   ) : (
                     <span className="text-text-secondary">Nenhuma</span>
