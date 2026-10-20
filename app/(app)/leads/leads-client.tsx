@@ -17,6 +17,11 @@ import { BarraAcoesMassa } from "@/components/leads/barra-acoes-massa";
 import { ColunasCarregando } from "@/components/leads/colunas-carregando";
 import { DrawerLead } from "@/components/leads/drawer-lead";
 import {
+  AvisoDaExportacaoDeLeads,
+  BotaoExportarLeads,
+  useExportacaoDeLeads,
+} from "@/components/leads/exportar-leads";
+import {
   FiltrosLeads,
   type OpcaoDeResponsavel,
   type ValoresFiltros,
@@ -33,12 +38,15 @@ import { PageHeader } from "@/components/shared/page-header";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { instanteLocal } from "@/lib/domain/horarios";
 import {
   algumaEtapaComDescricao,
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
-import { filtrarLeads, type FiltrosDeLeads } from "@/lib/domain/leads-ui";
+import {
+  filtrarLeads,
+  filtrosDeLeadsDosValores,
+  type FiltrosDeLeads,
+} from "@/lib/domain/leads-ui";
 import {
   fetchLeads,
   fetchReguasDeFollowup,
@@ -62,6 +70,11 @@ import { createClient } from "@/lib/supabase/client";
 // esta NA TELA. A selecao efetiva e recortada pelos leads filtrados, zera
 // quando um filtro muda e, depois de uma acao em massa, fica so com os leads
 // que nao mudaram (nenhum, quando tudo deu certo).
+//
+// Exportar (pedido do dono em 20/10/2026): o arquivo e gerado no servidor
+// com TODOS os leads que batem com os filtros da URL, nao so os carregados
+// aqui (components/leads/exportar-leads.tsx). So administrador e gestor; os
+// outros papeis veem o botao desabilitado, com a dica.
 
 type Visao = "kanban" | "lista";
 
@@ -109,6 +122,7 @@ export function LeadsClient({
   responsaveisAtivos,
   podeEditar,
   dica,
+  podeExportar,
   podeAgendar,
   dicaAgendar,
   soAtribuidas,
@@ -127,6 +141,8 @@ export function LeadsClient({
   responsaveisAtivos: string[];
   podeEditar: boolean;
   dica: string;
+  /** Administrador ou gestor: o "Exportar" fica habilitado */
+  podeExportar: boolean;
   /** Permissao da Agenda, para o "Agendar" do drawer */
   podeAgendar: boolean;
   dicaAgendar: string;
@@ -201,21 +217,19 @@ export function LeadsClient({
 
   // O periodo dos inputs e dia civil da clinica; o filtro compara instantes.
   // A conversao respeita o fuso da clinica (regra 3.6), com o fim inclusivo
-  // ate o ultimo milissegundo do dia.
+  // ate o ultimo milissegundo do dia. A MESMA conversao vale na exportacao.
   const filtros = useMemo<FiltrosDeLeads>(
-    () => ({
-      etapa: valores.etapa || undefined,
-      origem: valores.origem || undefined,
-      responsavel: valores.resp || undefined,
-      deISO: valores.de
-        ? instanteLocal(timezone, valores.de, "00:00").toISOString()
-        : undefined,
-      ateISO: valores.ate
-        ? new Date(
-            instanteLocal(timezone, valores.ate, "23:59").getTime() + 59_999,
-          ).toISOString()
-        : undefined,
-    }),
+    () =>
+      filtrosDeLeadsDosValores(
+        {
+          etapa: valores.etapa,
+          origem: valores.origem,
+          resp: valores.resp,
+          de: valores.de,
+          ate: valores.ate,
+        },
+        timezone,
+      ),
     [
       valores.etapa,
       valores.origem,
@@ -239,6 +253,7 @@ export function LeadsClient({
   const [leadAbertoId, setLeadAbertoId] = useState<string | null>(null);
   const [novoAberto, setNovoAberto] = useState(false);
   const [importAberto, setImportAberto] = useState(false);
+  const exportacao = useExportacaoDeLeads(clinicId, valores);
 
   const leadAberto = leads.find((lead) => lead.id === leadAbertoId) ?? null;
   // So o que esta na tela pode ser alvo: lead que saiu do filtro (pela troca
@@ -340,14 +355,23 @@ export function LeadsClient({
             ariaLabel="Modo de exibição"
           />
         </div>
+        {/* Abaixo de 640px Importar e Exportar ficam so com o icone (o nome
+            continua para o leitor de tela): com os dois e o Novo lead, a
+            barra passaria da largura do celular. */}
         <BotaoProtegido
           podeEditar={podeEditar}
           dica={dica}
           variant="outline"
           onClick={() => setImportAberto(true)}
         >
-          <Upload className="size-4" /> Importar planilha
+          <Upload className="size-4" aria-hidden />
+          <span className="max-sm:sr-only">Importar planilha</span>
         </BotaoProtegido>
+        <BotaoExportarLeads
+          podeExportar={podeExportar}
+          exportando={exportacao.exportando}
+          aoExportar={exportacao.exportar}
+        />
         <BotaoProtegido
           podeEditar={podeEditar}
           dica={dica}
@@ -365,6 +389,12 @@ export function LeadsClient({
         responsaveis={responsaveisDoFiltro}
         aoMudar={mudarFiltro}
         aoLimpar={limparFiltros}
+      />
+
+      <AvisoDaExportacaoDeLeads
+        aviso={exportacao.aviso}
+        aoDispensar={exportacao.dispensar}
+        aoTentarDeNovo={exportacao.exportar}
       />
 
       {cortado ? (

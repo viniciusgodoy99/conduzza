@@ -7,6 +7,7 @@ import {
   idDeAnuncioValido,
   LEITURA_SEM_ANUNCIO,
   type AnuncioDaMeta,
+  type FiltrosDeLeads,
   type LeituraDoAnuncio,
   type LinhaConsent,
 } from "@/lib/domain/leads-ui";
@@ -131,31 +132,40 @@ export const anuncioDaMetaKeys = {
 // linha Campanha, nunca da tela inteira.
 const ANUNCIO_SELECT =
   "ad_id, campaign_id, campaign_name, adset_id, adset_name";
+// A exportacao de leads tambem escreve o nome do anuncio na Meta (coluna
+// Anuncio, quando o anuncio nao tem titulo guardado).
+const ANUNCIO_COM_NOME_SELECT = `${ANUNCIO_SELECT}, ad_name`;
 
 // Lote de ids por consulta: 100 ids de ate 32 digitos cabem com folga na URL
 // do PostgREST.
 const ANUNCIOS_POR_CONSULTA = 100;
 
 function normalizarAnuncio(row: Record<string, unknown>): AnuncioDaMeta {
-  return {
+  const anuncio: AnuncioDaMeta = {
     ad_id: row.ad_id as string,
     campaign_id: row.campaign_id as string,
     campaign_name: (row.campaign_name as string | null) ?? null,
     adset_id: (row.adset_id as string | null) ?? null,
     adset_name: (row.adset_name as string | null) ?? null,
   };
+  if ("ad_name" in row) {
+    anuncio.ad_name = (row.ad_name as string | null) ?? null;
+  }
+  return anuncio;
 }
 
 /**
  * As linhas de meta_anuncio dos anuncios pedidos, da clinica pedida (o
  * filtro de clinica importa: o mesmo anuncio pode estar no mapa de duas
  * clinicas, e a RLS deixa ler todas as clinicas ativas da pessoa). Id fora
- * do formato do mapa nunca casa e nem vai na consulta. LANCA em erro.
+ * do formato do mapa nunca casa e nem vai na consulta. `comNome` traz
+ * tambem o nome do anuncio (so a exportacao usa). LANCA em erro.
  */
 export async function fetchAnunciosDaMeta(
   supabase: SupabaseClient,
   clinicId: string,
   adIds: readonly (string | null | undefined)[],
+  opcoes: { comNome?: boolean } = {},
 ): Promise<Map<string, AnuncioDaMeta>> {
   const validos = [
     ...new Set(
@@ -169,13 +179,15 @@ export async function fetchAnunciosDaMeta(
     const lote = validos.slice(i, i + ANUNCIOS_POR_CONSULTA);
     const { data, error } = await supabase
       .from("meta_anuncio")
-      .select(ANUNCIO_SELECT)
+      .select(opcoes.comNome ? ANUNCIO_COM_NOME_SELECT : ANUNCIO_SELECT)
       .eq("clinic_id", clinicId)
       .in("ad_id", lote);
     if (error) {
       throw new Error(error.message);
     }
-    for (const row of (data ?? []) as Record<string, unknown>[]) {
+    // A coluna do nome vem por escolha: o select e variavel, e o
+    // supabase-js so tipa a linha de select literal.
+    for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
       const anuncio = normalizarAnuncio(row);
       mapa.set(anuncio.ad_id, anuncio);
     }
@@ -244,21 +256,100 @@ async function anexarAnunciosDaMeta(
 
 // source_google_campaign_id so existe depois da migration 20261005100000:
 // ela e aplicada ANTES de publicar este codigo, senao a lista inteira falha.
-const LEAD_SELECT =
+// A exportacao de leads le este MESMO select (mais o tipo do contato).
+export const LEAD_SELECT =
   "id, name, phone_e164, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
+
+/**
+ * A consulta dos contatos da clinica, a base da lista (fetchLeads), do tempo
+ * real (fetchLead) e da exportacao: um construtor so, para coluna e regra
+ * novas valerem nas tres. `contar` pede a contagem exata junto (a
+ * exportacao confere o teto na primeira pagina).
+ */
+export function consultaDosLeads(
+  supabase: SupabaseClient,
+  clinicId: string,
+  opcoes: { colunas?: string; contar?: boolean } = {},
+) {
+  return supabase
+    .from("contact")
+    .select(
+      opcoes.colunas ?? LEAD_SELECT,
+      opcoes.contar ? { count: "exact" } : undefined,
+    )
+    .eq("clinic_id", clinicId);
+}
+
+/**
+ * As linhas cruas de uma leitura de contatos. Com as colunas vindas de
+ * variavel, o supabase-js nao monta o tipo da linha (sem tipos gerados no
+ * cliente, todo leitor daqui ja trata a linha como registro solto).
+ */
+export function linhasDosLeads(data: unknown): Record<string, unknown>[] {
+  return (Array.isArray(data) ? data : []) as Record<string, unknown>[];
+}
+
+/** O minimo do construtor do PostgREST que os filtros da barra usam. */
+type ConsultaFiltravel<Q> = {
+  eq(coluna: string, valor: string): Q;
+  gte(coluna: string, valor: string): Q;
+  lt(coluna: string, valor: string): Q;
+};
+
+/**
+ * Os filtros da barra (os MESMOS de filtrarLeads, vindos da mesma
+ * conversao, filtrosDeLeadsDosValores) aplicados no banco, para a
+ * exportacao recortar a clinica inteira sem trazer tudo. Mesmo resultado de
+ * filtrarLeads: igualdade exata em etapa, origem e responsavel (contato sem
+ * canal ou sem responsavel nunca casa), e o periodo sobre first_contact_at,
+ * inclusivo nas duas pontas. O navegador compara em milissegundos e o banco
+ * guarda microssegundos: o inicio vale como "a partir do instante" e o fim
+ * vira "antes do milissegundo seguinte", que e exatamente o que o
+ * new Date(...).getTime() da lista aceita (ele corta, nao arredonda).
+ */
+export function aplicarFiltrosDeLeads<Q extends ConsultaFiltravel<Q>>(
+  consulta: Q,
+  filtros: FiltrosDeLeads,
+): Q {
+  let filtrada = consulta;
+  if (filtros.etapa) {
+    filtrada = filtrada.eq("funnel_stage", filtros.etapa);
+  }
+  if (filtros.origem) {
+    filtrada = filtrada.eq("source_channel", filtros.origem);
+  }
+  if (filtros.responsavel) {
+    filtrada = filtrada.eq("owner_user_id", filtros.responsavel);
+  }
+  // Instante que nao e data nao filtra, como no filtrarLeads (NaN nunca
+  // exclui ninguem la).
+  const de = filtros.deISO ? new Date(filtros.deISO).getTime() : Number.NaN;
+  const ate = filtros.ateISO ? new Date(filtros.ateISO).getTime() : Number.NaN;
+  if (!Number.isNaN(de)) {
+    filtrada = filtrada.gte("first_contact_at", new Date(de).toISOString());
+  }
+  if (!Number.isNaN(ate)) {
+    filtrada = filtrada.lt("first_contact_at", new Date(ate + 1).toISOString());
+  }
+  return filtrada;
+}
+
+/** As linhas de contact_consent do embed (um-para-muitos vem como array). */
+export function linhasDeConsentimentoDoLead(
+  row: Record<string, unknown>,
+): LinhaConsent[] {
+  const consentBruto = row.contact_consent;
+  return (Array.isArray(consentBruto) ? consentBruto : []) as LinhaConsent[];
+}
 
 // Sem tipos gerados, o supabase-js devolve embed como array: normaliza no
 // padrao de normalizarConsulta (lib/queries/agenda.ts) e ja deriva
 // consent_ativo pela regra da linha mais recente, descartando as linhas.
-function normalizarLead(row: Record<string, unknown>): LeadResumo {
+export function normalizarLead(row: Record<string, unknown>): LeadResumo {
   const insuranceBruto = Array.isArray(row.insurance)
     ? row.insurance[0]
     : row.insurance;
-  // Embed um-para-muitos vem sempre como array do PostgREST.
-  const consentBruto = row.contact_consent;
-  const linhas = (
-    Array.isArray(consentBruto) ? consentBruto : []
-  ) as LinhaConsent[];
+  const linhas = linhasDeConsentimentoDoLead(row);
   return {
     id: row.id as string,
     name: (row.name as string | null) ?? null,
@@ -307,10 +398,7 @@ export async function fetchLeads(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<LeadResumo[]> {
-  const { data, error } = await supabase
-    .from("contact")
-    .select(LEAD_SELECT)
-    .eq("clinic_id", clinicId)
+  const { data, error } = await consultaDosLeads(supabase, clinicId)
     .order("last_contact_at", { ascending: false, nullsFirst: false })
     .order("first_contact_at", { ascending: false })
     .order("id", { ascending: true })
@@ -318,7 +406,7 @@ export async function fetchLeads(
   if (error) {
     throw new Error(error.message);
   }
-  const leads = ((data ?? []) as Record<string, unknown>[]).map(normalizarLead);
+  const leads = linhasDosLeads(data).map(normalizarLead);
   return (await anexarAnunciosDaMeta(supabase, clinicId, leads)).sort(
     compararPorProximaAcao,
   );
@@ -395,17 +483,14 @@ export async function fetchLead(
   clinicId: string,
   contactId: string,
 ): Promise<LeadResumo | null> {
-  const { data, error } = await supabase
-    .from("contact")
-    .select(LEAD_SELECT)
-    .eq("clinic_id", clinicId)
+  const { data, error } = await consultaDosLeads(supabase, clinicId)
     .eq("id", contactId)
     .maybeSingle();
   if (error || !data) {
     return null;
   }
   const [lead] = await anexarAnunciosDaMeta(supabase, clinicId, [
-    normalizarLead(data as Record<string, unknown>),
+    normalizarLead(data as unknown as Record<string, unknown>),
   ]);
   return lead ?? null;
 }

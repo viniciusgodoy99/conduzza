@@ -2,6 +2,7 @@ import { rotuloDoCanal } from "@/components/leads/rotulos";
 import { APPOINTMENT_STATUS } from "@/lib/design/status";
 import {
   idEntreParenteses,
+  ROTULO_ANUNCIO_NAO_IDENTIFICADO,
   rotuloDoAnuncio,
 } from "@/lib/domain/anuncio-do-whatsapp";
 import {
@@ -168,7 +169,9 @@ export const TITULO_DO_DETALHE_DA_ORIGEM: Record<DimensaoDaOrigem, string> = {
   anuncio: "Detalhe por anúncio",
 };
 
-export const ROTULO_ANUNCIO_NAO_IDENTIFICADO = "Anúncio não identificado";
+// "Anúncio não identificado" mora em lib/domain/anuncio-do-whatsapp.ts (a
+// exportacao de leads usa o mesmo); reexportado aqui para quem ja importava.
+export { ROTULO_ANUNCIO_NAO_IDENTIFICADO };
 // O resto dos leads: nao vieram de anuncio da Meta. O lead do clique no site
 // (anuncio do Google) tambem cai aqui, por isso "da Meta".
 export const ROTULO_SEM_ANUNCIO = "Sem anúncio da Meta";

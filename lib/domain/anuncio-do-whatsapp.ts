@@ -348,8 +348,15 @@ export function idEntreParenteses(adId: string): string {
 }
 
 /**
- * Rotulo de um anuncio em Resultados: o titulo guardado; senao o nome do
- * anuncio na Meta; senao "Anúncio sem título (id 120240624148610289)".
+ * Lead de anuncio sem id de anuncio valido (clique numa publicacao, ou o id
+ * nao veio): a linha de Resultados e a coluna Anuncio da exportacao de leads.
+ */
+export const ROTULO_ANUNCIO_NAO_IDENTIFICADO = "Anúncio não identificado";
+
+/**
+ * Rotulo de um anuncio em Resultados e na exportacao de leads: o titulo
+ * guardado; senao o nome do anuncio na Meta; senao "Anúncio sem título (id
+ * 120240624148610289)".
  */
 export function rotuloDoAnuncio(linha: {
   adId: string;

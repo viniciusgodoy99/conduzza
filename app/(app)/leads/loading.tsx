@@ -14,7 +14,8 @@ export default function CarregandoLeads() {
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Skeleton className="hidden h-10 w-44 rounded-lg lg:block" />
-          <Skeleton className="h-10 w-40 rounded-lg" />
+          <Skeleton className="h-10 w-11 rounded-lg sm:w-40" />
+          <Skeleton className="h-10 w-11 rounded-lg sm:w-28" />
           <Skeleton className="h-10 w-28 rounded-lg" />
         </div>
       </div>

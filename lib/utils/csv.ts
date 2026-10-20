@@ -36,7 +36,9 @@ function escaparCelula(celula: string): string {
 export function gerarCsv(linhas: string[][]): string {
   const corpo = linhas
     .map((linha) =>
-      linha.map((celula) => escaparCelula(neutralizarFormula(celula))).join(";"),
+      linha
+        .map((celula) => escaparCelula(neutralizarFormula(celula)))
+        .join(";"),
     )
     .join("\r\n");
   return "\uFEFF" + corpo;
@@ -124,13 +126,29 @@ export function baixarCsv(nomeDoArquivo: string, conteudo: string): void {
   if (typeof document === "undefined") {
     return;
   }
-  const blob = new Blob([conteudo], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
+  baixarArquivo(
+    nomeDoArquivo,
+    new Blob([conteudo], { type: "text/csv;charset=utf-8" }),
+  );
+}
+
+/**
+ * Baixa um arquivo que ja chegou pronto (o CSV dos leads, gerado no
+ * servidor). Pelo Blob da resposta, e nao pelo texto: o text() da resposta
+ * tira o BOM, e sem ele o Excel abre os acentos quebrados.
+ */
+export function baixarArquivo(nomeDoArquivo: string, arquivo: Blob): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const url = URL.createObjectURL(arquivo);
   const link = document.createElement("a");
   link.href = url;
   link.download = nomeDoArquivo;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  // Revogar logo depois do click interrompe o download em alguns Safari: o
+  // endereco do Blob fica valido mais um pouco (o mesmo prazo do FileSaver).
+  setTimeout(() => URL.revokeObjectURL(url), 40_000);
 }

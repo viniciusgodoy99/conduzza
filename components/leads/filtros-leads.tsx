@@ -13,22 +13,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
+import type { ValoresDosFiltrosDeLeads } from "@/lib/domain/leads-ui";
 
 // Filtros da Tela 4: etapa, origem, responsavel e periodo de entrada. Os
 // valores vivem na URL (o pai grava); aqui e so a barra, solta na pagina
 // (fora de cartao), no desenho do design system Conduzza (docs/06 secao
 // 5.4). O sentinela evita value="" no Radix Select, mesmo padrao do
-// SelectFiltro da Agenda.
+// SelectFiltro da Agenda. Os mesmos valores vao para a exportacao (o
+// arquivo sai com os leads que estes filtros mostram).
 
 const TODOS = "__todos__";
 
-export type ValoresFiltros = {
-  etapa: string;
-  origem: string;
-  resp: string;
-  de: string;
-  ate: string;
-};
+// O campo de data aceita ano de 5 digitos (o Chrome vai ate 275760), e o
+// filtro so le dia civil com ano de 4 (ehDiaCivilValido): sem o teto, a data
+// ficaria escrita no campo sem filtrar nada.
+const ULTIMO_DIA_DO_CAMPO = "9999-12-31";
+
+export type ValoresFiltros = ValoresDosFiltrosDeLeads;
 
 /** Membro que aparece numa lista de responsavel (filtro, Reatribuir, Novo lead). */
 export type OpcaoDeResponsavel = { id: string; nome: string };
@@ -124,6 +125,7 @@ export function FiltrosLeads({
           type="date"
           value={valores.de}
           onChange={(e) => aoMudar("de", e.target.value)}
+          max={ULTIMO_DIA_DO_CAMPO}
           className="h-10 w-[150px] cz-num shadow-xs"
           aria-label="Entrou a partir de"
         />
@@ -132,6 +134,7 @@ export function FiltrosLeads({
           type="date"
           value={valores.ate}
           onChange={(e) => aoMudar("ate", e.target.value)}
+          max={ULTIMO_DIA_DO_CAMPO}
           className="h-10 w-[150px] cz-num shadow-xs"
           aria-label="Entrou até"
         />

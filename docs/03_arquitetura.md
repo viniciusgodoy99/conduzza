@@ -44,6 +44,8 @@ app/
 ├── (admin)/                      Tela 14, visão do dono do produto
 └── api/
     ├── webhooks/whatsapp/        fallback, o principal é Edge Function
+    ├── leads/exportar/           CSV dos leads da Tela 4 (20/10/2026), com sessão: só admin e gestor,
+    │                             leitura pela sessão (RLS), trilha em audit_log (docs/04, seção 20)
     └── publico/clique/           aviso do clique rastreado pelo site (F1 do Google, 04/10/2026), sem login
 
 public/

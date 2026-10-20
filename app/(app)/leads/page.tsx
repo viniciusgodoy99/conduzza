@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
+import { podeExportarLeads } from "@/lib/domain/exportacao-de-leads";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { fetchJornada } from "@/lib/queries/jornada";
 import {
@@ -67,6 +68,9 @@ export default async function LeadsPage() {
         permissionHint(active.role, "leads_pacientes") ??
         "Seu perfil não pode editar leads e pacientes"
       }
+      // Exportar e so de administrador e gestor (decisao do dono em
+      // 20/10/2026); a rota confere o papel de novo no servidor.
+      podeExportar={podeExportarLeads(active.role)}
       // "Agendar" do drawer respeita a permissao do modulo DE DESTINO: sem
       // ela, a Agenda nao abre o modal do link (achados 6 e 22).
       podeAgendar={canEdit(active.role, "agenda")}

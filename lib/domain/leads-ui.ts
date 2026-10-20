@@ -1,5 +1,6 @@
 import { rotuloDoCanal } from "@/components/leads/rotulos";
 import type { ContactRecency } from "@/lib/design/status";
+import { instanteLocal } from "@/lib/domain/horarios";
 
 // Regras PURAS da Tela 4 (Leads): recencia de contato, consentimento vigente,
 // ordenacao por "quem espera ha mais tempo" e agrupamento do Kanban. Zero
@@ -44,24 +45,43 @@ export type LinhaConsent = {
 };
 
 /**
- * Consentimento vigente de WhatsApp a partir das linhas de contact_consent:
- * filtra o canal, ordena por granted_at desc e olha SO a linha mais recente,
- * a mesma regra da RPC consentimento_vigente. Filtrar por "ativa" ANTES de
- * ordenar seria o bug do fetchConsent antigo: uma linha antiga ativa
- * mascararia a revogacao mais recente, e disparo sem autorizacao e
- * exatamente o que a regra 3.3 proibe.
+ * Situacao da autorizacao de WhatsApp: "sem_autorizacao" quando nunca houve
+ * linha do canal; senao a linha mais recente decide entre "autorizado" e
+ * "revogado". Os mesmos tres estados do CONSENT_STATUS das telas.
  */
-export function consentimentoVigenteDeLinhas(
+export type SituacaoDoConsentimento =
+  "autorizado" | "revogado" | "sem_autorizacao";
+
+/**
+ * Situacao da autorizacao a partir das linhas de contact_consent: filtra o
+ * canal, ordena por granted_at desc e olha SO a linha mais recente, a mesma
+ * regra da RPC consentimento_vigente. Filtrar por "ativa" ANTES de ordenar
+ * seria o bug do fetchConsent antigo: uma linha antiga ativa mascararia a
+ * revogacao mais recente, e disparo sem autorizacao e exatamente o que a
+ * regra 3.3 proibe.
+ */
+export function situacaoDoConsentimentoDeLinhas(
   linhas: readonly LinhaConsent[],
-): boolean {
+): SituacaoDoConsentimento {
   const doCanal = linhas
     .filter((linha) => linha.channel === "whatsapp")
     .sort((a, b) => b.granted_at.localeCompare(a.granted_at));
   const maisRecente = doCanal[0];
   if (!maisRecente) {
-    return false;
+    return "sem_autorizacao";
   }
-  return maisRecente.revoked_at === null;
+  return maisRecente.revoked_at === null ? "autorizado" : "revogado";
+}
+
+/**
+ * Consentimento vigente de WhatsApp (booleano da lista e do envio): so a
+ * linha mais recente do canal, ativa, autoriza. Mesma regra de
+ * situacaoDoConsentimentoDeLinhas, numa fonte so.
+ */
+export function consentimentoVigenteDeLinhas(
+  linhas: readonly LinhaConsent[],
+): boolean {
+  return situacaoDoConsentimentoDeLinhas(linhas) === "autorizado";
 }
 
 /**
@@ -83,6 +103,48 @@ export function compararPorProximaAcao(
     return 1;
   }
   return a.last_contact_at.localeCompare(b.last_contact_at);
+}
+
+/**
+ * Dois instantes timestamptz do PostgREST, do mais antigo ao mais novo, com
+ * a precisao do banco: o Date para no milissegundo, entao o empate nele cai
+ * nos microssegundos da fracao ("…:56.123456+00:00").
+ */
+function compararInstantes(a: string, b: string): number {
+  const diferenca = Date.parse(a) - Date.parse(b);
+  if (diferenca !== 0) {
+    return diferenca < 0 ? -1 : 1;
+  }
+  const alemDoMilissegundo = (instante: string) =>
+    Number((/\.(\d+)/.exec(instante)?.[1] ?? "").padEnd(6, "0").slice(3, 6));
+  return alemDoMilissegundo(a) - alemDoMilissegundo(b);
+}
+
+/**
+ * A ordem da Tela 4 para quem le os leads em outra ordem (a exportacao, que
+ * pagina por id): proxima acao (compararPorProximaAcao) e, no empate, a
+ * ordem em que fetchLeads pede ao banco (primeiro contato mais novo, depois
+ * o id), que e o que o sort estavel da tela preserva. Sem o desempate, os
+ * nunca contatados saiam na ordem do uuid. Mudou a ordem de fetchLeads,
+ * muda aqui.
+ */
+export function compararNaOrdemDaTela(
+  a: { id: string; first_contact_at: string; last_contact_at: string | null },
+  b: { id: string; first_contact_at: string; last_contact_at: string | null },
+): number {
+  const proximaAcao = compararPorProximaAcao(a, b);
+  if (proximaAcao !== 0) {
+    return proximaAcao;
+  }
+  const primeiroContato = compararInstantes(
+    b.first_contact_at,
+    a.first_contact_at,
+  );
+  if (primeiroContato !== 0) {
+    return primeiroContato;
+  }
+  // O uuid em texto minusculo compara como os bytes, a ordem do banco.
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 // Motivos de perda do check do banco, com o rotulo de interface. "Outro"
@@ -116,10 +178,72 @@ export type FiltrosDeLeads = {
 };
 
 /**
+ * Os valores da barra de filtros como vivem na URL da Tela 4 (string vazia =
+ * sem filtro): etapa (chave da jornada), origem (canal), resp (id do
+ * membro) e o periodo de entrada em dias civis da clinica (aaaa-mm-dd).
+ */
+export type ValoresDosFiltrosDeLeads = {
+  etapa: string;
+  origem: string;
+  resp: string;
+  de: string;
+  ate: string;
+};
+
+/** Dia civil aaaa-mm-dd que existe no calendario (30/02 nao existe). */
+export function ehDiaCivilValido(texto: string): boolean {
+  const partes = /^(\d{4})-(\d{2})-(\d{2})$/.exec(texto);
+  if (!partes) {
+    return false;
+  }
+  const [ano, mes, dia] = [
+    Number(partes[1]),
+    Number(partes[2]),
+    Number(partes[3]),
+  ];
+  const data = new Date(Date.UTC(ano, mes - 1, dia));
+  return (
+    data.getUTCFullYear() === ano &&
+    data.getUTCMonth() === mes - 1 &&
+    data.getUTCDate() === dia
+  );
+}
+
+/**
+ * Os valores da URL viram os filtros que a lista aplica (filtrarLeads) e que
+ * a exportacao aplica no banco (aplicarFiltrosDeLeads): UMA conversao para
+ * as duas, para o arquivo sair com os mesmos leads da tela. O periodo e dia
+ * civil da clinica e vira instantes no fuso dela (regra 3.6): o inicio as
+ * 00:00 e o fim inclusivo ate o ultimo milissegundo do dia. Dia que nao
+ * existe no calendario (URL editada a mao) e ignorado, em vez de derrubar a
+ * tela.
+ */
+export function filtrosDeLeadsDosValores(
+  valores: ValoresDosFiltrosDeLeads,
+  timezone: string,
+): FiltrosDeLeads {
+  return {
+    etapa: valores.etapa || undefined,
+    origem: valores.origem || undefined,
+    responsavel: valores.resp || undefined,
+    deISO: ehDiaCivilValido(valores.de)
+      ? instanteLocal(timezone, valores.de, "00:00").toISOString()
+      : undefined,
+    ateISO: ehDiaCivilValido(valores.ate)
+      ? new Date(
+          instanteLocal(timezone, valores.ate, "23:59").getTime() + 59_999,
+        ).toISOString()
+      : undefined,
+  };
+}
+
+/**
  * Filtros da barra da Tela 4, aplicados no cliente (mesma decisao da Agenda:
  * troca de filtro instantanea, sem refetch). O periodo e sobre
  * first_contact_at; quem converte o dia civil da clinica em instantes e o
- * chamador, respeitando a regra 3.6 de fuso.
+ * chamador (filtrosDeLeadsDosValores), respeitando a regra 3.6 de fuso. A
+ * exportacao aplica os mesmos filtros no banco (aplicarFiltrosDeLeads, em
+ * lib/queries/leads.ts) e passa o resultado por aqui de novo.
  */
 export function filtrarLeads<T extends LeadFiltravel>(
   leads: readonly T[],
@@ -319,6 +443,11 @@ export type AnuncioDaMeta = {
   campaign_name: string | null;
   adset_id: string | null;
   adset_name: string | null;
+  /**
+   * Nome do anuncio na Meta. So a exportacao de leads le (coluna Anuncio,
+   * quando o anuncio nao tem titulo guardado); as telas nao trazem.
+   */
+  ad_name?: string | null;
 };
 
 /**
