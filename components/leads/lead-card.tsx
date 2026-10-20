@@ -19,6 +19,10 @@ import { cn } from "@/lib/utils";
 // parado nem "urgente": nao ha dado para eles (C25). Arrastavel com 8px de
 // ativacao, entao o clique continua abrindo o drawer. O telefone aparece
 // formatado, como uma pessoa discaria.
+//
+// data-cartao-do-lead marca o cartao para o arrasto do quadro para os lados
+// (arrastar-para-os-lados.ts) nunca comecar nele. O cursor e sempre do
+// cartao: sem edicao, o padrao, e nao a mao do quadro que o envolve.
 
 export function LeadCard({
   lead,
@@ -56,10 +60,11 @@ export function LeadCard({
       ref={setNodeRef}
       {...listeners}
       {...atributosDeArrasto}
+      data-cartao-do-lead=""
       onClick={() => onAbrir(lead)}
       className={cn(
         "grid w-full gap-2 rounded-xl border border-border bg-card p-[11px] text-left shadow-xs transition-[box-shadow,translate] duration-(--dur-fast) outline-none hover:-translate-y-px hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid motion-reduce:hover:translate-y-0",
-        podeEditar && "cursor-grab",
+        podeEditar ? "cursor-grab" : "cursor-default",
         isDragging && "cursor-grabbing shadow-pop",
       )}
       style={
