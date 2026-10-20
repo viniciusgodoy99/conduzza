@@ -1689,3 +1689,340 @@ describe("anúncio: plataforma, tipo e chaves vistas", () => {
     });
   });
 });
+
+// Detalhes do anuncio (pedido do dono em 20/10/2026, o cartao "Detalhes do
+// anuncio" da uazapi): titulo, descricao e link, lidos de forma defensiva nas
+// tres formas conhecidas e ja saneados. A forma exata da uazapi nao esta
+// documentada: o parser nao aposta em uma.
+describe("anúncio: título, descrição e link", () => {
+  const base = {
+    EventType: "messages",
+    token: "token-da-instancia",
+  };
+
+  function mensagemComContexto(contextInfo: Record<string, unknown>) {
+    return {
+      ...base,
+      message: {
+        messageid: "AD-DETALHES",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        chatid: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "Olá! Quero saber mais",
+        content: { text: "Olá! Quero saber mais", contextInfo },
+      },
+    };
+  }
+
+  function anuncioDe(payload: unknown) {
+    const evento = parseInboundEvent(payload);
+    if (evento?.kind !== "message_received") {
+      throw new Error("esperava mensagem recebida");
+    }
+    return evento.anuncio;
+  }
+
+  it("forma whatsmeow em PascalCase (Title, Body, SourceID, SourceURL)", () => {
+    const anuncio = anuncioDe(
+      mensagemComContexto({
+        ExternalAdReply: {
+          Title: "Limpeza de pele com 30% de desconto",
+          Body: "Agende sua avaliação.\nVagas limitadas.",
+          SourceID: "120240624148610289",
+          SourceURL: "https://fb.me/abcXYZ",
+          SourceType: "ad",
+          SourceApp: "instagram",
+          CtwaClid: "Af-PASCAL",
+          MediaURL: "https://scontent.xx.fbcdn.net/imagem.jpg",
+          ThumbnailURL: "https://scontent.xx.fbcdn.net/miniatura.jpg",
+        },
+      }),
+    );
+    expect(anuncio).toMatchObject({
+      adId: "120240624148610289",
+      ctwaClid: "Af-PASCAL",
+      titulo: "Limpeza de pele com 30% de desconto",
+      descricao: "Agende sua avaliação.\nVagas limitadas.",
+      sourceUrl: "https://fb.me/abcXYZ",
+      plataforma: "Instagram",
+      tipo: "ad",
+    });
+  });
+
+  it("forma whatsmeow em camelCase (title, body, sourceID, sourceURL)", () => {
+    const anuncio = anuncioDe(
+      mensagemComContexto({
+        externalAdReply: {
+          title: "Botox em Fortaleza",
+          body: "Avaliação gratuita",
+          sourceID: "120240624148610290",
+          sourceURL: "https://www.instagram.com/p/abc/",
+          sourceType: "ad",
+          ctwaClid: "Af-CAMEL",
+        },
+      }),
+    );
+    expect(anuncio).toMatchObject({
+      adId: "120240624148610290",
+      titulo: "Botox em Fortaleza",
+      descricao: "Avaliação gratuita",
+      sourceUrl: "https://www.instagram.com/p/abc/",
+    });
+  });
+
+  it("forma do referral da Cloud API (headline, body, source_url)", () => {
+    const evento = parseInboundEvent({
+      ...base,
+      message: {
+        messageid: "AD-OFICIAL",
+        sender_pn: "5584991234567@s.whatsapp.net",
+        fromMe: false,
+        text: "oi",
+        referral: {
+          source_url: "https://fb.me/oficial",
+          source_id: "120210000000000001",
+          source_type: "ad",
+          headline: "Clareamento dental",
+          body: "Sorria com confiança",
+          media_type: "image",
+          image_url: "https://scontent.xx.fbcdn.net/imagem.jpg",
+          ctwa_clid: "CLID-OFICIAL",
+        },
+      },
+    });
+    expect(evento).toMatchObject({
+      anuncio: {
+        adId: "120210000000000001",
+        ctwaClid: "CLID-OFICIAL",
+        titulo: "Clareamento dental",
+        descricao: "Sorria com confiança",
+        sourceUrl: "https://fb.me/oficial",
+        tipo: "ad",
+      },
+    });
+  });
+
+  it("title vence headline e body vence description; vazio cai para o seguinte", () => {
+    const anuncio = extrairAnuncio({
+      referral: {
+        source_id: "120210000000000002",
+        title: "   ",
+        headline: "Do headline",
+        body: "Do body",
+        description: "Da description",
+      },
+    });
+    expect(anuncio).toMatchObject({
+      titulo: "Do headline",
+      descricao: "Do body",
+    });
+    expect(
+      extrairAnuncio({
+        referral: {
+          source_id: "120210000000000003",
+          description: "Só description",
+        },
+      }),
+    ).toMatchObject({ titulo: null, descricao: "Só description" });
+  });
+
+  it("sem título, descrição e link: os três nulos, e o anúncio continua", () => {
+    const anuncio = anuncioDe(
+      mensagemComContexto({
+        externalAdReply: { sourceID: "120240624148610289", ctwaClid: "Af-1" },
+      }),
+    );
+    expect(anuncio).toMatchObject({
+      adId: "120240624148610289",
+      titulo: null,
+      descricao: null,
+      sourceUrl: null,
+    });
+  });
+
+  it("título, descrição ou link sozinhos não fazem um anúncio", () => {
+    const evento = parseInboundEvent(
+      mensagemComContexto({
+        externalAdReply: {
+          title: "Título solto",
+          body: "Descrição solta",
+          sourceURL: "https://fb.me/solto",
+        },
+      }),
+    );
+    expect(evento).toMatchObject({ anuncio: null });
+  });
+
+  it("saneia: título numa linha só, sem controle nem marca de direção", () => {
+    const anuncio = extrairAnuncio({
+      externalAdReply: {
+        sourceID: "120240624148610289",
+        title: "  Limpeza\nde\tpele \u{0007}hoje\u{202e}txe.  ",
+        body: "Primeira linha\r\nSegunda\u{0000} linha\r\r\r\n\n\nTerceira\u{2066}\t fim   ",
+      },
+    });
+    // A marca de direcao sai (nao vira espaco); o controle vira espaco.
+    expect(anuncio?.titulo).toBe("Limpeza de pele hojetxe.");
+    expect(anuncio?.descricao).toBe(
+      "Primeira linha\nSegunda linha\n\nTerceira  fim",
+    );
+  });
+
+  it("corta o título em 300 e a descrição em 2.000, sem partir emoji", () => {
+    const emoji = "\u{1f469}\u{200d}\u{2695}\u{fe0f}";
+    const anuncio = extrairAnuncio({
+      externalAdReply: {
+        sourceID: "120240624148610289",
+        title: `${"a".repeat(298)}${emoji}b`,
+        body: "d".repeat(2500),
+      },
+    });
+    // O emoji tem 4 pontos de codigo: nao cabe inteiro em 300 e sai inteiro.
+    expect(anuncio?.titulo).toBe("a".repeat(298));
+    expect(Array.from(anuncio?.descricao ?? "")).toHaveLength(2000);
+
+    const cabe = extrairAnuncio({
+      externalAdReply: {
+        sourceID: "120240624148610289",
+        title: `${"a".repeat(296)}${emoji}b`,
+      },
+    });
+    expect(cabe?.titulo).toBe(`${"a".repeat(296)}${emoji}`);
+    expect(Array.from(cabe?.titulo ?? "")).toHaveLength(300);
+  });
+
+  it("link: só https onde o anúncio vive (host exato), até 2.000; o resto vira nulo", () => {
+    const linkDe = (sourceURL: string) =>
+      extrairAnuncio({
+        externalAdReply: { sourceID: "120240624148610289", sourceURL },
+      })?.sourceUrl;
+    expect(linkDe("https://fb.me/abc")).toBe("https://fb.me/abc");
+    expect(linkDe("  https://www.facebook.com/clinica/posts/1  ")).toBe(
+      "https://www.facebook.com/clinica/posts/1",
+    );
+    // Redirecionador, grupo e conversa nunca viram "Abrir anúncio".
+    expect(linkDe("  https://l.facebook.com/l.php?u=x  ")).toBeNull();
+    expect(
+      linkDe("https://www.facebook.com/l.php?u=https%3A%2F%2Fgolpe.example"),
+    ).toBeNull();
+    expect(linkDe("https://l.instagram.com/?u=https%3A%2F%2Fgolpe")).toBeNull();
+    expect(linkDe("https://chat.whatsapp.com/ConviteDeGrupo")).toBeNull();
+    expect(linkDe("https://wa.me/5584999990000?text=Pague")).toBeNull();
+    expect(linkDe("https://m.me/golpista")).toBeNull();
+    expect(linkDe("http://fb.me/abc")).toBeNull();
+    expect(linkDe("javascript:alert(1)")).toBeNull();
+    expect(linkDe("https://golpe.example.com/fb.me")).toBeNull();
+    expect(linkDe("https://facebook.com.golpe.example/")).toBeNull();
+    expect(linkDe("https://usuario:senha@facebook.com/x")).toBeNull();
+    expect(linkDe("https://fb.me/a b")).toBeNull();
+    expect(linkDe(`https://fb.me/${"a".repeat(1986)}`)).toHaveLength(2000);
+    expect(linkDe(`https://fb.me/${"a".repeat(1987)}`)).toBeNull();
+  });
+
+  it("os detalhes vêm do referral que deu o id, nunca de outro", () => {
+    const anuncio = extrairAnuncio({
+      content: {
+        // Primeiro referral (na ordem da varredura) sem id, com outro texto.
+        primeiro: {
+          externalAdReply: {
+            title: "Texto de outro anúncio",
+            sourceURL: "https://fb.me/outro",
+            ctwaClid: "Af-SEM-ID",
+          },
+        },
+        contextInfo: {
+          externalAdReply: {
+            sourceID: "120240624148610289",
+            title: "Texto deste anúncio",
+            body: "Descrição deste anúncio",
+          },
+        },
+      },
+    });
+    expect(anuncio).toMatchObject({
+      adId: "120240624148610289",
+      titulo: "Texto deste anúncio",
+      descricao: "Descrição deste anúncio",
+      sourceUrl: null,
+    });
+  });
+
+  it("o anúncio da mensagem citada não empresta título nem descrição", () => {
+    const citada = {
+      extendedTextMessage: {
+        text: "mensagem antiga",
+        contextInfo: {
+          externalAdReply: {
+            sourceID: "1789000000000009",
+            title: "Título da citada",
+            body: "Descrição da citada",
+            sourceURL: "https://fb.me/citada",
+          },
+        },
+      },
+    };
+    const comAnuncioProprio = extrairAnuncio({
+      quoted: "ID-DA-CITADA",
+      content: {
+        contextInfo: {
+          quotedMessage: citada,
+          externalAdReply: { sourceID: "120240624148610289", ctwaClid: "Af-3" },
+        },
+      },
+    });
+    expect(comAnuncioProprio).toMatchObject({
+      adId: "120240624148610289",
+      titulo: null,
+      descricao: null,
+      sourceUrl: null,
+    });
+    const soACitada = extrairAnuncio({
+      content: { contextInfo: { quotedMessage: citada } },
+    });
+    expect(soACitada).toBeNull();
+  });
+
+  it("o diagnóstico continua só com os nomes de chave, nunca o texto", () => {
+    const anuncio = extrairAnuncio({
+      externalAdReply: {
+        SourceID: "120240624148610289",
+        Title: "Título secreto",
+        Body: "Descrição secreta",
+        SourceURL: "https://fb.me/secreto",
+      },
+    });
+    expect(anuncio?.chavesVistas.anuncio).toEqual([
+      "Body",
+      "SourceID",
+      "SourceURL",
+      "Title",
+    ]);
+    const serializado = JSON.stringify(anuncio?.chavesVistas);
+    for (const valor of ["secreto", "secreta", "fb.me", "120240624148610289"]) {
+      expect(serializado).not.toContain(valor);
+    }
+  });
+
+  it("formato canônico aceita titulo e descricao e saneia como o do uazapi", () => {
+    const evento = parseInboundEvent({
+      kind: "message_received",
+      phone: "+5584999990000",
+      waMessageId: "sim:ad:detalhes",
+      body: "vi o anúncio",
+      anuncio: {
+        adId: "120240624148610289",
+        tipo: "ad",
+        titulo: "  Título\ncom quebra  ",
+        descricao: "Linha 1\r\nLinha 2",
+        sourceUrl: "http://fb.me/sem-https",
+      },
+    });
+    expect(evento).toMatchObject({
+      anuncio: {
+        titulo: "Título com quebra",
+        descricao: "Linha 1\nLinha 2",
+        sourceUrl: null,
+      },
+    });
+  });
+});

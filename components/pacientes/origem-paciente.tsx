@@ -1,3 +1,4 @@
+import { DetalhesDoAnuncio } from "@/components/leads/detalhes-do-anuncio";
 import { dataLocal } from "@/components/leads/rotulos";
 import {
   BlocoFicha,
@@ -5,8 +6,11 @@ import {
   SemDado,
 } from "@/components/pacientes/comum";
 import {
+  campanhaDaMeta,
   campanhaDoContato,
+  campanhaForaDaMeta,
   conjuntoDoContato,
+  ehLeadDeAnuncio,
   rotuloDoMetodo,
   textoDaOrigem,
   type TextoDeAtribuicao,
@@ -21,6 +25,15 @@ import type { ContatoDaFicha } from "@/lib/queries/pacientes";
 // plataforma ("Tráfego pago, Meta (Instagram)"); a Campanha e o Conjunto do
 // lead de anuncio vem de meta_anuncio pelo id do anuncio (lidos com a ficha,
 // pela sessao); o Metodo diz como a origem foi capturada. So leitura.
+//
+// Detalhes do anuncio (20/10/2026, pedido do dono): o lead de anuncio tem o
+// bloco "Detalhes do anúncio" (o mesmo do Atendimento e da gaveta de Leads)
+// com titulo, descricao e link do anuncio (anuncio_do_whatsapp, lido com a
+// ficha) e a campanha e o conjunto da Meta, que sairam das linhas; a
+// campanha do link ou do Google continua nas linhas. Sem botao de tentar de
+// novo: a ficha e do servidor, o erro manda atualizar a pagina.
+
+const ATUALIZE_A_PAGINA = "Atualize a página para tentar de novo.";
 
 function ValorDeAtribuicao({ valor }: { valor: TextoDeAtribuicao }) {
   if (valor.tipo === "nome") {
@@ -31,7 +44,7 @@ function ValorDeAtribuicao({ valor }: { valor: TextoDeAtribuicao }) {
     <SemDado
       texto={
         valor.tipo === "erro"
-          ? `${valor.texto}. Atualize a página para tentar de novo.`
+          ? `${valor.texto}. ${ATUALIZE_A_PAGINA}`
           : valor.texto
       }
     />
@@ -46,7 +59,15 @@ export function OrigemPaciente({
   timezone: string;
 }) {
   const origem = textoDaOrigem(contato);
-  const campanha = campanhaDoContato(contato, contato.anuncio_meta);
+  const deAnuncio = ehLeadDeAnuncio(contato);
+  // Lead de anuncio: nas linhas, so a campanha que nao vem da Meta (link ou
+  // Google); a da Meta vai para o bloco "Detalhes do anúncio".
+  const campanhaNasLinhas = deAnuncio
+    ? campanhaForaDaMeta(contato)
+    : campanhaDoContato(contato, contato.anuncio_meta);
+  const campanhaDoBloco = deAnuncio
+    ? campanhaDaMeta(contato, contato.anuncio_meta)
+    : null;
   const conjunto = conjuntoDoContato(contato, contato.anuncio_meta);
   const metodo = rotuloDoMetodo(contato.source_method);
   const quando = contato.source_captured_at ?? contato.first_contact_at;
@@ -57,12 +78,9 @@ export function OrigemPaciente({
         <LinhaDaFicha rotulo="Canal">
           {origem ?? <SemDado texto="Não informado" />}
         </LinhaDaFicha>
-        <LinhaDaFicha rotulo="Campanha">
-          <ValorDeAtribuicao valor={campanha} />
-        </LinhaDaFicha>
-        {conjunto ? (
-          <LinhaDaFicha rotulo="Conjunto">
-            <ValorDeAtribuicao valor={conjunto} />
+        {campanhaNasLinhas ? (
+          <LinhaDaFicha rotulo="Campanha">
+            <ValorDeAtribuicao valor={campanhaNasLinhas} />
           </LinhaDaFicha>
         ) : null}
         {metodo ? <LinhaDaFicha rotulo="Método">{metodo}</LinhaDaFicha> : null}
@@ -70,6 +88,16 @@ export function OrigemPaciente({
           <span className="cz-num">{dataLocal(quando, timezone)}</span>
         </LinhaDaFicha>
       </div>
+      {deAnuncio ? (
+        <DetalhesDoAnuncio
+          leitura={contato.anuncio_whatsapp}
+          campanha={campanhaDoBloco}
+          conjunto={conjunto}
+          tela="ficha"
+          tituloComo="h3"
+          complementoDoErro={ATUALIZE_A_PAGINA}
+        />
+      ) : null}
     </BlocoFicha>
   );
 }

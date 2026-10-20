@@ -1,6 +1,10 @@
 import { rotuloDoCanal } from "@/components/leads/rotulos";
 import { APPOINTMENT_STATUS } from "@/lib/design/status";
 import {
+  idEntreParenteses,
+  rotuloDoAnuncio,
+} from "@/lib/domain/anuncio-do-whatsapp";
+import {
   DIVISOR_DO_CUSTO_POR_LEAD,
   TEXTOS_DO_DIVISOR,
   avisoDeFusoDaConta,
@@ -23,10 +27,12 @@ import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import type {
   AbaDeResultados,
   AgendaDoPeriodo,
+  AnunciosDoPeriodo,
   AtendimentoDoPeriodo,
   CampanhasDoPeriodo,
   FaturamentoDoPeriodo,
   FunilDoPeriodo,
+  LinhaDeAnuncioDoPeriodo,
   LinhaDeBase,
   LinhaDeCampanhaDoPeriodo,
   ObjetivoDeConversao,
@@ -134,8 +140,38 @@ export function taxaDeConversao(
 // Linhas de detalhe (tabelas da tela e da exportacao)
 // ---------------------------------------------------------------------------
 
-export type DimensaoDaOrigem = "canal" | "campanha";
+export type DimensaoDaOrigem = "canal" | "campanha" | "anuncio";
 export type DimensaoDaAgenda = "profissional" | "procedimento" | "status";
+
+/** As dimensoes do Detalhe da origem, na ordem do seletor. */
+export const DIMENSOES_DA_ORIGEM: readonly {
+  chave: DimensaoDaOrigem;
+  rotulo: string;
+}[] = [
+  { chave: "canal", rotulo: "Canal" },
+  { chave: "campanha", rotulo: "Campanha" },
+  { chave: "anuncio", rotulo: "Anúncio" },
+];
+
+/** O valor do seletor vira dimensao; valor desconhecido cai em Canal. */
+export function lerDimensaoDaOrigem(valor: string): DimensaoDaOrigem {
+  return (
+    DIMENSOES_DA_ORIGEM.find((dimensao) => dimensao.chave === valor)?.chave ??
+    "canal"
+  );
+}
+
+/** Titulo da secao do detalhe na exportacao, pela dimensao ativa. */
+export const TITULO_DO_DETALHE_DA_ORIGEM: Record<DimensaoDaOrigem, string> = {
+  canal: "Detalhe por canal",
+  campanha: "Detalhe por campanha",
+  anuncio: "Detalhe por anúncio",
+};
+
+export const ROTULO_ANUNCIO_NAO_IDENTIFICADO = "Anúncio não identificado";
+// O resto dos leads: nao vieram de anuncio da Meta. O lead do clique no site
+// (anuncio do Google) tambem cai aqui, por isso "da Meta".
+export const ROTULO_SEM_ANUNCIO = "Sem anúncio da Meta";
 
 export type LinhaDeOrigem = {
   rotulo: string;
@@ -156,6 +192,43 @@ export function rotuloDaLinhaDeCampanha(linha: LinhaDeCampanhaDoPeriodo): string
 }
 
 /**
+ * Rotulos das linhas da dimensao Anuncio: rotuloDoAnuncio (o titulo; senao o
+ * nome do anuncio na Meta; senao "Anúncio sem título (id 120240624148610289)").
+ * Dois anuncios com o mesmo rotulo (sem diferenca de maiuscula: o mesmo
+ * titulo, o mesmo nome na Meta) ganham o id INTEIRO, para cada linha ser
+ * distinguivel e achavel no Gerenciador (os ids de uma mesma conta costumam
+ * terminar igual). O rotulo que ja termina no proprio id nao repete; o
+ * desempate roda ate nao sobrar rotulo repetido (cada linha ganha o id uma
+ * vez so, e dois ids diferentes nunca dao o mesmo rotulo).
+ */
+export function rotulosDosAnuncios(
+  linhas: readonly LinhaDeAnuncioDoPeriodo[],
+): string[] {
+  const rotulos = linhas.map((linha) => rotuloDoAnuncio(linha));
+  const chave = (rotulo: string) => rotulo.toLocaleLowerCase("pt-BR");
+  let mudou = true;
+  while (mudou) {
+    mudou = false;
+    const vezes = new Map<string, number>();
+    for (const rotulo of rotulos) {
+      vezes.set(chave(rotulo), (vezes.get(chave(rotulo)) ?? 0) + 1);
+    }
+    rotulos.forEach((rotulo, indice) => {
+      const linha = linhas[indice];
+      if (!linha || (vezes.get(chave(rotulo)) ?? 0) < 2) {
+        return;
+      }
+      const id = idEntreParenteses(linha.adId);
+      if (!rotulo.endsWith(id)) {
+        rotulos[indice] = `${rotulo} ${id}`;
+        mudou = true;
+      }
+    });
+  }
+  return rotulos;
+}
+
+/**
  * Detalhe da origem (Marketing). Por canal: o funil. Por campanha: as MESMAS
  * linhas da tabela Campanhas (uma verdade so na aba), mais "Sem campanha"
  * com os leads de leads_sem_campanha. Agendaram e compareceram de "Sem
@@ -163,12 +236,50 @@ export function rotuloDaLinhaDeCampanha(linha: LinhaDeCampanhaDoPeriodo): string
  * retratos batem (mesmo total de leads e diferencas validas), senao a celula
  * fica vazia em vez de um numero errado. Por campanha sem as campanhas
  * carregadas: null (a tela mostra carregando; a exportacao pula a secao).
+ *
+ * Por anuncio (20/10/2026): uma linha por anuncio de anuncios_do_periodo
+ * (rotulosDosAnuncios), mais "Anúncio não identificado" (lead de anuncio sem
+ * id valido) e "Sem anúncio da Meta", que o banco ja conta junto (as tres
+ * somam os leads do periodo). Sem os anuncios carregados: null.
  */
 export function montarDetalheDeOrigem(
   funil: FunilDoPeriodo,
   dimensao: DimensaoDaOrigem,
   campanhas: CampanhasDoPeriodo | undefined,
+  anuncios?: AnunciosDoPeriodo,
 ): LinhaDeOrigem[] | null {
+  if (dimensao === "anuncio") {
+    if (!anuncios) {
+      return null;
+    }
+    const rotulos = rotulosDosAnuncios(anuncios.linhas);
+    const linhas: LinhaDeOrigem[] = anuncios.linhas.map((linha, indice) => ({
+      rotulo: rotulos[indice] ?? rotuloDoAnuncio(linha),
+      leads: linha.leads,
+      agendaram: linha.agendaram,
+      compareceram: linha.compareceram,
+      comparecimento: percentualOuSemDados(linha.compareceram, linha.leads),
+    }));
+    const restos = [
+      [ROTULO_ANUNCIO_NAO_IDENTIFICADO, anuncios.naoIdentificado],
+      [ROTULO_SEM_ANUNCIO, anuncios.semAnuncio],
+    ] as const;
+    for (const [rotulo, contagem] of restos) {
+      if (contagem.leads > 0) {
+        linhas.push({
+          rotulo,
+          leads: contagem.leads,
+          agendaram: contagem.agendaram,
+          compareceram: contagem.compareceram,
+          comparecimento: percentualOuSemDados(
+            contagem.compareceram,
+            contagem.leads,
+          ),
+        });
+      }
+    }
+    return linhas;
+  }
   if (dimensao === "canal") {
     return funil.porCanal.map((linha) => ({
       rotulo: rotuloDoCanal(linha.canal) ?? "Sem atribuição",
@@ -578,6 +689,8 @@ export type EntradaDaExportacao = {
   conversoes?: ConversoesResumo;
   /** Fase 4: campanhas_do_periodo (investimento null fora da gestao) */
   campanhas?: Periodizado<CampanhasDoPeriodo>;
+  /** anuncios_do_periodo: so com a dimensao Anuncio ativa na aba Marketing */
+  anuncios?: AnunciosDoPeriodo;
   /** Fuso da clinica: o "Atualizado em" do investimento sai nele */
   timezone?: string;
   dimensaoOrigem: DimensaoDaOrigem;
@@ -901,13 +1014,11 @@ function montarMarketing(entrada: EntradaDaExportacao): SecaoExportavel[] {
       funil,
       entrada.dimensaoOrigem,
       entrada.campanhas?.atual,
+      entrada.anuncios,
     );
     if (detalhe) {
       secoes.push({
-        titulo:
-          entrada.dimensaoOrigem === "canal"
-            ? "Detalhe por canal"
-            : "Detalhe por campanha",
+        titulo: TITULO_DO_DETALHE_DA_ORIGEM[entrada.dimensaoOrigem],
         linhas: [
           ["Origem", "Leads", "Agendaram", "Compareceram", "Comparecimento"],
           ...detalhe.map((linha) => [

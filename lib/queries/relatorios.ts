@@ -232,6 +232,40 @@ export type InvestimentoDoPeriodo = {
   outraMoeda: boolean;
 };
 
+// ---------------------------------------------------------------------------
+// Dimensao "Anuncio" do Detalhe da origem (anuncios_do_periodo, 20/10/2026)
+// ---------------------------------------------------------------------------
+
+/** Leads, agendados e comparecimentos de um recorte da coorte. */
+export type ContagemDaCoorte = {
+  leads: number;
+  agendaram: number;
+  compareceram: number;
+};
+
+/**
+ * Uma linha da dimensao Anuncio: os leads do periodo que chegaram por este
+ * anuncio (contact.source_ad_id). titulo = o guardado em anuncio_do_whatsapp
+ * (como veio na mensagem); nomeNaMeta = o nome do anuncio na Meta
+ * (meta_anuncio.ad_name). O rotulo da tela sai de rotuloDoAnuncio.
+ */
+export type LinhaDeAnuncioDoPeriodo = ContagemDaCoorte & {
+  adId: string;
+  titulo: string | null;
+  nomeNaMeta: string | null;
+};
+
+export type AnunciosDoPeriodo = {
+  /** Leads que chegaram no periodo (o mesmo numero do funil). */
+  leads: number;
+  /** Uma por anuncio, mais leads primeiro. */
+  linhas: LinhaDeAnuncioDoPeriodo[];
+  /** De anuncio (clique, ids ou metodo), mas sem id de anuncio valido. */
+  naoIdentificado: ContagemDaCoorte;
+  /** Nao vieram de anuncio. */
+  semAnuncio: ContagemDaCoorte;
+};
+
 export type CampanhasDoPeriodo = {
   /** Leads que chegaram no periodo (o mesmo numero do funil). */
   leads: number;
@@ -312,6 +346,8 @@ export const relatoriosKeys = {
     ["relatorios", clinicId, "objetivo-de-conversao"] as const,
   campanhas: (clinicId: string, diaDe: string, diaAte: string) =>
     ["relatorios", clinicId, "campanhas", diaDe, diaAte] as const,
+  anuncios: (clinicId: string, diaDe: string, diaAte: string) =>
+    ["relatorios", clinicId, "anuncios", diaDe, diaAte] as const,
   proximasAcoes: (clinicId: string) =>
     ["inicio", clinicId, "proximas-acoes"] as const,
 };
@@ -906,5 +942,67 @@ export async function fetchCampanhasDoPeriodo(
   return {
     atual: lerCampanhas(corpo.atual, hoje),
     anterior: corpo.anterior ? lerCampanhas(corpo.anterior, hoje) : null,
+  };
+}
+
+type ContagemRpc = { leads: number; agendaram: number; compareceram: number };
+
+type AnunciosRpc = {
+  leads: number;
+  linhas: (ContagemRpc & {
+    ad_id: string;
+    titulo: string | null;
+    nome_na_meta: string | null;
+  })[];
+  nao_identificado: ContagemRpc;
+  sem_anuncio: ContagemRpc;
+};
+
+function lerContagem(bruto: ContagemRpc): ContagemDaCoorte {
+  return {
+    leads: Number(bruto.leads),
+    agendaram: Number(bruto.agendaram),
+    compareceram: Number(bruto.compareceram),
+  };
+}
+
+/**
+ * Os leads do periodo por anuncio (anuncios_do_periodo, a dimensao Anuncio
+ * do Detalhe da origem). So o periodo pedido: a tabela nao compara com o
+ * anterior. Security invoker: para o profissional o banco devolve null, e
+ * aqui isso vira erro de recorte, nunca tabela vazia. LANCA em erro.
+ */
+export async function fetchAnunciosDoPeriodo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  timezone: string,
+  diaDe: string,
+  diaAte: string,
+): Promise<AnunciosDoPeriodo> {
+  const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
+  const { data, error } = await supabase.rpc("anuncios_do_periodo", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (data === null || data === undefined) {
+    throw new Error(
+      "Recorte indisponível para este perfil (anuncios_do_periodo).",
+    );
+  }
+  const corpo = data as AnunciosRpc;
+  return {
+    leads: Number(corpo.leads),
+    linhas: corpo.linhas.map((linha) => ({
+      adId: linha.ad_id,
+      titulo: linha.titulo,
+      nomeNaMeta: linha.nome_na_meta,
+      ...lerContagem(linha),
+    })),
+    naoIdentificado: lerContagem(corpo.nao_identificado),
+    semAnuncio: lerContagem(corpo.sem_anuncio),
   };
 }

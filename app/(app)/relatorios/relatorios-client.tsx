@@ -25,6 +25,7 @@ import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import {
   ABAS_DE_RESULTADOS,
   fetchAgendaDoPeriodo,
+  fetchAnunciosDoPeriodo,
   fetchAtendimentoDoPeriodo,
   fetchCampanhasDoPeriodo,
   fetchFaturamentoDoPeriodo,
@@ -61,6 +62,8 @@ import { createClient } from "@/lib/supabase/client";
 // nesse caso, e o banco devolve null para os outros papeis de qualquer jeito.
 // Fase 4: campanhas_do_periodo (Custo por lead, Campanhas e o detalhe por
 // campanha) e buscada para todos; o investimento vem null fora da gestao.
+// O detalhe por anuncio (anuncios_do_periodo, 20/10/2026) so e buscado com a
+// aba Marketing e essa dimensao escolhida; a exportacao espera por ele.
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -176,6 +179,8 @@ export function RelatoriosClient({
   const precisaFaturamento =
     podeVerValores && (abaAtiva === "geral" || abaAtiva === "comercial");
   const precisaCampanhas = abaAtiva === "geral" || abaAtiva === "marketing";
+  const precisaAnuncios =
+    abaAtiva === "marketing" && dimensaoOrigem === "anuncio";
 
   useDadosDoServidor(
     relatoriosKeys.funil(clinicId, diaDeInicial, diaAteInicial),
@@ -258,6 +263,13 @@ export function RelatoriosClient({
     staleTime: 60_000,
     enabled: precisaCampanhas,
   });
+  const anunciosQuery = useQuery({
+    queryKey: relatoriosKeys.anuncios(clinicId, diaDe, diaAte),
+    queryFn: () =>
+      fetchAnunciosDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
+    staleTime: 60_000,
+    enabled: precisaAnuncios,
+  });
   const linhaDeBaseQuery = useQuery({
     queryKey: relatoriosKeys.linhaDeBase(clinicId),
     queryFn: () => fetchLinhaDeBase(supabase, clinicId),
@@ -290,7 +302,9 @@ export function RelatoriosClient({
     (!precisaFaturamento ||
       (faturamentoQuery.data !== undefined && !faturamentoQuery.isError)) &&
     (!precisaCampanhas ||
-      (campanhasQuery.data !== undefined && !campanhasQuery.isError));
+      (campanhasQuery.data !== undefined && !campanhasQuery.isError)) &&
+    (!precisaAnuncios ||
+      (anunciosQuery.data !== undefined && !anunciosQuery.isError));
 
   const montarExportavel = () =>
     montarExportavelDaAba({
@@ -306,6 +320,7 @@ export function RelatoriosClient({
       objetivo: objetivoQuery.data,
       conversoes,
       campanhas: campanhasQuery.data,
+      anuncios: precisaAnuncios ? anunciosQuery.data : undefined,
       timezone,
       dimensaoOrigem,
       dimensaoAgenda,
@@ -454,6 +469,9 @@ export function RelatoriosClient({
               campanhas={campanhasQuery.data}
               campanhasComErro={campanhasQuery.isError}
               aoTentarCampanhasDeNovo={() => void campanhasQuery.refetch()}
+              anuncios={anunciosQuery.data}
+              anunciosComErro={anunciosQuery.isError}
+              aoTentarAnunciosDeNovo={() => void anunciosQuery.refetch()}
               conversoes={conversoes}
               timezone={timezone}
               podeVerValores={podeVerValores}

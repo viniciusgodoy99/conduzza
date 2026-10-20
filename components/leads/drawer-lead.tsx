@@ -15,6 +15,7 @@ import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { MarcaPeloCelular } from "@/components/atendimento/pelo-celular";
 import { SecaoDeAtividades } from "@/components/atividades/secao-de-atividades";
 import { ChipDeOrigem } from "@/components/leads/chip-de-origem";
+import { DetalhesDoAnuncio } from "@/components/leads/detalhes-do-anuncio";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
 import {
   dataLocal,
@@ -38,13 +39,20 @@ import {
   STATUS_TONE_VARS,
 } from "@/lib/design/status";
 import {
+  LEITURA_SEM_DETALHES,
+  type LeituraDosDetalhes,
+} from "@/lib/domain/anuncio-do-whatsapp";
+import {
   definicaoDaEtapa,
   porChave,
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
 import {
+  campanhaDaMeta,
   campanhaDoContato,
+  campanhaForaDaMeta,
   conjuntoDoContato,
+  ehLeadDeAnuncio,
   melhorLeitura,
   recencyDe,
   rotuloDoMetodo,
@@ -89,6 +97,12 @@ import {
 // anuncio vem de meta_anuncio pelo id do anuncio: a leitura do detalhe (mais
 // nova) vence a da lista. So leitura: nenhum papel edita a origem aqui (o
 // banco a congela depois de gravada).
+//
+// Detalhes do anuncio (20/10/2026, pedido do dono): o lead de anuncio tem o
+// bloco "Detalhes do anúncio" (o mesmo do Atendimento e da ficha), com
+// titulo, descricao e link do anuncio (anuncio_do_whatsapp, lido no MESMO
+// detalhe da action) e a campanha e o conjunto da Meta, que sairam das
+// linhas. A campanha do link ou do Google continua nas linhas.
 
 const AUTOR_LABEL: Record<MensagemDoLead["author"], string> = {
   paciente: "Paciente",
@@ -213,14 +227,29 @@ export function DrawerLead({
   const leituraDoAnuncio = leituraDaLista
     ? melhorLeitura(detalhe?.anuncio_meta, leituraDaLista)
     : null;
-  const campanha =
+  const deAnuncio = lead ? ehLeadDeAnuncio(lead) : false;
+  // Lead de anuncio: nas linhas, so a campanha que nao vem da Meta (link ou
+  // Google); a da Meta vai para o bloco "Detalhes do anúncio".
+  const campanhaNasLinhas =
     lead && leituraDoAnuncio
-      ? campanhaDoContato(lead, leituraDoAnuncio, detalhe?.campanha_nome)
+      ? deAnuncio
+        ? campanhaForaDaMeta(lead, detalhe?.campanha_nome)
+        : campanhaDoContato(lead, leituraDoAnuncio, detalhe?.campanha_nome)
+      : null;
+  const campanhaDoBloco =
+    lead && leituraDoAnuncio && deAnuncio
+      ? campanhaDaMeta(lead, leituraDoAnuncio)
       : null;
   const conjunto =
     lead && leituraDoAnuncio ? conjuntoDoContato(lead, leituraDoAnuncio) : null;
   const textoOrigem = lead ? textoDaOrigem(lead) : null;
   const metodo = lead ? rotuloDoMetodo(lead.source_method) : null;
+  // Detalhes do anuncio: vem so no detalhe da action (com trilha).
+  const leituraDosDetalhes: LeituraDosDetalhes = detalheQuery.isLoading
+    ? { estado: "carregando" }
+    : detalheQuery.isError
+      ? { estado: "erro" }
+      : (detalhe?.anuncio_whatsapp ?? LEITURA_SEM_DETALHES);
   const defs = porChave(jornada);
   const defDoLead = lead ? defs.get(lead.funnel_stage) : undefined;
   const jaPerdido = defDoLead?.papel === "perdido";
@@ -320,20 +349,26 @@ export function DrawerLead({
                     <span className="text-text-secondary">Não informado</span>
                   )}
                 </Linha>
-                {campanha ? (
+                {campanhaNasLinhas ? (
                   <Linha rotulo="Campanha">
-                    <ValorDeAtribuicao valor={campanha} />
-                  </Linha>
-                ) : null}
-                {conjunto ? (
-                  <Linha rotulo="Conjunto">
-                    <ValorDeAtribuicao valor={conjunto} />
+                    <ValorDeAtribuicao valor={campanhaNasLinhas} />
                   </Linha>
                 ) : null}
                 {metodo ? <Linha rotulo="Método">{metodo}</Linha> : null}
+                {deAnuncio ? (
+                  <DetalhesDoAnuncio
+                    key={lead.id}
+                    leitura={leituraDosDetalhes}
+                    campanha={campanhaDoBloco}
+                    conjunto={conjunto}
+                    tela="gaveta"
+                  />
+                ) : null}
                 {/* Com o detalhe inteiro em erro, o Tentar de novo da Conversa
                     ja refaz a mesma leitura. */}
-                {campanha?.tipo === "erro" && !detalheQuery.isError ? (
+                {(campanhaDoBloco?.tipo === "erro" ||
+                  (deAnuncio && leituraDosDetalhes.estado === "erro")) &&
+                !detalheQuery.isError ? (
                   <div>
                     <Button
                       variant="outline"

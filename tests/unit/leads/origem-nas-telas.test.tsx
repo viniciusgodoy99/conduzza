@@ -16,6 +16,10 @@ vi.mock("@/app/(app)/atividades/actions", () => ({
 import { BlocoDeOrigem } from "@/components/atendimento/context-panel";
 import { ListaLeads } from "@/components/leads/lista-leads";
 import { OrigemPaciente } from "@/components/pacientes/origem-paciente";
+import {
+  LEITURA_SEM_DETALHES,
+  type LeituraDosDetalhes,
+} from "@/lib/domain/anuncio-do-whatsapp";
 import type { AnuncioDaMeta, LeituraDoAnuncio } from "@/lib/domain/leads-ui";
 import type { ContactSummary } from "@/lib/queries/conversations";
 import type { LeadResumo } from "@/lib/queries/leads";
@@ -61,11 +65,13 @@ function contatoDoPainel(campos: Partial<ContactSummary> = {}): ContactSummary {
 function painel(
   contato: ContactSummary,
   leitura: LeituraDoAnuncio = LIDA,
+  detalhes: LeituraDosDetalhes = LEITURA_SEM_DETALHES,
 ): string {
   return renderToStaticMarkup(
     <BlocoDeOrigem
       contact={contato}
       leitura={leitura}
+      detalhes={detalhes}
       timezone={FUSO}
       aoTentarDeNovo={() => undefined}
     />,
@@ -175,6 +181,7 @@ function contatoDaFicha(campos: Partial<ContatoDaFicha> = {}): ContatoDaFicha {
     source_ad_id: AD_ID,
     source_google_campaign_id: null,
     anuncio_meta: LIDA,
+    anuncio_whatsapp: LEITURA_SEM_DETALHES,
     first_contact_at: "2026-10-01T15:00:00.000Z",
     last_contact_at: null,
     created_at: "2026-10-01T15:00:00.000Z",

@@ -13,6 +13,7 @@ import type { DimensaoDaOrigem } from "@/lib/domain/exportacao-de-resultados";
 import { formatarPercentual, percentualDe } from "@/lib/domain/formato-compacto";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import type {
+  AnunciosDoPeriodo,
   CampanhasDoPeriodo,
   FunilDoPeriodo,
   Periodizado,
@@ -25,6 +26,8 @@ import type {
 // para maturar). Sem drill-down nominal: so contagens.
 // Fase 4: Custo por lead, Campanhas e o detalhe por campanha leem
 // campanhas_do_periodo (uma verdade so: as mesmas linhas nos tres).
+// O detalhe por anuncio (20/10/2026) le anuncios_do_periodo, buscada pelo
+// pai so quando essa dimensao esta escolhida.
 
 function tentarDeNovo(acao: () => void) {
   return (
@@ -39,6 +42,9 @@ export function AbaMarketing({
   campanhas,
   campanhasComErro,
   aoTentarCampanhasDeNovo,
+  anuncios,
+  anunciosComErro = false,
+  aoTentarAnunciosDeNovo,
   conversoes,
   timezone,
   podeVerValores,
@@ -50,6 +56,10 @@ export function AbaMarketing({
   campanhas: Periodizado<CampanhasDoPeriodo> | undefined;
   campanhasComErro: boolean;
   aoTentarCampanhasDeNovo: () => void;
+  /** anuncios_do_periodo; undefined = carregando ou dimensao nao escolhida */
+  anuncios?: AnunciosDoPeriodo;
+  anunciosComErro?: boolean;
+  aoTentarAnunciosDeNovo?: () => void;
   conversoes: ConversoesResumo;
   timezone: string;
   podeVerValores: boolean;
@@ -145,6 +155,13 @@ export function AbaMarketing({
         campanhas={campanhas?.atual}
         campanhasComErro={campanhasComErro}
         tentarCampanhasDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}
+        anuncios={anuncios}
+        anunciosComErro={anunciosComErro}
+        tentarAnunciosDeNovo={
+          aoTentarAnunciosDeNovo
+            ? tentarDeNovo(aoTentarAnunciosDeNovo)
+            : undefined
+        }
         dimensao={dimensao}
         aoMudarDimensao={aoMudarDimensao}
       />

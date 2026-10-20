@@ -158,6 +158,9 @@ class BancoFalso {
         if (nome === "enfileirar_resolucao_de_anuncios_meta") {
           return { data: { codigo: "sem_configuracao" }, error: null };
         }
+        if (nome === "registrar_anuncio_do_whatsapp") {
+          return { data: "inserido", error: null };
+        }
         return { data: null, error: null };
       },
     };
@@ -360,6 +363,8 @@ function anuncioDaMeta(): AnuncioDeOrigem {
     adsetId: null,
     campaignId: null,
     sourceUrl: "https://fb.me/abcXYZ",
+    titulo: null,
+    descricao: null,
     plataforma: "Instagram",
     tipo: "ad",
     chavesVistas: { anuncio: ["ctwaClid"], contexto: [] },
@@ -978,6 +983,8 @@ describe("ingestão com código de clique do site", () => {
         adsetId: null,
         campaignId: null,
         sourceUrl: null,
+        titulo: null,
+        descricao: null,
         plataforma: null,
         tipo: null,
         chavesVistas: { anuncio: ["sourceId"], contexto: [] },

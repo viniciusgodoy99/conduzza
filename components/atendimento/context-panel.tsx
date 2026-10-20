@@ -23,6 +23,7 @@ import {
   FUSO_PADRAO,
 } from "@/components/atendimento/fuso-da-clinica";
 import { AtividadesDaConversa } from "@/components/atividades/atividades-da-conversa";
+import { DetalhesDoAnuncio } from "@/components/leads/detalhes-do-anuncio";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
@@ -32,10 +33,16 @@ import {
   STATUS_TONE_VARS,
   type StatusDefinition,
 } from "@/lib/design/status";
+import {
+  LEITURA_SEM_DETALHES,
+  type LeituraDosDetalhes,
+} from "@/lib/domain/anuncio-do-whatsapp";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import {
+  campanhaDaMeta,
   campanhaDoContato,
+  campanhaForaDaMeta,
   conjuntoDoContato,
   ehLeadDeAnuncio,
   idDeAnuncioValido,
@@ -51,6 +58,10 @@ import {
   type ConsentInfo,
   type ContactSummary,
 } from "@/lib/queries/conversations";
+import {
+  detalhesDoAnuncioKeys,
+  fetchDetalhesDosAnuncios,
+} from "@/lib/queries/anuncio-do-whatsapp";
 import { anuncioDaMetaKeys, fetchAnunciosDaMeta } from "@/lib/queries/leads";
 import { createClient } from "@/lib/supabase/client";
 
@@ -66,6 +77,13 @@ import { createClient } from "@/lib/supabase/client";
 // do banco ("Tráfego pago, Meta (Instagram)", e nao trafego_pago). Campanha
 // e conjunto do lead de anuncio vem de meta_anuncio pelo id do anuncio,
 // lidos pela sessao (RLS de membro ativo) com carregando e erro proprios.
+// Desde 20/10/2026 (pedido do dono), o lead de anuncio tem o bloco
+// "Detalhes do anúncio" (components/leads/detalhes-do-anuncio.tsx): titulo,
+// descricao e link do anuncio como vieram na mensagem (anuncio_do_whatsapp,
+// lida pela sessao com carregando e erro proprios), e a campanha e o
+// conjunto DA META, que sairam das linhas da Origem e foram para dentro do
+// bloco. A campanha do link ou do Google (o contato que chegou por link e
+// depois tocou num anuncio) continua nas linhas, fora do bloco.
 
 const CONSENT_SOURCE_LABEL: Record<string, string> = {
   formulario_site: "Formulário do site",
@@ -167,36 +185,52 @@ function LinhaDeAtribuicao({
 }
 
 /**
- * O bloco Origem, puro: recebe a leitura do anuncio pronta (o ContextPanel
- * faz a consulta). Exportado para o teste de rotulo.
+ * O bloco Origem, puro: recebe as leituras prontas (o ContextPanel faz as
+ * consultas). Exportado para o teste de rotulo. Lead de anuncio: Canal, a
+ * Campanha do link ou do Google (quando ha), Metodo e Primeiro contato nas
+ * linhas, e o bloco "Detalhes do anúncio" com titulo, descricao, link e a
+ * campanha e o conjunto da Meta. Os outros contatos ficam como antes (a
+ * Campanha nas linhas). O bloco tem a chave do contato: a instancia do painel
+ * continua ao trocar de conversa, e o "Ver mais" aberto nao passa adiante.
  */
 export function BlocoDeOrigem({
   contact,
   leitura,
+  detalhes,
   timezone,
   aoTentarDeNovo,
 }: {
   contact: ContactSummary;
   leitura: LeituraDoAnuncio;
+  /** Detalhes do anuncio (anuncio_do_whatsapp) pelo id do anuncio. */
+  detalhes: LeituraDosDetalhes;
   timezone: string;
+  /** Refaz as leituras que falharam (Meta e detalhes). */
   aoTentarDeNovo: () => void;
 }) {
   const origem = textoDaOrigem(contact);
   const deAnuncio = ehLeadDeAnuncio(contact);
   const campanha = campanhaDoContato(contact, leitura);
+  // Lead de anuncio: nas linhas, so a campanha que nao vem da Meta (link ou
+  // Google); a da Meta vai para o bloco. Os outros: "Sem campanha" some,
+  // como antes.
+  const campanhaNasLinhas = deAnuncio
+    ? campanhaForaDaMeta(contact)
+    : campanha.tipo !== "nenhuma"
+      ? campanha
+      : null;
+  const campanhaDoBloco = deAnuncio ? campanhaDaMeta(contact, leitura) : null;
   const conjunto = conjuntoDoContato(contact, leitura);
   const metodo = rotuloDoMetodo(contact.source_method);
-  // "Sem campanha" de quem nao veio de anuncio some, como antes.
-  const mostrarCampanha = campanha.tipo !== "nenhuma" || deAnuncio;
+  const algumaLeituraFalhou =
+    campanhaDoBloco?.tipo === "erro" ||
+    (deAnuncio && detalhes.estado === "erro");
   return (
     <Secao titulo="Origem">
       <div className="grid gap-1.5">
         <Linha rotulo="Canal" valor={origem} />
-        {mostrarCampanha ? (
-          <LinhaDeAtribuicao rotulo="Campanha" valor={campanha} />
-        ) : null}
-        {conjunto ? (
-          <LinhaDeAtribuicao rotulo="Conjunto" valor={conjunto} />
+        {campanhaNasLinhas ? (
+          <LinhaDeAtribuicao rotulo="Campanha" valor={campanhaNasLinhas} />
         ) : null}
         <Linha rotulo="Método" valor={metodo} />
         <Linha
@@ -209,7 +243,16 @@ export function BlocoDeOrigem({
           numerico
         />
       </div>
-      {campanha.tipo === "erro" ? (
+      {deAnuncio ? (
+        <DetalhesDoAnuncio
+          key={contact.id}
+          leitura={detalhes}
+          campanha={campanhaDoBloco}
+          conjunto={conjunto}
+          tela="painel"
+        />
+      ) : null}
+      {algumaLeituraFalhou ? (
         <div>
           <Button variant="outline" size="sm" onClick={aoTentarDeNovo}>
             <RotateCcw aria-hidden />
@@ -217,7 +260,7 @@ export function BlocoDeOrigem({
           </Button>
         </div>
       ) : null}
-      {!origem && !mostrarCampanha ? (
+      {!origem && !deAnuncio && !campanhaNasLinhas ? (
         <p className="text-[12.5px] text-text-secondary">
           Origem ainda não identificada. Ela é capturada sozinha quando o
           contato chega por anúncio de clique para WhatsApp, link com código,
@@ -393,6 +436,33 @@ export function ContextPanel({
         : anuncioQuery.isError
           ? { estado: "erro" }
           : { estado: "lida", anuncio: anuncioQuery.data ?? null };
+  // Detalhes do anuncio (titulo, descricao e link), pelo mesmo id e clinica.
+  const detalhesQuery = useQuery({
+    queryKey: detalhesDoAnuncioKeys.doAnuncio(
+      clinicaDoContato ?? "",
+      adId ?? "",
+    ),
+    queryFn: async () => {
+      if (!clinicaDoContato || !adId) {
+        return null;
+      }
+      const mapa = await fetchDetalhesDosAnuncios(supabase, clinicaDoContato, [
+        adId,
+      ]);
+      return mapa.get(adId) ?? null;
+    },
+    enabled: clinicaDoContato !== null && adId !== null,
+    staleTime: 60_000,
+  });
+  const leituraDosDetalhes: LeituraDosDetalhes = !adId
+    ? LEITURA_SEM_DETALHES
+    : !clinicaDoContato
+      ? { estado: "erro" }
+      : detalhesQuery.isPending
+        ? { estado: "carregando" }
+        : detalhesQuery.isError
+          ? { estado: "erro" }
+          : { estado: "lida", detalhes: detalhesQuery.data ?? null };
 
   const marcarConsulta = (
     <>
@@ -505,8 +575,16 @@ export function ContextPanel({
       <BlocoDeOrigem
         contact={contact}
         leitura={leituraDoAnuncio}
+        detalhes={leituraDosDetalhes}
         timezone={timezone}
-        aoTentarDeNovo={() => void anuncioQuery.refetch()}
+        aoTentarDeNovo={() => {
+          if (anuncioQuery.isError) {
+            void anuncioQuery.refetch();
+          }
+          if (detalhesQuery.isError) {
+            void detalhesQuery.refetch();
+          }
+        }}
       />
 
       <Secao titulo="Agendamentos e histórico">

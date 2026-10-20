@@ -324,6 +324,53 @@ export type Database = {
           },
         ]
       }
+      anuncio_do_whatsapp: {
+        Row: {
+          ad_id: string
+          atualizado_em: string
+          clinic_id: string
+          descricao: string | null
+          link: string | null
+          plataforma: string | null
+          primeiro_visto_em: string
+          texto_visto_em: string
+          tipo: string | null
+          titulo: string | null
+        }
+        Insert: {
+          ad_id: string
+          atualizado_em?: string
+          clinic_id: string
+          descricao?: string | null
+          link?: string | null
+          plataforma?: string | null
+          primeiro_visto_em?: string
+          texto_visto_em?: string
+          tipo?: string | null
+          titulo?: string | null
+        }
+        Update: {
+          ad_id?: string
+          atualizado_em?: string
+          clinic_id?: string
+          descricao?: string | null
+          link?: string | null
+          plataforma?: string | null
+          primeiro_visto_em?: string
+          texto_visto_em?: string
+          tipo?: string | null
+          titulo?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "anuncio_do_whatsapp_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       appointment: {
         Row: {
           approval_status: string | null
@@ -4593,6 +4640,10 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: string
       }
+      anuncios_do_periodo: {
+        Args: { p_ate: string; p_clinic_id: string; p_de: string }
+        Returns: Json
+      }
       anuncios_meta_a_resolver: {
         Args: {
           p_ad_account_id: string
@@ -5346,6 +5397,19 @@ export type Database = {
           p_google_campaign_id?: string
           p_site_host?: string
           p_wbraid?: string
+        }
+        Returns: string
+      }
+      registrar_anuncio_do_whatsapp: {
+        Args: {
+          p_ad_id: string
+          p_clinic_id: string
+          p_descricao?: string
+          p_link?: string
+          p_plataforma?: string
+          p_tipo?: string
+          p_titulo?: string
+          p_visto_em?: string
         }
         Returns: string
       }

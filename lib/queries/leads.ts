@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { LeituraDosDetalhes } from "@/lib/domain/anuncio-do-whatsapp";
 import {
   compararPorProximaAcao,
   consentimentoVigenteDeLinhas,
@@ -9,6 +10,7 @@ import {
   type LeituraDoAnuncio,
   type LinhaConsent,
 } from "@/lib/domain/leads-ui";
+import { lerDetalhesDoAnuncio } from "@/lib/queries/anuncio-do-whatsapp";
 import {
   fetchAtividadesDoContato,
   type AtividadesDoContato,
@@ -91,6 +93,12 @@ export type LeadDetalhe = {
    * resolvedor de anuncios grava meta_anuncio sem tempo real).
    */
   anuncio_meta: LeituraDoAnuncio;
+  /**
+   * Detalhes do anuncio (titulo, descricao e link de anuncio_do_whatsapp,
+   * pedido do dono em 20/10/2026), lidos agora pela sessao. Nunca derruba o
+   * detalhe: falha e "erro" so no bloco "Detalhes do anúncio".
+   */
+  anuncio_whatsapp: LeituraDosDetalhes;
   /**
    * Atividades do contato (pendentes e ultimas concluidas), lidas na MESMA
    * action que grava a trilha da ficha. null quando a leitura delas falhou:
@@ -435,35 +443,38 @@ export async function fetchLeadDetalhe(
   const sourceCampaign = (row.source_campaign as string | null) ?? null;
   const sourceAdId = (row.source_ad_id as string | null) ?? null;
 
-  const [conversa, campanha, atividades, anuncioMeta] = await Promise.all([
-    // VARIOS NUMEROS (docs/07): o lead pode ter uma conversa aberta em cada
-    // numero da clinica. O drawer mostra e liga a mais recente em QUALQUER
-    // numero (o limit(1) nunca quebra com duas); empate de atividade vai para
-    // a mais nova.
-    supabase
-      .from("conversation")
-      .select("id")
-      .eq("clinic_id", clinicId)
-      .eq("contact_id", contactId)
-      .neq("status", "resolvida")
-      .order("last_message_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    sourceCampaign
-      ? supabase
-          .from("campaign_link")
-          .select("name")
-          .eq("clinic_id", clinicId)
-          .eq("campaign", sourceCampaign)
-          .limit(1)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-    // Falha so das atividades nao derruba a conversa do drawer.
-    fetchAtividadesDoContato(supabase, clinicId, contactId).catch(() => null),
-    // Nem a do anuncio: lerAnuncioDaMeta nunca lanca.
-    lerAnuncioDaMeta(supabase, clinicId, sourceAdId),
-  ]);
+  const [conversa, campanha, atividades, anuncioMeta, anuncioWhatsapp] =
+    await Promise.all([
+      // VARIOS NUMEROS (docs/07): o lead pode ter uma conversa aberta em cada
+      // numero da clinica. O drawer mostra e liga a mais recente em QUALQUER
+      // numero (o limit(1) nunca quebra com duas); empate de atividade vai para
+      // a mais nova.
+      supabase
+        .from("conversation")
+        .select("id")
+        .eq("clinic_id", clinicId)
+        .eq("contact_id", contactId)
+        .neq("status", "resolvida")
+        .order("last_message_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      sourceCampaign
+        ? supabase
+            .from("campaign_link")
+            .select("name")
+            .eq("clinic_id", clinicId)
+            .eq("campaign", sourceCampaign)
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      // Falha so das atividades nao derruba a conversa do drawer.
+      fetchAtividadesDoContato(supabase, clinicId, contactId).catch(() => null),
+      // Nem a do anuncio: lerAnuncioDaMeta nunca lanca.
+      lerAnuncioDaMeta(supabase, clinicId, sourceAdId),
+      // Nem os detalhes do anuncio: lerDetalhesDoAnuncio tambem nunca lanca.
+      lerDetalhesDoAnuncio(supabase, clinicId, sourceAdId),
+    ]);
   if (conversa.error) {
     throw new Error(conversa.error.message);
   }
@@ -491,6 +502,7 @@ export async function fetchLeadDetalhe(
     mensagens,
     campanha_nome: (campanha.data as { name: string } | null)?.name ?? null,
     anuncio_meta: anuncioMeta,
+    anuncio_whatsapp: anuncioWhatsapp,
     atividades,
   };
 }

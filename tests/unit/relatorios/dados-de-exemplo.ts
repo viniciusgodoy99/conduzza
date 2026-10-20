@@ -2,6 +2,7 @@ import type { AppointmentStatus } from "@/lib/design/status";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import type {
   AgendaDoPeriodo,
+  AnunciosDoPeriodo,
   AtendimentoDoPeriodo,
   CampanhasDoPeriodo,
   FaturamentoDoPeriodo,
@@ -233,5 +234,50 @@ export function campanhasPeriodizadas(
           },
       { leadsDeAnuncio: 160, ...extra },
     ),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Dimensao Anuncio (anuncios_do_periodo, 20/10/2026), coerente com o FUNIL
+// ---------------------------------------------------------------------------
+// 486 leads = 100 (titulo guardado) + 40 (so o nome na Meta) + 10 (sem
+// titulo nem nome) + 12 de anuncio sem id valido + 324 sem anuncio.
+// Coorte: 312 agendaram (70 + 30 + 5 + 7 + 200) e 250 compareceram
+// (50 + 20 + 3 + 7 + 170).
+
+export function anunciosDoPeriodo(
+  extra: Partial<AnunciosDoPeriodo> = {},
+): AnunciosDoPeriodo {
+  return {
+    leads: 486,
+    linhas: [
+      {
+        adId: "120240624148610289",
+        titulo: "Limpeza de pele com 30% de desconto",
+        nomeNaMeta: "Limpeza de pele, criativo 2",
+        leads: 100,
+        agendaram: 70,
+        compareceram: 50,
+      },
+      {
+        adId: "120240624148610290",
+        titulo: null,
+        nomeNaMeta: "Botox outubro",
+        leads: 40,
+        agendaram: 30,
+        compareceram: 20,
+      },
+      {
+        adId: "120240624148610291",
+        titulo: null,
+        nomeNaMeta: null,
+        leads: 10,
+        agendaram: 5,
+        compareceram: 3,
+      },
+    ],
+    naoIdentificado: { leads: 12, agendaram: 7, compareceram: 7 },
+    semAnuncio: { leads: 324, agendaram: 200, compareceram: 170 },
+    ...extra,
   };
 }

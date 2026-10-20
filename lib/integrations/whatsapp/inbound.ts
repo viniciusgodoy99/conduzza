@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import {
+  sanearDescricaoDoAnuncio,
+  sanearLinkDoAnuncio,
+  sanearTituloDoAnuncio,
+} from "@/lib/domain/anuncio-do-whatsapp";
 import { ORIGEM_DO_RASTREIO } from "@/lib/integrations/whatsapp/rastreio";
 
 // Normalizador de eventos do webhook. E o UNICO lugar que conhece o formato
@@ -27,13 +32,30 @@ import { ORIGEM_DO_RASTREIO } from "@/lib/integrations/whatsapp/rastreio";
  * Campanha e conjunto NAO vem na mensagem em canal nenhum (uazapi, protocolo
  * do WhatsApp ou referral oficial): saem da Meta pelo id do anuncio
  * (meta_anuncio, por source_ad_id). Ver scratchpad/origem/critica.md.
+ *
+ * Titulo, descricao e link (pedido do dono em 20/10/2026, o cartao "Detalhes
+ * do anuncio" da uazapi) vem do MESMO referral que deu o id do anuncio (sem
+ * id, do primeiro referral): misturar o texto de um anuncio com o id de
+ * outro gravaria o texto no anuncio errado. Ja saem saneados
+ * (lib/domain/anuncio-do-whatsapp.ts) e vao para anuncio_do_whatsapp pela
+ * ingestao. NUNCA vao para log.
  */
 export type AnuncioDeOrigem = {
   ctwaClid: string | null;
   adId: string | null;
   adsetId: string | null;
   campaignId: string | null;
+  /**
+   * Link do anuncio (source_url / sourceURL), saneado: so https, num
+   * endereco onde o anuncio vive (fb.me, fb.watch, facebook.com e
+   * instagram.com, host exato, sem redirecionador), ate 2.000 caracteres;
+   * qualquer outra coisa vira null (sanearLinkDoAnuncio, a mesma da tela).
+   */
   sourceUrl: string | null;
+  /** Titulo do anuncio (title, Title ou headline), uma linha, ate 300. */
+  titulo: string | null;
+  /** Descricao (body, Body ou description), com as quebras, ate 2.000. */
+  descricao: string | null;
   /**
    * Onde o anuncio apareceu, quando o canal informa: sourceApp do referral
    * e, na falta dele, entryPointConversionApp do contextInfo ao lado. Valor
@@ -219,6 +241,10 @@ const canonicalSchema = z.discriminatedUnion("kind", [
         adsetId: z.string().nullish(),
         campaignId: z.string().nullish(),
         sourceUrl: z.string().nullish(),
+        // Detalhes do anuncio: texto livre, saneado na normalizacao como o
+        // do uazapi (o simulador e os testes passam por aqui).
+        titulo: z.string().nullish(),
+        descricao: z.string().nullish(),
         // Texto livre de proposito: valor desconhecido vira null na
         // normalizacao. Um enum aqui derrubaria o evento inteiro (o webhook
         // ignoraria a mensagem do paciente por causa de um campo de anuncio).
@@ -711,23 +737,58 @@ function textoPorPadrao(
   return null;
 }
 
-/** Le os campos de anuncio de um objeto referral/externalAdReply. */
-function lerReferral(
+/**
+ * Nome de chave sem diferenca de maiuscula nem sublinhado. As familias
+ * conhecidas escrevem o mesmo campo de jeitos diferentes: source_id (Cloud
+ * API), sourceID ou sourceId (whatsmeow em camelCase) e SourceID (whatsmeow
+ * em PascalCase) viram todos "sourceid".
+ */
+function chaveNormalizada(chave: string): string {
+  return chave.toLowerCase().replace(/_/g, "");
+}
+
+/**
+ * O primeiro valor que o saneador aceita, procurando os nomes na ordem
+ * pedida (o primeiro nome vence o segundo) entre as chaves do objeto.
+ */
+function valorDaChave(
   obj: Record<string, unknown>,
-): Omit<AnuncioDeOrigem, "chavesVistas"> {
-  const pega = (...nomes: string[]): string | null => {
-    for (const nome of nomes) {
-      const v = stringOuNull(obj[nome]);
-      if (v) return v;
+  sanear: (valor: unknown) => string | null,
+  ...nomes: string[]
+): string | null {
+  for (const nome of nomes) {
+    for (const [chave, valor] of Object.entries(obj)) {
+      if (chaveNormalizada(chave) === nome) {
+        const saneado = sanear(valor);
+        if (saneado) return saneado;
+      }
     }
-    return null;
-  };
+  }
+  return null;
+}
+
+type LidoDoReferral = Omit<AnuncioDeOrigem, "chavesVistas">;
+
+/**
+ * Le os campos de anuncio de um objeto referral/externalAdReply, em qualquer
+ * das formas conhecidas (Cloud API: referral.source_id, headline, body,
+ * source_url; whatsmeow: sourceID, title, body, sourceURL, em camelCase ou
+ * PascalCase). Titulo, descricao e link ja saem saneados.
+ */
+function lerReferral(obj: Record<string, unknown>): LidoDoReferral {
   return {
-    ctwaClid: pega("ctwa_clid", "ctwaClid", "ctwaclid", "CtwaClid"),
-    adId: pega("source_id", "sourceId", "sourceID", "ad_id", "adId"),
-    adsetId: pega("adset_id", "adsetId"),
-    campaignId: pega("campaign_id", "campaignId"),
-    sourceUrl: pega("source_url", "sourceUrl", "sourceURL"),
+    ctwaClid: valorDaChave(obj, stringOuNull, "ctwaclid"),
+    adId: valorDaChave(obj, stringOuNull, "sourceid", "adid"),
+    adsetId: valorDaChave(obj, stringOuNull, "adsetid"),
+    campaignId: valorDaChave(obj, stringOuNull, "campaignid"),
+    sourceUrl: valorDaChave(obj, sanearLinkDoAnuncio, "sourceurl"),
+    titulo: valorDaChave(obj, sanearTituloDoAnuncio, "title", "headline"),
+    descricao: valorDaChave(
+      obj,
+      sanearDescricaoDoAnuncio,
+      "body",
+      "description",
+    ),
     plataforma: normalizarPlataforma(textoPorPadrao(obj, CHAVE_APP_DO_ANUNCIO)),
     tipo: normalizarTipoDoAnuncio(textoPorPadrao(obj, CHAVE_TIPO_DO_ANUNCIO)),
   };
@@ -744,8 +805,12 @@ function lerReferral(
  * contextInfo): dele sai a segunda opcao da plataforma
  * (entryPointConversionApp) e os nomes de chave do diagnostico. Plataforma ou
  * tipo sozinhos nao fazem um anuncio: sem clique, anuncio, conjunto ou
- * campanha, devolve null. A mensagem citada fica de fora da varredura: se so
- * ela tem anuncio, esta mensagem nao tem.
+ * campanha, devolve null. Titulo, descricao e link sozinhos tambem nao. A
+ * mensagem citada fica de fora da varredura: se so ela tem anuncio, esta
+ * mensagem nao tem.
+ *
+ * Titulo, descricao e link saem do referral que deu o id do anuncio; sem id,
+ * do primeiro referral. Nunca de um referral e o id de outro.
  */
 export function extrairAnuncio(
   mensagem: Record<string, unknown>,
@@ -756,18 +821,30 @@ export function extrairAnuncio(
     adsetId: null,
     campaignId: null,
     sourceUrl: null,
+    titulo: null,
+    descricao: null,
     plataforma: null,
     tipo: null,
     chavesVistas: { anuncio: [], contexto: [] },
   };
   // Onde o anuncio foi achado: o objeto do primeiro referral e quem o contem;
   // sem referral, o objeto que tinha o ctwaClid solto. (Num objeto, e nao em
-  // variaveis soltas, porque quem preenche e o visitante.)
+  // variaveis soltas, porque quem preenche e o visitante.) Os detalhes
+  // (titulo, descricao e link) ficam guardados do referral que deu o id e do
+  // primeiro referral, para a escolha no fim.
   const onde: {
     referral: Record<string, unknown> | null;
     contexto: Record<string, unknown> | null;
     doClidSolto: Record<string, unknown> | null;
-  } = { referral: null, contexto: null, doClidSolto: null };
+    lidoDoId: LidoDoReferral | null;
+    lidoDoPrimeiro: LidoDoReferral | null;
+  } = {
+    referral: null,
+    contexto: null,
+    doClidSolto: null,
+    lidoDoId: null,
+    lidoDoPrimeiro: null,
+  };
 
   const visitar = (no: Record<string, unknown>, profundidade: number): void => {
     if (profundidade > 5) {
@@ -794,10 +871,12 @@ export function extrairAnuncio(
         const objeto = valor as Record<string, unknown>;
         const lido = lerReferral(objeto);
         achado.ctwaClid ??= lido.ctwaClid;
-        achado.adId ??= lido.adId;
+        if (achado.adId === null && lido.adId !== null) {
+          achado.adId = lido.adId;
+          onde.lidoDoId = lido;
+        }
         achado.adsetId ??= lido.adsetId;
         achado.campaignId ??= lido.campaignId;
-        achado.sourceUrl ??= lido.sourceUrl;
         // Plataforma e tipo decidem a origem (imutavel): vem SO do primeiro
         // referral e do contexto dele, nunca misturados com um segundo
         // referral. A mensagem citada nem chega aqui (CHAVE_DE_CITACAO): a
@@ -805,6 +884,7 @@ export function extrairAnuncio(
         if (onde.referral === null) {
           onde.referral = objeto;
           onde.contexto = no;
+          onde.lidoDoPrimeiro = lido;
           achado.plataforma =
             lido.plataforma ??
             normalizarPlataforma(textoPorPadrao(no, CHAVE_APP_DE_ENTRADA));
@@ -827,6 +907,12 @@ export function extrairAnuncio(
   if (!temAlgo) {
     return null;
   }
+
+  // Detalhes do anuncio: do referral que deu o id; sem id, do primeiro.
+  const detalhes = onde.lidoDoId ?? onde.lidoDoPrimeiro;
+  achado.sourceUrl = detalhes?.sourceUrl ?? null;
+  achado.titulo = detalhes?.titulo ?? null;
+  achado.descricao = detalhes?.descricao ?? null;
 
   const { referral } = onde;
   const ondeAchou = onde.contexto ?? onde.doClidSolto;
@@ -948,7 +1034,9 @@ export function parseInboundEvent(payload: unknown): InboundEvent | null {
               adId: evento.anuncio.adId ?? null,
               adsetId: evento.anuncio.adsetId ?? null,
               campaignId: evento.anuncio.campaignId ?? null,
-              sourceUrl: evento.anuncio.sourceUrl ?? null,
+              sourceUrl: sanearLinkDoAnuncio(evento.anuncio.sourceUrl),
+              titulo: sanearTituloDoAnuncio(evento.anuncio.titulo),
+              descricao: sanearDescricaoDoAnuncio(evento.anuncio.descricao),
               plataforma: normalizarPlataforma(evento.anuncio.plataforma),
               tipo: normalizarTipoDoAnuncio(evento.anuncio.tipo),
               chavesVistas: chavesVistasCanonicas(evento.anuncio.chavesVistas),

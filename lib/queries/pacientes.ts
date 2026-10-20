@@ -1,9 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { AppointmentStatus } from "@/lib/design/status";
+import type { LeituraDosDetalhes } from "@/lib/domain/anuncio-do-whatsapp";
 import type { SaldoParaComparecimento } from "@/lib/domain/appointment-status";
 import type { LeituraDoAnuncio } from "@/lib/domain/leads-ui";
 import type { MetricasDePacientes } from "@/lib/domain/pacientes-ui";
+import { lerDetalhesDoAnuncio } from "@/lib/queries/anuncio-do-whatsapp";
 import { lerAnuncioDaMeta } from "@/lib/queries/leads";
 
 export type { MetricasDePacientes } from "@/lib/domain/pacientes-ui";
@@ -231,6 +233,12 @@ export type ContatoDaFicha = {
    * sessao). Falha da leitura e "erro" e nao derruba a ficha.
    */
   anuncio_meta: LeituraDoAnuncio;
+  /**
+   * Detalhes do anuncio (titulo, descricao e link guardados pela ingestao em
+   * anuncio_do_whatsapp) pelo source_ad_id, pela sessao. Falha da leitura e
+   * "erro" e nao derruba a ficha.
+   */
+  anuncio_whatsapp: LeituraDosDetalhes;
   first_contact_at: string;
   last_contact_at: string | null;
   created_at: string;
@@ -472,9 +480,12 @@ export async function fetchFichaPaciente(
 
   const row = contato.data as Record<string, unknown>;
   const sourceAdId = (row.source_ad_id as string | null) ?? null;
-  // Depois do contato (precisa do id do anuncio); lerAnuncioDaMeta nunca
-  // lanca e, sem anuncio, nem consulta.
-  const anuncioMeta = await lerAnuncioDaMeta(supabase, clinicId, sourceAdId);
+  // Depois do contato (precisa do id do anuncio); as duas leituras nunca
+  // lancam e, sem anuncio, nem consultam.
+  const [anuncioMeta, anuncioWhatsapp] = await Promise.all([
+    lerAnuncioDaMeta(supabase, clinicId, sourceAdId),
+    lerDetalhesDoAnuncio(supabase, clinicId, sourceAdId),
+  ]);
   return {
     contato: {
       ...(row as unknown as ContatoDaFicha),
@@ -484,6 +495,7 @@ export async function fetchFichaPaciente(
       source_google_campaign_id:
         (row.source_google_campaign_id as string | null) ?? null,
       anuncio_meta: anuncioMeta,
+      anuncio_whatsapp: anuncioWhatsapp,
       insurance: desembrulhar(row.insurance) as ContatoDaFicha["insurance"],
     },
     consultas: ((consultas.data ?? []) as Record<string, unknown>[]).map(

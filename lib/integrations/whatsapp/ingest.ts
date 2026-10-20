@@ -8,6 +8,13 @@ import {
   type SourceChannel,
   eFraseDoBotao,
 } from "@/lib/domain/attribution";
+import {
+  apararIdDoAnuncio,
+  idDoAnuncioDoWhatsapp,
+  sanearDescricaoDoAnuncio,
+  sanearLinkDoAnuncio,
+  sanearTituloDoAnuncio,
+} from "@/lib/domain/anuncio-do-whatsapp";
 import { FRASE_PADRAO } from "@/lib/domain/rastreio-do-site";
 import type {
   AnuncioDeOrigem,
@@ -339,7 +346,10 @@ async function tentarAtribuirOrigem(
 /**
  * Colunas de id do anuncio que vao para o contato (so as que vieram). null
  * quando nao veio nenhuma ou quando e post: post nao grava id (ver
- * capturarAnuncio).
+ * capturarAnuncio). O id do anuncio vai APARADO pela regra do JavaScript
+ * (apararIdDoAnuncio, a mesma da gravacao dos detalhes e de
+ * anuncios_do_periodo): o id com espaco Unicode na ponta cai no mesmo
+ * anuncio na ficha e em Resultados.
  */
 export function idsDoAnuncio(
   anuncio: AnuncioDeOrigem,
@@ -348,8 +358,9 @@ export function idsDoAnuncio(
     return null;
   }
   const ids: Record<string, string> = {};
+  const adId = apararIdDoAnuncio(anuncio.adId);
   if (anuncio.ctwaClid) ids.ctwa_clid = anuncio.ctwaClid;
-  if (anuncio.adId) ids.source_ad_id = anuncio.adId;
+  if (adId) ids.source_ad_id = adId;
   if (anuncio.adsetId) ids.source_adset_id = anuncio.adsetId;
   if (anuncio.campaignId) ids.source_campaign_id = anuncio.campaignId;
   return Object.keys(ids).length > 0 ? ids : null;
@@ -418,7 +429,31 @@ type CapturaDeAnuncio = {
   /** A mensagem acabou de ser gravada (false na reentrega do webhook). */
   mensagemNova: boolean;
   anuncio: AnuncioDeOrigem;
+  /**
+   * Horario da mensagem (ISO): o envio no aparelho (enviadaEm) e, sem ele,
+   * a chegada. Decide se o texto do anuncio guardado pode ser trocado (so
+   * por mensagem mais nova: horarioDaMensagemDoAnuncio).
+   */
+  vistoEm: string;
 };
+
+/**
+ * O horario da mensagem para os detalhes do anuncio: o envio no aparelho
+ * (enviadaEm, do messageTimestamp) quando e uma data ISO com ano de 4
+ * digitos (fora disso o Postgres recusaria a chamada inteira); senao a
+ * chegada do webhook. A reentrega traz o mesmo envio, entao nunca passa por
+ * mais nova que a mensagem do texto guardado.
+ */
+export function horarioDaMensagemDoAnuncio(
+  enviadaEm: string | null | undefined,
+  chegadaEm: string,
+): string {
+  return enviadaEm &&
+    /^\d{4}-\d{2}-\d{2}T/.test(enviadaEm) &&
+    Number.isFinite(Date.parse(enviadaEm))
+    ? enviadaEm
+    : chegadaEm;
+}
 
 /**
  * Diagnostico do anuncio recebido: quais campos o canal entrega de fato
@@ -435,6 +470,141 @@ function registrarAnuncioRecebido(captura: CapturaDeAnuncio): void {
     status: anuncio.plataforma ? "com_plataforma" : "sem_plataforma",
     ...chavesDoAnuncioParaLog(anuncio),
   });
+}
+
+/** Resposta da RPC registrar_anuncio_do_whatsapp. */
+export type RegistroDosDetalhesDoAnuncio =
+  "inserido" | "atualizado" | "sem_mudanca" | "sem_detalhes";
+
+const REGISTROS_DOS_DETALHES: readonly RegistroDosDetalhesDoAnuncio[] = [
+  "inserido",
+  "atualizado",
+  "sem_mudanca",
+  "sem_detalhes",
+];
+
+function lerRegistroDosDetalhes(
+  dado: unknown,
+): RegistroDosDetalhesDoAnuncio | null {
+  return REGISTROS_DOS_DETALHES.find((registro) => registro === dado) ?? null;
+}
+
+/** Argumentos de registrar_anuncio_do_whatsapp (so os que vieram). */
+export type ArgumentosDosDetalhesDoAnuncio = {
+  p_clinic_id: string;
+  p_ad_id: string;
+  p_titulo?: string;
+  p_descricao?: string;
+  p_link?: string;
+  p_plataforma?: string;
+  p_tipo?: string;
+  /** Horario da mensagem: so mensagem mais nova troca o texto guardado. */
+  p_visto_em: string;
+};
+
+/**
+ * Os argumentos da RPC registrar_anuncio_do_whatsapp para os detalhes deste
+ * anuncio (titulo, descricao e link, pedido do dono em 20/10/2026), ou null
+ * quando nao ha o que guardar:
+ * - post: publicacao nao e anuncio pago (a mesma regra da origem, e o id e
+ *   de publicacao, nunca o source_ad_id de um contato);
+ * - id do anuncio fora do formato da tabela (^[0-9]{1,32}$);
+ * - nenhum de titulo, descricao e link.
+ * Os tres ja vem saneados do parser e sao saneados DE NOVO aqui (o
+ * saneamento e idempotente): evento montado a mao (simulador, ferramenta,
+ * teste) nunca leva ao banco valor que o CHECK recusaria, e link fora dos
+ * enderecos do anuncio nunca e gravado. Campo nulo nao vai: a RPC nunca
+ * apaga o que esta guardado, e assim a chamada fica so com o que veio. O
+ * horario da mensagem vai sempre: a RPC so troca titulo, descricao e link
+ * por mensagem mais nova que a do texto guardado (campo vazio, qualquer uma
+ * preenche), e plataforma e tipo so preenchem o que esta vazio.
+ */
+export function argumentosDosDetalhesDoAnuncio(
+  clinicId: string,
+  anuncio: AnuncioDeOrigem,
+  vistoEm: string,
+): ArgumentosDosDetalhesDoAnuncio | null {
+  if (anuncio.tipo === "post") {
+    return null;
+  }
+  const adId = idDoAnuncioDoWhatsapp(anuncio.adId);
+  if (!adId) {
+    return null;
+  }
+  const titulo = sanearTituloDoAnuncio(anuncio.titulo);
+  const descricao = sanearDescricaoDoAnuncio(anuncio.descricao);
+  const link = sanearLinkDoAnuncio(anuncio.sourceUrl);
+  if (!titulo && !descricao && !link) {
+    return null;
+  }
+  return {
+    p_clinic_id: clinicId,
+    p_ad_id: adId,
+    ...(titulo ? { p_titulo: titulo } : {}),
+    ...(descricao ? { p_descricao: descricao } : {}),
+    ...(link ? { p_link: link } : {}),
+    ...(anuncio.plataforma ? { p_plataforma: anuncio.plataforma } : {}),
+    ...(anuncio.tipo ? { p_tipo: anuncio.tipo } : {}),
+    p_visto_em: vistoEm,
+  };
+}
+
+/**
+ * Guarda os detalhes do anuncio (titulo, descricao e link) em
+ * anuncio_do_whatsapp, pela RPC registrar_anuncio_do_whatsapp (service
+ * role). Roda em TODA mensagem de anuncio com detalhe, nova ou reentrega: a
+ * RPC e idempotente (a mesma mensagem da sem_mudanca) e vale o texto da
+ * mensagem MAIS NOVA (pelo horario da mensagem, nao pela chegada), porque o
+ * anunciante pode editar o anuncio e a reentrega atrasada traz o texto
+ * velho. Um por anuncio, nunca por contato: o lead antigo do mesmo anuncio
+ * passa a ver os detalhes.
+ *
+ * Melhor esforco, como o resto da captura: a mensagem ja esta salva, entao
+ * erro ou excecao vira log so com ids e codigo e nunca derruba a ingestao
+ * nem o webhook. O texto do anuncio NUNCA vai para log.
+ */
+async function registrarDetalhesDoAnuncio(
+  admin: SupabaseClient,
+  captura: CapturaDeAnuncio,
+): Promise<void> {
+  const argumentos = argumentosDosDetalhesDoAnuncio(
+    captura.clinicId,
+    captura.anuncio,
+    captura.vistoEm,
+  );
+  if (!argumentos) {
+    return;
+  }
+  const campos = {
+    clinic_id: captura.clinicId,
+    whatsapp_account_id: captura.whatsappAccountId,
+    contact_id: captura.contactId,
+  };
+  try {
+    const { data, error } = await admin.rpc(
+      "registrar_anuncio_do_whatsapp",
+      argumentos,
+    );
+    if (error) {
+      log.error("anuncio_detalhes_falhou", {
+        ...campos,
+        error_code: error.code ?? null,
+      });
+      return;
+    }
+    const registro = lerRegistroDosDetalhes(data);
+    if (registro === null) {
+      log.error("anuncio_detalhes_resposta_inesperada", campos);
+      return;
+    }
+    // So o que mudou vai para log (a reentrega e o lead seguinte do mesmo
+    // anuncio dao sem_mudanca, sem ruido).
+    if (registro === "inserido" || registro === "atualizado") {
+      log.info("anuncio_detalhes_gravados", { ...campos, status: registro });
+    }
+  } catch {
+    log.error("anuncio_detalhes_falhou", campos);
+  }
 }
 
 /**
@@ -497,9 +667,13 @@ async function pedirResolucaoDaCampanha(
  * 3. No primeiro clique: log de diagnostico e, se veio id de anuncio, o
  *    pedido de resolucao da campanha na Meta.
  *
- * POST nao grava nada (nem ids, nem origem). Nao e anuncio pago, e o
- * ctwa_clid de um post gravado no contato faria o primeiro clique num
- * anuncio de verdade, depois, perder o "primeiro clique vence".
+ * Antes dos tres, em TODA mensagem de anuncio (nova ou reentrega), os
+ * detalhes do anuncio (titulo, descricao e link) vao para
+ * anuncio_do_whatsapp (registrarDetalhesDoAnuncio, que nunca lanca).
+ *
+ * POST nao grava nada (nem ids, nem origem, nem detalhes). Nao e anuncio
+ * pago, e o ctwa_clid de um post gravado no contato faria o primeiro clique
+ * num anuncio de verdade, depois, perder o "primeiro clique vence".
  */
 async function capturarAnuncio(
   admin: SupabaseClient,
@@ -518,6 +692,8 @@ async function capturarAnuncio(
     }
     return;
   }
+
+  await registrarDetalhesDoAnuncio(admin, captura);
 
   const ids = idsDoAnuncio(anuncio);
   let primeiroClique = false;
@@ -660,6 +836,9 @@ export async function ingerirMensagemRecebida(
   accountId: string | null,
   event: MensagemRecebida,
 ): Promise<{ data: IngestResultado | null; error: PostgrestError | null }> {
+  // A chegada: o horario da mensagem do anuncio quando o payload nao traz o
+  // envio (horarioDaMensagemDoAnuncio).
+  const chegadaEm = new Date().toISOString();
   const { data, error } = await admin.rpc("ingest_inbound_message", {
     p_clinic_id: clinicId,
     p_whatsapp_account_id: accountId,
@@ -727,9 +906,10 @@ export async function ingerirMensagemRecebida(
     }
   }
 
-  // CAPTURA DO ANUNCIO: ids do clique e, desde 04/10/2026 (D3), a origem
-  // real. Roda ANTES da atribuicao por texto, entao o anuncio vence o codigo
-  // de campanha. Melhor esforco: a mensagem ja esta salva.
+  // CAPTURA DO ANUNCIO: os detalhes do anuncio (20/10/2026), os ids do
+  // clique e, desde 04/10/2026 (D3), a origem real. Roda ANTES da
+  // atribuicao por texto, entao o anuncio vence o codigo de campanha.
+  // Melhor esforco: a mensagem ja esta salva.
   if (event.anuncio && resultado?.contact_id) {
     try {
       await capturarAnuncio(admin, {
@@ -738,6 +918,7 @@ export async function ingerirMensagemRecebida(
         whatsappAccountId: resultado.whatsapp_account_id ?? accountId,
         mensagemNova: resultado.inserted,
         anuncio: event.anuncio,
+        vistoEm: horarioDaMensagemDoAnuncio(event.enviadaEm, chegadaEm),
       });
     } catch {
       log.error("captura_ctwa_falhou", {

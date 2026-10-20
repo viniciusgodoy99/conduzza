@@ -304,6 +304,8 @@ describe("clique do site na ingestão", () => {
       adsetId: null,
       campaignId: null,
       sourceUrl: "https://fb.me/abcXYZ",
+      titulo: null,
+      descricao: null,
       plataforma: "Instagram",
       tipo: "ad",
       chavesVistas: { anuncio: ["ctwaClid"], contexto: [] },

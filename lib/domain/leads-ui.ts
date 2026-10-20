@@ -368,13 +368,35 @@ export const CONJUNTO_PENDENTE = "Conjunto ainda não identificado";
 
 /**
  * Campanha do contato. `nomeDoLink` e o nome amigavel de campaign_link
- * casado pelo texto (so o drawer le).
+ * casado pelo texto (so o drawer le). A campanha que nao vem da Meta (a
+ * digitada ou a do clique do Google) vence; senao, a do anuncio pela Meta.
  */
 export function campanhaDoContato(
   contato: OrigemDoContato,
   leitura: LeituraDoAnuncio,
   nomeDoLink?: string | null,
 ): TextoDeAtribuicao {
+  const foraDaMeta = campanhaForaDaMeta(contato, nomeDoLink);
+  if (foraDaMeta) {
+    return foraDaMeta;
+  }
+  if (!ehLeadDeAnuncio(contato)) {
+    return { texto: "Sem campanha", tipo: "nenhuma" };
+  }
+  return campanhaDaMeta(contato, leitura);
+}
+
+/**
+ * Campanha do contato que NAO vem da Meta: a digitada (codigo de link,
+ * importacao, cadastro) ou a do clique do Google (clique no site); null
+ * quando nao ha. No lead de anuncio ela fica nas linhas da Origem, fora do
+ * bloco "Detalhes do anúncio", que so mostra a campanha e o conjunto da Meta
+ * (o contato que chegou por link e depois tocou num anuncio tem as duas).
+ */
+export function campanhaForaDaMeta(
+  contato: OrigemDoContato,
+  nomeDoLink?: string | null,
+): TextoDeAtribuicao | null {
   const digitada = textoLimpo(contato.source_campaign);
   if (digitada) {
     return { texto: textoLimpo(nomeDoLink) ?? digitada, tipo: "nome" };
@@ -387,9 +409,17 @@ export function campanhaDoContato(
       ? { texto: rotuloDaCampanhaDoGoogle(id), tipo: "nome" }
       : { texto: CAMPANHA_DO_GOOGLE_SEM_ID, tipo: "nenhuma" };
   }
-  if (!ehLeadDeAnuncio(contato)) {
-    return { texto: "Sem campanha", tipo: "nenhuma" };
-  }
+  return null;
+}
+
+/**
+ * Campanha da Meta do lead de anuncio, pelo meta_anuncio do id do anuncio
+ * (com o carregando, o erro e o "ainda não identificada" da leitura).
+ */
+export function campanhaDaMeta(
+  contato: Pick<OrigemDoContato, "source_ad_id">,
+  leitura: LeituraDoAnuncio,
+): TextoDeAtribuicao {
   if (!textoLimpo(contato.source_ad_id)) {
     // Clique sem id de anuncio: nunca vai ser identificada pela Meta.
     return { texto: CAMPANHA_SEM_ANUNCIO, tipo: "nenhuma" };

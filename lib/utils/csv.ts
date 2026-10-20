@@ -1,6 +1,25 @@
 // Geracao e download de CSV no padrao Excel pt-BR: separador ";" e BOM
 // UTF-8 no inicio (sem o BOM o Excel abre acentos quebrados).
 
+// Celula de texto que a planilha leria como formula (injecao de formula no
+// CSV): comeca com =, +, -, @, tabulacao ou CR. Vale para TODA exportacao,
+// porque o texto pode ser de terceiro: o titulo do anuncio vem da mensagem,
+// o nome do paciente vem do WhatsApp.
+const INICIO_DE_FORMULA = /^[=+\-@\t\r]/;
+// Numero e percentual (com sinal, separadores e o "%") nao sao texto: nao
+// viram formula e ficam como estao ("-5", "12,5%", o telefone "+5585...").
+const NUMERO_OU_PERCENTUAL = /^[+-]?\d[\d.,]*%?$/;
+
+/**
+ * Celula de texto que comeca como formula ganha um apostrofo na frente (a
+ * recomendacao da OWASP): a planilha mostra o texto, nunca o executa.
+ */
+export function neutralizarFormula(celula: string): string {
+  return INICIO_DE_FORMULA.test(celula) && !NUMERO_OU_PERCENTUAL.test(celula)
+    ? `'${celula}`
+    : celula;
+}
+
 /** Escapa a celula quando contem ";", aspas ou quebra de linha. */
 function escaparCelula(celula: string): string {
   if (/[";\n\r]/.test(celula)) {
@@ -9,9 +28,16 @@ function escaparCelula(celula: string): string {
   return celula;
 }
 
+/**
+ * O CSV das linhas: cada celula neutralizada (formula vira texto) e depois
+ * escapada. Toda exportacao do sistema passa por aqui (Resultados, Agenda e
+ * as linhas recusadas da importacao).
+ */
 export function gerarCsv(linhas: string[][]): string {
   const corpo = linhas
-    .map((linha) => linha.map(escaparCelula).join(";"))
+    .map((linha) =>
+      linha.map((celula) => escaparCelula(neutralizarFormula(celula))).join(";"),
+    )
     .join("\r\n");
   return "\uFEFF" + corpo;
 }

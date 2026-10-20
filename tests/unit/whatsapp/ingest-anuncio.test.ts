@@ -6,7 +6,9 @@ import type {
   InboundEvent,
 } from "@/lib/integrations/whatsapp/inbound";
 import {
+  argumentosDosDetalhesDoAnuncio,
   chavesDoAnuncioParaLog,
+  horarioDaMensagemDoAnuncio,
   idsDoAnuncio,
   ingerirMensagemRecebida,
   origemDoAnuncio,
@@ -50,6 +52,10 @@ class BancoFalso {
   };
   /** Erro forcado para o PROXIMO update de contato que gravar a origem. */
   erroNaOrigem: ErroFalso | null = null;
+  /** Resposta de registrar_anuncio_do_whatsapp (os detalhes do anuncio). */
+  respostaDosDetalhes: Resultado = { data: "inserido", error: null };
+  /** A RPC dos detalhes lanca (rede caiu no meio). */
+  detalhesLancam = false;
   readonly rpcs: { nome: string; args: Record<string, unknown> }[] = [];
   readonly updates: { patch: Linha; filtros: Filtro[]; select: boolean }[] = [];
 
@@ -86,6 +92,8 @@ class BancoFalso {
       error: null,
     };
     this.erroNaOrigem = null;
+    this.respostaDosDetalhes = { data: "inserido", error: null };
+    this.detalhesLancam = false;
     this.rpcs.length = 0;
     this.updates.length = 0;
   }
@@ -103,6 +111,12 @@ class BancoFalso {
         }
         if (nome === "enfileirar_resolucao_de_anuncios_meta") {
           return this.respostaDoEnfileirar;
+        }
+        if (nome === "registrar_anuncio_do_whatsapp") {
+          if (this.detalhesLancam) {
+            throw new Error("fetch failed");
+          }
+          return this.respostaDosDetalhes;
         }
         return { data: null, error: null };
       },
@@ -244,6 +258,8 @@ function anuncio(parcial: Partial<AnuncioDeOrigem> = {}): AnuncioDeOrigem {
     adsetId: null,
     campaignId: null,
     sourceUrl: "https://fb.me/abcXYZ",
+    titulo: null,
+    descricao: null,
     plataforma: null,
     tipo: "ad",
     chavesVistas: {
@@ -258,6 +274,7 @@ function mensagem(
   body: string | null,
   comAnuncio: AnuncioDeOrigem | null,
   waMessageId = "wa-1",
+  enviadaEm?: string | null,
 ): MensagemRecebida {
   return {
     kind: "message_received",
@@ -270,6 +287,7 @@ function mensagem(
     mediaFilename: null,
     mediaMimetype: null,
     quotedWaMessageId: null,
+    ...(enviadaEm === undefined ? {} : { enviadaEm }),
     anuncio: comAnuncio,
     instanceToken: null,
   };
@@ -352,6 +370,19 @@ describe("origemDoAnuncio (o que vai para o contato)", () => {
     expect(idsDoAnuncio(anuncio({ tipo: "post" }))).toBeNull();
     expect(
       idsDoAnuncio(anuncio({ ctwaClid: null, adId: null, tipo: null })),
+    ).toBeNull();
+  });
+
+  it("idsDoAnuncio: o id do anúncio vai aparado pela regra do JavaScript (espaço Unicode)", () => {
+    expect(
+      idsDoAnuncio(anuncio({ adId: "\u{a0}120240624148610289\t" })),
+    ).toEqual({
+      ctwa_clid: "Af-CLIQUE-PRIMEIRO",
+      source_ad_id: "120240624148610289",
+    });
+    // Só espaço: nenhum id de anúncio.
+    expect(
+      idsDoAnuncio(anuncio({ ctwaClid: null, adId: "\u{3000} \u{feff}" })),
     ).toBeNull();
   });
 
@@ -730,5 +761,390 @@ describe("ingestão de mensagem de anúncio", () => {
     ]) {
       expect(tudo).not.toContain(valor);
     }
+  });
+});
+
+// Detalhes do anuncio (pedido do dono em 20/10/2026): titulo, descricao e
+// link vao para anuncio_do_whatsapp pela RPC registrar_anuncio_do_whatsapp,
+// em TODA mensagem de anuncio com detalhe (nova ou reentrega; a RPC e
+// idempotente). Falha nunca derruba a ingestao, e o texto nunca vai para log.
+describe("detalhes do anúncio na ingestão", () => {
+  const TITULO = "Limpeza de pele com 30% de desconto";
+  const DESCRICAO = "Agende sua avaliação.\nVagas limitadas para outubro.";
+  const LINK = "https://fb.me/abcXYZ";
+
+  function comDetalhes(
+    parcial: Partial<AnuncioDeOrigem> = {},
+  ): AnuncioDeOrigem {
+    return anuncio({
+      titulo: TITULO,
+      descricao: DESCRICAO,
+      sourceUrl: LINK,
+      plataforma: "Instagram",
+      ...parcial,
+    });
+  }
+
+  function chamadasDosDetalhes() {
+    return banco.rpcs.filter(
+      (rpc) => rpc.nome === "registrar_anuncio_do_whatsapp",
+    );
+  }
+
+  const ENVIADA_EM = "2026-10-20T12:00:00.000Z";
+
+  it("anúncio com título, descrição e link chama a RPC com os argumentos certos", async () => {
+    const { data, error } = await ingerir(
+      mensagem("Olá!", comDetalhes(), "wa-1", ENVIADA_EM),
+    );
+    expect(error).toBeNull();
+    expect(data?.message_id).toBe("mensagem-1");
+    expect(chamadasDosDetalhes()).toEqual([
+      {
+        nome: "registrar_anuncio_do_whatsapp",
+        args: {
+          p_clinic_id: CLINICA,
+          p_ad_id: "120240624148610289",
+          p_titulo: TITULO,
+          p_descricao: DESCRICAO,
+          p_link: LINK,
+          p_plataforma: "Instagram",
+          p_tipo: "ad",
+          p_visto_em: ENVIADA_EM,
+        },
+      },
+    ]);
+    const gravados = eventosDeLog().filter(
+      (linha) => linha.evento === "anuncio_detalhes_gravados",
+    );
+    expect(gravados).toEqual([
+      expect.objectContaining({
+        nivel: "info",
+        clinic_id: CLINICA,
+        whatsapp_account_id: NUMERO,
+        contact_id: CONTATO,
+        status: "inserido",
+      }),
+    ]);
+    // Os ids e a origem continuam sendo gravados como antes.
+    expect(banco.contato).toMatchObject({
+      source_ad_id: "120240624148610289",
+      source_method: "anuncio_ctwa",
+    });
+  });
+
+  it("campo que não veio não vai na chamada (a RPC nunca apaga o guardado)", async () => {
+    await ingerir(
+      mensagem(
+        "oi",
+        comDetalhes({
+          descricao: null,
+          sourceUrl: null,
+          plataforma: null,
+          tipo: null,
+        }),
+        "wa-1",
+        ENVIADA_EM,
+      ),
+    );
+    expect(chamadasDosDetalhes()[0]?.args).toEqual({
+      p_clinic_id: CLINICA,
+      p_ad_id: "120240624148610289",
+      p_titulo: TITULO,
+      p_visto_em: ENVIADA_EM,
+    });
+  });
+
+  it("o horário da mensagem vai junto: o envio no aparelho; sem ele, a chegada", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-20T15:30:00.000Z"));
+      await ingerir(mensagem("oi", comDetalhes(), "wa-1", ENVIADA_EM));
+      await ingerir(mensagem("oi", comDetalhes(), "wa-2"));
+      await ingerir(mensagem("oi", comDetalhes(), "wa-3", null));
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(chamadasDosDetalhes().map((rpc) => rpc.args.p_visto_em)).toEqual([
+      ENVIADA_EM,
+      "2026-10-20T15:30:00.000Z",
+      "2026-10-20T15:30:00.000Z",
+    ]);
+  });
+
+  it("a reentrega atrasada manda o horário do envio, nunca o da nova chegada", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-20T12:00:05.000Z"));
+      await ingerir(mensagem("oi", comDetalhes(), "wa-1", ENVIADA_EM));
+      banco.ingestao = {
+        ...banco.ingestao,
+        inserted: false,
+        contact_created: false,
+      };
+      // Uma hora depois, o provedor entrega a mesma mensagem de novo.
+      vi.setSystemTime(new Date("2026-10-20T13:00:05.000Z"));
+      await ingerir(mensagem("oi", comDetalhes(), "wa-1", ENVIADA_EM));
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(chamadasDosDetalhes().map((rpc) => rpc.args.p_visto_em)).toEqual([
+      ENVIADA_EM,
+      ENVIADA_EM,
+    ]);
+  });
+
+  it("o id do anúncio com espaço Unicode nas pontas vai aparado para o contato e para a RPC", async () => {
+    await ingerir(
+      mensagem(
+        "oi",
+        comDetalhes({ adId: "\u{a0}120240624148610289\u{2003}" }),
+        "wa-1",
+        ENVIADA_EM,
+      ),
+    );
+    expect(banco.contato.source_ad_id).toBe("120240624148610289");
+    expect(chamadasDosDetalhes()[0]?.args.p_ad_id).toBe("120240624148610289");
+  });
+
+  it("reentrega do webhook chama de novo (idempotente) e não repete o log", async () => {
+    await ingerir(mensagem("oi", comDetalhes(), "wa-1", ENVIADA_EM));
+    banco.ingestao = {
+      ...banco.ingestao,
+      inserted: false,
+      contact_created: false,
+    };
+    banco.respostaDosDetalhes = { data: "sem_mudanca", error: null };
+    await ingerir(mensagem("oi", comDetalhes(), "wa-1", ENVIADA_EM));
+    expect(chamadasDosDetalhes()).toHaveLength(2);
+    expect(
+      eventosDeLog().filter(
+        (linha) => linha.evento === "anuncio_detalhes_gravados",
+      ),
+    ).toHaveLength(1);
+    expect(eventosDeLog().filter((linha) => linha.nivel === "error")).toEqual(
+      [],
+    );
+  });
+
+  it("texto novo do mesmo anúncio: a RPC atualiza e o log diz atualizado", async () => {
+    await ingerir(mensagem("oi", comDetalhes(), "wa-1"));
+    banco.ingestao = { ...banco.ingestao, contact_created: false };
+    banco.respostaDosDetalhes = { data: "atualizado", error: null };
+    await ingerir(
+      mensagem(
+        "oi de novo",
+        comDetalhes({ titulo: "Texto novo do anúncio" }),
+        "wa-2",
+      ),
+    );
+    expect(chamadasDosDetalhes()[1]?.args).toMatchObject({
+      p_titulo: "Texto novo do anúncio",
+    });
+    expect(
+      eventosDeLog()
+        .filter((linha) => linha.evento === "anuncio_detalhes_gravados")
+        .map((linha) => linha.status),
+    ).toEqual(["inserido", "atualizado"]);
+  });
+
+  it("só com o código do anúncio (sem título, descrição e link) não chama", async () => {
+    await ingerir(mensagem("oi", anuncio({ sourceUrl: null })));
+    expect(chamadasDosDetalhes()).toEqual([]);
+    expect(banco.contato.source_ad_id).toBe("120240624148610289");
+  });
+
+  it("post não grava detalhe (não é anúncio pago)", async () => {
+    await ingerir(mensagem("oi", comDetalhes({ tipo: "post" })));
+    expect(chamadasDosDetalhes()).toEqual([]);
+  });
+
+  it("id do anúncio fora do formato não chama", async () => {
+    await ingerir(mensagem("oi", comDetalhes({ adId: "abc-123" })));
+    await ingerir(mensagem("oi", comDetalhes({ adId: null })));
+    expect(chamadasDosDetalhes()).toEqual([]);
+  });
+
+  it("falha da RPC vira log só com códigos e a ingestão segue", async () => {
+    banco.respostaDosDetalhes = {
+      data: null,
+      error: { code: "PGRST202", message: "function not found" },
+    };
+    const { data, error } = await ingerir(mensagem("oi", comDetalhes()));
+    expect(error).toBeNull();
+    expect(data?.message_id).toBe("mensagem-1");
+    expect(banco.contato.source_method).toBe("anuncio_ctwa");
+    const [falha] = eventosDeLog().filter(
+      (linha) => linha.evento === "anuncio_detalhes_falhou",
+    );
+    expect(falha).toEqual(
+      expect.objectContaining({
+        nivel: "error",
+        clinic_id: CLINICA,
+        contact_id: CONTATO,
+        error_code: "PGRST202",
+      }),
+    );
+  });
+
+  it("exceção na chamada (rede) também não derruba a ingestão nem a captura", async () => {
+    banco.detalhesLancam = true;
+    const { data, error } = await ingerir(mensagem("oi", comDetalhes()));
+    expect(error).toBeNull();
+    expect(data?.message_id).toBe("mensagem-1");
+    expect(banco.contato).toMatchObject({
+      source_ad_id: "120240624148610289",
+      source_channel: "trafego_pago",
+    });
+    expect(
+      eventosDeLog().filter(
+        (linha) => linha.evento === "anuncio_detalhes_falhou",
+      ),
+    ).toHaveLength(1);
+    expect(
+      eventosDeLog().filter((linha) => linha.evento === "captura_ctwa_falhou"),
+    ).toEqual([]);
+  });
+
+  it("resposta fora do contrato vira log de resposta inesperada", async () => {
+    banco.respostaDosDetalhes = { data: { ok: true }, error: null };
+    await ingerir(mensagem("oi", comDetalhes()));
+    expect(
+      eventosDeLog().filter(
+        (linha) => linha.evento === "anuncio_detalhes_resposta_inesperada",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("o log nunca leva o título, a descrição nem o link", async () => {
+    await ingerir(mensagem("Olá, meu nome é Maria", comDetalhes()));
+    banco.respostaDosDetalhes = {
+      data: null,
+      error: { code: "23514", message: `valor ${TITULO} recusado` },
+    };
+    await ingerir(mensagem("de novo", comDetalhes(), "wa-2"));
+    const tudo = linhasDeLog.join("");
+    for (const valor of [
+      "Limpeza de pele",
+      "Agende sua",
+      "Vagas limitadas",
+      "fb.me",
+      "abcXYZ",
+      "120240624148610289",
+      "Maria",
+      "recusado",
+    ]) {
+      expect(tudo).not.toContain(valor);
+    }
+  });
+});
+
+describe("argumentosDosDetalhesDoAnuncio", () => {
+  const VISTO_EM = "2026-10-20T12:00:00.000Z";
+
+  it("só o que veio, com o id do anúncio aparado e o horário da mensagem", () => {
+    expect(
+      argumentosDosDetalhesDoAnuncio(
+        CLINICA,
+        anuncio({
+          adId: " 120240624148610289 ",
+          titulo: "Título",
+          sourceUrl: null,
+        }),
+        VISTO_EM,
+      ),
+    ).toEqual({
+      p_clinic_id: CLINICA,
+      p_ad_id: "120240624148610289",
+      p_titulo: "Título",
+      p_tipo: "ad",
+      p_visto_em: VISTO_EM,
+    });
+  });
+
+  it("link de redirecionador, grupo ou conversa não vai (só endereço do anúncio)", () => {
+    for (const sourceUrl of [
+      "https://l.facebook.com/l.php?u=https%3A%2F%2Fgolpe.example%2F",
+      "https://chat.whatsapp.com/ConviteDeGrupo",
+      "https://wa.me/5584999990000?text=Pague",
+    ]) {
+      expect(
+        argumentosDosDetalhesDoAnuncio(
+          CLINICA,
+          anuncio({ titulo: "Título", sourceUrl }),
+          VISTO_EM,
+        ),
+      ).not.toHaveProperty("p_link");
+    }
+  });
+
+  it("evento montado à mão é saneado de novo: nada que o banco recusaria, nada fora da Meta", () => {
+    expect(
+      argumentosDosDetalhesDoAnuncio(
+        CLINICA,
+        anuncio({
+          titulo: "  Título\ncom quebra  ",
+          descricao: "Linha 1\r\nLinha 2\t!",
+          sourceUrl: "https://golpe.example.com/fb.me",
+        }),
+        VISTO_EM,
+      ),
+    ).toEqual({
+      p_clinic_id: CLINICA,
+      p_ad_id: "120240624148610289",
+      p_titulo: "Título com quebra",
+      p_descricao: "Linha 1\nLinha 2 !",
+      p_tipo: "ad",
+      p_visto_em: VISTO_EM,
+    });
+    // So o link fora dos enderecos do anuncio: nada para guardar.
+    expect(
+      argumentosDosDetalhesDoAnuncio(
+        CLINICA,
+        anuncio({ sourceUrl: "http://fb.me/sem-https" }),
+        VISTO_EM,
+      ),
+    ).toBeNull();
+  });
+
+  it("sem detalhe, post ou id inválido: null", () => {
+    expect(
+      argumentosDosDetalhesDoAnuncio(
+        CLINICA,
+        anuncio({ sourceUrl: null }),
+        VISTO_EM,
+      ),
+    ).toBeNull();
+    expect(
+      argumentosDosDetalhesDoAnuncio(
+        CLINICA,
+        anuncio({ tipo: "post", titulo: "x" }),
+        VISTO_EM,
+      ),
+    ).toBeNull();
+    expect(
+      argumentosDosDetalhesDoAnuncio(
+        CLINICA,
+        anuncio({ adId: "1".repeat(33), titulo: "x" }),
+        VISTO_EM,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("horarioDaMensagemDoAnuncio", () => {
+  const CHEGADA = "2026-10-20T15:30:00.000Z";
+
+  it("o envio no aparelho quando é data ISO; senão, a chegada", () => {
+    expect(
+      horarioDaMensagemDoAnuncio("2026-10-20T12:00:00.000Z", CHEGADA),
+    ).toBe("2026-10-20T12:00:00.000Z");
+    expect(horarioDaMensagemDoAnuncio(null, CHEGADA)).toBe(CHEGADA);
+    expect(horarioDaMensagemDoAnuncio(undefined, CHEGADA)).toBe(CHEGADA);
+    expect(horarioDaMensagemDoAnuncio("ontem", CHEGADA)).toBe(CHEGADA);
+    // Ano com 6 dígitos: o Postgres recusaria a chamada inteira.
+    expect(
+      horarioDaMensagemDoAnuncio(new Date(8.64e15).toISOString(), CHEGADA),
+    ).toBe(CHEGADA);
   });
 });
