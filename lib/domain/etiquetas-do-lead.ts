@@ -14,7 +14,8 @@ import type {
 // - a MESMA etiqueta, ignorando maiuscula, acento e espaco sobrando, conta
 //   uma vez: a cadastrada vence e fica com a grafia dela; entre as que so
 //   estao em uso, fica a grafia mais usada;
-// - o chip do lead (lista, cartao do quadro e gaveta) pega o tom da
+// - o chip do lead (lista e gaveta; o cartao do quadro fica com os 5
+//   elementos do brief) pega o tom da
 //   cadastrada com o mesmo nome; sem ela, neutro. O texto e o do lead.
 //
 // Logica pura: roda no servidor e no cliente, e e o que os testes cobrem.

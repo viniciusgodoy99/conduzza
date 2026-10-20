@@ -5,7 +5,8 @@ import {
 } from "@/lib/domain/etiquetas-do-lead";
 import { cn } from "@/lib/utils";
 
-// As etiquetas do lead na lista e no cartao do quadro (relato do dono em
+// As etiquetas do lead na lista (o cartao do quadro fica com os 5 elementos
+// do brief; relato do dono em
 // 20/10/2026: a etiqueta gravava, mas so a gaveta mostrava). Ate 2 chips
 // compactos, o mesmo ChipDeEtiqueta do Atendimento, e "+N" com as que
 // sobram. O tom e o da etiqueta cadastrada com o mesmo nome; sem ela,

@@ -535,8 +535,8 @@ describe("escrita de dado de paciente por papel", () => {
 // kind = 'lead' no mesmo update. Aqui a policy de verdade: a recepcao da A
 // marca o lead da A sem mexer na etapa; a gestao da B nao alcanca o lead da
 // A; profissional e leitura da A nao marcam. Toda negacao confere o estado
-// pelo service role (anti falso-positivo). ESCRITO EM 20/10/2026, NAO RODADO
-// nesta entrega (a suite grava no banco).
+// pelo service role (anti falso-positivo). Escrito e rodado contra o banco
+// em 20/10/2026 (19 de 19 na suite), em clinica de teste.
 describe("lead vira paciente sem consulta", () => {
   let leadDaRecepcao = "";
   let leadIntocado = "";

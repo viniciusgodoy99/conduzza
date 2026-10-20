@@ -326,8 +326,8 @@ describe("importação de planilha: telefone repetido no lote", () => {
 // "Importar como" Pacientes (decisao do dono em 20/10/2026), contra o banco
 // real: o novo nasce paciente, o lead que ja existia vira paciente pela
 // sessao do miolo (aqui o service role), o paciente continua, e a etapa de
-// ninguem muda. ESCRITO EM 20/10/2026, NAO RODADO nesta entrega (a suite
-// grava no banco).
+// ninguem muda. Escrito e rodado contra o banco em 20/10/2026 (8 de 8 na
+// suite), em clinica de teste.
 describe("importação de planilha: como Pacientes", () => {
   it("novo nasce paciente, lead vira paciente, paciente continua, sem mudar a etapa", async () => {
     const clinicId = await criarClinica("pacientes");

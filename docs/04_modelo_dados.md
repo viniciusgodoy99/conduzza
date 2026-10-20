@@ -829,7 +829,9 @@ create table subscription (
 );
 ```
 
-**`audit_log.detalhes` (20/10/2026, migration `20261020120000_trilha_com_detalhes.sql`, ainda não aplicada):** `jsonb` nula, com CHECK de objeto de até 2 KB, para os metadados da ação (a exportação de leads guarda a quantidade e os filtros). Nunca dado de paciente: nome, telefone, texto de mensagem e id de contato não entram ali (o id do contato lido continua em `entity_id`). Seção 20.
+**`audit_log.detalhes` (20/10/2026, migration `20261020120000_trilha_com_detalhes.sql`, aplicada em 20/10/2026):** `jsonb` nula, com CHECK de objeto de até 2 KB, para os metadados da ação (a exportação de leads guarda a quantidade e os filtros). Nunca dado de paciente: nome, telefone, texto de mensagem e id de contato não entram ali (o id do contato lido continua em `entity_id`). Seção 20.
+
+**Tipo do contato pela tela e ações novas da trilha (20/10/2026, sem migration):** além do gatilho `converter_lead_em_paciente` (a primeira consulta), a sessão passa a gravar `contact.kind = 'paciente'` no "Marcar como paciente" (Leads e Atendimento), pela policy de `contact` que já existia (administrador, gestor e recepção), sempre com `kind = 'lead'` no mesmo update e sem tocar em `funnel_stage`; a importação "como Pacientes" cria o contato novo já `paciente` e passa os leads do lote do mesmo jeito. Não há caminho de volta pela tela. O "Iniciar conversa" não tem RPC nova: confere papel, contato e `consentimento_vigente` pela sessão e só então chama `garantir_conversa_aberta` com o service role. Ações novas em `audit_log`, sem dado de paciente: `marcou_como_paciente` (`entity = 'contact'`, `entity_id` só quando é um contato, `detalhes = {"quantidade": n}`) e `iniciou_conversa` (`entity = 'conversation'`, o id da conversa); `concedeu_consentimento`, a mesma da ficha, passa a vir também do Novo lead; e `importou_planilha` passa a levar em `detalhes` a escolha (`importar_como`) e as contagens do lote. Backlog, entrada "Lead vira paciente sem consulta".
 
 ---
 
