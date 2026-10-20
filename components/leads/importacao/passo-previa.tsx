@@ -10,6 +10,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 
 import { importarContatosAction } from "@/app/(app)/leads/actions";
+import { EscolhaImportarComo } from "@/components/leads/importacao/escolha-importar-como";
 import type { MapeamentoDeColunas } from "@/components/leads/importacao/passo-mapeamento";
 import { Aviso } from "@/components/shared/aviso";
 import { BarraDeProgresso } from "@/components/shared/barra-de-progresso";
@@ -28,7 +29,10 @@ import {
   type LinhaImportada,
 } from "@/lib/domain/importacao";
 import { chaveDeTelefone, formatarTelefone } from "@/lib/domain/telefone";
-import type { DeclaracaoDeConsentimento } from "@/lib/integrations/importar-contatos";
+import type {
+  DeclaracaoDeConsentimento,
+  ImportarComo,
+} from "@/lib/integrations/importar-contatos";
 import { baixarCsv, gerarCsv } from "@/lib/utils/csv";
 
 // Passo 4 da importacao: previa das linhas validadas e o envio em lotes de
@@ -43,6 +47,10 @@ import { baixarCsv, gerarCsv } from "@/lib/utils/csv";
 // A previa diz que a importacao NAO inscreve ninguem em follow-up (decisao
 // do dono de 24/09/2026): o planejador ignora o relogio de etapa de quem
 // nasceu pela planilha, ate alguem mudar a etapa do contato.
+//
+// "Importar como" (20/10/2026) mora aqui, junto do botao que grava: Leads,
+// como sempre, ou Pacientes. A escolha vai em todo lote e trava assim que o
+// primeiro sai; o resumo diz quantos viraram pacientes.
 
 const TAMANHO_DO_LOTE = 500;
 const LINHAS_NA_PREVIA = 20;
@@ -55,16 +63,23 @@ type LinhaInvalida = {
   motivo: string;
 };
 
-type Totais = {
+/** O que os lotes gravaram, somado (o resumo do fim da importacao). */
+export type TotaisDaImportacao = {
   importados: number;
   atualizados: number;
+  viraram_pacientes: number;
+  ja_eram_pacientes: number;
   mantidos_sem_autorizacao: number;
   pulados: number;
 };
 
+type Totais = TotaisDaImportacao;
+
 const TOTAIS_ZERADOS: Totais = {
   importados: 0,
   atualizados: 0,
+  viraram_pacientes: 0,
+  ja_eram_pacientes: 0,
   mantidos_sem_autorizacao: 0,
   pulados: 0,
 };
@@ -73,13 +88,15 @@ type Fase =
   | { etapa: "pronto" }
   | { etapa: "importando"; enviados: number }
   | { etapa: "erro"; loteIndice: number; enviados: number; mensagem: string }
-  | { etapa: "concluido"; totais: Totais };
+  | { etapa: "concluido"; totais: Totais; importarComo: ImportarComo };
 
 export function PassoPrevia({
   cabecalho,
   linhas,
   mapeamento,
   declaracao,
+  importarComo = "leads",
+  aoMudarImportarComo,
   recodificado = false,
   aoOcupado,
   aoGravarLote,
@@ -90,6 +107,10 @@ export function PassoPrevia({
   linhas: string[][];
   mapeamento: MapeamentoDeColunas;
   declaracao: DeclaracaoDeConsentimento;
+  /** "Importar como": Leads (padrao) ou Pacientes. */
+  importarComo?: ImportarComo;
+  /** Sem ele, a escolha nao aparece e a importacao vai como Leads. */
+  aoMudarImportarComo?: (valor: ImportarComo) => void;
   /** O arquivo nao era UTF-8 e foi lido como Windows-1252 (Excel pt-BR) */
   recodificado?: boolean;
   /** Avisa o modal para travar o fechamento enquanto grava. */
@@ -151,7 +172,11 @@ export function PassoPrevia({
       if (!lote) {
         break;
       }
-      const resultado = await importarContatosAction({ declaracao, lote });
+      const resultado = await importarContatosAction({
+        declaracao,
+        lote,
+        importar_como: importarComo,
+      });
       if (!resultado.ok) {
         setFase({
           etapa: "erro",
@@ -165,6 +190,10 @@ export function PassoPrevia({
       totaisRef.current = {
         importados: totaisRef.current.importados + resultado.importados,
         atualizados: totaisRef.current.atualizados + resultado.atualizados,
+        viraram_pacientes:
+          totaisRef.current.viraram_pacientes + resultado.viraram_pacientes,
+        ja_eram_pacientes:
+          totaisRef.current.ja_eram_pacientes + resultado.ja_eram_pacientes,
         mantidos_sem_autorizacao:
           totaisRef.current.mantidos_sem_autorizacao +
           resultado.mantidos_sem_autorizacao,
@@ -174,7 +203,7 @@ export function PassoPrevia({
       enviados += lote.length;
       setFase({ etapa: "importando", enviados });
     }
-    setFase({ etapa: "concluido", totais: totaisRef.current });
+    setFase({ etapa: "concluido", totais: totaisRef.current, importarComo });
     aoOcupado(false);
     aoTerminar();
   };
@@ -193,72 +222,12 @@ export function PassoPrevia({
 
   if (fase.etapa === "concluido") {
     return (
-      <div className="grid gap-3">
-        <div className="grid gap-3 rounded-card border border-border bg-card p-4 shadow-sm">
-          <p className="flex items-center gap-2 text-base font-bold text-text-strong">
-            <CircleCheck
-              className="size-[18px] shrink-0 text-success-text"
-              aria-hidden
-            />
-            Importação concluída
-          </p>
-          <dl className="grid gap-1.5 text-[13px]">
-            <div className="flex items-center justify-between gap-4">
-              <dt className="text-text-secondary">Contatos novos</dt>
-              <dd className="cz-num font-semibold text-text-strong">
-                {numero.format(fase.totais.importados)}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <dt className="text-text-secondary">Contatos atualizados</dt>
-              <dd className="cz-num font-semibold text-text-strong">
-                {numero.format(fase.totais.atualizados)}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <dt className="text-text-secondary">Linhas inválidas</dt>
-              <dd className="cz-num font-semibold text-text-strong">
-                {numero.format(invalidas.length)}
-              </dd>
-            </div>
-          </dl>
-          {fase.totais.pulados > 0 ? (
-            <p className="text-xs text-text-secondary">
-              <span className="cz-num">
-                {numero.format(fase.totais.pulados)}
-              </span>{" "}
-              {fase.totais.pulados === 1
-                ? "contato já tinha autorização e foi mantido"
-                : "contatos já tinham autorização e foram mantidos"}{" "}
-              como estava.
-            </p>
-          ) : null}
-          {fase.totais.mantidos_sem_autorizacao > 0 ? (
-            <Aviso
-              tom="warning"
-              role="note"
-              titulo={`${numero.format(fase.totais.mantidos_sem_autorizacao)} ${
-                fase.totais.mantidos_sem_autorizacao === 1
-                  ? "pessoa pediu para não receber mensagens"
-                  : "pessoas pediram para não receber mensagens"
-              }`}
-            >
-              Os dados entraram, mas elas continuam sem autorização e nenhum
-              envio automático as alcança. Para voltar a enviar, abra a ficha e
-              registre como a pessoa autorizou de novo.
-            </Aviso>
-          ) : null}
-        </div>
-        {invalidas.length > 0 ? (
-          <Button
-            variant="outline"
-            className="w-fit"
-            onClick={baixarRejeitadas}
-          >
-            <Download className="size-4" /> Baixar rejeitados
-          </Button>
-        ) : null}
-      </div>
+      <ResumoDaImportacao
+        totais={fase.totais}
+        importarComo={fase.importarComo}
+        invalidas={invalidas.length}
+        aoBaixarRejeitadas={baixarRejeitadas}
+      />
     );
   }
 
@@ -375,6 +344,14 @@ export function PassoPrevia({
             terem entrado pela planilha. A régua de uma etapa começa para eles
             quando alguém mudar a etapa do contato.
           </Aviso>
+          {aoMudarImportarComo ? (
+            <EscolhaImportarComo
+              valor={importarComo}
+              aoEscolher={aoMudarImportarComo}
+              // Um lote ja gravado (erro no meio): o resto vai do mesmo jeito.
+              travado={fase.etapa !== "pronto"}
+            />
+          ) : null}
         </>
       )}
 
@@ -402,9 +379,127 @@ export function PassoPrevia({
             <Upload className="size-4" /> Importar{" "}
             {numero.format(validas.length)}{" "}
             {validas.length === 1 ? "contato" : "contatos"}
+            {importarComo === "pacientes" ? " como pacientes" : null}
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * O resumo do fim da importacao, so apresentacao: contatos novos,
+ * atualizados, quantos viraram pacientes (importando como Pacientes), as
+ * linhas invalidas, quem ja tinha autorizacao e quem pediu para nao receber.
+ */
+export function ResumoDaImportacao({
+  totais,
+  importarComo,
+  invalidas,
+  aoBaixarRejeitadas,
+}: {
+  totais: TotaisDaImportacao;
+  importarComo: ImportarComo;
+  /** Quantas linhas da planilha foram rejeitadas na previa. */
+  invalidas: number;
+  aoBaixarRejeitadas: () => void;
+}) {
+  // Importando como Pacientes: os novos nasceram pacientes e os leads que
+  // ja existiam viraram; quem ja era paciente continuou.
+  const viraramPacientes =
+    importarComo === "pacientes"
+      ? totais.importados + totais.viraram_pacientes
+      : 0;
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-3 rounded-card border border-border bg-card p-4 shadow-sm">
+        <p className="flex items-center gap-2 text-base font-bold text-text-strong">
+          <CircleCheck
+            className="size-[18px] shrink-0 text-success-text"
+            aria-hidden
+          />
+          Importação concluída
+        </p>
+        <dl className="grid gap-1.5 text-[13px]">
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-text-secondary">Contatos novos</dt>
+            <dd className="cz-num font-semibold text-text-strong">
+              {numero.format(totais.importados)}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-text-secondary">Contatos atualizados</dt>
+            <dd className="cz-num font-semibold text-text-strong">
+              {numero.format(totais.atualizados)}
+            </dd>
+          </div>
+          {importarComo === "pacientes" ? (
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-text-secondary">Viraram pacientes</dt>
+              <dd className="cz-num font-semibold text-text-strong">
+                {numero.format(viraramPacientes)}
+              </dd>
+            </div>
+          ) : null}
+          <div className="flex items-center justify-between gap-4">
+            <dt className="text-text-secondary">Linhas inválidas</dt>
+            <dd className="cz-num font-semibold text-text-strong">
+              {numero.format(invalidas)}
+            </dd>
+          </div>
+        </dl>
+        {importarComo === "pacientes" ? (
+          <p className="text-xs text-text-secondary">
+            {viraramPacientes > 0
+              ? `${
+                  viraramPacientes === 1
+                    ? "O contato já aparece em Pacientes"
+                    : "Os contatos já aparecem em Pacientes"
+                }, sem mudar de etapa no funil.`
+              : "Nenhum contato mudou para paciente nesta importação."}
+            {totais.ja_eram_pacientes > 0
+              ? ` ${numero.format(totais.ja_eram_pacientes)} ${
+                  totais.ja_eram_pacientes === 1
+                    ? "contato já era paciente e continuou como estava"
+                    : "contatos já eram pacientes e continuaram como estavam"
+                }.`
+              : null}
+          </p>
+        ) : null}
+        {totais.pulados > 0 ? (
+          <p className="text-xs text-text-secondary">
+            <span className="cz-num">{numero.format(totais.pulados)}</span>{" "}
+            {totais.pulados === 1
+              ? "contato já tinha autorização e foi mantido"
+              : "contatos já tinham autorização e foram mantidos"}{" "}
+            como estava.
+          </p>
+        ) : null}
+        {totais.mantidos_sem_autorizacao > 0 ? (
+          <Aviso
+            tom="warning"
+            role="note"
+            titulo={`${numero.format(totais.mantidos_sem_autorizacao)} ${
+              totais.mantidos_sem_autorizacao === 1
+                ? "pessoa pediu para não receber mensagens"
+                : "pessoas pediram para não receber mensagens"
+            }`}
+          >
+            Os dados entraram, mas elas continuam sem autorização e nenhum envio
+            automático as alcança. Para voltar a enviar, abra a ficha e registre
+            como a pessoa autorizou de novo.
+          </Aviso>
+        ) : null}
+      </div>
+      {invalidas > 0 ? (
+        <Button
+          variant="outline"
+          className="w-fit"
+          onClick={aoBaixarRejeitadas}
+        >
+          <Download className="size-4" /> Baixar rejeitados
+        </Button>
+      ) : null}
     </div>
   );
 }

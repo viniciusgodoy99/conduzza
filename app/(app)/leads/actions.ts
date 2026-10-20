@@ -13,7 +13,11 @@ import {
   mensagemDeTelefoneDuplicado,
   normalizarTelefone,
 } from "@/lib/domain/telefone";
-import { importarContatos } from "@/lib/integrations/importar-contatos";
+import {
+  evidenciaDaDeclaracao,
+  FONTE_DA_DECLARACAO,
+  importarContatos,
+} from "@/lib/integrations/importar-contatos";
 import { fetchLeadDetalhe, type LeadDetalhe } from "@/lib/queries/leads";
 import { createClient } from "@/lib/supabase/server";
 
@@ -30,6 +34,11 @@ export type LeadsActionResult = {
   error?: string;
   id?: string;
   token?: string;
+  /**
+   * Deu certo, mas com uma parte que ficou para depois (o Novo lead criado
+   * sem a autorizacao declarada): a tela avisa em vez de comemorar.
+   */
+  aviso?: string;
 };
 
 const idSchema = z.uuid();
@@ -87,6 +96,26 @@ const motivoPerdaSchema = z.enum([
   "outro",
 ]);
 
+/**
+ * Declaracao de como a autorizacao para receber mensagens aconteceu: a da
+ * importacao (o lote inteiro) e a do Novo lead (um contato), com as MESMAS
+ * opcoes e a mesma regra ("outra" exige observacao). So a frase da recusa
+ * muda, para falar de um contato ou de varios.
+ */
+function schemaDaDeclaracao(mensagemDaOutra: string) {
+  return z
+    .object({
+      opcao: z.enum(["formulario_site", "anuncio_ctwa", "recepcao", "outra"]),
+      observacao: z.string().trim().max(300).optional(),
+    })
+    .refine(
+      (declaracao) =>
+        declaracao.opcao !== "outra" ||
+        (declaracao.observacao != null && declaracao.observacao.length >= 2),
+      { message: mensagemDaOutra },
+    );
+}
+
 async function requireLeadsWriter() {
   const context = await getSessionContext();
   if (!context?.active) {
@@ -122,6 +151,13 @@ async function requireCampaignManager() {
   return { context, clinicId: context.active.clinicId };
 }
 
+/**
+ * Metadados da acao em audit_log.detalhes (migration 20261020120000): so
+ * contagens e escolhas da tela. NUNCA dado de paciente (nome, telefone,
+ * texto, id de contato); o id do contato, quando ha um so, vai em entity_id.
+ */
+type DetalhesDaTrilha = Record<string, string | number | boolean | null>;
+
 async function auditar(
   supabase: Awaited<ReturnType<typeof createClient>>,
   clinicId: string,
@@ -129,6 +165,7 @@ async function auditar(
   action: string,
   entity: string,
   entityId: string | null,
+  detalhes?: DetalhesDaTrilha,
 ): Promise<void> {
   await supabase.from("audit_log").insert({
     clinic_id: clinicId,
@@ -136,6 +173,7 @@ async function auditar(
     action,
     entity,
     entity_id: entityId,
+    ...(detalhes ? { detalhes } : {}),
   });
 }
 
@@ -284,6 +322,87 @@ export async function mudarEtapaAction(
   return { ok: true };
 }
 
+// ---------------------------------------------------------------------------
+// Lead vira paciente sem consulta (decisao do dono em 20/10/2026)
+// ---------------------------------------------------------------------------
+// "Vira paciente, e eu preciso incluir várias pessoas aí": um contato (gaveta
+// de Leads, painel do Atendimento) ou varios (acao em massa da lista, em
+// lotes de 100) passam a kind 'paciente' e aparecem em Pacientes, sem
+// consulta. Ate aqui so o gatilho converter_lead_em_paciente (consulta
+// marcada) fazia isso. A sessao ja pode gravar kind (policy "recepcao e
+// gestao editam contato"): nenhuma migration.
+//
+// - So quem ainda e lead muda: kind = 'lead' no MESMO update deixa quem ja e
+//   paciente como esta, e a contagem diz quantos mudaram de fato.
+// - A ETAPA NAO MUDA. Mover para Agendou ou Compareceu geraria conversao
+//   falsa para a Meta (registrar_conversao_do_funil); o funil continua onde
+//   o contato estava.
+// - Sem caminho de volta: o dono nao pediu.
+// - Efeitos que ja existem e continuam: automacao de fluxo so pega lead (o
+//   executor cancela as pendentes com 'nao_e_lead'); a regua de follow-up
+//   segue pela etapa.
+
+const marcarComoPacienteSchema = z.object({ contact_ids: idsSchema });
+
+export type MarcarComoPacienteResult =
+  | {
+      ok: true;
+      /** Quantos eram lead e viraram paciente agora (os outros ja eram). */
+      marcados: number;
+    }
+  | { ok: false; error: string };
+
+export async function marcarComoPacienteAction(
+  input: unknown,
+): Promise<MarcarComoPacienteResult> {
+  const guard = await requireLeadsWriter();
+  if ("error" in guard) {
+    return {
+      ok: false,
+      error: guard.error ?? "Seu perfil não pode editar leads e pacientes",
+    };
+  }
+  const parsed = marcarComoPacienteSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: passouDoLote(parsed.error)
+        ? MENSAGEM_LOTE_GRANDE
+        : "Contatos inválidos. Atualize a página e tente de novo.",
+    };
+  }
+
+  const ids = parsed.data.contact_ids;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("contact")
+    .update({ kind: "paciente" })
+    .eq("clinic_id", guard.clinicId)
+    .in("id", ids)
+    .eq("kind", "lead")
+    .select("id");
+  if (error) {
+    return { ok: false, error: "Não foi possível marcar como paciente." };
+  }
+  const marcados = (data ?? []).length;
+  if (marcados > 0) {
+    // Um contato so: o id vai em entity_id, como nas acoes da ficha. Em
+    // massa, so a quantidade (as vizinhas gravam a acao sem o id).
+    await auditar(
+      supabase,
+      guard.clinicId,
+      guard.context.userId,
+      "marcou_como_paciente",
+      "contact",
+      ids.length === 1 ? (ids[0] ?? null) : null,
+      { quantidade: marcados },
+    );
+    revalidatePath("/leads");
+    revalidatePath("/pacientes");
+  }
+  return { ok: true, marcados };
+}
+
 const reatribuirSchema = z.object({
   contact_ids: idsSchema,
   owner_user_id: idSchema.nullable(),
@@ -393,6 +512,14 @@ export async function etiquetarAction(
 // Criacao manual de lead
 // ---------------------------------------------------------------------------
 
+// Autorizacao OPCIONAL no Novo lead (decisao do dono em 20/10/2026, para a
+// equipe poder iniciar a conversa pelo sistema): as opcoes e a regra da
+// declaracao da importacao. Sem ela, o contato fica sem autorizacao, como
+// sempre: cadastrar um lead NAO e autorizacao de disparo (regra 3.3).
+const autorizacaoDoNovoLeadSchema = schemaDaDeclaracao(
+  "Descreva como o contato autorizou receber mensagens.",
+);
+
 const criarLeadSchema = z.object({
   name: nomeSchema.optional(),
   // Texto como veio: a normalizacao unica (lib/domain/telefone.ts) roda aqui
@@ -403,6 +530,7 @@ const criarLeadSchema = z.object({
   source_campaign: z.string().trim().min(1).max(120).optional(),
   owner_user_id: idSchema.optional(),
   insurance_id: idSchema.optional(),
+  autorizacao: autorizacaoDoNovoLeadSchema.optional(),
 });
 
 export async function criarLeadAction(
@@ -414,7 +542,12 @@ export async function criarLeadAction(
   }
   const parsed = criarLeadSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: "Confira os campos do lead." };
+    // A unica recusa com frase propria e a "outra" sem observacao.
+    const refinado = parsed.error.issues.find((i) => i.code === "custom");
+    return {
+      ok: false,
+      error: refinado?.message ?? "Confira os campos do lead.",
+    };
   }
 
   const telefone = normalizarTelefone(parsed.data.phone_e164);
@@ -447,8 +580,9 @@ export async function criarLeadAction(
     return { ok: false, error: mensagemDeTelefoneDuplicado(existente.name) };
   }
   // Origem so entra junto com o canal (method manual, capturada agora); o
-  // trigger de origem imutavel preserva depois. NAO grava consentimento:
-  // cadastrar lead nao e autorizacao de disparo (regra 3.3).
+  // trigger de origem imutavel preserva depois. Consentimento so com a
+  // declaracao, logo abaixo: cadastrar lead nao e autorizacao de disparo
+  // (regra 3.3).
   const { data, error } = await supabase
     .from("contact")
     .insert({
@@ -485,6 +619,43 @@ export async function criarLeadAction(
     "contact",
     data.id,
   );
+
+  // A autorizacao declarada vira a linha de contact_consent pelo mesmo
+  // caminho da ficha (concederConsentimentoAction): fonte da opcao,
+  // evidencia com o rotulo e a observacao (a mesma frase da importacao) e a
+  // trilha 'concedeu_consentimento'. O contato acabou de nascer, entao nao
+  // ha autorizacao vigente nem descadastro para conferir.
+  const autorizacao = parsed.data.autorizacao;
+  if (autorizacao) {
+    const { error: erroDaAutorizacao } = await supabase
+      .from("contact_consent")
+      .insert({
+        clinic_id: guard.clinicId,
+        contact_id: data.id,
+        channel: "whatsapp",
+        source: FONTE_DA_DECLARACAO[autorizacao.opcao],
+        evidence: evidenciaDaDeclaracao(autorizacao),
+      });
+    if (erroDaAutorizacao) {
+      // O lead ja existe: dizer "nao foi possivel criar" levaria a criar de
+      // novo e esbarrar no telefone repetido. Diz o que faltou e onde fazer.
+      revalidatePath("/leads");
+      return {
+        ok: true,
+        id: data.id,
+        aviso:
+          "O lead foi criado, mas a autorização não foi registrada. Registre na ficha do contato.",
+      };
+    }
+    await auditar(
+      supabase,
+      guard.clinicId,
+      guard.context.userId,
+      "concedeu_consentimento",
+      "contact",
+      data.id,
+    );
+  }
   revalidatePath("/leads");
   return { ok: true, id: data.id };
 }
@@ -772,17 +943,9 @@ export async function desativarCampanhaAction(
 // tests/integration/importacao.test.ts). Um lote por chamada, ate 500 linhas;
 // quem divide a planilha e mostra o progresso e a tela.
 
-const declaracaoDeConsentimentoSchema = z
-  .object({
-    opcao: z.enum(["formulario_site", "anuncio_ctwa", "recepcao", "outra"]),
-    observacao: z.string().trim().max(300).optional(),
-  })
-  .refine(
-    (declaracao) =>
-      declaracao.opcao !== "outra" ||
-      (declaracao.observacao != null && declaracao.observacao.length >= 2),
-    { message: "Descreva como os contatos autorizaram receber mensagens." },
-  );
+const declaracaoDeConsentimentoSchema = schemaDaDeclaracao(
+  "Descreva como os contatos autorizaram receber mensagens.",
+);
 
 const linhaImportadaSchema = z.object({
   name: z.string().trim().min(1).max(120).nullable(),
@@ -792,9 +955,13 @@ const linhaImportadaSchema = z.object({
   source_campaign: z.string().trim().min(1).max(120).nullable(),
 });
 
+// "Importar como" (decisao do dono em 20/10/2026: "pode ser manualmente ou
+// via importação"): Leads, o padrao de sempre, ou Pacientes. Ausente vale
+// Leads (a tela antiga, durante a publicacao, continua igual).
 const importarContatosSchema = z.object({
   declaracao: declaracaoDeConsentimentoSchema,
   lote: z.array(linhaImportadaSchema).min(1).max(500),
+  importar_como: z.enum(["leads", "pacientes"]).optional(),
 });
 
 export type ImportarContatosActionResult =
@@ -802,6 +969,10 @@ export type ImportarContatosActionResult =
       ok: true;
       importados: number;
       atualizados: number;
+      /** Ja existiam como lead e viraram paciente ("Importar como" Pacientes). */
+      viraram_pacientes: number;
+      /** Ja existiam como paciente e continuaram como estavam. */
+      ja_eram_pacientes: number;
       mantidos_sem_autorizacao: number;
       pulados: number;
     }
@@ -823,14 +994,18 @@ export async function importarContatosAction(
     };
   }
 
+  const importarComo = parsed.data.importar_como ?? "leads";
   const supabase = await createClient();
   const resultado = await importarContatos(supabase, guard.clinicId, {
     declaracao: parsed.data.declaracao,
     lote: parsed.data.lote,
+    importarComo,
   });
   if (!resultado.ok) {
     return resultado;
   }
+  // Uma linha por lote, com a escolha e as contagens do lote (so numeros,
+  // nunca dado de paciente).
   await auditar(
     supabase,
     guard.clinicId,
@@ -838,7 +1013,17 @@ export async function importarContatosAction(
     "importou_planilha",
     "contact",
     null,
+    {
+      importar_como: importarComo,
+      importados: resultado.importados,
+      atualizados: resultado.atualizados,
+      viraram_pacientes: resultado.viraram_pacientes,
+      ja_eram_pacientes: resultado.ja_eram_pacientes,
+      mantidos_sem_autorizacao: resultado.mantidos_sem_autorizacao,
+      pulados: resultado.pulados,
+    },
   );
   revalidatePath("/leads");
+  revalidatePath("/pacientes");
   return resultado;
 }

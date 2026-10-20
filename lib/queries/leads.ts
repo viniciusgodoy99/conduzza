@@ -40,6 +40,14 @@ export type LeadResumo = {
   id: string;
   name: string | null;
   phone_e164: string;
+  /**
+   * Lead ou paciente (contact.kind). A lista traz os dois (o funil existe em
+   * todo contato); a gaveta e as acoes em massa usam para o "Marcar como
+   * paciente" (pedido do dono em 20/10/2026). Toda leitura daqui traz
+   * (LEAD_SELECT); opcional no tipo so para o lead montado a mao continuar
+   * valendo, e ausente vale lead.
+   */
+  kind?: "lead" | "paciente";
   funnel_stage: string;
   lost_reason: string | null;
   lost_reason_note: string | null;
@@ -279,12 +287,21 @@ async function anexarAnunciosDaMeta(
 
 // source_google_campaign_id so existe depois da migration 20261005100000:
 // ela e aplicada ANTES de publicar este codigo, senao a lista inteira falha.
-// A exportacao de leads le este MESMO select (mais o tipo do contato).
+// A exportacao de leads le este MESMO select (o tipo do contato, kind, vem
+// nele desde 20/10/2026: a lista tambem usa).
 // source_campaign_id, source_adset_id e ctwa_clid (migration
 // 20260908150000, aplicada) sao o que Resultados le para separar campanha e
 // anuncio; o clique vira so com_ctwa_clid em normalizarLead.
 export const LEAD_SELECT =
-  "id, name, phone_e164, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, source_campaign_id, source_adset_id, ctwa_clid, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
+  "id, name, phone_e164, kind, funnel_stage, lost_reason, lost_reason_note, owner_user_id, tags, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, source_campaign_id, source_adset_id, ctwa_clid, first_contact_at, last_contact_at, insurance:insurance_id (id, name), contact_consent (channel, granted_at, revoked_at)";
+
+/**
+ * O tipo do contato como a tela usa: so "paciente" e paciente; qualquer
+ * outro valor (inclusive ausente) e lead, o default do banco.
+ */
+export function tipoDoContato(valor: unknown): "lead" | "paciente" {
+  return valor === "paciente" ? "paciente" : "lead";
+}
 
 /**
  * A consulta dos contatos da clinica, a base da lista (fetchLeads), do tempo
@@ -389,6 +406,7 @@ export function normalizarLead(row: Record<string, unknown>): LeadResumo {
     id: row.id as string,
     name: (row.name as string | null) ?? null,
     phone_e164: row.phone_e164 as string,
+    kind: tipoDoContato(row.kind),
     funnel_stage: row.funnel_stage as string,
     lost_reason: (row.lost_reason as string | null) ?? null,
     lost_reason_note: (row.lost_reason_note as string | null) ?? null,

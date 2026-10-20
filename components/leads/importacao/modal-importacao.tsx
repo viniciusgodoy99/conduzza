@@ -22,14 +22,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { CampoImportavel } from "@/lib/domain/importacao";
-import type { OpcaoDeclaracao } from "@/lib/integrations/importar-contatos";
+import type {
+  ImportarComo,
+  OpcaoDeclaracao,
+} from "@/lib/integrations/importar-contatos";
 import { parseCsv, type CsvLido } from "@/lib/utils/csv";
 import { cn } from "@/lib/utils";
 
 // Assistente de importacao de planilha (Tela 4, tarefa 4.4), em 4 passos:
 // arquivo, mapeamento de colunas, declaracao de consentimento (obrigatoria) e
 // previa com envio em lotes. Quem abre e a tela de Leads, atras do
-// BotaoProtegido; a permissao real e conferida na Server Action.
+// BotaoProtegido; a permissao real e conferida na Server Action. No ultimo
+// passo, "Importar como" Leads (padrao) ou Pacientes (20/10/2026); a escolha
+// mora aqui para sobreviver ao Voltar e Continuar. So CSV, como sempre.
 //
 // O arquivo e lido em bytes e decodificado aqui (achado 101 da revisao): o
 // CSV do Excel em portugues vem em Windows-1252, e ler como UTF-8 quebrava os
@@ -66,6 +71,7 @@ export function ModalImportacao({
     useState<MapeamentoDeColunas>(MAPEAMENTO_VAZIO);
   const [opcao, setOpcao] = useState<OpcaoDeclaracao | null>(null);
   const [observacao, setObservacao] = useState("");
+  const [importarComo, setImportarComo] = useState<ImportarComo>("leads");
   const [ocupado, setOcupado] = useState(false);
   const [terminou, setTerminou] = useState(false);
   const gravouAlgo = useRef(false);
@@ -110,6 +116,7 @@ export function ModalImportacao({
     setMapeamento(MAPEAMENTO_VAZIO);
     setOpcao(null);
     setObservacao("");
+    setImportarComo("leads");
     setTerminou(false);
     if (gravouAlgo.current) {
       gravouAlgo.current = false;
@@ -297,6 +304,8 @@ export function ModalImportacao({
                 ? { observacao: observacao.trim() }
                 : {}),
             }}
+            importarComo={importarComo}
+            aoMudarImportarComo={setImportarComo}
             recodificado={recodificado}
             aoOcupado={setOcupado}
             aoGravarLote={() => {

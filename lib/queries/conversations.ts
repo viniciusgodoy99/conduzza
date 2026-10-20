@@ -378,6 +378,8 @@ export type NumerosDoInbox = {
 
 export const numerosKeys = {
   doInbox: (clinicId: string) => ["whatsapp-numeros-inbox", clinicId] as const,
+  /** So os ativos (fetchNumerosDaClinica): por onde iniciar uma conversa. */
+  ativos: (clinicId: string) => ["whatsapp-numeros-ativos", clinicId] as const,
 };
 
 // Teto dos removidos lidos: eles so servem para nomear conversa antiga, e uma

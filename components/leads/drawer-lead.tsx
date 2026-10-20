@@ -12,10 +12,12 @@ import { useState } from "react";
 
 import { abrirDetalheDoContatoAction } from "@/app/(app)/leads/actions";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import { BotaoIniciarConversa } from "@/components/atendimento/iniciar-conversa";
 import { MarcaPeloCelular } from "@/components/atendimento/pelo-celular";
 import { SecaoDeAtividades } from "@/components/atividades/secao-de-atividades";
 import { ChipDeOrigem } from "@/components/leads/chip-de-origem";
 import { DetalhesDoAnuncio } from "@/components/leads/detalhes-do-anuncio";
+import { BotaoMarcarComoPaciente } from "@/components/leads/marcar-como-paciente";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
 import {
   dataLocal,
@@ -79,13 +81,20 @@ import {
 // - Abrir ficha: /pacientes/<id>, que funciona tambem para lead (a ficha nao
 //   filtra por tipo e grava a trilha de leitura). E o unico caminho para
 //   registrar a autorizacao ou corrigir o cadastro de quem nao tem conversa;
-// - Abrir conversa: leva a conversa aberta do contato e fica desabilitado,
-//   com dica, quando nao ha conversa aberta. Para o profissional, a RLS so
-//   mostra as conversas atribuidas a ele: o texto diz isso, em vez de afirmar
-//   que o contato nao tem conversa (achado 7);
+// - Abrir conversa: leva a conversa aberta do contato. Sem conversa aberta
+//   (depois de o detalhe carregar), vira "Iniciar conversa" (decisao do dono
+//   em 20/10/2026): a primeira mensagem pelo sistema, so com a autorizacao
+//   registrada e para quem atende e edita leads; sem isso, visivel e
+//   desabilitado com a dica. Para o profissional, a RLS so mostra as
+//   conversas atribuidas a ele: a dica diz isso tambem, em vez de afirmar que
+//   o contato nao tem conversa (achado 7);
 // - Agendar: abre a Agenda ja com o agendamento deste contato. Respeita a
 //   permissao da Agenda: sem ela, visivel, desabilitado e com dica, porque a
 //   Agenda nao abre o modal do link para quem nao agenda (achados 6 e 22).
+//
+// Tipo (20/10/2026): a linha diz se o contato e lead ou paciente, e o lead
+// ganha "Marcar como paciente" ali mesmo (o rodape 2x2 nao ganha botao). A
+// etapa nao muda; quem marca e quem edita leads, como as outras acoes.
 //
 // Secao Atividades (escopo de 02/10/2026), entre Dados e Conversa: ate 3
 // pendentes, "Nova atividade" e "Ver todas". As atividades vem no MESMO
@@ -181,6 +190,8 @@ export function DrawerLead({
   dica,
   podeAgendar,
   dicaAgendar,
+  podeIniciarConversa = false,
+  dicaIniciarConversa = "",
   soAtribuidas,
   onFechar,
 }: {
@@ -194,6 +205,10 @@ export function DrawerLead({
   /** Permissao da Agenda (modulo de destino do "Agendar") */
   podeAgendar: boolean;
   dicaAgendar: string;
+  /** Atendimento e leads editaveis: a primeira mensagem pelo sistema */
+  podeIniciarConversa?: boolean;
+  /** Dica do "Iniciar conversa" desabilitado por papel */
+  dicaIniciarConversa?: string;
   /** Profissional: a RLS so mostra as conversas atribuidas a ele */
   soAtribuidas: boolean;
   onFechar: () => void;
@@ -262,6 +277,32 @@ export function DrawerLead({
     : detalheQuery.isError
       ? "Não foi possível conferir a conversa deste contato."
       : semConversa;
+  // Sem conversa aberta CONFIRMADA (o detalhe voltou), o lugar e do
+  // "Iniciar conversa". Carregando ou com erro, continua o "Abrir conversa"
+  // desabilitado com a dica de sempre.
+  const podeOferecerInicio =
+    !conversaId && !detalheQuery.isLoading && !detalheQuery.isError;
+  // O profissional nao inicia conversa, e para ele "sem conversa" pode ser
+  // "nenhuma atribuida a voce": a dica diz as duas coisas.
+  const dicaDoInicio =
+    soAtribuidas && !podeIniciarConversa
+      ? `${semConversa} ${dicaIniciarConversa}`.trim()
+      : dicaIniciarConversa;
+  const ehPaciente = lead?.kind === "paciente";
+  // Marcou: a lista (e esta gaveta) ja mostram paciente, sem esperar o
+  // tempo real; Pacientes recarrega quando abrir.
+  const aoMarcarComoPaciente = (contactId: string) => {
+    queryClient.setQueryData<LeadResumo[]>(
+      leadsKeys.lista(clinicId),
+      (atual) =>
+        atual
+          ? atual.map((l) =>
+              l.id === contactId ? { ...l, kind: "paciente" as const } : l,
+            )
+          : atual,
+    );
+    void queryClient.invalidateQueries({ queryKey: ["pacientes"] });
+  };
 
   return (
     <Sheet open={lead !== null} onOpenChange={(a) => (!a ? onFechar() : null)}>
@@ -323,6 +364,21 @@ export function DrawerLead({
                 </Linha>
                 <Linha rotulo="Autorização">
                   <Autorizacao autorizado={lead.consent_ativo} />
+                </Linha>
+                <Linha rotulo="Tipo">
+                  <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <span>{ehPaciente ? "Paciente" : "Lead"}</span>
+                    {ehPaciente ? null : (
+                      <BotaoMarcarComoPaciente
+                        contactId={lead.id}
+                        nome={lead.name ?? formatarTelefone(lead.phone_e164)}
+                        podeEditar={podeEditar}
+                        dica={dica}
+                        size="sm"
+                        aoMarcar={() => aoMarcarComoPaciente(lead.id)}
+                      />
+                    )}
+                  </span>
                 </Linha>
                 <Linha rotulo="Etiquetas do lead">
                   {lead.tags.length > 0 ? (
@@ -490,6 +546,19 @@ export function DrawerLead({
                     Abrir conversa
                   </Link>
                 </Button>
+              ) : podeOferecerInicio ? (
+                <BotaoIniciarConversa
+                  clinicId={clinicId}
+                  contato={{
+                    id: lead.id,
+                    nome: lead.name,
+                    telefone: lead.phone_e164,
+                  }}
+                  podeIniciar={podeIniciarConversa}
+                  dicaSemPermissao={dicaDoInicio}
+                  autorizado={lead.consent_ativo}
+                  className="w-full"
+                />
               ) : (
                 <DisabledWithHint hint={dicaSemConversa} className="w-full">
                   <Button variant="outline" className="w-full" disabled>

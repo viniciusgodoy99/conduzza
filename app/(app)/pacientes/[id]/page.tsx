@@ -27,6 +27,10 @@ import {
   indicadoresDe,
   saldoDeSessoes,
 } from "@/lib/domain/pacientes-ui";
+import {
+  dicaParaIniciarConversa,
+  podeIniciarConversa,
+} from "@/lib/domain/iniciar-conversa";
 import { vendasQueJaDescontaram } from "@/lib/domain/pacotes-ui";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
@@ -235,12 +239,24 @@ export default async function FichaPacientePage({
           />
           <OrigemPaciente contato={ficha.contato} timezone={active.timezone} />
           <AcoesPaciente
+            clinicId={active.clinicId}
             contactId={ficha.contato.id}
+            nome={ficha.contato.name}
+            telefone={ficha.contato.phone_e164}
             conversationId={ficha.conversationId}
             podeAgendar={podeAgendar}
             dicaAgendar={dicaAgendar}
             podeEsperar={podeEsperar}
             dicaEsperar={dicaEsperar}
+            // "Iniciar conversa" (20/10/2026): Atendimento e pacientes
+            // editaveis, e a autorizacao vigente (a linha mais recente
+            // ativa); a Server Action confere tudo de novo.
+            podeIniciarConversa={podeIniciarConversa(papel)}
+            dicaIniciarConversa={dicaParaIniciarConversa(papel) ?? ""}
+            autorizado={
+              ficha.consentimento !== null &&
+              ficha.consentimento.revoked_at === null
+            }
             soDaSuaAgenda={soDaSuaAgenda}
           />
         </div>

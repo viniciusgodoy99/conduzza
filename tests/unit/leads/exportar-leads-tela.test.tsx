@@ -51,6 +51,11 @@ vi.mock("@/app/(app)/leads/actions", () => ({
   abrirDetalheDoContatoAction: vi.fn(),
   importarContatosAction: vi.fn(),
 }));
+// A gaveta oferece "Iniciar conversa" (20/10/2026): a Server Action dele
+// fica de fora, como as outras.
+vi.mock("@/app/(app)/atendimento/iniciar-conversa-actions", () => ({
+  iniciarConversaAction: vi.fn(),
+}));
 vi.mock("@/app/(app)/atividades/actions", () => ({
   equipeDaAtividadeAction: vi.fn(),
   conversaDoContatoAction: vi.fn(),

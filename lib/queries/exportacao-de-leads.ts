@@ -38,6 +38,7 @@ import {
   linhasDeConsentimentoDoLead,
   linhasDosLeads,
   normalizarLead,
+  tipoDoContato,
   type LeadResumo,
 } from "@/lib/queries/leads";
 import { gerarCsv } from "@/lib/utils/csv";
@@ -71,8 +72,10 @@ import { gerarCsv } from "@/lib/utils/csv";
 /** Linhas por pagina: o teto de linhas por resposta do PostgREST. */
 export const PAGINA_DA_EXPORTACAO = 1000;
 
-// O select da lista, mais o tipo do contato (coluna Tipo do arquivo).
-const SELECT_DA_EXPORTACAO = `${LEAD_SELECT}, kind`;
+// O select da lista. O tipo do contato (coluna Tipo do arquivo) vem nele
+// desde 20/10/2026, quando a lista passou a usar o kind ("Marcar como
+// paciente"); repetir a coluna aqui pediria kind duas vezes ao PostgREST.
+const SELECT_DA_EXPORTACAO = LEAD_SELECT;
 
 export type SessaoDaExportacao = {
   userId: string;
@@ -111,14 +114,14 @@ export type LeituraDaExportacao =
     };
 
 type LeadLido = LeadResumo & {
-  kind: string;
+  kind: "lead" | "paciente";
   consentimento: LeadParaExportar["consentimento"];
 };
 
 function normalizarLeadDaExportacao(row: Record<string, unknown>): LeadLido {
   return {
     ...normalizarLead(row),
-    kind: (row.kind as string | null) ?? "lead",
+    kind: tipoDoContato(row.kind),
     consentimento: situacaoDoConsentimentoDeLinhas(
       linhasDeConsentimentoDoLead(row),
     ),

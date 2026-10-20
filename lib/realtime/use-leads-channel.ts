@@ -5,7 +5,12 @@ import { useEffect } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { compararPorProximaAcao } from "@/lib/domain/leads-ui";
-import { fetchLead, leadsKeys, type LeadResumo } from "@/lib/queries/leads";
+import {
+  fetchLead,
+  leadsKeys,
+  tipoDoContato,
+  type LeadResumo,
+} from "@/lib/queries/leads";
 import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 
 // Tempo real da Tela 4: canal por clinica em contact, filtrado por
@@ -27,6 +32,8 @@ export type ContactRow = {
   id: string;
   name: string | null;
   phone_e164: string;
+  /** Lead ou paciente: o "Marcar como paciente" chega por aqui (20/10/2026). */
+  kind?: string | null;
   funnel_stage: LeadResumo["funnel_stage"];
   lost_reason: string | null;
   lost_reason_note: string | null;
@@ -61,6 +68,11 @@ export function mesclarLinhaNoLead(
     ...existente,
     name: row.name,
     phone_e164: row.phone_e164,
+    // Sem a coluna no payload, fica o que a lista ja sabia.
+    kind:
+      row.kind === undefined || row.kind === null
+        ? existente.kind
+        : tipoDoContato(row.kind),
     funnel_stage: row.funnel_stage,
     lost_reason: row.lost_reason,
     lost_reason_note: row.lost_reason_note,

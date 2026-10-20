@@ -17,6 +17,9 @@ function acoesFalsas() {
 vi.mock("@/app/(app)/leads/actions", () => acoesFalsas());
 vi.mock("@/app/(app)/atividades/actions", () => acoesFalsas());
 vi.mock("@/app/(app)/atendimento/actions", () => acoesFalsas());
+vi.mock("@/app/(app)/atendimento/iniciar-conversa-actions", () =>
+  acoesFalsas(),
+);
 
 import { AutorDaMensagemDoLead } from "@/components/leads/drawer-lead";
 import type { MensagemDoLead } from "@/lib/queries/leads";

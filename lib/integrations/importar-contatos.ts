@@ -16,10 +16,19 @@ import {
 // coluna, e planilha com nome vazio apagaria nome ja preenchido no cadastro.
 // O fluxo e set-based em etapas: (a) select dos telefones existentes,
 // (b) insert dos novos, (c) update dos existentes so no que veio preenchido
-// (nome apenas quando o cadastro esta sem nome).
+// (nome apenas quando o cadastro esta sem nome) e, importando como
+// Pacientes, (d) os que ja existiam como lead viram paciente.
 
 export type OpcaoDeclaracao =
   "formulario_site" | "anuncio_ctwa" | "recepcao" | "outra";
+
+/**
+ * "Importar como" (decisao do dono em 20/10/2026): Leads, como sempre, ou
+ * Pacientes. Com Pacientes, o contato novo ja nasce paciente, o que ja
+ * existia como lead vira paciente e o paciente continua paciente. A etapa
+ * do funil nao muda em nenhum caso (mover geraria conversao falsa).
+ */
+export type ImportarComo = "leads" | "pacientes";
 
 export type DeclaracaoDeConsentimento = {
   opcao: OpcaoDeclaracao;
@@ -48,6 +57,25 @@ export function evidenciaDaDeclaracao(
   return observacao ? `${rotulo}: ${observacao}` : rotulo;
 }
 
+/**
+ * A fonte (contact_consent.source) da declaracao feita para UM contato, no
+ * Novo lead (20/10/2026). A importacao grava sempre 'importacao_planilha'; o
+ * cadastro manual grava a fonte que a pessoa escolheu, com a evidencia de
+ * evidenciaDaDeclaracao. "Outra origem" nao tem fonte propria (o check do
+ * banco aceita so as cinco de sempre, e criar uma seria migration): vai como
+ * 'recepcao', o registro feito pela equipe da clinica, e a evidencia guarda
+ * "Outra origem: {observacao}".
+ */
+export const FONTE_DA_DECLARACAO: Record<
+  OpcaoDeclaracao,
+  "formulario_site" | "anuncio_ctwa" | "recepcao"
+> = {
+  formulario_site: "formulario_site",
+  anuncio_ctwa: "anuncio_ctwa",
+  recepcao: "recepcao",
+  outra: "recepcao",
+};
+
 export type ResultadoDaImportacao =
   | {
       ok: true;
@@ -55,6 +83,13 @@ export type ResultadoDaImportacao =
       importados: number;
       /** Contatos que ja existiam (dados completados quando faltavam). */
       atualizados: number;
+      /**
+       * Contatos que ja existiam como LEAD e viraram paciente (so importando
+       * como Pacientes; os novos nascem pacientes e contam em importados).
+       */
+      viraram_pacientes: number;
+      /** Contatos que ja existiam como paciente e continuaram como estavam. */
+      ja_eram_pacientes: number;
       /**
        * Contatos que ja tinham pedido descadastro: os dados entraram, mas a
        * autorizacao NAO voltou e nenhuma regua os alcanca.
@@ -73,6 +108,7 @@ type ContatoExistente = {
   id: string;
   phone_e164: string;
   phone_key: string;
+  kind: string;
   name: string | null;
   email: string | null;
   insurance_id: string | null;
@@ -90,8 +126,11 @@ export async function importarContatos(
   payload: {
     declaracao: DeclaracaoDeConsentimento;
     lote: readonly LinhaImportada[];
+    /** Ausente vale Leads, o comportamento de sempre. */
+    importarComo?: ImportarComo;
   },
 ): Promise<ResultadoDaImportacao> {
+  const comoPacientes = payload.importarComo === "pacientes";
   // Telefone pela normalizacao UNICA (lib/domain/telefone.ts), de novo aqui
   // no servidor: a tela ja normalizou, mas o que vem do cliente nao e
   // confiavel. Linha que nao normaliza so chega por payload adulterado.
@@ -127,7 +166,7 @@ export async function importarContatos(
   )) {
     const { data, error } = await supabase
       .from("contact")
-      .select("id, phone_e164, phone_key, name, email, insurance_id")
+      .select("id, phone_e164, phone_key, kind, name, email, insurance_id")
       .eq("clinic_id", clinicId)
       .in("phone_key", pedaco);
     if (error) {
@@ -180,7 +219,7 @@ export async function importarContatos(
           name: linha.name,
           email: linha.email,
           insurance_id: convenioDe(linha),
-          kind: "lead",
+          kind: comoPacientes ? "paciente" : "lead",
           // IMPORTACAO NAO ENTRA NO FOLLOW-UP (decisao do dono de
           // 24/09/2026). O banco carimba o relogio da etapa no insert, como
           // em qualquer contato novo, mas subir uma planilha nao e um ato
@@ -249,6 +288,40 @@ export async function importarContatos(
         ok: false,
         error: "Não foi possível atualizar os contatos que já existiam.",
       };
+    }
+  }
+
+  // (d) Importando como Pacientes, quem ja existia como lead vira paciente,
+  // set-based e com kind = 'lead' no MESMO update (quem ja e paciente fica
+  // como esta; a contagem e a do banco). A etapa nao muda. Importando como
+  // Leads, nada muda aqui: paciente continua paciente, como sempre.
+  const existentesDoLote = linhas
+    .map((linha) => existentes.get(chaveDaLinha(linha)))
+    .filter((contato): contato is ContatoExistente => contato !== undefined);
+  const jaEramPacientes = existentesDoLote.filter(
+    (contato) => contato.kind === "paciente",
+  ).length;
+  let viraramPacientes = 0;
+  if (comoPacientes) {
+    const leadsExistentes = existentesDoLote
+      .filter((contato) => contato.kind !== "paciente")
+      .map((contato) => contato.id);
+    for (const pedaco of dividirEmLotes(leadsExistentes, PEDACO_DE_CONSULTA)) {
+      const { data, error } = await supabase
+        .from("contact")
+        .update({ kind: "paciente" })
+        .eq("clinic_id", clinicId)
+        .in("id", pedaco)
+        .eq("kind", "lead")
+        .select("id");
+      if (error) {
+        return {
+          ok: false,
+          error:
+            "Não foi possível passar para pacientes os contatos que já existiam.",
+        };
+      }
+      viraramPacientes += (data ?? []).length;
     }
   }
 
@@ -333,6 +406,8 @@ export async function importarContatos(
     ok: true,
     importados: novas.length,
     atualizados,
+    viraram_pacientes: viraramPacientes,
+    ja_eram_pacientes: jaEramPacientes,
     mantidos_sem_autorizacao: mantidosSemAutorizacao,
     pulados,
   };

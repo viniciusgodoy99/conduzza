@@ -110,6 +110,8 @@ describe("importação de planilha: contatos novos", () => {
       ok: true,
       importados: 2,
       atualizados: 0,
+      viraram_pacientes: 0,
+      ja_eram_pacientes: 0,
       mantidos_sem_autorizacao: 0,
       pulados: 0,
     });
@@ -317,6 +319,101 @@ describe("importação de planilha: telefone repetido no lote", () => {
     expect(contato.name).toBe("Primeira Linha");
     expect(await consentimentosDe(clinicId, contato.id as string)).toHaveLength(
       1,
+    );
+  });
+});
+
+// "Importar como" Pacientes (decisao do dono em 20/10/2026), contra o banco
+// real: o novo nasce paciente, o lead que ja existia vira paciente pela
+// sessao do miolo (aqui o service role), o paciente continua, e a etapa de
+// ninguem muda. ESCRITO EM 20/10/2026, NAO RODADO nesta entrega (a suite
+// grava no banco).
+describe("importação de planilha: como Pacientes", () => {
+  it("novo nasce paciente, lead vira paciente, paciente continua, sem mudar a etapa", async () => {
+    const clinicId = await criarClinica("pacientes");
+    await admin
+      .from("contact")
+      .insert([
+        {
+          clinic_id: clinicId,
+          phone_e164: "+5584981700002",
+          name: "Lead Antigo",
+          kind: "lead",
+          funnel_stage: "novo",
+        },
+        {
+          clinic_id: clinicId,
+          phone_e164: "+5584981700003",
+          name: "Paciente Antigo",
+          kind: "paciente",
+          funnel_stage: "novo",
+        },
+      ])
+      .throwOnError();
+
+    const resultado = await importarContatos(admin, clinicId, {
+      declaracao: DECLARACAO,
+      lote: [
+        linha("+5584981700001", { name: "Paciente Novo" }),
+        linha("+5584981700002"),
+        linha("+5584981700003"),
+      ],
+      importarComo: "pacientes",
+    });
+    expect(resultado).toEqual({
+      ok: true,
+      importados: 1,
+      atualizados: 2,
+      viraram_pacientes: 1,
+      ja_eram_pacientes: 1,
+      mantidos_sem_autorizacao: 0,
+      pulados: 0,
+    });
+
+    expect((await contatoPorTelefone(clinicId, "+5584981700001")).kind).toBe(
+      "paciente",
+    );
+    expect((await contatoPorTelefone(clinicId, "+5584981700002")).kind).toBe(
+      "paciente",
+    );
+    expect((await contatoPorTelefone(clinicId, "+5584981700003")).kind).toBe(
+      "paciente",
+    );
+    const { data: etapas } = await admin
+      .from("contact")
+      .select("phone_e164, funnel_stage")
+      .eq("clinic_id", clinicId)
+      .in("phone_e164", ["+5584981700002", "+5584981700003"])
+      .throwOnError();
+    expect((etapas ?? []).map((c) => c.funnel_stage)).toEqual(["novo", "novo"]);
+  });
+
+  it("como Leads (o padrão), o lead continua lead e o paciente continua paciente", async () => {
+    const clinicId = await criarClinica("leads-padrao");
+    await admin
+      .from("contact")
+      .insert({
+        clinic_id: clinicId,
+        phone_e164: "+5584981800002",
+        kind: "paciente",
+      })
+      .throwOnError();
+
+    const resultado = await importarContatos(admin, clinicId, {
+      declaracao: DECLARACAO,
+      lote: [linha("+5584981800001"), linha("+5584981800002")],
+    });
+    expect(resultado).toMatchObject({
+      ok: true,
+      importados: 1,
+      viraram_pacientes: 0,
+      ja_eram_pacientes: 1,
+    });
+    expect((await contatoPorTelefone(clinicId, "+5584981800001")).kind).toBe(
+      "lead",
+    );
+    expect((await contatoPorTelefone(clinicId, "+5584981800002")).kind).toBe(
+      "paciente",
     );
   });
 });

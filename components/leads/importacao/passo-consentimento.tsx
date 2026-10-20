@@ -11,8 +11,11 @@ import { cn } from "@/lib/utils";
 // contact_consent (regra 3.3: sem autorização, nenhum disparo). A opcao
 // escolhida segue a receita de selecionado do DS (lime suave com borda
 // lime-700), com o radio nativo como pista que nao depende de cor.
+//
+// As MESMAS opcoes valem no Novo lead (20/10/2026), onde a declaracao e
+// opcional e de um contato so (components/leads/modal-novo-lead.tsx).
 
-const OPCOES: {
+export const OPCOES_DA_DECLARACAO: readonly {
   valor: OpcaoDeclaracao;
   rotulo: string;
   descricao: string;
@@ -62,7 +65,7 @@ export function PassoConsentimento({
         aria-label="Como os contatos autorizaram receber mensagens"
         className="grid gap-2"
       >
-        {OPCOES.map((item) => {
+        {OPCOES_DA_DECLARACAO.map((item) => {
           const escolhida = opcao === item.valor;
           return (
             <label

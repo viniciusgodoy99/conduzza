@@ -3,6 +3,10 @@ import { redirect } from "next/navigation";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { podeExportarLeads } from "@/lib/domain/exportacao-de-leads";
+import {
+  dicaParaIniciarConversa,
+  podeIniciarConversa,
+} from "@/lib/domain/iniciar-conversa";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { fetchJornada } from "@/lib/queries/jornada";
 import {
@@ -83,6 +87,10 @@ export default async function LeadsPage() {
         permissionHint(active.role, "agenda") ??
         "Seu perfil não pode alterar a agenda"
       }
+      // "Iniciar conversa" (20/10/2026): manda a primeira mensagem, entao
+      // pede Atendimento e Leads editaveis; a Server Action confere de novo.
+      podeIniciarConversa={podeIniciarConversa(active.role)}
+      dicaIniciarConversa={dicaParaIniciarConversa(active.role) ?? ""}
       // Profissional so le as conversas atribuidas a ele (RLS de
       // conversation): o drawer diz isso em vez de afirmar que nao ha
       // conversa (achado 7), como a ficha faz.

@@ -529,3 +529,118 @@ describe("escrita de dado de paciente por papel", () => {
     expect(gravado?.notes).toBe("Prefere horário pela manhã");
   });
 });
+
+// "Marcar como paciente" (decisao do dono em 20/10/2026): a acao grava SO o
+// kind, pela sessao (policy "recepcao e gestao editam contato"), com
+// kind = 'lead' no mesmo update. Aqui a policy de verdade: a recepcao da A
+// marca o lead da A sem mexer na etapa; a gestao da B nao alcanca o lead da
+// A; profissional e leitura da A nao marcam. Toda negacao confere o estado
+// pelo service role (anti falso-positivo). ESCRITO EM 20/10/2026, NAO RODADO
+// nesta entrega (a suite grava no banco).
+describe("lead vira paciente sem consulta", () => {
+  let leadDaRecepcao = "";
+  let leadIntocado = "";
+
+  beforeAll(async () => {
+    const { data } = await admin
+      .from("contact")
+      .insert([
+        {
+          clinic_id: clinicaA,
+          phone_e164: "+5584970000011",
+          name: "Lead que vira paciente",
+          kind: "lead",
+          funnel_stage: "novo",
+        },
+        {
+          clinic_id: clinicaA,
+          phone_e164: "+5584970000012",
+          name: "Lead que ninguém de fora marca",
+          kind: "lead",
+          funnel_stage: "novo",
+        },
+      ])
+      .select("id, phone_e164")
+      .throwOnError();
+    leadDaRecepcao = data!.find((c) => c.phone_e164 === "+5584970000011")!
+      .id as string;
+    leadIntocado = data!.find((c) => c.phone_e164 === "+5584970000012")!
+      .id as string;
+  });
+
+  async function situacao(id: string) {
+    const { data } = await admin
+      .from("contact")
+      .select("kind, funnel_stage")
+      .eq("id", id)
+      .single()
+      .throwOnError();
+    return data as { kind: string; funnel_stage: string };
+  }
+
+  async function marcar(email: string, clinicId: string, id: string) {
+    const cliente = await logado(email);
+    return cliente
+      .from("contact")
+      .update({ kind: "paciente" })
+      .eq("clinic_id", clinicId)
+      .in("id", [id])
+      .eq("kind", "lead")
+      .select("id");
+  }
+
+  it("recepção da A marca o lead da A, e a etapa não muda", async () => {
+    const { data, error } = await marcar(
+      `leads-recepcao-${sufixo}@teste.dev`,
+      clinicaA,
+      leadDaRecepcao,
+    );
+    expect(error).toBeNull();
+    expect(data).toHaveLength(1);
+    expect(await situacao(leadDaRecepcao)).toEqual({
+      kind: "paciente",
+      funnel_stage: "novo",
+    });
+  });
+
+  it("quem já é paciente não conta de novo (kind = 'lead' no mesmo update)", async () => {
+    const { data, error } = await marcar(
+      `leads-recepcao-${sufixo}@teste.dev`,
+      clinicaA,
+      leadDaRecepcao,
+    );
+    expect(error).toBeNull();
+    expect(data ?? []).toHaveLength(0);
+  });
+
+  it("gestor da B não alcança o lead da A", async () => {
+    const { data, error } = await marcar(
+      `leads-gestor-b-${sufixo}@teste.dev`,
+      clinicaA,
+      leadIntocado,
+    );
+    if (error) {
+      expect(error.code).toBe(RLS_VIOLATION);
+    } else {
+      expect(data ?? []).toHaveLength(0);
+    }
+    expect((await situacao(leadIntocado)).kind).toBe("lead");
+  });
+
+  it.each(["profissional", "leitura"])(
+    "%s da A não marca: o lead continua lead",
+    async (papel) => {
+      const { data, error } = await marcar(
+        `leads-${papel}-${sufixo}@teste.dev`,
+        clinicaA,
+        leadIntocado,
+      );
+      if (error) {
+        expect(error.code).toBe(RLS_VIOLATION);
+      } else {
+        expect(data ?? []).toHaveLength(0);
+      }
+      expect((await situacao(leadIntocado)).kind).toBe("lead");
+    },
+  );
+});

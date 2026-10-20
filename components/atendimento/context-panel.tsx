@@ -24,6 +24,7 @@ import {
 } from "@/components/atendimento/fuso-da-clinica";
 import { AtividadesDaConversa } from "@/components/atividades/atividades-da-conversa";
 import { DetalhesDoAnuncio } from "@/components/leads/detalhes-do-anuncio";
+import { BotaoMarcarComoPaciente } from "@/components/leads/marcar-como-paciente";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
@@ -84,6 +85,14 @@ import { createClient } from "@/lib/supabase/client";
 // conjunto DA META, que sairam das linhas da Origem e foram para dentro do
 // bloco. A campanha do link ou do Google (o contato que chegou por link e
 // depois tocou num anuncio) continua nas linhas, fora do bloco.
+//
+// "Marcar como paciente" (decisao do dono em 20/10/2026; a spec 1.9 ja pedia
+// nas acoes rapidas): so para lead, junto do tipo e do "Marcar consulta". O
+// contato passa a aparecer em Pacientes sem consulta e sem mudar de etapa.
+// Segue a matriz de Leads e Pacientes (a mesma da etapa): profissional e
+// leitura veem o botao desabilitado, com a dica. Depois de marcar, a lista
+// de conversas recarrega (o contato viaja nela), como na troca de etapa; o
+// tempo real tambem traz a mudanca.
 
 const CONSENT_SOURCE_LABEL: Record<string, string> = {
   formulario_site: "Formulário do site",
@@ -524,6 +533,16 @@ export function ContextPanel({
               </Button>
             </DisabledWithHint>
           )}
+          {contact.kind === "lead" ? (
+            <BotaoMarcarComoPaciente
+              contactId={contact.id}
+              nome={contact.name ?? formatarTelefone(contact.phone_e164)}
+              podeEditar={podeEditarLeads}
+              dica={dicaLeads}
+              aoMarcar={() => void aoMudarEtapa()}
+              className="w-full"
+            />
+          ) : null}
         </div>
       </section>
 

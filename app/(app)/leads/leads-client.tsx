@@ -142,6 +142,8 @@ export function LeadsClient({
   podeExportar,
   podeAgendar,
   dicaAgendar,
+  podeIniciarConversa = false,
+  dicaIniciarConversa = "",
   soAtribuidas,
 }: {
   clinicId: string;
@@ -168,6 +170,9 @@ export function LeadsClient({
   /** Permissao da Agenda, para o "Agendar" do drawer */
   podeAgendar: boolean;
   dicaAgendar: string;
+  /** "Iniciar conversa" do drawer: Atendimento e Leads editaveis */
+  podeIniciarConversa?: boolean;
+  dicaIniciarConversa?: string;
   /** Profissional: a RLS so mostra as conversas atribuidas a ele */
   soAtribuidas: boolean;
 }) {
@@ -665,6 +670,8 @@ export function LeadsClient({
         dica={dica}
         podeAgendar={podeAgendar}
         dicaAgendar={dicaAgendar}
+        podeIniciarConversa={podeIniciarConversa}
+        dicaIniciarConversa={dicaIniciarConversa}
         soAtribuidas={soAtribuidas}
         onFechar={() => setLeadAbertoId(null)}
       />

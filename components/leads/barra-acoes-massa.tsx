@@ -3,6 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRightLeft,
+  IdCard,
   Tag,
   UserRoundCog,
   Workflow,
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 
 import {
   etiquetarAction,
+  marcarComoPacienteAction,
   mudarEtapaAction,
   reatribuirAction,
 } from "@/app/(app)/leads/actions";
@@ -25,6 +27,10 @@ import {
   type ResultadoEmLotes,
 } from "@/components/leads/em-lotes";
 import type { OpcaoDeResponsavel } from "@/components/leads/filtros-leads";
+import {
+  DialogoMarcarComoPaciente,
+  ROTULO_MARCAR_COMO_PACIENTE,
+} from "@/components/leads/marcar-como-paciente";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
 import { BarraDeProgresso } from "@/components/shared/barra-de-progresso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -66,6 +72,14 @@ import { cn } from "@/lib/utils";
 // - achado 98: no Mudar etapa, a etapa com regua de follow-up ligada vem
 //   marcada, e mover para ela pede confirmacao dizendo quantos autorizados
 //   vao receber as mensagens.
+//
+// "Marcar como paciente" (decisao do dono em 20/10/2026): os leads da
+// selecao passam a aparecer em Pacientes, sem consulta e sem mudar de etapa.
+// A confirmacao diz quantos mudam e quantos ja sao pacientes (esses ficam
+// como estao e nem vao para o servidor); depois, em lotes de 100 com o
+// progresso, como as outras acoes.
+
+const DICA_JA_SAO_PACIENTES = "Os contatos selecionados já são pacientes.";
 
 const DICA_DISPARAR_REGUA =
   "As réguas de follow-up começam sozinhas quando o lead entra na etapa. Use Mudar etapa para colocar os selecionados numa etapa com régua.";
@@ -167,23 +181,31 @@ export function BarraAcoesMassa({
   const [confirmacao, setConfirmacao] = useState<ConfirmacaoDeEtapa | null>(
     null,
   );
+  const [pacientesAberto, setPacientesAberto] = useState(false);
 
   const ids = selecionados.map((lead) => lead.id);
   const n = ids.length;
   const ocupado = progresso !== null;
+  // Quem da selecao ainda e lead: so eles mudam no "Marcar como paciente".
+  const idsDeLeads = selecionados
+    .filter((lead) => lead.kind !== "paciente")
+    .map((lead) => lead.id);
+  const jaPacientes = n - idsDeLeads.length;
 
   const invalidar = () =>
     void queryClient.invalidateQueries({ queryKey: leadsKeys.lista(clinicId) });
 
   // Roda a acao em lotes de 100 com o progresso na barra. Recarrega a lista
-  // se qualquer lote gravou.
+  // se qualquer lote gravou. O alvo e a selecao inteira, salvo quando a
+  // acao so vale para parte dela (Marcar como paciente: so os leads).
   const rodar = async (
     verbo: string,
     acao: (lote: string[]) => Promise<ResultadoDaAcao>,
+    alvo: string[] = ids,
   ): Promise<ResultadoEmLotes> => {
-    setProgresso({ verbo, feitos: 0, total: n });
-    const resultado = await executarEmLotes(ids, acao, (feitos) =>
-      setProgresso({ verbo, feitos, total: n }),
+    setProgresso({ verbo, feitos: 0, total: alvo.length });
+    const resultado = await executarEmLotes(alvo, acao, (feitos) =>
+      setProgresso({ verbo, feitos, total: alvo.length }),
     );
     setProgresso(null);
     if (resultado.feitos.length > 0) {
@@ -263,6 +285,54 @@ export function BarraAcoesMassa({
         ? `Etiqueta adicionada em ${contarLeads(n)}`
         : `Etiqueta removida de ${contarLeads(n)}`,
     );
+  };
+
+  const marcarComoPacientes = async () => {
+    setPacientesAberto(false);
+    const alvo = idsDeLeads;
+    let marcados = 0;
+    const resultado = await rodar(
+      "Marcando",
+      async (lote) => {
+        const parcial = await marcarComoPacienteAction({ contact_ids: lote });
+        if (parcial.ok) {
+          marcados += parcial.marcados;
+        }
+        return parcial;
+      },
+      alvo,
+    );
+    if (resultado.feitos.length > 0) {
+      // A lista ja mostra paciente nos que mudaram, sem esperar o tempo real.
+      const feitos = new Set(resultado.feitos);
+      queryClient.setQueryData<LeadResumo[]>(
+        leadsKeys.lista(clinicId),
+        (atual) =>
+          atual
+            ? atual.map((lead) =>
+                feitos.has(lead.id)
+                  ? { ...lead, kind: "paciente" as const }
+                  : lead,
+              )
+            : atual,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["pacientes"] });
+    }
+    if (resultado.erro !== null) {
+      toast.error(mensagemDeFalhaParcial(resultado, alvo.length));
+      aoConcluir(resultado.restantes);
+      return;
+    }
+    if (marcados === 0) {
+      toast.info("Nenhum lead mudou: os selecionados já eram pacientes.");
+    } else {
+      toast.success(
+        marcados === 1
+          ? "1 lead marcado como paciente"
+          : `${marcados} leads marcados como pacientes`,
+      );
+    }
+    aoConcluir([]);
   };
 
   // Uniao das etiquetas dos selecionados, para remover em massa.
@@ -464,6 +534,22 @@ export function BarraAcoesMassa({
           </div>
         </AcaoComPopover>
 
+        {podeEditar && idsDeLeads.length > 0 ? (
+          <Button
+            variant="outline"
+            disabled={ocupado}
+            onClick={() => setPacientesAberto(true)}
+          >
+            <IdCard className="size-4" /> {ROTULO_MARCAR_COMO_PACIENTE}
+          </Button>
+        ) : (
+          <DisabledWithHint hint={podeEditar ? DICA_JA_SAO_PACIENTES : dica}>
+            <Button variant="outline" disabled>
+              <IdCard className="size-4" /> {ROTULO_MARCAR_COMO_PACIENTE}
+            </Button>
+          </DisabledWithHint>
+        )}
+
         <DisabledWithHint hint={DICA_DISPARAR_REGUA}>
           <Button variant="outline" disabled>
             <Workflow className="size-4" /> Disparar régua
@@ -523,6 +609,14 @@ export function BarraAcoesMassa({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <DialogoMarcarComoPaciente
+        aberto={pacientesAberto}
+        leads={idsDeLeads.length}
+        jaPacientes={jaPacientes}
+        onConfirmar={() => void marcarComoPacientes()}
+        onFechar={() => setPacientesAberto(false)}
+      />
 
       <ModalMotivoPerda
         contactIds={perdaIds}
