@@ -159,27 +159,33 @@ beforeAll(async () => {
 
   await admin
     .from("contact")
-    .insert([
-      {
-        clinic_id: clinicaA,
-        phone_e164: TELEFONES_A[0],
-        name: `Paciente A1 ${sufixo}`,
-        tags: ["vip"],
-      },
-      {
-        clinic_id: clinicaA,
-        phone_e164: TELEFONES_A[1],
-        name: `Paciente A2 ${sufixo}`,
-      },
-      {
-        clinic_id: clinicaA,
-        phone_e164: TELEFONES_A[2],
-        name: `Paciente A3 ${sufixo}`,
-        funnel_stage: "perdido",
-        lost_reason: "preco",
-      },
-      { clinic_id: clinicaB, phone_e164: TELEFONE_B, name: NOME_B },
-    ])
+    .insert(
+      [
+        {
+          clinic_id: clinicaA,
+          phone_e164: TELEFONES_A[0],
+          name: `Paciente A1 ${sufixo}`,
+          tags: ["vip"],
+        },
+        {
+          clinic_id: clinicaA,
+          phone_e164: TELEFONES_A[1],
+          name: `Paciente A2 ${sufixo}`,
+        },
+        {
+          clinic_id: clinicaA,
+          phone_e164: TELEFONES_A[2],
+          name: `Paciente A3 ${sufixo}`,
+          funnel_stage: "perdido",
+          lost_reason: "preco",
+        },
+        { clinic_id: clinicaB, phone_e164: TELEFONE_B, name: NOME_B },
+        // Num insert de varias linhas o PostgREST manda nulo na coluna que
+        // falta numa delas (etapa e etiquetas): o default do banco so vale com
+        // defaultToNull desligado.
+      ],
+      { defaultToNull: false },
+    )
     .throwOnError();
 });
 

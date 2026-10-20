@@ -594,6 +594,7 @@ export type Database = {
           action: string
           clinic_id: string | null
           created_at: string
+          detalhes: Json | null
           entity: string
           entity_id: string | null
           id: number
@@ -605,6 +606,7 @@ export type Database = {
           action: string
           clinic_id?: string | null
           created_at?: string
+          detalhes?: Json | null
           entity: string
           entity_id?: string | null
           id?: number
@@ -616,6 +618,7 @@ export type Database = {
           action?: string
           clinic_id?: string | null
           created_at?: string
+          detalhes?: Json | null
           entity?: string
           entity_id?: string | null
           id?: number

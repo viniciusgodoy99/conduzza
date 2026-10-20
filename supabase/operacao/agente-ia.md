@@ -41,6 +41,25 @@ Conferido na produção, só leitura, às 15:13 de 19/10/2026. Horários no fuso
 - Números ligados ao assistente, os dois conectados: "Número principal", final 0914 (`35fa44ef-6761-4293-88f9-b492f065f48f`, o que atende pacientes de verdade), desde 12:15; "Numero 2 teste pessoal", final 9018 (`d73d3e43-e299-4433-8f52-9f9cde6da5b9`), desde 09:08.
 - Versão 1 publicada às 09:08, igual à da teste123.
 - Telefones da equipe: nenhum. O administrador de lá cadastra.
+- **Mudança de 20/10/2026** (conferida na produção, só leitura, depois da mudança):
+  - O administrador de lá (Victor Torres, o único membro) **tirou o final 9018 da clínica**: `d73d3e43` removido e desconectado, e a linha dele em `ia_numero_liberado` desligada. O assistente segue só no final 0914.
+  - O dono pediu para usar esse mesmo celular (o final 9018, agora pessoal do Victor) como telefone de teste: "pode liberar para ele adicionar, pode retirar ele de cliente". A trava de número da plataforma já não o recusa (o número saiu da clínica). Mas o contato dele na Conduzza Teste tem sinal de paciente: `kind` paciente e uma consulta de 18/09/2026, aguardando confirmação. Por isso a aba recusaria o cadastro.
+  - **Cadastrado pelo forçar da equipe Conduzza**, pela conexão direta, com o ok do dono: linha "Victor" (`d07b3a0b-fa28-420b-94c7-ce84b8365dfc`), ativa e `forcado`. A trilha tem o forçar e a confirmação do aviso da OpenAI, sem nome. O contato e a consulta ficaram como estavam.
+  - **Consequência:** se o Victor desligar essa linha, o "Ligar de novo" da aba é recusado (sinal de paciente). Religar é só pela equipe Conduzza, com o forçar, no SQL editor:
+
+    ```sql
+    select public.definir_contato_liberado_da_ia(
+      p_clinic_id                => 'f0c115dd-e98c-4767-a1bb-93d517844852',
+      p_telefone_e164            => (select l.phone_key from public.ia_contato_liberado l
+                                      where l.id = 'd07b3a0b-fa28-420b-94c7-ce84b8365dfc'),
+      p_rotulo                   => null,
+      p_ativo                    => true,
+      p_forcar_contato_existente => true);
+    ```
+
+    Esta é a única receita deste arquivo com o forçar, e vale só para essa linha, já autorizada pelo dono.
+
+  - **Primeiro teste no WhatsApp (20/10/2026):** às 13h39 o Victor assumiu a conversa aberta desse celular no final 0914 (`0ed9746c`), respondeu e a devolveu para a IA. Às 13h40 o assistente respondeu (`respondeu`, aprovado pelo filtro, 8 s, `gpt-6-luna`): a primeira resposta da IA num WhatsApp de verdade. Na mensagem seguinte ("Quero marcar uma consulta") passou para a equipe com a frase fixa (`escalou`, `pedido_de_agenda`), como manda esta fase: marcar consulta é a E4, ainda não construída. Custo da clínica até ali: 5 chamadas, US$ 0,0006.
 - Quem acompanha: o administrador de lá, pela tela; o dono, só pelas consultas.
 
 **Nas duas:**
@@ -56,7 +75,7 @@ Conferido na produção, só leitura, às 15:13 de 19/10/2026. Horários no fuso
 
 **O que falta para a IA responder:** um telefone da equipe válido, cadastrado e ligado em cada clínica (D1), sem conversa aberta com a equipe nos números ligados ("Roteiro do primeiro teste", passos 1 a 3).
 
-**Em construção:** as correções da revisão para produção de 19/10/2026 (`docs/05`, entrada "E3"), entre elas o portão de entrada afrouxado e o nome da clínica no prompt, e a migration `20261019120000_ia_ajustes_do_teste.sql` ("Como foi ligado", passo 8). Nada delas está aplicado nem publicado; este arquivo descreve o que está publicado (`a87e01e`), e o que muda com elas vem marcado como "depois da migration `20261019120000`" ou "depois do deploy".
+**Publicado depois deste retrato:** as correções da revisão para produção de 19/10/2026 (`docs/05`, entrada "E3"), entre elas o portão de entrada afrouxado e o nome da clínica no prompt. Saíram em `d2a7fc0`, com a migration `20261019120000_ia_ajustes_do_teste.sql` aplicada em 19/10/2026 ("Como foi ligado", passo 8). O que este arquivo marca como "depois da migration `20261019120000`" ou "depois do deploy" já vale, e o passo 8 do roteiro (as mensagens que passavam para a equipe à toa) não se aplica mais.
 
 ---
 
