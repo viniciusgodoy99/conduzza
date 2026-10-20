@@ -103,13 +103,6 @@ export async function POST(request: NextRequest) {
   const campos = { clinic_id: ativa.clinicId, user_id: context.userId };
   switch (resultado.tipo) {
     case "arquivo":
-      if (resultado.trilhaSemDetalhes) {
-        // A migration 20261020120000 ainda nao foi aplicada.
-        log.warn("exportacao_de_leads_trilha_sem_detalhes", {
-          ...campos,
-          error_code: "PGRST204",
-        });
-      }
       log.info("leads_exportados", {
         ...campos,
         count: resultado.quantidade,

@@ -580,32 +580,27 @@ describe("trilha (LGPD)", () => {
     });
   });
 
-  it("antes da migration da coluna detalhes (PGRST204): grava a linha sem os detalhes, uma só", async () => {
+  it("a coluna detalhes recusada (qualquer erro, inclusive PGRST204): 503 sem tentar de novo sem ela", async () => {
     banco.errosDeInsert.audit_log = [
       { code: "PGRST204", message: "coluna desconhecida" },
       null,
     ];
     const resultado = await exportar("admin");
+    expect(resultado).toMatchObject({ tipo: "falhou", status: 503 });
+    // Uma tentativa so: nunca uma linha sem os detalhes.
+    expect(banco.inserts).toHaveLength(1);
+  });
+
+  it("a linha sai com os detalhes, uma tentativa so", async () => {
+    const resultado = await exportar("gestor");
     expect(resultado.tipo).toBe("arquivo");
-    if (resultado.tipo === "arquivo") {
-      expect(resultado.trilhaSemDetalhes).toBe(true);
-    }
-    expect(banco.inserts).toHaveLength(2);
-    expect(banco.inserts[1]?.linha).toEqual({
-      clinic_id: CLINICA,
-      user_id: EU,
+    expect(banco.inserts).toHaveLength(1);
+    expect(banco.inserts[0]?.linha).toMatchObject({
       action: "exportou",
       entity: "leads",
       entity_id: null,
     });
-  });
-
-  it("com a coluna: a linha sai com os detalhes de primeira", async () => {
-    const resultado = await exportar("gestor");
-    expect(resultado.tipo === "arquivo" && resultado.trilhaSemDetalhes).toBe(
-      false,
-    );
-    expect(banco.inserts).toHaveLength(1);
+    expect(banco.inserts[0]?.linha.detalhes).toBeDefined();
   });
 });
 

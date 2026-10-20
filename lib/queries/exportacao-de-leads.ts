@@ -74,12 +74,6 @@ export const PAGINA_DA_EXPORTACAO = 1000;
 // O select da lista, mais o tipo do contato (coluna Tipo do arquivo).
 const SELECT_DA_EXPORTACAO = `${LEAD_SELECT}, kind`;
 
-/**
- * Coluna que o PostgREST nao conhece (PGRST204): audit_log.detalhes antes da
- * migration 20261020120000 ser aplicada.
- */
-const COLUNA_DESCONHECIDA = "PGRST204";
-
 export type SessaoDaExportacao = {
   userId: string;
   clinicId: string;
@@ -94,8 +88,6 @@ export type ResultadoDaExportacao =
       nome: string;
       conteudo: string;
       quantidade: number;
-      /** A trilha gravou sem `detalhes` (migration ainda nao aplicada). */
-      trilhaSemDetalhes: boolean;
     }
   | { tipo: "vazio" }
   | { tipo: "recusada"; status: 400 | 403 | 409 | 422; mensagem: string }
@@ -248,15 +240,14 @@ export async function lerLeadsParaExportar(
 }
 
 /** Como a trilha da exportacao ficou. */
-export type TrilhaDaExportacao = "com_detalhes" | "sem_detalhes" | "falhou";
+export type TrilhaDaExportacao = "gravada" | "falhou";
 
 /**
  * UMA linha na trilha (regra 3.1): quem exportou, de que clinica, "leads",
- * com a quantidade e os filtros em `detalhes` (nunca dado de paciente).
- * Pela SESSAO: a policy exige user_id = auth.uid() e clinica ativa, e e isso
- * que impede forjar trilha alheia. Antes da migration que cria
- * audit_log.detalhes (20261020120000), a linha sai sem os detalhes: o
- * PostgREST recusa a coluna antes de gravar, entao nunca ficam duas.
+ * com a quantidade e os filtros em `detalhes` (nunca dado de paciente;
+ * coluna da migration 20261020120000, aplicada em 20/10/2026). Pela SESSAO:
+ * a policy exige user_id = auth.uid() e clinica ativa, e e isso que impede
+ * forjar trilha alheia. Qualquer erro e "falhou": sem a linha, nada sai.
  */
 export async function registrarExportacaoDeLeads(
   supabase: SupabaseClient,
@@ -276,16 +267,7 @@ export async function registrarExportacaoDeLeads(
   const { error } = await supabase
     .from("audit_log")
     .insert({ ...linha, detalhes: registro.detalhes });
-  if (!error) {
-    return "com_detalhes";
-  }
-  if (error.code !== COLUNA_DESCONHECIDA) {
-    return "falhou";
-  }
-  const { error: erroSemDetalhes } = await supabase
-    .from("audit_log")
-    .insert(linha);
-  return erroSemDetalhes ? "falhou" : "sem_detalhes";
+  return error ? "falhou" : "gravada";
 }
 
 /**
@@ -391,6 +373,5 @@ export async function exportarLeads({
     nome: nomeDoArquivoDaExportacao(agora, sessao.timezone),
     conteudo,
     quantidade,
-    trilhaSemDetalhes: trilha === "sem_detalhes",
   };
 }

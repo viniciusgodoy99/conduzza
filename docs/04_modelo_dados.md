@@ -2457,6 +2457,6 @@ Pedido do dono em 20/10/2026: "conseguir exportar os leads e não só importar" 
 
 **Provas:** de unidade (rodadas) em `tests/unit/leads/` (`exportacao-de-leads`, `exportacao-de-leads-servidor`, `rota-exportar-leads` e `exportar-leads-tela`); de RLS, rodada contra o banco depois de aplicar (20/10/2026, 7 de 7, com o ajuste da preparação: o insert de vários contatos com `defaultToNull` desligado, para a etapa e as etiquetas que faltam numa linha virem do default): `npm run test:rls -- exportacao-de-leads` (`tests/rls/exportacao-de-leads.test.ts`: o administrador da A só exporta a A, mesmo pedindo a clínica B; recepção, profissional e leitura recebem 403 sem trilha; uma linha de trilha com quantidade e filtros e sem dado de paciente).
 
-**Ordem de publicação:** ensaio (com o ok do dono), migration, tipos e o código. O código antes da migration também funciona: o PostgREST recusa a coluna desconhecida (PGRST204) antes de gravar, `registrarExportacaoDeLeads` grava a linha de novo sem `detalhes` (nunca duas) e a rota loga `exportacao_de_leads_trilha_sem_detalhes`.
+**Ordem de publicação (cumprida em 20/10/2026):** ensaio, migration, tipos e o código. Enquanto a coluna não existia, o código gravava a linha de novo sem `detalhes` quando o PostgREST a recusava (PGRST204); esse caminho provisório saiu depois da aplicação: hoje qualquer erro ao gravar a trilha recusa o arquivo (503), sem segunda tentativa.
 
 **Rollback** (manual): o código não precisa voltar; `alter table public.audit_log drop column detalhes;` leva o CHECK e os detalhes gravados.
