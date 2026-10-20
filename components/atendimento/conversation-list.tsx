@@ -38,8 +38,11 @@ import {
 import {
   casaBusca,
   casaSituacao,
+  casaTipo,
+  filtroDeTipoGuardado,
   recencia,
   type FiltroDeSituacao,
+  type FiltroDeTipo,
 } from "@/lib/domain/filtros-da-conversa";
 import {
   casaNumero,
@@ -57,10 +60,10 @@ import {
 import { cn } from "@/lib/utils";
 
 // Lista de conversas (design system Conduzza, docs/06 secao 5.3): filtros no
-// topo na ordem busca, posse, numero (so com mais de um numero ativo,
-// docs/07), situacao e etiquetas; cartoes rolando embaixo. Busca client-side
-// sobre as conversas carregadas (as 300 ativas mais recentes, mais o arquivo
-// quando aberto).
+// topo na ordem busca, posse, tipo do contato (Todos, Leads, Pacientes),
+// numero (so com mais de um numero ativo, docs/07), situacao e etiquetas;
+// cartoes rolando embaixo. Busca client-side sobre as conversas carregadas
+// (as 300 ativas mais recentes, mais o arquivo quando aberto).
 
 type OwnFilter = "minhas" | "sem_atendente" | "todas";
 
@@ -80,12 +83,22 @@ export function semAtendente(
   );
 }
 
+// Chaves dos filtros "Numero" e "Todos / Leads / Pacientes" guardados neste
+// navegador, por pessoa.
+const chaveDoNumero = (viewerId: string) => `cz-inbox-numero:${viewerId}`;
+const chaveDoTipo = (viewerId: string) => `cz-inbox-tipo:${viewerId}`;
+
+// Tipo do contato (pedido do dono em 20/10/2026). "Todos" na frente, como no
+// filtro de Numero.
+const TIPOS: { value: FiltroDeTipo; label: string }[] = [
+  { value: "todos", label: "Todos" },
+  { value: "leads", label: "Leads" },
+  { value: "pacientes", label: "Pacientes" },
+];
+
 // Ordem dos chips de situacao. "IA atendendo" so aparece quando existe
 // conversa com a IA (o Agente e da Fase 3; hoje o chip viraria um zero
 // permanente na tela da recepcao).
-// Chave do filtro "Numero" guardado neste navegador, por pessoa.
-const chaveDoNumero = (viewerId: string) => `cz-inbox-numero:${viewerId}`;
-
 const SITUACOES: FiltroDeSituacao[] = [
   "ia_atendendo",
   "aguardando_humano",
@@ -199,6 +212,33 @@ export function ConversationList({
       // sem storage: vale so nesta aba
     }
   };
+  // Todos, Leads ou Pacientes: guardado neste navegador, por pessoa, pelo
+  // mesmo mecanismo do Numero. Valor estranho no storage vira "Todos"
+  // (filtroDeTipoGuardado); storage bloqueado nunca quebra.
+  const [tipo, setTipo] = useState<FiltroDeTipo>("todos");
+  useEffect(() => {
+    try {
+      setTipo(
+        filtroDeTipoGuardado(
+          window.localStorage.getItem(chaveDoTipo(viewerId)),
+        ),
+      );
+    } catch {
+      // sem storage: comeca em Todos
+    }
+  }, [viewerId]);
+  const escolherTipo = (proximo: FiltroDeTipo) => {
+    setTipo(proximo);
+    try {
+      if (proximo === "todos") {
+        window.localStorage.removeItem(chaveDoTipo(viewerId));
+      } else {
+        window.localStorage.setItem(chaveDoTipo(viewerId), proximo);
+      }
+    } catch {
+      // sem storage: vale so nesta aba
+    }
+  };
   const [situacao, setSituacao] = useState<FiltroDeSituacao | null>(
     filtroInicial,
   );
@@ -263,8 +303,23 @@ export function ConversationList({
         conversations.filter((c) => casaSituacao(c, alvo, agora)).length,
       ]),
     ) as Record<FiltroDeSituacao, number>;
+    // O tipo conta como os outros filtros: o lote carregado inteiro, com a
+    // MESMA regra que filtra (casaTipo), sem depender dos outros filtros.
+    const porTipo = Object.fromEntries(
+      TIPOS.map(({ value }) => [
+        value,
+        conversations.filter((c) => casaTipo(c.contact, value)).length,
+      ]),
+    ) as Record<FiltroDeTipo, number>;
     const ativas = conversations.filter((c) => c.status !== "resolvida").length;
-    return { mine, unassigned, all: conversations.length, porSituacao, ativas };
+    return {
+      mine,
+      unassigned,
+      all: conversations.length,
+      porSituacao,
+      porTipo,
+      ativas,
+    };
   }, [conversations, viewerId, agora]);
 
   const filtered = useMemo(() => {
@@ -275,6 +330,10 @@ export function ConversationList({
             return false;
           }
           if (own === "sem_atendente" && !semAtendente(conversation)) {
+            return false;
+          }
+          // Todos, Leads ou Pacientes: o tipo do contato da conversa.
+          if (!casaTipo(conversation.contact, tipo)) {
             return false;
           }
           // O chip filtra o mesmo conjunto que ele conta: número e lista têm
@@ -307,6 +366,7 @@ export function ConversationList({
   }, [
     conversations,
     own,
+    tipo,
     situacao,
     search,
     etiquetasAtivas,
@@ -317,6 +377,7 @@ export function ConversationList({
 
   const hasActiveFilter =
     own !== "todas" ||
+    tipo !== "todos" ||
     situacao !== null ||
     search.trim() !== "" ||
     etiquetasAtivas.length > 0 ||
@@ -324,6 +385,7 @@ export function ConversationList({
 
   const limparFiltros = () => {
     setOwn("todas");
+    escolherTipo("todos");
     escolherSituacao(null);
     setSearch("");
     setEtiquetasEscolhidas([]);
@@ -343,7 +405,8 @@ export function ConversationList({
     (etiquetasAtivas.length > 0 ||
       situacao === "sem_resposta_24h" ||
       search.trim() !== "" ||
-      numeroAtivo !== null);
+      numeroAtivo !== null ||
+      tipo !== "todos");
 
   // O arquivo de resolvidas tambem tem teto (achado L3): o chip mostra o
   // TOTAL contado no servidor, e nao as 100 carregadas; a lista, a busca e
@@ -353,7 +416,8 @@ export function ConversationList({
     search.trim() !== "" ||
     etiquetasAtivas.length > 0 ||
     own !== "todas" ||
-    numeroAtivo !== null;
+    numeroAtivo !== null ||
+    tipo !== "todos";
   const numeroDeResolvidas = (n: number): string =>
     resolvidasTotal !== null
       ? String(Math.max(resolvidasTotal, n))
@@ -400,6 +464,20 @@ export function ConversationList({
             },
             { value: "todas", label: "Todas", count: counts.all },
           ]}
+        />
+
+        {/* Tipo do contato, no mesmo desenho da posse (rotulo e contagem;
+            ligado em negrito, sombra e anel, nao so na cor). */}
+        <SegmentedControl
+          size="sm"
+          ariaLabel="Filtrar por lead ou paciente"
+          className="flex w-full [&>button]:flex-auto [&>button]:px-2"
+          value={tipo}
+          onChange={escolherTipo}
+          options={TIPOS.map((opcao) => ({
+            ...opcao,
+            count: counts.porTipo[opcao.value],
+          }))}
         />
 
         {comNumeros ? (

@@ -82,6 +82,45 @@ export function casaSituacao(
   return filtro === "aguardando_humano" ? conversa.awaiting_reply : true;
 }
 
+/** O tipo do contato (contact.kind; o check do banco aceita so estes dois). */
+export type TipoDoContato = "lead" | "paciente";
+
+/**
+ * Filtro "Todos / Leads / Pacientes" da lista (pedido do dono em
+ * 20/10/2026).
+ */
+export type FiltroDeTipo = "todos" | "leads" | "pacientes";
+
+/**
+ * A conversa entra no filtro de tipo? Le o tipo do CONTATO da conversa, o
+ * mesmo que o cabecalho do fio e a reserva da previa do cartao mostram.
+ * "todos" nao filtra. O tipo muda no banco (o lead que ganha o primeiro
+ * agendamento vira paciente pelo gatilho converter_lead_em_paciente) e o
+ * tempo real recarrega a lista a cada UPDATE de contato: a conversa troca de
+ * lado sozinha. O controle conta com esta mesma funcao.
+ */
+export function casaTipo(
+  contato: { kind: TipoDoContato },
+  filtro: FiltroDeTipo,
+): boolean {
+  if (filtro === "leads") {
+    return contato.kind === "lead";
+  }
+  if (filtro === "pacientes") {
+    return contato.kind === "paciente";
+  }
+  return true;
+}
+
+/**
+ * A escolha de tipo guardada no navegador (por pessoa, como a do Numero)
+ * volta como filtro. Vazio, desconhecido ou estragado vira "todos": a lista
+ * nunca fica presa num filtro que ninguem escolheu.
+ */
+export function filtroDeTipoGuardado(valor: string | null): FiltroDeTipo {
+  return valor === "leads" || valor === "pacientes" ? valor : "todos";
+}
+
 /**
  * Chave de ordem da lista: a conversa com a mensagem mais recente primeiro,
  * enviada OU recebida, como no WhatsApp (pedido do dono em 06/10/2026; antes

@@ -4,7 +4,9 @@ import {
   FILTROS_DA_URL,
   casaBusca,
   casaSituacao,
+  casaTipo,
   filtroDeSituacaoDaUrl,
+  filtroDeTipoGuardado,
   recencia,
   semResposta24h,
   type ConversaFiltravel,
@@ -113,6 +115,42 @@ describe("chip de situação", () => {
         AGORA,
       ),
     ).toBe(true);
+  });
+});
+
+describe("filtro Todos / Leads / Pacientes (pedido do dono em 20/10/2026)", () => {
+  const lead = { kind: "lead" } as const;
+  const paciente = { kind: "paciente" } as const;
+
+  it("Todos não filtra: lead e paciente entram", () => {
+    expect(casaTipo(lead, "todos")).toBe(true);
+    expect(casaTipo(paciente, "todos")).toBe(true);
+  });
+
+  it("Leads é só lead, Pacientes é só paciente", () => {
+    expect(casaTipo(lead, "leads")).toBe(true);
+    expect(casaTipo(paciente, "leads")).toBe(false);
+    expect(casaTipo(paciente, "pacientes")).toBe(true);
+    expect(casaTipo(lead, "pacientes")).toBe(false);
+  });
+
+  it("cada conversa cai em exatamente um lado, e os dois somam Todos", () => {
+    const contatos = [lead, paciente, lead, lead, paciente];
+    const quantos = (filtro: "todos" | "leads" | "pacientes") =>
+      contatos.filter((c) => casaTipo(c, filtro)).length;
+    expect(quantos("leads")).toBe(3);
+    expect(quantos("pacientes")).toBe(2);
+    expect(quantos("leads") + quantos("pacientes")).toBe(quantos("todos"));
+  });
+
+  it("a escolha guardada no navegador volta; valor estranho ou vazio vira Todos", () => {
+    expect(filtroDeTipoGuardado("leads")).toBe("leads");
+    expect(filtroDeTipoGuardado("pacientes")).toBe("pacientes");
+    expect(filtroDeTipoGuardado("todos")).toBe("todos");
+    expect(filtroDeTipoGuardado(null)).toBe("todos");
+    for (const estranho of ["", "lead", "paciente", "Leads", " leads", "{}"]) {
+      expect(filtroDeTipoGuardado(estranho)).toBe("todos");
+    }
   });
 });
 

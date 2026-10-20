@@ -1,9 +1,9 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Esqueleto na forma do Atendimento (docs/06 secao 5.3): lista de 336px com
-// busca, posse e chips; fio com cabecalho, bolhas e compositor; contexto pela
-// MESMA container query da tela. Nunca giratorio no meio da tela. No
-// celular, como a tela, mostra so a lista.
+// busca, posse, tipo do contato e chips; fio com cabecalho, bolhas e
+// compositor; contexto pela MESMA container query da tela. Nunca giratorio no
+// meio da tela. No celular, como a tela, mostra so a lista.
 export default function CarregandoAtendimento() {
   return (
     <div
@@ -13,6 +13,7 @@ export default function CarregandoAtendimento() {
       <aside className="flex w-full shrink-0 flex-col border-r border-border bg-card lg:w-inbox-list">
         <div className="grid gap-[9px] border-b border-border p-3">
           <Skeleton className="h-10 w-full rounded-full" />
+          <Skeleton className="h-[34px] w-full rounded-lg" />
           <Skeleton className="h-[34px] w-full rounded-lg" />
           <div className="flex flex-wrap gap-1.5 py-1.5">
             <Skeleton className="h-7 w-32 rounded-full" />
