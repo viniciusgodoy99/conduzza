@@ -6,7 +6,10 @@ import { Zap } from "lucide-react";
 import { AppointmentMenu } from "@/components/agenda/appointment-menu";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
 import { APPOINTMENT_STATUS, STATUS_TONE_VARS } from "@/lib/design/status";
-import { STATUS_TERMINAIS } from "@/lib/domain/appointment-status";
+import {
+  aguardaAprovacao,
+  STATUS_TERMINAIS,
+} from "@/lib/domain/appointment-status";
 import type { BloqueioDaAgenda, ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 // Bloco de consulta na grade, na pele do AppointmentCard do design system
@@ -166,7 +169,7 @@ export function AppointmentBlock({
               ) : null}
               <span className="truncate" style={{ color: tone.text }}>
                 {definicao.label}
-                {consulta.approval_status === "pendente"
+                {aguardaAprovacao(consulta)
                   ? " · aguarda aprovação"
                   : ""}
                 {" · "}

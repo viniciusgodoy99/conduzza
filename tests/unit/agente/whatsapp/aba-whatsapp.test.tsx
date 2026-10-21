@@ -13,32 +13,40 @@ vi.mock("sonner", () => ({
 }));
 
 // A aba importa as Server Actions; aqui so a renderizacao importa.
-vi.mock("@/app/(app)/configuracoes/ia-liberacao-actions", () => ({
+vi.mock("@/app/(app)/agente/whatsapp-actions", () => ({
   adicionarTelefoneDaIaAction: vi.fn(),
   alternarNumeroDaIaAction: vi.fn(),
   alternarTelefoneDaIaAction: vi.fn(),
   definirEscolhaDaIaAction: vi.fn(),
-  definirInterruptorGeralAction: vi.fn(),
+  definirPausaDaIaAction: vi.fn(),
+  excluirTelefoneDaIaAction: vi.fn(),
 }));
 
-import { TEXTOS_DA_IA } from "@/components/configuracoes/agente-de-ia";
 import {
-  AgenteDeIaTab,
+  TEXTOS_DA_IA,
+  TEXTOS_DO_TESTE_COM_PACIENTE,
+} from "@/components/agente/whatsapp/agente-de-ia";
+import {
+  AbaWhatsapp,
+  AbaWhatsappDaRecepcao,
   anunciar,
   telefonesNaOrdem,
-} from "@/components/configuracoes/agente-de-ia-tab";
+} from "@/components/agente/whatsapp/agente-de-ia-tab";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import { expedientePadrao } from "@/lib/domain/agente/config";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 
-// Aba "Agente de IA" de Configuracoes (Fase 3): o estado em 3 camadas com os
-// motivos, o seletor do modo, os numeros (varios ligados ao mesmo tempo
-// desde 19/10/2026, cada um com o proprio estado e botao; ligar so numero
-// conectado), os telefones da equipe, o interruptor geral (botao so para o
-// super admin) e o teto; sem permissao (gestor), tudo visivel e desabilitado com a dica;
-// vazios e erro de leitura; nenhum travessao em estado nenhum; o fim de cada
-// acao no toast (sucesso e erro) e, no erro, na regiao sempre montada.
+// Aba "WhatsApp" da tela Agente de IA (ate a onda 2, a aba "Agente de IA"
+// de Configuracoes): o estado em 3 camadas com os motivos, o seletor do
+// modo (com "Atendendo os contatos", so pelo Painel geral), a pausa, os
+// numeros (varios ligados ao mesmo tempo desde 19/10/2026, cada um com o
+// proprio estado e botao; ligar so numero conectado), os telefones da
+// equipe (com Excluir) e a linha do limite de gasto (o interruptor geral
+// saiu para o Painel geral); sem permissao (gestor), tudo visivel e
+// desabilitado com a dica; a recepcao so le quem cuida; vazios e erro de
+// leitura; nenhum travessao em estado nenhum; o fim de cada acao no toast
+// (sucesso e erro) e, no erro, na regiao sempre montada.
 
 const NUMERO = "11111111-1111-4111-8111-111111111111";
 const SEGUNDO = "22222222-2222-4222-8222-222222222222";
@@ -97,11 +105,11 @@ function numero(campos: Partial<NumeroDoWhatsapp> = {}): NumeroDoWhatsapp {
 }
 
 function aba(
-  props: Partial<React.ComponentProps<typeof AgenteDeIaTab>> = {},
+  props: Partial<React.ComponentProps<typeof AbaWhatsapp>> = {},
 ): string {
   return renderToStaticMarkup(
     <TooltipProvider>
-      <AgenteDeIaTab
+      <AbaWhatsapp
         dados={dados()}
         numeros={[numero()]}
         ambienteLigado
@@ -109,6 +117,7 @@ function aba(
         superAdmin={false}
         agoraMs={Date.parse("2026-10-13T15:00:00.000Z")}
         fuso="America/Fortaleza"
+        telefonesForcados={[]}
         {...props}
       />
     </TooltipProvider>,
@@ -262,7 +271,7 @@ describe("números do assistente", () => {
     expect(html).toContain(escapado(TEXTOS_DA_IA.numeroDesconectado));
     expect(html).toContain(
       escapado(
-        "O número Número principal está desconectado. Conecte o número na aba WhatsApp.",
+        "O número Número principal está desconectado. Conecte o número em Configurações, aba WhatsApp.",
       ),
     );
     expect(html).toContain("Ligado, mas parado");
@@ -377,17 +386,11 @@ describe("permissão", () => {
     }
   });
 
-  it("interruptor geral: botão só para o super admin; os demais leem quem liga", () => {
-    const admin = aba();
-    expect(admin).toContain(escapado(TEXTOS_DA_IA.soEquipeConduzza));
-    expect(admin).not.toContain("o interruptor geral</button>");
-    const superAdmin = aba({ superAdmin: true });
-    expect(superAdmin).toContain("Desligar o interruptor geral</button>");
-    const desligado = aba({
-      superAdmin: true,
-      dados: dados({ interruptorLigado: false }),
-    });
-    expect(desligado).toContain("Ligar o interruptor geral</button>");
+  it("o interruptor geral saiu da aba (onda 2, P8): nem para o super admin", () => {
+    for (const html of [aba(), aba({ superAdmin: true })]) {
+      expect(html).not.toContain("Interruptor geral");
+      expect(html).not.toContain("o interruptor geral</button>");
+    }
   });
 });
 
@@ -514,9 +517,11 @@ describe("ligar só pela equipe Conduzza (E3)", () => {
     expect(caixas).toHaveLength(1);
     expect(caixas[0]).not.toContain('disabled=""');
     expect(html).toContain(escapado(TEXTOS_DA_IA.confirmarAvisoDaOpenai));
-    // o forcar nunca aparece de saida (e, para o administrador, nem depois
-    // da recusa: a action so devolve pedeForcar ao super admin)
-    expect(html).not.toContain(escapado(TEXTOS_DA_IA.forcarContatoDePaciente));
+    // o "Usar mesmo assim" nunca aparece de saida: e um dialogo que so abre
+    // depois da recusa do banco (onda 2, item 3: o administrador tambem)
+    expect(html).not.toContain(
+      escapado(TEXTOS_DO_TESTE_COM_PACIENTE.confirmacao),
+    );
   });
 
   it("administrador: telefone que não aciona o assistente continua com Ligar de novo preso, com a frase da linha", () => {
@@ -671,7 +676,10 @@ describe("a aba diz a verdade (E3)", () => {
           ],
         },
       }),
-      numeros: [numero(), numero({ id: SEGUNDO, nome: "Numero 2 teste pessoal" })],
+      numeros: [
+        numero(),
+        numero({ id: SEGUNDO, nome: "Numero 2 teste pessoal" }),
+      ],
     });
     expect(html).toContain(
       escapado(
@@ -699,9 +707,7 @@ describe("a aba diz a verdade (E3)", () => {
     });
     expect(html).toContain(escapado(TEXTOS_DA_IA.conversaAbertaNumDosNumeros));
     expect(html).toContain(`href="/atendimento?conversa=${CONVERSA}"`);
-    expect(html).toContain(
-      escapado("Abrir no Atendimento a conversa aberta"),
-    );
+    expect(html).toContain(escapado("Abrir no Atendimento a conversa aberta"));
   });
 
   it("a conversa aberta do telefone desligado ou que não aciona não aparece", () => {
@@ -724,7 +730,7 @@ describe("a aba diz a verdade (E3)", () => {
     for (const html of [aba(), aba({ superAdmin: true })]) {
       expect(html).toContain(escapado(TEXTOS_DA_IA.confirmarAvisoDaOpenai));
       expect(html).not.toContain(
-        escapado(TEXTOS_DA_IA.forcarContatoDePaciente),
+        escapado(TEXTOS_DO_TESTE_COM_PACIENTE.confirmacao),
       );
     }
   });
@@ -865,12 +871,12 @@ describe("vários números ligados (19/10/2026)", () => {
     expect(html).toContain("Ligado, mas parado");
     expect(html).toContain(
       escapado(
-        "O número Número principal está desconectado. Conecte o número na aba WhatsApp.",
+        "O número Número principal está desconectado. Conecte o número em Configurações, aba WhatsApp.",
       ),
     );
     expect(html).toContain(
       escapado(
-        "O número Numero 2 teste pessoal está desconectado. Conecte o número na aba WhatsApp.",
+        "O número Numero 2 teste pessoal está desconectado. Conecte o número em Configurações, aba WhatsApp.",
       ),
     );
     expect(html).not.toContain("Em uso pelo assistente");
@@ -941,7 +947,10 @@ describe("revisão de produção (19/10/2026)", () => {
       numeros: [numero(), numero({ id: SEGUNDO, nome: "Unidade Centro" })],
     });
     // o seletor (antes do cartao dos numeros) e as duas linhas
-    const antesDosNumeros = html.slice(0, html.indexOf("Números do assistente"));
+    const antesDosNumeros = html.slice(
+      0,
+      html.indexOf("Números do assistente"),
+    );
     expect(antesDosNumeros).toContain(escapado(APOIO));
     expect(linhaDoNumero(html, "Número principal")).toContain(escapado(APOIO));
     expect(linhaDoNumero(html, "Unidade Centro")).toContain(escapado(APOIO));
@@ -973,7 +982,10 @@ describe("revisão de produção (19/10/2026)", () => {
         },
       }),
     });
-    const antesDosNumeros = html.slice(0, html.indexOf("Números do assistente"));
+    const antesDosNumeros = html.slice(
+      0,
+      html.indexOf("Números do assistente"),
+    );
     expect(antesDosNumeros).not.toContain(escapado(APOIO));
     expect(linhaDoNumero(html, "Número principal")).toContain(escapado(APOIO));
   });
@@ -997,9 +1009,7 @@ describe("revisão de produção (19/10/2026)", () => {
       escapado(TEXTOS_DA_IA.motivosParaAEquipeConduzza.motor_parado),
     );
     expect(doSuperAdmin).not.toContain("Avise a equipe Conduzza");
-    expect(doSuperAdmin).not.toContain(
-      escapado(TEXTOS_DA_IA.motivos.servidor),
-    );
+    expect(doSuperAdmin).not.toContain(escapado(TEXTOS_DA_IA.motivos.servidor));
     const doAdministrador = aba(parado);
     expect(doAdministrador).toContain(escapado(TEXTOS_DA_IA.motivos.servidor));
     expect(doAdministrador).toContain(
@@ -1014,6 +1024,209 @@ describe("revisão de produção (19/10/2026)", () => {
     for (const html of [
       aba({ dados: dados({ numerosLigados: [NUMERO, SEGUNDO] }) }),
       aba({ superAdmin: true, ambienteLigado: false }),
+    ]) {
+      expect(html).not.toMatch(/[—–]/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Onda 2 (itens 3, 4, 8, 9 e 11): a aba na Tela 6
+// ---------------------------------------------------------------------------
+
+/** O modo numero_inteiro (a producao), que o tipo do leitor ganha na M3. */
+const NUMERO_INTEIRO = "numero_inteiro" as string as NonNullable<
+  DadosDaIa["liberacao"]
+>["modo"];
+
+function liberacaoEm(
+  campos: Partial<NonNullable<DadosDaIa["liberacao"]>>,
+): NonNullable<DadosDaIa["liberacao"]> {
+  return {
+    liberada: true,
+    modo: "contatos",
+    pausadaPelaClinica: false,
+    tetoDiarioCentavosUsd: 500,
+    ...campos,
+  };
+}
+
+describe("onda 2: a aba na Tela 6 (item 8)", () => {
+  it("a linha do topo: vale na hora, sem publicar; a linha do limite de gasto, só leitura", () => {
+    const html = aba();
+    expect(html).toContain("O que você muda aqui vale na hora, sem publicar.");
+    expect(html).toContain(
+      "Limite de gasto do assistente: US$ 5,00 a cada 24 horas. Quem muda é a equipe Conduzza.",
+    );
+    // o teto nao tem campo nem botao aqui
+    expect(html).not.toContain("Salvar teto");
+    const semLinha = aba({ dados: dados({ liberacao: null }) });
+    expect(semLinha).toContain(escapado(TEXTOS_DA_IA.tetoSemLinha));
+  });
+
+  it("gestor: a dica escrita no topo e tudo preso", () => {
+    const html = aba({ podeEditar: false });
+    expect(html).toContain("Só o administrador da clínica muda isto.");
+    expect(botaoDesabilitado(html, "Desligado")).toBe(true);
+    expect(botaoDesabilitado(html, "Adicionar")).toBe(true);
+    expect(botaoDesabilitado(html, "Pausar o assistente")).toBe(true);
+    expect(botaoComDica(html, "Pausar o assistente")).toBe(true);
+  });
+
+  it("recepção: só a linha de quem cuida, sem os cartões", () => {
+    const html = renderToStaticMarkup(
+      <TooltipProvider>
+        <AbaWhatsappDaRecepcao />
+      </TooltipProvider>,
+    );
+    expect(html).toContain("O que você muda aqui vale na hora, sem publicar.");
+    expect(html).toContain(
+      "Os números e os telefones do assistente ficam com o administrador e o gestor.",
+    );
+    expect(html).not.toContain("Assistente de IA nesta clínica");
+    expect(html).not.toContain("Telefones da equipe");
+  });
+
+  it("leitura da liberação que falhou: o erro da aba, nunca uma clínica desligada", () => {
+    const html = aba({ dados: null });
+    expect(html).toContain("Não foi possível carregar o assistente de IA");
+    expect(html).not.toContain("Assistente de IA nesta clínica");
+    expect(html).not.toContain(">Desligado<");
+  });
+});
+
+describe("onda 2: Atendendo os contatos e a pausa (item 11)", () => {
+  it("fora da produção: a opção visível, presa, com o porquê escrito", () => {
+    const html = aba({ superAdmin: true });
+    expect(botaoDesabilitado(html, "Atendendo os contatos")).toBe(true);
+    expect(html).toContain(escapado(TEXTOS_DA_IA.producaoSoPeloPainel));
+  });
+
+  it("em produção: a opção escolhida, o chip verde próprio e Conversar com a equipe preso", () => {
+    const html = aba({
+      dados: dados({
+        liberacao: liberacaoEm({ modo: NUMERO_INTEIRO }),
+      }),
+    });
+    expect(aberturaDoBotao(html, "Atendendo os contatos")).toContain(
+      'aria-pressed="true"',
+    );
+    expect(html).toContain(">Atendendo os contatos<");
+    expect(botaoDesabilitado(html, "Conversar com a equipe")).toBe(true);
+    expect(html).toContain(escapado(TEXTOS_DA_IA.emProducaoSoPeloPainel));
+    // Revisao da onda 2: em producao o seletor inteiro fica preso (so o
+    // Painel geral muda o modo; a clinica para pelo Pausar, que fica
+    // liberado).
+    expect(botaoDesabilitado(html, "Desligado")).toBe(true);
+    expect(botaoDesabilitado(html, "Só simulador")).toBe(true);
+    expect(botaoDesabilitado(html, "Pausar o assistente")).toBe(false);
+    // os cartoes dizem o que muda em producao
+    expect(html).toContain(
+      escapado(TEXTOS_DA_IA.descricaoDosNumerosEmProducao),
+    );
+    expect(html).toContain(escapado(TEXTOS_DA_IA.telefonesEmProducao));
+  });
+
+  it("pausar com o WhatsApp ligado; retomar quando pausado; nada sem o WhatsApp", () => {
+    const ligado = aba();
+    expect(botaoDesabilitado(ligado, "Pausar o assistente")).toBe(false);
+    expect(ligado).not.toContain("Retomar o assistente</button>");
+    expect(ligado).toContain(escapado(TEXTOS_DA_IA.pausaExplicacao));
+
+    const pausado = aba({
+      dados: dados({ liberacao: liberacaoEm({ pausadaPelaClinica: true }) }),
+    });
+    expect(botaoDesabilitado(pausado, "Retomar o assistente")).toBe(false);
+    expect(pausado).not.toContain("Pausar o assistente</button>");
+    expect(pausado).toContain("Ligado, mas parado");
+    expect(pausado).toContain(escapado(TEXTOS_DA_IA.motivos.pausada));
+
+    for (const liberacao of [
+      null,
+      liberacaoEm({ modo: "simulador" }),
+      liberacaoEm({ liberada: false }),
+    ]) {
+      const html = aba({ dados: dados({ liberacao }) });
+      expect(html).not.toContain("Pausar o assistente</button>");
+      expect(html).not.toContain("Retomar o assistente</button>");
+    }
+  });
+
+  // Revisao da onda 2: a pausa gravada continua valendo no "Só simulador"
+  // (e trava o simulador tambem). Sem o Retomar ali, so a equipe Conduzza,
+  // religando o WhatsApp, devolvia o botao.
+  it("pausado no Só simulador ou desligado: Retomar aparece, Pausar não, e a explicação diz que o simulador também para", () => {
+    for (const liberacao of [
+      liberacaoEm({ modo: "simulador", pausadaPelaClinica: true }),
+      liberacaoEm({ liberada: false, pausadaPelaClinica: true }),
+    ]) {
+      const html = aba({ dados: dados({ liberacao }) });
+      expect(botaoDesabilitado(html, "Retomar o assistente")).toBe(false);
+      expect(html).not.toContain("Pausar o assistente</button>");
+      expect(html).toContain(escapado(TEXTOS_DA_IA.pausaExplicacao));
+    }
+    expect(TEXTOS_DA_IA.pausaExplicacao).toContain("e no simulador");
+    // O gestor ve o Retomar desabilitado, com a dica.
+    const doGestor = aba({
+      podeEditar: false,
+      dados: dados({
+        liberacao: liberacaoEm({ modo: "simulador", pausadaPelaClinica: true }),
+      }),
+    });
+    expect(botaoDesabilitado(doGestor, "Retomar o assistente")).toBe(true);
+  });
+});
+
+describe("onda 2: telefones (itens 3, 4 e 9)", () => {
+  it("cada telefone tem Excluir, com o nome do telefone no nome acessível", () => {
+    const html = aba();
+    expect(html).toContain(
+      'aria-label="Excluir o telefone de Vinicius, equipe"',
+    );
+    expect(html).toContain('aria-label="Excluir o telefone de Ana"');
+    // o dialogo so abre no clique
+    expect(html).not.toContain(escapado(TEXTOS_DA_IA.excluirTitulo));
+  });
+
+  it("gestor: Excluir visível e preso, com a dica", () => {
+    const html = aba({ podeEditar: false });
+    const abertura = html.slice(
+      html.lastIndexOf(
+        "<button",
+        html.indexOf('aria-label="Excluir o telefone de Ana"'),
+      ),
+      html.indexOf('aria-label="Excluir o telefone de Ana"'),
+    );
+    expect(abertura).toContain('disabled=""');
+  });
+
+  it("telefone fora do público (P4b): não aciona, com a frase da linha", () => {
+    const base = dados();
+    const html = aba({
+      dados: {
+        ...base,
+        situacao: {
+          ...base.situacao,
+          telefonesForaDoPublico: ["t1"],
+        } as DadosDaIa["situacao"],
+      },
+    });
+    expect(html).toContain("Não aciona o assistente");
+    expect(html).toContain(escapado(TEXTOS_DA_IA.telefoneForaDoPublicoNaLinha));
+  });
+
+  it("nenhum travessão nos estados novos", () => {
+    for (const html of [
+      aba({ podeEditar: false }),
+      aba({
+        dados: dados({
+          liberacao: liberacaoEm({
+            modo: NUMERO_INTEIRO,
+            pausadaPelaClinica: true,
+          }),
+        }),
+      }),
+      aba({ dados: null }),
     ]) {
       expect(html).not.toMatch(/[—–]/);
     }

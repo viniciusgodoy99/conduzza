@@ -16,6 +16,11 @@ import {
   mensagensPendentes,
   type ClienteDoAgente,
 } from "@/lib/agente/laco";
+import {
+  aberturaDaJanela,
+  lerJanela,
+  type AberturaDaJanela,
+} from "@/lib/agente/whatsapp";
 import { configPadraoDoAgente } from "@/lib/domain/agente/config";
 import { avaliarRegras } from "@/lib/domain/conformidade/filtro-deterministico";
 import { detectarGatilhosDeEntrada } from "@/lib/domain/conformidade/gatilhos-de-entrada";
@@ -59,7 +64,7 @@ function mensagem(campos: Record<string, unknown>) {
 function carregar(
   banco: BancoEmMemoria,
   nome: string | null = null,
-  abertaPor: "ingestao" | "devolver" = "devolver",
+  abertaPor: AberturaDaJanela = "devolver",
 ) {
   return carregarHistoricoDaConversa(banco.cliente(), {
     clinicId: CLINICA,
@@ -139,6 +144,96 @@ describe("carregarHistoricoDaConversa", () => {
     // Na janela do Devolver o filtro por desde continua valendo.
     const doDevolver = await carregar(banco, null, "devolver");
     expect(doDevolver.mensagens.map((m) => m.texto)).toEqual(["primeira"]);
+  });
+
+  // Onda 2 (contrato 4.1): a janela da retomada no horario do assistente
+  // ('horario') e a de valor que o codigo nao conhece leem so a partir do
+  // desde, como a do Devolver. Antes, o valor desconhecido era lido como
+  // 'ingestao' e a IA via a conversa inteira.
+  it("janela do horário e de valor desconhecido: o corte do desde vale (falha fechada)", async () => {
+    sequencia = 0;
+    const banco = new BancoEmMemoria();
+    banco.linhas("message").push(
+      mensagem({
+        author: "paciente",
+        body: "da equipe, antes de esperar",
+        created_at: "2026-10-13T11:30:00.000Z",
+      }),
+      mensagem({
+        author: "usuario",
+        body: "resposta da equipe",
+        created_at: "2026-10-13T11:40:00.000Z",
+      }),
+      mensagem({ author: "paciente", body: "no expediente" }),
+    );
+    for (const abertaPor of ["horario", "desconhecida"] as const) {
+      const historico = await carregar(banco, null, abertaPor);
+      expect(
+        historico.mensagens.map((m) => m.texto),
+        abertaPor,
+      ).toEqual(["no expediente"]);
+      expect(historico.pendentes, abertaPor).toHaveLength(1);
+    }
+  });
+
+  // Onda 2 (P11a): o aviso de assistente virtual vai na primeira resposta
+  // da IA na janela; a fala da equipe ou do sistema nao conta.
+  it("iaRespondeuNaJanela: só a resposta da IA (autor 'ia') no trecho lido conta", async () => {
+    sequencia = 0;
+    const banco = new BancoEmMemoria();
+    banco
+      .linhas("message")
+      .push(
+        mensagem({ author: "paciente", body: "Oi" }),
+        mensagem({ author: "usuario", body: "Olá, aqui é a equipe." }),
+        mensagem({ author: "sistema", body: "Lembrete da consulta." }),
+        mensagem({ author: "paciente", body: "Tem estacionamento?" }),
+      );
+    expect((await carregar(banco)).iaRespondeuNaJanela).toBe(false);
+    banco
+      .linhas("message")
+      .push(mensagem({ author: "ia", body: "Temos sim." }));
+    expect((await carregar(banco)).iaRespondeuNaJanela).toBe(true);
+    // Antes da janela (fora do corte), nao conta.
+    sequencia = 0;
+    const antes = new BancoEmMemoria();
+    antes.linhas("message").push(
+      mensagem({
+        author: "ia",
+        body: "Resposta de outra janela.",
+        created_at: "2026-10-13T11:00:00.000Z",
+      }),
+      mensagem({ author: "paciente", body: "Oi de novo" }),
+    );
+    expect((await carregar(antes, null, "devolver")).iaRespondeuNaJanela).toBe(
+      false,
+    );
+  });
+
+  it("aberturaDaJanela: só 'ingestao' é a conversa inteira; valor desconhecido vira 'desconhecida'", async () => {
+    expect(aberturaDaJanela("ingestao")).toBe("ingestao");
+    expect(aberturaDaJanela("devolver")).toBe("devolver");
+    expect(aberturaDaJanela("horario")).toBe("horario");
+    for (const valor of ["", "INGESTAO", "turno", null, undefined, 1]) {
+      expect(aberturaDaJanela(valor), String(valor)).toBe("desconhecida");
+    }
+
+    const banco = new BancoEmMemoria();
+    banco.linhas("ia_janela_da_conversa").push({
+      conversation_id: CONVERSA,
+      clinic_id: CLINICA,
+      contact_id: "c1",
+      phone_key: "+5585999990000",
+      desde: DESDE,
+      aberta_por: "algo_novo",
+    });
+    expect(
+      (await lerJanela(banco.cliente(), CLINICA, CONVERSA))?.abertaPor,
+    ).toBe("desconhecida");
+    banco.linhas("ia_janela_da_conversa")[0]!.aberta_por = "horario";
+    expect(
+      (await lerJanela(banco.cliente(), CLINICA, CONVERSA))?.abertaPor,
+    ).toBe("horario");
   });
 
   it("pendente por id: as lidas de turno encerrado e de outro job decidido não contam; as do próprio job, sim", async () => {

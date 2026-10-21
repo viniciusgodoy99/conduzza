@@ -9,6 +9,7 @@ import {
   salvarInstrucoesAction,
   salvarItemDaBaseAction,
   salvarPersonaAction,
+  salvarPublicoAction,
   simularAction,
 } from "@/app/(app)/agente/actions";
 import type { EntradaDaSimulacao } from "@/components/agente/simulador";
@@ -25,6 +26,7 @@ import type {
   ItemDaBaseEntrada,
   PersonaDoAgente,
   ProblemaDaPublicacao,
+  PublicoDoAgente,
 } from "@/lib/domain/agente/config";
 
 // O UNICO lugar da tela que conhece o formato das Server Actions do agente
@@ -43,6 +45,8 @@ export type AcoesDoAgente = {
   salvarHorario: (horario: HorarioDeOperacao) => Promise<ResultadoDaAcao>;
   /** Limites para marcar consulta (E4, D13). */
   salvarAgenda: (agenda: AgendaDoAgente) => Promise<ResultadoDaAcao>;
+  /** Quem o assistente atende (onda 2, item 4). */
+  salvarPublico: (publico: PublicoDoAgente) => Promise<ResultadoDaAcao>;
   salvarItemDaBase: (item: ItemDaBaseEntrada) => Promise<ResultadoDaAcao>;
   ativarItemDaBase: (id: string, ativo: boolean) => Promise<ResultadoDaAcao>;
   excluirItemDaBase: (id: string) => Promise<ResultadoDaAcao>;
@@ -67,6 +71,8 @@ export const acoesDoAgente: AcoesDoAgente = {
   salvarHorario: async (horario) =>
     resultado(await salvarHorarioAction(horario)),
   salvarAgenda: async (agenda) => resultado(await salvarAgendaAction(agenda)),
+  salvarPublico: async (publico) =>
+    resultado(await salvarPublicoAction({ publico })),
   salvarItemDaBase: async (item) =>
     resultado(await salvarItemDaBaseAction(item)),
   ativarItemDaBase: async (id, ativo) =>

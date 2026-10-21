@@ -14,8 +14,8 @@ import { login } from "./helpers";
 // do telefone que nao aciona o assistente, "Não deu para conferir agora",
 // "Em uso no WhatsApp") estao nos testes de unidade:
 // tests/unit/atendimento/devolver-para-ia.test.tsx, cartao-de-bloqueio,
-// fio-da-ia, tests/unit/configuracoes/agente-de-ia*.test.ts(x) e
-// tests/unit/agente/tela-em-uso-no-whatsapp.test.tsx.
+// fio-da-ia, tests/unit/agente/whatsapp/*.test.ts(x) (a aba WhatsApp da
+// Tela 6 desde a onda 2) e tests/unit/agente/tela-em-uso-no-whatsapp.test.tsx.
 //
 // Leitura pura: nenhum botao que muda dado e clicado. Escrito na leva do E3
 // e ainda NAO rodado (depende das migrations aplicadas e do seed sem
@@ -115,12 +115,13 @@ test("a conversa com a IA continua com o aviso do compositor e Assumir conversa"
   ).toHaveCount(0);
 });
 
-test("fora da fase, Configurações não tem a aba Agente de IA", async ({
+test("fora da fase, o link antigo de Configurações leva ao vazio da tela Agente de IA", async ({
   page,
 }) => {
   await login(page, dados().emails.admin);
   await page.goto("/configuracoes?aba=ia");
-  await expect(page.getByRole("tab", { name: "Agente de IA" })).toHaveCount(0);
+  await expect(page).toHaveURL(/\/agente\?aba=whatsapp/);
+  await expect(page.getByRole("tab", { name: "WhatsApp" })).toHaveCount(0);
   await expect(
     page.getByText(
       "Nesta fase, só a equipe Conduzza liga o atendimento pelo WhatsApp.",

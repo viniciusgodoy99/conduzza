@@ -16,6 +16,7 @@ import {
   type ResultadoDaPublicacao,
 } from "@/components/agente/acoes";
 import { CartaoDaAgenda } from "@/components/agente/cartao-da-agenda";
+import { CartaoDoPublico } from "@/components/agente/cartao-do-publico";
 import {
   abasNaoSalvas,
   formulariosNaoSalvos,
@@ -89,6 +90,10 @@ import {
 //   marcar consulta (antecedencia e horizonte, D13), formulario proprio com
 //   a propria chave, e a aba Habilidades recebe a agenda do rascunho para
 //   travar "Agendar consulta" enquanto ela estiver incompleta.
+// - Onda 2, item 8: a aba WhatsApp (numeros, telefones da equipe, o modo e
+//   a pausa) chega pronta da pagina (abaWhatsapp, montada no servidor com a
+//   liberacao lida por quem pode ler). Ela grava na hora, fora do rascunho:
+//   o rodape de publicar nao conta nada dela.
 //
 // Toda gravacao vai para o RASCUNHO (o paciente so ve depois de publicar).
 // Uma acao por vez: enquanto uma roda, os outros controles esperam. O
@@ -105,6 +110,7 @@ import {
  */
 export function chavesDosFormularios(config: DadosDoPainel["config"]): {
   persona: string;
+  publico: string;
   horario: string;
   agenda: string;
   instrucoes: string;
@@ -117,6 +123,7 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
       config.saudacao,
       config.encerramento,
     ]),
+    publico: JSON.stringify(config.publico),
     horario: JSON.stringify(config.horario),
     agenda: JSON.stringify([
       config.agenda.antecedenciaHoras,
@@ -130,11 +137,19 @@ export function PainelDoAgente({
   dados,
   abaInicial,
   acoes = acoesDoAgente,
+  abaWhatsapp,
 }: {
   dados: DadosDoPainel;
   abaInicial?: string;
   /** As Server Actions (os testes trocam). */
   acoes?: AcoesDoAgente;
+  /**
+   * A aba WhatsApp pronta (onda 2, item 8): a pagina monta no servidor, com
+   * a liberacao lida para administrador, gestor e super admin, ou so a linha
+   * de quem cuida para a recepcao. Sem ela (os testes do painel), a aba
+   * abre vazia.
+   */
+  abaWhatsapp?: React.ReactNode;
 }) {
   const [aba, setAba] = useState<AbaDoAgente>(() =>
     abaDoAgente(abaInicial, dados.superAdmin),
@@ -163,6 +178,7 @@ export function PainelDoAgente({
     return {
       persona: avisar("persona"),
       conhecimento: avisar("conhecimento"),
+      publico: avisar("publico"),
       regras: avisar("regras"),
       agenda: avisar("agenda"),
       instrucoes: avisar("instrucoes"),
@@ -425,6 +441,25 @@ export function PainelDoAgente({
               <AbaRegras
                 chaveDoHorario={`${chaves.horario}:${geracao.regras}`}
                 horario={config.horario}
+                quemAtende={
+                  <CartaoDoPublico
+                    key={`${chaves.publico}:${geracao.publico}`}
+                    publico={config.publico}
+                    podeEditar={podeEditar}
+                    dica={dica}
+                    pendente={pendente}
+                    salvando={ocupado("publico")}
+                    aoSalvar={(publico, retorno) =>
+                      executar(
+                        "publico",
+                        () => acoes.salvarPublico(publico),
+                        T.publicoSalvo,
+                        retorno,
+                      )
+                    }
+                    aoMudarNaoSalvo={avisos.publico}
+                  />
+                }
                 limitesDaAgenda={
                   <CartaoDaAgenda
                     key={`${chaves.agenda}:${geracao.agenda}`}
@@ -458,6 +493,14 @@ export function PainelDoAgente({
                 }
                 aoMudarNaoSalvo={avisos.regras}
               />
+            </TabsContent>
+
+            <TabsContent
+              value="whatsapp"
+              forceMount
+              className="data-[state=inactive]:hidden"
+            >
+              {abaWhatsapp}
             </TabsContent>
 
             {superAdmin ? (

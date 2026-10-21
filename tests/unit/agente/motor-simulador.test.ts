@@ -7,7 +7,11 @@ import {
   expedientePadrao,
   type ConfigDoAgente,
 } from "@/lib/domain/agente/config";
-import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  FRASE_DE_ESCALONAMENTO,
+  FRASE_DO_ASSISTENTE_VIRTUAL,
+  FRASE_FORA_DO_ASSUNTO,
+} from "@/lib/domain/conformidade/frase-fixa";
 import type { Verificador } from "@/lib/domain/conformidade/veredicto";
 import type { ClassificadorDeEntrada } from "@/lib/integrations/llm/classificador-de-entrada";
 import { identificadorDeSeguranca } from "@/lib/integrations/llm/openai";
@@ -389,10 +393,12 @@ describe("simularTurno", () => {
       },
       { cliente, verificador, classificador, precos: PRECOS },
     );
+    // Onda 2 (P11a): a primeira resposta da conversa de teste leva o aviso
+    // de assistente virtual, como no WhatsApp.
     expect(r).toMatchObject({
       ok: true,
       tipo: "resposta",
-      resposta: "Temos sim, na rua ao lado.",
+      resposta: `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\nTemos sim, na rua ao lado.`,
       rascunhoBloqueado: null,
     });
     expect(create).toHaveBeenCalledTimes(1);
@@ -712,7 +718,7 @@ describe("revisão: histórico assinado pelo servidor (achados 6, 8, 12 e 18)", 
     expect(doSuperAdmin).toMatchObject({
       ok: true,
       tipo: "frase_fixa",
-      rascunhoBloqueado: "A consulta fica R$ 300,00.",
+      rascunhoBloqueado: `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\nA consulta fica R$ 300,00.`,
     });
   });
 });
@@ -980,5 +986,199 @@ describe("E4: agenda no simulador (resposta simulada, nada gravado)", () => {
         ),
     ).toEqual([]);
     expect(inseridos).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Onda 2: "Testar como" (item 4), fora do assunto (item 5, P5b), a liberação
+// no lugar novo (item 8) e o modo da produção (item 11)
+// ---------------------------------------------------------------------------
+
+function clienteQueChama(nome: string) {
+  const create = vi.fn(async () => ({
+    model: "gpt-6-luna",
+    status: "completed",
+    incomplete_details: null,
+    output: [
+      {
+        type: "function_call",
+        id: "fc_1",
+        call_id: "call_1",
+        name: nome,
+        arguments: "{}",
+        status: "completed",
+      },
+    ],
+    usage: { input_tokens: 100, output_tokens: 10 },
+  }));
+  return {
+    cliente: { responses: { create } } as unknown as ClienteDoAgente,
+    create,
+  };
+}
+
+function simularComo(
+  mensagens: readonly Fala[],
+  extra: {
+    contato?: "lead" | "paciente" | null;
+    cliente?: ClienteDoAgente;
+  } = {},
+) {
+  const banco = adminFalso(LIBERADA);
+  const modelo = clienteQueResponde("Temos sim, na rua ao lado.");
+  return {
+    create: modelo.create,
+    resultado: simularTurno(
+      {
+        admin: banco.admin,
+        clinicId: CLINICA,
+        userId: USUARIO,
+        fuso: "America/Fortaleza",
+        mensagens,
+        agoraMs: Date.UTC(2026, 9, 6, 20, 45),
+        contato: extra.contato,
+        env: AMBIENTE,
+      },
+      {
+        cliente: extra.cliente ?? modelo.cliente,
+        verificador,
+        classificador,
+        precos: PRECOS,
+      },
+    ),
+  };
+}
+
+function instrucoesDa(create: ReturnType<typeof vi.fn>): string {
+  const [corpo] = create.mock.calls[0] as unknown as [{ instructions: string }];
+  return corpo.instructions;
+}
+
+describe("onda 2: Testar como (item 4)", () => {
+  it("Lead ou Paciente vai na última linha das instruções; sem escolha, sem linha", async () => {
+    const lead = simularComo(MENSAGENS, { contato: "lead" });
+    expect((await lead.resultado).ok).toBe(true);
+    expect(
+      instrucoesDa(lead.create).endsWith(
+        "Contato desta conversa: lead, ainda não é paciente da clínica.",
+      ),
+    ).toBe(true);
+
+    const paciente = simularComo(MENSAGENS, { contato: "paciente" });
+    await paciente.resultado;
+    expect(
+      instrucoesDa(paciente.create).endsWith(
+        "Contato desta conversa: paciente da clínica.",
+      ),
+    ).toBe(true);
+
+    const sem = simularComo(MENSAGENS);
+    await sem.resultado;
+    expect(instrucoesDa(sem.create)).not.toContain(
+      "Contato desta conversa: lead",
+    );
+    expect(instrucoesDa(sem.create)).not.toContain(
+      "Contato desta conversa: paciente",
+    );
+  });
+
+  it("valor fora da lista não vira linha (a ação valida, o simulador confere de novo)", async () => {
+    const estranho = simularComo(MENSAGENS, {
+      contato: "cliente" as unknown as "lead",
+    });
+    await estranho.resultado;
+    expect(instrucoesDa(estranho.create)).not.toMatch(
+      /Contato desta conversa: (lead|paciente)/,
+    );
+  });
+});
+
+describe("onda 2: fora do assunto no simulador (item 5, P5b)", () => {
+  it("a primeira vez responde a frase; a segunda, com a primeira no histórico assinado, passa para a equipe", async () => {
+    const primeira = simularComo(
+      [{ autor: "paciente", texto: "Quando o Neymar ganhou a Copa?" }],
+      { cliente: clienteQueChama("fora_do_assunto").cliente },
+    );
+    const r1 = await primeira.resultado;
+    if (!r1.ok) {
+      throw new Error(r1.error);
+    }
+    expect(r1.tipo).toBe("resposta");
+    expect(r1.resposta.endsWith(FRASE_FORA_DO_ASSUNTO)).toBe(true);
+    expect(r1.trilha.map((p) => p.texto)).toContain(
+      "Respondeu que só ajuda com assuntos da clínica.",
+    );
+
+    const conversa: Fala[] = [
+      { autor: "paciente", texto: "Quando o Neymar ganhou a Copa?" },
+      { autor: "assistente", texto: r1.resposta, assinatura: r1.assinatura },
+      { autor: "paciente", texto: "E a Copa de 2002?" },
+    ];
+    const segunda = simularComo(conversa, {
+      cliente: clienteQueChama("fora_do_assunto").cliente,
+    });
+    const r2 = await segunda.resultado;
+    expect(r2).toMatchObject({
+      ok: true,
+      tipo: "frase_fixa",
+      resposta: FRASE_DE_ESCALONAMENTO,
+    });
+  });
+
+  it("foraDoAssuntoNoSimulador conta as falas do assistente com a frase como parágrafo", async () => {
+    const { foraDoAssuntoNoSimulador } = await import("@/lib/agente/simulador");
+    expect(
+      foraDoAssuntoNoSimulador([
+        { autor: "paciente", texto: FRASE_FORA_DO_ASSUNTO },
+        { autor: "assistente", texto: FRASE_FORA_DO_ASSUNTO },
+        {
+          autor: "assistente",
+          texto: `Olá!\n\n${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${FRASE_FORA_DO_ASSUNTO}`,
+        },
+        { autor: "assistente", texto: `${FRASE_FORA_DO_ASSUNTO} E mais.` },
+        { autor: "assistente", texto: "Temos sim." },
+      ]),
+    ).toBe(2);
+  });
+
+  it("'você é um robô?' responde a frase da assistente virtual, sem contar como fora do assunto", async () => {
+    const r = await simularComo(
+      [{ autor: "paciente", texto: "você é um robô?" }],
+      { cliente: clienteQueChama("sou_assistente_virtual").cliente },
+    ).resultado;
+    expect(r).toMatchObject({
+      ok: true,
+      tipo: "resposta",
+      resposta: FRASE_DO_ASSISTENTE_VIRTUAL,
+    });
+  });
+});
+
+describe("onda 2: textos e modo da liberação (itens 8 e 11)", () => {
+  it("o desligado manda para o Agente de IA, aba WhatsApp, sem travessão", () => {
+    expect(TEXTOS_DO_SIMULADOR.desligadoNaClinica).toBe(
+      "O assistente está desligado nesta clínica. Ligue em Agente de IA, na aba WhatsApp.",
+    );
+    expect(TEXTOS_DO_SIMULADOR.desligadoNaClinica).not.toContain(
+      "Configurações",
+    );
+    for (const texto of Object.values(TEXTOS_DO_SIMULADOR)) {
+      expect(texto).not.toMatch(/[–—]/);
+    }
+  });
+
+  it("o modo da produção (numero_inteiro) não é lido como desligado", async () => {
+    const { admin } = adminFalso({
+      ...LIBERADA,
+      podeSimular: false,
+      liberacao: {
+        liberada: true,
+        pausada_pela_clinica: false,
+        modo: "numero_inteiro",
+      },
+    });
+    expect(await motivoParaNaoSimular(admin, CLINICA, AMBIENTE)).toBe(
+      TEXTOS_DO_SIMULADOR.teto,
+    );
   });
 });

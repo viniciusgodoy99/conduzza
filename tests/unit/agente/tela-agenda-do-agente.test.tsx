@@ -263,10 +263,12 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
     ).toEqual(["agendar"]);
   });
 
-  // Decisao do dono de 20/10/2026: nesta fase de teste, marcar e confirmar
-  // so com telefone da equipe cadastrado pela equipe Conduzza (o forcado),
-  // porque a consulta marcada transforma o contato em paciente.
-  it("a nota da fase de teste fica embaixo de Agendar consulta e de Confirmar presença, para todos os papéis", () => {
+  // Decisao do dono de 20/10/2026, revista na onda 2 (item 10): a consulta
+  // da IA so transforma o contato em paciente quando a equipe aprova.
+  // "Agendar consulta" funciona com telefone comum; a nota do telefone
+  // cadastrado pela equipe Conduzza (o forcado) fica so em "Confirmar
+  // presença".
+  it("a nota da fase de teste fica só embaixo de Confirmar presença, para todos os papéis", () => {
     const nota = TEXTOS_DO_AGENTE.habilidadeNaFaseDeTeste;
     for (const props of [
       {},
@@ -274,25 +276,29 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
       { podeEditar: false, dica: DICA_RECEPCAO, agenda: AGENDA_COMPLETA },
     ]) {
       const html = renderHabilidades(props);
-      for (const chave of ["agendar", "confirmar_presenca"]) {
-        expect(html, chave).toContain(
-          `<span id="agente-habilidade-${chave}-fase-de-teste" class="text-xs text-text-secondary">${nota}</span>`,
-        );
-      }
-      // So nas duas: nem em Informar preço nem nas travadas.
-      expect(html.split(nota)).toHaveLength(3);
+      expect(html).toContain(
+        `<span id="agente-habilidade-confirmar_presenca-fase-de-teste" class="text-xs text-text-secondary">${nota}</span>`,
+      );
+      expect(html).not.toContain(
+        'id="agente-habilidade-agendar-fase-de-teste"',
+      );
+      // So nela: nem em Agendar consulta, nem em Informar preço, nem nas
+      // travadas.
+      expect(html.split(nota)).toHaveLength(2);
     }
   });
 
-  it("a nota fica logo abaixo da descrição, antes da dica da agenda", () => {
+  it("a nota fica logo abaixo da descrição de Confirmar presença", () => {
     const html = renderHabilidades({ agenda: SEM_AGENDA });
-    const agendar = HABILIDADES_DO_AGENTE.find((h) => h.chave === "agendar");
-    const descricao = html.indexOf(agendar?.descricao ?? "?");
-    const nota = html.indexOf('id="agente-habilidade-agendar-fase-de-teste"');
-    const dica = html.indexOf('id="agente-habilidade-agendar-agenda"');
+    const confirmar = HABILIDADES_DO_AGENTE.find(
+      (h) => h.chave === "confirmar_presenca",
+    );
+    const descricao = html.indexOf(confirmar?.descricao ?? "?");
+    const nota = html.indexOf(
+      'id="agente-habilidade-confirmar_presenca-fase-de-teste"',
+    );
     expect(descricao).toBeGreaterThan(-1);
     expect(nota).toBeGreaterThan(descricao);
-    expect(dica).toBeGreaterThan(nota);
     // Nota, nao status: so texto, sem chip, sem icone e sem cor propria.
     expect(html.slice(nota, html.indexOf("</span>", nota))).not.toMatch(
       /<svg|role="status"/,
@@ -306,7 +312,7 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
       "só com telefone da equipe cadastrado pela equipe Conduzza",
     );
     expect(nota).toContain(
-      "a consulta marcada transforma o contato em paciente",
+      "depois que a equipe aprova a consulta, o contato vira paciente",
     );
     expect(nota).toContain("um telefone comum deixa de acionar o assistente");
     expect(nota).not.toMatch(/[—–]/);
@@ -319,9 +325,9 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
     const livres = HABILIDADES_DO_AGENTE.filter((h) => !h.travada).map(
       (h) => h.chave as string,
     );
-    expect([...HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA].sort()).toEqual(
-      ["agendar", "confirmar_presenca"].sort(),
-    );
+    expect([...HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA]).toEqual([
+      "confirmar_presenca",
+    ]);
     for (const chave of HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA) {
       expect(livres, chave).toContain(chave);
     }

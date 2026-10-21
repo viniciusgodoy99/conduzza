@@ -22,6 +22,7 @@ import {
   faltasParaAEquipe,
   IA_NA_CLINICA_STATUS,
   LIGADO_DESLIGADO_STATUS,
+  LINK_DOS_NUMEROS,
   linkDaConversa,
   MODO_DA_ESCOLHA,
   motivoDoNumeroDesconectado,
@@ -43,16 +44,22 @@ import {
   telefoneDaEquipeSchema,
   telefoneParaExibir,
   TEXTOS_DA_IA,
+  TEXTOS_DO_TESTE_COM_PACIENTE,
+  telefonesForaDoPublico,
   temTelefoneQueNaoAciona,
   textoDaConversaAberta,
+  textoDoForaDoHorarioAgora,
   textoDoMotivo,
   textoDoTelefoneQueNaoAciona,
+  textoDoLimiteDeGasto,
   textoDoTeto,
   textosDaParada,
   textosDosMotivos,
+  versaoEmUsoNoWhatsapp,
+  whatsappLigado,
   type ContextoDaIa,
   type EstadoDaIa,
-} from "@/components/configuracoes/agente-de-ia";
+} from "@/components/agente/whatsapp/agente-de-ia";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import {
   ACCESS_LEVEL_STATUS,
@@ -78,8 +85,9 @@ import {
   type SituacaoDaIa,
 } from "@/lib/queries/ia-liberacao";
 
-// Regras puras da aba "Agente de IA" de Configuracoes (Fase 3; decisao do
-// dono em 05/10/2026): a aba so existe nas clinicas com o agente habilitado
+// Regras puras da aba "WhatsApp" da tela Agente de IA (ate a onda 2, a aba
+// "Agente de IA" de Configuracoes; Fase 3, decisao do dono em 05/10/2026):
+// a aba so existe nas clinicas com o agente habilitado
 // (desde a onda 1, a lista vem do banco: ia_clinicas_da_fase_controlada,
 // lida pela service role, aqui um duble); o estado em 3 camadas diz a
 // verdade (ligado pela clinica, mas
@@ -327,8 +335,10 @@ describe("estado e motivos", () => {
     });
     expect(motivosDaParada(desconectado)).toEqual(["numero_desconectado"]);
     expect(estadoDaIa(desconectado)).toBe("parado");
+    // Onda 2: a aba mora na Tela 6, ao lado da aba WhatsApp do agente; o
+    // texto diz onde a clinica conecta (Configuracoes).
     expect(textosDaParada(desconectado)).toEqual([
-      "O número Número principal está desconectado. Conecte o número na aba WhatsApp.",
+      "O número Número principal está desconectado. Conecte o número em Configurações, aba WhatsApp.",
     ]);
   });
 
@@ -408,6 +418,8 @@ describe("status em 3 camadas", () => {
       desligado: "Desligado",
       simulador: "Só simulador",
       equipe: "Conversando com a equipe",
+      // onda 2, item 11: a producao (numero_inteiro), so pelo Painel geral
+      producao: "Atendendo os contatos",
       parado: "Ligado, mas parado",
       nao_conferido: "Não deu para conferir agora",
     });
@@ -538,12 +550,13 @@ describe("telefone novo da equipe", () => {
   });
 
   it("aviso de telefone que já é de um contato: com o nome, ou sem nome", () => {
+    // Onda 2 (item 3, P3): tambem de quem aceitou testar o assistente.
     expect(avisoDeContatoDaClinica("  Maria Souza ")).toBe(
-      "Este telefone já é de um contato da clínica (Maria Souza). Só confirme se for de alguém da equipe.",
+      "Este telefone já é de um contato da clínica (Maria Souza). Só confirme se for de alguém da equipe ou de quem aceitou testar o assistente.",
     );
     for (const nome of [null, "", "   "]) {
       expect(avisoDeContatoDaClinica(nome)).toBe(
-        "Este telefone já é de um contato da clínica (cadastro sem nome). Só confirme se for de alguém da equipe.",
+        "Este telefone já é de um contato da clínica (cadastro sem nome). Só confirme se for de alguém da equipe ou de quem aceitou testar o assistente.",
       );
     }
   });
@@ -563,7 +576,7 @@ describe("teto e dicas", () => {
     expect(textoDoTeto(null)).toBeNull();
   });
 
-  it("sem permissão: tudo com a dica do administrador; interruptor só do super admin", () => {
+  it("sem permissão: tudo com a dica do administrador; a produção só pelo Painel geral", () => {
     expect(
       dicasDaIa({
         podeEditar: false,
@@ -571,12 +584,19 @@ describe("teto e dicas", () => {
         faltasParaAEquipe: [],
       }),
     ).toEqual({
+      modo: TEXTOS_DA_IA.semPermissao,
       escolha: TEXTOS_DA_IA.semPermissao,
       equipe: TEXTOS_DA_IA.semPermissao,
+      producao: TEXTOS_DA_IA.producaoSoPeloPainel,
       numero: TEXTOS_DA_IA.semPermissao,
       telefone: TEXTOS_DA_IA.semPermissao,
-      interruptor: TEXTOS_DA_IA.soEquipeConduzza,
+      excluir: TEXTOS_DA_IA.semPermissao,
+      forcar: TEXTOS_DA_IA.semPermissao,
+      pausa: TEXTOS_DA_IA.semPermissao,
     });
+    expect(TEXTOS_DA_IA.semPermissao).toBe(
+      "Só o administrador da clínica muda isto.",
+    );
     // E3: o administrador desliga, mas ligar o atendimento pelo WhatsApp
     // (modo equipe e usar número) é só da equipe Conduzza. Telefone
     // (adicionar e ligar de novo): o administrador também, desde 19/10/2026
@@ -588,11 +608,17 @@ describe("teto e dicas", () => {
         faltasParaAEquipe: ["sem_numero"],
       }),
     ).toEqual({
+      modo: null,
       escolha: null,
       equipe: TEXTOS_DA_IA.soEquipeConduzzaLiga,
+      producao: TEXTOS_DA_IA.producaoSoPeloPainel,
       numero: TEXTOS_DA_IA.soEquipeConduzzaLiga,
       telefone: null,
-      interruptor: TEXTOS_DA_IA.soEquipeConduzza,
+      // onda 2: excluir, o "Usar mesmo assim" (P3) e a pausa ficam com o
+      // administrador
+      excluir: null,
+      forcar: null,
+      pausa: null,
     });
     // a dica de hoje não fala de telefone (ela continua no modo e no número)
     expect(TEXTOS_DA_IA.soEquipeConduzzaLiga).not.toMatch(/telefone/i);
@@ -607,16 +633,44 @@ describe("teto e dicas", () => {
         faltasParaAEquipe: ["sem_numero"],
       }),
     ).toEqual({
+      modo: null,
       escolha: null,
       equipe: TEXTOS_DA_IA.faltaParaAEquipe,
+      producao: TEXTOS_DA_IA.producaoSoPeloPainel,
       numero: null,
       telefone: null,
-      interruptor: null,
+      excluir: null,
+      forcar: null,
+      pausa: null,
     });
-    expect(
-      dicasDaIa({ podeEditar: true, superAdmin: true, faltasParaAEquipe: [] })
-        .interruptor,
-    ).toBeNull();
+    // Em producao: "Conversar com a equipe" so pelo Painel geral (ate para
+    // o super admin, na aba), e a opcao da producao nao tem dica (e a
+    // escolhida).
+    const emProducao = dicasDaIa({
+      podeEditar: true,
+      superAdmin: true,
+      faltasParaAEquipe: [],
+      emProducao: true,
+    });
+    expect(emProducao.equipe).toBe(TEXTOS_DA_IA.emProducaoSoPeloPainel);
+    expect(emProducao.producao).toBeNull();
+    expect(emProducao.escolha).toBeNull();
+    // Revisao da onda 2: em producao o seletor inteiro fica preso, para o
+    // administrador e para o super admin (so o Painel geral muda o modo;
+    // a clinica para pelo Pausar). Desligar numero e telefone segue livre.
+    expect(emProducao.modo).toBe(TEXTOS_DA_IA.emProducaoSoPeloPainel);
+    const doAdministrador = dicasDaIa({
+      podeEditar: true,
+      superAdmin: false,
+      faltasParaAEquipe: [],
+      emProducao: true,
+    });
+    expect(doAdministrador.modo).toBe(TEXTOS_DA_IA.emProducaoSoPeloPainel);
+    expect(doAdministrador.escolha).toBeNull();
+    expect(doAdministrador.pausa).toBeNull();
+    expect(TEXTOS_DA_IA.emProducaoSoPeloPainel).toContain(
+      "Para parar agora, use Pausar o assistente.",
+    );
   });
 
   it("aviso do diálogo de ligar: as travas que dizem não", () => {
@@ -669,8 +723,15 @@ describe("teto e dicas", () => {
 
   it("o teto explicado sem jargão do canal oficial", () => {
     expect(TEXTOS_DA_IA.tetoExplicacao).toBe(
-      "Ao chegar no teto, o assistente para de responder até o gasto mais antigo completar 24 horas. Só a equipe Conduzza muda o teto nesta fase.",
+      "Ao chegar no limite, o assistente para de responder até o gasto mais antigo completar 24 horas.",
     );
+  });
+
+  it("a linha do limite de gasto (P8): só leitura, com quem muda", () => {
+    expect(textoDoLimiteDeGasto(liberacao())).toBe(
+      "Limite de gasto do assistente: US$ 5,00 a cada 24 horas. Quem muda é a equipe Conduzza.",
+    );
+    expect(textoDoLimiteDeGasto(null)).toBe(TEXTOS_DA_IA.tetoSemLinha);
   });
 
   it("nenhum travessão nem jargão nos textos", () => {
@@ -845,8 +906,10 @@ describe("mapa de estados do E3", () => {
     expect(TEXTOS_DA_IA.motivos.motor_parado).toBe(
       "O motor do assistente não está rodando. Avise a equipe Conduzza.",
     );
+    // Onda 2 (item 7): no expediente, a conversa fica com a equipe e o
+    // assistente assume no fim dele (sem a hora a mao, o texto geral).
     expect(TEXTOS_DA_IA.motivos.fora_do_horario_agora).toBe(
-      "Agora está fora do horário escolhido para o assistente.",
+      "Agora é o horário da equipe. O assistente volta quando o expediente acabar, e assume as conversas que ninguém da equipe respondeu.",
     );
     expect(TEXTOS_DA_IA.motivos.horario_nao_suportado).toBe(
       "Este modo de horário ainda não funciona no WhatsApp. Use 24 horas ou Só fora do expediente.",
@@ -1015,15 +1078,10 @@ describe("formulário do telefone: LGPD e recusas", () => {
     expect(TEXTOS_DA_IA.telefoneInvalidoNaLinha).toBe(
       "Este telefone não pode ser usado como telefone da equipe.",
     );
+    // Onda 2 (item 3, P3): o administrador tambem usa mesmo assim, com a
+    // confirmacao do teste (o dialogo; TEXTOS_DO_TESTE_COM_PACIENTE).
     expect(TEXTOS_DA_IA.contatoDePaciente).toBe(
-      "Este telefone é de um paciente da clínica. A IA só conversa com telefones da equipe.",
-    );
-    expect(TEXTOS_DA_IA.forcarContatoDePaciente).toBe(
-      "Usar mesmo assim (fica registrado)",
-    );
-    // o forcar de quem não é a equipe Conduzza (19/10/2026)
-    expect(TEXTOS_DA_IA.soEquipeConduzzaForca).toBe(
-      "Somente a equipe Conduzza usa o telefone de um paciente como telefone da equipe.",
+      "Este telefone é de um paciente da clínica. Só use mesmo assim se a pessoa aceitou testar o assistente.",
     );
     expect(TEXTOS_DA_IA.avisoTelefoneInvalido).toBe(
       "Há telefone da equipe que não aciona o assistente. Veja a lista de telefones.",
@@ -1225,8 +1283,8 @@ describe("vários números ligados (19/10/2026)", () => {
     expect(motivosDaParada(ctx)).toEqual(["numero_desconectado"]);
     expect(estadoDaIa(ctx)).toBe("parado");
     expect(textosDaParada(ctx)).toEqual([
-      "O número Número principal está desconectado. Conecte o número na aba WhatsApp.",
-      "O número Numero 2 teste pessoal está desconectado. Conecte o número na aba WhatsApp.",
+      "O número Número principal está desconectado. Conecte o número em Configurações, aba WhatsApp.",
+      "O número Numero 2 teste pessoal está desconectado. Conecte o número em Configurações, aba WhatsApp.",
     ]);
     // o desligado que caiu nao entra: so os ligados
     const comUmDesligado = contexto({
@@ -1556,8 +1614,9 @@ describe("revisão de produção (19/10/2026)", () => {
       expect(textoDoMotivo("servidor", true)).toBe(
         "A chave da OpenAI ou o segredo do identificador não estão no ambiente de produção da Vercel.",
       );
+      // Onda 2 (P8): o interruptor mora no topo do Painel geral.
       expect(textoDoMotivo("interruptor", true)).toBe(
-        "O interruptor geral está desligado. Ligue no cartão Interruptor geral.",
+        "O interruptor geral está desligado. Ele fica no topo do Painel geral.",
       );
       expect(textoDoMotivo("motor_parado", true)).toBe(
         "O motor do assistente não está rodando. Siga o diagnóstico rápido do motor-ia em supabase/operacao/motor-por-cron.md.",
@@ -1634,5 +1693,241 @@ describe("revisão de produção (19/10/2026)", () => {
         TEXTOS_DA_IA.motivosParaAEquipeConduzza.servidor,
       ]);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Onda 2 (itens 4, 7, 8 e 11): a aba na Tela 6
+// ---------------------------------------------------------------------------
+
+/** O modo numero_inteiro (a producao), que o tipo do leitor ganha na M3. */
+const NUMERO_INTEIRO = "numero_inteiro" as string as LiberacaoDaClinica["modo"];
+
+describe("onda 2: produção (Atendendo os contatos, item 11)", () => {
+  const emProducao = dados({
+    liberacao: liberacao({ modo: NUMERO_INTEIRO }),
+    // sem telefone da equipe: em producao a lista nao e exigida
+    telefones: [],
+  });
+
+  it("numero_inteiro é a produção, e só o WhatsApp ligado conta", () => {
+    expect(escolhaAtual(liberacao({ modo: NUMERO_INTEIRO }))).toBe("producao");
+    expect(
+      escolhaAtual(liberacao({ modo: NUMERO_INTEIRO, liberada: false })),
+    ).toBe("desligado");
+    expect(whatsappLigado("producao")).toBe(true);
+    expect(whatsappLigado("equipe")).toBe(true);
+    expect(whatsappLigado("simulador")).toBe(false);
+    expect(whatsappLigado("desligado")).toBe(false);
+  });
+
+  it("em produção sem telefone da equipe: verde (a lista não é exigida)", () => {
+    const ctx = contexto({ dados: emProducao });
+    expect(motivosDaParada(ctx)).toEqual([]);
+    expect(estadoDaIa(ctx)).toBe("producao");
+    expect(versaoEmUsoNoWhatsapp(ctx)).toBe(true);
+    expect(IA_NA_CLINICA_STATUS.producao).toMatchObject({
+      label: "Atendendo os contatos",
+      tone: "success",
+    });
+  });
+
+  it("em produção, as travas do WhatsApp continuam: número, versão, motor e pausa", () => {
+    const ctx = contexto({
+      dados: dados({
+        ...emProducao,
+        liberacao: liberacao({
+          modo: NUMERO_INTEIRO,
+          pausadaPelaClinica: true,
+        }),
+        numerosLigados: [],
+        situacao: situacao({ versaoPublicada: null, motorParado: true }),
+      }),
+    });
+    expect(motivosDaParada(ctx)).toEqual([
+      "pausada",
+      "sem_versao_publicada",
+      "motor_parado",
+      "sem_numero",
+    ]);
+    expect(estadoDaIa(ctx)).toBe("parado");
+    expect(oQueNaoDeuParaConferir({ ...ctx, numeros: null })).toEqual([]);
+    expect(
+      oQueNaoDeuParaConferir(contexto({ dados: emProducao, numeros: null })),
+    ).toEqual(["numero"]);
+  });
+
+  it("os rótulos verdes valem também em produção; o apoio do desligar também", () => {
+    expect(rotuloDoTelefoneLigado("producao", 1)).toBe(
+      "Conversa com o assistente",
+    );
+    expect(rotuloDoNumeroLigado("producao", true)).toBe(
+      "Em uso pelo assistente",
+    );
+    // Revisao da onda 2: em producao o seletor fica preso, entao nao ha
+    // "depois de desligar" junto dele.
+    expect(
+      apoioAoDesligarOWhatsapp({
+        podeEditar: true,
+        superAdmin: false,
+        escolha: "producao",
+      }),
+    ).toBeNull();
+    expect(
+      apoioAoDesligarOWhatsapp({
+        podeEditar: true,
+        superAdmin: false,
+        escolha: "equipe",
+      }),
+    ).toBe(TEXTOS_DA_IA.depoisDeDesligar);
+  });
+});
+
+describe("onda 2: telefone fora do público (item 4, P4b)", () => {
+  function comForaDoPublico(ids: string[] | undefined): DadosDaIa {
+    const base = dados();
+    return {
+      ...base,
+      situacao: {
+        ...base.situacao,
+        ...(ids === undefined ? {} : { telefonesForaDoPublico: ids }),
+      } as SituacaoDaIa,
+    };
+  }
+
+  it("o telefone fora do público não aciona, com a frase dele", () => {
+    const fora = comForaDoPublico(["t1"]);
+    expect(telefonesForaDoPublico(fora)).toEqual(["t1"]);
+    expect(porQueNaoAciona(fora, "t1")).toBe("fora_do_publico");
+    expect(estadoDoTelefone(fora, "t1")).toBe("invalido");
+    expect(quantosTelefonesLigados(fora)).toBe(0);
+    expect(temTelefoneQueNaoAciona(fora)).toBe(true);
+    expect(textoDoTelefoneQueNaoAciona("fora_do_publico")).toBe(
+      "Este contato está fora do público escolhido em Regras e limites. O assistente não conversa com ele.",
+    );
+    // no modo equipe, sem telefone que aciona: o motivo de sempre
+    expect(motivosDaParada(contexto({ dados: fora }))).toEqual([
+      "sem_telefone",
+    ]);
+  });
+
+  it("chave ausente (antes da migration) ou fora do formato: nenhum", () => {
+    expect(telefonesForaDoPublico(comForaDoPublico(undefined))).toEqual([]);
+    const estranho = {
+      ...dados(),
+      situacao: {
+        ...situacao(),
+        telefonesForaDoPublico: "t1",
+      } as unknown as SituacaoDaIa,
+    };
+    expect(telefonesForaDoPublico(estranho)).toEqual([]);
+    expect(porQueNaoAciona(comForaDoPublico(undefined), "t1")).toBeNull();
+  });
+
+  it("as outras razões vêm antes (inválido, sem autorização)", () => {
+    const base = comForaDoPublico(["t1"]);
+    const invalido = {
+      ...base,
+      situacao: { ...base.situacao, telefonesInvalidos: ["t1"] },
+    };
+    expect(porQueNaoAciona(invalido, "t1")).toBe("invalido");
+  });
+});
+
+describe("onda 2: fora do horário diz quando o assistente volta (item 7)", () => {
+  it("no expediente de hoje: a hora do fim, no fuso da clínica", () => {
+    const ctx = contexto({
+      dados: dados({
+        situacao: situacao({ horarioPublicado: horario("fora_expediente") }),
+      }),
+      agoraMs: MEIO_DIA,
+    });
+    expect(motivosDaParada(ctx)).toEqual(["fora_do_horario_agora"]);
+    expect(textosDaParada(ctx)).toEqual([
+      "Agora é o horário da equipe. O assistente volta às 18:00, e assume as conversas que ninguém da equipe respondeu.",
+    ]);
+    // o mesmo texto para o super admin
+    expect(textosDaParada(ctx, true)).toEqual(textosDaParada(ctx));
+  });
+
+  it("o fim do dia de hoje, não o de outro dia", () => {
+    const expediente = {
+      ...expedientePadrao(),
+      ter: { aberto: true, inicio: "08:00", fim: "13:30" },
+    };
+    const ctx = contexto({
+      dados: dados({
+        situacao: situacao({
+          horarioPublicado: {
+            modo: "fora_expediente",
+            minutosSemResposta: 10,
+            expediente,
+          },
+        }),
+      }),
+      // terca, 12:00 em Fortaleza
+      agoraMs: MEIO_DIA,
+    });
+    expect(textosDaParada(ctx)).toEqual([textoDoForaDoHorarioAgora("13:30")]);
+  });
+});
+
+describe("onda 2: textos da aba na Tela 6 (item 8)", () => {
+  it("a linha do topo, a dica do gestor e a da recepção", () => {
+    expect(TEXTOS_DA_IA.valeNaHora).toBe(
+      "O que você muda aqui vale na hora, sem publicar.",
+    );
+    expect(TEXTOS_DA_IA.semPermissao).toBe(
+      "Só o administrador da clínica muda isto.",
+    );
+    expect(TEXTOS_DA_IA.soAdministradorEGestor).toBe(
+      "Os números e os telefones do assistente ficam com o administrador e o gestor.",
+    );
+  });
+
+  it("os textos de excluir são os do contrato", () => {
+    expect(TEXTOS_DA_IA.excluirTitulo).toBe("Excluir este telefone da equipe?");
+    expect(TEXTOS_DA_IA.excluirTexto).toBe(
+      "O telefone sai da lista e deixa de conversar com o assistente. Para usar de novo, adicione outra vez.",
+    );
+    expect(TEXTOS_DA_IA.excluirForcado).toBe(
+      "Ele foi usado mesmo sendo de paciente: para voltar, vai precisar dessa confirmação de novo.",
+    );
+  });
+
+  it("os números conectam em Configurações, nunca na aba WhatsApp do agente", () => {
+    for (const texto of [
+      TEXTOS_DA_IA.conecteAntes,
+      TEXTOS_DA_IA.numeroDesconectado,
+      TEXTOS_DA_IA.semNumeros,
+      TEXTOS_DA_IA.motivos.numero_desconectado,
+      motivoDoNumeroDesconectado("Recepção"),
+    ]) {
+      expect(texto).toContain("Configurações, aba WhatsApp");
+    }
+    expect(LINK_DOS_NUMEROS).toBe("/configuracoes?aba=whatsapp");
+  });
+
+  it("nenhum travessão nem jargão nos textos novos", () => {
+    const textos = [
+      TEXTOS_DA_IA.valeNaHora,
+      TEXTOS_DA_IA.soAdministradorEGestor,
+      TEXTOS_DA_IA.producaoSoPeloPainel,
+      TEXTOS_DA_IA.emProducaoSoPeloPainel,
+      TEXTOS_DA_IA.pausaExplicacao,
+      TEXTOS_DA_IA.retomarTexto,
+      TEXTOS_DA_IA.telefonesEmProducao,
+      TEXTOS_DA_IA.descricaoDosNumerosEmProducao,
+      TEXTOS_DA_IA.telefoneForaDoPublicoNaLinha,
+      textoDoForaDoHorarioAgora("18:00"),
+      textoDoLimiteDeGasto(liberacao()),
+      ...Object.values(TEXTOS_DO_TESTE_COM_PACIENTE),
+    ];
+    for (const texto of textos) {
+      expect(texto).not.toMatch(/[—–]/);
+      expect(texto).not.toMatch(
+        /\b(tenant|opt-in|handoff|kill switch|numero_inteiro|prompt)\b/i,
+      );
+    }
   });
 });

@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// As Server Actions da aba "Agente de IA" (Fase 3), com a sessao, o cliente
-// do Supabase, as leituras e o log trocados por dubles que guardam tudo o
-// que a action mandou. O que se prova aqui:
+// As Server Actions da aba "WhatsApp" da tela Agente de IA (ate a onda 2, a
+// aba "Agente de IA" de Configuracoes; app/(app)/agente/whatsapp-actions.ts),
+// com a sessao, o cliente do Supabase, as leituras e o log trocados por
+// dubles que guardam tudo o que a action mandou. O que se prova aqui:
 //   - a guarda: a aba so existe nas clinicas com o agente habilitado
 //     (abaDaIaVisivel, a lista do banco desde a onda 1; aqui um duble que
 //     devolve a Promise, e a guarda tem de AGUARDAR: sem o await a Promise e
 //     sempre verdadeira e nada era barrado) e so o administrador da clinica
-//     ou o super admin chega ao banco; gestor, nao. O interruptor geral, so
-//     o super admin;
+//     ou o super admin chega ao banco; gestor, nao. O interruptor geral
+//     saiu daqui na onda 2 (P8): mora no Painel geral
+//     (tests/unit/painel-geral/acoes-do-painel.test.ts);
 //   - o Zod estrito de cada entrada;
 //   - cada acao vira a RPC certa, com a sessao; "Conversar com a equipe"
 //     exige ao menos um numero ligado (ainda da clinica) e um telefone;
@@ -28,9 +30,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //     admin recebe pedeForcar;
 //   - decisao do dono de 19/10/2026: o administrador da clinica adiciona e
 //     liga de novo telefone da equipe (com a confirmacao da OpenAI na trilha
-//     no nome dele); o forcar de quem nao e super admin para antes do banco
-//     (soEquipeConduzzaForca), sem ler o contato; 42501 do banco no telefone
-//     vira o texto de permissao.
+//     no nome dele); 42501 do banco no telefone vira o texto de permissao;
+//   - onda 2: o motivo e "Agente de IA, aba WhatsApp" e cada acao revalida a
+//     Tela 6 e o Painel geral; excluir telefone (item 9) pela RPC nova, com o
+//     id; o "Usar mesmo assim" do telefone de paciente pelo administrador
+//     tambem (item 3, P3), sempre com a confirmacao do teste (sem ela, para
+//     antes do banco, sem ler o contato); pausar e retomar (item 11).
 // A autorizacao de verdade (guarda no banco, policies) esta em
 // tests/rls/ia-liberacao.test.ts e tests/integration/ia-liberacao.test.ts.
 
@@ -43,7 +48,7 @@ const OUTRO_NUMERO = "b2222222-2222-4222-8222-222222222222";
 type DadosFalsos = {
   liberacao: {
     liberada: boolean;
-    modo: "simulador" | "contatos";
+    modo: string;
     pausadaPelaClinica: boolean;
     tetoDiarioCentavosUsd: number;
   } | null;
@@ -73,6 +78,8 @@ const registro = vi.hoisted(() => ({
   rpcs: [] as { nome: string; args: Record<string, unknown> }[],
   /** Erro por nome de RPC (a primeira chamada com aquele nome em diante). */
   errosDoRpc: new Map<string, { code?: string; message?: string }>(),
+  /** O data de cada RPC sem erro (sem entrada: true). */
+  retornosDoRpc: new Map<string, unknown>(),
   /** Erro so na chamada de numero com este id e este ativo. */
   erroNoNumero: null as null | { id: string; ativo: boolean; code: string },
   dados: null as unknown,
@@ -147,7 +154,10 @@ vi.mock("@/lib/supabase/server", () => ({
         return { data: null, error: { code: e.code } };
       }
       const erro = registro.errosDoRpc.get(nome) ?? null;
-      return { data: erro ? null : true, error: erro };
+      const retorno = registro.retornosDoRpc.has(nome)
+        ? registro.retornosDoRpc.get(nome)
+        : true;
+      return { data: erro ? null : retorno, error: erro };
     },
   }),
 }));
@@ -218,12 +228,20 @@ import {
   alternarNumeroDaIaAction,
   alternarTelefoneDaIaAction,
   definirEscolhaDaIaAction,
-  definirInterruptorGeralAction,
-} from "@/app/(app)/configuracoes/ia-liberacao-actions";
+  definirPausaDaIaAction,
+  excluirTelefoneDaIaAction,
+} from "@/app/(app)/agente/whatsapp-actions";
 import {
   avisoDeContatoDaClinica,
   TEXTOS_DA_IA,
-} from "@/components/configuracoes/agente-de-ia";
+  TEXTOS_DO_TESTE_COM_PACIENTE,
+} from "@/components/agente/whatsapp/agente-de-ia";
+
+/** O motivo que a aba manda nas RPCs (onda 2: a aba mora na Tela 6). */
+const MOTIVO = "Agente de IA, aba WhatsApp";
+/** O que cada acao que gravou revalida: a Tela 6 e o Painel geral. */
+const REVALIDADOS = ["/agente", "/painel-geral"];
+const TELEFONE_DA_LISTA = "d1111111-1111-4111-8111-111111111111";
 
 function dadosCompletos(campos: Partial<DadosFalsos> = {}): DadosFalsos {
   return {
@@ -251,6 +269,7 @@ beforeEach(() => {
   registro.superAdmin = false;
   registro.rpcs = [];
   registro.errosDoRpc = new Map();
+  registro.retornosDoRpc = new Map();
   registro.erroNoNumero = null;
   registro.dados = dadosCompletos();
   registro.dadosFalham = false;
@@ -278,6 +297,8 @@ const todasAsAcoes = [
     }),
   () =>
     alternarTelefoneDaIaAction({ telefone: "+5584999990001", ligado: false }),
+  () => excluirTelefoneDaIaAction({ id: TELEFONE_DA_LISTA }),
+  () => definirPausaDaIaAction({ pausada: false }),
 ] as const;
 
 /** So as consultas a contact (a conferencia do contato da clinica). */
@@ -288,10 +309,7 @@ function consultasDoContato() {
 describe("guarda", () => {
   it("sem sessão: pede para entrar de novo, sem banco", async () => {
     registro.comSessao = false;
-    for (const acao of [
-      ...todasAsAcoes,
-      () => definirInterruptorGeralAction({ ligado: false }),
-    ]) {
+    for (const acao of todasAsAcoes) {
       expect(await acao()).toEqual({
         ok: false,
         error: "Sessão expirada. Entre de novo.",
@@ -303,10 +321,7 @@ describe("guarda", () => {
   it("clínica fora da fase controlada: recusada antes do banco, até para o super admin", async () => {
     registro.clinica = FORA_DA_LISTA;
     registro.superAdmin = true;
-    for (const acao of [
-      ...todasAsAcoes,
-      () => definirInterruptorGeralAction({ ligado: false }),
-    ]) {
+    for (const acao of todasAsAcoes) {
       const r = await acao();
       expect(r.ok).toBe(false);
       expect(r).toEqual({
@@ -322,10 +337,7 @@ describe("guarda", () => {
     // clinica passava direto para as RPCs.
     registro.habilitadas = new Set();
     registro.superAdmin = true;
-    for (const acao of [
-      ...todasAsAcoes,
-      () => definirInterruptorGeralAction({ ligado: true }),
-    ]) {
+    for (const acao of todasAsAcoes) {
       expect(await acao()).toEqual({
         ok: false,
         error: "O assistente de IA ainda não está disponível nesta clínica.",
@@ -335,7 +347,9 @@ describe("guarda", () => {
     expect(registro.consultas).toEqual([]);
     expect(registro.revalidados).toEqual([]);
     // Cada acao conferiu a clinica ATIVA na lista, uma vez.
-    expect(registro.conferidas).toEqual(Array(5).fill(TESTE123));
+    expect(registro.conferidas).toEqual(
+      Array(todasAsAcoes.length).fill(TESTE123),
+    );
   });
 
   it("gestor (e os demais papéis) não altera: a dica do administrador", async () => {
@@ -362,32 +376,9 @@ describe("guarda", () => {
     ]);
   });
 
-  it("interruptor geral: só o super admin, nem o administrador da clínica", async () => {
-    expect(await definirInterruptorGeralAction({ ligado: true })).toEqual({
-      ok: false,
-      error: "Somente a equipe Conduzza liga e desliga o interruptor geral.",
-    });
-    expect(registro.rpcs).toEqual([]);
-    registro.superAdmin = true;
-    expect(await definirInterruptorGeralAction({ ligado: true })).toEqual({
-      ok: true,
-    });
-    expect(registro.rpcs).toEqual([
-      {
-        nome: "definir_interruptor_da_ia",
-        args: { p_ligado: true, p_motivo: "Configurações, aba Agente de IA" },
-      },
-    ]);
-    expect(registro.revalidados).toEqual(["/configuracoes"]);
-  });
-
-  it("interruptor geral: 42501 do banco vira o texto do super admin", async () => {
-    registro.superAdmin = true;
-    registro.errosDoRpc.set("definir_interruptor_da_ia", { code: "42501" });
-    expect(await definirInterruptorGeralAction({ ligado: false })).toEqual({
-      ok: false,
-      error: "Somente a equipe Conduzza liga e desliga o interruptor geral.",
-    });
+  it("o interruptor geral saiu da aba (onda 2, P8): nenhuma ação daqui o chama", async () => {
+    const acoes = await import("@/app/(app)/agente/whatsapp-actions");
+    expect(Object.keys(acoes)).not.toContain("definirInterruptorGeralAction");
   });
 });
 
@@ -417,6 +408,19 @@ describe("entradas estritas", () => {
           confirmarContato: "sim",
           confirmarAvisoDaOpenai: true,
         }),
+      () =>
+        adicionarTelefoneDaIaAction({
+          rotulo: "Ana",
+          telefone: "84999990002",
+          confirmarAvisoDaOpenai: true,
+          confirmouTesteComPaciente: "sim",
+        }),
+      () => excluirTelefoneDaIaAction({ id: "x" }),
+      () => excluirTelefoneDaIaAction({ id: TELEFONE_DA_LISTA, extra: 1 }),
+      () => excluirTelefoneDaIaAction(TELEFONE_DA_LISTA),
+      () => definirPausaDaIaAction({ pausada: "sim" }),
+      // a pausa e so da clinica ativa: o clinicId do painel nao passa
+      () => definirPausaDaIaAction({ pausada: true, clinicId: FORA_DA_LISTA }),
     ];
     for (const acao of invalidas) {
       expect(await acao()).toEqual({
@@ -424,11 +428,6 @@ describe("entradas estritas", () => {
         error: "Dados inválidos. Recarregue a página e tente de novo.",
       });
     }
-    registro.superAdmin = true;
-    expect(await definirInterruptorGeralAction({ ligado: "sim" })).toEqual({
-      ok: false,
-      error: "Dados inválidos. Recarregue a página e tente de novo.",
-    });
     expect(registro.rpcs).toEqual([]);
   });
 });
@@ -444,11 +443,11 @@ describe("ligar e desligar na clínica", () => {
         args: {
           p_clinic_id: TESTE123,
           p_liberada: false,
-          p_motivo: "Configurações, aba Agente de IA",
+          p_motivo: MOTIVO,
         },
       },
     ]);
-    expect(registro.revalidados).toEqual(["/configuracoes"]);
+    expect(registro.revalidados).toEqual(REVALIDADOS);
   });
 
   it("só simulador: modo simulador", async () => {
@@ -471,7 +470,7 @@ describe("ligar e desligar na clínica", () => {
           p_clinic_id: TESTE123,
           p_liberada: true,
           p_modo: "contatos",
-          p_motivo: "Configurações, aba Agente de IA",
+          p_motivo: MOTIVO,
         },
       },
     ]);
@@ -551,6 +550,53 @@ describe("ligar e desligar na clínica", () => {
     ]);
     expect(registro.revalidados).toEqual([]);
   });
+
+  // Revisao da onda 2: em producao (numero_inteiro), so o Painel geral
+  // muda o modo; "Só simulador" e "Desligado" pela aba gravavam o modo
+  // com o estado ainda producao. A clinica para pelo Pausar.
+  it("em produção, nenhuma escolha muda o modo por aqui, nem para a equipe Conduzza", async () => {
+    registro.dados = {
+      liberacao: {
+        liberada: true,
+        modo: "numero_inteiro",
+        pausadaPelaClinica: false,
+        tetoDiarioCentavosUsd: 500,
+      },
+      numerosLigados: [NUMERO],
+      telefones: [],
+      interruptorLigado: true,
+    } satisfies DadosFalsos;
+    // (O administrador escolhendo "Conversar com a equipe" ja para antes,
+    // em "so a equipe Conduzza liga"; o super admin chega na producao.)
+    for (const superAdmin of [false, true]) {
+      registro.superAdmin = superAdmin;
+      const escolhas = superAdmin
+        ? (["desligado", "simulador", "equipe"] as const)
+        : (["desligado", "simulador"] as const);
+      for (const escolha of escolhas) {
+        expect(
+          await definirEscolhaDaIaAction({ escolha }),
+          `${escolha} ${superAdmin}`,
+        ).toEqual({
+          ok: false,
+          error: TEXTOS_DA_IA.emProducaoSoPeloPainel,
+        });
+      }
+    }
+    expect(registro.rpcs).toEqual([]);
+    expect(registro.revalidados).toEqual([]);
+  });
+
+  it("o banco recusa a clínica em produção (P0001 clinica_em_producao): o mesmo texto", async () => {
+    registro.errosDoRpc.set("definir_liberacao_da_ia", {
+      code: "P0001",
+      message: "clinica_em_producao",
+    });
+    expect(await definirEscolhaDaIaAction({ escolha: "desligado" })).toEqual({
+      ok: false,
+      error: TEXTOS_DA_IA.emProducaoSoPeloPainel,
+    });
+  });
 });
 
 describe("números do assistente (vários desde 19/10/2026)", () => {
@@ -580,7 +626,7 @@ describe("números do assistente (vários desde 19/10/2026)", () => {
     expect(
       registro.rpcs.some((r) => r.args.p_whatsapp_account_id === OUTRO_NUMERO),
     ).toBe(false);
-    expect(registro.revalidados).toEqual(["/configuracoes"]);
+    expect(registro.revalidados).toEqual(REVALIDADOS);
   });
 
   it("desligar um com outro ligado: uma RPC só, deste número", async () => {
@@ -782,7 +828,7 @@ describe("telefones da equipe", () => {
     ).toEqual({
       ok: false,
       error:
-        "Este telefone já é de um contato da clínica (Maria Souza). Só confirme se for de alguém da equipe.",
+        "Este telefone já é de um contato da clínica (Maria Souza). Só confirme se for de alguém da equipe ou de quem aceitou testar o assistente.",
       pedeConfirmacao: true,
     });
     expect(registro.rpcs).toEqual([]);
@@ -1050,7 +1096,7 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
     // A trilha da confirmacao e do banco, na mesma transacao (migration
     // 20261019120000): a action nao grava audit_log nenhum.
     expect(registro.inseridos).toEqual([]);
-    expect(registro.revalidados).toEqual(["/configuracoes"]);
+    expect(registro.revalidados).toEqual(REVALIDADOS);
   });
 
   it("sem a confirmação do aviso da OpenAI: o texto do campo, sem banco", async () => {
@@ -1083,10 +1129,10 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
         },
       },
     ]);
-    expect(registro.revalidados).toEqual(["/configuracoes"]);
+    expect(registro.revalidados).toEqual(REVALIDADOS);
   });
 
-  it("o forçar de quem não é super admin para antes do banco, sem ler o contato", async () => {
+  it("o forçar sem a confirmação do teste para antes do banco, sem ler o contato (item 3)", async () => {
     registro.contato = { id: "c-maria", name: "Maria Souza" };
     expect(
       await adicionarTelefoneDaIaAction({
@@ -1095,7 +1141,16 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
         confirmarAvisoDaOpenai: true,
         forcarContatoDePaciente: true,
       }),
-    ).toEqual({ ok: false, error: TEXTOS_DA_IA.soEquipeConduzzaForca });
+    ).toEqual({ ok: false, error: TEXTOS_DO_TESTE_COM_PACIENTE.naoConfirmado });
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+        forcarContatoDePaciente: true,
+        confirmouTesteComPaciente: false,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_TESTE_COM_PACIENTE.naoConfirmado });
     expect(registro.rpcs).toEqual([]);
     expect(registro.consultas).toEqual([]);
     expect(registro.auditorias).toEqual([]);
@@ -1115,7 +1170,7 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
     });
   });
 
-  it("telefone de paciente: o texto, sem a opção de forçar", async () => {
+  it("telefone de paciente: o texto, com o pedeForcar também para o administrador (item 3, P3)", async () => {
     registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
       code: "23514",
       message: "contato_de_paciente",
@@ -1127,7 +1182,11 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
         confirmarContato: true,
         confirmarAvisoDaOpenai: true,
       }),
-    ).toEqual({ ok: false, error: TEXTOS_DA_IA.contatoDePaciente });
+    ).toEqual({
+      ok: false,
+      error: TEXTOS_DA_IA.contatoDePaciente,
+      pedeForcar: true,
+    });
     expect(
       await alternarTelefoneDaIaAction({
         telefone: "+5584999990001",
@@ -1246,7 +1305,7 @@ describe("E3: telefone novo da equipe", () => {
     expect(registro.inseridos).toEqual([]);
   });
 
-  it("telefone de paciente: o texto, com pedeForcar só para o super admin", async () => {
+  it("telefone de paciente: o texto, com pedeForcar (o Ligar de novo, sem a opção)", async () => {
     registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
       code: "23514",
       message: "contato_de_paciente",
@@ -1271,13 +1330,14 @@ describe("E3: telefone novo da equipe", () => {
     ).toEqual({ ok: false, error: TEXTOS_DA_IA.contatoDePaciente });
   });
 
-  it("forçar: vai ao banco por nome de parâmetro", async () => {
+  it("forçar: vai ao banco por nome de parâmetro, com a confirmação do teste", async () => {
     expect(
       await adicionarTelefoneDaIaAction({
         rotulo: "Ana",
         telefone: "84999990002",
         confirmarAvisoDaOpenai: true,
         forcarContatoDePaciente: true,
+        confirmouTesteComPaciente: true,
       }),
     ).toEqual({ ok: true });
     expect(registro.rpcs.at(-1)).toEqual({
@@ -1289,8 +1349,25 @@ describe("E3: telefone novo da equipe", () => {
         p_ativo: true,
         p_forcar_contato_existente: true,
         p_confirmou_aviso_da_openai: true,
+        p_confirmou_teste_com_paciente: true,
       },
     });
+  });
+
+  it("forçar que o banco recusa de novo: nunca pede forçar outra vez", async () => {
+    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+      code: "23514",
+      message: "contato_de_paciente",
+    });
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+        forcarContatoDePaciente: true,
+        confirmouTesteComPaciente: true,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.contatoDePaciente });
   });
 });
 
@@ -1425,5 +1502,358 @@ describe("confirmação da OpenAI no banco e Ligar de novo só da lista (19/10/2
       p_confirmou_aviso_da_openai: true,
     });
     expect(registro.inseridos).toEqual([]);
+  });
+});
+
+// Onda 2, item 3 (decisao P3 do dono, opcao a): o administrador da clinica
+// usa o telefone de um paciente que aceitou testar, com a confirmacao do
+// teste, que o banco grava na trilha no nome dele.
+describe("onda 2: o Usar mesmo assim do administrador (item 3)", () => {
+  it("o administrador forca com a confirmação: a RPC com o forçar e a confirmação do teste", async () => {
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Maria, aceitou testar",
+        telefone: "84999990002",
+        confirmarContato: true,
+        confirmarAvisoDaOpenai: true,
+        forcarContatoDePaciente: true,
+        confirmouTesteComPaciente: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_contato_liberado_da_ia",
+        args: {
+          p_clinic_id: TESTE123,
+          p_telefone_e164: "+5584999990002",
+          p_rotulo: "Maria, aceitou testar",
+          p_ativo: true,
+          p_forcar_contato_existente: true,
+          p_confirmou_aviso_da_openai: true,
+          p_confirmou_teste_com_paciente: true,
+        },
+      },
+    ]);
+    // A trilha e do banco: a action nao grava audit_log.
+    expect(registro.inseridos).toEqual([]);
+    expect(registro.revalidados).toEqual(REVALIDADOS);
+  });
+
+  it("sem forçar, a confirmação do teste nunca vai ao banco (a assinatura de antes continua valendo)", async () => {
+    await adicionarTelefoneDaIaAction({
+      rotulo: "Ana",
+      telefone: "84999990002",
+      confirmarAvisoDaOpenai: true,
+      confirmouTesteComPaciente: true,
+    });
+    expect(registro.rpcs.at(-1)?.args).not.toHaveProperty(
+      "p_confirmou_teste_com_paciente",
+    );
+  });
+
+  it("o banco recusa sem a confirmação (23514 teste_com_paciente_nao_confirmado): o texto do contrato", async () => {
+    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+      code: "23514",
+      message: "teste_com_paciente_nao_confirmado",
+    });
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarContato: true,
+        confirmarAvisoDaOpenai: true,
+        forcarContatoDePaciente: true,
+        confirmouTesteComPaciente: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        "Confirme que a pessoa sabe que é um teste antes de usar este telefone.",
+    });
+  });
+
+  it("gestor nunca forca: a guarda para antes", async () => {
+    registro.papel = "gestor";
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarAvisoDaOpenai: true,
+        forcarContatoDePaciente: true,
+        confirmouTesteComPaciente: true,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.semPermissao });
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("os textos da confirmação: a frase do contrato e nenhum travessão", () => {
+    expect(TEXTOS_DO_TESTE_COM_PACIENTE.confirmacao).toBe(
+      "A pessoa deste telefone sabe que vai conversar com um assistente virtual de teste e que o que escrever vai para a OpenAI, nos EUA.",
+    );
+    for (const texto of Object.values(TEXTOS_DO_TESTE_COM_PACIENTE)) {
+      expect(texto).not.toMatch(/[—–]/);
+    }
+  });
+});
+
+// Onda 2, item 9: excluir telefone da equipe pela RPC nova, com o id da
+// linha; o banco devolve a conversa para a equipe e grava a trilha sem o
+// telefone.
+describe("onda 2: excluir telefone (item 9)", () => {
+  it("administrador exclui: a RPC com a clínica ativa e o id", async () => {
+    expect(await excluirTelefoneDaIaAction({ id: TELEFONE_DA_LISTA })).toEqual({
+      ok: true,
+    });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "excluir_contato_liberado_da_ia",
+        args: {
+          p_clinic_id: TESTE123,
+          p_contato_liberado_id: TELEFONE_DA_LISTA,
+        },
+      },
+    ]);
+    expect(registro.revalidados).toEqual(REVALIDADOS);
+    expect(registro.inseridos).toEqual([]);
+  });
+
+  it("a linha já tinha saído (falso do banco): o texto de recarregar", async () => {
+    registro.retornosDoRpc.set("excluir_contato_liberado_da_ia", false);
+    expect(await excluirTelefoneDaIaAction({ id: TELEFONE_DA_LISTA })).toEqual({
+      ok: false,
+      error: "Este telefone já não está na lista. Recarregue a página.",
+    });
+  });
+
+  it("42501 do banco: o texto de permissão; outro erro: o genérico, com o log só do código", async () => {
+    registro.errosDoRpc.set("excluir_contato_liberado_da_ia", {
+      code: "42501",
+    });
+    expect(await excluirTelefoneDaIaAction({ id: TELEFONE_DA_LISTA })).toEqual({
+      ok: false,
+      error: TEXTOS_DA_IA.semPermissao,
+    });
+    registro.errosDoRpc.set("excluir_contato_liberado_da_ia", {
+      code: "XX000",
+    });
+    expect(await excluirTelefoneDaIaAction({ id: TELEFONE_DA_LISTA })).toEqual({
+      ok: false,
+      error: "Não foi possível excluir o telefone. Tente de novo.",
+    });
+    expect(registro.logs.at(-1)).toEqual([
+      "ia_liberacao_nao_alterada",
+      { clinic_id: TESTE123, kind: "telefone_excluir", error_code: "XX000" },
+    ]);
+    expect(registro.revalidados).toEqual([]);
+  });
+
+  it("gestor e os demais papéis não excluem", async () => {
+    for (const papel of ["gestor", "recepcao", "profissional", "leitura"]) {
+      registro.papel = papel;
+      expect(
+        await excluirTelefoneDaIaAction({ id: TELEFONE_DA_LISTA }),
+      ).toEqual({ ok: false, error: TEXTOS_DA_IA.semPermissao });
+    }
+    expect(registro.rpcs).toEqual([]);
+  });
+});
+
+// Onda 2, item 11 (decisao P11c): a clinica pausa e retoma o assistente.
+describe("onda 2: pausar e retomar (item 11)", () => {
+  it("pausar com o WhatsApp ligado (equipe ou produção): a RPC com o motivo da aba", async () => {
+    for (const modo of ["contatos", "numero_inteiro"]) {
+      registro.rpcs = [];
+      registro.dados = dadosCompletos({
+        liberacao: {
+          liberada: true,
+          modo,
+          pausadaPelaClinica: false,
+          tetoDiarioCentavosUsd: 500,
+        },
+      });
+      expect(await definirPausaDaIaAction({ pausada: true })).toEqual({
+        ok: true,
+      });
+      expect(registro.rpcs).toEqual([
+        {
+          nome: "definir_pausa_da_ia",
+          args: { p_clinic_id: TESTE123, p_pausada: true, p_motivo: MOTIVO },
+        },
+      ]);
+    }
+  });
+
+  it("pausar sem o WhatsApp ligado (desligado ou só simulador): recusado sem banco", async () => {
+    for (const liberacao of [
+      null,
+      {
+        liberada: false,
+        modo: "contatos",
+        pausadaPelaClinica: false,
+        tetoDiarioCentavosUsd: 500,
+      },
+      {
+        liberada: true,
+        modo: "simulador",
+        pausadaPelaClinica: false,
+        tetoDiarioCentavosUsd: 500,
+      },
+    ]) {
+      registro.dados = dadosCompletos({ liberacao });
+      expect(await definirPausaDaIaAction({ pausada: true })).toEqual({
+        ok: false,
+        error:
+          "O assistente não está ligado no WhatsApp nesta clínica. Não há o que pausar.",
+      });
+    }
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("retomar vai sempre ao banco (tirar a pausa não liga nada sozinho)", async () => {
+    registro.dadosFalham = true;
+    expect(await definirPausaDaIaAction({ pausada: false })).toEqual({
+      ok: true,
+    });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_pausa_da_ia",
+        args: { p_clinic_id: TESTE123, p_pausada: false, p_motivo: MOTIVO },
+      },
+    ]);
+    expect(registro.revalidados).toEqual(REVALIDADOS);
+  });
+
+  it("leitura que falha ao pausar: não pausa às cegas", async () => {
+    registro.dadosFalham = true;
+    const r = await definirPausaDaIaAction({ pausada: true });
+    expect(r.ok).toBe(false);
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("gestor não pausa; 42501 do banco vira o texto de permissão", async () => {
+    registro.papel = "gestor";
+    expect(await definirPausaDaIaAction({ pausada: true })).toEqual({
+      ok: false,
+      error: TEXTOS_DA_IA.semPermissao,
+    });
+    registro.papel = "admin";
+    registro.dados = dadosCompletos({
+      liberacao: {
+        liberada: true,
+        modo: "contatos",
+        pausadaPelaClinica: false,
+        tetoDiarioCentavosUsd: 500,
+      },
+    });
+    registro.errosDoRpc.set("definir_pausa_da_ia", { code: "42501" });
+    expect(await definirPausaDaIaAction({ pausada: true })).toEqual({
+      ok: false,
+      error: TEXTOS_DA_IA.semPermissao,
+    });
+    expect(registro.logs.at(-1)).toEqual([
+      "ia_liberacao_nao_alterada",
+      { clinic_id: TESTE123, kind: "pausar", error_code: "42501" },
+    ]);
+  });
+});
+
+describe("onda 2: as recusas da pausa no banco (migration 20261022120000)", () => {
+  it("P0001 sem_liberacao e clinica_suspensa viram texto de recepção; outra chave, o genérico", async () => {
+    registro.dados = dadosCompletos({
+      liberacao: {
+        liberada: true,
+        modo: "contatos",
+        pausadaPelaClinica: false,
+        tetoDiarioCentavosUsd: 500,
+      },
+    });
+    const casos: [boolean, string, string][] = [
+      [
+        true,
+        "sem_liberacao",
+        "O assistente não está ligado no WhatsApp nesta clínica. Não há o que pausar.",
+      ],
+      [
+        false,
+        "sem_liberacao",
+        "O assistente não está ligado no WhatsApp nesta clínica. Não há o que retomar.",
+      ],
+      [
+        true,
+        "clinica_suspensa",
+        "A conta da clínica está suspensa. Fale com a equipe Conduzza.",
+      ],
+      [
+        false,
+        "clinica_suspensa",
+        "A conta da clínica está suspensa. Fale com a equipe Conduzza.",
+      ],
+      [
+        true,
+        "outra_coisa",
+        "Não foi possível pausar o assistente. Tente de novo.",
+      ],
+      [
+        false,
+        "outra_coisa",
+        "Não foi possível retomar o assistente. Tente de novo.",
+      ],
+    ];
+    for (const [pausada, chave, texto] of casos) {
+      registro.errosDoRpc.set("definir_pausa_da_ia", {
+        code: "P0001",
+        message: chave,
+      });
+      expect(await definirPausaDaIaAction({ pausada })).toEqual({
+        ok: false,
+        error: texto,
+      });
+    }
+    expect(registro.revalidados).toEqual([]);
+  });
+});
+
+// Se o codigo subir antes da migration da onda 2 (a RPC nova ou a
+// assinatura nova ainda nao existem), a acao diz que a opcao nao esta
+// disponivel, e nada muda.
+describe("onda 2: a RPC que ainda não existe no banco", () => {
+  it("PGRST202 ou 42883: o texto de ainda não disponível, sem revalidar", async () => {
+    for (const codigo of ["PGRST202", "42883"]) {
+      registro.errosDoRpc.set("excluir_contato_liberado_da_ia", {
+        code: codigo,
+      });
+      registro.errosDoRpc.set("definir_pausa_da_ia", { code: codigo });
+      registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+        code: codigo,
+      });
+      registro.dados = dadosCompletos({
+        liberacao: {
+          liberada: true,
+          modo: "contatos",
+          pausadaPelaClinica: false,
+          tetoDiarioCentavosUsd: 500,
+        },
+      });
+      for (const acao of [
+        () => excluirTelefoneDaIaAction({ id: TELEFONE_DA_LISTA }),
+        () => definirPausaDaIaAction({ pausada: true }),
+        () =>
+          adicionarTelefoneDaIaAction({
+            rotulo: "Ana",
+            telefone: "84999990002",
+            confirmarContato: true,
+            confirmarAvisoDaOpenai: true,
+            forcarContatoDePaciente: true,
+            confirmouTesteComPaciente: true,
+          }),
+      ]) {
+        expect(await acao()).toEqual({
+          ok: false,
+          error:
+            "Esta opção ainda não está disponível. Nada foi alterado; tente de novo mais tarde.",
+        });
+      }
+    }
+    expect(registro.revalidados).toEqual([]);
   });
 });

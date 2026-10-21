@@ -67,6 +67,21 @@ import { adminClient, anonClient } from "./stack";
 //     o banco grava a trilha dela no nome de quem liga; desligar telefone
 //     fora da lista nao cria linha; o Devolver confere a liberacao ANTES da
 //     pergunta pendente (conversa de paciente nunca diz pergunta_pendente).
+//   - onda 2 (migration 20261022110000, M2): ia_horario_do_assistente,
+//     ia_publico_aceita e ia_retomar_conversas_no_horario sao so do
+//     servidor (42501 para a sessao e anon); ia_conversa_fora_do_horario
+//     nao e lida por nenhum papel (sem grant: 42501); o FORCAR deixa de ser
+//     so da equipe Conduzza (P3 (a), decisao do dono de 21/10/2026): o
+//     administrador forca com a confirmacao do teste com paciente
+//     (p_confirmou_teste_com_paciente), com as trilhas no nome dele; sem
+//     ela, 23514 teste_com_paciente_nao_confirmado, com e sem sinal de
+//     paciente (ate para o servidor); gestor continua 42501;
+//     excluir_contato_liberado_da_ia: o administrador da propria clinica
+//     exclui (trilha no nome dele, sem o telefone; a conversa do telefone
+//     volta para a equipe), gestor, recepcao, leitura, outra clinica e anon
+//     recebem 42501.
+//     ESCRITO NA ONDA 2 E NAO RODADO por quem escreveu (grava no banco):
+//     quem roda e o coordenador, DEPOIS de aplicar a migration.
 // disparar_ciclo_da_ia, motor_ia_agendar e motor_ia_desagendar NUNCA sao
 // chamados aqui pela API: se o grant regredisse, a chamada mexeria no pg_cron
 // e no pg_net da producao antes de a assercao falhar. O grant deles e
@@ -461,6 +476,17 @@ describe("funcoes do servidor: nao sao da sessao", () => {
         p_incluir_teste: true,
         p_folga: "0 seconds",
       }),
+      // Onda 2 (M2): o horario e o publico (so leitura) e a retomada com
+      // limite 0 (com um grant regredido, nao pega linha nenhuma).
+      cliente.rpc("ia_horario_do_assistente", { p_clinic_id: clinicaA }),
+      cliente.rpc("ia_publico_aceita", {
+        p_clinic_id: clinicaA,
+        p_telefone: TELEFONE_DA_EQUIPE,
+      }),
+      cliente.rpc("ia_retomar_conversas_no_horario", {
+        p_limite: 0,
+        p_incluir_teste: true,
+      }),
     ];
     for (const cliente of [
       anonClient(),
@@ -493,6 +519,28 @@ describe("funcoes do servidor: nao sao da sessao", () => {
         p_phone_key: TELEFONE_DO_PACIENTE,
       }),
     ).toBe(true);
+    // Onda 2: o servidor pergunta o horario (24h: atende), o publico (nulo
+    // no modo contatos: aceita) e chama a retomada (nada a retomar).
+    expect(
+      await rpcDoSistema("ia_horario_do_assistente", { p_clinic_id: clinicaA }),
+    ).toBe("atende");
+    expect(
+      await rpcDoSistema("ia_publico_aceita", {
+        p_clinic_id: clinicaA,
+        p_telefone: TELEFONE_DA_EQUIPE,
+      }),
+    ).toBe(true);
+    expect(
+      await rpcDoSistema("ia_retomar_conversas_no_horario", {
+        p_limite: 0,
+        p_incluir_teste: true,
+      }),
+    ).toEqual({
+      retomadas: 0,
+      descartadas: 0,
+      enfileiradas: 0,
+      erros_por_linha: 0,
+    });
   });
 
   it("disparar_ciclo_da_ia, motor_ia_agendar e motor_ia_desagendar: so a service role, pela migration (nunca chamados aqui)", () => {
@@ -537,7 +585,7 @@ describe("funcoes do servidor: nao sao da sessao", () => {
 });
 
 describe("tabelas novas: nenhuma sessao le nem escreve", () => {
-  it("ai_turno, ai_rascunho_bloqueado e ia_janela_da_conversa: 42501 para todo papel e para anon", async () => {
+  it("ai_turno, ai_rascunho_bloqueado, ia_janela_da_conversa e ia_conversa_fora_do_horario: 42501 para todo papel e para anon", async () => {
     for (const cliente of [
       anonClient(),
       como("admin-a"),
@@ -549,6 +597,8 @@ describe("tabelas novas: nenhuma sessao le nem escreve", () => {
         "ai_turno",
         "ai_rascunho_bloqueado",
         "ia_janela_da_conversa",
+        // onda 2 (M2): a espera do horario do assistente
+        "ia_conversa_fora_do_horario",
       ] as const) {
         const { error: leitura } = await cliente.from(tabela).select("*");
         expect(leitura?.code, tabela).toBe(PERMISSAO_NEGADA);
@@ -866,6 +916,21 @@ describe("devolver_para_ia e ia_devolver_disponivel", () => {
     );
     expect(semForcar?.code).toBe(CHECK);
     expect(semForcar?.message).toBe("contato_de_paciente");
+    // Onda 2 (P3): o forcar, ate pelo servidor, exige a confirmacao do teste
+    // com paciente; sem ela, 23514 e nada muda.
+    const { error: semConfirmar } = await admin.rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_PACIENTE,
+        p_rotulo: "Paciente",
+        p_ativo: true,
+        p_forcar_contato_existente: true,
+        p_confirmou_aviso_da_openai: true,
+      },
+    );
+    expect(semConfirmar?.code).toBe(CHECK);
+    expect(semConfirmar?.message).toBe("teste_com_paciente_nao_confirmado");
     expect(
       await rpcDoSistema("definir_contato_liberado_da_ia", {
         p_clinic_id: clinicaA,
@@ -874,6 +939,7 @@ describe("devolver_para_ia e ia_devolver_disponivel", () => {
         p_ativo: true,
         p_forcar_contato_existente: true,
         p_confirmou_aviso_da_openai: true,
+        p_confirmou_teste_com_paciente: true,
       }),
     ).toBe(true);
     const { data: forcou } = await admin
@@ -1003,7 +1069,7 @@ describe("devolver_para_ia e ia_devolver_disponivel", () => {
 describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tambem pelo administrador", () => {
   const SO_A_EQUIPE = "Somente a equipe do Conduzza libera a IA.";
 
-  it("o administrador recebe 42501 ao ligar modo contatos e numero e ao forcar telefone (com e sem sinal de paciente), e desliga", async () => {
+  it("o administrador recebe 42501 ao ligar modo contatos e numero; o forcar sem a confirmacao do teste da 23514 (com e sem sinal de paciente); e desliga", async () => {
     const adminA = como("admin-a");
     for (const [nome, args] of [
       [
@@ -1018,22 +1084,30 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
           p_ativo: true,
         },
       ],
-      // o forcar continua so da equipe Conduzza, mesmo sem sinal de paciente
-      [
-        "definir_contato_liberado_da_ia",
-        {
-          p_clinic_id: clinicaA,
-          p_telefone_e164: TELEFONE_FORA,
-          p_rotulo: "Forjado",
-          p_ativo: true,
-          p_forcar_contato_existente: true,
-        },
-      ],
     ] as const) {
       const { error } = await adminA.rpc(nome, args);
       expect(error?.code, nome).toBe(PERMISSAO_NEGADA);
       expect(error?.message, nome).toBe(SO_A_EQUIPE);
     }
+    // Onda 2 (P3 (a), migration 20261022110000): o forcar do administrador
+    // nao e mais 42501; sem a confirmacao do teste com paciente, 23514,
+    // mesmo sem sinal de paciente (o erro nao revela se o telefone e de
+    // paciente), e nada e gravado.
+    const { error: forcarSemConfirmar } = await adminA.rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_FORA,
+        p_rotulo: "Forjado",
+        p_ativo: true,
+        p_forcar_contato_existente: true,
+        p_confirmou_aviso_da_openai: true,
+      },
+    );
+    expect(forcarSemConfirmar?.code).toBe(CHECK);
+    expect(forcarSemConfirmar?.message).toBe(
+      "teste_com_paciente_nao_confirmado",
+    );
     // desligar: o administrador consegue (o telefone do paciente, forcado antes)
     const { data, error } = await adminA.rpc("definir_contato_liberado_da_ia", {
       p_clinic_id: clinicaA,
@@ -1043,8 +1117,8 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
     });
     expect(error).toBeNull();
     expect(data).toBe(false);
-    // religar o paciente: sem o forcar, a recusa de paciente (o administrador
-    // ja passa no guarda); com o forcar, 42501 (so a equipe Conduzza)
+    // religar o paciente: sem o forcar, a recusa de paciente; com o forcar
+    // e sem a confirmacao do teste, 23514 teste_com_paciente_nao_confirmado
     const { error: semForcar } = await adminA.rpc(
       "definir_contato_liberado_da_ia",
       {
@@ -1066,8 +1140,8 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
         p_forcar_contato_existente: true,
       },
     );
-    expect(comForcar?.code).toBe(PERMISSAO_NEGADA);
-    expect(comForcar?.message).toBe(SO_A_EQUIPE);
+    expect(comForcar?.code).toBe(CHECK);
+    expect(comForcar?.message).toBe("teste_com_paciente_nao_confirmado");
     const { data: doPaciente } = await admin
       .from("ia_contato_liberado")
       .select("ativo, forcado")
@@ -1082,7 +1156,7 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
       .eq("clinic_id", clinicaA)
       .eq("phone_key", TELEFONE_FORA);
     expect(linha).toEqual([]);
-    // o forcar so existe na trilha do servidor (o teste do D-B, acima)
+    // ate aqui, o forcar so existe na trilha do servidor (o teste do D-B)
     const { data: forcou } = await admin
       .from("audit_log")
       .select("user_id")
@@ -1090,6 +1164,75 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
       .eq("action", "forcou_telefone_de_paciente_na_ia")
       .throwOnError();
     expect(forcou).toEqual([{ user_id: null }]);
+  });
+
+  it("onda 2 (P3): o administrador forca o telefone do paciente com a confirmacao do teste, com as trilhas no nome dele; o gestor nao (42501)", async () => {
+    const { error: doGestor } = await como("gestor-a").rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_PACIENTE,
+        p_rotulo: "",
+        p_ativo: true,
+        p_forcar_contato_existente: true,
+        p_confirmou_teste_com_paciente: true,
+      },
+    );
+    expect(doGestor?.code).toBe(PERMISSAO_NEGADA);
+    const { data, error } = await como("admin-a").rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_PACIENTE,
+        p_rotulo: "",
+        p_ativo: true,
+        p_forcar_contato_existente: true,
+        p_confirmou_teste_com_paciente: true,
+      },
+    );
+    expect(error).toBeNull();
+    expect(data).toBe(true);
+    const { data: linha } = await admin
+      .from("ia_contato_liberado")
+      .select("id, ativo, forcado")
+      .eq("clinic_id", clinicaA)
+      .eq("phone_key", TELEFONE_DO_PACIENTE)
+      .single()
+      .throwOnError();
+    const { id, ...estado } = linha as {
+      id: string;
+      ativo: boolean;
+      forcado: boolean;
+    };
+    expect(estado).toEqual({ ativo: true, forcado: true });
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("action")
+      .eq("clinic_id", clinicaA)
+      .eq("entity_id", id)
+      .eq("user_id", ids.get("admin-a")!)
+      .in("action", [
+        "forcou_telefone_de_paciente_na_ia",
+        "confirmou_teste_com_paciente",
+      ])
+      .throwOnError();
+    expect(
+      ((trilha ?? []) as { action: string }[]).map((l) => l.action).sort(),
+    ).toEqual([
+      "confirmou_teste_com_paciente",
+      "forcou_telefone_de_paciente_na_ia",
+    ]);
+    // volta como estava (desligado; desligar zera o forcado)
+    const { data: desligou } = await como("admin-a").rpc(
+      "definir_contato_liberado_da_ia",
+      {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_PACIENTE,
+        p_rotulo: null,
+        p_ativo: false,
+      },
+    );
+    expect(desligou).toBe(false);
   });
 
   it("telefone da equipe (19/10/2026): o administrador liga sem forcar, desliga e liga de novo, com a trilha no nome dele; gestor, recepcao, leitura e o administrador da B: 42501", async () => {
@@ -1604,5 +1747,116 @@ describe("saude_do_motor: a chave ia detalhada so para o servidor", () => {
       devidos: expect.any(Number),
       alerta: expect.any(Boolean),
     });
+  });
+});
+
+describe("onda 2 (M2): excluir telefone da equipe", () => {
+  // Um telefone novo da A, ligado pelo servidor, com contato e conversa na
+  // IA (a service role poe a conversa na IA; a sessao nunca).
+  const TELEFONE_EXCLUIR = `+5584985${digitos}`;
+  let telefoneId = "";
+  let conversaExcluir = "";
+
+  beforeAll(async () => {
+    await rpcDoSistema("definir_contato_liberado_da_ia", {
+      p_clinic_id: clinicaA,
+      p_telefone_e164: TELEFONE_EXCLUIR,
+      p_rotulo: "Para excluir",
+      p_ativo: true,
+      p_confirmou_aviso_da_openai: true,
+    });
+    const { data: linha } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("phone_key", TELEFONE_EXCLUIR)
+      .single()
+      .throwOnError();
+    telefoneId = (linha as { id: string }).id;
+    const contato = await contatoCom(clinicaA, TELEFONE_EXCLUIR);
+    const { data: nova } = await admin
+      .from("conversation")
+      .insert({
+        clinic_id: clinicaA,
+        contact_id: contato,
+        whatsapp_account_id: numeroA,
+        status: "ia_atendendo",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    conversaExcluir = (nova as { id: string }).id;
+  });
+
+  it("gestor, recepcao, leitura, a outra clinica e anon: 42501, e o telefone fica", async () => {
+    for (const cliente of [
+      como("gestor-a"),
+      como("recepcao-a"),
+      como("leitura-a"),
+      como("admin-b"),
+      anonClient(),
+    ]) {
+      const { error } = await cliente.rpc("excluir_contato_liberado_da_ia", {
+        p_clinic_id: clinicaA,
+        p_contato_liberado_id: telefoneId,
+      });
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    // a B pela propria clinica, com o id da A: nada (false), sem erro
+    const { data: pelaB, error: erroDaB } = await como("admin-b").rpc(
+      "excluir_contato_liberado_da_ia",
+      { p_clinic_id: clinicaB, p_contato_liberado_id: telefoneId },
+    );
+    expect(erroDaB).toBeNull();
+    expect(pelaB).toBe(false);
+    const { data } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("id", telefoneId);
+    expect(data).toEqual([{ id: telefoneId }]);
+  });
+
+  it("o administrador da propria clinica exclui: a linha sai, a conversa do telefone volta para a equipe e a trilha fica no nome dele, sem o telefone", async () => {
+    const { data, error } = await como("admin-a").rpc(
+      "excluir_contato_liberado_da_ia",
+      { p_clinic_id: clinicaA, p_contato_liberado_id: telefoneId },
+    );
+    expect(error).toBeNull();
+    expect(data).toBe(true);
+    const { data: linha } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("id", telefoneId);
+    expect(linha).toEqual([]);
+    expect((await conversa(conversaExcluir)).status).toBe("aguardando_humano");
+    const { data: eventos } = await admin
+      .from("message")
+      .select("body")
+      .eq("conversation_id", conversaExcluir)
+      .eq("content_type", "evento")
+      .throwOnError();
+    expect(eventos).toEqual([
+      { body: "O assistente foi desligado. A conversa voltou para a equipe." },
+    ]);
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("user_id, entity, detalhes")
+      .eq("clinic_id", clinicaA)
+      .eq("action", "excluiu_telefone_da_ia")
+      .eq("entity_id", telefoneId)
+      .throwOnError();
+    expect(trilha).toEqual([
+      {
+        user_id: ids.get("admin-a"),
+        entity: "ia_contato_liberado",
+        detalhes: null,
+      },
+    ]);
+    // de novo: false, sem outra trilha
+    const { data: deNovo } = await como("admin-a").rpc(
+      "excluir_contato_liberado_da_ia",
+      { p_clinic_id: clinicaA, p_contato_liberado_id: telefoneId },
+    );
+    expect(deNovo).toBe(false);
   });
 });

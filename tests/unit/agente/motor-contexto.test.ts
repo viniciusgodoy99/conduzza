@@ -952,3 +952,85 @@ describe("ordem da leitura para o carimbo da publicação", () => {
     );
   });
 });
+
+// Onda 2: o publico na configuracao (item 4) e as especialidades no catalogo
+// (item 6). As colunas novas so entram nos selects com a migration
+// 20261022110000 aplicada (contrato, secao 7).
+describe("onda 2: público e especialidades", () => {
+  it("a configuração publicada e o rascunho leem publico_atendido (motor e sessão)", async () => {
+    const tabelas = {
+      ai_agent_config: [
+        linhaDaConfig({
+          clinic_id: CLINICA,
+          version: 3,
+          publico_atendido: "pacientes",
+        }),
+      ],
+      knowledge_item: [],
+    };
+    const { cliente, consultas } = bancoFalso(tabelas);
+    const publicada = await carregarConfigPublicada(cliente, CLINICA);
+    expect(publicada?.publico).toBe("pacientes");
+    const daConfig = consultas.filter((c) => c.tabela === "ai_agent_config");
+    expect(daConfig[0]?.colunas).toContain("publico_atendido");
+    expect(COLUNAS_DA_CONFIG_DO_AGENTE).toContain("publico_atendido");
+    // Sem a coluna na linha: nulo (ainda nao escolhido).
+    const semColuna = bancoFalso({
+      ai_agent_config: [linhaDaConfig({ clinic_id: CLINICA, version: 3 })],
+    });
+    expect(
+      (await carregarConfigPublicada(semColuna.cliente, CLINICA))?.publico,
+    ).toBeNull();
+  });
+
+  it("o catálogo lê as especialidades, saneadas; a descartada vai para o log só pela contagem", async () => {
+    const escritas: string[] = [];
+    const espiao = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((linha) => {
+        escritas.push(String(linha));
+        return true;
+      });
+    const PROF = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const SEM_VINCULO = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const { cliente, consultas } = bancoFalso({
+      professional: [
+        {
+          id: PROF,
+          clinic_id: CLINICA,
+          name: "Dra. Helena",
+          active: true,
+          specialties: ["Dermatologia", "Medicina da dor", "Ozempic"],
+        },
+        {
+          id: SEM_VINCULO,
+          clinic_id: CLINICA,
+          name: "Dr. Caio",
+          active: true,
+          specialties: ["Cardiologia"],
+        },
+      ],
+    });
+    const catalogo = await carregarCatalogoDoAgente(cliente, CLINICA);
+    espiao.mockRestore();
+    const doProfissional = consultas.find((c) => c.tabela === "professional");
+    expect(doProfissional?.colunas).toBe("id, name, active, specialties");
+    expect(catalogo.profissionais).toEqual([
+      { id: SEM_VINCULO, nome: "Dr. Caio", especialidades: ["Cardiologia"] },
+      { id: PROF, nome: "Dra. Helena", especialidades: ["Dermatologia"] },
+    ]);
+    expect(catalogo.especialidadesDescartadas).toBe(2);
+    const aviso = escritas.find((l) =>
+      l.includes('"evento":"agente_especialidade_descartada"'),
+    );
+    expect(aviso).toBeDefined();
+    const campos = JSON.parse(aviso ?? "{}") as Record<string, unknown>;
+    expect(campos).toMatchObject({ clinic_id: CLINICA, count: 2 });
+    expect(Object.keys(campos).sort()).toEqual(
+      ["clinic_id", "count", "evento", "nivel", "ts"].sort(),
+    );
+    // Nunca o texto da especialidade no log.
+    expect(escritas.join("")).not.toContain("Medicina da dor");
+    expect(escritas.join("")).not.toContain("Ozempic");
+  });
+});

@@ -87,22 +87,26 @@ test("abrir a URL da aba de WhatsApp já cai na aba certa", async ({ page }) => 
   await expect(principal.getByText("Principal", { exact: true })).toBeVisible();
 });
 
-// Aba Agente de IA (Fase 3): so existe na teste123 e na Conduzza Teste,
-// decidido no servidor. A clinica do e2e nao esta na lista: a aba nao
-// aparece, nem pela URL (?aba=ia cai na equipe, como aba desconhecida). O
-// lado positivo nao roda aqui (as duas clinicas sao reais); a renderizacao
-// da aba esta nos testes de unidade de components/configuracoes.
-test("a aba Agente de IA não existe fora das clínicas da fase controlada", async ({
+// Onda 2, item 8: a aba Agente de IA saiu de Configuracoes e mora na aba
+// WhatsApp da tela Agente de IA. O link antigo (?aba=ia) vai para la; a
+// clinica do e2e nao tem o agente habilitado, entao a Tela 6 mostra o vazio
+// de sempre. Configuracoes nao tem mais a aba nem o aviso (o aviso so
+// aparece nas clinicas com o agente). O lado positivo esta nos testes de
+// unidade (tests/unit/agente/whatsapp e
+// tests/unit/configuracoes/agente-foi-para-a-tela-6.test.tsx).
+test("o link antigo da aba Agente de IA leva à tela Agente de IA", async ({
   page,
 }) => {
   apenasDesktop();
   await login(page, dados().emails.admin);
   await page.goto("/configuracoes?aba=ia");
 
+  await expect(page).toHaveURL(/\/agente\?aba=whatsapp/);
   await expect(
-    page.getByRole("tab", { name: /^Equipe e permissões/ }),
-  ).toHaveAttribute("aria-selected", "true");
-  // contraprova: a fileira de abas esta la, terminando no Google
+    page.getByText("A recepcionista de IA ainda não está ligada nesta clínica"),
+  ).toBeVisible();
+
+  await page.goto("/configuracoes?aba=whatsapp");
   await expect(
     page.getByRole("tab", { name: "Anúncios do Google", exact: true }),
   ).toHaveCount(1);
@@ -111,6 +115,9 @@ test("a aba Agente de IA não existe fora das clínicas da fase controlada", asy
   ).toHaveCount(0);
   await expect(page.getByText("Assistente de IA nesta clínica")).toHaveCount(0);
   await expect(page.getByText("Interruptor geral")).toHaveCount(0);
+  await expect(
+    page.getByText("ficam agora na tela Agente de IA, aba WhatsApp"),
+  ).toHaveCount(0);
 });
 
 test("clínica desconectada vê o cartão do número com Conectar liberado", async ({

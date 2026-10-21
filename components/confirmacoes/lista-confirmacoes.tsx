@@ -37,9 +37,16 @@ import {
   CONSENT_STATUS,
   PATIENT_TAG,
 } from "@/lib/design/status";
+import {
+  DICA_CONSULTA_PENDENTE,
+  mudancaEsperaAprovacao,
+} from "@/lib/domain/appointment-status";
 import { temRiscoDeFalta } from "@/lib/domain/etiquetas";
 import type { ConsultaDaConfirmacao } from "@/lib/queries/confirmacoes";
-import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
+import {
+  estadoDoConfirmarManual,
+  STATUS_PENDENTES,
+} from "@/lib/queries/confirmacoes";
 import { cn } from "@/lib/utils";
 
 // Corpo da Tela 2: um cartao com a lista agrupada por profissional, em ordem
@@ -209,17 +216,24 @@ function Linha({
   // O paciente respondeu "Remarcar": ele JA respondeu, e perguntar de novo se
   // confirma o horario que ele quer trocar e a mensagem errada.
   const pediuRemarcacao = consulta.remarcacao_pedida_em !== null;
+  const confirmarManual = estadoDoConfirmarManual({
+    consulta,
+    podeEditar,
+    dicaSemPermissao,
+  });
   const semAutorizacao = consulta.consent_estado === "sem_autorizacao";
 
   const motivoSemCobranca = !podeEditar
     ? dicaSemPermissao
-    : consulta.consent_estado === "revogado"
-      ? "O paciente pediu para não receber mensagens no WhatsApp"
-      : !consulta.consent_ativo
-        ? "Sem autorização registrada para receber mensagens no WhatsApp"
-        : !consulta.send_confirmation
-          ? "A confirmação automática está desligada nesta consulta"
-          : null;
+    : mudancaEsperaAprovacao(consulta.approval_status, "aguardando_confirmacao")
+      ? DICA_CONSULTA_PENDENTE
+      : consulta.consent_estado === "revogado"
+        ? "O paciente pediu para não receber mensagens no WhatsApp"
+        : !consulta.consent_ativo
+          ? "Sem autorização registrada para receber mensagens no WhatsApp"
+          : !consulta.send_confirmation
+            ? "A confirmação automática está desligada nesta consulta"
+            : null;
 
   // Uma acao principal por linha, a que a situacao pede: manter o horario de
   // quem pediu para remarcar (R12), registrar a autorizacao de quem nunca foi
@@ -347,14 +361,8 @@ function Linha({
           icone={UserCheck}
           rotulo="Confirmar manualmente"
           onClick={() => onConfirmar(consulta)}
-          desabilitado={!podeEditar || !pendente || ocupado}
-          dica={
-            !podeEditar
-              ? dicaSemPermissao
-              : !pendente
-                ? "Esta consulta já saiu da fila de confirmação"
-                : "Confirmar manualmente"
-          }
+          desabilitado={confirmarManual.desabilitado || ocupado}
+          dica={confirmarManual.dica}
         />
         <AcaoDeLinha
           icone={MessageSquareText}

@@ -31,6 +31,7 @@
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
+import { problemaNoTextoDoAgente } from "@/lib/domain/agente/config";
 import {
   CATEGORIAS_CLINICAS,
   type CategoriaDeConformidade,
@@ -69,6 +70,18 @@ export type VinculoDoAgente = {
 
 /** Um profissional do indice: o codigo curto (r1, r2...) vai ao modelo. */
 export type ProfissionalDoIndice = { codigo: string; id: string; nome: string };
+
+/**
+ * Um profissional ATIVO da clinica (onda 2, item 6; decisao do dono P6a),
+ * com ou sem vinculo do agente, e as especialidades que podem ir ao modelo
+ * (especialidadesParaOAgente). Vai ao bloco <profissionais>: com vinculo,
+ * com o codigo do indice; sem vinculo, "marcação só com a equipe".
+ */
+export type ProfissionalDoCatalogo = {
+  id: string;
+  nome: string;
+  especialidades: string[];
+};
 
 export type ConvenioDoAgente = {
   id: string;
@@ -116,6 +129,19 @@ export type CatalogoDoAgente = {
    * (nomeDaClinicaParaOAgente).
    */
   nomeDaClinica: string | null;
+  /**
+   * Onda 2 (item 6, P6a): TODOS os profissionais ativos da clinica, por
+   * nome (e id), com as especialidades saneadas. Ausente (catalogo montado
+   * a mao) e o mesmo que nenhum: o bloco <profissionais> fica so com os do
+   * indice, sem especialidade.
+   */
+  profissionais?: ProfissionalDoCatalogo[];
+  /**
+   * Quantas especialidades ficaram de fora (texto que o filtro barraria,
+   * longo demais, vazio ou alem das 20 do profissional). So a contagem: vai
+   * para log.warn (contexto.ts), nunca o texto.
+   */
+  especialidadesDescartadas?: number;
 };
 
 export const CATALOGO_VAZIO: CatalogoDoAgente = {
@@ -214,7 +240,16 @@ export type LinhasDoCatalogo = {
     active: boolean;
     duration_min?: number | null;
   }[];
-  profissionais: readonly { id: string; name: string; active: boolean }[];
+  profissionais: readonly {
+    id: string;
+    name: string;
+    active: boolean;
+    /**
+     * professional.specialties (text[]). Opcional so para as linhas montadas
+     * a mao: sem ela, o profissional vai ao bloco sem especialidade.
+     */
+    specialties?: unknown;
+  }[];
   convenios: readonly {
     id: string;
     name: string;
@@ -236,6 +271,65 @@ export type LinhasDoCatalogo = {
 
 function porNome<T extends { nome: string; id: string }>(a: T, b: T): number {
   return a.nome.localeCompare(b.nome, "pt-BR") || a.id.localeCompare(b.id);
+}
+
+/** Especialidades por profissional que vao ao modelo (o Zod de Cadastros). */
+export const LIMITE_DE_ESPECIALIDADES = 20;
+/** Caracteres de uma especialidade (o Zod de Cadastros: de 2 a 60). */
+export const LIMITE_DA_ESPECIALIDADE = 60;
+
+/**
+ * As especialidades de um profissional que podem ir ao modelo (onda 2, item
+ * 6): cada uma numa linha so, sem sinal de bloco ("<", ">", marcador duplo)
+ * e aparada. Fica de fora, e conta em `descartadas`, a que nao e texto, a
+ * vazia, a com mais de 60 caracteres, a que as regras do filtro de saida
+ * barrariam (problemaNoTextoDoAgente: "Medicina da dor", "Emagrecimento
+ * garantido", nome de remedio) e a que passa das 20. A repetida (sem
+ * diferenciar maiusculas e acentos) entra uma vez, sem contar. Valor que nao
+ * e lista: nenhuma. Nunca lanca; a contagem vai para log (contexto.ts), o
+ * texto nunca.
+ */
+export function especialidadesParaOAgente(valor: unknown): {
+  especialidades: string[];
+  descartadas: number;
+} {
+  if (!Array.isArray(valor)) {
+    return { especialidades: [], descartadas: 0 };
+  }
+  const especialidades: string[] = [];
+  const vistas = new Set<string>();
+  let descartadas = 0;
+  for (const item of valor) {
+    if (typeof item !== "string") {
+      descartadas += 1;
+      continue;
+    }
+    const limpa = item
+      .replace(/[\r\n\u2028\u2029\u0085\v\f]+/g, " ")
+      .replace(/<{2,}|>{2,}/g, " ")
+      .replace(/[<>]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (
+      limpa === "" ||
+      Array.from(limpa).length > LIMITE_DA_ESPECIALIDADE ||
+      problemaNoTextoDoAgente(limpa, "resposta") !== null
+    ) {
+      descartadas += 1;
+      continue;
+    }
+    const chave = normalizarBase(limpa);
+    if (vistas.has(chave)) {
+      continue;
+    }
+    if (especialidades.length >= LIMITE_DE_ESPECIALIDADES) {
+      descartadas += 1;
+      continue;
+    }
+    vistas.add(chave);
+    especialidades.push(limpa);
+  }
+  return { especialidades, descartadas };
 }
 
 /**
@@ -341,6 +435,19 @@ export function montarCatalogoDoAgente(
         ]
       : [],
   );
+  // Onda 2 (item 6, P6a): todos os profissionais ativos, com e sem vinculo
+  // do agente, e as especialidades saneadas (as descartadas so contam).
+  let especialidadesDescartadas = 0;
+  const profissionaisDoCatalogo: ProfissionalDoCatalogo[] = linhas.profissionais
+    .filter((p) => p.active && p.name.trim() !== "")
+    .map((p) => {
+      const { especialidades, descartadas } = especialidadesParaOAgente(
+        p.specialties,
+      );
+      especialidadesDescartadas += descartadas;
+      return { id: p.id, nome: p.name.trim(), especialidades };
+    })
+    .sort(porNome);
   return {
     procedimentos,
     vinculos: vinculos.sort(
@@ -355,6 +462,8 @@ export function montarCatalogoDoAgente(
       .sort(porNome),
     conveniosDoCadastro: [...convenios.values()].sort(porNome),
     nomeDaClinica: nomeDaClinicaParaOAgente(linhas.clinica?.name),
+    profissionais: profissionaisDoCatalogo,
+    especialidadesDescartadas,
   };
 }
 
@@ -407,8 +516,15 @@ const TITULO_DO_PROFISSIONAL =
 function nomesDosProfissionais(catalogo: CatalogoDoAgente): string[] {
   const nomes = new Set<string>();
   const vistos = new Set<string>();
-  for (const v of catalogo.vinculos) {
-    const nome = v.profissional.replace(/\s+/g, " ").trim();
+  // Onda 2 (item 6): o bloco <profissionais> traz tambem os ativos sem
+  // vinculo do agente ("marcação só com a equipe"), entao o nome deles entra
+  // na mascara pelas mesmas regras.
+  const todos = [
+    ...catalogo.vinculos.map((v) => v.profissional),
+    ...(catalogo.profissionais ?? []).map((p) => p.nome),
+  ];
+  for (const bruto of todos) {
+    const nome = bruto.replace(/\s+/g, " ").trim();
     if (nome === "" || vistos.has(nome)) {
       continue;
     }
@@ -429,8 +545,10 @@ function nomesDosProfissionais(catalogo: CatalogoDoAgente): string[] {
  * Nomes do catalogo que o filtro de saida mascara antes dos padroes
  * (nomesDoCatalogo): o nome da clinica (Q7), os procedimentos, os
  * profissionais (Q11: "A Prostota custa R$ 500,00 com a Dra. Maria das
- * Dores." nao e triagem) e os convenios, com o plano. Todos os convenios
- * ativos do Cadastro: a busca pode citar qualquer plano da operadora.
+ * Dores." nao e triagem; desde a onda 2, todos os ativos, com e sem vinculo
+ * do agente), as especialidades deles (onda 2, item 6) e os convenios, com o
+ * plano. Todos os convenios ativos do Cadastro: a busca pode citar qualquer
+ * plano da operadora.
  * Promessa, oferta casada e antes e depois continuam rodando tambem sem a
  * mascara (filtro-deterministico.ts).
  */
@@ -444,6 +562,13 @@ export function nomesDoCatalogo(catalogo: CatalogoDoAgente): string[] {
   }
   for (const nome of nomesDosProfissionais(catalogo)) {
     nomes.add(nome);
+  }
+  // Onda 2 (item 6): as especialidades do bloco <profissionais> (ja
+  // saneadas: so as que passam nas regras do filtro).
+  for (const profissional of catalogo.profissionais ?? []) {
+    for (const especialidade of profissional.especialidades) {
+      nomes.add(especialidade);
+    }
   }
   for (const c of conveniosConhecidos(catalogo)) {
     nomes.add(c.nome);

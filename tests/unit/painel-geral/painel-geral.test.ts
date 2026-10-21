@@ -1,10 +1,14 @@
 import {
+  BadgeX,
   CircleAlert,
   CircleCheck,
+  CircleDashed,
   CirclePause,
+  CircleX,
   FlaskConical,
   Hourglass,
   OctagonPause,
+  RadioTower,
   TriangleAlert,
 } from "lucide-react";
 import { describe, expect, it } from "vitest";
@@ -14,11 +18,26 @@ import {
   LIGADO_DESLIGADO_STATUS,
   NUMERO_DO_ASSISTENTE_STATUS,
   TELEFONE_DA_EQUIPE_STATUS,
-} from "@/components/configuracoes/agente-de-ia";
+} from "@/components/agente/whatsapp/agente-de-ia";
 import {
   AGENTE_DA_CLINICA_STATUS,
   agenteDaClinicaSchema,
   apoioDoAgente,
+  efeitoDeRevogar,
+  ESCOPO_DO_REQUISITO,
+  evidenciaValida,
+  detalheDoRequisito,
+  linhasDosRequisitos,
+  producaoLiberada,
+  publicoDosRequisitos,
+  publicoNoDialogo,
+  registrarRequisitoSchema,
+  REQUISITO_STATUS,
+  REQUISITOS_DA_EQUIPE,
+  requisitosDoHint,
+  revogarRequisitoSchema,
+  rotuloDoRequisito,
+  versaoMudouDepoisDaRodada,
   contaDaClinicaSchema,
   dolares,
   dolaresParaCampo,
@@ -61,7 +80,11 @@ import {
   WHATSAPP_CONNECTION_STATUS,
   type StatusDefinition,
 } from "@/lib/design/status";
-import type { ClinicaNoPainel } from "@/lib/queries/painel-geral";
+import type {
+  ClinicaNoPainel,
+  RegistroDoRequisito,
+  RequisitoConferido,
+} from "@/lib/queries/painel-geral";
 
 // Regras puras do Painel geral (onda 1): os status em 3 camadas sem
 // repetir icone em outra cor, o gasto contra o teto, os formatos (dolar e
@@ -137,6 +160,7 @@ const MAPAS_DO_PAINEL = {
   SITUACAO_DA_CONTA_STATUS,
   AGENTE_DA_CLINICA_STATUS,
   GASTO_STATUS,
+  REQUISITO_STATUS,
 };
 
 const DO_PAINEL: StatusDefinition[] = Object.values(MAPAS_DO_PAINEL).flatMap(
@@ -182,6 +206,25 @@ describe("status do painel em 3 camadas", () => {
     });
     expect(IA_NA_CLINICA_STATUS.simulador.icon).toBe(FlaskConical);
     expect(IA_NA_CLINICA_STATUS.simulador.tone).toBe("info");
+    // Onda 2: a producao, o mesmo par do "Atendendo os contatos" da Tela 6
+    expect(AGENTE_DA_CLINICA_STATUS.producao).toEqual({
+      label: "Produção",
+      tone: "success",
+      icon: RadioTower,
+    });
+    expect(IA_NA_CLINICA_STATUS.producao.icon).toBe(RadioTower);
+  });
+
+  it("requisito: Cumprido, Falta e Revogado; o CircleX fica só com o Cancelado pelo paciente", () => {
+    expect(REQUISITO_STATUS).toEqual({
+      cumprido: { label: "Cumprido", tone: "success", icon: CircleCheck },
+      falta: { label: "Falta", tone: "neutral", icon: CircleDashed },
+      revogado: { label: "Revogado", tone: "alert", icon: BadgeX },
+    });
+    const comX = [...MAPAS_DO_PRODUTO, ...DO_PAINEL].filter(
+      (definicao) => definicao.icon === CircleX,
+    );
+    expect(comX).toEqual([APPOINTMENT_STATUS.cancelado_paciente]);
   });
 
   it("gasto: perto do teto é atenção (CircleAlert) e teto atingido é pendência (Hourglass)", () => {
@@ -339,8 +382,12 @@ describe("busca e filtros", () => {
         params({ busca: "aurora", situacao: "suspensa", agente: "teste" }),
       ),
     ).toEqual({ busca: "aurora", situacao: "suspensa", agente: "teste" });
+    // Onda 2: o agente em producao e filtro de verdade
+    expect(lerFiltrosDoPainel(params({ agente: "producao" })).agente).toBe(
+      "producao",
+    );
     expect(
-      lerFiltrosDoPainel(params({ situacao: "apagada", agente: "producao" })),
+      lerFiltrosDoPainel(params({ situacao: "apagada", agente: "ligado" })),
     ).toEqual(FILTROS_PADRAO);
     expect(
       lerFiltrosDoPainel(params({ busca: "x".repeat(200) })).busca,
@@ -414,12 +461,25 @@ describe("entradas das ações", () => {
     ).toBe(false);
   });
 
-  it("agente: desligado, teste ou produção (a ação recusa a produção)", () => {
-    for (const estado of ["desligado", "teste", "producao"]) {
+  it("agente: desligado, teste ou produção; a produção com motivo obrigatório (onda 2)", () => {
+    for (const estado of ["desligado", "teste"]) {
       expect(
         agenteDaClinicaSchema.safeParse({ clinicId: ID_A, estado }).success,
       ).toBe(true);
     }
+    const producao = (motivo?: string) =>
+      agenteDaClinicaSchema.safeParse({
+        clinicId: ID_A,
+        estado: "producao",
+        ...(motivo === undefined ? {} : { motivo }),
+      });
+    expect(producao().success).toBe(false);
+    expect(producao("  ab  ").success).toBe(false);
+    expect(producao().error?.issues[0]?.message).toBe(
+      TEXTOS_DO_PAINEL.motivoCurto,
+    );
+    expect(producao("Requisitos conferidos").success).toBe(true);
+    expect(producao("x".repeat(301)).success).toBe(false);
     expect(
       agenteDaClinicaSchema.safeParse({ clinicId: ID_A, estado: "ligado" })
         .success,
@@ -480,8 +540,13 @@ describe("entradas das ações", () => {
 });
 
 describe("textos do painel", () => {
+  // As funcoes de texto entram com um exemplo.
   const todos = Object.values(TEXTOS_DO_PAINEL).flatMap((valor) =>
-    Array.isArray(valor) ? valor : [valor],
+    Array.isArray(valor)
+      ? valor
+      : typeof valor === "function"
+        ? [(valor as (...args: string[]) => string)("exemplo", "exemplo")]
+        : [valor],
   ) as string[];
 
   it("sem travessão e sem jargão de programador", () => {
@@ -508,5 +573,361 @@ describe("textos do painel", () => {
     expect(efeitos).toContain("param de enviar");
     expect(efeitos).toContain("continuam chegando");
     expect(efeitos).toContain("Nenhum dado é apagado");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Onda 2 (item 11): a produção e os requisitos
+// ---------------------------------------------------------------------------
+
+describe("onda 2: apoio do agente na lista", () => {
+  it("em produção: Atendendo os contatos; a pausa e o desligar da clínica valem também", () => {
+    const emProducao = (campos: Partial<ClinicaNoPainel["agente"]> = {}) =>
+      clinica({
+        agente: {
+          estado: "producao",
+          modo: "numero_inteiro",
+          liberada: true,
+          pausadaPelaClinica: false,
+          telefonesLigados: 1,
+          ...campos,
+        },
+      });
+    expect(apoioDoAgente(emProducao())).toBe("Atendendo os contatos");
+    expect(apoioDoAgente(emProducao({ pausadaPelaClinica: true }))).toBe(
+      "Pausado pela clínica",
+    );
+    expect(apoioDoAgente(emProducao({ liberada: false }))).toBe(
+      "Desligado pela clínica",
+    );
+    expect(apoioDoAgente(clinica())).toBeNull();
+  });
+});
+
+describe("onda 2: requisitos da produção", () => {
+  const REGISTRO = "e1111111-1111-4111-8111-111111111111";
+  const OUTRO_REGISTRO = "e2222222-2222-4222-8222-222222222222";
+
+  const NADA_CONFERIDO: RequisitoConferido["conferido"] = {
+    estado: null,
+    versao: null,
+    publico: null,
+    modo: null,
+    conectados: null,
+  };
+
+  /** Um requisito como lerRequisitosDoBanco devolve. */
+  function conferido(
+    chave: string,
+    ok: boolean,
+    campos: Partial<Omit<RequisitoConferido, "chave" | "ok">> = {},
+  ): RequisitoConferido {
+    return {
+      chave,
+      ok,
+      origem: "banco",
+      registro: null,
+      conferido: NADA_CONFERIDO,
+      ...campos,
+    };
+  }
+
+  function registro(
+    campos: Partial<RegistroDoRequisito> = {},
+  ): RegistroDoRequisito {
+    return {
+      id: REGISTRO,
+      revogado: false,
+      evidencia: "Rodada de 21/10. Filtro regras-1 portao-2, modelo gpt-6-luna",
+      registradoEm: "2026-10-21T12:00:00.000Z",
+      geral: true,
+      revogadoEm: null,
+      motivoDaRevogacao: null,
+      ...campos,
+    };
+  }
+
+  const revogadoDoBanco = registro({
+    id: OUTRO_REGISTRO,
+    revogado: true,
+    evidencia: null,
+    registradoEm: null,
+    geral: null,
+    revogadoEm: "2026-10-21T15:00:00.000Z",
+    motivoDaRevogacao: "Contrato vencido",
+  });
+
+  it("as linhas: cumprido pelo ok do banco; revogado com o último revogado e sem vivo; falta no resto", () => {
+    const linhas = linhasDosRequisitos({
+      estado: "lido",
+      conferidos: [
+        conferido("versao_publicada", true, {
+          conferido: { ...NADA_CONFERIDO, versao: 3 },
+        }),
+        conferido("rodada_cfm", false, {
+          origem: "equipe",
+          registro: revogadoDoBanco,
+        }),
+        conferido("contrato_openai", false, { origem: "equipe" }),
+        conferido("termo_da_clinica", true, {
+          origem: "equipe",
+          registro: registro({ geral: false }),
+        }),
+      ],
+    });
+    expect(linhas.map((linha) => [linha.chave, linha.estado])).toEqual([
+      ["versao_publicada", "cumprido"],
+      ["rodada_cfm", "revogado"],
+      ["contrato_openai", "falta"],
+      ["termo_da_clinica", "cumprido"],
+    ]);
+    expect(linhas.map((linha) => linha.daEquipe)).toEqual([
+      false,
+      true,
+      true,
+      true,
+    ]);
+    expect(linhas[3]?.vivo?.id).toBe(REGISTRO);
+    expect(linhas[3]?.revogado).toBeNull();
+    expect(linhas[1]?.vivo).toBeNull();
+    expect(linhas[1]?.revogado?.motivoDaRevogacao).toBe("Contrato vencido");
+    expect(linhas[0]?.detalhe).toBe("Versão 3 publicada.");
+    expect(linhas[2]?.detalhe).toBeNull();
+  });
+
+  it("as linhas: só registra quem é da equipe pelo banco E pela tela; ok que não é verdadeiro é falta", () => {
+    const linhas = linhasDosRequisitos({
+      estado: "lido",
+      conferidos: [
+        // o banco diz equipe, a tela nao conhece a chave: sem Registrar
+        conferido("chave_nova", false, { origem: "equipe" }),
+        // chave da equipe que o banco diz conferir: sem Registrar
+        conferido("rodada_cfm", false),
+      ],
+    });
+    expect(linhas.map((linha) => linha.daEquipe)).toEqual([false, false]);
+    expect(linhas.map((linha) => linha.estado)).toEqual(["falta", "falta"]);
+    expect(linhas[0]?.rotulo).toBe("Outro requisito do banco");
+  });
+
+  it("o detalhe do que o banco conferiu, em texto de recepção", () => {
+    const viu = (chave: string, campos: Partial<typeof NADA_CONFERIDO>) =>
+      detalheDoRequisito(
+        conferido(chave, false, {
+          conferido: { ...NADA_CONFERIDO, ...campos },
+        }),
+      );
+    expect(viu("agente_em_teste", { estado: "desligado" })).toBe(
+      "Agora: Desligado.",
+    );
+    expect(viu("agente_em_teste", { estado: "teste" })).toBe("Agora: Teste.");
+    expect(viu("agente_em_teste", { estado: "constructor" })).toBeNull();
+    expect(viu("versao_publicada", { versao: 4 })).toBe("Versão 4 publicada.");
+    expect(viu("versao_publicada", {})).toBe("Nenhuma versão publicada ainda.");
+    expect(viu("publico_escolhido", { publico: "leads" })).toBe("Só leads.");
+    expect(viu("publico_escolhido", { publico: "todos" })).toBe(
+      "Leads e pacientes.",
+    );
+    expect(viu("publico_escolhido", {})).toBe(
+      "Ainda não escolhido na versão publicada.",
+    );
+    expect(viu("horario_suportado", { modo: "fallback" })).toBe(
+      "Se a equipe não responder.",
+    );
+    expect(viu("horario_suportado", { modo: "24h" })).toBe("24 horas.");
+    expect(viu("horario_suportado", { modo: "toString" })).toBeNull();
+    expect(viu("numero_conectado", { conectados: 0 })).toBe(
+      "Nenhum número ligado e conectado.",
+    );
+    expect(viu("numero_conectado", { conectados: 3 })).toBe(
+      "3 números ligados e conectados.",
+    );
+    expect(viu("numero_conectado", { conectados: 1 })).toBe(
+      "1 número ligado e conectado.",
+    );
+    expect(viu("numero_conectado", {})).toBeNull();
+    expect(viu("conta_ativa", {})).toBeNull();
+    expect(viu("rodada_cfm", {})).toBeNull();
+  });
+
+  it("a produção só libera com todos cumpridos (falha fechada)", () => {
+    const lido = (oks: boolean[]) => ({
+      estado: "lido" as const,
+      conferidos: oks.map((ok, indice) => conferido(`chave_${indice}`, ok)),
+    });
+    expect(producaoLiberada(lido([true, true]))).toBe(true);
+    expect(producaoLiberada(lido([true, false]))).toBe(false);
+    expect(producaoLiberada(lido([]))).toBe(false);
+    expect(producaoLiberada({ estado: "indisponivel" })).toBe(false);
+    expect(producaoLiberada("erro")).toBe(false);
+  });
+
+  it("o público da versão publicada vem do requisito publico_escolhido", () => {
+    expect(
+      publicoDosRequisitos({
+        estado: "lido",
+        conferidos: [
+          conferido("publico_escolhido", true, {
+            conferido: { ...NADA_CONFERIDO, publico: "pacientes" },
+          }),
+        ],
+      }),
+    ).toBe("pacientes");
+    expect(
+      publicoDosRequisitos({
+        estado: "lido",
+        conferidos: [conferido("publico_escolhido", false)],
+      }),
+    ).toBeNull();
+    expect(publicoDosRequisitos({ estado: "lido", conferidos: [] })).toBeNull();
+    expect(publicoDosRequisitos({ estado: "indisponivel" })).toBeNull();
+    expect(publicoDosRequisitos("erro")).toBeNull();
+  });
+
+  it("P11e: a rodada registrada fala de outra versão do filtro ou do modelo: avisa", () => {
+    const linhas = linhasDosRequisitos({
+      estado: "lido",
+      conferidos: [
+        conferido("rodada_cfm", true, {
+          origem: "equipe",
+          registro: registro(),
+        }),
+      ],
+    });
+    expect(
+      versaoMudouDepoisDaRodada(linhas, {
+        filtro: "regras-1 portao-2",
+        modelo: "gpt-6-luna",
+      }),
+    ).toBe(false);
+    expect(
+      versaoMudouDepoisDaRodada(linhas, {
+        filtro: "regras-9 portao-2",
+        modelo: "gpt-6-luna",
+      }),
+    ).toBe(true);
+    expect(
+      versaoMudouDepoisDaRodada(linhas, {
+        filtro: "regras-1 portao-2",
+        modelo: "gpt-6.1-sol",
+      }),
+    ).toBe(true);
+    // sem versoes, sem a rodada viva (so a revogada) ou sem linhas: nada a avisar
+    expect(versaoMudouDepoisDaRodada(linhas, null)).toBe(false);
+    expect(
+      versaoMudouDepoisDaRodada(
+        linhasDosRequisitos({
+          estado: "lido",
+          conferidos: [
+            conferido("rodada_cfm", false, {
+              origem: "equipe",
+              registro: revogadoDoBanco,
+            }),
+          ],
+        }),
+        { filtro: "x", modelo: "y" },
+      ),
+    ).toBe(false);
+    expect(versaoMudouDepoisDaRodada([], { filtro: "x", modelo: "y" })).toBe(
+      false,
+    );
+  });
+
+  it("os da equipe Conduzza: o termo é por clínica; os outros valem para todas (P11d)", () => {
+    expect([...REQUISITOS_DA_EQUIPE]).toEqual([
+      "rodada_cfm",
+      "contrato_openai",
+      "aviso_assistente_virtual",
+      "termo_da_clinica",
+      "transcricao_com_nossa_chave",
+    ]);
+    expect(ESCOPO_DO_REQUISITO.termo_da_clinica).toBe("clinica");
+    expect(ESCOPO_DO_REQUISITO.rodada_cfm).toBe("todas");
+    expect(ESCOPO_DO_REQUISITO.transcricao_com_nossa_chave).toBe("todas");
+  });
+
+  // Revisao da onda 2: revogar o termo de uma clinica em producao a tira
+  // da producao na hora (o banco volta para Teste); a confirmacao dessa
+  // acao perigosa diz o efeito real.
+  it("o efeito de revogar: o que vale para todas, o da clínica em produção e o da clínica fora dela", () => {
+    expect(efeitoDeRevogar({ valeParaTodas: true, emProducao: false })).toBe(
+      TEXTOS_DO_PAINEL.revogarTodasEfeito,
+    );
+    expect(efeitoDeRevogar({ valeParaTodas: true, emProducao: true })).toBe(
+      TEXTOS_DO_PAINEL.revogarTodasEfeito,
+    );
+    expect(efeitoDeRevogar({ valeParaTodas: false, emProducao: false })).toBe(
+      "Sem este requisito, a produção não liga nesta clínica.",
+    );
+    const emProducao = efeitoDeRevogar({ valeParaTodas: false, emProducao: true });
+    expect(emProducao).toBe(TEXTOS_DO_PAINEL.revogarDaClinicaEmProducaoEfeito);
+    expect(emProducao).toContain("volta para Teste na hora");
+    expect(emProducao).toContain("sem mensagem ao paciente");
+    expect(emProducao).not.toMatch(/[–—]/);
+  });
+
+  it("os nomes dos requisitos; chave desconhecida (ou do protótipo) vira um nome neutro", () => {
+    expect(rotuloDoRequisito("rodada_cfm")).toBe(
+      "Rodada paga de conferência do CFM",
+    );
+    expect(rotuloDoRequisito("chave_nova")).toBe("Outro requisito do banco");
+    expect(rotuloDoRequisito("constructor")).toBe("Outro requisito do banco");
+  });
+
+  it("o hint de requisitos_pendentes vira a lista em nomes", () => {
+    expect(requisitosDoHint("rodada_cfm, publico_escolhido")).toEqual([
+      "Rodada paga de conferência do CFM",
+      "Público escolhido em Regras e limites",
+    ]);
+    expect(requisitosDoHint("constructor toString")).toBeNull();
+    expect(requisitosDoHint(null)).toBeNull();
+    expect(requisitosDoHint("")).toBeNull();
+  });
+
+  it("o público no diálogo da produção", () => {
+    expect(publicoNoDialogo("leads")).toBe("aos leads");
+    expect(publicoNoDialogo("pacientes")).toBe("aos pacientes");
+    expect(publicoNoDialogo("todos")).toBe("aos leads e aos pacientes");
+    expect(publicoNoDialogo(null)).toBeNull();
+    expect(publicoNoDialogo("outro")).toBeNull();
+    expect(TEXTOS_DO_PAINEL.efeitoDaProducao("aos leads")).toBe(
+      "O assistente passa a responder aos leads que escreverem para os números ligados. Os telefones da equipe continuam valendo.",
+    );
+  });
+
+  it("registrar e revogar: entradas estritas, evidência de 3 a 500 e motivo de 3 a 300", () => {
+    expect(evidenciaValida("ab")).toBe(false);
+    expect(evidenciaValida(" abc ")).toBe(true);
+    expect(evidenciaValida("x".repeat(501))).toBe(false);
+    expect(
+      registrarRequisitoSchema.safeParse({
+        clinicId: ID_A,
+        chave: "rodada_cfm",
+        evidencia: "Rodada de 21/10",
+      }).success,
+    ).toBe(true);
+    // so as chaves da equipe; as do banco nao se registram
+    expect(
+      registrarRequisitoSchema.safeParse({
+        clinicId: ID_A,
+        chave: "versao_publicada",
+        evidencia: "Rodada de 21/10",
+      }).success,
+    ).toBe(false);
+    expect(
+      revogarRequisitoSchema.safeParse({
+        clinicId: ID_A,
+        id: REGISTRO,
+        motivo: "ok",
+      }).success,
+    ).toBe(false);
+    expect(
+      revogarRequisitoSchema.safeParse({
+        clinicId: ID_A,
+        id: REGISTRO,
+        motivo: "Contrato vencido",
+        extra: 1,
+      }).success,
+    ).toBe(false);
   });
 });

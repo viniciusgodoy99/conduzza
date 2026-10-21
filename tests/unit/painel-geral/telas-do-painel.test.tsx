@@ -23,16 +23,20 @@ vi.mock("@/app/(app)/painel-geral/actions", () => ({
   reativarClinicaAction: vi.fn(),
   definirAgenteDaClinicaAction: vi.fn(),
   definirTetoDaIaAction: vi.fn(),
+  registrarRequisitoDaProducaoAction: vi.fn(),
+  revogarRequisitoDaProducaoAction: vi.fn(),
+  definirInterruptorGeralAction: vi.fn(),
 }));
-vi.mock("@/app/(app)/configuracoes/ia-liberacao-actions", () => ({
+vi.mock("@/app/(app)/agente/whatsapp-actions", () => ({
   adicionarTelefoneDaIaAction: vi.fn(),
   alternarNumeroDaIaAction: vi.fn(),
   alternarTelefoneDaIaAction: vi.fn(),
   definirEscolhaDaIaAction: vi.fn(),
-  definirInterruptorGeralAction: vi.fn(),
+  definirPausaDaIaAction: vi.fn(),
+  excluirTelefoneDaIaAction: vi.fn(),
 }));
 
-import type { ContextoDaIa } from "@/components/configuracoes/agente-de-ia";
+import type { ContextoDaIa } from "@/components/agente/whatsapp/agente-de-ia";
 import {
   AgenteDaClinica,
   textoDoAgenteMudou,
@@ -47,6 +51,7 @@ import {
   textoDaEquipe,
 } from "@/components/painel-geral/equipe-da-clinica";
 import { ErroDoPainel } from "@/components/painel-geral/erro-do-painel";
+import { InterruptorGeral } from "@/components/painel-geral/interruptor-geral";
 import { GastoDaIa } from "@/components/painel-geral/gasto-da-ia";
 import { ListaDoPainel } from "@/components/painel-geral/lista-do-painel";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
@@ -235,7 +240,7 @@ describe("lista do painel", () => {
 });
 
 describe("totais e erro", () => {
-  it("os seis totais do topo", () => {
+  it("os sete totais do topo (a produção chega na onda 2)", () => {
     const saida = html(
       <TotaisDoPainel
         totais={{
@@ -243,6 +248,7 @@ describe("totais e erro", () => {
           ativas: 10,
           suspensas: 2,
           agenteEmTeste: 3,
+          agenteEmProducao: 1,
           gasto24hCentavos: 1234,
           gastoMesCentavos: 98765,
         }}
@@ -253,6 +259,7 @@ describe("totais e erro", () => {
       "Ativas",
       "Suspensas",
       "Agente em teste",
+      "Agente em produção",
       "Gasto de IA em 24 horas",
       "Gasto de IA no mês",
     ]) {
@@ -261,6 +268,7 @@ describe("totais e erro", () => {
     expect(saida).toContain("US$ 12,34");
     expect(saida).toContain("US$ 987,65");
     expect(saida).toContain("lucide-octagon-pause");
+    expect(saida).toContain("lucide-radio-tower");
   });
 
   it("erro de leitura: o texto e o Tentar de novo, nunca zero", () => {
@@ -384,12 +392,16 @@ describe("agente da clínica", () => {
         suspensa={false}
         tetoDiarioCentavos={500}
         contexto={null}
+        requisitos={{ estado: "indisponivel" }}
+        publicoPublicado={null}
       />,
     );
     expect(saida).toContain('aria-label="Agente de IA desta clínica"');
+    // A descricao do cartao tambem fala da Producao: o botao e o do
+    // segmentado.
     const producao = saida.slice(
-      saida.lastIndexOf("<button", saida.indexOf("Produção")),
-      saida.indexOf("Produção"),
+      saida.lastIndexOf("<button", saida.indexOf(">Produção<")),
+      saida.indexOf(">Produção<"),
     );
     expect(producao).toContain('disabled=""');
     expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.dicaDaProducao));
@@ -407,6 +419,8 @@ describe("agente da clínica", () => {
         suspensa={false}
         tetoDiarioCentavos={500}
         contexto={contexto()}
+        requisitos={{ estado: "indisponivel" }}
+        publicoPublicado={null}
       />,
     );
     expect(verde).toContain("Na clínica agora");
@@ -424,13 +438,19 @@ describe("agente da clínica", () => {
         contexto={contexto({
           dados: dadosDaIa({ interruptorLigado: false }),
         })}
+        requisitos={{ estado: "indisponivel" }}
+        publicoPublicado={null}
       />,
     );
     expect(chip(parado, "Ligado, mas parado")).toContain("lucide-hourglass");
     // Para a equipe Conduzza, o motivo diz o que conferir e onde fica o
-    // interruptor (o cartao dele e da aba de Configuracoes, nao do painel).
-    expect(parado).toContain(escapado(TEXTOS_DO_PAINEL.interruptorNoPainel));
-    expect(parado).not.toContain("Ligue no cartão Interruptor geral.");
+    // interruptor (onda 2, P8: no topo do Painel geral).
+    expect(parado).toContain(
+      escapado(
+        "O interruptor geral está desligado. Ele fica no topo do Painel geral.",
+      ),
+    );
+    expect(parado).not.toContain("Configurações");
   });
 
   it("leitura que falhou: não deu para conferir, nunca o verde", () => {
@@ -442,6 +462,8 @@ describe("agente da clínica", () => {
         suspensa={false}
         tetoDiarioCentavos={500}
         contexto={null}
+        requisitos={{ estado: "indisponivel" }}
+        publicoPublicado={null}
       />,
     );
     expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.agenteSemLeitura));
@@ -457,6 +479,8 @@ describe("agente da clínica", () => {
         suspensa
         tetoDiarioCentavos={null}
         contexto={null}
+        requisitos={{ estado: "indisponivel" }}
+        publicoPublicado={null}
       />,
     );
     const teste = saida.slice(
@@ -476,6 +500,8 @@ describe("agente da clínica", () => {
         suspensa
         tetoDiarioCentavos={null}
         contexto={contexto()}
+        requisitos={{ estado: "indisponivel" }}
+        publicoPublicado={null}
       />,
     );
     expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.agenteComContaSuspensa));
@@ -490,6 +516,9 @@ describe("agente da clínica", () => {
     );
     expect(textoDoAgenteMudou("Aurora", "desligado")).toBe(
       "Agente da Aurora desligado.",
+    );
+    expect(textoDoAgenteMudou("Aurora", "producao")).toBe(
+      "Agente da Aurora em produção.",
     );
   });
 });
@@ -594,11 +623,12 @@ describe("números e telefones do agente no modo do painel", () => {
         dados={dadosDaIa()}
         numeros={[numeroDoPainel()]}
         finais={{ [NUMERO]: "0000" }}
-        agenteEmTeste
+        agenteHabilitado
         suspensa={false}
         ambienteLigado
         agoraMs={Date.parse(AGORA)}
         fuso="America/Fortaleza"
+        telefonesForcados={[]}
         {...campos}
       />,
     );
@@ -659,7 +689,7 @@ describe("números e telefones do agente no modo do painel", () => {
   });
 
   it("agente desligado na clínica: tudo visível e desabilitado, com a dica", () => {
-    const saida = cartoes({ agenteEmTeste: false });
+    const saida = cartoes({ agenteHabilitado: false });
     expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.ligueOAgenteAntes));
     const adicionar = saida.slice(
       saida.lastIndexOf("<button", saida.indexOf(">Adicionar<")),
@@ -700,6 +730,8 @@ describe("nenhum travessão nas telas", () => {
           suspensa
           tetoDiarioCentavos={500}
           contexto={contexto()}
+          requisitos={{ estado: "indisponivel" }}
+          publicoPublicado={null}
         />,
       ),
       html(<TetoDaIa clinicId={ID_A} tetos={null} />),
@@ -708,5 +740,61 @@ describe("nenhum travessão nas telas", () => {
     for (const tela of telas) {
       expect(tela).not.toMatch(/[—–]/);
     }
+  });
+});
+
+describe("interruptor geral no topo do painel (onda 2, P8)", () => {
+  it("ligado: o chip e o Desligar; desligado: o Ligar (com confirmação)", () => {
+    const ligado = html(<InterruptorGeral ligado />);
+    expect(ligado).toContain("Interruptor geral");
+    expect(chip(ligado, "Ligado")).toContain("lucide-circle-check");
+    expect(ligado).toContain("Desligar o interruptor geral</button>");
+    const desligado = html(<InterruptorGeral ligado={false} />);
+    expect(chip(desligado, "Desligado")).toContain("lucide-circle-pause");
+    expect(desligado).toContain("Ligar o interruptor geral</button>");
+    // o dialogo so abre no clique
+    expect(desligado).not.toContain(TEXTOS_DO_PAINEL.interruptorLigarTitulo);
+    expect(desligado).toContain(escapado(TEXTOS_DO_PAINEL.interruptorEfeito));
+  });
+
+  it("leitura que falhou: o aviso, sem estado inventado nem botão", () => {
+    const saida = html(<InterruptorGeral ligado={null} />);
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.interruptorSemLeitura));
+    expect(saida).not.toContain("o interruptor geral</button>");
+    expect(saida).not.toMatch(/[—–]/);
+  });
+});
+
+describe("agente em produção no painel (onda 2, item 11)", () => {
+  it("a lista mostra Produção em 3 camadas, com o apoio Atendendo os contatos", () => {
+    const saida = html(
+      <ListaDoPainel
+        clinicas={[
+          clinica({
+            agente: {
+              estado: "producao",
+              modo: "numero_inteiro",
+              liberada: true,
+              pausadaPelaClinica: false,
+              telefonesLigados: 1,
+            },
+          }),
+        ]}
+        agoraIso={AGORA}
+      />,
+    );
+    expect(chip(saida, "Produção")).toContain("lucide-radio-tower");
+    expect(saida).toContain("Atendendo os contatos");
+    expect(saida).toContain(">Agente em produção<");
+  });
+
+  it("o diálogo da produção pede o motivo e diz a quem o assistente passa a responder", () => {
+    // O dialogo so abre no clique; aqui, os textos que ele usa.
+    expect(
+      TEXTOS_DO_PAINEL.efeitoDaProducao("aos leads e aos pacientes"),
+    ).toContain("aos leads e aos pacientes que escreverem");
+    expect(TEXTOS_DO_PAINEL.regraDoMotivoDaProducao).toContain(
+      "Obrigatório, de 3 a 300 caracteres",
+    );
   });
 });

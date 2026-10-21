@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
 // visivel: o radio nativo continua la (sr-only), recebe o foco e as setas do
 // teclado, e o anel de foco aparece no cartao inteiro. Escolhido pela
 // receita "Selecionado" da 4.7 (lime suave com borda lime-700) e com o
-// negrito no rotulo: a escolha nunca depende so da cor.
+// negrito no rotulo: a escolha nunca depende so da cor. Valor nulo (onda 2,
+// "Quem o assistente atende" ainda nao escolhido): nenhum cartao marcado.
 
 export type OpcaoDeCartao<T extends string> = {
   valor: T;
@@ -33,7 +34,8 @@ export function CartoesDeEscolha<T extends string>({
   nome: string;
   rotuloDoGrupo: string;
   opcoes: readonly OpcaoDeCartao<T>[];
-  valor: T;
+  /** Nulo: nada escolhido ainda (nenhum cartao marcado). */
+  valor: T | null;
   aoEscolher: (valor: T) => void;
   desabilitado?: boolean;
   className?: string;

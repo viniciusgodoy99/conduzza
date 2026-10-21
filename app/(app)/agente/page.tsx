@@ -4,7 +4,12 @@ import { redirect } from "next/navigation";
 import { PainelDoAgente } from "@/components/agente/painel-do-agente";
 import { TEXTOS_DO_AGENTE } from "@/components/agente/textos";
 import type { DadosDoPainel, VersaoDoAgente } from "@/components/agente/tipos";
-import { versaoEmUsoNoWhatsapp } from "@/components/configuracoes/agente-de-ia";
+import { versaoEmUsoNoWhatsapp } from "@/components/agente/whatsapp/agente-de-ia";
+import {
+  AbaWhatsapp,
+  AbaWhatsappDaRecepcao,
+  type DadosDaAbaWhatsapp,
+} from "@/components/agente/whatsapp/agente-de-ia-tab";
 import { AvisoCelular } from "@/components/shared/aviso-celular";
 import {
   situacaoDaConexao,
@@ -38,7 +43,7 @@ import { createClient } from "@/lib/supabase/server";
 // Agente de IA (Tela 6). So existe nas clinicas com o agente habilitado
 // (desde a onda 1, a lista do banco que o super admin muda pelo Painel
 // geral; antes, teste123 e Conduzza Teste fixas), decidido AQUI no servidor
-// pela mesma lista da aba de Configuracoes (abaDaIaVisivel): nas outras, a
+// pela mesma lista das acoes da aba WhatsApp (abaDaIaVisivel): nas outras, a
 // tela continua o vazio honesto de antes (achado 111) e nada do agente e
 // lido nem vai para o cliente. A guarda de papel mora no layout
 // (profissional e leitura vao para o Inicio).
@@ -60,6 +65,14 @@ import { createClient } from "@/lib/supabase/server";
 // do foco (scroll-padding-bottom so enquanto o painel esta na tela): o
 // controle focado pelo teclado nunca fica escondido atras dele (WCAG 2.4.11,
 // achado 32).
+//
+// Onda 2, item 8 (decisao do dono de 20/10/2026): a aba WhatsApp (o modo, os
+// numeros, os telefones da equipe, a pausa e o limite de gasto) mora aqui,
+// e nao mais em Configuracoes. Para administrador, gestor e super admin, a
+// pagina le pela SESSAO a liberacao, os numeros ativos e os telefones
+// forcados (a RLS so entrega a quem configura), monta a aba no servidor e
+// decide com as MESMAS leituras o "Em uso no WhatsApp" do rodape (D39). A
+// recepcao recebe so a linha de quem cuida, sem leitura nenhuma.
 
 // O simulador roda o turno do agente dentro da Server Action desta rota
 // (lib/agente/laco.ts: ate 45 s de turno, mais o filtro), e a action herda
@@ -91,56 +104,132 @@ function Vazio() {
   );
 }
 
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/** Leitura que lanca, ou volta erro, vira nulo (a parte mostra o erro dela). */
+async function ouNulo<T>(tarefa: () => Promise<T>): Promise<T | null> {
+  try {
+    return await tarefa();
+  } catch {
+    return null;
+  }
+}
+
 /**
- * A versao publicada esta mesmo em uso no WhatsApp (D39)? A mesma regra da
- * aba Agente de IA de Configuracoes (versaoEmUsoNoWhatsapp): so o estado
- * "equipe", sem nenhum motivo de parada e com tudo conferido. Qualquer
- * leitura que falha (inclusive a da liberacao, que a RLS so mostra a
- * administrador e gestor) diz que nao: a tela fica com "Última publicada",
- * nunca afirma o que nao conferiu. A lista de numeros que falha vai como
- * nula, como na aba ("Não deu para conferir agora" la, fora de uso aqui).
+ * Os numeros ATIVOS da clinica, o principal primeiro (a ordem da aba
+ * WhatsApp de Configuracoes). Nulo: a leitura falhou (a aba diz que nao deu
+ * para conferir a conexao, nunca "nenhum numero").
  */
-async function emUsoNoWhatsapp(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+async function lerNumeros(
+  supabase: Supabase,
+  clinicId: string,
+): Promise<NumeroDoWhatsapp[] | null> {
+  const { data, error } = await supabase
+    .from("whatsapp_account")
+    .select(
+      "id, nome, principal, unit_id, connection_status, display_phone, connected_at, provider, cor",
+    )
+    .eq("clinic_id", clinicId)
+    .is("removido_em", null)
+    .order("principal", { ascending: false })
+    .order("created_at", { ascending: true });
+  if (error) {
+    return null;
+  }
+  return (
+    (data ?? []) as {
+      id: string;
+      nome: string;
+      principal: boolean;
+      unit_id: string | null;
+      connection_status: string | null;
+      display_phone: string | null;
+      connected_at: string | null;
+      provider: string | null;
+      cor: string | null;
+    }[]
+  ).map((numero) => ({
+    id: numero.id,
+    nome: numero.nome,
+    principal: numero.principal,
+    unitId: numero.unit_id,
+    displayPhone: numero.display_phone,
+    status: situacaoDaConexao(numero.connection_status),
+    connectedAt: numero.connected_at,
+    provider: numero.provider,
+    cor: corDoNumero(numero.cor),
+  }));
+}
+
+/**
+ * Os ids dos telefones da equipe usados mesmo sendo de paciente (o forcado;
+ * a coluna e legivel por quem le a lista). So para o dialogo de excluir
+ * avisar que voltar pede a confirmacao de novo. Nulo: a leitura falhou.
+ */
+async function lerTelefonesForcados(
+  supabase: Supabase,
+  clinicId: string,
+): Promise<string[] | null> {
+  const { data, error } = await supabase
+    .from("ia_contato_liberado")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .eq("forcado", true);
+  if (error) {
+    return null;
+  }
+  return ((data ?? []) as { id: string }[]).map((linha) => linha.id);
+}
+
+/**
+ * A aba WhatsApp para quem le a liberacao (administrador, gestor e super
+ * admin): a liberacao (obrigatoria: sem ela, o erro da aba), os numeros e os
+ * forcados (cada um com o proprio erro) e o ambiente (T1 e T2). Nunca lanca.
+ */
+async function lerAbaWhatsapp(
+  supabase: Supabase,
   clinicId: string,
   fuso: string,
-): Promise<boolean> {
-  // As duas leituras viram promessas antes do Promise.all: um erro sincrono
-  // numa delas nao deixa a outra rejeitar sem ninguem ouvir.
-  const lerNumeros = async () =>
-    supabase
-      .from("whatsapp_account")
-      .select(
-        "id, nome, principal, unit_id, connection_status, display_phone, connected_at, provider, cor",
-      )
-      .eq("clinic_id", clinicId)
-      .is("removido_em", null);
+  podeEditar: boolean,
+  superAdmin: boolean,
+): Promise<DadosDaAbaWhatsapp> {
+  const [dados, numeros, forcados, config] = await Promise.all([
+    ouNulo(() => fetchLiberacaoDaIa(supabase, clinicId)),
+    ouNulo(() => lerNumeros(supabase, clinicId)),
+    ouNulo(() => lerTelefonesForcados(supabase, clinicId)),
+    // A mesma lista da guarda da pagina (cache da requisicao).
+    configDaIaDaRequisicao(),
+  ]);
+  return {
+    dados,
+    numeros,
+    ambienteLigado: iaLiberadaNoAmbiente(config, clinicId),
+    podeEditar,
+    superAdmin,
+    agoraMs: Date.now(),
+    fuso,
+    telefonesForcados: forcados,
+  };
+}
+
+/**
+ * A versao publicada esta mesmo em uso no WhatsApp (D39)? A mesma regra da
+ * aba WhatsApp (versaoEmUsoNoWhatsapp), com as MESMAS leituras: so o estado
+ * verde (equipe ou producao), sem nenhum motivo de parada e com tudo
+ * conferido. Qualquer leitura que falha diz que nao: a tela fica com
+ * "Última publicada", nunca afirma o que nao conferiu.
+ */
+function emUsoNoWhatsapp(aba: DadosDaAbaWhatsapp): boolean {
+  if (aba.dados === null) {
+    return false;
+  }
   try {
-    const [dados, numeros, config] = await Promise.all([
-      fetchLiberacaoDaIa(supabase, clinicId),
-      lerNumeros(),
-      // A mesma lista da guarda da pagina (cache da requisicao).
-      configDaIaDaRequisicao(),
-    ]);
-    const ativos: NumeroDoWhatsapp[] | null = numeros.error
-      ? null
-      : (numeros.data ?? []).map((numero) => ({
-          id: numero.id,
-          nome: numero.nome,
-          principal: numero.principal,
-          unitId: numero.unit_id,
-          displayPhone: numero.display_phone,
-          status: situacaoDaConexao(numero.connection_status),
-          connectedAt: numero.connected_at,
-          provider: numero.provider,
-          cor: corDoNumero(numero.cor),
-        }));
     return versaoEmUsoNoWhatsapp({
-      dados,
-      numeros: ativos,
-      ambienteLigado: iaLiberadaNoAmbiente(config, clinicId),
-      agoraMs: Date.now(),
-      fuso,
+      dados: aba.dados,
+      numeros: aba.numeros,
+      ambienteLigado: aba.ambienteLigado,
+      agoraMs: aba.agoraMs,
+      fuso: aba.fuso,
     });
   } catch {
     return false;
@@ -203,7 +292,7 @@ export default async function AgentePage({
   const podeEditar = superAdmin || canEdit(active.role, "agente");
 
   const supabase = await createClient();
-  const [lido, versoes, extras, motivo, emUso] = await Promise.all([
+  const [lido, versoes, extras, motivo, abaWhatsapp] = await Promise.all([
     seguro(
       fetchConfigDoAgente(supabase, clinicId, { lerInstrucoes: superAdmin }),
     ),
@@ -218,12 +307,20 @@ export default async function AgentePage({
     }),
     // A recepcao nao usa o simulador: nem se confere.
     podeEditar ? motivoDoSimulador(clinicId) : Promise.resolve(null),
-    // "Em uso no WhatsApp" (D39): a RLS da liberacao so mostra a quem
-    // configura; para a recepcao, nem se pergunta.
+    // A aba WhatsApp e o "Em uso no WhatsApp" (D39): a RLS da liberacao so
+    // mostra a quem configura; para a recepcao, nem se pergunta. Na aba, so
+    // o administrador da clinica e o super admin mudam (o gestor ve).
     podeEditar
-      ? emUsoNoWhatsapp(supabase, clinicId, active.timezone)
-      : Promise.resolve(false),
+      ? lerAbaWhatsapp(
+          supabase,
+          clinicId,
+          active.timezone,
+          superAdmin || active.role === "admin",
+          superAdmin,
+        )
+      : Promise.resolve(null),
   ]);
+  const emUso = abaWhatsapp ? emUsoNoWhatsapp(abaWhatsapp) : false;
 
   if (lido === null) {
     return casca(
@@ -277,5 +374,17 @@ export default async function AgentePage({
     emUsoNoWhatsapp: emUso,
   };
 
-  return cascaDoPainel(<PainelDoAgente dados={dados} abaInicial={aba} />);
+  return cascaDoPainel(
+    <PainelDoAgente
+      dados={dados}
+      abaInicial={aba}
+      abaWhatsapp={
+        abaWhatsapp ? (
+          <AbaWhatsapp {...abaWhatsapp} />
+        ) : (
+          <AbaWhatsappDaRecepcao />
+        )
+      }
+    />,
+  );
 }

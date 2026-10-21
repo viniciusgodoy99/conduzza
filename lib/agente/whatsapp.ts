@@ -41,13 +41,32 @@ export const PRAZO_DA_TRAVA_MS = 3_000;
 // Janela da conversa
 // ---------------------------------------------------------------------------
 
+/**
+ * Como a janela abriu (ia_janela_da_conversa.aberta_por): 'ingestao'
+ * (conversa nova), 'devolver' (o Devolver da equipe) ou 'horario' (onda 2:
+ * a conversa que esperou o horario do assistente e voltou para ele). Valor
+ * que o codigo nao conhece vira 'desconhecida' (onda 2, contrato 4.1). So a
+ * 'ingestao' le a conversa inteira; todas as outras, 'desconhecida'
+ * inclusive, leem so a partir do `desde` (falha fechada: a IA nunca le o
+ * que veio antes de a conversa entrar nela).
+ */
+export type AberturaDaJanela =
+  "ingestao" | "devolver" | "horario" | "desconhecida";
+
+/** aberta_por do banco para AberturaDaJanela; desconhecido nunca e 'ingestao'. */
+export function aberturaDaJanela(valor: unknown): AberturaDaJanela {
+  return valor === "ingestao" || valor === "devolver" || valor === "horario"
+    ? valor
+    : "desconhecida";
+}
+
 export type JanelaDaConversa = {
   conversationId: string;
   clinicId: string;
   contactId: string;
   phoneKey: string;
   desde: string;
-  abertaPor: "ingestao" | "devolver";
+  abertaPor: AberturaDaJanela;
 };
 
 type LinhaDaJanela = {
@@ -86,7 +105,7 @@ export async function lerJanela(
     contactId: linha.contact_id,
     phoneKey: linha.phone_key,
     desde: linha.desde,
-    abertaPor: linha.aberta_por === "devolver" ? "devolver" : "ingestao",
+    abertaPor: aberturaDaJanela(linha.aberta_por),
   };
 }
 
@@ -660,14 +679,18 @@ export type DecisaoParaGravar = {
 /**
  * O tool_used de ai_decision_log (texto livre, uma ferramenta): a que mais
  * pesa no turno. Efeito na agenda primeiro (marcou, confirmou presenca,
- * reservou), depois a passagem pelo agente, depois a consulta (horario,
- * preco). Sem a lista, o preco sai da trilha, como antes do E4.
+ * reservou), depois a passagem pelo agente, depois as frases fixas (onda 2:
+ * fora do assunto e "você é um robô?"; a contagem do fora do assunto na
+ * janela le este campo), depois a consulta (horario, preco). Sem a lista, o
+ * preco sai da trilha, como antes do E4.
  */
 const PESO_DA_FERRAMENTA: readonly string[] = [
   "agendar",
   "confirmar_presenca",
   "reservar_horario",
   "escalar_humano",
+  "fora_do_assunto",
+  "sou_assistente_virtual",
   "buscar_horario",
   "buscar_procedimento",
 ];
@@ -937,6 +960,31 @@ export async function respostasDaIaDesde(
     .eq("clinic_id", e.clinicId)
     .eq("conversation_id", e.conversationId)
     .eq("author", "ia")
+    .gte("created_at", e.desdeIso);
+  if (error || typeof count !== "number") {
+    throw new ErroComCodigoDeJob("leitura_falhou");
+  }
+  return count;
+}
+
+/**
+ * Onda 2 (item 5, P5b): quantas vezes a IA ja respondeu fora do assunto na
+ * janela da conversa: as decisoes 'respondeu' com tool_used fora_do_assunto
+ * da conversa desde o `desde` da janela (a insistencia so conta dentro da
+ * janela: depois de Assumir e Devolver, conta de novo). Lanca
+ * ErroComCodigoDeJob na leitura que falha (o job tenta de novo).
+ */
+export async function foraDoAssuntoNaJanela(
+  admin: SupabaseClient,
+  e: { clinicId: string; conversationId: string; desdeIso: string },
+): Promise<number> {
+  const { count, error } = await admin
+    .from("ai_decision_log")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", e.clinicId)
+    .eq("conversation_id", e.conversationId)
+    .eq("desfecho", "respondeu")
+    .eq("tool_used", "fora_do_assunto")
     .gte("created_at", e.desdeIso);
   if (error || typeof count !== "number") {
     throw new ErroComCodigoDeJob("leitura_falhou");

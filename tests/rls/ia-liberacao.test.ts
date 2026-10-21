@@ -53,6 +53,17 @@ import { adminClient, anonClient } from "./stack";
 //     seed) passa, porque o servidor e guardado por ia_atende_no_whatsapp e
 //     ia_pode_falar_com ao enfileirar, antes do modelo e antes do envio;
 //   - clinic.e_de_teste: so a equipe do Conduzza muda (42501 para o admin);
+//   - onda 2 (migrations 20261022110000 e 20261022120000): o forcar do
+//     administrador sem a confirmacao do teste da 23514 (P3); excluir
+//     telefone: o pendente e o administrador de clinica fora da lista
+//     recebem 42501; numero_inteiro (todos os contatos) e recusado fora da
+//     producao ate para a service role (a F, so dentro do teste, sai de
+//     teste e entra em teste do agente pelo painel); definir_pausa_da_ia:
+//     o administrador da propria clinica pausa e retoma (trilha no nome
+//     dele, conversas do assistente de volta para a equipe), gestor,
+//     recepcao, leitura, pendente, outra clinica e anon recebem 42501.
+//     ESCRITO NA ONDA 2 E NAO RODADO por quem escreveu (grava no banco):
+//     quem roda e o coordenador, DEPOIS de aplicar as migrations.
 //   - ai_agent_config e knowledge_item: membro ativo le; admin e gestor
 //     escrevem a base e editam o rascunho (que so nasce pela RPC: nenhuma
 //     sessao cria nem apaga versao); a versao publicada nao muda nem sai; a
@@ -913,8 +924,9 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
 
     // telefone (decisao do dono de 19/10/2026, migration 20261019100000):
     // o administrador liga sem o nono digito (gravado pela chave canonica)
-    // e desliga; o forcar dele continua 42501 (so a equipe Conduzza), mesmo
-    // sem sinal de paciente
+    // e desliga; o forcar dele sem a confirmacao do teste com paciente da
+    // 23514 (onda 2, P3, migration 20261022110000), mesmo sem sinal de
+    // paciente, e nada muda
     await ok(
       adminA,
       "definir_contato_liberado_da_ia",
@@ -929,13 +941,17 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       },
       true,
     );
-    await negado("definir_contato_liberado_da_ia", {
-      p_clinic_id: clinicaA,
-      p_telefone_e164: TELEFONE_DO_ADMIN,
-      p_rotulo: "",
-      p_ativo: true,
-      p_forcar_contato_existente: true,
-    });
+    {
+      const { error } = await adminA.rpc("definir_contato_liberado_da_ia", {
+        p_clinic_id: clinicaA,
+        p_telefone_e164: TELEFONE_DO_ADMIN,
+        p_rotulo: "",
+        p_ativo: true,
+        p_forcar_contato_existente: true,
+      });
+      expect(error?.code).toBe("23514");
+      expect(error?.message).toBe("teste_com_paciente_nao_confirmado");
+    }
     await ok(
       adminA,
       "definir_contato_liberado_da_ia",
@@ -1506,5 +1522,164 @@ describe("knowledge_item: base de conhecimento", () => {
       .single()
       .throwOnError();
     expect(final).toEqual({ answer: "Sim, gratuito." });
+  });
+});
+
+describe("onda 2: excluir telefone, numero_inteiro fora da producao e a pausa", () => {
+  it("excluir telefone: o pendente e o administrador de outra clinica recebem 42501", async () => {
+    const { data: linha } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("clinic_id", clinicaA)
+      .eq("phone_key", TELEFONE_DA_EQUIPE)
+      .single()
+      .throwOnError();
+    const telefoneId = (linha as { id: string }).id;
+    for (const apelido of ["pendente-a", "admin-b", "admin-f"] as const) {
+      const { error } = await como(apelido).rpc(
+        "excluir_contato_liberado_da_ia",
+        { p_clinic_id: clinicaA, p_contato_liberado_id: telefoneId },
+      );
+      expect(error?.code, apelido).toBe(PERMISSAO_NEGADA);
+    }
+    const { data } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("id", telefoneId);
+    expect(data).toEqual([{ id: telefoneId }]);
+  });
+
+  it("numero_inteiro fora da producao: 42501 ate para a service role (a F em teste do agente, so durante o teste)", async () => {
+    await foraDeTeste(async () => {
+      try {
+        // A F entra em teste do agente pelo caminho do painel (o servidor).
+        const { error: emTeste } = await admin.rpc(
+          "definir_agente_da_clinica",
+          {
+            p_clinic_id: clinicaF,
+            p_estado: "teste",
+            p_motivo: "teste de RLS da onda 2",
+          },
+        );
+        expect(emTeste).toBeNull();
+        const { error: pelaRpc } = await admin.rpc("definir_liberacao_da_ia", {
+          p_clinic_id: clinicaF,
+          p_liberada: true,
+          p_modo: "numero_inteiro",
+          p_motivo: "teste de RLS da onda 2",
+        });
+        expect(pelaRpc?.code).toBe(PERMISSAO_NEGADA);
+        expect(pelaRpc?.message).toBe("Esta clínica não está em produção.");
+        const { error: direto } = await admin
+          .from("ia_liberacao")
+          .update({ modo: "numero_inteiro" })
+          .eq("clinic_id", clinicaF);
+        expect(direto?.code).toBe(PERMISSAO_NEGADA);
+        // o administrador nem chega na trava (ligar e da equipe Conduzza)
+        const { error: doAdmin } = await como("admin-f").rpc(
+          "definir_liberacao_da_ia",
+          {
+            p_clinic_id: clinicaF,
+            p_liberada: true,
+            p_modo: "numero_inteiro",
+          },
+        );
+        expect(doAdmin?.code).toBe(PERMISSAO_NEGADA);
+        // producao pela sessao do administrador: 42501; pelo servidor, com
+        // requisito faltando, P0001 requisitos_pendentes
+        const { error: producaoDoAdmin } = await como("admin-f").rpc(
+          "definir_agente_da_clinica",
+          {
+            p_clinic_id: clinicaF,
+            p_estado: "producao",
+            p_motivo: "teste de RLS da onda 2",
+          },
+        );
+        expect(producaoDoAdmin?.code).toBe(PERMISSAO_NEGADA);
+        const { error: producao } = await admin.rpc(
+          "definir_agente_da_clinica",
+          {
+            p_clinic_id: clinicaF,
+            p_estado: "producao",
+            p_motivo: "teste de RLS da onda 2",
+          },
+        );
+        expect(producao?.code).toBe(REGRA_DO_BANCO);
+        expect(producao?.message).toBe("requisitos_pendentes");
+        const { data: modo } = await admin
+          .from("ia_liberacao")
+          .select("modo")
+          .eq("clinic_id", clinicaF)
+          .single()
+          .throwOnError();
+        expect(modo).toEqual({ modo: "contatos" });
+      } finally {
+        await admin.rpc("definir_agente_da_clinica", {
+          p_clinic_id: clinicaF,
+          p_estado: "desligado",
+          p_motivo: "limpeza do teste de RLS da onda 2",
+        });
+      }
+    });
+  });
+
+  it("definir_pausa_da_ia: o administrador da propria clinica pausa e retoma; os outros papeis e anon recebem 42501", async () => {
+    for (const cliente of [
+      como("gestor-a"),
+      como("recepcao-a"),
+      como("leitura-a"),
+      como("pendente-a"),
+      como("admin-b"),
+      anonClient(),
+    ]) {
+      const { error } = await cliente.rpc("definir_pausa_da_ia", {
+        p_clinic_id: clinicaA,
+        p_pausada: true,
+        p_motivo: "Pausa de teste",
+      });
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    const lerPausa = async () => {
+      const { data } = await admin
+        .from("ia_liberacao")
+        .select("pausada_pela_clinica")
+        .eq("clinic_id", clinicaA)
+        .single()
+        .throwOnError();
+      return (data as { pausada_pela_clinica: boolean }).pausada_pela_clinica;
+    };
+    expect(await lerPausa()).toBe(false);
+    const adminA = como("admin-a");
+    const pausa = await adminA.rpc("definir_pausa_da_ia", {
+      p_clinic_id: clinicaA,
+      p_pausada: true,
+      p_motivo: "Pausa de teste",
+    });
+    expect(pausa.error).toBeNull();
+    expect(pausa.data).toBe(true);
+    expect(await lerPausa()).toBe(true);
+    const retoma = await adminA.rpc("definir_pausa_da_ia", {
+      p_clinic_id: clinicaA,
+      p_pausada: false,
+      p_motivo: null,
+    });
+    expect(retoma.error).toBeNull();
+    expect(retoma.data).toBe(false);
+    expect(await lerPausa()).toBe(false);
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("action, user_id, detalhes")
+      .eq("clinic_id", clinicaA)
+      .in("action", ["pausou_a_ia", "retomou_a_ia"])
+      .order("id")
+      .throwOnError();
+    expect(trilha).toEqual([
+      {
+        action: "pausou_a_ia",
+        user_id: ids.get("admin-a"),
+        detalhes: { motivo: "Pausa de teste" },
+      },
+      { action: "retomou_a_ia", user_id: ids.get("admin-a"), detalhes: null },
+    ]);
   });
 });

@@ -195,6 +195,16 @@ beforeEach(() => {
 });
 
 describe("menu da consulta: qual pendência é qual", () => {
+  // Revisao da onda 2: a pendente cancelada pelo paciente nao mostra
+  // Aprovar nem Recusar (ja conta como recusada).
+  it("a consulta da IA cancelada pelo paciente não tem Aprovar nem Recusar", () => {
+    const html = render({ ...DA_IA, status: "cancelado_paciente" } as Consulta);
+    expect(html).not.toContain(rotulosDaPendenciaNoMenu(true).aprovar);
+    expect(html).not.toContain(rotulosDaPendenciaNoMenu(true).recusar);
+    expect(html).not.toContain(rotulosDaPendenciaNoMenu(true).grupo);
+    expect(render(DA_IA)).toContain(rotulosDaPendenciaNoMenu(true).aprovar);
+  });
+
   it("a consulta que a IA marcou não é encaixe", () => {
     const html = render(DA_IA);
     expect(html).toContain("Consulta marcada pela IA");
@@ -345,5 +355,63 @@ describe("menu da consulta: cancelar a pendência da IA conta como recusar", () 
         approval_status: null,
       }),
     ).toBe(false);
+  });
+});
+
+// Onda 2, item 10 (decisoes do dono P10a e P10b): a consulta que espera
+// aprovacao so aprova, recusa ou cancela. As outras situacoes ficam
+// visiveis e desabilitadas, com a dica da acao (DICA_CONSULTA_PENDENTE)
+// escrita uma vez embaixo de "Mudar situação". Cancelar continua liberado.
+describe("menu da consulta: a pendente só aprova, recusa ou cancela", () => {
+  const DICA_PENDENTE =
+    "Esta consulta ainda espera aprovação. Aprove ou recuse antes de mudar a situação.";
+
+  function vezes(html: string, trecho: string): number {
+    return html.split(trecho).length - 1;
+  }
+
+  it("as situações que não são cancelamento ficam desabilitadas, com a dica uma vez", () => {
+    const html = render(DA_IA);
+    for (const rotulo of [
+      "Aguardando",
+      "Confirmado pela recepção",
+      "Na recepção",
+      "Compareceu",
+      "Faltou",
+    ]) {
+      expect(item(html, rotulo), rotulo).toContain('aria-disabled="true"');
+    }
+    for (const rotulo of [
+      "Cancelado pelo paciente",
+      "Cancelado pela clínica",
+    ]) {
+      expect(item(html, rotulo), rotulo).not.toContain("aria-disabled");
+    }
+    expect(vezes(html, DICA_PENDENTE)).toBe(1);
+    // aprovar e recusar continuam com quem edita
+    expect(item(html, "Aprovar consulta")).not.toContain("aria-disabled");
+  });
+
+  it("o encaixe pendente segue a mesma regra (P10a)", () => {
+    const html = render(ENCAIXE);
+    expect(item(html, "Na recepção")).toContain('aria-disabled="true"');
+    expect(item(html, "Cancelado pela clínica")).not.toContain("aria-disabled");
+    expect(vezes(html, DICA_PENDENTE)).toBe(1);
+  });
+
+  it("aprovada ou sem aprovação: nada muda e a dica não aparece", () => {
+    for (const aprovacao of ["aprovado", null] as const) {
+      const html = render({ ...DA_IA, approval_status: aprovacao } as Consulta);
+      expect(item(html, "Na recepção")).not.toContain("aria-disabled");
+      expect(item(html, "Aguardando")).not.toContain("aria-disabled");
+      expect(html).not.toContain(DICA_PENDENTE);
+    }
+  });
+
+  it("a dica é a mesma da ação e não tem travessão", async () => {
+    const { DICA_CONSULTA_PENDENTE } =
+      await import("@/lib/domain/appointment-status");
+    expect(DICA_CONSULTA_PENDENTE).toBe(DICA_PENDENTE);
+    expect(DICA_PENDENTE).not.toMatch(/[—–]/);
   });
 });

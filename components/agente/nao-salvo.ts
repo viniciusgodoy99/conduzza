@@ -12,12 +12,15 @@ import { ABAS_DO_AGENTE, type AbaDoAgente } from "@/components/agente/textos";
 // E4 (20/10/2026): a aba Regras e limites tem dois formularios, o horario
 // ("regras") e os limites para marcar consulta ("agenda"), cada um com o
 // proprio Salvar. Cada um avisa e remonta sozinho; a lista do publicar diz a
-// aba uma vez so (abasNaoSalvas).
+// aba uma vez so (abasNaoSalvas). Onda 2 (item 4): o terceiro, "Quem o
+// assistente atende" ("publico"), na mesma aba. A aba WhatsApp grava na
+// hora, fora do rascunho: nao tem formulario aqui.
 
 /** Os formularios com Salvar (Habilidades grava no toque, sem Salvar). */
 export const FORMULARIOS_DO_AGENTE = [
   "persona",
   "conhecimento",
+  "publico",
   "regras",
   "agenda",
   "instrucoes",
@@ -36,6 +39,7 @@ export type GeracaoDosFormularios = Record<FormularioDoAgente, number>;
 export const NADA_NAO_SALVO: EstadoNaoSalvo = {
   persona: false,
   conhecimento: false,
+  publico: false,
   regras: false,
   agenda: false,
   instrucoes: false,
@@ -44,15 +48,20 @@ export const NADA_NAO_SALVO: EstadoNaoSalvo = {
 export const GERACAO_INICIAL: GeracaoDosFormularios = {
   persona: 0,
   conhecimento: 0,
+  publico: 0,
   regras: 0,
   agenda: 0,
   instrucoes: 0,
 };
 
-/** A aba de cada formulario: o horario e a agenda moram em Regras e limites. */
+/**
+ * A aba de cada formulario: o publico, o horario e a agenda moram em Regras
+ * e limites.
+ */
 const ABA_DO_FORMULARIO: Readonly<Record<FormularioDoAgente, AbaDoAgente>> = {
   persona: "persona",
   conhecimento: "conhecimento",
+  publico: "regras",
   regras: "regras",
   agenda: "regras",
   instrucoes: "instrucoes",

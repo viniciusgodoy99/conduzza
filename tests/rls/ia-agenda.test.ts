@@ -25,6 +25,12 @@ import { adminClient, anonClient } from "./stack";
 //     servidor devolvem a conversa e gravam o evento; anon, leitura, o
 //     profissional de outra agenda e a outra clinica recebem 42501 e nada
 //     muda; a clinica A nao devolve a consulta da B.
+//   - onda 2 (migration 20261022100000, M1): a consulta pendente nao
+//     converte o lead; aprovar pela sessao (recepcao) converte; recusar nao;
+//     a sessao nao muda o status de uma pendente para confirmar, chegar,
+//     atender, compareceu ou falta (23514 consulta_pendente), cancelar
+//     passa; a B nao le nem aprova a consulta da A. ESCRITO NA ONDA 2 E NAO
+//     RODADO por quem escreveu: roda depois de aplicar a migration.
 // Toda negacao tem o caso positivo ao lado (anti falso positivo).
 //
 // ESCRITO NA E4 E NAO RODADO por quem escreveu: grava no banco. Quem roda e
@@ -813,5 +819,141 @@ describe("devolver_conversa_da_consulta_recusada: quem escreve na clínica", () 
       awaiting_reply: true,
       eventos: [EVENTO_DA_RECUSA],
     });
+  });
+});
+
+describe("onda 2 (M1): conversao so na aprovacao", () => {
+  // Depois de amanha, a tarde, na agenda do Dr. Dois (fora dos horarios
+  // dos outros testes): cada consulta num horario proprio.
+  const depois = new Date(Date.now() + 2 * 24 * 60 * 60_000)
+    .toISOString()
+    .slice(0, 10);
+  const horario = (hora: string) => ({
+    starts_at: new Date(`${depois}T${hora}:00-03:00`).toISOString(),
+    ends_at: new Date(`${depois}T${hora}:30-03:00`).toISOString(),
+  });
+
+  async function contatoLead(final: string): Promise<string> {
+    return inserir("contact", {
+      clinic_id: clinicaA,
+      phone_e164: `+55849${digitos}${final}`,
+      name: `Contato sintético ${final}`,
+    });
+  }
+
+  async function pendente(contato: string, hora: string): Promise<string> {
+    return inserir("appointment", {
+      clinic_id: clinicaA,
+      contact_id: contato,
+      professional_id: p2,
+      service_link_id: l2,
+      ...horario(hora),
+      status: "agendado",
+      created_by: "ia",
+      approval_status: "pendente",
+      send_confirmation: false,
+    });
+  }
+
+  async function kindDe(contato: string): Promise<string> {
+    const { data } = await admin
+      .from("contact")
+      .select("kind")
+      .eq("id", contato)
+      .single()
+      .throwOnError();
+    return (data as { kind: string }).kind;
+  }
+
+  it("a pendente nao converte; aprovar pela recepcao converte; recusar nao", async () => {
+    const aprova = await contatoLead("21");
+    const consultaAprova = await pendente(aprova, "13:00");
+    expect(await kindDe(aprova)).toBe("lead");
+    const { data: aprovada, error } = await como("recepcao-a")
+      .from("appointment")
+      .update({ approval_status: "aprovado", send_confirmation: true })
+      .eq("id", consultaAprova)
+      .select("id");
+    expect(error).toBeNull();
+    expect(aprovada).toEqual([{ id: consultaAprova }]);
+    expect(await kindDe(aprova)).toBe("paciente");
+
+    const recusa = await contatoLead("22");
+    const consultaRecusa = await pendente(recusa, "14:00");
+    const { data: recusada, error: erroRecusa } = await como("recepcao-a")
+      .from("appointment")
+      .update({
+        approval_status: "recusado",
+        status: "cancelado_clinica",
+        oferecer_vaga_ao_cancelar: false,
+      })
+      .eq("id", consultaRecusa)
+      .select("id");
+    expect(erroRecusa).toBeNull();
+    expect(recusada).toEqual([{ id: consultaRecusa }]);
+    expect(await kindDe(recusa)).toBe("lead");
+  });
+
+  it("a sessao nao muda o status da pendente (23514 consulta_pendente); cancelar passa", async () => {
+    const contato = await contatoLead("23");
+    const consulta = await pendente(contato, "15:00");
+    for (const status of [
+      "confirmado_recepcao",
+      "na_recepcao",
+      "compareceu",
+      "faltou",
+    ]) {
+      const { error } = await como("recepcao-a")
+        .from("appointment")
+        .update({ status })
+        .eq("id", consulta);
+      expect(error?.code, status).toBe(FORA_DA_FAIXA);
+      expect(error?.message, status).toBe("consulta_pendente");
+    }
+    const { data: lida } = await admin
+      .from("appointment")
+      .select("status, approval_status")
+      .eq("id", consulta)
+      .single()
+      .throwOnError();
+    expect(lida).toEqual({ status: "agendado", approval_status: "pendente" });
+    expect(await kindDe(contato)).toBe("lead");
+    const { data: cancelada, error } = await como("recepcao-a")
+      .from("appointment")
+      .update({ status: "cancelado_clinica", oferecer_vaga_ao_cancelar: false })
+      .eq("id", consulta)
+      .select("id");
+    expect(error).toBeNull();
+    expect(cancelada).toEqual([{ id: consulta }]);
+    expect(await kindDe(contato)).toBe("lead");
+  });
+
+  it("a B nao le nem aprova a consulta da A; nada converte", async () => {
+    const contato = await contatoLead("24");
+    const consulta = await pendente(contato, "16:00");
+    const { data: lida } = await como("admin-b")
+      .from("appointment")
+      .select("id")
+      .eq("id", consulta);
+    expect(lida).toEqual([]);
+    const { data: aprovada } = await como("admin-b")
+      .from("appointment")
+      .update({ approval_status: "aprovado" })
+      .eq("id", consulta)
+      .select("id");
+    expect(aprovada ?? []).toEqual([]);
+    const { data: pelaLeitura } = await como("leitura-a")
+      .from("appointment")
+      .update({ approval_status: "aprovado" })
+      .eq("id", consulta)
+      .select("id");
+    expect(pelaLeitura ?? []).toEqual([]);
+    expect(await kindDe(contato)).toBe("lead");
+    // contraprova: a A le a propria
+    const { data: daA } = await como("recepcao-a")
+      .from("appointment")
+      .select("id")
+      .eq("id", consulta);
+    expect(daA).toEqual([{ id: consulta }]);
   });
 });

@@ -5,6 +5,10 @@ import {
   contaComoNaoEnviada,
   rotuloDoNaoEnvio,
 } from "@/lib/domain/falha-de-envio";
+import {
+  DICA_CONSULTA_PENDENTE,
+  mudancaEsperaAprovacao,
+} from "@/lib/domain/appointment-status";
 import { limitesDoDia } from "@/lib/domain/horarios";
 import type { LinhaConsent } from "@/lib/domain/leads-ui";
 
@@ -47,6 +51,12 @@ export type ConsultaDaConfirmacao = {
   status: AppointmentStatus;
   confirmation_channel: string | null;
   send_confirmation: boolean;
+  /**
+   * Onda 2 (item 10, revisao): a consulta que ainda espera a aprovacao da
+   * equipe (a que a IA marcou nasce 'pendente') nao confirma nem e cobrada
+   * antes da aprovacao: a lista mostra as acoes desabilitadas, com a dica.
+   */
+  approval_status: string | null;
   /**
    * Quando o paciente pediu para remarcar pelo WhatsApp (pedido ainda de pe).
    * A regua para de perguntar e a recepcao precisa combinar o novo horario.
@@ -219,6 +229,33 @@ export function rotuloDoNaoEnvioDaConsulta(
   );
 }
 
+/**
+ * "Confirmar manualmente" na linha (revisao da onda 2): desabilitado, com a
+ * dica, para quem nao edita, para a consulta que ja saiu da fila e para a
+ * que ainda espera a aprovacao da equipe (a que a IA marcou: o servidor e o
+ * banco recusam, item 10). A acao sem permissao fica visivel e desabilitada.
+ */
+export function estadoDoConfirmarManual(entrada: {
+  consulta: Pick<ConsultaDaConfirmacao, "status" | "approval_status">;
+  podeEditar: boolean;
+  dicaSemPermissao: string;
+}): { desabilitado: boolean; dica: string } {
+  const { consulta, podeEditar, dicaSemPermissao } = entrada;
+  if (!podeEditar) {
+    return { desabilitado: true, dica: dicaSemPermissao };
+  }
+  if (!STATUS_PENDENTES.includes(consulta.status)) {
+    return {
+      desabilitado: true,
+      dica: "Esta consulta já saiu da fila de confirmação",
+    };
+  }
+  if (mudancaEsperaAprovacao(consulta.approval_status, "confirmado_recepcao")) {
+    return { desabilitado: true, dica: DICA_CONSULTA_PENDENTE };
+  }
+  return { desabilitado: false, dica: "Confirmar manualmente" };
+}
+
 export const confirmacoesKeys = {
   dia: (clinicId: string, diaISO: string) =>
     ["confirmacoes", clinicId, "dia", diaISO] as const,
@@ -228,7 +265,7 @@ export const confirmacoesKeys = {
 };
 
 const CONSULTA_SELECT =
-  "id, contact_id, professional_id, starts_at, ends_at, status, confirmation_channel, send_confirmation, remarcacao_pedida_em, contact:contact_id (id, name, phone_e164, no_show_count), professional:professional_id (id, name), service_link:service_link_id (id, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
+  "id, contact_id, professional_id, starts_at, ends_at, status, confirmation_channel, send_confirmation, approval_status, remarcacao_pedida_em, contact:contact_id (id, name, phone_e164, no_show_count), professional:professional_id (id, name), service_link:service_link_id (id, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
 
 function primeiro<T>(valor: T | T[] | null | undefined): T | null {
   if (Array.isArray(valor)) {
@@ -260,6 +297,7 @@ function normalizarConsulta(
     service_link,
     remarcacao_pedida_em:
       (row.remarcacao_pedida_em as string | null | undefined) ?? null,
+    approval_status: (row.approval_status as string | null | undefined) ?? null,
     consent_ativo:
       consentPorContato.get(row.contact_id as string) === "autorizado",
     consent_estado:

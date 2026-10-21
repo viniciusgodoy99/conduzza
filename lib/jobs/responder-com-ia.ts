@@ -22,6 +22,7 @@ import {
   conferirTravaDoWhatsapp,
   consentimentoVigente,
   fecharTurno,
+  foraDoAssuntoNaJanela,
   gravarDecisao,
   gravarEventoDaIa,
   gravarRascunhoBloqueado,
@@ -46,6 +47,7 @@ import {
   agenteAtendeAgora,
   MOTIVOS_DE_ESCALONAMENTO,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
+  tipoDoContatoDoBanco,
   type ConfigDoAgente,
   type MotivoDeEscalonamento,
   type MotivoDoEventoDaIa,
@@ -91,8 +93,10 @@ import { ErroComCodigoDeJob } from "./erro-de-job";
 import type { Job, ResultadoDeJob } from "./worker";
 
 // Executor do job 'responder_com_ia' (E3): um turno da recepcionista de IA
-// numa conversa do WhatsApp com um telefone da equipe. Desenho no plano do
-// E3 (secao 2.1, passo 7, e tabela 5.3) e no contrato (secao 3.6).
+// numa conversa do WhatsApp com um telefone da equipe (na producao da onda
+// 2, item 11, com qualquer contato que caiba no publico: quem entra na IA
+// e o banco, pelas travas; aqui nada muda). Desenho no plano do E3 (secao
+// 2.1, passo 7, e tabela 5.3) e no contrato (secao 3.6).
 //
 // Ordem, cada passo com falha FECHADA:
 //  1. Ambiente e lista (T1 e T2: iaLiberadaNoAmbiente, com a lista do banco
@@ -108,6 +112,9 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     modelo: quem revogou nao manda texto a OpenAI nem recebe nada.
 //  6. Versao PUBLICADA e horario de operacao.
 //  7. Historico da janela e pendentes por id (sem pendente: nada a fazer).
+//     Onda 2: quantas vezes a IA ja respondeu fora do assunto na janela
+//     (P5b) e se ela ja respondeu na janela (o aviso de assistente virtual,
+//     P11a); o tipo do contato (lead ou paciente, item 4) vai ao prompt.
 //  8. Teto de respostas da conversa na ultima hora.
 //  9. Reserva do custo maximo do turno (origem whatsapp).
 // 10. O turno (portao, classificador, agente, filtro), com a trava do
@@ -236,6 +243,8 @@ type Contato = {
   phone_key: string | null;
   name: string | null;
   birth_date: string | null;
+  /** contact.kind (onda 2, item 4): lead ou paciente, para o prompt. */
+  kind: string | null;
 };
 
 type Contexto = {
@@ -397,7 +406,7 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
 
   const lidoContato = await admin
     .from("contact")
-    .select("phone_key, name, birth_date")
+    .select("phone_key, name, birth_date, kind")
     .eq("clinic_id", clinicId)
     .eq("id", conversa.contact_id)
     .maybeSingle();
@@ -472,6 +481,15 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     await encerrarSemEnvio(c, turnoAtual);
     return CONCLUIR;
   }
+  // Onda 2 (item 5, P5b): a insistencia fora do assunto conta na janela.
+  const foraDoAssunto = await foraDoAssuntoNaJanela(admin, {
+    clinicId,
+    conversationId: c.conversationId,
+    desdeIso: janela.desde,
+  });
+  // Onda 2 (item 4): o tipo do contato AGORA (o lead que virou paciente no
+  // meio da conversa ja vai como paciente; o banco so filtra na entrada).
+  const tipoDoContato = tipoDoContatoDoBanco(contato.kind);
 
   const base: TurnoDaIa = {
     jobId: c.job.id,
@@ -547,6 +565,7 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       modelo,
       modeloDosClassificadores,
       precos,
+      contato: tipoDoContato,
     });
     if (custoMaximo === null) {
       log.warn("ia_preco_ausente", idsDoLog(c));
@@ -588,6 +607,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       verificador: c.deps.criarVerificador(identificador ?? ""),
       classificador: c.deps.criarClassificador(identificador ?? ""),
       dataDeNascimento: contato.birth_date,
+      contato: tipoDoContato,
+      foraDoAssuntoNaJanela: foraDoAssunto,
+      primeiraRespostaDaIa: !historico.iaRespondeuNaJanela,
       conferirTrava: () =>
         conferirTravaDoWhatsapp(admin, {
           clinicId,

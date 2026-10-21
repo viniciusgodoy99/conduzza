@@ -19,7 +19,10 @@ import { MARCA_DO_NOME } from "@/lib/agente/historico";
 import { executarTurnoDoAgente, type ClienteDoAgente } from "@/lib/agente/laco";
 import { configPadraoDoAgente } from "@/lib/domain/agente/config";
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
-import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  FRASE_DE_ESCALONAMENTO,
+  FRASE_DO_ASSISTENTE_VIRTUAL,
+} from "@/lib/domain/conformidade/frase-fixa";
 import {
   criarClassificadorDeEntrada,
   POLITICA_DO_CLASSIFICADOR,
@@ -361,8 +364,11 @@ afterEach(() => {
 describe("ponta a ponta com LLM falso", () => {
   it("pergunta comum: a resposta aprovada sai como 'ia', com custo zero, e o hash bate com a decisão", async () => {
     montar("Vocês atendem aos sábados?");
-    const texto = "Atendemos de segunda a sexta. Posso ajudar em algo mais?";
-    const { resultado, create } = await rodar([respostaFinal(texto)]);
+    const doModelo = "Atendemos de segunda a sexta. Posso ajudar em algo mais?";
+    // Onda 2 (P11a): a primeira resposta da IA na janela leva o aviso de
+    // assistente virtual antes; o hash e o da resposta inteira.
+    const texto = `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${doModelo}`;
+    const { resultado, create } = await rodar([respostaFinal(doModelo)]);
     expect(resultado).toEqual({ ok: true });
     expect(create).toHaveBeenCalledTimes(1);
     expect(fakeSentMessages().map((m) => [m.to, m.body])).toEqual([
@@ -493,7 +499,9 @@ describe("o nome do contato: o portão lê o original, a OpenAI só a marca", ()
     expect(openAi.parse).toHaveBeenCalledTimes(2);
     expect(openAi.create).toHaveBeenCalledTimes(1);
     expect(openAi.corpos).toHaveLength(3);
-    expect(fakeSentMessages().map((m) => m.body)).toEqual([resposta]);
+    expect(fakeSentMessages().map((m) => m.body)).toEqual([
+      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${resposta}`,
+    ]);
     expect(banco.linhas("ai_decision_log")[0]).toMatchObject({
       desfecho: "respondeu",
     });

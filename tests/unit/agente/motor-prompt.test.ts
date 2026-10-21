@@ -29,6 +29,7 @@ import {
   type ItemDaBase,
 } from "@/lib/domain/agente/config";
 import { LIMITE_DO_RASCUNHO } from "@/lib/domain/conformidade/filtro-deterministico";
+import { FRASE_DO_ASSISTENTE_VIRTUAL } from "@/lib/domain/conformidade/frase-fixa";
 
 // Montagem das instrucoes do agente (lib/agente/prompt.ts): ordem estavel
 // para o cache (texto fixo, atendimento, instrucoes, base, procedimentos e a
@@ -163,7 +164,10 @@ describe("montarInstrucoes", () => {
     expect(texto).toContain("[p2] Limpeza de pele");
     expect(texto).not.toMatch(/R\$/);
     expect(texto).not.toContain("317");
-    expect(texto).not.toContain("Dra. Helena");
+    // Onda 2 (item 6): a profissional so no bloco <profissionais>, com o
+    // codigo e os procedimentos, nunca o preco nem o id.
+    expect(texto).toContain("<profissionais>\n[r1] Dra. Helena: p1\n</profissionais>");
+    expect(texto.split("Dra. Helena").length - 1).toBe(1);
     expect(texto).not.toContain("11111111-1111");
   });
 
@@ -228,10 +232,14 @@ describe("montarInstrucoes", () => {
       habilidades: { ...ligada.habilidades, informar_preco_e_convenio: false },
     });
     expect(ferramentasDaChamada(ligada).map((f) => f.name)).toEqual([
+      "fora_do_assunto",
+      "sou_assistente_virtual",
       "buscar_procedimento",
       "escalar_humano",
     ]);
     expect(ferramentasDaChamada(desligada).map((f) => f.name)).toEqual([
+      "fora_do_assunto",
+      "sou_assistente_virtual",
       "escalar_humano",
     ]);
     expect(
@@ -321,15 +329,20 @@ describe("limiteDaMensagem", () => {
     );
   });
 
-  it("desconta saudação e encerramento dos 700 do filtro, com piso", () => {
+  it("desconta saudação, aviso de assistente virtual (onda 2, P11a) e encerramento dos 700 do filtro, com piso", () => {
     const saudacao = "a".repeat(150);
     const encerramento = "b".repeat(100);
+    const aviso = Array.from(FRASE_DO_ASSISTENTE_VIRTUAL).length;
     expect(limiteDaMensagem({ saudacao, encerramento })).toBe(
       Math.min(
         LIMITE_DA_MENSAGEM_DO_MODELO,
-        LIMITE_DO_RASCUNHO - 150 - 100 - 4,
+        LIMITE_DO_RASCUNHO - 150 - aviso - 100 - 6,
       ),
     );
+    // Cabe a resposta mais longa que o modelo pode mandar com tudo colado.
+    expect(
+      150 + aviso + 100 + 6 + limiteDaMensagem({ saudacao, encerramento }),
+    ).toBeLessThanOrEqual(LIMITE_DO_RASCUNHO);
     expect(
       limiteDaMensagem({
         saudacao: "a".repeat(300),

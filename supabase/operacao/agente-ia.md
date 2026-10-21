@@ -6,6 +6,8 @@ Como está ligado hoje, como fazer o primeiro teste, como desligar em segundos e
 
 **Onda 1 (20/10/2026; construída e revisada; migration `20261021100000` aplicada e código publicado em 20/10/2026):** a lista fixa das duas clínicas sai do código e do banco. O agente de cada clínica passa a ser um dado (Desligado ou Teste; Produção travada até a onda 2), que só a equipe Conduzza muda, pelo **Painel geral**, com trilha; o teto de gasto também passa a ser ajustado lá. Como ligar o agente numa clínica, antes e depois da onda 1: seção "Ligar o agente numa clínica (onda 1)", logo depois de "Religar". A suspensão de conta, que também desliga o agente: `supabase/operacao/suspensao-de-clinica.md`. Banco no `docs/04`, seção 22; código no `docs/03`, seção 15; estado no `docs/05`, entrada "Onda 1".
 
+**Onda 2 (21/10/2026; construída, revisada e corrigida; as migrations `20261022100000` (M1), `20261022110000` (M2) e `20261022120000` (M3) NÃO estão aplicadas e o código NÃO foi publicado):** o horário do assistente decidido pelo banco e a retomada no fim do expediente; o público (leads, pacientes ou os dois); a frase fixa do fora do assunto e do "você é um robô?"; excluir telefone; o telefone de paciente que aceitou testar, forçado pelo administrador com a confirmação; a pausa pela clínica; a conversão só na aprovação da consulta; tudo do agente na Tela 6 (aba WhatsApp; o interruptor geral vai para o Painel geral); e a **produção** (todos os contatos do público escolhido, ligada só pela equipe Conduzza no Painel geral, com o checklist). O que muda na operação e as receitas novas: seção "Onda 2", logo depois de "Ligar o agente numa clínica (onda 1)". Até cada migration ser aplicada (com o ok do dono) e o código publicado depois das três, **vale o que este arquivo diz hoje**; as notas "depois da onda 2" espalhadas nele dizem o que muda. Banco no `docs/04`, seção 23; código no `docs/03`, seção 16; estado e pendências no `docs/05`, entrada "Onda 2".
+
 Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicado em 19/10/2026 (`1c36327`; o telefone pelo administrador em `24058b1` e os vários números em `a87e01e`). **Migrations aplicadas:** M1 `20261013100000_ia_whatsapp_fila.sql`, M3 `20261013110000_ia_whatsapp_gatilho_mensagem.sql` e M2 `20261013120000_ia_whatsapp_funcoes_quentes.sql` em 13/10/2026, nessa ordem; `20261019100000_ia_telefone_pelo_administrador.sql` e `20261019110000_ia_varios_numeros.sql` em 19/10/2026 (md5 conferidos na produção: "Como foi ligado"). Contrato do banco no `docs/04`, 17.13; turno e travas no `docs/03`, seção 14; estado e decisões no `docs/05`, Fase 3, entrada "E3"; o motor da IA em `supabase/operacao/motor-por-cron.md`, "Resposta da IA no WhatsApp (motor-ia)".
 
 ---
@@ -16,10 +18,12 @@ Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicad
   - **Depois da onda 1** (migration `20261021100000` aplicada e código publicado, os dois em 20/10/2026): a IA existe nas clínicas com o agente em **Teste** no Painel geral, sem as de conta suspensa (`select public.ia_clinicas_da_fase_controlada();`). Ao aplicar, a lista é a mesma (as duas acima). Outra clínica só entra com o ok do dono, pelo painel ("Ligar o agente numa clínica (onda 1)"). Selecionar por id continua valendo.
 - A salud-care e qualquer outra clínica, **nunca**. Nenhum comando deste arquivo escreve em outra clínica.
 - A IA conversa só com os **telefones da equipe** ligados na aba Agente de IA. Paciente nenhum, inclusive os que escrevem para o mesmo número.
+  - **Depois da onda 2** (o código publicado): a aba é a **WhatsApp da Tela 6** (Agente de IA), não mais a de Configurações; e, com a M3, numa clínica ligada em **produção** pelo Painel geral, a IA atende todos os contatos do público escolhido nessa clínica (seção "Onda 2", "Produção"). Nas clínicas em Teste, continua só com os telefones da equipe.
 - **Nunca imprima telefone** no SQL editor, em chat, ticket ou print: as consultas abaixo devolvem contagens, ids e o rótulo do telefone ("De quem é"). Neste arquivo, os números de WhatsApp aparecem só pelo id e pelo final.
 - **Nunca copie texto de conversa nem o rascunho bloqueado** para fora do sistema (chat, ticket, log, planilha). Conversa de paciente é dado de saúde (LGPD, art. 5º, II).
 - **Quem faz o quê nesta fase** (decisões do dono de 13/10 e 19/10/2026; `docs/05`, entrada "E3"):
   - **só a equipe Conduzza** (super admin na aba, ou o SQL editor): o interruptor geral, ligar o modo "Conversar com a equipe", ligar um número e o "Usar mesmo assim (fica registrado)" do telefone de paciente (este, só com o ok do dono; o administrador da clínica nunca vê a opção);
+    - **depois da M2 e do código da onda 2** (decisão do dono P3, 21/10/2026): o "Usar mesmo assim" passa a valer também para o administrador da clínica, só para quem aceitou testar e sempre com a confirmação do teste, gravada no nome de quem forçou (seção "Onda 2", "Telefone de paciente como teste"); o interruptor geral passa a ficar no topo do Painel geral; e só a equipe Conduzza liga a produção, pelo painel;
   - **o administrador da clínica** (e a equipe Conduzza): cadastrar e ligar os telefones da equipe ("Adicionar" e "Ligar de novo"), sempre com a confirmação do aviso da OpenAI, que vai para a trilha no nome de quem adicionou;
   - **qualquer administrador da clínica**: desligar o modo, um número ou um telefone, e deve desligar em caso de dúvida. Desligar vale na hora e, para ele, não tem volta pela tela: religar o modo e o número é só da equipe Conduzza ("Religar", abaixo).
 - **Vários números** (decisão do dono de 19/10/2026, migration `20261019110000` aplicada): a clínica pode ter mais de um número ligado ao assistente, e o mesmo telefone da equipe tem uma conversa em cada número. Cada número liga e desliga sozinho. O assistente responde por qualquer número ligado e conectado.
@@ -64,6 +68,21 @@ Conferido na produção, só leitura, às 15:13 de 19/10/2026. Horários no fuso
 
     Esta é a única receita deste arquivo com o forçar, e vale só para essa linha, já autorizada pelo dono.
 
+    **Depois da M2 da onda 2** (`20261022110000`, decisão do dono P3): a mesma receita leva também `p_confirmou_teste_com_paciente => true`, sempre com o ok do dono (sem ele, 23514 `teste_com_paciente_nao_confirmado`, e nada muda). Pelo SQL editor, as trilhas `forcou_telefone_de_paciente_na_ia` e `confirmou_teste_com_paciente` saem "sem nome":
+
+    ```sql
+    select public.definir_contato_liberado_da_ia(
+      p_clinic_id                    => 'f0c115dd-e98c-4767-a1bb-93d517844852',
+      p_telefone_e164                => (select l.phone_key from public.ia_contato_liberado l
+                                          where l.id = 'd07b3a0b-fa28-420b-94c7-ce84b8365dfc'),
+      p_rotulo                       => null,
+      p_ativo                        => true,
+      p_forcar_contato_existente     => true,
+      p_confirmou_teste_com_paciente => true);
+    ```
+
+    Depois da M2 e do código, o administrador de lá também religa pela aba ("Usar mesmo assim", com a confirmação do teste).
+
   - **Primeiro teste no WhatsApp (20/10/2026):** às 13h39 o Victor assumiu a conversa aberta desse celular no final 0914 (`0ed9746c`), respondeu e a devolveu para a IA. Às 13h40 o assistente respondeu (`respondeu`, aprovado pelo filtro, 8 s, `gpt-6-luna`): a primeira resposta da IA num WhatsApp de verdade. Na mensagem seguinte ("Quero marcar uma consulta") passou para a equipe com a frase fixa (`escalou`, `pedido_de_agenda`), como manda esta fase: marcar consulta é a E4, ainda não construída. Custo da clínica até ali: 5 chamadas, US$ 0,0006.
 - Quem acompanha: o administrador de lá, pela tela; o dono, só pelas consultas.
 
@@ -91,7 +110,7 @@ Em cada clínica, na ordem. Na teste123 quem faz é o dono; na Conduzza Teste, o
 **Antes de escrever:**
 
 1. **Escolher o celular de teste (D1):** que **não** seja o final 0914, o final 9018 nem o final 1318 (nenhum número conectado ao Conduzza, de clínica nenhuma). A aba recusa número conectado com "Este telefone não pode ser usado como telefone da equipe. Use o celular pessoal de alguém da equipe.", a IA nunca responde a ele, e a mensagem de um número da clínica para outro da mesma clínica nem é gravada. Quem usa o celular recebe o aviso por escrito (D32): o que escrever vai para a OpenAI, nos EUA, e só dados de teste.
-2. **Cadastrar o telefone** (administrador da clínica; aba Agente de IA de Configurações, cartão "Telefones da equipe"): "De quem é", "Telefone", a confirmação "Quem usa este celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar só dados de teste." e "Adicionar". A linha tem de ficar "Conversa com o assistente", nunca "Não aciona o assistente". Na teste123, "Desligar" na linha "Vinicius" (é o próprio final 1318). Se a aba disser "Este telefone é de um paciente da clínica...", **pare** e fale com o dono; na Conduzza Teste o "Usar mesmo assim" nem existe pela tela (o administrador não força, e o dono não é membro).
+2. **Cadastrar o telefone** (administrador da clínica; aba Agente de IA de Configurações, cartão "Telefones da equipe"; depois do código da onda 2, Tela 6, aba WhatsApp, o mesmo cartão): "De quem é", "Telefone", a confirmação "Quem usa este celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar só dados de teste." e "Adicionar". A linha tem de ficar "Conversa com o assistente", nunca "Não aciona o assistente". Na teste123, "Desligar" na linha "Vinicius" (é o próprio final 1318). Se a aba disser "Este telefone é de um paciente da clínica...", **pare** e fale com o dono; na Conduzza Teste o "Usar mesmo assim" nem existe pela tela (o administrador não força, e o dono não é membro). Depois da M2 e do código da onda 2, o administrador também força, mas só para quem aceitou testar e com a confirmação do teste (seção "Onda 2").
 3. **Resolver a conversa aberta antes:** conversa aberta com a equipe não passa para a IA e não avisa nada: a mensagem cai na conversa velha, em "Aguardando você", sem resposta e sem evento. Em 19/10/2026, **todos** os contatos das duas clínicas tinham conversa aberta (na Conduzza Teste, nenhuma conversa foi resolvida até hoje): se o celular de teste já escreveu para um dos números, a conversa dele está aberta. A linha do telefone mostra, uma vez por número com conversa aberta, "Tem conversa aberta com a equipe no número {nome}." com "Para o assistente começar neste número, assuma e resolva a conversa aberta no Atendimento." e o botão "Abrir conversa", que leva à conversa no Atendimento (sem a lista de números, "Tem conversa aberta com a equipe num dos números ligados."). Isso vale depois da migration `20261019120000` e do deploy do código; até lá, a linha diz só "Tem conversa aberta com a equipe num dos números ligados: nesse número, o assistente começa na próxima conversa.", sem o número nem o botão. Nos dois casos, a consulta I diz em qual número e dá o link (que só abre para quem é membro da clínica). No Atendimento, em cada uma: **Assumir conversa** e **Resolver**. Na Conduzza Teste, conferir os dois números.
 4. **Aba verde, sem motivo:** "Conversando com a equipe", sem nenhum motivo de parada; o telefone em "Conversa com o assistente"; os números em "Em uso pelo assistente". Se aparecer o motivo de que a equipe Conduzza ainda não ativou o assistente (para o super admin, depois do deploy das correções de 19/10/2026, "A chave da OpenAI ou o segredo do identificador não estão no ambiente de produção da Vercel."), é a Vercel (sem `OPENAI_API_KEY`, sem `IA_SEGREDO_DO_IDENTIFICADOR` de 32 caracteres ou mais, ou fora de Production): pare (na Conduzza Teste, o administrador avisa o dono). Se aparecer o motor parado: `supabase/operacao/motor-por-cron.md`, "Resposta da IA no WhatsApp (motor-ia)".
 5. **Simular primeiro** (tela Agente de IA, do menu, no simulador): uma pergunta, cerca de US$ 0,01 (conta no teto de US$ 5 e aparece na consulta G como `simulador`). Na Conduzza Teste, "Quanto custa a Prostota?" (a resposta tem de trazer R$ 500,00); na teste123, que não tem preço cadastrado, um cumprimento ("oi"). **Só siga se a resposta vier.** Se vier a frase fixa ou um aviso de ambiente ("A chave da OpenAI ainda não está configurada." e afins), pare e abra "Por que a IA respondeu isso": o problema (chave, crédito, modelo ou segredo) se repetiria no WhatsApp.
@@ -143,7 +162,7 @@ Ninguém preenche estes dados no lugar do dono. Sem eles, a IA não tem o que re
 
 Desligar **nunca envia nada** ao contato: as conversas da IA voltam para a equipe com o evento "O assistente foi desligado. A conversa voltou para a equipe." e os pendentes são cancelados. O job que estiver em voo para nas guardas (antes do modelo, entre rodadas, logo antes do provedor e no gatilho de `message`).
 
-- **Uma clínica:** na aba Agente de IA, "Desligado" (o administrador da clínica também pode). Pelo SQL editor (na Conduzza Teste, o caminho do dono):
+- **Uma clínica:** na aba Agente de IA, "Desligado" (o administrador da clínica também pode; depois do código da onda 2, na Tela 6, aba WhatsApp; com a clínica em **produção**, o modo só muda pelo Painel geral, e a clínica para na hora pelo "Pausar o assistente" da mesma aba ou pela receita de pausa da seção "Onda 2"). Pelo SQL editor (na Conduzza Teste, o caminho do dono; em produção, `definir_liberacao_da_ia` recusa com P0001 `clinica_em_producao` e o caminho é a pausa ou o painel):
 
   ```sql
   select public.definir_liberacao_da_ia('<id da clínica>', false, null, 'motivo curto');
@@ -171,7 +190,7 @@ Desligar **nunca envia nada** ao contato: as conversas da IA voltam para a equip
 
   Na teste123, a linha "Vinicius" (o próprio final 1318) é `31d0e6e8-b6cf-4497-8055-16363cf02144`. `p_rotulo => null` mantém o "De quem é"; id errado faz a subconsulta voltar vazia, e a RPC recusa (22004) sem mudar nada. Desligar um número devolve só as conversas dele e **não mexe nos outros números ligados**: para parar a clínica inteira, "Desligado" no modo.
 
-- **Tudo, nas duas clínicas:** o interruptor geral na aba (super admin) ou:
+- **Tudo, nas duas clínicas:** o interruptor geral na aba (super admin; depois do código da onda 2, no topo do Painel geral) ou:
 
   ```sql
   select public.definir_interruptor_da_ia(false, 'motivo curto');
@@ -259,9 +278,9 @@ Cada receita grava a trilha (`editou`, "sem nome" na consulta H) e devolve para 
    commit;
    ```
 
-   Só para linha que já existe, como o "Ligar de novo" da aba (sem a confirmação do aviso da OpenAI): telefone novo é sempre pela aba, que pede a confirmação e a manda. Nenhuma receita deste arquivo cria telefone (as duas vão pelo id da linha). Depois da migration `20261019120000`, o próprio banco recusa telefone fora da lista sem `p_confirmou_aviso_da_openai => true`, inclusive pelo SQL editor (23514 `aviso_da_openai_nao_confirmado`, nada muda), e, com ela, grava a trilha `confirmou_aviso_da_openai` na mesma transação ("sem nome" pelo SQL editor); antes dela, o parâmetro nem existe e a chamada com ele falha. **Nunca** passe `p_forcar_contato_existente`: o telefone com sinal de paciente é recusado (23514 `contato_de_paciente`), e o forçar é só pela aba, pelo super admin, com o ok do dono. O número de WhatsApp de qualquer clínica do Conduzza também é recusado (23514 `telefone_invalido_para_equipe`).
+   Só para linha que já existe, como o "Ligar de novo" da aba (sem a confirmação do aviso da OpenAI): telefone novo é sempre pela aba, que pede a confirmação e a manda. Nenhuma receita deste arquivo cria telefone (as duas vão pelo id da linha). Depois da migration `20261019120000`, o próprio banco recusa telefone fora da lista sem `p_confirmou_aviso_da_openai => true`, inclusive pelo SQL editor (23514 `aviso_da_openai_nao_confirmado`, nada muda), e, com ela, grava a trilha `confirmou_aviso_da_openai` na mesma transação ("sem nome" pelo SQL editor); antes dela, o parâmetro nem existe e a chamada com ele falha. **Nunca** passe `p_forcar_contato_existente`: o telefone com sinal de paciente é recusado (23514 `contato_de_paciente`), e o forçar é só pela aba, pelo super admin, com o ok do dono (depois da M2 e do código da onda 2, também pelo administrador da clínica, com a confirmação do teste; a receita do SQL editor está na seção "Onda 2"). O número de WhatsApp de qualquer clínica do Conduzza também é recusado (23514 `telefone_invalido_para_equipe`).
 
-5. **O interruptor geral:** o dono religa na aba da teste123 (cartão "Interruptor geral") ou com `select public.definir_interruptor_da_ia(true, 'motivo curto');`.
+5. **O interruptor geral:** o dono religa na aba da teste123 (cartão "Interruptor geral"; depois do código da onda 2, no topo do Painel geral) ou com `select public.definir_interruptor_da_ia(true, 'motivo curto');`.
 
 Conferir depois: consulta A (e a I, se mexeu em telefone).
 
@@ -282,11 +301,11 @@ Conferir depois: consulta A (e a I, se mexeu em telefone).
 
 **Pelo Painel geral** (super admin; não precisa ser membro da clínica):
 
-1. Painel geral, a clínica, cartão **Agente de IA**, **Teste**. O diálogo diz o que acontece e o teto da clínica; escreva o motivo (vai para a trilha) e confirme com "Ligar em teste". A clínica entra na lista e fica liberada em "Conversar com a equipe" (`definir_liberacao_da_ia` com o modo `contatos`); a aba Agente de IA de Configurações passa a aparecer para o administrador dela.
+1. Painel geral, a clínica, cartão **Agente de IA**, **Teste**. O diálogo diz o que acontece e o teto da clínica; escreva o motivo (vai para a trilha) e confirme com "Ligar em teste". A clínica entra na lista e fica liberada em "Conversar com a equipe" (`definir_liberacao_da_ia` com o modo `contatos`); a aba Agente de IA de Configurações passa a aparecer para o administrador dela (depois do código da onda 2, a aba WhatsApp da Tela 6).
 2. **Teto de gasto** (coluna da direita): confira ou ajuste o teto a cada 24 horas (US$ 5,00 quando a linha nasce) e as respostas por conversa em 1 hora (20). Para gasto zero, o agente fica Desligado: o teto não aceita zero.
 3. **Números do assistente:** "Ligar" em cada número conectado que vai atender (um não desliga o outro). Sem número, a clínica adiciona e conecta na aba WhatsApp dela.
 4. **Telefones da equipe:** adicionar o celular de teste, com "De quem é", a confirmação do aviso da OpenAI e a confirmação "Confirmo que este telefone é de alguém da equipe" (no painel ela é pedida sempre, porque o painel não consulta os contatos da clínica). O banco recusa telefone de paciente sem o forçar e o número de WhatsApp de qualquer clínica do Conduzza; "Usar mesmo assim (fica registrado)" só com o ok do dono. Na Conduzza Teste, onde o dono não é membro, o painel também muda os números e os telefones; a decisão de 19/10/2026 (quem cadastra telefone lá é o administrador de lá) continua valendo até o dono dizer o contrário.
-5. **Conferir:** no cartão do agente, "Na clínica agora" sem nenhum motivo de parada (o motivo do interruptor diz onde ele fica: o cartão Interruptor geral da aba Agente de IA, em Configurações); a consulta A já inclui a clínica (ela filtra por `ia_clinicas_da_fase_controlada()`); a consulta I para o telefone; e, para o primeiro teste, o "Roteiro do primeiro teste" (resolver antes a conversa aberta do celular de teste).
+5. **Conferir:** no cartão do agente, "Na clínica agora" sem nenhum motivo de parada (o motivo do interruptor diz onde ele fica: o cartão Interruptor geral da aba Agente de IA, em Configurações; depois do código da onda 2, o topo do Painel geral); a consulta A já inclui a clínica (ela filtra por `ia_clinicas_da_fase_controlada()`); a consulta I para o telefone; e, para o primeiro teste, o "Roteiro do primeiro teste" (resolver antes a conversa aberta do celular de teste).
 
 **Pelo SQL editor** (recuo, se o painel falhar; as mesmas recusas e a mesma trilha, "sem nome"):
 
@@ -306,6 +325,168 @@ Os números e os telefones, pelas receitas de "Religar" (passos 3 e 4).
 **Desligar:** pelo painel, **Desligado** no cartão do agente (na hora, sem confirmação; nada é enviado ao contato). A clínica sai da lista, e a aba some para o administrador dela. Se a ideia é a clínica continuar na lista com o assistente parado, o administrador de lá põe o modo em "Desligado" na aba (ou a receita "Uma clínica" de "Desligar em segundos"); o painel passa a mostrar "Desligado pela clínica".
 
 **Religar o modo de uma clínica que já está em Teste** (o administrador pôs "Desligado" ou "Só simulador" na aba): o painel não tem esse botão, porque "Teste" já está marcado. Use a receita 2 de "Religar" no SQL editor ou, pelo painel, Desligado e depois Teste (no meio, as conversas do agente voltam para a equipe).
+
+---
+
+## Onda 2: horário, público, fora do assunto, telefones, pausa e produção
+
+**Estado em 21/10/2026:** construída, revisada e corrigida; **nada aplicado nem publicado**. As três migrations estão ensaiadas num Postgres local (`ENSAIO OK`) e **não** na produção; o código está na árvore, sem commit. Conferido na produção, só leitura, às 12h57 de 21/10/2026: nenhuma das três aplicada, os corpos que elas trocam iguais aos lidos (md5 nos arquivos de rollback), as três versões publicadas em 24 horas, a teste123 e a Conduzza Teste em Teste, liberadas em `contatos`, sem pausa, e o interruptor ligado. Decisões do dono de 20 e 21/10/2026 e pendências: `docs/05`, entrada "Onda 2"; banco no `docs/04`, seção 23.
+
+### Ordem (cada passo só com o ok do dono, em horário calmo)
+
+1. **M1** `20261022100000_conversao_na_aprovacao.sql`: o ensaio `~/.claude/plans/onda2-agente/ensaio-20261022100000.sql` na produção (`ferramentas/executar.js` ou o SQL editor, sem sessão; `ENSAIO OK`, tudo desfeito no fim; segura SHARE ROW EXCLUSIVE em `appointment` por alguns segundos), a migration logo depois (`ferramentas/aplicar.js`) e a conferência.
+2. **M2** `20261022110000_ia_horario_publico_e_telefones.sql`: o ensaio (segura `ai_agent_config`, `ai_decision_log` e `ia_janela_da_conversa` e roda a manutenção do motor uma vez, dentro da transação desfeita), a migration e a conferência.
+3. **M3** `20261022120000_producao_do_agente.sql`: o ensaio (segura `ia_clinica_habilitada` e `ia_liberacao`; confere que o interruptor geral está ligado), a migration e a conferência.
+4. Os tipos gerados e comparados; os testes de RLS e de integração da onda 2 (escritos, nunca rodados: `docs/04`, 23.6).
+5. **Só depois, o código** (um deploy só). O código novo antes da M2 pararia a IA (42703 em `publico_atendido`).
+
+**Entre a M2 e o código, não publicar versão em "Só fora do expediente"** em nenhuma clínica da fase: o código de hoje leria a janela `horario` da retomada como a conversa inteira. Se o código atrasar, publicar antes só o endurecimento da janela (`docs/04`, 23.7).
+
+**Conferir depois de cada migration** (só leitura; `true` em todas as colunas da migration aplicada):
+
+```sql
+select
+  -- M1
+  (select count(*) from pg_trigger
+    where tgrelid = 'public.appointment'::regclass and not tgisinternal
+      and tgname in ('avancar_funil_na_aprovacao', 'converter_lead_na_aprovacao',
+                     'consulta_pendente_espera_aprovacao')) = 3 as m1_gatilhos,
+  -- M2
+  to_regprocedure('public.ia_retomar_conversas_no_horario(integer, boolean)') is not null as m2_retomada,
+  to_regprocedure('public.excluir_contato_liberado_da_ia(uuid, uuid)') is not null as m2_excluir,
+  to_regprocedure('public.definir_contato_liberado_da_ia(uuid, text, text, boolean, boolean, boolean, boolean)') is not null as m2_forcar,
+  exists (select 1 from information_schema.columns
+           where table_schema = 'public' and table_name = 'ai_agent_config'
+             and column_name = 'publico_atendido') as m2_publico,
+  -- M3
+  to_regclass('public.ia_requisito_da_producao') is not null as m3_requisitos,
+  to_regprocedure('public.definir_pausa_da_ia(uuid, boolean, text)') is not null as m3_pausa;
+```
+
+E os md5 novos das funções trocadas, contra os que o ensaio calculou (o último bloco de cada ensaio). Depois da M3: nenhuma clínica em produção (`select count(*) from public.ia_clinica_habilitada where estado = 'producao';` igual a zero) e a lista igual (`select public.ia_clinicas_da_fase_controlada();`, as duas de sempre).
+
+### Conversão só na aprovação (M1)
+
+A consulta que a IA marca nasce pendente e **não** converte o lead nem anda o funil; a equipe aprova em "Pendente de você", e só então o contato vira paciente e vai para "agendou" (Leads, Resultados, a conversão da Meta e a automação "entrou na etapa" contam na aprovação). Recusar, cancelar e aprovar a pendente já cancelada não convertem. A pendente só aprova, recusa ou cancela. O que muda na agenda pela IA: "Agenda pela IA (E4)", "Antes de ligar". Aprovar pelo SQL editor também converte: não aprovar fora da tela.
+
+### Horário do assistente e retomada (M2 e o código)
+
+Vale só para a versão publicada em **"Só fora do expediente"** (em 21/10/2026, nenhuma: as três em 24 horas) e só para telefone da equipe (no teste) ou para a clínica em produção:
+- **No expediente:** a conversa nova nasce com a equipe, em "Aguardando você", com o evento "O assistente não respondeu: agora é o horário da equipe. Se ninguém da equipe responder, ele assume quando o horário dele começar."; a conversa que estava com a IA passa para a equipe com "A IA passou a conversa para a equipe: agora está fora do horário escolhido para o assistente.". As duas ganham uma linha de espera.
+- **No fim do expediente** (a manutenção do motor, a cada minuto): a conversa que esperou volta para a IA, com o evento "Começou o horário do assistente: ele assumiu esta conversa, que ninguém da equipe tinha respondido.", e a IA responde o que a pessoa mandou no expediente. Só volta a que **ninguém tocou**: sem mensagem de pessoa da equipe (pelo sistema, pelo celular ou nota) desde a espera, sem responsável, ainda aguardando, o mesmo contato, telefone e número, em até 24 horas, e se o assistente pode atender aquele telefone (liberação, teto, público, versão). **Para a conversa não voltar para a IA:** responder, assumir ou resolver no expediente.
+- **"Se a equipe não responder"** continua sem atender no WhatsApp: a conversa nova fica com a equipe com "O assistente não atende pelo WhatsApp no modo de horário escolhido. A conversa ficou com a equipe.".
+- **O que olhar:** a consulta **O** (abaixo); no `planner_erro` da consulta B, `ia_horario_erros:<n>` (linhas da retomada com erro: elas saem da espera, e a conversa fica com a equipe) ou `ia_horario:<SQLSTATE>` (a retomada inteira falhou naquela passagem); a consulta E com os eventos `no_expediente` e `retomou_no_horario`.
+
+**O. Conversas esperando o horário do assistente** (depois da M2; só contagens, nenhum telefone):
+
+```sql
+select c.name as clinica,
+       f.origem,                       -- ingestao (nova no expediente) | turno (estava na IA)
+       count(*) as conversas,
+       to_char(min(f.criada_em) at time zone 'America/Fortaleza', 'DD/MM HH24:MI') as mais_antiga,
+       public.ia_horario_do_assistente(f.clinic_id) as horario_agora   -- atende | no_expediente | ...
+from public.ia_conversa_fora_do_horario f
+join public.clinic c on c.id = f.clinic_id
+group by c.name, f.clinic_id, f.origem
+order by c.name, f.origem;
+```
+
+Linha com mais de 24 horas sai sozinha na passagem seguinte. `horario_agora` igual a `atende` com linhas paradas por mais de 2 minutos: a retomada não está andando (olhar o `planner_erro`).
+
+### Quem o assistente atende (M2 e o código)
+
+Na Tela 6, Regras e limites, "Quem o assistente atende": Só leads, Só pacientes ou Leads e pacientes. Salvo no rascunho, vale ao **publicar**. Conferido na **entrada** da conversa (nova, Devolver e retomada): quem vira paciente no meio da conversa continua. No teste, vale também para os telefones da equipe: o telefone cujo contato está fora do público fica "Não aciona o assistente", com "Este contato está fora do público escolhido em Regras e limites. O assistente não conversa com ele.". Sem escolha ("Ainda não escolhido"), no teste o assistente atende os telefones da equipe, sejam leads ou pacientes; na produção, não atende ninguém (e a produção nem liga). Para conferir um telefone, acrescente à consulta I a coluna `public.ia_publico_aceita(l.clinic_id, l.phone_key) as cabe_no_publico` (depois da M2).
+
+### Fora do assunto e "você é um robô?" (código)
+
+A pergunta que não é da clínica nem de saúde, ou sobre a tecnologia, a empresa ou o modelo por trás do atendimento, recebe a frase fixa do dono ("Desculpe, por aqui eu só consigo ajudar com assuntos da clínica. Posso ajudar com alguma coisa sobre a clínica?"), que passa pelo filtro inteiro como qualquer resposta; na consulta D, `desfecho` `respondeu` e `tool_used` `fora_do_assunto`. A segunda na mesma conversa (desde que ela entrou na IA) passa para a equipe com a frase fixa de escalonamento e o evento "A IA passou a conversa para a equipe: a pessoa insistiu num assunto fora da clínica." (`escalation_reason` `fora_do_assunto`). "Você é um robô?" recebe o texto de assistente virtual (`tool_used` `sou_assistente_virtual`; PROPOSTA, espera o dono). Pedir uma pessoa continua passando (`pedido_humano`). A primeira resposta da IA em cada conversa leva o aviso de assistente virtual antes do texto. **Nada disso vai ao ar antes de o dono aprovar os textos e de uma simulação paga curta** (a versão do prompt e a do filtro mudaram: medir se o verificador aceita o aviso).
+
+### Excluir telefone (M2 e o código)
+
+Pela Tela 6, aba WhatsApp: "Excluir" na linha do telefone, com confirmação (o administrador da clínica ou a equipe Conduzza). O telefone sai da lista, a conversa dele com a IA volta para a equipe (evento de desligado) e a trilha grava `excluiu_telefone_da_ia` (o id, nunca o telefone). Excluir o telefone forçado apaga o forçar: para voltar, forçar de novo. Pelo SQL editor (equipe Conduzza, com o ok do dono), pelo id da linha:
+
+```sql
+select public.excluir_contato_liberado_da_ia(
+  p_clinic_id           => '<id da clínica>',
+  p_contato_liberado_id => '<id da linha>');
+-- false: a linha já não existia (nada muda, sem trilha)
+```
+
+### Telefone de paciente como teste (M2 e o código; decisão do dono P3)
+
+O administrador da clínica (e a equipe Conduzza) pode usar como telefone de teste o de um **paciente que aceitou testar**: na aba WhatsApp, o telefone recusado como paciente mostra "Usar mesmo assim", que abre o diálogo com a confirmação obrigatória "A pessoa deste telefone sabe que vai conversar com um assistente virtual de teste e que o que escrever vai para a OpenAI, nos EUA.". A trilha grava `forcou_telefone_de_paciente_na_ia` e `confirmou_teste_com_paciente` no nome de quem forçou. **Antes:** combinar com a pessoa por escrito (ela sabe que é um teste, o que escreve vai para a OpenAI, nos EUA, e usa só dados de teste). O dono registrou que quem aceitou testar não conta como "paciente na IA" para o D34. Pelo SQL editor (equipe Conduzza, só com o ok do dono), para uma linha que já existe, pelo id:
+
+```sql
+select public.definir_contato_liberado_da_ia(
+  p_clinic_id                    => '<id da clínica>',
+  p_telefone_e164                => (select l.phone_key from public.ia_contato_liberado l
+                                      where l.id = '<id da linha>' and l.clinic_id = '<id da clínica>'),
+  p_rotulo                       => null,
+  p_ativo                        => true,
+  p_forcar_contato_existente     => true,
+  p_confirmou_teste_com_paciente => true);
+```
+
+Sem `p_confirmou_teste_com_paciente => true`, 23514 `teste_com_paciente_nao_confirmado` e nada muda. Pelo SQL editor, as trilhas saem "sem nome". Telefone novo continua pela aba (que pede a confirmação do aviso da OpenAI).
+
+### Pausa da clínica (M3 e o código)
+
+Na aba WhatsApp, "Pausar o assistente" (o administrador da clínica ou a equipe Conduzza; na hora, sem diálogo): o assistente para de responder pelo WhatsApp **e no simulador**, e as conversas dele voltam para a equipe sem mensagem ao paciente. "Retomar o assistente" pede confirmação e aparece em qualquer modo enquanto a pausa estiver gravada. Trilhas `pausou_a_ia` e `retomou_a_ia`. Na clínica em produção, é o jeito de a clínica parar (o modo só muda pelo Painel geral). Pelo SQL editor:
+
+```sql
+select public.definir_pausa_da_ia('<id da clínica>', true,  'motivo curto');  -- pausar
+select public.definir_pausa_da_ia('<id da clínica>', false, 'motivo curto');  -- retomar
+```
+
+P0001 `sem_liberacao` (a clínica nunca foi ligada) ou `clinica_suspensa` (conta suspensa com a liberação ligada). Já no estado pedido, nada muda e não há trilha.
+
+### Produção e o checklist (M3 e o código; decisões do dono P11a a P11e)
+
+**Nunca antes de:** as três migrations aplicadas e o código publicado; os textos aprovados (o aviso de assistente virtual vai a todo contato); a rodada paga D34 com a versão de agora do filtro e do modelo; o contrato com a OpenAI (o checklist LGPD de 10 itens do `docs/05`, Fase 3); o termo da clínica; a correção da transcrição de áudio pela nossa chave; e as auditorias 2 e 6 (e a consulta E) reescritas para o modo `numero_inteiro` (acima, "Consultas de auditoria"). Cada clínica, só com o ok do dono.
+
+**Antes de ligar uma clínica:**
+- a versão publicada com o **público escolhido** e o horário em 24 horas ou Só fora do expediente; pelo menos um número ligado e conectado; a conta ativa; o agente em Teste;
+- o **teto** revisto (US$ 5 a cada 24 horas acaba rápido com todos os contatos; Painel geral, "Teto de gasto");
+- as **conversas abertas antigas** resolvidas: a conversa aberta com a equipe nunca entra na IA (D7). No Atendimento, "Resolver conversas paradas" (o administrador ou o gestor da clínica; o N de dias escolhido na hora, 7, 15, 30 ou 60, sem nenhum marcado; até 500 por vez, as mais antigas primeiro; cada uma ganha o evento "Conversa resolvida: estava parada há mais de N dias.");
+- quem atende o número avisado: o assistente passa a responder todos os contatos do público, e responder pelo celular continua tirando a conversa da IA;
+- os requisitos registrados (abaixo).
+
+**O checklist** (Painel geral, a clínica, cartão "Para liberar a produção"; ou pela consulta P): os que o banco confere (o agente passou pelo Teste, versão publicada, público escolhido, horário que funciona no WhatsApp, número ligado e conectado, conta ativa, a conversão na aprovação) e os que a equipe Conduzza registra com a evidência (o que prova e onde está guardado, 3 a 500 caracteres; nunca dado de paciente): `rodada_cfm` (com a versão do filtro e do modelo na evidência; o painel mostra as de agora e avisa se mudarem depois), `contrato_openai`, `aviso_assistente_virtual`, `termo_da_clinica` (por clínica) e `transcricao_com_nossa_chave`. Registrar de novo substitui a evidência, sem tirar ninguém da produção. **Revogar** devolve para Teste, na hora, toda clínica em produção que deixa de cumprir (o geral, todas; o termo, aquela clínica): as conversas dela com quem não é telefone da equipe voltam para a equipe, sem mensagem ao paciente.
+
+**P. Os requisitos de uma clínica** (super admin pelo painel, ou o SQL editor):
+
+```sql
+select r ->> 'chave' as requisito,
+       (r ->> 'ok')::boolean as cumprido,
+       r -> 'detalhe' ->> 'origem' as origem,          -- banco | equipe
+       r -> 'detalhe' ->> 'registrado_em' as registrado_em,
+       coalesce((r -> 'detalhe' ->> 'revogado')::boolean, false) as revogado
+from jsonb_array_elements(public.requisitos_da_producao('<id da clínica>')) r;
+```
+
+Registrar e revogar pelo SQL editor (o painel é o caminho normal; trilhas `registrou_requisito_da_producao` e `revogou_requisito_da_producao`, "sem nome" pelo SQL editor):
+
+```sql
+-- p_clinic_id nulo vale para todas; o termo da clínica leva o id dela
+select public.registrar_requisito_da_producao(
+  p_chave     => 'rodada_cfm',
+  p_evidencia => 'Rodada de <data>, filtro <versão>, modelo <modelo>; relatório em <onde>',
+  p_clinic_id => null);
+
+-- devolve {clinicas_de_volta_ao_teste}
+select public.revogar_requisito_da_producao('<id do registro>', 'motivo curto');
+```
+
+**Ligar:** Painel geral, a clínica, cartão "Agente de IA", **Produção** (só habilitada com o agente em Teste e tudo cumprido), o diálogo com o efeito e o **motivo obrigatório** (3 a 300). A clínica fica liberada em `numero_inteiro`: o assistente atende quem escrever para os números ligados, dentro do público, sem a lista de telefones e sem a trava K. Recuo pelo SQL editor: `select public.definir_agente_da_clinica('<id da clínica>', 'producao', 'Dono em <data>: <motivo>');` (P0001 `requisitos_pendentes` com as chaves que faltam no hint). **Voltar para Teste:** **Teste** no mesmo cartão (com diálogo) ou `select public.definir_agente_da_clinica('<id da clínica>', 'teste', 'motivo curto');`: o modo volta a `contatos`, e as conversas de quem não é telefone da equipe voltam para a equipe, sem mensagem ao paciente. **Desligar** continua na hora.
+
+**Acompanhar a clínica em produção:** as consultas A, B, C, D, F, G e H valem como estão (a A mostra o modo `numero_inteiro`); a E, a 2 e a 6 precisam da versão nova antes (acima). Na produção, toda conversa nova de contato fora do público, ou com a clínica pausada, o teto atingido ou o interruptor desligado, ganha hoje o evento "O assistente não atendeu esta mensagem: ele está parado para este telefone ou este número." (ponto aberto para o dono decidir antes da produção: `docs/05`, entrada "Onda 2", ponto 6).
+
+### Rollback da onda 2
+
+Na ordem inversa (M3, M2, M1), cada um numa transação, no SQL editor, em horário calmo, **sempre com o código voltado antes**; o detalhe, o que fica e o que conferir no `docs/04`, 23.8:
+- **M3:** antes, toda clínica de produção para Teste (pelo painel ou `definir_agente_da_clinica('<id>', 'teste', 'rollback da onda 2')`; o arquivo para com P0001 se achar clínica em produção ou liberação em `numero_inteiro`); depois `supabase/operacao/rollback/20261022120000-corpos-anteriores.sql`.
+- **M2:** `supabase/operacao/rollback/20261022110000-corpos-anteriores.sql`. As conversas retomadas pelo horário ficam com a janela `horario`: o código de antes da onda 2 a leria inteira, então, ao voltar o código, mantenha o endurecimento da janela ou espere zerar `select count(*) from public.ia_janela_da_conversa w join public.conversation c on c.id = w.conversation_id where w.aberta_por = 'horario' and c.status = 'ia_atendendo';`.
+- **M1:** `supabase/operacao/rollback/20261022100000-corpos-anteriores.sql`. O que converteu na aprovação fica convertido.
 
 ---
 
@@ -446,7 +627,9 @@ with motivos(codigo) as (
          ('pedido_de_agenda'), ('fora_do_horario'), ('horario_nao_suportado'),
          ('sem_versao_publicada'), ('liberacao_perdida'), ('numero_desconectado'),
          ('envio_incerto'), ('aviso_nao_enviado'), ('celular'), ('sem_resposta'),
-         ('desligada'), ('parada'), ('sem_autorizacao')
+         ('desligada'), ('parada'), ('sem_autorizacao'),
+         -- onda 2 (so existem depois da M2; antes, o rotulo e nulo e a linha nao casa)
+         ('no_expediente'), ('retomou_no_horario'), ('fora_do_assunto')
 )
 select to_char(m.created_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI:SS') as quando,
        c.name as clinica,
@@ -632,6 +815,17 @@ select
 
 Em 19/10/2026: tudo em zero. Qualquer coluna de `a2` a `a6` acima de zero: "Incidente: a IA falou com quem não devia", abaixo.
 
+**Depois da M2 da onda 2:** a varredura de 3 minutos conta a espera de `greatest(last_inbound_at, janela.updated_at)`, para a conversa retomada no começo do horário do assistente (com mensagem do expediente) não ser devolvida na hora. Logo depois de uma retomada, `a1` pode mostrar a conversa por até 1 minuto (o tempo de a IA responder). Para contar como a varredura conta, troque a linha de `a1` por:
+
+```sql
+  (select count(*) from public.conversation c
+     left join public.ia_janela_da_conversa w on w.conversation_id = c.id
+    where c.status = 'ia_atendendo' and c.awaiting_reply
+      and greatest(c.last_inbound_at, w.updated_at) < now() - interval '3 minutes') as a1_esperando_mais_de_3min,
+```
+
+(conferida na produção, só leitura, em 21/10/2026: a mesma contagem de hoje, zero). **Com uma clínica em produção (M3):** `a2` e `a6` contam as conversas dela, porque o modo `numero_inteiro` não usa a lista de telefones nem a trava K, e isso não é incidente. As duas (e a consulta E, que filtra os telefones da equipe) precisam ser reescritas antes de ligar a primeira clínica em produção (pendência da onda 2: comparar com o modo da clínica e com a trilha de quando ela esteve em produção).
+
 ### Primeira semana e depois
 
 ```sql
@@ -752,6 +946,8 @@ Qualquer contador acima de zero nas consultas 2 a 6: siga "Incidente: a IA falou
 
 **Depois da onda 1, cuidado com a consulta 4** (e com a coluna `a4_ia_fora_das_duas` da consulta J): ela compara com a lista **de hoje**. Uma clínica que já teve o agente em Teste e depois foi desligada ou suspensa deixa histórico (mensagens, jobs, uso e decisões da IA) e passa a aparecer aqui sem ser incidente. Antes de tratar como incidente, confira na trilha se a clínica esteve em Teste no período (`select created_at, detalhes->>'estado' as estado from public.audit_log where clinic_id = '<id da clínica>' and action = 'mudou_agente_da_clinica' order by created_at;`, ou a suspensão em `suspendeu_clinica` e `reativou_clinica`). A consulta ainda não foi reescrita para isso (pendência registrada no `docs/05`, entrada "Onda 1").
 
+**Depois da M3 da onda 2, cuidado com as consultas 2 e 6** (e com as colunas `a2` e `a6` da J): com uma clínica em produção, a IA fala com contatos fora da lista de telefones e com pacientes (o modo `numero_inteiro` não usa a lista nem a trava K). Nessa clínica, as duas contam sem ser incidente. Reescrever antes de ligar a primeira clínica em produção (pendência registrada no `docs/05`, entrada "Onda 2").
+
 ---
 
 ## Incidentes
@@ -831,6 +1027,8 @@ select
 
 - **Conduzza Teste:** testar só com a linha "Victor" (`d07b3a0b-fa28-420b-94c7-ce84b8365dfc`), que já é `forcado` (a consulta I mostra `forcado` verdadeiro).
 - **teste123:** **não** ligar "Agendar consulta" (em 19/10/2026, o único telefone de lá era o próprio final 1318, que nunca aciona o assistente; um telefone de teste novo, sem o forçar, cairia na trava depois da primeira consulta). Forçar um telefone é só com o ok do dono, pela equipe Conduzza.
+
+**Depois da M1 da onda 2** (`20261022100000`, conversão só na aprovação): a consulta pendente da IA não converte mais o lead nem é sinal de paciente, então a resposta depois do "sim" sai também para o telefone **não** forçado, e ele continua acionando o assistente até a equipe **aprovar** a consulta (na aprovação, o contato vira paciente e, sem o forçar, o telefone deixa de acionar o assistente). A regra "só com telefone forçado" passa a valer só para **"Confirmar presença"** (a confirmação é de consulta já aprovada). Na Agenda, a consulta pendente só aprova, recusa ou cancela: confirmar, chegou, compareceu e falta esperam a aprovação (23514 `consulta_pendente`). **Aprove antes de remarcar:** a recepção que remarca uma consulta pendente dispara o aviso de remarcação, e o "confirmar" do paciente nesse aviso é recusado pelo banco (o interceptador trata como falha técnica). Na aprovação contam Leads, Resultados, a conversão da Meta e a automação "entrou na etapa".
 
 ### Ligar numa das duas clínicas
 
@@ -1036,6 +1234,8 @@ select
 ## Rollback
 
 Na ordem. Detalhe e lista exata de objetos no `docs/04`, 17.13, "Rollback".
+
+**Só a onda 2 (migrations `20261022120000`, `20261022110000` e `20261022100000`, depois de aplicadas; sem desfazer a onda 1, a E4 nem o E3):** na ordem inversa, M3, M2 e M1, cada uma com o código voltado antes e o arquivo de rollback dela inteiro, numa transação, no SQL editor, em horário calmo; antes da M3, toda clínica de produção para Teste. Passo a passo em "Onda 2", "Rollback da onda 2", e no `docs/04`, 23.8. Se a onda 1, a E4 ou o E3 também forem desfeitos, este vem antes de todos.
 
 **Só a onda 1 (migration `20261021100000`, depois de aplicada; sem desfazer o E3 nem a E4):** (0) desligar pelo painel, ou com `definir_agente_da_clinica(..., 'desligado', 'rollback da onda 1')`, toda clínica ligada em Teste pelo painel, fora a teste123 e a Conduzza Teste (a lista volta a ser só as duas fixas, e a liberação dessas clínicas ficaria ligada fora da lista), e reativar as clínicas suspensas que devem voltar a enviar; (1) voltar o código para o de antes da onda 1; (2) rodar `supabase/operacao/rollback/20261021100000-corpos-anteriores.sql` inteiro, numa transação, no SQL editor, em horário calmo (`lock_timeout` de 3 s; SHARE ROW EXCLUSIVE em `clinic`), e conferir os nove md5 do cabeçalho do arquivo, nenhuma das sete funções novas e nenhuma das duas tabelas novas. Ficam a trilha, os jobs cancelados na reativação e a liberação como o painel a deixou. Detalhe no `docs/04`, 22.8. Se a E4 ou o E3 também forem desfeitos, este vem antes.
 

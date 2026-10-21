@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -45,6 +45,7 @@ import {
   MODOS_DE_OPERACAO,
   MOTIVOS_DE_ESCALONAMENTO,
   MUDANCA_DAS_INSTRUCOES,
+  PADROES_PROPOSTOS_DA_CLINICA_NOVA,
   personaParaOBanco,
   personaSchema,
   PROBLEMA_DAS_INSTRUCOES_PARA_A_CLINICA,
@@ -52,17 +53,27 @@ import {
   problemasDaPublicacao,
   problemasNoTextoDoAgente,
   problemasParaQuemPublica,
+  PUBLICOS_DO_AGENTE,
+  publicoDoBanco,
+  publicoParaOBanco,
+  publicoSchema,
   ROTULO_CURTO_DO_DIA,
   ROTULO_DA_AGENDA,
   ROTULO_DA_TRAVA,
   ROTULO_DO_CAMPO_DE_TEXTO,
   ROTULO_DO_DIA,
   ROTULO_DO_MODO,
+  ROTULO_DO_CAMPO_PUBLICO,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
+  ROTULO_DO_PUBLICO,
+  ROTULO_DO_PUBLICO_NAO_ESCOLHIDO,
   ROTULO_DO_TOM,
   TEXTO_DA_CONFORMIDADE,
   TEXTO_DAS_INSTRUCOES_A_AJUSTAR,
   textoDoProblemaDaPublicacao,
+  tipoDoContatoDoBanco,
+  tipoDoContatoSchema,
+  TIPOS_DO_CONTATO,
   TONS_DO_AGENTE,
   type ConfigDoAgente,
   type HorarioDeOperacao,
@@ -176,7 +187,12 @@ describe("habilidades", () => {
       HABILIDADES_DO_AGENTE.map((h) => [h.chave, h]),
     );
     expect(porChave.responder_duvidas?.travada).toBe(true);
-    expect(porChave.responder_duvidas?.ferramentas).toEqual([]);
+    // Onda 2 (item 5 e P5c): as frases fixas vem sempre, pela habilidade
+    // travada.
+    expect(porChave.responder_duvidas?.ferramentas).toEqual([
+      "fora_do_assunto",
+      "sou_assistente_virtual",
+    ]);
     expect(porChave.informar_preco_e_convenio?.travada).toBe(false);
     expect(porChave.informar_preco_e_convenio?.ferramentas).toEqual([
       "buscar_procedimento",
@@ -249,15 +265,20 @@ describe("habilidades", () => {
     ).toBe(true);
   });
 
-  it("as ferramentas seguem as habilidades, e escalar_humano sempre vem", () => {
+  it("as ferramentas seguem as habilidades; escalar_humano e as frases fixas sempre vem", () => {
     const semAgenda = agendaPadrao();
     expect(ferramentasDoAgente({}, semAgenda)).toEqual([
+      "fora_do_assunto",
+      "sou_assistente_virtual",
       "buscar_procedimento",
       "escalar_humano",
     ]);
     expect(
       ferramentasDoAgente({ informar_preco_e_convenio: false }, semAgenda),
-    ).toEqual(["escalar_humano"]);
+    ).toEqual(["fora_do_assunto", "sou_assistente_virtual", "escalar_humano"]);
+    expect(
+      ferramentasDoAgente({ responder_duvidas: false }, semAgenda),
+    ).toContain("fora_do_assunto");
     expect(
       ferramentasDoAgente({ passar_para_equipe: false }, semAgenda),
     ).toContain("escalar_humano");
@@ -267,6 +288,8 @@ describe("habilidades", () => {
     const completa = { antecedenciaHoras: 2, horizonteDias: 30 };
     const ligadas = { agendar: true, confirmar_presenca: true };
     expect(ferramentasDoAgente(ligadas, completa)).toEqual([
+      "fora_do_assunto",
+      "sou_assistente_virtual",
       "buscar_procedimento",
       "buscar_horario",
       "reservar_horario",
@@ -284,6 +307,8 @@ describe("habilidades", () => {
       { antecedenciaHoras: 1.5, horizonteDias: 30 },
     ]) {
       expect(ferramentasDoAgente(ligadas, agenda)).toEqual([
+        "fora_do_assunto",
+        "sou_assistente_virtual",
         "buscar_procedimento",
         "confirmar_presenca",
         "escalar_humano",
@@ -756,18 +781,33 @@ describe("horario de operacao", () => {
 });
 
 describe("escalonamento e conformidade", () => {
-  it("os motivos espelham o CHECK de escalation_reason da migration", () => {
+  it("os motivos espelham o CHECK de escalation_reason da migration mais nova que o define", () => {
     // O CHECK foi redefinido no E3 (falha_tecnica, teto_de_respostas,
-    // nao_individual e pedido_de_agenda).
-    const sql = readFileSync(
-      "supabase/migrations/20261013100000_ia_whatsapp_fila.sql",
-      "utf-8",
-    );
-    const bloco = sql.match(
-      /escalation_reason is null or escalation_reason in \(([\s\S]*?)\)\)/,
-    );
+    // nao_individual e pedido_de_agenda) e na onda 2 (fora_do_assunto,
+    // migration 20261022110000): vale o da migration mais nova.
+    const pasta = "supabase/migrations";
+    const arquivos = readdirSync(pasta)
+      .filter((arquivo) => arquivo.endsWith(".sql"))
+      .sort()
+      .reverse();
+    let bloco: string | null = null;
+    let arquivoDoCheck: string | null = null;
+    for (const arquivo of arquivos) {
+      const sql = readFileSync(`${pasta}/${arquivo}`, "utf-8");
+      const achado = [
+        ...sql.matchAll(
+          /escalation_reason is null or escalation_reason in \(([\s\S]*?)\)\)/g,
+        ),
+      ].at(-1);
+      if (achado) {
+        bloco = achado[1] ?? "";
+        arquivoDoCheck = arquivo;
+        break;
+      }
+    }
     expect(bloco).not.toBeNull();
-    const doBanco = [...(bloco?.[1] ?? "").matchAll(/'([a-z_]+)'/g)].map(
+    expect((arquivoDoCheck ?? "") >= "20261022110000").toBe(true);
+    const doBanco = [...(bloco ?? "").matchAll(/'([a-z_]+)'/g)].map(
       (m) => m[1],
     );
     expect([...MOTIVOS_DE_ESCALONAMENTO].sort()).toEqual(doBanco.sort());
@@ -1364,6 +1404,8 @@ describe("leitura do banco", () => {
       },
       horario: { ...horarioPadrao(), modo: "fallback", minutosSemResposta: 15 },
       agenda: { antecedenciaHoras: null, horizonteDias: null },
+      // Onda 2: coluna fora do select (ou antes da migration) e nula.
+      publico: null,
       instrucoes: "Seja breve.",
       base,
     });
@@ -1434,8 +1476,180 @@ describe("leitura do banco", () => {
         expediente: expedientePadrao(),
       },
       agenda: { antecedenciaHoras: null, horizonteDias: null },
+      publico: null,
       instrucoes: null,
       base: [],
+    });
+  });
+});
+
+// Onda 2, item 4 (contrato 4.5; decisoes do dono P4a e P4b): quem o
+// assistente atende mora na configuracao do agente (versionada).
+describe("público do assistente", () => {
+  const linha: LinhaDaConfigDoAgente = {
+    version: 3,
+    status: "publicada",
+    agent_name: "Ana",
+    tone: "cordial",
+    use_emoji: false,
+    greeting: null,
+    closing: null,
+    skills: {},
+    operating_mode: "24h",
+    fallback_minutes: 5,
+    operating_hours: null,
+    agenda_antecedencia_horas: null,
+    agenda_horizonte_dias: null,
+  };
+
+  it("espelha o CHECK e tem os rótulos da tela", () => {
+    expect([...PUBLICOS_DO_AGENTE]).toEqual(["leads", "pacientes", "todos"]);
+    expect(ROTULO_DO_PUBLICO).toEqual({
+      leads: "Só leads",
+      pacientes: "Só pacientes",
+      todos: "Leads e pacientes",
+    });
+    expect(ROTULO_DO_PUBLICO_NAO_ESCOLHIDO).toBe("Ainda não escolhido");
+    for (const texto of [
+      ...Object.values(ROTULO_DO_PUBLICO),
+      ROTULO_DO_PUBLICO_NAO_ESCOLHIDO,
+      ROTULO_DO_CAMPO_PUBLICO,
+    ]) {
+      expect(texto).not.toMatch(TRAVESSAO);
+    }
+  });
+
+  it("publicoDoBanco: nulo, ausente e fora da lista viram nulo (ainda não escolhido)", () => {
+    expect(publicoDoBanco("leads")).toBe("leads");
+    expect(publicoDoBanco("pacientes")).toBe("pacientes");
+    expect(publicoDoBanco("todos")).toBe("todos");
+    for (const valor of [null, undefined, "", "Leads", "lead", 1, {}]) {
+      expect(publicoDoBanco(valor), String(valor)).toBeNull();
+    }
+    expect(publicoParaOBanco("pacientes")).toEqual({
+      publico_atendido: "pacientes",
+    });
+  });
+
+  it("configDaLinha lê a coluna; sem ela, nulo", () => {
+    expect(
+      configDaLinha({ ...linha, publico_atendido: "leads" }, { base: [] })
+        .publico,
+    ).toBe("leads");
+    expect(
+      configDaLinha({ ...linha, publico_atendido: "outro" }, { base: [] })
+        .publico,
+    ).toBeNull();
+    expect(configDaLinha(linha, { base: [] }).publico).toBeNull();
+  });
+
+  it("o schema aceita só os três, com a mensagem de recepção", () => {
+    expect(publicoSchema.parse({ publico: "todos" })).toEqual({
+      publico: "todos",
+    });
+    for (const publico of [null, "", "leads ", "paciente", undefined]) {
+      const lido = publicoSchema.safeParse({ publico });
+      expect(lido.success, String(publico)).toBe(false);
+      if (!lido.success) {
+        expect(lido.error.issues[0]?.message).toBe(
+          "Escolha quem o assistente atende.",
+        );
+      }
+    }
+  });
+
+  it("entra no 'o que mudou' das Versões: escolher, trocar e voltar a nulo", () => {
+    const publicada = {
+      ...configPadraoDoAgente(),
+      status: "publicada" as const,
+    };
+    const escolhida = { ...configPadraoDoAgente(), publico: "leads" as const };
+    expect(diferencasDoRascunho(escolhida, publicada)).toEqual([
+      { campo: "publico", rotulo: "Quem o assistente atende: Só leads" },
+    ]);
+    expect(
+      diferencasDoRascunho(
+        { ...escolhida, publico: "todos" },
+        { ...publicada, publico: "leads" },
+      ),
+    ).toEqual([
+      {
+        campo: "publico",
+        rotulo: "Quem o assistente atende: Leads e pacientes",
+      },
+    ]);
+    expect(
+      diferencasDoRascunho(
+        { ...configPadraoDoAgente(), publico: null },
+        { ...publicada, publico: "pacientes" },
+      ),
+    ).toEqual([
+      {
+        campo: "publico",
+        rotulo: "Quem o assistente atende: Ainda não escolhido",
+      },
+    ]);
+    // Igual nos dois lados: nada muda.
+    expect(
+      diferencasDoRascunho(escolhida, { ...publicada, publico: "leads" }),
+    ).toEqual([]);
+  });
+
+  it("tipo do contato: só lead ou paciente (e o Testar como valida o mesmo)", () => {
+    expect([...TIPOS_DO_CONTATO]).toEqual(["lead", "paciente"]);
+    expect(tipoDoContatoSchema.parse("lead")).toBe("lead");
+    expect(tipoDoContatoSchema.parse(null)).toBeNull();
+    for (const valor of ["", "Lead", "cliente", 1, undefined]) {
+      expect(tipoDoContatoSchema.safeParse(valor).success, String(valor)).toBe(
+        false,
+      );
+    }
+    expect(tipoDoContatoDoBanco("lead")).toBe("lead");
+    expect(tipoDoContatoDoBanco("paciente")).toBe("paciente");
+    for (const valor of [null, undefined, "", "Lead", "cliente"]) {
+      expect(tipoDoContatoDoBanco(valor), String(valor)).toBeNull();
+    }
+  });
+});
+
+// Onda 2 (P6b): a proposta dos padroes de clinica nova. Nao esta ligada
+// (o padrao continua o do banco), mas ja passa nas regras do texto do
+// agente, para o dono aprovar sem retrabalho.
+describe("padrões propostos de clínica nova (P6b, proposta)", () => {
+  it("passam nas regras do texto do agente e no formato do nome, sem travessão", () => {
+    const p = PADROES_PROPOSTOS_DA_CLINICA_NOVA;
+    expect(
+      personaSchema.safeParse({
+        nome: p.nome,
+        tom: "cordial",
+        usarEmoji: false,
+        saudacao: p.saudacao,
+        encerramento: p.encerramento,
+      }).success,
+    ).toBe(true);
+    expect(problemaNoTextoDoAgente(p.nome, "nome")).toBeNull();
+    expect(problemaNoTextoDoAgente(p.saudacao, "saudacao")).toBeNull();
+    expect(problemaNoTextoDoAgente(p.encerramento, "encerramento")).toBeNull();
+    for (const texto of Object.values(p)) {
+      expect(texto).not.toMatch(TRAVESSAO);
+    }
+  });
+
+  // Revisao da onda 2: a saudacao vai logo antes do aviso de assistente
+  // virtual (P11a) na primeira resposta. Ela nao repete o aviso (a
+  // proposta do relato do banco, "Sou a assistente virtual da clínica",
+  // foi descartada: uma versao so, a daqui).
+  it("a saudação proposta não repete o aviso de assistente virtual", () => {
+    const p = PADROES_PROPOSTOS_DA_CLINICA_NOVA;
+    expect(p.saudacao.toLowerCase()).not.toContain("assistente virtual");
+    expect(p.encerramento.toLowerCase()).not.toContain("assistente virtual");
+  });
+
+  it("ainda não são o padrão (o padrão espelha o banco até a migration)", () => {
+    expect(configPadraoDoAgente()).toMatchObject({
+      nome: "Assistente",
+      saudacao: null,
+      encerramento: null,
     });
   });
 });

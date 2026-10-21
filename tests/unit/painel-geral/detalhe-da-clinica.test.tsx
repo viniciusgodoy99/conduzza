@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 // apoio que falhou mostra o erro no proprio cartao. A disponibilidade do
 // agente vem do ambiente (T1) e da propria linha do painel (agente em
 // teste e conta ativa): o motivo "servidor" nunca culpa a chave da OpenAI
-// por uma clinica desligada ou suspensa.
+// por uma clinica desligada ou suspensa. Onda 2 (item 11): o cartao "Para
+// liberar a produção" e a Produção do agente, so com tudo cumprido.
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/painel-geral/c3333333-3333-4333-8333-333333333333",
@@ -22,16 +23,20 @@ vi.mock("@/app/(app)/painel-geral/actions", () => ({
   reativarClinicaAction: vi.fn(),
   definirAgenteDaClinicaAction: vi.fn(),
   definirTetoDaIaAction: vi.fn(),
+  registrarRequisitoDaProducaoAction: vi.fn(),
+  revogarRequisitoDaProducaoAction: vi.fn(),
+  definirInterruptorGeralAction: vi.fn(),
 }));
-vi.mock("@/app/(app)/configuracoes/ia-liberacao-actions", () => ({
+vi.mock("@/app/(app)/agente/whatsapp-actions", () => ({
   adicionarTelefoneDaIaAction: vi.fn(),
   alternarNumeroDaIaAction: vi.fn(),
   alternarTelefoneDaIaAction: vi.fn(),
   definirEscolhaDaIaAction: vi.fn(),
-  definirInterruptorGeralAction: vi.fn(),
+  definirPausaDaIaAction: vi.fn(),
+  excluirTelefoneDaIaAction: vi.fn(),
 }));
 
-import { TEXTOS_DA_IA } from "@/components/configuracoes/agente-de-ia";
+import { TEXTOS_DA_IA } from "@/components/agente/whatsapp/agente-de-ia";
 import {
   agenteAtendeNoAmbiente,
   bloqueioDoTeto,
@@ -42,7 +47,11 @@ import {
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
-import type { ClinicaNoPainel } from "@/lib/queries/painel-geral";
+import type {
+  ClinicaNoPainel,
+  RequisitoConferido,
+  RequisitosDaProducao,
+} from "@/lib/queries/painel-geral";
 
 const ID = "c3333333-3333-4333-8333-333333333333";
 const NUMERO = "d4444444-4444-4444-8444-444444444444";
@@ -123,6 +132,10 @@ function detalhe(campos: Partial<DetalheDaClinicaProps> = {}): string {
         tetos={{ tetoDiarioCentavos: 500, tetoRespostasPorConversaHora: 20 }}
         ambienteDaIa
         agoraMs={AGORA}
+        requisitos={{ estado: "indisponivel" }}
+        publicoPublicado={null}
+        telefonesForcados={[]}
+        versoes={null}
         {...campos}
       />
     </TooltipProvider>,
@@ -250,9 +263,15 @@ describe("detalhe da clínica", () => {
 });
 
 describe("regras do detalhe", () => {
-  it("o agente atende no ambiente só com T1, em teste e com a conta ativa", () => {
+  it("o agente atende no ambiente só com T1, em teste (ou em produção) e com a conta ativa", () => {
     const base = clinica();
     expect(agenteAtendeNoAmbiente(base, true)).toBe(true);
+    expect(
+      agenteAtendeNoAmbiente(
+        { ...base, agente: { ...base.agente, estado: "producao" } },
+        true,
+      ),
+    ).toBe(true);
     expect(agenteAtendeNoAmbiente(base, false)).toBe(false);
     expect(
       agenteAtendeNoAmbiente(
@@ -301,5 +320,217 @@ describe("regras do detalhe", () => {
       }),
     ]);
     expect(finais).toEqual({ [NUMERO]: "4321" });
+  });
+});
+
+describe("onda 2: a produção no detalhe (item 11)", () => {
+  const NADA_CONFERIDO: RequisitoConferido["conferido"] = {
+    estado: null,
+    versao: null,
+    publico: null,
+    modo: null,
+    conectados: null,
+  };
+
+  /** Um requisito como o leitor devolve (lib/queries/painel-geral). */
+  function conferido(
+    chave: string,
+    ok: boolean,
+    campos: Partial<Omit<RequisitoConferido, "chave" | "ok">> = {},
+  ): RequisitoConferido {
+    return {
+      chave,
+      ok,
+      origem: "banco",
+      registro: null,
+      conferido: NADA_CONFERIDO,
+      ...campos,
+    };
+  }
+
+  const RODADA_VIVA: RequisitoConferido = conferido("rodada_cfm", true, {
+    origem: "equipe",
+    registro: {
+      id: "e1111111-1111-4111-8111-111111111111",
+      revogado: false,
+      evidencia: "Rodada de 21/10. Filtro regras-1, modelo gpt-6-luna",
+      registradoEm: "2026-10-21T12:00:00.000Z",
+      geral: true,
+      revogadoEm: null,
+      motivoDaRevogacao: null,
+    },
+  });
+
+  const TODOS_OK: RequisitosDaProducao = {
+    estado: "lido",
+    conferidos: [
+      conferido("agente_em_teste", true, {
+        conferido: { ...NADA_CONFERIDO, estado: "teste" },
+      }),
+      conferido("versao_publicada", true, {
+        conferido: { ...NADA_CONFERIDO, versao: 2 },
+      }),
+      conferido("publico_escolhido", true, {
+        conferido: { ...NADA_CONFERIDO, publico: "leads" },
+      }),
+      RODADA_VIVA,
+    ],
+  };
+
+  /** A tag de abertura do botao com aquele texto (a primeira). */
+  function aberturaDoBotao(html: string, texto: string): string {
+    const indice = html.indexOf(`${texto}</button>`);
+    expect(indice, `botão "${texto}"`).toBeGreaterThan(-1);
+    const abertura = html.lastIndexOf("<button", indice);
+    return html.slice(abertura, html.indexOf(">", abertura) + 1);
+  }
+
+  it("banco sem a migration: o cartão diz que a produção não chegou, e a Produção presa com a dica de antes", () => {
+    const saida = detalhe();
+    expect(saida).toContain("Para liberar a produção");
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.requisitosIndisponiveis));
+    expect(aberturaDoBotao(saida, "Produção")).toContain('disabled=""');
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.dicaDaProducao));
+  });
+
+  it("leitura que falhou: o erro no cartão, e a Produção presa", () => {
+    const saida = detalhe({ requisitos: "erro" });
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.requisitosSemLeitura));
+    expect(aberturaDoBotao(saida, "Produção")).toContain('disabled=""');
+  });
+
+  it("com requisito faltando: a lista em 3 camadas, Registrar nos da equipe e a Produção presa", () => {
+    const saida = detalhe({
+      requisitos: {
+        estado: "lido",
+        conferidos: [
+          conferido("versao_publicada", true, {
+            conferido: { ...NADA_CONFERIDO, versao: 2 },
+          }),
+          conferido("contrato_openai", false, { origem: "equipe" }),
+        ],
+      },
+    });
+    expect(saida).toContain("Versão do assistente publicada");
+    expect(saida).toContain("Versão 2 publicada.");
+    expect(saida).toContain(">Cumprido<");
+    expect(saida).toContain(">Falta<");
+    expect(saida).toContain("Registrar</button>");
+    expect(saida).not.toContain("Revogar</button>");
+    expect(aberturaDoBotao(saida, "Produção")).toContain('disabled=""');
+    expect(saida).toContain(
+      escapado(TEXTOS_DO_PAINEL.dicaDaProducaoComRequisitos),
+    );
+  });
+
+  it("tudo cumprido e o agente em teste: a Produção liberada; o registro vivo pode ser revogado", () => {
+    const saida = detalhe({ requisitos: TODOS_OK });
+    expect(aberturaDoBotao(saida, "Produção")).not.toContain('disabled=""');
+    expect(saida).not.toContain(
+      escapado(TEXTOS_DO_PAINEL.dicaDaProducaoComRequisitos),
+    );
+    expect(saida).toContain("Revogar</button>");
+    expect(saida).toContain("Registrar de novo</button>");
+    expect(saida).toContain(", vale para todas as clínicas");
+    expect(saida).toContain(
+      "Evidência: Rodada de 21/10. Filtro regras-1, modelo gpt-6-luna",
+    );
+  });
+
+  it("registro revogado e sem outro vivo: Revogado em 3 camadas, a data, o motivo e Registrar de novo não aparece", () => {
+    const saida = detalhe({
+      requisitos: {
+        estado: "lido",
+        conferidos: [
+          conferido("contrato_openai", false, {
+            origem: "equipe",
+            registro: {
+              id: "e2222222-2222-4222-8222-222222222222",
+              revogado: true,
+              evidencia: null,
+              registradoEm: null,
+              geral: null,
+              revogadoEm: "2026-10-21T15:00:00.000Z",
+              motivoDaRevogacao: "Contrato vencido",
+            },
+          }),
+        ],
+      },
+    });
+    expect(saida).toContain(">Revogado<");
+    expect(saida).toContain("Revogado em");
+    expect(saida).toContain("Motivo: Contrato vencido");
+    expect(saida).toContain("Registrar</button>");
+    expect(saida).not.toContain("Registrar de novo</button>");
+    expect(saida).not.toContain("Revogar</button>");
+    expect(aberturaDoBotao(saida, "Produção")).toContain('disabled=""');
+  });
+
+  it("tudo cumprido, mas o agente desligado: a Produção presa (só a partir de Teste)", () => {
+    const saida = detalhe({
+      requisitos: TODOS_OK,
+      clinica: clinica({
+        agente: {
+          estado: "desligado",
+          modo: null,
+          liberada: false,
+          pausadaPelaClinica: false,
+          telefonesLigados: 0,
+        },
+      }),
+    });
+    expect(aberturaDoBotao(saida, "Produção")).toContain('disabled=""');
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.dicaDaProducaoSoDeTeste));
+  });
+
+  it("em produção: o chip Produção e o agente na clínica pela mesma regra da Tela 6", () => {
+    const saida = detalhe({
+      requisitos: TODOS_OK,
+      clinica: clinica({
+        agente: {
+          estado: "producao",
+          modo: "numero_inteiro",
+          liberada: true,
+          pausadaPelaClinica: false,
+          telefonesLigados: 1,
+        },
+      }),
+      dados: {
+        ...DADOS,
+        liberacao: {
+          ...DADOS.liberacao!,
+          modo: "numero_inteiro" as string as NonNullable<
+            DadosDaIa["liberacao"]
+          >["modo"],
+        },
+      },
+    });
+    expect(aberturaDoBotao(saida, "Produção")).toContain('aria-pressed="true"');
+    expect(saida).toContain("Na clínica agora");
+    expect(saida).toContain("Atendendo os contatos");
+  });
+
+  it("P11e: a versão de agora não está na evidência da rodada: o aviso, sem travar", () => {
+    const mudou = detalhe({
+      requisitos: TODOS_OK,
+      versoes: { filtro: "regras-9", modelo: "gpt-6-luna" },
+    });
+    expect(mudou).toContain(escapado(TEXTOS_DO_PAINEL.versaoMudou));
+    expect(aberturaDoBotao(mudou, "Produção")).not.toContain('disabled=""');
+    const igual = detalhe({
+      requisitos: TODOS_OK,
+      versoes: { filtro: "regras-1", modelo: "gpt-6-luna" },
+    });
+    expect(igual).not.toContain(escapado(TEXTOS_DO_PAINEL.versaoMudou));
+  });
+
+  it("sem travessão nos estados novos", () => {
+    for (const requisitos of [
+      TODOS_OK,
+      { estado: "indisponivel" as const },
+      "erro" as const,
+    ]) {
+      expect(detalhe({ requisitos })).not.toMatch(/[—–]/);
+    }
   });
 });

@@ -56,6 +56,14 @@ import { adminClient, anonClient } from "../rls/stack";
 //   conversas, cada uma com a propria janela e a propria fila); telefone
 //   fora da lista nunca; desligar um numero devolve so a conversa dele (com
 //   o evento e o pendente cancelado) e o outro continua atendendo.
+// - onda 2 (migration 20261022110000, M2): o publico da versao publicada na
+//   ENTRADA (so leads: o paciente forcado nao entra, o contato sem cadastro
+//   entra como lead; so pacientes: o inverso), e o lead que vira paciente no
+//   meio da conversa continua (ia_pode_falar_com nao olha o publico);
+//   excluir telefone devolve a conversa dele para a equipe, com o evento; o
+//   forcar sem a confirmacao do teste da 23514 ate para o servidor. ESCRITO
+//   NA ONDA 2 E NAO RODADO por quem escreveu: roda depois de aplicar a
+//   migration.
 // O claim LEGADO nunca e chamado com limite (ele reivindicaria jobs reais
 // de outras clinicas): so com p_limit 0, para provar que nao enterra o kind.
 // Que ele nao REIVINDICA o kind e provado no harness local e no ensaio.
@@ -1176,6 +1184,9 @@ describe("varredura e frase que nao sai", () => {
       p_ativo: true,
       p_forcar_contato_existente: true,
       p_confirmou_aviso_da_openai: true,
+      // onda 2 (P3, migration 20261022110000): o forcar exige a
+      // confirmacao do teste com paciente, ate para o servidor
+      p_confirmou_teste_com_paciente: true,
     });
     const r = await ingerir(EQ7, "Alguém aí?");
     expect(r.ia_atendendo).toBe(true);
@@ -1557,6 +1568,9 @@ describe("D-B: sinal de paciente sem o forcar barra em todo lugar; o forcado ent
       p_ativo: true,
       p_forcar_contato_existente: true,
       p_confirmou_aviso_da_openai: true,
+      // onda 2 (P3, migration 20261022110000): o forcar exige a
+      // confirmacao do teste com paciente, ate para o servidor
+      p_confirmou_teste_com_paciente: true,
     });
     const r = await ingerir(EQ_FORCADO, "Oi");
     expect(r.ia_atendendo).toBe(true);
@@ -1919,5 +1933,180 @@ describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
       .single()
       .throwOnError();
     expect(primeiro).toEqual({ ativo: true });
+  });
+});
+
+describe("onda 2 (M2): o publico na entrada e excluir telefone", () => {
+  // Telefones novos da equipe (ficticios). O lead sem cadastro, o paciente
+  // forcado, o lead forcado que vira paciente, outro paciente forcado e o
+  // que e excluido.
+  const PUB_LEAD = `+5584951${digitos}`;
+  const PUB_PACIENTE = `+5584952${digitos}`;
+  const PUB_VIRA = `+5584953${digitos}`;
+  const PUB_PACIENTE2 = `+5584954${digitos}`;
+  const PUB_LEAD2 = `+5584955${digitos}`;
+  const EXCLUIR = `+5584956${digitos}`;
+  const DESLIGOU =
+    "O assistente foi desligado. A conversa voltou para a equipe.";
+
+  async function publicar(publico: string | null): Promise<void> {
+    const { data } = await admin
+      .from("ai_agent_config")
+      .select("version")
+      .eq("clinic_id", clinicaT)
+      .order("version", { ascending: false })
+      .limit(1)
+      .throwOnError();
+    const versao = ((data ?? []) as { version: number }[])[0]?.version ?? 0;
+    await admin
+      .from("ai_agent_config")
+      .insert({
+        clinic_id: clinicaT,
+        version: versao + 1,
+        status: "publicada",
+        publico_atendido: publico,
+      })
+      .throwOnError();
+  }
+
+  /**
+   * Telefone forcado pela equipe (com a confirmacao do teste). O forcado so
+   * fica marcado quando o contato tem sinal de paciente na hora: o contato
+   * nasce paciente e, para o lead forcado, volta a lead depois.
+   */
+  async function forcar(telefone: string, kind: "lead" | "paciente") {
+    await admin
+      .from("contact")
+      .insert({
+        clinic_id: clinicaT,
+        phone_e164: telefone,
+        name: "Contato sintético",
+        kind: "paciente",
+      })
+      .throwOnError();
+    await rpcOk("definir_contato_liberado_da_ia", {
+      p_clinic_id: clinicaT,
+      p_telefone_e164: telefone,
+      p_rotulo: "Equipe sintética",
+      p_ativo: true,
+      p_forcar_contato_existente: true,
+      p_confirmou_aviso_da_openai: true,
+      p_confirmou_teste_com_paciente: true,
+    });
+    if (kind === "lead") {
+      await admin
+        .from("contact")
+        .update({ kind: "lead" })
+        .eq("clinic_id", clinicaT)
+        .eq("phone_e164", telefone)
+        .throwOnError();
+    }
+  }
+
+  it("o forcar sem a confirmacao do teste: 23514 ate para o servidor, e nada muda", async () => {
+    await admin
+      .from("contact")
+      .insert({
+        clinic_id: clinicaT,
+        phone_e164: PUB_PACIENTE,
+        name: "Contato sintético",
+        kind: "paciente",
+      })
+      .throwOnError();
+    const { error } = await admin.rpc("definir_contato_liberado_da_ia", {
+      p_clinic_id: clinicaT,
+      p_telefone_e164: PUB_PACIENTE,
+      p_rotulo: "Equipe sintética",
+      p_ativo: true,
+      p_forcar_contato_existente: true,
+      p_confirmou_aviso_da_openai: true,
+    });
+    expect(error?.code).toBe("23514");
+    expect(error?.message).toBe("teste_com_paciente_nao_confirmado");
+    const { data } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("clinic_id", clinicaT)
+      .eq("phone_key", PUB_PACIENTE);
+    expect(data).toEqual([]);
+    // com a confirmacao, forcado
+    await rpcOk("definir_contato_liberado_da_ia", {
+      p_clinic_id: clinicaT,
+      p_telefone_e164: PUB_PACIENTE,
+      p_rotulo: "Equipe sintética",
+      p_ativo: true,
+      p_forcar_contato_existente: true,
+      p_confirmou_aviso_da_openai: true,
+      p_confirmou_teste_com_paciente: true,
+    });
+  });
+
+  it("so leads: o lead sem cadastro entra, o paciente forcado nao; o lead que vira paciente no meio continua", async () => {
+    await publicar("leads");
+    await liberarTelefone(PUB_LEAD);
+    expect((await ingerir(PUB_LEAD, "Oi")).ia_atendendo).toBe(true);
+    const doPaciente = await ingerir(PUB_PACIENTE, "Oi");
+    expect(doPaciente.ia_atendendo).toBe(false);
+    expect(await eventos(doPaciente.conversation_id!)).toEqual([PARADA]);
+
+    await forcar(PUB_VIRA, "lead");
+    const primeira = await ingerir(PUB_VIRA, "Oi");
+    expect(primeira.ia_atendendo).toBe(true);
+    await admin
+      .from("contact")
+      .update({ kind: "paciente" })
+      .eq("clinic_id", clinicaT)
+      .eq("phone_e164", PUB_VIRA)
+      .throwOnError();
+    const segunda = await ingerir(PUB_VIRA, "Agora sou paciente");
+    expect(segunda).toMatchObject({
+      ia_atendendo: true,
+      conversation_id: primeira.conversation_id,
+    });
+  });
+
+  it("so pacientes: o paciente forcado entra, o lead nao", async () => {
+    await publicar("pacientes");
+    await forcar(PUB_PACIENTE2, "paciente");
+    expect((await ingerir(PUB_PACIENTE2, "Oi")).ia_atendendo).toBe(true);
+    await liberarTelefone(PUB_LEAD2);
+    const doLead = await ingerir(PUB_LEAD2, "Oi");
+    expect(doLead.ia_atendendo).toBe(false);
+    expect(await eventos(doLead.conversation_id!)).toEqual([PARADA]);
+    // de volta ao publico nao escolhido (no teste, vale tudo)
+    await publicar(null);
+  });
+
+  it("excluir telefone: a conversa dele volta para a equipe, com o evento; de novo, false", async () => {
+    await liberarTelefone(EXCLUIR);
+    const r = await ingerir(EXCLUIR, "Oi");
+    expect(r.ia_atendendo).toBe(true);
+    const { data: linha } = await admin
+      .from("ia_contato_liberado")
+      .select("id")
+      .eq("clinic_id", clinicaT)
+      .eq("phone_key", EXCLUIR)
+      .single()
+      .throwOnError();
+    const id = (linha as { id: string }).id;
+    expect(
+      await rpcOk("excluir_contato_liberado_da_ia", {
+        p_clinic_id: clinicaT,
+        p_contato_liberado_id: id,
+      }),
+    ).toBe(true);
+    expect((await conversa(r.conversation_id!)).status).toBe(
+      "aguardando_humano",
+    );
+    expect(await eventos(r.conversation_id!)).toEqual([DESLIGOU]);
+    expect(
+      await rpcOk("excluir_contato_liberado_da_ia", {
+        p_clinic_id: clinicaT,
+        p_contato_liberado_id: id,
+      }),
+    ).toBe(false);
+    // a mensagem seguinte fica com a equipe (o telefone nao esta na lista)
+    const depois = await ingerir(EXCLUIR, "Ainda ai?");
+    expect(depois.ia_atendendo).toBe(false);
   });
 });

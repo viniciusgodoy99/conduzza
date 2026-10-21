@@ -33,9 +33,11 @@ import { fetchProfileNames } from "@/lib/queries/profiles";
  * da agenda da IA (E4, D13: antecedencia minima e horizonte) tem o mesmo
  * grant por coluna de skills (migration 20261020130000): sem elas a tela
  * leria a agenda nula e mostraria "Agendar consulta" desligada sem motivo.
+ * publico_atendido (onda 2, item 4) tem o mesmo grant desde a migration
+ * 20261022110000 e so entra aqui com ela aplicada (antes, 42703).
  */
 export const COLUNAS_DA_CONFIG_DO_AGENTE =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, conhecimento, published_at, published_by";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, conhecimento, published_at, published_by";
 
 type LinhaDaSessao = LinhaDaConfigDoAgente & {
   id: string;

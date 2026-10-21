@@ -78,7 +78,6 @@ function tela(abaInicial: string | undefined): string {
         mensagens={null}
         meta={null}
         google={null}
-        agenteDeIa={null}
       />
     </TooltipProvider>,
   );

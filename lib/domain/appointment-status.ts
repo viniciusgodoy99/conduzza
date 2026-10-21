@@ -95,6 +95,51 @@ export function eCancelamento(status: AppointmentStatus): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Consulta pendente so aprova ou recusa (onda 2, item 10)
+// ---------------------------------------------------------------------------
+
+/**
+ * Decisao do dono (onda 2, P10a e P10b): a consulta que espera aprovacao
+ * (approval_status 'pendente': a que a IA marcou e, quando existir, o
+ * encaixe pendente) nao confirma, nao vai para a recepcao, nao comparece e
+ * nao falta antes da aprovacao. Cancelar continua (pela Agenda, cancelar a
+ * pendencia da IA e recusar). A acao (mudarStatusAction) recusa com esta
+ * dica e o menu mostra as opcoes desabilitadas com a mesma; o gatilho do
+ * banco (23514 consulta_pendente) confere de novo para qualquer caminho.
+ */
+export const DICA_CONSULTA_PENDENTE =
+  "Esta consulta ainda espera aprovação. Aprove ou recuse antes de mudar a situação.";
+
+/**
+ * A mudanca de situacao espera a aprovacao: a consulta esta pendente e a
+ * situacao nova nao e cancelamento.
+ */
+export function mudancaEsperaAprovacao(
+  approvalStatus: string | null | undefined,
+  novoStatus: AppointmentStatus,
+): boolean {
+  return approvalStatus === "pendente" && !eCancelamento(novoStatus);
+}
+
+/**
+ * A consulta ainda espera a aprovacao da equipe: pendente e NAO cancelada.
+ * A pendente cancelada (o paciente cancelou pelo WhatsApp: a funcao do banco
+ * muda so o status, e ela continua 'pendente') conta como recusada (item 10
+ * da onda 2): sai de "Pendente de voce", nao mostra Aprovar nem Recusar, a
+ * acao recusa aprovar ou recusar, e o banco nao converte nem avanca o funil
+ * se alguem aprovar por outro caminho (gatilhos da migration 20261022100000).
+ */
+export function aguardaAprovacao(consulta: {
+  approval_status: string | null | undefined;
+  status: AppointmentStatus;
+}): boolean {
+  return consulta.approval_status === "pendente" && !eCancelamento(consulta.status);
+}
+
+/** A pendencia cancelada antes da aprovacao (aprovar ou recusar e recusado). */
+export const PENDENCIA_CANCELADA = "Esta consulta já foi cancelada.";
+
+// ---------------------------------------------------------------------------
 // Falta so a partir do horario da consulta
 // ---------------------------------------------------------------------------
 

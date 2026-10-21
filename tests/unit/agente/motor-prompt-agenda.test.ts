@@ -29,8 +29,9 @@ import {
 // entra o fluxo (procedimento, profissional, convenio com a D14, ate 3
 // horarios, reserva, confirmacao numa mensagem nova, a equipe confirma por
 // aqui); o bloco <atendimento> diz se marcar e confirmar presenca estao
-// ligados, com a antecedencia e o horizonte; o bloco <profissionais> so vem
-// com a agenda. Tudo versionado em VERSAO_DO_PROMPT.
+// ligados, com a antecedencia e o horizonte; o bloco <profissionais> vem
+// SEMPRE desde a onda 2 (item 6, P6a), com e sem a agenda. Tudo versionado
+// em VERSAO_DO_PROMPT.
 
 const CATALOGO = catalogoDaAgenda();
 const AGORA = "terça-feira, 20/10/2026, 09:00";
@@ -176,7 +177,7 @@ describe("bloco <atendimento> e <profissionais>", () => {
     expect(singular).toContain("Marcar até quantos dias à frente: 1 dia.");
   });
 
-  it("com a agenda desligada (ou incompleta): manda passar para a equipe e não traz <profissionais>", () => {
+  it("com a agenda desligada (ou incompleta): manda passar para a equipe, e <profissionais> vem igual (onda 2, P6a)", () => {
     const padrao = instrucoes({ ...configPadraoDoAgente(), nome: "Ana" });
     expect(blocoEm(padrao, "atendimento")).toContain(
       FRASES_DO_ATENDIMENTO.agendaDesligada,
@@ -184,7 +185,10 @@ describe("bloco <atendimento> e <profissionais>", () => {
     expect(blocoEm(padrao, "atendimento")).toContain(
       FRASES_DO_ATENDIMENTO.presencaDesligada,
     );
-    expect(blocoEm(padrao, "profissionais")).toBeNull();
+    const comAgenda = blocoEm(instrucoes(configComAgenda()), "profissionais");
+    expect(comAgenda).not.toBeNull();
+    // O bloco nao depende da agenda: os mesmos codigos de buscar_horario.
+    expect(blocoEm(padrao, "profissionais")).toEqual(comAgenda);
     // Agendar ligada no jsonb, sem horizonte: vale desligada (falha fechada).
     const incompleta = instrucoes(
       configComAgenda({
@@ -194,7 +198,7 @@ describe("bloco <atendimento> e <profissionais>", () => {
     expect(blocoEm(incompleta, "atendimento")).toContain(
       FRASES_DO_ATENDIMENTO.agendaDesligada,
     );
-    expect(blocoEm(incompleta, "profissionais")).toBeNull();
+    expect(blocoEm(incompleta, "profissionais")).toEqual(comAgenda);
   });
 
   it("<profissionais> traz código, nome e os procedimentos de cada um, sem preço, convênio nem id", () => {
@@ -293,7 +297,10 @@ describe("bloco <atendimento> e <profissionais>", () => {
 
 describe("ferramentas e versão", () => {
   it("as ferramentas seguem as habilidades e a agenda, na ordem estável", () => {
+    // Onda 2: as duas de frase fixa vem sempre, na frente.
+    const frases = ["fora_do_assunto", "sou_assistente_virtual"];
     expect(ferramentasDaChamada(configComAgenda()).map((f) => f.name)).toEqual([
+      ...frases,
       "buscar_procedimento",
       "buscar_horario",
       "reservar_horario",
@@ -307,14 +314,21 @@ describe("ferramentas e versão", () => {
           agenda: { antecedenciaHoras: null, horizonteDias: 3 },
         }),
       ).map((f) => f.name),
-    ).toEqual(["buscar_procedimento", "confirmar_presenca", "escalar_humano"]);
+    ).toEqual([
+      ...frases,
+      "buscar_procedimento",
+      "confirmar_presenca",
+      "escalar_humano",
+    ]);
     expect(
       ferramentasDaChamada(configPadraoDoAgente()).map((f) => f.name),
-    ).toEqual(["buscar_procedimento", "escalar_humano"]);
+    ).toEqual([...frases, "buscar_procedimento", "escalar_humano"]);
   });
 
   it("a versão cobre as ferramentas e as frases novas", () => {
     expect(FONTES_DA_VERSAO_DO_PROMPT.ferramentas.map((f) => f.name)).toEqual([
+      "fora_do_assunto",
+      "sou_assistente_virtual",
       "buscar_procedimento",
       "buscar_horario",
       "reservar_horario",
@@ -338,7 +352,7 @@ describe("ferramentas e versão", () => {
         agoraTexto: AGORA,
       }),
     ).toContain(
-      "Ferramentas desta versão: buscar_procedimento, buscar_horario, reservar_horario, agendar, confirmar_presenca, escalar_humano.",
+      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, buscar_procedimento, buscar_horario, reservar_horario, agendar, confirmar_presenca, escalar_humano.",
     );
   });
 });

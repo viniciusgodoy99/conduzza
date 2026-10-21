@@ -13,8 +13,10 @@ import {
 } from "@/lib/ia/liberacao";
 import { log } from "@/lib/log";
 
-// Leitura da aba "Agente de IA" de Configuracoes (Fase 3; decisao do dono em
-// 05/10/2026): a liberacao da IA na clinica, os numeros ligados ao
+// Leitura da liberacao da IA (Fase 3; decisao do dono em 05/10/2026), que
+// desde a onda 2 (item 8) mora na Tela 6, aba WhatsApp, e no Painel geral
+// (antes, aba "Agente de IA" de Configuracoes): a liberacao da IA na
+// clinica, os numeros ligados ao
 // assistente (varios desde a decisao do dono de 19/10/2026, migration
 // 20261019110000), os telefones da equipe e o estado do interruptor geral.
 // Contrato do banco na migration
@@ -87,8 +89,14 @@ export async function configDaIaDaRequisicao(): Promise<ConfigDaIa> {
   }
 }
 
-/** O modo gravado em ia_liberacao (check do banco). */
-export type ModoDaIa = "simulador" | "contatos";
+/**
+ * O modo gravado em ia_liberacao (check do banco). "numero_inteiro" (onda 2,
+ * item 11): a producao, o assistente atende todos os contatos que cabem no
+ * publico pelos numeros ligados. So existe depois da migration da producao
+ * (M3), mas o leitor ja aceita (contrato da onda 2, secao 7: o codigo que
+ * entende o valor novo vai antes ou junto da migration).
+ */
+export type ModoDaIa = "simulador" | "contatos" | "numero_inteiro";
 
 export type LiberacaoDaClinica = {
   liberada: boolean;
@@ -151,6 +159,15 @@ export type SituacaoDaIa = {
    */
   telefonesSemAutorizacao: string[];
   /**
+   * Onda 2 (item 4, P4b): ids de ia_contato_liberado ativos cujo contato nao
+   * cabe no publico da versao publicada (so leads, so pacientes): eles nao
+   * acionam o assistente, e a aba diz por que. A chave nova de
+   * situacao_da_ia_na_clinica (migration 20261022110000) e OPCIONAL no
+   * leitor: ausente (banco de antes da migration) = nenhum. Opcional tambem
+   * no tipo: quem monta a situacao a mao (testes, tela) pode deixar de fora.
+   */
+  telefonesForaDoPublico?: string[];
+  /**
    * Por telefone ativo e numero ligado (nao removido), a conversa aberta com
    * a equipe (situacao_da_ia_na_clinica.conversas_abertas, revisao de
    * producao de 19/10/2026). Leitura OBRIGATORIA, como as outras listas: a
@@ -207,10 +224,14 @@ type LinhaDoTelefone = {
 };
 
 function modoDaLinha(modo: string): ModoDaIa {
-  if (modo === "simulador" || modo === "contatos") {
+  if (
+    modo === "simulador" ||
+    modo === "contatos" ||
+    modo === "numero_inteiro"
+  ) {
     return modo;
   }
-  // O check do banco so aceita os dois; outro valor e banco e codigo
+  // O check do banco so aceita os tres; outro valor e banco e codigo
   // desencontrados, e a aba mostra o erro em vez de adivinhar.
   throw new Error("modo da liberacao desconhecido");
 }
@@ -258,6 +279,14 @@ function listaDeConversasAbertas(valor: unknown): ConversaAbertaDaIa[] {
   });
 }
 
+/**
+ * Uma lista OPCIONAL de ids (chave nova, onda 2): ausente ou nula = nenhum;
+ * presente e fora do formato (nao e lista) lanca, como as outras.
+ */
+function listaOpcionalDeIds(valor: unknown): string[] {
+  return valor === undefined || valor === null ? [] : listaDeIds(valor);
+}
+
 /** O jsonb de situacao_da_ia_na_clinica. Formato estranho: lanca. */
 export function lerSituacaoDoBanco(
   valor: unknown,
@@ -284,6 +313,7 @@ export function lerSituacaoDoBanco(
     versaoPublicada: versao,
     telefonesInvalidos: listaDeIds(s.telefones_invalidos),
     telefonesSemAutorizacao: listaDeIds(s.telefones_sem_autorizacao),
+    telefonesForaDoPublico: listaOpcionalDeIds(s.telefones_fora_do_publico),
     conversasAbertas: listaDeConversasAbertas(s.conversas_abertas),
     motorParado: s.motor_parado,
   };

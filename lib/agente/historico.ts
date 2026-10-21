@@ -4,6 +4,7 @@ import { ErroComCodigoDeJob } from "@/lib/jobs/erro-de-job";
 
 import { MENSAGENS_NO_HISTORICO, type MensagemDaConversa } from "./laco";
 import { MARCA_DO_NOME } from "./marca-do-nome";
+import type { AberturaDaJanela } from "./whatsapp";
 
 // Historico da conversa do WhatsApp para o turno da IA (E3), lido do banco
 // pela service role com clinic_id explicito (o isolamento por clinica e no
@@ -18,7 +19,8 @@ import { MARCA_DO_NOME } from "./marca-do-nome";
 //    inicio da transacao que criou a conversa, e a mensagem de uma rajada
 //    cuja transacao comecou um pouco antes fica com created_at < desde. Nesse
 //    caso a conversa inteira entra (sem o filtro por desde). Na janela do
-//    Devolver o filtro vale sempre;
+//    Devolver, na do horario (onda 2) e na de valor desconhecido o filtro
+//    vale sempre (falha fechada);
 //  - sem nota interna, sem evento, sem mensagem apagada e sem a resposta
 //    automatica do app WhatsApp Business (pelo_celular com autor 'sistema'),
 //    filtrados ANTES do limite de MENSAGENS_NO_HISTORICO;
@@ -61,10 +63,13 @@ export type EntradaDoHistorico = {
   /** ia_janela_da_conversa.desde (ISO). So mensagens com created_at >= desde. */
   desde: string;
   /**
-   * ia_janela_da_conversa.aberta_por. 'ingestao' (conversa nova, nada
-   * antes dela): a conversa inteira, sem o filtro por desde.
+   * ia_janela_da_conversa.aberta_por. So 'ingestao' (conversa nova, nada
+   * antes dela) le a conversa inteira, sem o filtro por desde. 'devolver',
+   * 'horario' (onda 2: a retomada no horario do assistente) e
+   * 'desconhecida' (valor que o codigo nao conhece) leem so a partir do
+   * desde: falha fechada.
    */
-  abertaPor: "ingestao" | "devolver";
+  abertaPor: AberturaDaJanela;
   /** contact.name, para mascarar por MARCA_DO_NOME. */
   nomeDoContato: string | null;
   /** O job que carrega: as lidas dele nao contam como respondidas (retomada). */
@@ -76,6 +81,15 @@ export type HistoricoDaConversa = {
   mensagens: MensagemDaConversa[];
   /** Ids das pendentes, na ordem em que foram para `mensagens`. Vazio: nada a responder. */
   pendentes: string[];
+  /**
+   * Onda 2 (P11a): alguma resposta da IA (autor 'ia') no trecho lido da
+   * janela. Falso: a proxima resposta e a primeira da IA nesta janela e leva
+   * o aviso de assistente virtual. Fala da equipe ou do sistema nao conta
+   * (o aviso e da IA). Lido das mesmas linhas do historico (as 20 mais
+   * recentes): numa janela mais longa que isso, o aviso pode repetir, nunca
+   * faltar.
+   */
+  iaRespondeuNaJanela: boolean;
 };
 
 // A marca do nome mora em ./marca-do-nome (o laco tira a marca da resposta
@@ -260,6 +274,7 @@ export function montarHistorico(
     pendentes: pendentes
       .filter((linha) => idsNoRecorte.has(linha.id))
       .map((linha) => linha.id),
+    iaRespondeuNaJanela: ordenadas.some((linha) => linha.author === "ia"),
   };
 }
 

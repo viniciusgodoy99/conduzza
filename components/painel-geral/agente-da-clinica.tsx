@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, CircleQuestionMark, Power } from "lucide-react";
+import { Bot, CircleQuestionMark, Power, RadioTower } from "lucide-react";
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -16,12 +16,15 @@ import {
   textosDaParada,
   TEXTOS_DA_IA,
   type ContextoDaIa,
-} from "@/components/configuracoes/agente-de-ia";
+} from "@/components/agente/whatsapp/agente-de-ia";
 import {
   AGENTE_DA_CLINICA_STATUS,
   dolares,
   MOTIVO_MAXIMO,
+  motivoValido,
   OPCOES_DO_ESTADO_DO_AGENTE,
+  producaoLiberada,
+  publicoNoDialogo,
   TEXTOS_DO_PAINEL,
   type OpcaoDoAgente,
 } from "@/components/painel-geral/painel-geral";
@@ -47,30 +50,77 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { EstadoDoAgente } from "@/lib/queries/painel-geral";
+import type {
+  EstadoDoAgente,
+  RequisitosDaProducao,
+} from "@/lib/queries/painel-geral";
 
 // O agente de IA da clinica no detalhe do Painel geral (onda 1, decisao do
-// dono de 20/10/2026): Desligado, Teste e Producao. Producao fica visivel e
-// travada ate a onda 2, com os pre-requisitos escritos logo abaixo (o
-// segmentado nao abre dica numa opcao desabilitada). Ligar em teste pede
+// dono de 20/10/2026): Desligado, Teste e Producao. Ligar em teste pede
 // confirmacao, com o efeito e um motivo opcional (vai para a trilha);
 // desligar e na hora (o lado seguro: as conversas do agente voltam para a
 // equipe).
 //
-// Com o agente em teste e a conta ativa, "Na clínica agora" diz a verdade
-// de hoje pela mesma regra da aba de Configuracoes (estadoDaIa): o
-// ambiente, a escolha da propria clinica, o interruptor geral, o teto, o
-// motor, os numeros e os telefones. Leitura que falhou vira o aviso de que
-// nao deu para conferir, nunca o verde. Com a conta suspensa, so o aviso
-// de que o agente nao atende.
+// Producao (onda 2, item 11, decisoes P11a a P11e): so a partir de Teste e
+// so com todos os requisitos de "Para liberar a produção" cumpridos; fora
+// disso a opcao fica visivel e desabilitada, com o porque escrito logo
+// abaixo (o segmentado nao abre dica numa opcao desabilitada). O dialogo
+// diz o efeito, com o publico publicado ("O assistente passa a responder aos
+// leads que escreverem..."), e pede o motivo obrigatorio. De Producao para
+// Teste tambem pede confirmacao: as conversas com quem nao e telefone da
+// equipe voltam para a equipe, sem mensagem ao paciente. O banco confere
+// tudo de novo.
+//
+// Com o agente em teste ou em producao e a conta ativa, "Na clínica agora"
+// diz a verdade de hoje pela mesma regra da aba WhatsApp da Tela 6
+// (estadoDaIa): o ambiente, a escolha da propria clinica, a pausa, o
+// interruptor geral, o teto, o motor, os numeros e os telefones. Leitura
+// que falhou vira o aviso de que nao deu para conferir, nunca o verde. Com
+// a conta suspensa, so o aviso de que o agente nao atende.
 
 export function textoDoAgenteMudou(
   nome: string,
   estado: EstadoDoAgente,
 ): string {
-  return estado === "teste"
-    ? `Agente da ${nome} ligado em teste.`
-    : `Agente da ${nome} desligado.`;
+  switch (estado) {
+    case "producao":
+      return `Agente da ${nome} em produção.`;
+    case "teste":
+      return `Agente da ${nome} ligado em teste.`;
+    case "desligado":
+      return `Agente da ${nome} desligado.`;
+  }
+}
+
+/** O dialogo aberto: ligar em teste, ligar a producao ou voltar para teste. */
+type Confirmacao = "teste" | "producao" | "volta";
+
+/**
+ * Por que a Producao nao liga agora (a linha embaixo do seletor). Nulo: liga
+ * (ou ja esta em producao).
+ */
+export function porQueAProducaoNaoLiga(entrada: {
+  estado: EstadoDoAgente;
+  suspensa: boolean;
+  requisitos: RequisitosDaProducao | "erro";
+}): string | null {
+  const { estado, suspensa, requisitos } = entrada;
+  if (estado === "producao") {
+    return null;
+  }
+  if (requisitos === "erro") {
+    return TEXTOS_DO_PAINEL.requisitosSemLeitura;
+  }
+  if (requisitos.estado === "indisponivel") {
+    return TEXTOS_DO_PAINEL.dicaDaProducao;
+  }
+  if (estado !== "teste") {
+    return TEXTOS_DO_PAINEL.dicaDaProducaoSoDeTeste;
+  }
+  if (suspensa || !producaoLiberada(requisitos)) {
+    return TEXTOS_DO_PAINEL.dicaDaProducaoComRequisitos;
+  }
+  return null;
 }
 
 export function AgenteDaClinica({
@@ -80,6 +130,8 @@ export function AgenteDaClinica({
   suspensa,
   tetoDiarioCentavos,
   contexto,
+  requisitos,
+  publicoPublicado,
 }: {
   clinicId: string;
   nome: string;
@@ -92,9 +144,16 @@ export function AgenteDaClinica({
    * "Na clínica agora". Nulo: a leitura falhou.
    */
   contexto: ContextoDaIa | null;
+  /** Os requisitos da producao (a Producao so liga com todos cumpridos). */
+  requisitos: RequisitosDaProducao | "erro";
+  /**
+   * O publico da ultima versao publicada ("leads", "pacientes", "todos"),
+   * para o dialogo da producao. Nulo: ainda nao escolhido ou nao lido.
+   */
+  publicoPublicado: string | null;
 }) {
   const ids = useId();
-  const [confirmando, setConfirmando] = useState(false);
+  const [confirmando, setConfirmando] = useState<Confirmacao | null>(null);
   const [motivo, setMotivo] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [pendente, startTransition] = useTransition();
@@ -114,7 +173,7 @@ export function AgenteDaClinica({
       }
       if (r?.ok) {
         toast.success(textoDoAgenteMudou(nome, novo));
-        setConfirmando(false);
+        setConfirmando(null);
         setMotivo("");
         return;
       }
@@ -128,23 +187,49 @@ export function AgenteDaClinica({
   // clinica_suspensa): a opcao fica visivel e desabilitada, com o porque
   // escrito. Desligar continua livre.
   const testeTravado = suspensa && estado !== "teste";
+  const motivoDaProducao = porQueAProducaoNaoLiga({
+    estado,
+    suspensa,
+    requisitos,
+  });
+  const producaoTravada = estado !== "producao" && motivoDaProducao !== null;
 
   const trocar = (opcao: OpcaoDoAgente) => {
-    if (
-      opcao === estado ||
-      opcao === "producao" ||
-      (opcao === "teste" && testeTravado) ||
-      pendente
-    ) {
+    if (opcao === estado || pendente) {
+      return;
+    }
+    if (opcao === "producao") {
+      if (producaoTravada) {
+        return;
+      }
+      setErro(null);
+      setConfirmando("producao");
       return;
     }
     if (opcao === "teste") {
+      if (testeTravado) {
+        return;
+      }
       setErro(null);
-      setConfirmando(true);
+      setConfirmando(estado === "producao" ? "volta" : "teste");
       return;
     }
     mudar("desligado", "");
   };
+
+  const fechar = () => {
+    if (pendente) {
+      return;
+    }
+    setConfirmando(null);
+    setMotivo("");
+    setErro(null);
+  };
+
+  const publico = publicoNoDialogo(publicoPublicado);
+  // Producao: motivo obrigatorio (3 a 300); teste e a volta: opcional.
+  const podeConfirmar =
+    !pendente && (confirmando !== "producao" || motivoValido(motivo));
 
   return (
     <Card role="region" aria-labelledby={`${ids}-titulo`}>
@@ -170,7 +255,7 @@ export function AgenteDaClinica({
       <CardContent className="grid gap-4">
         {/* Sempre montada: o leitor de tela anuncia o erro novo. */}
         <div aria-live="polite" aria-atomic="true" className="grid gap-2">
-          {erro && !confirmando ? (
+          {erro && confirmando === null ? (
             <Aviso tom="alert" role="note">
               {erro}
             </Aviso>
@@ -186,18 +271,18 @@ export function AgenteDaClinica({
             options={OPCOES_DO_ESTADO_DO_AGENTE.map((opcao) => ({
               ...opcao,
               disabled:
-                opcao.value === "producao" ||
+                (opcao.value === "producao" && producaoTravada) ||
                 (opcao.value === "teste" && testeTravado) ||
                 pendente,
             }))}
           />
-          {pendente && !confirmando ? (
+          {pendente && confirmando === null ? (
             <span className="text-[13px] text-text-secondary">Salvando...</span>
           ) : null}
         </div>
-        <p className="text-[13px] text-text-secondary">
-          {TEXTOS_DO_PAINEL.dicaDaProducao}
-        </p>
+        {motivoDaProducao ? (
+          <p className="text-[13px] text-text-secondary">{motivoDaProducao}</p>
+        ) : null}
 
         {suspensa ? (
           <Aviso tom="info" role="note">
@@ -208,32 +293,49 @@ export function AgenteDaClinica({
 
         {/* Com a conta suspensa, o aviso acima ja diz tudo: o agente nao
             atende, e a lista de motivos culparia outra trava. */}
-        {estado === "teste" && !suspensa ? (
+        {estado !== "desligado" && !suspensa ? (
           <NaClinicaAgora contexto={contexto} />
         ) : null}
       </CardContent>
 
       <Dialog
-        open={confirmando}
-        onOpenChange={(aberto) => {
-          if (!aberto && !pendente) {
-            setConfirmando(false);
-            setMotivo("");
-            setErro(null);
-          }
-        }}
+        open={confirmando !== null}
+        onOpenChange={(aberto) => (!aberto ? fechar() : null)}
       >
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
-            <DialogTitle>{`Ligar o agente em teste na ${nome}?`}</DialogTitle>
+            <DialogTitle>
+              {confirmando === "producao"
+                ? `Ligar a produção do agente na ${nome}?`
+                : confirmando === "volta"
+                  ? `Voltar o agente da ${nome} para Teste?`
+                  : `Ligar o agente em teste na ${nome}?`}
+            </DialogTitle>
             <DialogDescription>
-              Confira o que acontece ao ligar.
+              {confirmando === "volta"
+                ? "Confira o que acontece ao voltar para Teste."
+                : "Confira o que acontece ao ligar."}
             </DialogDescription>
           </DialogHeader>
           <ul className="grid list-disc gap-1.5 pl-5 text-[13px] text-foreground">
-            {TEXTOS_DO_PAINEL.efeitoDoTeste.map((efeito) => (
-              <li key={efeito}>{efeito}</li>
-            ))}
+            {confirmando === "producao" ? (
+              <>
+                {publico ? (
+                  <li>{TEXTOS_DO_PAINEL.efeitoDaProducao(publico)}</li>
+                ) : null}
+                {TEXTOS_DO_PAINEL.efeitosDaProducao.map((efeito) => (
+                  <li key={efeito}>{efeito}</li>
+                ))}
+              </>
+            ) : confirmando === "volta" ? (
+              TEXTOS_DO_PAINEL.efeitoDaVoltaParaTeste.map((efeito) => (
+                <li key={efeito}>{efeito}</li>
+              ))
+            ) : (
+              TEXTOS_DO_PAINEL.efeitoDoTeste.map((efeito) => (
+                <li key={efeito}>{efeito}</li>
+              ))
+            )}
             {tetoDiarioCentavos !== null ? (
               <li>
                 O teto de gasto desta clínica é de{" "}
@@ -243,46 +345,68 @@ export function AgenteDaClinica({
             ) : null}
           </ul>
           <div className="grid gap-1.5">
-            <Label htmlFor={`${ids}-motivo`}>Motivo (opcional)</Label>
+            <Label htmlFor={`${ids}-motivo`}>
+              {confirmando === "producao"
+                ? "Motivo (obrigatório)"
+                : "Motivo (opcional)"}
+            </Label>
             <Textarea
               id={`${ids}-motivo`}
               value={motivo}
-              onChange={(evento) => setMotivo(evento.target.value)}
+              onChange={(evento) => {
+                setMotivo(evento.target.value);
+                setErro(null);
+              }}
               rows={2}
               maxLength={MOTIVO_MAXIMO}
-              placeholder="Ex.: clínica entrou na fase de testes"
+              aria-describedby={`${ids}-motivo-apoio`}
+              placeholder={
+                confirmando === "producao"
+                  ? "Ex.: requisitos conferidos com o dono, clínica pronta"
+                  : "Ex.: clínica entrou na fase de testes"
+              }
               disabled={pendente}
             />
-            <p className="text-[11px] text-text-tertiary">
-              {TEXTOS_DO_PAINEL.motivoRegistrado}
+            <p
+              id={`${ids}-motivo-apoio`}
+              className="text-[11px] text-text-tertiary"
+            >
+              {confirmando === "producao"
+                ? TEXTOS_DO_PAINEL.regraDoMotivoDaProducao
+                : TEXTOS_DO_PAINEL.motivoRegistrado}
             </p>
           </div>
           <div aria-live="polite" aria-atomic="true">
-            {erro && confirmando ? (
+            {erro && confirmando !== null ? (
               <Aviso tom="alert" role="note">
                 {erro}
               </Aviso>
             ) : null}
           </div>
           <DialogFooter>
-            <Button
-              variant="ghost"
-              disabled={pendente}
-              onClick={() => {
-                setConfirmando(false);
-                setMotivo("");
-                setErro(null);
-              }}
-            >
+            <Button variant="ghost" disabled={pendente} onClick={fechar}>
               Cancelar
             </Button>
             <Button
-              disabled={pendente}
+              disabled={!podeConfirmar}
               aria-busy={pendente || undefined}
-              onClick={() => mudar("teste", motivo)}
+              aria-describedby={`${ids}-motivo-apoio`}
+              onClick={() =>
+                mudar(confirmando === "producao" ? "producao" : "teste", motivo)
+              }
             >
-              <Power aria-hidden />
-              {pendente ? "Ligando..." : "Ligar em teste"}
+              {confirmando === "producao" ? (
+                <RadioTower aria-hidden />
+              ) : (
+                <Power aria-hidden />
+              )}
+              {pendente
+                ? "Salvando..."
+                : confirmando === "producao"
+                  ? "Ligar a produção"
+                  : confirmando === "volta"
+                    ? "Voltar para Teste"
+                    : "Ligar em teste"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -292,22 +416,18 @@ export function AgenteDaClinica({
 }
 
 /**
- * Os motivos da parada para a equipe Conduzza (os textos da aba), com o do
- * interruptor dizendo onde ele fica: o cartao Interruptor geral e da aba de
- * Configuracoes, nao do painel.
+ * Os motivos da parada para a equipe Conduzza (os textos da aba WhatsApp da
+ * Tela 6, com os do super admin: o do interruptor ja diz que ele mora no
+ * topo do Painel geral).
  */
 export function textosDaParadaNoPainel(contexto: ContextoDaIa): string[] {
-  return textosDaParada(contexto, true).map((texto) =>
-    texto === TEXTOS_DA_IA.motivosParaAEquipeConduzza.interruptor
-      ? TEXTOS_DO_PAINEL.interruptorNoPainel
-      : texto,
-  );
+  return textosDaParada(contexto, true);
 }
 
 /**
  * Como o agente esta de verdade na clinica (a mesma regra e os mesmos
- * textos da aba de Configuracoes; para a equipe Conduzza, os motivos dizem
- * o que conferir).
+ * textos da aba WhatsApp da Tela 6; para a equipe Conduzza, os motivos
+ * dizem o que conferir).
  */
 function NaClinicaAgora({ contexto }: { contexto: ContextoDaIa | null }) {
   if (!contexto) {

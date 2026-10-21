@@ -7,15 +7,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { montarCatalogoDoAgente } from "@/lib/agente/ferramentas/buscar-procedimento";
 import { custoMaximoDaChamada, tokensNoMaximo } from "@/lib/agente/gasto";
+import { MOTIVOS_DO_AGENTE } from "@/lib/agente/ferramentas/escalar-humano";
+import {
+  FERRAMENTA_FORA_DO_ASSUNTO,
+  FERRAMENTA_SOU_ASSISTENTE_VIRTUAL,
+  semArgumentos,
+} from "@/lib/agente/ferramentas/fora-do-assunto";
 import {
   comporResposta,
   custoMaximoDoTurno,
   executarTurnoDoAgente,
   historicoParaOModelo,
+  LIMITE_DO_FORA_DO_ASSUNTO,
   MAX_TOKENS_DO_AGENTE,
   MAXIMO_DE_RODADAS,
   mensagensPendentes,
+  PASSO_DA_INSISTENCIA_FORA_DO_ASSUNTO,
   PASSO_DA_PASSAGEM_EM_TEXTO,
+  PASSO_DO_ASSISTENTE_VIRTUAL,
+  PASSO_DO_FORA_DO_ASSUNTO,
   PASSO_SEM_CONSULTA,
   PRAZO_DA_RODADA_MS,
   TEXTO_DA_FALHA,
@@ -23,13 +33,21 @@ import {
   type EntradaDoTurno,
   type MensagemDaConversa,
 } from "@/lib/agente/laco";
-import { TEXTO_FIXO_DO_AGENTE, VERSAO_DO_PROMPT } from "@/lib/agente/prompt";
+import {
+  FRASES_DO_CONTATO,
+  TEXTO_FIXO_DO_AGENTE,
+  VERSAO_DO_PROMPT,
+} from "@/lib/agente/prompt";
 import {
   configPadraoDoAgente,
   type ConfigDoAgente,
 } from "@/lib/domain/agente/config";
 import { LIMITE_DO_RASCUNHO } from "@/lib/domain/conformidade/filtro-deterministico";
-import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  FRASE_DE_ESCALONAMENTO,
+  FRASE_DO_ASSISTENTE_VIRTUAL,
+  FRASE_FORA_DO_ASSUNTO,
+} from "@/lib/domain/conformidade/frase-fixa";
 import type {
   ResultadoDoVerificador,
   Verificador,
@@ -50,6 +68,10 @@ import { MAX_TOKENS_DO_VERIFICADOR } from "@/lib/integrations/llm/verificador";
 // para o log. Nenhum teste fala com a OpenAI.
 
 const CLINICA = "acd9c539-585e-4f2a-a195-712c70099564";
+/** Onda 2 (P11a): o aviso que vai antes da primeira resposta da IA. */
+const AVISO = FRASE_DO_ASSISTENTE_VIRTUAL;
+/** As ferramentas de frase fixa (onda 2) vem sempre, antes das outras. */
+const FRASES_FIXAS = ["fora_do_assunto", "sou_assistente_virtual"];
 const IDENTIFICADOR = "a".repeat(64);
 const USO_DA_API = {
   input_tokens: 1_200,
@@ -270,7 +292,7 @@ describe("executarTurnoDoAgente: resposta", () => {
       entrada({ cliente, config: config({ saudacao: null }) }),
     );
     expect(r.tipo).toBe("resposta");
-    expect(r.resposta).toBe("Olá! Temos sim, na rua ao lado.");
+    expect(r.resposta).toBe(`${AVISO}\n\nOlá! Temos sim, na rua ao lado.`);
     expect(aprovador).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(aprovador.mock.calls[0])).not.toContain("Fulano");
   });
@@ -291,8 +313,10 @@ describe("executarTurnoDoAgente: resposta", () => {
     const r = await executarTurnoDoAgente(entrada({ cliente }));
 
     expect(r.tipo).toBe("resposta");
+    // A saudacao, o aviso de assistente virtual (onda 2, P11a: primeira
+    // resposta da IA) e a mensagem.
     expect(r.resposta).toBe(
-      "Olá! Aqui é a Ana, da clínica.\n\nTemos sim, na rua ao lado.",
+      `Olá! Aqui é a Ana, da clínica.\n\n${AVISO}\n\nTemos sim, na rua ao lado.`,
     );
     expect(r.desfecho).toEqual({ tipo: "respondeu" });
     expect(r.versaoDoPrompt).toBe(VERSAO_DO_PROMPT);
@@ -325,6 +349,7 @@ describe("executarTurnoDoAgente: resposta", () => {
       true,
     );
     expect((corpo.tools as { name: string }[]).map((t) => t.name)).toEqual([
+      ...FRASES_FIXAS,
       "buscar_procedimento",
       "escalar_humano",
     ]);
@@ -361,7 +386,9 @@ describe("executarTurnoDoAgente: resposta", () => {
       }),
     );
     expect(r.tipo).toBe("resposta");
-    expect(r.resposta).toBe("A consulta com a Dra. Helena fica R$ 317,00.");
+    expect(r.resposta).toBe(
+      `${AVISO}\n\nA consulta com a Dra. Helena fica R$ 317,00.`,
+    );
     expect(chamadas).toHaveLength(2);
     const input = chamadas[1]?.corpo.input as Record<string, unknown>[];
     expect(input).toContainEqual(expect.objectContaining(RACIOCINIO));
@@ -416,7 +443,7 @@ describe("executarTurnoDoAgente: bloqueio e escalonamento", () => {
       categoria: "preco_nao_verificado",
       camada: "regra",
     });
-    expect(r.rascunhoBloqueado).toBe("A consulta fica R$ 200,00.");
+    expect(r.rascunhoBloqueado).toBe(`${AVISO}\n\nA consulta fica R$ 200,00.`);
     expect(aprovador).not.toHaveBeenCalled();
     expect(r.trilha.map((p) => [p.tipo, p.texto])).toContainEqual([
       "bloqueio",
@@ -641,7 +668,7 @@ describe("executarTurnoDoAgente: falha fechada do modelo", () => {
     );
     expect(
       (chamadas[0]?.corpo.tools as { name: string }[]).map((t) => t.name),
-    ).toEqual(["escalar_humano"]);
+    ).toEqual([...FRASES_FIXAS, "escalar_humano"]);
     expect(r.desfecho).toEqual({
       tipo: "falhou",
       motivo: "ferramenta_invalida",
@@ -887,7 +914,7 @@ describe("revisão: a resposta é só a mensagem final (achado 22)", () => {
       entrada({ cliente, config: config({ saudacao: null }) }),
     );
     expect(r.tipo).toBe("resposta");
-    expect(r.resposta).toBe("Temos sim, na rua ao lado.");
+    expect(r.resposta).toBe(`${AVISO}\n\nTemos sim, na rua ao lado.`);
 
     const duas = clienteComRoteiro([
       resposta([
@@ -1369,5 +1396,389 @@ describe("revisão de produção: nomes do Cadastro no filtro (Q7 e Q11)", () =>
       }),
     );
     expect(r.desfecho).toMatchObject({ tipo: "bloqueou", categoria: "triagem" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Onda 2: fora do assunto (item 5, P5a e P5b), "você é um robô?" (P5c), o
+// aviso de assistente virtual (P11a) e o tipo do contato (item 4)
+// ---------------------------------------------------------------------------
+
+describe("onda 2: fora do assunto", () => {
+  it("a ferramenta sem argumento encerra o turno e a frase do dono passa pelo filtro inteiro", async () => {
+    const { cliente, chamadas } = clienteComRoteiro([
+      ferramenta("fora_do_assunto", {}),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({
+        cliente,
+        mensagens: [paciente("Quando o Neymar ganhou a Copa?")],
+      }),
+    );
+    expect(chamadas).toHaveLength(1);
+    expect(r.tipo).toBe("resposta");
+    expect(r.desfecho).toEqual({ tipo: "respondeu" });
+    // Primeira resposta: a saudacao e o aviso colados, como numa resposta
+    // comum (contrato 4.4).
+    expect(r.resposta).toBe(
+      `Olá! Aqui é a Ana, da clínica.\n\n${AVISO}\n\n${FRASE_FORA_DO_ASSUNTO}`,
+    );
+    expect(r.ferramentasUsadas).toEqual(["fora_do_assunto"]);
+    // O verificador (a segunda camada) julgou a frase: nada de atalho.
+    expect(aprovador).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(aprovador.mock.calls[0])).toContain(
+      FRASE_FORA_DO_ASSUNTO,
+    );
+    expect(r.filtro?.aprovado).toBe(true);
+    expect(r.trilha.map((p) => p.texto)).toEqual([
+      "A mensagem foi conferida antes de chegar ao assistente.",
+      PASSO_DO_FORA_DO_ASSUNTO,
+      "A resposta passou na conformidade.",
+    ]);
+    expect(PASSO_DO_FORA_DO_ASSUNTO).toBe(
+      "Respondeu que só ajuda com assuntos da clínica.",
+    );
+  });
+
+  it("fora da primeira resposta sai só a frase; a frase da ferramenta não leva encerramento", async () => {
+    const { cliente } = clienteComRoteiro([ferramenta("fora_do_assunto", {})]);
+    const r = await executarTurnoDoAgente(
+      entrada({
+        cliente,
+        mensagens: [
+          paciente("Oi"),
+          { autor: "assistente", texto: "Olá! Como posso ajudar?" },
+          paciente("Qual a capital da França?"),
+        ],
+      }),
+    );
+    expect(r.resposta).toBe(FRASE_FORA_DO_ASSUNTO);
+  });
+
+  it("a segunda vez na janela (P5b: limite 1) passa para a equipe com o motivo de sistema, sem chamar o verificador", async () => {
+    expect(LIMITE_DO_FORA_DO_ASSUNTO).toBe(1);
+    const { cliente } = clienteComRoteiro([ferramenta("fora_do_assunto", {})]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, foraDoAssuntoNaJanela: 1 }),
+    );
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
+    expect(r.desfecho).toEqual({
+      tipo: "escalou",
+      motivo: "fora_do_assunto",
+      gatilho: null,
+      origem: "insistencia",
+    });
+    expect(r.ferramentasUsadas).toEqual(["fora_do_assunto"]);
+    expect(aprovador).not.toHaveBeenCalled();
+    expect(r.trilha.at(-1)).toEqual({
+      tipo: "equipe",
+      texto: "A pessoa insistiu num assunto fora da clínica: passou para a equipe.",
+    });
+    expect(PASSO_DA_INSISTENCIA_FORA_DO_ASSUNTO).toBe(
+      "A pessoa insistiu num assunto fora da clínica: passou para a equipe.",
+    );
+  });
+
+  it("verificador fora do ar: a frase de fora do assunto vira a frase de escalonamento (falha fechada)", async () => {
+    const foraDoAr = vi.fn<Verificador>(async () => ({
+      tipo: "falha",
+      motivo: "timeout",
+      modelo: "gpt-6-luna",
+      uso: null,
+      httpStatus: null,
+    }));
+    const { cliente } = clienteComRoteiro([ferramenta("fora_do_assunto", {})]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, verificador: foraDoAr }),
+    );
+    expect(foraDoAr).toHaveBeenCalledTimes(1);
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
+    expect(r.desfecho).toMatchObject({ tipo: "bloqueou", camada: "falha" });
+  });
+
+  it("verificador que reprova: bloqueia como qualquer resposta", async () => {
+    const reprova = vi.fn<Verificador>(async () => ({
+      tipo: "veredicto",
+      veredicto: {
+        aprovado: false,
+        violacoes: [{ categoria: "formato_invalido", gravidade: "alta" }],
+        confianca: "alta",
+      },
+      modelo: "gpt-6-luna",
+      uso: { ...USO_LIDO },
+    }));
+    const { cliente } = clienteComRoteiro([ferramenta("fora_do_assunto", {})]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, verificador: reprova }),
+    );
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toMatchObject({ tipo: "bloqueou", camada: "modelo" });
+  });
+
+  it("ferramenta com argumento, junto de outra chamada ou fora das permitidas: falha fechada", async () => {
+    const comArgumento = clienteComRoteiro([
+      ferramenta("fora_do_assunto", { motivo: "futebol" }),
+    ]);
+    expect(
+      (await executarTurnoDoAgente(entrada({ cliente: comArgumento.cliente })))
+        .desfecho,
+    ).toEqual({ tipo: "falhou", motivo: "ferramenta_invalida" });
+
+    const semJson = clienteComRoteiro([
+      resposta([
+        RACIOCINIO,
+        {
+          type: "function_call",
+          id: "fc_1",
+          call_id: "call_1",
+          name: "fora_do_assunto",
+          arguments: "nao e json",
+          status: "completed",
+        },
+      ]),
+    ]);
+    expect(
+      (await executarTurnoDoAgente(entrada({ cliente: semJson.cliente })))
+        .desfecho,
+    ).toEqual({ tipo: "falhou", motivo: "ferramenta_invalida" });
+
+    const juntas = clienteComRoteiro([
+      resposta([
+        RACIOCINIO,
+        {
+          type: "function_call",
+          id: "fc_1",
+          call_id: "call_1",
+          name: "fora_do_assunto",
+          arguments: "{}",
+          status: "completed",
+        },
+        {
+          type: "function_call",
+          id: "fc_2",
+          call_id: "call_2",
+          name: "buscar_procedimento",
+          arguments: JSON.stringify({ procedimento: "p1", convenio: null }),
+          status: "completed",
+        },
+      ]),
+    ]);
+    expect(
+      (await executarTurnoDoAgente(entrada({ cliente: juntas.cliente })))
+        .desfecho,
+    ).toEqual({ tipo: "falhou", motivo: "ferramenta_invalida" });
+    expect(aprovador).not.toHaveBeenCalled();
+  });
+
+  it("escalar_humano na mesma rodada vence a frase fixa", async () => {
+    const { cliente } = clienteComRoteiro([
+      resposta([
+        RACIOCINIO,
+        {
+          type: "function_call",
+          id: "fc_1",
+          call_id: "call_1",
+          name: "fora_do_assunto",
+          arguments: "{}",
+          status: "completed",
+        },
+        {
+          type: "function_call",
+          id: "fc_2",
+          call_id: "call_2",
+          name: "escalar_humano",
+          arguments: JSON.stringify({ motivo: "pedido_humano" }),
+          status: "completed",
+        },
+      ]),
+    ]);
+    const r = await executarTurnoDoAgente(entrada({ cliente }));
+    expect(r.desfecho).toMatchObject({
+      tipo: "escalou",
+      motivo: "pedido_humano",
+      origem: "agente",
+    });
+  });
+
+  it("fora_do_assunto é sempre oferecida, com strict e sem parâmetros; o modelo nunca escolhe o motivo de sistema", () => {
+    expect(FERRAMENTA_FORA_DO_ASSUNTO).toMatchObject({
+      name: "fora_do_assunto",
+      strict: true,
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+        additionalProperties: false,
+      },
+    });
+    expect(FERRAMENTA_SOU_ASSISTENTE_VIRTUAL).toMatchObject({
+      name: "sou_assistente_virtual",
+      strict: true,
+      parameters: { properties: {}, additionalProperties: false },
+    });
+    expect(semArgumentos({})).toBe(true);
+    for (const valor of [null, undefined, [], { a: 1 }, "{}", 0]) {
+      expect(semArgumentos(valor), String(valor)).toBe(false);
+    }
+    expect(MOTIVOS_DO_AGENTE as readonly string[]).not.toContain(
+      "fora_do_assunto",
+    );
+  });
+});
+
+describe("onda 2: 'você é um robô?' (P5c)", () => {
+  it("a ferramenta responde que é a assistente virtual da clínica e oferece uma pessoa, sem repetir o aviso", async () => {
+    const { cliente } = clienteComRoteiro([
+      ferramenta("sou_assistente_virtual", {}),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, mensagens: [paciente("você é um robô?")] }),
+    );
+    expect(r.tipo).toBe("resposta");
+    expect(r.desfecho).toEqual({ tipo: "respondeu" });
+    // Primeira resposta: a saudacao e a frase, que ja e o aviso (uma vez so).
+    expect(r.resposta).toBe(
+      `Olá! Aqui é a Ana, da clínica.\n\n${FRASE_DO_ASSISTENTE_VIRTUAL}`,
+    );
+    expect(r.resposta.split(FRASE_DO_ASSISTENTE_VIRTUAL)).toHaveLength(2);
+    expect(r.ferramentasUsadas).toEqual(["sou_assistente_virtual"]);
+    expect(aprovador).toHaveBeenCalledTimes(1);
+    expect(r.trilha.map((p) => p.texto)).toContain(PASSO_DO_ASSISTENTE_VIRTUAL);
+  });
+
+  it("não conta como fora do assunto: com a insistência no limite, responde", async () => {
+    const { cliente } = clienteComRoteiro([
+      ferramenta("sou_assistente_virtual", {}),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, foraDoAssuntoNaJanela: 5 }),
+    );
+    expect(r.desfecho).toEqual({ tipo: "respondeu" });
+  });
+});
+
+describe("onda 2: aviso de assistente virtual (P11a)", () => {
+  it("vai só na primeira resposta da IA na janela, depois da saudação", async () => {
+    const primeira = clienteComRoteiro([final("Temos sim.")]);
+    const r1 = await executarTurnoDoAgente(
+      entrada({ cliente: primeira.cliente }),
+    );
+    expect(r1.resposta).toBe(
+      `Olá! Aqui é a Ana, da clínica.\n\n${AVISO}\n\nTemos sim.`,
+    );
+
+    const segunda = clienteComRoteiro([final("Temos sim.")]);
+    const r2 = await executarTurnoDoAgente(
+      entrada({
+        cliente: segunda.cliente,
+        mensagens: [
+          paciente("Oi"),
+          { autor: "assistente", texto: "Olá! Como posso ajudar?" },
+          paciente("Tem estacionamento?"),
+        ],
+      }),
+    );
+    expect(r2.resposta).toBe("Temos sim.");
+  });
+
+  it("no WhatsApp o executor diz: fala da equipe na janela não tira o aviso; resposta da IA já dada, sim", async () => {
+    const comEquipe = clienteComRoteiro([final("Temos sim.")]);
+    const r1 = await executarTurnoDoAgente(
+      entrada({
+        cliente: comEquipe.cliente,
+        primeiraRespostaDaIa: true,
+        mensagens: [
+          { autor: "assistente", texto: "Mensagem da equipe." },
+          paciente("Tem estacionamento?"),
+        ],
+      }),
+    );
+    // Sem saudacao (ja houve fala do assistente), mas com o aviso.
+    expect(r1.resposta).toBe(`${AVISO}\n\nTemos sim.`);
+
+    const jaRespondeu = clienteComRoteiro([final("Temos sim.")]);
+    const r2 = await executarTurnoDoAgente(
+      entrada({ cliente: jaRespondeu.cliente, primeiraRespostaDaIa: false }),
+    );
+    expect(r2.resposta).toBe("Olá! Aqui é a Ana, da clínica.\n\nTemos sim.");
+  });
+
+  it("comporResposta nunca tira o aviso: tira o encerramento e a saudação antes, e sem espaço vai inteiro para o filtro barrar", () => {
+    const longa = "a".repeat(LIMITE_DO_RASCUNHO - 10);
+    const composta = comporResposta({
+      mensagem: longa,
+      saudacao: "Olá!",
+      encerramento: "Até breve!",
+      primeiraResposta: true,
+      encerra: true,
+      aviso: AVISO,
+    });
+    expect(composta).toBe(`${AVISO}\n\n${longa}`);
+    expect(Array.from(composta).length).toBeGreaterThan(LIMITE_DO_RASCUNHO);
+
+    const cabe = comporResposta({
+      mensagem: "Temos sim.",
+      saudacao: "Olá!",
+      encerramento: "Até breve!",
+      primeiraResposta: true,
+      encerra: true,
+      aviso: AVISO,
+    });
+    expect(cabe).toBe(`Olá!\n\n${AVISO}\n\nTemos sim.\n\nAté breve!`);
+  });
+
+  it("resposta grande demais com o aviso é barrada inteira (falha fechada), nunca sai sem ele", async () => {
+    const { cliente } = clienteComRoteiro([
+      final(`Temos sim. ${"Fica na rua ao lado da praça. ".repeat(23)}`),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, config: config({ saudacao: null }) }),
+    );
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toMatchObject({
+      tipo: "bloqueou",
+      categoria: "formato_invalido",
+    });
+    expect(r.rascunhoBloqueado?.startsWith(AVISO)).toBe(true);
+  });
+});
+
+describe("onda 2: tipo do contato no prompt (item 4)", () => {
+  it("a linha do contato é a última das instruções, depois da hora; sem tipo, sem linha", async () => {
+    for (const [contato, linha] of [
+      ["lead", "Contato desta conversa: lead, ainda não é paciente da clínica."],
+      ["paciente", "Contato desta conversa: paciente da clínica."],
+    ] as const) {
+      const { cliente, chamadas } = clienteComRoteiro([final("Temos sim.")]);
+      await executarTurnoDoAgente(entrada({ cliente, contato }));
+      const instrucoes = String(chamadas[0]?.corpo.instructions);
+      expect(instrucoes.endsWith(`\n\n${linha}`), contato).toBe(true);
+      const hora = instrucoes.lastIndexOf("Agora na clínica: ");
+      expect(hora).toBeGreaterThan(0);
+      expect(instrucoes.indexOf(linha)).toBeGreaterThan(hora);
+    }
+    const semTipo = clienteComRoteiro([final("Temos sim.")]);
+    await executarTurnoDoAgente(entrada({ cliente: semTipo.cliente }));
+    const semLinha = String(semTipo.chamadas[0]?.corpo.instructions);
+    for (const linha of Object.values(FRASES_DO_CONTATO)) {
+      expect(semLinha).not.toContain(linha);
+    }
+    expect(semLinha.split("\n\n").at(-1)?.startsWith("Agora na clínica: ")).toBe(
+      true,
+    );
+  });
+
+  it("a linha do contato não muda nenhum veredicto nem chega ao verificador", async () => {
+    for (const contato of ["lead", "paciente", null] as const) {
+      aprovador.mockClear();
+      const { cliente } = clienteComRoteiro([final("Temos sim.")]);
+      const r = await executarTurnoDoAgente(entrada({ cliente, contato }));
+      expect(r.desfecho, String(contato)).toEqual({ tipo: "respondeu" });
+      for (const linha of Object.values(FRASES_DO_CONTATO)) {
+        expect(JSON.stringify(aprovador.mock.calls[0])).not.toContain(linha);
+      }
+    }
   });
 });

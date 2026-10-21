@@ -85,13 +85,25 @@ function primeiroErro(resultado: {
 
 describe("textos da tela", () => {
   it("abas: a das instruções só para o super admin; desconhecida cai na Persona", () => {
+    // Onda 2, item 8: a aba WhatsApp logo depois de Regras e limites.
     expect(abasVisiveis(false).map((aba) => aba.chave)).toEqual([
       "persona",
       "habilidades",
       "conhecimento",
       "regras",
+      "whatsapp",
       "versoes",
     ]);
+    expect(abasVisiveis(true).map((aba) => aba.chave)).toEqual([
+      "persona",
+      "habilidades",
+      "conhecimento",
+      "regras",
+      "whatsapp",
+      "instrucoes",
+      "versoes",
+    ]);
+    expect(abaDoAgente("whatsapp", false)).toBe("whatsapp");
     expect(abasVisiveis(true).map((aba) => aba.chave)).toContain("instrucoes");
     expect(abaDoAgente("versoes", false)).toBe("versoes");
     expect(abaDoAgente("instrucoes", false)).toBe("persona");
@@ -758,9 +770,20 @@ describe("edição não salva (achados 10 e 27)", () => {
     ).toEqual({
       persona: 1,
       conhecimento: 1,
+      publico: 0,
       regras: 0,
       agenda: 0,
       instrucoes: 0,
     });
+  });
+
+  it("o público (onda 2) mora em Regras e limites: a aba aparece uma vez com o horário", () => {
+    expect(rotuloDoFormulario("publico")).toBe("Regras e limites");
+    expect(
+      formulariosNaoSalvos(
+        { ...NADA_NAO_SALVO, publico: true, regras: true },
+        false,
+      ),
+    ).toEqual(["publico", "regras"]);
   });
 });

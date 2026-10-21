@@ -19,15 +19,30 @@ import type { SituacaoDaConexao } from "@/components/whatsapp/numeros";
 // um painel que afirma o que nao conferiu (uma clinica "ativa" que pode
 // estar suspensa, um gasto zero que nao foi lido). Item de lista fora do
 // formato (um numero sem id) fica de fora, como nas outras leituras.
+//
+// Onda 2 (item 11, contrato secao 7): o leitor entende 'producao' (estado do
+// agente) e 'numero_inteiro' (modo da liberacao) ANTES da migration da
+// producao, para a ordem entre ela e o codigo nao derrubar o painel; a
+// chave nova totais.agente_em_producao e opcional (ausente = 0). Os
+// requisitos da producao (requisitos_da_producao, so do super admin, com o
+// registro da equipe Conduzza no detalhe de cada um) tem leitura propria:
+// antes da migration, "indisponivel" (o cartao diz que a producao ainda nao
+// chegou), nunca o erro.
 
 /** A conta da clinica: ativa ou suspensa (clinica_suspensa). */
 export type SituacaoDaConta = "ativa" | "suspensa";
 
 /**
- * O agente da clinica (ia_clinica_habilitada). "producao" nao existe nesta
- * onda (o CHECK do banco so aceita os dois): chega na onda 2.
+ * O agente da clinica (ia_clinica_habilitada). "producao" chega com a
+ * migration da producao (onda 2, item 11); o leitor ja entende.
  */
-export type EstadoDoAgente = "desligado" | "teste";
+export type EstadoDoAgente = "desligado" | "teste" | "producao";
+
+/**
+ * O modo gravado em ia_liberacao: "numero_inteiro" (todos os contatos do
+ * publico) chega com a migration da producao (onda 2, item 11).
+ */
+export type ModoDoAgenteNoPainel = "simulador" | "contatos" | "numero_inteiro";
 
 /** Um numero de WhatsApp da clinica (sem os removidos). */
 export type NumeroNoPainel = {
@@ -52,7 +67,7 @@ export type AdministradorNoPainel = {
 export type AgenteNoPainel = {
   estado: EstadoDoAgente;
   /** ia_liberacao.modo; nulo quando a clinica nunca teve a linha. */
-  modo: "simulador" | "contatos" | null;
+  modo: ModoDoAgenteNoPainel | null;
   /** ia_liberacao.liberada (a escolha da propria clinica). */
   liberada: boolean;
   pausadaPelaClinica: boolean;
@@ -111,6 +126,8 @@ export type TotaisDoPainel = {
   ativas: number;
   suspensas: number;
   agenteEmTeste: number;
+  /** Onda 2: chave opcional no banco (ausente antes da migration = 0). */
+  agenteEmProducao: number;
   gasto24hCentavos: number;
   gastoMesCentavos: number;
 };
@@ -245,19 +262,23 @@ function administradorDoBanco(valor: unknown): AdministradorNoPainel[] {
 
 function estadoDoAgenteDoBanco(valor: unknown): EstadoDoAgente {
   // Sem linha em ia_clinica_habilitada: desligado (o banco devolve nulo ou
-  // 'desligado'). Qualquer outro valor (a 'producao' da onda 2 antes do
-  // codigo dela) e banco e codigo desencontrados: o painel mostra o erro.
+  // 'desligado'). Qualquer outro valor fora dos tres e banco e codigo
+  // desencontrados: o painel mostra o erro.
   if (valor === null || valor === undefined || valor === "desligado") {
     return "desligado";
   }
-  return valor === "teste" ? "teste" : ilegivel();
+  return valor === "teste" || valor === "producao" ? valor : ilegivel();
 }
 
 function modoDoBanco(valor: unknown): AgenteNoPainel["modo"] {
   if (valor === null || valor === undefined) {
     return null;
   }
-  return valor === "simulador" || valor === "contatos" ? valor : ilegivel();
+  return valor === "simulador" ||
+    valor === "contatos" ||
+    valor === "numero_inteiro"
+    ? valor
+    : ilegivel();
 }
 
 function agenteDoBanco(valor: unknown): AgenteNoPainel {
@@ -335,6 +356,7 @@ function totaisDoBanco(valor: unknown): TotaisDoPainel {
     ativas: contagem(t.ativas),
     suspensas: contagem(t.suspensas),
     agenteEmTeste: contagem(t.agente_em_teste),
+    agenteEmProducao: contagem(t.agente_em_producao ?? 0),
     gasto24hCentavos: contagem(t.gasto_24h_centavos_usd),
     gastoMesCentavos: contagem(t.gasto_mes_centavos_usd),
   };
@@ -426,4 +448,152 @@ export async function fetchTetosDaIa(
         tetoRespostasPorConversaHora: linha.teto_respostas_por_conversa_hora,
       }
     : null;
+}
+
+// ---------------------------------------------------------------------------
+// Requisitos da producao (onda 2, item 11; contrato secao 3.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * O registro da equipe Conduzza que vale para a clinica, como
+ * requisitos_da_producao devolve no detalhe: o vivo (com a evidencia, a
+ * data e se vale para todas) ou, sem vivo, o ultimo revogado (com a data e
+ * o motivo). Texto da equipe Conduzza, nunca dado de paciente.
+ */
+export type RegistroDoRequisito = {
+  id: string;
+  revogado: boolean;
+  evidencia: string | null;
+  registradoEm: string | null;
+  /** Vale para todas as clinicas (clinic_id nulo); nulo: o banco nao disse. */
+  geral: boolean | null;
+  revogadoEm: string | null;
+  motivoDaRevogacao: string | null;
+};
+
+/**
+ * Um requisito como requisitos_da_producao(p_clinic_id) devolve: a chave,
+ * se esta cumprido, de onde vem (o banco confere ou a equipe registra) e o
+ * que a tela mostra. Os conferidos pelo banco trazem o que viram (estado do
+ * agente, versao, publico, modo de horario, numeros conectados); os da
+ * equipe, o registro.
+ */
+export type RequisitoConferido = {
+  chave: string;
+  ok: boolean;
+  origem: "banco" | "equipe";
+  registro: RegistroDoRequisito | null;
+  conferido: {
+    estado: string | null;
+    versao: number | null;
+    publico: string | null;
+    modo: string | null;
+    conectados: number | null;
+  };
+};
+
+/**
+ * Os requisitos de uma clinica. "indisponivel": o banco ainda nao tem a
+ * migration da producao (a funcao nao existe), e o cartao diz que a
+ * producao ainda nao chegou, sem afirmar requisito nenhum.
+ */
+export type RequisitosDaProducao =
+  | { estado: "indisponivel" }
+  | { estado: "lido"; conferidos: RequisitoConferido[] };
+
+/**
+ * Codigos de "isto ainda nao existe no banco": a funcao (PGRST202 do
+ * PostgREST, 42883 do Postgres). So a leitura dos requisitos tolera: e o
+ * que a migration da producao traz.
+ */
+const AINDA_NAO_EXISTE = new Set(["PGRST202", "42883"]);
+
+function textoOuNuloSolto(valor: unknown): string | null {
+  return typeof valor === "string" && valor.trim() !== "" ? valor : null;
+}
+
+function inteiroOuNulo(valor: unknown): number | null {
+  return typeof valor === "number" && Number.isInteger(valor) ? valor : null;
+}
+
+function instanteOuNuloSolto(valor: unknown): string | null {
+  return typeof valor === "string" && !Number.isNaN(Date.parse(valor))
+    ? valor
+    : null;
+}
+
+function registroDoDetalhe(
+  detalhe: Record<string, unknown>,
+): RegistroDoRequisito | null {
+  if (typeof detalhe.id !== "string" || !UUID.test(detalhe.id)) {
+    return null;
+  }
+  return {
+    id: detalhe.id,
+    revogado: detalhe.revogado === true,
+    evidencia: textoOuNuloSolto(detalhe.evidencia),
+    registradoEm: instanteOuNuloSolto(detalhe.registrado_em),
+    geral: typeof detalhe.geral === "boolean" ? detalhe.geral : null,
+    revogadoEm: instanteOuNuloSolto(detalhe.revogado_em),
+    motivoDaRevogacao: textoOuNuloSolto(detalhe.motivo_da_revogacao),
+  };
+}
+
+function requisitoConferidoDoBanco(valor: unknown): RequisitoConferido[] {
+  if (typeof valor !== "object" || valor === null) {
+    return [];
+  }
+  const r = valor as Record<string, unknown>;
+  if (typeof r.chave !== "string" || r.chave.trim() === "") {
+    return [];
+  }
+  const detalhe =
+    typeof r.detalhe === "object" && r.detalhe !== null
+      ? (r.detalhe as Record<string, unknown>)
+      : {};
+  return [
+    {
+      chave: r.chave,
+      // So o verdadeiro cumpre: qualquer outro valor e "falta" (falha
+      // fechada; a producao nunca libera pelo que nao foi conferido).
+      ok: r.ok === true,
+      origem: detalhe.origem === "equipe" ? "equipe" : "banco",
+      registro: registroDoDetalhe(detalhe),
+      conferido: {
+        estado: textoOuNuloSolto(detalhe.estado),
+        versao: inteiroOuNulo(detalhe.versao),
+        publico: textoOuNuloSolto(detalhe.publico),
+        modo: textoOuNuloSolto(detalhe.modo),
+        conectados: inteiroOuNulo(detalhe.conectados),
+      },
+    },
+  ];
+}
+
+/** O jsonb de requisitos_da_producao. Fora do formato (nao lista): lanca. */
+export function lerRequisitosDoBanco(valor: unknown): RequisitoConferido[] {
+  return lista(valor).flatMap(requisitoConferidoDoBanco);
+}
+
+/**
+ * Os requisitos da producao de uma clinica, com a sessao (a RPC e so do
+ * super admin): o que o banco confere e, nos da equipe Conduzza, o registro
+ * que vale para ela (o da clinica ou o de todas; sem vivo, o ultimo
+ * revogado). Banco sem a migration da producao: "indisponivel". Outro erro
+ * ou formato estranho: lanca, e o cartao mostra o erro.
+ */
+export async function fetchRequisitosDaProducao(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<RequisitosDaProducao> {
+  const { data, error } = await supabase.rpc("requisitos_da_producao", {
+    p_clinic_id: clinicId,
+  });
+  if (error?.code && AINDA_NAO_EXISTE.has(error.code)) {
+    return { estado: "indisponivel" };
+  }
+  if (error) {
+    throw new Error("leitura dos requisitos da producao falhou");
+  }
+  return { estado: "lido", conferidos: lerRequisitosDoBanco(data) };
 }

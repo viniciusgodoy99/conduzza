@@ -1665,3 +1665,120 @@ describe("revisão: job anterior à janela só conclui (D-A, achado 2)", () => {
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// Onda 2: fora do assunto (item 5, P5b), tipo do contato (item 4) e o aviso
+// de assistente virtual (P11a)
+// ---------------------------------------------------------------------------
+
+function decisaoNaConversa(campos: Linha): void {
+  banco.linhas("ai_decision_log").push({
+    clinic_id: CLINICA,
+    conversation_id: CONVERSA,
+    desfecho: "respondeu",
+    tool_used: "fora_do_assunto",
+    created_at: "2026-10-13T14:59:30.000Z",
+    ...campos,
+  });
+}
+
+describe("onda 2: o que o executor passa ao turno", () => {
+  it("o tipo do contato, quantas vezes a IA já respondeu fora do assunto na janela e se ela já respondeu", async () => {
+    banco.linhas("contact")[0]!.kind = "paciente";
+    // Conta: 'respondeu' com fora_do_assunto da conversa, desde a janela.
+    decisaoNaConversa({ id: "d-conta" });
+    // Nao contam: antes da janela, escalou, outra ferramenta, outra conversa.
+    decisaoNaConversa({
+      id: "d-antes",
+      created_at: "2026-10-13T14:00:00.000Z",
+    });
+    decisaoNaConversa({ id: "d-escalou", desfecho: "escalou" });
+    decisaoNaConversa({ id: "d-preco", tool_used: "buscar_procedimento" });
+    decisaoNaConversa({
+      id: "d-outra",
+      conversation_id: "c0000000-0000-4000-8000-000000000009",
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    const entrada = turno.mock.calls[0]![0];
+    expect(entrada.contato).toBe("paciente");
+    expect(entrada.foraDoAssuntoNaJanela).toBe(1);
+    // Nenhuma resposta da IA na janela: a proxima leva o aviso.
+    expect(entrada.primeiraRespostaDaIa).toBe(true);
+  });
+
+  it("kind lead vai como lead; ausente ou desconhecido, sem tipo (sem a linha)", async () => {
+    banco.linhas("contact")[0]!.kind = "lead";
+    await rodar();
+    expect(turno.mock.calls[0]![0].contato).toBe("lead");
+
+    montar();
+    banco.linhas("contact")[0]!.kind = "cliente";
+    await rodar();
+    expect(turno.mock.calls[0]![0].contato).toBeNull();
+  });
+
+  it("resposta da IA na janela: a próxima não leva o aviso de novo", async () => {
+    banco.linhas("message").unshift({
+      id: "m0",
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      author: "ia",
+      direction: "saida",
+      content_type: "texto",
+      body: "Olá! Como posso ajudar?",
+      media_url: null,
+      deleted_at: null,
+      is_internal_note: false,
+      pelo_celular: false,
+      created_at: "2026-10-13T14:58:10.000Z",
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(turno.mock.calls[0]![0].primeiraRespostaDaIa).toBe(false);
+  });
+
+  it("a contagem que não deu para ler: o job tenta de novo, sem chamar o modelo", async () => {
+    banco.erros.set("ai_decision_log:select", { code: "57014" });
+    expect(await rodar()).toEqual({ ok: false, erro: "leitura_falhou" });
+    expect(turno).not.toHaveBeenCalled();
+    expect(passagens).toEqual([]);
+  });
+});
+
+describe("onda 2: a decisão do fora do assunto", () => {
+  it("respondeu pela frase fixa: a decisão grava tool_used fora_do_assunto (é o que a contagem lê)", async () => {
+    turno.mockResolvedValue({
+      ...respondeu(),
+      ferramentasUsadas: ["fora_do_assunto"],
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(decisoes()[0]).toMatchObject({
+      desfecho: "respondeu",
+      tool_used: "fora_do_assunto",
+      aprovado: true,
+      escalation_reason: null,
+    });
+    expect(enviarResposta).toHaveBeenCalledTimes(1);
+  });
+
+  it("insistiu (P5b): passa para a equipe com o motivo fora_do_assunto e a frase de escalonamento", async () => {
+    turno.mockResolvedValue({
+      ...frase({
+        tipo: "escalou",
+        motivo: "fora_do_assunto",
+        gatilho: null,
+        origem: "insistencia",
+      }),
+      ferramentasUsadas: ["fora_do_assunto"],
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(decisoes()[0]).toMatchObject({
+      desfecho: "escalou",
+      escalation_reason: "fora_do_assunto",
+      // Nao foi o modelo que chamou escalar_humano: a ferramenta que rodou.
+      tool_used: "fora_do_assunto",
+    });
+    expect(passagens).toEqual(["fora_do_assunto"]);
+    expect(enviarFrase).toHaveBeenCalledTimes(1);
+    expect(enviarResposta).not.toHaveBeenCalled();
+  });
+});

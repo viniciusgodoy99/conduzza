@@ -49,6 +49,9 @@ import {
 } from "@/lib/domain/agente/config";
 
 // Aba Regras e limites da Tela 6:
+// - Quem o assistente atende (onda 2, item 4): o cartao do publico
+//   (cartao-do-publico.tsx), com o proprio Salvar, no topo da aba. O painel
+//   monta o cartao (com a chave dele) e passa pronto, como o da agenda.
 // - Horario de operacao: o modo em 3 cartoes de radio (24 horas, so fora do
 //   expediente, se a equipe nao responder em X minutos), os minutos e a
 //   grade do expediente por dia (molde da janela de envio da regua, com
@@ -183,6 +186,7 @@ export function errosDoHorario(erros: FieldErrors<ValoresDoHorario>): string[] {
 export function AbaRegras({
   horario,
   chaveDoHorario,
+  quemAtende,
   limitesDaAgenda,
   podeEditar,
   dica,
@@ -198,6 +202,8 @@ export function AbaRegras({
    * Sem ela, o proprio horario.
    */
   chaveDoHorario?: string;
+  /** O cartao "Quem o assistente atende" (onda 2), montado pelo painel. */
+  quemAtende?: React.ReactNode;
   /** O cartao dos limites para marcar consulta (E4), montado pelo painel. */
   limitesDaAgenda?: React.ReactNode;
   podeEditar: boolean;
@@ -210,6 +216,8 @@ export function AbaRegras({
 }) {
   return (
     <div className="grid gap-4">
+      {quemAtende}
+
       <CartaoDoHorario
         key={chaveDoHorario ?? JSON.stringify(horario)}
         horario={horario}

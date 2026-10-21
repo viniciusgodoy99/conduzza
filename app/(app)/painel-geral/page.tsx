@@ -1,4 +1,5 @@
 import { ErroDoPainel } from "@/components/painel-geral/erro-do-painel";
+import { InterruptorGeral } from "@/components/painel-geral/interruptor-geral";
 import { ListaDoPainel } from "@/components/painel-geral/lista-do-painel";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 import { TotaisDoPainel } from "@/components/painel-geral/totais-do-painel";
@@ -14,14 +15,30 @@ import { createClient } from "@/lib/supabase/server";
 // contagens, nenhum dado de paciente, entao nada vai para a trilha de
 // leitura de paciente. Erro de leitura vira o estado de erro com "Tentar de
 // novo", nunca uma lista vazia.
+//
+// Onda 2 (decisao P8 do dono): o interruptor geral do agente mora no topo
+// desta lista (antes, na aba Agente de IA de Configuracoes). O estado vem do
+// banco pela sessao (ia_interruptor_ligado, so o booleano); leitura que
+// falhou vira o aviso do cartao, sem derrubar o painel.
+
+/** O interruptor geral; nulo: a leitura falhou. Nunca lanca. */
+async function lerInterruptor(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<boolean | null> {
+  try {
+    const { data, error } = await supabase.rpc("ia_interruptor_ligado");
+    return error || typeof data !== "boolean" ? null : data;
+  } catch {
+    return null;
+  }
+}
+
 export default async function PainelGeralPage() {
   const supabase = await createClient();
-  let painel: PainelGeral | null = null;
-  try {
-    painel = await fetchPainelGeral(supabase);
-  } catch {
-    painel = null;
-  }
+  const [painel, interruptor] = await Promise.all([
+    fetchPainelGeral(supabase).catch((): PainelGeral | null => null),
+    lerInterruptor(supabase),
+  ]);
 
   return (
     <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-4 md:p-6">
@@ -31,6 +48,7 @@ export default async function PainelGeralPage() {
         description={TEXTOS_DO_PAINEL.descricao}
       />
       <AvisoCelular />
+      <InterruptorGeral ligado={interruptor} />
       {painel ? (
         <>
           <TotaisDoPainel totais={painel.totais} />

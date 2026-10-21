@@ -3,15 +3,19 @@ import { describe, expect, it } from "vitest";
 import {
   type ConsultaDoAviso,
   DICA_COMPARECEU_ANTES_DO_DIA,
+  DICA_CONSULTA_PENDENTE,
   DICA_FALTA_ANTES_DO_HORARIO,
   DICA_REMARCAR_ENCERRADA,
   MENSAGEM_PROFISSIONAL_INATIVO,
   STATUS_TERMINAIS,
   type SaldoParaComparecimento,
+  PENDENCIA_CANCELADA,
+  aguardaAprovacao,
   avisoDeRemarcacaoVale,
   comparecimentoLiberado,
   eCancelamento,
   faltaLiberada,
+  mudancaEsperaAprovacao,
   podeRemarcar,
   podeTransicionar,
   saldoDescontadoAoComparecer,
@@ -483,5 +487,51 @@ describe("aviso de remarcação na hora do envio", () => {
         agora,
       ),
     ).toBe(false);
+  });
+});
+
+// Onda 2 (item 10, P10a e P10b): consulta pendente so aprova, recusa ou
+// cancela; a acao e o menu usam a mesma regra e a mesma dica.
+describe("consulta pendente espera a aprovação", () => {
+  it("só o cancelamento passa; aprovada, recusada e sem aprovação seguem o ciclo", () => {
+    for (const status of [
+      "agendado",
+      "aguardando_confirmacao",
+      "confirmado_paciente",
+      "confirmado_recepcao",
+      "na_recepcao",
+      "em_atendimento",
+      "compareceu",
+      "faltou",
+    ] as const) {
+      expect(mudancaEsperaAprovacao("pendente", status), status).toBe(true);
+      expect(mudancaEsperaAprovacao("aprovado", status), status).toBe(false);
+      expect(mudancaEsperaAprovacao(null, status), status).toBe(false);
+    }
+    for (const status of ["cancelado_paciente", "cancelado_clinica"] as const) {
+      expect(mudancaEsperaAprovacao("pendente", status), status).toBe(false);
+    }
+  });
+
+  // Revisao da onda 2: a pendente cancelada (o paciente cancelou pelo
+  // WhatsApp e ela continua 'pendente') ja conta como recusada.
+  it("aguarda aprovação: só a pendente que não foi cancelada", () => {
+    expect(aguardaAprovacao({ approval_status: "pendente", status: "agendado" })).toBe(true);
+    expect(
+      aguardaAprovacao({ approval_status: "pendente", status: "cancelado_paciente" }),
+    ).toBe(false);
+    expect(
+      aguardaAprovacao({ approval_status: "pendente", status: "cancelado_clinica" }),
+    ).toBe(false);
+    expect(aguardaAprovacao({ approval_status: "aprovado", status: "agendado" })).toBe(false);
+    expect(aguardaAprovacao({ approval_status: null, status: "agendado" })).toBe(false);
+    expect(PENDENCIA_CANCELADA).toBe("Esta consulta já foi cancelada.");
+  });
+
+  it("a dica diz o que fazer, sem travessão", () => {
+    expect(DICA_CONSULTA_PENDENTE).toBe(
+      "Esta consulta ainda espera aprovação. Aprove ou recuse antes de mudar a situação.",
+    );
+    expect(DICA_CONSULTA_PENDENTE).not.toMatch(/[–—]/);
   });
 });

@@ -196,6 +196,8 @@ describe("situação da IA para a aba", () => {
       versaoPublicada: 3,
       telefonesInvalidos: [UM_ID],
       telefonesSemAutorizacao: [UM_ID],
+      // Onda 2: a chave nova ausente (banco de antes da migration) e nenhum.
+      telefonesForaDoPublico: [],
       conversasAbertas: [],
       motorParado: false,
     });
@@ -383,6 +385,60 @@ describe("situação da IA para a aba", () => {
     }));
     await expect(
       fetchLiberacaoDaIa(semSituacao.cliente(), CLINICA),
+    ).rejects.toThrow();
+  });
+
+  // Onda 2 (contrato, secao 7): o leitor entende os valores novos antes da
+  // migration que os grava, para a ordem entre o banco e o codigo nao
+  // quebrar a aba.
+  it("onda 2: telefones_fora_do_publico é opcional (ausente ou nulo = nenhum) e, presente, lida como as outras listas", () => {
+    const base = {
+      teto_atingido: false,
+      versao_publicada: 4,
+      telefones_invalidos: [],
+      telefones_sem_autorizacao: [],
+      conversas_abertas: [],
+      motor_parado: false,
+    };
+    expect(lerSituacaoDoBanco(base).telefonesForaDoPublico).toEqual([]);
+    expect(
+      lerSituacaoDoBanco({ ...base, telefones_fora_do_publico: null })
+        .telefonesForaDoPublico,
+    ).toEqual([]);
+    expect(
+      lerSituacaoDoBanco({
+        ...base,
+        telefones_fora_do_publico: [UM_ID, "nao-e-uuid", 3],
+      }).telefonesForaDoPublico,
+    ).toEqual([UM_ID]);
+    // Presente e fora do formato: lanca (a aba mostra o erro).
+    expect(() =>
+      lerSituacaoDoBanco({ ...base, telefones_fora_do_publico: "x" }),
+    ).toThrow();
+  });
+
+  it("onda 2: o modo da produção (numero_inteiro) é lido; valor desconhecido continua erro", async () => {
+    const banco = bancoDaAba();
+    banco.linhas("ia_liberacao").push({
+      clinic_id: CLINICA,
+      liberada: true,
+      modo: "numero_inteiro",
+      pausada_pela_clinica: false,
+      teto_diario_centavos_usd: 500,
+    });
+    expect(
+      (await fetchLiberacaoDaIa(banco.cliente(), CLINICA)).liberacao,
+    ).toMatchObject({ liberada: true, modo: "numero_inteiro" });
+    const desconhecido = bancoDaAba();
+    desconhecido.linhas("ia_liberacao").push({
+      clinic_id: CLINICA,
+      liberada: true,
+      modo: "todo_mundo",
+      pausada_pela_clinica: false,
+      teto_diario_centavos_usd: 500,
+    });
+    await expect(
+      fetchLiberacaoDaIa(desconhecido.cliente(), CLINICA),
     ).rejects.toThrow();
   });
 

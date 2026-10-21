@@ -30,7 +30,6 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { corDoNumero } from "@/lib/domain/cor-do-numero";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
-import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
 import { provedorDoAmbiente } from "@/lib/integrations/whatsapp/provider";
 import { motivosDaRecusaVigentes } from "@/lib/integrations/whatsapp/trava-celular";
 import { fetchProfileNames } from "@/lib/queries/profiles";
@@ -42,11 +41,7 @@ import {
   fetchContagemDeEtiquetas,
   fetchEtiquetasDeConversa,
 } from "@/lib/queries/etiquetas-de-conversa";
-import {
-  abaDaIaVisivel,
-  configDaIaDaRequisicao,
-  fetchLiberacaoDaIa,
-} from "@/lib/queries/ia-liberacao";
+import { abaDaIaVisivel } from "@/lib/queries/ia-liberacao";
 import { fetchJornada } from "@/lib/queries/jornada";
 import { fetchRespostasRapidas } from "@/lib/queries/respostas-rapidas";
 import type { Pendente } from "./equipe-client";
@@ -118,12 +113,15 @@ async function convidadosQueAindaNaoEntraram(
 // WhatsApp (um cartao por numero; docs/07, Telas), jornada, etiquetas,
 // mensagens padrao e anuncios da Meta e do Google (rastreio do site).
 // Administrador e gestor editam (nome e fuso so o administrador); os demais
-// papeis nem chegam aqui (o layout redireciona pela matriz do brief). A aba
-// Agente de IA (Fase 3) so existe nas clinicas com o agente habilitado (a
-// lista do banco desde a onda 1, que o super admin muda pelo Painel geral),
-// decidido AQUI no servidor (abaDaIaVisivel): nas outras, nada dela e lido
-// nem vai para o cliente. Nela, so o administrador da clinica e o super
-// admin alteram.
+// papeis nem chegam aqui (o layout redireciona pela matriz do brief).
+//
+// A aba Agente de IA (Fase 3) saiu daqui na onda 2 (item 8, decisao do dono
+// de 20/10/2026): o modo, os numeros, os telefones da equipe e a pausa do
+// assistente moram na aba WhatsApp da tela Agente de IA, e o interruptor
+// geral, no Painel geral. O link antigo (?aba=ia) vai para la antes de
+// qualquer leitura. Nas clinicas com o agente habilitado (a lista do banco,
+// decidida AQUI no servidor por abaDaIaVisivel), a aba WhatsApp daqui ganha
+// o aviso de onde os numeros do assistente estao agora.
 //
 // As automacoes de fluxo sairam daqui em 20/10/2026 (decisao do dono, onda
 // 4): moram na tela Automacoes. O link antigo (?aba=fluxo) vai para la antes
@@ -138,6 +136,11 @@ export default async function ConfiguracoesPage({
   if (aba === "fluxo") {
     redirect("/automacoes?aba=fluxo");
   }
+  // Onda 2, item 8: a aba do agente mora na Tela 6. Fora das clinicas com o
+  // agente habilitado, a Tela 6 mostra o vazio de sempre.
+  if (aba === "ia") {
+    redirect("/agente?aba=whatsapp");
+  }
 
   const context = await getSessionContext();
   const active = context?.active;
@@ -146,11 +149,9 @@ export default async function ConfiguracoesPage({
   }
 
   const supabase = await createClient();
-  // A lista do banco e lida uma vez (cache da requisicao) para as duas, e
-  // SEM esperar: ela corre junto com o lote abaixo (a liberacao da aba
-  // encadeia nela), em vez de somar uma ida ao banco em serie a toda carga
-  // de Configuracoes. As duas nunca lancam (falha fechada: aba escondida).
-  const abaDaIa = abaDaIaVisivel(active.clinicId);
+  // A lista do banco (so para o aviso de onde o assistente mora agora) corre
+  // JUNTO com o lote abaixo, em vez de somar uma ida ao banco em serie a
+  // toda carga de Configuracoes. Nunca lanca (falha fechada: sem o aviso).
   const [
     memberResult,
     profissionaisResult,
@@ -168,9 +169,7 @@ export default async function ConfiguracoesPage({
     limiteDeNumerosResult,
     rastreioResult,
     situacaoDoRastreioResult,
-    liberacaoDaIa,
-    comAbaDaIa,
-    configDaIa,
+    comAgenteDeIa,
   ] = await Promise.all([
     supabase
       .from("clinic_member")
@@ -259,15 +258,9 @@ export default async function ConfiguracoesPage({
     // Os totais do rastreio (so agregados: nunca a chave, o gclid ou o
     // contato). A funcao confere admin ou gestor ativo.
     supabase.rpc("situacao_do_rastreio", { p_clinic_id: active.clinicId }),
-    // Aba Agente de IA: a liberacao, o numero, os telefones da equipe e o
-    // interruptor geral (so o booleano). A RLS so mostra a administrador ou
-    // gestor ativo das clinicas com o agente habilitado; fora delas, nem se
-    // pergunta (encadeada na lista, que corre junto com o resto do lote).
-    abaDaIa.then((visivel) =>
-      visivel ? seguro(fetchLiberacaoDaIa(supabase, active.clinicId)) : null,
-    ),
-    abaDaIa,
-    configDaIaDaRequisicao(),
+    // O agente habilitado nesta clinica: so decide o aviso da aba WhatsApp
+    // (os numeros do assistente moram na Tela 6 desde a onda 2).
+    abaDaIaVisivel(active.clinicId),
   ]);
 
   type MemberRow = {
@@ -514,27 +507,7 @@ export default async function ConfiguracoesPage({
                 agoraMs: Date.now(),
               }
         }
-        agenteDeIa={
-          comAbaDaIa
-            ? {
-                dados: liberacaoDaIa,
-                numeros: whatsappResult.error ? null : numerosDoWhatsapp,
-                // T1 e T2 (producao com a chave e a lista do banco) para
-                // esta clinica: so o booleano, nunca o valor de variavel
-                // nenhuma.
-                ambienteLigado: iaLiberadaNoAmbiente(
-                  configDaIa,
-                  active.clinicId,
-                ),
-                podeEditar: active.role === "admin" || context.isProductAdmin,
-                superAdmin: context.isProductAdmin,
-                // O horario do assistente ("Agora está fora do horário")
-                // no relogio e no fuso da clinica (regra 3.6).
-                agoraMs: Date.now(),
-                fuso: active.timezone,
-              }
-            : null
-        }
+        comAgenteDeIa={comAgenteDeIa}
         google={
           rastreioResult.error
             ? null

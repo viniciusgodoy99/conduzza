@@ -2,8 +2,14 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { agenteAtendeAgora } from "@/lib/domain/agente/config";
-import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  agenteAtendeAgora,
+  type TipoDoContato,
+} from "@/lib/domain/agente/config";
+import {
+  FRASE_DE_ESCALONAMENTO,
+  FRASE_FORA_DO_ASSUNTO,
+} from "@/lib/domain/conformidade/frase-fixa";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 import {
   ambienteDaIaLigado,
@@ -46,6 +52,7 @@ import {
   type PassoDoTurno,
   type ResultadoDoTurno,
 } from "./laco";
+import { SEPARADOR_DA_RESPOSTA } from "./prompt";
 import { lerPrecos, type PrecoDoModelo } from "./uso";
 
 // Simulador da Tela 6 (E2): o MESMO turno do WhatsApp (portao de entrada,
@@ -81,6 +88,14 @@ import { lerPrecos, type PrecoDoModelo } from "./uso";
 //    seguinte do paciente pularia o portao e o classificador que barraram a
 //    anterior (so as pendentes passam por eles). Recusa antes de reservar
 //    gasto e de chamar o modelo; a tela ja trava no mesmo ponto.
+//
+// Onda 2:
+//  - "Testar como" (item 4): Lead ou Paciente, que a acao valida no
+//    servidor; vai na ultima linha das instrucoes, como o tipo do contato no
+//    WhatsApp. Sem escolha: sem a linha;
+//  - fora do assunto (item 5, P5b): a contagem da janela sao as falas do
+//    assistente com a frase de fora do assunto, no historico assinado (a
+//    conversa de teste e uma janela so).
 
 type Ambiente = Readonly<Record<string, string | undefined>>;
 
@@ -90,8 +105,9 @@ export const TEXTOS_DO_SIMULADOR = {
   clinicaForaDaFase:
     "O assistente ainda não está disponível para esta clínica.",
   interruptor: "O interruptor geral da IA está desligado.",
+  // Onda 2 (item 8): a liberacao mudou para a Tela 6, aba WhatsApp.
   desligadoNaClinica:
-    "O assistente está desligado nesta clínica. Ligue em Configurações, na aba Agente de IA.",
+    "O assistente está desligado nesta clínica. Ligue em Agente de IA, na aba WhatsApp.",
   pausado: "O assistente está pausado nesta clínica.",
   teto: "O teto de gasto de hoje acabou.",
   modeloInvalido:
@@ -134,6 +150,24 @@ export function conversaPassouParaAEquipe(
       fala.autor === "assistente" &&
       fala.texto.trim() === FRASE_DE_ESCALONAMENTO,
   );
+}
+
+/**
+ * Onda 2 (item 5, P5b): quantas vezes o assistente ja respondeu fora do
+ * assunto na conversa de teste: as falas dele que trazem a frase de fora do
+ * assunto como um paragrafo (com a saudacao e o aviso colados na primeira,
+ * ela vem depois deles).
+ */
+export function foraDoAssuntoNoSimulador(
+  falas: readonly FalaAssinavel[],
+): number {
+  return falas.filter(
+    (fala) =>
+      fala.autor === "assistente" &&
+      fala.texto
+        .split(SEPARADOR_DA_RESPOSTA)
+        .some((parte) => parte.trim() === FRASE_FORA_DO_ASSUNTO),
+  ).length;
 }
 
 /** Prazo da trava do banco: sem resposta, nao pode (falha fechada). */
@@ -211,10 +245,14 @@ async function motivoDoBanco(
       pausada_pela_clinica?: unknown;
       modo?: unknown;
     } | null;
+    // Onda 2 (item 11): o modo da producao ("numero_inteiro") tambem deixa
+    // simular; o leitor aceita o valor novo antes da migration.
     if (
       linha === null ||
       linha.liberada !== true ||
-      (linha.modo !== "simulador" && linha.modo !== "contatos")
+      (linha.modo !== "simulador" &&
+        linha.modo !== "contatos" &&
+        linha.modo !== "numero_inteiro")
     ) {
       return TEXTOS_DO_SIMULADOR.desligadoNaClinica;
     }
@@ -306,6 +344,11 @@ export async function simularTurno(
     agoraMs: number;
     /** Super admin: ve o texto barrado e o passo do texto descartado. */
     superAdmin?: boolean;
+    /**
+     * Onda 2 (item 4): o "Testar como" da tela (Lead ou Paciente), ja
+     * validado pela acao. Nulo ou ausente: sem a linha do contato.
+     */
+    contato?: TipoDoContato | null;
     env?: Ambiente;
   },
   dependencias: DependenciasDoSimulador = {},
@@ -400,6 +443,10 @@ export async function simularTurno(
     });
 
   // O custo maximo do turno, reservado antes de qualquer chamada.
+  const contato =
+    entrada.contato === "lead" || entrada.contato === "paciente"
+      ? entrada.contato
+      : null;
   const custoMaximo = custoMaximoDoTurno({
     config: contexto.config,
     catalogo,
@@ -409,6 +456,7 @@ export async function simularTurno(
     modelo,
     modeloDosClassificadores,
     precos,
+    contato,
   });
   if (custoMaximo === null) {
     log.warn("ia_simulador_sem_preco", { clinic_id: clinicId });
@@ -442,6 +490,8 @@ export async function simularTurno(
     fuso: entrada.fuso,
     verificador,
     classificador,
+    contato,
+    foraDoAssuntoNaJanela: foraDoAssuntoNoSimulador(falas),
     conferirTrava: () => iaPodeSimular(admin, clinicId),
     agenda: portaDaAgendaDoSimulador(admin, {
       clinicId,

@@ -34,13 +34,15 @@ type Operacao = {
   dados?: unknown;
   colunas?: string;
   filtros: [string, unknown][];
+  /** .not(coluna, "in", "(a,b)"): a coluna fora da lista. */
+  excluidos: [string, string[]][];
 };
 type RespostaDoRpc = { data: unknown; error: { code?: string } | null };
 
 const estado = {
   consultas: [] as Linha[],
   erroNaLeitura: null as { code: string } | null,
-  erroNoUpdate: null as { code: string } | null,
+  erroNoUpdate: null as { code: string; message?: string } | null,
   rpc: { data: true, error: null } as RespostaDoRpc | "lanca",
   operacoes: [] as Operacao[],
   rpcs: [] as { nome: string; args: unknown }[],
@@ -88,9 +90,12 @@ function consultaComum(): Linha {
 }
 
 function from(tabela: string) {
-  const op: Operacao = { tabela, tipo: "select", filtros: [] };
+  const op: Operacao = { tabela, tipo: "select", filtros: [], excluidos: [] };
   const casa = (linha: Linha) =>
-    op.filtros.every(([coluna, valor]) => linha[coluna] === valor);
+    op.filtros.every(([coluna, valor]) => linha[coluna] === valor) &&
+    op.excluidos.every(
+      ([coluna, lista]) => !lista.includes(String(linha[coluna])),
+    );
   const executar = (): { data: unknown; error: unknown } => {
     estado.operacoes.push(op);
     estado.sequencia.push(`${tabela}:${op.tipo}`);
@@ -137,6 +142,13 @@ function from(tabela: string) {
     },
     eq: (coluna: string, valor: unknown) => {
       op.filtros.push([coluna, valor]);
+      return api;
+    },
+    not: (coluna: string, operador: string, valor: string) => {
+      if (operador !== "in") {
+        throw new Error(`operador ${operador} sem dublê`);
+      }
+      op.excluidos.push([coluna, valor.replace(/^\(|\)$/g, "").split(",")]);
       return api;
     },
     maybeSingle: async () => {
@@ -293,7 +305,7 @@ describe("aprovar", () => {
     const leitura = estado.operacoes.find(
       (op) => op.tabela === "appointment" && op.tipo === "select",
     );
-    expect(leitura?.colunas).toBe("created_by, is_overbooking");
+    expect(leitura?.colunas).toBe("created_by, is_overbooking, status");
     expect(leitura?.filtros).toEqual([
       ["clinic_id", CLINICA],
       ["id", DA_IA],
@@ -326,6 +338,55 @@ describe("aprovar", () => {
       error: "Não foi possível aprovar. Tente de novo.",
     });
     expect(trilha()).toEqual([]);
+  });
+});
+
+// Revisao da onda 2: a pendente cancelada pelo paciente (a funcao do banco
+// muda so o status; ela continua 'pendente') conta como recusada. Aprovar
+// converteria o lead e avancaria o funil de uma consulta cancelada; recusar
+// trocaria o "cancelado pelo paciente" por "cancelado pela clinica".
+describe("a pendente já cancelada", () => {
+  it("aprovar: recusado com o texto da consulta cancelada, sem update nem trilha", async () => {
+    linha(DA_IA).status = "cancelado_paciente";
+    expect(await aprovarEncaixeAction(DA_IA)).toEqual({
+      ok: false,
+      code: "ja_tratado",
+      error: "Esta consulta já foi cancelada.",
+    });
+    expect(updates()).toEqual([]);
+    expect(trilha()).toEqual([]);
+    expect(linha(DA_IA).approval_status).toBe("pendente");
+  });
+
+  it("recusar: recusado do mesmo jeito, e o cancelamento do paciente fica", async () => {
+    linha(DA_IA).status = "cancelado_paciente";
+    expect(await recusarEncaixeAction(DA_IA)).toEqual({
+      ok: false,
+      code: "ja_tratado",
+      error: "Esta consulta já foi cancelada.",
+    });
+    expect(updates()).toEqual([]);
+    expect(estado.rpcs).toEqual([]);
+    expect(linha(DA_IA).status).toBe("cancelado_paciente");
+  });
+
+  it("a leitura da pendência traz a situação, e o update perde a corrida com o cancelamento", async () => {
+    expect(await aprovarEncaixeAction(DA_IA)).toEqual({ ok: true });
+    const leitura = estado.operacoes.find(
+      (op) => op.tabela === "appointment" && op.tipo === "select",
+    );
+    expect(leitura?.colunas).toBe("created_by, is_overbooking, status");
+    const [update] = updates();
+    expect(update?.excluidos).toEqual([
+      ["status", ["cancelado_paciente", "cancelado_clinica"]],
+    ]);
+  });
+
+  it("o encaixe pendente cancelado pela clínica também não aprova", async () => {
+    linha(ENCAIXE).status = "cancelado_clinica";
+    const resultado = await aprovarEncaixeAction(ENCAIXE);
+    expect(resultado).toMatchObject({ ok: false, code: "ja_tratado" });
+    expect(updates()).toEqual([]);
   });
 });
 
@@ -628,7 +689,85 @@ describe("cancelar pela Agenda a pendência da IA conta como recusar", () => {
     expect(trilha()).toMatchObject([{ action: "mudou_status" }]);
   });
 
-  it("outra mudança de situação na consulta da IA pendente não é recusa", async () => {
+  // Onda 2 (item 10, P10a e P10b): a consulta pendente so aprova, recusa ou
+  // cancela. Antes, confirmar uma pendente da IA passava (e Compareceu
+  // avancaria o funil antes da aprovacao).
+  it("outra mudança de situação na consulta pendente espera a aprovação: nada é gravado", async () => {
+    for (const [id, novo_status, canal] of [
+      [DA_IA, "confirmado_recepcao", "telefone"],
+      [DA_IA, "aguardando_confirmacao", null],
+      [ENCAIXE, "confirmado_recepcao", "presencial"],
+    ] as const) {
+      reiniciar();
+      expect(
+        await mudarStatusAction({
+          id,
+          status_atual: "agendado",
+          novo_status,
+          canal,
+        }),
+        `${id} ${novo_status}`,
+      ).toEqual({
+        ok: false,
+        code: "consulta_pendente",
+        error:
+          "Esta consulta ainda espera aprovação. Aprove ou recuse antes de mudar a situação.",
+      });
+      expect(linha(id)).toMatchObject({
+        approval_status: "pendente",
+        status: "agendado",
+      });
+      expect(gravacoes()).toEqual([]);
+      expect(estado.rpcs).toEqual([]);
+    }
+  });
+
+  it("a pendência que barra a mudança é lida do banco, pela clínica e pelo id", async () => {
+    await mudarStatusAction({
+      id: DA_IA,
+      status_atual: "agendado",
+      novo_status: "confirmado_recepcao",
+      canal: "telefone",
+    });
+    const leitura = estado.operacoes.find(
+      (op) => op.tabela === "appointment" && op.tipo === "select",
+    );
+    expect(leitura?.filtros).toEqual([
+      ["clinic_id", CLINICA],
+      ["id", DA_IA],
+      ["approval_status", "pendente"],
+    ]);
+
+    // Leitura que falha: nada gravado (falha fechada).
+    reiniciar();
+    estado.erroNaLeitura = { code: "57014" };
+    expect(
+      await mudarStatusAction({
+        id: DA_IA,
+        status_atual: "agendado",
+        novo_status: "confirmado_recepcao",
+        canal: "telefone",
+      }),
+    ).toEqual({
+      ok: false,
+      error: "Não foi possível conferir esta consulta. Tente de novo.",
+    });
+    expect(gravacoes()).toEqual([]);
+  });
+
+  it("consulta comum e consulta da IA já aprovada mudam de situação como sempre", async () => {
+    expect(
+      await mudarStatusAction({
+        id: COMUM,
+        status_atual: "agendado",
+        novo_status: "confirmado_recepcao",
+        canal: "telefone",
+      }),
+    ).toEqual({ ok: true });
+    expect(linha(COMUM).status).toBe("confirmado_recepcao");
+
+    reiniciar();
+    linha(DA_IA).approval_status = "aprovado";
     expect(
       await mudarStatusAction({
         id: DA_IA,
@@ -638,10 +777,41 @@ describe("cancelar pela Agenda a pendência da IA conta como recusar", () => {
       }),
     ).toEqual({ ok: true });
     expect(linha(DA_IA)).toMatchObject({
-      approval_status: "pendente",
+      approval_status: "aprovado",
       status: "confirmado_recepcao",
     });
-    expect(estado.rpcs).toEqual([]);
+  });
+
+  it("o gatilho do banco que recusa (23514 consulta_pendente) vira a mesma dica", async () => {
+    // A consulta virou pendente entre a leitura e o update: o banco recusa.
+    estado.erroNoUpdate = {
+      code: "23514",
+      message: "consulta_pendente",
+    };
+    expect(
+      await mudarStatusAction({
+        id: COMUM,
+        status_atual: "agendado",
+        novo_status: "confirmado_recepcao",
+        canal: "telefone",
+      }),
+    ).toEqual({
+      ok: false,
+      code: "consulta_pendente",
+      error:
+        "Esta consulta ainda espera aprovação. Aprove ou recuse antes de mudar a situação.",
+    });
+    // Outro 23514 continua o erro de sempre.
+    reiniciar();
+    estado.erroNoUpdate = { code: "23514", message: "outra_regra" };
+    expect(
+      await mudarStatusAction({
+        id: COMUM,
+        status_atual: "agendado",
+        novo_status: "confirmado_recepcao",
+        canal: "telefone",
+      }),
+    ).toEqual({ ok: false, error: "Não foi possível mudar a situação." });
   });
 
   it("a pendência é lida do banco: leitura que falha não grava nada", async () => {

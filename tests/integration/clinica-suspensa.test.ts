@@ -121,6 +121,22 @@ async function rpcErro(
   return error as Erro;
 }
 
+/**
+ * A migration da producao do agente (onda 2, M3, 20261022120000) ja foi
+ * aplicada? Ela muda dois contratos que esta suite fixa: os totais do
+ * painel ganham agente_em_producao, e producao deixa de ser estado
+ * invalido (numa clinica e_de_teste vira P0001 clinica_de_teste). As
+ * migrations da onda 2 vao para a producao em fases (a M3 espera as
+ * decisoes do dono): a suite vale antes e depois dela. Sem a funcao, o
+ * PostgREST responde PGRST202 (ou o banco, 42883).
+ */
+async function producaoDoAgenteAplicada(): Promise<boolean> {
+  const { error } = await admin.rpc("requisitos_da_producao", {
+    p_clinic_id: crypto.randomUUID(),
+  });
+  return !(error && (error.code === "PGRST202" || error.code === "42883"));
+}
+
 function esperaErro(erro: Erro, codigo: string, chave?: string): void {
   expect(erro?.code).toBe(codigo);
   if (chave !== undefined) {
@@ -774,7 +790,10 @@ describe("painel_geral_das_clinicas pela service role", () => {
       },
     );
     expect(Object.keys(painel).sort()).toEqual(["clinicas", "totais"]);
+    // Onda 2 (M3): os totais ganham agente_em_producao.
+    const comProducao = await producaoDoAgenteAplicada();
     expect(Object.keys(painel.totais as object).sort()).toEqual([
+      ...(comProducao ? ["agente_em_producao"] : []),
       "agente_em_teste",
       "ativas",
       "clinicas",
@@ -864,10 +883,23 @@ describe("agente por clínica e teto", () => {
       "P0001",
       "clinica_de_teste",
     );
+    // Onda 2 (M3): producao passa a ser um estado; numa clinica e_de_teste
+    // a recusa e a da clinica de teste. Antes dela, estado invalido. Um
+    // estado que nao existe e invalido nos dois.
+    const comProducao = await producaoDoAgenteAplicada();
     esperaErro(
       await rpcErro("definir_agente_da_clinica", {
         p_clinic_id: clinicaS,
         p_estado: "producao",
+        p_motivo: "Teste",
+      }),
+      comProducao ? "P0001" : "22023",
+      comProducao ? "clinica_de_teste" : "estado_invalido",
+    );
+    esperaErro(
+      await rpcErro("definir_agente_da_clinica", {
+        p_clinic_id: clinicaS,
+        p_estado: "no_ar",
         p_motivo: "Teste",
       }),
       "22023",

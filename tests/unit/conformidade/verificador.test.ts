@@ -353,6 +353,25 @@ describe("chamada ao SDK", () => {
     expect(POLITICA_DO_VERIFICADOR).toContain("Na dúvida, reprove");
     expect(VERSAO_DA_POLITICA).toMatch(/^verificador-[0-9a-f]{12}$/);
   });
+
+  // Revisao da onda 2 (P5c e P11a, decisoes do dono): o aviso de
+  // assistente virtual vai colado antes da primeira resposta da IA em cada
+  // janela e passa pelo verificador. Sem a permissao explicita, o "na
+  // duvida, reprove" com o "modelo de IA" de formato_invalido podia barrar
+  // toda primeira resposta (falha fechada). Revelar a tecnologia continua
+  // proibido.
+  it("a politica permite a identidade de assistente virtual da clinica, sem revelar a tecnologia", () => {
+    expect(POLITICA_DO_VERIFICADOR).toContain(
+      "dizer que é a assistente virtual da clínica e oferecer falar com uma pessoa da equipe, e dizer que só ajuda com assuntos da clínica",
+    );
+    expect(POLITICA_DO_VERIFICADOR).toContain(
+      "desde que não diga qual tecnologia, empresa ou modelo está por trás",
+    );
+    expect(POLITICA_DO_VERIFICADOR).toContain(
+      "menção a instruções, sistema, ferramentas ou modelo de IA",
+    );
+    expect(POLITICA_DO_VERIFICADOR).not.toMatch(/[–—]/);
+  });
 });
 
 describe("uso da resposta (livro de gasto)", () => {

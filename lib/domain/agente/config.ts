@@ -135,9 +135,13 @@ export const INSTRUCAO_DO_EMOJI = {
 /**
  * As ferramentas que o motor sabe dar ao modelo. As de agenda (buscar_horario,
  * reservar_horario, agendar e confirmar_presenca) entraram no E4 (contrato
- * da E4, secao 2).
+ * da E4, secao 2). As duas de frase fixa (fora_do_assunto e
+ * sou_assistente_virtual) entraram na onda 2 (item 5 e P5c): sem argumentos,
+ * o texto e do dono (lib/agente/ferramentas/fora-do-assunto.ts).
  */
 export const FERRAMENTAS_DO_AGENTE = [
+  "fora_do_assunto",
+  "sou_assistente_virtual",
   "buscar_procedimento",
   "buscar_horario",
   "reservar_horario",
@@ -207,7 +211,9 @@ export const HABILIDADES_DO_AGENTE = [
     descricao:
       "Responde dúvidas sobre a clínica com as perguntas e respostas do Conhecimento.",
     travada: true,
-    ferramentas: [],
+    // Onda 2 (item 5 e P5c): as frases fixas do fora do assunto e do "você
+    // é um robô?" vem sempre, como escalar_humano (habilidade travada).
+    ferramentas: ["fora_do_assunto", "sou_assistente_virtual"],
     padrao: true,
     precisaDaAgenda: false,
   },
@@ -485,6 +491,75 @@ export function habilidadesComAgendaSchema(agenda: AgendaDoAgente) {
 }
 
 // ---------------------------------------------------------------------------
+// Publico (onda 2, item 4): leads, pacientes ou os dois
+// ---------------------------------------------------------------------------
+
+/**
+ * Espelho do CHECK de ai_agent_config.publico_atendido (migration
+ * 20261022110000). Decisao do dono (P4a): mora na configuracao do agente
+ * (versionada, vale ao publicar), "uma condicao no mesmo agente". Quem
+ * aplica e o banco, na ENTRADA da conversa na IA (ia_publico_aceita: conversa
+ * nova, Devolver e retomada), como o teto: o lead que vira paciente no meio
+ * da conversa continua. P4b: vale tambem para os telefones da equipe.
+ */
+export const PUBLICOS_DO_AGENTE = ["leads", "pacientes", "todos"] as const;
+export type PublicoDoAgente = (typeof PUBLICOS_DO_AGENTE)[number];
+
+export const ROTULO_DO_PUBLICO: Readonly<Record<PublicoDoAgente, string>> = {
+  leads: "Só leads",
+  pacientes: "Só pacientes",
+  todos: "Leads e pacientes",
+};
+
+/** Enquanto a clinica nao escolheu (coluna nula). */
+export const ROTULO_DO_PUBLICO_NAO_ESCOLHIDO = "Ainda não escolhido";
+
+/** O titulo do cartao da aba Regras e limites (e do "o que mudou"). */
+export const ROTULO_DO_CAMPO_PUBLICO = "Quem o assistente atende";
+
+/**
+ * publico_atendido para o publico. Nulo (a clinica ainda nao escolheu),
+ * ausente (coluna fora do select) ou fora da lista: nulo. Nunca lanca.
+ * Nulo no banco aceita todo contato no modo de teste (os telefones da
+ * equipe) e recusa no numero inteiro (falha fechada, M3).
+ */
+export function publicoDoBanco(valor: unknown): PublicoDoAgente | null {
+  return typeof valor === "string" &&
+    (PUBLICOS_DO_AGENTE as readonly string[]).includes(valor)
+    ? (valor as PublicoDoAgente)
+    : null;
+}
+
+/** O publico na coluna do banco (o inverso de publicoDoBanco). */
+export function publicoParaOBanco(publico: PublicoDoAgente): {
+  publico_atendido: PublicoDoAgente;
+} {
+  return { publico_atendido: publico };
+}
+
+/** Entrada do cartao "Quem o assistente atende" (aba Regras e limites). */
+export const publicoSchema = z.object({
+  publico: z.enum(PUBLICOS_DO_AGENTE, {
+    error: "Escolha quem o assistente atende.",
+  }),
+});
+
+/** contact.kind (CHECK contact_kind_check): so lead ou paciente. */
+export const TIPOS_DO_CONTATO = ["lead", "paciente"] as const;
+export type TipoDoContato = (typeof TIPOS_DO_CONTATO)[number];
+
+/**
+ * O "Testar como" do simulador (onda 2, item 4), validado no servidor: lead,
+ * paciente ou nulo (sem escolha, sem a linha do contato no prompt).
+ */
+export const tipoDoContatoSchema = z.enum(TIPOS_DO_CONTATO).nullable();
+
+/** contact.kind para o tipo; fora da lista (ou ausente) vira nulo. */
+export function tipoDoContatoDoBanco(valor: unknown): TipoDoContato | null {
+  return valor === "lead" || valor === "paciente" ? valor : null;
+}
+
+// ---------------------------------------------------------------------------
 // Horario de operacao
 // ---------------------------------------------------------------------------
 
@@ -547,7 +622,9 @@ export function descricaoDoModo(
     case "24h":
       return "O assistente responde a qualquer hora, todos os dias.";
     case "fora_expediente":
-      return "O assistente responde só fora do expediente abaixo. No expediente, quem responde é a equipe.";
+      // Onda 2 (item 7): texto proposto no contrato (secao 9), com a
+      // retomada no fim do expediente.
+      return "O assistente responde só fora do expediente abaixo. No expediente, quem responde é a equipe; a conversa que ninguém respondeu passa para o assistente quando o expediente acaba.";
     case "fallback":
       return `O assistente responde quando ninguém da equipe responder em ${textoDeMinutos(minutosSemResposta)}.`;
   }
@@ -758,6 +835,74 @@ export function agenteAtendeAgora(
     : { atende: true, motivo: "fora_do_expediente" };
 }
 
+/**
+ * O que ia_horario_do_assistente (banco, onda 2, item 7) devolve para a
+ * ultima versao publicada, fora os estados que so o banco tem ('sem_versao'
+ * e 'indisponivel').
+ */
+export type HorarioDoAssistente =
+  "atende" | "no_expediente" | "modo_nao_suportado";
+
+/**
+ * Se o assistente atende agora no WhatsApp, a partir das colunas da linha de
+ * ai_agent_config e do fuso da clinica: horarioDoBanco e agenteAtendeAgora,
+ * com o modo "Se a equipe não responder" como nao suportado (o executor faz
+ * o mesmo: horario_nao_suportado). Fuso vazio, nulo ou invalido cai no
+ * padrao da clinica (CLAUDE.md 3.6). Nunca lanca.
+ *
+ * ESPELHO EXATO no banco (ia_horario_do_assistente, migration da onda 2): a
+ * ingestao decide com ele se a conversa nasce na IA, e o executor confere de
+ * novo por aqui. A MESMA tabela verdade roda nos dois
+ * (tests/fixtures/ia/horario-do-assistente.ts): divergencia daria conversa
+ * nascendo de um jeito e o executor tirando de outro.
+ */
+export function horarioDoAssistente(
+  linha: {
+    operating_mode: string;
+    fallback_minutes: number | null;
+    operating_hours: unknown;
+  },
+  agoraMs: number,
+  fuso: string | null | undefined,
+): HorarioDoAssistente {
+  const horario = horarioDoBanco(linha);
+  if (horario.modo === "fallback") {
+    return "modo_nao_suportado";
+  }
+  return agenteAtendeAgora(horario, agoraMs, fuso || FUSO_DA_CLINICA_PADRAO)
+    .atende
+    ? "atende"
+    : "no_expediente";
+}
+
+/**
+ * Quando o assistente volta (onda 2, item 7): no modo "Só fora do
+ * expediente", com agora DENTRO do expediente do dia, o fim dele ("HH:mm",
+ * no fuso da clinica), que e quando a conversa que ninguem respondeu passa
+ * para o assistente. null em qualquer outro caso (24 horas, "Se a equipe não
+ * responder", fora do expediente, instante ou grade que nao servem). Para a
+ * aba WhatsApp dizer "O assistente volta às 18:00".
+ */
+export function fimDoExpedienteAgora(
+  horario: HorarioDeOperacao,
+  agoraMs: number,
+  fuso: string,
+): string | null {
+  if (
+    horario.modo !== "fora_expediente" ||
+    !Number.isFinite(agoraMs) ||
+    !estaNoExpediente(horario.expediente, agoraMs, fuso)
+  ) {
+    return null;
+  }
+  const instante = new Date(agoraMs);
+  const fusoValido = Number.isNaN(weekdayLocal(fuso, instante))
+    ? FUSO_DA_CLINICA_PADRAO
+    : fuso;
+  const dia = DIAS_DA_SEMANA[weekdayLocal(fusoValido, instante)];
+  return dia === undefined ? null : horario.expediente[dia].fim;
+}
+
 // ---------------------------------------------------------------------------
 // Escalonamento (passar para a equipe)
 // ---------------------------------------------------------------------------
@@ -772,6 +917,11 @@ export function agenteAtendeAgora(
  * ultima hora), nao_individual (mensagem de grupo, status ou canal numa
  * conversa da IA) e pedido_de_agenda (D41: o paciente quer marcar, remarcar
  * ou cancelar, e a IA ainda nao agenda).
+ *
+ * Onda 2 (item 5, migration 20261022110000, que redefine o CHECK):
+ * fora_do_assunto, a pessoa insistiu num assunto que nao e da clinica depois
+ * da resposta educada. E motivo do SISTEMA (o laco decide pela contagem da
+ * janela), nunca do modelo: fica fora de MOTIVOS_DO_AGENTE.
  */
 export const MOTIVOS_DE_ESCALONAMENTO = [
   "sintoma",
@@ -791,6 +941,7 @@ export const MOTIVOS_DE_ESCALONAMENTO = [
   "teto_de_respostas",
   "nao_individual",
   "pedido_de_agenda",
+  "fora_do_assunto",
 ] as const;
 export type MotivoDeEscalonamento = (typeof MOTIVOS_DE_ESCALONAMENTO)[number];
 
@@ -821,6 +972,8 @@ export const ROTULO_DO_MOTIVO_DE_ESCALONAMENTO: Readonly<
     "o limite de respostas desta conversa na última hora acabou",
   nao_individual: "a mensagem veio de um grupo, de um status ou de um canal",
   pedido_de_agenda: "o paciente quer marcar, remarcar ou cancelar",
+  // Onda 2 (item 5): texto do evento proposto no contrato (secao 9).
+  fora_do_assunto: "a pessoa insistiu num assunto fora da clínica",
 };
 
 /**
@@ -843,6 +996,12 @@ export const MOTIVOS_DE_SISTEMA_DA_IA = [
   // Revisao do E3 (S5): o telefone da equipe revogou a autorizacao para
   // receber mensagens. O executor confere antes do modelo e passa sem frase.
   "sem_autorizacao",
+  // Onda 2 (item 7, migration 20261022110000): so o banco grava os dois. A
+  // conversa nova que chega no expediente nasce com a equipe
+  // (no_expediente) e, no fim do expediente, a que ninguem da equipe
+  // respondeu volta para o assistente (retomou_no_horario).
+  "no_expediente",
+  "retomou_no_horario",
 ] as const;
 export type MotivoDeSistemaDaIa = (typeof MOTIVOS_DE_SISTEMA_DA_IA)[number];
 export type MotivoDoEventoDaIa = MotivoDeEscalonamento | MotivoDeSistemaDaIa;
@@ -857,10 +1016,12 @@ function passagemDaIa(motivo: MotivoDeEscalonamento): string {
 /**
  * O corpo do evento no fio para cada motivo (contrato do E3, secao 4.1).
  * Espelho EXATO de rotulo_do_motivo_da_ia() da migration MAIS NOVA que a
- * define (hoje a 20261019120000, que trocou o texto de 'parada'): um teste
- * cruza os dois (tests/unit/ia-whatsapp/espelhos.test.ts). O banco grava o
- * evento; este espelho existe para o teste e para quem precisar mostrar o
- * mesmo texto sem ir ao banco.
+ * define (a 20261019120000 trocou o texto de 'parada'; a da onda 2,
+ * 20261022110000, traz no_expediente, retomou_no_horario, fora_do_assunto e
+ * o texto novo de horario_nao_suportado): um teste cruza os dois
+ * (tests/unit/ia-whatsapp/espelhos.test.ts). O banco grava o evento; este
+ * espelho existe para o teste e para quem precisar mostrar o mesmo texto sem
+ * ir ao banco.
  */
 export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   Record<MotivoDoEventoDaIa, string>
@@ -881,10 +1042,18 @@ export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   falha_tecnica: passagemDaIa("falha_tecnica"),
   teto_de_respostas: passagemDaIa("teto_de_respostas"),
   pedido_de_agenda: passagemDaIa("pedido_de_agenda"),
+  fora_do_assunto: passagemDaIa("fora_do_assunto"),
   nao_individual:
     "Chegou uma mensagem de grupo ou de status. A conversa voltou para a equipe.",
   fora_do_horario: `${PASSAGEM_DA_IA}agora está fora do horário escolhido para o assistente.`,
-  horario_nao_suportado: `${PASSAGEM_DA_IA}o modo de horário escolhido ainda não funciona no WhatsApp.`,
+  // Onda 2 (item 7): o evento sai tambem na conversa nova que chega no modo
+  // "Se a equipe não responder" e ja nasce com a equipe (contrato, secao 9).
+  horario_nao_suportado:
+    "O assistente não atende pelo WhatsApp no modo de horário escolhido. A conversa ficou com a equipe.",
+  no_expediente:
+    "O assistente não respondeu: agora é o horário da equipe. Se ninguém da equipe responder, ele assume quando o horário dele começar.",
+  retomou_no_horario:
+    "Começou o horário do assistente: ele assumiu esta conversa, que ninguém da equipe tinha respondido.",
   sem_versao_publicada: `${PASSAGEM_DA_IA}o assistente ainda não tem versão publicada.`,
   liberacao_perdida: `${PASSAGEM_DA_IA}o assistente deixou de estar liberado para este telefone ou este número.`,
   numero_desconectado: `${PASSAGEM_DA_IA}o número do assistente está desconectado.`,
@@ -1401,6 +1570,11 @@ export type ConfigDoAgente = {
    */
   agenda: AgendaDoAgente;
   /**
+   * Quem o assistente atende (onda 2, item 4; coluna publico_atendido). Nulo
+   * = a clinica ainda nao escolheu.
+   */
+  publico: PublicoDoAgente | null;
+  /**
    * So no servidor (motor) e para o super admin. Para os outros papeis chega
    * nulo: a sessao nao tem grant na coluna.
    */
@@ -1425,10 +1599,28 @@ export function configPadraoDoAgente(): ConfigDoAgente {
     habilidades: habilidadesComAgenda({}, agendaPadrao()),
     horario: horarioPadrao(),
     agenda: agendaPadrao(),
+    publico: null,
     instrucoes: null,
     base: [],
   };
 }
+
+/**
+ * PROPOSTA, espera aprovacao do dono (onda 2, P6b: "texto padrao melhor").
+ * Os padroes de clinica nova que substituiriam os de hoje ("Assistente", sem
+ * saudacao e sem encerramento). NAO ESTAO LIGADOS: configPadraoDoAgente
+ * espelha os padroes das colunas de ai_agent_config (o rascunho que nasce sem
+ * versao publicada e o garantir_rascunho_do_agente do banco), entao trocar
+ * exige, juntos, a migration dos defaults das colunas agent_name, greeting e
+ * closing e configPadraoDoAgente. Combinam com o aviso de assistente virtual
+ * (P11a), que vai logo depois da saudacao na primeira resposta. Um teste
+ * confere que passam nas regras do texto do agente.
+ */
+export const PADROES_PROPOSTOS_DA_CLINICA_NOVA = {
+  nome: "Assistente Virtual",
+  saudacao: "Olá! Que bom receber sua mensagem.",
+  encerramento: "Obrigada pelo contato! Qualquer dúvida, é só chamar por aqui.",
+} as const;
 
 /**
  * A linha de ai_agent_config como o banco devolve (colunas explicitas). As
@@ -1449,6 +1641,13 @@ export type LinhaDaConfigDoAgente = {
   operating_hours: unknown;
   agenda_antecedencia_horas: number | null;
   agenda_horizonte_dias: number | null;
+  /**
+   * Onda 2 (item 4, migration 20261022110000). Opcional: fora do select (ou
+   * antes da migration) le nulo, "ainda não escolhido". So entra nos selects
+   * DEPOIS da migration aplicada (antes, o PostgREST devolve 42703 e a IA
+   * para de responder, a licao da E4).
+   */
+  publico_atendido?: string | null;
 };
 
 function ehTom(valor: unknown): valor is TomDoAgente {
@@ -1617,6 +1816,7 @@ export function configDaLinha(
     habilidades: habilidadesComAgenda(linha.skills, agenda),
     horario: horarioDoBanco(linha),
     agenda,
+    publico: publicoDoBanco(linha.publico_atendido),
     instrucoes: textoOuNulo(extras.instrucoes),
     base: extras.base,
   };
@@ -1774,6 +1974,7 @@ export type CampoDaMudanca =
   | "habilidades"
   | "horario"
   | "agenda"
+  | "publico"
   | "instrucoes"
   | "base"
   | "primeira_publicacao";
@@ -1955,8 +2156,8 @@ function mudancasDaAgenda(
 /**
  * O que o rascunho muda em relacao a versao publicada, para "N alterações
  * não publicadas" e para o "o que mudou" das Versões. Cada habilidade, cada
- * dia do expediente, cada campo da agenda e cada item da base conta como uma
- * mudanca. As habilidades sao comparadas como valem de fato
+ * dia do expediente, cada campo da agenda, o publico (onda 2) e cada item da
+ * base conta como uma mudanca. As habilidades sao comparadas como valem de fato
  * (habilidadesComAgenda). A base e comparada pelo snapshot da publicada:
  * item criado, reativado, editado, desativado ou excluido conta uma vez.
  *
@@ -2016,6 +2217,19 @@ export function diferencasDoRascunho(
   }
   mudancas.push(...mudancasDoHorario(rascunho.horario, referencia.horario));
   mudancas.push(...mudancasDaAgenda(agendaNova, agendaAntiga));
+  // Onda 2 (item 4): quem o assistente atende. Nulo nos dois lados (ou
+  // ausente numa configuracao montada a mao) nao conta.
+  const publicoNovo = rascunho.publico ?? null;
+  if (publicoNovo !== (referencia.publico ?? null)) {
+    mudancas.push({
+      campo: "publico",
+      rotulo: `${ROTULO_DO_CAMPO_PUBLICO}: ${
+        publicoNovo === null
+          ? ROTULO_DO_PUBLICO_NAO_ESCOLHIDO
+          : ROTULO_DO_PUBLICO[publicoNovo]
+      }`,
+    });
+  }
   if (!mesmoTexto(rascunho.instrucoes, referencia.instrucoes)) {
     mudancas.push(MUDANCA_DAS_INSTRUCOES);
   }

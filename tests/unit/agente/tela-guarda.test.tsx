@@ -362,3 +362,82 @@ describe("página", () => {
     expect(visivel).toContain("Publicar alterações");
   });
 });
+
+// Onda 2, item 8: a aba WhatsApp na Tela 6. A pagina le a liberacao, os
+// numeros e os telefones forcados so para quem configura (administrador,
+// gestor e super admin); a recepcao recebe so a linha de quem cuida, sem
+// leitura nenhuma. Leitura que falha vira o erro da aba, nunca uma clinica
+// desligada.
+describe("aba WhatsApp (onda 2)", () => {
+  /** A sessao falsa que anota cada tabela e cada RPC, e falha em todas. */
+  function sessaoQueAnota() {
+    const tabelas: string[] = [];
+    const rpcs: string[] = [];
+    const falha = { data: null, error: { code: "XX000" } };
+    const cadeia: Record<string, unknown> = {};
+    for (const metodo of ["select", "eq", "is", "order", "limit"]) {
+      cadeia[metodo] = () => cadeia;
+    }
+    cadeia.maybeSingle = async () => falha;
+    cadeia.then = (ok: (valor: unknown) => unknown) =>
+      Promise.resolve(falha).then(ok);
+    return {
+      tabelas,
+      rpcs,
+      cliente: {
+        from: (tabela: string) => {
+          tabelas.push(tabela);
+          return cadeia;
+        },
+        rpc: async (nome: string) => {
+          rpcs.push(nome);
+          return falha;
+        },
+      },
+    };
+  }
+
+  it("administrador: a pagina le a liberação e mostra a aba; a leitura que falha vira o erro da aba", async () => {
+    sessao.atual = contexto("admin");
+    const anotada = sessaoQueAnota();
+    banco.createClient.mockResolvedValue(anotada.cliente);
+    const visivel = await pagina("whatsapp");
+    expect(visivel).toContain("WhatsApp");
+    expect(visivel).toContain(
+      "O que você muda aqui vale na hora, sem publicar.",
+    );
+    expect(visivel).toContain("Não foi possível carregar o assistente de IA");
+    expect(anotada.tabelas).toEqual(
+      expect.arrayContaining([
+        "ia_liberacao",
+        "whatsapp_account",
+        "ia_contato_liberado",
+      ]),
+    );
+    expect(anotada.rpcs).toContain("situacao_da_ia_na_clinica");
+    // o rodape nunca diz "Em uso no WhatsApp" sem conferir
+    expect(visivel).not.toContain("Em uso no WhatsApp");
+  });
+
+  it("recepção: só a linha de quem cuida, sem ler a liberação", async () => {
+    sessao.atual = contexto("recepcao");
+    const anotada = sessaoQueAnota();
+    banco.createClient.mockResolvedValue(anotada.cliente);
+    const visivel = await pagina("whatsapp");
+    expect(visivel).toContain(
+      "Os números e os telefones do assistente ficam com o administrador e o gestor.",
+    );
+    expect(visivel).not.toContain("Assistente de IA nesta clínica");
+    expect(anotada.tabelas).toEqual([]);
+    expect(anotada.rpcs).toEqual([]);
+  });
+
+  it("?aba=whatsapp abre a aba; o link antigo de Configurações chega aqui", async () => {
+    sessao.atual = contexto("gestor");
+    banco.createClient.mockResolvedValue(sessaoQueAnota().cliente);
+    const html = await paginaEmHtml("whatsapp");
+    expect(html).toMatch(
+      /<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>WhatsApp/,
+    );
+  });
+});

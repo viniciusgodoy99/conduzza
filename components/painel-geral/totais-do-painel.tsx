@@ -10,23 +10,26 @@ import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import type { TotaisDoPainel as Totais } from "@/lib/queries/painel-geral";
 
 // Os totais do topo do Painel geral (onda 1): clinicas, ativas, suspensas,
-// com o agente em teste e o gasto de IA das ultimas 24 horas e do mes. Os
-// cartoes que SAO um status (ativas, suspensas, agente em teste) levam o
-// icone e o tom do chip da lista (as 3 camadas, a mesma forma nos dois
-// lugares); os de contagem e de gasto ficam neutros. Coins e o mesmo icone
-// do "Custo do período" do agente em Resultados. Sem lime de destaque: o
-// painel nao tem um numero principal. Server Component.
+// com o agente em teste, em producao (onda 2) e o gasto de IA das ultimas
+// 24 horas e do mes. Os cartoes que SAO um status (ativas, suspensas,
+// agente em teste e em producao) levam o icone e o tom do chip da lista (as
+// 3 camadas, a mesma forma nos dois lugares); os de contagem e de gasto
+// ficam neutros. Coins e o mesmo icone do "Custo do período" do agente em
+// Resultados. Sem lime de destaque: o painel nao tem um numero principal.
+// Server Component.
 
 export function TotaisDoPainel({ totais }: { totais: Totais }) {
   return (
-    // Tres por linha ate as telas largas: o valor em dolar em mono de 34px
-    // nao cabe num sexto da largura a 1366px. No celular, os dois de gasto
-    // ocupam a linha inteira pelo mesmo motivo.
+    // Quatro por linha nas telas largas (duas linhas): o valor em dolar em
+    // mono de 34px nao cabe num setimo da largura. No celular, Clínicas e
+    // os dois de gasto ocupam a linha inteira (a conta fecha em pares), e o
+    // gasto do mes ocupa duas colunas no fim da segunda linha.
     <section
       aria-label="Totais do sistema"
-      className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6"
+      className="grid grid-cols-2 gap-3 lg:grid-cols-4"
     >
       <CartaoDeMetrica
+        className="col-span-2 lg:col-span-1"
         rotulo="Clínicas"
         icone={Building2}
         valor={contagemNoPainel(totais.clinicas)}
@@ -51,6 +54,12 @@ export function TotaisDoPainel({ totais }: { totais: Totais }) {
         valor={contagemNoPainel(totais.agenteEmTeste)}
       />
       <CartaoDeMetrica
+        rotulo="Agente em produção"
+        icone={AGENTE_DA_CLINICA_STATUS.producao.icon ?? undefined}
+        tom={AGENTE_DA_CLINICA_STATUS.producao.tone}
+        valor={contagemNoPainel(totais.agenteEmProducao)}
+      />
+      <CartaoDeMetrica
         className="col-span-2 lg:col-span-1"
         rotulo="Gasto de IA em 24 horas"
         icone={Coins}
@@ -58,7 +67,7 @@ export function TotaisDoPainel({ totais }: { totais: Totais }) {
         rodape="Todas as clínicas, com o simulador"
       />
       <CartaoDeMetrica
-        className="col-span-2 lg:col-span-1"
+        className="col-span-2 lg:col-span-2"
         rotulo="Gasto de IA no mês"
         icone={Coins}
         valor={dolares(totais.gastoMesCentavos)}

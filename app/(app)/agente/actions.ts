@@ -28,8 +28,11 @@ import {
   problemaNoTextoDoAgente,
   problemasDaPublicacao,
   problemasParaQuemPublica,
+  publicoParaOBanco,
+  publicoSchema,
   ROTULO_DO_CAMPO_DE_TEXTO,
   textoDoProblemaDaPublicacao,
+  tipoDoContatoSchema,
   type CampoDeTextoDoAgente,
   type ProblemaDaPublicacao,
 } from "@/lib/domain/agente/config";
@@ -68,7 +71,12 @@ import { createClient } from "@/lib/supabase/server";
 //    horizonte) gravam as duas colunas do rascunho pelo mesmo caminho; ligar
 //    "Agendar consulta" sem os dois e recusado aqui, contra a agenda lida do
 //    proprio rascunho (habilidadesComAgendaSchema), nunca contra o que a
-//    tela diz.
+//    tela diz;
+//  - onda 2 (item 4, decisao P4a do dono): "Quem o assistente atende"
+//    (publico_atendido) grava no rascunho pelo mesmo caminho, com a trilha
+//    editou_publico_do_agente sem o valor. A coluna e o grant so existem
+//    depois da migration 20261022110000 (antes, a gravacao falha e a tela
+//    mostra o erro de sempre).
 // Trilha: audit_log sem texto nenhum (so a acao, a entidade e o id); as
 // RPCs gravam a propria. Log so com clinica, tipo da acao e codigo do erro.
 
@@ -158,6 +166,13 @@ const simulacaoSchema = z
       .min(1)
       .max(FALAS_POR_RODADA),
     cenario: z.enum(CENARIOS).nullable().optional(),
+    /**
+     * O "Testar como" da tela (onda 2, item 4; contrato 4.5): lead,
+     * paciente ou nulo (sem escolha: sem a linha do contato no prompt).
+     * Validado aqui; o simulador monta o prompt como o executor monta no
+     * WhatsApp para o contato desse tipo.
+     */
+    contato: tipoDoContatoSchema.optional(),
   })
   .strict();
 
@@ -477,6 +492,34 @@ export async function salvarAgendaAction(
     quem,
     "agenda",
     agendaParaOBanco(parsed.data),
+  );
+}
+
+/**
+ * Quem o assistente atende no rascunho (onda 2, item 4): so leads, so
+ * pacientes ou os dois. Vale ao publicar; o banco aplica na entrada da
+ * conversa na IA (ia_publico_aceita). Mesmo caminho de permissao das outras
+ * partes: a guarda daqui (administrador, gestor ou super admin), o grant por
+ * coluna, a policy de UPDATE so no rascunho e o CHECK do banco. A trilha
+ * (editou_publico_do_agente) nao leva o valor.
+ */
+export async function salvarPublicoAction(
+  entrada: unknown,
+): Promise<ResultadoDoAgente> {
+  const quem = await exigirQuemConfigura();
+  if ("error" in quem) {
+    return { ok: false, error: quem.error };
+  }
+  const parsed = publicoSchema.strict().safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: erroDaEntrada(parsed.error) };
+  }
+  const supabase = await createClient();
+  return gravarNoRascunho(
+    supabase,
+    quem,
+    "publico",
+    publicoParaOBanco(parsed.data.publico),
   );
 }
 
@@ -990,6 +1033,7 @@ export async function simularAction(
       mensagens,
       agoraMs: Date.now(),
       superAdmin: quem.superAdmin,
+      contato: parsed.data.contato ?? null,
     });
     if (!resultado.ok) {
       return resultado;

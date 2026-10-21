@@ -11,11 +11,16 @@ import {
 // para a equipe", "publicar". A unica excecao e a "Prévia do prompt", que
 // so o super admin ve (decisao do dono de 06/10/2026).
 
+// Onda 2, item 8 (decisao do dono de 20/10/2026): tudo do agente na Tela 6.
+// A aba WhatsApp (numeros, telefones da equipe, o modo e a pausa) veio da
+// aba "Agente de IA" de Configuracoes e fica logo depois de Regras e
+// limites; o que se muda nela vale na hora, sem publicar.
 export const ABAS_DO_AGENTE = [
   { chave: "persona", rotulo: "Persona", soSuperAdmin: false },
   { chave: "habilidades", rotulo: "Habilidades", soSuperAdmin: false },
   { chave: "conhecimento", rotulo: "Conhecimento", soSuperAdmin: false },
   { chave: "regras", rotulo: "Regras e limites", soSuperAdmin: false },
+  { chave: "whatsapp", rotulo: "WhatsApp", soSuperAdmin: false },
   {
     chave: "instrucoes",
     rotulo: "Instruções do assistente",
@@ -62,8 +67,9 @@ export function dataEHoraNaClinica(instante: string, fuso: string): string {
 
 /**
  * A ultima versao publicada, para o rodape. "Em uso no WhatsApp" SO quando a
- * aba Agente de IA de Configuracoes diz que o assistente esta conversando
- * com a equipe, sem nenhum motivo de parada (D39, E3): fora disso,
+ * aba WhatsApp desta tela (ate a onda 2, a aba Agente de IA de
+ * Configuracoes) diz que o assistente esta conversando, com a equipe ou com
+ * os contatos, sem nenhum motivo de parada (D39, E3): fora disso,
  * "Ultima publicada", porque nenhuma conversa de verdade usa a versao (o
  * simulador sempre usa o rascunho, achado 30).
  *
@@ -141,6 +147,31 @@ export function ehCenario(valor: string): valor is CenarioDoSimulador {
 }
 
 /**
+ * O "Testar como" do simulador (onda 2, item 4; contrato 4.5): o tipo do
+ * contato que o assistente ve na linha "Contato desta conversa", como no
+ * WhatsApp. "Sem escolha" manda sem a linha. O servidor confere de novo
+ * (tipoDoContatoSchema).
+ */
+export const TESTAR_COMO = [
+  { chave: "nenhum", rotulo: "Sem escolha" },
+  { chave: "lead", rotulo: "Lead (ainda não é paciente)" },
+  { chave: "paciente", rotulo: "Paciente da clínica" },
+] as const;
+
+export type TestarComo = (typeof TESTAR_COMO)[number]["chave"];
+
+export function ehTestarComo(valor: string): valor is TestarComo {
+  return TESTAR_COMO.some((opcao) => opcao.chave === valor);
+}
+
+/** O que vai para a acao: lead, paciente ou nulo (sem a linha). */
+export function contatoDoTestarComo(
+  valor: TestarComo,
+): "lead" | "paciente" | null {
+  return valor === "nenhum" ? null : valor;
+}
+
+/**
  * Quantas falas o simulador manda por rodada: as mais recentes. O motor le
  * as 20 ultimas (MENSAGENS_NO_HISTORICO, lib/agente/laco.ts) e a acao recusa
  * mais de 40. Nunca abaixo de 20: a assinatura do servidor cobre as 19
@@ -208,13 +239,15 @@ export const TEXTOS_DO_AGENTE = {
   // com a equipe (o pedido passa para ela).
   habilidadesDescricao:
     "O que o assistente pode fazer na conversa. Remarcar, cancelar, lista de espera e encaixe continuam com a equipe.",
-  // Decisao do dono de 20/10/2026 (E4): a consulta marcada transforma o
-  // contato em paciente, e o telefone da equipe que nao foi cadastrado pela
-  // equipe Conduzza (o "forcado") deixa de acionar o assistente. Nota, nao
-  // status: texto embaixo da descricao de "Agendar consulta" e de
-  // "Confirmar presença" (HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA).
+  // Decisao do dono de 20/10/2026 (E4), revista na onda 2 (item 10, depois
+  // da migration da conversao na aprovacao): a consulta da IA so transforma
+  // o contato em paciente quando a equipe APROVA, e so entao o telefone da
+  // equipe que nao foi cadastrado pela equipe Conduzza (o "forcado") deixa
+  // de acionar o assistente. "Agendar consulta" funciona com telefone
+  // comum; a nota fica so em "Confirmar presença"
+  // (HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA). Nota, nao status.
   habilidadeNaFaseDeTeste:
-    "Nesta fase de teste, só com telefone da equipe cadastrado pela equipe Conduzza: a consulta marcada transforma o contato em paciente, e um telefone comum deixa de acionar o assistente.",
+    "Nesta fase de teste, só com telefone da equipe cadastrado pela equipe Conduzza: depois que a equipe aprova a consulta, o contato vira paciente e um telefone comum deixa de acionar o assistente.",
   habilidadeLigada: (titulo: string) => `${titulo}: ligada no rascunho.`,
   habilidadeDesligada: (titulo: string) => `${titulo}: desligada no rascunho.`,
   // Conhecimento
@@ -272,6 +305,18 @@ export const TEXTOS_DO_AGENTE = {
     "Com um dos campos vazio, a habilidade Agendar consulta fica desligada.",
   salvarAgenda: "Salvar limites",
   agendaSalva: "Limites para marcar consulta salvos no rascunho.",
+  // Quem o assistente atende (onda 2, item 4; decisao P4a do dono). O
+  // titulo e os rotulos das opcoes vem de lib/domain/agente/config.ts
+  // (ROTULO_DO_CAMPO_PUBLICO e ROTULO_DO_PUBLICO).
+  publicoDescricao:
+    "Salvo no rascunho, vale ao publicar. O assistente confere o público quando a conversa começa: quem vira paciente no meio da conversa continua com ele.",
+  // Texto do contrato da onda 2 (secao 5.3).
+  publicoNaoEscolhido:
+    "No teste, o assistente atende os telefones da equipe, sejam leads ou pacientes. Antes da produção, escolha.",
+  publicoEscolhaAntes: "Escolha uma das opções antes de salvar.",
+  publicoSemMudanca: "Escolha outra opção para salvar.",
+  salvarPublico: "Salvar público",
+  publicoSalvo: "Público salvo no rascunho.",
   gatilhosTitulo: "Quando o assistente passa para a equipe",
   gatilhosDescricao:
     "Nestes casos a conversa sempre vai para a equipe, e o paciente recebe uma frase fixa, nunca escrita pelo assistente. Não podem ser desligados.",
@@ -299,7 +344,7 @@ export const TEXTOS_DO_AGENTE = {
   // tambem as instrucoes da equipe Conduzza daquela versao (achados 3, 16,
   // 25 e 28): o dialogo diz as duas coisas, sem mostrar o texto.
   restaurarDescricao:
-    "O rascunho passa a ter a persona, as habilidades, o horário, os limites para marcar consulta, as instruções da equipe Conduzza e as perguntas desta versão. As perguntas que não estão nesta versão ficam desativadas, não são apagadas: dá para reativar no Conhecimento. As outras alterações que ainda não foram publicadas se perdem. Para o paciente, nada muda até você publicar.",
+    "O rascunho passa a ter a persona, as habilidades, o horário, quem o assistente atende, os limites para marcar consulta, as instruções da equipe Conduzza e as perguntas desta versão. As perguntas que não estão nesta versão ficam desativadas, não são apagadas: dá para reativar no Conhecimento. As outras alterações que ainda não foram publicadas se perdem. Para o paciente, nada muda até você publicar.",
   restaurada: (versao: number) =>
     `Versão ${versao} restaurada no rascunho. Confira e publique.`,
   autorDesconhecido: "Pessoa fora da equipe",
@@ -312,6 +357,9 @@ export const TEXTOS_DO_AGENTE = {
   simuladorAviso: "Use dados de teste. Não escreva dados de pacientes reais.",
   cenario: "Cenário",
   cenarioPlaceholder: "Escolha um cenário",
+  testarComo: "Testar como",
+  testarComoAjuda:
+    "O assistente responde como responderia a um lead ou a um paciente da clínica no WhatsApp.",
   mensagemDoPaciente: "Mensagem do paciente",
   mensagemPlaceholder: "Escreva como se fosse o paciente.",
   enviar: "Enviar",

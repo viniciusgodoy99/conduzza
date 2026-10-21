@@ -572,9 +572,11 @@ describe("tabela verdade (clinica e_de_teste)", () => {
         { p_clinic_id: clinicaT, p_liberada: null },
         "22004",
       ],
+      // Um modo que nao existe (numero_inteiro passou a valer na onda 2,
+      // M3: na clinica e_de_teste ele grava, entao nao e entrada invalida).
       [
         "definir_liberacao_da_ia",
-        { p_clinic_id: clinicaT, p_liberada: true, p_modo: "numero_inteiro" },
+        { p_clinic_id: clinicaT, p_liberada: true, p_modo: "todos_os_contatos" },
         "22023",
       ],
       [
@@ -913,6 +915,9 @@ describe("aba Agente de IA: a leitura da tela", () => {
         conversasAbertas: [],
         horarioPublicado: null,
         motorParado: expect.any(Boolean),
+        // Onda 2 (M2): o leitor sempre devolve a lista (vazia sem a chave
+        // ou sem telefone fora do publico).
+        telefonesForaDoPublico: [],
       },
     });
   });

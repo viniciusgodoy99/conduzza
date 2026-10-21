@@ -10,8 +10,11 @@ import {
 } from "@/components/agente/simulador";
 import {
   CENARIOS_DO_SIMULADOR,
+  contatoDoTestarComo,
   ehCenario,
+  ehTestarComo,
   FALAS_ENVIADAS_PELO_SIMULADOR,
+  TESTAR_COMO,
 } from "@/components/agente/textos";
 import type { FalaDoSimulador } from "@/components/agente/tipos";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -87,6 +90,49 @@ describe("simulador", () => {
       /<textarea[^>]*id="agente-simulador-mensagem"[^>]*disabled=""/,
     );
     expect(html).toMatch(/<button[^>]*type="submit"[^>]*disabled=""/);
+  });
+});
+
+// Onda 2, item 4 (contrato 4.5): o "Testar como" da Tela 6. Revisao da
+// onda 2: o seletor nao existia, e a simulacao nunca mandava o tipo do
+// contato que o executor manda no WhatsApp.
+describe("Testar como", () => {
+  it("o seletor aparece com o rótulo, a ajuda e começa sem escolha", () => {
+    const html = render();
+    expect(html).toContain('for="agente-simulador-testar-como"');
+    expect(texto(html)).toContain("Testar como");
+    expect(texto(html)).toContain(
+      "O assistente responde como responderia a um lead ou a um paciente da clínica no WhatsApp.",
+    );
+    expect(texto(html)).toContain("Sem escolha");
+  });
+
+  it("desabilitado para quem não pode usar, como o cenário", () => {
+    const html = render({ podeUsar: false, dica: DICA_RECEPCAO });
+    const gatilho = /<button[^>]*id="agente-simulador-testar-como"[^>]*>/.exec(
+      html,
+    )?.[0];
+    expect(gatilho).toContain('disabled=""');
+    const liberado = /<button[^>]*id="agente-simulador-testar-como"[^>]*>/.exec(
+      render(),
+    )?.[0];
+    expect(liberado).not.toContain('disabled=""');
+  });
+
+  it("as opções: sem escolha, lead e paciente, sem travessão; o que vai para a ação", () => {
+    expect(TESTAR_COMO.map((opcao) => opcao.chave)).toEqual([
+      "nenhum",
+      "lead",
+      "paciente",
+    ]);
+    for (const opcao of TESTAR_COMO) {
+      expect(opcao.rotulo).not.toMatch(/[–—]/);
+      expect(ehTestarComo(opcao.chave)).toBe(true);
+    }
+    expect(ehTestarComo("cliente")).toBe(false);
+    expect(contatoDoTestarComo("nenhum")).toBeNull();
+    expect(contatoDoTestarComo("lead")).toBe("lead");
+    expect(contatoDoTestarComo("paciente")).toBe("paciente");
   });
 });
 

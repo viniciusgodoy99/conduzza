@@ -188,7 +188,7 @@ describe("estado do Devolver por motivo", () => {
         "Chega com o agente de IA. Até lá, use Resolver quando terminar o atendimento.",
       pergunta_pendente: "Responda o paciente antes de devolver para a IA.",
       assistente_desligado:
-        "O assistente está desligado ou sem versão publicada. Veja em Configurações, Agente de IA.",
+        "O assistente está desligado ou sem versão publicada. Veja em Agente de IA, aba WhatsApp.",
       nao_liberada:
         "Este telefone ou este número não está liberado para o assistente.",
       contato_de_paciente:
@@ -196,7 +196,7 @@ describe("estado do Devolver por motivo", () => {
       nao_disponivel: "Esta conversa não pode voltar para a IA.",
       // achado T1 da revisao: o assistente nao responderia agora
       assistente_parado:
-        "O assistente está parado agora. Veja em Configurações, Agente de IA.",
+        "O assistente está parado agora. Veja em Agente de IA, aba WhatsApp.",
       fora_do_horario:
         "Agora está fora do horário escolhido para o assistente.",
       numero_desconectado: "O número desta conversa está desconectado.",
@@ -540,7 +540,7 @@ describe("no cabeçalho do fio", () => {
     for (const [motivo, dica] of [
       [
         "assistente_parado",
-        "O assistente está parado agora. Veja em Configurações, Agente de IA.",
+        "O assistente está parado agora. Veja em Agente de IA, aba WhatsApp.",
       ],
       [
         "fora_do_horario",

@@ -33,16 +33,18 @@ import {
 // DICA_DA_AGENDA_INCOMPLETA, escrita tambem embaixo da descricao (a dica do
 // cursor nao e o unico jeito de saber por que). A acao recusa de novo.
 //
-// Fase de teste (decisao do dono de 20/10/2026): "Agendar consulta" e
-// "Confirmar presença" so com telefone da equipe cadastrado pela equipe
-// Conduzza (o forcado), porque a consulta marcada transforma o contato em
-// paciente e um telefone comum deixa de acionar o assistente. A nota fica
-// embaixo da descricao das duas, sempre visivel, para todos os papeis. E
-// nota, nao status: so texto, sem chip, sem cor propria.
+// Fase de teste (decisao do dono de 20/10/2026, revista na onda 2, item
+// 10): a consulta da IA so transforma o contato em paciente quando a equipe
+// aprova (a conversao na aprovacao). "Agendar consulta" passa a funcionar
+// com telefone comum; "Confirmar presença" (consulta ja aprovada, contato ja
+// paciente) continua so com telefone da equipe cadastrado pela equipe
+// Conduzza (o forcado). A nota fica embaixo da descricao dela, sempre
+// visivel, para todos os papeis. E nota, nao status: so texto, sem chip,
+// sem cor propria.
 
 /** As habilidades que, nesta fase de teste, levam a nota do telefone. */
 export const HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA: ReadonlySet<string> =
-  new Set(["agendar", "confirmar_presenca"]);
+  new Set(["confirmar_presenca"]);
 
 /** Por que a chave nao muda: sem permissao vence; depois, a agenda. */
 export function motivoDaChaveTravada(

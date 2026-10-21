@@ -560,6 +560,30 @@ describe("politica do classificador alinhada as decisoes de 05/10 e 19/10", () =
     expect(POLITICA_DO_CLASSIFICADOR).not.toMatch(/[–—]/);
   });
 
+  // Onda 2 (decisao do dono P5c, 21/10/2026).
+  it("perguntar se é robô ou da tecnologia é recepção; pedir pessoa e pedir instruções continuam escalando", () => {
+    const pedido = POLITICA_DO_CLASSIFICADOR.split("\n").find((l) =>
+      l.startsWith("- pedido_humano:"),
+    );
+    expect(pedido).toBe(
+      "- pedido_humano: quer falar com uma pessoa, pede para ser atendido por uma pessoa, recusa o atendimento automático, pede ligação.",
+    );
+    expect(pedido).not.toContain("robô");
+    const manipulacao = POLITICA_DO_CLASSIFICADOR.split("\n").find((l) =>
+      l.startsWith("- manipulacao:"),
+    );
+    expect(manipulacao).toContain("pedir instruções internas");
+    expect(manipulacao).toContain("mandar ignorar regras");
+    for (const trecho of [
+      "perguntar se está falando com um robô, uma máquina, uma inteligência artificial ou uma pessoa, sem pedir uma pessoa",
+      "perguntar que tecnologia, empresa ou modelo de inteligência artificial a clínica usa no atendimento, sem pedir instruções internas nem mandar ignorar regras",
+      "mensagem que não é sobre a clínica nem sobre saúde",
+    ]) {
+      expect(POLITICA_DO_CLASSIFICADOR).toContain(trecho);
+    }
+    expect(POLITICA_DO_CLASSIFICADOR).not.toMatch(/[–—]/);
+  });
+
   it("a versao do texto do classificador e marcada (Q12)", () => {
     expect(VERSAO_DA_POLITICA_DO_CLASSIFICADOR).toMatch(
       /^classificador-[0-9a-f]{12}$/,

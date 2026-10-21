@@ -36,6 +36,7 @@ import { Composer, type Mode } from "@/components/atendimento/composer";
 import { ContextPanel } from "@/components/atendimento/context-panel";
 import { ConversationList } from "@/components/atendimento/conversation-list";
 import { DialogoApagar } from "@/components/atendimento/dialogo-apagar";
+import { ResolverConversasParadas } from "@/components/atendimento/resolver-conversas-paradas";
 import { Thread } from "@/components/atendimento/thread";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -1108,30 +1109,43 @@ export function InboxClient({
             </Aviso>
           </div>
         ) : null}
-        <ConversationList
-          nomesDeEtapa={nomesDeEtapa}
-          etiquetas={catalogoDeEtiquetas}
-          conversations={conversations}
-          viewerId={viewerId}
-          authorNames={authorNames}
-          timezone={timezone}
-          agoraInicial={agoraInicial}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-          filtroInicial={filtroDaLista}
-          onResolvedRequested={setShowResolved}
-          resolvedLoading={resolvedQuery.isFetching}
-          resolvedError={showResolved && resolvedQuery.isError}
-          onRetryResolved={() => void resolvedQuery.refetch()}
-          resolvidasTotal={totalResolvidasQuery.data ?? null}
-          resolvidasNoTeto={
-            (resolvedQuery.data?.length ?? 0) >= RESOLVIDAS_LIMIT
-          }
-          semAtivas={activeConversations.length === 0}
-          temArquivo={temArquivo}
-          ehProfissional={viewerRole === "profissional"}
-          numeros={numeros}
-        />
+        {/* A lista ocupa o que sobra: o rodape das conversas paradas (onda
+            2) fica sempre a vista embaixo dela. */}
+        <div className="min-h-0 flex-1">
+          <ConversationList
+            nomesDeEtapa={nomesDeEtapa}
+            etiquetas={catalogoDeEtiquetas}
+            conversations={conversations}
+            viewerId={viewerId}
+            authorNames={authorNames}
+            timezone={timezone}
+            agoraInicial={agoraInicial}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            filtroInicial={filtroDaLista}
+            onResolvedRequested={setShowResolved}
+            resolvedLoading={resolvedQuery.isFetching}
+            resolvedError={showResolved && resolvedQuery.isError}
+            onRetryResolved={() => void resolvedQuery.refetch()}
+            resolvidasTotal={totalResolvidasQuery.data ?? null}
+            resolvidasNoTeto={
+              (resolvedQuery.data?.length ?? 0) >= RESOLVIDAS_LIMIT
+            }
+            semAtivas={activeConversations.length === 0}
+            temArquivo={temArquivo}
+            ehProfissional={viewerRole === "profissional"}
+            numeros={numeros}
+          />
+        </div>
+        {/* Onda 2 (decisao P11b do dono): resolver de uma vez as conversas
+            paradas, so nas clinicas com o agente habilitado; em lote, so a
+            chefia (os outros veem a dica). */}
+        {iaNaFase ? (
+          <ResolverConversasParadas
+            clinicId={clinicId}
+            podeResolver={ehChefia}
+          />
+        ) : null}
       </aside>
 
       <section

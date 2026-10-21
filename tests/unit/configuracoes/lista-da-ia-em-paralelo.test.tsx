@@ -5,9 +5,10 @@ import { BancoFalso } from "../whatsapp/banco-falso";
 // Configuracoes le a lista das clinicas com o agente habilitado (onda 1:
 // ia_clinicas_da_fase_controlada pela service role) JUNTO com o lote
 // principal de leituras, e nao antes dele: esperar a lista somava uma ida ao
-// banco em serie a toda carga da tela, em qualquer clinica. A liberacao da
-// aba Agente de IA encadeia na lista (so e lida quando a aba existe).
-// Banco em memoria: nada de rede.
+// banco em serie a toda carga da tela, em qualquer clinica. Desde a onda 2
+// (item 8), a lista so decide o aviso de onde o assistente mora (a aba do
+// agente foi para a Tela 6): a liberacao nunca e lida aqui. Banco em
+// memoria: nada de rede.
 
 const CLINICA_A = "0a0a0a0a-0000-4000-8000-00000000000a";
 
@@ -119,16 +120,15 @@ describe("Configurações: a lista da IA corre junto com o lote principal", () =
     ]) {
       expect(leituras, tabela).toContain(tabela);
     }
-    // A liberacao da aba depende da lista: ainda nao foi lida.
-    expect(leituras).not.toContain("sessao:ia_liberacao");
-
     responder({ data: [CLINICA_A], error: null });
     await pagina;
-    // Com a clinica na lista, a aba existe e a liberacao e lida.
-    expect(leituras).toContain("sessao:ia_liberacao");
+    // Onda 2: com a clinica na lista, so o aviso; a liberacao mora na
+    // Tela 6 e nunca e lida aqui.
+    expect(leituras).not.toContain("sessao:ia_liberacao");
+    expect(leituras).not.toContain("sessao:ia_contato_liberado");
   });
 
-  it("clínica fora da lista: a liberação da aba nem é lida", async () => {
+  it("clínica fora da lista: a liberação nem é lida", async () => {
     const responder = listaPendente();
     const pagina = ConfiguracoesPage({ searchParams: Promise.resolve({}) });
     responder({ data: [], error: null });
@@ -137,7 +137,7 @@ describe("Configurações: a lista da IA corre junto com o lote principal", () =
     expect(leituras).not.toContain("sessao:ia_liberacao");
   });
 
-  it("lista que não deu para ler: a tela carrega, sem a aba (falha fechada)", async () => {
+  it("lista que não deu para ler: a tela carrega, sem o aviso (falha fechada)", async () => {
     const responder = listaPendente();
     const pagina = ConfiguracoesPage({ searchParams: Promise.resolve({}) });
     responder({ data: null, error: { code: "57014", message: "tempo" } });

@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
-import type { ContextoDaIa } from "@/components/configuracoes/agente-de-ia";
+import type { ContextoDaIa } from "@/components/agente/whatsapp/agente-de-ia";
 import { AgenteDaClinica } from "@/components/painel-geral/agente-da-clinica";
 import { CartoesDoAgenteNoPainel } from "@/components/painel-geral/cartoes-do-agente-no-painel";
 import { ContaDaClinica } from "@/components/painel-geral/conta-da-clinica";
@@ -22,6 +22,7 @@ import {
   textoDosNumeros,
   TEXTOS_DO_PAINEL,
 } from "@/components/painel-geral/painel-geral";
+import { RequisitosDaProducaoCartao } from "@/components/painel-geral/requisitos-da-producao";
 import { TetoDaIa } from "@/components/painel-geral/teto-da-ia";
 import { Aviso } from "@/components/shared/aviso";
 import { AvisoCelular } from "@/components/shared/aviso-celular";
@@ -31,17 +32,22 @@ import { Button } from "@/components/ui/button";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import { corDoNumero } from "@/lib/domain/cor-do-numero";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
-import type { ClinicaNoPainel, TetosDaIa } from "@/lib/queries/painel-geral";
+import type {
+  ClinicaNoPainel,
+  RequisitosDaProducao,
+  TetosDaIa,
+} from "@/lib/queries/painel-geral";
 
 // O detalhe de uma clinica no Painel geral (onda 1, decisao do dono de
 // 20/10/2026): as metricas da lista, a conta (suspender e reativar), o
-// agente (Desligado, Teste e a Producao travada), os numeros e os telefones
-// do agente (os cartoes da aba de Configuracoes, no modo do painel), o
-// gasto contra o teto, o proprio teto e a equipe. So contagens: nenhum dado
-// de paciente. A pagina (app/(app)/painel-geral/[clinicId]/page.tsx) le os
-// dados; aqui so se desenha, e cada leitura de apoio que falhou mostra o
-// erro no proprio cartao (nunca um cartao vazio que afirma o que nao leu).
-// Server Component; os cartoes com acao sao filhos client.
+// agente (Desligado, Teste e Producao), os requisitos da producao (onda 2,
+// item 11), os numeros e os telefones do agente (os cartoes da aba
+// WhatsApp da Tela 6, no modo do painel), o gasto contra o teto, o proprio
+// teto e a equipe. So contagens: nenhum dado de paciente. A pagina
+// (app/(app)/painel-geral/[clinicId]/page.tsx) le os dados; aqui so se
+// desenha, e cada leitura de apoio que falhou mostra o erro no proprio
+// cartao (nunca um cartao vazio que afirma o que nao leu). Server
+// Component; os cartoes com acao sao filhos client.
 
 /** Uma leitura de apoio: o valor, ou "erro" quando ela falhou. */
 export type LeituraDoDetalhe<T> = T | "erro";
@@ -54,22 +60,33 @@ export type DetalheDaClinicaProps = {
   tetos: LeituraDoDetalhe<TetosDaIa | null>;
   /**
    * So T1: a producao da Vercel com a chave da OpenAI e o segredo do
-   * identificador (ambienteDaIaLigado). A parte da clinica (T2: agente em
-   * teste e conta ativa) vem da propria linha do painel
+   * identificador (ambienteDaIaLigado). A parte da clinica (T2: agente
+   * habilitado e conta ativa) vem da propria linha do painel
    * (agenteAtendeNoAmbiente).
    */
   ambienteDaIa: boolean;
   /** Relogio do servidor na carga (epoch ms). */
   agoraMs: number;
+  /** Os requisitos da producao (onda 2, item 11). */
+  requisitos: LeituraDoDetalhe<RequisitosDaProducao>;
+  /**
+   * O publico da ultima versao publicada (o dialogo da producao). Nulo:
+   * ainda nao escolhido ou nao deu para ler.
+   */
+  publicoPublicado: string | null;
+  /** Os ids dos telefones forcados (o dialogo de excluir); nulo: falhou. */
+  telefonesForcados: string[] | null;
+  /** As versoes de agora do filtro e do modelo (P11e); nulas: sem aviso. */
+  versoes: { filtro: string; modelo: string } | null;
 };
 
 /**
- * T1 e T2 pela linha do painel: o ambiente de pe, o agente da clinica em
- * teste e a conta ativa (a lista do banco, ia_clinicas_da_fase_controlada,
- * tira a clinica suspensa). Com isso, o motivo "servidor" da situacao so
- * aparece quando o que falta e o ambiente, e nunca culpa a chave da OpenAI
- * por uma clinica desligada ou suspensa (o painel ja diz isso no chip e no
- * aviso do cartao do agente).
+ * T1 e T2 pela linha do painel: o ambiente de pe, o agente da clinica
+ * habilitado (em teste ou, com a onda 2, em producao) e a conta ativa (a
+ * lista do banco, ia_clinicas_da_fase_controlada, tira a clinica suspensa).
+ * Com isso, o motivo "servidor" da situacao so aparece quando o que falta e
+ * o ambiente, e nunca culpa a chave da OpenAI por uma clinica desligada ou
+ * suspensa (o painel ja diz isso no chip e no aviso do cartao do agente).
  */
 export function agenteAtendeNoAmbiente(
   clinica: Pick<ClinicaNoPainel, "agente" | "suspensao">,
@@ -77,7 +94,7 @@ export function agenteAtendeNoAmbiente(
 ): boolean {
   return (
     ambienteDaIa &&
-    clinica.agente.estado === "teste" &&
+    clinica.agente.estado !== "desligado" &&
     clinica.suspensao === null
   );
 }
@@ -140,6 +157,10 @@ export function DetalheDaClinica({
   tetos,
   ambienteDaIa,
   agoraMs,
+  requisitos,
+  publicoPublicado,
+  telefonesForcados,
+  versoes,
 }: DetalheDaClinicaProps) {
   const { numeros, finais } = numerosDosCartoes(clinica);
   const ambienteLigado = agenteAtendeNoAmbiente(clinica, ambienteDaIa);
@@ -241,6 +262,15 @@ export function DetalheDaClinica({
             suspensa={clinica.suspensao !== null}
             tetoDiarioCentavos={clinica.tetoDiarioCentavos}
             contexto={contexto}
+            requisitos={requisitos}
+            publicoPublicado={publicoPublicado}
+          />
+          <RequisitosDaProducaoCartao
+            clinicId={clinica.id}
+            fuso={clinica.fuso}
+            requisitos={requisitos}
+            versoes={versoes}
+            emProducao={clinica.agente.estado === "producao"}
           />
           {dados === "erro" ? (
             <Aviso tom="alert" role="note">
@@ -253,11 +283,12 @@ export function DetalheDaClinica({
               dados={dados}
               numeros={numeros}
               finais={finais}
-              agenteEmTeste={clinica.agente.estado === "teste"}
+              agenteHabilitado={clinica.agente.estado !== "desligado"}
               suspensa={clinica.suspensao !== null}
               ambienteLigado={ambienteLigado}
               agoraMs={agoraMs}
               fuso={clinica.fuso}
+              telefonesForcados={telefonesForcados}
             />
           )}
         </div>

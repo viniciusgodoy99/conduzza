@@ -54,9 +54,9 @@ export const VERSAO_EM_USO: StatusDefinition = {
 };
 
 /**
- * A mesma versao quando o assistente esta conversando com a equipe pelo
- * WhatsApp, sem motivo de parada na aba de Configuracoes (D39): o mesmo
- * icone e a mesma cor, so o rotulo diz que esta em uso.
+ * A mesma versao quando o assistente esta conversando pelo WhatsApp, sem
+ * motivo de parada na aba WhatsApp desta tela (D39): o mesmo icone e a
+ * mesma cor, so o rotulo diz que esta em uso.
  */
 export const VERSAO_EM_USO_NO_WHATSAPP: StatusDefinition = {
   ...VERSAO_EM_USO,
@@ -110,7 +110,7 @@ export function AbaVersoes({
   pendente: boolean;
   ocupado: (qual: string) => boolean;
   aoRestaurar: (versao: number, retorno: { seDerCerto: () => void }) => void;
-  /** A aba de Configuracoes diz "Conversando com a equipe" (D39). */
+  /** A aba WhatsApp diz que o assistente esta conversando (D39). */
   emUsoNoWhatsapp?: boolean;
 }) {
   const [restaurando, setRestaurando] = useState<VersaoDoAgente | null>(null);

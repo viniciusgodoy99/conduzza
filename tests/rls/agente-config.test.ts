@@ -27,7 +27,16 @@ import { adminClient, anonClient } from "./stack";
 //     para anon (so service role);
 //   - clinica fora da fase controlada e sem e_de_teste: 42501 na escrita
 //     direta, na RPC e ate pela service role;
-//   - um rascunho por clinica (23505) pelo sistema.
+//   - um rascunho por clinica (23505) pelo sistema;
+//   - onda 2 (migration 20261022110000): publico_atendido (quem o
+//     assistente atende) tem a permissao por coluna de skills: todo membro
+//     ativo le; administrador e gestor gravam no rascunho; recepcao,
+//     profissional, leitura, pendente e a outra clinica nao (zero linhas);
+//     anon nao le (42501); o CHECK vale para a sessao (23514); a publicada
+//     nao muda (zero linhas pela sessao, P0001 pelo sistema); garantir e
+//     restaurar copiam o publico. ESCRITO NA ONDA 2 E NAO RODADO por quem
+//     escreveu (grava no banco): quem roda e o coordenador, DEPOIS de
+//     aplicar a migration.
 // Toda negacao tem o caso positivo ao lado (anti falso positivo).
 //
 // CUIDADO, o banco e o da producao: clinicas e_de_teste, apagadas no
@@ -658,5 +667,128 @@ describe("clinica fora da fase controlada", () => {
     );
     expect(error).toBeNull();
     expect(typeof data).toBe("string");
+  });
+});
+
+describe("onda 2 (M2): publico_atendido, quem o assistente atende", () => {
+  // Depois do describe de publicar: a A tem a versao 1 publicada (o
+  // rascunhoA) e um rascunho novo, que garantir devolve.
+  let rascunho = "";
+
+  beforeAll(async () => {
+    const { data, error } = await como("admin-a").rpc(
+      "garantir_rascunho_do_agente",
+      { p_clinic_id: clinicaA },
+    );
+    expect(error).toBeNull();
+    rascunho = data as string;
+  });
+
+  async function publicoDe(id: string): Promise<string | null> {
+    const { data } = await admin
+      .from("ai_agent_config")
+      .select("publico_atendido")
+      .eq("id", id)
+      .single()
+      .throwOnError();
+    return (data as { publico_atendido: string | null }).publico_atendido;
+  }
+
+  it("todo membro ativo da A le a coluna; a B nao le a da A; anon nao le (42501)", async () => {
+    for (const apelido of MEMBROS_ATIVOS_DA_A) {
+      const { data, error } = await como(apelido)
+        .from("ai_agent_config")
+        .select("id, publico_atendido")
+        .eq("id", rascunho);
+      expect(error, apelido).toBeNull();
+      expect(data, apelido).toEqual([{ id: rascunho, publico_atendido: null }]);
+    }
+    const { data: daB } = await como("admin-b")
+      .from("ai_agent_config")
+      .select("id, publico_atendido")
+      .eq("id", rascunho);
+    expect(daB).toEqual([]);
+    const { error: deAnon } = await anonClient()
+      .from("ai_agent_config")
+      .select("id, publico_atendido")
+      .eq("id", rascunho);
+    expect(deAnon?.code).toBe(PERMISSAO_NEGADA);
+  });
+
+  it("administrador e gestor gravam no rascunho; recepcao, profissional, leitura, pendente e a B nao (zero linhas); o CHECK vale (23514)", async () => {
+    for (const [apelido, valor] of [
+      ["admin-a", "todos"],
+      ["gestor-a", "pacientes"],
+    ] as const) {
+      const { data, error } = await como(apelido)
+        .from("ai_agent_config")
+        .update({ publico_atendido: valor })
+        .eq("id", rascunho)
+        .select("id");
+      expect(error, apelido).toBeNull();
+      expect(data, apelido).toEqual([{ id: rascunho }]);
+    }
+    for (const apelido of SEM_ESCRITA_NA_A) {
+      const { data } = await como(apelido)
+        .from("ai_agent_config")
+        .update({ publico_atendido: "leads" })
+        .eq("id", rascunho)
+        .select("id");
+      expect(data ?? [], apelido).toEqual([]);
+    }
+    const { error: foraDaLista } = await como("admin-a")
+      .from("ai_agent_config")
+      .update({ publico_atendido: "ninguem" })
+      .eq("id", rascunho);
+    expect(foraDaLista?.code).toBe("23514");
+    const { error: deAnon } = await anonClient()
+      .from("ai_agent_config")
+      .update({ publico_atendido: "leads" })
+      .eq("id", rascunho);
+    expect(deAnon?.code).toBe(PERMISSAO_NEGADA);
+    expect(await publicoDe(rascunho)).toBe("pacientes");
+  });
+
+  it("a publicada nao muda (zero linhas pela sessao, P0001 pelo sistema); restaurar a versao publicada volta o publico dela", async () => {
+    const { data: pelaSessao } = await como("admin-a")
+      .from("ai_agent_config")
+      .update({ publico_atendido: "todos" })
+      .eq("id", rascunhoA)
+      .select("id");
+    expect(pelaSessao ?? []).toEqual([]);
+    const { error: peloSistema } = await admin
+      .from("ai_agent_config")
+      .update({ publico_atendido: "todos" })
+      .eq("id", rascunhoA);
+    expect(peloSistema?.code).toBe(REGRA_DO_BANCO);
+    expect(await publicoDe(rascunhoA)).toBeNull();
+    // a versao 1 (publicada sem publico) volta para o rascunho
+    const { data: restaurado, error } = await como("admin-a").rpc(
+      "restaurar_versao_do_agente",
+      { p_clinic_id: clinicaA, p_versao: 1 },
+    );
+    expect(error).toBeNull();
+    expect(restaurado).toBe(rascunho);
+    expect(await publicoDe(rascunho)).toBeNull();
+  });
+
+  it("o rascunho novo copia o publico da ultima publicada (pelo sistema na B)", async () => {
+    // A B fica so com uma versao publicada, que ja escolheu o publico.
+    await admin.from("ai_agent_config").delete().eq("clinic_id", clinicaB);
+    await admin
+      .from("ai_agent_config")
+      .insert({
+        clinic_id: clinicaB,
+        version: 1,
+        status: "publicada",
+        publico_atendido: "todos",
+      })
+      .throwOnError();
+    const { data, error } = await como("admin-b").rpc(
+      "garantir_rascunho_do_agente",
+      { p_clinic_id: clinicaB },
+    );
+    expect(error).toBeNull();
+    expect(await publicoDe(data as string)).toBe("todos");
   });
 });

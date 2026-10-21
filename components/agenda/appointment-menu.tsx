@@ -72,13 +72,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { APPOINTMENT_STATUS, STATUS_TONE_VARS } from "@/lib/design/status";
 import type { AppointmentStatus } from "@/lib/design/status";
 import {
+  aguardaAprovacao,
   comparecimentoLiberado,
   DICA_COMPARECEU_ANTES_DO_DIA,
+  DICA_CONSULTA_PENDENTE,
   DICA_FALTA_ANTES_DO_HORARIO,
   DICA_REMARCAR_ENCERRADA,
   eCancelamento,
   faltaLiberada,
   MENSAGEM_PROFISSIONAL_INATIVO,
+  mudancaEsperaAprovacao,
   podeRemarcar,
   saldoDescontadoAoComparecer,
   transicoesPermitidas,
@@ -123,6 +126,12 @@ import { createClient } from "@/lib/supabase/client";
 // mudanca de situacao conta como recusar (decisao do dono de 20/10/2026): o
 // retorno e o do Recusar (retornoDaMudancaDeSituacao) e o dialogo de
 // cancelar nao pergunta da lista de espera, que a recusa nunca aciona.
+//
+// Onda 2, item 10 (decisoes do dono P10a e P10b): a consulta que espera
+// aprovacao (qualquer pendente) so aprova, recusa ou cancela. As outras
+// situacoes ficam visiveis e desabilitadas, com a dica uma vez so, logo
+// abaixo de "Mudar situação" (DICA_CONSULTA_PENDENTE, a mesma que a acao
+// devolve e que o gatilho do banco confere). Cancelar continua liberado.
 
 /** Os textos do grupo de pendencia do menu, pelo tipo da pendencia. */
 export function rotulosDaPendenciaNoMenu(daIa: boolean): {
@@ -304,6 +313,7 @@ export function AppointmentMenu({
   const [agora, setAgora] = useState(() => Date.now());
   const idDicaFalta = useId();
   const idDicaComparecer = useId();
+  const idDicaPendente = useId();
   const idDicaRemarcar = useId();
   const idBloqueio = useId();
   const podeRemoverBloqueios = podeRemoverBloqueio(contexto);
@@ -318,13 +328,20 @@ export function AppointmentMenu({
     new Date(agora),
   );
   const remarcavel = podeRemarcar(consulta.status);
+  // Consulta pendente (item 10): alguma situacao da lista espera a
+  // aprovacao? A dica aparece uma vez, embaixo do rotulo do grupo.
+  const algumaEsperaAprovacao = transicoes.some((novoStatus) =>
+    mudancaEsperaAprovacao(consulta.approval_status, novoStatus),
+  );
 
   // Confere o pacote ja na abertura do menu: quando a recepcao escolhe
-  // Compareceu, a tela ja sabe se precisa perguntar.
+  // Compareceu, a tela ja sabe se precisa perguntar. A pendente nao
+  // comparece antes da aprovacao: nem confere.
   const podeComparecerAgora =
     contexto.podeEditar &&
     transicoes.includes("compareceu") &&
-    !comparecerAindaNao;
+    !comparecerAindaNao &&
+    !mudancaEsperaAprovacao(consulta.approval_status, "compareceu");
   const saldoQuery = useSaldoDoComparecimento(
     contexto,
     consulta,
@@ -505,7 +522,9 @@ export function AppointmentMenu({
             </>
           ) : null}
 
-          {consulta.approval_status === "pendente" ? (
+          {/* A pendente cancelada (o paciente cancelou) ja conta como
+              recusada: sem Aprovar nem Recusar (revisao da onda 2). */}
+          {aguardaAprovacao(consulta) ? (
             <>
               <DropdownMenuGroup>
                 <DropdownMenuLabel className="cz-eyebrow text-[10px] text-text-tertiary">
@@ -537,15 +556,30 @@ export function AppointmentMenu({
               <DropdownMenuLabel className="cz-eyebrow text-[10px] text-text-tertiary">
                 Mudar situação
               </DropdownMenuLabel>
+              {algumaEsperaAprovacao ? (
+                <p
+                  id={idDicaPendente}
+                  className="max-w-64 px-[9px] pb-1.5 text-xs whitespace-normal text-text-secondary"
+                >
+                  {DICA_CONSULTA_PENDENTE}
+                </p>
+              ) : null}
               {transicoes.map((novoStatus) => {
                 const definicao = APPOINTMENT_STATUS[novoStatus];
                 const tone = STATUS_TONE_VARS[definicao.tone];
                 const Icone = definicao.icon;
+                // A pendente (item 10) espera a aprovacao: a dica ja esta
+                // embaixo do rotulo do grupo, e o item aponta para ela.
+                const esperaAprovacao = mudancaEsperaAprovacao(
+                  consulta.approval_status,
+                  novoStatus,
+                );
                 // Faltou fica VISIVEL antes do horario (achado 81) e
                 // Compareceu antes do dia da consulta (achado L11),
                 // desabilitados e com o porque logo abaixo.
-                const bloqueio =
-                  novoStatus === "faltou" && faltaAindaNao
+                const bloqueio = esperaAprovacao
+                  ? null
+                  : novoStatus === "faltou" && faltaAindaNao
                     ? { id: idDicaFalta, dica: DICA_FALTA_ANTES_DO_HORARIO }
                     : novoStatus === "compareceu" && comparecerAindaNao
                       ? {
@@ -557,9 +591,14 @@ export function AppointmentMenu({
                   <div key={novoStatus}>
                     <DropdownMenuItem
                       disabled={
-                        !contexto.podeEditar || pendente || bloqueio !== null
+                        !contexto.podeEditar ||
+                        pendente ||
+                        esperaAprovacao ||
+                        bloqueio !== null
                       }
-                      aria-describedby={bloqueio?.id}
+                      aria-describedby={
+                        esperaAprovacao ? idDicaPendente : bloqueio?.id
+                      }
                       className="h-10"
                       onSelect={() => escolherTransicao(novoStatus)}
                     >

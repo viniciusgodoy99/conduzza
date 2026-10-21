@@ -76,15 +76,16 @@ function abaSelecionada(html: string): string | null {
 }
 
 describe("abas", () => {
-  it("administrador ve as 5 abas, sem a das instruções", () => {
+  it("administrador ve as 6 abas (com a WhatsApp, onda 2), sem a das instruções", () => {
     const html = render(dadosDeTeste());
-    expect(tags(html, "tab")).toHaveLength(5);
+    expect(tags(html, "tab")).toHaveLength(6);
     const visivel = texto(html);
     for (const rotulo of [
       "Persona",
       "Habilidades",
       "Conhecimento",
       "Regras e limites",
+      "WhatsApp",
       "Versões",
     ]) {
       expect(visivel).toContain(rotulo);
@@ -115,7 +116,7 @@ describe("abas", () => {
       }),
       "instrucoes",
     );
-    expect(tags(html, "tab")).toHaveLength(6);
+    expect(tags(html, "tab")).toHaveLength(7);
     expect(abaSelecionada(html)).toBe("instrucoes");
     const visivel = texto(html);
     expect(visivel).toContain("Instruções do assistente");

@@ -4,32 +4,37 @@ import {
   adicionarTelefoneDaIaAction,
   alternarNumeroDaIaAction,
   alternarTelefoneDaIaAction,
-} from "@/app/(app)/configuracoes/ia-liberacao-actions";
+  excluirTelefoneDaIaAction,
+} from "@/app/(app)/agente/whatsapp-actions";
 import {
   dicasDaIa,
+  escolhaAtual,
   estadoDaIa,
   faltasParaAEquipe,
+  TEXTOS_DA_IA,
   type AcaoDaIa,
-} from "@/components/configuracoes/agente-de-ia";
+} from "@/components/agente/whatsapp/agente-de-ia";
 import {
   CartaoDosNumeros,
   CartaoDosTelefones,
   RegiaoDoResultado,
   useAcaoDaIa,
-} from "@/components/configuracoes/agente-de-ia-tab";
+} from "@/components/agente/whatsapp/agente-de-ia-tab";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 import { Aviso } from "@/components/shared/aviso";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 
 // Os numeros e os telefones da equipe do agente de UMA clinica, pelo Painel
-// geral (onda 1): os mesmos cartoes da aba Agente de IA de Configuracoes, no
-// modo do painel (noPainel), com as acoes levando o clinicId da tela. So a
-// equipe Conduzza chega aqui (layout da rota), e a acao e o banco conferem
-// de novo. Com o agente da clinica desligado ou a conta suspensa (a clinica
-// sai da lista do banco), tudo fica visivel e desabilitado, com o porque
-// escrito e na dica: a acao recusa mudar numero e telefone de clinica fora
-// da lista.
+// geral (onda 1): os mesmos cartoes da aba WhatsApp da Tela 6 (ate a onda
+// 2, a aba Agente de IA de Configuracoes), no modo do painel (noPainel), com
+// as acoes levando o clinicId da tela. So a equipe Conduzza chega aqui
+// (layout da rota), e a acao e o banco conferem de novo. Com o agente da
+// clinica desligado ou a conta suspensa (a clinica sai da lista do banco),
+// tudo fica visivel e desabilitado, com o porque escrito e na dica: a acao
+// recusa mudar numero e telefone de clinica fora da lista. Onda 2: o
+// "Excluir" de cada telefone (item 9) e o "Usar mesmo assim" com a
+// confirmacao do teste (item 3) tambem valem aqui.
 
 export type CartoesDoAgenteNoPainelProps = {
   clinicId: string;
@@ -38,11 +43,14 @@ export type CartoesDoAgenteNoPainelProps = {
   numeros: NumeroDoWhatsapp[];
   /** Os 4 ultimos digitos de cada numero, pelo id. */
   finais: Record<string, string | null>;
-  /** O agente da clinica esta em teste (ia_clinica_habilitada). */
-  agenteEmTeste: boolean;
+  /**
+   * O agente da clinica esta habilitado (ia_clinica_habilitada em teste ou,
+   * com a onda 2, em producao).
+   */
+  agenteHabilitado: boolean;
   /**
    * A conta esta suspensa: a clinica sai da lista do banco e a acao recusa
-   * mudar numero e telefone, mesmo com o agente em teste.
+   * mudar numero e telefone, mesmo com o agente habilitado.
    */
   suspensa: boolean;
   /** T1 e T2 (producao com a chave e a clinica habilitada). */
@@ -51,6 +59,8 @@ export type CartoesDoAgenteNoPainelProps = {
   agoraMs: number;
   /** Fuso da clinica (CLAUDE.md 3.6). */
   fuso: string;
+  /** Os ids dos telefones forcados (o dialogo de excluir); nulo: falhou. */
+  telefonesForcados: string[] | null;
 };
 
 /**
@@ -59,23 +69,27 @@ export type CartoesDoAgenteNoPainelProps = {
  * Nulo: muda.
  */
 export function bloqueioDosCartoes(entrada: {
-  agenteEmTeste: boolean;
+  agenteHabilitado: boolean;
   suspensa: boolean;
 }): string | null {
   if (entrada.suspensa) {
     return TEXTOS_DO_PAINEL.suspensaNaoMudaNumeros;
   }
-  return entrada.agenteEmTeste ? null : TEXTOS_DO_PAINEL.ligueOAgenteAntes;
+  return entrada.agenteHabilitado ? null : TEXTOS_DO_PAINEL.ligueOAgenteAntes;
 }
 
 /** A mesma dica em todos os controles. */
 function dicasTravadas(dica: string): Record<AcaoDaIa, string | null> {
   return {
+    modo: dica,
     escolha: dica,
     equipe: dica,
+    producao: dica,
     numero: dica,
     telefone: dica,
-    interruptor: dica,
+    excluir: dica,
+    forcar: dica,
+    pausa: dica,
   };
 }
 
@@ -84,15 +98,17 @@ export function CartoesDoAgenteNoPainel({
   dados,
   numeros,
   finais,
-  agenteEmTeste,
+  agenteHabilitado,
   suspensa,
   ambienteLigado,
   agoraMs,
   fuso,
+  telefonesForcados,
 }: CartoesDoAgenteNoPainelProps) {
   const { pendente, resultado, executar, ocupado } = useAcaoDaIa();
   const estado = estadoDaIa({ dados, numeros, ambienteLigado, agoraMs, fuso });
-  const bloqueio = bloqueioDosCartoes({ agenteEmTeste, suspensa });
+  const emProducao = escolhaAtual(dados.liberacao) === "producao";
+  const bloqueio = bloqueioDosCartoes({ agenteHabilitado, suspensa });
   // Quem ve e sempre a equipe Conduzza: liga numero e usa o forcar.
   const dicas =
     bloqueio === null
@@ -100,6 +116,7 @@ export function CartoesDoAgenteNoPainel({
           podeEditar: true,
           superAdmin: true,
           faltasParaAEquipe: faltasParaAEquipe(dados, numeros),
+          emProducao,
         })
       : dicasTravadas(bloqueio);
 
@@ -118,6 +135,7 @@ export function CartoesDoAgenteNoPainel({
         dados={dados}
         numeros={numeros}
         estadoDoAssistente={estado}
+        emProducao={emProducao}
         dicas={dicas}
         apoioDoDesligar={null}
         pendente={pendente}
@@ -146,7 +164,8 @@ export function CartoesDoAgenteNoPainel({
         dados={dados}
         numeros={numeros}
         estadoDoAssistente={estado}
-        superAdmin
+        emProducao={emProducao}
+        forcados={telefonesForcados ? new Set(telefonesForcados) : null}
         dicas={dicas}
         pendente={pendente}
         ocupado={ocupado}
@@ -162,16 +181,20 @@ export function CartoesDoAgenteNoPainel({
             ligado ? "Telefone ligado." : "Telefone desligado.",
           )
         }
-        aoAdicionar={(valores, { limpar, pedirConfirmacao, pedirForcar }) =>
+        aoExcluir={(telefone, { fechar }) =>
+          executar(
+            `excluir-${telefone.id}`,
+            () => excluirTelefoneDaIaAction({ clinicId, id: telefone.id }),
+            TEXTOS_DA_IA.telefoneExcluido,
+            { sempre: fechar },
+          )
+        }
+        aoAdicionar={(valores, depois) =>
           executar(
             "telefone-novo",
             () => adicionarTelefoneDaIaAction({ ...valores, clinicId }),
             "Telefone da equipe adicionado.",
-            {
-              seDerCerto: limpar,
-              sePedirConfirmacao: pedirConfirmacao,
-              sePedirForcar: pedirForcar,
-            },
+            depois,
           )
         }
       />

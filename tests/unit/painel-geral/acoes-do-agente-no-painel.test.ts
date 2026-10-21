@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// As acoes de numero e de telefone da aba Agente de IA chamadas pelo Painel
-// geral (onda 1): a entrada traz o clinicId da tela. O que se prova:
+// As acoes de numero e de telefone da aba WhatsApp da Tela 6 (ate a onda 2,
+// a aba Agente de IA de Configuracoes) chamadas pelo Painel geral (onda 1):
+// a entrada traz o clinicId da tela. O que se prova:
 //   - so a equipe Conduzza passa (o administrador da clinica ativa, nao), e
 //     sem precisar de clinica ativa nem de ser membro da clinica;
 //   - clinicId que nao e uuid: dados invalidos; clinica sem o agente em
@@ -12,11 +13,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //   - o telefone novo pede sempre a confirmacao de que e da equipe e NUNCA
 //     le os contatos da clinica (nenhum dado de paciente no painel, nada na
 //     trilha de leitura);
-//   - o painel revalida o painel, e nao a aba de Configuracoes;
-//   - a escolha do modo e o interruptor geral continuam so da aba (a
-//     entrada estrita recusa o clinicId).
+//   - a acao revalida o painel e a Tela 6 (onda 2), e nao Configuracoes;
+//   - a escolha do modo e a pausa continuam so da aba (a entrada estrita
+//     recusa o clinicId); o interruptor geral mora no Painel geral desde a
+//     onda 2 (tests/unit/painel-geral/acoes-do-painel.test.ts);
+//   - onda 2: excluir telefone tambem pelo painel, com o clinicId da tela.
 // A aba de Configuracoes (sem clinicId) esta em
-// tests/unit/configuracoes/ia-liberacao-actions.test.ts.
+// tests/unit/agente/whatsapp/whatsapp-actions.test.ts.
 
 const ATIVA = "acd9c539-585e-4f2a-a195-712c70099564";
 const DO_PAINEL = "f0c115dd-e98c-4767-a1bb-93d517844852";
@@ -159,9 +162,10 @@ import {
   alternarNumeroDaIaAction,
   alternarTelefoneDaIaAction,
   definirEscolhaDaIaAction,
-  definirInterruptorGeralAction,
-} from "@/app/(app)/configuracoes/ia-liberacao-actions";
-import { TEXTOS_DA_IA } from "@/components/configuracoes/agente-de-ia";
+  definirPausaDaIaAction,
+  excluirTelefoneDaIaAction,
+} from "@/app/(app)/agente/whatsapp-actions";
+import { TEXTOS_DA_IA } from "@/components/agente/whatsapp/agente-de-ia";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 
 function dados(liberacao: boolean) {
@@ -304,7 +308,7 @@ describe("guarda do painel", () => {
     ]);
   });
 
-  it("a escolha do modo e o interruptor geral não aceitam a clínica do painel", async () => {
+  it("a escolha do modo e a pausa não aceitam a clínica do painel", async () => {
     expect(
       await definirEscolhaDaIaAction({
         escolha: "desligado",
@@ -315,14 +319,34 @@ describe("guarda do painel", () => {
       error: "Dados inválidos. Recarregue a página e tente de novo.",
     });
     expect(
-      await definirInterruptorGeralAction({
-        ligado: false,
+      await definirPausaDaIaAction({
+        pausada: true,
         clinicId: DO_PAINEL,
       }),
     ).toEqual({
       ok: false,
       error: "Dados inválidos. Recarregue a página e tente de novo.",
     });
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("excluir telefone pelo painel (onda 2, item 9): a RPC com a clínica do painel", async () => {
+    const TELEFONE = "d1111111-1111-4111-8111-111111111111";
+    expect(
+      await excluirTelefoneDaIaAction({ clinicId: DO_PAINEL, id: TELEFONE }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "excluir_contato_liberado_da_ia",
+        args: { p_clinic_id: DO_PAINEL, p_contato_liberado_id: TELEFONE },
+      },
+    ]);
+    // o administrador da clinica ativa nao exclui pelo painel
+    registro.rpcs = [];
+    registro.superAdmin = false;
+    expect(
+      await excluirTelefoneDaIaAction({ clinicId: DO_PAINEL, id: TELEFONE }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.soEquipeConduzzaNoAgente });
     expect(registro.rpcs).toEqual([]);
   });
 });
@@ -342,7 +366,10 @@ describe("números pelo painel", () => {
         },
       },
     ]);
-    expect(registro.revalidados).toEqual([["/painel-geral", "layout"]]);
+    expect(registro.revalidados).toEqual([
+      ["/agente", undefined],
+      ["/painel-geral", "layout"],
+    ]);
   });
 
   it("ligar número desconectado, de fora da clínica ou com o painel fora do ar: recusado, sem RPC", async () => {
@@ -461,7 +488,10 @@ describe("telefones pelo painel", () => {
         },
       },
     ]);
-    expect(registro.revalidados).toEqual([["/painel-geral", "layout"]]);
+    expect(registro.revalidados).toEqual([
+      ["/agente", undefined],
+      ["/painel-geral", "layout"],
+    ]);
   });
 
   it("telefone de paciente: o banco recusa e a equipe Conduzza recebe o forçar", async () => {

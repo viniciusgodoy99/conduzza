@@ -262,9 +262,12 @@ describe("o laço com as ferramentas de agenda", () => {
     const r = await executarTurnoDoAgente(entrada({ cliente }));
     expect(r.tipo).toBe("resposta");
     expect(r.desfecho).toEqual({ tipo: "respondeu" });
-    // As ferramentas que o modelo recebe com Agendar e Confirmar ligadas.
+    // As ferramentas que o modelo recebe com Agendar e Confirmar ligadas
+    // (as duas de frase fixa da onda 2 vem sempre, na frente).
     expect((corpos[0]?.tools as { name: string }[]).map((t) => t.name)).toEqual(
       [
+        "fora_do_assunto",
+        "sou_assistente_virtual",
         "buscar_procedimento",
         "buscar_horario",
         "reservar_horario",
@@ -527,11 +530,18 @@ describe("rodadas, liberação e falha fechada", () => {
       entrada({ cliente, config: { ...configPadraoDoAgente(), nome: "Ana" } }),
     );
     expect((corpos[0]?.tools as { name: string }[]).map((t) => t.name)).toEqual(
-      ["buscar_procedimento", "escalar_humano"],
+      [
+        "fora_do_assunto",
+        "sou_assistente_virtual",
+        "buscar_procedimento",
+        "escalar_humano",
+      ],
     );
+    // Onda 2 (item 6, P6a): o bloco <profissionais> vai sempre, mas sem a
+    // agenda o bloco <atendimento> manda passar o pedido de marcar.
     expect(
       String(corpos[0]?.instructions).slice(TEXTO_FIXO_DO_AGENTE.length),
-    ).not.toContain("<profissionais>");
+    ).toContain("<profissionais>");
     expect(r.desfecho).toEqual({
       tipo: "falhou",
       motivo: "ferramenta_invalida",

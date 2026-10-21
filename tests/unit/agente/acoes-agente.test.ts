@@ -19,7 +19,9 @@ import {
 //     pela sessao; a trilha nunca leva texto;
 //   - publicar roda o filtro em tudo (instrucoes inclusive) e so entao chama
 //     publicar_agente pela service role com o autor da sessao;
-//   - o simulador delega ao lib/agente/simulador (aqui um falso).
+//   - o simulador delega ao lib/agente/simulador (aqui um falso);
+//   - onda 2 (item 4): "Quem o assistente atende" grava publico_atendido no
+//     rascunho, pelo mesmo caminho e com a trilha sem o valor.
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
@@ -271,6 +273,7 @@ describe("guarda de toda ação", () => {
   const chamadas: [string, () => Promise<{ ok: boolean }>][] = [
     ["persona", () => acoes.salvarPersonaAction(PERSONA)],
     ["habilidades", () => acoes.salvarHabilidadesAction({})],
+    ["publico", () => acoes.salvarPublicoAction({ publico: "leads" })],
     [
       "horario",
       () =>
@@ -978,6 +981,51 @@ describe("simulador", () => {
     });
   });
 
+  // Onda 2, item 4 (contrato 4.5 e 6.1): o "Testar como" da tela chega ao
+  // simulador validado no servidor (a linha "Contato desta conversa" do
+  // prompt, como o executor manda no WhatsApp). Revisao da onda 2: antes
+  // a acao nem aceitava o campo (schema estrito) e nunca o repassava.
+  it("Testar como: lead e paciente chegam ao simulador; sem escolha vai nulo", async () => {
+    simularTurno.mockResolvedValue(OK);
+    const mensagens = [{ autor: "paciente", texto: "Oi" }];
+    for (const contato of ["lead", "paciente"] as const) {
+      expect(
+        await acoes.simularAction({ mensagens, cenario: null, contato }),
+        contato,
+      ).toEqual(OK);
+      expect(simularTurno.mock.calls.at(-1)?.[0]).toMatchObject({ contato });
+    }
+    expect(
+      await acoes.simularAction({ mensagens, cenario: null, contato: null }),
+    ).toEqual(OK);
+    expect(simularTurno.mock.calls.at(-1)?.[0]).toMatchObject({
+      contato: null,
+    });
+    expect(await acoes.simularAction({ mensagens, cenario: null })).toEqual(
+      OK,
+    );
+    expect(simularTurno.mock.calls.at(-1)?.[0]).toMatchObject({
+      contato: null,
+    });
+  });
+
+  it("Testar como fora da lista é recusado antes de simular", async () => {
+    for (const contato of ["cliente", "Lead", 1, true]) {
+      expect(
+        await acoes.simularAction({
+          mensagens: [{ autor: "paciente", texto: "Oi" }],
+          cenario: null,
+          contato,
+        }),
+        String(contato),
+      ).toEqual({
+        ok: false,
+        error: "Dados inválidos. Recarregue a página e tente de novo.",
+      });
+    }
+    expect(simularTurno).not.toHaveBeenCalled();
+  });
+
   it("aceita todos os cenários da tela", async () => {
     simularTurno.mockResolvedValue(OK);
     for (const { chave } of CENARIOS_DO_SIMULADOR) {
@@ -1070,6 +1118,78 @@ describe("simulador", () => {
     expect(await acoes.simularAction(entrada)).toEqual({
       ok: false,
       error: "Não foi possível testar agora. Tente de novo.",
+    });
+  });
+});
+
+describe("quem o assistente atende (onda 2, item 4)", () => {
+  it.each(["admin", "gestor"] as const)(
+    "%s grava o público no rascunho garantido, com a trilha sem o valor",
+    async (papel) => {
+      entrar(papel);
+      expect(await acoes.salvarPublicoAction({ publico: "pacientes" })).toEqual(
+        { ok: true },
+      );
+      expect(banco.rpcs.map((r) => r.nome)).toEqual([
+        "garantir_rascunho_do_agente",
+      ]);
+      expect(banco.escritas()).toEqual([
+        expect.objectContaining({
+          tabela: "ai_agent_config",
+          tipo: "update",
+          dados: { publico_atendido: "pacientes" },
+          filtros: [
+            ["eq", "id", RASCUNHO],
+            ["eq", "clinic_id", CLINICA],
+            ["eq", "status", "rascunho"],
+          ],
+        }),
+      ]);
+      const trilha = banco.trilha();
+      expect(trilha).toHaveLength(1);
+      expect(trilha[0]?.dados).toEqual({
+        clinic_id: CLINICA,
+        user_id: USUARIO,
+        action: "editou_publico_do_agente",
+        entity: "ai_agent_config",
+        entity_id: RASCUNHO,
+      });
+      expect(JSON.stringify(trilha)).not.toContain("pacientes");
+    },
+  );
+
+  it("as três opções do contrato; nulo, valor fora da lista ou campo a mais são recusados sem banco", async () => {
+    for (const publico of ["leads", "pacientes", "todos"]) {
+      banco = new Banco();
+      expect(await acoes.salvarPublicoAction({ publico })).toEqual({
+        ok: true,
+      });
+    }
+    banco = new Banco();
+    for (const entrada of [
+      { publico: null },
+      { publico: "ninguem" },
+      { publico: "leads", extra: 1 },
+      "leads",
+      {},
+    ]) {
+      const r = await acoes.salvarPublicoAction(entrada);
+      expect(r.ok).toBe(false);
+    }
+    expect(await acoes.salvarPublicoAction({ publico: "ninguem" })).toEqual({
+      ok: false,
+      error: "Escolha quem o assistente atende.",
+    });
+    expect(banco.operacoes).toEqual([]);
+    expect(banco.rpcs).toEqual([]);
+  });
+
+  it("rascunho publicado no meio (zero linhas): o texto de corrida", async () => {
+    banco.rascunhoAtualizado = false;
+    expect(await acoes.salvarPublicoAction({ publico: "todos" })).toEqual({
+      ok: false,
+      error:
+        "O agente de IA foi alterado ao mesmo tempo por outra pessoa. Recarregue a página e tente de novo.",
     });
   });
 });

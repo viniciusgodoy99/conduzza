@@ -36,6 +36,22 @@
 // uma delas ganha ate MAXIMO_DE_RODADAS_COM_AGENDA rodadas; reservar, agendar
 // e confirmar valem uma vez por turno (ferramentas/agenda-do-turno.ts).
 //
+// Onda 2 (item 5, P5a, P5b e P5c; P11a):
+//  - as ferramentas de frase fixa (fora_do_assunto e sou_assistente_virtual,
+//    sem argumentos) encerram o turno: a resposta e a frase do dono
+//    (lib/domain/conformidade/frase-fixa.ts), com a saudacao e o aviso
+//    colados como numa resposta comum, e passa pelo filtro de saida INTEIRO
+//    (regras e verificador, falha fechada: bloqueio vira a frase de
+//    escalonamento). Decisao 'respondeu', tool_used da ferramenta;
+//  - fora do assunto pela segunda vez na janela (entrada.
+//    foraDoAssuntoNaJanela no limite, P5b: 1) passa para a equipe com o
+//    motivo de sistema fora_do_assunto e a frase de escalonamento;
+//  - o aviso de assistente virtual (P11a) vai antes da primeira resposta da
+//    IA em cada janela, depois da saudacao e antes do filtro, e nunca sai
+//    sozinho de uma resposta grande (a resposta grande e barrada inteira);
+//  - o tipo do contato (lead ou paciente) vai na ultima linha das
+//    instrucoes (item 4), fora do prefixo do cache.
+//
 // A trilha ("Por que a IA respondeu isso") diz o que foi consultado, com
 // nomes do Cadastro e da base da clinica, NUNCA texto do paciente. Log so com
 // ids, codigos, modelo e duracao.
@@ -55,6 +71,7 @@ import {
   type ConfigDoAgente,
   type FerramentaDoAgente,
   type MotivoDeEscalonamento,
+  type TipoDoContato,
 } from "@/lib/domain/agente/config";
 import type {
   CamadaDoFiltro,
@@ -66,7 +83,11 @@ import {
   type DecisaoDoFiltro,
 } from "@/lib/domain/conformidade/filtro";
 import { LIMITE_DO_RASCUNHO } from "@/lib/domain/conformidade/filtro-deterministico";
-import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  FRASE_DE_ESCALONAMENTO,
+  FRASE_DO_ASSISTENTE_VIRTUAL,
+  FRASE_FORA_DO_ASSUNTO,
+} from "@/lib/domain/conformidade/frase-fixa";
 import {
   detectarGatilhosDeEntrada,
   LIMITE_DE_MENSAGEM,
@@ -120,6 +141,11 @@ import {
   motivoDoEscalonamento,
   NOME_DO_ESCALONAMENTO,
 } from "./ferramentas/escalar-humano";
+import {
+  NOME_DO_ASSISTENTE_VIRTUAL,
+  NOME_DO_FORA_DO_ASSUNTO,
+  semArgumentos,
+} from "./ferramentas/fora-do-assunto";
 import {
   chamadaPodeTerSidoCobrada,
   custoMaximoDaChamada,
@@ -185,6 +211,12 @@ export const RESERVA_DO_FILTRO_MS = 10_000;
 export const MAX_TOKENS_DO_AGENTE = 8_192;
 /** Mensagens da conversa que vao ao modelo (as mais recentes). */
 export const MENSAGENS_NO_HISTORICO = 20;
+/**
+ * Respostas educadas de fora do assunto por janela antes de passar para a
+ * equipe (onda 2, decisao do dono P5b: 1). A segunda pergunta fora do
+ * assunto na mesma janela passa com o motivo fora_do_assunto.
+ */
+export const LIMITE_DO_FORA_DO_ASSUNTO = 1;
 /** Uma mensagem no historico do modelo (o portao escala acima disto). */
 const CARACTERES_POR_MENSAGEM = LIMITE_DE_MENSAGEM;
 
@@ -229,9 +261,13 @@ export type TipoDoPasso =
 /** Um passo do "Por que a IA respondeu isso". Nunca texto do paciente. */
 export type PassoDoTurno = { tipo: TipoDoPasso; texto: string };
 
-/** Quem decidiu passar a conversa para a equipe. */
+/**
+ * Quem decidiu passar a conversa para a equipe. "insistencia" (onda 2, item
+ * 5): o modelo escolheu fora_do_assunto de novo na janela e o sistema
+ * passou pela contagem (P5b), sem escalar_humano.
+ */
 export type OrigemDoEscalonamento =
-  "portao" | "classificador" | "agente" | "texto_do_agente";
+  "portao" | "classificador" | "agente" | "texto_do_agente" | "insistencia";
 
 /** Falhas do turno alem das do verificador e do classificador. */
 export type FalhaDoAgente =
@@ -328,6 +364,25 @@ export type EntradaDoTurno = {
   hojeNaClinica?: string | null;
   /** Antes de cada rodada do agente; false para o turno (teto, interruptor). */
   conferirTrava?: () => Promise<boolean>;
+  /**
+   * Onda 2 (item 4): contact.kind do contato (no simulador, o "Testar
+   * como"). Vai na ultima linha das instrucoes. Nulo ou ausente: sem linha.
+   */
+  contato?: TipoDoContato | null;
+  /**
+   * Onda 2 (item 5, P5b): quantas vezes a IA ja respondeu fora do assunto
+   * nesta janela (no WhatsApp, as decisoes 'respondeu' com tool_used
+   * fora_do_assunto desde o desde da janela; no simulador, as falas do
+   * assistente com a frase). No limite (LIMITE_DO_FORA_DO_ASSUNTO), a
+   * proxima passa para a equipe. Ausente: 0.
+   */
+  foraDoAssuntoNaJanela?: number;
+  /**
+   * Onda 2 (P11a): a IA ainda nao respondeu nesta janela, entao a resposta
+   * leva o aviso de assistente virtual. Ausente: nenhuma fala do assistente
+   * no historico (o mesmo criterio da saudacao; o simulador).
+   */
+  primeiraRespostaDaIa?: boolean;
   /**
    * A porta da agenda (E4): a Agenda e as RPCs do WhatsApp, ou a do
    * simulador, que nao grava. Sem porta, ferramenta de agenda e falha
@@ -457,6 +512,18 @@ export const PASSO_SEM_CONSULTA =
  */
 export const PASSO_DA_PASSAGEM_EM_TEXTO =
   "A resposta do assistente dizia que a conversa ia para a equipe. Ela não foi enviada, e a conversa passou para a equipe.";
+
+/** Onda 2 (item 5): a resposta educada de fora do assunto (contrato, 4.4). */
+export const PASSO_DO_FORA_DO_ASSUNTO =
+  "Respondeu que só ajuda com assuntos da clínica.";
+
+/** Onda 2 (item 5, P5b): a segunda pergunta fora do assunto (contrato, 4.4). */
+export const PASSO_DA_INSISTENCIA_FORA_DO_ASSUNTO =
+  "A pessoa insistiu num assunto fora da clínica: passou para a equipe.";
+
+/** Onda 2 (P5c): a resposta a "você é um robô?". */
+export const PASSO_DO_ASSISTENTE_VIRTUAL =
+  "Respondeu que é a assistente virtual da clínica e ofereceu uma pessoa da equipe.";
 
 const LIMITE_DO_TRECHO = 60;
 
@@ -676,10 +743,14 @@ export function mensagensPendentes(
 }
 
 /**
- * Saudacao (so na primeira resposta), mensagem e encerramento (so quando a
- * conversa terminou), com uma linha em branco entre eles. Se passar do
- * limite do filtro, tira o encerramento e depois a saudacao: a resposta
- * nunca e cortada (o filtro barra o que ainda passar).
+ * Saudacao (so na primeira resposta), aviso de assistente virtual (onda 2,
+ * P11a: quem chama manda so na primeira resposta da IA na janela), mensagem
+ * e encerramento (so quando a conversa terminou), com uma linha em branco
+ * entre eles. Se passar do limite do filtro, tira o encerramento e depois a
+ * saudacao: a resposta nunca e cortada (o filtro barra o que ainda passar).
+ * O aviso NUNCA sai: se nem ele com a mensagem cabe, vai assim mesmo, e o
+ * filtro barra o texto longo (falha fechada: a conversa passa para a
+ * equipe, e o paciente nunca recebe a resposta da IA sem o aviso).
  */
 export function comporResposta(entrada: {
   mensagem: string;
@@ -687,12 +758,14 @@ export function comporResposta(entrada: {
   encerramento: string | null;
   primeiraResposta: boolean;
   encerra: boolean;
+  aviso?: string | null;
 }): string {
   const mensagem = entrada.mensagem.trim();
   const saudacao =
     entrada.primeiraResposta && entrada.saudacao?.trim()
       ? entrada.saudacao.trim()
       : null;
+  const aviso = entrada.aviso?.trim() ? entrada.aviso.trim() : null;
   const encerramento =
     entrada.encerra && entrada.encerramento?.trim()
       ? entrada.encerramento.trim()
@@ -700,16 +773,16 @@ export function comporResposta(entrada: {
   const juntar = (partes: (string | null)[]) =>
     partes.filter((p): p is string => p !== null).join(SEPARADOR_DA_RESPOSTA);
   for (const partes of [
-    [saudacao, mensagem, encerramento],
-    [saudacao, mensagem, null],
-    [null, mensagem, null],
+    [saudacao, aviso, mensagem, encerramento],
+    [saudacao, aviso, mensagem, null],
+    [null, aviso, mensagem, null],
   ]) {
     const texto = juntar(partes);
     if (tamanhoNoFiltro(texto) <= LIMITE_DO_RASCUNHO) {
       return texto;
     }
   }
-  return mensagem;
+  return juntar([null, aviso, mensagem, null]);
 }
 
 // ---------------------------------------------------------------------------
@@ -734,6 +807,8 @@ export function custoMaximoDoTurno(entrada: {
   modelo: string;
   modeloDosClassificadores: string | null;
   precos: readonly PrecoDoModelo[];
+  /** Onda 2 (item 4): a linha do contato entra na conta da entrada. */
+  contato?: TipoDoContato | null;
 }): number | null {
   const pendentes = mensagensPendentes(entrada.mensagens).map(
     (m) => m.texto ?? "",
@@ -743,6 +818,7 @@ export function custoMaximoDoTurno(entrada: {
       config: entrada.config,
       catalogo: entrada.catalogo,
       agoraTexto: agoraNaClinica(entrada.agoraMs, entrada.fuso),
+      contato: entrada.contato ?? null,
     }),
     input: historicoParaOModelo(entrada.mensagens),
     tools: ferramentasDaChamada(entrada.config),
@@ -980,6 +1056,7 @@ export async function executarTurnoDoAgente(
       config: entrada.config,
       catalogo: entrada.catalogo,
       agoraTexto: agoraNaClinica(entrada.agoraMs, entrada.fuso),
+      contato: entrada.contato ?? null,
     });
     const perguntas = perguntasParaOModelo(entrada.config.base);
     // Texto que deixou de passar nas regras fica de fora (segunda trava);
@@ -1004,6 +1081,9 @@ export async function executarTurnoDoAgente(
     );
     const precosDoTurno: number[] = [];
     let final: RespostaFinal | null = null;
+    // Onda 2 (item 5 e P5c): a ferramenta de frase fixa que encerrou o turno.
+    let fraseEscolhida: "fora_do_assunto" | "sou_assistente_virtual" | null =
+      null;
 
     for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
       if (entrada.conferirTrava) {
@@ -1156,6 +1236,29 @@ export async function executarTurnoDoAgente(
         );
       }
 
+      // Onda 2 (item 5 e P5c): a ferramenta de frase fixa encerra o turno.
+      // So vale sozinha na rodada e sem argumento (strict, sem
+      // parametros): junto de outra chamada, com argumento ou fora das
+      // permitidas, e anomalia e falha fechada.
+      const pedidoDeFrase = chamadas.find(
+        (c) =>
+          c.name === NOME_DO_FORA_DO_ASSUNTO ||
+          c.name === NOME_DO_ASSISTENTE_VIRTUAL,
+      );
+      if (pedidoDeFrase !== undefined) {
+        const nome = pedidoDeFrase.name as
+          "fora_do_assunto" | "sou_assistente_virtual";
+        if (
+          chamadas.length !== 1 ||
+          !permitidas.has(nome) ||
+          !semArgumentos(argumentosDe(pedidoDeFrase))
+        ) {
+          return falhar("ferramenta_invalida");
+        }
+        fraseEscolhida = nome;
+        break;
+      }
+
       // O historico da proxima rodada leva tudo o que o modelo produziu
       // (raciocinio cifrado inclusive) e a saida de cada ferramenta.
       historico.push(...(lida.itens as unknown as ResponseInputItem[]));
@@ -1215,66 +1318,120 @@ export async function executarTurnoDoAgente(
       }
     }
 
-    if (final === null) {
-      return falhar("rodadas_esgotadas");
-    }
+    const primeiraResposta = !entrada.mensagens.some(
+      (m) => m.autor === "assistente",
+    );
+    // P11a: o aviso de assistente virtual na primeira resposta da IA na
+    // janela (no WhatsApp, o executor diz; no simulador, a mesma regra da
+    // saudacao).
+    const aviso =
+      (entrada.primeiraRespostaDaIa ?? primeiraResposta)
+        ? FRASE_DO_ASSISTENTE_VIRTUAL
+        : null;
+    let rascunho: string;
 
-    // Q5 (revisao de producao de 19/10/2026): a resposta que promete passar
-    // para a equipe sem ter chamado escalar_humano e uma passagem. O texto do
-    // modelo nunca sai (a conversa ficaria na IA sem ninguem avisado); sai a
-    // frase fixa, e a conversa vai para a equipe como em toda passagem.
-    if (prometePassagemParaAEquipe(final.mensagem)) {
-      trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
-      return escalar(
-        "agente_pediu",
-        "texto_do_agente",
-        null,
-        ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.agente_pediu,
-      );
-    }
-
-    // A base que o modelo disse que usou (codigos conhecidos, sem repetir).
-    const usadas = new Set<string>();
-    for (const codigo of final.perguntas_da_base) {
-      const pergunta = perguntas.find(
-        (p) => p.codigo === codigo.trim().toLowerCase(),
-      );
-      if (pergunta !== undefined && !usadas.has(pergunta.codigo)) {
-        usadas.add(pergunta.codigo);
+    if (fraseEscolhida !== null) {
+      ferramentasUsadas.push(fraseEscolhida);
+      // P5b: a segunda pergunta fora do assunto na janela passa para a
+      // equipe (motivo de sistema), com a frase de escalonamento.
+      if (
+        fraseEscolhida === "fora_do_assunto" &&
+        (entrada.foraDoAssuntoNaJanela ?? 0) >= LIMITE_DO_FORA_DO_ASSUNTO
+      ) {
         trilha.push({
-          tipo: "base",
-          texto: `Usou a pergunta da base: ${trecho(pergunta.item.pergunta)}`,
+          tipo: "equipe",
+          texto: PASSO_DA_INSISTENCIA_FORA_DO_ASSUNTO,
+        });
+        return fraseFixa({
+          tipo: "escalou",
+          motivo: "fora_do_assunto",
+          gatilho: null,
+          origem: "insistencia",
         });
       }
-    }
+      const ehForaDoAssunto = fraseEscolhida === "fora_do_assunto";
+      trilha.push({
+        tipo: "outro",
+        texto: ehForaDoAssunto
+          ? PASSO_DO_FORA_DO_ASSUNTO
+          : PASSO_DO_ASSISTENTE_VIRTUAL,
+      });
+      // A frase do dono, com a saudacao e o aviso colados como numa
+      // resposta comum (a do "você é um robô?" ja e o aviso: nao repete).
+      rascunho = comporResposta({
+        mensagem: ehForaDoAssunto
+          ? FRASE_FORA_DO_ASSUNTO
+          : FRASE_DO_ASSISTENTE_VIRTUAL,
+        saudacao: entrada.config.saudacao,
+        encerramento: null,
+        primeiraResposta,
+        encerra: false,
+        aviso: ehForaDoAssunto ? aviso : null,
+      });
+    } else {
+      if (final === null) {
+        return falhar("rodadas_esgotadas");
+      }
 
-    if (
-      !trilha.some(
-        (passo) =>
-          passo.tipo === "preco" ||
-          passo.tipo === "base" ||
-          passo.tipo === "agenda",
-      )
-    ) {
-      trilha.push({ tipo: "outro", texto: PASSO_SEM_CONSULTA });
-    }
+      // Q5 (revisao de producao de 19/10/2026): a resposta que promete
+      // passar para a equipe sem ter chamado escalar_humano e uma passagem.
+      // O texto do modelo nunca sai (a conversa ficaria na IA sem ninguem
+      // avisado); sai a frase fixa, e a conversa vai para a equipe como em
+      // toda passagem.
+      if (prometePassagemParaAEquipe(final.mensagem)) {
+        trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
+        return escalar(
+          "agente_pediu",
+          "texto_do_agente",
+          null,
+          ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.agente_pediu,
+        );
+      }
 
-    // 5. Saudacao e encerramento antes do filtro. A marca do nome do
-    // contato (historico do WhatsApp) nunca vira vocativo na resposta; se
-    // so sobrar pontuacao ("Fulano!" vira "!"), falha fechada.
-    const mensagemSemMarca = semAMarcaDoNome(final.mensagem);
-    if (!/\p{L}/u.test(mensagemSemMarca)) {
-      return falhar("saida_invalida");
+      // A base que o modelo disse que usou (codigos conhecidos, sem
+      // repetir).
+      const usadas = new Set<string>();
+      for (const codigo of final.perguntas_da_base) {
+        const pergunta = perguntas.find(
+          (p) => p.codigo === codigo.trim().toLowerCase(),
+        );
+        if (pergunta !== undefined && !usadas.has(pergunta.codigo)) {
+          usadas.add(pergunta.codigo);
+          trilha.push({
+            tipo: "base",
+            texto: `Usou a pergunta da base: ${trecho(pergunta.item.pergunta)}`,
+          });
+        }
+      }
+
+      if (
+        !trilha.some(
+          (passo) =>
+            passo.tipo === "preco" ||
+            passo.tipo === "base" ||
+            passo.tipo === "agenda",
+        )
+      ) {
+        trilha.push({ tipo: "outro", texto: PASSO_SEM_CONSULTA });
+      }
+
+      // 5. Saudacao, aviso (P11a) e encerramento antes do filtro. A marca do
+      // nome do contato (historico do WhatsApp) nunca vira vocativo na
+      // resposta; se so sobrar pontuacao ("Fulano!" vira "!"), falha
+      // fechada.
+      const mensagemSemMarca = semAMarcaDoNome(final.mensagem);
+      if (!/\p{L}/u.test(mensagemSemMarca)) {
+        return falhar("saida_invalida");
+      }
+      rascunho = comporResposta({
+        mensagem: mensagemSemMarca,
+        saudacao: entrada.config.saudacao,
+        encerramento: entrada.config.encerramento,
+        primeiraResposta,
+        encerra: final.encerra_a_conversa,
+        aviso,
+      });
     }
-    const rascunho = comporResposta({
-      mensagem: mensagemSemMarca,
-      saudacao: entrada.config.saudacao,
-      encerramento: entrada.config.encerramento,
-      primeiraResposta: !entrada.mensagens.some(
-        (m) => m.autor === "assistente",
-      ),
-      encerra: final.encerra_a_conversa,
-    });
 
     // 6. Filtro de saida.
     filtro = await filtrarSaida({

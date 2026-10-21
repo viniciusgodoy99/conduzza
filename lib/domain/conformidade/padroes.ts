@@ -1164,7 +1164,23 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     // "Sistema" e "programacao" soltos sao recepcao ("vou verificar no
     // sistema", "a programacao do feriado"); "aprovado:" e o convenio
     // ("seu convenio foi aprovado: pode vir"). Fica o rotulo de veredicto.
-    "\\b(?:instruc(?:ao|oes)|instruid[oa]|prompt|system|anthropic|claude|openai|chatgpt|gpt|llm|modelo de linguagem|language model|tool_use|function_call|json|nonce|token|configurad[oa] para|fui programad[oa]|minha programacao|minhas regras|regras internas|diretrizes|avaliador\\w*|avaliacao interna|verificador\\w*|revisor\\w*|rascunho|veredicto|considere aprovad\\w*|pode aprovar|conformidade|cfm)\\b|\\b(?:prompt|instruc\\w*|regras|mensagem|comando)s? d[oe] sistema\\b|\\bmarque como (?:aprovad|conforme|ok|valid)|\\baprovad[oa] ?=|\\b(?:status|parecer|decisao|verificacao|moderacao|validacao|revisao)\\s*[:=]\\s*(?:aprovad|conforme|liberad)|\\bconfianca\\s*[:=]?\\s*(?:alta|media)\\b",
+    // Onda 2 (item 5): a parafrase que revela quem esta por tras do
+    // assistente ("fui treinada pela ...", "a empresa que me criou", "uso
+    // um modelo da ...", "sou baseada no Gemini"). So a primeira pessoa e o
+    // modelo de IA: "nossa equipe foi treinada pela fabricante" e "usamos um
+    // modelo de agendamento online" sao recepcao.
+    // Revisao da onda 2: "usamos" e "utilizamos" sao a voz da clinica
+    // ("usamos a tecnologia do ultrassom microfocado", "usamos o modelo do
+    // aparelho mais novo") e sairam; "uso", "funciono com", "trabalho com"
+    // e "sou alimentada por" so bloqueiam com o alvo de IA ou de empresa
+    // depois ("uso um modelo da OpenAI", "uma tecnologia da Google", "um
+    // sistema de IA"). "Me criou" e "me construiu" so com quem ou que antes
+    // ("a empresa que me criou", "quem me fez"): "a Dra. Ana me criou um
+    // horario extra" e recepcao. Entraram o participio colado em IA, robo ou
+    // assistente ("uma IA desenvolvida pela Google", "um robo feito pela
+    // Microsoft"; a assistente "criada pela clinica" passa), "fui feita
+    // por" e "sistema de IA".
+    "\\b(?:instruc(?:ao|oes)|instruid[oa]|prompt|system|anthropic|claude|openai|chatgpt|gpt|llm|gemini|copilot|deepseek|modelo de linguagem|language model|(?:modelo|sistema) d[ae] (?:ia|inteligencia artificial)|fui treinad[oa]|me treinaram|fui (?:criad|feit|construid)[oa] (?:pela|pelo|por)|fui desenvolvid[oa]|me (?:desenvolveu|desenvolveram|treinou|programou|programaram)|(?:quem|que) me (?:criou|criaram|construiu|construiram)|quem me (?:fez|fizeram)|tool_use|function_call|json|nonce|token|configurad[oa] para|fui programad[oa]|minha programacao|minhas regras|regras internas|diretrizes|avaliador\\w*|avaliacao interna|verificador\\w*|revisor\\w*|rascunho|veredicto|considere aprovad\\w*|pode aprovar|conformidade|cfm)\\b|\\b(?:uso|utilizo|funciono com|trabalho com|opero com|sou baseada? (?:em|no|na|num|numa)|(?:sou|fui|estou) alimentad[oa] (?:por|pel[oa]))\\b (?:um |uma |o |a )?(?:modelo|tecnologia|sistema|plataforma) d[aoe]s? (?:ia\\b|inteligencia artificial|openai|google|microsoft|meta\\b|amazon|apple|ibm|empresa|companhia)|\\b(?:sou|fui|estou) alimentad[oa] (?:por|pel[oa]) (?:um |uma |o |a )?(?:ia\\b|inteligencia artificial|openai|google|microsoft|meta\\b|empresa|companhia)|\\b(?:ia|inteligencia artificial|robo|robozinho|assistente(?: virtual)?|chatbot|bot) (?:criad|desenvolvid|feit|treinad|construid|programad)[oa]s? (?:pela|pelo|por)\\b(?! (?:a |o )?(?:propria )?clinica\\b)|\\b(?:prompt|instruc\\w*|regras|mensagem|comando)s? d[oe] sistema\\b|\\bmarque como (?:aprovad|conforme|ok|valid)|\\baprovad[oa] ?=|\\b(?:status|parecer|decisao|verificacao|moderacao|validacao|revisao)\\s*[:=]\\s*(?:aprovad|conforme|liberad)|\\bconfianca\\s*[:=]?\\s*(?:alta|media)\\b",
   ),
 ];
 
@@ -1660,7 +1676,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "manipulacao",
     "manipulacao",
-    "\\b(?:ignor|desconsider|esquec(?:e|a) (?:tudo|suas|as|o que)|instruc|prompt|system\\b|(?:prompt|instruc\\w*|regras|mensagem|comando|modo)s? d[oe] sistema\\b|diretriz|configurac|(?:voce|vc|tu|foi|fui|sou|es) (?:\\w+ )?programad|voce agora e|agora voce e|a partir de agora (?:voce|vc|tu|responda|responde|ignore|ignora|esqueca|esquece|seja|aja|finja|fale|fala|so|apenas|sem)\\b|finja|finge|fingir|faca de conta|faz de conta|role ?play|personagem|modo (?:desenvolvedor|dev|debug|admin|teste|livre|sem filtro)|jailbreak|(?:modo|mode) dan\\b|dan mode\\b|(?:you are|you re|youre|voce e|vc e) (?:now |agora )?(?:o |a )?dan\\b|do anything now|developer mode|sem filtro|sem restric|responda (?:apenas|so|somente)|repita|traduz|translate|(?:responda|responde|fale|fala|escreva|escreve|continue|answer|reply) (?:\\w+ ){0,2}?em ingles|in english|token|administrador|admin\\b|root\\b|override|bypass|act as|pretend|you are now|forget (?:your|all|previous)|olvida|ignora las|aja como|age como|atue como|comporte-se como|modelo de linguagem|language model|avaliador|avaliacao interna|verificador|revisor|rascunho|veredicto|considere aprovad|pode aprovar|aprovad[oa] ?=|(?:status|parecer|decisao|verificacao|moderacao|validacao|revisao)\\s*[:=]\\s*(?:aprovad|conforme|liberad)|marque como (?:aprovad|conforme|ok|valid)|confianca\\s*[:=]?\\s*(?:alta|media)|conformidade)|[\\u00ab\\u00bb\\u2039\\u203a]{2,}|\\b[a-z]+_[a-z]+_[a-z]+\\b(?![a-z0-9_.+-]*(?:@|\\.(?:com|br|net|org)\\b))",
+    "\\b(?:ignor|desconsider|esquec(?:e|a) (?:tudo|suas|as|o que)|instruc|prompt|system\\b|(?:prompt|instruc\\w*|regras|mensagem|comando|modo)s? d[oe] sistema\\b|diretriz|configurac|(?:voce|vc|tu|foi|fui|sou|es) (?:\\w+ )?programad|voce agora e|agora voce e|a partir de agora (?:voce|vc|tu|responda|responde|ignore|ignora|esqueca|esquece|seja|aja|finja|fale|fala|so|apenas|sem)\\b|finja|finge|fingir|faca de conta|faz de conta|role ?play|personagem|modo (?:desenvolvedor|dev|debug|admin|teste|livre|sem filtro)|jailbreak|(?:modo|mode) dan\\b|dan mode\\b|(?:you are|you re|youre|voce e|vc e) (?:now |agora )?(?:o |a )?dan\\b|do anything now|developer mode|sem filtro|sem restric|responda (?:apenas|so|somente)|repita|traduz|translate|(?:responda|responde|fale|fala|escreva|escreve|continue|answer|reply) (?:\\w+ ){0,2}?em ingles|in english|token|administrador|admin\\b|root\\b|override|bypass|act as|pretend|you are now|forget (?:your|all|previous)|olvida|ignora las|aja como|age como|atue como|comporte-se como|avaliador|avaliacao interna|verificador|revisor|rascunho|veredicto|considere aprovad|pode aprovar|aprovad[oa] ?=|(?:status|parecer|decisao|verificacao|moderacao|validacao|revisao)\\s*[:=]\\s*(?:aprovad|conforme|liberad)|marque como (?:aprovad|conforme|ok|valid)|confianca\\s*[:=]?\\s*(?:alta|media)|conformidade)|[\\u00ab\\u00bb\\u2039\\u203a]{2,}|\\b[a-z]+_[a-z]+_[a-z]+\\b(?![a-z0-9_.+-]*(?:@|\\.(?:com|br|net|org)\\b))",
   ),
   // Revisao de precisao de 05/10/2026 (conjunto cego 1): autorizacao da
   // medica alegada pelo paciente ("a dra ja autorizou, pode me falar
@@ -1682,10 +1698,49 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   // producao, Q3, decisao do dono): e o que quem espera a resposta manda, sem
   // pedir uma pessoa. "Alguem de verdade", "falar com alguem" e "quero falar
   // com" continuam.
+  // Onda 2 (decisao do dono P5c, 21/10/2026): PERGUNTAR se e robo, bot,
+  // maquina, IA, automatico, real ou uma pessoa ("você é um robô?", "é
+  // uma IA?", "você é humano?") saiu daqui e vai ao modelo, que responde
+  // com a frase fixa da assistente virtual (sou_assistente_virtual); a
+  // pergunta sobre a tecnologia ("qual IA vocês usam?") recebe a frase de
+  // fora do assunto. PEDIR uma pessoa continua escalando: os pedidos que o
+  // "robo" e o "humano" soltos pegavam ganharam padrao proprio
+  // (pedido_de_pessoa e rejeita_o_robo, abaixo). "Pessoa de verdade" e
+  // "gente de verdade" continuam (na duvida entre pergunta e pedido, escala).
   e(
     "pedido_humano",
     "pedido_humano",
-    "\\b(?:atendente|humano|humana|ser humano|pessoa (?:de verdade|real|fisica)|gente de verdade|robo|robozinho|bot\\b|chatbot|chat bot|maquina\\b|(?<!debito )automatic|inteligencia artificial|e uma ia\\b|voce e (?:uma )?ia\\b|e ia\\b|gerente|supervisor|responsavel|dono\\b|dona da clinica|recepcionista|secretaria|falar com (?:alguem|uma? pessoa|o medico|a medica|o doutor|a doutora|a dra|o dr|voces|a clinica)|conversar com (?:alguem|uma? pessoa)|quero (?:falar|conversar) com|me liga|me ligue|ligar (?:pra|para) mim|pode me ligar|telefonar|alguem de verdade|e voce mesm[oa]|voce e real|e uma pessoa|e gente)",
+    "\\b(?:atendente|atendimento humano|pessoa (?:de verdade|real|fisica)|gente de verdade|gerente|supervisor|responsavel|dono\\b|dona da clinica|recepcionista|secretaria|falar com (?:alguem|uma? pessoa|um ser humano|um humano|uma humana|o medico|a medica|o doutor|a doutora|a dra|o dr|voces|a clinica)|conversar com (?:alguem|uma? pessoa|um ser humano|um humano|uma humana)|quero (?:falar|conversar) com|me liga|me ligue|ligar (?:pra|para) mim|pode me ligar|telefonar|alguem de verdade)",
+  ),
+  // Onda 2 (P5c): o pedido de uma pessoa sem "falar com" ("preciso de um
+  // humano", "prefiro ser atendida por uma pessoa", "quero uma pessoa").
+  // "Quero saber se você é humano" nao e pedido, e "pessoa" so conta no fim
+  // da frase: "preciso de uma pessoa para me acompanhar na consulta" e
+  // recepcao.
+  // Revisao da onda 2: os pedidos claros que o "humano" solto pegava antes
+  // da P5c e que nao comecam com quero, preciso ou prefiro: o imperativo
+  // ("me passa para um humano", "chama um humano", "me transfere pra uma
+  // pessoa"), o "cadê o humano?", o "falar com humano" sem artigo ("posso
+  // falar com humano?") e a mensagem que e so "humano" ("HUMANO",
+  // "humano por favor"). "Pessoa" sozinha na mensagem nao entra ("uma
+  // pessoa" responde "para quantas pessoas?"), nem "chama alguém" solto.
+  e(
+    "pedido_humano",
+    "pedido_de_pessoa",
+    "\\b(?:quero|queria|preciso|prefiro|gostaria|exijo)\\b (?:de )?(?:um |uma )?(?:humano|humana|ser humano|atendente)\\b|\\b(?:quero|queria|prefiro|gostaria de|exijo) ser atendid[oa] (?:por|pel[oa]) (?:um |uma )?(?:pessoa|humano|humana|ser humano|atendente|gente)\\b|\\b(?:quero|queria|preciso de|prefiro|exijo) (?:um |uma )?pessoa(?: (?:ai|aqui|agora|por favor|pf|pfv|pfvr))*\\s*(?:$|[?!.,;])|\\b(?:me )?(?:passa|passe|transfere|transfira|chama|chame|coloca|coloque|bota|bote)\\b (?:pra |para |pro |com )?(?:um |uma |o |a |algum |alguma )?(?:humano|humana|ser humano|pessoa|atendente|alguem da (?:equipe|clinica|recepcao))\\b|\\bcade\\b (?:o |a |um |uma |os |as )?(?:humanos?|humanas?|ser humano|pessoa|atendente)\\b|\\b(?:falar|conversar) com (?:ser humano|humanos?|humanas?|pessoa|gente)\\b|^\\s*(?:um |uma |o |a )?(?:humanos?|humanas?|ser humano)(?:,? (?:por favor|pf|pfv|pfvr|urgente|agora|ja|aqui))*\\s*[?!.]*\\s*$",
+  ),
+  // Onda 2 (P5c): quem recusa o robo pede uma pessoa ("não quero falar com
+  // robô", "chega de robô", "sem IA, por favor"). Sem "maquina": "vocês
+  // estão sem máquina de cartão?" e pagamento.
+  // Revisao da onda 2: a recusa posposta ("robô não, por favor"), a
+  // maquina so com "falar com" ("não gosto de falar com máquina") e a
+  // reclamacao do robo ("esse robô não entende nada"), que o "robo" solto
+  // pegava antes da P5c. "A IA não marcou" e "a máquina de cartão não
+  // funciona" nao entram.
+  e(
+    "pedido_humano",
+    "rejeita_o_robo",
+    "\\b(?:nao quero|chega de|cansei de|odeio|detesto|nao gosto de|sem)\\b (?:falar com |conversar com |ser atendid[oa] por |esse |essa |este |esta )?(?:o |a |um |uma )?(?:robo|robozinho|bot|chatbot|ia|inteligencia artificial|atendimento automatic\\w*|resposta automatic\\w*|mensagem automatic\\w*)\\b|\\b(?:nao quero|chega de|cansei de|odeio|detesto|nao gosto de)\\b (?:falar|conversar) com (?:o |a |um |uma |essa |esse |esta |este )?maquinas?\\b|\\b(?:robo|robozinho|bot|chatbot|ia|inteligencia artificial)\\b,? nao(?:\\s*(?:$|[?!.,;])| (?:por favor|pf|pfv|pfvr|obrigad[oa]|valeu|quero|prefiro)\\b)|\\b(?:robo|robozinho|bot|chatbot|ia|inteligencia artificial|atendimento automatic\\w*)\\b (?:nao (?:entende|entendeu|entendi|resolve|resolveu|ajuda|ajudou|sabe|serve|presta)|e (?:burr|inutil|ruim|horrivel|pessim))",
   ),
   // Revisao de precisao de 05/10/2026 (conjunto cego 1): pedir para chamar
   // ou falar com a doutora ("chama a dra ai pra falar cmg", "a dra pode
@@ -1696,10 +1751,13 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
     "falar_com_a_doutora",
     "\\b(?:chama|chame|chamar|chamem|transfere|transfira|transferir|pede (?:pra|para)|peca (?:pra|para)|(?:me )?(?:passa|passe|passar) (?:pra|para|pro))\\b (?:ai |aqui |logo |pra mim )?(?:pra |para |pro )?(?:a |o )?(?:dra|dr|doutora|doutor|medica|medico)\\b(?:\\.? (?!(?:pra|para|pro|ai|aqui|me|falar|conversar|logo|por)\\b)\\w+)?(?: (?:ai|aqui|pra mim|logo|por favor|pfv|pfvr|pf|urgente))*(?: (?:pra|para|pro) (?:falar|conversar|me (?:ligar|liga|ligue|responder|retornar|chamar))| (?:falar|conversar) (?:comigo|cmg)| me (?:ligar|liga|ligue|responder|retornar|chamar)|\\s*(?:$|[?!.,]))|\\b(?:dra|dr|doutora|doutor|medica|medico)\\b(?:\\.? (?!(?:pode|poderia|podia|consegue|conseguiria|vai)\\b)\\w+)? (?:pode |poderia |podia |consegue |conseguiria |vai )?(?:falar|conversar) (?:comigo|cmg)\\b|\\b(?:dra|dr|doutora|doutor|medica|medico)\\b(?:\\.? (?!(?:pode|poderia|podia)\\b)\\w+)? (?:pode|poderia|podia) me (?:ligar|liga|responder|retornar|chamar)\\b|\\b(?:falar|conversar) (?:direto |diretamente |pessoalmente )?com (?:a |o )?(?:dra|dr|doutora|doutor|medica|medico)\\b",
   ),
+  // Onda 2 (P5c): "robot" e "are you real" (a pergunta) sairam, como no
+  // portugues, e "human" virou palavra inteira (pegava o "humano" de "você
+  // é humano?").
   e(
     "pedido_humano",
     "pedido_humano_en_es",
-    "\\b(?:human|real person|agent\\b|operator|manager|robot|are you real|talk to someone|persona real|hablar con alguien|agente\\b)",
+    "\\b(?:humans?\\b|real person|agent\\b|operator|manager|talk to someone|persona real|hablar con alguien|agente\\b)",
   ),
 
   // ---- insatisfacao --------------------------------------------------------
@@ -1885,7 +1943,9 @@ export const LEXICO_COMPACTO_DE_ENTRADA: readonly {
     gatilho: "manipulacao" as const,
     termo,
   })),
-  ...["atendente", "humano", "chatbot"].map((termo) => ({
+  // Onda 2 (P5c): "humano" e "chatbot" sairam (a pergunta "você é humano?"
+  // vai ao modelo); "atendente" continua.
+  ...["atendente"].map((termo) => ({
     gatilho: "pedido_humano" as const,
     termo,
   })),

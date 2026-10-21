@@ -10,6 +10,7 @@ import {
   type ItemDaBase,
   type LinhaDaConfigDoAgente,
 } from "@/lib/domain/agente/config";
+import { log } from "@/lib/log";
 
 import {
   montarCatalogoDoAgente,
@@ -28,9 +29,15 @@ import {
 
 type Cliente = SupabaseClient;
 
-/** Todas as colunas que o motor usa (instrucoes inclusive: service role). */
+/**
+ * Todas as colunas que o motor usa (instrucoes inclusive: service role).
+ * publico_atendido (onda 2, item 4) so existe DEPOIS da migration
+ * 20261022110000: este codigo so vai ao ar com ela aplicada (antes, o
+ * PostgREST devolve 42703 e a IA das clinicas para de responder, a licao da
+ * E4).
+ */
 const COLUNAS_DA_CONFIG =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, instrucoes, conhecimento, updated_at";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, instrucoes, conhecimento, updated_at";
 
 type LinhaDoMotor = LinhaDaConfigDoAgente & {
   id: string;
@@ -399,10 +406,12 @@ export async function carregarCatalogoDoAgente(
         .order("id", { ascending: true })
         .range(de, ate),
     ),
+    // Onda 2 (item 6): as especialidades vao ao bloco <profissionais>,
+    // saneadas (especialidadesParaOAgente).
     todasAsPaginas<LinhasDoCatalogo["profissionais"][number]>((de, ate) =>
       admin
         .from("professional")
-        .select("id, name, active")
+        .select("id, name, active, specialties")
         .eq("clinic_id", clinicId)
         .eq("active", true)
         .order("id", { ascending: true })
@@ -431,7 +440,7 @@ export async function carregarCatalogoDoAgente(
           .range(de, ate),
     ),
   ]);
-  return montarCatalogoDoAgente({
+  const catalogo = montarCatalogoDoAgente({
     procedimentos,
     vinculos,
     profissionais,
@@ -439,4 +448,14 @@ export async function carregarCatalogoDoAgente(
     clinica,
     vinculosSoDaEquipe,
   });
+  // Especialidade que nao passa nas regras do filtro (ou fora do formato)
+  // fica de fora do modelo; a equipe Conduzza fica sabendo so pela contagem.
+  const descartadas = catalogo.especialidadesDescartadas ?? 0;
+  if (descartadas > 0) {
+    log.warn("agente_especialidade_descartada", {
+      clinic_id: clinicId,
+      count: descartadas,
+    });
+  }
+  return catalogo;
 }

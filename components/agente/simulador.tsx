@@ -15,11 +15,15 @@ import { useEffect, useRef, useState, useTransition } from "react";
 
 import {
   CENARIOS_DO_SIMULADOR,
+  contatoDoTestarComo,
   ehCenario,
+  ehTestarComo,
   FALAS_ENVIADAS_PELO_SIMULADOR,
   LIMITE_DA_MENSAGEM_DO_SIMULADOR,
+  TESTAR_COMO,
   TEXTOS_DO_AGENTE as T,
   type CenarioDoSimulador,
+  type TestarComo,
 } from "@/components/agente/textos";
 import type {
   FalaDoSimulador,
@@ -66,6 +70,10 @@ import { cn } from "@/lib/utils";
 // reiniciar ou recarregar.
 //
 // - Cenarios do brief: escolher um preenche a primeira mensagem.
+// - "Testar como" (onda 2, item 4): Lead ou Paciente da clinica, como o
+//   executor manda no WhatsApp (a linha "Contato desta conversa" do
+//   prompt); "Sem escolha" manda sem a linha. Vale a partir da proxima
+//   mensagem e volta para "Sem escolha" ao reiniciar.
 // - Bolhas leves com as peles do Atendimento (paciente a esquerda, IA a
 //   direita com o selo "IA").
 // - Resposta trocada pela frase fixa, e a conversa encerra, como na conversa
@@ -101,6 +109,8 @@ export type EntradaDaSimulacao = {
     assinatura?: string | null;
   }[];
   cenario: CenarioDoSimulador | null;
+  /** O "Testar como": lead, paciente ou nulo (sem a linha do contato). */
+  contato: "lead" | "paciente" | null;
 };
 
 // O passo de agenda (E4: buscou horario, reservou, marcou, confirmou
@@ -309,6 +319,7 @@ export function Simulador({
   const [falas, setFalas] = useState<FalaDoSimulador[]>([]);
   const [texto, setTexto] = useState("");
   const [cenario, setCenario] = useState<CenarioDoSimulador | null>(null);
+  const [testarComo, setTestarComo] = useState<TestarComo>("nenhum");
   const [erro, setErro] = useState<string | null>(null);
   const [pendente, startTransition] = useTransition();
   const contador = useRef(0);
@@ -339,6 +350,7 @@ export function Simulador({
     setFalas([]);
     setTexto("");
     setCenario(null);
+    setTestarComo("nenhum");
     setErro(null);
   };
 
@@ -375,6 +387,7 @@ export function Simulador({
         resultado = await aoSimular({
           mensagens: mensagensParaOServidor(historico),
           cenario,
+          contato: contatoDoTestarComo(testarComo),
         });
       } catch {
         resultado = { ok: false, erro: T.semResposta };
@@ -470,6 +483,47 @@ export function Simulador({
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="agente-simulador-testar-como">{T.testarComo}</Label>
+          <Select
+            value={testarComo}
+            onValueChange={(valor) => {
+              if (ehTestarComo(valor)) {
+                setTestarComo(valor);
+              }
+            }}
+            disabled={bloqueado || encerrada || pendente}
+          >
+            <SelectTrigger
+              id="agente-simulador-testar-como"
+              className="w-full"
+              aria-describedby="agente-simulador-testar-como-ajuda"
+            >
+              {/* O rotulo escolhido ja no primeiro desenho (sem esperar a
+                  lista abrir). */}
+              <SelectValue>
+                {
+                  TESTAR_COMO.find((opcao) => opcao.chave === testarComo)
+                    ?.rotulo
+                }
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {TESTAR_COMO.map((opcao) => (
+                <SelectItem key={opcao.chave} value={opcao.chave}>
+                  {opcao.rotulo}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p
+            id="agente-simulador-testar-como-ajuda"
+            className="text-[12px] text-text-secondary"
+          >
+            {T.testarComoAjuda}
+          </p>
         </div>
 
         <div

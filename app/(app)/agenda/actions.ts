@@ -12,14 +12,17 @@ import type { AppointmentStatus } from "@/lib/design/status";
 import {
   comparecimentoLiberado,
   DICA_COMPARECEU_ANTES_DO_DIA,
+  DICA_CONSULTA_PENDENTE,
   DICA_FALTA_ANTES_DO_HORARIO,
   DICA_REMARCAR_ENCERRADA,
   eCancelamento,
   exigeCanal,
   faltaLiberada,
   MENSAGEM_PROFISSIONAL_INATIVO,
+  PENDENCIA_CANCELADA,
   podeRemarcar,
   podeTransicionar,
+  STATUS_DE_CANCELAMENTO,
   statusAposRemarcar,
 } from "@/lib/domain/appointment-status";
 import { diaCivil } from "@/lib/domain/horarios";
@@ -76,7 +79,10 @@ export type AgendaActionResult = {
     // Mudar situacao: falta antes do horario da consulta, e Compareceu
     // antes do dia dela.
     | "falta_antes_do_horario"
-    | "comparecimento_antes_do_dia";
+    | "comparecimento_antes_do_dia"
+    // Mudar situacao de consulta que ainda espera aprovacao (onda 2, item
+    // 10): so aprovar, recusar ou cancelar.
+    | "consulta_pendente";
   id?: string;
   /**
    * A acao deu certo, mas algo que a recepcao pediu junto nao aconteceu (ex.:
@@ -920,6 +926,24 @@ export async function mudarStatusAction(
         ? { ...resultado, recusada: daIa ? "consulta_da_ia" : "encaixe" }
         : resultado;
     }
+  } else {
+    // Onda 2 (item 10, decisoes do dono P10a e P10b): a consulta que ainda
+    // espera aprovacao (qualquer pendente, nao so a da IA) so aprova, recusa
+    // ou cancela. Confirmar, mandar para a recepcao, Compareceu e Falta
+    // esperam a aprovacao: sem isto, Compareceu numa pendente avancava o
+    // funil antes da aprovacao. A pendencia e lida do BANCO, nunca da tela;
+    // o gatilho do banco recusa de novo (23514 consulta_pendente, abaixo).
+    const lida = await lerPendencia(supabase, guard.clinicId, id);
+    if ("erro" in lida) {
+      return { ok: false, error: TEXTOS_DA_PENDENCIA.semConferir };
+    }
+    if (lida.pendencia !== null) {
+      return {
+        ok: false,
+        code: "consulta_pendente",
+        error: DICA_CONSULTA_PENDENTE,
+      };
+    }
   }
 
   // Falta so a partir do horario da consulta (achado 81). O horario vem do
@@ -987,6 +1011,19 @@ export async function mudarStatusAction(
     .eq("status", status_atual)
     .select("id");
   if (error) {
+    // A consulta virou pendente entre a leitura e o update (ou outro
+    // caminho): o gatilho do banco recusa com 23514 consulta_pendente, que
+    // vem antes da falta (a falta numa pendente tambem da 23514).
+    if (
+      error.code === CHECK_VIOLATION &&
+      (error.message ?? "").includes("consulta_pendente")
+    ) {
+      return {
+        ok: false,
+        code: "consulta_pendente",
+        error: DICA_CONSULTA_PENDENTE,
+      };
+    }
     if (error.code === CHECK_VIOLATION && novo_status === "faltou") {
       return {
         ok: false,
@@ -1055,7 +1092,19 @@ export async function mudarStatusAction(
 // O tipo e lido do BANCO (nunca da tela) e repetido no filtro do update: a
 // corrida perde educadamente ("ja foi tratada").
 
-type PendenciaLida = { created_by: string; is_overbooking: boolean };
+/** O filtro do PostgREST: a situacao e um dos cancelamentos. */
+const FILTRO_DE_CANCELAMENTO = `(${STATUS_DE_CANCELAMENTO.join(",")})`;
+
+type PendenciaLida = {
+  created_by: string;
+  is_overbooking: boolean;
+  /**
+   * A situacao da consulta. A pendente cancelada (o paciente cancelou pelo
+   * WhatsApp; continua 'pendente') conta como recusada: aprovar e recusar
+   * respondem que ela ja foi cancelada (revisao da onda 2).
+   */
+  cancelada: boolean;
+};
 
 const TEXTOS_DA_PENDENCIA = {
   invalida: "Consulta inválida.",
@@ -1078,7 +1127,7 @@ async function lerPendencia(
 ): Promise<{ pendencia: PendenciaLida | null } | { erro: true }> {
   const { data, error } = await supabase
     .from("appointment")
-    .select("created_by, is_overbooking")
+    .select("created_by, is_overbooking, status")
     .eq("clinic_id", clinicId)
     .eq("id", id)
     .eq("approval_status", "pendente")
@@ -1086,12 +1135,19 @@ async function lerPendencia(
   if (error) {
     return { erro: true };
   }
-  const linha = data as Partial<PendenciaLida> | null;
+  const linha = data as {
+    created_by?: unknown;
+    is_overbooking?: unknown;
+    status?: unknown;
+  } | null;
   return {
     pendencia: linha
       ? {
           created_by: String(linha.created_by ?? ""),
           is_overbooking: linha.is_overbooking === true,
+          cancelada: STATUS_DE_CANCELAMENTO.some(
+            (status) => status === linha.status,
+          ),
         }
       : null,
   };
@@ -1120,6 +1176,12 @@ export async function aprovarEncaixeAction(
       error: TEXTOS_DA_PENDENCIA.consultaTratada,
     };
   }
+  // A pendente cancelada (pelo paciente, no WhatsApp) conta como recusada
+  // (revisao da onda 2): aprovar uma consulta cancelada converteria o lead
+  // e avancaria o funil. O banco tambem nao converte nesse caso.
+  if (lida.pendencia.cancelada) {
+    return { ok: false, code: "ja_tratado", error: PENDENCIA_CANCELADA };
+  }
   const daIa = ehConsultaDaIa(lida.pendencia);
 
   let aprovar = supabase
@@ -1135,7 +1197,9 @@ export async function aprovarEncaixeAction(
     )
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data)
-    .eq("approval_status", "pendente");
+    .eq("approval_status", "pendente")
+    // A corrida com o cancelamento pelo paciente perde educadamente.
+    .not("status", "in", FILTRO_DE_CANCELAMENTO);
   if (daIa) {
     aprovar = aprovar.eq("created_by", "ia").eq("is_overbooking", false);
   }
@@ -1228,6 +1292,11 @@ export async function recusarEncaixeAction(
       error: TEXTOS_DA_PENDENCIA.consultaTratada,
     };
   }
+  // A pendente cancelada ja conta como recusada: recusar de novo trocaria
+  // o "cancelado pelo paciente" por "cancelado pela clinica".
+  if (lida.pendencia.cancelada) {
+    return { ok: false, code: "ja_tratado", error: PENDENCIA_CANCELADA };
+  }
   return gravarRecusa(
     supabase,
     guard,
@@ -1265,7 +1334,8 @@ async function gravarRecusa(
     )
     .eq("clinic_id", guard.clinicId)
     .eq("id", id)
-    .eq("approval_status", "pendente");
+    .eq("approval_status", "pendente")
+    .not("status", "in", FILTRO_DE_CANCELAMENTO);
   if (daIa) {
     recusar = recusar.eq("created_by", "ia").eq("is_overbooking", false);
   }

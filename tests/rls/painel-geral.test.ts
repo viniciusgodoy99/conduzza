@@ -27,6 +27,15 @@ import { adminClient, anonClient } from "./stack";
 //   definir_teto_da_ia e painel_geral_das_clinicas: 42501 para TODO papel da
 //   clinica (o administrador inclusive) e para anon; a service role passa da
 //   guarda (contraprova: chega na regra de negocio ou no resultado).
+// - onda 2 (migration 20261022120000, M3): ia_requisito_da_producao, so o
+//   super admin le e ninguem escreve pela sessao (anon nem le);
+//   requisitos_da_producao, registrar_requisito_da_producao e
+//   revogar_requisito_da_producao: 42501 para todo papel da clinica e anon,
+//   a service role passa da guarda (registra e revoga SO requisito da
+//   propria A de teste: nada geral, que valeria para as clinicas de
+//   verdade); producao pela sessao: 42501; o painel tem
+//   totais.agente_em_producao. ESCRITO NA ONDA 2 E NAO RODADO por quem
+//   escreveu: roda depois de aplicar a migration.
 // Toda negacao tem o caso positivo ao lado (anti falso positivo).
 //
 // O SUPER ADMIN pela sessao (o painel e as acoes como a equipe Conduzza as
@@ -799,5 +808,185 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin pela sessão (opt-in)", () => {
     );
     expect(erroReativar).toBeNull();
     expect(reativada).toEqual({ jobs_vencidos: 0 });
+  });
+
+  it("onda 2 (M3): registra, le e revoga requisito da producao da A (de teste); le o checklist", async () => {
+    const sessao = sessaoDoSuper!;
+    const { data: id, error } = await sessao.rpc(
+      "registrar_requisito_da_producao",
+      {
+        p_chave: "termo_da_clinica",
+        p_evidencia: "Evidência sintética do teste de RLS",
+        p_clinic_id: clinicaA,
+      },
+    );
+    expect(error).toBeNull();
+    const { data: linhas } = await sessao
+      .from("ia_requisito_da_producao")
+      .select("id, chave, clinic_id, registrado_por")
+      .eq("id", id as string);
+    expect(linhas).toEqual([
+      {
+        id,
+        chave: "termo_da_clinica",
+        clinic_id: clinicaA,
+        registrado_por: superAdmin,
+      },
+    ]);
+    const { data: checklist, error: erroChecklist } = await sessao.rpc(
+      "requisitos_da_producao",
+      { p_clinic_id: clinicaA },
+    );
+    expect(erroChecklist).toBeNull();
+    const termo = (
+      checklist as { chave: string; ok: boolean; detalhe: { id?: string } }[]
+    ).find((item) => item.chave === "termo_da_clinica");
+    expect(termo?.ok).toBe(true);
+    expect(termo?.detalhe.id).toBe(id);
+    const { data: revogado, error: erroRevogar } = await sessao.rpc(
+      "revogar_requisito_da_producao",
+      { p_id: id, p_motivo: "Teste do super admin" },
+    );
+    expect(erroRevogar).toBeNull();
+    expect(revogado).toEqual({ clinicas_de_volta_ao_teste: 0 });
+  });
+});
+
+describe("onda 2 (M3): os requisitos da produção e o agente em produção", () => {
+  // Um requisito SO da A (de teste), registrado pelo servidor. Nada geral:
+  // um requisito de clinic_id nulo valeria para as clinicas de verdade.
+  let requisitoDaA = "";
+
+  beforeAll(async () => {
+    const { data, error } = await admin.rpc("registrar_requisito_da_producao", {
+      p_chave: "termo_da_clinica",
+      p_evidencia: "Evidência sintética do teste de RLS",
+      p_clinic_id: clinicaA,
+    });
+    expect(error).toBeNull();
+    requisitoDaA = data as string;
+  });
+
+  it("ia_requisito_da_producao: nenhuma sessão de clínica lê nem escreve; anon nem lê", async () => {
+    for (const papel of TODOS_OS_PAPEIS) {
+      const cliente = await logado(papel);
+      expect(
+        await linhasVisiveis(cliente, "ia_requisito_da_producao", clinicaA),
+        papel,
+      ).toBe(0);
+      const { error } = await cliente.from("ia_requisito_da_producao").insert({
+        chave: "rodada_cfm",
+        clinic_id: clinicaA,
+        evidencia: "Tentativa da sessão",
+      });
+      expect((error as Erro)?.code, papel).toBe(PERMISSAO_NEGADA);
+    }
+    const { error: erroAnon } = await anonClient()
+      .from("ia_requisito_da_producao")
+      .select("id");
+    expect((erroAnon as Erro)?.code).toBe(PERMISSAO_NEGADA);
+    // Contraprova: o servidor le a linha.
+    const { data } = await admin
+      .from("ia_requisito_da_producao")
+      .select("id")
+      .eq("id", requisitoDaA);
+    expect(data).toEqual([{ id: requisitoDaA }]);
+  });
+
+  it("requisitos, registrar, revogar e produção pela sessão: 42501 para todo papel e anon", async () => {
+    const chamadas: { nome: string; args: Record<string, unknown> }[] = [
+      { nome: "requisitos_da_producao", args: { p_clinic_id: clinicaA } },
+      {
+        nome: "registrar_requisito_da_producao",
+        args: {
+          p_chave: "termo_da_clinica",
+          p_evidencia: "Tentativa da sessão",
+          p_clinic_id: clinicaA,
+        },
+      },
+      {
+        nome: "revogar_requisito_da_producao",
+        args: { p_id: requisitoDaA, p_motivo: "Tentativa da sessão" },
+      },
+      {
+        nome: "definir_agente_da_clinica",
+        args: {
+          p_clinic_id: clinicaB,
+          p_estado: "producao",
+          p_motivo: "Tentativa da sessão",
+        },
+      },
+    ];
+    for (const chamada of chamadas) {
+      for (const papel of TODOS_OS_PAPEIS) {
+        const { error } = await (
+          await logado(papel)
+        ).rpc(chamada.nome, chamada.args);
+        expect((error as Erro)?.code, `${chamada.nome} por ${papel}`).toBe(
+          PERMISSAO_NEGADA,
+        );
+      }
+      const { error: erroAnon } = await anonClient().rpc(
+        chamada.nome,
+        chamada.args,
+      );
+      expect((erroAnon as Erro)?.code, `${chamada.nome} por anon`).toBe(
+        PERMISSAO_NEGADA,
+      );
+    }
+    // Nada mudou: o requisito continua vivo.
+    const { data } = await admin
+      .from("ia_requisito_da_producao")
+      .select("revogado_em")
+      .eq("id", requisitoDaA)
+      .single();
+    expect((data as { revogado_em: string | null }).revogado_em).toBeNull();
+  });
+
+  it("a service role passa da guarda: o checklist, a produção (a regra da clínica de teste), revogar e o painel", async () => {
+    const { data: checklist, error } = await admin.rpc(
+      "requisitos_da_producao",
+      { p_clinic_id: clinicaA },
+    );
+    expect(error).toBeNull();
+    const itens = checklist as { chave: string; ok: boolean }[];
+    expect(itens.map((item) => item.chave)).toEqual([
+      "agente_em_teste",
+      "versao_publicada",
+      "publico_escolhido",
+      "horario_suportado",
+      "numero_conectado",
+      "conta_ativa",
+      "conversao_na_aprovacao",
+      "rodada_cfm",
+      "contrato_openai",
+      "aviso_assistente_virtual",
+      "termo_da_clinica",
+      "transcricao_com_nossa_chave",
+    ]);
+    expect(itens.find((item) => item.chave === "termo_da_clinica")?.ok).toBe(
+      true,
+    );
+    // A B e de teste: a produção recusa pela regra (P0001 clinica_de_teste).
+    const { error: producao } = await admin.rpc("definir_agente_da_clinica", {
+      p_clinic_id: clinicaB,
+      p_estado: "producao",
+      p_motivo: "Contraprova",
+    });
+    expect((producao as Erro)?.code).toBe("P0001");
+    expect((producao as Erro)?.message).toBe("clinica_de_teste");
+    const { data: revogado, error: erroRevogar } = await admin.rpc(
+      "revogar_requisito_da_producao",
+      { p_id: requisitoDaA, p_motivo: "Contraprova do teste de RLS" },
+    );
+    expect(erroRevogar).toBeNull();
+    expect(revogado).toEqual({ clinicas_de_volta_ao_teste: 0 });
+    const { data: painel } = await admin.rpc("painel_geral_das_clinicas", {
+      p_incluir_teste: true,
+    });
+    expect(
+      typeof (painel as { totais: { agente_em_producao?: unknown } }).totais
+        .agente_em_producao,
+    ).toBe("number");
   });
 });

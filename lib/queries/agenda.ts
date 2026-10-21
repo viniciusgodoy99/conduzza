@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { STATUS_DE_CANCELAMENTO } from "@/lib/domain/appointment-status";
 import { limitesDoDia, somarDias } from "@/lib/domain/horarios";
 import type { AppointmentStatus } from "@/lib/design/status";
 import { fetchProfileNames } from "@/lib/queries/profiles";
@@ -286,7 +287,9 @@ export function cancelarContaComoRecusa(consulta: {
  * O que aguarda aprovacao da equipe (painel "Pendente de voce"): os
  * encaixes da IA e, desde o E4, as consultas que a IA marcou (ehConsultaDaIa).
  * As duas vem com created_by e is_overbooking (CONSULTA_SELECT), que o
- * painel usa para dizer qual e qual.
+ * painel usa para dizer qual e qual. A pendente CANCELADA (o paciente
+ * cancelou pelo WhatsApp; ela continua 'pendente') nao entra: conta como
+ * recusada e nao espera mais ninguem (aguardaAprovacao; revisao da onda 2).
  */
 export async function fetchPendencias(
   supabase: SupabaseClient,
@@ -297,6 +300,7 @@ export async function fetchPendencias(
     .select(CONSULTA_SELECT)
     .eq("clinic_id", clinicId)
     .eq("approval_status", "pendente")
+    .not("status", "in", `(${STATUS_DE_CANCELAMENTO.join(",")})`)
     .order("starts_at");
   if (error) {
     throw new Error(error.message);

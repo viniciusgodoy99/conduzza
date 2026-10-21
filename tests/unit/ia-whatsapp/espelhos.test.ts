@@ -61,6 +61,24 @@ function corpoMaisNovo(nome: string): { arquivo: string; corpo: string } {
   throw new Error(`${nome} nao encontrada nas migrations`);
 }
 
+/**
+ * Os literais do CHECK ai_decision_log_escalation_reason_valida na migration
+ * MAIS NOVA que o (re)define: o E3 (M1) e, na onda 2 (item 5), a
+ * 20261022110000, que acrescenta fora_do_assunto.
+ */
+function checkDoMotivoMaisNovo(): { arquivo: string; motivos: string[] } {
+  const definicao =
+    /add constraint ai_decision_log_escalation_reason_valida\s+check\s*\(([\s\S]*?)\)\s*\)\s*[,;]/gi;
+  for (const arquivo of [...MIGRATIONS].reverse()) {
+    const sql = readFileSync(`${PASTA_DAS_MIGRATIONS}/${arquivo}`, "utf-8");
+    const bloco = [...sql.matchAll(definicao)].at(-1)?.[1];
+    if (bloco !== undefined) {
+      return { arquivo, motivos: literais(bloco) };
+    }
+  }
+  throw new Error("CHECK de escalation_reason nao encontrado nas migrations");
+}
+
 // As falhas do turno alem das do verificador (FalhaDoAgente), conferidas
 // pelo tipo: se FalhaDoAgente ganhar um codigo, isto deixa de compilar.
 const FALHAS_DO_TURNO = [
@@ -87,9 +105,11 @@ describe("espelhos do E3 com as migrations", () => {
     const { arquivo } = corpoMaisNovo("rotulo_do_motivo_da_ia");
     expect(arquivo).not.toBe(ARQUIVO_DA_M1);
     // A 20261019120000 (revisao de producao de 19/10/2026) recriou a funcao
-    // com o texto novo de 'parada'; uma migration posterior que a recrie
-    // passa a valer no lugar dela.
-    expect(arquivo >= "20261019120000").toBe(true);
+    // com o texto novo de 'parada'; a da onda 2 (20261022110000, itens 5 e
+    // 7) a recria com no_expediente, retomou_no_horario, fora_do_assunto e
+    // o texto novo de horario_nao_suportado. Uma migration posterior que a
+    // recrie passa a valer no lugar dela.
+    expect(arquivo >= "20261022110000").toBe(true);
   });
 
   it("rotulo_do_motivo_da_ia é TEXTO_DO_EVENTO_DA_IA, motivo a motivo", () => {
@@ -120,14 +140,44 @@ describe("espelhos do E3 com as migrations", () => {
     }
   });
 
-  it("MOTIVOS_DE_ESCALONAMENTO é o CHECK de escalation_reason (17)", () => {
+  it("MOTIVOS_DE_ESCALONAMENTO é o CHECK de escalation_reason mais novo (18, com fora_do_assunto)", () => {
+    const { arquivo, motivos } = checkDoMotivoMaisNovo();
+    // Onda 2 (item 5): a 20261022110000 redefine o CHECK com
+    // fora_do_assunto. O E3 (M1) tinha 17.
+    expect(arquivo >= "20261022110000").toBe(true);
+    expect(motivos.sort()).toEqual([...MOTIVOS_DE_ESCALONAMENTO].sort());
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(18);
+    expect(MOTIVOS_DE_ESCALONAMENTO).toContain("fora_do_assunto");
+  });
+
+  it("o CHECK do E3 (M1) tinha os 17 de antes da onda 2", () => {
     const bloco = M1.match(
       /escalation_reason is null or escalation_reason in \(([\s\S]*?)\)\)/,
     )?.[1];
     expect(literais(bloco ?? "").sort()).toEqual(
-      [...MOTIVOS_DE_ESCALONAMENTO].sort(),
+      MOTIVOS_DE_ESCALONAMENTO.filter((m) => m !== "fora_do_assunto").sort(),
     );
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(17);
+  });
+
+  it("onda 2: os motivos e os textos novos do contrato (seção 9)", () => {
+    expect(MOTIVOS_DE_SISTEMA_DA_IA).toContain("no_expediente");
+    expect(MOTIVOS_DE_SISTEMA_DA_IA).toContain("retomou_no_horario");
+    expect(TEXTO_DO_EVENTO_DA_IA.fora_do_assunto).toBe(
+      "A IA passou a conversa para a equipe: a pessoa insistiu num assunto fora da clínica.",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.no_expediente).toBe(
+      "O assistente não respondeu: agora é o horário da equipe. Se ninguém da equipe responder, ele assume quando o horário dele começar.",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.retomou_no_horario).toBe(
+      "Começou o horário do assistente: ele assumiu esta conversa, que ninguém da equipe tinha respondido.",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.horario_nao_suportado).toBe(
+      "O assistente não atende pelo WhatsApp no modo de horário escolhido. A conversa ficou com a equipe.",
+    );
+    // fora_do_assunto e do sistema (o laco conta a janela), nunca do modelo.
+    expect(MOTIVOS_DO_AGENTE as readonly string[]).not.toContain(
+      "fora_do_assunto",
+    );
   });
 
   it("motivo_da_falha é MOTIVOS_DA_FALHA mais as falhas do turno", () => {
@@ -176,6 +226,7 @@ describe("espelhos do E3 com as migrations", () => {
       "nao_individual",
       "teto_atingido",
       "conformidade",
+      "fora_do_assunto",
     ]) {
       expect(MOTIVOS_DO_AGENTE as readonly string[]).not.toContain(doSistema);
     }

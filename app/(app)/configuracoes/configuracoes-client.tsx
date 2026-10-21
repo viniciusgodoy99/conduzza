@@ -1,13 +1,9 @@
 "use client";
 
 import { Hourglass } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { TEXTOS_DA_IA } from "@/components/configuracoes/agente-de-ia";
-import {
-  AgenteDeIaTab,
-  type DadosDaAbaDaIa,
-} from "@/components/configuracoes/agente-de-ia-tab";
 import { ClinicaTab } from "@/components/configuracoes/clinica-tab";
 import { EtiquetasTab } from "@/components/configuracoes/etiquetas-tab";
 import {
@@ -27,7 +23,9 @@ import {
   type ContaMeta,
 } from "@/components/configuracoes/meta-ads-tab";
 import { PainelPapeis } from "@/components/configuracoes/painel-papeis";
+import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -58,11 +56,16 @@ import { InviteForm } from "./invite-form";
 // do navegador funcionar, mesmo padrao de Cadastros. "?aba=conversoes" segue
 // valendo como link antigo: cai na jornada, que absorveu aquela aba.
 //
-// Abas sublinhadas do design system (8 vistas, mais a do Agente de IA nas
-// clinicas com o agente habilitado), com contadores. Na equipe, o
-// segundo contador e o de pedidos aguardando liberacao (ampulheta, tom de
+// Abas sublinhadas do design system (8 vistas), com contadores. Na equipe,
+// o segundo contador e o de pedidos aguardando liberacao (ampulheta, tom de
 // atencao e o texto por extenso para leitor de tela). Cada aba mostra o
 // proprio erro de carregamento em vez de derrubar a tela inteira.
+//
+// A aba Agente de IA (Fase 3) saiu daqui na onda 2 (item 8, decisao do dono
+// de 20/10/2026): mora na aba WhatsApp da tela Agente de IA (?aba=ia a
+// pagina redireciona para la). Nas clinicas com o agente habilitado, a aba
+// WhatsApp daqui avisa onde ficaram os numeros e os telefones do
+// assistente (AvisoDoAssistente).
 //
 // Automacoes de fluxo (02/10/2026) era a aba logo depois da jornada ate
 // 20/10/2026, quando o dono a levou para a tela Automacoes (?aba=fluxo de
@@ -82,16 +85,37 @@ const ABAS = [
   ["google", "Anúncios do Google"],
 ] as const;
 
-// Agente de IA (Fase 3, decisao do dono em 05/10/2026): a liberacao do
-// assistente de IA, so nas clinicas com o agente habilitado (a lista do banco,
-// que o super admin muda pelo Painel geral). Fica FORA de ABAS de
-// proposito: a pagina decide no servidor se a aba existe (agenteDeIa nulo
-// nas outras clinicas) e ela entra no fim da fileira. O esqueleto de
-// loading.tsx desenha as 8 abas fixas (o teste carregando-configuracoes
-// conta ABAS); nessas clinicas a fileira ganha uma aba quando carrega.
-const ABA_DO_AGENTE = ["ia", "Agente de IA"] as const;
+type AbaKey = (typeof ABAS)[number][0];
 
-type AbaKey = (typeof ABAS)[number][0] | (typeof ABA_DO_AGENTE)[0];
+/** Onde o assistente de IA mora desde a onda 2 (item 8). */
+export const AVISO_DO_ASSISTENTE = {
+  texto:
+    "Os números e os telefones da equipe do assistente de IA ficam agora na tela Agente de IA, aba WhatsApp.",
+  acao: "Abrir Agente de IA",
+  link: "/agente?aba=whatsapp",
+} as const;
+
+/**
+ * O aviso da aba WhatsApp nas clinicas com o agente habilitado: os cartoes
+ * do assistente que moravam em Configuracoes foram para a Tela 6.
+ */
+function AvisoDoAssistente() {
+  return (
+    <Aviso
+      tom="info"
+      role="note"
+      acao={
+        <Button variant="outline" size="sm" asChild>
+          <Link href={AVISO_DO_ASSISTENTE.link} prefetch={false}>
+            {AVISO_DO_ASSISTENTE.acao}
+          </Link>
+        </Button>
+      }
+    >
+      {AVISO_DO_ASSISTENTE.texto}
+    </Aviso>
+  );
+}
 
 function ErroDaAba({ titulo }: { titulo: string }) {
   return (
@@ -137,7 +161,7 @@ export function ConfiguracoesClient({
   mensagens,
   meta,
   google,
-  agenteDeIa,
+  comAgenteDeIa = false,
 }: {
   abaInicial?: string;
   /** nulo: a leitura da equipe falhou */
@@ -195,21 +219,19 @@ export function ConfiguracoesClient({
    */
   google: DadosDoRastreio | null;
   /**
-   * A aba Agente de IA. Nulo: a aba NAO existe nesta clinica (decisao do
-   * servidor). Com a aba, dados nulo e o erro de leitura dela.
+   * A clinica tem o agente de IA habilitado (decisao do servidor): a aba
+   * WhatsApp avisa onde ficaram os numeros e os telefones do assistente.
    */
-  agenteDeIa: DadosDaAbaDaIa | null;
+  comAgenteDeIa?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // A fileira desta clinica: a do agente so quando o servidor mandou.
-  const abas: readonly (readonly [AbaKey, string])[] = agenteDeIa
-    ? [...ABAS, ABA_DO_AGENTE]
-    : ABAS;
+  const abas: readonly (readonly [AbaKey, string])[] = ABAS;
 
-  // ?aba=ia numa clinica sem a aba cai na equipe, como aba desconhecida.
+  // Aba desconhecida cai na equipe (o ?aba=ia antigo a pagina ja mandou
+  // para a Tela 6).
   const abaAtiva: AbaKey = abas.some(([key]) => key === abaInicial)
     ? (abaInicial as AbaKey)
     : abaInicial === "conversoes" // link antigo, antes de a jornada absorver
@@ -350,6 +372,7 @@ export function ConfiguracoesClient({
           número é atendido por ele, e a conversa mostra por qual número está
           falando.
         </p>
+        {comAgenteDeIa ? <AvisoDoAssistente /> : null}
         {whatsapp ? (
           <ListaDeNumeros
             {...whatsapp}
@@ -456,19 +479,6 @@ export function ConfiguracoesClient({
           <ErroDaAba titulo="Não foi possível carregar o rastreio do site" />
         )}
       </TabsContent>
-
-      {agenteDeIa ? (
-        <TabsContent value="ia" className="grid gap-4">
-          <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-            {TEXTOS_DA_IA.descricaoDaAba}
-          </p>
-          {agenteDeIa.dados ? (
-            <AgenteDeIaTab {...agenteDeIa} dados={agenteDeIa.dados} />
-          ) : (
-            <ErroDaAba titulo="Não foi possível carregar o assistente de IA" />
-          )}
-        </TabsContent>
-      ) : null}
     </Tabs>
   );
 }

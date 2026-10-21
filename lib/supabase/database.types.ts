@@ -50,6 +50,7 @@ export type Database = {
           instrucoes: string | null
           operating_hours: Json | null
           operating_mode: string
+          publico_atendido: string | null
           published_at: string | null
           published_by: string | null
           skills: Json
@@ -74,6 +75,7 @@ export type Database = {
           instrucoes?: string | null
           operating_hours?: Json | null
           operating_mode?: string
+          publico_atendido?: string | null
           published_at?: string | null
           published_by?: string | null
           skills?: Json
@@ -98,6 +100,7 @@ export type Database = {
           instrucoes?: string | null
           operating_hours?: Json | null
           operating_mode?: string
+          publico_atendido?: string | null
           published_at?: string | null
           published_by?: string | null
           skills?: Json
@@ -2046,6 +2049,47 @@ export type Database = {
           },
         ]
       }
+      ia_conversa_fora_do_horario: {
+        Row: {
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          criada_em: string
+          desde: string
+          origem: string
+          phone_key: string
+          whatsapp_account_id: string
+        }
+        Insert: {
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          criada_em?: string
+          desde?: string
+          origem: string
+          phone_key: string
+          whatsapp_account_id: string
+        }
+        Update: {
+          clinic_id?: string
+          contact_id?: string
+          conversation_id?: string
+          criada_em?: string
+          desde?: string
+          origem?: string
+          phone_key?: string
+          whatsapp_account_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_conversa_fora_do_horario_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ia_interruptor: {
         Row: {
           alterado_em: string
@@ -2193,6 +2237,50 @@ export type Database = {
             columns: ["whatsapp_account_id"]
             isOneToOne: true
             referencedRelation: "whatsapp_account"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ia_requisito_da_producao: {
+        Row: {
+          chave: string
+          clinic_id: string | null
+          evidencia: string
+          id: string
+          motivo_da_revogacao: string | null
+          registrado_em: string
+          registrado_por: string | null
+          revogado_em: string | null
+          revogado_por: string | null
+        }
+        Insert: {
+          chave: string
+          clinic_id?: string | null
+          evidencia: string
+          id?: string
+          motivo_da_revogacao?: string | null
+          registrado_em?: string
+          registrado_por?: string | null
+          revogado_em?: string | null
+          revogado_por?: string | null
+        }
+        Update: {
+          chave?: string
+          clinic_id?: string | null
+          evidencia?: string
+          id?: string
+          motivo_da_revogacao?: string | null
+          registrado_em?: string
+          registrado_por?: string | null
+          revogado_em?: string | null
+          revogado_por?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_requisito_da_producao_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
         ]
@@ -5026,10 +5114,15 @@ export type Database = {
           p_ativo: boolean
           p_clinic_id: string
           p_confirmou_aviso_da_openai?: boolean
+          p_confirmou_teste_com_paciente?: boolean
           p_forcar_contato_existente?: boolean
           p_rotulo: string
           p_telefone_e164: string
         }
+        Returns: boolean
+      }
+      definir_pausa_da_ia: {
+        Args: { p_clinic_id: string; p_motivo: string; p_pausada: boolean }
         Returns: boolean
       }
       definir_agente_da_clinica: {
@@ -5145,6 +5238,10 @@ export type Database = {
         }
         Returns: string
       }
+      excluir_contato_liberado_da_ia: {
+        Args: { p_clinic_id: string; p_contato_liberado_id: string }
+        Returns: boolean
+      }
       etiquetar_contatos: {
         Args: {
           p_adicionar: string[]
@@ -5251,6 +5348,10 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: undefined
       }
+      ia_horario_do_assistente: {
+        Args: { p_agora?: string; p_clinic_id: string }
+        Returns: string
+      }
       ia_interruptor_ligado: { Args: never; Returns: boolean }
       ia_jobs_devidos: {
         Args: {
@@ -5300,6 +5401,14 @@ export type Database = {
         Returns: boolean
       }
       ia_pode_simular: { Args: { p_clinic_id: string }; Returns: boolean }
+      ia_publico_aceita: {
+        Args: { p_clinic_id: string; p_telefone: string }
+        Returns: boolean
+      }
+      ia_retomar_conversas_no_horario: {
+        Args: { p_incluir_teste?: boolean; p_limite?: number }
+        Returns: Json
+      }
       ia_tirar_conversa: {
         Args: {
           p_aguardando: boolean
@@ -5610,12 +5719,20 @@ export type Database = {
         }
         Returns: Json
       }
+      registrar_requisito_da_producao: {
+        Args: { p_chave: string; p_clinic_id?: string; p_evidencia: string }
+        Returns: string
+      }
       remover_numero: {
         Args: {
           p_account_id: string
           p_clinic_id: string
           p_removido_por?: string
         }
+        Returns: Json
+      }
+      requisitos_da_producao: {
+        Args: { p_clinic_id: string }
         Returns: Json
       }
       reservar_gasto_da_ia: {
@@ -5664,6 +5781,10 @@ export type Database = {
           p_semana_passada_ate: string
           p_semana_passada_de: string
         }
+        Returns: Json
+      }
+      revogar_requisito_da_producao: {
+        Args: { p_id: string; p_motivo: string }
         Returns: Json
       }
       salvar_pacote: {

@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //   - a guarda no servidor: sem sessao ou sem super admin, nada chega ao
 //     banco (esconder a tela nao protege nada);
 //   - o Zod estrito de cada entrada, com o motivo de 3 a 300 letras e as
-//     faixas do teto; a producao do agente recusada antes do banco;
+//     faixas do teto; a producao do agente (onda 2) com o motivo
+//     obrigatorio, e as chaves pendentes do banco em nomes;
+//   - onda 2: registrar e revogar os requisitos da producao (o termo so
+//     para a clinica; os outros para todas) e o interruptor geral, que saiu
+//     da aba da clinica e nao depende da clinica ativa;
 //   - cada acao vira a RPC do contrato, com a sessao e os parametros por
 //     nome; a trilha e da RPC (a acao nao grava audit_log);
 //   - o erro do banco vira texto de recepcao; o log leva so a clinica, o
@@ -72,8 +76,11 @@ vi.mock("@/lib/log", () => ({
 
 import {
   definirAgenteDaClinicaAction,
+  definirInterruptorGeralAction,
   definirTetoDaIaAction,
   reativarClinicaAction,
+  registrarRequisitoDaProducaoAction,
+  revogarRequisitoDaProducaoAction,
   suspenderClinicaAction,
 } from "@/app/(app)/painel-geral/actions";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
@@ -89,6 +96,12 @@ beforeEach(() => {
 });
 
 const MOTIVO = "Pagamento atrasado há 30 dias";
+const REGISTRO = "e1111111-1111-4111-8111-111111111111";
+/** O que toda acao que gravou revalida: o painel e a Tela 6 (onda 2). */
+const REVALIDADOS_DO_PAINEL: [string, string | undefined][] = [
+  ["/painel-geral", "layout"],
+  ["/agente", undefined],
+];
 
 const validas = [
   () => suspenderClinicaAction({ clinicId: CLINICA, motivo: MOTIVO }),
@@ -100,6 +113,19 @@ const validas = [
       tetoDiarioCentavos: 500,
       respostasPorConversaHora: 20,
     }),
+  () =>
+    registrarRequisitoDaProducaoAction({
+      clinicId: CLINICA,
+      chave: "rodada_cfm",
+      evidencia: "Rodada de 21/10",
+    }),
+  () =>
+    revogarRequisitoDaProducaoAction({
+      clinicId: CLINICA,
+      id: REGISTRO,
+      motivo: MOTIVO,
+    }),
+  () => definirInterruptorGeralAction({ ligado: true }),
 ] as const;
 
 describe("guarda no servidor", () => {
@@ -149,6 +175,27 @@ describe("entradas estritas", () => {
           tetoDiarioCentavos: "500",
           respostasPorConversaHora: 20,
         }),
+      // so as chaves da equipe Conduzza se registram
+      () =>
+        registrarRequisitoDaProducaoAction({
+          clinicId: CLINICA,
+          chave: "versao_publicada",
+          evidencia: "Rodada de 21/10",
+        }),
+      () =>
+        registrarRequisitoDaProducaoAction({
+          clinicId: "x",
+          chave: "rodada_cfm",
+          evidencia: "Rodada de 21/10",
+        }),
+      () =>
+        revogarRequisitoDaProducaoAction({
+          clinicId: CLINICA,
+          id: "x",
+          motivo: MOTIVO,
+        }),
+      () => definirInterruptorGeralAction({ ligado: "sim" }),
+      () => definirInterruptorGeralAction({ ligado: true, clinicId: CLINICA }),
     ];
     for (const acao of invalidas) {
       expect(await acao()).toEqual({
@@ -190,14 +237,33 @@ describe("entradas estritas", () => {
     expect(registro.rpcs).toEqual([]);
   });
 
-  it("produção do agente: recusada antes do banco (chega na onda 2)", async () => {
+  it("produção do agente sem motivo (ou curto): o texto do campo, sem banco (onda 2)", async () => {
     expect(
       await definirAgenteDaClinicaAction({
         clinicId: CLINICA,
         estado: "producao",
-        motivo: "liberar",
       }),
-    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.producaoRecusada });
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.motivoCurto });
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estado: "producao",
+        motivo: " ok ",
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.motivoCurto });
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("evidência curta ou longa: o texto do campo, sem banco", async () => {
+    for (const evidencia of ["ab", "x".repeat(501)]) {
+      expect(
+        await registrarRequisitoDaProducaoAction({
+          clinicId: CLINICA,
+          chave: "rodada_cfm",
+          evidencia,
+        }),
+      ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.evidenciaInvalida });
+    }
     expect(registro.rpcs).toEqual([]);
   });
 });
@@ -216,7 +282,7 @@ describe("as RPCs do contrato", () => {
         args: { p_clinic_id: CLINICA, p_motivo: MOTIVO },
       },
     ]);
-    expect(registro.revalidados).toEqual([["/painel-geral", "layout"]]);
+    expect(registro.revalidados).toEqual(REVALIDADOS_DO_PAINEL);
     // A trilha e da RPC: a acao nao escreve em tabela nenhuma.
     expect(registro.tabelas).toEqual([]);
   });
@@ -274,8 +340,120 @@ describe("as RPCs do contrato", () => {
     expect(
       registro.rpcs.every((r) => r.nome === "definir_agente_da_clinica"),
     ).toBe(true);
-    // A aba Agente de IA de Configuracoes aparece e some com o estado.
+    // O aviso de onde o assistente mora (Configuracoes) e a Tela 6.
     expect(registro.revalidados).toContainEqual(["/configuracoes", undefined]);
+    expect(registro.revalidados).toContainEqual(["/agente", undefined]);
+  });
+
+  it("produção (onda 2): definir_agente_da_clinica com o motivo, sem as pontas", async () => {
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estado: "producao",
+        motivo: "  Requisitos conferidos com o dono  ",
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_agente_da_clinica",
+        args: {
+          p_clinic_id: CLINICA,
+          p_estado: "producao",
+          p_motivo: "Requisitos conferidos com o dono",
+        },
+      },
+    ]);
+  });
+
+  it("registrar: o termo vale só para a clínica; os outros, para todas (p_clinic_id nulo)", async () => {
+    expect(
+      await registrarRequisitoDaProducaoAction({
+        clinicId: CLINICA,
+        chave: "termo_da_clinica",
+        evidencia: "  Termo assinado em 21/10, pasta da clínica  ",
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      await registrarRequisitoDaProducaoAction({
+        clinicId: CLINICA,
+        chave: "contrato_openai",
+        evidencia: "DPA assinado, pasta do contrato",
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "registrar_requisito_da_producao",
+        args: {
+          p_chave: "termo_da_clinica",
+          p_clinic_id: CLINICA,
+          p_evidencia: "Termo assinado em 21/10, pasta da clínica",
+        },
+      },
+      {
+        nome: "registrar_requisito_da_producao",
+        args: {
+          p_chave: "contrato_openai",
+          p_clinic_id: null,
+          p_evidencia: "DPA assinado, pasta do contrato",
+        },
+      },
+    ]);
+    expect(registro.tabelas).toEqual([]);
+  });
+
+  it("revogar: revogar_requisito_da_producao com o id e o motivo", async () => {
+    expect(
+      await revogarRequisitoDaProducaoAction({
+        clinicId: CLINICA,
+        id: REGISTRO,
+        motivo: MOTIVO,
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "revogar_requisito_da_producao",
+        args: { p_id: REGISTRO, p_motivo: MOTIVO },
+      },
+    ]);
+    expect(registro.revalidados).toEqual(REVALIDADOS_DO_PAINEL);
+  });
+
+  it("interruptor geral (onda 2, P8): definir_interruptor_da_ia, sem depender da clínica ativa", async () => {
+    // a sessao do duble nem tem clinica ativa
+    expect(await definirInterruptorGeralAction({ ligado: false })).toEqual({
+      ok: true,
+    });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_interruptor_da_ia",
+        args: { p_ligado: false, p_motivo: "Painel geral" },
+      },
+    ]);
+    expect(registro.revalidados).toEqual(REVALIDADOS_DO_PAINEL);
+  });
+
+  it("interruptor geral: 42501 é o texto da equipe Conduzza; outro erro, o genérico, com o log só do código", async () => {
+    registro.respostas.set("definir_interruptor_da_ia", {
+      data: null,
+      error: { code: "42501" },
+    });
+    expect(await definirInterruptorGeralAction({ ligado: true })).toEqual({
+      ok: false,
+      error: TEXTOS_DO_PAINEL.soEquipeConduzza,
+    });
+    registro.respostas.set("definir_interruptor_da_ia", {
+      data: null,
+      error: { code: "XX000" },
+    });
+    expect(await definirInterruptorGeralAction({ ligado: true })).toEqual({
+      ok: false,
+      error: TEXTOS_DO_PAINEL.interruptorNaoAlterou,
+    });
+    expect(registro.logs.at(-1)).toEqual([
+      "ia_interruptor_nao_alterado",
+      { kind: "ligar", error_code: "XX000" },
+    ]);
+    expect(registro.revalidados).toEqual([]);
   });
 
   it("teto: definir_teto_da_ia em centavos e respostas por hora", async () => {
@@ -419,6 +597,74 @@ describe("erros do banco em texto de recepção", () => {
         { code: "XX000", message: "constructor" },
         TEXTOS_DO_PAINEL.naoSuspendeu,
       ],
+      // Onda 2: a producao com requisito faltando (as chaves no hint)
+      [
+        validas[2],
+        "definir_agente_da_clinica",
+        { code: "P0001", message: "requisitos_pendentes" },
+        TEXTOS_DO_PAINEL.requisitosPendentesSemLista,
+      ],
+      [
+        validas[4],
+        "registrar_requisito_da_producao",
+        { code: "22023", message: "evidencia_invalida" },
+        TEXTOS_DO_PAINEL.evidenciaInvalida,
+      ],
+      [
+        validas[4],
+        "registrar_requisito_da_producao",
+        { code: "42501" },
+        TEXTOS_DO_PAINEL.soEquipeConduzza,
+      ],
+      [
+        validas[4],
+        "registrar_requisito_da_producao",
+        { code: "XX000" },
+        TEXTOS_DO_PAINEL.naoRegistrou,
+      ],
+      [
+        validas[5],
+        "revogar_requisito_da_producao",
+        { code: "P0001", message: "requisito_ja_revogado" },
+        TEXTOS_DO_PAINEL.requisitoJaRevogado,
+      ],
+      [
+        validas[5],
+        "revogar_requisito_da_producao",
+        { code: "XX000" },
+        TEXTOS_DO_PAINEL.naoRevogou,
+      ],
+      [
+        validas[4],
+        "registrar_requisito_da_producao",
+        { code: "22023", message: "chave_invalida" },
+        TEXTOS_DO_PAINEL.dadosInvalidos,
+      ],
+      [
+        validas[4],
+        "registrar_requisito_da_producao",
+        { code: "22023", message: "requisito_por_clinica" },
+        TEXTOS_DO_PAINEL.dadosInvalidos,
+      ],
+      [
+        validas[4],
+        "registrar_requisito_da_producao",
+        { code: "P0002", message: "Clínica não encontrada." },
+        TEXTOS_DO_PAINEL.clinicaNaoEncontrada,
+      ],
+      // Revogar: o P0002 e o registro que sumiu, nao a clinica.
+      [
+        validas[5],
+        "revogar_requisito_da_producao",
+        { code: "P0002", message: "Requisito não encontrado." },
+        TEXTOS_DO_PAINEL.requisitoNaoEncontrado,
+      ],
+      [
+        validas[5],
+        "revogar_requisito_da_producao",
+        { code: "22023", message: "motivo_invalido" },
+        TEXTOS_DO_PAINEL.motivoInvalido,
+      ],
     ];
     for (const [acao, rpc, erro, texto] of casos) {
       registro.respostas = new Map([[rpc, { data: null, error: erro }]]);
@@ -445,5 +691,30 @@ describe("erros do banco em texto de recepção", () => {
       ],
     ]);
     expect(JSON.stringify(registro.logs)).not.toContain(MOTIVO);
+  });
+});
+
+describe("onda 2: requisitos pendentes da produção em nomes", () => {
+  it("o hint do banco vira a lista do que falta", async () => {
+    registro.respostas.set("definir_agente_da_clinica", {
+      data: null,
+      error: {
+        code: "P0001",
+        message: "requisitos_pendentes",
+        hint: "rodada_cfm,contrato_openai",
+      },
+    });
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estado: "producao",
+        motivo: "Requisitos conferidos",
+      }),
+    ).toEqual({
+      ok: false,
+      error: TEXTOS_DO_PAINEL.requisitosPendentes(
+        "Rodada paga de conferência do CFM; Contrato com a OpenAI para dado de saúde",
+      ),
+    });
   });
 });

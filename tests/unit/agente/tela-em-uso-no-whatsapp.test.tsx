@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { DadosDoPainel } from "@/components/agente/tipos";
-import type { ContextoDaIa } from "@/components/configuracoes/agente-de-ia";
+import type { ContextoDaIa } from "@/components/agente/whatsapp/agente-de-ia";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import { expedientePadrao } from "@/lib/domain/agente/config";
 import { iaLiberadaNoAmbiente, lerConfigDaIa } from "@/lib/ia/liberacao";
@@ -49,7 +49,7 @@ const { textoDaUltimaPublicada, TEXTOS_DO_AGENTE } =
 const { dicaDaIaNoInicio } =
   await import("@/components/inicio/indicadores-do-dia");
 const { versaoEmUsoNoWhatsapp } =
-  await import("@/components/configuracoes/agente-de-ia");
+  await import("@/components/agente/whatsapp/agente-de-ia");
 
 function texto(html: string): string {
   return html

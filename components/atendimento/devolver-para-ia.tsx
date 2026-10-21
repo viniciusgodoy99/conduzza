@@ -65,8 +65,10 @@ export const TEXTOS_DO_DEVOLVER = {
     fora_da_fase:
       "Chega com o agente de IA. Até lá, use Resolver quando terminar o atendimento.",
     pergunta_pendente: "Responda o paciente antes de devolver para a IA.",
+    // Onda 2, item 8: tudo do agente mora na tela Agente de IA (a aba
+    // WhatsApp tem o modo, os numeros e os telefones).
     assistente_desligado:
-      "O assistente está desligado ou sem versão publicada. Veja em Configurações, Agente de IA.",
+      "O assistente está desligado ou sem versão publicada. Veja em Agente de IA, aba WhatsApp.",
     nao_liberada:
       "Este telefone ou este número não está liberado para o assistente.",
     contato_de_paciente:
@@ -78,7 +80,7 @@ export const TEXTOS_DO_DEVOLVER = {
     // modo de horario que nao funciona no WhatsApp) so chega a quem
     // configura: os outros papeis recebem nao_disponivel.
     assistente_parado:
-      "O assistente está parado agora. Veja em Configurações, Agente de IA.",
+      "O assistente está parado agora. Veja em Agente de IA, aba WhatsApp.",
     fora_do_horario: "Agora está fora do horário escolhido para o assistente.",
     numero_desconectado: "O número desta conversa está desconectado.",
     // Conferencia da revisao (N1 e N2): o executor passaria a conversa de
