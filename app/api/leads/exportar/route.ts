@@ -75,6 +75,13 @@ export async function POST(request: NextRequest) {
   if (!ativa) {
     return erro(409, MENSAGEM_EXPORTACAO_SEM_CLINICA);
   }
+  // O Implementador nao exporta (P18-6), e so a marca o separa do
+  // administrador. Sem conseguir ler a marca, o administrador recebe 503
+  // (tentar de novo) em vez de o arquivo sair na duvida: nada no banco
+  // trava a exportacao.
+  if (ativa.role === "admin" && context.marcaDeImplementadorIndisponivel) {
+    return erro(503, MENSAGEM_EXPORTACAO_ACESSO_INDISPONIVEL);
+  }
 
   // Corpo que nao e JSON (ou sem o Content-Type de JSON) fica indefinido: o
   // Zod recusa como filtros invalidos, mas so depois da guarda de papel, que
@@ -93,6 +100,7 @@ export async function POST(request: NextRequest) {
       userId: context.userId,
       clinicId: ativa.clinicId,
       role: ativa.role,
+      implementador: ativa.implementador === true,
       timezone: ativa.timezone,
     },
     clinicaDaTela: request.headers.get(CABECALHO_DA_CLINICA_DA_TELA),

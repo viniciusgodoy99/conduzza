@@ -81,6 +81,8 @@ export type SessaoDaExportacao = {
   userId: string;
   clinicId: string;
   role: Role;
+  /** administrador com a marca de Implementador: nao exporta (P18-6) */
+  implementador?: boolean;
   /** Fuso IANA da clinica ativa (regra 3.6). */
   timezone: string;
 };
@@ -296,7 +298,7 @@ export async function exportarLeads({
 }): Promise<ResultadoDaExportacao> {
   // Papel antes de tudo: quem nao exporta nao chega nem a validar filtro, e
   // nada e lido do banco.
-  if (!podeExportarLeads(sessao.role)) {
+  if (!podeExportarLeads(sessao.role, sessao.implementador === true)) {
     return { tipo: "recusada", status: 403, mensagem: DICA_EXPORTAR_LEADS };
   }
   // A clinica ativa mudou em outra aba (ou a tela nao disse qual mostra): o

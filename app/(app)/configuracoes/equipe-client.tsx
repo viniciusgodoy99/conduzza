@@ -10,6 +10,11 @@ import {
   opcoesDeProfissional,
   type ProfissionalDaAgenda,
 } from "@/components/configuracoes/lista-equipe";
+import {
+  AVISO_DO_IMPLEMENTADOR,
+  papelSoDoAdminPleno,
+  rotuloDaOpcao,
+} from "@/components/configuracoes/papel-na-equipe";
 import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
@@ -38,7 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { ROLE_OPTIONS } from "@/lib/domain/permissions";
+import { OPCOES_DE_PAPEL } from "@/lib/domain/permissions";
 
 import {
   alternarCodigoAction,
@@ -57,19 +62,24 @@ export type Pendente = {
  * Pedidos de entrada pelo codigo da clinica, no topo da aba de equipe. Cada
  * linha escolhe o papel e, para Profissional, o profissional da agenda que a
  * pessoa vai ser (achados 1, 31 e 120). Recusar apaga o pedido, entao pede
- * confirmacao (achados 121 e 127).
+ * confirmacao (achados 121 e 127). Liberar como Implementador (onda 5) so o
+ * administrador pleno, e a linha mostra o aviso de LGPD do convite: a
+ * pessoa passa a ver os dados dos pacientes.
  */
 export function PendentesList({
   pendentes,
   podeGerenciar,
-  ehAdmin,
+  ehAdminPleno,
   dica,
   profissionais,
 }: {
   pendentes: Pendente[];
   podeGerenciar: boolean;
-  /** gestor libera colega, mas nao consegue liberar ninguem como administrador */
-  ehAdmin: boolean;
+  /**
+   * administrador sem a marca de Implementador: o gestor e o Implementador
+   * liberam colega, mas nao como administrador nem como Implementador
+   */
+  ehAdminPleno: boolean;
   dica: string;
   /** nulo: a leitura dos profissionais falhou */
   profissionais: ProfissionalDaAgenda[] | null;
@@ -154,17 +164,16 @@ export function PendentesList({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ROLE_OPTIONS.map((opcao) => {
-                  const soAdmin = opcao.value === "admin" && !ehAdmin;
+                {OPCOES_DE_PAPEL.map((opcao) => {
+                  const travada =
+                    papelSoDoAdminPleno(opcao.value) && !ehAdminPleno;
                   return (
                     <SelectItem
                       key={opcao.value}
                       value={opcao.value}
-                      disabled={soAdmin}
+                      disabled={travada}
                     >
-                      {soAdmin
-                        ? `${opcao.label} (só um administrador libera)`
-                        : opcao.label}
+                      {rotuloDaOpcao(opcao.value, travada, "liberar")}
                     </SelectItem>
                   );
                 })}
@@ -263,6 +272,11 @@ export function PendentesList({
                   </>
                 )}
               </span>
+              {papel === "implementador" ? (
+                <Aviso tom="warning" role="note" className="basis-full">
+                  {AVISO_DO_IMPLEMENTADOR}
+                </Aviso>
+              ) : null}
             </li>
           );
         })}

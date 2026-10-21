@@ -4,14 +4,15 @@ import {
 } from "@/components/shared/loading-skeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
-// Esqueleto na forma da tela de Configuracoes (cabecalho com eyebrow, as oito
+// Esqueleto na forma da tela de Configuracoes (cabecalho com eyebrow, as nove
 // abas sublinhadas e os cartoes da aba de equipe: usuarios, convite, codigo
 // e a tabela de papeis), nunca giratorio no meio da tela.
 
 // Uma barra por aba, na ordem e no tamanho aproximado do rotulo (com o
 // contador, onde a aba tem um) das ABAS de configuracoes-client.tsx. Aba nova
 // la pede barra nova aqui: o teste carregando-configuracoes confere a conta.
-// (Automacoes de fluxo saiu em 20/10/2026: mora na tela Automacoes.)
+// (Automacoes de fluxo saiu em 20/10/2026: mora na tela Automacoes. Origem
+// dos leads entrou na onda 5, logo depois de Anuncios do Google.)
 const ABAS = [
   "w-40", // Equipe e permissões
   "w-16", // Clínica
@@ -21,6 +22,7 @@ const ABAS = [
   "w-36", // Mensagens padrão
   "w-32", // Anúncios da Meta
   "w-36", // Anúncios do Google
+  "w-36", // Origem dos leads
 ];
 
 function CabecalhoDeCartao({ largura }: { largura: string }) {

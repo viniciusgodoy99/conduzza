@@ -80,11 +80,27 @@ const TOKENS_REGEX = new RegExp(
  */
 export const MAX_CODIGOS_DE_CLIQUE = 3;
 
-/** Minusculas, sem acentos (NFD), espacos colapsados e trim. */
+// Marcas combinantes (\p{M}: os acentos que o NFD separa, os seletores de
+// variacao de emoji como U+FE0F) e caracteres de formatacao invisiveis
+// (\p{Cf}: largura zero U+200B a U+200D, U+2060, U+FEFF, U+180E, os
+// bidirecionais U+200E, U+200F, U+202A a U+202E e U+2066 a U+2069, o hifen
+// suave). Onda 5, item 17: o texto pronto de link de outra ferramenta chega
+// com centenas desses no meio (o codigo dela escondido), e sem tira-los a
+// mensagem pronta cadastrada nunca casaria. O mesmo padrao de
+// lib/domain/midia-recebida.ts (\p{Cc}\p{Cf}).
+const MARCAS_E_INVISIVEIS = /[\p{M}\p{Cf}]/gu;
+
+/**
+ * Minusculas, sem acentos (NFD), sem marcas combinantes nem caracteres
+ * invisiveis de formatacao, espacos colapsados e trim. Serve a atribuicao,
+ * ao termo-chave da jornada (lib/domain/jornada.ts) e a busca das mensagens
+ * padrao (lib/domain/respostas-rapidas.ts): os tres comparam texto do
+ * paciente com texto da clinica.
+ */
 export function normalizarTexto(texto: string): string {
   return texto
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(MARCAS_E_INVISIVEIS, "")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
@@ -229,6 +245,18 @@ function montarAtribuicao(
 }
 
 /**
+ * A regra que reconhece o corpo e por qual jeito, com a precedencia descrita
+ * no topo. E a decisao de atribuirOrigem, com a regra inteira: a tela
+ * "Origem dos leads" (onda 5) diz QUAL origem cadastrada reconheceria uma
+ * mensagem de teste. A ingestao continua usando atribuirOrigem, que devolve
+ * so os campos gravados no contato.
+ */
+export type Reconhecimento = {
+  regra: CampaignRule;
+  method: Exclude<SourceMethod, "clique_site">;
+};
+
+/**
  * `codigosDoClique`: codigos de clique do site que a ingestao tentou casar e
  * que nao gravaram origem (nao achado, vencido ou so vinculado). Mexem SO na
  * mensagem padrao, que passa a comparar tambem o corpo sem o sufixo deles.
@@ -239,6 +267,18 @@ export function atribuirOrigem(
   regras: readonly CampaignRule[],
   codigosDoClique: readonly string[] = [],
 ): Attribution | null {
+  const reconhecimento = reconhecerOrigem(corpo, regras, codigosDoClique);
+  return reconhecimento
+    ? montarAtribuicao(reconhecimento.regra, reconhecimento.method)
+    : null;
+}
+
+/** A decisao de atribuirOrigem com a regra que venceu (mesmos parametros). */
+export function reconhecerOrigem(
+  corpo: string | null,
+  regras: readonly CampaignRule[],
+  codigosDoClique: readonly string[] = [],
+): Reconhecimento | null {
   if (!corpo || regras.length === 0) {
     return null;
   }
@@ -248,7 +288,7 @@ export function atribuirOrigem(
   for (const token of extrairTokens(corpo)) {
     for (const regra of regras) {
       if (regra.token && regra.token.toUpperCase() === token) {
-        return montarAtribuicao(regra, "link_token");
+        return { regra, method: "link_token" };
       }
     }
   }
@@ -274,7 +314,7 @@ export function atribuirOrigem(
       padrao !== "" &&
       (padrao === corpoNormalizado || padrao === corpoSemCodigos)
     ) {
-      return montarAtribuicao(regra, "mensagem_padrao");
+      return { regra, method: "mensagem_padrao" };
     }
   }
 
@@ -295,7 +335,7 @@ export function atribuirOrigem(
     }
   }
   if (vencedora) {
-    return montarAtribuicao(vencedora, "palavra_chave");
+    return { regra: vencedora, method: "palavra_chave" };
   }
 
   return null;

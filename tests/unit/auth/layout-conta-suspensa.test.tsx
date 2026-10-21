@@ -63,6 +63,7 @@ function vinculo(
     slug: "",
     timezone: "America/Fortaleza",
     role: "admin",
+    implementador: false,
     status,
     productName: "Conduzza Clínicas",
     primaryColor: "#B2E54F",
@@ -84,6 +85,7 @@ function sessao(
     clinicaSuspensa: suspensa,
     isProductAdmin: false,
     vinculoIndisponivel: false,
+    marcaDeImplementadorIndisponivel: false,
     ...campos,
   };
 }

@@ -1,9 +1,15 @@
 "use client";
 
 import { CircleCheck, OctagonAlert } from "lucide-react";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
 import { inviteMemberAction, type ActionState } from "@/app/(auth)/actions";
+import {
+  AVISO_DO_IMPLEMENTADOR,
+  papelSoDoAdminPleno,
+  rotuloDaOpcao,
+} from "@/components/configuracoes/papel-na-equipe";
+import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ROLE_OPTIONS } from "@/lib/domain/permissions";
+import { OPCOES_DE_PAPEL, type PapelNaTela } from "@/lib/domain/permissions";
 
 const initialState: ActionState = {};
 
@@ -24,20 +30,29 @@ const initialState: ActionState = {};
 // convite de conta nova (achados L17/L20): a tela nao confirma a quem convida
 // que o e-mail tem cadastro. O gestor convida, mas nunca como administrador:
 // a opcao fica visivel e desabilitada, como na liberacao de pedidos.
+//
+// Implementador (onda 5, item 18): so o administrador pleno convida (o
+// gestor e o proprio Implementador veem a opcao desabilitada, com o porque),
+// e escolher o papel mostra o aviso fixo de LGPD: a clinica decide quem ve
+// os dados dos pacientes.
 export function InviteForm({
   canInvite,
   hint,
-  ehAdmin,
+  ehAdminPleno,
 }: {
   canInvite: boolean;
   hint: string | null;
-  /** so o administrador convida outro administrador */
-  ehAdmin: boolean;
+  /**
+   * administrador sem a marca de Implementador: so ele convida
+   * administrador e Implementador
+   */
+  ehAdminPleno: boolean;
 }) {
   const [state, formAction, pending] = useActionState(
     inviteMemberAction,
     initialState,
   );
+  const [papel, setPapel] = useState<PapelNaTela>("recepcao");
 
   const submit = (
     <Button type="submit" disabled={!canInvite || pending}>
@@ -61,22 +76,26 @@ export function InviteForm({
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="invite-role">Papel</Label>
-          <Select name="role" defaultValue="recepcao" disabled={!canInvite}>
+          <Select
+            name="role"
+            value={papel}
+            onValueChange={(valor) => setPapel(valor as PapelNaTela)}
+            disabled={!canInvite}
+          >
             <SelectTrigger id="invite-role" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ROLE_OPTIONS.map((option) => {
-                const soAdmin = option.value === "admin" && !ehAdmin;
+              {OPCOES_DE_PAPEL.map((option) => {
+                const travada =
+                  papelSoDoAdminPleno(option.value) && !ehAdminPleno;
                 return (
                   <SelectItem
                     key={option.value}
                     value={option.value}
-                    disabled={soAdmin}
+                    disabled={travada}
                   >
-                    {soAdmin
-                      ? `${option.label} (só um administrador convida)`
-                      : option.label}
+                    {rotuloDaOpcao(option.value, travada, "convidar")}
                   </SelectItem>
                 );
               })}
@@ -91,6 +110,11 @@ export function InviteForm({
           )}
         </div>
       </div>
+      {papel === "implementador" ? (
+        <Aviso tom="warning" role="note">
+          {AVISO_DO_IMPLEMENTADOR}
+        </Aviso>
+      ) : null}
       {state.error ? (
         <p
           role="alert"

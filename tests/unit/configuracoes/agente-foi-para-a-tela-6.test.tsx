@@ -131,7 +131,7 @@ describe("a fileira de Configurações sem a aba do agente", () => {
     for (const comAgente of [true, false, undefined]) {
       const rotulos = abas(tela(undefined, comAgente));
       expect(rotulos).not.toContain("Agente de IA");
-      expect(rotulos.at(-1)).toBe("Anúncios do Google");
+      expect(rotulos.at(-1)).toBe("Origem dos leads");
     }
   });
 

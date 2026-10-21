@@ -132,6 +132,7 @@ function contexto(role: Role): SessionContext {
       slug: "teste",
       timezone: "America/Fortaleza",
       role,
+      implementador: false,
       status: "ativo",
       productName: "Conduzza Clínicas",
       primaryColor: "#B2E54F",
@@ -140,6 +141,7 @@ function contexto(role: Role): SessionContext {
     clinicaSuspensa: null,
     isProductAdmin: false,
     vinculoIndisponivel: false,
+    marcaDeImplementadorIndisponivel: false,
   };
 }
 

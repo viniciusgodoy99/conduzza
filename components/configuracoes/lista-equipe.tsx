@@ -18,6 +18,12 @@ import {
   textoDasAgendadasDaPessoa,
 } from "@/components/atendimento/agendadas/contagens";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
+import {
+  barrarMexidaEmAdmin,
+  papelSoDoAdminPleno,
+  rotuloDaOpcao,
+  unicoAdminPlenoId,
+} from "@/components/configuracoes/papel-na-equipe";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -44,7 +50,11 @@ import {
   ACCESS_LEVEL_STATUS,
   type StatusDefinition,
 } from "@/lib/design/status";
-import { ROLE_DESCRIPTIONS, ROLE_OPTIONS } from "@/lib/domain/permissions";
+import {
+  DESCRICAO_DO_PAPEL,
+  OPCOES_DE_PAPEL,
+  papelNaTela,
+} from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -56,6 +66,13 @@ import { cn } from "@/lib/utils";
 // Tres travas, iguais as do banco, aqui so para explicar antes de tentar:
 // ninguem mexe na propria linha, gestor nao mexe em administrador, e o unico
 // administrador ativo nao pode ser rebaixado nem desativado.
+//
+// Implementador (onda 5, item 18): no banco, administrador com a marca. A
+// linha mostra "Implementador"; ele fica como o gestor diante de
+// administrador e de outro Implementador (P18-2), nao conta como o
+// administrador que a clinica precisa ter (P18-3), e so o administrador
+// pleno escolhe Implementador no seletor (P18-4; para os outros, a opcao
+// aparece desabilitada com o porque).
 //
 // Mensagens agendadas (A5 do desenho final da mensagem agendada, 06/10/2026):
 // tirar o acesso ou trocar para Somente leitura de quem ASSINA mensagens
@@ -74,6 +91,8 @@ export type MembroEquipe = {
   nome: string;
   email: string;
   papel: Role;
+  /** administrador com a marca de Implementador (so vale com papel admin) */
+  implementador: boolean;
   /** false = acesso tirado, reversivel */
   ativo: boolean;
   /** cadastro de profissional da agenda (so vale para o papel Profissional) */
@@ -203,7 +222,7 @@ export function ListaEquipe({
   membros,
   meuUserId,
   podeGerenciar,
-  ehAdmin,
+  ehAdminPleno,
   dica,
   profissionais,
   clinicId,
@@ -211,7 +230,8 @@ export function ListaEquipe({
   membros: MembroEquipe[];
   meuUserId: string;
   podeGerenciar: boolean;
-  ehAdmin: boolean;
+  /** administrador sem a marca de Implementador: mexe em administrador */
+  ehAdminPleno: boolean;
   dica: string;
   /** nulo: a leitura dos profissionais falhou */
   profissionais: ProfissionalDaAgenda[] | null;
@@ -347,11 +367,9 @@ export function ListaEquipe({
     });
   };
 
-  const adminsAtivos = membros.filter(
-    (membro) => membro.ativo && membro.papel === "admin",
-  );
-  const unicoAdminId =
-    adminsAtivos.length === 1 ? (adminsAtivos[0]?.userId ?? null) : null;
+  // O Implementador nao conta (P18-3): a clinica sempre precisa de um
+  // administrador pleno ativo.
+  const unicoAdminId = unicoAdminPlenoId(membros);
 
   // Devolve o motivo de a acao estar travada, ou null quando ela esta liberada.
   const motivo = (
@@ -366,8 +384,12 @@ export function ListaEquipe({
         ? "Você não altera o próprio papel"
         : "Você não tira o próprio acesso";
     }
-    if (!ehAdmin && membro.papel === "admin") {
-      return "Somente um administrador altera o acesso de outro administrador";
+    const barrado = barrarMexidaEmAdmin(
+      ehAdminPleno,
+      papelNaTela(membro.papel, membro.implementador),
+    );
+    if (barrado) {
+      return barrado.replace(/\.$/, "");
     }
     if (membro.userId === unicoAdminId) {
       return "A clínica precisa de pelo menos um administrador ativo";
@@ -448,12 +470,13 @@ export function ListaEquipe({
           const motivoPapel = motivo(membro, "papel");
           const motivoAcesso = motivo(membro, "acesso");
           const ehProfissional = membro.papel === "profissional";
+          const papelAtual = papelNaTela(membro.papel, membro.implementador);
 
           const seletor = (
             <Select
-              value={membro.papel}
+              value={papelAtual}
               onValueChange={(valor) =>
-                valor === "leitura" && membro.papel !== "leitura" && clinicId
+                valor === "leitura" && papelAtual !== "leitura" && clinicId
                   ? pedirLeitura(membro)
                   : mudarPapel(membro, valor)
               }
@@ -466,24 +489,31 @@ export function ListaEquipe({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ROLE_OPTIONS.map((opcao) => {
-                  // Mesma trava da liberacao e do convite: o gestor ve a
-                  // opcao, desabilitada, em vez de ser recusado depois. Na
-                  // linha de quem ja e administrador o seletor inteiro fica
-                  // travado, e o rotulo atual continua limpo.
-                  const soAdmin =
-                    opcao.value === "admin" &&
-                    !ehAdmin &&
-                    membro.papel !== "admin";
+                {OPCOES_DE_PAPEL.map((opcao) => {
+                  // Mesma trava da liberacao e do convite: quem nao e
+                  // administrador pleno (o gestor e o Implementador) ve as
+                  // opcoes Administrador e Implementador, desabilitadas, em
+                  // vez de ser recusado depois. Na linha de quem ja e
+                  // administrador ou Implementador o seletor inteiro fica
+                  // travado, e o rotulo atual continua limpo. Quem esta sem
+                  // acesso volta pelo Reativar antes de virar Implementador.
+                  const travada =
+                    papelSoDoAdminPleno(opcao.value) &&
+                    !ehAdminPleno &&
+                    papelAtual !== opcao.value;
+                  const semAcesso =
+                    opcao.value === "implementador" &&
+                    !membro.ativo &&
+                    papelAtual !== "implementador";
                   return (
                     <SelectItem
                       key={opcao.value}
                       value={opcao.value}
-                      disabled={soAdmin}
+                      disabled={travada || semAcesso}
                     >
-                      {soAdmin
-                        ? `${opcao.label} (só um administrador promove)`
-                        : opcao.label}
+                      {semAcesso && !travada
+                        ? `${opcao.label} (reative o acesso antes)`
+                        : rotuloDaOpcao(opcao.value, travada, "trocar")}
                     </SelectItem>
                   );
                 })}
@@ -667,7 +697,7 @@ export function ListaEquipe({
             <DialogTitle>
               Trocar {paraLeitura?.nome ?? "esta pessoa"} para Somente leitura?
             </DialogTitle>
-            <DialogDescription>{ROLE_DESCRIPTIONS.leitura}</DialogDescription>
+            <DialogDescription>{DESCRICAO_DO_PAPEL.leitura}</DialogDescription>
           </DialogHeader>
           <AgendadasDaPessoa
             contagem={agendadas}

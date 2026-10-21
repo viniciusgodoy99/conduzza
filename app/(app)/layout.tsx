@@ -23,13 +23,14 @@ import { MotorStatus } from "@/components/shell/motor-status";
 import { SairDaConta } from "@/components/shell/sair-da-conta";
 import { WhatsappStatus } from "@/components/shell/whatsapp-status";
 import { Button } from "@/components/ui/button";
-import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
+import { getSessionContext } from "@/lib/auth/active-clinic";
 import {
   COLUNAS_DA_FAIXA,
   numerosParaContar,
   type NumeroDaFaixa,
 } from "@/lib/domain/conexao-dos-numeros";
 import type { SaudeDoMotor } from "@/lib/domain/motor";
+import { papelNaTela, ROTULO_DO_PAPEL } from "@/lib/domain/permissions";
 import { COOKIE_DO_RAIL, preferenciaDoRail } from "@/lib/navigation";
 import { contarMensagensEsperando } from "@/lib/queries/mensagens-esperando";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -311,7 +312,10 @@ export default async function AppLayout({
       viewer={{
         name: context.userName,
         role: active.role,
-        roleLabel: ROLE_LABELS[active.role],
+        // "Implementador" abaixo do nome (onda 5): o papel continua admin
+        // para o menu e as telas; so o rotulo muda.
+        roleLabel:
+          ROTULO_DO_PAPEL[papelNaTela(active.role, active.implementador)],
         clinicName: active.clinicName,
         productName: active.productName,
       }}

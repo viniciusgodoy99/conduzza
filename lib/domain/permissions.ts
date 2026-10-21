@@ -102,6 +102,66 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   leitura: "Acompanha os números e as telas de operação sem alterar nada.",
 };
 
+// ---------------------------------------------------------------------------
+// Implementador (onda 5, item 18; caminho (b-i) escolhido pelo dono em
+// 21/10/2026): o assistente tecnico que configura a clinica. No banco ele e
+// um vinculo 'admin' com uma linha em membro_implementador: as policies e as
+// funcoes de acesso nao mudam, e ele ve e faz tudo como o administrador
+// (resposta D do dono: "Tudo"). Role NAO ganha valor novo e a
+// PERMISSION_MATRIX nao muda (ele usa a linha do admin). A marca so muda o
+// rotulo e liga as travas que o dono escolheu: nao mexe em administrador nem
+// em outro Implementador (P18-2), nao conta como o administrador que a
+// clinica precisa ter (P18-3), so o administrador da clinica faz alguem
+// Implementador (P18-4), nao exporta a planilha de leads (P18-6) e nao
+// recebe e-mail de administrador (P18-7; hoje o sistema nao manda nenhum).
+
+/** O papel como a tela o mostra e as telas de equipe o escolhem. */
+export type PapelNaTela = Role | "implementador";
+
+/** Ordem do seletor: Implementador logo depois de Administrador. */
+export const PAPEIS_NA_TELA: readonly PapelNaTela[] = [
+  "admin",
+  "implementador",
+  "gestor",
+  "recepcao",
+  "profissional",
+  "leitura",
+] as const;
+
+export const ROTULO_DO_PAPEL: Record<PapelNaTela, string> = {
+  ...ROLE_LABELS,
+  implementador: "Implementador",
+};
+
+export const DESCRICAO_DO_PAPEL: Record<PapelNaTela, string> = {
+  ...ROLE_DESCRIPTIONS,
+  implementador:
+    "Assistente técnico que configura a clínica. Vê e faz tudo o que o administrador faz, menos mexer em administradores e exportar os leads.",
+};
+
+/** As opcoes de papel da equipe: convite, liberacao e troca de papel. */
+export const OPCOES_DE_PAPEL: readonly { value: PapelNaTela; label: string }[] =
+  PAPEIS_NA_TELA.map((value) => ({ value, label: ROTULO_DO_PAPEL[value] }));
+
+/**
+ * O papel que a tela mostra. A marca so vale com o vinculo 'admin' (o
+ * gatilho do banco apaga a marca quando o papel sai de admin; aqui a regra
+ * repete, para um desencontro nunca virar rotulo errado).
+ */
+export function papelNaTela(role: Role, implementador: boolean): PapelNaTela {
+  return role === "admin" && implementador ? "implementador" : role;
+}
+
+/** Administrador sem a marca: o unico que mexe em administrador (P18-2). */
+export function ehAdminPleno(role: Role, implementador: boolean): boolean {
+  return role === "admin" && !implementador;
+}
+
+/** O papel do banco por tras do papel da tela (o Implementador e admin). */
+export function papelDoBanco(papel: PapelNaTela): Role {
+  return papel === "implementador" ? "admin" : papel;
+}
+
 // Copia da tabela da secao 5 do brief, com a divergencia registrada no topo
 // deste arquivo. Nao ajustar outra celula sem atualizar o brief.
 export const PERMISSION_MATRIX: Record<ModuleKey, Record<Role, Access>> = {

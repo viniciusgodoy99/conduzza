@@ -24,7 +24,11 @@ import {
   type SituacaoDoConsentimento,
   type ValoresDosFiltrosDeLeads,
 } from "@/lib/domain/leads-ui";
-import type { Role } from "@/lib/domain/permissions";
+import {
+  papelNaTela,
+  type PapelNaTela,
+  type Role,
+} from "@/lib/domain/permissions";
 import { formatarTelefone } from "@/lib/domain/telefone";
 
 // Exportacao dos leads da Tela 4 (pedido do dono em 20/10/2026: "conseguir
@@ -42,11 +46,22 @@ import { formatarTelefone } from "@/lib/domain/telefone";
 // Os rotulos sao os da tela (rotulos.ts e leads-ui.ts). Campo vazio fica
 // vazio (nunca travessao nem "Sem nome"): o arquivo e dado para planilha.
 
-/** Os papeis que exportam os leads (decisao do dono em 20/10/2026). */
-export const PAPEIS_QUE_EXPORTAM_LEADS: readonly Role[] = ["admin", "gestor"];
+/**
+ * Os papeis que exportam os leads (decisao do dono em 20/10/2026). O
+ * Implementador (onda 5) e administrador no banco, mas NAO exporta (P18-6
+ * do dono, 21/10/2026: ver tudo na tela nao precisa levar a base inteira
+ * para fora): a lista e de papeis da tela, e ele nao esta nela.
+ */
+export const PAPEIS_QUE_EXPORTAM_LEADS: readonly PapelNaTela[] = [
+  "admin",
+  "gestor",
+];
 
-export function podeExportarLeads(role: Role): boolean {
-  return PAPEIS_QUE_EXPORTAM_LEADS.includes(role);
+export function podeExportarLeads(
+  role: Role,
+  implementador = false,
+): boolean {
+  return PAPEIS_QUE_EXPORTAM_LEADS.includes(papelNaTela(role, implementador));
 }
 
 /** A dica do botao desabilitado e a resposta 403 da rota (texto do dono). */

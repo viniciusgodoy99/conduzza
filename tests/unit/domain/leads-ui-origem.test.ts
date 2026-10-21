@@ -87,6 +87,8 @@ describe("rotuloDoMetodo", () => {
       expect(rotulo).not.toContain("_");
     }
     expect(rotuloDoMetodo("link_token")).toBe("Link com código");
+    // P17-2 do dono (onda 5): era "Mensagem padrão do anúncio".
+    expect(rotuloDoMetodo("mensagem_padrao")).toBe("Mensagem pronta do link");
     expect(rotuloDoMetodo("manual")).toBe("Cadastro manual");
     expect(rotuloDoMetodo("importacao")).toBe("Importação de planilha");
   });

@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 
 import { pickClinicAction } from "@/app/(auth)/actions";
 import { SairDaConta } from "@/components/shell/sair-da-conta";
-import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
+import { getSessionContext } from "@/lib/auth/active-clinic";
+import { papelNaTela, ROTULO_DO_PAPEL } from "@/lib/domain/permissions";
 
 function initialsOf(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -60,7 +61,11 @@ export default async function SelecionarClinicaPage() {
                   {membership.clinicName}
                 </span>
                 <span className="text-xs text-text-secondary">
-                  {ROLE_LABELS[membership.role]}
+                  {
+                    ROTULO_DO_PAPEL[
+                      papelNaTela(membership.role, membership.implementador)
+                    ]
+                  }
                 </span>
               </span>
               <ChevronRight

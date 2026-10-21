@@ -84,6 +84,7 @@ function contexto(
       slug: "teste",
       timezone: "America/Fortaleza",
       role,
+      implementador: false,
       status: "ativo",
       productName: "Conduzza Clínicas",
       primaryColor: "#B2E54F",
@@ -92,6 +93,7 @@ function contexto(
     clinicaSuspensa: null,
     isProductAdmin: campos.isProductAdmin ?? false,
     vinculoIndisponivel: false,
+    marcaDeImplementadorIndisponivel: false,
   };
 }
 

@@ -81,8 +81,9 @@ export default async function LeadsPage() {
         "Seu perfil não pode editar leads e pacientes"
       }
       // Exportar e so de administrador e gestor (decisao do dono em
-      // 20/10/2026); a rota confere o papel de novo no servidor.
-      podeExportar={podeExportarLeads(active.role)}
+      // 20/10/2026), e o Implementador nao exporta (P18-6, onda 5); a rota
+      // confere o papel de novo no servidor.
+      podeExportar={podeExportarLeads(active.role, active.implementador)}
       // "Agendar" do drawer respeita a permissao do modulo DE DESTINO: sem
       // ela, a Agenda nao abre o modal do link (achados 6 e 22).
       podeAgendar={canEdit(active.role, "agenda")}
