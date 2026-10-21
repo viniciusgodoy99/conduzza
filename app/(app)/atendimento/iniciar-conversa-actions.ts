@@ -39,8 +39,8 @@ import { assumirConversaAction, enviarComoAtendente } from "./actions";
 //      em atendimento com outra pessoa, recusa e devolve a conversa, em vez
 //      de tirar o atendimento de um colega;
 //   5. a conversa fica com quem iniciou pelo MESMO caminho do botao Assumir
-//      (assumirConversaAction: evento na conversa, trilha e o lead novo
-//      andando para "Em contato");
+//      (assumirConversaAction: evento na conversa, trilha e o lead novo, ou
+//      que aguarda resposta da equipe, andando para "Em contato");
 //   6. o envio pelo MESMO caminho da resposta digitada (enviarComoAtendente:
 //      confere a autorizacao de novo, grava o custo e sai pelo numero da
 //      conversa);

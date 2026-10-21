@@ -225,7 +225,11 @@ export function AbaFluxo({
           <EmptyState
             icon={Workflow}
             title="Nenhuma automação de fluxo ainda"
-            description="Por exemplo: quem ficou 3 dias sem responder em Aguardando resposta vai para Perdido, ou quem entrou em Em contato ganha uma atividade de ligar."
+            // Desde a onda 3 (21/10/2026), em Aguardando resposta e o lead
+            // que espera a equipe (a IA passou a conversa): o exemplo antigo,
+            // "sem responder em Aguardando resposta vai para Perdido",
+            // perderia justamente quem espera a clinica.
+            description="Por exemplo: quem entrou em Aguardando resposta ganha uma atividade de responder, ou quem ficou 3 dias sem responder em Em contato vai para Perdido."
           >
             {comDica(
               <Button

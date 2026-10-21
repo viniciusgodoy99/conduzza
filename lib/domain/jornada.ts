@@ -32,8 +32,30 @@ import { normalizarTexto } from "@/lib/domain/attribution";
 // semeadura as cria, a chave e imutavel e etapa de sistema e indelevel (tudo
 // por gatilho no banco). Codigo pode referencia-las com seguranca; so as
 // etapas LIVRES variam por clinica.
+//
+// Onda 3 (21/10/2026, migration 20261023100000): Aguardando resposta e Em
+// contato tambem viram etapas de sistema, com os papeis 'aguardando' (o lead
+// espera a resposta da equipe; a passagem da IA poe aqui) e 'em_contato' (a
+// equipe esta com a conversa; Assumir poe aqui). O codigo acha as duas pelo
+// PAPEL, nunca pelo nome (a Salud Care renomeou a sua Em contato). E este
+// codigo vai ao ar ANTES da migration: tudo aqui funciona tambem com o banco
+// velho, em que as duas sao livres (sem papel) e podem ate faltar.
 
-export type PapelDeEtapa = "entrada" | "agendou" | "compareceu" | "perdido";
+/**
+ * Os papeis que o check funnel_stage_def_papel_check aceita, na ordem da
+ * jornada semeada. Fonte unica para quem valida papel vindo do banco (o
+ * Funil de leads do Inicio recusa papel fora desta lista).
+ */
+export const PAPEIS_DE_ETAPA = [
+  "entrada",
+  "aguardando",
+  "em_contato",
+  "agendou",
+  "compareceu",
+  "perdido",
+] as const;
+
+export type PapelDeEtapa = (typeof PAPEIS_DE_ETAPA)[number];
 
 /**
  * Quem escreve o termo-chave que anda o contato para a etapa (pedido do dono
@@ -124,39 +146,295 @@ export function porChave(
   return new Map(jornada.map((etapa) => [etapa.chave, etapa]));
 }
 
+/** O que a regra do Assumir precisa saber de cada etapa. */
+export type EtapaParaAssumir = Pick<
+  EtapaDaJornada,
+  "chave" | "papel" | "posicao"
+>;
+
 /**
  * Assumir a conversa de um lead NOVO o move para "Em contato" (decisao do
- * dono em 19/09/2026): atender e o primeiro contato de verdade. Regras
- * defensivas, nesta ordem: so contato kind lead; so quando a etapa ATUAL tem
- * papel de entrada (quem ja avancou ou se perdeu nao volta por causa de um
- * clique em Assumir); e so se a chave em_contato ainda existir na jornada
- * (ela e etapa LIVRE, renomeavel e excluivel; a clinica que a excluiu nao
- * quer essa automacao). Devolve a chave de destino ou null para nao mover.
+ * dono em 19/09/2026): atender e o primeiro contato de verdade. Desde a onda
+ * 3 (21/10/2026) vale tambem para o lead que AGUARDA RESPOSTA da equipe (a
+ * IA passou a conversa) e para Iniciar conversa, Transferir para um colega e
+ * Reabrir (decisao D7), que chamam a mesma regra. Regras defensivas, nesta
+ * ordem:
+ * - so contato kind lead (paciente nao anda por clique de atendimento);
+ * - so quando a etapa ATUAL tem papel de entrada ou de aguardando (quem ja
+ *   avancou ou se perdeu nao volta por causa de um clique);
+ * - o destino e a etapa de papel em_contato; sem ela, a de CHAVE em_contato
+ *   ainda livre (o banco antes da migration 20261023100000, em que a etapa
+ *   nao tem papel; a clinica que a excluiu nao quer essa automacao);
+ * - so para FRENTE: a posicao do destino tem de ser maior que a da atual
+ *   (a ordem entre as etapas de sistema e fixa, mas o codigo nao aposta
+ *   nisso para nunca andar para tras).
+ * Devolve a chave de destino ou null para nao mover.
  */
 export function etapaAposAssumir(params: {
   kind: "lead" | "paciente";
-  etapaAtual: Pick<EtapaDaJornada, "chave" | "papel"> | null;
-  jornada: readonly Pick<EtapaDaJornada, "chave" | "papel">[];
+  etapaAtual: EtapaParaAssumir | null;
+  jornada: readonly EtapaParaAssumir[];
 }): string | null {
   if (params.kind !== "lead") {
     return null;
   }
-  if (!params.etapaAtual || params.etapaAtual.papel !== "entrada") {
+  const atual = params.etapaAtual;
+  if (!atual || (atual.papel !== "entrada" && atual.papel !== "aguardando")) {
     return null;
   }
-  const destino = params.jornada.find((etapa) => etapa.chave === "em_contato");
-  if (!destino || destino.chave === params.etapaAtual.chave) {
+  const destino =
+    params.jornada.find((etapa) => etapa.papel === "em_contato") ??
+    params.jornada.find(
+      (etapa) => etapa.chave === "em_contato" && etapa.papel === null,
+    );
+  if (
+    !destino ||
+    destino.chave === atual.chave ||
+    destino.posicao <= atual.posicao
+  ) {
     return null;
   }
   return destino.chave;
 }
 
-/** A etapa com um papel de sistema; as quatro existem em toda jornada. */
+/**
+ * A etapa com um papel de sistema. As quatro antigas existem em toda
+ * jornada; aguardando e em_contato so depois da migration 20261023100000
+ * (antes dela, null).
+ */
 export function etapaPorPapel(
   jornada: readonly EtapaDaJornada[],
   papel: PapelDeEtapa,
 ): EtapaDaJornada | null {
   return jornada.find((etapa) => etapa.papel === papel) ?? null;
+}
+
+/**
+ * Etapa de sistema = etapa com papel. Nunca sai da jornada (o gatilho
+ * proteger_jornada recusa, ate para o service role), entao a tela mostra o
+ * cadeado e nem oferece Excluir. Desde a onda 3 inclui Aguardando resposta
+ * e Em contato; com o banco de antes elas chegam sem papel e continuam
+ * livres.
+ */
+export function etapaDeSistema(etapa: Pick<EtapaDaJornada, "papel">): boolean {
+  return etapa.papel !== null;
+}
+
+/** "A", "A e B", "A, B e C": a lista como se fala. */
+export function listaEmPortugues(nomes: readonly string[]): string {
+  if (nomes.length <= 1) {
+    return nomes[0] ?? "";
+  }
+  return `${nomes.slice(0, -1).join(", ")} e ${nomes[nomes.length - 1]}`;
+}
+
+/** Os nomes que a clinica deu as etapas destes papeis, na ordem pedida. */
+function nomesDosPapeis(
+  jornada: readonly Pick<EtapaDaJornada, "nome" | "papel">[],
+  papeis: readonly PapelDeEtapa[],
+): string[] {
+  return papeis.flatMap((papel) => {
+    const etapa = jornada.find((candidata) => candidata.papel === papel);
+    return etapa ? [etapa.nome] : [];
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Ordem fixa das etapas de sistema (decisao D6 do dono, 21/10/2026).
+
+/**
+ * Os papeis cuja ordem entre si nao muda: o caminho do lead ate a consulta.
+ * Perdido fica de fora e vai para qualquer lugar, como as etapas livres. E
+ * a mesma lista da trava de reordenar_etapa_da_jornada (migration
+ * 20261023100000), que recusa a troca com o hint ordem_de_sistema.
+ */
+export const PAPEIS_EM_ORDEM_FIXA = [
+  "entrada",
+  "aguardando",
+  "em_contato",
+  "agendou",
+  "compareceu",
+] as const satisfies readonly PapelDeEtapa[];
+
+/**
+ * As etapas da cadeia de ordem fixa nesta jornada, na ordem dos papeis.
+ * Depois da migration 20261023100000 cada uma e achada pelo proprio papel.
+ * Antes dela (este codigo vai ao ar antes), Em contato ainda e livre e
+ * entra pela CHAVE, como o destino de etapaAposAssumir: a migration poe
+ * Aguardando resposta logo antes dela e preserva o resto da ordem, entao
+ * Novo, Em contato, Agendou e Compareceu precisam chegar la ja na ordem (a
+ * conferencia da migration recusa a cadeia invertida, que a D6 congelaria;
+ * achado da revisao de 21/10/2026). Aguardando resposta sem papel continua
+ * livre: onde quer que esteja, a migration a recoloca.
+ */
+function cadeiaDaJornada<T extends Pick<EtapaDaJornada, "chave" | "papel">>(
+  jornada: readonly T[],
+): T[] {
+  return PAPEIS_EM_ORDEM_FIXA.flatMap((papel) => {
+    const etapa =
+      jornada.find((candidata) => candidata.papel === papel) ??
+      (papel === "em_contato"
+        ? jornada.find(
+            (candidata) =>
+              candidata.papel === null && candidata.chave === "em_contato",
+          )
+        : undefined);
+    return etapa ? [etapa] : [];
+  });
+}
+
+/**
+ * A dica da seta que trocaria duas etapas de sistema, com os nomes que a
+ * clinica deu, na ordem fixa: "A ordem das etapas de sistema é fixa: Novo,
+ * Aguardando resposta, Em contato, Agendou e Compareceu." Tambem e o que a
+ * action devolve quando recusa a troca (ou o banco recusa). Com o banco de
+ * antes da migration, sai "Novo, Em contato, Agendou e Compareceu".
+ */
+export function dicaDaOrdemFixa(
+  jornada: readonly Pick<EtapaDaJornada, "chave" | "nome" | "papel">[],
+): string {
+  const nomes = cadeiaDaJornada(jornada).map((etapa) => etapa.nome);
+  return nomes.length > 0
+    ? `A ordem das etapas de sistema é fixa: ${listaEmPortugues(nomes)}.`
+    : "A ordem das etapas de sistema é fixa.";
+}
+
+export type TrocaDeOrdem =
+  | { permitida: true }
+  | {
+      permitida: false;
+      /** null: nao ha troca (ponta da jornada), nada a explicar. */
+      dica: string | null;
+    };
+
+/**
+ * A etapa pode trocar de lugar com a vizinha (Subir ou Descer)? Pura, para a
+ * tela desabilitar a seta com a dica antes de o banco recusar.
+ *
+ * jornada vem na ordem da tela (fetchJornada: posicao, chave, a mesma da
+ * RPC); a ordenacao aqui e so por posicao e estavel, entao o desempate de
+ * quem chamou e mantido. Nega sem dica na ponta e para chave desconhecida;
+ * nega COM a dica quando as duas etapas da troca sao da cadeia de ordem fixa
+ * (cadeiaDaJornada: com o banco de antes da migration, Em contato entra pela
+ * chave). As trocas sao sempre entre vizinhas, entao barrar so este caso
+ * basta para a cadeia Novo, Aguardando resposta, Em contato, Agendou e
+ * Compareceu nunca inverter, e etapa livre continua podendo passar por entre
+ * elas. A action de reordenar confere o mesmo no servidor antes da RPC.
+ */
+export function trocaDeOrdemPermitida(
+  jornada: readonly Pick<
+    EtapaDaJornada,
+    "chave" | "nome" | "papel" | "posicao"
+  >[],
+  chave: string,
+  direcao: "subir" | "descer",
+): TrocaDeOrdem {
+  const ordenada = [...jornada].sort((a, b) => a.posicao - b.posicao);
+  const indice = ordenada.findIndex((etapa) => etapa.chave === chave);
+  const etapa = indice >= 0 ? ordenada[indice] : undefined;
+  const vizinha =
+    indice >= 0 ? ordenada[indice + (direcao === "subir" ? -1 : 1)] : undefined;
+  if (!etapa || !vizinha) {
+    return { permitida: false, dica: null };
+  }
+  const cadeia = cadeiaDaJornada(jornada);
+  if (cadeia.includes(etapa) && cadeia.includes(vizinha)) {
+    return { permitida: false, dica: dicaDaOrdemFixa(jornada) };
+  }
+  return { permitida: true };
+}
+
+/**
+ * A recusa da RPC reordenar_etapa_da_jornada para a troca entre duas etapas
+ * de sistema (P0001 com o hint ordem_de_sistema), pelo hint ou, se ele nao
+ * chegar, pela mensagem.
+ */
+export function ehRecusaDaOrdemFixa(
+  erro: { message?: string | null; hint?: string | null } | null | undefined,
+): boolean {
+  if (!erro) {
+    return false;
+  }
+  return (
+    erro.hint === "ordem_de_sistema" ||
+    (erro.message ?? "").includes("A ordem das etapas de sistema não muda")
+  );
+}
+
+/**
+ * O rodape da tela Jornada, com os nomes da clinica. Diz quais sao as etapas
+ * de sistema e o que e fixo nelas. Com o banco antes da migration
+ * 20261023100000 a lista de sistema sai com as quatro de entao, sem mentir,
+ * e a da ordem fixa ja inclui Em contato (pela chave, como a seta).
+ */
+export function rodapeDaJornada(
+  jornada: readonly Pick<EtapaDaJornada, "chave" | "nome" | "papel">[],
+): string {
+  const deSistema = nomesDosPapeis(jornada, PAPEIS_DE_ETAPA);
+  const emOrdemFixa = cadeiaDaJornada(jornada).map((etapa) => etapa.nome);
+  const partes: string[] = [];
+  if (deSistema.length > 0) {
+    partes.push(
+      `As etapas de sistema (${listaEmPortugues(deSistema)}) podem mudar de nome e de lugar, nunca sair: são elas que movem o contato sozinho e que protegem o motivo de perda.`,
+    );
+  }
+  if (emOrdemFixa.length > 1) {
+    partes.push(
+      `A ordem entre ${listaEmPortugues(emOrdemFixa)} não muda; as outras etapas vão para qualquer lugar.`,
+    );
+  }
+  partes.push(
+    "Os eventos de conversão ainda não são enviados à Meta: esta tela define o que será enviado quando a conta de anúncios for conectada.",
+  );
+  return partes.join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Regua de follow-up por etapa (decisao D3 do dono, 21/10/2026).
+
+/**
+ * A etapa e a de Aguardando resposta? Pelo papel depois da migration
+ * 20261023100000; antes dela, pela CHAVE aguardando_resposta ainda sem papel
+ * (achado da revisao de 21/10/2026: se uma clinica criasse a regua ali entre
+ * a publicacao deste codigo e a migration, a conferencia da migration a
+ * recusaria inteira, e a regua mandaria mensagem a quem passa a esperar a
+ * clinica).
+ */
+function etapaDeAguardar(
+  etapa: Pick<EtapaDaJornada, "chave" | "papel">,
+): boolean {
+  return (
+    etapa.papel === "aguardando" ||
+    (etapa.papel === null && etapa.chave === "aguardando_resposta")
+  );
+}
+
+/**
+ * A etapa aceita regua de follow-up? Perdido nao (acompanhar quem pediu para
+ * parar seria spam). Aguardando resposta tambem nao: quem esta ali espera a
+ * resposta da CLINICA, e a regua mandaria mensagem automatica a quem espera
+ * gente (e, no canal nao oficial, cada mensagem a mais e risco de denuncia).
+ * O banco recusa o mesmo pelo gatilho recusar_followup_em_aguardando (hint
+ * etapa_sem_followup); aqui a tela nem oferece e a action recusa antes, ja
+ * com o banco de antes da migration (etapaDeAguardar).
+ */
+export function etapaRecebeFollowup(
+  etapa: Pick<EtapaDaJornada, "chave" | "papel">,
+): boolean {
+  return etapa.papel !== "perdido" && !etapaDeAguardar(etapa);
+}
+
+/** Por que a etapa nao recebe regua de follow-up, ou null se recebe. */
+export function recusaDeFollowup(
+  etapa: Pick<EtapaDaJornada, "chave" | "nome" | "papel">,
+): string | null {
+  if (etapa.papel === "perdido") {
+    return "A etapa de perda não recebe follow-up automático.";
+  }
+  if (etapaDeAguardar(etapa)) {
+    return `Quem está em ${etapa.nome} espera a resposta da clínica: esta etapa não tem régua de follow-up.`;
+  }
+  return null;
 }
 
 /** O que a decisao por termo-chave precisa saber de cada etapa. */

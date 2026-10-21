@@ -236,3 +236,33 @@ test("o link antigo de Configurações leva para a aba nova", async ({
     page.getByRole("tab", { name: /^Automações de fluxo/ }),
   ).toHaveAttribute("aria-selected", "true");
 });
+
+// Onda 3 (21/10/2026): Aguardando resposta passou a ser onde o lead espera a
+// resposta da equipe (a IA passou a conversa). O exemplo do vazio mudou: o
+// antigo, "sem responder em Aguardando resposta vai para Perdido", perderia
+// justamente quem espera a clinica. Texto fixo da tela, vale antes e depois
+// da migration 20261023100000. Ultimo do modo serial: tira as regras deste
+// spec antes (o afterAll faria o mesmo); a Clinica E2E nao tem outra
+// automacao de fluxo.
+test("sem automação, o vazio dá o exemplo da jornada nova", async ({
+  page,
+}) => {
+  await admin
+    .from("automacao_fluxo")
+    .delete()
+    .eq("clinic_id", dados().clinicId)
+    .in("nome", [NOME_DA_TELA, NOME_DA_VOLTA])
+    .throwOnError();
+  await abrirAba(page);
+  await expect(
+    page.getByText("Nenhuma automação de fluxo ainda"),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Por exemplo: quem entrou em Aguardando resposta ganha uma atividade de responder, ou quem ficou 3 dias sem responder em Em contato vai para Perdido.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("sem responder em Aguardando resposta"),
+  ).toHaveCount(0);
+});

@@ -337,12 +337,41 @@ describe("follow-up por etapa, contra o banco real", () => {
 
   it("etapa com régua de follow-up não pode ser excluída da jornada", async () => {
     const cenario = await montarCenario("trava");
+    // Desde a onda 3 (migration 20261023100000) Em contato e etapa de
+    // sistema: a exclusao dela para antes, no papel. A trava da regua se
+    // prova numa etapa LIVRE com regua.
+    await admin
+      .from("funnel_stage_def")
+      .insert({
+        clinic_id: cenario.clinicId,
+        chave: "retorno",
+        nome: "Retorno",
+        posicao: 70,
+      })
+      .throwOnError();
+    await admin
+      .from("cadence")
+      .insert({
+        clinic_id: cenario.clinicId,
+        kind: "followup",
+        name: "Follow-up de Retorno",
+        trigger_stage: "retorno",
+        active: false,
+      })
+      .throwOnError();
     const { error } = await admin
       .from("funnel_stage_def")
       .delete()
       .eq("clinic_id", cenario.clinicId)
-      .eq("chave", "em_contato");
+      .eq("chave", "retorno");
     expect(error?.message).toContain("régua de follow-up");
+
+    const { error: erroDaDeSistema } = await admin
+      .from("funnel_stage_def")
+      .delete()
+      .eq("clinic_id", cenario.clinicId)
+      .eq("chave", "em_contato");
+    expect(erroDaDeSistema?.message).toContain("Etapa de sistema");
   });
 
   it("o motivo canal_ocupado agora grava (check corrigido)", async () => {

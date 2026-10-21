@@ -457,6 +457,67 @@ describe("cartão Automações de fluxo", () => {
   });
 });
 
+// Decisao D3 do dono (21/10/2026): a etapa de papel 'aguardando' (o lead
+// espera a resposta da equipe, migration 20261023100000) nao recebe regua de
+// follow-up, como Perdido. A pagina monta a lista de etapas da aba Follow-up
+// de leads; o seletor mora num dialogo fechado (fora do HTML estatico),
+// entao a prova le a lista que a pagina entrega ao cliente.
+describe("aba Follow-up de leads: a lista de etapas da régua", () => {
+  function etapasDaRegua(elemento: ReactElement): unknown {
+    const filhos = (elemento.props as { children?: unknown }).children;
+    const cliente = (Array.isArray(filhos) ? filhos : [filhos]).find(
+      (filho): filho is ReactElement<{ etapasParaFollowup: unknown }> =>
+        typeof filho === "object" &&
+        filho !== null &&
+        "props" in filho &&
+        typeof filho.props === "object" &&
+        filho.props !== null &&
+        "etapasParaFollowup" in filho.props,
+    );
+    expect(cliente, "o cliente da tela").toBeDefined();
+    return cliente?.props.etapasParaFollowup;
+  }
+
+  it("sem Perdido e sem a etapa em que o lead espera a equipe", async () => {
+    sessao.atual = contexto("admin");
+    banco.fetchJornada.mockResolvedValue([
+      etapa("novo", "Novo", "entrada", 10),
+      etapa("aguardando_resposta", "Aguardando resposta", "aguardando", 20),
+      etapa("em_contato", "Contato inicial", "em_contato", 30),
+      etapa("follow_1", "Follow 1", null, 40),
+      etapa("agendou", "Agendou", "agendou", 50),
+      etapa("compareceu", "Compareceu", "compareceu", 60),
+      etapa("perdido", "Perdido", "perdido", 70),
+    ]);
+    const elemento = (await AutomacoesPage({
+      searchParams: Promise.resolve({ aba: "followup" }),
+    })) as ReactElement;
+    expect(etapasDaRegua(elemento)).toEqual([
+      { chave: "novo", nome: "Novo" },
+      { chave: "em_contato", nome: "Contato inicial" },
+      { chave: "follow_1", nome: "Follow 1" },
+      { chave: "agendou", nome: "Agendou" },
+      { chave: "compareceu", nome: "Compareceu" },
+    ]);
+  });
+
+  // Revisao de 21/10/2026: com o banco de antes da migration, a etapa ainda
+  // sem papel ja sai da lista pela chave aguardando_resposta. Uma regua
+  // criada ali no meio tempo faria a conferencia da migration parar.
+  it("banco de antes da migration: Aguardando resposta sem papel também sai da lista", async () => {
+    sessao.atual = contexto("gestor");
+    const elemento = (await AutomacoesPage({
+      searchParams: Promise.resolve({ aba: "followup" }),
+    })) as ReactElement;
+    expect(etapasDaRegua(elemento)).toEqual([
+      { chave: "novo", nome: "Novo" },
+      { chave: "em_contato", nome: "Em contato" },
+      { chave: "agendou", nome: "Agendou" },
+      { chave: "compareceu", nome: "Compareceu" },
+    ]);
+  });
+});
+
 describe("esqueleto de Automações", () => {
   it("desenha os cinco cartões seletores da fileira de administrador e gestor", () => {
     const html = renderToStaticMarkup(<CarregandoAutomacoes />);

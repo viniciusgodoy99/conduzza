@@ -8,14 +8,15 @@ Ligado em 02/09/2026. **Não existe mais processo de worker em servidor nenhum.*
 
 ## O desenho
 
-Três entradas no `pg_cron`, dentro do próprio Supabase, mais a quarta, `motor-ia`, que só existe depois de ligar a IA no WhatsApp (E3; ver "Resposta da IA no WhatsApp (motor-ia)", abaixo):
+Três entradas no `pg_cron`, dentro do próprio Supabase, mais a quarta, `motor-ia`, que só existe depois de ligar a IA no WhatsApp (E3; ver "Resposta da IA no WhatsApp (motor-ia)", abaixo), e a quinta, `funil-da-passagem`, que só existe depois da migration `20261023100000` (onda 3, **não aplicada**; ver "Funil da passagem da IA (funil-da-passagem)", abaixo):
 
-| Entrada            | Cadência                          | O que faz                                                                                                                                                                           | Onde executa                  |
-| ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| `motor-manutencao` | 60 segundos                       | limpa reservas vencidas, fecha execuções órfãs, expira ofertas, planeja réguas, higiene, enfileira a leitura diária do investimento da Meta, planeja e fecha as mensagens agendadas | **dentro do banco**, SQL puro |
-| `motor-fila`       | 20 segundos                       | chama a rota na Vercel, que processa a fila de tarefas                                                                                                                              | Vercel, região de São Paulo   |
-| `poda-do-cron`     | 1 vez por dia, 03:17 de Fortaleza | apaga de `cron.job_run_details` as execuções com mais de 7 dias                                                                                                                     | **dentro do banco**, SQL puro |
-| `motor-ia` (E3)    | 10 segundos, com guarda           | só quando há resposta da IA devida de clínica da lista, chama a rota `/api/webhooks/motor-ia`, que roda o turno da IA                                                               | Vercel, região de São Paulo   |
+| Entrada                      | Cadência                          | O que faz                                                                                                                                                                           | Onde executa                  |
+| ---------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `motor-manutencao`           | 60 segundos                       | limpa reservas vencidas, fecha execuções órfãs, expira ofertas, planeja réguas, higiene, enfileira a leitura diária do investimento da Meta, planeja e fecha as mensagens agendadas | **dentro do banco**, SQL puro |
+| `motor-fila`                 | 20 segundos                       | chama a rota na Vercel, que processa a fila de tarefas                                                                                                                              | Vercel, região de São Paulo   |
+| `poda-do-cron`               | 1 vez por dia, 03:17 de Fortaleza | apaga de `cron.job_run_details` as execuções com mais de 7 dias                                                                                                                     | **dentro do banco**, SQL puro |
+| `motor-ia` (E3)              | 10 segundos, com guarda           | só quando há resposta da IA devida de clínica da lista, chama a rota `/api/webhooks/motor-ia`, que roda o turno da IA                                                               | Vercel, região de São Paulo   |
+| `funil-da-passagem` (onda 3) | 60 segundos                       | tenta de novo levar para Aguardando resposta o lead cujo contato estava travado na passagem da IA (`processar_pendencias_do_funil()`) e bate ponto como `motor-funil`               | **dentro do banco**, SQL puro |
 
 A manutenção não depende da rede: é só chamada de função. Só a fila precisa de Node, porque fala com o uazapi, com o Storage e com a Meta.
 
@@ -30,7 +31,7 @@ A rota da fila faz **quatro** reivindicações em paralelo a cada passagem, cada
 
 O trilho das leituras da Meta é explicado em "Leitura do investimento da Meta" e em "Consulta dos anúncios da Meta", abaixo. A mensagem agendada, em "Mensagem agendada".
 
-As duas primeiras são ligadas e desligadas pela operação (`motor_agendar()` e `motor_desagendar()`), nunca por migration: num banco de laptop elas virariam um segundo motor chamando a produção. A poda é agendada pela migration `20260924120000_poda_do_cron.sql`, porque não chama nada fora do banco.
+As duas primeiras são ligadas e desligadas pela operação (`motor_agendar()` e `motor_desagendar()`), nunca por migration: num banco de laptop elas virariam um segundo motor chamando a produção. A poda é agendada pela migration `20260924120000_poda_do_cron.sql`, porque não chama nada fora do banco. Pelo mesmo motivo, a `funil-da-passagem` é agendada pela migration `20261023100000` (onda 3), que só agenda se o banco tem o `pg_cron`.
 
 A rota é `POST /api/webhooks/motor`. O nome tem `webhooks` de propósito: o matcher do `middleware.ts` já exclui esse prefixo, e uma rota fora dele seria redirecionada para o login com o segredo descartado, deixando o sistema idêntico a um sistema saudável enquanto nada sai.
 
@@ -54,7 +55,7 @@ from net._http_response order by created desc limit 5;
 select saude_do_motor();
 ```
 
-O que esperar de `saude_do_motor()`: `fila` batida há menos de 20 segundos, `planner` há menos de 60, `atrasados` em zero. A tolerância da faixa na tela é de 3 minutos. Depois da M1 do E3, a saúde ganha a chave `ia` (ver "Resposta da IA no WhatsApp"): com a IA desligada, `vigiado` é falso e `alerta` também.
+O que esperar de `saude_do_motor()`: `fila` batida há menos de 20 segundos, `planner` há menos de 60, `atrasados` em zero. A tolerância da faixa na tela é de 3 minutos. Depois da M1 do E3, a saúde ganha a chave `ia` (ver "Resposta da IA no WhatsApp"): com a IA desligada, `vigiado` é falso e `alerta` também. A batida `motor-funil` (onda 3, depois da migration `20261023100000`) **não** entra na saúde: confira-a à parte, em "Funil da passagem da IA".
 
 Pela interface: a faixa "as mensagens automáticas estão paradas" **não** deve aparecer.
 
@@ -422,6 +423,67 @@ group by 1, 2, 3 order by 4 desc;
 - `ia_parada` com `agendado` falso: a entrada foi tirada (ou nunca agendada). `select public.motor_ia_agendar();`.
 - `ia_parada` com `devidos` > 0 e a entrada ativa: a corrente cron, `pg_net`, Vercel quebrou. Olhar `cron.job_run_details` (a entrada `motor-ia`), `net._http_response` (401 é segredo divergente; 404 é deploy sem a rota) e os logs da rota na Vercel. `select net.worker_restart();` se o `pg_net` travou.
 - Muitos `falhos` na resposta da rota: os logs da Vercel trazem só ids e códigos; o detalhe de cada turno está em `ai_decision_log` (`desfecho`, `motivo_da_falha`).
+
+## Funil da passagem da IA (funil-da-passagem)
+
+Construída na onda 3 (21/10/2026; migrations `20261023100000` e `20261023110000`, **não aplicadas**: nada desta seção existe na produção até lá). Contrato no `docs/04`, seção 24; arquitetura no `docs/03`, seção 17.
+
+**O que é.** Depois da M2, a passagem da IA para a equipe (a conversa sai de `ia_atendendo` para `aguardando_humano` com o paciente esperando) leva o lead para Aguardando resposta, pelo gatilho `passagem_da_ia_move_o_lead` de `conversation`. O movimento **nunca espera** o contato: se outra transação o segura (uma mensagem do mesmo paciente chegando no mesmo instante, por exemplo), ele vira uma linha em `etapa_pendente_da_passagem` (só ids). A entrada `funil-da-passagem` roda `processar_pendencias_do_funil()` a cada minuto e tenta de novo:
+
+- descarta a pendência com mais de 1 dia, com 60 tentativas ou cuja conversa já não está `aguardando_humano` (alguém assumiu, devolveu para a IA ou resolveu: o lead fica onde está);
+- tenta até 100 por passagem, as mais antigas primeiro, sem esperar trava nenhuma: trava a conversa antes do contato, e o que estiver ocupado fica para a passagem seguinte (soma uma tentativa);
+- ignora as clínicas `e_de_teste` (as suítes passam a clínica delas);
+- bate ponto como `motor-funil` em `worker_heartbeat` e devolve `{movidos, descartadas, adiadas, sem_mudanca, erros}`.
+
+Ela **não** está em `motor_manutencao` (a onda 2 troca essa função em paralelo) e não chama nada fora do banco. Antes da M2 nada grava pendência: a entrada só bate ponto. São 1.440 execuções a mais por dia no histórico do cron (a `poda-do-cron` cuida delas).
+
+**Conferir que está viva** (depois da M1):
+
+```sql
+select jobname, schedule, active, username from cron.job where jobname = 'funil-da-passagem';
+
+select status, return_message, start_time
+from cron.job_run_details
+where jobid = (select jobid from cron.job where jobname = 'funil-da-passagem')
+order by start_time desc limit 5;
+
+select batida_em, ultimo_lote, ultimo_erro, ultimo_erro_em
+from worker_heartbeat where worker_id = 'motor-funil';
+
+-- as pendências (só ids e contagens)
+select clinic_id, count(*), max(tentativas), min(criada_em)
+from etapa_pendente_da_passagem group by 1;
+```
+
+Esperado: a entrada ativa, as execuções com `succeeded`, `batida_em` com menos de 2 minutos e `ultimo_erro` nulo; quase sempre nenhuma pendência, e as que aparecem somem em um ou dois minutos.
+
+**O monitor não vê esta batida.** `saude_do_motor()` lê só `motor-fila` e `motor-planner` (e a chave `ia`), então a faixa da tela e `/api/webhooks/saude` continuam em 200 com a manutenção do funil parada ou com erro. Até o dono decidir (ponto aberto no `docs/05`, entrada "Onda 3"), confira à mão nas primeiras semanas depois da M2. Se a entrada parar, a higiene de `motor_manutencao` apaga a linha `motor-funil` depois de 1 hora sem batida: a falta da linha também é sinal de parada.
+
+**Códigos** (em `erros` e no `ultimo_erro` da batida):
+
+| Código                      | O que é                                                                                                                                        | O que fazer                                                                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `funil_passagem:<SQLSTATE>` | erro numa pendência (ela soma uma tentativa e é descartada nas 60; as outras seguem) ou erro estrutural da passagem (nada do que ela fez fica) | se some na passagem seguinte, foi soluço. Se repete, `select processar_pendencias_do_funil(1);` no SQL Editor mostra o retorno com o código (e processa uma e bate ponto, como o cron faria) |
+
+No log do Postgres (Dashboard > Logs > Postgres, nível WARNING), `passagem da IA nao moveu a etapa (clinic <id>): <SQLSTATE>` é a **passagem** que deu erro ao mover o lead: a conversa foi para a equipe normalmente, e o lead ficou onde estava, sem pendência. Só tem a clínica e o código, nunca dado de paciente.
+
+**Acompanhar as primeiras passagens** (depois da M2; só contagens):
+
+```sql
+select clinic_id, (created_at at time zone 'America/Fortaleza')::date as dia, count(*)
+from audit_log where action = 'ia_moveu_etapa'
+group by 1, 2 order by 2 desc, 1;
+```
+
+**Desligar só esta entrada:**
+
+```sql
+select cron.unschedule('funil-da-passagem');
+-- religar (o mesmo comando da migration; um nome que já existe atualiza a entrada)
+select cron.schedule('funil-da-passagem', '* * * * *', 'select public.processar_pendencias_do_funil()');
+```
+
+Com ela desligada, a passagem continua movendo o lead quando o contato está livre (quase sempre); só as pendências esperam, e as com mais de 1 dia são descartadas quando ela voltar. `motor_desagendar()` não mexe nesta entrada, e a ponte `npm run worker` não a roda. O rollback das migrations (que tira a entrada, a batida, as funções e a tabela) está no `docs/04`, 24.10.
 
 ## Desligar (rollback)
 

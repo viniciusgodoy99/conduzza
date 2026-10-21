@@ -241,22 +241,27 @@ export function estadoVisualDaConversa(
 // JORNADA PADRAO SEMEADA, e sobrevive para: o teste que trava a semente, e a
 // tela do mapa de conversao ate a fase 3 da jornada. Tela de leads e inbox ja
 // leem a jornada do banco: nao acrescente consumidor novo aqui.
+// Onda 3 (21/10/2026, migration 20261023100000): a semente mudou de ordem
+// (Aguardando resposta logo antes de Em contato) e as duas ganharam papel de
+// sistema ('aguardando' e 'em_contato'); o sentido de Aguardando resposta
+// virou "o lead espera a resposta da equipe". As entradas abaixo seguem a
+// ordem nova; nome, tom e icone continuam os mesmos.
 export type FunnelStage =
   | "novo"
-  | "em_contato"
   | "aguardando_resposta"
+  | "em_contato"
   | "agendou"
   | "compareceu"
   | "perdido";
 
 export const FUNNEL_STAGE: Record<FunnelStage, StatusDefinition> = {
   novo: { label: "Novo", tone: "neutral", icon: BadgePlus },
-  em_contato: { label: "Em contato", tone: "info", icon: MessageSquareText },
   aguardando_resposta: {
     label: "Aguardando resposta",
     tone: "warning",
     icon: Timer,
   },
+  em_contato: { label: "Em contato", tone: "info", icon: MessageSquareText },
   agendou: { label: "Agendou", tone: "success", icon: CalendarPlus },
   compareceu: { label: "Compareceu", tone: "success", icon: CheckCheck },
   perdido: { label: "Perdido", tone: "alert", icon: UserRoundX },

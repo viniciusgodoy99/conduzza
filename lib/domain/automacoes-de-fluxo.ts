@@ -337,8 +337,8 @@ export function resolvedorDeNomes(
 }
 
 /**
- * "Ficou 3 dias em Em contato", "Ficou 48 h sem responder em Aguardando
- * resposta", "Entrou em Agendou", "Mandou mensagem estando em Novo".
+ * "Ficou 3 dias em Em contato", "Ficou 48 h sem responder em Em contato",
+ * "Entrou em Aguardando resposta", "Mandou mensagem estando em Novo".
  */
 export function descreverGatilho(
   regra: Pick<AutomacaoDeFluxo, "gatilho" | "etapa" | "espera_minutos">,

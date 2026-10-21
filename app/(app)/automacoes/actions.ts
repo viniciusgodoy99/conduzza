@@ -12,6 +12,7 @@ import {
   resolverEspecialidade,
 } from "@/components/automacoes/vinculo-da-regua";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { recusaDeFollowup, type PapelDeEtapa } from "@/lib/domain/jornada";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import { canEdit } from "@/lib/domain/permissions";
 import {
@@ -1032,7 +1033,7 @@ export async function criarReguaDeFollowupAction(
   const supabase = await createClient();
   const { data: etapa } = await supabase
     .from("funnel_stage_def")
-    .select("nome, papel")
+    .select("chave, nome, papel")
     .eq("clinic_id", guard.clinicId)
     .eq("chave", parsed.data.trigger_stage)
     .maybeSingle();
@@ -1041,12 +1042,21 @@ export async function criarReguaDeFollowupAction(
   }
   // Follow-up de quem foi PERDIDO e outra conversa (reativacao, fora do
   // escopo): mandar mensagem de acompanhamento para quem pediu para parar de
-  // ser acompanhado seria spam.
-  if (etapa.papel === "perdido") {
-    return {
-      ok: false,
-      error: "A etapa de perda não recebe follow-up automático.",
-    };
+  // ser acompanhado seria spam. E quem esta em Aguardando resposta espera a
+  // resposta da CLINICA (decisao D3 do dono, 21/10/2026): a regua mandaria
+  // mensagem automatica a quem espera gente. Vale tambem com o banco de
+  // antes da migration 20261023100000, pela chave (a conferencia da
+  // migration recusaria uma regua criada ali no meio tempo). A regra e a
+  // frase vem de lib/domain/jornada.ts; o banco recusa o mesmo por gatilho
+  // (abaixo).
+  const etapaDaRegua = {
+    chave: parsed.data.trigger_stage,
+    nome: etapa.nome as string,
+    papel: (etapa.papel ?? null) as PapelDeEtapa | null,
+  };
+  const recusa = recusaDeFollowup(etapaDaRegua);
+  if (recusa) {
+    return { ok: false, error: recusa };
   }
 
   // Nasce DESLIGADA, sem janela e sem mensagens: o texto por etapa e decisao
@@ -1063,13 +1073,18 @@ export async function criarReguaDeFollowupAction(
     .select("id")
     .single();
   if (error || !nova) {
-    return {
-      ok: false,
-      error:
-        error?.code === "23505"
-          ? "Esta etapa já tem régua de follow-up."
-          : "Não foi possível criar a régua.",
-    };
+    // 23505: a etapa ja tem regua (indice unico). etapa_sem_followup: o
+    // gatilho recusar_followup_em_aguardando (migration 20261023100000)
+    // recusou o que a regra de cima deixou passar (defesa: hoje o papel
+    // aguardando so existe na chave aguardando_resposta, que a regra ja
+    // recusa); a frase e a mesma da recusa de cima.
+    const mensagem =
+      error?.code === "23505"
+        ? "Esta etapa já tem régua de follow-up."
+        : error?.hint === "etapa_sem_followup"
+          ? recusaDeFollowup({ ...etapaDaRegua, papel: "aguardando" })
+          : null;
+    return { ok: false, error: mensagem ?? "Não foi possível criar a régua." };
   }
 
   await supabase.from("audit_log").insert({

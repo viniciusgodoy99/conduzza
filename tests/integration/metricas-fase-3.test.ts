@@ -379,10 +379,12 @@ describe("resumo_do_dia e funil_da_jornada", () => {
       posicao: number;
       total: number;
     }[];
+    // Ordem da semente da onda 3 (migration 20261023100000): Aguardando
+    // resposta logo antes de Em contato.
     expect(etapas.map((e) => [e.chave, e.total])).toEqual([
       ["novo", 2],
-      ["em_contato", 1],
       ["aguardando_resposta", 0],
+      ["em_contato", 1],
       // o contato das consultas avancou ao agendar
       ["agendou", 1],
       ["compareceu", 0],
