@@ -587,6 +587,25 @@ Relato do dono em 20/10/2026, na lista de Leads: "não tá adicionando nem apare
 - **Duas listas de etiquetas:** a do lead e a da conversa continuam separadas e só se encontram pelo nome, para o tom. Etiquetar o lead não etiqueta a conversa, e o contrário também não.
 - **Só os leads carregados:** as etiquetas em uso saem dos 1.000 leads de contato mais recente que a lista carrega.
 
+### [x] Etapa e etiquetas na linha da lista e na gaveta `P` (pedido do dono em 20/10/2026; sem migration; publicado em 20/10/2026)
+Pedido do dono em 20/10/2026, com o print da Lista de Leads: "não consigo alterar a etapa nem adicionar uma etiqueta por aqui, era pra eu conseguir". Até ali, a etapa e as etiquetas só mudavam pela barra em massa (selecionar, depois agir) ou pelo arrasto do Kanban. Telas em `docs/02` (Tela 4, "Etapa e etiquetas direto na linha e na gaveta") e `docs/06` 5.4.
+- **Etapa** (`components/leads/etapa-do-lead.tsx`; regras e diálogo em `components/leads/mudar-etapa.tsx`, compartilhados com a barra em massa): o chip da etapa na linha e no cabeçalho da gaveta abre a lista das etapas da jornada. Valem as regras da barra: Perdido pelo papel abre o motivo da perda; etapa com régua confirma, com texto de um lead só; sem régua, move direto. Grava pela mesma `mudarEtapaAction`. `moverEtapaNaHora` muda a cache na hora e, se o servidor recusar, volta só aquele lead, e só se ninguém mexeu nele nesse meio tempo. O arrasto do Kanban passou a usar a mesma função; antes, a falha devolvia a lista inteira.
+- **Etiquetas** (`components/leads/etiquetar-um-lead.tsx`): o "+" da linha e da gaveta abre o mesmo `PainelEtiquetarLead`, com `alvo="lead"`. Na gaveta, cada chip ganha o X. Grava pela mesma `etiquetar_contatos`; se falhar, desfaz só o que aquele pedido mudou.
+- **Lista:** as colunas ficaram fixas e as células leem um contexto. As linhas são identificadas pelo id do lead (`getRowId`, opcional, novo no `DataTable`), para o tempo real não fechar o popover nem perder o foco. Os popovers montam só no primeiro toque (`popover-sob-demanda.tsx`), porque montar dois por linha dobrava o tempo de desenhar 1.000 leads. Medido em modo de desenvolvimento: de 0,34 a 0,52 s antes, para 0,44 a 0,65 s depois.
+- **Permissão:** a mesma da barra em massa. Sem ela, os controles ficam visíveis, desabilitados e com a dica. A action continua conferindo o papel no servidor.
+- **Provas (unidade, rodadas):**
+  - `tests/unit/leads/etapa-e-etiquetas-na-linha.test.tsx` passou com 38 testes novos. Eles cobrem a etapa e o "+" na linha e na gaveta, as regras de Perdido, régua e sem régua, os textos de um lead, a falha que volta só aquele lead, sem permissão, alvo de 40px e sem travessão.
+  - A pasta `tests/unit/leads` inteira passou: 431 testes em 22 arquivos.
+  - Numa cópia isolada (o último commit mais só estes arquivos), também passaram tipos, lint, a unidade inteira e o build.
+  - Sem e2e, e sem conferência no navegador.
+
+**Pontos para o dono:**
+- **Conferir no navegador:**
+  - claro e escuro;
+  - o popover abrindo no primeiro clique;
+  - Esc e o foco voltando ao chip;
+  - a tela em 768px.
+
 ### [ ] Contrato dos pacotes
 Migration de contrato do pacote com vários procedimentos (a `20260929120000` foi o expand). **Só roda depois do código novo publicado**: até lá, o código antigo depende dos gatilhos legados.
 **Pré-requisitos (migrar antes para `package_item` e `package_balance_item`):**

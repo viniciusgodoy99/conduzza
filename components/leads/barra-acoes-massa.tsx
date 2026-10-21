@@ -33,29 +33,27 @@ import {
   ROTULO_MARCAR_COMO_PACIENTE,
 } from "@/components/leads/marcar-como-paciente";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
+import {
+  decidirMudancaDeEtapa,
+  DialogoMoverParaEtapa,
+  ITEM_DO_POPOVER,
+  OpcoesDeEtapa,
+  type ConfirmacaoDeEtapa,
+} from "@/components/leads/mudar-etapa";
 import { BarraDeProgresso } from "@/components/shared/barra-de-progresso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { STATUS_TONE_VARS } from "@/lib/design/status";
 import {
   outrasGrafias,
   type LeituraDasEtiquetas,
   type OpcaoDeEtiqueta,
 } from "@/lib/domain/etiquetas-do-lead";
-import { definicaoDaEtapa, type EtapaDaJornada } from "@/lib/domain/jornada";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import {
   leadsKeys,
   type LeadResumo,
@@ -90,6 +88,10 @@ import { cn } from "@/lib/utils";
 // repetir. A etiqueta continua em contact.tags, pelo mesmo etiquetar. Quem
 // adiciona "LEAD" tira, no mesmo pedido, outra grafia da mesma etiqueta
 // ("lead") dos selecionados: o lead nao fica com as duas.
+//
+// "Mudar etapa" (20/10/2026): a regra (Perdido, regua, direto), a lista das
+// etapas e a confirmacao moram em mudar-etapa.tsx, porque a linha da lista e
+// a gaveta mudam a etapa de um lead com as MESMAS regras. Aqui nada mudou.
 
 const SEM_OPCOES: readonly OpcaoDeEtiqueta[] = [];
 
@@ -97,10 +99,6 @@ const DICA_JA_SAO_PACIENTES = "Os contatos selecionados já são pacientes.";
 
 const DICA_DISPARAR_REGUA =
   "As réguas de follow-up começam sozinhas quando o lead entra na etapa. Use Mudar etapa para colocar os selecionados numa etapa com régua.";
-
-// Item de lista dentro do popover, na casca do item de menu do DS.
-const ITEM_DO_POPOVER =
-  "flex min-h-10 w-full items-center gap-[9px] rounded-sm px-[9px] text-left text-[13px] font-medium text-foreground outline-none cz-transition hover:bg-accent hover:text-text-strong focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:pointer-events-none disabled:opacity-45";
 
 // Popover de acao protegida: com permissao abre o popover; sem permissao o
 // botao fica visivel e desabilitado com a dica, sem popover nenhum.
@@ -153,13 +151,6 @@ function AcaoComPopover({
 }
 
 type Progresso = { verbo: string; feitos: number; total: number };
-
-type ConfirmacaoDeEtapa = {
-  chave: string;
-  nome: string;
-  /** Nome da regua ligada; null quando nao deu para conferir as reguas */
-  regua: string | null;
-};
 
 export function BarraAcoesMassa({
   jornada,
@@ -259,10 +250,6 @@ export function BarraAcoesMassa({
     );
   };
 
-  const reguaPorEtapa = new Map(
-    (reguas ?? []).map((regua) => [regua.etapa, regua.nome]),
-  );
-
   const moverPara = async (chave: string, nome: string) => {
     const resultado = await rodar("Movendo", (lote) =>
       mudarEtapaAction({ contact_ids: lote, etapa: chave }),
@@ -273,20 +260,19 @@ export function BarraAcoesMassa({
     );
   };
 
+  // As regras de mudar-etapa.tsx, as mesmas da linha e da gaveta.
   const escolherEtapa = (def: EtapaDaJornada) => {
     setEtapaAberto(false);
-    if (def.papel === "perdido") {
+    const decisao = decidirMudancaDeEtapa(def, reguas);
+    if (decisao.tipo === "pedir_motivo") {
       setPerdaIds(ids);
       return;
     }
-    // Etapa com regua (ou sem como saber): confirma antes, dizendo quem
-    // passa a receber mensagem. Sem regua, move direto, como sempre.
-    const regua = reguaPorEtapa.get(def.chave);
-    if (reguas === null || regua !== undefined) {
+    if (decisao.tipo === "confirmar") {
       setConfirmacao({
         chave: def.chave,
         nome: def.nome,
-        regua: regua ?? null,
+        regua: decisao.regua,
       });
       return;
     }
@@ -456,54 +442,11 @@ export function BarraAcoesMassa({
           onAberto={setEtapaAberto}
           larguraClassName="w-64"
         >
-          <div className="grid">
-            {jornada.map((def) => {
-              const definicao = definicaoDaEtapa(def);
-              const tone = STATUS_TONE_VARS[definicao.tone];
-              const Icone = definicao.icon;
-              const regua = reguaPorEtapa.get(def.chave);
-              return (
-                <button
-                  key={def.chave}
-                  type="button"
-                  className={ITEM_DO_POPOVER}
-                  onClick={() => escolherEtapa(def)}
-                >
-                  {Icone ? (
-                    <Icone
-                      className="size-[15px] shrink-0"
-                      style={{ color: tone.text }}
-                      aria-hidden
-                    />
-                  ) : null}
-                  <span className="truncate">{definicao.label}</span>
-                  {regua !== undefined ? (
-                    <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-text-secondary">
-                      <Workflow className="size-3" aria-hidden />
-                      Régua
-                      <span className="sr-only">
-                        {" "}
-                        de follow-up ligada: {regua}
-                      </span>
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-            <p className="border-t border-border px-[9px] pt-2 pb-1 text-[11px] leading-[1.4] text-text-secondary">
-              {reguas === null
-                ? "Não foi possível conferir as réguas de follow-up. Antes de mover, a tela pede confirmação."
-                : reguaPorEtapa.size > 0
-                  ? "Etapa com Régua manda mensagens automáticas para quem tem autorização."
-                  : "Nenhuma etapa tem régua de follow-up ligada."}
-            </p>
-            {/* Automacoes de fluxo (02/10/2026): o gatilho "entrou na etapa"
-                vale para todo movimento, inclusive o em massa. */}
-            <p className="px-[9px] pb-1 text-[11px] leading-[1.4] text-text-secondary">
-              Mover também pode disparar as automações de fluxo da etapa de
-              destino, para cada lead.
-            </p>
-          </div>
+          <OpcoesDeEtapa
+            jornada={jornada}
+            reguas={reguas}
+            aoEscolher={escolherEtapa}
+          />
         </AcaoComPopover>
 
         <AcaoComPopover
@@ -556,54 +499,15 @@ export function BarraAcoesMassa({
         </Button>
       </div>
 
-      <Dialog
-        open={confirmacao !== null}
-        onOpenChange={(aberto) => (!aberto ? setConfirmacao(null) : null)}
-      >
-        <DialogContent className="sm:max-w-[420px]">
-          <DialogHeader>
-            <DialogTitle>Mover para {confirmacao?.nome}?</DialogTitle>
-            <DialogDescription>
-              {confirmacao?.regua
-                ? `A etapa ${confirmacao.nome} tem régua de follow-up ligada (${confirmacao.regua}).`
-                : "Não foi possível conferir se esta etapa tem régua de follow-up ligada."}
-            </DialogDescription>
-          </DialogHeader>
-          <p className="text-[13px] leading-[1.5] text-foreground">
-            {confirmacao?.regua ? "" : "Se tiver, "}
-            <span className="cz-num font-bold text-text-strong">
-              {recebem}
-            </span>{" "}
-            {recebem === 1
-              ? "lead com autorização vai receber"
-              : "leads com autorização vão receber"}{" "}
-            as mensagens automáticas dela.
-            {n - recebem > 0
-              ? ` Os outros ${n - recebem} não recebem nada por esta mudança (estão sem autorização ou já estavam nesta etapa).`
-              : null}
-          </p>
-          <p className="text-[13px] leading-[1.5] text-text-secondary">
-            Se {confirmacao?.nome} tiver automação de fluxo ligada, ela também
-            roda para cada lead movido.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmacao(null)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => {
-                if (confirmacao) {
-                  const { chave, nome } = confirmacao;
-                  setConfirmacao(null);
-                  void moverPara(chave, nome);
-                }
-              }}
-            >
-              Mover {contarLeads(n)}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DialogoMoverParaEtapa
+        confirmacao={confirmacao}
+        quem={{ tipo: "selecao", total: n, recebem }}
+        aoCancelar={() => setConfirmacao(null)}
+        aoConfirmar={({ chave, nome }) => {
+          setConfirmacao(null);
+          void moverPara(chave, nome);
+        }}
+      />
 
       <DialogoMarcarComoPaciente
         aberto={pacientesAberto}

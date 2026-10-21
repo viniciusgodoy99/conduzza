@@ -8,7 +8,6 @@ import {
   UserRoundX,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
 
 import { abrirDetalheDoContatoAction } from "@/app/(app)/leads/actions";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
@@ -17,8 +16,15 @@ import { MarcaPeloCelular } from "@/components/atendimento/pelo-celular";
 import { SecaoDeAtividades } from "@/components/atividades/secao-de-atividades";
 import { ChipDeOrigem } from "@/components/leads/chip-de-origem";
 import { DetalhesDoAnuncio } from "@/components/leads/detalhes-do-anuncio";
+import {
+  SeletorDeEtapa,
+  useMudarEtapaDoLead,
+} from "@/components/leads/etapa-do-lead";
+import {
+  BotaoEtiquetarLead,
+  useEtiquetarUmLead,
+} from "@/components/leads/etiquetar-um-lead";
 import { BotaoMarcarComoPaciente } from "@/components/leads/marcar-como-paciente";
-import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
 import {
   dataLocal,
   rotuloDoCanal,
@@ -48,13 +54,11 @@ import {
 import {
   etiquetasDoLead,
   SEM_TONS,
+  type LeituraDasEtiquetas,
+  type OpcaoDeEtiqueta,
   type TonsDasEtiquetas,
 } from "@/lib/domain/etiquetas-do-lead";
-import {
-  definicaoDaEtapa,
-  porChave,
-  type EtapaDaJornada,
-} from "@/lib/domain/jornada";
+import { porChave, type EtapaDaJornada } from "@/lib/domain/jornada";
 import {
   campanhaDaMeta,
   campanhaDoContato,
@@ -74,6 +78,7 @@ import {
   leadsKeys,
   type LeadResumo,
   type MensagemDoLead,
+  type ReguaDaEtapa,
 } from "@/lib/queries/leads";
 
 // Drawer da ficha rapida do lead (480px, docs/06 secao 5.4): resumo, dados de
@@ -121,6 +126,19 @@ import {
 //
 // Etiquetas do lead (20/10/2026): o mesmo ChipDeEtiqueta da lista e do
 // cartao, no tom da etiqueta cadastrada com o mesmo nome (sem ela, neutro).
+//
+// Etapa e etiquetas editaveis aqui (pedido do dono em 20/10/2026, "era pra
+// eu conseguir"): o chip da etapa no cabecalho e o mesmo seletor da linha da
+// lista, com as regras da barra em massa (etapa-do-lead.tsx); a linha
+// "Etiquetas do lead" ganha o X em cada chip (40px de alvo) e o "+" com o
+// painel de etiquetar daquele lead (etiquetar-um-lead.tsx). O "Marcar
+// perdido" do rodape abre o MESMO motivo da perda. Sem permissao, tudo
+// visivel e desabilitado com a dica.
+
+const SEM_OPCOES: readonly OpcaoDeEtiqueta[] = [];
+
+/** O X do chip sem permissao: aparece desabilitado e nunca dispara. */
+const NAO_REMOVE = () => undefined;
 
 const AUTOR_LABEL: Record<MensagemDoLead["author"], string> = {
   paciente: "Paciente",
@@ -203,6 +221,10 @@ export function DrawerLead({
   dicaIniciarConversa = "",
   soAtribuidas,
   tonsDeEtiqueta = SEM_TONS,
+  reguas = null,
+  etiquetasDaClinica = SEM_OPCOES,
+  leituraDasEtiquetas = "pronto",
+  aoTentarDeNovoAsEtiquetas,
   onFechar,
 }: {
   clinicId: string;
@@ -210,6 +232,7 @@ export function DrawerLead({
   jornada: EtapaDaJornada[];
   timezone: string;
   membros: Record<string, string>;
+  /** Muda a etapa e as etiquetas; sem permissao, desabilitado com a dica */
   podeEditar: boolean;
   dica: string;
   /** Permissao da Agenda (modulo de destino do "Agendar") */
@@ -223,10 +246,21 @@ export function DrawerLead({
   soAtribuidas: boolean;
   /** Tom das etiquetas cadastradas, pelo nome; sem catalogo, tudo neutro */
   tonsDeEtiqueta?: TonsDasEtiquetas;
+  /**
+   * Etapas com regua de follow-up ligada; null quando nao deu para ler (o
+   * padrao: mudar de etapa entao sempre confirma antes).
+   */
+  reguas?: ReguaDaEtapa[] | null;
+  /** Cadastradas e em uso nos leads carregados, sem repetir */
+  etiquetasDaClinica?: readonly OpcaoDeEtiqueta[];
+  /** Leitura das cadastradas: sem ela, o painel avisa e fica com as em uso */
+  leituraDasEtiquetas?: LeituraDasEtiquetas;
+  aoTentarDeNovoAsEtiquetas?: () => void;
   onFechar: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [perdaIds, setPerdaIds] = useState<string[] | null>(null);
+  const etapa = useMudarEtapaDoLead({ clinicId, reguas });
+  const etiquetas = useEtiquetarUmLead(clinicId);
 
   const detalheQuery = useQuery({
     queryKey: leadsKeys.detalhe(lead?.id ?? "nenhum"),
@@ -337,13 +371,17 @@ export function DrawerLead({
                   </p>
                 ) : null}
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  {defDoLead ? (
-                    <StatusChip definition={definicaoDaEtapa(defDoLead)} />
-                  ) : (
-                    <span className="text-[13px] text-text-secondary">
-                      {lead.funnel_stage}
-                    </span>
-                  )}
+                  <SeletorDeEtapa
+                    lead={lead}
+                    jornada={jornada}
+                    reguas={reguas}
+                    podeEditar={podeEditar}
+                    dica={dica}
+                    tamanho="md"
+                    aoEscolher={(destino, gatilho) =>
+                      etapa.escolher(lead, destino, gatilho)
+                    }
+                  />
                   {origem ? <ChipDeOrigem rotulo={origem} size="md" /> : null}
                   {recencia && lead.last_contact_at ? (
                     <StatusChip
@@ -393,21 +431,44 @@ export function DrawerLead({
                   </span>
                 </Linha>
                 <Linha rotulo="Etiquetas do lead">
-                  {lead.tags.length > 0 ? (
-                    <span className="flex flex-wrap gap-1">
-                      {etiquetasDoLead(lead.tags, tonsDeEtiqueta).map(
-                        (etiqueta) => (
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    {etiquetasDoLead(lead.tags, tonsDeEtiqueta).map(
+                      (etiqueta) =>
+                        podeEditar ? (
                           <ChipDeEtiqueta
                             key={etiqueta.nome}
                             nome={etiqueta.nome}
                             tom={etiqueta.tom}
+                            aoRemover={() =>
+                              etiquetas.remover(lead, etiqueta.nome)
+                            }
                           />
+                        ) : (
+                          <DisabledWithHint key={etiqueta.nome} hint={dica}>
+                            <ChipDeEtiqueta
+                              nome={etiqueta.nome}
+                              tom={etiqueta.tom}
+                              aoRemover={NAO_REMOVE}
+                              removerDesabilitado
+                            />
+                          </DisabledWithHint>
                         ),
-                      )}
-                    </span>
-                  ) : (
-                    <span className="text-text-secondary">Nenhuma</span>
-                  )}
+                    )}
+                    {lead.tags.length === 0 ? (
+                      <span className="text-text-secondary">Nenhuma</span>
+                    ) : null}
+                    <BotaoEtiquetarLead
+                      lead={lead}
+                      podeEditar={podeEditar}
+                      dica={dica}
+                      opcoes={etiquetasDaClinica}
+                      leitura={leituraDasEtiquetas}
+                      aoTentarDeNovo={aoTentarDeNovoAsEtiquetas}
+                      aoAdicionar={(nome) => etiquetas.adicionar(lead, nome)}
+                      aoRemover={(nome) => etiquetas.remover(lead, nome)}
+                      tamanho="icon-sm"
+                    />
+                  </span>
                 </Linha>
               </section>
 
@@ -599,7 +660,7 @@ export function DrawerLead({
                 <Button
                   variant="destructive"
                   className="w-full"
-                  onClick={() => setPerdaIds([lead.id])}
+                  onClick={() => etapa.pedirMotivo(lead)}
                 >
                   <UserRoundX className="size-4" />
                   Marcar perdido
@@ -619,28 +680,9 @@ export function DrawerLead({
           </>
         ) : null}
 
-        <ModalMotivoPerda
-          contactIds={perdaIds}
-          onFechar={() => setPerdaIds(null)}
-          onSucesso={(ids, motivo, nota) => {
-            queryClient.setQueryData<LeadResumo[]>(
-              leadsKeys.lista(clinicId),
-              (atual) =>
-                atual
-                  ? atual.map((l) =>
-                      ids.includes(l.id)
-                        ? {
-                            ...l,
-                            funnel_stage: "perdido",
-                            lost_reason: motivo,
-                            lost_reason_note: nota,
-                          }
-                        : l,
-                    )
-                  : atual,
-            );
-          }}
-        />
+        {/* O motivo da perda (Perdido no seletor e "Marcar perdido") e a
+            confirmacao da etapa com regua, dentro da gaveta. */}
+        {etapa.dialogos}
       </SheetContent>
     </Sheet>
   );

@@ -46,6 +46,12 @@ type DataTableProps<TData, TValue> = {
   isRowSelected?: (row: TData) => boolean;
   /** Linhas de 36px e texto de 12,5px, para tabela dentro de painel */
   dense?: boolean;
+  /**
+   * Identidade da linha (a chave do React). Sem ela vale a posicao, e o
+   * estado de dentro de uma celula (um popover aberto) passaria para outra
+   * linha quando a lista reordena. Use quando a celula tem controle.
+   */
+  getRowId?: (row: TData, index: number) => string;
 };
 
 // Metadados de coluna lidos aqui. align "right" alinha cabecalho e celula;
@@ -76,6 +82,7 @@ export function DataTable<TData, TValue>({
   containerClassName,
   isRowSelected,
   dense = false,
+  getRowId,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -86,6 +93,7 @@ export function DataTable<TData, TValue>({
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    ...(getRowId ? { getRowId } : {}),
   });
 
   const casca = cn(

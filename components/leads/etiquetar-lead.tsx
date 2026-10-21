@@ -22,6 +22,12 @@ import {
 //    (opcoesDeEtiqueta). Um toque adiciona aos selecionados. Sem a leitura
 //    das cadastradas (carregando ou erro), ficam so as em uso, com o aviso.
 // 3. As etiquetas dos selecionados, com o X para remover, como antes.
+//
+// O MESMO painel abre para UM lead, no "+" da linha da lista e da gaveta
+// (pedido do dono em 20/10/2026: "nao consigo ... adicionar uma etiqueta
+// por aqui"), com alvo "lead": os textos falam deste lead e as etiquetas que
+// ele ja tem saem da lista de adicionar (ficam embaixo, com o X). A grafia
+// existente continua valendo, porque ela olha todas as opcoes.
 
 // Linha clicavel na casca do item de menu do DS, a mesma dos outros
 // popovers da barra (Reatribuir, Mudar etapa): 40px de alvo.
@@ -38,6 +44,7 @@ export function PainelEtiquetarLead({
   ocupado,
   aoAdicionar,
   aoRemover,
+  alvo = "selecionados",
 }: {
   novaEtiqueta: string;
   aoDigitar: (texto: string) => void;
@@ -46,16 +53,24 @@ export function PainelEtiquetarLead({
   /** Leitura das cadastradas; carregando ou erro, as opcoes sao as em uso */
   leitura: LeituraDasEtiquetas;
   aoTentarDeNovo?: () => void;
-  /** Uniao das etiquetas dos selecionados, para remover */
+  /** Uniao das etiquetas dos selecionados (ou as do lead), para remover */
   etiquetasDosSelecionados: readonly string[];
   ocupado: boolean;
   /** Recebe a grafia que vai para o lead */
   aoAdicionar: (nome: string) => void;
   aoRemover: (nome: string) => void;
+  /** A selecao da barra em massa (o padrao) ou um lead so */
+  alvo?: "selecionados" | "lead";
 }) {
   const digitada = novaEtiqueta.replace(/\s+/g, " ").trim();
   const grafia = grafiaDaEtiqueta(novaEtiqueta, opcoes);
   const outraGrafia = digitada.length > 0 && grafia !== digitada;
+  const umLead = alvo === "lead";
+  // Para um lead, o que ele ja tem nao se oferece de novo (a mesma grafia;
+  // outra grafia continua, para trocar "lead" por "LEAD").
+  const oferecidas = umLead
+    ? opcoes.filter((opcao) => !etiquetasDosSelecionados.includes(opcao.nome))
+    : opcoes;
 
   return (
     <div className="grid gap-3 p-[5px]">
@@ -124,9 +139,9 @@ export function PainelEtiquetarLead({
             ) : null}
           </div>
         ) : null}
-        {opcoes.length > 0 ? (
+        {oferecidas.length > 0 ? (
           <div className="-mx-[5px] grid cz-scroll max-h-48 overflow-y-auto">
-            {opcoes.map((opcao) => (
+            {oferecidas.map((opcao) => (
               <button
                 key={opcao.nome}
                 type="button"
@@ -152,8 +167,9 @@ export function PainelEtiquetarLead({
           </div>
         ) : leitura === "pronto" ? (
           <p className="text-xs leading-[1.4] text-text-secondary">
-            A clínica ainda não tem etiquetas. Escreva uma acima para criar a
-            primeira.
+            {opcoes.length > 0
+              ? "Este lead já tem todas as etiquetas da clínica. Escreva uma acima para criar outra."
+              : "A clínica ainda não tem etiquetas. Escreva uma acima para criar a primeira."}
           </p>
         ) : null}
       </div>
@@ -161,7 +177,9 @@ export function PainelEtiquetarLead({
       {etiquetasDosSelecionados.length > 0 ? (
         <div className="grid gap-1.5">
           <p className="text-xs text-text-secondary">
-            Etiquetas do lead nos selecionados (toque no X para remover)
+            {umLead
+              ? "Etiquetas deste lead (toque no X para remover)"
+              : "Etiquetas do lead nos selecionados (toque no X para remover)"}
           </p>
           <div className="flex cz-scroll max-h-28 flex-wrap gap-2 overflow-y-auto">
             {etiquetasDosSelecionados.map((etiqueta) => (
@@ -185,7 +203,9 @@ export function PainelEtiquetarLead({
         </div>
       ) : (
         <p className="text-xs text-text-secondary">
-          Os leads selecionados ainda não têm etiquetas.
+          {umLead
+            ? "Este lead ainda não tem etiquetas."
+            : "Os leads selecionados ainda não têm etiquetas."}
         </p>
       )}
     </div>

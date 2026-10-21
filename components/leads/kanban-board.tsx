@@ -10,14 +10,16 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useId, useLayoutEffect, useState } from "react";
-import { toast } from "sonner";
 
-import { mudarEtapaAction } from "@/app/(app)/leads/actions";
 import {
   useArrastarParaOsLados,
   type LimitesDaRolagem,
   type Sentido,
 } from "@/components/leads/arrastar-para-os-lados";
+import {
+  aplicarPerdaNaCache,
+  moverEtapaNaHora,
+} from "@/components/leads/etapa-do-lead";
 import { KanbanColuna } from "@/components/leads/kanban-coluna";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
 import { Button } from "@/components/ui/button";
@@ -27,17 +29,14 @@ import {
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
 import { compararPorProximaAcao } from "@/lib/domain/leads-ui";
-import {
-  leadsKeys,
-  type LeadResumo,
-  type ReguaDaEtapa,
-} from "@/lib/queries/leads";
+import type { LeadResumo, ReguaDaEtapa } from "@/lib/queries/leads";
 import { cn } from "@/lib/utils";
 
 // Kanban da Tela 4: as colunas SAO A JORNADA DA CLINICA (funnel_stage_def),
 // na ordem que ela definiu, nao mais uma lista fixa de 6. Arrasto com
 // PointerSensor de 8px (o clique continua abrindo o drawer). Soltar em etapa
-// comum e otimista com rollback; soltar na etapa de papel PERDIDO nao
+// comum e otimista com rollback (moverEtapaNaHora, o mesmo da etapa na
+// linha da lista e na gaveta); soltar na etapa de papel PERDIDO nao
 // persiste nada: o modal de motivo decide, e cancelar devolve o cartao,
 // porque nada foi gravado. A coluna cuja etapa tem regua de follow-up ligada
 // diz isso no cabecalho: soltar ali faz o lead autorizado receber a regua.
@@ -147,7 +146,6 @@ export function KanbanBoard({
   for (const grupo of grupos.values()) {
     grupo.sort(compararPorProximaAcao);
   }
-  const chave = leadsKeys.lista(clinicId);
 
   const aoSoltar = (event: DragEndEvent) => {
     const lead = event.active.data.current?.lead as LeadResumo | undefined;
@@ -163,29 +161,7 @@ export function KanbanBoard({
       return;
     }
     // Otimista: mescla na cache, persiste, e desfaz com aviso se falhar.
-    const anterior = queryClient.getQueryData<LeadResumo[]>(chave);
-    queryClient.setQueryData<LeadResumo[]>(chave, (atual) =>
-      atual
-        ? atual.map((l) =>
-            l.id === lead.id
-              ? {
-                  ...l,
-                  funnel_stage: destino,
-                  lost_reason: null,
-                  lost_reason_note: null,
-                }
-              : l,
-          )
-        : atual,
-    );
-    void mudarEtapaAction({ contact_ids: [lead.id], etapa: destino }).then(
-      (resultado) => {
-        if (!resultado.ok) {
-          queryClient.setQueryData(chave, anterior);
-          toast.error(resultado.error ?? "Não foi possível mudar a etapa.");
-        }
-      },
-    );
+    void moverEtapaNaHora(queryClient, clinicId, lead.id, destino);
   };
 
   const reguaPorEtapa = new Map(
@@ -235,22 +211,9 @@ export function KanbanBoard({
       <ModalMotivoPerda
         contactIds={perdaIds}
         onFechar={() => setPerdaIds(null)}
-        onSucesso={(ids, motivo, nota) => {
-          queryClient.setQueryData<LeadResumo[]>(chave, (atual) =>
-            atual
-              ? atual.map((l) =>
-                  ids.includes(l.id)
-                    ? {
-                        ...l,
-                        funnel_stage: "perdido",
-                        lost_reason: motivo,
-                        lost_reason_note: nota,
-                      }
-                    : l,
-                )
-              : atual,
-          );
-        }}
+        onSucesso={(ids, motivo, nota) =>
+          aplicarPerdaNaCache(queryClient, clinicId, ids, motivo, nota)
+        }
       />
     </DndContext>
   );

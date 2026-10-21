@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { STATUS_TONE_VARS, type StatusDefinition } from "@/lib/design/status";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +12,12 @@ type StatusChipProps = {
   /** md (24px) e o padrao; sm (20px) para tabela densa, cartao e lista */
   size?: "sm" | "md";
   className?: string;
+  /**
+   * Depois do rotulo, dentro da pilula e na cor dela: a seta do chip que
+   * abre uma lista (a etapa do lead na lista e na gaveta). Decorativo; o
+   * nome acessivel e de quem envolve o chip.
+   */
+  children?: ReactNode;
 };
 
 // Chip de status com a pele do Badge do design system Conduzza: pilula com
@@ -23,6 +31,7 @@ export function StatusChip({
   avatarInitials,
   size = "md",
   className,
+  children,
 }: StatusChipProps) {
   const tone = STATUS_TONE_VARS[definition.tone];
   const Icon = definition.icon;
@@ -65,6 +74,7 @@ export function StatusChip({
         </span>
       )}
       <span>{text}</span>
+      {children}
     </span>
   );
 }

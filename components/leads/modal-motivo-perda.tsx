@@ -37,12 +37,19 @@ export function ModalMotivoPerda({
   contactIds,
   onFechar,
   onSucesso,
+  aoDevolverFoco,
 }: {
   /** null fecha o dialogo; a lista de ids abre (1 do Kanban, N da massa). */
   contactIds: string[] | null;
   onFechar: () => void;
   /** Chamado com os ids que de fato foram para Perdido (todos ou parte) */
   onSucesso?: (ids: string[], motivo: string, nota: string | null) => void;
+  /**
+   * Para onde o foco volta ao fechar. Sem ele vale o padrao do Radix (o que
+   * tinha o foco ao abrir); a etapa da linha e da gaveta abre o dialogo
+   * de dentro de uma lista que ja saiu da tela, e devolve o foco ao chip.
+   */
+  aoDevolverFoco?: (evento: Event) => void;
 }) {
   const [motivo, setMotivo] = useState<string | null>(null);
   const [nota, setNota] = useState("");
@@ -112,7 +119,11 @@ export function ModalMotivoPerda({
       open={aberto}
       onOpenChange={(a) => (!a && !salvando ? fechar() : null)}
     >
-      <DialogContent className="sm:max-w-[420px]" showCloseButton={!salvando}>
+      <DialogContent
+        className="sm:max-w-[420px]"
+        showCloseButton={!salvando}
+        onCloseAutoFocus={aoDevolverFoco}
+      >
         <DialogHeader>
           <DialogTitle>Motivo da perda</DialogTitle>
           <DialogDescription>

@@ -108,6 +108,10 @@ import { createClient } from "@/lib/supabase/client";
 // da gaveta, e, com as que ja estao em uso nos leads carregados, as opcoes
 // do "Etiquetar lead". Sem a leitura (carregando ou erro), os chips saem
 // neutros e o popover fica com as em uso, avisando; a tela nao cai.
+//
+// Etapa e etiquetas de UM lead (pedido do dono em 20/10/2026): a linha da
+// lista e a gaveta mudam a etapa e etiquetam ali mesmo, com as reguas, as
+// etiquetas e a permissao que a barra em massa ja recebe.
 
 type Visao = "kanban" | "lista";
 
@@ -276,6 +280,7 @@ export function LeadsClient({
     () => tonsDasEtiquetas(catalogoDeEtiquetas ?? []),
     [catalogoDeEtiquetas],
   );
+  const tentarDeNovoAsEtiquetas = () => void etiquetasQuery.refetch();
 
   const visao: Visao =
     searchParams.get("visao") === "lista" ? "lista" : "kanban";
@@ -686,11 +691,18 @@ export function LeadsClient({
         />
       ) : (
         <ListaLeads
+          clinicId={clinicId}
           jornada={jornada}
           leads={leadsFiltrados}
           membros={membros}
+          reguas={reguas}
           timezone={timezone}
           tonsDeEtiqueta={tonsDeEtiqueta}
+          podeEditar={podeEditar}
+          dica={dica}
+          etiquetasDaClinica={etiquetasDaClinica}
+          leituraDasEtiquetas={leituraDasEtiquetas}
+          aoTentarDeNovoAsEtiquetas={tentarDeNovoAsEtiquetas}
           selecionados={selecionados}
           onSelecionar={selecionar}
           onSelecionarTodos={selecionarTodos}
@@ -709,7 +721,7 @@ export function LeadsClient({
           dica={dica}
           etiquetasDaClinica={etiquetasDaClinica}
           leituraDasEtiquetas={leituraDasEtiquetas}
-          aoTentarDeNovoAsEtiquetas={() => void etiquetasQuery.refetch()}
+          aoTentarDeNovoAsEtiquetas={tentarDeNovoAsEtiquetas}
           onLimpar={limparSelecao}
           aoConcluir={(restantes) => setSelecionados(new Set(restantes))}
         />
@@ -729,6 +741,10 @@ export function LeadsClient({
         dicaIniciarConversa={dicaIniciarConversa}
         soAtribuidas={soAtribuidas}
         tonsDeEtiqueta={tonsDeEtiqueta}
+        reguas={reguas}
+        etiquetasDaClinica={etiquetasDaClinica}
+        leituraDasEtiquetas={leituraDasEtiquetas}
+        aoTentarDeNovoAsEtiquetas={tentarDeNovoAsEtiquetas}
         onFechar={() => setLeadAbertoId(null)}
       />
 

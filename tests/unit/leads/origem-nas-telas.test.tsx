@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -274,16 +275,22 @@ function leadDaLista(campos: Partial<LeadResumo> = {}): LeadResumo {
 
 function lista(leads: LeadResumo[]): string {
   return renderToStaticMarkup(
-    <ListaLeads
-      leads={leads}
-      membros={{}}
-      jornada={[]}
-      timezone={FUSO}
-      selecionados={new Set()}
-      onSelecionar={() => undefined}
-      onSelecionarTodos={() => undefined}
-      onAbrirLead={() => undefined}
-    />,
+    <QueryClientProvider client={new QueryClient()}>
+      <ListaLeads
+        clinicId="22222222-2222-4222-8222-222222222222"
+        leads={leads}
+        membros={{}}
+        jornada={[]}
+        reguas={[]}
+        timezone={FUSO}
+        podeEditar
+        dica="Seu perfil não pode editar leads e pacientes"
+        selecionados={new Set()}
+        onSelecionar={() => undefined}
+        onSelecionarTodos={() => undefined}
+        onAbrirLead={() => undefined}
+      />
+    </QueryClientProvider>,
   );
 }
 

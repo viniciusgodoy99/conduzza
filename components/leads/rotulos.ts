@@ -2,6 +2,7 @@ import { formatDistanceToNowStrict } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 import { SOURCE_CHANNELS, type SourceChannel } from "@/lib/domain/attribution";
+import { formatarTelefone } from "@/lib/domain/telefone";
 
 // Rotulos e formatos compartilhados da Tela 4 (Leads). Linguagem de
 // recepcionista: o canal aparece com nome humano, nunca a string tecnica do
@@ -38,6 +39,17 @@ export function tempoRelativo(iso: string): string {
     locale: ptBR,
     addSuffix: true,
   });
+}
+
+/**
+ * Como a tela chama o lead numa frase ou num nome acessivel: o nome, ou o
+ * telefone formatado, como uma pessoa discaria, quando nao ha nome.
+ */
+export function nomeOuTelefone(lead: {
+  name: string | null;
+  phone_e164: string;
+}): string {
+  return lead.name ?? formatarTelefone(lead.phone_e164);
 }
 
 /** Data local no fuso da clinica (regra 3.6): dd/mm/aaaa. */

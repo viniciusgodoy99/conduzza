@@ -514,17 +514,23 @@ describe("barra de ações em massa: Etiquetar lead", () => {
 describe("lista de Leads: coluna Etiquetas", () => {
   function lista(leads: LeadResumo[], tons: TonsDasEtiquetas = TONS): string {
     return renderToStaticMarkup(
-      <ListaLeads
-        leads={leads}
-        membros={{}}
-        jornada={JORNADA}
-        timezone="America/Fortaleza"
-        tonsDeEtiqueta={tons}
-        selecionados={new Set()}
-        onSelecionar={() => undefined}
-        onSelecionarTodos={() => undefined}
-        onAbrirLead={() => undefined}
-      />,
+      <QueryClientProvider client={new QueryClient()}>
+        <ListaLeads
+          clinicId={CLINICA}
+          leads={leads}
+          membros={{}}
+          jornada={JORNADA}
+          reguas={[]}
+          timezone="America/Fortaleza"
+          tonsDeEtiqueta={tons}
+          podeEditar
+          dica={DICA}
+          selecionados={new Set()}
+          onSelecionar={() => undefined}
+          onSelecionarTodos={() => undefined}
+          onAbrirLead={() => undefined}
+        />
+      </QueryClientProvider>,
     );
   }
 
@@ -549,7 +555,7 @@ describe("lista de Leads: coluna Etiquetas", () => {
     ]);
   });
 
-  it("sem catálogo, tudo neutro; lead sem etiqueta deixa a célula vazia", () => {
+  it("sem catálogo, tudo neutro; lead sem etiqueta fica sem chip", () => {
     const neutro = lista([lead({ tags: ["Cliente"] })], new Map());
     expect(chips(neutro)).toEqual([
       { tamanho: "compacto", nome: "Cliente", cor: "var(--neutral)" },
