@@ -15,8 +15,10 @@ import {
 
 // Leituras das automacoes de fluxo (migration 20261002130000). A RLS recorta
 // por clinica: membro ativo le as regras e o historico; so admin e gestor
-// escrevem as regras (pelas Server Actions da aba de Configuracoes), e o
-// historico so o motor escreve.
+// escrevem as regras (pelas Server Actions da aba de fluxo da tela
+// Automacoes, app/(app)/automacoes/fluxo-actions.ts), e o historico so o
+// motor escreve. A tela so chama estas leituras para administrador e gestor
+// (decisao do dono de 20/10/2026).
 //
 // O historico traz o NOME do contato, que e dado de paciente: quem chama
 // fetchHistoricoDeAutomacoes grava a trilha de leitura (a action da aba faz

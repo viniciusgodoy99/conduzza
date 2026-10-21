@@ -131,7 +131,7 @@ describe("traduzirRecusaDaJornada", () => {
     // O mesmo texto que a action devolve pelo hint (os dois nao podem se
     // desencontrar).
     expect(mensagem).toBe(RECUSA_DA_ETAPA_USADA);
-    expect(mensagem).toContain("aba Automações de fluxo");
+    expect(mensagem).toContain("em Automações, na aba Automações de fluxo");
   });
 
   it("as recusas do gatilho que já explicam passam como vieram", () => {

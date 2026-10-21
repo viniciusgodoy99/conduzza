@@ -61,10 +61,10 @@ type Params = {
     // dado de saude. Sem id na tela de lista; com o id do CONTATO quando a
     // leitura e das atividades de um contato so (painel da conversa).
     | "atividades"
-    // Historico das automacoes de fluxo (Configuracoes): mostra o nome do
-    // contato de cada execucao, lead ou paciente. Entidade propria para nao
-    // se confundir com a lista de Leads na janela de 5 minutos. Sem id
-    // (tela de lista).
+    // Historico das automacoes de fluxo (Automacoes, aba de fluxo; ate
+    // 20/10/2026 era de Configuracoes): mostra o nome do contato de cada
+    // execucao, lead ou paciente. Entidade propria para nao se confundir com
+    // a lista de Leads na janela de 5 minutos. Sem id (tela de lista).
     | "automacoes_de_fluxo"
     // Mensagens agendadas de um contato (lista acima da caixa de escrever):
     // o texto e escrito para o paciente. Com o id do CONTATO.

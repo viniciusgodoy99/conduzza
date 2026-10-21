@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { EXECUCAO_STATUS } from "@/components/configuracoes/automacoes-de-fluxo/status-da-execucao";
+import { EXECUCAO_STATUS } from "@/components/automacoes/fluxo/status-da-execucao";
 import {
   ACCESS_LEVEL_STATUS,
   APPOINTMENT_FLAG,

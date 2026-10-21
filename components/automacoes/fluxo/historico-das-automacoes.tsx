@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { History, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
-import { historicoDeAutomacoesDeFluxoAction } from "@/app/(app)/configuracoes/automacoes-de-fluxo-actions";
+import { historicoDeAutomacoesDeFluxoAction } from "@/app/(app)/automacoes/fluxo-actions";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";

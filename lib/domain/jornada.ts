@@ -354,10 +354,11 @@ const RECUSAS_DA_JORNADA: readonly {
   {
     // migration 20261002130000 (automacoes de fluxo): etapa que e origem ou
     // destino de uma automacao nao se exclui (hint etapa_usada_por_automacao).
-    // Mesmo texto de RECUSA_DA_ETAPA_USADA (lib/domain/automacoes-de-fluxo).
+    // Mesmo texto de RECUSA_DA_ETAPA_USADA (lib/domain/automacoes-de-fluxo);
+    // desde 20/10/2026 a aba mora em Automacoes, e nao em Configuracoes.
     trecho: "Esta etapa é usada por uma automação de fluxo",
     mensagem:
-      "Esta etapa é usada por uma automação de fluxo. Exclua a automação ou troque a etapa dela na aba Automações de fluxo antes de excluir a etapa.",
+      "Esta etapa é usada por uma automação de fluxo. Exclua a automação ou troque a etapa dela em Automações, na aba Automações de fluxo, antes de excluir a etapa.",
   },
   {
     trecho: "descricao_de_etapa_com_tamanho",

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import type { PapelDeEtapa } from "@/lib/domain/jornada";
+import type { Role } from "@/lib/domain/permissions";
 
 // Automacoes de fluxo (pedido do dono em 02/10/2026; migration
 // 20261002130000_automacoes_de_fluxo.sql). Modulo puro, serve cliente e
@@ -16,6 +17,30 @@ import type { PapelDeEtapa } from "@/lib/domain/jornada";
 // Regra em colunas fixas (CLAUDE.md 4): QUANDO o lead esta na ETAPA e
 // acontece o GATILHO, FAZ a ACAO. Nao existe acao de mensagem para o
 // paciente: isso e a regua de follow-up da etapa (Automacoes > Follow-up).
+
+// ---------------------------------------------------------------------------
+// Quem acessa (decisao do dono de 20/10/2026, onda 4, item 13)
+
+/**
+ * Os papeis que veem e mudam as automacoes de fluxo. Desde 20/10/2026 elas
+ * moram na tela Automacoes (aba "Automacoes de fluxo", ?aba=fluxo), e nao
+ * mais em Configuracoes, mas continuam SO de administrador e gestor: a
+ * recepcao ve o resto de Automacoes, nao esta aba; profissional e leitura
+ * nem entram em Automacoes (o layout da rota redireciona).
+ *
+ * Lista propria, e nao a celula "automacoes" da matriz de permissao: ali a
+ * recepcao tem "ver", e a aba de fluxo e excecao a isso. Fonte unica da
+ * pagina (para os outros papeis a aba nem existe e nada dela e lido) e das
+ * Server Actions (o papel e conferido antes de tocar o banco, regra 3.4).
+ */
+export const PAPEIS_DAS_AUTOMACOES_DE_FLUXO: readonly Role[] = [
+  "admin",
+  "gestor",
+];
+
+export function podeAcessarAutomacoesDeFluxo(role: Role): boolean {
+  return PAPEIS_DAS_AUTOMACOES_DE_FLUXO.includes(role);
+}
 
 // ---------------------------------------------------------------------------
 // Vocabulario (checks gatilho_de_automacao_valido e acao_de_automacao_valida)
@@ -964,10 +989,11 @@ export const DICA_SEM_PERMISSAO =
 /**
  * Excluir etiqueta usada por automacao: proteger_etiqueta_de_conversa recusa
  * com o hint etiqueta_usada_por_automacao (migration 20261002130000). A aba
- * Etiquetas mostra este texto, que diz onde resolver.
+ * Etiquetas mostra este texto, que diz onde resolver: desde 20/10/2026 a aba
+ * de automacoes de fluxo mora na tela Automacoes, e nao em Configuracoes.
  */
 export const RECUSA_DA_ETIQUETA_USADA =
-  "Esta etiqueta é usada por uma automação de fluxo. Exclua a automação ou troque a etiqueta dela na aba Automações de fluxo antes de excluir a etiqueta.";
+  "Esta etiqueta é usada por uma automação de fluxo. Exclua a automação ou troque a etiqueta dela em Automações, na aba Automações de fluxo, antes de excluir a etiqueta.";
 
 /** A recusa de excluir etiqueta usada por automacao, ou null se for outra. */
 export function recusaDaEtiquetaUsadaPorAutomacao(
@@ -992,10 +1018,11 @@ export function recusaDaEtiquetaUsadaPorAutomacao(
  * recusa com o hint etapa_usada_por_automacao (migration 20261002130000). A
  * aba Jornada mostra este texto. O mesmo texto esta em RECUSAS_DA_JORNADA
  * (lib/domain/jornada.ts), para quem traduz so pela mensagem; um teste de
- * unidade confere que os dois nao se desencontram.
+ * unidade confere que os dois nao se desencontram. Desde 20/10/2026 diz que
+ * a aba fica em Automacoes.
  */
 export const RECUSA_DA_ETAPA_USADA =
-  "Esta etapa é usada por uma automação de fluxo. Exclua a automação ou troque a etapa dela na aba Automações de fluxo antes de excluir a etapa.";
+  "Esta etapa é usada por uma automação de fluxo. Exclua a automação ou troque a etapa dela em Automações, na aba Automações de fluxo, antes de excluir a etapa.";
 
 /** A recusa de excluir etapa usada por automacao, ou null se for outra. */
 export function recusaDaEtapaUsadaPorAutomacao(

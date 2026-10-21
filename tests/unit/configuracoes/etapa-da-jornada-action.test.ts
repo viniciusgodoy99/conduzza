@@ -237,7 +237,9 @@ describe("etapa e etiqueta usadas por automação de fluxo", () => {
     registro.erroDoDelete = recusaDaEtapa;
     const resultado = await excluirEtapaDaJornadaAction("em_contato");
     expect(resultado).toEqual({ ok: false, error: RECUSA_DA_ETAPA_USADA });
-    expect(resultado.error).toContain("aba Automações de fluxo");
+    expect(resultado.error).toContain(
+      "em Automações, na aba Automações de fluxo",
+    );
   });
 
   it("vale pelo código do banco, mesmo com outra mensagem", async () => {
@@ -264,7 +266,9 @@ describe("etapa e etiqueta usadas por automação de fluxo", () => {
     registro.erroDoDelete = recusaDaEtiqueta;
     const resultado = await excluirEtiquetaDeConversaAction("retorno");
     expect(resultado).toEqual({ ok: false, error: RECUSA_DA_ETIQUETA_USADA });
-    expect(resultado.error).toContain("aba Automações de fluxo");
+    expect(resultado.error).toContain(
+      "em Automações, na aba Automações de fluxo",
+    );
   });
 
   it("etiqueta pelo código do banco, mesmo com outra mensagem", async () => {

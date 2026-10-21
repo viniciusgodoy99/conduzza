@@ -7,6 +7,7 @@ import {
   CircleDashed,
   Hourglass,
   Repeat,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -18,9 +19,14 @@ import {
   type EtapaParaFollowup,
 } from "@/components/automacoes/aba-followup";
 import { ReguasVinculadas } from "@/components/automacoes/excecoes";
+import {
+  AbaFluxo,
+  type DadosDaAbaDeFluxo,
+} from "@/components/automacoes/fluxo/aba-fluxo";
 import { situacaoDoTipo } from "@/components/automacoes/vinculo-da-regua";
 import { NumeroDasAutomaticas } from "@/components/automacoes/numero-das-automaticas";
 import type { NumerosDasAutomaticas } from "@/components/automacoes/numeros-de-envio";
+import { EmptyState } from "@/components/shared/empty-state";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -51,24 +57,35 @@ import {
 // fila e mora na Tela 10 (/espera), entao aqui ela vira o cartao que explica
 // e leva para la.
 //
-// Desenho do design system (docs/06 secao 5.10): as abas viram quatro
-// cartoes seletores, ainda Tabs do Radix (role=tab, setas e ?aba= iguais).
-// Cada cartao diz o nome (nome acessivel exato) e a situacao em 3 camadas
+// Desenho do design system (docs/06 secao 5.10): as abas viram cartoes
+// seletores, ainda Tabs do Radix (role=tab, setas e ?aba= iguais). Cada
+// cartao diz o nome (nome acessivel exato) e a situacao em 3 camadas
 // (REGUA_STATUS), ligada ao cartao por aria-describedby, com o numero de
 // mensagens enviadas em 24 horas que a tela ja busca.
+//
+// Automacoes de fluxo (decisao do dono de 20/10/2026, onda 4): o quinto
+// cartao, ?aba=fluxo, que saiu de Configuracoes. So administrador e gestor
+// o veem: a pagina decide no servidor (fluxo nulo para os outros papeis,
+// sem ler nada da aba), e ai o cartao nao existe e ?aba=fluxo cai na
+// Confirmacao, como aba desconhecida. Fica FORA de ABAS de proposito, no
+// fim da fileira, como a aba do Agente de IA em Configuracoes.
 
-const ABAS: readonly {
-  chave: "confirmacao" | "pos_falta" | "followup" | "espera";
-  rotulo: string;
-  icone: LucideIcon;
-}[] = [
+type AbaKey = "confirmacao" | "pos_falta" | "followup" | "espera" | "fluxo";
+
+type DefinicaoDaAba = { chave: AbaKey; rotulo: string; icone: LucideIcon };
+
+const ABAS: readonly DefinicaoDaAba[] = [
   { chave: "confirmacao", rotulo: "Confirmação", icone: CalendarCheck },
   { chave: "pos_falta", rotulo: "Pós falta", icone: CalendarX },
   { chave: "followup", rotulo: "Follow-up de leads", icone: Repeat },
   { chave: "espera", rotulo: "Lista de espera", icone: Hourglass },
 ];
 
-type AbaKey = (typeof ABAS)[number]["chave"];
+const ABA_DO_FLUXO: DefinicaoDaAba = {
+  chave: "fluxo",
+  rotulo: "Automações de fluxo",
+  icone: Workflow,
+};
 
 /** Regua que ainda nao existe: ausencia, neutra, como nos outros mapas. */
 const NAO_CONFIGURADA: StatusDefinition = {
@@ -93,12 +110,34 @@ function enviadas(total: number): React.ReactNode {
     </>
   );
 }
-const ABAS_PRONTAS: AbaKey[] = [
-  "confirmacao",
-  "pos_falta",
-  "followup",
-  "espera",
-];
+
+/** O cartao das automacoes de fluxo, com as regras que a pagina leu. */
+function situacaoDoFluxo(
+  automacoes: DadosDaAbaDeFluxo["automacoes"],
+): SituacaoDoCartao {
+  if (automacoes === null) {
+    return { ligada: false, chip: null, nota: "Não foi possível carregar" };
+  }
+  if (automacoes.length === 0) {
+    return {
+      ligada: false,
+      chip: { ...NAO_CONFIGURADA, label: "Nenhuma automação" },
+      nota: null,
+    };
+  }
+  const ligadas = automacoes.filter((regra) => regra.ativa).length;
+  return {
+    ligada: ligadas > 0,
+    chip: REGUA_STATUS[ligadas > 0 ? "ligada" : "desligada"],
+    nota: (
+      <>
+        <span className="cz-num">{ligadas}</span> de{" "}
+        <span className="cz-num">{automacoes.length}</span>{" "}
+        {automacoes.length === 1 ? "ligada" : "ligadas"}
+      </>
+    ),
+  };
+}
 
 export function AutomacoesClient({
   clinicId,
@@ -113,6 +152,7 @@ export function AutomacoesClient({
   podeEditar,
   dicaSemPermissao,
   ehAdministrador,
+  fluxo,
 }: {
   clinicId: string;
   nomeDaClinica: string;
@@ -132,6 +172,12 @@ export function AutomacoesClient({
   dicaSemPermissao: string;
   /** So o administrador registra a linha de base (aviso ao ligar). */
   ehAdministrador: boolean;
+  /**
+   * A aba Automacoes de fluxo. Nulo: a aba NAO existe para este papel
+   * (decisao do servidor; so administrador e gestor a recebem). Com a aba,
+   * automacoes nulo e o erro de leitura dela.
+   */
+  fluxo: DadosDaAbaDeFluxo | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -139,9 +185,15 @@ export function AutomacoesClient({
   const queryClient = useQueryClient();
   const supabase = createClient();
 
-  const abaAtiva: AbaKey = ABAS_PRONTAS.includes(abaInicial as AbaKey)
-    ? (abaInicial as AbaKey)
-    : "confirmacao";
+  // A fileira deste papel: a do fluxo so quando o servidor mandou.
+  const abas: readonly DefinicaoDaAba[] = fluxo
+    ? [...ABAS, ABA_DO_FLUXO]
+    : ABAS;
+
+  // Aba desconhecida (ou ?aba=fluxo para quem nao tem a aba) cai na
+  // Confirmacao.
+  const abaAtiva: AbaKey =
+    abas.find((aba) => aba.chave === abaInicial)?.chave ?? "confirmacao";
 
   const trocarAba = (aba: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -252,6 +304,9 @@ export function AutomacoesClient({
       chip: null,
       nota: "A reoferta mora na Lista de espera",
     },
+    fluxo: fluxo
+      ? situacaoDoFluxo(fluxo.automacoes)
+      : { ligada: false, chip: null, nota: null },
   };
 
   return (
@@ -266,9 +321,12 @@ export function AutomacoesClient({
       />
       <TabsList
         variant="cartoes"
-        className="grid-cols-1 items-stretch sm:grid-cols-2 xl:grid-cols-4"
+        className={cn(
+          "grid-cols-1 items-stretch sm:grid-cols-2",
+          abas.length > ABAS.length ? "xl:grid-cols-5" : "xl:grid-cols-4",
+        )}
       >
-        {ABAS.map((aba) => {
+        {abas.map((aba) => {
           const situacao = situacoes[aba.chave];
           const Icone = aba.icone;
           const idSituacao = `automacoes-situacao-${aba.chave}`;
@@ -456,6 +514,36 @@ export function AutomacoesClient({
           </CardContent>
         </Card>
       </TabsContent>
+
+      {fluxo ? (
+        <TabsContent value="fluxo" className="grid gap-4">
+          <p className="max-w-[62ch] text-[13.5px] text-text-secondary">
+            Regras que andam com o lead sozinhas: quando ele fica parado, deixa
+            de responder, entra numa etapa ou manda mensagem, a automação move
+            de etapa, coloca etiqueta, cria uma atividade ou deixa uma nota
+            interna. Nenhuma delas manda mensagem para o paciente.
+          </p>
+          {fluxo.automacoes ? (
+            <AbaFluxo
+              automacoes={fluxo.automacoes}
+              jornada={fluxo.jornada}
+              etiquetas={fluxo.etiquetas}
+              clinicId={clinicId}
+              timezone={fluxo.timezone}
+              podeGerenciar={fluxo.podeGerenciar}
+              dica={fluxo.dica}
+            />
+          ) : (
+            <Card>
+              <EmptyState
+                tom="erro"
+                title="Não foi possível carregar as automações de fluxo"
+                description="Recarregue a página. Se continuar, fale com o suporte."
+              />
+            </Card>
+          )}
+        </TabsContent>
+      ) : null}
     </Tabs>
   );
 }

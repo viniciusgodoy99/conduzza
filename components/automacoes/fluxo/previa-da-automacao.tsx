@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Users } from "lucide-react";
 
-import { previaDaAutomacaoDeFluxoAction } from "@/app/(app)/configuracoes/automacoes-de-fluxo-actions";
+import { previaDaAutomacaoDeFluxoAction } from "@/app/(app)/automacoes/fluxo-actions";
 import { Aviso } from "@/components/shared/aviso";
 import { Skeleton } from "@/components/ui/skeleton";
 import {

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// As Server Actions da aba "Automações de fluxo", com a sessao e o cliente do
-// Supabase trocados por dubles que guardam o que a action mandou. O que se
-// prova aqui:
+// As Server Actions da aba "Automações de fluxo" (desde 20/10/2026 na tela
+// Automacoes, app/(app)/automacoes/fluxo-actions.ts), com a sessao e o
+// cliente do Supabase trocados por dubles que guardam o que a action mandou.
+// O que se prova aqui:
 //   - so os campos da acao chegam ao banco (os das outras vao null), sem
 //     carimbo (created_by, updated_by, vigente_desde) e com clinic_id da
 //     SESSAO no insert;
@@ -10,9 +11,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //   - destino Agendou e recusado antes do banco, com a mensagem de gente;
 //   - a recusa do banco (ciclo pelo hint, RLS) volta traduzida;
 //   - toda mutacao grava audit_log com entity automacao_fluxo e o id, sem
-//     nome nem texto da regra;
+//     nome nem texto da regra, e revalida /automacoes (onde a aba mora);
 //   - o historico grava a trilha de leitura (traz nome do lead);
-//   - papel sem gestao nao chega ao banco.
+//   - so administrador e gestor passam: recepcao, profissional e leitura
+//     sao recusados em TODA action, as de leitura inclusive, antes de abrir
+//     o cliente do banco (decisao do dono de 20/10/2026).
 // A RLS, os checks e o detector de ciclo de verdade estao nos testes de RLS
 // e integracao da Leva B.
 
@@ -29,6 +32,10 @@ type Resultado = { data: unknown; error: Erro; count?: number };
 
 const registro = vi.hoisted(() => ({
   papel: "gestor" as string,
+  /** Quantas vezes a action abriu o cliente do banco. */
+  clientes: 0,
+  /** Os caminhos revalidados. */
+  revalidados: [] as string[],
   inserts: [] as { tabela: string; valores: Record<string, unknown> }[],
   updates: [] as { tabela: string; valores: Record<string, unknown> }[],
   deletes: [] as string[],
@@ -38,6 +45,8 @@ const registro = vi.hoisted(() => ({
   }[],
   leituras: [] as { entity: string; clinicId: string; userId: string }[],
   historico: [] as Record<string, unknown>[],
+  /** Sessao sem clinica ativa (expirada, ou mais de uma sem escolha). */
+  semClinicaAtiva: false,
 }));
 
 function cadeia(resultado: () => Resultado) {
@@ -102,9 +111,16 @@ function cliente() {
   };
 }
 
-vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+vi.mock("next/cache", () => ({
+  revalidatePath: (caminho: string) => {
+    registro.revalidados.push(caminho);
+  },
+}));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => cliente(),
+  createClient: async () => {
+    registro.clientes += 1;
+    return cliente();
+  },
 }));
 vi.mock("@/lib/auth/read-audit", () => ({
   auditarLeituraDePaciente: async (
@@ -117,7 +133,9 @@ vi.mock("@/lib/auth/read-audit", () => ({
 vi.mock("@/lib/auth/active-clinic", () => ({
   getSessionContext: async () => ({
     userId: USUARIO,
-    active: { clinicId: CLINICA, role: registro.papel, status: "ativo" },
+    active: registro.semClinicaAtiva
+      ? null
+      : { clinicId: CLINICA, role: registro.papel, status: "ativo" },
   }),
 }));
 
@@ -126,8 +144,9 @@ const {
   alternarAutomacaoDeFluxoAction,
   excluirAutomacaoDeFluxoAction,
   previaDaAutomacaoDeFluxoAction,
+  usoDasAutomacoesDeFluxoAction,
   historicoDeAutomacoesDeFluxoAction,
-} = await import("@/app/(app)/configuracoes/automacoes-de-fluxo-actions");
+} = await import("@/app/(app)/automacoes/fluxo-actions");
 
 function entrada(campos: Record<string, unknown> = {}) {
   return {
@@ -154,6 +173,8 @@ const trilha = () =>
 
 beforeEach(() => {
   registro.papel = "gestor";
+  registro.clientes = 0;
+  registro.revalidados = [];
   registro.inserts = [];
   registro.updates = [];
   registro.deletes = [];
@@ -161,6 +182,7 @@ beforeEach(() => {
   registro.linhasDoUpdate = [{ id: REGRA }];
   registro.leituras = [];
   registro.historico = [];
+  registro.semClinicaAtiva = false;
 });
 
 describe("salvarAutomacaoDeFluxoAction", () => {
@@ -198,6 +220,17 @@ describe("salvarAutomacaoDeFluxoAction", () => {
       entity: "automacao_fluxo",
       entity_id: REGRA,
     });
+  });
+
+  it("revalida a tela Automações, onde a aba mora (não mais Configurações)", async () => {
+    await salvarAutomacaoDeFluxoAction(entrada());
+    await alternarAutomacaoDeFluxoAction(REGRA, false);
+    await excluirAutomacaoDeFluxoAction(REGRA);
+    expect(registro.revalidados).toEqual([
+      "/automacoes",
+      "/automacoes",
+      "/automacoes",
+    ]);
   });
 
   it("editar usa update filtrado e grava editou", async () => {
@@ -260,6 +293,69 @@ describe("salvarAutomacaoDeFluxoAction", () => {
     const resultado = await salvarAutomacaoDeFluxoAction(entrada());
     expect(resultado.ok).toBe(false);
     expect(registro.inserts).toHaveLength(0);
+  });
+});
+
+describe("quem pode (decisão do dono de 20/10/2026)", () => {
+  // Toda action, as de leitura inclusive, com uma entrada valida: a recusa
+  // tem de vir do papel, nunca do Zod.
+  const ACTIONS: [string, () => Promise<{ ok: boolean }>][] = [
+    ["salvar", () => salvarAutomacaoDeFluxoAction(entrada())],
+    ["ligar", () => alternarAutomacaoDeFluxoAction(REGRA, true)],
+    ["desligar", () => alternarAutomacaoDeFluxoAction(REGRA, false)],
+    ["excluir", () => excluirAutomacaoDeFluxoAction(REGRA)],
+    [
+      "prévia",
+      () =>
+        previaDaAutomacaoDeFluxoAction({
+          gatilho: "tempo_na_etapa",
+          etapa: "em_contato",
+          espera_minutos: 4320,
+        }),
+    ],
+    ["uso", () => usoDasAutomacoesDeFluxoAction([REGRA])],
+    ["histórico", () => historicoDeAutomacoesDeFluxoAction(null)],
+  ];
+
+  describe.each(["recepcao", "profissional", "leitura"])(
+    "%s é recusado",
+    (papel) => {
+      it.each(ACTIONS)("%s: sem abrir o banco", async (_nome, chamar) => {
+        registro.papel = papel;
+        const resultado = await chamar();
+        expect(resultado).toEqual({
+          ok: false,
+          error:
+            "Somente administradores e gestores mudam as automações de fluxo.",
+        });
+        expect(registro.clientes).toBe(0);
+        expect(registro.inserts).toHaveLength(0);
+        expect(registro.updates).toHaveLength(0);
+        expect(registro.deletes).toHaveLength(0);
+        // O historico traz nome de lead: nem a leitura nem a trilha.
+        expect(registro.leituras).toHaveLength(0);
+        expect(registro.revalidados).toHaveLength(0);
+      });
+    },
+  );
+
+  describe.each(["admin", "gestor"])("%s passa", (papel) => {
+    it.each(ACTIONS)("%s", async (_nome, chamar) => {
+      registro.papel = papel;
+      const resultado = await chamar();
+      expect(resultado.ok).toBe(true);
+      expect(registro.clientes).toBe(1);
+    });
+  });
+
+  it("sem clínica ativa: sessão expirada, sem abrir o banco", async () => {
+    registro.semClinicaAtiva = true;
+    const resultado = await historicoDeAutomacoesDeFluxoAction(null);
+    expect(resultado).toEqual({
+      ok: false,
+      error: "Sessão expirada. Entre de novo.",
+    });
+    expect(registro.clientes).toBe(0);
   });
 });
 

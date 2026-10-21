@@ -4,19 +4,19 @@ import {
 } from "@/components/shared/loading-skeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
-// Esqueleto na forma da tela de Configuracoes (cabecalho com eyebrow, as nove
+// Esqueleto na forma da tela de Configuracoes (cabecalho com eyebrow, as oito
 // abas sublinhadas e os cartoes da aba de equipe: usuarios, convite, codigo
 // e a tabela de papeis), nunca giratorio no meio da tela.
 
 // Uma barra por aba, na ordem e no tamanho aproximado do rotulo (com o
 // contador, onde a aba tem um) das ABAS de configuracoes-client.tsx. Aba nova
 // la pede barra nova aqui: o teste carregando-configuracoes confere a conta.
+// (Automacoes de fluxo saiu em 20/10/2026: mora na tela Automacoes.)
 const ABAS = [
   "w-40", // Equipe e permissões
   "w-16", // Clínica
   "w-20", // WhatsApp
   "w-40", // Jornada e conversões
-  "w-40", // Automações de fluxo
   "w-40", // Etiquetas de conversa
   "w-36", // Mensagens padrão
   "w-32", // Anúncios da Meta

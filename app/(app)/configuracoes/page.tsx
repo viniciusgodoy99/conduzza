@@ -42,7 +42,6 @@ import {
   fetchContagemDeEtiquetas,
   fetchEtiquetasDeConversa,
 } from "@/lib/queries/etiquetas-de-conversa";
-import { fetchAutomacoesDeFluxo } from "@/lib/queries/automacoes-de-fluxo";
 import {
   abaDaIaVisivel,
   configDaIaDaRequisicao,
@@ -116,20 +115,30 @@ async function convidadosQueAindaNaoEntraram(
 // Tela 12, Configuracoes: equipe e permissoes (liberacao de pedidos, papeis,
 // vinculo do profissional com a agenda, convite, codigo da clinica e a tabela
 // do que cada papel faz), dados da clinica (nome e fuso), os numeros de
-// WhatsApp (um cartao por numero; docs/07, Telas), jornada, automacoes de
-// fluxo, etiquetas, mensagens padrao e anuncios da Meta e do Google (rastreio
-// do site). Administrador e gestor editam (nome e fuso so o administrador);
-// os demais papeis nem chegam aqui (o layout redireciona pela matriz do
-// brief). A aba Agente de IA (Fase 3) so existe nas clinicas com o agente
-// habilitado (a lista do banco desde a onda 1, que o super admin muda pelo
-// Painel geral), decidido AQUI no servidor (abaDaIaVisivel): nas outras,
-// nada dela e lido nem vai para o cliente. Nela, so o administrador da
-// clinica e o super admin alteram.
+// WhatsApp (um cartao por numero; docs/07, Telas), jornada, etiquetas,
+// mensagens padrao e anuncios da Meta e do Google (rastreio do site).
+// Administrador e gestor editam (nome e fuso so o administrador); os demais
+// papeis nem chegam aqui (o layout redireciona pela matriz do brief). A aba
+// Agente de IA (Fase 3) so existe nas clinicas com o agente habilitado (a
+// lista do banco desde a onda 1, que o super admin muda pelo Painel geral),
+// decidido AQUI no servidor (abaDaIaVisivel): nas outras, nada dela e lido
+// nem vai para o cliente. Nela, so o administrador da clinica e o super
+// admin alteram.
+//
+// As automacoes de fluxo sairam daqui em 20/10/2026 (decisao do dono, onda
+// 4): moram na tela Automacoes. O link antigo (?aba=fluxo) vai para la antes
+// de qualquer leitura; quem nao e administrador nem gestor nem chega aqui
+// (o layout manda para o Inicio), e la a aba so existe para os dois.
 export default async function ConfiguracoesPage({
   searchParams,
 }: {
   searchParams: Promise<{ aba?: string }>;
 }) {
+  const { aba } = await searchParams;
+  if (aba === "fluxo") {
+    redirect("/automacoes?aba=fluxo");
+  }
+
   const context = await getSessionContext();
   const active = context?.active;
   if (!context || !active) {
@@ -149,7 +158,6 @@ export default async function ConfiguracoesPage({
     codigoResult,
     whatsappResult,
     jornada,
-    automacoesDeFluxo,
     etiquetas,
     contagemDeEtiquetas,
     mensagensPadrao,
@@ -200,9 +208,6 @@ export default async function ConfiguracoesPage({
       .order("created_at", { ascending: true }),
     // A jornada da clinica (etapas + conversao): a RLS recorta por clinica.
     seguro(fetchJornada(supabase, active.clinicId)),
-    // As automacoes de fluxo (regras, sem paciente): membro ativo le. O uso
-    // e o historico a aba busca sob demanda, so quando aberta.
-    seguro(fetchAutomacoesDeFluxo(supabase, active.clinicId)),
     seguro(fetchEtiquetasDeConversa(supabase, active.clinicId)),
     seguro(fetchContagemDeEtiquetas(supabase, active.clinicId)),
     // As mensagens padrao, todas (ativas e desativadas): membro ativo le.
@@ -434,8 +439,6 @@ export default async function ConfiguracoesPage({
     allow_code_signup: boolean;
   } | null;
 
-  const { aba } = await searchParams;
-
   return (
     <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
       <PageHeader
@@ -484,15 +487,6 @@ export default async function ConfiguracoesPage({
               }
         }
         jornada={jornada}
-        fluxo={
-          automacoesDeFluxo
-            ? {
-                lista: automacoesDeFluxo,
-                clinicId: active.clinicId,
-                timezone: active.timezone,
-              }
-            : null
-        }
         etiquetas={
           etiquetas && contagemDeEtiquetas
             ? { lista: etiquetas, contagem: contagemDeEtiquetas }

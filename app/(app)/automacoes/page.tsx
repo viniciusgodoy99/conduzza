@@ -8,6 +8,10 @@ import {
 import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import {
+  DICA_SEM_PERMISSAO,
+  podeAcessarAutomacoesDeFluxo,
+} from "@/lib/domain/automacoes-de-fluxo";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { NAV_GROUPS } from "@/lib/navigation";
 import {
@@ -15,6 +19,8 @@ import {
   fetchReguasVinculadas,
   fetchVolumesDaEstimativa,
 } from "@/lib/queries/automacoes";
+import { fetchAutomacoesDeFluxo } from "@/lib/queries/automacoes-de-fluxo";
+import { fetchEtiquetasDeConversa } from "@/lib/queries/etiquetas-de-conversa";
 import { fetchJornada } from "@/lib/queries/jornada";
 import { fetchReguasDaClinica } from "@/lib/queries/confirmacoes";
 import { fetchNumerosDaClinica } from "@/lib/queries/conversations";
@@ -51,9 +57,18 @@ async function fetchNumerosDasAutomaticas(
   }
 }
 
-// Tela 7, Automacoes (tarefa 4.8): onde a clinica edita as reguas. Sem
-// auditarLeituraDePaciente de proposito: a tela mostra configuracao e
-// contagens agregadas, nenhum dado identificado de paciente.
+// Tela 7, Automacoes (tarefa 4.8): onde a clinica edita as reguas e, desde
+// 20/10/2026 (decisao do dono, onda 4), as automacoes de fluxo, que sairam
+// de Configuracoes. Sem auditarLeituraDePaciente de proposito: a tela mostra
+// configuracao e contagens agregadas, nenhum dado identificado de paciente
+// (o historico das automacoes de fluxo, que traz o nome do lead, chega sob
+// demanda pela Server Action, que grava a trilha).
+//
+// A guarda do modulo mora no layout (profissional e leitura vao para o
+// Inicio). A aba de fluxo e so de administrador e gestor, decidido AQUI no
+// servidor (podeAcessarAutomacoesDeFluxo): para a recepcao, nada dela e lido
+// nem vai para o cliente, e ?aba=fluxo cai na aba padrao, como aba
+// desconhecida.
 export default async function AutomacoesPage({
   searchParams,
 }: {
@@ -65,16 +80,36 @@ export default async function AutomacoesPage({
     redirect("/inicio");
   }
 
+  const comFluxo = podeAcessarAutomacoesDeFluxo(active.role);
   const supabase = await createClient();
-  const [reguas, volumes, vinculadas, followups, jornada, numeros] =
-    await Promise.all([
-      fetchReguasDaClinica(supabase, active.clinicId),
-      fetchVolumesDaEstimativa(supabase, active.clinicId),
-      fetchReguasVinculadas(supabase, active.clinicId),
-      fetchFollowups(supabase, active.clinicId),
-      fetchJornada(supabase, active.clinicId),
-      fetchNumerosDasAutomaticas(supabase, active.clinicId),
-    ]);
+  const [
+    reguas,
+    volumes,
+    vinculadas,
+    followups,
+    jornada,
+    numeros,
+    automacoesDeFluxo,
+    etiquetas,
+  ] = await Promise.all([
+    fetchReguasDaClinica(supabase, active.clinicId),
+    fetchVolumesDaEstimativa(supabase, active.clinicId),
+    fetchReguasVinculadas(supabase, active.clinicId),
+    fetchFollowups(supabase, active.clinicId),
+    fetchJornada(supabase, active.clinicId),
+    fetchNumerosDasAutomaticas(supabase, active.clinicId),
+    // As regras (sem paciente). Leitura que falha vira nulo: a aba mostra o
+    // proprio erro, sem derrubar as reguas. O uso e o historico a aba busca
+    // sob demanda, so quando aberta.
+    comFluxo
+      ? fetchAutomacoesDeFluxo(supabase, active.clinicId).catch(() => null)
+      : null,
+    // O catalogo de etiquetas (o nome da etiqueta na frase da regra e no
+    // dialogo). Nulo: a aba avisa que nao carregou.
+    comFluxo
+      ? fetchEtiquetasDeConversa(supabase, active.clinicId).catch(() => null)
+      : null,
+  ]);
   const { aba } = await searchParams;
 
   return (
@@ -82,7 +117,11 @@ export default async function AutomacoesPage({
       <PageHeader
         eyebrow={NAV_GROUPS.inteligencia ?? undefined}
         title="Automações"
-        description="As mensagens que saem sozinhas: o que dizem, quando saem e para quem."
+        description={
+          comFluxo
+            ? "As mensagens que saem sozinhas e as regras que andam com o lead."
+            : "As mensagens que saem sozinhas: o que dizem, quando saem e para quem."
+        }
       />
       {/* Tela pensada para computador (brief secao 6): no celular, o aviso. */}
       <AvisoCelular />
@@ -104,6 +143,22 @@ export default async function AutomacoesPage({
           "Somente administradores e gestores alteram as automações"
         }
         ehAdministrador={active.role === "admin"}
+        fluxo={
+          comFluxo
+            ? {
+                automacoes: automacoesDeFluxo,
+                jornada,
+                etiquetas,
+                // O historico e o uso no relogio da clinica (regra 3.6).
+                timezone: active.timezone,
+                // So quem gerencia chega a aba, entao dentro dela tudo vem
+                // habilitado; o componente continua sabendo desabilitar com
+                // a dica, e as actions conferem o papel de novo.
+                podeGerenciar: true,
+                dica: DICA_SEM_PERMISSAO,
+              }
+            : null
+        }
       />
     </div>
   );

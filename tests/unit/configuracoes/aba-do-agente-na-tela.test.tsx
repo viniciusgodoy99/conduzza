@@ -67,7 +67,6 @@ function tela(
         codigoAtivo={false}
         whatsapp={null}
         jornada={null}
-        fluxo={null}
         etiquetas={null}
         mensagens={null}
         meta={null}

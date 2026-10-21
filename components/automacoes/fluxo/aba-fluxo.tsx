@@ -16,11 +16,11 @@ import {
   alternarAutomacaoDeFluxoAction,
   excluirAutomacaoDeFluxoAction,
   usoDasAutomacoesDeFluxoAction,
-} from "@/app/(app)/configuracoes/automacoes-de-fluxo-actions";
+} from "@/app/(app)/automacoes/fluxo-actions";
 import { DialogoDeExclusao } from "@/components/automacoes/dialogo-de-exclusao";
-import { DialogoDaAutomacao } from "@/components/configuracoes/automacoes-de-fluxo/dialogo-da-automacao";
-import { DialogoParaLigar } from "@/components/configuracoes/automacoes-de-fluxo/dialogo-para-ligar";
-import { HistoricoDasAutomacoes } from "@/components/configuracoes/automacoes-de-fluxo/historico-das-automacoes";
+import { DialogoDaAutomacao } from "@/components/automacoes/fluxo/dialogo-da-automacao";
+import { DialogoParaLigar } from "@/components/automacoes/fluxo/dialogo-para-ligar";
+import { HistoricoDasAutomacoes } from "@/components/automacoes/fluxo/historico-das-automacoes";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -50,23 +50,40 @@ import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { automacoesDeFluxoKeys } from "@/lib/queries/automacoes-de-fluxo";
 
-// Aba "Automacoes de fluxo" (Configuracoes, logo depois de "Jornada e
-// conversoes"; pedido do dono em 02/10/2026). Administrador e gestor criam,
-// editam, ligam, desligam e excluem; os demais papeis nem chegam a esta tela
-// (o layout redireciona), e ainda assim tudo fica visivel e desabilitado com
-// a dica se a permissao faltar.
+// Aba "Automacoes de fluxo" da tela Automacoes (?aba=fluxo; pedido do dono
+// em 02/10/2026, em Configuracoes ate 20/10/2026, quando o dono a trouxe para
+// ca). Administrador e gestor criam, editam, ligam, desligam e excluem; para
+// os demais papeis a aba nem existe (a pagina decide no servidor, e as
+// actions conferem o papel de novo), e ainda assim tudo fica visivel e
+// desabilitado com a dica se a permissao faltar.
 //
 // Cada regra numa linha: nome, a situacao em 3 camadas (REGUA_STATUS, o
 // mesmo par Ligada/Desligada das reguas), "Quando" e "Faz" em portugues, e
 // quantas vezes rodou com a ultima vez (contagem sob demanda, sem paciente).
 // Ligar pede confirmacao com a previa (nao e retroativa); desligar e direto.
 // Criar e editar num dialogo. Embaixo, os avisos fixos, o atalho para a
-// mensagem ao paciente (que e a regua de follow-up, em Automacoes) e o
-// historico das ultimas execucoes.
+// mensagem ao paciente (que e a regua de follow-up, outra aba desta mesma
+// tela) e o historico das ultimas execucoes.
+
+/**
+ * O que a pagina de Automacoes manda para a aba, so para administrador e
+ * gestor (nulo no lugar disto: a aba nao existe para o papel).
+ */
+export type DadosDaAbaDeFluxo = {
+  /** nulo: a leitura das regras falhou (a aba mostra o erro) */
+  automacoes: AutomacaoDeFluxo[] | null;
+  jornada: EtapaDaJornada[];
+  /** nulo: a leitura das etiquetas falhou */
+  etiquetas: EtiquetaDeConversa[] | null;
+  /** fuso da clinica, para o uso e o historico */
+  timezone: string;
+  podeGerenciar: boolean;
+  dica: string;
+};
 
 type Dialogo = { regra: AutomacaoDeFluxo | null };
 
-export function AutomacoesDeFluxoTab({
+export function AbaFluxo({
   automacoes,
   jornada,
   etiquetas,
@@ -310,6 +327,8 @@ export function AutomacoesDeFluxoTab({
               <li key={aviso}>{aviso}</li>
             ))}
           </ul>
+          {/* O follow-up e outra aba desta mesma tela: o link so troca a
+              aba (?aba=followup), como os cartoes do topo. */}
           <Aviso
             tom="info"
             icone={MessageSquareText}
@@ -319,9 +338,9 @@ export function AutomacoesDeFluxoTab({
               </Button>
             }
           >
-            A mensagem para o paciente ao entrar na etapa fica em Automações
-            &gt; Follow-up, com horário de envio e autorização para receber
-            mensagens.
+            A mensagem para o paciente ao entrar na etapa fica no Follow-up de
+            leads, nesta mesma tela, com horário de envio e autorização para
+            receber mensagens.
           </Aviso>
         </CardContent>
       </Card>

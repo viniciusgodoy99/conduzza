@@ -5,8 +5,9 @@ import { dados } from "./dados";
 import { login } from "./helpers";
 
 // Automacoes de fluxo (pedido do dono em 02/10/2026; migration
-// 20261002130000): a aba de Configuracoes logo depois de "Jornada e
-// conversoes". O que se prova pela tela:
+// 20261002130000): desde 20/10/2026 (decisao do dono, onda 4) a aba mora na
+// tela Automacoes (?aba=fluxo), e nao mais em Configuracoes. O que se prova
+// pela tela:
 //   - administrador cria uma regra pelo dialogo (campos conforme gatilho e
 //     acao) e a linha mostra Quando e Faz em portugues, desligada;
 //   - o ciclo com outra regra ligada e avisado ANTES de salvar (Salvar
@@ -14,7 +15,10 @@ import { login } from "./helpers";
 //   - ligar pela lista pede confirmacao com a previa (nao e retroativa) e,
 //     com ciclo, o botao Ligar fica desabilitado;
 //   - excluir pergunta antes;
-//   - o atalho leva para Automacoes > Follow-up.
+//   - o atalho troca para a aba Follow-up de leads, na mesma tela;
+//   - so administrador e gestor veem a aba: a recepcao ve o resto de
+//     Automacoes sem ela, e leitura nem entra em Automacoes;
+//   - o link antigo de Configuracoes leva para a aba nova.
 //
 // O spec cria as proprias regras (nome com sufixo) e limpa no fim. Nao muta
 // o seed. Usa as etapas da jornada padrao da Clinica E2E (Em contato e
@@ -71,7 +75,7 @@ test.afterAll(async () => {
 
 async function abrirAba(page: Page) {
   await login(page, dados().emails.admin);
-  await page.goto("/configuracoes?aba=fluxo");
+  await page.goto("/automacoes?aba=fluxo");
   await expect(
     page.getByRole("tab", { name: /^Automações de fluxo/ }),
   ).toHaveAttribute("aria-selected", "true");
@@ -186,17 +190,49 @@ test("excluir pergunta antes; o atalho leva ao follow-up", async ({ page }) => {
 
   await page.getByRole("link", { name: "Abrir o follow-up" }).click();
   await page.waitForURL(/\/automacoes\?aba=followup/);
+  await expect(
+    page.getByRole("tab", { name: "Follow-up de leads" }),
+  ).toHaveAttribute("aria-selected", "true");
 });
 
-test("gestor também gerencia; recepção nem chega à aba", async ({ page }) => {
+test("gestor também gerencia; recepção não vê a aba; leitura nem entra", async ({
+  page,
+}) => {
   await login(page, dados().emails.gestor);
-  await page.goto("/configuracoes?aba=fluxo");
+  await page.goto("/automacoes?aba=fluxo");
   await expect(
     page.getByRole("button", { name: "Nova automação" }),
   ).toBeEnabled();
 
+  // A recepcao ve Automacoes sem a aba: ?aba=fluxo cai na Confirmacao.
   await page.context().clearCookies();
   await login(page, dados().emails.recepcao);
-  await page.goto("/configuracoes?aba=fluxo");
+  await page.goto("/automacoes?aba=fluxo");
+  await expect(page.getByRole("tab", { name: "Confirmação" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("tab", { name: /^Automações de fluxo/ }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Nova automação" }),
+  ).toHaveCount(0);
+
+  // Leitura nao entra em Automacoes, nem pela URL.
+  await page.context().clearCookies();
+  await login(page, dados().emails.leitura);
+  await page.goto("/automacoes");
   await page.waitForURL(/\/inicio/);
+});
+
+test("o link antigo de Configurações leva para a aba nova", async ({
+  page,
+}) => {
+  await login(page, dados().emails.admin);
+  await page.goto("/configuracoes?aba=fluxo");
+  await page.waitForURL(/\/automacoes\?aba=fluxo/);
+  await expect(
+    page.getByRole("tab", { name: /^Automações de fluxo/ }),
+  ).toHaveAttribute("aria-selected", "true");
 });

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 // A aba importa as Server Actions; aqui so a renderizacao importa.
-vi.mock("@/app/(app)/configuracoes/automacoes-de-fluxo-actions", () => ({
+vi.mock("@/app/(app)/automacoes/fluxo-actions", () => ({
   salvarAutomacaoDeFluxoAction: vi.fn(),
   alternarAutomacaoDeFluxoAction: vi.fn(),
   excluirAutomacaoDeFluxoAction: vi.fn(),
@@ -12,15 +12,17 @@ vi.mock("@/app/(app)/configuracoes/automacoes-de-fluxo-actions", () => ({
   historicoDeAutomacoesDeFluxoAction: vi.fn(),
 }));
 
-import { AutomacoesDeFluxoTab } from "@/components/configuracoes/automacoes-de-fluxo-tab";
+import { AbaFluxo } from "@/components/automacoes/fluxo/aba-fluxo";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AutomacaoDeFluxo } from "@/lib/domain/automacoes-de-fluxo";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 
-// Aba "Automações de fluxo" de Configuracoes: vazio com exemplo, cada regra
-// com nome, situacao em tres camadas, "Quando" e "Faz" em portugues, os
-// avisos fixos, o atalho para o follow-up e as acoes de quem nao gerencia
-// visiveis e desabilitadas.
+// Aba "Automações de fluxo" (desde 20/10/2026 na tela Automacoes; ate entao
+// em Configuracoes): vazio com exemplo, cada regra com nome, situacao em tres
+// camadas, "Quando" e "Faz" em portugues, os avisos fixos, o atalho para o
+// follow-up (outra aba da mesma tela) e as acoes de quem nao gerencia
+// visiveis e desabilitadas. Quem ve a aba (so administrador e gestor) esta
+// em tela-guarda.test.tsx.
 
 function etapa(
   chave: string,
@@ -100,21 +102,19 @@ const AUTOMACOES: AutomacaoDeFluxo[] = [
 const desabilitado = (nome: string) =>
   new RegExp(`<button(?=[^>]*aria-label="${nome}")(?=[^>]*disabled="")[^>]*>`);
 
-function aba(
-  props: Partial<React.ComponentProps<typeof AutomacoesDeFluxoTab>>,
-) {
+function aba(props: Partial<React.ComponentProps<typeof AbaFluxo>>) {
   const queryClient = new QueryClient();
   return renderToStaticMarkup(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <AutomacoesDeFluxoTab
+        <AbaFluxo
           automacoes={AUTOMACOES}
           jornada={JORNADA}
           etiquetas={[]}
           clinicId="c1111111-1111-4111-8111-111111111111"
           timezone="America/Fortaleza"
           podeGerenciar
-          dica="Somente administradores e gestores alteram as configurações"
+          dica="Somente administradores e gestores mudam as automações de fluxo."
           {...props}
         />
       </TooltipProvider>
@@ -152,10 +152,13 @@ describe("aba Automações de fluxo", () => {
     expect(html).toContain("Agendou e Compareceu não são destino");
     expect(html).toContain("encerra o follow-up daquela etapa");
     expect(html).toContain("param no 3º salto");
+    // O follow-up e outra aba desta mesma tela: o atalho so troca a aba.
     expect(html).toContain(
-      "A mensagem para o paciente ao entrar na etapa fica em Automações",
+      "A mensagem para o paciente ao entrar na etapa fica no Follow-up de leads, nesta mesma tela",
     );
     expect(html).toContain('href="/automacoes?aba=followup"');
+    expect(html).toContain("Abrir o follow-up");
+    expect(html).not.toContain("/configuracoes");
   });
 
   it("histórico começa carregando, com texto para leitor de tela", () => {

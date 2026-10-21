@@ -581,6 +581,8 @@ Não estava previsto e vai doer no mês 3 se ficar de fora. Com 9 a 15 tenants, 
 
 Pedido do dono em 02/10/2026. Fica em Configurações, na aba "Automações de fluxo", ao lado de "Jornada e conversões", porque toda regra parte de uma etapa da jornada. Administrador e gestor criam, editam, ligam e excluem; recepção, profissional e leitura não veem a aba (Configurações não aparece para eles).
 
+> **Desde 20/10/2026 (decisão do dono, onda 4, item 13; construído em 21/10/2026, sem migration):** a aba sai de Configurações e vai para a tela **Automações**, como mais uma aba ("Automações de fluxo", `?aba=fluxo`), com tudo o que tinha (lista, criar, editar, ligar e desligar, excluir, histórico). O link antigo de Configurações leva para lá. **Quem vê não mudou:** só administrador e gestor. A recepção continua vendo o resto de Automações como via, mas esta aba não aparece para ela, nem pelo endereço; profissional e leitura não entram em Automações (a tela leva ao Início).
+
 14.1. **Uma regra é: quando o lead está na etapa X e acontece o gatilho, a automação faz uma ação.** Regra em campos fixos, sem linguagem de programação.
 14.2. **Gatilhos:**
    - **Ficou um tempo na etapa:** de 1 hora a 90 dias, contados da entrada na etapa.
@@ -599,7 +601,7 @@ Pedido do dono em 02/10/2026. Fica em Configurações, na aba "Automações de f
    - **Só leads.** Paciente nunca é movido por automação, e os importados que nunca mudaram de etapa ficam de fora.
    - **O movimento humano vence.** Se alguém (ou o termo-chave) mudou o lead de etapa antes de a automação rodar, ela não faz nada e o histórico diz por quê.
    - **Sem laço.** Uma regra ligada que fecharia um ciclo com outra (o lead indo e voltando entre etapas sozinho) é recusada ao salvar e ao ligar, e a tela mostra o caminho das etapas. Automações em cadeia param no 3º salto, e um lead é movido por automação no máximo 10 vezes em 24 horas.
-   - **Etapa ou etiqueta usada por automação não se exclui**, com mensagem dizendo para excluir a automação ou trocar a etapa (ou a etiqueta) dela na aba Automações de fluxo antes.
+   - **Etapa ou etiqueta usada por automação não se exclui**, com mensagem dizendo para excluir a automação ou trocar a etapa (ou a etiqueta) dela na aba Automações de fluxo antes (desde 20/10/2026, "em Automações, na aba Automações de fluxo").
 14.5. **Quando roda:** sozinha, pelo motor da plataforma, em até 1 minuto depois do que aconteceu (a mensagem recebida espera uns 15 segundos a mais, para o termo da jornada andar antes). A regra nasce desligada.
 14.6. **Histórico:** as últimas 50 execuções, com filtro por automação: Aguardando, Feita (o que fez naquela execução: de onde para onde, a etiqueta com o nome que tinha na hora, a atividade criada ou a nota; editar a regra depois não muda o que o histórico conta), Pulada (o motivo em português, como "o lead já tinha mudado de etapa" ou "o lead tem consulta marcada") e Falhou (com um código para o suporte). Nunca mostra conteúdo de mensagem. Cada linha mostra o nome do lead, por isso a leitura do histórico vai para a trilha de auditoria.
 14.7. **Trilha:** toda ação da automação vai para o `audit_log` como ação do sistema (sem usuário e sem conteúdo): moveu de etapa, etiquetou, criou atividade, deixou nota. Criar, editar, ligar, desligar e excluir uma regra também vão para a trilha, sem o texto.

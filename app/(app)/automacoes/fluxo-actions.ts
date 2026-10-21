@@ -11,6 +11,7 @@ import {
   DICA_SEM_PERMISSAO,
   MENSAGENS_DO_VETO,
   mensagemDaRecusaDaAutomacao,
+  podeAcessarAutomacoesDeFluxo,
   previaDaAutomacaoEntradaSchema,
   vetoDoDestino,
   type EtapaParaAutomacao,
@@ -19,7 +20,6 @@ import {
   type UsoDaAutomacao,
 } from "@/lib/domain/automacoes-de-fluxo";
 import type { PapelDeEtapa } from "@/lib/domain/jornada";
-import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   fetchHistoricoDeAutomacoes,
   fetchPreviaDaAutomacao,
@@ -32,6 +32,14 @@ import { createClient } from "@/lib/supabase/server";
 // demanda (previa, uso e historico). Mesma forma das actions da jornada e
 // das mensagens padrao: guard de papel, Zod, cliente de SESSAO (a RLS decide
 // de novo: admin e gestor escrevem), audit_log sem texto e revalidate.
+//
+// Desde 20/10/2026 (decisao do dono, onda 4) a aba mora na tela Automacoes
+// (?aba=fluxo), e nao mais em Configuracoes. A guarda nao depende da rota:
+// TODAS as actions daqui, as de leitura inclusive, conferem no servidor que o
+// papel na clinica ativa e administrador ou gestor
+// (podeAcessarAutomacoesDeFluxo), antes de qualquer leitura ou escrita. A
+// recepcao, que ve o resto de Automacoes, nao ve esta aba e e recusada aqui
+// do mesmo jeito que profissional e leitura.
 //
 // NAO vao daqui: created_by, updated_by, created_at nem vigente_desde (o
 // gatilho validar_automacao_de_fluxo carimba com a sessao e ignora o que
@@ -68,11 +76,8 @@ async function requireGestorOuAdmin(): Promise<Guarda | { error: string }> {
   if (!context?.active) {
     return { error: "Sessão expirada. Entre de novo." };
   }
-  const { role } = context.active;
-  if (!canEdit(role, "configuracoes")) {
-    return {
-      error: permissionHint(role, "configuracoes") ?? DICA_SEM_PERMISSAO,
-    };
+  if (!podeAcessarAutomacoesDeFluxo(context.active.role)) {
+    return { error: DICA_SEM_PERMISSAO };
   }
   return { userId: context.userId, clinicId: context.active.clinicId };
 }
@@ -93,8 +98,10 @@ async function auditar(
   });
 }
 
+// A lista da aba volta pela pagina de Automacoes (a action a revalida, e a
+// tela recebe as regras novas sem recarregar).
 function revalidar() {
-  revalidatePath("/configuracoes");
+  revalidatePath("/automacoes");
 }
 
 function primeiraMensagem(erro: z.ZodError, padrao: string): string {

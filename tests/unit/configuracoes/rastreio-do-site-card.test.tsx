@@ -10,7 +10,7 @@ vi.mock("@/app/(app)/configuracoes/rastreio-do-site-actions", () => ({
   trocarChaveDoRastreioAction: vi.fn(),
 }));
 
-import { EXECUCAO_STATUS } from "@/components/configuracoes/automacoes-de-fluxo/status-da-execucao";
+import { EXECUCAO_STATUS } from "@/components/automacoes/fluxo/status-da-execucao";
 import { GoogleAdsTab } from "@/components/configuracoes/google-ads-tab";
 import {
   acompanharOServidor,

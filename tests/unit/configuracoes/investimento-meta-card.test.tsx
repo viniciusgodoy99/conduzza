@@ -21,7 +21,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), replace: vi.fn(), push: vi.fn() }),
 }));
 
-import { EXECUCAO_STATUS } from "@/components/configuracoes/automacoes-de-fluxo/status-da-execucao";
+import { EXECUCAO_STATUS } from "@/components/automacoes/fluxo/status-da-execucao";
 import {
   ATUALIZANDO_NO_MAXIMO_MS,
   estaAtualizando,

@@ -8,7 +8,6 @@ import {
   AgenteDeIaTab,
   type DadosDaAbaDaIa,
 } from "@/components/configuracoes/agente-de-ia-tab";
-import { AutomacoesDeFluxoTab } from "@/components/configuracoes/automacoes-de-fluxo-tab";
 import { ClinicaTab } from "@/components/configuracoes/clinica-tab";
 import { EtiquetasTab } from "@/components/configuracoes/etiquetas-tab";
 import {
@@ -47,7 +46,6 @@ import {
   ListaDeNumeros,
   type ListaDeNumerosProps,
 } from "@/components/whatsapp/lista-de-numeros";
-import type { AutomacaoDeFluxo } from "@/lib/domain/automacoes-de-fluxo";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import type { RespostaRapida } from "@/lib/domain/respostas-rapidas";
@@ -60,20 +58,22 @@ import { InviteForm } from "./invite-form";
 // do navegador funcionar, mesmo padrao de Cadastros. "?aba=conversoes" segue
 // valendo como link antigo: cai na jornada, que absorveu aquela aba.
 //
-// Abas sublinhadas do design system (9 vistas, mais a do Agente de IA nas
+// Abas sublinhadas do design system (8 vistas, mais a do Agente de IA nas
 // clinicas com o agente habilitado), com contadores. Na equipe, o
 // segundo contador e o de pedidos aguardando liberacao (ampulheta, tom de
 // atencao e o texto por extenso para leitor de tela). Cada aba mostra o
 // proprio erro de carregamento em vez de derrubar a tela inteira.
+//
+// Automacoes de fluxo (02/10/2026) era a aba logo depois da jornada ate
+// 20/10/2026, quando o dono a levou para a tela Automacoes (?aba=fluxo de
+// la). O link antigo, /configuracoes?aba=fluxo, a pagina redireciona no
+// servidor (page.tsx), antes de ler qualquer coisa.
 
 const ABAS = [
   ["equipe", "Equipe e permissões"],
   ["clinica", "Clínica"],
   ["whatsapp", "WhatsApp"],
   ["jornada", "Jornada e conversões"],
-  // Automacoes de fluxo (02/10/2026): logo depois da jornada, que e de onde
-  // vem a etapa de toda regra.
-  ["fluxo", "Automações de fluxo"],
   ["etiquetas", "Etiquetas de conversa"],
   ["mensagens", "Mensagens padrão"],
   ["meta", "Anúncios da Meta"],
@@ -87,7 +87,7 @@ const ABAS = [
 // que o super admin muda pelo Painel geral). Fica FORA de ABAS de
 // proposito: a pagina decide no servidor se a aba existe (agenteDeIa nulo
 // nas outras clinicas) e ela entra no fim da fileira. O esqueleto de
-// loading.tsx desenha as 9 abas fixas (o teste carregando-configuracoes
+// loading.tsx desenha as 8 abas fixas (o teste carregando-configuracoes
 // conta ABAS); nessas clinicas a fileira ganha uma aba quando carrega.
 const ABA_DO_AGENTE = ["ia", "Agente de IA"] as const;
 
@@ -133,7 +133,6 @@ export function ConfiguracoesClient({
   codigoAtivo,
   whatsapp,
   jornada,
-  fluxo,
   etiquetas,
   mensagens,
   meta,
@@ -168,15 +167,6 @@ export function ConfiguracoesClient({
     "podeGerenciar" | "ehAdmin" | "dica"
   > | null;
   jornada: EtapaDaJornada[] | null;
-  /**
-   * As automacoes de fluxo e o que a aba precisa da clinica (a chave do
-   * cache e o fuso do historico). Nulo: a leitura das regras falhou.
-   */
-  fluxo: {
-    lista: AutomacaoDeFluxo[];
-    clinicId: string;
-    timezone: string;
-  } | null;
   etiquetas: {
     lista: EtiquetaDeConversa[];
     contagem: Record<string, number>;
@@ -257,9 +247,6 @@ export function ConfiguracoesClient({
     }
     if (aba === "jornada" && jornada) {
       return <Contagem valor={jornada.length} rotulo="etapas" />;
-    }
-    if (aba === "fluxo" && fluxo) {
-      return <Contagem valor={fluxo.lista.length} rotulo="automações" />;
     }
     if (aba === "etiquetas" && etiquetas) {
       return <Contagem valor={etiquetas.lista.length} rotulo="etiquetas" />;
@@ -389,28 +376,6 @@ export function ConfiguracoesClient({
           />
         ) : (
           <ErroDaAba titulo="Não foi possível carregar a jornada" />
-        )}
-      </TabsContent>
-
-      <TabsContent value="fluxo" className="grid gap-4">
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          Regras que andam com o lead sozinhas: quando ele fica parado, deixa de
-          responder, entra numa etapa ou manda mensagem, a automação move de
-          etapa, coloca etiqueta, cria uma atividade ou deixa uma nota interna.
-          Nenhuma delas manda mensagem para o paciente.
-        </p>
-        {fluxo && jornada ? (
-          <AutomacoesDeFluxoTab
-            automacoes={fluxo.lista}
-            jornada={jornada}
-            etiquetas={etiquetas?.lista ?? null}
-            clinicId={fluxo.clinicId}
-            timezone={fluxo.timezone}
-            podeGerenciar={podeGerenciar}
-            dica={dica}
-          />
-        ) : (
-          <ErroDaAba titulo="Não foi possível carregar as automações de fluxo" />
         )}
       </TabsContent>
 

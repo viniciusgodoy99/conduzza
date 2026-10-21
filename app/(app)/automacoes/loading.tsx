@@ -1,9 +1,14 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Esqueleto na forma REAL da Tela 7 (docs/06 secao 5.10): cabecalho, os
-// quatro cartoes seletores de 88px, o cartao de ativacao com a faixa do
+// cinco cartoes seletores de 88px, o cartao de ativacao com a faixa do
 // interruptor e a janela, e o cartao das mensagens com a linha do tempo e o
 // editor em duas colunas. Nunca giratorio no meio da tela.
+//
+// Cinco cartoes desde 20/10/2026 (Automacoes de fluxo, onda 4): a fileira de
+// administrador e gestor. A recepcao, que nao tem a aba de fluxo, ve quatro
+// quando a tela chega (o esqueleto nao sabe o papel), como a aba do Agente
+// de IA em Configuracoes.
 export default function CarregandoAutomacoes() {
   return (
     <div
@@ -15,8 +20,8 @@ export default function CarregandoAutomacoes() {
         <Skeleton className="h-7 w-40" />
         <Skeleton className="h-3.5 w-96 max-w-full" />
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[0, 1, 2, 3].map((cartao) => (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((cartao) => (
           <div
             key={cartao}
             className="flex min-h-[88px] gap-3 rounded-card border border-border bg-card p-3.5 shadow-sm"

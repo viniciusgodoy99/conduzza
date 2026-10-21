@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
-import { salvarAutomacaoDeFluxoAction } from "@/app/(app)/configuracoes/automacoes-de-fluxo-actions";
+import { salvarAutomacaoDeFluxoAction } from "@/app/(app)/automacoes/fluxo-actions";
 import { Aviso } from "@/components/shared/aviso";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
