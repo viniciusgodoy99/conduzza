@@ -20,8 +20,13 @@ export type Membership = {
   /** fuso IANA da clinica; toda logica de agenda converte por ele */
   timezone: string;
   role: Role;
-  /** pendente = entrou por codigo e aguarda aprovacao; nao le dado de paciente */
-  status: "ativo" | "pendente";
+  /**
+   * pendente = entrou por codigo e aguarda aprovacao; nao le dado de paciente.
+   * suspensa = vinculo ativo numa clinica com a conta suspensa pela equipe
+   * Conduzza (onda 1, decisao do dono de 20/10/2026): a RLS ja nega tudo e
+   * o vinculo nunca vira clinica ativa; o layout mostra "Conta suspensa".
+   */
+  status: "ativo" | "pendente" | "suspensa";
   productName: string;
   primaryColor: string;
   labels: Partial<Labels> | null;
@@ -31,10 +36,22 @@ export type SessionContext = {
   userId: string;
   userName: string;
   userEmail: string;
-  /** todos os vinculos, inclusive os pendentes */
+  /** todos os vinculos, inclusive os pendentes e os de conta suspensa */
   memberships: Membership[];
-  /** null quando o usuario pertence a mais de uma clinica e ainda nao escolheu */
+  /**
+   * null quando o usuario pertence a mais de uma clinica e ainda nao
+   * escolheu, ou quando a clinica escolhida esta suspensa (clinicaSuspensa)
+   */
   active: Membership | null;
+  /**
+   * A conta suspensa a avisar (onda 1): a clinica escolhida no cookie esta
+   * suspensa, ou a pessoa nao tem nenhuma clinica ativa e alguma das suas
+   * esta suspensa. O layout troca o sistema pela tela "Conta suspensa", com
+   * Sair e, havendo outra clinica ativa, a troca. null: nada a avisar. O
+   * super admin nunca cai aqui: ele le a clinica suspensa como qualquer
+   * outra e entra normalmente.
+   */
+  clinicaSuspensa: Membership | null;
   isProductAdmin: boolean;
   /**
    * A leitura dos vinculos FALHOU (erro do banco ou da rede), e por isso
@@ -120,12 +137,38 @@ export const getSessionContext = cache(
       }
     }
 
+    // Vinculo ATIVO sem a clinica no embed: desde a onda 1, e a conta
+    // suspensa (a RLS de clinic so mostra clinica nao suspensa a quem nao e
+    // super admin). O nome vem por uma funcao que devolve so id, nome e
+    // quando foi suspensa, e so e chamada nesse caso: quem esta numa
+    // clinica normal nao paga ida nenhuma a mais.
+    const temAtivoSemClinica = (
+      (memberRows ?? []) as { status?: string; clinic?: unknown }[]
+    ).some((row) => row.status === "ativo" && !row.clinic);
+    const nomesSuspensas = new Map<string, string>();
+    let erroNomesSuspensas = false;
+    if (temAtivoSemClinica) {
+      const { data: suspensas, error: erroSuspensas } = await supabase.rpc(
+        "minhas_clinicas_suspensas",
+      );
+      // Sem o nome, o vinculo sumiria e a pessoa veria "Sem clinica
+      // vinculada" no lugar de "Conta suspensa": melhor dizer que o acesso
+      // nao carregou.
+      erroNomesSuspensas = erroSuspensas !== null;
+      for (const linha of (suspensas ?? []) as {
+        clinic_id: string;
+        nome: string;
+      }[]) {
+        nomesSuspensas.set(linha.clinic_id, linha.nome);
+      }
+    }
+
     // Sem tipos gerados do banco (pendencia registrada), a inferencia do
     // supabase-js trata os embeds como array; em runtime clinic e branding
     // sao objetos (FK para PK). Conversao explicita + normalizacao defensiva.
     const rows = (memberRows ?? []) as unknown as MemberRow[];
     const memberships: Membership[] = rows
-      .map((row) => {
+      .map((row): Membership | null => {
         // Acesso desativado: some da lista, como se o vinculo nao existisse.
         // A RLS ja nega tudo (toda checagem exige status = 'ativo'); isto so
         // evita mostrar a clinica numa lista de onde a pessoa nao entra mais.
@@ -136,16 +179,25 @@ export const getSessionContext = cache(
           ? (row.clinic[0] ?? null)
           : row.clinic;
         if (!clinic) {
-          // Vinculo pendente: sem acesso a clinica, so o nome pela funcao.
-          const nome = nomesPendentes.get(row.clinic_id);
-          if (row.status === "pendente" && nome) {
+          // Vinculo pendente ou de conta suspensa: sem acesso a clinica, so
+          // o nome pela funcao de cada caso.
+          const nome =
+            row.status === "pendente"
+              ? nomesPendentes.get(row.clinic_id)
+              : row.status === "ativo"
+                ? nomesSuspensas.get(row.clinic_id)
+                : undefined;
+          if (nome) {
             return {
               clinicId: row.clinic_id,
               clinicName: nome,
               slug: "",
               timezone: "America/Fortaleza",
               role: row.role,
-              status: "pendente" as const,
+              status:
+                row.status === "pendente"
+                  ? ("pendente" as const)
+                  : ("suspensa" as const),
               productName: "Conduzza Clínicas",
               primaryColor: "#B2E54F",
               labels: null,
@@ -172,15 +224,25 @@ export const getSessionContext = cache(
       .sort((a, b) => a.clinicName.localeCompare(b.clinicName));
 
     // Vinculo pendente nao pode virar clinica ativa: a pessoa entra no
-    // sistema, ve que esta aguardando aprovacao, e nada mais.
+    // sistema, ve que esta aguardando aprovacao, e nada mais. Vinculo de
+    // conta suspensa tambem nao.
     const ativos = memberships.filter((m) => m.status === "ativo");
     const cookieStore = await cookies();
     const wanted = cookieStore.get(ACTIVE_CLINIC_COOKIE)?.value;
     const fromCookie = wanted
       ? (ativos.find((m) => m.clinicId === wanted) ?? null)
       : null;
+    // Conta suspensa: a escolhida no cookie (mesmo havendo outra ativa, a
+    // pessoa precisa saber por que nao entrou nela) ou, sem nenhuma ativa,
+    // a primeira suspensa.
+    const suspensas = memberships.filter((m) => m.status === "suspensa");
+    const clinicaSuspensa =
+      (wanted ? suspensas.find((m) => m.clinicId === wanted) : undefined) ??
+      (ativos.length === 0 ? (suspensas[0] ?? null) : null);
     const active =
-      fromCookie ?? (ativos.length === 1 ? (ativos[0] ?? null) : null);
+      clinicaSuspensa !== null
+        ? null
+        : (fromCookie ?? (ativos.length === 1 ? (ativos[0] ?? null) : null));
 
     const metadata = user.user_metadata as Record<string, unknown> | null;
     const userName =
@@ -194,13 +256,15 @@ export const getSessionContext = cache(
       userEmail: user.email ?? "",
       memberships,
       active,
+      clinicaSuspensa,
       isProductAdmin: productAdminRow !== null,
       // A leitura de dono do produto entra junto: falhando, o dono sem
       // clinica veria "Sem clinica vinculada" no lugar de "Criar clinica".
       vinculoIndisponivel:
         erroVinculos !== null ||
         erroDonoDoProduto !== null ||
-        erroNomesPendentes,
+        erroNomesPendentes ||
+        erroNomesSuspensas,
     };
   },
 );

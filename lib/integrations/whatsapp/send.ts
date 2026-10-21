@@ -29,13 +29,15 @@ import type {
 // como assercao: divergiu, nada sai. O envio nunca troca de numero sozinho.
 //
 // A ORDEM do fluxo e a defesa contra mensagem duplicada ao paciente:
+//   0. a conta da clinica nao esta suspensa (onda 1; trava final, antes de
+//      gravar qualquer coisa)
 //   1. consentimento vigente + o numero da conversa conectado
 //   2. a linha de message NASCE AQUI, 'enviando', amarrada ao job quando
 //      houver (unique de job_id): um retry encontra a linha e nao reenvia o
 //      que pode ja ter saido
 //   3. reserva do slot anti-ban no banco (falha FECHADA: sem slot, sem envio)
-//   4. espera do slot e RECONFERENCIA do consentimento (revogacao durante a
-//      espera cancela o envio)
+//   4. espera do slot e RECONFERENCIA do consentimento e da conta suspensa
+//      (revogacao ou suspensao durante a espera cancela o envio)
 //   5. provider envia, marcado com o id da linha (rastreio do eco, ver
 //      rastreio.ts); a linha vira 'enviada' ou 'falhou'
 //
@@ -521,6 +523,59 @@ async function lerNumeroDaConversa(
   };
 }
 
+/**
+ * A conta da clinica esta suspensa? clinica_esta_suspensa (migration
+ * 20261021100000; so a service role a executa), pelo cliente de servico que
+ * o envio recebe. So o booleano do banco decide: true e suspensa, false e
+ * ativa. Qualquer outra coisa (erro do banco ou da rede, PGRST202 ou 42883
+ * de funcao que o PostgREST ou o Postgres nao acham, nulo, formato estranho)
+ * e "erro": quem chama FECHA (leitura_falhou, retentavel), nunca deixa sair.
+ * Nao ha tolerancia para funcao ausente: a migration foi aplicada antes
+ * deste codigo (20/10/2026), e no rollback o codigo volta antes do banco.
+ */
+export async function lerSuspensaoDaClinica(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<"suspensa" | "ativa" | "erro"> {
+  try {
+    const { data, error } = await supabase.rpc("clinica_esta_suspensa", {
+      p_clinic_id: clinicId,
+    });
+    if (error) {
+      log.warn("envio_leitura_da_suspensao_falhou", {
+        clinic_id: clinicId,
+        error_code: (error as { code?: string }).code ?? null,
+      });
+      return "erro";
+    }
+    if (data === true) {
+      return "suspensa";
+    }
+    if (data === false) {
+      return "ativa";
+    }
+    log.warn("envio_leitura_da_suspensao_falhou", {
+      clinic_id: clinicId,
+      error_code: "resposta_fora_do_formato",
+    });
+    return "erro";
+  } catch {
+    log.warn("envio_leitura_da_suspensao_falhou", {
+      clinic_id: clinicId,
+      error_code: "excecao",
+    });
+    return "erro";
+  }
+}
+
+/** A recusa da conta suspensa (trava final e reconferencia pos-espera). */
+const RECUSA_DA_CONTA_SUSPENSA = {
+  ok: false,
+  reason: "falha_envio",
+  code: "clinica_suspensa",
+  message: "A conta desta clínica está suspensa. Nada foi enviado.",
+} as const satisfies SendTextResult;
+
 /** O token da instancia daquele numero (o segredo e por numero, nao por clinica). */
 async function lerTokenDaInstancia(
   supabase: SupabaseClient,
@@ -607,27 +662,58 @@ async function enviarPeloCanal(
   // receber, bastando alguem inserir uma linha nova.
   //
   // O numero vem DA CONVERSA, junto com ela: e por ele que a mensagem sai.
-  const [{ data: consentimentoVigente, error: erroDoConsentimento }, conversa] =
-    await Promise.all([
-      supabase.rpc("consentimento_vigente", {
-        p_clinic_id: input.clinicId,
-        p_contact_id: input.contactId,
-        p_channel: "whatsapp",
-      }),
-      lerNumeroDaConversa(supabase, input.clinicId, input.conversationId),
-    ]);
+  // A suspensao da conta vem na mesma rodada (nenhuma ida a mais em serie).
+  const [
+    { data: consentimentoVigente, error: erroDoConsentimento },
+    conversa,
+    suspensao,
+  ] = await Promise.all([
+    supabase.rpc("consentimento_vigente", {
+      p_clinic_id: input.clinicId,
+      p_contact_id: input.contactId,
+      p_channel: "whatsapp",
+    }),
+    lerNumeroDaConversa(supabase, input.clinicId, input.conversationId),
+    lerSuspensaoDaClinica(supabase, input.clinicId),
+  ]);
+
+  // TRAVA FINAL da conta suspensa (onda 1, decisao do dono de 20/10/2026):
+  // nada sai, por nenhum caminho (atendimento, regua, agendada, IA; o teste
+  // da regua, que fala com o provedor direto, confere por
+  // lerSuspensaoDaClinica tambem), e nada e gravado (nem linha de message,
+  // nem slot, nem trilha). O motor ja nao reivindica job de clinica
+  // suspensa; isto pega a corrida e qualquer caminho manual, e a
+  // reconferencia depois da espera do slot pega a suspensao que chega
+  // durante ela. Vem antes das outras leituras: sabendo que esta suspensa,
+  // a recusa e esta, mesmo que outra leitura tenha falhado. Nao e retry
+  // (repetir daria o mesmo). So ids no log.
+  if (suspensao === "suspensa") {
+    log.warn("envio_bloqueado_clinica_suspensa", {
+      clinic_id: input.clinicId,
+      conversation_id: input.conversationId,
+      job_id: input.jobId ?? null,
+    });
+    return { ...RECUSA_DA_CONTA_SUSPENSA };
+  }
 
   // Sem resposta nao e revogacao: nada de "sem autorizacao" nem de registro
   // na trilha de um bloqueio que o paciente nao pediu. 'leitura_falhou' e
   // retentavel (FALHAS_SEM_ENVIO), entao regua e envio ativo tentam de novo.
-  if (erroDoConsentimento || conversa.estado === "erro") {
+  // A suspensao que nao deu para conferir tambem: falha fechada.
+  if (
+    erroDoConsentimento ||
+    conversa.estado === "erro" ||
+    suspensao === "erro"
+  ) {
     return {
       ok: false,
       reason: "falha_envio",
       code: "leitura_falhou",
       message: erroDoConsentimento
         ? "Não foi possível conferir a autorização. Tente de novo."
-        : "Não foi possível carregar a conversa. Tente de novo.",
+        : conversa.estado === "erro"
+          ? "Não foi possível carregar a conversa. Tente de novo."
+          : "Não foi possível conferir a situação da conta da clínica. Tente de novo.",
     };
   }
   if (conversa.estado === "inexistente") {
@@ -918,14 +1004,44 @@ async function enviarPeloCanal(
 
   // RECONFERENCIA pos-espera: o paciente pode ter revogado o consentimento
   // durante os segundos de fila (o descadastro vale na hora, nao "a partir do
-  // proximo envio").
+  // proximo envio"), e a equipe Conduzza pode ter suspendido a conta da
+  // clinica (a trava final leu antes da espera; nada sai depois da
+  // suspensao). As duas na mesma rodada.
   if (espera > 0) {
-    const { data: aindaVigente, error: erroDaReconferencia } =
-      await supabase.rpc("consentimento_vigente", {
+    const [
+      { data: aindaVigente, error: erroDaReconferencia },
+      suspensaoDepois,
+    ] = await Promise.all([
+      supabase.rpc("consentimento_vigente", {
         p_clinic_id: input.clinicId,
         p_contact_id: input.contactId,
         p_channel: "whatsapp",
+      }),
+      lerSuspensaoDaClinica(supabase, input.clinicId),
+    ]);
+    if (suspensaoDepois === "suspensa") {
+      // A linha ja nasceu: fica 'falhou' com o codigo da suspensao (o
+      // provedor nao foi chamado; nao entra em retry). So ids no log.
+      await marcarFalha(supabase, messageId, "clinica_suspensa");
+      log.warn("envio_bloqueado_clinica_suspensa", {
+        clinic_id: input.clinicId,
+        conversation_id: input.conversationId,
+        job_id: input.jobId ?? null,
       });
+      return { ...RECUSA_DA_CONTA_SUSPENSA };
+    }
+    if (suspensaoDepois === "erro") {
+      // Falha fechada, como a da autorizacao abaixo: retentavel pela chave
+      // do job.
+      await marcarFalha(supabase, messageId, "leitura_falhou");
+      return {
+        ok: false,
+        reason: "falha_envio",
+        code: "leitura_falhou",
+        message:
+          "Não foi possível conferir a situação da conta da clínica. Tente de novo.",
+      };
+    }
     if (erroDaReconferencia) {
       // Idem acima: falha de leitura nao e descadastro. A linha fica
       // reutilizavel no retry pela chave do job.

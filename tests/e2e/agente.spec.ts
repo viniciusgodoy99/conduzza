@@ -4,12 +4,12 @@ import { dados } from "./dados";
 import { login } from "./helpers";
 
 // Tela 6, Agente de IA. O painel (persona, habilidades, conhecimento, regras,
-// versoes e o simulador) so existe nas duas clinicas da fase controlada
-// (teste123 e Conduzza Teste), decidido no servidor pela mesma lista da aba
-// de Configuracoes (abaDaIaVisivel). A clinica do e2e nao esta na lista, e
-// a lista NAO aceita clinica e_de_teste (so o banco aceita, para as suites
-// de RLS e integracao): aqui a tela e o vazio de sempre, sem ler nada do
-// agente. A renderizacao do painel esta nos testes de unidade
+// versoes e o simulador) so existe nas clinicas com o agente habilitado (a
+// lista do banco desde a onda 1, que o super admin muda pelo Painel geral),
+// decidido no servidor pela mesma lista da aba de Configuracoes
+// (abaDaIaVisivel). A clinica do e2e nao esta na lista, e a lista NAO
+// aceita clinica e_de_teste (so o banco aceita, para as suites de RLS e
+// integracao): aqui a tela e o vazio de sempre, sem ler nada do agente. A renderizacao do painel esta nos testes de unidade
 // (tests/unit/agente/tela-*.test.tsx).
 //
 // O que se confere aqui:

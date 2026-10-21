@@ -205,6 +205,10 @@ export default async function InicioPage() {
   // (administrador e gestor), nao so do administrador.
   const podeConfigurar = canEdit(active.role, "configuracoes");
 
+  // O agente habilitado na clinica (lista do banco desde a onda 1): comeca
+  // junto com as leituras abaixo e nunca derruba a tela (falha fechada).
+  const leituraDaIa = abaDaIaVisivel(active.clinicId);
+
   const [numeros, conversas, equipe, pedidos, resumo, funil, proximasAcoes] =
     await Promise.all([
       // Os numeros ATIVOS da clinica (docs/07): o passo fica feito com pelo
@@ -246,6 +250,7 @@ export default async function InicioPage() {
       ),
       fetchProximasAcoes(supabase, active.clinicId, active.timezone),
     ]);
+  const iaNaFase = await leituraDaIa;
 
   // Leitura que decide o checklist: erro vira a tela de erro, nunca um
   // passo "Pendente" falso nem um pedido de acesso escondido.
@@ -370,7 +375,7 @@ export default async function InicioPage() {
         funil={funil}
         proximasAcoes={proximasAcoes}
         pedidosDeAcesso={pedidosDeAcesso}
-        iaNaFase={abaDaIaVisivel(active.clinicId)}
+        iaNaFase={iaNaFase}
       />
     </div>
   );

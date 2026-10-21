@@ -159,13 +159,25 @@ class Banco {
       }
       return (
         this.respostaDoRpc[nome] ?? {
-          data: nome === "garantir_rascunho_do_agente" ? RASCUNHO : null,
+          data:
+            nome === "garantir_rascunho_do_agente"
+              ? RASCUNHO
+              : // A lista das clinicas com o agente habilitado (onda 1),
+                // lida pela guarda com a service role: so a CLINICA.
+                nome === "ia_clinicas_da_fase_controlada"
+                ? [CLINICA]
+                : null,
           error: null,
         }
       );
     };
     return { from, rpc };
   }
+}
+
+/** As RPCs da service role sem a leitura da lista da guarda (abaDaIaVisivel). */
+function semALista(rpcs: { nome: string; args: unknown }[]) {
+  return rpcs.filter((r) => r.nome !== "ia_clinicas_da_fase_controlada");
 }
 
 let banco = new Banco();
@@ -321,7 +333,9 @@ describe("guarda de toda ação", () => {
       }
       expect(banco.operacoes).toEqual([]);
       expect(banco.rpcs).toEqual([]);
-      expect(admin.rpcs).toEqual([]);
+      // Pela service role, so a lista das clinicas habilitadas (a guarda).
+      expect(semALista(admin.rpcs)).toEqual([]);
+      expect(admin.operacoes).toEqual([]);
       expect(simularTurno).not.toHaveBeenCalled();
     },
   );
@@ -329,6 +343,30 @@ describe("guarda de toda ação", () => {
   it("super admin passa mesmo com outro papel na clínica", async () => {
     entrar("recepcao", { superAdmin: true });
     expect(await acoes.salvarPersonaAction(PERSONA)).toEqual({ ok: true });
+  });
+
+  it("a lista das clínicas habilitadas vem do banco: ilegível ou sem a clínica, recusa sem tocar em nada (falha fechada)", async () => {
+    admin.respostaDoRpc.ia_clinicas_da_fase_controlada = {
+      data: null,
+      error: { code: "57014" },
+    };
+    expect(await acoes.salvarPersonaAction(PERSONA)).toEqual({
+      ok: false,
+      error: "O assistente de IA ainda não está disponível nesta clínica.",
+    });
+    // O super admin desligou o agente da clínica: ela saiu da lista.
+    admin.respostaDoRpc.ia_clinicas_da_fase_controlada = {
+      data: [FORA_DA_FASE],
+      error: null,
+    };
+    entrar("gestor", { superAdmin: true });
+    expect(await acoes.salvarPersonaAction(PERSONA)).toEqual({
+      ok: false,
+      error: "O assistente de IA ainda não está disponível nesta clínica.",
+    });
+    expect(banco.operacoes).toEqual([]);
+    expect(banco.rpcs).toEqual([]);
+    expect(semALista(admin.rpcs)).toEqual([]);
   });
 });
 
@@ -726,7 +764,7 @@ describe("instruções do assistente e prévia", () => {
 describe("publicar e restaurar", () => {
   it("publica pela service role com o autor da sessão", async () => {
     expect(await acoes.publicarAgenteAction()).toEqual({ ok: true, versao: 3 });
-    expect(admin.rpcs).toEqual([
+    expect(semALista(admin.rpcs)).toEqual([
       {
         nome: "publicar_agente",
         args: {
@@ -776,7 +814,7 @@ describe("publicar e restaurar", () => {
       expect(r.error).toBe(TEXTO_DAS_INSTRUCOES_A_AJUSTAR);
       expect(JSON.stringify(r)).not.toContain("link");
     }
-    expect(admin.rpcs).toEqual([]);
+    expect(semALista(admin.rpcs)).toEqual([]);
 
     // O super admin ve o problema exato.
     entrar("gestor", { superAdmin: true });
@@ -788,7 +826,7 @@ describe("publicar e restaurar", () => {
       );
       expect(doSuperAdmin.error).toContain("link");
     }
-    expect(admin.rpcs).toEqual([]);
+    expect(semALista(admin.rpcs)).toEqual([]);
   });
 
   it("instrução que barra a publicação do gestor vai para o log, sem texto", async () => {
@@ -833,7 +871,7 @@ describe("publicar e restaurar", () => {
       error:
         "Não foi possível carregar a configuração do assistente. Recarregue a página e tente de novo.",
     });
-    expect(admin.rpcs).toEqual([]);
+    expect(semALista(admin.rpcs)).toEqual([]);
   });
 
   it("sem rascunho ou sem diferença para a publicada: nada a publicar", async () => {

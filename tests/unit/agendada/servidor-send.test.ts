@@ -60,6 +60,8 @@ function banco(opcoes: {
         data: opcoes.slot ?? { estado: "reservado", espera_ms: 0 },
         error: null,
       }),
+      // A conta nao esta suspensa (onda 1): o envio exige o booleano.
+      clinica_esta_suspensa: () => ({ data: false, error: null }),
     },
   });
 }
@@ -232,6 +234,7 @@ describe("linha reaproveitada no retry (F15)", () => {
           marcas.updatesAntesDoSlot = b.updatesEm("message").length;
           return { data: opcoes.slot, error: null };
         },
+        clinica_esta_suspensa: () => ({ data: false, error: null }),
       },
     });
     return { b, marcas };

@@ -1,18 +1,20 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { CLINICAS_DA_FASE_CONTROLADA } from "@/lib/ia/liberacao";
+import { lerClinicasHabilitadasDaIa } from "@/lib/ia/liberacao";
 import {
   abaDaIaVisivel,
   fetchLiberacaoDaIa,
   fetchNumeroDaClinica,
 } from "@/lib/queries/ia-liberacao";
 import { criarNumeroDeTeste } from "../rls/numeros";
-import { adminClient } from "../rls/stack";
+import { adminClient, stackCredentials } from "../rls/stack";
 
 // Agente de IA, E0: travas de liberacao (migration 20261006100000) contra o
 // banco REAL, com o cliente de servico (quem a RLS nao barra):
-// - a lista fechada do banco e igual a constante do codigo, e a salud-care
-//   nao esta nela (UMA consulta, nunca escrita com a id dela);
+// - a lista das clinicas com o agente habilitado (onda 1: dado em
+//   ia_clinica_habilitada, estado 'teste', sem clinica suspensa) e a MESMA
+//   que o codigo le (lerClinicasHabilitadasDaIa), e clinica e_de_teste nunca
+//   esta nela (so leitura; a lista fixa do codigo saiu);
 // - T3a: clinica fora da lista e sem e_de_teste nao ganha liberacao NEM pela
 //   service role (42501), pela RPC ou pelo insert direto;
 // - tabela verdade de ia_pode_atender e ia_pode_simular numa clinica
@@ -241,12 +243,35 @@ afterAll(async () => {
   }
 });
 
-describe("lista fechada (T3a)", () => {
-  it("a funcao do banco e igual a constante do codigo; a salud-care nao esta nela", async () => {
-    const lista = (await rpcOk("ia_clinicas_da_fase_controlada", {})) as
-      string[] | null;
-    expect(lista).toEqual([...CLINICAS_DA_FASE_CONTROLADA]);
-    expect(lista).not.toContain(SALUD_CARE);
+describe("lista das clínicas habilitadas (T3a)", () => {
+  it("a função do banco é a tabela (estado teste, sem suspensa) e é a mesma lista que o código lê", async () => {
+    const lista = ((await rpcOk("ia_clinicas_da_fase_controlada", {})) ??
+      []) as string[];
+    const [habilitadas, suspensas] = await Promise.all([
+      admin
+        .from("ia_clinica_habilitada")
+        .select("clinic_id")
+        .eq("estado", "teste")
+        .throwOnError(),
+      admin.from("clinica_suspensa").select("clinic_id").throwOnError(),
+    ]);
+    const fora = new Set(
+      ((suspensas.data ?? []) as { clinic_id: string }[]).map(
+        (linha) => linha.clinic_id,
+      ),
+    );
+    const daTabela = ((habilitadas.data ?? []) as { clinic_id: string }[])
+      .map((linha) => linha.clinic_id)
+      .filter((id) => !fora.has(id))
+      .sort();
+    expect([...lista].sort()).toEqual(daTabela);
+    expect(await lerClinicasHabilitadasDaIa(admin)).toEqual(
+      lista.map((id) => id.toLowerCase()),
+    );
+    // Clinica de teste das suites nunca esta na lista (o banco aceita a
+    // escrita dela so para os testes).
+    expect(lista).not.toContain(clinicaT);
+    expect(lista).not.toContain(clinicaU);
   });
 
   it("clinica fora da lista e sem e_de_teste: 42501 ate para a service role", async () => {
@@ -848,13 +873,23 @@ describe("aba Agente de IA: a leitura da tela", () => {
   const EQUIPE_DA_U_SEM_NONO = `+558498${digitos}`;
   const EQUIPE_DA_U = `+5584998${digitos}`;
 
-  it("a aba so existe nas duas clinicas da lista; clinica de teste nunca", () => {
-    for (const id of CLINICAS_DA_FASE_CONTROLADA) {
-      expect(abaDaIaVisivel(id)).toBe(true);
+  it("a aba so existe nas clinicas que o banco habilita; clinica de teste nunca", async () => {
+    // abaDaIaVisivel le a lista pelo createAdminClient de verdade: as
+    // credenciais da pilha dos testes vao para o ambiente so neste caso.
+    const { url, serviceRoleKey } = stackCredentials();
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", url);
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey);
+    try {
+      const lista = await lerClinicasHabilitadasDaIa(admin);
+      for (const id of lista) {
+        expect(await abaDaIaVisivel(id)).toBe(true);
+      }
+      expect(await abaDaIaVisivel(clinicaT)).toBe(false);
+      expect(await abaDaIaVisivel(clinicaU)).toBe(false);
+      expect(await abaDaIaVisivel(SALUD_CARE)).toBe(lista.includes(SALUD_CARE));
+    } finally {
+      vi.unstubAllEnvs();
     }
-    expect(abaDaIaVisivel(clinicaT)).toBe(false);
-    expect(abaDaIaVisivel(clinicaU)).toBe(false);
-    expect(abaDaIaVisivel(SALUD_CARE)).toBe(false);
   });
 
   it("clinica sem linha: liberacao nula e listas vazias, com o interruptor", async () => {

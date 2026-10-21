@@ -95,7 +95,8 @@ import type { Job, ResultadoDeJob } from "./worker";
 // E3 (secao 2.1, passo 7, e tabela 5.3) e no contrato (secao 3.6).
 //
 // Ordem, cada passo com falha FECHADA:
-//  1. Ambiente (T1 e T2: iaLiberadaNoAmbiente) e clinica de teste.
+//  1. Ambiente e lista (T1 e T2: iaLiberadaNoAmbiente, com a lista do banco
+//     que o motor da IA leu nesta passagem) e clinica de teste.
 //  2. Estado do turno (ai_turno): retomada sem chamar o modelo de novo.
 //  3. Conversa na IA sem responsavel, contato, numero e fuso.
 //  4. Janela da conversa (contato, telefone atual, job depois de `desde`).
@@ -142,7 +143,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export type DependenciasDoExecutorDaIa = {
   admin: SupabaseClient;
-  /** lerConfigDaIa(); sem T1/T2 o executor falha definitivo 'ia_fora_do_ambiente'. */
+  /**
+   * T1 e T2: o ambiente e a lista das clinicas habilitadas que o motor da IA
+   * leu do banco nesta passagem (executarPassagemDaIa). Sem T1/T2 o executor
+   * falha definitivo 'ia_fora_do_ambiente'.
+   */
   config: ConfigDaIa;
   /** Epoch ms do fim da invocacao (o executor reserva 14 s para o envio). */
   prazoFinalMs: number;
@@ -189,7 +194,10 @@ export function dependenciasPadraoDaIa(entrada: {
   const modeloDosClassificadores = modeloDoVerificador(env);
   return {
     admin: entrada.admin,
-    config: lerConfigDaIa(env),
+    // Sem a lista: nenhuma clinica passa (falha fechada). A lista vem do
+    // banco, lida pelo motor da IA a cada passagem, que troca esta config
+    // pela dele (executarPassagemDaIa); o claim legado nunca traz o kind.
+    config: lerConfigDaIa([], env),
     prazoFinalMs: entrada.prazoFinalMs,
     agora: Date.now,
     clienteDoAgente,
@@ -273,8 +281,8 @@ export async function executarRespostaComIa(
 ): Promise<ResultadoDeJob> {
   exigirForaDeProducao(deps.incluirClinicasDeTeste);
 
-  // T1 e T2 antes de qualquer leitura: fora do ambiente ou da lista, nada
-  // e tocado.
+  // T1 e T2 antes de qualquer leitura: fora do ambiente ou da lista (a do
+  // banco, lida pelo motor nesta passagem), nada e tocado.
   if (!iaLiberadaNoAmbiente(deps.config, job.clinic_id)) {
     log.warn("ia_job_fora_do_ambiente", {
       clinic_id: job.clinic_id,
@@ -1089,10 +1097,15 @@ async function encerrarSemEnvio(
 // Envio da resposta
 // ---------------------------------------------------------------------------
 
-/** Codigos da linha do job (ou do envio) que querem dizer "liberacao caiu". */
+/**
+ * Codigos da linha do job (ou do envio) que querem dizer "liberacao caiu".
+ * A conta suspensa (onda 1) tambem: suspender desliga a IA na clinica, e o
+ * envio recusa antes de gravar qualquer coisa (corrida com a suspensao).
+ */
 const CODIGOS_DE_LIBERACAO: ReadonlySet<string> = new Set([
   "janela_invalida",
   "ia_nao_liberada",
+  "clinica_suspensa",
 ]);
 
 /** Codigos de numero fora (desconectado, removido, sem numero). */

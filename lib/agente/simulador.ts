@@ -6,7 +6,9 @@ import { agenteAtendeAgora } from "@/lib/domain/agente/config";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 import {
+  ambienteDaIaLigado,
   iaLiberadaNoAmbiente,
+  lerClinicasHabilitadasDaIa,
   lerConfigDaIa,
   segredoDoIdentificadorValido,
 } from "@/lib/ia/liberacao";
@@ -53,9 +55,10 @@ import { lerPrecos, type PrecoDoModelo } from "./uso";
 // "simulador"), que conta no teto diario da clinica.
 //
 // Travas, nesta ordem (plano de seguranca, secao 1): ambiente (T1 e T2,
-// iaLiberadaNoAmbiente) e banco (ia_pode_simular, service role: lista
-// fechada, interruptor geral, liberacao da clinica, pausa e teto das ultimas
-// 24 horas). A trava do banco e conferida de novo antes de cada rodada do
+// iaLiberadaNoAmbiente, com a lista das clinicas habilitadas lida do banco
+// desde a onda 1) e banco (ia_pode_simular, service role: a mesma lista,
+// interruptor geral, liberacao da clinica, pausa e teto das ultimas 24
+// horas). A trava do banco e conferida de novo antes de cada rodada do
 // modelo. Quando nao pode rodar, o motivo em texto de recepcionista.
 //
 // E4 (20/10/2026, contrato da E4 secao 2): com a habilidade Agendar consulta
@@ -137,14 +140,16 @@ export function conversaPassouParaAEquipe(
 export const PRAZO_DA_TRAVA_MS = 3_000;
 
 /**
- * T1 e T2 (so o ambiente), com o motivo exato. null = o ambiente deixa.
- * Nunca devolve nem registra o valor de nenhuma variavel.
+ * T1 e T2 (o ambiente e a lista das clinicas habilitadas, ja lida do banco
+ * por quem chama), com o motivo exato. null = o ambiente deixa. Nunca
+ * devolve nem registra o valor de nenhuma variavel.
  */
 export function motivoDoAmbiente(
   clinicId: string,
+  clinicas: readonly string[],
   env: Ambiente = process.env,
 ): string | null {
-  if (iaLiberadaNoAmbiente(lerConfigDaIa(env), clinicId)) {
+  if (iaLiberadaNoAmbiente(lerConfigDaIa(clinicas, env), clinicId)) {
     return null;
   }
   if ((env.OPENAI_API_KEY ?? "").trim() === "") {
@@ -232,7 +237,21 @@ export async function motivoParaNaoSimular(
   clinicId: string,
   env: Ambiente = process.env,
 ): Promise<string | null> {
-  const doAmbiente = motivoDoAmbiente(clinicId, env);
+  // T2 so e lida com T1 de pe (fora da producao, o motivo e o ambiente).
+  // Lista que nao deu para ler, ou que nao respondeu no prazo da trava:
+  // nao conferiu (falha fechada).
+  let clinicas: readonly string[] = [];
+  if (ambienteDaIaLigado(env)) {
+    const lida = await correrComPrazo(
+      () => lerClinicasHabilitadasDaIa(admin),
+      PRAZO_DA_TRAVA_MS,
+    );
+    if (lida.tipo !== "resultado") {
+      return TEXTOS_DO_SIMULADOR.naoConferiu;
+    }
+    clinicas = lida.valor;
+  }
+  const doAmbiente = motivoDoAmbiente(clinicId, clinicas, env);
   if (doAmbiente !== null) {
     return doAmbiente;
   }

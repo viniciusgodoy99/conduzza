@@ -89,8 +89,24 @@ function contexto(
       primaryColor: "#B2E54F",
       labels: null,
     },
+    clinicaSuspensa: null,
     isProductAdmin: campos.isProductAdmin ?? false,
     vinculoIndisponivel: false,
+  };
+}
+
+/**
+ * O cliente de servico falso: so a lista das clinicas com o agente
+ * habilitado (onda 1, ia_clinicas_da_fase_controlada), com a CLINICA.
+ */
+function adminComALista(lista: unknown = [CLINICA]) {
+  return {
+    rpc: async (nome: string) =>
+      nome === "ia_clinicas_da_fase_controlada"
+        ? lista === "erro"
+          ? { data: null, error: { code: "57014" } }
+          : { data: lista, error: null }
+        : { data: null, error: null },
   };
 }
 
@@ -119,7 +135,7 @@ async function pagina(aba?: string): Promise<string> {
 beforeEach(() => {
   vi.clearAllMocks();
   banco.createClient.mockResolvedValue({});
-  banco.createAdminClient.mockReturnValue({});
+  banco.createAdminClient.mockReturnValue(adminComALista());
   banco.motivoParaNaoSimular.mockResolvedValue(null);
   banco.carregarExtrasDoPainel.mockResolvedValue({
     instrucoesMudaram: false,
@@ -161,6 +177,9 @@ describe("guarda de papel da rota", () => {
 describe("página", () => {
   it("fora da fase controlada: o vazio, sem ler nada do agente", async () => {
     sessao.atual = contexto("admin", { clinicId: FORA_DA_FASE });
+    const admin = adminComALista();
+    const rpc = vi.spyOn(admin, "rpc");
+    banco.createAdminClient.mockReturnValue(admin);
     const visivel = await pagina("instrucoes");
     expect(visivel).toContain(
       "A recepcionista de IA ainda não está ligada nesta clínica",
@@ -168,10 +187,30 @@ describe("página", () => {
     expect(visivel).toContain("Abrir Atendimento");
     expect(visivel).not.toContain("Publicar alterações");
     expect(banco.createClient).not.toHaveBeenCalled();
-    expect(banco.createAdminClient).not.toHaveBeenCalled();
+    // Pela service role, so a lista das clinicas habilitadas (onda 1).
+    expect(rpc.mock.calls.map(([nome]) => nome)).toEqual([
+      "ia_clinicas_da_fase_controlada",
+    ]);
     expect(banco.fetchConfigDoAgente).not.toHaveBeenCalled();
     expect(banco.motivoParaNaoSimular).not.toHaveBeenCalled();
     expect(banco.carregarExtrasDoPainel).not.toHaveBeenCalled();
+  });
+
+  it("a lista vem do banco: ilegível é o vazio (falha fechada); a clínica que o banco habilita tem o painel", async () => {
+    sessao.atual = contexto("admin");
+    banco.createAdminClient.mockReturnValue(adminComALista("erro"));
+    const ilegivel = await pagina();
+    expect(ilegivel).toContain(
+      "A recepcionista de IA ainda não está ligada nesta clínica",
+    );
+    expect(ilegivel).not.toContain("Publicar alterações");
+    expect(banco.fetchConfigDoAgente).not.toHaveBeenCalled();
+
+    sessao.atual = contexto("admin", { clinicId: FORA_DA_FASE });
+    banco.createAdminClient.mockReturnValue(
+      adminComALista([CLINICA, FORA_DA_FASE]),
+    );
+    expect(await pagina()).toContain("Publicar alterações");
   });
 
   it("na fase: o painel, com o motivo do simulador para quem configura", async () => {

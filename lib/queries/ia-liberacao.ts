@@ -1,10 +1,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { cache } from "react";
 
 import {
   horarioDoBanco,
   type HorarioDeOperacao,
 } from "@/lib/domain/agente/config";
-import { CLINICAS_DA_FASE_CONTROLADA } from "@/lib/ia/liberacao";
+import {
+  ambienteDaIaLigado,
+  lerClinicasHabilitadasDaIa,
+  lerConfigDaIa,
+  type ConfigDaIa,
+} from "@/lib/ia/liberacao";
+import { log } from "@/lib/log";
 
 // Leitura da aba "Agente de IA" de Configuracoes (Fase 3; decisao do dono em
 // 05/10/2026): a liberacao da IA na clinica, os numeros ligados ao
@@ -13,21 +20,71 @@ import { CLINICAS_DA_FASE_CONTROLADA } from "@/lib/ia/liberacao";
 // Contrato do banco na migration
 // 20261006120000_ia_liberacao_pela_tela.sql: administrador ou
 // gestor ATIVO da propria clinica le as tres tabelas da liberacao quando ela
-// esta na lista fechada (ou e e_de_teste, nas suites); o interruptor geral chega so como
-// booleano (ia_interruptor_ligado). A escrita nunca passa por aqui: e das
-// Server Actions da aba, pelas RPCs definir_*_da_ia.
+// tem o agente habilitado (ou e e_de_teste, nas suites); o interruptor
+// geral chega so como booleano (ia_interruptor_ligado). A escrita nunca
+// passa por aqui: e das Server Actions da aba, pelas RPCs definir_*_da_ia.
 //
 // Os telefones sao da EQUIPE (quem conversa com a IA nesta fase), nao de
-// paciente: nao entram na trilha de leitura. Nada daqui vai para log.
+// paciente: nao entram na trilha de leitura. Nada daqui vai para log alem
+// do aviso da lista que nao deu para ler (so a clinica, nunca dado).
 
 /**
- * A aba so existe nas clinicas da fase controlada (teste123 e Conduzza
- * Teste). Decisao do SERVIDOR (pagina e Server Actions), pela constante
- * espelho de ia_clinicas_da_fase_controlada(). Clinica e_de_teste das suites
- * nao entra: o banco aceita a escrita dela so para os testes.
+ * As clinicas com o agente habilitado (estado 'teste' em
+ * ia_clinica_habilitada, sem clinica suspensa), lidas do banco pela service
+ * role (ia_clinicas_da_fase_controlada nao e executavel pela sessao) UMA vez
+ * por requisicao (cache do React: a pagina e as pecas dela leem a mesma
+ * lista). Fora de um render do React o cache so repassa, e cada chamada le
+ * de novo. LANCA quando a leitura falha: quem chama fecha.
+ *
+ * Import tardio do cliente de servico (server-only), como o do executor da
+ * IA em lib/jobs/worker.ts: as leituras puras deste arquivo
+ * (lerSituacaoDoBanco, motorParadoDaSituacao) continuam importaveis sem ele.
  */
-export function abaDaIaVisivel(clinicId: string): boolean {
-  return CLINICAS_DA_FASE_CONTROLADA.includes(clinicId.trim().toLowerCase());
+export const clinicasHabilitadasDaIa = cache(
+  async (): Promise<readonly string[]> => {
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    return lerClinicasHabilitadasDaIa(createAdminClient());
+  },
+);
+
+/**
+ * A aba so existe nas clinicas com o agente habilitado (desde a onda 1, um
+ * dado que o super admin muda pelo Painel geral; antes, a lista fixa de
+ * teste123 e Conduzza Teste). Decisao do SERVIDOR (pagina e Server
+ * Actions), pela mesma funcao que as travas do banco usam. Clinica
+ * e_de_teste das suites nao entra: o banco aceita a escrita dela so para os
+ * testes. Falha FECHADA: lista que nao deu para ler esconde a aba (e a
+ * acao recusa), nunca mostra.
+ */
+export async function abaDaIaVisivel(clinicId: string): Promise<boolean> {
+  const id = clinicId.trim().toLowerCase();
+  if (id === "") {
+    return false;
+  }
+  try {
+    return (await clinicasHabilitadasDaIa()).includes(id);
+  } catch {
+    log.warn("ia_lista_de_clinicas_ilegivel", { clinic_id: id });
+    return false;
+  }
+}
+
+/**
+ * T1 e T2 (lib/ia/liberacao.ts) para a requisicao: o ambiente e a lista do
+ * banco (a mesma do cache de abaDaIaVisivel). Sem T1, nem le o banco. Lista
+ * que nao deu para ler: DESLIGADA (falha fechada; o aviso ja foi para o log
+ * por quem leu primeiro, ou vai agora).
+ */
+export async function configDaIaDaRequisicao(): Promise<ConfigDaIa> {
+  if (!ambienteDaIaLigado()) {
+    return lerConfigDaIa([]);
+  }
+  try {
+    return lerConfigDaIa(await clinicasHabilitadasDaIa());
+  } catch {
+    log.warn("ia_lista_de_clinicas_ilegivel", { count: 0 });
+    return lerConfigDaIa([]);
+  }
 }
 
 /** O modo gravado em ia_liberacao (check do banco). */

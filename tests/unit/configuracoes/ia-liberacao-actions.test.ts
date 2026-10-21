@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // As Server Actions da aba "Agente de IA" (Fase 3), com a sessao, o cliente
 // do Supabase, as leituras e o log trocados por dubles que guardam tudo o
 // que a action mandou. O que se prova aqui:
-//   - a guarda: a aba so existe nas duas clinicas da fase controlada (a
-//     mesma abaDaIaVisivel da pagina, de verdade) e so o administrador da
-//     clinica ou o super admin chega ao banco; gestor, nao. O interruptor
-//     geral, so o super admin;
+//   - a guarda: a aba so existe nas clinicas com o agente habilitado
+//     (abaDaIaVisivel, a lista do banco desde a onda 1; aqui um duble que
+//     devolve a Promise, e a guarda tem de AGUARDAR: sem o await a Promise e
+//     sempre verdadeira e nada era barrado) e so o administrador da clinica
+//     ou o super admin chega ao banco; gestor, nao. O interruptor geral, so
+//     o super admin;
 //   - o Zod estrito de cada entrada;
 //   - cada acao vira a RPC certa, com a sessao; "Conversar com a equipe"
 //     exige ao menos um numero ligado (ainda da clinica) e um telefone;
@@ -59,6 +61,13 @@ type DadosFalsos = {
 const registro = vi.hoisted(() => ({
   comSessao: true,
   clinica: "acd9c539-585e-4f2a-a195-712c70099564",
+  /**
+   * As clinicas com o agente habilitado (a lista do banco que
+   * abaDaIaVisivel le desde a onda 1). Vazia: a aba nao existe em nenhuma.
+   */
+  habilitadas: new Set<string>(["acd9c539-585e-4f2a-a195-712c70099564"]),
+  /** Cada clinica que a guarda conferiu na lista, na ordem. */
+  conferidas: [] as string[],
   papel: "admin" as string,
   superAdmin: false,
   rpcs: [] as { nome: string; args: Record<string, unknown> }[],
@@ -166,6 +175,12 @@ vi.mock("@/lib/queries/ia-liberacao", async (original) => {
   const real = await original<typeof import("@/lib/queries/ia-liberacao")>();
   return {
     ...real,
+    // A lista do banco nas maos do teste, como a funcao de verdade: uma
+    // Promise (a leitura e assincrona desde a onda 1).
+    abaDaIaVisivel: (clinicId: string) => {
+      registro.conferidas.push(clinicId);
+      return Promise.resolve(registro.habilitadas.has(clinicId));
+    },
     fetchLiberacaoDaIa: async () => {
       if (registro.dadosFalham) {
         throw new Error("falhou");
@@ -230,6 +245,8 @@ function dadosCompletos(campos: Partial<DadosFalsos> = {}): DadosFalsos {
 beforeEach(() => {
   registro.comSessao = true;
   registro.clinica = TESTE123;
+  registro.habilitadas = new Set([TESTE123]);
+  registro.conferidas = [];
   registro.papel = "admin";
   registro.superAdmin = false;
   registro.rpcs = [];
@@ -298,6 +315,27 @@ describe("guarda", () => {
       });
     }
     expect(registro.rpcs).toEqual([]);
+  });
+
+  it("a lista do banco diz não (Promise resolvida em false): toda ação recusa, sem banco, até na teste123 e para o super admin", async () => {
+    // Sem o await na guarda, a Promise devolvida era verdadeira e esta
+    // clinica passava direto para as RPCs.
+    registro.habilitadas = new Set();
+    registro.superAdmin = true;
+    for (const acao of [
+      ...todasAsAcoes,
+      () => definirInterruptorGeralAction({ ligado: true }),
+    ]) {
+      expect(await acao()).toEqual({
+        ok: false,
+        error: "O assistente de IA ainda não está disponível nesta clínica.",
+      });
+    }
+    expect(registro.rpcs).toEqual([]);
+    expect(registro.consultas).toEqual([]);
+    expect(registro.revalidados).toEqual([]);
+    // Cada acao conferiu a clinica ATIVA na lista, uma vez.
+    expect(registro.conferidas).toEqual(Array(5).fill(TESTE123));
   });
 
   it("gestor (e os demais papéis) não altera: a dica do administrador", async () => {

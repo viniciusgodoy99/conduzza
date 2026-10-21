@@ -9,8 +9,9 @@ import { executarPassagemDaIa } from "@/lib/jobs/motor-ia";
 import { log } from "@/lib/log";
 
 // Tick do motor da IA (E3), chamado pelo pg_cron (entrada 'motor-ia', via
-// disparar_ciclo_da_ia) so quando ha resposta da IA devida de clinica da
-// lista fechada. Mora em /api/webhooks pelo mesmo motivo da rota do motor
+// disparar_ciclo_da_ia) so quando ha resposta da IA devida de clinica com o
+// agente habilitado (a lista do banco, ia_clinicas_da_fase_controlada, sem
+// clinica suspensa). Mora em /api/webhooks pelo mesmo motivo da rota do motor
 // principal (o matcher do middleware exclui o prefixo; fora dele cada tick
 // viraria redirecionamento para /login com cara de sucesso).
 //

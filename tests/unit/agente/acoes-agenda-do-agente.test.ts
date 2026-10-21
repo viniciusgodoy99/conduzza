@@ -108,7 +108,14 @@ class Banco {
     const rpc = async (nome: string, args: unknown) => {
       this.rpcs.push({ nome, args });
       return {
-        data: nome === "garantir_rascunho_do_agente" ? RASCUNHO : null,
+        data:
+          nome === "garantir_rascunho_do_agente"
+            ? RASCUNHO
+            : // A lista das clinicas com o agente habilitado (onda 1), lida
+              // pela guarda com a service role: so a CLINICA.
+              nome === "ia_clinicas_da_fase_controlada"
+              ? [CLINICA]
+              : null,
         error: null,
       };
     };

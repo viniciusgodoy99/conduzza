@@ -61,7 +61,7 @@ import { InviteForm } from "./invite-form";
 // valendo como link antigo: cai na jornada, que absorveu aquela aba.
 //
 // Abas sublinhadas do design system (9 vistas, mais a do Agente de IA nas
-// duas clinicas da fase controlada), com contadores. Na equipe, o
+// clinicas com o agente habilitado), com contadores. Na equipe, o
 // segundo contador e o de pedidos aguardando liberacao (ampulheta, tom de
 // atencao e o texto por extenso para leitor de tela). Cada aba mostra o
 // proprio erro de carregamento em vez de derrubar a tela inteira.
@@ -83,11 +83,12 @@ const ABAS = [
 ] as const;
 
 // Agente de IA (Fase 3, decisao do dono em 05/10/2026): a liberacao do
-// assistente de IA, so na teste123 e na Conduzza Teste. Fica FORA de ABAS de
+// assistente de IA, so nas clinicas com o agente habilitado (a lista do banco,
+// que o super admin muda pelo Painel geral). Fica FORA de ABAS de
 // proposito: a pagina decide no servidor se a aba existe (agenteDeIa nulo
 // nas outras clinicas) e ela entra no fim da fileira. O esqueleto de
 // loading.tsx desenha as 9 abas fixas (o teste carregando-configuracoes
-// conta ABAS); nas duas clinicas a fileira ganha uma aba quando carrega.
+// conta ABAS); nessas clinicas a fileira ganha uma aba quando carrega.
 const ABA_DO_AGENTE = ["ia", "Agente de IA"] as const;
 
 type AbaKey = (typeof ABAS)[number][0] | (typeof ABA_DO_AGENTE)[0];

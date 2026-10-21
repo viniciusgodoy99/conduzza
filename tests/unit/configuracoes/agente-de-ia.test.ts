@@ -6,7 +6,7 @@ import {
   Hourglass,
   TriangleAlert,
 } from "lucide-react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   apoioAoDesligar,
@@ -71,7 +71,6 @@ import {
   expedientePadrao,
   type HorarioDeOperacao,
 } from "@/lib/domain/agente/config";
-import { CLINICAS_DA_FASE_CONTROLADA } from "@/lib/ia/liberacao";
 import {
   abaDaIaVisivel,
   type DadosDaIa,
@@ -80,11 +79,28 @@ import {
 } from "@/lib/queries/ia-liberacao";
 
 // Regras puras da aba "Agente de IA" de Configuracoes (Fase 3; decisao do
-// dono em 05/10/2026): a aba so existe nas duas clinicas da fase
-// controlada; o estado em 3 camadas diz a verdade (ligado pela clinica, mas
+// dono em 05/10/2026): a aba so existe nas clinicas com o agente habilitado
+// (desde a onda 1, a lista vem do banco: ia_clinicas_da_fase_controlada,
+// lida pela service role, aqui um duble); o estado em 3 camadas diz a
+// verdade (ligado pela clinica, mas
 // parado por alguma trava, vira "Ligado, mas parado" com os motivos);
 // "Conversar com a equipe" exige numero e telefone; o telefone novo vira
 // E.164 com o 55 do Brasil; e as dicas de quem nao altera.
+
+// O cliente de servico falso: so a lista das clinicas com o agente
+// habilitado (ia_clinicas_da_fase_controlada), com a resposta trocavel.
+const bancoDaLista = vi.hoisted(() => ({
+  resposta: { data: [] as unknown, error: null as unknown },
+  chamadas: [] as string[],
+}));
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => ({
+    rpc: async (nome: string) => {
+      bancoDaLista.chamadas.push(nome);
+      return bancoDaLista.resposta;
+    },
+  }),
+}));
 
 const TESTE123 = "acd9c539-585e-4f2a-a195-712c70099564";
 const CONDUZZA_TESTE = "f0c115dd-e98c-4767-a1bb-93d517844852";
@@ -173,21 +189,51 @@ function contexto(campos: Partial<ContextoDaIa> = {}): ContextoDaIa {
   };
 }
 
-describe("visibilidade da aba (decidida no servidor)", () => {
-  it("só nas duas clínicas da fase controlada", () => {
-    expect(abaDaIaVisivel(TESTE123)).toBe(true);
-    expect(abaDaIaVisivel(CONDUZZA_TESTE)).toBe(true);
-    expect(abaDaIaVisivel(TESTE123.toUpperCase())).toBe(true);
-    expect(abaDaIaVisivel(SALUD_CARE)).toBe(false);
-    expect(abaDaIaVisivel("")).toBe(false);
-    expect(abaDaIaVisivel("11111111-1111-4111-8111-111111111111")).toBe(false);
+describe("visibilidade da aba (decidida no servidor, lista do banco)", () => {
+  it("só nas clínicas que o banco habilita (hoje, as duas da semeadura)", async () => {
+    bancoDaLista.resposta = {
+      data: [TESTE123, CONDUZZA_TESTE],
+      error: null,
+    };
+    expect(await abaDaIaVisivel(TESTE123)).toBe(true);
+    expect(await abaDaIaVisivel(CONDUZZA_TESTE)).toBe(true);
+    expect(await abaDaIaVisivel(TESTE123.toUpperCase())).toBe(true);
+    expect(await abaDaIaVisivel(` ${TESTE123} `)).toBe(true);
+    expect(await abaDaIaVisivel(SALUD_CARE)).toBe(false);
+    expect(await abaDaIaVisivel("")).toBe(false);
+    expect(await abaDaIaVisivel("11111111-1111-4111-8111-111111111111")).toBe(
+      false,
+    );
   });
 
-  it("usa a constante da trava de ambiente (sem lista própria)", () => {
-    expect(CLINICAS_DA_FASE_CONTROLADA).toEqual([TESTE123, CONDUZZA_TESTE]);
-    for (const id of CLINICAS_DA_FASE_CONTROLADA) {
-      expect(abaDaIaVisivel(id)).toBe(true);
+  it("a lista é dado: o super admin liga e desliga sem mudar código", async () => {
+    bancoDaLista.resposta = { data: [SALUD_CARE], error: null };
+    expect(await abaDaIaVisivel(SALUD_CARE)).toBe(true);
+    expect(await abaDaIaVisivel(TESTE123)).toBe(false);
+    bancoDaLista.resposta = { data: [], error: null };
+    expect(await abaDaIaVisivel(SALUD_CARE)).toBe(false);
+  });
+
+  it("lê pela service role a mesma função das travas do banco; ilegível esconde a aba (falha fechada)", async () => {
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    bancoDaLista.chamadas = [];
+    bancoDaLista.resposta = { data: [TESTE123], error: null };
+    await abaDaIaVisivel(TESTE123);
+    expect(bancoDaLista.chamadas).toEqual(["ia_clinicas_da_fase_controlada"]);
+    for (const resposta of [
+      { data: null, error: { code: "57014" } },
+      { data: null, error: null },
+      { data: TESTE123, error: null },
+    ]) {
+      bancoDaLista.resposta = resposta;
+      expect(await abaDaIaVisivel(TESTE123)).toBe(false);
     }
+    // Vazio nem pergunta ao banco.
+    bancoDaLista.chamadas = [];
+    expect(await abaDaIaVisivel("  ")).toBe(false);
+    expect(bancoDaLista.chamadas).toEqual([]);
+    vi.restoreAllMocks();
   });
 });
 
@@ -1330,16 +1376,30 @@ describe("revisão de produção (19/10/2026)", () => {
         ...DOIS_LIGADOS,
         situacao: situacao({
           conversasAbertas: [
-            { telefoneId: "t1", numeroId: OUTRO_NUMERO, conversaId: OUTRA_CONVERSA },
+            {
+              telefoneId: "t1",
+              numeroId: OUTRO_NUMERO,
+              conversaId: OUTRA_CONVERSA,
+            },
             { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
-            { telefoneId: "t2", numeroId: NUMERO, conversaId: "c3333333-3333-4333-8333-333333333333" },
+            {
+              telefoneId: "t2",
+              numeroId: NUMERO,
+              conversaId: "c3333333-3333-4333-8333-333333333333",
+            },
           ],
         }),
       });
-      expect(conversasAbertasDoTelefone(d, [PRINCIPAL, SEGUNDO], "t1")).toEqual([
-        { numeroId: NUMERO, numero: PRINCIPAL, conversaId: CONVERSA },
-        { numeroId: OUTRO_NUMERO, numero: SEGUNDO, conversaId: OUTRA_CONVERSA },
-      ]);
+      expect(conversasAbertasDoTelefone(d, [PRINCIPAL, SEGUNDO], "t1")).toEqual(
+        [
+          { numeroId: NUMERO, numero: PRINCIPAL, conversaId: CONVERSA },
+          {
+            numeroId: OUTRO_NUMERO,
+            numero: SEGUNDO,
+            conversaId: OUTRA_CONVERSA,
+          },
+        ],
+      );
       // sem a lista de números: a ordem do banco, sem o nome
       expect(conversasAbertasDoTelefone(d, null, "t1")).toEqual([
         { numeroId: OUTRO_NUMERO, numero: null, conversaId: OUTRA_CONVERSA },
@@ -1350,7 +1410,9 @@ describe("revisão de produção (19/10/2026)", () => {
         { numeroId: NUMERO, numero: PRINCIPAL, conversaId: CONVERSA },
         { numeroId: OUTRO_NUMERO, numero: null, conversaId: OUTRA_CONVERSA },
       ]);
-      expect(conversasAbertasDoTelefone(dados(), [PRINCIPAL], "t1")).toEqual([]);
+      expect(conversasAbertasDoTelefone(dados(), [PRINCIPAL], "t1")).toEqual(
+        [],
+      );
     });
 
     it("os textos, palavra por palavra: o número pelo nome, a ação e o link", () => {
@@ -1364,7 +1426,9 @@ describe("revisão de produção (19/10/2026)", () => {
         "Para o assistente começar neste número, assuma e resolva a conversa aberta no Atendimento.",
       );
       expect(TEXTOS_DA_IA.abrirConversa).toBe("Abrir conversa");
-      expect(linkDaConversa(CONVERSA)).toBe(`/atendimento?conversa=${CONVERSA}`);
+      expect(linkDaConversa(CONVERSA)).toBe(
+        `/atendimento?conversa=${CONVERSA}`,
+      );
       expect(rotuloDoLinkDaConversa(SEGUNDO)).toBe(
         "Abrir no Atendimento a conversa do número Numero 2 teste pessoal",
       );
@@ -1380,18 +1444,30 @@ describe("revisão de produção (19/10/2026)", () => {
     });
 
     it("Conversa com o assistente só com um número ligado e conectado SEM conversa aberta para o telefone", () => {
-      const ctxDe = (conversasAbertas: SituacaoDaIa["conversasAbertas"], numeros = [PRINCIPAL, SEGUNDO]) =>
+      const ctxDe = (
+        conversasAbertas: SituacaoDaIa["conversasAbertas"],
+        numeros = [PRINCIPAL, SEGUNDO],
+      ) =>
         contexto({
-          dados: dados({ ...DOIS_LIGADOS, situacao: situacao({ conversasAbertas }) }),
+          dados: dados({
+            ...DOIS_LIGADOS,
+            situacao: situacao({ conversasAbertas }),
+          }),
           numeros,
         });
       // aberta nos dois: a mensagem dele cai numa delas, fica com a equipe
       const nosDois = ctxDe([
         { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
-        { telefoneId: "t1", numeroId: OUTRO_NUMERO, conversaId: OUTRA_CONVERSA },
+        {
+          telefoneId: "t1",
+          numeroId: OUTRO_NUMERO,
+          conversaId: OUTRA_CONVERSA,
+        },
       ]);
       expect(estadoDaIa(nosDois)).toBe("equipe");
-      expect(numerosLivresDoTelefone(nosDois.dados, nosDois.numeros, "t1")).toEqual([]);
+      expect(
+        numerosLivresDoTelefone(nosDois.dados, nosDois.numeros, "t1"),
+      ).toEqual([]);
       expect(
         rotuloDoTelefoneLigado(
           estadoDaIa(nosDois),
@@ -1402,9 +1478,9 @@ describe("revisão de produção (19/10/2026)", () => {
       const numSo = ctxDe([
         { telefoneId: "t1", numeroId: NUMERO, conversaId: CONVERSA },
       ]);
-      expect(numerosLivresDoTelefone(numSo.dados, numSo.numeros, "t1")).toEqual([
-        SEGUNDO,
-      ]);
+      expect(numerosLivresDoTelefone(numSo.dados, numSo.numeros, "t1")).toEqual(
+        [SEGUNDO],
+      );
       expect(
         rotuloDoTelefoneLigado(
           estadoDaIa(numSo),
@@ -1428,7 +1504,9 @@ describe("revisão de produção (19/10/2026)", () => {
         numerosLivresDoTelefone(deOutro.dados, deOutro.numeros, "t1"),
       ).toEqual([PRINCIPAL, SEGUNDO]);
       // sem a lista de números, nenhum livre (a aba não afirma a conexão)
-      expect(numerosLivresDoTelefone(dados(DOIS_LIGADOS), null, "t1")).toEqual([]);
+      expect(numerosLivresDoTelefone(dados(DOIS_LIGADOS), null, "t1")).toEqual(
+        [],
+      );
       // fora do estado equipe, nunca
       expect(rotuloDoTelefoneLigado("parado", 2)).toBe("Ligado");
     });
@@ -1443,8 +1521,12 @@ describe("revisão de produção (19/10/2026)", () => {
         "Depois de desligar, só a equipe Conduzza liga de novo.",
       );
       // o super admin liga de novo; quem não altera não desliga
-      expect(apoioAoDesligar({ podeEditar: true, superAdmin: true })).toBeNull();
-      expect(apoioAoDesligar({ podeEditar: false, superAdmin: false })).toBeNull();
+      expect(
+        apoioAoDesligar({ podeEditar: true, superAdmin: true }),
+      ).toBeNull();
+      expect(
+        apoioAoDesligar({ podeEditar: false, superAdmin: false }),
+      ).toBeNull();
     });
 
     it("no seletor e no diálogo do Só simulador: só com o WhatsApp ligado", () => {
@@ -1480,19 +1562,31 @@ describe("revisão de produção (19/10/2026)", () => {
       expect(textoDoMotivo("motor_parado", true)).toBe(
         "O motor do assistente não está rodando. Siga o diagnóstico rápido do motor-ia em supabase/operacao/motor-por-cron.md.",
       );
-      const motivos = Object.keys(TEXTOS_DA_IA.motivos) as (keyof typeof TEXTOS_DA_IA.motivos)[];
+      const motivos = Object.keys(
+        TEXTOS_DA_IA.motivos,
+      ) as (keyof typeof TEXTOS_DA_IA.motivos)[];
       for (const motivo of motivos) {
-        expect(textoDoMotivo(motivo, true), motivo).not.toMatch(/[Aa]vise a equipe Conduzza/);
-        expect(textoDoMotivo(motivo, true), motivo).not.toMatch(/A equipe Conduzza/);
+        expect(textoDoMotivo(motivo, true), motivo).not.toMatch(
+          /[Aa]vise a equipe Conduzza/,
+        );
+        expect(textoDoMotivo(motivo, true), motivo).not.toMatch(
+          /A equipe Conduzza/,
+        );
         expect(textoDoMotivo(motivo, true), motivo).not.toMatch(/[—–]/);
       }
     });
 
     it("os outros papéis leem o texto de hoje", () => {
-      const motivos = Object.keys(TEXTOS_DA_IA.motivos) as (keyof typeof TEXTOS_DA_IA.motivos)[];
+      const motivos = Object.keys(
+        TEXTOS_DA_IA.motivos,
+      ) as (keyof typeof TEXTOS_DA_IA.motivos)[];
       for (const motivo of motivos) {
-        expect(textoDoMotivo(motivo), motivo).toBe(TEXTOS_DA_IA.motivos[motivo]);
-        expect(textoDoMotivo(motivo, false), motivo).toBe(TEXTOS_DA_IA.motivos[motivo]);
+        expect(textoDoMotivo(motivo), motivo).toBe(
+          TEXTOS_DA_IA.motivos[motivo],
+        );
+        expect(textoDoMotivo(motivo, false), motivo).toBe(
+          TEXTOS_DA_IA.motivos[motivo],
+        );
       }
       expect(TEXTOS_DA_IA.motivos.servidor).toBe(
         "A equipe Conduzza ainda não ativou o assistente para esta clínica.",

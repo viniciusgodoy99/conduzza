@@ -147,7 +147,7 @@ export async function provisionar(): Promise<DadosE2E> {
       // a saude acusaria fila_atrasada), e a varredura da IA nao toca a
       // "Juliana Dermato" (so varre clinica da lista ou de teste com janela).
       // A aba Agente de IA e o Devolver ficam fora da fase (a tela decide
-      // pela lista fechada do codigo).
+      // pela lista do banco, em que a clinica do e2e nao entra).
       .insert([
         {
           name: "Clínica E2E",

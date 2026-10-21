@@ -30,7 +30,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { corDoNumero } from "@/lib/domain/cor-do-numero";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
-import { iaLiberadaNoAmbiente, lerConfigDaIa } from "@/lib/ia/liberacao";
+import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
 import { provedorDoAmbiente } from "@/lib/integrations/whatsapp/provider";
 import { motivosDaRecusaVigentes } from "@/lib/integrations/whatsapp/trava-celular";
 import { fetchProfileNames } from "@/lib/queries/profiles";
@@ -43,7 +43,11 @@ import {
   fetchEtiquetasDeConversa,
 } from "@/lib/queries/etiquetas-de-conversa";
 import { fetchAutomacoesDeFluxo } from "@/lib/queries/automacoes-de-fluxo";
-import { abaDaIaVisivel, fetchLiberacaoDaIa } from "@/lib/queries/ia-liberacao";
+import {
+  abaDaIaVisivel,
+  configDaIaDaRequisicao,
+  fetchLiberacaoDaIa,
+} from "@/lib/queries/ia-liberacao";
 import { fetchJornada } from "@/lib/queries/jornada";
 import { fetchRespostasRapidas } from "@/lib/queries/respostas-rapidas";
 import type { Pendente } from "./equipe-client";
@@ -116,10 +120,11 @@ async function convidadosQueAindaNaoEntraram(
 // fluxo, etiquetas, mensagens padrao e anuncios da Meta e do Google (rastreio
 // do site). Administrador e gestor editam (nome e fuso so o administrador);
 // os demais papeis nem chegam aqui (o layout redireciona pela matriz do
-// brief). A aba Agente de IA (Fase 3) so existe nas duas clinicas da fase
-// controlada, decidido AQUI no servidor (abaDaIaVisivel): nas outras, nada
-// dela e lido nem vai para o cliente. Nela, so o administrador da clinica e
-// o super admin alteram.
+// brief). A aba Agente de IA (Fase 3) so existe nas clinicas com o agente
+// habilitado (a lista do banco desde a onda 1, que o super admin muda pelo
+// Painel geral), decidido AQUI no servidor (abaDaIaVisivel): nas outras,
+// nada dela e lido nem vai para o cliente. Nela, so o administrador da
+// clinica e o super admin alteram.
 export default async function ConfiguracoesPage({
   searchParams,
 }: {
@@ -132,7 +137,11 @@ export default async function ConfiguracoesPage({
   }
 
   const supabase = await createClient();
-  const comAbaDaIa = abaDaIaVisivel(active.clinicId);
+  // A lista do banco e lida uma vez (cache da requisicao) para as duas, e
+  // SEM esperar: ela corre junto com o lote abaixo (a liberacao da aba
+  // encadeia nela), em vez de somar uma ida ao banco em serie a toda carga
+  // de Configuracoes. As duas nunca lancam (falha fechada: aba escondida).
+  const abaDaIa = abaDaIaVisivel(active.clinicId);
   const [
     memberResult,
     profissionaisResult,
@@ -152,6 +161,8 @@ export default async function ConfiguracoesPage({
     rastreioResult,
     situacaoDoRastreioResult,
     liberacaoDaIa,
+    comAbaDaIa,
+    configDaIa,
   ] = await Promise.all([
     supabase
       .from("clinic_member")
@@ -245,11 +256,13 @@ export default async function ConfiguracoesPage({
     supabase.rpc("situacao_do_rastreio", { p_clinic_id: active.clinicId }),
     // Aba Agente de IA: a liberacao, o numero, os telefones da equipe e o
     // interruptor geral (so o booleano). A RLS so mostra a administrador ou
-    // gestor ativo das clinicas da fase controlada; fora delas, nem se
-    // pergunta.
-    comAbaDaIa
-      ? seguro(fetchLiberacaoDaIa(supabase, active.clinicId))
-      : Promise.resolve(null),
+    // gestor ativo das clinicas com o agente habilitado; fora delas, nem se
+    // pergunta (encadeada na lista, que corre junto com o resto do lote).
+    abaDaIa.then((visivel) =>
+      visivel ? seguro(fetchLiberacaoDaIa(supabase, active.clinicId)) : null,
+    ),
+    abaDaIa,
+    configDaIaDaRequisicao(),
   ]);
 
   type MemberRow = {
@@ -512,10 +525,11 @@ export default async function ConfiguracoesPage({
             ? {
                 dados: liberacaoDaIa,
                 numeros: whatsappResult.error ? null : numerosDoWhatsapp,
-                // T1 e T2 (producao com a chave e a lista fechada) para esta
-                // clinica: so o booleano, nunca o valor de variavel nenhuma.
+                // T1 e T2 (producao com a chave e a lista do banco) para
+                // esta clinica: so o booleano, nunca o valor de variavel
+                // nenhuma.
                 ambienteLigado: iaLiberadaNoAmbiente(
-                  lerConfigDaIa(),
+                  configDaIa,
                   active.clinicId,
                 ),
                 podeEditar: active.role === "admin" || context.isProductAdmin,

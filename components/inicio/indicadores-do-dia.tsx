@@ -20,9 +20,9 @@ import {
 const DICA_DA_IA =
   "Chega com o agente de IA. Sem o agente atendendo, não existe número para mostrar.";
 
-// Nas duas clinicas da fase controlada (teste123 e Conduzza Teste) o agente
-// ja existe, so com os telefones da equipe (E3): "chega com o agente" deixa
-// de ser verdade, mas a medicao ainda nao existe.
+// Nas clinicas com o agente habilitado (a lista do banco desde a onda 1) o
+// agente ja existe, so com os telefones da equipe (E3): "chega com o
+// agente" deixa de ser verdade, mas a medicao ainda nao existe.
 const DICA_DA_IA_NA_FASE = "Medição da IA ainda não disponível.";
 
 /** A dica do cartao "Resolvidas pela IA". */

@@ -61,6 +61,10 @@ const AMBIENTE = {
   IA_SEGREDO_DO_IDENTIFICADOR: SEGREDO,
 };
 
+/** A lista das clinicas com o agente habilitado, como o banco a devolveria. */
+const LISTA = [CLINICA];
+const OUTRA = "99999999-9999-4999-8999-999999999999";
+
 type Estado = {
   podeSimular: boolean | "erro";
   interruptor: { ligado: boolean } | null;
@@ -72,6 +76,11 @@ type Estado = {
   erroDeLeitura?: boolean;
   /** O que reservar_gasto_da_ia devolve: o id, null (teto) ou erro. */
   reserva?: string | null | "erro";
+  /**
+   * O que ia_clinicas_da_fase_controlada devolve (onda 1: a lista vem do
+   * banco). Padrao: so a CLINICA.
+   */
+  lista?: string[] | "erro";
 };
 
 const RESERVA = "0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e";
@@ -82,6 +91,12 @@ function adminFalso(estado: Estado) {
   const rpc = vi.fn<
     (nome: string, args?: unknown) => Promise<{ data: unknown; error: unknown }>
   >(async (nome) => {
+    if (nome === "ia_clinicas_da_fase_controlada") {
+      const lista = estado.lista ?? LISTA;
+      return lista === "erro"
+        ? { data: null, error: { code: "57014" } }
+        : { data: lista, error: null };
+    }
     if (nome === "reservar_gasto_da_ia") {
       const reserva = estado.reserva === undefined ? RESERVA : estado.reserva;
       return reserva === "erro"
@@ -214,22 +229,26 @@ afterEach(() => {
 
 describe("motivoDoAmbiente (T1 e T2)", () => {
   it("diz exatamente o que falta, sem nunca mostrar valor de variável", () => {
-    expect(motivoDoAmbiente(CLINICA, AMBIENTE)).toBeNull();
+    expect(motivoDoAmbiente(CLINICA, LISTA, AMBIENTE)).toBeNull();
     expect(
-      motivoDoAmbiente(CLINICA, { ...AMBIENTE, OPENAI_API_KEY: " " }),
+      motivoDoAmbiente(CLINICA, LISTA, { ...AMBIENTE, OPENAI_API_KEY: " " }),
     ).toBe(TEXTOS_DO_SIMULADOR.semChave);
     expect(
-      motivoDoAmbiente(CLINICA, { ...AMBIENTE, VERCEL_ENV: "preview" }),
+      motivoDoAmbiente(CLINICA, LISTA, { ...AMBIENTE, VERCEL_ENV: "preview" }),
     ).toBe(TEXTOS_DO_SIMULADOR.soEmProducao);
-    // Fora da lista fechada do codigo, nada libera.
-    expect(
-      motivoDoAmbiente("99999999-9999-4999-8999-999999999999", AMBIENTE),
-    ).toBe(TEXTOS_DO_SIMULADOR.clinicaForaDaFase);
+    // Fora da lista do banco, nada libera; com a clinica na lista, libera.
+    expect(motivoDoAmbiente(OUTRA, LISTA, AMBIENTE)).toBe(
+      TEXTOS_DO_SIMULADOR.clinicaForaDaFase,
+    );
+    expect(motivoDoAmbiente(CLINICA, [], AMBIENTE)).toBe(
+      TEXTOS_DO_SIMULADOR.clinicaForaDaFase,
+    );
+    expect(motivoDoAmbiente(OUTRA, [OUTRA], AMBIENTE)).toBeNull();
     // T1 tambem exige o segredo do identificador (revisao do E3): o motivo
     // e o da configuracao de seguranca, nao "fora da fase".
     for (const segredo of [undefined, "", "curto"]) {
       expect(
-        motivoDoAmbiente(CLINICA, {
+        motivoDoAmbiente(CLINICA, LISTA, {
           ...AMBIENTE,
           IA_SEGREDO_DO_IDENTIFICADOR: segredo,
         }),
@@ -245,13 +264,15 @@ describe("motivoDoAmbiente (T1 e T2)", () => {
       { IA_CLINICAS_LIBERADAS: "" },
       { IA_CLINICAS_LIBERADAS: "99999999-9999-4999-8999-999999999999" },
     ]) {
-      expect(motivoDoAmbiente(CLINICA, { ...AMBIENTE, ...antigas })).toBeNull();
+      expect(
+        motivoDoAmbiente(CLINICA, LISTA, { ...AMBIENTE, ...antigas }),
+      ).toBeNull();
     }
     expect(
-      motivoDoAmbiente("99999999-9999-4999-8999-999999999999", {
+      motivoDoAmbiente(OUTRA, LISTA, {
         ...AMBIENTE,
         IA_AGENTE_LIGADO: "sim",
-        IA_CLINICAS_LIBERADAS: "99999999-9999-4999-8999-999999999999",
+        IA_CLINICAS_LIBERADAS: OUTRA,
       }),
     ).toBe(TEXTOS_DO_SIMULADOR.clinicaForaDaFase);
   });
@@ -261,6 +282,54 @@ describe("motivoParaNaoSimular (banco)", () => {
   it("liberada: nenhum motivo", async () => {
     const { admin } = adminFalso(LIBERADA);
     expect(await motivoParaNaoSimular(admin, CLINICA, AMBIENTE)).toBeNull();
+  });
+
+  it("a lista das clínicas vem do banco (onda 1): lida só com T1, antes da trava", async () => {
+    const ligado = adminFalso(LIBERADA);
+    await motivoParaNaoSimular(ligado.admin, CLINICA, AMBIENTE);
+    expect(ligado.rpc.mock.calls.map((c) => c[0])).toEqual([
+      "ia_clinicas_da_fase_controlada",
+      "ia_pode_simular",
+    ]);
+    // Fora da producao o motivo e o ambiente: a lista nem e lida.
+    const desligado = adminFalso(LIBERADA);
+    expect(
+      await motivoParaNaoSimular(desligado.admin, CLINICA, {
+        ...AMBIENTE,
+        VERCEL_ENV: "preview",
+      }),
+    ).toBe(TEXTOS_DO_SIMULADOR.soEmProducao);
+    expect(desligado.rpc).not.toHaveBeenCalled();
+  });
+
+  it("clínica fora da lista do banco: fora da fase, sem ir à trava", async () => {
+    const { admin, rpc } = adminFalso({ ...LIBERADA, lista: [OUTRA] });
+    expect(await motivoParaNaoSimular(admin, CLINICA, AMBIENTE)).toBe(
+      TEXTOS_DO_SIMULADOR.clinicaForaDaFase,
+    );
+    expect(chamadasDoRpc(rpc, "ia_pode_simular")).toEqual([]);
+  });
+
+  it("lista que não deu para ler: não conferiu (falha fechada), sem ir à trava", async () => {
+    const { admin, rpc } = adminFalso({ ...LIBERADA, lista: "erro" });
+    expect(await motivoParaNaoSimular(admin, CLINICA, AMBIENTE)).toBe(
+      TEXTOS_DO_SIMULADOR.naoConferiu,
+    );
+    expect(chamadasDoRpc(rpc, "ia_pode_simular")).toEqual([]);
+  });
+
+  it("lista que não responde no prazo da trava: não conferiu", async () => {
+    vi.useFakeTimers();
+    try {
+      const admin = {
+        rpc: () => new Promise(() => undefined),
+      } as unknown as SupabaseClient;
+      const motivo = motivoParaNaoSimular(admin, CLINICA, AMBIENTE);
+      await vi.advanceTimersByTimeAsync(PRAZO_DA_TRAVA_MS);
+      expect(await motivo).toBe(TEXTOS_DO_SIMULADOR.naoConferiu);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("explica na ordem: interruptor, liberação, pausa e por fim o teto", async () => {
@@ -345,6 +414,7 @@ describe("simularTurno", () => {
     // Trava antes de comecar e antes da rodada do modelo; a reserva antes
     // de qualquer chamada e o acerto no fim.
     expect(rpc.mock.calls.map((c) => c[0])).toEqual([
+      "ia_clinicas_da_fase_controlada",
       "ia_pode_simular",
       "reservar_gasto_da_ia",
       "ia_pode_simular",
@@ -902,6 +972,7 @@ describe("E4: agenda no simulador (resposta simulada, nada gravado)", () => {
         .filter(
           (nome) =>
             ![
+              "ia_clinicas_da_fase_controlada",
               "ia_pode_simular",
               "reservar_gasto_da_ia",
               "acertar_gasto_da_ia",

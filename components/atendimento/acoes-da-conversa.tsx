@@ -95,9 +95,10 @@ export function AcoesDaConversa({
   viewerRole: Role;
   authorNames: Record<string, string>;
   /**
-   * A clinica e uma das duas da fase controlada do agente de IA (decidido
-   * no servidor, abaDaIaVisivel). Fora delas o Devolver nem pergunta ao
-   * servidor: fica desabilitado com a dica de sempre.
+   * A clinica tem o agente de IA habilitado (a lista do banco,
+   * ia_clinicas_da_fase_controlada, decidida no servidor por
+   * abaDaIaVisivel). Fora dela o Devolver nem pergunta ao servidor: fica
+   * desabilitado com a dica de sempre.
    */
   iaNaFase?: boolean;
   /** Leva a tela ate outra conversa (a aberta do mesmo paciente, ao reabrir) */

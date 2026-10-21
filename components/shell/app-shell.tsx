@@ -28,11 +28,21 @@ import {
 // (contadores ao vivo). O atributo data-rail na raiz guarda a preferencia e
 // alimenta a variante rail-aberto do globals.css.
 
-function itemsForRole(role: Role): NavItem[] {
+// Item marcado soSuperAdmin (o Painel geral da onda 1, so da equipe
+// Conduzza) aparece so para o super admin, qualquer que seja o papel na
+// clinica; os demais seguem a matriz de papeis. Esconder o item nao protege
+// nada: a rota tem a propria guarda no servidor.
+function itemsForRole(
+  role: Role,
+  { superAdmin = false }: { superAdmin?: boolean } = {},
+): NavItem[] {
   const visible = new Set(visibleModules(role));
-  return NAV_ITEMS.filter(
-    (item) => item.moduleKey === null || visible.has(item.moduleKey),
-  );
+  return NAV_ITEMS.filter((item) => {
+    if ("soSuperAdmin" in item && item.soSuperAdmin === true) {
+      return superAdmin;
+    }
+    return item.moduleKey === null || visible.has(item.moduleKey);
+  });
 }
 
 export function AppShell({
@@ -41,6 +51,7 @@ export function AppShell({
   timezone,
   counts,
   canSwitchClinic = false,
+  superAdmin = false,
   labels = null,
   banner = null,
   preferenciaDoRail = "auto",
@@ -54,6 +65,8 @@ export function AppShell({
   /** Contagens do servidor para o primeiro paint. */
   counts: ContadoresDoMenu;
   canSwitchClinic?: boolean;
+  /** Equipe Conduzza (product_admin): ve os itens soSuperAdmin do menu. */
+  superAdmin?: boolean;
   labels?: Partial<Labels> | null;
   banner?: React.ReactNode;
   /** Preferencia gravada no cookie cz_rail (lida no layout). */
@@ -62,7 +75,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const mainRef = useRef<HTMLElement>(null);
-  const items = itemsForRole(viewer.role);
+  const items = itemsForRole(viewer.role, { superAdmin });
   const t = createT(labels);
   const rota = itemDaRota(pathname);
   const titulo = rota

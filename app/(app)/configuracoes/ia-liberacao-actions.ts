@@ -9,6 +9,7 @@ import {
   telefoneDaEquipeSchema,
   TEXTOS_DA_IA,
 } from "@/components/configuracoes/agente-de-ia";
+import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 import { situacaoDaConexao } from "@/components/whatsapp/numeros";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
@@ -20,6 +21,7 @@ import {
   fetchNumeroDaClinica,
   type DadosDaIa,
 } from "@/lib/queries/ia-liberacao";
+import { fetchNumeroDaClinicaNoPainel } from "@/lib/queries/painel-geral";
 import { createClient } from "@/lib/supabase/server";
 
 // Aba "Agente de IA" de Configuracoes (Fase 3; decisao do dono em
@@ -32,7 +34,7 @@ import { createClient } from "@/lib/supabase/server";
 //
 // A AUTORIZACAO VIVE NO BANCO: toda escrita passa pelas RPCs definir_*_da_ia,
 // com a sessao. O guarda ia_exigir_quem_libera deixa passar so o
-// administrador ativo da propria clinica da lista fechada e o super admin;
+// administrador ativo da propria clinica da lista do banco e o super admin;
 // definir_interruptor_da_ia, so o super admin. A guarda daqui e a segunda
 // camada (CLAUDE.md 3.4: esconder botao nao protege nada): a aba so existe
 // nas clinicas da fase controlada (abaDaIaVisivel, a mesma decisao da
@@ -59,6 +61,19 @@ import { createClient } from "@/lib/supabase/server";
 //
 // Nada daqui vai para log alem do codigo do erro, da clinica, do numero e
 // do tipo de acao: nunca telefone, rotulo nem nome de contato.
+//
+// PAINEL GERAL (onda 1, decisao do dono de 20/10/2026): os numeros e os
+// telefones da equipe tambem se mudam pelo Painel geral, para qualquer
+// clinica com o agente em teste. A entrada traz o clinicId da tela, e entao
+// so a equipe Conduzza passa (super admin; o banco confere de novo em
+// ia_exigir_quem_libera), sem precisar ser membro da clinica. Sem clinicId,
+// vale a clinica ativa, como sempre. No painel:
+// - a conexao do numero vem do proprio painel (painel_geral_das_clinicas,
+//   so do super admin): whatsapp_account so e legivel por membro ativo;
+// - o telefone novo pede SEMPRE a confirmacao de que e de alguem da equipe,
+//   sem consultar os contatos da clinica: o painel nao le nem mostra dado
+//   de paciente (o banco continua recusando telefone de paciente sem o
+//   forcar e o numero de WhatsApp do Conduzza).
 //
 // Guarda local: toda funcao exportada de um arquivo "use server" vira
 // endpoint, entao cada uma confere por si.
@@ -93,40 +108,122 @@ const TEXTOS = {
     "Este telefone não está na lista da equipe. Adicione o telefone pelo formulário.",
   interruptorNaoAlterou:
     "Não foi possível alterar o interruptor geral. Tente de novo.",
+  // Pelo Painel geral (os mesmos textos da tela do painel).
+  soEquipeConduzzaNoPainel: TEXTOS_DO_PAINEL.soEquipeConduzzaNoAgente,
+  agenteDesligadoNoPainel: TEXTOS_DO_PAINEL.soComAgenteEmTeste,
+  confirmeQueEDaEquipe: TEXTOS_DO_PAINEL.confirmeQueEDaEquipe,
 } as const;
 
 /** Texto livre do motivo nas RPCs (vai para ia_liberacao.motivo). */
 const MOTIVO = "Configurações, aba Agente de IA";
+const MOTIVO_DO_PAINEL = "Painel geral";
 
 /** E.164 do banco (check de ia_contato_liberado). */
 const E164 = /^\+[1-9][0-9]{7,14}$/;
+
+/**
+ * A clinica que o Painel geral manda (so o super admin). Ausente: a clinica
+ * ativa, como sempre (Configuracoes).
+ */
+const clinicaDoPainel = z.uuid().optional();
 
 const escolhaSchema = z
   .object({ escolha: z.enum(["desligado", "simulador", "equipe"]) })
   .strict();
 
 const alternarNumeroSchema = z
-  .object({ whatsappAccountId: z.uuid(), ligado: z.boolean() })
+  .object({
+    whatsappAccountId: z.uuid(),
+    ligado: z.boolean(),
+    clinicId: clinicaDoPainel,
+  })
   .strict();
 
 const alternarTelefoneSchema = z
-  .object({ telefone: z.string().regex(E164), ligado: z.boolean() })
+  .object({
+    telefone: z.string().regex(E164),
+    ligado: z.boolean(),
+    clinicId: clinicaDoPainel,
+  })
   .strict();
+
+// O mesmo schema do formulario (estrito: o extend mantem), com a clinica do
+// painel.
+const adicionarTelefoneSchema = telefoneDaEquipeSchema.extend({
+  clinicId: clinicaDoPainel,
+});
 
 const interruptorSchema = z.object({ ligado: z.boolean() }).strict();
 
-type Guarda = { userId: string; clinicId: string; superAdmin: boolean };
+type Guarda = {
+  userId: string;
+  clinicId: string;
+  superAdmin: boolean;
+  /** A acao veio do Painel geral (a clinica da tela, nao a ativa). */
+  noPainel: boolean;
+};
 
 /**
- * A clinica ativa esta na fase controlada e quem chama e o administrador
- * dela ou o super admin. Gestor e os demais papeis param aqui (e no banco).
+ * De onde vem a clinica: a ativa (sem clinicId na entrada), a do painel (um
+ * uuid) ou uma entrada que nao serve (clinicId que nao e uuid). So olha a
+ * chave: o resto da entrada passa pelo Zod de cada acao.
  */
-async function guarda(): Promise<Guarda | { error: string }> {
+type ClinicaDaEntrada =
+  { de: "ativa" } | { de: "painel"; clinicId: string } | { de: "invalida" };
+
+function clinicaDaEntrada(entrada: unknown): ClinicaDaEntrada {
+  if (
+    typeof entrada !== "object" ||
+    entrada === null ||
+    !("clinicId" in entrada)
+  ) {
+    return { de: "ativa" };
+  }
+  const valor = (entrada as { clinicId?: unknown }).clinicId;
+  if (valor === undefined) {
+    return { de: "ativa" };
+  }
+  const lido = z.uuid().safeParse(valor);
+  return lido.success
+    ? { de: "painel", clinicId: lido.data.toLowerCase() }
+    : { de: "invalida" };
+}
+
+/**
+ * Sem clinicId: a clinica ativa tem o agente habilitado e quem chama e o
+ * administrador dela ou o super admin (gestor e os demais papeis param aqui
+ * e no banco). Com clinicId (Painel geral): so o super admin, e so clinica
+ * da lista do banco (agente em teste e conta ativa: a lista tira a
+ * suspensa).
+ */
+async function guarda(
+  origem: ClinicaDaEntrada = { de: "ativa" },
+): Promise<Guarda | { error: string }> {
   const context = await getSessionContext();
-  if (!context?.active) {
+  if (!context) {
     return { error: TEXTOS.sessaoExpirada };
   }
-  if (!abaDaIaVisivel(context.active.clinicId)) {
+  if (origem.de !== "ativa") {
+    if (!context.isProductAdmin) {
+      return { error: TEXTOS.soEquipeConduzzaNoPainel };
+    }
+    if (origem.de === "invalida") {
+      return { error: TEXTOS.dadosInvalidos };
+    }
+    if (!(await abaDaIaVisivel(origem.clinicId))) {
+      return { error: TEXTOS.agenteDesligadoNoPainel };
+    }
+    return {
+      userId: context.userId,
+      clinicId: origem.clinicId,
+      superAdmin: true,
+      noPainel: true,
+    };
+  }
+  if (!context.active) {
+    return { error: TEXTOS.sessaoExpirada };
+  }
+  if (!(await abaDaIaVisivel(context.active.clinicId))) {
     return { error: TEXTOS.foraDaFase };
   }
   if (context.active.role !== "admin" && !context.isProductAdmin) {
@@ -136,7 +233,20 @@ async function guarda(): Promise<Guarda | { error: string }> {
     userId: context.userId,
     clinicId: context.active.clinicId,
     superAdmin: context.isProductAdmin,
+    noPainel: false,
   };
+}
+
+/**
+ * A tela que mostra o que mudou: o Painel geral (lista e detalhe) ou a aba
+ * de Configuracoes da clinica ativa.
+ */
+function revalidar(guardaOk: Guarda) {
+  if (guardaOk.noPainel) {
+    revalidatePath("/painel-geral", "layout");
+    return;
+  }
+  revalidatePath("/configuracoes");
 }
 
 /**
@@ -178,7 +288,15 @@ function falhou(
     kind,
     error_code: error?.code ?? null,
   });
-  return { ok: false, error: textoDoErro(kind, error, texto) };
+  return {
+    ok: false,
+    error:
+      // No painel so chega o super admin: 42501 e o banco nao reconhecendo
+      // a equipe Conduzza, nunca "fale com o administrador".
+      guardaOk.noPainel && error?.code === "42501"
+        ? TEXTOS.soEquipeConduzzaNoPainel
+        : textoDoErro(kind, error, texto),
+  };
 }
 
 /**
@@ -249,7 +367,7 @@ async function garantirLinha(
   const { error } = await supabase.rpc("definir_liberacao_da_ia", {
     p_clinic_id: guardaOk.clinicId,
     p_liberada: false,
-    p_motivo: MOTIVO,
+    p_motivo: guardaOk.noPainel ? MOTIVO_DO_PAINEL : MOTIVO,
   });
   return error ?? "ok";
 }
@@ -337,12 +455,13 @@ export async function definirEscolhaDaIaAction(
  * migration 20261019110000). Ligar: so o super admin nesta fase, e so
  * numero conectado da clinica. Desligar: o administrador da clinica tambem,
  * mesmo com o numero desconectado; o banco devolve para a equipe so as
- * conversas DESTE numero.
+ * conversas DESTE numero. Pelo Painel geral (clinicId na entrada), a
+ * conexao vem do painel (numeroDaClinica).
  */
 export async function alternarNumeroDaIaAction(
   entrada: unknown,
 ): Promise<ResultadoDaIa> {
-  const guardaOk = await guarda();
+  const guardaOk = await guarda(clinicaDaEntrada(entrada));
   if ("error" in guardaOk) {
     return { ok: false, error: guardaOk.error };
   }
@@ -371,17 +490,13 @@ export async function alternarNumeroDaIaAction(
     if (error) {
       return falhou(guardaOk, "numero_desligar", error, TEXTOS.naoAlterou);
     }
-    revalidatePath("/configuracoes");
+    revalidar(guardaOk);
     return { ok: true };
   }
 
-  let numero: Awaited<ReturnType<typeof fetchNumeroDaClinica>>;
+  let numero: { id: string; connectionStatus: string | null } | null;
   try {
-    numero = await fetchNumeroDaClinica(
-      supabase,
-      guardaOk.clinicId,
-      whatsappAccountId,
-    );
+    numero = await numeroDaClinica(supabase, guardaOk, whatsappAccountId);
   } catch {
     return { ok: false, error: TEXTOS.naoLeu };
   }
@@ -404,8 +519,33 @@ export async function alternarNumeroDaIaAction(
   if (error) {
     return falhou(guardaOk, "numero_ligar", error, TEXTOS.naoAlterou);
   }
-  revalidatePath("/configuracoes");
+  revalidar(guardaOk);
   return { ok: true };
+}
+
+/**
+ * Um numero ATIVO (nao removido) da clinica, com a conexao crua; nulo
+ * quando nao e (mais) da clinica. Na clinica ativa, a leitura de sempre
+ * (whatsapp_account pela RLS). No painel, o proprio painel: a equipe
+ * Conduzza nem sempre e membro da clinica, e whatsapp_account so e legivel
+ * por membro ativo. Lanca se a leitura falhar.
+ */
+async function numeroDaClinica(
+  supabase: Supabase,
+  guardaOk: Guarda,
+  whatsappAccountId: string,
+): Promise<{ id: string; connectionStatus: string | null } | null> {
+  if (!guardaOk.noPainel) {
+    return fetchNumeroDaClinica(supabase, guardaOk.clinicId, whatsappAccountId);
+  }
+  const doPainel = await fetchNumeroDaClinicaNoPainel(
+    supabase,
+    guardaOk.clinicId,
+    whatsappAccountId,
+  );
+  return doPainel
+    ? { id: doPainel.id, connectionStatus: doPainel.conexao }
+    : null;
 }
 
 /**
@@ -444,15 +584,20 @@ async function contatoComOTelefone(
  *
  * Desde 19/10/2026 (decisao do dono) o administrador da clinica tambem
  * adiciona; o forcar continua so do super admin (recusaDoForcar).
+ *
+ * Pelo Painel geral (clinicId na entrada), a confirmacao de que o telefone
+ * e de alguem da equipe e SEMPRE pedida, sem ler os contatos da clinica: o
+ * painel nao le nem mostra dado de paciente (nada vai para a trilha de
+ * leitura, porque nada de paciente foi lido).
  */
 export async function adicionarTelefoneDaIaAction(
   entrada: unknown,
 ): Promise<ResultadoDaIa> {
-  const guardaOk = await guarda();
+  const guardaOk = await guarda(clinicaDaEntrada(entrada));
   if ("error" in guardaOk) {
     return { ok: false, error: guardaOk.error };
   }
-  const parsed = telefoneDaEquipeSchema.safeParse(entrada);
+  const parsed = adicionarTelefoneSchema.safeParse(entrada);
   if (!parsed.success) {
     const problema = parsed.error.issues[0];
     return {
@@ -468,6 +613,13 @@ export async function adicionarTelefoneDaIaAction(
   const recusa = recusaDoForcar(guardaOk, forcarContatoDePaciente);
   if (recusa) {
     return recusa;
+  }
+  if (guardaOk.noPainel && confirmarContato !== true) {
+    return {
+      ok: false,
+      error: TEXTOS.confirmeQueEDaEquipe,
+      pedeConfirmacao: true,
+    };
   }
   const supabase = await createClient();
 
@@ -536,7 +688,7 @@ export async function adicionarTelefoneDaIaAction(
     }
     return resultado;
   }
-  revalidatePath("/configuracoes");
+  revalidar(guardaOk);
   return { ok: true };
 }
 
@@ -576,7 +728,7 @@ async function telefoneEstaNaLista(
 export async function alternarTelefoneDaIaAction(
   entrada: unknown,
 ): Promise<ResultadoDaIa> {
-  const guardaOk = await guarda();
+  const guardaOk = await guarda(clinicaDaEntrada(entrada));
   if ("error" in guardaOk) {
     return { ok: false, error: guardaOk.error };
   }
@@ -615,7 +767,7 @@ export async function alternarTelefoneDaIaAction(
       TEXTOS.naoAlterou,
     );
   }
-  revalidatePath("/configuracoes");
+  revalidar(guardaOk);
   return { ok: true };
 }
 
@@ -631,7 +783,7 @@ export async function definirInterruptorGeralAction(
   if (!context?.active) {
     return { ok: false, error: TEXTOS.sessaoExpirada };
   }
-  if (!abaDaIaVisivel(context.active.clinicId)) {
+  if (!(await abaDaIaVisivel(context.active.clinicId))) {
     return { ok: false, error: TEXTOS.foraDaFase };
   }
   if (!context.isProductAdmin) {

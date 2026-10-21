@@ -1,7 +1,15 @@
-import { DoorClosed, Hourglass, OctagonAlert } from "lucide-react";
+import {
+  ArrowLeftRight,
+  DoorClosed,
+  Hourglass,
+  OctagonAlert,
+  OctagonPause,
+} from "lucide-react";
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { pickClinicAction } from "@/app/(auth)/actions";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { AppShell } from "@/components/shell/app-shell";
 import { BotaoRecarregar } from "@/components/shell/botao-recarregar";
@@ -14,6 +22,7 @@ import { EstadoDeTela, TelaSemShell } from "@/components/shell/estado-de-tela";
 import { MotorStatus } from "@/components/shell/motor-status";
 import { SairDaConta } from "@/components/shell/sair-da-conta";
 import { WhatsappStatus } from "@/components/shell/whatsapp-status";
+import { Button } from "@/components/ui/button";
 import { ROLE_LABELS, getSessionContext } from "@/lib/auth/active-clinic";
 import {
   COLUNAS_DA_FAIXA,
@@ -67,6 +76,57 @@ export default async function AppLayout({
             }
           >
             <BotaoRecarregar rotulo="Tentar de novo" />
+            <SairDaConta
+              email={context.userEmail}
+              className="mt-2 w-full border-t border-border pt-4"
+            />
+          </EstadoDeTela>
+        </TelaSemShell>
+      );
+    }
+
+    // Conta suspensa pela equipe Conduzza (onda 1, decisao do dono de
+    // 20/10/2026): os dados ficam guardados e a RLS ja nega tudo; aqui so se
+    // diz o que aconteceu e por onde sair. Vem antes da escolha de clinica:
+    // quem escolheu a suspensa precisa saber por que nao entrou nela. Com
+    // outra clinica ativa, a troca; o super admin nunca chega aqui.
+    if (context.clinicaSuspensa) {
+      const outra = ativos.length === 1 ? ativos[0] : undefined;
+      return (
+        <TelaSemShell>
+          <EstadoDeTela
+            emCartao
+            icone={OctagonPause}
+            tom="alerta"
+            titulo="Conta suspensa"
+            descricao={
+              <>
+                <p className="font-semibold text-foreground">
+                  {context.clinicaSuspensa.clinicName}
+                </p>
+                <p>
+                  A conta desta clínica está suspensa. Fale com a equipe
+                  Conduzza para reativar.
+                </p>
+              </>
+            }
+          >
+            {ativos.length > 1 ? (
+              <Button asChild className="h-10 px-4">
+                <Link href="/selecionar-clinica">
+                  <ArrowLeftRight aria-hidden className="size-4" />
+                  Trocar de clínica
+                </Link>
+              </Button>
+            ) : outra ? (
+              <form action={pickClinicAction}>
+                <input type="hidden" name="clinicId" value={outra.clinicId} />
+                <Button type="submit" className="h-10 px-4">
+                  <ArrowLeftRight aria-hidden className="size-4" />
+                  Trocar para {outra.clinicName}
+                </Button>
+              </form>
+            ) : null}
             <SairDaConta
               email={context.userEmail}
               className="mt-2 w-full border-t border-border pt-4"
@@ -260,6 +320,7 @@ export default async function AppLayout({
       canSwitchClinic={
         context.memberships.filter((m) => m.status === "ativo").length > 1
       }
+      superAdmin={context.isProductAdmin}
       labels={active.labels}
       banner={banner}
       preferenciaDoRail={preferenciaDoRail(

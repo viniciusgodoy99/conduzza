@@ -52,6 +52,11 @@ const RECUSAS_ANTES_DO_PROVEDOR: ReadonlySet<string> = new Set([
   "conteudo_divergente",
   "ia_sem_aprovacao",
   "frase_divergente",
+  // Conta da clinica suspensa (onda 1): send.ts recusou antes do provedor
+  // (a trava final, antes de gravar qualquer coisa, ou a reconferencia
+  // depois da espera do slot, com a linha marcada 'falhou'); repetir daria
+  // o mesmo enquanto durar a suspensao.
+  "clinica_suspensa",
 ]);
 
 /**

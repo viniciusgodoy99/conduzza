@@ -39,9 +39,12 @@ app/
 │   ├── agente/                   Tela 6
 │   ├── automacoes/               Tela 7
 │   ├── cadastros/                Tela 8
-│   └── configuracoes/            Tela 12
+│   ├── configuracoes/            Tela 12
+│   └── painel-geral/             Tela 14, o Painel geral (onda 1, 20/10/2026): só super admin, com guarda
+│                                 no layout da rota; lista e [clinicId]/ (detalhe); seção 15
 ├── (onboarding)/whatsapp/        Tela 13
-├── (admin)/                      Tela 14, visão do dono do produto
+├── (admin)/                      Tela 14, visão do dono do produto (desenho original; a parte construída
+│                                 na onda 1 ficou em (app)/painel-geral, com o menu e a clínica ativa)
 └── api/
     ├── webhooks/whatsapp/        fallback, o principal é Edge Function
     ├── leads/exportar/           CSV dos leads da Tela 4 (20/10/2026), com sessão: só admin e gestor,
@@ -73,6 +76,7 @@ lib/
 │                                 contexto.ts, uso.ts, simulador.ts e ferramentas/ (buscar-procedimento.ts,
 │                                 escalar-humano.ts)
 ├── ia/                           liberacao.ts: travas de ambiente T1 e T2 e a lista da fase controlada
+│                                 (desde a onda 1, a lista é lida do banco; seção 15)
 ├── jobs/                         motor da fila (motor.ts, worker.ts) e executores (regua.ts, conversao-meta.ts,
 │                                 lista-espera.ts, gasto-meta.ts, o sincronizar_gasto_meta da Fase 4, e
 │                                 resolver-anuncio-meta.ts, a consulta dos anúncios pelo id de 04/10/2026)
@@ -137,6 +141,8 @@ create policy "membro escreve na propria clinica" on contact
 RLS garante o isolamento entre clínicas. **Permissão por papel** (Admin, Gestor, Recepção, Profissional, Leitura) é uma segunda camada, aplicada em policy específica ou na Server Action. A matriz está na seção 5 do brief de telas.
 
 O Service Role Key ignora RLS. **Nunca em código que chegue ao browser.** Na prática ele roda no servidor: no motor da fila, na ingestão do WhatsApp, na rota pública do clique do site (seção 13, que não tem sessão e só chama uma função de registro com o corpo validado) e nas Server Actions que gravam o que a sessão não pode gravar (por exemplo, os segredos da seção 10 e a situação da leitura do investimento da Meta), sempre **depois** da guarda de papel.
+
+**Conta suspensa (onda 1, 20/10/2026; migration `20261021100000`, aplicada em 20/10/2026):** a suspensão entra nas três funções que servem as policies (`user_active_clinic_ids`, `user_has_role` e `user_can_write`): a clínica suspensa sai para todo membro, salvo para o super admin. Sem suspensão, o resultado das três é idêntico ao de antes. Detalhe na seção 15.
 
 ---
 
@@ -223,6 +229,8 @@ Para cada job de régua:
 ```
 
 **Backoff e idempotência:** todo job tem `attempts` e `next_attempt_at`. Falha de rede reagenda com backoff exponencial. Job tem chave natural (`contact_id + step_id + scheduled_for`) para não duplicar envio.
+
+**Conta suspensa (onda 1, 20/10/2026; migration `20261021100000`, aplicada em 20/10/2026):** o claim não reivindica job de clínica suspensa (menos a mídia que chega), e `enviarPeloCanal` recusa o envio da clínica suspensa antes de gravar qualquer coisa e de novo depois da espera do slot. Detalhe na seção 15.
 
 ---
 
@@ -552,6 +560,8 @@ Plano aprovado pelo dono em 13/10/2026 ("pode"). O mesmo motor do E2 passa a res
 
 **Travas** (basta uma dizer não): T1 e T2 no código; a lista fechada, a liberação, o número, o telefone, o interruptor e a pausa no banco (`docs/04`, 17.1); e, novas no E3: ligar só pela equipe Conduzza; telefone que não é número de WhatsApp do Conduzza nem tem sinal de paciente (salvo forçado pela equipe Conduzza; o sinal que aparece depois de ligado também barra, em todo lugar); versão publicada; conversa nova ou Devolver; a janela; só conversa individual; reconferência ao enfileirar, antes do modelo, entre rodadas e logo antes do provedor; o gatilho de `message`; `TextoAprovado`; autorização para receber mensagens. A tabela com onde cada uma vive está no `docs/04`, 17.13. Clínica `e_de_teste` nunca chama a OpenAI em produção: o claim e o enfileiramento de produção a excluem, o executor exige T2, e a flag `incluirClinicasDeTeste` (só das suítes) lança com `VERCEL_ENV=production`.
 
+**Desde a onda 1 (20/10/2026; migration `20261021100000` aplicada e código publicado em 20/10/2026):** T2 deixou de ser a constante `CLINICAS_DA_FASE_CONTROLADA` e "a lista fechada" deixou de ser fixa no banco: as duas são a mesma lista de dados, das clínicas com o agente em Teste, que a equipe Conduzza muda pelo Painel geral. Clínica de conta suspensa sai dela e de `ia_pode_atender`. Detalhe na seção 15.
+
 **LGPD do E3:** o que a pessoa da equipe escreve no celular de teste vai para a OpenAI, nos EUA (as mesmas regras de chamada acima: `store: false`, mascaramento, `safety_identifier` em HMAC de clínica e contato). Por isso o formulário do telefone pede, sempre, a confirmação "Quem usa este celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar só dados de teste.", gravada na trilha (`confirmou_aviso_da_openai`). Telefone de paciente não pode ser cadastrado (salvo forçado pela equipe Conduzza, registrado). O texto que o filtro barrou fica em tabela própria, só a equipe Conduzza lê e cada leitura vai para a trilha. Log de aplicação só com ids, códigos e contagens.
 
 **Custo e latência:** `ia_uso` por chamada, origem `whatsapp`, com `conversation_id` e `job_id`; `cost_cents = 0` e `billable = false` em `message` (uazapi). Teto de US$ 5 a cada 24 horas por clínica. Latência medida, não prometida: até 4 s de espera da rajada (15 s no máximo), até 10 s de tick e o turno.
@@ -617,3 +627,64 @@ Pedido do dono em 20/10/2026, depois do primeiro teste no WhatsApp ("O intuito d
 - A passagem prometida (Q5): se o modelo escrever "a equipe vai confirmar por aqui" depois de marcar, a resposta vira passagem com a frase fixa (o lado seguro; a consulta continua marcada e pendente).
 - "Agendar consulta" ligada no rascunho com um limite apagado vale desligada e volta a valer ligada quando os dois forem preenchidos de novo, sem religar a chave.
 - A unidade não entra: a IA usa a jornada de todas as unidades do profissional (nenhuma clínica tem unidade).
+
+---
+
+## 15. Painel geral, conta suspensa e agente por clínica (onda 1, 20/10/2026)
+
+Pedido do dono em 20/10/2026, depois da reunião com o Victor ("visualização do administrador geral... quais clínicas se cadastraram, se estão usando ou não"; "painel geral de administração... gerir essas contas, ativar, desativar conta"; "liberar o agente pra essa clínica ou não, liberar pra testar e liberar depois pra produção. Porque vamos ter que controlar os gastos"). **Decisões do dono de 20/10/2026:** o painel é do sistema inteiro e só da equipe Conduzza; desativar a conta é **suspender mantendo os dados** (a equipe da clínica vê "Conta suspensa", os envios automáticos e a IA param, as mensagens que chegam continuam gravadas, reativar volta como estava); o agente por clínica tem três estados, desligado, teste e produção, com a produção visível e travada até a onda 2; e o gasto de IA por clínica aparece no painel, com o teto ajustável pela equipe Conduzza.
+
+Construída em três frentes (banco, código do sistema e telas) sobre um contrato comum (`~/.claude/plans/onda1-painel/contrato.md`; plano em `~/.claude/plans/onda1-painel/plano.md`), revisada por três lentes independentes e corrigida. **Estado em 20/10/2026:** a migration `20261021100000_painel_geral.sql` foi ensaiada num Postgres local e na produção (`ENSAIO OK`) e **aplicada**, com o ok do dono, e o código foi publicado depois dela (ordem de publicação no `docs/04`, 22.8). Banco no `docs/04`, seção 22; telas no brief (Tela 14 e "Conta suspensa") e no `docs/06`, C49; operação em `supabase/operacao/suspensao-de-clinica.md` e `supabase/operacao/agente-ia.md`; estado e pendências no `docs/05`, entrada "Onda 1".
+
+### 15.1 A rota do painel
+
+| Peça | O quê |
+|---|---|
+| `app/(app)/painel-geral/layout.tsx` | a guarda: sem sessão, `/login`; sem `isProductAdmin`, `/inicio`. Fica dentro do layout `(app)`, com o menu e a clínica ativa (limite abaixo) |
+| `app/(app)/painel-geral/page.tsx` | uma leitura só, `fetchPainelGeral` (a RPC `painel_geral_das_clinicas`, pela sessão: a função recusa com 42501 quem não é super admin); erro ou formato estranho viram o estado de erro, nunca um painel vazio |
+| `app/(app)/painel-geral/[clinicId]/page.tsx` | id que não é uuid: not-found. A linha da clínica vem da mesma RPC (`fetchClinicaDoPainel`); a liberação, os números ligados, os telefones e a situação do agente vêm das leituras da aba de Configurações (`fetchLiberacaoDaIa`, pela sessão: o super admin lê pelas policies próprias, sem ser membro); os tetos, de `ia_liberacao` (`fetchTetosDaIa`). Cada leitura de apoio que falha tira só o cartão dela. Do ambiente, só T1 (`ambienteDaIaLigado`): a clínica estar habilitada sai da própria linha do painel, para o motivo "chave da OpenAI" nunca aparecer numa clínica desligada ou suspensa |
+| `app/(app)/painel-geral/actions.ts` | `suspenderClinicaAction`, `reativarClinicaAction`, `definirAgenteDaClinicaAction` e `definirTetoDaIaAction`: sessão e super admin conferidos (segunda camada), Zod estrito e a RPC do contrato pela sessão (a autorização e a trilha vivem no banco, na mesma transação). As chaves de erro do banco (P0001 e 22023 trazem a chave na mensagem; 42501; P0002) viram texto de recepção. Produção é recusada antes do banco. Log só com a clínica, o tipo da ação e o código, nunca o motivo |
+| `lib/queries/painel-geral.ts` | `lerPainelDoBanco` confere o JSON da RPC: campo essencial fora do formato lança (a tela mostra o erro, nunca uma clínica "ativa" que pode estar suspensa nem um gasto zero que não foi lido); item de lista fora do formato fica de fora |
+| `components/painel-geral/` | as telas (Server Components; os cartões com ação são client) e as regras puras em `painel-geral.ts` (status em 3 camadas, textos, filtros na URL, Zod das ações, leitura do teto em dólares), as mesmas na tela, nas actions e nos testes |
+| `app/(app)/configuracoes/ia-liberacao-actions.ts` | as ações de número e telefone da aba aceitam `clinicId` opcional. Com ele, só o super admin passa, e só em clínica da lista do banco (agente em Teste e conta ativa); a conexão do número vem do próprio painel (`fetchNumeroDaClinicaNoPainel`), porque `whatsapp_account` só é legível por membro ativo; o telefone novo pede sempre a confirmação de que é da equipe, sem ler `contact`. Sem `clinicId`, a aba de Configurações continua igual |
+| `components/configuracoes/agente-de-ia-tab.tsx` | o ciclo das ações virou o hook `useAcaoDaIa`, e os cartões "Números do assistente" e "Telefones da equipe" ganharam o modo `noPainel` |
+| `lib/navigation.ts` e `components/shell/app-shell.tsx` | o item com `soSuperAdmin` e o filtro `itemsForRole(role, { superAdmin })`, com `superAdmin={context.isProductAdmin}` vindo do layout. Sem a flag, item com `moduleKey` nulo apareceria para todos os papéis |
+
+**Só contagens:** a RPC devolve contagens, o gasto em centavos de dólar, a suspensão e o agente; os administradores (nome e e-mail) são da equipe da clínica; o número de WhatsApp vai só com os 4 últimos dígitos. Nada de paciente é lido, então nada vai para a trilha de leitura de paciente. Cada ação revalida o painel inteiro (`revalidatePath('/painel-geral', 'layout')`); o "Ligar" de número pelo painel lê o painel inteiro uma vez por clique (custo aceito com os volumes de hoje: em 20/10/2026, 499 contatos e 501 conversas no banco todo).
+
+**Limite conhecido (decisão para o dono):** o painel mora no layout `(app)`, que exige clínica ativa. Alguém da equipe Conduzza que não é membro de nenhuma clínica vê "Criar clínica"; com duas ou mais e sem escolha, vai antes para `/selecionar-clinica`. Hoje o dono é membro de clínicas e entra. As saídas mudam a arquitetura: um grupo próprio (`app/(sistema)/painel-geral`, com uma casca mínima e a guarda de `isProductAdmin`) ou o layout `(app)` reconhecer a rota e renderizar sem clínica ativa.
+
+### 15.2 A suspensão no acesso
+
+- **Banco** (`docs/04`, 22.2): a tabela `clinica_suspensa`, uma linha por clínica suspensa. As três funções das policies (`user_active_clinic_ids`, `user_has_role` e `user_can_write`) ganham a condição "não existe linha de suspensão da clínica **ou** é super admin". RLS, Realtime e Storage passam por elas, então o membro da clínica suspensa lê e escreve zero; fica só o que não passa por elas (o próprio vínculo, a marca da clínica e o nome dos colegas; nada de paciente). Sem suspensão, o resultado das três é idêntico ao de antes (provado no ensaio para todo vínculo). Custo medido no Postgres 18 local, na policy de `conversation` (que chama `user_has_role` por linha, 5.000 conversas): cerca de 1,2 µs a mais por linha quando o papel não bate e 3,4 µs quando bate; uma página de até 200 linhas fica abaixo de 1 ms a mais; `user_active_clinic_ids` sem diferença medida.
+- **Sessão** (`lib/auth/active-clinic.ts`): o vínculo **ativo** que volta sem a clínica no embed (a RLS de `clinic` esconde a clínica suspensa) vira `status: 'suspensa'`, com o nome lido de `minhas_clinicas_suspensas()`, chamada só nesse caso (quem está numa clínica normal não paga ida nenhuma a mais). `SessionContext.clinicaSuspensa` diz o que avisar: a clínica escolhida no cookie, mesmo havendo outra ativa, ou, sem nenhuma ativa, a primeira suspensa. A clínica suspensa nunca vira a clínica ativa. Erro nessa leitura marca `vinculoIndisponivel` ("Seu acesso não carregou"), como já acontecia com as pendentes.
+- **Layout** (`app/(app)/layout.tsx`): com `clinicaSuspensa`, a tela "Conta suspensa" no lugar do sistema, antes da escolha de clínica (brief, "Conta suspensa"), com Sair e, havendo outra clínica ativa, a troca. O super admin nunca chega aqui: para ele a clínica suspensa é uma clínica como as outras.
+
+### 15.3 A suspensão no envio e no motor
+
+- **Motor** (`docs/04`, 22.3): `claim_jobs_por_clinica` não reivindica job de clínica suspensa, **menos** `baixar_midia` (a mídia que chega é parte da mensagem recebida, que continua gravada). `ia_jobs_devidos` (e com ela `claim_jobs_da_ia`, `ia_estado_do_motor` e `disparar_ciclo_da_ia`) deixa a clínica suspensa de fora. `ia_pode_atender` é falso na clínica suspensa (e com ela `ia_atende_no_whatsapp`, a ingestão, o Devolver e o gatilho de status): conversa nova não nasce na IA. A ingestão em si não muda. A saúde do motor não acusa o que a suspensão segura de propósito: `saude_do_motor().atrasados` não conta o job segurado (a mídia atrasada continua contando) e `reconciliar_mensagens_agendadas().presas` não conta a agendada da clínica suspensa (`supabase/operacao/motor-por-cron.md`).
+- **Suspender** devolve as conversas do agente para a equipe (`ia_desligar`; nada é enviado). **Reativar** cancela a mensagem automática que venceu durante a suspensão (o job pendente com `run_at` já passado e o `executando` de lease vencido, que o motor pegaria de novo; `last_error 'vencido_na_suspensao'`), fecha como não enviado o toque de régua desse job (o rótulo "Conta suspensa" em Confirmações, `lib/domain/falha-de-envio.ts`) e deixa seguir, como estava, o que não manda mensagem ao paciente: a mídia e as três da Meta (`enviar_conversao_meta`, `sincronizar_gasto_meta` e `resolver_anuncio_meta`). Qualquer outro tipo de job, inclusive um que nasça depois, é cancelado: na dúvida, nada sai fora de hora. A agendada do job cancelado, a reconciliação do motor fecha como não enviada.
+- **Trava final** (`lib/integrations/whatsapp/send.ts`, `enviarPeloCanal`): `lerSuspensaoDaClinica` (a RPC `clinica_esta_suspensa`, que só a service role executa) roda em paralelo com o consentimento e a conversa, antes de gravar qualquer coisa. Suspensa: `{ reason: 'falha_envio', code: 'clinica_suspensa', message: "A conta desta clínica está suspensa. Nada foi enviado." }`, nada gravado (nem `message`, nem slot, nem trilha) e log só com ids. Depois da espera do slot anti-ban, a suspensão é lida de novo junto com o consentimento: suspensa, a linha que já nasceu fica `falhou` com `clinica_suspensa`; erro de leitura, `leitura_falhou`. Vale para texto, menu, resposta da IA e frase fixa. `clinica_suspensa` está em `RECUSAS_ANTES_DO_PROVEDOR` (sem retry: repetir daria o mesmo) e, no executor da IA, em `CODIGOS_DE_LIBERACAO` (a conversa volta para a equipe sem a frase fixa).
+- **Falha fechada, sem exceção:** só `true` é suspensa e só `false` é ativa; erro do banco ou da rede, PGRST202 ou 42883 (função que o PostgREST ou o Postgres não acham), nulo ou formato estranho viram `leitura_falhou` (retentável). A tolerância ao PGRST202, que existia só para o código publicado antes da migration, saiu antes da publicação, porque a migration foi aplicada primeiro (20/10/2026); no rollback, o código volta antes do banco.
+- **O "Testar" da régua** (`testarEnvioAction`, em `app/(app)/automacoes/actions.ts`), que fala com o provedor direto, confere a mesma trava antes de carregar a instância, com falha fechada. Numa clínica suspensa, só o super admin chega até ali.
+- **Custo:** cada envio faz uma RPC a mais, em paralelo, sem espera em série.
+- **Fica de fora (ponto para o dono):** as automações de fluxo (`planejar_automacoes_de_fluxo` e `executar_automacoes_de_fluxo`, dentro de `motor_manutencao`) não olham a suspensão. Elas não enviam mensagem, mas movem etapa, etiquetam, criam atividade e nota interna enquanto a clínica está suspensa; o follow-up e a conversão da Meta que nascem de um movimento ficam segurados pelo claim.
+
+### 15.4 A lista da IA vem do banco
+
+- **Antes:** a lista fechada morava em dois lugares que precisavam bater: a constante `CLINICAS_DA_FASE_CONTROLADA` (`lib/ia/liberacao.ts`, T2) e a função imutável `ia_clinicas_da_fase_controlada()` (T3a, `docs/04`, 17.2). Mudar exigia commit e migration.
+- **Agora:** a habilitação é dado, em `ia_clinica_habilitada` (`desligado` ou `teste`; `producao` entra no CHECK na onda 2), escrita só por `definir_agente_da_clinica` (super admin, com trilha). `ia_clinicas_da_fase_controlada()` mantém o nome e a assinatura, passa a STABLE e lê as clínicas em `teste`, sem as suspensas; as cerca de 15 funções do banco que a usam não mudam. A migration semeia a teste123 e a Conduzza Teste em `teste`: ao aplicar, a lista é a mesma.
+- **O código lê a mesma função**, pelo cliente de serviço (a sessão não a executa):
+  - `lib/ia/liberacao.ts`: `ambienteDaIaLigado(env?)` (só T1), `lerClinicasHabilitadasDaIa(admin)` (lança se a leitura falhar ou vier fora do formato; normaliza para uuid em minúsculas, sem repetição), `lerConfigDaIaDoBanco(admin, env?)` (sem T1, nem lê o banco) e `lerConfigDaIa(clinicas, env?)`, agora com a lista obrigatória, para nenhum chamador receber lista vazia em silêncio;
+  - `lib/queries/ia-liberacao.ts`: `clinicasHabilitadasDaIa()`, com o cache do React por requisição (a página e as peças dela leem uma vez; em Server Action o cache não memoriza e cada chamada lê de novo), `abaDaIaVisivel(id)`, agora assíncrona, e `configDaIaDaRequisicao()`. **Falha fechada:** lista ilegível esconde a aba, trata o ambiente como desligado e faz a ação recusar (`log.warn` `ia_lista_de_clinicas_ilegivel`, só com a clínica);
+  - **o motor da IA** (`lib/jobs/motor-ia.ts`) lê a lista uma vez por passagem, e a **mesma** lista vai ao claim (pelo banco) e ao executor (`iaLiberadaNoAmbiente`); ilegível ou vazia, nada é reivindicado (`log.error` `motor_ia_lista_ilegivel`). `dependenciasPadraoDaIa` monta a configuração com a lista vazia: só o motor fornece a lista;
+  - **o simulador** (`lib/agente/simulador.ts`) lê a lista só com T1 de pé, dentro do prazo da trava (3 s); lista que não veio é "não conferiu";
+  - os chamadores trocados: Início, Atendimento (a página e o Devolver), Tela 6 (a página e as ações), Configurações (a página dispara `abaDaIaVisivel` sem esperar e encadeia a liberação no lote principal, para não somar uma ida ao banco em série) e as ações da aba.
+- **Na sessão**, o membro ativo lê só `clinic_id` e `estado` da própria clínica em `ia_clinica_habilitada` (grant por coluna); o motivo e quem mudou ficam com a equipe Conduzza (o painel e a trilha).
+- **O que não muda:** o interruptor geral (T6), a liberação da clínica, os números, os telefones, a pausa e o teto continuam valendo, e T1 continua no ambiente. A clínica `e_de_teste` continua fora da lista (as suítes ligam a IA dela pelo caminho delas, e `definir_agente_da_clinica` a recusa).
+
+### 15.5 O gasto e o teto
+
+- O painel mostra o gasto de `ia_uso` com as reservas (como o teto conta), em centavos de dólar arredondados: as últimas 24 horas (a janela móvel do teto) e o mês corrente no fuso de cada clínica, com e sem o simulador. Os totais do topo arredondam a soma das clínicas, não somam os arredondados.
+- `definir_teto_da_ia` (super admin, trilha `mudou_teto_da_ia` com os valores de antes) muda `ia_liberacao.teto_diario_centavos_usd` (de 1 a 100.000 centavos de dólar; para zerar o gasto, o agente fica desligado) e `teto_respostas_por_conversa_hora` (de 1 a 200). Até a onda 1, os tetos só mudavam pelo SQL editor.
+- **Fora desta onda:** teto global e teto mensal de gasto (próximo passo, no `docs/05`).

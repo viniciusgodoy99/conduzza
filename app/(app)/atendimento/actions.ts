@@ -16,12 +16,12 @@ import { after } from "next/server";
 import { log } from "@/lib/log";
 import { agenteAtendeAgora, horarioDoBanco } from "@/lib/domain/agente/config";
 import { etapaAposAssumir } from "@/lib/domain/jornada";
+import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
 import {
-  CLINICAS_DA_FASE_CONTROLADA,
-  iaLiberadaNoAmbiente,
-  lerConfigDaIa,
-} from "@/lib/ia/liberacao";
-import { motorParadoDaSituacao } from "@/lib/queries/ia-liberacao";
+  abaDaIaVisivel,
+  configDaIaDaRequisicao,
+  motorParadoDaSituacao,
+} from "@/lib/queries/ia-liberacao";
 import {
   consentimentoVigente,
   respostasDaIaDesde,
@@ -1067,11 +1067,6 @@ const TEXTOS_DO_DEVOLVER = {
   naoDevolveu: "Não foi possível devolver a conversa para a IA. Tente de novo.",
 } as const;
 
-/** A IA so existe nas clinicas da fase controlada (lib/ia/liberacao.ts). */
-function clinicaDaFase(clinicId: string): boolean {
-  return CLINICAS_DA_FASE_CONTROLADA.includes(clinicId.trim().toLowerCase());
-}
-
 /** O assistente responderia esta conversa agora? */
 type ConferenciaDoAssistente =
   | { tipo: "de_pe" }
@@ -1172,7 +1167,9 @@ async function conferirAssistenteDePe(
   supabase: Awaited<ReturnType<typeof createClient>>,
   entrada: { clinicId: string; conversationId: string; fuso: string },
 ): Promise<ConferenciaDoAssistente> {
-  if (!iaLiberadaNoAmbiente(lerConfigDaIa(), entrada.clinicId)) {
+  // T1 e T2 (lib/ia/liberacao.ts): o ambiente e a lista do banco. Lista
+  // que nao deu para ler fecha (assistente parado), como fora da lista.
+  if (!iaLiberadaNoAmbiente(await configDaIaDaRequisicao(), entrada.clinicId)) {
     return { tipo: "parado", motivo: "assistente_parado" };
   }
   const [conversa, publicada, motorParado] = await Promise.all([
@@ -1298,8 +1295,9 @@ function motivoParaOPapel(
  * de producao de 19/10/2026, migration 20261019120000: conversa de paciente
  * nunca diz "Responda o paciente antes de devolver para a IA."), e para
  * quem nao e administrador nem gestor troca o motivo da liberacao pelo
- * generico (nao_disponivel), sem expor a lista de telefones. Fora das duas
- * clinicas da fase, fora_da_fase sem ir ao banco.
+ * generico (nao_disponivel), sem expor a lista de telefones. Fora das
+ * clinicas com o agente habilitado (abaDaIaVisivel, a lista do banco desde
+ * a onda 1), fora_da_fase sem ir as funcoes da IA.
  */
 export async function elegibilidadeDoDevolverAction(
   conversationId: string,
@@ -1312,7 +1310,7 @@ export async function elegibilidadeDoDevolverAction(
   if (!parsed.success) {
     return { ok: false, error: TEXTOS_DO_DEVOLVER.conversaInvalida };
   }
-  if (!clinicaDaFase(context.active.clinicId)) {
+  if (!(await abaDaIaVisivel(context.active.clinicId))) {
     return { ok: true, pode: false, motivo: "fora_da_fase" };
   }
   const supabase = await createClient();

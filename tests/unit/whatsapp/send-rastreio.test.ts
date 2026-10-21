@@ -142,6 +142,10 @@ function bancoFalso(cenario: Cenario = {}) {
       }
       return cenario.adocao ?? { data: true, error: null };
     }
+    // A conta nao esta suspensa (onda 1): o envio exige o booleano.
+    if (nome === "clinica_esta_suspensa") {
+      return { data: false, error: null };
+    }
     return { data: null, error: null };
   }
 

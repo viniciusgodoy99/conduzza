@@ -46,6 +46,7 @@ let banco: BancoEmMemoria;
 let admin: BancoEmMemoria;
 let motorParado: boolean | "erro";
 let consentimento: boolean | "erro";
+let listaDoBanco: string[] | "erro";
 
 /** O ambiente da IA de pe (T1): producao, chave e segredo do identificador. */
 function ambienteLigado() {
@@ -114,6 +115,14 @@ beforeEach(() => {
   });
   admin = new BancoEmMemoria();
   estado.admin = admin;
+  // A lista das clinicas com o agente habilitado (onda 1): do banco, pela
+  // service role (abaDaIaVisivel e configDaIaDaRequisicao). So a teste123.
+  listaDoBanco = [TESTE123];
+  admin.rpc("ia_clinicas_da_fase_controlada", () =>
+    listaDoBanco === "erro"
+      ? { data: null, error: { code: "57014" } }
+      : { data: listaDoBanco, error: null },
+  );
   motorParado = false;
   admin.rpc("situacao_da_ia_na_clinica", () =>
     motorParado === "erro"
@@ -142,8 +151,37 @@ afterEach(() => {
 });
 
 describe("elegibilidadeDoDevolverAction", () => {
-  it("fora das duas clínicas: fora_da_fase sem ir ao banco", async () => {
+  it("fora das clínicas habilitadas no banco: fora_da_fase sem ir às funções da IA", async () => {
     estado.sessao = sessao({ clinica: FORA_DA_LISTA });
+    expect(await elegibilidadeDoDevolverAction(CONVERSA)).toEqual({
+      ok: true,
+      pode: false,
+      motivo: "fora_da_fase",
+    });
+    expect(banco.chamadas).toEqual([]);
+    // Só a lista, pela service role.
+    expect(admin.chamadas.map((c) => c.nome)).toEqual([
+      "ia_clinicas_da_fase_controlada",
+    ]);
+  });
+
+  it("a lista é dado: a clínica que o banco passa a habilitar entra sem mudar código", async () => {
+    listaDoBanco = [TESTE123, FORA_DA_LISTA];
+    estado.sessao = sessao({ clinica: FORA_DA_LISTA });
+    banco.rpc("ia_devolver_disponivel", () => ({
+      data: { pode: false, motivo: "nao_e_sua" },
+      error: null,
+    }));
+    expect(await elegibilidadeDoDevolverAction(CONVERSA)).toEqual({
+      ok: true,
+      pode: false,
+      motivo: "nao_e_sua",
+    });
+    expect(banco.chamadasDe("ia_devolver_disponivel")).toHaveLength(1);
+  });
+
+  it("lista do banco ilegível: fora_da_fase (falha fechada), sem ir às funções da IA", async () => {
+    listaDoBanco = "erro";
     expect(await elegibilidadeDoDevolverAction(CONVERSA)).toEqual({
       ok: true,
       pode: false,
@@ -312,7 +350,11 @@ describe("Devolver só quando o assistente responderia", () => {
       pode: false,
       motivo: "nao_e_sua",
     });
-    expect(admin.chamadas).toEqual([]);
+    // Pela service role, só a lista das clínicas habilitadas (antes do
+    // banco); nada do motor, da autorização nem do teto.
+    expect(admin.chamadas.map((c) => c.nome)).toEqual([
+      "ia_clinicas_da_fase_controlada",
+    ]);
   });
 
   it.each([
@@ -510,6 +552,22 @@ describe("Devolver só quando o assistente responderia", () => {
       error: "Não foi possível conferir agora. Tente de novo.",
     });
     vi.stubEnv("OPENAI_API_KEY", "");
+    expect(await devolverParaIaAction(CONVERSA)).toEqual({
+      ok: false,
+      error: "Esta conversa não pode voltar para a IA agora.",
+    });
+    expect(banco.chamadasDe("devolver_para_ia")).toEqual([]);
+  });
+
+  it("devolverParaIaAction com a lista do banco ilegível ou sem a clínica: recusa antes de gravar (falha fechada)", async () => {
+    banco.rpc("devolver_para_ia", () => ({ data: { ok: true }, error: null }));
+    listaDoBanco = "erro";
+    expect(await devolverParaIaAction(CONVERSA)).toEqual({
+      ok: false,
+      error: "Esta conversa não pode voltar para a IA agora.",
+    });
+    // O super admin desligou o agente da clínica (saiu da lista).
+    listaDoBanco = [FORA_DA_LISTA];
     expect(await devolverParaIaAction(CONVERSA)).toEqual({
       ok: false,
       error: "Esta conversa não pode voltar para a IA agora.",

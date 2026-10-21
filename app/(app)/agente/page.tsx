@@ -26,17 +26,22 @@ import {
   fetchConfigDoAgente,
   fetchVersoesDoAgente,
 } from "@/lib/queries/agente";
-import { iaLiberadaNoAmbiente, lerConfigDaIa } from "@/lib/ia/liberacao";
-import { abaDaIaVisivel, fetchLiberacaoDaIa } from "@/lib/queries/ia-liberacao";
+import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
+import {
+  abaDaIaVisivel,
+  configDaIaDaRequisicao,
+  fetchLiberacaoDaIa,
+} from "@/lib/queries/ia-liberacao";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-// Agente de IA (Tela 6). So existe nas clinicas da fase controlada
-// (teste123 e Conduzza Teste), decidido AQUI no servidor pela mesma lista da
-// aba de Configuracoes (abaDaIaVisivel): nas outras, a tela continua o vazio
-// honesto de antes (achado 111) e nada do agente e lido nem vai para o
-// cliente. A guarda de papel mora no layout (profissional e leitura vao para
-// o Inicio).
+// Agente de IA (Tela 6). So existe nas clinicas com o agente habilitado
+// (desde a onda 1, a lista do banco que o super admin muda pelo Painel
+// geral; antes, teste123 e Conduzza Teste fixas), decidido AQUI no servidor
+// pela mesma lista da aba de Configuracoes (abaDaIaVisivel): nas outras, a
+// tela continua o vazio honesto de antes (achado 111) e nada do agente e
+// lido nem vai para o cliente. A guarda de papel mora no layout
+// (profissional e leitura vao para o Inicio).
 //
 // Dentro da fase, a pagina le pela SESSAO (RLS) a configuracao em edicao, a
 // ultima publicada, a base viva e as versoes (lib/queries/agente). So para o
@@ -111,9 +116,11 @@ async function emUsoNoWhatsapp(
       .eq("clinic_id", clinicId)
       .is("removido_em", null);
   try {
-    const [dados, numeros] = await Promise.all([
+    const [dados, numeros, config] = await Promise.all([
       fetchLiberacaoDaIa(supabase, clinicId),
       lerNumeros(),
+      // A mesma lista da guarda da pagina (cache da requisicao).
+      configDaIaDaRequisicao(),
     ]);
     const ativos: NumeroDoWhatsapp[] | null = numeros.error
       ? null
@@ -131,7 +138,7 @@ async function emUsoNoWhatsapp(
     return versaoEmUsoNoWhatsapp({
       dados,
       numeros: ativos,
-      ambienteLigado: iaLiberadaNoAmbiente(lerConfigDaIa(), clinicId),
+      ambienteLigado: iaLiberadaNoAmbiente(config, clinicId),
       agoraMs: Date.now(),
       fuso,
     });
@@ -183,7 +190,7 @@ export default async function AgentePage({
     </div>
   );
 
-  if (!abaDaIaVisivel(active.clinicId)) {
+  if (!(await abaDaIaVisivel(active.clinicId))) {
     return casca(<Vazio />);
   }
 

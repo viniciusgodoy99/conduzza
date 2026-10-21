@@ -19,7 +19,10 @@ import {
   MENU_CONFIRMACAO,
 } from "@/lib/domain/textos-padrao";
 import { TIPOS_DE_ENVIO, tipoDeEnvioDaRegua } from "@/lib/domain/tipo-de-envio";
-import { carregarInstancia } from "@/lib/integrations/whatsapp/send";
+import {
+  carregarInstancia,
+  lerSuspensaoDaClinica,
+} from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -1226,6 +1229,26 @@ export async function testarEnvioAction(
         procedimento: "Consulta",
         preparo: "",
       }).trim()}`;
+
+  // Conta suspensa (onda 1, decisao do dono de 20/10/2026): nada sai, por
+  // nenhum caminho. Este fala com o provedor direto (fora de
+  // enviarPeloCanal), entao confere aqui a mesma trava, pela service role e
+  // com falha fechada. So o super admin chega a esta acao numa clinica
+  // suspensa (para os outros ela nunca vira a clinica ativa).
+  const suspensao = await lerSuspensaoDaClinica(adminDb, guard.clinicId);
+  if (suspensao === "suspensa") {
+    return {
+      ok: false,
+      error: "A conta desta clínica está suspensa. Nada foi enviado.",
+    };
+  }
+  if (suspensao === "erro") {
+    return {
+      ok: false,
+      error:
+        "Não foi possível conferir a situação da conta da clínica. Nada foi enviado. Tente de novo.",
+    };
+  }
 
   const { provider, ref } = await carregarInstancia(
     adminDb,

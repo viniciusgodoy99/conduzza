@@ -74,6 +74,7 @@ export default async function AtendimentoPage({
     etiquetas,
     respostasRapidas,
     conversaDoLink,
+    iaNaFase,
   ] = await Promise.all([
     fetchConversations(supabase, active.clinicId),
     // Os numeros ATIVOS da clinica (docs/07): se ha ao menos um (senao, o
@@ -96,6 +97,9 @@ export default async function AtendimentoPage({
     parametros.conversa
       ? fetchConversationById(supabase, active.clinicId, parametros.conversa)
       : Promise.resolve(null),
+    // O agente habilitado na clinica (lista do banco desde a onda 1). Nunca
+    // derruba a tela: lista que nao deu para ler e falso (falha fechada).
+    abaDaIaVisivel(active.clinicId),
   ]);
   // A jornada e configuravel por clinica: os rotulos de etapa que o Inbox
   // mostra vem dela, nao mais de um dicionario fixo.
@@ -129,10 +133,10 @@ export default async function AtendimentoPage({
         conversaDoLink={conversaDoLink}
         linkIndisponivel={Boolean(parametros.conversa) && !conversaDoLink}
         filtroInicial={parametros.filtro ?? null}
-        // Agente de IA (E3): o Devolver so pergunta ao servidor nas duas
-        // clinicas da fase controlada; o rascunho bloqueado, so o super
+        // Agente de IA (E3): o Devolver so pergunta ao servidor nas
+        // clinicas com o agente habilitado; o rascunho bloqueado, so o super
         // admin abre (D25). As actions e o banco conferem de novo.
-        iaNaFase={abaDaIaVisivel(active.clinicId)}
+        iaNaFase={iaNaFase}
         podeVerRascunho={context.isProductAdmin}
       />
     </div>

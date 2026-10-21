@@ -57,6 +57,7 @@ const ROTULO_POR_MOTIVO: Record<
 };
 
 const SISTEMA = "Erro do sistema no envio";
+const CONTA_SUSPENSA = "Conta suspensa";
 const NUMERO_NAO_CONFIGURADO = "Número da clínica não configurado";
 const SERVIDOR_FORA_DO_AR = "Servidor do WhatsApp fora do ar";
 
@@ -80,11 +81,17 @@ const ROTULO_POR_CODIGO: Readonly<Record<string, string>> = {
   sem_consentimento_no_envio: "Sem autorização",
   leitura_falhou: SISTEMA,
   registro_falhou: SISTEMA,
+  // A conta da clinica suspensa pela equipe Conduzza (onda 1): a trava de
+  // send.ts recusou o toque na corrida com a suspensao.
+  clinica_suspensa: CONTA_SUSPENSA,
   // Motor (regua.ts, worker.ts) e fila (job_queue.last_error)
   pular_run_falhou: SISTEMA,
   excecao_no_worker: SISTEMA,
   lease_expirado: "Envio interrompido",
   devolucoes_demais: "Envio adiado várias vezes",
+  // reativar_clinica (onda 1) fecha assim o toque cujo job venceu durante a
+  // suspensao: a perda veio da conta suspensa, nao do WhatsApp.
+  vencido_na_suspensao: CONTA_SUSPENSA,
 };
 
 const CODIGO_DO_PROVEDOR = /^uazapi_(\d{3})$/;

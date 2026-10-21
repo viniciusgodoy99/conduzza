@@ -37,6 +37,9 @@ const CODIGOS_COM_ROTULO: Record<string, string> = {
   excecao_no_worker: "Erro do sistema no envio",
   lease_expirado: "Envio interrompido",
   devolucoes_demais: "Envio adiado várias vezes",
+  // Conta suspensa (onda 1): a trava de send.ts e a reativacao.
+  clinica_suspensa: "Conta suspensa",
+  vencido_na_suspensao: "Conta suspensa",
 };
 
 describe("contaComoNaoEnviada", () => {
@@ -126,6 +129,26 @@ describe("rotuloDoNaoEnvio", () => {
     expect(rotuloDoNaoEnvio("teto_gasto", null)).toBe(
       "Limite de gasto atingido",
     );
+  });
+
+  it("o toque perdido na suspensão diz Conta suspensa, não Falha no envio", () => {
+    // reativar_clinica grava vencido_na_suspensao no toque cujo job venceu
+    // durante a suspensao; a trava de send.ts, clinica_suspensa.
+    expect(rotuloDoNaoEnvio("falha_envio", "vencido_na_suspensao")).toBe(
+      "Conta suspensa",
+    );
+    expect(rotuloDoNaoEnvio("falha_envio", "clinica_suspensa")).toBe(
+      "Conta suspensa",
+    );
+    expect(
+      rodapeDosMotivos(
+        resumirMotivos([
+          rotuloDoNaoEnvio("falha_envio", "vencido_na_suspensao"),
+          rotuloDoNaoEnvio("falha_envio", "vencido_na_suspensao"),
+          rotuloDoNaoEnvio("desconectado", null),
+        ]),
+      ),
+    ).toBe("Mais comum: Conta suspensa");
   });
 
   it("falha de envio usa o código gravado; sem código, Falha no envio", () => {

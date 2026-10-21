@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { lerConfigDaIaDoBanco, type ConfigDaIa } from "@/lib/ia/liberacao";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -16,8 +17,12 @@ import { executarJobComPosse, type Job } from "./worker";
 // 45 s e nao pode atrasar regua, confirmacao nem midia.
 //
 //  - Sem T1 (producao com a chave da OpenAI) nada e reivindicado.
+//  - T2 (onda 1): a lista das clinicas com o agente habilitado e lida do
+//    banco UMA vez por passagem (ia_clinicas_da_fase_controlada, sem
+//    clinica suspensa) e a MESMA lista vai ao claim e ao executor. Lista
+//    que nao deu para ler: nada e reivindicado.
 //  - claim_jobs_da_ia traz ate 4 jobs, no maximo um por conversa, so de
-//    clinica da lista fechada (T2 aqui e no banco) e nunca e_de_teste em
+//    clinica da lista (T2 aqui e no banco) e nunca e_de_teste em
 //    producao. Lease de 90 s.
 //  - Um executor por invocacao ('motor-ia:<uuid>', criado pela rota): duas
 //    invocacoes sobrepostas nunca se confundem na posse.
@@ -51,6 +56,25 @@ async function baterPonto(
   }
 }
 
+/**
+ * T1 e T2 da passagem: a config injetada (so as suites) ou o ambiente com a
+ * lista lida do banco agora (sem T1, nem le). null: a lista nao deu para
+ * ler (erro ou formato estranho).
+ */
+async function configDaPassagem(
+  admin: SupabaseClient,
+  injetada: ConfigDaIa | undefined,
+): Promise<ConfigDaIa | null> {
+  if (injetada !== undefined) {
+    return injetada;
+  }
+  try {
+    return await lerConfigDaIaDoBanco(admin);
+  } catch {
+    return null;
+  }
+}
+
 export async function executarPassagemDaIa(opcoes: {
   executorId: string;
   prazoFinalMs: number;
@@ -67,17 +91,6 @@ export async function executarPassagemDaIa(opcoes: {
   exigirForaDeProducao(opcoes.incluirClinicasDeTeste);
   const inicio = Date.now();
   const admin = opcoes.dependencias?.admin ?? createAdminClient();
-  const padrao = dependenciasPadraoDaIa({
-    admin,
-    prazoFinalMs: opcoes.prazoFinalMs,
-  });
-  const dependencias: DependenciasDoExecutorDaIa = {
-    ...padrao,
-    ...opcoes.dependencias,
-    admin,
-    prazoFinalMs: opcoes.prazoFinalMs,
-    incluirClinicasDeTeste: opcoes.incluirClinicasDeTeste === true,
-  };
   const resumo: ResumoDaPassagemDaIa = {
     reivindicados: 0,
     concluidos: 0,
@@ -91,14 +104,31 @@ export async function executarPassagemDaIa(opcoes: {
     await baterPonto(admin, 0);
   }
 
+  // T1 e T2 desta passagem (as suites injetam a config pronta). Lista que
+  // nao deu para ler: nada e reivindicado, como sem T1.
+  const config = await configDaPassagem(admin, opcoes.dependencias?.config);
+  if (config === null) {
+    log.error("motor_ia_lista_ilegivel", { count: 0 });
+    return resumo;
+  }
+
   // T1: fora da producao com a chave, ou sem nenhuma clinica na lista, nada
   // e reivindicado (o job continua pendente e a varredura devolve a
   // conversa para a equipe em 3 minutos).
-  const { config } = dependencias;
   if (!config.ligado || config.clinicas.length === 0) {
     log.warn("motor_ia_fora_do_ambiente", { count: 0 });
     return resumo;
   }
+
+  // O executor confere a MESMA lista que foi ao claim (iaLiberadaNoAmbiente).
+  const dependencias: DependenciasDoExecutorDaIa = {
+    ...dependenciasPadraoDaIa({ admin, prazoFinalMs: opcoes.prazoFinalMs }),
+    ...opcoes.dependencias,
+    admin,
+    config,
+    prazoFinalMs: opcoes.prazoFinalMs,
+    incluirClinicasDeTeste: opcoes.incluirClinicasDeTeste === true,
+  };
 
   const { data, error } = await admin.rpc("claim_jobs_da_ia", {
     p_worker: opcoes.executorId,

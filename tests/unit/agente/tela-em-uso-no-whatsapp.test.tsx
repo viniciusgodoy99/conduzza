@@ -259,7 +259,10 @@ describe("Em uso no WhatsApp: a mesma regra do verde da aba (T3)", () => {
 
   it("produção com a chave e sem o segredo do identificador: fora de uso, como a aba", () => {
     const CLINICA_DA_FASE = "acd9c539-585e-4f2a-a195-712c70099564";
-    const semSegredo = lerConfigDaIa({
+    // A lista das clinicas habilitadas vem do banco desde a onda 1; aqui, a
+    // que o banco devolveria com a clinica dentro.
+    const lista = [CLINICA_DA_FASE];
+    const semSegredo = lerConfigDaIa(lista, {
       VERCEL_ENV: "production",
       OPENAI_API_KEY: "chave-de-teste",
     });
@@ -270,7 +273,7 @@ describe("Em uso no WhatsApp: a mesma regra do verde da aba (T3)", () => {
         }),
       ),
     ).toBe(false);
-    const comSegredo = lerConfigDaIa({
+    const comSegredo = lerConfigDaIa(lista, {
       VERCEL_ENV: "production",
       OPENAI_API_KEY: "chave-de-teste",
       IA_SEGREDO_DO_IDENTIFICADOR: "s".repeat(32),

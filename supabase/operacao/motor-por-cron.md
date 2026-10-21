@@ -135,6 +135,15 @@ where j.status = 'pendente' and j.run_at < now() - interval '5 minutes'
 group by 1, 2;
 ```
 
+**Conta suspensa** (Painel geral, onda 1; migration `20261021100000`): o claim segura na fila tudo da clínica suspensa, menos a mídia que chega (`baixar_midia`), e `atrasados` **não conta** o que ele segura. Por isso suspender uma clínica não acende `fila_atrasada`, e a mídia dela que atrasar continua acendendo. Ao reativar, `reativar_clinica` cancela as mensagens automáticas que venceram (`last_error = 'vencido_na_suspensao'`); as três da Meta (`enviar_conversao_meta`, `sincronizar_gasto_meta`, `resolver_anuncio_meta`) não são canceladas e seguem como estavam, e voltam a contar em `atrasados` até o motor pegá-las. Para ver o que está segurado:
+
+```sql
+select s.clinic_id, j.kind, count(*)
+from job_queue j join clinica_suspensa s on s.clinic_id = j.clinic_id
+where j.status = 'pendente' and j.run_at < now() - interval '5 minutes'
+group by 1, 2;
+```
+
 ---
 
 ## Diagnóstico quando algo não sai
@@ -329,7 +338,7 @@ where a.id = '<id>';
 4. **Caso conhecido (ensaiado em 06/10/2026):** SQLSTATE `23514` com `conversa_do_contato = false`. Alguém trocou o contato da conversa da agendada (nenhuma tela faz isso: só uma chamada direta à API), e a atividade de "não saiu", que leva a conversa, é recusada por `validar_atividade`. Corrigida a conversa, a passagem seguinte fecha a agendada com a atividade, sozinha. Se a troca do contato foi intencional, não a desfaça só por isso: anote o id e trate com o desenvolvimento.
 5. **Nunca** mude `mensagem_agendada.situacao` direto, nem aqui: a atividade, a ordem por contato e a retirada do texto dependem das funções. Enquanto a linha estiver quebrada, as outras agendadas da clínica e das outras clínicas continuam saindo.
 
-Clínica `e_de_teste` fica fora da planejadora, da reconciliação e da contagem de presas do motor (só os testes de integração passam `p_incluir_teste`).
+Clínica `e_de_teste` fica fora da planejadora, da reconciliação e da contagem de presas do motor (só os testes de integração passam `p_incluir_teste`). Clínica de **conta suspensa** fica fora da contagem de presas (a tarefa da agendada dela espera a reativação, segurada pelo claim): `agendadas_presas` não acende por causa da suspensão. Ao reativar, a tarefa vencida é cancelada (`vencido_na_suspensao`) e a reconciliação fecha a agendada como não enviada, com a atividade de sempre.
 
 **Diagnóstico das presas** (sem o texto):
 

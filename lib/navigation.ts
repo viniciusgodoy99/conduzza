@@ -5,6 +5,7 @@ import {
   FolderCog,
   Hourglass,
   House,
+  LayoutDashboard,
   ListChecks,
   MessagesSquare,
   Settings,
@@ -29,6 +30,13 @@ import type { ModuleKey } from "@/lib/domain/permissions";
 // Icones: CalendarDays na Agenda porque Calendar e o icone do status
 // Agendado, e Hourglass na Lista de espera sem cor semantica (tabela de
 // icones reservados, secao 4.6).
+//
+// Painel geral (onda 1, decisao do dono de 20/10/2026): o sistema inteiro,
+// so para a equipe Conduzza (super admin), fora da matriz de papeis. O item
+// tem soSuperAdmin e so entra no menu de quem e super admin (o filtro e o
+// itemsForRole do AppShell, components/shell/app-shell.tsx). ATENCAO: sem a
+// flag, item com moduleKey null aparece para TODOS os papeis. A rota confere
+// de novo no layout dela, e cada acao no servidor e no banco.
 
 export type NavGroup =
   "principal" | "operacao_do_dia" | "inteligencia" | "administracao";
@@ -43,6 +51,11 @@ export type NavItem = {
   labelKey?: LabelKey;
   /** Chave do contador do menu (contagem real, ao vivo no cliente) */
   badge?: "conversas" | "confirmacoes";
+  /**
+   * So a equipe Conduzza (super admin) ve o item, qualquer que seja o papel
+   * na clinica ativa (o Painel geral).
+   */
+  soSuperAdmin?: boolean;
 };
 
 /** Titulo de cada bloco; null = bloco sem titulo (o primeiro). */
@@ -159,6 +172,15 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Settings,
     group: "administracao",
     moduleKey: "configuracoes",
+  },
+  // LayoutDashboard: icone sem outro dono no menu nem nos mapas de status.
+  {
+    href: "/painel-geral",
+    label: "Painel geral",
+    icon: LayoutDashboard,
+    group: "administracao",
+    moduleKey: null,
+    soSuperAdmin: true,
   },
 ];
 

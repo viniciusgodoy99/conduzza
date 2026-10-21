@@ -24,7 +24,13 @@ export type ManipuladorDeRpc = (
 
 export class BancoEmMemoria {
   readonly tabelas = new Map<string, Linha[]>();
-  readonly manipuladores = new Map<string, ManipuladorDeRpc>();
+  readonly manipuladores = new Map<string, ManipuladorDeRpc>([
+    // A conta da clinica nao esta suspensa (onda 1): a funcao do banco
+    // sempre devolve o booleano, e a trava final do envio FECHA
+    // (leitura_falhou) com qualquer outra resposta. Quem testa a suspensao
+    // registra o proprio manipulador (banco.rpc).
+    ["clinica_esta_suspensa", () => ({ data: false, error: null })],
+  ]);
   readonly chamadas: { nome: string; args: Record<string, unknown> }[] = [];
   /** Cada operacao em tabela: [tabela, operacao, valores]. */
   readonly operacoes: {

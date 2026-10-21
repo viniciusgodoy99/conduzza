@@ -1307,6 +1307,35 @@ export type Database = {
           },
         ]
       }
+      clinica_suspensa: {
+        Row: {
+          clinic_id: string
+          motivo: string
+          suspensa_em: string
+          suspensa_por: string | null
+        }
+        Insert: {
+          clinic_id: string
+          motivo: string
+          suspensa_em?: string
+          suspensa_por?: string | null
+        }
+        Update: {
+          clinic_id?: string
+          motivo?: string
+          suspensa_em?: string
+          suspensa_por?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clinica_suspensa_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clique_do_site: {
         Row: {
           casado_em: string | null
@@ -1940,6 +1969,38 @@ export type Database = {
           label?: string
         }
         Relationships: []
+      }
+      ia_clinica_habilitada: {
+        Row: {
+          alterado_em: string
+          alterado_por: string | null
+          clinic_id: string
+          estado: string
+          motivo: string | null
+        }
+        Insert: {
+          alterado_em?: string
+          alterado_por?: string | null
+          clinic_id: string
+          estado: string
+          motivo?: string | null
+        }
+        Update: {
+          alterado_em?: string
+          alterado_por?: string | null
+          clinic_id?: string
+          estado?: string
+          motivo?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_clinica_habilitada_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: true
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       ia_contato_liberado: {
         Row: {
@@ -4862,6 +4923,7 @@ export type Database = {
       }
       chave_de_especialidade: { Args: { p_texto: string }; Returns: string }
       chave_telefone: { Args: { p_phone: string }; Returns: string }
+      clinica_esta_suspensa: { Args: { p_clinic_id: string }; Returns: boolean }
       concluir_job: {
         Args: { p_id: string; p_worker: string }
         Returns: undefined
@@ -4970,6 +5032,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      definir_agente_da_clinica: {
+        Args: { p_clinic_id: string; p_estado: string; p_motivo: string }
+        Returns: undefined
+      }
       definir_instrucoes_do_agente: {
         Args: { p_clinic_id: string; p_instrucoes: string }
         Returns: undefined
@@ -4994,6 +5060,14 @@ export type Database = {
           p_whatsapp_account_id: string
         }
         Returns: boolean
+      }
+      definir_teto_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_teto_diario_centavos_usd: number
+          p_teto_respostas_por_conversa_hora: number
+        }
+        Returns: undefined
       }
       definir_numero_principal: {
         Args: { p_account_id: string; p_clinic_id: string }
@@ -5305,6 +5379,14 @@ export type Database = {
           clinic_name: string
         }[]
       }
+      minhas_clinicas_suspensas: {
+        Args: never
+        Returns: {
+          clinic_id: string
+          nome: string
+          suspensa_em: string
+        }[]
+      }
       motor_agendar: { Args: never; Returns: string }
       motor_desagendar: { Args: never; Returns: string }
       motor_ia_agendar: { Args: never; Returns: string }
@@ -5330,6 +5412,10 @@ export type Database = {
           p_contact_id: string
           p_conversation_id?: string
         }
+        Returns: Json
+      }
+      painel_geral_das_clinicas: {
+        Args: { p_incluir_teste?: boolean }
         Returns: Json
       }
       pacientes_resumo: {
@@ -5406,6 +5492,10 @@ export type Database = {
           p_worker: string
         }
         Returns: boolean
+      }
+      reativar_clinica: {
+        Args: { p_clinic_id: string; p_motivo: string }
+        Returns: Json
       }
       recalcular_previa_da_conversa: {
         Args: { p_conversation_id: string }
@@ -5621,6 +5711,10 @@ export type Database = {
       }
       substituir_jornada: {
         Args: { p_clinic_id: string; p_faixas: Json; p_professional_id: string }
+        Returns: undefined
+      }
+      suspender_clinica: {
+        Args: { p_clinic_id: string; p_motivo: string }
         Returns: undefined
       }
       telefone_e_numero_da_plataforma: {

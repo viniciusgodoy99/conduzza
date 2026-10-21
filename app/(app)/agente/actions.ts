@@ -43,8 +43,9 @@ import { createClient } from "@/lib/supabase/server";
 // secao 3. Contrato do banco na migration 20261006150000_tela_do_agente.sql.
 //
 // Guarda em TODA acao (toda funcao exportada de um arquivo "use server" vira
-// endpoint): sessao, clinica da fase controlada (abaDaIaVisivel, a mesma
-// decisao da pagina) e papel (administrador ou gestor, ou o super admin).
+// endpoint): sessao, clinica com o agente habilitado (abaDaIaVisivel, a
+// lista do banco desde a onda 1, a mesma decisao da pagina) e papel
+// (administrador ou gestor, ou o super admin).
 // O banco confere de novo: RLS, o gatilho agente_so_na_fase_controlada e as
 // guardas das RPCs (CLAUDE.md 3.4: esconder botao nao protege nada).
 //
@@ -178,7 +179,7 @@ async function exigirQuemConfigura(): Promise<Quem | { error: string }> {
     return { error: TEXTOS.sessaoExpirada };
   }
   const { clinicId, role, timezone } = context.active;
-  if (!abaDaIaVisivel(clinicId)) {
+  if (!(await abaDaIaVisivel(clinicId))) {
     return { error: TEXTOS.foraDaFase };
   }
   if (!context.isProductAdmin && !canEdit(role, "agente")) {

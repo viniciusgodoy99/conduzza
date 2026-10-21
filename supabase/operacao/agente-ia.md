@@ -4,6 +4,8 @@ Como está ligado hoje, como fazer o primeiro teste, como desligar em segundos e
 
 **E4 (20/10/2026; construída e revisada, migration `20261020130000` aplicada na produção e código publicado no mesmo dia, `0e66cb2`; às 18h27 de 20/10/2026, nenhuma das duas clínicas tinha ligado a agenda):** a IA marca consulta. Como ligar a agenda numa das duas clínicas, o que conferir e como desligar: seção "Agenda pela IA (E4)", abaixo de "Encerrar uma conversa da IA".
 
+**Onda 1 (20/10/2026; construída e revisada; migration `20261021100000` aplicada e código publicado em 20/10/2026):** a lista fixa das duas clínicas sai do código e do banco. O agente de cada clínica passa a ser um dado (Desligado ou Teste; Produção travada até a onda 2), que só a equipe Conduzza muda, pelo **Painel geral**, com trilha; o teto de gasto também passa a ser ajustado lá. Como ligar o agente numa clínica, antes e depois da onda 1: seção "Ligar o agente numa clínica (onda 1)", logo depois de "Religar". A suspensão de conta, que também desliga o agente: `supabase/operacao/suspensao-de-clinica.md`. Banco no `docs/04`, seção 22; código no `docs/03`, seção 15; estado no `docs/05`, entrada "Onda 1".
+
 Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicado em 19/10/2026 (`1c36327`; o telefone pelo administrador em `24058b1` e os vários números em `a87e01e`). **Migrations aplicadas:** M1 `20261013100000_ia_whatsapp_fila.sql`, M3 `20261013110000_ia_whatsapp_gatilho_mensagem.sql` e M2 `20261013120000_ia_whatsapp_funcoes_quentes.sql` em 13/10/2026, nessa ordem; `20261019100000_ia_telefone_pelo_administrador.sql` e `20261019110000_ia_varios_numeros.sql` em 19/10/2026 (md5 conferidos na produção: "Como foi ligado"). Contrato do banco no `docs/04`, 17.13; turno e travas no `docs/03`, seção 14; estado e decisões no `docs/05`, Fase 3, entrada "E3"; o motor da IA em `supabase/operacao/motor-por-cron.md`, "Resposta da IA no WhatsApp (motor-ia)".
 
 ---
@@ -11,6 +13,7 @@ Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicad
 ## Regras que valem em todo passo
 
 - A IA existe **só** na **teste123** (`acd9c539-585e-4f2a-a195-712c70099564`) e na **Conduzza Teste** (`f0c115dd-e98c-4767-a1bb-93d517844852`). Selecione **sempre por id**, nunca por nome: existe outra clínica chamada "Conduzza Teste" (`e2d2e43f`), mais "Clinica conduzza teste" (`6180eafd`) e "Vinicius teste" (`628d92b7`), todas fora da lista.
+  - **Depois da onda 1** (migration `20261021100000` aplicada e código publicado, os dois em 20/10/2026): a IA existe nas clínicas com o agente em **Teste** no Painel geral, sem as de conta suspensa (`select public.ia_clinicas_da_fase_controlada();`). Ao aplicar, a lista é a mesma (as duas acima). Outra clínica só entra com o ok do dono, pelo painel ("Ligar o agente numa clínica (onda 1)"). Selecionar por id continua valendo.
 - A salud-care e qualquer outra clínica, **nunca**. Nenhum comando deste arquivo escreve em outra clínica.
 - A IA conversa só com os **telefones da equipe** ligados na aba Agente de IA. Paciente nenhum, inclusive os que escrevem para o mesmo número.
 - **Nunca imprima telefone** no SQL editor, em chat, ticket ou print: as consultas abaixo devolvem contagens, ids e o rótulo do telefone ("De quem é"). Neste arquivo, os números de WhatsApp aparecem só pelo id e pelo final.
@@ -146,6 +149,8 @@ Desligar **nunca envia nada** ao contato: as conversas da IA voltam para a equip
   select public.definir_liberacao_da_ia('<id da clínica>', false, null, 'motivo curto');
   ```
 
+  **Depois da onda 1**, também pelo Painel geral (super admin): a clínica, cartão "Agente de IA", **Desligado** (na hora). Esse caminho tira a clínica da lista (a aba some para o administrador dela) e desliga a liberação; para religar, "Teste" no mesmo cartão ("Ligar o agente numa clínica (onda 1)"). Suspender a conta também desliga o agente (`supabase/operacao/suspensao-de-clinica.md`).
+
 - **Só um número ou só um telefone:** "Desligar" na linha do número (cartão "Números do assistente") ou do telefone (cartão "Telefones da equipe"). Pelo SQL editor, sempre por id e por nome de parâmetro, **sem digitar o telefone** (os ids saem das consultas de "Religar", passo 1):
 
   ```sql
@@ -259,6 +264,48 @@ Cada receita grava a trilha (`editou`, "sem nome" na consulta H) e devolve para 
 5. **O interruptor geral:** o dono religa na aba da teste123 (cartão "Interruptor geral") ou com `select public.definir_interruptor_da_ia(true, 'motivo curto');`.
 
 Conferir depois: consulta A (e a I, se mexeu em telefone).
+
+---
+
+## Ligar o agente numa clínica (onda 1)
+
+**Até a onda 1 (antes de 20/10/2026):** a lista era fixa, a teste123 e a Conduzza Teste, e nenhuma outra clínica ligava, nem pelo SQL editor (o gatilho `ia_liberacao_so_na_lista` recusava com 42501). **Desde 20/10/2026** (migration aplicada e código publicado), vale o que segue.
+
+**Depois da onda 1** (a migration aplicada com o ok do dono e depois o código publicado, em 20/10/2026; `docs/04`, 22.8): o agente de cada clínica é um dado (`ia_clinica_habilitada`, Desligado ou Teste), que só a equipe Conduzza muda, pelo Painel geral, com trilha (`mudou_agente_da_clinica`). Ao aplicar, a teste123 e a Conduzza Teste nascem em Teste: nada muda nelas, e tudo o que este arquivo diz delas continua valendo.
+
+**Antes de ligar** (com o ok do dono para aquela clínica):
+
+- a clínica não é de teste automático (o painel nem a mostra e a RPC recusa com `clinica_de_teste`) e a conta está ativa (com a conta suspensa, "Teste" fica desabilitado);
+- quem vai usar o celular de teste foi avisado por escrito (D32): o que escrever vai para a OpenAI, nos EUA, e só dados de teste;
+- a clínica tem uma versão do assistente **publicada** na Tela 6, com o modo de horário 24 horas ou Só fora do expediente (quem publica é o administrador ou o gestor de lá, ou o super admin que for membro; o painel não publica);
+- continuam valendo todas as travas desta fase: o interruptor geral, os números ligados, os telefones da equipe, a pausa da clínica e o teto. Paciente nenhum entra na IA.
+
+**Pelo Painel geral** (super admin; não precisa ser membro da clínica):
+
+1. Painel geral, a clínica, cartão **Agente de IA**, **Teste**. O diálogo diz o que acontece e o teto da clínica; escreva o motivo (vai para a trilha) e confirme com "Ligar em teste". A clínica entra na lista e fica liberada em "Conversar com a equipe" (`definir_liberacao_da_ia` com o modo `contatos`); a aba Agente de IA de Configurações passa a aparecer para o administrador dela.
+2. **Teto de gasto** (coluna da direita): confira ou ajuste o teto a cada 24 horas (US$ 5,00 quando a linha nasce) e as respostas por conversa em 1 hora (20). Para gasto zero, o agente fica Desligado: o teto não aceita zero.
+3. **Números do assistente:** "Ligar" em cada número conectado que vai atender (um não desliga o outro). Sem número, a clínica adiciona e conecta na aba WhatsApp dela.
+4. **Telefones da equipe:** adicionar o celular de teste, com "De quem é", a confirmação do aviso da OpenAI e a confirmação "Confirmo que este telefone é de alguém da equipe" (no painel ela é pedida sempre, porque o painel não consulta os contatos da clínica). O banco recusa telefone de paciente sem o forçar e o número de WhatsApp de qualquer clínica do Conduzza; "Usar mesmo assim (fica registrado)" só com o ok do dono. Na Conduzza Teste, onde o dono não é membro, o painel também muda os números e os telefones; a decisão de 19/10/2026 (quem cadastra telefone lá é o administrador de lá) continua valendo até o dono dizer o contrário.
+5. **Conferir:** no cartão do agente, "Na clínica agora" sem nenhum motivo de parada (o motivo do interruptor diz onde ele fica: o cartão Interruptor geral da aba Agente de IA, em Configurações); a consulta A já inclui a clínica (ela filtra por `ia_clinicas_da_fase_controlada()`); a consulta I para o telefone; e, para o primeiro teste, o "Roteiro do primeiro teste" (resolver antes a conversa aberta do celular de teste).
+
+**Pelo SQL editor** (recuo, se o painel falhar; as mesmas recusas e a mesma trilha, "sem nome"):
+
+```sql
+-- ligar em Teste (a clínica entra na lista e fica liberada em modo contatos)
+select public.definir_agente_da_clinica('<id da clínica>', 'teste', 'Dono em <data>: <motivo curto>');
+
+-- o teto: centavos de dólar a cada 24 horas (1 a 100000) e respostas por conversa por hora (1 a 200)
+select public.definir_teto_da_ia('<id da clínica>', 500, 20);
+
+-- desligar (sai da lista, a liberação fica desligada e as conversas do agente voltam para a equipe)
+select public.definir_agente_da_clinica('<id da clínica>', 'desligado', 'motivo curto');
+```
+
+Os números e os telefones, pelas receitas de "Religar" (passos 3 e 4).
+
+**Desligar:** pelo painel, **Desligado** no cartão do agente (na hora, sem confirmação; nada é enviado ao contato). A clínica sai da lista, e a aba some para o administrador dela. Se a ideia é a clínica continuar na lista com o assistente parado, o administrador de lá põe o modo em "Desligado" na aba (ou a receita "Uma clínica" de "Desligar em segundos"); o painel passa a mostrar "Desligado pela clínica".
+
+**Religar o modo de uma clínica que já está em Teste** (o administrador pôs "Desligado" ou "Só simulador" na aba): o painel não tem esse botão, porque "Teste" já está marcado. Use a receita 2 de "Religar" no SQL editor ou, pelo painel, Desligado e depois Teste (no meio, as conversas do agente voltam para a equipe).
 
 ---
 
@@ -703,6 +750,8 @@ select
 
 Qualquer contador acima de zero nas consultas 2 a 6: siga "Incidente: a IA falou com quem não devia", abaixo.
 
+**Depois da onda 1, cuidado com a consulta 4** (e com a coluna `a4_ia_fora_das_duas` da consulta J): ela compara com a lista **de hoje**. Uma clínica que já teve o agente em Teste e depois foi desligada ou suspensa deixa histórico (mensagens, jobs, uso e decisões da IA) e passa a aparecer aqui sem ser incidente. Antes de tratar como incidente, confira na trilha se a clínica esteve em Teste no período (`select created_at, detalhes->>'estado' as estado from public.audit_log where clinic_id = '<id da clínica>' and action = 'mudou_agente_da_clinica' order by created_at;`, ou a suspensão em `suspendeu_clinica` e `reativou_clinica`). A consulta ainda não foi reescrita para isso (pendência registrada no `docs/05`, entrada "Onda 1").
+
 ---
 
 ## Incidentes
@@ -732,7 +781,7 @@ Qualquer contador acima de zero nas consultas 2 a 6: siga "Incidente: a IA falou
 
 **Número desconectado:** as conversas da IA naquele número voltam para a equipe ("o número do assistente está desconectado"); a IA não espera a reconexão. Reconectar na aba WhatsApp. Com outro número ligado e conectado, o assistente continua respondendo por ele: a aba fica em "Conversando com a equipe" e só a linha do número caído mostra o aviso. Com nenhum ligado conectado, a aba mostra "Ligado, mas parado" com o motivo de cada número, pelo nome, até reconectar.
 
-**Teto de gasto atingido:** conversa nova do telefone da equipe nasce com a equipe (evento "parada"); a conversa que já estava na IA recebe a frase fixa e passa ("o limite de gasto de hoje acabou"). Volta sozinho quando o gasto mais antigo sai da janela de 24 horas. Mudar o teto é só com o ok do dono, pelo SQL editor, na clínica da lista: `update public.ia_liberacao set teto_diario_centavos_usd = <centavos> where clinic_id = '<id da clínica>';`.
+**Teto de gasto atingido:** conversa nova do telefone da equipe nasce com a equipe (evento "parada"); a conversa que já estava na IA recebe a frase fixa e passa ("o limite de gasto de hoje acabou"). Volta sozinho quando o gasto mais antigo sai da janela de 24 horas. Mudar o teto é só com o ok do dono, pelo SQL editor, na clínica da lista: `update public.ia_liberacao set teto_diario_centavos_usd = <centavos> where clinic_id = '<id da clínica>';`. **Depois da onda 1**, com o ok do dono, pelo Painel geral (a clínica, cartão "Teto de gasto", de US$ 0,01 a US$ 1.000 a cada 24 horas e de 1 a 200 respostas por conversa em 1 hora) ou por `select public.definir_teto_da_ia('<id da clínica>', <centavos>, <respostas>);`, que grava a trilha `mudou_teto_da_ia` com os valores de antes; o `update` direto fica só como recuo.
 
 **O contato recebeu duas respostas, a da IA e outra pelo celular:** alguém respondeu pelo aparelho até uns 8 segundos depois da mensagem, e o banco tomou a resposta por automática do app; a conversa continuou na IA. Avise quem atende o número ("Roteiro do primeiro teste", passo 6).
 
@@ -987,6 +1036,8 @@ select
 ## Rollback
 
 Na ordem. Detalhe e lista exata de objetos no `docs/04`, 17.13, "Rollback".
+
+**Só a onda 1 (migration `20261021100000`, depois de aplicada; sem desfazer o E3 nem a E4):** (0) desligar pelo painel, ou com `definir_agente_da_clinica(..., 'desligado', 'rollback da onda 1')`, toda clínica ligada em Teste pelo painel, fora a teste123 e a Conduzza Teste (a lista volta a ser só as duas fixas, e a liberação dessas clínicas ficaria ligada fora da lista), e reativar as clínicas suspensas que devem voltar a enviar; (1) voltar o código para o de antes da onda 1; (2) rodar `supabase/operacao/rollback/20261021100000-corpos-anteriores.sql` inteiro, numa transação, no SQL editor, em horário calmo (`lock_timeout` de 3 s; SHARE ROW EXCLUSIVE em `clinic`), e conferir os nove md5 do cabeçalho do arquivo, nenhuma das sete funções novas e nenhuma das duas tabelas novas. Ficam a trilha, os jobs cancelados na reativação e a liberação como o painel a deixou. Detalhe no `docs/04`, 22.8. Se a E4 ou o E3 também forem desfeitos, este vem antes.
 
 **Só a agenda pela IA (migration `20261020130000`, depois de aplicada; sem desfazer o E3):** primeiro voltar o código para o de antes da E4 (o novo lê e grava as colunas da agenda e chama as três RPCs); depois rodar `supabase/operacao/rollback/20261020130000-corpos-anteriores.sql` inteiro, numa transação, no SQL editor, em horário calmo (`lock_timeout` de 3 s; ACCESS EXCLUSIVE em `ai_agent_config` e `slot_hold`), e conferir os quatro md5 do cabeçalho do arquivo, nenhuma das quatro funções novas e nenhuma das oito colunas novas. As consultas que a IA marcou ficam; os limites preenchidos se perdem. Detalhe no `docs/04`, 21.10. Se o E3 também for desfeito, este vem antes.
 

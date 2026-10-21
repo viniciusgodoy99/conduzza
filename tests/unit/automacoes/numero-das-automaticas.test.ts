@@ -14,7 +14,10 @@ import { BancoFalso, type Linha } from "../whatsapp/banco-falso";
 //     sessao, com Zod e trilha, e recarimba os envios pendentes DESSES tipos
 //     em cada numero ativo;
 //   - testarEnvioAction sai pelo numero pedido, senao pelo fixo do tipo da
-//     regua, senao pelo principal, e o numero manda para ele mesmo.
+//     regua, senao pelo principal, e o numero manda para ele mesmo; com a
+//     conta da clinica suspensa (ou sem conseguir conferir), nada sai: o
+//     teste fala com o provedor direto, fora da trava de enviarPeloCanal
+//     (onda 1).
 
 const CLINICA_A = "0a0a0a0a-0000-4000-8000-00000000000a";
 const CLINICA_B = "0b0b0b0b-0000-4000-8000-00000000000b";
@@ -220,8 +223,19 @@ describe("definirNumeroDasAutomaticasAction", () => {
   });
 });
 
+/** clinica_esta_suspensa pela service role; o resto, como o banco vazio. */
+function contaDaClinica(resposta: {
+  data: unknown;
+  error: { code: string; message: string } | null;
+}): void {
+  banco.rpc.mockImplementation(async (nome: string) =>
+    nome === "clinica_esta_suspensa" ? resposta : { data: null, error: null },
+  );
+}
+
 describe("testarEnvioAction: por qual número", () => {
   beforeEach(() => {
+    contaDaClinica({ data: false, error: null });
     banco.linhas("clinic").push({
       id: CLINICA_A,
       name: "Clínica A",
@@ -318,6 +332,38 @@ describe("testarEnvioAction: por qual número", () => {
       expect(resultado.error).toBe(
         "Este número não existe mais nesta clínica. Recarregue a página.",
       );
+    }
+    expect(fakeSentMessages()).toHaveLength(0);
+  });
+
+  it("conta da clínica suspensa: nada sai, nem pelo provedor direto", async () => {
+    contaDaClinica({ data: true, error: null });
+
+    const resultado = await testarEnvioAction({ cadence_step_id: PASSO });
+
+    expect(resultado).toEqual({
+      ok: false,
+      error: "A conta desta clínica está suspensa. Nada foi enviado.",
+    });
+    expect(fakeSentMessages()).toHaveLength(0);
+    expect(banco.rpc).toHaveBeenCalledWith("clinica_esta_suspensa", {
+      p_clinic_id: CLINICA_A,
+    });
+    expect(banco.linhas("audit_log")).toEqual([]);
+  });
+
+  it("conta que não deu para conferir: falha fechada, nada sai", async () => {
+    for (const resposta of [
+      { data: null, error: { code: "57014", message: "tempo esgotado" } },
+      { data: null, error: null },
+    ]) {
+      contaDaClinica(resposta);
+      const resultado = await testarEnvioAction({ cadence_step_id: PASSO });
+      expect(resultado).toEqual({
+        ok: false,
+        error:
+          "Não foi possível conferir a situação da conta da clínica. Nada foi enviado. Tente de novo.",
+      });
     }
     expect(fakeSentMessages()).toHaveLength(0);
   });

@@ -198,6 +198,91 @@ describe("executarPassagemDaIa", () => {
     expect(worker.executarJobComPosse).not.toHaveBeenCalled();
   });
 
+  describe("a lista das clínicas vem do banco (onda 1)", () => {
+    /** O ambiente da IA de pe (T1): producao, chave e segredo. */
+    function ambienteLigado() {
+      vi.stubEnv("VERCEL_ENV", "production");
+      vi.stubEnv("OPENAI_API_KEY", "chave-de-mentira");
+      vi.stubEnv("IA_SEGREDO_DO_IDENTIFICADOR", "s".repeat(40));
+    }
+
+    it("sem config injetada: lê a lista uma vez e a MESMA vai ao claim e ao executor", async () => {
+      ambienteLigado();
+      const OUTRA = "682edca6-cc7d-4bb7-8db6-4c68e2510549";
+      banco.rpc("ia_clinicas_da_fase_controlada", () => ({
+        data: [CLINICA.toUpperCase(), OUTRA],
+        error: null,
+      }));
+      banco.rpc("claim_jobs_da_ia", () => ({
+        data: [jobDe("j1")],
+        error: null,
+      }));
+      const resumo = await executarPassagemDaIa({
+        executorId: EXECUTOR,
+        prazoFinalMs: Date.now() + 55_000,
+        dependencias: { admin: banco.cliente() },
+      });
+      expect(resumo.concluidos).toBe(1);
+      expect(banco.chamadasDe("ia_clinicas_da_fase_controlada")).toHaveLength(
+        1,
+      );
+      expect(banco.chamadasDe("claim_jobs_da_ia")[0]).toMatchObject({
+        p_clinic_ids: [CLINICA, OUTRA],
+      });
+      const [, , , opcoes] = worker.executarJobComPosse.mock.calls[0]!;
+      expect(opcoes).toMatchObject({
+        dependenciasDaIa: {
+          config: { ligado: true, clinicas: [CLINICA, OUTRA] },
+        },
+      });
+    });
+
+    it("lista ilegível: bate o ponto e não reivindica nada (falha fechada)", async () => {
+      ambienteLigado();
+      banco.rpc("ia_clinicas_da_fase_controlada", () => ({
+        data: null,
+        error: { code: "57014" },
+      }));
+      const resumo = await executarPassagemDaIa({
+        executorId: EXECUTOR,
+        prazoFinalMs: Date.now() + 55_000,
+        dependencias: { admin: banco.cliente() },
+      });
+      expect(resumo.reivindicados).toBe(0);
+      expect(banco.chamadasDe("claim_jobs_da_ia")).toEqual([]);
+      expect(banco.chamadasDe("bater_ponto_do_worker")).toHaveLength(1);
+      expect(worker.executarJobComPosse).not.toHaveBeenCalled();
+    });
+
+    it("lista vazia (nenhuma clínica em teste): nada é reivindicado", async () => {
+      ambienteLigado();
+      banco.rpc("ia_clinicas_da_fase_controlada", () => ({
+        data: [],
+        error: null,
+      }));
+      await executarPassagemDaIa({
+        executorId: EXECUTOR,
+        prazoFinalMs: Date.now() + 55_000,
+        dependencias: { admin: banco.cliente() },
+      });
+      expect(banco.chamadasDe("claim_jobs_da_ia")).toEqual([]);
+    });
+
+    it("sem T1 nem lê a lista", async () => {
+      banco.rpc("ia_clinicas_da_fase_controlada", () => ({
+        data: [CLINICA],
+        error: null,
+      }));
+      await executarPassagemDaIa({
+        executorId: EXECUTOR,
+        prazoFinalMs: Date.now() + 55_000,
+        dependencias: { admin: banco.cliente() },
+      });
+      expect(banco.chamadasDe("ia_clinicas_da_fase_controlada")).toEqual([]);
+      expect(banco.chamadasDe("claim_jobs_da_ia")).toEqual([]);
+    });
+  });
+
   it("incluirClinicasDeTeste lança em produção; fora dela vai ao claim", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     await expect(

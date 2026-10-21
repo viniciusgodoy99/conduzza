@@ -177,8 +177,8 @@ export function InboxClient({
   /** /atendimento?filtro=: chip de situacao marcado na chegada. */
   filtroInicial: FiltroDaUrl | null;
   /**
-   * A clinica e uma das duas da fase controlada do agente de IA (decidido
-   * no servidor). Fora delas, o Devolver nem pergunta ao servidor.
+   * A clinica tem o agente de IA habilitado (a lista do banco, decidida no
+   * servidor). Fora dela, o Devolver nem pergunta ao servidor.
    */
   iaNaFase?: boolean;
   /** Super admin: le o rascunho bloqueado pela conformidade (D25). */

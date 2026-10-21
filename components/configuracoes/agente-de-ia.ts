@@ -25,8 +25,10 @@ import type {
 // testes usam as mesmas regras, e o que a tela desabilita e o mesmo que a
 // acao recusa no servidor.
 //
-// - A aba so existe na teste123 e na Conduzza Teste (abaDaIaVisivel, em
-//   lib/queries/ia-liberacao.ts, decidida no servidor).
+// - A aba so existe nas clinicas com o agente habilitado (a lista do banco,
+//   ia_clinicas_da_fase_controlada, que o super admin muda pelo Painel
+//   geral; abaDaIaVisivel, em lib/queries/ia-liberacao.ts, decidida no
+//   servidor).
 // - Quem altera: o administrador da clinica e o super admin. Gestor ve tudo
 //   desabilitado, com a dica. O interruptor geral e so do super admin.
 // - Nesta fase (E3, 13/10/2026), LIGAR o atendimento pelo WhatsApp e so da
@@ -116,7 +118,7 @@ export type ContextoDaIa = {
    * a leitura falhou, e a aba nao afirma nada sobre a conexao.
    */
   numeros: readonly NumeroDoWhatsapp[] | null;
-  /** T1 e T2: producao com a chave da OpenAI e a clinica na lista fechada. */
+  /** T1 e T2: producao com a chave da OpenAI e a clinica na lista do banco. */
   ambienteLigado: boolean;
   /** Agora (epoch ms), para fora_do_horario_agora. */
   agoraMs: number;

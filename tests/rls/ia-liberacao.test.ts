@@ -564,87 +564,97 @@ describe("tabelas da liberacao: administrador e gestor da propria clinica leem, 
     expect(error?.code).toBe(PERMISSAO_NEGADA);
   });
 
-  it("nenhum papel insere, muda ou apaga (42501); nada muda", async () => {
-    const antes = await liberacaoDaA();
-    for (const apelido of TODAS_AS_SESSOES) {
-      const cliente = como(apelido);
-      const tentativas = [
-        // interruptor: filtro que nunca casa (id e sempre true)
-        cliente
-          .from("ia_interruptor")
-          .update({ motivo: "forjado" })
-          .eq("id", false),
-        cliente.from("ia_interruptor").delete().eq("id", false),
-        cliente.from("ia_interruptor").insert({ id: false, ligado: false }),
-        cliente
-          .from("ia_liberacao")
-          .insert({ clinic_id: clinicaB, liberada: true, modo: "contatos" }),
-        cliente
-          .from("ia_liberacao")
-          .update({ liberada: false })
-          .eq("clinic_id", clinicaA),
-        cliente.from("ia_liberacao").delete().eq("clinic_id", clinicaA),
-        cliente.from("ia_numero_liberado").insert({
-          whatsapp_account_id: numeroB,
-          clinic_id: clinicaB,
-          ativo: true,
-        }),
-        cliente
-          .from("ia_numero_liberado")
-          .update({ ativo: false })
-          .eq("clinic_id", clinicaA),
-        cliente.from("ia_numero_liberado").delete().eq("clinic_id", clinicaA),
-        cliente.from("ia_contato_liberado").insert({
-          clinic_id: clinicaA,
-          phone_key: TELEFONE_DO_PACIENTE,
-          ativo: true,
-        }),
-        cliente
-          .from("ia_contato_liberado")
-          .update({ ativo: false })
-          .eq("clinic_id", clinicaA),
-        cliente.from("ia_contato_liberado").delete().eq("clinic_id", clinicaA),
-        cliente.from("ia_uso").insert({
-          clinic_id: clinicaA,
-          origem: "whatsapp",
-          papel: "agente",
-          modelo: "claude-opus-5",
-          custo_microdolar: 0,
-        }),
-        cliente
-          .from("ia_uso")
-          .update({ custo_microdolar: 0 })
-          .eq("clinic_id", clinicaA),
-        cliente.from("ia_uso").delete().eq("clinic_id", clinicaA),
-        cliente.from("llm_preco").insert({
-          modelo: "modelo-forjado",
-          entrada_microdolar_por_milhao: 0,
-          saida_microdolar_por_milhao: 0,
-          cache_leitura_microdolar_por_milhao: 0,
-          cache_escrita_microdolar_por_milhao: 0,
-          vigente_desde: "2026-10-06",
-          fonte: "forjado",
-        }),
-        cliente
-          .from("llm_preco")
-          .update({ entrada_microdolar_por_milhao: 0 })
-          .eq("modelo", "claude-haiku-4-5"),
-        cliente.from("llm_preco").delete().eq("modelo", "claude-haiku-4-5"),
-      ];
-      for (const tentativa of tentativas) {
-        const { error } = await tentativa;
-        expect(error?.code).toBe(PERMISSAO_NEGADA);
+  // Cerca de 160 pedidos em serie (9 sessoes, 18 tentativas cada) pela rede
+  // ate o banco: passa dos 15 s padrao numa noite lenta (20/10/2026). O
+  // prazo maior nao muda o que o teste prova.
+  it(
+    "nenhum papel insere, muda ou apaga (42501); nada muda",
+    { timeout: 60_000 },
+    async () => {
+      const antes = await liberacaoDaA();
+      for (const apelido of TODAS_AS_SESSOES) {
+        const cliente = como(apelido);
+        const tentativas = [
+          // interruptor: filtro que nunca casa (id e sempre true)
+          cliente
+            .from("ia_interruptor")
+            .update({ motivo: "forjado" })
+            .eq("id", false),
+          cliente.from("ia_interruptor").delete().eq("id", false),
+          cliente.from("ia_interruptor").insert({ id: false, ligado: false }),
+          cliente
+            .from("ia_liberacao")
+            .insert({ clinic_id: clinicaB, liberada: true, modo: "contatos" }),
+          cliente
+            .from("ia_liberacao")
+            .update({ liberada: false })
+            .eq("clinic_id", clinicaA),
+          cliente.from("ia_liberacao").delete().eq("clinic_id", clinicaA),
+          cliente.from("ia_numero_liberado").insert({
+            whatsapp_account_id: numeroB,
+            clinic_id: clinicaB,
+            ativo: true,
+          }),
+          cliente
+            .from("ia_numero_liberado")
+            .update({ ativo: false })
+            .eq("clinic_id", clinicaA),
+          cliente.from("ia_numero_liberado").delete().eq("clinic_id", clinicaA),
+          cliente.from("ia_contato_liberado").insert({
+            clinic_id: clinicaA,
+            phone_key: TELEFONE_DO_PACIENTE,
+            ativo: true,
+          }),
+          cliente
+            .from("ia_contato_liberado")
+            .update({ ativo: false })
+            .eq("clinic_id", clinicaA),
+          cliente
+            .from("ia_contato_liberado")
+            .delete()
+            .eq("clinic_id", clinicaA),
+          cliente.from("ia_uso").insert({
+            clinic_id: clinicaA,
+            origem: "whatsapp",
+            papel: "agente",
+            modelo: "claude-opus-5",
+            custo_microdolar: 0,
+          }),
+          cliente
+            .from("ia_uso")
+            .update({ custo_microdolar: 0 })
+            .eq("clinic_id", clinicaA),
+          cliente.from("ia_uso").delete().eq("clinic_id", clinicaA),
+          cliente.from("llm_preco").insert({
+            modelo: "modelo-forjado",
+            entrada_microdolar_por_milhao: 0,
+            saida_microdolar_por_milhao: 0,
+            cache_leitura_microdolar_por_milhao: 0,
+            cache_escrita_microdolar_por_milhao: 0,
+            vigente_desde: "2026-10-06",
+            fonte: "forjado",
+          }),
+          cliente
+            .from("llm_preco")
+            .update({ entrada_microdolar_por_milhao: 0 })
+            .eq("modelo", "claude-haiku-4-5"),
+          cliente.from("llm_preco").delete().eq("modelo", "claude-haiku-4-5"),
+        ];
+        for (const tentativa of tentativas) {
+          const { error } = await tentativa;
+          expect(error?.code).toBe(PERMISSAO_NEGADA);
+        }
       }
-    }
-    expect(await liberacaoDaA()).toEqual(antes);
-    const { data: preco } = await admin
-      .from("llm_preco")
-      .select("entrada_microdolar_por_milhao")
-      .eq("modelo", "claude-haiku-4-5")
-      .single()
-      .throwOnError();
-    expect(preco).toEqual({ entrada_microdolar_por_milhao: 1_000_000 });
-  });
+      expect(await liberacaoDaA()).toEqual(antes);
+      const { data: preco } = await admin
+        .from("llm_preco")
+        .select("entrada_microdolar_por_milhao")
+        .eq("modelo", "claude-haiku-4-5")
+        .single()
+        .throwOnError();
+      expect(preco).toEqual({ entrada_microdolar_por_milhao: 1_000_000 });
+    },
+  );
 
   it("todo papel le os precos dos modelos", async () => {
     for (const apelido of TODAS_AS_SESSOES) {
