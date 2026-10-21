@@ -11,7 +11,7 @@
 | Banco | **Supabase Postgres** | RLS resolve isolamento multi-tenant no nível do banco, que é o que a LGPD art. 11 exige. Postgres dá exclusion constraint para conflito de agenda, que é a trava mais importante do produto |
 | Auth | **Supabase Auth** | Integra com RLS via JWT. Convite por e-mail pronto |
 | Tempo real | **Supabase Realtime** | Inbox e Agenda precisam atualizar sozinhos. Sem isso, duas recepcionistas se atropelam |
-| Filas | **`job_queue` + motor por `pg_cron`** | Régua de mensagem é trabalho agendado, não requisição HTTP. Desde 02/09/2026 o `pg_cron` com `pg_net` chama `/api/webhooks/motor` na Vercel a cada 20 s (entrada `motor-fila`) e a manutenção a cada minuto (`motor-manutencao`); a rota reivindica jobs com `FOR UPDATE SKIP LOCKED` (`claim_jobs_por_clinica`, com prioridade: confirmação antes de follow-up). Não existe worker em servidor: `npm run worker` é ferramenta local e ponte de emergência que roda o mesmo motor. `worker_heartbeat` alimenta a faixa "as mensagens automáticas estão paradas", e `/api/webhooks/saude` responde 503 para um monitor externo quando o motor para ou atrasa. Runbook: `supabase/operacao/motor-por-cron.md` |
+| Filas | **`job_queue` + motor por `pg_cron`** | Régua de mensagem é trabalho agendado, não requisição HTTP. Desde 02/09/2026 o `pg_cron` com `pg_net` chama `/api/webhooks/motor` na Vercel a cada 20 s (entrada `motor-fila`) e a manutenção a cada minuto (`motor-manutencao`); a rota reivindica jobs com `FOR UPDATE SKIP LOCKED` (`claim_jobs_por_clinica`, com prioridade: confirmação antes de follow-up). Não existe worker em servidor: `npm run worker` é ferramenta local e ponte de emergência que roda o mesmo motor. `worker_heartbeat` alimenta a faixa "as mensagens automáticas estão paradas", e `/api/webhooks/saude` responde 503 para um monitor externo quando o motor para ou atrasa. Desde a onda 3 (migration `20261023100000`, **não aplicada**), uma entrada a mais, `funil-da-passagem`, a cada minuto, só dentro do banco (seção 17). Runbook: `supabase/operacao/motor-por-cron.md` |
 | Webhook WhatsApp | **Edge Function (Deno)** | Precisa responder em menos de 5 segundos para a Meta não reenviar. Function isolada, sem cold start de Next |
 
 ### Alerta de residência de dado
@@ -782,3 +782,55 @@ Construída em três frentes (banco, código do sistema e telas) sobre um contra
 - **`VERSAO_DO_PROMPT`** passou de `agente-b19b3def88b1` (E4) a `agente-4ac74ce455f8` (o texto fixo, as ferramentas novas, as frases fixas, o bloco de profissionais e a linha do contato). **A versão do filtro do turno** (`versaoDoFiltroDoTurno`) é `regras-e25c1dae04b0 portao-93092fee9e70 classificador-b66b80be0266 verificador-e01acf308c81` (as regras de saída, o portão, o classificador e o verificador mudaram). Cada uma vai em `ai_decision_log` e separa as decisões de antes e de depois.
 - **Rodadas (21/10/2026, fase final, depois da correção e destes documentos):** `npx tsc --noEmit -p .` sem erro; `npm run lint` limpo; `npx vitest run`, a unidade inteira, 318 arquivos e 8.855 testes verdes; `npm run build` sem erro nem aviso novo, com a bateria do CFM no prebuild (15 arquivos, 2.110 testes). Nenhum teste chama a OpenAI (o pacote `openai` é stub nas configs do vitest e o fetch dos testes recusa os hosts de LLM). As provas de unidade novas e ajustadas estão no `docs/05`, entrada "Onda 2".
 - **Não provado** (fora desta leva, por regra): o modelo de verdade (a simulação paga curta e a rodada D34: o verificador aceitar o aviso e a resposta ao "robô?", a API aceitar as ferramentas `strict` sem parâmetros, o fora do assunto bem classificado); o banco de verdade (RLS e integração escritas e não rodadas; nenhum ensaio na produção); o e2e do Playwright; o navegador (claro e escuro, 40px, foco).
+
+---
+
+## 17. Funil de leads: as etapas obrigatórias e a passagem da IA (onda 3, 21/10/2026; construída, revisada e corrigida; migrations NÃO aplicadas e código NÃO publicado)
+
+A seção 16 é a da onda 2 (agente de IA), construída ao mesmo tempo numa outra cópia do repositório; as duas se juntam antes de publicar.
+
+Pedido do dono em 20/10/2026, na segunda reunião com o Victor (itens 10, 11 e 12 do plano em cinco ondas): a passagem da IA para a equipe leva o lead para "Aguardando resposta"; "Aguardando resposta" vem antes de "Em contato", também nas clínicas que já existem; Novo, Aguardando resposta e Em contato passam a ser obrigatórias, como Agendou, Compareceu e Perdido. **Decisões do dono de 21/10/2026** (todas as recomendações do contrato): **D0**, "Aguardando resposta" passa a ser o lead esperando a equipe, e o lead de clínica sem IA continua nascendo em Novo; **D1 = A**, toda saída da IA para a fila com o paciente esperando move o lead; **D2**, só lead; **D3 = A**, a etapa não aceita régua de follow-up; **D4**, as automações de fluxo disparam na entrada pela IA; **D5 = A**, a Salud Care ganha Aguardando resposta de volta e "Contato inicial" vira etapa de sistema com esse nome; **D6 = A**, a ordem entre Novo, Aguardando resposta, Em contato, Agendou e Compareceu trava; **D7 = B**, Assumir, Iniciar conversa, Transferir e Reabrir levam para Em contato; **D8**, Devolver para a IA não mexe na etapa. Levantamento e contrato entre as frentes em `~/.claude/plans/onda3-funil/` (`levantamento.md` e `contrato.md`). Banco no `docs/04`, seção 24; telas no brief (Telas 4, 7 e 12) e no `docs/06`, 5.12; operação em `supabase/operacao/motor-por-cron.md`, "Funil da passagem da IA"; estado e pendências no `docs/05`, entrada "Onda 3".
+
+### 17.1 Um ponto só: a transição da conversa
+
+Antes da onda 3, nenhuma passagem da IA mexia na etapa. Toda saída da IA para a fila desemboca na mesma transição de `conversation.status`, de `ia_atendendo` para `aguardando_humano`: `ia_tirar_conversa` (chamada por `passar_conversa_da_ia_para_equipe`, quando a IA decide passar, o filtro barra, um teto ou uma trava para a IA ou o turno falha; por `tirar_conversa_da_ia_pelo_servidor`; e pela varredura de 3 minutos de `motor_manutencao`), `ia_desligar`, a ingestão com a IA parada e a devolução da consulta da IA recusada. Por isso a regra mora num gatilho só (M2, `20261023110000`): `AFTER UPDATE OF status` em `conversation`, com `WHEN (old.status = 'ia_atendendo' and new.status = 'aguardando_humano' and new.awaiting_reply)`. Nenhum corpo de função quente muda (nem `ingest_inbound_message`, nem `ia_tirar_conversa`), e a passagem nova que a onda 2 criar com o mesmo status entra sozinha.
+
+- **O celular fica de fora sozinho:** a resposta da pessoa pelo celular derruba `awaiting_reply` antes de `ia_tirar_conversa(..., 'celular')`. Exceção conhecida: se o paciente escreveu nos 8 segundos em volta da resposta pelo celular, a conversa continua esperando a equipe (como em "Aguardando você"), e o lead move.
+- **A varredura com `liberacao_perdida`** só move se o paciente estava esperando.
+- **Com a onda 2:** a passagem `fora_do_horario` também move (regra genérica da D1 = A), e a retomada da IA no horário não devolve o lead (D8). A consulta da IA recusada só move com a onda 2: a conversão só na aprovação deixa o contato como lead até lá, e hoje a consulta pendente já o converte em paciente.
+
+### 17.2 Mover sem esperar ninguém
+
+A ingestão trava `contact` e depois `conversation`; as passagens travam `conversation` primeiro. Um `update contact` comum dentro da passagem criaria a ordem inversa e um deadlock possível com uma mensagem do mesmo paciente chegando no mesmo instante. Então:
+
+- `mover_lead_para_aguardando` pega o contato com `FOR NO KEY UPDATE SKIP LOCKED` e **nunca espera**. Contato ocupado vira uma linha em `etapa_pendente_da_passagem` (só ids) e a resposta `adiado`. A trava que a própria transação já tem (a ingestão com a IA parada) não conta como ocupada: ali o lead move na hora.
+- **A passagem nunca falha por causa do funil:** a função do gatilho chama a de cima dentro de `BEGIN ... EXCEPTION` e, no erro, só deixa um `WARNING` com a clínica e o SQLSTATE.
+- **As pendências** são tentadas de novo por `processar_pendencias_do_funil`, a cada minuto, pela **entrada própria** `funil-da-passagem` do `pg_cron` (só chamada de função, dentro do banco, como a `poda-do-cron`), e não por `motor_manutencao`, que a onda 2 troca em paralelo. Ela descarta a pendência com mais de 1 dia, com 60 tentativas ou cuja conversa já não está `aguardando_humano`, e tenta até 100 com `FOR UPDATE SKIP LOCKED`; em cada uma, trava a conversa **antes** do contato (`FOR SHARE SKIP LOCKED`, exigindo `aguardando_humano`), na ordem das passagens: quem assume nesse instante espera milissegundos e lê o lead já em Aguardando resposta, que o Assumir leva para Em contato.
+- **Observabilidade:** a manutenção do funil bate ponto como `motor-funil` em `worker_heartbeat`, com o erro (`funil_passagem:<SQLSTATE>`) em `ultimo_erro`. `saude_do_motor()`, a faixa da tela e o monitor externo **não** leem essa batida (ponto aberto para o dono, `docs/05`, entrada "Onda 3"); o acompanhamento é pela batida e por `cron.job_run_details`.
+
+### 17.3 Quem leva para Em contato (D7 e D8)
+
+- **A regra é pura** (`etapaAposAssumir`, `lib/domain/jornada.ts`): só lead; origem com papel `entrada` ou `aguardando`; destino a etapa de papel `em_contato` (sem ela, a de chave `em_contato` ainda sem papel, que é o banco de antes da M1); só para frente pela posição (o código não aposta na ordem fixa).
+- **O encanamento** (`moverLeadAoAssumir`, `app/(app)/atendimento/actions.ts`) serve Assumir, Iniciar conversa (que passa pelo Assumir), Transferir e Reabrir, depois do sucesso da ação: cliente admin (o papel profissional assume, mas a policy de `contact` não o deixa escrever), CAS por `funnel_stage`, melhor esforço (a falha nunca quebra a ação, e o log leva só ids). Quando o CAS volta vazio (outra escrita ganhou entre a leitura e o update, por exemplo a manutenção do funil movendo o lead para Aguardando resposta no mesmo instante), relê o contato **uma vez** e aplica a regra de novo.
+- **Trilha** com o usuário da ação: `assumir_moveu_etapa` (Assumir e Iniciar conversa), `transferir_moveu_etapa` e `reabrir_moveu_etapa`. Quem contar os movimentos feitos por gente soma as três. O movimento da IA é `ia_moveu_etapa`, sem usuário.
+- **Devolver para a IA** não mexe na etapa: o lead em Aguardando resposta fica lá (nunca para trás).
+
+### 17.4 Ordem fixa (D6) e régua (D3), nas três camadas
+
+| Camada | Ordem fixa | Régua em Aguardando resposta |
+|---|---|---|
+| Tela | `trocaDeOrdemPermitida` desabilita a seta, com a dica escrita com os nomes da clínica (`dicaDaOrdemFixa`) | `etapaRecebeFollowup` tira a etapa da lista da aba Follow-up |
+| Server Action | `reordenarEtapaDaJornadaAction` lê a jornada e confere a mesma regra **antes** da RPC (leitura que falha não deixa reordenar) e traduz o hint `ordem_de_sistema` | `criarReguaDeFollowupAction` recusa com `recusaDeFollowup` e traduz o hint `etapa_sem_followup` |
+| Banco (M1) | a RPC `reordenar_etapa_da_jornada` recusa; o gatilho de restrição `conferir_ordem_da_jornada` torna a cadeia invariante, porque a policy "gestao gerencia a jornada" é `FOR ALL` e o gestor muda `posicao` direto pelo PostgREST | o gatilho `recusar_followup_em_aguardando` em `cadence`, para a tela, o PostgREST e a service role |
+
+Antes da M1, a tela e a action já tratam Em contato pela chave (a cadeia fica Novo, Em contato, Agendou e Compareceu; Aguardando resposta, ainda sem papel, fica livre, porque a M1 a recoloca de qualquer lugar) e já recusam régua na chave `aguardando_resposta`. A M1 preserva a ordem de hoje e recusa a migration inteira se encontrar a cadeia invertida ou uma régua em Aguardando resposta, então essas duas portas fecham já com o código.
+
+### 17.5 O código vai ao ar antes do banco
+
+- **Tolerante aos dois bancos:** `PAPEIS_DE_ETAPA` (os seis papéis, fonte única) faz o leitor do Funil de leads do Início aceitar `aguardando` e `em_contato` (ele recusa papel desconhecido e cairia no estado de erro se o papel chegasse antes do código); as regras acham Em contato pelo papel e, sem ele, pela chave; a tela mostra cadeado e esconde Excluir pelo papel, então antes da M1 as duas continuam livres.
+- **Valem já com a publicação:** Transferir e Reabrir movem de Novo para Em contato; a seta que trocaria Em contato com Novo ou com Agendou (ou Agendou com Compareceu) fica desabilitada; Aguardando resposta sai da lista da régua.
+- **Nada muda** em `lib/jobs`, `lib/agente`, no filtro de conformidade nem no envio: a passagem continua igual e o banco move o lead.
+
+### 17.6 LGPD
+
+A pendência e a trilha guardam só ids; os `WARNING`s do gatilho e os códigos de erro, só a clínica e o SQLSTATE; o log de `moverLeadAoAssumir`, só os ids da clínica e do contato. Nada de nome, telefone ou conteúdo de mensagem.

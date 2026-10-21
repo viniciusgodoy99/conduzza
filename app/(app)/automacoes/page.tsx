@@ -12,6 +12,7 @@ import {
   DICA_SEM_PERMISSAO,
   podeAcessarAutomacoesDeFluxo,
 } from "@/lib/domain/automacoes-de-fluxo";
+import { etapaRecebeFollowup } from "@/lib/domain/jornada";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { NAV_GROUPS } from "@/lib/navigation";
 import {
@@ -132,8 +133,12 @@ export default async function AutomacoesPage({
         reguasIniciais={reguas}
         vinculadasIniciais={vinculadas}
         followupsIniciais={followups}
+        // Sem Perdido e sem a etapa que espera a resposta da equipe
+        // (decisao D3, 21/10/2026), tambem com o banco de antes da migration
+        // (pela chave): a regra e etapaRecebeFollowup, a mesma que a action
+        // usa para recusar.
         etapasParaFollowup={jornada
-          .filter((etapa) => etapa.papel !== "perdido")
+          .filter((etapa) => etapaRecebeFollowup(etapa))
           .map((etapa) => ({ chave: etapa.chave, nome: etapa.nome }))}
         volumes={volumes}
         numeros={numeros}

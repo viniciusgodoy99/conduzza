@@ -15,8 +15,12 @@ import {
   ICONES_DE_ETAPA,
   LIMITE_DA_DESCRICAO,
   TERMOS_DE_QUEM,
+  dicaDaOrdemFixa,
+  ehRecusaDaOrdemFixa,
   normalizarDescricaoDaEtapa,
   traduzirRecusaDaJornada,
+  trocaDeOrdemPermitida,
+  type EtapaDaJornada,
 } from "@/lib/domain/jornada";
 import { normalizarContaDeAnuncios } from "@/lib/domain/meta-anuncios";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
@@ -929,6 +933,37 @@ export async function reordenarEtapaDaJornadaAction(
   // (achado da revisao adversarial de 09/09/2026). SECURITY INVOKER: a RLS
   // continua decidindo quem reordena.
   const supabase = await createClient();
+
+  // Decisao D6 do dono (21/10/2026): duas etapas do caminho do lead (Novo,
+  // Aguardando resposta, Em contato, Agendou e Compareceu) nao trocam de
+  // lugar. A tela ja desabilita a seta, mas tela nao protege nada: a regra
+  // vale aqui tambem, ANTES da RPC, com a mesma funcao pura da tela. Com o
+  // banco de antes da migration 20261023100000 a RPC ainda nao recusa, e a
+  // regra pura ja trava Em contato pela chave (revisao de 21/10/2026: a
+  // cadeia invertida nesse meio tempo ficaria congelada pela migration).
+  // Leitura que falha nao deixa passar.
+  const { data: jornada, error: erroDaJornada } = await supabase
+    .from("funnel_stage_def")
+    .select("chave, nome, papel, posicao")
+    .eq("clinic_id", guard.clinicId)
+    .order("posicao", { ascending: true })
+    .order("chave", { ascending: true });
+  if (erroDaJornada || !jornada) {
+    return { ok: false, error: "Não foi possível reordenar. Tente de novo." };
+  }
+  const etapasDaJornada = jornada as Pick<
+    EtapaDaJornada,
+    "chave" | "nome" | "papel" | "posicao"
+  >[];
+  const troca = trocaDeOrdemPermitida(
+    etapasDaJornada,
+    parsedChave.data,
+    parsedDirecao.data,
+  );
+  if (!troca.permitida && troca.dica) {
+    return { ok: false, error: troca.dica };
+  }
+
   const { data: etapaMovida, error } = await supabase.rpc(
     "reordenar_etapa_da_jornada",
     {
@@ -937,6 +972,12 @@ export async function reordenarEtapaDaJornadaAction(
       p_direcao: parsedDirecao.data,
     },
   );
+  if (error && ehRecusaDaOrdemFixa(error)) {
+    // A RPC (e o gatilho conferir_ordem_da_jornada) recusa o mesmo com o
+    // hint ordem_de_sistema: a jornada mudou entre a leitura e a troca. A
+    // resposta diz a ordem com os nomes que a clinica deu.
+    return { ok: false, error: dicaDaOrdemFixa(etapasDaJornada) };
+  }
   if (error || !etapaMovida) {
     return {
       ok: false,

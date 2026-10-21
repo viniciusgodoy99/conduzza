@@ -194,9 +194,63 @@ describe("lerFunilDaJornada", () => {
     expect(() =>
       lerFunilDaJornada([{ ...etapas[0], papel: "vendeu" }]),
     ).toThrow();
+    expect(() => lerFunilDaJornada([{ ...etapas[0], papel: 3 }])).toThrow();
     expect(() =>
       lerFunilDaJornada([{ ...etapas[0], total: undefined }]),
     ).toThrow();
+  });
+
+  // Onda 3 (migration 20261023100000): Aguardando resposta e Em contato
+  // ganham os papeis 'aguardando' e 'em_contato', e Aguardando vem antes. O
+  // leitor sai antes da migration e tem de aceitar os dois, ou o Funil de
+  // leads do Inicio cai no erro no minuto em que ela for aplicada.
+  it("aceita os papéis da onda 3 e mantém a ordem nova do banco", () => {
+    const ordemNova = [
+      { chave: "novo", nome: "Novo", papel: "entrada", posicao: 10, total: 5 },
+      {
+        chave: "aguardando_resposta",
+        nome: "Aguardando resposta",
+        papel: "aguardando",
+        posicao: 20,
+        total: 2,
+      },
+      {
+        chave: "em_contato",
+        nome: "Contato inicial",
+        papel: "em_contato",
+        posicao: 30,
+        total: 41,
+      },
+      {
+        chave: "follow_1",
+        nome: "Follow 1",
+        papel: null,
+        posicao: 40,
+        total: 0,
+      },
+      {
+        chave: "agendou",
+        nome: "Agendou",
+        papel: "agendou",
+        posicao: 50,
+        total: 1,
+      },
+      {
+        chave: "compareceu",
+        nome: "Compareceu",
+        papel: "compareceu",
+        posicao: 60,
+        total: 0,
+      },
+      {
+        chave: "perdido",
+        nome: "Perdido",
+        papel: "perdido",
+        posicao: 70,
+        total: 26,
+      },
+    ];
+    expect(lerFunilDaJornada(ordemNova)).toEqual(ordemNova);
   });
 });
 

@@ -128,6 +128,15 @@ describe("aba Automações de fluxo", () => {
     expect(html).toContain("Nenhuma automação de fluxo ainda");
     expect(html).toContain("Criar a primeira");
     expect(html).toContain("Nova automação");
+    // Onda 3 (21/10/2026): em Aguardando resposta e o lead que espera a
+    // equipe, e a automacao dispara tambem na entrada pela IA (decisao D4).
+    // O exemplo nao sugere mais perder quem espera a clinica.
+    expect(html).toContain(
+      "Por exemplo: quem entrou em Aguardando resposta ganha uma atividade de responder, ou quem ficou 3 dias sem responder em Em contato vai para Perdido.",
+    );
+    expect(html).not.toContain(
+      "sem responder em Aguardando resposta vai para Perdido",
+    );
   });
 
   it("cada regra: nome, situação em texto, Quando e Faz em português", () => {

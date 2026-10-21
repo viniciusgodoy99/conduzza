@@ -109,6 +109,64 @@ test("arrastar para Perdido exige motivo, e cancelar devolve o cartão", async (
   await expect(colunaNovo).not.toContainText(NOME_COM_ORIGEM);
 });
 
+// Onda 3 (21/10/2026, migration 20261023100000): Aguardando resposta (o lead
+// espera a resposta da equipe) vem logo depois de Novo e antes de Em
+// contato, e as seis etapas de sistema ficam na ordem Novo, Aguardando
+// resposta, Em contato, Agendou, Compareceu e Perdido. A ordem vem do banco
+// (a Clinica E2E nasce da semente), entao a prova so vale depois da
+// migration: antes dela a clinica nasce na semente antiga e o teste se pula,
+// dizendo por que.
+test("o Kanban mostra Aguardando resposta logo depois de Novo e antes de Em contato", async ({
+  page,
+}) => {
+  test.skip(
+    test.info().project.name === "tablet-768",
+    "abaixo de 1024px a tela forca a lista e o Kanban nao existe",
+  );
+  const d = dados();
+  const { data: aguardando } = await adminClient()
+    .from("funnel_stage_def")
+    .select("papel")
+    .eq("clinic_id", d.clinicId)
+    .eq("chave", "aguardando_resposta")
+    .maybeSingle()
+    .throwOnError();
+  test.skip(
+    (aguardando as { papel: string | null } | null)?.papel !== "aguardando",
+    "a ordem nova vem com a migration 20261023100000 (onda 3); antes dela a Clínica E2E nasce na semente antiga",
+  );
+
+  await page.setViewportSize({ width: 2000, height: 900 });
+  await login(page, d.emails.gestor);
+  await page.goto("/leads");
+
+  const quadro = page.getByRole("region", { name: "Etapas da jornada" });
+  await expect(quadro).toBeVisible();
+  // Todas as colunas estao no quadro (ele rola de lado): o rotulo de cada
+  // uma e "Etapa, N leads", na ordem da jornada.
+  const etapas = await quadro
+    .locator(":scope > section")
+    .evaluateAll((colunas) =>
+      colunas.map((coluna) =>
+        (coluna.getAttribute("aria-label") ?? "").replace(/, \d+ leads$/, ""),
+      ),
+    );
+  const deSistema = [
+    "Novo",
+    "Aguardando resposta",
+    "Em contato",
+    "Agendou",
+    "Compareceu",
+    "Perdido",
+  ];
+  expect(etapas.filter((etapa) => deSistema.includes(etapa))).toEqual(
+    deSistema,
+  );
+  expect(etapas.indexOf("Aguardando resposta")).toBe(
+    etapas.indexOf("Novo") + 1,
+  );
+});
+
 test("cartão sem nome e sem origem mostra o telefone, nunca rótulo órfão", async ({
   page,
 }) => {

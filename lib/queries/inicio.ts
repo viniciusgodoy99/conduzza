@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { diaCivil, limitesDoDia, somarDias } from "@/lib/domain/horarios";
-import type { PapelDeEtapa } from "@/lib/domain/jornada";
+import { PAPEIS_DE_ETAPA, type PapelDeEtapa } from "@/lib/domain/jornada";
 
 // Agregados do Inicio (Tela 5, Fase 3), calculados no banco pelas RPCs da
 // migration 20261002110000_metricas_da_fase_3:
@@ -197,12 +197,12 @@ export function lerResumoDoDia(
   };
 }
 
-const PAPEIS: readonly PapelDeEtapa[] = [
-  "entrada",
-  "agendou",
-  "compareceu",
-  "perdido",
-];
+// Papel fora do catalogo LANCA (resposta fora do formato, nunca um papel
+// inventado na tela). O catalogo e o de lib/domain/jornada.ts, a fonte unica:
+// a onda 3 (migration 20261023100000) trouxe 'aguardando' e 'em_contato', e
+// este leitor tem de aceita-los ANTES de a migration ir ao ar, ou o Funil de
+// leads do Inicio cai no estado de erro.
+const PAPEIS: readonly string[] = PAPEIS_DE_ETAPA;
 
 /** Traduz o JSON de funil_da_jornada, mantendo a ordem do banco. */
 export function lerFunilDaJornada(data: unknown): EtapaDoFunil[] {
@@ -217,7 +217,7 @@ export function lerFunilDaJornada(data: unknown): EtapaDoFunil[] {
     if (
       papel !== null &&
       papel !== undefined &&
-      !PAPEIS.includes(papel as PapelDeEtapa)
+      (typeof papel !== "string" || !PAPEIS.includes(papel))
     ) {
       throw formatoInesperado(rpc);
     }

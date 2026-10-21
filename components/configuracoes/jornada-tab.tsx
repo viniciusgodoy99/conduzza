@@ -57,10 +57,15 @@ import {
   TERMOS_DE_QUEM,
   ajudaDosTermos,
   definicaoDaEtapa,
+  etapaDeSistema,
   normalizarDescricaoDaEtapa,
   resumoDosTermos,
+  rodapeDaJornada,
+  trocaDeOrdemPermitida,
   type EtapaDaJornada,
+  type PapelDeEtapa,
   type TermosDeQuem,
+  type TrocaDeOrdem,
 } from "@/lib/domain/jornada";
 import {
   EVENTOS_META_PADRAO,
@@ -74,9 +79,22 @@ import { centavosParaReais, reaisParaCentavos } from "@/lib/utils/moeda";
 // aparencia, termos-chave e a conversao da Meta NO MESMO formulario, porque
 // era assim que o dono usava no Tintim e foi assim que ele pediu.
 //
-// Papel de sistema (entrada, agendou, compareceu, perdido) aparece com
-// cadeado e explicacao: renomeia e reordena, nunca exclui. Quem garante isso
-// e gatilho no banco; a tela so evita oferecer o que vai ser recusado.
+// Papel de sistema (entrada, aguardando, em_contato, agendou, compareceu,
+// perdido) aparece com cadeado e explicacao: renomeia e reordena, nunca
+// exclui. Quem garante isso e gatilho no banco; a tela so evita oferecer o
+// que vai ser recusado. Aguardando resposta e Em contato viraram etapas de
+// sistema na onda 3 (21/10/2026, migration 20261023100000); antes dela as
+// duas chegam sem papel e a tela as trata como livres (sem cadeado, com
+// Excluir), menos na ordem: Em contato ja nao passa de Novo nem de Agendou
+// (revisao de 21/10/2026; a migration preserva a ordem dela).
+//
+// Ordem fixa (decisao D6 do dono, 21/10/2026): Novo, Aguardando resposta, Em
+// contato, Agendou e Compareceu nao trocam de lugar entre si. A seta que
+// faria essa troca fica visivel e desabilitada, com a dica dizendo a ordem
+// com os nomes da clinica (trocaDeOrdemPermitida, lib/domain/jornada.ts); a
+// action confere o mesmo antes da RPC, e o banco recusa (a RPC e o gatilho
+// conferir_ordem_da_jornada). Perdido e as etapas livres vao para qualquer
+// lugar.
 //
 // Desenho do design system (docs/06 secao 5.12): cada etapa e uma linha
 // afundada; a aberta vira cartao com o formulario. As marcas da conversao
@@ -121,8 +139,14 @@ const TONS: { valor: StatusTone; rotulo: string }[] = [
   { valor: "alert", rotulo: "Vermelho (alerta)" },
 ];
 
-const PAPEL_EXPLICADO: Record<string, string> = {
+// Um texto por papel: o Record fechado faz o typecheck cobrar o texto de
+// todo papel novo.
+const PAPEL_EXPLICADO: Record<PapelDeEtapa, string> = {
   entrada: "Etapa de sistema: todo contato novo nasce aqui.",
+  aguardando:
+    "Etapa de sistema: quando a IA passa a conversa de um lead novo para a equipe, o lead vem para cá.",
+  em_contato:
+    "Etapa de sistema: quando a equipe assume, inicia, passa para um colega ou reabre a conversa de um lead novo ou que aguarda resposta, o lead vem para cá.",
   agendou: "Etapa de sistema: criar um agendamento move o contato para cá.",
   compareceu: "Etapa de sistema: comparecer à consulta move o contato para cá.",
   perdido: "Etapa de sistema: marcar como perdido exige o motivo.",
@@ -365,8 +389,45 @@ export function JornadaTab({
 
         {jornada.map((etapa, indice) => {
           const aberta = editando === etapa.chave;
-          const explicacao = etapa.papel ? PAPEL_EXPLICADO[etapa.papel] : null;
+          // Papel fora do catalogo (cache velho) fica sem frase, nunca quebra.
+          const explicacao = etapa.papel
+            ? (PAPEL_EXPLICADO[etapa.papel] ?? null)
+            : null;
           const conversao = chipDaConversao(etapa);
+          // Uma seta por direcao. Sem permissao, as duas vao juntas na dica
+          // de permissao (abaixo); com permissao, a seta que trocaria duas
+          // etapas de sistema ganha a propria dica.
+          const seta = (direcao: "subir" | "descer", troca: TrocaDeOrdem) => {
+            const Icone = direcao === "subir" ? ArrowUp : ArrowDown;
+            const botao = (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`${direcao === "subir" ? "Subir" : "Descer"} ${etapa.nome}`}
+                disabled={!podeGerenciar || pendente || !troca.permitida}
+                onClick={() => reordenar(etapa, direcao)}
+              >
+                <Icone className="size-4" aria-hidden />
+              </Button>
+            );
+            return podeGerenciar && !troca.permitida && troca.dica ? (
+              <DisabledWithHint hint={troca.dica}>{botao}</DisabledWithHint>
+            ) : (
+              botao
+            );
+          };
+          const setas = (
+            <>
+              {seta(
+                "subir",
+                trocaDeOrdemPermitida(jornada, etapa.chave, "subir"),
+              )}
+              {seta(
+                "descer",
+                trocaDeOrdemPermitida(jornada, etapa.chave, "descer"),
+              )}
+            </>
+          );
           const botaoEditar = (
             <Button
               variant="ghost"
@@ -394,7 +455,7 @@ export function JornadaTab({
                   {indice + 1}
                 </span>
                 <StatusChip definition={definicaoDaEtapa(etapa)} />
-                {etapa.papel ? (
+                {etapaDeSistema(etapa) ? (
                   <StatusChip size="sm" definition={ETAPA_DE_SISTEMA} />
                 ) : null}
                 <StatusChip
@@ -412,28 +473,13 @@ export function JornadaTab({
                   </span>
                 ) : null}
                 <div className="ml-auto flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Subir ${etapa.nome}`}
-                    disabled={!podeGerenciar || pendente || indice === 0}
-                    onClick={() => reordenar(etapa, "subir")}
-                  >
-                    <ArrowUp className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Descer ${etapa.nome}`}
-                    disabled={
-                      !podeGerenciar ||
-                      pendente ||
-                      indice === jornada.length - 1
-                    }
-                    onClick={() => reordenar(etapa, "descer")}
-                  >
-                    <ArrowDown className="size-4" />
-                  </Button>
+                  {podeGerenciar ? (
+                    setas
+                  ) : (
+                    <DisabledWithHint hint={dica}>
+                      <span className="flex items-center gap-1">{setas}</span>
+                    </DisabledWithHint>
+                  )}
                   {aberta ? null : podeGerenciar ? (
                     botaoEditar
                   ) : (
@@ -466,7 +512,9 @@ export function JornadaTab({
                   pendente={pendente}
                   aoSalvar={() => salvar(etapa)}
                   aoCancelar={fechar}
-                  aoExcluir={etapa.papel ? null : () => excluir(etapa)}
+                  aoExcluir={
+                    etapaDeSistema(etapa) ? null : () => excluir(etapa)
+                  }
                 />
               ) : null}
             </article>
@@ -490,12 +538,10 @@ export function JornadaTab({
         ) : null}
       </CardContent>
       <CardFooter>
+        {/* Com os nomes da clinica: quais sao as etapas de sistema e o que e
+            fixo nelas (rodapeDaJornada, testado em unidade). */}
         <p className="text-xs text-text-secondary">
-          As etapas de sistema podem mudar de nome e de lugar, nunca sair: são
-          elas que movem o contato sozinho (agendar, comparecer) e que protegem
-          o motivo de perda. Os eventos de conversão ainda não são enviados à
-          Meta: esta tela define o que será enviado quando a conta de anúncios
-          for conectada.
+          {rodapeDaJornada(jornada)}
         </p>
       </CardFooter>
     </Card>

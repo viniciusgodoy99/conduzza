@@ -100,29 +100,33 @@ afterAll(async () => {
 });
 
 describe("a jornada nasce com a clínica", () => {
-  it("clínica nova já tem as 6 etapas, com os 4 papéis de sistema", async () => {
+  // Onda 3 (21/10/2026, migration 20261023100000): a semente poe Aguardando
+  // resposta logo antes de Em contato, e as duas nascem etapas de sistema
+  // (papeis 'aguardando' e 'em_contato'). As seis sao obrigatorias.
+  it("clínica nova já tem as 6 etapas, todas de sistema, na ordem nova", async () => {
     const { data } = await admin
       .from("funnel_stage_def")
-      .select("chave, papel")
+      .select("chave, papel, posicao")
       .eq("clinic_id", clinicaA)
       .order("posicao");
     expect(data).toHaveLength(6);
     expect(data!.map((e) => e.chave)).toEqual([
       "novo",
-      "em_contato",
       "aguardando_resposta",
+      "em_contato",
       "agendou",
       "compareceu",
       "perdido",
     ]);
     expect(data!.map((e) => e.papel)).toEqual([
       "entrada",
-      null,
-      null,
+      "aguardando",
+      "em_contato",
       "agendou",
       "compareceu",
       "perdido",
     ]);
+    expect(data!.map((e) => e.posicao)).toEqual([10, 20, 30, 40, 50, 60]);
   });
 });
 
@@ -290,11 +294,14 @@ describe("a conversão da etapa", () => {
 // de 09/09/2026: o swap em duas escritas soltas podia empatar posicoes para
 // sempre e desligar o avanco automatico do funil.
 describe("reordenar pela RPC", () => {
+  // Desde a onda 3 (decisao D6) as etapas de sistema do caminho do lead nao
+  // trocam entre si; a prova da renumeracao usa a etapa livre comprou_pacote
+  // (criada acima, na posicao 55, entre Compareceu e Perdido).
   it("gestor sobe uma etapa e a jornada inteira sai renumerada", async () => {
     const cliente = await logado(email("gestor-a"));
     const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
       p_clinic_id: clinicaA,
-      p_chave: "aguardando_resposta",
+      p_chave: "comprou_pacote",
       p_direcao: "subir",
     });
     expect(error).toBeNull();
@@ -304,8 +311,8 @@ describe("reordenar pela RPC", () => {
       .eq("clinic_id", clinicaA)
       .order("posicao");
     const ordem = data!.map((e) => e.chave);
-    expect(ordem.indexOf("aguardando_resposta")).toBeLessThan(
-      ordem.indexOf("em_contato"),
+    expect(ordem.indexOf("comprou_pacote")).toBeLessThan(
+      ordem.indexOf("compareceu"),
     );
     // Renumeracao canonica: posicoes 10, 20, 30... sem buraco nem empate.
     expect(data!.map((e) => e.posicao)).toEqual(
@@ -317,7 +324,7 @@ describe("reordenar pela RPC", () => {
     const cliente = await logado(email("recepcao-a"));
     const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
       p_clinic_id: clinicaA,
-      p_chave: "em_contato",
+      p_chave: "comprou_pacote",
       p_direcao: "subir",
     });
     expect(error?.message).toContain("Etapa não encontrada");
@@ -340,26 +347,274 @@ describe("reordenar pela RPC", () => {
   });
 
   it("empate histórico de posição é consertado pela próxima reordenação", async () => {
-    // Força o defeito antigo: duas etapas na MESMA posicao.
+    // Força o defeito antigo: duas etapas na MESMA posicao. Desde a onda 3
+    // (revisao de 21/10/2026) o banco recusa empate entre duas etapas da
+    // cadeia (gatilho conferir_ordem_da_jornada, provado abaixo); o empate
+    // que ainda pode existir e o de uma livre com uma de sistema: Comprou
+    // pacote na posicao de Agendou, que vem logo antes dela.
+    const { data: agendou } = await admin
+      .from("funnel_stage_def")
+      .select("posicao")
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "agendou")
+      .single()
+      .throwOnError();
     await admin
       .from("funnel_stage_def")
-      .update({ posicao: 20 })
+      .update({ posicao: (agendou as { posicao: number }).posicao })
       .eq("clinic_id", clinicaA)
-      .eq("chave", "aguardando_resposta")
+      .eq("chave", "comprou_pacote")
       .throwOnError();
+    // Compareceu desce para depois de Perdido: Perdido fica fora da ordem
+    // fixa (decisao D6), entao a troca vale e renumera tudo.
     const cliente = await logado(email("gestor-a"));
     const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
       p_clinic_id: clinicaA,
-      p_chave: "agendou",
+      p_chave: "compareceu",
       p_direcao: "descer",
     });
     expect(error).toBeNull();
     const { data } = await admin
       .from("funnel_stage_def")
-      .select("posicao")
-      .eq("clinic_id", clinicaA);
+      .select("chave, posicao")
+      .eq("clinic_id", clinicaA)
+      .order("posicao");
     const posicoes = data!.map((e) => e.posicao);
     expect(new Set(posicoes).size).toBe(posicoes.length);
+    // O desempate (posicao, chave) manteve Agendou antes de Comprou pacote.
+    const ordem = data!.map((e) => e.chave);
+    expect(ordem.indexOf("agendou")).toBeLessThan(
+      ordem.indexOf("comprou_pacote"),
+    );
+  });
+});
+
+// Decisao D6 do dono (21/10/2026; migration 20261023100000): a RPC recusa
+// trocar duas etapas de sistema do caminho do lead (Novo, Aguardando
+// resposta, Em contato, Agendou e Compareceu) com P0001 e o hint
+// ordem_de_sistema; etapa livre continua passando por entre elas.
+describe("a ordem fixa das etapas de sistema", () => {
+  it("gestor não troca Aguardando resposta com Em contato, em nenhum sentido", async () => {
+    const cliente = await logado(email("gestor-a"));
+    const antes = await admin
+      .from("funnel_stage_def")
+      .select("chave, posicao")
+      .eq("clinic_id", clinicaA)
+      .order("posicao");
+    for (const [chave, direcao] of [
+      ["aguardando_resposta", "descer"],
+      ["em_contato", "subir"],
+      ["novo", "descer"],
+    ] as const) {
+      const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
+        p_clinic_id: clinicaA,
+        p_chave: chave,
+        p_direcao: direcao,
+      });
+      expect(error?.code, `${chave} ${direcao}`).toBe("P0001");
+      expect(error?.hint, `${chave} ${direcao}`).toBe("ordem_de_sistema");
+      expect(error?.message).toContain(
+        "A ordem das etapas de sistema não muda",
+      );
+    }
+    // Contraprova: nada mudou de lugar.
+    const depois = await admin
+      .from("funnel_stage_def")
+      .select("chave, posicao")
+      .eq("clinic_id", clinicaA)
+      .order("posicao");
+    expect(depois.data).toEqual(antes.data);
+  });
+
+  it("etapa livre entra entre Aguardando resposta e Em contato e sai de novo", async () => {
+    const cliente = await logado(email("gestor-a"));
+    // Entra no fim e sobe ate ficar logo depois de Aguardando resposta.
+    await cliente
+      .from("funnel_stage_def")
+      .insert({
+        clinic_id: clinicaA,
+        chave: "pediu_valor",
+        nome: "Pediu valor",
+        posicao: 990,
+      })
+      .throwOnError();
+    for (let passo = 0; passo < 20; passo++) {
+      const { data: atual } = await admin
+        .from("funnel_stage_def")
+        .select("chave")
+        .eq("clinic_id", clinicaA)
+        .order("posicao")
+        .order("chave");
+      const ordem = atual!.map((e) => e.chave);
+      if (
+        ordem.indexOf("pediu_valor") ===
+        ordem.indexOf("aguardando_resposta") + 1
+      ) {
+        break;
+      }
+      const { error } = await cliente.rpc("reordenar_etapa_da_jornada", {
+        p_clinic_id: clinicaA,
+        p_chave: "pediu_valor",
+        p_direcao: "subir",
+      });
+      expect(error).toBeNull();
+    }
+    const { data: entre } = await admin
+      .from("funnel_stage_def")
+      .select("chave, posicao")
+      .eq("clinic_id", clinicaA)
+      .order("posicao");
+    const ordem = entre!.map((e) => e.chave);
+    expect(ordem.indexOf("pediu_valor")).toBe(
+      ordem.indexOf("aguardando_resposta") + 1,
+    );
+    expect(ordem.indexOf("em_contato")).toBe(ordem.indexOf("pediu_valor") + 1);
+    // Com a livre no meio, Aguardando resposta e Em contato trocam com ela.
+    const { error: erroDoAguardando } = await cliente.rpc(
+      "reordenar_etapa_da_jornada",
+      {
+        p_clinic_id: clinicaA,
+        p_chave: "aguardando_resposta",
+        p_direcao: "descer",
+      },
+    );
+    expect(erroDoAguardando).toBeNull();
+    const { error: erroDaLivre } = await cliente.rpc(
+      "reordenar_etapa_da_jornada",
+      { p_clinic_id: clinicaA, p_chave: "pediu_valor", p_direcao: "subir" },
+    );
+    expect(erroDaLivre).toBeNull();
+    // A livre saiu e a ordem do caminho voltou a ser a de antes.
+    const { data: fim } = await admin
+      .from("funnel_stage_def")
+      .select("chave, posicao")
+      .eq("clinic_id", clinicaA)
+      .order("posicao");
+    const ordemFinal = fim!.map((e) => e.chave);
+    expect(ordemFinal.indexOf("aguardando_resposta")).toBeLessThan(
+      ordemFinal.indexOf("em_contato"),
+    );
+    expect(ordemFinal.indexOf("pediu_valor")).toBeLessThan(
+      ordemFinal.indexOf("aguardando_resposta"),
+    );
+    await admin
+      .from("funnel_stage_def")
+      .delete()
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "pediu_valor")
+      .throwOnError();
+  });
+});
+
+// A cadeia como invariante do banco (revisao de 21/10/2026): a policy
+// "gestao gerencia a jornada" e FOR ALL, entao a sessao do gestor muda
+// posicao DIRETO pela tabela (o PATCH do PostgREST), sem passar pela RPC. O
+// gatilho de restricao conferir_ordem_da_jornada (migration 20261023100000)
+// recusa no fim do comando, com o mesmo P0001 e o mesmo hint da RPC, quando
+// a cadeia Novo < Aguardando resposta < Em contato < Agendou < Compareceu
+// inverte ou empata pela posicao; vale ate para o service role. Etapa livre
+// continua indo direto para qualquer lugar.
+describe("a ordem fixa vale também para quem muda a posição direto", () => {
+  async function jornadaDeA(): Promise<{ chave: string; posicao: number }[]> {
+    const { data } = await admin
+      .from("funnel_stage_def")
+      .select("chave, posicao")
+      .eq("clinic_id", clinicaA)
+      .order("posicao")
+      .order("chave")
+      .throwOnError();
+    return data as { chave: string; posicao: number }[];
+  }
+
+  function posicaoNa(
+    jornada: { chave: string; posicao: number }[],
+    chave: string,
+  ): number {
+    return jornada.find((etapa) => etapa.chave === chave)!.posicao;
+  }
+
+  it("gestor não inverte nem empata a cadeia pelo PATCH direto", async () => {
+    const cliente = await logado(email("gestor-a"));
+    const antes = await jornadaDeA();
+    for (const [chave, posicao] of [
+      // Aguardando resposta para depois de Em contato (o achado da revisao).
+      ["aguardando_resposta", posicaoNa(antes, "em_contato") + 5],
+      // Novo para depois de Aguardando resposta.
+      ["novo", posicaoNa(antes, "aguardando_resposta") + 5],
+      // Em contato empatada com Aguardando resposta.
+      ["em_contato", posicaoNa(antes, "aguardando_resposta")],
+    ] as const) {
+      const { error } = await cliente
+        .from("funnel_stage_def")
+        .update({ posicao })
+        .eq("clinic_id", clinicaA)
+        .eq("chave", chave);
+      expect(error?.code, chave).toBe("P0001");
+      expect(error?.hint, chave).toBe("ordem_de_sistema");
+      expect(error?.message, chave).toContain(
+        "A ordem das etapas de sistema não muda",
+      );
+    }
+    // Contraprova: nada mudou de lugar.
+    expect(await jornadaDeA()).toEqual(antes);
+  });
+
+  it("o service role também não põe Compareceu antes de Agendou", async () => {
+    const antes = await jornadaDeA();
+    const { error } = await admin
+      .from("funnel_stage_def")
+      .update({ posicao: posicaoNa(antes, "agendou") - 5 })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "compareceu");
+    expect(error?.code).toBe("P0001");
+    expect(error?.hint).toBe("ordem_de_sistema");
+    expect(await jornadaDeA()).toEqual(antes);
+  });
+
+  it("etapa livre vai direto para o meio da cadeia, e Perdido para o topo", async () => {
+    const cliente = await logado(email("gestor-a"));
+    await cliente
+      .from("funnel_stage_def")
+      .insert({
+        clinic_id: clinicaA,
+        chave: "livre_direta",
+        nome: "Livre direta",
+        posicao: 995,
+      })
+      .throwOnError();
+    const antes = await jornadaDeA();
+    const { error: erroDaLivre } = await cliente
+      .from("funnel_stage_def")
+      .update({ posicao: posicaoNa(antes, "novo") + 5 })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "livre_direta");
+    expect(erroDaLivre).toBeNull();
+    const perdidoAntes = posicaoNa(antes, "perdido");
+    const { error: erroDoPerdido } = await cliente
+      .from("funnel_stage_def")
+      .update({ posicao: 1 })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "perdido");
+    expect(erroDoPerdido).toBeNull();
+    const ordem = (await jornadaDeA()).map((etapa) => etapa.chave);
+    expect(ordem[0]).toBe("perdido");
+    expect(ordem.indexOf("livre_direta")).toBe(ordem.indexOf("novo") + 1);
+    expect(ordem.indexOf("livre_direta")).toBeLessThan(
+      ordem.indexOf("aguardando_resposta"),
+    );
+    // Volta como estava.
+    await admin
+      .from("funnel_stage_def")
+      .update({ posicao: perdidoAntes })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "perdido")
+      .throwOnError();
+    await admin
+      .from("funnel_stage_def")
+      .delete()
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "livre_direta")
+      .throwOnError();
   });
 });
 
@@ -389,6 +644,62 @@ describe("as travas de estrutura (por gatilho, valem até para o service role)",
       .eq("clinic_id", clinicaA)
       .eq("chave", "perdido");
     expect(error?.message).toContain("Etapa de sistema");
+  });
+
+  // Onda 3 (21/10/2026): Em contato e Aguardando resposta viraram etapas de
+  // sistema. Quem gerencia a jornada (o gestor, pela RLS) renomeia, mas nao
+  // exclui nem tira o papel delas: a trava e o gatilho proteger_jornada.
+  it("gestor não exclui Em contato nem Aguardando resposta", async () => {
+    const cliente = await logado(email("gestor-a"));
+    for (const chave of ["em_contato", "aguardando_resposta"]) {
+      const { error } = await cliente
+        .from("funnel_stage_def")
+        .delete()
+        .eq("clinic_id", clinicaA)
+        .eq("chave", chave);
+      expect(error?.message, chave).toContain("Etapa de sistema");
+    }
+    const { data: prova } = await admin
+      .from("funnel_stage_def")
+      .select("chave")
+      .eq("clinic_id", clinicaA)
+      .in("chave", ["em_contato", "aguardando_resposta"]);
+    expect(prova).toHaveLength(2);
+  });
+
+  it("gestor não muda o papel delas, mas renomeia", async () => {
+    const cliente = await logado(email("gestor-a"));
+    for (const [chave, papel] of [
+      ["em_contato", null],
+      ["aguardando_resposta", "em_contato"],
+    ] as const) {
+      const { error } = await cliente
+        .from("funnel_stage_def")
+        .update({ papel })
+        .eq("clinic_id", clinicaA)
+        .eq("chave", chave);
+      expect(error?.message, chave).toContain("papel de sistema");
+    }
+    const { error: erroDoNome } = await cliente
+      .from("funnel_stage_def")
+      .update({ nome: "Contato inicial" })
+      .eq("clinic_id", clinicaA)
+      .eq("chave", "em_contato");
+    expect(erroDoNome).toBeNull();
+    const { data: prova } = await admin
+      .from("funnel_stage_def")
+      .select("chave, nome, papel")
+      .eq("clinic_id", clinicaA)
+      .in("chave", ["em_contato", "aguardando_resposta"])
+      .order("chave");
+    expect(prova).toEqual([
+      {
+        chave: "aguardando_resposta",
+        nome: "Aguardando resposta",
+        papel: "aguardando",
+      },
+      { chave: "em_contato", nome: "Contato inicial", papel: "em_contato" },
+    ]);
   });
 
   it("etapa livre com contato dentro não pode ser excluída", async () => {

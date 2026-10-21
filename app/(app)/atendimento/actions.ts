@@ -15,7 +15,7 @@ import { after } from "next/server";
 
 import { log } from "@/lib/log";
 import { agenteAtendeAgora, horarioDoBanco } from "@/lib/domain/agente/config";
-import { etapaAposAssumir } from "@/lib/domain/jornada";
+import { etapaAposAssumir, type EtapaParaAssumir } from "@/lib/domain/jornada";
 import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
 import {
   abaDaIaVisivel,
@@ -881,75 +881,95 @@ export async function assumirConversaAction(
     context.active!.clinicId,
     conversation.contact_id,
     context.userId,
+    "assumir_moveu_etapa",
   );
   return { ok: true };
 }
 
+/**
+ * A trilha de cada caminho que move o lead ao pegar a conversa. Iniciar
+ * conversa passa pelo Assumir e fica com a dele. So o nome da acao e ids
+ * vao para o audit_log, nunca dado do paciente.
+ */
+type TrilhaDoMovimento =
+  "assumir_moveu_etapa" | "transferir_moveu_etapa" | "reabrir_moveu_etapa";
+
 // Assumir a conversa de um lead NOVO o move para "Em contato" (decisao do
-// dono em 19/09/2026). A regra e a funcao pura etapaAposAssumir (testada em
-// unidade); aqui vive so o encanamento: cliente ADMIN porque o papel
-// profissional pode assumir mas a policy de contact nao o deixa escrever
-// (automacao do sistema, auditada em nome de quem assumiu), CAS por
-// funnel_stage contra corrida, e falha NUNCA quebra o assumir. Os gatilhos
-// existentes fazem o resto (ancora de follow-up, conversao do funil).
+// dono em 19/09/2026); desde a onda 3 (21/10/2026), tambem o lead que
+// aguarda resposta da equipe, e tambem Transferir e Reabrir (decisao D7). A
+// regra e a funcao pura etapaAposAssumir (testada em unidade); aqui vive so o
+// encanamento: cliente ADMIN porque o papel profissional pode assumir mas a
+// policy de contact nao o deixa escrever (automacao do sistema, auditada em
+// nome de quem fez a acao), CAS por funnel_stage contra corrida, e falha
+// NUNCA quebra a acao. Os gatilhos existentes fazem o resto (ancora de
+// follow-up, automacoes de fluxo, conversao do funil).
+//
+// Le chave, papel e posicao: o papel acha Em contato (e o Aguardando de
+// origem) depois da migration 20261023100000, a chave em_contato acha o
+// destino no banco de antes, e a posicao garante que nunca anda para tras.
+//
+// O CAS que volta vazio perdeu para outra escrita entre a leitura e o
+// update. A que importa: a manutencao do funil (processar_pendencias_do_funil)
+// levando o lead de Novo para Aguardando resposta no mesmo instante em que a
+// pessoa pega a conversa (achado da revisao de 21/10/2026); desistir ali
+// deixaria a conversa com a equipe e o lead em Aguardando resposta. Entao
+// rele o contato UMA vez e aplica a regra de novo: ela so anda para frente,
+// a partir de Novo ou de Aguardando resposta. O update que perde espera o
+// commit de quem ganhou, entao a releitura ja ve a etapa nova.
 async function moverLeadAoAssumir(
   clinicId: string,
   contactId: string,
   userId: string,
+  trilha: TrilhaDoMovimento,
 ): Promise<void> {
   try {
     const admin = createAdminClient();
-    const { data: contato } = await admin
-      .from("contact")
-      .select("kind, funnel_stage")
-      .eq("clinic_id", clinicId)
-      .eq("id", contactId)
-      .maybeSingle();
-    if (!contato) {
-      return;
-    }
     const { data: etapas } = await admin
       .from("funnel_stage_def")
-      .select("chave, papel")
+      .select("chave, papel, posicao")
       .eq("clinic_id", clinicId);
-    const jornada = (etapas ?? []) as { chave: string; papel: string | null }[];
-    const destino = etapaAposAssumir({
-      kind: contato.kind as "lead" | "paciente",
-      etapaAtual:
-        (jornada.find((e) => e.chave === contato.funnel_stage) as
-          | {
-              chave: string;
-              papel: "entrada" | "agendou" | "compareceu" | "perdido" | null;
-            }
-          | undefined) ?? null,
-      jornada: jornada as {
-        chave: string;
-        papel: "entrada" | "agendou" | "compareceu" | "perdido" | null;
-      }[],
-    });
-    if (!destino) {
-      return;
-    }
-    const { data: movido } = await admin
-      .from("contact")
-      .update({ funnel_stage: destino })
-      .eq("clinic_id", clinicId)
-      .eq("id", contactId)
-      .eq("funnel_stage", contato.funnel_stage)
-      .select("id");
-    if (movido && movido.length > 0) {
-      await admin.from("audit_log").insert({
-        clinic_id: clinicId,
-        user_id: userId,
-        action: "assumir_moveu_etapa",
-        entity: "contact",
-        entity_id: contactId,
+    const jornada = (etapas ?? []) as EtapaParaAssumir[];
+    for (let tentativa = 0; tentativa < 2; tentativa += 1) {
+      const { data: contato } = await admin
+        .from("contact")
+        .select("kind, funnel_stage")
+        .eq("clinic_id", clinicId)
+        .eq("id", contactId)
+        .maybeSingle();
+      if (!contato) {
+        return;
+      }
+      const destino = etapaAposAssumir({
+        kind: contato.kind as "lead" | "paciente",
+        etapaAtual:
+          jornada.find((etapa) => etapa.chave === contato.funnel_stage) ?? null,
+        jornada,
       });
-      revalidatePath("/leads");
+      if (!destino) {
+        return;
+      }
+      const { data: movido } = await admin
+        .from("contact")
+        .update({ funnel_stage: destino })
+        .eq("clinic_id", clinicId)
+        .eq("id", contactId)
+        .eq("funnel_stage", contato.funnel_stage)
+        .select("id");
+      if (movido && movido.length > 0) {
+        await admin.from("audit_log").insert({
+          clinic_id: clinicId,
+          user_id: userId,
+          action: trilha,
+          entity: "contact",
+          entity_id: contactId,
+        });
+        revalidatePath("/leads");
+        return;
+      }
     }
   } catch {
-    // Melhor esforco declarado: o assumir ja valeu, e mover etapa e bonus.
-    log.warn("assumir_moveu_etapa_falhou", {
+    // Melhor esforco declarado: a acao ja valeu, e mover etapa e bonus.
+    log.warn(`${trilha}_falhou`, {
       clinic_id: clinicId,
       contact_id: contactId,
     });
@@ -1616,6 +1636,15 @@ export async function transferirConversaAction(
     entity: "conversation",
     entity_id: conversation.id,
   });
+  // Decisao D7 do dono (21/10/2026): passar para um colega tambem e a equipe
+  // pegando a conversa, entao o lead novo ou que aguarda resposta anda para
+  // Em contato, como no Assumir. A trilha leva quem passou.
+  await moverLeadAoAssumir(
+    clinicId,
+    conversation.contact_id,
+    context.userId,
+    "transferir_moveu_etapa",
+  );
   return { ok: true };
 }
 
@@ -1708,6 +1737,15 @@ export async function reabrirConversaAction(
     context.active!.clinicId,
     conversation.id,
     `${context.userName} reabriu a conversa`,
+  );
+  // Decisao D7 do dono (21/10/2026): reabrir deixa a conversa com quem
+  // reabriu, entao o lead novo ou que aguarda resposta anda para Em contato,
+  // como no Assumir.
+  await moverLeadAoAssumir(
+    context.active!.clinicId,
+    conversation.contact_id,
+    context.userId,
+    "reabrir_moveu_etapa",
   );
   return { ok: true };
 }

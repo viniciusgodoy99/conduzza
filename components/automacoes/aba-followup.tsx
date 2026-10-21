@@ -75,7 +75,10 @@ export function AbaFollowup({
 }: {
   clinicId: string;
   followups: ReguaDeFollowup[];
-  /** Etapas da jornada que aceitam follow-up (sem a de perda). */
+  /**
+   * Etapas da jornada que aceitam follow-up: sem a de perda e sem a que
+   * espera a resposta da equipe (etapaRecebeFollowup, lib/domain/jornada).
+   */
   etapas: EtapaParaFollowup[];
   nomeDaClinica: string;
   precoCents: number | null;

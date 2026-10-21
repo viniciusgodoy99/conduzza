@@ -359,15 +359,18 @@ describe("quem escreve o termo, contra o banco real", () => {
     expect(await etapaDe(contactId)).toBe("novo");
   });
 
+  // Desde a onda 3 (migration 20261023100000) Aguardando resposta vem logo
+  // ANTES de Em contato, e o termo-chave so anda para frente: o caminho e de
+  // Aguardando resposta para Em contato.
   it("etapa de qualquer um: anda pelo paciente e pela clínica", async () => {
     const clinicId = await criarClinica("qualquer");
-    await configurarTermos(clinicId, "em_contato", ["orcamento"], "qualquer");
     await configurarTermos(
       clinicId,
       "aguardando_resposta",
-      ["proposta"],
+      ["orcamento"],
       "qualquer",
     );
+    await configurarTermos(clinicId, "em_contato", ["proposta"], "qualquer");
 
     const { data } = await ingerirMensagemRecebida(
       admin,
@@ -376,7 +379,7 @@ describe("quem escreve o termo, contra o banco real", () => {
       evento("+5584972200008", `termo:${sufixo}:q2`, "Quero um orcamento"),
     );
     const contactId = data!.contact_id!;
-    expect(await etapaDe(contactId)).toBe("em_contato");
+    expect(await etapaDe(contactId)).toBe("aguardando_resposta");
 
     expect(
       await tentarMoverPorTermo(admin, {
@@ -386,8 +389,20 @@ describe("quem escreve o termo, contra o banco real", () => {
         quemEscreveu: "clinica",
         userId: null,
       }),
-    ).toBe("aguardando_resposta");
-    expect(await etapaDe(contactId)).toBe("aguardando_resposta");
+    ).toBe("em_contato");
+    expect(await etapaDe(contactId)).toBe("em_contato");
+
+    // E nunca para tras: de Em contato, o termo de Aguardando nao volta.
+    expect(
+      await tentarMoverPorTermo(admin, {
+        clinicId,
+        contactId,
+        corpo: "Ainda quero o orcamento",
+        quemEscreveu: "paciente",
+        userId: null,
+      }),
+    ).toBeNull();
+    expect(await etapaDe(contactId)).toBe("em_contato");
   });
 });
 

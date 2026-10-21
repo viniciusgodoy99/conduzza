@@ -1881,6 +1881,38 @@ export type Database = {
           },
         ]
       }
+      etapa_pendente_da_passagem: {
+        Row: {
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          criada_em: string
+          tentativas: number
+        }
+        Insert: {
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          criada_em?: string
+          tentativas?: number
+        }
+        Update: {
+          clinic_id?: string
+          contact_id?: string
+          conversation_id?: string
+          criada_em?: string
+          tentativas?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "etapa_pendente_da_passagem_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       funnel_stage_def: {
         Row: {
           chave: string
@@ -5502,6 +5534,15 @@ export type Database = {
       motor_ia_desagendar: { Args: never; Returns: string }
       motivo_da_agendada: { Args: { p_codigo: string }; Returns: string }
       motor_manutencao: { Args: never; Returns: Json }
+      mover_lead_para_aguardando: {
+        Args: {
+          p_clinic_id: string
+          p_contact_id: string
+          p_conversation_id: string
+          p_da_pendencia?: boolean
+        }
+        Returns: string
+      }
       numero_do_job: {
         Args: { p_job_id: string; p_worker: string }
         Returns: Json
@@ -5574,6 +5615,14 @@ export type Database = {
           p_espera_minutos?: number
           p_etapa: string
           p_gatilho: string
+        }
+        Returns: Json
+      }
+      processar_pendencias_do_funil: {
+        Args: {
+          p_clinic_id?: string
+          p_incluir_teste?: boolean
+          p_limite?: number
         }
         Returns: Json
       }
