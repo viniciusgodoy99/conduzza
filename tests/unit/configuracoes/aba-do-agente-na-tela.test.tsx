@@ -105,7 +105,8 @@ describe("aba Agente de IA na tela de Configurações", () => {
     const html = tela(DA_IA, "ia");
     const rotulos = abas(html);
     expect(rotulos.at(-1)).toBe("Agente de IA");
-    expect(rotulos.at(-2)).toBe("Anúncios do Google");
+    // Onda 5: Origem dos leads entrou logo depois de Anúncios do Google.
+    expect(rotulos.at(-2)).toBe("Origem dos leads");
     expect(abaSelecionada(html)).toBe("Agente de IA");
     expect(html).toContain("Assistente de IA nesta clínica");
   });

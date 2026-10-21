@@ -28,11 +28,19 @@ import {
 } from "@/components/whatsapp/numeros";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { corDoNumero } from "@/lib/domain/cor-do-numero";
-import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import {
+  canEdit,
+  ehAdminPleno as ehAdministradorPleno,
+  permissionHint,
+} from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/permissions";
 import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
 import { provedorDoAmbiente } from "@/lib/integrations/whatsapp/provider";
 import { motivosDaRecusaVigentes } from "@/lib/integrations/whatsapp/trava-celular";
+import {
+  lerMarcasDaClinica,
+  marcadosOuNinguem,
+} from "@/lib/queries/implementadores";
 import { fetchProfileNames } from "@/lib/queries/profiles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -48,6 +56,11 @@ import {
   fetchLiberacaoDaIa,
 } from "@/lib/queries/ia-liberacao";
 import { fetchJornada } from "@/lib/queries/jornada";
+import {
+  frasesDoBotaoDoSite,
+  numerosParaOLink,
+} from "@/lib/domain/regras-de-origem";
+import { fetchRegrasDeOrigem } from "@/lib/queries/regras-de-origem";
 import { fetchRespostasRapidas } from "@/lib/queries/respostas-rapidas";
 import type { Pendente } from "./equipe-client";
 
@@ -153,6 +166,7 @@ export default async function ConfiguracoesPage({
   const abaDaIa = abaDaIaVisivel(active.clinicId);
   const [
     memberResult,
+    marcasDaEquipe,
     profissionaisResult,
     clinicResult,
     codigoResult,
@@ -161,6 +175,7 @@ export default async function ConfiguracoesPage({
     etiquetas,
     contagemDeEtiquetas,
     mensagensPadrao,
+    origensDaClinica,
     contaMetaResult,
     leituraMetaResult,
     unidadesResult,
@@ -177,6 +192,10 @@ export default async function ConfiguracoesPage({
       .select("user_id, role, status, professional_id, created_at")
       .eq("clinic_id", active.clinicId)
       .order("created_at", { ascending: true }),
+    // Quem da equipe tem a marca de Implementador (onda 5, item 18): leitura
+    // tolerante, nunca derruba a aba (falhando, ninguem aparece com a
+    // marca e o banco continua travando o que o dono escolheu).
+    lerMarcasDaClinica(supabase, active.clinicId),
     // Cadastros de profissional que um usuario de papel Profissional pode
     // ser (seletor "Profissional da agenda").
     supabase
@@ -212,6 +231,9 @@ export default async function ConfiguracoesPage({
     seguro(fetchContagemDeEtiquetas(supabase, active.clinicId)),
     // As mensagens padrao, todas (ativas e desativadas): membro ativo le.
     seguro(fetchRespostasRapidas(supabase, active.clinicId)),
+    // Origem dos leads (onda 5, item 17): as regras de campaign_link, todas
+    // (ativas e desativadas), na ordem de criacao. Membro ativo le.
+    seguro(fetchRegrasDeOrigem(supabase, active.clinicId)),
     // Conta de anuncios da Meta: a policy so mostra para admin e gestor.
     supabase
       .from("meta_ads_account")
@@ -363,7 +385,8 @@ export default async function ConfiguracoesPage({
   // Quem esta na equipe (com acesso ou sem) entra numa lista so; quem perdeu
   // o acesso vai para o fim, com fundo afundado e o chip "Sem acesso". O sort
   // e estavel, entao dentro de cada grupo a ordem de entrada na clinica se
-  // mantem.
+  // mantem. A marca de Implementador so vale com o papel admin.
+  const implementadores = marcadosOuNinguem(marcasDaEquipe);
   const membros: MembroEquipe[] = rows
     .filter((row) => row.status !== "pendente")
     .map((row) => ({
@@ -371,6 +394,7 @@ export default async function ConfiguracoesPage({
       nome: userById.get(row.user_id)?.name ?? "Usuário",
       email: userById.get(row.user_id)?.email ?? "",
       papel: row.role,
+      implementador: row.role === "admin" && implementadores.has(row.user_id),
       ativo: row.status === "ativo",
       professionalId: row.professional_id ?? null,
     }))
@@ -401,6 +425,10 @@ export default async function ConfiguracoesPage({
 
   const podeGerenciar = canEdit(active.role, "configuracoes");
   const ehAdmin = active.role === "admin";
+  // Na equipe vale o administrador SEM a marca de Implementador (P18-2 e
+  // P18-4): so ele mexe em administrador e faz alguem Implementador. Nas
+  // outras abas, o Implementador faz tudo como o administrador (ehAdmin).
+  const ehAdminPleno = ehAdministradorPleno(active.role, active.implementador);
   const dica = permissionHint(active.role, "configuracoes");
 
   // Aba de WhatsApp: um cartao por numero ativo. Leitura dos numeros que
@@ -462,6 +490,7 @@ export default async function ConfiguracoesPage({
         meuUserId={context.userId}
         podeGerenciar={podeGerenciar}
         ehAdmin={ehAdmin}
+        ehAdminPleno={ehAdminPleno}
         dica={dica ?? "Seu perfil não altera as configurações"}
         clinica={
           clinicResult.error || !clinica
@@ -495,6 +524,27 @@ export default async function ConfiguracoesPage({
         mensagens={
           mensagensPadrao
             ? { lista: mensagensPadrao, nomeDaClinica: active.clinicName }
+            : null
+        }
+        origens={
+          origensDaClinica
+            ? {
+                regras: origensDaClinica,
+                // Os numeros ativos da leitura da aba WhatsApp (o principal
+                // primeiro), so os que ja tem telefone. Nulo: a leitura
+                // falhou, e o bloco do link diz isso.
+                numeros: whatsappResult.error
+                  ? null
+                  : numerosParaOLink(numerosDoWhatsapp),
+                // As frases do botao do site (aviso de mensagem igual):
+                // as da clinica, quando a leitura deu, e as de fabrica.
+                frasesDoSite: frasesDoBotaoDoSite(
+                  rastreioResult.error
+                    ? null
+                    : ((rastreioResult.data?.frases as string[] | null) ??
+                        null),
+                ),
+              }
             : null
         }
         meta={

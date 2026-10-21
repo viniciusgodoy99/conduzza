@@ -10,6 +10,11 @@ import {
   conviteRegistrado,
 } from "@/components/configuracoes/convite-na-equipe";
 import {
+  recusaDaEquipe,
+  recusaDePapelDeAdmin,
+  recusaSemConferirAMarca,
+} from "@/components/configuracoes/papel-na-equipe";
+import {
   ACTIVE_CLINIC_COOKIE,
   getSessionContext,
 } from "@/lib/auth/active-clinic";
@@ -19,7 +24,13 @@ import {
   senhaNovaSchema,
   senhasConferem,
 } from "@/lib/auth/senha";
-import { ROLES, can } from "@/lib/domain/permissions";
+import {
+  can,
+  ehAdminPleno,
+  PAPEIS_NA_TELA,
+  type PapelNaTela,
+  type Role,
+} from "@/lib/domain/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -255,10 +266,12 @@ export async function updatePasswordAction(
   redirect("/inicio");
 }
 
-// Papeis vem da fonte unica em lib/domain/permissions.ts.
+// Papeis vem da fonte unica em lib/domain/permissions.ts: os cinco do banco
+// e o Implementador (onda 5, item 18: no banco, um vinculo admin com a
+// marca, gravados juntos pela RPC entrar_como_implementador).
 const inviteSchema = z.object({
   email: z.email("Informe um e-mail válido"),
-  role: z.enum(ROLES),
+  role: z.enum(PAPEIS_NA_TELA),
 });
 
 export async function inviteMemberAction(
@@ -282,9 +295,28 @@ export async function inviteMemberAction(
   }
   // Conferido ANTES de qualquer e-mail sair (achados 3 e 124): o gatilho
   // proteger_papel_admin recusa o vinculo, mas so depois de o GoTrue ja ter
-  // mandado o convite, e cada nova tentativa mandava outro.
-  if (parsed.data.role === "admin" && context.active.role !== "admin") {
-    return { error: "Somente um administrador convida outro administrador." };
+  // mandado o convite, e cada nova tentativa mandava outro. Administrador e
+  // Implementador so o administrador pleno convida (P18-2 e P18-4): o
+  // gestor e o proprio Implementador, nao.
+  // Sem a propria marca conferida (a leitura falhou), o Implementador
+  // passaria aqui como administrador pleno e o e-mail sairia antes da
+  // recusa do banco: na duvida, recusa (revisao da onda 5). Antes da busca
+  // da conta, para a resposta ser a mesma com e sem cadastro (L17/L20).
+  const semAMarca = recusaSemConferirAMarca(
+    context.marcaDeImplementadorIndisponivel,
+    context.active.role,
+    parsed.data.role,
+  );
+  if (semAMarca) {
+    return { error: semAMarca };
+  }
+  const recusaDoPapel = recusaDePapelDeAdmin(
+    ehAdminPleno(context.active.role, context.active.implementador),
+    parsed.data.role,
+    "convidar",
+  );
+  if (recusaDoPapel) {
+    return { error: recusaDoPapel };
   }
 
   const email = parsed.data.email.trim().toLowerCase();
@@ -347,12 +379,12 @@ export async function inviteMemberAction(
 
   // Convite por e-mail e nominal: o administrador escolheu a pessoa e o papel,
   // entao o vinculo ja nasce ativo (diferente da entrada por codigo).
-  const { error: memberError } = await supabase.from("clinic_member").insert({
-    clinic_id: clinicId,
-    user_id: invited.data.user.id,
-    role: parsed.data.role,
-    status: "ativo",
-  });
+  const { error: memberError } = await criarVinculo(
+    supabase,
+    clinicId,
+    invited.data.user.id,
+    parsed.data.role,
+  );
   if (memberError) {
     // 23505: a pessoa ja tem vinculo aqui e ainda nao aceitou o convite. O
     // GoTrue acabou de reenviar o e-mail; o vinculo que existe fica como esta.
@@ -362,6 +394,7 @@ export async function inviteMemberAction(
         clinicId,
         invited.data.user.id,
       );
+      // O vinculo que ja existia fica como esta: nada foi marcado.
       await registrarConvite(
         supabase,
         clinicId,
@@ -380,9 +413,38 @@ export async function inviteMemberAction(
     clinicId,
     context.userId,
     invited.data.user.id,
+    parsed.data.role === "implementador",
   );
   revalidatePath("/configuracoes");
   return { success: conviteRegistrado(email) };
+}
+
+/**
+ * O vinculo do convite, com a sessao de quem convida (policy e gatilhos
+ * valem). O Implementador nasce pela RPC entrar_como_implementador sem
+ * vinculo lido: o vinculo admin ativo e a marca na mesma transacao (se ja
+ * houver vinculo, 23505, como no insert de sempre).
+ */
+async function criarVinculo(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  userId: string,
+  papel: PapelNaTela,
+): Promise<{ error: { code?: string; message?: string } | null }> {
+  if (papel === "implementador") {
+    const { error } = await supabase.rpc("entrar_como_implementador", {
+      p_clinic_id: clinicId,
+      p_user_id: userId,
+    });
+    return { error };
+  }
+  const { error } = await supabase.from("clinic_member").insert({
+    clinic_id: clinicId,
+    user_id: userId,
+    role: papel,
+    status: "ativo",
+  });
+  return { error };
 }
 
 const CONVITE_NAO_CONCLUIDO =
@@ -395,11 +457,17 @@ const CONVITE_NAO_CONCLUIDO =
 // as demais trilhas de acao: o vinculo ja existe, e a tela nao pode dizer que
 // o convite falhou. A lista da equipe le estas linhas para saber quem foi
 // convidado e ainda nao usou a clinica (configuracoes/page.tsx).
+//
+// Implementador (onda 5): a trilha ganha tambem marcou_implementador, a
+// mesma linha da troca de papel na equipe. O convite em si continua a linha
+// de sempre (conta nova e existente indistinguiveis).
 async function registrarConvite(
   supabase: Awaited<ReturnType<typeof createClient>>,
   clinicId: string,
   quemConvidou: string,
   convidado: string,
+  /** O convite criou o vinculo como Implementador (a marca entrou). */
+  marcouImplementador = false,
 ): Promise<void> {
   await supabase.from("audit_log").insert({
     clinic_id: clinicId,
@@ -408,10 +476,19 @@ async function registrarConvite(
     entity: "clinic_member",
     entity_id: convidado,
   });
+  if (marcouImplementador) {
+    await supabase.from("audit_log").insert({
+      clinic_id: clinicId,
+      user_id: quemConvidou,
+      action: "marcou_implementador",
+      entity: "clinic_member",
+      entity_id: convidado,
+    });
+  }
 }
 
 type VinculoNaClinica = {
-  role: (typeof ROLES)[number];
+  role: Role;
   status: "ativo" | "pendente" | "inativo";
 } | null;
 
@@ -446,17 +523,21 @@ async function vinculoNaClinica(
   return (data as VinculoNaClinica) ?? null;
 }
 
-// Recusas dos gatilhos de clinic_member ja vem em portugues e explicam o
-// motivo; erro de policy vira permissao. O resto cai no texto de quem chama.
+// Recusas dos gatilhos de clinic_member (e da marca de Implementador) ja vem
+// em portugues e explicam o motivo; erro de policy vira permissao. O resto
+// cai no texto de quem chama.
 function recusaDoVinculo(
   error: { code?: string; message?: string },
   fallback: string,
 ): string {
+  const mensagem = error.message ?? "";
+  if (mensagem.includes("Somente um administrador")) {
+    return mensagem;
+  }
   if (error.code === "42501") {
     return "Seu perfil não convida pessoas para esta clínica.";
   }
-  const mensagem = error.message ?? "";
-  return mensagem.includes("Somente um administrador") ? mensagem : fallback;
+  return recusaDaEquipe(error) ?? fallback;
 }
 
 function mensagemDeConviteReenviado(
@@ -482,17 +563,18 @@ async function vincularContaExistente(
   clinicId: string,
   quemConvidou: string,
   userId: string,
-  role: (typeof ROLES)[number],
+  role: PapelNaTela,
   email: string,
 ): Promise<ActionState> {
-  const { error } = await supabase.from("clinic_member").insert({
-    clinic_id: clinicId,
-    user_id: userId,
-    role,
-    status: "ativo",
-  });
+  const { error } = await criarVinculo(supabase, clinicId, userId, role);
   if (!error) {
-    await registrarConvite(supabase, clinicId, quemConvidou, userId);
+    await registrarConvite(
+      supabase,
+      clinicId,
+      quemConvidou,
+      userId,
+      role === "implementador",
+    );
     revalidatePath("/configuracoes");
     return { success: conviteRegistrado(email) };
   }

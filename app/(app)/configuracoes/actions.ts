@@ -6,7 +6,13 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { dadosDaClinicaSchema } from "@/components/configuracoes/dados-da-clinica";
+import {
+  barrarMexidaEmAdmin,
+  recusaDaEquipe,
+  recusaDePapelDeAdmin,
+} from "@/components/configuracoes/papel-na-equipe";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { normalizarTexto } from "@/lib/domain/attribution";
 import {
   recusaDaEtapaUsadaPorAutomacao,
   recusaDaEtiquetaUsadaPorAutomacao,
@@ -19,8 +25,16 @@ import {
   traduzirRecusaDaJornada,
 } from "@/lib/domain/jornada";
 import { normalizarContaDeAnuncios } from "@/lib/domain/meta-anuncios";
-import { canEdit, permissionHint } from "@/lib/domain/permissions";
-import type { Role } from "@/lib/domain/permissions";
+import {
+  canEdit,
+  ehAdminPleno,
+  PAPEIS_NA_TELA,
+  papelDoBanco,
+  papelNaTela,
+  permissionHint,
+} from "@/lib/domain/permissions";
+import type { PapelNaTela, Role } from "@/lib/domain/permissions";
+import { lerMarcasDaClinica } from "@/lib/queries/implementadores";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -29,16 +43,19 @@ import { createClient } from "@/lib/supabase/server";
 // de acesso. Tudo com a sessao do usuario (RLS aplica) e com checagem
 // explicita de papel: administrador e gestor gerenciam a equipe (decisao do
 // dono em 25/08/2026), com o gestor barrado em tudo que envolve administrador.
+//
+// Implementador (onda 5, item 18): no banco e um vinculo admin com a marca
+// (membro_implementador). Ele gerencia a equipe como o administrador, mas
+// fica como o gestor diante de administrador e de outro Implementador
+// (P18-2), e so o administrador pleno (sem a marca) faz alguem
+// Implementador (P18-4). Dar ou tirar o papel passa pelas RPCs
+// entrar_como_implementador e deixar_de_ser_implementador, que gravam papel
+// e marca na mesma transacao (com a sessao: a RLS e os gatilhos decidem).
 
 export type TeamActionResult = { ok: boolean; error?: string };
 
-const papelSchema = z.enum([
-  "admin",
-  "gestor",
-  "recepcao",
-  "profissional",
-  "leitura",
-]);
+// O papel como a tela o escolhe: os cinco do banco e o Implementador.
+const papelSchema = z.enum(PAPEIS_NA_TELA);
 
 const alvoSchema = z.object({ user_id: z.uuid() });
 const mudarPapelSchema = z.object({ user_id: z.uuid(), papel: papelSchema });
@@ -61,36 +78,26 @@ async function requireGestorOuAdmin() {
         "Somente administradores e gestores gerenciam a equipe.",
     };
   }
-  return { context, clinicId: context.active.clinicId, role };
+  return {
+    context,
+    clinicId: context.active.clinicId,
+    role,
+    // Administrador sem a marca de Implementador: so ele mexe em
+    // administrador e da o papel de administrador ou de Implementador.
+    pleno: ehAdminPleno(role, context.active.implementador),
+  };
 }
 
-// Os gatilhos de clinic_member (migration 20260825160000) recusam em portugues
-// e ja explicam o motivo. Repassar a mensagem do banco ajuda muito mais que um
-// "algo deu errado" generico. Erro de policy nao vaza detalhe: vira permissao.
-const RECUSAS_DO_BANCO = [
-  "Somente um administrador",
-  "A clínica precisa de pelo menos um administrador ativo.",
-  "Você não pode alterar o próprio papel",
-  // Gatilho exigir_cadastro_da_mesma_clinica (leva 1): o vinculo usuario ->
-  // profissional so aceita profissional da mesma clinica.
-  "O profissional informado não pertence a esta clínica.",
-];
-
+// Os gatilhos de clinic_member (migrations 20260825160000 e 20261025110000)
+// recusam em portugues e ja explicam o motivo; as RPCs do Implementador
+// recusam com uma chave (papel_mudou, ja_e_implementador). Repassar o motivo
+// ajuda muito mais que um "algo deu errado" generico. Erro de policy nao
+// vaza detalhe: vira permissao (recusaDaEquipe).
 function mensagemDeErro(
   error: { code?: string; message?: string } | null,
   fallback: string,
 ): string {
-  if (!error) {
-    return fallback;
-  }
-  if (error.code === "42501") {
-    return "Seu perfil não altera o acesso da equipe.";
-  }
-  const mensagem = error.message ?? "";
-  if (RECUSAS_DO_BANCO.some((trecho) => mensagem.includes(trecho))) {
-    return mensagem;
-  }
-  return fallback;
+  return recusaDaEquipe(error) ?? fallback;
 }
 
 async function auditar(
@@ -108,6 +115,54 @@ async function auditar(
     entity,
     entity_id: entityId,
   });
+}
+
+/**
+ * A pessoa tem a marca de Implementador nesta clinica? So se pergunta de
+ * quem tem o vinculo admin (a marca so existe nele). Nulo: a leitura falhou
+ * (quem precisa da resposta para decidir recusa e pede para tentar de novo).
+ */
+async function alvoEImplementador(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  userId: string,
+  role: Role,
+): Promise<boolean | null> {
+  if (role !== "admin") {
+    return false;
+  }
+  const marcas = await lerMarcasDaClinica(supabase, clinicId);
+  return marcas.ok ? marcas.ids.has(userId) : null;
+}
+
+const MARCA_NAO_CONFERIDA =
+  "Não foi possível conferir o papel desta pessoa. Tente de novo.";
+
+/**
+ * Quem nao e administrador pleno nao tira nem devolve o acesso de
+ * administrador ou de Implementador (P18-2). A marca so muda a frase: sem
+ * conseguir le-la, vale a de administrador (o gatilho do banco recusa do
+ * mesmo jeito). Administrador pleno: nulo.
+ */
+async function recusaDiante(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: { clinicId: string; pleno: boolean },
+  alvoId: string,
+  alvo: Alvo,
+): Promise<string | null> {
+  if (guard.pleno) {
+    return null;
+  }
+  const implementador = await alvoEImplementador(
+    supabase,
+    guard.clinicId,
+    alvoId,
+    alvo.role,
+  );
+  return barrarMexidaEmAdmin(
+    false,
+    papelNaTela(alvo.role, implementador === true),
+  );
 }
 
 // O cadastro de profissional que o usuario com papel Profissional vai ser:
@@ -153,20 +208,10 @@ async function carregarAlvo(
   return (data as Alvo | null) ?? null;
 }
 
-// Guarda de aplicacao rodada ANTES do banco. Os gatilhos recusam do mesmo
-// jeito, mas aqui a recusa sai antes da escrita e com o nome da acao certa.
-function barrarMexidaEmAdmin(
-  quemChama: Role,
-  papelDoAlvo: Role,
-): string | null {
-  if (quemChama === "admin") {
-    return null;
-  }
-  if (papelDoAlvo === "admin") {
-    return "Somente um administrador altera o acesso de outro administrador.";
-  }
-  return null;
-}
+// Guarda de aplicacao rodada ANTES do banco (barrarMexidaEmAdmin e
+// recusaDePapelDeAdmin, em components/configuracoes/papel-na-equipe.ts). Os
+// gatilhos recusam do mesmo jeito, mas aqui a recusa sai antes da escrita e
+// com o nome da acao certa.
 
 export async function aprovarMembroAction(
   userId: string,
@@ -195,16 +240,22 @@ export async function aprovarMembroAction(
   ) {
     return { ok: false, error: "Dados inválidos." };
   }
-  if (guard.role !== "admin" && parsedPapel.data === "admin") {
-    return {
-      ok: false,
-      error: "Somente um administrador cria outro administrador.",
-    };
+  const recusaDoPapel = recusaDePapelDeAdmin(
+    guard.pleno,
+    parsedPapel.data,
+    "liberar",
+  );
+  if (recusaDoPapel) {
+    return { ok: false, error: recusaDoPapel };
   }
 
   const supabase = await createClient();
+  if (parsedPapel.data === "implementador") {
+    return liberarComoImplementador(supabase, guard, parsedUser.data);
+  }
+  const papelEscolhido: Role = parsedPapel.data;
   const vinculo =
-    parsedPapel.data === "profissional"
+    papelEscolhido === "profissional"
       ? (parsedProfissional.data ?? null)
       : null;
   if (vinculo) {
@@ -222,7 +273,7 @@ export async function aprovarMembroAction(
     .from("clinic_member")
     .update({
       status: "ativo",
-      role: parsedPapel.data,
+      role: papelEscolhido,
       ...(vinculo ? { professional_id: vinculo } : {}),
     })
     .eq("clinic_id", guard.clinicId)
@@ -255,6 +306,59 @@ export async function aprovarMembroAction(
       parsedUser.data,
     );
   }
+  revalidatePath("/configuracoes");
+  return { ok: true };
+}
+
+type GuardaDaEquipe = {
+  context: { userId: string };
+  clinicId: string;
+  pleno: boolean;
+};
+
+/**
+ * Libera o pedido de entrada como Implementador: o vinculo pendente vira
+ * admin ativo e ganha a marca, na mesma transacao (RPC; o papel lido no
+ * pedido confere que ninguem mexeu antes). So o administrador pleno chega
+ * aqui (a action confere; a RPC confere de novo).
+ */
+async function liberarComoImplementador(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: GuardaDaEquipe,
+  userId: string,
+): Promise<TeamActionResult> {
+  const alvo = await carregarAlvo(supabase, guard.clinicId, userId);
+  if (!alvo || alvo.status !== "pendente") {
+    return { ok: false, error: "Este pedido já foi tratado." };
+  }
+  const { error } = await supabase.rpc("entrar_como_implementador", {
+    p_clinic_id: guard.clinicId,
+    p_user_id: userId,
+    p_situacao_lida: "pendente",
+    p_papel_lido: alvo.role,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error: (error.message ?? "").includes("papel_mudou")
+        ? "Este pedido já foi tratado."
+        : mensagemDeErro(error, "Não foi possível liberar o acesso."),
+    };
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "liberou_acesso",
+    userId,
+  );
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "marcou_implementador",
+    userId,
+  );
   revalidatePath("/configuracoes");
   return { ok: true };
 }
@@ -400,18 +504,36 @@ export async function mudarPapelAction(
   if (!alvo) {
     return { ok: false, error: "Esta pessoa não faz parte da equipe." };
   }
-  const barrado = barrarMexidaEmAdmin(guard.role, alvo.role);
+  // A marca so importa no vinculo admin (nulo: a leitura falhou).
+  const implementador = await alvoEImplementador(
+    supabase,
+    guard.clinicId,
+    alvoId,
+    alvo.role,
+  );
+  const papelAtual = papelNaTela(alvo.role, implementador === true);
+  const barrado = barrarMexidaEmAdmin(guard.pleno, papelAtual);
   if (barrado) {
     return { ok: false, error: barrado };
   }
-  if (guard.role !== "admin" && papel === "admin") {
-    return {
-      ok: false,
-      error: "Somente um administrador cria outro administrador.",
-    };
+  const recusaDoPapel = recusaDePapelDeAdmin(guard.pleno, papel, "trocar");
+  if (recusaDoPapel) {
+    return { ok: false, error: recusaDoPapel };
   }
-  if (alvo.role === papel) {
+  // So o administrador pleno chega aqui diante de um admin. Sem conferir a
+  // marca, nao da para saber se a troca e "tirar a marca" ou "trocar o
+  // papel": recusa e pede para tentar de novo.
+  if (implementador === null) {
+    return { ok: false, error: MARCA_NAO_CONFERIDA };
+  }
+  if (papelAtual === papel) {
     return { ok: true };
+  }
+  if (papel === "implementador") {
+    return fazerImplementador(supabase, guard, alvoId, alvo);
+  }
+  if (implementador) {
+    return tirarImplementador(supabase, guard, alvoId, papel);
   }
 
   // Update condicional pelo papel lido: se alguem mudou antes numa outra aba,
@@ -447,6 +569,102 @@ export async function mudarPapelAction(
   return { ok: true };
 }
 
+/**
+ * Faz de quem ja esta na equipe o Implementador: o papel vira admin (se
+ * ainda nao era) e a marca entra, na mesma transacao (RPC, com o papel lido:
+ * aba desatualizada recebe papel_mudou). Quem esta sem acesso volta antes
+ * pelo Reativar.
+ */
+async function fazerImplementador(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: GuardaDaEquipe,
+  alvoId: string,
+  alvo: Alvo,
+): Promise<TeamActionResult> {
+  if (alvo.status !== "ativo") {
+    return {
+      ok: false,
+      error:
+        alvo.status === "pendente"
+          ? "Libere o pedido de entrada no quadro de pedidos."
+          : "Esta pessoa está sem acesso. Use Reativar antes de fazer dela implementador.",
+    };
+  }
+  const { error } = await supabase.rpc("entrar_como_implementador", {
+    p_clinic_id: guard.clinicId,
+    p_user_id: alvoId,
+    p_situacao_lida: alvo.status,
+    p_papel_lido: alvo.role,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error: mensagemDeErro(error, "Não foi possível mudar o papel."),
+    };
+  }
+  if (alvo.role !== "admin") {
+    await auditar(
+      supabase,
+      guard.clinicId,
+      guard.context.userId,
+      "mudou_papel",
+      alvoId,
+    );
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "marcou_implementador",
+    alvoId,
+  );
+  revalidatePath("/configuracoes");
+  return { ok: true };
+}
+
+/**
+ * Tira a marca de Implementador: para Administrador, so a marca sai (vira
+ * administrador pleno); para outro papel, o papel troca e a marca sai pelo
+ * gatilho do banco (RPC; papel_mudou se a marca ja tinha saido).
+ */
+async function tirarImplementador(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: GuardaDaEquipe,
+  alvoId: string,
+  papel: PapelNaTela,
+): Promise<TeamActionResult> {
+  const papelNovo = papelDoBanco(papel);
+  const { error } = await supabase.rpc("deixar_de_ser_implementador", {
+    p_clinic_id: guard.clinicId,
+    p_user_id: alvoId,
+    p_papel_novo: papelNovo,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error: mensagemDeErro(error, "Não foi possível mudar o papel."),
+    };
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "tirou_implementador",
+    alvoId,
+  );
+  if (papelNovo !== "admin") {
+    await auditar(
+      supabase,
+      guard.clinicId,
+      guard.context.userId,
+      "mudou_papel",
+      alvoId,
+    );
+  }
+  revalidatePath("/configuracoes");
+  return { ok: true };
+}
+
 export async function desativarMembroAction(
   input: unknown,
 ): Promise<TeamActionResult> {
@@ -468,7 +686,7 @@ export async function desativarMembroAction(
   if (!alvo) {
     return { ok: false, error: "Esta pessoa não faz parte da equipe." };
   }
-  const barrado = barrarMexidaEmAdmin(guard.role, alvo.role);
+  const barrado = await recusaDiante(supabase, guard, alvoId, alvo);
   if (barrado) {
     return { ok: false, error: barrado };
   }
@@ -522,7 +740,7 @@ export async function reativarMembroAction(
   if (!alvo) {
     return { ok: false, error: "Esta pessoa não faz parte da equipe." };
   }
-  const barrado = barrarMexidaEmAdmin(guard.role, alvo.role);
+  const barrado = await recusaDiante(supabase, guard, alvoId, alvo);
   if (barrado) {
     return { ok: false, error: barrado };
   }
@@ -722,6 +940,9 @@ const TONS_DE_ETAPA = [
 // app sabe desenhar e o que a action aceita, sem espelho para dessincronizar.
 const NOMES_DE_ICONES = Object.keys(ICONES_DE_ETAPA) as [string, ...string[]];
 
+const TERMO_CURTO_DEMAIS =
+  "Cada termo precisa de pelo menos 2 caracteres, sem contar acentos, marcas de emoji e caracteres invisíveis.";
+
 const conversaoDaEtapaSchema = z
   .object({
     meta_event_name: z.string().trim().min(1).max(100).nullable(),
@@ -747,8 +968,23 @@ const etapaDaJornadaSchema = z.object({
   tom: z.enum(TONS_DE_ETAPA),
   icone: z.enum(NOMES_DE_ICONES),
   // Termos que movem o lead para esta etapa sozinhos (fase 4). Mesmos limites
-  // das palavras-chave de campanha, que sao o molde.
-  termos_chave: z.array(z.string().trim().min(2).max(40)).max(20),
+  // das palavras-chave de campanha, que sao o molde. O minimo de 2 vale
+  // tambem DEPOIS de normalizar (revisao da onda 5; etapaPorTermoChave
+  // ignora termo mais curto): a normalizacao tira marcas e invisiveis, e o
+  // emoji de tecla (o 1 com U+FE0F e U+20E3) viraria "1". O refine (e nao um
+  // min) faz a mensagem chegar na tela: so issue custom vira texto.
+  termos_chave: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(2)
+        .max(40)
+        .refine((termo) => normalizarTexto(termo).length >= 2, {
+          message: TERMO_CURTO_DEMAIS,
+        }),
+    )
+    .max(20),
   // Quem escreve o termo (02/10/2026): o check termos_de_quem_valido do
   // banco aceita exatamente estes tres.
   termos_de_quem: z.enum(TERMOS_DE_QUEM),

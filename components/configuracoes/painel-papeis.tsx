@@ -17,12 +17,13 @@ import {
 } from "@/components/ui/table";
 import { ACCESS_LEVEL_STATUS } from "@/lib/design/status";
 import {
+  DESCRICAO_DO_PAPEL,
   MODULE_KEYS,
   MODULE_LABELS,
+  PAPEIS_NA_TELA,
+  papelDoBanco,
   PERMISSION_MATRIX,
-  ROLE_DESCRIPTIONS,
-  ROLE_LABELS,
-  ROLES,
+  ROTULO_DO_PAPEL,
 } from "@/lib/domain/permissions";
 
 // Referencia de consulta de quem escolhe o papel de um colega: uma frase por
@@ -31,6 +32,11 @@ import {
 // acesso e sempre StatusChip (icone, texto de ACCESS_LABELS e cor, de
 // ACCESS_LEVEL_STATUS), e a tabela rola sozinha no celular com a coluna das
 // telas presa a esquerda. E a UNICA table da aba de equipe (e2e).
+//
+// Implementador (onda 5, item 18): coluna propria, logo depois do
+// Administrador, com as celulas do administrador (no banco ele e um
+// administrador com a marca; a matriz nao muda). O que ele nao faz (mexer
+// em administrador, exportar os leads) esta na frase do papel.
 
 export function PainelPapeis() {
   return (
@@ -43,16 +49,16 @@ export function PainelPapeis() {
       </CardHeader>
       <CardContent>
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {ROLES.map((papel) => (
+          {PAPEIS_NA_TELA.map((papel) => (
             <li
               key={papel}
               className="grid gap-1 rounded-xl bg-surface-4 p-3.5"
             >
               <p className="text-[13.5px] font-bold text-text-strong">
-                {ROLE_LABELS[papel]}
+                {ROTULO_DO_PAPEL[papel]}
               </p>
               <p className="text-[12.5px] text-text-secondary">
-                {ROLE_DESCRIPTIONS[papel]}
+                {DESCRICAO_DO_PAPEL[papel]}
               </p>
             </li>
           ))}
@@ -63,9 +69,9 @@ export function PainelPapeis() {
         <TableHeader>
           <TableRow>
             <TableHead className="left-0 z-[2] min-w-44">Tela</TableHead>
-            {ROLES.map((papel) => (
+            {PAPEIS_NA_TELA.map((papel) => (
               <TableHead key={papel} className="min-w-36">
-                {ROLE_LABELS[papel]}
+                {ROTULO_DO_PAPEL[papel]}
               </TableHead>
             ))}
           </TableRow>
@@ -76,8 +82,8 @@ export function PainelPapeis() {
               <TableCell className="sticky left-0 z-[1] bg-card font-semibold text-text-strong">
                 {MODULE_LABELS[modulo]}
               </TableCell>
-              {ROLES.map((papel) => {
-                const acesso = PERMISSION_MATRIX[modulo][papel];
+              {PAPEIS_NA_TELA.map((papel) => {
+                const acesso = PERMISSION_MATRIX[modulo][papelDoBanco(papel)];
                 return (
                   <TableCell key={papel}>
                     <StatusChip

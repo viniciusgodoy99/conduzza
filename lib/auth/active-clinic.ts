@@ -6,6 +6,7 @@ import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import type { Labels } from "@/lib/branding/labels";
 import type { Role } from "@/lib/domain/permissions";
+import { lerMinhasMarcas } from "@/lib/queries/implementadores";
 
 // Contexto de sessao e clinica ativa da area logada.
 // O cookie e SO conveniencia de selecao: toda leitura e validada contra
@@ -20,6 +21,14 @@ export type Membership = {
   /** fuso IANA da clinica; toda logica de agenda converte por ele */
   timezone: string;
   role: Role;
+  /**
+   * Administrador com a marca de Implementador nesta clinica (onda 5, item
+   * 18): role continua 'admin' (ele ve e faz tudo como o administrador) e a
+   * marca so muda o rotulo e as travas de equipe. Lida numa consulta
+   * propria e tolerante: se a leitura falhar, fica false (o rotulo cai em
+   * "Administrador") e a sessao segue.
+   */
+  implementador: boolean;
   /**
    * pendente = entrou por codigo e aguarda aprovacao; nao le dado de paciente.
    * suspensa = vinculo ativo numa clinica com a conta suspensa pela equipe
@@ -61,6 +70,13 @@ export type SessionContext = {
    * porque o layout raiz tambem chama esta funcao e nao ha global-error.
    */
   vinculoIndisponivel: boolean;
+  /**
+   * A leitura da marca de Implementador FALHOU (nao a tabela ausente, que
+   * quer dizer que ninguem tem marca). A sessao segue com implementador
+   * false em todo vinculo; quem precisa da marca para RECUSAR algo que o
+   * banco nao trava (a exportacao dos leads, P18-6) recusa na duvida.
+   */
+  marcaDeImplementadorIndisponivel: boolean;
 };
 
 type BrandingEmbed = {
@@ -95,11 +111,15 @@ export const getSessionContext = cache(
       return null;
     }
 
-    // As duas so dependem de user.id: em serie eram duas idas ao Postgres
-    // remoto pagas por TODA navegacao, dentro do caminho mais quente do app.
+    // As tres so dependem de user.id: em serie eram idas ao Postgres remoto
+    // pagas por TODA navegacao, dentro do caminho mais quente do app. A marca
+    // de Implementador (onda 5) vem numa consulta propria e tolerante, NUNCA
+    // por embed na leitura dos vinculos: tabela ausente ou erro nao derrubam
+    // a sessao de ninguem.
     const [
       { data: memberRows, error: erroVinculos },
       { data: productAdminRow, error: erroDonoDoProduto },
+      marcas,
     ] = await Promise.all([
       supabase
         .from("clinic_member")
@@ -112,7 +132,9 @@ export const getSessionContext = cache(
         .select("user_id")
         .eq("user_id", user.id)
         .maybeSingle(),
+      lerMinhasMarcas(supabase, user.id),
     ]);
+    const clinicasMarcadas = marcas.ok ? marcas.ids : new Set<string>();
 
     // Quem esta PENDENTE nao le a tabela clinic (a policy exige vinculo ativo,
     // para o codigo de acesso nao vazar antes da aprovacao), entao o embed vem
@@ -194,6 +216,8 @@ export const getSessionContext = cache(
               slug: "",
               timezone: "America/Fortaleza",
               role: row.role,
+              implementador:
+                row.role === "admin" && clinicasMarcadas.has(row.clinic_id),
               status:
                 row.status === "pendente"
                   ? ("pendente" as const)
@@ -214,6 +238,9 @@ export const getSessionContext = cache(
           slug: clinic.slug,
           timezone: clinic.timezone ?? "America/Fortaleza",
           role: row.role,
+          // A marca so vale com o vinculo admin (papelNaTela repete a regra).
+          implementador:
+            row.role === "admin" && clinicasMarcadas.has(clinic.id),
           status: row.status ?? "ativo",
           productName: branding?.product_name ?? "Conduzza Clínicas",
           primaryColor: branding?.primary_color ?? "#B2E54F",
@@ -265,6 +292,7 @@ export const getSessionContext = cache(
         erroDonoDoProduto !== null ||
         erroNomesPendentes ||
         erroNomesSuspensas,
+      marcaDeImplementadorIndisponivel: !marcas.ok,
     };
   },
 );

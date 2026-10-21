@@ -11,7 +11,8 @@ import CarregandoConfiguracoes from "@/app/(app)/configuracoes/loading";
 // de abas mora num componente de cliente (configuracoes-client.tsx, sem
 // export), entao o teste conta as tuplas [chave, rotulo] do ABAS no fonte.
 // Desde 20/10/2026 "Automações de fluxo" mora na tela Automacoes (decisao
-// do dono, onda 4): a fileira e o esqueleto ficam com 8.
+// do dono, onda 4), e a onda 5 trouxe "Origem dos leads" logo depois de
+// "Anúncios do Google" (P17-1 do dono): a fileira e o esqueleto ficam com 9.
 
 function abasDaTela(): string[] {
   const fonte = readFileSync(
@@ -45,7 +46,7 @@ describe("esqueleto de Configurações", () => {
   it("Automações de fluxo saiu da fileira (mora em Automações)", () => {
     const abas = abasDaTela();
     expect(abas).not.toContain("fluxo");
-    expect(abas).toHaveLength(8);
+    expect(abas).toHaveLength(9);
     // A jornada agora e seguida direto pelas etiquetas.
     expect(abas.indexOf("etiquetas")).toBe(abas.indexOf("jornada") + 1);
   });
@@ -53,5 +54,12 @@ describe("esqueleto de Configurações", () => {
   it("Anúncios do Google vem logo depois de Anúncios da Meta", () => {
     const abas = abasDaTela();
     expect(abas.indexOf("google")).toBe(abas.indexOf("meta") + 1);
+  });
+
+  it("Origem dos leads vem logo depois de Anúncios do Google (P17-1)", () => {
+    const abas = abasDaTela();
+    expect(abas).toContain("origem");
+    expect(abas.indexOf("origem")).toBe(abas.indexOf("google") + 1);
+    expect(barrasDoEsqueleto()).toBe(9);
   });
 });

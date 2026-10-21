@@ -13,8 +13,11 @@ import { login } from "./helpers";
 // Recepcao nem chega nesta tela (o layout redireciona): o aceite desse
 // redirect mora em auth-permissions.spec.ts e nao se repete aqui.
 
+// O Implementador (onda 5, item 18) tem coluna propria na tabela dos papeis,
+// logo depois do Administrador, com as celulas do administrador.
 const PAPEIS = [
   "Administrador",
+  "Implementador",
   "Gestor",
   "Recepção",
   "Profissional",
@@ -102,9 +105,13 @@ test("a aba Agente de IA não existe fora das clínicas da fase controlada", asy
   await expect(
     page.getByRole("tab", { name: /^Equipe e permissões/ }),
   ).toHaveAttribute("aria-selected", "true");
-  // contraprova: a fileira de abas esta la, terminando no Google
+  // contraprova: a fileira de abas esta la, com o Google e terminando na
+  // Origem dos leads (onda 5), a ultima aba fixa
   await expect(
     page.getByRole("tab", { name: "Anúncios do Google", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("tab", { name: /^Origem dos leads/ }),
   ).toHaveCount(1);
   await expect(
     page.getByRole("tab", { name: "Agente de IA", exact: true }),
@@ -390,7 +397,7 @@ test("a própria linha fica visível e desabilitada, com dica", async ({
   await expect(page.getByText("Você não altera o próprio papel")).toBeVisible();
 });
 
-test("o painel de papéis mostra os 9 módulos e os 5 papéis em texto", async ({
+test("o painel de papéis mostra os 9 módulos e os 6 papéis em texto", async ({
   page,
 }) => {
   apenasDesktop();
@@ -413,13 +420,14 @@ test("o painel de papéis mostra os 9 módulos e os 5 papéis em texto", async (
   }
 
   // O nivel de acesso e TEXTO, nunca so cor: a linha de Configuracoes tem
-  // "Vê e edita" para administrador e gestor e "Sem acesso" para os outros 3.
+  // "Vê e edita" para administrador, implementador e gestor e "Sem acesso"
+  // para os outros 3.
   const linhaConfiguracoes = tabela
     .getByRole("row")
     .filter({ hasText: "Configurações" });
   await expect(
     linhaConfiguracoes.getByRole("cell", { name: "Vê e edita", exact: true }),
-  ).toHaveCount(2);
+  ).toHaveCount(3);
   await expect(
     linhaConfiguracoes.getByRole("cell", { name: "Sem acesso", exact: true }),
   ).toHaveCount(3);

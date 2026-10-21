@@ -273,7 +273,7 @@ export function BlocoDeOrigem({
         <p className="text-[12.5px] text-text-secondary">
           Origem ainda não identificada. Ela é capturada sozinha quando o
           contato chega por anúncio de clique para WhatsApp, link com código,
-          mensagem padrão do anúncio ou palavra-chave.
+          mensagem pronta do link ou palavra-chave.
         </p>
       ) : null}
     </Secao>

@@ -199,7 +199,8 @@ export function termoValePara(
  *   na atribuicao de campanha; empate fica com a etapa mais cedo na jornada.
  *
  * Normalizacao identica a da atribuicao: minusculas, sem acento, espacos
- * colapsados, substring simples.
+ * colapsados, substring simples. Termo com menos de 2 caracteres depois de
+ * normalizar nao casa nada.
  */
 export function etapaPorTermoChave<T extends EtapaParaTermo>(
   corpo: string | null,
@@ -232,7 +233,12 @@ export function etapaPorTermoChave<T extends EtapaParaTermo>(
     for (const termo of etapa.termos_chave) {
       const termoNormalizado = normalizarTexto(termo);
       if (
-        termoNormalizado !== "" &&
+        // O minimo de 2 do Zod da action (termos_chave) vale tambem DEPOIS
+        // de normalizar (revisao da onda 5): a normalizacao tira marcas e
+        // invisiveis, e o emoji de tecla (o 1 com U+FE0F e U+20E3) viraria
+        // "1", que casaria toda mensagem com o algarismo. Termo assim nao
+        // casa nada.
+        termoNormalizado.length >= 2 &&
         termoNormalizado.length > maiorComprimento &&
         corpoNormalizado.includes(termoNormalizado)
       ) {

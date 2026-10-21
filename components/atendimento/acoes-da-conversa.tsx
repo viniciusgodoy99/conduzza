@@ -35,11 +35,20 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { canEdit, ROLE_LABELS, type Role } from "@/lib/domain/permissions";
+import {
+  canEdit,
+  papelNaTela,
+  ROTULO_DO_PAPEL,
+  type Role,
+} from "@/lib/domain/permissions";
 import {
   conversationKeys,
   type ConversationListItem,
 } from "@/lib/queries/conversations";
+import {
+  lerMarcasDaClinica,
+  marcadosOuNinguem,
+} from "@/lib/queries/implementadores";
 import { devolverKeys } from "@/lib/realtime/use-inbox-channel";
 import { createClient } from "@/lib/supabase/client";
 
@@ -75,7 +84,7 @@ const PAPEIS_QUE_RECEBEM: readonly Role[] = [
   "profissional",
 ];
 
-type Membro = { user_id: string; role: Role };
+type Membro = { user_id: string; role: Role; implementador: boolean };
 
 type Acao = "assumir" | "resolver" | "reabrir" | "transferir" | "devolver";
 
@@ -142,20 +151,31 @@ export function AcoesDaConversa({
 
   // A equipe que pode receber a conversa, lida com a sessao (a policy de
   // clinic_member deixa o membro ativo ver o time). So quando o menu abre:
-  // a maioria das conversas nunca e passada adiante.
+  // a maioria das conversas nunca e passada adiante. A marca de
+  // Implementador (onda 5) vem junto, numa leitura tolerante: falhando, o
+  // rotulo cai em "Administrador" e a lista aparece do mesmo jeito.
   const membrosQuery = useQuery({
     queryKey: ["membros-que-atendem", clinicId],
     queryFn: async (): Promise<Membro[]> => {
-      const { data, error } = await supabase
-        .from("clinic_member")
-        .select("user_id, role")
-        .eq("clinic_id", clinicId)
-        .eq("status", "ativo")
-        .in("role", [...PAPEIS_QUE_RECEBEM]);
+      const [{ data, error }, marcas] = await Promise.all([
+        supabase
+          .from("clinic_member")
+          .select("user_id, role")
+          .eq("clinic_id", clinicId)
+          .eq("status", "ativo")
+          .in("role", [...PAPEIS_QUE_RECEBEM]),
+        lerMarcasDaClinica(supabase, clinicId),
+      ]);
       if (error) {
         throw new Error(error.message);
       }
-      return (data ?? []) as Membro[];
+      const marcados = marcadosOuNinguem(marcas);
+      return ((data ?? []) as { user_id: string; role: Role }[]).map(
+        (membro) => ({
+          ...membro,
+          implementador: marcados.has(membro.user_id),
+        }),
+      );
     },
     enabled: menuAberto && podeTransferir,
     staleTime: 60_000,
@@ -326,7 +346,11 @@ export function AcoesDaConversa({
               <span className="grid min-w-0 flex-1">
                 <span className="truncate">{membro.nome}</span>
                 <span className="text-[11.5px] font-normal text-text-secondary">
-                  {ROLE_LABELS[membro.role]}
+                  {
+                    ROTULO_DO_PAPEL[
+                      papelNaTela(membro.role, membro.implementador)
+                    ]
+                  }
                 </span>
               </span>
             </DropdownMenuItem>

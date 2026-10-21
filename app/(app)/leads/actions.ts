@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
-import { gerarToken, SOURCE_CHANNELS } from "@/lib/domain/attribution";
+import { SOURCE_CHANNELS } from "@/lib/domain/attribution";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   chaveDeTelefone,
@@ -22,8 +22,9 @@ import { fetchLeadDetalhe, type LeadDetalhe } from "@/lib/queries/leads";
 import { createClient } from "@/lib/supabase/server";
 
 // Server Actions das Telas de Leads (4.2 e 4.3). Escrita de lead e de
-// consentimento segue a matriz do brief (admin, gestor e recepcao); campanha
-// de atribuicao e so de administrador e gestor, como a policy do banco. Toda
+// consentimento segue a matriz do brief (admin, gestor e recepcao). As
+// regras de origem (campaign_link) moram na aba "Origem dos leads" de
+// Configuracoes desde a onda 5 (regras-de-origem-actions.ts). Toda
 // entrada passa por Zod; cliente de SESSAO (RLS aplica); mutacao relevante
 // vai para audit_log. As regras duras (perdido exige motivo, origem imutavel,
 // reconsentimento exige evidencia) existem TAMBEM no banco: aqui a validacao
@@ -33,7 +34,6 @@ export type LeadsActionResult = {
   ok: boolean;
   error?: string;
   id?: string;
-  token?: string;
   /**
    * Deu certo, mas com uma parte que ficou para depois (o Novo lead criado
    * sem a autorizacao declarada): a tela avisa em vez de comemorar.
@@ -133,22 +133,6 @@ async function requireLeadsWriter() {
     clinicId: context.active.clinicId,
     timezone: context.active.timezone,
   };
-}
-
-// Campanha de atribuicao e configuracao de gestao, nao operacao de recepcao:
-// guard proprio, espelhando a policy "gestao gerencia campanhas" do banco.
-async function requireCampaignManager() {
-  const context = await getSessionContext();
-  if (!context?.active) {
-    return { error: "Sessão expirada. Entre de novo." as const };
-  }
-  const role = context.active.role;
-  if (role !== "admin" && role !== "gestor") {
-    return {
-      error: "Somente administradores e gestores gerenciam campanhas" as const,
-    };
-  }
-  return { context, clinicId: context.active.clinicId };
 }
 
 /**
@@ -786,152 +770,6 @@ export async function revogarConsentimentoAction(
   );
   revalidatePath("/leads");
   revalidatePath("/pacientes");
-  return { ok: true };
-}
-
-// ---------------------------------------------------------------------------
-// Campanhas de atribuicao (campaign_link)
-// ---------------------------------------------------------------------------
-
-const campanhaSchema = z.object({
-  id: idSchema.optional(),
-  name: nomeSchema,
-  channel: canalSchema,
-  origin: z.string().trim().min(1).max(120).optional(),
-  medium: z.string().trim().min(1).max(120).optional(),
-  campaign: z.string().trim().min(1).max(120).optional(),
-  default_message: z.string().trim().min(2).max(1000).optional(),
-  keywords: z.array(z.string().trim().min(2).max(40)).max(20),
-  com_token: z.boolean(),
-});
-
-export async function salvarCampanhaAction(
-  input: unknown,
-): Promise<LeadsActionResult> {
-  const guard = await requireCampaignManager();
-  if ("error" in guard) {
-    return { ok: false, error: guard.error };
-  }
-  const parsed = campanhaSchema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: "Confira os campos da campanha." };
-  }
-  const supabase = await createClient();
-  const campos = {
-    name: parsed.data.name,
-    channel: parsed.data.channel,
-    origin: parsed.data.origin ?? null,
-    medium: parsed.data.medium ?? null,
-    campaign: parsed.data.campaign ?? null,
-    default_message: parsed.data.default_message ?? null,
-    keywords: parsed.data.keywords,
-  };
-
-  if (parsed.data.id) {
-    // Edicao nao mexe no token: link ja impresso em anuncio nao pode mudar.
-    const { data } = await supabase
-      .from("campaign_link")
-      .update(campos)
-      .eq("clinic_id", guard.clinicId)
-      .eq("id", parsed.data.id)
-      .select("id");
-    if (!data || data.length === 0) {
-      return { ok: false, error: "Não foi possível salvar a campanha." };
-    }
-    await auditar(
-      supabase,
-      guard.clinicId,
-      guard.context.userId,
-      "editou",
-      "campaign_link",
-      parsed.data.id,
-    );
-    revalidatePath("/leads");
-    return { ok: true, id: parsed.data.id };
-  }
-
-  if (!parsed.data.com_token) {
-    const { data, error } = await supabase
-      .from("campaign_link")
-      .insert({ clinic_id: guard.clinicId, token: null, ...campos })
-      .select("id")
-      .single();
-    if (error || !data) {
-      return { ok: false, error: "Não foi possível criar a campanha." };
-    }
-    await auditar(
-      supabase,
-      guard.clinicId,
-      guard.context.userId,
-      "criou",
-      "campaign_link",
-      data.id,
-    );
-    revalidatePath("/leads");
-    return { ok: true, id: data.id };
-  }
-
-  // Token unico por clinica (indice em upper(token)): colisao 23505 re-tenta
-  // com token novo ate 3 vezes.
-  for (let tentativa = 0; tentativa < 3; tentativa++) {
-    const token = gerarToken().toUpperCase();
-    const { data, error } = await supabase
-      .from("campaign_link")
-      .insert({ clinic_id: guard.clinicId, token, ...campos })
-      .select("id")
-      .single();
-    if (!error && data) {
-      await auditar(
-        supabase,
-        guard.clinicId,
-        guard.context.userId,
-        "criou",
-        "campaign_link",
-        data.id,
-      );
-      revalidatePath("/leads");
-      return { ok: true, id: data.id, token };
-    }
-    if (error && error.code !== "23505") {
-      return { ok: false, error: "Não foi possível criar a campanha." };
-    }
-  }
-  return {
-    ok: false,
-    error: "Não foi possível gerar um código único. Tente de novo.",
-  };
-}
-
-export async function desativarCampanhaAction(
-  input: unknown,
-): Promise<LeadsActionResult> {
-  const guard = await requireCampaignManager();
-  if ("error" in guard) {
-    return { ok: false, error: guard.error };
-  }
-  const parsed = z.object({ id: idSchema }).safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: "Campanha inválida." };
-  }
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("campaign_link")
-    .update({ active: false })
-    .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.id)
-    .select("id");
-  if (!data || data.length === 0) {
-    return { ok: false, error: "Não foi possível desativar a campanha." };
-  }
-  await auditar(
-    supabase,
-    guard.clinicId,
-    guard.context.userId,
-    "desativou_campanha",
-    "campaign_link",
-    parsed.data.id,
-  );
-  revalidatePath("/leads");
   return { ok: true };
 }
 

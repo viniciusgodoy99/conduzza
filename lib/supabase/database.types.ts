@@ -2462,6 +2462,35 @@ export type Database = {
         }
         Relationships: []
       }
+      membro_implementador: {
+        Row: {
+          clinic_id: string
+          marcado_em: string
+          marcado_por: string | null
+          user_id: string
+        }
+        Insert: {
+          clinic_id: string
+          marcado_em?: string
+          marcado_por?: string | null
+          user_id: string
+        }
+        Update: {
+          clinic_id?: string
+          marcado_em?: string
+          marcado_por?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "membro_implementador_clinic_id_user_id_fkey"
+            columns: ["clinic_id", "user_id"]
+            isOneToOne: true
+            referencedRelation: "clinic_member"
+            referencedColumns: ["clinic_id", "user_id"]
+          },
+        ]
+      }
       mensagem_agendada: {
         Row: {
           atividade_id: string | null
@@ -4699,6 +4728,7 @@ export type Database = {
         Args: { p_linhas: Json; p_reserva: string }
         Returns: undefined
       }
+      admins_plenos_ativos: { Args: { p_clinic_id: string }; Returns: number }
       adotar_eco_do_envio: {
         Args: {
           p_clinic_id: string
@@ -5073,6 +5103,10 @@ export type Database = {
         Args: { p_account_id: string; p_clinic_id: string }
         Returns: string
       }
+      deixar_de_ser_implementador: {
+        Args: { p_clinic_id: string; p_papel_novo: string; p_user_id: string }
+        Returns: undefined
+      }
       devolver_conversa_da_consulta_recusada: {
         Args: { p_appointment_id: string; p_clinic_id: string }
         Returns: boolean
@@ -5135,6 +5169,15 @@ export type Database = {
           email: string
           user_id: string
         }[]
+      }
+      entrar_como_implementador: {
+        Args: {
+          p_clinic_id: string
+          p_papel_lido?: string
+          p_situacao_lida?: string
+          p_user_id: string
+        }
+        Returns: string
       }
       espera_pelo_celular_sem_linha: {
         Args: {
@@ -5745,6 +5788,8 @@ export type Database = {
       user_active_clinic_ids: { Args: never; Returns: string[] }
       user_can_write: { Args: { p_clinic_id: string }; Returns: boolean }
       user_clinic_ids: { Args: never; Returns: string[] }
+      user_e_admin_pleno: { Args: { p_clinic_id: string }; Returns: boolean }
+      user_e_implementador: { Args: { p_clinic_id: string }; Returns: boolean }
       user_has_role: {
         Args: { p_clinic_id: string; p_roles: string[] }
         Returns: boolean

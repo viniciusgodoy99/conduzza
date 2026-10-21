@@ -304,7 +304,9 @@ describe("registrar_clique_do_site", () => {
         {
           clinic_id: clinicaA,
           name: "Link ativo",
-          token: ativo.toLowerCase(),
+          // Em maiusculas: desde a onda 5 o CHECK campaign_link_codigo
+          // (migration 20261025100000) recusa codigo minusculo no banco.
+          token: ativo,
           channel: "redes_sociais",
           active: true,
         },

@@ -26,6 +26,11 @@ import {
   MetaAdsTab,
   type ContaMeta,
 } from "@/components/configuracoes/meta-ads-tab";
+import {
+  OrigemDosLeadsTab,
+  TEXTOS_DA_ORIGEM,
+  type DadosDasOrigens,
+} from "@/components/configuracoes/origem-dos-leads-tab";
 import { PainelPapeis } from "@/components/configuracoes/painel-papeis";
 import { EmptyState } from "@/components/shared/empty-state";
 import {
@@ -80,6 +85,11 @@ const ABAS = [
   // Anuncios do Google (F1, 04/10/2026): o rastreio do site e, em breve, a
   // conexao com o Google Ads. Logo depois da Meta.
   ["google", "Anúncios do Google"],
+  // Origem dos leads (onda 5, item 17; P17-1 do dono em 21/10/2026): as
+  // regras que reconhecem o lead do link da bio, do perfil no Google, do QR
+  // code ou de um parceiro. Logo depois dos anuncios: com ela, a fileira
+  // fixa tem 9 abas (e o esqueleto de loading.tsx, 9 barras).
+  ["origem", "Origem dos leads"],
 ] as const;
 
 // Agente de IA (Fase 3, decisao do dono em 05/10/2026): a liberacao do
@@ -127,6 +137,7 @@ export function ConfiguracoesClient({
   meuUserId,
   podeGerenciar,
   ehAdmin,
+  ehAdminPleno = ehAdmin,
   dica,
   clinica,
   codigo,
@@ -135,6 +146,7 @@ export function ConfiguracoesClient({
   jornada,
   etiquetas,
   mensagens,
+  origens = null,
   meta,
   google,
   agenteDeIa,
@@ -151,6 +163,13 @@ export function ConfiguracoesClient({
   meuUserId: string;
   podeGerenciar: boolean;
   ehAdmin: boolean;
+  /**
+   * Administrador sem a marca de Implementador (onda 5, item 18): so ele
+   * convida, libera ou faz de alguem administrador ou Implementador e mexe
+   * no acesso de quem e (P18-2 e P18-4). As outras abas seguem com ehAdmin:
+   * o Implementador faz o resto como o administrador. Ausente, vale ehAdmin.
+   */
+  ehAdminPleno?: boolean;
   dica: string;
   /** nulo: a leitura da clinica falhou */
   clinica: { nome: string; timezone: string } | null;
@@ -176,6 +195,12 @@ export function ConfiguracoesClient({
     lista: RespostaRapida[];
     nomeDaClinica: string;
   } | null;
+  /**
+   * A aba Origem dos leads: as origens (todas), os numeros que servem ao
+   * link e as frases do botao do site. Nulo (ou ausente): a leitura das
+   * origens falhou, e a aba mostra o erro com "Tentar de novo".
+   */
+  origens?: DadosDasOrigens | null;
   /**
    * A aba Anuncios da Meta: a conta, se existe cada token (nunca o valor) e
    * a situacao da leitura do investimento. Nulo: alguma leitura falhou.
@@ -254,6 +279,9 @@ export function ConfiguracoesClient({
     if (aba === "mensagens" && mensagens) {
       return <Contagem valor={mensagens.lista.length} rotulo="mensagens" />;
     }
+    if (aba === "origem" && origens) {
+      return <Contagem valor={origens.regras.length} rotulo="origens" />;
+    }
     return null;
   };
 
@@ -276,7 +304,7 @@ export function ConfiguracoesClient({
             <PendentesList
               pendentes={equipe.pendentes}
               podeGerenciar={podeGerenciar}
-              ehAdmin={ehAdmin}
+              ehAdminPleno={ehAdminPleno}
               dica={dica}
               profissionais={equipe.profissionais}
             />
@@ -294,7 +322,7 @@ export function ConfiguracoesClient({
                 membros={equipe.membros}
                 meuUserId={meuUserId}
                 podeGerenciar={podeGerenciar}
-                ehAdmin={ehAdmin}
+                ehAdminPleno={ehAdminPleno}
                 dica={dica}
                 profissionais={equipe.profissionais}
                 clinicId={equipe.clinicId}
@@ -317,7 +345,7 @@ export function ConfiguracoesClient({
             <InviteForm
               canInvite={podeGerenciar}
               hint={dica}
-              ehAdmin={ehAdmin}
+              ehAdminPleno={ehAdminPleno}
             />
           </CardContent>
         </Card>
@@ -437,6 +465,17 @@ export function ConfiguracoesClient({
         ) : (
           <ErroDaAba titulo="Não foi possível carregar a conta de anúncios" />
         )}
+      </TabsContent>
+
+      <TabsContent value="origem" className="grid gap-4">
+        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
+          {TEXTOS_DA_ORIGEM.descricaoDaAba}
+        </p>
+        <OrigemDosLeadsTab
+          dados={origens}
+          podeGerenciar={podeGerenciar}
+          dica={dica}
+        />
       </TabsContent>
 
       <TabsContent value="google" className="grid gap-4">

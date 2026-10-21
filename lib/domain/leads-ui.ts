@@ -365,12 +365,18 @@ export function textoDaContagemDeLeads(
 // Google). O Google nunca grava source_ad_id, entao ehLeadDeAnuncio (que e
 // o lead de anuncio DA META, o divisor do custo por lead dela) nao muda.
 
-/** Metodos do check contact_source_method_valido, em linguagem de recepcao. */
+/**
+ * Metodos do check contact_source_method_valido, em linguagem de recepcao.
+ * "Mensagem pronta do link" (P17-2 do dono, 21/10/2026, onda 5): era
+ * "Mensagem padrão do anúncio", que se confundia com as Mensagens padrão do
+ * Atendimento, e o lead da bio nem vem de anuncio. A chave do banco segue
+ * mensagem_padrao.
+ */
 export const METODO_LABELS: Readonly<Record<string, string>> = {
   anuncio_ctwa: "Anúncio de clique para WhatsApp",
   clique_site: "Clique no site",
   link_token: "Link com código",
-  mensagem_padrao: "Mensagem padrão do anúncio",
+  mensagem_padrao: "Mensagem pronta do link",
   palavra_chave: "Palavra-chave na primeira mensagem",
   manual: "Cadastro manual",
   importacao: "Importação de planilha",
