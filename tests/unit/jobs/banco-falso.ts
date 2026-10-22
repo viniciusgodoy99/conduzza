@@ -26,9 +26,12 @@ export type ChamadaDeRpc = { nome: string; args: Record<string, unknown> };
 const METODOS_ENCADEADOS = [
   "select",
   "eq",
+  "neq",
   "is",
+  "not",
   "in",
   "gt",
+  "gte",
   "order",
   "limit",
   "update",

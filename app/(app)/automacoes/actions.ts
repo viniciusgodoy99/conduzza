@@ -16,6 +16,15 @@ import { recusaDeFollowup, type PapelDeEtapa } from "@/lib/domain/jornada";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 import { canEdit } from "@/lib/domain/permissions";
 import {
+  mesmoFiltro,
+  nomeSugeridoDaRegua,
+  novaReguaDeFollowupSchema,
+  ordemDasReguasSchema,
+  paraQuemDaReguaSchema,
+  PRIORIDADE_MAXIMA,
+  RECUSAS_DA_REGUA,
+} from "@/lib/domain/reguas-de-followup";
+import {
   CORPO_DO_MENU_APOS_MIDIA,
   MENU_CONFIRMACAO,
 } from "@/lib/domain/textos-padrao";
@@ -357,6 +366,116 @@ const reguaVinculadaSchema = z.discriminatedUnion("base", [
   }),
 ]);
 
+/**
+ * Copia os passos de uma regua para a regua recem-criada, ANEXO INCLUSO
+ * (achado da revisao de 19/09: copiar so o texto transformava passo
+ * so-anexo em passo vazio que nunca envia, em silencio). Serve a regua
+ * vinculada (copia da geral do tipo) e, desde a onda 4, a regua de
+ * follow-up com etiqueta (copia da geral da etapa).
+ *
+ * O insert em lote e ATOMICO no PostgREST: falhou, nao entrou NENHUM passo,
+ * a regua recem-criada e desfeita e a clinica ouve a verdade. A copia dos
+ * ARQUIVOS vem depois das linhas: se um arquivo falhar, o passo copiado
+ * fica sem anexo, e um passo que ficaria sem conteudo nenhum e removido com
+ * aviso, nunca deixado como casca.
+ */
+async function copiarPassosDaRegua(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  deId: string,
+  paraId: string,
+): Promise<{ ok: true; aviso?: string } | { ok: false; error: string }> {
+  const { data: passos } = await supabase
+    .from("cadence_step")
+    .select(
+      "offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
+    )
+    .eq("clinic_id", clinicId)
+    .eq("cadence_id", deId)
+    .order("offset_minutes");
+  let avisoDaCopia: string | undefined;
+  if (passos && passos.length > 0) {
+    const { data: copiados, error: erroCopia } = await supabase
+      .from("cadence_step")
+      .insert(
+        passos.map((passo) => ({
+          clinic_id: clinicId,
+          cadence_id: paraId,
+          offset_minutes: passo.offset_minutes as number,
+          fixed_body: passo.fixed_body as string | null,
+        })),
+      )
+      .select("id, offset_minutes");
+    if (erroCopia || !copiados) {
+      await supabase
+        .from("cadence")
+        .delete()
+        .eq("clinic_id", clinicId)
+        .eq("id", paraId);
+      return {
+        ok: false,
+        error:
+          "Não foi possível copiar as mensagens da régua geral. Tente de novo.",
+      };
+    }
+    const adminStorage = createAdminClient();
+    for (const original of passos) {
+      if (!original.media_path) {
+        continue;
+      }
+      const copiado = copiados.find(
+        (c) => c.offset_minutes === original.offset_minutes,
+      );
+      if (!copiado) {
+        continue;
+      }
+      const destino = `${clinicId}/${copiado.id as string}`;
+      const { data: bytesDoAnexo } = await adminStorage.storage
+        .from("midia-de-regua")
+        .download(original.media_path as string);
+      const copiouArquivo = bytesDoAnexo
+        ? !(
+            await adminStorage.storage
+              .from("midia-de-regua")
+              .upload(destino, Buffer.from(await bytesDoAnexo.arrayBuffer()), {
+                contentType:
+                  (original.media_mimetype as string | null) ??
+                  "application/octet-stream",
+                upsert: true,
+                cacheControl: "0",
+              })
+          ).error
+        : false;
+      if (copiouArquivo) {
+        await supabase
+          .from("cadence_step")
+          .update({
+            media_path: destino,
+            media_type: original.media_type,
+            media_mimetype: original.media_mimetype,
+            media_filename: original.media_filename,
+          })
+          .eq("clinic_id", clinicId)
+          .eq("id", copiado.id as string);
+      } else if (!original.fixed_body) {
+        // Sem o arquivo e sem texto o passo seria uma casca que nunca envia:
+        // melhor nao existir, e a clinica fica sabendo.
+        await supabase
+          .from("cadence_step")
+          .delete()
+          .eq("clinic_id", clinicId)
+          .eq("id", copiado.id as string);
+        avisoDaCopia =
+          "Um dos passos da régua geral é só anexo e o arquivo não pôde ser copiado: ele ficou de fora. Anexe de novo na régua nova.";
+      } else {
+        avisoDaCopia =
+          "O texto veio, mas um anexo não pôde ser copiado. Anexe de novo na régua nova.";
+      }
+    }
+  }
+  return avisoDaCopia ? { ok: true, aviso: avisoDaCopia } : { ok: true };
+}
+
 /** Nome da regua geral de cada tipo, para as mensagens de erro. */
 const GERAL_DO_TIPO: Record<"confirmacao" | "pos_falta", string> = {
   confirmacao: "a régua geral de confirmação",
@@ -504,101 +623,16 @@ export async function criarReguaDeExcecaoAction(
     };
   }
 
-  // Copia os passos da geral, ANEXO INCLUSO (achado da revisao de 19/09:
-  // copiar so o texto transformava passo so-anexo em passo vazio que nunca
-  // envia, em silencio). O insert em lote e ATOMICO no PostgREST: falhou,
-  // nao entrou NENHUM passo, a regua recem-criada e desfeita e a clinica
-  // ouve a verdade. A copia dos ARQUIVOS vem depois das linhas: se um
-  // arquivo falhar, o passo copiado fica sem anexo, e um passo que ficaria
-  // sem conteudo nenhum e removido com aviso, nunca deixado como casca.
-  const { data: passos } = await supabase
-    .from("cadence_step")
-    .select(
-      "offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
-    )
-    .eq("clinic_id", guard.clinicId)
-    .eq("cadence_id", geral.id as string)
-    .order("offset_minutes");
-  let avisoDaCopia: string | undefined;
-  if (passos && passos.length > 0) {
-    const { data: copiados, error: erroCopia } = await supabase
-      .from("cadence_step")
-      .insert(
-        passos.map((passo) => ({
-          clinic_id: guard.clinicId,
-          cadence_id: nova.id as string,
-          offset_minutes: passo.offset_minutes as number,
-          fixed_body: passo.fixed_body as string | null,
-        })),
-      )
-      .select("id, offset_minutes");
-    if (erroCopia || !copiados) {
-      await supabase
-        .from("cadence")
-        .delete()
-        .eq("clinic_id", guard.clinicId)
-        .eq("id", nova.id as string);
-      return {
-        ok: false,
-        error:
-          "Não foi possível copiar as mensagens da régua geral. Tente de novo.",
-      };
-    }
-    const adminStorage = createAdminClient();
-    for (const original of passos) {
-      if (!original.media_path) {
-        continue;
-      }
-      const copiado = copiados.find(
-        (c) => c.offset_minutes === original.offset_minutes,
-      );
-      if (!copiado) {
-        continue;
-      }
-      const destino = `${guard.clinicId}/${copiado.id as string}`;
-      const { data: bytesDoAnexo } = await adminStorage.storage
-        .from("midia-de-regua")
-        .download(original.media_path as string);
-      const copiouArquivo = bytesDoAnexo
-        ? !(
-            await adminStorage.storage
-              .from("midia-de-regua")
-              .upload(destino, Buffer.from(await bytesDoAnexo.arrayBuffer()), {
-                contentType:
-                  (original.media_mimetype as string | null) ??
-                  "application/octet-stream",
-                upsert: true,
-                cacheControl: "0",
-              })
-          ).error
-        : false;
-      if (copiouArquivo) {
-        await supabase
-          .from("cadence_step")
-          .update({
-            media_path: destino,
-            media_type: original.media_type,
-            media_mimetype: original.media_mimetype,
-            media_filename: original.media_filename,
-          })
-          .eq("clinic_id", guard.clinicId)
-          .eq("id", copiado.id as string);
-      } else if (!original.fixed_body) {
-        // Sem o arquivo e sem texto o passo seria uma casca que nunca envia:
-        // melhor nao existir, e a clinica fica sabendo.
-        await supabase
-          .from("cadence_step")
-          .delete()
-          .eq("clinic_id", guard.clinicId)
-          .eq("id", copiado.id as string);
-        avisoDaCopia =
-          "Um dos passos da régua geral é só anexo e o arquivo não pôde ser copiado: ele ficou de fora. Anexe de novo na régua nova.";
-      } else {
-        avisoDaCopia =
-          "O texto veio, mas um anexo não pôde ser copiado. Anexe de novo na régua nova.";
-      }
-    }
+  const copia = await copiarPassosDaRegua(
+    supabase,
+    guard.clinicId,
+    geral.id as string,
+    nova.id as string,
+  );
+  if (!copia.ok) {
+    return { ok: false, error: copia.error };
   }
+  const avisoDaCopia = copia.aviso;
   await supabase.from("audit_log").insert({
     clinic_id: guard.clinicId,
     user_id: guard.context.userId,
@@ -725,7 +759,7 @@ export async function excluirReguaAction(
   const { data: regua } = await supabase
     .from("cadence")
     .select(
-      "id, kind, procedure_id, professional_id, specialty, for_no_show_history",
+      "id, kind, procedure_id, professional_id, specialty, for_no_show_history, trigger_stage",
     )
     .eq("clinic_id", guard.clinicId)
     .eq("id", parsed.data.cadence_id)
@@ -762,9 +796,31 @@ export async function excluirReguaAction(
   // vencido de consulta que recebeu toque do mesmo tipo nos ultimos 30
   // minutos). Sem essa prova, a regua que volta a valer para a consulta
   // mandaria de novo a mesma mensagem. Desligar agora ja tira a regua do
-  // envio; excluir depois da janela nao repete nada. O follow-up nao entra:
-  // ele nao disputa consulta com outra regua.
-  if (regua.kind === "confirmacao" || regua.kind === "pos_falta") {
+  // envio; excluir depois da janela nao repete nada.
+  //
+  // Desde a onda 4 (reguas por etiqueta) o follow-up tambem entra, quando a
+  // etapa tem OUTRA regua: os leads desta passam para a outra, e a trava do
+  // planejador contra toque repetido (nenhum passo vencido de outra regua
+  // da mesma etapa nos 30 minutos depois de um toque) le as runs enviadas
+  // desta, que o cascade apagaria. Sozinha na etapa, ninguem herda os leads
+  // e a exclusao segue livre, como antes.
+  let disputaComOutra =
+    regua.kind === "confirmacao" || regua.kind === "pos_falta";
+  if (regua.kind === "followup") {
+    const { data: outras, error: erroDasOutras } = await supabase
+      .from("cadence")
+      .select("id")
+      .eq("clinic_id", guard.clinicId)
+      .eq("kind", "followup")
+      .eq("trigger_stage", (regua.trigger_stage as string | null) ?? "")
+      .neq("id", parsed.data.cadence_id)
+      .limit(1);
+    if (erroDasOutras) {
+      return { ok: false, error: "Não foi possível excluir a régua." };
+    }
+    disputaComOutra = (outras ?? []).length > 0;
+  }
+  if (disputaComOutra) {
     const recente = await enviouHaPouco(
       supabase,
       guard.clinicId,
@@ -1014,7 +1070,24 @@ export async function excluirPassoAction(
 }
 
 // ---------------------------------------------------------------------------
-// Follow-up de leads (fase 3 da 4.8): regua por etapa da jornada.
+// Follow-up de leads (fase 3 da 4.8): regua por etapa da jornada. Desde a
+// onda 4 (item 16, migration 20261024100000) a etapa pode ter varias: as com
+// etiqueta (na ordem que a clinica escolhe) e no maximo uma geral, sem
+// etiqueta. Para cada lead vale uma por vez (regua_de_followup_do_contato).
+
+/**
+ * Codigos de coluna ou funcao que o banco nao tem (o cache do PostgREST
+ * atrasado, ou o banco sem a migration 20261024100000, que sobe antes deste
+ * codigo). Falha fechada: a action recusa com a frase de tentar de novo e
+ * nada se grava por outro caminho.
+ */
+const ESQUEMA_ANTIGO = new Set(["42703", "PGRST204", "PGRST202", "42883"]);
+
+/** A primeira mensagem do Zod, ou o padrao. */
+function primeiraRecusa(erro: z.ZodError, padrao: string): string {
+  const custom = erro.issues.find((issue) => issue.code === "custom");
+  return custom?.message ?? padrao;
+}
 
 export async function criarReguaDeFollowupAction(
   input: unknown,
@@ -1023,19 +1096,22 @@ export async function criarReguaDeFollowupAction(
   if ("error" in guard) {
     return { ok: false, error: guard.error };
   }
-  const parsed = z
-    .object({ trigger_stage: z.string().regex(/^[a-z0-9_]{1,40}$/) })
-    .safeParse(input);
+  const parsed = novaReguaDeFollowupSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: "Escolha a etapa da jornada." };
+    return {
+      ok: false,
+      error: primeiraRecusa(parsed.error, "Escolha a etapa da jornada."),
+    };
   }
+  const entrada = parsed.data;
+  const comEtiqueta = entrada.etiquetas.length > 0;
 
   const supabase = await createClient();
   const { data: etapa } = await supabase
     .from("funnel_stage_def")
     .select("chave, nome, papel")
     .eq("clinic_id", guard.clinicId)
-    .eq("chave", parsed.data.trigger_stage)
+    .eq("chave", entrada.trigger_stage)
     .maybeSingle();
   if (!etapa) {
     return { ok: false, error: "Esta etapa não existe na jornada." };
@@ -1050,7 +1126,7 @@ export async function criarReguaDeFollowupAction(
   // frase vem de lib/domain/jornada.ts; o banco recusa o mesmo por gatilho
   // (abaixo).
   const etapaDaRegua = {
-    chave: parsed.data.trigger_stage,
+    chave: entrada.trigger_stage,
     nome: etapa.nome as string,
     papel: (etapa.papel ?? null) as PapelDeEtapa | null,
   };
@@ -1058,33 +1134,129 @@ export async function criarReguaDeFollowupAction(
   if (recusa) {
     return { ok: false, error: recusa };
   }
+  const nome =
+    entrada.nome ||
+    nomeSugeridoDaRegua(
+      etapaDaRegua.nome,
+      entrada.etiquetas,
+      entrada.etiquetas_modo,
+    );
 
-  // Nasce DESLIGADA, sem janela e sem mensagens: o texto por etapa e decisao
-  // da clinica, nada se inventa. Regua sem passos nao materializa nada.
+  // A GERAL (sem etiqueta) nasce como sempre: DESLIGADA, sem janela e sem
+  // mensagens (o texto por etapa e decisao da clinica, nada se inventa;
+  // regua sem passos nao materializa nada), e sem as colunas do filtro (o
+  // padrao do banco ja e o da geral).
+  //
+  // A COM ETIQUETA (onda 4) nasce desligada, no FIM da ordem da etapa, com a
+  // janela e as mensagens copiadas da geral da etapa, quando ha (como a
+  // regua vinculada: conteudo da clinica). Quem tem as etiquetas e ja
+  // recebia a geral passa a receber esta quando ela for ligada, a partir do
+  // proximo toque (D3).
+  let copiarDe: string | null = null;
+  let valores: Record<string, unknown> = {
+    clinic_id: guard.clinicId,
+    kind: "followup",
+    name: nome,
+    trigger_stage: entrada.trigger_stage,
+    active: false,
+  };
+  if (comEtiqueta) {
+    const { data: daEtapa, error: erroDaEtapa } = await supabase
+      .from("cadence")
+      .select(
+        "id, etiquetas, etiquetas_modo, prioridade, send_window_start, send_window_end, send_weekdays",
+      )
+      .eq("clinic_id", guard.clinicId)
+      .eq("kind", "followup")
+      .eq("trigger_stage", entrada.trigger_stage);
+    if (erroDaEtapa) {
+      return {
+        ok: false,
+        error: ESQUEMA_ANTIGO.has(erroDaEtapa.code ?? "")
+          ? RECUSAS_DA_REGUA.bancoSemEtiquetas
+          : "Não foi possível criar a régua.",
+      };
+    }
+    const reguasDaEtapa = (daEtapa ?? []) as {
+      id: string;
+      etiquetas: string[] | null;
+      etiquetas_modo: string | null;
+      prioridade: number | null;
+      send_window_start: string | null;
+      send_window_end: string | null;
+      send_weekdays: number[] | null;
+    }[];
+    const repetida = reguasDaEtapa.some((regua) =>
+      mesmoFiltro(
+        {
+          etiquetas: regua.etiquetas ?? [],
+          etiquetas_modo:
+            regua.etiquetas_modo === "todas" ? "todas" : "qualquer",
+        },
+        entrada,
+      ),
+    );
+    if (repetida) {
+      return { ok: false, error: RECUSAS_DA_REGUA.mesmoFiltro };
+    }
+    const geral = reguasDaEtapa.find(
+      (regua) => (regua.etiquetas ?? []).length === 0,
+    );
+    const ultima = Math.max(
+      -1,
+      ...reguasDaEtapa
+        .filter((regua) => (regua.etiquetas ?? []).length > 0)
+        .map((regua) => regua.prioridade ?? 0),
+    );
+    copiarDe = geral?.id ?? null;
+    valores = {
+      ...valores,
+      etiquetas: entrada.etiquetas,
+      etiquetas_modo: entrada.etiquetas_modo,
+      prioridade: Math.min(PRIORIDADE_MAXIMA, ultima + 1),
+      send_window_start: geral?.send_window_start ?? null,
+      send_window_end: geral?.send_window_end ?? null,
+      send_weekdays: geral?.send_weekdays ?? null,
+    };
+  }
+
   const { data: nova, error } = await supabase
     .from("cadence")
-    .insert({
-      clinic_id: guard.clinicId,
-      kind: "followup",
-      name: `Follow-up de ${etapa.nome as string}`,
-      trigger_stage: parsed.data.trigger_stage,
-      active: false,
-    })
+    .insert(valores)
     .select("id")
     .single();
   if (error || !nova) {
-    // 23505: a etapa ja tem regua (indice unico). etapa_sem_followup: o
-    // gatilho recusar_followup_em_aguardando (migration 20261023100000)
-    // recusou o que a regra de cima deixou passar (defesa: hoje o papel
-    // aguardando so existe na chave aguardando_resposta, que a regra ja
-    // recusa); a frase e a mesma da recusa de cima.
+    // 23505: o indice da etapa (a geral repetida, ou o mesmo filtro).
+    // etapa_sem_followup: o gatilho recusar_followup_em_aguardando
+    // (migration 20261023100000) recusou o que a regra de cima deixou
+    // passar (defesa: hoje o papel aguardando so existe na chave
+    // aguardando_resposta, que a regra ja recusa); a frase e a mesma da
+    // recusa de cima. Coluna desconhecida: o banco antes da migration.
     const mensagem =
       error?.code === "23505"
-        ? "Esta etapa já tem régua de follow-up."
+        ? comEtiqueta
+          ? RECUSAS_DA_REGUA.mesmoFiltro
+          : RECUSAS_DA_REGUA.geralJaExiste
         : error?.hint === "etapa_sem_followup"
           ? recusaDeFollowup({ ...etapaDaRegua, papel: "aguardando" })
-          : null;
+          : comEtiqueta && ESQUEMA_ANTIGO.has(error?.code ?? "")
+            ? RECUSAS_DA_REGUA.bancoSemEtiquetas
+            : null;
     return { ok: false, error: mensagem ?? "Não foi possível criar a régua." };
+  }
+
+  let aviso: string | undefined;
+  if (copiarDe) {
+    const copia = await copiarPassosDaRegua(
+      supabase,
+      guard.clinicId,
+      copiarDe,
+      nova.id as string,
+    );
+    if (!copia.ok) {
+      return { ok: false, error: copia.error };
+    }
+    aviso = copia.aviso;
   }
 
   await supabase.from("audit_log").insert({
@@ -1093,6 +1265,165 @@ export async function criarReguaDeFollowupAction(
     action: "criou_regua_de_followup",
     entity: "cadence",
     entity_id: nova.id as string,
+  });
+  revalidatePath("/automacoes");
+  return aviso ? { ok: true, aviso } : { ok: true };
+}
+
+/**
+ * O "Para quem" de uma regua de follow-up que ja existe: o nome e, na com
+ * etiqueta, as etiquetas e o modo. A geral continua geral (sem etiqueta) e
+ * a com etiqueta continua com pelo menos uma: virar geral ou deixar de ser
+ * e excluir e criar de novo, que a tela explica. Trocar as etiquetas de uma
+ * regua ligada vale a partir do proximo toque de cada lead (D3).
+ */
+export async function editarParaQuemDaReguaAction(
+  input: unknown,
+): Promise<AutomacoesActionResult> {
+  const guard = await requireAutomacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = paraQuemDaReguaSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: primeiraRecusa(parsed.error, "Dados inválidos."),
+    };
+  }
+  const entrada = parsed.data;
+
+  const supabase = await createClient();
+  const { data: regua, error: erroDaLeitura } = await supabase
+    .from("cadence")
+    .select("id, trigger_stage, etiquetas")
+    .eq("clinic_id", guard.clinicId)
+    .eq("kind", "followup")
+    .eq("id", entrada.cadence_id)
+    .maybeSingle();
+  if (erroDaLeitura) {
+    return {
+      ok: false,
+      error: ESQUEMA_ANTIGO.has(erroDaLeitura.code ?? "")
+        ? RECUSAS_DA_REGUA.bancoSemEtiquetas
+        : "Não foi possível salvar a régua.",
+    };
+  }
+  if (!regua) {
+    return { ok: false, error: "Régua não encontrada." };
+  }
+  const geral = ((regua.etiquetas as string[] | null) ?? []).length === 0;
+  if (geral && entrada.etiquetas.length > 0) {
+    return { ok: false, error: RECUSAS_DA_REGUA.geralSemEtiqueta };
+  }
+  if (!geral && entrada.etiquetas.length === 0) {
+    return { ok: false, error: RECUSAS_DA_REGUA.semEtiquetaNaComEtiqueta };
+  }
+
+  let nome = entrada.nome;
+  if (!nome) {
+    const { data: etapa } = await supabase
+      .from("funnel_stage_def")
+      .select("nome")
+      .eq("clinic_id", guard.clinicId)
+      .eq("chave", regua.trigger_stage as string)
+      .maybeSingle();
+    nome = nomeSugeridoDaRegua(
+      (etapa?.nome as string | undefined) ?? (regua.trigger_stage as string),
+      entrada.etiquetas,
+      entrada.etiquetas_modo,
+    );
+  }
+
+  const { data: linhas, error } = await supabase
+    .from("cadence")
+    .update(
+      geral
+        ? { name: nome }
+        : {
+            name: nome,
+            etiquetas: entrada.etiquetas,
+            etiquetas_modo: entrada.etiquetas_modo,
+          },
+    )
+    .eq("clinic_id", guard.clinicId)
+    .eq("kind", "followup")
+    .eq("id", entrada.cadence_id)
+    .select("id");
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "23505"
+          ? RECUSAS_DA_REGUA.mesmoFiltro
+          : error.code === "42501"
+            ? "Somente administradores e gestores alteram as automações."
+            : "Não foi possível salvar a régua.",
+    };
+  }
+  if (!linhas || linhas.length === 0) {
+    return { ok: false, error: "Régua não encontrada." };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "editou_para_quem_da_regua",
+    entity: "cadence",
+    entity_id: entrada.cadence_id,
+  });
+  revalidatePath("/automacoes");
+  return { ok: true };
+}
+
+/**
+ * A ordem das reguas com etiqueta de uma etapa (D2: vale a de cima). A RPC
+ * ordenar_reguas_de_followup grava a posicao de cada uma, pela sessao (a RLS
+ * de cadence decide: administrador e gestor), e recusa com 22023 a lista
+ * que nao e exatamente a das reguas com etiqueta da etapa (alguem criou ou
+ * excluiu uma no meio).
+ */
+export async function ordenarReguasDeFollowupAction(
+  input: unknown,
+): Promise<AutomacoesActionResult> {
+  const guard = await requireAutomacoes();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = ordemDasReguasSchema.safeParse(input);
+  if (
+    !parsed.success ||
+    new Set(parsed.data.ids).size !== parsed.data.ids.length
+  ) {
+    return { ok: false, error: "Dados inválidos." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("ordenar_reguas_de_followup", {
+    p_clinic_id: guard.clinicId,
+    p_trigger_stage: parsed.data.trigger_stage,
+    p_ids: parsed.data.ids,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "22023"
+          ? RECUSAS_DA_REGUA.ordemMudou
+          : error.code === "42501"
+            ? "Somente administradores e gestores alteram as automações."
+            : ESQUEMA_ANTIGO.has(error.code ?? "")
+              ? RECUSAS_DA_REGUA.bancoSemEtiquetas
+              : "Não foi possível mudar a ordem das réguas.",
+    };
+  }
+
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "ordenou_reguas_de_followup",
+    entity: "cadence",
+    entity_id: null,
   });
   revalidatePath("/automacoes");
   return { ok: true };

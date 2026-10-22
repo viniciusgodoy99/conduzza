@@ -92,6 +92,7 @@ export function ControlesDaRegua({
   visivel,
   podeEditar,
   dicaSemPermissao,
+  dicaParaLigar = null,
   ehAdministrador,
   aoMudar,
 }: {
@@ -104,6 +105,13 @@ export function ControlesDaRegua({
   visivel: boolean;
   podeEditar: boolean;
   dicaSemPermissao: string;
+  /**
+   * Por que a regua DESLIGADA ainda nao pode ligar (alem da janela), com a
+   * dica no lugar do interruptor; ligada, o interruptor desliga como sempre.
+   * Hoje: a regua de follow-up com etiqueta e sem mensagem (onda 4; a action
+   * recusa do mesmo jeito).
+   */
+  dicaParaLigar?: string | null;
   /**
    * So o administrador registra a linha de base (policy "admin registra
    * linha de base"): para o gestor, o aviso diz a quem pedir.
@@ -191,7 +199,9 @@ export function ControlesDaRegua({
     ? dicaSemPermissao
     : !janelaSalva
       ? "Preencha e salve a hora de início, a hora de fim e os dias antes de ligar a régua"
-      : null;
+      : !regua.active && dicaParaLigar
+        ? dicaParaLigar
+        : null;
 
   const idInicio = `regua-inicio-${regua.id}`;
   const idFim = `regua-fim-${regua.id}`;

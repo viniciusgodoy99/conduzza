@@ -273,6 +273,7 @@ export function BarraAcoesMassa({
         chave: def.chave,
         nome: def.nome,
         regua: decisao.regua,
+        reguas: decisao.reguas,
       });
       return;
     }

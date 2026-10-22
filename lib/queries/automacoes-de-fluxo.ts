@@ -5,6 +5,7 @@ import {
   ACOES,
   automacaoDeFluxoLinhaSchema,
   previaDaAutomacaoSchema,
+  STATUS_DA_ACAO,
   STATUS_DE_EXECUCAO,
   type AutomacaoDeFluxo,
   type ExecucaoDeAutomacao,
@@ -13,12 +14,25 @@ import {
   type UsoDaAutomacao,
 } from "@/lib/domain/automacoes-de-fluxo";
 
-// Leituras das automacoes de fluxo (migration 20261002130000). A RLS recorta
-// por clinica: membro ativo le as regras e o historico; so admin e gestor
-// escrevem as regras (pelas Server Actions da aba de fluxo da tela
-// Automacoes, app/(app)/automacoes/fluxo-actions.ts), e o historico so o
-// motor escreve. A tela so chama estas leituras para administrador e gestor
-// (decisao do dono de 20/10/2026).
+// Leituras das automacoes de fluxo (migration 20261002130000; regra composta
+// desde a onda 4, migration 20261024110000). A RLS recorta por clinica:
+// membro ativo le as regras, as condicoes, as acoes e o historico; as regras
+// so admin e gestor gravam (pela RPC salvar_automacao_de_fluxo, chamada pelas
+// Server Actions da aba de fluxo da tela Automacoes,
+// app/(app)/automacoes/fluxo-actions.ts), e o historico so o motor escreve.
+// A tela so chama estas leituras para administrador e gestor (decisao do
+// dono de 20/10/2026).
+//
+// As colunas de acao de automacao_fluxo sao legado (a limpeza da onda 4 as
+// apaga): a regra le o "Se" de automacao_condicao e o "Faz" de
+// automacao_acao, embutidos na mesma ida.
+//
+// ORDEM DE PUBLICACAO (decidida pelo coordenador em 22/10/2026): as
+// migrations 20261024100000 e 20261024110000 sobem ANTES deste codigo, que
+// le as tabelas filhas e a coluna combinar delas. Sem elas a leitura e erro
+// como outro qualquer, e a aba mostra o proprio estado de erro (falha
+// fechada; correcao de 22/10/2026: antes caia nas colunas de antes, que nao
+// tem as condicoes e a ordem das acoes da regra composta).
 //
 // O historico traz o NOME do contato, que e dado de paciente: quem chama
 // fetchHistoricoDeAutomacoes grava a trilha de leitura (a action da aba faz
@@ -58,8 +72,9 @@ export const automacoesDeFluxoKeys = {
     ] as const,
 };
 
-const AUTOMACAO_SELECT =
-  "id, nome, ativa, gatilho, etapa, espera_minutos, acao, etapa_destino, motivo_perda, etiqueta, atividade_titulo, atividade_prazo_dias, nota_texto, vigente_desde, created_at, updated_at";
+/** A regra com as filhas: o "Se" (condicoes) e o "Faz" (acoes). */
+export const AUTOMACAO_SELECT =
+  "id, nome, ativa, gatilho, etapa, espera_minutos, combinar, vigente_desde, created_at, updated_at, condicoes:automacao_condicao(posicao, tipo, etiqueta), acoes:automacao_acao(posicao, acao, etapa_destino, motivo_perda, etiqueta, atividade_titulo, atividade_prazo_dias, nota_texto)";
 
 /** As regras da clinica, na ordem em que foram criadas. */
 export async function fetchAutomacoesDeFluxo(
@@ -112,6 +127,17 @@ export async function fetchUsoDasAutomacoes(
   return Object.fromEntries(resultados);
 }
 
+const execucaoDaAcaoSchema = z.object({
+  posicao: z.number().int(),
+  acao: z.enum(ACOES),
+  status: z.enum(STATUS_DA_ACAO),
+  motivo: z.string().nullable(),
+  para_etapa: z.string().nullable(),
+  etiqueta: z.string().nullable(),
+  etiqueta_nome: z.string().nullable(),
+  executada_em: z.string().nullable(),
+});
+
 const execucaoSchema = z.object({
   id: z.string(),
   automacao_id: z.string(),
@@ -126,30 +152,35 @@ const execucaoSchema = z.object({
   executada_em: z.string().nullable(),
   created_at: z.string(),
   contact: z.object({ name: z.string().nullable() }).nullable().optional(),
+  // O retrato por acao (onda 4); vazio nas execucoes de antes.
+  acoes: z.array(execucaoDaAcaoSchema).nullable().optional(),
 });
 
 /** Limite do historico na tela: as ultimas execucoes. */
 export const LIMITE_DO_HISTORICO = 50;
 
+/** As colunas do historico, com o retrato de cada acao embutido. */
+export const HISTORICO_SELECT =
+  "id, automacao_id, status, motivo, de_etapa, para_etapa, acao, etiqueta, etiqueta_nome, executada_em, created_at, contact:contact_id(name), acoes:automacao_execucao_acao(posicao, acao, status, motivo, para_etapa, etiqueta, etiqueta_nome, executada_em)";
+
 /**
- * As ultimas execucoes da clinica (ou de uma regra), mais novas primeiro. O
- * nome do contato e dado de paciente: grave a trilha de leitura ao chamar.
+ * As ultimas execucoes da clinica (ou de uma regra), mais novas primeiro, com
+ * o que cada acao fez ou nao fez. O nome do contato e dado de paciente:
+ * grave a trilha de leitura ao chamar.
  */
 export async function fetchHistoricoDeAutomacoes(
   supabase: SupabaseClient,
   clinicId: string,
   automacaoId: string | null,
 ): Promise<ExecucaoDeAutomacao[]> {
-  let consulta = supabase
+  let pedido = supabase
     .from("automacao_execucao")
-    .select(
-      "id, automacao_id, status, motivo, de_etapa, para_etapa, acao, etiqueta, etiqueta_nome, executada_em, created_at, contact:contact_id(name)",
-    )
+    .select(HISTORICO_SELECT)
     .eq("clinic_id", clinicId);
   if (automacaoId !== null) {
-    consulta = consulta.eq("automacao_id", automacaoId);
+    pedido = pedido.eq("automacao_id", automacaoId);
   }
-  const { data, error } = await consulta
+  const { data, error } = await pedido
     .order("created_at", { ascending: false })
     .limit(LIMITE_DO_HISTORICO);
   if (error) {
@@ -158,9 +189,10 @@ export async function fetchHistoricoDeAutomacoes(
   return z
     .array(execucaoSchema)
     .parse(data ?? [])
-    .map(({ contact, ...linha }) => ({
+    .map(({ contact, acoes, ...linha }) => ({
       ...linha,
       contato: contact?.name ?? null,
+      acoes: [...(acoes ?? [])].sort((a, b) => a.posicao - b.posicao),
     }));
 }
 

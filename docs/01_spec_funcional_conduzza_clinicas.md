@@ -470,6 +470,16 @@ Piso teórico de equilíbrio (SEM custo variável, portanto otimista):
 
    > **Aguardando resposta sem régua (onda 3, decisão D3 do dono, 21/10/2026; migration `20261023100000` não aplicada):** a etapa em que o lead espera a resposta da equipe não aceita régua de follow-up: uma mensagem automática da clínica para quem espera gente seria ruim para o paciente e, no canal não oficial, risco de denúncia. A tela não oferece a etapa (como já não oferecia Perdido), a action recusa e, depois da migration, o banco também recusa, venha de onde vier. Nenhuma clínica tinha régua ali em 21/10/2026.
 
+   > **Réguas por etiqueta (onda 4, item 16; pedido do dono em 20/10/2026, decisões D1 a D4 e D6 de 20 e 21/10/2026; construído em 22/10/2026; migration `20261024100000` NÃO aplicada e código NÃO publicado):** a etapa pode ter **mais de uma régua de follow-up**: as **com etiqueta** (por exemplo, uma para os leads com "Psiquiatria" e outra para "Odontologia") e no máximo uma **geral** (sem etiqueta), que vale para quem não tem as etiquetas das outras. As regras:
+   > - **Cada lead recebe uma régua só por vez.** Se ele tiver as etiquetas de mais de uma régua, vale a de cima, na ordem que a clínica escolhe ("Subir" e "Descer"); as com etiqueta vêm sempre antes da geral (D2). Quem não tiver nenhuma recebe a geral; se a etapa não tem geral ligada, fica sem régua, e a tela diz quantos leads estão assim.
+   > - **A etiqueta conta no lead (Leads) ou em qualquer conversa dele (Atendimento)**, pelo nome, sem diferença de maiúscula e acento (D1). Tirar a etiqueta do lead não tira da conversa: o filtro continua valendo enquanto alguma das duas tiver.
+   > - **Uma régua junta as etiquetas** como "qualquer uma" (o lead tem pelo menos uma) ou "todas" (tem todas), com até 10 etiquetas por régua (D6). Com uma etiqueta só, as duas formas são a mesma.
+   > - **A etiqueta mudou no meio da sequência:** o lead troca de régua no próximo toque, e o passo que já venceu da régua nova não sai se ele recebeu toque de outra régua da etapa nos últimos 30 minutos (D3). Pode receber, em horas diferentes, as primeiras mensagens das duas réguas.
+   > - **Régua com etiqueta desligada não conta:** os leads dela passam para a geral, se ela estiver ligada (D4).
+   > - **A régua com etiqueta nasce desligada**, no fim da ordem, com as mensagens e o horário copiados da régua geral da etapa, e só liga com pelo menos uma mensagem (ligada sem mensagem, os leads dela ficariam sem nada, nem a geral).
+   > - **Autorização, janela de envio, número por tipo, custo e as paradas** (respondeu, agendou, mudou de etapa) são os de sempre: nenhum caminho novo de envio, e o volume por lead não cresce.
+   > - **Uma etiqueta do catálogo da clínica que está no filtro de uma régua não se exclui nem se renomeia** em Configurações (mudar só maiúscula, acento ou espaço passa; a mensagem diz para trocar a etiqueta em Automações antes), porque o filtro deixaria de valer em silêncio.
+
 ---
 
 ### MÓDULO 8. CONFIRMAÇÃO DE CONSULTA
@@ -632,9 +642,9 @@ Não estava previsto e vai doer no mês 3 se ficar de fora. Com 9 a 15 tenants, 
 
 Pedido do dono em 02/10/2026. Fica em Configurações, na aba "Automações de fluxo", ao lado de "Jornada e conversões", porque toda regra parte de uma etapa da jornada. Administrador e gestor criam, editam, ligam e excluem; recepção, profissional e leitura não veem a aba (Configurações não aparece para eles).
 
-> **Desde 20/10/2026 (decisão do dono, onda 4, item 13; construído em 21/10/2026, sem migration):** a aba sai de Configurações e vai para a tela **Automações**, como mais uma aba ("Automações de fluxo", `?aba=fluxo`), com tudo o que tinha (lista, criar, editar, ligar e desligar, excluir, histórico). O link antigo de Configurações leva para lá. **Quem vê não mudou:** só administrador e gestor. A recepção continua vendo o resto de Automações como via, mas esta aba não aparece para ela, nem pelo endereço; profissional e leitura não entram em Automações (a tela leva ao Início).
+> **Desde 20/10/2026 (decisão do dono, onda 4, item 13; construído em 21/10/2026, sem migration; publicado em `6598ea9`):** a aba sai de Configurações e vai para a tela **Automações**, como mais uma aba ("Automações de fluxo", `?aba=fluxo`), com tudo o que tinha (lista, criar, editar, ligar e desligar, excluir, histórico). O link antigo de Configurações leva para lá. **Quem vê não mudou:** só administrador e gestor. A recepção continua vendo o resto de Automações como via, mas esta aba não aparece para ela, nem pelo endereço; profissional e leitura não entram em Automações (a tela leva ao Início).
 
-14.1. **Uma regra é: quando o lead está na etapa X e acontece o gatilho, a automação faz uma ação.** Regra em campos fixos, sem linguagem de programação.
+14.1. **Uma regra é: quando o lead está na etapa X e acontece o gatilho, a automação faz uma ação.** Regra em campos fixos, sem linguagem de programação. (Desde a onda 4, até 5 ações e condições de etiqueta: nota "Várias ações e condições", no fim deste módulo.)
 14.2. **Gatilhos:**
    - **Ficou um tempo na etapa:** de 1 hora a 90 dias, contados da entrada na etapa.
    - **Ficou um tempo sem responder na etapa:** de 1 hora a 90 dias, contados da entrada na etapa ou da última mensagem do lead, o que for mais recente (quem escreveu antes de entrar na etapa conta da entrada). Mensagem da clínica não zera o tempo.
@@ -658,6 +668,17 @@ Pedido do dono em 02/10/2026. Fica em Configurações, na aba "Automações de f
 14.7. **Trilha:** toda ação da automação vai para o `audit_log` como ação do sistema (sem usuário e sem conteúdo): moveu de etapa, etiquetou, criou atividade, deixou nota. Criar, editar, ligar, desligar e excluir uma regra também vão para a trilha, sem o texto.
 
 > **Entrada pela IA (onda 3, decisão D4 do dono, 21/10/2026; vale depois da migration `20261023110000`, não aplicada):** a passagem da IA para a equipe que leva o lead para Aguardando resposta é uma entrada na etapa como as outras, e as automações de Aguardando resposta disparam (nenhuma ação delas manda mensagem ao paciente). O exemplo da tela mudou para "quem entrou em Aguardando resposta ganha uma atividade de responder, ou quem ficou 3 dias sem responder em Em contato vai para Perdido", porque o antigo ("quem ficou 3 dias sem responder em Aguardando resposta vai para Perdido") passaria a perder justamente quem espera a clínica.
+
+> **Várias ações e condições (onda 4, itens 14 e 15; pedido do dono em 20/10/2026, decisões D1, D5, D6, D7 e D9 de 20 e 21/10/2026; construído em 22/10/2026; migration `20261024110000` NÃO aplicada e código NÃO publicado):** a regra passa a ser **Quando** (a etapa e o gatilho de sempre), **Se** (opcional) e **Faz**.
+> - **Faz: de 1 a 5 ações** (as quatro de 14.3), na ordem que a clínica escolhe, com **no máximo um "Mover para outra etapa", que roda sempre por último** (mover antes tiraria o lead da etapa, e as outras não rodariam). Exemplo do pedido: "24 h em Follow 1: cria a atividade Ligar E move para Follow 2" vira uma regra só (D7).
+> - **Se: até 5 condições de etiqueta,** "o lead tem a etiqueta X" e "o lead não tem a etiqueta X" (D5), juntadas por uma escolha só: "todas forem verdade" (E) ou "qualquer uma for verdade" (OU) (D6). A etiqueta conta no lead ou em qualquer conversa dele, pelo nome, sem diferença de maiúscula e acento (D1). Sem condição, a regra vale para todo lead do Quando, como antes.
+> - **As condições são conferidas uma vez, na hora do gatilho:** quem não bate fica de fora daquela entrada, e o histórico diz "o lead não batia com as condições na hora" (D9).
+> - **Cada ação faz o que fazia, com as mesmas travas de 14.4** (uma vez por entrada, não retroativa, o movimento humano vence, sem laço, cadeia e teto de movimentos). Uma regra com condição conta como possível laço (conservador). Se uma ação não pode ser feita (por exemplo, a conversa já tinha a etiqueta), as outras seguem; se uma ação não consegue a conversa naquele minuto, a regra termina na passagem seguinte, sem repetir o que já fez, e o mover espera as outras.
+> - **Clínica com a conta suspensa** (onda 1) não roda automação de fluxo, e nada roda atrasado na volta.
+> - **Histórico:** com várias ações, a execução diz "Fez N de M ações" e cada ação ganha uma linha ("Fez: ...", "Não fez: ... (o motivo)" ou "Não conseguiu: ..." com o código); com uma ação só, a frase de sempre.
+> - **A automação que já existe** (uma só em 20/10/2026, a da Salud Care) vira uma regra de uma ação, sem condição, e roda e conta o histórico exatamente como antes.
+> - **Uma etiqueta do catálogo que está numa condição não se exclui nem se renomeia** em Configurações (mudar só maiúscula, acento ou espaço passa), porque a condição deixaria de valer em silêncio. A etiqueta que uma ação coloca continua sem poder ser excluída, como antes.
+> - **Fora desta versão** (contrato da onda 4, 3.11): grupos de condições ("(A e B) ou C"), mais de uma etapa por regra, condições de origem, consulta ou responsável, e ações novas ("colocar etiqueta no lead", "tirar etiqueta").
 
 ---
 

@@ -186,6 +186,7 @@ export function useMudarEtapaDoLead({
       chave: etapa.chave,
       nome: etapa.nome,
       regua: decisao.regua,
+      reguas: decisao.reguas,
     });
   };
 

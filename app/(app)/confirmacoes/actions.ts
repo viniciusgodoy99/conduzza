@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { horaParaMinutos } from "@/lib/domain/horarios";
 import { canEdit } from "@/lib/domain/permissions";
+import { RECUSAS_DA_REGUA } from "@/lib/domain/reguas-de-followup";
 import { planejarCobrancaManual } from "@/lib/jobs/cobranca-manual";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -154,6 +155,43 @@ const alternarSchema = z.object({
   ativar: z.boolean(),
 });
 
+/**
+ * Regua de follow-up COM etiqueta so liga com pelo menos uma mensagem (onda
+ * 4, correcao de 22/10/2026): ligada, ela vale para os leads dela (a
+ * precedencia regua_de_followup_do_contato olha so as ligadas) e, sem
+ * mensagem, eles nao receberiam nada, nem a regua geral da etapa. A geral e
+ * as outras reguas seguem como sempre. Leitura que falha: recusa (nada
+ * muda), nunca liga sem conferir.
+ */
+async function recusaAoLigarSemMensagem(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  cadenceId: string,
+): Promise<string | null> {
+  const { data: regua, error } = await supabase
+    .from("cadence")
+    .select("kind, etiquetas")
+    .eq("clinic_id", clinicId)
+    .eq("id", cadenceId)
+    .maybeSingle();
+  if (error) {
+    return "Não foi possível mudar a régua.";
+  }
+  const etiquetas = (regua?.etiquetas as string[] | null | undefined) ?? [];
+  if (!regua || regua.kind !== "followup" || etiquetas.length === 0) {
+    return null;
+  }
+  const { count, error: erroDosPassos } = await supabase
+    .from("cadence_step")
+    .select("id", { count: "exact", head: true })
+    .eq("clinic_id", clinicId)
+    .eq("cadence_id", cadenceId);
+  if (erroDosPassos) {
+    return "Não foi possível mudar a régua.";
+  }
+  return (count ?? 0) === 0 ? RECUSAS_DA_REGUA.ligarSemMensagem : null;
+}
+
 export async function alternarReguaAction(
   input: unknown,
 ): Promise<ConfirmacoesActionResult> {
@@ -167,6 +205,16 @@ export async function alternarReguaAction(
   }
 
   const supabase = await createClient();
+  if (parsed.data.ativar) {
+    const recusa = await recusaAoLigarSemMensagem(
+      supabase,
+      guard.clinicId,
+      parsed.data.cadence_id,
+    );
+    if (recusa) {
+      return { ok: false, error: recusa };
+    }
+  }
   const { data, error } = await supabase
     .from("cadence")
     .update({ active: parsed.data.ativar })

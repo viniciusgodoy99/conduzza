@@ -143,6 +143,12 @@ function banco(cenario: Cenario) {
       confirmar_posse_job: () => ({ data: true, error: null }),
       consentimento_vigente: () => ({ data: true, error: null }),
       regua_da_consulta: () => cenario.vigente,
+      // No follow-up a regua da run continua sendo a do contato (as trocas
+      // da onda 4 estao em regua-followup-vigente.test.ts).
+      regua_de_followup_do_contato: () => ({
+        data: REGUA_DA_RUN,
+        error: null,
+      }),
       numero_do_job: () => ({
         data: { estado: "ok", whatsapp_account_id: NUMERO },
         error: null,
@@ -343,7 +349,7 @@ describe("pós falta: a mesma conferência", () => {
 });
 
 describe("follow-up não tem consulta nem vínculo", () => {
-  it("não pergunta pela régua vigente e o toque sai", async () => {
+  it("não pergunta pela régua vigente da consulta e o toque sai", async () => {
     const b = banco({
       kind: "followup",
       vigente: { data: OUTRA_REGUA, error: null },

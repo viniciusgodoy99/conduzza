@@ -14,13 +14,17 @@ vi.mock("@/app/(app)/automacoes/fluxo-actions", () => ({
 
 import { AbaFluxo } from "@/components/automacoes/fluxo/aba-fluxo";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { AutomacaoDeFluxo } from "@/lib/domain/automacoes-de-fluxo";
+import type {
+  AcaoDaAutomacao,
+  AutomacaoDeFluxo,
+} from "@/lib/domain/automacoes-de-fluxo";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 
 // Aba "Automações de fluxo" (desde 20/10/2026 na tela Automacoes; ate entao
 // em Configuracoes): vazio com exemplo, cada regra com nome, situacao em tres
-// camadas, "Quando" e "Faz" em portugues, os avisos fixos, o atalho para o
-// follow-up (outra aba da mesma tela) e as acoes de quem nao gerencia
+// camadas, "Quando", "Se" (so com condicao, onda 4) e "Faz" em portugues
+// (varias acoes numa frase, o mover por ultimo), os avisos fixos, o atalho
+// para o follow-up (outra aba da mesma tela) e as acoes de quem nao gerencia
 // visiveis e desabilitadas. Quem ve a aba (so administrador e gestor) esta
 // em tela-guarda.test.tsx.
 
@@ -59,17 +63,30 @@ const JORNADA: EtapaDaJornada[] = [
   etapa("perdido", "Perdido", "perdido", 60),
 ];
 
-const BASE: Omit<AutomacaoDeFluxo, "id" | "nome" | "ativa"> = {
-  gatilho: "sem_resposta_na_etapa",
-  etapa: "aguardando_resposta",
-  espera_minutos: 48 * 60,
-  acao: "mover_etapa",
-  etapa_destino: "perdido",
-  motivo_perda: "nao_respondeu",
+const SEM_ACAO: Omit<AcaoDaAutomacao, "posicao" | "acao"> = {
+  etapa_destino: null,
+  motivo_perda: null,
   etiqueta: null,
   atividade_titulo: null,
   atividade_prazo_dias: null,
   nota_texto: null,
+};
+
+const BASE: Omit<AutomacaoDeFluxo, "id" | "nome" | "ativa"> = {
+  gatilho: "sem_resposta_na_etapa",
+  etapa: "aguardando_resposta",
+  espera_minutos: 48 * 60,
+  combinar: "todas",
+  condicoes: [],
+  acoes: [
+    {
+      ...SEM_ACAO,
+      posicao: 1,
+      acao: "mover_etapa",
+      etapa_destino: "perdido",
+      motivo_perda: "nao_respondeu",
+    },
+  ],
   vigente_desde: "2026-10-02T12:00:00Z",
   created_at: "2026-10-02T12:00:00Z",
   updated_at: "2026-10-02T12:00:00Z",
@@ -90,13 +107,57 @@ const AUTOMACOES: AutomacaoDeFluxo[] = [
     gatilho: "entrou_na_etapa",
     etapa: "em_contato",
     espera_minutos: null,
-    acao: "criar_atividade",
-    etapa_destino: null,
-    motivo_perda: null,
-    atividade_titulo: "Ligar para o paciente",
-    atividade_prazo_dias: 2,
+    acoes: [
+      {
+        ...SEM_ACAO,
+        posicao: 1,
+        acao: "criar_atividade",
+        atividade_titulo: "Ligar para o paciente",
+        atividade_prazo_dias: 2,
+      },
+    ],
+  },
+  // Onda 4: com condicao e duas acoes (o mover por ultimo).
+  {
+    ...BASE,
+    id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    nome: "Psiquiatria parada",
+    ativa: true,
+    gatilho: "tempo_na_etapa",
+    etapa: "em_contato",
+    espera_minutos: 24 * 60,
+    combinar: "todas",
+    condicoes: [
+      { posicao: 1, tipo: "tem_etiqueta", etiqueta: "Psiquiatria" },
+      { posicao: 2, tipo: "nao_tem_etiqueta", etiqueta: "Retorno" },
+    ],
+    acoes: [
+      {
+        ...SEM_ACAO,
+        posicao: 1,
+        acao: "criar_atividade",
+        atividade_titulo: "Ligar",
+        atividade_prazo_dias: 0,
+      },
+      {
+        ...SEM_ACAO,
+        posicao: 2,
+        acao: "mover_etapa",
+        etapa_destino: "aguardando_resposta",
+      },
+    ],
   },
 ];
+
+/** O texto visivel, sem as tags e com os espacos colapsados. */
+function texto(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .replace(/ ([,.:)])/g, "$1")
+    .trim();
+}
 
 /** Botao com aquele nome e desabilitado, em qualquer ordem de atributo. */
 const desabilitado = (nome: string) =>
@@ -147,12 +208,24 @@ describe("aba Automações de fluxo", () => {
     expect(html).toContain("Ficou 48 h sem responder em Aguardando resposta");
     expect(html).toContain("Move para Perdido (Não respondeu)");
     expect(html).toContain("Entrou em Em contato");
-    expect(html).toContain("Cria atividade: Ligar para o paciente, em 2 dias");
+    expect(html).toContain("Cria a atividade Ligar para o paciente, em 2 dias");
     // Situacao tambem no interruptor, com o nome da regra.
     expect(html).toContain('aria-label="Desligar Sumiu vira Perdido"');
     expect(html).toContain('aria-label="Ligar Ligar para quem entrou"');
     // Uso carregando: esqueleto com texto para leitor de tela.
     expect(html).toContain("Contando as execuções");
+  });
+
+  it("regra composta: o Se com as condições e o Faz com as ações em ordem", () => {
+    const html = texto(aba({}));
+    expect(html).toContain(
+      "Se: O lead tem a etiqueta Psiquiatria e não tem a etiqueta Retorno",
+    );
+    expect(html).toContain(
+      "Faz: Cria a atividade Ligar, para o mesmo dia, e move para Aguardando resposta",
+    );
+    // Regra sem condicao nao mostra o "Se".
+    expect(html.match(/Se: /g)).toHaveLength(1);
   });
 
   it("avisos fixos e o atalho para o follow-up", () => {
@@ -161,6 +234,9 @@ describe("aba Automações de fluxo", () => {
     expect(html).toContain("Agendou e Compareceu não são destino");
     expect(html).toContain("encerra o follow-up daquela etapa");
     expect(html).toContain("param no 3º salto");
+    expect(html).toContain(
+      "As condições são conferidas na hora do gatilho: quem não bate fica de fora daquela vez.",
+    );
     // O follow-up e outra aba desta mesma tela: o atalho so troca a aba.
     expect(html).toContain(
       "A mensagem para o paciente ao entrar na etapa fica no Follow-up de leads, nesta mesma tela",

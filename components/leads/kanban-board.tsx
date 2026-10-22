@@ -22,6 +22,7 @@ import {
 } from "@/components/leads/etapa-do-lead";
 import { KanbanColuna } from "@/components/leads/kanban-coluna";
 import { ModalMotivoPerda } from "@/components/leads/modal-motivo-perda";
+import { nomesDasReguas, reguasPorEtapa } from "@/components/leads/mudar-etapa";
 import { Button } from "@/components/ui/button";
 import {
   agruparPorJornada,
@@ -164,8 +165,13 @@ export function KanbanBoard({
     void moverEtapaNaHora(queryClient, clinicId, lead.id, destino);
   };
 
+  // Desde a onda 4 a etapa pode ter varias reguas ligadas (por etiqueta e
+  // a geral): o cabecalho da coluna diz os nomes de todas.
   const reguaPorEtapa = new Map(
-    (reguas ?? []).map((regua) => [regua.etapa, regua.nome]),
+    [...reguasPorEtapa(reguas)].map(([etapa, daEtapa]) => [
+      etapa,
+      nomesDasReguas(daEtapa),
+    ]),
   );
   const reservarDescricao = algumaEtapaComDescricao(jornada);
 

@@ -5,8 +5,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // Banco em memoria com a forma do cliente do Supabase, para os testes de
 // unidade da IA no WhatsApp (E3). Imita SO o que o executor, o envio e o
 // carregador do historico usam: from (select, insert, update, upsert,
-// delete, com eq, neq, is, in, gte, gt, lt, lte, or simples, order e
-// limit; maybeSingle, single e await direto, com count/head) e rpc por
+// delete, com eq, neq, is, not is, in, gte, gt, lt, lte, or simples, order
+// e limit; maybeSingle, single e await direto, com count/head) e rpc por
 // manipulador. Nada de rede, nada de banco. Os gatilhos e as RPCs de
 // verdade sao provados nas suites de integracao e RLS (com o banco).
 
@@ -177,6 +177,13 @@ class Consulta implements PromiseLike<Resposta> {
   }
   or(expressao: string): this {
     this.filtros.push(filtroDoOr(expressao));
+    return this;
+  }
+  /** So o "is" (not is null), o que o codigo usa. */
+  not(coluna: string, operador: string, valor: unknown): this {
+    if (operador === "is") {
+      this.filtros.push((linha) => (linha[coluna] ?? null) !== valor);
+    }
     return this;
   }
   order(coluna: string, opcoes?: { ascending?: boolean }): this {

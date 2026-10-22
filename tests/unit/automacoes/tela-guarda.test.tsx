@@ -48,6 +48,7 @@ const banco = vi.hoisted(() => ({
   fetchNumerosDaClinica: vi.fn(),
   fetchAutomacoesDeFluxo: vi.fn(),
   fetchEtiquetasDeConversa: vi.fn(),
+  fetchEtiquetasParaFiltro: vi.fn(),
 }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: banco.createClient }));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
@@ -60,6 +61,7 @@ vi.mock("@/lib/queries/automacoes", async (importOriginal) => ({
   fetchVolumesDaEstimativa: banco.fetchVolumesDaEstimativa,
   fetchReguasVinculadas: banco.fetchReguasVinculadas,
   fetchFollowups: banco.fetchFollowups,
+  fetchEtiquetasParaFiltro: banco.fetchEtiquetasParaFiltro,
 }));
 vi.mock("@/lib/queries/jornada", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/queries/jornada")>()),
@@ -93,6 +95,8 @@ vi.mock("@/app/(app)/automacoes/actions", () => ({
   salvarEsperaDoPassoAction: vi.fn(),
   excluirPassoAction: vi.fn(),
   criarReguaDeFollowupAction: vi.fn(),
+  editarParaQuemDaReguaAction: vi.fn(),
+  ordenarReguasDeFollowupAction: vi.fn(),
   testarEnvioAction: vi.fn(),
   definirNumeroDasAutomaticasAction: vi.fn(),
 }));
@@ -180,17 +184,24 @@ const JORNADA: EtapaDaJornada[] = [
   etapa("perdido", "Perdido", "perdido", 60),
 ];
 
-const REGRA: Omit<AutomacaoDeFluxo, "id" | "nome" | "ativa"> = {
-  gatilho: "sem_resposta_na_etapa",
-  etapa: "aguardando_resposta",
-  espera_minutos: 48 * 60,
-  acao: "mover_etapa",
+const MOVER = {
+  posicao: 1,
+  acao: "mover_etapa" as const,
   etapa_destino: "perdido",
-  motivo_perda: "nao_respondeu",
+  motivo_perda: "nao_respondeu" as const,
   etiqueta: null,
   atividade_titulo: null,
   atividade_prazo_dias: null,
   nota_texto: null,
+};
+
+const REGRA: Omit<AutomacaoDeFluxo, "id" | "nome" | "ativa"> = {
+  gatilho: "sem_resposta_na_etapa",
+  etapa: "aguardando_resposta",
+  espera_minutos: 48 * 60,
+  combinar: "todas",
+  condicoes: [],
+  acoes: [MOVER],
   vigente_desde: "2026-10-02T12:00:00Z",
   created_at: "2026-10-02T12:00:00Z",
   updated_at: "2026-10-02T12:00:00Z",
@@ -210,8 +221,9 @@ const AUTOMACOES: AutomacaoDeFluxo[] = [
     ativa: false,
     gatilho: "tempo_na_etapa",
     etapa: "em_contato",
-    etapa_destino: "aguardando_resposta",
-    motivo_perda: null,
+    acoes: [
+      { ...MOVER, etapa_destino: "aguardando_resposta", motivo_perda: null },
+    ],
   },
 ];
 
@@ -287,11 +299,15 @@ beforeEach(() => {
     reguas: [],
     opcoes: { medicos: [], especialidades: [], procedimentos: [] },
   });
-  banco.fetchFollowups.mockResolvedValue([]);
+  banco.fetchFollowups.mockResolvedValue({
+    reguas: [],
+    semReguaPorEtapa: {},
+  });
   banco.fetchJornada.mockResolvedValue(JORNADA);
   banco.fetchNumerosDaClinica.mockResolvedValue([]);
   banco.fetchAutomacoesDeFluxo.mockResolvedValue(AUTOMACOES);
   banco.fetchEtiquetasDeConversa.mockResolvedValue([]);
+  banco.fetchEtiquetasParaFiltro.mockResolvedValue([]);
 });
 
 describe("guarda de módulo da rota /automacoes", () => {
@@ -365,6 +381,8 @@ describe("aba Automações de fluxo: só administrador e gestor", () => {
     expect(html).not.toContain("xl:grid-cols-5");
     expect(banco.fetchAutomacoesDeFluxo).not.toHaveBeenCalled();
     expect(banco.fetchEtiquetasDeConversa).not.toHaveBeenCalled();
+    // Nem as etiquetas em uso nos leads (so para quem edita um filtro).
+    expect(banco.fetchEtiquetasParaFiltro).not.toHaveBeenCalled();
     // O cabecalho nao promete o que ela nao ve.
     expect(html).toContain(
       "As mensagens que saem sozinhas: o que dizem, quando saem e para quem.",

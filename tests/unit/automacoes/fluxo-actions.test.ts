@@ -4,12 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Automacoes, app/(app)/automacoes/fluxo-actions.ts), com a sessao e o
 // cliente do Supabase trocados por dubles que guardam o que a action mandou.
 // O que se prova aqui:
-//   - so os campos da acao chegam ao banco (os das outras vao null), sem
-//     carimbo (created_by, updated_by, vigente_desde) e com clinic_id da
-//     SESSAO no insert;
-//   - o motivo da perda nasce do papel do destino lido do banco;
+//   - salvar e UMA chamada a RPC salvar_automacao_de_fluxo (onda 4: a regra
+//     composta, com o "Se" e o "Faz" nas tabelas filhas), com a clinica da
+//     SESSAO, o id so na edicao e o jsonb da regra: cada acao so com os
+//     proprios campos, o mover por ultimo, sem motivo da perda nem carimbo
+//     (o banco tira os dois);
 //   - destino Agendou e recusado antes do banco, com a mensagem de gente;
-//   - a recusa do banco (ciclo pelo hint, RLS) volta traduzida;
+//   - a recusa do banco (ciclo pelo hint, RLS, limites, regra que nao
+//     existe) volta traduzida;
 //   - toda mutacao grava audit_log com entity automacao_fluxo e o id, sem
 //     nome nem texto da regra, e revalida /automacoes (onde a aba mora);
 //   - o historico grava a trilha de leitura (traz nome do lead);
@@ -32,6 +34,13 @@ type Resultado = { data: unknown; error: Erro; count?: number };
 
 const registro = vi.hoisted(() => ({
   papel: "gestor" as string,
+  /** As chamadas de RPC, com os argumentos. */
+  rpcs: [] as { nome: string; args: Record<string, unknown> }[],
+  /** O que a RPC salvar_automacao_de_fluxo devolve. */
+  respostaDoSalvar: {
+    data: "a1111111-1111-4111-8111-111111111111" as unknown,
+    error: null as Erro,
+  },
   /** Quantas vezes a action abriu o cliente do banco. */
   clientes: 0,
   /** Os caminhos revalidados. */
@@ -103,11 +112,16 @@ function cliente() {
         return cadeia(() => ({ data: [{ id: REGRA }], error: null }));
       },
     }),
-    rpc: () =>
-      Promise.resolve({
+    rpc: (nome: string, args: Record<string, unknown>) => {
+      registro.rpcs.push({ nome, args });
+      if (nome === "salvar_automacao_de_fluxo") {
+        return Promise.resolve(registro.respostaDoSalvar);
+      }
+      return Promise.resolve({
         data: { na_etapa: 5, ja_se_encaixam: 2, importados_fora: 1 },
         error: null,
-      }),
+      });
+    },
   };
 }
 
@@ -156,23 +170,23 @@ function entrada(campos: Record<string, unknown> = {}) {
     gatilho: "sem_resposta_na_etapa",
     etapa: "aguardando_resposta",
     espera_minutos: 2880,
-    acao: "mover_etapa",
-    etapa_destino: "perdido",
-    etiqueta: null,
-    atividade_titulo: null,
-    atividade_prazo_dias: null,
-    nota_texto: null,
+    combinar: "todas",
+    condicoes: [],
+    acoes: [{ acao: "mover_etapa", etapa_destino: "perdido" }],
     ...campos,
   };
 }
 
-const daRegra = () =>
-  registro.inserts.filter((linha) => linha.tabela === "automacao_fluxo");
+/** As chamadas da RPC de salvar (a regra so chega ao banco por ela). */
+const salvamentos = () =>
+  registro.rpcs.filter((rpc) => rpc.nome === "salvar_automacao_de_fluxo");
 const trilha = () =>
   registro.inserts.filter((linha) => linha.tabela === "audit_log");
 
 beforeEach(() => {
   registro.papel = "gestor";
+  registro.rpcs = [];
+  registro.respostaDoSalvar = { data: REGRA, error: null };
   registro.clientes = 0;
   registro.revalidados = [];
   registro.inserts = [];
@@ -186,28 +200,66 @@ beforeEach(() => {
 });
 
 describe("salvarAutomacaoDeFluxoAction", () => {
-  it("criar grava só os campos da ação, com o motivo do destino e sem carimbo", async () => {
+  it("criar chama a RPC com a clínica da sessão, sem id, e o jsonb da regra", async () => {
     const resultado = await salvarAutomacaoDeFluxoAction(
-      entrada({ etiqueta: "lixo", nota_texto: "lixo" }),
+      entrada({
+        combinar: "qualquer",
+        condicoes: [{ tipo: "tem_etiqueta", etiqueta: "  Psiquiatria " }],
+        acoes: [
+          // Lixo de outras acoes no mover: nao pode ir para o banco.
+          { acao: "mover_etapa", etapa_destino: "perdido", etiqueta: "lixo" },
+          {
+            acao: "criar_atividade",
+            atividade_titulo: "Ligar",
+            atividade_prazo_dias: 0,
+          },
+        ],
+      }),
     );
     expect(resultado).toEqual({ ok: true, id: REGRA });
-    expect(daRegra()).toHaveLength(1);
-    const valores = daRegra()[0]!.valores;
-    expect(valores).toEqual({
-      clinic_id: CLINICA,
-      nome: "Sumiu vira Perdido",
-      ativa: true,
-      gatilho: "sem_resposta_na_etapa",
-      etapa: "aguardando_resposta",
-      espera_minutos: 2880,
-      acao: "mover_etapa",
-      etapa_destino: "perdido",
-      motivo_perda: "nao_respondeu",
-      etiqueta: null,
-      atividade_titulo: null,
-      atividade_prazo_dias: null,
-      nota_texto: null,
-    });
+    expect(salvamentos()).toEqual([
+      {
+        nome: "salvar_automacao_de_fluxo",
+        args: {
+          p_clinic_id: CLINICA,
+          p_id: null,
+          p_regra: {
+            nome: "Sumiu vira Perdido",
+            ativa: true,
+            gatilho: "sem_resposta_na_etapa",
+            etapa: "aguardando_resposta",
+            espera_minutos: 2880,
+            combinar: "qualquer",
+            condicoes: [{ tipo: "tem_etiqueta", etiqueta: "Psiquiatria" }],
+            // O mover vai por ultimo; sem motivo da perda (o banco tira do
+            // papel do destino) e sem carimbo.
+            acoes: [
+              {
+                acao: "criar_atividade",
+                etapa_destino: null,
+                etiqueta: null,
+                atividade_titulo: "Ligar",
+                atividade_prazo_dias: 0,
+                nota_texto: null,
+              },
+              {
+                acao: "mover_etapa",
+                etapa_destino: "perdido",
+                etiqueta: null,
+                atividade_titulo: null,
+                atividade_prazo_dias: null,
+                nota_texto: null,
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    // Nada de escrita direta nas tabelas da regra.
+    expect(
+      registro.inserts.filter((linha) => linha.tabela !== "audit_log"),
+    ).toEqual([]);
+    expect(registro.updates).toEqual([]);
   });
 
   it("toda mutação grava a trilha sem nome nem texto da regra", async () => {
@@ -233,50 +285,129 @@ describe("salvarAutomacaoDeFluxoAction", () => {
     ]);
   });
 
-  it("editar usa update filtrado e grava editou", async () => {
+  it("editar manda o id e grava editou", async () => {
     const resultado = await salvarAutomacaoDeFluxoAction(
       entrada({
         id: REGRA,
-        acao: "nota_interna",
-        etapa_destino: null,
-        nota_texto: "  Ofereça horário.  ",
+        acoes: [{ acao: "nota_interna", nota_texto: "  Ofereça horário.  " }],
       }),
     );
     expect(resultado).toEqual({ ok: true, id: REGRA });
-    const update = registro.updates.find(
-      (linha) => linha.tabela === "automacao_fluxo",
-    );
-    expect(update?.valores).toMatchObject({
-      acao: "nota_interna",
-      nota_texto: "Ofereça horário.",
-      etapa_destino: null,
-      motivo_perda: null,
-    });
-    expect(update?.valores).not.toHaveProperty("clinic_id");
+    const args = salvamentos()[0]!.args;
+    expect(args.p_id).toBe(REGRA);
+    expect((args.p_regra as { acoes: unknown[] }).acoes).toEqual([
+      {
+        acao: "nota_interna",
+        etapa_destino: null,
+        etiqueta: null,
+        atividade_titulo: null,
+        atividade_prazo_dias: null,
+        nota_texto: "Ofereça horário.",
+      },
+    ]);
     expect(trilha()[0]!.valores.action).toBe("editou_automacao_de_fluxo");
   });
 
   it("destino Agendou é recusado antes do banco", async () => {
     const resultado = await salvarAutomacaoDeFluxoAction(
-      entrada({ etapa_destino: "agendou" }),
+      entrada({ acoes: [{ acao: "mover_etapa", etapa_destino: "agendou" }] }),
     );
     expect(resultado).toEqual({
       ok: false,
       error:
         "Agendou e Compareceu são marcados pela Agenda e não podem ser destino de uma automação.",
     });
-    expect(daRegra()).toHaveLength(0);
+    expect(salvamentos()).toHaveLength(0);
+  });
+
+  it("dois movers nem chegam ao banco", async () => {
+    const resultado = await salvarAutomacaoDeFluxoAction(
+      entrada({
+        acoes: [
+          { acao: "mover_etapa", etapa_destino: "perdido" },
+          { acao: "mover_etapa", etapa_destino: "novo" },
+        ],
+      }),
+    );
+    expect(resultado).toEqual({
+      ok: false,
+      error: "Uma automação move o lead uma vez só.",
+    });
+    expect(salvamentos()).toHaveLength(0);
   });
 
   it("o ciclo recusado pelo banco volta traduzido, sem trilha", async () => {
-    registro.erroDaEscrita = {
-      code: "23514",
-      message: "Esta automação fecha um ciclo...",
-      hint: "automacao_ciclo",
+    registro.respostaDoSalvar = {
+      data: null,
+      error: {
+        code: "23514",
+        message: "Esta automação fecha um ciclo...",
+        hint: "automacao_ciclo",
+      },
     };
     const resultado = await salvarAutomacaoDeFluxoAction(entrada());
     expect(resultado.ok).toBe(false);
     expect(!resultado.ok && resultado.error).toContain("fecha um ciclo");
+    expect(trilha()).toHaveLength(0);
+  });
+
+  it("regra que não existe (P0002) e limites (22023) viram frase de gente", async () => {
+    registro.respostaDoSalvar = {
+      data: null,
+      error: { code: "P0002", message: "nao encontrada" },
+    };
+    expect(await salvarAutomacaoDeFluxoAction(entrada({ id: REGRA }))).toEqual({
+      ok: false,
+      error:
+        "Esta automação não existe mais. Recarregue a página para ver a lista atual.",
+    });
+    registro.respostaDoSalvar = {
+      data: null,
+      error: { code: "22023", message: "limites" },
+    };
+    const limites = await salvarAutomacaoDeFluxoAction(entrada());
+    expect(!limites.ok && limites.error).toContain("de 1 a 5 ações");
+    expect(trilha()).toHaveLength(0);
+  });
+
+  // A RPC ausente (o cache do PostgREST atrasado, ou o banco sem a migration
+  // 20261024110000): falha fechada, nada se grava por outro caminho
+  // (correcao de 22/10/2026; o codigo sobe depois das migrations).
+  it.each(["PGRST202", "42883"])(
+    "banco sem a RPC (%s): falha fechada, nada gravado por outro caminho e sem trilha",
+    async (codigo) => {
+      for (const regra of [
+        entrada(),
+        entrada({ id: REGRA }),
+        entrada({
+          condicoes: [{ tipo: "tem_etiqueta", etiqueta: "Psiquiatria" }],
+        }),
+      ]) {
+        registro.respostaDoSalvar = {
+          data: null,
+          error: { code: codigo, message: "Could not find the function" },
+        };
+        expect(await salvarAutomacaoDeFluxoAction(regra)).toEqual({
+          ok: false,
+          error:
+            "Não foi possível salvar a automação agora. Nada foi alterado. Tente de novo em alguns minutos.",
+        });
+      }
+      expect(
+        registro.inserts.filter((linha) => linha.tabela === "automacao_fluxo"),
+      ).toEqual([]);
+      expect(registro.updates).toEqual([]);
+      expect(trilha()).toHaveLength(0);
+    },
+  );
+
+  it("resposta sem id não grava trilha", async () => {
+    registro.respostaDoSalvar = { data: null, error: null };
+    const resultado = await salvarAutomacaoDeFluxoAction(entrada());
+    expect(resultado).toEqual({
+      ok: false,
+      error: "Não foi possível criar a automação.",
+    });
     expect(trilha()).toHaveLength(0);
   });
 
@@ -286,6 +417,7 @@ describe("salvarAutomacaoDeFluxoAction", () => {
     );
     expect(resultado.ok).toBe(false);
     expect(registro.inserts).toHaveLength(0);
+    expect(salvamentos()).toHaveLength(0);
   });
 
   it("papel sem gestão não chega ao banco", async () => {
@@ -293,6 +425,7 @@ describe("salvarAutomacaoDeFluxoAction", () => {
     const resultado = await salvarAutomacaoDeFluxoAction(entrada());
     expect(resultado.ok).toBe(false);
     expect(registro.inserts).toHaveLength(0);
+    expect(salvamentos()).toHaveLength(0);
   });
 });
 
@@ -332,6 +465,7 @@ describe("quem pode (decisão do dono de 20/10/2026)", () => {
         expect(registro.inserts).toHaveLength(0);
         expect(registro.updates).toHaveLength(0);
         expect(registro.deletes).toHaveLength(0);
+        expect(registro.rpcs).toHaveLength(0);
         // O historico traz nome de lead: nem a leitura nem a trilha.
         expect(registro.leituras).toHaveLength(0);
         expect(registro.revalidados).toHaveLength(0);
@@ -439,12 +573,38 @@ describe("leituras sob demanda", () => {
         executada_em: "2026-10-02T13:00:00Z",
         created_at: "2026-10-02T12:59:00Z",
         contact: { name: "Maria" },
+        // O retrato por acao (onda 4), fora de ordem: volta ordenado.
+        acoes: [
+          {
+            posicao: 2,
+            acao: "mover_etapa",
+            status: "executada",
+            motivo: null,
+            para_etapa: "perdido",
+            etiqueta: null,
+            etiqueta_nome: null,
+            executada_em: "2026-10-02T13:00:00Z",
+          },
+          {
+            posicao: 1,
+            acao: "criar_atividade",
+            status: "pulada",
+            motivo: "sem_conversa",
+            para_etapa: null,
+            etiqueta: null,
+            etiqueta_nome: null,
+            executada_em: "2026-10-02T13:00:00Z",
+          },
+        ],
       },
     ];
     const resultado = await historicoDeAutomacoesDeFluxoAction(null);
     expect(resultado.ok).toBe(true);
     expect(resultado.ok && resultado.execucoes[0]?.contato).toBe("Maria");
     expect(resultado.ok && resultado.execucoes[0]?.acao).toBe("mover_etapa");
+    expect(
+      resultado.ok && resultado.execucoes[0]?.acoes.map((a) => a.posicao),
+    ).toEqual([1, 2]);
     // Entidade propria da aba: nao se confunde com a lista de Leads no
     // dedupe de 5 minutos da trilha.
     expect(registro.leituras).toEqual([

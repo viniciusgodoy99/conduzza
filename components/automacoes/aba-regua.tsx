@@ -158,6 +158,7 @@ export function AbaRegua({
   placeholders,
   podeEditar,
   dicaSemPermissao,
+  dicaParaLigar = null,
   ehAdministrador,
   numeros = null,
   aninhada = false,
@@ -186,6 +187,8 @@ export function AbaRegua({
   placeholders?: readonly string[];
   podeEditar: boolean;
   dicaSemPermissao: string;
+  /** Por que a regua desligada ainda nao pode ligar (ControlesDaRegua). */
+  dicaParaLigar?: string | null;
   /** So o administrador registra a linha de base (aviso ao ligar). */
   ehAdministrador: boolean;
   /**
@@ -360,6 +363,7 @@ export function AbaRegua({
           visivel
           podeEditar={podeEditar}
           dicaSemPermissao={dicaSemPermissao}
+          dicaParaLigar={dicaParaLigar}
           ehAdministrador={ehAdministrador}
           aoMudar={aoMudar}
         />

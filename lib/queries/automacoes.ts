@@ -309,39 +309,128 @@ export async function fetchReguasVinculadas(
 }
 
 // ---------------------------------------------------------------------------
-// Reguas de follow-up por etapa da jornada (fase 3 da 4.8).
+// Reguas de follow-up por etapa da jornada (fase 3 da 4.8) e, desde a onda 4
+// (item 16, migration 20261024100000), por etiqueta: a etapa pode ter as
+// reguas com etiqueta e uma geral, e para cada lead vale uma por vez
+// (regua_de_followup_do_contato; espelho em lib/domain/reguas-de-followup).
+
+import { z } from "zod";
 
 import {
-  consentimentoVigenteDeLinhas,
-  type LinhaConsent,
-} from "@/lib/domain/leads-ui";
+  chaveDaEtiqueta,
+  MODOS_DO_FILTRO,
+  opcoesDeEtiqueta,
+  type ModoDoFiltro,
+  type OpcaoDeEtiqueta,
+} from "@/lib/domain/etiquetas-do-lead";
+import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
+
+/**
+ * Quantos leads cada regua alcanca HOJE (RPC alcance_das_reguas_de_followup,
+ * contagens sem dado de paciente).
+ */
+export type AlcanceDaRegua = {
+  /** Leads hoje na etapa com as etiquetas da regua (a geral: todos). */
+  casam: number;
+  /** Para quem ela e a vigente agora (0 se desligada). */
+  recebem: number;
+  /** Dos que casam, os sem autorizacao para receber mensagens. */
+  sem_autorizacao: number;
+  /** Dos que casam, os que entraram na etapa nos ultimos 30 dias. */
+  entradas_30d: number;
+};
 
 export type ReguaDeFollowup = ReguaDeConfirmacao & {
   trigger_stage: string;
   /** Nome da etapa na jornada da clinica (a regua guarda so a chave). */
   etapa_nome: string;
-  /** Entradas na etapa nos ultimos 30 dias (estimativa de volume). */
+  /** Os NOMES das etiquetas do filtro; vazio: a regua geral da etapa. */
+  etiquetas: string[];
+  etiquetas_modo: ModoDoFiltro;
+  /** A ordem entre as com etiqueta da etapa (vale a de cima). */
+  prioridade: number;
+  created_at: string;
+  /**
+   * Entradas na etapa nos ultimos 30 dias que casam com a regua (a
+   * estimativa de volume). Sem o alcance, a contagem da etapa inteira, que
+   * e a ordem de grandeza (como nas reguas vinculadas).
+   */
   eventos30d: number;
-  /** Contatos HOJE na etapa sem autorizacao para receber mensagens. */
-  sem_autorizacao: number;
-  total_na_etapa: number;
+  /** As contagens de hoje; nulo quando a leitura delas falhou. */
+  alcance: AlcanceDaRegua | null;
 };
+
+/** O que a aba Follow-up de leads recebe. */
+export type DadosDosFollowups = {
+  reguas: ReguaDeFollowup[];
+  /**
+   * Por etapa (chave): leads da etapa, com regua ligada nela, para quem
+   * nenhuma vale (a etapa sem regua geral). Nulo: a contagem nao carregou.
+   */
+  semReguaPorEtapa: Record<string, number> | null;
+};
+
+const numeroSchema = z.number().int().min(0);
+
+/**
+ * O jsonb de alcance_das_reguas_de_followup: por regua e por etapa. Forma
+ * diferente (banco a frente ou atras do app) vira "nao carregou", nunca
+ * numero inventado.
+ */
+const alcanceSchema = z.object({
+  reguas: z.array(
+    z.object({
+      id: z.string(),
+      casam: numeroSchema,
+      recebem: numeroSchema,
+      sem_autorizacao: numeroSchema,
+      entradas_30d: numeroSchema,
+    }),
+  ),
+  etapas: z.array(z.object({ chave: z.string(), sem_regua: numeroSchema })),
+});
+
+const COLUNAS_DA_REGUA =
+  "id, name, active, send_window_start, send_window_end, send_weekdays, trigger_stage, created_at";
+const COLUNAS_DO_FILTRO = "etiquetas, etiquetas_modo, prioridade";
+
+/**
+ * As reguas de follow-up com o filtro. O codigo da onda 4 sobe DEPOIS da
+ * migration 20261024100000 (ordem decidida pelo coordenador em 22/10/2026):
+ * sem as colunas do filtro, a leitura e erro como outro qualquer e a aba
+ * mostra o proprio estado de erro (falha fechada; correcao de 22/10/2026).
+ */
+async function lerReguasDeFollowup(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<Record<string, unknown>[]> {
+  const { data, error } = await supabase
+    .from("cadence")
+    .select(`${COLUNAS_DA_REGUA}, ${COLUNAS_DO_FILTRO}`)
+    .eq("clinic_id", clinicId)
+    .eq("kind", "followup")
+    .order("name");
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+/** O modo gravado, ou "qualquer" (o padrao da coluna) se vier outra coisa. */
+function modoDaLinha(valor: unknown): ModoDoFiltro {
+  return (MODOS_DO_FILTRO as readonly unknown[]).includes(valor)
+    ? (valor as ModoDoFiltro)
+    : "qualquer";
+}
 
 export async function fetchFollowups(
   supabase: SupabaseClient,
   clinicId: string,
-): Promise<ReguaDeFollowup[]> {
+): Promise<DadosDosFollowups> {
   const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
   const desde24h = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-  const [reguas, etapas, jaEnviou] = await Promise.all([
-    supabase
-      .from("cadence")
-      .select(
-        "id, name, active, send_window_start, send_window_end, send_weekdays, trigger_stage",
-      )
-      .eq("clinic_id", clinicId)
-      .eq("kind", "followup")
-      .order("name"),
+  const [linhas, etapas, jaEnviou, alcanceBruto] = await Promise.all([
+    lerReguasDeFollowup(supabase, clinicId),
     supabase
       .from("funnel_stage_def")
       .select("chave, nome")
@@ -352,10 +441,11 @@ export async function fetchFollowups(
       .eq("clinic_id", clinicId)
       .not("sent_at", "is", null)
       .limit(1),
+    // As contagens de hoje (casam, recebem, sem autorizacao, entradas em 30
+    // dias, e quem fica sem regua na etapa), numa ida so, no banco: com
+    // varias reguas por etapa a conta depende da precedencia, que mora la.
+    supabase.rpc("alcance_das_reguas_de_followup", { p_clinic_id: clinicId }),
   ]);
-  if (reguas.error) {
-    throw new Error(reguas.error.message);
-  }
   const nomePorChave = new Map(
     ((etapas.data ?? []) as { chave: string; nome: string }[]).map((etapa) => [
       etapa.chave,
@@ -363,64 +453,72 @@ export async function fetchFollowups(
     ]),
   );
   const primeiraAtivacao = (jaEnviou.data ?? []).length === 0;
+  // Leitura que falha (ou forma estranha) vira "nao carregou": as reguas
+  // continuam na tela, so as contagens dizem que nao vieram.
+  const alcance = alcanceBruto.error
+    ? null
+    : (alcanceSchema.safeParse(alcanceBruto.data).data ?? null);
+  const alcancePorRegua = new Map(
+    (alcance?.reguas ?? []).map((linha) => [linha.id, linha]),
+  );
 
-  return Promise.all(
-    ((reguas.data ?? []) as Record<string, unknown>[]).map(async (regua) => {
+  // Sem o alcance, a estimativa usa as entradas da etapa inteira (uma
+  // contagem por etapa, nao por regua).
+  const entradasDaEtapa = new Map<string, Promise<number>>();
+  const entradasSemFiltro = (chave: string): Promise<number> => {
+    const pronta = entradasDaEtapa.get(chave);
+    if (pronta) {
+      return pronta;
+    }
+    const contagem = Promise.resolve(
+      supabase
+        .from("contact")
+        .select("id", { count: "exact", head: true })
+        .eq("clinic_id", clinicId)
+        .eq("funnel_stage", chave)
+        .gte("funnel_stage_changed_at", desde30d),
+    ).then(({ count }) => count ?? 0);
+    entradasDaEtapa.set(chave, contagem);
+    return contagem;
+  };
+
+  const reguas = await Promise.all(
+    linhas.map(async (regua) => {
       const chave = regua.trigger_stage as string;
-      const [passos, entradas30d, contatos, enviados, pulados] =
-        await Promise.all([
-          supabase
-            .from("cadence_step")
-            .select(
-              "id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
-            )
-            .eq("clinic_id", clinicId)
-            .eq("cadence_id", regua.id as string)
-            .order("offset_minutes"),
-          supabase
-            .from("contact")
-            .select("id", { count: "exact", head: true })
-            .eq("clinic_id", clinicId)
-            .eq("funnel_stage", chave)
-            .gte("funnel_stage_changed_at", desde30d),
-          // Quem esta na etapa HOJE, para a contagem de sem autorizacao
-          // (spec 7.6). Teto de 1000: na escala do projeto uma etapa nao
-          // passa disso; acima, a contagem vira "pelo menos".
-          supabase
-            .from("contact")
-            .select("id, contact_consent (channel, granted_at, revoked_at)")
-            .eq("clinic_id", clinicId)
-            .eq("funnel_stage", chave)
-            .limit(1000),
-          supabase
-            .from("cadence_run")
-            .select("id, cadence_step!inner(cadence_id)", {
-              count: "exact",
-              head: true,
-            })
-            .eq("clinic_id", clinicId)
-            .eq("cadence_step.cadence_id", regua.id as string)
-            .gte("sent_at", desde24h),
-          supabase
-            .from("cadence_run")
-            .select("id, cadence_step!inner(cadence_id)", {
-              count: "exact",
-              head: true,
-            })
-            .eq("clinic_id", clinicId)
-            .eq("cadence_step.cadence_id", regua.id as string)
-            .not("skipped_reason", "is", null)
-            .gte("scheduled_for", desde24h),
-        ]);
-      const linhas = (contatos.data ?? []) as {
-        id: string;
-        contact_consent: LinhaConsent[] | null;
-      }[];
-      const semAutorizacao = linhas.filter(
-        (linha) => !consentimentoVigenteDeLinhas(linha.contact_consent ?? []),
-      ).length;
+      const id = regua.id as string;
+      const doAlcance = alcancePorRegua.get(id) ?? null;
+      const [passos, enviados, pulados, entradas30d] = await Promise.all([
+        supabase
+          .from("cadence_step")
+          .select(
+            "id, offset_minutes, fixed_body, media_path, media_type, media_mimetype, media_filename",
+          )
+          .eq("clinic_id", clinicId)
+          .eq("cadence_id", id)
+          .order("offset_minutes"),
+        supabase
+          .from("cadence_run")
+          .select("id, cadence_step!inner(cadence_id)", {
+            count: "exact",
+            head: true,
+          })
+          .eq("clinic_id", clinicId)
+          .eq("cadence_step.cadence_id", id)
+          .gte("sent_at", desde24h),
+        supabase
+          .from("cadence_run")
+          .select("id, cadence_step!inner(cadence_id)", {
+            count: "exact",
+            head: true,
+          })
+          .eq("clinic_id", clinicId)
+          .eq("cadence_step.cadence_id", id)
+          .not("skipped_reason", "is", null)
+          .gte("scheduled_for", desde24h),
+        doAlcance ? doAlcance.entradas_30d : entradasSemFiltro(chave),
+      ]);
       return {
-        id: regua.id as string,
+        id,
         name: regua.name as string,
         active: regua.active as boolean,
         send_window_start: (regua.send_window_start as string | null) ?? null,
@@ -434,12 +532,71 @@ export async function fetchFollowups(
         pulados_24h: pulados.count ?? 0,
         trigger_stage: chave,
         etapa_nome: nomePorChave.get(chave) ?? chave,
-        eventos30d: entradas30d.count ?? 0,
-        sem_autorizacao: semAutorizacao,
-        total_na_etapa: linhas.length,
+        etiquetas: Array.isArray(regua.etiquetas)
+          ? (regua.etiquetas as unknown[]).filter(
+              (etiqueta): etiqueta is string => typeof etiqueta === "string",
+            )
+          : [],
+        etiquetas_modo: modoDaLinha(regua.etiquetas_modo),
+        prioridade: typeof regua.prioridade === "number" ? regua.prioridade : 0,
+        created_at: (regua.created_at as string | null) ?? "",
+        eventos30d: entradas30d,
+        alcance: doAlcance
+          ? {
+              casam: doAlcance.casam,
+              recebem: doAlcance.recebem,
+              sem_autorizacao: doAlcance.sem_autorizacao,
+              entradas_30d: doAlcance.entradas_30d,
+            }
+          : null,
       } satisfies ReguaDeFollowup;
     }),
   );
+
+  return {
+    reguas,
+    semReguaPorEtapa: alcance
+      ? Object.fromEntries(
+          alcance.etapas.map((etapa) => [etapa.chave, etapa.sem_regua]),
+        )
+      : null,
+  };
+}
+
+/** Teto da leitura das etiquetas em uso (so a coluna tags, sem paciente). */
+const TETO_DAS_ETIQUETAS_EM_USO = 2000;
+
+/**
+ * As etiquetas que a clinica tem para escolher num filtro: as do catalogo
+ * de conversa (com o tom) e as que ja estao nos leads, sem repetir pelo
+ * nome (opcoesDeEtiqueta, a mesma regra do "Etiquetar lead"). Le SO a
+ * coluna tags dos contatos com etiqueta, ate 2000, e devolve os nomes
+ * distintos: nenhum contato identificado sai daqui (por isso sem trilha de
+ * leitura, como as contagens da tela). Leitura que falha lanca.
+ */
+export async function fetchEtiquetasParaFiltro(
+  supabase: SupabaseClient,
+  clinicId: string,
+  catalogo: readonly EtiquetaDeConversa[],
+): Promise<OpcaoDeEtiqueta[]> {
+  const { data, error } = await supabase
+    .from("contact")
+    .select("tags")
+    .eq("clinic_id", clinicId)
+    .neq("tags", "{}")
+    .limit(TETO_DAS_ETIQUETAS_EM_USO);
+  if (error) {
+    throw new Error(error.message);
+  }
+  const emUso = ((data ?? []) as { tags: unknown }[]).map((linha) => ({
+    tags: Array.isArray(linha.tags)
+      ? (linha.tags as unknown[]).filter(
+          (tag): tag is string =>
+            typeof tag === "string" && chaveDaEtiqueta(tag).length > 0,
+        )
+      : [],
+  }));
+  return opcoesDeEtiqueta(catalogo, emUso);
 }
 
 // ---------------------------------------------------------------------------
