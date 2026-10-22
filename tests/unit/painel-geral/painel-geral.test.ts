@@ -891,7 +891,7 @@ describe("onda 2: requisitos da produção", () => {
     expect(publicoNoDialogo(null)).toBeNull();
     expect(publicoNoDialogo("outro")).toBeNull();
     expect(TEXTOS_DO_PAINEL.efeitoDaProducao("aos leads")).toBe(
-      "O assistente passa a responder aos leads que escreverem para os números ligados. Os telefones da equipe continuam valendo.",
+      "O assistente passa a responder aos leads que escreverem para os números ligados. Os telefones da equipe também são atendidos, se estiverem no público escolhido.",
     );
   });
 

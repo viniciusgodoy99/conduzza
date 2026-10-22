@@ -193,7 +193,7 @@ export const TEXTOS_DO_PAINEL = {
   ],
   // Producao (onda 2, item 11; texto do contrato, secao 5.4).
   efeitoDaProducao: (publico: string) =>
-    `O assistente passa a responder ${publico} que escreverem para os números ligados. Os telefones da equipe continuam valendo.`,
+    `O assistente passa a responder ${publico} que escreverem para os números ligados. Os telefones da equipe também são atendidos, se estiverem no público escolhido.`,
   efeitosDaProducao: [
     "O gasto conta para o teto da clínica, que acaba mais rápido com todos os contatos. Confira o teto antes.",
     "A clínica pode pausar e retomar o agente na aba WhatsApp da tela Agente de IA.",
