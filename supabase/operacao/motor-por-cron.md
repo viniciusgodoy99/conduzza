@@ -8,7 +8,7 @@ Ligado em 02/09/2026. **Não existe mais processo de worker em servidor nenhum.*
 
 ## O desenho
 
-Três entradas no `pg_cron`, dentro do próprio Supabase, mais a quarta, `motor-ia`, que só existe depois de ligar a IA no WhatsApp (E3; ver "Resposta da IA no WhatsApp (motor-ia)", abaixo), e a quinta, `funil-da-passagem`, que só existe depois da migration `20261023100000` (onda 3, **não aplicada**; ver "Funil da passagem da IA (funil-da-passagem)", abaixo):
+Três entradas no `pg_cron`, dentro do próprio Supabase, mais a quarta, `motor-ia`, que só existe depois de ligar a IA no WhatsApp (E3; ver "Resposta da IA no WhatsApp (motor-ia)", abaixo), e a quinta, `funil-da-passagem`, que só existe depois da migration `20261023100000` (onda 3, **aplicada em 22/10/2026**: a entrada roda a cada minuto desde então; ver "Funil da passagem da IA (funil-da-passagem)", abaixo):
 
 | Entrada                      | Cadência                          | O que faz                                                                                                                                                                           | Onde executa                  |
 | ---------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
@@ -163,7 +163,7 @@ from job_queue group by 1,2 order by 3 desc;
 
 `ultimo_motivo_devolucao = 'canal_ocupado'` com `devolucoes` crescendo significa que o número da clínica está com fila longa, não que o motor quebrou.
 
-`ultimo_motivo_devolucao = 'desconectado'` (ou `'sem_numero'`) com `devolucoes` crescendo é o envio **esperando a reconexão** do número (ou a clínica ter número): não é defeito do motor, e a solução é reconectar o WhatsApp da clínica. Desde a migration `20260925141000_espera_do_canal.sql` essas esperas **não contam no teto de 20** devoluções do `reagendar_job` (que vale só para `canal_ocupado`, janela e `numero_removido`): cada uma soma em `payload->>'esperas_do_canal'`, a espera cresce de 5 até 30 minutos e quem desiste é o executor, pelo prazo (confirmação até a hora da consulta; demais réguas, e a confirmação sem consulta, até 12 horas depois da primeira abertura da janela de envio a partir de `scheduled_for` (ou do próprio `scheduled_for` no toque manual e no que já vence dentro da janela); envio ativo até a consulta do payload ou `created_at` mais 12 horas), fechando a run como `'desconectado'`. O banco só encerra sozinho na 400ª espera, como rede de segurança (cerca de 8 dias com janela de 24h: um passo de confirmação acima disso, com o celular caído o tempo todo, fecha como `'falha_envio'`, e isso foi aceito). Leitura do banco que falha durante o toque vira retry com o código em `last_error` (`run_ilegivel`, `consulta_ilegivel`, `consentimento_ilegivel`, `remarcacao_ilegivel`, e `regua_vigente_ilegivel` na régua vinculada), nunca decisão definitiva. Com a onda 4 (não aplicada; ver "Réguas por etiqueta e automações compostas", abaixo), o follow-up também usa `regua_vigente_ilegivel` e ganha `toque_recente_ilegivel`.
+`ultimo_motivo_devolucao = 'desconectado'` (ou `'sem_numero'`) com `devolucoes` crescendo é o envio **esperando a reconexão** do número (ou a clínica ter número): não é defeito do motor, e a solução é reconectar o WhatsApp da clínica. Desde a migration `20260925141000_espera_do_canal.sql` essas esperas **não contam no teto de 20** devoluções do `reagendar_job` (que vale só para `canal_ocupado`, janela e `numero_removido`): cada uma soma em `payload->>'esperas_do_canal'`, a espera cresce de 5 até 30 minutos e quem desiste é o executor, pelo prazo (confirmação até a hora da consulta; demais réguas, e a confirmação sem consulta, até 12 horas depois da primeira abertura da janela de envio a partir de `scheduled_for` (ou do próprio `scheduled_for` no toque manual e no que já vence dentro da janela); envio ativo até a consulta do payload ou `created_at` mais 12 horas), fechando a run como `'desconectado'`. O banco só encerra sozinho na 400ª espera, como rede de segurança (cerca de 8 dias com janela de 24h: um passo de confirmação acima disso, com o celular caído o tempo todo, fecha como `'falha_envio'`, e isso foi aceito). Leitura do banco que falha durante o toque vira retry com o código em `last_error` (`run_ilegivel`, `consulta_ilegivel`, `consentimento_ilegivel`, `remarcacao_ilegivel`, e `regua_vigente_ilegivel` na régua vinculada), nunca decisão definitiva. Com a onda 4 (aplicada e publicada em 22/10/2026; ver "Réguas por etiqueta e automações compostas", abaixo), o follow-up também usa `regua_vigente_ilegivel` e ganha `toque_recente_ilegivel`.
 
 Desde 25/09/2026 a fila é reivindicada por **raia**: cada número de WhatsApp é uma raia (`coalesce(whatsapp_account_id, clinic_id)`), então dois números da mesma clínica enviam em paralelo e o mesmo número serializa. `MOTOR_MAX_CLINICAS` conta **raias** por passagem (padrão 8; o nome ficou por compatibilidade). Job com `last_error = 'numero_removido'` é o eco de uma resposta ao toque cujo número foi removido: foi cancelado de propósito, não é defeito do motor.
 
@@ -426,7 +426,7 @@ group by 1, 2, 3 order by 4 desc;
 
 ## Funil da passagem da IA (funil-da-passagem)
 
-Construída na onda 3 (21/10/2026; migrations `20261023100000` e `20261023110000`, **não aplicadas**: nada desta seção existe na produção até lá). Contrato no `docs/04`, seção 24; arquitetura no `docs/03`, seção 17.
+Construída na onda 3 (21/10/2026; migrations `20261023100000` e `20261023110000`, **aplicadas em 22/10/2026**, com o ok do dono, depois do ensaio de cada uma na produção; o código foi antes delas, `c7b3063`). Desde então, a entrada `funil-da-passagem` roda a cada minuto e a passagem da IA move o lead. Contrato no `docs/04`, seção 24; arquitetura no `docs/03`, seção 17.
 
 **O que é.** Depois da M2, a passagem da IA para a equipe (a conversa sai de `ia_atendendo` para `aguardando_humano` com o paciente esperando) leva o lead para Aguardando resposta, pelo gatilho `passagem_da_ia_move_o_lead` de `conversation`. O movimento **nunca espera** o contato: se outra transação o segura (uma mensagem do mesmo paciente chegando no mesmo instante, por exemplo), ele vira uma linha em `etapa_pendente_da_passagem` (só ids). A entrada `funil-da-passagem` roda `processar_pendencias_do_funil()` a cada minuto e tenta de novo:
 
@@ -457,7 +457,7 @@ from etapa_pendente_da_passagem group by 1;
 
 Esperado: a entrada ativa, as execuções com `succeeded`, `batida_em` com menos de 2 minutos e `ultimo_erro` nulo; quase sempre nenhuma pendência, e as que aparecem somem em um ou dois minutos.
 
-**O monitor não vê esta batida.** `saude_do_motor()` lê só `motor-fila` e `motor-planner` (e a chave `ia`), então a faixa da tela e `/api/webhooks/saude` continuam em 200 com a manutenção do funil parada ou com erro. Até o dono decidir (ponto aberto no `docs/05`, entrada "Onda 3"), confira à mão nas primeiras semanas depois da M2. Se a entrada parar, a higiene de `motor_manutencao` apaga a linha `motor-funil` depois de 1 hora sem batida: a falta da linha também é sinal de parada.
+**O monitor não vê esta batida.** `saude_do_motor()` lê só `motor-fila` e `motor-planner` (e a chave `ia`), então a faixa da tela e `/api/webhooks/saude` continuam em 200 com a manutenção do funil parada ou com erro. Até o dono decidir (ponto aberto no `docs/05`, entrada "Onda 3"), confira à mão nas primeiras semanas depois da M2 (aplicada em 22/10/2026: as primeiras semanas contam daí). O alarme (uma migration pequena para `saude_do_motor`) continua pendente e fica antes de ligar a produção do agente em qualquer clínica. Se a entrada parar, a higiene de `motor_manutencao` apaga a linha `motor-funil` depois de 1 hora sem batida: a falta da linha também é sinal de parada.
 
 **Códigos** (em `erros` e no `ultimo_erro` da batida):
 
@@ -487,7 +487,7 @@ Com ela desligada, a passagem continua movendo o lead quando o contato está liv
 
 ## Réguas por etiqueta e automações compostas (onda 4)
 
-Construída na onda 4 (22/10/2026; migrations `20261024100000` e `20261024110000`, **não aplicadas**, e código **não publicado**: nada desta seção existe na produção até lá). Contrato no `docs/04`, seção 25; arquitetura no `docs/03`, seção 18.
+Construída na onda 4 (22/10/2026; migrations `20261024100000` e `20261024110000` **aplicadas** em 22/10/2026, com o ok do dono, e o código **publicado** depois delas, `5f116b2`: o que esta seção descreve vale na produção desde então). A migration C (limpeza do espelho e das colunas legadas) continua para depois, com ensaio e ok. Contrato no `docs/04`, seção 25; arquitetura no `docs/03`, seção 18.
 
 **O que muda no motor.** Nenhuma entrada nova no `pg_cron`, nenhum tipo novo de tarefa e `motor_manutencao` igual. Muda o que roda dentro das funções que ela já chama:
 

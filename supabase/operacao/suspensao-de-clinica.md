@@ -4,6 +4,8 @@ Como suspender e reativar a conta de uma clínica, o que conferir e o que fazer 
 
 **Estado em 20/10/2026:** migration `20261021100000_painel_geral.sql` **aplicada** (ensaio na produção com `ENSAIO OK` e o ok do dono) e código publicado depois dela (`docs/04`, 22.8). Antes de suspender, confira que o código no ar é o da onda 1 (o Painel geral abre): o código de antes não mostra "Conta suspensa" e não tem a trava final do envio.
 
+**Estado em 22/10/2026:** as ondas 2 a 5 foram aplicadas e publicadas, com o ok do dono (`docs/05`, entradas "Onda 2" a "Onda 5"). O que muda na suspensão: **as automações de fluxo também param** na clínica suspensa (migration B da onda 4, `20261024110000`: a execução devida nasce pulada, `clinica_suspensa`, e nada roda atrasado na volta; `docs/04`, 25.9); e **a produção do agente não liga** numa clínica de conta suspensa, e pausar ou retomar o assistente dela é recusado quando a liberação está ligada (P0001 `clinica_suspensa`, M3 da onda 2, `20261022120000`; `docs/04`, 23.4). A lista da IA (`ia_clinicas_da_fase_controlada()`) lê as clínicas em Teste ou em Produção, sem as suspensas.
+
 ---
 
 ## Regras
@@ -19,7 +21,7 @@ Como suspender e reativar a conta de uma clínica, o que conferir e o que fazer 
 - **A equipe da clínica** (todo papel, o administrador inclusive) vê "Conta suspensa" ao entrar e não lê nem escreve nada da clínica: o banco nega, nas mesmas funções que as policies usam. Quem tem outra clínica ativa troca para ela. **O super admin entra normalmente.**
 - **Nada sai pelo WhatsApp da clínica:** régua, confirmação, mensagem agendada, lista de espera, envio ativo, a IA, o atendimento (até o do super admin) e o "Testar" da régua. O motor segura os jobs da clínica na fila; a trava final do envio recusa o que escapar.
 - **As conversas do agente voltam para a equipe** na hora (nada é enviado ao contato), e conversa nova não nasce na IA.
-- **O que continua:** as mensagens que os pacientes mandam chegam e ficam gravadas, com a mídia (`baixar_midia` não é segurado); os dados ficam todos; a saúde do motor não acusa os jobs segurados (`supabase/operacao/motor-por-cron.md`). As automações de fluxo, que não enviam mensagem (mover etapa, etiquetar, criar atividade, nota interna), continuam rodando no banco (ponto aberto no `docs/05`, entrada "Onda 1"); o follow-up e a conversão da Meta que nascem delas ficam segurados como os outros jobs.
+- **O que continua:** as mensagens que os pacientes mandam chegam e ficam gravadas, com a mídia (`baixar_midia` não é segurado); os dados ficam todos; a saúde do motor não acusa os jobs segurados (`supabase/operacao/motor-por-cron.md`). As automações de fluxo, que não enviam mensagem (mover etapa, etiquetar, criar atividade, nota interna), continuavam rodando no banco até 22/10/2026 (ponto aberto no `docs/05`, entrada "Onda 1"); o follow-up e a conversão da Meta que nascem delas ficam segurados como os outros jobs. Desde a migration B da onda 4 (`20261024110000`, aplicada em 22/10/2026), elas também param: a execução nasce pulada (`clinica_suspensa`) e nada roda atrasado na volta.
 
 ## Suspender
 
