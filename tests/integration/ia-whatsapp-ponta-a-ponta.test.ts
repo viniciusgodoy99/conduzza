@@ -10,7 +10,10 @@ import {
 
 import type { ClienteDoAgente } from "@/lib/agente/laco";
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
-import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  FRASE_DE_ESCALONAMENTO,
+  FRASE_DO_ASSISTENTE_VIRTUAL,
+} from "@/lib/domain/conformidade/frase-fixa";
 import type { Verificador } from "@/lib/domain/conformidade/veredicto";
 import type { ClassificadorDeEntrada } from "@/lib/integrations/llm/classificador-de-entrada";
 import {
@@ -349,6 +352,12 @@ beforeEach(() => {
   resetFakeProvider();
 });
 
+// Onda 2 (P11a, aprovada pelo dono em 22/10/2026): a primeira resposta da
+// IA na janela sai com o aviso de assistente virtual na frente, e o filtro
+// confere o texto inteiro (o hash e o rascunho guardado incluem o aviso).
+const comAviso = (texto: string): string =>
+  `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${texto}`;
+
 describe("ponta a ponta com o LLM falso", () => {
   it("pergunta comum: a resposta aprovada sai como 'ia', com custo zero e o hash da decisão", async () => {
     const { conversationId, jobId } = await prepararTurno(
@@ -368,7 +377,7 @@ describe("ponta a ponta com o LLM falso", () => {
     });
     expect(create).toHaveBeenCalledTimes(1);
     expect(fakeSentMessages().map((m) => [m.to, m.body])).toEqual([
-      [EQ_COMUM, texto],
+      [EQ_COMUM, comAviso(texto)],
     ]);
 
     const daIa = (await mensagens(conversationId)).filter(
@@ -376,7 +385,7 @@ describe("ponta a ponta com o LLM falso", () => {
     );
     expect(daIa).toEqual([
       expect.objectContaining({
-        body: texto,
+        body: comAviso(texto),
         job_id: jobId,
         cost_cents: 0,
         billable: false,
@@ -386,7 +395,7 @@ describe("ponta a ponta com o LLM falso", () => {
     expect(await decisao(jobId)).toMatchObject({
       desfecho: "respondeu",
       aprovado: true,
-      texto_sha256: sha256DoTexto(texto),
+      texto_sha256: sha256DoTexto(comAviso(texto)),
       blocked_draft: null,
     });
     expect(await turno(jobId)).toMatchObject({
@@ -469,7 +478,11 @@ describe("ponta a ponta com o LLM falso", () => {
       .eq("job_id", jobId)
       .throwOnError();
     expect(guardado).toEqual([
-      { texto: rascunho, job_id: jobId, conversation_id: conversationId },
+      {
+        texto: comAviso(rascunho),
+        job_id: jobId,
+        conversation_id: conversationId,
+      },
     ]);
     expect(await conversa(conversationId)).toMatchObject({
       status: "aguardando_humano",
@@ -495,13 +508,13 @@ describe("ponta a ponta com o LLM falso", () => {
     expect(a.resumo.reivindicados + b.resumo.reivindicados).toBe(1);
     expect(a.create.mock.calls.length + b.create.mock.calls.length).toBe(1);
     expect(fakeSentMessages().map((m) => [m.to, m.body])).toEqual([
-      [EQ_DUAS, texto],
+      [EQ_DUAS, comAviso(texto)],
     ]);
     const daIa = (await mensagens(conversationId)).filter(
       (m) => m.author === "ia",
     );
     expect(daIa).toEqual([
-      expect.objectContaining({ body: texto, job_id: jobId }),
+      expect.objectContaining({ body: comAviso(texto), job_id: jobId }),
     ]);
   });
 

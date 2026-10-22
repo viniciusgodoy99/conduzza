@@ -1197,6 +1197,14 @@ describe("varredura e frase que nao sai", () => {
       })
       .eq("id", r.conversation_id!)
       .throwOnError();
+    // Onda 2 (M2): a espera conta do maior entre a ultima mensagem e a
+    // janela da IA (a conversa retomada no horario ganha 3 minutos a partir
+    // da retomada); aqui a janela tambem ficou para tras.
+    await admin
+      .from("ia_janela_da_conversa")
+      .update({ updated_at: new Date(Date.now() - 4 * 60_000).toISOString() })
+      .eq("conversation_id", r.conversation_id!)
+      .throwOnError();
     const { count: antes } = await admin
       .from("message")
       .select("id", { count: "exact", head: true })
