@@ -414,134 +414,142 @@ afterAll(async () => {
 });
 
 describe("funcoes do servidor: nao sao da sessao", () => {
-  it("anon e authenticated recebem 42501; a service role chega", async () => {
-    const z = "00000000-0000-4000-a000-000000000000";
-    const chamadas = (cliente: SupabaseClient) => [
-      cliente.rpc("enfileirar_resposta_da_ia", {
-        p_clinic_id: clinicaA,
-        p_conversation_id: conversaDaEquipe,
-        p_message_id: z,
-        p_incluir_teste: true,
-      }),
-      cliente.rpc("claim_jobs_da_ia", {
-        p_worker: "rls",
-        p_max: 1,
-        p_clinic_ids: [clinicaA],
-        p_incluir_teste: true,
-      }),
-      cliente.rpc("passar_conversa_da_ia_para_equipe", {
-        p_job_id: z,
-        p_worker: "rls",
-        p_motivo: "sintoma",
-      }),
-      cliente.rpc("gravar_evento_da_ia", {
-        p_job_id: z,
-        p_worker: "rls",
-        p_motivo: "aviso_nao_enviado",
-      }),
-      cliente.rpc("tirar_conversa_da_ia_pelo_servidor", {
-        p_clinic_id: clinicaA,
-        p_conversation_id: conversaDaEquipe,
-        p_motivo: "nao_individual",
-      }),
-      cliente.rpc("ia_pode_enviar_agora", {
-        p_job_id: z,
-        p_worker: "rls",
-        p_conversation_id: conversaDaEquipe,
-        p_whatsapp_account_id: numeroA,
-        p_telefone: TELEFONE_DA_EQUIPE,
-        p_tipo: "resposta",
-      }),
-      cliente.rpc("ia_atende_no_whatsapp", {
-        p_clinic_id: clinicaA,
-        p_whatsapp_account_id: numeroA,
-        p_telefone: TELEFONE_DA_EQUIPE,
-      }),
-      cliente.rpc("ia_pode_falar_com", {
-        p_clinic_id: clinicaA,
-        p_whatsapp_account_id: numeroA,
-        p_telefone: TELEFONE_DA_EQUIPE,
-      }),
-      cliente.rpc("ia_marcar_respondida", { p_job_id: z, p_worker: "rls" }),
-      cliente.rpc("contato_tem_sinal_de_paciente", {
-        p_clinic_id: clinicaA,
-        p_phone_key: TELEFONE_DO_PACIENTE,
-      }),
-      cliente.rpc("telefone_e_numero_da_plataforma", {
-        p_telefone: NUMERO_DA_A_E164,
-      }),
-      // So leitura (stable): chamar com um grant regredido nao mexe em nada.
-      cliente.rpc("ia_jobs_devidos", {
-        p_clinic_ids: [clinicaA],
-        p_incluir_teste: true,
-        p_folga: "0 seconds",
-      }),
-      // Onda 2 (M2): o horario e o publico (so leitura) e a retomada com
-      // limite 0 (com um grant regredido, nao pega linha nenhuma).
-      cliente.rpc("ia_horario_do_assistente", { p_clinic_id: clinicaA }),
-      cliente.rpc("ia_publico_aceita", {
-        p_clinic_id: clinicaA,
-        p_telefone: TELEFONE_DA_EQUIPE,
-      }),
-      cliente.rpc("ia_retomar_conversas_no_horario", {
-        p_limite: 0,
-        p_incluir_teste: true,
-      }),
-    ];
-    for (const cliente of [
-      anonClient(),
-      como("admin-a"),
-      como("gestor-a"),
-      como("recepcao-a"),
-      como("admin-b"),
-    ]) {
-      for (const chamada of chamadas(cliente)) {
-        const { error } = await chamada;
-        expect(error?.code).toBe(PERMISSAO_NEGADA);
+  // Cerca de 50 chamadas em serie (16 funcoes, tres clientes) pela rede ate
+  // o banco: passa dos 15 s padrao numa tarde carregada (22/10/2026).
+  it(
+    "anon e authenticated recebem 42501; a service role chega",
+    { timeout: 60_000 },
+    async () => {
+      const z = "00000000-0000-4000-a000-000000000000";
+      const chamadas = (cliente: SupabaseClient) => [
+        cliente.rpc("enfileirar_resposta_da_ia", {
+          p_clinic_id: clinicaA,
+          p_conversation_id: conversaDaEquipe,
+          p_message_id: z,
+          p_incluir_teste: true,
+        }),
+        cliente.rpc("claim_jobs_da_ia", {
+          p_worker: "rls",
+          p_max: 1,
+          p_clinic_ids: [clinicaA],
+          p_incluir_teste: true,
+        }),
+        cliente.rpc("passar_conversa_da_ia_para_equipe", {
+          p_job_id: z,
+          p_worker: "rls",
+          p_motivo: "sintoma",
+        }),
+        cliente.rpc("gravar_evento_da_ia", {
+          p_job_id: z,
+          p_worker: "rls",
+          p_motivo: "aviso_nao_enviado",
+        }),
+        cliente.rpc("tirar_conversa_da_ia_pelo_servidor", {
+          p_clinic_id: clinicaA,
+          p_conversation_id: conversaDaEquipe,
+          p_motivo: "nao_individual",
+        }),
+        cliente.rpc("ia_pode_enviar_agora", {
+          p_job_id: z,
+          p_worker: "rls",
+          p_conversation_id: conversaDaEquipe,
+          p_whatsapp_account_id: numeroA,
+          p_telefone: TELEFONE_DA_EQUIPE,
+          p_tipo: "resposta",
+        }),
+        cliente.rpc("ia_atende_no_whatsapp", {
+          p_clinic_id: clinicaA,
+          p_whatsapp_account_id: numeroA,
+          p_telefone: TELEFONE_DA_EQUIPE,
+        }),
+        cliente.rpc("ia_pode_falar_com", {
+          p_clinic_id: clinicaA,
+          p_whatsapp_account_id: numeroA,
+          p_telefone: TELEFONE_DA_EQUIPE,
+        }),
+        cliente.rpc("ia_marcar_respondida", { p_job_id: z, p_worker: "rls" }),
+        cliente.rpc("contato_tem_sinal_de_paciente", {
+          p_clinic_id: clinicaA,
+          p_phone_key: TELEFONE_DO_PACIENTE,
+        }),
+        cliente.rpc("telefone_e_numero_da_plataforma", {
+          p_telefone: NUMERO_DA_A_E164,
+        }),
+        // So leitura (stable): chamar com um grant regredido nao mexe em nada.
+        cliente.rpc("ia_jobs_devidos", {
+          p_clinic_ids: [clinicaA],
+          p_incluir_teste: true,
+          p_folga: "0 seconds",
+        }),
+        // Onda 2 (M2): o horario e o publico (so leitura) e a retomada com
+        // limite 0 (com um grant regredido, nao pega linha nenhuma).
+        cliente.rpc("ia_horario_do_assistente", { p_clinic_id: clinicaA }),
+        cliente.rpc("ia_publico_aceita", {
+          p_clinic_id: clinicaA,
+          p_telefone: TELEFONE_DA_EQUIPE,
+        }),
+        cliente.rpc("ia_retomar_conversas_no_horario", {
+          p_limite: 0,
+          p_incluir_teste: true,
+        }),
+      ];
+      for (const cliente of [
+        anonClient(),
+        como("admin-a"),
+        como("gestor-a"),
+        como("recepcao-a"),
+        como("admin-b"),
+      ]) {
+        for (const chamada of chamadas(cliente)) {
+          const { error } = await chamada;
+          expect(error?.code).toBe(PERMISSAO_NEGADA);
+        }
       }
-    }
-    // contraprova: o servidor pergunta e a resposta e a da liberacao
-    expect(
-      await rpcDoSistema("ia_atende_no_whatsapp", {
-        p_clinic_id: clinicaA,
-        p_whatsapp_account_id: numeroA,
-        p_telefone: TELEFONE_DA_EQUIPE,
-      }),
-    ).toBe(true);
-    expect(
-      await rpcDoSistema("telefone_e_numero_da_plataforma", {
-        p_telefone: NUMERO_DA_A_E164,
-      }),
-    ).toBe(true);
-    expect(
-      await rpcDoSistema("contato_tem_sinal_de_paciente", {
-        p_clinic_id: clinicaA,
-        p_phone_key: TELEFONE_DO_PACIENTE,
-      }),
-    ).toBe(true);
-    // Onda 2: o servidor pergunta o horario (24h: atende), o publico (nulo
-    // no modo contatos: aceita) e chama a retomada (nada a retomar).
-    expect(
-      await rpcDoSistema("ia_horario_do_assistente", { p_clinic_id: clinicaA }),
-    ).toBe("atende");
-    expect(
-      await rpcDoSistema("ia_publico_aceita", {
-        p_clinic_id: clinicaA,
-        p_telefone: TELEFONE_DA_EQUIPE,
-      }),
-    ).toBe(true);
-    expect(
-      await rpcDoSistema("ia_retomar_conversas_no_horario", {
-        p_limite: 0,
-        p_incluir_teste: true,
-      }),
-    ).toEqual({
-      retomadas: 0,
-      descartadas: 0,
-      enfileiradas: 0,
-      erros_por_linha: 0,
-    });
-  });
+      // contraprova: o servidor pergunta e a resposta e a da liberacao
+      expect(
+        await rpcDoSistema("ia_atende_no_whatsapp", {
+          p_clinic_id: clinicaA,
+          p_whatsapp_account_id: numeroA,
+          p_telefone: TELEFONE_DA_EQUIPE,
+        }),
+      ).toBe(true);
+      expect(
+        await rpcDoSistema("telefone_e_numero_da_plataforma", {
+          p_telefone: NUMERO_DA_A_E164,
+        }),
+      ).toBe(true);
+      expect(
+        await rpcDoSistema("contato_tem_sinal_de_paciente", {
+          p_clinic_id: clinicaA,
+          p_phone_key: TELEFONE_DO_PACIENTE,
+        }),
+      ).toBe(true);
+      // Onda 2: o servidor pergunta o horario (24h: atende), o publico (nulo
+      // no modo contatos: aceita) e chama a retomada (nada a retomar).
+      expect(
+        await rpcDoSistema("ia_horario_do_assistente", {
+          p_clinic_id: clinicaA,
+        }),
+      ).toBe("atende");
+      expect(
+        await rpcDoSistema("ia_publico_aceita", {
+          p_clinic_id: clinicaA,
+          p_telefone: TELEFONE_DA_EQUIPE,
+        }),
+      ).toBe(true);
+      expect(
+        await rpcDoSistema("ia_retomar_conversas_no_horario", {
+          p_limite: 0,
+          p_incluir_teste: true,
+        }),
+      ).toEqual({
+        retomadas: 0,
+        descartadas: 0,
+        enfileiradas: 0,
+        erros_por_linha: 0,
+      });
+    },
+  );
 
   it("disparar_ciclo_da_ia, motor_ia_agendar e motor_ia_desagendar: so a service role, pela migration (nunca chamados aqui)", () => {
     const m1 = readFileSync(

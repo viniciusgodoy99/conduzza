@@ -497,7 +497,17 @@ describe("isolamento entre clínicas", () => {
       phone_e164: "+5584978559999",
       name: "Invasão",
     });
-    expect((erroContato as Erro)?.code).toBe(PERMISSAO_NEGADA);
+    // Barrado antes da RLS: o gatilho validar_etapa_do_contato (BEFORE
+    // INSERT) le a jornada com a sessao de quem grava, nao enxerga a da B e
+    // recusa com 23514; sem ele, a policy recusaria com 42501. O que importa
+    // e que nada entra na B (conferido pelo sistema logo abaixo).
+    expect(["23514", PERMISSAO_NEGADA]).toContain((erroContato as Erro)?.code);
+    const { count: invasoes } = await admin
+      .from("contact")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinicaB)
+      .eq("phone_e164", "+5584978559999");
+    expect(invasoes).toBe(0);
     const { error: erroMarca } = await implA
       .from("membro_implementador")
       .insert({ clinic_id: clinicaB, user_id: idDe("gestor-b") });
