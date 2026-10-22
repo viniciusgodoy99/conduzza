@@ -28,8 +28,12 @@ import { bancoFalso, eUpdate, type Resposta } from "./banco-falso";
 // etiqueta mudou no meio, D3; outra regua da etapa foi ligada; esta foi
 // desligada ou reordenada), ESTE toque e pulado como 'condicao_parada' e
 // nada sai. A cadeia nao para: os toques da vigente sao outras runs. Leitura
-// com erro vira retry do job, nunca decisao. So a funcao AUSENTE (banco antes
-// da migration, uma regua por etapa) segue o comportamento de antes.
+// com erro vira retry do job, nunca decisao, e a funcao AUSENTE tambem
+// (correcao de 22/10/2026: o codigo sobe depois das migrations e falha
+// fechado sem elas). Com a vigente certa, a trava de toque repetido e
+// conferida de novo na hora de enviar: o passo que nasceu vencido nao sai se
+// OUTRA regua de follow-up da etapa tocou o contato nos ultimos 30 minutos
+// (o toque que ainda estava saindo quando o planejador rodou).
 // Consentimento, janela, numero, slot de massa e custo nao mudam.
 
 const CLINICA = "11111111-1111-4111-8111-111111111111";
@@ -39,6 +43,7 @@ const CONTATO = "55555555-5555-4555-8555-555555555555";
 const JOB = "66666666-6666-4666-8666-666666666666";
 const REGUA_DA_RUN = "77777777-7777-4777-8777-777777777777";
 const OUTRA_REGUA = "88888888-8888-4888-8888-888888888888";
+const TOQUE_RECENTE = "99999999-9999-4999-8999-999999999999";
 const WORKER = "worker-de-teste";
 
 const MIN = 60_000;
@@ -56,11 +61,40 @@ type Cenario = {
   /** consentimento_vigente (padrao: true). */
   consentimento?: boolean;
   /**
-   * A leitura de cadence.etiquetas (so com a funcao ausente): 42703 e o
-   * banco antes da migration 20261024100000. Padrao: a coluna existe.
+   * Quando a run foi criada, em minutos depois do scheduled_for (negativo:
+   * nasceu antes de vencer; zero ou mais: nasceu vencida). Padrao: nasceu
+   * 30 minutos antes de vencer (o planejador adianta ate 60).
    */
-  colunaEtiquetas?: Resposta;
+  criadaMinutosDepois?: number;
+  /** A leitura dos toques recentes do contato (a trava na hora de enviar). */
+  toquesRecentes?: Resposta;
 };
+
+/** Um toque enviado ha pouco, da regua dada (com o tipo e a etapa dela). */
+function toque(cadence: {
+  id: string;
+  kind?: string;
+  trigger_stage?: string | null;
+}) {
+  return {
+    id: TOQUE_RECENTE,
+    cadence_step: {
+      cadence: {
+        id: cadence.id,
+        kind: cadence.kind ?? "followup",
+        trigger_stage:
+          cadence.trigger_stage === undefined
+            ? "em_contato"
+            : cadence.trigger_stage,
+      },
+    },
+  };
+}
+
+/** A consulta dos toques recentes (a trava), e nao a leitura da run. */
+function eTrava(chamada: { metodos: { metodo: string }[] }): boolean {
+  return chamada.metodos.some((m) => m.metodo === "gt");
+}
 
 function banco(cenario: Cenario) {
   const iso = (epoch: number) => new Date(epoch).toISOString();
@@ -73,6 +107,7 @@ function banco(cenario: Cenario) {
     contact_id: CONTATO,
     appointment_id: null,
     scheduled_for: iso(scheduledFor),
+    created_at: iso(scheduledFor + (cenario.criadaMinutosDepois ?? -30) * MIN),
     sent_at: null,
     skipped_reason: null,
     cadence_step: {
@@ -106,13 +141,10 @@ function banco(cenario: Cenario) {
       cadence_run: (chamada) =>
         eUpdate(chamada)
           ? { data: null, error: null }
-          : { data: run, error: null },
+          : eTrava(chamada)
+            ? (cenario.toquesRecentes ?? { data: [], error: null })
+            : { data: run, error: null },
       cadence_step: () => ({ data: [{ id: "passo" }], error: null }),
-      cadence: () =>
-        cenario.colunaEtiquetas ?? {
-          data: [{ etiquetas: [] }],
-          error: null,
-        },
       whatsapp_account: () => ({
         data: {
           provider: "fake",
@@ -254,57 +286,126 @@ describe("follow-up: a run ainda é da régua que vale para o contato?", () => {
   });
 
   it.each(["PGRST202", "42883"])(
-    "função ausente (%s) e sem a coluna etiquetas (banco antes da migration): a régua da run é a única da etapa e o toque sai",
+    "função ausente (%s): falha fechada, exceção para retry, sem pular e sem enviar (correção de 22/10/2026)",
     async (codigo) => {
       const b = banco({
         vigente: { data: null, error: { code: codigo, message: "nao achou" } },
-        colunaEtiquetas: {
-          data: null,
-          error: { code: "42703", message: "column does not exist" },
-        },
+      });
+      await expect(
+        executarPassoDeRegua(b.admin, job(), WORKER),
+      ).rejects.toThrow(`regua_vigente_ilegivel: ${codigo}`);
+      expect(updatesNaRun(b)).toEqual([]);
+      expect(sendWhatsAppText).not.toHaveBeenCalled();
+      // Nada de conferir o esquema para decidir seguir: so a run foi lida.
+      expect(b.tabelas.map((c) => c.tabela)).toEqual(["cadence_run"]);
+    },
+  );
+});
+
+describe("follow-up: a trava de toque repetido de novo, na hora de enviar", () => {
+  it("o passo nasceu vencido e OUTRA régua da etapa tocou há pouco: pula só esta run, sem enviar", async () => {
+    const b = banco({
+      vigente: { data: REGUA_DA_RUN, error: null },
+      criadaMinutosDepois: 0,
+      toquesRecentes: { data: [toque({ id: OUTRA_REGUA })], error: null },
+    });
+    expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+      ok: true,
+    });
+    expect(sendWhatsAppText).not.toHaveBeenCalled();
+    expect(b.chamadasDe("numero_do_job")).toEqual([]);
+    expect(updatesNaRun(b)).toEqual([
+      { valores: { skipped_reason: "condicao_parada" }, filtros: ["id"] },
+    ]);
+    // A consulta: os toques ENVIADOS do contato nos ultimos 30 minutos,
+    // desta entrada na etapa, fora a propria run.
+    const trava = b.tabelas.find(
+      (c) => c.tabela === "cadence_run" && eTrava(c),
+    );
+    expect(trava?.metodos.map((m) => [m.metodo, ...m.args])).toEqual([
+      [
+        "select",
+        "id, cadence_step:cadence_step_id ( cadence:cadence_id ( id, kind, trigger_stage ) )",
+      ],
+      ["eq", "clinic_id", CLINICA],
+      ["eq", "contact_id", CONTATO],
+      ["neq", "id", RUN],
+      ["gt", "sent_at", new Date(AGORA - 30 * MIN).toISOString()],
+      ["gte", "scheduled_for", new Date(AGORA - 61 * MIN).toISOString()],
+      ["limit", 50],
+    ]);
+  });
+
+  it.each([
+    ["da mesma régua (a sequência dela)", toque({ id: REGUA_DA_RUN })],
+    [
+      "de outra régua de outra etapa",
+      toque({ id: OUTRA_REGUA, trigger_stage: "novo" }),
+    ],
+    [
+      "de uma régua que não é de follow-up",
+      toque({ id: OUTRA_REGUA, kind: "confirmacao", trigger_stage: null }),
+    ],
+  ])(
+    "o toque recente é %s: a trava não vale e o toque sai",
+    async (_rotulo, recente) => {
+      const b = banco({
+        vigente: { data: REGUA_DA_RUN, error: null },
+        criadaMinutosDepois: 5,
+        toquesRecentes: { data: [recente], error: null },
       });
       expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
         ok: true,
       });
       expect(sendWhatsAppText).toHaveBeenCalledTimes(1);
-      // A conferencia leu a coluna da regua da run.
-      expect(
-        b.tabelas
-          .filter((c) => c.tabela === "cadence")
-          .map((c) => c.metodos.map((m) => [m.metodo, ...m.args])),
-      ).toEqual([
-        [
-          ["select", "etiquetas"],
-          ["eq", "id", REGUA_DA_RUN],
-          ["limit", 1],
-        ],
-      ]);
     },
   );
 
-  it.each([
-    ["a coluna existe (o cache do PostgREST atrasado)", { data: [], error: null }],
-    [
-      "a leitura da coluna também falha",
-      { data: null, error: { code: "57014", message: "statement timeout" } },
-    ],
-  ])(
-    "função ausente e %s: falha fechada, exceção para retry, sem pular e sem enviar (revisão de 21/10/2026)",
-    async (_rotulo, colunaEtiquetas) => {
-      const b = banco({
-        vigente: {
-          data: null,
-          error: { code: "PGRST202", message: "nao achou" },
-        },
-        colunaEtiquetas,
-      });
-      await expect(
-        executarPassoDeRegua(b.admin, job(), WORKER),
-      ).rejects.toThrow("regua_vigente_ilegivel: PGRST202");
-      expect(updatesNaRun(b)).toEqual([]);
-      expect(sendWhatsAppText).not.toHaveBeenCalled();
-    },
-  );
+  it("o passo nasceu antes de vencer (o próximo da régua nova): sai, sem consultar a trava", async () => {
+    const b = banco({
+      vigente: { data: REGUA_DA_RUN, error: null },
+      criadaMinutosDepois: -10,
+      toquesRecentes: { data: [toque({ id: OUTRA_REGUA })], error: null },
+    });
+    expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+      ok: true,
+    });
+    expect(sendWhatsAppText).toHaveBeenCalledTimes(1);
+    expect(
+      b.tabelas.filter((c) => c.tabela === "cadence_run" && eTrava(c)),
+    ).toEqual([]);
+  });
+
+  it("a leitura dos toques recentes falha: exceção para retry, sem pular e sem enviar", async () => {
+    const b = banco({
+      vigente: { data: REGUA_DA_RUN, error: null },
+      criadaMinutosDepois: 0,
+      toquesRecentes: {
+        data: null,
+        error: { code: "57014", message: "statement timeout" },
+      },
+    });
+    await expect(executarPassoDeRegua(b.admin, job(), WORKER)).rejects.toThrow(
+      "toque_recente_ilegivel: 57014",
+    );
+    expect(updatesNaRun(b)).toEqual([]);
+    expect(sendWhatsAppText).not.toHaveBeenCalled();
+  });
+
+  it("toque manual: quem pediu foi uma pessoa, não passa pela trava", async () => {
+    const b = banco({
+      vigente: { data: OUTRA_REGUA, error: null },
+      criadaMinutosDepois: 0,
+      toquesRecentes: { data: [toque({ id: OUTRA_REGUA })], error: null },
+    });
+    expect(
+      await executarPassoDeRegua(b.admin, job({ manual: true }), WORKER),
+    ).toEqual({ ok: true });
+    expect(sendWhatsAppText).toHaveBeenCalledTimes(1);
+    expect(
+      b.tabelas.filter((c) => c.tabela === "cadence_run" && eTrava(c)),
+    ).toEqual([]);
+  });
 });
 
 describe("as paradas de sempre vêm antes da régua vigente", () => {

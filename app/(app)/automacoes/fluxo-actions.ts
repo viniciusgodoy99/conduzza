@@ -7,19 +7,15 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import {
   automacaoDeFluxoSchema,
-  colunasDeAntes,
   DICA_SEM_PERMISSAO,
-  FUNCAO_AUSENTE,
   MENSAGENS_DO_VETO,
   mensagemDaRecusaAoSalvar,
   mensagemDaRecusaDaAutomacao,
   motivoDaPerdaPara,
   podeAcessarAutomacoesDeFluxo,
   previaDaAutomacaoEntradaSchema,
-  RECUSAS_AO_SALVAR,
   regraParaGravar,
   vetoDoDestino,
-  type EntradaDaAutomacao,
   type EtapaParaAutomacao,
   type ExecucaoDeAutomacao,
   type PreviaDaAutomacao,
@@ -61,12 +57,13 @@ import { createClient } from "@/lib/supabase/server";
 // exclusao e real e leva o historico junto (cascade); as atividades criadas
 // pela regra ficam (FK ON DELETE SET NULL).
 //
-// Banco sem a migration 20261024110000 (revisao de 21/10/2026; o contrato,
-// secao 8, publica este codigo antes dela, junto com o do follow-up): sem a
-// RPC, a regra de UMA acao e sem condicao grava pelas colunas de antes, como
-// o codigo de antes gravava; a de varias acoes ou com condicao e recusada
-// com a frase que diz o que fazer. Ligar, desligar, excluir, o uso e o
-// historico nao dependem da B.
+// ORDEM DE PUBLICACAO (decidida pelo coordenador em 22/10/2026): as
+// migrations 20261024100000 e 20261024110000 sobem ANTES deste codigo, que
+// depende delas. Sem a RPC (PGRST202 ou 42883: o cache do PostgREST atrasado,
+// ou o banco sem a migration), salvar FALHA FECHADO: nada se grava por outro
+// caminho e a pessoa le que pode tentar de novo (correcao de 22/10/2026:
+// antes, a regra de uma acao gravava pelas colunas de antes, e a regra
+// composta que existia no banco perdia as condicoes em silencio).
 
 export type AutomacaoDeFluxoResultado =
   { ok: true; id: string } | { ok: false; error: string };
@@ -198,9 +195,6 @@ export async function salvarAutomacaoDeFluxoAction(
     p_id: dados.id,
     p_regra: regraParaGravar(dados),
   });
-  if (error && FUNCAO_AUSENTE.has(error.code ?? "")) {
-    return salvarPelasColunasDeAntes(supabase, guard, dados, jornada, padrao);
-  }
   if (error) {
     return { ok: false, error: mensagemDaRecusaAoSalvar(error, padrao) };
   }
@@ -215,53 +209,6 @@ export async function salvarAutomacaoDeFluxoAction(
   );
   revalidar();
   return { ok: true, id };
-}
-
-/**
- * A gravacao de antes da onda 4, para o banco sem a migration 20261024110000
- * (a RPC ausente): as colunas de acao de automacao_fluxo, pela sessao (a RLS
- * e o gatilho validar_automacao_de_fluxo decidem, como antes). So a regra de
- * uma acao e sem condicao (colunasDeAntes); a outra e recusada.
- */
-async function salvarPelasColunasDeAntes(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  guard: Guarda,
-  dados: EntradaDaAutomacao,
-  jornada: readonly EtapaParaAutomacao[],
-  padrao: string,
-): Promise<AutomacaoDeFluxoResultado> {
-  const campos = colunasDeAntes(dados, jornada);
-  if (!campos) {
-    return { ok: false, error: RECUSAS_AO_SALVAR.semRpc };
-  }
-  if (dados.id) {
-    const { data: linhas, error } = await supabase
-      .from("automacao_fluxo")
-      .update(campos)
-      .eq("clinic_id", guard.clinicId)
-      .eq("id", dados.id)
-      .select("id");
-    if (error) {
-      return { ok: false, error: mensagemDaRecusaDaAutomacao(error, padrao) };
-    }
-    if (!linhas || linhas.length === 0) {
-      return { ok: false, error: RECUSAS_AO_SALVAR.naoExiste };
-    }
-    await auditar(supabase, guard, "editou_automacao_de_fluxo", linhas[0]!.id);
-    revalidar();
-    return { ok: true, id: linhas[0]!.id };
-  }
-  const { data: criada, error } = await supabase
-    .from("automacao_fluxo")
-    .insert({ clinic_id: guard.clinicId, ...campos })
-    .select("id")
-    .single();
-  if (error || !criada) {
-    return { ok: false, error: mensagemDaRecusaDaAutomacao(error, padrao) };
-  }
-  await auditar(supabase, guard, "criou_automacao_de_fluxo", criada.id);
-  revalidar();
-  return { ok: true, id: criada.id };
 }
 
 /**

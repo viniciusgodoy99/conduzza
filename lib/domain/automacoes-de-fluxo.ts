@@ -1023,46 +1023,6 @@ export function regraParaGravar(dados: EntradaDaAutomacao): RegraParaGravar {
   };
 }
 
-/**
- * As colunas de automacao_fluxo de ANTES da onda 4 (uma acao, sem condicao),
- * para gravar a regra quando o banco ainda nao tem a migration 20261024110000
- * (a RPC salvar_automacao_de_fluxo ausente). O contrato (secao 8) publica o
- * codigo do follow-up depois da migration A e antes da B, e este codigo vai
- * junto: com o banco sem a B, a regra de UMA acao e sem condicao continua
- * gravando como antes (o espelho da B leva a acao para automacao_acao quando
- * ela chegar). Regra com mais de uma acao ou com condicao: nulo (o modelo de
- * antes nao a representa; a action recusa com a frase de semRpc). O motivo da
- * perda nasce do papel do destino, como antes.
- */
-export function colunasDeAntes(
-  dados: EntradaDaAutomacao,
-  jornada: readonly EtapaParaAutomacao[],
-) {
-  const [acao] = dados.acoes;
-  if (!acao || dados.acoes.length !== 1 || dados.condicoes.length > 0) {
-    return null;
-  }
-  const destino = acao.acao === "mover_etapa" ? acao.etapa_destino : null;
-  return {
-    nome: dados.nome,
-    ativa: dados.ativa,
-    gatilho: dados.gatilho,
-    etapa: dados.etapa,
-    espera_minutos: ehGatilhoDeTempo(dados.gatilho)
-      ? dados.espera_minutos
-      : null,
-    acao: acao.acao,
-    etapa_destino: destino,
-    motivo_perda: motivoDaPerdaPara(destino, jornada),
-    etiqueta: acao.acao === "etiquetar" ? acao.etiqueta : null,
-    atividade_titulo:
-      acao.acao === "criar_atividade" ? acao.atividade_titulo : null,
-    atividade_prazo_dias:
-      acao.acao === "criar_atividade" ? acao.atividade_prazo_dias : null,
-    nota_texto: acao.acao === "nota_interna" ? acao.nota_texto : null,
-  };
-}
-
 /** Entrada da previa (a mesma faixa da RPC, que da 22023 fora dela). */
 export const previaDaAutomacaoEntradaSchema = z
   .object({
@@ -1590,19 +1550,20 @@ export const RECUSAS_AO_SALVAR = {
   naoExiste:
     "Esta automação não existe mais. Recarregue a página para ver a lista atual.",
   /**
-   * A RPC nova ainda nao esta no banco (migration 20261024110000): a regra
-   * de uma acao e sem condicao grava pelas colunas de antes (colunasDeAntes);
-   * esta e a recusa da que tem mais de uma acao ou alguma condicao.
+   * A RPC nao respondeu como funcao que existe (PGRST202 ou 42883: o cache
+   * do PostgREST atrasado, ou o banco sem a migration 20261024110000). Nada
+   * foi gravado: falha fechada, sem caminho de escrita alternativo
+   * (correcao de 22/10/2026).
    */
-  semRpc:
-    "Esta clínica ainda não tem automações com mais de uma ação ou com condições. Por enquanto, salve com uma ação só e sem condições.",
+  indisponivel:
+    "Não foi possível salvar a automação agora. Nada foi alterado. Tente de novo em alguns minutos.",
 } as const;
 
 /**
  * A recusa do "Salvar" (RPC salvar_automacao_de_fluxo): 22023 sao os
  * limites da regra composta (e nao a faixa da previa), P0002 a regra que nao
- * existe (sem dizer se existe em outra clinica), funcao ausente e o banco
- * antes da migration; o resto como as outras escritas.
+ * existe (sem dizer se existe em outra clinica), funcao ausente (falha
+ * fechada: nada foi gravado); o resto como as outras escritas.
  */
 export function mensagemDaRecusaAoSalvar(
   erro: ErroDoBanco,
@@ -1629,7 +1590,7 @@ export function mensagemDaRecusaAoSalvar(
     return RECUSAS_AO_SALVAR.naoExiste;
   }
   if (erro.code && FUNCAO_AUSENTE.has(erro.code)) {
-    return RECUSAS_AO_SALVAR.semRpc;
+    return RECUSAS_AO_SALVAR.indisponivel;
   }
   return mensagemDaRecusaDaAutomacao(erro, padrao);
 }

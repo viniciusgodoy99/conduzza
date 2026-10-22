@@ -163,7 +163,7 @@ from job_queue group by 1,2 order by 3 desc;
 
 `ultimo_motivo_devolucao = 'canal_ocupado'` com `devolucoes` crescendo significa que o número da clínica está com fila longa, não que o motor quebrou.
 
-`ultimo_motivo_devolucao = 'desconectado'` (ou `'sem_numero'`) com `devolucoes` crescendo é o envio **esperando a reconexão** do número (ou a clínica ter número): não é defeito do motor, e a solução é reconectar o WhatsApp da clínica. Desde a migration `20260925141000_espera_do_canal.sql` essas esperas **não contam no teto de 20** devoluções do `reagendar_job` (que vale só para `canal_ocupado`, janela e `numero_removido`): cada uma soma em `payload->>'esperas_do_canal'`, a espera cresce de 5 até 30 minutos e quem desiste é o executor, pelo prazo (confirmação até a hora da consulta; demais réguas, e a confirmação sem consulta, até 12 horas depois da primeira abertura da janela de envio a partir de `scheduled_for` (ou do próprio `scheduled_for` no toque manual e no que já vence dentro da janela); envio ativo até a consulta do payload ou `created_at` mais 12 horas), fechando a run como `'desconectado'`. O banco só encerra sozinho na 400ª espera, como rede de segurança (cerca de 8 dias com janela de 24h: um passo de confirmação acima disso, com o celular caído o tempo todo, fecha como `'falha_envio'`, e isso foi aceito). Leitura do banco que falha durante o toque vira retry com o código em `last_error` (`run_ilegivel`, `consulta_ilegivel`, `consentimento_ilegivel`, `remarcacao_ilegivel`), nunca decisão definitiva.
+`ultimo_motivo_devolucao = 'desconectado'` (ou `'sem_numero'`) com `devolucoes` crescendo é o envio **esperando a reconexão** do número (ou a clínica ter número): não é defeito do motor, e a solução é reconectar o WhatsApp da clínica. Desde a migration `20260925141000_espera_do_canal.sql` essas esperas **não contam no teto de 20** devoluções do `reagendar_job` (que vale só para `canal_ocupado`, janela e `numero_removido`): cada uma soma em `payload->>'esperas_do_canal'`, a espera cresce de 5 até 30 minutos e quem desiste é o executor, pelo prazo (confirmação até a hora da consulta; demais réguas, e a confirmação sem consulta, até 12 horas depois da primeira abertura da janela de envio a partir de `scheduled_for` (ou do próprio `scheduled_for` no toque manual e no que já vence dentro da janela); envio ativo até a consulta do payload ou `created_at` mais 12 horas), fechando a run como `'desconectado'`. O banco só encerra sozinho na 400ª espera, como rede de segurança (cerca de 8 dias com janela de 24h: um passo de confirmação acima disso, com o celular caído o tempo todo, fecha como `'falha_envio'`, e isso foi aceito). Leitura do banco que falha durante o toque vira retry com o código em `last_error` (`run_ilegivel`, `consulta_ilegivel`, `consentimento_ilegivel`, `remarcacao_ilegivel`, e `regua_vigente_ilegivel` na régua vinculada), nunca decisão definitiva. Com a onda 4 (não aplicada; ver "Réguas por etiqueta e automações compostas", abaixo), o follow-up também usa `regua_vigente_ilegivel` e ganha `toque_recente_ilegivel`.
 
 Desde 25/09/2026 a fila é reivindicada por **raia**: cada número de WhatsApp é uma raia (`coalesce(whatsapp_account_id, clinic_id)`), então dois números da mesma clínica enviam em paralelo e o mesmo número serializa. `MOTOR_MAX_CLINICAS` conta **raias** por passagem (padrão 8; o nome ficou por compatibilidade). Job com `last_error = 'numero_removido'` é o eco de uma resposta ao toque cujo número foi removido: foi cancelado de propósito, não é defeito do motor.
 
@@ -484,6 +484,45 @@ select cron.schedule('funil-da-passagem', '* * * * *', 'select public.processar_
 ```
 
 Com ela desligada, a passagem continua movendo o lead quando o contato está livre (quase sempre); só as pendências esperam, e as com mais de 1 dia são descartadas quando ela voltar. `motor_desagendar()` não mexe nesta entrada, e a ponte `npm run worker` não a roda. O rollback das migrations (que tira a entrada, a batida, as funções e a tabela) está no `docs/04`, 24.10.
+
+## Réguas por etiqueta e automações compostas (onda 4)
+
+Construída na onda 4 (22/10/2026; migrations `20261024100000` e `20261024110000`, **não aplicadas**, e código **não publicado**: nada desta seção existe na produção até lá). Contrato no `docs/04`, seção 25; arquitetura no `docs/03`, seção 18.
+
+**O que muda no motor.** Nenhuma entrada nova no `pg_cron`, nenhum tipo novo de tarefa e `motor_manutencao` igual. Muda o que roda dentro das funções que ela já chama:
+
+- **`planejar_reguas()`** planeja o follow-up por `followups_devidos(null)`: para cada lead vale uma régua por vez (a etapa pode ter réguas por etiqueta e uma geral), e o passo já vencido da régua que acabou de passar a valer não nasce se o lead recebeu toque de outra régua da etapa nos últimos 30 minutos. Confirmação e pós falta não mudam.
+- **O executor das réguas** (`executar_passo_de_regua`), no follow-up, confere antes de enviar se a run ainda é da régua que vale para o lead e, no passo que nasceu vencido, a mesma trava de 30 minutos. Se não for, pula **só aquela run** com `skipped_reason = 'condicao_parada'` (a etiqueta do lead mudou, outra régua foi ligada ou a ordem mudou): é esperado, não defeito. Leitura que falha vira nova tentativa, com `last_error` `regua_vigente_ilegivel: <código>` ou `toque_recente_ilegivel: <código>`, e nada sai. Sem a migration A no banco, **todo** toque de follow-up do código novo cai aí (é a falha fechada: o código só sobe depois das duas migrations).
+- **As automações de fluxo** (`planejar_automacoes_de_fluxo` e `executar_automacoes_de_fluxo`, ainda dentro da manutenção, sem fila): com várias ações, uma execução pode ficar **pela metade** por uma passagem (uma ação não pegou a trava da conversa, que alguém segurava); a passagem seguinte faz só o que falta, sem repetir. Na clínica suspensa (onda 1), a execução nasce e fecha pulada, `clinica_suspensa`, e nada roda atrasado na volta. O retorno continua `{executadas, puladas, falhas, adiadas}`.
+
+**Conferir** (depois das migrations e do código; só contagens, nada de paciente):
+
+```sql
+-- toques de follow-up pulados por régua que deixou de valer, por clínica e dia
+select r.clinic_id, (r.updated_at at time zone 'America/Fortaleza')::date as dia, count(*)
+from cadence_run r
+join cadence_step s on s.id = r.cadence_step_id
+join cadence c on c.id = s.cadence_id
+where c.kind = 'followup' and r.skipped_reason = 'condicao_parada'
+group by 1, 2 order by 2 desc, 1;
+
+-- execuções de automação pela metade (devem sumir em um ou dois minutos)
+select x.clinic_id, count(*), min(x.devida_em)
+from automacao_execucao x
+where x.status = 'pendente'
+  and exists (select 1 from automacao_execucao_acao ea where ea.execucao_id = x.id)
+group by 1;
+
+-- motivos novos das automações, por clínica
+select clinic_id, motivo, count(*)
+from automacao_execucao
+where motivo in ('condicoes_nao_atendidas', 'acoes_puladas', 'clinica_suspensa')
+group by 1, 2 order by 1, 2;
+```
+
+`condicao_parada` cresce quando a clínica mexe nas etiquetas ou na ordem das réguas; o que não pode é um lead com duas mensagens de régua em seguida (a trava existe para isso; se acontecer, olhe a duração do envio no log da rota: o resíduo conhecido é um envio que leva mais que os 20 segundos do ciclo). Execução pela metade que **não some** é uma conversa travada por muito tempo por outra transação: o motor continua tentando a cada minuto.
+
+**Desligar:** não há entrada própria. Para parar uma régua por etiqueta, desligue a régua na tela (os leads dela voltam para a geral); para parar uma automação, desligue a regra. O rollback das migrations (primeiro o código fora do ar, depois a B, depois a A, com as réguas com etiqueta desligadas há 30 minutos e a perda delas aceita) está no `docs/04`, 25.13.
 
 ## Desligar (rollback)
 

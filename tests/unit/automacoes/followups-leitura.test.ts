@@ -17,12 +17,14 @@ import {
 //   - a tela le o filtro de cada regua (etiquetas, modo e ordem) e as
 //     contagens de hoje numa RPC so (alcance_das_reguas_de_followup), sem
 //     contar paciente no codigo;
-//   - banco antes da migration (42703, a coluna nao existe): le sem o filtro
-//     e todas sao a geral da etapa delas, como eram; a tela nao cai;
+//   - banco sem a migration 20261024100000 (42703, a coluna nao existe): o
+//     codigo sobe depois dela e falha fechado, sem ler as reguas sem o
+//     filtro (correcao de 22/10/2026): a aba mostra o erro, e Leads confirma
+//     toda mudanca de etapa dizendo que nao deu para conferir;
 //   - contagem que falha (ou vem com outra forma) vira "nao carregou", nunca
 //     numero inventado; a estimativa cai na contagem da etapa inteira;
 //   - em Leads, as reguas ligadas com passo, na ordem da precedencia de cada
-//     etapa (com etiqueta antes da geral), tambem com o banco de antes.
+//     etapa (com etiqueta antes da geral).
 
 const CLINICA = "c1111111-1111-4111-8111-111111111111";
 const GERAL = "a1111111-1111-4111-8111-111111111111";
@@ -159,19 +161,15 @@ describe("fetchFollowups", () => {
     expect(b.tabelas.filter((t) => t.tabela === "contact")).toEqual([]);
   });
 
-  it("banco antes da migration: lê sem o filtro e todas são a geral", async () => {
+  it("banco sem a migration (42703): falha fechada, sem ler as réguas sem o filtro", async () => {
     const b = banco({ semFiltro: true, alcance: SEM_COLUNA });
-    const dados = await fetchFollowups(b.admin, CLINICA);
-    expect(dados.reguas.map((regua) => regua.etiquetas)).toEqual([[], []]);
-    expect(dados.reguas.map((regua) => regua.etiquetas_modo)).toEqual([
-      "qualquer",
-      "qualquer",
-    ]);
-    // A segunda leitura de cadence foi sem as colunas novas.
+    await expect(fetchFollowups(b.admin, CLINICA)).rejects.toThrow(
+      "column cadence.etiquetas does not exist",
+    );
+    // Uma leitura so de cadence, com o filtro: nenhuma segunda tentativa.
     const leituras = b.tabelas.filter((t) => t.tabela === "cadence");
     expect(leituras.map(colunas).map((c) => c.includes("etiquetas"))).toEqual([
       true,
-      false,
     ]);
   });
 
@@ -287,7 +285,7 @@ describe("fetchReguasDeFollowup (Leads)", () => {
     ]);
   });
 
-  it("banco antes da migration: lê sem o filtro, todas gerais", async () => {
+  it("banco sem a migration (42703): falha fechada (a tela diz que não deu para conferir)", async () => {
     const b = bancoFalso({
       tabelas: {
         cadence: (chamada) =>
@@ -307,13 +305,9 @@ describe("fetchReguasDeFollowup (Leads)", () => {
               },
       },
     });
-    expect(await fetchReguasDeFollowup(b.admin, CLINICA)).toEqual([
-      {
-        etapa: "em_contato",
-        nome: "Geral",
-        etiquetas: [],
-        etiquetas_modo: "qualquer",
-      },
-    ]);
+    await expect(fetchReguasDeFollowup(b.admin, CLINICA)).rejects.toThrow(
+      "column cadence.etiquetas does not exist",
+    );
+    expect(b.tabelas.filter((t) => t.tabela === "cadence")).toHaveLength(1);
   });
 });

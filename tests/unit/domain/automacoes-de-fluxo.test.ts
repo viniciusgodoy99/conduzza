@@ -1070,11 +1070,12 @@ describe("recusas do banco traduzidas", () => {
     expect(mensagemDaRecusaAoSalvar({ code: "P0002" }, padrao)).toBe(
       RECUSAS_AO_SALVAR.naoExiste,
     );
+    // A RPC ausente falha fechado: nada foi gravado (correcao de 22/10/2026).
     expect(mensagemDaRecusaAoSalvar({ code: "PGRST202" }, padrao)).toBe(
-      RECUSAS_AO_SALVAR.semRpc,
+      "Não foi possível salvar a automação agora. Nada foi alterado. Tente de novo em alguns minutos.",
     );
     expect(mensagemDaRecusaAoSalvar({ code: "42883" }, padrao)).toBe(
-      RECUSAS_AO_SALVAR.semRpc,
+      RECUSAS_AO_SALVAR.indisponivel,
     );
     expect(
       mensagemDaRecusaAoSalvar(

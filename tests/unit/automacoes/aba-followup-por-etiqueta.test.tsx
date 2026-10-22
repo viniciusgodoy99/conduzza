@@ -43,6 +43,7 @@ import { CartaoDaRegua } from "@/components/automacoes/followup/cartao-da-regua"
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import { tonsDasEtiquetas } from "@/lib/domain/etiquetas-do-lead";
+import { DICA_PARA_LIGAR_SEM_MENSAGEM } from "@/lib/domain/reguas-de-followup";
 import type {
   DadosDosFollowups,
   ReguaDeFollowup,
@@ -336,6 +337,60 @@ describe("o cartão aberto: para quem e quantos", () => {
       "Não foi possível contar os leads desta régua agora.",
     );
     expect(lido).not.toContain("Recebem hoje");
+  });
+
+  // Regua com etiqueta LIGADA e sem mensagem vale para os leads dela e nao
+  // manda nada (nem a geral): so liga com mensagem (correcao de 22/10/2026).
+  describe("régua com etiqueta e sem mensagem", () => {
+    const JANELA = {
+      send_window_start: "08:00:00",
+      send_window_end: "18:00:00",
+      send_weekdays: [1, 2, 3, 4, 5],
+    };
+    const PASSO = {
+      id: "s1",
+      offset_minutes: 60,
+      fixed_body: "Oi, {{nome}}!",
+      media_path: null,
+      media_type: null,
+      media_mimetype: null,
+      media_filename: null,
+    };
+    /** O interruptor (role switch) desabilitado? */
+    const interruptorDesabilitado = (html: string) =>
+      /<button[^>]*role="switch"[^>]*disabled=""/.test(html) ||
+      /<button[^>]*disabled=""[^>]*role="switch"/.test(html);
+    const VAZIA = regua({
+      id: "v",
+      name: "Psiquiatria vazia",
+      etiquetas: ["Psiquiatria"],
+      ...JANELA,
+    });
+
+    it("desligada: o interruptor fica desabilitado, com a dica de escrever antes", () => {
+      const html = cartao(VAZIA);
+      expect(texto(html)).toContain(DICA_PARA_LIGAR_SEM_MENSAGEM);
+      expect(interruptorDesabilitado(html)).toBe(true);
+    });
+
+    it("com mensagem, ou a geral sem mensagem: liga como sempre", () => {
+      for (const alvo of [
+        { ...VAZIA, passos: [PASSO] },
+        regua({ id: "g2", name: "Geral vazia", ...JANELA }),
+      ]) {
+        const html = cartao(alvo);
+        expect(texto(html)).not.toContain(DICA_PARA_LIGAR_SEM_MENSAGEM);
+        expect(interruptorDesabilitado(html)).toBe(false);
+      }
+    });
+
+    it("ligada assim mesmo (corrida): avisa que os leads ficam sem nada e deixa desligar", () => {
+      const html = cartao({ ...VAZIA, active: true });
+      expect(texto(html)).toContain(
+        "Esta régua está ligada sem mensagens: os leads com Psiquiatria não recebem nada, nem a régua geral da etapa. Escreva uma mensagem ou desligue a régua.",
+      );
+      expect(interruptorDesabilitado(html)).toBe(false);
+    });
   });
 
   it("quem não edita: Editar para quem desabilitado, com a dica", () => {

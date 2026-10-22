@@ -27,13 +27,12 @@ import {
 // apaga): a regra le o "Se" de automacao_condicao e o "Faz" de
 // automacao_acao, embutidos na mesma ida.
 //
-// BANCO SEM A MIGRATION 20261024110000 (revisao de 21/10/2026): o contrato
-// (secao 8) publica o codigo do follow-up depois da migration A e antes da
-// B, e este codigo vai junto. Sem a B, as tabelas filhas e a coluna combinar
-// nao existem (PGRST200 no embed, 42703 na coluna): a leitura cai nas colunas
-// de antes, cada regra com a acao delas na posicao 1, sem condicao e com
-// combinar todas, e o historico sem o retrato por acao. Com a B, a leitura
-// de sempre.
+// ORDEM DE PUBLICACAO (decidida pelo coordenador em 22/10/2026): as
+// migrations 20261024100000 e 20261024110000 sobem ANTES deste codigo, que
+// le as tabelas filhas e a coluna combinar delas. Sem elas a leitura e erro
+// como outro qualquer, e a aba mostra o proprio estado de erro (falha
+// fechada; correcao de 22/10/2026: antes caia nas colunas de antes, que nao
+// tem as condicoes e a ordem das acoes da regra composta).
 //
 // O historico traz o NOME do contato, que e dado de paciente: quem chama
 // fetchHistoricoDeAutomacoes grava a trilha de leitura (a action da aba faz
@@ -77,83 +76,23 @@ export const automacoesDeFluxoKeys = {
 export const AUTOMACAO_SELECT =
   "id, nome, ativa, gatilho, etapa, espera_minutos, combinar, vigente_desde, created_at, updated_at, condicoes:automacao_condicao(posicao, tipo, etiqueta), acoes:automacao_acao(posicao, acao, etapa_destino, motivo_perda, etiqueta, atividade_titulo, atividade_prazo_dias, nota_texto)";
 
-/** A regra com as colunas de antes da migration 20261024110000 (uma acao). */
-export const AUTOMACAO_SELECT_DE_ANTES =
-  "id, nome, ativa, gatilho, etapa, espera_minutos, vigente_desde, created_at, updated_at, acao, etapa_destino, motivo_perda, etiqueta, atividade_titulo, atividade_prazo_dias, nota_texto";
-
-/**
- * Codigos de "o banco ainda nao tem a migration 20261024110000": o embed de
- * uma tabela filha que nao existe (PGRST200, o PostgREST nao acha a relacao)
- * ou a coluna combinar (42703).
- */
-export const BANCO_SEM_AS_FILHAS = new Set(["PGRST200", "42703"]);
-
-type LinhaDeAntes = Record<string, unknown> & { acao?: unknown };
-
-/** A regra lida pelas colunas de antes, na forma da regra composta. */
-function regraDeAntes(linha: LinhaDeAntes): Record<string, unknown> {
-  const {
-    acao,
-    etapa_destino,
-    motivo_perda,
-    etiqueta,
-    atividade_titulo,
-    atividade_prazo_dias,
-    nota_texto,
-    ...regra
-  } = linha;
-  return {
-    ...regra,
-    combinar: "todas",
-    condicoes: [],
-    acoes:
-      acao === null || acao === undefined
-        ? []
-        : [
-            {
-              posicao: 1,
-              acao,
-              etapa_destino,
-              motivo_perda,
-              etiqueta,
-              atividade_titulo,
-              atividade_prazo_dias,
-              nota_texto,
-            },
-          ],
-  };
-}
-
 /** As regras da clinica, na ordem em que foram criadas. */
 export async function fetchAutomacoesDeFluxo(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<AutomacaoDeFluxo[]> {
-  const consulta = (colunas: string) =>
-    supabase
-      .from("automacao_fluxo")
-      .select(colunas)
-      .eq("clinic_id", clinicId)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
-  const { data, error } = await consulta(AUTOMACAO_SELECT);
-  let linhas: unknown[] = (data ?? []) as unknown[];
+  const { data, error } = await supabase
+    .from("automacao_fluxo")
+    .select(AUTOMACAO_SELECT)
+    .eq("clinic_id", clinicId)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
   if (error) {
-    if (!BANCO_SEM_AS_FILHAS.has(error.code ?? "")) {
-      throw new Error(error.message);
-    }
-    // Banco sem a migration 20261024110000: as colunas de antes.
-    const deAntes = await consulta(AUTOMACAO_SELECT_DE_ANTES);
-    if (deAntes.error) {
-      throw new Error(deAntes.error.message);
-    }
-    linhas = ((deAntes.data ?? []) as unknown as LinhaDeAntes[]).map(
-      regraDeAntes,
-    );
+    throw new Error(error.message);
   }
   // Valor fora do vocabulario (banco a frente do app) vira erro da aba, em
   // vez de uma frase mentindo sobre o que a regra faz.
-  return z.array(automacaoDeFluxoLinhaSchema).parse(linhas);
+  return z.array(automacaoDeFluxoLinhaSchema).parse(data ?? []);
 }
 
 /**
@@ -224,10 +163,6 @@ export const LIMITE_DO_HISTORICO = 50;
 export const HISTORICO_SELECT =
   "id, automacao_id, status, motivo, de_etapa, para_etapa, acao, etiqueta, etiqueta_nome, executada_em, created_at, contact:contact_id(name), acoes:automacao_execucao_acao(posicao, acao, status, motivo, para_etapa, etiqueta, etiqueta_nome, executada_em)";
 
-/** O historico sem o retrato por acao (banco sem a migration 20261024110000). */
-export const HISTORICO_SELECT_DE_ANTES =
-  "id, automacao_id, status, motivo, de_etapa, para_etapa, acao, etiqueta, etiqueta_nome, executada_em, created_at, contact:contact_id(name)";
-
 /**
  * As ultimas execucoes da clinica (ou de uma regra), mais novas primeiro, com
  * o que cada acao fez ou nao fez. O nome do contato e dado de paciente:
@@ -238,24 +173,16 @@ export async function fetchHistoricoDeAutomacoes(
   clinicId: string,
   automacaoId: string | null,
 ): Promise<ExecucaoDeAutomacao[]> {
-  const consulta = (colunas: string) => {
-    let pedido = supabase
-      .from("automacao_execucao")
-      .select(colunas)
-      .eq("clinic_id", clinicId);
-    if (automacaoId !== null) {
-      pedido = pedido.eq("automacao_id", automacaoId);
-    }
-    return pedido
-      .order("created_at", { ascending: false })
-      .limit(LIMITE_DO_HISTORICO);
-  };
-  let { data, error } = await consulta(HISTORICO_SELECT);
-  if (error && BANCO_SEM_AS_FILHAS.has(error.code ?? "")) {
-    // Banco sem a migration 20261024110000: sem o retrato por acao (o
-    // historico descreve pelo retrato do pai, como antes).
-    ({ data, error } = await consulta(HISTORICO_SELECT_DE_ANTES));
+  let pedido = supabase
+    .from("automacao_execucao")
+    .select(HISTORICO_SELECT)
+    .eq("clinic_id", clinicId);
+  if (automacaoId !== null) {
+    pedido = pedido.eq("automacao_id", automacaoId);
   }
+  const { data, error } = await pedido
+    .order("created_at", { ascending: false })
+    .limit(LIMITE_DO_HISTORICO);
   if (error) {
     throw new Error(error.message);
   }

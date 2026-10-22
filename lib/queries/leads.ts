@@ -631,28 +631,25 @@ const COLUNAS_DA_REGUA_DA_ETAPA =
  * revisao). Desde a onda 4 uma etapa pode ter varias (as com etiqueta e a
  * geral; para cada lead vale uma, regua_de_followup_do_contato): a lista
  * vem na ordem da precedencia de cada etapa, com o filtro de cada regua,
- * para a confirmacao de mover dizer quem recebe o que. Com o banco antes da
- * migration 20261024100000 (42703: a coluna nao existe), le sem o filtro e
- * todas sao a geral da etapa delas, como eram. A leitura de cadence e de
- * qualquer membro ativo (RLS).
+ * para a confirmacao de mover dizer quem recebe o que. O codigo da onda 4
+ * sobe DEPOIS da migration 20261024100000 (ordem decidida pelo coordenador
+ * em 22/10/2026): sem as colunas do filtro, a leitura e erro como outro
+ * qualquer, e a tela de Leads confirma toda mudanca de etapa dizendo que nao
+ * deu para conferir (falha fechada; correcao de 22/10/2026). A leitura de
+ * cadence e de qualquer membro ativo (RLS).
  */
 export async function fetchReguasDeFollowup(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<ReguaDaEtapa[]> {
-  const consulta = (colunas: string) =>
-    supabase
-      .from("cadence")
-      .select(colunas)
-      .eq("clinic_id", clinicId)
-      .eq("kind", "followup")
-      .eq("active", true);
-  let resposta = await consulta(
-    `${COLUNAS_DA_REGUA_DA_ETAPA}, etiquetas, etiquetas_modo, prioridade`,
-  );
-  if (resposta.error?.code === "42703") {
-    resposta = await consulta(COLUNAS_DA_REGUA_DA_ETAPA);
-  }
+  const resposta = await supabase
+    .from("cadence")
+    .select(
+      `${COLUNAS_DA_REGUA_DA_ETAPA}, etiquetas, etiquetas_modo, prioridade`,
+    )
+    .eq("clinic_id", clinicId)
+    .eq("kind", "followup")
+    .eq("active", true);
   if (resposta.error) {
     throw new Error(resposta.error.message);
   }

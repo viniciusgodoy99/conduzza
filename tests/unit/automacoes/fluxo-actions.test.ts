@@ -370,111 +370,36 @@ describe("salvarAutomacaoDeFluxoAction", () => {
     expect(trilha()).toHaveLength(0);
   });
 
-  // Banco sem a migration 20261024110000 (revisao de 21/10/2026): o contrato
-  // publica este codigo antes dela, junto com o do follow-up.
+  // A RPC ausente (o cache do PostgREST atrasado, ou o banco sem a migration
+  // 20261024110000): falha fechada, nada se grava por outro caminho
+  // (correcao de 22/10/2026; o codigo sobe depois das migrations).
   it.each(["PGRST202", "42883"])(
-    "banco sem a RPC (%s): a regra de uma ação e sem condição grava pelas colunas de antes",
+    "banco sem a RPC (%s): falha fechada, nada gravado por outro caminho e sem trilha",
     async (codigo) => {
-      registro.respostaDoSalvar = {
-        data: null,
-        error: { code: codigo, message: "Could not find the function" },
-      };
-      expect(await salvarAutomacaoDeFluxoAction(entrada())).toEqual({
-        ok: true,
-        id: REGRA,
-      });
+      for (const regra of [
+        entrada(),
+        entrada({ id: REGRA }),
+        entrada({
+          condicoes: [{ tipo: "tem_etiqueta", etiqueta: "Psiquiatria" }],
+        }),
+      ]) {
+        registro.respostaDoSalvar = {
+          data: null,
+          error: { code: codigo, message: "Could not find the function" },
+        };
+        expect(await salvarAutomacaoDeFluxoAction(regra)).toEqual({
+          ok: false,
+          error:
+            "Não foi possível salvar a automação agora. Nada foi alterado. Tente de novo em alguns minutos.",
+        });
+      }
       expect(
         registro.inserts.filter((linha) => linha.tabela === "automacao_fluxo"),
-      ).toEqual([
-        {
-          tabela: "automacao_fluxo",
-          valores: {
-            clinic_id: CLINICA,
-            nome: "Sumiu vira Perdido",
-            ativa: true,
-            gatilho: "sem_resposta_na_etapa",
-            etapa: "aguardando_resposta",
-            espera_minutos: 2880,
-            acao: "mover_etapa",
-            etapa_destino: "perdido",
-            // Do papel do destino, como o codigo de antes.
-            motivo_perda: "nao_respondeu",
-            etiqueta: null,
-            atividade_titulo: null,
-            atividade_prazo_dias: null,
-            nota_texto: null,
-          },
-        },
-      ]);
-      expect(trilha().map((linha) => linha.valores.action)).toEqual([
-        "criou_automacao_de_fluxo",
-      ]);
-
-      // Editar: update das colunas de antes, so na regra desta clinica.
-      registro.inserts = [];
-      await salvarAutomacaoDeFluxoAction(
-        entrada({
-          id: REGRA,
-          gatilho: "entrou_na_etapa",
-          espera_minutos: null,
-          acoes: [
-            {
-              acao: "criar_atividade",
-              atividade_titulo: "Ligar",
-              atividade_prazo_dias: 1,
-            },
-          ],
-        }),
-      );
-      expect(registro.updates).toEqual([
-        {
-          tabela: "automacao_fluxo",
-          valores: {
-            nome: "Sumiu vira Perdido",
-            ativa: true,
-            gatilho: "entrou_na_etapa",
-            etapa: "aguardando_resposta",
-            espera_minutos: null,
-            acao: "criar_atividade",
-            etapa_destino: null,
-            motivo_perda: null,
-            etiqueta: null,
-            atividade_titulo: "Ligar",
-            atividade_prazo_dias: 1,
-            nota_texto: null,
-          },
-        },
-      ]);
-      expect(trilha().map((linha) => linha.valores.action)).toEqual([
-        "editou_automacao_de_fluxo",
-      ]);
+      ).toEqual([]);
+      expect(registro.updates).toEqual([]);
+      expect(trilha()).toHaveLength(0);
     },
   );
-
-  it("banco sem a RPC: com mais de uma ação ou com condição, recusa sem gravar nada", async () => {
-    registro.respostaDoSalvar = {
-      data: null,
-      error: { code: "PGRST202", message: "Could not find the function" },
-    };
-    for (const composta of [
-      entrada({
-        acoes: [
-          { acao: "nota_interna", nota_texto: "Ligar" },
-          { acao: "mover_etapa", etapa_destino: "perdido" },
-        ],
-      }),
-      entrada({
-        condicoes: [{ tipo: "tem_etiqueta", etiqueta: "Psiquiatria" }],
-      }),
-    ]) {
-      const resultado = await salvarAutomacaoDeFluxoAction(composta);
-      expect(!resultado.ok && resultado.error).toBe(
-        "Esta clínica ainda não tem automações com mais de uma ação ou com condições. Por enquanto, salve com uma ação só e sem condições.",
-      );
-    }
-    expect(registro.inserts).toEqual([]);
-    expect(registro.updates).toEqual([]);
-  });
 
   it("resposta sem id não grava trilha", async () => {
     registro.respostaDoSalvar = { data: null, error: null };

@@ -28,17 +28,37 @@
 --   2. O codigo novo do follow-up (as telas por etiqueta, o executor que
 --      confere a regua que vale, a leitura do alcance e a ordem) sai do ar
 --      ANTES de rodar este arquivo: ele le as colunas e chama as funcoes que
---      saem aqui.
---   3. Rodar ESTE arquivo inteiro no SQL editor (uma transacao):
+--      saem aqui. (O executor novo, sem as funcoes, falha fechado: nenhum
+--      toque de follow-up sai ate o codigo de antes voltar.)
+--   3. O QUE SE PERDE (correcao de 22/10/2026): o modelo de antes nao tem
+--      regua com etiqueta, e o passo (b) as apaga, com elas, no cascade, as
+--      mensagens que a clinica escreveu nelas (cadence_step) e o historico
+--      dos toques delas (cadence_run, inclusive os ENVIADOS: a mensagem
+--      continua na conversa, mas some a ligacao do toque com ela e as
+--      contagens de enviadas que leem cadence_run). Por isso o passo (b)
+--      RECUSA (P0001, so contagens: quantas reguas, mensagens e toques, e
+--      quantos enviados) enquanto existir regua com etiqueta, a nao ser que
+--      a perda tenha sido aceita, com o ok do dono, nesta transacao. Para
+--      guardar antes os textos (configuracao da clinica, nada de paciente):
+--        select c.clinic_id, c.name, c.trigger_stage, c.etiquetas,
+--               s.offset_minutes, s.fixed_body, s.media_path
+--          from public.cadence c
+--          join public.cadence_step s on s.cadence_id = c.id
+--         where c.kind = 'followup' and cardinality(c.etiquetas) > 0
+--         order by c.clinic_id, c.trigger_stage, c.prioridade, s.offset_minutes;
+--      Aceita a perda, acrescente logo depois do "begin;" abaixo a linha:
+--        set local conduzza.rollback_apaga_reguas_com_etiqueta = 'sim';
+--   4. Rodar ESTE arquivo inteiro no SQL editor (uma transacao):
 --      a. planejar_reguas volta ao corpo de antes (CREATE OR REPLACE: mesma
 --         assinatura, security, search_path e grants);
 --      b. a conferencia do passo 1 (nenhuma regua com etiqueta ligada e
---         nenhum toque delas nos ultimos 30 minutos), e as reguas COM
---         etiqueta saem (com elas, no cascade, os passos e as execucoes
---         delas; o job pendente de uma delas cai no executor como execucao
---         que nao existe mais e nada sai). A regua geral de cada etapa fica,
---         com os passos e a historia. NOTICE com quantas saem (so a
---         contagem);
+--         nenhum toque delas nos ultimos 30 minutos) e a do passo 3 (a
+--         perda aceita), e as reguas COM etiqueta saem (com elas, no
+--         cascade, os passos e as execucoes delas; o job pendente de uma
+--         delas cai no executor como execucao que nao existe mais e nada
+--         sai). A regua geral de cada etapa fica, com os passos e a
+--         historia. NOTICE com quantas reguas, mensagens e toques saem (so
+--         as contagens);
 --      c. os dois indices novos saem e o de antes volta (uma regua de
 --         follow-up por etapa): so depois de (b), senao a segunda regua da
 --         etapa o recusaria;
@@ -346,6 +366,10 @@ do $reguas$
 declare
   v_ligadas integer;
   v_recentes integer;
+  v_reguas integer;
+  v_mensagens integer;
+  v_toques integer;
+  v_enviados integer;
   v_n integer;
 begin
   -- O passo 1 do cabecalho: regua com etiqueta ligada, ou que mandou toque
@@ -371,11 +395,38 @@ begin
       message = format('rollback 20261024100000: %s regua(s) com etiqueta ligada(s) e %s toque(s) delas nos ultimos 30 minutos. Desligue as reguas com etiqueta (passo 1 do cabecalho) e rode de novo 30 minutos depois do ultimo toque.', v_ligadas, v_recentes);
   end if;
 
+  -- O passo 3 do cabecalho (correcao de 22/10/2026): o que sai com as
+  -- reguas com etiqueta (as mensagens que a clinica escreveu e o historico
+  -- dos toques, inclusive os enviados) so sai com a perda aceita nesta
+  -- transacao. So contagens, nada de nome nem de texto.
+  select count(*) into v_reguas
+    from public.cadence c
+   where c.kind = 'followup'
+     and cardinality(c.etiquetas) > 0;
+  select count(*) into v_mensagens
+    from public.cadence_step s
+    join public.cadence c on c.id = s.cadence_id
+   where c.kind = 'followup'
+     and cardinality(c.etiquetas) > 0;
+  select count(*), count(*) filter (where r.sent_at is not null)
+    into v_toques, v_enviados
+    from public.cadence_run r
+    join public.cadence_step s on s.id = r.cadence_step_id
+    join public.cadence c on c.id = s.cadence_id
+   where c.kind = 'followup'
+     and cardinality(c.etiquetas) > 0;
+  if v_reguas > 0
+     and coalesce(current_setting('conduzza.rollback_apaga_reguas_com_etiqueta', true), '') <> 'sim' then
+    raise exception using errcode = 'P0001',
+      message = format('rollback 20261024100000: apagaria %s regua(s) com etiqueta, %s mensagem(ns) escrita(s) pela clinica e %s toque(s) delas (%s enviado(s)). Guarde antes o que precisar e, com o ok do dono, aceite a perda (passo 3 do cabecalho).', v_reguas, v_mensagens, v_toques, v_enviados);
+  end if;
+
   delete from public.cadence c
    where c.kind = 'followup'
      and cardinality(c.etiquetas) > 0;
   get diagnostics v_n = row_count;
-  raise notice 'rollback 20261024100000: % regua(s) de follow-up com etiqueta excluida(s)', v_n;
+  raise notice 'rollback 20261024100000: % regua(s) de follow-up com etiqueta excluida(s), com % mensagem(ns) e % toque(s) (% enviado(s))',
+    v_n, v_mensagens, v_toques, v_enviados;
 end;
 $reguas$;
 

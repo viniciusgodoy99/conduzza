@@ -102,6 +102,8 @@ type LinhaDaRun = {
   contact_id: string;
   appointment_id: string | null;
   scheduled_for: string;
+  /** Quando o planejador (ou a pessoa) criou a run. */
+  created_at: string;
   sent_at: string | null;
   skipped_reason: string | null;
   cadence_step: {
@@ -466,18 +468,6 @@ async function reguaVigenteDaConsulta(
 }
 
 /**
- * Codigos de "a funcao ainda nao existe no banco": PGRST202 (o PostgREST nao
- * a acha no cache do esquema) e 42883 (o Postgres nao a acha).
- */
-const FUNCAO_AUSENTE = new Set(["PGRST202", "42883"]);
-
-/** A regua de follow-up que vale para o contato, ou a resposta do legado. */
-type VigenteDoFollowup =
-  | { tipo: "lida"; reguaId: string | null }
-  /** Banco antes da migration 20261024100000: uma regua so por etapa. */
-  | { tipo: "sem_precedencia" };
-
-/**
  * A regua de follow-up que vale AGORA para o contato (reguas por etiqueta,
  * onda 4, item 16; decisoes D1 a D4 do dono). A escolha mora no banco, em
  * regua_de_followup_do_contato, a mesma funcao que o planejador usa: so
@@ -488,52 +478,94 @@ type VigenteDoFollowup =
  * Leitura que falha vira excecao (retry do job), nunca decisao, como na
  * regua vinculada: tratar o erro como "outra regua vale" pularia um toque
  * que ainda vale, e como "esta vale" mandaria o toque de uma regua que
- * deixou de valer. A unica resposta que nao e erro nem regua e a funcao
- * AUSENTE com o banco ANTES da migration 20261024100000 (codigo no ar antes
- * dela, ou depois do rollback dela): sem a coluna cadence.etiquetas o banco
- * tem o indice de uma regua por etapa, a regua desta run e a unica da etapa
- * e o comportamento e o de antes, sem precedencia. Funcao ausente com a
- * coluna presente (o cache do PostgREST atrasado logo depois da migration)
- * e falha FECHADA, como erro de leitura: a etapa pode ter varias reguas, e
- * seguir sem precedencia mandaria tambem o toque da que deixou de valer
- * (revisao de 21/10/2026).
+ * deixou de valer. A funcao AUSENTE (PGRST202 do PostgREST, 42883 do
+ * Postgres) e erro como outro qualquer: o codigo da onda 4 sobe depois das
+ * migrations 20261024100000 e 20261024110000 (ordem decidida pelo
+ * coordenador em 22/10/2026) e falha FECHADO sem elas. Nenhum toque de
+ * follow-up sai sem a conferencia (correcao de 22/10/2026: antes, a funcao
+ * ausente com o banco sem a coluna cadence.etiquetas seguia sem
+ * precedencia, e o toque saia).
  */
 async function reguaVigenteDoFollowup(
   admin: SupabaseClient,
   contactId: string,
-  reguaId: string,
-): Promise<VigenteDoFollowup> {
+): Promise<string | null> {
   const { data, error } = await admin.rpc("regua_de_followup_do_contato", {
     p_contact_id: contactId,
   });
   if (error) {
-    const codigo = (error as { code?: string }).code ?? "";
-    if (FUNCAO_AUSENTE.has(codigo) && (await bancoSemReguasPorEtiqueta(admin, reguaId))) {
-      return { tipo: "sem_precedencia" };
-    }
     throw new ErroComCodigoDeJob(
       `regua_vigente_ilegivel: ${codigoDoErro(error)}`,
     );
   }
-  return { tipo: "lida", reguaId: typeof data === "string" ? data : null };
+  return typeof data === "string" ? data : null;
 }
 
+/** A janela da trava de toque repetido (a mesma de followups_devidos). */
+const TRAVA_DE_TOQUE_REPETIDO_MS = 30 * 60_000;
+
+type ToqueRecente = {
+  id: string;
+  cadence_step: {
+    cadence: { id: string; kind: string; trigger_stage: string | null } | null;
+  } | null;
+};
+
 /**
- * O banco e o de antes da migration 20261024100000? So quando ler
- * cadence.etiquetas da 42703 (a coluna nao existe). Qualquer outra resposta,
- * inclusive a leitura que funciona, quer dizer que a etapa pode ter reguas
- * por etiqueta.
+ * A trava de toque repetido (D3), conferida de novo na hora de enviar
+ * (correcao de 22/10/2026). O planejador so materializa um passo JA VENCIDO
+ * da regua que passou a valer se o contato nao recebeu, nos ultimos 30
+ * minutos, toque de OUTRA regua de follow-up da mesma etapa e da mesma
+ * entrada (followups_devidos). Mas ele so enxerga o toque ja ENVIADO: o da
+ * regua antiga que estava saindo (conferido, ainda sem sent_at) quando a
+ * etiqueta mudou e o planejador rodou nao travava, e os dois saiam um logo
+ * depois do outro. Aqui, com o toque antigo ja gravado (os dois vao pela
+ * mesma raia, o numero do contato, um depois do outro), o passo que NASCEU
+ * vencido (created_at >= scheduled_for, a mesma conta do planejador) e
+ * pulado com a mesma regra. O passo que nasceu futuro sai, como sempre (D3:
+ * troca no proximo toque). Com uma regua so na etapa, nunca dispara.
+ * Leitura com erro: excecao para retry, nunca envio.
  */
-async function bancoSemReguasPorEtiqueta(
+async function outraReguaTocouHaPouco(
   admin: SupabaseClient,
-  reguaId: string,
+  run: LinhaDaRun,
+  regua: ReguaDaRun,
+  entradaNaEtapa: string,
+  agora: Date,
 ): Promise<boolean> {
-  const { error } = await admin
-    .from("cadence")
-    .select("etiquetas")
-    .eq("id", reguaId)
-    .limit(1);
-  return (error as { code?: string } | null)?.code === "42703";
+  const nasceuVencida =
+    new Date(run.created_at).getTime() >= new Date(run.scheduled_for).getTime();
+  if (!nasceuVencida) {
+    return false;
+  }
+  const { data, error } = await admin
+    .from("cadence_run")
+    .select(
+      "id, cadence_step:cadence_step_id ( cadence:cadence_id ( id, kind, trigger_stage ) )",
+    )
+    .eq("clinic_id", run.clinic_id)
+    .eq("contact_id", run.contact_id)
+    .neq("id", run.id)
+    .gt(
+      "sent_at",
+      new Date(agora.getTime() - TRAVA_DE_TOQUE_REPETIDO_MS).toISOString(),
+    )
+    .gte("scheduled_for", entradaNaEtapa)
+    .limit(50);
+  if (error) {
+    throw new ErroComCodigoDeJob(
+      `toque_recente_ilegivel: ${codigoDoErro(error)}`,
+    );
+  }
+  return ((data ?? []) as unknown as ToqueRecente[]).some((toque) => {
+    const outra = toque.cadence_step?.cadence ?? null;
+    return (
+      outra !== null &&
+      outra.kind === "followup" &&
+      outra.trigger_stage === regua.trigger_stage &&
+      outra.id !== regua.id
+    );
+  });
 }
 
 /**
@@ -624,8 +656,8 @@ export async function executarPassoDeRegua(
   const { data: bruta, error: erroDaRun } = await admin
     .from("cadence_run")
     .select(
-      `id, clinic_id, contact_id, appointment_id, scheduled_for, sent_at,
-       skipped_reason,
+      `id, clinic_id, contact_id, appointment_id, scheduled_for, created_at,
+       sent_at, skipped_reason,
        cadence_step:cadence_step_id (
          id, offset_minutes, fixed_body,
          media_path, media_type, media_mimetype, media_filename,
@@ -749,12 +781,22 @@ export async function executarPassoDeRegua(
     // quem pediu foi uma pessoa. Consentimento, janela, numero, slot de
     // massa e custo seguem iguais: nenhum caminho novo de envio.
     if (!manual) {
-      const vigente = await reguaVigenteDoFollowup(
-        admin,
-        run.contact_id,
-        regua.id,
-      );
-      if (vigente.tipo === "lida" && vigente.reguaId !== regua.id) {
+      const vigente = await reguaVigenteDoFollowup(admin, run.contact_id);
+      if (vigente !== regua.id) {
+        await pularRun(admin, run, "condicao_parada");
+        return { ok: true };
+      }
+      // A trava de toque repetido de novo, agora com o toque da regua antiga
+      // ja gravado (outraReguaTocouHaPouco): pula so este passo.
+      if (
+        await outraReguaTocouHaPouco(
+          admin,
+          run,
+          regua,
+          contato.funnel_stage_changed_at,
+          agora,
+        )
+      ) {
         await pularRun(admin, run, "condicao_parada");
         return { ok: true };
       }

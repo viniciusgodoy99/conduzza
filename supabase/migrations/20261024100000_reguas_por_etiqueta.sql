@@ -99,15 +99,18 @@
 -- nenhuma FK nova e nenhuma linha de nenhuma tabela muda. Aplicar em horario
 -- calmo.
 --
--- ORDEM DE PUBLICACAO (contrato, secao 8): depois das ondas 2 e 3, antes do
--- codigo novo do follow-up. O codigo de hoje funciona com esta migration: as
--- colunas novas tem padrao, o indice da geral e o invariante de hoje e
--- ninguem cria regua com etiqueta antes do codigo novo.
+-- ORDEM DE PUBLICACAO (decidida pelo coordenador em 22/10/2026, no lugar
+-- da secao 8 do contrato): depois das ondas 2 e 3; esta migration e a B
+-- (20261024110000), cada uma com ensaio e o ok do dono, ANTES de todo o
+-- codigo da onda 4, que sobe de uma vez depois das duas (o codigo depende
+-- delas e falha fechado sem elas). O codigo de hoje funciona com esta
+-- migration: as colunas novas tem padrao, o indice da geral e o invariante
+-- de hoje e ninguem cria regua com etiqueta antes do codigo novo.
 --
 -- ROLLBACK (manual): supabase/operacao/rollback/20261024100000-corpos-
--- anteriores.sql (depois do rollback da migration B, se ela foi aplicada, e
--- com as reguas com etiqueta desligadas ha 30 minutos: o passo 1 dele, que
--- ele confere).
+-- anteriores.sql (depois do rollback da migration B, se ela foi aplicada,
+-- com as reguas com etiqueta desligadas ha 30 minutos e com a perda delas
+-- aceita: os passos 1 e 3 dele, que ele confere).
 
 set local lock_timeout = '3s';
 

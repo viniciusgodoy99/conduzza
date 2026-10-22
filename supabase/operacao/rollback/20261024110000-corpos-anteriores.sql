@@ -14,9 +14,23 @@
 -- ROLLBACK manual da migration (cabecalho dela). ORDEM:
 --   1. O codigo novo das automacoes (a RPC, as tabelas filhas, o historico
 --      por acao) sai do ar ANTES. O codigo velho funciona com o banco de
---      antes.
+--      antes. Rodar este arquivo LOGO DEPOIS (correcao de 22/10/2026): entre
+--      um e outro, a aba de automacoes de fluxo do codigo velho nao le a
+--      regra gravada pelo codigo novo (a acao legada nula) e mostra o erro
+--      dela; o motor continua o novo ate este arquivo.
 --   2. Rodar ESTE arquivo inteiro no SQL editor (uma transacao):
 --      a. o espelho sai (as escritas abaixo nao regravam as filhas);
+--      a2. as execucoes feitas pela metade (pendentes com retrato de alguma
+--         acao: uma acao adiada pela trava da conversa) fecham AGORA, com as
+--         acoes de agora, pela mesma fechar_execucoes_pela_metade da
+--         migration (o que falta fica pulado, regra_alterada, e a execucao
+--         fecha executada se alguma acao fez). Sem isto o executor de antes
+--         as fecharia como pulada, regra_desligada (a regra composta e
+--         desligada em b), e o historico diria que nada foi feito quando uma
+--         acao ja tinha rodado (correcao de 22/10/2026). Quando so UMA acao
+--         fez, o retrato dela (acao, etiqueta, conversa e atividade) vai para
+--         a execucao: o historico de antes so le a execucao. NOTICE com
+--         quantas fecharam (so a contagem);
 --      b. as regras gravadas pelo codigo novo (acao legada nula) ganham de
 --         volta as colunas legadas a partir da acao da posicao mais baixa. A
 --         regra que o modelo de antes NAO representa (mais de uma acao, ou
@@ -51,6 +65,69 @@ set local lock_timeout = '3s';
 
 -- a. O espelho do codigo velho sai antes de qualquer escrita.
 drop trigger if exists espelhar_acao_legada on public.automacao_fluxo;
+
+-- a2. As execucoes feitas pela metade fecham antes de o retrato por acao sair
+-- (correcao de 22/10/2026).
+do $metade$
+declare
+  v_metade uuid[];
+  v_regra uuid;
+  v_fechadas integer := 0;
+begin
+  -- Trava antes as pendentes com retrato (a passagem do motor que estiver
+  -- com alguma termina primeiro; lock_timeout de 3 s: se nao der, nada mudou
+  -- e e so rodar de novo).
+  select coalesce(array_agg(x.id order by x.id), '{}'::uuid[])
+    into v_metade
+    from (
+      select x.id
+        from public.automacao_execucao x
+       where x.status = 'pendente'
+         and exists (
+           select 1 from public.automacao_execucao_acao ea where ea.execucao_id = x.id
+         )
+       order by x.id
+         for update of x
+    ) x;
+  for v_regra in
+    select distinct x.automacao_id
+      from public.automacao_execucao x
+     where x.id = any (v_metade)
+     order by 1
+  loop
+    v_fechadas := v_fechadas + public.fechar_execucoes_pela_metade(v_regra);
+  end loop;
+  -- Uma acao so fez: o retrato dela vai para a execucao (como o executor de
+  -- antes gravava), para o historico de antes dizer o que foi feito.
+  update public.automacao_execucao x
+     set acao = case when ea.acao <> 'etiquetar'
+                       or (ea.etiqueta is not null and ea.etiqueta_nome is not null)
+                     then ea.acao end,
+         etiqueta = case when ea.acao = 'etiquetar' and ea.etiqueta_nome is not null
+                         then ea.etiqueta end,
+         etiqueta_nome = case when ea.acao = 'etiquetar' and ea.etiqueta is not null
+                              then ea.etiqueta_nome end,
+         conversation_id = ea.conversation_id,
+         atividade_id = ea.atividade_id
+    from public.automacao_execucao_acao ea
+   where x.id = any (v_metade)
+     and x.status = 'executada'
+     and ea.execucao_id = x.id
+     and ea.status = 'executada'
+     and (select count(*) from public.automacao_execucao_acao e2
+           where e2.execucao_id = x.id and e2.status = 'executada') = 1;
+  if exists (
+    select 1 from public.automacao_execucao x
+     where x.status = 'pendente'
+       and exists (
+         select 1 from public.automacao_execucao_acao ea where ea.execucao_id = x.id
+       )
+  ) then
+    raise exception 'rollback 20261024110000: sobrou execucao feita pela metade sem fechar';
+  end if;
+  raise notice 'rollback 20261024110000: % execucao(oes) feita(s) pela metade fechada(s)', v_fechadas;
+end;
+$metade$;
 
 -- b. As regras do codigo novo voltam ao modelo de uma acao (a da posicao mais
 -- baixa); a que tinha mais de uma acao ou condicao fica desligada.

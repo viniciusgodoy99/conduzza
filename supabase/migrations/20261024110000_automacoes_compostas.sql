@@ -142,10 +142,13 @@
 -- nenhuma FK nova aponta para message ou conversation. Aplicar em horario
 -- calmo.
 --
--- ORDEM DE PUBLICACAO (contrato, secao 8): depois da migration A; o codigo
--- velho continua funcionando pelo espelho; depois, o codigo novo das
--- automacoes. A migration C (limpeza) so depois de o codigo novo estar
--- estavel e de conferir que nenhuma regra recebeu escrita legada.
+-- ORDEM DE PUBLICACAO (decidida pelo coordenador em 22/10/2026, no lugar
+-- da secao 8 do contrato): depois da migration A; as duas, cada uma com
+-- ensaio e o ok do dono, ANTES de todo o codigo da onda 4, que sobe de uma
+-- vez depois delas (o codigo depende das duas e falha fechado sem elas). O
+-- codigo velho continua funcionando pelo espelho ate o novo subir. A
+-- migration C (limpeza) so depois de o codigo novo estar estavel e de
+-- conferir que nenhuma regra recebeu escrita legada.
 --
 -- ROLLBACK (manual): supabase/operacao/rollback/20261024110000-corpos-
 -- anteriores.sql (antes do rollback da migration A).
@@ -208,6 +211,10 @@ create table public.automacao_acao (
   -- inteira, as duas apagam antes as acoes que apontam para a etapa ou a
   -- etiqueta: as acoes saem com a regra, um nivel de cascade abaixo da
   -- clinica, e a checagem destas FKs viria antes (revisao de 21/10/2026).
+  -- NO ACTION e nao ON DELETE CASCADE de proposito (retomada de
+  -- 22/10/2026): com a protecao desligada (uma migration futura que a
+  -- desligue, como a da onda 3 fez com proteger_jornada), excluir a etapa ou
+  -- a etiqueta falha, em vez de apagar em silencio a acao de uma regra.
   constraint automacao_acao_etapa_destino_fkey
     foreign key (clinic_id, etapa_destino)
     references public.funnel_stage_def (clinic_id, chave),

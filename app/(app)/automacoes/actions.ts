@@ -1075,7 +1075,12 @@ export async function excluirPassoAction(
 // etiqueta (na ordem que a clinica escolhe) e no maximo uma geral, sem
 // etiqueta. Para cada lead vale uma por vez (regua_de_followup_do_contato).
 
-/** Codigos de coluna ou funcao que o banco ainda nao tem (antes da A). */
+/**
+ * Codigos de coluna ou funcao que o banco nao tem (o cache do PostgREST
+ * atrasado, ou o banco sem a migration 20261024100000, que sobe antes deste
+ * codigo). Falha fechada: a action recusa com a frase de tentar de novo e
+ * nada se grava por outro caminho.
+ */
 const ESQUEMA_ANTIGO = new Set(["42703", "PGRST204", "PGRST202", "42883"]);
 
 /** A primeira mensagem do Zod, ou o padrao. */

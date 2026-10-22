@@ -201,6 +201,23 @@ export function avisoDeGeralDesligada(nomeDaEtapa: string): string {
   return `A régua geral de ${nomeDaEtapa} está desligada: quem não tiver as etiquetas das réguas acima não recebe nenhuma.`;
 }
 
+/**
+ * Regua com etiqueta LIGADA e sem mensagem nenhuma vale para os leads dela
+ * (a precedencia olha so as ligadas) e nao manda nada: eles ficariam sem
+ * follow-up, nem a geral (correcao de 22/10/2026). Por isso ela so liga com
+ * pelo menos uma mensagem (alternarReguaAction recusa, e o interruptor fica
+ * desabilitado com esta dica); a ultima mensagem ja nao se exclui pela tela.
+ */
+export const DICA_PARA_LIGAR_SEM_MENSAGEM =
+  "Escreva pelo menos uma mensagem antes de ligar. Sem mensagem, os leads com estas etiquetas não recebem nada, nem a régua geral.";
+
+/** A mesma regra, se a regua ja estiver ligada sem mensagem (corrida). */
+export function avisoDeLigadaSemMensagem(
+  regua: Pick<ReguaDaPrecedencia, "etiquetas" | "etiquetas_modo">,
+): string {
+  return `Esta régua está ligada sem mensagens: os leads com ${textoDasEtiquetas(regua.etiquetas, regua.etiquetas_modo)} não recebem nada, nem a régua geral da etapa. Escreva uma mensagem ou desligue a régua.`;
+}
+
 /** Ao desligar a regua com etiqueta (D4). */
 export function avisoAoDesligar(
   regua: Pick<ReguaDaPrecedencia, "etiquetas" | "etiquetas_modo">,
@@ -388,4 +405,6 @@ export const RECUSAS_DA_REGUA = {
     "A lista de réguas desta etapa mudou. Recarregue a página e tente de novo.",
   bancoSemEtiquetas:
     "As réguas por etiqueta ainda não estão disponíveis. Tente de novo em alguns minutos.",
+  ligarSemMensagem:
+    "Escreva pelo menos uma mensagem antes de ligar esta régua. Ligada sem mensagem, os leads com estas etiquetas não receberiam nada, nem a régua geral da etapa.",
 } as const;

@@ -395,36 +395,25 @@ const COLUNAS_DA_REGUA =
 const COLUNAS_DO_FILTRO = "etiquetas, etiquetas_modo, prioridade";
 
 /**
- * As reguas de follow-up com o filtro. Com o banco antes da migration
- * 20261024100000 (42703: a coluna nao existe), le sem o filtro e todas sao a
- * geral da etapa delas, que e exatamente o que eram: a tela nao cai.
+ * As reguas de follow-up com o filtro. O codigo da onda 4 sobe DEPOIS da
+ * migration 20261024100000 (ordem decidida pelo coordenador em 22/10/2026):
+ * sem as colunas do filtro, a leitura e erro como outro qualquer e a aba
+ * mostra o proprio estado de erro (falha fechada; correcao de 22/10/2026).
  */
 async function lerReguasDeFollowup(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<Record<string, unknown>[]> {
-  const comFiltro = await supabase
+  const { data, error } = await supabase
     .from("cadence")
     .select(`${COLUNAS_DA_REGUA}, ${COLUNAS_DO_FILTRO}`)
     .eq("clinic_id", clinicId)
     .eq("kind", "followup")
     .order("name");
-  if (!comFiltro.error) {
-    return (comFiltro.data ?? []) as Record<string, unknown>[];
+  if (error) {
+    throw new Error(error.message);
   }
-  if (comFiltro.error.code !== "42703") {
-    throw new Error(comFiltro.error.message);
-  }
-  const semFiltro = await supabase
-    .from("cadence")
-    .select(COLUNAS_DA_REGUA)
-    .eq("clinic_id", clinicId)
-    .eq("kind", "followup")
-    .order("name");
-  if (semFiltro.error) {
-    throw new Error(semFiltro.error.message);
-  }
-  return (semFiltro.data ?? []) as Record<string, unknown>[];
+  return (data ?? []) as Record<string, unknown>[];
 }
 
 /** O modo gravado, ou "qualquer" (o padrao da coluna) se vier outra coisa. */

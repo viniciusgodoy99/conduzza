@@ -232,6 +232,8 @@ Para cada job de régua:
 
 **Conta suspensa (onda 1, 20/10/2026; migration `20261021100000`, aplicada em 20/10/2026):** o claim não reivindica job de clínica suspensa (menos a mídia que chega), e `enviarPeloCanal` recusa o envio da clínica suspensa antes de gravar qualquer coisa e de novo depois da espera do slot. Detalhe na seção 15.
 
+**Réguas de follow-up por etiqueta (onda 4, 22/10/2026; migration `20261024100000` NÃO aplicada e código NÃO publicado):** a etapa pode ter várias réguas de follow-up, e para cada lead vale uma por vez (a mesma função do banco no planejador e no executor). Antes de cada toque de follow-up, o executor confere se a run ainda é da régua que vale e, no passo que nasceu vencido, a trava de 30 minutos contra toque repetido; o caminho de envio (consentimento, janela, número, slot e custo) não muda. Detalhe na seção 18.
+
 ---
 
 ## 6. Conflito de agenda, a trava mais importante
@@ -834,3 +836,80 @@ Antes da M1, a tela e a action já tratam Em contato pela chave (a cadeia fica N
 ### 17.6 LGPD
 
 A pendência e a trilha guardam só ids; os `WARNING`s do gatilho e os códigos de erro, só a clínica e o SQLSTATE; o log de `moverLeadAoAssumir`, só os ids da clínica e do contato. Nada de nome, telefone ou conteúdo de mensagem.
+
+---
+
+## 18. Automações compostas e réguas de follow-up por etiqueta (onda 4, 22/10/2026; construída, revisada e corrigida; migrations NÃO aplicadas e código NÃO publicado)
+
+As seções 16 e 17 são das ondas 2 e 3, que vão à produção antes desta. A onda 5, construída ao mesmo tempo noutra cópia do repositório, deixou esta seção para a onda 4.
+
+Pedido do dono em 20/10/2026, na segunda reunião com o Victor (itens 14, 15 e 16 do plano em cinco ondas; o item 13, a aba no lugar novo, já foi publicado em `6598ea9`): uma automação de fluxo com várias ações e com condições de etiqueta juntadas por E ou OU, e mais de uma régua de follow-up na mesma etapa, cada uma para os leads com certas etiquetas. **Decisões do dono de 20 e 21/10/2026** (as recomendações do contrato, menos a D8): **D1**, a etiqueta do filtro conta no lead ou em qualquer conversa dele, pelo nome, sem diferença de maiúscula e acento; **D2**, vale a régua de cima (com etiqueta antes da geral; entre elas, a ordem da clínica); **D3**, a etiqueta mudou no meio: troca no próximo toque, com a trava de 30 minutos; **D4**, régua com etiqueta desligada não conta; **D5**, condições "tem a etiqueta" e "não tem"; **D6**, todas (E) ou qualquer uma (OU), uma escolha por automação e por régua; **D7**, as quatro ações de hoje, até 5, um mover só, sempre por último; **D8 mudou**, a recepção não vê as automações de fluxo; **D9**, a condição que não bate na hora do gatilho pula aquela entrada. **Do coordenador (22/10/2026):** as migrations A e B vão ao banco antes de todo o código da onda 4, e o código falha fechado sem elas. Levantamento e contrato em `~/.claude/plans/onda4-automacoes/` (`levantamento.md` e `contrato.md`). Banco no `docs/04`, seção 25; spec no `docs/01` (Módulos 7 e 14); telas no brief (Seção 5 e Telas 4, 7 e 12) e no `docs/06` (5.10 e C51); operação em `supabase/operacao/motor-por-cron.md`, "Réguas por etiqueta e automações compostas"; estado e pendências no `docs/05`, entrada "Onda 4, itens 14 a 16".
+
+### 18.1 Uma régua por lead, escolhida num lugar só
+
+Antes, uma régua de follow-up por etapa e sem filtro: o planejador casava contato e régua pela etapa. Agora a etapa pode ter várias réguas (as com etiqueta e no máximo uma geral), e para cada lead vale **uma por vez**. A escolha mora numa função só do banco, `regua_de_followup_do_contato` (no molde de `regua_da_consulta`, das réguas vinculadas), que o planejador, o executor e as contagens da tela usam; a tela tem o espelho `reguaQueVale` (`lib/domain/reguas-de-followup.ts`), só para explicar.
+
+- **O planejamento** (`followups_devidos`, chamada por `planejar_reguas` no lugar do CTE do follow-up): primeiro as candidatas (o recorte de sempre, mais "alguma régua ligada da etapa tem passo na janela", materializado para não chamar a precedência à toa); depois, por candidata, só os passos da régua que vale. Passo já vencido da régua que acabou de passar a valer só nasce se o contato não recebeu toque de **outra** régua de follow-up da mesma etapa e da mesma entrada nos últimos 30 minutos (D3), a trava que a régua vinculada já tem.
+- **O que não muda:** o job (`executar_passo_de_regua`, prioridade 1), o número (`resolver_conta_de_envio(..., 'followup')`), o consentimento, a janela, o slot de massa (10 a 30 s por número), o custo gravado no envio e as paradas da etapa (respondeu ou saiu da etapa para a cadeia inteira). **Nenhum caminho novo de envio.** O volume por lead não cresce: cada lead segue uma régua por vez na etapa, e a troca da D3 só substitui os próximos toques.
+- **Paridade:** com uma régua sem etiqueta por etapa (todo o estado de hoje), o planejador novo cria exatamente as mesmas runs que o antigo (provado no ensaio e, no harness, com o `planejar_reguas` inteiro).
+
+### 18.2 O executor confere a régua que vale
+
+No ramo do follow-up de `executarPassoDeRegua` (`lib/jobs/regua.ts`), depois das paradas da etapa e antes da janela, do número e do envio:
+- **A régua vigente:** `rpc("regua_de_followup_do_contato")`. Se a que vale agora não é a desta run (a etiqueta do lead mudou, outra régua da etapa foi ligada, esta foi desligada ou reordenada para baixo), a run é pulada como `condicao_parada`, e **só ela**: a cadeia não para, porque os toques da régua vigente são outras runs, que o planejador materializa. Leitura com erro vira `ErroComCodigoDeJob("regua_vigente_ilegivel: <código>")` e o job tenta de novo, nunca decide: tratar o erro como "outra régua vale" pularia um toque que vale, e como "esta vale" mandaria o toque de uma régua que deixou de valer. A função **ausente** (PGRST202, 42883) é erro como outro qualquer (falha fechada, 18.6).
+- **A trava de toque repetido, de novo, na hora de enviar** (correção de 22/10/2026): o planejador só enxerga o toque já enviado. Se a etiqueta mudou enquanto o toque da régua antiga estava saindo, o passo vencido da régua nova podia nascer e sair logo depois. Por isso o passo que **nasceu vencido** (`created_at >= scheduled_for`, a mesma conta do planejador) é pulado (`condicao_parada`) quando outra régua de follow-up da mesma etapa e da mesma entrada enviou nos últimos 30 minutos. Os dois toques vão pela mesma raia (o número do contato), um depois do outro, então o toque antigo já está gravado quando o novo confere. Passo que nasceu futuro sai como sempre (D3: troca no próximo toque). Leitura com erro: `toque_recente_ilegivel: <código>`, nova tentativa.
+- **O toque manual** ("Cobrar agora" e afins) não passa por essas duas conferências: quem pediu foi uma pessoa.
+- **Resíduo (ponto aberto):** se o envio de um toque da régua antiga levar mais que o ciclo do motor (20 s) e o job seguinte da mesma raia rodar no meio, o toque antigo ainda não está gravado e os dois podem sair. Fechar isso pede mudança no claim por raia, fora do contrato.
+
+### 18.3 As regras do follow-up por etiqueta, nas três camadas
+
+| Regra | Tela | Server Action | Banco (migration A) |
+|---|---|---|---|
+| Uma régua geral por etapa | "Nova régua" numa etapa que já tem a geral exige etiqueta, com o aviso | `criarReguaDeFollowupAction` traduz o 23505 ("Esta etapa já tem a régua geral. Para outra régua, escolha as etiquetas.") | índice `cadence_followup_geral_unico_por_etapa` |
+| O mesmo filtro uma vez por etapa | | `mesmoFiltro` recusa antes do banco ("Já existe uma régua com estas etiquetas nesta etapa."), e o 23505 dá a mesma frase | índice `cadence_followup_mesmo_filtro` (as chaves, em qualquer grafia e ordem) |
+| Com uma etiqueta, o modo é "qualquer uma" | o seletor do modo só aparece com duas ou mais | o Zod normaliza (`modoDoFiltro`), também ao tirar etiqueta no "Para quem" | CHECK `cadence_modo_so_com_varias_etiquetas` |
+| A régua com etiqueta só liga com mensagem | o interruptor fica desabilitado com a dica, e o cartão avisa se ela estiver ligada sem mensagem por corrida | `alternarReguaAction` recusa ligar régua de follow-up com etiqueta e sem passo (leitura que falha recusa) | nada: a precedência conta a régua ligada sem passo (ponto aberto) |
+| A ordem entre as com etiqueta | "Subir" e "Descer" (as pontas desabilitadas) | `ordenarReguasDeFollowupAction` chama a RPC e traduz o 22023 ("A lista de réguas desta etapa mudou. Recarregue a página e tente de novo.") | `ordenar_reguas_de_followup` exige a lista exata e só aceita a gestão |
+| A geral continua geral; a com etiqueta continua com pelo menos uma | o "Para quem" da geral só muda o nome | `editarParaQuemDaReguaAction` confere contra o banco | |
+| Excluir a régua que enviou há pouco | a confirmação diz quem passa a receber o quê | a trava de "enviou há menos de 30 minutos" passa a valer para o follow-up quando a etapa tem outra régua (a prova da trava some no cascade) | |
+| Régua em Aguardando resposta | a etapa não aparece | a recusa da onda 3 | o gatilho da onda 3, também para a régua por etiqueta |
+
+**A régua com etiqueta nasce** desligada, no fim da ordem da etapa (a maior prioridade das com etiqueta mais 1, até 1000), com a janela de envio e as mensagens copiadas da geral da etapa, quando ela existe (`copiarPassosDaRegua`, o mesmo da régua vinculada, anexo incluso: o passo que ficaria vazio sem o anexo sai, com aviso). O nome é sugerido ("Follow-up de {etapa}: {etiquetas}") até a pessoa escrever outro. A geral nasce como sempre, sem mensagens.
+
+**As contagens da tela** vêm de `alcance_das_reguas_de_followup` (por régua: recebem hoje, casam, sem autorização e entradas em 30 dias; por etapa: quantos ficam sem régua), no lugar da contagem que `fetchFollowups` fazia no JavaScript. Se a RPC falhar, o cartão diz que não foi possível contar (nada de número inventado) e a estimativa usa as entradas da etapa inteira.
+
+### 18.4 A execução composta
+
+As automações de fluxo continuam fora da `job_queue`: rodam em SQL dentro de `motor_manutencao`, a cada minuto, e nenhuma ação envia mensagem ao paciente. `executar_automacoes_de_fluxo` mantém a assinatura e o retorno; o que muda:
+- **As condições (D9) são conferidas uma vez,** antes da primeira ação, com as etiquetas do lead e das conversas dele (D1). Não batem: a execução fecha pulada, `condicoes_nao_atendidas`, e o histórico diz por quê.
+- **As ações rodam na ordem da posição, o mover sempre por último** (mover antes tiraria o lead da etapa, e o CAS das outras derrubaria a etiqueta, a atividade e a nota). Cada uma tem o próprio bloco de exceção e o código de hoje.
+- **Idempotente por ação:** o retrato de cada ação (`automacao_execucao_acao`) é a prova de que ela foi feita. A ação que não pega a trava (a conversa ou o contato ocupados) não grava retrato, a execução fica pendente, o mover espera, e a passagem seguinte faz só o que falta, sem repetir a atividade.
+- **O pai fecha pelo retrato,** e com uma ação só as colunas de retrato do pai saem como antes: a automação que já existe (a da Salud Care, migrada para a ação da posição 1) executa e conta o histórico igual.
+- **A clínica suspensa** (onda 1) não roda automação de fluxo: o planejador registra a execução já pulada (`clinica_suspensa`), e nada roda atrasado na volta.
+- **A execução feita pela metade e a regra editada:** quem troca as ações de uma regra (a RPC e o espelho do código velho) fecha antes as pendentes que já têm retrato, com as ações de antes (o resto pulado, `regra_alterada`). Sem isso, a passagem seguinte retomaria com as ações novas, repetindo uma e perdendo outra.
+- **O ciclo** lê as arestas das ações (regras ligadas de mover, gatilho que não é de mensagem). Regra com condição conta como aresta (conservador: a condição pode bater); regra de mensagem recebida não conta, nem a própria nem a das outras.
+- **A escrita do código novo** é a RPC `salvar_automacao_de_fluxo`: o pai, as condições e as ações de uma vez, com a guarda de papel contra oráculo, o mesmo advisory lock por clínica, o motivo da perda decidido pelo banco e o ciclo conferido no fim. A Server Action (`app/(app)/automacoes/fluxo-actions.ts`) confere papel e Zod, aplica os vetos do destino antes do banco, monta o jsonb (`regraParaGravar`) e grava a trilha `criou_automacao_de_fluxo` ou `editou_automacao_de_fluxo`, sem texto. O diálogo espelha o detector de ciclo lendo as ações (`regraParaCiclo` e `cicloDaAutomacao`).
+
+### 18.5 Expandir e contrair
+
+A migration B não apaga as colunas de ação de `automacao_fluxo`. Enquanto o código velho estiver no ar, a escrita dele (as colunas) vira a ação da posição 1 pelo gatilho `espelhar_acao_legada`, e a regra continua fazendo exatamente o que ele mandou. O código novo nunca lê nem grava essas colunas (a RPC as grava nulas, com uma GUC que desliga o espelho). A limpeza (o espelho, as colunas, os índices e os ramos legados) é a migration C, numa janela posterior, só depois de o código novo estar estável e de conferir que nenhuma regra recebeu escrita legada.
+
+### 18.6 O banco antes, e o código falha fechado
+
+Decisão do coordenador de 22/10/2026, no lugar da ordem do contrato (que publicava o código do follow-up entre a A e a B): **as migrations A e B vão ao banco, cada uma com ensaio e o ok do dono, depois das ondas 2 e 3 e antes de todo o código da onda 4**, que sobe de uma vez. Entre as migrations e o código, o código de hoje funciona (as colunas novas têm padrão, o índice da geral é o invariante de hoje, ninguém cria régua com etiqueta, e a escrita das automações passa pelo espelho).
+
+Por isso as tolerâncias a esquema antigo saíram na correção de 22/10/2026, e sem as migrations o código **falha fechado**:
+- o executor das réguas: a função ausente vira nova tentativa com o código, e nenhum toque de follow-up sai sem a conferência da régua vigente;
+- salvar uma automação: só pela RPC, sem caminho de escrita pelas colunas de antes; sem ela, "Não foi possível salvar a automação agora. Nada foi alterado. Tente de novo em alguns minutos.";
+- as leituras das automações de fluxo, do follow-up e de Leads: sem as tabelas filhas ou as colunas do filtro, são erro como outro qualquer (a aba de fluxo mostra o próprio estado de erro; a leitura das réguas cai no estado de erro da tela Automações, com "Tentar de novo", como qualquer leitura dela que falha; Leads confirma toda mudança de etapa dizendo que não deu para conferir a régua);
+- criar, editar o "Para quem" e ordenar as réguas: a coluna ou a função que falta vira a recusa "As réguas por etiqueta ainda não estão disponíveis. Tente de novo em alguns minutos.", e nada se grava por outro caminho.
+
+### 18.7 Quem vê e o que se lê
+
+- **Automações de fluxo, só administrador e gestor** (D8, como no item 13): para a recepção a aba não existe e nada dela é lido; toda Server Action, as de leitura inclusive, recusa os outros papéis antes do banco. O banco deixa membro ativo ler as tabelas novas, como já deixa ler as regras (ponto do item 13).
+- **As etiquetas para escolher num filtro** (o "Se" da automação e o "Para quem" da régua) são as do catálogo de conversa e as em uso nos leads, sem repetir pelo nome (`fetchEtiquetasParaFiltro`: só a coluna `tags` dos contatos com etiqueta, até 2.000 linhas, e devolve só os nomes distintos; nenhum contato identificado sai dali, por isso sem trilha de leitura, como as contagens). São lidas **só para administrador e gestor**; na aba Follow-up, a recepção vê os chips das etiquetas no tom neutro, sempre com o nome escrito.
+- **Leads** (`fetchReguasDeFollowup`) lê as réguas ligadas e com mensagem de cada etapa, com o filtro de cada uma, na ordem da precedência: a confirmação de mover diz que cada lead recebe a régua que vale para as etiquetas dele, e quais são. O número "recebem" da seleção em massa continua sendo os autorizados fora da etapa: a tela não conhece as etiquetas das conversas (D1), e a escolha é do banco.
+
+### 18.8 LGPD
+
+Etiqueta pode ser dado sensível (uma etiqueta "Psiquiatria" diz algo da saúde do paciente). Ela nunca vai para log, evento, mensagem de erro ou `audit_log`: as trilhas novas guardam só ids (`criou_regua_de_followup`, `editou_para_quem_da_regua`, `ordenou_reguas_de_followup` com `entity_id` nulo, `criou_` e `editou_automacao_de_fluxo`), as de sistema das ações são as de hoje, e os erros de job levam só códigos. As contagens do alcance são só números. O histórico das automações continua com a leitura auditada (`auditarLeituraDePaciente`), porque mostra o nome do lead.

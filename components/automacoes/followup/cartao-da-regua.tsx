@@ -13,6 +13,8 @@ import { REGUA_STATUS } from "@/lib/design/status";
 import type { TonsDasEtiquetas } from "@/lib/domain/etiquetas-do-lead";
 import {
   avisoAoDesligar,
+  avisoDeLigadaSemMensagem,
+  DICA_PARA_LIGAR_SEM_MENSAGEM,
   ehReguaGeral,
   textoDeParaQuem,
 } from "@/lib/domain/reguas-de-followup";
@@ -85,6 +87,9 @@ export function CartaoDaRegua({
   const geral = ehReguaGeral(regua);
   const idConteudo = `followup-${regua.id}`;
   const alcance = regua.alcance;
+  // A com etiqueta so liga com mensagem (a action recusa do mesmo jeito):
+  // ligada e vazia, os leads dela ficariam sem follow-up, nem a geral.
+  const semMensagem = !geral && regua.passos.length === 0;
 
   const comDica = (controle: React.ReactNode, dica: string | null) =>
     dica ? (
@@ -237,6 +242,10 @@ export function CartaoDaRegua({
             ) : null}
           </section>
 
+          {semMensagem && regua.active ? (
+            <Aviso tom="warning">{avisoDeLigadaSemMensagem(regua)}</Aviso>
+          ) : null}
+
           {/* Spec 7.6: quem sera pulado por falta de autorizacao */}
           {alcance && alcance.sem_autorizacao > 0 ? (
             <Aviso tom="info">
@@ -282,6 +291,7 @@ export function CartaoDaRegua({
             placeholders={["nome", "clinica"]}
             podeEditar={podeEditar}
             dicaSemPermissao={dicaSemPermissao}
+            dicaParaLigar={semMensagem ? DICA_PARA_LIGAR_SEM_MENSAGEM : null}
             ehAdministrador={ehAdministrador}
             numeros={numeros}
             aninhada
