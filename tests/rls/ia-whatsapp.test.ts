@@ -593,44 +593,50 @@ describe("funcoes do servidor: nao sao da sessao", () => {
 });
 
 describe("tabelas novas: nenhuma sessao le nem escreve", () => {
-  it("ai_turno, ai_rascunho_bloqueado, ia_janela_da_conversa e ia_conversa_fora_do_horario: 42501 para todo papel e para anon", async () => {
-    for (const cliente of [
-      anonClient(),
-      como("admin-a"),
-      como("gestor-a"),
-      como("recepcao-a"),
-      como("admin-b"),
-    ]) {
-      for (const tabela of [
-        "ai_turno",
-        "ai_rascunho_bloqueado",
-        "ia_janela_da_conversa",
-        // onda 2 (M2): a espera do horario do assistente
-        "ia_conversa_fora_do_horario",
-      ] as const) {
-        const { error: leitura } = await cliente.from(tabela).select("*");
-        expect(leitura?.code, tabela).toBe(PERMISSAO_NEGADA);
+  // Quatro tabelas, cada papel e anon, ler e escrever: muitas chamadas em
+  // serie pela rede (22/10/2026).
+  it(
+    "ai_turno, ai_rascunho_bloqueado, ia_janela_da_conversa e ia_conversa_fora_do_horario: 42501 para todo papel e para anon",
+    { timeout: 60_000 },
+    async () => {
+      for (const cliente of [
+        anonClient(),
+        como("admin-a"),
+        como("gestor-a"),
+        como("recepcao-a"),
+        como("admin-b"),
+      ]) {
+        for (const tabela of [
+          "ai_turno",
+          "ai_rascunho_bloqueado",
+          "ia_janela_da_conversa",
+          // onda 2 (M2): a espera do horario do assistente
+          "ia_conversa_fora_do_horario",
+        ] as const) {
+          const { error: leitura } = await cliente.from(tabela).select("*");
+          expect(leitura?.code, tabela).toBe(PERMISSAO_NEGADA);
+        }
+        const { error: escrita } = await cliente
+          .from("ia_janela_da_conversa")
+          .insert({
+            conversation_id: conversaDaEquipe,
+            clinic_id: clinicaA,
+            contact_id: contatoDaEquipe,
+            phone_key: TELEFONE_DA_EQUIPE,
+            desde: new Date().toISOString(),
+            aberta_por: "devolver",
+          });
+        expect(escrita?.code).toBe(PERMISSAO_NEGADA);
       }
-      const { error: escrita } = await cliente
-        .from("ia_janela_da_conversa")
-        .insert({
-          conversation_id: conversaDaEquipe,
-          clinic_id: clinicaA,
-          contact_id: contatoDaEquipe,
-          phone_key: TELEFONE_DA_EQUIPE,
-          desde: new Date().toISOString(),
-          aberta_por: "devolver",
-        });
-      expect(escrita?.code).toBe(PERMISSAO_NEGADA);
-    }
-    // contraprova: o servidor le o rascunho
-    const { data } = await admin
-      .from("ai_rascunho_bloqueado")
-      .select("texto")
-      .eq("decision_id", decisaoBloqueada)
-      .throwOnError();
-    expect(data).toEqual([{ texto: "Rascunho sintético de teste." }]);
-  });
+      // contraprova: o servidor le o rascunho
+      const { data } = await admin
+        .from("ai_rascunho_bloqueado")
+        .select("texto")
+        .eq("decision_id", decisaoBloqueada)
+        .throwOnError();
+      expect(data).toEqual([{ texto: "Rascunho sintético de teste." }]);
+    },
+  );
 });
 
 describe("ai_decision_log e o rascunho bloqueado", () => {
@@ -1761,7 +1767,9 @@ describe("saude_do_motor: a chave ia detalhada so para o servidor", () => {
 describe("onda 2 (M2): excluir telefone da equipe", () => {
   // Um telefone novo da A, ligado pelo servidor, com contato e conversa na
   // IA (a service role poe a conversa na IA; a sessao nunca).
-  const TELEFONE_EXCLUIR = `+5584985${digitos}`;
+  // Prefixo proprio: o +5584985 ja e de um contato criado antes na A (teste
+  // de status da IA), e os dois colidiam na mesma execucao.
+  const TELEFONE_EXCLUIR = `+5584980${digitos}`;
   let telefoneId = "";
   let conversaExcluir = "";
 
