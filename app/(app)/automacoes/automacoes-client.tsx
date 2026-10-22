@@ -35,12 +35,14 @@ import { REGUA_STATUS, type StatusDefinition } from "@/lib/design/status";
 import { createClient } from "@/lib/supabase/client";
 import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
 import { cn } from "@/lib/utils";
+import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
+import type { OpcaoDeEtiqueta } from "@/lib/domain/etiquetas-do-lead";
 import {
   automacoesKeys,
   fetchFollowups,
   fetchReguasVinculadas,
   type DadosDasReguasVinculadas,
-  type ReguaDeFollowup,
+  type DadosDosFollowups,
   type VolumesDaEstimativa,
 } from "@/lib/queries/automacoes";
 import {
@@ -147,6 +149,8 @@ export function AutomacoesClient({
   vinculadasIniciais,
   followupsIniciais,
   etapasParaFollowup,
+  etiquetas = null,
+  opcoesDeEtiqueta = null,
   volumes,
   numeros,
   podeEditar,
@@ -160,8 +164,18 @@ export function AutomacoesClient({
   reguasIniciais: ReguasDaClinica;
   /** Reguas vinculadas (medico, especialidade, procedimento) dos dois tipos. */
   vinculadasIniciais: DadosDasReguasVinculadas;
-  followupsIniciais: ReguaDeFollowup[];
+  followupsIniciais: DadosDosFollowups;
   etapasParaFollowup: EtapaParaFollowup[];
+  /**
+   * O catalogo de etiquetas de conversa (o tom dos chips das reguas por
+   * etiqueta); nulo: a leitura falhou.
+   */
+  etiquetas?: EtiquetaDeConversa[] | null;
+  /**
+   * As etiquetas para escolher num filtro (catalogo e em uso nos leads),
+   * so para quem edita; nulo: so as do catalogo.
+   */
+  opcoesDeEtiqueta?: OpcaoDeEtiqueta[] | null;
   volumes: VolumesDaEstimativa;
   /**
    * Os numeros ativos e a politica das automaticas (docs/07). Nulo quando a
@@ -216,6 +230,7 @@ export function AutomacoesClient({
     queryFn: () => fetchFollowups(supabase, clinicId),
     initialData: followupsIniciais,
   });
+  const reguasDeFollowup = followups.reguas;
 
   const invalidar = async () => {
     await Promise.all([
@@ -272,12 +287,14 @@ export function AutomacoesClient({
     }
   };
 
-  const followupsLigados = followups.filter((regua) => regua.active).length;
+  const followupsLigados = reguasDeFollowup.filter(
+    (regua) => regua.active,
+  ).length;
   const situacoes: Record<AbaKey, SituacaoDoCartao> = {
     confirmacao: situacaoDaRegua("confirmacao", reguas.confirmacao),
     pos_falta: situacaoDaRegua("pos_falta", reguas.pos_falta),
     followup:
-      followups.length === 0
+      reguasDeFollowup.length === 0
         ? {
             ligada: false,
             chip: { ...NAO_CONFIGURADA, label: "Nenhuma régua" },
@@ -289,9 +306,10 @@ export function AutomacoesClient({
             nota: (
               <>
                 <span className="cz-num">{followupsLigados}</span> de{" "}
-                <span className="cz-num">{followups.length}</span> ligadas,{" "}
+                <span className="cz-num">{reguasDeFollowup.length}</span>{" "}
+                ligadas,{" "}
                 {enviadas(
-                  followups.reduce(
+                  reguasDeFollowup.reduce(
                     (soma, regua) => soma + regua.enviados_24h,
                     0,
                   ),
@@ -481,6 +499,8 @@ export function AutomacoesClient({
           clinicId={clinicId}
           followups={followups}
           etapas={etapasParaFollowup}
+          etiquetas={etiquetas}
+          opcoesDeEtiqueta={opcoesDeEtiqueta}
           nomeDaClinica={nomeDaClinica}
           precoCents={volumes.precoCents}
           podeEditar={podeEditar}
@@ -528,6 +548,7 @@ export function AutomacoesClient({
               automacoes={fluxo.automacoes}
               jornada={fluxo.jornada}
               etiquetas={fluxo.etiquetas}
+              opcoesDeEtiqueta={fluxo.opcoesDeEtiqueta}
               clinicId={clinicId}
               timezone={fluxo.timezone}
               podeGerenciar={fluxo.podeGerenciar}

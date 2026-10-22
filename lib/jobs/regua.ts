@@ -466,6 +466,77 @@ async function reguaVigenteDaConsulta(
 }
 
 /**
+ * Codigos de "a funcao ainda nao existe no banco": PGRST202 (o PostgREST nao
+ * a acha no cache do esquema) e 42883 (o Postgres nao a acha).
+ */
+const FUNCAO_AUSENTE = new Set(["PGRST202", "42883"]);
+
+/** A regua de follow-up que vale para o contato, ou a resposta do legado. */
+type VigenteDoFollowup =
+  | { tipo: "lida"; reguaId: string | null }
+  /** Banco antes da migration 20261024100000: uma regua so por etapa. */
+  | { tipo: "sem_precedencia" };
+
+/**
+ * A regua de follow-up que vale AGORA para o contato (reguas por etiqueta,
+ * onda 4, item 16; decisoes D1 a D4 do dono). A escolha mora no banco, em
+ * regua_de_followup_do_contato, a mesma funcao que o planejador usa: so
+ * regua ligada da etapa do contato, as com etiqueta antes da geral, na ordem
+ * da clinica; a etiqueta conta no lead e nas conversas dele, pelo nome.
+ * Nenhuma casa: null.
+ *
+ * Leitura que falha vira excecao (retry do job), nunca decisao, como na
+ * regua vinculada: tratar o erro como "outra regua vale" pularia um toque
+ * que ainda vale, e como "esta vale" mandaria o toque de uma regua que
+ * deixou de valer. A unica resposta que nao e erro nem regua e a funcao
+ * AUSENTE com o banco ANTES da migration 20261024100000 (codigo no ar antes
+ * dela, ou depois do rollback dela): sem a coluna cadence.etiquetas o banco
+ * tem o indice de uma regua por etapa, a regua desta run e a unica da etapa
+ * e o comportamento e o de antes, sem precedencia. Funcao ausente com a
+ * coluna presente (o cache do PostgREST atrasado logo depois da migration)
+ * e falha FECHADA, como erro de leitura: a etapa pode ter varias reguas, e
+ * seguir sem precedencia mandaria tambem o toque da que deixou de valer
+ * (revisao de 21/10/2026).
+ */
+async function reguaVigenteDoFollowup(
+  admin: SupabaseClient,
+  contactId: string,
+  reguaId: string,
+): Promise<VigenteDoFollowup> {
+  const { data, error } = await admin.rpc("regua_de_followup_do_contato", {
+    p_contact_id: contactId,
+  });
+  if (error) {
+    const codigo = (error as { code?: string }).code ?? "";
+    if (FUNCAO_AUSENTE.has(codigo) && (await bancoSemReguasPorEtiqueta(admin, reguaId))) {
+      return { tipo: "sem_precedencia" };
+    }
+    throw new ErroComCodigoDeJob(
+      `regua_vigente_ilegivel: ${codigoDoErro(error)}`,
+    );
+  }
+  return { tipo: "lida", reguaId: typeof data === "string" ? data : null };
+}
+
+/**
+ * O banco e o de antes da migration 20261024100000? So quando ler
+ * cadence.etiquetas da 42703 (a coluna nao existe). Qualquer outra resposta,
+ * inclusive a leitura que funciona, quer dizer que a etapa pode ter reguas
+ * por etiqueta.
+ */
+async function bancoSemReguasPorEtiqueta(
+  admin: SupabaseClient,
+  reguaId: string,
+): Promise<boolean> {
+  const { error } = await admin
+    .from("cadence")
+    .select("etiquetas")
+    .eq("id", reguaId)
+    .limit(1);
+  return (error as { code?: string } | null)?.code === "42703";
+}
+
+/**
  * O paciente ja remarcou depois da falta? O eixo do pos_falta e o instante em
  * que a falta foi marcada, entao so conta consulta futura CRIADA depois disso.
  */
@@ -662,6 +733,31 @@ export async function executarPassoDeRegua(
     if (obsoletaPorReentrada) {
       await pularRun(admin, run, "condicao_parada");
       return { ok: true };
+    }
+
+    // REGUA VIGENTE do follow-up (reguas por etiqueta, onda 4, item 16). A
+    // etapa pode ter varias reguas (as com etiqueta e a geral), e para cada
+    // lead vale UMA por vez. A run nasceu da regua que valia no
+    // planejamento; se a etiqueta do lead mudou no meio (D3: troca no
+    // proximo toque), se outra regua da etapa foi ligada ou se esta foi
+    // reordenada para baixo, ESTE toque e de uma regua que deixou de valer
+    // para ele: pula so ele ('condicao_parada'). A cadeia NAO para: os
+    // toques da regua vigente sao outras runs, que o planejador materializa
+    // (com a trava de 30 minutos contra toque repetido). Vem depois das
+    // paradas da etapa: saiu da etapa ou respondeu continua parando a cadeia
+    // inteira antes desta conferencia. O toque manual nao passa por aqui:
+    // quem pediu foi uma pessoa. Consentimento, janela, numero, slot de
+    // massa e custo seguem iguais: nenhum caminho novo de envio.
+    if (!manual) {
+      const vigente = await reguaVigenteDoFollowup(
+        admin,
+        run.contact_id,
+        regua.id,
+      );
+      if (vigente.tipo === "lida" && vigente.reguaId !== regua.id) {
+        await pularRun(admin, run, "condicao_parada");
+        return { ok: true };
+      }
     }
   } else {
     consulta = await carregarConsulta(admin, job.clinic_id, run.appointment_id);

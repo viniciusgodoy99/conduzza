@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { STATUS_TONE_VARS } from "@/lib/design/status";
 import {
   descreverExecucao,
   quandoNaClinica,
@@ -45,6 +46,11 @@ import { EXECUCAO_STATUS } from "./status-da-execucao";
 // da regra atual so vem o nome. O nome do lead e dado de paciente: vem da
 // historicoDeAutomacoesDeFluxoAction, que grava a trilha de leitura antes de
 // devolver.
+//
+// Desde a onda 4, com varias acoes, cada uma tem a propria linha embaixo da
+// execucao: "Fez: ..." ou "Não fez: ... (por que pulou)", com a forma, o
+// texto e a cor da situacao (EXECUCAO_STATUS). Execucao de uma acao so (ou
+// de antes da onda 4) continua numa frase so.
 
 /** Valor do Select para "todas" (o Radix nao aceita vazio). */
 const TODAS = "__todas__";
@@ -205,6 +211,41 @@ export function HistoricoDasAutomacoes({
                       </span>
                     ) : null}
                   </p>
+                  {frase.acoes.length > 0 ? (
+                    <ul
+                      aria-label="O que cada ação fez"
+                      className="grid gap-1 border-l-2 border-border pl-2.5"
+                    >
+                      {frase.acoes.map((linha) => {
+                        const situacao = EXECUCAO_STATUS[linha.status];
+                        const Icone = situacao.icon;
+                        return (
+                          <li
+                            key={linha.posicao}
+                            className="flex items-start gap-1.5 text-[12.5px] text-foreground"
+                          >
+                            {Icone ? (
+                              <Icone
+                                aria-hidden
+                                className="mt-0.5 size-3.5 shrink-0"
+                                style={{
+                                  color: STATUS_TONE_VARS[situacao.tone].text,
+                                }}
+                              />
+                            ) : null}
+                            <span>
+                              {linha.texto}
+                              {linha.codigo ? (
+                                <span className="ml-1.5 cz-num text-[11.5px] text-text-secondary">
+                                  ({linha.codigo})
+                                </span>
+                              ) : null}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
                 </div>
                 <time
                   dateTime={instante}

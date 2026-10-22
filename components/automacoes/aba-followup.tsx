@@ -1,58 +1,61 @@
 "use client";
 
-import {
-  Check,
-  ChevronDown,
-  PenLine,
-  Plus,
-  Repeat,
-  Trash2,
-  WandSparkles,
-} from "lucide-react";
+import { Check, PenLine, Plus, Repeat, WandSparkles } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import {
-  criarReguaDeFollowupAction,
   excluirReguaAction,
+  ordenarReguasDeFollowupAction,
 } from "@/app/(app)/automacoes/actions";
-import { AbaRegua } from "@/components/automacoes/aba-regua";
 import {
   DialogoDeExclusao,
   PERDAS_DO_HISTORICO,
 } from "@/components/automacoes/dialogo-de-exclusao";
+import { CartaoDaRegua } from "@/components/automacoes/followup/cartao-da-regua";
+import { DialogoNovaRegua } from "@/components/automacoes/followup/dialogo-nova-regua";
+import { DialogoParaQuem } from "@/components/automacoes/followup/dialogo-para-quem";
 import type { NumerosDasAutomaticas } from "@/components/automacoes/numeros-de-envio";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
-import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
+  opcoesDeEtiqueta as opcoesDoCatalogo,
+  SEM_TONS,
+  tonsDasEtiquetas,
+  type OpcaoDeEtiqueta,
+} from "@/lib/domain/etiquetas-do-lead";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { REGUA_STATUS } from "@/lib/design/status";
-import type { ReguaDeFollowup } from "@/lib/queries/automacoes";
-import { cn } from "@/lib/utils";
+  agruparReguasPorEtapa,
+  avisoDeEtapaSemGeral,
+  avisoDeGeralDesligada,
+  avisoDeSemRegua,
+  ehReguaGeral,
+  novaOrdemDasReguas,
+  REGRA_DA_ORDEM,
+  REGRA_DA_PRECEDENCIA,
+  textoDasEtiquetas,
+} from "@/lib/domain/reguas-de-followup";
+import type {
+  DadosDosFollowups,
+  ReguaDeFollowup,
+} from "@/lib/queries/automacoes";
 
 // Aba de follow-up de leads (spec modulo 7): regua por ETAPA da jornada.
 // Gatilho = entrou na etapa; parada automatica quando responde, muda de
 // etapa (agendou, perdido, qualquer movimento). Mensagem fixa por enquanto:
 // deixar a IA escrever fica desabilitado ate o agente existir com o filtro
 // de conformidade (regra 3.2; o banco recusa use_ai=true).
+//
+// Desde a onda 4 (item 16, decisoes do dono de 20/10/2026) a etapa pode ter
+// varias reguas: as com etiqueta, na ordem de precedencia (vale a de cima,
+// com Subir e Descer), e a geral por ultimo. A tela agrupa por etapa, na
+// ordem da jornada; cada regua diz para quem e, quantos recebem hoje e
+// quantos estao sem autorizacao; a etapa sem regua geral avisa quantos leads
+// ficam sem nenhuma. "Nova régua" nao esconde mais a etapa que ja tem regua.
 //
 // Desenho do design system (docs/06 secao 5.10): o modo em uso como cartao
 // escolhido (receita 4.7), cada regua num cartao com cabecalho de acordeao e
@@ -71,10 +74,12 @@ export function AbaFollowup({
   dicaSemPermissao,
   ehAdministrador,
   numeros = null,
+  etiquetas = null,
+  opcoesDeEtiqueta = null,
   aoMudar,
 }: {
   clinicId: string;
-  followups: ReguaDeFollowup[];
+  followups: DadosDosFollowups;
   /**
    * Etapas da jornada que aceitam follow-up: sem a de perda e sem a que
    * espera a resposta da equipe (etapaRecebeFollowup, lib/domain/jornada).
@@ -87,33 +92,31 @@ export function AbaFollowup({
   ehAdministrador: boolean;
   /** Numeros ativos e politica: o teste de cada passo escolhe o numero. */
   numeros?: NumerosDasAutomaticas | null;
+  /** O catalogo de etiquetas (o tom dos chips); nulo: nao carregou */
+  etiquetas?: EtiquetaDeConversa[] | null;
+  /** As etiquetas para escolher (catalogo e em uso); nulo: so o catalogo */
+  opcoesDeEtiqueta?: OpcaoDeEtiqueta[] | null;
   aoMudar: () => Promise<unknown> | void;
 }) {
   const [aberta, setAberta] = useState<string | null>(null);
-  const [dialogoAberto, setDialogoAberto] = useState(false);
+  const [criando, setCriando] = useState(false);
+  const [paraQuem, setParaQuem] = useState<ReguaDeFollowup | null>(null);
   const [aExcluir, setAExcluir] = useState<ReguaDeFollowup | null>(null);
-  const [etapaEscolhida, setEtapaEscolhida] = useState("");
   const [pendente, iniciarTransicao] = useTransition();
 
-  const etapasLivres = etapas.filter(
-    (etapa) => !followups.some((regua) => regua.trigger_stage === etapa.chave),
-  );
-
-  const criar = () => {
-    iniciarTransicao(async () => {
-      const resultado = await criarReguaDeFollowupAction({
-        trigger_stage: etapaEscolhida,
-      });
-      if (resultado.ok) {
-        toast.success("Régua criada, desligada. Escreva as mensagens e ligue.");
-        setDialogoAberto(false);
-        setEtapaEscolhida("");
-        await aoMudar();
-        return;
-      }
-      toast.error(resultado.error ?? "Não foi possível criar a régua.");
-    });
-  };
+  const { reguas, semReguaPorEtapa } = followups;
+  const grupos = agruparReguasPorEtapa(reguas, etapas);
+  const tons = etiquetas ? tonsDasEtiquetas(etiquetas) : SEM_TONS;
+  const opcoes =
+    opcoesDeEtiqueta ?? (etiquetas ? opcoesDoCatalogo(etiquetas, []) : []);
+  const leitura =
+    opcoesDeEtiqueta !== null || etiquetas !== null ? "pronto" : "erro";
+  const etapasDaNova = etapas.map((etapa) => ({
+    ...etapa,
+    temGeral: reguas.some(
+      (regua) => regua.trigger_stage === etapa.chave && ehReguaGeral(regua),
+    ),
+  }));
 
   const excluir = (regua: ReguaDeFollowup) => {
     iniciarTransicao(async () => {
@@ -127,6 +130,46 @@ export function AbaFollowup({
       toast.error(resultado.error ?? "Não foi possível excluir.");
     });
   };
+
+  const reordenar = (etapa: string, ids: string[]) => {
+    iniciarTransicao(async () => {
+      const resultado = await ordenarReguasDeFollowupAction({
+        trigger_stage: etapa,
+        ids,
+      });
+      if (resultado.ok) {
+        toast.success("Ordem das réguas salva.");
+        await aoMudar();
+        return;
+      }
+      toast.error(
+        resultado.error ?? "Não foi possível mudar a ordem das réguas.",
+      );
+    });
+  };
+
+  // O que se perde ao excluir, dito para quem a regua atende.
+  const etapaDaExcluida = aExcluir
+    ? grupos.find((grupo) => grupo.chave === aExcluir.trigger_stage)
+    : undefined;
+  const descricaoDaExclusao = !aExcluir
+    ? ""
+    : !ehReguaGeral(aExcluir)
+      ? `Os leads com ${textoDasEtiquetas(aExcluir.etiquetas, aExcluir.etiquetas_modo)} passam a receber a régua geral da etapa ${aExcluir.etapa_nome}, se ela estiver ligada.`
+      : (etapaDaExcluida?.comEtiqueta.length ?? 0) > 0
+        ? `Os leads da etapa ${aExcluir.etapa_nome} sem as etiquetas das outras réguas deixam de receber mensagens de acompanhamento.`
+        : `Os leads da etapa ${aExcluir.etapa_nome} deixam de receber mensagens de acompanhamento.`;
+
+  const botaoNova = (
+    <Button
+      variant="outline"
+      disabled={!podeEditar || pendente || etapas.length === 0}
+      onClick={() => setCriando(true)}
+    >
+      <Plus aria-hidden />
+      Nova régua
+    </Button>
+  );
 
   return (
     <div className="grid gap-4">
@@ -172,34 +215,25 @@ export function AbaFollowup({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-[62ch] text-[13px] text-text-secondary">
           A régua acompanha o lead enquanto ele está na etapa. Ela para sozinha
-          quando ele responde, agenda ou muda de etapa.
+          quando ele responde, agenda ou muda de etapa. Uma etapa pode ter
+          réguas por etiqueta e uma geral: cada lead recebe uma só.
         </p>
-        {podeEditar && etapasLivres.length > 0 ? (
-          <Button
-            variant="outline"
-            disabled={pendente}
-            onClick={() => setDialogoAberto(true)}
-          >
-            <Plus aria-hidden />
-            Nova régua por etapa
-          </Button>
+        {podeEditar && etapas.length > 0 ? (
+          botaoNova
         ) : (
           <DisabledWithHint
             hint={
               podeEditar
-                ? "Todas as etapas da jornada já têm régua de follow-up"
+                ? "Nenhuma etapa da jornada aceita follow-up."
                 : dicaSemPermissao
             }
           >
-            <Button variant="outline" disabled>
-              <Plus aria-hidden />
-              Nova régua por etapa
-            </Button>
+            {botaoNova}
           </DisabledWithHint>
         )}
       </div>
 
-      {followups.length === 0 ? (
+      {reguas.length === 0 ? (
         <Card>
           <EmptyState
             compact
@@ -209,117 +243,105 @@ export function AbaFollowup({
           />
         </Card>
       ) : (
-        followups.map((regua) => {
-          const expandida = aberta === regua.id;
-          const idConteudo = `followup-${regua.id}`;
+        grupos.map((grupo) => {
+          const idDoTitulo = `followup-etapa-${grupo.chave}`;
+          const ordenadas = [
+            ...grupo.comEtiqueta,
+            ...(grupo.geral ? [grupo.geral] : []),
+          ];
+          const semRegua = semReguaPorEtapa?.[grupo.chave] ?? null;
+          const temComEtiqueta = grupo.comEtiqueta.length > 0;
           return (
-            <Card key={regua.id}>
-              <div className="flex flex-wrap items-center gap-2 px-4 py-2">
-                <button
-                  type="button"
-                  aria-expanded={expandida}
-                  aria-controls={idConteudo}
-                  onClick={() => setAberta(expandida ? null : regua.id)}
-                  className="flex min-h-10 min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+            <section
+              key={grupo.chave}
+              aria-labelledby={idDoTitulo}
+              className="grid gap-3"
+            >
+              <div className="grid gap-1">
+                <h2
+                  id={idDoTitulo}
+                  className="text-base leading-[1.3] font-bold tracking-[-0.01em]"
                 >
-                  <ChevronDown
-                    className={cn(
-                      "size-4 shrink-0 text-text-secondary transition-transform duration-(--dur-base) motion-reduce:transition-none",
-                      expandida && "rotate-180",
-                    )}
-                    aria-hidden
-                  />
-                  <span className="text-[13.5px] font-bold text-text-strong">
-                    {regua.name}
-                  </span>
-                  <span className="text-xs text-text-secondary">
-                    etapa {regua.etapa_nome}
-                  </span>
-                  <StatusChip
-                    size="sm"
-                    className="ml-auto"
-                    definition={
-                      REGUA_STATUS[regua.active ? "ligada" : "desligada"]
-                    }
-                  />
-                </button>
-                {podeEditar ? (
-                  <Button
-                    variant="destructive"
-                    aria-label={`Excluir a régua ${regua.name}`}
-                    disabled={pendente}
-                    onClick={() => setAExcluir(regua)}
-                  >
-                    <Trash2 aria-hidden />
-                    Excluir
-                  </Button>
-                ) : (
-                  <DisabledWithHint hint={dicaSemPermissao}>
-                    <Button
-                      variant="destructive"
-                      aria-label={`Excluir a régua ${regua.name}`}
-                      disabled
-                    >
-                      <Trash2 aria-hidden />
-                      Excluir
-                    </Button>
-                  </DisabledWithHint>
-                )}
+                  {grupo.nome}
+                </h2>
+                {temComEtiqueta ? (
+                  <p className="max-w-[72ch] text-[13px] text-text-secondary">
+                    {grupo.geral?.active
+                      ? REGRA_DA_PRECEDENCIA
+                      : REGRA_DA_ORDEM}
+                  </p>
+                ) : null}
               </div>
-              {expandida ? (
-                <div
-                  id={idConteudo}
-                  className="grid gap-4 border-t border-border p-4"
+              {/* A etapa sem geral ligada deixa sem regua quem nao tem as
+                  etiquetas: o aviso diz quantos (o alcance conta) e por que. */}
+              {temComEtiqueta && !grupo.geral?.active ? (
+                <Aviso
+                  tom={semRegua !== null && semRegua > 0 ? "warning" : "info"}
                 >
-                  {/* Spec 7.6: quem sera pulado por falta de autorizacao */}
-                  {regua.sem_autorizacao > 0 ? (
-                    <Aviso tom="info">
-                      <span className="cz-num font-semibold">
-                        {regua.sem_autorizacao}
-                      </span>{" "}
-                      de <span className="cz-num">{regua.total_na_etapa}</span>{" "}
-                      {regua.total_na_etapa === 1 ? "contato" : "contatos"}{" "}
-                      desta etapa não{" "}
-                      {regua.sem_autorizacao === 1 ? "tem" : "têm"} autorização
-                      para receber mensagens e{" "}
-                      {regua.sem_autorizacao === 1
-                        ? "será pulado"
-                        : "serão pulados"}
-                      .
-                    </Aviso>
-                  ) : null}
-                  <AbaRegua
-                    clinicId={clinicId}
+                  {semRegua !== null && semRegua > 0
+                    ? `${avisoDeSemRegua(semRegua, grupo.nome)} `
+                    : null}
+                  {grupo.geral
+                    ? avisoDeGeralDesligada(grupo.nome)
+                    : avisoDeEtapaSemGeral(grupo.nome)}
+                </Aviso>
+              ) : null}
+              {ordenadas.map((regua) => {
+                const posicao = grupo.comEtiqueta.findIndex(
+                  (item) => item.id === regua.id,
+                );
+                const ordem =
+                  posicao < 0
+                    ? null
+                    : {
+                        podeSubir: posicao > 0,
+                        podeDescer: posicao < grupo.comEtiqueta.length - 1,
+                        aoSubir: () => {
+                          const ids = novaOrdemDasReguas(
+                            grupo.comEtiqueta,
+                            regua.id,
+                            -1,
+                          );
+                          if (ids) {
+                            reordenar(grupo.chave, ids);
+                          }
+                        },
+                        aoDescer: () => {
+                          const ids = novaOrdemDasReguas(
+                            grupo.comEtiqueta,
+                            regua.id,
+                            1,
+                          );
+                          if (ids) {
+                            reordenar(grupo.chave, ids);
+                          }
+                        },
+                      };
+                return (
+                  <CartaoDaRegua
+                    key={regua.id}
                     regua={regua}
-                    copy={{
-                      ligar: `Ligar a régua ${regua.name}`,
-                      ligada: "Régua ligada",
-                      desligada: "Régua desligada",
-                      inicioDaLinha: "Entrou na etapa",
-                      fimDaLinha: null,
-                      vazio: "Esta régua não tem mensagens.",
-                    }}
+                    aberta={aberta === regua.id}
+                    aoAlternar={() =>
+                      setAberta(aberta === regua.id ? null : regua.id)
+                    }
+                    ordem={ordem}
+                    tons={tons}
+                    clinicId={clinicId}
                     nomeDaClinica={nomeDaClinica}
-                    estimativa={{
-                      eventos30d: regua.eventos30d,
-                      rotuloDoEvento: "leads que entraram na etapa",
-                      rotuloDoEventoSingular: "lead que entrou na etapa",
-                      precoCents,
-                    }}
-                    sentidoDoPasso="depois"
-                    tipoDaRegua="followup"
-                    eventoRotulo="a entrada na etapa"
-                    placeholders={["nome", "clinica"]}
+                    precoCents={precoCents}
                     podeEditar={podeEditar}
                     dicaSemPermissao={dicaSemPermissao}
                     ehAdministrador={ehAdministrador}
                     numeros={numeros}
-                    aninhada
+                    pendente={pendente}
+                    aoEditarParaQuem={() => setParaQuem(regua)}
+                    aoExcluir={() => setAExcluir(regua)}
                     aoMudar={aoMudar}
                   />
-                </div>
-              ) : null}
-            </Card>
+                );
+              })}
+            </section>
           );
         })
       )}
@@ -327,7 +349,7 @@ export function AbaFollowup({
       <DialogoDeExclusao
         aberto={aExcluir !== null}
         titulo={`Excluir a régua ${aExcluir?.name ?? ""}?`}
-        descricao={`Os leads da etapa ${aExcluir?.etapa_nome ?? ""} deixam de receber mensagens de acompanhamento.`}
+        descricao={descricaoDaExclusao}
         consequencias={[
           "Os textos e os anexos da régua são apagados.",
           "Todo o histórico de envios dela também é apagado e some das métricas.",
@@ -343,52 +365,24 @@ export function AbaFollowup({
         }}
       />
 
-      <Dialog open={dialogoAberto} onOpenChange={setDialogoAberto}>
-        <DialogContent className="sm:max-w-[420px]">
-          <DialogHeader>
-            <DialogTitle>Nova régua de follow-up</DialogTitle>
-            <DialogDescription>
-              Escolha a etapa da jornada. A régua nasce desligada e sem
-              mensagens, para você escrever antes de ligar.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-1.5">
-            <Label htmlFor="followup-etapa">Etapa da jornada</Label>
-            <Select value={etapaEscolhida} onValueChange={setEtapaEscolhida}>
-              <SelectTrigger id="followup-etapa" className="w-full">
-                <SelectValue placeholder="Escolha a etapa" />
-              </SelectTrigger>
-              <SelectContent>
-                {etapasLivres.map((etapa) => (
-                  <SelectItem key={etapa.chave} value={etapa.chave}>
-                    {etapa.nome}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {etapasLivres.length === 0 ? (
-              <p className="text-[11px] text-text-secondary">
-                Todas as etapas da jornada já têm régua de follow-up.
-              </p>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              disabled={pendente}
-              onClick={() => setDialogoAberto(false)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              disabled={pendente || etapaEscolhida === ""}
-              onClick={criar}
-            >
-              {pendente ? "Criando..." : "Criar régua"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DialogoNovaRegua
+        aberto={criando}
+        aoFechar={() => setCriando(false)}
+        aoCriar={aoMudar}
+        etapas={etapasDaNova}
+        opcoes={opcoes}
+        leitura={leitura}
+        tons={tons}
+      />
+
+      <DialogoParaQuem
+        regua={paraQuem}
+        aoFechar={() => setParaQuem(null)}
+        aoSalvar={aoMudar}
+        opcoes={opcoes}
+        leitura={leitura}
+        tons={tons}
+      />
     </div>
   );
 }

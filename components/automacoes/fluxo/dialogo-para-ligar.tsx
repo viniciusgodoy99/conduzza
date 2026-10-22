@@ -14,8 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import {
   cicloDaAutomacao,
-  descreverAcao,
-  descreverGatilho,
+  descreverRegra,
+  regraParaCiclo,
   resolvedorDeNomes,
   textoDoCiclo,
   type AutomacaoDeFluxo,
@@ -27,8 +27,9 @@ import { PreviaDaAutomacao } from "./previa-da-automacao";
 
 // Ligar pede confirmacao com a previa: a regra nao e retroativa, e quem ja
 // passou do ponto fica de fora. Se ligar fecharia um ciclo com outra
-// automacao ligada (espelho do detector do banco), o botao fica desabilitado
-// e o aviso diz o caminho.
+// automacao ligada (espelho do detector do banco, que le as acoes da regra
+// desde a onda 4), o botao fica desabilitado e o aviso diz o caminho. A
+// descricao e a regra inteira numa frase: quando, se e o que faz.
 
 export function DialogoParaLigar({
   regra,
@@ -52,7 +53,10 @@ export function DialogoParaLigar({
 }) {
   const nomeDaEtapa = resolvedorDeNomes(jornada);
   const ciclo = regra
-    ? cicloDaAutomacao({ ...regra, ativa: true }, automacoes)
+    ? cicloDaAutomacao(
+        { ...regraParaCiclo(regra), ativa: true },
+        automacoes.map(regraParaCiclo),
+      )
     : null;
 
   return (
@@ -65,13 +69,10 @@ export function DialogoParaLigar({
           <DialogTitle>Ligar {regra?.nome}?</DialogTitle>
           <DialogDescription>
             {regra
-              ? `${descreverGatilho(regra, nomeDaEtapa)}: ${descreverAcao(
-                  regra,
-                  {
-                    etapa: nomeDaEtapa,
-                    etiqueta: resolvedorDeNomes(etiquetas),
-                  },
-                ).replace(/^./, (letra) => letra.toLowerCase())}.`
+              ? descreverRegra(regra, {
+                  etapa: nomeDaEtapa,
+                  etiqueta: resolvedorDeNomes(etiquetas),
+                })
               : null}
           </DialogDescription>
         </DialogHeader>

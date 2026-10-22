@@ -16,6 +16,7 @@ import { etapaRecebeFollowup } from "@/lib/domain/jornada";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import { NAV_GROUPS } from "@/lib/navigation";
 import {
+  fetchEtiquetasParaFiltro,
   fetchFollowups,
   fetchReguasVinculadas,
   fetchVolumesDaEstimativa,
@@ -82,7 +83,29 @@ export default async function AutomacoesPage({
   }
 
   const comFluxo = podeAcessarAutomacoesDeFluxo(active.role);
+  const podeEditar = canEdit(active.role, "automacoes");
   const supabase = await createClient();
+  // O catalogo de etiquetas de conversa: o nome da etiqueta na frase da
+  // regra e no dialogo da aba de fluxo, e o tom dos chips das reguas por
+  // etiqueta do follow-up. So para quem edita (administrador e gestor, os
+  // mesmos da aba de fluxo): para a recepcao nada da aba de fluxo e lido
+  // (decisao do item 13), e os chips dela saem no tom neutro, com o nome
+  // escrito. Nulo: quem usa avisa que nao carregou.
+  const catalogo =
+    comFluxo || podeEditar
+      ? fetchEtiquetasDeConversa(supabase, active.clinicId).catch(() => null)
+      : Promise.resolve(null);
+  // As etiquetas para escolher num filtro (o "Se" da automacao e o "Para
+  // quem" da regua): as do catalogo e as em uso nos leads, so para quem
+  // edita. Nomes distintos, sem contato identificado. Nulo: ficam as do
+  // catalogo.
+  const opcoesDeEtiqueta = podeEditar
+    ? catalogo.then((lido) =>
+        fetchEtiquetasParaFiltro(supabase, active.clinicId, lido ?? []).catch(
+          () => null,
+        ),
+      )
+    : Promise.resolve(null);
   const [
     reguas,
     volumes,
@@ -92,6 +115,7 @@ export default async function AutomacoesPage({
     numeros,
     automacoesDeFluxo,
     etiquetas,
+    opcoes,
   ] = await Promise.all([
     fetchReguasDaClinica(supabase, active.clinicId),
     fetchVolumesDaEstimativa(supabase, active.clinicId),
@@ -105,11 +129,8 @@ export default async function AutomacoesPage({
     comFluxo
       ? fetchAutomacoesDeFluxo(supabase, active.clinicId).catch(() => null)
       : null,
-    // O catalogo de etiquetas (o nome da etiqueta na frase da regra e no
-    // dialogo). Nulo: a aba avisa que nao carregou.
-    comFluxo
-      ? fetchEtiquetasDeConversa(supabase, active.clinicId).catch(() => null)
-      : null,
+    catalogo,
+    opcoesDeEtiqueta,
   ]);
   const { aba } = await searchParams;
 
@@ -133,6 +154,8 @@ export default async function AutomacoesPage({
         reguasIniciais={reguas}
         vinculadasIniciais={vinculadas}
         followupsIniciais={followups}
+        etiquetas={etiquetas}
+        opcoesDeEtiqueta={opcoes}
         // Sem Perdido e sem a etapa que espera a resposta da equipe
         // (decisao D3, 21/10/2026), tambem com o banco de antes da migration
         // (pela chave): a regra e etapaRecebeFollowup, a mesma que a action
@@ -142,7 +165,7 @@ export default async function AutomacoesPage({
           .map((etapa) => ({ chave: etapa.chave, nome: etapa.nome }))}
         volumes={volumes}
         numeros={numeros}
-        podeEditar={canEdit(active.role, "automacoes")}
+        podeEditar={podeEditar}
         dicaSemPermissao={
           permissionHint(active.role, "automacoes") ??
           "Somente administradores e gestores alteram as automações"
@@ -154,6 +177,7 @@ export default async function AutomacoesPage({
                 automacoes: automacoesDeFluxo,
                 jornada,
                 etiquetas,
+                opcoesDeEtiqueta: opcoes,
                 // O historico e o uso no relogio da clinica (regra 3.6).
                 timezone: active.timezone,
                 // So quem gerencia chega a aba, entao dentro dela tudo vem

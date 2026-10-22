@@ -645,6 +645,111 @@ export type Database = {
           },
         ]
       }
+      automacao_acao: {
+        Row: {
+          acao: string
+          atividade_prazo_dias: number | null
+          atividade_titulo: string | null
+          automacao_id: string
+          clinic_id: string
+          created_at: string
+          etapa_destino: string | null
+          etiqueta: string | null
+          id: string
+          motivo_perda: string | null
+          nota_texto: string | null
+          posicao: number
+        }
+        Insert: {
+          acao: string
+          atividade_prazo_dias?: number | null
+          atividade_titulo?: string | null
+          automacao_id: string
+          clinic_id: string
+          created_at?: string
+          etapa_destino?: string | null
+          etiqueta?: string | null
+          id?: string
+          motivo_perda?: string | null
+          nota_texto?: string | null
+          posicao: number
+        }
+        Update: {
+          acao?: string
+          atividade_prazo_dias?: number | null
+          atividade_titulo?: string | null
+          automacao_id?: string
+          clinic_id?: string
+          created_at?: string
+          etapa_destino?: string | null
+          etiqueta?: string | null
+          id?: string
+          motivo_perda?: string | null
+          nota_texto?: string | null
+          posicao?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automacao_acao_automacao_fkey"
+            columns: ["automacao_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "automacao_fluxo"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "automacao_acao_etapa_destino_fkey"
+            columns: ["clinic_id", "etapa_destino"]
+            isOneToOne: false
+            referencedRelation: "funnel_stage_def"
+            referencedColumns: ["clinic_id", "chave"]
+          },
+          {
+            foreignKeyName: "automacao_acao_etiqueta_fkey"
+            columns: ["clinic_id", "etiqueta"]
+            isOneToOne: false
+            referencedRelation: "conversation_tag_def"
+            referencedColumns: ["clinic_id", "chave"]
+          },
+        ]
+      }
+      automacao_condicao: {
+        Row: {
+          automacao_id: string
+          clinic_id: string
+          created_at: string
+          etiqueta: string
+          id: string
+          posicao: number
+          tipo: string
+        }
+        Insert: {
+          automacao_id: string
+          clinic_id: string
+          created_at?: string
+          etiqueta: string
+          id?: string
+          posicao: number
+          tipo: string
+        }
+        Update: {
+          automacao_id?: string
+          clinic_id?: string
+          created_at?: string
+          etiqueta?: string
+          id?: string
+          posicao?: number
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automacao_condicao_automacao_fkey"
+            columns: ["automacao_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "automacao_fluxo"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
       automacao_execucao: {
         Row: {
           acao: string | null
@@ -757,13 +862,80 @@ export type Database = {
           },
         ]
       }
-      automacao_fluxo: {
+      automacao_execucao_acao: {
         Row: {
           acao: string
+          atividade_id: string | null
+          clinic_id: string
+          conversation_id: string | null
+          etiqueta: string | null
+          etiqueta_nome: string | null
+          execucao_id: string
+          executada_em: string
+          id: string
+          message_id: string | null
+          motivo: string | null
+          para_etapa: string | null
+          posicao: number
+          status: string
+        }
+        Insert: {
+          acao: string
+          atividade_id?: string | null
+          clinic_id: string
+          conversation_id?: string | null
+          etiqueta?: string | null
+          etiqueta_nome?: string | null
+          execucao_id: string
+          executada_em?: string
+          id?: string
+          message_id?: string | null
+          motivo?: string | null
+          para_etapa?: string | null
+          posicao: number
+          status: string
+        }
+        Update: {
+          acao?: string
+          atividade_id?: string | null
+          clinic_id?: string
+          conversation_id?: string | null
+          etiqueta?: string | null
+          etiqueta_nome?: string | null
+          execucao_id?: string
+          executada_em?: string
+          id?: string
+          message_id?: string | null
+          motivo?: string | null
+          para_etapa?: string | null
+          posicao?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automacao_execucao_acao_atividade_id_fkey"
+            columns: ["atividade_id"]
+            isOneToOne: false
+            referencedRelation: "contact_activity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "automacao_execucao_acao_execucao_id_fkey"
+            columns: ["execucao_id"]
+            isOneToOne: false
+            referencedRelation: "automacao_execucao"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      automacao_fluxo: {
+        Row: {
+          acao: string | null
           ativa: boolean
           atividade_prazo_dias: number | null
           atividade_titulo: string | null
           clinic_id: string
+          combinar: string
           created_at: string
           created_by: string | null
           espera_minutos: number | null
@@ -780,11 +952,12 @@ export type Database = {
           vigente_desde: string
         }
         Insert: {
-          acao: string
+          acao?: string | null
           ativa?: boolean
           atividade_prazo_dias?: number | null
           atividade_titulo?: string | null
           clinic_id: string
+          combinar?: string
           created_at?: string
           created_by?: string | null
           espera_minutos?: number | null
@@ -801,11 +974,12 @@ export type Database = {
           vigente_desde?: string
         }
         Update: {
-          acao?: string
+          acao?: string | null
           ativa?: boolean
           atividade_prazo_dias?: number | null
           atividade_titulo?: string | null
           clinic_id?: string
+          combinar?: string
           created_at?: string
           created_by?: string | null
           espera_minutos?: number | null
@@ -857,11 +1031,14 @@ export type Database = {
           active: boolean
           clinic_id: string
           created_at: string
+          etiquetas: string[]
+          etiquetas_modo: string
           for_no_show_history: boolean
           id: string
           kind: string
           name: string
           no_show_threshold: number
+          prioridade: number
           procedure_id: string | null
           professional_id: string | null
           send_weekdays: number[] | null
@@ -875,11 +1052,14 @@ export type Database = {
           active?: boolean
           clinic_id: string
           created_at?: string
+          etiquetas?: string[]
+          etiquetas_modo?: string
           for_no_show_history?: boolean
           id?: string
           kind: string
           name: string
           no_show_threshold?: number
+          prioridade?: number
           procedure_id?: string | null
           professional_id?: string | null
           send_weekdays?: number[] | null
@@ -893,11 +1073,14 @@ export type Database = {
           active?: boolean
           clinic_id?: string
           created_at?: string
+          etiquetas?: string[]
+          etiquetas_modo?: string
           for_no_show_history?: boolean
           id?: string
           kind?: string
           name?: string
           no_show_threshold?: number
+          prioridade?: number
           procedure_id?: string | null
           professional_id?: string | null
           send_weekdays?: number[] | null
@@ -4877,6 +5060,10 @@ export type Database = {
         }
         Returns: Json
       }
+      alcance_das_reguas_de_followup: {
+        Args: { p_clinic_id: string }
+        Returns: Json
+      }
       anuncios_do_periodo: {
         Args: { p_ate: string; p_clinic_id: string; p_de: string }
         Returns: Json
@@ -4912,6 +5099,15 @@ export type Database = {
           p_por: string
         }
         Returns: undefined
+      }
+      automacao_fecha_ciclo: {
+        Args: {
+          p_clinic_id: string
+          p_destinos: string[]
+          p_etapa: string
+          p_id: string
+        }
+        Returns: boolean
       }
       bater_ponto_do_worker: {
         Args: { p_ultimo_lote?: number; p_worker_id: string }
@@ -5042,7 +5238,16 @@ export type Database = {
         }
       }
       chave_de_especialidade: { Args: { p_texto: string }; Returns: string }
+      chave_de_etiqueta: { Args: { p_texto: string }; Returns: string }
       chave_telefone: { Args: { p_phone: string }; Returns: string }
+      chaves_de_etiqueta_do_contato: {
+        Args: { p_contact_id: string }
+        Returns: string[]
+      }
+      chaves_de_etiquetas: {
+        Args: { p_etiquetas: string[] }
+        Returns: string[]
+      }
       clinica_esta_suspensa: { Args: { p_clinic_id: string }; Returns: boolean }
       concluir_job: {
         Args: { p_id: string; p_worker: string }
@@ -5292,6 +5497,15 @@ export type Database = {
         }
         Returns: string[]
       }
+      etiquetas_casam: {
+        Args: {
+          p_chaves_do_contato: string[]
+          p_etiquetas: string[]
+          p_modo: string
+        }
+        Returns: boolean
+      }
+      etiquetas_validas: { Args: { p_etiquetas: string[] }; Returns: boolean }
       executar_automacoes_de_fluxo: {
         Args: {
           p_clinic_id?: string
@@ -5318,9 +5532,22 @@ export type Database = {
         }
         Returns: Json
       }
+      fechar_execucoes_pela_metade: {
+        Args: { p_automacao_id: string }
+        Returns: number
+      }
       fechar_runs_orfas: { Args: never; Returns: number }
       frase_de_escalonamento_da_ia: { Args: never; Returns: string }
       frases_do_rastreio: { Args: { p_chave: string }; Returns: string[] }
+      followups_devidos: {
+        Args: { p_clinic_id?: string }
+        Returns: {
+          clinic_id: string
+          contact_id: string
+          scheduled_for: string
+          step_id: string
+        }[]
+      }
       funil_da_jornada: { Args: { p_clinic_id: string }; Returns: Json }
       funil_do_periodo: {
         Args: {
@@ -5551,6 +5778,10 @@ export type Database = {
         Args: { p_clinic_id: string; p_id: string; p_nova_posicao: number }
         Returns: string
       }
+      ordenar_reguas_de_followup: {
+        Args: { p_clinic_id: string; p_ids: string[]; p_trigger_stage: string }
+        Returns: undefined
+      }
       passar_conversa_da_ia_para_equipe: {
         Args: { p_job_id: string; p_motivo: string; p_worker: string }
         Returns: Json
@@ -5685,6 +5916,10 @@ export type Database = {
       }
       regua_da_consulta: {
         Args: { p_appointment_id: string; p_kind: string }
+        Returns: string
+      }
+      regua_de_followup_do_contato: {
+        Args: { p_contact_id: string }
         Returns: string
       }
       regravar_gasto_meta: {
@@ -5835,6 +6070,10 @@ export type Database = {
       revogar_requisito_da_producao: {
         Args: { p_id: string; p_motivo: string }
         Returns: Json
+      }
+      salvar_automacao_de_fluxo: {
+        Args: { p_clinic_id: string; p_id: string; p_regra: Json }
+        Returns: string
       }
       salvar_pacote: {
         Args: {

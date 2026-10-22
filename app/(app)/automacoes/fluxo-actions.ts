@@ -7,13 +7,19 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import {
   automacaoDeFluxoSchema,
-  camposParaGravar,
+  colunasDeAntes,
   DICA_SEM_PERMISSAO,
+  FUNCAO_AUSENTE,
   MENSAGENS_DO_VETO,
+  mensagemDaRecusaAoSalvar,
   mensagemDaRecusaDaAutomacao,
+  motivoDaPerdaPara,
   podeAcessarAutomacoesDeFluxo,
   previaDaAutomacaoEntradaSchema,
+  RECUSAS_AO_SALVAR,
+  regraParaGravar,
   vetoDoDestino,
+  type EntradaDaAutomacao,
   type EtapaParaAutomacao,
   type ExecucaoDeAutomacao,
   type PreviaDaAutomacao,
@@ -41,11 +47,26 @@ import { createClient } from "@/lib/supabase/server";
 // recepcao, que ve o resto de Automacoes, nao ve esta aba e e recusada aqui
 // do mesmo jeito que profissional e leitura.
 //
+// Desde a onda 4 (itens 14 e 15) a regra e composta: o "Se" (condicoes de
+// etiqueta) e o "Faz" (de 1 a 5 acoes) moram em tabelas filhas, e salvar e
+// UMA chamada a RPC salvar_automacao_de_fluxo (migration 20261024110000),
+// que grava a regra e as filhas na mesma transacao, com a mesma guarda de
+// papel do banco (42501 sem dica para quem nao e admin ou gestor da clinica)
+// e o detector de ciclo lendo as acoes novas. Ligar, desligar e excluir
+// continuam na linha de automacao_fluxo.
+//
 // NAO vao daqui: created_by, updated_by, created_at nem vigente_desde (o
 // gatilho validar_automacao_de_fluxo carimba com a sessao e ignora o que
 // vier). O motivo da perda nasce do papel do destino lido do banco. A
 // exclusao e real e leva o historico junto (cascade); as atividades criadas
 // pela regra ficam (FK ON DELETE SET NULL).
+//
+// Banco sem a migration 20261024110000 (revisao de 21/10/2026; o contrato,
+// secao 8, publica este codigo antes dela, junto com o do follow-up): sem a
+// RPC, a regra de UMA acao e sem condicao grava pelas colunas de antes, como
+// o codigo de antes gravava; a de varias acoes ou com condicao e recusada
+// com a frase que diz o que fazer. Ligar, desligar, excluir, o uso e o
+// historico nao dependem da B.
 
 export type AutomacaoDeFluxoResultado =
   { ok: true; id: string } | { ok: false; error: string };
@@ -150,12 +171,18 @@ export async function salvarAutomacaoDeFluxoAction(
     };
   }
 
-  const campos = camposParaGravar(dados, jornada);
-  if (campos.acao === "mover_etapa") {
+  // O mover (no maximo um, o Zod ja conferiu) passa pelos vetos do destino
+  // antes do banco, com o motivo da perda tirado do papel do destino lido
+  // agora: a mensagem de gente chega sem ida ao banco. O banco confere de
+  // novo (validar_acao_de_automacao).
+  for (const acao of dados.acoes) {
+    if (acao.acao !== "mover_etapa") {
+      continue;
+    }
     const veto = vetoDoDestino({
-      etapa: campos.etapa,
-      etapaDestino: campos.etapa_destino,
-      motivoPerda: campos.motivo_perda,
+      etapa: dados.etapa,
+      etapaDestino: acao.etapa_destino,
+      motivoPerda: motivoDaPerdaPara(acao.etapa_destino, jornada),
       jornada,
     });
     if (veto) {
@@ -163,6 +190,50 @@ export async function salvarAutomacaoDeFluxoAction(
     }
   }
 
+  const padrao = dados.id
+    ? "Não foi possível salvar a automação."
+    : "Não foi possível criar a automação.";
+  const { data: id, error } = await supabase.rpc("salvar_automacao_de_fluxo", {
+    p_clinic_id: guard.clinicId,
+    p_id: dados.id,
+    p_regra: regraParaGravar(dados),
+  });
+  if (error && FUNCAO_AUSENTE.has(error.code ?? "")) {
+    return salvarPelasColunasDeAntes(supabase, guard, dados, jornada, padrao);
+  }
+  if (error) {
+    return { ok: false, error: mensagemDaRecusaAoSalvar(error, padrao) };
+  }
+  if (typeof id !== "string" || !idSchema.safeParse(id).success) {
+    return { ok: false, error: padrao };
+  }
+  await auditar(
+    supabase,
+    guard,
+    dados.id ? "editou_automacao_de_fluxo" : "criou_automacao_de_fluxo",
+    id,
+  );
+  revalidar();
+  return { ok: true, id };
+}
+
+/**
+ * A gravacao de antes da onda 4, para o banco sem a migration 20261024110000
+ * (a RPC ausente): as colunas de acao de automacao_fluxo, pela sessao (a RLS
+ * e o gatilho validar_automacao_de_fluxo decidem, como antes). So a regra de
+ * uma acao e sem condicao (colunasDeAntes); a outra e recusada.
+ */
+async function salvarPelasColunasDeAntes(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: Guarda,
+  dados: EntradaDaAutomacao,
+  jornada: readonly EtapaParaAutomacao[],
+  padrao: string,
+): Promise<AutomacaoDeFluxoResultado> {
+  const campos = colunasDeAntes(dados, jornada);
+  if (!campos) {
+    return { ok: false, error: RECUSAS_AO_SALVAR.semRpc };
+  }
   if (dados.id) {
     const { data: linhas, error } = await supabase
       .from("automacao_fluxo")
@@ -171,39 +242,22 @@ export async function salvarAutomacaoDeFluxoAction(
       .eq("id", dados.id)
       .select("id");
     if (error) {
-      return {
-        ok: false,
-        error: mensagemDaRecusaDaAutomacao(
-          error,
-          "Não foi possível salvar a automação.",
-        ),
-      };
+      return { ok: false, error: mensagemDaRecusaDaAutomacao(error, padrao) };
     }
     if (!linhas || linhas.length === 0) {
-      return {
-        ok: false,
-        error:
-          "Esta automação não existe mais. Recarregue a página para ver a lista atual.",
-      };
+      return { ok: false, error: RECUSAS_AO_SALVAR.naoExiste };
     }
     await auditar(supabase, guard, "editou_automacao_de_fluxo", linhas[0]!.id);
     revalidar();
     return { ok: true, id: linhas[0]!.id };
   }
-
   const { data: criada, error } = await supabase
     .from("automacao_fluxo")
     .insert({ clinic_id: guard.clinicId, ...campos })
     .select("id")
     .single();
   if (error || !criada) {
-    return {
-      ok: false,
-      error: mensagemDaRecusaDaAutomacao(
-        error,
-        "Não foi possível criar a automação.",
-      ),
-    };
+    return { ok: false, error: mensagemDaRecusaDaAutomacao(error, padrao) };
   }
   await auditar(supabase, guard, "criou_automacao_de_fluxo", criada.id);
   revalidar();

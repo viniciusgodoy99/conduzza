@@ -7,6 +7,7 @@ import {
   type MapaDeAtribuicaoLido,
   type TituloDoMapa,
 } from "@/lib/domain/campanha-e-anuncio-do-lead";
+import type { ModoDoFiltro } from "@/lib/domain/etiquetas-do-lead";
 import {
   compararPorProximaAcao,
   consentimentoVigenteDeLinhas,
@@ -17,6 +18,7 @@ import {
   type LeituraDoAnuncio,
   type LinhaConsent,
 } from "@/lib/domain/leads-ui";
+import { compararPrecedencia } from "@/lib/domain/reguas-de-followup";
 import { lerDetalhesDoAnuncio } from "@/lib/queries/anuncio-do-whatsapp";
 import {
   fetchAtividadesDoContato,
@@ -601,41 +603,86 @@ export type ReguaDaEtapa = {
   etapa: string;
   /** Nome da regua, como aparece em Automacoes */
   nome: string;
+  /**
+   * Os nomes das etiquetas do filtro (onda 4, reguas por etiqueta). Vazio
+   * ou ausente: a regua geral da etapa (a de antes da onda 4 tambem).
+   */
+  etiquetas?: string[];
+  etiquetas_modo?: ModoDoFiltro;
 };
 
+type LinhaDaReguaDaEtapa = {
+  id: string;
+  trigger_stage: string | null;
+  name: string;
+  created_at: string | null;
+  etiquetas?: unknown;
+  etiquetas_modo?: unknown;
+  prioridade?: unknown;
+  cadence_step: { id: string }[] | null;
+};
+
+const COLUNAS_DA_REGUA_DA_ETAPA =
+  "id, trigger_stage, name, created_at, cadence_step (id)";
+
 /**
- * As etapas que tem regua de follow-up ligada e com pelo menos um passo, ou
- * seja, as que mandam mensagem sozinhas quando um lead entra nelas (achado 98
- * da revisao). O indice cadence_followup_unico_por_etapa garante uma regua
- * por etapa. A leitura de cadence e de qualquer membro ativo (RLS).
+ * As reguas de follow-up ligadas e com pelo menos um passo, ou seja, as que
+ * mandam mensagem sozinhas quando um lead entra na etapa delas (achado 98 da
+ * revisao). Desde a onda 4 uma etapa pode ter varias (as com etiqueta e a
+ * geral; para cada lead vale uma, regua_de_followup_do_contato): a lista
+ * vem na ordem da precedencia de cada etapa, com o filtro de cada regua,
+ * para a confirmacao de mover dizer quem recebe o que. Com o banco antes da
+ * migration 20261024100000 (42703: a coluna nao existe), le sem o filtro e
+ * todas sao a geral da etapa delas, como eram. A leitura de cadence e de
+ * qualquer membro ativo (RLS).
  */
 export async function fetchReguasDeFollowup(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<ReguaDaEtapa[]> {
-  const { data, error } = await supabase
-    .from("cadence")
-    .select("trigger_stage, name, cadence_step (id)")
-    .eq("clinic_id", clinicId)
-    .eq("kind", "followup")
-    .eq("active", true);
-  if (error) {
-    throw new Error(error.message);
+  const consulta = (colunas: string) =>
+    supabase
+      .from("cadence")
+      .select(colunas)
+      .eq("clinic_id", clinicId)
+      .eq("kind", "followup")
+      .eq("active", true);
+  let resposta = await consulta(
+    `${COLUNAS_DA_REGUA_DA_ETAPA}, etiquetas, etiquetas_modo, prioridade`,
+  );
+  if (resposta.error?.code === "42703") {
+    resposta = await consulta(COLUNAS_DA_REGUA_DA_ETAPA);
   }
-  return (
-    (data ?? []) as {
-      trigger_stage: string | null;
-      name: string;
-      cadence_step: { id: string }[] | null;
-    }[]
-  )
+  if (resposta.error) {
+    throw new Error(resposta.error.message);
+  }
+  return ((resposta.data ?? []) as unknown as LinhaDaReguaDaEtapa[])
     .filter(
       (regua) =>
         regua.trigger_stage !== null && (regua.cadence_step ?? []).length > 0,
     )
     .map((regua) => ({
+      id: regua.id,
+      active: true,
       etapa: regua.trigger_stage as string,
       nome: regua.name,
+      etiquetas: Array.isArray(regua.etiquetas)
+        ? regua.etiquetas.filter(
+            (etiqueta): etiqueta is string => typeof etiqueta === "string",
+          )
+        : [],
+      etiquetas_modo: (regua.etiquetas_modo === "todas"
+        ? "todas"
+        : "qualquer") as ModoDoFiltro,
+      prioridade: typeof regua.prioridade === "number" ? regua.prioridade : 0,
+      created_at: regua.created_at ?? "",
+    }))
+    .sort((a, b) => a.etapa.localeCompare(b.etapa) || compararPrecedencia(a, b))
+    .map(({ etapa, nome, etiquetas, etiquetas_modo }) => ({
+      etapa,
+      nome,
+      etiquetas,
+      etiquetas_modo,
     }));
 }
 

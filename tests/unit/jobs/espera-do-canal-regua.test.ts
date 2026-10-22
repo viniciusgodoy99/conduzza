@@ -170,6 +170,10 @@ function banco(cenario: Cenario) {
       // A regua da run continua sendo a vigente da consulta (regua vinculada,
       // 29/09/2026; os casos da troca estao em regua-vigente.test.ts).
       regua_da_consulta: () => ({ data: "regua", error: null }),
+      // No follow-up, a regua da run e a que vale para o contato (reguas
+      // por etiqueta, onda 4; os casos da troca estao em
+      // regua-followup-vigente.test.ts).
+      regua_de_followup_do_contato: () => ({ data: "regua", error: null }),
       numero_do_job: () => ({ data: cenario.numero, error: null }),
       garantir_conversa_aberta: () => ({ data: "conversa-1", error: null }),
       confirmar_posse_job: () => ({ data: true, error: null }),

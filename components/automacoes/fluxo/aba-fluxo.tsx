@@ -39,14 +39,20 @@ import { Switch } from "@/components/ui/switch";
 import { REGUA_STATUS } from "@/lib/design/status";
 import {
   AVISOS_FIXOS,
-  descreverAcao,
+  descreverAcoes,
+  descreverCondicoes,
   descreverGatilho,
+  MAXIMO_DE_ACOES,
   quandoNaClinica,
   resolvedorDeNomes,
   textoDoUso,
   type AutomacaoDeFluxo,
 } from "@/lib/domain/automacoes-de-fluxo";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
+import {
+  opcoesDeEtiqueta as opcoesDoCatalogo,
+  type OpcaoDeEtiqueta,
+} from "@/lib/domain/etiquetas-do-lead";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { automacoesDeFluxoKeys } from "@/lib/queries/automacoes-de-fluxo";
 
@@ -58,8 +64,10 @@ import { automacoesDeFluxoKeys } from "@/lib/queries/automacoes-de-fluxo";
 // desabilitado com a dica se a permissao faltar.
 //
 // Cada regra numa linha: nome, a situacao em 3 camadas (REGUA_STATUS, o
-// mesmo par Ligada/Desligada das reguas), "Quando" e "Faz" em portugues, e
-// quantas vezes rodou com a ultima vez (contagem sob demanda, sem paciente).
+// mesmo par Ligada/Desligada das reguas), "Quando", "Se" (so com condicao) e
+// "Faz" em portugues (desde a onda 4, a regra tem condicoes de etiqueta e
+// ate 5 acoes, a de mover por ultimo), e quantas vezes rodou com a ultima
+// vez (contagem sob demanda, sem paciente).
 // Ligar pede confirmacao com a previa (nao e retroativa); desligar e direto.
 // Criar e editar num dialogo. Embaixo, os avisos fixos, o atalho para a
 // mensagem ao paciente (que e a regua de follow-up, outra aba desta mesma
@@ -75,6 +83,12 @@ export type DadosDaAbaDeFluxo = {
   jornada: EtapaDaJornada[];
   /** nulo: a leitura das etiquetas falhou */
   etiquetas: EtiquetaDeConversa[] | null;
+  /**
+   * As etiquetas para as condicoes: as do catalogo e as em uso nos leads,
+   * sem repetir (opcoesDeEtiqueta). Nulo: a leitura das em uso falhou (ficam
+   * as do catalogo).
+   */
+  opcoesDeEtiqueta: OpcaoDeEtiqueta[] | null;
   /** fuso da clinica, para o uso e o historico */
   timezone: string;
   podeGerenciar: boolean;
@@ -87,6 +101,7 @@ export function AbaFluxo({
   automacoes,
   jornada,
   etiquetas,
+  opcoesDeEtiqueta = null,
   clinicId,
   timezone,
   podeGerenciar,
@@ -96,6 +111,8 @@ export function AbaFluxo({
   jornada: EtapaDaJornada[];
   /** nulo: a leitura das etiquetas falhou */
   etiquetas: EtiquetaDeConversa[] | null;
+  /** As etiquetas para as condicoes; nulo: so as do catalogo */
+  opcoesDeEtiqueta?: OpcaoDeEtiqueta[] | null;
   clinicId: string;
   timezone: string;
   podeGerenciar: boolean;
@@ -112,6 +129,12 @@ export function AbaFluxo({
     etiqueta: resolvedorDeNomes(etiquetas),
   };
   const ids = automacoes.map((regra) => regra.id);
+  // Sem as em uso, as do catalogo; sem nenhuma das duas, o seletor diz que
+  // nao carregou e aceita a etiqueta escrita.
+  const opcoesDoFiltro =
+    opcoesDeEtiqueta ?? (etiquetas ? opcoesDoCatalogo(etiquetas, []) : []);
+  const leituraDoFiltro =
+    opcoesDeEtiqueta !== null || etiquetas !== null ? "pronto" : "erro";
 
   const uso = useQuery({
     queryKey: automacoesDeFluxoKeys.uso(clinicId, ids),
@@ -215,8 +238,10 @@ export function AbaFluxo({
           <CardTitle>Automações de fluxo da clínica</CardTitle>
           <CardDescription>
             Quando o lead fica parado, deixa de responder, entra numa etapa ou
-            manda mensagem, a automação move de etapa, coloca etiqueta, cria uma
-            atividade ou deixa uma nota interna.
+            manda mensagem, a automação faz até {MAXIMO_DE_ACOES} coisas por
+            ele: move de etapa, coloca etiqueta, cria uma atividade ou deixa uma
+            nota interna. Com condições, só para quem tem (ou não tem) as
+            etiquetas escolhidas.
           </CardDescription>
           <CardAction>{comDica(botaoNova)}</CardAction>
         </CardHeader>
@@ -262,9 +287,15 @@ export function AbaFluxo({
                       <span className="font-semibold">Quando:</span>{" "}
                       {descreverGatilho(regra, nomes.etapa)}
                     </p>
+                    {regra.condicoes.length > 0 ? (
+                      <p className="text-[13px] text-foreground">
+                        <span className="font-semibold">Se:</span>{" "}
+                        {descreverCondicoes(regra)}
+                      </p>
+                    ) : null}
                     <p className="text-[13px] text-foreground">
                       <span className="font-semibold">Faz:</span>{" "}
-                      {descreverAcao(regra, nomes)}
+                      {descreverAcoes(regra.acoes, nomes)}
                     </p>
                     <p className="text-xs text-text-secondary">
                       {usoDaRegra(regra)}
@@ -367,6 +398,8 @@ export function AbaFluxo({
           automacoes={automacoes}
           jornada={jornada}
           etiquetas={etiquetas}
+          opcoesDeEtiqueta={opcoesDoFiltro}
+          leituraDasOpcoes={leituraDoFiltro}
           clinicId={clinicId}
         />
       ) : null}

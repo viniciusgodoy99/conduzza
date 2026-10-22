@@ -19,6 +19,12 @@ import type {
 //   cadastrada com o mesmo nome; sem ela, neutro. O texto e o do lead.
 //
 // Logica pura: roda no servidor e no cliente, e e o que os testes cobrem.
+//
+// Onda 4 (21/10/2026): as reguas de follow-up por etiqueta e as condicoes
+// das automacoes de fluxo filtram pela etiqueta do lead E pela da conversa,
+// juntas pelo NOME (decisao D1). O filtro usa a mesma chave daqui
+// (chaveDaEtiqueta), com os espelhos das funcoes do banco logo abaixo dela
+// (chavesDeEtiquetas, etiquetasCasam e recusaDasEtiquetas).
 
 /** Leitura das etiquetas cadastradas da clinica, para a tela dizer o estado. */
 export type LeituraDasEtiquetas = "pronto" | "carregando" | "erro";
@@ -31,6 +37,13 @@ const MAXIMO_POR_PEDIDO = 20;
 /**
  * Chave de comparacao: sem acento, minuscula e com um espaco so entre as
  * palavras. "Avaliação", "avaliacao" e " AVALIAÇÃO " sao a mesma etiqueta.
+ *
+ * Fonte UNICA do lado do codigo para os filtros por etiqueta da onda 4 (as
+ * reguas de follow-up por etiqueta e as condicoes das automacoes de fluxo):
+ * nada de segunda copia. O banco faz o mesmo em chave_de_etiqueta (migration
+ * 20261024100000, o corpo de chave_de_especialidade); em pt-BR as duas dao o
+ * mesmo resultado, e o teste de paridade confere com uma tabela fixa
+ * (tests/unit/domain/chave-da-etiqueta-paridade.test.ts).
  */
 export function chaveDaEtiqueta(nome: string): string {
   return nome
@@ -43,6 +56,94 @@ export function chaveDaEtiqueta(nome: string): string {
 
 function porNome(a: { nome: string }, b: { nome: string }): number {
   return a.nome.localeCompare(b.nome, "pt-BR");
+}
+
+// ---------------------------------------------------------------------------
+// Filtro por etiqueta (onda 4): a regua de follow-up por etiqueta e a
+// condicao "o lead tem a etiqueta" das automacoes de fluxo. Espelhos das
+// funcoes do banco (migration 20261024100000): o banco decide, isto so serve
+// para a tela dizer antes o que vai acontecer e para os testes.
+
+/** Como o filtro junta as etiquetas: qualquer uma delas, ou todas. */
+export const MODOS_DO_FILTRO = ["qualquer", "todas"] as const;
+
+export type ModoDoFiltro = (typeof MODOS_DO_FILTRO)[number];
+
+/** A grafia que entra no filtro: um espaco so entre as palavras, sem pontas. */
+export function etiquetaLimpa(nome: string): string {
+  return nome.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * As chaves distintas das etiquetas, ordenadas, sem a vazia (espelho de
+ * chaves_de_etiquetas). E a forma de comparar dois filtros: "Psiquiatria" e
+ * "psiquiatria" sao o mesmo filtro.
+ */
+export function chavesDeEtiquetas(etiquetas: readonly string[]): string[] {
+  return [
+    ...new Set(
+      etiquetas.map(chaveDaEtiqueta).filter((chave) => chave.length > 0),
+    ),
+  ].sort();
+}
+
+/**
+ * O lead casa com o filtro? Espelho de etiquetas_casam: lista vazia casa
+ * sempre (e a regua geral, ou a automacao sem condicao); "qualquer" casa com
+ * uma etiqueta em comum; "todas" exige todas. `chavesDoLead` ja sao chaves
+ * (chaveDaEtiqueta); as etiquetas do filtro sao nomes.
+ */
+export function etiquetasCasam(
+  chavesDoLead: readonly string[],
+  etiquetas: readonly string[],
+  modo: ModoDoFiltro,
+): boolean {
+  const doFiltro = chavesDeEtiquetas(etiquetas);
+  if (doFiltro.length === 0) {
+    return true;
+  }
+  const doLead = new Set(chavesDoLead);
+  return modo === "todas"
+    ? doFiltro.every((chave) => doLead.has(chave))
+    : doFiltro.some((chave) => doLead.has(chave));
+}
+
+/** Teto de uma etiqueta no filtro: o mesmo do "Etiquetar lead". */
+export const ETIQUETA_DO_FILTRO_MAXIMA = MAXIMO_DA_ETIQUETA;
+
+/**
+ * Por que a lista nao serve de filtro, ou null se serve (espelho de
+ * etiquetas_validas): ate `maximo` etiquetas, cada uma de 1 a 40 caracteres
+ * ja limpa (etiquetaLimpa), com chave, e sem repetir a mesma etiqueta (pela
+ * chave). Quem chama limpa antes.
+ */
+export function recusaDasEtiquetas(
+  etiquetas: readonly string[],
+  maximo: number,
+): string | null {
+  if (etiquetas.length > maximo) {
+    return `Escolha até ${maximo} etiquetas.`;
+  }
+  const vistas = new Set<string>();
+  for (const etiqueta of etiquetas) {
+    const limpa = etiquetaLimpa(etiqueta);
+    if (
+      limpa !== etiqueta ||
+      limpa.length < 1 ||
+      limpa.length > ETIQUETA_DO_FILTRO_MAXIMA
+    ) {
+      return `Cada etiqueta vai de 1 a ${ETIQUETA_DO_FILTRO_MAXIMA} caracteres.`;
+    }
+    const chave = chaveDaEtiqueta(limpa);
+    if (!chave) {
+      return "Escreva o nome da etiqueta com letras ou números.";
+    }
+    if (vistas.has(chave)) {
+      return `A etiqueta ${limpa} aparece duas vezes.`;
+    }
+    vistas.add(chave);
+  }
+  return null;
 }
 
 /** O tom de cada etiqueta cadastrada, pela chave de comparacao do nome. */

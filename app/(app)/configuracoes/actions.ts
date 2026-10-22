@@ -1093,12 +1093,16 @@ export async function salvarEtiquetaDeConversaAction(
       .eq("chave", dados.chave)
       .select("id");
     if (error || !linhas || linhas.length === 0) {
+      // Onda 4 (D1): renomear etiqueta cujo nome esta num filtro (condicao
+      // de automacao ou regua de follow-up por etiqueta) e recusado pelo
+      // banco, com a mensagem que diz onde trocar.
       return {
         ok: false,
         error:
           error?.code === "23505"
             ? "Já existe uma etiqueta com esse nome."
-            : "Não foi possível salvar a etiqueta.",
+            : (recusaDaEtiquetaUsadaPorAutomacao(error) ??
+              "Não foi possível salvar a etiqueta."),
       };
     }
     await supabase.from("audit_log").insert({

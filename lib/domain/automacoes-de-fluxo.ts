@@ -2,6 +2,11 @@ import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 import { z } from "zod";
 
+import {
+  chaveDaEtiqueta,
+  etiquetaLimpa,
+  recusaDasEtiquetas,
+} from "@/lib/domain/etiquetas-do-lead";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import type { PapelDeEtapa } from "@/lib/domain/jornada";
 import type { Role } from "@/lib/domain/permissions";
@@ -10,13 +15,21 @@ import type { Role } from "@/lib/domain/permissions";
 // 20261002130000_automacoes_de_fluxo.sql). Modulo puro, serve cliente e
 // servidor: as opcoes da tela, a frase em portugues de cada regra, os vetos e
 // o detector de ciclo que ESPELHAM o banco (validar_automacao_de_fluxo e os
-// checks de automacao_fluxo), a traducao das recusas e os textos do
-// historico. O banco continua sendo a garantia: o espelho so serve para a
-// tela avisar antes de salvar.
+// checks), a traducao das recusas e os textos do historico. O banco continua
+// sendo a garantia: o espelho so serve para a tela avisar antes de salvar.
 //
-// Regra em colunas fixas (CLAUDE.md 4): QUANDO o lead esta na ETAPA e
-// acontece o GATILHO, FAZ a ACAO. Nao existe acao de mensagem para o
-// paciente: isso e a regua de follow-up da etapa (Automacoes > Follow-up).
+// Desde a onda 4 (itens 14 e 15, decisoes do dono de 20/10/2026, D5 a D7 e
+// D9; migration 20261024110000_automacoes_compostas.sql) a regra e
+// composta: QUANDO o lead esta na ETAPA e acontece o GATILHO, SE as
+// condicoes de etiqueta batem (todas ou qualquer uma; nenhuma condicao e
+// "sempre"), FAZ as ACOES, de 1 a 5, na ordem, com no maximo um "mover" e
+// sempre por ultimo. As condicoes ficam em automacao_condicao e as acoes em
+// automacao_acao; a gravacao e uma RPC so (salvar_automacao_de_fluxo). As
+// colunas de acao de automacao_fluxo viraram legado (a limpeza e a migration
+// C): o codigo novo nao le nem grava nelas.
+//
+// Nao existe acao de mensagem para o paciente: isso e a regua de follow-up
+// da etapa (Automacoes > Follow-up de leads).
 
 // ---------------------------------------------------------------------------
 // Quem acessa (decisao do dono de 20/10/2026, onda 4, item 13)
@@ -43,7 +56,7 @@ export function podeAcessarAutomacoesDeFluxo(role: Role): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Vocabulario (checks gatilho_de_automacao_valido e acao_de_automacao_valida)
+// Vocabulario (checks do banco)
 
 export const GATILHOS = [
   "tempo_na_etapa",
@@ -63,6 +76,16 @@ export const ACOES = [
 
 export type AcaoDeAutomacao = (typeof ACOES)[number];
 
+/** As condicoes da 1a versao (D5): a etiqueta do lead ou da conversa. */
+export const TIPOS_DE_CONDICAO = ["tem_etiqueta", "nao_tem_etiqueta"] as const;
+
+export type TipoDeCondicao = (typeof TIPOS_DE_CONDICAO)[number];
+
+/** Como as condicoes se juntam (D6): uma escolha por automacao. */
+export const COMBINAR = ["todas", "qualquer"] as const;
+
+export type Combinar = (typeof COMBINAR)[number];
+
 /** Check status_de_execucao_valido de automacao_execucao. */
 export const STATUS_DE_EXECUCAO = [
   "pendente",
@@ -72,6 +95,11 @@ export const STATUS_DE_EXECUCAO = [
 ] as const;
 
 export type StatusDaExecucao = (typeof STATUS_DE_EXECUCAO)[number];
+
+/** Check do status de automacao_execucao_acao: o retrato de cada acao. */
+export const STATUS_DA_ACAO = ["executada", "pulada", "falhou"] as const;
+
+export type StatusDaAcao = (typeof STATUS_DA_ACAO)[number];
 
 /** O unico motivo de perda que a automacao grava (decisao do dono). */
 export const MOTIVO_DA_PERDA_DA_AUTOMACAO = "nao_respondeu" as const;
@@ -86,6 +114,9 @@ export const TITULO_DA_ATIVIDADE_MINIMO = 2;
 export const TITULO_DA_ATIVIDADE_MAXIMO = 120;
 export const PRAZO_MAXIMO_DIAS = 365;
 export const NOTA_MAXIMA = 2000;
+/** Travas da regra composta (D7): ate 5 acoes e ate 5 condicoes. */
+export const MAXIMO_DE_ACOES = 5;
+export const MAXIMO_DE_CONDICOES = 5;
 /** Travas do motor (executar_automacoes_de_fluxo). */
 export const SALTOS_EM_CADEIA = 3;
 export const MOVIMENTOS_POR_DIA = 10;
@@ -106,14 +137,9 @@ export function ehGatilhoDeTempo(gatilho: GatilhoDeAutomacao): boolean {
 // ---------------------------------------------------------------------------
 // Formas
 
-/** Uma linha de automacao_fluxo, como a tela usa. */
-export type AutomacaoDeFluxo = {
-  id: string;
-  nome: string;
-  ativa: boolean;
-  gatilho: GatilhoDeAutomacao;
-  etapa: string;
-  espera_minutos: number | null;
+/** Uma linha de automacao_acao (o "Faz"), como a tela usa. */
+export type AcaoDaAutomacao = {
+  posicao: number;
   acao: AcaoDeAutomacao;
   etapa_destino: string | null;
   motivo_perda: typeof MOTIVO_DA_PERDA_DA_AUTOMACAO | null;
@@ -121,22 +147,35 @@ export type AutomacaoDeFluxo = {
   atividade_titulo: string | null;
   atividade_prazo_dias: number | null;
   nota_texto: string | null;
+};
+
+/** Uma linha de automacao_condicao (o "Se"). A etiqueta e o NOME. */
+export type CondicaoDaAutomacao = {
+  posicao: number;
+  tipo: TipoDeCondicao;
+  etiqueta: string;
+};
+
+/** Uma regra, com as condicoes e as acoes dela, como a tela usa. */
+export type AutomacaoDeFluxo = {
+  id: string;
+  nome: string;
+  ativa: boolean;
+  gatilho: GatilhoDeAutomacao;
+  etapa: string;
+  espera_minutos: number | null;
+  combinar: Combinar;
+  /** Em ordem de posicao; vazia: roda para todo lead (sem "Se"). */
+  condicoes: CondicaoDaAutomacao[];
+  /** Na ordem em que rodam: o mover, se houver, e sempre o ultimo. */
+  acoes: AcaoDaAutomacao[];
   vigente_desde: string;
   created_at: string;
   updated_at: string;
 };
 
-/**
- * Valida a linha lida do banco: os tipos gerados dizem "string" para gatilho
- * e acao, e a tela precisa saber que e um dos valores conhecidos.
- */
-export const automacaoDeFluxoLinhaSchema = z.object({
-  id: z.string(),
-  nome: z.string(),
-  ativa: z.boolean(),
-  gatilho: z.enum(GATILHOS),
-  etapa: z.string(),
-  espera_minutos: z.number().int().nullable(),
+const acaoDaLinhaSchema = z.object({
+  posicao: z.number().int(),
   acao: z.enum(ACOES),
   etapa_destino: z.string().nullable(),
   motivo_perda: z.literal(MOTIVO_DA_PERDA_DA_AUTOMACAO).nullable(),
@@ -144,10 +183,56 @@ export const automacaoDeFluxoLinhaSchema = z.object({
   atividade_titulo: z.string().nullable(),
   atividade_prazo_dias: z.number().int().nullable(),
   nota_texto: z.string().nullable(),
-  vigente_desde: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
 });
+
+const condicaoDaLinhaSchema = z.object({
+  posicao: z.number().int(),
+  tipo: z.enum(TIPOS_DE_CONDICAO),
+  etiqueta: z.string(),
+});
+
+/**
+ * Valida a linha lida do banco (a regra com as filhas embutidas): os tipos
+ * gerados dizem "string" para gatilho e acao, e a tela precisa saber que e
+ * um dos valores conhecidos. As filhas saem ordenadas pela posicao, e o
+ * mover vai para o fim (o banco ja grava assim; aqui e defesa).
+ */
+export const automacaoDeFluxoLinhaSchema = z
+  .object({
+    id: z.string(),
+    nome: z.string(),
+    ativa: z.boolean(),
+    gatilho: z.enum(GATILHOS),
+    etapa: z.string(),
+    espera_minutos: z.number().int().nullable(),
+    combinar: z.enum(COMBINAR),
+    vigente_desde: z.string(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    condicoes: z.array(condicaoDaLinhaSchema).nullable().optional(),
+    acoes: z.array(acaoDaLinhaSchema).nullable().optional(),
+  })
+  .transform((linha): AutomacaoDeFluxo => ({
+    ...linha,
+    condicoes: [...(linha.condicoes ?? [])].sort(
+      (a, b) => a.posicao - b.posicao,
+    ),
+    acoes: ordenarAcoes(
+      [...(linha.acoes ?? [])].sort((a, b) => a.posicao - b.posicao),
+    ),
+  }));
+
+/** O retrato de UMA acao numa execucao (automacao_execucao_acao). */
+export type ExecucaoDaAcao = {
+  posicao: number;
+  acao: AcaoDeAutomacao;
+  status: StatusDaAcao;
+  motivo: string | null;
+  para_etapa: string | null;
+  etiqueta: string | null;
+  etiqueta_nome: string | null;
+  executada_em: string | null;
+};
 
 /** Uma linha do historico (automacao_execucao). Sem conteudo de mensagem. */
 export type ExecucaoDeAutomacao = {
@@ -160,7 +245,8 @@ export type ExecucaoDeAutomacao = {
   /**
    * O retrato do que a regra fez NESTA execucao, gravado pelo motor (so em
    * executada): a regra pode mudar de acao ou de etiqueta depois. Nulo em
-   * execucao que nao rodou ou gravada sem o retrato.
+   * execucao que nao rodou, gravada sem o retrato, ou com varias acoes (ai
+   * o retrato e por acao, em `acoes`).
    */
   acao: AcaoDeAutomacao | null;
   /** Chave da etiqueta posta (so quando acao = etiquetar). */
@@ -171,6 +257,11 @@ export type ExecucaoDeAutomacao = {
   created_at: string;
   /** Nome do contato (dado de paciente: a leitura e auditada). */
   contato: string | null;
+  /**
+   * O retrato de cada acao (onda 4), na ordem. Vazio nas execucoes de antes
+   * da onda 4 e nas puladas por uma guarda antes da primeira acao.
+   */
+  acoes: ExecucaoDaAcao[];
 };
 
 /** Quantas vezes a regra fez o que manda, e quando foi a ultima. */
@@ -256,6 +347,30 @@ export const OPCOES_DE_ACAO: readonly {
   },
 ];
 
+export const OPCOES_DE_CONDICAO: readonly {
+  valor: TipoDeCondicao;
+  rotulo: string;
+}[] = [
+  { valor: "tem_etiqueta", rotulo: "O lead tem a etiqueta" },
+  { valor: "nao_tem_etiqueta", rotulo: "O lead não tem a etiqueta" },
+];
+
+export const OPCOES_DE_COMBINAR: readonly {
+  valor: Combinar;
+  rotulo: string;
+}[] = [
+  { valor: "todas", rotulo: "Só roda se todas forem verdade" },
+  { valor: "qualquer", rotulo: "Só roda se qualquer uma for verdade" },
+];
+
+/** De onde vem a etiqueta que a condicao confere (D1). */
+export const AJUDA_DAS_CONDICOES =
+  "Vale a etiqueta do lead (Leads) e a da conversa (Atendimento), pelo nome, sem diferença de maiúscula e acento.";
+
+/** A nota fixa da lista de acoes (D7). */
+export const NOTA_DO_MOVER =
+  "Mover roda sempre por último, depois das outras ações.";
+
 /** Os avisos fixos da aba: o que a automacao nunca faz e onde ela para. */
 export const AVISOS_FIXOS: readonly string[] = [
   "Só leads: paciente nunca é movido por automação.",
@@ -263,6 +378,8 @@ export const AVISOS_FIXOS: readonly string[] = [
   "Mover o lead para fora de uma etapa encerra o follow-up daquela etapa.",
   `Automações em cadeia param no ${SALTOS_EM_CADEIA}º salto, e um lead é movido por automação no máximo ${MOVIMENTOS_POR_DIA} vezes em 24 horas.`,
   "Não é retroativa: vale para o que acontecer depois de ligada (ou de mudar o gatilho, a etapa ou o tempo).",
+  // D9: a condicao e conferida uma vez, quando o gatilho acontece.
+  "As condições são conferidas na hora do gatilho: quem não bate fica de fora daquela vez.",
 ];
 
 // ---------------------------------------------------------------------------
@@ -324,6 +441,32 @@ export function textoDoPrazo(dias: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Ordem das acoes (D7): o mover, se houver, roda por ultimo
+
+/**
+ * As acoes na ordem em que rodam: as outras na ordem dada, e o mover no fim.
+ * Mover antes tiraria o lead da etapa, e o CAS das outras derrubaria a
+ * etiqueta, a atividade e a nota.
+ */
+export function ordenarAcoes<T extends { acao: AcaoDeAutomacao }>(
+  acoes: readonly T[],
+): T[] {
+  return [
+    ...acoes.filter((acao) => acao.acao !== "mover_etapa"),
+    ...acoes.filter((acao) => acao.acao === "mover_etapa"),
+  ];
+}
+
+/** O destino do mover da regra, ou null se a regra nao move. */
+export function destinoDoMover(
+  acoes: readonly Pick<AcaoDaAutomacao, "acao" | "etapa_destino">[],
+): string | null {
+  return (
+    acoes.find((acao) => acao.acao === "mover_etapa")?.etapa_destino ?? null
+  );
+}
+
+// ---------------------------------------------------------------------------
 // A regra em portugues
 
 type ResolverNome = (chave: string) => string;
@@ -334,6 +477,24 @@ export function resolvedorDeNomes(
 ): ResolverNome {
   const mapa = new Map((itens ?? []).map((item) => [item.chave, item.nome]));
   return (chave) => mapa.get(chave) ?? chave;
+}
+
+function comMaiuscula(texto: string): string {
+  return texto.replace(/^./, (letra) => letra.toUpperCase());
+}
+
+/**
+ * "a, b e c" ou "a, b ou c". Com virgula dentro do penultimo item (a
+ * atividade leva o prazo depois de uma virgula), a ligacao ganha virgula
+ * tambem: "cria a atividade Ligar, para o mesmo dia, e move para Perdido".
+ */
+function juntar(partes: readonly string[], ligacao: "e" | "ou"): string {
+  if (partes.length <= 1) {
+    return partes[0] ?? "";
+  }
+  const penultima = partes[partes.length - 2] ?? "";
+  const separador = penultima.includes(",") ? `, ${ligacao} ` : ` ${ligacao} `;
+  return `${partes.slice(0, -1).join(", ")}${separador}${partes[partes.length - 1]}`;
 }
 
 /**
@@ -359,42 +520,143 @@ export function descreverGatilho(
   }
 }
 
+/** "tem a etiqueta Psiquiatria" ou "não tem a etiqueta Retorno". */
+function fraseDaCondicao(
+  condicao: Pick<CondicaoDaAutomacao, "tipo" | "etiqueta">,
+): string {
+  return condicao.tipo === "tem_etiqueta"
+    ? `tem a etiqueta ${condicao.etiqueta}`
+    : `não tem a etiqueta ${condicao.etiqueta}`;
+}
+
 /**
- * "Move para Perdido (Não respondeu)", "Etiqueta: Retorno", "Cria atividade:
- * Ligar para o paciente, em 2 dias", "Nota interna".
+ * O "Se" da regra: "O lead tem a etiqueta Psiquiatria e não tem a etiqueta
+ * Retorno". Sem condicao, null (a regra vale para todo lead do Quando).
  */
-export function descreverAcao(
-  regra: Pick<
-    AutomacaoDeFluxo,
-    | "acao"
-    | "etapa_destino"
-    | "motivo_perda"
-    | "etiqueta"
-    | "atividade_titulo"
-    | "atividade_prazo_dias"
-  >,
+export function descreverCondicoes(
+  regra: Pick<AutomacaoDeFluxo, "combinar"> & {
+    condicoes: readonly Pick<CondicaoDaAutomacao, "tipo" | "etiqueta">[];
+  },
+): string | null {
+  if (regra.condicoes.length === 0) {
+    return null;
+  }
+  const frases = regra.condicoes.map(fraseDaCondicao);
+  return `O lead ${juntar(frases, regra.combinar === "todas" ? "e" : "ou")}`;
+}
+
+type AcaoParaFrase = Pick<
+  AcaoDaAutomacao,
+  | "acao"
+  | "etapa_destino"
+  | "motivo_perda"
+  | "etiqueta"
+  | "atividade_titulo"
+  | "atividade_prazo_dias"
+>;
+
+/**
+ * Uma acao em minusculas, para entrar na frase da regra: "move para Perdido
+ * (Não respondeu)", "etiqueta a conversa com Retorno", "cria a atividade
+ * Ligar, para o mesmo dia", "deixa uma nota interna".
+ */
+export function fraseDaAcao(
+  acao: AcaoParaFrase,
   nomes: { etapa: ResolverNome; etiqueta: ResolverNome },
 ): string {
-  switch (regra.acao) {
+  switch (acao.acao) {
     case "mover_etapa": {
-      const destino = regra.etapa_destino
-        ? nomes.etapa(regra.etapa_destino)
+      const destino = acao.etapa_destino
+        ? nomes.etapa(acao.etapa_destino)
         : "outra etapa";
-      return regra.motivo_perda
-        ? `Move para ${destino} (Não respondeu)`
-        : `Move para ${destino}`;
+      return acao.motivo_perda
+        ? `move para ${destino} (Não respondeu)`
+        : `move para ${destino}`;
     }
     case "etiquetar":
-      return `Etiqueta: ${regra.etiqueta ? nomes.etiqueta(regra.etiqueta) : "sem etiqueta"}`;
+      return acao.etiqueta
+        ? `etiqueta a conversa com ${nomes.etiqueta(acao.etiqueta)}`
+        : "etiqueta a conversa";
     case "criar_atividade":
-      return `Cria atividade: ${regra.atividade_titulo ?? ""}, ${textoDoPrazo(regra.atividade_prazo_dias ?? 0)}`;
+      return `cria a atividade ${acao.atividade_titulo ?? ""}, ${textoDoPrazo(acao.atividade_prazo_dias ?? 0)}`;
     case "nota_interna":
-      return "Nota interna";
+      return "deixa uma nota interna";
   }
 }
 
+/**
+ * O "Faz" da regra, na ordem em que roda: "Cria a atividade Ligar, para o
+ * mesmo dia, e move para Follow 2". Sem acao (nao acontece pelo banco),
+ * "Nenhuma ação".
+ */
+export function descreverAcoes(
+  acoes: readonly AcaoParaFrase[],
+  nomes: { etapa: ResolverNome; etiqueta: ResolverNome },
+): string {
+  if (acoes.length === 0) {
+    return "Nenhuma ação";
+  }
+  return comMaiuscula(
+    juntar(
+      ordenarAcoes(acoes).map((acao) => fraseDaAcao(acao, nomes)),
+      "e",
+    ),
+  );
+}
+
+/**
+ * A regra numa frase so, para o dialogo de ligar: "Ficou 24 h em Follow 1,
+ * se o lead tem a etiqueta X: cria a atividade Ligar, para o mesmo dia, e
+ * move para Follow 2."
+ */
+export function descreverRegra(
+  regra: Pick<
+    AutomacaoDeFluxo,
+    "gatilho" | "etapa" | "espera_minutos" | "combinar"
+  > & {
+    condicoes: readonly Pick<CondicaoDaAutomacao, "tipo" | "etiqueta">[];
+    acoes: readonly AcaoParaFrase[];
+  },
+  nomes: { etapa: ResolverNome; etiqueta: ResolverNome },
+): string {
+  const quando = descreverGatilho(regra, nomes.etapa);
+  const se = descreverCondicoes(regra);
+  const faz = descreverAcoes(regra.acoes, nomes).replace(/^./, (letra) =>
+    letra.toLowerCase(),
+  );
+  return se
+    ? `${quando}, se ${se.replace(/^O /, "o ")}: ${faz}.`
+    : `${quando}: ${faz}.`;
+}
+
 // ---------------------------------------------------------------------------
-// Vetos de destino (espelho de validar_automacao_de_fluxo e dos checks)
+// Condicoes (espelho do executor; D9: conferidas uma vez, no gatilho)
+
+/**
+ * As condicoes batem com as etiquetas do lead (chaves do lead e das
+ * conversas dele, pelo nome)? Sem condicao, sempre. "todas" exige cada uma;
+ * "qualquer", ao menos uma. O banco decide; isto serve aos testes e a tela.
+ */
+export function condicoesCasam(
+  condicoes: readonly Pick<CondicaoDaAutomacao, "tipo" | "etiqueta">[],
+  chavesDoLead: readonly string[],
+  combinar: Combinar,
+): boolean {
+  if (condicoes.length === 0) {
+    return true;
+  }
+  const doLead = new Set(chavesDoLead);
+  const resultados = condicoes.map((condicao) => {
+    const tem = doLead.has(chaveDaEtiqueta(condicao.etiqueta));
+    return condicao.tipo === "tem_etiqueta" ? tem : !tem;
+  });
+  return combinar === "todas"
+    ? resultados.every(Boolean)
+    : resultados.some(Boolean);
+}
+
+// ---------------------------------------------------------------------------
+// Vetos de destino (espelho de validar_acao_de_automacao e dos checks)
 
 export type VetoDoDestino =
   | "sem_destino"
@@ -475,23 +737,44 @@ export function vetoDoDestino(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Detector de ciclo (espelho do with recursive de validar_automacao_de_fluxo)
+// Detector de ciclo (espelho do with recursive de automacao_fecha_ciclo)
 
-export type RegraParaCiclo = Pick<
-  AutomacaoDeFluxo,
-  "ativa" | "gatilho" | "acao" | "etapa" | "etapa_destino"
-> & { id: string | null };
+/** O que o detector precisa de cada regra: de onde e para onde ela move. */
+export type RegraParaCiclo = {
+  id: string | null;
+  ativa: boolean;
+  gatilho: GatilhoDeAutomacao;
+  etapa: string;
+  /** O destino da acao de mover da regra; null se ela nao move. */
+  destino: string | null;
+};
+
+/** A regra como o detector a ve: o destino sai das acoes (automacao_acao). */
+export function regraParaCiclo(
+  regra: Pick<AutomacaoDeFluxo, "id" | "ativa" | "gatilho" | "etapa"> & {
+    acoes: readonly Pick<AcaoDaAutomacao, "acao" | "etapa_destino">[];
+  },
+): RegraParaCiclo {
+  return {
+    id: regra.id,
+    ativa: regra.ativa,
+    gatilho: regra.gatilho,
+    etapa: regra.etapa,
+    destino: destinoDoMover(regra.acoes),
+  };
+}
 
 /**
- * So regra LIGADA de mover, com gatilho que nao e de mensagem, vira aresta:
- * a de mensagem so anda se o lead escrever, entao o vai e volta depende dele.
+ * So regra LIGADA com acao de mover, e gatilho que nao e de mensagem, vira
+ * aresta: a de mensagem so anda se o lead escrever, entao o vai e volta
+ * depende dele. Regra com condicao conta do mesmo jeito (conservador: a
+ * condicao pode bater).
  */
 export function viraAresta(regra: RegraParaCiclo): boolean {
   return (
     regra.ativa &&
-    regra.acao === "mover_etapa" &&
-    regra.gatilho !== "mensagem_recebida" &&
-    regra.etapa_destino !== null
+    regra.destino !== null &&
+    regra.gatilho !== "mensagem_recebida"
   );
 }
 
@@ -504,7 +787,7 @@ export function cicloDaAutomacao(
   regra: RegraParaCiclo,
   outras: readonly RegraParaCiclo[],
 ): string[] | null {
-  if (!viraAresta(regra) || regra.etapa_destino === null) {
+  if (!viraAresta(regra) || regra.destino === null) {
     return null;
   }
   const saidas = new Map<string, string[]>();
@@ -512,18 +795,18 @@ export function cicloDaAutomacao(
     if (regra.id !== null && outra.id === regra.id) {
       continue;
     }
-    if (!viraAresta(outra) || outra.etapa_destino === null) {
+    if (!viraAresta(outra) || outra.destino === null) {
       continue;
     }
     const lista = saidas.get(outra.etapa) ?? [];
-    lista.push(outra.etapa_destino);
+    lista.push(outra.destino);
     saidas.set(outra.etapa, lista);
   }
 
   // Busca em largura a partir do destino, guardando de onde veio cada etapa
   // para remontar o caminho.
-  const veioDe = new Map<string, string | null>([[regra.etapa_destino, null]]);
-  const fila = [regra.etapa_destino];
+  const veioDe = new Map<string, string | null>([[regra.destino, null]]);
+  const fila = [regra.destino];
   while (fila.length > 0) {
     const atual = fila.shift()!;
     if (atual === regra.etapa) {
@@ -564,6 +847,66 @@ const chaveSchema = z
   .regex(/^[a-z0-9_]{1,40}$/, { error: "Escolha uma opção da lista." });
 
 const ERRO_DA_ESPERA = "O tempo vai de 1 hora a 90 dias.";
+const ERRO_DO_TITULO = "O que fazer vai de 2 a 120 caracteres.";
+const ERRO_DO_PRAZO = "O prazo vai de 0 a 365 dias.";
+const ERRO_DA_NOTA = "A nota vai de 1 a 2000 caracteres.";
+export const ERRO_DE_DOIS_MOVERES = "Uma automação move o lead uma vez só.";
+const ERRO_DA_ETIQUETA_DA_CONDICAO = "Escolha a etiqueta da condição.";
+
+/** Uma acao da regra composta: os campos so da acao escolhida. */
+const acaoDaEntradaSchema = z.discriminatedUnion(
+  "acao",
+  [
+    z.object({
+      acao: z.literal("mover_etapa"),
+      etapa_destino: chaveSchema,
+    }),
+    z.object({
+      acao: z.literal("etiquetar"),
+      etiqueta: chaveSchema,
+    }),
+    z.object({
+      acao: z.literal("criar_atividade"),
+      atividade_titulo: z
+        .string()
+        .trim()
+        .min(TITULO_DA_ATIVIDADE_MINIMO, { error: ERRO_DO_TITULO })
+        .max(TITULO_DA_ATIVIDADE_MAXIMO, { error: ERRO_DO_TITULO }),
+      atividade_prazo_dias: z
+        .number({ error: ERRO_DO_PRAZO })
+        .int({ error: ERRO_DO_PRAZO })
+        .min(0, { error: ERRO_DO_PRAZO })
+        .max(PRAZO_MAXIMO_DIAS, { error: ERRO_DO_PRAZO }),
+    }),
+    z.object({
+      acao: z.literal("nota_interna"),
+      nota_texto: z
+        .string()
+        .trim()
+        .min(1, { error: ERRO_DA_NOTA })
+        .max(NOTA_MAXIMA, { error: ERRO_DA_NOTA }),
+    }),
+  ],
+  { error: "Escolha o que a automação faz." },
+);
+
+export type AcaoDaEntrada = z.infer<typeof acaoDaEntradaSchema>;
+
+const condicaoDaEntradaSchema = z.object({
+  tipo: z.enum(TIPOS_DE_CONDICAO, { error: "Escolha a condição." }),
+  etiqueta: z
+    .string()
+    .transform(etiquetaLimpa)
+    .superRefine((etiqueta, ctx) => {
+      const recusa =
+        etiqueta === ""
+          ? ERRO_DA_ETIQUETA_DA_CONDICAO
+          : recusaDasEtiquetas([etiqueta], 1);
+      if (recusa) {
+        ctx.addIssue({ code: "custom", message: recusa });
+      }
+    }),
+});
 
 export const automacaoDeFluxoSchema = z
   .object({
@@ -583,17 +926,18 @@ export const automacaoDeFluxoSchema = z
       .min(ESPERA_MINIMA_MINUTOS, { error: ERRO_DA_ESPERA })
       .max(ESPERA_MAXIMA_MINUTOS, { error: ERRO_DA_ESPERA })
       .nullable(),
-    acao: z.enum(ACOES, { error: "Escolha o que a automação faz." }),
-    etapa_destino: chaveSchema.nullable(),
-    etiqueta: chaveSchema.nullable(),
-    atividade_titulo: z.string().trim().nullable(),
-    atividade_prazo_dias: z
-      .number()
-      .int({ error: "O prazo vai de 0 a 365 dias." })
-      .min(0, { error: "O prazo vai de 0 a 365 dias." })
-      .max(PRAZO_MAXIMO_DIAS, { error: "O prazo vai de 0 a 365 dias." })
-      .nullable(),
-    nota_texto: z.string().trim().nullable(),
+    combinar: z.enum(COMBINAR, {
+      error: "Escolha como as condições se juntam.",
+    }),
+    condicoes: z.array(condicaoDaEntradaSchema).max(MAXIMO_DE_CONDICOES, {
+      error: `Até ${MAXIMO_DE_CONDICOES} condições por automação.`,
+    }),
+    acoes: z
+      .array(acaoDaEntradaSchema)
+      .min(1, { error: "Escolha pelo menos uma ação." })
+      .max(MAXIMO_DE_ACOES, {
+        error: `Até ${MAXIMO_DE_ACOES} ações por automação.`,
+      }),
   })
   .superRefine((dados, ctx) => {
     if (ehGatilhoDeTempo(dados.gatilho) && dados.espera_minutos === null) {
@@ -603,54 +947,20 @@ export const automacaoDeFluxoSchema = z
         message: "Diga quanto tempo o lead fica antes de a automação rodar.",
       });
     }
-    if (dados.acao === "mover_etapa" && dados.etapa_destino === null) {
+    const movers = dados.acoes.filter((acao) => acao.acao === "mover_etapa");
+    if (movers.length > 1) {
       ctx.addIssue({
         code: "custom",
-        path: ["etapa_destino"],
-        message: MENSAGENS_DO_VETO.sem_destino,
+        path: ["acoes"],
+        message: ERRO_DE_DOIS_MOVERES,
       });
     }
-    if (dados.acao === "mover_etapa" && dados.etapa_destino === dados.etapa) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["etapa_destino"],
-        message: MENSAGENS_DO_VETO.destino_igual_origem,
-      });
-    }
-    if (dados.acao === "etiquetar" && dados.etiqueta === null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["etiqueta"],
-        message: "Escolha a etiqueta.",
-      });
-    }
-    if (dados.acao === "criar_atividade") {
-      const titulo = dados.atividade_titulo ?? "";
-      if (
-        titulo.length < TITULO_DA_ATIVIDADE_MINIMO ||
-        titulo.length > TITULO_DA_ATIVIDADE_MAXIMO
-      ) {
+    for (const mover of movers) {
+      if (mover.etapa_destino === dados.etapa) {
         ctx.addIssue({
           code: "custom",
-          path: ["atividade_titulo"],
-          message: "O que fazer vai de 2 a 120 caracteres.",
-        });
-      }
-      if (dados.atividade_prazo_dias === null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["atividade_prazo_dias"],
-          message: "Diga em quantos dias a atividade vence.",
-        });
-      }
-    }
-    if (dados.acao === "nota_interna") {
-      const nota = dados.nota_texto ?? "";
-      if (nota.length === 0 || nota.length > NOTA_MAXIMA) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["nota_texto"],
-          message: "A nota vai de 1 a 2000 caracteres.",
+          path: ["acoes"],
+          message: MENSAGENS_DO_VETO.destino_igual_origem,
         });
       }
     }
@@ -658,18 +968,35 @@ export const automacaoDeFluxoSchema = z
 
 export type EntradaDaAutomacao = z.infer<typeof automacaoDeFluxoSchema>;
 
+/** Uma acao como a RPC salvar_automacao_de_fluxo recebe. */
+export type AcaoParaGravar = {
+  acao: AcaoDeAutomacao;
+  etapa_destino: string | null;
+  etiqueta: string | null;
+  atividade_titulo: string | null;
+  atividade_prazo_dias: number | null;
+  nota_texto: string | null;
+};
+
+/** O p_regra da RPC salvar_automacao_de_fluxo. */
+export type RegraParaGravar = {
+  nome: string;
+  ativa: boolean;
+  gatilho: GatilhoDeAutomacao;
+  etapa: string;
+  espera_minutos: number | null;
+  combinar: Combinar;
+  condicoes: { tipo: TipoDeCondicao; etiqueta: string }[];
+  acoes: AcaoParaGravar[];
+};
+
 /**
- * As colunas para gravar: so os campos da acao escolhida; os das outras vao
- * null (os checks acao_*_tem_* recusam campo sobrando). O motivo da perda
- * vem do papel do destino lido do banco, nunca do cliente. Sem created_by,
- * updated_by nem vigente_desde: o banco carimba.
+ * O jsonb da RPC (no lugar das colunas de antes): a espera so nos gatilhos
+ * de tempo; cada acao so com os proprios campos (os outros vao null) e o
+ * mover no fim. Sem motivo da perda (o banco tira do papel do destino), sem
+ * created_by, updated_by nem vigente_desde (o banco carimba).
  */
-export function camposParaGravar(
-  dados: EntradaDaAutomacao,
-  jornada: readonly EtapaParaAutomacao[],
-) {
-  const mover = dados.acao === "mover_etapa";
-  const destino = mover ? dados.etapa_destino : null;
+export function regraParaGravar(dados: EntradaDaAutomacao): RegraParaGravar {
   return {
     nome: dados.nome,
     ativa: dados.ativa,
@@ -678,15 +1005,61 @@ export function camposParaGravar(
     espera_minutos: ehGatilhoDeTempo(dados.gatilho)
       ? dados.espera_minutos
       : null,
-    acao: dados.acao,
+    combinar: dados.combinar,
+    condicoes: dados.condicoes.map((condicao) => ({
+      tipo: condicao.tipo,
+      etiqueta: condicao.etiqueta,
+    })),
+    acoes: ordenarAcoes(dados.acoes).map((acao) => ({
+      acao: acao.acao,
+      etapa_destino: acao.acao === "mover_etapa" ? acao.etapa_destino : null,
+      etiqueta: acao.acao === "etiquetar" ? acao.etiqueta : null,
+      atividade_titulo:
+        acao.acao === "criar_atividade" ? acao.atividade_titulo : null,
+      atividade_prazo_dias:
+        acao.acao === "criar_atividade" ? acao.atividade_prazo_dias : null,
+      nota_texto: acao.acao === "nota_interna" ? acao.nota_texto : null,
+    })),
+  };
+}
+
+/**
+ * As colunas de automacao_fluxo de ANTES da onda 4 (uma acao, sem condicao),
+ * para gravar a regra quando o banco ainda nao tem a migration 20261024110000
+ * (a RPC salvar_automacao_de_fluxo ausente). O contrato (secao 8) publica o
+ * codigo do follow-up depois da migration A e antes da B, e este codigo vai
+ * junto: com o banco sem a B, a regra de UMA acao e sem condicao continua
+ * gravando como antes (o espelho da B leva a acao para automacao_acao quando
+ * ela chegar). Regra com mais de uma acao ou com condicao: nulo (o modelo de
+ * antes nao a representa; a action recusa com a frase de semRpc). O motivo da
+ * perda nasce do papel do destino, como antes.
+ */
+export function colunasDeAntes(
+  dados: EntradaDaAutomacao,
+  jornada: readonly EtapaParaAutomacao[],
+) {
+  const [acao] = dados.acoes;
+  if (!acao || dados.acoes.length !== 1 || dados.condicoes.length > 0) {
+    return null;
+  }
+  const destino = acao.acao === "mover_etapa" ? acao.etapa_destino : null;
+  return {
+    nome: dados.nome,
+    ativa: dados.ativa,
+    gatilho: dados.gatilho,
+    etapa: dados.etapa,
+    espera_minutos: ehGatilhoDeTempo(dados.gatilho)
+      ? dados.espera_minutos
+      : null,
+    acao: acao.acao,
     etapa_destino: destino,
-    motivo_perda: mover ? motivoDaPerdaPara(destino, jornada) : null,
-    etiqueta: dados.acao === "etiquetar" ? dados.etiqueta : null,
+    motivo_perda: motivoDaPerdaPara(destino, jornada),
+    etiqueta: acao.acao === "etiquetar" ? acao.etiqueta : null,
     atividade_titulo:
-      dados.acao === "criar_atividade" ? dados.atividade_titulo : null,
+      acao.acao === "criar_atividade" ? acao.atividade_titulo : null,
     atividade_prazo_dias:
-      dados.acao === "criar_atividade" ? dados.atividade_prazo_dias : null,
-    nota_texto: dados.acao === "nota_interna" ? dados.nota_texto : null,
+      acao.acao === "criar_atividade" ? acao.atividade_prazo_dias : null,
+    nota_texto: acao.acao === "nota_interna" ? acao.nota_texto : null,
   };
 }
 
@@ -711,6 +1084,24 @@ export const previaDaAutomacaoEntradaSchema = z
 // ---------------------------------------------------------------------------
 // Formulario do dialogo (react-hook-form): tudo texto, convertido no envio
 
+const acaoDoFormularioSchema = z.object({
+  acao: z.enum(ACOES),
+  etapa_destino: z.string(),
+  etiqueta: z.string(),
+  atividade_titulo: z.string(),
+  atividade_prazo_dias: z.string(),
+  nota_texto: z.string(),
+});
+
+export type ValoresDaAcao = z.infer<typeof acaoDoFormularioSchema>;
+
+const condicaoDoFormularioSchema = z.object({
+  tipo: z.enum(TIPOS_DE_CONDICAO),
+  etiqueta: z.string(),
+});
+
+export type ValoresDaCondicao = z.infer<typeof condicaoDoFormularioSchema>;
+
 export const formularioDaAutomacaoSchema = z
   .object({
     nome: z
@@ -723,12 +1114,16 @@ export const formularioDaAutomacaoSchema = z
     etapa: z.string().min(1, { error: "Escolha a etapa." }),
     espera_valor: z.string(),
     espera_unidade: z.enum(["horas", "dias"]),
-    acao: z.enum(ACOES),
-    etapa_destino: z.string(),
-    etiqueta: z.string(),
-    atividade_titulo: z.string(),
-    atividade_prazo_dias: z.string(),
-    nota_texto: z.string(),
+    combinar: z.enum(COMBINAR),
+    condicoes: z.array(condicaoDoFormularioSchema).max(MAXIMO_DE_CONDICOES, {
+      error: `Até ${MAXIMO_DE_CONDICOES} condições por automação.`,
+    }),
+    acoes: z
+      .array(acaoDoFormularioSchema)
+      .min(1, { error: "Escolha pelo menos uma ação." })
+      .max(MAXIMO_DE_ACOES, {
+        error: `Até ${MAXIMO_DE_ACOES} ações por automação.`,
+      }),
   })
   .superRefine((valores, ctx) => {
     if (ehGatilhoDeTempo(valores.gatilho)) {
@@ -745,59 +1140,85 @@ export const formularioDaAutomacaoSchema = z
         });
       }
     }
-    if (valores.acao === "mover_etapa") {
-      if (valores.etapa_destino === "") {
-        ctx.addIssue({
-          code: "custom",
-          path: ["etapa_destino"],
-          message: MENSAGENS_DO_VETO.sem_destino,
-        });
-      } else if (valores.etapa_destino === valores.etapa) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["etapa_destino"],
-          message: MENSAGENS_DO_VETO.destino_igual_origem,
-        });
-      }
-    }
-    if (valores.acao === "etiquetar" && valores.etiqueta === "") {
+    if (
+      valores.acoes.filter((acao) => acao.acao === "mover_etapa").length > 1
+    ) {
       ctx.addIssue({
         code: "custom",
-        path: ["etiqueta"],
-        message: "Escolha a etiqueta.",
+        path: ["acoes"],
+        message: ERRO_DE_DOIS_MOVERES,
       });
     }
-    if (valores.acao === "criar_atividade") {
-      const titulo = valores.atividade_titulo.trim();
-      if (
-        titulo.length < TITULO_DA_ATIVIDADE_MINIMO ||
-        titulo.length > TITULO_DA_ATIVIDADE_MAXIMO
-      ) {
+    valores.acoes.forEach((acao, indice) => {
+      const campo = (nome: keyof ValoresDaAcao) => ["acoes", indice, nome];
+      if (acao.acao === "mover_etapa") {
+        if (acao.etapa_destino === "") {
+          ctx.addIssue({
+            code: "custom",
+            path: campo("etapa_destino"),
+            message: MENSAGENS_DO_VETO.sem_destino,
+          });
+        } else if (acao.etapa_destino === valores.etapa) {
+          ctx.addIssue({
+            code: "custom",
+            path: campo("etapa_destino"),
+            message: MENSAGENS_DO_VETO.destino_igual_origem,
+          });
+        }
+      }
+      if (acao.acao === "etiquetar" && acao.etiqueta === "") {
         ctx.addIssue({
           code: "custom",
-          path: ["atividade_titulo"],
-          message: "O que fazer vai de 2 a 120 caracteres.",
+          path: campo("etiqueta"),
+          message: "Escolha a etiqueta.",
         });
       }
-      const prazo = inteiroDoTexto(valores.atividade_prazo_dias);
-      if (prazo === null || prazo < 0 || prazo > PRAZO_MAXIMO_DIAS) {
+      if (acao.acao === "criar_atividade") {
+        const titulo = acao.atividade_titulo.trim();
+        if (
+          titulo.length < TITULO_DA_ATIVIDADE_MINIMO ||
+          titulo.length > TITULO_DA_ATIVIDADE_MAXIMO
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: campo("atividade_titulo"),
+            message: ERRO_DO_TITULO,
+          });
+        }
+        const prazo = inteiroDoTexto(acao.atividade_prazo_dias);
+        if (prazo === null || prazo < 0 || prazo > PRAZO_MAXIMO_DIAS) {
+          ctx.addIssue({
+            code: "custom",
+            path: campo("atividade_prazo_dias"),
+            message: ERRO_DO_PRAZO,
+          });
+        }
+      }
+      if (acao.acao === "nota_interna") {
+        const nota = acao.nota_texto.trim();
+        if (nota.length === 0 || nota.length > NOTA_MAXIMA) {
+          ctx.addIssue({
+            code: "custom",
+            path: campo("nota_texto"),
+            message: ERRO_DA_NOTA,
+          });
+        }
+      }
+    });
+    valores.condicoes.forEach((condicao, indice) => {
+      const etiqueta = etiquetaLimpa(condicao.etiqueta);
+      const recusa =
+        etiqueta === ""
+          ? ERRO_DA_ETIQUETA_DA_CONDICAO
+          : recusaDasEtiquetas([etiqueta], 1);
+      if (recusa) {
         ctx.addIssue({
           code: "custom",
-          path: ["atividade_prazo_dias"],
-          message: "O prazo vai de 0 a 365 dias.",
+          path: ["condicoes", indice, "etiqueta"],
+          message: recusa,
         });
       }
-    }
-    if (valores.acao === "nota_interna") {
-      const nota = valores.nota_texto.trim();
-      if (nota.length === 0 || nota.length > NOTA_MAXIMA) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["nota_texto"],
-          message: "A nota vai de 1 a 2000 caracteres.",
-        });
-      }
-    }
+    });
   });
 
 export type ValoresDaAutomacao = z.infer<typeof formularioDaAutomacaoSchema>;
@@ -822,6 +1243,34 @@ export function minutosDoFormulario(
   return esperaEmMinutos(valor, valores.espera_unidade);
 }
 
+/** Uma acao em branco do tipo pedido, para "Adicionar ação". */
+export function acaoEmBranco(acao: AcaoDeAutomacao): ValoresDaAcao {
+  return {
+    acao,
+    etapa_destino: "",
+    etiqueta: "",
+    atividade_titulo: "",
+    atividade_prazo_dias: "1",
+    nota_texto: "",
+  };
+}
+
+/** Uma condicao em branco, para "Adicionar condição". */
+export function condicaoEmBranco(): ValoresDaCondicao {
+  return { tipo: "tem_etiqueta", etiqueta: "" };
+}
+
+function acaoParaValores(acao: AcaoDaAutomacao): ValoresDaAcao {
+  return {
+    acao: acao.acao,
+    etapa_destino: acao.etapa_destino ?? "",
+    etiqueta: acao.etiqueta ?? "",
+    atividade_titulo: acao.atividade_titulo ?? "",
+    atividade_prazo_dias: String(acao.atividade_prazo_dias ?? 1),
+    nota_texto: acao.nota_texto ?? "",
+  };
+}
+
 /** Valores iniciais do dialogo: a regra existente ou uma em branco. */
 export function valoresIniciais(
   regra: AutomacaoDeFluxo | null,
@@ -834,12 +1283,9 @@ export function valoresIniciais(
       etapa: "",
       espera_valor: "3",
       espera_unidade: "dias",
-      acao: "mover_etapa",
-      etapa_destino: "",
-      etiqueta: "",
-      atividade_titulo: "",
-      atividade_prazo_dias: "1",
-      nota_texto: "",
+      combinar: "todas",
+      condicoes: [],
+      acoes: [acaoEmBranco("mover_etapa")],
     };
   }
   const espera =
@@ -853,21 +1299,42 @@ export function valoresIniciais(
     etapa: regra.etapa,
     espera_valor: String(espera.valor),
     espera_unidade: espera.unidade,
-    acao: regra.acao,
-    etapa_destino: regra.etapa_destino ?? "",
-    etiqueta: regra.etiqueta ?? "",
-    atividade_titulo: regra.atividade_titulo ?? "",
-    atividade_prazo_dias: String(regra.atividade_prazo_dias ?? 1),
-    nota_texto: regra.nota_texto ?? "",
+    combinar: regra.combinar,
+    condicoes: regra.condicoes.map((condicao) => ({
+      tipo: condicao.tipo,
+      etiqueta: condicao.etiqueta,
+    })),
+    acoes:
+      regra.acoes.length > 0
+        ? ordenarAcoes(regra.acoes).map(acaoParaValores)
+        : [acaoEmBranco("mover_etapa")],
   };
 }
 
-/** Do formulario para a entrada da Server Action (so os campos da acao). */
+/** Uma acao do formulario para a entrada da Server Action. */
+function acaoDaEntrada(valores: ValoresDaAcao): AcaoDaEntrada {
+  switch (valores.acao) {
+    case "mover_etapa":
+      return { acao: "mover_etapa", etapa_destino: valores.etapa_destino };
+    case "etiquetar":
+      return { acao: "etiquetar", etiqueta: valores.etiqueta };
+    case "criar_atividade":
+      return {
+        acao: "criar_atividade",
+        atividade_titulo: valores.atividade_titulo.trim(),
+        atividade_prazo_dias:
+          inteiroDoTexto(valores.atividade_prazo_dias) ?? -1,
+      };
+    case "nota_interna":
+      return { acao: "nota_interna", nota_texto: valores.nota_texto.trim() };
+  }
+}
+
+/** Do formulario para a entrada da Server Action (o mover vai no fim). */
 export function entradaDoFormulario(
   valores: ValoresDaAutomacao,
   id: string | null,
 ): EntradaDaAutomacao {
-  const acao = valores.acao;
   return {
     id,
     nome: valores.nome.trim(),
@@ -877,20 +1344,12 @@ export function entradaDoFormulario(
     espera_minutos: ehGatilhoDeTempo(valores.gatilho)
       ? minutosDoFormulario(valores)
       : null,
-    acao,
-    etapa_destino:
-      acao === "mover_etapa" && valores.etapa_destino !== ""
-        ? valores.etapa_destino
-        : null,
-    etiqueta:
-      acao === "etiquetar" && valores.etiqueta !== "" ? valores.etiqueta : null,
-    atividade_titulo:
-      acao === "criar_atividade" ? valores.atividade_titulo.trim() : null,
-    atividade_prazo_dias:
-      acao === "criar_atividade"
-        ? inteiroDoTexto(valores.atividade_prazo_dias)
-        : null,
-    nota_texto: acao === "nota_interna" ? valores.nota_texto.trim() : null,
+    combinar: valores.combinar,
+    condicoes: valores.condicoes.map((condicao) => ({
+      tipo: condicao.tipo,
+      etiqueta: etiquetaLimpa(condicao.etiqueta),
+    })),
+    acoes: ordenarAcoes(valores.acoes).map(acaoDaEntrada),
   };
 }
 
@@ -908,17 +1367,19 @@ const RECUSAS_POR_HINT: Record<string, string> = {
   automacao_destino_da_agenda: MENSAGENS_DO_VETO.destino_da_agenda,
   automacao_perdido_sem_motivo: MENSAGENS_DO_VETO.perdido_sem_motivo,
   automacao_motivo_sem_perdido: MENSAGENS_DO_VETO.motivo_sem_perdido,
+  automacao_destino_igual_origem: MENSAGENS_DO_VETO.destino_igual_origem,
   automacao_ciclo:
     "Esta automação fecha um ciclo com outra automação ligada: o lead ficaria indo e voltando entre as etapas. Mude o destino ou desligue a outra automação.",
 };
 
 // A ordem importa onde um nome contem outro: o do destino vem antes do da
-// origem (automacao_fluxo_etapa_fkey nao e trecho do de destino, mas a lista
-// fica a prova de nome novo).
+// origem. Os trechos casam com a constraint de automacao_fluxo (as de antes)
+// e com as de automacao_acao e automacao_condicao (onda 4): o banco grava as
+// acoes e as condicoes nas tabelas filhas, com os MESMOS checks por acao.
 const RECUSAS_POR_CONSTRAINT: readonly { trecho: string; mensagem: string }[] =
   [
     {
-      trecho: "automacao_fluxo_etapa_destino_fkey",
+      trecho: "etapa_destino_fkey",
       mensagem: MENSAGENS_DO_VETO.destino_inexistente,
     },
     {
@@ -927,9 +1388,13 @@ const RECUSAS_POR_CONSTRAINT: readonly { trecho: string; mensagem: string }[] =
         "A etapa escolhida não existe mais na jornada. Recarregue a página e escolha outra.",
     },
     {
-      trecho: "automacao_fluxo_etiqueta_fkey",
+      trecho: "etiqueta_fkey",
       mensagem:
         "A etiqueta escolhida não existe mais. Recarregue a página e escolha outra.",
+    },
+    {
+      trecho: "automacao_acao_um_mover",
+      mensagem: ERRO_DE_DOIS_MOVERES,
     },
     {
       trecho: "nome_de_automacao_com_tamanho",
@@ -970,16 +1435,27 @@ const RECUSAS_POR_CONSTRAINT: readonly { trecho: string; mensagem: string }[] =
     },
     {
       trecho: "titulo_de_atividade_da_automacao",
-      mensagem: "O que fazer vai de 2 a 120 caracteres.",
+      mensagem: ERRO_DO_TITULO,
     },
     {
       trecho: "prazo_de_atividade_da_automacao",
-      mensagem: "O prazo vai de 0 a 365 dias.",
+      mensagem: ERRO_DO_PRAZO,
     },
     { trecho: "acao_nota_tem_texto", mensagem: "Escreva o texto da nota." },
     {
       trecho: "nota_da_automacao_com_tamanho",
-      mensagem: "A nota vai de 1 a 2000 caracteres.",
+      mensagem: ERRO_DA_NOTA,
+    },
+    {
+      trecho: "combinar",
+      mensagem: "Escolha como as condições se juntam.",
+    },
+    {
+      // Qualquer check de automacao_condicao (etiquetas_validas, tipo,
+      // posicao): o que a pessoa pode mudar e a etiqueta.
+      trecho: "automacao_condicao",
+      mensagem:
+        "Confira as condições: cada etiqueta vai de 1 a 40 caracteres, e são até 5 condições.",
     },
   ];
 
@@ -995,7 +1471,21 @@ export const DICA_SEM_PERMISSAO =
 export const RECUSA_DA_ETIQUETA_USADA =
   "Esta etiqueta é usada por uma automação de fluxo. Exclua a automação ou troque a etiqueta dela em Automações, na aba Automações de fluxo, antes de excluir a etiqueta.";
 
-/** A recusa de excluir etiqueta usada por automacao, ou null se for outra. */
+/**
+ * Excluir ou renomear etiqueta do catalogo cujo NOME esta num filtro (uma
+ * condicao de automacao ou uma regua de follow-up por etiqueta; onda 4, D1:
+ * a etiqueta da conversa conta pelo nome, e o filtro deixaria de casar em
+ * silencio). O banco recusa com a mensagem dele; quando ela nao vem
+ * (formato inesperado), este texto diz onde trocar.
+ */
+export const RECUSA_DA_ETIQUETA_EM_FILTRO =
+  "Esta etiqueta está no filtro de uma automação de fluxo ou de uma régua de follow-up. Troque a etiqueta em Automações antes de excluir ou renomear.";
+
+/**
+ * A recusa de mexer em etiqueta usada por automacao (ou num filtro), ou
+ * null se for outra. A recusa de filtro (P0001 com hint de etiqueta, onda 4)
+ * passa a mensagem do banco, que ja diz onde trocar.
+ */
 export function recusaDaEtiquetaUsadaPorAutomacao(
   erro: ErroDoBanco,
 ): string | null {
@@ -1009,6 +1499,17 @@ export function recusaDaEtiquetaUsadaPorAutomacao(
     )
   ) {
     return RECUSA_DA_ETIQUETA_USADA;
+  }
+  const hint = erro.hint ?? "";
+  if (
+    erro.code === "P0001" &&
+    hint.startsWith("etiqueta_") &&
+    (hint.includes("filtro") || hint.includes("regua"))
+  ) {
+    const mensagem = (erro.message ?? "").trim();
+    return mensagem.length > 0 && !/[\u2013\u2014]/.test(mensagem)
+      ? mensagem
+      : RECUSA_DA_ETIQUETA_EM_FILTRO;
   }
   return null;
 }
@@ -1060,7 +1561,7 @@ export function mensagemDaRecusaDaAutomacao(
   if (erro.code === "23514" && RECUSAS_POR_HINT[hint]) {
     return RECUSAS_POR_HINT[hint];
   }
-  if (erro.code === "23514" || erro.code === "23503") {
+  if (erro.code === "23514" || erro.code === "23503" || erro.code === "23505") {
     const texto = `${erro.message ?? ""} ${erro.details ?? ""}`;
     const recusa = RECUSAS_POR_CONSTRAINT.find(({ trecho }) =>
       texto.includes(trecho),
@@ -1070,6 +1571,67 @@ export function mensagemDaRecusaDaAutomacao(
     }
   }
   return padrao;
+}
+
+/** Codigos de "a funcao ainda nao existe no banco" (PostgREST e Postgres). */
+export const FUNCAO_AUSENTE = new Set(["PGRST202", "42883"]);
+
+/** Codigos do "Salvar" que nao sao do mensagemDaRecusaDaAutomacao. */
+export const RECUSAS_AO_SALVAR = {
+  /** 22023 da RPC: contagem de acoes e condicoes fora do limite. */
+  limites: `Uma automação tem de 1 a ${MAXIMO_DE_ACOES} ações, até ${MAXIMO_DE_CONDICOES} condições e move o lead uma vez só.`,
+  /** 22023 com hint automacao_acoes. */
+  acoes: `Uma automação tem de 1 a ${MAXIMO_DE_ACOES} ações.`,
+  /** 22023 com hint automacao_condicoes. */
+  condicoes: `Uma automação tem até ${MAXIMO_DE_CONDICOES} condições.`,
+  /** 22023 com hint automacao_regra_invalida: a forma do jsonb. */
+  invalida: "Confira os campos da automação e salve de novo.",
+  /** P0002: id que nao e desta clinica, ou que foi excluido. */
+  naoExiste:
+    "Esta automação não existe mais. Recarregue a página para ver a lista atual.",
+  /**
+   * A RPC nova ainda nao esta no banco (migration 20261024110000): a regra
+   * de uma acao e sem condicao grava pelas colunas de antes (colunasDeAntes);
+   * esta e a recusa da que tem mais de uma acao ou alguma condicao.
+   */
+  semRpc:
+    "Esta clínica ainda não tem automações com mais de uma ação ou com condições. Por enquanto, salve com uma ação só e sem condições.",
+} as const;
+
+/**
+ * A recusa do "Salvar" (RPC salvar_automacao_de_fluxo): 22023 sao os
+ * limites da regra composta (e nao a faixa da previa), P0002 a regra que nao
+ * existe (sem dizer se existe em outra clinica), funcao ausente e o banco
+ * antes da migration; o resto como as outras escritas.
+ */
+export function mensagemDaRecusaAoSalvar(
+  erro: ErroDoBanco,
+  padrao: string,
+): string {
+  if (!erro) {
+    return padrao;
+  }
+  if (erro.code === "22023") {
+    switch (erro.hint) {
+      case "automacao_acoes":
+        return RECUSAS_AO_SALVAR.acoes;
+      case "automacao_condicoes":
+        return RECUSAS_AO_SALVAR.condicoes;
+      case "automacao_um_mover":
+        return ERRO_DE_DOIS_MOVERES;
+      case "automacao_regra_invalida":
+        return RECUSAS_AO_SALVAR.invalida;
+      default:
+        return RECUSAS_AO_SALVAR.limites;
+    }
+  }
+  if (erro.code === "P0002") {
+    return RECUSAS_AO_SALVAR.naoExiste;
+  }
+  if (erro.code && FUNCAO_AUSENTE.has(erro.code)) {
+    return RECUSAS_AO_SALVAR.semRpc;
+  }
+  return mensagemDaRecusaDaAutomacao(erro, padrao);
 }
 
 // ---------------------------------------------------------------------------
@@ -1084,7 +1646,8 @@ type QuandoRoda = Pick<
  * Espelho de validar_automacao_de_fluxo: vigente_desde volta a now() na
  * regra nova, ao ligar (desligada para ligada) e ao mudar gatilho, etapa ou
  * espera. So entao a previa ("ja passaram do ponto e nao serao afetados")
- * diz a verdade; editar o nome ou a acao de uma regra ligada nao recomeca.
+ * diz a verdade; editar o nome, as condicoes ou as acoes de uma regra ligada
+ * nao recomeca.
  */
 export function recomecaAVigencia(
   antes: QuandoRoda | null,
@@ -1155,6 +1718,10 @@ const MOTIVOS_DA_PULADA: Record<string, string> = {
   sem_conversa: "o lead não tem conversa",
   ja_tinha_etiqueta: "a conversa já tinha a etiqueta",
   limite_de_etiquetas: "a conversa já tem o máximo de etiquetas",
+  // Onda 4 (migration 20261024110000).
+  condicoes_nao_atendidas: "o lead não batia com as condições na hora",
+  acoes_puladas: "nenhuma das ações pôde ser feita",
+  clinica_suspensa: "a conta da clínica estava suspensa",
 };
 
 /** O motivo da pulada em portugues (codigo novo cai num texto neutro). */
@@ -1165,29 +1732,109 @@ export function textoDoMotivo(motivo: string | null): string {
   return MOTIVOS_DA_PULADA[motivo] ?? "motivo não reconhecido";
 }
 
-/**
- * A frase de uma execucao: o que fez (de/para quando moveu), por que pulou
- * ou que falhou. Nunca conteudo de mensagem.
- *
- * O que fez sai do RETRATO gravado na execucao (acao, etiqueta e o nome dela
- * na hora), nunca da regra como esta hoje: a regra pode ter trocado de acao
- * ou de etiqueta depois, e o historico contaria algo que nao aconteceu.
- * Execucao sem o retrato cai num texto neutro.
- */
-export function descreverExecucao(
+/** Uma acao do retrato, como a tela mostra (o "Fez:" ou o "Não fez:"). */
+export type LinhaDaAcaoNoHistorico = {
+  posicao: number;
+  status: StatusDaAcao;
+  texto: string;
+  /** O codigo da falha (erro_<sqlstate>), so em falhou. */
+  codigo: string | null;
+};
+
+/** O que a tela mostra de uma execucao: a frase e, com varias acoes, cada uma. */
+export type FraseDaExecucao = {
+  texto: string;
+  codigo: string | null;
+  acoes: LinhaDaAcaoNoHistorico[];
+};
+
+/** O que a acao era para fazer, para o "Não fez:": "mover o lead". */
+function intencaoDaAcao(acao: ExecucaoDaAcao, nomeDaEtiqueta: string | null) {
+  switch (acao.acao) {
+    case "mover_etapa":
+      return "mover o lead";
+    case "etiquetar":
+      return nomeDaEtiqueta
+        ? `etiquetar a conversa com ${nomeDaEtiqueta}`
+        : "etiquetar a conversa";
+    case "criar_atividade":
+      return "criar a atividade";
+    case "nota_interna":
+      return "deixar a nota interna";
+  }
+}
+
+/** O que a acao fez, pelo retrato: "moveu de Em contato para Perdido". */
+function feitoDaAcao(
+  acao: ExecucaoDaAcao,
+  origem: string,
+  nomes: { etapa: ResolverNome },
+  nomeDaEtiqueta: string | null,
+): string {
+  switch (acao.acao) {
+    case "mover_etapa":
+      return acao.para_etapa
+        ? `moveu de ${origem} para ${nomes.etapa(acao.para_etapa)}`
+        : `moveu o lead (de ${origem})`;
+    case "etiquetar":
+      return nomeDaEtiqueta
+        ? `etiquetou a conversa com ${nomeDaEtiqueta}`
+        : "etiquetou a conversa";
+    case "criar_atividade":
+      return "criou uma atividade";
+    case "nota_interna":
+      return "deixou uma nota interna na conversa";
+  }
+}
+
+/** Cada acao do retrato numa linha: "Fez: ...", "Não fez: ... (motivo)". */
+function linhasDasAcoes(
+  acoes: readonly ExecucaoDaAcao[],
+  origem: string,
+  nomes: { etapa: ResolverNome; etiqueta: ResolverNome },
+): LinhaDaAcaoNoHistorico[] {
+  return [...acoes]
+    .sort((a, b) => a.posicao - b.posicao)
+    .map((acao) => {
+      // O nome da hora; sem ele (nao acontece pelo motor), o de hoje.
+      const nomeDaEtiqueta =
+        acao.etiqueta_nome ??
+        (acao.etiqueta ? nomes.etiqueta(acao.etiqueta) : null);
+      switch (acao.status) {
+        case "executada":
+          return {
+            posicao: acao.posicao,
+            status: acao.status,
+            texto: `Fez: ${feitoDaAcao(acao, origem, nomes, nomeDaEtiqueta)}`,
+            codigo: null,
+          };
+        case "pulada":
+          return {
+            posicao: acao.posicao,
+            status: acao.status,
+            texto: `Não fez: ${intencaoDaAcao(acao, nomeDaEtiqueta)} (${textoDoMotivo(acao.motivo)})`,
+            codigo: null,
+          };
+        case "falhou":
+          return {
+            posicao: acao.posicao,
+            status: acao.status,
+            texto: `Não conseguiu: ${intencaoDaAcao(acao, nomeDaEtiqueta)}`,
+            codigo: acao.motivo,
+          };
+      }
+    });
+}
+
+/** A frase de antes da onda 4: o retrato do pai (uma acao so). */
+function fraseDoRetratoDoPai(
   execucao: Pick<
     ExecucaoDeAutomacao,
-    | "status"
-    | "motivo"
-    | "de_etapa"
-    | "para_etapa"
-    | "acao"
-    | "etiqueta"
-    | "etiqueta_nome"
+    "status" | "motivo" | "para_etapa" | "acao" | "etiqueta" | "etiqueta_nome"
   >,
+  origem: string,
   nomes: { etapa: ResolverNome; etiqueta: ResolverNome },
 ): { texto: string; codigo: string | null } {
-  const origem = nomes.etapa(execucao.de_etapa);
   switch (execucao.status) {
     case "pendente":
       return {
@@ -1242,6 +1889,67 @@ export function descreverExecucao(
           };
       }
     }
+  }
+}
+
+/**
+ * A frase de uma execucao: o que fez (de/para quando moveu), por que pulou
+ * ou que falhou, e, com varias acoes, o que cada uma fez ou nao fez. Nunca
+ * conteudo de mensagem.
+ *
+ * O que fez sai do RETRATO gravado na execucao (o do pai, com uma acao so,
+ * igual a antes da onda 4; o de cada acao, com varias), nunca da regra como
+ * esta hoje: a regra pode ter trocado de acao ou de etiqueta depois, e o
+ * historico contaria algo que nao aconteceu.
+ */
+export function descreverExecucao(
+  execucao: Pick<
+    ExecucaoDeAutomacao,
+    | "status"
+    | "motivo"
+    | "de_etapa"
+    | "para_etapa"
+    | "acao"
+    | "etiqueta"
+    | "etiqueta_nome"
+  > & { acoes?: readonly ExecucaoDaAcao[] },
+  nomes: { etapa: ResolverNome; etiqueta: ResolverNome },
+): FraseDaExecucao {
+  const origem = nomes.etapa(execucao.de_etapa);
+  const acoes = execucao.acoes ?? [];
+  // Uma acao so (ou nenhuma: a execucao de antes da onda 4, ou a pulada
+  // por uma guarda antes da primeira acao): o pai tem o retrato, e a frase e
+  // a mesma de sempre.
+  if (acoes.length <= 1) {
+    return { ...fraseDoRetratoDoPai(execucao, origem, nomes), acoes: [] };
+  }
+  const linhas = linhasDasAcoes(acoes, origem, nomes);
+  const feitas = acoes.filter((acao) => acao.status === "executada").length;
+  switch (execucao.status) {
+    case "pendente":
+      return {
+        texto: `Na fila, termina em até 1 minuto (em ${origem})`,
+        codigo: null,
+        acoes: linhas,
+      };
+    case "executada":
+      return {
+        texto: `Fez ${feitas} de ${acoes.length} ações (em ${origem})`,
+        codigo: null,
+        acoes: linhas,
+      };
+    case "pulada":
+      return {
+        texto: `Não fez nada: ${textoDoMotivo(execucao.motivo)} (em ${origem})`,
+        codigo: null,
+        acoes: linhas,
+      };
+    case "falhou":
+      return {
+        texto: `Não conseguiu executar (em ${origem}). Se repetir, fale com o suporte.`,
+        codigo: execucao.motivo,
+        acoes: linhas,
+      };
   }
 }
 

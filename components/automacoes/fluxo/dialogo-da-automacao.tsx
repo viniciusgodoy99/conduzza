@@ -2,7 +2,6 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check } from "lucide-react";
-import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
@@ -36,62 +35,47 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { STATUS_TONE_VARS } from "@/lib/design/status";
 import {
   cicloDaAutomacao,
-  destinosPossiveis,
   ehGatilhoDeTempo,
   entradaDoFormulario,
   ESPERA_MAXIMA_MINUTOS,
   ESPERA_MINIMA_MINUTOS,
   formularioDaAutomacaoSchema,
+  MAXIMO_DE_ACOES,
   minutosDoFormulario,
   NOME_MAXIMO,
-  NOTA_MAXIMA,
-  OPCOES_DE_ACAO,
   OPCOES_DE_GATILHO,
   recomecaAVigencia,
+  regraParaCiclo,
   resolvedorDeNomes,
   textoDoCiclo,
-  TITULO_DA_ATIVIDADE_MAXIMO,
   valoresIniciais,
   type AutomacaoDeFluxo,
   type ValoresDaAutomacao,
 } from "@/lib/domain/automacoes-de-fluxo";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
-import { definicaoDaEtapa, type EtapaDaJornada } from "@/lib/domain/jornada";
+import type {
+  LeituraDasEtiquetas,
+  OpcaoDeEtiqueta,
+} from "@/lib/domain/etiquetas-do-lead";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
 
+import { FazDaAutomacao, OpcaoDeEtapa } from "./faz-da-automacao";
 import { PreviaDaAutomacao } from "./previa-da-automacao";
+import { SeDaAutomacao } from "./se-da-automacao";
 import { useValorAtrasado } from "./use-valor-atrasado";
 
-// Criar e editar uma automacao de fluxo num dialogo central. Os campos
-// aparecem conforme o gatilho (o tempo so nos de tempo) e a acao (destino,
-// etiqueta, atividade ou nota). react-hook-form com o Zod do formulario de
-// lib/domain/automacoes-de-fluxo; a Server Action valida de novo e o banco
-// e a garantia final (vetos, ciclo, FKs).
+// Criar e editar uma automacao de fluxo num dialogo central, em tres partes
+// (onda 4, itens 14 e 15): QUANDO (etapa, gatilho e o tempo nos gatilhos de
+// tempo), SE (as condicoes de etiqueta, opcionais) e FAZ (de 1 a 5 acoes, o
+// mover sempre por ultimo). react-hook-form com o Zod do formulario de
+// lib/domain/automacoes-de-fluxo; a Server Action valida de novo e o banco e
+// a garantia final (RPC salvar_automacao_de_fluxo: vetos, ciclo, FKs).
 //
 // Antes de salvar a tela ja avisa o que o banco recusaria: o ciclo com as
-// outras automacoes ligadas (espelho do detector do banco) e a previa de
-// quantos leads ja passaram do ponto (a regra nao e retroativa).
-
-/** Etapa com icone e nome na cor da familia, como o seletor de etapa do Kanban. */
-function OpcaoDeEtapa({ etapa }: { etapa: EtapaDaJornada }) {
-  const definicao = definicaoDaEtapa(etapa);
-  const Icone = definicao.icon;
-  return (
-    <span className="flex items-center gap-2">
-      {Icone ? (
-        <Icone
-          aria-hidden
-          className="size-[15px] shrink-0"
-          style={{ color: STATUS_TONE_VARS[definicao.tone].text }}
-        />
-      ) : null}
-      {etapa.nome}
-    </span>
-  );
-}
+// outras automacoes ligadas (espelho do detector do banco, lendo as acoes) e
+// a previa de quantos leads ja passaram do ponto (a regra nao e retroativa).
 
 export function DialogoDaAutomacao({
   aberto,
@@ -101,6 +85,8 @@ export function DialogoDaAutomacao({
   automacoes,
   jornada,
   etiquetas,
+  opcoesDeEtiqueta,
+  leituraDasOpcoes,
   clinicId,
 }: {
   aberto: boolean;
@@ -114,6 +100,9 @@ export function DialogoDaAutomacao({
   jornada: readonly EtapaDaJornada[];
   /** nulo: a leitura das etiquetas falhou */
   etiquetas: readonly EtiquetaDeConversa[] | null;
+  /** As etiquetas para as condicoes (catalogo e em uso nos leads) */
+  opcoesDeEtiqueta: readonly OpcaoDeEtiqueta[];
+  leituraDasOpcoes: LeituraDasEtiquetas;
   clinicId: string;
 }) {
   const form = useForm<ValoresDaAutomacao>({
@@ -124,12 +113,14 @@ export function DialogoDaAutomacao({
   const valores = form.watch();
   const nomeDaEtapa = resolvedorDeNomes(jornada);
   const deTempo = ehGatilhoDeTempo(valores.gatilho);
-  const destinos = destinosPossiveis(jornada, valores.etapa);
-  const destinoEscolhido = jornada.find(
-    (etapa) => etapa.chave === valores.etapa_destino,
-  );
   const salvando = form.formState.isSubmitting;
   const erroGeral = form.formState.errors.root?.message;
+  const erroDasAcoes =
+    form.formState.errors.acoes?.root?.message ??
+    form.formState.errors.acoes?.message;
+  const erroDasCondicoes =
+    form.formState.errors.condicoes?.root?.message ??
+    form.formState.errors.condicoes?.message;
 
   // A previa so consulta depois de o campo de tempo parar de mudar.
   const esperaAtrasada = useValorAtrasado(
@@ -144,9 +135,9 @@ export function DialogoDaAutomacao({
         espera_unidade: unidadeAtrasada === "horas" ? "horas" : "dias",
       })
     : null;
-  // Regra ligada que so mudou de nome ou de acao continua valendo desde
-  // quando foi ligada: ai a previa nao se aplica. Desligada, mostra o que
-  // vai valer ao ligar.
+  // Regra ligada que so mudou de nome, de condicao ou de acao continua
+  // valendo desde quando foi ligada: ai a previa nao se aplica. Desligada,
+  // mostra o que vai valer ao ligar.
   const previaSeAplica =
     regra === null ||
     !regra.ativa ||
@@ -164,19 +155,22 @@ export function DialogoDaAutomacao({
         minutosDaPrevia >= ESPERA_MINIMA_MINUTOS &&
         minutosDaPrevia <= ESPERA_MAXIMA_MINUTOS));
 
-  // Espelho do detector de ciclo do banco: so com a regra ligada.
+  // Espelho do detector de ciclo do banco: so com a regra ligada e com um
+  // mover de destino escolhido.
+  const destino =
+    valores.acoes.find((acao) => acao.acao === "mover_etapa")?.etapa_destino ??
+    "";
   const ciclo =
-    valores.acao === "mover_etapa" && valores.etapa_destino !== ""
+    destino !== ""
       ? cicloDaAutomacao(
           {
             id: regra?.id ?? null,
             ativa: valores.ativa,
             gatilho: valores.gatilho,
-            acao: valores.acao,
             etapa: valores.etapa,
-            etapa_destino: valores.etapa_destino,
+            destino,
           },
-          automacoes,
+          automacoes.map(regraParaCiclo),
         )
       : null;
 
@@ -196,19 +190,17 @@ export function DialogoDaAutomacao({
     aoFechar();
   };
 
-  const destinoComConversao =
-    destinoEscolhido?.conversao_ativa && destinoEscolhido.meta_event_name;
-
   return (
     <Dialog open={aberto} onOpenChange={(v) => (!v ? aoFechar() : null)}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[680px]">
         <DialogHeader>
           <DialogTitle>
             {regra ? `Editar ${regra.nome}` : "Nova automação de fluxo"}
           </DialogTitle>
           <DialogDescription>
-            Quando o lead está numa etapa e algo acontece, a automação faz uma
-            coisa por ele. Roda sozinha, em até 1 minuto.
+            Quando o lead está numa etapa e algo acontece, se as condições
+            baterem, a automação faz até {MAXIMO_DE_ACOES} coisas por ele, na
+            ordem. Roda sozinha, em até 1 minuto.
           </DialogDescription>
         </DialogHeader>
 
@@ -252,9 +244,17 @@ export function DialogoDaAutomacao({
                         onValueChange={(valor) => {
                           field.onChange(valor);
                           // Destino igual a origem nao existe: limpa.
-                          if (form.getValues("etapa_destino") === valor) {
-                            form.setValue("etapa_destino", "");
-                          }
+                          form.getValues("acoes").forEach((acao, indice) => {
+                            if (
+                              acao.acao === "mover_etapa" &&
+                              acao.etapa_destino === valor
+                            ) {
+                              form.setValue(
+                                `acoes.${indice}.etapa_destino`,
+                                "",
+                              );
+                            }
+                          });
                         }}
                       >
                         <FormControl>
@@ -363,230 +363,29 @@ export function DialogoDaAutomacao({
               ) : null}
             </fieldset>
 
-            <fieldset className="grid gap-3 rounded-xl border border-border p-3.5">
-              <legend className="px-1 text-[13.5px] font-bold text-text-strong">
-                Faz
-              </legend>
-              <FormField
-                control={form.control}
-                name="acao"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Ação</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {OPCOES_DE_ACAO.map((opcao) => (
-                          <SelectItem key={opcao.valor} value={opcao.valor}>
-                            {opcao.rotulo}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      {
-                        OPCOES_DE_ACAO.find(
-                          (opcao) => opcao.valor === valores.acao,
-                        )?.ajuda
-                      }
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <SeDaAutomacao
+              form={form}
+              opcoes={opcoesDeEtiqueta}
+              leitura={leituraDasOpcoes}
+              desabilitado={salvando}
+            />
+            {erroDasCondicoes ? (
+              <Aviso tom="alert" role="alert">
+                {erroDasCondicoes}
+              </Aviso>
+            ) : null}
 
-              {valores.acao === "mover_etapa" ? (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="etapa_destino"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Para a etapa</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={field.onChange}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Escolha o destino" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {destinos.map((etapa) => (
-                              <SelectItem key={etapa.chave} value={etapa.chave}>
-                                <OpcaoDeEtapa etapa={etapa} />
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          Agendou e Compareceu não aparecem: quem leva o lead
-                          para essas etapas é a Agenda.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  {destinoEscolhido?.papel === "perdido" ? (
-                    <p className="text-[13px] text-foreground">
-                      <span className="font-semibold">Motivo da perda:</span>{" "}
-                      Não respondeu (fixo). Quem tem consulta marcada fica onde
-                      está.
-                    </p>
-                  ) : null}
-                  {destinoComConversao ? (
-                    <Aviso tom="warning">
-                      {destinoEscolhido.nome} registra conversão para os
-                      anúncios da Meta: cada lead movido pela automação conta
-                      como conversão.
-                    </Aviso>
-                  ) : null}
-                </>
-              ) : null}
-
-              {valores.acao === "etiquetar" ? (
-                etiquetas === null ? (
-                  <Aviso tom="alert">
-                    Não foi possível carregar as etiquetas. Recarregue a página
-                    para escolher uma.
-                  </Aviso>
-                ) : etiquetas.length === 0 ? (
-                  <Aviso tom="info">
-                    Nenhuma etiqueta cadastrada ainda. Crie uma na aba{" "}
-                    <Link
-                      href="/configuracoes?aba=etiquetas"
-                      className="font-semibold underline underline-offset-2"
-                    >
-                      Etiquetas de conversa
-                    </Link>{" "}
-                    e volte aqui.
-                  </Aviso>
-                ) : (
-                  <FormField
-                    control={form.control}
-                    name="etiqueta"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Etiqueta</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={field.onChange}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Escolha a etiqueta" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {etiquetas.map((etiqueta) => (
-                              <SelectItem
-                                key={etiqueta.chave}
-                                value={etiqueta.chave}
-                              >
-                                <span className="flex items-center gap-2">
-                                  <span
-                                    aria-hidden
-                                    className="size-2.5 rounded-[2px]"
-                                    style={{
-                                      backgroundColor:
-                                        STATUS_TONE_VARS[etiqueta.tom].marker,
-                                    }}
-                                  />
-                                  {etiqueta.nome}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )
-              ) : null}
-
-              {valores.acao === "criar_atividade" ? (
-                <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-                  <FormField
-                    control={form.control}
-                    name="atividade_titulo"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>O que fazer</FormLabel>
-                        <FormControl>
-                          <Input
-                            {...field}
-                            maxLength={TITULO_DA_ATIVIDADE_MAXIMO}
-                            placeholder="Ex.: Ligar para o lead"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="atividade_prazo_dias"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Vence em (dias)</FormLabel>
-                        <FormControl>
-                          <Input
-                            {...field}
-                            inputMode="numeric"
-                            maxLength={3}
-                            className="cz-num"
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Zero vence no mesmo dia, no calendário da clínica.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              ) : null}
-
-              {valores.acao === "nota_interna" ? (
-                <FormField
-                  control={form.control}
-                  name="nota_texto"
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className="flex items-baseline justify-between gap-2">
-                        <FormLabel>Texto da nota</FormLabel>
-                        <span
-                          aria-hidden
-                          className="cz-num text-[11px] text-text-secondary"
-                        >
-                          {field.value.length}/{NOTA_MAXIMA}
-                        </span>
-                      </div>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          rows={4}
-                          maxLength={NOTA_MAXIMA}
-                          placeholder="Ex.: Lead parado há 3 dias. Ofereça um horário."
-                          className="min-h-[96px] text-sm"
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Só a equipe vê. Não escreva dado de saúde do paciente: o
-                        mesmo texto vai para todos os leads.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : null}
-            </fieldset>
+            <FazDaAutomacao
+              form={form}
+              jornada={jornada}
+              etiquetas={etiquetas}
+              desabilitado={salvando}
+            />
+            {erroDasAcoes ? (
+              <Aviso tom="alert" role="alert">
+                {erroDasAcoes}
+              </Aviso>
+            ) : null}
 
             {/* Checkbox, e nao Switch: a escolha so vale depois do Salvar
                 (docs/06, C31). O Radix pode devolver "indeterminate": so
