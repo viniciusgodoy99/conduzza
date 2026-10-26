@@ -300,6 +300,8 @@ Ordem de integração quando chegar a hora (justificada no benchmark): Feegow (A
 
 **O token fica em texto puro na coluna** (sem criptografia no banco): a proteção é a sessão não enxergar a tabela (sem policy e, no segredo da Meta, sem grant) e a regra de nunca devolver o valor. O valor nunca volta para a tela (o campo é só de escrita e a tela recebe só se existe), nunca vai para log nem para `job_queue.last_error`, e nenhuma função do banco o devolve: as que gravam a leitura do investimento recebem só o sha256 dele, para recusar a escrita de uma leitura feita com o token antigo. Na chamada à Meta, o token de leitura vai no cabeçalho `Authorization` e o da API de conversões no corpo do POST; nunca na URL.
 
+**Código.** O repositório no GitHub (`viniciusgodoy99/conduzza`) é **privado desde 26/10/2026**, por decisão do dono (estava público desde 19/08/2026). Antes de fechar, os 175 commits do histórico foram varridos atrás de chaves (Supabase, OpenAI, Resend, Meta, Google, uazapi e a senha do banco): só havia valores falsos de teste, então nenhuma chave precisou ser trocada; o repositório não tinha nenhum fork. A Vercel publica a partir do `main`; os commits saem pela conta colaboradora `viniciusrodrigues-arch`. Só o dono (`viniciusgodoy99`) muda a visibilidade, e quem precisar ver o código entra como colaborador.
+
 ---
 
 ## 11. Observabilidade
