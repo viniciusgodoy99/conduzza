@@ -452,7 +452,7 @@ describe("lista do painel", () => {
     expect(aurora).not.toContain("equipe Conduzza");
   });
 
-  it("a borda dos 30 dias: a clínica em uso com o login de 30 dias de calendário mostra \"Há 30 dias\", nunca \"Há 1 mês\" (revisão de 26/10/2026)", () => {
+  it('a borda dos 30 dias: a clínica em uso com o login de 30 dias de calendário mostra "Há 30 dias", nunca "Há 1 mês" (revisão de 26/10/2026)', () => {
     // Login em 25/09 as 23:30 em Fortaleza, leitura em 25/10 as 08:00:
     // 704,5 horas, em uso para o banco.
     const saida = html(
@@ -1124,15 +1124,11 @@ describe("equipe da clínica no detalhe (26/10/2026; P18-5)", () => {
     expect(saida).toContain(
       escapado(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao),
     );
-    expect(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao).toContain(
-      "conta no uso",
-    );
+    expect(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao).toContain("conta no uso");
     expect(saida).toContain(
       escapado("2 membros ativos (1 da equipe Conduzza) e 1 pedido"),
     );
-    expect(saida).toContain(
-      escapado(TEXTOS_DO_PAINEL.ultimoAcessoEAtividade),
-    );
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.ultimoAcessoEAtividade));
     const semConduzza = equipe({
       equipe: { ...EQUIPE, equipe: [pessoa()] },
     });
@@ -1441,7 +1437,10 @@ describe("segunda leva da lista (pedido do dono de 26/10/2026)", () => {
     const filtrada = html(<FaixaDeSaude contagem={contagem} />);
     expect(filtrada.match(/aria-pressed="true"/g)).toHaveLength(1);
     const ligada = filtrada.slice(
-      filtrada.lastIndexOf("<button", filtrada.indexOf("<span>Em risco</span>")),
+      filtrada.lastIndexOf(
+        "<button",
+        filtrada.indexOf("<span>Em risco</span>"),
+      ),
       filtrada.indexOf("<span>Em risco</span>"),
     );
     expect(ligada).toContain('aria-pressed="true"');
@@ -1456,9 +1455,13 @@ describe("segunda leva da lista (pedido do dono de 26/10/2026)", () => {
     expect(chip(arvore, "Conta suspensa")).toContain("lucide-octagon-pause");
     expect(chip(arvore, "Sem uso há 30 dias")).toContain("lucide-watch");
     expect(chip(arvore, "WhatsApp desconectado")).toContain("lucide-wifi-off");
-    expect(chip(arvore, "Perto do teto de IA")).toContain(
-      "lucide-circle-alert",
+    // 100% do teto: o rotulo e a cara do Teto atingido do cartao de gasto
+    // (terceira leva, decisao do dono de 26/10/2026)
+    expect(chip(arvore, "Teto de IA atingido")).toContain("lucide-hourglass");
+    expect(chip(arvore, "Teto de IA atingido")).toContain(
+      "var(--warning-text)",
     );
+    expect(arvore).not.toContain("Perto do teto de IA");
     expect(arvore).toContain(
       `aria-label="${escapado("Sinais de alerta da Odonto Árvore")}"`,
     );
@@ -1468,10 +1471,44 @@ describe("segunda leva da lista (pedido do dono de 26/10/2026)", () => {
     expect(chip(bela, "Sem número de WhatsApp")).toContain(
       "var(--warning-text)",
     );
+    // 82% do teto: ainda Perto do teto de IA
+    expect(chip(bela, "Perto do teto de IA")).toContain("lucide-circle-alert");
 
     const aurora = celula(linhaDa(saida, ID_A), 2);
     expect(chip(aurora, "Saudável")).toContain("lucide-circle-check");
     expect(aurora).not.toContain("<ul");
+  });
+
+  it("terceira leva: a clínica nova em que ninguém entrou fica em Atenção, com Ainda sem acesso (Sprout, âmbar)", () => {
+    const saida = html(
+      <ListaDoPainel
+        clinicas={[
+          clinica({
+            id: ID_B,
+            nome: "Clínica Nova",
+            criadaEm: "2026-10-20T13:05:00.000Z",
+            emUso: false,
+            ultimoAcesso: null,
+            saude: "atencao",
+            sinais: [
+              {
+                chave: "ainda_sem_acesso",
+                nivel: "atencao",
+                quantidade: null,
+                desde: "2026-10-20T13:05:00.000Z",
+              },
+            ],
+          }),
+        ]}
+        agoraIso={AGORA}
+      />,
+    );
+    const nova = celula(linhaDa(saida, ID_B), 2);
+    expect(chip(nova, "Atenção")).toContain("lucide-circle-alert");
+    expect(chip(nova, "Ainda sem acesso")).toContain("lucide-sprout");
+    expect(chip(nova, "Ainda sem acesso")).toContain("var(--warning-text)");
+    expect(nova).not.toContain("Em risco");
+    expect(nova).not.toContain("Sem uso há 30 dias");
   });
 
   it("a coluna IA no mês: o gasto exato, as chamadas e o teto por dia; sem agente e sem gasto, Sem uso de IA", () => {
@@ -1614,10 +1651,12 @@ describe("segunda leva da lista (pedido do dono de 26/10/2026)", () => {
 
   it("nenhum travessão na faixa e na lista nova", () => {
     expect(
-      html(<FaixaDeSaude contagem={{ saudavel: 1, atencao: 1, em_risco: 1 }} />),
+      html(
+        <FaixaDeSaude contagem={{ saudavel: 1, atencao: 1, em_risco: 1 }} />,
+      ),
     ).not.toMatch(/[—–]/);
-    expect(html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />)).not.toMatch(
-      /[—–]/,
-    );
+    expect(
+      html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />),
+    ).not.toMatch(/[—–]/);
   });
 });

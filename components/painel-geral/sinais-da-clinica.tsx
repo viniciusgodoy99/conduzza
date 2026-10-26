@@ -2,10 +2,10 @@ import { HeartPulse } from "lucide-react";
 import { useId } from "react";
 
 import {
+  definicaoDoSinal,
   detalheDoSinal,
   rotuloDoSinal,
   SAUDE_STATUS,
-  SINAL_STATUS,
   TEXTOS_DO_PAINEL,
 } from "@/components/painel-geral/painel-geral";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -27,7 +27,8 @@ import { cn } from "@/lib/utils";
 // leva, 26/10/2026; escolhas (1) e (8) do dono). O banco decide os sinais e
 // a saude (a leitura confere a coerencia); aqui, o desenho: na linha da
 // lista, a saude e cada sinal aceso, todos em 3 camadas (icone, rotulo e
-// cor; nunca so cor); no detalhe, o cartao "Saúde da clínica" com a regra
+// cor; nunca so cor; o teto da IA atingido com o icone e a cor do cartao de gasto); no
+// detalhe, o cartao "Saúde da clínica" com a regra
 // escrita e, em cada sinal, o que o banco contou (desde quando, quantos,
 // quanto do teto). Sem estado nem evento: serve a lista (client) e o
 // detalhe (servidor).
@@ -52,7 +53,7 @@ export function ListaDeSinais({
         <li key={sinal.chave}>
           <StatusChip
             size="sm"
-            definition={SINAL_STATUS[sinal.chave]}
+            definition={definicaoDoSinal(sinal)}
             label={rotuloDoSinal(sinal)}
           />
         </li>
@@ -126,7 +127,7 @@ export function SaudeDaClinicaCartao({
                 >
                   <StatusChip
                     size="sm"
-                    definition={SINAL_STATUS[sinal.chave]}
+                    definition={definicaoDoSinal(sinal)}
                     label={rotuloDoSinal(sinal)}
                   />
                   {detalhe ? (

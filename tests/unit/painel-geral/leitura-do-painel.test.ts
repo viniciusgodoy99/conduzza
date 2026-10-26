@@ -1007,6 +1007,75 @@ function equipeDoBanco(campos: Record<string, unknown> = {}) {
   };
 }
 
+describe("terceira leva: a clínica nova sem acesso (decisão do dono de 26/10/2026, migration 20261026120000)", () => {
+  const AINDA_SEM_ACESSO = {
+    chave: "ainda_sem_acesso",
+    nivel: "atencao",
+    quantidade: null,
+    desde: "2026-10-20T13:05:00+00:00",
+  };
+  const SEM_USO = {
+    chave: "sem_uso",
+    nivel: "em_risco",
+    quantidade: null,
+    desde: null,
+  };
+
+  /** A clinica sem uso em que ninguem entrou, com os sinais e a saude. */
+  function semAcesso(campos: Record<string, unknown>) {
+    return clinicaDoBanco({ em_uso: false, ultimo_acesso: null, ...campos });
+  }
+
+  function lido(clinica: Record<string, unknown>) {
+    return lerPainelDoBanco(painelDoBanco({ clinicas: [clinica] })).clinicas[0];
+  }
+
+  it("a clínica nova sem acesso chega em Atenção, com Ainda sem acesso desde a criação", () => {
+    const clinica = lido(
+      semAcesso({ saude: "atencao", sinais: [AINDA_SEM_ACESSO] }),
+    );
+    expect(clinica?.emUso).toBe(false);
+    expect(clinica?.saude).toBe("atencao");
+    expect(clinica?.sinais).toEqual([
+      {
+        chave: "ainda_sem_acesso",
+        nivel: "atencao",
+        quantidade: null,
+        desde: "2026-10-20T13:05:00+00:00",
+      },
+    ]);
+  });
+
+  it("antes da migration, a mesma clínica chega com Sem uso há 30 dias, em risco: a leitura aceita os dois jeitos", () => {
+    const clinica = lido(semAcesso({ saude: "em_risco", sinais: [SEM_USO] }));
+    expect(clinica?.saude).toBe("em_risco");
+    expect(clinica?.sinais.map((sinal) => sinal.chave)).toEqual(["sem_uso"]);
+  });
+
+  it("incoerente: lança, nunca uma saúde ou um sinal que não conferiu", () => {
+    const quebradas: Record<string, unknown>[] = [
+      // os dois juntos
+      semAcesso({ saude: "em_risco", sinais: [SEM_USO, AINDA_SEM_ACESSO] }),
+      // em uso com Ainda sem acesso
+      clinicaDoBanco({ saude: "atencao", sinais: [AINDA_SEM_ACESSO] }),
+      // Ainda sem acesso com o nivel de risco
+      semAcesso({
+        saude: "em_risco",
+        sinais: [{ ...AINDA_SEM_ACESSO, nivel: "em_risco" }],
+      }),
+      // a saude de risco so com Ainda sem acesso
+      semAcesso({ saude: "em_risco", sinais: [AINDA_SEM_ACESSO] }),
+      // sem uso sem nenhum dos dois
+      semAcesso({ saude: "saudavel", sinais: [] }),
+    ];
+    for (const clinica of quebradas) {
+      expect(() =>
+        lerPainelDoBanco(painelDoBanco({ clinicas: [clinica] })),
+      ).toThrow();
+    }
+  });
+});
+
 describe("lerEquipeDoBanco (equipe_da_clinica_no_painel)", () => {
   it("a equipe e os Implementadores, numa lista separada (P18-5)", () => {
     expect(lerEquipeDoBanco(equipeDoBanco())).toEqual({

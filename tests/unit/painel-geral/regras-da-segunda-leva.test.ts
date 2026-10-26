@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   autoria,
+  definicaoDoSinal,
   descreverTendencia,
   descricaoDoEvento,
   descricoesDoHistorico,
@@ -14,6 +15,7 @@ import {
   filtrarClinicas,
   filtrosAtivos,
   FILTROS_PADRAO,
+  GASTO_STATUS,
   lerFiltrosDoPainel,
   lerOrdemDaLista,
   MOTIVO_PADRAO_DO_AGENTE,
@@ -26,6 +28,8 @@ import {
   proximaOrdem,
   rotuloDoSinal,
   semUsoDeIa,
+  SINAL_STATUS,
+  TETO_DE_IA_ATINGIDO_STATUS,
   textoDaImplantacao,
   textoDasChamadas,
   TEXTOS_DO_PAINEL,
@@ -296,6 +300,57 @@ describe("sinais de alerta: o rótulo da linha e o que o banco contou", () => {
     expect(
       detalheDoSinal(sinal("perto_do_teto_da_ia", { quantidade: 120 }), FUSO),
     ).toContain("O agente para de responder");
+  });
+});
+
+describe("terceira leva (decisões do dono de 26/10/2026): a clínica nova sem acesso e o teto atingido", () => {
+  it("Ainda sem acesso: o rótulo e, no detalhe, a criação e o dia em que a clínica passa para Em risco", () => {
+    expect(rotuloDoSinal(sinal("ainda_sem_acesso"))).toBe("Ainda sem acesso");
+    expect(definicaoDoSinal(sinal("ainda_sem_acesso"))).toBe(
+      SINAL_STATUS.ainda_sem_acesso,
+    );
+    // 13:05 UTC = 10:05 em Fortaleza; 30 dias depois, 19/11/2026
+    expect(
+      detalheDoSinal(
+        sinal("ainda_sem_acesso", { desde: "2026-10-20T13:05:00.000Z" }),
+        FUSO,
+      ),
+    ).toBe(
+      "Ninguém da equipe entrou desde a criação, em 20/10/2026. Se ninguém entrar até 19/11/2026, a clínica passa para Em risco.",
+    );
+    // 02:30 UTC ainda e o dia anterior em Fortaleza (23:30): o dia e o da
+    // clinica, nas duas datas
+    expect(
+      detalheDoSinal(
+        sinal("ainda_sem_acesso", { desde: "2026-10-21T02:30:00.000Z" }),
+        FUSO,
+      ),
+    ).toBe(
+      "Ninguém da equipe entrou desde a criação, em 20/10/2026. Se ninguém entrar até 19/11/2026, a clínica passa para Em risco.",
+    );
+    expect(detalheDoSinal(sinal("ainda_sem_acesso"), FUSO)).toBe(
+      "Ninguém da equipe entrou ainda.",
+    );
+  });
+
+  it("Teto de IA atingido a partir de 100%: o rótulo e a cara do Teto atingido do cartão de gasto", () => {
+    const perto = sinal("perto_do_teto_da_ia", { quantidade: 99 });
+    expect(rotuloDoSinal(perto)).toBe("Perto do teto de IA");
+    expect(definicaoDoSinal(perto)).toBe(SINAL_STATUS.perto_do_teto_da_ia);
+    for (const quantidade of [100, 250]) {
+      const atingido = sinal("perto_do_teto_da_ia", { quantidade });
+      expect(rotuloDoSinal(atingido)).toBe("Teto de IA atingido");
+      expect(definicaoDoSinal(atingido)).toBe(TETO_DE_IA_ATINGIDO_STATUS);
+    }
+    expect(TETO_DE_IA_ATINGIDO_STATUS).toEqual({
+      label: "Teto de IA atingido",
+      tone: GASTO_STATUS.atingido.tone,
+      icon: GASTO_STATUS.atingido.icon,
+    });
+    // Os outros sinais nao mudam de cara com a quantidade.
+    expect(
+      definicaoDoSinal(sinal("falhas_de_envio", { quantidade: 500 })),
+    ).toBe(SINAL_STATUS.falhas_de_envio);
   });
 });
 

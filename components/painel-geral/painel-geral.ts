@@ -14,6 +14,7 @@ import {
   PhoneOff,
   RadioTower,
   Siren,
+  Sprout,
   Watch,
 } from "lucide-react";
 import { z } from "zod";
@@ -259,6 +260,13 @@ export const SINAL_STATUS: Record<ChaveDoSinal, StatusDefinition> = {
     icon: OctagonPause,
   },
   sem_uso: { label: "Sem uso há 30 dias", tone: "warning", icon: Watch },
+  // Terceira leva (decisao do dono de 26/10/2026): a clinica com menos de
+  // 30 dias em que ninguem entrou fica em Atencao, nao Em risco.
+  ainda_sem_acesso: {
+    label: "Ainda sem acesso",
+    tone: "warning",
+    icon: Sprout,
+  },
   whatsapp_desconectado: {
     label: "WhatsApp desconectado",
     tone: WHATSAPP_CONNECTION_STATUS.desconectado.tone,
@@ -286,6 +294,44 @@ export const SINAL_STATUS: Record<ChaveDoSinal, StatusDefinition> = {
   },
 };
 
+/**
+ * Os 30 dias da clinica nova: criada ha menos que isso e sem acesso, e
+ * ainda_sem_acesso; depois, sem_uso (o banco conta 30 vezes 24 horas a
+ * partir da criacao, interval '30 days' em UTC).
+ */
+const TRINTA_DIAS_EM_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * O teto da IA atingido (100% ou mais nas ultimas 24 horas): o mesmo sinal
+ * do banco (perto_do_teto_da_ia, nivel Atencao) com rotulo proprio, porque
+ * o agente para de responder (decisao do dono de 26/10/2026, terceira
+ * leva). O icone e a cor sao os do "Teto atingido" do cartao de gasto
+ * (GASTO_STATUS.atingido, a pendencia da tabela C18): o mesmo estado com a
+ * mesma cara na lista e no detalhe.
+ */
+export const TETO_DE_IA_ATINGIDO_STATUS: StatusDefinition = {
+  label: "Teto de IA atingido",
+  tone: GASTO_STATUS.atingido.tone,
+  icon: GASTO_STATUS.atingido.icon,
+};
+
+function tetoAtingido(
+  sinal: Pick<SinalNoPainel, "chave" | "quantidade">,
+): boolean {
+  return (
+    sinal.chave === "perto_do_teto_da_ia" && (sinal.quantidade ?? 0) >= 100
+  );
+}
+
+/** O icone, a cor e o rotulo de base do sinal (o teto atingido a parte). */
+export function definicaoDoSinal(
+  sinal: Pick<SinalNoPainel, "chave" | "quantidade">,
+): StatusDefinition {
+  return tetoAtingido(sinal)
+    ? TETO_DE_IA_ATINGIDO_STATUS
+    : SINAL_STATUS[sinal.chave];
+}
+
 /** O rotulo do sinal na linha, com a contagem quando ajuda. */
 export function rotuloDoSinal(
   sinal: Pick<SinalNoPainel, "chave" | "quantidade">,
@@ -301,7 +347,7 @@ export function rotuloDoSinal(
         ? `${contagemNoPainel(quantidade)} falhas de envio`
         : "1 falha de envio";
     default:
-      return SINAL_STATUS[sinal.chave].label;
+      return definicaoDoSinal(sinal).label;
   }
 }
 
@@ -323,6 +369,17 @@ export function detalheDoSinal(
       return quando
         ? `Último acesso da equipe em ${quando}.`
         : "Ninguém da equipe entrou ainda.";
+    case "ainda_sem_acesso": {
+      if (!sinal.desde) {
+        return "Ninguém da equipe entrou ainda.";
+      }
+      const criada = dataNaClinica(sinal.desde, fuso);
+      const limite = dataNaClinica(
+        new Date(Date.parse(sinal.desde) + TRINTA_DIAS_EM_MS).toISOString(),
+        fuso,
+      );
+      return `Ninguém da equipe entrou desde a criação, em ${criada}. Se ninguém entrar até ${limite}, a clínica passa para Em risco.`;
+    }
     case "whatsapp_desconectado": {
       const numeros =
         quantidade === 1

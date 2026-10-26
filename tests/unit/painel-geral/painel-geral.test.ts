@@ -13,6 +13,7 @@ import {
   PhoneOff,
   RadioTower,
   Siren,
+  Sprout,
   TriangleAlert,
   Watch,
   WifiOff,
@@ -81,6 +82,7 @@ import {
   SINAL_STATUS,
   SITUACAO_DA_CONTA_STATUS,
   situacaoDaConta,
+  TETO_DE_IA_ATINGIDO_STATUS,
   tetoDaIaSchema,
   textoDosNumeros,
   TEXTOS_DO_PAINEL,
@@ -179,7 +181,12 @@ function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
     sinais: [],
     implantacao: implantacao(),
     tendencia: {
-      leads: { atual: 14, anterior: 10, variacaoPercentual: 40, direcao: "subindo" },
+      leads: {
+        atual: 14,
+        anterior: 10,
+        variacaoPercentual: 40,
+        direcao: "subindo",
+      },
       conversas: {
         atual: 40,
         anterior: 41,
@@ -253,6 +260,8 @@ const MAPAS_DO_PAINEL = {
   SINAL_STATUS,
   SAUDE_STATUS,
   PASSO_STATUS,
+  // Terceira leva (26/10/2026): a variante do sinal do teto a partir de 100%
+  TETO_DE_IA_ATINGIDO: { atingido: TETO_DE_IA_ATINGIDO_STATUS },
 };
 
 const DO_PAINEL: StatusDefinition[] = Object.values(MAPAS_DO_PAINEL).flatMap(
@@ -375,6 +384,11 @@ describe("status do painel em 3 camadas", () => {
         icon: OctagonPause,
       },
       sem_uso: { label: "Sem uso há 30 dias", tone: "warning", icon: Watch },
+      ainda_sem_acesso: {
+        label: "Ainda sem acesso",
+        tone: "warning",
+        icon: Sprout,
+      },
       whatsapp_desconectado: {
         label: "WhatsApp desconectado",
         tone: "alert",
@@ -409,6 +423,20 @@ describe("status do painel em 3 camadas", () => {
       feito: { label: "Feito", tone: "success", icon: CircleCheck },
       falta: { label: "Falta", tone: "neutral", icon: CircleDashed },
     });
+  });
+
+  it("terceira leva: Sprout é só do Ainda sem acesso; o Teto de IA atingido tem a cara do Teto atingido do cartão de gasto", () => {
+    const todos = [...MAPAS_DO_PRODUTO, ...DO_PAINEL];
+    expect(todos.filter((definicao) => definicao.icon === Sprout)).toEqual([
+      SINAL_STATUS.ainda_sem_acesso,
+    ]);
+    expect(TETO_DE_IA_ATINGIDO_STATUS).toEqual({
+      label: "Teto de IA atingido",
+      tone: "warning",
+      icon: Hourglass,
+    });
+    expect(TETO_DE_IA_ATINGIDO_STATUS.icon).toBe(GASTO_STATUS.atingido.icon);
+    expect(TETO_DE_IA_ATINGIDO_STATUS.tone).toBe(GASTO_STATUS.atingido.tone);
   });
 
   it("segunda leva: Siren (Em risco) e PhoneOff (Sem número de WhatsApp) têm um dono só no produto", () => {
@@ -552,7 +580,7 @@ describe("formatos", () => {
     expect(haQuantoTempo("2026-10-26T15:00:05.000Z", fuso, agora)).toBe("Hoje");
   });
 
-  it("a borda dos 30 dias: o login que o banco ainda conta como em uso nunca aparece como \"Há 1 mês\" (revisão de 26/10/2026)", () => {
+  it('a borda dos 30 dias: o login que o banco ainda conta como em uso nunca aparece como "Há 1 mês" (revisão de 26/10/2026)', () => {
     // Login em 25/09/2026 as 23:30 em Fortaleza, leitura em 25/10/2026 as
     // 08:00: 704,5 horas (menos de 30 vezes 24), em uso para o banco; 30
     // dias de calendario.
@@ -591,7 +619,11 @@ describe("formatos", () => {
       }),
     ).toBe("Vinicius Rodrigues (equipe Conduzza)");
     expect(
-      quemEntrou({ ...acesso, nome: "Vinicius Rodrigues", equipeConduzza: true }),
+      quemEntrou({
+        ...acesso,
+        nome: "Vinicius Rodrigues",
+        equipeConduzza: true,
+      }),
     ).toBe("Vinicius Rodrigues (Administrador, equipe Conduzza)");
     expect(
       quemEntrou({

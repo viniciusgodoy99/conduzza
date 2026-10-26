@@ -170,10 +170,18 @@ export const SAUDES_DO_BANCO: readonly SaudeNoPainel[] = [
   "em_risco",
 ];
 
-/** Os sinais de alerta, na ordem em que o banco os manda. */
+/**
+ * Os sinais de alerta, na ordem em que o banco os manda. sem_uso e
+ * ainda_sem_acesso ocupam o mesmo lugar e nunca vem juntos: a clinica sem
+ * uso criada ha menos de 30 dias e ainda_sem_acesso (Atencao); com 30 dias
+ * ou mais, sem_uso (Em risco). Decisao do dono de 26/10/2026, terceira leva
+ * (migration 20261026120000); antes dela, o banco manda sem_uso tambem para
+ * a clinica nova, e a leitura aceita os dois jeitos.
+ */
 export type ChaveDoSinal =
   | "conta_suspensa"
   | "sem_uso"
+  | "ainda_sem_acesso"
   | "whatsapp_desconectado"
   | "sem_numero_de_whatsapp"
   | "pedido_de_entrada_esperando"
@@ -182,13 +190,15 @@ export type ChaveDoSinal =
 
 /**
  * O nivel de cada sinal (o banco manda junto, e a leitura confere): os tres
- * de risco deixam a clinica Em risco; os outros, em Atencao.
+ * de risco deixam a clinica Em risco; os outros (ainda_sem_acesso
+ * inclusive), em Atencao.
  */
 export const NIVEL_DO_SINAL: Readonly<
   Record<ChaveDoSinal, "em_risco" | "atencao">
 > = {
   conta_suspensa: "em_risco",
   sem_uso: "em_risco",
+  ainda_sem_acesso: "atencao",
   whatsapp_desconectado: "em_risco",
   sem_numero_de_whatsapp: "atencao",
   pedido_de_entrada_esperando: "atencao",
@@ -209,7 +219,8 @@ export type SinalNoPainel = {
   quantidade: number | null;
   /**
    * conta_suspensa: quando suspendeu; sem_uso: o ultimo acesso (nulo:
-   * ninguem entrou); whatsapp_desconectado: a desconexao mais recente;
+   * ninguem entrou); ainda_sem_acesso: a criacao da clinica;
+   * whatsapp_desconectado: a desconexao mais recente;
    * pedido_de_entrada_esperando: o pedido mais antigo; falhas_de_envio: a
    * falha mais antiga dos 7 dias. Nulo nos outros (ou sem registro).
    */
@@ -793,16 +804,18 @@ function clinicaDoBanco(valor: unknown): ClinicaNoPainel {
   const sinais = lista(c.sinais).map(sinalDoBanco);
   const saude = saudeDoBanco(c.saude);
   const tendencia = objeto(c.tendencia);
-  // A saude e a dos sinais, cada sinal aparece uma vez, e os quatro sinais
-  // que dependem so da linha batem com ela (a conta suspensa, o uso e os
-  // numeros). Incoerente: o painel mostra o erro, nunca uma saude ou um
-  // sinal que nao conferiu.
+  // A saude e a dos sinais, cada sinal aparece uma vez, e os sinais que
+  // dependem so da linha batem com ela (a conta suspensa, o uso e os
+  // numeros): sem uso, exatamente um de sem_uso e ainda_sem_acesso.
+  // Incoerente: o painel mostra o erro, nunca uma saude ou um sinal que nao
+  // conferiu.
   const acesos = new Set(sinais.map((sinal) => sinal.chave));
   if (
     acesos.size !== sinais.length ||
     saude !== saudeDosSinais(sinais) ||
     acesos.has("conta_suspensa") !== (suspensao !== null) ||
-    acesos.has("sem_uso") !== !emUso ||
+    (acesos.has("sem_uso") && acesos.has("ainda_sem_acesso")) ||
+    (acesos.has("sem_uso") || acesos.has("ainda_sem_acesso")) !== !emUso ||
     acesos.has("whatsapp_desconectado") !==
       (numerosTotal > 0 && numerosConectados === 0) ||
     acesos.has("sem_numero_de_whatsapp") !== (numerosTotal === 0)
