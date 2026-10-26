@@ -12,18 +12,27 @@ import { modeloDoAgente } from "@/lib/integrations/llm/openai";
 import { fetchLiberacaoDaIa } from "@/lib/queries/ia-liberacao";
 import {
   fetchClinicaDoPainel,
+  fetchEquipeDaClinica,
   fetchRequisitosDaProducao,
   fetchTetosDaIa,
+  type EquipeNoPainel,
 } from "@/lib/queries/painel-geral";
 import { createClient } from "@/lib/supabase/server";
 
 // Detalhe de uma clinica no Painel geral (onda 1, decisao do dono de
-// 20/10/2026), so para a equipe Conduzza (a guarda e o layout da rota). Aqui
-// so se le; o desenho e o DetalheDaClinica (components/painel-geral).
+// 20/10/2026; desde 26/10/2026, o acompanhamento de cliente), so para a
+// equipe Conduzza (a guarda e o layout da rota). Aqui so se le; o desenho e
+// o DetalheDaClinica (components/painel-geral).
 //
-// A linha da clinica vem do painel (painel_geral_das_clinicas, obrigatoria:
+// A linha da clinica vem do painel (painel_cs_das_clinicas, obrigatoria:
 // sem ela, o estado de erro com "Tentar de novo"; fora do painel, o
-// not-found). As leituras do agente (a liberacao, os numeros ligados, os
+// not-found), com o relogio da leitura (o "Há N dias" do ultimo acesso
+// conta pelo mesmo relogio do "Em uso"). A equipe (desde 26/10/2026) vem
+// de equipe_da_clinica_no_painel, com os Implementadores numa lista
+// separada (P18-5); se falhar, so a secao Equipe mostra o erro. Nome,
+// e-mail, papel e ultimo acesso sao da equipe da clinica, nunca de
+// paciente: nada vai para a trilha de leitura de paciente. As leituras do
+// agente (a liberacao, os numeros ligados, os
 // telefones da equipe e a situacao) sao as mesmas da aba WhatsApp da Tela
 // 6, com a sessao: o super admin le pelas policies proprias, sem ser membro
 // da clinica. Cada uma que falha tira so o cartao que dependia dela. Nenhuma
@@ -97,15 +106,16 @@ export default async function DetalheDaClinicaNoPainelPage({
   }
 
   const supabase = await createClient();
-  const [clinica, dados, tetos, requisitos, forcados] = await Promise.all([
+  const [lida, equipe, dados, tetos, requisitos, forcados] = await Promise.all([
     ouErro(fetchClinicaDoPainel(supabase, clinicId)),
+    ouErro(fetchEquipeDaClinica(supabase, clinicId)),
     ouErro(fetchLiberacaoDaIa(supabase, clinicId)),
     ouErro(fetchTetosDaIa(supabase, clinicId)),
     ouErro(fetchRequisitosDaProducao(supabase, clinicId)),
     lerTelefonesForcados(supabase, clinicId),
   ]);
 
-  if (clinica === "erro") {
+  if (lida === "erro") {
     return (
       <div className="mx-auto grid w-full max-w-content content-start gap-4 p-4 md:p-6">
         <VoltarParaOPainel />
@@ -113,19 +123,24 @@ export default async function DetalheDaClinicaNoPainelPage({
       </div>
     );
   }
-  if (!clinica) {
+  if (!lida) {
     notFound();
   }
+
+  // A clinica esta no painel, mas a equipe veio nula (a clinica sumiu entre
+  // as duas leituras): a secao mostra o erro, nunca uma equipe vazia.
+  const equipeLida: EquipeNoPainel | "erro" = equipe === null ? "erro" : equipe;
 
   // So o ambiente (T1) vem daqui: a parte da clinica (agente habilitado e
   // conta ativa) sai da propria linha do painel (agenteAtendeNoAmbiente).
   return (
     <DetalheDaClinica
-      clinica={clinica}
+      clinica={lida.clinica}
+      equipe={equipeLida}
       dados={dados}
       tetos={tetos}
       ambienteDaIa={ambienteDaIaLigado()}
-      agoraMs={Date.now()}
+      agoraMs={Date.parse(lida.geradoEm)}
       requisitos={requisitos}
       publicoPublicado={publicoDosRequisitos(requisitos)}
       telefonesForcados={forcados}

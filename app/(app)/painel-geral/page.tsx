@@ -8,18 +8,20 @@ import { PageHeader } from "@/components/shared/page-header";
 import { fetchPainelGeral, type PainelGeral } from "@/lib/queries/painel-geral";
 import { createClient } from "@/lib/supabase/server";
 
-// Painel geral (onda 1, decisao do dono de 20/10/2026): todas as clinicas do
-// sistema, so para a equipe Conduzza (a guarda e o layout desta rota). Uma
-// leitura so (painel_geral_das_clinicas, SECURITY DEFINER e so do super
-// admin): os totais do topo e a lista, com busca e filtros no cliente. So
-// contagens, nenhum dado de paciente, entao nada vai para a trilha de
-// leitura de paciente. Erro de leitura vira o estado de erro com "Tentar de
-// novo", nunca uma lista vazia.
+// Painel geral (onda 1, decisao do dono de 20/10/2026; desde 26/10/2026, o
+// acompanhamento de cliente): todas as clinicas do sistema, so para a
+// equipe Conduzza (a guarda e o layout desta rota). Uma leitura so
+// (painel_cs_das_clinicas, SECURITY DEFINER e so do super admin): os
+// cartoes do topo e a lista, com busca e filtros no cliente. De paciente, so
+// contagens; nome e e-mail sao da equipe da clinica (dado de operacao),
+// entao nada vai para a trilha de leitura de paciente. Erro de leitura vira
+// o estado de erro com "Tentar de novo", nunca uma lista vazia.
 //
-// Onda 2 (decisao P8 do dono): o interruptor geral do agente mora no topo
-// desta lista (antes, na aba Agente de IA de Configuracoes). O estado vem do
-// banco pela sessao (ia_interruptor_ligado, so o booleano); leitura que
-// falhou vira o aviso do cartao, sem derrubar o painel.
+// Os cartoes do topo vem primeiro (o retrato das clinicas); o interruptor
+// geral do agente (onda 2, decisao P8) continua no topo da lista, logo
+// abaixo deles. O estado dele vem do banco pela sessao
+// (ia_interruptor_ligado, so o booleano); leitura que falhou vira o aviso
+// do cartao, sem derrubar o painel.
 
 /** O interruptor geral; nulo: a leitura falhou. Nunca lanca. */
 async function lerInterruptor(
@@ -48,17 +50,22 @@ export default async function PainelGeralPage() {
         description={TEXTOS_DO_PAINEL.descricao}
       />
       <AvisoCelular />
-      <InterruptorGeral ligado={interruptor} />
       {painel ? (
         <>
           <TotaisDoPainel totais={painel.totais} />
+          <InterruptorGeral ligado={interruptor} />
+          {/* "Hoje" e "Há N dias" pelo relogio da leitura, o mesmo do
+              "Em uso". */}
           <ListaDoPainel
             clinicas={painel.clinicas}
-            agoraIso={new Date().toISOString()}
+            agoraIso={painel.geradoEm}
           />
         </>
       ) : (
-        <ErroDoPainel />
+        <>
+          <InterruptorGeral ligado={interruptor} />
+          <ErroDoPainel />
+        </>
       )}
     </div>
   );

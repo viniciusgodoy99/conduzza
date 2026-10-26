@@ -6,10 +6,12 @@ import {
   CircleCheck,
   CircleDashed,
   CirclePause,
+  CircleSlash,
   FlaskConical,
   Hourglass,
   OctagonPause,
   RadioTower,
+  Watch,
 } from "lucide-react";
 import { z } from "zod";
 
@@ -20,23 +22,47 @@ import {
   ROTULO_DO_PUBLICO,
   type ModoDeOperacao,
 } from "@/lib/domain/agente/config";
-import { diaCivil, somarDias } from "@/lib/domain/horarios";
+import { diaCivil, diasEntre, somarDias } from "@/lib/domain/horarios";
+import { ROTULO_DO_PAPEL } from "@/lib/domain/permissions";
 import type {
   ClinicaNoPainel,
   EstadoDoAgente,
+  PessoaDaEquipe,
   RegistroDoRequisito,
   RequisitoConferido,
   RequisitosDaProducao,
   SituacaoDaConta,
+  SituacaoDoMembro,
+  UltimoAcessoNoPainel,
 } from "@/lib/queries/painel-geral";
 import { lerReais } from "@/lib/utils/moeda";
 
-// Regras do Painel geral (onda 1, decisao do dono de 20/10/2026). Modulo
-// puro, sem "use client": as telas, as Server Actions e os testes usam as
-// mesmas regras, e o que a tela desabilita e o mesmo que a acao recusa.
+// Regras do Painel geral (onda 1, decisao do dono de 20/10/2026; desde
+// 26/10/2026, o acompanhamento de cliente). Modulo puro, sem "use client":
+// as telas, as Server Actions e os testes usam as mesmas regras, e o que a
+// tela desabilita e o mesmo que a acao recusa.
 //
 // - So a equipe Conduzza (super admin) chega aqui: a guarda vive no layout
 //   da rota, em cada Server Action e nas RPCs do banco (42501).
+// - Acompanhamento de cliente (pedido do dono de 26/10/2026, "ele e para
+//   ser tipo uma visualizacao de CS"): quantas clinicas, quantas em uso
+//   (alguem da equipe da clinica entrou nos ultimos 30 dias, a resposta do
+//   dono), quem entrou por ultimo e quando, a equipe, o WhatsApp e o
+//   agente. A funcionalidade que a equipe Conduzza libera e o agente de IA
+//   ("Preciso poder liberar as funcionalidades de agente de IA ou nao para a
+//   clinica"): liberar e ligar em Teste, na propria linha da lista; a
+//   Producao continua so no detalhe, com o checklist.
+// - O ultimo acesso e a ULTIMA ATIVIDADE (decisao do dono de 26/10/2026,
+//   "Pela ultima atividade"): o maior entre o ultimo login e a renovacao da
+//   sessao, que acontece enquanto a pessoa usa o sistema. Quem continua
+//   conectado por semanas aparece em dia, e a tela diz isso. A equipe
+//   Conduzza com vinculo ativo conta como qualquer pessoa ativa (o desenho:
+//   "dos membros ATIVOS"; o dono confirmou em 26/10/2026); a tela a marca
+//   quando o ultimo acesso foi dela e diz quantas das ativas sao dela.
+// - Mudar o agente pelo painel manda junto o estado que a tela mostrava; o
+//   banco recusa (agente_mudou) se ele mudou desde que a pagina abriu (outra
+//   aba, outra pessoa), em vez de rebaixar a Producao ou passar por cima da
+//   escolha da clinica.
 // - Suspender a conta mantem os dados: a equipe da clinica ve "Conta
 //   suspensa" ao entrar, os envios automaticos e o agente param, as
 //   mensagens que chegam continuam guardadas, e reativar volta tudo como
@@ -49,8 +75,10 @@ import { lerReais } from "@/lib/utils/moeda";
 // - O interruptor geral (todas as clinicas) mora no topo da lista desde a
 //   onda 2 (P8).
 // - O gasto da IA (24 horas, a janela do teto, e o mes no fuso da clinica)
-//   aparece contra o teto diario, que a equipe Conduzza ajusta aqui.
-// - So contagens: nenhum dado de paciente na tela, na URL nem em log.
+//   aparece no detalhe contra o teto diario, que a equipe Conduzza ajusta
+//   la; na lista, so o total do mes no cartao do topo.
+// - De paciente, so contagens: nenhum dado de paciente na tela, na URL nem
+//   em log. Nome, e-mail, papel e ultimo acesso sao da equipe da clinica.
 
 // ---------------------------------------------------------------------------
 // Status em 3 camadas (icone, rotulo e cor), com icones que ja tem dono no
@@ -72,6 +100,17 @@ import { lerReais } from "@/lib/utils/moeda";
 // - gasto perto do teto: CircleAlert warning (atencao);
 // - teto atingido: Hourglass warning (pendencia: o agente espera o gasto
 //   mais antigo completar 24 horas), o mesmo par do "Ligado, mas parado".
+// Desde 26/10/2026 (acompanhamento de cliente), nenhum icone ganha dono
+// novo:
+// - em uso: CircleCheck success (ativo, feito);
+// - sem uso: Watch warning, o mesmo sentido e a mesma cor do "Esfriando"
+//   do lead e do "Sem cliques nos últimos 7 dias" (tempo demais sem
+//   atividade);
+// - agente na lista: os pares do agente da clinica com o rotulo da
+//   liberacao ("Não liberado", "Liberado (Teste)", "Liberado (Produção)");
+// - pessoa da equipe: ativa CircleCheck success, pendente Hourglass warning
+//   (pendencia: esperando liberacao) e inativa CircleSlash neutral, o mesmo
+//   do "Sem acesso" da lista da equipe em Configuracoes.
 // ---------------------------------------------------------------------------
 
 export const SITUACAO_DA_CONTA_STATUS: Record<
@@ -90,6 +129,41 @@ export const AGENTE_DA_CLINICA_STATUS: Record<
   teste: { label: "Teste", tone: "info", icon: FlaskConical },
   producao: { label: "Produção", tone: "success", icon: RadioTower },
 };
+
+/**
+ * O agente na lista, como a equipe Conduzza libera: o mesmo icone e a mesma
+ * cor do agente da clinica (AGENTE_DA_CLINICA_STATUS), com o rotulo da
+ * liberacao.
+ */
+export const ROTULO_DA_LIBERACAO: Readonly<Record<EstadoDoAgente, string>> = {
+  desligado: "Não liberado",
+  teste: "Liberado (Teste)",
+  producao: "Liberado (Produção)",
+};
+
+/** O uso da clinica: alguem da equipe usou o sistema nos ultimos 30 dias, ou nao. */
+export type UsoDaClinica = "em_uso" | "sem_uso";
+
+export const USO_DA_CLINICA_STATUS: Record<UsoDaClinica, StatusDefinition> = {
+  em_uso: { label: "Em uso", tone: "success", icon: CircleCheck },
+  sem_uso: { label: "Sem uso", tone: "warning", icon: Watch },
+};
+
+export const SITUACAO_DO_MEMBRO_STATUS: Record<
+  SituacaoDoMembro,
+  StatusDefinition
+> = {
+  ativo: { label: "Ativa", tone: "success", icon: CircleCheck },
+  pendente: { label: "Pendente", tone: "warning", icon: Hourglass },
+  inativo: { label: "Inativa", tone: "neutral", icon: CircleSlash },
+};
+
+/** Pelo que o banco disse na leitura (em_uso), nunca pelo relogio da tela. */
+export function usoDaClinica(
+  clinica: Pick<ClinicaNoPainel, "emUso">,
+): UsoDaClinica {
+  return clinica.emUso ? "em_uso" : "sem_uso";
+}
 
 /** Um requisito da producao na lista do cartao. */
 export type EstadoDoRequisito = "cumprido" | "falta" | "revogado";
@@ -133,11 +207,21 @@ export function situacaoDaConta(clinica: ClinicaNoPainel): SituacaoDaConta {
 // Textos (linguagem de recepcao, sem travessao)
 // ---------------------------------------------------------------------------
 
+/**
+ * O que o ultimo acesso mede (decisao do dono de 26/10/2026, "Pela ultima
+ * atividade"): o maior entre o ultimo login e a renovacao da sessao, que o
+ * sistema faz enquanto a pessoa usa. A tela diz isso na descricao do
+ * painel e na equipe do detalhe. Os limites (folga de ate cerca de 1 hora;
+ * quem clica em Sair volta ao login) ficam no docs/04, secao 27.
+ */
+const ULTIMO_ACESSO_E_ATIVIDADE =
+  "O último acesso é a última atividade da pessoa no sistema: quem continua conectado e usando aparece em dia, sem precisar entrar de novo.";
+
 export const TEXTOS_DO_PAINEL = {
   titulo: "Painel geral",
   eyebrow: "Equipe Conduzza",
-  descricao:
-    "Todas as clínicas do sistema: conta, agente de IA, números de WhatsApp, movimento dos últimos 30 dias e gasto de IA. Só contagens, nenhum dado de paciente.",
+  descricao: `Como cada clínica usa o sistema: quem da equipe usou por último, quantas pessoas tem, o WhatsApp e o agente de IA. De paciente, só contagens. ${ULTIMO_ACESSO_E_ATIVIDADE}`,
+  ultimoAcessoEAtividade: ULTIMO_ACESSO_E_ATIVIDADE,
   soEquipeConduzza: "Somente a equipe Conduzza usa o painel geral.",
   sessaoExpirada: "Sessão expirada. Entre de novo.",
   dadosInvalidos: "Dados inválidos. Recarregue a página e tente de novo.",
@@ -153,6 +237,52 @@ export const TEXTOS_DO_PAINEL = {
     "Ajuste a busca ou os filtros, ou limpe para ver todas as clínicas.",
   clinicaNaoEncontrada:
     "Esta clínica não está no painel. Ela pode ter sido removida. Recarregue a página.",
+  // Acompanhamento de cliente (26/10/2026): o uso e o ultimo acesso
+  buscaPlaceholder: "Clínica, nome ou e-mail da equipe",
+  ninguemEntrou: "Ninguém entrou ainda",
+  nuncaEntrou: "Nunca entrou",
+  semNomeNoPerfil: "Sem nome no perfil",
+  rodapeDoEmUso: "Alguém da equipe usou o sistema nos últimos 30 dias",
+  rodapeDoSemUso: "Ninguém da equipe usou o sistema nos últimos 30 dias",
+  rodapeDasSuspensas: "Também contadas em Em uso ou Sem uso",
+  rodapeDoAgenteLiberado: "Em Teste ou em Produção",
+  // O agente na linha da lista: liberar (Teste) e retirar (Desligado)
+  liberarAgente: "Liberar agente",
+  retirarAgente: "Retirar agente",
+  agenteLiberadoNaClinica: (nome: string) =>
+    `Agente de IA liberado na ${nome}, em Teste.`,
+  agenteRetiradoDaClinica: (nome: string) =>
+    `Agente de IA retirado da ${nome}.`,
+  // Depois de liberar, o agente so responde com os numeros e os telefones
+  // ligados, o que se faz no detalhe da clinica.
+  efeitoDaLiberacaoNoDetalhe:
+    "Ele só responde depois que os números e os telefones da equipe forem ligados, no detalhe da clínica.",
+  efeitoDaRetirada: [
+    "O agente para de atender nesta clínica, em todos os números.",
+    "As conversas que estavam com ele voltam para a equipe da clínica, sem nenhuma mensagem ao paciente.",
+  ],
+  efeitoDaRetiradaDaProducao:
+    "A clínica sai da produção. Para voltar, o agente é liberado em Teste de novo, e a produção liga pelo detalhe da clínica, com os requisitos cumpridos.",
+  // A equipe no detalhe (P18-5: os Implementadores numa lista separada)
+  equipeTitulo: "Equipe da clínica",
+  equipeLista: "Equipe",
+  equipeVazia: "Ninguém na equipe desta clínica.",
+  equipeConduzzaMarca: "Equipe Conduzza",
+  equipeConduzzaExplicacao:
+    "Quem é da equipe Conduzza aparece marcado. Com acesso ativo, conta no uso e nas contagens da clínica como qualquer pessoa da equipe.",
+  // O marcador do ultimo acesso quando foi a equipe Conduzza (na lista e no
+  // detalhe) e a linha da coluna Equipe.
+  daEquipeConduzza: "equipe Conduzza",
+  incluiEquipeConduzza: (quantas: number) =>
+    quantas === 1
+      ? "Inclui 1 da equipe Conduzza"
+      : `Inclui ${quantas.toLocaleString("pt-BR")} da equipe Conduzza`,
+  implementadoresTitulo: "Implementadores",
+  implementadoresDescricao:
+    "Assistentes técnicos que configuram a clínica, marcados pelo administrador dela. Veem e fazem tudo o que o administrador faz, menos mexer em administradores e exportar os leads.",
+  nenhumImplementador: "Nenhum implementador nesta clínica.",
+  equipeSemLeitura:
+    "Não foi possível carregar a equipe desta clínica. Recarregue a página.",
   // Conta
   motivoCurto: "Escreva o motivo com pelo menos 3 letras.",
   motivoLongo: "O motivo tem no máximo 300 caracteres.",
@@ -214,6 +344,11 @@ export const TEXTOS_DO_PAINEL = {
   agenteDeTesteRecusado:
     "Esta clínica é de teste automático e não muda pelo painel.",
   naoMudouOAgente: "Não foi possível mudar o agente. Tente de novo.",
+  // A tela mostrava um estado que nao e mais o de agora (outra aba, outra
+  // pessoa da equipe Conduzza, a revogacao de um requisito): o banco recusa
+  // (P0001 agente_mudou) e nada muda.
+  agenteMudou:
+    "O agente desta clínica mudou desde que a página foi aberta. Recarregue a página e confira antes de mudar de novo.",
   // O banco recusa ligar em teste a clinica suspensa (P0001
   // clinica_suspensa); desligar continua livre.
   suspensaNaoLigaOAgente:
@@ -659,30 +794,147 @@ export function contagemNoPainel(valor: number): string {
   return valor.toLocaleString("pt-BR");
 }
 
+/**
+ * Ha quanto tempo, pelos dias do calendario da clinica (CLAUDE.md 3.6):
+ * "Hoje", "Ontem", "Há 5 dias" (ate 30), "Há 1 mês", "Há 3 meses" (a
+ * partir de 31, de 30 em 30 dias) e "Há 1 ano", "Há 2 anos" (de 365 em
+ * 365). O dia e a hora exatos vao ao lado (dataEHoraNaClinica).
+ *
+ * Ate 30 em dias, nunca em meses: o "Em uso" do banco conta 30 vezes 24
+ * horas, e um acesso de 30 dias de calendario atras (25/09 as 23:30 lido em
+ * 25/10 as 08:00) ainda esta em uso; "Há 1 mês" nessa linha desmentia o
+ * "usou o sistema nos últimos 30 dias" (revisao de 26/10/2026).
+ */
+export function haQuantoTempo(
+  instante: string,
+  fuso: string,
+  agora: Date,
+): string {
+  const dias = diasEntre(
+    diaCivil(fuso, new Date(instante)),
+    diaCivil(fuso, agora),
+  );
+  if (dias <= 0) {
+    return "Hoje";
+  }
+  if (dias === 1) {
+    return "Ontem";
+  }
+  if (dias <= 30) {
+    return `Há ${dias} dias`;
+  }
+  if (dias < 365) {
+    const meses = Math.floor(dias / 30);
+    return meses === 1 ? "Há 1 mês" : `Há ${meses} meses`;
+  }
+  const anos = Math.floor(dias / 365);
+  return anos === 1 ? "Há 1 ano" : `Há ${anos} anos`;
+}
+
+/**
+ * Como a pessoa aparece: o nome do perfil; sem nome, o e-mail; sem os
+ * dois, "Sem nome no perfil".
+ */
+export function nomeDaPessoa(pessoa: {
+  nome: string | null;
+  email: string | null;
+}): string {
+  return pessoa.nome ?? pessoa.email ?? TEXTOS_DO_PAINEL.semNomeNoPerfil;
+}
+
+/**
+ * Quem entrou por ultimo, na linha da lista: o nome e, quando foi a equipe
+ * Conduzza, a marca ("Vinicius Rodrigues (equipe Conduzza)"), para o uso
+ * dela nao passar pelo da clinica.
+ */
+export function quemEntrouNaLista(acesso: UltimoAcessoNoPainel): string {
+  const nome = nomeDaPessoa(acesso);
+  return acesso.equipeConduzza
+    ? `${nome} (${TEXTOS_DO_PAINEL.daEquipeConduzza})`
+    : nome;
+}
+
+/**
+ * Quem entrou por ultimo, para o detalhe: o nome e o papel na clinica
+ * ("Ana Souza (Recepção)"; o Implementador pelo rotulo dele), com a marca
+ * da equipe Conduzza quando foi ela ("Vinicius Rodrigues (Administrador,
+ * equipe Conduzza)").
+ */
+export function quemEntrou(acesso: UltimoAcessoNoPainel): string {
+  const nome = nomeDaPessoa(acesso);
+  const papel = acesso.implementador
+    ? ROTULO_DO_PAPEL.implementador
+    : acesso.papel
+      ? ROTULO_DO_PAPEL[acesso.papel]
+      : null;
+  const marcas = [
+    ...(papel ? [papel] : []),
+    ...(acesso.equipeConduzza ? [TEXTOS_DO_PAINEL.daEquipeConduzza] : []),
+  ];
+  return marcas.length > 0 ? `${nome} (${marcas.join(", ")})` : nome;
+}
+
+/** O papel da pessoa como a equipe da clinica ve ("Recepção"). */
+export function papelDaPessoa(pessoa: Pick<PessoaDaEquipe, "papel">): string {
+  return ROTULO_DO_PAPEL[pessoa.papel];
+}
+
+/**
+ * A coluna Equipe da lista, em partes (o numero em mono, a palavra no
+ * texto, como os leads e as conversas): "3 ativas" (vinculos ativos) e "2
+ * pendentes" (pedidos de entrada); sem nenhuma, so a palavra ("Nenhuma
+ * ativa"). Juntas, numero e palavra separados por espaco.
+ */
+export function contagemDaEquipe(
+  valor: number,
+  tipo: "ativas" | "pendentes",
+): { numero: string | null; palavra: string } {
+  const singular = tipo === "ativas" ? "ativa" : "pendente";
+  if (valor === 0) {
+    return { numero: null, palavra: `Nenhuma ${singular}` };
+  }
+  return {
+    numero: contagemNoPainel(valor),
+    palavra: valor === 1 ? singular : tipo,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Busca e filtros (na URL: o link leva o mesmo recorte)
 // ---------------------------------------------------------------------------
 
-export type FiltroDaSituacao = "todas" | SituacaoDaConta;
-export type FiltroDoAgente = "todos" | EstadoDoAgente;
+export type FiltroDoUso = "todas" | UsoDaClinica;
+export type FiltroDaConta = "todas" | SituacaoDaConta;
+
+/** O agente liberado (Teste ou Producao) ou nao (Desligado). */
+export type LiberacaoDoAgente = "liberado" | "nao_liberado";
+export type FiltroDoAgente = "todos" | LiberacaoDoAgente;
 
 export type FiltrosDoPainel = {
   busca: string;
-  situacao: FiltroDaSituacao;
+  uso: FiltroDoUso;
+  conta: FiltroDaConta;
   agente: FiltroDoAgente;
 };
 
 export const FILTROS_PADRAO: FiltrosDoPainel = {
   busca: "",
-  situacao: "todas",
+  uso: "todas",
+  conta: "todas",
   agente: "todos",
 };
 
-export const OPCOES_DA_SITUACAO: readonly {
-  value: FiltroDaSituacao;
+export const OPCOES_DO_USO: readonly { value: FiltroDoUso; label: string }[] = [
+  { value: "todas", label: "Todas" },
+  { value: "em_uso", label: "Em uso" },
+  { value: "sem_uso", label: "Sem uso" },
+];
+
+export const OPCOES_DA_CONTA: readonly {
+  value: FiltroDaConta;
   label: string;
 }[] = [
-  { value: "todas", label: "Todas as contas" },
+  { value: "todas", label: "Todas" },
   { value: "ativa", label: "Ativas" },
   { value: "suspensa", label: "Suspensas" },
 ];
@@ -691,26 +943,28 @@ export const OPCOES_DO_AGENTE: readonly {
   value: FiltroDoAgente;
   label: string;
 }[] = [
-  { value: "todos", label: "Todos os agentes" },
-  { value: "desligado", label: "Agente desligado" },
-  { value: "teste", label: "Agente em teste" },
-  { value: "producao", label: "Agente em produção" },
+  { value: "todos", label: "Todos" },
+  { value: "liberado", label: "Liberado" },
+  { value: "nao_liberado", label: "Não liberado" },
 ];
+
+export function liberacaoDoAgente(estado: EstadoDoAgente): LiberacaoDoAgente {
+  return estado === "desligado" ? "nao_liberado" : "liberado";
+}
 
 /** Os filtros da URL; valor desconhecido vira o padrao. */
 export function lerFiltrosDoPainel(params: {
   get(nome: string): string | null;
 }): FiltrosDoPainel {
-  const situacao = params.get("situacao");
+  const uso = params.get("uso");
+  const conta = params.get("conta");
   const agente = params.get("agente");
   return {
     busca: (params.get("busca") ?? "").slice(0, 80),
-    situacao:
-      situacao === "ativa" || situacao === "suspensa" ? situacao : "todas",
+    uso: uso === "em_uso" || uso === "sem_uso" ? uso : "todas",
+    conta: conta === "ativa" || conta === "suspensa" ? conta : "todas",
     agente:
-      agente === "desligado" || agente === "teste" || agente === "producao"
-        ? agente
-        : "todos",
+      agente === "liberado" || agente === "nao_liberado" ? agente : "todos",
   };
 }
 
@@ -720,9 +974,31 @@ export function normalizarBusca(texto: string): string {
 }
 
 /**
- * O recorte da lista: a busca olha o nome da clinica e o nome e o e-mail dos
- * administradores (dado da equipe); a situacao e o agente, o valor exato.
- * Ordem: pelo nome, como a recepcao procura.
+ * A ordem da lista (a mesma do banco): o ultimo acesso mais recente
+ * primeiro, quem nunca entrou no fim; empate, pelo nome e pelo id.
+ */
+export function ordemDoPainel(a: ClinicaNoPainel, b: ClinicaNoPainel): number {
+  const emA = a.ultimoAcesso ? Date.parse(a.ultimoAcesso.em) : null;
+  const emB = b.ultimoAcesso ? Date.parse(b.ultimoAcesso.em) : null;
+  if (emA !== emB) {
+    if (emA === null) {
+      return 1;
+    }
+    if (emB === null) {
+      return -1;
+    }
+    return emB - emA;
+  }
+  return (
+    a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+/**
+ * O recorte da lista: a busca olha o nome da clinica e o nome e o e-mail de
+ * qualquer pessoa da equipe dela (dado da equipe); o uso, a conta e o agente
+ * pelo valor exato. Ordem: ordemDoPainel.
  */
 export function filtrarClinicas(
   clinicas: readonly ClinicaNoPainel[],
@@ -731,15 +1007,18 @@ export function filtrarClinicas(
   const termo = normalizarBusca(filtros.busca);
   return clinicas
     .filter((clinica) => {
+      if (filtros.uso !== "todas" && usoDaClinica(clinica) !== filtros.uso) {
+        return false;
+      }
       if (
-        filtros.situacao !== "todas" &&
-        situacaoDaConta(clinica) !== filtros.situacao
+        filtros.conta !== "todas" &&
+        situacaoDaConta(clinica) !== filtros.conta
       ) {
         return false;
       }
       if (
         filtros.agente !== "todos" &&
-        clinica.agente.estado !== filtros.agente
+        liberacaoDoAgente(clinica.agente.estado) !== filtros.agente
       ) {
         return false;
       }
@@ -748,20 +1027,21 @@ export function filtrarClinicas(
       }
       const onde = [
         clinica.nome,
-        ...clinica.administradores.flatMap((admin) => [
-          admin.nome ?? "",
-          admin.email ?? "",
+        ...clinica.pessoas.flatMap((pessoa) => [
+          pessoa.nome ?? "",
+          pessoa.email ?? "",
         ]),
       ];
       return onde.some((campo) => normalizarBusca(campo).includes(termo));
     })
-    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    .sort(ordemDoPainel);
 }
 
 export function filtrosAtivos(filtros: FiltrosDoPainel): boolean {
   return (
     filtros.busca.trim() !== "" ||
-    filtros.situacao !== "todas" ||
+    filtros.uso !== "todas" ||
+    filtros.conta !== "todas" ||
     filtros.agente !== "todos"
   );
 }
@@ -782,28 +1062,40 @@ export const OPCOES_DO_ESTADO_DO_AGENTE: readonly {
 ];
 
 /**
- * O que o agente da clinica mostra na linha de apoio da lista: com o agente
- * em teste ou em producao, a escolha da propria clinica na aba WhatsApp da
- * Tela 6 (e a pausa dela). Nulo: nada a acrescentar.
+ * O dialogo de confirmacao do agente (components/painel-geral/
+ * dialogo-do-agente.tsx), o mesmo no detalhe e na linha da lista:
+ * - no detalhe: ligar em teste, ligar a producao e voltar para teste;
+ * - na lista: liberar (vai para Teste) e retirar (vai para Desligado).
  */
-export function apoioDoAgente(clinica: ClinicaNoPainel): string | null {
-  if (clinica.agente.estado === "desligado") {
-    return null;
-  }
-  if (clinica.agente.pausadaPelaClinica) {
-    return "Pausado pela clínica";
-  }
-  if (!clinica.agente.liberada) {
-    return "Desligado pela clínica";
-  }
-  switch (clinica.agente.modo) {
-    case "numero_inteiro":
-      return "Atendendo os contatos";
-    case "contatos":
-      return "Conversa com a equipe";
+export type ConfirmacaoDoAgente =
+  "teste" | "producao" | "volta" | "liberar" | "retirar";
+
+/** O estado que a confirmacao grava (definir_agente_da_clinica). */
+export function estadoDaConfirmacao(
+  confirmacao: ConfirmacaoDoAgente,
+): EstadoDoAgente {
+  switch (confirmacao) {
+    case "producao":
+      return "producao";
+    case "retirar":
+      return "desligado";
     default:
-      return "Só simulador";
+      return "teste";
   }
+}
+
+/**
+ * Por que "Liberar agente" nao liga agora (a dica do botao desabilitado):
+ * o banco recusa ligar em Teste a clinica suspensa (P0001
+ * clinica_suspensa). Nulo: liga. Retirar continua livre.
+ */
+export function porQueNaoLibera(entrada: {
+  estado: EstadoDoAgente;
+  suspensa: boolean;
+}): string | null {
+  return entrada.estado === "desligado" && entrada.suspensa
+    ? TEXTOS_DO_PAINEL.suspensaNaoLigaOAgente
+    : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -831,11 +1123,15 @@ export const contaDaClinicaSchema = z
 /**
  * Motivo do agente: opcional em Desligado e Teste (vazio vira o texto
  * padrao do painel); OBRIGATORIO na Producao (3 a 300, contrato da onda 2,
- * secao 3.1).
+ * secao 3.1). estadoVisto e o estado que a tela mostrava quando a pessoa
+ * decidiu: o banco confere se ainda e o de agora (agente_mudou) antes de
+ * mudar. Pedir o mesmo estado que a tela mostrava nao e mudanca (o banco
+ * tambem recusa, mudanca_invalida).
  */
 export const agenteDaClinicaSchema = z
   .object({
     clinicId: z.uuid(),
+    estadoVisto: z.enum(["desligado", "teste", "producao"]),
     estado: z.enum(["desligado", "teste", "producao"]),
     motivo: z
       .string()
@@ -845,6 +1141,13 @@ export const agenteDaClinicaSchema = z
   })
   .strict()
   .superRefine((entrada, ctx) => {
+    if (entrada.estado === entrada.estadoVisto) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["estado"],
+        message: TEXTOS_DO_PAINEL.dadosInvalidos,
+      });
+    }
     if (
       entrada.estado === "producao" &&
       (entrada.motivo ?? "").length < MOTIVO_MINIMO

@@ -72,8 +72,9 @@ import { createClient } from "@/lib/supabase/server";
 // entao so a equipe Conduzza passa (super admin; o banco confere de novo em
 // ia_exigir_quem_libera), sem precisar ser membro da clinica. Sem clinicId,
 // vale a clinica ativa, como sempre. No painel:
-// - a conexao do numero vem do proprio painel (painel_geral_das_clinicas,
-//   so do super admin): whatsapp_account so e legivel por membro ativo;
+// - a conexao do numero vem do proprio painel (painel_cs_das_clinicas desde
+//   26/10/2026, pelo fetchNumeroDaClinicaNoPainel; so do super admin):
+//   whatsapp_account so e legivel por membro ativo;
 // - o telefone novo pede SEMPRE a confirmacao de que e de alguem da equipe,
 //   sem consultar os contatos da clinica: o painel nao le nem mostra dado
 //   de paciente (o banco continua recusando telefone de paciente sem o

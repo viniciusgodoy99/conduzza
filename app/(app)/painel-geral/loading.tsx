@@ -1,9 +1,9 @@
 import { TableSkeleton } from "@/components/shared/loading-skeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
-// Esqueleto na forma do Painel geral (cabecalho, o cartao do interruptor
-// geral, os sete cartoes dos totais e o cartao com a barra de busca e
-// filtros e a tabela), nunca giratorio no meio da tela.
+// Esqueleto na forma do Painel geral (cabecalho, os seis cartoes do topo,
+// o cartao do interruptor geral e o cartao com a barra de busca e filtros e
+// a tabela de sete colunas), nunca giratorio no meio da tela.
 export default function CarregandoPainelGeral() {
   return (
     <div
@@ -16,6 +16,22 @@ export default function CarregandoPainelGeral() {
         <Skeleton className="h-7 w-44" />
         <Skeleton className="h-4 w-96 max-w-full" />
       </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3" aria-hidden>
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div
+            key={i}
+            className={
+              i === 0 || i === 5
+                ? "col-span-2 grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm lg:col-span-1"
+                : "grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm"
+            }
+          >
+            <Skeleton className="h-2.5 w-3/5" />
+            <Skeleton className="h-[34px] w-2/5" />
+            <Skeleton className="h-3 w-4/5" />
+          </div>
+        ))}
+      </div>
       <div
         className="grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm"
         aria-hidden
@@ -24,31 +40,15 @@ export default function CarregandoPainelGeral() {
         <Skeleton className="h-3 w-72 max-w-full" />
         <Skeleton className="h-10 w-56" />
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-hidden>
-        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-          <div
-            key={i}
-            className={
-              i === 0 || i === 5
-                ? "col-span-2 grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm lg:col-span-1"
-                : i === 6
-                  ? "col-span-2 grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm"
-                  : "grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm"
-            }
-          >
-            <Skeleton className="h-2.5 w-3/5" />
-            <Skeleton className="h-[34px] w-2/5" />
-          </div>
-        ))}
-      </div>
       <div
         className="overflow-hidden rounded-card border border-border bg-card shadow-sm"
         aria-hidden
       >
         <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
           <Skeleton className="h-10 w-full rounded-lg sm:w-[280px]" />
+          <Skeleton className="h-10 w-52 rounded-lg" />
           <Skeleton className="h-10 w-56 rounded-lg" />
-          <Skeleton className="h-10 w-64 rounded-lg" />
+          <Skeleton className="h-10 w-60 rounded-lg" />
         </div>
         <TableSkeleton rows={6} columns={7} variant="bare" />
       </div>

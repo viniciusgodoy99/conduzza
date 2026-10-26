@@ -28,6 +28,16 @@ import { createClient } from "@/lib/supabase/server";
 // 20261022120000) e o interruptor geral, que saiu da aba da clinica e mora
 // no topo da lista.
 //
+// Acompanhamento de cliente (26/10/2026): o "Liberar agente" (Teste) e o
+// "Retirar agente" (Desligado) da linha da lista sao esta mesma
+// definirAgenteDaClinicaAction, com o mesmo dialogo do detalhe; nenhuma
+// acao nova. Desde a revisao do mesmo dia, ela manda tambem o estado que a
+// tela mostrava (estadoVisto) e chama definir_agente_da_clinica_no_painel
+// (migration 20261026100000), que confere se ele ainda e o de agora antes
+// de chamar definir_agente_da_clinica: uma lista velha (outra aba) nao
+// rebaixa mais a Producao para Teste nem passa por cima da escolha da
+// clinica ("So simulador", desligado); recusa com agente_mudou.
+//
 // A AUTORIZACAO VIVE NO BANCO: cada acao e uma RPC do contrato da onda 1
 // (migration 20261021100000_painel_geral.sql), chamada com a SESSAO, que
 // recusa (42501) quem nao e is_product_admin() e grava a trilha (audit_log,
@@ -81,6 +91,11 @@ const TEXTO_DA_CHAVE = new Map<string, (kind: string) => string>([
   ["respostas_invalidas", () => TEXTOS_DO_PAINEL.respostasInvalidas],
   // Antes da migration da producao, o banco so aceita desligado e teste.
   ["estado_invalido", () => TEXTOS_DO_PAINEL.producaoRecusada],
+  // A tela mostrava um estado do agente que nao e mais o de agora
+  // (definir_agente_da_clinica_no_painel): nada mudou.
+  ["agente_mudou", () => TEXTOS_DO_PAINEL.agenteMudou],
+  // O pedido e o estado que a tela ja mostrava: so com a tela mexida.
+  ["mudanca_invalida", () => TEXTOS_DO_PAINEL.dadosInvalidos],
   ["evidencia_invalida", () => TEXTOS_DO_PAINEL.evidenciaInvalida],
   ["requisito_ja_revogado", () => TEXTOS_DO_PAINEL.requisitoJaRevogado],
   // A chave que o banco nao conhece e o termo sem clinica: a tela manda as
@@ -221,6 +236,11 @@ export async function reativarClinicaAction(
  * que a producao ainda nao esta liberada. De Producao para Teste, o banco
  * volta ao modo dos telefones da equipe e devolve as outras conversas para
  * a equipe, sem mensagem ao paciente.
+ *
+ * O estado que a tela mostrava (estadoVisto) vai junto: com as travas de
+ * definir_agente_da_clinica, o banco confere se ele ainda e o de agora e,
+ * se mudou, recusa sem mudar nada (P0001 agente_mudou; a tela pede para
+ * recarregar). Pedir o mesmo estado que a tela mostrava o Zod ja recusa.
  */
 export async function definirAgenteDaClinicaAction(
   entrada: unknown,
@@ -233,10 +253,11 @@ export async function definirAgenteDaClinicaAction(
   if (!parsed.success) {
     return { ok: false, error: textoDaEntrada(parsed.error.issues) };
   }
-  const { clinicId, estado, motivo } = parsed.data;
+  const { clinicId, estadoVisto, estado, motivo } = parsed.data;
   const supabase: Supabase = await createClient();
-  const { error } = await supabase.rpc("definir_agente_da_clinica", {
+  const { error } = await supabase.rpc("definir_agente_da_clinica_no_painel", {
     p_clinic_id: clinicId,
+    p_estado_visto: estadoVisto,
     p_estado: estado,
     p_motivo: motivo ? motivo : MOTIVO_PADRAO_DO_AGENTE,
   });

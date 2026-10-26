@@ -1,47 +1,59 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { SituacaoDaConexao } from "@/components/whatsapp/numeros";
+import type { Role } from "@/lib/domain/permissions";
 
-// Leitura do Painel geral (onda 1, decisao do dono de 20/10/2026): o sistema
-// inteiro, so para a equipe Conduzza (super admin). Contrato do banco em
-// supabase/migrations/20261021100000_painel_geral.sql:
-// painel_geral_das_clinicas() e STABLE SECURITY DEFINER e recusa (42501)
-// quem nao e is_product_admin(). Devolve um jsonb com os totais do topo e
-// uma linha por clinica (sem as e_de_teste das suites).
+// Leitura do Painel geral, so para a equipe Conduzza (super admin). Desde
+// 26/10/2026 (pedido do dono, com o print do painel: "ele e para ser tipo
+// uma visualizacao de CS"), o painel e o acompanhamento de cliente: quantas
+// clinicas, quais estao em uso (alguem da equipe usou o sistema nos ultimos
+// 30 dias), quem usou por ultimo, a equipe, o WhatsApp e o agente de IA.
+// Contrato do banco em supabase/migrations/20261026100000_painel_cs.sql:
+// - painel_cs_das_clinicas(): os totais do topo e uma linha por clinica
+//   (sem as e_de_teste das suites);
+// - equipe_da_clinica_no_painel(p_clinic_id): a secao Equipe do detalhe,
+//   com os Implementadores numa lista separada (P18-5 da onda 5).
+// As duas sao STABLE SECURITY DEFINER e recusam (42501) quem nao e
+// is_product_admin(). painel_geral_das_clinicas (onda 1) nao e mais lida
+// por aqui: ela sai numa limpeza depois. O codigo depende da migration
+// aplicada (ordem de publicacao: a migration antes do codigo, escrita no
+// cabecalho dela); sem as funcoes, o painel mostra o erro de leitura.
 //
-// SO CONTAGENS: nenhum dado de paciente passa por aqui (nem nome, nem
-// telefone, nem conteudo). Os administradores (nome e e-mail) sao da
-// EQUIPE da clinica; o numero de WhatsApp chega so com os 4 ultimos
-// digitos. Nada daqui vai para log.
+// O ultimo acesso e a ULTIMA ATIVIDADE (decisao do dono de 26/10/2026, "Pela
+// ultima atividade"): o maior entre o ultimo login (auth.users.
+// last_sign_in_at) e a renovacao das sessoes da pessoa (auth.sessions), que
+// o sistema faz enquanto ela usa; a tela diz isso. A equipe Conduzza com
+// vinculo ativo conta como qualquer vinculo (o desenho: "dos membros
+// ATIVOS"; o dono confirmou em 26/10/2026) e vem marcada, para a tela dizer
+// quando o ultimo acesso foi dela.
 //
-// O formato do banco e conferido aqui (lerPainelDoBanco): campo essencial
-// fora do formato LANCA, e a tela mostra o erro com "Tentar de novo", nunca
-// um painel que afirma o que nao conferiu (uma clinica "ativa" que pode
-// estar suspensa, um gasto zero que nao foi lido). Item de lista fora do
-// formato (um numero sem id) fica de fora, como nas outras leituras.
+// SO CONTAGENS DE PACIENTE: nenhum dado de paciente passa por aqui (nem
+// nome, nem telefone, nem conteudo). Nome, e-mail, papel e o ultimo acesso
+// sao da EQUIPE da clinica (dado de operacao); o numero de WhatsApp chega so
+// com os 4 ultimos digitos. Nada daqui vai para log.
 //
-// Onda 2 (item 11, contrato secao 7): o leitor entende 'producao' (estado do
-// agente) e 'numero_inteiro' (modo da liberacao) ANTES da migration da
-// producao, para a ordem entre ela e o codigo nao derrubar o painel; a
-// chave nova totais.agente_em_producao e opcional (ausente = 0). Os
-// requisitos da producao (requisitos_da_producao, so do super admin, com o
-// registro da equipe Conduzza no detalhe de cada um) tem leitura propria:
-// antes da migration, "indisponivel" (o cartao diz que a producao ainda nao
-// chegou), nunca o erro.
+// O formato do banco e conferido aqui (lerPainelDoBanco e
+// lerEquipeDoBanco): campo essencial fora do formato LANCA, e a tela mostra
+// o erro com "Tentar de novo", nunca um painel que afirma o que nao
+// conferiu (uma clinica "em uso" sem o acesso que prova, uma "ativa" que
+// pode estar suspensa, um gasto zero que nao foi lido). Item de lista que so
+// serve a busca ou fora do formato (um numero sem id) fica de fora, como nas
+// outras leituras.
+//
+// Onda 2 (item 11): o leitor entende 'producao' (estado do agente) e
+// 'numero_inteiro' (modo da liberacao). Os requisitos da producao
+// (requisitos_da_producao, so do super admin, com o registro da equipe
+// Conduzza no detalhe de cada um) tem leitura propria: antes da migration da
+// producao, "indisponivel" (o cartao diz que a producao ainda nao chegou),
+// nunca o erro.
 
 /** A conta da clinica: ativa ou suspensa (clinica_suspensa). */
 export type SituacaoDaConta = "ativa" | "suspensa";
 
-/**
- * O agente da clinica (ia_clinica_habilitada). "producao" chega com a
- * migration da producao (onda 2, item 11); o leitor ja entende.
- */
+/** O agente da clinica (ia_clinica_habilitada). */
 export type EstadoDoAgente = "desligado" | "teste" | "producao";
 
-/**
- * O modo gravado em ia_liberacao: "numero_inteiro" (todos os contatos do
- * publico) chega com a migration da producao (onda 2, item 11).
- */
+/** O modo gravado em ia_liberacao. */
 export type ModoDoAgenteNoPainel = "simulador" | "contatos" | "numero_inteiro";
 
 /** Um numero de WhatsApp da clinica (sem os removidos). */
@@ -57,8 +69,29 @@ export type NumeroNoPainel = {
   iaLigada: boolean;
 };
 
-/** Um administrador ATIVO da clinica (dado da equipe, nao de paciente). */
-export type AdministradorNoPainel = {
+/**
+ * Quem da equipe da clinica usou o sistema por ultimo, e quando: a ultima
+ * atividade mais recente (o login ou a renovacao da sessao) dos vinculos
+ * ATIVOS, a equipe Conduzza inclusive (marcada). Dado da equipe, nao de
+ * paciente.
+ */
+export type UltimoAcessoNoPainel = {
+  /** O instante da ultima atividade (o maior entre o login e a renovacao da sessao). */
+  em: string;
+  userId: string;
+  /** profile.name; nulo sem nome no perfil. */
+  nome: string | null;
+  email: string | null;
+  /** O papel na clinica; nulo quando o banco manda um que a tela nao conhece. */
+  papel: Role | null;
+  /** A pessoa tem a marca de Implementador nesta clinica. */
+  implementador: boolean;
+  /** A pessoa e da equipe Conduzza (super admin): a tela diz que foi ela. */
+  equipeConduzza: boolean;
+};
+
+/** Uma pessoa da equipe, so para a busca da lista (dado da equipe). */
+export type PessoaNaBusca = {
   nome: string | null;
   email: string | null;
 };
@@ -98,9 +131,22 @@ export type ClinicaNoPainel = {
   criadaEm: string;
   /** clinic.timezone (CLAUDE.md 3.6); o padrao quando vem vazio. */
   fuso: string;
+  /**
+   * Alguem da equipe da clinica usou o sistema nos ultimos 30 dias,
+   * contados do relogio do banco na leitura (geradoEm). Sem ultimo acesso,
+   * falso.
+   */
+  emUso: boolean;
+  /** Nulo: ninguem com vinculo ativo na clinica entrou ainda. */
+  ultimoAcesso: UltimoAcessoNoPainel | null;
+  /** Vinculos ativos (o Implementador e a equipe Conduzza contam). */
   membrosAtivos: number;
+  /** Pedidos de entrada esperando liberacao (a equipe Conduzza conta). */
   membrosPendentes: number;
-  administradores: AdministradorNoPainel[];
+  /** Dos ativos, quantos sao da equipe Conduzza (ja contados em membrosAtivos). */
+  membrosEquipeConduzza: number;
+  /** Todo vinculo da clinica (qualquer situacao), so para a busca. */
+  pessoas: PessoaNaBusca[];
   /** Numeros de WhatsApp sem os removidos. */
   numerosTotal: number;
   numerosConectados: number;
@@ -121,19 +167,23 @@ export type ClinicaNoPainel = {
   tetoDiarioCentavos: number | null;
 };
 
+/** Os cartoes do topo (em_uso + sem_uso = clinicas; as suspensas, a parte). */
 export type TotaisDoPainel = {
   clinicas: number;
-  ativas: number;
+  emUso: number;
+  semUso: number;
   suspensas: number;
-  agenteEmTeste: number;
-  /** Onda 2: chave opcional no banco (ausente antes da migration = 0). */
-  agenteEmProducao: number;
-  gasto24hCentavos: number;
+  /** Agente em Teste ou em Producao. */
+  agenteLiberado: number;
+  /** O mes corrente de todas as clinicas, cada uma no proprio fuso. */
   gastoMesCentavos: number;
 };
 
 export type PainelGeral = {
+  /** O relogio do banco na leitura: os 30 dias do uso contam daqui. */
+  geradoEm: string;
   totais: TotaisDoPainel;
+  /** Ultimo acesso mais recente primeiro; quem nunca entrou no fim. */
   clinicas: ClinicaNoPainel[];
 };
 
@@ -141,6 +191,37 @@ export type PainelGeral = {
 export type TetosDaIa = {
   tetoDiarioCentavos: number;
   tetoRespostasPorConversaHora: number;
+};
+
+/** A situacao do vinculo da pessoa (clinic_member.status). */
+export type SituacaoDoMembro = "ativo" | "pendente" | "inativo";
+
+/** Uma pessoa da equipe da clinica no detalhe (dado da equipe). */
+export type PessoaDaEquipe = {
+  userId: string;
+  /** profile.name; nulo sem nome no perfil. */
+  nome: string | null;
+  email: string | null;
+  /** O papel do vinculo; o Implementador e sempre admin. */
+  papel: Role;
+  situacao: SituacaoDoMembro;
+  /** A ultima atividade da pessoa, qualquer que seja a situacao; nulo: nunca. */
+  ultimoAcessoEm: string | null;
+  /**
+   * E da equipe Conduzza (super admin): aparece marcada; ativa, conta no
+   * uso e nas contagens como qualquer vinculo.
+   */
+  equipeConduzza: boolean;
+};
+
+/**
+ * A equipe de uma clinica: as pessoas sem a marca de Implementador e, numa
+ * lista separada, as com a marca (P18-5). Ordem do banco: situacao, papel e
+ * nome.
+ */
+export type EquipeNoPainel = {
+  equipe: PessoaDaEquipe[];
+  implementadores: PessoaDaEquipe[];
 };
 
 export const FUSO_PADRAO_DO_PAINEL = "America/Fortaleza";
@@ -152,6 +233,20 @@ const SITUACOES_DA_CONEXAO: readonly SituacaoDaConexao[] = [
   "conectando",
   "aguardando_qr",
   "desconectado",
+];
+
+const PAPEIS: readonly Role[] = [
+  "admin",
+  "gestor",
+  "recepcao",
+  "profissional",
+  "leitura",
+];
+
+const SITUACOES_DO_MEMBRO: readonly SituacaoDoMembro[] = [
+  "ativo",
+  "pendente",
+  "inativo",
 ];
 
 function ilegivel(): never {
@@ -211,6 +306,11 @@ function lista(valor: unknown): unknown[] {
   return Array.isArray(valor) ? valor : ilegivel();
 }
 
+function uuid(valor: unknown): string {
+  const lido = texto(valor);
+  return UUID.test(lido) ? lido : ilegivel();
+}
+
 /** Valor do banco na situacao da tela; o desconhecido e desconectado. */
 function conexaoDoBanco(valor: unknown): SituacaoDaConexao {
   return (
@@ -250,14 +350,36 @@ function numeroDoBanco(valor: unknown): NumeroNoPainel[] {
   ];
 }
 
-function administradorDoBanco(valor: unknown): AdministradorNoPainel[] {
+/** Uma pessoa da busca; sem nome e sem e-mail nao acha nada e fica de fora. */
+function pessoaNaBuscaDoBanco(valor: unknown): PessoaNaBusca[] {
   if (typeof valor !== "object" || valor === null) {
     return [];
   }
-  const a = valor as Record<string, unknown>;
-  const nome = typeof a.nome === "string" && a.nome.trim() ? a.nome : null;
-  const email = typeof a.email === "string" && a.email.trim() ? a.email : null;
+  const p = valor as Record<string, unknown>;
+  const nome = typeof p.nome === "string" && p.nome.trim() ? p.nome : null;
+  const email = typeof p.email === "string" && p.email.trim() ? p.email : null;
   return nome || email ? [{ nome, email }] : [];
+}
+
+/** O papel do banco; o que a tela nao conhece vira nulo (nao se mostra). */
+function papelOuNulo(valor: unknown): Role | null {
+  return PAPEIS.find((papel) => papel === valor) ?? null;
+}
+
+function ultimoAcessoDoBanco(valor: unknown): UltimoAcessoNoPainel | null {
+  if (valor === null || valor === undefined) {
+    return null;
+  }
+  const a = objeto(valor);
+  return {
+    em: instante(a.em),
+    userId: uuid(a.user_id),
+    nome: textoOuNulo(a.nome),
+    email: textoOuNulo(a.email),
+    papel: papelOuNulo(a.papel),
+    implementador: booleano(a.implementador),
+    equipeConduzza: booleano(a.equipe_conduzza),
+  };
 }
 
 function estadoDoAgenteDoBanco(valor: unknown): EstadoDoAgente {
@@ -320,21 +442,31 @@ function suspensaoDoBanco(valor: unknown): SuspensaoNoPainel | null {
 
 function clinicaDoBanco(valor: unknown): ClinicaNoPainel {
   const c = objeto(valor);
-  const id = texto(c.id);
-  if (!UUID.test(id)) {
+  const fuso = textoOuNulo(c.fuso);
+  const ultimoAcesso = ultimoAcessoDoBanco(c.ultimo_acesso);
+  const emUso = booleano(c.em_uso);
+  // "Em uso" sem o acesso que prova, ou mais gente da equipe Conduzza do
+  // que ativas, e banco e codigo desencontrados: o painel nunca afirma o
+  // que nao conferiu.
+  if (emUso && ultimoAcesso === null) {
     return ilegivel();
   }
-  const fuso = textoOuNulo(c.fuso);
+  const membrosAtivos = contagem(c.membros_ativos);
+  const membrosEquipeConduzza = contagem(c.membros_equipe_conduzza);
+  if (membrosEquipeConduzza > membrosAtivos) {
+    return ilegivel();
+  }
   return {
-    id,
+    id: uuid(c.id),
     nome: texto(c.nome),
     criadaEm: instante(c.criada_em),
     fuso: fuso ?? FUSO_PADRAO_DO_PAINEL,
-    membrosAtivos: contagem(c.membros_ativos),
+    emUso,
+    ultimoAcesso,
+    membrosAtivos,
     membrosPendentes: contagem(c.membros_pendentes),
-    administradores: lista(c.administradores ?? []).flatMap(
-      administradorDoBanco,
-    ),
+    membrosEquipeConduzza,
+    pessoas: lista(c.pessoas ?? []).flatMap(pessoaNaBuscaDoBanco),
     numerosTotal: contagem(c.numeros_total),
     numerosConectados: contagem(c.numeros_conectados),
     numeros: lista(c.numeros ?? []).flatMap(numeroDoBanco),
@@ -353,19 +485,19 @@ function totaisDoBanco(valor: unknown): TotaisDoPainel {
   const t = objeto(valor);
   return {
     clinicas: contagem(t.clinicas),
-    ativas: contagem(t.ativas),
+    emUso: contagem(t.em_uso),
+    semUso: contagem(t.sem_uso),
     suspensas: contagem(t.suspensas),
-    agenteEmTeste: contagem(t.agente_em_teste),
-    agenteEmProducao: contagem(t.agente_em_producao ?? 0),
-    gasto24hCentavos: contagem(t.gasto_24h_centavos_usd),
+    agenteLiberado: contagem(t.agente_liberado),
     gastoMesCentavos: contagem(t.gasto_mes_centavos_usd),
   };
 }
 
-/** O jsonb de painel_geral_das_clinicas(). Formato estranho: lanca. */
+/** O jsonb de painel_cs_das_clinicas(). Formato estranho: lanca. */
 export function lerPainelDoBanco(valor: unknown): PainelGeral {
   const p = objeto(valor);
   return {
+    geradoEm: instante(p.gerado_em),
     totais: totaisDoBanco(p.totais),
     clinicas: lista(p.clinicas).map(clinicaDoBanco),
   };
@@ -378,7 +510,7 @@ export function lerPainelDoBanco(valor: unknown): PainelGeral {
 export async function fetchPainelGeral(
   supabase: SupabaseClient,
 ): Promise<PainelGeral> {
-  const { data, error } = await supabase.rpc("painel_geral_das_clinicas");
+  const { data, error } = await supabase.rpc("painel_cs_das_clinicas");
   if (error) {
     throw new Error("leitura do painel geral falhou");
   }
@@ -386,19 +518,19 @@ export async function fetchPainelGeral(
 }
 
 /**
- * Uma clinica do painel, pela mesma RPC. Nula quando nao esta no painel
- * (id que nao existe ou clinica e_de_teste das suites). Lanca como
- * fetchPainelGeral.
+ * Uma clinica do painel, pela mesma RPC, com o relogio da leitura. Nula
+ * quando nao esta no painel (id que nao existe ou clinica e_de_teste das
+ * suites). Lanca como fetchPainelGeral.
  */
 export async function fetchClinicaDoPainel(
   supabase: SupabaseClient,
   clinicId: string,
-): Promise<ClinicaNoPainel | null> {
+): Promise<{ clinica: ClinicaNoPainel; geradoEm: string } | null> {
   const id = clinicId.trim().toLowerCase();
   const painel = await fetchPainelGeral(supabase);
-  return (
-    painel.clinicas.find((clinica) => clinica.id.toLowerCase() === id) ?? null
-  );
+  const clinica =
+    painel.clinicas.find((linha) => linha.id.toLowerCase() === id) ?? null;
+  return clinica ? { clinica, geradoEm: painel.geradoEm } : null;
 }
 
 /**
@@ -414,12 +546,73 @@ export async function fetchNumeroDaClinicaNoPainel(
   clinicId: string,
   whatsappAccountId: string,
 ): Promise<NumeroNoPainel | null> {
-  const clinica = await fetchClinicaDoPainel(supabase, clinicId);
+  const lida = await fetchClinicaDoPainel(supabase, clinicId);
   const id = whatsappAccountId.trim().toLowerCase();
   return (
-    clinica?.numeros.find((numero) => numero.id.toLowerCase() === id) ?? null
+    lida?.clinica.numeros.find((numero) => numero.id.toLowerCase() === id) ??
+    null
   );
 }
+
+// ---------------------------------------------------------------------------
+// A equipe da clinica no detalhe (equipe_da_clinica_no_painel)
+// ---------------------------------------------------------------------------
+
+function pessoaDaEquipeDoBanco(valor: unknown): PessoaDaEquipe {
+  const p = objeto(valor);
+  // Papel e situacao fora dos que o banco aceita (os CHECKs de
+  // clinic_member) sao banco e codigo desencontrados: a secao mostra o
+  // erro, nunca um rotulo inventado nem uma pessoa a menos.
+  const papel = PAPEIS.find((valido) => valido === p.papel) ?? ilegivel();
+  const situacao =
+    SITUACOES_DO_MEMBRO.find((valida) => valida === p.situacao) ?? ilegivel();
+  return {
+    userId: uuid(p.user_id),
+    nome: textoOuNulo(p.nome),
+    email: textoOuNulo(p.email),
+    papel,
+    situacao,
+    ultimoAcessoEm: instanteOuNulo(p.ultimo_acesso_em),
+    equipeConduzza: booleano(p.equipe_conduzza),
+  };
+}
+
+/**
+ * O jsonb de equipe_da_clinica_no_painel(p_clinic_id). Nulo: a clinica nao
+ * existe (o banco devolve null). Formato estranho: lanca.
+ */
+export function lerEquipeDoBanco(valor: unknown): EquipeNoPainel | null {
+  if (valor === null || valor === undefined) {
+    return null;
+  }
+  const e = objeto(valor);
+  return {
+    equipe: lista(e.equipe).map(pessoaDaEquipeDoBanco),
+    implementadores: lista(e.implementadores).map(pessoaDaEquipeDoBanco),
+  };
+}
+
+/**
+ * A equipe de uma clinica, com a sessao (a RPC confere o super admin). Nula:
+ * a clinica nao existe. Erro do banco ou formato estranho: lanca, e a secao
+ * mostra o erro no lugar dela.
+ */
+export async function fetchEquipeDaClinica(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<EquipeNoPainel | null> {
+  const { data, error } = await supabase.rpc("equipe_da_clinica_no_painel", {
+    p_clinic_id: clinicId,
+  });
+  if (error) {
+    throw new Error("leitura da equipe da clinica falhou");
+  }
+  return lerEquipeDoBanco(data);
+}
+
+// ---------------------------------------------------------------------------
+// Teto da IA
+// ---------------------------------------------------------------------------
 
 /**
  * Os dois tetos da IA da clinica (ia_liberacao, que o super admin le pela

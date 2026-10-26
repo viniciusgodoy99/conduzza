@@ -5396,6 +5396,15 @@ export type Database = {
         Args: { p_clinic_id: string; p_estado: string; p_motivo: string }
         Returns: undefined
       }
+      definir_agente_da_clinica_no_painel: {
+        Args: {
+          p_clinic_id: string
+          p_estado: string
+          p_estado_visto: string
+          p_motivo: string
+        }
+        Returns: undefined
+      }
       definir_instrucoes_do_agente: {
         Args: { p_clinic_id: string; p_instrucoes: string }
         Returns: undefined
@@ -5508,6 +5517,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      equipe_da_clinica_no_painel: {
+        Args: { p_clinic_id: string }
+        Returns: Json
       }
       espera_pelo_celular_sem_linha: {
         Args: {
@@ -5836,6 +5849,10 @@ export type Database = {
           p_contact_id: string
           p_conversation_id?: string
         }
+        Returns: Json
+      }
+      painel_cs_das_clinicas: {
+        Args: { p_incluir_teste?: boolean }
         Returns: Json
       }
       painel_geral_das_clinicas: {

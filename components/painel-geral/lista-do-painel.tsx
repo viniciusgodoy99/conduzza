@@ -5,27 +5,29 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
+import { AgenteNaLista } from "@/components/painel-geral/agente-na-lista";
 import {
-  AGENTE_DA_CLINICA_STATUS,
-  apoioDoAgente,
+  contagemDaEquipe,
   contagemNoPainel,
+  dataEHoraNaClinica,
   dataNaClinica,
-  dolares,
-  estadoDoGasto,
   filtrarClinicas,
   filtrosAtivos,
-  GASTO_STATUS,
+  haQuantoTempo,
   lerFiltrosDoPainel,
   nenhumNumeroConectado,
-  OPCOES_DA_SITUACAO,
+  OPCOES_DA_CONTA,
   OPCOES_DO_AGENTE,
-  quandoNaClinica,
+  OPCOES_DO_USO,
+  quemEntrouNaLista,
   SITUACAO_DA_CONTA_STATUS,
   situacaoDaConta,
   textoDosNumeros,
   TEXTOS_DO_PAINEL,
-  type FiltroDaSituacao,
+  USO_DA_CLINICA_STATUS,
+  type FiltroDaConta,
   type FiltroDoAgente,
+  type FiltroDoUso,
   type FiltrosDoPainel,
 } from "@/components/painel-geral/painel-geral";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -44,27 +46,39 @@ import {
 import { WHATSAPP_CONNECTION_STATUS } from "@/lib/design/status";
 import type { ClinicaNoPainel } from "@/lib/queries/painel-geral";
 
-// Lista do Painel geral (onda 1): uma linha por clinica com a conta e o
-// agente em 3 camadas (icone, rotulo e cor), os numeros conectados, o
-// movimento dos ultimos 30 dias, a ultima mensagem recebida (no fuso de
-// cada clinica, CLAUDE.md 3.6) e o gasto de IA contra o teto. So contagens:
-// nenhum dado de paciente.
+// Lista do Painel geral como acompanhamento de cliente (pedido do dono de
+// 26/10/2026): uma linha por clinica com o ultimo acesso da equipe (quando,
+// ha quanto tempo e quem, no fuso de cada clinica, CLAUDE.md 3.6), a
+// equipe (ativas e pendentes), o WhatsApp, o agente de IA com o "Liberar
+// agente" e o "Retirar agente" na propria linha, o movimento dos ultimos 30
+// dias e a conta. Status em 3 camadas (icone, rotulo e cor); so o "Sem uso"
+// vira chip no ultimo acesso (o que pede atencao). De paciente, so
+// contagens; nome e e-mail sao da equipe da clinica. A equipe Conduzza com
+// vinculo ativo conta como qualquer pessoa ativa (o desenho) e aparece
+// marcada: "(equipe Conduzza)" depois do nome no ultimo acesso, e "Inclui 1
+// da equipe Conduzza" na coluna Equipe, para o uso dela nao passar pelo da
+// clinica.
 //
-// Busca e filtros na URL, trocados com history.replaceState (o roteador do
-// Next acompanha sem ir ao servidor): digitar na busca nao recarrega a
-// pagina, e o link leva o mesmo recorte. A busca da tela e a do campo
-// (estado local); a URL so acompanha. O vazio inicial (nenhuma clinica) e
-// o vazio por filtro sao estados diferentes; o erro de leitura e o
-// carregando ficam com a pagina (ErroDoPainel e loading.tsx).
+// Ordem: o ultimo acesso mais recente primeiro, quem nunca entrou no fim (a
+// mesma do banco). Busca e filtros na URL, trocados com
+// history.replaceState (o roteador do Next acompanha sem ir ao servidor):
+// digitar na busca nao recarrega a pagina, e o link leva o mesmo recorte. A
+// busca da tela e a do campo (estado local); a URL so acompanha. O vazio
+// inicial (nenhuma clinica) e o vazio por filtro sao estados diferentes; o
+// erro de leitura e o carregando ficam com a pagina (ErroDoPainel e
+// loading.tsx).
 
-type ParametroDaUrl = "busca" | "situacao" | "agente";
+type ParametroDaUrl = "busca" | "uso" | "conta" | "agente";
 
 export function ListaDoPainel({
   clinicas,
   agoraIso,
 }: {
   clinicas: ClinicaNoPainel[];
-  /** O relogio do servidor na carga: "Hoje" e "Ontem" no fuso de cada clinica. */
+  /**
+   * O relogio do banco na leitura (gerado_em): "Hoje", "Ontem" e "Há N
+   * dias" no fuso de cada clinica, pelo mesmo relogio do "Em uso".
+   */
   agoraIso: string;
 }) {
   const pathname = usePathname();
@@ -104,7 +118,7 @@ export function ListaDoPainel({
 
   const limpar = () => {
     setBusca("");
-    setParams({ busca: null, situacao: null, agente: null });
+    setParams({ busca: null, uso: null, conta: null, agente: null });
   };
 
   return (
@@ -112,7 +126,7 @@ export function ListaDoPainel({
       aria-label="Clínicas"
       className="flex min-h-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm"
     >
-      <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border p-3">
         <div className="relative w-full sm:w-[280px]">
           <Search
             aria-hidden
@@ -121,7 +135,7 @@ export function ListaDoPainel({
           <Input
             type="search"
             aria-label="Buscar clínica"
-            placeholder="Clínica, administrador ou e-mail"
+            placeholder={TEXTOS_DO_PAINEL.buscaPlaceholder}
             autoComplete="off"
             className="h-10 pl-9"
             value={busca}
@@ -132,24 +146,39 @@ export function ListaDoPainel({
             }}
           />
         </div>
-        <SegmentedControl<FiltroDaSituacao>
-          ariaLabel="Situação da conta"
-          className="max-w-full overflow-x-auto"
-          value={filtros.situacao}
-          onChange={(valor) =>
-            setParams({ situacao: valor === "todas" ? null : valor })
-          }
-          options={OPCOES_DA_SITUACAO}
-        />
-        <SegmentedControl<FiltroDoAgente>
-          ariaLabel="Agente de IA"
-          className="max-w-full overflow-x-auto"
-          value={filtros.agente}
-          onChange={(valor) =>
-            setParams({ agente: valor === "todos" ? null : valor })
-          }
-          options={OPCOES_DO_AGENTE}
-        />
+        <FiltroComNome nome="Uso">
+          <SegmentedControl<FiltroDoUso>
+            ariaLabel="Uso"
+            className="max-w-full overflow-x-auto"
+            value={filtros.uso}
+            onChange={(valor) =>
+              setParams({ uso: valor === "todas" ? null : valor })
+            }
+            options={OPCOES_DO_USO}
+          />
+        </FiltroComNome>
+        <FiltroComNome nome="Conta">
+          <SegmentedControl<FiltroDaConta>
+            ariaLabel="Conta"
+            className="max-w-full overflow-x-auto"
+            value={filtros.conta}
+            onChange={(valor) =>
+              setParams({ conta: valor === "todas" ? null : valor })
+            }
+            options={OPCOES_DA_CONTA}
+          />
+        </FiltroComNome>
+        <FiltroComNome nome="Agente">
+          <SegmentedControl<FiltroDoAgente>
+            ariaLabel="Agente de IA"
+            className="max-w-full overflow-x-auto"
+            value={filtros.agente}
+            onChange={(valor) =>
+              setParams({ agente: valor === "todos" ? null : valor })
+            }
+            options={OPCOES_DO_AGENTE}
+          />
+        </FiltroComNome>
         {filtrosAtivos(filtros) ? (
           <Button variant="ghost" onClick={limpar}>
             Limpar filtros
@@ -186,6 +215,31 @@ export function ListaDoPainel({
   );
 }
 
+/**
+ * O nome visivel do filtro, ao lado do segmentado ("Uso", "Conta",
+ * "Agente"): as tres barras comecam por "Todas" ou "Todos". O nome
+ * acessivel do grupo e o ariaLabel do segmentado.
+ */
+function FiltroComNome({
+  nome,
+  children,
+}: {
+  nome: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex max-w-full min-w-0 items-center gap-2">
+      <span
+        aria-hidden
+        className="text-[12px] font-semibold whitespace-nowrap text-text-secondary"
+      >
+        {nome}
+      </span>
+      {children}
+    </div>
+  );
+}
+
 function TabelaDoPainel({
   clinicas,
   agora,
@@ -198,12 +252,12 @@ function TabelaDoPainel({
       <TableHeader>
         <TableRow>
           <TableHead scope="col">Clínica</TableHead>
-          <TableHead scope="col">Conta</TableHead>
-          <TableHead scope="col">Agente</TableHead>
-          <TableHead scope="col">Números</TableHead>
+          <TableHead scope="col">Último acesso</TableHead>
+          <TableHead scope="col">Equipe</TableHead>
+          <TableHead scope="col">WhatsApp</TableHead>
+          <TableHead scope="col">Agente de IA</TableHead>
           <TableHead scope="col">Últimos 30 dias</TableHead>
-          <TableHead scope="col">Última mensagem</TableHead>
-          <TableHead scope="col">Gasto de IA</TableHead>
+          <TableHead scope="col">Conta</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -223,11 +277,6 @@ function LinhaDaClinica({
   agora: Date;
 }) {
   const situacao = situacaoDaConta(clinica);
-  const apoio = apoioDoAgente(clinica);
-  const gasto = estadoDoGasto(
-    clinica.gasto.ultimas24hCentavos,
-    clinica.tetoDiarioCentavos,
-  );
   return (
     <TableRow>
       <TableCell className="min-w-[180px] py-2 whitespace-normal">
@@ -243,27 +292,23 @@ function LinhaDaClinica({
           </span>
         </div>
       </TableCell>
-      <TableCell className="py-2">
-        <div className="grid justify-items-start gap-1">
-          <StatusChip
-            size="sm"
-            definition={SITUACAO_DA_CONTA_STATUS[situacao]}
-          />
-          {clinica.suspensao ? (
-            <span className="cz-num text-[12px] text-text-secondary">
-              Desde {dataNaClinica(clinica.suspensao.suspensaEm, clinica.fuso)}
-            </span>
-          ) : null}
-        </div>
+      <TableCell className="min-w-[170px] py-2 whitespace-normal">
+        <UltimoAcessoNaLinha clinica={clinica} agora={agora} />
       </TableCell>
       <TableCell className="py-2">
-        <div className="grid justify-items-start gap-1">
-          <StatusChip
-            size="sm"
-            definition={AGENTE_DA_CLINICA_STATUS[clinica.agente.estado]}
+        <div className="grid gap-0.5">
+          <ContagemDaEquipe valor={clinica.membrosAtivos} tipo="ativas" />
+          <ContagemDaEquipe
+            valor={clinica.membrosPendentes}
+            tipo="pendentes"
+            className="text-[12px]"
           />
-          {apoio ? (
-            <span className="text-[12px] text-text-secondary">{apoio}</span>
+          {clinica.membrosEquipeConduzza > 0 ? (
+            <span className="text-[12px] text-text-secondary">
+              {TEXTOS_DO_PAINEL.incluiEquipeConduzza(
+                clinica.membrosEquipeConduzza,
+              )}
+            </span>
           ) : null}
         </div>
       </TableCell>
@@ -275,8 +320,9 @@ function LinhaDaClinica({
               definition={WHATSAPP_CONNECTION_STATUS.desconectado}
               label="Nenhum conectado"
             />
-            <span className="cz-num text-[12px] text-text-secondary">
-              {textoDosNumeros(clinica)}
+            <span className="text-[12px] text-text-secondary">
+              <span className="cz-num">{textoDosNumeros(clinica)}</span>{" "}
+              conectados
             </span>
           </div>
         ) : clinica.numerosTotal === 0 ? (
@@ -289,6 +335,15 @@ function LinhaDaClinica({
             <span className="text-text-secondary">conectados</span>
           </span>
         )}
+      </TableCell>
+      <TableCell className="py-2">
+        <AgenteNaLista
+          clinicId={clinica.id}
+          nome={clinica.nome}
+          estado={clinica.agente.estado}
+          suspensa={clinica.suspensao !== null}
+          tetoDiarioCentavos={clinica.tetoDiarioCentavos}
+        />
       </TableCell>
       <TableCell className="py-2">
         <div className="grid gap-0.5">
@@ -310,42 +365,86 @@ function LinhaDaClinica({
           </span>
         </div>
       </TableCell>
-      <TableCell className="py-2 cz-num">
-        {clinica.ultimaMensagemEm ? (
-          quandoNaClinica(clinica.ultimaMensagemEm, clinica.fuso, agora)
-        ) : (
-          <span className="text-text-secondary">Nenhuma</span>
-        )}
-      </TableCell>
       <TableCell className="py-2">
-        <div className="grid justify-items-start gap-0.5">
-          <span>
-            <span className="cz-num font-semibold text-text-strong">
-              {dolares(clinica.gasto.ultimas24hCentavos)}
-            </span>{" "}
-            <span className="text-[12px] text-text-secondary">em 24 h</span>
-          </span>
-          <span className="text-[12px] text-text-secondary">
-            {clinica.tetoDiarioCentavos === null ? (
-              "Sem teto"
-            ) : (
-              <>
-                Teto de{" "}
-                <span className="cz-num">
-                  {dolares(clinica.tetoDiarioCentavos)}
-                </span>
-              </>
-            )}
-          </span>
-          <span className="text-[12px] text-text-secondary">
-            <span className="cz-num">{dolares(clinica.gasto.mesCentavos)}</span>{" "}
-            no mês
-          </span>
-          {gasto === "perto" || gasto === "atingido" ? (
-            <StatusChip size="sm" definition={GASTO_STATUS[gasto]} />
+        <div className="grid justify-items-start gap-1">
+          <StatusChip
+            size="sm"
+            definition={SITUACAO_DA_CONTA_STATUS[situacao]}
+          />
+          {clinica.suspensao ? (
+            <span className="cz-num text-[12px] text-text-secondary">
+              Desde {dataNaClinica(clinica.suspensao.suspensaEm, clinica.fuso)}
+            </span>
           ) : null}
         </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+/** "3 ativas": o numero em mono e a palavra no texto; sem nenhuma, a frase. */
+function ContagemDaEquipe({
+  valor,
+  tipo,
+  className,
+}: {
+  valor: number;
+  tipo: "ativas" | "pendentes";
+  className?: string;
+}) {
+  const { numero, palavra } = contagemDaEquipe(valor, tipo);
+  return (
+    <span className={className}>
+      {numero ? (
+        <>
+          <span className="cz-num">{numero}</span>{" "}
+        </>
+      ) : null}
+      <span className="text-text-secondary">{palavra}</span>
+    </span>
+  );
+}
+
+/**
+ * Quando e quem: ha quanto tempo, o dia e a hora no fuso da clinica e o
+ * nome da pessoa (com "(equipe Conduzza)" quando foi ela). Sem uso (mais de
+ * 30 dias, ou nunca), o chip em 3 camadas em cima; quem nunca entrou,
+ * "Ninguém entrou ainda".
+ */
+function UltimoAcessoNaLinha({
+  clinica,
+  agora,
+}: {
+  clinica: ClinicaNoPainel;
+  agora: Date;
+}) {
+  const acesso = clinica.ultimoAcesso;
+  return (
+    <div className="grid justify-items-start gap-0.5">
+      {clinica.emUso ? null : (
+        <StatusChip
+          size="sm"
+          className="mb-0.5"
+          definition={USO_DA_CLINICA_STATUS.sem_uso}
+        />
+      )}
+      {acesso ? (
+        <>
+          <span className="font-semibold text-text-strong">
+            {haQuantoTempo(acesso.em, clinica.fuso, agora)}
+          </span>
+          <span className="cz-num text-[12px] text-text-secondary">
+            {dataEHoraNaClinica(acesso.em, clinica.fuso)}
+          </span>
+          <span className="text-[12px] break-words text-text-secondary">
+            por {quemEntrouNaLista(acesso)}
+          </span>
+        </>
+      ) : (
+        <span className="text-text-secondary">
+          {TEXTOS_DO_PAINEL.ninguemEntrou}
+        </span>
+      )}
+    </div>
   );
 }

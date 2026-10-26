@@ -1,13 +1,8 @@
 "use client";
 
-import { Bot, CircleQuestionMark, Power, RadioTower } from "lucide-react";
-import { useId, useState, useTransition } from "react";
-import { toast } from "sonner";
+import { Bot, CircleQuestionMark } from "lucide-react";
+import { useId } from "react";
 
-import {
-  definirAgenteDaClinicaAction,
-  type ResultadoDoPainel,
-} from "@/app/(app)/painel-geral/actions";
 import {
   estadoDaIa,
   IA_NA_CLINICA_STATUS,
@@ -18,10 +13,11 @@ import {
   type ContextoDaIa,
 } from "@/components/agente/whatsapp/agente-de-ia";
 import {
+  DialogoDoAgente,
+  useMudancaDoAgente,
+} from "@/components/painel-geral/dialogo-do-agente";
+import {
   AGENTE_DA_CLINICA_STATUS,
-  dolares,
-  MOTIVO_MAXIMO,
-  motivoValido,
   OPCOES_DO_ESTADO_DO_AGENTE,
   producaoLiberada,
   publicoNoDialogo,
@@ -31,7 +27,6 @@ import {
 import { Aviso } from "@/components/shared/aviso";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { StatusChip } from "@/components/shared/status-chip";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardAction,
@@ -40,16 +35,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type {
   EstadoDoAgente,
   RequisitosDaProducao,
@@ -77,6 +62,11 @@ import type {
 // interruptor geral, o teto, o motor, os numeros e os telefones. Leitura
 // que falhou vira o aviso de que nao deu para conferir, nunca o verde. Com
 // a conta suspensa, so o aviso de que o agente nao atende.
+//
+// O dialogo e o estado da mudanca sao os mesmos do "Liberar agente" e do
+// "Retirar agente" da linha da lista (dialogo-do-agente.tsx, 26/10/2026):
+// toda mudanca leva o estado que o cartao mostrava, e o banco recusa sem
+// mudar nada se a pagina estiver velha (outra aba, outra pessoa).
 
 export function textoDoAgenteMudou(
   nome: string,
@@ -91,9 +81,6 @@ export function textoDoAgenteMudou(
       return `Agente da ${nome} desligado.`;
   }
 }
-
-/** O dialogo aberto: ligar em teste, ligar a producao ou voltar para teste. */
-type Confirmacao = "teste" | "producao" | "volta";
 
 /**
  * Por que a Producao nao liga agora (a linha embaixo do seletor). Nulo: liga
@@ -153,35 +140,17 @@ export function AgenteDaClinica({
   publicoPublicado: string | null;
 }) {
   const ids = useId();
-  const [confirmando, setConfirmando] = useState<Confirmacao | null>(null);
-  const [motivo, setMotivo] = useState("");
-  const [erro, setErro] = useState<string | null>(null);
-  const [pendente, startTransition] = useTransition();
-
-  const mudar = (novo: EstadoDoAgente, motivoDigitado: string) => {
-    setErro(null);
-    startTransition(async () => {
-      let r: ResultadoDoPainel | null = null;
-      try {
-        r = await definirAgenteDaClinicaAction({
-          clinicId,
-          estado: novo,
-          ...(motivoDigitado.trim() ? { motivo: motivoDigitado.trim() } : {}),
-        });
-      } catch {
-        r = null;
-      }
-      if (r?.ok) {
-        toast.success(textoDoAgenteMudou(nome, novo));
-        setConfirmando(null);
-        setMotivo("");
-        return;
-      }
-      const texto = r ? r.error : TEXTOS_DO_PAINEL.semResposta;
-      setErro(texto);
-      toast.error(texto);
-    });
-  };
+  const {
+    confirmando,
+    abrir,
+    fechar,
+    motivo,
+    setMotivo,
+    erro,
+    pendente,
+    mudar,
+    confirmar,
+  } = useMudancaDoAgente({ clinicId, estado });
 
   // O banco recusa ligar em teste a clinica suspensa (P0001
   // clinica_suspensa): a opcao fica visivel e desabilitada, com o porque
@@ -199,37 +168,21 @@ export function AgenteDaClinica({
       return;
     }
     if (opcao === "producao") {
-      if (producaoTravada) {
-        return;
+      if (!producaoTravada) {
+        abrir("producao");
       }
-      setErro(null);
-      setConfirmando("producao");
       return;
     }
     if (opcao === "teste") {
-      if (testeTravado) {
-        return;
+      if (!testeTravado) {
+        abrir(estado === "producao" ? "volta" : "teste");
       }
-      setErro(null);
-      setConfirmando(estado === "producao" ? "volta" : "teste");
       return;
     }
-    mudar("desligado", "");
+    // Desligar e na hora: o lado seguro (as conversas do agente voltam para
+    // a equipe). Vai com o estado que o cartao mostra agora.
+    mudar("desligado", estado, "", textoDoAgenteMudou(nome, "desligado"));
   };
-
-  const fechar = () => {
-    if (pendente) {
-      return;
-    }
-    setConfirmando(null);
-    setMotivo("");
-    setErro(null);
-  };
-
-  const publico = publicoNoDialogo(publicoPublicado);
-  // Producao: motivo obrigatorio (3 a 300); teste e a volta: opcional.
-  const podeConfirmar =
-    !pendente && (confirmando !== "producao" || motivoValido(motivo));
 
   return (
     <Card role="region" aria-labelledby={`${ids}-titulo`}>
@@ -298,119 +251,21 @@ export function AgenteDaClinica({
         ) : null}
       </CardContent>
 
-      <Dialog
-        open={confirmando !== null}
-        onOpenChange={(aberto) => (!aberto ? fechar() : null)}
-      >
-        <DialogContent className="sm:max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>
-              {confirmando === "producao"
-                ? `Ligar a produção do agente na ${nome}?`
-                : confirmando === "volta"
-                  ? `Voltar o agente da ${nome} para Teste?`
-                  : `Ligar o agente em teste na ${nome}?`}
-            </DialogTitle>
-            <DialogDescription>
-              {confirmando === "volta"
-                ? "Confira o que acontece ao voltar para Teste."
-                : "Confira o que acontece ao ligar."}
-            </DialogDescription>
-          </DialogHeader>
-          <ul className="grid list-disc gap-1.5 pl-5 text-[13px] text-foreground">
-            {confirmando === "producao" ? (
-              <>
-                {publico ? (
-                  <li>{TEXTOS_DO_PAINEL.efeitoDaProducao(publico)}</li>
-                ) : null}
-                {TEXTOS_DO_PAINEL.efeitosDaProducao.map((efeito) => (
-                  <li key={efeito}>{efeito}</li>
-                ))}
-              </>
-            ) : confirmando === "volta" ? (
-              TEXTOS_DO_PAINEL.efeitoDaVoltaParaTeste.map((efeito) => (
-                <li key={efeito}>{efeito}</li>
-              ))
-            ) : (
-              TEXTOS_DO_PAINEL.efeitoDoTeste.map((efeito) => (
-                <li key={efeito}>{efeito}</li>
-              ))
-            )}
-            {tetoDiarioCentavos !== null ? (
-              <li>
-                O teto de gasto desta clínica é de{" "}
-                <span className="cz-num">{dolares(tetoDiarioCentavos)}</span> a
-                cada 24 horas.
-              </li>
-            ) : null}
-          </ul>
-          <div className="grid gap-1.5">
-            <Label htmlFor={`${ids}-motivo`}>
-              {confirmando === "producao"
-                ? "Motivo (obrigatório)"
-                : "Motivo (opcional)"}
-            </Label>
-            <Textarea
-              id={`${ids}-motivo`}
-              value={motivo}
-              onChange={(evento) => {
-                setMotivo(evento.target.value);
-                setErro(null);
-              }}
-              rows={2}
-              maxLength={MOTIVO_MAXIMO}
-              aria-describedby={`${ids}-motivo-apoio`}
-              placeholder={
-                confirmando === "producao"
-                  ? "Ex.: requisitos conferidos com o dono, clínica pronta"
-                  : "Ex.: clínica entrou na fase de testes"
-              }
-              disabled={pendente}
-            />
-            <p
-              id={`${ids}-motivo-apoio`}
-              className="text-[11px] text-text-tertiary"
-            >
-              {confirmando === "producao"
-                ? TEXTOS_DO_PAINEL.regraDoMotivoDaProducao
-                : TEXTOS_DO_PAINEL.motivoRegistrado}
-            </p>
-          </div>
-          <div aria-live="polite" aria-atomic="true">
-            {erro && confirmando !== null ? (
-              <Aviso tom="alert" role="note">
-                {erro}
-              </Aviso>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" disabled={pendente} onClick={fechar}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={!podeConfirmar}
-              aria-busy={pendente || undefined}
-              aria-describedby={`${ids}-motivo-apoio`}
-              onClick={() =>
-                mudar(confirmando === "producao" ? "producao" : "teste", motivo)
-              }
-            >
-              {confirmando === "producao" ? (
-                <RadioTower aria-hidden />
-              ) : (
-                <Power aria-hidden />
-              )}
-              {pendente
-                ? "Salvando..."
-                : confirmando === "producao"
-                  ? "Ligar a produção"
-                  : confirmando === "volta"
-                    ? "Voltar para Teste"
-                    : "Ligar em teste"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DialogoDoAgente
+        nome={nome}
+        confirmacao={confirmando}
+        publico={publicoNoDialogo(publicoPublicado)}
+        emProducao={estado === "producao"}
+        tetoDiarioCentavos={tetoDiarioCentavos}
+        motivo={motivo}
+        onMotivo={setMotivo}
+        erro={erro}
+        pendente={pendente}
+        onFechar={fechar}
+        onConfirmar={() =>
+          confirmar((novo) => textoDoAgenteMudou(nome, novo))
+        }
+      />
     </Card>
   );
 }

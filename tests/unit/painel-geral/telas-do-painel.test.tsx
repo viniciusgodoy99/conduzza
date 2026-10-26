@@ -1,13 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// As telas do Painel geral (onda 1) renderizadas no servidor: a lista com a
-// conta e o agente em 3 camadas (icone, rotulo e cor), os numeros, o
-// movimento, a ultima mensagem no fuso da clinica e o gasto contra o teto;
-// os vazios (inicial e por filtro) e o erro; os totais; e o detalhe (conta
-// com suspender e reativar, agente com a Producao travada e a dica, teto,
-// gasto, equipe e os cartoes de numeros e telefones no modo do painel). Sem
-// travessao em estado nenhum, e nenhum dado de paciente (so contagens).
+// As telas do Painel geral renderizadas no servidor. Desde 26/10/2026, o
+// acompanhamento de cliente: os seis cartoes do topo (Clinicas, Em uso, Sem
+// uso, Suspensas, Agente de IA liberado e Gasto de IA no mes); a lista pelo
+// ultimo acesso (quando, ha quanto tempo e quem, no fuso da clinica; o "Sem
+// uso" em 3 camadas), a equipe, o WhatsApp, o agente com "Liberar agente" e
+// "Retirar agente" na propria linha, os ultimos 30 dias e a conta; os
+// filtros de uso, conta e agente; os vazios (inicial e por filtro) e o
+// erro; e, no detalhe, a equipe com os Implementadores numa lista separada.
+// Ficam a conta com suspender e reativar, o agente com a Producao travada e
+// a dica, o teto, o gasto e os cartoes de numeros e telefones no modo do
+// painel. Sem travessao em estado nenhum, e de paciente so contagens.
 
 const navegacao = vi.hoisted(() => ({ busca: "" }));
 vi.mock("next/navigation", () => ({
@@ -41,6 +45,10 @@ import {
   AgenteDaClinica,
   textoDoAgenteMudou,
 } from "@/components/painel-geral/agente-da-clinica";
+import {
+  AgenteNaLista,
+  textoDaMudancaNaLista,
+} from "@/components/painel-geral/agente-na-lista";
 import { CartoesDoAgenteNoPainel } from "@/components/painel-geral/cartoes-do-agente-no-painel";
 import {
   ContaDaClinica,
@@ -60,13 +68,18 @@ import { TotaisDoPainel } from "@/components/painel-geral/totais-do-painel";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
-import type { ClinicaNoPainel } from "@/lib/queries/painel-geral";
+import type {
+  ClinicaNoPainel,
+  EquipeNoPainel,
+  PessoaDaEquipe,
+} from "@/lib/queries/painel-geral";
 
 const ID_A = "a1111111-1111-4111-8111-111111111111";
 const ID_B = "b2222222-2222-4222-8222-222222222222";
 const ID_C = "c3333333-3333-4333-8333-333333333333";
 const NUMERO = "d4444444-4444-4444-8444-444444444444";
 const CONVERSA = "e5555555-5555-4555-8555-555555555555";
+const PESSOA = "f6666666-6666-4666-8666-666666666666";
 const AGORA = "2026-10-20T15:00:00.000Z"; // 12:00 em Fortaleza
 
 function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
@@ -75,9 +88,20 @@ function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
     nome: "Clínica Aurora",
     criadaEm: "2026-09-01T12:00:00.000Z",
     fuso: "America/Fortaleza",
+    emUso: true,
+    ultimoAcesso: {
+      em: "2026-10-20T13:05:00.000Z",
+      userId: PESSOA,
+      nome: "Ana Souza",
+      email: "ana@aurora.com.br",
+      papel: "admin",
+      implementador: false,
+      equipeConduzza: false,
+    },
     membrosAtivos: 3,
     membrosPendentes: 0,
-    administradores: [{ nome: "Ana Souza", email: "ana@aurora.com.br" }],
+    membrosEquipeConduzza: 0,
+    pessoas: [{ nome: "Ana Souza", email: "ana@aurora.com.br" }],
     numerosTotal: 2,
     numerosConectados: 1,
     numeros: [],
@@ -104,27 +128,50 @@ function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
   };
 }
 
+/** O gasto das ultimas 24 horas no proprio teto (US$ 5,00 de US$ 5,00). */
+const GASTO_NO_TETO: ClinicaNoPainel["gasto"] = {
+  ultimas24hCentavos: 500,
+  mesCentavos: 900,
+  ultimas24hSemSimuladorCentavos: 500,
+  mesSemSimuladorCentavos: 900,
+};
+
+// A ordem do banco (e da tela): o ultimo acesso mais recente primeiro,
+// quem nunca entrou no fim. Aqui fora de ordem, de proposito.
 const LISTA: ClinicaNoPainel[] = [
-  clinica(),
   clinica({
     id: ID_B,
     nome: "Odonto Árvore",
+    emUso: false,
+    ultimoAcesso: null,
+    membrosAtivos: 1,
+    membrosPendentes: 2,
+    pessoas: [{ nome: "João Prado", email: "joao@arvore.com" }],
     suspensao: {
       suspensaEm: "2026-10-18T10:00:00.000Z",
       motivo: "Pagamento atrasado",
     },
     numerosConectados: 0,
     ultimaMensagemEm: null,
-    gasto: {
-      ultimas24hCentavos: 500,
-      mesCentavos: 900,
-      ultimas24hSemSimuladorCentavos: 500,
-      mesSemSimuladorCentavos: 900,
-    },
+    gasto: GASTO_NO_TETO,
   }),
+  clinica(),
   clinica({
     id: ID_C,
     nome: "Estética Bela",
+    emUso: false,
+    ultimoAcesso: {
+      em: "2026-09-01T12:00:00.000Z",
+      userId: PESSOA,
+      nome: null,
+      email: "recepcao@bela.com.br",
+      papel: "recepcao",
+      implementador: false,
+      equipeConduzza: false,
+    },
+    membrosAtivos: 1,
+    numerosTotal: 0,
+    numerosConectados: 0,
     agente: {
       estado: "teste",
       modo: "contatos",
@@ -163,49 +210,195 @@ function chip(saida: string, rotulo: string): string {
   return saida.slice(inicio, fim + rotulo.length + 13);
 }
 
+/** A tag de abertura do botao com aquele nome acessivel (aria-label). */
+function botaoPeloNome(saida: string, nome: string): string {
+  const indice = saida.indexOf(`aria-label="${escapado(nome)}"`);
+  expect(indice, `botão "${nome}"`).toBeGreaterThan(-1);
+  const abertura = saida.lastIndexOf("<button", indice);
+  return saida.slice(abertura, saida.indexOf(">", abertura) + 1);
+}
+
+/** A linha da tabela da clinica, pelo link do detalhe. */
+function linhaDa(saida: string, id: string): string {
+  const link = saida.indexOf(`href="/painel-geral/${id}"`);
+  expect(link, id).toBeGreaterThan(-1);
+  const inicio = saida.lastIndexOf("<tr", link);
+  return saida.slice(inicio, saida.indexOf("</tr>", link) + 5);
+}
+
 beforeEach(() => {
   navegacao.busca = "";
 });
 
 describe("lista do painel", () => {
-  it("uma linha por clínica, pelo nome, com o link para o detalhe", () => {
+  it("uma linha por clínica, pelo último acesso mais recente (quem nunca entrou no fim), com o link para o detalhe", () => {
     const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
     const ordem = ["Clínica Aurora", "Estética Bela", "Odonto Árvore"].map(
       (nome) => saida.indexOf(escapado(nome)),
     );
+    expect(ordem.every((indice) => indice > -1)).toBe(true);
     expect([...ordem].sort((a, b) => a - b)).toEqual(ordem);
     for (const id of [ID_A, ID_B, ID_C]) {
       expect(saida).toContain(`href="/painel-geral/${id}"`);
     }
     expect(saida).toContain("3 clínicas");
+    expect(saida).toContain("Criada em 01/09/2026");
   });
 
-  it("conta e agente em 3 camadas: ícone de forma própria, rótulo e cor", () => {
+  it("as colunas do desenho, nesta ordem, e o gasto por clínica fora da lista", () => {
     const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
-    expect(chip(saida, "Ativa")).toContain("lucide-circle-check");
-    expect(chip(saida, "Ativa")).toContain("var(--success-text)");
-    expect(chip(saida, "Suspensa")).toContain("lucide-octagon-pause");
-    expect(chip(saida, "Suspensa")).toContain("var(--alert-text)");
-    expect(chip(saida, "Desligado")).toContain("lucide-circle-pause");
-    expect(chip(saida, "Teste")).toContain("lucide-flask-conical");
-    expect(chip(saida, "Teste")).toContain("var(--info-text)");
-    expect(saida).toContain("Desde 18/10/2026");
-    expect(saida).toContain("Conversa com a equipe");
+    const colunas = [
+      "Clínica",
+      "Último acesso",
+      "Equipe",
+      "WhatsApp",
+      "Agente de IA",
+      "Últimos 30 dias",
+      "Conta",
+    ].map((coluna) => saida.indexOf(`>${escapado(coluna)}</th>`));
+    expect(colunas.every((indice) => indice > -1)).toBe(true);
+    expect([...colunas].sort((a, b) => a - b)).toEqual(colunas);
+    // O gasto de cada clinica foi para o detalhe.
+    expect(saida).not.toContain("em 24 h");
+    expect(saida).not.toContain("Teto de");
+    expect(saida).not.toContain("Gasto de IA");
   });
 
-  it("números, movimento, última mensagem no fuso da clínica e gasto contra o teto", () => {
+  it("último acesso: há quanto tempo, o dia e a hora no fuso da clínica e quem; Sem uso em 3 camadas; quem nunca entrou", () => {
     const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
-    expect(saida).toContain("1 de 2");
-    expect(chip(saida, "Nenhum conectado")).toContain("lucide-wifi-off");
-    expect(saida).toContain("1.234");
-    expect(saida).toContain("Hoje, 10:05");
-    expect(saida).toContain("Nenhuma");
-    expect(saida).toContain("US$ 0,42");
-    expect(saida).toContain("em 24 h");
-    expect(saida).toContain('Teto de <span class="cz-num">US$ 5,00</span>');
-    expect(saida).toContain('<span class="cz-num">US$ 3,10</span> no mês');
-    expect(chip(saida, "Teto atingido")).toContain("lucide-hourglass");
-    expect(chip(saida, "Perto do teto")).toContain("lucide-circle-alert");
+    const aurora = linhaDa(saida, ID_A);
+    expect(aurora).toContain(">Hoje<");
+    // 13:05 UTC = 10:05 em Fortaleza
+    expect(aurora).toContain("20/10/2026, 10:05");
+    expect(aurora).toContain("por Ana Souza");
+    expect(aurora).not.toContain("Sem uso");
+
+    const bela = linhaDa(saida, ID_C);
+    expect(bela).toContain(">Há 1 mês<");
+    expect(bela).toContain("01/09/2026, 09:00");
+    // sem nome no perfil: o e-mail
+    expect(bela).toContain("por recepcao@bela.com.br");
+    expect(chip(bela, "Sem uso")).toContain("lucide-watch");
+    expect(chip(bela, "Sem uso")).toContain("var(--warning-text)");
+
+    const arvore = linhaDa(saida, ID_B);
+    expect(arvore).toContain(escapado(TEXTOS_DO_PAINEL.ninguemEntrou));
+    expect(chip(arvore, "Sem uso")).toContain("lucide-watch");
+  });
+
+  it("o último acesso da equipe Conduzza conta e vem marcado na linha, e a coluna Equipe diz quantas das ativas são dela", () => {
+    const saida = html(
+      <ListaDoPainel
+        clinicas={[
+          clinica({
+            ultimoAcesso: {
+              em: "2026-10-20T13:05:00.000Z",
+              userId: PESSOA,
+              nome: "Vinicius Rodrigues",
+              email: "vinicius@conduzza.com",
+              papel: "admin",
+              implementador: false,
+              equipeConduzza: true,
+            },
+            membrosAtivos: 1,
+            membrosEquipeConduzza: 1,
+          }),
+        ]}
+        agoraIso={AGORA}
+      />,
+    );
+    const linha = linhaDa(saida, ID_A);
+    expect(linha).toContain("por Vinicius Rodrigues (equipe Conduzza)");
+    expect(linha).toContain(">Inclui 1 da equipe Conduzza<");
+    expect(linha).not.toContain("Sem uso");
+    // Sem ninguem da equipe Conduzza, nenhuma das duas marcas.
+    const aurora = linhaDa(
+      html(<ListaDoPainel clinicas={[clinica()]} agoraIso={AGORA} />),
+      ID_A,
+    );
+    expect(aurora).not.toContain("equipe Conduzza");
+  });
+
+  it("a borda dos 30 dias: a clínica em uso com o login de 30 dias de calendário mostra \"Há 30 dias\", nunca \"Há 1 mês\" (revisão de 26/10/2026)", () => {
+    // Login em 25/09 as 23:30 em Fortaleza, leitura em 25/10 as 08:00:
+    // 704,5 horas, em uso para o banco.
+    const saida = html(
+      <ListaDoPainel
+        clinicas={[
+          clinica({
+            emUso: true,
+            ultimoAcesso: {
+              ...clinica().ultimoAcesso!,
+              em: "2026-09-26T02:30:00.000Z",
+            },
+          }),
+        ]}
+        agoraIso="2026-10-25T11:00:00.000Z"
+      />,
+    );
+    const linha = linhaDa(saida, ID_A);
+    expect(linha).toContain(">Há 30 dias<");
+    expect(linha).not.toContain("Há 1 mês");
+    expect(linha).not.toContain("Sem uso");
+    expect(linha).toContain("25/09/2026, 23:30");
+  });
+
+  it("equipe, WhatsApp, últimos 30 dias e conta em 3 camadas", () => {
+    const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    const aurora = linhaDa(saida, ID_A);
+    // O numero em mono e a palavra no texto, como os leads e as conversas.
+    expect(aurora).toContain(
+      '<span class="cz-num">3</span> <span class="text-text-secondary">ativas</span>',
+    );
+    expect(aurora).toContain(">Nenhuma pendente<");
+    expect(aurora).toContain(">1 de 2</span>");
+    expect(aurora).toContain("conectados");
+    expect(aurora).toContain("1.234");
+    expect(chip(aurora, "Ativa")).toContain("lucide-circle-check");
+    expect(chip(aurora, "Ativa")).toContain("var(--success-text)");
+
+    const arvore = linhaDa(saida, ID_B);
+    expect(arvore).toContain(
+      '<span class="cz-num">1</span> <span class="text-text-secondary">ativa</span>',
+    );
+    expect(arvore).toContain(
+      '<span class="cz-num">2</span> <span class="text-text-secondary">pendentes</span>',
+    );
+    expect(chip(arvore, "Nenhum conectado")).toContain("lucide-wifi-off");
+    expect(chip(arvore, "Suspensa")).toContain("lucide-octagon-pause");
+    expect(chip(arvore, "Suspensa")).toContain("var(--alert-text)");
+    expect(arvore).toContain("Desde 18/10/2026");
+
+    expect(linhaDa(saida, ID_C)).toContain("Nenhum número");
+  });
+
+  it("agente em 3 camadas com a ação na linha: Liberar (Teste) e Retirar; com a conta suspensa, Liberar visível, desabilitado e com a dica", () => {
+    const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    const aurora = linhaDa(saida, ID_A);
+    expect(chip(aurora, "Não liberado")).toContain("lucide-circle-pause");
+    expect(chip(aurora, "Não liberado")).toContain("var(--neutral-text)");
+    const liberar = botaoPeloNome(aurora, "Liberar agente na Clínica Aurora");
+    expect(liberar).not.toContain('disabled=""');
+    expect(aurora).toContain(">Liberar agente</button>");
+    expect(aurora).not.toContain("Retirar agente");
+
+    const bela = linhaDa(saida, ID_C);
+    expect(chip(bela, "Liberado (Teste)")).toContain("lucide-flask-conical");
+    expect(chip(bela, "Liberado (Teste)")).toContain("var(--info-text)");
+    expect(
+      botaoPeloNome(bela, "Retirar agente da Estética Bela"),
+    ).not.toContain('disabled=""');
+    expect(bela).not.toContain(">Liberar agente</button>");
+
+    // O banco recusa ligar em Teste a clinica suspensa: o botao fica, e a
+    // dica diz o porque.
+    const arvore = linhaDa(saida, ID_B);
+    expect(botaoPeloNome(arvore, "Liberar agente na Odonto Árvore")).toContain(
+      'disabled=""',
+    );
+    expect(arvore).toContain("cursor-not-allowed");
+    // Nenhum dialogo aberto sem clique.
+    expect(saida).not.toContain("Liberar o agente de IA na");
   });
 
   it("vazio inicial: nenhuma clínica, sem tabela", () => {
@@ -214,61 +407,102 @@ describe("lista do painel", () => {
     expect(saida).not.toContain("<table");
   });
 
-  it("filtros da URL: só as suspensas; a busca sem resultado tem o vazio próprio e o limpar", () => {
-    navegacao.busca = "situacao=suspensa";
-    const suspensas = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+  it("filtros da URL: uso, conta e agente; a busca olha a equipe; sem resultado, o vazio próprio e o limpar", () => {
+    const comFiltro = (busca: string) => {
+      navegacao.busca = busca;
+      return html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    };
+
+    const semUso = comFiltro("uso=sem_uso");
+    expect(semUso).toContain(escapado("Odonto Árvore"));
+    expect(semUso).toContain(escapado("Estética Bela"));
+    expect(semUso).not.toContain(escapado("Clínica Aurora"));
+    expect(semUso).toContain("2 clínicas");
+    expect(semUso).toContain("Limpar filtros");
+
+    const suspensas = comFiltro("conta=suspensa");
     expect(suspensas).toContain(escapado("Odonto Árvore"));
     expect(suspensas).not.toContain(escapado("Clínica Aurora"));
     expect(suspensas).toContain("1 clínica");
     expect(suspensas).toContain('aria-pressed="true"');
-    expect(suspensas).toContain("Limpar filtros");
 
-    navegacao.busca = "busca=zzz";
-    const nada = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    const liberadas = comFiltro("agente=liberado");
+    expect(liberadas).toContain(escapado("Estética Bela"));
+    expect(liberadas).not.toContain(escapado("Odonto Árvore"));
+
+    const pelaEquipe = comFiltro("busca=joao%40arvore");
+    expect(pelaEquipe).toContain(escapado("Odonto Árvore"));
+    expect(pelaEquipe).toContain("1 clínica");
+
+    const nada = comFiltro("busca=zzz");
     expect(nada).toContain(TEXTOS_DO_PAINEL.vazioPorFiltro);
     expect(nada).toContain("Limpar filtros");
     expect(nada).not.toContain("<table");
   });
 
-  it("os filtros têm nome acessível e alvo de 40px", () => {
+  it("os filtros têm nome acessível, o nome visível e alvo de 40px", () => {
     const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
     expect(saida).toContain('aria-label="Buscar clínica"');
-    expect(saida).toContain('aria-label="Situação da conta"');
+    expect(saida).toContain(
+      `placeholder="${escapado(TEXTOS_DO_PAINEL.buscaPlaceholder)}"`,
+    );
+    expect(saida).toContain('aria-label="Uso"');
+    expect(saida).toContain('aria-label="Conta"');
     expect(saida).toContain('aria-label="Agente de IA"');
+    for (const opcao of ["Em uso", "Sem uso", "Ativas", "Suspensas"]) {
+      expect(saida).toContain(`>${opcao}</button>`);
+    }
+    expect(saida).toContain(`>${escapado("Não liberado")}</button>`);
     expect(saida).toContain("min-h-10");
+    expect(saida).toContain("hit-40");
   });
 });
 
 describe("totais e erro", () => {
-  it("os sete totais do topo (a produção chega na onda 2)", () => {
+  it("os seis cartões do topo do desenho de 26/10/2026", () => {
     const saida = html(
       <TotaisDoPainel
         totais={{
           clinicas: 12,
-          ativas: 10,
+          emUso: 8,
+          semUso: 4,
           suspensas: 2,
-          agenteEmTeste: 3,
-          agenteEmProducao: 1,
-          gasto24hCentavos: 1234,
+          agenteLiberado: 3,
           gastoMesCentavos: 98765,
         }}
       />,
     );
-    for (const rotulo of [
+    const rotulos = [
       "Clínicas",
-      "Ativas",
+      "Em uso",
+      "Sem uso",
       "Suspensas",
+      "Agente de IA liberado",
+      "Gasto de IA no mês",
+    ];
+    const posicoes = rotulos.map((rotulo) => saida.indexOf(escapado(rotulo)));
+    expect(posicoes.every((indice) => indice > -1)).toBe(true);
+    expect([...posicoes].sort((a, b) => a - b)).toEqual(posicoes);
+    expect(saida.match(/role="group"/g)).toHaveLength(6);
+    for (const valor of [">12<", ">8<", ">4<", ">2<", ">3<"]) {
+      expect(saida).toContain(valor);
+    }
+    expect(saida).toContain("US$ 987,65");
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.rodapeDoEmUso));
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.rodapeDoSemUso));
+    // Os cartoes que sao status levam o icone do chip.
+    expect(saida).toContain("lucide-circle-check");
+    expect(saida).toContain("lucide-watch");
+    expect(saida).toContain("lucide-octagon-pause");
+    // Os que sairam do topo.
+    for (const saiu of [
+      ">Ativas<",
       "Agente em teste",
       "Agente em produção",
       "Gasto de IA em 24 horas",
-      "Gasto de IA no mês",
     ]) {
-      expect(saida).toContain(escapado(rotulo));
+      expect(saida).not.toContain(saiu);
     }
-    expect(saida).toContain("US$ 12,34");
-    expect(saida).toContain("US$ 987,65");
-    expect(saida).toContain("lucide-octagon-pause");
-    expect(saida).toContain("lucide-radio-tower");
   });
 
   it("erro de leitura: o texto e o Tentar de novo, nunca zero", () => {
@@ -276,6 +510,51 @@ describe("totais e erro", () => {
     expect(saida).toContain(TEXTOS_DO_PAINEL.erroAoCarregar);
     expect(saida).toContain("Tentar de novo");
     expect(saida).toContain("lucide-octagon-alert");
+  });
+});
+
+describe("o agente na linha (liberar e retirar)", () => {
+  it("em produção: Liberado (Produção) em 3 camadas e o Retirar", () => {
+    const saida = html(
+      <AgenteNaLista
+        clinicId={ID_A}
+        nome="Clínica Aurora"
+        estado="producao"
+        suspensa={false}
+        tetoDiarioCentavos={500}
+      />,
+    );
+    expect(chip(saida, "Liberado (Produção)")).toContain("lucide-radio-tower");
+    expect(chip(saida, "Liberado (Produção)")).toContain("var(--success-text)");
+    expect(botaoPeloNome(saida, "Retirar agente da Clínica Aurora")).toContain(
+      'data-size="sm"',
+    );
+    expect(saida).toContain("lucide-power-off");
+  });
+
+  it("retirar continua livre com a conta suspensa (o lado seguro)", () => {
+    const saida = html(
+      <AgenteNaLista
+        clinicId={ID_C}
+        nome="Estética Bela"
+        estado="teste"
+        suspensa
+        tetoDiarioCentavos={500}
+      />,
+    );
+    expect(
+      botaoPeloNome(saida, "Retirar agente da Estética Bela"),
+    ).not.toContain('disabled=""');
+    expect(saida).not.toContain("cursor-not-allowed");
+  });
+
+  it("o aviso do fim: liberado em Teste ou retirado", () => {
+    expect(textoDaMudancaNaLista("Aurora", "teste")).toBe(
+      "Agente de IA liberado na Aurora, em Teste.",
+    );
+    expect(textoDaMudancaNaLista("Aurora", "desligado")).toBe(
+      "Agente de IA retirado da Aurora.",
+    );
   });
 });
 
@@ -561,7 +840,7 @@ describe("teto, gasto e equipe", () => {
 
   it("gasto: a legenda contra o teto, o mês, sem o simulador e o chip só quando pede atenção", () => {
     const dentro = html(
-      <GastoDaIa gasto={LISTA[0]!.gasto} tetoDiarioCentavos={500} />,
+      <GastoDaIa gasto={clinica().gasto} tetoDiarioCentavos={500} />,
     );
     expect(dentro).toContain("US$ 0,42 de US$ 5,00");
     expect(dentro).toContain("US$ 3,10");
@@ -571,45 +850,187 @@ describe("teto, gasto e equipe", () => {
     expect(dentro).not.toContain("Teto atingido");
 
     const atingido = html(
-      <GastoDaIa gasto={LISTA[1]!.gasto} tetoDiarioCentavos={500} />,
+      <GastoDaIa gasto={GASTO_NO_TETO} tetoDiarioCentavos={500} />,
     );
     expect(chip(atingido, "Teto atingido")).toContain("lucide-hourglass");
 
     const semTeto = html(
-      <GastoDaIa gasto={LISTA[0]!.gasto} tetoDiarioCentavos={null} />,
+      <GastoDaIa gasto={clinica().gasto} tetoDiarioCentavos={null} />,
     );
     expect(semTeto).toContain("US$ 0,42, sem teto");
   });
 
-  it("equipe: os administradores ativos e os pedidos de entrada", () => {
-    const saida = html(
-      <EquipeDaClinica
-        membrosAtivos={4}
-        membrosPendentes={2}
-        administradores={[
-          { nome: "Ana Souza", email: "ana@aurora.com.br" },
-          { nome: null, email: "sem.nome@aurora.com.br" },
-        ]}
-      />,
-    );
-    expect(saida).toContain("Ana Souza");
-    expect(saida).toContain('href="mailto:ana@aurora.com.br"');
-    expect(saida).toContain("Sem nome no perfil");
-    expect(saida).toContain(
-      escapado("4 membros ativos e 2 pedidos de entrada esperando liberação."),
-    );
-    const vazia = html(
-      <EquipeDaClinica
-        membrosAtivos={0}
-        membrosPendentes={0}
-        administradores={[]}
-      />,
-    );
-    expect(vazia).toContain("Nenhum administrador ativo.");
+  it("o aviso de fim da equipe: membros ativos e pedidos de entrada", () => {
     expect(textoDaEquipe(1, 0)).toBe("1 membro ativo.");
+    expect(textoDaEquipe(3, 0, 1)).toBe(
+      "3 membros ativos (1 da equipe Conduzza).",
+    );
+    expect(textoDaEquipe(1, 2, 1)).toBe(
+      "1 membro ativo (1 da equipe Conduzza) e 2 pedidos de entrada esperando liberação.",
+    );
+    expect(textoDaEquipe(4, 2)).toBe(
+      "4 membros ativos e 2 pedidos de entrada esperando liberação.",
+    );
     expect(textoDaEquipe(1, 1)).toBe(
       "1 membro ativo e 1 pedido de entrada esperando liberação.",
     );
+  });
+});
+
+function pessoa(campos: Partial<PessoaDaEquipe> = {}): PessoaDaEquipe {
+  return {
+    userId: PESSOA,
+    nome: "Ana Souza",
+    email: "ana@aurora.com.br",
+    papel: "admin",
+    situacao: "ativo",
+    ultimoAcessoEm: "2026-10-20T13:05:00.000Z",
+    equipeConduzza: false,
+    ...campos,
+  };
+}
+
+const EQUIPE: EquipeNoPainel = {
+  equipe: [
+    pessoa(),
+    pessoa({
+      userId: ID_B,
+      nome: null,
+      email: "recepcao@aurora.com.br",
+      papel: "recepcao",
+      situacao: "pendente",
+      ultimoAcessoEm: "2026-09-01T12:00:00.000Z",
+    }),
+    pessoa({
+      userId: ID_C,
+      nome: "Bruno Lima",
+      email: "bruno@aurora.com.br",
+      papel: "leitura",
+      situacao: "inativo",
+      ultimoAcessoEm: null,
+    }),
+    pessoa({
+      userId: NUMERO,
+      nome: "Vinicius",
+      email: "vinicius@conduzza.com",
+      papel: "admin",
+      equipeConduzza: true,
+    }),
+  ],
+  implementadores: [
+    pessoa({
+      userId: CONVERSA,
+      nome: "Técnico da Implantação",
+      email: "tecnico@implanta.com.br",
+      papel: "admin",
+      ultimoAcessoEm: "2026-10-19T23:30:00.000Z",
+    }),
+  ],
+};
+
+describe("equipe da clínica no detalhe (26/10/2026; P18-5)", () => {
+  function equipe(
+    campos: Partial<React.ComponentProps<typeof EquipeDaClinica>> = {},
+  ) {
+    return html(
+      <EquipeDaClinica
+        equipe={EQUIPE}
+        membrosAtivos={2}
+        membrosPendentes={1}
+        fuso="America/Fortaleza"
+        agoraMs={Date.parse(AGORA)}
+        {...campos}
+      />,
+    );
+  }
+
+  /** O pedaco do HTML entre o rotulo de uma lista e o fim da tabela dela. */
+  function lista(saida: string, rotulo: string): string {
+    const inicio = saida.indexOf(`>${rotulo}</p>`);
+    expect(inicio, rotulo).toBeGreaterThan(-1);
+    const fim = saida.indexOf("</table>", inicio);
+    return saida.slice(inicio, fim === -1 ? undefined : fim);
+  }
+
+  it("cada pessoa: nome, e-mail (40px), papel, situação em 3 camadas e o último acesso no fuso da clínica", () => {
+    const saida = equipe();
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.equipeTitulo));
+    expect(saida).toContain(
+      escapado("2 membros ativos e 1 pedido de entrada esperando liberação."),
+    );
+    const daEquipe = lista(saida, "Equipe");
+    for (const coluna of ["Pessoa", "Papel", "Situação", "Último acesso"]) {
+      expect(daEquipe).toContain(`>${escapado(coluna)}</th>`);
+    }
+    expect(daEquipe).toContain("Ana Souza");
+    expect(daEquipe).toContain('href="mailto:ana@aurora.com.br"');
+    expect(daEquipe).toContain("min-h-10");
+    expect(daEquipe).toContain(">Administrador<");
+    expect(daEquipe).toContain(">Recepção<");
+    expect(daEquipe).toContain(">Somente leitura<");
+    expect(chip(daEquipe, "Ativa")).toContain("lucide-circle-check");
+    expect(chip(daEquipe, "Pendente")).toContain("lucide-hourglass");
+    expect(chip(daEquipe, "Pendente")).toContain("var(--warning-text)");
+    expect(chip(daEquipe, "Inativa")).toContain("lucide-circle-slash");
+    expect(chip(daEquipe, "Inativa")).toContain("var(--neutral-text)");
+    expect(daEquipe).toContain(">Hoje<");
+    expect(daEquipe).toContain("20/10/2026, 10:05");
+    expect(daEquipe).toContain(">Há 1 mês<");
+    expect(daEquipe).toContain(escapado(TEXTOS_DO_PAINEL.nuncaEntrou));
+    expect(daEquipe).toContain(escapado(TEXTOS_DO_PAINEL.semNomeNoPerfil));
+  });
+
+  it("a equipe Conduzza aparece marcada e conta no uso como qualquer pessoa ativa; o último acesso é a última atividade", () => {
+    const saida = equipe({ membrosEquipeConduzza: 1 });
+    expect(lista(saida, "Equipe")).toContain(
+      escapado(TEXTOS_DO_PAINEL.equipeConduzzaMarca),
+    );
+    expect(saida).toContain(
+      escapado(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao),
+    );
+    expect(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao).toContain(
+      "conta no uso",
+    );
+    expect(saida).toContain(
+      escapado("2 membros ativos (1 da equipe Conduzza) e 1 pedido"),
+    );
+    expect(saida).toContain(
+      escapado(TEXTOS_DO_PAINEL.ultimoAcessoEAtividade),
+    );
+    const semConduzza = equipe({
+      equipe: { ...EQUIPE, equipe: [pessoa()] },
+    });
+    expect(semConduzza).not.toContain(
+      escapado(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao),
+    );
+  });
+
+  it("os Implementadores numa lista separada, sem a coluna Papel, e fora da lista da equipe", () => {
+    const saida = equipe();
+    const implementadores = lista(saida, "Implementadores");
+    expect(implementadores).toContain(escapado("Técnico da Implantação"));
+    expect(implementadores).not.toContain(">Papel</th>");
+    // 23:30 UTC do dia 19 = 20:30 em Fortaleza
+    expect(implementadores).toContain("19/10/2026, 20:30");
+    expect(implementadores).toContain(">Ontem<");
+    expect(lista(saida, "Equipe")).not.toContain(
+      escapado("Técnico da Implantação"),
+    );
+    expect(saida).toContain(
+      escapado(TEXTOS_DO_PAINEL.implementadoresDescricao),
+    );
+  });
+
+  it("vazios: ninguém na equipe e nenhum implementador", () => {
+    const saida = equipe({
+      equipe: { equipe: [], implementadores: [] },
+      membrosAtivos: 0,
+      membrosPendentes: 0,
+    });
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.equipeVazia));
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.nenhumImplementador));
+    expect(saida).not.toContain("<table");
+    expect(saida).toContain("0 membros ativos.");
   });
 });
 
@@ -710,6 +1131,27 @@ describe("nenhum travessão nas telas", () => {
     const telas = [
       html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />),
       html(<ListaDoPainel clinicas={[]} agoraIso={AGORA} />),
+      html(
+        <TotaisDoPainel
+          totais={{
+            clinicas: 3,
+            emUso: 1,
+            semUso: 2,
+            suspensas: 1,
+            agenteLiberado: 1,
+            gastoMesCentavos: 2210,
+          }}
+        />,
+      ),
+      html(
+        <EquipeDaClinica
+          equipe={EQUIPE}
+          membrosAtivos={2}
+          membrosPendentes={1}
+          fuso="America/Fortaleza"
+          agoraMs={Date.parse(AGORA)}
+        />,
+      ),
       html(<ErroDoPainel />),
       html(
         <ContaDaClinica
@@ -735,7 +1177,7 @@ describe("nenhum travessão nas telas", () => {
         />,
       ),
       html(<TetoDaIa clinicId={ID_A} tetos={null} />),
-      html(<GastoDaIa gasto={LISTA[1]!.gasto} tetoDiarioCentavos={500} />),
+      html(<GastoDaIa gasto={GASTO_NO_TETO} tetoDiarioCentavos={500} />),
     ];
     for (const tela of telas) {
       expect(tela).not.toMatch(/[—–]/);
@@ -766,7 +1208,8 @@ describe("interruptor geral no topo do painel (onda 2, P8)", () => {
 });
 
 describe("agente em produção no painel (onda 2, item 11)", () => {
-  it("a lista mostra Produção em 3 camadas, com o apoio Atendendo os contatos", () => {
+  it("a lista mostra Liberado (Produção) em 3 camadas, com o Retirar, e o filtro Liberado a acha", () => {
+    navegacao.busca = "agente=liberado";
     const saida = html(
       <ListaDoPainel
         clinicas={[
@@ -783,9 +1226,9 @@ describe("agente em produção no painel (onda 2, item 11)", () => {
         agoraIso={AGORA}
       />,
     );
-    expect(chip(saida, "Produção")).toContain("lucide-radio-tower");
-    expect(saida).toContain("Atendendo os contatos");
-    expect(saida).toContain(">Agente em produção<");
+    expect(chip(saida, "Liberado (Produção)")).toContain("lucide-radio-tower");
+    expect(saida).toContain("Retirar agente da Clínica Aurora");
+    expect(saida).toContain("1 clínica");
   });
 
   it("o diálogo da produção pede o motivo e diz a quem o assistente passa a responder", () => {

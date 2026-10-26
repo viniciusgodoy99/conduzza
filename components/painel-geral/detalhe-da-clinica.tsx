@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   CalendarClock,
   Contact,
+  LogIn,
   MessagesSquare,
   Smartphone,
   UserPlus,
@@ -17,10 +18,14 @@ import { EquipeDaClinica } from "@/components/painel-geral/equipe-da-clinica";
 import { GastoDaIa } from "@/components/painel-geral/gasto-da-ia";
 import {
   contagemNoPainel,
+  dataEHoraNaClinica,
   dataNaClinica,
+  haQuantoTempo,
   quandoNaClinica,
+  quemEntrou,
   textoDosNumeros,
   TEXTOS_DO_PAINEL,
+  USO_DA_CLINICA_STATUS,
 } from "@/components/painel-geral/painel-geral";
 import { RequisitosDaProducaoCartao } from "@/components/painel-geral/requisitos-da-producao";
 import { TetoDaIa } from "@/components/painel-geral/teto-da-ia";
@@ -28,22 +33,28 @@ import { Aviso } from "@/components/shared/aviso";
 import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import { PageHeader } from "@/components/shared/page-header";
+import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import { corDoNumero } from "@/lib/domain/cor-do-numero";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 import type {
   ClinicaNoPainel,
+  EquipeNoPainel,
   RequisitosDaProducao,
   TetosDaIa,
 } from "@/lib/queries/painel-geral";
 
 // O detalhe de uma clinica no Painel geral (onda 1, decisao do dono de
-// 20/10/2026): as metricas da lista, a conta (suspender e reativar), o
-// agente (Desligado, Teste e Producao), os requisitos da producao (onda 2,
-// item 11), os numeros e os telefones do agente (os cartoes da aba
-// WhatsApp da Tela 6, no modo do painel), o gasto contra o teto, o proprio
-// teto e a equipe. So contagens: nenhum dado de paciente. A pagina
+// 20/10/2026; desde 26/10/2026, o acompanhamento de cliente): as metricas
+// (o ultimo acesso da equipe primeiro, com quem entrou), a equipe da
+// clinica com os Implementadores numa lista separada (P18-5), a conta
+// (suspender e reativar), o agente (Desligado, Teste e Producao, sempre
+// com o estado que a tela mostrava: o banco recusa a pagina velha), os
+// requisitos da producao (onda 2, item 11), os numeros e os telefones do
+// agente (os cartoes da aba WhatsApp da Tela 6, no modo do painel), o gasto
+// contra o teto e o proprio teto. De paciente, so contagens; nome, e-mail,
+// papel e ultimo acesso sao da equipe da clinica. A pagina
 // (app/(app)/painel-geral/[clinicId]/page.tsx) le os dados; aqui so se
 // desenha, e cada leitura de apoio que falhou mostra o erro no proprio
 // cartao (nunca um cartao vazio que afirma o que nao leu). Server
@@ -54,6 +65,8 @@ export type LeituraDoDetalhe<T> = T | "erro";
 
 export type DetalheDaClinicaProps = {
   clinica: ClinicaNoPainel;
+  /** A equipe da clinica e os Implementadores (equipe_da_clinica_no_painel). */
+  equipe: LeituraDoDetalhe<EquipeNoPainel>;
   /** A liberacao, os numeros ligados, os telefones e a situacao do agente. */
   dados: LeituraDoDetalhe<DadosDaIa>;
   /** Nulo: a clinica ainda nao tem a linha de liberacao (nem teto). */
@@ -65,7 +78,10 @@ export type DetalheDaClinicaProps = {
    * (agenteAtendeNoAmbiente).
    */
   ambienteDaIa: boolean;
-  /** Relogio do servidor na carga (epoch ms). */
+  /**
+   * O relogio da leitura do painel (epoch ms): o "Há N dias" do ultimo
+   * acesso conta pelo mesmo relogio do "Em uso".
+   */
   agoraMs: number;
   /** Os requisitos da producao (onda 2, item 11). */
   requisitos: LeituraDoDetalhe<RequisitosDaProducao>;
@@ -153,6 +169,7 @@ export function VoltarParaOPainel() {
 
 export function DetalheDaClinica({
   clinica,
+  equipe,
   dados,
   tetos,
   ambienteDaIa,
@@ -168,6 +185,8 @@ export function DetalheDaClinica({
     dados === "erro"
       ? null
       : { dados, numeros, ambienteLigado, agoraMs, fuso: clinica.fuso };
+  const agora = new Date(agoraMs);
+  const acesso = clinica.ultimoAcesso;
 
   return (
     <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-4 md:p-6">
@@ -179,10 +198,46 @@ export function DetalheDaClinica({
       />
       <AvisoCelular />
 
+      {/* Quatro por linha a partir de 1024px: o ultimo acesso ocupa duas
+          colunas (diz quando e quem), e as oito vagas fecham em duas linhas.
+          No celular, o ultimo acesso ocupa a linha inteira. */}
       <section
         aria-label="Movimento da clínica"
-        className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
       >
+        {acesso ? (
+          <CartaoDeMetrica
+            className="col-span-2"
+            rotulo="Último acesso da equipe"
+            icone={LogIn}
+            tamanho="md"
+            valor={haQuantoTempo(acesso.em, clinica.fuso, agora)}
+            rodape={`${dataEHoraNaClinica(acesso.em, clinica.fuso)}, por ${quemEntrou(acesso)}`}
+          >
+            {clinica.emUso ? null : (
+              <StatusChip
+                size="sm"
+                className="w-fit"
+                definition={USO_DA_CLINICA_STATUS.sem_uso}
+              />
+            )}
+          </CartaoDeMetrica>
+        ) : (
+          <CartaoDeMetrica
+            className="col-span-2"
+            rotulo="Último acesso da equipe"
+            icone={LogIn}
+            tamanho="md"
+            estado="vazio"
+            texto={TEXTOS_DO_PAINEL.ninguemEntrou}
+          >
+            <StatusChip
+              size="sm"
+              className="w-fit"
+              definition={USO_DA_CLINICA_STATUS.sem_uso}
+            />
+          </CartaoDeMetrica>
+        )}
         <CartaoDeMetrica
           rotulo="Equipe"
           icone={Users}
@@ -247,6 +302,21 @@ export function DetalheDaClinica({
         )}
       </section>
 
+      {equipe === "erro" ? (
+        <Aviso tom="alert" role="note">
+          {TEXTOS_DO_PAINEL.equipeSemLeitura}
+        </Aviso>
+      ) : (
+        <EquipeDaClinica
+          equipe={equipe}
+          membrosAtivos={clinica.membrosAtivos}
+          membrosPendentes={clinica.membrosPendentes}
+          membrosEquipeConduzza={clinica.membrosEquipeConduzza}
+          fuso={clinica.fuso}
+          agoraMs={agoraMs}
+        />
+      )}
+
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
         <div className="grid min-w-0 gap-4">
           <ContaDaClinica
@@ -308,11 +378,6 @@ export function DetalheDaClinica({
               bloqueio={bloqueioDoTeto(clinica)}
             />
           )}
-          <EquipeDaClinica
-            membrosAtivos={clinica.membrosAtivos}
-            membrosPendentes={clinica.membrosPendentes}
-            administradores={clinica.administradores}
-          />
         </div>
       </div>
     </div>

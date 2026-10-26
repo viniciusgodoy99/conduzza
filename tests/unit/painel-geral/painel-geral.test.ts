@@ -4,12 +4,14 @@ import {
   CircleCheck,
   CircleDashed,
   CirclePause,
+  CircleSlash,
   CircleX,
   FlaskConical,
   Hourglass,
   OctagonPause,
   RadioTower,
   TriangleAlert,
+  Watch,
 } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
@@ -22,8 +24,24 @@ import {
 import {
   AGENTE_DA_CLINICA_STATUS,
   agenteDaClinicaSchema,
-  apoioDoAgente,
+  contagemDaEquipe,
   efeitoDeRevogar,
+  estadoDaConfirmacao,
+  haQuantoTempo,
+  liberacaoDoAgente,
+  nomeDaPessoa,
+  OPCOES_DA_CONTA,
+  OPCOES_DO_AGENTE,
+  OPCOES_DO_USO,
+  ordemDoPainel,
+  papelDaPessoa,
+  porQueNaoLibera,
+  quemEntrou,
+  quemEntrouNaLista,
+  ROTULO_DA_LIBERACAO,
+  SITUACAO_DO_MEMBRO_STATUS,
+  USO_DA_CLINICA_STATUS,
+  usoDaClinica,
   ESCOPO_DO_REQUISITO,
   evidenciaValida,
   detalheDoRequisito,
@@ -86,15 +104,19 @@ import type {
   RequisitoConferido,
 } from "@/lib/queries/painel-geral";
 
-// Regras puras do Painel geral (onda 1): os status em 3 camadas sem
-// repetir icone em outra cor, o gasto contra o teto, os formatos (dolar e
-// data no fuso da clinica), a busca e os filtros da URL, as entradas das
-// Server Actions (Zod) e a leitura do teto digitado. Nenhum texto com
-// travessao nem jargao.
+// Regras puras do Painel geral (onda 1; desde 26/10/2026, o acompanhamento
+// de cliente): os status em 3 camadas sem repetir icone em outra cor (o uso
+// da clinica, a pessoa da equipe e o agente com o rotulo da liberacao), o
+// gasto contra o teto, os formatos (dolar, data e "Há N dias" no fuso da
+// clinica, quem entrou), a busca e os filtros da URL (uso, conta e agente,
+// e a ordem pelo ultimo acesso), o dialogo do agente (liberar e retirar),
+// as entradas das Server Actions (Zod) e a leitura do teto digitado. Nenhum
+// texto com travessao nem jargao.
 
 const ID_A = "a1111111-1111-4111-8111-111111111111";
 const ID_B = "b2222222-2222-4222-8222-222222222222";
 const ID_C = "c3333333-3333-4333-8333-333333333333";
+const PESSOA = "d4444444-4444-4444-8444-444444444444";
 
 function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
   return {
@@ -102,9 +124,20 @@ function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
     nome: "Clínica Aurora",
     criadaEm: "2026-09-01T12:00:00.000Z",
     fuso: "America/Fortaleza",
+    emUso: true,
+    ultimoAcesso: {
+      em: "2026-10-20T13:00:00.000Z",
+      userId: PESSOA,
+      nome: "Ana Souza",
+      email: "ana@aurora.com.br",
+      papel: "admin",
+      implementador: false,
+      equipeConduzza: false,
+    },
     membrosAtivos: 3,
     membrosPendentes: 0,
-    administradores: [{ nome: "Ana Souza", email: "ana@aurora.com.br" }],
+    membrosEquipeConduzza: 0,
+    pessoas: [{ nome: "Ana Souza", email: "ana@aurora.com.br" }],
     numerosTotal: 2,
     numerosConectados: 1,
     numeros: [],
@@ -161,6 +194,8 @@ const MAPAS_DO_PAINEL = {
   AGENTE_DA_CLINICA_STATUS,
   GASTO_STATUS,
   REQUISITO_STATUS,
+  USO_DA_CLINICA_STATUS,
+  SITUACAO_DO_MEMBRO_STATUS,
 };
 
 const DO_PAINEL: StatusDefinition[] = Object.values(MAPAS_DO_PAINEL).flatMap(
@@ -263,6 +298,42 @@ describe("status do painel em 3 camadas", () => {
     expect(comPausa).toEqual([SITUACAO_DA_CONTA_STATUS.suspensa]);
     expect(DO_PAINEL.some((d) => d.icon === TriangleAlert)).toBe(false);
   });
+
+  it("uso (26/10/2026): Em uso é sucesso; Sem uso é o Watch âmbar do Esfriando (tempo demais sem atividade)", () => {
+    expect(USO_DA_CLINICA_STATUS).toEqual({
+      em_uso: { label: "Em uso", tone: "success", icon: CircleCheck },
+      sem_uso: { label: "Sem uso", tone: "warning", icon: Watch },
+    });
+    // O mesmo par de outro mapa do produto, no mesmo sentido.
+    expect(
+      MAPAS_DO_PRODUTO.filter((definicao) => definicao.icon === Watch).map(
+        (definicao) => definicao.tone,
+      ),
+    ).toEqual(["warning"]);
+    expect(usoDaClinica({ emUso: true })).toBe("em_uso");
+    expect(usoDaClinica({ emUso: false })).toBe("sem_uso");
+  });
+
+  it("pessoa da equipe: Ativa, Pendente (ampulheta, esperando liberação) e Inativa (o Sem acesso da lista da equipe)", () => {
+    expect(SITUACAO_DO_MEMBRO_STATUS).toEqual({
+      ativo: { label: "Ativa", tone: "success", icon: CircleCheck },
+      pendente: { label: "Pendente", tone: "warning", icon: Hourglass },
+      inativo: { label: "Inativa", tone: "neutral", icon: CircleSlash },
+    });
+    expect(ACCESS_LEVEL_STATUS.nada.icon).toBe(CircleSlash);
+    expect(ACCESS_LEVEL_STATUS.nada.tone).toBe("neutral");
+  });
+
+  it("agente na lista: o rótulo da liberação, com o ícone e a cor do agente da clínica", () => {
+    expect(ROTULO_DA_LIBERACAO).toEqual({
+      desligado: "Não liberado",
+      teste: "Liberado (Teste)",
+      producao: "Liberado (Produção)",
+    });
+    expect(liberacaoDoAgente("desligado")).toBe("nao_liberado");
+    expect(liberacaoDoAgente("teste")).toBe("liberado");
+    expect(liberacaoDoAgente("producao")).toBe("liberado");
+  });
 });
 
 describe("gasto contra o teto", () => {
@@ -324,45 +395,180 @@ describe("formatos", () => {
     expect(nenhumNumeroConectado(clinica())).toBe(false);
   });
 
-  it("apoio do agente: só com o agente em teste, pela escolha da clínica", () => {
-    expect(apoioDoAgente(clinica())).toBeNull();
-    const emTeste = (agente: Partial<ClinicaNoPainel["agente"]>) =>
-      clinica({
-        agente: {
-          estado: "teste",
-          modo: "contatos",
-          liberada: true,
-          pausadaPelaClinica: false,
-          telefonesLigados: 1,
-          ...agente,
-        },
-      });
-    expect(apoioDoAgente(emTeste({}))).toBe("Conversa com a equipe");
-    expect(apoioDoAgente(emTeste({ modo: "simulador" }))).toBe("Só simulador");
-    expect(apoioDoAgente(emTeste({ liberada: false }))).toBe(
-      "Desligado pela clínica",
+  it("há quanto tempo, pelos dias do calendário da clínica", () => {
+    const agora = new Date("2026-10-26T15:00:00.000Z"); // 12:00 em Fortaleza
+    const fuso = "America/Fortaleza";
+    expect(haQuantoTempo("2026-10-26T13:05:00.000Z", fuso, agora)).toBe("Hoje");
+    // 02:30 UTC do dia 26 ainda e o dia 25 em Fortaleza (23:30).
+    expect(haQuantoTempo("2026-10-26T02:30:00.000Z", fuso, agora)).toBe(
+      "Ontem",
     );
-    expect(apoioDoAgente(emTeste({ pausadaPelaClinica: true }))).toBe(
-      "Pausado pela clínica",
+    expect(haQuantoTempo("2026-10-24T12:00:00.000Z", fuso, agora)).toBe(
+      "Há 2 dias",
     );
+    expect(haQuantoTempo("2026-09-27T12:00:00.000Z", fuso, agora)).toBe(
+      "Há 29 dias",
+    );
+    // Ate 30 dias de calendario, em dias (o "Em uso" conta 30 vezes 24
+    // horas); "Há 1 mês" so a partir de 31.
+    expect(haQuantoTempo("2026-09-26T12:00:00.000Z", fuso, agora)).toBe(
+      "Há 30 dias",
+    );
+    expect(haQuantoTempo("2026-09-25T12:00:00.000Z", fuso, agora)).toBe(
+      "Há 1 mês",
+    );
+    expect(haQuantoTempo("2026-07-01T12:00:00.000Z", fuso, agora)).toBe(
+      "Há 3 meses",
+    );
+    expect(haQuantoTempo("2025-10-01T12:00:00.000Z", fuso, agora)).toBe(
+      "Há 1 ano",
+    );
+    expect(haQuantoTempo("2023-10-01T12:00:00.000Z", fuso, agora)).toBe(
+      "Há 3 anos",
+    );
+    // relogio da tela um pouco atras do instante: hoje, nunca "Há -1 dias"
+    expect(haQuantoTempo("2026-10-26T15:00:05.000Z", fuso, agora)).toBe("Hoje");
+  });
+
+  it("a borda dos 30 dias: o login que o banco ainda conta como em uso nunca aparece como \"Há 1 mês\" (revisão de 26/10/2026)", () => {
+    // Login em 25/09/2026 as 23:30 em Fortaleza, leitura em 25/10/2026 as
+    // 08:00: 704,5 horas (menos de 30 vezes 24), em uso para o banco; 30
+    // dias de calendario.
+    const login = "2026-09-26T02:30:00.000Z";
+    const leitura = new Date("2026-10-25T11:00:00.000Z");
+    expect((leitura.getTime() - Date.parse(login)) / 3_600_000).toBe(704.5);
+    expect(haQuantoTempo(login, "America/Fortaleza", leitura)).toBe(
+      "Há 30 dias",
+    );
+  });
+
+  it("quem entrou: o nome e o papel; sem nome, o e-mail; o Implementador pelo rótulo dele", () => {
+    const acesso = clinica().ultimoAcesso!;
+    expect(quemEntrou(acesso)).toBe("Ana Souza (Administrador)");
+    expect(quemEntrou({ ...acesso, papel: "recepcao" })).toBe(
+      "Ana Souza (Recepção)",
+    );
+    expect(quemEntrou({ ...acesso, nome: null, implementador: true })).toBe(
+      "ana@aurora.com.br (Implementador)",
+    );
+    expect(quemEntrou({ ...acesso, papel: null })).toBe("Ana Souza");
+    expect(nomeDaPessoa({ nome: null, email: null })).toBe(
+      TEXTOS_DO_PAINEL.semNomeNoPerfil,
+    );
+    expect(papelDaPessoa({ papel: "leitura" })).toBe("Somente leitura");
+  });
+
+  it("quando o último acesso foi da equipe Conduzza, a lista e o detalhe dizem (ela conta no uso, marcada)", () => {
+    const acesso = clinica().ultimoAcesso!;
+    expect(quemEntrouNaLista(acesso)).toBe("Ana Souza");
+    expect(
+      quemEntrouNaLista({
+        ...acesso,
+        nome: "Vinicius Rodrigues",
+        equipeConduzza: true,
+      }),
+    ).toBe("Vinicius Rodrigues (equipe Conduzza)");
+    expect(
+      quemEntrou({ ...acesso, nome: "Vinicius Rodrigues", equipeConduzza: true }),
+    ).toBe("Vinicius Rodrigues (Administrador, equipe Conduzza)");
+    expect(
+      quemEntrou({
+        ...acesso,
+        nome: "Vinicius Rodrigues",
+        papel: null,
+        equipeConduzza: true,
+      }),
+    ).toBe("Vinicius Rodrigues (equipe Conduzza)");
+    expect(TEXTOS_DO_PAINEL.incluiEquipeConduzza(1)).toBe(
+      "Inclui 1 da equipe Conduzza",
+    );
+    expect(TEXTOS_DO_PAINEL.incluiEquipeConduzza(1200)).toBe(
+      "Inclui 1.200 da equipe Conduzza",
+    );
+  });
+
+  it("o painel diz que o último acesso é a última atividade, não só o login (decisão do dono de 26/10/2026)", () => {
+    expect(TEXTOS_DO_PAINEL.descricao).toContain(
+      TEXTOS_DO_PAINEL.ultimoAcessoEAtividade,
+    );
+    expect(TEXTOS_DO_PAINEL.ultimoAcessoEAtividade).toContain(
+      "última atividade",
+    );
+    expect(TEXTOS_DO_PAINEL.rodapeDoEmUso).toBe(
+      "Alguém da equipe usou o sistema nos últimos 30 dias",
+    );
+    expect(TEXTOS_DO_PAINEL.rodapeDoSemUso).toContain("usou o sistema");
+    // Nenhum texto do uso fala em login (a regra de antes) nem tem
+    // travessao.
+    for (const texto of [
+      TEXTOS_DO_PAINEL.descricao,
+      TEXTOS_DO_PAINEL.ultimoAcessoEAtividade,
+      TEXTOS_DO_PAINEL.rodapeDoEmUso,
+      TEXTOS_DO_PAINEL.rodapeDoSemUso,
+    ]) {
+      expect(texto).not.toMatch(/login/i);
+      expect(texto).not.toMatch(/[–—]/);
+    }
+  });
+
+  it("a coluna Equipe: ativas e pendentes, no singular e no plural, com o número à parte", () => {
+    expect(contagemDaEquipe(0, "ativas")).toEqual({
+      numero: null,
+      palavra: "Nenhuma ativa",
+    });
+    expect(contagemDaEquipe(1, "ativas")).toEqual({
+      numero: "1",
+      palavra: "ativa",
+    });
+    expect(contagemDaEquipe(1200, "ativas")).toEqual({
+      numero: "1.200",
+      palavra: "ativas",
+    });
+    expect(contagemDaEquipe(0, "pendentes")).toEqual({
+      numero: null,
+      palavra: "Nenhuma pendente",
+    });
+    expect(contagemDaEquipe(1, "pendentes")).toEqual({
+      numero: "1",
+      palavra: "pendente",
+    });
+    expect(contagemDaEquipe(3, "pendentes")).toEqual({
+      numero: "3",
+      palavra: "pendentes",
+    });
   });
 });
 
-describe("busca e filtros", () => {
+describe("busca, filtros e ordem", () => {
+  const acessoEm = (em: string) => ({
+    ...clinica().ultimoAcesso!,
+    em,
+  });
   const lista = [
-    clinica({ id: ID_A, nome: "Clínica Zélia" }),
+    clinica({
+      id: ID_A,
+      nome: "Clínica Zélia",
+      ultimoAcesso: acessoEm("2026-10-20T13:00:00.000Z"),
+    }),
     clinica({
       id: ID_B,
       nome: "Odonto Árvore",
+      emUso: false,
+      ultimoAcesso: null,
       suspensao: {
         suspensaEm: "2026-10-10T12:00:00.000Z",
         motivo: "Pagamento atrasado",
       },
-      administradores: [{ nome: "João Prado", email: "joao@arvore.com" }],
+      pessoas: [
+        { nome: "João Prado", email: "joao@arvore.com" },
+        // pendente e inativo tambem entram na busca (decisao do banco)
+        { nome: null, email: "recepcao.antiga@arvore.com" },
+      ],
     }),
     clinica({
       id: ID_C,
       nome: "Estética Bela",
+      ultimoAcesso: acessoEm("2026-10-25T09:00:00.000Z"),
       agente: {
         estado: "teste",
         modo: "contatos",
@@ -373,56 +579,102 @@ describe("busca e filtros", () => {
     }),
   ];
 
-  it("lê os filtros da URL; valor desconhecido vira o padrão", () => {
+  it("lê os filtros da URL; valor desconhecido (ou de antes de 26/10) vira o padrão", () => {
     const params = (valores: Record<string, string>) =>
       new URLSearchParams(valores);
     expect(lerFiltrosDoPainel(params({}))).toEqual(FILTROS_PADRAO);
     expect(
       lerFiltrosDoPainel(
-        params({ busca: "aurora", situacao: "suspensa", agente: "teste" }),
+        params({
+          busca: "aurora",
+          uso: "sem_uso",
+          conta: "suspensa",
+          agente: "liberado",
+        }),
       ),
-    ).toEqual({ busca: "aurora", situacao: "suspensa", agente: "teste" });
-    // Onda 2: o agente em producao e filtro de verdade
-    expect(lerFiltrosDoPainel(params({ agente: "producao" })).agente).toBe(
-      "producao",
+    ).toEqual({
+      busca: "aurora",
+      uso: "sem_uso",
+      conta: "suspensa",
+      agente: "liberado",
+    });
+    expect(lerFiltrosDoPainel(params({ agente: "nao_liberado" })).agente).toBe(
+      "nao_liberado",
     );
     expect(
-      lerFiltrosDoPainel(params({ situacao: "apagada", agente: "ligado" })),
+      lerFiltrosDoPainel(
+        params({
+          uso: "ativo",
+          conta: "apagada",
+          agente: "teste",
+          situacao: "suspensa",
+        }),
+      ),
     ).toEqual(FILTROS_PADRAO);
     expect(
       lerFiltrosDoPainel(params({ busca: "x".repeat(200) })).busca,
     ).toHaveLength(80);
   });
 
-  it("sem filtro: todas, pelo nome", () => {
+  it("as opções de cada filtro, na ordem do desenho", () => {
+    expect(OPCOES_DO_USO.map((o) => o.label)).toEqual([
+      "Todas",
+      "Em uso",
+      "Sem uso",
+    ]);
+    expect(OPCOES_DA_CONTA.map((o) => o.label)).toEqual([
+      "Todas",
+      "Ativas",
+      "Suspensas",
+    ]);
+    expect(OPCOES_DO_AGENTE.map((o) => o.label)).toEqual([
+      "Todos",
+      "Liberado",
+      "Não liberado",
+    ]);
+  });
+
+  it("sem filtro: todas, o último acesso mais recente primeiro e quem nunca entrou no fim", () => {
     expect(filtrarClinicas(lista, FILTROS_PADRAO).map((c) => c.nome)).toEqual([
-      "Clínica Zélia",
       "Estética Bela",
+      "Clínica Zélia",
       "Odonto Árvore",
     ]);
     expect(filtrosAtivos(FILTROS_PADRAO)).toBe(false);
   });
 
-  it("situação e agente pelo valor exato", () => {
-    expect(
-      filtrarClinicas(lista, { ...FILTROS_PADRAO, situacao: "suspensa" }).map(
-        (c) => c.id,
-      ),
-    ).toEqual([ID_B]);
-    expect(
-      filtrarClinicas(lista, { ...FILTROS_PADRAO, situacao: "ativa" }).map(
-        (c) => c.id,
-      ),
-    ).toEqual([ID_A, ID_C]);
-    expect(
-      filtrarClinicas(lista, { ...FILTROS_PADRAO, agente: "teste" }).map(
-        (c) => c.id,
-      ),
-    ).toEqual([ID_C]);
-    expect(situacaoDaConta(lista[1] as ClinicaNoPainel)).toBe("suspensa");
+  it("a ordem: empate no acesso (ou ninguém entrou) vai pelo nome, sem caixa, e pelo id", () => {
+    const mesmo = "2026-10-20T13:00:00.000Z";
+    const ordenadas = [
+      clinica({ id: ID_C, nome: "beta", ultimoAcesso: null, emUso: false }),
+      clinica({ id: ID_B, nome: "Alfa", ultimoAcesso: null, emUso: false }),
+      clinica({ id: ID_A, nome: "Zeta", ultimoAcesso: acessoEm(mesmo) }),
+      clinica({ id: ID_C, nome: "Alfa", ultimoAcesso: acessoEm(mesmo) }),
+    ]
+      .sort(ordemDoPainel)
+      .map((c) => `${c.nome} ${c.id.slice(0, 1)}`);
+    expect(ordenadas).toEqual(["Alfa c", "Zeta a", "Alfa b", "beta c"]);
   });
 
-  it("a busca ignora acento e maiúscula e olha o administrador", () => {
+  it("uso, conta e agente pelo valor exato", () => {
+    const ids = (filtros: Partial<typeof FILTROS_PADRAO>) =>
+      filtrarClinicas(lista, { ...FILTROS_PADRAO, ...filtros }).map(
+        (c) => c.id,
+      );
+    expect(ids({ uso: "em_uso" })).toEqual([ID_C, ID_A]);
+    expect(ids({ uso: "sem_uso" })).toEqual([ID_B]);
+    expect(ids({ conta: "suspensa" })).toEqual([ID_B]);
+    expect(ids({ conta: "ativa" })).toEqual([ID_C, ID_A]);
+    expect(ids({ agente: "liberado" })).toEqual([ID_C]);
+    expect(ids({ agente: "nao_liberado" })).toEqual([ID_A, ID_B]);
+    expect(ids({ uso: "sem_uso", agente: "liberado" })).toEqual([]);
+    expect(situacaoDaConta(lista[1] as ClinicaNoPainel)).toBe("suspensa");
+    expect(filtrosAtivos({ ...FILTROS_PADRAO, uso: "em_uso" })).toBe(true);
+    expect(filtrosAtivos({ ...FILTROS_PADRAO, conta: "ativa" })).toBe(true);
+    expect(filtrosAtivos({ ...FILTROS_PADRAO, agente: "liberado" })).toBe(true);
+  });
+
+  it("a busca ignora acento e maiúscula e olha qualquer pessoa da equipe", () => {
     const busca = (termo: string) =>
       filtrarClinicas(lista, { ...FILTROS_PADRAO, busca: termo }).map(
         (c) => c.id,
@@ -431,9 +683,32 @@ describe("busca e filtros", () => {
     expect(busca("ZELIA")).toEqual([ID_A]);
     expect(busca("joao@")).toEqual([ID_B]);
     expect(busca("prado")).toEqual([ID_B]);
+    expect(busca("recepcao.antiga")).toEqual([ID_B]);
+    expect(busca("ana souza")).toEqual([ID_C, ID_A]);
     expect(busca("ninguém")).toEqual([]);
     expect(normalizarBusca("  Éstética ")).toBe("estetica");
     expect(filtrosAtivos({ ...FILTROS_PADRAO, busca: "  " })).toBe(false);
+  });
+});
+
+describe("o agente na linha da lista (liberar e retirar)", () => {
+  it("cada confirmação grava o estado certo", () => {
+    expect(estadoDaConfirmacao("liberar")).toBe("teste");
+    expect(estadoDaConfirmacao("teste")).toBe("teste");
+    expect(estadoDaConfirmacao("volta")).toBe("teste");
+    expect(estadoDaConfirmacao("producao")).toBe("producao");
+    expect(estadoDaConfirmacao("retirar")).toBe("desligado");
+  });
+
+  it("Liberar não liga com a conta suspensa (o banco recusa); retirar continua livre", () => {
+    expect(porQueNaoLibera({ estado: "desligado", suspensa: true })).toBe(
+      TEXTOS_DO_PAINEL.suspensaNaoLigaOAgente,
+    );
+    expect(porQueNaoLibera({ estado: "desligado", suspensa: false })).toBe(
+      null,
+    );
+    expect(porQueNaoLibera({ estado: "teste", suspensa: true })).toBeNull();
+    expect(porQueNaoLibera({ estado: "producao", suspensa: true })).toBeNull();
   });
 });
 
@@ -462,14 +737,24 @@ describe("entradas das ações", () => {
   });
 
   it("agente: desligado, teste ou produção; a produção com motivo obrigatório (onda 2)", () => {
-    for (const estado of ["desligado", "teste"]) {
-      expect(
-        agenteDaClinicaSchema.safeParse({ clinicId: ID_A, estado }).success,
-      ).toBe(true);
-    }
+    expect(
+      agenteDaClinicaSchema.safeParse({
+        clinicId: ID_A,
+        estadoVisto: "teste",
+        estado: "desligado",
+      }).success,
+    ).toBe(true);
+    expect(
+      agenteDaClinicaSchema.safeParse({
+        clinicId: ID_A,
+        estadoVisto: "desligado",
+        estado: "teste",
+      }).success,
+    ).toBe(true);
     const producao = (motivo?: string) =>
       agenteDaClinicaSchema.safeParse({
         clinicId: ID_A,
+        estadoVisto: "teste",
         estado: "producao",
         ...(motivo === undefined ? {} : { motivo }),
       });
@@ -481,14 +766,42 @@ describe("entradas das ações", () => {
     expect(producao("Requisitos conferidos").success).toBe(true);
     expect(producao("x".repeat(301)).success).toBe(false);
     expect(
-      agenteDaClinicaSchema.safeParse({ clinicId: ID_A, estado: "ligado" })
-        .success,
+      agenteDaClinicaSchema.safeParse({
+        clinicId: ID_A,
+        estadoVisto: "desligado",
+        estado: "ligado",
+      }).success,
     ).toBe(false);
     expect(OPCOES_DO_ESTADO_DO_AGENTE.map((o) => o.label)).toEqual([
       "Desligado",
       "Teste",
       "Produção",
     ]);
+  });
+
+  it("agente: o estado que a tela mostrava vai junto, e pedir o mesmo não é mudança (revisão de 26/10/2026)", () => {
+    // Sem o estado visto: recusado (a tela sempre manda o que mostrava).
+    expect(
+      agenteDaClinicaSchema.safeParse({ clinicId: ID_A, estado: "teste" })
+        .success,
+    ).toBe(false);
+    expect(
+      agenteDaClinicaSchema.safeParse({
+        clinicId: ID_A,
+        estadoVisto: "ligado",
+        estado: "teste",
+      }).success,
+    ).toBe(false);
+    for (const estado of ["desligado", "teste", "producao"] as const) {
+      const mesmo = agenteDaClinicaSchema.safeParse({
+        clinicId: ID_A,
+        estadoVisto: estado,
+        estado,
+        motivo: "Requisitos conferidos",
+      });
+      expect(mesmo.success).toBe(false);
+      expect(mesmo.error?.issues[0]?.path).toEqual(["estado"]);
+    }
   });
 
   it("teto: 1 a 100.000 centavos (o check do banco) e 1 a 200 respostas, inteiros", () => {
@@ -579,30 +892,6 @@ describe("textos do painel", () => {
 // ---------------------------------------------------------------------------
 // Onda 2 (item 11): a produção e os requisitos
 // ---------------------------------------------------------------------------
-
-describe("onda 2: apoio do agente na lista", () => {
-  it("em produção: Atendendo os contatos; a pausa e o desligar da clínica valem também", () => {
-    const emProducao = (campos: Partial<ClinicaNoPainel["agente"]> = {}) =>
-      clinica({
-        agente: {
-          estado: "producao",
-          modo: "numero_inteiro",
-          liberada: true,
-          pausadaPelaClinica: false,
-          telefonesLigados: 1,
-          ...campos,
-        },
-      });
-    expect(apoioDoAgente(emProducao())).toBe("Atendendo os contatos");
-    expect(apoioDoAgente(emProducao({ pausadaPelaClinica: true }))).toBe(
-      "Pausado pela clínica",
-    );
-    expect(apoioDoAgente(emProducao({ liberada: false }))).toBe(
-      "Desligado pela clínica",
-    );
-    expect(apoioDoAgente(clinica())).toBeNull();
-  });
-});
 
 describe("onda 2: requisitos da produção", () => {
   const REGISTRO = "e1111111-1111-4111-8111-111111111111";
@@ -859,7 +1148,10 @@ describe("onda 2: requisitos da produção", () => {
     expect(efeitoDeRevogar({ valeParaTodas: false, emProducao: false })).toBe(
       "Sem este requisito, a produção não liga nesta clínica.",
     );
-    const emProducao = efeitoDeRevogar({ valeParaTodas: false, emProducao: true });
+    const emProducao = efeitoDeRevogar({
+      valeParaTodas: false,
+      emProducao: true,
+    });
     expect(emProducao).toBe(TEXTOS_DO_PAINEL.revogarDaClinicaEmProducaoEfeito);
     expect(emProducao).toContain("volta para Teste na hora");
     expect(emProducao).toContain("sem mensagem ao paciente");

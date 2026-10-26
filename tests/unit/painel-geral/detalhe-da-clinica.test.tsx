@@ -2,13 +2,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 // O detalhe de uma clinica no Painel geral (onda 1) inteiro, como a pagina
-// desenha depois de ler: as metricas, a conta, o agente, os numeros e os
-// telefones (modo do painel), o gasto, o teto e a equipe. Cada leitura de
-// apoio que falhou mostra o erro no proprio cartao. A disponibilidade do
-// agente vem do ambiente (T1) e da propria linha do painel (agente em
-// teste e conta ativa): o motivo "servidor" nunca culpa a chave da OpenAI
-// por uma clinica desligada ou suspensa. Onda 2 (item 11): o cartao "Para
-// liberar a produção" e a Produção do agente, so com tudo cumprido.
+// desenha depois de ler: as metricas (desde 26/10/2026, o ultimo acesso da
+// equipe primeiro, com quem entrou), a equipe com os Implementadores numa
+// lista separada, a conta, o agente, os numeros e os telefones (modo do
+// painel), o gasto e o teto. Cada leitura de apoio que falhou mostra o erro
+// no proprio cartao. A disponibilidade do agente vem do ambiente (T1) e da
+// propria linha do painel (agente em teste e conta ativa): o motivo
+// "servidor" nunca culpa a chave da OpenAI por uma clinica desligada ou
+// suspensa. Onda 2 (item 11): o cartao "Para liberar a produção" e a
+// Produção do agente, so com tudo cumprido.
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/painel-geral/c3333333-3333-4333-8333-333333333333",
@@ -49,12 +51,15 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 import type {
   ClinicaNoPainel,
+  EquipeNoPainel,
   RequisitoConferido,
   RequisitosDaProducao,
 } from "@/lib/queries/painel-geral";
 
 const ID = "c3333333-3333-4333-8333-333333333333";
 const NUMERO = "d4444444-4444-4444-8444-444444444444";
+const PESSOA = "e4444444-4444-4444-8444-444444444444";
+const IMPLEMENTADOR = "f4444444-4444-4444-8444-444444444444";
 const AGORA = Date.parse("2026-10-20T15:00:00.000Z");
 
 function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
@@ -63,9 +68,20 @@ function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
     nome: "Estética Bela",
     criadaEm: "2026-09-01T12:00:00.000Z",
     fuso: "America/Fortaleza",
+    emUso: true,
+    ultimoAcesso: {
+      em: "2026-10-20T13:05:00.000Z",
+      userId: PESSOA,
+      nome: "Ana Souza",
+      email: "ana@bela.com.br",
+      papel: "admin",
+      implementador: false,
+      equipeConduzza: false,
+    },
     membrosAtivos: 3,
     membrosPendentes: 1,
-    administradores: [{ nome: "Ana Souza", email: "ana@bela.com.br" }],
+    membrosEquipeConduzza: 0,
+    pessoas: [{ nome: "Ana Souza", email: "ana@bela.com.br" }],
     numerosTotal: 1,
     numerosConectados: 1,
     numeros: [
@@ -123,11 +139,37 @@ const DADOS: DadosDaIa = {
   },
 };
 
+const EQUIPE: EquipeNoPainel = {
+  equipe: [
+    {
+      userId: PESSOA,
+      nome: "Ana Souza",
+      email: "ana@bela.com.br",
+      papel: "admin",
+      situacao: "ativo",
+      ultimoAcessoEm: "2026-10-20T13:05:00.000Z",
+      equipeConduzza: false,
+    },
+  ],
+  implementadores: [
+    {
+      userId: IMPLEMENTADOR,
+      nome: "Técnico",
+      email: "tecnico@implanta.com.br",
+      papel: "admin",
+      situacao: "ativo",
+      ultimoAcessoEm: null,
+      equipeConduzza: false,
+    },
+  ],
+};
+
 function detalhe(campos: Partial<DetalheDaClinicaProps> = {}): string {
   return renderToStaticMarkup(
     <TooltipProvider>
       <DetalheDaClinica
         clinica={clinica()}
+        equipe={EQUIPE}
         dados={DADOS}
         tetos={{ tetoDiarioCentavos: 500, tetoRespostasPorConversaHora: 20 }}
         ambienteDaIa
@@ -151,7 +193,7 @@ function escapado(texto: string): string {
 }
 
 describe("detalhe da clínica", () => {
-  it("o cabeçalho, a volta para o painel e as métricas (só contagens)", () => {
+  it("o cabeçalho, a volta para o painel e as métricas (de paciente, só contagens)", () => {
     const saida = detalhe();
     expect(saida).toContain("<h1");
     expect(saida).toContain(escapado("Estética Bela"));
@@ -162,6 +204,80 @@ describe("detalhe da clínica", () => {
     expect(saida).toContain("1.234");
     expect(saida).toContain("Hoje, 10:05");
     expect(saida).toContain("1 esperando liberação");
+  });
+
+  it("o último acesso da equipe nas métricas, primeiro: há quanto tempo, o dia e a hora no fuso da clínica e quem", () => {
+    const saida = detalhe();
+    const metricas = saida.slice(
+      saida.indexOf('aria-label="Movimento da clínica"'),
+    );
+    expect(metricas.indexOf(escapado("Último acesso da equipe"))).toBeLessThan(
+      metricas.indexOf(">Equipe<"),
+    );
+    expect(metricas).toContain(">Hoje<");
+    expect(metricas).toContain(
+      escapado("20/10/2026, 10:05, por Ana Souza (Administrador)"),
+    );
+    expect(metricas).toContain("lucide-log-in");
+    // Em uso: sem o chip.
+    expect(saida).not.toContain(">Sem uso<");
+  });
+
+  it("quando o último acesso foi da equipe Conduzza, o detalhe diz (ela conta no uso), e a equipe diz quantas das ativas são dela", () => {
+    const saida = detalhe({
+      clinica: clinica({
+        ultimoAcesso: {
+          ...clinica().ultimoAcesso!,
+          nome: "Vinicius Rodrigues",
+          equipeConduzza: true,
+        },
+        membrosAtivos: 1,
+        membrosPendentes: 0,
+        membrosEquipeConduzza: 1,
+      }),
+    });
+    expect(saida).toContain(
+      escapado("por Vinicius Rodrigues (Administrador, equipe Conduzza)"),
+    );
+    expect(saida).not.toContain(">Sem uso<");
+    expect(saida).toContain(escapado("1 membro ativo (1 da equipe Conduzza)."));
+  });
+
+  it("sem uso, e quem nunca entrou: o chip Sem uso em 3 camadas", () => {
+    const antigo = detalhe({
+      clinica: clinica({
+        emUso: false,
+        ultimoAcesso: {
+          ...clinica().ultimoAcesso!,
+          em: "2026-08-01T12:00:00.000Z",
+          implementador: true,
+        },
+      }),
+    });
+    expect(antigo).toContain(">Há 2 meses<");
+    expect(antigo).toContain("por Ana Souza (Implementador)");
+    expect(antigo).toContain(">Sem uso<");
+    expect(antigo).toContain("lucide-watch");
+
+    const nunca = detalhe({
+      clinica: clinica({ emUso: false, ultimoAcesso: null }),
+    });
+    expect(nunca).toContain(escapado(TEXTOS_DO_PAINEL.ninguemEntrou));
+    expect(nunca).toContain(">Sem uso<");
+  });
+
+  it("a equipe com os Implementadores numa lista separada; a leitura que falhou mostra o erro no lugar dela", () => {
+    const saida = detalhe();
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.equipeTitulo));
+    expect(saida).toContain(">Implementadores</p>");
+    expect(saida).toContain("tecnico@implanta.com.br");
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.nuncaEntrou));
+
+    const semEquipe = detalhe({ equipe: "erro" });
+    expect(semEquipe).toContain(escapado(TEXTOS_DO_PAINEL.equipeSemLeitura));
+    expect(semEquipe).not.toContain(">Implementadores</p>");
+    // O resto do detalhe continua de pe.
+    expect(semEquipe).toContain("Conta da clínica");
   });
 
   it("todos os cartões: conta, agente, números, telefones, gasto, teto e equipe", () => {
@@ -258,7 +374,12 @@ describe("detalhe da clínica", () => {
 
   it("sem travessão", () => {
     expect(detalhe()).not.toMatch(/[—–]/);
-    expect(detalhe({ dados: "erro", tetos: null })).not.toMatch(/[—–]/);
+    expect(detalhe({ dados: "erro", tetos: null, equipe: "erro" })).not.toMatch(
+      /[—–]/,
+    );
+    expect(
+      detalhe({ clinica: clinica({ emUso: false, ultimoAcesso: null }) }),
+    ).not.toMatch(/[—–]/);
   });
 });
 

@@ -14,7 +14,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //     nome; a trilha e da RPC (a acao nao grava audit_log);
 //   - o erro do banco vira texto de recepcao; o log leva so a clinica, o
 //     tipo e o codigo (nunca o motivo);
-//   - a reativacao devolve quantas mensagens vencidas foram canceladas.
+//   - a reativacao devolve quantas mensagens vencidas foram canceladas;
+//   - o agente vai com o estado que a tela mostrava
+//     (definir_agente_da_clinica_no_painel, revisao de 26/10/2026): a tela
+//     velha recebe "mudou, recarregue", e o mesmo estado de novo nem chega
+//     ao banco.
 // A autorizacao de verdade (42501 nas RPCs) esta nos testes de RLS e de
 // integracao da frente de banco.
 
@@ -106,7 +110,12 @@ const REVALIDADOS_DO_PAINEL: [string, string | undefined][] = [
 const validas = [
   () => suspenderClinicaAction({ clinicId: CLINICA, motivo: MOTIVO }),
   () => reativarClinicaAction({ clinicId: CLINICA, motivo: MOTIVO }),
-  () => definirAgenteDaClinicaAction({ clinicId: CLINICA, estado: "teste" }),
+  () =>
+    definirAgenteDaClinicaAction({
+      clinicId: CLINICA,
+      estadoVisto: "desligado",
+      estado: "teste",
+    }),
   () =>
     definirTetoDaIaAction({
       clinicId: CLINICA,
@@ -162,12 +171,33 @@ describe("entradas estritas", () => {
       () =>
         suspenderClinicaAction({ clinicId: CLINICA, motivo: MOTIVO, extra: 1 }),
       () => reativarClinicaAction({ clinicId: CLINICA, motivo: 42 }),
-      () => definirAgenteDaClinicaAction({ clinicId: CLINICA, estado: "on" }),
       () =>
         definirAgenteDaClinicaAction({
           clinicId: CLINICA,
+          estadoVisto: "desligado",
+          estado: "on",
+        }),
+      () =>
+        definirAgenteDaClinicaAction({
+          clinicId: CLINICA,
+          estadoVisto: "desligado",
           estado: "teste",
           extra: true,
+        }),
+      // sem o estado que a tela mostrava, ou com um que nao existe
+      () => definirAgenteDaClinicaAction({ clinicId: CLINICA, estado: "teste" }),
+      () =>
+        definirAgenteDaClinicaAction({
+          clinicId: CLINICA,
+          estadoVisto: "ligado",
+          estado: "teste",
+        }),
+      // o mesmo estado que a tela mostrava nao e mudanca
+      () =>
+        definirAgenteDaClinicaAction({
+          clinicId: CLINICA,
+          estadoVisto: "teste",
+          estado: "teste",
         }),
       () =>
         definirTetoDaIaAction({
@@ -241,12 +271,14 @@ describe("entradas estritas", () => {
     expect(
       await definirAgenteDaClinicaAction({
         clinicId: CLINICA,
+        estadoVisto: "teste",
         estado: "producao",
       }),
     ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.motivoCurto });
     expect(
       await definirAgenteDaClinicaAction({
         clinicId: CLINICA,
+        estadoVisto: "teste",
         estado: "producao",
         motivo: " ok ",
       }),
@@ -307,10 +339,11 @@ describe("as RPCs do contrato", () => {
     ).toEqual({ ok: true });
   });
 
-  it("agente: definir_agente_da_clinica, com o motivo padrão quando a tela não manda", async () => {
+  it("agente: definir_agente_da_clinica_no_painel com o estado visto, e o motivo padrão quando a tela não manda", async () => {
     expect(
       await definirAgenteDaClinicaAction({
         clinicId: CLINICA,
+        estadoVisto: "desligado",
         estado: "teste",
         motivo: "Clínica entrou nos testes",
       }),
@@ -318,12 +351,14 @@ describe("as RPCs do contrato", () => {
     expect(
       await definirAgenteDaClinicaAction({
         clinicId: CLINICA,
+        estadoVisto: "teste",
         estado: "desligado",
       }),
     ).toEqual({ ok: true });
     expect(
       await definirAgenteDaClinicaAction({
         clinicId: CLINICA,
+        estadoVisto: "producao",
         estado: "desligado",
         motivo: "   ",
       }),
@@ -331,33 +366,49 @@ describe("as RPCs do contrato", () => {
     expect(registro.rpcs.map((r) => r.args)).toEqual([
       {
         p_clinic_id: CLINICA,
+        p_estado_visto: "desligado",
         p_estado: "teste",
         p_motivo: "Clínica entrou nos testes",
       },
-      { p_clinic_id: CLINICA, p_estado: "desligado", p_motivo: "Painel geral" },
-      { p_clinic_id: CLINICA, p_estado: "desligado", p_motivo: "Painel geral" },
+      {
+        p_clinic_id: CLINICA,
+        p_estado_visto: "teste",
+        p_estado: "desligado",
+        p_motivo: "Painel geral",
+      },
+      {
+        p_clinic_id: CLINICA,
+        p_estado_visto: "producao",
+        p_estado: "desligado",
+        p_motivo: "Painel geral",
+      },
     ]);
+    // Nunca a funcao de antes, que muda qualquer que seja o estado de agora.
     expect(
-      registro.rpcs.every((r) => r.nome === "definir_agente_da_clinica"),
+      registro.rpcs.every(
+        (r) => r.nome === "definir_agente_da_clinica_no_painel",
+      ),
     ).toBe(true);
     // O aviso de onde o assistente mora (Configuracoes) e a Tela 6.
     expect(registro.revalidados).toContainEqual(["/configuracoes", undefined]);
     expect(registro.revalidados).toContainEqual(["/agente", undefined]);
   });
 
-  it("produção (onda 2): definir_agente_da_clinica com o motivo, sem as pontas", async () => {
+  it("produção (onda 2): com o estado visto (Teste) e o motivo, sem as pontas", async () => {
     expect(
       await definirAgenteDaClinicaAction({
         clinicId: CLINICA,
+        estadoVisto: "teste",
         estado: "producao",
         motivo: "  Requisitos conferidos com o dono  ",
       }),
     ).toEqual({ ok: true });
     expect(registro.rpcs).toEqual([
       {
-        nome: "definir_agente_da_clinica",
+        nome: "definir_agente_da_clinica_no_painel",
         args: {
           p_clinic_id: CLINICA,
+          p_estado_visto: "teste",
           p_estado: "producao",
           p_motivo: "Requisitos conferidos com o dono",
         },
@@ -497,7 +548,7 @@ describe("erros do banco em texto de recepção", () => {
       ],
       [
         validas[2],
-        "definir_agente_da_clinica",
+        "definir_agente_da_clinica_no_painel",
         { code: "42501" },
         TEXTOS_DO_PAINEL.soEquipeConduzza,
       ],
@@ -533,19 +584,19 @@ describe("erros do banco em texto de recepção", () => {
       ],
       [
         validas[2],
-        "definir_agente_da_clinica",
+        "definir_agente_da_clinica_no_painel",
         { code: "P0001", message: "clinica_de_teste" },
         TEXTOS_DO_PAINEL.agenteDeTesteRecusado,
       ],
       [
         validas[2],
-        "definir_agente_da_clinica",
+        "definir_agente_da_clinica_no_painel",
         { code: "P0001", message: "clinica_suspensa" },
         TEXTOS_DO_PAINEL.suspensaNaoLigaOAgente,
       ],
       [
         validas[2],
-        "definir_agente_da_clinica",
+        "definir_agente_da_clinica_no_painel",
         { code: "22023", message: "estado_invalido" },
         TEXTOS_DO_PAINEL.producaoRecusada,
       ],
@@ -581,7 +632,7 @@ describe("erros do banco em texto de recepção", () => {
       ],
       [
         validas[2],
-        "definir_agente_da_clinica",
+        "definir_agente_da_clinica_no_painel",
         { code: "XX000" },
         TEXTOS_DO_PAINEL.naoMudouOAgente,
       ],
@@ -600,7 +651,7 @@ describe("erros do banco em texto de recepção", () => {
       // Onda 2: a producao com requisito faltando (as chaves no hint)
       [
         validas[2],
-        "definir_agente_da_clinica",
+        "definir_agente_da_clinica_no_painel",
         { code: "P0001", message: "requisitos_pendentes" },
         TEXTOS_DO_PAINEL.requisitosPendentesSemLista,
       ],
@@ -665,6 +716,19 @@ describe("erros do banco em texto de recepção", () => {
         { code: "22023", message: "motivo_invalido" },
         TEXTOS_DO_PAINEL.motivoInvalido,
       ],
+      // Revisao de 26/10/2026: a tela velha e o mesmo estado de novo
+      [
+        validas[2],
+        "definir_agente_da_clinica_no_painel",
+        { code: "P0001", message: "agente_mudou" },
+        TEXTOS_DO_PAINEL.agenteMudou,
+      ],
+      [
+        validas[2],
+        "definir_agente_da_clinica_no_painel",
+        { code: "22023", message: "mudanca_invalida" },
+        TEXTOS_DO_PAINEL.dadosInvalidos,
+      ],
     ];
     for (const [acao, rpc, erro, texto] of casos) {
       registro.respostas = new Map([[rpc, { data: null, error: erro }]]);
@@ -696,7 +760,7 @@ describe("erros do banco em texto de recepção", () => {
 
 describe("onda 2: requisitos pendentes da produção em nomes", () => {
   it("o hint do banco vira a lista do que falta", async () => {
-    registro.respostas.set("definir_agente_da_clinica", {
+    registro.respostas.set("definir_agente_da_clinica_no_painel", {
       data: null,
       error: {
         code: "P0001",
@@ -707,6 +771,7 @@ describe("onda 2: requisitos pendentes da produção em nomes", () => {
     expect(
       await definirAgenteDaClinicaAction({
         clinicId: CLINICA,
+        estadoVisto: "teste",
         estado: "producao",
         motivo: "Requisitos conferidos",
       }),
@@ -716,5 +781,144 @@ describe("onda 2: requisitos pendentes da produção em nomes", () => {
         "Rodada paga de conferência do CFM; Contrato com a OpenAI para dado de saúde",
       ),
     });
+  });
+});
+
+// Acompanhamento de cliente (26/10/2026): o "Liberar agente" e o "Retirar
+// agente" da linha da lista sao a mesma definirAgenteDaClinicaAction do
+// detalhe, com o dialogo dele (components/painel-geral/agente-na-lista.tsx).
+// O que se prova aqui e o contrato que a linha usa: liberar e Teste (visto
+// Desligado), retirar e Desligado (visto Teste ou Producao), o motivo do
+// dialogo vai sem as pontas, so a equipe Conduzza chega ao banco e o Zod
+// recusa o que a tela nao manda. Revisao de 26/10/2026: a linha velha (a
+// clinica mudou em outra aba) recebe "mudou, recarregue" e nada muda.
+describe("o agente na linha da lista: a mesma ação do detalhe", () => {
+  it("Liberar agente é Teste e Retirar agente é Desligado, com o estado que a linha mostrava e o motivo do diálogo", async () => {
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estadoVisto: "desligado",
+        estado: "teste",
+        motivo: "  Clínica entrou nos testes  ",
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estadoVisto: "producao",
+        estado: "desligado",
+        motivo: "Clínica pediu para parar o agente",
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_agente_da_clinica_no_painel",
+        args: {
+          p_clinic_id: CLINICA,
+          p_estado_visto: "desligado",
+          p_estado: "teste",
+          p_motivo: "Clínica entrou nos testes",
+        },
+      },
+      {
+        nome: "definir_agente_da_clinica_no_painel",
+        args: {
+          p_clinic_id: CLINICA,
+          p_estado_visto: "producao",
+          p_estado: "desligado",
+          p_motivo: "Clínica pediu para parar o agente",
+        },
+      },
+    ]);
+    // A lista e o detalhe mostram o estado novo; a trilha e da RPC.
+    expect(registro.revalidados).toContainEqual(["/painel-geral", "layout"]);
+    expect(registro.tabelas).toEqual([]);
+  });
+
+  it("só a equipe Conduzza; o Zod recusa estado que não existe e motivo longo, sem banco", async () => {
+    registro.superAdmin = false;
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estadoVisto: "desligado",
+        estado: "teste",
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.soEquipeConduzza });
+    registro.superAdmin = true;
+    for (const estado of ["liberar", "retirar", "liberado"]) {
+      expect(
+        await definirAgenteDaClinicaAction({
+          clinicId: CLINICA,
+          estadoVisto: "desligado",
+          estado,
+        }),
+      ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.dadosInvalidos });
+    }
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estadoVisto: "teste",
+        estado: "desligado",
+        motivo: "x".repeat(301),
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.motivoLongo });
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("a linha velha (a clínica mudou em outra aba): o banco recusa, a tela pede para recarregar, e nada é revalidado nem logado além do código", async () => {
+    // A lista mostrava "Não liberado"; a clinica ja esta em Producao.
+    registro.respostas.set("definir_agente_da_clinica_no_painel", {
+      data: null,
+      error: { code: "P0001", message: "agente_mudou", hint: "producao" },
+    });
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estadoVisto: "desligado",
+        estado: "teste",
+        motivo: "Clínica entrou nos testes",
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.agenteMudou });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "definir_agente_da_clinica_no_painel",
+        args: {
+          p_clinic_id: CLINICA,
+          p_estado_visto: "desligado",
+          p_estado: "teste",
+          p_motivo: "Clínica entrou nos testes",
+        },
+      },
+    ]);
+    expect(registro.revalidados).toEqual([]);
+    expect(registro.logs).toEqual([
+      [
+        "painel_geral_nao_alterou",
+        { clinic_id: CLINICA, kind: "agente", error_code: "P0001" },
+      ],
+    ]);
+  });
+
+  it("conta suspensa: o banco recusa liberar, em texto de recepção, e o log não leva o motivo", async () => {
+    registro.respostas.set("definir_agente_da_clinica_no_painel", {
+      data: null,
+      error: { code: "P0001", message: "clinica_suspensa" },
+    });
+    expect(
+      await definirAgenteDaClinicaAction({
+        clinicId: CLINICA,
+        estadoVisto: "desligado",
+        estado: "teste",
+        motivo: "Clínica entrou nos testes",
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.suspensaNaoLigaOAgente });
+    expect(registro.logs).toEqual([
+      [
+        "painel_geral_nao_alterou",
+        { clinic_id: CLINICA, kind: "agente", error_code: "P0001" },
+      ],
+    ]);
+    expect(JSON.stringify(registro.logs)).not.toContain("testes");
+    expect(registro.revalidados).toEqual([]);
   });
 });

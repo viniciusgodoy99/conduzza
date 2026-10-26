@@ -22,8 +22,10 @@ import { adminClient } from "../rls/stack";
 //   mensagem ao paciente e seguem como estavam) e o executando vivo; fecha
 //   o toque de regua do job cancelado; devolve {jobs_vencidos} igual a
 //   trilha; a IA volta;
-// - painel_geral_das_clinicas: o formato que lerPainelDoBanco le
-//   (lib/queries/painel-geral.ts) e os numeros da clinica de teste;
+// - painel_geral_das_clinicas: o formato dela (a tela a leu ate 26/10/2026;
+//   desde entao lerPainelDoBanco, em lib/queries/painel-geral.ts, le
+//   painel_cs_das_clinicas, e a funcao antiga sai numa limpeza depois) e os
+//   numeros da clinica de teste;
 // - definir_agente_da_clinica e definir_teto_da_ia: as recusas (de teste,
 //   estado, faixas, sem liberacao, conta suspensa) e, numa clinica que deixa
 //   de ser de teste SO DENTRO do teste, a entrada e a saida da lista da IA.
@@ -782,7 +784,7 @@ describe("a conta da S suspensa e reativada", () => {
 });
 
 describe("painel_geral_das_clinicas pela service role", () => {
-  it("o formato do leitor da tela e os números da S", async () => {
+  it("o formato da função antiga e os números da S", async () => {
     const painel = await rpcOk<Record<string, unknown>>(
       "painel_geral_das_clinicas",
       {
