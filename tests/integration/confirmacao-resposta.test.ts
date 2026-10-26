@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { RESPOSTA_OFERTA_PERDIDA } from "@/lib/domain/textos-padrao";
 import { interceptarRespostaDePaciente } from "@/lib/integrations/whatsapp/interceptar-resposta";
@@ -44,6 +44,10 @@ async function montarCenario(
     .insert({
       name: `Resposta ${nome} ${sufixo}`,
       slug: `resposta-${nome}-${sufixo}`,
+      // Marcada como de teste: se a limpeza do fim nao rodar (em 22/10/2026
+      // uma rodada sob carga deixou 17 clinicas destas no Painel geral), a
+      // sobra fica fora das telas da equipe Conduzza e o beforeAll a apaga.
+      e_de_teste: true,
     })
     .select("id")
     .single()
@@ -414,11 +418,22 @@ async function toqueDoCobrarAgora(
     .throwOnError();
 }
 
+// Sobra de uma execucao que morreu antes do afterAll: so clinicas de teste
+// deste arquivo ("Resposta ..."), criadas ha mais de uma hora.
+beforeAll(async () => {
+  await admin
+    .from("clinic")
+    .delete()
+    .eq("e_de_teste", true)
+    .like("name", "Resposta %")
+    .lt("created_at", new Date(Date.now() - 60 * 60_000).toISOString());
+}, 60_000);
+
 afterAll(async () => {
-  for (const clinicId of clinicasCriadas) {
-    await admin.from("clinic").delete().eq("id", clinicId);
+  if (clinicasCriadas.length > 0) {
+    await admin.from("clinic").delete().in("id", clinicasCriadas);
   }
-});
+}, 60_000);
 
 describe("resposta do paciente ao toque de confirmação", () => {
   it("'Confirmar' muda o status sozinho, com autoria do paciente", async () => {
@@ -684,7 +699,9 @@ describe("resposta do paciente ao toque de confirmação", () => {
     const menu = await menuDoToque(cenario, cenario.appointmentId);
     await responderCitando(cenario, "Confirmar", menu);
 
-    expect((await statusDaConsulta(cenario)).status).toBe("confirmado_paciente");
+    expect((await statusDaConsulta(cenario)).status).toBe(
+      "confirmado_paciente",
+    );
     const ecos = await ecosDaClinica(cenario.clinicId);
     expect(ecos).toHaveLength(1);
     expect(ecos[0]?.payload.body).toContain("Presença confirmada");
@@ -741,7 +758,9 @@ describe("resposta do paciente ao toque de confirmação", () => {
 
     await responder(cenario, "Confirmar");
 
-    expect((await statusDaConsulta(cenario)).status).toBe("confirmado_paciente");
+    expect((await statusDaConsulta(cenario)).status).toBe(
+      "confirmado_paciente",
+    );
     const ecos = await ecosSemAviso(cenario.clinicId);
     expect(ecos).toHaveLength(1);
     expect(ecos[0]?.payload.body).toContain("Presença confirmada");
@@ -758,7 +777,9 @@ describe("resposta do paciente ao toque de confirmação", () => {
 
     await responder(cenario, "Confirmar");
 
-    expect((await statusDaConsulta(cenario)).status).toBe("confirmado_paciente");
+    expect((await statusDaConsulta(cenario)).status).toBe(
+      "confirmado_paciente",
+    );
   });
 
   it("run fora da conta do passo e sem a marca manual fica com a recepção", async () => {
@@ -830,7 +851,9 @@ describe("resposta do paciente ao toque de confirmação", () => {
         source_appointment_id: cenario.appointmentId,
         professional_id: cenario.professionalId,
         slot_starts_at: new Date(Date.now() + 5 * HORA).toISOString(),
-        slot_ends_at: new Date(Date.now() + 5 * HORA + 30 * MINUTO).toISOString(),
+        slot_ends_at: new Date(
+          Date.now() + 5 * HORA + 30 * MINUTO,
+        ).toISOString(),
         expires_at: new Date(Date.now() - HORA).toISOString(),
         offered_to: [cenario.contactId],
         matched_waitlist_ids: [],
@@ -876,7 +899,9 @@ describe("resposta do paciente ao toque de confirmação", () => {
 
     await responder(cenario, "Confirmar");
 
-    expect((await statusDaConsulta(cenario)).status).toBe("confirmado_paciente");
+    expect((await statusDaConsulta(cenario)).status).toBe(
+      "confirmado_paciente",
+    );
     const ecos = (await ecosDaClinica(cenario.clinicId)).filter(
       (eco) => eco.payload.body !== "Oferta (teste)",
     );
