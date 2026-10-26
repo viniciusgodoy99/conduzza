@@ -30,6 +30,8 @@ vi.mock("@/app/(app)/painel-geral/actions", () => ({
   registrarRequisitoDaProducaoAction: vi.fn(),
   revogarRequisitoDaProducaoAction: vi.fn(),
   definirInterruptorGeralAction: vi.fn(),
+  escreverNotaDaClinicaAction: vi.fn(),
+  excluirNotaDaClinicaAction: vi.fn(),
 }));
 vi.mock("@/app/(app)/agente/whatsapp-actions", () => ({
   adicionarTelefoneDaIaAction: vi.fn(),
@@ -59,6 +61,7 @@ import {
   textoDaEquipe,
 } from "@/components/painel-geral/equipe-da-clinica";
 import { ErroDoPainel } from "@/components/painel-geral/erro-do-painel";
+import { FaixaDeSaude } from "@/components/painel-geral/faixa-de-saude";
 import { InterruptorGeral } from "@/components/painel-geral/interruptor-geral";
 import { GastoDaIa } from "@/components/painel-geral/gasto-da-ia";
 import { ListaDoPainel } from "@/components/painel-geral/lista-do-painel";
@@ -117,24 +120,84 @@ function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
       pausadaPelaClinica: false,
       telefonesLigados: 0,
     },
-    gasto: {
-      ultimas24hCentavos: 42,
-      mesCentavos: 310,
-      ultimas24hSemSimuladorCentavos: 30,
-      mesSemSimuladorCentavos: 200,
-    },
+    gasto: gasto(42, 310, 30, 200),
     tetoDiarioCentavos: 500,
+    saude: "saudavel",
+    sinais: [],
+    implantacao: implantacao([true, true, true, false, false, false]),
+    tendencia: {
+      leads: {
+        atual: 14,
+        anterior: 10,
+        variacaoPercentual: 40,
+        direcao: "subindo",
+      },
+      conversas: {
+        atual: 1234,
+        anterior: 0,
+        variacaoPercentual: null,
+        direcao: "sem_base",
+      },
+    },
+    ultimaNotaEm: null,
     ...campos,
   };
 }
 
+/**
+ * O gasto em centavos e os mesmos valores exatos em microdolares (10.000
+ * por centavo), com chamadas.
+ */
+function gasto(
+  ultimas24h: number,
+  mes: number,
+  ultimas24hSemSimulador: number,
+  mesSemSimulador: number,
+): ClinicaNoPainel["gasto"] {
+  return {
+    ultimas24hCentavos: ultimas24h,
+    mesCentavos: mes,
+    ultimas24hSemSimuladorCentavos: ultimas24hSemSimulador,
+    mesSemSimuladorCentavos: mesSemSimulador,
+    ultimas24hMicrodolares: ultimas24h * 10_000,
+    mesMicrodolares: mes * 10_000,
+    ultimas24hSemSimuladorMicrodolares: ultimas24hSemSimulador * 10_000,
+    mesSemSimuladorMicrodolares: mesSemSimulador * 10_000,
+    ultimas24hChamadas: ultimas24h > 0 ? 3 : 0,
+    mesChamadas: mes > 0 ? 25 : 0,
+    ultimas24hSemSimuladorChamadas: ultimas24hSemSimulador > 0 ? 2 : 0,
+    mesSemSimuladorChamadas: mesSemSimulador > 0 ? 15 : 0,
+  };
+}
+
+const CHAVES_DOS_PASSOS = [
+  "whatsapp_conectado",
+  "equipe_com_duas_pessoas",
+  "procedimentos_cadastrados",
+  "profissionais_cadastrados",
+  "regua_de_confirmacao_ligada",
+  "anuncios_conectados",
+] as const;
+
+/** Os seis passos do banco: os feitos nas posicoes pedidas. */
+function implantacao(
+  feitos: readonly boolean[],
+): ClinicaNoPainel["implantacao"] {
+  const passos = CHAVES_DOS_PASSOS.map((chave, indice) => ({
+    chave,
+    feito: feitos[indice] ?? false,
+    quantidade: feitos[indice] ? 1 : 0,
+  }));
+  return {
+    feitos: passos.filter((passo) => passo.feito).length,
+    total: passos.length,
+    passos,
+    anuncios: { meta: false, google: false },
+  };
+}
+
 /** O gasto das ultimas 24 horas no proprio teto (US$ 5,00 de US$ 5,00). */
-const GASTO_NO_TETO: ClinicaNoPainel["gasto"] = {
-  ultimas24hCentavos: 500,
-  mesCentavos: 900,
-  ultimas24hSemSimuladorCentavos: 500,
-  mesSemSimuladorCentavos: 900,
-};
+const GASTO_NO_TETO: ClinicaNoPainel["gasto"] = gasto(500, 900, 500, 900);
 
 // A ordem do banco (e da tela): o ultimo acesso mais recente primeiro,
 // quem nunca entrou no fim. Aqui fora de ordem, de proposito.
@@ -154,6 +217,30 @@ const LISTA: ClinicaNoPainel[] = [
     numerosConectados: 0,
     ultimaMensagemEm: null,
     gasto: GASTO_NO_TETO,
+    saude: "em_risco",
+    sinais: [
+      {
+        chave: "conta_suspensa",
+        nivel: "em_risco",
+        quantidade: null,
+        desde: "2026-10-18T10:00:00.000Z",
+      },
+      { chave: "sem_uso", nivel: "em_risco", quantidade: null, desde: null },
+      {
+        chave: "whatsapp_desconectado",
+        nivel: "em_risco",
+        quantidade: 2,
+        desde: null,
+      },
+      {
+        chave: "perto_do_teto_da_ia",
+        nivel: "atencao",
+        quantidade: 100,
+        desde: null,
+      },
+    ],
+    implantacao: implantacao([false, false, false, false, false, false]),
+    ultimaNotaEm: "2026-10-22T12:00:00.000Z",
   }),
   clinica(),
   clinica({
@@ -179,13 +266,43 @@ const LISTA: ClinicaNoPainel[] = [
       pausadaPelaClinica: false,
       telefonesLigados: 2,
     },
-    gasto: {
-      ultimas24hCentavos: 410,
-      mesCentavos: 1000,
-      ultimas24hSemSimuladorCentavos: 100,
-      mesSemSimuladorCentavos: 200,
-    },
+    gasto: gasto(410, 1000, 100, 200),
     tetoDiarioCentavos: 500,
+    saude: "em_risco",
+    sinais: [
+      {
+        chave: "sem_uso",
+        nivel: "em_risco",
+        quantidade: null,
+        desde: "2026-09-01T12:00:00.000Z",
+      },
+      {
+        chave: "sem_numero_de_whatsapp",
+        nivel: "atencao",
+        quantidade: null,
+        desde: null,
+      },
+      {
+        chave: "perto_do_teto_da_ia",
+        nivel: "atencao",
+        quantidade: 82,
+        desde: null,
+      },
+    ],
+    tendencia: {
+      leads: {
+        atual: 14,
+        anterior: 20,
+        variacaoPercentual: -30,
+        direcao: "caindo",
+      },
+      conversas: {
+        atual: 1234,
+        anterior: 1200,
+        variacaoPercentual: 3,
+        direcao: "estavel",
+      },
+    },
   }),
 ];
 
@@ -245,23 +362,39 @@ describe("lista do painel", () => {
     expect(saida).toContain("Criada em 01/09/2026");
   });
 
-  it("as colunas do desenho, nesta ordem, e o gasto por clínica fora da lista", () => {
+  it("as colunas do desenho, nesta ordem; as que ordenam com o botão no cabeçalho e o aria-sort", () => {
     const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    const cabecalho = saida.slice(
+      saida.indexOf("<thead"),
+      saida.indexOf("</thead>"),
+    );
     const colunas = [
       "Clínica",
+      "Saúde",
       "Último acesso",
       "Equipe",
       "WhatsApp",
       "Agente de IA",
-      "Últimos 30 dias",
+      "IA no mês",
+      "Leads em 30 dias",
+      "Conversas em 30 dias",
+      "Implantação",
       "Conta",
-    ].map((coluna) => saida.indexOf(`>${escapado(coluna)}</th>`));
+    ].map((coluna) => cabecalho.indexOf(`>${escapado(coluna)}<`));
     expect(colunas.every((indice) => indice > -1)).toBe(true);
     expect([...colunas].sort((a, b) => a - b)).toEqual(colunas);
-    // O gasto de cada clinica foi para o detalhe.
-    expect(saida).not.toContain("em 24 h");
-    expect(saida).not.toContain("Teto de");
-    expect(saida).not.toContain("Gasto de IA");
+    // Seis ordenam (botao de 40px); sem clique, o ultimo acesso mais recente
+    // primeiro.
+    expect(cabecalho.match(/aria-sort=/g)).toHaveLength(6);
+    expect(cabecalho.match(/<button/g)).toHaveLength(6);
+    expect(cabecalho).toContain('aria-sort="descending"');
+    expect(cabecalho.match(/aria-sort="none"/g)).toHaveLength(5);
+    const ultimoAcesso = cabecalho.slice(
+      cabecalho.lastIndexOf("<th", cabecalho.indexOf(">Último acesso<")),
+      cabecalho.indexOf(">Último acesso<"),
+    );
+    expect(ultimoAcesso).toContain('aria-sort="descending"');
+    expect(cabecalho).toContain("min-h-10");
   });
 
   it("último acesso: há quanto tempo, o dia e a hora no fuso da clínica e quem; Sem uso em 3 camadas; quem nunca entrou", () => {
@@ -469,6 +602,9 @@ describe("totais e erro", () => {
           suspensas: 2,
           agenteLiberado: 3,
           gastoMesCentavos: 98765,
+          gastoMesMicrodolares: 987_654_321,
+          chamadasMes: 4321,
+          saude: { saudavel: 8, atencao: 2, em_risco: 2 },
         }}
       />,
     );
@@ -1140,6 +1276,9 @@ describe("nenhum travessão nas telas", () => {
             suspensas: 1,
             agenteLiberado: 1,
             gastoMesCentavos: 2210,
+            gastoMesMicrodolares: 22_100_000,
+            chamadasMes: 12,
+            saude: { saudavel: 1, atencao: 0, em_risco: 2 },
           }}
         />,
       ),
@@ -1238,6 +1377,247 @@ describe("agente em produção no painel (onda 2, item 11)", () => {
     ).toContain("aos leads e aos pacientes que escreverem");
     expect(TEXTOS_DO_PAINEL.regraDoMotivoDaProducao).toContain(
       "Obrigatório, de 3 a 300 caracteres",
+    );
+  });
+});
+
+describe("segunda leva da lista (pedido do dono de 26/10/2026)", () => {
+  /** A celula da coluna (contando do 1) dentro da linha. */
+  function celula(linha: string, coluna: number): string {
+    let inicio = -1;
+    for (let i = 0; i < coluna; i += 1) {
+      inicio = linha.indexOf("<td", inicio + 1);
+    }
+    expect(inicio, `coluna ${coluna}`).toBeGreaterThan(-1);
+    return linha.slice(inicio, linha.indexOf("</td>", inicio) + 5);
+  }
+
+  it("o cartão do gasto do mês: a precisão real e as chamadas (o mês de US$ 0,001 nunca vira US$ 0,00)", () => {
+    const saida = html(
+      <TotaisDoPainel
+        totais={{
+          clinicas: 6,
+          emUso: 3,
+          semUso: 3,
+          suspensas: 0,
+          agenteLiberado: 2,
+          gastoMesCentavos: 0,
+          gastoMesMicrodolares: 1000,
+          chamadasMes: 7,
+          saude: { saudavel: 2, atencao: 1, em_risco: 3 },
+        }}
+      />,
+    );
+    expect(saida).toContain("US$ 0,001");
+    expect(saida).not.toContain("US$ 0,00<");
+    expect(saida).toContain(
+      escapado(`7 chamadas. ${TEXTOS_DO_PAINEL.rodapeDoGastoDoMes}`),
+    );
+  });
+
+  it("a faixa da saúde: as três contagens em 3 camadas, botões de 40px que filtram (aria-pressed)", () => {
+    const contagem = { saudavel: 4, atencao: 1, em_risco: 2 };
+    const saida = html(<FaixaDeSaude contagem={contagem} />);
+    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.faixaDeSaude));
+    expect(saida.match(/<button/g)).toHaveLength(3);
+    expect(saida.match(/aria-pressed="false"/g)).toHaveLength(3);
+    expect(saida).toContain("min-h-10");
+    const botao = (rotulo: string) => {
+      const indice = saida.indexOf(`<span>${escapado(rotulo)}</span>`);
+      expect(indice, rotulo).toBeGreaterThan(-1);
+      const abertura = saida.lastIndexOf("<button", indice);
+      return saida.slice(abertura, saida.indexOf("</button>", indice));
+    };
+    expect(botao("Saudável")).toContain("lucide-circle-check");
+    expect(botao("Saudável")).toContain("var(--success-text)");
+    expect(botao("Saudável")).toContain(">4<");
+    expect(botao("Atenção")).toContain("lucide-circle-alert");
+    expect(botao("Atenção")).toContain("var(--warning-text)");
+    expect(botao("Em risco")).toContain("lucide-siren");
+    expect(botao("Em risco")).toContain("var(--alert-text)");
+    expect(botao("Em risco")).toContain(">2<");
+
+    navegacao.busca = "saude=em_risco";
+    const filtrada = html(<FaixaDeSaude contagem={contagem} />);
+    expect(filtrada.match(/aria-pressed="true"/g)).toHaveLength(1);
+    const ligada = filtrada.slice(
+      filtrada.lastIndexOf("<button", filtrada.indexOf("<span>Em risco</span>")),
+      filtrada.indexOf("<span>Em risco</span>"),
+    );
+    expect(ligada).toContain('aria-pressed="true"');
+    expect(ligada).toContain("ring-2");
+  });
+
+  it("a coluna Saúde: a saúde e cada sinal aceso em 3 camadas; a clínica saudável sem sinal", () => {
+    const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    const arvore = celula(linhaDa(saida, ID_B), 2);
+    expect(chip(arvore, "Em risco")).toContain("lucide-siren");
+    expect(chip(arvore, "Em risco")).toContain("var(--alert-text)");
+    expect(chip(arvore, "Conta suspensa")).toContain("lucide-octagon-pause");
+    expect(chip(arvore, "Sem uso há 30 dias")).toContain("lucide-watch");
+    expect(chip(arvore, "WhatsApp desconectado")).toContain("lucide-wifi-off");
+    expect(chip(arvore, "Perto do teto de IA")).toContain(
+      "lucide-circle-alert",
+    );
+    expect(arvore).toContain(
+      `aria-label="${escapado("Sinais de alerta da Odonto Árvore")}"`,
+    );
+
+    const bela = celula(linhaDa(saida, ID_C), 2);
+    expect(chip(bela, "Sem número de WhatsApp")).toContain("lucide-phone-off");
+    expect(chip(bela, "Sem número de WhatsApp")).toContain(
+      "var(--warning-text)",
+    );
+
+    const aurora = celula(linhaDa(saida, ID_A), 2);
+    expect(chip(aurora, "Saudável")).toContain("lucide-circle-check");
+    expect(aurora).not.toContain("<ul");
+  });
+
+  it("a coluna IA no mês: o gasto exato, as chamadas e o teto por dia; sem agente e sem gasto, Sem uso de IA", () => {
+    const saida = html(
+      <ListaDoPainel
+        clinicas={[
+          clinica(),
+          clinica({
+            id: ID_B,
+            nome: "Conduzza Teste",
+            agente: { ...clinica().agente, estado: "teste" },
+            gasto: {
+              ...gasto(0, 0, 0, 0),
+              mesMicrodolares: 1000,
+              mesChamadas: 7,
+            },
+          }),
+          clinica({
+            id: ID_C,
+            nome: "Sem IA",
+            gasto: gasto(0, 0, 0, 0),
+            tetoDiarioCentavos: null,
+          }),
+        ]}
+        agoraIso={AGORA}
+      />,
+    );
+    const aurora = celula(linhaDa(saida, ID_A), 7);
+    expect(aurora).toContain("US$ 3,10");
+    expect(aurora).toContain("25 chamadas");
+    expect(aurora).toContain("Teto de US$ 5,00 por dia");
+
+    const teste = celula(linhaDa(saida, ID_B), 7);
+    expect(teste).toContain("US$ 0,001");
+    expect(teste).toContain("7 chamadas");
+    expect(teste).not.toContain("US$ 0,00<");
+
+    const semIa = celula(linhaDa(saida, ID_C), 7);
+    expect(semIa).toContain(TEXTOS_DO_PAINEL.semUsoDeIa);
+    expect(semIa).not.toContain("US$");
+  });
+
+  it("leads e conversas com a tendência do banco: a seta e o texto, a frase para o leitor de tela; sem base", () => {
+    const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    const aurora = linhaDa(saida, ID_A);
+    const leads = celula(aurora, 8);
+    expect(leads).toContain('<span class="cz-num">14</span>');
+    expect(leads).toContain("lucide-trending-up");
+    expect(leads).toContain("+40%");
+    expect(leads).toContain("text-success-text");
+    expect(leads).toContain("subindo 40% vs. 30 dias anteriores");
+    const conversas = celula(aurora, 9);
+    expect(conversas).toContain("1.234");
+    expect(conversas).toContain(">Sem base<");
+    expect(conversas).not.toContain("lucide-trending");
+
+    const bela = linhaDa(saida, ID_C);
+    expect(celula(bela, 8)).toContain("lucide-trending-down");
+    expect(celula(bela, 8)).toContain("text-alert-text");
+    expect(celula(bela, 9)).toContain("lucide-minus");
+    expect(celula(bela, 9)).toContain(">Estável<");
+  });
+
+  it("a implantação: N de 6 passos, que leva ao cartão do detalhe; a data da última nota embaixo do nome", () => {
+    const saida = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    const aurora = celula(linhaDa(saida, ID_A), 10);
+    expect(aurora).toContain(`href="/painel-geral/${ID_A}#implantacao"`);
+    expect(aurora).toContain(">3 de 6 passos<");
+    expect(aurora).toContain(
+      `aria-label="${escapado("3 de 6 passos da implantação da Clínica Aurora")}"`,
+    );
+    expect(aurora).toContain("min-h-10");
+    expect(celula(linhaDa(saida, ID_B), 10)).toContain(">0 de 6 passos<");
+
+    expect(celula(linhaDa(saida, ID_B), 1)).toContain(
+      "Última nota em 22/10/2026",
+    );
+    expect(celula(linhaDa(saida, ID_A), 1)).not.toContain("Última nota");
+  });
+
+  it("o filtro Saúde na barra e na URL; a ordem da URL com o aria-sort da coluna", () => {
+    navegacao.busca = "saude=em_risco";
+    const emRisco = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    expect(emRisco).toContain('aria-label="Saúde"');
+    expect(emRisco).toContain("2 clínicas");
+    expect(emRisco).not.toContain(escapado("Clínica Aurora"));
+    expect(emRisco).toContain("Limpar filtros");
+
+    navegacao.busca = "ordem=ia&sentido=desc";
+    const porIa = html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />);
+    const ordem = ["Estética Bela", "Odonto Árvore", "Clínica Aurora"].map(
+      (nome) => porIa.indexOf(escapado(nome)),
+    );
+    expect([...ordem].sort((a, b) => a - b)).toEqual(ordem);
+    const cabecalho = porIa.slice(
+      porIa.indexOf("<thead"),
+      porIa.indexOf("</thead>"),
+    );
+    const ia = cabecalho.slice(
+      cabecalho.lastIndexOf("<th", cabecalho.indexOf(">IA no mês<")),
+      cabecalho.indexOf(">IA no mês<"),
+    );
+    expect(ia).toContain('aria-sort="descending"');
+    expect(cabecalho.match(/aria-sort="none"/g)).toHaveLength(5);
+    expect(cabecalho).toContain("lucide-arrow-down");
+
+    navegacao.busca = "ordem=implantacao";
+    const porImplantacao = html(
+      <ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />,
+    );
+    // Sem sentido na URL: o do primeiro clique (quem fez menos primeiro).
+    expect(porImplantacao).toContain('aria-sort="ascending"');
+    expect(porImplantacao.indexOf(escapado("Odonto Árvore"))).toBeLessThan(
+      porImplantacao.indexOf(escapado("Clínica Aurora")),
+    );
+  });
+
+  it("o Exportar: habilitado com clínica na lista; sem nenhuma com os filtros, visível, desabilitado e com a dica", () => {
+    const comClinicas = html(
+      <ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />,
+    );
+    const exportar = comClinicas.slice(
+      comClinicas.lastIndexOf("<button", comClinicas.indexOf(">Exportar<")),
+      comClinicas.indexOf(">Exportar<"),
+    );
+    expect(exportar).not.toContain('disabled=""');
+    expect(comClinicas).toContain("lucide-download");
+
+    navegacao.busca = "busca=zzz";
+    const semClinicas = html(
+      <ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />,
+    );
+    const desabilitado = semClinicas.slice(
+      semClinicas.lastIndexOf("<button", semClinicas.indexOf(">Exportar<")),
+      semClinicas.indexOf(">Exportar<"),
+    );
+    expect(desabilitado).toContain('disabled=""');
+    expect(semClinicas).toContain("cursor-not-allowed");
+  });
+
+  it("nenhum travessão na faixa e na lista nova", () => {
+    expect(
+      html(<FaixaDeSaude contagem={{ saudavel: 1, atencao: 1, em_risco: 1 }} />),
+    ).not.toMatch(/[—–]/);
+    expect(html(<ListaDoPainel clinicas={LISTA} agoraIso={AGORA} />)).not.toMatch(
+      /[—–]/,
     );
   });
 });

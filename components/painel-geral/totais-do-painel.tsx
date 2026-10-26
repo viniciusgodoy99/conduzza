@@ -2,8 +2,9 @@ import { Bot, Building2, Coins } from "lucide-react";
 
 import {
   contagemNoPainel,
-  dolares,
+  dolaresPrecisos,
   SITUACAO_DA_CONTA_STATUS,
+  textoDasChamadas,
   TEXTOS_DO_PAINEL,
   USO_DA_CLINICA_STATUS,
 } from "@/components/painel-geral/painel-geral";
@@ -19,6 +20,10 @@ import type { TotaisDoPainel as Totais } from "@/lib/queries/painel-geral";
 // dois lugares); os de contagem e de gasto ficam neutros (Bot, Building2 e
 // Coins sao ladrilhos decorativos). Sem lime de destaque: o painel nao tem
 // um numero principal. Server Component.
+//
+// Segunda leva (26/10/2026, pedido do dono: "Esse gasto de IA ta certo?"):
+// o gasto do mes com a precisao real (o mes inteiro custou US$ 0,001, e o
+// cartao arredondava para US$ 0,00) e, no rodape, as chamadas da IA.
 
 export function TotaisDoPainel({ totais }: { totais: Totais }) {
   return (
@@ -67,8 +72,8 @@ export function TotaisDoPainel({ totais }: { totais: Totais }) {
         className="col-span-2 lg:col-span-1"
         rotulo="Gasto de IA no mês"
         icone={Coins}
-        valor={dolares(totais.gastoMesCentavos)}
-        rodape="Todas as clínicas, no mês corrente de cada uma"
+        valor={dolaresPrecisos(totais.gastoMesMicrodolares)}
+        rodape={`${textoDasChamadas(totais.chamadasMes)}. ${TEXTOS_DO_PAINEL.rodapeDoGastoDoMes}`}
       />
     </section>
   );

@@ -3,8 +3,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 // Esqueleto na forma do detalhe da clinica no Painel geral (voltar,
 // cabecalho, os sete cartoes de metrica com o ultimo acesso em duas
-// colunas, a equipe com a tabela e as duas colunas de cartoes), nunca
-// giratorio no meio da tela.
+// colunas, a saude e a implantacao, as notas e o historico, a equipe com a
+// tabela e as duas colunas de cartoes), nunca giratorio no meio da tela.
 function CartaoEsqueleto({ linhas }: { linhas: number }) {
   return (
     <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
@@ -52,6 +52,14 @@ export default function CarregandoClinicaNoPainel() {
               <Skeleton className="h-[34px] w-2/5" />
             </div>
           ))}
+        </div>
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <CartaoEsqueleto linhas={3} />
+          <CartaoEsqueleto linhas={6} />
+        </div>
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <CartaoEsqueleto linhas={4} />
+          <CartaoEsqueleto linhas={4} />
         </div>
         <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
           <div className="flex min-h-[64px] items-center gap-3 border-b border-border px-4">

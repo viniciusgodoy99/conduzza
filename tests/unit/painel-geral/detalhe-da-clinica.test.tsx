@@ -10,7 +10,11 @@ import { describe, expect, it, vi } from "vitest";
 // propria linha do painel (agente em teste e conta ativa): o motivo
 // "servidor" nunca culpa a chave da OpenAI por uma clinica desligada ou
 // suspensa. Onda 2 (item 11): o cartao "Para liberar a produção" e a
-// Produção do agente, so com tudo cumprido.
+// Produção do agente, so com tudo cumprido. Segunda leva (26/10/2026): a
+// saude com os sinais (o que o banco contou de cada um), a implantacao com
+// os seis passos, a tendencia nas metricas, o gasto com a precisao real e
+// as chamadas, as notas internas (o aviso de dado de paciente, o Excluir so
+// da propria nota) e o historico da conta.
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/painel-geral/c3333333-3333-4333-8333-333333333333",
@@ -28,6 +32,8 @@ vi.mock("@/app/(app)/painel-geral/actions", () => ({
   registrarRequisitoDaProducaoAction: vi.fn(),
   revogarRequisitoDaProducaoAction: vi.fn(),
   definirInterruptorGeralAction: vi.fn(),
+  escreverNotaDaClinicaAction: vi.fn(),
+  excluirNotaDaClinicaAction: vi.fn(),
 }));
 vi.mock("@/app/(app)/agente/whatsapp-actions", () => ({
   adicionarTelefoneDaIaAction: vi.fn(),
@@ -110,8 +116,46 @@ function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
       mesCentavos: 310,
       ultimas24hSemSimuladorCentavos: 30,
       mesSemSimuladorCentavos: 200,
+      ultimas24hMicrodolares: 421_500,
+      mesMicrodolares: 3_100_400,
+      ultimas24hSemSimuladorMicrodolares: 300_000,
+      mesSemSimuladorMicrodolares: 2_000_000,
+      ultimas24hChamadas: 12,
+      mesChamadas: 40,
+      ultimas24hSemSimuladorChamadas: 5,
+      mesSemSimuladorChamadas: 1,
     },
     tetoDiarioCentavos: 500,
+    saude: "saudavel",
+    sinais: [],
+    implantacao: {
+      feitos: 4,
+      total: 6,
+      passos: [
+        { chave: "whatsapp_conectado", feito: true, quantidade: 1 },
+        { chave: "equipe_com_duas_pessoas", feito: true, quantidade: 3 },
+        { chave: "procedimentos_cadastrados", feito: true, quantidade: 12 },
+        { chave: "profissionais_cadastrados", feito: true, quantidade: 4 },
+        { chave: "regua_de_confirmacao_ligada", feito: false, quantidade: 0 },
+        { chave: "anuncios_conectados", feito: false, quantidade: 0 },
+      ],
+      anuncios: { meta: false, google: false },
+    },
+    tendencia: {
+      leads: {
+        atual: 142,
+        anterior: 100,
+        variacaoPercentual: 42,
+        direcao: "subindo",
+      },
+      conversas: {
+        atual: 1234,
+        anterior: 0,
+        variacaoPercentual: null,
+        direcao: "sem_base",
+      },
+    },
+    ultimaNotaEm: null,
     ...campos,
   };
 }
@@ -178,6 +222,8 @@ function detalhe(campos: Partial<DetalheDaClinicaProps> = {}): string {
         publicoPublicado={null}
         telefonesForcados={[]}
         versoes={null}
+        notas={{ notas: [], temMais: false }}
+        historico={{ eventos: [], temMais: false }}
         {...campos}
       />
     </TooltipProvider>,
@@ -653,5 +699,319 @@ describe("onda 2: a produção no detalhe (item 11)", () => {
     ]) {
       expect(detalhe({ requisitos })).not.toMatch(/[—–]/);
     }
+  });
+});
+
+describe("segunda leva do detalhe (pedido do dono de 26/10/2026)", () => {
+  const AUTORA = "a7777777-7777-4777-8777-777777777777";
+  const NOTA = "b8888888-8888-4888-8888-888888888888";
+  const OUTRA_NOTA = "c9999999-9999-4999-8999-999999999999";
+
+  /** O pedaco do HTML de uma regiao (cartao) pelo titulo. */
+  function regiao(saida: string, titulo: string): string {
+    const indice = saida.indexOf(`>${escapado(titulo)}<`);
+    expect(indice, titulo).toBeGreaterThan(-1);
+    const inicio = saida.lastIndexOf('role="region"', indice);
+    const fim = saida.indexOf('role="region"', indice);
+    return saida.slice(inicio, fim === -1 ? undefined : fim);
+  }
+
+  it("a saúde com a regra escrita; cada sinal em 3 camadas com o que o banco contou, no fuso da clínica", () => {
+    const saudavel = regiao(detalhe(), TEXTOS_DO_PAINEL.saudeTitulo);
+    expect(saudavel).toContain(escapado(TEXTOS_DO_PAINEL.saudeRegra));
+    expect(saudavel).toContain("lucide-circle-check");
+    expect(saudavel).toContain(">Saudável<");
+    expect(saudavel).toContain(escapado(TEXTOS_DO_PAINEL.nenhumSinal));
+
+    const emRisco = regiao(
+      detalhe({
+        clinica: clinica({
+          suspensao: {
+            suspensaEm: "2026-10-18T10:00:00.000Z",
+            motivo: "Pagamento atrasado",
+          },
+          saude: "em_risco",
+          sinais: [
+            {
+              chave: "conta_suspensa",
+              nivel: "em_risco",
+              quantidade: null,
+              desde: "2026-10-18T10:00:00.000Z",
+            },
+            {
+              chave: "falhas_de_envio",
+              nivel: "atencao",
+              quantidade: 3,
+              // 12:00 UTC = 09:00 em Fortaleza
+              desde: "2026-10-19T12:00:00.000Z",
+            },
+          ],
+        }),
+      }),
+      TEXTOS_DO_PAINEL.saudeTitulo,
+    );
+    expect(emRisco).toContain("lucide-siren");
+    expect(emRisco).toContain(">Em risco<");
+    expect(emRisco).toContain("lucide-octagon-pause");
+    expect(emRisco).toContain("Suspensa desde 18/10/2026, 07:00.");
+    expect(emRisco).toContain(">3 falhas de envio<");
+    expect(emRisco).toContain("lucide-octagon-alert");
+    expect(emRisco).toContain(
+      escapado(
+        "3 mensagens não saíram nos últimos 7 dias. A primeira falha foi em 19/10/2026, 09:00.",
+      ),
+    );
+  });
+
+  it("a implantação: N de 6 passos, cada passo Feito ou Falta em 3 camadas, com o que o banco contou, e a âncora da lista", () => {
+    const saida = detalhe();
+    expect(saida).toContain('id="implantacao"');
+    const implantacao = regiao(saida, TEXTOS_DO_PAINEL.implantacaoTitulo);
+    expect(implantacao).toContain(">4 de 6 passos<");
+    expect(implantacao.match(/<span>Feito<\/span>/g)).toHaveLength(4);
+    expect(implantacao.match(/<span>Falta<\/span>/g)).toHaveLength(2);
+    expect(implantacao).toContain("lucide-circle-dashed");
+    expect(implantacao).toContain("12 procedimentos ativos.");
+    expect(implantacao).toContain(
+      escapado("Nenhuma régua de confirmação ligada."),
+    );
+    expect(implantacao).toContain(
+      escapado("Meta desligada. Rastreio do Google desligado."),
+    );
+  });
+
+  it("as métricas de leads e conversas com a tendência do banco e a base dos 30 dias anteriores", () => {
+    const metricas = detalhe().slice(
+      detalhe().indexOf('aria-label="Movimento da clínica"'),
+    );
+    expect(metricas).toContain("+42%");
+    expect(metricas).toContain("lucide-trending-up");
+    expect(metricas).toContain("subindo 42% vs. 30 dias anteriores");
+    expect(metricas).toContain("100 nos 30 dias anteriores");
+    expect(metricas).toContain(">Sem base<");
+    expect(metricas).toContain("0 nos 30 dias anteriores");
+  });
+
+  it("o gasto de IA com a precisão real em todos os recortes e as chamadas", () => {
+    const gastoMinimo = regiao(
+      detalhe({
+        clinica: clinica({
+          gasto: {
+            ...clinica().gasto,
+            ultimas24hCentavos: 0,
+            ultimas24hMicrodolares: 1000,
+            ultimas24hChamadas: 7,
+            mesCentavos: 0,
+            mesMicrodolares: 1000,
+            mesChamadas: 7,
+          },
+        }),
+      }),
+      "Gasto de IA",
+    );
+    expect(gastoMinimo).toContain("US$ 0,001 de US$ 5,00");
+    expect(gastoMinimo).toContain("7 chamadas nas últimas 24 horas");
+    expect(gastoMinimo).toContain("US$ 0,001");
+    expect(gastoMinimo).toContain("US$ 2,00");
+    expect(gastoMinimo).toContain("1 chamada");
+  });
+
+  it("as notas: o aviso de dado de paciente, o campo de até 2.000, o Excluir só da própria nota e a dica nas outras", () => {
+    const saida = detalhe({
+      notas: {
+        temMais: true,
+        notas: [
+          {
+            id: NOTA,
+            texto: "Combinado: treinar a recepção na sexta.",
+            // 13:05 UTC = 10:05 em Fortaleza
+            criadaEm: "2026-10-20T13:05:00.000Z",
+            autor: {
+              userId: AUTORA,
+              nome: "Vinicius Rodrigues",
+              email: "v@conduzza.com",
+              equipeConduzza: true,
+            },
+            minha: true,
+          },
+          {
+            id: OUTRA_NOTA,
+            texto: "Ligar para o gestor na segunda.",
+            criadaEm: "2026-10-19T13:05:00.000Z",
+            autor: {
+              userId: PESSOA,
+              nome: "Ana Lima",
+              email: "ana@conduzza.com",
+              equipeConduzza: true,
+            },
+            minha: false,
+          },
+        ],
+      },
+    });
+    const notas = regiao(saida, TEXTOS_DO_PAINEL.notasTitulo);
+    expect(notas).toContain(escapado(TEXTOS_DO_PAINEL.notasDescricao));
+    expect(notas).toContain(
+      escapado(TEXTOS_DO_PAINEL.naoEscrevaDadoDePaciente),
+    );
+    expect(notas).toContain('maxLength="2000"');
+    expect(notas).toContain(escapado(TEXTOS_DO_PAINEL.regraDaNota));
+    expect(notas).toContain("0 de 2.000");
+    // Campo vazio: o Salvar visivel e desabilitado, com a regra ligada.
+    const salvar = notas.slice(
+      notas.lastIndexOf("<button", notas.indexOf(">Salvar nota<")),
+      notas.indexOf(">Salvar nota<"),
+    );
+    expect(salvar).toContain('disabled=""');
+    expect(salvar).toContain("aria-describedby=");
+    expect(notas).toContain(
+      escapado("Combinado: treinar a recepção na sexta."),
+    );
+    expect(notas).toContain(
+      escapado("Escrita por Vinicius Rodrigues (equipe Conduzza) em"),
+    );
+    expect(notas).toContain("20/10/2026, 10:05");
+    // A propria nota: Excluir habilitado; a de outra pessoa: desabilitado,
+    // com a dica.
+    const botoes = [
+      ...notas.matchAll(/<button[^>]*>(?:(?!<\/button>).)*Excluir nota/g),
+    ].map((m) => m[0]);
+    expect(botoes).toHaveLength(2);
+    expect(botoes[0]).not.toContain('disabled=""');
+    expect(botoes[1]).toContain('disabled=""');
+    expect(notas).toContain("cursor-not-allowed");
+    expect(notas).toContain(escapado(TEXTOS_DO_PAINEL.notasTemMais));
+    // Nenhum dialogo aberto sem clique.
+    expect(saida).not.toContain(escapado(TEXTOS_DO_PAINEL.excluirNotaTitulo));
+  });
+
+  it("as notas: vazio e leitura que falhou (só a seção mostra o erro)", () => {
+    const vazio = regiao(detalhe(), TEXTOS_DO_PAINEL.notasTitulo);
+    expect(vazio).toContain(escapado(TEXTOS_DO_PAINEL.nenhumaNota));
+    const falhou = detalhe({ notas: "erro" });
+    expect(falhou).toContain(escapado(TEXTOS_DO_PAINEL.notasSemLeitura));
+    // O campo continua: escrever nao depende da leitura.
+    expect(regiao(falhou, TEXTOS_DO_PAINEL.notasTitulo)).toContain(
+      ">Salvar nota<",
+    );
+    expect(falhou).toContain("Conta da clínica");
+  });
+
+  it("o histórico da conta: o mais novo primeiro, quem e quando no fuso da clínica; vazio e erro", () => {
+    const saida = detalhe({
+      historico: {
+        temMais: false,
+        eventos: [
+          {
+            id: "12",
+            em: "2026-10-20T13:05:00.000Z",
+            acao: "mudou_agente_da_clinica",
+            autor: {
+              userId: AUTORA,
+              nome: "Vinicius Rodrigues",
+              email: "v@conduzza.com",
+              equipeConduzza: true,
+            },
+            detalhes: {
+              estado: "teste",
+              motivo: "Piloto combinado",
+              chave: null,
+              substituiu: null,
+              tetoDiarioCentavos: null,
+              tetoRespostasPorConversaHora: null,
+              tetoDiarioAntesCentavos: null,
+              tetoRespostasAntesPorConversaHora: null,
+              jobsVencidos: null,
+              clinicasDeVoltaAoTeste: null,
+              notaEscritaEm: null,
+            },
+          },
+          {
+            id: "11",
+            em: "2026-10-18T10:00:00.000Z",
+            acao: "suspendeu_clinica",
+            autor: null,
+            detalhes: {
+              estado: null,
+              motivo: "Pagamento atrasado",
+              chave: null,
+              substituiu: null,
+              tetoDiarioCentavos: null,
+              tetoRespostasPorConversaHora: null,
+              tetoDiarioAntesCentavos: null,
+              tetoRespostasAntesPorConversaHora: null,
+              jobsVencidos: null,
+              clinicasDeVoltaAoTeste: null,
+              notaEscritaEm: null,
+            },
+          },
+          // A mudanca de agente anterior: o Teste de cima vem do Desligado
+          // (a tela tira a direcao da lista inteira; a trilha so guarda o
+          // destino).
+          {
+            id: "10",
+            em: "2026-10-17T10:00:00.000Z",
+            acao: "mudou_agente_da_clinica",
+            autor: null,
+            detalhes: {
+              estado: "desligado",
+              motivo: null,
+              chave: null,
+              substituiu: null,
+              tetoDiarioCentavos: null,
+              tetoRespostasPorConversaHora: null,
+              tetoDiarioAntesCentavos: null,
+              tetoRespostasAntesPorConversaHora: null,
+              jobsVencidos: null,
+              clinicasDeVoltaAoTeste: null,
+              notaEscritaEm: null,
+            },
+          },
+        ],
+      },
+    });
+    const historico = regiao(saida, TEXTOS_DO_PAINEL.historicoTitulo);
+    expect(historico.indexOf("Agente liberado em Teste")).toBeGreaterThan(-1);
+    expect(historico.indexOf("Agente liberado em Teste")).toBeLessThan(
+      historico.indexOf("Conta suspensa"),
+    );
+    expect(historico.indexOf("Conta suspensa")).toBeLessThan(
+      historico.indexOf("Agente retirado"),
+    );
+    expect(historico).toContain("Motivo: Piloto combinado");
+    expect(historico).toContain(
+      escapado("Feito por Vinicius Rodrigues (equipe Conduzza) em"),
+    );
+    expect(historico).toContain("20/10/2026, 10:05");
+    expect(historico).toContain("Feito pelo sistema em");
+    // A lista rola dentro do cartao e recebe o foco do teclado.
+    expect(historico).toContain('tabindex="0"');
+
+    expect(regiao(detalhe(), TEXTOS_DO_PAINEL.historicoTitulo)).toContain(
+      escapado(TEXTOS_DO_PAINEL.historicoVazio),
+    );
+    expect(detalhe({ historico: "erro" })).toContain(
+      escapado(TEXTOS_DO_PAINEL.historicoSemLeitura),
+    );
+  });
+
+  it("sem travessão nos cartões novos", () => {
+    expect(
+      detalhe({
+        notas: "erro",
+        historico: "erro",
+        clinica: clinica({
+          saude: "atencao",
+          sinais: [
+            {
+              chave: "perto_do_teto_da_ia",
+              nivel: "atencao",
+              quantidade: 120,
+              desde: null,
+            },
+          ],
+        }),
+      }),
+    ).not.toMatch(/[—–]/);
   });
 });

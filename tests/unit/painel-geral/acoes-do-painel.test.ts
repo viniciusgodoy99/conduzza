@@ -82,6 +82,8 @@ import {
   definirAgenteDaClinicaAction,
   definirInterruptorGeralAction,
   definirTetoDaIaAction,
+  escreverNotaDaClinicaAction,
+  excluirNotaDaClinicaAction,
   reativarClinicaAction,
   registrarRequisitoDaProducaoAction,
   revogarRequisitoDaProducaoAction,
@@ -135,6 +137,17 @@ const validas = [
       motivo: MOTIVO,
     }),
   () => definirInterruptorGeralAction({ ligado: true }),
+  // Segunda leva: as notas internas da equipe Conduzza
+  () =>
+    escreverNotaDaClinicaAction({
+      clinicId: CLINICA,
+      texto: "Treinar a recepção na sexta.",
+    }),
+  () =>
+    excluirNotaDaClinicaAction({
+      clinicId: CLINICA,
+      notaId: REGISTRO,
+    }),
 ] as const;
 
 describe("guarda no servidor", () => {
@@ -920,5 +933,146 @@ describe("o agente na linha da lista: a mesma ação do detalhe", () => {
     ]);
     expect(JSON.stringify(registro.logs)).not.toContain("testes");
     expect(registro.revalidados).toEqual([]);
+  });
+});
+
+describe("segunda leva: as notas internas da equipe Conduzza", () => {
+  const NOTA = "f1111111-1111-4111-8111-111111111111";
+  const TEXTO = "Combinado: treinar a recepção na sexta.";
+
+  it("escrever: escrever_nota_da_clinica com a clínica e o texto sem as pontas; revalida o painel e não loga o texto", async () => {
+    expect(
+      await escreverNotaDaClinicaAction({
+        clinicId: CLINICA,
+        texto: `  ${TEXTO}\n `,
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      {
+        nome: "escrever_nota_da_clinica",
+        args: { p_clinic_id: CLINICA, p_texto: TEXTO },
+      },
+    ]);
+    expect(registro.revalidados).toEqual([["/painel-geral", "layout"]]);
+    expect(registro.tabelas).toEqual([]);
+    expect(JSON.stringify(registro.logs)).not.toContain("recepção");
+  });
+
+  it("excluir: excluir_nota_da_clinica com a nota", async () => {
+    expect(
+      await excluirNotaDaClinicaAction({ clinicId: CLINICA, notaId: NOTA }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs).toEqual([
+      { nome: "excluir_nota_da_clinica", args: { p_nota_id: NOTA } },
+    ]);
+    expect(registro.revalidados).toEqual([["/painel-geral", "layout"]]);
+  });
+
+  it("entrada fora da faixa ou do formato: o texto do campo ou dados inválidos, sem banco", async () => {
+    expect(
+      await escreverNotaDaClinicaAction({ clinicId: CLINICA, texto: "  \n " }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.notaVazia });
+    expect(
+      await escreverNotaDaClinicaAction({
+        clinicId: CLINICA,
+        texto: "x".repeat(2001),
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DO_PAINEL.notaLonga });
+    for (const entrada of [
+      { clinicId: "x", texto: TEXTO },
+      { clinicId: CLINICA, texto: 42 },
+      { clinicId: CLINICA, texto: TEXTO, autor: USUARIO },
+      "nota",
+    ]) {
+      expect(await escreverNotaDaClinicaAction(entrada)).toEqual({
+        ok: false,
+        error: TEXTOS_DO_PAINEL.dadosInvalidos,
+      });
+    }
+    for (const entrada of [
+      { clinicId: CLINICA, notaId: "1" },
+      { clinicId: CLINICA },
+      { clinicId: CLINICA, notaId: NOTA, extra: true },
+    ]) {
+      expect(await excluirNotaDaClinicaAction(entrada)).toEqual({
+        ok: false,
+        error: TEXTOS_DO_PAINEL.dadosInvalidos,
+      });
+    }
+    expect(registro.rpcs).toEqual([]);
+  });
+
+  it("as recusas do banco em texto de recepção; o log leva só a clínica, o tipo e o código", async () => {
+    const casos: [
+      () => Promise<unknown>,
+      string,
+      { code?: string; message?: string },
+      string,
+    ][] = [
+      [
+        () => escreverNotaDaClinicaAction({ clinicId: CLINICA, texto: TEXTO }),
+        "escrever_nota_da_clinica",
+        { code: "22023", message: "texto_invalido" },
+        TEXTOS_DO_PAINEL.notaInvalida,
+      ],
+      [
+        () => escreverNotaDaClinicaAction({ clinicId: CLINICA, texto: TEXTO }),
+        "escrever_nota_da_clinica",
+        { code: "P0002", message: "Clínica não encontrada." },
+        TEXTOS_DO_PAINEL.clinicaNaoEncontrada,
+      ],
+      [
+        () => escreverNotaDaClinicaAction({ clinicId: CLINICA, texto: TEXTO }),
+        "escrever_nota_da_clinica",
+        { code: "42501" },
+        TEXTOS_DO_PAINEL.soEquipeConduzza,
+      ],
+      [
+        () => escreverNotaDaClinicaAction({ clinicId: CLINICA, texto: TEXTO }),
+        "escrever_nota_da_clinica",
+        { code: "XX000" },
+        TEXTOS_DO_PAINEL.naoSalvouANota,
+      ],
+      // A nota de outra pessoa: o banco recusa (42501 nota_de_outra_pessoa).
+      [
+        () => excluirNotaDaClinicaAction({ clinicId: CLINICA, notaId: NOTA }),
+        "excluir_nota_da_clinica",
+        { code: "42501", message: "nota_de_outra_pessoa" },
+        TEXTOS_DO_PAINEL.soQuemEscreveuExclui,
+      ],
+      [
+        () => excluirNotaDaClinicaAction({ clinicId: CLINICA, notaId: NOTA }),
+        "excluir_nota_da_clinica",
+        { code: "P0002", message: "Nota não encontrada." },
+        TEXTOS_DO_PAINEL.notaNaoEncontrada,
+      ],
+      [
+        () => excluirNotaDaClinicaAction({ clinicId: CLINICA, notaId: NOTA }),
+        "excluir_nota_da_clinica",
+        { code: "XX000" },
+        TEXTOS_DO_PAINEL.naoExcluiuANota,
+      ],
+    ];
+    for (const [acao, rpc, erro, texto] of casos) {
+      registro.respostas = new Map([[rpc, { data: null, error: erro }]]);
+      registro.logs = [];
+      registro.revalidados = [];
+      expect(await acao(), `${rpc} ${erro.code}`).toEqual({
+        ok: false,
+        error: texto,
+      });
+      expect(registro.revalidados).toEqual([]);
+      expect(registro.logs).toEqual([
+        [
+          "painel_geral_nao_alterou",
+          {
+            clinic_id: CLINICA,
+            kind: rpc === "excluir_nota_da_clinica" ? "excluir_nota" : "nota",
+            error_code: erro.code ?? null,
+          },
+        ],
+      ]);
+      expect(JSON.stringify(registro.logs)).not.toContain("treinar");
+    }
   });
 });

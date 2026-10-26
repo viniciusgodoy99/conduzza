@@ -9,13 +9,19 @@ import {
   CircleSlash,
   FlaskConical,
   Hourglass,
+  OctagonAlert,
   OctagonPause,
+  PhoneOff,
   RadioTower,
+  Siren,
   Watch,
 } from "lucide-react";
 import { z } from "zod";
 
-import type { StatusDefinition } from "@/lib/design/status";
+import {
+  WHATSAPP_CONNECTION_STATUS,
+  type StatusDefinition,
+} from "@/lib/design/status";
 import {
   publicoDoBanco,
   ROTULO_DO_MODO,
@@ -24,16 +30,27 @@ import {
 } from "@/lib/domain/agente/config";
 import { diaCivil, diasEntre, somarDias } from "@/lib/domain/horarios";
 import { ROTULO_DO_PAPEL } from "@/lib/domain/permissions";
-import type {
-  ClinicaNoPainel,
-  EstadoDoAgente,
-  PessoaDaEquipe,
-  RegistroDoRequisito,
-  RequisitoConferido,
-  RequisitosDaProducao,
-  SituacaoDaConta,
-  SituacaoDoMembro,
-  UltimoAcessoNoPainel,
+import {
+  SAUDES_DO_BANCO,
+  type AutorNoPainel,
+  type ChaveDoPasso,
+  type ChaveDoSinal,
+  type ClinicaNoPainel,
+  type DirecaoDaTendencia,
+  type EstadoDoAgente,
+  type EventoDaConta,
+  type ImplantacaoNoPainel,
+  type PassoNoPainel,
+  type PessoaDaEquipe,
+  type RegistroDoRequisito,
+  type RequisitoConferido,
+  type RequisitosDaProducao,
+  type SaudeNoPainel,
+  type SinalNoPainel,
+  type SituacaoDaConta,
+  type SituacaoDoMembro,
+  type TendenciaNoPainel,
+  type UltimoAcessoNoPainel,
 } from "@/lib/queries/painel-geral";
 import { lerReais } from "@/lib/utils/moeda";
 
@@ -76,7 +93,14 @@ import { lerReais } from "@/lib/utils/moeda";
 //   onda 2 (P8).
 // - O gasto da IA (24 horas, a janela do teto, e o mes no fuso da clinica)
 //   aparece no detalhe contra o teto diario, que a equipe Conduzza ajusta
-//   la; na lista, so o total do mes no cartao do topo.
+//   la. Desde a segunda leva (26/10/2026), com a precisao real (nunca "US$
+//   0,00" quando houve gasto) e as chamadas, no cartao do topo, no detalhe
+//   e na coluna "IA no mes" da lista.
+// - Segunda leva (26/10/2026, escolhas do dono): os sinais de alerta e a
+//   saude, a implantacao e a tendencia vem decididos pelo banco (migration
+//   20261026110000; as regras novas la estao marcadas AJUSTAVEL); aqui, os
+//   rotulos, os status em 3 camadas, o filtro de saude, a ordem por coluna,
+//   as notas internas, o historico da conta e as entradas das acoes.
 // - De paciente, so contagens: nenhum dado de paciente na tela, na URL nem
 //   em log. Nome, e-mail, papel e ultimo acesso sao da equipe da clinica.
 
@@ -111,6 +135,21 @@ import { lerReais } from "@/lib/utils/moeda";
 // - pessoa da equipe: ativa CircleCheck success, pendente Hourglass warning
 //   (pendencia: esperando liberacao) e inativa CircleSlash neutral, o mesmo
 //   do "Sem acesso" da lista da equipe em Configuracoes.
+// Segunda leva (26/10/2026), dois icones ganham dono e o resto reaproveita
+// sentidos da tabela:
+// - saude: Saudavel CircleCheck success (sucesso), Atencao CircleAlert
+//   warning (atencao) e Em risco Siren alert (DONO NOVO: so a clinica em
+//   risco; o ShieldAlert do "risco" e do Risco de falta, e a familia Shield
+//   e da autorizacao para receber mensagens);
+// - sinais: Conta suspensa OctagonPause alert (o da conta suspensa),
+//   WhatsApp desconectado WifiOff alert (o do Desconectado), Sem uso ha 30
+//   dias Watch warning (o do Sem uso), Sem numero de WhatsApp PhoneOff
+//   warning (DONO NOVO: so a clinica sem numero), Falhas de envio
+//   OctagonAlert alert (erro ou falha, o do "Não enviada"), Perto do teto
+//   de IA CircleAlert warning (o do Perto do teto) e Pedido de entrada
+//   esperando Hourglass warning (pendencia, o da pessoa Pendente);
+// - passo da implantacao: Feito CircleCheck success e Falta CircleDashed
+//   neutral (o "nada aqui ainda"), os pares do requisito da producao.
 // ---------------------------------------------------------------------------
 
 export const SITUACAO_DA_CONTA_STATUS: Record<
@@ -199,8 +238,302 @@ export function estadoDoGasto(
   return gastoCentavos >= tetoCentavos * PERTO_DO_TETO ? "perto" : "dentro";
 }
 
-export function situacaoDaConta(clinica: ClinicaNoPainel): SituacaoDaConta {
+export function situacaoDaConta(
+  clinica: Pick<ClinicaNoPainel, "suspensao">,
+): SituacaoDaConta {
   return clinica.suspensao ? "suspensa" : "ativa";
+}
+
+// ---------------------------------------------------------------------------
+// Sinais de alerta e saude (segunda leva, 26/10/2026; escolhas (1) e (8) do
+// dono). O BANCO decide quais sinais acendem e a saude (migration
+// 20261026110000, onde as regras novas estao marcadas AJUSTAVEL); a tela
+// mostra cada sinal em 3 camadas, com o rotulo e o que o banco contou, e a
+// leitura (lib/queries/painel-geral.ts) confere a saude com os sinais.
+// ---------------------------------------------------------------------------
+
+export const SINAL_STATUS: Record<ChaveDoSinal, StatusDefinition> = {
+  conta_suspensa: {
+    label: "Conta suspensa",
+    tone: "alert",
+    icon: OctagonPause,
+  },
+  sem_uso: { label: "Sem uso há 30 dias", tone: "warning", icon: Watch },
+  whatsapp_desconectado: {
+    label: "WhatsApp desconectado",
+    tone: WHATSAPP_CONNECTION_STATUS.desconectado.tone,
+    icon: WHATSAPP_CONNECTION_STATUS.desconectado.icon,
+  },
+  sem_numero_de_whatsapp: {
+    label: "Sem número de WhatsApp",
+    tone: "warning",
+    icon: PhoneOff,
+  },
+  pedido_de_entrada_esperando: {
+    label: "Pedido de entrada esperando",
+    tone: "warning",
+    icon: Hourglass,
+  },
+  falhas_de_envio: {
+    label: "Falhas de envio",
+    tone: "alert",
+    icon: OctagonAlert,
+  },
+  perto_do_teto_da_ia: {
+    label: "Perto do teto de IA",
+    tone: "warning",
+    icon: CircleAlert,
+  },
+};
+
+/** O rotulo do sinal na linha, com a contagem quando ajuda. */
+export function rotuloDoSinal(
+  sinal: Pick<SinalNoPainel, "chave" | "quantidade">,
+): string {
+  const quantidade = sinal.quantidade ?? 0;
+  switch (sinal.chave) {
+    case "pedido_de_entrada_esperando":
+      return quantidade > 1
+        ? `${contagemNoPainel(quantidade)} pedidos de entrada esperando`
+        : SINAL_STATUS.pedido_de_entrada_esperando.label;
+    case "falhas_de_envio":
+      return quantidade > 1
+        ? `${contagemNoPainel(quantidade)} falhas de envio`
+        : "1 falha de envio";
+    default:
+      return SINAL_STATUS[sinal.chave].label;
+  }
+}
+
+/**
+ * O que o banco contou do sinal, em texto de recepcao, para o detalhe:
+ * desde quando, quantos, quanto do teto. Nulo: nada a acrescentar. Datas no
+ * fuso da clinica.
+ */
+export function detalheDoSinal(
+  sinal: SinalNoPainel,
+  fuso: string,
+): string | null {
+  const quando = sinal.desde ? dataEHoraNaClinica(sinal.desde, fuso) : null;
+  const quantidade = sinal.quantidade ?? 0;
+  switch (sinal.chave) {
+    case "conta_suspensa":
+      return quando ? `Suspensa desde ${quando}.` : null;
+    case "sem_uso":
+      return quando
+        ? `Último acesso da equipe em ${quando}.`
+        : "Ninguém da equipe entrou ainda.";
+    case "whatsapp_desconectado": {
+      const numeros =
+        quantidade === 1
+          ? "O número está sem conexão."
+          : `Os ${contagemNoPainel(quantidade)} números estão sem conexão.`;
+      return quando
+        ? `${numeros} A desconexão mais recente foi em ${quando}.`
+        : numeros;
+    }
+    case "sem_numero_de_whatsapp":
+      return "A clínica ainda não conectou um número na aba WhatsApp de Configurações.";
+    case "pedido_de_entrada_esperando": {
+      const pedidos =
+        quantidade === 1
+          ? "1 pedido esperando há mais de 2 dias."
+          : `${contagemNoPainel(quantidade)} pedidos esperando há mais de 2 dias.`;
+      return sinal.desde
+        ? `${pedidos} O mais antigo é de ${dataNaClinica(sinal.desde, fuso)}.`
+        : pedidos;
+    }
+    case "falhas_de_envio": {
+      const falhas =
+        quantidade === 1
+          ? "1 mensagem não saiu nos últimos 7 dias."
+          : `${contagemNoPainel(quantidade)} mensagens não saíram nos últimos 7 dias.`;
+      return quando ? `${falhas} A primeira falha foi em ${quando}.` : falhas;
+    }
+    case "perto_do_teto_da_ia":
+      return quantidade >= 100
+        ? `${contagemNoPainel(quantidade)}% do teto diário gasto nas últimas 24 horas. O agente para de responder até o gasto mais antigo completar 24 horas.`
+        : `${contagemNoPainel(quantidade)}% do teto diário gasto nas últimas 24 horas.`;
+  }
+}
+
+export const SAUDE_STATUS: Record<SaudeNoPainel, StatusDefinition> = {
+  saudavel: { label: "Saudável", tone: "success", icon: CircleCheck },
+  atencao: { label: "Atenção", tone: "warning", icon: CircleAlert },
+  em_risco: { label: "Em risco", tone: "alert", icon: Siren },
+};
+
+/** A ordem da saude, da melhor para a pior (a faixa e o filtro). */
+export const SAUDES: readonly SaudeNoPainel[] = SAUDES_DO_BANCO;
+
+// ---------------------------------------------------------------------------
+// Implantacao (segunda leva, escolha (2) do dono): seis passos, cada um
+// feito ou nao, decididos pelo banco (a equipe minima de 2 pessoas ativas
+// conta a equipe Conduzza, como as outras contagens; AJUSTAVEL na
+// migration). A tela da o nome e o que o banco contou.
+// ---------------------------------------------------------------------------
+
+export const ROTULO_DO_PASSO: Readonly<Record<ChaveDoPasso, string>> = {
+  whatsapp_conectado: "Número de WhatsApp conectado",
+  equipe_com_duas_pessoas: "Equipe com 2 ou mais pessoas ativas",
+  procedimentos_cadastrados: "Procedimentos cadastrados",
+  profissionais_cadastrados: "Profissionais cadastrados",
+  regua_de_confirmacao_ligada: "Régua de confirmação ligada",
+  anuncios_conectados: "Anúncios conectados (Meta ou rastreio do Google)",
+};
+
+export type EstadoDoPasso = "feito" | "falta";
+
+export const PASSO_STATUS: Record<EstadoDoPasso, StatusDefinition> = {
+  feito: { label: "Feito", tone: "success", icon: CircleCheck },
+  falta: { label: "Falta", tone: "neutral", icon: CircleDashed },
+};
+
+/** Um passo como a tela mostra. */
+export type PassoDaImplantacao = {
+  chave: ChaveDoPasso;
+  rotulo: string;
+  feito: boolean;
+  /** O que o banco contou, em texto ("2 números conectados"). */
+  detalhe: string;
+};
+
+function plural(quantidade: number, um: string, varios: string): string {
+  return quantidade === 1
+    ? `1 ${um}`
+    : `${contagemNoPainel(quantidade)} ${varios}`;
+}
+
+function detalheDoPasso(
+  passo: PassoNoPainel,
+  anuncios: ImplantacaoNoPainel["anuncios"],
+): string {
+  switch (passo.chave) {
+    case "whatsapp_conectado":
+      return passo.quantidade === 0
+        ? "Nenhum número conectado."
+        : `${plural(passo.quantidade, "número conectado", "números conectados")}.`;
+    case "equipe_com_duas_pessoas":
+      return passo.quantidade === 0
+        ? "Nenhuma pessoa ativa."
+        : `${plural(passo.quantidade, "pessoa ativa", "pessoas ativas")}.`;
+    case "procedimentos_cadastrados":
+      return passo.quantidade === 0
+        ? "Nenhum procedimento ativo."
+        : `${plural(passo.quantidade, "procedimento ativo", "procedimentos ativos")}.`;
+    case "profissionais_cadastrados":
+      return passo.quantidade === 0
+        ? "Nenhum profissional ativo."
+        : `${plural(passo.quantidade, "profissional ativo", "profissionais ativos")}.`;
+    case "regua_de_confirmacao_ligada":
+      return passo.quantidade === 0
+        ? "Nenhuma régua de confirmação ligada."
+        : `${plural(passo.quantidade, "régua de confirmação ligada", "réguas de confirmação ligadas")}.`;
+    case "anuncios_conectados":
+      return `Meta ${anuncios.meta ? "ligada" : "desligada"}. Rastreio do Google ${anuncios.google ? "ligado" : "desligado"}.`;
+  }
+}
+
+/** Os seis passos, na ordem do banco, com o nome e o que ele contou. */
+export function passosDaImplantacao(
+  clinica: Pick<ClinicaNoPainel, "implantacao">,
+): PassoDaImplantacao[] {
+  return clinica.implantacao.passos.map((passo) => ({
+    chave: passo.chave,
+    rotulo: ROTULO_DO_PASSO[passo.chave],
+    feito: passo.feito,
+    detalhe: detalheDoPasso(passo, clinica.implantacao.anuncios),
+  }));
+}
+
+/** "4 de 6 passos". */
+export function textoDaImplantacao(feitos: number, total: number): string {
+  return `${feitos} de ${total} passos`;
+}
+
+// ---------------------------------------------------------------------------
+// Tendencia (segunda leva, escolha (3) do dono): os ultimos 30 dias contra
+// os 30 anteriores, com a direcao que o banco decide (a faixa do estavel e
+// dele, AJUSTAVEL na migration). A seta e o texto, nunca so a cor; a cor
+// pela polaridade (mais leads e mais conversas e bom), como a variacao dos
+// cartoes de metrica.
+// ---------------------------------------------------------------------------
+
+export const COMPARADO_COM_OS_30_DIAS = "30 dias anteriores";
+
+/** O percentual com o sinal ASCII ("+25%", "-10%", "0%"). */
+function percentualComSinal(valor: number): string {
+  const modulo = `${contagemNoPainel(Math.abs(valor))}%`;
+  if (valor > 0) {
+    return `+${modulo}`;
+  }
+  return valor < 0 ? `-${modulo}` : modulo;
+}
+
+export type TendenciaDescrita = {
+  direcao: DirecaoDaTendencia;
+  /** O texto visivel: "+25%", "-10%", "Estável" ou "Sem base". */
+  visivel: string;
+  /** A frase do leitor de tela. */
+  falado: string;
+  /** Bom para a clinica (subindo), ruim (caindo) ou nulo (estavel, sem base). */
+  boa: boolean | null;
+};
+
+export function descreverTendencia(
+  tendencia: TendenciaNoPainel,
+): TendenciaDescrita {
+  const vs = `vs. ${COMPARADO_COM_OS_30_DIAS}`;
+  const variacao = tendencia.variacaoPercentual ?? 0;
+  switch (tendencia.direcao) {
+    case "sem_base":
+      return {
+        direcao: "sem_base",
+        visivel: TEXTOS_DO_PAINEL.semBase,
+        falado: `sem base de comparação: nenhum nos ${COMPARADO_COM_OS_30_DIAS}`,
+        boa: null,
+      };
+    case "estavel":
+      return {
+        direcao: "estavel",
+        visivel: TEXTOS_DO_PAINEL.estavel,
+        falado: `estável, ${percentualComSinal(variacao)} ${vs}`,
+        boa: null,
+      };
+    case "subindo":
+      return {
+        direcao: "subindo",
+        visivel: percentualComSinal(variacao),
+        falado: `subindo ${contagemNoPainel(Math.abs(variacao))}% ${vs}`,
+        boa: true,
+      };
+    case "caindo":
+      return {
+        direcao: "caindo",
+        visivel: percentualComSinal(variacao),
+        falado: `caindo ${contagemNoPainel(Math.abs(variacao))}% ${vs}`,
+        boa: false,
+      };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// IA no mes (segunda leva, pedido do dono: "Esse gasto de IA ta certo? Era
+// bom fazer por clinica"): o gasto do mes com a precisao real e as chamadas.
+// ---------------------------------------------------------------------------
+
+/**
+ * Sem agente liberado, sem gasto e sem chamada no mes: a linha diz "Sem uso
+ * de IA" (nunca um traco nem um "US$ 0,00" solto).
+ */
+export function semUsoDeIa(
+  clinica: Pick<ClinicaNoPainel, "agente" | "gasto">,
+): boolean {
+  return (
+    clinica.agente.estado === "desligado" &&
+    clinica.gasto.mesMicrodolares === 0 &&
+    clinica.gasto.mesChamadas === 0
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -445,7 +778,76 @@ export const TEXTOS_DO_PAINEL = {
     `Escreva na evidência a versão do filtro (${filtro}) e o modelo (${modelo}) da rodada.`,
   versaoMudou:
     "A versão do filtro ou do modelo mudou depois da rodada registrada. Confira e registre de novo, se for o caso. A produção não trava sozinha por isso.",
+  // Segunda leva (26/10/2026): gasto de IA por clinica, saude e sinais,
+  // implantacao, tendencia, notas, historico, exportar e ordenar.
+  rodapeDoGastoDoMes: "Todas as clínicas, no mês corrente de cada uma.",
+  semUsoDeIa: "Sem uso de IA",
+  tetoPorDia: (teto: string) => `Teto de ${teto} por dia`,
+  saudeTitulo: "Saúde da clínica",
+  saudeRegra:
+    "Em risco: sem uso há 30 dias, WhatsApp desconectado ou conta suspensa. Atenção: qualquer outro sinal de alerta. Saudável: nenhum sinal.",
+  nenhumSinal: "Nenhum sinal de alerta.",
+  sinaisDeAlerta: "Sinais de alerta",
+  faixaDeSaude: "Saúde das clínicas",
+  faixaDeSaudeApoio: "Escolha uma saúde para filtrar a lista.",
+  implantacaoTitulo: "Implantação",
+  implantacaoDescricao:
+    "Os passos para a clínica usar o sistema por inteiro. A equipe conta quem tem acesso ativo, a equipe Conduzza inclusive.",
+  semBase: "Sem base",
+  estavel: "Estável",
+  // Notas internas da equipe Conduzza (escolha (6) do dono)
+  notasTitulo: "Notas da equipe Conduzza",
+  notasDescricao:
+    "Só a equipe Conduzza vê estas notas. A equipe da clínica não vê.",
+  naoEscrevaDadoDePaciente: "Não escreva dado de paciente aqui.",
+  naoEscrevaDadoDePacienteApoio:
+    "Nada de nome, telefone ou assunto de saúde de paciente. Escreva só o que a equipe Conduzza precisa saber da conta.",
+  novaNota: "Nova nota",
+  regraDaNota:
+    "De 1 a 2.000 caracteres. Fica registrada com o seu nome e a data.",
+  salvarNota: "Salvar nota",
+  salvandoNota: "Salvando...",
+  notaSalva: "Nota salva.",
+  notaVazia: "Escreva a nota antes de salvar.",
+  notaLonga: "A nota tem no máximo 2.000 caracteres.",
+  notaInvalida: "Escreva a nota com 1 a 2.000 caracteres.",
+  naoSalvouANota: "Não foi possível salvar a nota. Tente de novo.",
+  nenhumaNota: "Nenhuma nota ainda.",
+  nenhumaNotaApoio:
+    "Escreva o que a equipe Conduzza combinou com a clínica, para quem atender depois.",
+  notasSemLeitura:
+    "Não foi possível carregar as notas desta clínica. Recarregue a página.",
+  notasTemMais: "Mostrando as 100 notas mais recentes.",
+  excluirNota: "Excluir nota",
+  excluindoNota: "Excluindo...",
+  excluirNotaTitulo: "Excluir esta nota?",
+  excluirNotaEfeito:
+    "A nota sai da lista desta clínica para toda a equipe Conduzza. A exclusão fica no histórico da conta.",
+  notaExcluida: "Nota excluída.",
+  naoExcluiuANota: "Não foi possível excluir a nota. Tente de novo.",
+  soQuemEscreveuExclui: "Só quem escreveu a nota pode excluir.",
+  notaNaoEncontrada: "Esta nota não existe mais. Recarregue a página.",
+  peloSistema: "pelo sistema",
+  ultimaNotaEm: (data: string) => `Última nota em ${data}`,
+  // Historico da conta (escolha (6) do dono)
+  historicoTitulo: "Histórico da conta",
+  historicoDescricao:
+    "O que a equipe Conduzza mudou nesta clínica, do mais novo para o mais antigo.",
+  historicoVazio: "Nada registrado ainda.",
+  historicoSemLeitura:
+    "Não foi possível carregar o histórico desta clínica. Recarregue a página.",
+  historicoTemMais: "Mostrando os 100 registros mais recentes.",
+  // Exportar a lista (escolha (7) do dono)
+  exportar: "Exportar",
+  exportando: "Exportando...",
+  exportarSemClinicas: "Nenhuma clínica com esses filtros para exportar.",
 } as const;
+
+/**
+ * O motivo do agente (e do interruptor) quando a tela nao manda nenhum: a
+ * acao grava este texto na trilha, e o historico da conta nao o repete.
+ */
+export const MOTIVO_PADRAO_DO_AGENTE = "Painel geral";
 
 // ---------------------------------------------------------------------------
 // Requisitos da producao (onda 2, item 11; contrato secao 3.3)
@@ -738,6 +1140,45 @@ export function dolaresParaCampo(centavos: number): string {
   return (centavos / 100).toFixed(2).replace(".", ",");
 }
 
+/** 10.000 microdolares = 1 centavo de dolar. */
+export const MICRODOLARES_POR_CENTAVO = 10_000;
+
+/**
+ * O gasto em microdolares (US$ 1 = 1.000.000) com a precisao real (segunda
+ * leva, pedido do dono): abaixo de 1 centavo, todas as casas que o valor
+ * tem ("US$ 0,001", "US$ 0,0015", "US$ 0,000001"), nunca "US$ 0,00" quando
+ * houve gasto; de 1 centavo para cima, as 2 casas de sempre ("US$ 3,10",
+ * arredondado como o banco arredonda os centavos). Zero e "US$ 0,00".
+ */
+export function dolaresPrecisos(microdolares: number): string {
+  if (microdolares > 0 && microdolares < MICRODOLARES_POR_CENTAVO) {
+    const valor = (microdolares / 1_000_000).toLocaleString("pt-BR", {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 6,
+    });
+    return `US$ ${valor}`;
+  }
+  return dolares(Math.round(microdolares / MICRODOLARES_POR_CENTAVO));
+}
+
+/**
+ * O mesmo valor para a planilha, sem o "US$" ("0,001", "3,10"): a coluna
+ * diz a moeda no titulo.
+ */
+export function dolaresPrecisosParaPlanilha(microdolares: number): string {
+  return dolaresPrecisos(microdolares).replace(/^US\$\s/, "");
+}
+
+/** "Nenhuma chamada", "1 chamada", "1.234 chamadas" (as chamadas da IA). */
+export function textoDasChamadas(chamadas: number): string {
+  if (chamadas === 0) {
+    return "Nenhuma chamada";
+  }
+  return chamadas === 1
+    ? "1 chamada"
+    : `${contagemNoPainel(chamadas)} chamadas`;
+}
+
 /** "2 de 3"; "Nenhum número" sem numero. */
 export function textoDosNumeros(clinica: ClinicaNoPainel): string {
   if (clinica.numerosTotal === 0) {
@@ -747,7 +1188,9 @@ export function textoDosNumeros(clinica: ClinicaNoPainel): string {
 }
 
 /** Ha numero, mas nenhum conectado (o chip de alerta na lista). */
-export function nenhumNumeroConectado(clinica: ClinicaNoPainel): boolean {
+export function nenhumNumeroConectado(
+  clinica: Pick<ClinicaNoPainel, "numerosTotal" | "numerosConectados">,
+): boolean {
   return clinica.numerosTotal > 0 && clinica.numerosConectados === 0;
 }
 
@@ -910,11 +1353,15 @@ export type FiltroDaConta = "todas" | SituacaoDaConta;
 export type LiberacaoDoAgente = "liberado" | "nao_liberado";
 export type FiltroDoAgente = "todos" | LiberacaoDoAgente;
 
+/** A saude (segunda leva): a faixa do topo e o segmentado mexem aqui. */
+export type FiltroDaSaude = "todas" | SaudeNoPainel;
+
 export type FiltrosDoPainel = {
   busca: string;
   uso: FiltroDoUso;
   conta: FiltroDaConta;
   agente: FiltroDoAgente;
+  saude: FiltroDaSaude;
 };
 
 export const FILTROS_PADRAO: FiltrosDoPainel = {
@@ -922,6 +1369,7 @@ export const FILTROS_PADRAO: FiltrosDoPainel = {
   uso: "todas",
   conta: "todas",
   agente: "todos",
+  saude: "todas",
 };
 
 export const OPCOES_DO_USO: readonly { value: FiltroDoUso; label: string }[] = [
@@ -948,6 +1396,21 @@ export const OPCOES_DO_AGENTE: readonly {
   { value: "nao_liberado", label: "Não liberado" },
 ];
 
+export const OPCOES_DA_SAUDE: readonly {
+  value: FiltroDaSaude;
+  label: string;
+}[] = [
+  { value: "todas", label: "Todas" },
+  ...SAUDES.map((saude) => ({
+    value: saude,
+    label: SAUDE_STATUS[saude].label,
+  })),
+];
+
+function filtroDaSaude(valor: string | null): FiltroDaSaude {
+  return SAUDES.find((saude) => saude === valor) ?? "todas";
+}
+
 export function liberacaoDoAgente(estado: EstadoDoAgente): LiberacaoDoAgente {
   return estado === "desligado" ? "nao_liberado" : "liberado";
 }
@@ -960,13 +1423,17 @@ export function lerFiltrosDoPainel(params: {
   const conta = params.get("conta");
   const agente = params.get("agente");
   return {
-    busca: (params.get("busca") ?? "").slice(0, 80),
+    busca: (params.get("busca") ?? "").slice(0, BUSCA_MAXIMA),
     uso: uso === "em_uso" || uso === "sem_uso" ? uso : "todas",
     conta: conta === "ativa" || conta === "suspensa" ? conta : "todas",
     agente:
       agente === "liberado" || agente === "nao_liberado" ? agente : "todos",
+    saude: filtroDaSaude(params.get("saude")),
   };
 }
+
+/** A busca da lista tem ate 80 caracteres (o campo e a URL). */
+export const BUSCA_MAXIMA = 80;
 
 /** Sem acento e em minusculas, para a busca nao depender da grafia. */
 export function normalizarBusca(texto: string): string {
@@ -997,8 +1464,9 @@ export function ordemDoPainel(a: ClinicaNoPainel, b: ClinicaNoPainel): number {
 
 /**
  * O recorte da lista: a busca olha o nome da clinica e o nome e o e-mail de
- * qualquer pessoa da equipe dela (dado da equipe); o uso, a conta e o agente
- * pelo valor exato. Ordem: ordemDoPainel.
+ * qualquer pessoa da equipe dela (dado da equipe); o uso, a conta, o agente
+ * e a saude pelo valor exato. Ordem: ordemDoPainel (a ordem escolhida no
+ * cabecalho vem depois, em ordenarClinicas).
  */
 export function filtrarClinicas(
   clinicas: readonly ClinicaNoPainel[],
@@ -1022,6 +1490,9 @@ export function filtrarClinicas(
       ) {
         return false;
       }
+      if (filtros.saude !== "todas" && clinica.saude !== filtros.saude) {
+        return false;
+      }
       if (termo === "") {
         return true;
       }
@@ -1042,7 +1513,156 @@ export function filtrosAtivos(filtros: FiltrosDoPainel): boolean {
     filtros.busca.trim() !== "" ||
     filtros.uso !== "todas" ||
     filtros.conta !== "todas" ||
-    filtros.agente !== "todos"
+    filtros.agente !== "todos" ||
+    filtros.saude !== "todas"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ordem da lista (segunda leva, escolha (7) do dono): clicar no cabecalho
+// ordena por aquela coluna; clicar de novo inverte. Na URL (ordem e
+// sentido), como os filtros. Sem nada na URL, a ordem do banco (o ultimo
+// acesso mais recente primeiro). Empate: a ordem do banco.
+// ---------------------------------------------------------------------------
+
+export type ColunaDaOrdem =
+  "ultimo_acesso" | "saude" | "ia" | "leads" | "conversas" | "implantacao";
+
+export type SentidoDaOrdem = "asc" | "desc";
+
+export type OrdemDaLista = { coluna: ColunaDaOrdem; sentido: SentidoDaOrdem };
+
+export const ORDEM_PADRAO: OrdemDaLista = {
+  coluna: "ultimo_acesso",
+  sentido: "desc",
+};
+
+const COLUNAS_DA_ORDEM: readonly ColunaDaOrdem[] = [
+  "ultimo_acesso",
+  "saude",
+  "ia",
+  "leads",
+  "conversas",
+  "implantacao",
+];
+
+/**
+ * O sentido do primeiro clique em cada coluna, o mais util para quem
+ * acompanha: o acesso mais recente, a pior saude, o maior gasto, mais leads
+ * e mais conversas primeiro; na implantacao, quem fez menos passos primeiro
+ * (quem precisa de ajuda).
+ */
+export const PRIMEIRO_SENTIDO: Readonly<Record<ColunaDaOrdem, SentidoDaOrdem>> =
+  {
+    ultimo_acesso: "desc",
+    saude: "desc",
+    ia: "desc",
+    leads: "desc",
+    conversas: "desc",
+    implantacao: "asc",
+  };
+
+/** A ordem da URL; coluna ou sentido desconhecidos viram a padrao. */
+export function lerOrdemDaLista(params: {
+  get(nome: string): string | null;
+}): OrdemDaLista {
+  const coluna = COLUNAS_DA_ORDEM.find(
+    (valida) => valida === params.get("ordem"),
+  );
+  if (!coluna) {
+    return ORDEM_PADRAO;
+  }
+  const sentido = params.get("sentido");
+  return {
+    coluna,
+    sentido:
+      sentido === "asc" || sentido === "desc"
+        ? sentido
+        : PRIMEIRO_SENTIDO[coluna],
+  };
+}
+
+/** A ordem depois do clique no cabecalho da coluna. */
+export function proximaOrdem(
+  atual: OrdemDaLista,
+  coluna: ColunaDaOrdem,
+): OrdemDaLista {
+  if (atual.coluna !== coluna) {
+    return { coluna, sentido: PRIMEIRO_SENTIDO[coluna] };
+  }
+  return { coluna, sentido: atual.sentido === "asc" ? "desc" : "asc" };
+}
+
+export function ehOrdemPadrao(ordem: OrdemDaLista): boolean {
+  return (
+    ordem.coluna === ORDEM_PADRAO.coluna &&
+    ordem.sentido === ORDEM_PADRAO.sentido
+  );
+}
+
+const PESO_DA_SAUDE: Readonly<Record<SaudeNoPainel, number>> = {
+  saudavel: 0,
+  atencao: 1,
+  em_risco: 2,
+};
+
+/**
+ * O valor de cada clinica na coluna (maior = "desc" primeiro). No ultimo
+ * acesso, quem nunca entrou vale menos que qualquer data (fica no fim do
+ * mais recente primeiro e no comeco do mais antigo primeiro). Na saude, a
+ * pior vale mais, e os sinais desempatam.
+ */
+function valorNaColuna(
+  clinica: ClinicaNoPainel,
+  coluna: ColunaDaOrdem,
+): number[] {
+  switch (coluna) {
+    case "ultimo_acesso":
+      return [
+        clinica.ultimoAcesso
+          ? Date.parse(clinica.ultimoAcesso.em)
+          : Number.NEGATIVE_INFINITY,
+      ];
+    case "saude":
+      return [PESO_DA_SAUDE[clinica.saude], clinica.sinais.length];
+    case "ia":
+      return [clinica.gasto.mesMicrodolares, clinica.gasto.mesChamadas];
+    case "leads":
+      return [clinica.leads30Dias];
+    case "conversas":
+      return [clinica.conversas30Dias];
+    case "implantacao":
+      return [clinica.implantacao.feitos];
+  }
+}
+
+function compararValores(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * A lista na ordem escolhida (uma copia). Empate, a ordem do banco
+ * (ordemDoPainel): a lista nunca pula de lugar entre duas leituras iguais.
+ */
+export function ordenarClinicas(
+  clinicas: readonly ClinicaNoPainel[],
+  ordem: OrdemDaLista,
+): ClinicaNoPainel[] {
+  const sinal = ordem.sentido === "asc" ? 1 : -1;
+  return [...clinicas].sort(
+    (a, b) =>
+      sinal *
+        compararValores(
+          valorNaColuna(a, ordem.coluna),
+          valorNaColuna(b, ordem.coluna),
+        ) || ordemDoPainel(a, b),
   );
 }
 
@@ -1199,6 +1819,264 @@ export const revogarRequisitoSchema = z
 export const interruptorGeralSchema = z
   .object({ ligado: z.boolean() })
   .strict();
+
+// ---------------------------------------------------------------------------
+// Notas internas da equipe Conduzza (segunda leva, escolha (6) do dono)
+// ---------------------------------------------------------------------------
+
+/** Faixa do texto da nota (a mesma do banco: 1 a 2.000 depois do trim). */
+export const NOTA_MINIMA = 1;
+export const NOTA_MAXIMA = 2000;
+
+export const textoDaNotaSchema = z
+  .string()
+  .trim()
+  .min(NOTA_MINIMA, TEXTOS_DO_PAINEL.notaVazia)
+  .max(NOTA_MAXIMA, TEXTOS_DO_PAINEL.notaLonga);
+
+export function notaValida(texto: string): boolean {
+  return textoDaNotaSchema.safeParse(texto).success;
+}
+
+/** Escrever uma nota: a clinica da tela e o texto. */
+export const escreverNotaSchema = z
+  .object({ clinicId: z.uuid(), texto: textoDaNotaSchema })
+  .strict();
+
+/** Excluir uma nota: a clinica da tela (para revalidar) e a nota. */
+export const excluirNotaSchema = z
+  .object({ clinicId: z.uuid(), notaId: z.uuid() })
+  .strict();
+
+// ---------------------------------------------------------------------------
+// Historico da conta (segunda leva, escolha (6) do dono): cada evento em
+// texto de recepcao, com o que o banco deixa sair dos detalhes (o motivo, o
+// estado do agente, os tetos, o requisito e as contagens).
+// ---------------------------------------------------------------------------
+
+export type DescricaoDoEvento = {
+  titulo: string;
+  /** As linhas de apoio, ja em texto ("Motivo: ..."). */
+  linhas: string[];
+};
+
+/**
+ * O motivo que revogar_requisito_da_producao grava quando tira a clinica da
+ * producao (a volta para Teste e automatica): este prefixo e a CHAVE do
+ * requisito ('Requisito da produção revogado: termo_da_clinica'). Ele so
+ * tira da producao: a mudanca com este motivo e sempre uma volta.
+ */
+const MOTIVO_DA_VOLTA_PELA_REVOGACAO = "Requisito da produção revogado: ";
+
+/** A volta automatica para Teste pela revogacao de um requisito. */
+function voltaPelaRevogacao(motivo: string | null): boolean {
+  return (motivo?.trim() ?? "").startsWith(MOTIVO_DA_VOLTA_PELA_REVOGACAO);
+}
+
+/**
+ * "Motivo: ...", menos o motivo padrao que o painel grava sozinho. No da
+ * volta pela revogacao, a chave do requisito vira o nome dele (revisao de
+ * 26/10/2026: a equipe lia "termo_da_clinica").
+ */
+function linhaDoMotivo(motivo: string | null): string[] {
+  const limpo = motivo?.trim() ?? "";
+  if (limpo === "" || limpo === MOTIVO_PADRAO_DO_AGENTE) {
+    return [];
+  }
+  if (voltaPelaRevogacao(limpo)) {
+    const chave = limpo.slice(MOTIVO_DA_VOLTA_PELA_REVOGACAO.length).trim();
+    if (/^[a-z0-9_]+$/.test(chave)) {
+      return [
+        `Motivo: ${MOTIVO_DA_VOLTA_PELA_REVOGACAO}${rotuloDoRequisito(chave)}`,
+      ];
+    }
+  }
+  return [`Motivo: ${limpo}`];
+}
+
+/**
+ * O titulo da mudanca do agente. A trilha so guarda o estado de DESTINO:
+ * Teste e tanto a liberacao (de Desligado) quanto a volta (da Producao,
+ * pelo seletor ou pela revogacao de um requisito). A direcao vem do estado
+ * da mudanca anterior na mesma lista (estadoAnterior) ou do motivo da volta
+ * pela revogacao; sem nenhum dos dois, o titulo fica neutro (revisao de
+ * 26/10/2026: o historico dizia "liberado" na volta).
+ */
+function tituloDoAgente(
+  estado: string | null,
+  motivo: string | null,
+  estadoAnterior: string | null,
+): string {
+  switch (estado) {
+    case "desligado":
+      return "Agente retirado";
+    case "producao":
+      return "Agente ligado em Produção";
+    case "teste":
+      if (voltaPelaRevogacao(motivo) || estadoAnterior === "producao") {
+        return "Agente voltou para Teste";
+      }
+      return estadoAnterior === "desligado"
+        ? "Agente liberado em Teste"
+        : "Agente passou para Teste";
+    default:
+      return "Agente da clínica mudou";
+  }
+}
+
+function linhasDoTeto(detalhes: EventoDaConta["detalhes"]): string[] {
+  const linhas: string[] = [];
+  const teto = detalhes.tetoDiarioCentavos;
+  const tetoAntes = detalhes.tetoDiarioAntesCentavos;
+  if (teto !== null) {
+    linhas.push(
+      tetoAntes !== null && tetoAntes !== teto
+        ? `Teto a cada 24 horas: de ${dolares(tetoAntes)} para ${dolares(teto)}.`
+        : `Teto a cada 24 horas: ${dolares(teto)}.`,
+    );
+  }
+  const respostas = detalhes.tetoRespostasPorConversaHora;
+  const respostasAntes = detalhes.tetoRespostasAntesPorConversaHora;
+  if (respostas !== null) {
+    linhas.push(
+      respostasAntes !== null && respostasAntes !== respostas
+        ? `Respostas por conversa em 1 hora: de ${respostasAntes} para ${respostas}.`
+        : `Respostas por conversa em 1 hora: ${respostas}.`,
+    );
+  }
+  return linhas;
+}
+
+function linhaDoRequisito(chave: string | null): string[] {
+  return chave ? [`${rotuloDoRequisito(chave)}.`] : [];
+}
+
+/**
+ * O evento em texto: o titulo e as linhas de apoio. Datas (a nota excluida)
+ * no fuso da clinica. estadoAnterior: o estado do agente na mudanca de
+ * agente anterior a esta (descricoesDoHistorico acha na lista); nulo quando
+ * nao se sabe.
+ */
+export function descricaoDoEvento(
+  evento: Pick<EventoDaConta, "acao" | "detalhes">,
+  fuso: string,
+  estadoAnterior: string | null = null,
+): DescricaoDoEvento {
+  const { detalhes } = evento;
+  switch (evento.acao) {
+    case "suspendeu_clinica":
+      return {
+        titulo: "Conta suspensa",
+        linhas: linhaDoMotivo(detalhes.motivo),
+      };
+    case "reativou_clinica": {
+      const vencidas = detalhes.jobsVencidos ?? 0;
+      return {
+        titulo: "Conta reativada",
+        linhas: [
+          ...linhaDoMotivo(detalhes.motivo),
+          ...(vencidas > 0
+            ? [
+                vencidas === 1
+                  ? "1 mensagem automática vencida foi cancelada."
+                  : `${contagemNoPainel(vencidas)} mensagens automáticas vencidas foram canceladas.`,
+              ]
+            : []),
+        ],
+      };
+    }
+    case "mudou_agente_da_clinica":
+      return {
+        titulo: tituloDoAgente(
+          detalhes.estado,
+          detalhes.motivo,
+          estadoAnterior,
+        ),
+        linhas: linhaDoMotivo(detalhes.motivo),
+      };
+    case "mudou_teto_da_ia":
+      return { titulo: "Teto de IA mudou", linhas: linhasDoTeto(detalhes) };
+    case "registrou_requisito_da_producao":
+      return {
+        titulo: "Requisito da produção registrado",
+        linhas: [
+          ...linhaDoRequisito(detalhes.chave),
+          ...(detalhes.substituiu ? ["Substituiu o registro anterior."] : []),
+        ],
+      };
+    case "revogou_requisito_da_producao": {
+      const devolvidas = detalhes.clinicasDeVoltaAoTeste ?? 0;
+      return {
+        titulo: "Requisito da produção revogado",
+        linhas: [
+          ...linhaDoRequisito(detalhes.chave),
+          ...linhaDoMotivo(detalhes.motivo),
+          ...(devolvidas > 0
+            ? [
+                devolvidas === 1
+                  ? "1 clínica voltou para Teste."
+                  : `${contagemNoPainel(devolvidas)} clínicas voltaram para Teste.`,
+              ]
+            : []),
+        ],
+      };
+    }
+    case "escreveu_nota_interna":
+      return { titulo: "Nota escrita", linhas: [] };
+    case "excluiu_nota_interna":
+      return {
+        titulo: "Nota excluída",
+        linhas: detalhes.notaEscritaEm
+          ? [
+              `A nota tinha sido escrita em ${dataEHoraNaClinica(detalhes.notaEscritaEm, fuso)}.`,
+            ]
+          : [],
+      };
+  }
+}
+
+/**
+ * O historico inteiro em texto (o mais novo primeiro, como o banco manda).
+ * O estado de antes de cada mudanca do agente e o da mudanca de agente
+ * seguinte na lista (a anterior no tempo); a mais antiga da lista fica sem
+ * ele (pode haver outra alem do limite de 100), e o titulo dela, neutro.
+ */
+export function descricoesDoHistorico<
+  E extends Pick<EventoDaConta, "acao" | "detalhes">,
+>(
+  eventos: readonly E[],
+  fuso: string,
+): { evento: E; descricao: DescricaoDoEvento }[] {
+  // Do mais antigo para o mais novo: o estado do agente ate cada evento.
+  const anteriores = new Array<string | null>(eventos.length).fill(null);
+  let estado: string | null = null;
+  for (let i = eventos.length - 1; i >= 0; i--) {
+    anteriores[i] = estado;
+    const evento = eventos[i];
+    if (evento?.acao === "mudou_agente_da_clinica" && evento.detalhes.estado) {
+      estado = evento.detalhes.estado;
+    }
+  }
+  return eventos.map((evento, i) => ({
+    evento,
+    descricao: descricaoDoEvento(evento, fuso, anteriores[i] ?? null),
+  }));
+}
+
+/**
+ * Quem fez, para o fim da frase: "por Ana Souza", com "(equipe Conduzza)"
+ * quando e dela; sem pessoa (a service role ou o SQL editor), "pelo
+ * sistema".
+ */
+export function autoria(autor: AutorNoPainel | null): string {
+  if (!autor) {
+    return TEXTOS_DO_PAINEL.peloSistema;
+  }
+  const nome = nomeDaPessoa(autor);
+  return autor.equipeConduzza
+    ? `por ${nome} (${TEXTOS_DO_PAINEL.daEquipeConduzza})`
+    : `por ${nome}`;
+}
 
 /**
  * Faixas de definir_teto_da_ia, as mesmas da RPC (decisao do coordenador

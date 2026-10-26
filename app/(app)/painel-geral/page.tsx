@@ -1,4 +1,5 @@
 import { ErroDoPainel } from "@/components/painel-geral/erro-do-painel";
+import { FaixaDeSaude } from "@/components/painel-geral/faixa-de-saude";
 import { InterruptorGeral } from "@/components/painel-geral/interruptor-geral";
 import { ListaDoPainel } from "@/components/painel-geral/lista-do-painel";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
@@ -22,6 +23,11 @@ import { createClient } from "@/lib/supabase/server";
 // abaixo deles. O estado dele vem do banco pela sessao
 // (ia_interruptor_ligado, so o booleano); leitura que falhou vira o aviso
 // do cartao, sem derrubar o painel.
+//
+// Segunda leva (26/10/2026): logo abaixo dos cartoes de hoje, a faixa da
+// saude (Saudavel, Atencao e Em risco, de todas as clinicas da leitura),
+// que filtra a lista no clique. Sem a leitura, nem a faixa: nunca uma
+// contagem que nao foi lida.
 
 /** O interruptor geral; nulo: a leitura falhou. Nunca lanca. */
 async function lerInterruptor(
@@ -53,6 +59,7 @@ export default async function PainelGeralPage() {
       {painel ? (
         <>
           <TotaisDoPainel totais={painel.totais} />
+          <FaixaDeSaude contagem={painel.totais.saude} />
           <InterruptorGeral ligado={interruptor} />
           {/* "Hoje" e "Há N dias" pelo relogio da leitura, o mesmo do
               "Em uso". */}

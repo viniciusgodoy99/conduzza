@@ -1,35 +1,60 @@
 "use client";
 
-import { Building2, Search, SearchX } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Building2,
+  Search,
+  SearchX,
+} from "lucide-react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { AgenteNaLista } from "@/components/painel-geral/agente-na-lista";
+import { corpoDoPedidoDoPainel } from "@/components/painel-geral/exportacao-do-painel";
+import {
+  AvisoDaExportacao,
+  BotaoExportarPainel,
+  useExportacaoDoPainel,
+} from "@/components/painel-geral/exportar-painel";
+import { ImplantacaoNaLinha } from "@/components/painel-geral/implantacao-da-clinica";
 import {
   contagemDaEquipe,
   contagemNoPainel,
   dataEHoraNaClinica,
   dataNaClinica,
+  dolares,
+  dolaresPrecisos,
   filtrarClinicas,
   filtrosAtivos,
   haQuantoTempo,
-  lerFiltrosDoPainel,
   nenhumNumeroConectado,
   OPCOES_DA_CONTA,
+  OPCOES_DA_SAUDE,
   OPCOES_DO_AGENTE,
   OPCOES_DO_USO,
+  ordenarClinicas,
+  proximaOrdem,
   quemEntrouNaLista,
+  semUsoDeIa,
   SITUACAO_DA_CONTA_STATUS,
   situacaoDaConta,
+  textoDasChamadas,
   textoDosNumeros,
   TEXTOS_DO_PAINEL,
   USO_DA_CLINICA_STATUS,
+  type ColunaDaOrdem,
   type FiltroDaConta,
+  type FiltroDaSaude,
   type FiltroDoAgente,
   type FiltroDoUso,
   type FiltrosDoPainel,
+  type OrdemDaLista,
 } from "@/components/painel-geral/painel-geral";
+import { useParametrosDaLista } from "@/components/painel-geral/parametros-da-lista";
+import { SaudeNaLinha } from "@/components/painel-geral/sinais-da-clinica";
+import { TendenciaNaLinha } from "@/components/painel-geral/tendencia";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -44,31 +69,40 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { WHATSAPP_CONNECTION_STATUS } from "@/lib/design/status";
-import type { ClinicaNoPainel } from "@/lib/queries/painel-geral";
+import type {
+  ClinicaNoPainel,
+  TendenciaNoPainel,
+} from "@/lib/queries/painel-geral";
+import { cn } from "@/lib/utils";
 
 // Lista do Painel geral como acompanhamento de cliente (pedido do dono de
 // 26/10/2026): uma linha por clinica com o ultimo acesso da equipe (quando,
 // ha quanto tempo e quem, no fuso de cada clinica, CLAUDE.md 3.6), a
 // equipe (ativas e pendentes), o WhatsApp, o agente de IA com o "Liberar
 // agente" e o "Retirar agente" na propria linha, o movimento dos ultimos 30
-// dias e a conta. Status em 3 camadas (icone, rotulo e cor); so o "Sem uso"
-// vira chip no ultimo acesso (o que pede atencao). De paciente, so
-// contagens; nome e e-mail sao da equipe da clinica. A equipe Conduzza com
-// vinculo ativo conta como qualquer pessoa ativa (o desenho) e aparece
+// dias e a conta. Status em 3 camadas (icone, rotulo e cor). De paciente,
+// so contagens; nome e e-mail sao da equipe da clinica. A equipe Conduzza
+// com vinculo ativo conta como qualquer pessoa ativa (o desenho) e aparece
 // marcada: "(equipe Conduzza)" depois do nome no ultimo acesso, e "Inclui 1
-// da equipe Conduzza" na coluna Equipe, para o uso dela nao passar pelo da
-// clinica.
+// da equipe Conduzza" na coluna Equipe.
 //
-// Ordem: o ultimo acesso mais recente primeiro, quem nunca entrou no fim (a
-// mesma do banco). Busca e filtros na URL, trocados com
+// Segunda leva (26/10/2026, escolhas do dono): a coluna Saude (a saude e
+// cada sinal de alerta aceso, em 3 camadas), a coluna IA no mes (o gasto do
+// mes com a precisao real, as chamadas e o teto por dia; sem agente e sem
+// gasto, "Sem uso de IA"), Leads e Conversas em colunas proprias com a
+// tendencia contra os 30 dias anteriores, a Implantacao ("N de 6 passos",
+// com os passos na dica), a data da ultima nota interna embaixo do nome, o
+// filtro de saude, o "Exportar" e a ordem por coluna (clique no cabecalho,
+// com aria-sort).
+//
+// Ordem: sem clique, o ultimo acesso mais recente primeiro (a do banco).
+// Busca, filtros e ordem na URL (parametros-da-lista), trocados com
 // history.replaceState (o roteador do Next acompanha sem ir ao servidor):
 // digitar na busca nao recarrega a pagina, e o link leva o mesmo recorte. A
 // busca da tela e a do campo (estado local); a URL so acompanha. O vazio
 // inicial (nenhuma clinica) e o vazio por filtro sao estados diferentes; o
 // erro de leitura e o carregando ficam com a pagina (ErroDoPainel e
 // loading.tsx).
-
-type ParametroDaUrl = "busca" | "uso" | "conta" | "agente";
 
 export function ListaDoPainel({
   clinicas,
@@ -81,9 +115,12 @@ export function ListaDoPainel({
    */
   agoraIso: string;
 }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const daUrl = useMemo(() => lerFiltrosDoPainel(searchParams), [searchParams]);
+  const {
+    filtros: daUrl,
+    ordem,
+    definir,
+    definirOrdem,
+  } = useParametrosDaLista();
   const [busca, setBusca] = useState(daUrl.busca);
   const agora = useMemo(() => new Date(agoraIso), [agoraIso]);
 
@@ -92,33 +129,16 @@ export function ListaDoPainel({
     [daUrl, busca],
   );
   const visiveis = useMemo(
-    () => filtrarClinicas(clinicas, filtros),
-    [clinicas, filtros],
+    () => ordenarClinicas(filtrarClinicas(clinicas, filtros), ordem),
+    [clinicas, filtros, ordem],
   );
-
-  const setParams = useCallback(
-    (mudancas: Partial<Record<ParametroDaUrl, string | null>>) => {
-      const params = new URLSearchParams(searchParams.toString());
-      for (const [chave, valor] of Object.entries(mudancas)) {
-        if (valor === null || valor === undefined || valor === "") {
-          params.delete(chave);
-        } else {
-          params.set(chave, valor);
-        }
-      }
-      const qs = params.toString();
-      window.history.replaceState(
-        null,
-        "",
-        qs ? `${pathname}?${qs}` : pathname,
-      );
-    },
-    [pathname, searchParams],
+  const exportacao = useExportacaoDoPainel(
+    corpoDoPedidoDoPainel(filtros, ordem),
   );
 
   const limpar = () => {
     setBusca("");
-    setParams({ busca: null, uso: null, conta: null, agente: null });
+    definir({ busca: null, uso: null, conta: null, agente: null, saude: null });
   };
 
   return (
@@ -142,17 +162,28 @@ export function ListaDoPainel({
             maxLength={80}
             onChange={(evento) => {
               setBusca(evento.target.value);
-              setParams({ busca: evento.target.value.trim() || null });
+              definir({ busca: evento.target.value.trim() || null });
             }}
           />
         </div>
+        <FiltroComNome nome="Saúde">
+          <SegmentedControl<FiltroDaSaude>
+            ariaLabel="Saúde"
+            className="max-w-full overflow-x-auto"
+            value={filtros.saude}
+            onChange={(valor) =>
+              definir({ saude: valor === "todas" ? null : valor })
+            }
+            options={OPCOES_DA_SAUDE}
+          />
+        </FiltroComNome>
         <FiltroComNome nome="Uso">
           <SegmentedControl<FiltroDoUso>
             ariaLabel="Uso"
             className="max-w-full overflow-x-auto"
             value={filtros.uso}
             onChange={(valor) =>
-              setParams({ uso: valor === "todas" ? null : valor })
+              definir({ uso: valor === "todas" ? null : valor })
             }
             options={OPCOES_DO_USO}
           />
@@ -163,7 +194,7 @@ export function ListaDoPainel({
             className="max-w-full overflow-x-auto"
             value={filtros.conta}
             onChange={(valor) =>
-              setParams({ conta: valor === "todas" ? null : valor })
+              definir({ conta: valor === "todas" ? null : valor })
             }
             options={OPCOES_DA_CONTA}
           />
@@ -174,7 +205,7 @@ export function ListaDoPainel({
             className="max-w-full overflow-x-auto"
             value={filtros.agente}
             onChange={(valor) =>
-              setParams({ agente: valor === "todos" ? null : valor })
+              definir({ agente: valor === "todos" ? null : valor })
             }
             options={OPCOES_DO_AGENTE}
           />
@@ -184,15 +215,32 @@ export function ListaDoPainel({
             Limpar filtros
           </Button>
         ) : null}
-        <p
-          aria-live="polite"
-          className="ml-auto cz-num text-[13px] text-text-secondary"
-        >
-          {visiveis.length === 1
-            ? "1 clínica"
-            : `${contagemNoPainel(visiveis.length)} clínicas`}
-        </p>
+        <div className="ml-auto flex items-center gap-3">
+          <p
+            aria-live="polite"
+            className="cz-num text-[13px] text-text-secondary"
+          >
+            {visiveis.length === 1
+              ? "1 clínica"
+              : `${contagemNoPainel(visiveis.length)} clínicas`}
+          </p>
+          <BotaoExportarPainel
+            temClinicas={visiveis.length > 0}
+            exportando={exportacao.exportando}
+            aoExportar={exportacao.exportar}
+          />
+        </div>
       </div>
+
+      {exportacao.aviso ? (
+        <div className="border-b border-border p-3">
+          <AvisoDaExportacao
+            aviso={exportacao.aviso}
+            aoDispensar={exportacao.dispensar}
+            aoTentarDeNovo={exportacao.exportar}
+          />
+        </div>
+      ) : null}
 
       {clinicas.length === 0 ? (
         <EmptyState
@@ -209,15 +257,20 @@ export function ListaDoPainel({
           onClearFilters={limpar}
         />
       ) : (
-        <TabelaDoPainel clinicas={visiveis} agora={agora} />
+        <TabelaDoPainel
+          clinicas={visiveis}
+          agora={agora}
+          ordem={ordem}
+          aoOrdenar={(coluna) => definirOrdem(proximaOrdem(ordem, coluna))}
+        />
       )}
     </section>
   );
 }
 
 /**
- * O nome visivel do filtro, ao lado do segmentado ("Uso", "Conta",
- * "Agente"): as tres barras comecam por "Todas" ou "Todos". O nome
+ * O nome visivel do filtro, ao lado do segmentado ("Saúde", "Uso",
+ * "Conta", "Agente"): as barras comecam por "Todas" ou "Todos". O nome
  * acessivel do grupo e o ariaLabel do segmentado.
  */
 function FiltroComNome({
@@ -240,23 +293,84 @@ function FiltroComNome({
   );
 }
 
+/**
+ * O cabecalho que ordena: o botao com o nome da coluna (40px) e a seta do
+ * sentido; aria-sort no proprio cabecalho diz a ordem ao leitor de tela
+ * ("ascending", "descending" ou "none" nas outras colunas que ordenam).
+ */
+function CabecalhoQueOrdena({
+  coluna,
+  rotulo,
+  ordem,
+  aoOrdenar,
+}: {
+  coluna: ColunaDaOrdem;
+  rotulo: string;
+  ordem: OrdemDaLista;
+  aoOrdenar: (coluna: ColunaDaOrdem) => void;
+}) {
+  const ativa = ordem.coluna === coluna;
+  const Seta = ativa
+    ? ordem.sentido === "asc"
+      ? ArrowUp
+      : ArrowDown
+    : ArrowUpDown;
+  return (
+    <TableHead
+      scope="col"
+      className="py-0"
+      aria-sort={
+        ativa ? (ordem.sentido === "asc" ? "ascending" : "descending") : "none"
+      }
+    >
+      <button
+        type="button"
+        onClick={() => aoOrdenar(coluna)}
+        className={cn(
+          "-mx-1.5 inline-flex min-h-10 items-center gap-1 rounded-md px-1.5 cz-eyebrow whitespace-nowrap cz-transition hover:text-text-strong focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid",
+          ativa ? "text-text-strong" : "text-text-secondary",
+        )}
+      >
+        {rotulo}
+        <Seta aria-hidden className="size-3.5 shrink-0" />
+      </button>
+    </TableHead>
+  );
+}
+
 function TabelaDoPainel({
   clinicas,
   agora,
+  ordem,
+  aoOrdenar,
 }: {
   clinicas: ClinicaNoPainel[];
   agora: Date;
+  ordem: OrdemDaLista;
+  aoOrdenar: (coluna: ColunaDaOrdem) => void;
 }) {
+  const ordenavel = (coluna: ColunaDaOrdem, rotulo: string) => (
+    <CabecalhoQueOrdena
+      coluna={coluna}
+      rotulo={rotulo}
+      ordem={ordem}
+      aoOrdenar={aoOrdenar}
+    />
+  );
   return (
     <Table aria-label="Clínicas do sistema">
       <TableHeader>
         <TableRow>
           <TableHead scope="col">Clínica</TableHead>
-          <TableHead scope="col">Último acesso</TableHead>
+          {ordenavel("saude", "Saúde")}
+          {ordenavel("ultimo_acesso", "Último acesso")}
           <TableHead scope="col">Equipe</TableHead>
           <TableHead scope="col">WhatsApp</TableHead>
           <TableHead scope="col">Agente de IA</TableHead>
-          <TableHead scope="col">Últimos 30 dias</TableHead>
+          {ordenavel("ia", "IA no mês")}
+          {ordenavel("leads", "Leads em 30 dias")}
+          {ordenavel("conversas", "Conversas em 30 dias")}
+          {ordenavel("implantacao", "Implantação")}
           <TableHead scope="col">Conta</TableHead>
         </TableRow>
       </TableHeader>
@@ -290,7 +404,17 @@ function LinhaDaClinica({
           <span className="cz-num text-[12px] text-text-secondary">
             Criada em {dataNaClinica(clinica.criadaEm, clinica.fuso)}
           </span>
+          {clinica.ultimaNotaEm ? (
+            <span className="cz-num text-[12px] text-text-secondary">
+              {TEXTOS_DO_PAINEL.ultimaNotaEm(
+                dataNaClinica(clinica.ultimaNotaEm, clinica.fuso),
+              )}
+            </span>
+          ) : null}
         </div>
+      </TableCell>
+      <TableCell className="min-w-[170px] py-2 whitespace-normal">
+        <SaudeNaLinha clinica={clinica} />
       </TableCell>
       <TableCell className="min-w-[170px] py-2 whitespace-normal">
         <UltimoAcessoNaLinha clinica={clinica} agora={agora} />
@@ -346,24 +470,26 @@ function LinhaDaClinica({
         />
       </TableCell>
       <TableCell className="py-2">
-        <div className="grid gap-0.5">
-          <span>
-            <span className="cz-num">
-              {contagemNoPainel(clinica.leads30Dias)}
-            </span>{" "}
-            <span className="text-text-secondary">
-              {clinica.leads30Dias === 1 ? "lead" : "leads"}
-            </span>
-          </span>
-          <span>
-            <span className="cz-num">
-              {contagemNoPainel(clinica.conversas30Dias)}
-            </span>{" "}
-            <span className="text-text-secondary">
-              {clinica.conversas30Dias === 1 ? "conversa" : "conversas"}
-            </span>
-          </span>
-        </div>
+        <IaNoMesNaLinha clinica={clinica} />
+      </TableCell>
+      <TableCell className="py-2">
+        <MovimentoNaLinha
+          valor={clinica.leads30Dias}
+          tendencia={clinica.tendencia.leads}
+          singular="lead"
+          plural="leads"
+        />
+      </TableCell>
+      <TableCell className="py-2">
+        <MovimentoNaLinha
+          valor={clinica.conversas30Dias}
+          tendencia={clinica.tendencia.conversas}
+          singular="conversa"
+          plural="conversas"
+        />
+      </TableCell>
+      <TableCell className="py-2">
+        <ImplantacaoNaLinha clinica={clinica} />
       </TableCell>
       <TableCell className="py-2">
         <div className="grid justify-items-start gap-1">
@@ -379,6 +505,59 @@ function LinhaDaClinica({
         </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+/**
+ * IA no mes: o gasto do mes com a precisao real ("US$ 0,001"; nunca "US$
+ * 0,00" quando houve gasto), as chamadas e, quando ha, o teto por dia. Sem
+ * agente liberado, sem gasto e sem chamada: "Sem uso de IA".
+ */
+function IaNoMesNaLinha({ clinica }: { clinica: ClinicaNoPainel }) {
+  if (semUsoDeIa(clinica)) {
+    return (
+      <span className="text-text-secondary">{TEXTOS_DO_PAINEL.semUsoDeIa}</span>
+    );
+  }
+  return (
+    <div className="grid gap-0.5">
+      <span className="cz-num font-semibold text-text-strong">
+        {dolaresPrecisos(clinica.gasto.mesMicrodolares)}
+      </span>
+      <span className="text-[12px] text-text-secondary">
+        {textoDasChamadas(clinica.gasto.mesChamadas)}
+      </span>
+      {clinica.tetoDiarioCentavos !== null ? (
+        <span className="cz-num text-[12px] text-text-secondary">
+          {TEXTOS_DO_PAINEL.tetoPorDia(dolares(clinica.tetoDiarioCentavos))}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** "14 leads" e, embaixo, a tendencia contra os 30 dias anteriores. */
+function MovimentoNaLinha({
+  valor,
+  tendencia,
+  singular,
+  plural,
+}: {
+  valor: number;
+  tendencia: TendenciaNoPainel;
+  singular: string;
+  plural: string;
+}) {
+  return (
+    <div className="grid justify-items-start gap-0.5">
+      <span>
+        <span className="cz-num">{contagemNoPainel(valor)}</span>{" "}
+        <span className="text-text-secondary">
+          {valor === 1 ? singular : plural}
+        </span>
+      </span>
+      <TendenciaNaLinha tendencia={tendencia} />
+    </div>
   );
 }
 

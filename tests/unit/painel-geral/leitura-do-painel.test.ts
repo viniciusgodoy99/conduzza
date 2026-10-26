@@ -1,15 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CLINICA_SEM_NOME,
   fetchClinicaDoPainel,
   fetchEquipeDaClinica,
+  fetchHistoricoDaConta,
+  fetchNotasDaClinica,
   fetchNumeroDaClinicaNoPainel,
   fetchPainelGeral,
   fetchRequisitosDaProducao,
   fetchTetosDaIa,
   lerEquipeDoBanco,
+  lerHistoricoDoBanco,
+  lerNotasDoBanco,
   lerPainelDoBanco,
   lerRequisitosDoBanco,
+  registrarExportacaoDoPainel,
+  saudeDosSinais,
 } from "@/lib/queries/painel-geral";
 
 // Leitura do Painel geral como acompanhamento de cliente (26/10/2026): o
@@ -24,6 +31,15 @@ import {
 // 2 (item 11): o leitor entende 'producao' e 'numero_inteiro', e os
 // requisitos da producao tem leitura propria ("indisponivel" sem a
 // migration).
+//
+// Segunda leva (26/10/2026, migration 20261026110000_painel_cs_2.sql): o
+// gasto em microdolares e as chamadas, a saude e os sinais, a implantacao,
+// a tendencia, a ultima nota e, nos totais, a contagem por saude. O banco
+// decide; a leitura confere a coerencia (a saude com os sinais, os sinais
+// com a linha, os passos com a contagem, a tendencia com os 30 dias, os
+// microdolares com os centavos e a contagem por saude com as linhas) e
+// LANCA quando nao bate. As notas e o historico da conta tem leitura
+// propria; a trilha da exportacao vai direto para audit_log.
 
 const ID = "acd9c539-585e-4f2a-a195-712c70099564";
 const OUTRA = "f0c115dd-e98c-4767-a1bb-93d517844852";
@@ -86,13 +102,83 @@ function clinicaDoBanco(campos: Record<string, unknown> = {}) {
       mes_centavos_usd: 310,
       ultimas_24h_sem_simulador_centavos_usd: 30,
       mes_sem_simulador_centavos_usd: 200,
+      ultimas_24h_microdolares: 421_500,
+      mes_microdolares: 3_100_400,
+      ultimas_24h_sem_simulador_microdolares: 300_000,
+      mes_sem_simulador_microdolares: 1_999_999,
+      ultimas_24h_chamadas: 12,
+      mes_chamadas: 40,
+      ultimas_24h_sem_simulador_chamadas: 5,
+      mes_sem_simulador_chamadas: 20,
     },
     teto_diario_centavos_usd: 500,
+    saude: "saudavel",
+    sinais: [],
+    implantacao: implantacaoDoBanco(),
+    tendencia: {
+      leads: {
+        atual: 12,
+        anterior: 8,
+        variacao_percentual: 50,
+        direcao: "subindo",
+      },
+      conversas: {
+        atual: 33,
+        anterior: 0,
+        variacao_percentual: null,
+        direcao: "sem_base",
+      },
+    },
+    ultima_nota_em: "2026-10-24T12:00:00+00:00",
     ...campos,
   };
 }
 
+/** Os seis passos, como o banco manda (tres feitos). */
+function implantacaoDoBanco(campos: Record<string, unknown> = {}) {
+  return {
+    feitos: 3,
+    total: 6,
+    passos: [
+      { chave: "whatsapp_conectado", feito: true, quantidade: 1 },
+      { chave: "equipe_com_duas_pessoas", feito: true, quantidade: 4 },
+      { chave: "procedimentos_cadastrados", feito: true, quantidade: 12 },
+      { chave: "profissionais_cadastrados", feito: false, quantidade: 0 },
+      { chave: "regua_de_confirmacao_ligada", feito: false, quantidade: 0 },
+      { chave: "anuncios_conectados", feito: false, quantidade: 0 },
+    ],
+    anuncios: { meta: false, google: false },
+    ...campos,
+  };
+}
+
+/** Os sinais de uma clinica sem uso e suspensa (o banco manda os dois). */
+const SINAIS_SEM_USO_E_SUSPENSA = [
+  {
+    chave: "conta_suspensa",
+    nivel: "em_risco",
+    quantidade: null,
+    desde: "2026-10-18T10:00:00+00:00",
+  },
+  { chave: "sem_uso", nivel: "em_risco", quantidade: null, desde: null },
+];
+
+/** A contagem por saude das linhas, como os totais do banco trazem. */
+function saudeDasLinhas(clinicas: unknown[]) {
+  const contagem = { saudavel: 0, atencao: 0, em_risco: 0 };
+  for (const clinica of clinicas) {
+    const saude = (clinica as { saude?: unknown }).saude;
+    if (saude === "saudavel" || saude === "atencao" || saude === "em_risco") {
+      contagem[saude] += 1;
+    }
+  }
+  return contagem;
+}
+
 function painelDoBanco(campos: Record<string, unknown> = {}) {
+  const clinicas = Array.isArray(campos.clinicas)
+    ? (campos.clinicas as unknown[])
+    : [clinicaDoBanco()];
   return {
     gerado_em: GERADO_EM,
     totais: {
@@ -102,8 +188,11 @@ function painelDoBanco(campos: Record<string, unknown> = {}) {
       suspensas: 0,
       agente_liberado: 1,
       gasto_mes_centavos_usd: 310,
+      gasto_mes_microdolares: 3_100_400,
+      chamadas_mes: 40,
+      saude: saudeDasLinhas(clinicas),
     },
-    clinicas: [clinicaDoBanco()],
+    clinicas,
     ...campos,
   };
 }
@@ -119,6 +208,9 @@ describe("lerPainelDoBanco (painel_cs_das_clinicas)", () => {
       suspensas: 0,
       agenteLiberado: 1,
       gastoMesCentavos: 310,
+      gastoMesMicrodolares: 3_100_400,
+      chamadasMes: 40,
+      saude: { saudavel: 1, atencao: 0, em_risco: 0 },
     });
     expect(painel.clinicas).toEqual([
       {
@@ -173,8 +265,58 @@ describe("lerPainelDoBanco (painel_cs_das_clinicas)", () => {
           mesCentavos: 310,
           ultimas24hSemSimuladorCentavos: 30,
           mesSemSimuladorCentavos: 200,
+          ultimas24hMicrodolares: 421_500,
+          mesMicrodolares: 3_100_400,
+          ultimas24hSemSimuladorMicrodolares: 300_000,
+          mesSemSimuladorMicrodolares: 1_999_999,
+          ultimas24hChamadas: 12,
+          mesChamadas: 40,
+          ultimas24hSemSimuladorChamadas: 5,
+          mesSemSimuladorChamadas: 20,
         },
         tetoDiarioCentavos: 500,
+        saude: "saudavel",
+        sinais: [],
+        implantacao: {
+          feitos: 3,
+          total: 6,
+          passos: [
+            { chave: "whatsapp_conectado", feito: true, quantidade: 1 },
+            { chave: "equipe_com_duas_pessoas", feito: true, quantidade: 4 },
+            {
+              chave: "procedimentos_cadastrados",
+              feito: true,
+              quantidade: 12,
+            },
+            {
+              chave: "profissionais_cadastrados",
+              feito: false,
+              quantidade: 0,
+            },
+            {
+              chave: "regua_de_confirmacao_ligada",
+              feito: false,
+              quantidade: 0,
+            },
+            { chave: "anuncios_conectados", feito: false, quantidade: 0 },
+          ],
+          anuncios: { meta: false, google: false },
+        },
+        tendencia: {
+          leads: {
+            atual: 12,
+            anterior: 8,
+            variacaoPercentual: 50,
+            direcao: "subindo",
+          },
+          conversas: {
+            atual: 33,
+            anterior: 0,
+            variacaoPercentual: null,
+            direcao: "sem_base",
+          },
+        },
+        ultimaNotaEm: "2026-10-24T12:00:00+00:00",
       },
     ]);
   });
@@ -189,7 +331,10 @@ describe("lerPainelDoBanco (painel_cs_das_clinicas)", () => {
             ultimo_acesso: null,
             pessoas: [],
             ultima_mensagem_em: null,
+            ultima_nota_em: null,
             teto_diario_centavos_usd: null,
+            saude: "em_risco",
+            sinais: SINAIS_SEM_USO_E_SUSPENSA,
             suspensao: {
               suspensa_em: "2026-10-18T10:00:00+00:00",
               motivo: "Pagamento atrasado",
@@ -211,7 +356,18 @@ describe("lerPainelDoBanco (painel_cs_das_clinicas)", () => {
     expect(clinica?.ultimoAcesso).toBeNull();
     expect(clinica?.pessoas).toEqual([]);
     expect(clinica?.ultimaMensagemEm).toBeNull();
+    expect(clinica?.ultimaNotaEm).toBeNull();
     expect(clinica?.tetoDiarioCentavos).toBeNull();
+    expect(clinica?.saude).toBe("em_risco");
+    expect(clinica?.sinais).toEqual([
+      {
+        chave: "conta_suspensa",
+        nivel: "em_risco",
+        quantidade: null,
+        desde: "2026-10-18T10:00:00+00:00",
+      },
+      { chave: "sem_uso", nivel: "em_risco", quantidade: null, desde: null },
+    ]);
     expect(clinica?.suspensao).toEqual({
       suspensaEm: "2026-10-18T10:00:00+00:00",
       motivo: "Pagamento atrasado",
@@ -231,6 +387,15 @@ describe("lerPainelDoBanco (painel_cs_das_clinicas)", () => {
         clinicas: [
           clinicaDoBanco({
             em_uso: false,
+            saude: "em_risco",
+            sinais: [
+              {
+                chave: "sem_uso",
+                nivel: "em_risco",
+                quantidade: null,
+                desde: "2026-08-01T10:00:00+00:00",
+              },
+            ],
             ultimo_acesso: {
               em: "2026-08-01T10:00:00+00:00",
               user_id: IMPLEMENTADOR,
@@ -348,6 +513,24 @@ describe("lerPainelDoBanco (painel_cs_das_clinicas)", () => {
     });
   });
 
+  it("o nome da clínica vazio ou só com espaços vira 'Clínica sem nome' e não derruba o painel de todas (revisão de 26/10/2026)", () => {
+    // O administrador de qualquer clinica edita o nome pela API (sem CHECK
+    // no banco): uma clinica com o nome '   ' nao pode levar o painel, o
+    // detalhe, o "Ligar" e a exportacao de todas junto.
+    for (const nome of ["   ", "", "\n\t "]) {
+      const painel = lerPainelDoBanco(
+        painelDoBanco({
+          clinicas: [clinicaDoBanco({ id: OUTRA, nome }), clinicaDoBanco()],
+        }),
+      );
+      expect(painel.clinicas.map((c) => [c.id, c.nome])).toEqual([
+        [OUTRA, CLINICA_SEM_NOME],
+        [ID, "teste123"],
+      ]);
+    }
+    expect(CLINICA_SEM_NOME).toBe("Clínica sem nome");
+  });
+
   it("formato estranho no essencial: lança", () => {
     const base = painelDoBanco();
     const acesso = clinicaDoBanco().ultimo_acesso;
@@ -369,7 +552,9 @@ describe("lerPainelDoBanco (painel_cs_das_clinicas)", () => {
       }),
       painelDoBanco({ clinicas: null }),
       painelDoBanco({ clinicas: [clinicaDoBanco({ id: "x" })] }),
-      painelDoBanco({ clinicas: [clinicaDoBanco({ nome: " " })] }),
+      // o nome: texto (clinic.name e NOT NULL); vazio nao quebra (abaixo)
+      painelDoBanco({ clinicas: [clinicaDoBanco({ nome: null })] }),
+      painelDoBanco({ clinicas: [clinicaDoBanco({ nome: 42 })] }),
       painelDoBanco({ clinicas: [clinicaDoBanco({ criada_em: "ontem" })] }),
       // o uso: booleano, e "em uso" so com o acesso que prova
       painelDoBanco({ clinicas: [clinicaDoBanco({ em_uso: "sim" })] }),
@@ -453,6 +638,324 @@ describe("lerPainelDoBanco (painel_cs_das_clinicas)", () => {
       expect(() => lerPainelDoBanco(valor), JSON.stringify(valor)).toThrow(
         "painel geral ilegivel",
       );
+    }
+  });
+});
+
+describe("segunda leva: gasto exato, saúde, sinais, implantação e tendência (migration 20261026110000)", () => {
+  /** Uma linha com um campo da segunda leva trocado. */
+  function comGasto(campos: Record<string, unknown>) {
+    return clinicaDoBanco({
+      gasto: { ...clinicaDoBanco().gasto, ...campos },
+    });
+  }
+
+  function lido(clinica: Record<string, unknown>) {
+    return lerPainelDoBanco(painelDoBanco({ clinicas: [clinica] })).clinicas[0];
+  }
+
+  it("o gasto abaixo de 1 centavo chega exato (o mês de US$ 0,001 que o cartão mostrava como US$ 0,00)", () => {
+    const clinica = lido(
+      comGasto({
+        mes_centavos_usd: 0,
+        mes_microdolares: 1000,
+        mes_chamadas: 7,
+      }),
+    );
+    expect(clinica?.gasto.mesCentavos).toBe(0);
+    expect(clinica?.gasto.mesMicrodolares).toBe(1000);
+    expect(clinica?.gasto.mesChamadas).toBe(7);
+    const painel = lerPainelDoBanco(
+      painelDoBanco({
+        totais: {
+          ...painelDoBanco().totais,
+          gasto_mes_centavos_usd: 0,
+          gasto_mes_microdolares: 1000,
+          chamadas_mes: 7,
+        },
+      }),
+    );
+    expect(painel.totais).toMatchObject({
+      gastoMesCentavos: 0,
+      gastoMesMicrodolares: 1000,
+      chamadasMes: 7,
+    });
+  });
+
+  it("os sinais chegam na ordem do banco, com o nível, a quantidade e o desde; a saúde é a deles", () => {
+    const clinica = lido(
+      clinicaDoBanco({
+        numeros_total: 0,
+        numeros_conectados: 0,
+        numeros: [],
+        saude: "atencao",
+        sinais: [
+          {
+            chave: "sem_numero_de_whatsapp",
+            nivel: "atencao",
+            quantidade: null,
+            desde: null,
+          },
+          {
+            chave: "pedido_de_entrada_esperando",
+            nivel: "atencao",
+            quantidade: 2,
+            desde: "2026-10-20T12:00:00+00:00",
+          },
+          {
+            chave: "falhas_de_envio",
+            nivel: "atencao",
+            quantidade: 3,
+            desde: "2026-10-24T09:00:00+00:00",
+          },
+          {
+            chave: "perto_do_teto_da_ia",
+            nivel: "atencao",
+            quantidade: 85,
+            desde: null,
+          },
+        ],
+      }),
+    );
+    expect(clinica?.saude).toBe("atencao");
+    expect(clinica?.sinais.map((sinal) => sinal.chave)).toEqual([
+      "sem_numero_de_whatsapp",
+      "pedido_de_entrada_esperando",
+      "falhas_de_envio",
+      "perto_do_teto_da_ia",
+    ]);
+    expect(clinica?.sinais[1]).toEqual({
+      chave: "pedido_de_entrada_esperando",
+      nivel: "atencao",
+      quantidade: 2,
+      desde: "2026-10-20T12:00:00+00:00",
+    });
+
+    const desconectada = lido(
+      clinicaDoBanco({
+        numeros_conectados: 0,
+        saude: "em_risco",
+        sinais: [
+          {
+            chave: "whatsapp_desconectado",
+            nivel: "em_risco",
+            quantidade: 2,
+            desde: null,
+          },
+        ],
+      }),
+    );
+    expect(desconectada?.saude).toBe("em_risco");
+  });
+
+  it("saudeDosSinais: Em risco com um sinal de risco, Atenção com outro, Saudável sem nenhum", () => {
+    expect(saudeDosSinais([])).toBe("saudavel");
+    expect(saudeDosSinais([{ nivel: "atencao" }])).toBe("atencao");
+    expect(saudeDosSinais([{ nivel: "atencao" }, { nivel: "em_risco" }])).toBe(
+      "em_risco",
+    );
+  });
+
+  it("a contagem por saúde dos totais é a das linhas (a faixa do topo filtra a lista)", () => {
+    const linhas = [
+      clinicaDoBanco(),
+      clinicaDoBanco({
+        id: OUTRA,
+        em_uso: false,
+        saude: "em_risco",
+        sinais: [
+          {
+            chave: "sem_uso",
+            nivel: "em_risco",
+            quantidade: null,
+            desde: null,
+          },
+        ],
+      }),
+    ];
+    const painel = lerPainelDoBanco(painelDoBanco({ clinicas: linhas }));
+    expect(painel.totais.saude).toEqual({
+      saudavel: 1,
+      atencao: 0,
+      em_risco: 1,
+    });
+    expect(() =>
+      lerPainelDoBanco(
+        painelDoBanco({
+          clinicas: linhas,
+          totais: {
+            ...painelDoBanco().totais,
+            saude: { saudavel: 2, atencao: 0, em_risco: 0 },
+          },
+        }),
+      ),
+    ).toThrow("painel geral ilegivel");
+  });
+
+  it("incoerente ou fora do formato: lança, nunca uma saúde, um sinal, um passo ou um gasto inventado", () => {
+    const base = clinicaDoBanco();
+    const quebradas: Record<string, unknown>[] = [
+      // o gasto exato bate com os centavos que o banco arredondou
+      comGasto({ mes_microdolares: 4_000_000 }),
+      comGasto({ ultimas_24h_microdolares: undefined }),
+      comGasto({ mes_sem_simulador_microdolares: -1 }),
+      comGasto({ mes_chamadas: undefined }),
+      comGasto({ ultimas_24h_sem_simulador_chamadas: 1.5 }),
+      // a saude: so as tres, e a dos sinais
+      clinicaDoBanco({ saude: "otima" }),
+      clinicaDoBanco({ saude: undefined }),
+      clinicaDoBanco({ saude: "atencao" }),
+      clinicaDoBanco({
+        saude: "atencao",
+        sinais: [
+          {
+            chave: "falhas_de_envio",
+            nivel: "em_risco",
+            quantidade: 1,
+            desde: null,
+          },
+        ],
+      }),
+      // sinal que a tela nao conhece, repetido ou fora do formato
+      clinicaDoBanco({
+        saude: "atencao",
+        sinais: [
+          {
+            chave: "plano_vencido",
+            nivel: "atencao",
+            quantidade: null,
+            desde: null,
+          },
+        ],
+      }),
+      clinicaDoBanco({
+        saude: "atencao",
+        sinais: [
+          {
+            chave: "falhas_de_envio",
+            nivel: "atencao",
+            quantidade: 1,
+            desde: null,
+          },
+          {
+            chave: "falhas_de_envio",
+            nivel: "atencao",
+            quantidade: 1,
+            desde: null,
+          },
+        ],
+      }),
+      clinicaDoBanco({
+        saude: "atencao",
+        sinais: [
+          {
+            chave: "falhas_de_envio",
+            nivel: "atencao",
+            quantidade: -1,
+            desde: null,
+          },
+        ],
+      }),
+      clinicaDoBanco({
+        saude: "atencao",
+        sinais: [
+          {
+            chave: "falhas_de_envio",
+            nivel: "atencao",
+            quantidade: 1,
+            desde: "ontem",
+          },
+        ],
+      }),
+      clinicaDoBanco({ sinais: null }),
+      // os sinais da linha batem com ela: suspensa, uso e numeros
+      clinicaDoBanco({
+        saude: "em_risco",
+        sinais: [SINAIS_SEM_USO_E_SUSPENSA[0]],
+      }),
+      clinicaDoBanco({ em_uso: false, ultimo_acesso: null }),
+      clinicaDoBanco({ numeros_conectados: 0 }),
+      clinicaDoBanco({ numeros_total: 0, numeros_conectados: 0 }),
+      // a implantacao: os seis passos, na ordem, e a contagem dos feitos
+      clinicaDoBanco({ implantacao: implantacaoDoBanco({ feitos: 4 }) }),
+      clinicaDoBanco({ implantacao: implantacaoDoBanco({ total: 7 }) }),
+      clinicaDoBanco({
+        implantacao: implantacaoDoBanco({
+          passos: [...implantacaoDoBanco().passos].reverse(),
+        }),
+      }),
+      clinicaDoBanco({
+        implantacao: implantacaoDoBanco({
+          feitos: 2,
+          passos: implantacaoDoBanco().passos.slice(1),
+          total: 5,
+        }),
+      }),
+      clinicaDoBanco({
+        implantacao: implantacaoDoBanco({
+          passos: [
+            ...implantacaoDoBanco().passos.slice(0, 5),
+            { chave: "plano_pago", feito: false, quantidade: 0 },
+          ],
+        }),
+      }),
+      clinicaDoBanco({ implantacao: implantacaoDoBanco({ anuncios: null }) }),
+      clinicaDoBanco({ implantacao: null }),
+      // a tendencia: o atual e o dos 30 dias; sem base so com o anterior zero
+      clinicaDoBanco({
+        tendencia: {
+          ...base.tendencia,
+          leads: { ...base.tendencia.leads, atual: 13 },
+        },
+      }),
+      clinicaDoBanco({
+        tendencia: {
+          ...base.tendencia,
+          leads: { ...base.tendencia.leads, direcao: "sem_base" },
+        },
+      }),
+      clinicaDoBanco({
+        tendencia: {
+          ...base.tendencia,
+          leads: { ...base.tendencia.leads, variacao_percentual: null },
+        },
+      }),
+      clinicaDoBanco({
+        tendencia: {
+          ...base.tendencia,
+          leads: { ...base.tendencia.leads, variacao_percentual: 49.5 },
+        },
+      }),
+      clinicaDoBanco({
+        tendencia: {
+          ...base.tendencia,
+          conversas: { ...base.tendencia.conversas, direcao: "estavel" },
+        },
+      }),
+      clinicaDoBanco({
+        tendencia: {
+          ...base.tendencia,
+          leads: { ...base.tendencia.leads, direcao: "explodindo" },
+        },
+      }),
+      clinicaDoBanco({ tendencia: null }),
+      clinicaDoBanco({ ultima_nota_em: "ontem" }),
+    ];
+    for (const clinica of quebradas) {
+      expect(
+        () => lerPainelDoBanco(painelDoBanco({ clinicas: [clinica] })),
+        JSON.stringify(clinica),
+      ).toThrow("painel geral ilegivel");
+    }
+    for (const totais of [
+      { ...painelDoBanco().totais, gasto_mes_microdolares: 9_000_000 },
+      { ...painelDoBanco().totais, chamadas_mes: undefined },
+      { ...painelDoBanco().totais, saude: null },
+    ]) {
+      expect(
+        () => lerPainelDoBanco(painelDoBanco({ totais })),
+        JSON.stringify(totais),
+      ).toThrow("painel geral ilegivel");
     }
   });
 });
@@ -645,6 +1148,25 @@ describe("leituras com a sessão", () => {
     expect(
       await fetchNumeroDaClinicaNoPainel(cliente, OUTRA, NUMERO),
     ).toBeNull();
+  });
+
+  it("uma clínica sem nome não derruba a leitura das outras pela sessão (o detalhe e o 'Ligar' do número)", async () => {
+    const { cliente } = clienteFalso({
+      data: painelDoBanco({
+        clinicas: [
+          clinicaDoBanco({ id: OUTRA, nome: "   " }),
+          clinicaDoBanco(),
+        ],
+      }),
+      error: null,
+    });
+    expect((await fetchPainelGeral(cliente)).clinicas).toHaveLength(2);
+    expect((await fetchClinicaDoPainel(cliente, OUTRA))?.clinica.nome).toBe(
+      CLINICA_SEM_NOME,
+    );
+    expect(
+      await fetchNumeroDaClinicaNoPainel(cliente, ID, NUMERO),
+    ).toMatchObject({ id: NUMERO });
   });
 
   it("a equipe: a RPC com a clínica; nula quando a clínica não existe; erro do banco lança", async () => {
@@ -979,5 +1501,321 @@ describe("onda 2: requisitos da produção", () => {
     await expect(fetchRequisitosDaProducao(cliente, ID)).rejects.toThrow(
       "painel geral ilegivel",
     );
+  });
+});
+
+describe("segunda leva: notas internas e histórico da conta", () => {
+  const NOTA = "d5555555-5555-4555-8555-555555555555";
+  const AUTOR = "e6666666-6666-4666-8666-666666666666";
+
+  function notaDoBanco(campos: Record<string, unknown> = {}) {
+    return {
+      id: NOTA,
+      texto: "Combinado: treinar a recepção na sexta.",
+      criada_em: "2026-10-26T13:00:00+00:00",
+      autor: {
+        user_id: AUTOR,
+        nome: "Vinicius Rodrigues",
+        email: "vinicius@conduzza.com",
+        equipe_conduzza: true,
+      },
+      minha: true,
+      ...campos,
+    };
+  }
+
+  function notasDoBanco(campos: Record<string, unknown> = {}) {
+    return {
+      clinic_id: ID,
+      gerado_em: GERADO_EM,
+      tem_mais: false,
+      notas: [notaDoBanco()],
+      ...campos,
+    };
+  }
+
+  function eventoDoBanco(campos: Record<string, unknown> = {}) {
+    return {
+      id: 4512,
+      em: "2026-10-26T13:05:00+00:00",
+      acao: "suspendeu_clinica",
+      quem: {
+        user_id: AUTOR,
+        nome: "Vinicius Rodrigues",
+        email: "vinicius@conduzza.com",
+        equipe_conduzza: true,
+      },
+      detalhes: {
+        estado: null,
+        motivo: "Pagamento atrasado",
+        chave: null,
+        substituiu: null,
+        teto_diario_centavos_usd: null,
+        teto_respostas_por_conversa_hora: null,
+        teto_diario_antes_centavos_usd: null,
+        teto_respostas_antes_por_conversa_hora: null,
+        jobs_vencidos: null,
+        clinicas_de_volta_ao_teste: null,
+        nota_escrita_em: null,
+      },
+      ...campos,
+    };
+  }
+
+  it("as notas: texto, autor (com a marca da equipe Conduzza), data e o 'minha' do banco", () => {
+    expect(
+      lerNotasDoBanco(
+        notasDoBanco({
+          tem_mais: true,
+          notas: [
+            notaDoBanco(),
+            notaDoBanco({
+              id: OUTRA,
+              autor: null,
+              minha: false,
+            }),
+          ],
+        }),
+      ),
+    ).toEqual({
+      temMais: true,
+      notas: [
+        {
+          id: NOTA,
+          texto: "Combinado: treinar a recepção na sexta.",
+          criadaEm: "2026-10-26T13:00:00+00:00",
+          autor: {
+            userId: AUTOR,
+            nome: "Vinicius Rodrigues",
+            email: "vinicius@conduzza.com",
+            equipeConduzza: true,
+          },
+          minha: true,
+        },
+        {
+          id: OUTRA,
+          texto: "Combinado: treinar a recepção na sexta.",
+          criadaEm: "2026-10-26T13:00:00+00:00",
+          autor: null,
+          minha: false,
+        },
+      ],
+    });
+    expect(lerNotasDoBanco(null)).toBeNull();
+    expect(lerNotasDoBanco(notasDoBanco({ notas: [] }))).toEqual({
+      temMais: false,
+      notas: [],
+    });
+  });
+
+  it("nota fora do formato: lança (nunca uma lista com nota a menos nem um Excluir que o banco recusa)", () => {
+    for (const valor of [
+      [],
+      notasDoBanco({ notas: null }),
+      notasDoBanco({ tem_mais: undefined }),
+      notasDoBanco({ notas: [notaDoBanco({ id: "x" })] }),
+      notasDoBanco({ notas: [notaDoBanco({ texto: " " })] }),
+      notasDoBanco({ notas: [notaDoBanco({ criada_em: "ontem" })] }),
+      notasDoBanco({ notas: [notaDoBanco({ minha: "sim" })] }),
+      notasDoBanco({ notas: [notaDoBanco({ autor: null, minha: true })] }),
+      notasDoBanco({
+        notas: [notaDoBanco({ autor: { user_id: AUTOR, nome: "Ana" } })],
+      }),
+    ]) {
+      expect(() => lerNotasDoBanco(valor), JSON.stringify(valor)).toThrow(
+        "painel geral ilegivel",
+      );
+    }
+  });
+
+  it("o histórico: cada evento com a ação, quem, quando e só os detalhes conhecidos", () => {
+    expect(
+      lerHistoricoDoBanco({
+        clinic_id: ID,
+        gerado_em: GERADO_EM,
+        tem_mais: false,
+        eventos: [
+          eventoDoBanco(),
+          eventoDoBanco({
+            id: "4511",
+            acao: "excluiu_nota_interna",
+            quem: null,
+            detalhes: {
+              ...eventoDoBanco().detalhes,
+              motivo: null,
+              nota_escrita_em: "2026-10-20T10:00:00+00:00",
+            },
+          }),
+        ],
+      }),
+    ).toEqual({
+      temMais: false,
+      eventos: [
+        {
+          id: "4512",
+          em: "2026-10-26T13:05:00+00:00",
+          acao: "suspendeu_clinica",
+          autor: {
+            userId: AUTOR,
+            nome: "Vinicius Rodrigues",
+            email: "vinicius@conduzza.com",
+            equipeConduzza: true,
+          },
+          detalhes: {
+            estado: null,
+            motivo: "Pagamento atrasado",
+            chave: null,
+            substituiu: null,
+            tetoDiarioCentavos: null,
+            tetoRespostasPorConversaHora: null,
+            tetoDiarioAntesCentavos: null,
+            tetoRespostasAntesPorConversaHora: null,
+            jobsVencidos: null,
+            clinicasDeVoltaAoTeste: null,
+            notaEscritaEm: null,
+          },
+        },
+        {
+          id: "4511",
+          em: "2026-10-26T13:05:00+00:00",
+          acao: "excluiu_nota_interna",
+          autor: null,
+          detalhes: {
+            estado: null,
+            motivo: null,
+            chave: null,
+            substituiu: null,
+            tetoDiarioCentavos: null,
+            tetoRespostasPorConversaHora: null,
+            tetoDiarioAntesCentavos: null,
+            tetoRespostasAntesPorConversaHora: null,
+            jobsVencidos: null,
+            clinicasDeVoltaAoTeste: null,
+            notaEscritaEm: "2026-10-20T10:00:00+00:00",
+          },
+        },
+      ],
+    });
+    expect(lerHistoricoDoBanco(null)).toBeNull();
+  });
+
+  it("evento fora do formato ou com ação que a tela não descreve: lança", () => {
+    const historico = (evento: unknown) => ({
+      clinic_id: ID,
+      gerado_em: GERADO_EM,
+      tem_mais: false,
+      eventos: [evento],
+    });
+    for (const valor of [
+      "historico",
+      { eventos: [], tem_mais: "nao" },
+      historico(eventoDoBanco({ acao: "leu" })),
+      historico(eventoDoBanco({ id: -1 })),
+      historico(eventoDoBanco({ id: "abc" })),
+      historico(eventoDoBanco({ em: "ontem" })),
+      historico(eventoDoBanco({ detalhes: null })),
+      historico(
+        eventoDoBanco({
+          detalhes: { ...eventoDoBanco().detalhes, jobs_vencidos: "3" },
+        }),
+      ),
+      historico(
+        eventoDoBanco({
+          detalhes: { ...eventoDoBanco().detalhes, substituiu: "sim" },
+        }),
+      ),
+      historico(eventoDoBanco({ quem: { user_id: "x" } })),
+    ]) {
+      expect(() => lerHistoricoDoBanco(valor), JSON.stringify(valor)).toThrow(
+        "painel geral ilegivel",
+      );
+    }
+  });
+
+  it("as leituras com a sessão: a função com a clínica; nula sem a clínica; erro lança", async () => {
+    const notas = clienteFalso({ data: notasDoBanco(), error: null });
+    expect((await fetchNotasDaClinica(notas.cliente, ID))?.notas).toHaveLength(
+      1,
+    );
+    expect(notas.chamadas).toEqual([
+      { nome: "notas_da_clinica_no_painel", args: { p_clinic_id: ID } },
+    ]);
+    expect(notas.consultas).toEqual([]);
+
+    const historico = clienteFalso({
+      data: { tem_mais: false, eventos: [eventoDoBanco()] },
+      error: null,
+    });
+    expect(
+      (await fetchHistoricoDaConta(historico.cliente, ID))?.eventos,
+    ).toHaveLength(1);
+    expect(historico.chamadas).toEqual([
+      { nome: "historico_da_clinica_no_painel", args: { p_clinic_id: ID } },
+    ]);
+
+    const semClinica = clienteFalso({ data: null, error: null });
+    expect(await fetchNotasDaClinica(semClinica.cliente, OUTRA)).toBeNull();
+    expect(await fetchHistoricoDaConta(semClinica.cliente, OUTRA)).toBeNull();
+
+    const falhou = clienteFalso({ data: null, error: { code: "42501" } });
+    await expect(fetchNotasDaClinica(falhou.cliente, ID)).rejects.toThrow(
+      "leitura das notas da clinica falhou",
+    );
+    await expect(fetchHistoricoDaConta(falhou.cliente, ID)).rejects.toThrow(
+      "leitura do historico da conta falhou",
+    );
+  });
+});
+
+describe("segunda leva: a trilha da exportação da lista", () => {
+  function clienteDaTrilha(erro: unknown) {
+    const inseridos: { tabela: string; linha: unknown }[] = [];
+    const cliente = {
+      from: (tabela: string) => ({
+        insert: async (linha: unknown) => {
+          inseridos.push({ tabela, linha });
+          return { data: null, error: erro };
+        },
+      }),
+    };
+    return { cliente: cliente as never, inseridos };
+  }
+
+  it("uma linha em audit_log, sem clínica, de quem exportou, com os detalhes recebidos", async () => {
+    const { cliente, inseridos } = clienteDaTrilha(null);
+    const detalhes = {
+      quantidade: 3,
+      filtros: { saude: "em_risco", com_busca: true },
+      ordem: { coluna: "saude", sentido: "desc" },
+    };
+    expect(
+      await registrarExportacaoDoPainel(cliente, {
+        userId: PESSOA,
+        detalhes,
+      }),
+    ).toBe("gravada");
+    expect(inseridos).toEqual([
+      {
+        tabela: "audit_log",
+        linha: {
+          clinic_id: null,
+          user_id: PESSOA,
+          action: "exportou",
+          entity: "painel_geral",
+          entity_id: null,
+          detalhes,
+        },
+      },
+    ]);
+  });
+
+  it("o banco recusou (a policy, por exemplo): falhou", async () => {
+    const { cliente } = clienteDaTrilha({ code: "42501" });
+    expect(
+      await registrarExportacaoDoPainel(cliente, {
+        userId: PESSOA,
+        detalhes: { quantidade: 1 },
+      }),
+    ).toBe("falhou");
   });
 });

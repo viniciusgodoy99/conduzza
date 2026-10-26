@@ -8,10 +8,14 @@ import {
   CircleX,
   FlaskConical,
   Hourglass,
+  OctagonAlert,
   OctagonPause,
+  PhoneOff,
   RadioTower,
+  Siren,
   TriangleAlert,
   Watch,
+  WifiOff,
 } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
@@ -71,7 +75,10 @@ import {
   nenhumNumeroConectado,
   normalizarBusca,
   OPCOES_DO_ESTADO_DO_AGENTE,
+  PASSO_STATUS,
   quandoNaClinica,
+  SAUDE_STATUS,
+  SINAL_STATUS,
   SITUACAO_DA_CONTA_STATUS,
   situacaoDaConta,
   tetoDaIaSchema,
@@ -158,9 +165,55 @@ function clinica(campos: Partial<ClinicaNoPainel> = {}): ClinicaNoPainel {
       mesCentavos: 0,
       ultimas24hSemSimuladorCentavos: 0,
       mesSemSimuladorCentavos: 0,
+      ultimas24hMicrodolares: 0,
+      mesMicrodolares: 0,
+      ultimas24hSemSimuladorMicrodolares: 0,
+      mesSemSimuladorMicrodolares: 0,
+      ultimas24hChamadas: 0,
+      mesChamadas: 0,
+      ultimas24hSemSimuladorChamadas: 0,
+      mesSemSimuladorChamadas: 0,
     },
     tetoDiarioCentavos: null,
+    saude: "saudavel",
+    sinais: [],
+    implantacao: implantacao(),
+    tendencia: {
+      leads: { atual: 14, anterior: 10, variacaoPercentual: 40, direcao: "subindo" },
+      conversas: {
+        atual: 40,
+        anterior: 41,
+        variacaoPercentual: -2,
+        direcao: "estavel",
+      },
+    },
+    ultimaNotaEm: null,
     ...campos,
+  };
+}
+
+/** Os seis passos do banco: os feitos nas posicoes pedidas. */
+function implantacao(
+  feitos: readonly boolean[] = [true, true, false, false, false, false],
+): ClinicaNoPainel["implantacao"] {
+  const chaves = [
+    "whatsapp_conectado",
+    "equipe_com_duas_pessoas",
+    "procedimentos_cadastrados",
+    "profissionais_cadastrados",
+    "regua_de_confirmacao_ligada",
+    "anuncios_conectados",
+  ] as const;
+  const passos = chaves.map((chave, indice) => ({
+    chave,
+    feito: feitos[indice] ?? false,
+    quantidade: feitos[indice] ? 1 : 0,
+  }));
+  return {
+    feitos: passos.filter((passo) => passo.feito).length,
+    total: passos.length,
+    passos,
+    anuncios: { meta: false, google: false },
   };
 }
 
@@ -196,6 +249,10 @@ const MAPAS_DO_PAINEL = {
   REQUISITO_STATUS,
   USO_DA_CLINICA_STATUS,
   SITUACAO_DO_MEMBRO_STATUS,
+  // Segunda leva (26/10/2026)
+  SINAL_STATUS,
+  SAUDE_STATUS,
+  PASSO_STATUS,
 };
 
 const DO_PAINEL: StatusDefinition[] = Object.values(MAPAS_DO_PAINEL).flatMap(
@@ -291,12 +348,77 @@ describe("status do painel em 3 camadas", () => {
     }
   });
 
-  it("OctagonPause é só da conta suspensa; o TriangleAlert (Faltou) não aparece", () => {
+  it("OctagonPause é só da conta suspensa (o chip da conta e o sinal Conta suspensa); o TriangleAlert (Faltou) não aparece", () => {
     const comPausa = [...MAPAS_DO_PRODUTO, ...DO_PAINEL].filter(
       (definicao) => definicao.icon === OctagonPause,
     );
-    expect(comPausa).toEqual([SITUACAO_DA_CONTA_STATUS.suspensa]);
+    expect(comPausa).toEqual([
+      SITUACAO_DA_CONTA_STATUS.suspensa,
+      SINAL_STATUS.conta_suspensa,
+    ]);
+    expect(comPausa.every((definicao) => definicao.tone === "alert")).toBe(
+      true,
+    );
     expect(DO_PAINEL.some((d) => d.icon === TriangleAlert)).toBe(false);
+  });
+
+  it("segunda leva: a saúde, os sinais e os passos em 3 camadas, com os sentidos da tabela de ícones", () => {
+    expect(SAUDE_STATUS).toEqual({
+      saudavel: { label: "Saudável", tone: "success", icon: CircleCheck },
+      atencao: { label: "Atenção", tone: "warning", icon: CircleAlert },
+      em_risco: { label: "Em risco", tone: "alert", icon: Siren },
+    });
+    expect(SINAL_STATUS).toEqual({
+      conta_suspensa: {
+        label: "Conta suspensa",
+        tone: "alert",
+        icon: OctagonPause,
+      },
+      sem_uso: { label: "Sem uso há 30 dias", tone: "warning", icon: Watch },
+      whatsapp_desconectado: {
+        label: "WhatsApp desconectado",
+        tone: "alert",
+        icon: WifiOff,
+      },
+      sem_numero_de_whatsapp: {
+        label: "Sem número de WhatsApp",
+        tone: "warning",
+        icon: PhoneOff,
+      },
+      pedido_de_entrada_esperando: {
+        label: "Pedido de entrada esperando",
+        tone: "warning",
+        icon: Hourglass,
+      },
+      falhas_de_envio: {
+        label: "Falhas de envio",
+        tone: "alert",
+        icon: OctagonAlert,
+      },
+      perto_do_teto_da_ia: {
+        label: "Perto do teto de IA",
+        tone: "warning",
+        icon: CircleAlert,
+      },
+    });
+    // O WhatsApp desconectado e o mesmo par do "Desconectado" da conexao.
+    expect(SINAL_STATUS.whatsapp_desconectado.icon).toBe(
+      WHATSAPP_CONNECTION_STATUS.desconectado.icon,
+    );
+    expect(PASSO_STATUS).toEqual({
+      feito: { label: "Feito", tone: "success", icon: CircleCheck },
+      falta: { label: "Falta", tone: "neutral", icon: CircleDashed },
+    });
+  });
+
+  it("segunda leva: Siren (Em risco) e PhoneOff (Sem número de WhatsApp) têm um dono só no produto", () => {
+    const todos = [...MAPAS_DO_PRODUTO, ...DO_PAINEL];
+    expect(todos.filter((definicao) => definicao.icon === Siren)).toEqual([
+      SAUDE_STATUS.em_risco,
+    ]);
+    expect(todos.filter((definicao) => definicao.icon === PhoneOff)).toEqual([
+      SINAL_STATUS.sem_numero_de_whatsapp,
+    ]);
   });
 
   it("uso (26/10/2026): Em uso é sucesso; Sem uso é o Watch âmbar do Esfriando (tempo demais sem atividade)", () => {
@@ -597,6 +719,7 @@ describe("busca, filtros e ordem", () => {
       uso: "sem_uso",
       conta: "suspensa",
       agente: "liberado",
+      saude: "todas",
     });
     expect(lerFiltrosDoPainel(params({ agente: "nao_liberado" })).agente).toBe(
       "nao_liberado",

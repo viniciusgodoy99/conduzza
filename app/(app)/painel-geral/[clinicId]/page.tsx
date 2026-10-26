@@ -13,9 +13,13 @@ import { fetchLiberacaoDaIa } from "@/lib/queries/ia-liberacao";
 import {
   fetchClinicaDoPainel,
   fetchEquipeDaClinica,
+  fetchHistoricoDaConta,
+  fetchNotasDaClinica,
   fetchRequisitosDaProducao,
   fetchTetosDaIa,
   type EquipeNoPainel,
+  type HistoricoDaConta,
+  type NotasDaClinica,
 } from "@/lib/queries/painel-geral";
 import { createClient } from "@/lib/supabase/server";
 
@@ -47,6 +51,13 @@ import { createClient } from "@/lib/supabase/server";
 // sem a leitura), os telefones forcados (o dialogo de excluir) e as versoes
 // de agora do filtro e do modelo (P11e: o aviso quando a rodada do CFM
 // registrada fala de outra versao).
+//
+// Segunda leva (26/10/2026): as notas internas da equipe Conduzza
+// (notas_da_clinica_no_painel) e o historico da conta
+// (historico_da_clinica_no_painel), as duas so da equipe Conduzza e sem
+// dado de paciente; cada uma que falha tira so o proprio cartao. O banco
+// diz quais notas sao de quem esta vendo ("minha": so essas tem o "Excluir"
+// habilitado) e confere de novo ao excluir.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -106,14 +117,17 @@ export default async function DetalheDaClinicaNoPainelPage({
   }
 
   const supabase = await createClient();
-  const [lida, equipe, dados, tetos, requisitos, forcados] = await Promise.all([
-    ouErro(fetchClinicaDoPainel(supabase, clinicId)),
-    ouErro(fetchEquipeDaClinica(supabase, clinicId)),
-    ouErro(fetchLiberacaoDaIa(supabase, clinicId)),
-    ouErro(fetchTetosDaIa(supabase, clinicId)),
-    ouErro(fetchRequisitosDaProducao(supabase, clinicId)),
-    lerTelefonesForcados(supabase, clinicId),
-  ]);
+  const [lida, equipe, dados, tetos, requisitos, forcados, notas, historico] =
+    await Promise.all([
+      ouErro(fetchClinicaDoPainel(supabase, clinicId)),
+      ouErro(fetchEquipeDaClinica(supabase, clinicId)),
+      ouErro(fetchLiberacaoDaIa(supabase, clinicId)),
+      ouErro(fetchTetosDaIa(supabase, clinicId)),
+      ouErro(fetchRequisitosDaProducao(supabase, clinicId)),
+      lerTelefonesForcados(supabase, clinicId),
+      ouErro(fetchNotasDaClinica(supabase, clinicId)),
+      ouErro(fetchHistoricoDaConta(supabase, clinicId)),
+    ]);
 
   if (lida === "erro") {
     return (
@@ -128,8 +142,12 @@ export default async function DetalheDaClinicaNoPainelPage({
   }
 
   // A clinica esta no painel, mas a equipe veio nula (a clinica sumiu entre
-  // as duas leituras): a secao mostra o erro, nunca uma equipe vazia.
+  // as duas leituras): a secao mostra o erro, nunca uma equipe vazia. O
+  // mesmo nas notas e no historico.
   const equipeLida: EquipeNoPainel | "erro" = equipe === null ? "erro" : equipe;
+  const notasLidas: NotasDaClinica | "erro" = notas === null ? "erro" : notas;
+  const historicoLido: HistoricoDaConta | "erro" =
+    historico === null ? "erro" : historico;
 
   // So o ambiente (T1) vem daqui: a parte da clinica (agente habilitado e
   // conta ativa) sai da propria linha do painel (agenteAtendeNoAmbiente).
@@ -145,6 +163,8 @@ export default async function DetalheDaClinicaNoPainelPage({
       publicoPublicado={publicoDosRequisitos(requisitos)}
       telefonesForcados={forcados}
       versoes={versoesDeAgora()}
+      notas={notasLidas}
+      historico={historicoLido}
     />
   );
 }

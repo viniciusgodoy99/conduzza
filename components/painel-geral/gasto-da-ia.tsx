@@ -3,8 +3,10 @@ import { useId } from "react";
 
 import {
   dolares,
+  dolaresPrecisos,
   estadoDoGasto,
   GASTO_STATUS,
+  textoDasChamadas,
 } from "@/components/painel-geral/painel-geral";
 import { BarraDeProgresso } from "@/components/shared/barra-de-progresso";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -17,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { GastoNoPainel } from "@/lib/queries/painel-geral";
+import { cn } from "@/lib/utils";
 
 // O gasto de IA da clinica no detalhe do Painel geral (onda 1): as ultimas
 // 24 horas (a janela movel do teto) contra o teto diario, o mes corrente no
@@ -24,6 +27,44 @@ import type { GastoNoPainel } from "@/lib/queries/painel-geral";
 // gastou conversando pelo WhatsApp). Em centavos de dolar arredondados pelo
 // banco. A barra mede, nao julga (so os tons da barra); o perto do teto e o
 // teto atingido vem no chip, em 3 camadas. Server Component.
+//
+// Segunda leva (26/10/2026, pedido do dono: "Esse gasto de IA ta certo?"):
+// os quatro valores com a precisao real (microdolares do banco: "US$
+// 0,001"; nunca "US$ 0,00" quando houve gasto) e as chamadas ao modelo de
+// cada recorte. A barra continua medindo em centavos contra o teto (a regra
+// do teto e em centavos).
+
+/** Um recorte: o valor com a precisao real e as chamadas embaixo. */
+function Recorte({
+  rotulo,
+  microdolares,
+  chamadas,
+  className,
+}: {
+  rotulo: string;
+  microdolares: number;
+  chamadas: number;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3",
+        className,
+      )}
+    >
+      <dt className="text-text-secondary">{rotulo}</dt>
+      <dd className="grid gap-0.5">
+        <span className="cz-num text-[15px] font-semibold text-text-strong">
+          {dolaresPrecisos(microdolares)}
+        </span>
+        <span className="text-[12px] text-text-secondary">
+          {textoDasChamadas(chamadas)}
+        </span>
+      </dd>
+    </div>
+  );
+}
 
 export function GastoDaIa({
   gasto,
@@ -34,10 +75,11 @@ export function GastoDaIa({
 }) {
   const id = useId();
   const estado = estadoDoGasto(gasto.ultimas24hCentavos, tetoDiarioCentavos);
+  const nas24h = dolaresPrecisos(gasto.ultimas24hMicrodolares);
   const legenda =
     tetoDiarioCentavos === null
-      ? `${dolares(gasto.ultimas24hCentavos)}, sem teto`
-      : `${dolares(gasto.ultimas24hCentavos)} de ${dolares(tetoDiarioCentavos)}`;
+      ? `${nas24h}, sem teto`
+      : `${nas24h} de ${dolares(tetoDiarioCentavos)}`;
   return (
     <Card role="region" aria-labelledby={`${id}-titulo`}>
       <CardHeader>
@@ -69,27 +111,26 @@ export function GastoDaIa({
           legenda={legenda}
           ariaLabel={`Gasto das últimas 24 horas: ${legenda}`}
         />
+        <p className="-mt-2 text-[12px] text-text-secondary">
+          {textoDasChamadas(gasto.ultimas24hChamadas)} nas últimas 24 horas
+        </p>
         <dl className="grid gap-3 text-[13px] sm:grid-cols-2">
-          <div className="grid gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3">
-            <dt className="text-text-secondary">No mês</dt>
-            <dd className="cz-num text-[15px] font-semibold text-text-strong">
-              {dolares(gasto.mesCentavos)}
-            </dd>
-          </div>
-          <div className="grid gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3">
-            <dt className="text-text-secondary">Sem o simulador, no mês</dt>
-            <dd className="cz-num text-[15px] font-semibold text-text-strong">
-              {dolares(gasto.mesSemSimuladorCentavos)}
-            </dd>
-          </div>
-          <div className="grid gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3 sm:col-span-2">
-            <dt className="text-text-secondary">
-              Sem o simulador, nas últimas 24 horas
-            </dt>
-            <dd className="cz-num text-[15px] font-semibold text-text-strong">
-              {dolares(gasto.ultimas24hSemSimuladorCentavos)}
-            </dd>
-          </div>
+          <Recorte
+            rotulo="No mês"
+            microdolares={gasto.mesMicrodolares}
+            chamadas={gasto.mesChamadas}
+          />
+          <Recorte
+            rotulo="Sem o simulador, no mês"
+            microdolares={gasto.mesSemSimuladorMicrodolares}
+            chamadas={gasto.mesSemSimuladorChamadas}
+          />
+          <Recorte
+            rotulo="Sem o simulador, nas últimas 24 horas"
+            microdolares={gasto.ultimas24hSemSimuladorMicrodolares}
+            chamadas={gasto.ultimas24hSemSimuladorChamadas}
+            className="sm:col-span-2"
+          />
         </dl>
       </CardContent>
     </Card>

@@ -16,7 +16,11 @@ import { CartoesDoAgenteNoPainel } from "@/components/painel-geral/cartoes-do-ag
 import { ContaDaClinica } from "@/components/painel-geral/conta-da-clinica";
 import { EquipeDaClinica } from "@/components/painel-geral/equipe-da-clinica";
 import { GastoDaIa } from "@/components/painel-geral/gasto-da-ia";
+import { HistoricoDaConta } from "@/components/painel-geral/historico-da-conta";
+import { ImplantacaoDaClinicaCartao } from "@/components/painel-geral/implantacao-da-clinica";
+import { NotasDaClinica } from "@/components/painel-geral/notas-da-clinica";
 import {
+  COMPARADO_COM_OS_30_DIAS,
   contagemNoPainel,
   dataEHoraNaClinica,
   dataNaClinica,
@@ -28,6 +32,8 @@ import {
   USO_DA_CLINICA_STATUS,
 } from "@/components/painel-geral/painel-geral";
 import { RequisitosDaProducaoCartao } from "@/components/painel-geral/requisitos-da-producao";
+import { SaudeDaClinicaCartao } from "@/components/painel-geral/sinais-da-clinica";
+import { TendenciaNaLinha } from "@/components/painel-geral/tendencia";
 import { TetoDaIa } from "@/components/painel-geral/teto-da-ia";
 import { Aviso } from "@/components/shared/aviso";
 import { AvisoCelular } from "@/components/shared/aviso-celular";
@@ -41,6 +47,8 @@ import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 import type {
   ClinicaNoPainel,
   EquipeNoPainel,
+  HistoricoDaConta as Historico,
+  NotasDaClinica as Notas,
   RequisitosDaProducao,
   TetosDaIa,
 } from "@/lib/queries/painel-geral";
@@ -59,6 +67,12 @@ import type {
 // desenha, e cada leitura de apoio que falhou mostra o erro no proprio
 // cartao (nunca um cartao vazio que afirma o que nao leu). Server
 // Component; os cartoes com acao sao filhos client.
+//
+// Segunda leva (26/10/2026, escolhas do dono): logo abaixo das metricas (os
+// leads e as conversas com a tendencia contra os 30 dias anteriores), a
+// saude com os sinais de alerta e a implantacao com os seis passos; depois,
+// as notas internas da equipe Conduzza e o historico da conta (cada um com
+// o erro no proprio cartao); o resto como estava.
 
 /** Uma leitura de apoio: o valor, ou "erro" quando ela falhou. */
 export type LeituraDoDetalhe<T> = T | "erro";
@@ -94,6 +108,10 @@ export type DetalheDaClinicaProps = {
   telefonesForcados: string[] | null;
   /** As versoes de agora do filtro e do modelo (P11e); nulas: sem aviso. */
   versoes: { filtro: string; modelo: string } | null;
+  /** As notas internas da equipe Conduzza, a mais nova primeiro. */
+  notas: LeituraDoDetalhe<Notas>;
+  /** O historico da conta, o mais novo primeiro. */
+  historico: LeituraDoDetalhe<Historico>;
 };
 
 /**
@@ -178,6 +196,8 @@ export function DetalheDaClinica({
   publicoPublicado,
   telefonesForcados,
   versoes,
+  notas,
+  historico,
 }: DetalheDaClinicaProps) {
   const { numeros, finais } = numerosDosCartoes(clinica);
   const ambienteLigado = agenteAtendeNoAmbiente(clinica, ambienteDaIa);
@@ -269,16 +289,24 @@ export function DetalheDaClinica({
           valor={contagemNoPainel(clinica.contatos)}
           rodape="Leads e pacientes"
         />
+        {/* A tendencia e a do banco (a direcao e a faixa do estavel sao
+            dele), a mesma da lista: nunca a variacao propria do cartao. */}
         <CartaoDeMetrica
           rotulo="Leads em 30 dias"
           icone={UserPlus}
           valor={contagemNoPainel(clinica.leads30Dias)}
-        />
+          rodape={`${contagemNoPainel(clinica.tendencia.leads.anterior)} nos ${COMPARADO_COM_OS_30_DIAS}`}
+        >
+          <TendenciaNaLinha tendencia={clinica.tendencia.leads} />
+        </CartaoDeMetrica>
         <CartaoDeMetrica
           rotulo="Conversas em 30 dias"
           icone={MessagesSquare}
           valor={contagemNoPainel(clinica.conversas30Dias)}
-        />
+          rodape={`${contagemNoPainel(clinica.tendencia.conversas.anterior)} nos ${COMPARADO_COM_OS_30_DIAS}`}
+        >
+          <TendenciaNaLinha tendencia={clinica.tendencia.conversas} />
+        </CartaoDeMetrica>
         {clinica.ultimaMensagemEm ? (
           <CartaoDeMetrica
             rotulo="Última mensagem recebida"
@@ -301,6 +329,20 @@ export function DetalheDaClinica({
           />
         )}
       </section>
+
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <SaudeDaClinicaCartao clinica={clinica} />
+        <ImplantacaoDaClinicaCartao clinica={clinica} />
+      </div>
+
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <NotasDaClinica
+          clinicId={clinica.id}
+          leitura={notas}
+          fuso={clinica.fuso}
+        />
+        <HistoricoDaConta historico={historico} fuso={clinica.fuso} />
+      </div>
 
       {equipe === "erro" ? (
         <Aviso tom="alert" role="note">

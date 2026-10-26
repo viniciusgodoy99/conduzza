@@ -5,8 +5,11 @@ import { revalidatePath } from "next/cache";
 import {
   agenteDaClinicaSchema,
   contaDaClinicaSchema,
+  escreverNotaSchema,
   ESCOPO_DO_REQUISITO,
+  excluirNotaSchema,
   interruptorGeralSchema,
+  MOTIVO_PADRAO_DO_AGENTE,
   registrarRequisitoSchema,
   requisitosDoHint,
   revogarRequisitoSchema,
@@ -45,19 +48,22 @@ import { createClient } from "@/lib/supabase/server";
 // camada (CLAUDE.md 3.4: esconder botao nao protege nada): sem sessao ou sem
 // super admin, nada chega ao banco.
 //
+// Segunda leva (26/10/2026, escolha (6) do dono): escrever e excluir as
+// notas internas da equipe Conduzza (escrever_nota_da_clinica e
+// excluir_nota_da_clinica, da migration 20261026110000; a exclusao so da
+// propria nota, conferida no banco: 42501 nota_de_outra_pessoa). O texto
+// da nota nunca vai para log.
+//
 // Toda funcao exportada de um arquivo "use server" vira endpoint: cada uma
 // confere por si (sessao, super admin e Zod estrito na entrada). Nada daqui
 // vai para log alem do codigo do erro, da clinica e do tipo de acao: nunca
-// o motivo (texto livre).
+// o motivo nem a nota (texto livre).
 
 export type ResultadoDoPainel =
   { ok: true; jobsVencidos?: number } | { ok: false; error: string };
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 type ErroDoBanco = { code?: string; message?: string; hint?: string } | null;
-
-/** O motivo do agente (e do interruptor) quando a tela nao manda nenhum. */
-const MOTIVO_PADRAO_DO_AGENTE = "Painel geral";
 
 /** null: pode seguir. */
 async function guarda(): Promise<{ error: string } | null> {
@@ -102,6 +108,11 @@ const TEXTO_DA_CHAVE = new Map<string, (kind: string) => string>([
   // chaves e o escopo do contrato, entao so com a tela velha ou mexida.
   ["chave_invalida", () => TEXTOS_DO_PAINEL.dadosInvalidos],
   ["requisito_por_clinica", () => TEXTOS_DO_PAINEL.dadosInvalidos],
+  // As notas (segunda leva): o texto fora da faixa (o Zod ja recusa antes)
+  // e a nota de outra pessoa (so quem escreveu exclui).
+  ["texto_invalido", () => TEXTOS_DO_PAINEL.notaInvalida],
+  ["nota_invalida", () => TEXTOS_DO_PAINEL.notaInvalida],
+  ["nota_de_outra_pessoa", () => TEXTOS_DO_PAINEL.soQuemEscreveuExclui],
 ]);
 
 /**
@@ -114,12 +125,20 @@ const TEXTO_DA_CHAVE = new Map<string, (kind: string) => string>([
 function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
   const codigo = error?.code;
   if (codigo === "42501") {
-    return TEXTOS_DO_PAINEL.soEquipeConduzza;
+    // Excluir a nota: a guarda daqui ja conferiu a equipe Conduzza, entao a
+    // recusa do banco e a nota de outra pessoa.
+    return kind === "excluir_nota"
+      ? TEXTOS_DO_PAINEL.soQuemEscreveuExclui
+      : TEXTOS_DO_PAINEL.soEquipeConduzza;
   }
   if (codigo === "P0002") {
-    // Revogar: o registro sumiu (P0002 de revogar_requisito_da_producao).
-    return kind === "revogar"
-      ? TEXTOS_DO_PAINEL.requisitoNaoEncontrado
+    // Revogar: o registro sumiu (P0002 de revogar_requisito_da_producao);
+    // excluir a nota: a nota sumiu.
+    if (kind === "revogar") {
+      return TEXTOS_DO_PAINEL.requisitoNaoEncontrado;
+    }
+    return kind === "excluir_nota"
+      ? TEXTOS_DO_PAINEL.notaNaoEncontrada
       : TEXTOS_DO_PAINEL.clinicaNaoEncontrada;
   }
   const chave = (error?.message ?? "").trim();
@@ -406,8 +425,71 @@ export async function definirTetoDaIaAction(
 }
 
 /**
+ * Escreve uma nota interna da equipe Conduzza sobre a clinica (segunda
+ * leva): o texto de 1 a 2.000 caracteres (conferido aqui e no banco). O
+ * banco grava a nota com o autor e a data e a trilha. O texto nunca vai
+ * para log.
+ */
+export async function escreverNotaDaClinicaAction(
+  entrada: unknown,
+): Promise<ResultadoDoPainel> {
+  const recusa = await guarda();
+  if (recusa) {
+    return { ok: false, error: recusa.error };
+  }
+  const parsed = escreverNotaSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: textoDaEntrada(parsed.error.issues) };
+  }
+  const { clinicId, texto } = parsed.data;
+  const supabase: Supabase = await createClient();
+  const { error } = await supabase.rpc("escrever_nota_da_clinica", {
+    p_clinic_id: clinicId,
+    p_texto: texto,
+  });
+  if (error) {
+    return falhou(clinicId, "nota", error, TEXTOS_DO_PAINEL.naoSalvouANota);
+  }
+  revalidatePath("/painel-geral", "layout");
+  return { ok: true };
+}
+
+/**
+ * Exclui uma nota interna (segunda leva): so a propria, e o banco confere
+ * (a nota de outra pessoa e recusada sem mudar nada). A exclusao fica no
+ * historico da conta.
+ */
+export async function excluirNotaDaClinicaAction(
+  entrada: unknown,
+): Promise<ResultadoDoPainel> {
+  const recusa = await guarda();
+  if (recusa) {
+    return { ok: false, error: recusa.error };
+  }
+  const parsed = excluirNotaSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: TEXTOS_DO_PAINEL.dadosInvalidos };
+  }
+  const { clinicId, notaId } = parsed.data;
+  const supabase: Supabase = await createClient();
+  const { error } = await supabase.rpc("excluir_nota_da_clinica", {
+    p_nota_id: notaId,
+  });
+  if (error) {
+    return falhou(
+      clinicId,
+      "excluir_nota",
+      error,
+      TEXTOS_DO_PAINEL.naoExcluiuANota,
+    );
+  }
+  revalidatePath("/painel-geral", "layout");
+  return { ok: true };
+}
+
+/**
  * Os campos cujas mensagens do Zod sao textos nossos (painel-geral.ts): o
- * motivo, a evidencia e o teto. Nos outros (a chave do requisito, o estado),
+ * motivo, a evidencia, o teto e o texto da nota. Nos outros (a chave do requisito, o estado),
  * a mensagem padrao do Zod nao e de recepcao: "Dados inválidos".
  */
 const CAMPOS_COM_TEXTO_PROPRIO = new Set([
@@ -415,6 +497,7 @@ const CAMPOS_COM_TEXTO_PROPRIO = new Set([
   "evidencia",
   "tetoDiarioCentavos",
   "respostasPorConversaHora",
+  "texto",
 ]);
 
 /**

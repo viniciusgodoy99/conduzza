@@ -3573,6 +3573,38 @@ export type Database = {
           },
         ]
       }
+      nota_interna_da_clinica: {
+        Row: {
+          autor_user_id: string | null
+          clinic_id: string
+          criada_em: string
+          id: string
+          texto: string
+        }
+        Insert: {
+          autor_user_id?: string | null
+          clinic_id: string
+          criada_em?: string
+          id?: string
+          texto: string
+        }
+        Update: {
+          autor_user_id?: string | null
+          clinic_id?: string
+          criada_em?: string
+          id?: string
+          texto?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nota_interna_da_clinica_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       objetivo_de_conversao: {
         Row: {
           clinic_id: string
@@ -5522,6 +5554,10 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: Json
       }
+      escrever_nota_da_clinica: {
+        Args: { p_clinic_id: string; p_texto: string }
+        Returns: string
+      }
       espera_pelo_celular_sem_linha: {
         Args: {
           p_base: string
@@ -5534,6 +5570,10 @@ export type Database = {
       excluir_contato_liberado_da_ia: {
         Args: { p_clinic_id: string; p_contato_liberado_id: string }
         Returns: boolean
+      }
+      excluir_nota_da_clinica: {
+        Args: { p_nota_id: string }
+        Returns: undefined
       }
       etiquetar_contatos: {
         Args: {
@@ -5641,6 +5681,10 @@ export type Database = {
           p_worker: string
         }
         Returns: string
+      }
+      historico_da_clinica_no_painel: {
+        Args: { p_clinic_id: string; p_limite?: number }
+        Returns: Json
       }
       ia_atende_no_whatsapp: {
         Args: {
@@ -5825,6 +5869,10 @@ export type Database = {
           p_da_pendencia?: boolean
         }
         Returns: string
+      }
+      notas_da_clinica_no_painel: {
+        Args: { p_clinic_id: string; p_limite?: number }
+        Returns: Json
       }
       numero_do_job: {
         Args: { p_job_id: string; p_worker: string }
