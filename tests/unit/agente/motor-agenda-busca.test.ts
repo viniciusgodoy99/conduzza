@@ -811,7 +811,10 @@ describe("buscar_horario: procedimento, profissional e convênio", () => {
 });
 
 describe("escolherHorarios puro", () => {
-  it("sem agenda lida, sem horário", () => {
+  // AG2 (27/10/2026): sem jornada de nenhum profissional do pedido, a
+  // agenda nao esta cadastrada (antes saia "sem horario", e o modelo
+  // oferecia outro dia de uma agenda que nao existe).
+  it("sem jornada de ninguém, agenda não cadastrada; com jornada e tudo ocupado, sem horário", () => {
     const plano = planejarBuscaDeHorario({
       catalogo: CATALOGO,
       agenda: AGENDA,
@@ -831,7 +834,76 @@ describe("escolherHorarios puro", () => {
       [VINC.consultaAna, VINC.consultaBruno].sort(),
     );
     const r = escolherHorarios(plano.plano, AGENDA_VAZIA, 1);
-    expect(r.resultado).toBe("sem_horario");
+    expect(r.resultado).toBe("agenda_nao_cadastrada");
     expect(r.horarios).toEqual([]);
+    expect(JSON.parse(r.saida)).toEqual({
+      resultado: "agenda_nao_cadastrada",
+      procedimento: "Consulta",
+      convenio: "particular",
+    });
+    expect(r.passo).toBe(
+      "Consultou a agenda de Consulta, no particular: a agenda de quem faz este procedimento não está cadastrada",
+    );
+
+    // Um dos dois com jornada basta para nao ser "agenda nao cadastrada":
+    // com o horizonte inteiro bloqueado, e "sem horario".
+    const tudoBloqueado = {
+      ...AGENDA_VAZIA,
+      jornadas: new Map([
+        [
+          PROF.ana,
+          [1, 2, 3, 4, 5].map((weekday) => ({
+            weekday,
+            startsAt: "08:00:00",
+            endsAt: "18:00:00",
+          })),
+        ],
+      ]),
+      bloqueios: new Map([
+        [
+          PROF.ana,
+          [
+            {
+              startsAt: new Date(AGORA - 24 * 60 * 60_000),
+              endsAt: new Date(AGORA + 60 * 24 * 60 * 60_000),
+            },
+          ],
+        ],
+      ]),
+    };
+    const semHorario = escolherHorarios(plano.plano, tudoBloqueado, 1);
+    expect(semHorario.resultado).toBe("sem_horario");
+    expect(semHorario.horarios).toEqual([]);
+  });
+
+  it("o profissional pedido sem jornada: agenda não cadastrada, com o nome dele na trilha", () => {
+    const plano = planejarBuscaDeHorario({
+      catalogo: CATALOGO,
+      agenda: AGENDA,
+      argumentos: argumentos({ profissional: R_BRUNO }),
+      agoraMs: AGORA,
+      fuso: FUSO,
+      informarValor: true,
+    });
+    if (plano.tipo !== "plano") {
+      throw new Error("esperava o plano");
+    }
+    const soDaAna = {
+      ...AGENDA_VAZIA,
+      jornadas: new Map([
+        [PROF.ana, [{ weekday: 2, startsAt: "08:00:00", endsAt: "12:00:00" }]],
+      ]),
+    };
+    const r = escolherHorarios(plano.plano, soDaAna, 1);
+    expect(r.resultado).toBe("agenda_nao_cadastrada");
+    expect(JSON.parse(r.saida)).toEqual({
+      resultado: "agenda_nao_cadastrada",
+      procedimento: "Consulta",
+      convenio: "particular",
+      profissional: "Dr. Bruno Costa",
+    });
+    expect(r.passo).toBe(
+      "Consultou a agenda de Consulta com Dr. Bruno Costa, no particular: a agenda deste profissional não está cadastrada",
+    );
   });
 });

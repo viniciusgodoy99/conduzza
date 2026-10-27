@@ -13,6 +13,7 @@ import {
 import { log } from "@/lib/log";
 
 import {
+  idsDoIndice,
   montarCatalogoDoAgente,
   type CatalogoDoAgente,
   type LinhasDoCatalogo,
@@ -355,6 +356,9 @@ async function linhaDaClinica(
     : { name: typeof nome === "string" ? nome : null };
 }
 
+/** Ids por pedido de `in` (a URL do PostgREST tem limite). */
+const IDS_POR_LOTE = 100;
+
 /**
  * O catalogo que o agente enxerga (indice e vinculos de buscar_procedimento):
  * so procedimento e vinculo ativos com "IA pode agendar" nas duas chaves,
@@ -371,6 +375,32 @@ async function linhaDaClinica(
  * Correcao da E4 (D14): os vinculos ATIVOS sem "IA pode agendar" vem so com
  * ids (nunca preco), para a agenda nunca dizer que o profissional nao atende
  * um convenio que ele atende (so a equipe marca por ele).
+ *
+ * AG2 (27/10/2026), o Cadastro das consultas do agente
+ * (lib/agente/ferramentas/cadastro-do-agente.ts), sempre com o clinic_id
+ * explicito e colunas explicitas, nada de paciente:
+ *  - TODOS os procedimentos ativos (com "IA pode agendar" ou nao), com
+ *    ia_pode_informar e requires_evaluation (nunca prep_instructions: D-4,
+ *    opcao A);
+ *  - a idade atendida do profissional;
+ *  - as unidades ativas, sem cep, phone, link_do_mapa e address;
+ *  - a jornada so com o profissional e a unidade (nunca a hora);
+ *  - os requisitos ativos dos procedimentos;
+ *  - os convenios de cada profissional (professional_insurance);
+ *  - DEPOIS dessas leituras, e so quando ha: os vinculos ativos, com preco,
+ *    dos procedimentos ativos fora do indice que deixam informar
+ *    (ia_pode_informar, D-3). O vinculo que a IA nao marca so traz preco ao
+ *    motor nesse caso.
+ * Erro em qualquer leitura lanca (o catalogo nunca sai pela metade): quem
+ * chama falha fechado, como sempre.
+ *
+ * ORDEM DE PUBLICACAO (a licao da E4): as colunas e a tabela da AG2
+ * (procedure.ia_pode_informar, professional.idade_minima e idade_maxima, as
+ * colunas novas de unit e procedure_requirement) so existem DEPOIS da
+ * migration 20261027100000_cadastro_para_o_agente.sql. Este codigo so vai ao
+ * ar com ela aplicada: antes, o PostgREST devolve 42703 ou 42P01, o catalogo
+ * lanca e a IA de todas as clinicas para de responder (falha fechada, mas
+ * parada).
  */
 export async function carregarCatalogoDoAgente(
   admin: Cliente,
@@ -383,14 +413,19 @@ export async function carregarCatalogoDoAgente(
     convenios,
     clinica,
     vinculosSoDaEquipe,
+    unidades,
+    jornadas,
+    requisitos,
+    conveniosDosProfissionais,
   ] = await Promise.all([
     todasAsPaginas<LinhasDoCatalogo["procedimentos"][number]>((de, ate) =>
       admin
         .from("procedure")
-        .select("id, name, active, bookable_by_ai, resource_id")
+        .select(
+          "id, name, active, bookable_by_ai, resource_id, ia_pode_informar, requires_evaluation",
+        )
         .eq("clinic_id", clinicId)
         .eq("active", true)
-        .eq("bookable_by_ai", true)
         .order("id", { ascending: true })
         .range(de, ate),
     ),
@@ -407,11 +442,11 @@ export async function carregarCatalogoDoAgente(
         .range(de, ate),
     ),
     // Onda 2 (item 6): as especialidades vao ao bloco <profissionais>,
-    // saneadas (especialidadesParaOAgente).
+    // saneadas (especialidadesParaOAgente). AG2: e a idade atendida.
     todasAsPaginas<LinhasDoCatalogo["profissionais"][number]>((de, ate) =>
       admin
         .from("professional")
-        .select("id, name, active, specialties")
+        .select("id, name, active, specialties, idade_minima, idade_maxima")
         .eq("clinic_id", clinicId)
         .eq("active", true)
         .order("id", { ascending: true })
@@ -439,7 +474,58 @@ export async function carregarCatalogoDoAgente(
           .order("id", { ascending: true })
           .range(de, ate),
     ),
+    // AG2: nunca cep, phone, link_do_mapa nem address.
+    todasAsPaginas<NonNullable<LinhasDoCatalogo["unidades"]>[number]>(
+      (de, ate) =>
+        admin
+          .from("unit")
+          .select(
+            "id, name, active, logradouro, numero, complemento, bairro, cidade, uf, referencia, estacionamento, acessibilidade, horario_de_funcionamento, observacao_ao_paciente",
+          )
+          .eq("clinic_id", clinicId)
+          .eq("active", true)
+          .order("id", { ascending: true })
+          .range(de, ate),
+    ),
+    // AG2: so quem atende onde (nunca a hora).
+    todasAsPaginas<NonNullable<LinhasDoCatalogo["jornadas"]>[number]>(
+      (de, ate) =>
+        admin
+          .from("professional_schedule")
+          .select("professional_id, unit_id")
+          .eq("clinic_id", clinicId)
+          .order("id", { ascending: true })
+          .range(de, ate),
+    ),
+    todasAsPaginas<NonNullable<LinhasDoCatalogo["requisitos"]>[number]>(
+      (de, ate) =>
+        admin
+          .from("procedure_requirement")
+          .select(
+            "procedure_id, insurance_id, tipo, valor_inteiro, texto_ao_paciente, ativo",
+          )
+          .eq("clinic_id", clinicId)
+          .eq("ativo", true)
+          .order("id", { ascending: true })
+          .range(de, ate),
+    ),
+    todasAsPaginas<
+      NonNullable<LinhasDoCatalogo["conveniosDosProfissionais"]>[number]
+    >((de, ate) =>
+      admin
+        .from("professional_insurance")
+        .select("professional_id, insurance_id")
+        .eq("clinic_id", clinicId)
+        .order("id", { ascending: true })
+        .range(de, ate),
+    ),
   ]);
+  const vinculosDaEquipe = await carregarVinculosDaEquipe(admin, clinicId, {
+    procedimentos,
+    vinculos,
+    profissionais,
+    convenios,
+  });
   const catalogo = montarCatalogoDoAgente({
     procedimentos,
     vinculos,
@@ -447,6 +533,11 @@ export async function carregarCatalogoDoAgente(
     convenios,
     clinica,
     vinculosSoDaEquipe,
+    vinculosDaEquipe,
+    unidades,
+    jornadas,
+    requisitos,
+    conveniosDosProfissionais,
   });
   // Especialidade que nao passa nas regras do filtro (ou fora do formato)
   // fica de fora do modelo; a equipe Conduzza fica sabendo so pela contagem.
@@ -457,5 +548,59 @@ export async function carregarCatalogoDoAgente(
       count: descartadas,
     });
   }
+  // AG2: o mesmo para os textos do Cadastro (endereco montado, textos da
+  // unidade e dos requisitos): so a contagem, nunca o texto.
+  const textos = catalogo.textosDoCadastroDescartados ?? 0;
+  if (textos > 0) {
+    log.warn("agente_texto_do_cadastro_descartado", {
+      clinic_id: clinicId,
+      count: textos,
+    });
+  }
   return catalogo;
+}
+
+/**
+ * AG2 (D-3): os vinculos ATIVOS, com preco e duracao, so dos procedimentos
+ * ativos que a IA nao marca (fora do indice) e que deixam informar
+ * (ia_pode_informar). Os procedimentos vem da leitura de cima; o indice e o
+ * de montarCatalogoDoAgente (o mesmo calculo). Sem nenhum desses
+ * procedimentos, nada e lido.
+ */
+async function carregarVinculosDaEquipe(
+  admin: Cliente,
+  clinicId: string,
+  linhas: Pick<
+    LinhasDoCatalogo,
+    "procedimentos" | "vinculos" | "profissionais" | "convenios"
+  >,
+): Promise<NonNullable<LinhasDoCatalogo["vinculosDaEquipe"]>> {
+  const doIndice = idsDoIndice(linhas);
+  const ids = linhas.procedimentos
+    .filter(
+      (p) => p.active && p.ia_pode_informar !== false && !doIndice.has(p.id),
+    )
+    .map((p) => p.id)
+    .sort();
+  const lidos: NonNullable<LinhasDoCatalogo["vinculosDaEquipe"]>[number][] = [];
+  for (let de = 0; de < ids.length; de += IDS_POR_LOTE) {
+    const lote = ids.slice(de, de + IDS_POR_LOTE);
+    lidos.push(
+      ...(await todasAsPaginas<
+        NonNullable<LinhasDoCatalogo["vinculosDaEquipe"]>[number]
+      >((inicio, fim) =>
+        admin
+          .from("service_link")
+          .select(
+            "id, procedure_id, professional_id, insurance_id, price_cents, covered_by_insurance, active, duration_min",
+          )
+          .eq("clinic_id", clinicId)
+          .eq("active", true)
+          .in("procedure_id", lote)
+          .order("id", { ascending: true })
+          .range(inicio, fim),
+      )),
+    );
+  }
+  return lidos;
 }

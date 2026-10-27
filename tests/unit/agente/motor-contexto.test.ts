@@ -1014,7 +1014,10 @@ describe("onda 2: público e especialidades", () => {
     const catalogo = await carregarCatalogoDoAgente(cliente, CLINICA);
     espiao.mockRestore();
     const doProfissional = consultas.find((c) => c.tabela === "professional");
-    expect(doProfissional?.colunas).toBe("id, name, active, specialties");
+    // AG2: e a idade atendida (so as duas colunas a mais).
+    expect(doProfissional?.colunas).toBe(
+      "id, name, active, specialties, idade_minima, idade_maxima",
+    );
     expect(catalogo.profissionais).toEqual([
       { id: SEM_VINCULO, nome: "Dr. Caio", especialidades: ["Cardiologia"] },
       { id: PROF, nome: "Dra. Helena", especialidades: ["Dermatologia"] },

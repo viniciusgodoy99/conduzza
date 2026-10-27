@@ -34,6 +34,13 @@
 //     convenio e acao de agenda so passam com fato; erro ao montar os fatos
 //     e falha fechada.
 //
+// AG2 (27/10/2026): as consultas do Cadastro (consultar_unidades,
+// consultar_requisitos e buscar_profissionais) leem so o catalogo carregado
+// antes do turno, como buscar_procedimento: nao gravam, nao leem a Agenda e
+// nao mudam o numero de rodadas. O que elas trazem (endereco, horario de
+// funcionamento, o convenio que o profissional atende) entra nos fatos do
+// turno; o passo da trilha e do tipo "cadastro".
+//
 // E4 (agenda, contrato da E4 secao 2): as ferramentas de agenda
 // (buscar_horario, reservar_horario, agendar e confirmar_presenca) rodam pela
 // porta da agenda (entrada.agenda): no WhatsApp gravam pelas RPCs com o
@@ -71,6 +78,7 @@ import { z } from "zod";
 
 import {
   ehFerramentaDeAgenda,
+  ehFerramentaDoCadastro,
   ferramentasDoAgente,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
   type ConfigDoAgente,
@@ -143,6 +151,10 @@ import {
   NOME_DA_BUSCA,
   type CatalogoDoAgente,
 } from "./ferramentas/buscar-procedimento";
+import {
+  executarConsultaDoCadastro,
+  limiteDasConsultasDoCadastro,
+} from "./ferramentas/consultas-do-cadastro";
 import {
   motivoDoEscalonamento,
   NOME_DO_ESCALONAMENTO,
@@ -259,11 +271,12 @@ export type MensagemDaConversa = {
 /**
  * O tipo de cada passo, que escolhe o icone na tela (components/agente/
  * simulador.tsx): consulta de preco, pergunta da base, agenda (buscar,
- * reservar, marcar e confirmar presenca, E4), passagem para a equipe,
- * bloqueio da conformidade e o resto.
+ * reservar, marcar e confirmar presenca, E4), consulta do Cadastro
+ * (unidades, o que o paciente precisa e quem atende, AG2), passagem para a
+ * equipe, bloqueio da conformidade e o resto.
  */
 export type TipoDoPasso =
-  "preco" | "base" | "agenda" | "equipe" | "bloqueio" | "outro";
+  "preco" | "base" | "agenda" | "cadastro" | "equipe" | "bloqueio" | "outro";
 
 /** Um passo do "Por que a IA respondeu isso". Nunca texto do paciente. */
 export type PassoDoTurno = { tipo: TipoDoPasso; texto: string };
@@ -847,6 +860,8 @@ export function custoMaximoDoTurno(entrada: {
     Math.max(
       limiteDaSaidaDaBusca(entrada.catalogo),
       comAgenda ? limiteDaSaidaDaBuscaDeHorario(entrada.catalogo) : 0,
+      // AG2: as consultas do Cadastro vem sempre (habilidade travada).
+      limiteDasConsultasDoCadastro(entrada.catalogo),
     ) +
     FOLGA_DA_CHAMADA;
   const rodadas = comAgenda ? MAXIMO_DE_RODADAS_COM_AGENDA : MAXIMO_DE_RODADAS;
@@ -1303,6 +1318,31 @@ export async function executarTurnoDoAgente(
           });
           continue;
         }
+        if (ehFerramentaDoCadastro(nome)) {
+          // AG2: so le o catalogo do turno (nunca lanca; uma excecao cai na
+          // rede de seguranca do turno, falha fechada).
+          const consulta = executarConsultaDoCadastro(
+            nome,
+            entrada.catalogo,
+            argumentosDe(chamada),
+            {
+              informarConvenio: permitidas.has(NOME_DA_BUSCA),
+              agendaLigada: permitidas.has("buscar_horario"),
+            },
+          );
+          ferramentasDoTurno.push({
+            saida: consulta.saida,
+            fatos: consulta.fatos,
+          });
+          trilha.push({ tipo: "cadastro", texto: consulta.passo });
+          ferramentasUsadas.push(nome);
+          historico.push({
+            type: "function_call_output",
+            call_id: chamada.call_id,
+            output: consulta.saida,
+          });
+          continue;
+        }
         if (!ehFerramentaDeAgenda(nome)) {
           return falhar("ferramenta_invalida");
         }
@@ -1427,7 +1467,8 @@ export async function executarTurnoDoAgente(
           (passo) =>
             passo.tipo === "preco" ||
             passo.tipo === "base" ||
-            passo.tipo === "agenda",
+            passo.tipo === "agenda" ||
+            passo.tipo === "cadastro",
         )
       ) {
         trilha.push({ tipo: "outro", texto: PASSO_SEM_CONSULTA });

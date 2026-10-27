@@ -137,11 +137,17 @@ export const INSTRUCAO_DO_EMOJI = {
  * reservar_horario, agendar e confirmar_presenca) entraram no E4 (contrato
  * da E4, secao 2). As duas de frase fixa (fora_do_assunto e
  * sou_assistente_virtual) entraram na onda 2 (item 5 e P5c): sem argumentos,
- * o texto e do dono (lib/agente/ferramentas/fora-do-assunto.ts).
+ * o texto e do dono (lib/agente/ferramentas/fora-do-assunto.ts). As tres
+ * consultas do Cadastro (consultar_unidades, consultar_requisitos e
+ * buscar_profissionais) entraram na AG2 (27/10/2026): so leem o Cadastro
+ * (lib/agente/ferramentas/consultas-do-cadastro.ts).
  */
 export const FERRAMENTAS_DO_AGENTE = [
   "fora_do_assunto",
   "sou_assistente_virtual",
+  "consultar_unidades",
+  "consultar_requisitos",
+  "buscar_profissionais",
   "buscar_procedimento",
   "buscar_horario",
   "reservar_horario",
@@ -166,6 +172,24 @@ export type FerramentaDeAgenda = (typeof FERRAMENTAS_DE_AGENDA)[number];
 
 export function ehFerramentaDeAgenda(nome: string): nome is FerramentaDeAgenda {
   return (FERRAMENTAS_DE_AGENDA as readonly string[]).includes(nome);
+}
+
+/**
+ * AG2: as consultas do Cadastro (unidades, o que o paciente precisa e quem
+ * atende). So leem o catalogo que o servidor ja carregou: nao gravam nada,
+ * nao leem a Agenda e nao mudam o numero de rodadas do turno.
+ */
+export const FERRAMENTAS_DO_CADASTRO = [
+  "consultar_unidades",
+  "consultar_requisitos",
+  "buscar_profissionais",
+] as const satisfies readonly FerramentaDoAgente[];
+export type FerramentaDoCadastro = (typeof FERRAMENTAS_DO_CADASTRO)[number];
+
+export function ehFerramentaDoCadastro(
+  nome: string,
+): nome is FerramentaDoCadastro {
+  return (FERRAMENTAS_DO_CADASTRO as readonly string[]).includes(nome);
 }
 
 export type HabilidadeDoAgente = {
@@ -209,11 +233,16 @@ export const HABILIDADES_DO_AGENTE = [
     chave: "responder_duvidas",
     titulo: "Responder dúvidas",
     descricao:
-      "Responde dúvidas sobre a clínica com as perguntas e respostas do Conhecimento.",
+      "Responde dúvidas sobre a clínica com as perguntas e respostas do Conhecimento e com o Cadastro: unidades, o que o paciente precisa levar e quem atende.",
     travada: true,
     // Onda 2 (item 5 e P5c): as frases fixas do fora do assunto e do "você
-    // é um robô?" vem sempre, como escalar_humano (habilidade travada).
-    ferramentas: ["fora_do_assunto", "sou_assistente_virtual"],
+    // é um robô?" vem sempre, como escalar_humano (habilidade travada). AG2:
+    // as consultas do Cadastro tambem (so leitura).
+    ferramentas: [
+      "fora_do_assunto",
+      "sou_assistente_virtual",
+      ...FERRAMENTAS_DO_CADASTRO,
+    ],
     padrao: true,
     precisaDaAgenda: false,
   },

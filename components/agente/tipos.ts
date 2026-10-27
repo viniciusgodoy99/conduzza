@@ -77,10 +77,12 @@ export type AutorNoSimulador = "paciente" | "assistente";
 /**
  * Um passo do "Por que a IA respondeu isso" (nunca o texto do paciente).
  * "agenda" (E4): buscou horario, reservou, marcou ou confirmou presenca; no
- * simulador, reservar e marcar so simulam.
+ * simulador, reservar e marcar so simulam. "cadastro" (AG2): consultou as
+ * unidades, o que o paciente precisa ou quem atende.
  */
 export type PassoDaTrilha = {
-  tipo: "preco" | "base" | "agenda" | "equipe" | "bloqueio" | "outro";
+  tipo:
+    "preco" | "base" | "agenda" | "cadastro" | "equipe" | "bloqueio" | "outro";
   texto: string;
 };
 

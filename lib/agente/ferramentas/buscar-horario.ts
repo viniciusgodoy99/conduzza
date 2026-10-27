@@ -29,7 +29,10 @@
 //    esse horario de novo entre os 3 (o modelo reserva pelo codigo da busca
 //    da propria resposta). Os codigos valem so no turno e mapeiam para
 //    (service_link_id, starts_at) no servidor; nada disso vai ao modelo.
-//  - Nunca inventa: sem horario, "sem_horario".
+//  - Nunca inventa: sem horario, "sem_horario". AG2 (27/10/2026): quando
+//    NENHUM profissional do pedido tem jornada cadastrada, o resultado e
+//    "agenda_nao_cadastrada" (antes saia igual a "sem horario", e o modelo
+//    oferecia outro dia de uma agenda que nao existe).
 
 import { TZDate } from "@date-fns/tz";
 import type { FunctionTool } from "openai/resources/responses/responses";
@@ -319,6 +322,7 @@ export type ResultadoDaBuscaDeHorario = {
   resultado:
     | "horarios"
     | "sem_horario"
+    | "agenda_nao_cadastrada"
     | "agenda_nao_configurada"
     | "procedimento_nao_agendavel"
     | "profissional_nao_encontrado"
@@ -699,6 +703,37 @@ export function escolherHorarios(
   agenda: AgendaCarregada,
   primeiroNumero: number,
 ): ResultadoDaBuscaDeHorario {
+  const base = {
+    procedimento: plano.procedimento.nome,
+    convenio: plano.convenio,
+    ...(plano.profissional === null
+      ? {}
+      : { profissional: plano.profissional }),
+  };
+  const texto = textoDaBusca(
+    plano.procedimento.nome,
+    plano.profissional,
+    plano.convenio,
+  );
+  const fatos = fatosDoConvenio(plano.convenioDoCadastro);
+
+  // AG2: nenhum profissional do pedido com jornada cadastrada. Nao e "sem
+  // horario": a agenda dele nao existe, e o modelo passa para a equipe.
+  if (
+    plano.vinculos.every(
+      (v) => (agenda.jornadas.get(v.profissionalId) ?? []).length === 0,
+    )
+  ) {
+    return {
+      saida: JSON.stringify({ resultado: "agenda_nao_cadastrada", ...base }),
+      precos: [],
+      passo: `${texto}: a agenda ${plano.profissional === null ? "de quem faz este procedimento" : "deste profissional"} não está cadastrada`,
+      resultado: "agenda_nao_cadastrada",
+      horarios: [],
+      ...(fatos === undefined ? {} : { fatos }),
+    };
+  }
+
   type Livre = { vinculo: VinculoAgendavel; inicio: Date; fim: Date };
   const livres: Livre[] = [];
   for (const vinculo of plano.vinculos) {
@@ -734,19 +769,6 @@ export function escolherHorarios(
       a.vinculo.id.localeCompare(b.vinculo.id),
   );
 
-  const base = {
-    procedimento: plano.procedimento.nome,
-    convenio: plano.convenio,
-    ...(plano.profissional === null
-      ? {}
-      : { profissional: plano.profissional }),
-  };
-  const texto = textoDaBusca(
-    plano.procedimento.nome,
-    plano.profissional,
-    plano.convenio,
-  );
-  const fatos = fatosDoConvenio(plano.convenioDoCadastro);
   if (livres.length === 0) {
     const ate = diaEHora(plano.limite, plano.fuso, plano.agoraMs).dia;
     return {

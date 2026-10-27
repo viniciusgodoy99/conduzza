@@ -22,7 +22,9 @@ import {
   EXEMPLO_DO_TOM,
   expedientePadrao,
   ehFerramentaDeAgenda,
+  ehFerramentaDoCadastro,
   FERRAMENTAS_DE_AGENDA,
+  FERRAMENTAS_DO_CADASTRO,
   FERRAMENTAS_DO_AGENTE,
   ferramentasDoAgente,
   GATILHOS_OBRIGATORIOS,
@@ -188,10 +190,13 @@ describe("habilidades", () => {
     );
     expect(porChave.responder_duvidas?.travada).toBe(true);
     // Onda 2 (item 5 e P5c): as frases fixas vem sempre, pela habilidade
-    // travada.
+    // travada. AG2: as consultas do Cadastro tambem (so leitura).
     expect(porChave.responder_duvidas?.ferramentas).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
     ]);
     expect(porChave.informar_preco_e_convenio?.travada).toBe(false);
     expect(porChave.informar_preco_e_convenio?.ferramentas).toEqual([
@@ -228,6 +233,18 @@ describe("habilidades", () => {
     ]);
     expect(ehFerramentaDeAgenda("agendar")).toBe(true);
     expect(ehFerramentaDeAgenda("buscar_procedimento")).toBe(false);
+    // AG2: as consultas do Cadastro nao sao de agenda (nao gravam, nao leem
+    // a Agenda, nao mudam as rodadas).
+    expect([...FERRAMENTAS_DO_CADASTRO]).toEqual([
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
+    ]);
+    for (const nome of FERRAMENTAS_DO_CADASTRO) {
+      expect(ehFerramentaDoCadastro(nome)).toBe(true);
+      expect(ehFerramentaDeAgenda(nome)).toBe(false);
+    }
+    expect(ehFerramentaDoCadastro("buscar_procedimento")).toBe(false);
   });
 
   it("travada vale sempre, desconhecida e ignorada, ausente vale o padrao", () => {
@@ -270,12 +287,22 @@ describe("habilidades", () => {
     expect(ferramentasDoAgente({}, semAgenda)).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
       "buscar_procedimento",
       "escalar_humano",
     ]);
     expect(
       ferramentasDoAgente({ informar_preco_e_convenio: false }, semAgenda),
-    ).toEqual(["fora_do_assunto", "sou_assistente_virtual", "escalar_humano"]);
+    ).toEqual([
+      "fora_do_assunto",
+      "sou_assistente_virtual",
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
+      "escalar_humano",
+    ]);
     expect(
       ferramentasDoAgente({ responder_duvidas: false }, semAgenda),
     ).toContain("fora_do_assunto");
@@ -290,6 +317,9 @@ describe("habilidades", () => {
     expect(ferramentasDoAgente(ligadas, completa)).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
       "buscar_procedimento",
       "buscar_horario",
       "reservar_horario",
@@ -309,6 +339,9 @@ describe("habilidades", () => {
       expect(ferramentasDoAgente(ligadas, agenda)).toEqual([
         "fora_do_assunto",
         "sou_assistente_virtual",
+        "consultar_unidades",
+        "consultar_requisitos",
+        "buscar_profissionais",
         "buscar_procedimento",
         "confirmar_presenca",
         "escalar_humano",

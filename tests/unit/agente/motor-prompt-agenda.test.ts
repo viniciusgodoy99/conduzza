@@ -297,8 +297,15 @@ describe("bloco <atendimento> e <profissionais>", () => {
 
 describe("ferramentas e versão", () => {
   it("as ferramentas seguem as habilidades e a agenda, na ordem estável", () => {
-    // Onda 2: as duas de frase fixa vem sempre, na frente.
-    const frases = ["fora_do_assunto", "sou_assistente_virtual"];
+    // Onda 2: as duas de frase fixa vem sempre, na frente; AG2: as tres
+    // consultas do Cadastro logo depois (mesma habilidade travada).
+    const frases = [
+      "fora_do_assunto",
+      "sou_assistente_virtual",
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
+    ];
     expect(ferramentasDaChamada(configComAgenda()).map((f) => f.name)).toEqual([
       ...frases,
       "buscar_procedimento",
@@ -329,6 +336,9 @@ describe("ferramentas e versão", () => {
     expect(FONTES_DA_VERSAO_DO_PROMPT.ferramentas.map((f) => f.name)).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
       "buscar_procedimento",
       "buscar_horario",
       "reservar_horario",
@@ -352,7 +362,7 @@ describe("ferramentas e versão", () => {
         agoraTexto: AGORA,
       }),
     ).toContain(
-      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, buscar_procedimento, buscar_horario, reservar_horario, agendar, confirmar_presenca, escalar_humano.",
+      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, buscar_procedimento, buscar_horario, reservar_horario, agendar, confirmar_presenca, escalar_humano.",
     );
   });
 });

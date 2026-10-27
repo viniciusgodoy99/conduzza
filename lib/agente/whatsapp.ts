@@ -681,8 +681,9 @@ export type DecisaoParaGravar = {
  * pesa no turno. Efeito na agenda primeiro (marcou, confirmou presenca,
  * reservou), depois a passagem pelo agente, depois as frases fixas (onda 2:
  * fora do assunto e "você é um robô?"; a contagem do fora do assunto na
- * janela le este campo), depois a consulta (horario, preco). Sem a lista, o
- * preco sai da trilha, como antes do E4.
+ * janela le este campo), depois a consulta (horario, preco e, desde a AG2,
+ * as do Cadastro: quem atende, o que o paciente precisa e as unidades). Sem
+ * a lista, o preco sai da trilha, como antes do E4.
  */
 const PESO_DA_FERRAMENTA: readonly string[] = [
   "agendar",
@@ -693,6 +694,9 @@ const PESO_DA_FERRAMENTA: readonly string[] = [
   "sou_assistente_virtual",
   "buscar_horario",
   "buscar_procedimento",
+  "buscar_profissionais",
+  "consultar_requisitos",
+  "consultar_unidades",
 ];
 
 export function ferramentaDoTurno(d: {

@@ -265,11 +265,15 @@ describe("o laço com as ferramentas de agenda", () => {
     expect(r.tipo).toBe("resposta");
     expect(r.desfecho).toEqual({ tipo: "respondeu" });
     // As ferramentas que o modelo recebe com Agendar e Confirmar ligadas
-    // (as duas de frase fixa da onda 2 vem sempre, na frente).
+    // (as duas de frase fixa da onda 2 e as tres consultas do Cadastro da
+    // AG2 vem sempre, na frente).
     expect((corpos[0]?.tools as { name: string }[]).map((t) => t.name)).toEqual(
       [
         "fora_do_assunto",
         "sou_assistente_virtual",
+        "consultar_unidades",
+        "consultar_requisitos",
+        "buscar_profissionais",
         "buscar_procedimento",
         "buscar_horario",
         "reservar_horario",
@@ -535,6 +539,9 @@ describe("rodadas, liberação e falha fechada", () => {
       [
         "fora_do_assunto",
         "sou_assistente_virtual",
+        "consultar_unidades",
+        "consultar_requisitos",
+        "buscar_profissionais",
         "buscar_procedimento",
         "escalar_humano",
       ],
