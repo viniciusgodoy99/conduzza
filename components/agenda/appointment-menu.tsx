@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CalendarPlus,
   Check,
+  FileUser,
   History,
   Trash2,
   X,
@@ -20,6 +21,12 @@ import {
   type AgendaActionResult,
 } from "@/app/(app)/agenda/actions";
 import { DICA_REMOVER_SEM_PERMISSAO } from "@/components/agenda/bloqueio-comum";
+import {
+  contatoDaConsulta,
+  DialogoDosDadosInformados,
+  TEXTOS_DOS_DADOS_INFORMADOS,
+  useDadosInformados,
+} from "@/components/agenda/dados-informados";
 import {
   ConfirmarRemocaoDoBloqueio,
   podeRemoverBloqueio,
@@ -132,6 +139,14 @@ import { createClient } from "@/lib/supabase/client";
 // situacoes ficam visiveis e desabilitadas, com a dica uma vez so, logo
 // abaixo de "Mudar situação" (DICA_CONSULTA_PENDENTE, a mesma que a acao
 // devolve e que o gatilho do banco confere). Cancelar continua liberado.
+//
+// AG3 (D-7): a consulta que a IA marcou tem "Ver dados informados" (o que o
+// paciente informou ao assistente para marcar; a aprovacao aplica ao
+// cadastro so onde ele esta vazio). Pendente, e o primeiro item do grupo da
+// pendencia, antes de Aprovar; depois de tratada, fica junto de "Ver
+// histórico" (mostra se os dados ja entraram no cadastro, quando e por
+// quem). A leitura so acontece no clique (grava trilha). Sem permissao,
+// visivel e desabilitado com o porque logo abaixo.
 
 /** Os textos do grupo de pendencia do menu, pelo tipo da pendencia. */
 export function rotulosDaPendenciaNoMenu(daIa: boolean): {
@@ -316,7 +331,11 @@ export function AppointmentMenu({
   const idDicaPendente = useId();
   const idDicaRemarcar = useId();
   const idBloqueio = useId();
+  const idDicaDados = useId();
   const podeRemoverBloqueios = podeRemoverBloqueio(contexto);
+  // "Ver dados informados" (AG3): so a consulta que a IA marcou.
+  const daIa = ehConsultaDaIa(consulta);
+  const dadosInformados = useDadosInformados();
 
   const nome =
     consulta.contact?.name ?? consulta.contact?.phone_e164 ?? "Paciente";
@@ -428,7 +447,31 @@ export function AppointmentMenu({
     });
   };
 
-  const rotulosDaPendencia = rotulosDaPendenciaNoMenu(ehConsultaDaIa(consulta));
+  const rotulosDaPendencia = rotulosDaPendenciaNoMenu(daIa);
+  const pendenteDeAprovacao = aguardaAprovacao(consulta);
+  // O mesmo item nos dois lugares (no grupo da pendencia ou junto do
+  // historico): a leitura so no clique.
+  const itemDosDadosInformados = (
+    <>
+      <DropdownMenuItem
+        disabled={!contexto.podeEditar}
+        aria-describedby={contexto.podeEditar ? undefined : idDicaDados}
+        className="h-10"
+        onSelect={() => dadosInformados.abrir(consulta.id)}
+      >
+        <FileUser className="size-4 shrink-0" aria-hidden />
+        <span>{TEXTOS_DOS_DADOS_INFORMADOS.ver}</span>
+      </DropdownMenuItem>
+      {contexto.podeEditar ? null : (
+        <p
+          id={idDicaDados}
+          className="max-w-64 px-[9px] pb-1.5 text-xs whitespace-normal text-text-secondary"
+        >
+          {TEXTOS_DOS_DADOS_INFORMADOS.semPermissao}
+        </p>
+      )}
+    </>
+  );
   const tratarPendencia = (decisao: AcaoDaPendencia) => {
     iniciarTransicao(async () => {
       mostrarRetornoDaPendencia(await tratarPendenciaNoMenu(consulta, decisao));
@@ -524,12 +567,13 @@ export function AppointmentMenu({
 
           {/* A pendente cancelada (o paciente cancelou) ja conta como
               recusada: sem Aprovar nem Recusar (revisao da onda 2). */}
-          {aguardaAprovacao(consulta) ? (
+          {pendenteDeAprovacao ? (
             <>
               <DropdownMenuGroup>
                 <DropdownMenuLabel className="cz-eyebrow text-[10px] text-text-tertiary">
                   {rotulosDaPendencia.grupo}
                 </DropdownMenuLabel>
+                {daIa ? itemDosDadosInformados : null}
                 <DropdownMenuItem
                   disabled={!contexto.podeEditar || pendente}
                   className="h-10"
@@ -657,6 +701,7 @@ export function AppointmentMenu({
               <span>Marcar nova consulta</span>
             </DropdownMenuItem>
           ) : null}
+          {daIa && !pendenteDeAprovacao ? itemDosDadosInformados : null}
           <DropdownMenuItem
             className="h-10"
             onSelect={() => setHistoricoAberto(true)}
@@ -791,6 +836,18 @@ export function AppointmentMenu({
         aberto={historicoAberto}
         onFechar={() => setHistoricoAberto(false)}
       />
+
+      {daIa ? (
+        <DialogoDosDadosInformados
+          aberto={dadosInformados.aberta !== null}
+          nome={contatoDaConsulta(consulta)}
+          fuso={contexto.timezone}
+          pendente={pendenteDeAprovacao}
+          estado={dadosInformados.estado}
+          aoFechar={dadosInformados.fechar}
+          aoTentarDeNovo={dadosInformados.tentarDeNovo}
+        />
+      ) : null}
     </>
   );
 }

@@ -15,6 +15,8 @@ import {
   agendaDoAgenteSchema,
   agendaDoBanco,
   agendaParaOBanco,
+  dadosExigidosParaOBanco,
+  dadosExigidosSchema,
   diferencasDoRascunho,
   habilidadesComAgendaSchema,
   habilidadesSchema,
@@ -76,7 +78,12 @@ import { createClient } from "@/lib/supabase/server";
 //    (publico_atendido) grava no rascunho pelo mesmo caminho, com a trilha
 //    editou_publico_do_agente sem o valor. A coluna e o grant so existem
 //    depois da migration 20261022110000 (antes, a gravacao falha e a tela
-//    mostra o erro de sempre).
+//    mostra o erro de sempre);
+//  - AG3 (D-6, padrao recomendado): os dados que a IA pede antes de marcar
+//    (exige_nome_completo, exige_nascimento e exige_cpf) gravam no rascunho
+//    pelo mesmo caminho, com a trilha editou_dados_exigidos_do_agente sem o
+//    valor. As colunas e o grant so existem depois da migration
+//    20261027120000.
 // Trilha: audit_log sem texto nenhum (so a acao, a entidade e o id); as
 // RPCs gravam a propria. Log so com clinica, tipo da acao e codigo do erro.
 
@@ -520,6 +527,35 @@ export async function salvarPublicoAction(
     quem,
     "publico",
     publicoParaOBanco(parsed.data.publico),
+  );
+}
+
+/**
+ * Os dados que a IA pede antes de marcar consulta, no rascunho (AG3, D-6):
+ * nome completo, data de nascimento e CPF, os tres de uma vez (o cartao tem
+ * um Salvar so). Vale ao publicar; quem decide se falta algum e o banco,
+ * pela ultima versao publicada. Mesmo caminho de permissao das outras
+ * partes: a guarda daqui (administrador, gestor ou super admin), o grant por
+ * coluna e a policy de UPDATE so no rascunho. A trilha
+ * (editou_dados_exigidos_do_agente) nao leva o valor.
+ */
+export async function salvarDadosExigidosAction(
+  entrada: unknown,
+): Promise<ResultadoDoAgente> {
+  const quem = await exigirQuemConfigura();
+  if ("error" in quem) {
+    return { ok: false, error: quem.error };
+  }
+  const parsed = dadosExigidosSchema.strict().safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: erroDaEntrada(parsed.error) };
+  }
+  const supabase = await createClient();
+  return gravarNoRascunho(
+    supabase,
+    quem,
+    "dados_exigidos",
+    dadosExigidosParaOBanco(parsed.data),
   );
 }
 

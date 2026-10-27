@@ -298,24 +298,29 @@ describe("cartão", () => {
   });
 
   it("quem edita: Aprovar e Recusar habilitados, com 40px", () => {
+    // AG3: a consulta da IA tem tambem "Ver dados informados", antes deles.
     const html = cartao(render([DA_IA]), "Paciente de Teste");
     const botoes = html.match(/<button[^>]*>/g) ?? [];
-    expect(botoes).toHaveLength(2);
+    expect(botoes).toHaveLength(3);
     for (const botao of botoes) {
       expect(botao).toContain("h-10");
       expect(botao).not.toMatch(/ disabled=""/);
     }
-    expect(texto(html)).toMatch(/Aprovar .*Recusar/);
+    expect(texto(html)).toMatch(/Ver dados informados .*Aprovar .*Recusar/);
+    // O encaixe continua so com os dois.
+    const encaixe = cartao(render([ENCAIXE]), "Outra Pessoa");
+    expect(encaixe.match(/<button[^>]*>/g) ?? []).toHaveLength(2);
+    expect(texto(encaixe)).not.toContain("Ver dados informados");
   });
 
-  it("sem permissão: os dois visíveis e desabilitados, com a dica", () => {
+  it("sem permissão: os três visíveis e desabilitados, com a dica", () => {
     const html = cartao(render([DA_IA], false), "Paciente de Teste");
     const gatilhos =
       html.match(
         /<span tabindex="0"[^>]*cursor-not-allowed[^>]*><button[^>]*disabled=""[^>]*>/g,
       ) ?? [];
-    expect(gatilhos).toHaveLength(2);
-    expect(texto(html)).toMatch(/Aprovar .*Recusar/);
+    expect(gatilhos).toHaveLength(3);
+    expect(texto(html)).toMatch(/Ver dados informados .*Aprovar .*Recusar/);
   });
 
   it("vazio: diz que a IA deixa aqui a consulta marcada e o encaixe", () => {

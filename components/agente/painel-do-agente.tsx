@@ -17,8 +17,10 @@ import {
 } from "@/components/agente/acoes";
 import { CartaoDaAgenda } from "@/components/agente/cartao-da-agenda";
 import { CartaoDoPublico } from "@/components/agente/cartao-do-publico";
+import { CartaoDosDadosExigidos } from "@/components/agente/cartao-dos-dados-exigidos";
 import {
   abasNaoSalvas,
+  comOsDadosParaMarcar,
   formulariosNaoSalvos,
   GERACAO_INICIAL,
   geracaoDepoisDeDescartar,
@@ -94,6 +96,10 @@ import {
 //   a pausa) chega pronta da pagina (abaWhatsapp, montada no servidor com a
 //   liberacao lida por quem pode ler). Ela grava na hora, fora do rascunho:
 //   o rodape de publicar nao conta nada dela.
+// - AG3: Regras e limites ganha o cartao "Dados para marcar consulta" (o que
+//   a IA pede antes de marcar), logo depois dos limites, formulario proprio
+//   com a propria chave. O que foi marcado e nao salvo nele conta como o dos
+//   limites (comOsDadosParaMarcar), e descartar remonta os dois.
 //
 // Toda gravacao vai para o RASCUNHO (o paciente so ve depois de publicar).
 // Uma acao por vez: enquanto uma roda, os outros controles esperam. O
@@ -113,6 +119,7 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
   publico: string;
   horario: string;
   agenda: string;
+  dados: string;
   instrucoes: string;
 } {
   return {
@@ -128,6 +135,11 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
     agenda: JSON.stringify([
       config.agenda.antecedenciaHoras,
       config.agenda.horizonteDias,
+    ]),
+    dados: JSON.stringify([
+      config.dadosExigidos.nomeCompleto,
+      config.dadosExigidos.nascimento,
+      config.dadosExigidos.cpf,
     ]),
     instrucoes: JSON.stringify(config.instrucoes),
   };
@@ -164,6 +176,8 @@ export function PainelDoAgente({
   } | null>(null);
   // Os formularios com texto digitado e nao salvo (cada um avisa).
   const [naoSalvos, setNaoSalvos] = useState(NADA_NAO_SALVO);
+  // O cartao "Dados para marcar consulta" (AG3): conta como o dos limites.
+  const [dadosNaoSalvos, setDadosNaoSalvos] = useState(false);
   // Descartar remonta o formulario (a chave muda) com o que esta salvo.
   const [geracao, setGeracao] = useState(GERACAO_INICIAL);
   const avisos = useMemo(() => {
@@ -201,11 +215,15 @@ export function PainelDoAgente({
   const problemas = base === null ? [] : problemasDaPublicacao(configComBase);
   const ultimaPublicada = dados.versoes?.find((versao) => versao.emUso) ?? null;
   const chaves = chavesDosFormularios(config);
-  const pendentes = formulariosNaoSalvos(naoSalvos, superAdmin);
+  const pendentes = formulariosNaoSalvos(
+    comOsDadosParaMarcar(naoSalvos, dadosNaoSalvos),
+    superAdmin,
+  );
 
   const descartarNaoSalvos = () => {
     setGeracao((atuais) => geracaoDepoisDeDescartar(atuais, pendentes));
     setNaoSalvos(NADA_NAO_SALVO);
+    setDadosNaoSalvos(false);
   };
 
   const trocarAba = (valor: string) => {
@@ -477,6 +495,25 @@ export function PainelDoAgente({
                       )
                     }
                     aoMudarNaoSalvo={avisos.agenda}
+                  />
+                }
+                dadosParaMarcar={
+                  <CartaoDosDadosExigidos
+                    key={`${chaves.dados}:${geracao.agenda}`}
+                    dados={config.dadosExigidos}
+                    podeEditar={podeEditar}
+                    dica={dica}
+                    pendente={pendente}
+                    salvando={ocupado("dados")}
+                    aoSalvar={(dadosExigidos, retorno) =>
+                      executar(
+                        "dados",
+                        () => acoes.salvarDadosExigidos(dadosExigidos),
+                        T.dadosSalvos,
+                        retorno,
+                      )
+                    }
+                    aoMudarNaoSalvo={setDadosNaoSalvos}
                   />
                 }
                 podeEditar={podeEditar}

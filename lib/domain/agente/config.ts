@@ -589,6 +589,109 @@ export function tipoDoContatoDoBanco(valor: unknown): TipoDoContato | null {
 }
 
 // ---------------------------------------------------------------------------
+// Dados para marcar consulta (AG3): o que a IA pede antes de marcar
+// ---------------------------------------------------------------------------
+
+/**
+ * Os dados que a clinica exige para a IA marcar consulta (AG3, decisao D-6
+ * do dono, padrao recomendado), nas colunas exige_nome_completo,
+ * exige_nascimento e exige_cpf de ai_agent_config (migration
+ * 20261027120000). Versionados como a antecedencia e o horizonte: gravam no
+ * rascunho, valem ao publicar e voltam no restaurar (o banco copia as tres em
+ * agente_garantir_rascunho e restaurar_versao_do_agente). Quem decide se
+ * falta algum e o banco (dados_que_faltam_para_marcar, pela ultima versao
+ * publicada; o agendar recusa com faltam_dados): o que esta aqui e o que a
+ * tela mostra e o que o motor le. A carteirinha nao e escolha daqui: e pedida
+ * na consulta pelo convenio quando o Cadastro diz que o convenio ou o
+ * procedimento a exige.
+ *
+ * Os dados que o paciente informa ficam a parte (dados_informados_na_
+ * marcacao) e entram no cadastro do contato so quando a equipe APROVA a
+ * consulta, e so nos campos vazios (D-7).
+ */
+export type DadosExigidos = {
+  nomeCompleto: boolean;
+  nascimento: boolean;
+  cpf: boolean;
+};
+
+export type DadoExigido = keyof DadosExigidos;
+
+/** O titulo do cartao da aba Regras e limites (e do "o que mudou"). */
+export const ROTULO_DOS_DADOS_EXIGIDOS = "Dados para marcar consulta";
+
+/**
+ * Os tres, na ordem da tela, com o rotulo da caixa e o jeito de dizer no "o
+ * que mudou" ("pede o CPF").
+ */
+export const DADOS_EXIGIDOS: readonly {
+  chave: DadoExigido;
+  rotulo: string;
+  noTexto: string;
+}[] = [
+  {
+    chave: "nomeCompleto",
+    rotulo: "Nome completo",
+    noTexto: "o nome completo",
+  },
+  {
+    chave: "nascimento",
+    rotulo: "Data de nascimento",
+    noTexto: "a data de nascimento",
+  },
+  { chave: "cpf", rotulo: "CPF", noTexto: "o CPF" },
+];
+
+/**
+ * O padrao da coluna para a PRIMEIRA versao de uma clinica (D-6: nome
+ * completo e nascimento, sim; CPF, nao). As versoes que ja existiam antes da
+ * migration leem os tres falsos (dadosExigidosDoBanco), e o rascunho copia a
+ * ultima publicada.
+ */
+export function dadosExigidosPadrao(): DadosExigidos {
+  return { nomeCompleto: true, nascimento: true, cpf: false };
+}
+
+/**
+ * As tres colunas para os dados exigidos. So true conta: falso, nulo ou
+ * ausente (coluna fora do select, ou antes da migration) le falso, como as
+ * versoes de antes da migration. Nunca lanca.
+ */
+export function dadosExigidosDoBanco(linha: {
+  exige_nome_completo?: unknown;
+  exige_nascimento?: unknown;
+  exige_cpf?: unknown;
+}): DadosExigidos {
+  return {
+    nomeCompleto: linha.exige_nome_completo === true,
+    nascimento: linha.exige_nascimento === true,
+    cpf: linha.exige_cpf === true,
+  };
+}
+
+/** Os dados exigidos nas colunas do banco (o inverso de dadosExigidosDoBanco). */
+export function dadosExigidosParaOBanco(dados: DadosExigidos): {
+  exige_nome_completo: boolean;
+  exige_nascimento: boolean;
+  exige_cpf: boolean;
+} {
+  return {
+    exige_nome_completo: dados.nomeCompleto,
+    exige_nascimento: dados.nascimento,
+    exige_cpf: dados.cpf,
+  };
+}
+
+const ERRO_DO_DADO_EXIGIDO = "Marque ou desmarque a caixa.";
+
+/** Entrada do cartao "Dados para marcar consulta" (aba Regras e limites). */
+export const dadosExigidosSchema = z.object({
+  nomeCompleto: z.boolean({ error: ERRO_DO_DADO_EXIGIDO }),
+  nascimento: z.boolean({ error: ERRO_DO_DADO_EXIGIDO }),
+  cpf: z.boolean({ error: ERRO_DO_DADO_EXIGIDO }),
+});
+
+// ---------------------------------------------------------------------------
 // Horario de operacao
 // ---------------------------------------------------------------------------
 
@@ -951,6 +1054,14 @@ export function fimDoExpedienteAgora(
  * fora_do_assunto, a pessoa insistiu num assunto que nao e da clinica depois
  * da resposta educada. E motivo do SISTEMA (o laco decide pela contagem da
  * janela), nunca do modelo: fica fora de MOTIVOS_DO_AGENTE.
+ *
+ * AG3, agendamento completo (migration 20261027120000, que redefine o CHECK
+ * de novo; decisoes D-6 a D-8 do dono, padrao recomendado): a IA passa para
+ * a equipe quando a consulta e para outra pessoa
+ * (consulta_para_outra_pessoa), quando o paciente ja tem consulta futura do
+ * mesmo procedimento (ja_tem_consulta) e quando faltaram os dados que a
+ * clinica exige para marcar (faltam_dados). Quais deles o modelo pode dar e
+ * decisao do motor (lib/agente), nao desta lista.
  */
 export const MOTIVOS_DE_ESCALONAMENTO = [
   "sintoma",
@@ -971,6 +1082,9 @@ export const MOTIVOS_DE_ESCALONAMENTO = [
   "nao_individual",
   "pedido_de_agenda",
   "fora_do_assunto",
+  "consulta_para_outra_pessoa",
+  "ja_tem_consulta",
+  "faltam_dados",
 ] as const;
 export type MotivoDeEscalonamento = (typeof MOTIVOS_DE_ESCALONAMENTO)[number];
 
@@ -1003,6 +1117,10 @@ export const ROTULO_DO_MOTIVO_DE_ESCALONAMENTO: Readonly<
   pedido_de_agenda: "o paciente quer marcar, remarcar ou cancelar",
   // Onda 2 (item 5): texto do evento proposto no contrato (secao 9).
   fora_do_assunto: "a pessoa insistiu num assunto fora da clínica",
+  // AG3 (migration 20261027120000): os rotulos de rotulo_do_motivo_da_ia.
+  consulta_para_outra_pessoa: "a consulta é para outra pessoa",
+  ja_tem_consulta: "o paciente já tem consulta marcada deste procedimento",
+  faltam_dados: "faltaram dados do paciente para marcar",
 };
 
 /**
@@ -1047,10 +1165,11 @@ function passagemDaIa(motivo: MotivoDeEscalonamento): string {
  * Espelho EXATO de rotulo_do_motivo_da_ia() da migration MAIS NOVA que a
  * define (a 20261019120000 trocou o texto de 'parada'; a da onda 2,
  * 20261022110000, traz no_expediente, retomou_no_horario, fora_do_assunto e
- * o texto novo de horario_nao_suportado): um teste cruza os dois
- * (tests/unit/ia-whatsapp/espelhos.test.ts). O banco grava o evento; este
- * espelho existe para o teste e para quem precisar mostrar o mesmo texto sem
- * ir ao banco.
+ * o texto novo de horario_nao_suportado; a da AG3, 20261027120000, traz
+ * consulta_para_outra_pessoa, ja_tem_consulta e faltam_dados): um teste
+ * cruza os dois (tests/unit/ia-whatsapp/espelhos.test.ts). O banco grava o
+ * evento; este espelho existe para o teste e para quem precisar mostrar o
+ * mesmo texto sem ir ao banco.
  */
 export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   Record<MotivoDoEventoDaIa, string>
@@ -1072,6 +1191,9 @@ export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   teto_de_respostas: passagemDaIa("teto_de_respostas"),
   pedido_de_agenda: passagemDaIa("pedido_de_agenda"),
   fora_do_assunto: passagemDaIa("fora_do_assunto"),
+  consulta_para_outra_pessoa: passagemDaIa("consulta_para_outra_pessoa"),
+  ja_tem_consulta: passagemDaIa("ja_tem_consulta"),
+  faltam_dados: passagemDaIa("faltam_dados"),
   nao_individual:
     "Chegou uma mensagem de grupo ou de status. A conversa voltou para a equipe.",
   fora_do_horario: `${PASSAGEM_DA_IA}agora está fora do horário escolhido para o assistente.`,
@@ -1614,6 +1736,12 @@ export type ConfigDoAgente = {
    */
   publico: PublicoDoAgente | null;
   /**
+   * Os dados que a IA pede antes de marcar (AG3, D-6; colunas
+   * exige_nome_completo, exige_nascimento e exige_cpf). Coluna fora do
+   * select le falso (dadosExigidosDoBanco).
+   */
+  dadosExigidos: DadosExigidos;
+  /**
    * So no servidor (motor) e para o super admin. Para os outros papeis chega
    * nulo: a sessao nao tem grant na coluna.
    */
@@ -1639,6 +1767,7 @@ export function configPadraoDoAgente(): ConfigDoAgente {
     horario: horarioPadrao(),
     agenda: agendaPadrao(),
     publico: null,
+    dadosExigidos: dadosExigidosPadrao(),
     instrucoes: null,
     base: [],
   };
@@ -1687,6 +1816,14 @@ export type LinhaDaConfigDoAgente = {
    * para de responder, a licao da E4).
    */
   publico_atendido?: string | null;
+  /**
+   * AG3 (migration 20261027120000): os dados que a IA pede antes de marcar.
+   * Opcionais pelo mesmo motivo de publico_atendido: fora do select (ou
+   * antes da migration) leem falso.
+   */
+  exige_nome_completo?: boolean | null;
+  exige_nascimento?: boolean | null;
+  exige_cpf?: boolean | null;
 };
 
 function ehTom(valor: unknown): valor is TomDoAgente {
@@ -1856,6 +1993,7 @@ export function configDaLinha(
     horario: horarioDoBanco(linha),
     agenda,
     publico: publicoDoBanco(linha.publico_atendido),
+    dadosExigidos: dadosExigidosDoBanco(linha),
     instrucoes: textoOuNulo(extras.instrucoes),
     base: extras.base,
   };
@@ -2014,6 +2152,7 @@ export type CampoDaMudanca =
   | "horario"
   | "agenda"
   | "publico"
+  | "dados_exigidos"
   | "instrucoes"
   | "base"
   | "primeira_publicacao";
@@ -2193,9 +2332,35 @@ function mudancasDaAgenda(
 }
 
 /**
+ * Cada dado exigido que mudou conta uma vez ("Dados para marcar consulta:
+ * pede o CPF", "...: não pede o nome completo"). Ausente num lado (uma
+ * configuracao montada a mao) nao conta.
+ */
+function mudancasDosDadosExigidos(
+  rascunho: DadosExigidos | undefined,
+  publicada: DadosExigidos | undefined,
+): Mudanca[] {
+  if (rascunho === undefined || publicada === undefined) {
+    return [];
+  }
+  const mudancas: Mudanca[] = [];
+  for (const dado of DADOS_EXIGIDOS) {
+    const exigido = rascunho[dado.chave];
+    if (exigido !== publicada[dado.chave]) {
+      mudancas.push({
+        campo: "dados_exigidos",
+        rotulo: `${ROTULO_DOS_DADOS_EXIGIDOS}: ${exigido ? "pede" : "não pede"} ${dado.noTexto}`,
+      });
+    }
+  }
+  return mudancas;
+}
+
+/**
  * O que o rascunho muda em relacao a versao publicada, para "N alterações
  * não publicadas" e para o "o que mudou" das Versões. Cada habilidade, cada
- * dia do expediente, cada campo da agenda, o publico (onda 2) e cada item da
+ * dia do expediente, cada campo da agenda, o publico (onda 2), cada dado
+ * exigido para marcar (AG3, so contra uma versao publicada) e cada item da
  * base conta como uma mudanca. As habilidades sao comparadas como valem de fato
  * (habilidadesComAgenda). A base e comparada pelo snapshot da publicada:
  * item criado, reativado, editado, desativado ou excluido conta uma vez.
@@ -2268,6 +2433,20 @@ export function diferencasDoRascunho(
           : ROTULO_DO_PUBLICO[publicoNovo]
       }`,
     });
+  }
+  // AG3: os dados para marcar consulta so contam contra uma versao
+  // publicada de verdade. Contra os padroes nao: as versoes de antes da
+  // migration leem os tres falsos e o padrao da primeira versao e outro
+  // (nome completo e nascimento), entao a versao 1 de toda clinica que ja
+  // existia ganharia, nas Versoes, duas mudancas que ninguem fez. Sem versao
+  // publicada sempre ha o que publicar (a primeira versao).
+  if (publicada !== null) {
+    mudancas.push(
+      ...mudancasDosDadosExigidos(
+        rascunho.dadosExigidos,
+        publicada.dadosExigidos,
+      ),
+    );
   }
   if (!mesmoTexto(rascunho.instrucoes, referencia.instrucoes)) {
     mudancas.push(MUDANCA_DAS_INSTRUCOES);

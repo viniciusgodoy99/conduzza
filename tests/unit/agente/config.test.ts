@@ -15,6 +15,11 @@ import {
   comMudancaDasInstrucoes,
   configDaLinha,
   configPadraoDoAgente,
+  DADOS_EXIGIDOS,
+  dadosExigidosDoBanco,
+  dadosExigidosPadrao,
+  dadosExigidosParaOBanco,
+  dadosExigidosSchema,
   descricaoDoModo,
   DIAS_DA_SEMANA,
   DICA_DA_AGENDA_INCOMPLETA,
@@ -66,6 +71,7 @@ import {
   ROTULO_DO_DIA,
   ROTULO_DO_MODO,
   ROTULO_DO_CAMPO_PUBLICO,
+  ROTULO_DOS_DADOS_EXIGIDOS,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
   ROTULO_DO_PUBLICO,
   ROTULO_DO_PUBLICO_NAO_ESCOLHIDO,
@@ -87,6 +93,7 @@ import {
   avaliarRegras,
   LIMITE_DO_RASCUNHO,
 } from "@/lib/domain/conformidade/filtro-deterministico";
+import { COLUNAS_DA_CONFIG_DO_AGENTE } from "@/lib/queries/agente";
 
 // Dominio puro da Tela 6 (configuracao do agente de IA). As outras partes
 // (banco, motor, telas) dependem destes nomes e destas regras.
@@ -816,8 +823,10 @@ describe("horario de operacao", () => {
 describe("escalonamento e conformidade", () => {
   it("os motivos espelham o CHECK de escalation_reason da migration mais nova que o define", () => {
     // O CHECK foi redefinido no E3 (falha_tecnica, teto_de_respostas,
-    // nao_individual e pedido_de_agenda) e na onda 2 (fora_do_assunto,
-    // migration 20261022110000): vale o da migration mais nova.
+    // nao_individual e pedido_de_agenda), na onda 2 (fora_do_assunto,
+    // migration 20261022110000) e na AG3 (consulta_para_outra_pessoa,
+    // ja_tem_consulta e faltam_dados, migration 20261027120000): vale o da
+    // migration mais nova.
     const pasta = "supabase/migrations";
     const arquivos = readdirSync(pasta)
       .filter((arquivo) => arquivo.endsWith(".sql"))
@@ -839,11 +848,24 @@ describe("escalonamento e conformidade", () => {
       }
     }
     expect(bloco).not.toBeNull();
-    expect((arquivoDoCheck ?? "") >= "20261022110000").toBe(true);
+    expect((arquivoDoCheck ?? "") >= "20261027120000").toBe(true);
     const doBanco = [...(bloco ?? "").matchAll(/'([a-z_]+)'/g)].map(
       (m) => m[1],
     );
     expect([...MOTIVOS_DE_ESCALONAMENTO].sort()).toEqual(doBanco.sort());
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(21);
+  });
+
+  it("AG3: os três motivos novos têm o rótulo do banco", () => {
+    expect(ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.consulta_para_outra_pessoa).toBe(
+      "a consulta é para outra pessoa",
+    );
+    expect(ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.ja_tem_consulta).toBe(
+      "o paciente já tem consulta marcada deste procedimento",
+    );
+    expect(ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.faltam_dados).toBe(
+      "faltaram dados do paciente para marcar",
+    );
   });
 
   it("os 6 gatilhos obrigatorios sao motivos validos", () => {
@@ -1439,6 +1461,9 @@ describe("leitura do banco", () => {
       agenda: { antecedenciaHoras: null, horizonteDias: null },
       // Onda 2: coluna fora do select (ou antes da migration) e nula.
       publico: null,
+      // AG3: colunas fora do select (ou antes da migration) leem falso,
+      // como as versoes de antes da migration 20261027120000.
+      dadosExigidos: { nomeCompleto: false, nascimento: false, cpf: false },
       instrucoes: "Seja breve.",
       base,
     });
@@ -1510,6 +1535,8 @@ describe("leitura do banco", () => {
       },
       agenda: { antecedenciaHoras: null, horizonteDias: null },
       publico: null,
+      // AG3 (D-6): o padrao da coluna para a primeira versao da clinica.
+      dadosExigidos: { nomeCompleto: true, nascimento: true, cpf: false },
       instrucoes: null,
       base: [],
     });
@@ -1642,6 +1669,236 @@ describe("público do assistente", () => {
     for (const valor of [null, undefined, "", "Lead", "cliente"]) {
       expect(tipoDoContatoDoBanco(valor), String(valor)).toBeNull();
     }
+  });
+});
+
+// AG3 (migration 20261027120000; decisao D-6 do dono, padrao recomendado):
+// os dados que a IA pede antes de marcar moram na configuracao do agente
+// (versionados), nas colunas exige_nome_completo, exige_nascimento e
+// exige_cpf.
+describe("dados para marcar consulta (AG3)", () => {
+  const MIGRATION_DA_AG3 =
+    "supabase/migrations/20261027120000_agendamento_completo_da_ia.sql";
+  const linha: LinhaDaConfigDoAgente = {
+    version: 3,
+    status: "publicada",
+    agent_name: "Ana",
+    tone: "cordial",
+    use_emoji: false,
+    greeting: null,
+    closing: null,
+    skills: {},
+    operating_mode: "24h",
+    fallback_minutes: 5,
+    operating_hours: null,
+    agenda_antecedencia_horas: null,
+    agenda_horizonte_dias: null,
+  };
+
+  it("a lista e os rótulos da tela, sem travessão", () => {
+    expect(DADOS_EXIGIDOS.map((d) => d.chave)).toEqual([
+      "nomeCompleto",
+      "nascimento",
+      "cpf",
+    ]);
+    expect(DADOS_EXIGIDOS.map((d) => d.rotulo)).toEqual([
+      "Nome completo",
+      "Data de nascimento",
+      "CPF",
+    ]);
+    expect(ROTULO_DOS_DADOS_EXIGIDOS).toBe("Dados para marcar consulta");
+    for (const texto of [
+      ROTULO_DOS_DADOS_EXIGIDOS,
+      ...DADOS_EXIGIDOS.flatMap((d) => [d.rotulo, d.noTexto]),
+    ]) {
+      expect(texto).not.toMatch(TRAVESSAO);
+      expect(texto).not.toMatch(JARGAO);
+    }
+  });
+
+  it("o padrão é o da coluna para a primeira versão (nome completo e nascimento, sem CPF)", () => {
+    expect(dadosExigidosPadrao()).toEqual({
+      nomeCompleto: true,
+      nascimento: true,
+      cpf: false,
+    });
+    const sql = readFileSync(MIGRATION_DA_AG3, "utf-8");
+    // As versoes que existem leem falso; a coluna passa a nascer verdadeira
+    // so para nome completo e nascimento.
+    expect(sql).toMatch(
+      /add column exige_nome_completo boolean not null default false/,
+    );
+    expect(sql).toMatch(/alter column exige_nome_completo set default true/);
+    expect(sql).toMatch(/alter column exige_nascimento set default true/);
+    expect(sql).toMatch(/add column exige_cpf boolean not null default false/);
+    expect(sql).not.toMatch(/alter column exige_cpf set default true/);
+  });
+
+  it("a Tela 6 lê as três colunas, que têm o grant por coluna da sessão", () => {
+    for (const coluna of [
+      "exige_nome_completo",
+      "exige_nascimento",
+      "exige_cpf",
+    ]) {
+      expect(COLUNAS_DA_CONFIG_DO_AGENTE).toContain(coluna);
+    }
+    const sql = readFileSync(MIGRATION_DA_AG3, "utf-8").replace(/\s+/g, " ");
+    expect(sql).toContain(
+      "grant select (exige_nome_completo, exige_nascimento, exige_cpf), update (exige_nome_completo, exige_nascimento, exige_cpf) on public.ai_agent_config to authenticated",
+    );
+  });
+
+  it("do banco: só true conta; nulo, ausente ou outro valor lê falso", () => {
+    expect(
+      dadosExigidosDoBanco({
+        exige_nome_completo: true,
+        exige_nascimento: false,
+        exige_cpf: true,
+      }),
+    ).toEqual({ nomeCompleto: true, nascimento: false, cpf: true });
+    expect(dadosExigidosDoBanco({})).toEqual({
+      nomeCompleto: false,
+      nascimento: false,
+      cpf: false,
+    });
+    expect(
+      dadosExigidosDoBanco({
+        exige_nome_completo: null,
+        exige_nascimento: "true",
+        exige_cpf: 1,
+      }),
+    ).toEqual({ nomeCompleto: false, nascimento: false, cpf: false });
+    expect(
+      dadosExigidosParaOBanco({
+        nomeCompleto: true,
+        nascimento: false,
+        cpf: true,
+      }),
+    ).toEqual({
+      exige_nome_completo: true,
+      exige_nascimento: false,
+      exige_cpf: true,
+    });
+  });
+
+  it("configDaLinha lê as três colunas; sem elas, falso", () => {
+    expect(
+      configDaLinha(
+        {
+          ...linha,
+          exige_nome_completo: true,
+          exige_nascimento: true,
+          exige_cpf: true,
+        },
+        { base: [] },
+      ).dadosExigidos,
+    ).toEqual({ nomeCompleto: true, nascimento: true, cpf: true });
+    expect(configDaLinha(linha, { base: [] }).dadosExigidos).toEqual({
+      nomeCompleto: false,
+      nascimento: false,
+      cpf: false,
+    });
+  });
+
+  it("o schema aceita os três booleanos e recusa o resto (a ação usa o strict)", () => {
+    expect(
+      dadosExigidosSchema.parse({
+        nomeCompleto: true,
+        nascimento: false,
+        cpf: true,
+      }),
+    ).toEqual({ nomeCompleto: true, nascimento: false, cpf: true });
+    for (const entrada of [
+      {},
+      { nomeCompleto: true, nascimento: true },
+      { nomeCompleto: "sim", nascimento: true, cpf: false },
+      { nomeCompleto: true, nascimento: null, cpf: false },
+      null,
+      "tudo",
+    ]) {
+      expect(
+        dadosExigidosSchema.safeParse(entrada).success,
+        JSON.stringify(entrada),
+      ).toBe(false);
+    }
+    expect(
+      dadosExigidosSchema
+        .strict()
+        .safeParse({
+          nomeCompleto: true,
+          nascimento: true,
+          cpf: false,
+          extra: 1,
+        }).success,
+    ).toBe(false);
+  });
+
+  it("entra no 'o que mudou' contra a versão publicada: cada dado uma vez", () => {
+    const publicada = config({
+      status: "publicada",
+      versao: 3,
+      dadosExigidos: { nomeCompleto: false, nascimento: false, cpf: false },
+    });
+    const rascunho = config({
+      versao: 4,
+      dadosExigidos: { nomeCompleto: true, nascimento: true, cpf: false },
+    });
+    expect(diferencasDoRascunho(rascunho, publicada)).toEqual([
+      {
+        campo: "dados_exigidos",
+        rotulo: "Dados para marcar consulta: pede o nome completo",
+      },
+      {
+        campo: "dados_exigidos",
+        rotulo: "Dados para marcar consulta: pede a data de nascimento",
+      },
+    ]);
+    expect(
+      diferencasDoRascunho(
+        config({
+          dadosExigidos: { nomeCompleto: false, nascimento: true, cpf: true },
+        }),
+        config({
+          status: "publicada",
+          dadosExigidos: { nomeCompleto: true, nascimento: true, cpf: false },
+        }),
+      ),
+    ).toEqual([
+      {
+        campo: "dados_exigidos",
+        rotulo: "Dados para marcar consulta: não pede o nome completo",
+      },
+      {
+        campo: "dados_exigidos",
+        rotulo: "Dados para marcar consulta: pede o CPF",
+      },
+    ]);
+    // Igual nos dois lados: nada muda.
+    expect(
+      diferencasDoRascunho(rascunho, { ...rascunho, status: "publicada" }),
+    ).toEqual([]);
+  });
+
+  it("sem versão publicada não conta: a versão 1 das clínicas de antes não ganha mudança que ninguém fez", () => {
+    const antiga = config({
+      status: "publicada",
+      versao: 1,
+      dadosExigidos: { nomeCompleto: false, nascimento: false, cpf: false },
+    });
+    expect(diferencasDoRascunho(antiga, null)).toEqual([
+      { campo: "primeira_publicacao", rotulo: "Primeira versão do assistente" },
+    ]);
+    // O rascunho de quem nunca publicou continua com o que publicar.
+    expect(
+      diferencasDoRascunho(
+        config({
+          dadosExigidos: { nomeCompleto: true, nascimento: true, cpf: true },
+        }),
+        null,
+      ),
+    ).toEqual([
+      { campo: "primeira_publicacao", rotulo: "Primeira versão do assistente" },
+    ]);
   });
 });
 

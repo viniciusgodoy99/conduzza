@@ -49,6 +49,11 @@ import {
 } from "@/lib/jobs/numero-de-envio";
 import { log } from "@/lib/log";
 import { ehConsultaDaIa } from "@/lib/queries/agenda";
+import {
+  lerDadosInformadosNaMarcacao,
+  type DadosInformadosNaMarcacao,
+} from "@/lib/queries/dados-da-marcacao";
+import { fetchProfileNames } from "@/lib/queries/profiles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -1379,6 +1384,109 @@ async function gravarRecusa(
     : null;
   revalidatePath("/agenda");
   return aviso ? { ok: true, aviso } : { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Dados informados pelo paciente (AG3): o "Ver dados informados"
+// ---------------------------------------------------------------------------
+//
+// AG3 (decisao D-7 do dono, padrao recomendado): o que o paciente informou a
+// IA para marcar (nome completo, nascimento, CPF e carteirinha) fica a parte
+// e so entra no cadastro do contato quando a equipe APROVA a consulta, e so
+// nos campos vazios (o gatilho do banco). Quem aprova confere antes, pelo
+// "Ver dados informados" do painel "Pendente de voce" e do menu da consulta.
+//
+// A leitura e pela SESSAO, pela RPC ler_dados_informados_na_marcacao (a
+// unica leitura humana da tabela), que confere de novo o papel (quem escreve
+// na clinica; o profissional so na propria agenda) e grava a trilha
+// leu_dados_da_marcacao quando ha dado, sem o conteudo. Por isso a tela so
+// chama sob demanda, no clique. Aqui: a guarda de sempre da Agenda (o papel
+// leitura nem chega ao banco), o id pelo Zod e o nome de quem aprovou (a
+// tela nunca recebe o id). Log so com ids e o codigo do erro; o conteudo
+// nunca sai daqui a nao ser para a tela de quem pode ler.
+
+/** O que a tela mostra: a linha lida, com o nome de quem aplicou. */
+export type DadosInformadosDaConsulta = Omit<
+  DadosInformadosNaMarcacao,
+  "aplicadoPorId"
+> & {
+  /**
+   * Quem aprovou a consulta e, com isso, aplicou os dados ao cadastro: o
+   * nome, ou nulo quando o nome nao pode ser lido. Nulo inteiro quando o
+   * banco nao guardou ninguem (ainda nao aplicado, ou aplicado sem sessao).
+   */
+  aplicadoPor: { nome: string | null } | null;
+};
+
+export type ResultadoDosDadosInformados =
+  | { ok: true; dados: DadosInformadosDaConsulta | null }
+  | { ok: false; error: string };
+
+const TEXTOS_DOS_DADOS_INFORMADOS = {
+  sessaoExpirada: "Sessão expirada. Entre de novo.",
+  semPermissao: "Seu perfil não vê os dados que o paciente informou.",
+  invalida: "Consulta inválida.",
+  naoEncontrada: "Esta consulta não está mais na agenda. Atualize a página.",
+  naoLeu: "Não foi possível carregar os dados. Tente de novo.",
+} as const;
+
+export async function lerDadosInformadosAction(
+  id: unknown,
+): Promise<ResultadoDosDadosInformados> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: TEXTOS_DOS_DADOS_INFORMADOS.sessaoExpirada };
+  }
+  // Quem aprova (a Agenda com escrita): o papel leitura nao le, nem pela
+  // RPC (user_can_write).
+  if (!canEdit(context.active.role, "agenda")) {
+    return { ok: false, error: TEXTOS_DOS_DADOS_INFORMADOS.semPermissao };
+  }
+  const parsed = idSchema.safeParse(id);
+  if (!parsed.success) {
+    return { ok: false, error: TEXTOS_DOS_DADOS_INFORMADOS.invalida };
+  }
+  const clinicId = context.active.clinicId;
+  const supabase = await createClient();
+  const lido = await lerDadosInformadosNaMarcacao(
+    supabase,
+    clinicId,
+    parsed.data,
+  );
+  if (!lido.ok) {
+    log.warn("agenda_dados_informados_nao_lidos", {
+      clinic_id: clinicId,
+      user_id: context.userId,
+      error_code: lido.codigo,
+    });
+    return {
+      ok: false,
+      error:
+        lido.codigo === "42501"
+          ? TEXTOS_DOS_DADOS_INFORMADOS.semPermissao
+          : lido.codigo === "P0002"
+            ? TEXTOS_DOS_DADOS_INFORMADOS.naoEncontrada
+            : TEXTOS_DOS_DADOS_INFORMADOS.naoLeu,
+    };
+  }
+  if (lido.dados === null) {
+    return { ok: true, dados: null };
+  }
+  const { aplicadoPorId, ...dados } = lido.dados;
+  let aplicadoPor: DadosInformadosDaConsulta["aplicadoPor"] = null;
+  if (aplicadoPorId !== null) {
+    let nome: string | null = null;
+    try {
+      nome =
+        (await fetchProfileNames(supabase, [aplicadoPorId]))[aplicadoPorId] ??
+        null;
+    } catch {
+      // Sem o nome os dados continuam na tela: "por alguém da equipe".
+      nome = null;
+    }
+    aplicadoPor = { nome };
+  }
+  return { ok: true, dados: { ...dados, aplicadoPor } };
 }
 
 // ---------------------------------------------------------------------------
