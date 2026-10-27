@@ -351,7 +351,9 @@ export function criarAgendaDoTurno(entrada: {
         ? `Reservaria ${quando} por ${MINUTOS_DA_RESERVA} minutos. ${SIMULADO}`
         : `Reservou ${quando} por ${MINUTOS_DA_RESERVA} minutos`,
       [],
-      { acao: "reservou" },
+      // Revisao da AG2: o horario reservado tambem e horario livre do turno
+      // (o dia e a hora como foram ao modelo).
+      { acao: "reservou", horarios: [{ dia, hora }] },
     );
   }
 

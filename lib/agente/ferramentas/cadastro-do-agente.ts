@@ -22,7 +22,12 @@
 //    do requisito) passa de novo pelas regras deterministicas do filtro
 //    (problemaNoTextoDoAgente): e a segunda trava, depois da tela de
 //    Cadastros, para um texto gravado direto no banco. O que nao passa fica
-//    de fora e so conta (descartados).
+//    de fora e so conta (descartados). Revisao da AG2: o nome de lugar com
+//    palavra que as regras clinicas leem como sintoma ou remedio ("Rua das
+//    Dores", "Nossa Senhora dos Remedios") nao derruba o endereco; so essas
+//    palavras (PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR), so como a ultima palavra
+//    do logradouro, do bairro e da cidade, e o endereco continua conferido
+//    inteiro.
 //  - Preparo clinico nunca entra: procedure.prep_instructions nem e lido
 //    (decisao D-4, opcao A: jejum e cuidados continuam com a equipe).
 //  - A faixa de jornada sem unidade (unit_id nulo) vale para QUALQUER
@@ -30,6 +35,7 @@
 //    unidade").
 
 import { problemaNoTextoDoAgente } from "@/lib/domain/agente/config";
+import { semPalavrasClinicasDeLugar } from "@/lib/domain/conformidade/fatos-do-turno";
 import {
   descricaoDoRequisito,
   ehTipoDeRequisito,
@@ -216,6 +222,40 @@ export function enderecoMontado(unidade: LinhaDaUnidade): string | null {
     .join(", ");
 }
 
+/**
+ * O endereco montado que pode ir ao paciente (revisao da AG2): o mesmo
+ * textoAoPacienteParaOAgente e, se ele nao passar, uma segunda conferencia
+ * com a ULTIMA palavra do logradouro, do bairro e da cidade trocada por uma
+ * neutra quando ela esta em PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR ("Rua das
+ * Dores" e nome de rua). O numero, o complemento e a UF nunca ganham a
+ * troca, e qualquer outra regra (remedio de verdade, telefone, promessa)
+ * continua derrubando o endereco inteiro: "Rua Tome Dipirona" e "Rua Dores
+ * de Cabeca Passam" ficam de fora. O endereco que passa assim e mascarado
+ * so nas vedacoes clinicas do filtro de saida quando o modelo o repete
+ * (trechosDeEnderecoDasFerramentas).
+ */
+export function enderecoParaOAgente(unidade: LinhaDaUnidade): {
+  texto: string | null;
+  descartado: boolean;
+} {
+  const montado = enderecoMontado(unidade);
+  const lido = textoAoPacienteParaOAgente(montado);
+  if (!lido.descartado || montado === null) {
+    return lido;
+  }
+  const trocar = (valor: string | null | undefined) =>
+    typeof valor === "string" ? semPalavrasClinicasDeLugar(valor) : valor;
+  const neutro = enderecoMontado({
+    ...unidade,
+    logradouro: trocar(unidade.logradouro),
+    bairro: trocar(unidade.bairro),
+    cidade: trocar(unidade.cidade),
+  });
+  return neutro !== null && textoAoPacienteParaOAgente(neutro).texto !== null
+    ? { texto: numaLinhaSoh(montado), descartado: false }
+    : lido;
+}
+
 // ---------------------------------------------------------------------------
 // Horario de funcionamento em texto curto
 // ---------------------------------------------------------------------------
@@ -346,10 +386,14 @@ export function unidadesParaOAgente(linhas: readonly LinhaDaUnidade[]): {
     const horario = lerHorarioDeFuncionamento(
       linha.horario_de_funcionamento ?? null,
     );
+    const endereco = enderecoParaOAgente(linha);
+    if (endereco.descartado) {
+      descartados += 1;
+    }
     prontas.push({
       id: linha.id,
       nome,
-      endereco: texto(enderecoMontado(linha)),
+      endereco: endereco.texto,
       referencia: texto(linha.referencia),
       estacionamento: texto(linha.estacionamento),
       acessibilidade: texto(linha.acessibilidade),

@@ -13,8 +13,13 @@
 //    leem como afirmacao do modelo), com o aviso de assistente virtual e a
 //    frase de fora do assunto;
 //  - os convenios do Cadastro (so nome e plano), para reconhecer o nome no
-//    rascunho;
-//  - o ano de hoje no fuso da clinica.
+//    rascunho, e se ele nao tem nenhum convenio ativo (a negativa "nao
+//    atendemos convenio" e verdade);
+//  - os nomes dos procedimentos ativos do Cadastro (o procedimento citado
+//    ao lado do convenio precisa do fato dele);
+//  - os horarios livres que as ferramentas de agenda trouxeram (a unica
+//    prova da frase que afirma horario livre);
+//  - o ano e o dia de hoje no fuso da clinica.
 // As mensagens novas do paciente (fonte de data e hora) o filtro ja recebe
 // em mensagensDoPaciente. Quem chama (lib/agente/laco.ts) falha fechado se
 // montar os fatos lancar.
@@ -25,8 +30,10 @@ import type { ConfigDoAgente } from "@/lib/domain/agente/config";
 import type {
   AcaoDoTurno,
   CoberturaDoTurno,
+  DiaDaClinica,
   FatosDaFerramenta,
   FatosDoTurno,
+  HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import {
   FRASE_DO_ASSISTENTE_VIRTUAL,
@@ -49,6 +56,16 @@ export type SaidaParaOsFatos = {
 /** O ano de hoje no fuso da clinica (fuso invalido: o padrao da agenda). */
 export function anoNaClinica(agoraMs: number, fuso: string): number {
   return new TZDate(agoraMs, fusoDaAgenda(fuso)).getFullYear();
+}
+
+/** Hoje no fuso da clinica (fuso invalido: o padrao da agenda). */
+export function hojeNaClinica(agoraMs: number, fuso: string): DiaDaClinica {
+  const local = new TZDate(agoraMs, fusoDaAgenda(fuso));
+  return {
+    dia: local.getDate(),
+    mes: local.getMonth() + 1,
+    ano: local.getFullYear(),
+  };
 }
 
 /**
@@ -101,10 +118,12 @@ export function montarFatosDoTurno(entrada: {
 }): FatosDoTurno {
   const { config, catalogo } = entrada;
   const coberturas: CoberturaDoTurno[] = [];
+  const horariosLivres: HorarioLivreDoTurno[] = [];
   const acoes = new Set<AcaoDoTurno>();
   let consultaLida = false;
   for (const { fatos } of entrada.ferramentas) {
     coberturas.push(...(fatos?.coberturas ?? []));
+    horariosLivres.push(...(fatos?.horarios ?? []));
     if (fatos?.acao !== undefined) {
       acoes.add(fatos.acao);
     }
@@ -112,6 +131,10 @@ export function montarFatosDoTurno(entrada: {
       consultaLida = true;
     }
   }
+  const convenios = conveniosConhecidos(catalogo).map((c) => ({
+    nome: c.nome,
+    plano: c.plano,
+  }));
   const colados = [
     config.saudacao,
     config.encerramento,
@@ -122,13 +145,17 @@ export function montarFatosDoTurno(entrada: {
     saidasDasFerramentas: entrada.ferramentas.map(({ saida }) => saida),
     textosPublicados: textosPublicadosDoTurno(entrada),
     textosColados: colados,
-    convenios: conveniosConhecidos(catalogo).map((c) => ({
-      nome: c.nome,
-      plano: c.plano,
-    })),
+    convenios,
     coberturas,
     acoes: [...acoes],
     consultaLida,
     anoCorrente: anoNaClinica(entrada.agoraMs, entrada.fuso),
+    horariosLivres,
+    procedimentos: [
+      ...catalogo.procedimentos,
+      ...(catalogo.procedimentosSoComAEquipe ?? []),
+    ].map((p) => p.nome),
+    semConvenioAtivo: convenios.length === 0,
+    hoje: hojeNaClinica(entrada.agoraMs, entrada.fuso),
   };
 }

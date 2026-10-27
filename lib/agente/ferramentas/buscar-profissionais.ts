@@ -337,10 +337,20 @@ export function buscarProfissionais(
       ...(idade === null ? {} : { idade_atendida: idade }),
     };
   });
-  // O convenio identificado com alguem na lista: ele atende por ele.
+  // O convenio identificado com alguem na lista: ele atende por ele (no
+  // procedimento do filtro; sem ele, o fato nao tem procedimento e nao
+  // sustenta frase que cita um).
   const fatos: FatosDaFerramenta | undefined =
     convenio.tipo === "convenio"
-      ? { coberturas: [coberturaDoConvenio(convenio.convenio, "atende")] }
+      ? {
+          coberturas: [
+            coberturaDoConvenio(
+              convenio.convenio,
+              "atende",
+              procedimento?.nome ?? null,
+            ),
+          ],
+        }
       : undefined;
   return {
     saida: JSON.stringify({

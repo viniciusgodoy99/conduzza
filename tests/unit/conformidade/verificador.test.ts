@@ -424,6 +424,34 @@ describe("politica do verificador na AG2", () => {
     // A versao de antes da AG2 (docs/03, secao 16.9).
     expect(VERSAO_DA_POLITICA).not.toBe("verificador-e01acf308c81");
   });
+
+  // Revisao independente da AG2 (27/10/2026): exames anteriores, idade
+  // minima e avaliacao antes sao requisitos administrativos do Cadastro
+  // (consultar_requisitos). As vedacoes continuam as mesmas (o teste de
+  // cima confere byte a byte) e a versao mudou de novo.
+  it("o permitido inclui exames anteriores, idade minima e avaliacao antes do procedimento", () => {
+    for (const trecho of [
+      "levar os exames anteriores",
+      "a idade mínima para o atendimento",
+      "precisar de uma avaliação antes do procedimento",
+    ]) {
+      expect(POLITICA_DO_VERIFICADOR).toContain(trecho);
+    }
+    // A ordem do "e permitido": antes do "Nada disso libera".
+    const permitido = POLITICA_DO_VERIFICADOR.indexOf(
+      "informar os requisitos administrativos",
+    );
+    const ressalva = POLITICA_DO_VERIFICADOR.indexOf("Nada disso libera");
+    expect(permitido).toBeGreaterThan(-1);
+    expect(
+      POLITICA_DO_VERIFICADOR.indexOf("levar os exames anteriores"),
+    ).toBeGreaterThan(permitido);
+    expect(
+      POLITICA_DO_VERIFICADOR.indexOf("levar os exames anteriores"),
+    ).toBeLessThan(ressalva);
+    // A versao da AG2 antes da revisao.
+    expect(VERSAO_DA_POLITICA).not.toBe("verificador-71ae8aebc26d");
+  });
 });
 
 describe("uso da resposta (livro de gasto)", () => {

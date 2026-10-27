@@ -338,7 +338,9 @@ export type ResultadoDaBuscaDeHorario = {
   /**
    * O que a saida afirma do convenio identificado, para os fatos do turno
    * (AG2): "atende" quando ele tem vinculo no procedimento (horarios, sem
-   * horario, so com a equipe), "nao_atende" no convenio_nao_atendido.
+   * horario, so com a equipe), "nao_atende" no convenio_nao_atendido, com
+   * o procedimento. Em "horarios", tambem os horarios livres (o dia e a
+   * hora como foram ao modelo).
    */
   fatos?: FatosDaFerramenta;
 };
@@ -388,10 +390,11 @@ function pronto(
 /** O convenio do plano atende (tem vinculo no procedimento). */
 function fatosDoConvenio(
   convenio: ConvenioDoAgente | null | undefined,
+  procedimento: string,
 ): FatosDaFerramenta | undefined {
   return convenio === null || convenio === undefined
     ? undefined
-    : { coberturas: [coberturaDoConvenio(convenio, "atende")] };
+    : { coberturas: [coberturaDoConvenio(convenio, "atende", procedimento)] };
 }
 
 function rotuloDaModalidade(convenio: string): string {
@@ -572,7 +575,7 @@ export function planejarBuscaDeHorario(entrada: {
         },
         `${doPaciente}: o convênio ${convenio.nome} é atendido, mas só a equipe marca por ele`,
         [],
-        fatosDoConvenio(convenio.convenio),
+        fatosDoConvenio(convenio.convenio, procedimento.nome),
       );
     }
     // D14: o convenio foi identificado, mas nenhum vinculo deste
@@ -596,7 +599,13 @@ export function planejarBuscaDeHorario(entrada: {
       `${doPaciente}: o convênio ${convenio.nome} não tem vínculo para marcar este procedimento${particulares.length > 0 ? "; o particular tem" : "; o particular também não"}`,
       valores.precos,
       {
-        coberturas: [coberturaDoConvenio(convenio.convenio, "nao_atende")],
+        coberturas: [
+          coberturaDoConvenio(
+            convenio.convenio,
+            "nao_atende",
+            procedimento.nome,
+          ),
+        ],
       },
     );
   }
@@ -642,7 +651,7 @@ export function planejarBuscaDeHorario(entrada: {
       },
       `${textoDaModalidade}: o dia pedido passa do horizonte (até ${ultimoDia})`,
       [],
-      fatosDoConvenio(convenioDoCadastro),
+      fatosDoConvenio(convenioDoCadastro, procedimento.nome),
     );
   }
   const maiorDuracao = Math.max(...vinculos.map((v) => v.duracaoMin));
@@ -715,7 +724,10 @@ export function escolherHorarios(
     plano.profissional,
     plano.convenio,
   );
-  const fatos = fatosDoConvenio(plano.convenioDoCadastro);
+  const fatos = fatosDoConvenio(
+    plano.convenioDoCadastro,
+    plano.procedimento.nome,
+  );
 
   // AG2: nenhum profissional do pedido com jornada cadastrada. Nao e "sem
   // horario": a agenda dele nao existe, e o modelo passa para a equipe.
@@ -817,7 +829,12 @@ export function escolherHorarios(
       .join(", ")}`,
     resultado: "horarios",
     horarios,
-    ...(fatos === undefined ? {} : { fatos }),
+    // Revisao da AG2: os horarios livres sao a unica prova de "tenho as
+    // 14h" (o dia e a hora como foram ao modelo).
+    fatos: {
+      ...fatos,
+      horarios: horarios.map((h) => ({ dia: h.dia, hora: h.hora })),
+    },
   };
 }
 

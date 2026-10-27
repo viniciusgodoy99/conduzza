@@ -1435,8 +1435,17 @@ export async function executarTurnoDoAgente(
       // passar para a equipe sem ter chamado escalar_humano e uma passagem.
       // O texto do modelo nunca sai (a conversa ficaria na IA sem ninguem
       // avisado); sai a frase fixa, e a conversa vai para a equipe como em
-      // toda passagem.
-      if (prometePassagemParaAEquipe(final.mensagem)) {
+      // toda passagem. Revisao da AG2: com o que o turno fez (o aviso da
+      // aprovacao depois de marcar e informacao; "vou conferir a agenda"
+      // sem ferramenta e promessa).
+      if (
+        prometePassagemParaAEquipe(final.mensagem, {
+          usouFerramenta: ferramentasDoTurno.length > 0,
+          acoes: ferramentasDoTurno.flatMap(({ fatos }) =>
+            fatos?.acao === undefined ? [] : [fatos.acao],
+          ),
+        })
+      ) {
         trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
         return escalar(
           "agente_pediu",

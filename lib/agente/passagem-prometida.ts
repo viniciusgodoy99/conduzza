@@ -27,7 +27,20 @@
 // a conversa nao chega a ninguem da equipe. "A confirmacao chega por
 // aqui" (a mensagem do sistema depois da aprovacao) e "entramos em contato
 // um dia antes" (a rotina da clinica) continuam informacao.
+//
+// Revisao da AG2 (27/10/2026), com o que o turno fez (ContextoDaPassagem):
+//  - depois de um agendar com sucesso (acao "marcou"), avisar da aprovacao
+//    e informacao: "te confirmo assim que for aprovada", "te aviso assim
+//    que a equipe confirmar" e "a equipe vai aprovar" falam da mensagem que
+//    o sistema manda quando a equipe aprova a consulta pendente. Qualquer
+//    outra promessa no mesmo texto continua contando;
+//  - "vou conferir a agenda", "vou verificar a disponibilidade", "estou
+//    verificando" sem ferramenta no turno (ou na ultima frase da resposta,
+//    com ferramenta) contam: a IA nao volta sozinha, e o paciente fica
+//    esperando. A oferta em pergunta ("posso verificar?") e a conferencia
+//    com o resultado logo depois ("vou verificar: tenho terca as 14h") nao.
 
+import type { AcaoDoTurno } from "@/lib/domain/conformidade/fatos-do-turno";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 
 /** Palavras que podem vir antes de quem recebe ("alguem da nossa equipe"). */
@@ -81,7 +94,9 @@ const PROMESSAS: readonly RegExp[] = [
     `\\b${EU_VOU}\\s+(?:te\\s+|lhe\\s+)?${PASSAR}\\s+${O_QUE_PASSA}${PARA}${DESTINO}`,
   ),
   // "Vou encaminhar seu pedido", "vou te transferir".
-  new RegExp(`\\b${EU_VOU}\\s+(?:te\\s+|lhe\\s+)?${PASSAR}\\s+${PEDIDO_DO_PACIENTE}`),
+  new RegExp(
+    `\\b${EU_VOU}\\s+(?:te\\s+|lhe\\s+)?${PASSAR}\\s+${PEDIDO_DO_PACIENTE}`,
+  ),
   new RegExp(
     `\\b${EU_VOU}\\s+(?:te|lhe|voce|vc)\\s+${TRANSFERIR}\\b|\\b${EU_VOU}\\s+${TRANSFERIR}\\s+(?:voce|vc)\\b`,
   ),
@@ -90,7 +105,9 @@ const PROMESSAS: readonly RegExp[] = [
   new RegExp(
     `\\b(?:estou|to|tou|estamos)\\s+(?:te\\s+|lhe\\s+)?${PASSANDO}\\s+${O_QUE_PASSA}${PARA}${DESTINO}`,
   ),
-  new RegExp(`\\b(?:te\\s+|lhe\\s+)?${PASSEI}\\s+${O_QUE_PASSA}${PARA}${DESTINO}`),
+  new RegExp(
+    `\\b(?:te\\s+|lhe\\s+)?${PASSEI}\\s+${O_QUE_PASSA}${PARA}${DESTINO}`,
+  ),
   // "Sua conversa foi encaminhada para a equipe".
   new RegExp(
     `\\b(?:foi|foram|sera|serao|vai ser|vao ser|esta sendo|estao sendo)\\s+${PASSADA}\\s+${PARA}${DESTINO}`,
@@ -131,9 +148,10 @@ const PROMESSAS: readonly RegExp[] = [
     `\\b${EU_VOU}\\s+(?:\\w+\\s+){0,2}?${CONFERIR}\\b[^.!?\\n]{0,60}?\\be\\s+(?:ja\\s+|logo\\s+|depois\\s+|em seguida\\s+)?${VOLTAR}\\b(?![^.!?\\n]*\\?)`,
   ),
   // "Te aviso assim que souber", "te falo em seguida", "e aviso se surgir
-  // uma vaga".
+  // uma vaga". Revisao da AG2: e no fim da frase ("assim que tiver
+  // novidade, te aviso", "pode deixar que te aviso").
   new RegExp(
-    `\\b(?:te|lhe)\\s+(?:aviso|falo|digo|respondo|confirmo|informo|passo|mando|envio|escrevo|conto)\\s+${QUANDO_VOLTA}\\b|\\be\\s+aviso\\s+${QUANDO_VOLTA}\\b`,
+    `\\b(?:te|lhe)\\s+(?:aviso|falo|digo|respondo|confirmo|informo|passo|mando|envio|escrevo|conto)\\s+${QUANDO_VOLTA}\\b|\\be\\s+aviso\\s+${QUANDO_VOLTA}\\b|\\b(?:te|lhe)\\s+(?:aviso|falo|digo|respondo|confirmo|informo|retorno)\\s*(?:[.!]|$)`,
   ),
   // "Ja volto", "volto em seguida", "volto com a resposta", "retorno ja ja".
   /\b(?:ja|logo)\s+(?:te\s+)?(?:volto|retorno)\b|\b(?:volto|retorno)\s+(?:ja\b|logo\b|em seguida|em breve|em instantes|ja ja|daqui a pouco|assim que|com (?:a|as|uma|o|os) (?:resposta|informac|confirmac|retorno|novidade|valor|horario))/,
@@ -146,11 +164,100 @@ const PROMESSAS: readonly RegExp[] = [
   /(?:^|[.!?,]\s*)(?:so\s+)?um\s+(?:momento|minutinho|instante|instantinho|segundinho|minuto)\b(?=\s*(?:[,.!]|por favor|que\b|enquanto|$))/,
 ];
 
+/** O que o turno fez antes da resposta final (lib/agente/laco.ts). */
+export type ContextoDaPassagem = {
+  /** Alguma ferramenta rodou no turno (consulta, valor, agenda). */
+  usouFerramenta: boolean;
+  /** As acoes que as ferramentas do turno executaram com sucesso. */
+  acoes: readonly AcaoDoTurno[];
+};
+
+/** Sem o turno: nenhuma ferramenta, nenhuma acao (o lado seguro). */
+const TURNO_SEM_FERRAMENTA: ContextoDaPassagem = {
+  usouFerramenta: false,
+  acoes: [],
+};
+
+/** A aprovacao da consulta pendente pela equipe. */
+const APROVACAO =
+  "(?:aprovad\\w*|aprovar\\w*|aprovacao|confirmad\\w*|confirmar\\w*|confirmacao|liberad\\w*|liberar\\w*|validad\\w*|validar\\w*)";
+const QUANDO_APROVA =
+  "(?:assim que|quando|logo que|apos|depois que|depois da|depois de|tao logo)";
+const AVISO =
+  "(?:aviso|confirmo|informo|falo|digo|mando|envio|escrevo|conto|passo)";
+
+/**
+ * Revisao da AG2: com a consulta marcada no turno, o aviso da aprovacao e
+ * informacao ("te confirmo assim que for aprovada", "assim que a equipe
+ * aprovar, te aviso", "a equipe vai aprovar sua consulta").
+ */
+const AVISOS_DA_APROVACAO: readonly RegExp[] = [
+  new RegExp(
+    `\\b(?:te|lhe)\\s+${AVISO}\\s+${QUANDO_APROVA}\\b[^.!?]{0,60}?\\b${APROVACAO}`,
+    "g",
+  ),
+  new RegExp(
+    `\\b${QUANDO_APROVA}\\b[^.!?]{0,60}?\\b${APROVACAO}[^.!?]{0,30}?\\b(?:te|lhe)\\s+${AVISO}\\b`,
+    "g",
+  ),
+  new RegExp(
+    `\\b${EQUIPE_E_APOSTO}\\s+${DEPOIS}(?:vai|vao|ira|irao|deve|devem)\\s+(?:aprovar|confirmar|validar|liberar)(?:\\s+(?:a|o|sua|seu)\\s+(?:consulta|agendamento|marcacao|horario))?(?=\\s*(?:[.!,]|$|em breve|assim que|logo|ainda hoje))`,
+    "g",
+  ),
+];
+
+/** Conferir sem voltar: o verbo no infinitivo e no gerundio. */
+const CONFERINDO =
+  "(?:verificando|conferindo|consultando|checando|procurando|pesquisando|analisando|buscando|confirmando|levantando)";
+/**
+ * Revisao da AG2: "vou conferir a agenda", "vou verificar a
+ * disponibilidade", "deixa eu ver", "estou verificando". Fora da pergunta e
+ * sem o resultado logo depois dos dois pontos.
+ */
+const CONFERIR_SEM_VOLTAR = new RegExp(
+  `\\b(?:(?:${EU_VOU})\\s+(?:\\w+\\s+){0,2}?${CONFERIR}|(?:estou|to|tou|estamos|ja estou)\\s+(?:\\w+\\s+)?${CONFERINDO})\\b(?![^.!?\\n]*:)`,
+);
+/** "Posso verificar", "podemos ver": a oferta, nao a promessa. */
+const OFERTA_DE_CONFERIR = /\b(?:posso|podemos|poderia|poderiamos)\b/;
+
+/**
+ * As frases do texto normalizado, com o ponto que fecha (o de "Dra." e o
+ * de "Av." nao fecham).
+ */
+function frasesDe(base: string): string[] {
+  return base
+    .split(/(?<=[!?]|\.\.|(?<=[a-z]{4}|\d)\.)\s+/)
+    .map((frase) => frase.trim())
+    .filter((frase) => frase !== "");
+}
+
+function conferirSemVoltar(frase: string): boolean {
+  const casou = CONFERIR_SEM_VOLTAR.exec(frase);
+  if (casou === null || frase.trimEnd().endsWith("?")) {
+    return false;
+  }
+  return !OFERTA_DE_CONFERIR.test(casou[0]);
+}
+
 /**
  * A resposta promete passar a conversa para a equipe (ou que alguem vai
- * retornar)? Le o texto sem acento e sem caixa (normalizarBase).
+ * retornar)? Le o texto sem acento e sem caixa (normalizarBase). Sem o
+ * contexto do turno, o lado seguro: nenhuma ferramenta e nenhuma acao.
  */
-export function prometePassagemParaAEquipe(texto: string): boolean {
-  const base = normalizarBase(texto);
-  return PROMESSAS.some((padrao) => padrao.test(base));
+export function prometePassagemParaAEquipe(
+  texto: string,
+  contexto: ContextoDaPassagem = TURNO_SEM_FERRAMENTA,
+): boolean {
+  let base = normalizarBase(texto);
+  if (contexto.acoes.includes("marcou")) {
+    for (const aviso of AVISOS_DA_APROVACAO) {
+      base = base.replace(aviso, " ");
+    }
+  }
+  if (PROMESSAS.some((padrao) => padrao.test(base))) {
+    return true;
+  }
+  const frases = frasesDe(base);
+  const conferir = contexto.usouFerramenta ? frases.slice(-1) : frases;
+  return conferir.some(conferirSemVoltar);
 }

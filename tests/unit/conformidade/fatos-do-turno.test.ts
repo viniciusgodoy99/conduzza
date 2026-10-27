@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
+import { CATEGORIAS_DOS_FATOS } from "@/lib/domain/conformidade/categorias";
 import {
   datasEHorasDoTexto,
   enderecosDoTexto,
   fatosValidos,
   fatosVazios,
   regrasDosFatos,
+  semPalavrasClinicasDeLugar,
+  trechosDeEnderecoDasFerramentas,
+  type CoberturaDoTurno,
   type FatosDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import { avaliarRegras } from "@/lib/domain/conformidade/filtro-deterministico";
@@ -22,7 +26,10 @@ import {
   CONTROLES_DE_SAIDA,
   CONVENIOS_DA_BATERIA,
   FRASES_DE_RECEPCAO,
+  HORARIOS_DA_BUSCA_DE_HORARIO,
+  PROCEDIMENTOS_DA_BATERIA,
   SAIDA_DA_BUSCA_DE_HORARIO,
+  SAIDA_DAS_UNIDADES,
 } from "@/tests/fixtures/ia/conformidade/casos";
 
 // Os fatos do turno (AG2, 27/10/2026): data e hora, endereco, convenio e
@@ -53,6 +60,22 @@ function regras(
     mensagensDoPaciente,
   }).map((achado) => `${achado.categoria}:${achado.regra}`);
 }
+
+/** Um fato de convenio (com o procedimento). */
+function cobertura(
+  nome: string,
+  plano: string | null,
+  estado: CoberturaDoTurno["estado"],
+  procedimento: string | null = "Consulta dermatológica",
+): CoberturaDoTurno {
+  return { nome, plano, estado, procedimento };
+}
+
+/** A busca de horario do turno: a saida e os horarios livres dela. */
+const BUSCA = {
+  saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
+  horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
+};
 
 const aprova: Verificador = async () => ({
   tipo: "veredicto",
@@ -194,7 +217,7 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
   const barradas: [string, string[]][] = [
     [
       "Temos horários disponíveis na quinta-feira às 9h, 10h30 e 14h. Algum desses funciona para você?",
-      ["hora_fora_dos_fatos"],
+      ["hora_fora_dos_fatos", "horario_livre_sem_ferramenta"],
     ],
     [
       "Perfeito, reservei o horário das 10h30 para você por alguns minutos. Posso confirmar?",
@@ -232,14 +255,17 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
       "Obrigada, Maria! Seu horário está confirmado.",
       ["confirmacao_sem_ferramenta"],
     ],
-    ["Temos vaga com o Dr. Carlos na segunda às 16h.", ["hora_fora_dos_fatos"]],
+    [
+      "Temos vaga com o Dr. Carlos na segunda às 16h.",
+      ["hora_fora_dos_fatos", "horario_livre_sem_ferramenta"],
+    ],
     [
       "Seu retorno ficou para o dia 20/10 às 11h.",
       ["data_fora_dos_fatos", "hora_fora_dos_fatos"],
     ],
     [
       "Esse horário acabou de ser preenchido, mas tenho outro às 15h.",
-      ["hora_fora_dos_fatos"],
+      ["hora_fora_dos_fatos", "horario_livre_sem_ferramenta"],
     ],
     [
       "Ok! Cancelei sua consulta de sexta. Quer remarcar?",
@@ -251,7 +277,7 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
     ],
     [
       "Hoje não temos mais horários, mas amanhã tem às 8h.",
-      ["hora_fora_dos_fatos"],
+      ["hora_fora_dos_fatos", "horario_livre_sem_ferramenta"],
     ],
     [
       "Confirmado! Até quinta-feira, às 14h30.",
@@ -270,12 +296,23 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
       "Seu agendamento foi cancelado com sucesso.",
       ["cancelamento_sem_ferramenta"],
     ],
-    ["Pode ser às 10h ou prefere mais tarde?", ["hora_fora_dos_fatos"]],
+    [
+      "Pode ser às 10h ou prefere mais tarde?",
+      ["hora_fora_dos_fatos", "horario_livre_sem_ferramenta"],
+    ],
     [
       "Seria ótimo! Confirmo então para as 9h.",
       ["hora_fora_dos_fatos", "confirmacao_sem_ferramenta"],
     ],
-    ["Temos horário às 9h e às 10h, e também às 14h.", ["hora_fora_dos_fatos"]],
+    [
+      "Temos horário às 9h e às 10h, e também às 14h.",
+      ["hora_fora_dos_fatos", "horario_livre_sem_ferramenta"],
+    ],
+    // Revisao da AG2: afirma horario livre amanha sem a ferramenta.
+    [
+      "Esse é o melhor horário que tenho para amanhã.",
+      ["horario_livre_sem_ferramenta"],
+    ],
     [
       "Sem problema, remarquei para sexta às 10h.",
       ["hora_fora_dos_fatos", "remarcacao_sem_ferramenta"],
@@ -303,8 +340,8 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
       return achados.length > 0 ? [[frase, achados] as [string, string[]]] : [];
     });
     expect(vistas).toEqual(barradas);
-    // As outras 56 passam, mesmo sem fato nenhum.
-    expect(FRASES_DE_RECEPCAO.length - barradas.length).toBe(56);
+    // As outras 55 passam, mesmo sem fato nenhum.
+    expect(FRASES_DE_RECEPCAO.length - barradas.length).toBe(55);
   });
 
   it("a mesma frase como texto publicado (ou saída de ferramenta) é o próprio fato: data, hora e endereço passam", () => {
@@ -316,9 +353,12 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
         "textosPublicados",
         "saidasDasFerramentas",
       ] as const) {
+        // Horario livre e outra regra: o texto nunca prova horario livre
+        // (so os horarios livres que a ferramenta de agenda trouxe).
         const achados = regras(frase, { [fonte]: [frase] }).filter(
           (a) =>
-            a.startsWith("horario_nao_verificado") ||
+            a === "horario_nao_verificado:data_fora_dos_fatos" ||
+            a === "horario_nao_verificado:hora_fora_dos_fatos" ||
             a.startsWith("endereco_nao_verificado"),
         );
         expect(achados, `${fonte}: ${frase}`).toEqual([]);
@@ -328,17 +368,23 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
 });
 
 describe("horario_nao_verificado", () => {
-  const busca = { saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO] };
+  const busca = BUSCA;
 
   it("bloqueia a hora e a data que nenhuma fonte trouxe", () => {
     expect(regras("Tenho às 16h.", busca)).toEqual([
       "horario_nao_verificado:hora_fora_dos_fatos",
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
+    ]);
+    expect(regras("A Dra. Ana Lima volta dia 30/10.", busca)).toEqual([
+      "horario_nao_verificado:data_fora_dos_fatos",
     ]);
     expect(regras("Pode ser dia 30/10?", busca)).toEqual([
       "horario_nao_verificado:data_fora_dos_fatos",
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
     ]);
     expect(regras("Tenho 21/10/2027 às 14:00.", busca)).toEqual([
       "horario_nao_verificado:data_fora_dos_fatos",
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
     ]);
   });
 
@@ -363,7 +409,158 @@ describe("horario_nao_verificado", () => {
     );
     expect(regras("Às 15h30 consigo.", {}, ["15:00 não tenho"])).toEqual([
       "horario_nao_verificado:hora_fora_dos_fatos",
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
     ]);
+  });
+
+  // Revisao da AG2: repetir a hora do paciente afirmando nao vale; so
+  // negando ou perguntando.
+  it("a hora do paciente só vale na frase que nega ou pergunta", () => {
+    for (const [texto, mensagem] of [
+      ["Prefere às 15:00?", "15:00"],
+      ["Às 15h não consigo, infelizmente.", "pode ser 15h?"],
+      ["Não tenho vaga livre às 15h.", "tem às 15h?"],
+      ["Entendi, às 11:15 não dá. Prefere à tarde?", "Às 11:15 não posso"],
+    ] as const) {
+      expect(regras(texto, {}, [mensagem]), texto).toEqual([]);
+    }
+    for (const [texto, mensagem] of [
+      ["Anotado: às 15h, então.", "quero às 15h"],
+      ["Certo, dia 30 às 15h.", "pode ser dia 30 às 15h?"],
+    ] as const) {
+      expect(regras(texto, {}, [mensagem]), texto).toEqual(
+        texto.includes("dia 30")
+          ? [
+              "horario_nao_verificado:data_fora_dos_fatos",
+              "horario_nao_verificado:hora_fora_dos_fatos",
+            ]
+          : ["horario_nao_verificado:hora_fora_dos_fatos"],
+      );
+    }
+    // Negar uma hora e afirmar a outra: a afirmacao precisa da ferramenta.
+    expect(
+      regras("15:00 não tenho, mas às 16h tenho.", {}, ["15:00 ou 16h?"]),
+    ).toEqual([
+      "horario_nao_verificado:hora_fora_dos_fatos",
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
+    ]);
+    // A negacao de outra coisa nao libera a afirmacao.
+    expect(
+      regras("Não se preocupe, às 16h tenho.", {}, ["pode ser 16h?"]),
+    ).toEqual([
+      "horario_nao_verificado:hora_fora_dos_fatos",
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
+    ]);
+  });
+
+  it("afirmar horário livre exige o horário livre da ferramenta, conferido em par", () => {
+    // A hora do paciente, do texto publicado ou da saida sem horario livre
+    // nunca prova horario livre.
+    expect(
+      regras("Pode ser às 10 e meia, sim.", {}, ["dá pra ser 10:30?"]),
+    ).toEqual([
+      "horario_nao_verificado:hora_fora_dos_fatos",
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
+    ]);
+    expect(
+      regras("Temos horário às 8h.", {
+        textosPublicados: BASE_PUBLICADA_DA_BATERIA,
+      }),
+    ).toEqual(["horario_nao_verificado:horario_livre_sem_ferramenta"]);
+    expect(
+      regras("Tenho terça, 21/10 às 14h.", {
+        saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
+      }),
+    ).toEqual(["horario_nao_verificado:horario_livre_sem_ferramenta"]);
+    // O dia com a hora dele, em qualquer ordem; nunca separados.
+    for (const texto of [
+      "Tenho duas opções: a primeira às 14h e a segunda às 16:15.",
+      "Que tal quinta às 16:15?",
+      "Tenho estes horários com a Dra. Ana Lima. Terça, 21/10 às 14:00 ou quarta, 22/10 às 9h30.",
+      "Tenho terça, 21/10 às 14h, quarta, 22/10 às 9h30 ou quinta, 23/10 às 16:15.",
+      "Tenho às 9h30 na quarta, 22/10, ou às 16h15 na quinta, 23/10.",
+      "Tenho quinta às 16:15.",
+      "Na quinta, 23 de outubro, tenho às 16h15.",
+      "Às 14h tenho, na terça.",
+      "Tenho vaga dia 23.",
+      "Tenho vaga na quinta à tarde.",
+    ]) {
+      expect(regras(texto, busca), texto).toEqual([]);
+    }
+    for (const texto of [
+      "Tenho às 16:15 na terça, 21/10.",
+      "Tenho terça às 16:15.",
+      "Tenho terça, 21/10 às 16:15 ou quinta, 23/10 às 14h.",
+      "Quarta, 21/10 às 14:00 está livre.",
+      "Tenho vaga dia 30.",
+      "Tenho vaga na terça à noite.",
+      "Tenho vaga no sábado.",
+      "Tenho estes horários com a Dra. Ana Lima: terça, 21/10 às 16:15.",
+      "Encontrei terça, 21/10 às 16:15.",
+      "Que tal terça às 16:15?",
+      "Os próximos horários são terça às 16:15.",
+      // A lista com ";" e a oferta numa frase com os horarios na seguinte.
+      "Tenho estes horários com a Dra. Ana Lima: terça, 21/10 às 14:00; quarta, 22/10 às 16:15.",
+      "Tenho estes horários com a Dra. Ana Lima. Terça, 21/10 às 14:00 ou quarta, 22/10 às 16:15.",
+    ]) {
+      expect(
+        regras(texto, busca).filter(
+          (a) => a === "horario_nao_verificado:horario_livre_sem_ferramenta",
+        ),
+        texto,
+      ).toEqual(["horario_nao_verificado:horario_livre_sem_ferramenta"]);
+    }
+  });
+
+  it("hoje e amanhã na oferta, pelo dia de hoje na clínica", () => {
+    const amanhaDeManha = "Amanhã de manhã tenho vaga.";
+    // Sem saber hoje, nao passa.
+    expect(regras(amanhaDeManha, busca)).toEqual([
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
+    ]);
+    // Hoje e terca, 21/10: amanha e quarta, 22/10, com 9h30 livre.
+    expect(
+      regras(amanhaDeManha, {
+        ...busca,
+        hoje: { dia: 21, mes: 10, ano: 2026 },
+      }),
+    ).toEqual([]);
+    // Hoje e quarta, 22/10: amanha (quinta) so tem a tarde.
+    expect(
+      regras(amanhaDeManha, {
+        ...busca,
+        hoje: { dia: 22, mes: 10, ano: 2026 },
+      }),
+    ).toEqual(["horario_nao_verificado:horario_livre_sem_ferramenta"]);
+  });
+
+  it("a frase que não afirma horário livre não precisa da ferramenta", () => {
+    for (const texto of [
+      "Temos 3 opções de horário. Responda 1, 2 ou 3.",
+      "A avaliação dura em média 30 minutos.",
+      "Você tem horário marcado amanhã?",
+      "Infelizmente não tenho às 15h, mas posso ver outro dia. Qual prefere?",
+      "Traga consigo o pedido médico.",
+      // O que esta livre ou disponivel sem ser a agenda, e quem abre.
+      "Atendemos de segunda a sexta, das 8h às 18h, e o estacionamento é livre.",
+      "O estacionamento está disponível das 7h às 19h.",
+      "Temos vaga de estacionamento das 7h às 19h.",
+      "O laudo fica disponível a partir das 14h.",
+      "A clínica abriu às 8h hoje.",
+      "Oferecemos atendimento das 8h às 18h.",
+      "Dá tempo de chegar até as 18h.",
+      "A clínica abre apenas às 8h.",
+      "Desculpe, não encontrei horários nessa data. Que tal sexta-feira?",
+      // A oferta que nao fala de agenda nao passa para a frase seguinte.
+      "Temos sim, na rua ao lado. Nossa equipe atende de segunda a sexta.",
+    ]) {
+      expect(
+        regras(texto, {}, ["tem às 15h?"]).filter(
+          (a) => a === "horario_nao_verificado:horario_livre_sem_ferramenta",
+        ),
+        texto,
+      ).toEqual([]);
+    }
   });
 
   it("a base e a hora da clinica publicadas sao fonte", () => {
@@ -441,16 +638,89 @@ describe("endereco_nao_verificado", () => {
   });
 });
 
+// Revisao da AG2: o endereco que a ferramenta trouxe e nome de lugar ("Rua
+// das Dores", "Nossa Senhora dos Remedios") e sai so das vedacoes clinicas.
+describe("o endereço da ferramenta com nome de lugar que parece sintoma ou remédio", () => {
+  const unidades = { saidasDasFerramentas: [SAIDA_DAS_UNIDADES] };
+  const avaliar = (texto: string, parcial: Partial<FatosDoTurno> = unidades) =>
+    avaliarRegras(texto, {
+      ...CONTEXTO_PADRAO,
+      fatos: fatos(parcial),
+    }).achados.map((a) => `${a.categoria}:${a.regra}`);
+
+  it("os trechos: o campo endereco inteiro e o logradouro com número que batem com a ferramenta", () => {
+    expect(
+      trechosDeEnderecoDasFerramentas(
+        "Fica na Rua das Dores, 100, Centro, Fortaleza, CE.",
+        fatos(unidades),
+      ),
+    ).toEqual([
+      "rua das dores, 100, centro, fortaleza, ce",
+      "rua das dores, 100",
+    ]);
+    expect(
+      trechosDeEnderecoDasFerramentas(
+        "Fica na Rua das Dores, 200.",
+        fatos(unidades),
+      ),
+    ).toEqual([]);
+    // Do texto publicado, nao: so da ferramenta.
+    expect(
+      trechosDeEnderecoDasFerramentas(
+        "Fica na Rua das Dores, 100.",
+        fatos({ textosPublicados: ["Ficamos na Rua das Dores, 100."] }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("o endereço da ferramenta passa; o resto do rascunho continua lido", () => {
+    for (const texto of [
+      "A clínica fica na Rua das Dores, 100, Centro.",
+      "Fica na Rua das Dores, 100, Centro, Fortaleza, CE.",
+      "A outra unidade fica na Rua X, 15, Nossa Senhora dos Remédios, PI.",
+    ]) {
+      expect(avaliar(texto), texto).toEqual([]);
+    }
+    expect(avaliar("Fica na Rua das Dores, 100. Está com dores?")).toContain(
+      "triagem:sintoma_citado",
+    );
+    expect(
+      avaliar("Fica na Rua das Dores, 100. Se doer, tome dipirona."),
+    ).toContain("medicamento:remedio_citado");
+    // Outro numero nao e o endereco da ferramenta: barra pelos dois.
+    expect(avaliar("Fica na Rua das Dores, 200.")).toEqual([
+      "triagem:sintoma_citado",
+      "endereco_nao_verificado:endereco_fora_dos_fatos",
+    ]);
+    // O mesmo endereco so no texto publicado continua barrado pela
+    // vedacao (a base passa pelas regras na publicacao).
+    expect(
+      avaliar("Fica na Rua das Dores, 100.", {
+        textosPublicados: ["Ficamos na Rua das Dores, 100."],
+      }),
+    ).toEqual(["triagem:sintoma_citado"]);
+  });
+
+  it("a troca da palavra de lugar é só a última palavra do nome", () => {
+    expect(semPalavrasClinicasDeLugar("Rua das Dores")).toBe("Rua das Lugar");
+    expect(semPalavrasClinicasDeLugar("Nossa Senhora dos Remédios")).toBe(
+      "Nossa Senhora dos Lugar",
+    );
+    expect(semPalavrasClinicasDeLugar("Rua Dores de Cabeça Passam")).toBe(
+      "Rua Dores de Cabeça Passam",
+    );
+    expect(semPalavrasClinicasDeLugar("Rua Tome Dipirona")).toBe(
+      "Rua Tome Dipirona",
+    );
+  });
+});
+
 describe("cobertura_nao_verificada", () => {
   const unimedCoberto = {
-    coberturas: [
-      { nome: "Unimed", plano: "Nacional", estado: "coberto" as const },
-    ],
+    coberturas: [cobertura("Unimed", "Nacional", "coberto", null)],
   };
   const unimedAtende = {
-    coberturas: [
-      { nome: "Unimed", plano: "Nacional", estado: "atende" as const },
-    ],
+    coberturas: [cobertura("Unimed", "Nacional", "atende", null)],
   };
 
   it("cobre só com 'coberto'; aceita e atende com 'atende' ou 'coberto'", () => {
@@ -476,7 +746,7 @@ describe("cobertura_nao_verificada", () => {
     ]);
     expect(
       regras("O plano Nacional da Unimed cobre.", {
-        coberturas: [{ nome: "Unimed", plano: null, estado: "coberto" }],
+        coberturas: [cobertura("Unimed", null, "coberto", null)],
       }),
     ).toEqual(["cobertura_nao_verificada:cobertura_sem_fato"]);
     expect(regras("O plano Nacional da Unimed cobre.", unimedCoberto)).toEqual(
@@ -490,9 +760,7 @@ describe("cobertura_nao_verificada", () => {
         ...CONVENIOS_DA_BATERIA,
         { nome: "Unimed Fortaleza", plano: "Flex" },
       ],
-      coberturas: [
-        { nome: "Unimed Fortaleza", plano: "Flex", estado: "coberto" as const },
-      ],
+      coberturas: [cobertura("Unimed Fortaleza", "Flex", "coberto", null)],
     };
     expect(
       regras("A Unimed Fortaleza cobre a consulta.", comFortaleza),
@@ -504,9 +772,7 @@ describe("cobertura_nao_verificada", () => {
 
   it("negar também só com fato ('sem informação' nunca vira 'não cobre')", () => {
     const naoAtende = {
-      coberturas: [
-        { nome: "Unimed", plano: "Nacional", estado: "nao_atende" as const },
-      ],
+      coberturas: [cobertura("Unimed", "Nacional", "nao_atende", null)],
     };
     for (const texto of [
       "Infelizmente não atendemos o seu convênio.",
@@ -539,9 +805,151 @@ describe("cobertura_nao_verificada", () => {
       "Aceitamos Pix, cartão e dinheiro.",
       "Atendemos pela manhã e pela tarde.",
       "O plano de tratamento é definido na consulta.",
+      // Revisao da AG2 (achado 4).
+      "O valor de R$ 300 cobre a consulta e o retorno.",
+      "A consulta cobre a avaliação e o retorno em 30 dias.",
+      "Esse valor já cobre a anestesia.",
+      "A Dra. Ana disse que o valor cobre o retorno.",
+      "Aceitamos cartão de qualquer operadora.",
+      "Aceitamos cartão de crédito, débito, Pix e dinheiro.",
+      "Aceitamos Visa, Mastercard e Elo.",
+      "Aceitamos acompanhante na consulta.",
+      "Aceitamos pacientes de todas as idades.",
+      "A Dra. Ana atende adultos e crianças.",
+      "Atendemos pelo WhatsApp e pelo telefone.",
+      "Trabalhamos com agendamento, sem fila.",
+      "O estacionamento é coberto.",
+      "Nosso estacionamento é sem cobertura.",
+      "Não aceitamos cheque.",
     ]) {
       expect(regras(texto), texto).toEqual([]);
     }
+  });
+
+  // Revisao da AG2 (achado 3): depois de "aceita", "atende pelo", "trabalha
+  // com" e "cobre", tudo o que nao e pagamento nem particular exige fato.
+  it("a operadora fora da lista e fora do Cadastro nunca tem fato", () => {
+    for (const texto of [
+      "Sim, aceitamos Bradesco.",
+      "Atendemos pelo Bradesco, sim.",
+      "Atendemos pela Camed.",
+      "Trabalhamos com a Camed e com a Hapvida.",
+      "Atendemos pelo SUS.",
+      "Aceitamos Unimed e cartão.",
+      "Atendemos particular e Unimed.",
+      "Aceitamos os principais convênios.",
+    ]) {
+      expect(regras(texto), texto).toEqual([
+        "cobertura_nao_verificada:aceitacao_sem_fato",
+      ]);
+    }
+    // O fato da Unimed nao sustenta a Camed nem o Bradesco.
+    expect(regras("Atendemos pela Camed.", unimedAtende)).toEqual([
+      "cobertura_nao_verificada:aceitacao_sem_fato",
+    ]);
+    expect(regras("Sim, aceitamos Bradesco.", unimedAtende)).toEqual([
+      "cobertura_nao_verificada:aceitacao_sem_fato",
+    ]);
+    // O fato do Bradesco Saude sustenta o "Bradesco".
+    expect(
+      regras("Sim, aceitamos Bradesco.", {
+        coberturas: [cobertura("Bradesco Saúde", null, "atende")],
+      }),
+    ).toEqual([]);
+    expect(regras("A Camed cobre o ultrassom.", unimedCoberto)).toEqual([
+      "cobertura_nao_verificada:cobertura_sem_fato",
+    ]);
+  });
+
+  it("'Aceitamos, sim!' respondendo a quem perguntou do convênio afirma convênio", () => {
+    for (const texto of ["Aceitamos, sim!", "Atendemos sim!"]) {
+      expect(regras(texto, {}, ["vocês aceitam Unimed?"]), texto).toEqual([
+        "cobertura_nao_verificada:aceitacao_sem_fato",
+      ]);
+      expect(
+        regras(texto, unimedAtende, ["vocês aceitam Unimed?"]),
+        texto,
+      ).toEqual([]);
+      // A pergunta de pagamento nao e de convenio.
+      expect(regras(texto, {}, ["aceita cartão?"]), texto).toEqual([]);
+    }
+  });
+
+  it("'cobre' sem sujeito, 'é coberto' e 'tem cobertura' afirmam convênio", () => {
+    for (const texto of [
+      "Cobre, sim!",
+      "Sim, o procedimento é coberto.",
+      "Tem cobertura, sim.",
+    ]) {
+      expect(regras(texto), texto).toEqual([
+        "cobertura_nao_verificada:cobertura_sem_fato",
+      ]);
+      expect(regras(texto, unimedCoberto), texto).toEqual([]);
+    }
+    // A pergunta do paciente sobre convenio faz o "coberto" contar.
+    expect(
+      regras("Ele é coberto, sim.", {}, ["a Unimed cobre o peeling?"]),
+    ).toEqual(["cobertura_nao_verificada:cobertura_sem_fato"]);
+  });
+
+  it("o procedimento citado precisa do fato do procedimento", () => {
+    const consultaCoberta = {
+      procedimentos: PROCEDIMENTOS_DA_BATERIA,
+      coberturas: [cobertura("Unimed", "Nacional", "coberto")],
+    };
+    expect(
+      regras("A Unimed cobre a Consulta dermatológica.", consultaCoberta),
+    ).toEqual([]);
+    expect(regras("A Unimed cobre a consulta.", consultaCoberta)).toEqual([]);
+    for (const texto of [
+      "A Unimed cobre o Peeling químico.",
+      "O seu plano cobre a Limpeza de pele.",
+      "A Unimed cobre o ultrassom.",
+      "A Limpeza de pele é coberta pela Unimed.",
+    ]) {
+      expect(regras(texto, consultaCoberta), texto).toEqual([
+        "cobertura_nao_verificada:cobertura_sem_fato",
+      ]);
+    }
+    // "O seu plano cobre": so com o convenio consultado no turno.
+    expect(regras("O seu plano cobre.", consultaCoberta)).toEqual([]);
+    expect(regras("O seu plano cobre.")).toEqual([
+      "cobertura_nao_verificada:cobertura_sem_fato",
+    ]);
+    // O fato sem procedimento (buscar_profissionais sem o filtro) nao
+    // sustenta a frase que cita um.
+    const semProcedimento = {
+      procedimentos: PROCEDIMENTOS_DA_BATERIA,
+      coberturas: [cobertura("Unimed", "Nacional", "atende", null)],
+    };
+    expect(
+      regras("A Dra. Ana Lima atende pela Unimed.", semProcedimento),
+    ).toEqual([]);
+    expect(
+      regras(
+        "A Dra. Ana Lima atende a Limpeza de pele pela Unimed.",
+        semProcedimento,
+      ),
+    ).toEqual(["cobertura_nao_verificada:aceitacao_sem_fato"]);
+  });
+
+  // Revisao da AG2 (achado 4): o Cadastro sem nenhum convenio ativo.
+  it("sem convênio ativo no Cadastro, a negativa passa; a afirmação continua barrada", () => {
+    const semConvenio = { convenios: [], semConvenioAtivo: true };
+    for (const texto of [
+      "Não atendemos convênios, apenas particular.",
+      "Não aceitamos plano de saúde, só particular.",
+      "Não trabalhamos com a Unimed.",
+      "Esse procedimento está fora da cobertura do seu plano.",
+    ]) {
+      expect(regras(texto, semConvenio), texto).toEqual([]);
+      expect(regras(texto), texto).toEqual([
+        "cobertura_nao_verificada:negativa_sem_fato",
+      ]);
+    }
+    expect(regras("Atendemos pela Unimed.", semConvenio)).toEqual([
+      "cobertura_nao_verificada:aceitacao_sem_fato",
+    ]);
   });
 });
 
@@ -589,6 +997,74 @@ describe("acao_nao_executada", () => {
   ] as const)("%s", (texto, acao, regra) => {
     expect(regras(texto)).toEqual([`acao_nao_executada:${regra}`]);
     expect(regras(texto, { acoes: [acao] })).toEqual([]);
+  });
+
+  // Revisao da AG2 (achado 1): as formas naturais.
+  it.each([
+    [
+      "Prontinho! Seu horário está marcado para quinta.",
+      "consulta_existente_sem_ferramenta",
+    ],
+    ["Agendado! Te esperamos.", "marcacao_sem_ferramenta"],
+    ["Está agendado para quinta.", "consulta_existente_sem_ferramenta"],
+    ["Tá marcado.", "consulta_existente_sem_ferramenta"],
+    ["Já está tudo marcado.", "consulta_existente_sem_ferramenta"],
+    ["Consulta marcada para quinta.", "marcacao_sem_ferramenta"],
+    ["Consulta agendada!", "marcacao_sem_ferramenta"],
+    ["Horário marcado: quinta.", "marcacao_sem_ferramenta"],
+    ["Você tem horário marcado amanhã.", "consulta_existente_sem_ferramenta"],
+    ["Fica marcado para terça, então.", "consulta_existente_sem_ferramenta"],
+    [
+      "A consulta marcada para quinta está mantida.",
+      "consulta_existente_sem_ferramenta",
+    ],
+  ] as const)("estado sem a consulta lida: %s", (texto, regra) => {
+    expect(regras(texto)).toEqual([`acao_nao_executada:${regra}`]);
+    expect(regras(texto, { consultaLida: true })).toEqual([]);
+    expect(regras(texto, { acoes: ["marcou"] })).toEqual([]);
+    expect(regras(texto, { acoes: ["reservou"] })).toEqual([
+      `acao_nao_executada:${regra}`,
+    ]);
+  });
+
+  it.each([
+    ["Já deixei agendado.", "marcou", "marcacao_sem_ferramenta"],
+    ["Ficou agendadinho pra quinta!", "marcou", "marcacao_sem_ferramenta"],
+    ["Cancelado, Maria.", "cancelou", "cancelamento_sem_ferramenta"],
+    ["Consulta cancelada.", "cancelou", "cancelamento_sem_ferramenta"],
+    ["Pronto, cancelada.", "cancelou", "cancelamento_sem_ferramenta"],
+    ["Ok, desmarcado.", "cancelou", "cancelamento_sem_ferramenta"],
+    ["Remarcado para quinta.", "remarcou", "remarcacao_sem_ferramenta"],
+    ["Consulta remarcada!", "remarcou", "remarcacao_sem_ferramenta"],
+    ["Horário reservado por 10 minutos.", "reservou", "reserva_sem_ferramenta"],
+    [
+      "Prontinho, confirmada!",
+      "confirmou_presenca",
+      "confirmacao_sem_ferramenta",
+    ],
+  ] as const)("ação sem a ferramenta: %s", (texto, acao, regra) => {
+    expect(regras(texto)).toEqual([`acao_nao_executada:${regra}`]);
+    expect(regras(texto, { acoes: [acao] })).toEqual([]);
+  });
+
+  it("a regra da agenda, o horário com hora marcada e o processo não são ação", () => {
+    for (const texto of [
+      "Consultas canceladas em cima da hora são cobradas.",
+      "Consulta cancelada com menos de 24 horas de antecedência é cobrada.",
+      "A consulta é com hora marcada, sem fila.",
+      "Chegue 15 minutos antes do horário marcado.",
+      "Atendemos só com horário agendado.",
+      "Depois de marcada, a consulta fica pendente da aprovação da equipe.",
+      "Agendado só depois da sua confirmação.",
+      "Consulta marcada pelo WhatsApp precisa da aprovação da equipe.",
+      "Está agendado?",
+      "Assim que você confirmar, fica marcado.",
+    ]) {
+      expect(
+        regras(texto).filter((r) => r.startsWith("acao_nao_executada")),
+        texto,
+      ).toEqual([]);
+    }
   });
 
   it("o nome do procedimento mascarado também é objeto da agenda", () => {
@@ -655,7 +1131,10 @@ describe("os textos colados não são afirmação do modelo", () => {
     // O que o modelo escreveu entre eles continua lido.
     expect(
       regras(`${saudacao}\n\nTenho às 16h.`, { textosColados: [saudacao] }),
-    ).toEqual(["horario_nao_verificado:hora_fora_dos_fatos"]);
+    ).toEqual([
+      "horario_nao_verificado:hora_fora_dos_fatos",
+      "horario_nao_verificado:horario_livre_sem_ferramenta",
+    ]);
   });
 });
 
@@ -673,10 +1152,7 @@ describe("entrada opcional: sem fatos, nada muda", () => {
     const rascunho = "Tenho terça, 21/10 às 14h com a Dra. Ana Lima.";
     const decisao = await filtrarSaida({
       rascunho,
-      contexto: {
-        ...CONTEXTO_PADRAO,
-        fatos: fatos({ saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO] }),
-      },
+      contexto: { ...CONTEXTO_PADRAO, fatos: fatos(BUSCA) },
       verificador: aprova,
     });
     expect(decisao.aprovado).toBe(true);
@@ -690,7 +1166,13 @@ describe("entrada opcional: sem fatos, nada muda", () => {
   });
 
   it("os casos dos fatos na bateria só bloqueiam com os fatos", () => {
-    const dosFatos = CASOS_DE_SAIDA.filter((c) => c.id.startsWith("AG2-S"));
+    // Os casos AG2 das vedacoes clinicas (o endereco da ferramenta que nao
+    // esconde o resto do rascunho) bloqueiam com ou sem fato.
+    const dosFatos = CASOS_DE_SAIDA.filter(
+      (c) =>
+        c.id.startsWith("AG2-S") &&
+        (CATEGORIAS_DOS_FATOS as readonly string[]).includes(c.categoria),
+    );
     expect(dosFatos.length).toBeGreaterThanOrEqual(30);
     for (const caso of dosFatos) {
       expect(
@@ -707,6 +1189,23 @@ describe("entrada opcional: sem fatos, nada muda", () => {
 describe("validação e falha fechada", () => {
   it("fatosValidos recusa qualquer desvio de formato", () => {
     expect(fatosValidos(fatos())).toBe(true);
+    expect(
+      fatosValidos(
+        fatos({
+          ...BUSCA,
+          coberturas: [cobertura("Unimed", "Nacional", "coberto")],
+          procedimentos: PROCEDIMENTOS_DA_BATERIA,
+          hoje: { dia: 21, mes: 10, ano: 2026 },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      fatosValidos({
+        ...fatosVazios(ANO),
+        convenios: [],
+        semConvenioAtivo: true,
+      }),
+    ).toBe(true);
     for (const ruim of [
       null,
       "fatos",
@@ -722,6 +1221,26 @@ describe("validação e falha fechada", () => {
       { ...fatos(), consultaLida: "sim" },
       { ...fatos(), anoCorrente: Number.NaN },
       { ...fatos(), anoCorrente: 1999 },
+      // Revisao da AG2.
+      {
+        ...fatos(),
+        coberturas: [{ nome: "Unimed", plano: null, estado: "coberto" }],
+      },
+      {
+        ...fatos(),
+        coberturas: [
+          { nome: "Unimed", plano: null, estado: "coberto", procedimento: 1 },
+        ],
+      },
+      { ...fatos(), horariosLivres: [{ dia: "terça, 21/10" }] },
+      { ...fatos(), horariosLivres: "14:00" },
+      { ...fatos(), procedimentos: [1] },
+      { ...fatos(), semConvenioAtivo: "sim" },
+      // Sem convenio ativo com convenio no Cadastro: incoerente.
+      { ...fatos(), semConvenioAtivo: true },
+      { ...fatos(), hoje: { dia: 32, mes: 10, ano: 2026 } },
+      { ...fatos(), hoje: { dia: 21, mes: 10 } },
+      { ...fatosVazios(ANO), hoje: undefined },
     ]) {
       expect(fatosValidos(ruim), JSON.stringify(ruim)).toBe(false);
     }
@@ -757,10 +1276,7 @@ describe("validação e falha fechada", () => {
     };
     const barrada = await filtrarSaida({
       rascunho: "Tenho terça, 21/10 às 16h.",
-      contexto: {
-        ...CONTEXTO_PADRAO,
-        fatos: fatos({ saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO] }),
-      },
+      contexto: { ...CONTEXTO_PADRAO, fatos: fatos(BUSCA) },
       verificador,
     });
     expect(barrada).toMatchObject({
@@ -771,10 +1287,7 @@ describe("validação e falha fechada", () => {
     expect(chamadas).toBe(0);
     const aprovada = await filtrarSaida({
       rascunho: "Tenho terça, 21/10 às 14h.",
-      contexto: {
-        ...CONTEXTO_PADRAO,
-        fatos: fatos({ saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO] }),
-      },
+      contexto: { ...CONTEXTO_PADRAO, fatos: fatos(BUSCA) },
       verificador,
     });
     expect(aprovada.aprovado).toBe(true);
@@ -796,7 +1309,9 @@ describe("validação e falha fechada", () => {
 
   it("a versão das regras inclui as regras dos fatos", () => {
     expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
-    // A versao de antes da AG2 (docs/03, secao 16.9).
+    // A versao de antes da AG2 (docs/03, secao 16.9) e a da AG2 antes da
+    // revisao independente (27/10/2026).
     expect(versaoDasRegras()).not.toBe("regras-e25c1dae04b0");
+    expect(versaoDasRegras()).not.toBe("regras-8c7125513af5");
   });
 });

@@ -17,6 +17,7 @@ import {
   horarioEmTexto,
   idadeAtendidaEmTexto,
   textoAoPacienteParaOAgente,
+  unidadesParaOAgente,
 } from "@/lib/agente/ferramentas/cadastro-do-agente";
 import {
   consultarRequisitos,
@@ -403,7 +404,7 @@ describe("consultar_unidades", () => {
           id: UNID.centro,
           name: "Centro",
           active: true,
-          logradouro: "Rua das Dores",
+          logradouro: "Rua Tome Dipirona",
           numero: "12",
           cidade: "Recife",
           uf: "PE",
@@ -420,6 +421,49 @@ describe("consultar_unidades", () => {
         profissionais: ["Dr. Bruno Costa", "Dra. Carla Dias"],
       },
     ]);
+  });
+
+  // Revisao da AG2 (achado 6): o nome de lugar que as regras clinicas leem
+  // como sintoma ou remedio ("Rua das Dores", "Nossa Senhora dos
+  // Remedios") nao derruba o endereco; so como a ultima palavra do
+  // logradouro, do bairro ou da cidade, e o resto continua conferido.
+  it("endereço com nome de lugar que parece sintoma ou remédio continua; texto clínico de verdade cai", () => {
+    const unidade = (id: string, extra: Record<string, string>) => ({
+      id,
+      name: `Unidade ${id.slice(-1)}`,
+      active: true,
+      numero: "12",
+      bairro: "Centro",
+      cidade: "Recife",
+      uf: "PE",
+      logradouro: "Rua X",
+      ...extra,
+    });
+    const r = unidadesParaOAgente([
+      unidade("u-1", { logradouro: "Rua das Dores" }),
+      unidade("u-2", { logradouro: "Avenida Nossa Senhora dos Remédios" }),
+      unidade("u-3", { cidade: "Nossa Senhora dos Remédios", uf: "PI" }),
+      unidade("u-4", { bairro: "Bairro das Dores" }),
+      unidade("u-5", { logradouro: "Rua Dores de Cabeça Passam" }),
+      unidade("u-6", {
+        logradouro: "Rua das Dores",
+        complemento: "tome dipirona",
+      }),
+      unidade("u-7", {
+        logradouro: "Rua das Dores",
+        complemento: "ligue (85) 3333-4444",
+      }),
+    ]);
+    expect(r.unidades.map((u) => u.endereco)).toEqual([
+      "Rua das Dores, 12, Centro, Recife, PE",
+      "Avenida Nossa Senhora dos Remédios, 12, Centro, Recife, PE",
+      "Rua X, 12, Centro, Nossa Senhora dos Remédios, PI",
+      "Rua X, 12, Bairro das Dores, Recife, PE",
+      null,
+      null,
+      null,
+    ]);
+    expect(r.descartados).toBe(3);
   });
 });
 
@@ -725,13 +769,34 @@ describe("buscar_profissionais", () => {
     const unimed = profissionais({ convenio: "Unimed Nacional" });
     expect(nomes(unimed)).toEqual(["Dra. Ana Lima", "Dra. Carla Dias"]);
     expect(json(unimed).convenio).toBe("Unimed (Nacional)");
+    // Sem procedimento no filtro, o fato nao tem procedimento (revisao da
+    // AG2: nao sustenta frase que cita um).
     expect(unimed.fatos).toEqual({
-      coberturas: [{ nome: "Unimed", plano: "Nacional", estado: "atende" }],
+      coberturas: [
+        {
+          nome: "Unimed",
+          plano: "Nacional",
+          estado: "atende",
+          procedimento: null,
+        },
+      ],
     });
     // A Dra. Carla atende Unimed, mas nao faz a Consulta por ele.
-    expect(
-      nomes(profissionais({ convenio: "Unimed Nacional", procedimento: "p1" })),
-    ).toEqual(["Dra. Ana Lima"]);
+    const naConsulta = profissionais({
+      convenio: "Unimed Nacional",
+      procedimento: "p1",
+    });
+    expect(nomes(naConsulta)).toEqual(["Dra. Ana Lima"]);
+    expect(naConsulta.fatos).toEqual({
+      coberturas: [
+        {
+          nome: "Unimed",
+          plano: "Nacional",
+          estado: "atende",
+          procedimento: "Consulta",
+        },
+      ],
+    });
     expect(nomes(profissionais({ convenio: "Amil" }))).toEqual([
       "Dr. Bruno Costa",
     ]);
@@ -926,7 +991,14 @@ describe("buscar_procedimento ampliada", () => {
       atendimentos: [{ profissional: "Dra. Ana Lima", situacao: "coberto" }],
     });
     expect(coberto.fatos).toEqual({
-      coberturas: [{ nome: "Unimed", plano: "Nacional", estado: "coberto" }],
+      coberturas: [
+        {
+          nome: "Unimed",
+          plano: "Nacional",
+          estado: "coberto",
+          procedimento: "Botox",
+        },
+      ],
     });
     // A duvida do convenio segue a regra de sempre, sem valor.
     const plano = buscarProcedimento(CATALOGO, {

@@ -60,7 +60,9 @@ describe("prometePassagemParaAEquipe", () => {
   });
 
   it("nas frases de recepção da bateria, só as que prometem passar ou retornar contam", () => {
-    const contam = FRASES_DE_RECEPCAO.filter(prometePassagemParaAEquipe);
+    const contam = FRASES_DE_RECEPCAO.filter((frase) =>
+      prometePassagemParaAEquipe(frase),
+    );
     expect(contam).toEqual([
       "Entendi! Vou passar sua dúvida para a equipe, tudo bem?",
       "Vou verificar a agenda e já te retorno.",
@@ -120,5 +122,101 @@ describe("prometePassagemParaAEquipe: conferir e voltar depois (AG2)", () => {
     "Se quiser, posso ver outro dia. Qual prefere?",
   ])("não conta: %s", (texto) => {
     expect(prometePassagemParaAEquipe(texto)).toBe(false);
+  });
+});
+
+// Revisao independente da AG2 (27/10/2026), com o que o turno fez
+// (ContextoDaPassagem): depois de agendar, o aviso da aprovacao e
+// informacao; "vou conferir a agenda" sem ferramenta (ou no fim da
+// resposta) e promessa.
+describe("prometePassagemParaAEquipe: com o que o turno fez (revisão da AG2)", () => {
+  const marcou = { usouFerramenta: true, acoes: ["marcou"] as const };
+  const comFerramenta = { usouFerramenta: true, acoes: [] };
+  const semFerramenta = { usouFerramenta: false, acoes: [] };
+
+  it.each([
+    "Pronto! Sua consulta foi marcada, pendente de aprovação da equipe. Te confirmo assim que for aprovada.",
+    "Te aviso assim que a equipe confirmar.",
+    "Assim que a equipe aprovar, te aviso.",
+  ])("depois de agendar, o aviso da aprovação não conta: %s", (texto) => {
+    expect(prometePassagemParaAEquipe(texto, marcou)).toBe(false);
+    // Sem a marcacao no turno, continua promessa.
+    expect(prometePassagemParaAEquipe(texto, comFerramenta)).toBe(true);
+    expect(prometePassagemParaAEquipe(texto)).toBe(true);
+  });
+
+  it("'a equipe vai aprovar' depois de agendar é informação", () => {
+    expect(
+      prometePassagemParaAEquipe(
+        "Sua consulta ficou marcada. A equipe vai aprovar em breve.",
+        marcou,
+      ),
+    ).toBe(false);
+    // O resto da frase continua lido: "alguem vai te ligar" e promessa.
+    expect(
+      prometePassagemParaAEquipe(
+        "Sua consulta ficou marcada. A equipe vai aprovar em breve, e alguém vai te ligar.",
+        marcou,
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["Pode deixar que te aviso.", "Qualquer novidade, te aviso!"])(
+    "o aviso no fim da frase também é promessa: %s",
+    (texto) => {
+      expect(prometePassagemParaAEquipe(texto)).toBe(true);
+    },
+  );
+
+  it.each([
+    "Sua consulta ficou marcada. A equipe vai confirmar o valor e te chama.",
+    "Sua consulta ficou marcada. Vou verificar o valor e te aviso.",
+    "Pronto, marcado! Vou passar sua conversa para a equipe.",
+  ])("depois de agendar, a outra promessa continua contando: %s", (texto) => {
+    expect(prometePassagemParaAEquipe(texto, marcou)).toBe(true);
+  });
+
+  it.each([
+    "Vou conferir a agenda.",
+    "Vou verificar a disponibilidade.",
+    "Estou verificando a agenda.",
+    "Deixa eu ver aqui.",
+    "Vou buscar os horários.",
+  ])("conferir sem ferramenta conta: %s", (texto) => {
+    expect(prometePassagemParaAEquipe(texto, semFerramenta)).toBe(true);
+    expect(prometePassagemParaAEquipe(texto)).toBe(true);
+  });
+
+  it("com ferramenta, só a última frase da resposta conta", () => {
+    expect(
+      prometePassagemParaAEquipe(
+        "A consulta custa R$ 250,00. Vou conferir a agenda.",
+        comFerramenta,
+      ),
+    ).toBe(true);
+    expect(
+      prometePassagemParaAEquipe(
+        "Tenho terça às 14h. Vou verificar outras opções também.",
+        comFerramenta,
+      ),
+    ).toBe(true);
+    expect(
+      prometePassagemParaAEquipe(
+        "Vou verificar aqui... Tenho terça às 14h.",
+        comFerramenta,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "Vou verificar a agenda: tenho terça às 14:00.",
+    "Posso verificar a agenda para você?",
+    "Posso verificar a agenda para você.",
+    "Se quiser, posso ver outro dia. Qual prefere?",
+    "Vamos ver os horários? Prefere manhã ou tarde?",
+    "A Dra. Ana atende na terça. Quer que eu veja os horários?",
+    "Você pode verificar o pedido médico antes de vir.",
+  ])("oferta, pergunta e resultado logo depois não contam: %s", (texto) => {
+    expect(prometePassagemParaAEquipe(texto, semFerramenta)).toBe(false);
   });
 });

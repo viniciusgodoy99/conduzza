@@ -957,12 +957,17 @@ export type ResultadoDaBusca = {
   fatos?: FatosDaFerramenta;
 };
 
-/** O convenio do Cadastro com o estado, para os fatos do turno. */
+/**
+ * O convenio do Cadastro com o estado e o procedimento (o nome do Cadastro;
+ * nulo quando a ferramenta afirmou o convenio sem procedimento), para os
+ * fatos do turno.
+ */
 export function coberturaDoConvenio(
   convenio: ConvenioDoAgente,
   estado: EstadoDaCobertura,
+  procedimento: string | null,
 ): CoberturaDoTurno {
-  return { nome: convenio.nome, plano: convenio.plano, estado };
+  return { nome: convenio.nome, plano: convenio.plano, estado, procedimento };
 }
 
 function valorEmReais(centavos: number): string {
@@ -1928,7 +1933,7 @@ export function buscarProcedimento(
       // "sem informacao", nunca "nao atende".
       fatos: {
         coberturas: conveniosAceitos.map((c) =>
-          coberturaDoConvenio(c, "atende"),
+          coberturaDoConvenio(c, "atende", procedimento.nome),
         ),
       },
     };
@@ -2020,6 +2025,7 @@ export function buscarProcedimento(
               coberturaDoConvenio(
                 c,
                 situacao === "coberto" ? "coberto" : "atende",
+                procedimento.nome,
               ),
             ];
           }),
@@ -2072,6 +2078,7 @@ export function buscarProcedimento(
           situacoes.some((s) => s.situacao === "coberto")
             ? "coberto"
             : "atende",
+          procedimento.nome,
         ),
       ],
     },

@@ -545,7 +545,12 @@ describe("os fatos que o turno monta", () => {
     expect(fatos.textosColados).toContain("Até logo!");
     expect(fatos.textosColados).toContain(FRASE_DO_ASSISTENTE_VIRTUAL);
     expect(fatos.coberturas).toEqual([
-      { nome: "Unimed", plano: "Nacional", estado: "coberto" },
+      {
+        nome: "Unimed",
+        plano: "Nacional",
+        estado: "coberto",
+        procedimento: "Consulta",
+      },
     ]);
     expect(fatos.acoes).toEqual(["reservou", "confirmou_presenca"]);
     expect(fatos.consultaLida).toBe(true);
