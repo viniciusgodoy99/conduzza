@@ -66,11 +66,25 @@ function estadoCom(parcial: Partial<EstadoDoAtendimento>): EstadoDoAtendimento {
   return { ...estadoVazio(), ...parcial };
 }
 
+/**
+ * Revisao da AG4 (achado 1): a pergunta do cancelamento de quinta (T1), a
+ * mensagem da IA logo antes da resposta da pessoa.
+ */
+const T1_DE_QUINTA: NonNullable<
+  Parameters<typeof criarAgendaDoTurno>[0]["mensagens"]
+>["antesDasPendentes"] = {
+  autoria: "ia",
+  texto: "Confirma o cancelamento da sua consulta de quinta, 22/10 às 14:00?",
+};
+
 /** Um turno direto sobre a agenda do turno (sem o modelo). */
 function turno(
   cenario: CenarioDaAg4,
   estado: EstadoDoAtendimento,
   mensagens: string[] = [],
+  antesDasPendentes: NonNullable<
+    Parameters<typeof criarAgendaDoTurno>[0]["mensagens"]
+  >["antesDasPendentes"] = null,
 ): AgendaDoTurno {
   return criarAgendaDoTurno({
     porta: portaDaAgendaDoWhatsapp(cenario.banco.cliente(), {
@@ -88,6 +102,7 @@ function turno(
     mensagens: {
       doPaciente: mensagens.map((m) => ({ mascarado: m, original: m })),
       pendentes: mensagens.map((m) => ({ mascarado: m, original: m })),
+      antesDasPendentes,
     },
     agora: () => AGORA,
   });
@@ -99,6 +114,8 @@ describe("a tabela do estado (desenho 4.2)", () => {
     consultasDoContato(cenario.banco);
     const t = turno(cenario, estadoVazio());
     await t.preparar();
+    // Revisao da AG4 (achado 4): o codigo so vale com a lista do turno.
+    await t.executar("consultar_minhas_consultas", {});
     const r = await t.executar("pedir_cancelamento", { consulta: "c1" });
     expect(r.tipo).toBe("frase");
     const { estado } = t.fechar({ mensagemFinal: "x", passou: false });
@@ -145,6 +162,7 @@ describe("a tabela do estado (desenho 4.2)", () => {
     consultasDoContato(cenario.banco);
     const t1 = turno(cenario, estadoVazio());
     await t1.preparar();
+    await t1.executar("consultar_minhas_consultas", {});
     await t1.executar("buscar_horario_para_remarcar", {
       consulta: "c1",
       a_partir_de: "2026-10-26",
@@ -185,6 +203,7 @@ describe("a tabela do estado (desenho 4.2)", () => {
     consultasDoContato(cenario.banco);
     const t = turno(cenario, estadoVazio());
     await t.preparar();
+    await t.executar("consultar_minhas_consultas", {});
     await t.executar("buscar_horario_para_remarcar", {
       consulta: "c1",
       a_partir_de: "2026-10-26",
@@ -287,7 +306,13 @@ describe("a reconferência e os fatos do estado", () => {
       appointment_id: C1,
     });
     cenario.atendimento = { estado: armado, dados: dadosVazios() };
-    const t = turno(cenario, armado, ["Sim"]);
+    // A conversa como o banco guarda: a pergunta da IA depois do pedido e o
+    // "sim" logo depois dela (a ancora forte).
+    cenario.noBanco.push(
+      { direcao: "saida", autor: "ia", em: Date.parse(EM) + 1_000 },
+      { direcao: "entrada", autor: "paciente", em: AGORA - 1_000 },
+    );
+    const t = turno(cenario, armado, ["Sim"], T1_DE_QUINTA);
     await t.preparar();
     expect(t.fatosDoEstado()?.fatos).toEqual({
       consultaLida: true,
@@ -391,7 +416,9 @@ describe("a reconferência e os fatos do estado", () => {
       "Passo: remarcação pedida nesta conversa.",
       "Remarcação pedida nesta conversa: de quinta, 22/10 às 14:00 para segunda, 26/10 às 08:00, pendente da aprovação da equipe; a consulta de antes continua marcada até lá.",
     ]);
-    // Aprovada: a antiga cancelada sai; a nova deixa de ser "remarcada".
+    // Aprovada: a antiga cancelada sai; a nova deixa de ser "remarcada" e,
+    // revisao da AG4 (achado 7), passa a ser a remarcacao aprovada ("foi
+    // remarcada" vale com o par dela, sem a pendencia).
     nova.approval_status = "aprovado";
     c1.status = "cancelado_paciente";
     const t2 = turno(cenario, depois);
@@ -403,6 +430,7 @@ describe("a reconferência e os fatos do estado", () => {
         unidade: "Aldeota",
         profissional: "Dra. Ana Lima",
         marcadaNestaConversa: false,
+        remarcacaoAprovada: true,
       },
     ]);
     expect(linhasDoAtendimentoEmAndamento(t2.paraOModelo()!)).toContain(
@@ -493,6 +521,7 @@ describe("as falhas, os avanços e a nota da passagem", () => {
     await cenario.fala({
       texto: "Quero remarcar a de quinta",
       roteiro: [
+        ferramenta("consultar_minhas_consultas", {}),
         ferramenta("buscar_horario_para_remarcar", {
           consulta: "c1",
           a_partir_de: "2026-10-26",
@@ -512,6 +541,7 @@ describe("as falhas, os avanços e a nota da passagem", () => {
     const r = await cenario.fala({
       texto: "Quero remarcar a de quinta",
       roteiro: [
+        ferramenta("consultar_minhas_consultas", {}),
         ferramenta("buscar_horario_para_remarcar", {
           consulta: "c1",
           a_partir_de: "2026-10-26",

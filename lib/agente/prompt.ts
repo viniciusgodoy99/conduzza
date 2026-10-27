@@ -127,8 +127,8 @@ O sistema guarda o atendimento de uma mensagem para a outra no bloco <atendiment
 - Se reservar_horario ou agendar disser que o horário não está mais livre (ocupado, bloqueado, conflito, reservado_por_outra_conversa, fora_da_jornada, antes_da_antecedencia, depois_do_horizonte ou unidade_invalida), diga que esse horário não está mais disponível e ofereça outros com buscar_horario.
 - Se agendar disser "reserva_vencida" ou "reserva_inexistente", a reserva de 10 minutos acabou: consulte buscar_horario de novo para o mesmo dia, o mesmo período e a mesma hora; se o mesmo horário vier, reserve de novo e pergunte "Confirma ...?" outra vez; se não vier, diga que ele não está mais disponível e ofereça os que vieram. Se agendar disser "sem_confirmacao_do_paciente", pergunte "Confirma ...?" com tudo e só marque depois da resposta da pessoa.
 - Se agendar disser "faltam_dados", peça os dados da lista "faltam" e registre com registrar_dados_do_paciente antes de perguntar "Confirma ...?" de novo. Se a pessoa não quiser informar os dados que a clínica pede, passe para a equipe com o motivo "faltam_dados".
-- Se agendar disser "reserva_diferente", o horário reservado nesta conversa é outro, o que veio em horario_reservado: pergunte "Confirma ...?" de novo com esse horário e só marque depois da resposta da pessoa.
-- Se reservar_horario ou agendar disser "ja_tem_consulta", diga só que a pessoa já tem uma consulta desse procedimento marcada, com o dia e a hora que vieram, e pergunte se ela quer falar com a equipe sobre essa consulta; se quiser, passe para a equipe com o motivo "ja_tem_consulta". Não peça dados, não reserve e não marque outra.
+- Se agendar disser "reserva_diferente", o horário reservado nesta conversa é outro, o que veio em horario_reservado: pergunte "Confirma ...?" de novo com esse horário e só marque depois da resposta da pessoa (numa remarcação, siga "Cancelar e remarcar" abaixo).
+- Fora de uma remarcação, se reservar_horario ou agendar disser "ja_tem_consulta", diga só que a pessoa já tem uma consulta desse procedimento marcada, com o dia e a hora que vieram, e pergunte se ela quer falar com a equipe sobre essa consulta; se quiser, passe para a equipe com o motivo "ja_tem_consulta". Não peça dados, não reserve e não marque outra.
 - Se a consulta for para outra pessoa (filho, mãe, amigo), chame registrar_dados_do_paciente com para_o_titular false, sem nome e sem data: o sistema passa a conversa para a equipe.
 - Se reservar_horario disser "codigo_invalido", consulte buscar_horario de novo e use um código que ela trouxer. Se buscar_horario disser "profissional_nao_encontrado" ou "unidade_nao_encontrada", use o código do bloco <profissionais> ou de consultar_unidades, ou null.
 - Cada resposta tem no máximo uma reserva, uma marcação e uma confirmação de presença. Se a ferramenta disser "uma_reserva_por_resposta", ofereça os horários e reserve só na próxima resposta.
@@ -141,17 +141,18 @@ O sistema guarda o atendimento de uma mensagem para a outra no bloco <atendiment
 - Lista de espera e encaixe continuam com a equipe: passe com o motivo "pedido_de_agenda".
 
 Cancelar e remarcar (só com as ferramentas de cancelar e de remarcar; o bloco <atendimento> diz se estão ligadas):
-- As consultas que a pessoa já tem, só pela ferramenta consultar_minhas_consultas, nesta resposta: ela traz cada consulta com um código (c1, c2...), o dia, a hora e a situação. Fale só do dia, da hora e da situação: nunca diga o procedimento, o profissional ou o convênio de uma consulta que a pessoa já tem. Com mais de uma consulta, pergunte qual pelo dia. Se a consulta que ela quer não vier na lista, passe para a equipe com o motivo "pedido_de_agenda".
+- As consultas que a pessoa já tem, só pela ferramenta consultar_minhas_consultas, nesta resposta: ela traz cada consulta com um código (c1, c2...), o dia, a hora e a situação. O código vale só na resposta em que consultar_minhas_consultas foi chamada: numa mensagem nova, chame consultar_minhas_consultas de novo antes de usar um código. Fale só do dia, da hora e da situação: nunca diga o procedimento, o profissional ou o convênio de uma consulta que a pessoa já tem. Com mais de uma consulta, pergunte qual pelo dia. Se a consulta que ela quer não vier na lista, passe para a equipe com o motivo "pedido_de_agenda".
 - Situações: "marcada" e "confirmada" são consultas de pé; "aguardando_aprovacao" ainda espera a aprovação da equipe; "remarcacao_pedida" já tem uma remarcação esperando a aprovação da equipe; "remarcacao_aguardando_aprovacao" é a remarcação pedida, esperando a aprovação da equipe.
 - Se a pessoa disser que não vai poder ir sem dizer o que quer, pergunte se ela prefere remarcar ou cancelar a consulta, com o dia e a hora. Nunca cancele nem remarque sem a pessoa pedir, e nunca diga que ela faltou.
-- Para cancelar, chame pedir_cancelamento com o código da consulta: o sistema confere a consulta e o prazo da clínica e faz a pergunta de confirmação, então não escreva mais nada. Chame cancelar_consulta só quando a pessoa responder a essa pergunta, numa mensagem nova. Se ela disser que não quer cancelar, não chame ferramenta: diga que a consulta continua marcada, com o dia e a hora. Se cancelar_consulta disser "paciente_nao_confirmou", diga que a consulta continua marcada. Se disser "sem_pergunta_de_cancelamento" ou "sem_confirmacao_do_paciente", chame pedir_cancelamento de novo para o sistema perguntar.
-- Para remarcar, pergunte para quando a pessoa prefere e chame buscar_horario_para_remarcar com o código da consulta (depois, com consulta null). A busca é sempre com o mesmo profissional, o mesmo procedimento e o mesmo pagamento da consulta: ofereça os horários que vieram com o dia e a hora (e a unidade, quando vier). Quando a pessoa escolher, chame reservar_horario com o código do horário: o sistema reserva e faz a pergunta de confirmação, então não escreva mais nada. Chame agendar só quando a pessoa confirmar, numa mensagem nova depois dessa pergunta: o sistema responde. Para remarcar, nunca use buscar_horario, que é para marcar uma consulta nova.
-- Se agendar disser "sem_confirmacao_do_paciente" numa remarcação, chame reservar_horario de novo com o mesmo horário, para o sistema perguntar outra vez.
+- Para cancelar, chame pedir_cancelamento com o código da consulta: o sistema confere a consulta e o prazo da clínica e faz a pergunta de confirmação, então não escreva mais nada. Chame cancelar_consulta só quando a pessoa responder a essa pergunta, numa mensagem nova. Se ela disser que não quer cancelar, não chame ferramenta: diga que a consulta continua marcada, com o dia e a hora. Se cancelar_consulta disser "paciente_nao_confirmou", diga que a consulta continua marcada. Se disser "sem_pergunta_de_cancelamento", chame consultar_minhas_consultas e pedir_cancelamento de novo para o sistema perguntar. Se o bloco <atendimento_em_andamento> disser que a pergunta do cancelamento não vale mais e a pessoa responder que quer cancelar, chame cancelar_consulta: o sistema pergunta de novo, então não escreva mais nada; nunca diga que cancelou.
+- Para remarcar, pergunte para quando a pessoa prefere e chame buscar_horario_para_remarcar com o código da consulta (depois, com consulta null). A busca é sempre com o mesmo profissional, o mesmo procedimento e o mesmo pagamento da consulta: ofereça os horários que vieram com o dia e a hora (e a unidade, quando vier). Ofereça os horários e espere a pessoa escolher numa mensagem nova: nunca chame reservar_horario na mesma resposta de buscar_horario_para_remarcar, nem quando ela já disse o dia e a hora (se reservar_horario disser "oferecer_antes_de_reservar", ofereça o horário e espere a escolha). Quando a pessoa escolher, chame reservar_horario com o código do horário: o sistema reserva e faz a pergunta de confirmação, então não escreva mais nada. Chame agendar só quando a pessoa confirmar, numa mensagem nova depois dessa pergunta: o sistema responde. Para remarcar, nunca use buscar_horario, que é para marcar uma consulta nova.
+- Se agendar disser "sem_confirmacao_do_paciente" ou "reserva_diferente" numa remarcação, chame reservar_horario de novo com o horário que a pessoa escolheu, para o sistema perguntar outra vez.
+- Na remarcação, a pessoa já tem a consulta que está sendo remarcada: nunca diga que ela já tem consulta marcada como motivo para não remarcar.
 - A remarcação fica pendente até a equipe aprovar, e a consulta antiga continua marcada até lá: nunca diga que a consulta antiga foi cancelada nem que a nova está confirmada, aprovada ou garantida.
 - Se a pessoa quiser trocar de profissional, de procedimento ou de convênio na remarcação, passe para a equipe com o motivo "pedido_de_agenda".
 - Se a consulta que a pessoa quer cancelar ou remarcar for de outra pessoa (filho, mãe, amigo), não chame as ferramentas de cancelar nem de remarcar: passe para a equipe com o motivo "consulta_para_outra_pessoa".
 - Nunca fale de multa, taxa, cobrança, reembolso ou prazo para cancelar ou remarcar, a não ser pela pergunta do bloco <base_da_clinica> que responda; se nenhuma responder, passe para a equipe com o motivo "agente_pediu".
-- Se uma dessas ferramentas disser "consulta_encerrada" ou "consulta_nao_encontrada", diga que a consulta não está mais marcada e pergunte o que a pessoa quer fazer; para seguir, consulte consultar_minhas_consultas de novo. Se cancelar_consulta disser "consulta_mudou", diga que a consulta mudou e chame pedir_cancelamento de novo, se a pessoa ainda quiser. Se agendar disser "consulta_mudou" numa remarcação, chame reservar_horario de novo com o mesmo horário, para o sistema perguntar outra vez. Se disser "horario_fora_da_remarcacao" ou "remarcacao_invalida", ofereça os horários de buscar_horario_para_remarcar. Se disser "codigo_invalido" ou "sem_consulta_para_remarcar", consulte consultar_minhas_consultas de novo e use um código que ela trouxer.
+- Se uma dessas ferramentas disser "consulta_encerrada" ou "consulta_nao_encontrada", diga que a consulta não está mais marcada e pergunte o que a pessoa quer fazer; para seguir, consulte consultar_minhas_consultas de novo. Se cancelar_consulta disser "consulta_mudou", diga que a consulta mudou e, se a pessoa ainda quiser, chame consultar_minhas_consultas e pedir_cancelamento de novo. Se agendar disser "consulta_mudou" numa remarcação, chame reservar_horario de novo com o mesmo horário, para o sistema perguntar outra vez. Se disser "horario_fora_da_remarcacao" ou "remarcacao_invalida", ofereça os horários de buscar_horario_para_remarcar. Se disser "codigo_invalido" ou "sem_consulta_para_remarcar", consulte consultar_minhas_consultas de novo e use um código que ela trouxer.
 
 Confirmar presença: quando o paciente disser que vai à consulta já marcada, chame confirmar_presenca. Se ela disser "sem_consulta" ou "mais_de_uma", passe para a equipe com o motivo "pedido_de_agenda". Se ela disser "reserva_em_andamento", a pessoa tem um horário reservado nesta conversa esperando a confirmação: se ela respondeu à pergunta de confirmação desse horário, chame agendar; se não ficou claro, pergunte se ela confirma o horário reservado.
 
@@ -376,6 +377,11 @@ export const FRASES_DO_ATENDIMENTO_EM_ANDAMENTO = {
     "Remarcando a consulta de {}, com o mesmo profissional, o mesmo procedimento e o mesmo pagamento.",
   pedidoNaoConferido:
     "A consulta do pedido não foi conferida agora: consulte consultar_minhas_consultas de novo antes de falar dela.",
+  // Revisao da AG4 (achados 1 e 7): a pergunta do cancelamento que nao vale
+  // mais e a consulta cancelada nesta conversa.
+  pedidoDeCancelarDesfeito:
+    "Pedido de cancelar a consulta de {}: a pergunta do cancelamento não vale mais (passou do tempo, ou outra mensagem saiu depois dela). Nada foi cancelado: se a pessoa quiser cancelar, chame cancelar_consulta, e o sistema pergunta de novo.",
+  cancelada: "Consulta cancelada nesta conversa: {}.",
   horariosDaRemarcacao:
     "Horários já oferecidos para a remarcação (o código vale enquanto estiver nesta lista):",
   remarcacaoPendente:
@@ -729,7 +735,9 @@ export function linhasDoAtendimentoEmAndamento(
   const comCodigo = (codigo: string | null, nome: string) =>
     codigo === null ? emUmaLinha(nome) : `[${codigo}] ${emUmaLinha(nome)}`;
   const comPedido =
-    (a.pedidoDaConsulta ?? null) !== null || (a.remarcacao ?? null) !== null;
+    (a.pedidoDaConsulta ?? null) !== null ||
+    (a.remarcacao ?? null) !== null ||
+    (a.cancelada ?? null) !== null;
   const remarcando = a.pedidoDaConsulta?.acao === "remarcar";
   const linhas: string[] = [
     preencher(
@@ -752,12 +760,19 @@ export function linhasDoAtendimentoEmAndamento(
       linhas.push(
         preencher(
           pedidoDaConsulta.acao === "cancelar"
-            ? f.pedidoDeCancelar
+            ? pedidoDaConsulta.desfeito === true
+              ? f.pedidoDeCancelarDesfeito
+              : f.pedidoDeCancelar
             : f.pedidoDeRemarcar,
           `${pedidoDaConsulta.dia} às ${pedidoDaConsulta.hora}`,
         ),
       );
     }
+  }
+  // Revisao da AG4 (achado 7): a consulta cancelada nesta conversa.
+  const cancelada = a.cancelada ?? null;
+  if (cancelada !== null) {
+    linhas.push(preencher(f.cancelada, `${cancelada.dia} às ${cancelada.hora}`));
   }
   const remarcacao = a.remarcacao ?? null;
   if (remarcacao !== null) {

@@ -291,8 +291,25 @@ const CARACTERES_POR_MENSAGEM = LIMITE_DE_MENSAGEM;
 /** So responses.create e usado; os testes injetam um falso com roteiro. */
 export type ClienteDoAgente = Pick<OpenAI, "responses">;
 
+/**
+ * Revisao da AG4: quem escreveu a mensagem que nao e do paciente, como o
+ * banco guarda (message.author): a IA, a equipe (usuario, inclusive pelo
+ * celular) ou o sistema (regua, campanha, mensagem agendada, a frase de
+ * escalonamento).
+ */
+export type AutoriaDaClinica = "ia" | "usuario" | "sistema";
+
 export type MensagemDaConversa = {
   autor: "paciente" | "assistente";
+  /**
+   * Revisao da AG4 (achado 1): a autoria REAL da mensagem do "assistente"
+   * (o historico mostra a IA, a equipe e o sistema todos como
+   * "assistente"). So o servidor le isto: a pergunta do cancelamento (T1) e
+   * a da remarcacao (T3) so valem quando a mensagem logo antes das
+   * pendentes e da IA. Nunca vai a OpenAI. Ausente ou nula: nao se sabe
+   * (falha fechada: nao conta como da IA).
+   */
+  autoria?: AutoriaDaClinica | null;
   /**
    * null para midia sem texto. No historico do WhatsApp, com o nome do
    * contato trocado pela marca (lib/agente/historico.ts): e o texto que os
@@ -1168,6 +1185,13 @@ export async function executarTurnoDoAgente(
   const comEstado =
     entrada.atendimento !== null && entrada.atendimento !== undefined;
   const pendentes = mensagensPendentes(entrada.mensagens);
+  // Revisao da AG4 (achado 1): a mensagem logo antes das pendentes, com a
+  // autoria real (a pergunta do cancelamento e da remarcacao so vale quando
+  // e ela, da IA).
+  const antes =
+    pendentes.length === 0
+      ? undefined
+      : entrada.mensagens[entrada.mensagens.length - pendentes.length - 1];
   const agendaDoTurno = criarAgendaDoTurno({
     porta: entrada.agenda ?? null,
     catalogo: entrada.catalogo,
@@ -1178,6 +1202,13 @@ export async function executarTurnoDoAgente(
     mensagens: {
       doPaciente: mensagensDoPacienteParaOsDados(entrada.mensagens),
       pendentes: mensagensDoPacienteParaOsDados(pendentes),
+      antesDasPendentes:
+        antes === undefined || antes.autor !== "assistente"
+          ? null
+          : {
+              autoria: antes.autoria ?? null,
+              texto: (antes.tipo ?? "texto") === "texto" ? antes.texto : null,
+            },
     },
     nascimentos: [entrada.dataDeNascimento, entrada.nascimentoInformado].filter(
       (n): n is string => typeof n === "string" && n !== "",

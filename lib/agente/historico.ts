@@ -2,7 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ErroComCodigoDeJob } from "@/lib/jobs/erro-de-job";
 
-import { MENSAGENS_NO_HISTORICO, type MensagemDaConversa } from "./laco";
+import {
+  MENSAGENS_NO_HISTORICO,
+  type AutoriaDaClinica,
+  type MensagemDaConversa,
+} from "./laco";
 import { MARCA_DO_NOME } from "./marca-do-nome";
 import type { AberturaDaJanela } from "./whatsapp";
 
@@ -24,7 +28,9 @@ import type { AberturaDaJanela } from "./whatsapp";
 //  - sem nota interna, sem evento, sem mensagem apagada e sem a resposta
 //    automatica do app WhatsApp Business (pelo_celular com autor 'sistema'),
 //    filtrados ANTES do limite de MENSAGENS_NO_HISTORICO;
-//  - paciente vira "paciente"; ia, usuario e sistema viram "assistente";
+//  - paciente vira "paciente"; ia, usuario e sistema viram "assistente"
+//    (revisao da AG4: com a autoria real em `autoria`, que so o servidor le
+//    e nunca vai a OpenAI);
 //  - texto com media_url (video, localizacao e cartao chegam como texto) e
 //    corpo vazio viram midia: o portao de entrada escala. Audio vai sem a
 //    transcricao (escala como midia);
@@ -234,11 +240,16 @@ export function mensagemDaLinha(
   nomeDoContato: string | null,
 ): MensagemDaConversa {
   const autor = linha.author === "paciente" ? "paciente" : "assistente";
+  // Revisao da AG4 (achado 1): a autoria real da fala da clinica (a IA, a
+  // equipe ou o sistema), so para o servidor; valor desconhecido e nulo.
+  const autoria: Pick<MensagemDaConversa, "autoria"> =
+    autor === "paciente" ? {} : { autoria: autoriaDaClinica(linha.author) };
   const corpo = typeof linha.body === "string" ? linha.body : "";
   const ehTexto = linha.content_type === "texto";
   if (!ehTexto || linha.media_url !== null || corpo.trim() === "") {
     return {
       autor,
+      ...autoria,
       texto: null,
       tipo: ehTexto ? "midia" : linha.content_type,
     };
@@ -246,7 +257,14 @@ export function mensagemDaLinha(
   const texto = mascararNome(corpo, nomeDoContato);
   return autor === "paciente"
     ? { autor, texto, tipo: "texto", textoOriginal: corpo }
-    : { autor, texto, tipo: "texto" };
+    : { autor, ...autoria, texto, tipo: "texto" };
+}
+
+/** message.author da fala da clinica como a autoria do laco (ou nula). */
+function autoriaDaClinica(author: string): AutoriaDaClinica | null {
+  return author === "ia" || author === "usuario" || author === "sistema"
+    ? author
+    : null;
 }
 
 /**

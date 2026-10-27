@@ -23,6 +23,7 @@ import {
   type AcaoDaRemarcacao,
 } from "@/components/agenda/remarcacao-da-ia";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
+import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
@@ -80,6 +81,9 @@ import {
 // "Para ..." (a nova), sem "Ver dados informados" (a remarcacao nao pede
 // dado, D-26). Aprovar e Recusar abrem os dialogos da remarcacao
 // (dialogo-da-remarcacao.tsx), com o aviso ao paciente na aprovacao (D-28).
+// A antiga vem numa leitura a parte (fetchPendencias): se ela falhar, so o
+// cartao da remarcacao diz que a antiga nao carregou (Aviso de atencao no
+// lugar do "De"), e o resto do painel e da Agenda abre normalmente.
 
 export const CHIP_ENCAIXE_IA: StatusDefinition = {
   label: "Encaixe da IA",
@@ -139,7 +143,9 @@ export type RetornoNaTela = {
  * O que a tela diz depois de aprovar ou recusar. A consulta da IA pede que a
  * equipe avise o paciente (a IA disse a ele que a equipe confirma por aqui).
  * Aviso da acao (a conversa nao voltou para a equipe) e warning, nunca
- * sucesso calado.
+ * sucesso calado, e vai SOZINHO: por isso todo aviso da recusa e
+ * autocontido ("A consulta foi recusada, mas ...", e na remarcacao da IA "A
+ * remarcação foi recusada, mas ..."; revisao da AG4, achado 5).
  */
 export function retornoDaPendencia(
   resultado: AgendaActionResult,
@@ -353,6 +359,11 @@ export function PendingPanel({
                         <p className="cz-num text-xs text-text-secondary">
                           {horarios.para}
                         </p>
+                        {horarios.naoCarregada ? (
+                          <Aviso tom="warning" className="mt-1.5 px-3 py-2.5">
+                            {TEXTOS_DA_REMARCACAO.antigaNaoCarregada}
+                          </Aviso>
+                        ) : null}
                       </>
                     ) : (
                       <p className="cz-num text-xs text-text-secondary">
@@ -455,7 +466,13 @@ export function PendingPanel({
           <DialogoDaRemarcacao
             key={`${remarcacaoAberta.consulta.id}-${remarcacaoAberta.acao}`}
             contexto={contexto}
-            consulta={remarcacaoAberta.consulta}
+            // A da lista AGORA (o tempo real a renova, com a antiga lida de
+            // novo); a guardada so quando ela ja saiu da lista.
+            consulta={
+              pendencias.find(
+                (pendencia) => pendencia.id === remarcacaoAberta.consulta.id,
+              ) ?? remarcacaoAberta.consulta
+            }
             acao={remarcacaoAberta.acao}
             aoFechar={() => setRemarcacaoAberta(null)}
             aoTerminar={() =>

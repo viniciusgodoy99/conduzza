@@ -939,6 +939,10 @@ export const RESULTADOS_QUE_SAO_FALHA: ReadonlySet<string> = new Set([
   "horario_fora_da_remarcacao",
   "sem_consulta_para_remarcar",
   "um_cancelamento_por_resposta",
+  // Revisao da AG4 (achado 1): a resposta da pessoa que nao veio logo
+  // depois da pergunta do cancelamento (o sistema pergunta de novo). Conta
+  // como falha para a pergunta que nunca confere nao repetir sem fim.
+  "resposta_fora_da_pergunta",
 ]);
 
 /** O que conta como AVANCO: um passo do atendimento que deu certo. */
@@ -1025,6 +1029,12 @@ export type EntradaDaNota = {
     de: { dia: string; hora: string } | null;
     para: { dia: string; hora: string };
   } | null;
+  /**
+   * Revisao da AG4 (achado 7): a consulta que o assistente cancelou nesta
+   * conversa (o estado guarda o id dela em appointment_id, que entao NAO e
+   * a consulta marcada nesta conversa).
+   */
+  cancelada?: { dia: string; hora: string } | null;
 };
 
 const NOME_DO_PERIODO: Readonly<Record<string, string>> = {
@@ -1191,7 +1201,12 @@ export function notaDaPassagem(entrada: EntradaDaNota): string | null {
       linhas.push(`Dados para marcar: ${partes.join("; ")}.`);
     }
   }
-  if (estado.appointment_id !== null) {
+  const cancelada = entrada.cancelada ?? null;
+  if (cancelada !== null) {
+    linhas.push(
+      `Consulta cancelada pelo assistente nesta conversa: ${cancelada.dia} às ${cancelada.hora}.`,
+    );
+  } else if (estado.appointment_id !== null) {
     linhas.push(
       "Consulta marcada pelo assistente nesta conversa, pendente da aprovação da equipe.",
     );

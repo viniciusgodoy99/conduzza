@@ -337,8 +337,20 @@ export function resumirFatosDoTurno(
         ? `${lido} (marcada pela assistente nesta conversa, pendente da aprovação da equipe)`
         : c.remarcadaNestaConversa === true
           ? `${lido} (remarcação pedida pela assistente nesta conversa, pendente da aprovação da equipe)`
-          : lido,
+          : c.remarcacaoAprovada === true
+            ? `${lido} (remarcação pedida pela assistente nesta conversa, já aprovada pela equipe)`
+            : lido,
     );
+  }
+  // Revisao da AG4 (achado 7): as consultas que a assistente cancelou nesta
+  // conversa num turno anterior, relidas e ainda canceladas.
+  const canceladas: string[] = [];
+  for (const c of fatos.consultasCanceladas ?? []) {
+    const lido = horarioEmTexto(c);
+    if (lido === null) {
+      return { ok: false, motivo: "horario_fora_do_formato" };
+    }
+    canceladas.push(lido);
   }
   const consultaLida =
     consultas.length > 0
@@ -402,6 +414,15 @@ export function resumirFatosDoTurno(
       "nenhuma",
     ),
     consultaLida,
+    ...(canceladas.length === 0
+      ? []
+      : [
+          secao(
+            "Consultas que a assistente cancelou nesta conversa, relidas pelo sistema nesta resposta e ainda canceladas (dia e hora juntos)",
+            canceladas,
+            "nenhuma",
+          ),
+        ]),
     secao(
       "Horários livres que a agenda trouxe nesta resposta (dia e hora juntos)",
       horarios,
@@ -465,4 +486,8 @@ export const FONTES_DO_RESUMO: readonly string[] = [
   // conversa avisada.
   ROTULO_DA_REMARCACAO_COM_A_ANTIGA,
   "resumo: a remarcacao pedida nesta conversa avisada como pendente",
+  // Revisao da AG4 (achado 7): a remarcacao ja aprovada e as canceladas
+  // nesta conversa.
+  "resumo: a remarcacao pedida nesta conversa e ja aprovada avisada como aprovada",
+  "resumo: as consultas canceladas pela assistente nesta conversa, relidas, numa secao propria so quando ha",
 ];

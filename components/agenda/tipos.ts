@@ -81,6 +81,14 @@ export type ContextoAgenda = {
    * (23514 remarcacao_pendente).
    */
   remarcacaoPendenteDe?: (consultaId: string) => ConsultaDaAgenda | null;
+  /**
+   * AG4 (revisao, achados 1 e 3): a remarcacao pedida pela IA (a consulta
+   * NOVA) como esta na lista do "Pendente de você", com a antiga lida a
+   * parte (remarcacoesPendentesPorNova). A consulta do dia nao traz a
+   * antiga; o menu da nova abre os dialogos com esta, que o tempo real
+   * renova a cada mudanca de consulta. Nulo quando a nova nao esta na lista.
+   */
+  remarcacaoNaLista?: (novaId: string) => ConsultaDaAgenda | null;
 };
 
 export type SelecaoDeConsulta = {

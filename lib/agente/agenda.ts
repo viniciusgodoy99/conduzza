@@ -1004,6 +1004,11 @@ export async function lerConsultaDaIa(
     pendente: linha.approval_status === "pendente",
     remarcacaoDe:
       typeof linha.remarcacao_de === "string" ? linha.remarcacao_de : null,
+    // Revisao da AG4 (achado 7): cancelada (pelo paciente ou pela clinica),
+    // para o fato do cancelamento feito nesta conversa.
+    cancelada:
+      linha.status === "cancelado_paciente" ||
+      linha.status === "cancelado_clinica",
   };
 }
 
@@ -1029,21 +1034,27 @@ type LinhaDaConsultaListada = {
  * antes do atendimento e sem as recusadas, ate MAXIMO_DE_CONSULTAS_NA_LISTA
  * (com ha_mais), e quais delas tem uma remarcacao pendente ligada. So o que
  * a ferramenta e a conferencia precisam: nada de observacao, nome ou
- * telefone. Lanca na leitura que falha ou passa do prazo.
+ * telefone. Lanca na leitura que falha ou passa do prazo. Revisao da AG4
+ * (achados 1 e 9): com `apenas`, so aquela consulta (a mesma leitura e a
+ * mesma conferencia, para reconferir a consulta em foco).
  */
 export async function lerConsultasDoContatoDaIa(
   admin: Cliente,
   ids: IdsDoTurno,
   agoraMs: number,
+  apenas?: string,
 ): Promise<ConsultasDoContato> {
   const corrida = await correrComPrazo(async () => {
-    const { data, error } = await admin
+    const consulta = admin
       .from("appointment")
       .select(
         "id, starts_at, ends_at, status, approval_status, is_overbooking, service_link_id, professional_id, unit_id, remarcacao_de",
       )
       .eq("clinic_id", ids.clinicId)
-      .eq("contact_id", ids.contactId)
+      .eq("contact_id", ids.contactId);
+    const { data, error } = await (apenas === undefined
+      ? consulta
+      : consulta.eq("id", apenas))
       .in("status", [...STATUS_ANTES_DO_ATENDIMENTO])
       .gt("starts_at", new Date(agoraMs).toISOString())
       .or("approval_status.is.null,approval_status.neq.recusado")
@@ -1206,8 +1217,8 @@ export function portaDaAgendaDoWhatsapp(
       lerConsultaDaIa(admin, ids, appointmentId, ids.agora()),
     lerReservaViva: () => lerReservaVivaDaIa(admin, ids, ids.agora()),
     // AG4: remarcar e cancelar.
-    lerConsultasDoContato: () =>
-      lerConsultasDoContatoDaIa(admin, ids, ids.agora()),
+    lerConsultasDoContato: (apenas) =>
+      lerConsultasDoContatoDaIa(admin, ids, ids.agora(), apenas),
     cancelarConsulta: (appointmentId) =>
       cancelarConsultaPelaIa(admin, ids, appointmentId),
   };
@@ -1730,8 +1741,11 @@ export function portaDaAgendaDoSimulador(
       };
     },
     // AG4: so a consulta marcada na propria conversa de teste aparece.
-    lerConsultasDoContato: async () => {
-      const lista = emOrdem(simuladas());
+    // Revisao da AG4: com `apenas`, so aquela.
+    lerConsultasDoContato: async (apenas) => {
+      const lista = emOrdem(
+        simuladas().filter((c) => apenas === undefined || c.id === apenas),
+      );
       return {
         consultas: lista.slice(0, MAXIMO_DE_CONSULTAS_NA_LISTA),
         haMais: lista.length > MAXIMO_DE_CONSULTAS_NA_LISTA,

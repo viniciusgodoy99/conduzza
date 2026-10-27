@@ -161,7 +161,9 @@ describe("cancelar: o caminho feliz", () => {
       intencao: "cancelar",
       pedido_pendente: null,
       pedido_pendente_em: null,
-      appointment_id: null,
+      // Revisao da AG4 (achado 7): o estado guarda a consulta cancelada (o
+      // turno seguinte rele e o fato "foi cancelada" vale com o par dela).
+      appointment_id: C1,
       desfecho: "cancelou",
       falhas_seguidas: 0,
     });
@@ -518,6 +520,13 @@ describe("cancelar: a idempotência pelo job", () => {
     const cenario = new CenarioDaAg4();
     consultasDoContato(cenario.banco);
     await pedirOCancelamento(cenario);
+    // A resposta da pessoa logo depois da pergunta (a ancora forte do banco),
+    // sem um turno da IA: a RPC e chamada direto.
+    cenario.noBanco.push({
+      direcao: "entrada",
+      autor: "paciente",
+      em: cenario.agora + 60_000,
+    });
     const ids = {
       clinicId: "acd9c539-585e-4f2a-a195-712c70099564",
       conversationId: "c0000000-0000-4000-8000-000000000001",

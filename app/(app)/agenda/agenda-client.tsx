@@ -28,6 +28,7 @@ import {
   fetchAgendaDia,
   fetchPendencias,
   remarcacoesPendentesPorAntiga,
+  remarcacoesPendentesPorNova,
   type AgendaDia,
   type ConsultaDaAgenda,
 } from "@/lib/queries/agenda";
@@ -195,6 +196,12 @@ export function AgendaClient({
     () => remarcacoesPendentesPorAntiga(pendenciasQuery.data ?? []),
     [pendenciasQuery.data],
   );
+  // A mesma lista pela consulta NOVA: o menu dela abre os dialogos com a
+  // antiga lida a parte (a consulta do dia nao traz a antiga).
+  const remarcacoesPorNova = useMemo(
+    () => remarcacoesPendentesPorNova(pendenciasQuery.data ?? []),
+    [pendenciasQuery.data],
+  );
 
   const contexto: ContextoAgenda = {
     clinicId,
@@ -210,6 +217,7 @@ export function AgendaClient({
     abrirAgendamento: abrirModal,
     remarcacaoPendenteDe: (consultaId) =>
       remarcacoesPendentes.get(consultaId) ?? null,
+    remarcacaoNaLista: (novaId) => remarcacoesPorNova.get(novaId) ?? null,
   };
 
   const weekdayDoDia = weekdayLocal(

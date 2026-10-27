@@ -9,6 +9,8 @@ import {
 } from "@/app/(app)/agenda/actions";
 import { TEXTOS_DO_AVISO_AO_PACIENTE } from "@/components/agenda/remarcacao-comum";
 import {
+  antigaNaoCarregada,
+  avisoDaAntigaQueJaPassou,
   desfechoDaRemarcacao,
   erroDaAntigaEncerrada,
   situacaoDaAntiga,
@@ -35,8 +37,12 @@ import type { ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 // "Aprovar a remarcação?" e "Recusar a remarcação?" (AG4, desenho da secao
 // 5), o mesmo dialogo no painel "Pendente de você" e no menu da consulta. A
-// remarcacao e a consulta NOVA que a IA pediu, pendente e ligada a antiga
-// (a antiga vem embutida na leitura da Agenda).
+// remarcacao e a consulta NOVA que a IA pediu, pendente e ligada a antiga.
+// A antiga vem da lista do "Pendente de você" (lida a parte; o painel e o
+// menu passam a consulta da lista, que o tempo real renova), e o dialogo a
+// le a cada render: a antiga cancelada ou atendida nesse meio muda o texto e
+// o Aprovar na hora (revisao da AG4, achado 3). Se a antiga nao carregou, o
+// dialogo diz isso e o servidor confere de novo ao confirmar.
 //
 // - Aprovar: a frase do que acontece com as duas consultas (a antiga e
 //   cancelada; o horario dela volta a lista de espera so se ainda for futuro)
@@ -52,8 +58,12 @@ import type { ConsultaDaAgenda } from "@/lib/queries/agenda";
 //   horario da antiga lido do banco), "Esta remarcação já foi tratada." para
 //   quem chega depois, e o erro do gatilho da aprovacao (a antiga ja
 //   atendida ou com falta) dentro do dialogo, com o Aprovar travado. Quando
-//   a leitura da Agenda ja mostra a antiga encerrada, o dialogo abre com
-//   esse erro e o Aprovar travado (o servidor confere de novo).
+//   a lista ja mostra a antiga encerrada, o dialogo mostra esse erro e o
+//   Aprovar travado (o servidor confere de novo).
+// - A antiga que ja passou sem presenca nem falta marcada (revisao da AG4,
+//   achado 8): a aprovacao a cancela como "Cancelado pelo paciente", e o
+//   paciente pode ter ido ou faltado. O "Aprovar a remarcação?" avisa, e o
+//   Aprovar continua (a decisao e da recepcao).
 // Quem nao edita a agenda nem chega aqui: o botao que abre fica visivel e
 // desabilitado com a dica, e a acao confere de novo no servidor.
 
@@ -81,7 +91,10 @@ export function DialogoDaRemarcacao({
   aoTerminar,
 }: {
   contexto: ContextoAgenda;
-  /** A consulta NOVA (a remarcacao pendente), com a antiga embutida. */
+  /**
+   * A consulta NOVA (a remarcacao pendente), como a lista do "Pendente de
+   * você" tem agora, com a antiga lida a parte.
+   */
   consulta: ConsultaDaAgenda;
   acao: AcaoDaRemarcacao;
   aoFechar: () => void;
@@ -89,24 +102,35 @@ export function DialogoDaRemarcacao({
   aoTerminar?: () => Promise<unknown> | void;
 }) {
   const aprovar = acao === "aprovar";
-  // A antiga ja na recepcao, em atendimento, compareceu ou faltou: o gatilho
-  // recusaria a aprovacao. O dialogo ja abre dizendo isso, com o Aprovar
-  // travado (o servidor confere de novo, com a antiga lida do banco).
+  const [enviando, setEnviando] = useState(false);
+  // O erro que o servidor devolveu, e se ele trava o Aprovar.
+  const [erroDoServidor, setErroDoServidor] = useState<{
+    texto: string;
+    travar: boolean;
+  } | null>(null);
+  const [avisar, setAvisar] = useState(true);
+  const [abertoEm] = useState(() => Date.now());
+  const idCaixaAviso = useId();
+
+  // A antiga como a lista tem AGORA (a cada render, nunca so na abertura).
+  // Ja na recepcao, em atendimento, compareceu ou faltou: o gatilho
+  // recusaria a aprovacao. O dialogo diz isso, com o Aprovar travado (o
+  // servidor confere de novo, com a antiga lida do banco).
   const antiga = consulta.antiga ?? null;
   const antigaEncerrada =
     aprovar &&
     antiga !== null &&
     situacaoDaAntiga(antiga.status) === "encerrada";
-  const [enviando, setEnviando] = useState(false);
-  const [erro, setErro] = useState<string | null>(() =>
-    antigaEncerrada && antiga
+  const erro =
+    erroDoServidor?.texto ??
+    (antigaEncerrada && antiga
       ? erroDaAntigaEncerrada(antiga.starts_at, contexto.timezone)
-      : null,
-  );
-  const [travado, setTravado] = useState(antigaEncerrada);
-  const [avisar, setAvisar] = useState(true);
-  const [abertoEm] = useState(() => Date.now());
-  const idCaixaAviso = useId();
+      : null);
+  const travado = (erroDoServidor?.travar ?? false) || antigaEncerrada;
+  const naoCarregada = antigaNaoCarregada(consulta);
+  const jaPassou = aprovar
+    ? avisoDaAntigaQueJaPassou(consulta, contexto.timezone, abertoEm)
+    : null;
 
   const nome =
     consulta.contact?.name ?? consulta.contact?.phone_e164 ?? "Paciente";
@@ -115,7 +139,7 @@ export function DialogoDaRemarcacao({
 
   const confirmar = async () => {
     setEnviando(true);
-    setErro(null);
+    setErroDoServidor(null);
     let resultado: Awaited<ReturnType<typeof aprovarRemarcacaoAction>>;
     try {
       resultado = aprovar
@@ -133,8 +157,7 @@ export function DialogoDaRemarcacao({
       mostrar(desfecho.avisos);
       aoFechar();
     } else {
-      setErro(desfecho.erro);
-      setTravado(desfecho.travar);
+      setErroDoServidor({ texto: desfecho.erro, travar: desfecho.travar });
     }
     await aoTerminar?.();
   };
@@ -171,6 +194,14 @@ export function DialogoDaRemarcacao({
               {convenio}
             </span>
           </p>
+
+          {naoCarregada ? (
+            <Aviso tom="warning">
+              {TEXTOS_DA_REMARCACAO.antigaNaoCarregadaNoDialogo}
+            </Aviso>
+          ) : null}
+
+          {jaPassou ? <Aviso tom="warning">{jaPassou}</Aviso> : null}
 
           {aprovar ? (
             <CaixaAvisarPaciente

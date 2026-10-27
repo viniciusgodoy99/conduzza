@@ -58,11 +58,18 @@ function blocoDoEstado(instrucoes: string): string {
   );
 }
 
+/**
+ * Revisao da AG4 (achado 4): o codigo c1..c5 so vale na resposta em que
+ * consultar_minhas_consultas rodou. Toda busca pelo codigo lista antes.
+ */
+const LISTAR = () => ferramenta("consultar_minhas_consultas", {});
+
 /** Ate a pergunta da remarcacao (T3): a busca e a reserva de segunda. */
 async function ateAPerguntaDaRemarcacao(cenario: CenarioDaAg4) {
   const r1 = await cenario.fala({
     texto: "Quero remarcar a de quinta para a semana que vem, de manhã",
     roteiro: [
+      LISTAR(),
       ferramenta("buscar_horario_para_remarcar", BUSCA_DA_SEMANA_QUE_VEM),
       final(
         "Tenho segunda, 26/10 às 08:00 e terça, 27/10 às 08:00, na unidade Aldeota. Qual fica melhor?",
@@ -85,7 +92,7 @@ describe("remarcar: o caminho feliz", () => {
     // A busca: so dia, hora e unidade (a clinica tem duas), e o aviso de
     // que o profissional e o mesmo; nada do procedimento nem do pagamento.
     expect(r1.tipo).toBe("resposta");
-    expect(saidas(cenario.corpos[1])[0]).toEqual({
+    expect(saidas(cenario.corpos[2])[1]).toEqual({
       resultado: "horarios",
       mesmo_profissional: true,
       consulta: { dia: "quinta, 22/10", hora: "14:00" },
@@ -120,7 +127,7 @@ describe("remarcar: o caminho feliz", () => {
         },
       ],
     });
-    expect(JSON.stringify(saidas(cenario.corpos[1]))).not.toMatch(
+    expect(JSON.stringify(saidas(cenario.corpos[2]))).not.toMatch(
       /Ana|Consulta"|particular|convenio/,
     );
     expect(r1.atendimento?.estado).toMatchObject({
@@ -133,7 +140,7 @@ describe("remarcar: o caminho feliz", () => {
     });
 
     // O bloco do estado: o pedido e os horarios, sem nomes (D-13).
-    const bloco = blocoDoEstado(cenario.instrucoesDaChamada(2));
+    const bloco = blocoDoEstado(cenario.instrucoesDaChamada(3));
     expect(bloco).toContain(
       "Passo: horários oferecidos para a remarcação, esperando a escolha da pessoa.",
     );
@@ -157,7 +164,7 @@ describe("remarcar: o caminho feliz", () => {
     ]);
     expect(r2.tipo).toBe("resposta");
     expect(r2.resposta).toBe(T3_SEGUNDA);
-    expect(cenario.corpos).toHaveLength(3);
+    expect(cenario.corpos).toHaveLength(4);
     expect(cenario.estado).toMatchObject({
       etapa: "aguardando_confirmacao",
       pedido_pendente: "remarcar",
@@ -218,7 +225,7 @@ describe("remarcar: o caminho feliz", () => {
       categoria: "acao_nao_executada",
       camada: "regra",
     });
-    expect(blocoDoEstado(cenario.instrucoesDaChamada(4))).toContain(
+    expect(blocoDoEstado(cenario.instrucoesDaChamada(5))).toContain(
       "Remarcação pedida nesta conversa: de quinta, 22/10 às 14:00 para segunda, 26/10 às 08:00, pendente da aprovação da equipe; a consulta de antes continua marcada até lá.",
     );
   });
@@ -253,6 +260,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
     const r = await cenario.fala({
       texto: "Quero remarcar a de terça",
       roteiro: [
+        LISTAR(),
         ferramenta("buscar_horario_para_remarcar", {
           ...BUSCA_DA_SEMANA_QUE_VEM,
           consulta: "c2",
@@ -277,6 +285,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
     const r = await cenario.fala({
       texto: "Quero remarcar a de quinta",
       roteiro: [
+        LISTAR(),
         ferramenta("buscar_horario_para_remarcar", BUSCA_DA_SEMANA_QUE_VEM),
       ],
     });
@@ -303,7 +312,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
         ),
       ],
     });
-    expect(saidas(cenario.corpos[4])[0]).toEqual({
+    expect(saidas(cenario.corpos[5])[0]).toEqual({
       resultado: "reserva_vencida",
     });
     expect(
@@ -328,7 +337,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
         ferramenta("reservar_horario", { horario: "h1" }),
       ],
     });
-    expect(saidas(cenario.corpos[4])[0]).toEqual({
+    expect(saidas(cenario.corpos[5])[0]).toEqual({
       resultado: "consulta_mudou",
     });
     // O pedido nao desarma: reservar de novo resolve (a ancora e a reserva).
@@ -342,6 +351,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
     await cenario.fala({
       texto: "Quero remarcar a de quinta",
       roteiro: [
+        LISTAR(),
         ferramenta("buscar_horario_para_remarcar", BUSCA_DA_SEMANA_QUE_VEM),
         final("Tenho segunda, 26/10 às 08:00. Pode ser?"),
       ],
@@ -363,7 +373,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
         final("Vou reservar o horário primeiro."),
       ],
     });
-    expect(saidas(cenario.corpos[4])[0]).toEqual({
+    expect(saidas(cenario.corpos[5])[0]).toEqual({
       resultado: "sem_confirmacao_do_paciente",
     });
     expect(cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
@@ -417,6 +427,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
     await cenario.fala({
       texto: "Quero remarcar a de quinta",
       roteiro: [
+        LISTAR(),
         ferramenta("buscar_horario_para_remarcar", BUSCA_DA_SEMANA_QUE_VEM),
         final("Tenho segunda, 26/10 às 08:00. Pode ser?"),
       ],

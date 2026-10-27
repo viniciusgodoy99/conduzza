@@ -218,8 +218,18 @@ const NAO_DO_CANCELAMENTO = new Set([
   "melhor nao",
 ]);
 
+/**
+ * Revisao da AG4 (achado 8): a mensagem com ponto de interrogacao e uma
+ * pergunta ("Sim?", "Pode?", "Cancela?"), nunca um sim (nem um nao): a
+ * normalizacao tira a pontuacao, entao a pergunta e lida antes.
+ */
+const PERGUNTA_NA_MENSAGEM = /[?¿؟？]/u;
+
 /** Uma mensagem so, pela lista fechada. */
 function respostaDeUmaMensagem(body: string): RespostaAoCancelamento {
+  if (PERGUNTA_NA_MENSAGEM.test(body)) {
+    return "nao_reconhecida";
+  }
   const semModificadores = body.replace(MODIFICADORES, "");
   let restante = semModificadores;
   let temEmojiDeConfirmacao = false;
@@ -272,6 +282,8 @@ export const FONTES_DA_RESPOSTA_AO_CANCELAMENTO: readonly string[] = [
   [...SIM_DO_CANCELAMENTO].join(","),
   [...NAO_DO_CANCELAMENTO].join(","),
   EMOJIS_DE_CONFIRMACAO.join(","),
+  // Revisao da AG4 (achado 8): a pergunta nunca e sim nem nao.
+  PERGUNTA_NA_MENSAGEM.source,
 ];
 
 // ---------------------------------------------------------------------------

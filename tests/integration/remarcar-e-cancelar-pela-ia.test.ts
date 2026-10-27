@@ -18,23 +18,41 @@ import { adminClient } from "../rls/stack";
 //   a trilha com autor ia e o job, o evento, a reoferta com fila ativa); a
 //   idempotencia por job; a paridade com o botao da confirmacao
 //   (cancelar_pelo_paciente);
-// - o reservar e o agendar com p_remarcar: as recusas, a antiga fora do
-//   ja_tem_consulta, a nova pendente ligada a antiga, a antiga com a marca,
-//   os toques pulados, a linha de evento e o evento da conversa; a segunda
+// - [revisao da AG4] a ancora forte do "sim": uma automatica (autor sistema)
+//   entre a pergunta e o "sim" nao cancela nem pede a remarcacao; a IA
+//   pergunta de novo e o "sim" vale;
+// - o reservar e o agendar com p_remarcar: as recusas, o ja_tem_consulta que
+//   nao vale na remarcacao (outra consulta do mesmo procedimento de pe, com
+//   outro profissional, e a pendente da IA nao barram; sem p_remarcar,
+//   barram), a nova pendente ligada a antiga, a antiga com a marca, os
+//   toques pulados, a linha de evento e o evento da conversa; a segunda
 //   remarcacao da mesma consulta; o indice unico;
 // - a aprovacao e a recusa pelo servidor: a antiga cancelada (trilha do
 //   sistema, reoferta), a antiga ja atendida (23514 e a chave), a recusa que
 //   devolve a conversa com o texto da remarcacao;
 // - o gravar: o instante do pedido e do banco (o do codigo nao vale); pedido
-//   sem consulta em foco e 22023;
+//   sem consulta em foco e 22023; o turno seguinte com o mesmo pedido e o
+//   mesmo foco mantem o instante enquanto ele vale, e outro foco carimba de
+//   novo;
 // - ao mesmo tempo (Promise.all): a IA e o botao na mesma consulta; duas
-//   remarcacoes da mesma consulta por duas conversas do mesmo contato.
+//   remarcacoes da mesma consulta por duas conversas do mesmo contato;
+// - a antiga com remarcacao pendente, pelo servidor: so o fim ou so a
+//   unidade tambem sao 23514 remarcacao_pendente, com a dica; o mesmo valor
+//   passa; sem remarcacao pendente, mudam.
 // LIMITE (como na E4 e na AG3): os casos "ao mesmo tempo" disparam as RPCs
 // por HTTP e NAO forcam a sobreposicao dentro do Postgres: provam o
 // resultado final no banco real, nao a trava. A prova das travas, com
 // sessoes de verdade esperando umas as outras, e o teste de concorrencia do
 // harness local (~/.claude/plans/agente-completo/ag4/banco/travas), nunca na
 // producao.
+// LIMITE (o pedido vencido, pedido_vencido): o pedido vale 60 minutos a
+// partir do instante que o BANCO carimba, e nenhum papel da API grava em
+// ia_atendimento (o servidor so le), entao este arquivo nao consegue
+// envelhecer o pedido sem esperar uma hora. O vencimento (o pedido de 3
+// dias, o limite exato de 60 minutos, a ordem da recusa e a pergunta de novo
+// que re-arma o pedido) e provado no ensaio do harness local (passos 5 e 7b)
+// e na simulacao dos testes (o instante envelhecido direto no banco local),
+// nunca na producao.
 //
 // CUIDADO, o banco e o da producao: a clinica e_de_teste com o slug
 // remarcar-ia-int-*, apagada no afterAll (consultas, reservas, estado,
@@ -60,6 +78,8 @@ const DADO_INVALIDO = "22023";
 const PARAMETRO_NULO = "22004";
 const VIOLA_CHECK = "23514";
 const CHAVE_DUPLICADA = "23505";
+const DICA_DA_ANTIGA =
+  "Aprove ou recuse a remarcação pedida pela IA antes de mover esta consulta.";
 
 type Resposta = {
   ok: boolean;
@@ -251,24 +271,54 @@ async function armar(
   expect(gravado, "armar o pedido").toMatchObject({ ok: true });
 }
 
+/**
+ * Uma mensagem da conversa: a pergunta da IA, o "sim" do paciente ou uma
+ * automatica (autor sistema: a regua, uma campanha, uma agendada). Cada uma
+ * num pedido HTTP proprio (o instante de cada uma e o do banco, em ordem).
+ */
+async function mensagem(
+  conversa: string,
+  quem: "ia" | "paciente" | "automatica",
+): Promise<void> {
+  const linhaDaMensagem = {
+    ia: { direction: "saida", author: "ia", body: "Pergunta sintética da IA" },
+    paciente: {
+      direction: "entrada",
+      author: "paciente",
+      body: "Mensagem sintética de confirmação",
+    },
+    automatica: {
+      direction: "saida",
+      author: "sistema",
+      body: "Mensagem sintética automática",
+    },
+  }[quem];
+  await admin
+    .from("message")
+    .insert({
+      clinic_id: clinica,
+      conversation_id: conversa,
+      content_type: "texto",
+      ...linhaDaMensagem,
+    })
+    .throwOnError();
+}
+
 /** A pergunta da IA e a resposta do paciente depois dela. */
 async function perguntaEConfirmacao(conversa: string): Promise<void> {
-  for (const [direction, author, body] of [
-    ["saida", "ia", "Pergunta sintética da IA"],
-    ["entrada", "paciente", "Mensagem sintética de confirmação"],
-  ] as const) {
-    await admin
-      .from("message")
-      .insert({
-        clinic_id: clinica,
-        conversation_id: conversa,
-        direction,
-        author,
-        content_type: "texto",
-        body,
-      })
-      .throwOnError();
-  }
+  await mensagem(conversa, "ia");
+  await mensagem(conversa, "paciente");
+}
+
+/** O instante do pedido gravado pelo banco (o estado da conversa). */
+async function instanteDoPedido(conversa: string): Promise<string | null> {
+  const { data } = await admin
+    .from("ia_atendimento")
+    .select("pedido_pendente_em")
+    .eq("conversation_id", conversa)
+    .single()
+    .throwOnError();
+  return (data as { pedido_pendente_em: string | null }).pedido_pendente_em;
 }
 
 /** Uma consulta direta (como a recepcao marca), de 30 minutos. */
@@ -707,6 +757,31 @@ describe("cancelar_consulta_pela_ia: cada recusa, na ordem do contrato", () => {
     });
     expect((await linha(alvo)).status).toBe("agendado");
   });
+
+  it("a âncora forte: uma automática entre a pergunta e o sim não cancela; a IA pergunta de novo e o sim vale", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const alvo = await consulta(contato, lAna, as("08:00", 3));
+    await armar(conversa, "cancelar", alvo);
+    // A regua (ou uma campanha) sai entre a pergunta e o "sim": o "sim" pode
+    // ser a resposta a ela.
+    await mensagem(conversa, "ia");
+    await mensagem(conversa, "automatica");
+    await mensagem(conversa, "paciente");
+    expect(await cancelar(conversa, alvo)).toEqual({
+      ok: false,
+      motivo: "sem_confirmacao_do_paciente",
+    });
+    expect((await linha(alvo)).status).toBe("agendado");
+    expect(await trilhaDeCancelamento(alvo)).toEqual([]);
+    expect(await reofertas(alvo)).toBe(0);
+    // A IA pergunta de novo depois da automatica e o paciente responde.
+    await perguntaEConfirmacao(conversa);
+    expect(await cancelar(conversa, alvo)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+    });
+    expect((await linha(alvo)).status).toBe("cancelado_paciente");
+  });
 });
 
 describe("cancelar_consulta_pela_ia: o caminho feliz, a idempotência e a paridade com o botão", () => {
@@ -876,8 +951,8 @@ describe("remarcar: o reservar e o agendar com p_remarcar", () => {
       ok: false,
       motivo: "fora_do_prazo",
     });
-    // O caminho feliz: a antiga fica de fora do ja_tem_consulta; nada grava
-    // nela.
+    // O caminho feliz: na remarcacao, o ja_tem_consulta nao vale; nada grava
+    // na antiga.
     await armar(conversa, "remarcar", antiga);
     expect(
       await reservar(conversa, lAna, as("15:00", 1), antiga),
@@ -987,6 +1062,79 @@ describe("remarcar: o reservar e o agendar com p_remarcar", () => {
       remarcacao_de: antiga,
     });
     expect(error?.code).toBe(CHAVE_DUPLICADA);
+  });
+
+  it("outra consulta do mesmo procedimento de pé (com outro profissional, e a pendente da IA) não barra a remarcação; sem p_remarcar, barra", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const antiga = await consulta(contato, lAna, as("11:00", 3));
+    // O mesmo procedimento (Consulta sintetica) com o Dr. Bruno, e a pendente
+    // que a IA marcou com a Dra. Ana.
+    const outra = await consulta(contato, lBruno, as("11:00", 4));
+    const pendente = await consulta(contato, lAna, as("12:00", 4), {
+      created_by: "ia",
+      approval_status: "pendente",
+      send_confirmation: false,
+      oferecer_vaga_ao_cancelar: false,
+    });
+    // Sem p_remarcar, como hoje: barra, apontando a mais proxima.
+    expect(await reservar(conversa, lAna, as("13:00", 4))).toMatchObject({
+      ok: false,
+      motivo: "ja_tem_consulta",
+      appointment_id: antiga,
+    });
+    // Na remarcacao, nenhuma barra (a remarcacao troca uma consulta por
+    // outra), nem no reservar nem no agendar.
+    const reserva = await prontoParaRemarcar(
+      conversa,
+      antiga,
+      lAna,
+      as("13:00", 4),
+    );
+    expect(await agendar(conversa, reserva, antiga)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+      remarcacao_de: antiga,
+    });
+    expect(await linha(outra)).toMatchObject({
+      status: "agendado",
+      approval_status: null,
+    });
+    expect(await linha(pendente)).toMatchObject({
+      status: "agendado",
+      approval_status: "pendente",
+    });
+  });
+
+  it("a âncora forte no agendar da remarcação: uma automática entre a pergunta e o sim não pede a remarcação; a IA pergunta de novo e o sim vale", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const antiga = await consulta(contato, lAna, as("10:00", 3));
+    await armar(conversa, "remarcar", antiga);
+    const reserva = await reservar(conversa, lAna, as("10:00", 4), antiga);
+    expect(reserva, "a reserva da remarcacao").toMatchObject({ ok: true });
+    await mensagem(conversa, "ia");
+    await mensagem(conversa, "automatica");
+    await mensagem(conversa, "paciente");
+    expect(await agendar(conversa, reserva.hold_id, antiga)).toEqual({
+      ok: false,
+      motivo: "sem_confirmacao_do_paciente",
+    });
+    expect(await linha(antiga)).toMatchObject({
+      status: "agendado",
+      remarcacao_pedida_em: null,
+    });
+    const { count } = await admin
+      .from("appointment")
+      .select("id", { count: "exact", head: true })
+      .eq("remarcacao_de", antiga)
+      .throwOnError();
+    expect(count).toBe(0);
+    // A IA pergunta de novo e o paciente responde: a remarcacao e pedida.
+    await perguntaEConfirmacao(conversa);
+    expect(await agendar(conversa, reserva.hold_id, antiga)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+      remarcacao_de: antiga,
+    });
   });
 });
 
@@ -1123,6 +1271,23 @@ describe("o gravar: o instante do pedido é do banco", () => {
     });
     expect(error?.code).toBe(DADO_INVALIDO);
   });
+
+  it("o turno seguinte com o mesmo pedido e o mesmo foco mantém o instante enquanto ele vale; outro foco carimba de novo", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const alvo = await consulta(contato, lAna, as("08:30", 3));
+    const outra = await consulta(contato, lRetorno, as("09:00", 3));
+    await armar(conversa, "cancelar", alvo);
+    const primeiro = await instanteDoPedido(conversa);
+    expect(primeiro).not.toBeNull();
+    // Um job novo, o mesmo pedido e o mesmo foco, dentro dos 60 minutos: o
+    // instante fica (a pergunta de antes continua valendo).
+    await armar(conversa, "cancelar", alvo);
+    expect(await instanteDoPedido(conversa)).toBe(primeiro);
+    // Outro foco: o pedido e outro, o instante e de agora.
+    await armar(conversa, "cancelar", outra);
+    const segundo = await instanteDoPedido(conversa);
+    expect(Date.parse(segundo!)).toBeGreaterThan(Date.parse(primeiro!));
+  });
 });
 
 describe("ao mesmo tempo (Promise.all)", () => {
@@ -1183,5 +1348,73 @@ describe("ao mesmo tempo (Promise.all)", () => {
       .eq("approval_status", "pendente")
       .throwOnError();
     expect(count).toBe(1);
+  });
+});
+
+// Por ultimo no arquivo: a unidade criada aqui nao muda os casos de cima.
+describe("a antiga com a remarcação pendente: o fim e a unidade também ficam (D-32, pelo servidor)", () => {
+  it("só o fim ou só a unidade: 23514 remarcacao_pendente com a dica; o mesmo valor passa; sem remarcação pendente, mudam", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const antiga = await consulta(contato, lAna, as("14:00", 3));
+    const reserva = await prontoParaRemarcar(
+      conversa,
+      antiga,
+      lAna,
+      as("14:00", 4),
+    );
+    expect(await agendar(conversa, reserva, antiga)).toMatchObject({
+      ok: true,
+      remarcacao_de: antiga,
+    });
+    const sede = await inserir("unit", {
+      clinic_id: clinica,
+      name: "Sede sintética",
+    });
+    const quarentaECincoDepois = (inicio: string): string =>
+      new Date(Date.parse(inicio) + 45 * 60_000).toISOString();
+    for (const [rotulo, mudanca] of [
+      ["so o fim", { ends_at: quarentaECincoDepois(as("14:00", 3)) }],
+      ["so a unidade", { unit_id: sede }],
+    ] as const) {
+      const { error } = await admin
+        .from("appointment")
+        .update(mudanca)
+        .eq("id", antiga);
+      expect(error?.code, rotulo).toBe(VIOLA_CHECK);
+      expect(error?.message, rotulo).toBe("remarcacao_pendente");
+      expect(error?.hint, rotulo).toBe(DICA_DA_ANTIGA);
+    }
+    // O mesmo fim e a mesma unidade (nenhuma) passam; a antiga fica como
+    // estava, com a marca.
+    const { data: igual } = await admin
+      .from("appointment")
+      .update({ ends_at: meiaHoraDepois(as("14:00", 3)), unit_id: null })
+      .eq("id", antiga)
+      .select("ends_at, unit_id, remarcacao_pedida_em")
+      .throwOnError();
+    const [ficou] = igual as {
+      ends_at: string;
+      unit_id: string | null;
+      remarcacao_pedida_em: string | null;
+    }[];
+    expect(Date.parse(ficou!.ends_at)).toBe(
+      Date.parse(meiaHoraDepois(as("14:00", 3))),
+    );
+    expect(ficou!.unit_id).toBeNull();
+    expect(ficou!.remarcacao_pedida_em).not.toBeNull();
+    // Positivo: a consulta sem remarcacao pendente muda o fim e a unidade.
+    const livre = await consulta(contato, lRetorno, as("15:00", 3));
+    const { data: mudou } = await admin
+      .from("appointment")
+      .update({
+        ends_at: new Date(
+          Date.parse(as("15:00", 3)) + 15 * 60_000,
+        ).toISOString(),
+        unit_id: sede,
+      })
+      .eq("id", livre)
+      .select("unit_id")
+      .throwOnError();
+    expect(mudou).toEqual([{ unit_id: sede }]);
   });
 });

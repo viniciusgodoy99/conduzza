@@ -55,7 +55,7 @@ export const FERRAMENTA_CANCELAR_CONSULTA: FunctionTool = {
   name: NOME_DO_CANCELAMENTO,
   strict: true,
   description:
-    'Cancela a consulta da pergunta de cancelamento que o sistema fez. Use só quando a pessoa responder que confirma, numa mensagem nova depois da pergunta "Confirma o cancelamento ...?". O sistema confere a resposta e responde: depois de chamar, não escreva mais nada.',
+    'Cancela a consulta da pergunta de cancelamento que o sistema fez. Use só quando a pessoa responder que confirma, numa mensagem nova depois da pergunta "Confirma o cancelamento ...?". O sistema confere a resposta e responde (se a pergunta não valer mais, ele pergunta de novo): depois de chamar, não escreva mais nada.',
   parameters: {
     type: "object",
     properties: {},
@@ -68,8 +68,11 @@ export const FERRAMENTA_CANCELAR_CONSULTA: FunctionTool = {
  * Os motivos de cancelar_consulta_pela_ia (desenho da AG4, 3.3 b), lista
  * fechada, na ordem do banco: a trava da conversa, a habilidade e o prazo, o
  * pedido no estado, a conferencia da consulta (conferir_consulta_da_ia, sem
- * pendente_da_equipe, que so vale na remarcacao), "a consulta mudou" e a
- * mensagem do paciente depois da pergunta.
+ * pendente_da_equipe, que so vale na remarcacao), "a consulta mudou", o
+ * pedido vencido (revisao da AG4: a pergunta vale 60 minutos; o motor
+ * pergunta de novo) e a mensagem do paciente logo depois da pergunta
+ * (revisao da AG4: a ultima saida antes da ultima mensagem do paciente tem
+ * de ser a pergunta da IA, a ancora forte).
  */
 export const MOTIVOS_DO_CANCELAMENTO = [
   "ia_desligada",
@@ -82,8 +85,33 @@ export const MOTIVOS_DO_CANCELAMENTO = [
   "remarcacao_pendente",
   "fora_do_prazo",
   "consulta_mudou",
+  "pedido_vencido",
   "sem_confirmacao_do_paciente",
 ] as const;
+
+/**
+ * Revisao da AG4 (achado 1): a pergunta do cancelamento (T1) vale por 60
+ * minutos (c_validade_do_pedido no banco: cancelar_consulta_pela_ia recusa
+ * pedido_vencido e gravar_atendimento_da_ia carimba de novo o pedido
+ * vencido). DECISAO A CONFIRMAR COM O DONO (o mesmo numero no banco).
+ */
+export const VALIDADE_DO_PEDIDO_MS = 60 * 60_000;
+
+/**
+ * O pedido armado no instante `pedidoEm` (ISO) ainda vale agora? Vencido e
+ * `pedidoEm <= agora - 60 minutos`, como o banco; instante nulo ou
+ * ilegivel nao vale (falha fechada).
+ */
+export function pedidoAindaVale(
+  pedidoEm: string | null,
+  agoraMs: number,
+): boolean {
+  if (pedidoEm === null) {
+    return false;
+  }
+  const em = Date.parse(pedidoEm);
+  return Number.isFinite(em) && em > agoraMs - VALIDADE_DO_PEDIDO_MS;
+}
 export type MotivoDoCancelamento = (typeof MOTIVOS_DO_CANCELAMENTO)[number];
 
 export type RespostaDoCancelamento =

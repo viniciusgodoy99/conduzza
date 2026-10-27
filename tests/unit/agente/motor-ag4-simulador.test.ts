@@ -331,6 +331,8 @@ describe("o simulador cancela e remarca sem gravar nada", () => {
     const t1 = await tela.envia(
       "Quero remarcar para a semana que vem de manhã",
       [
+        // Revisao da AG4 (achado 4): o codigo so vale com a lista do turno.
+        ferramenta("consultar_minhas_consultas", {}),
         ferramenta("buscar_horario_para_remarcar", {
           consulta: "c1",
           a_partir_de: "2026-10-26",

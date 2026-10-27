@@ -21,11 +21,12 @@ import { adminClient, anonClient } from "./stack";
 // - appointment_status_history.ia_job_id: a sessao nunca grava (o CHECK com
 //   o proprio usuario, 23514; a policy com autor ia, 42501); a sessao le a
 //   trilha da propria clinica;
-// - mover (horario ou profissional) a antiga com a remarcacao pendente: 23514
+// - mover (horario ou profissional; [revisao da AG4] tambem so o fim ou so
+//   a unidade) a antiga com a remarcacao pendente: 23514
 //   remarcacao_pendente, com a dica, para todo papel que escreve
-//   (administrador, gestor, recepcao e o profissional da agenda); leitura e a
-//   outra clinica nao alcancam a linha (zero linhas); a antiga fica onde
-//   estava;
+//   (administrador, gestor, recepcao e o profissional da agenda); o mesmo
+//   valor passa; leitura e a outra clinica nao alcancam a linha (zero
+//   linhas); a antiga fica onde estava; sem remarcacao pendente, muda;
 // - cancelar_consulta_pela_ia, e o reservar e o agendar com p_remarcar:
 //   42501 para toda sessao e para anon; o servidor chama (resposta de
 //   negocio); o job de uma clinica com a outra clinica: 22023;
@@ -892,6 +893,68 @@ describe("a antiga com a remarcação pendente não se move (D-32)", () => {
       .select("id");
     expect(erroMovida).toBeNull();
     expect(movida).toEqual([{ id: outraDaA }]);
+  });
+
+  it("só o fim ou só a unidade da antiga também não mudam, para todo papel que escreve; o mesmo valor passa; sem remarcação pendente, mudam", async () => {
+    const sede = await inserir("unit", {
+      clinic_id: clinicaA,
+      name: "Sede sintética",
+    });
+    const fimDaAntiga = meiaHoraDepois(as("09:00"));
+    for (const quem of QUEM_MOVE) {
+      for (const [rotulo, mudanca] of [
+        [
+          "so o fim",
+          {
+            ends_at: new Date(
+              Date.parse(as("09:00")) + 45 * 60_000,
+            ).toISOString(),
+          },
+        ],
+        ["so a unidade", { unit_id: sede }],
+      ] as const) {
+        const { data, error } = await como(quem)
+          .from("appointment")
+          .update(mudanca)
+          .eq("id", antiga1)
+          .select("id");
+        expect(data, `${quem}, ${rotulo}`).toBeNull();
+        expect(error?.code, `${quem}, ${rotulo}`).toBe(VIOLA_CHECK);
+        expect(error?.message, `${quem}, ${rotulo}`).toBe(
+          "remarcacao_pendente",
+        );
+        expect(error?.hint, `${quem}, ${rotulo}`).toBe(DICA_DA_ANTIGA);
+      }
+    }
+    // O mesmo fim e a mesma unidade (nenhuma) passam.
+    const { data: igual, error: erroIgual } = await como("recepcao-a")
+      .from("appointment")
+      .update({ ends_at: fimDaAntiga, unit_id: null })
+      .eq("id", antiga1)
+      .select("id");
+    expect(erroIgual).toBeNull();
+    expect(igual).toEqual([{ id: antiga1 }]);
+    const { data: ficou } = await admin
+      .from("appointment")
+      .select("ends_at, unit_id")
+      .eq("id", antiga1)
+      .single()
+      .throwOnError();
+    const antiga = ficou as { ends_at: string; unit_id: string | null };
+    expect(Date.parse(antiga.ends_at)).toBe(Date.parse(fimDaAntiga));
+    expect(antiga.unit_id).toBeNull();
+    // Positivo: sem remarcacao pendente, o fim (mais curto, sem bater na
+    // consulta das 12:00 do Dr. Dois) e a unidade mudam.
+    const { data: mudou, error: erroMudou } = await como("recepcao-a")
+      .from("appointment")
+      .update({
+        ends_at: new Date(Date.parse(as("11:30")) + 15 * 60_000).toISOString(),
+        unit_id: sede,
+      })
+      .eq("id", outraDaA)
+      .select("id, unit_id");
+    expect(erroMudou).toBeNull();
+    expect(mudou).toEqual([{ id: outraDaA, unit_id: sede }]);
   });
 });
 

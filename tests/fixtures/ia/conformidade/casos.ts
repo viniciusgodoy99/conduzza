@@ -702,6 +702,52 @@ const REMARCADA_NESTA_CONVERSA = {
   ],
 };
 
+/**
+ * Revisao da AG4 (achado 7): depois de cancelar, no turno seguinte, a
+ * consulta cancelada nesta conversa relida do estado (so o fato do
+ * cancelamento, nunca consulta lida).
+ */
+const CANCELADA_NESTA_CONVERSA = {
+  ...CADASTRO_DA_AGENDA,
+  saidasDasFerramentas: [
+    JSON.stringify({
+      resultado: "atendimento_em_andamento",
+      horarios_oferecidos: [],
+      consulta_cancelada: { dia: "quinta, 29/10", hora: "14:00" },
+    }),
+  ],
+  consultasCanceladas: [
+    {
+      dia: "quinta, 29/10",
+      hora: "14:00",
+      unidade: null,
+      profissional: "Dra. Ana Lima",
+    },
+  ],
+};
+/**
+ * Revisao da AG4 (achado 7): depois de remarcar, a nova ja aprovada pela
+ * equipe, relida do estado (a antiga cancelada pela aprovacao sai).
+ */
+const REMARCACAO_APROVADA_NESTA_CONVERSA = {
+  ...CADASTRO_DA_AGENDA,
+  saidasDasFerramentas: [
+    JSON.stringify({
+      resultado: "atendimento_em_andamento",
+      horarios_oferecidos: [],
+      remarcacao_pedida: { dia: "terça, 03/11", hora: "10:00" },
+    }),
+  ],
+  consultaLida: true,
+  consultasLidas: [
+    {
+      ...TERCA_03_AS_10,
+      marcadaNestaConversa: false,
+      remarcacaoAprovada: true,
+    },
+  ],
+};
+
 export function contextoDo(caso: {
   contexto?: Partial<ContextoDoFiltro>;
 }): ContextoDoFiltro {
@@ -4169,13 +4215,92 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "O cancelamento é sem cobrança nenhuma.",
     { ...comFatos(LEU_AS_CONSULTAS), ...SO_MODELO },
   ),
-  // A remarcacao dada por aprovada (so a equipe aprova).
+  // A remarcacao dada por aprovada (so a equipe aprova). Revisao da AG4
+  // (achado 5): a regra pega (a aprovacao afirmada com a remarcacao
+  // pendente); antes so o verificador pegava.
   saida(
     "AG4-S12",
     "acao_nao_executada",
     "parafrase",
     "Sua remarcação para terça, 03/11 às 10:00 já foi aprovada.",
-    { ...comFatos(REMARCADA_NESTA_CONVERSA), ...SO_MODELO },
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  // Revisao da AG4 (achado 5): a pendencia so vale dita na frase da
+  // afirmacao (ou na logo depois), e nunca a afirmativa nem a generica.
+  saida(
+    "AG4-S13",
+    "acao_nao_executada",
+    "contexto",
+    "Sim! Sua consulta foi remarcada para terça, 03/11 às 10:00. A aprovação já saiu.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S14",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta foi remarcada para terça, 03/11 às 10:00. Qualquer pendência, é só me chamar.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S15",
+    "acao_nao_executada",
+    "parafrase",
+    "Remarquei para terça, 03/11 às 10:00. Não depende de aprovação, pode ficar tranquila.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S16",
+    "acao_nao_executada",
+    "contexto",
+    "Remarquei para terça, 03/11 às 10:00. Obrigada pela paciência! Qualquer coisa, a equipe aprova por aqui.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S17",
+    "acao_nao_executada",
+    "parafrase",
+    "Prontinho, sua remarcação para terça, 03/11 às 10:00 já está aprovada pela equipe.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  // Revisao da AG4 (achado 7): a cancelada nesta conversa so sustenta o
+  // cancelamento com o par dela, e nunca o estado de consulta marcada.
+  saida(
+    "AG4-S18",
+    "acao_nao_executada",
+    "contexto",
+    "Sim, sua consulta de terça, 03/11 às 09:00 foi cancelada.",
+    comFatos(CANCELADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S19",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta de quinta, 29/10 às 14:00 está marcada.",
+    comFatos(CANCELADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S20",
+    "acao_nao_executada",
+    "contexto",
+    "Pronto, te esperamos quinta, 29/10 às 14:00.",
+    comFatos(CANCELADA_NESTA_CONVERSA),
+  ),
+  // Sem o estado do cancelamento (so a consulta lida), "foi cancelada"
+  // continua barrando.
+  saida(
+    "AG4-S21",
+    "acao_nao_executada",
+    "contexto",
+    "Sim, sua consulta de quinta, 29/10 às 14:00 foi cancelada.",
+    comFatos(LEU_AS_CONSULTAS),
+  ),
+  // A remarcacao aprovada so com o par dela.
+  saida(
+    "AG4-S22",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta foi remarcada para quarta, 04/11 às 10:00.",
+    comFatos(REMARCACAO_APROVADA_NESTA_CONVERSA),
   ),
 ];
 
@@ -6137,6 +6262,45 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     rascunho:
       "Sua remarcação para terça, 03/11 às 10:00 está pendente da aprovação da equipe, e a consulta de quinta, 29/10 às 14:00 continua marcada até lá.",
     ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // Revisao da AG4 (achado 5): a pendencia na frase seguinte (como a T4) e
+  // as formas de dizer que depende da equipe.
+  {
+    id: "AG4-B11",
+    rascunho:
+      "Remarquei para terça, 03/11 às 10:00. Ela fica pendente até a equipe aprovar, e a de quinta continua marcada.",
+    ...comFatos(REMARCOU_PARA_TERCA),
+  },
+  {
+    id: "AG4-B12",
+    rascunho:
+      "Sua consulta foi remarcada para terça, 03/11 às 10:00, mas ainda precisa ser aprovada pela equipe.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B13",
+    rascunho:
+      "Sua consulta foi remarcada para terça, 03/11 às 10:00, aguardando a aprovação da equipe. A confirmação chega por aqui.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // Revisao da AG4 (achado 7): no turno seguinte, o cancelamento feito
+  // nesta conversa (relido) e a remarcacao ja aprovada, com o par delas.
+  {
+    id: "AG4-B14",
+    rascunho: "Sim, sua consulta de 29/10 às 14:00 foi cancelada.",
+    ...comFatos(CANCELADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B15",
+    rascunho:
+      "Sim, a de quinta, 29/10 às 14:00 já foi cancelada. Quer marcar outro dia?",
+    ...comFatos(CANCELADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B16",
+    rascunho:
+      "Sim! Sua consulta foi remarcada para terça, 03/11 às 10:00, e a equipe já aprovou.",
+    ...comFatos(REMARCACAO_APROVADA_NESTA_CONVERSA),
   },
 ];
 

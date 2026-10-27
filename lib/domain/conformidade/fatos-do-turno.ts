@@ -233,6 +233,13 @@ export type AcaoComHorario = HorarioDoFato & {
 export type ConsultaDoFato = HorarioDoFato & {
   marcadaNestaConversa: boolean;
   remarcadaNestaConversa?: boolean;
+  /**
+   * Revisao da AG4 (achado 7): a consulta NOVA da remarcacao que a IA pediu
+   * nesta conversa, ja aprovada pela equipe (relida agora): "foi remarcada"
+   * vale com ela, com o par dela, sem a pendencia (que ja nao e verdade).
+   * Nunca junto de remarcadaNestaConversa (fato incoerente bloqueia).
+   */
+  remarcacaoAprovada?: boolean;
 };
 
 /** O que uma ferramenta acrescenta aos fatos, alem da propria saida. */
@@ -261,6 +268,13 @@ export type FatosDaFerramenta = {
    * continua marcada ate a aprovacao.
    */
   horarioAnterior?: HorarioDoFato;
+  /**
+   * Revisao da AG4 (achado 7): as consultas que a IA cancelou nesta conversa
+   * num turno anterior, relidas agora e ainda canceladas (o estado do
+   * atendimento). So sustentam a frase do cancelamento, com o par delas;
+   * nunca sao consulta lida (nao estao marcadas).
+   */
+  consultasCanceladas?: readonly HorarioDoFato[];
   /**
    * Os horarios livres que a ferramenta trouxe (buscar_horario) ou reservou
    * (reservar_horario): a unica prova de "tenho as 14h".
@@ -316,6 +330,13 @@ export type FatosDoTurno = {
    * da consulta marcada ou remarcada no turno).
    */
   consultasLidas: readonly ConsultaDoFato[];
+  /**
+   * Revisao da AG4 (achado 7): as consultas que a IA cancelou nesta conversa
+   * num turno anterior, relidas e ainda canceladas. "Foi cancelada" vale com
+   * o par de uma delas; nunca sustentam o estado da consulta nem o
+   * fechamento. Ausente: nenhuma.
+   */
+  consultasCanceladas?: readonly HorarioDoFato[];
   /**
    * Revisao final da AG3: o eco do pedido (FatosDaFerramenta.ecos), fonte
    * de data e hora so na frase que nega ou pergunta.
@@ -376,6 +397,7 @@ export function fatosVazios(anoCorrente: number): FatosDoTurno {
     horariosDasAcoes: [],
     consultaLida: false,
     consultasLidas: [],
+    consultasCanceladas: [],
     ecosDoPedido: [],
     anoCorrente,
     horariosLivres: [],
@@ -470,11 +492,25 @@ function acaoComHorarioValida(valor: unknown): boolean {
 function consultaDoFatoValida(valor: unknown): boolean {
   const remarcada = (valor as Record<string, unknown> | null)
     ?.remarcadaNestaConversa;
+  const aprovada = (valor as Record<string, unknown> | null)
+    ?.remarcacaoAprovada;
   return (
     horarioDoFatoValido(valor) &&
     typeof (valor as Record<string, unknown>).marcadaNestaConversa ===
       "boolean" &&
-    (remarcada === undefined || typeof remarcada === "boolean")
+    (remarcada === undefined || typeof remarcada === "boolean") &&
+    // Revisao da AG4 (achado 7): aprovada, opcional, nunca junto da
+    // pendente.
+    (aprovada === undefined || typeof aprovada === "boolean") &&
+    !(remarcada === true && aprovada === true)
+  );
+}
+
+/** Revisao da AG4 (achado 7): a lista opcional das consultas canceladas. */
+function consultasCanceladasValidas(valor: unknown): boolean {
+  return (
+    valor === undefined ||
+    (Array.isArray(valor) && valor.every(horarioDoFatoValido))
   );
 }
 
@@ -532,6 +568,7 @@ export function fatosValidos(valor: unknown): valor is FatosDoTurno {
     Array.isArray(f.consultasLidas) &&
     f.consultasLidas.every(consultaDoFatoValida) &&
     (f.consultasLidas.length === 0 || f.consultaLida === true) &&
+    consultasCanceladasValidas(f.consultasCanceladas) &&
     listaDeTextos(f.ecosDoPedido) &&
     inteiroEntre(f.anoCorrente, 2000, 2200) &&
     Array.isArray(f.horariosLivres) &&
@@ -3024,12 +3061,53 @@ function semFlexaoDoParticipio(texto: string): string {
 }
 
 /**
- * AG4 (27/10/2026): a mensagem diz que a remarcacao depende da aprovacao da
+ * AG4 (27/10/2026): a frase diz que a remarcacao depende da aprovacao da
  * equipe ("pendente da aprovacao", "ate a equipe aprovar", "falta a
  * aprovacao"). "Aprovada" e "aprovado" NAO contam: dizem que ja foi.
+ * Revisao da AG4 (achado 5): so a pendencia DITA, com a aprovacao ou a
+ * equipe junto ("qualquer pendencia, me chame" e "a aprovacao" sozinha nao
+ * contam), lida na frase da afirmacao e na frase logo depois dela (nunca na
+ * mensagem inteira).
  */
-const PENDENCIA_DA_REMARCACAO =
-  /\b(?:pendente|pendentes|pendencia|aprovacao|aprovar|aprove|aprova|ate a equipe|aguardando a equipe|esperando a equipe)\b/;
+const PENDENCIA_DA_REMARCACAO = new RegExp(
+  [
+    // "pendente da aprovacao da equipe", "pendente de aprovacao",
+    // "pendente ate a equipe aprovar".
+    "\\bpendentes?\\s+(?:de|da|do|ate|ainda)\\s+(?:\\w+\\s+){0,2}?(?:aprovacao|equipe|aprovar)\\b",
+    // "esta pendente", "fica pendente", "continua pendente".
+    "\\b(?:esta|estao|fica|ficam|ficou|ficaram|continua|continuam|segue|seguem)\\s+(?:ainda\\s+)?pendentes?\\b",
+    // "aguardando a aprovacao", "depende da equipe", "sujeita a aprovacao".
+    "\\b(?:aguardando|esperando|aguarda|espera|aguardam|esperam|aguardar|esperar|depende|dependem|dependendo|sujeit[oa]s?)\\s+(?:\\w+\\s+){0,2}?(?:aprovacao|equipe)\\b",
+    // "ate a equipe aprovar", "assim que a equipe confirmar".
+    "\\b(?:ate|assim que|quando|depois que|logo que|antes que)\\s+(?:a\\s+)?(?:equipe|clinica|recepcao)\\s+(?:\\w+\\s+)?(?:aprovar|aprove|confirmar|confirme)\\b",
+    // "ate a aprovacao", "depois da aprovacao".
+    "\\b(?:ate|antes da|depois da|apos a|apos)\\s+(?:a\\s+)?aprovacao\\b",
+    // "precisa ser aprovada", "falta a equipe aprovar", "tem que ser aprovada".
+    "\\b(?:precisa|precisam|falta|faltando|tem que|ainda tem que)\\s+(?:\\w+\\s+){0,3}?(?:aprovad[oa]s?|aprovacao|aprovar)\\b",
+    // "ainda nao foi aprovada".
+    "\\bainda nao (?:foi|esta|ficou) aprovad[oa]s?\\b",
+  ].join("|"),
+);
+
+/**
+ * Revisao da AG4 (achado 5): a frase que AFIRMA a aprovacao ou nega a
+ * pendencia ("a aprovacao ja saiu", "ja aprovada", "a equipe aprovou",
+ * "nao precisa de aprovacao", "sem pendencia"). Com a remarcacao pendente,
+ * qualquer uma delas na mensagem barra (a remarcacao ainda nao foi
+ * aprovada), e a frase com ela nunca conta como pendencia.
+ */
+const APROVACAO_AFIRMADA = new RegExp(
+  [
+    "\\bja\\s+(?:foi\\s+|foram\\s+|esta\\s+|estao\\s+|ficou\\s+)?aprovad[oa]s?\\b",
+    "\\baprovacao\\s+(?:\\w+\\s+){0,3}?(?:ja\\s+)?(?:saiu|veio|chegou|foi dada|foi feita|aconteceu)\\b",
+    "\\b(?:equipe|clinica|recepcao)\\s+(?:ja\\s+)?(?:aprovou|aprovaram)\\b",
+    "\\bja\\s+(?:aprovou|aprovaram)\\b",
+    "(?<!\\bnao\\s)\\b(?:foi|foram|esta|estao|ficou|ficaram|sido)\\s+aprovad[oa]s?\\b",
+    "\\bnao\\s+(?:esta|fica|ficou|precisa|depende|tem|ha|existe)\\s+(?:mais\\s+)?(?:nenhuma\\s+|de\\s+|da\\s+|a\\s+)?(?:pendentes?|pendencia|aprovacao)\\b",
+    "\\bnao\\s+(?:precisa|e preciso|tem que)\\s+(?:\\w+\\s+){0,2}?aprov",
+    "\\b(?:sem|nenhuma)\\s+pendencia\\b",
+  ].join("|"),
+);
 
 /** Negacao colada na afirmacao ("nao marquei", "ainda nao foi marcada"). */
 const NEGACAO_ANTES =
@@ -4975,6 +5053,14 @@ export function regrasDosFatos(
   const remarcadaNestaConversa = fatos.consultasLidas.some(
     (c) => c.remarcadaNestaConversa === true,
   );
+  // Revisao da AG4 (achado 7): a remarcacao pedida nesta conversa e ja
+  // aprovada pela equipe tambem sustenta "foi remarcada" (sem a pendencia),
+  // e a consulta que a IA cancelou nesta conversa, relida e ainda
+  // cancelada, sustenta "foi cancelada"; as duas so com o par delas.
+  const remarcacaoAprovada = fatos.consultasLidas.some(
+    (c) => c.remarcacaoAprovada === true,
+  );
+  const canceladas = fatos.consultasCanceladas ?? [];
   const acoesSemFerramenta = new Set<string>();
   const semDiminutivo = semFlexaoDoParticipio(mascarada);
   const frasesSemDiminutivo = frasesComPosicao(semDiminutivo);
@@ -5021,7 +5107,9 @@ export function regrasDosFatos(
           ? fatos.consultaLida || acoes.has("marcou") || acoes.has("remarcou")
           : acoes.has(padrao.acao) ||
             (padrao.acao === "marcou" && marcadaNestaConversa) ||
-            (padrao.acao === "remarcou" && remarcadaNestaConversa);
+            (padrao.acao === "remarcou" &&
+              (remarcadaNestaConversa || remarcacaoAprovada)) ||
+            (padrao.acao === "cancelou" && canceladas.length > 0);
       if (!sustentada) {
         acoesSemFerramenta.add(padrao.nome);
         continue;
@@ -5080,15 +5168,22 @@ export function regrasDosFatos(
           ...daAcao("confirmou_presenca"),
         ];
       case "remarcou":
-        // AG4: a remarcacao do turno ou a pedida nesta conversa, relida.
+        // AG4: a remarcacao do turno ou a pedida nesta conversa, relida
+        // (revisao da AG4, achado 7: pendente ou ja aprovada).
         return [
           ...daAcao("remarcou"),
           ...lidos(
             fatos.consultasLidas.filter(
-              (c) => c.remarcadaNestaConversa === true,
+              (c) =>
+                c.remarcadaNestaConversa === true ||
+                c.remarcacaoAprovada === true,
             ),
           ),
         ];
+      case "cancelou":
+        // Revisao da AG4 (achado 7): o cancelamento do turno ou o feito
+        // nesta conversa num turno anterior, relido.
+        return [...daAcao("cancelou"), ...lidos(canceladas)];
       default:
         return daAcao(alegacao);
     }
@@ -5227,32 +5322,44 @@ export function regrasDosFatos(
   // AG4 (27/10/2026): a remarcacao que a IA pede nasce PENDENTE da aprovacao
   // da equipe, e a consulta antiga continua marcada ate la (D-10). A frase
   // que diz que remarcou (a acao, ou o estado ou o fechamento com o par da
-  // consulta nova) so passa com a pendencia dita na MENSAGEM
-  // (PENDENCIA_DA_REMARCACAO): "Remarquei para terca" sozinho barra.
+  // consulta nova) so passa com a pendencia dita (PENDENCIA_DA_REMARCACAO):
+  // "Remarquei para terca" sozinho barra. Revisao da AG4 (achado 5): a
+  // pendencia na PROPRIA frase ou na frase logo depois dela (a T4: "Pronto,
+  // pedi a remarcacao para ... Ate a equipe aprovar, ..."), nunca em
+  // qualquer lugar da mensagem; a frase que afirma a aprovacao ou nega a
+  // pendencia (APROVACAO_AFIRMADA) nunca conta, e com a remarcacao pendente
+  // ela barra em qualquer lugar da mensagem ("a aprovacao ja saiu").
   const paresDaRemarcacao = [
     ...daAcao("remarcou"),
     ...lidos(
       fatos.consultasLidas.filter((c) => c.remarcadaNestaConversa === true),
     ),
   ];
-  if (
-    (acoes.has("remarcou") || remarcadaNestaConversa) &&
-    !PENDENCIA_DA_REMARCACAO.test(semDiminutivo)
-  ) {
+  const pendenciaNaFrase = (indice: number): boolean => {
+    const frase = frasesSemDiminutivo[indice];
+    return (
+      frase !== undefined &&
+      PENDENCIA_DA_REMARCACAO.test(frase.texto) &&
+      !APROVACAO_AFIRMADA.test(frase.texto)
+    );
+  };
+  if (acoes.has("remarcou") || remarcadaNestaConversa) {
     const indices = new Set([...alegadas.keys(), ...fatosDaFrase.keys()]);
     const dizQueRemarcou = [...indices].some((indice) => {
-      if (alegadas.get(indice)?.has("remarcou")) {
-        return true;
-      }
       const frase = frasesSemDiminutivo[indice];
       if (frase === undefined) {
         return false;
       }
-      return paresDaOferta(
-        partesDaOferta(semDiminutivo, frase, fatos.hoje),
-      ).some((par) => paresDaRemarcacao.some((h) => parNoHorarioLivre(par, h)));
+      const daRemarcacao =
+        alegadas.get(indice)?.has("remarcou") === true ||
+        paresDaOferta(partesDaOferta(semDiminutivo, frase, fatos.hoje)).some(
+          (par) => paresDaRemarcacao.some((h) => parNoHorarioLivre(par, h)),
+        );
+      return (
+        daRemarcacao && !pendenciaNaFrase(indice) && !pendenciaNaFrase(indice + 1)
+      );
     });
-    if (dizQueRemarcou) {
+    if (dizQueRemarcou || APROVACAO_AFIRMADA.test(semDiminutivo)) {
       achados.push({
         categoria: "acao_nao_executada",
         regra: "remarcacao_sem_pendencia",
@@ -5434,7 +5541,13 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   // AG4 (27/10/2026): a remarcacao pedida nesta conversa e a pendencia.
   "remarcou: tambem a remarcacao pedida nesta conversa, relida e pendente",
   PENDENCIA_DA_REMARCACAO.source,
-  "remarcacao_sem_pendencia: a frase que diz que remarcou (acao, ou estado ou fechamento com o par da consulta nova) so com a pendencia na mensagem",
+  // Revisao da AG4 (achados 5 e 7): a pendencia na frase (ou na seguinte),
+  // a aprovacao afirmada, a remarcacao aprovada e a cancelada nesta
+  // conversa.
+  APROVACAO_AFIRMADA.source,
+  "remarcacao_sem_pendencia: a frase que diz que remarcou (acao, ou estado ou fechamento com o par da consulta nova) so com a pendencia nela ou na frase logo depois, sem a aprovacao afirmada; com a remarcacao pendente, a aprovacao afirmada em qualquer frase barra",
+  "remarcou: tambem a remarcacao pedida nesta conversa e ja aprovada, relida, com o par dela e sem a pendencia",
+  "cancelou: tambem a consulta cancelada nesta conversa num turno anterior, relida e ainda cancelada, com o par dela; nunca consulta lida",
   "acao com horario: o anterior so na remarcacao",
   CONVENIO_GENERICO,
   DETERMINANTES,

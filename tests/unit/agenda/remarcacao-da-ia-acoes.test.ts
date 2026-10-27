@@ -42,11 +42,17 @@ const INICIO_DA_NOVA = "2026-11-03T13:00:00.000Z";
 
 const TEXTOS = {
   jaTratada: "Esta remarcação já foi tratada.",
+  // Com o aviso pelo WhatsApp pedido (a caixa marcada).
   aprovada: "Remarcação aprovada. A consulta de 29/10 às 14:00 foi cancelada.",
+  // Sem ele (a caixa desmarcada ou o Aprovar de antes; revisao, achado 4).
+  aprovadaSemAviso:
+    "Remarcação aprovada. A consulta de 29/10 às 14:00 foi cancelada. Avise o paciente pelo Atendimento.",
   aprovadaJaCancelada:
-    "Remarcação aprovada. A consulta de 29/10 às 14:00 já estava cancelada.",
+    "Remarcação aprovada. A consulta de 29/10 às 14:00 já estava cancelada. Avise o paciente pelo Atendimento.",
+  // A antiga continua com o pedido e sem a confirmacao automatica
+  // (revisao, achado 9).
   recusada:
-    "Remarcação recusada. A consulta de 29/10 às 14:00 continua marcada. Avise o paciente pelo Atendimento.",
+    "Remarcação recusada. A consulta de 29/10 às 14:00 continua marcada, com o pedido de remarcação: a confirmação automática fica parada até Manter o horário, em Confirmações. Avise o paciente pelo Atendimento.",
   antigaEncerrada:
     "A consulta de 29/10 às 14:00 já foi atendida ou teve a falta marcada. Recuse esta remarcação e fale com o paciente.",
   dicaDaAntiga:
@@ -230,7 +236,7 @@ describe("aprovar a remarcação", () => {
       id: NOVA,
       avisar_paciente: false,
     });
-    expect(r).toEqual({ ok: true, mensagem: TEXTOS.aprovada });
+    expect(r).toEqual({ ok: true, mensagem: TEXTOS.aprovadaSemAviso });
 
     const [daNova, daAntiga] = banco.doTipo("appointment", "select");
     expect(daNova?.colunas).toBe(
@@ -451,7 +457,10 @@ describe("aprovar a remarcação", () => {
     banco.tabelas.appointment = [nova()];
     expect(
       await aprovarRemarcacaoAction({ id: NOVA, avisar_paciente: false }),
-    ).toEqual({ ok: true, mensagem: "Remarcação aprovada." });
+    ).toEqual({
+      ok: true,
+      mensagem: "Remarcação aprovada. Avise o paciente pelo Atendimento.",
+    });
   });
 });
 
@@ -532,7 +541,7 @@ describe("recusar a remarcação", () => {
       ok: true,
       mensagem: TEXTOS.recusada,
       aviso:
-        "A conversa não voltou para a equipe. Abra a conversa no Atendimento e avise o paciente.",
+        "A remarcação foi recusada, mas a conversa não voltou para a equipe. Abra a conversa no Atendimento e avise o paciente.",
     });
     banco.tabelas.appointment = [nova(), antiga()];
     banco.respostasDosRpcs.devolver_conversa_da_consulta_recusada = {
@@ -542,7 +551,7 @@ describe("recusar a remarcação", () => {
     expect(await recusarRemarcacaoAction(NOVA)).toMatchObject({
       ok: true,
       aviso:
-        "A conversa do paciente não foi encontrada. Avise o paciente pelo Atendimento.",
+        "A remarcação foi recusada, mas a conversa do paciente não foi encontrada. Avise o paciente pelo Atendimento.",
     });
     const tudo = logs.join("");
     expect(tudo).toContain('"evento":"agenda_conversa_nao_devolvida"');
@@ -565,7 +574,7 @@ describe("os caminhos de antes passam pela remarcação", () => {
   it("Aprovar do encaixe e da consulta da IA: a remarcação aprova pelo caminho dela, sem o aviso", async () => {
     expect(await aprovarEncaixeAction(NOVA)).toEqual({
       ok: true,
-      mensagem: TEXTOS.aprovada,
+      mensagem: TEXTOS.aprovadaSemAviso,
     });
     expect(updatesDaConsulta()[0]?.filtros).toContainEqual([
       "remarcacao_de",

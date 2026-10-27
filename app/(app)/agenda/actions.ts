@@ -1276,7 +1276,8 @@ export async function aprovarEncaixeAction(
   const daIa = ehConsultaDaIa(lida.pendencia);
   // AG4: a remarcacao da IA aprova pelo caminho dela (os textos e o erro da
   // antiga ja atendida). Daqui, sem o aviso ao paciente: so o dialogo
-  // "Aprovar a remarcação?" mostra a escolha (D-28).
+  // "Aprovar a remarcação?" mostra a escolha (D-28), e o sucesso pede para
+  // avisar pelo Atendimento.
   if (daIa && lida.pendencia.remarcacaoDe !== null) {
     return aprovarRemarcacao(supabase, guard, parsed.data, false);
   }
@@ -1519,7 +1520,9 @@ async function gravarRecusa(
 //   (enfileirarAvisoDeRemarcacao), com a consulta NOVA;
 // - recusar e a recusa da consulta da IA de sempre (gravarRecusa: so a nova
 //   e cancelada, sem reoferta, e a conversa volta para a equipe), com os
-//   textos da remarcacao. A antiga fica como esta (D-29);
+//   textos da remarcacao. A antiga fica como esta (D-29), com o pedido de
+//   remarcacao e sem a confirmacao automatica ate o "Manter o horário" das
+//   Confirmacoes (o sucesso diz isso);
 // - a pendencia e a antiga sao lidas do BANCO, nunca da tela, e a ligacao vai
 //   no filtro do update (corrida perde educadamente: "Esta remarcação já foi
 //   tratada."). O texto de sucesso leva o horario da antiga lido aqui.
@@ -1701,9 +1704,16 @@ async function aprovarRemarcacao(
       })
     : undefined;
   revalidatePath("/agenda");
+  // Revisao da AG4 (achado 4): sem o aviso pedido (a caixa desmarcada, ou o
+  // caminho antigo do Aprovar), o sucesso pede para avisar pelo
+  // Atendimento, como na aprovacao da consulta marcada pela IA.
   return {
     ok: true,
-    mensagem: sucessoDoAprovar(remarcacao.antiga, guard.timezone),
+    mensagem: sucessoDoAprovar(
+      remarcacao.antiga,
+      guard.timezone,
+      avisarPaciente,
+    ),
     ...(aviso ? { aviso } : {}),
   };
 }

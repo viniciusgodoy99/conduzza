@@ -237,6 +237,9 @@ export function montarFatosDoTurno(entrada: {
   const acoes = new Set<AcaoDoTurno>();
   const horariosDasAcoes: AcaoComHorario[] = [];
   const consultasLidas: ConsultaDoFato[] = [];
+  // Revisao da AG4 (achado 7): as consultas canceladas nesta conversa num
+  // turno anterior (o estado), so para a frase do cancelamento.
+  const consultasCanceladas: HorarioDoFato[] = [];
   const ecosDoPedido: string[] = [];
   let consultaLida = false;
   for (const { saida, fatos } of entrada.ferramentas) {
@@ -271,6 +274,9 @@ export function montarFatosDoTurno(entrada: {
         consultasLidas.push({ ...consulta });
       }
     }
+    for (const cancelada of fatos?.consultasCanceladas ?? []) {
+      consultasCanceladas.push({ ...cancelada });
+    }
   }
   const convenios = conveniosConhecidos(catalogo).map((c) => ({
     nome: c.nome,
@@ -296,6 +302,7 @@ export function montarFatosDoTurno(entrada: {
     horariosDasAcoes,
     consultaLida,
     consultasLidas,
+    consultasCanceladas,
     ecosDoPedido,
     anoCorrente: anoNaClinica(entrada.agoraMs, entrada.fuso),
     horariosLivres,

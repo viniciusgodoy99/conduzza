@@ -511,10 +511,14 @@ export async function simularTurno(
     log.info("ia_simulador_conversa_com_a_equipe", { clinic_id: clinicId });
     return { ok: false, error: TEXTOS_DO_SIMULADOR.conversaComAEquipe };
   }
-  const mensagens: MensagemDaConversa[] = falas.map((fala) => ({
-    autor: fala.autor,
-    texto: fala.texto,
-  }));
+  // Revisao da AG4 (achado 1): no simulador, toda fala do assistente e da
+  // IA (o historico e assinado), a autoria que a pergunta do cancelamento e
+  // da remarcacao confere.
+  const mensagens: MensagemDaConversa[] = falas.map((fala) =>
+    fala.autor === "assistente"
+      ? { autor: fala.autor, autoria: "ia", texto: fala.texto }
+      : { autor: fala.autor, texto: fala.texto },
+  );
 
   // AG3: o estado do atendimento simulado, ligado a ultima resposta.
   let anterior: EstadoDoSimulador = {

@@ -33,6 +33,7 @@ import {
   comOCarimboDoBanco,
   consultaDoContato,
   rpcsDaAg4,
+  type MensagemNoBanco,
   type OpcoesDaAg4,
 } from "./ag4-contrato";
 import type { AgendaEmMemoria, Linha } from "./agenda-em-memoria";
@@ -54,6 +55,12 @@ import { catalogoDoCadastro, UNID } from "./cadastro-fixtures";
 // do paciente roda um turno inteiro, com o estado gravado do turno anterior
 // (o instante do pedido carimbado como o banco faz) e um job novo, dois
 // minutos depois. Nenhum teste fala com a OpenAI nem com o banco.
+//
+// Revisao da AG4: a conversa tambem como o banco guarda (`noBanco`, a ordem
+// e o instante de cada mensagem, com o autor de verdade: a resposta e da IA,
+// a frase fixa e do sistema), para a ancora forte do "sim" no contrato; e
+// cada fala da clinica no historico leva a autoria real (`daClinica` poe a
+// mensagem de uma campanha, de um lembrete ou da equipe no meio).
 //
 // A clinica ficticia (agenda-fixtures e cadastro-fixtures): agora e terca,
 // 20/10/2026, 09:00 em Fortaleza. A Dra. Ana Lima atende de segunda a sexta,
@@ -238,6 +245,8 @@ export class CenarioDaAg4 {
   config: ConfigDoAgente;
   readonly verificacao = verificadorQueAprova();
   readonly opcoes: OpcoesDaAg4;
+  /** Revisao da AG4: a conversa como o banco guarda (a ancora do "sim"). */
+  readonly noBanco: MensagemNoBanco[] = [];
 
   constructor(
     e: {
@@ -257,6 +266,7 @@ export class CenarioDaAg4 {
       exigidos: { nomeCompleto: true, nascimento: true, cpf: false },
       agora: () => this.agora,
       estado: () => this.atendimento.estado,
+      conversa: () => this.noBanco,
       cancelar: {
         ligada: this.config.habilidades.cancelar === true,
         prazoHoras: this.config.prazos.cancelarHoras,
@@ -274,6 +284,31 @@ export class CenarioDaAg4 {
     return this.atendimento.estado;
   }
 
+  /** O instante de uma mensagem nova (sempre depois da anterior). */
+  private instante(minimo: number): number {
+    const ultima = this.noBanco.at(-1)?.em ?? Number.NEGATIVE_INFINITY;
+    return Math.max(minimo, ultima + 1);
+  }
+
+  /**
+   * Revisao da AG4: uma mensagem da clinica fora do turno da IA (campanha,
+   * lembrete, mensagem agendada: "sistema"; a equipe: "usuario"), no
+   * historico como "assistente" com a autoria real.
+   */
+  daClinica(
+    texto: string,
+    autoria: "sistema" | "usuario" | "ia" = "sistema",
+    falhou = false,
+  ): void {
+    this.mensagens.push({ autor: "assistente", autoria, texto });
+    this.noBanco.push({
+      direcao: "saida",
+      autor: autoria,
+      em: this.instante(this.agora),
+      ...(falhou ? { falhou: true } : {}),
+    });
+  }
+
   /** Uma fala do paciente: um turno inteiro, dois minutos depois do outro. */
   async fala(
     { texto, roteiro }: Fala,
@@ -288,6 +323,11 @@ export class CenarioDaAg4 {
       autor: "paciente",
       texto: mascararNome(texto, NOME_DO_CONTATO),
       textoOriginal: texto,
+    });
+    this.noBanco.push({
+      direcao: "entrada",
+      autor: "paciente",
+      em: this.instante(this.agora),
     });
     const create = vi.fn(async (corpo: unknown) => {
       this.corpos.push(structuredClone(corpo) as Record<string, unknown>);
@@ -317,7 +357,16 @@ export class CenarioDaAg4 {
       agora: () => momento,
       ...extra,
     });
-    this.mensagens.push({ autor: "assistente", texto: r.resposta });
+    // A resposta sai como mensagem da IA; a frase fixa da passagem, como do
+    // sistema (lib/jobs/responder-com-ia.ts). As duas DEPOIS do gravar (o
+    // instante do pedido e o do turno).
+    const autoria = r.tipo === "resposta" ? "ia" : "sistema";
+    this.mensagens.push({ autor: "assistente", autoria, texto: r.resposta });
+    this.noBanco.push({
+      direcao: "saida",
+      autor: autoria,
+      em: this.instante(momento + 1),
+    });
     if (r.atendimento) {
       // O executor grava o estado (gravar_atendimento_da_ia): o banco
       // carimba o instante do pedido.

@@ -75,13 +75,22 @@ export const TEXTOS_DA_REMARCACAO = {
   naoRecusou: "Não foi possível recusar. Tente de novo.",
   semConferir: "Não foi possível conferir esta remarcação. Tente de novo.",
   /**
-   * A recusa valeu, mas a conversa nao voltou: vai junto do sucesso, que ja
-   * diz que a remarcacao foi recusada.
+   * A recusa valeu, mas a conversa nao voltou. Autocontidos (revisao da
+   * AG4, achado 5): nos caminhos de defesa (o Recusar e o Cancelar de
+   * antes) a tela mostra so este aviso, entao ele mesmo diz que a
+   * remarcacao foi recusada, como os da consulta marcada pela IA.
    */
   conversaNaoDevolvida:
-    "A conversa não voltou para a equipe. Abra a conversa no Atendimento e avise o paciente.",
+    "A remarcação foi recusada, mas a conversa não voltou para a equipe. Abra a conversa no Atendimento e avise o paciente.",
   conversaNaoEncontrada:
-    "A conversa do paciente não foi encontrada. Avise o paciente pelo Atendimento.",
+    "A remarcação foi recusada, mas a conversa do paciente não foi encontrada. Avise o paciente pelo Atendimento.",
+  /**
+   * A antiga nao carregou (a leitura dela falhou): o cartao do "Pendente
+   * de você" e os dialogos dizem isso; o resto da Agenda abre normalmente.
+   */
+  antigaNaoCarregada: "Não foi possível carregar a consulta antiga.",
+  antigaNaoCarregadaNoDialogo:
+    "Não foi possível carregar a consulta antiga. Ela é conferida de novo quando você confirmar.",
   /** Confirmações: "Manter o horário" com a remarcação da IA pendente. */
   manterHorarioComRemarcacao:
     "Há uma remarcação pedida pela IA esperando aprovação na Agenda.",
@@ -90,20 +99,32 @@ export const TEXTOS_DA_REMARCACAO = {
 /** O pedaço da consulta nova que os textos usam. */
 export type RemarcacaoNosTextos = Pick<ConsultaDaAgenda, "starts_at"> & {
   antiga?: Pick<AntigaDaRemarcacao, "starts_at" | "status"> | null;
+  erroNaAntiga?: boolean;
 };
+
+/**
+ * A antiga nao veio: a leitura dela falhou (erroNaAntiga) ou a consulta nao
+ * e a da lista do "Pendente de você" (a do dia nao traz a antiga). Diferente
+ * da antiga nula de verdade (a RLS nao deixou ler), que so omite o "De".
+ */
+export function antigaNaoCarregada(consulta: RemarcacaoNosTextos): boolean {
+  return consulta.erroNaAntiga === true || consulta.antiga === undefined;
+}
 
 /**
  * As duas linhas de horário do cartão: "De 29/10 · 14:00" (com "(já
  * cancelada)" quando a antiga foi cancelada nesse meio) e "Para 03/11 ·
- * 10:00". Sem a antiga (a RLS não deixou ler), só o "Para".
+ * 10:00". Sem a antiga (a RLS não deixou ler), só o "Para". A antiga que
+ * não carregou também fica sem o "De", e `naoCarregada` pede o aviso.
  */
 export function linhasDoCartaoDaRemarcacao(
   consulta: RemarcacaoNosTextos,
   fuso: string,
-): { de: string | null; para: string } {
+): { de: string | null; para: string; naoCarregada: boolean } {
   const para = `Para ${quandoNoCartao(consulta.starts_at, fuso)}`;
+  const naoCarregada = antigaNaoCarregada(consulta);
   if (!consulta.antiga) {
-    return { de: null, para };
+    return { de: null, para, naoCarregada };
   }
   const de = `De ${quandoNoCartao(consulta.antiga.starts_at, fuso)}`;
   return {
@@ -112,7 +133,32 @@ export function linhasDoCartaoDaRemarcacao(
         ? `${de} ${TEXTOS_DA_REMARCACAO.jaCancelada}`
         : de,
     para,
+    naoCarregada,
   };
+}
+
+/**
+ * Revisao da AG4 (achado 8, da revisao do banco): a aprovacao cancela a
+ * antiga como "Cancelado pelo paciente" mesmo no passado. Se a antiga ja
+ * passou e continua numa das quatro situacoes antes do atendimento (sem
+ * presenca nem falta marcada), o paciente pode ter ido ou faltado: o
+ * "Aprovar a remarcação?" avisa, e o Aprovar continua (a decisao e da
+ * recepcao). Nulo quando nao ha o que avisar.
+ */
+export function avisoDaAntigaQueJaPassou(
+  consulta: RemarcacaoNosTextos,
+  fuso: string,
+  agoraMs: number,
+): string | null {
+  const antiga = consulta.antiga;
+  if (
+    !antiga ||
+    situacaoDaAntiga(antiga.status) !== "viva" ||
+    new Date(antiga.starts_at).getTime() > agoraMs
+  ) {
+    return null;
+  }
+  return `A consulta de ${quandoNaClinica(antiga.starts_at, fuso)} já passou. Confira se o paciente compareceu antes de aprovar.`;
 }
 
 /**
@@ -175,31 +221,47 @@ export type AntigaLida = {
   situacao: SituacaoDaAntiga;
 } | null;
 
-/** O sucesso de aprovar, com o horário da antiga lido do banco. */
-export function sucessoDoAprovar(antiga: AntigaLida, fuso: string): string {
+/** O pedido de sempre quando nenhuma mensagem automatica sai ao paciente. */
+const AVISE_PELO_ATENDIMENTO = "Avise o paciente pelo Atendimento.";
+
+/**
+ * O sucesso de aprovar, com o horário da antiga lido do banco. Revisao da
+ * AG4 (achado 4): sem o aviso pelo WhatsApp (a caixa desmarcada, ou o
+ * caminho antigo do Aprovar, que nao manda aviso), pede para avisar pelo
+ * Atendimento, como a aprovacao da consulta marcada pela IA. Com o aviso
+ * pedido, nao: ou ele saiu, ou a atencao do que nao saiu ja diz o que fazer.
+ */
+export function sucessoDoAprovar(
+  antiga: AntigaLida,
+  fuso: string,
+  comAvisoAoPaciente: boolean,
+): string {
+  const fim = comAvisoAoPaciente ? "" : ` ${AVISE_PELO_ATENDIMENTO}`;
   if (!antiga || antiga.situacao === "encerrada") {
-    return "Remarcação aprovada.";
+    return `Remarcação aprovada.${fim}`;
   }
   const quando = quandoNaClinica(antiga.starts_at, fuso);
   return antiga.situacao === "cancelada"
-    ? `Remarcação aprovada. A consulta de ${quando} já estava cancelada.`
-    : `Remarcação aprovada. A consulta de ${quando} foi cancelada.`;
+    ? `Remarcação aprovada. A consulta de ${quando} já estava cancelada.${fim}`
+    : `Remarcação aprovada. A consulta de ${quando} foi cancelada.${fim}`;
 }
 
 /**
  * O sucesso de recusar, com o horário da antiga lido do banco. Só diz
  * "continua marcada" quando ela continua (o mesmo cuidado do evento que o
- * banco grava no fio).
+ * banco grava no fio). Revisao da AG4 (achado 9, D-29): a antiga que
+ * continua fica com o pedido de remarcação, e a confirmação automática dela
+ * para até alguém usar "Manter o horário" em Confirmações; o sucesso diz.
  */
 export function sucessoDoRecusar(antiga: AntigaLida, fuso: string): string {
-  const fim = "Avise o paciente pelo Atendimento.";
+  const fim = AVISE_PELO_ATENDIMENTO;
   if (!antiga || antiga.situacao === "encerrada") {
     return `Remarcação recusada. ${fim}`;
   }
   const quando = quandoNaClinica(antiga.starts_at, fuso);
   return antiga.situacao === "cancelada"
     ? `Remarcação recusada. A consulta de ${quando} já estava cancelada. ${fim}`
-    : `Remarcação recusada. A consulta de ${quando} continua marcada. ${fim}`;
+    : `Remarcação recusada. A consulta de ${quando} continua marcada, com o pedido de remarcação: a confirmação automática fica parada até Manter o horário, em Confirmações. ${fim}`;
 }
 
 /**

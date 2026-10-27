@@ -11,7 +11,6 @@ import {
   X,
 } from "lucide-react";
 import { useId, useMemo, useState, useTransition } from "react";
-import { toast } from "sonner";
 
 import {
   aprovarEncaixeAction,
@@ -167,6 +166,10 @@ import { createClient } from "@/lib/supabase/client";
 // pela IA para ..." e o "Remarcar" desabilitado com a dica do gatilho (o
 // arrastar tambem nao vale, appointment-block.tsx). O rotulo e escrito, sem
 // o CalendarFold: o icone tem um dono so, o chip do painel (docs/06 4.6).
+// Revisao da AG4 (achados 1 e 3): a consulta do dia nao traz a antiga; os
+// dialogos da remarcacao abrem com a nova como esta na lista do "Pendente de
+// você" (contexto.remarcacaoNaLista), que o tempo real renova a cada mudanca
+// de consulta, e a guardada na abertura so quando ela ja saiu da lista.
 
 /** Os textos do grupo de pendencia do menu, pelo tipo da pendencia. */
 export function rotulosDaPendenciaNoMenu(
@@ -246,6 +249,66 @@ export function retornoDaMudancaDeSituacao(
   return {
     tipo: "error",
     texto: resultado.error ?? "Não foi possível mudar a situação.",
+  };
+}
+
+/**
+ * A consulta que os dialogos da remarcacao da IA recebem: a nova como esta
+ * AGORA na lista do "Pendente de você" (com a antiga lida a parte); sem ela
+ * na lista (ja tratada, ou a lista ainda nao chegou), a guardada quando o
+ * dialogo abriu. A consulta do dia nunca traz a antiga.
+ */
+export function consultaDaRemarcacaoNoMenu(
+  daLista: ConsultaDaAgenda | null,
+  guardada: ConsultaDaAgenda,
+): ConsultaDaAgenda {
+  return daLista ?? guardada;
+}
+
+/**
+ * O que o "Remarcar consulta" do menu faz com cada resposta da acao:
+ * - deu certo: fecha com "Consulta remarcada." e, se o aviso ao paciente nao
+ *   saiu, a atencao logo depois; refaz a agenda;
+ * - o que a recepcao corrige (outro horario ou profissional): fica aberto,
+ *   com o erro;
+ * - remarcacao_pendente (D-32: a IA pediu a remarcacao desta consulta
+ *   depois de a tela carregar): fecha com o erro e refaz a agenda, para o
+ *   menu e o arrastar travarem com a dica (revisao da AG4, achado 6);
+ * - outro erro: fecha com o erro.
+ */
+export type DesfechoDoRemarcar =
+  | { fechar: true; avisos: RetornoNaTela[]; atualizarAgenda: boolean }
+  | { fechar: false; erro: string };
+
+export function desfechoDoRemarcar(
+  resultado: AgendaActionResult,
+): DesfechoDoRemarcar {
+  if (resultado.ok) {
+    return {
+      fechar: true,
+      avisos: [
+        { tipo: "success", texto: "Consulta remarcada." },
+        // O aviso NAO saiu: a recepcao precisa saber para ligar.
+        ...(resultado.aviso
+          ? [{ tipo: "warning" as const, texto: resultado.aviso }]
+          : []),
+      ],
+      atualizarAgenda: true,
+    };
+  }
+  if (resultado.code && ERROS_CORRIGIVEIS_NA_REMARCACAO.has(resultado.code)) {
+    // Mantem o dialogo aberto para escolher outro horario ou profissional.
+    return {
+      fechar: false,
+      erro: resultado.error ?? "Não foi possível remarcar neste horário.",
+    };
+  }
+  return {
+    fechar: true,
+    avisos: [
+      { tipo: "error", texto: resultado.error ?? "Não foi possível remarcar." },
+    ],
+    atualizarAgenda: resultado.code === "remarcacao_pendente",
   };
 }
 
@@ -371,8 +434,17 @@ export function AppointmentMenu({
   const remarcacao = ehRemarcacaoDaIa(consulta);
   const remarcacaoDaAntiga =
     contexto.remarcacaoPendenteDe?.(consulta.id) ?? null;
-  const [remarcacaoAberta, setRemarcacaoAberta] =
-    useState<AcaoDaRemarcacao | null>(null);
+  // A nova como esta na lista do "Pendente de você", com a antiga (a do dia
+  // nao traz). Os dialogos abrem com ela; a guardada so se ela sair da lista.
+  const remarcacaoDaLista = remarcacao
+    ? (contexto.remarcacaoNaLista?.(consulta.id) ?? null)
+    : null;
+  const [remarcacaoAberta, setRemarcacaoAberta] = useState<{
+    acao: AcaoDaRemarcacao;
+    consulta: ConsultaDaAgenda;
+  } | null>(null);
+  const abrirRemarcacao = (acao: AcaoDaRemarcacao) =>
+    setRemarcacaoAberta({ acao, consulta: remarcacaoDaLista ?? consulta });
   // "Ver dados informados" (AG3): so a consulta que a IA marcou, nunca a
   // remarcacao (ela nao pede dado, D-26).
   const comDadosInformados = daIa && !remarcacao;
@@ -464,7 +536,7 @@ export function AppointmentMenu({
       // AG4: cancelar a remarcacao da IA pendente e recusa-la: o dialogo
       // dela diz o que acontece com as duas consultas.
       if (remarcacao && aguardaAprovacao(consulta)) {
-        setRemarcacaoAberta("recusar");
+        abrirRemarcacao("recusar");
         return;
       }
       setCancelamento(novoStatus);
@@ -531,7 +603,7 @@ export function AppointmentMenu({
     // que acontece com as duas consultas e, na aprovacao, o aviso ao
     // paciente, D-28).
     if (remarcacao) {
-      setRemarcacaoAberta(decisao);
+      abrirRemarcacao(decisao);
       return;
     }
     iniciarTransicao(async () => {
@@ -907,7 +979,7 @@ export function AppointmentMenu({
           consulta={consulta}
           aberto={dialogRemarcar}
           onFechar={() => setDialogRemarcar(false)}
-          onSucesso={atualizarAgenda}
+          atualizarAgenda={atualizarAgenda}
         />
       ) : null}
 
@@ -933,10 +1005,13 @@ export function AppointmentMenu({
 
       {remarcacaoAberta ? (
         <DialogoDaRemarcacao
-          key={remarcacaoAberta}
+          key={remarcacaoAberta.acao}
           contexto={contexto}
-          consulta={consulta}
-          acao={remarcacaoAberta}
+          consulta={consultaDaRemarcacaoNoMenu(
+            remarcacaoDaLista,
+            remarcacaoAberta.consulta,
+          )}
+          acao={remarcacaoAberta.acao}
           aoFechar={() => setRemarcacaoAberta(null)}
           aoTerminar={atualizarAgenda}
         />
@@ -950,13 +1025,14 @@ function RemarcarDialog({
   consulta,
   aberto,
   onFechar,
-  onSucesso,
+  atualizarAgenda,
 }: {
   contexto: ContextoAgenda;
   consulta: ConsultaDaAgenda;
   aberto: boolean;
   onFechar: () => void;
-  onSucesso: () => void;
+  /** Refaz a agenda (o dia, a lista das pendencias e o historico). */
+  atualizarAgenda: () => Promise<unknown>;
 }) {
   const [pendente, iniciarTransicao] = useTransition();
   const [erro, setErro] = useState<string | null>(null);
@@ -1007,25 +1083,17 @@ function RemarcarDialog({
         novo_professional_id: profissionalId,
         avisar_paciente: avisarPaciente,
       });
-      if (resultado.ok) {
-        toast.success("Consulta remarcada.");
-        if (resultado.aviso) {
-          // O aviso NAO saiu: a recepcao precisa saber para ligar.
-          toast.warning(resultado.aviso, { duration: 10_000 });
-        }
-        onSucesso();
-        onFechar();
+      const desfecho = desfechoDoRemarcar(resultado);
+      if (!desfecho.fechar) {
+        setErro(desfecho.erro);
         return;
       }
-      if (
-        resultado.code &&
-        ERROS_CORRIGIVEIS_NA_REMARCACAO.has(resultado.code)
-      ) {
-        // Mantem o dialogo aberto para escolher outro horario ou profissional
-        setErro(resultado.error ?? "Não foi possível remarcar neste horário.");
-        return;
+      for (const aviso of desfecho.avisos) {
+        mostrarRetornoDaPendencia(aviso);
       }
-      toast.error(resultado.error ?? "Não foi possível remarcar.");
+      if (desfecho.atualizarAgenda) {
+        void atualizarAgenda();
+      }
       onFechar();
     });
   };

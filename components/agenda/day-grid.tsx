@@ -387,6 +387,14 @@ function RemarcarDialog({
     setSalvando(false);
     if (!resultado.ok) {
       setErro(resultado.error ?? "Não foi possível remarcar.");
+      // AG4 (D-32; revisao, achado 6): a IA pediu a remarcacao desta
+      // consulta depois de a tela carregar. A agenda refaz, para o bloco
+      // deixar de se arrastar e o menu mostrar a dica.
+      if (resultado.code === "remarcacao_pendente") {
+        void queryClient.invalidateQueries({
+          queryKey: ["agenda", contexto.clinicId],
+        });
+      }
       return;
     }
     toast.success("Consulta remarcada.");

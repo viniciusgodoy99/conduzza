@@ -17,12 +17,40 @@ import { CLINICA, CONTATO } from "./agenda-fixtures";
 // pedido no estado GRAVADO, a conferencia da consulta, "a consulta mudou"
 // com a folga de 2 minutos e a mesma transicao do botao) e reservar_horario_
 // da_ia e agendar_pela_ia com p_remarcar (a consulta nova pendente, ligada a
-// antiga, que continua de pe). Simplificado onde o teste nao precisa (a
-// mensagem do paciente depois da pergunta nao e conferida: o turno ja
-// confere a pergunta armada). As RPCs de verdade sao provadas nas suites de
+// antiga, que continua de pe). As RPCs de verdade sao provadas nas suites de
 // integracao e de RLS (com o banco).
+//
+// Revisao da AG4 (27/10/2026, contrato-mudancas R1 a R5), o mesmo que a
+// frente de banco mudou:
+//  - cancelar: o pedido vale 60 minutos (pedido_vencido, depois de
+//    consulta_mudou e antes de sem_confirmacao_do_paciente) e a ANCORA FORTE
+//    do "sim": a ultima saida antes da ultima mensagem do paciente tem de ser
+//    da IA, nao falhada e gravada depois do instante do pedido (outra saida
+//    no meio, de qualquer autor: sem_confirmacao_do_paciente);
+//  - agendar com p_remarcar: a mesma ancora, gravada depois da reserva;
+//  - reservar e agendar com p_remarcar nunca conferem ja_tem_consulta (a
+//    remarcacao troca uma consulta por outra): so o caminho da AG3, sem
+//    p_remarcar, recusa ja_tem_consulta;
+//  - o gravar carimba de novo o instante vencido (comOCarimboDoBanco).
+// A ancora so e conferida com a conversa (`conversa`); sem ela, como antes.
 
 export type HabilidadeDaVersao = { ligada: boolean; prazoHoras: number | null };
+
+/**
+ * Revisao da AG4: uma mensagem da conversa como o banco guarda, na ordem
+ * (direction, author, created_at e se a entrega falhou). Evento e nota
+ * interna nao entram (o banco nao os conta como saida).
+ */
+export type MensagemNoBanco = {
+  direcao: "entrada" | "saida";
+  autor: "paciente" | "ia" | "usuario" | "sistema";
+  /** created_at (ms). */
+  em: number;
+  falhou?: boolean;
+};
+
+/** Revisao da AG4 (R1): o pedido de cancelar vale 60 minutos. */
+export const VALIDADE_DO_PEDIDO_NO_BANCO_MS = 60 * 60_000;
 
 export type OpcoesDaAg4 = OpcoesDoContrato & {
   /**
@@ -33,6 +61,11 @@ export type OpcoesDaAg4 = OpcoesDoContrato & {
   /** Cancelar e remarcar na versao publicada (a habilidade e o prazo). */
   cancelar: HabilidadeDaVersao;
   remarcar: HabilidadeDaVersao;
+  /**
+   * Revisao da AG4: a conversa como o banco guarda (a ancora forte do "sim").
+   * Ausente: a ancora nao e conferida.
+   */
+  conversa?: () => readonly MensagemNoBanco[];
   /** Uma recusa forcada (o primeiro motivo da ordem do banco). */
   forcar?: {
     cancelar?: string | null;
@@ -101,6 +134,41 @@ function comoConsulta(banco: AgendaEmMemoria, a: Linha): ConsultaDoContato {
 
 function recusa(motivo: string) {
   return { data: { ok: false, motivo }, error: null };
+}
+
+/**
+ * Revisao da AG4 (R2 e R3): a ancora forte. A ULTIMA mensagem do paciente
+ * na conversa; a ultima SAIDA antes dela (de qualquer autor, em qualquer
+ * situacao de entrega) tem de ser da IA, nao falhada e gravada depois de
+ * `desde` (o instante do pedido, ou a reserva). Sem mensagem do paciente:
+ * nao. Sem a conversa: sem conferir (como antes da revisao).
+ */
+export function ancoraForte(
+  conversa: readonly MensagemNoBanco[] | undefined,
+  desde: number | null,
+): boolean {
+  if (conversa === undefined) {
+    return true;
+  }
+  let ultimaDoPaciente = -1;
+  conversa.forEach((m, i) => {
+    if (m.direcao === "entrada" && m.autor === "paciente") {
+      ultimaDoPaciente = i;
+    }
+  });
+  if (ultimaDoPaciente < 0 || desde === null) {
+    return false;
+  }
+  const saida = conversa
+    .slice(0, ultimaDoPaciente)
+    .filter((m) => m.direcao === "saida")
+    .at(-1);
+  return (
+    saida !== undefined &&
+    saida.autor === "ia" &&
+    saida.falhou !== true &&
+    saida.em > desde
+  );
 }
 
 export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
@@ -175,6 +243,20 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
         Date.parse(estado.pedido_pendente_em) - DUAS_HORAS_DE_FOLGA_MS
     ) {
       return recusa("consulta_mudou");
+    }
+    // Revisao da AG4 (R1): o pedido vale 60 minutos; vencido, "pergunte de
+    // novo" (o gravar carimba o instante novo).
+    const pedidoEm =
+      estado.pedido_pendente_em === null
+        ? null
+        : Date.parse(estado.pedido_pendente_em);
+    if (pedidoEm !== null && pedidoEm <= agora - VALIDADE_DO_PEDIDO_NO_BANCO_MS) {
+      return recusa("pedido_vencido");
+    }
+    // Revisao da AG4 (R2): a ancora forte (a pergunta da IA logo antes do
+    // "sim", depois do pedido).
+    if (!ancoraForte(opcoes.conversa?.(), pedidoEm)) {
+      return recusa("sem_confirmacao_do_paciente");
     }
     // A mesma transicao do botao: cancelado_paciente, com a trilha da IA.
     linha.status = "cancelado_paciente";
@@ -254,6 +336,9 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
     if (opcoes.forcar?.reservar) {
       return recusa(opcoes.forcar.reservar);
     }
+    // Revisao da AG4 (R5): com p_remarcar, NADA de ja_tem_consulta (outra
+    // consulta futura do mesmo procedimento, inclusive a pendente que a IA
+    // marcou, nao barra).
     const inicio = String(args.p_starts_at);
     const fim = new Date(
       Date.parse(inicio) + (vinculo.duracaoMin ?? 30) * 60_000,
@@ -396,6 +481,11 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
     if (opcoes.forcar?.agendar) {
       return recusa(opcoes.forcar.agendar);
     }
+    // Revisao da AG4 (R3): a ancora forte, depois da reserva (o T3). Sem
+    // ja_tem_consulta (R5).
+    if (!ancoraForte(opcoes.conversa?.(), Date.parse(String(viva.created_at)))) {
+      return recusa("sem_confirmacao_do_paciente");
+    }
     // O indice unico de uma remarcacao pendente por consulta (23505).
     const outraPendente = banco
       .linhas("appointment")
@@ -451,7 +541,8 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
  * O gravar_atendimento_da_ia do banco, so o carimbo (contrato-mudancas,
  * item 5): o instante que o codigo manda e ignorado; o banco grava agora
  * quando o pedido ou o foco mudam, mantem quando os dois ficam iguais, e o
- * pedido nulo tem o instante nulo.
+ * pedido nulo tem o instante nulo. Revisao da AG4 (R4): o instante de antes
+ * so fica enquanto vale (60 minutos); vencido, agora (o pedido re-armado).
  */
 export function comOCarimboDoBanco(
   anterior: EstadoDoAtendimento,
@@ -464,7 +555,9 @@ export function comOCarimboDoBanco(
   const igual =
     novo.pedido_pendente === anterior.pedido_pendente &&
     novo.appointment_id === anterior.appointment_id &&
-    anterior.pedido_pendente_em !== null;
+    anterior.pedido_pendente_em !== null &&
+    Date.parse(anterior.pedido_pendente_em) >
+      agora - VALIDADE_DO_PEDIDO_NO_BANCO_MS;
   return {
     ...novo,
     pedido_pendente_em: igual

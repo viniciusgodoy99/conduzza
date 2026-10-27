@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Server Action da Tela 6 na AG4 (app/(app)/agente/actions.ts), contra um
 // banco falso com a forma do cliente do Supabase: salvarPrazosAction grava
@@ -155,6 +155,10 @@ beforeEach(() => {
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("prazos para cancelar e remarcar (salvarPrazosAction)", () => {
   it("sem sessão, fora da fase ou sem papel, nada toca o banco", async () => {
     sessao = null;
@@ -298,6 +302,11 @@ describe("prazos para cancelar e remarcar (salvarPrazosAction)", () => {
       escrito.push(String(linha));
       return true;
     });
+    // Revisao da AG4 (achado 2): o carimbo de cada linha (ts) tinha "48"
+    // conforme a hora, e a comparacao pegava. O relogio fica num instante
+    // com "24" e "48" no carimbo: so os campos podem decidir o teste.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-24T14:48:24.048Z"));
     banco.erroNoUpdate = { code: "42501" };
     expect(await acoes.salvarPrazosAction(ENTRADA)).toEqual({
       ok: false,
@@ -315,8 +324,25 @@ describe("prazos para cancelar e remarcar (salvarPrazosAction)", () => {
       ok: false,
       error: "Esta versão já foi publicada e não muda. Recarregue a página.",
     });
+    vi.useRealTimers();
     const log = escrito.join("");
     expect(log).toContain('"kind":"prazos"');
-    expect(log).not.toMatch(/cancelarHoras|antecedencia_horas|"24"|48/);
+    // Cada linha do log e um JSON; o carimbo (ts) sai fora da comparacao e
+    // o resto (o evento e os campos da lista fechada) nao pode trazer o
+    // prazo nem o nome dele.
+    const linhas = log
+      .split("\n")
+      .filter((linha) => linha.trim() !== "")
+      .map((linha) => JSON.parse(linha) as Record<string, unknown>);
+    expect(linhas.length).toBeGreaterThan(0);
+    for (const { ts, ...campos } of linhas) {
+      expect(ts).toBe("2026-10-24T14:48:24.048Z");
+      expect(JSON.stringify(campos)).not.toMatch(
+        /cancelarHoras|remarcarHoras|antecedencia_horas/,
+      );
+      for (const valor of Object.values(campos)) {
+        expect(String(valor)).not.toMatch(/\b(24|48)\b/);
+      }
+    }
   });
 });

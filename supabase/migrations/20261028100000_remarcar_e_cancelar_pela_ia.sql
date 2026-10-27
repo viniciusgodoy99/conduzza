@@ -43,8 +43,9 @@
 --        gravado (23514 remarcacao_nao_muda), so vira nulo pela FK, ao
 --        apagar a antiga;
 --      - remarcacao_pendente_trava_a_antiga (BEFORE UPDATE OF starts_at,
---        professional_id; D-32): mover a antiga com remarcacao pendente e
---        23514 remarcacao_pendente, com a dica para a tela;
+--        ends_at, professional_id, unit_id; D-32): mover a antiga com
+--        remarcacao pendente (o inicio, o fim, o profissional ou a unidade)
+--        e 23514 remarcacao_pendente, com a dica para a tela;
 --      - remarcacao_na_aprovacao (AFTER UPDATE OF approval_status, o ultimo
 --        na ordem alfabetica, depois de dados_informados_na_aprovacao; D-27):
 --        a remarcacao aprovada trava a antiga e, numa das quatro situacoes
@@ -82,21 +83,32 @@
 --      pelos gatilhos e pelo executor de sempre) com as travas da IA: a
 --      trava da conversa, o job, a idempotencia pela trilha, a conversa com
 --      a IA, a habilidade e o prazo, o pedido armado, a consulta travada e
---      conferida, a consulta que nao mudou e a confirmacao do paciente numa
---      mensagem depois da pergunta. A trilha leva autor ia e o job; o
---      evento da conversa diz procedimento e profissional. O botao nao muda.
+--      conferida, a consulta que nao mudou, o pedido ainda valido
+--      (pedido_vencido, VALIDADE DO PEDIDO abaixo) e a confirmacao do
+--      paciente pela ancora forte: a ultima mensagem de saida antes da
+--      ultima mensagem do paciente e a resposta da IA (que nao falhou)
+--      gravada depois do pedido; qualquer outra saida no meio (regua,
+--      campanha, agendada, a equipe, o sistema; evento e nota interna nao
+--      contam) e sem_confirmacao_do_paciente. A trilha leva autor ia e o
+--      job; o evento da conversa diz procedimento e profissional. O botao
+--      nao muda.
 --   7. reservar_horario_da_ia e agendar_pela_ia ganham p_remarcar (DROP e
 --      CREATE com os grants de antes; o codigo de hoje chama por nome com 6
 --      e 4 parametros e continua igual): a remarcacao. O agendar trava a
 --      antiga, cria a nova pendente com remarcacao_de e, na antiga, faz o
 --      que o botao Remarcar faz (a marca, os toques pulados e a linha de
---      evento, agora com autor ia). O ja_tem_consulta deixa a antiga de fora
---      (33.14, ponto 3).
+--      evento, agora com autor ia). Na remarcacao, o ja_tem_consulta nao
+--      vale (33.14, ponto 3; a remarcacao troca uma consulta por outra:
+--      outra consulta do mesmo procedimento, inclusive a pendente da IA,
+--      nao barra), e o "sim" do agendar segue a ancora forte do cancelar,
+--      com a reserva no lugar do pedido. Sem p_remarcar, os dois ficam
+--      como na producao (AG3).
 --   8. gravar_atendimento_da_ia (CREATE OR REPLACE, mesma assinatura): a
 --      reserva lida uma vez so (33.14, ponto 1); o instante do pedido e do
 --      banco (agora quando o pedido ou o foco mudam; o do estado de antes
---      quando nao mudam; o que o codigo manda e ignorado); pedido sem
---      consulta em foco e 22023.
+--      quando nao mudam e ele ainda vale; vencido, agora de novo: a IA que
+--      pergunta outra vez re-arma o pedido; o que o codigo manda e
+--      ignorado); pedido sem consulta em foco e 22023.
 --   9. ler_dados_informados_na_marcacao ganha p_campo (DROP e CREATE com os
 --      grants de antes; 33.14, ponto 2): com cpf ou carteirinha, so aquele
 --      dado volta e a trilha e revelou_dado_da_marcacao com o campo.
@@ -108,6 +120,19 @@
 -- arquivo do desenho (scratchpad/ag4, com as mudancas em
 -- contrato-mudancas.md). Nos espelhos do TypeScript, MOTIVOS_DE_ESCALONAMENTO
 -- e TEXTO_DO_EVENTO_DA_IA ganham fora_do_prazo.
+--
+-- VALIDADE DO PEDIDO (revisao de 27/10/2026; DECISAO A CONFIRMAR COM O
+-- DONO): o pedido de cancelar vale por 60 MINUTOS a partir do instante dele
+-- (c_validade_do_pedido: a MESMA constante no corpo de
+-- cancelar_consulta_pela_ia e no de gravar_atendimento_da_ia; trocar o
+-- valor e trocar nos dois). Depois disso, cancelar_consulta_pela_ia recusa
+-- pedido_vencido (depois de consulta_mudou, antes de
+-- sem_confirmacao_do_paciente), e o gravar, com o mesmo pedido e o mesmo
+-- foco, carimba o instante de novo (a IA pergunta outra vez e o pedido e
+-- re-armado; sem isso, todo "sim" seguinte daria pedido_vencido). Por que:
+-- o "sim" de horas ou dias depois da pergunta pode responder outra coisa. A
+-- remarcacao nao usa a validade: a ancora dela e a reserva, que vence em 10
+-- minutos.
 --
 -- Producao em 27/10/2026 (q.js, so leitura): a ultima migration aplicada e a
 -- 20261027120000; 15 consultas (nenhuma da IA, nenhuma futura, nenhuma
@@ -743,12 +768,17 @@ security definer
 set search_path = ''
 as $$
 declare
+  -- A validade do pedido (cabecalho, VALIDADE DO PEDIDO; DECISAO A
+  -- CONFIRMAR COM O DONO). A mesma constante esta em
+  -- gravar_atendimento_da_ia: trocar o valor e trocar nos dois.
+  c_validade_do_pedido constant interval := interval '60 minutes';
   v_trilha record;
   v_conversa record;
   v_config record;
   v_pedido record;
   v_conf record;
   v_pergunta timestamptz;
+  v_sim timestamptz;
   v_inicio timestamptz;
 begin
   if p_clinic_id is null or p_conversation_id is null or p_job_id is null
@@ -862,25 +892,50 @@ begin
     return jsonb_build_object('ok', false, 'motivo', 'consulta_mudou');
   end if;
 
-  -- O paciente confirmou numa mensagem PROPRIA, depois da pergunta (como o
-  -- agendar): a pergunta e a primeira resposta da IA gravada depois do
-  -- instante do pedido, e so a que nao falhou.
-  select min(x.created_at) into v_pergunta
+  -- O pedido ainda vale (c_validade_do_pedido, 60 minutos depois do
+  -- instante dele): o "sim" de horas ou dias depois da pergunta pode
+  -- responder outra coisa. Vencido, a IA pergunta de novo (o gravar carimba
+  -- o instante outra vez).
+  if v_pedido.o_pedido_em <= now() - c_validade_do_pedido then
+    return jsonb_build_object('ok', false, 'motivo', 'pedido_vencido');
+  end if;
+
+  -- O "sim" responde a pergunta da IA (a ancora forte): a ULTIMA mensagem
+  -- do paciente tem, como ultima mensagem de saida antes dela, a resposta da
+  -- IA (que nao falhou) gravada depois do instante do pedido. Conta toda
+  -- saida que nao e evento nem nota interna, de qualquer autor (regua,
+  -- campanha, agendada, a equipe, o sistema) e em qualquer situacao de
+  -- entrega: com outra mensagem no meio, o "sim" pode ser a resposta a ela.
+  -- Empate no instante conta como outra no meio (o lado seguro). O que
+  -- chega depois da ultima mensagem do paciente nao conta.
+  select max(m.created_at) into v_sim
+    from public.message m
+   where m.conversation_id = p_conversation_id
+     and m.clinic_id = p_clinic_id
+     and m.direction = 'entrada'
+     and m.author = 'paciente';
+  select max(x.created_at) into v_pergunta
     from public.message x
    where x.conversation_id = p_conversation_id
      and x.clinic_id = p_clinic_id
      and x.direction = 'saida'
      and x.author = 'ia'
+     and x.content_type <> 'evento'
+     and not x.is_internal_note
+     and x.delivery_status is distinct from 'falhou'
      and x.created_at > v_pedido.o_pedido_em
-     and x.delivery_status is distinct from 'falhou';
-  if v_pergunta is null or not exists (
+     and x.created_at < v_sim;
+  if v_pergunta is null or exists (
     select 1
-      from public.message m
-     where m.conversation_id = p_conversation_id
-       and m.clinic_id = p_clinic_id
-       and m.direction = 'entrada'
-       and m.author = 'paciente'
-       and m.created_at > v_pergunta
+      from public.message o
+     where o.conversation_id = p_conversation_id
+       and o.clinic_id = p_clinic_id
+       and o.direction = 'saida'
+       and o.content_type <> 'evento'
+       and not o.is_internal_note
+       and (o.author is distinct from 'ia' or o.delivery_status is not distinct from 'falhou')
+       and o.created_at >= v_pergunta
+       and o.created_at < v_sim
   ) then
     return jsonb_build_object('ok', false, 'motivo', 'sem_confirmacao_do_paciente');
   end if;
@@ -932,7 +987,7 @@ grant execute on function public.cancelar_consulta_pela_ia(uuid, uuid, uuid, uui
   to service_role;
 
 comment on function public.cancelar_consulta_pela_ia(uuid, uuid, uuid, uuid) is
-  'So o servidor (service_role). A IA cancela a consulta p_appointment_id a pedido do paciente (AG4, D-9), com a mesma transicao do botao da confirmacao (cancelar_pelo_paciente: cancelado_paciente pelo mesmo update condicional; reoferta e regua pelos gatilhos e pelo executor de sempre). Na ordem: a trava da conversa (a do reservar e do agendar); o job responder_com_ia desta clinica e conversa (senao 22023 job_invalido); a idempotencia (a linha da trilha com ia_job_id = p_job_id devolve {ok:true, starts_at, reutilizado:true}; de outra consulta, 22023 job_de_outra_consulta); ia_desligada (conversa de outra clinica, fora da IA, ou contato que a IA nao atende); cancelamento_desligado (a ultima versao publicada sem skills.cancelar ou sem cancelar_antecedencia_horas); sem_pedido_de_cancelamento (o estado da janela atual sem o pedido cancelar com o foco nesta consulta, pedido_da_ia_na_conversa); a consulta travada (FOR UPDATE) e os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, remarcacao_pendente, fora_do_prazo); consulta_mudou (linha kind remarcacao na trilha depois do instante do pedido menos 2 minutos); sem_confirmacao_do_paciente (nenhuma mensagem do paciente depois da primeira resposta da IA, que nao falhou, gravada depois do instante do pedido). Grava a trilha (cancelado_paciente, changed_by ia, ia_job_id) e o evento na conversa ("A IA cancelou a consulta de DD/MM às HH:MI (procedimento, profissional), a pedido do paciente."), nunca a resposta ao paciente. Devolve {ok:true, starts_at, reutilizado:false} ou {ok:false, motivo}. Parametro nulo: 22004. Nunca 40001 nem 40P01.';
+  'So o servidor (service_role). A IA cancela a consulta p_appointment_id a pedido do paciente (AG4, D-9), com a mesma transicao do botao da confirmacao (cancelar_pelo_paciente: cancelado_paciente pelo mesmo update condicional; reoferta e regua pelos gatilhos e pelo executor de sempre). Na ordem: a trava da conversa (a do reservar e do agendar); o job responder_com_ia desta clinica e conversa (senao 22023 job_invalido); a idempotencia (a linha da trilha com ia_job_id = p_job_id devolve {ok:true, starts_at, reutilizado:true}; de outra consulta, 22023 job_de_outra_consulta); ia_desligada (conversa de outra clinica, fora da IA, ou contato que a IA nao atende); cancelamento_desligado (a ultima versao publicada sem skills.cancelar ou sem cancelar_antecedencia_horas); sem_pedido_de_cancelamento (o estado da janela atual sem o pedido cancelar com o foco nesta consulta, pedido_da_ia_na_conversa); a consulta travada (FOR UPDATE) e os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, remarcacao_pendente, fora_do_prazo); consulta_mudou (linha kind remarcacao na trilha depois do instante do pedido menos 2 minutos); pedido_vencido (o pedido armado ha 60 minutos ou mais, c_validade_do_pedido; a confirmar com o dono); sem_confirmacao_do_paciente (a ancora forte: a ultima mensagem de saida antes da ultima mensagem do paciente nao e a resposta da IA, que nao falhou, gravada depois do instante do pedido; conta toda saida que nao e evento nem nota interna, de qualquer autor e em qualquer situacao de entrega; empate no instante conta como outra saida). Grava a trilha (cancelado_paciente, changed_by ia, ia_job_id) e o evento na conversa ("A IA cancelou a consulta de DD/MM às HH:MI (procedimento, profissional), a pedido do paciente."), nunca a resposta ao paciente. Devolve {ok:true, starts_at, reutilizado:false} ou {ok:false, motivo}. Parametro nulo: 22004. Nunca 40001 nem 40P01.';
 
 -- ---------------------------------------------------------------------------
 -- 7) A reserva e o agendar, com a remarcacao
@@ -1108,8 +1163,10 @@ begin
      and a.starts_at > now()
      and a.status not in ('cancelado_paciente', 'cancelado_clinica', 'faltou', 'compareceu')
      and a.approval_status is distinct from 'recusado'
-     -- [remarcar e cancelar] a consulta que esta sendo remarcada nao conta
-     and a.id is distinct from p_remarcar
+     -- [remarcar e cancelar] So fora da remarcacao: a remarcacao troca uma
+     -- consulta por outra, e nenhuma conta (nem a antiga, nem outra do
+     -- mesmo procedimento, nem a pendente que a IA marcou)
+     and p_remarcar is null
    order by a.starts_at, a.id
    limit 1;
   if v_ja_marcada is not null then
@@ -1165,7 +1222,7 @@ grant execute on function public.reservar_horario_da_ia(uuid, uuid, uuid, timest
   to service_role;
 
 comment on function public.reservar_horario_da_ia(uuid, uuid, uuid, timestamptz, uuid, uuid, uuid) is
-  'So o servidor (service_role). A IA reserva por 10 minutos o horario p_starts_at do vinculo p_service_link_id para a conversa (uma reserva por conversa), na unidade p_unit_id (AG3; nula = como antes, a jornada de todas as unidades). Confere tudo de novo no banco (conferir_horario_da_ia) sob trava da conversa, do profissional e, quando o procedimento tem, do recurso. p_remarcar (AG4; nulo = como antes): a consulta antiga da remarcacao; depois da conferencia do horario, recusa remarcacao_desligada (habilidade remarcar desligada ou sem remarcar_antecedencia_horas na versao em uso), sem_pedido_de_remarcacao (o estado da janela atual nao tem o pedido remarcar com o foco nela, pedido_da_ia_na_conversa), os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, pendente_da_equipe, remarcacao_pendente, fora_do_prazo) e remarcacao_invalida (o vinculo novo com outro procedimento, profissional ou convenio); nada grava na antiga, e ela fica fora do ja_tem_consulta. Devolve {ok:true, hold_id, starts_at, ends_at, expires_at, reutilizado, unit_id} ou {ok:false, motivo}: ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, ocupado, reservado_por_outra_conversa; depois os da remarcacao; depois, ja_tem_consulta (revisao final; com appointment_id e starts_at da consulta futura ativa do mesmo procedimento que o contato ja tem, com qualquer profissional, a mais proxima, pela mesma regra do agendar; nada grava). Idempotente pelo job_id (a reserva do job volta com reutilizado true, como esta; job de outra conversa: 22023). Parametro nulo: 22004.';
+  'So o servidor (service_role). A IA reserva por 10 minutos o horario p_starts_at do vinculo p_service_link_id para a conversa (uma reserva por conversa), na unidade p_unit_id (AG3; nula = como antes, a jornada de todas as unidades). Confere tudo de novo no banco (conferir_horario_da_ia) sob trava da conversa, do profissional e, quando o procedimento tem, do recurso. p_remarcar (AG4; nulo = como antes): a consulta antiga da remarcacao; depois da conferencia do horario, recusa remarcacao_desligada (habilidade remarcar desligada ou sem remarcar_antecedencia_horas na versao em uso), sem_pedido_de_remarcacao (o estado da janela atual nao tem o pedido remarcar com o foco nela, pedido_da_ia_na_conversa), os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, pendente_da_equipe, remarcacao_pendente, fora_do_prazo) e remarcacao_invalida (o vinculo novo com outro procedimento, profissional ou convenio); nada grava na antiga, e o ja_tem_consulta nao vale (a remarcacao troca uma consulta por outra: outra consulta futura do mesmo procedimento, inclusive a pendente da IA, nao barra). Devolve {ok:true, hold_id, starts_at, ends_at, expires_at, reutilizado, unit_id} ou {ok:false, motivo}: ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, ocupado, reservado_por_outra_conversa; depois os da remarcacao; depois, so sem p_remarcar, ja_tem_consulta (revisao final; com appointment_id e starts_at da consulta futura ativa do mesmo procedimento que o contato ja tem, com qualquer profissional, a mais proxima, pela mesma regra do agendar; nada grava). Idempotente pelo job_id (a reserva do job volta com reutilizado true, como esta; job de outra conversa: 22023). Parametro nulo: 22004.';
 
 -- 7b. Idem (o codigo de hoje chama com 4 parametros por nome).
 drop function public.agendar_pela_ia(uuid, uuid, uuid, uuid);
@@ -1205,6 +1262,7 @@ declare
   -- O inicio da antiga num escalar: o campo de um record nao atribuido
   -- falha ate num ramo do CASE que nao roda (o PL/pgSQL avalia antes).
   v_inicio_da_antiga timestamptz;
+  v_sim timestamptz;
   -- [remarcar e cancelar] fim
 begin
   if p_clinic_id is null or p_conversation_id is null or p_job_id is null then
@@ -1432,7 +1490,9 @@ begin
   -- (d) ja_tem_consulta: o contato da conversa ja tem consulta futura ativa
   -- (nao cancelada, nao recusada, nem faltou nem compareceu; a pendente da
   -- IA conta) do mesmo procedimento, com qualquer profissional. Devolve a
-  -- consulta (a mais proxima), para a IA oferecer remarcar.
+  -- consulta (a mais proxima), para a IA oferecer remarcar. [remarcar e
+  -- cancelar] So fora da remarcacao (a remarcacao troca uma consulta por
+  -- outra).
   select a.id into v_ja_marcada
     from public.appointment a
     join public.service_link sl on sl.id = a.service_link_id and sl.clinic_id = a.clinic_id
@@ -1444,8 +1504,9 @@ begin
      and a.starts_at > now()
      and a.status not in ('cancelado_paciente', 'cancelado_clinica', 'faltou', 'compareceu')
      and a.approval_status is distinct from 'recusado'
-     -- [remarcar e cancelar] a consulta que esta sendo remarcada nao conta
-     and a.id is distinct from p_remarcar
+     -- [remarcar e cancelar] So fora da remarcacao: nenhuma conta (nem a
+     -- antiga, nem outra do mesmo procedimento, nem a pendente da IA)
+     and p_remarcar is null
    order by a.starts_at, a.id
    limit 1;
   if v_ja_marcada is not null then
@@ -1490,6 +1551,49 @@ begin
   ) then
     return jsonb_build_object('ok', false, 'motivo', 'sem_confirmacao_do_paciente');
   end if;
+  -- [remarcar e cancelar] inicio
+  -- Na remarcacao, alem disso, a ancora forte (a de
+  -- cancelar_consulta_pela_ia, com a reserva no lugar do pedido): a ULTIMA
+  -- mensagem do paciente tem, como ultima mensagem de saida antes dela, a
+  -- resposta da IA (que nao falhou) gravada depois da reserva (a pergunta
+  -- T3 sai no turno da reserva). Conta toda saida que nao e evento nem nota
+  -- interna, de qualquer autor e em qualquer situacao de entrega; empate no
+  -- instante conta como outra no meio. Sem p_remarcar (AG3, a regra acima),
+  -- nada muda.
+  if p_remarcar is not null then
+    select max(m.created_at) into v_sim
+      from public.message m
+     where m.conversation_id = p_conversation_id
+       and m.clinic_id = p_clinic_id
+       and m.direction = 'entrada'
+       and m.author = 'paciente';
+    select max(x.created_at) into v_pergunta
+      from public.message x
+     where x.conversation_id = p_conversation_id
+       and x.clinic_id = p_clinic_id
+       and x.direction = 'saida'
+       and x.author = 'ia'
+       and x.content_type <> 'evento'
+       and not x.is_internal_note
+       and x.delivery_status is distinct from 'falhou'
+       and x.created_at > v_reserva.created_at
+       and x.created_at < v_sim;
+    if v_pergunta is null or exists (
+      select 1
+        from public.message o
+       where o.conversation_id = p_conversation_id
+         and o.clinic_id = p_clinic_id
+         and o.direction = 'saida'
+         and o.content_type <> 'evento'
+         and not o.is_internal_note
+         and (o.author is distinct from 'ia' or o.delivery_status is not distinct from 'falhou')
+         and o.created_at >= v_pergunta
+         and o.created_at < v_sim
+    ) then
+      return jsonb_build_object('ok', false, 'motivo', 'sem_confirmacao_do_paciente');
+    end if;
+  end if;
+  -- [remarcar e cancelar] fim
 
   -- A consulta pendente (D12), sem regua ate a aprovacao e sem oferecer a
   -- vaga a lista de espera se for recusada. 23P01: conflito, nada gravado.
@@ -1627,7 +1731,7 @@ grant execute on function public.agendar_pela_ia(uuid, uuid, uuid, uuid, uuid)
   to service_role;
 
 comment on function public.agendar_pela_ia(uuid, uuid, uuid, uuid, uuid) is
-  'So o servidor (service_role). Marca a consulta da reserva viva da conversa, depois de uma mensagem do paciente posterior a pergunta da IA (a primeira resposta da IA gravada depois da reserva, que nao falhou): agendado, created_by ia, approval_status pendente, send_confirmation false (a regua so comeca com a aprovacao), oferecer_vaga_ao_cancelar false, source interna, a unidade da reserva; consome a reserva, liga os dados informados (dados_informados_na_marcacao, a linha aberta da janela atual da IA) a consulta e grava o evento na conversa. p_slot_hold_id (revisao final; nulo = como antes): a reserva que o "Confirma ...?" perguntou; se a reserva viva da conversa (ou, no mesmo job de novo, a que ele consumiu) for outra, reserva_diferente, sem gravar nada. p_remarcar (AG4; nulo = como antes): a consulta antiga da remarcacao (D-10); depois da conferencia do horario, recusa remarcacao_desligada, sem_pedido_de_remarcacao, trava a antiga e recusa os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, pendente_da_equipe, remarcacao_pendente, fora_do_prazo), remarcacao_invalida (a reserva com outro procedimento, profissional ou convenio) e consulta_mudou (a antiga mudou de horario ou de profissional desde a reserva, com folga de 2 minutos); nao pede dado (sem faltam_dados) e nao liga os dados informados; a consulta nova leva remarcacao_de (o indice unico de uma remarcacao pendente por consulta, 23505, vira remarcacao_pendente); a antiga ganha remarcacao_pedida_em (se ainda nao tinha), os toques pendentes como remarcacao_pedida e a linha de evento remarcacao_pedida com autor ia; o evento da conversa diz o par de horarios; o retorno ganha remarcacao_de e remarcacao_de_starts_at (tambem na repeticao do job). Devolve {ok:true, appointment_id, starts_at, ends_at, reutilizado} ou {ok:false, motivo}: reserva_inexistente, reserva_diferente, reserva_vencida, ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, conflito (consulta no horario, inclusive o 23P01, sem gravar nada), reservado_por_outra_conversa; depois os da remarcacao; depois, nesta ordem, consulta_para_outra_pessoa (a marca da janela atual), menor_de_idade (menos de 18 anos no dia da consulta, pelo nascimento informado ou pelo do cadastro do contato), ja_tem_consulta (com appointment_id: o contato ja tem consulta futura ativa do mesmo procedimento, fora a antiga da remarcacao; o reservar ja recusa antes, e o agendar confere de novo) e faltam_dados (com faltam: a lista do que falta; nunca na remarcacao); e sem_confirmacao_do_paciente. Idempotente pelo job_id (a consulta do job volta com reutilizado true; job de outra conversa: 22023). Parametro nulo: 22004.';
+  'So o servidor (service_role). Marca a consulta da reserva viva da conversa, depois de uma mensagem do paciente posterior a pergunta da IA (a primeira resposta da IA gravada depois da reserva, que nao falhou): agendado, created_by ia, approval_status pendente, send_confirmation false (a regua so comeca com a aprovacao), oferecer_vaga_ao_cancelar false, source interna, a unidade da reserva; consome a reserva, liga os dados informados (dados_informados_na_marcacao, a linha aberta da janela atual da IA) a consulta e grava o evento na conversa. p_slot_hold_id (revisao final; nulo = como antes): a reserva que o "Confirma ...?" perguntou; se a reserva viva da conversa (ou, no mesmo job de novo, a que ele consumiu) for outra, reserva_diferente, sem gravar nada. p_remarcar (AG4; nulo = como antes): a consulta antiga da remarcacao (D-10); depois da conferencia do horario, recusa remarcacao_desligada, sem_pedido_de_remarcacao, trava a antiga e recusa os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, pendente_da_equipe, remarcacao_pendente, fora_do_prazo), remarcacao_invalida (a reserva com outro procedimento, profissional ou convenio) e consulta_mudou (a antiga mudou de horario ou de profissional desde a reserva, com folga de 2 minutos); nao pede dado (sem faltam_dados) e nao liga os dados informados; a consulta nova leva remarcacao_de (o indice unico de uma remarcacao pendente por consulta, 23505, vira remarcacao_pendente); a antiga ganha remarcacao_pedida_em (se ainda nao tinha), os toques pendentes como remarcacao_pedida e a linha de evento remarcacao_pedida com autor ia; o evento da conversa diz o par de horarios; o retorno ganha remarcacao_de e remarcacao_de_starts_at (tambem na repeticao do job). Devolve {ok:true, appointment_id, starts_at, ends_at, reutilizado} ou {ok:false, motivo}: reserva_inexistente, reserva_diferente, reserva_vencida, ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, conflito (consulta no horario, inclusive o 23P01, sem gravar nada), reservado_por_outra_conversa; depois os da remarcacao; depois, nesta ordem, consulta_para_outra_pessoa (a marca da janela atual), menor_de_idade (menos de 18 anos no dia da consulta, pelo nascimento informado ou pelo do cadastro do contato), ja_tem_consulta (com appointment_id: o contato ja tem consulta futura ativa do mesmo procedimento; nunca na remarcacao; o reservar ja recusa antes, e o agendar confere de novo) e faltam_dados (com faltam: a lista do que falta; nunca na remarcacao); e sem_confirmacao_do_paciente (na remarcacao, tambem a ancora forte de cancelar_consulta_pela_ia com a reserva no lugar do pedido: a ultima mensagem de saida antes da ultima mensagem do paciente tem de ser a resposta da IA, que nao falhou, gravada depois da reserva; evento e nota interna nao contam; sem p_remarcar, como antes). Idempotente pelo job_id (a consulta do job volta com reutilizado true; job de outra conversa: 22023). Parametro nulo: 22004.';
 
 -- ---------------------------------------------------------------------------
 -- 8) O estado do atendimento e os dados informados
@@ -1657,6 +1761,10 @@ declare
   v_horarios jsonb := '[]'::jsonb;
   v_formato constant text := 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"';
   -- [remarcar e cancelar] inicio
+  -- A validade do pedido (cabecalho, VALIDADE DO PEDIDO; DECISAO A
+  -- CONFIRMAR COM O DONO). A mesma constante esta em
+  -- cancelar_consulta_pela_ia: trocar o valor e trocar nos dois.
+  c_validade_do_pedido constant interval := interval '60 minutes';
   v_reserva record;
   v_base jsonb;
   v_pedido_em timestamptz;
@@ -1825,9 +1933,11 @@ begin
 
   -- [remarcar e cancelar] inicio
   -- O instante do pedido (AG4): o do estado de antes do job (o anterior,
-  -- no mesmo job de novo) quando o pedido e o foco nao mudam; agora quando
-  -- mudam; nulo sem pedido. E a ancora de cancelar_consulta_pela_ia (a
-  -- pergunta e a confirmacao vem depois dele).
+  -- no mesmo job de novo) quando o pedido e o foco nao mudam e ele ainda
+  -- vale (c_validade_do_pedido); agora quando mudam ou quando ele venceu (a
+  -- IA perguntou de novo: o pedido e re-armado; senao todo "sim" seguinte
+  -- daria pedido_vencido); nulo sem pedido. E a ancora de
+  -- cancelar_consulta_pela_ia (a pergunta e a confirmacao vem depois dele).
   if v_linha.id is null then
     v_base := null;
   elsif v_linha.job_id = p_job_id then
@@ -1840,6 +1950,7 @@ begin
   elsif v_base ->> 'pedido_pendente' is not distinct from v_estado ->> 'pedido_pendente'
         and v_base ->> 'appointment_id' is not distinct from v_estado ->> 'appointment_id'
         and v_base ->> 'pedido_pendente_em' is not null
+        and (v_base ->> 'pedido_pendente_em')::timestamptz > now() - c_validade_do_pedido
   then
     v_pedido_em := (v_base ->> 'pedido_pendente_em')::timestamptz;
   else
@@ -1907,7 +2018,7 @@ end;
 $$;
 
 comment on function public.gravar_atendimento_da_ia(uuid, uuid, uuid, integer, jsonb) is
-  'So o servidor (service_role). Grava o estado do atendimento da IA (p_estado, a forma de ia_estado_do_atendimento_valido; os instantes viram UTC com Z) na janela atual da conversa, pelo job p_job_id, que leu a versao p_versao (ler_atendimento_da_ia). Trava a conversa antes de ler a janela (D-A do E3). Idempotente por job: o mesmo job grava de novo sobre o estado de antes dele (versao - 1), a versao e o anterior ficam; job novo sobe a versao e guarda o estado de antes em anterior. Apaga o estado de outra janela da conversa. A reserva do estado que ja nao existe (apagada no meio do turno) e gravada nula (revisao final), sem erro, numa leitura so (AG4). O instante do pedido (pedido_pendente_em) e do banco (AG4): o que vem em p_estado e ignorado; agora quando o pedido ou o foco (appointment_id) mudam em relacao ao estado de antes do job, o de antes quando os dois ficam iguais, nulo sem pedido; pedido sem appointment_id e 22023. Devolve {ok:true, versao, reutilizado} ou {ok:false, motivo}: fora_da_ia (conversa de outra clinica, fora da IA, com responsavel, sem janela ou com a janela de outro contato), sem_posse (job fora de execucao), job_antigo, estado_mudou (outro job gravou depois da leitura: ler de novo). Forma errada, id de outra clinica ou conversa (a reserva que existe e e de outra conversa inclusive), pedido sem consulta, ou job que nao e desta conversa: 22023 (estado_invalido, job_invalido). Parametro nulo: 22004.';
+  'So o servidor (service_role). Grava o estado do atendimento da IA (p_estado, a forma de ia_estado_do_atendimento_valido; os instantes viram UTC com Z) na janela atual da conversa, pelo job p_job_id, que leu a versao p_versao (ler_atendimento_da_ia). Trava a conversa antes de ler a janela (D-A do E3). Idempotente por job: o mesmo job grava de novo sobre o estado de antes dele (versao - 1), a versao e o anterior ficam; job novo sobe a versao e guarda o estado de antes em anterior. Apaga o estado de outra janela da conversa. A reserva do estado que ja nao existe (apagada no meio do turno) e gravada nula (revisao final), sem erro, numa leitura so (AG4). O instante do pedido (pedido_pendente_em) e do banco (AG4): o que vem em p_estado e ignorado; agora quando o pedido ou o foco (appointment_id) mudam em relacao ao estado de antes do job, o de antes quando os dois ficam iguais e ele ainda vale (menos de 60 minutos, c_validade_do_pedido; vencido, agora de novo: o pedido e re-armado), nulo sem pedido; pedido sem appointment_id e 22023. Devolve {ok:true, versao, reutilizado} ou {ok:false, motivo}: fora_da_ia (conversa de outra clinica, fora da IA, com responsavel, sem janela ou com a janela de outro contato), sem_posse (job fora de execucao), job_antigo, estado_mudou (outro job gravou depois da leitura: ler de novo). Forma errada, id de outra clinica ou conversa (a reserva que existe e e de outra conversa inclusive), pedido sem consulta, ou job que nao e desta conversa: 22023 (estado_invalido, job_invalido). Parametro nulo: 22004.';
 
 -- Um parametro a mais com default: o codigo de hoje (2 parametros por nome)
 -- continua chamando.
@@ -2186,8 +2297,9 @@ create trigger exigir_remarcacao_da_ia
   before insert or update of remarcacao_de on public.appointment
   for each row execute function public.exigir_remarcacao_da_ia();
 
--- 10b. D-32: a recepcao nao move a antiga com remarcacao pendente. So le a
--- nova (sem trava): mover trava so a antiga.
+-- 10b. D-32: a recepcao nao move a antiga com remarcacao pendente (nem o
+-- inicio, nem o fim, nem o profissional, nem a unidade). So le a nova (sem
+-- trava): mover trava so a antiga.
 create function public.remarcacao_pendente_trava_a_antiga()
 returns trigger
 language plpgsql
@@ -2195,7 +2307,8 @@ security definer
 set search_path = ''
 as $$
 begin
-  -- So roda pelo WHEN do gatilho: o inicio ou o profissional mudou.
+  -- So roda pelo WHEN do gatilho: o inicio, o fim, o profissional ou a
+  -- unidade mudou.
   if exists (
     select 1
       from public.appointment n
@@ -2215,17 +2328,19 @@ revoke all on function public.remarcacao_pendente_trava_a_antiga()
   from public, anon, authenticated, service_role;
 
 comment on function public.remarcacao_pendente_trava_a_antiga() is
-  'Gatilho BEFORE UPDATE OF starts_at, professional_id de appointment (remarcacao_pendente_trava_a_antiga; AG4, D-32): a consulta com uma remarcacao pendente pedida pela IA nao muda de horario nem de profissional (23514 remarcacao_pendente, com a dica). So le a nova, sem trava. Ninguem executa direto.';
+  'Gatilho BEFORE UPDATE OF starts_at, ends_at, professional_id, unit_id de appointment (remarcacao_pendente_trava_a_antiga; AG4, D-32): a consulta com uma remarcacao pendente pedida pela IA nao muda o inicio, o fim (a duracao), o profissional nem a unidade (23514 remarcacao_pendente, com a dica). So le a nova, sem trava. Ninguem executa direto.';
 
 create trigger remarcacao_pendente_trava_a_antiga
-  before update of starts_at, professional_id on public.appointment
+  before update of starts_at, ends_at, professional_id, unit_id on public.appointment
   for each row
   when (old.starts_at is distinct from new.starts_at
-        or old.professional_id is distinct from new.professional_id)
+        or old.ends_at is distinct from new.ends_at
+        or old.professional_id is distinct from new.professional_id
+        or old.unit_id is distinct from new.unit_id)
   execute function public.remarcacao_pendente_trava_a_antiga();
 
 comment on trigger remarcacao_pendente_trava_a_antiga on public.appointment is
-  'AG4 (D-32): a consulta com remarcacao pendente pedida pela IA so se move depois de a equipe aprovar ou recusar a remarcacao (23514 remarcacao_pendente).';
+  'AG4 (D-32): a consulta com remarcacao pendente pedida pela IA so se move (inicio, fim, profissional ou unidade) depois de a equipe aprovar ou recusar a remarcacao (23514 remarcacao_pendente).';
 
 -- 10c. D-27: a remarcacao aprovada cancela a antiga. A nova ja esta travada
 -- (o update da aprovacao); a antiga e travada aqui, depois: ninguem trava a

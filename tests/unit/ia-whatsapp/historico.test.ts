@@ -11,6 +11,7 @@ import {
 import { semAMarcaDoNome } from "@/lib/agente/marca-do-nome";
 import {
   executarTurnoDoAgente,
+  historicoParaOModelo,
   MENSAGENS_NO_HISTORICO,
   mensagemParaOModelo,
   mensagensPendentes,
@@ -692,12 +693,35 @@ describe("o portão lê o texto original do contato; a OpenAI, só o mascarado",
       },
       "Socorro",
     );
+    // Revisao da AG4 (achado 1): com a autoria real (so o servidor le; a
+    // pergunta do cancelamento e da remarcacao so vale quando e da IA).
     expect(daClinica).toEqual({
       autor: "assistente",
+      autoria: "usuario",
       texto: `Olá ${MARCA_DO_NOME}, tudo bem?`,
       tipo: "texto",
     });
     expect(daClinica).not.toHaveProperty("textoOriginal");
+    for (const [author, autoria] of [
+      ["ia", "ia"],
+      ["sistema", "sistema"],
+      ["outro", null],
+    ] as const) {
+      expect(
+        mensagemDaLinha(
+          { author, content_type: "texto", body: "Oi", media_url: null },
+          "Socorro",
+        ).autoria,
+        author,
+      ).toBe(autoria);
+    }
+    // A autoria nunca vai a OpenAI: o historico do modelo so tem o papel e
+    // o texto.
+    expect(
+      historicoParaOModelo([
+        { autor: "assistente", autoria: "sistema", texto: "Oi" },
+      ]),
+    ).toEqual([{ role: "assistant", content: "Oi" }]);
     expect(
       mensagemDaLinha(
         {
