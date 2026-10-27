@@ -56,7 +56,16 @@ import {
   type ConveniosNaAbertura,
   type NomesDoResumo,
 } from "@/lib/domain/convenios-do-medico";
+import {
+  ehGrade,
+  GRADES_DE_HORARIO,
+  lerIdade,
+  LIMITES_DO_CADASTRO,
+  rotuloDaGrade,
+  textoDaIdadeAtendida,
+} from "@/lib/domain/cadastro-para-o-agente";
 import { especialidadesParaSalvar } from "@/lib/domain/profissionais";
+import { cadastroDoProfissional } from "@/lib/queries/cadastro-para-o-agente";
 import {
   WEEKDAY_LABELS,
   type Catalogo,
@@ -71,6 +80,11 @@ type FormProfissional = {
   specialties: string[];
   calendar_color: string;
   active: boolean;
+  /** Cadastro para o agente (AG1): a idade atendida, como digitada */
+  idade_minima: string;
+  idade_maxima: string;
+  /** A grade em minutos; "" = sem grade definida */
+  grade_minutos: string;
 };
 
 type FaixaForm = {
@@ -94,7 +108,74 @@ const FORM_VAZIO: FormProfissional = {
   specialties: [],
   calendar_color: COR_PADRAO,
   active: true,
+  idade_minima: "",
+  idade_maxima: "",
+  grade_minutos: "",
 };
+
+const SEM_GRADE = "sem-grade";
+
+/** O numero gravado como o campo mostra (nulo e vazio). */
+function textoDoNumero(numero: number | null | undefined): string {
+  return numero === null || numero === undefined ? "" : String(numero);
+}
+
+export const TEXTOS_DA_IDADE_E_GRADE = {
+  idade: "Idade atendida",
+  idadeAjuda:
+    "Deixe em branco o lado que não tem limite. Vale para o paciente da consulta.",
+  idadeDe: "De (anos)",
+  idadeAte: "Até (anos)",
+  grade: "Grade de horários",
+  gradeAjuda: "O intervalo entre os horários de início das consultas.",
+} as const;
+
+/**
+ * A idade e a grade do formulario, conferidas ANTES de gravar: o que vai
+ * para salvarProfissionalAction, ou a frase do problema.
+ */
+export function idadeEGradeDoForm(
+  form: Pick<
+    FormProfissional,
+    "idade_minima" | "idade_maxima" | "grade_minutos"
+  >,
+):
+  | {
+      ok: true;
+      campos: {
+        idade_minima: number | null;
+        idade_maxima: number | null;
+        grade_minutos: number | null;
+      };
+    }
+  | { ok: false; erro: string } {
+  const minima = lerIdade(form.idade_minima);
+  const maxima = lerIdade(form.idade_maxima);
+  if (minima === undefined || maxima === undefined) {
+    return {
+      ok: false,
+      erro: `Idade atendida: use um número inteiro de 0 a ${LIMITES_DO_CADASTRO.idade} anos.`,
+    };
+  }
+  if (minima !== null && maxima !== null && minima > maxima) {
+    return {
+      ok: false,
+      erro: "Idade atendida: a idade de início não pode passar da idade final.",
+    };
+  }
+  const grade = form.grade_minutos === "" ? null : Number(form.grade_minutos);
+  if (grade !== null && !ehGrade(grade)) {
+    return { ok: false, erro: "Escolha a grade de horários da lista." };
+  }
+  return {
+    ok: true,
+    campos: {
+      idade_minima: minima,
+      idade_maxima: maxima,
+      grade_minutos: grade,
+    },
+  };
+}
 
 function horaCurta(valor: string): string {
   // O banco devolve "HH:MM:SS"; o input type="time" quer "HH:MM".
@@ -425,6 +506,7 @@ const DURACAO_DO_RESUMO_MS = 10_000;
 export function ProfissionaisTab({
   catalogo,
   matriz,
+  cadastroDoAgente,
   podeEditar,
   dica,
   aoMudar,
@@ -505,6 +587,10 @@ export function ProfissionaisTab({
     setAbertura(naAbertura);
     setConveniosMarcados(new Set(naAbertura.marcados));
     if (profissional) {
+      const doAgente = cadastroDoProfissional(
+        cadastroDoAgente,
+        profissional.id,
+      );
       setForm({
         id: profissional.id,
         name: profissional.name,
@@ -513,6 +599,9 @@ export function ProfissionaisTab({
         specialties: profissional.specialties,
         calendar_color: profissional.calendar_color ?? COR_PADRAO,
         active: profissional.active,
+        idade_minima: textoDoNumero(doAgente?.idade_minima),
+        idade_maxima: textoDoNumero(doAgente?.idade_maxima),
+        grade_minutos: textoDoNumero(doAgente?.grade_minutos),
       });
       const salvas = catalogo.jornadas
         .filter((j) => j.professional_id === profissional.id)
@@ -606,6 +695,12 @@ export function ProfissionaisTab({
       confirmarConvenios?: boolean;
     } = {},
   ) => {
+    // A idade atendida e a grade (AG1), conferidas antes de gravar.
+    const idadeEGrade = idadeEGradeDoForm(form);
+    if (!idadeEGrade.ok) {
+      setErro(idadeEGrade.erro);
+      return;
+    }
     // Validacao da jornada ANTES de qualquer gravacao (achado 36): antes, a
     // faixa invalida so era recusada depois de o profissional ja existir.
     for (const faixa of faixas) {
@@ -667,6 +762,7 @@ export function ProfissionaisTab({
       ),
       calendar_color: form.calendar_color || null,
       active: form.active,
+      ...idadeEGrade.campos,
       confirmar_consultas: confirmarConsultas,
       ...(convenios ?? {}),
       confirmar_convenios: confirmarConvenios,
@@ -1075,6 +1171,19 @@ export function ProfissionaisTab({
                 ),
               },
               {
+                rotulo: TEXTOS_DA_IDADE_E_GRADE.idade,
+                valor: textoDaIdadeAtendida(
+                  lerIdade(form.idade_minima) ?? null,
+                  lerIdade(form.idade_maxima) ?? null,
+                ),
+              },
+              {
+                rotulo: TEXTOS_DA_IDADE_E_GRADE.grade,
+                valor: rotuloDaGrade(
+                  form.grade_minutos === "" ? null : Number(form.grade_minutos),
+                ),
+              },
+              {
                 rotulo: "Situação",
                 valor: <ChipSituacao active={form.active} />,
               },
@@ -1243,6 +1352,54 @@ export function ProfissionaisTab({
               ) : null}
             </div>
           </div>
+          <fieldset className="grid min-w-0 gap-2">
+            <legend className="text-sm font-bold text-text-strong">
+              {TEXTOS_DA_IDADE_E_GRADE.idade}
+            </legend>
+            <p id="prof-idade-ajuda" className="text-xs text-text-secondary">
+              {TEXTOS_DA_IDADE_E_GRADE.idadeAjuda}
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="prof-idade-minima">
+                  {TEXTOS_DA_IDADE_E_GRADE.idadeDe}
+                </Label>
+                <Input
+                  id="prof-idade-minima"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={LIMITES_DO_CADASTRO.idade}
+                  step={1}
+                  value={form.idade_minima}
+                  aria-describedby="prof-idade-ajuda"
+                  onChange={(e) =>
+                    setForm({ ...form, idade_minima: e.target.value })
+                  }
+                  className="cz-num"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="prof-idade-maxima">
+                  {TEXTOS_DA_IDADE_E_GRADE.idadeAte}
+                </Label>
+                <Input
+                  id="prof-idade-maxima"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={LIMITES_DO_CADASTRO.idade}
+                  step={1}
+                  value={form.idade_maxima}
+                  aria-describedby="prof-idade-ajuda"
+                  onChange={(e) =>
+                    setForm({ ...form, idade_maxima: e.target.value })
+                  }
+                  className="cz-num"
+                />
+              </div>
+            </div>
+          </fieldset>
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor="prof-cor">Cor na agenda</Label>
             <input
@@ -1278,6 +1435,40 @@ export function ProfissionaisTab({
               </p>
               <p className="text-xs text-text-secondary">
                 Almoço: crie duas faixas no mesmo dia (manhã e tarde).
+              </p>
+            </div>
+            <div className="grid gap-1.5 sm:max-w-[280px]">
+              <Label htmlFor="prof-grade">
+                {TEXTOS_DA_IDADE_E_GRADE.grade}
+              </Label>
+              <Select
+                value={form.grade_minutos || SEM_GRADE}
+                onValueChange={(valor) =>
+                  setForm({
+                    ...form,
+                    grade_minutos: valor === SEM_GRADE ? "" : valor,
+                  })
+                }
+              >
+                <SelectTrigger
+                  id="prof-grade"
+                  aria-describedby="prof-grade-ajuda"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SEM_GRADE}>
+                    {rotuloDaGrade(null)}
+                  </SelectItem>
+                  {GRADES_DE_HORARIO.map((grade) => (
+                    <SelectItem key={grade} value={String(grade)}>
+                      {rotuloDaGrade(grade)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p id="prof-grade-ajuda" className="text-xs text-text-secondary">
+                {TEXTOS_DA_IDADE_E_GRADE.gradeAjuda}
               </p>
             </div>
             {faixas.length === 0 ? (

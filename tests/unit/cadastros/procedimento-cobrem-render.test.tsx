@@ -39,6 +39,7 @@ import {
   VAZIO_DOS_CONVENIOS_QUE_COBREM,
 } from "@/components/cadastros/procedimentos-tab";
 import { ROTULO_DOS_PLANOS } from "@/lib/domain/vinculos-do-procedimento";
+import { CADASTRO_VAZIO_PARA_O_AGENTE } from "@/lib/queries/cadastro-para-o-agente";
 import type { Catalogo, Convenio } from "@/lib/queries/catalogo";
 
 const CONVENIO_BASE: Omit<Convenio, "id" | "name" | "active"> = {
@@ -65,6 +66,7 @@ function html(convenios: Convenio[]): string {
     <ProcedimentosTab
       catalogo={catalogo(convenios)}
       matriz={{ atendimentos: [], coberturas: [] }}
+      cadastroDoAgente={CADASTRO_VAZIO_PARA_O_AGENTE}
       podeEditar
       dica="Somente administradores e gestores alteram os cadastros."
       aoMudar={() => undefined}

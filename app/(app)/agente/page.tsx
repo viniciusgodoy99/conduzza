@@ -1,6 +1,7 @@
 import { Sparkles } from "lucide-react";
 import { redirect } from "next/navigation";
 
+import { CartaoDaProntidao } from "@/components/agente/cartao-da-prontidao";
 import { PainelDoAgente } from "@/components/agente/painel-do-agente";
 import { TEXTOS_DO_AGENTE } from "@/components/agente/textos";
 import type { DadosDoPainel, VersaoDoAgente } from "@/components/agente/tipos";
@@ -32,6 +33,7 @@ import {
   fetchVersoesDoAgente,
 } from "@/lib/queries/agente";
 import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
+import { fetchProntidaoDoCadastro } from "@/lib/queries/cadastro-para-o-agente";
 import {
   abaDaIaVisivel,
   configDaIaDaRequisicao,
@@ -59,6 +61,11 @@ import { createClient } from "@/lib/supabase/server";
 // responder (ambiente, interruptor, liberacao, teto), conferido de novo pela
 // acao a cada rodada. Leitura que falha vira o erro da tela (ou da parte),
 // nunca um painel vazio que parece verdade.
+//
+// Cadastro para o agente (AG1): para quem configura (administrador, gestor
+// e super admin), o cartao "Prontidao do cadastro" acima do painel, lido
+// pela sessao (prontidao_do_cadastro_da_ia; o banco recusa os outros
+// papeis). Leitura que falha vira o erro do cartao, nunca um "pronto".
 //
 // A casca do painel ocupa a altura do main (o rodape de publicacao fica no
 // pe nas abas curtas) e reserva no main a altura do rodape fixo na rolagem
@@ -292,6 +299,12 @@ export default async function AgentePage({
   const podeEditar = superAdmin || canEdit(active.role, "agente");
 
   const supabase = await createClient();
+  // A prontidao do cadastro (AG1), em paralelo com as leituras abaixo: so
+  // para quem configura (a recepcao nem le). Nunca lanca (nulo = o erro do
+  // cartao).
+  const lendoAProntidao = podeEditar
+    ? ouNulo(() => fetchProntidaoDoCadastro(supabase, clinicId))
+    : Promise.resolve(null);
   const [lido, versoes, extras, motivo, abaWhatsapp] = await Promise.all([
     seguro(
       fetchConfigDoAgente(supabase, clinicId, { lerInstrucoes: superAdmin }),
@@ -320,6 +333,7 @@ export default async function AgentePage({
         )
       : Promise.resolve(null),
   ]);
+  const prontidao = await lendoAProntidao;
   const emUso = abaWhatsapp ? emUsoNoWhatsapp(abaWhatsapp) : false;
 
   if (lido === null) {
@@ -375,16 +389,19 @@ export default async function AgentePage({
   };
 
   return cascaDoPainel(
-    <PainelDoAgente
-      dados={dados}
-      abaInicial={aba}
-      abaWhatsapp={
-        abaWhatsapp ? (
-          <AbaWhatsapp {...abaWhatsapp} />
-        ) : (
-          <AbaWhatsappDaRecepcao />
-        )
-      }
-    />,
+    <>
+      {podeEditar ? <CartaoDaProntidao prontidao={prontidao} /> : null}
+      <PainelDoAgente
+        dados={dados}
+        abaInicial={aba}
+        abaWhatsapp={
+          abaWhatsapp ? (
+            <AbaWhatsapp {...abaWhatsapp} />
+          ) : (
+            <AbaWhatsappDaRecepcao />
+          )
+        }
+      />
+    </>,
   );
 }

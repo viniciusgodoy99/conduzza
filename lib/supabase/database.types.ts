@@ -3965,6 +3965,7 @@ export type Database = {
           created_at: string
           default_duration_min: number
           description: string | null
+          ia_pode_informar: boolean
           id: string
           name: string
           prep_instructions: string | null
@@ -3980,6 +3981,7 @@ export type Database = {
           created_at?: string
           default_duration_min?: number
           description?: string | null
+          ia_pode_informar?: boolean
           id?: string
           name: string
           prep_instructions?: string | null
@@ -3995,6 +3997,7 @@ export type Database = {
           created_at?: string
           default_duration_min?: number
           description?: string | null
+          ia_pode_informar?: boolean
           id?: string
           name?: string
           prep_instructions?: string | null
@@ -4065,6 +4068,67 @@ export type Database = {
           },
         ]
       }
+      procedure_requirement: {
+        Row: {
+          ativo: boolean
+          clinic_id: string
+          created_at: string
+          id: string
+          insurance_id: string | null
+          procedure_id: string
+          texto_ao_paciente: string | null
+          tipo: string
+          updated_at: string
+          valor_inteiro: number | null
+        }
+        Insert: {
+          ativo?: boolean
+          clinic_id: string
+          created_at?: string
+          id?: string
+          insurance_id?: string | null
+          procedure_id: string
+          texto_ao_paciente?: string | null
+          tipo: string
+          updated_at?: string
+          valor_inteiro?: number | null
+        }
+        Update: {
+          ativo?: boolean
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          insurance_id?: string | null
+          procedure_id?: string
+          texto_ao_paciente?: string | null
+          tipo?: string
+          updated_at?: string
+          valor_inteiro?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "procedure_requirement_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "procedure_requirement_insurance_id_fkey"
+            columns: ["insurance_id"]
+            isOneToOne: false
+            referencedRelation: "insurance"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "procedure_requirement_procedure_id_fkey"
+            columns: ["procedure_id"]
+            isOneToOne: false
+            referencedRelation: "procedure"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_admin: {
         Row: {
           created_at: string
@@ -4088,7 +4152,10 @@ export type Database = {
           council_number: string | null
           council_type: string | null
           created_at: string
+          grade_minutos: number | null
           id: string
+          idade_maxima: number | null
+          idade_minima: number | null
           name: string
           photo_url: string | null
           specialties: string[]
@@ -4101,7 +4168,10 @@ export type Database = {
           council_number?: string | null
           council_type?: string | null
           created_at?: string
+          grade_minutos?: number | null
           id?: string
+          idade_maxima?: number | null
+          idade_minima?: number | null
           name: string
           photo_url?: string | null
           specialties?: string[]
@@ -4114,7 +4184,10 @@ export type Database = {
           council_number?: string | null
           council_type?: string | null
           created_at?: string
+          grade_minutos?: number | null
           id?: string
+          idade_maxima?: number | null
+          idade_minima?: number | null
           name?: string
           photo_url?: string | null
           specialties?: string[]
@@ -4638,33 +4711,72 @@ export type Database = {
       }
       unit: {
         Row: {
+          acessibilidade: string | null
           active: boolean
           address: string | null
+          bairro: string | null
+          cep: string | null
+          cidade: string | null
           clinic_id: string
+          complemento: string | null
           created_at: string
+          estacionamento: string | null
+          horario_de_funcionamento: Json | null
           id: string
+          link_do_mapa: string | null
+          logradouro: string | null
           name: string
+          numero: string | null
+          observacao_ao_paciente: string | null
           phone: string | null
+          referencia: string | null
+          uf: string | null
           updated_at: string
         }
         Insert: {
+          acessibilidade?: string | null
           active?: boolean
           address?: string | null
+          bairro?: string | null
+          cep?: string | null
+          cidade?: string | null
           clinic_id: string
+          complemento?: string | null
           created_at?: string
+          estacionamento?: string | null
+          horario_de_funcionamento?: Json | null
           id?: string
+          link_do_mapa?: string | null
+          logradouro?: string | null
           name: string
+          numero?: string | null
+          observacao_ao_paciente?: string | null
           phone?: string | null
+          referencia?: string | null
+          uf?: string | null
           updated_at?: string
         }
         Update: {
+          acessibilidade?: string | null
           active?: boolean
           address?: string | null
+          bairro?: string | null
+          cep?: string | null
+          cidade?: string | null
           clinic_id?: string
+          complemento?: string | null
           created_at?: string
+          estacionamento?: string | null
+          horario_de_funcionamento?: Json | null
           id?: string
+          link_do_mapa?: string | null
+          logradouro?: string | null
           name?: string
+          numero?: string | null
+          observacao_ao_paciente?: string | null
           phone?: string | null
+          referencia?: string | null
+          uf?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -5174,6 +5286,10 @@ export type Database = {
       bater_ponto_do_worker: {
         Args: { p_ultimo_lote?: number; p_worker_id: string }
         Returns: undefined
+      }
+      cadastro_texto_valido: {
+        Args: { p_maximo: number; p_texto: string }
+        Returns: boolean
       }
       cancelar_pelo_paciente: {
         Args: {
@@ -5686,6 +5802,10 @@ export type Database = {
         Args: { p_clinic_id: string; p_limite?: number }
         Returns: Json
       }
+      horario_de_funcionamento_valido: {
+        Args: { p_horario: Json }
+        Returns: boolean
+      }
       ia_atende_no_whatsapp: {
         Args: {
           p_clinic_id: string
@@ -5963,6 +6083,10 @@ export type Database = {
           p_incluir_teste?: boolean
           p_limite?: number
         }
+        Returns: Json
+      }
+      prontidao_do_cadastro_da_ia: {
+        Args: { p_clinic_id: string }
         Returns: Json
       }
       publicar_agente: {

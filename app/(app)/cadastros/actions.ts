@@ -5,6 +5,17 @@ import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import {
+  camposDaUnidadeParaOAgenteSchema,
+  comporEndereco,
+  idadeEGradeSchema,
+  problemaNosRequisitos,
+  problemaNosTextosDaUnidade,
+  requisitosDoProcedimentoSchema,
+  temEnderecoEstruturado,
+  type RequisitoDoProcedimento,
+  type TipoDeRequisito,
+} from "@/lib/domain/cadastro-para-o-agente";
+import {
   CODIGO_CADASTRO_MUDOU,
   MENSAGEM_CADASTRO_MUDOU,
   MENSAGEM_CONVENIO_INATIVO,
@@ -176,6 +187,11 @@ const profissionalSchema = z.object({
   // Tirar convenio com consulta futura (D4) ou que tira o profissional de
   // um procedimento (D3) so passa com confirmacao explicita.
   confirmar_convenios: z.boolean().optional(),
+  // Cadastro para o agente (AG1, migration 20261027100000): a idade atendida
+  // e a grade. AUSENTES = nao mexe (o cliente antigo, aberto durante a
+  // publicacao, nao apaga nada); presentes = o valor (nulo apaga). A regra
+  // minima <= maxima e conferida na action (o CHECK do banco tambem).
+  ...idadeEGradeSchema.shape,
 });
 
 /** Retorno da RPC sincronizar_convenios_do_profissional (migration 20261002140000) */
@@ -279,6 +295,19 @@ export async function salvarProfissionalAction(
   const parsed = profissionalSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: "Confira os campos do profissional." };
+  }
+  const { idade_minima, idade_maxima } = parsed.data;
+  if (
+    idade_minima !== null &&
+    idade_minima !== undefined &&
+    idade_maxima !== null &&
+    idade_maxima !== undefined &&
+    idade_minima > idade_maxima
+  ) {
+    return {
+      ok: false,
+      error: "A idade mínima não pode passar da máxima.",
+    };
   }
   const supabase = await createClient();
   const {
@@ -544,6 +573,9 @@ const procedimentoSchema = z.object({
   // procedimento que ja exigia uma sala continua exigindo.
   resource_id: idSchema.nullable().optional(),
   bookable_by_ai: z.boolean(),
+  // "A IA pode informar o preco e o que o procedimento exige" (AG1). INERTE
+  // ate a proxima etapa (decisao D-3 do dono pendente). AUSENTE = nao mexe.
+  ia_pode_informar: z.boolean().optional(),
   active: z.boolean(),
 });
 
@@ -556,13 +588,50 @@ const convenioSchema = z.object({
   active: z.boolean(),
 });
 
-const unidadeSchema = z.object({
-  id: idSchema.optional(),
-  name: nomeSchema,
-  address: z.string().trim().max(300).nullable(),
-  phone: z.string().trim().max(30).nullable(),
-  active: z.boolean(),
-});
+// A unidade com o cadastro para o agente (AG1): o endereco estruturado, o
+// horario de funcionamento e os textos ao paciente, todos opcionais (AUSENTE
+// = nao mexe). `address` e o texto de sempre: com os campos do endereco, o
+// servidor o compoe deles (comporEndereco); sem nenhum, fica o que veio.
+const unidadeSchema = z
+  .object({
+    id: idSchema.optional(),
+    name: nomeSchema,
+    address: z.string().trim().max(300).nullable(),
+    phone: z.string().trim().max(30).nullable(),
+    active: z.boolean(),
+  })
+  .extend(camposDaUnidadeParaOAgenteSchema.shape);
+
+// As frases de validacao dos campos novos da unidade ja estao em portugues
+// (lib/domain/cadastro-para-o-agente.ts); o resto (nome, telefone, um tipo
+// errado vindo da API) cai na frase geral.
+const CAMPOS_COM_FRASE = new Set([
+  "logradouro",
+  "numero",
+  "complemento",
+  "bairro",
+  "cidade",
+  "uf",
+  "cep",
+  "referencia",
+  "estacionamento",
+  "acessibilidade",
+  "link_do_mapa",
+  "horario_de_funcionamento",
+  "observacao_ao_paciente",
+]);
+
+function fraseDaUnidade(erro: z.ZodError): string {
+  const issue = erro.issues.find(
+    (i) =>
+      typeof i.path[0] === "string" &&
+      CAMPOS_COM_FRASE.has(i.path[0]) &&
+      (i.code === "too_big" ||
+        i.code === "custom" ||
+        i.code === "invalid_format"),
+  );
+  return issue?.message ?? "Confira os campos da unidade.";
+}
 
 // Pacote com varios procedimentos (migration 20260929120000): nome, os itens
 // (procedimento e sessoes, cada procedimento uma vez), o preco que a clinica
@@ -750,10 +819,284 @@ export async function salvarConvenioAction(
   return salvarEntidade("insurance", convenioSchema, input);
 }
 
+// Cria ou edita a unidade. Os textos que vao ao paciente (referencia,
+// estacionamento, acessibilidade e observacao) passam pela mesma
+// conferencia do editor da base de conhecimento (as regras do filtro de
+// saida), aqui e na tela. O endereco de texto (`address`) e composto dos
+// campos quando eles vieram com algum valor; sem nenhum, fica o texto que a
+// tela mandou (o endereco antigo, ou o cliente antigo que nem manda os
+// campos). O CEP nunca entra no texto composto (ele nao vai a IA).
 export async function salvarUnidadeAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
-  return salvarEntidade("unit", unidadeSchema, input);
+  const guard = await requireEditor();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = unidadeSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: fraseDaUnidade(parsed.error) };
+  }
+  const { id, ...dados } = parsed.data;
+  const problema = problemaNosTextosDaUnidade(dados);
+  if (problema) {
+    return { ok: false, error: problema };
+  }
+  const endereco = {
+    logradouro: dados.logradouro ?? null,
+    numero: dados.numero ?? null,
+    complemento: dados.complemento ?? null,
+    bairro: dados.bairro ?? null,
+    cidade: dados.cidade ?? null,
+    uf: dados.uf ?? null,
+  };
+  const campos: Record<string, unknown> = {
+    ...dados,
+    address: temEnderecoEstruturado(endereco)
+      ? comporEndereco(endereco)
+      : dados.address,
+  };
+
+  const supabase = await createClient();
+  if (id) {
+    const { data } = await supabase
+      .from("unit")
+      .update(campos)
+      .eq("clinic_id", guard.clinicId)
+      .eq("id", id)
+      .select("id");
+    if (!data || data.length === 0) {
+      return { ok: false, error: "Não foi possível salvar a unidade." };
+    }
+    await auditar(
+      supabase,
+      guard.clinicId,
+      guard.context.userId,
+      "editou",
+      "unit",
+      id,
+    );
+    revalidatePath("/cadastros");
+    revalidatePath("/agente");
+    return { ok: true, id };
+  }
+  const { data, error } = await supabase
+    .from("unit")
+    .insert({ clinic_id: guard.clinicId, ...campos })
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: "Não foi possível criar a unidade." };
+  }
+  await auditar(
+    supabase,
+    guard.clinicId,
+    guard.context.userId,
+    "criou",
+    "unit",
+    data.id,
+  );
+  revalidatePath("/cadastros");
+  revalidatePath("/agente");
+  return { ok: true, id: data.id };
+}
+
+// ---------------------------------------------------------------------------
+// O que o paciente precisa (procedure_requirement, AG1)
+// ---------------------------------------------------------------------------
+
+export type ResultadoDosRequisitos =
+  | {
+      ok: true;
+      /** A lista gravada; nula quando gravou e so a releitura falhou. */
+      requisitos: RequisitoDoProcedimento[] | null;
+    }
+  | { ok: false; error: string; code?: "cadastro_mudou" };
+
+const ERRO_DOS_REQUISITOS = "Não foi possível salvar o que o paciente precisa.";
+
+const MENSAGENS_DOS_REQUISITOS: Record<string, string> = {
+  "23505":
+    "Já existe um item ativo deste tipo para este convênio neste procedimento. Deixe um só ativo.",
+  "23503": "Um convênio escolhido não é desta clínica.",
+  "23514": "Confira o que o paciente precisa: um item ficou fora das regras.",
+  "42501": "Somente administradores e gestores alteram os cadastros.",
+};
+
+const COLUNAS_DO_REQUISITO =
+  "id, procedure_id, insurance_id, tipo, valor_inteiro, texto_ao_paciente, ativo";
+
+/**
+ * Grava a lista de "O que o paciente precisa" de um procedimento: APAGA so o
+ * que estava na abertura do modal e saiu da lista (o que outra pessoa criou
+ * no meio fica), ATUALIZA o que mudou (desativando antes de ativar, para o
+ * indice unico de um ativo por tipo e convenio nao recusar uma troca) e CRIA
+ * o novo, nesta ordem. Pela sessao: a RLS (administrador e gestor) e o
+ * gatilho de mesma clinica valem. Repetir com a mesma lista e seguro. Item
+ * da lista que sumiu do banco no meio da edicao: "cadastro_mudou", nada
+ * gravado. Devolve a lista gravada (com os ids novos), para a tela.
+ */
+export async function salvarRequisitosDoProcedimentoAction(
+  input: unknown,
+): Promise<ResultadoDosRequisitos> {
+  const guard = await requireEditor();
+  if ("error" in guard) {
+    return {
+      ok: false,
+      error:
+        guard.error ??
+        "Somente administradores e gestores alteram os cadastros.",
+    };
+  }
+  const parsed = requisitosDoProcedimentoSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Confira o que o paciente precisa." };
+  }
+  const { procedure_id, requisitos, ids_na_abertura } = parsed.data;
+  const problema = problemaNosRequisitos(requisitos, (insuranceId) =>
+    insuranceId === null ? "todos" : "o convênio escolhido",
+  );
+  if (problema) {
+    return { ok: false, error: problema };
+  }
+
+  const supabase = await createClient();
+  const { data: procedimento, error: erroDoProcedimento } = await supabase
+    .from("procedure")
+    .select("id")
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", procedure_id)
+    .maybeSingle();
+  if (erroDoProcedimento) {
+    return { ok: false, error: ERRO_DOS_REQUISITOS };
+  }
+  if (!procedimento) {
+    return { ok: false, error: "Procedimento não encontrado." };
+  }
+  const { data: atuais, error: erroDosAtuais } = await supabase
+    .from("procedure_requirement")
+    .select(COLUNAS_DO_REQUISITO)
+    .eq("clinic_id", guard.clinicId)
+    .eq("procedure_id", procedure_id);
+  if (erroDosAtuais) {
+    return { ok: false, error: ERRO_DOS_REQUISITOS };
+  }
+  const gravados = new Map(
+    ((atuais ?? []) as RequisitoDoProcedimento[]).map((r) => [r.id, r]),
+  );
+  if (requisitos.some((r) => r.id !== undefined && !gravados.has(r.id))) {
+    return {
+      ok: false,
+      code: "cadastro_mudou",
+      error: MENSAGEM_CADASTRO_MUDOU,
+    };
+  }
+
+  const desejados = new Set(
+    requisitos.flatMap((r) => (r.id === undefined ? [] : [r.id])),
+  );
+  const apagar = ids_na_abertura.filter(
+    (id) => gravados.has(id) && !desejados.has(id),
+  );
+  const mudar = requisitos.filter((r) => {
+    const antes = r.id === undefined ? undefined : gravados.get(r.id);
+    return (
+      antes !== undefined &&
+      (antes.tipo !== r.tipo ||
+        antes.insurance_id !== r.insurance_id ||
+        antes.valor_inteiro !== r.valor_inteiro ||
+        antes.texto_ao_paciente !== r.texto_ao_paciente ||
+        antes.ativo !== r.ativo)
+    );
+  });
+  // Quem fica inativo vai primeiro: um ativo do mesmo tipo pode estar
+  // entrando no lugar dele.
+  mudar.sort((a, b) => Number(a.ativo) - Number(b.ativo));
+  const criar = requisitos.filter((r) => r.id === undefined);
+
+  const traduzir = (erro: { code?: string }) =>
+    MENSAGENS_DOS_REQUISITOS[erro.code ?? ""] ?? ERRO_DOS_REQUISITOS;
+
+  if (apagar.length > 0) {
+    const { error } = await supabase
+      .from("procedure_requirement")
+      .delete()
+      .eq("clinic_id", guard.clinicId)
+      .eq("procedure_id", procedure_id)
+      .in("id", apagar);
+    if (error) {
+      return { ok: false, error: traduzir(error) };
+    }
+  }
+  for (const requisito of mudar) {
+    const { data, error } = await supabase
+      .from("procedure_requirement")
+      .update({
+        tipo: requisito.tipo,
+        insurance_id: requisito.insurance_id,
+        valor_inteiro: requisito.valor_inteiro,
+        texto_ao_paciente: requisito.texto_ao_paciente,
+        ativo: requisito.ativo,
+      })
+      .eq("clinic_id", guard.clinicId)
+      .eq("procedure_id", procedure_id)
+      .eq("id", requisito.id as string)
+      .select("id");
+    if (error) {
+      return { ok: false, error: traduzir(error) };
+    }
+    if (!data || data.length === 0) {
+      return { ok: false, error: ERRO_DOS_REQUISITOS };
+    }
+  }
+  if (criar.length > 0) {
+    const { error } = await supabase.from("procedure_requirement").insert(
+      criar.map((requisito) => ({
+        clinic_id: guard.clinicId,
+        procedure_id,
+        tipo: requisito.tipo,
+        insurance_id: requisito.insurance_id,
+        valor_inteiro: requisito.valor_inteiro,
+        texto_ao_paciente: requisito.texto_ao_paciente,
+        ativo: requisito.ativo,
+      })),
+    );
+    if (error) {
+      return { ok: false, error: traduzir(error) };
+    }
+  }
+  if (apagar.length + mudar.length + criar.length > 0) {
+    await auditar(
+      supabase,
+      guard.clinicId,
+      guard.context.userId,
+      "editou_requisitos_do_procedimento",
+      "procedure",
+      procedure_id,
+    );
+  }
+
+  const { data: depois, error: erroDeDepois } = await supabase
+    .from("procedure_requirement")
+    .select(COLUNAS_DO_REQUISITO)
+    .eq("clinic_id", guard.clinicId)
+    .eq("procedure_id", procedure_id)
+    .order("created_at")
+    .order("id");
+  revalidatePath("/cadastros");
+  revalidatePath("/agente");
+  if (erroDeDepois) {
+    // Gravou; so a releitura falhou. Nao e erro: a tela fecha e o catalogo
+    // recarrega (reenviar criaria de novo os itens sem id).
+    return { ok: true, requisitos: null };
+  }
+  return {
+    ok: true,
+    requisitos: ((depois ?? []) as RequisitoDoProcedimento[]).map((r) => ({
+      ...r,
+      tipo: r.tipo as TipoDeRequisito,
+    })),
+  };
 }
 
 // Cria ou edita o pacote e os itens numa transacao so no banco (RPC
