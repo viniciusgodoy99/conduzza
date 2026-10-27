@@ -108,6 +108,7 @@ export const acoesDoAgente: AcoesDoAgente = {
       trilha,
       rascunhoBloqueado: r.rascunhoBloqueado,
       assinatura: r.assinatura,
+      estado: r.estado,
     };
   },
 };

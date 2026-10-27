@@ -152,9 +152,15 @@ export type CoberturaDoTurno = ConvenioDosFatos & {
 /**
  * Um horario livre que uma ferramenta de agenda trouxe no turno, com o dia
  * e a hora exatamente como ela devolveu ao modelo ("terca, 21/10" e
- * "14:00").
+ * "14:00"). AG3 (27/10/2026): com a unidade do horario (o nome do Cadastro),
+ * quando ele tem uma; ausente ou nula, sem unidade. O resumo dos fatos leva
+ * a unidade ao verificador.
  */
-export type HorarioLivreDoTurno = { dia: string; hora: string };
+export type HorarioLivreDoTurno = {
+  dia: string;
+  hora: string;
+  unidade?: string | null;
+};
 
 /** Um dia do calendario (hoje no fuso da clinica). */
 export type DiaDaClinica = { dia: number; mes: number; ano: number };
@@ -284,7 +290,11 @@ function horarioLivreValido(valor: unknown): boolean {
     return false;
   }
   const h = valor as Record<string, unknown>;
-  return typeof h.dia === "string" && typeof h.hora === "string";
+  return (
+    typeof h.dia === "string" &&
+    typeof h.hora === "string" &&
+    (h.unidade === undefined || h.unidade === null || typeof h.unidade === "string")
+  );
 }
 
 function inteiroEntre(valor: unknown, minimo: number, maximo: number) {

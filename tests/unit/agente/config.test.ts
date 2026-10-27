@@ -214,7 +214,14 @@ describe("habilidades", () => {
       travada: false,
       padrao: false,
       precisaDaAgenda: true,
-      ferramentas: ["buscar_horario", "reservar_horario", "agendar"],
+      // AG3: o cadastro da pessoa (so sinais) e os dados para marcar.
+      ferramentas: [
+        "consultar_cadastro_do_contato",
+        "buscar_horario",
+        "reservar_horario",
+        "registrar_dados_do_paciente",
+        "agendar",
+      ],
     });
     expect(porChave.confirmar_presenca).toMatchObject({
       titulo: "Confirmar presença",
@@ -237,6 +244,9 @@ describe("habilidades", () => {
       "reservar_horario",
       "agendar",
       "confirmar_presenca",
+      // AG3: pela porta da agenda do turno (gravam ou leem pelo servidor).
+      "registrar_dados_do_paciente",
+      "consultar_cadastro_do_contato",
     ]);
     expect(ehFerramentaDeAgenda("agendar")).toBe(true);
     expect(ehFerramentaDeAgenda("buscar_procedimento")).toBe(false);
@@ -328,8 +338,10 @@ describe("habilidades", () => {
       "consultar_requisitos",
       "buscar_profissionais",
       "buscar_procedimento",
+      "consultar_cadastro_do_contato",
       "buscar_horario",
       "reservar_horario",
+      "registrar_dados_do_paciente",
       "agendar",
       "confirmar_presenca",
       "escalar_humano",

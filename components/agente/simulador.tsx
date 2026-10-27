@@ -112,6 +112,11 @@ export type EntradaDaSimulacao = {
   cenario: CenarioDoSimulador | null;
   /** O "Testar como": lead, paciente ou nulo (sem a linha do contato). */
   contato: "lead" | "paciente" | null;
+  /**
+   * AG3: o estado do atendimento simulado que o servidor mandou na ultima
+   * resposta (assinado), de volta como veio; nulo no comeco.
+   */
+  estado?: string | null;
 };
 
 // O passo de agenda (E4: buscou horario, reservou, marcou, confirmou
@@ -325,6 +330,11 @@ export function Simulador({
   const [texto, setTexto] = useState("");
   const [cenario, setCenario] = useState<CenarioDoSimulador | null>(null);
   const [testarComo, setTestarComo] = useState<TestarComo>("nenhum");
+  // AG3: o estado do atendimento simulado (assinado pelo servidor), que vai
+  // de volta no proximo pedido e some ao reiniciar. Nada e gravado.
+  const [estadoDoAtendimento, setEstadoDoAtendimento] = useState<
+    string | null
+  >(null);
   const [erro, setErro] = useState<string | null>(null);
   const [pendente, startTransition] = useTransition();
   const contador = useRef(0);
@@ -356,6 +366,7 @@ export function Simulador({
     setTexto("");
     setCenario(null);
     setTestarComo("nenhum");
+    setEstadoDoAtendimento(null);
     setErro(null);
   };
 
@@ -393,6 +404,7 @@ export function Simulador({
           mensagens: mensagensParaOServidor(historico),
           cenario,
           contato: contatoDoTestarComo(testarComo),
+          estado: estadoDoAtendimento,
         });
       } catch {
         resultado = { ok: false, erro: T.semResposta };
@@ -408,6 +420,7 @@ export function Simulador({
           assinatura: resultado.assinatura,
         };
         setFalas((atuais) => [...atuais, resposta]);
+        setEstadoDoAtendimento(resultado.estado ?? null);
         return;
       }
       // Nao respondeu: a mensagem volta para o campo, para tentar de novo.

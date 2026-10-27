@@ -1,7 +1,8 @@
-// As quatro ferramentas de agenda dentro de UM turno do agente (E4,
-// contrato da E4 secao 2). O laco (lib/agente/laco.ts) chama `executar` para
-// buscar_horario, reservar_horario, agendar e confirmar_presenca; isto aqui
-// guarda o estado do turno e monta a saida para o modelo e o passo da
+// As ferramentas de agenda dentro de UM turno do agente (E4, contrato da E4
+// secao 2; AG3). O laco (lib/agente/laco.ts) chama `executar` para
+// buscar_horario, reservar_horario, agendar, confirmar_presenca e, desde a
+// AG3, registrar_dados_do_paciente e consultar_cadastro_do_contato; isto
+// aqui guarda o estado do turno e monta a saida para o modelo e o passo da
 // trilha. A leitura da Agenda e os efeitos chegam pela PORTA
 // (PortaDaAgenda): no WhatsApp, as RPCs com o job_id do turno
 // (lib/agente/agenda.ts, a idempotencia: repetir o job nunca cria segunda
@@ -9,10 +10,6 @@
 // buscar e respostas simuladas, sem gravar, para o resto.
 //
 // Regras do turno:
-//  - os codigos h1, h2... sao do turno e nao se repetem (a segunda busca da
-//    h4, h5...): reservar so aceita um codigo que uma busca DESTE turno
-//    trouxe, e o que vai a RPC e o (service_link_id, starts_at) guardado,
-//    nunca o que o modelo escreveu;
 //  - no maximo UM reservar_horario, UM agendar e UM confirmar_presenca que
 //    chegam a porta por turno (o mesmo job_id devolveria a primeira reserva
 //    no lugar da segunda);
@@ -20,28 +17,73 @@
 //    chegou a porta ou nao: codigo invalido e entrada invalida contam) e
 //    "sem_confirmacao_do_paciente" sem chamar a porta: o turno em que o
 //    modelo tentou reservar e o da escolha do horario, nunca o da
-//    confirmacao; a confirmacao tem de vir numa mensagem nova, depois da
-//    reserva (a RPC confere de novo), e a reserva viva de um turno anterior
-//    pode ser de outro horario;
+//    confirmacao;
 //  - "ia_desligada" da RPC e a liberacao que caiu: o turno para como na
 //    trava entre rodadas (liberacao_suspensa, sem frase);
 //  - erro de leitura ou de RPC, ou resposta fora do formato: falha fechada
 //    (a frase fixa e a equipe), porque ninguem sabe o que o banco fez;
 //  - confirmar_presenca (revisao da E4): ao modelo vao so o dia e a hora da
-//    consulta confirmada (a consulta pode ter sido marcada pela recepcao,
-//    fora da conversa: procedimento e profissional ficam na trilha, que nao
-//    vai a OpenAI); com um horario reservado nesta conversa esperando a
+//    consulta confirmada; com um horario reservado nesta conversa esperando a
 //    confirmacao, nada e confirmado ("reserva_em_andamento").
-// Nada daqui tem texto do paciente: a trilha cita nomes do Cadastro, dias e
-// horas.
+//
+// AG3 (27/10/2026), com o estado do atendimento (lib/agente/atendimento.ts):
+//  - os codigos (h1, h2...) valem entre as mensagens: os horarios oferecidos
+//    do estado entram no mapa do turno, a reserva aceita o codigo de uma
+//    busca anterior e a RPC confere tudo de novo. Codigo novo nunca repete
+//    um que esta no estado;
+//  - antes da primeira rodada (`preparar`), a RECONFERENCIA LEVE: uma
+//    leitura da Agenda diz quais horarios do estado continuam livres, a
+//    reserva do estado e lida (viva ou vencida) e a consulta marcada nesta
+//    conversa tambem (so o dia e a hora). So o que foi conferido agora vira
+//    fato de horario livre; o resto o modelo cita como ja oferecido e, para
+//    dizer que esta livre, busca de novo;
+//  - agendar so com a pergunta "Confirma ...?" feita num turno ANTERIOR
+//    (etapa aguardando_confirmacao no comeco do turno), alem da regra da
+//    reserva no mesmo turno; e as recusas novas: consulta_para_outra_pessoa
+//    e menor_de_idade passam para a equipe (tipo "passar"), ja_tem_consulta
+//    diz o dia e a hora da consulta que ja existe (so isso), faltam_dados
+//    diz o que falta;
+//  - registrar_dados_do_paciente prepara os dados (ferramentas/
+//    registrar-dados.ts: o CPF e a carteirinha o servidor acha no texto
+//    original) e chama a porta; ao modelo vai so quais campos ficaram
+//    registrados, quais faltam e qual teve problema, nunca o valor;
+//  - `fechar` devolve o estado novo (etapa, horarios, reserva, consulta,
+//    falhas seguidas e desfecho) e `nota` monta a nota para a equipe.
+// Nada daqui tem texto do paciente: a trilha cita nomes do Cadastro, dias,
+// horas e os nomes dos campos.
 
 import {
   ferramentasDoAgente,
   type ConfigDoAgente,
   type FerramentaDeAgenda,
+  type MotivoDeEscalonamento,
 } from "@/lib/domain/agente/config";
-import type { FatosDaFerramenta } from "@/lib/domain/conformidade/fatos-do-turno";
+import type {
+  CoberturaDoTurno,
+  FatosDaFerramenta,
+  HorarioLivreDoTurno,
+} from "@/lib/domain/conformidade/fatos-do-turno";
 
+import {
+  comHorariosOferecidos,
+  copiarEstado,
+  dadosQueFaltam,
+  dadosVazios,
+  estadoVazio,
+  falhasDepoisDoTurno,
+  listaEmTexto,
+  notaDaPassagem,
+  perguntaSeConfirma,
+  proximoNumeroDoCodigo,
+  ROTULO_DO_DADO,
+  type DadoDaMarcacao,
+  type DadosInformados,
+  type EstadoDoAtendimento,
+  type EtapaDoAtendimento,
+  type HorarioDoEstado,
+  type HorarioLegivel,
+} from "../atendimento";
+import type { SaidaParaOsFatos } from "../fatos";
 import {
   entradaDoAgendarSchema,
   type MotivoDoAgendar,
@@ -51,17 +93,38 @@ import {
   diaAsHora,
   diaEHora,
   escolherHorarios,
+  horarioContinuaLivre,
+  pedidoDaReconferencia,
   planejarBuscaDeHorario,
   type AgendaCarregada,
   type HorarioOferecido,
   type PedidoDaAgenda,
 } from "./buscar-horario";
-import type { CatalogoDoAgente } from "./buscar-procedimento";
+import {
+  coberturaDoConvenio,
+  nomeDoConvenio,
+  type CatalogoDoAgente,
+  type ConvenioDoAgente,
+  type VinculoDoAgente,
+} from "./buscar-procedimento";
+import {
+  entradaDoCadastroDoContatoSchema,
+  saidaDoCadastroDoContato,
+  type CadastroDoContato,
+} from "./cadastro-do-contato";
 import {
   entradaDaConfirmacaoSchema,
   type MotivoDaConfirmacao,
   type RespostaDaConfirmacao,
 } from "./confirmar-presenca";
+import {
+  prepararRegistro,
+  resultadoDoProblema,
+  type DadosParaRegistrar,
+  type MensagemDoPaciente,
+  type ProblemaDoCampo,
+  type RespostaDoRegistro,
+} from "./registrar-dados";
 import {
   entradaDaReservaSchema,
   MINUTOS_DA_RESERVA,
@@ -69,9 +132,29 @@ import {
   type RespostaDaReserva,
 } from "./reservar-horario";
 
+/** A reserva do estado como a porta le (AG3). */
+export type ReservaLida = {
+  viva: boolean;
+  serviceLinkId: string;
+  /** ISO (UTC). */
+  inicio: string;
+  fim: string;
+  unidadeId: string | null;
+};
+
+/** A consulta como a porta le (AG3): so o inicio e se continua de pe. */
+export type ConsultaLida = {
+  /** ISO (UTC). */
+  inicio: string;
+  /** Nao cancelada, nem recusada, nem que ja passou. */
+  ativa: boolean;
+};
+
 /**
  * O que o turno pede ao servidor. Cada metodo pode lancar (erro de leitura,
- * de rede, prazo): o turno falha fechado.
+ * de rede, prazo): o turno falha fechado. Os metodos da AG3 sao opcionais
+ * (a porta de antes da AG3 nao tem): sem eles, a ferramenta que precisa
+ * falha fechado e a reconferencia nao acontece.
  */
 export type PortaDaAgenda = {
   /** true no simulador: reservar, agendar e confirmar nao gravam nada. */
@@ -83,11 +166,21 @@ export type PortaDaAgenda = {
     serviceLinkId: string;
     inicio: string;
     fim: string;
+    /** AG3: a unidade do horario (null = sem unidade). */
+    unidadeId?: string | null;
   }) => Promise<RespostaDaReserva>;
   /** agendar_pela_ia com o job_id do turno. */
   agendar: () => Promise<RespostaDoAgendar>;
   /** A consulta do contato que aguarda confirmacao e confirmar_pelo_paciente. */
   confirmarPresenca: () => Promise<RespostaDaConfirmacao>;
+  /** AG3: registrar_dados_da_marcacao com o job_id do turno. */
+  registrarDados?: (dados: DadosParaRegistrar) => Promise<RespostaDoRegistro>;
+  /** AG3: os sinais do cadastro do contato da conversa. */
+  lerCadastroDoContato?: () => Promise<CadastroDoContato>;
+  /** AG3: a reserva do estado (da conversa), ou null. */
+  lerReserva?: (holdId: string) => Promise<ReservaLida | null>;
+  /** AG3: uma consulta do contato da conversa, ou null. */
+  lerConsulta?: (appointmentId: string) => Promise<ConsultaLida | null>;
 };
 
 export type ResultadoDaFerramentaDeAgenda =
@@ -108,6 +201,19 @@ export type ResultadoDaFerramentaDeAgenda =
        */
       fatos?: FatosDaFerramenta;
     }
+  /**
+   * AG3: a recusa que passa a conversa para a equipe (consulta para outra
+   * pessoa, menor de idade, D-8), com o motivo do banco.
+   */
+  | {
+      tipo: "passar";
+      motivo: Extract<
+        MotivoDeEscalonamento,
+        "consulta_para_outra_pessoa" | "menor_de_idade"
+      >;
+      passo: string;
+      resultado: string;
+    }
   /** A RPC disse ia_desligada: o turno para sem frase (liberacao_suspensa). */
   | { tipo: "liberacao_suspensa"; passo: string }
   /** Leitura ou RPC que falhou, ou resposta fora do formato: falha fechada. */
@@ -122,6 +228,7 @@ export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
     "a antecedência e o horizonte não estão preenchidos na versão publicada",
   vinculo_invalido:
     "o procedimento ou o profissional não pode mais ser marcado pelo assistente",
+  unidade_invalida: "a unidade não pode mais ser marcada pelo assistente",
   antes_da_antecedencia: "o horário ficou dentro da antecedência mínima",
   depois_do_horizonte: "o horário passou do limite de dias à frente",
   fora_da_jornada: "o horário está fora da jornada do profissional",
@@ -133,6 +240,10 @@ export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
   sem_confirmacao_do_paciente:
     "o paciente ainda não confirmou numa mensagem nova",
   conflito: "a agenda recebeu outra consulta nesse horário",
+  consulta_para_outra_pessoa: "a consulta é para outra pessoa",
+  menor_de_idade: "o paciente é menor de idade",
+  ja_tem_consulta: "o paciente já tem consulta marcada deste procedimento",
+  faltam_dados: "faltam dados do paciente para marcar",
 };
 
 /** O passo da trilha de cada motivo de confirmar_presenca. */
@@ -147,13 +258,105 @@ const PASSO_DA_CONFIRMACAO_RECUSADA: Readonly<
     "Não confirmou presença: há um horário reservado nesta conversa esperando a confirmação",
 };
 
+/**
+ * Onde o atendimento parou, em texto de recepcao, pelo ultimo resultado de
+ * agenda que conta (a nota para a equipe). Fora daqui, vale o motivo da
+ * passagem.
+ */
+const PAROU_EM: Readonly<Record<string, string>> = {
+  hora_pedida_ocupada: "a hora pedida não estava livre",
+  sem_horario: "não havia horário livre no período pedido",
+  agenda_nao_cadastrada: "a agenda do profissional não está cadastrada",
+  nao_atende_na_unidade: "o profissional não atende na unidade pedida",
+  idade_nao_atendida: "o profissional não atende a idade do paciente",
+  convenio_nao_atendido: "o convênio não é atendido neste procedimento",
+  convenio_so_com_a_equipe: "o convênio só é marcado pela equipe",
+  procedimento_nao_agendavel: "o procedimento só é marcado pela equipe",
+  reserva_vencida: "a reserva de 10 minutos venceu",
+  ocupado: "o horário escolhido deixou de estar livre",
+  conflito: "o horário escolhido deixou de estar livre",
+  reservado_por_outra_conversa: "o horário escolhido estava reservado em outra conversa",
+  faltam_dados: "faltaram dados do paciente para marcar",
+  ja_tem_consulta: "o paciente já tem consulta deste procedimento",
+  consulta_para_outra_pessoa: "a consulta é para outra pessoa",
+  menor_de_idade: "o paciente é menor de idade",
+  cpf_invalido: "o CPF informado não confere",
+  dados_invalidos: "um dado informado não está no formato",
+};
+
 const SIMULADO = "No simulador, nada foi gravado.";
+
+/** O atendimento com que o turno comeca (o estado lido e os dados). */
+export type AtendimentoDoTurno = {
+  estado: EstadoDoAtendimento;
+  dados: DadosInformados;
+};
+
+/** A situacao de um horario do estado, depois da reconferencia. */
+export type SituacaoDoHorario = "livre" | "ocupado" | "nao_conferido";
+
+/** Um horario do estado como vai ao bloco <atendimento_em_andamento>. */
+export type HorarioParaOModelo = HorarioLegivel & {
+  codigo: string;
+  procedimento: string;
+  unidadeCodigo: string | null;
+  situacao: SituacaoDoHorario;
+};
+
+/** O que vai ao modelo do estado (lib/agente/prompt.ts monta o bloco). */
+export type AtendimentoParaOModelo = {
+  etapa: EtapaDoAtendimento;
+  procedimento: { codigo: string; nome: string } | null;
+  profissional: { codigo: string | null; nome: string } | null;
+  pagamento: string | null;
+  unidade: { codigo: string; nome: string } | null;
+  horarios: HorarioParaOModelo[];
+  reserva:
+    | (HorarioLegivel & {
+        codigo: string | null;
+        procedimento: string;
+        situacao: "viva" | "vencida" | "nao_conferida";
+      })
+    | null;
+  informados: DadoDaMarcacao[];
+  faltam: DadoDaMarcacao[];
+  paraOTitular: boolean | null;
+  consulta: { dia: string; hora: string } | null;
+  falhasSeguidas: number;
+};
+
+export type FechamentoDoTurno = {
+  estado: EstadoDoAtendimento;
+  dados: DadosInformados;
+};
 
 export type AgendaDoTurno = {
   executar: (
     nome: FerramentaDeAgenda,
     argumentos: unknown,
   ) => Promise<ResultadoDaFerramentaDeAgenda>;
+  /**
+   * AG3: a reconferencia leve, antes da primeira rodada (os horarios do
+   * estado, a reserva e a consulta marcada nesta conversa). Nunca lanca:
+   * leitura que falha so deixa tudo "nao conferido".
+   */
+  preparar: () => Promise<void>;
+  /** AG3: o estado para o bloco do modelo (null: nada em andamento). */
+  paraOModelo: () => AtendimentoParaOModelo | null;
+  /** AG3: os fatos que vem do estado (fonte de dia e hora), ou null. */
+  fatosDoEstado: () => SaidaParaOsFatos | null;
+  /** AG3: os codigos de resultado das ferramentas deste turno, em ordem. */
+  resultados: () => string[];
+  /** AG3: as falhas seguidas depois deste turno (item 9). */
+  falhasDepois: () => number;
+  /** AG3: o estado e os dados depois do turno. */
+  fechar: (entrada: {
+    /** A resposta que vai sair (null: o turno passou para a equipe). */
+    mensagemFinal: string | null;
+    passou: boolean;
+  }) => FechamentoDoTurno;
+  /** AG3: a nota para a equipe na passagem (null: nada a contar). */
+  nota: (motivo: string) => string | null;
 };
 
 function saida(
@@ -173,6 +376,28 @@ function saida(
   };
 }
 
+/** Hoje (aaaa-mm-dd) no fuso dado. */
+function hojeNoFuso(agoraMs: number, fuso: string): string {
+  try {
+    const texto = new Intl.DateTimeFormat("en-CA", {
+      timeZone: fuso,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(agoraMs));
+    return /^\d{4}-\d{2}-\d{2}$/.test(texto)
+      ? texto
+      : new Date(agoraMs).toISOString().slice(0, 10);
+  } catch {
+    return new Date(agoraMs).toISOString().slice(0, 10);
+  }
+}
+
+/** O instante em UTC com Z (a forma que o estado guarda). */
+function emUtc(iso: string): string {
+  return new Date(Date.parse(iso)).toISOString();
+}
+
 /**
  * O executor das ferramentas de agenda de um turno. Sem porta (nenhum
  * servidor para ler a Agenda), toda ferramenta de agenda e falha fechada.
@@ -180,31 +405,156 @@ function saida(
 export function criarAgendaDoTurno(entrada: {
   porta: PortaDaAgenda | null;
   catalogo: CatalogoDoAgente;
-  config: Pick<ConfigDoAgente, "habilidades" | "agenda">;
+  config: Pick<ConfigDoAgente, "habilidades" | "agenda"> &
+    Partial<Pick<ConfigDoAgente, "dadosExigidos">>;
   agoraMs: number;
   fuso: string;
+  /**
+   * AG3: o estado do atendimento lido no comeco do turno. Ausente ou nulo:
+   * como antes da AG3 (codigos so do turno, sem a etapa no agendar).
+   */
+  atendimento?: AtendimentoDoTurno | null;
+  /** AG3: as mensagens do paciente (registrar_dados_do_paciente). */
+  mensagens?: {
+    doPaciente: readonly MensagemDoPaciente[];
+    pendentes: readonly MensagemDoPaciente[];
+  };
+  /** AG3: os nascimentos conhecidos (cadastro e informado), para a idade. */
+  nascimentos?: readonly string[];
 }): AgendaDoTurno {
   const { porta, catalogo, agoraMs, fuso } = entrada;
+  const comEstado =
+    entrada.atendimento !== null && entrada.atendimento !== undefined;
+  const estado: EstadoDoAtendimento = comEstado
+    ? copiarEstado(entrada.atendimento!.estado)
+    : estadoVazio();
+  const dados: DadosInformados = comEstado
+    ? {
+        ...entrada.atendimento!.dados,
+        faltam: [...entrada.atendimento!.dados.faltam],
+      }
+    : dadosVazios();
+  const etapaInicial = estado.etapa;
+  const exigidos = entrada.config.dadosExigidos ?? {
+    nomeCompleto: false,
+    nascimento: false,
+    cpf: false,
+  };
+  const agendaLigada = ferramentasDoAgente(
+    entrada.config.habilidades,
+    entrada.config.agenda,
+  ).includes("buscar_horario");
+
   const horarios = new Map<string, HorarioOferecido>();
-  let proximoNumero = 1;
+  const situacoes = new Map<string, "livre" | "ocupado">();
+  /** O ultimo numero de codigo dado neste turno (os novos vem depois). */
+  let ultimoNumero = 0;
   /** Alguma chamada de reservar_horario neste turno, valida ou nao. */
   let tentouReservar = false;
   /** Um reservar_horario chegou a porta (limite de uma reserva por turno). */
   let chamouReservar = false;
   let chamouAgendar = false;
   let chamouConfirmar = false;
+  const resultados: string[] = [];
+  let ultimaPreferencia: { periodo: string | null; hora: string | null } | null =
+    null;
+  /** A reserva viva conhecida: a deste turno ou a do estado, conferida. */
+  let reserva:
+    | { horario: HorarioOferecido | null; leitura: ReservaLida | null; viva: boolean | null }
+    | null = null;
+  let consultaLida: { dia: string; hora: string } | null = null;
+  let consultaDoTurno: { dia: string; hora: string } | null = null;
+
+  /** O vinculo do catalogo pelo id. */
+  const vinculoDe = (id: string | null): VinculoDoAgente | undefined =>
+    id === null ? undefined : catalogo.vinculos.find((v) => v.id === id);
+
+  const procedimentoDe = (procedimentoId: string | undefined) =>
+    [...catalogo.procedimentos, ...(catalogo.procedimentosSoComAEquipe ?? [])].find(
+      (p) => p.id === procedimentoId,
+    );
+
+  const convenioDe = (id: string | null): ConvenioDoAgente | undefined =>
+    id === null
+      ? undefined
+      : [...catalogo.conveniosDoCadastro, ...catalogo.convenios].find(
+          (c) => c.id === id,
+        );
+
+  /** Um horario do estado com dia, hora e nomes (null: o vinculo saiu). */
+  const doEstado = (h: HorarioDoEstado): HorarioOferecido | null => {
+    const vinculo = vinculoDe(h.service_link_id);
+    const procedimento = procedimentoDe(vinculo?.procedimentoId);
+    if (
+      vinculo === undefined ||
+      vinculo.id === null ||
+      vinculo.duracaoMin === null ||
+      procedimento === undefined ||
+      vinculo.profissionalId !== h.professional_id
+    ) {
+      return null;
+    }
+    const unidade =
+      h.unit_id === null
+        ? null
+        : ((catalogo.unidades ?? []).find((u) => u.id === h.unit_id) ?? null);
+    if (h.unit_id !== null && unidade === null) {
+      return null;
+    }
+    const { dia, hora } = diaEHora(new Date(h.starts_at), fuso, agoraMs);
+    return {
+      codigo: h.codigo,
+      serviceLinkId: vinculo.id,
+      profissionalId: vinculo.profissionalId,
+      inicio: emUtc(h.starts_at),
+      fim: emUtc(h.ends_at),
+      dia,
+      hora,
+      profissional: vinculo.profissional,
+      procedimento: procedimento.nome,
+      duracaoMin: vinculo.duracaoMin,
+      unidadeId: unidade?.id ?? null,
+      unidade: unidade?.nome ?? null,
+      unidadeCodigo: unidade?.codigo ?? null,
+      convenioId: vinculo.convenioId,
+      oferecidoEm: emUtc(h.oferecido_em),
+    };
+  };
+
+  // Os horarios do estado entram no mapa do turno (o codigo vale de uma
+  // mensagem para a outra). O que saiu do catalogo fica de fora.
+  for (const h of estado.horarios_oferecidos) {
+    const lido = doEstado(h);
+    if (lido !== null) {
+      horarios.set(lido.codigo, lido);
+    }
+  }
+  estado.horarios_oferecidos = estado.horarios_oferecidos.filter((h) =>
+    horarios.has(h.codigo),
+  );
+
+  const proximoCodigo = (): string => {
+    const numero = proximoNumeroDoCodigo([...horarios.keys()], ultimoNumero);
+    ultimoNumero = numero;
+    return `h${numero}`;
+  };
+
+  const paraOEstado = (h: HorarioOferecido): HorarioDoEstado => ({
+    codigo: h.codigo,
+    service_link_id: h.serviceLinkId,
+    professional_id: h.profissionalId,
+    unit_id: h.unidadeId,
+    starts_at: emUtc(h.inicio),
+    ends_at: emUtc(h.fim),
+    oferecido_em: h.oferecidoEm,
+  });
 
   /** Profissional e procedimento de um vinculo do catalogo, para a saida. */
   const nomesDoVinculo = (
     serviceLinkId: string | null,
   ): { profissional: string; procedimento: string } | null => {
-    if (serviceLinkId === null) {
-      return null;
-    }
-    const vinculo = catalogo.vinculos.find((v) => v.id === serviceLinkId);
-    const procedimento = catalogo.procedimentos.find(
-      (p) => p.id === vinculo?.procedimentoId,
-    );
+    const vinculo = vinculoDe(serviceLinkId);
+    const procedimento = procedimentoDe(vinculo?.procedimentoId);
     return vinculo === undefined || procedimento === undefined
       ? null
       : { profissional: vinculo.profissional, procedimento: procedimento.nome };
@@ -214,6 +564,123 @@ export function criarAgendaDoTurno(entrada: {
     nomes: { profissional: string; procedimento: string } | null,
   ) =>
     nomes === null ? "" : ` (${nomes.procedimento}, ${nomes.profissional})`;
+
+  /** "particular" ou o nome do convenio (e plano) do vinculo. */
+  const pagamentoDoVinculo = (convenioId: string | null): string | null => {
+    if (convenioId === null) {
+      return "particular";
+    }
+    const convenio = convenioDe(convenioId);
+    return convenio === undefined ? null : nomeDoConvenio(convenio);
+  };
+
+  /** O fato "atende" do convenio do vinculo no procedimento dele. */
+  const coberturaDoVinculo = (
+    serviceLinkId: string | null,
+  ): CoberturaDoTurno[] => {
+    const vinculo = vinculoDe(serviceLinkId);
+    const convenio = convenioDe(vinculo?.convenioId ?? null);
+    const procedimento = procedimentoDe(vinculo?.procedimentoId);
+    return convenio === undefined || procedimento === undefined
+      ? []
+      : [coberturaDoConvenio(convenio, "atende", procedimento.nome)];
+  };
+
+  /** Os dados que faltam agora, com o vinculo da reserva viva. */
+  const recalcularFaltam = (serviceLinkId: string | null) => {
+    const vinculo = vinculoDe(serviceLinkId);
+    dados.faltam = dadosQueFaltam({
+      exigidos,
+      informados: dados,
+      vinculo:
+        vinculo === undefined
+          ? null
+          : {
+              procedimentoId: vinculo.procedimentoId,
+              convenioId: vinculo.convenioId,
+            },
+      catalogo,
+    });
+  };
+
+  // -------------------------------------------------------------------------
+  // A reconferencia leve (AG3)
+  // -------------------------------------------------------------------------
+
+  async function preparar(): Promise<void> {
+    if (!comEstado || porta === null) {
+      return;
+    }
+    // A reserva do estado: viva ou vencida (e o horario dela).
+    if (estado.slot_hold_id !== null && porta.lerReserva !== undefined) {
+      try {
+        const lida = await porta.lerReserva(estado.slot_hold_id);
+        if (lida !== null) {
+          const codigo =
+            [...horarios.values()].find(
+              (h) =>
+                h.serviceLinkId === lida.serviceLinkId &&
+                Date.parse(h.inicio) === Date.parse(lida.inicio),
+            ) ?? null;
+          reserva = { horario: codigo, leitura: lida, viva: lida.viva };
+        } else {
+          reserva = { horario: null, leitura: null, viva: false };
+        }
+      } catch {
+        reserva = { horario: null, leitura: null, viva: null };
+      }
+    }
+    // A consulta marcada nesta conversa (so o dia e a hora).
+    if (estado.appointment_id !== null && porta.lerConsulta !== undefined) {
+      try {
+        const lida = await porta.lerConsulta(estado.appointment_id);
+        if (lida !== null && lida.ativa) {
+          consultaLida = diaEHora(new Date(lida.inicio), fuso, agoraMs);
+        }
+      } catch {
+        consultaLida = null;
+      }
+    }
+    // Os horarios oferecidos: continuam livres?
+    if (!agendaLigada || horarios.size === 0) {
+      return;
+    }
+    const lista = [...horarios.values()].map((h) => ({
+      codigo: h.codigo,
+      serviceLinkId: h.serviceLinkId,
+      unidadeId: h.unidadeId,
+      inicio: h.inicio,
+      fim: h.fim,
+    }));
+    const pedido = pedidoDaReconferencia(catalogo, lista);
+    if (pedido === null) {
+      return;
+    }
+    try {
+      const agenda = await porta.carregar(pedido);
+      for (const h of lista) {
+        situacoes.set(
+          h.codigo,
+          horarioContinuaLivre({
+            catalogo,
+            agenda,
+            config: entrada.config.agenda,
+            horario: h,
+            agoraMs,
+            fuso,
+          })
+            ? "livre"
+            : "ocupado",
+        );
+      }
+    } catch {
+      situacoes.clear();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // As ferramentas
+  // -------------------------------------------------------------------------
 
   async function buscar(
     argumentos: unknown,
@@ -228,9 +695,15 @@ export function criarAgendaDoTurno(entrada: {
         entrada.config.habilidades,
         entrada.config.agenda,
       ).includes("buscar_procedimento"),
+      nascimentos: entrada.nascimentos ?? [],
     });
+    estado.intencao = "agendar";
+    if (estado.etapa === "informacao") {
+      estado.etapa = "escolha";
+    }
     if (plano.tipo === "resultado") {
       const r = plano.resultado;
+      resultados.push(r.resultado);
       return {
         tipo: "saida",
         saida: r.saida,
@@ -240,6 +713,11 @@ export function criarAgendaDoTurno(entrada: {
         ...(r.fatos === undefined ? {} : { fatos: r.fatos }),
       };
     }
+    ultimaPreferencia = {
+      periodo: plano.plano.periodo,
+      hora: plano.plano.hora ?? null,
+    };
+    estado.procedure_id = plano.plano.procedimento.id;
     let agenda: AgendaCarregada;
     try {
       if (porta === null) {
@@ -249,11 +727,33 @@ export function criarAgendaDoTurno(entrada: {
     } catch {
       return { tipo: "falha", passo: "Não foi possível ler a agenda agora." };
     }
-    const r = escolherHorarios(plano.plano, agenda, proximoNumero);
-    proximoNumero += r.horarios.length;
+    const r = escolherHorarios(plano.plano, agenda, proximoCodigo);
+    resultados.push(r.resultado);
     for (const horario of r.horarios) {
       horarios.set(horario.codigo, horario);
+      situacoes.set(horario.codigo, "livre");
     }
+    if (r.horarios.length > 0) {
+      const reservado = reserva?.horario?.codigo ?? null;
+      estado.horarios_oferecidos = comHorariosOferecidos(
+        estado.horarios_oferecidos,
+        r.horarios.map(paraOEstado),
+        reservado,
+      );
+      // O que saiu da lista do estado sai tambem do mapa do turno? Nao: o
+      // codigo continua valendo ate o fim deste turno (o modelo acabou de
+      // ver); o estado guarda os 9 mais novos.
+      estado.etapa = "oferta";
+    }
+    estado.professional_id = plano.plano.profissionalId ?? null;
+    if (plano.plano.convenioDoCadastro) {
+      estado.insurance_id = plano.plano.convenioDoCadastro.id;
+      estado.particular = false;
+    } else {
+      estado.insurance_id = null;
+      estado.particular = true;
+    }
+    estado.unit_id = plano.plano.unidade?.id ?? null;
     return {
       tipo: "saida",
       saida: r.saida,
@@ -270,8 +770,10 @@ export function criarAgendaDoTurno(entrada: {
     // Antes de validar qualquer coisa: o modelo que tenta reservar acha que
     // a pessoa esta escolhendo horario agora, entao agendar neste turno nao.
     tentouReservar = true;
+    estado.intencao = "agendar";
     const lido = entradaDaReservaSchema.safeParse(argumentos);
     if (!lido.success) {
+      resultados.push("entrada_invalida");
       return saida(
         "entrada_invalida",
         {},
@@ -279,6 +781,7 @@ export function criarAgendaDoTurno(entrada: {
       );
     }
     if (chamouReservar) {
+      resultados.push("uma_reserva_por_resposta");
       return saida(
         "uma_reserva_por_resposta",
         {},
@@ -287,10 +790,13 @@ export function criarAgendaDoTurno(entrada: {
     }
     const horario = horarios.get(lido.data.horario.toLowerCase());
     if (horario === undefined) {
+      resultados.push("codigo_invalido");
       return saida(
         "codigo_invalido",
         {},
-        "Tentou reservar um horário que a busca desta resposta não trouxe",
+        comEstado
+          ? "Tentou reservar um horário que nenhuma busca trouxe"
+          : "Tentou reservar um horário que a busca desta resposta não trouxe",
       );
     }
     chamouReservar = true;
@@ -303,6 +809,7 @@ export function criarAgendaDoTurno(entrada: {
         serviceLinkId: horario.serviceLinkId,
         inicio: horario.inicio,
         fim: horario.fim,
+        unidadeId: horario.unidadeId,
       });
     } catch {
       return {
@@ -312,6 +819,7 @@ export function criarAgendaDoTurno(entrada: {
     }
     const pedido = `${horario.dia} às ${horario.hora}`;
     if (!resposta.ok) {
+      resultados.push(resposta.motivo);
       const motivo = ROTULO_DO_MOTIVO_DA_AGENDA[resposta.motivo];
       if (resposta.motivo === "ia_desligada") {
         return {
@@ -319,26 +827,66 @@ export function criarAgendaDoTurno(entrada: {
           passo: `Tentou reservar ${pedido}: ${motivo}`,
         };
       }
+      situacoes.set(horario.codigo, "ocupado");
       return saida(
         resposta.motivo,
         { dia: horario.dia, hora: horario.hora },
         `Tentou reservar ${pedido}: ${motivo}`,
       );
     }
+    resultados.push("reservado");
     // Os nomes vem do vinculo da RESERVA: repetir o job devolve a reserva
     // que ele ja tinha, que pode ser de outro horario.
     const mesmoHorario =
       Date.parse(resposta.inicio) === Date.parse(horario.inicio) &&
       (resposta.serviceLinkId === null ||
         resposta.serviceLinkId === horario.serviceLinkId);
+    const serviceLinkId = mesmoHorario
+      ? horario.serviceLinkId
+      : (resposta.serviceLinkId ?? null);
     const nomes = mesmoHorario
       ? {
           profissional: horario.profissional,
           procedimento: horario.procedimento,
         }
-      : nomesDoVinculo(resposta.serviceLinkId);
+      : nomesDoVinculo(serviceLinkId);
+    const unidadeId = resposta.unitId ?? (mesmoHorario ? horario.unidadeId : null);
+    const unidade =
+      unidadeId === null
+        ? null
+        : ((catalogo.unidades ?? []).find((u) => u.id === unidadeId) ?? null);
     const { dia, hora } = diaEHora(new Date(resposta.inicio), fuso, agoraMs);
-    const quando = `${dia} às ${hora}${entreParenteses(nomes)}`;
+    const vinculo = vinculoDe(serviceLinkId);
+    const pagamento = pagamentoDoVinculo(vinculo?.convenioId ?? null);
+    // O estado: a reserva viva, o pedido (do vinculo e do horario).
+    estado.slot_hold_id = resposta.holdId;
+    if (vinculo !== undefined) {
+      estado.procedure_id = vinculo.procedimentoId;
+      estado.professional_id = vinculo.profissionalId;
+      estado.insurance_id = vinculo.convenioId;
+      estado.particular = vinculo.convenioId === null;
+    }
+    estado.unit_id = unidadeId;
+    if (estado.etapa === "informacao" || estado.etapa === "escolha") {
+      estado.etapa = "oferta";
+    }
+    const reservado: HorarioOferecido | null = mesmoHorario
+      ? { ...horario, unidadeId, unidade: unidade?.nome ?? null, unidadeCodigo: unidade?.codigo ?? null }
+      : null;
+    reserva = {
+      horario: reservado,
+      leitura: {
+        viva: true,
+        serviceLinkId: serviceLinkId ?? horario.serviceLinkId,
+        inicio: resposta.inicio,
+        fim: resposta.fim,
+        unidadeId,
+      },
+      viva: true,
+    };
+    recalcularFaltam(serviceLinkId);
+    const quando = `${dia} às ${hora}${entreParenteses(nomes)}${unidade === null ? "" : `, unidade ${unidade.nome}`}`;
+    const livre: HorarioLivreDoTurno = { dia, hora, unidade: unidade?.nome ?? null };
     return saida(
       "reservado",
       {
@@ -346,21 +894,182 @@ export function criarAgendaDoTurno(entrada: {
         dia,
         hora,
         ...(nomes === null ? {} : nomes),
+        unidade: unidade?.nome ?? null,
+        ...(pagamento === null ? {} : { pagamento }),
+        ...(comEstado ? { dados_que_faltam: dados.faltam } : {}),
       },
       porta?.simulada
         ? `Reservaria ${quando} por ${MINUTOS_DA_RESERVA} minutos. ${SIMULADO}`
         : `Reservou ${quando} por ${MINUTOS_DA_RESERVA} minutos`,
       [],
       // Revisao da AG2: o horario reservado tambem e horario livre do turno
-      // (o dia e a hora como foram ao modelo).
-      { acao: "reservou", horarios: [{ dia, hora }] },
+      // (o dia e a hora como foram ao modelo; AG3, com a unidade).
+      {
+        acao: "reservou",
+        horarios: [livre],
+        ...(coberturaDoVinculo(serviceLinkId).length > 0
+          ? { coberturas: coberturaDoVinculo(serviceLinkId) }
+          : {}),
+      },
+    );
+  }
+
+  async function registrar(
+    argumentos: unknown,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    estado.intencao = "agendar";
+    const preparo = prepararRegistro({
+      argumentos,
+      doPaciente: entrada.mensagens?.doPaciente ?? [],
+      pendentes: entrada.mensagens?.pendentes ?? [],
+      hoje: hojeNoFuso(agoraMs, fuso),
+    });
+    if (preparo.tipo === "entrada_invalida") {
+      resultados.push("entrada_invalida");
+      return saida(
+        "entrada_invalida",
+        {},
+        "Tentou registrar os dados do paciente com um pedido incompleto",
+      );
+    }
+    if (porta === null || porta.registrarDados === undefined) {
+      return {
+        tipo: "falha",
+        passo: "Não foi possível registrar os dados agora.",
+      };
+    }
+    if (preparo.tipo === "outra_pessoa") {
+      let resposta: RespostaDoRegistro;
+      try {
+        resposta = await porta.registrarDados({
+          paraOTitular: false,
+          nomeCompleto: null,
+          dataNascimento: null,
+          cpf: null,
+          carteirinha: null,
+        });
+      } catch {
+        return {
+          tipo: "falha",
+          passo: "Não foi possível registrar os dados agora.",
+        };
+      }
+      if (!resposta.ok && resposta.motivo === "ia_desligada") {
+        return {
+          tipo: "liberacao_suspensa",
+          passo: "Tentou registrar os dados: o assistente não está mais atendendo esta conversa",
+        };
+      }
+      dados.para_o_titular = false;
+      dados.nome_completo = false;
+      dados.data_nascimento = false;
+      dados.cpf = false;
+      dados.carteirinha = false;
+      resultados.push("consulta_para_outra_pessoa");
+      return {
+        tipo: "passar",
+        motivo: "consulta_para_outra_pessoa",
+        resultado: "consulta_para_outra_pessoa",
+        passo: "A consulta é para outra pessoa: nenhum dado foi guardado",
+      };
+    }
+    const { campos, problemas } = preparo;
+    const comProblema = Object.entries(problemas) as [
+      DadoDaMarcacao,
+      ProblemaDoCampo,
+    ][];
+    const problemasParaOModelo = Object.fromEntries(comProblema);
+    if (campos.length === 0) {
+      const [primeiro] = comProblema;
+      const codigo =
+        primeiro === undefined
+          ? "entrada_invalida"
+          : resultadoDoProblema(primeiro[0], primeiro[1]);
+      resultados.push(codigo);
+      return saida(
+        codigo,
+        { problemas: problemasParaOModelo, faltam: dados.faltam },
+        `Não registrou os dados: ${listaEmTexto(comProblema.map(([c]) => ROTULO_DO_DADO[c]))} com problema`,
+      );
+    }
+    let resposta: RespostaDoRegistro;
+    try {
+      resposta = await porta.registrarDados(preparo.dados);
+    } catch {
+      return {
+        tipo: "falha",
+        passo: "Não foi possível registrar os dados agora.",
+      };
+    }
+    if (!resposta.ok) {
+      if (resposta.motivo === "ia_desligada") {
+        return {
+          tipo: "liberacao_suspensa",
+          passo: "Tentou registrar os dados: o assistente não está mais atendendo esta conversa",
+        };
+      }
+      if (resposta.motivo === "menor_de_idade") {
+        dados.data_nascimento = true;
+        resultados.push("menor_de_idade");
+        return {
+          tipo: "passar",
+          motivo: "menor_de_idade",
+          resultado: "menor_de_idade",
+          passo: "O paciente é menor de idade: a marcação fica com a equipe",
+        };
+      }
+      if (resposta.motivo === "consulta_para_outra_pessoa") {
+        resultados.push("consulta_para_outra_pessoa");
+        return {
+          tipo: "passar",
+          motivo: "consulta_para_outra_pessoa",
+          resultado: "consulta_para_outra_pessoa",
+          passo: "A consulta é para outra pessoa: nenhum dado foi guardado",
+        };
+      }
+      resultados.push("dados_invalidos");
+      return saida(
+        "dados_invalidos",
+        { invalidos: resposta.invalidos ?? [], faltam: dados.faltam },
+        `Não registrou os dados: ${listaEmTexto((resposta.invalidos ?? []).map((c) => ROTULO_DO_DADO[c]))} fora do formato`,
+      );
+    }
+    for (const campo of campos) {
+      dados[campo] = true;
+    }
+    dados.para_o_titular = true;
+    dados.faltam = [...resposta.faltam];
+    resultados.push("registrado");
+    if (comProblema.length > 0) {
+      const [primeiro] = comProblema;
+      if (primeiro !== undefined) {
+        resultados.push(resultadoDoProblema(primeiro[0], primeiro[1]));
+      }
+    }
+    const registrados = listaEmTexto(campos.map((c) => ROTULO_DO_DADO[c]));
+    const faltamTexto =
+      dados.faltam.length === 0
+        ? "nenhum dado falta"
+        : `falta ${listaEmTexto(dados.faltam.map((c) => ROTULO_DO_DADO[c]))}`;
+    return saida(
+      "registrado",
+      {
+        registrados: campos,
+        faltam: dados.faltam,
+        ...(comProblema.length > 0 ? { problemas: problemasParaOModelo } : {}),
+      },
+      porta.simulada
+        ? `Registraria ${registrados} (${faltamTexto}). ${SIMULADO}`
+        : `Registrou ${registrados} (${faltamTexto})`,
     );
   }
 
   async function agendar(
     argumentos: unknown,
   ): Promise<ResultadoDaFerramentaDeAgenda> {
+    estado.intencao = "agendar";
     if (!entradaDoAgendarSchema.safeParse(argumentos ?? {}).success) {
+      resultados.push("entrada_invalida");
       return saida(
         "entrada_invalida",
         {},
@@ -368,17 +1077,19 @@ export function criarAgendaDoTurno(entrada: {
       );
     }
     if (chamouAgendar) {
+      resultados.push("uma_marcacao_por_resposta");
       return saida(
         "uma_marcacao_por_resposta",
         {},
         "Pediu para marcar de novo na mesma resposta: recusado",
       );
     }
-    if (tentouReservar) {
-      // A confirmacao tem de vir numa mensagem nova, depois da reserva. O
-      // turno que tentou reservar (com ou sem sucesso, com codigo valido ou
-      // nao) e o da escolha do horario, nunca o da confirmacao: marcar aqui
-      // usaria a reserva viva de antes, que pode ser de outro horario.
+    if (tentouReservar || (comEstado && etapaInicial !== "aguardando_confirmacao")) {
+      // A confirmacao tem de vir numa mensagem nova, depois da pergunta
+      // "Confirma ...?" (AG3: feita num turno anterior, com a reserva viva e
+      // sem dado faltando). O turno que tentou reservar e o da escolha do
+      // horario, nunca o da confirmacao.
+      resultados.push("sem_confirmacao_do_paciente");
       return saida(
         "sem_confirmacao_do_paciente",
         {},
@@ -399,6 +1110,7 @@ export function criarAgendaDoTurno(entrada: {
       };
     }
     if (!resposta.ok) {
+      resultados.push(resposta.motivo);
       const motivo = ROTULO_DO_MOTIVO_DA_AGENDA[resposta.motivo];
       if (resposta.motivo === "ia_desligada") {
         return {
@@ -406,12 +1118,77 @@ export function criarAgendaDoTurno(entrada: {
           passo: `Tentou marcar a consulta: ${motivo}`,
         };
       }
+      if (
+        resposta.motivo === "consulta_para_outra_pessoa" ||
+        resposta.motivo === "menor_de_idade"
+      ) {
+        return {
+          tipo: "passar",
+          motivo: resposta.motivo,
+          resultado: resposta.motivo,
+          passo: `Não marcou a consulta: ${motivo}`,
+        };
+      }
+      if (resposta.motivo === "ja_tem_consulta") {
+        // So o dia e a hora da consulta que ja existe (pode ter sido marcada
+        // pela recepcao, fora desta conversa).
+        let quando: { dia: string; hora: string } | null = null;
+        if (resposta.appointmentId && porta.lerConsulta !== undefined) {
+          try {
+            const lida = await porta.lerConsulta(resposta.appointmentId);
+            if (lida !== null) {
+              quando = diaEHora(new Date(lida.inicio), fuso, agoraMs);
+            }
+          } catch {
+            quando = null;
+          }
+        }
+        return saida(
+          "ja_tem_consulta",
+          quando === null ? {} : { ...quando },
+          quando === null
+            ? `Não marcou: ${motivo}`
+            : `Não marcou: ${motivo} (${quando.dia} às ${quando.hora})`,
+          [],
+          quando === null ? undefined : { consultaLida: true },
+        );
+      }
+      if (resposta.motivo === "faltam_dados") {
+        dados.faltam = [...(resposta.faltam ?? dados.faltam)];
+        return saida(
+          "faltam_dados",
+          { faltam: dados.faltam },
+          `Não marcou: falta ${listaEmTexto(dados.faltam.map((c) => ROTULO_DO_DADO[c]))}`,
+        );
+      }
+      if (resposta.motivo === "reserva_vencida" || resposta.motivo === "reserva_inexistente") {
+        reserva = reserva === null ? null : { ...reserva, viva: false };
+      }
       return saida(resposta.motivo, {}, `Tentou marcar a consulta: ${motivo}`);
     }
-    if (porta?.simulada) {
-      // O simulador nao guarda a reserva entre as rodadas: sem dia e hora
-      // (e, nos fatos do turno, a resposta que repete o dia e a hora da
-      // reserva de antes e barrada: so o "ficou marcada" passa).
+    resultados.push("marcado");
+    estado.appointment_id = resposta.appointmentId;
+    estado.slot_hold_id = null;
+    estado.horarios_oferecidos = [];
+    estado.etapa = "pos_marcacao";
+    estado.desfecho = "marcou";
+    const reservaAntes = reserva;
+    reserva = null;
+    const serviceLinkId =
+      resposta.serviceLinkId ?? reservaAntes?.leitura?.serviceLinkId ?? null;
+    const nomes = nomesDoVinculo(serviceLinkId);
+    const inicio = resposta.inicio ?? reservaAntes?.leitura?.inicio ?? null;
+    const unidadeId = reservaAntes?.leitura?.unidadeId ?? null;
+    const unidade =
+      unidadeId === null
+        ? null
+        : ((catalogo.unidades ?? []).find((u) => u.id === unidadeId) ?? null);
+    const quando =
+      inicio === null ? null : diaEHora(new Date(inicio), fuso, agoraMs);
+    consultaDoTurno = quando;
+    if (porta?.simulada && quando === null) {
+      // O simulador sem a reserva guardada: sem dia e hora (e, nos fatos do
+      // turno, a resposta que repete o dia e a hora e barrada).
       return saida(
         "marcado",
         { pendente: true },
@@ -420,21 +1197,21 @@ export function criarAgendaDoTurno(entrada: {
         { acao: "marcou" },
       );
     }
-    const nomes = nomesDoVinculo(resposta.serviceLinkId);
-    const quando =
-      resposta.inicio === null
-        ? null
-        : diaEHora(new Date(resposta.inicio), fuso, agoraMs);
+    const texto =
+      quando === null
+        ? "a consulta reservada"
+        : `a consulta de ${quando.dia} às ${quando.hora}${entreParenteses(nomes)}${unidade === null ? "" : `, unidade ${unidade.nome}`}`;
     return saida(
       "marcado",
       {
         pendente: true,
         ...(quando === null ? {} : quando),
         ...(nomes === null ? {} : nomes),
+        ...(unidade === null ? {} : { unidade: unidade.nome }),
       },
-      quando === null
-        ? "Marcou a consulta reservada, pendente de aprovação da equipe"
-        : `Marcou a consulta de ${quando.dia} às ${quando.hora}${entreParenteses(nomes)}, pendente de aprovação da equipe`,
+      porta?.simulada
+        ? `Marcaria ${texto}, pendente de aprovação da equipe. ${SIMULADO}`
+        : `Marcou ${texto}, pendente de aprovação da equipe`,
       [],
       { acao: "marcou" },
     );
@@ -443,7 +1220,11 @@ export function criarAgendaDoTurno(entrada: {
   async function confirmar(
     argumentos: unknown,
   ): Promise<ResultadoDaFerramentaDeAgenda> {
+    if (estado.intencao === null) {
+      estado.intencao = "confirmar";
+    }
     if (!entradaDaConfirmacaoSchema.safeParse(argumentos ?? {}).success) {
+      resultados.push("entrada_invalida");
       return saida(
         "entrada_invalida",
         {},
@@ -451,6 +1232,7 @@ export function criarAgendaDoTurno(entrada: {
       );
     }
     if (chamouConfirmar) {
+      resultados.push("uma_confirmacao_por_resposta");
       return saida(
         "uma_confirmacao_por_resposta",
         {},
@@ -471,12 +1253,15 @@ export function criarAgendaDoTurno(entrada: {
       };
     }
     if (!resposta.ok) {
+      resultados.push(resposta.motivo);
       return saida(
         resposta.motivo,
         {},
         PASSO_DA_CONFIRMACAO_RECUSADA[resposta.motivo],
       );
     }
+    resultados.push("confirmada");
+    estado.desfecho = "confirmou";
     if (porta?.simulada) {
       return saida(
         "confirmada",
@@ -515,6 +1300,326 @@ export function criarAgendaDoTurno(entrada: {
     );
   }
 
+  async function consultarCadastro(
+    argumentos: unknown,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    if (!entradaDoCadastroDoContatoSchema.safeParse(argumentos ?? {}).success) {
+      resultados.push("entrada_invalida");
+      return saida(
+        "entrada_invalida",
+        {},
+        "Tentou consultar o cadastro da pessoa com um pedido fora do formato",
+      );
+    }
+    let cadastro: CadastroDoContato;
+    try {
+      if (porta === null || porta.lerCadastroDoContato === undefined) {
+        throw new Error("sem porta");
+      }
+      cadastro = await porta.lerCadastroDoContato();
+    } catch {
+      return {
+        tipo: "falha",
+        passo: "Não foi possível consultar o cadastro da pessoa agora.",
+      };
+    }
+    resultados.push("cadastro");
+    const { saida: corpo, passo } = saidaDoCadastroDoContato(catalogo, cadastro);
+    return saida("cadastro", corpo, passo);
+  }
+
+  // -------------------------------------------------------------------------
+  // O estado para o modelo, os fatos, o fechamento e a nota
+  // -------------------------------------------------------------------------
+
+  const legivel = (h: HorarioOferecido): HorarioLegivel => ({
+    dia: h.dia,
+    hora: h.hora,
+    profissional: h.profissional,
+    unidade: h.unidade,
+  });
+
+  /** O horario da reserva conhecida, legivel (null: nao ha reserva). */
+  const reservaLegivel = ():
+    | (HorarioLegivel & { codigo: string | null; procedimento: string; viva: boolean | null })
+    | null => {
+    if (reserva === null) {
+      return null;
+    }
+    if (reserva.horario !== null) {
+      return {
+        ...legivel(reserva.horario),
+        codigo: reserva.horario.codigo,
+        procedimento: reserva.horario.procedimento,
+        viva: reserva.viva,
+      };
+    }
+    const leitura = reserva.leitura;
+    if (leitura === null) {
+      return null;
+    }
+    const nomes = nomesDoVinculo(leitura.serviceLinkId);
+    const unidade =
+      leitura.unidadeId === null
+        ? null
+        : ((catalogo.unidades ?? []).find((u) => u.id === leitura.unidadeId) ?? null);
+    const { dia, hora } = diaEHora(new Date(leitura.inicio), fuso, agoraMs);
+    return {
+      dia,
+      hora,
+      profissional: nomes?.profissional ?? null,
+      unidade: unidade?.nome ?? null,
+      codigo: null,
+      procedimento: nomes?.procedimento ?? "",
+      viva: reserva.viva,
+    };
+  };
+
+  const situacaoDe = (codigo: string): SituacaoDoHorario =>
+    situacoes.get(codigo) ?? "nao_conferido";
+
+  function paraOModelo(): AtendimentoParaOModelo | null {
+    if (!comEstado) {
+      return null;
+    }
+    const nada =
+      estado.etapa === "informacao" &&
+      estado.intencao === null &&
+      estado.procedure_id === null &&
+      horarios.size === 0 &&
+      estado.slot_hold_id === null &&
+      estado.appointment_id === null &&
+      !dados.nome_completo &&
+      !dados.data_nascimento &&
+      !dados.cpf &&
+      !dados.carteirinha &&
+      dados.faltam.length === 0 &&
+      estado.falhas_seguidas === 0;
+    if (nada) {
+      return null;
+    }
+    const procedimento = procedimentoDe(estado.procedure_id ?? undefined);
+    const profissionalDoIndice = (catalogo.profissionais ?? []).find(
+      (p) => p.id === estado.professional_id,
+    );
+    const codigoDoProfissional = (() => {
+      if (estado.professional_id === null) {
+        return null;
+      }
+      const ordenados = [
+        ...new Map(
+          catalogo.vinculos.map((v) => [v.profissionalId, v.profissional]),
+        ).entries(),
+      ]
+        .map(([id, nome]) => ({ id, nome }))
+        .sort(
+          (a, b) =>
+            a.nome.localeCompare(b.nome, "pt-BR") || a.id.localeCompare(b.id),
+        );
+      const indice = ordenados.findIndex((p) => p.id === estado.professional_id);
+      return indice < 0 ? null : `r${indice + 1}`;
+    })();
+    const unidade =
+      estado.unit_id === null
+        ? null
+        : ((catalogo.unidades ?? []).find((u) => u.id === estado.unit_id) ?? null);
+    const pagamento =
+      estado.particular === true
+        ? "particular"
+        : estado.insurance_id !== null
+          ? (() => {
+              const c = convenioDe(estado.insurance_id);
+              return c === undefined ? null : nomeDoConvenio(c);
+            })()
+          : null;
+    const r = reservaLegivel();
+    return {
+      etapa: estado.etapa,
+      procedimento:
+        procedimento === undefined
+          ? null
+          : { codigo: procedimento.codigo, nome: procedimento.nome },
+      profissional:
+        profissionalDoIndice === undefined
+          ? null
+          : { codigo: codigoDoProfissional, nome: profissionalDoIndice.nome },
+      pagamento,
+      unidade:
+        unidade === null ? null : { codigo: unidade.codigo, nome: unidade.nome },
+      horarios: [...horarios.values()]
+        .filter((h) =>
+          estado.horarios_oferecidos.some((e) => e.codigo === h.codigo),
+        )
+        .map((h) => ({
+          ...legivel(h),
+          codigo: h.codigo,
+          procedimento: h.procedimento,
+          unidadeCodigo: h.unidadeCodigo,
+          situacao: situacaoDe(h.codigo),
+        })),
+      reserva:
+        r === null
+          ? null
+          : {
+              dia: r.dia,
+              hora: r.hora,
+              profissional: r.profissional,
+              unidade: r.unidade,
+              codigo: r.codigo,
+              procedimento: r.procedimento,
+              situacao:
+                r.viva === true ? "viva" : r.viva === false ? "vencida" : "nao_conferida",
+            },
+      informados: (["nome_completo", "data_nascimento", "cpf", "carteirinha"] as const).filter(
+        (d) => dados[d],
+      ),
+      faltam: [...dados.faltam],
+      paraOTitular: dados.para_o_titular,
+      consulta: consultaLida,
+      falhasSeguidas: estado.falhas_seguidas,
+    };
+  }
+
+  function fatosDoEstado(): SaidaParaOsFatos | null {
+    if (!comEstado) {
+      return null;
+    }
+    const oferecidos = [...horarios.values()].filter((h) =>
+      estado.horarios_oferecidos.some((e) => e.codigo === h.codigo),
+    );
+    const r = reservaLegivel();
+    if (oferecidos.length === 0 && r === null && consultaLida === null) {
+      return null;
+    }
+    // Fonte de dia e hora (citar o que ja foi oferecido, negar); so o
+    // conferido agora e horario LIVRE.
+    const livres: HorarioLivreDoTurno[] = oferecidos
+      .filter((h) => situacaoDe(h.codigo) === "livre")
+      .map((h) => ({ dia: h.dia, hora: h.hora, unidade: h.unidade }));
+    const coberturas: CoberturaDoTurno[] = [];
+    for (const h of oferecidos.filter((o) => situacaoDe(o.codigo) === "livre")) {
+      coberturas.push(...coberturaDoVinculo(h.serviceLinkId));
+    }
+    const reservaViva = r !== null && r.viva === true;
+    if (reservaViva && r !== null) {
+      livres.push({ dia: r.dia, hora: r.hora, unidade: r.unidade });
+      coberturas.push(...coberturaDoVinculo(reserva?.leitura?.serviceLinkId ?? null));
+    }
+    const fatos: FatosDaFerramenta = {
+      ...(livres.length > 0 ? { horarios: livres } : {}),
+      ...(coberturas.length > 0 ? { coberturas } : {}),
+      // A reserva viva, lida agora, e reserva feita (nesta conversa).
+      ...(reservaViva ? { acao: "reservou" as const } : {}),
+      ...(consultaLida === null ? {} : { consultaLida: true }),
+    };
+    return {
+      saida: JSON.stringify({
+        resultado: "atendimento_em_andamento",
+        horarios_oferecidos: oferecidos.map((h) => ({
+          codigo: h.codigo,
+          dia: h.dia,
+          hora: h.hora,
+          profissional: h.profissional,
+          procedimento: h.procedimento,
+          unidade: h.unidade,
+        })),
+        ...(r === null
+          ? {}
+          : {
+              horario_reservado: {
+                dia: r.dia,
+                hora: r.hora,
+                profissional: r.profissional,
+                procedimento: r.procedimento,
+                unidade: r.unidade,
+              },
+            }),
+        ...(consultaLida === null ? {} : { consulta_marcada: consultaLida }),
+      }),
+      fatos,
+    };
+  }
+
+  function falhasDepois(): number {
+    return falhasDepoisDoTurno(estado.falhas_seguidas, resultados);
+  }
+
+  function fechar(fim: {
+    mensagemFinal: string | null;
+    passou: boolean;
+  }): FechamentoDoTurno {
+    const final = copiarEstado(estado);
+    final.falhas_seguidas = falhasDepois();
+    if (fim.passou) {
+      final.desfecho = "passou_para_equipe";
+    }
+    if (final.etapa !== "pos_marcacao" || consultaDoTurno === null) {
+      const reservaViva = reserva !== null && reserva.viva === true;
+      if (final.slot_hold_id !== null && reserva !== null && reserva.viva === false) {
+        // A reserva venceu: o estado nao guarda reserva morta.
+        final.slot_hold_id = null;
+      }
+      if (
+        !fim.passou &&
+        reservaViva &&
+        dados.faltam.length === 0 &&
+        fim.mensagemFinal !== null &&
+        perguntaSeConfirma(fim.mensagemFinal)
+      ) {
+        final.etapa = "aguardando_confirmacao";
+      } else if (final.etapa !== "pos_marcacao") {
+        if (final.horarios_oferecidos.length > 0 || reservaViva) {
+          final.etapa = "oferta";
+        } else if (final.intencao === "agendar") {
+          final.etapa = "escolha";
+        }
+      }
+    }
+    return {
+      estado: final,
+      dados: { ...dados, faltam: [...dados.faltam] },
+    };
+  }
+
+  function nota(motivo: string): string | null {
+    if (!comEstado) {
+      return null;
+    }
+    const procedimento = procedimentoDe(estado.procedure_id ?? undefined);
+    const profissional = (catalogo.profissionais ?? []).find(
+      (p) => p.id === estado.professional_id,
+    );
+    const unidade =
+      estado.unit_id === null
+        ? null
+        : ((catalogo.unidades ?? []).find((u) => u.id === estado.unit_id) ?? null);
+    const pagamento =
+      estado.particular === true
+        ? "particular"
+        : estado.insurance_id !== null
+          ? (() => {
+              const c = convenioDe(estado.insurance_id);
+              return c === undefined ? null : nomeDoConvenio(c);
+            })()
+          : null;
+    const r = reservaLegivel();
+    const ultimo = [...resultados].reverse().find((c) => PAROU_EM[c] !== undefined);
+    return notaDaPassagem({
+      estado,
+      dados,
+      procedimento: procedimento?.nome ?? null,
+      profissional: profissional?.nome ?? null,
+      pagamento,
+      unidade: unidade?.nome ?? null,
+      preferencia: ultimaPreferencia,
+      reserva: r === null ? null : { ...r, viva: r.viva },
+      oferecidos: [...horarios.values()]
+        .filter((h) => estado.horarios_oferecidos.some((e) => e.codigo === h.codigo))
+        .map(legivel),
+      parouEm: ultimo === undefined ? motivo : (PAROU_EM[ultimo] ?? motivo),
+    });
+  }
+
   return {
     executar: (nome, argumentos) => {
       switch (nome) {
@@ -526,7 +1631,18 @@ export function criarAgendaDoTurno(entrada: {
           return agendar(argumentos);
         case "confirmar_presenca":
           return confirmar(argumentos);
+        case "registrar_dados_do_paciente":
+          return registrar(argumentos);
+        case "consultar_cadastro_do_contato":
+          return consultarCadastro(argumentos);
       }
     },
+    preparar,
+    paraOModelo,
+    fatosDoEstado,
+    resultados: () => [...resultados],
+    falhasDepois,
+    fechar,
+    nota,
   };
 }

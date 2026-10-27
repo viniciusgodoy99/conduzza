@@ -161,7 +161,7 @@ const BUSCA = {
 };
 
 const RESERVEI =
-  "Reservei terça, 20/10 às 11:15 com a Dra. Ana Lima para a Consulta. Posso confirmar?";
+  "Reservei terça, 20/10 às 11:30 com a Dra. Ana Lima para a Consulta. Posso confirmar?";
 
 let banco: AgendaEmMemoria;
 
@@ -275,8 +275,10 @@ describe("o laço com as ferramentas de agenda", () => {
         "consultar_requisitos",
         "buscar_profissionais",
         "buscar_procedimento",
+        "consultar_cadastro_do_contato",
         "buscar_horario",
         "reservar_horario",
+        "registrar_dados_do_paciente",
         "agendar",
         "confirmar_presenca",
         "escalar_humano",
@@ -291,7 +293,7 @@ describe("o laço com as ferramentas de agenda", () => {
     });
     expect(saidasDasFerramentas(corpos[2])[1]).toMatchObject({
       resultado: "reservado",
-      hora: "11:15",
+      hora: "11:30",
     });
     expect(banco.chamadasDe("reservar_horario_da_ia")).toHaveLength(1);
     expect(r.trilha.filter((p) => p.tipo === "agenda")).toHaveLength(2);
@@ -394,7 +396,7 @@ describe("rodadas, liberação e falha fechada", () => {
     );
     const { cliente, create } = clienteComRoteiro([
       ...cinco,
-      final("Tenho terça, 20/10 às 11:15 com a Dra. Ana Lima. Pode ser?"),
+      final("Tenho terça, 20/10 às 11:30 com a Dra. Ana Lima. Pode ser?"),
     ]);
     const r = await executarTurnoDoAgente(entrada({ cliente }));
     expect(create).toHaveBeenCalledTimes(6);
@@ -617,16 +619,16 @@ describe("custo máximo do turno com agenda", () => {
 describe("o texto de marcar e a passagem prometida (Q5)", () => {
   it("a forma que o texto fixo pede não vira passagem; prometer ação da equipe vira", async () => {
     const marcado =
-      "Pronto! Sua Consulta de terça, 20/10 às 11:15 com a Dra. Ana Lima ficou marcada. Ela fica pendente até a equipe aprovar, e a confirmação chega por aqui.";
+      "Pronto! Sua Consulta de terça, 20/10 às 11:30 com a Dra. Ana Lima ficou marcada. Ela fica pendente até a equipe aprovar, e a confirmação chega por aqui.";
     const pergunta =
-      "Reservei terça, 20/10 às 11:15 por 10 minutos. Confirma a Consulta com a Dra. Ana Lima nesse horário?";
+      "Reservei terça, 20/10 às 11:30 por 10 minutos. Confirma a Consulta com a Dra. Ana Lima nesse horário?";
     // AG2: o texto de marcar so sai no turno em que a ferramenta marcou ou
     // reservou (os fatos do turno); aqui, cada um com a sua ferramenta.
     banco.rpc("agendar_pela_ia", () => ({
       data: {
         ok: true,
         appointment_id: randomUUID(),
-        starts_at: iso("2026-10-20", "11:15"),
+        starts_at: iso("2026-10-20", "11:30"),
         ends_at: iso("2026-10-20", "11:45"),
         reutilizado: false,
         service_link_id: VINC.consultaAna,
@@ -660,7 +662,7 @@ describe("o texto de marcar e a passagem prometida (Q5)", () => {
     }
     for (const texto of [
       "Pronto, ficou marcada. A equipe vai confirmar por aqui.",
-      "Posso confirmar a Consulta com a Dra. Ana Lima na terça às 11:15?",
+      "Posso confirmar a Consulta com a Dra. Ana Lima na terça às 11:30?",
     ]) {
       const { cliente } = clienteComRoteiro([final(texto)]);
       const r = await executarTurnoDoAgente(entrada({ cliente }));

@@ -256,7 +256,7 @@ describe("o verificador recebe o resumo dos fatos do turno", () => {
     );
     expect(r.tipo).toBe("resposta");
     const texto = resumoRecebido();
-    expect(texto).toContain("- terça, 20/10 às 11:15");
+    expect(texto).toContain("- terça, 20/10 às 11:30");
     expect(texto).toContain("- quarta, 21/10 às 08:00");
     expect(texto).toContain(
       "Ações que as ferramentas fizeram com sucesso nesta resposta: nenhuma.",
@@ -466,10 +466,18 @@ describe("consultar_unidades: o bairro e a cidade em campos próprios", () => {
   });
 });
 
-describe("o prompt até a unidade do horário chegar", () => {
-  it("nunca diz em que unidade é um horário, e a versão mudou", () => {
+describe("o prompt com a unidade do horário (AG3)", () => {
+  it("a unidade de um horário é só a que veio nele, e a versão mudou", () => {
+    // AG3: a busca traz a unidade de cada horario; a linha provisoria
+    // ("Nunca diga em que unidade e um horario") saiu.
+    expect(TEXTO_FIXO_DO_AGENTE).not.toContain(
+      "Nunca diga em que unidade é um horário",
+    );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "Nunca diga em que unidade é um horário: a consulta de horários ainda não traz a unidade.",
+      "A unidade de um horário é só a que veio nele",
+    );
+    expect(TEXTO_FIXO_DO_AGENTE).toContain(
+      "nunca diga uma unidade que não veio no horário",
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
       'Se buscar_profissionais disser "so_com_a_equipe", não fale de convênio nem de quem faz esse procedimento',

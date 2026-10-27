@@ -689,10 +689,14 @@ const PESO_DA_FERRAMENTA: readonly string[] = [
   "agendar",
   "confirmar_presenca",
   "reservar_horario",
+  // AG3: os dados para marcar gravam (dados_informados_na_marcacao).
+  "registrar_dados_do_paciente",
   "escalar_humano",
   "fora_do_assunto",
   "sou_assistente_virtual",
   "buscar_horario",
+  // AG3: so sinais do cadastro da pessoa.
+  "consultar_cadastro_do_contato",
   "buscar_procedimento",
   "buscar_profissionais",
   "consultar_requisitos",
@@ -838,6 +842,55 @@ export async function gravarDecisao(
     throw new ErroComCodigoDeJob("decisao_nao_gravada");
   }
   return id;
+}
+
+/**
+ * AG3 (item 8): a nota interna da passagem, pelo MESMO caminho da nota da
+ * automacao (motor_automacoes, acao nota_interna): message com
+ * is_internal_note, autor 'sistema', saida, texto, sem cobranca e SEM job_id
+ * (a guarda de message so deixa o job da IA gravar a resposta aprovada ou a
+ * frase fixa). O texto vem so do estado e do Cadastro (notaDaPassagem), nunca
+ * do modelo nem do paciente. Nunca lanca: e ajuda para a equipe, a passagem
+ * ja aconteceu.
+ */
+export async function anotarPassagemParaAEquipe(
+  admin: SupabaseClient,
+  e: { clinicId: string; conversationId: string; jobId: string; texto: string },
+): Promise<boolean> {
+  if (e.texto.trim() === "") {
+    return false;
+  }
+  try {
+    const { error } = await admin.from("message").insert({
+      clinic_id: e.clinicId,
+      conversation_id: e.conversationId,
+      direction: "saida",
+      author: "sistema",
+      content_type: "texto",
+      body: e.texto,
+      is_internal_note: true,
+      billable: false,
+      cost_cents: 0,
+    });
+    if (error) {
+      log.warn("ia_nota_da_passagem_nao_gravada", {
+        clinic_id: e.clinicId,
+        conversation_id: e.conversationId,
+        job_id: e.jobId,
+        error_code: (error as { code?: string }).code ?? null,
+      });
+      return false;
+    }
+    return true;
+  } catch {
+    log.warn("ia_nota_da_passagem_nao_gravada", {
+      clinic_id: e.clinicId,
+      conversation_id: e.conversationId,
+      job_id: e.jobId,
+      error_code: "excecao",
+    });
+    return false;
+  }
 }
 
 /** Liga a decisao a mensagem enviada. Nunca lanca. */

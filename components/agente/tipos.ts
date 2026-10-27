@@ -131,5 +131,11 @@ export type ResultadoDaSimulacao =
       rascunhoBloqueado: string | null;
       /** A assinatura desta resposta (lib/agente/assinatura, no servidor). */
       assinatura: string;
+      /**
+       * AG3: o estado do atendimento simulado (assinado pelo servidor), que
+       * a tela manda de volta no proximo pedido. Opcional so para os dubles
+       * dos testes de tela.
+       */
+      estado?: string | null;
     }
   | { ok: false; erro: string };

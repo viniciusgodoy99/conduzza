@@ -22,6 +22,26 @@ export type ManipuladorDeRpc = (
   args: Record<string, unknown>,
 ) => Resposta | Promise<Resposta>;
 
+/** O estado vazio do atendimento (ia_estado_do_atendimento com linha nula). */
+export function estadoVazioDoBanco(): Linha {
+  return {
+    etapa: "informacao",
+    intencao: null,
+    procedure_id: null,
+    professional_id: null,
+    insurance_id: null,
+    particular: null,
+    unit_id: null,
+    horarios_oferecidos: [],
+    slot_hold_id: null,
+    appointment_id: null,
+    pedido_pendente: null,
+    pedido_pendente_em: null,
+    falhas_seguidas: 0,
+    desfecho: null,
+  };
+}
+
 export class BancoEmMemoria {
   readonly tabelas = new Map<string, Linha[]>();
   readonly manipuladores = new Map<string, ManipuladorDeRpc>([
@@ -30,7 +50,102 @@ export class BancoEmMemoria {
     // (leitura_falhou) com qualquer outra resposta. Quem testa a suspensao
     // registra o proprio manipulador (banco.rpc).
     ["clinica_esta_suspensa", () => ({ data: false, error: null })],
+    // AG3: o estado do atendimento (o contrato de ler_atendimento_da_ia e
+    // gravar_atendimento_da_ia, simplificado: a conversa na IA, a versao
+    // otimista e a idempotencia por job). Quem testa a recusa registra o
+    // proprio manipulador.
+    ["ler_atendimento_da_ia", (args) => this.lerAtendimento(args)],
+    ["gravar_atendimento_da_ia", (args) => this.gravarAtendimento(args)],
   ]);
+
+  private conversaNaIa(args: Record<string, unknown>): boolean {
+    const conversa = this.linhas("conversation").find(
+      (c) => c.id === args.p_conversation_id && c.clinic_id === args.p_clinic_id,
+    );
+    return (
+      conversa !== undefined &&
+      conversa.status === "ia_atendendo" &&
+      (conversa.assignee_user_id ?? null) === null
+    );
+  }
+
+  private lerAtendimento(args: Record<string, unknown>): Resposta {
+    if (!this.conversaNaIa(args)) {
+      return { data: { ok: false, motivo: "fora_da_ia" }, error: null };
+    }
+    const linha = this.linhas("ia_atendimento").find(
+      (l) => l.conversation_id === args.p_conversation_id,
+    );
+    let estado = estadoVazioDoBanco();
+    let versao = 0;
+    if (linha !== undefined && linha.job_id === args.p_job_id) {
+      estado = (linha.anterior as Linha | null) ?? estadoVazioDoBanco();
+      versao = Number(linha.versao) - 1;
+    } else if (linha !== undefined) {
+      estado = linha.estado as Linha;
+      versao = Number(linha.versao);
+    }
+    return {
+      data: {
+        ok: true,
+        versao,
+        janela_desde: "2026-10-13T14:58:00+00:00",
+        estado: structuredClone(estado),
+        dados: {
+          nome_completo: false,
+          data_nascimento: false,
+          cpf: false,
+          carteirinha: false,
+          para_o_titular: null,
+          faltam: [],
+        },
+      },
+      error: null,
+    };
+  }
+
+  private gravarAtendimento(args: Record<string, unknown>): Resposta {
+    if (!this.conversaNaIa(args)) {
+      return { data: { ok: false, motivo: "fora_da_ia" }, error: null };
+    }
+    const linhas = this.linhas("ia_atendimento");
+    const linha = linhas.find((l) => l.conversation_id === args.p_conversation_id);
+    const estado = structuredClone(args.p_estado) as Linha;
+    if (linha === undefined) {
+      if (args.p_versao !== 0) {
+        return { data: { ok: false, motivo: "estado_mudou" }, error: null };
+      }
+      linhas.push({
+        conversation_id: args.p_conversation_id,
+        job_id: args.p_job_id,
+        versao: 1,
+        estado,
+        anterior: null,
+      });
+      return { data: { ok: true, versao: 1, reutilizado: false }, error: null };
+    }
+    if (linha.job_id === args.p_job_id) {
+      if (args.p_versao !== Number(linha.versao) - 1) {
+        return { data: { ok: false, motivo: "estado_mudou" }, error: null };
+      }
+      linha.estado = estado;
+      return {
+        data: { ok: true, versao: linha.versao, reutilizado: true },
+        error: null,
+      };
+    }
+    if (args.p_versao !== linha.versao) {
+      return { data: { ok: false, motivo: "estado_mudou" }, error: null };
+    }
+    linha.anterior = linha.estado;
+    linha.estado = estado;
+    linha.job_id = args.p_job_id;
+    linha.versao = Number(linha.versao) + 1;
+    return {
+      data: { ok: true, versao: linha.versao, reutilizado: false },
+      error: null,
+    };
+  }
   readonly chamadas: { nome: string; args: Record<string, unknown> }[] = [];
   /** Cada operacao em tabela: [tabela, operacao, valores]. */
   readonly operacoes: {

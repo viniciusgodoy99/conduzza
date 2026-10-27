@@ -47,6 +47,7 @@ import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
 import { problemaNoTextoDoAgente } from "@/lib/domain/agente/config";
+import { ehGrade } from "@/lib/domain/cadastro-para-o-agente";
 import {
   CATEGORIAS_CLINICAS,
   type CategoriaDeConformidade,
@@ -141,12 +142,25 @@ export type ProfissionalDoCatalogo = {
   /** AG2: a idade atendida (professional.idade_minima e idade_maxima). */
   idadeMinima?: number | null;
   idadeMaxima?: number | null;
+  /**
+   * AG3: professional.grade_minutos (5, 10, 15, 20, 30, 45 ou 60), o
+   * intervalo entre os inicios de consulta. Ausente: sem grade (a busca de
+   * horario usa a duracao do vinculo).
+   */
+  gradeMinutos?: number;
 };
 
 export type ConvenioDoAgente = {
   id: string;
   nome: string;
   plano: string | null;
+  /**
+   * AG3: insurance.requires_card ("Carteirinha obrigatoria" no Cadastro de
+   * convenios). So presente quando verdadeiro: a consulta da IA por este
+   * convenio pede a carteirinha (dados_que_faltam_para_marcar). Nunca vai ao
+   * modelo como campo do convenio.
+   */
+  exigeCarteirinha?: true;
 };
 
 /**
@@ -345,12 +359,16 @@ export type LinhasDoCatalogo = {
     /** AG2: a idade atendida (0 a 120; nulo = sem limite). */
     idade_minima?: number | null;
     idade_maxima?: number | null;
+    /** AG3: a grade de horarios (5 a 60 minutos; nulo = sem grade). */
+    grade_minutos?: number | null;
   }[];
   convenios: readonly {
     id: string;
     name: string;
     plan_name: string | null;
     active: boolean;
+    /** AG3: "Carteirinha obrigatoria" (insurance.requires_card). */
+    requires_card?: boolean | null;
   }[];
   /** A linha da clinica (so o nome). Ausente: o agente atende sem o nome. */
   clinica?: { name: string | null } | null;
@@ -513,12 +531,14 @@ function cadastroAtivo(
   const convenios = new Map(
     linhas.convenios
       .filter((c) => c.active && c.name.trim() !== "")
-      .map((c) => [
+      .map((c): [string, ConvenioDoAgente] => [
         c.id,
         {
           id: c.id,
           nome: c.name.trim(),
           plano: c.plan_name?.trim() ? c.plan_name.trim() : null,
+          // AG3: so quando verdadeiro (o catalogo montado a mao nao muda).
+          ...(c.requires_card === true ? { exigeCarteirinha: true as const } : {}),
         },
       ]),
   );
@@ -551,6 +571,11 @@ export function idsDoIndice(
   return new Set(
     cadastroAtivo(linhas).vinculosDoAgente.map((v) => v.procedure_id),
   );
+}
+
+/** AG3: a grade do profissional (o CHECK do banco) ou nulo. */
+function gradeValida(valor: unknown): number | null {
+  return ehGrade(valor) ? valor : null;
 }
 
 /**
@@ -703,12 +728,14 @@ export function montarCatalogoDoAgente(
       especialidadesDescartadas += descartadas;
       const idadeMinima = idadeValida(p.idade_minima);
       const idadeMaxima = idadeValida(p.idade_maxima);
+      const gradeMinutos = gradeValida(p.grade_minutos);
       return {
         id: p.id,
         nome: p.name.trim(),
         especialidades,
         ...(idadeMinima === null ? {} : { idadeMinima }),
         ...(idadeMaxima === null ? {} : { idadeMaxima }),
+        ...(gradeMinutos === null ? {} : { gradeMinutos }),
       };
     })
     .sort(porNome);
@@ -976,7 +1003,7 @@ function valorEmReais(centavos: number): string {
   return formatarCentavos(centavos).replace(/\s/g, " ");
 }
 
-function nomeDoConvenio(convenio: ConvenioDoAgente): string {
+export function nomeDoConvenio(convenio: ConvenioDoAgente): string {
   return convenio.plano === null
     ? convenio.nome
     : `${convenio.nome} (${convenio.plano})`;

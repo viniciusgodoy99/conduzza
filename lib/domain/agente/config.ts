@@ -140,7 +140,11 @@ export const INSTRUCAO_DO_EMOJI = {
  * o texto e do dono (lib/agente/ferramentas/fora-do-assunto.ts). As tres
  * consultas do Cadastro (consultar_unidades, consultar_requisitos e
  * buscar_profissionais) entraram na AG2 (27/10/2026): so leem o Cadastro
- * (lib/agente/ferramentas/consultas-do-cadastro.ts).
+ * (lib/agente/ferramentas/consultas-do-cadastro.ts). AG3 (27/10/2026, o
+ * agendamento completo): consultar_cadastro_do_contato (so sinais do
+ * cadastro da pessoa) e registrar_dados_do_paciente (os dados para marcar;
+ * o CPF e a carteirinha o servidor le do texto original), na habilidade
+ * "Agendar consulta".
  */
 export const FERRAMENTAS_DO_AGENTE = [
   "fora_do_assunto",
@@ -149,8 +153,10 @@ export const FERRAMENTAS_DO_AGENTE = [
   "consultar_requisitos",
   "buscar_profissionais",
   "buscar_procedimento",
+  "consultar_cadastro_do_contato",
   "buscar_horario",
   "reservar_horario",
+  "registrar_dados_do_paciente",
   "agendar",
   "confirmar_presenca",
   "escalar_humano",
@@ -159,14 +165,18 @@ export type FerramentaDoAgente = (typeof FERRAMENTAS_DO_AGENTE)[number];
 
 /**
  * As ferramentas de agenda: gravam (reservar_horario, agendar,
- * confirmar_presenca) ou leem a Agenda (buscar_horario). O laco da mais
- * rodadas ao turno que usa uma delas.
+ * confirmar_presenca e, desde a AG3, registrar_dados_do_paciente) ou leem
+ * pelo servidor (buscar_horario e, desde a AG3,
+ * consultar_cadastro_do_contato), pela porta da agenda do turno. O laco da
+ * mais rodadas ao turno que usa uma delas.
  */
 export const FERRAMENTAS_DE_AGENDA = [
   "buscar_horario",
   "reservar_horario",
   "agendar",
   "confirmar_presenca",
+  "registrar_dados_do_paciente",
+  "consultar_cadastro_do_contato",
 ] as const satisfies readonly FerramentaDoAgente[];
 export type FerramentaDeAgenda = (typeof FERRAMENTAS_DE_AGENDA)[number];
 
@@ -262,7 +272,14 @@ export const HABILIDADES_DO_AGENTE = [
     descricao:
       "Oferece horários livres da Agenda e marca a consulta, que fica pendente até a equipe aprovar.",
     travada: false,
-    ferramentas: ["buscar_horario", "reservar_horario", "agendar"],
+    // AG3: o cadastro da pessoa (so sinais) e os dados para marcar.
+    ferramentas: [
+      "consultar_cadastro_do_contato",
+      "buscar_horario",
+      "reservar_horario",
+      "registrar_dados_do_paciente",
+      "agendar",
+    ],
     padrao: false,
     precisaDaAgenda: true,
   },

@@ -36,9 +36,16 @@ type Cliente = SupabaseClient;
  * 20261022110000: este codigo so vai ao ar com ela aplicada (antes, o
  * PostgREST devolve 42703 e a IA das clinicas para de responder, a licao da
  * E4).
+ *
+ * AG3 (27/10/2026): exige_nome_completo, exige_nascimento e exige_cpf (os
+ * dados que a IA pede para marcar, D-6). Sem eles no select, o motor e o
+ * simulador liam falso (dadosExigidosDoBanco) e publicar so essa mudanca
+ * dizia "Não há alterações". Existem so DEPOIS da migration
+ * 20261027120000_agendamento_completo_da_ia.sql: este codigo vai ao ar com
+ * ela aplicada (a mesma licao).
  */
 const COLUNAS_DA_CONFIG =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, instrucoes, conhecimento, updated_at";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, instrucoes, conhecimento, updated_at";
 
 type LinhaDoMotor = LinhaDaConfigDoAgente & {
   id: string;
@@ -442,11 +449,14 @@ export async function carregarCatalogoDoAgente(
         .range(de, ate),
     ),
     // Onda 2 (item 6): as especialidades vao ao bloco <profissionais>,
-    // saneadas (especialidadesParaOAgente). AG2: e a idade atendida.
+    // saneadas (especialidadesParaOAgente). AG2: e a idade atendida. AG3: e
+    // a grade (os inicios que a busca de horario oferece).
     todasAsPaginas<LinhasDoCatalogo["profissionais"][number]>((de, ate) =>
       admin
         .from("professional")
-        .select("id, name, active, specialties, idade_minima, idade_maxima")
+        .select(
+          "id, name, active, specialties, idade_minima, idade_maxima, grade_minutos",
+        )
         .eq("clinic_id", clinicId)
         .eq("active", true)
         .order("id", { ascending: true })
@@ -455,7 +465,7 @@ export async function carregarCatalogoDoAgente(
     todasAsPaginas<LinhasDoCatalogo["convenios"][number]>((de, ate) =>
       admin
         .from("insurance")
-        .select("id, name, plan_name, active")
+        .select("id, name, plan_name, active, requires_card")
         .eq("clinic_id", clinicId)
         .eq("active", true)
         .order("id", { ascending: true })

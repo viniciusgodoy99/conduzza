@@ -892,7 +892,10 @@ describe("revisão: texto descartado na trilha só do super admin (achados 24 e 
 });
 
 describe("E4: agenda no simulador (resposta simulada, nada gravado)", () => {
-  it("com Agendar consulta ligada, marcar devolve a resposta simulada sem RPC nem escrita", async () => {
+  // AG3: marcar so depois da pergunta "Confirma ...?" de uma resposta
+  // anterior, com o horario reservado (o fluxo inteiro no simulador esta em
+  // motor-ag3-simulador.test.ts). Sem ela, o agendar nem chega a porta.
+  it("com Agendar consulta ligada, marcar sem a pergunta Confirma não marca, sem RPC nem escrita", async () => {
     configDoRascunho = {
       ...configPadraoDoAgente(),
       habilidades: {
@@ -933,7 +936,7 @@ describe("E4: agenda no simulador (resposta simulada, nada gravado)", () => {
                 type: "output_text",
                 text: JSON.stringify({
                   mensagem:
-                    "Pronto, sua consulta ficou marcada. A equipe confirma por aqui.",
+                    "Para marcar, me diga qual procedimento você quer e o período que prefere.",
                   encerra_a_conversa: false,
                   perguntas_da_base: [],
                 }),
@@ -967,9 +970,11 @@ describe("E4: agenda no simulador (resposta simulada, nada gravado)", () => {
     expect(corpo.tools.map((t) => t.name)).toContain("agendar");
     if (r.ok) {
       expect(r.trilha.some((p) => p.tipo === "agenda")).toBe(true);
-      expect(r.trilha.map((p) => p.texto).join(" ")).toContain(
-        "No simulador, nada foi gravado.",
+      expect(r.trilha.map((p) => p.texto)).toContain(
+        "Tentou marcar a consulta: o paciente ainda não confirmou numa mensagem nova",
       );
+      // O estado simulado volta assinado para a tela (nada gravado).
+      expect(r.estado).toMatch(/^e1\./);
     }
     // Nenhuma RPC da agenda e nenhuma escrita: so as travas e o gasto.
     expect(

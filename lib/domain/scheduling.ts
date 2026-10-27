@@ -41,6 +41,14 @@ export type EntradaDisponibilidade = {
   resourceBusy?: IntervaloOcupado[];
   /** grade de inicio dos slots; default 15 min, alinhada ao relogio local */
   gridMin?: number;
+  /**
+   * AG3 (agenda da IA): a grade parte do INICIO de cada faixa de jornada
+   * (as faixas encostadas viram uma so, que parte da primeira), e nao da
+   * meia-noite local. Com grade de 45 minutos e jornada das 08:00, os inicios
+   * sao 08:00, 08:45, 09:30... (pela meia-noite seriam 08:15, 09:00...).
+   * Ausente ou falso: como sempre (a Agenda e o modal nao mudam).
+   */
+  ancorarNaJornada?: boolean;
   /** nada no passado; o chamador passa o agora (testavel) */
   now: Date;
 };
@@ -48,6 +56,13 @@ export type EntradaDisponibilidade = {
 export type SlotLivre = { startsAt: Date; endsAt: Date };
 
 type Intervalo = { inicio: number; fim: number }; // epoch ms
+
+/**
+ * Uma janela de jornada materializada: o intervalo (recortado no range) e a
+ * ancora da grade (o inicio da faixa ANTES do recorte; nas encostadas, o da
+ * primeira).
+ */
+type JanelaDeJornada = Intervalo & { ancora: number };
 
 function paraIntervalos(ocupados: IntervaloOcupado[]): Intervalo[] {
   return ocupados
@@ -103,8 +118,10 @@ function subtrair(janela: Intervalo, ocupados: Intervalo[]): Intervalo[] {
  * Cada dia civil do range (mais a vespera, por causa de janela que vira o
  * dia) contribui com as faixas do seu weekday.
  */
-function materializarJornada(input: EntradaDisponibilidade): Intervalo[] {
-  const janelas: Intervalo[] = [];
+function materializarJornada(
+  input: EntradaDisponibilidade,
+): JanelaDeJornada[] {
+  const janelas: JanelaDeJornada[] = [];
   const rangeInicio = input.rangeStart.getTime();
   const rangeFim = input.rangeEnd.getTime();
 
@@ -131,11 +148,33 @@ function materializarJornada(input: EntradaDisponibilidade): Intervalo[] {
       const recortadoInicio = Math.max(inicio.getTime(), rangeInicio);
       const recortadoFim = Math.min(fim.getTime(), rangeFim);
       if (recortadoFim > recortadoInicio) {
-        janelas.push({ inicio: recortadoInicio, fim: recortadoFim });
+        janelas.push({
+          inicio: recortadoInicio,
+          fim: recortadoFim,
+          ancora: inicio.getTime(),
+        });
       }
     }
   }
-  return mesclar(janelas.sort((a, b) => a.inicio - b.inicio));
+  return mesclarJanelas(janelas.sort((a, b) => a.inicio - b.inicio));
+}
+
+/**
+ * Une as janelas sobrepostas ou encostadas (como `mesclar`), guardando a
+ * ancora da primeira de cada grupo (a menor).
+ */
+function mesclarJanelas(janelas: JanelaDeJornada[]): JanelaDeJornada[] {
+  const resultado: JanelaDeJornada[] = [];
+  for (const atual of janelas) {
+    const ultimo = resultado[resultado.length - 1];
+    if (ultimo && atual.inicio <= ultimo.fim) {
+      ultimo.fim = Math.max(ultimo.fim, atual.fim);
+      ultimo.ancora = Math.min(ultimo.ancora, atual.ancora);
+    } else {
+      resultado.push({ ...atual });
+    }
+  }
+  return resultado;
 }
 
 /**
@@ -161,13 +200,21 @@ export function availableSlots(input: EntradaDisponibilidade): SlotLivre[] {
   const slots: SlotLivre[] = [];
   for (const janela of materializarJornada(input)) {
     for (const livre of subtrair(janela, ocupados)) {
-      // Alinha o primeiro inicio possivel a grade LOCAL: minutos locais
-      // arredondados para cima ao multiplo da grade.
       let inicio = livre.inicio;
-      const desalinho =
-        minutosLocais(input.timezone, new Date(inicio)) % gridMin;
-      if (desalinho !== 0) {
-        inicio += (gridMin - desalinho) * 60_000;
+      if (input.ancorarNaJornada === true) {
+        // AG3: a grade parte do inicio da faixa (antes do recorte no range).
+        const desalinho = (((inicio - janela.ancora) % gridMs) + gridMs) % gridMs;
+        if (desalinho !== 0) {
+          inicio += gridMs - desalinho;
+        }
+      } else {
+        // Alinha o primeiro inicio possivel a grade LOCAL: minutos locais
+        // arredondados para cima ao multiplo da grade.
+        const desalinho =
+          minutosLocais(input.timezone, new Date(inicio)) % gridMin;
+        if (desalinho !== 0) {
+          inicio += (gridMin - desalinho) * 60_000;
+        }
       }
       // Nada no passado: proximo ponto de grade a partir de agora.
       if (inicio < agora) {

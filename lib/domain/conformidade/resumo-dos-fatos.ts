@@ -17,7 +17,8 @@
 //  - as acoes e a consulta lida (listas fechadas, viram rotulos fixos);
 //  - os horarios livres da agenda, conferidos no formato exato que
 //    buscar_horario e reservar_horario escrevem ("terca, 21/10" e "14:00").
-//    Outro formato: o resumo nao monta;
+//    Outro formato: o resumo nao monta. AG3 (27/10/2026): com a unidade do
+//    horario (nome do Cadastro), quando ele tem uma;
 //  - as coberturas, com o convenio, o plano e o procedimento conferidos no
 //    Cadastro do turno (fora dele: o resumo nao monta);
 //  - se o Cadastro nao tem convenio ativo;
@@ -230,7 +231,12 @@ export function resumirFatosDoTurno(
     if (!DIA_DO_HORARIO.test(livre.dia) || !HORA_DO_HORARIO.test(livre.hora)) {
       return { ok: false, motivo: "horario_fora_do_formato" };
     }
-    horarios.push(`${livre.dia} às ${livre.hora}`);
+    // AG3: a unidade do horario (nome do Cadastro), quando ele tem uma.
+    const unidade =
+      typeof livre.unidade === "string" && numaLinha(livre.unidade) !== ""
+        ? `, unidade ${numaLinha(livre.unidade)}`
+        : "";
+    horarios.push(`${livre.dia} às ${livre.hora}${unidade}`);
   }
 
   // As coberturas, com o convenio e o procedimento do Cadastro.
@@ -338,4 +344,6 @@ export const FONTES_DO_RESUMO: readonly string[] = [
   JSON.stringify(ROTULO_DA_ACAO),
   JSON.stringify(ROTULO_DO_ESTADO),
   "resumo: unidades e requisitos so do Cadastro; agenda so pelos horarios livres e acoes",
+  // AG3: a unidade de cada horario livre.
+  "resumo: horario livre com a unidade quando tem",
 ];

@@ -233,7 +233,7 @@ describe("data e hora no turno", () => {
   it("com buscar_horario no turno, o mesmo horário passa em outro formato", async () => {
     const r = await turno([
       ferramenta("buscar_horario", BUSCA_DE_MANHA),
-      final("Tenho terça, 20/10 às 11h15 com a Dra. Ana Lima. Pode ser?"),
+      final("Tenho terça, 20/10 às 11h30 com a Dra. Ana Lima. Pode ser?"),
     ]);
     expect(r.tipo).toBe("resposta");
     expect(verificador).toHaveBeenCalledTimes(1);
@@ -444,7 +444,7 @@ describe("ação de agenda no turno", () => {
       ferramenta("buscar_horario", BUSCA_DE_MANHA),
       ferramenta("reservar_horario", { horario: "h1" }),
       final(
-        "Reservei terça, 20/10 às 11:15 por 10 minutos. Confirma a Consulta com a Dra. Ana Lima?",
+        "Reservei terça, 20/10 às 11:30 por 10 minutos. Confirma a Consulta com a Dra. Ana Lima?",
       ),
     ]);
     expect(r.tipo).toBe("resposta");

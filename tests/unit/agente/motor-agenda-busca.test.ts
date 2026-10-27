@@ -50,9 +50,11 @@ import {
 // buscar_horario (E4) de ponta a ponta sobre um banco em memoria: o
 // carregador (lib/agente/agenda.ts) le jornada, bloqueio, consulta, reserva
 // viva de outra conversa e recurso, sempre com o clinic_id e sem nenhuma
-// coluna de paciente; a busca (ferramentas/buscar-horario.ts) escolhe os 3
-// primeiros horarios livres no fuso da clinica, da antecedencia ao
-// horizonte. Nenhum teste fala com o banco nem com a OpenAI.
+// coluna de paciente; a busca (ferramentas/buscar-horario.ts) escolhe os
+// horarios livres no fuso da clinica, da antecedencia ao horizonte. AG3: na
+// grade da duracao (ou do profissional) contada do inicio da jornada e
+// ESPALHADOS (o primeiro de cada periodo de cada dia, ate 4), ou pela hora
+// pedida. Nenhum teste fala com o banco nem com a OpenAI.
 
 const CATALOGO = catalogoDaAgenda();
 const P_CONSULTA = codigoDoProcedimento(CATALOGO, PROC.consulta);
@@ -67,6 +69,8 @@ type Pedido = {
   convenio?: string | null;
   a_partir_de?: string | null;
   periodo?: "manha" | "tarde" | "noite" | null;
+  unidade?: string | null;
+  hora?: string | null;
 };
 
 function argumentos(pedido: Pedido = {}) {
@@ -76,6 +80,8 @@ function argumentos(pedido: Pedido = {}) {
     convenio: pedido.convenio ?? null,
     a_partir_de: pedido.a_partir_de ?? null,
     periodo: pedido.periodo ?? null,
+    unidade: pedido.unidade ?? null,
+    hora: pedido.hora ?? null,
   };
 }
 
@@ -232,29 +238,38 @@ describe("carregador: só horários, sempre com a clínica", () => {
       status: "agendado",
     });
     const r = await buscar({ profissional: R_ANA });
-    expect(horas(r)[0]).toBe("terça, 20/10 11:15 Dra. Ana Lima");
+    expect(horas(r)[0]).toBe("terça, 20/10 11:30 Dra. Ana Lima");
   });
 });
 
-describe("buscar_horario: os 3 primeiros horários livres", () => {
-  it("da antecedência em diante, em ordem de tempo, com códigos h1, h2, h3", async () => {
+describe("buscar_horario: os horários livres, espalhados", () => {
+  it("da antecedência em diante, o primeiro de cada período de cada dia, com códigos h1 a h4", async () => {
     const r = await buscar();
     expect(r.resultado).toBe("horarios");
-    // Agora 09:00; antecedencia de 2 h e a folga de 5 min: 11:05, grade de
-    // 15 min. A Dra. Ana fecha a manha as 12:00; o Dr. Bruno abre as 13:00.
+    // Agora 09:00; antecedencia de 2 h e a folga de 12 min: 11:12, grade de
+    // 30 min (a duracao) desde as 08:00. A Dra. Ana fecha a manha as 12:00;
+    // o Dr. Bruno abre as 13:00. AG3: um por periodo de cada dia.
     expect(horas(r)).toEqual([
-      "terça, 20/10 11:15 Dra. Ana Lima",
       "terça, 20/10 11:30 Dra. Ana Lima",
       "terça, 20/10 13:00 Dr. Bruno Costa",
+      "quarta, 21/10 08:00 Dra. Ana Lima",
+      "quarta, 21/10 14:00 Dra. Ana Lima",
     ]);
-    expect(r.json.horarios?.map((h) => h.codigo)).toEqual(["h1", "h2", "h3"]);
+    expect(r.json.horarios?.map((h) => h.codigo)).toEqual([
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+    ]);
     expect(r.json.horarios?.[0]).toEqual({
       codigo: "h1",
       dia: "terça, 20/10",
-      hora: "11:15",
+      hora: "11:30",
       profissional: "Dra. Ana Lima",
       procedimento: "Consulta",
       duracao_min: 30,
+      // Sem unidade cadastrada: o horario vai sem unidade.
+      unidade: null,
     });
     expect(r.json.convenio).toBe("particular");
     // Nada de id no que vai ao modelo.
@@ -297,8 +312,9 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
     const tarde = await buscar({ periodo: "tarde" });
     expect(horas(tarde)).toEqual([
       "terça, 20/10 13:00 Dr. Bruno Costa",
-      "terça, 20/10 13:15 Dr. Bruno Costa",
-      "terça, 20/10 13:30 Dr. Bruno Costa",
+      "quarta, 21/10 14:00 Dra. Ana Lima",
+      "quinta, 22/10 13:00 Dr. Bruno Costa",
+      "sexta, 23/10 14:00 Dra. Ana Lima",
     ]);
     // O Dr. Bruno so atende terca e quinta: a partir de quarta, quinta.
     const bruno = await buscar({
@@ -386,11 +402,39 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
       },
     );
     const r = await buscar({ profissional: R_ANA });
-    expect(horas(r)).toEqual([
+    // A manha de terca (11:30) esta bloqueada; a tarde comeca as 15:00.
+    expect(horas(r)[0]).toBe("terça, 20/10 15:00 Dra. Ana Lima");
+    // AG3: a hora pedida diz o que ocupa: as 14:00 (encaixe) e as 14:30
+    // (reserva de outra conversa) nao estao livres; as 15:30 (reserva
+    // vencida) e as 16:00 (reserva consumida), sim.
+    const encaixe = await buscar({
+      profissional: R_ANA,
+      a_partir_de: "2026-10-20",
+      hora: "14:00",
+    });
+    expect(encaixe.resultado).toBe("hora_pedida_ocupada");
+    expect(horas(encaixe)).toEqual([
       "terça, 20/10 15:00 Dra. Ana Lima",
-      "terça, 20/10 15:15 Dra. Ana Lima",
       "terça, 20/10 15:30 Dra. Ana Lima",
+      "terça, 20/10 16:00 Dra. Ana Lima",
     ]);
+    const outraConversa = await buscar({
+      profissional: R_ANA,
+      a_partir_de: "2026-10-20",
+      hora: "14:30",
+    });
+    expect(outraConversa.resultado).toBe("hora_pedida_ocupada");
+    for (const hora of ["15:00", "15:30", "16:00"]) {
+      const livre = await buscar({
+        profissional: R_ANA,
+        a_partir_de: "2026-10-20",
+        hora,
+      });
+      expect(livre.resultado, hora).toBe("hora_pedida_livre");
+      expect(horas(livre), hora).toEqual([
+        `terça, 20/10 ${hora} Dra. Ana Lima`,
+      ]);
+    }
   });
 
   it("recurso do procedimento ocupado por qualquer profissional", async () => {
@@ -404,12 +448,14 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
       status: "confirmado_paciente",
     });
     const r = await buscar({ procedimento: P_LIMPEZA });
-    // 60 min: a manha (11:15 + 60 > 12:00) nao cabe; a sala esta ocupada
-    // das 14:00 as 15:00.
+    // 60 min, grade de 60 desde o inicio da faixa: a manha (11:00 antes da
+    // antecedencia; 12:00 nao cabe) fica de fora; a sala esta ocupada das
+    // 14:00 as 15:00.
     expect(horas(r)).toEqual([
       "terça, 20/10 15:00 Dra. Ana Lima",
-      "terça, 20/10 15:15 Dra. Ana Lima",
-      "terça, 20/10 15:30 Dra. Ana Lima",
+      "quarta, 21/10 08:00 Dra. Ana Lima",
+      "quarta, 21/10 14:00 Dra. Ana Lima",
+      "quinta, 22/10 08:00 Dra. Ana Lima",
     ]);
     expect(r.json.horarios?.[0]?.duracao_min).toBe(60);
     expect(
@@ -452,11 +498,7 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
       { catalogo: comSalaDoBruno },
     );
     // A Dra. Ana estaria livre as 14:00; a sala esta reservada ate as 15:00.
-    expect(horas(ocupada)).toEqual([
-      "terça, 20/10 15:00 Dra. Ana Lima",
-      "terça, 20/10 15:15 Dra. Ana Lima",
-      "terça, 20/10 15:30 Dra. Ana Lima",
-    ]);
+    expect(horas(ocupada)[0]).toBe("terça, 20/10 15:00 Dra. Ana Lima");
     const daSala = banco.leituras.filter(
       (l) =>
         l.tabela === "slot_hold" && l.filtros.includes("in:service_link_id"),
@@ -481,7 +523,7 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
   it("no fuso da clínica, nunca em UTC", async () => {
     // As mesmas jornadas (hora local) em Manaus (UTC-4): agora sao 08:00.
     const r = await buscar({ profissional: R_ANA }, { fuso: "America/Manaus" });
-    expect(horas(r)[0]).toBe("terça, 20/10 10:15 Dra. Ana Lima");
+    expect(horas(r)[0]).toBe("terça, 20/10 10:30 Dra. Ana Lima");
     expect(fusoDaAgenda("Fuso/Inexistente")).toBe(FUSO);
     expect(diaEHora(new Date(iso("2027-01-05", "08:00")), FUSO, AGORA)).toEqual(
       { dia: "terça, 05/01/2027", hora: "08:00" },
@@ -493,12 +535,12 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
       { profissional: R_ANA },
       { agenda: { antecedenciaHoras: 0, horizonteDias: 14 } },
     );
-    expect(horas(semAntecedencia)[0]).toBe("terça, 20/10 09:15 Dra. Ana Lima");
+    expect(horas(semAntecedencia)[0]).toBe("terça, 20/10 09:30 Dra. Ana Lima");
     const umDia = await buscar(
       { profissional: R_ANA },
       { agenda: { antecedenciaHoras: 24, horizonteDias: 14 } },
     );
-    expect(horas(umDia)[0]).toBe("quarta, 21/10 09:15 Dra. Ana Lima");
+    expect(horas(umDia)[0]).toBe("quarta, 21/10 09:30 Dra. Ana Lima");
     // Horizonte de 1 dia com 24 h de antecedencia: nada cabe.
     const fechado = await buscar(
       { profissional: R_ANA },
@@ -515,10 +557,11 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
       { profissional: R_ANA, a_partir_de: "2026-11-03" },
       { agenda: { antecedenciaHoras: 0, horizonteDias: 14 } },
     );
+    // Um periodo so (a manha de 03/11 ate as 09:00): o primeiro e, com
+    // 1 hora de distancia, o das 09:00.
     expect(horas(ultimo)).toEqual([
       "terça, 03/11 08:00 Dra. Ana Lima",
-      "terça, 03/11 08:15 Dra. Ana Lima",
-      "terça, 03/11 08:30 Dra. Ana Lima",
+      "terça, 03/11 09:00 Dra. Ana Lima",
     ]);
     const passou = await buscar(
       { profissional: R_ANA, a_partir_de: "2026-11-03", periodo: "tarde" },
@@ -527,23 +570,23 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
     expect(passou.resultado).toBe("sem_horario");
   });
 
-  it("o horário oferecido volta na busca do dia e do período dele (o modelo reserva pelo código da própria resposta)", async () => {
+  it("o horário oferecido volta na busca do dia e do período dele", async () => {
     const primeira = await buscar();
-    const terceiro = primeira.json.horarios?.[2];
-    expect(terceiro?.profissional).toBe("Dr. Bruno Costa");
+    const segundo = primeira.json.horarios?.[1];
+    expect(segundo?.profissional).toBe("Dr. Bruno Costa");
     const deNovo = await buscar({
       profissional: R_BRUNO,
       a_partir_de: "2026-10-20",
       periodo: "tarde",
     });
     expect(deNovo.json.horarios?.[0]).toMatchObject({
-      dia: terceiro?.dia,
-      hora: terceiro?.hora,
-      profissional: terceiro?.profissional,
+      dia: segundo?.dia,
+      hora: segundo?.hora,
+      profissional: segundo?.profissional,
     });
   });
 
-  it("a segunda busca do turno continua a numeração (h4, h5...)", async () => {
+  it("a segunda busca do turno continua a numeração (h5, h6...)", async () => {
     const turno = criarAgendaDoTurno({
       porta: porta(),
       catalogo: CATALOGO,
@@ -560,7 +603,12 @@ describe("buscar_horario: os 3 primeiros horários livres", () => {
     const json = JSON.parse(
       segunda.tipo === "saida" ? segunda.saida : "{}",
     ) as { horarios: { codigo: string }[] };
-    expect(json.horarios.map((h) => h.codigo)).toEqual(["h4", "h5", "h6"]);
+    expect(json.horarios.map((h) => h.codigo)).toEqual([
+      "h5",
+      "h6",
+      "h7",
+      "h8",
+    ]);
   });
 });
 

@@ -9,6 +9,7 @@ import {
 } from "@/lib/agente/contexto";
 import type { PassoDoTurno } from "@/lib/agente/laco";
 import { agoraNaClinica, previaDoPrompt } from "@/lib/agente/prompt";
+import { TAMANHO_MAXIMO_DO_ESTADO } from "@/lib/agente/assinatura";
 import { simularTurno } from "@/lib/agente/simulador";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import {
@@ -109,6 +110,11 @@ export type ResultadoDaSimulacaoDoAgente =
        * do assistente ({ autor: "assistente", texto, assinatura }).
        */
       assinatura: string;
+      /**
+       * AG3: o estado do atendimento simulado (assinado, ligado a esta
+       * resposta): a tela guarda e manda de volta no proximo pedido.
+       */
+      estado: string;
     }
   | { ok: false; error: string };
 
@@ -180,6 +186,12 @@ const simulacaoSchema = z
      * WhatsApp para o contato desse tipo.
      */
     contato: tipoDoContatoSchema.optional(),
+    /**
+     * AG3: o pacote assinado do estado do atendimento simulado, como o
+     * servidor mandou na ultima resposta (lib/agente/assinatura.ts). Nulo ou
+     * ausente: o atendimento comeca do zero.
+     */
+    estado: z.string().max(TAMANHO_MAXIMO_DO_ESTADO).nullable().optional(),
   })
   .strict();
 
@@ -1070,6 +1082,7 @@ export async function simularAction(
       agoraMs: Date.now(),
       superAdmin: quem.superAdmin,
       contato: parsed.data.contato ?? null,
+      estado: parsed.data.estado ?? null,
     });
     if (!resultado.ok) {
       return resultado;
@@ -1085,6 +1098,7 @@ export async function simularAction(
       // instrucoes, que o modelo pode repetir, so ela le).
       rascunhoBloqueado: quem.superAdmin ? resultado.rascunhoBloqueado : null,
       assinatura: resultado.assinatura,
+      estado: resultado.estado,
     };
   } catch {
     log.warn("ia_simulador_falhou", { clinic_id: quem.clinicId });

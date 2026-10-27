@@ -22,7 +22,12 @@
 //  - o ano e o dia de hoje no fuso da clinica;
 //  - revisao 2 da AG2: as respostas da base publicada que o modelo disse ter
 //    usado (perguntas_da_base), que o resumo dos fatos leva ao verificador
-//    como fonte de endereco e de requisito.
+//    como fonte de endereco e de requisito;
+//  - AG3: o estado do atendimento entra como mais uma "saida" (o laco junta
+//    agendaDoTurno.fatosDoEstado()): os horarios ja oferecidos e a reserva
+//    sao fonte de dia e hora (citar, negar), mas so o RECONFERIDO no turno
+//    e horario livre; a reserva viva, lida no turno, e "reservou"; a
+//    consulta marcada nesta conversa, lida no turno, e consulta lida.
 // As mensagens novas do paciente (fonte de data e hora) o filtro ja recebe
 // em mensagensDoPaciente. Quem chama (lib/agente/laco.ts) falha fechado se
 // montar os fatos lancar.

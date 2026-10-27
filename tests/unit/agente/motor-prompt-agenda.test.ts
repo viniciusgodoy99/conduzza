@@ -59,16 +59,23 @@ describe("texto fixo: o fluxo de marcar", () => {
     );
   });
 
+  // AG3 (27/10/2026): o fluxo completo, na ordem (o que a pessoa quer, o
+  // procedimento, o profissional, o convenio, a unidade, buscar e oferecer,
+  // reservar, os dados, a pergunta "Confirma" com tudo e so depois marcar).
   it("descreve o fluxo do contrato, na ordem", () => {
     const passos = [
-      "Descubra o procedimento",
+      "Entenda o que a pessoa quer",
+      "Procedimento: pelo código do bloco <procedimentos>",
       "mais de um profissional para o procedimento, pergunte se a pessoa tem preferência",
       "pergunte se vai ser pelo convênio ou no particular",
-      "ofereça no máximo 3 horários",
-      "reserve com reservar_horario",
-      "pergunte se a pessoa confirma, repetindo o dia, a hora, o profissional e o procedimento",
-      "Chame agendar só quando a pessoa confirmar numa mensagem nova, depois da reserva",
-      "diga que a consulta ficou marcada, pendente da aprovação da equipe, e que a confirmação chega por aqui",
+      "Unidade: se a clínica tiver mais de uma unidade",
+      "Consulte buscar_horario e ofereça os horários que vieram, com o dia, a hora, o profissional e a unidade",
+      "reserve com reservar_horario pelo código dele",
+      "peça numa mensagem só os dados que faltam para marcar",
+      "chame registrar_dados_do_paciente",
+      'pergunte se a pessoa confirma, numa pergunta que começa com "Confirma" e traz o dia, a hora, o profissional, o procedimento, a unidade',
+      'Chame agendar só quando a pessoa responder que confirma, numa mensagem nova depois da pergunta "Confirma"',
+      "diga que a consulta ficou marcada e fica pendente da aprovação da equipe, e que a confirmação chega por aqui",
     ];
     const posicoes = passos.map((passo) => TEXTO_FIXO_DO_AGENTE.indexOf(passo));
     for (const [i, posicao] of posicoes.entries()) {
@@ -84,7 +91,7 @@ describe("texto fixo: o fluxo de marcar", () => {
     // A passagem prometida em texto (Q5) vira frase fixa: o fluxo de marcar
     // pede as formas que nao prometem acao da equipe.
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "nunca como algo que você vai conferir com alguém",
+      'Nunca escreva "posso confirmar com", "vou confirmar com" nem "vou verificar com"',
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
       "Não escreva que a equipe vai confirmar, responder ou entrar em contato",
@@ -106,24 +113,25 @@ describe("texto fixo: o fluxo de marcar", () => {
     );
   });
 
-  // Revisao da E4: (1) buscar_horario so traz os primeiros horarios livres
-  // do periodo, entao a hora pedida que nao veio nao pode virar "ocupada";
-  // (2) "Posso confirmar com a Dra. ...?" casa com a passagem prometida (Q5)
-  // e mata a marcacao; (3) o convenio que o profissional atende por vinculo
-  // que a IA nao marca vai para a equipe, nunca vira "nao atende".
-  it("hora pedida que não veio nunca vira ocupada; a pergunta começa por Confirma; convênio só com a equipe passa", () => {
+  // Revisao da E4: (2) "Posso confirmar com a Dra. ...?" casa com a
+  // passagem prometida (Q5) e mata a marcacao; (3) o convenio que o
+  // profissional atende por vinculo que a IA nao marca vai para a equipe,
+  // nunca vira "nao atende". AG3: (1) a hora pedida tem resposta da
+  // ferramenta (hora_pedida_livre ou hora_pedida_ocupada), entao "ocupada"
+  // so com ela; o codigo do horario vale entre as mensagens.
+  it("a hora pedida pela ferramenta; a pergunta começa por Confirma; convênio só com a equipe passa", () => {
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "se a pessoa pedir uma hora que não veio, nunca diga que essa hora está ocupada, indisponível ou sem vaga",
+      'Se ela pedir uma hora certa, consulte com hora (e com a_partir_de, se ela disse o dia): com "hora_pedida_livre", ofereça esse horário; com "hora_pedida_ocupada", diga que essa hora não está livre e ofereça os mais próximos que vieram.',
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      'se ela quiser só aquela hora, passe para a equipe com o motivo "pedido_de_agenda"',
+      "o código vale enquanto estiver no bloco <atendimento_em_andamento> ou numa consulta desta resposta",
     );
-    expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "Se esse horário que você ofereceu não vier na consulta",
+    expect(TEXTO_FIXO_DO_AGENTE).not.toContain(
+      "valem só dentro da mesma resposta",
     );
-    expect(TEXTO_FIXO_DO_AGENTE).toContain('começando por "Confirma"');
+    expect(TEXTO_FIXO_DO_AGENTE).toContain('numa pergunta que começa com "Confirma"');
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      'não escreva "posso confirmar com", "vou confirmar com" nem "vou verificar com"',
+      'Nunca escreva "posso confirmar com", "vou confirmar com" nem "vou verificar com"',
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
       '"agenda_nao_configurada", "procedimento_nao_agendavel", "convenio_so_com_a_equipe" ou "vinculo_invalido", passe para a equipe com o motivo "pedido_de_agenda"',
@@ -161,12 +169,35 @@ describe("texto fixo: o fluxo de marcar", () => {
 describe("bloco <atendimento> e <profissionais>", () => {
   it("com a agenda ligada: as linhas de marcar, a antecedência, o horizonte e a presença", () => {
     const linhas = blocoEm(instrucoes(configComAgenda()), "atendimento") ?? [];
-    expect(linhas.slice(-4)).toEqual([
+    // AG3: e os dados que a clinica pede para marcar (D-6, o padrao da
+    // primeira versao: nome completo e nascimento).
+    expect(linhas.slice(-5)).toEqual([
       "Marcar consulta: ligado.",
       "Antecedência mínima para marcar: 2 horas.",
       "Marcar até quantos dias à frente: 14 dias.",
+      "Dados que a clínica pede para marcar: nome completo e data de nascimento, e o número da carteirinha quando o convênio ou o procedimento pede.",
       "Confirmar presença: ligado.",
     ]);
+    const semDados = blocoEm(
+      instrucoes(
+        configComAgenda({
+          dadosExigidos: { nomeCompleto: false, nascimento: false, cpf: false },
+        }),
+      ),
+      "atendimento",
+    );
+    expect(semDados).toContain(FRASES_DO_ATENDIMENTO.nenhumDadoExigido);
+    const comCpf = blocoEm(
+      instrucoes(
+        configComAgenda({
+          dadosExigidos: { nomeCompleto: true, nascimento: true, cpf: true },
+        }),
+      ),
+      "atendimento",
+    );
+    expect(comCpf).toContain(
+      "Dados que a clínica pede para marcar: nome completo, data de nascimento e CPF, e o número da carteirinha quando o convênio ou o procedimento pede.",
+    );
     const singular = blocoEm(
       instrucoes(
         configComAgenda({ agenda: { antecedenciaHoras: 1, horizonteDias: 1 } }),
@@ -309,8 +340,10 @@ describe("ferramentas e versão", () => {
     expect(ferramentasDaChamada(configComAgenda()).map((f) => f.name)).toEqual([
       ...frases,
       "buscar_procedimento",
+      "consultar_cadastro_do_contato",
       "buscar_horario",
       "reservar_horario",
+      "registrar_dados_do_paciente",
       "agendar",
       "confirmar_presenca",
       "escalar_humano",
@@ -340,8 +373,10 @@ describe("ferramentas e versão", () => {
       "consultar_requisitos",
       "buscar_profissionais",
       "buscar_procedimento",
+      "consultar_cadastro_do_contato",
       "buscar_horario",
       "reservar_horario",
+      "registrar_dados_do_paciente",
       "agendar",
       "confirmar_presenca",
       "escalar_humano",
@@ -362,7 +397,7 @@ describe("ferramentas e versão", () => {
         agoraTexto: AGORA,
       }),
     ).toContain(
-      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, buscar_procedimento, buscar_horario, reservar_horario, agendar, confirmar_presenca, escalar_humano.",
+      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, buscar_procedimento, consultar_cadastro_do_contato, buscar_horario, reservar_horario, registrar_dados_do_paciente, agendar, confirmar_presenca, escalar_humano.",
     );
   });
 });

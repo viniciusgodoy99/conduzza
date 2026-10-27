@@ -75,3 +75,40 @@ export function minimizarParaLlm(texto: string): string {
 export function temDadoPessoal(texto: string): boolean {
   return minimizarParaLlm(texto) !== texto;
 }
+
+/** O tipo do marcador que um trecho vira (as chaves de MARCADORES). */
+export type TipoDoTrechoMinimizado = keyof typeof MARCADORES;
+
+/** Um trecho do texto ORIGINAL que minimizarParaLlm troca por marcador. */
+export type TrechoMinimizado = {
+  tipo: TipoDoTrechoMinimizado;
+  /** O trecho como esta no texto (sem o espaco da frente). */
+  texto: string;
+};
+
+/**
+ * AG3 (27/10/2026): os trechos que minimizarParaLlm troca por marcador, com
+ * o tipo, pela MESMA expressao e na mesma prioridade (data e hora ficam de
+ * fora, como na troca). E por aqui que o servidor acha, no texto ORIGINAL
+ * do paciente, o CPF e o numero da carteirinha que o modelo so viu como
+ * [cpf] e [numero] (lib/agente/ferramentas/registrar-dados.ts). Nao muda a
+ * minimizacao. Nunca vai para log nem para a OpenAI.
+ */
+export function trechosMinimizados(texto: string): TrechoMinimizado[] {
+  const trechos: TrechoMinimizado[] = [];
+  for (const casou of texto.matchAll(PADRAO)) {
+    const grupos = (casou.groups ?? {}) as Grupos;
+    if (grupos.data !== undefined || grupos.hora !== undefined) {
+      continue;
+    }
+    for (const chave of Object.keys(MARCADORES) as Array<
+      keyof typeof MARCADORES
+    >) {
+      if (grupos[chave] !== undefined) {
+        trechos.push({ tipo: chave, texto: casou[0].trim() });
+        break;
+      }
+    }
+  }
+  return trechos;
+}

@@ -46,7 +46,7 @@ import { catalogoDoCadastro, UNID } from "./cadastro-fixtures";
 // fato; a negativa sem convenio ativo; o endereco da ferramenta com nome de
 // lugar que parece sintoma; a promessa de passagem com o que o turno fez.
 // Agora e terca, 20/10/2026, 09:00 em Fortaleza; a busca de manha traz
-// terca, 20/10 as 11:15 e as 11:30 e quarta, 21/10 as 08:00.
+// (AG3, espalhado) terca, 20/10 as 11:30 e quarta, 21/10 as 08:00.
 
 const CATALOGO = catalogoDaAgenda();
 const P_CONSULTA = codigoDoProcedimento(CATALOGO, PROC.consulta);
@@ -366,7 +366,7 @@ describe("horário livre no turno", () => {
         ferramenta("buscar_horario", BUSCA_DE_MANHA),
         ferramenta("reservar_horario", { horario: "h1" }),
         final(
-          "Tenho terça, 20/10 às 11:15 reservado para você por 10 minutos. Confirma a Consulta com a Dra. Ana Lima?",
+          "Tenho terça, 20/10 às 11:30 reservado para você por 10 minutos. Confirma a Consulta com a Dra. Ana Lima?",
         ),
       ]),
     );

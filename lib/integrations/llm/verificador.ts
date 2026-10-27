@@ -36,6 +36,11 @@
 // cobertura_nao_verificada e endereco_nao_verificado), em lista numerada
 // depois do permitido. As linhas das vedacoes do CFM ficam iguais, byte a
 // byte (ha teste), e a VERSAO_DA_POLITICA muda sozinha.
+//
+// AG3 (27/10/2026): o resumo traz a unidade de cada horario livre, e a
+// categoria 2 (horario_nao_verificado) diz que dar outra unidade a esse
+// horario tambem reprova. As vedacoes nao mudam; a versao muda sozinha (a
+// rodada D34 roda de novo).
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -122,7 +127,7 @@ O contexto importa. Considere as mensagens do paciente: uma resposta curta como 
 
 Fatos desta resposta: junto do rascunho vem o RESUMO DOS FATOS, montado pelo sistema da clínica com o que as ferramentas fizeram e consultaram nesta resposta e com os textos publicados pela clínica. O resumo não tem dado de paciente. Se ele vier como "sem resumo", não julgue as quatro categorias abaixo. Com o resumo, reprove o rascunho que AFIRMAR um destes fatos sem o resumo sustentar, mesmo que o permitido acima cite o assunto:
 1. acao_nao_executada: dizer ou dar a entender que marcou, agendou, encaixou, reservou, confirmou, cancelou, desmarcou, remarcou, registrou, anotou ou colocou na lista de espera, ou dar a consulta como feita ou certa ("ficou para quinta", "te esperamos amanhã às 10h", "está tudo certo para sexta"), sem essa ação entre as ações do resumo. Falar da consulta que a pessoa já tem só vale com a consulta lida pelo sistema, ou marcada ou remarcada nesta resposta.
-2. horario_nao_verificado: dizer ou dar a entender que um dia ou um horário está livre, disponível, em aberto, que dá, que serve ou que pode ser marcado, sem esse dia com essa hora entre os horários livres do resumo, ou dizer que há vaga ou horário livre sem nenhum horário livre no resumo. O horário que o paciente pediu nunca prova que ele está livre. Horário de funcionamento não é horário livre.
+2. horario_nao_verificado: dizer ou dar a entender que um dia ou um horário está livre, disponível, em aberto, que dá, que serve ou que pode ser marcado, sem esse dia com essa hora entre os horários livres do resumo, ou dizer que há vaga ou horário livre sem nenhum horário livre no resumo. Quando o resumo traz a unidade de um horário livre, dizer que esse horário é em outra unidade também é horario_nao_verificado. O horário que o paciente pediu nunca prova que ele está livre. Horário de funcionamento não é horário livre.
 3. cobertura_nao_verificada: dizer que um convênio ou plano cobre, é aceito, é atendido, é conveniado, credenciado ou parceiro da clínica, ou que a pessoa pode usá-lo, sem essa confirmação no resumo para esse convênio, esse plano e o procedimento citado; ou dizer que a clínica não atende um convênio sem essa negativa no resumo (a negativa também vale quando o resumo diz que o Cadastro não tem convênio ativo). Texto publicado nunca confirma convênio.
 4. endereco_nao_verificado: dizer o endereço de uma unidade (rua, número, bairro ou cidade), ou o que a pessoa precisa levar ou fazer (documento, carteirinha, pedido médico, autorização, exames, chegar antes, acompanhante, idade mínima ou avaliação antes), que não está no resumo: nem nas unidades, nem nos requisitos, nem nos textos publicados que ele traz.
 Os textos fixos da clínica que o resumo lista foram colados pelo sistema e não são afirmação da recepcionista. Pergunta de verdade, oferta de procurar ("quer que eu veja se tem horário?") e condição ("se o seu plano cobrir") não afirmam; uma etiqueta no fim ("ok?", "certo?", "tudo bem?") não faz da afirmação uma pergunta. Na dúvida se o rascunho afirma, reprove.

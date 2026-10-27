@@ -1,10 +1,16 @@
 // Ferramenta reservar_horario do agente de IA (E4, contrato da E4 secao 2):
-// trava por 10 minutos um horario que buscar_horario trouxe NA MESMA
-// resposta, pelo codigo (h1, h2...). PURO: a definicao, a entrada, os
-// motivos de reservar_horario_da_ia (contrato 1.3) e a leitura defensiva da
-// resposta da RPC. Quem chama a RPC (com o job_id do turno, a idempotencia)
-// e lib/agente/agenda.ts; quem limita a uma reserva por resposta e monta a
-// saida para o modelo e lib/agente/ferramentas/agenda-do-turno.ts.
+// trava por 10 minutos um horario oferecido, pelo codigo (h1, h2...). PURO:
+// a definicao, a entrada, os motivos de reservar_horario_da_ia (contrato
+// 1.3) e a leitura defensiva da resposta da RPC. Quem chama a RPC (com o
+// job_id do turno, a idempotencia) e lib/agente/agenda.ts; quem limita a uma
+// reserva por resposta e monta a saida para o modelo e
+// lib/agente/ferramentas/agenda-do-turno.ts.
+//
+// AG3 (27/10/2026): o codigo vale entre as mensagens (o estado do
+// atendimento guarda os horarios oferecidos, lib/agente/atendimento.ts), a
+// reserva leva a unidade do horario (p_unit_id) e a RPC devolve a unidade e
+// o motivo novo unidade_invalida (unidade de outra clinica, inativa ou que
+// nao existe). A RPC confere tudo de novo, sempre.
 
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
@@ -23,7 +29,7 @@ export const FERRAMENTA_RESERVAR_HORARIO: FunctionTool = {
   name: NOME_DA_RESERVA,
   strict: true,
   description:
-    "Reserva por 10 minutos o horário que a pessoa escolheu, pelo código que buscar_horario trouxe nesta mesma resposta. Uma reserva por resposta.",
+    "Reserva por 10 minutos o horário que a pessoa escolheu, pelo código que buscar_horario trouxe nesta resposta ou que está no bloco <atendimento_em_andamento>. O sistema confere o horário de novo. Uma reserva por resposta.",
   parameters: {
     type: "object",
     properties: {
@@ -37,11 +43,15 @@ export const FERRAMENTA_RESERVAR_HORARIO: FunctionTool = {
   },
 };
 
-/** Os motivos de reservar_horario_da_ia (contrato 1.3), lista fechada. */
+/**
+ * Os motivos de reservar_horario_da_ia (contrato 1.3), lista fechada. AG3:
+ * unidade_invalida, logo depois de vinculo_invalido (a ordem da RPC).
+ */
 export const MOTIVOS_DA_RESERVA = [
   "ia_desligada",
   "agenda_nao_configurada",
   "vinculo_invalido",
+  "unidade_invalida",
   "antes_da_antecedencia",
   "depois_do_horizonte",
   "fora_da_jornada",
@@ -66,6 +76,10 @@ export type RespostaDaReserva =
        * dele, nunca do pedido.
        */
       serviceLinkId: string | null;
+      /** AG3: slot_hold.id (o estado do atendimento guarda). */
+      holdId: string | null;
+      /** AG3: a unidade da reserva (nula = sem unidade, como antes). */
+      unitId: string | null;
     }
   | { ok: false; motivo: MotivoDaReserva };
 
@@ -104,6 +118,8 @@ export function lerRespostaDaReserva(dado: unknown): RespostaDaReserva | null {
       reutilizado: r.reutilizado === true,
       serviceLinkId:
         typeof r.service_link_id === "string" ? r.service_link_id : null,
+      holdId: typeof r.hold_id === "string" && r.hold_id !== "" ? r.hold_id : null,
+      unitId: typeof r.unit_id === "string" && r.unit_id !== "" ? r.unit_id : null,
     };
   }
   if (r.ok === false && ehMotivo(MOTIVOS_DA_RESERVA, r.motivo)) {
