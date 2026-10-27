@@ -921,7 +921,8 @@ describe("achado 10: o simulador espelha agendar_pela_ia", () => {
     expect(marcada).toMatchObject({ ok: true });
     const id = (marcada as { appointmentId: string }).appointmentId;
     expect(memoria.consulta).toMatchObject({ appointmentId: id, unidadeId: UNID.centro });
-    expect(await p.lerConsulta?.(id)).toEqual({
+    // AG4: tambem o profissional e o vinculo (os fatos e a remarcacao).
+    expect(await p.lerConsulta?.(id)).toMatchObject({
       inicio: iso("2026-10-21", "14:00"),
       ativa: true,
       unidadeId: UNID.centro,
@@ -931,7 +932,7 @@ describe("achado 10: o simulador espelha agendar_pela_ia", () => {
       reserva: null,
       consulta: { appointmentId: id, inicio: iso("2026-10-21", "14:00") },
     });
-    expect(await antiga.lerConsulta?.(id)).toEqual({
+    expect(await antiga.lerConsulta?.(id)).toMatchObject({
       inicio: iso("2026-10-21", "14:00"),
       ativa: true,
       unidadeId: null,

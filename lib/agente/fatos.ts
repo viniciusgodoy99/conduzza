@@ -38,7 +38,12 @@
 //    da propria saida que o modelo leu, no objeto com o mesmo dia e a mesma
 //    hora) e os nomes dos profissionais e das unidades do Cadastro, para a
 //    regra que barra a frase da acao com outro profissional ou outra
-//    unidade. O profissional nunca vai ao resumo do verificador.
+//    unidade. O profissional nunca vai ao resumo do verificador;
+//  - AG4 (27/10/2026): as consultas lidas de uma vez (consultar_minhas_
+//    consultas, a consulta em foco do pedido de cancelar ou remarcar, a
+//    antiga da remarcacao), cada uma com o profissional relido (o limite da
+//    21.15), e, na remarcacao, o horario da consulta antiga junto da acao
+//    (o resumo do verificador diz que ela continua marcada).
 // As mensagens novas do paciente (fonte de data e hora) o filtro ja recebe
 // em mensagensDoPaciente. Quem chama (lib/agente/laco.ts) falha fechado se
 // montar os fatos lancar.
@@ -241,11 +246,15 @@ export function montarFatosDoTurno(entrada: {
     if (fatos?.acao !== undefined) {
       acoes.add(fatos.acao);
       // Revisao final da AG3: o horario da acao vai junto dela (revisao curta
-      // das correcoes: com o profissional).
+      // das correcoes: com o profissional). AG4: na remarcacao, com o
+      // horario da consulta antiga.
       if (fatos.horarioDaAcao !== undefined) {
         horariosDasAcoes.push({
           ...comOProfissional(fatos.horarioDaAcao, saida),
           acao: fatos.acao,
+          ...(fatos.acao === "remarcou" && fatos.horarioAnterior !== undefined
+            ? { anterior: fatos.horarioAnterior }
+            : {}),
         });
       }
     }
@@ -255,6 +264,11 @@ export function montarFatosDoTurno(entrada: {
         consultasLidas.push({
           ...comOProfissional(fatos.consultaComHorario, saida),
         });
+      }
+      // AG4: as consultas lidas de uma vez (o profissional ja vem da
+      // ferramenta; sem ele, nao se sabe).
+      for (const consulta of fatos.consultasComHorario ?? []) {
+        consultasLidas.push({ ...consulta });
       }
     }
   }

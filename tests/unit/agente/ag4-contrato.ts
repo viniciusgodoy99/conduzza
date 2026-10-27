@@ -1,0 +1,474 @@
+import { randomUUID } from "node:crypto";
+
+import type { EstadoDoAtendimento } from "@/lib/agente/atendimento";
+import {
+  conferirConsultaDaIa,
+  type ConsultaDoContato,
+} from "@/lib/agente/ferramentas/minhas-consultas";
+
+import { rpcsDaAg3, type OpcoesDoContrato } from "./ag3-contrato";
+import type { AgendaEmMemoria, Linha } from "./agenda-em-memoria";
+import { CLINICA, CONTATO } from "./agenda-fixtures";
+
+// O CONTRATO das RPCs da AG4 (migration 20261028100000_remarcar_e_cancelar_
+// pela_ia.sql; o desenho, secao 3, e o contrato-mudancas da frente de banco)
+// em memoria, para as conversas de varias falas com o LLM falso: cancelar_
+// consulta_pela_ia (a idempotencia pelo job, a habilidade e o prazo, o
+// pedido no estado GRAVADO, a conferencia da consulta, "a consulta mudou"
+// com a folga de 2 minutos e a mesma transicao do botao) e reservar_horario_
+// da_ia e agendar_pela_ia com p_remarcar (a consulta nova pendente, ligada a
+// antiga, que continua de pe). Simplificado onde o teste nao precisa (a
+// mensagem do paciente depois da pergunta nao e conferida: o turno ja
+// confere a pergunta armada). As RPCs de verdade sao provadas nas suites de
+// integracao e de RLS (com o banco).
+
+export type HabilidadeDaVersao = { ligada: boolean; prazoHoras: number | null };
+
+export type OpcoesDaAg4 = OpcoesDoContrato & {
+  /**
+   * O estado GRAVADO da conversa (o que gravar_atendimento_da_ia guardou no
+   * fim do turno anterior, com o instante do pedido carimbado pelo banco).
+   */
+  estado: () => EstadoDoAtendimento | null;
+  /** Cancelar e remarcar na versao publicada (a habilidade e o prazo). */
+  cancelar: HabilidadeDaVersao;
+  remarcar: HabilidadeDaVersao;
+  /** Uma recusa forcada (o primeiro motivo da ordem do banco). */
+  forcar?: {
+    cancelar?: string | null;
+    reservar?: string | null;
+    agendar?: string | null;
+  };
+};
+
+const DUAS_HORAS_DE_FOLGA_MS = 2 * 60_000;
+
+/** Uma consulta do contato da conversa, como o banco guarda. */
+export function consultaDoContato(e: {
+  id?: string;
+  inicio: string;
+  fim: string;
+  vinculo: string;
+  profissional: string;
+  unidade?: string | null;
+  status?: string;
+  aprovacao?: string | null;
+  encaixe?: boolean;
+  remarcacaoDe?: string | null;
+  criadaPor?: string;
+}): Linha {
+  return {
+    id: e.id ?? randomUUID(),
+    clinic_id: CLINICA,
+    contact_id: CONTATO,
+    professional_id: e.profissional,
+    service_link_id: e.vinculo,
+    unit_id: e.unidade ?? null,
+    starts_at: e.inicio,
+    ends_at: e.fim,
+    status: e.status ?? "agendado",
+    approval_status: e.aprovacao ?? null,
+    is_overbooking: e.encaixe ?? false,
+    remarcacao_de: e.remarcacaoDe ?? null,
+    remarcacao_pedida_em: null,
+    created_by: e.criadaPor ?? "usuario",
+  };
+}
+
+/** A linha do banco como a conferencia le (o espelho de conferir_consulta_da_ia). */
+function comoConsulta(banco: AgendaEmMemoria, a: Linha): ConsultaDoContato {
+  return {
+    id: String(a.id),
+    inicio: String(a.starts_at),
+    fim: String(a.ends_at),
+    status: String(a.status),
+    aprovacao: (a.approval_status as string | null) ?? null,
+    encaixe: a.is_overbooking === true,
+    serviceLinkId: String(a.service_link_id),
+    profissionalId: String(a.professional_id),
+    unidadeId: (a.unit_id as string | null) ?? null,
+    remarcacaoDe: (a.remarcacao_de as string | null) ?? null,
+    temRemarcacaoPendente: banco
+      .linhas("appointment")
+      .some(
+        (b) =>
+          b.remarcacao_de === a.id &&
+          b.approval_status === "pendente" &&
+          !String(b.status).startsWith("cancelado"),
+      ),
+  };
+}
+
+function recusa(motivo: string) {
+  return { data: { ok: false, motivo }, error: null };
+}
+
+export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
+  rpcsDaAg3(banco, opcoes);
+  const { catalogo } = opcoes;
+  const reservarDaAg3 = banco.manipuladores.get("reservar_horario_da_ia")!;
+  const agendarDaAg3 = banco.manipuladores.get("agendar_pela_ia")!;
+  const vinculoDe = (id: unknown) => catalogo.vinculos.find((v) => v.id === id);
+  const consultaDe = (id: unknown) =>
+    banco
+      .linhas("appointment")
+      .find(
+        (a) =>
+          a.id === id && a.clinic_id === CLINICA && a.contact_id === CONTATO,
+      );
+  const conferir = (id: unknown, acao: "cancelar" | "remarcar") => {
+    const linha = consultaDe(id);
+    const habilidade = acao === "cancelar" ? opcoes.cancelar : opcoes.remarcar;
+    return conferirConsultaDaIa({
+      consulta: linha === undefined ? null : comoConsulta(banco, linha),
+      acao,
+      prazoHoras: habilidade.prazoHoras,
+      agoraMs: opcoes.agora(),
+      catalogo,
+    });
+  };
+
+  banco.rpc("cancelar_consulta_pela_ia", (args) => {
+    const agora = opcoes.agora();
+    // A idempotencia pelo job (a linha da trilha com ia_job_id).
+    const feita = banco
+      .linhas("appointment_status_history")
+      .find((h) => h.ia_job_id === args.p_job_id);
+    if (feita) {
+      if (feita.appointment_id !== args.p_appointment_id) {
+        return { data: null, error: { code: "22023" } };
+      }
+      return {
+        data: {
+          ok: true,
+          starts_at: consultaDe(feita.appointment_id)?.starts_at,
+          reutilizado: true,
+        },
+        error: null,
+      };
+    }
+    if (!opcoes.cancelar.ligada || opcoes.cancelar.prazoHoras === null) {
+      return recusa("cancelamento_desligado");
+    }
+    const estado = opcoes.estado();
+    if (
+      estado === null ||
+      estado.pedido_pendente !== "cancelar" ||
+      estado.appointment_id !== args.p_appointment_id
+    ) {
+      return recusa("sem_pedido_de_cancelamento");
+    }
+    const motivo = conferir(args.p_appointment_id, "cancelar");
+    if (motivo !== null) {
+      return recusa(motivo);
+    }
+    if (opcoes.forcar?.cancelar) {
+      return recusa(opcoes.forcar.cancelar);
+    }
+    const linha = consultaDe(args.p_appointment_id)!;
+    // "A consulta mudou": a recepcao remarcou depois do pedido (folga de 2
+    // minutos, contrato-mudancas item 4).
+    if (
+      typeof linha.remarcada_em === "string" &&
+      estado.pedido_pendente_em !== null &&
+      Date.parse(linha.remarcada_em) >
+        Date.parse(estado.pedido_pendente_em) - DUAS_HORAS_DE_FOLGA_MS
+    ) {
+      return recusa("consulta_mudou");
+    }
+    // A mesma transicao do botao: cancelado_paciente, com a trilha da IA.
+    linha.status = "cancelado_paciente";
+    banco.inserir("appointment_status_history", {
+      id: randomUUID(),
+      clinic_id: CLINICA,
+      appointment_id: linha.id,
+      status: "cancelado_paciente",
+      changed_by: "ia",
+      changed_by_user_id: null,
+      ia_job_id: args.p_job_id,
+      changed_at: new Date(agora).toISOString(),
+    });
+    banco.inserir("message", {
+      id: randomUUID(),
+      conversation_id: args.p_conversation_id,
+      content_type: "evento",
+      author: "sistema",
+    });
+    return {
+      data: { ok: true, starts_at: linha.starts_at, reutilizado: false },
+      error: null,
+    };
+  });
+
+  banco.rpc("reservar_horario_da_ia", (args) => {
+    if (args.p_remarcar === undefined || args.p_remarcar === null) {
+      return reservarDaAg3(args);
+    }
+    const agora = opcoes.agora();
+    const jaTem = banco
+      .linhas("slot_hold")
+      .find((h) => h.job_id === args.p_job_id);
+    if (jaTem) {
+      return {
+        data: {
+          ok: true,
+          hold_id: jaTem.id,
+          starts_at: jaTem.starts_at,
+          ends_at: jaTem.ends_at,
+          expires_at: jaTem.expires_at,
+          reutilizado: true,
+          unit_id: jaTem.unit_id ?? null,
+        },
+        error: null,
+      };
+    }
+    const vinculo = vinculoDe(args.p_service_link_id);
+    if (!vinculo) {
+      return recusa("vinculo_invalido");
+    }
+    if (!opcoes.remarcar.ligada || opcoes.remarcar.prazoHoras === null) {
+      return recusa("remarcacao_desligada");
+    }
+    const estado = opcoes.estado();
+    if (
+      estado === null ||
+      estado.pedido_pendente !== "remarcar" ||
+      estado.appointment_id !== args.p_remarcar
+    ) {
+      return recusa("sem_pedido_de_remarcacao");
+    }
+    const motivo = conferir(args.p_remarcar, "remarcar");
+    if (motivo !== null) {
+      return recusa(motivo);
+    }
+    const antiga = consultaDe(args.p_remarcar)!;
+    const daAntiga = vinculoDe(antiga.service_link_id);
+    if (
+      daAntiga === undefined ||
+      daAntiga.procedimentoId !== vinculo.procedimentoId ||
+      daAntiga.profissionalId !== vinculo.profissionalId ||
+      daAntiga.convenioId !== vinculo.convenioId
+    ) {
+      return recusa("remarcacao_invalida");
+    }
+    if (opcoes.forcar?.reservar) {
+      return recusa(opcoes.forcar.reservar);
+    }
+    const inicio = String(args.p_starts_at);
+    const fim = new Date(
+      Date.parse(inicio) + (vinculo.duracaoMin ?? 30) * 60_000,
+    ).toISOString();
+    const ocupado = banco
+      .linhas("appointment")
+      .some(
+        (a) =>
+          a.professional_id === vinculo.profissionalId &&
+          !String(a.status).startsWith("cancelado") &&
+          Date.parse(String(a.starts_at)) < Date.parse(fim) &&
+          Date.parse(String(a.ends_at)) > Date.parse(inicio),
+      );
+    if (ocupado) {
+      return recusa("ocupado");
+    }
+    banco.tabelas.set(
+      "slot_hold",
+      banco
+        .linhas("slot_hold")
+        .filter(
+          (h) =>
+            !(
+              h.conversation_id === args.p_conversation_id &&
+              h.consumido_em === null
+            ),
+        ),
+    );
+    const hold: Linha = {
+      id: randomUUID(),
+      clinic_id: args.p_clinic_id,
+      professional_id: vinculo.profissionalId,
+      conversation_id: args.p_conversation_id,
+      service_link_id: args.p_service_link_id,
+      job_id: args.p_job_id,
+      unit_id: args.p_unit_id ?? null,
+      starts_at: inicio,
+      ends_at: fim,
+      expires_at: new Date(agora + 10 * 60_000).toISOString(),
+      created_at: new Date(agora).toISOString(),
+      consumido_em: null,
+    };
+    banco.inserir("slot_hold", hold);
+    return {
+      data: {
+        ok: true,
+        hold_id: hold.id,
+        starts_at: inicio,
+        ends_at: fim,
+        expires_at: hold.expires_at,
+        reutilizado: false,
+        unit_id: hold.unit_id,
+      },
+      error: null,
+    };
+  });
+
+  banco.rpc("agendar_pela_ia", (args) => {
+    if (args.p_remarcar === undefined || args.p_remarcar === null) {
+      return agendarDaAg3(args);
+    }
+    const agora = opcoes.agora();
+    const consumida = banco
+      .linhas("slot_hold")
+      .find((h) => h.job_id_do_agendar === args.p_job_id);
+    if (consumida) {
+      const nova = banco
+        .linhas("appointment")
+        .find((a) => a.id === consumida.appointment_id);
+      const antiga = consultaDe(nova?.remarcacao_de);
+      return {
+        data: {
+          ok: true,
+          appointment_id: consumida.appointment_id,
+          starts_at: consumida.starts_at,
+          ends_at: consumida.ends_at,
+          reutilizado: true,
+          remarcacao_de: nova?.remarcacao_de ?? null,
+          remarcacao_de_starts_at: antiga?.starts_at ?? null,
+        },
+        error: null,
+      };
+    }
+    const viva = banco
+      .linhas("slot_hold")
+      .find(
+        (h) =>
+          h.conversation_id === args.p_conversation_id &&
+          h.consumido_em === null,
+      );
+    if (!viva) {
+      return recusa("reserva_inexistente");
+    }
+    if (
+      args.p_slot_hold_id !== undefined &&
+      args.p_slot_hold_id !== null &&
+      args.p_slot_hold_id !== viva.id
+    ) {
+      return recusa("reserva_diferente");
+    }
+    if (Date.parse(String(viva.expires_at)) <= agora) {
+      return recusa("reserva_vencida");
+    }
+    if (!opcoes.remarcar.ligada || opcoes.remarcar.prazoHoras === null) {
+      return recusa("remarcacao_desligada");
+    }
+    const estado = opcoes.estado();
+    if (
+      estado === null ||
+      estado.pedido_pendente !== "remarcar" ||
+      estado.appointment_id !== args.p_remarcar
+    ) {
+      return recusa("sem_pedido_de_remarcacao");
+    }
+    const motivo = conferir(args.p_remarcar, "remarcar");
+    if (motivo !== null) {
+      return recusa(motivo);
+    }
+    const antiga = consultaDe(args.p_remarcar)!;
+    const daAntiga = vinculoDe(antiga.service_link_id);
+    const daReserva = vinculoDe(viva.service_link_id);
+    if (
+      daAntiga === undefined ||
+      daReserva === undefined ||
+      daAntiga.procedimentoId !== daReserva.procedimentoId ||
+      daAntiga.profissionalId !== daReserva.profissionalId ||
+      daAntiga.convenioId !== daReserva.convenioId
+    ) {
+      return recusa("remarcacao_invalida");
+    }
+    // "A consulta mudou": a ancora e a reserva (o T3), com a folga.
+    if (
+      typeof antiga.remarcada_em === "string" &&
+      typeof viva.created_at === "string" &&
+      Date.parse(antiga.remarcada_em) >
+        Date.parse(viva.created_at) - DUAS_HORAS_DE_FOLGA_MS
+    ) {
+      return recusa("consulta_mudou");
+    }
+    if (opcoes.forcar?.agendar) {
+      return recusa(opcoes.forcar.agendar);
+    }
+    // O indice unico de uma remarcacao pendente por consulta (23505).
+    const outraPendente = banco
+      .linhas("appointment")
+      .some(
+        (a) =>
+          a.remarcacao_de === antiga.id &&
+          a.approval_status === "pendente" &&
+          !String(a.status).startsWith("cancelado"),
+      );
+    if (outraPendente) {
+      return recusa("remarcacao_pendente");
+    }
+    const nova: Linha = {
+      id: randomUUID(),
+      clinic_id: args.p_clinic_id,
+      contact_id: CONTATO,
+      professional_id: viva.professional_id,
+      service_link_id: viva.service_link_id,
+      unit_id: viva.unit_id ?? null,
+      starts_at: viva.starts_at,
+      ends_at: viva.ends_at,
+      status: "agendado",
+      created_by: "ia",
+      approval_status: "pendente",
+      is_overbooking: false,
+      remarcacao_de: antiga.id,
+      remarcacao_pedida_em: null,
+    };
+    banco.inserir("appointment", nova);
+    antiga.remarcacao_pedida_em =
+      antiga.remarcacao_pedida_em ?? new Date(agora).toISOString();
+    Object.assign(viva, {
+      consumido_em: new Date(agora).toISOString(),
+      appointment_id: nova.id,
+      job_id_do_agendar: args.p_job_id,
+    });
+    return {
+      data: {
+        ok: true,
+        appointment_id: nova.id,
+        starts_at: nova.starts_at,
+        ends_at: nova.ends_at,
+        reutilizado: false,
+        remarcacao_de: antiga.id,
+        remarcacao_de_starts_at: antiga.starts_at,
+      },
+      error: null,
+    };
+  });
+}
+
+/**
+ * O gravar_atendimento_da_ia do banco, so o carimbo (contrato-mudancas,
+ * item 5): o instante que o codigo manda e ignorado; o banco grava agora
+ * quando o pedido ou o foco mudam, mantem quando os dois ficam iguais, e o
+ * pedido nulo tem o instante nulo.
+ */
+export function comOCarimboDoBanco(
+  anterior: EstadoDoAtendimento,
+  novo: EstadoDoAtendimento,
+  agora: number,
+): EstadoDoAtendimento {
+  if (novo.pedido_pendente === null) {
+    return { ...novo, pedido_pendente_em: null };
+  }
+  const igual =
+    novo.pedido_pendente === anterior.pedido_pendente &&
+    novo.appointment_id === anterior.appointment_id &&
+    anterior.pedido_pendente_em !== null;
+  return {
+    ...novo,
+    pedido_pendente_em: igual
+      ? anterior.pedido_pendente_em
+      : new Date(agora).toISOString(),
+  };
+}

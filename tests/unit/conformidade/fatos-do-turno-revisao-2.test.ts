@@ -175,7 +175,11 @@ describe("item 1: as formas de ação que passavam", () => {
   it("com a ação certa no turno, as mesmas formas passam", () => {
     // Revisao final da AG3: a acao e a consulta lida com o dia e a hora.
     for (const [texto, parcial] of [
-      ["Sua consulta ficou para quinta, 23/10 às 16:15.", feita("remarcou")],
+      // AG4: a remarcacao com a pendencia dita.
+      [
+        "Sua consulta ficou para quinta, 23/10 às 16:15, pendente da aprovação da equipe.",
+        feita("remarcou"),
+      ],
       ["Já coloquei você na agenda da Dra. Ana Lima.", { acoes: ["marcou"] }],
       ["Combinado! Te esperamos quinta, 23/10 às 16:15.", feita("marcou")],
       ["Consegui encaixar você.", { acoes: ["marcou"] }],
@@ -246,10 +250,20 @@ describe("item 1: regra estrutural do fechamento", () => {
       lida(),
       { ...feita("confirmou_presenca"), ...lida() },
       feita("marcou"),
-      feita("remarcou"),
     ]) {
       expect(regras(texto, { ...BUSCA, ...parcial })).toEqual([]);
     }
+    // AG4: depois de remarcar, "te esperamos" sem a pendencia barra (a
+    // remarcacao espera a aprovacao da equipe).
+    expect(regras(texto, { ...BUSCA, ...feita("remarcou") })).toEqual([
+      "acao_nao_executada:remarcacao_sem_pendencia",
+    ]);
+    expect(
+      regras(`${texto} A remarcação está pendente da aprovação da equipe.`, {
+        ...BUSCA,
+        ...feita("remarcou"),
+      }),
+    ).toEqual([]);
     // A reserva de 10 minutos, a lista de espera e o cancelamento nao dao a
     // consulta por feita.
     for (const parcial of [

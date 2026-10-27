@@ -728,9 +728,12 @@ describe("agendar", () => {
       },
     });
     // A leitura da consulta: do contato da conversa, so o inicio, o estado
-    // e a unidade.
+    // e a unidade (AG4: e o profissional, o vinculo e a remarcacao, so para
+    // os fatos e o foco; nunca ao modelo).
     const leitura = banco.leituras.find((l) => l.tabela === "appointment");
-    expect(leitura?.colunas).toBe("starts_at, status, approval_status, unit_id");
+    expect(leitura?.colunas).toBe(
+      "starts_at, status, approval_status, unit_id, professional_id, service_link_id, remarcacao_de",
+    );
     expect(leitura?.filtros).toEqual(
       expect.arrayContaining([
         `eq:clinic_id=${CLINICA}`,

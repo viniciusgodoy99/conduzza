@@ -1046,7 +1046,12 @@ describe("acao_nao_executada", () => {
       "confirmacao_sem_ferramenta",
     ],
     ["Cancelei sua consulta.", "cancelou", "cancelamento_sem_ferramenta"],
-    ["Remarquei para quinta.", "remarcou", "remarcacao_sem_ferramenta"],
+    // AG4: a remarcacao so com a pendencia dita (remarcacao_sem_pendencia).
+    [
+      "Remarquei para quinta, pendente da aprovação da equipe.",
+      "remarcou",
+      "remarcacao_sem_ferramenta",
+    ],
     [
       "Coloquei você na lista de espera.",
       "lista_de_espera",
@@ -1069,15 +1074,25 @@ describe("acao_nao_executada", () => {
     expect(regras("Confirmado! Até quinta.", feita("confirmou_presenca", TERCA))).toEqual([
       "acao_nao_executada:fechamento_fora_do_horario",
     ]);
-    expect(regras("Remarquei para quinta.", feita("remarcou", TERCA))).toEqual([
-      "acao_nao_executada:horario_da_acao",
-    ]);
+    const PENDENTE = ", pendente da aprovação da equipe.";
+    expect(
+      regras(`Remarquei para quinta${PENDENTE}`, feita("remarcou", TERCA)),
+    ).toEqual(["acao_nao_executada:horario_da_acao"]);
     // Sem o horario da acao, o dia nao tem par: barra (falha fechada).
-    expect(regras("Remarquei para quinta.", { hoje: HOJE, acoes: ["remarcou"] })).toEqual([
-      "acao_nao_executada:horario_da_acao",
+    expect(
+      regras(`Remarquei para quinta${PENDENTE}`, {
+        hoje: HOJE,
+        acoes: ["remarcou"],
+      }),
+    ).toEqual(["acao_nao_executada:horario_da_acao"]);
+    // A frase sem dia nem hora continua so com a acao (e a pendencia, AG4).
+    expect(
+      regras(`Remarquei sua consulta${PENDENTE}`, { acoes: ["remarcou"] }),
+    ).toEqual([]);
+    // AG4: sem a pendencia, a remarcacao feita barra.
+    expect(regras("Remarquei sua consulta.", { acoes: ["remarcou"] })).toEqual([
+      "acao_nao_executada:remarcacao_sem_pendencia",
     ]);
-    // A frase sem dia nem hora continua so com a acao.
-    expect(regras("Remarquei sua consulta.", { acoes: ["remarcou"] })).toEqual([]);
   });
 
   // Revisao da AG2 (achado 1): as formas naturais.
@@ -1139,8 +1154,17 @@ describe("acao_nao_executada", () => {
     ["Consulta cancelada.", "cancelou", "cancelamento_sem_ferramenta"],
     ["Pronto, cancelada.", "cancelou", "cancelamento_sem_ferramenta"],
     ["Ok, desmarcado.", "cancelou", "cancelamento_sem_ferramenta"],
-    ["Remarcado para quinta.", "remarcou", "remarcacao_sem_ferramenta"],
-    ["Consulta remarcada!", "remarcou", "remarcacao_sem_ferramenta"],
+    // AG4: com a pendencia dita (a remarcacao fica pendente da equipe).
+    [
+      "Remarcado para quinta, pendente da aprovação.",
+      "remarcou",
+      "remarcacao_sem_ferramenta",
+    ],
+    [
+      "Consulta remarcada! Falta a aprovação da equipe.",
+      "remarcou",
+      "remarcacao_sem_ferramenta",
+    ],
     ["Horário reservado por 10 minutos.", "reservou", "reserva_sem_ferramenta"],
     [
       "Prontinho, confirmada!",

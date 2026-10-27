@@ -398,21 +398,29 @@ function estadoDoSimuladorLido(valor: unknown): EstadoDoSimulador | null {
       instante(reserva.fim) &&
       instante(reserva.expiraEm) &&
       (reserva.unidadeId === null || typeof reserva.unidadeId === "string"));
+  const consultaSimuladaValida = (c: unknown): boolean =>
+    ehObjeto(c) &&
+    typeof c.appointmentId === "string" &&
+    UUID.test(c.appointmentId) &&
+    instante(c.inicio) &&
+    // Revisao final da AG3: o vinculo da consulta simulada (opcional).
+    (c.serviceLinkId === undefined ||
+      (typeof c.serviceLinkId === "string" && UUID.test(c.serviceLinkId))) &&
+    // Revisao curta das correcoes (achado 10): a unidade (opcional; a
+    // mesma forma da unidade da reserva, de onde ela vem).
+    (c.unidadeId === undefined ||
+      c.unidadeId === null ||
+      typeof c.unidadeId === "string");
   const consultaValida =
     consulta === null ||
-    (ehObjeto(consulta) &&
-      typeof consulta.appointmentId === "string" &&
-      UUID.test(consulta.appointmentId) &&
-      instante(consulta.inicio) &&
-      // Revisao final da AG3: o vinculo da consulta simulada (opcional).
-      (consulta.serviceLinkId === undefined ||
-        (typeof consulta.serviceLinkId === "string" &&
-          UUID.test(consulta.serviceLinkId))) &&
-      // Revisao curta das correcoes (achado 10): a unidade (opcional; a
-      // mesma forma da unidade da reserva, de onde ela vem).
-      (consulta.unidadeId === undefined ||
-        consulta.unidadeId === null ||
-        typeof consulta.unidadeId === "string"));
+    (consultaSimuladaValida(consulta) &&
+      // AG4: a remarcacao simulada leva a consulta antiga (opcional), sem
+      // outra dentro dela.
+      ehObjeto(consulta) &&
+      (consulta.remarcacaoDe === undefined ||
+        (consultaSimuladaValida(consulta.remarcacaoDe) &&
+          ehObjeto(consulta.remarcacaoDe) &&
+          consulta.remarcacaoDe.remarcacaoDe === undefined)));
   if (!reservaValida || !consultaValida) {
     return null;
   }

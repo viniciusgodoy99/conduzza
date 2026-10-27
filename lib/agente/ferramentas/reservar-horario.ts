@@ -19,6 +19,12 @@
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
+import { ehMotivoDaRemarcacao, type MotivoDaRemarcacao } from "./remarcar";
+
+// AG4 (27/10/2026): no modo de remarcacao (o pedido "remarcar" no estado do
+// atendimento), a reserva vai com p_remarcar (a consulta em foco) e a RPC
+// recusa tambem com os motivos da remarcacao (MOTIVOS_DA_REMARCACAO).
+
 export const NOME_DA_RESERVA = "reservar_horario";
 
 /** A reserva vale 10 minutos (slot_hold.expires_at, contrato 1.3). */
@@ -74,7 +80,10 @@ export const MOTIVOS_DA_RESERVA = [
   ...MOTIVOS_DA_CONFERENCIA,
   "ja_tem_consulta",
 ] as const;
-export type MotivoDaReserva = (typeof MOTIVOS_DA_RESERVA)[number];
+export type MotivoDaReserva =
+  | (typeof MOTIVOS_DA_RESERVA)[number]
+  // AG4: so no modo de remarcacao.
+  | MotivoDaRemarcacao;
 
 export type RespostaDaReserva =
   | {
@@ -97,6 +106,8 @@ export type RespostaDaReserva =
       unitId: string | null;
     }
   | { ok: false; motivo: MotivoDaConferencia }
+  /** AG4: as recusas do modo de remarcacao (p_remarcar). */
+  | { ok: false; motivo: MotivoDaRemarcacao }
   /**
    * Revisao final da AG3: o contato ja tem consulta futura ativa do mesmo
    * procedimento (o id e o inicio dela; nulos quando a RPC nao trouxe).
@@ -160,6 +171,9 @@ export function lerRespostaDaReserva(dado: unknown): RespostaDaReserva | null {
     };
   }
   if (r.ok === false && ehMotivo(MOTIVOS_DA_CONFERENCIA, r.motivo)) {
+    return { ok: false, motivo: r.motivo };
+  }
+  if (r.ok === false && ehMotivoDaRemarcacao(r.motivo)) {
     return { ok: false, motivo: r.motivo };
   }
   return null;

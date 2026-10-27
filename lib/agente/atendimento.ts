@@ -931,6 +931,14 @@ export const RESULTADOS_QUE_SAO_FALHA: ReadonlySet<string> = new Set([
   "cpf_ambiguo",
   "carteirinha_nao_encontrada",
   "carteirinha_ambigua",
+  // AG4: cancelar sem a pergunta feita antes, o "sim" que nao foi claro, o
+  // horario da remarcacao de outro procedimento, profissional ou pagamento,
+  // a busca da remarcacao sem a consulta e o segundo pedido na resposta.
+  "sem_pergunta_de_cancelamento",
+  "sem_confirmacao_clara",
+  "horario_fora_da_remarcacao",
+  "sem_consulta_para_remarcar",
+  "um_cancelamento_por_resposta",
 ]);
 
 /** O que conta como AVANCO: um passo do atendimento que deu certo. */
@@ -942,6 +950,10 @@ export const RESULTADOS_QUE_AVANCAM: ReadonlySet<string> = new Set([
   "registrado",
   "marcado",
   "confirmada",
+  // AG4: as consultas lidas, o cancelamento e a remarcacao pedida.
+  "consultas",
+  "cancelada",
+  "remarcado",
 ]);
 
 /**
@@ -997,6 +1009,22 @@ export type EntradaDaNota = {
   oferecidos: readonly HorarioLegivel[];
   /** Onde o atendimento parou, em texto de recepcao (rotulo fixo). */
   parouEm: string;
+  /**
+   * AG4: o pedido de cancelar ou remarcar uma consulta da pessoa (o dia, a
+   * hora e os nomes do Cadastro, so na nota da equipe).
+   */
+  pedidoDaConsulta?: {
+    acao: "cancelar" | "remarcar";
+    dia: string;
+    hora: string;
+    procedimento: string | null;
+    profissional: string | null;
+  } | null;
+  /** AG4: a remarcacao pedida pelo assistente nesta conversa. */
+  remarcacao?: {
+    de: { dia: string; hora: string } | null;
+    para: { dia: string; hora: string };
+  } | null;
 };
 
 const NOME_DO_PERIODO: Readonly<Record<string, string>> = {
@@ -1018,6 +1046,10 @@ export function temAtendimentoParaContar(
 ): boolean {
   return (
     estado.intencao === "agendar" ||
+    // AG4: o pedido de cancelar ou remarcar.
+    estado.intencao === "cancelar" ||
+    estado.intencao === "remarcar" ||
+    estado.pedido_pendente !== null ||
     estado.procedure_id !== null ||
     estado.horarios_oferecidos.length > 0 ||
     estado.slot_hold_id !== null ||
@@ -1039,12 +1071,54 @@ export function temAtendimentoParaContar(
  */
 export function notaDaPassagem(entrada: EntradaDaNota): string | null {
   const { estado, dados } = entrada;
-  if (!temAtendimentoParaContar(estado, dados)) {
+  const doPedido = entrada.pedidoDaConsulta ?? null;
+  const remarcacao = entrada.remarcacao ?? null;
+  if (
+    !temAtendimentoParaContar(estado, dados) &&
+    doPedido === null &&
+    remarcacao === null
+  ) {
     return null;
   }
   // D-20: o cabecalho fixo e o que faz o Atendimento assinar a nota como do
   // assistente (lib/agente/nota-da-passagem.ts).
   const linhas: string[] = [CABECALHO_DA_NOTA_DA_PASSAGEM];
+  // AG4: o pedido de cancelar ou remarcar uma consulta que a pessoa ja tem.
+  if (doPedido !== null) {
+    const nomes = [doPedido.procedimento, doPedido.profissional].filter(
+      (n): n is string => n !== null,
+    );
+    linhas.push(
+      `Pedido: ${doPedido.acao} a consulta de ${doPedido.dia} às ${doPedido.hora}${nomes.length === 0 ? "" : ` (${nomes.join(", ")})`}.`,
+    );
+    if (entrada.reserva !== null && doPedido.acao === "remarcar") {
+      const situacao =
+        entrada.reserva.perdida === true
+          ? "o horário deixou de estar livre"
+          : entrada.reserva.viva === true
+            ? "reserva de 10 minutos ainda valendo"
+            : entrada.reserva.viva === false
+              ? "a reserva de 10 minutos venceu"
+              : "reserva de 10 minutos";
+      linhas.push(
+        `Horário reservado para a remarcação: ${horarioEmTexto(entrada.reserva)} (${situacao}).`,
+      );
+    }
+    if (entrada.oferecidos.length > 0 && doPedido.acao === "remarcar") {
+      linhas.push(
+        `Horários oferecidos para a remarcação: ${entrada.oferecidos.map(horarioEmTexto).join("; ")}.`,
+      );
+    }
+  }
+  if (remarcacao !== null) {
+    linhas.push(
+      `Remarcação pedida pelo assistente nesta conversa, pendente da aprovação da equipe: ${remarcacao.de === null ? "" : `de ${remarcacao.de.dia} às ${remarcacao.de.hora} `}para ${remarcacao.para.dia} às ${remarcacao.para.hora}.`,
+    );
+  }
+  if (doPedido !== null || remarcacao !== null) {
+    linhas.push(`Parou em: ${entrada.parouEm}.`);
+    return linhas.join("\n");
+  }
   const pedido: string[] = [];
   if (entrada.procedimento !== null) {
     pedido.push(`marcar ${entrada.procedimento}`);

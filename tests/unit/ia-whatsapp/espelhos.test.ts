@@ -144,23 +144,36 @@ describe("espelhos do E3 com as migrations", () => {
     }
   });
 
-  it("MOTIVOS_DE_ESCALONAMENTO é o CHECK de escalation_reason mais novo (21, com os três da AG3)", () => {
+  it("MOTIVOS_DE_ESCALONAMENTO é o CHECK de escalation_reason mais novo (22, com os três da AG3 e o da AG4)", () => {
     const { arquivo, motivos } = checkDoMotivoMaisNovo();
     // Onda 2 (item 5): a 20261022110000 redefine o CHECK com
     // fora_do_assunto (18). AG3: a 20261027120000 o redefine de novo com
-    // consulta_para_outra_pessoa, ja_tem_consulta e faltam_dados (21). O E3
-    // (M1) tinha 17.
-    expect(arquivo >= "20261027120000").toBe(true);
+    // consulta_para_outra_pessoa, ja_tem_consulta e faltam_dados (21). AG4:
+    // a 20261028100000, com fora_do_prazo (22). O E3 (M1) tinha 17.
+    expect(arquivo >= "20261028100000").toBe(true);
     expect(motivos.sort()).toEqual([...MOTIVOS_DE_ESCALONAMENTO].sort());
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(21);
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(22);
     for (const motivo of [
       "fora_do_assunto",
       "consulta_para_outra_pessoa",
       "ja_tem_consulta",
       "faltam_dados",
+      "fora_do_prazo",
     ]) {
       expect(MOTIVOS_DE_ESCALONAMENTO).toContain(motivo);
     }
+  });
+
+  it("AG4: fora_do_prazo e do sistema (a ferramenta e o banco decidem pelo prazo), nunca do modelo", () => {
+    expect(MOTIVOS_DO_AGENTE as readonly string[]).not.toContain(
+      "fora_do_prazo",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.fora_do_prazo).toBe(
+      "A IA passou a conversa para a equipe: o pedido de cancelar ou remarcar ficou dentro do prazo da clínica.",
+    );
+    expect(
+      corpoMaisNovo("rotulo_do_motivo_da_ia").arquivo >= "20261028100000",
+    ).toBe(true);
   });
 
   it("o CHECK do E3 (M1) tinha os 17 de antes da onda 2 e da AG3", () => {
@@ -172,6 +185,7 @@ describe("espelhos do E3 com as migrations", () => {
       "consulta_para_outra_pessoa",
       "ja_tem_consulta",
       "faltam_dados",
+      "fora_do_prazo",
     ];
     expect(literais(bloco ?? "").sort()).toEqual(
       MOTIVOS_DE_ESCALONAMENTO.filter((m) => !depoisDoE3.includes(m)).sort(),

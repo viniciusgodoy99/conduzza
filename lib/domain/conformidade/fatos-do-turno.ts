@@ -209,16 +209,31 @@ export type HorarioDoFato = {
   profissional?: string | null;
 };
 
-/** Uma acao de sucesso com o horario dela. */
-export type AcaoComHorario = HorarioDoFato & { acao: AcaoDoTurno };
+/**
+ * Uma acao de sucesso com o horario dela. AG4: na remarcacao, `anterior` e o
+ * horario da consulta antiga (que continua marcada ate a aprovacao); vai ao
+ * resumo do verificador ("pediu a remarcacao para X; a consulta de Y
+ * continua marcada").
+ */
+export type AcaoComHorario = HorarioDoFato & {
+  acao: AcaoDoTurno;
+  anterior?: HorarioDoFato | null;
+};
 
 /**
  * Uma consulta que a ferramenta leu (confirmar_presenca, ja_tem_consulta ou
  * a consulta do estado). marcadaNestaConversa: a consulta que a IA marcou
  * nesta conversa num turno anterior, relida agora (o estado do
- * atendimento): "ficou marcada" e "foi marcada" valem com ela.
+ * atendimento): "ficou marcada" e "foi marcada" valem com ela. AG4:
+ * remarcadaNestaConversa e a consulta NOVA da remarcacao que a IA pediu
+ * nesta conversa, relida e ainda pendente da aprovacao: "foi remarcada" vale
+ * com ela, e a mensagem que diz isso tem de dizer que depende da aprovacao
+ * (remarcacao_sem_pendencia).
  */
-export type ConsultaDoFato = HorarioDoFato & { marcadaNestaConversa: boolean };
+export type ConsultaDoFato = HorarioDoFato & {
+  marcadaNestaConversa: boolean;
+  remarcadaNestaConversa?: boolean;
+};
 
 /** O que uma ferramenta acrescenta aos fatos, alem da propria saida. */
 export type FatosDaFerramenta = {
@@ -236,6 +251,16 @@ export type FatosDaFerramenta = {
    * estado da consulta com dia ou hora nao passa.
    */
   consultaComHorario?: ConsultaDoFato;
+  /**
+   * AG4: as consultas lidas de uma vez (consultar_minhas_consultas, a
+   * consulta em foco e, na remarcacao, a antiga), com o horario de cada uma.
+   */
+  consultasComHorario?: readonly ConsultaDoFato[];
+  /**
+   * AG4: na remarcacao (acao "remarcou"), o horario da consulta antiga, que
+   * continua marcada ate a aprovacao.
+   */
+  horarioAnterior?: HorarioDoFato;
   /**
    * Os horarios livres que a ferramenta trouxe (buscar_horario) ou reservou
    * (reservar_horario): a unica prova de "tenho as 14h".
@@ -428,18 +453,28 @@ function listaDeTextosOpcional(valor: unknown): boolean {
 }
 
 function acaoComHorarioValida(valor: unknown): boolean {
+  const anterior = (valor as Record<string, unknown> | null)?.anterior;
   return (
     horarioDoFatoValido(valor) &&
     (ACOES_DO_TURNO as readonly unknown[]).includes(
       (valor as Record<string, unknown>).acao,
-    )
+    ) &&
+    // AG4: o horario da consulta antiga, opcional, so na remarcacao.
+    (anterior === undefined ||
+      anterior === null ||
+      (horarioDoFatoValido(anterior) &&
+        (valor as Record<string, unknown>).acao === "remarcou"))
   );
 }
 
 function consultaDoFatoValida(valor: unknown): boolean {
+  const remarcada = (valor as Record<string, unknown> | null)
+    ?.remarcadaNestaConversa;
   return (
     horarioDoFatoValido(valor) &&
-    typeof (valor as Record<string, unknown>).marcadaNestaConversa === "boolean"
+    typeof (valor as Record<string, unknown>).marcadaNestaConversa ===
+      "boolean" &&
+    (remarcada === undefined || typeof remarcada === "boolean")
   );
 }
 
@@ -2988,6 +3023,14 @@ function semFlexaoDoParticipio(texto: string): string {
     .replace(PARTICIPIO_NO_SUPERLATIVO, "$1$2");
 }
 
+/**
+ * AG4 (27/10/2026): a mensagem diz que a remarcacao depende da aprovacao da
+ * equipe ("pendente da aprovacao", "ate a equipe aprovar", "falta a
+ * aprovacao"). "Aprovada" e "aprovado" NAO contam: dizem que ja foi.
+ */
+const PENDENCIA_DA_REMARCACAO =
+  /\b(?:pendente|pendentes|pendencia|aprovacao|aprovar|aprove|aprova|ate a equipe|aguardando a equipe|esperando a equipe)\b/;
+
 /** Negacao colada na afirmacao ("nao marquei", "ainda nao foi marcada"). */
 const NEGACAO_ANTES =
   /\b(?:nao|nem|nunca)\s+(?:(?:te|lhe|me|se|a|o|ainda|tinha)\s+)?$/;
@@ -4927,6 +4970,11 @@ export function regrasDosFatos(
   const marcadaNestaConversa = fatos.consultasLidas.some(
     (c) => c.marcadaNestaConversa,
   );
+  // AG4: a remarcacao que a IA pediu nesta conversa, relida no turno (ainda
+  // pendente), sustenta "foi remarcada" no turno seguinte ao do pedido.
+  const remarcadaNestaConversa = fatos.consultasLidas.some(
+    (c) => c.remarcadaNestaConversa === true,
+  );
   const acoesSemFerramenta = new Set<string>();
   const semDiminutivo = semFlexaoDoParticipio(mascarada);
   const frasesSemDiminutivo = frasesComPosicao(semDiminutivo);
@@ -4972,7 +5020,8 @@ export function regrasDosFatos(
         padrao.acao === null
           ? fatos.consultaLida || acoes.has("marcou") || acoes.has("remarcou")
           : acoes.has(padrao.acao) ||
-            (padrao.acao === "marcou" && marcadaNestaConversa);
+            (padrao.acao === "marcou" && marcadaNestaConversa) ||
+            (padrao.acao === "remarcou" && remarcadaNestaConversa);
       if (!sustentada) {
         acoesSemFerramenta.add(padrao.nome);
         continue;
@@ -5029,6 +5078,16 @@ export function regrasDosFatos(
         return [
           ...lidos(fatos.consultasLidas),
           ...daAcao("confirmou_presenca"),
+        ];
+      case "remarcou":
+        // AG4: a remarcacao do turno ou a pedida nesta conversa, relida.
+        return [
+          ...daAcao("remarcou"),
+          ...lidos(
+            fatos.consultasLidas.filter(
+              (c) => c.remarcadaNestaConversa === true,
+            ),
+          ),
         ];
       default:
         return daAcao(alegacao);
@@ -5161,6 +5220,42 @@ export function regrasDosFatos(
       achados.push({
         categoria: "acao_nao_executada",
         regra: "fechamento_fora_do_horario",
+      });
+    }
+  }
+
+  // AG4 (27/10/2026): a remarcacao que a IA pede nasce PENDENTE da aprovacao
+  // da equipe, e a consulta antiga continua marcada ate la (D-10). A frase
+  // que diz que remarcou (a acao, ou o estado ou o fechamento com o par da
+  // consulta nova) so passa com a pendencia dita na MENSAGEM
+  // (PENDENCIA_DA_REMARCACAO): "Remarquei para terca" sozinho barra.
+  const paresDaRemarcacao = [
+    ...daAcao("remarcou"),
+    ...lidos(
+      fatos.consultasLidas.filter((c) => c.remarcadaNestaConversa === true),
+    ),
+  ];
+  if (
+    (acoes.has("remarcou") || remarcadaNestaConversa) &&
+    !PENDENCIA_DA_REMARCACAO.test(semDiminutivo)
+  ) {
+    const indices = new Set([...alegadas.keys(), ...fatosDaFrase.keys()]);
+    const dizQueRemarcou = [...indices].some((indice) => {
+      if (alegadas.get(indice)?.has("remarcou")) {
+        return true;
+      }
+      const frase = frasesSemDiminutivo[indice];
+      if (frase === undefined) {
+        return false;
+      }
+      return paresDaOferta(
+        partesDaOferta(semDiminutivo, frase, fatos.hoje),
+      ).some((par) => paresDaRemarcacao.some((h) => parNoHorarioLivre(par, h)));
+    });
+    if (dizQueRemarcou) {
+      achados.push({
+        categoria: "acao_nao_executada",
+        regra: "remarcacao_sem_pendencia",
       });
     }
   }
@@ -5336,6 +5431,11 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   TITULO_E_NOME.source,
   NEGACAO_DEPOIS_DA_MENCAO.source,
   "profissional e unidade: a frase da acao, do estado ou do fechamento licenciado com outro profissional do Cadastro (nome inteiro ou titulo com o nome) ou outra unidade (com a palavra unidade) barra; fato sem profissional ou unidade nao barra",
+  // AG4 (27/10/2026): a remarcacao pedida nesta conversa e a pendencia.
+  "remarcou: tambem a remarcacao pedida nesta conversa, relida e pendente",
+  PENDENCIA_DA_REMARCACAO.source,
+  "remarcacao_sem_pendencia: a frase que diz que remarcou (acao, ou estado ou fechamento com o par da consulta nova) so com a pendencia na mensagem",
+  "acao com horario: o anterior so na remarcacao",
   CONVENIO_GENERICO,
   DETERMINANTES,
   ...PADROES_DE_COBERTURA.map(

@@ -75,5 +75,10 @@ export type RespostaDaConfirmacao =
       /** ISO (UTC); null quando ninguem sabe (o simulador nao grava). */
       inicio: string | null;
       serviceLinkId: string | null;
+      /**
+       * AG4 (o limite da 21.15): o profissional da consulta confirmada, so
+       * para os fatos do turno. Ausente: o do vinculo.
+       */
+      profissionalId?: string | null;
     }
   | { ok: false; motivo: MotivoDaConfirmacao };

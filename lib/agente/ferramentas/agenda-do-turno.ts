@@ -71,21 +71,47 @@
 //    existe, antes de qualquer dado);
 //  - a reserva que vence no meio do turno (o relogio do turno passa do
 //    vencimento) conta como vencida na gravacao, nos fatos e na pergunta.
+//
+// AG4 (27/10/2026), remarcar e cancelar (desenho da AG4, secoes 1 e 4):
+//  - consultar_minhas_consultas le as consultas futuras do contato (c1 a c5,
+//    so dia, hora e situacao ao modelo; D-13);
+//  - pedir_cancelamento e cancelar_consulta, em duas fases: a primeira
+//    confere a consulta (o espelho de conferir_consulta_da_ia) e devolve a
+//    FRASE FIXA da pergunta (T1), que arma o pedido no fechamento; a segunda,
+//    numa mensagem nova e so com o pedido armado no comeco do turno, confere
+//    o "sim" numa lista fechada (D-30) e chama a RPC. Deu certo: a frase fixa
+//    do botao (T2);
+//  - buscar_horario_para_remarcar fixa a consulta em foco e busca com o
+//    procedimento, o profissional e o pagamento dela (do servidor);
+//    reservar_horario e agendar no modo de remarcacao mandam p_remarcar e
+//    devolvem as frases fixas T3 (que arma "aguardando_confirmacao") e T4;
+//  - a frase fixa ({tipo: "frase"}) encerra o turno: o laco a compoe com a
+//    saudacao e o aviso e a manda pelo filtro inteiro, com os fatos dela;
+//  - a pergunta e armada pelo RESULTADO da ferramenta, nunca por expressao
+//    no texto, e desarma em qualquer outro turno;
+//  - as recusas que sao da equipe passam com pedido_de_agenda, e as do prazo
+//    com fora_do_prazo (tipo "passar", com a nota da passagem).
 // Nada daqui tem texto do paciente: a trilha cita nomes do Cadastro, dias,
-// horas e os nomes dos campos.
+// horas e os nomes dos campos. O "sim" do cancelamento e lido do texto
+// original da mensagem (sem sair do turno, nunca para log).
 
 import {
   ferramentasDoAgente,
+  prazoDaAcao,
+  type AcaoComPrazo,
   type ConfigDoAgente,
   type FerramentaDeAgenda,
   type MotivoDeEscalonamento,
 } from "@/lib/domain/agente/config";
 import type {
+  ConsultaDoFato,
   CoberturaDoTurno,
   FatosDaFerramenta,
+  HorarioDoFato,
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import { pareceNomeDePessoa } from "@/lib/domain/conformidade/minimizar";
+import { interpretarRespostaAoCancelamento } from "@/lib/domain/resposta-paciente";
 
 import {
   comHorariosOferecidos,
@@ -113,6 +139,12 @@ import {
   type RespostaDoAgendar,
 } from "./agendar";
 import {
+  entradaDoCancelamentoSchema,
+  entradaDoPedidoDeCancelamentoSchema,
+  type MotivoDoCancelamento,
+  type RespostaDoCancelamento,
+} from "./cancelar-consulta";
+import {
   diaAsHora,
   diaEHora,
   escolherHorarios,
@@ -127,6 +159,7 @@ import {
 } from "./buscar-horario";
 import {
   coberturaDoConvenio,
+  indiceDosProfissionais,
   nomeDoConvenio,
   type CatalogoDoAgente,
   type ConvenioDoAgente,
@@ -143,6 +176,23 @@ import {
   type RespostaDaConfirmacao,
 } from "./confirmar-presenca";
 import {
+  perguntaDaRemarcacao,
+  perguntaDoCancelamento,
+  respostaDaRemarcacao,
+  respostaDoCancelamento,
+} from "./frases-da-agenda";
+import {
+  conferirConsultaDaIa,
+  emOrdem,
+  entradaDasMinhasConsultasSchema,
+  MAXIMO_DE_CONSULTAS_NA_LISTA,
+  ROTULO_DA_SITUACAO,
+  situacaoDaConsulta,
+  type ConsultaDoContato,
+  type ConsultasDoContato,
+  type MotivoDaConferenciaDaConsulta,
+} from "./minhas-consultas";
+import {
   entradaDoRegistroDeDadosSchema,
   prepararRegistro,
   resultadoDoProblema,
@@ -151,6 +201,10 @@ import {
   type ProblemaDoCampo,
   type RespostaDoRegistro,
 } from "./registrar-dados";
+import {
+  ehMotivoDaRemarcacao,
+  entradaDaBuscaParaRemarcarSchema,
+} from "./remarcar";
 import {
   entradaDaReservaSchema,
   MINUTOS_DA_RESERVA,
@@ -188,6 +242,18 @@ export type ConsultaLida = {
   ativa: boolean;
   /** Revisao final da AG3: a unidade da consulta (null: sem unidade). */
   unidadeId?: string | null;
+  /**
+   * AG4 (o limite da 21.15): o profissional da consulta, para os fatos do
+   * turno (o nome vem do catalogo, so no servidor; nunca ao modelo nem ao
+   * resumo do verificador). Ausente: nao se sabe.
+   */
+  profissionalId?: string | null;
+  /** AG4: o vinculo (procedimento, profissional e convenio) da consulta. */
+  serviceLinkId?: string | null;
+  /** AG4: approval_status = 'pendente' (a consulta da IA ainda nao aprovada). */
+  pendente?: boolean;
+  /** AG4: appointment.remarcacao_de (esta consulta e a remarcacao de outra). */
+  remarcacaoDe?: string | null;
 };
 
 /**
@@ -208,6 +274,8 @@ export type PortaDaAgenda = {
     fim: string;
     /** AG3: a unidade do horario (null = sem unidade). */
     unidadeId?: string | null;
+    /** AG4: a consulta que esta sendo remarcada (p_remarcar). */
+    remarcarId?: string | null;
   }) => Promise<RespostaDaReserva>;
   /**
    * agendar_pela_ia com o job_id do turno. Revisao final da AG3: com a
@@ -215,7 +283,11 @@ export type PortaDaAgenda = {
    * recusa reserva_diferente quando a reserva viva e outra. Sem o pedido
    * (ou com o id nulo), a reserva viva da conversa, como antes.
    */
-  agendar: (pedido?: { slotHoldId: string | null }) => Promise<RespostaDoAgendar>;
+  agendar: (pedido?: {
+    slotHoldId: string | null;
+    /** AG4: a consulta que esta sendo remarcada (p_remarcar). */
+    remarcarId?: string | null;
+  }) => Promise<RespostaDoAgendar>;
   /** A consulta do contato que aguarda confirmacao e confirmar_pelo_paciente. */
   confirmarPresenca: () => Promise<RespostaDaConfirmacao>;
   /** AG3: registrar_dados_da_marcacao com o job_id do turno. */
@@ -231,6 +303,13 @@ export type PortaDaAgenda = {
    * recusou reserva_diferente), ou null. Lanca na leitura que falha.
    */
   lerReservaViva?: () => Promise<ReservaVivaDaConversa | null>;
+  /**
+   * AG4: as consultas futuras do contato da conversa (ate 5, com ha_mais).
+   * Lanca na leitura que falha.
+   */
+  lerConsultasDoContato?: () => Promise<ConsultasDoContato>;
+  /** AG4: cancelar_consulta_pela_ia com o job_id do turno. */
+  cancelarConsulta?: (appointmentId: string) => Promise<RespostaDoCancelamento>;
 };
 
 export type ResultadoDaFerramentaDeAgenda =
@@ -253,16 +332,37 @@ export type ResultadoDaFerramentaDeAgenda =
     }
   /**
    * AG3: a recusa que passa a conversa para a equipe (consulta para outra
-   * pessoa, menor de idade, D-8), com o motivo do banco.
+   * pessoa, menor de idade, D-8), com o motivo do banco. AG4: a consulta que
+   * so a equipe mexe (pedido_de_agenda) e o pedido dentro do prazo da
+   * clinica (fora_do_prazo).
    */
   | {
       tipo: "passar";
       motivo: Extract<
         MotivoDeEscalonamento,
-        "consulta_para_outra_pessoa" | "menor_de_idade"
+        | "consulta_para_outra_pessoa"
+        | "menor_de_idade"
+        | "pedido_de_agenda"
+        | "fora_do_prazo"
       >;
       passo: string;
       resultado: string;
+    }
+  /**
+   * AG4: a FRASE FIXA que encerra o turno (as perguntas e as respostas do
+   * cancelamento e da remarcacao, T1 a T4). O laco a compoe com a saudacao e
+   * o aviso e a manda pelo filtro INTEIRO, com estes fatos; o modelo nao
+   * escreve nada.
+   */
+  | {
+      tipo: "frase";
+      /** O texto que sai (antes da saudacao e do aviso). */
+      texto: string;
+      /** O JSON dos fatos (o dia e a hora juntos, como uma saida). */
+      saida: string;
+      passo: string;
+      resultado: string;
+      fatos: FatosDaFerramenta;
     }
   /** A RPC disse ia_desligada: o turno para sem frase (liberacao_suspensa). */
   | { tipo: "liberacao_suspensa"; passo: string }
@@ -271,7 +371,13 @@ export type ResultadoDaFerramentaDeAgenda =
 
 /** O que a trilha diz de cada motivo das RPCs (linguagem de recepcao). */
 export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
-  Record<MotivoDaReserva | MotivoDoAgendar, string>
+  Record<
+    | MotivoDaReserva
+    | MotivoDoAgendar
+    | MotivoDoCancelamento
+    | MotivoDaConferenciaDaConsulta,
+    string
+  >
 > = {
   ia_desligada: "o assistente não está mais atendendo esta conversa",
   agenda_nao_configurada:
@@ -296,6 +402,24 @@ export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
   menor_de_idade: "o paciente é menor de idade",
   ja_tem_consulta: "o paciente já tem consulta marcada deste procedimento",
   faltam_dados: "faltam dados do paciente para marcar",
+  // AG4: remarcar e cancelar.
+  remarcacao_desligada:
+    "remarcar não está ligado, ou o prazo para remarcar não está preenchido, na versão publicada",
+  cancelamento_desligado:
+    "cancelar não está ligado, ou o prazo para cancelar não está preenchido, na versão publicada",
+  sem_pedido_de_remarcacao: "não havia pedido de remarcação nesta conversa",
+  sem_pedido_de_cancelamento: "não havia pedido de cancelamento nesta conversa",
+  consulta_nao_encontrada: "a consulta não é do paciente desta conversa",
+  consulta_encerrada:
+    "a consulta não está mais marcada (já passou, foi atendida ou cancelada)",
+  encaixe: "a consulta é um encaixe, que só a equipe mexe",
+  so_com_a_equipe: "a consulta só é mexida pela equipe",
+  pendente_da_equipe: "a consulta ainda espera a aprovação da equipe",
+  remarcacao_pendente: "a consulta já tem uma remarcação esperando a aprovação",
+  fora_do_prazo: "o pedido ficou dentro do prazo da clínica",
+  remarcacao_invalida:
+    "o horário novo não é do mesmo procedimento, profissional e pagamento",
+  consulta_mudou: "a consulta mudou depois do pedido",
 };
 
 /** O passo da trilha de cada motivo de confirmar_presenca. */
@@ -316,6 +440,18 @@ const PASSO_DA_CONFIRMACAO_RECUSADA: Readonly<
  * passagem.
  */
 const PAROU_EM: Readonly<Record<string, string>> = {
+  // AG4: remarcar e cancelar ("fora_do_prazo" leva o numero do prazo, na
+  // nota). As recusas que vem do banco depois da pergunta tambem.
+  encaixe: "a consulta é um encaixe, que só a equipe mexe",
+  so_com_a_equipe: "a consulta só é mexida pela equipe",
+  pendente_da_equipe: "a consulta ainda espera a aprovação da equipe",
+  remarcacao_pendente: "a consulta já tem uma remarcação esperando a aprovação",
+  consulta_mudou: "a consulta mudou depois do pedido",
+  remarcacao_invalida:
+    "o horário escolhido não é do mesmo procedimento, profissional e pagamento",
+  horario_fora_da_remarcacao:
+    "o horário escolhido não é do mesmo procedimento, profissional e pagamento",
+  sem_confirmacao_clara: "a resposta do paciente à pergunta do cancelamento não ficou clara",
   hora_pedida_ocupada: "a hora pedida não estava livre",
   sem_horario: "não havia horário livre no período pedido",
   agenda_nao_cadastrada: "a agenda do profissional não está cadastrada",
@@ -381,6 +517,24 @@ export type AtendimentoParaOModelo = {
   paraOTitular: boolean | null;
   consulta: { dia: string; hora: string } | null;
   falhasSeguidas: number;
+  /**
+   * AG4: o pedido de cancelar ou remarcar em andamento, com a consulta em
+   * foco (so o dia e a hora, D-13; nulos quando nao deu para reler agora).
+   */
+  pedidoDaConsulta?: {
+    acao: "cancelar" | "remarcar";
+    dia: string | null;
+    hora: string | null;
+  } | null;
+  /**
+   * AG4: a remarcacao pedida nesta conversa, relida (de, para e se ainda
+   * espera a aprovacao da equipe).
+   */
+  remarcacao?: {
+    de: { dia: string; hora: string } | null;
+    para: { dia: string; hora: string };
+    pendente: boolean;
+  } | null;
 };
 
 export type FechamentoDoTurno = {
@@ -444,6 +598,36 @@ function saida(
   };
 }
 
+/**
+ * AG4: o profissional do fato so quando se sabe (sem ele, a chave fica de
+ * fora, como antes: "nao se sabe").
+ */
+function comOProfissional(
+  nome: string | null | undefined,
+): { profissional?: string } {
+  return typeof nome === "string" && nome.trim() !== ""
+    ? { profissional: nome }
+    : {};
+}
+
+/** AG4: a frase fixa que encerra o turno (com os fatos dela). */
+function frase(
+  texto: string,
+  corpo: Record<string, unknown>,
+  passo: string,
+  resultado: string,
+  fatos: FatosDaFerramenta,
+): ResultadoDaFerramentaDeAgenda {
+  return {
+    tipo: "frase",
+    texto,
+    saida: JSON.stringify({ resultado, ...corpo }),
+    passo,
+    resultado,
+    fatos,
+  };
+}
+
 /** A reserva que o turno conhece (a do estado ou a feita no turno). */
 type ReservaDoTurno = {
   /** O horario do codigo (null: o horario da reserva nao tem codigo no mapa). */
@@ -462,6 +646,55 @@ type ReservaDoTurno = {
   /** slot_hold.id (null: a RPC nao devolveu). */
   holdId: string | null;
 };
+
+/**
+ * AG4: a consulta em foco do pedido de cancelar ou remarcar (so o servidor
+ * ve isto: o vinculo, o profissional e a unidade nunca vao ao modelo).
+ */
+type ConsultaEmFoco = {
+  id: string;
+  /** ISO (UTC). */
+  inicio: string;
+  serviceLinkId: string | null;
+  profissionalId: string | null;
+  unidadeId: string | null;
+};
+
+/** AG4: as recusas da consulta que passam para a equipe (pedido_de_agenda). */
+const RECUSAS_DA_EQUIPE: ReadonlySet<string> = new Set([
+  "encaixe",
+  "so_com_a_equipe",
+  "pendente_da_equipe",
+  "remarcacao_pendente",
+  "cancelamento_desligado",
+  "remarcacao_desligada",
+]);
+
+/**
+ * AG4: as recusas que vao ao modelo (a consulta deixou de estar marcada, ou
+ * mudou depois do pedido; o horario novo nao e o da consulta; a mensagem da
+ * pessoa depois da pergunta nao veio), e o modelo diz isso a pessoa.
+ */
+const RECUSAS_PARA_O_MODELO: ReadonlySet<string> = new Set([
+  "consulta_encerrada",
+  "consulta_nao_encontrada",
+  "consulta_mudou",
+  "remarcacao_invalida",
+  "sem_confirmacao_do_paciente",
+]);
+
+/**
+ * AG4: as que desarmam o pedido. No cancelamento, todas (a pergunta volta
+ * por pedir_cancelamento, com a consulta lida de novo). Na remarcacao, so a
+ * consulta que deixou de estar marcada: com "a consulta mudou" (o banco
+ * ancora na reserva) e com o horario de fora, reservar de novo resolve, sem
+ * perder o foco (contrato da frente de banco, item 4).
+ */
+function desarmaOPedido(motivo: string, acao: AcaoComPrazo): boolean {
+  return acao === "cancelar"
+    ? RECUSAS_PARA_O_MODELO.has(motivo)
+    : motivo === "consulta_encerrada" || motivo === "consulta_nao_encontrada";
+}
 
 /**
  * Revisao final da AG3: as recusas do agendar pelo horario (a reserva fica
@@ -511,8 +744,12 @@ function emUtc(iso: string): string {
 export function criarAgendaDoTurno(entrada: {
   porta: PortaDaAgenda | null;
   catalogo: CatalogoDoAgente;
+  /**
+   * AG4: os prazos (opcionais: sem eles, cancelar e remarcar valem
+   * desligadas e a conferencia da consulta da fora do prazo).
+   */
   config: Pick<ConfigDoAgente, "habilidades" | "agenda"> &
-    Partial<Pick<ConfigDoAgente, "dadosExigidos">>;
+    Partial<Pick<ConfigDoAgente, "dadosExigidos" | "prazos">>;
   agoraMs: number;
   fuso: string;
   /**
@@ -552,10 +789,29 @@ export function criarAgendaDoTurno(entrada: {
     nascimento: false,
     cpf: false,
   };
-  const agendaLigada = ferramentasDoAgente(
+  const ferramentasLigadas = ferramentasDoAgente(
     entrada.config.habilidades,
     entrada.config.agenda,
-  ).includes("buscar_horario");
+    entrada.config.prazos ?? null,
+  );
+  const agendaLigada = ferramentasLigadas.includes("buscar_horario");
+
+  // AG4: o pedido de cancelar ou remarcar com que o turno comeca. "remarcou":
+  // a remarcacao foi pedida nesta conversa (pos_marcacao, a consulta nova
+  // no appointment_id).
+  const pedidoInicial = estado.pedido_pendente;
+  const focoInicialId = estado.appointment_id;
+  const pedidoInicialEm = estado.pedido_pendente_em;
+  const modoInicial: "cancelar" | "remarcar" | "remarcou" | null =
+    focoInicialId === null
+      ? null
+      : pedidoInicial === "cancelar"
+        ? "cancelar"
+        : pedidoInicial === "remarcar"
+          ? "remarcar"
+          : estado.intencao === "remarcar" && estado.etapa === "pos_marcacao"
+            ? "remarcou"
+            : null;
 
   const horarios = new Map<string, HorarioOferecido>();
   const situacoes = new Map<string, "livre" | "ocupado">();
@@ -578,9 +834,38 @@ export function criarAgendaDoTurno(entrada: {
   /** A reserva conhecida: a deste turno ou a do estado, conferida. */
   let reserva: ReservaDoTurno | null = null;
   /** A consulta marcada nesta conversa (o estado), relida no turno. */
-  let consultaLida: { dia: string; hora: string; unidade: string | null } | null =
-    null;
+  let consultaLida: {
+    dia: string;
+    hora: string;
+    unidade: string | null;
+    profissional: string | null;
+  } | null = null;
   let consultaDoTurno: { dia: string; hora: string } | null = null;
+
+  // AG4: remarcar e cancelar.
+  /** As consultas do contato lidas neste turno (os codigos c1 a c5). */
+  let listaDoTurno: ConsultasDoContato | null = null;
+  const consultasPorCodigo = new Map<string, ConsultaDoContato>();
+  /** A consulta em foco (do pedido do estado, relida, ou escolhida agora). */
+  let foco: ConsultaEmFoco | null = null;
+  /** A frase fixa deste turno que arma a pergunta no fechamento. */
+  let perguntaArmada: "cancelar" | "remarcar" | null = null;
+  let chamouPedidoDeCancelamento = false;
+  let chamouCancelamento = false;
+  /** A consulta cancelada neste turno (sai dos fatos do estado). */
+  let canceladaNoTurno: string | null = null;
+  /** A remarcacao pedida neste turno (a antiga e a nova, como fato). */
+  let remarcacaoNoTurno: { antiga: HorarioDoFato; nova: HorarioDoFato } | null =
+    null;
+  /** A remarcacao pedida nesta conversa, relida (modo "remarcou"). */
+  let remarcacaoLida: {
+    nova: ConsultaDoFato;
+    antiga: ConsultaDoFato | null;
+    pendente: boolean;
+  } | null = null;
+  /** O pedido que a nota da passagem conta (a acao e a consulta). */
+  let pedidoDaNota: { acao: AcaoComPrazo; consulta: ConsultaEmFoco } | null =
+    null;
 
   /**
    * Revisao final da AG3: a reserva vale agora? Viva na leitura (ou feita
@@ -606,6 +891,54 @@ export function criarAgendaDoTurno(entrada: {
   /** O vinculo do catalogo pelo id. */
   const vinculoDe = (id: string | null): VinculoDoAgente | undefined =>
     id === null ? undefined : catalogo.vinculos.find((v) => v.id === id);
+
+  /**
+   * AG4 (o limite da 21.15): o nome do profissional pelo id, do Cadastro. So
+   * para os fatos do turno e a trilha; nunca vai ao modelo nem ao resumo.
+   */
+  const nomeDoProfissional = (id: string | null | undefined): string | null =>
+    id === null || id === undefined
+      ? null
+      : ((catalogo.profissionais ?? []).find((p) => p.id === id)?.nome ??
+        catalogo.vinculos.find((v) => v.profissionalId === id)?.profissional ??
+        null);
+
+  /** AG4: o prazo de uma acao (nulo: nao preenchido, a IA nao age). */
+  const prazoDe = (acao: AcaoComPrazo): number | null =>
+    prazoDaAcao(entrada.config.prazos ?? null, acao);
+
+  /**
+   * AG4: uma consulta como fato do turno (o dia, a hora, a unidade e o
+   * profissional do Cadastro). "marcada": a IA marcou nesta conversa;
+   * "remarcada": e a remarcacao pedida nesta conversa, ainda pendente.
+   */
+  function consultaComoFato(
+    c: {
+      inicio: string;
+      unidadeId?: string | null;
+      profissionalId?: string | null;
+    },
+    sinais: { marcada: boolean; remarcada?: boolean },
+  ): ConsultaDoFato {
+    const { dia, hora } = diaEHora(new Date(c.inicio), fuso, agoraMs);
+    return {
+      dia,
+      hora,
+      unidade: nomeDaUnidade(c.unidadeId),
+      ...comOProfissional(nomeDoProfissional(c.profissionalId)),
+      marcadaNestaConversa: sinais.marcada,
+      ...(sinais.remarcada === true ? { remarcadaNestaConversa: true } : {}),
+    };
+  }
+
+  /** AG4: a consulta da lista como a consulta em foco. */
+  const focoDaConsulta = (c: ConsultaDoContato): ConsultaEmFoco => ({
+    id: c.id,
+    inicio: c.inicio,
+    serviceLinkId: c.serviceLinkId,
+    profissionalId: c.profissionalId,
+    unidadeId: c.unidadeId,
+  });
 
   const procedimentoDe = (procedimentoId: string | undefined) =>
     [...catalogo.procedimentos, ...(catalogo.procedimentosSoComAEquipe ?? [])].find(
@@ -792,18 +1125,64 @@ export function criarAgendaDoTurno(entrada: {
         };
       }
     }
-    // A consulta marcada nesta conversa (so o dia, a hora e a unidade).
+    // A consulta do estado: a marcada nesta conversa (AG3; so o dia, a hora
+    // e a unidade ao modelo; AG4, o profissional nos fatos), a consulta em
+    // foco do pedido de cancelar ou remarcar (AG4, nunca "marcada nesta
+    // conversa") ou, depois de remarcar, a nova e a antiga.
     if (estado.appointment_id !== null && porta.lerConsulta !== undefined) {
-      try {
-        const lida = await porta.lerConsulta(estado.appointment_id);
-        if (lida !== null && lida.ativa) {
-          consultaLida = {
-            ...diaEHora(new Date(lida.inicio), fuso, agoraMs),
-            unidade: nomeDaUnidade(lida.unidadeId),
-          };
+      const id = estado.appointment_id;
+      if (modoInicial === "cancelar" || modoInicial === "remarcar") {
+        try {
+          const lida = await porta.lerConsulta(id);
+          if (lida !== null && lida.ativa) {
+            foco = {
+              id,
+              inicio: lida.inicio,
+              serviceLinkId: lida.serviceLinkId ?? null,
+              profissionalId: lida.profissionalId ?? null,
+              unidadeId: lida.unidadeId ?? null,
+            };
+          }
+        } catch {
+          foco = null;
         }
-      } catch {
-        consultaLida = null;
+      } else if (modoInicial === "remarcou") {
+        try {
+          const nova = await porta.lerConsulta(id);
+          if (nova !== null && nova.ativa) {
+            const pendente = nova.pendente === true;
+            let antiga: ConsultaDoFato | null = null;
+            if (nova.remarcacaoDe) {
+              const lidaAntiga = await porta.lerConsulta(nova.remarcacaoDe);
+              if (lidaAntiga !== null && lidaAntiga.ativa) {
+                antiga = consultaComoFato(lidaAntiga, { marcada: false });
+              }
+            }
+            remarcacaoLida = {
+              nova: consultaComoFato(nova, {
+                marcada: false,
+                remarcada: pendente,
+              }),
+              antiga,
+              pendente,
+            };
+          }
+        } catch {
+          remarcacaoLida = null;
+        }
+      } else {
+        try {
+          const lida = await porta.lerConsulta(id);
+          if (lida !== null && lida.ativa) {
+            consultaLida = {
+              ...diaEHora(new Date(lida.inicio), fuso, agoraMs),
+              unidade: nomeDaUnidade(lida.unidadeId),
+              profissional: nomeDoProfissional(lida.profissionalId),
+            };
+          }
+        } catch {
+          consultaLida = null;
+        }
       }
     }
     // Os horarios oferecidos e, revisao final da AG3, o horario da reserva
@@ -889,12 +1268,17 @@ export function criarAgendaDoTurno(entrada: {
       argumentos,
       agoraMs,
       fuso,
-      informarValor: ferramentasDoAgente(
-        entrada.config.habilidades,
-        entrada.config.agenda,
-      ).includes("buscar_procedimento"),
+      informarValor: ferramentasLigadas.includes("buscar_procedimento"),
       nascimentos: entrada.nascimentos ?? [],
     });
+    // AG4: buscar_horario e para marcar uma consulta NOVA. Com uma
+    // remarcacao em andamento, o pedido de remarcar sai (a busca da
+    // remarcacao e buscar_horario_para_remarcar): o horario desta busca
+    // reserva como marcacao nova, e o banco recusa ja_tem_consulta do mesmo
+    // procedimento.
+    if (estado.pedido_pendente === "remarcar") {
+      desarmarPedido();
+    }
     estado.intencao = "agendar";
     if (estado.etapa === "informacao") {
       estado.etapa = "escolha";
@@ -968,7 +1352,11 @@ export function criarAgendaDoTurno(entrada: {
     // Antes de validar qualquer coisa: o modelo que tenta reservar acha que
     // a pessoa esta escolhendo horario agora, entao agendar neste turno nao.
     tentouReservar = true;
-    estado.intencao = "agendar";
+    // AG4: com o pedido de remarcar no estado, a reserva e da remarcacao
+    // (p_remarcar, a consulta em foco).
+    const remarcarId =
+      estado.pedido_pendente === "remarcar" ? estado.appointment_id : null;
+    estado.intencao = remarcarId === null ? "agendar" : "remarcar";
     const lido = entradaDaReservaSchema.safeParse(argumentos);
     if (!lido.success) {
       resultados.push("entrada_invalida");
@@ -997,6 +1385,35 @@ export function criarAgendaDoTurno(entrada: {
           : "Tentou reservar um horário que a busca desta resposta não trouxe",
       );
     }
+    // AG4: a pre-checagem da remarcacao (D-26): o horario novo e do mesmo
+    // procedimento, do mesmo profissional e do mesmo pagamento da consulta
+    // em foco. A RPC confere de novo (remarcacao_invalida).
+    if (remarcarId !== null) {
+      const daConsulta =
+        foco !== null && foco.id === remarcarId
+          ? vinculoDe(foco.serviceLinkId)
+          : undefined;
+      if (daConsulta === undefined) {
+        return {
+          tipo: "falha",
+          passo: "Não foi possível ler a consulta que está sendo remarcada.",
+        };
+      }
+      const doHorario = vinculoDe(horario.serviceLinkId);
+      if (
+        doHorario === undefined ||
+        doHorario.procedimentoId !== daConsulta.procedimentoId ||
+        doHorario.profissionalId !== daConsulta.profissionalId ||
+        doHorario.convenioId !== daConsulta.convenioId
+      ) {
+        resultados.push("horario_fora_da_remarcacao");
+        return saida(
+          "horario_fora_da_remarcacao",
+          {},
+          "Tentou reservar para a remarcação um horário de outro procedimento, profissional ou pagamento",
+        );
+      }
+    }
     chamouReservar = true;
     let resposta: RespostaDaReserva;
     try {
@@ -1008,6 +1425,7 @@ export function criarAgendaDoTurno(entrada: {
         inicio: horario.inicio,
         fim: horario.fim,
         unidadeId: horario.unidadeId,
+        ...(remarcarId === null ? {} : { remarcarId }),
       });
     } catch {
       return {
@@ -1024,6 +1442,18 @@ export function criarAgendaDoTurno(entrada: {
           tipo: "liberacao_suspensa",
           passo: `Tentou reservar ${pedido}: ${motivo}`,
         };
+      }
+      // AG4: as recusas da remarcacao (a habilidade, o pedido, a consulta e
+      // o prazo), so no modo de remarcacao.
+      if (remarcarId !== null && ehMotivoDaRemarcacao(resposta.motivo)) {
+        const daRemarcacao = recusaDoPedido(
+          resposta.motivo,
+          "remarcar",
+          `Não reservou ${pedido} para a remarcação`,
+        );
+        if (daRemarcacao !== null) {
+          return daRemarcacao;
+        }
       }
       if (resposta.motivo === "ja_tem_consulta") {
         // Revisao final da AG3 (item 6): o contato ja tem consulta futura
@@ -1084,7 +1514,11 @@ export function criarAgendaDoTurno(entrada: {
       estado.particular = vinculo.convenioId === null;
     }
     estado.unit_id = unidadeId;
-    if (estado.etapa === "informacao" || estado.etapa === "escolha") {
+    if (
+      estado.etapa === "informacao" ||
+      estado.etapa === "escolha" ||
+      estado.etapa === "remarcar"
+    ) {
       estado.etapa = "oferta";
     }
     const reservado: HorarioOferecido | null = mesmoHorario
@@ -1106,9 +1540,49 @@ export function criarAgendaDoTurno(entrada: {
       situacao: "livre",
       holdId: resposta.holdId,
     };
-    recalcularFaltam(serviceLinkId);
     const quando = `${dia} às ${hora}${entreParenteses(nomes)}${unidade === null ? "" : `, unidade ${unidade.nome}`}`;
     const livre: HorarioLivreDoTurno = { dia, hora, unidade: unidade?.nome ?? null };
+    if (remarcarId !== null && foco !== null) {
+      // AG4: a remarcacao nao pede dados (D-26). O SISTEMA pergunta (T3), e
+      // a pergunta arma "aguardando_confirmacao" pelo resultado.
+      dados.faltam = [];
+      perguntaArmada = "remarcar";
+      const antiga = diaEHora(new Date(foco.inicio), fuso, agoraMs);
+      const variasUnidades = (catalogo.unidades ?? []).length > 1;
+      const unidadeDaFrase = variasUnidades ? (unidade?.nome ?? null) : null;
+      const daConsulta = `${antiga.dia} às ${antiga.hora}`;
+      return frase(
+        perguntaDaRemarcacao({
+          antiga,
+          nova: { dia, hora },
+          unidade: unidadeDaFrase,
+        }),
+        {
+          minutos: MINUTOS_DA_RESERVA,
+          dia,
+          hora,
+          ...(unidadeDaFrase === null ? {} : { unidade: unidadeDaFrase }),
+          consulta: antiga,
+        },
+        porta?.simulada
+          ? `Reservaria ${quando} por ${MINUTOS_DA_RESERVA} minutos para a remarcação da consulta de ${daConsulta} e perguntaria se a pessoa confirma. ${SIMULADO}`
+          : `Reservou ${quando} por ${MINUTOS_DA_RESERVA} minutos para a remarcação da consulta de ${daConsulta} e perguntou se a pessoa confirma`,
+        "reservado",
+        {
+          acao: "reservou",
+          horarioDaAcao: {
+            dia,
+            hora,
+            unidade: unidade?.nome ?? null,
+            profissional: nomes?.profissional ?? null,
+          },
+          horarios: [livre],
+          consultaLida: true,
+          consultasComHorario: [consultaComoFato(foco, { marcada: false })],
+        },
+      );
+    }
+    recalcularFaltam(serviceLinkId);
     return saida(
       "reservado",
       {
@@ -1327,12 +1801,14 @@ export function criarAgendaDoTurno(entrada: {
   ): Promise<ResultadoDaFerramentaDeAgenda> {
     let inicio = inicioDaRpc;
     let unidadeId: string | null = null;
+    let profissionalId: string | null = null;
     if (appointmentId && porta?.lerConsulta !== undefined) {
       try {
         const lida = await porta.lerConsulta(appointmentId);
         if (lida !== null) {
           inicio = lida.inicio;
           unidadeId = lida.unidadeId ?? null;
+          profissionalId = lida.profissionalId ?? null;
         }
       } catch {
         // Sem a leitura, vale o inicio que a RPC trouxe (ou nenhum).
@@ -1357,6 +1833,8 @@ export function criarAgendaDoTurno(entrada: {
         consultaComHorario: {
           ...quando,
           unidade: nomeDaUnidade(unidadeId),
+          // AG4 (o limite da 21.15): o profissional relido, so nos fatos.
+          ...comOProfissional(nomeDoProfissional(profissionalId)),
           marcadaNestaConversa: false,
         },
       },
@@ -1442,7 +1920,13 @@ export function criarAgendaDoTurno(entrada: {
   async function agendar(
     argumentos: unknown,
   ): Promise<ResultadoDaFerramentaDeAgenda> {
-    estado.intencao = "agendar";
+    // AG4: com o pedido de remarcar no comeco do turno (e ainda de pe), o
+    // agendar e o da remarcacao (p_remarcar, a consulta em foco).
+    const remarcarId =
+      modoInicial === "remarcar" && estado.pedido_pendente === "remarcar"
+        ? focoInicialId
+        : null;
+    estado.intencao = remarcarId === null ? "agendar" : "remarcar";
     if (!entradaDoAgendarSchema.safeParse(argumentos ?? {}).success) {
       resultados.push("entrada_invalida");
       return saida(
@@ -1487,7 +1971,10 @@ export function criarAgendaDoTurno(entrada: {
         throw new Error("sem porta");
       }
       resposta = comEstado
-        ? await porta.agendar({ slotHoldId: reservaPerguntada })
+        ? await porta.agendar({
+            slotHoldId: reservaPerguntada,
+            ...(remarcarId === null ? {} : { remarcarId }),
+          })
         : await porta.agendar();
     } catch {
       return {
@@ -1503,6 +1990,18 @@ export function criarAgendaDoTurno(entrada: {
           tipo: "liberacao_suspensa",
           passo: `Tentou marcar a consulta: ${motivo}`,
         };
+      }
+      // AG4: as recusas da remarcacao (a habilidade, o pedido, a consulta,
+      // o prazo e "a consulta mudou"), so no modo de remarcacao.
+      if (remarcarId !== null && ehMotivoDaRemarcacao(resposta.motivo)) {
+        const daRemarcacao = recusaDoPedido(
+          resposta.motivo,
+          "remarcar",
+          "Não pediu a remarcação",
+        );
+        if (daRemarcacao !== null) {
+          return daRemarcacao;
+        }
       }
       if (
         resposta.motivo === "consulta_para_outra_pessoa" ||
@@ -1549,6 +2048,9 @@ export function criarAgendaDoTurno(entrada: {
         estado.slot_hold_id = null;
       }
       return saida(resposta.motivo, {}, `Tentou marcar a consulta: ${motivo}`);
+    }
+    if (remarcarId !== null) {
+      return remarcou(resposta, remarcarId);
     }
     resultados.push("marcado");
     estado.appointment_id = resposta.appointmentId;
@@ -1687,12 +2189,18 @@ export function criarAgendaDoTurno(entrada: {
       { ...quando },
       `Confirmou a presença na consulta de ${diaAsHora(new Date(resposta.inicio), fuso, agoraMs)}${entreParenteses(nomes)}`,
       [],
-      // Revisao final da AG3: a consulta lida com o dia e a hora dela.
+      // Revisao final da AG3: a consulta lida com o dia e a hora dela. AG4
+      // (o limite da 21.15): e o profissional relido, so nos fatos.
       {
         ...fatosDaConfirmacao,
         consultaComHorario: {
           ...quando,
           unidade: null,
+          ...comOProfissional(
+            nomeDoProfissional(resposta.profissionalId) ??
+              nomes?.profissional ??
+              null,
+          ),
           marcadaNestaConversa: false,
         },
       },
@@ -1725,6 +2233,756 @@ export function criarAgendaDoTurno(entrada: {
     resultados.push("cadastro");
     const { saida: corpo, passo } = saidaDoCadastroDoContato(catalogo, cadastro);
     return saida("cadastro", corpo, passo);
+  }
+
+
+  // -------------------------------------------------------------------------
+  // AG4: remarcar e cancelar
+  // -------------------------------------------------------------------------
+
+  /** O texto da acao na trilha e na nota. */
+  const verboDaAcao = (acao: AcaoComPrazo) =>
+    acao === "cancelar" ? "cancelar" : "remarcar";
+
+  /** "quinta, 29/10 às 14:00 (Limpeza, Dra. Ana)": so na trilha e na nota. */
+  const descricaoDaConsulta = (c: {
+    inicio: string;
+    serviceLinkId: string | null;
+  }): string => {
+    const { dia, hora } = diaEHora(new Date(c.inicio), fuso, agoraMs);
+    return `${dia} às ${hora}${entreParenteses(nomesDoVinculo(c.serviceLinkId))}`;
+  };
+
+  /**
+   * Tira o pedido de cancelar ou remarcar do estado (a pessoa mudou de
+   * assunto, a consulta mudou, ou o pedido acabou). O que a nota conta fica
+   * em pedidoDaNota.
+   */
+  function desarmarPedido(): void {
+    if (estado.pedido_pendente === null) {
+      return;
+    }
+    estado.pedido_pendente = null;
+    estado.pedido_pendente_em = null;
+    estado.appointment_id = null;
+    if (estado.etapa === "cancelar" || estado.etapa === "remarcar") {
+      estado.etapa = "informacao";
+    }
+    if (perguntaArmada !== null) {
+      perguntaArmada = null;
+    }
+  }
+
+  /** O instante de agora em UTC (o banco carimba o de verdade). */
+  const agoraEmUtc = () => new Date(relogio()).toISOString();
+
+  /**
+   * A recusa da conferencia da consulta, do espelho (antes da RPC) ou do
+   * banco: a da equipe passa com pedido_de_agenda; a do prazo, com
+   * fora_do_prazo; a que o modelo conta (a consulta nao esta mais marcada,
+   * mudou, ou o horario novo nao e o dela) volta para ele e desarma o
+   * pedido; a do pedido que nao esta no estado e falha fechada. Nulo: nao e
+   * recusa do pedido (quem chama trata).
+   */
+  function recusaDoPedido(
+    motivo: string,
+    acao: AcaoComPrazo,
+    passoBase: string,
+  ): ResultadoDaFerramentaDeAgenda | null {
+    const rotulo =
+      ROTULO_DO_MOTIVO_DA_AGENDA[
+        motivo as keyof typeof ROTULO_DO_MOTIVO_DA_AGENDA
+      ] ?? motivo;
+    if (RECUSAS_DA_EQUIPE.has(motivo)) {
+      if (!resultados.includes(motivo)) {
+        resultados.push(motivo);
+      }
+      return {
+        tipo: "passar",
+        motivo: "pedido_de_agenda",
+        resultado: motivo,
+        passo: `${passoBase}: ${rotulo}`,
+      };
+    }
+    if (motivo === "fora_do_prazo") {
+      if (!resultados.includes(motivo)) {
+        resultados.push(motivo);
+      }
+      const prazo = prazoDe(acao);
+      return {
+        tipo: "passar",
+        motivo: "fora_do_prazo",
+        resultado: motivo,
+        passo: `${passoBase}: o pedido ficou dentro do prazo da clínica para o assistente ${verboDaAcao(acao)}${prazo === null ? "" : ` (${prazo === 1 ? "1 hora" : `${prazo} horas`})`}`,
+      };
+    }
+    if (
+      motivo === "sem_pedido_de_remarcacao" ||
+      motivo === "sem_pedido_de_cancelamento"
+    ) {
+      return {
+        tipo: "falha",
+        passo: `${passoBase}: ${rotulo}.`,
+      };
+    }
+    if (RECUSAS_PARA_O_MODELO.has(motivo)) {
+      if (!resultados.includes(motivo)) {
+        resultados.push(motivo);
+      }
+      if (desarmaOPedido(motivo, acao)) {
+        desarmarPedido();
+      }
+      return saida(motivo, {}, `${passoBase}: ${rotulo}`);
+    }
+    return null;
+  }
+
+  /** As consultas do contato, lidas uma vez por turno (c1 a c5). */
+  async function lerAsConsultas(): Promise<ConsultasDoContato | null> {
+    if (listaDoTurno !== null) {
+      return listaDoTurno;
+    }
+    if (porta === null || porta.lerConsultasDoContato === undefined) {
+      return null;
+    }
+    const lida = await porta.lerConsultasDoContato();
+    const consultas = emOrdem(lida.consultas).slice(
+      0,
+      MAXIMO_DE_CONSULTAS_NA_LISTA,
+    );
+    listaDoTurno = {
+      consultas,
+      haMais: lida.haMais || lida.consultas.length > consultas.length,
+    };
+    consultas.forEach((c, i) => consultasPorCodigo.set(`c${i + 1}`, c));
+    return listaDoTurno;
+  }
+
+  async function consultarMinhasConsultas(
+    argumentos: unknown,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    if (!entradaDasMinhasConsultasSchema.safeParse(argumentos ?? {}).success) {
+      resultados.push("entrada_invalida");
+      return saida(
+        "entrada_invalida",
+        {},
+        "Tentou consultar as consultas do paciente com um pedido fora do formato",
+      );
+    }
+    let lista: ConsultasDoContato | null;
+    try {
+      lista = await lerAsConsultas();
+    } catch {
+      lista = null;
+    }
+    if (lista === null) {
+      return {
+        tipo: "falha",
+        passo: "Não foi possível ler as consultas do paciente agora.",
+      };
+    }
+    if (lista.consultas.length === 0) {
+      resultados.push("sem_consultas");
+      return saida(
+        "sem_consultas",
+        {},
+        "Procurou as consultas do paciente: nenhuma consulta futura",
+      );
+    }
+    resultados.push("consultas");
+    const consultas = lista.consultas.map((c, i) => ({
+      codigo: `c${i + 1}`,
+      ...diaEHora(new Date(c.inicio), fuso, agoraMs),
+      situacao: situacaoDaConsulta(c),
+    }));
+    const lidas = lista.consultas
+      .map(
+        (c) =>
+          `${descricaoDaConsulta(c)}, ${ROTULO_DA_SITUACAO[situacaoDaConsulta(c)]}`,
+      )
+      .join("; ");
+    return saida(
+      "consultas",
+      { consultas, ha_mais: lista.haMais },
+      `Leu as consultas do paciente: ${lidas}${lista.haMais ? "; e outras" : ""}`,
+      [],
+      {
+        consultaLida: true,
+        consultasComHorario: lista.consultas.map((c) =>
+          consultaComoFato(c, { marcada: false }),
+        ),
+      },
+    );
+  }
+
+  /**
+   * A consulta do codigo (a lista do turno, lida aqui se ainda nao foi), ou
+   * o resultado que encerra a ferramenta (falha ou codigo invalido).
+   */
+  async function consultaDoCodigo(
+    codigo: string,
+    passoDoCodigo: string,
+  ): Promise<ConsultaDoContato | ResultadoDaFerramentaDeAgenda> {
+    let lista: ConsultasDoContato | null;
+    try {
+      lista = await lerAsConsultas();
+    } catch {
+      lista = null;
+    }
+    if (lista === null) {
+      return {
+        tipo: "falha",
+        passo: "Não foi possível ler as consultas do paciente agora.",
+      };
+    }
+    const consulta = consultasPorCodigo.get(codigo.trim().toLowerCase());
+    if (consulta === undefined) {
+      resultados.push("codigo_invalido");
+      return saida("codigo_invalido", {}, passoDoCodigo);
+    }
+    return consulta;
+  }
+
+  /** A recusa da conferencia em TS (antes de qualquer RPC). */
+  function recusaDaConferencia(
+    motivo: MotivoDaConferenciaDaConsulta,
+    acao: AcaoComPrazo,
+    descricao: string,
+  ): ResultadoDaFerramentaDeAgenda {
+    const passoBase = `Não pediu para ${verboDaAcao(acao)} a consulta de ${descricao}`;
+    if (motivo === "consulta_nao_encontrada" || motivo === "consulta_encerrada") {
+      resultados.push("consulta_encerrada");
+      return saida(
+        "consulta_encerrada",
+        {},
+        `${passoBase}: ${ROTULO_DO_MOTIVO_DA_AGENDA.consulta_encerrada}`,
+      );
+    }
+    return (
+      recusaDoPedido(motivo, acao, passoBase) ?? {
+        tipo: "falha",
+        passo: `${passoBase}.`,
+      }
+    );
+  }
+
+  async function pedirCancelamento(
+    argumentos: unknown,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    estado.intencao = "cancelar";
+    const lido = entradaDoPedidoDeCancelamentoSchema.safeParse(argumentos);
+    if (!lido.success) {
+      resultados.push("entrada_invalida");
+      return saida(
+        "entrada_invalida",
+        {},
+        "Tentou pedir o cancelamento com um pedido incompleto",
+      );
+    }
+    if (chamouPedidoDeCancelamento || chamouCancelamento) {
+      resultados.push("um_cancelamento_por_resposta");
+      return saida(
+        "um_cancelamento_por_resposta",
+        {},
+        "Pediu um segundo cancelamento na mesma resposta: recusado",
+      );
+    }
+    chamouPedidoDeCancelamento = true;
+    const achada = await consultaDoCodigo(
+      lido.data.consulta,
+      "Tentou cancelar uma consulta que a lista desta resposta não trouxe",
+    );
+    if (!("id" in achada)) {
+      return achada;
+    }
+    const consulta = achada;
+    const descricao = descricaoDaConsulta(consulta);
+    pedidoDaNota = { acao: "cancelar", consulta: focoDaConsulta(consulta) };
+    const motivo = conferirConsultaDaIa({
+      consulta,
+      acao: "cancelar",
+      prazoHoras: prazoDe("cancelar"),
+      agoraMs: relogio(),
+      catalogo,
+    });
+    if (motivo !== null) {
+      return recusaDaConferencia(motivo, "cancelar", descricao);
+    }
+    // A pergunta fixa (T1); o fechamento arma o pedido.
+    foco = focoDaConsulta(consulta);
+    perguntaArmada = "cancelar";
+    resultados.push("pergunta_do_cancelamento");
+    const quando = diaEHora(new Date(consulta.inicio), fuso, agoraMs);
+    return frase(
+      perguntaDoCancelamento(quando),
+      { consulta: quando },
+      `Perguntou se a pessoa confirma o cancelamento da consulta de ${descricao}`,
+      "pergunta_do_cancelamento",
+      {
+        consultaLida: true,
+        consultasComHorario: [consultaComoFato(consulta, { marcada: false })],
+      },
+    );
+  }
+
+  async function cancelarConsulta(
+    argumentos: unknown,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    estado.intencao = "cancelar";
+    if (!entradaDoCancelamentoSchema.safeParse(argumentos ?? {}).success) {
+      resultados.push("entrada_invalida");
+      return saida(
+        "entrada_invalida",
+        {},
+        "Tentou cancelar a consulta com um pedido fora do formato",
+      );
+    }
+    if (chamouCancelamento || chamouPedidoDeCancelamento) {
+      resultados.push("um_cancelamento_por_resposta");
+      return saida(
+        "um_cancelamento_por_resposta",
+        {},
+        "Pediu um segundo cancelamento na mesma resposta: recusado",
+      );
+    }
+    // So com a pergunta feita num turno ANTERIOR (o pedido armado no comeco
+    // deste) e ainda de pe.
+    if (
+      modoInicial !== "cancelar" ||
+      etapaInicial !== "cancelar" ||
+      focoInicialId === null ||
+      estado.pedido_pendente !== "cancelar" ||
+      estado.appointment_id !== focoInicialId
+    ) {
+      resultados.push("sem_pergunta_de_cancelamento");
+      return saida(
+        "sem_pergunta_de_cancelamento",
+        {},
+        "Tentou cancelar sem a pergunta de cancelamento feita numa mensagem anterior",
+      );
+    }
+    chamouCancelamento = true;
+    const descricao =
+      foco === null ? "do pedido" : `de ${descricaoDaConsulta(foco)}`;
+    if (foco !== null) {
+      pedidoDaNota = { acao: "cancelar", consulta: foco };
+    }
+    // D-30: o "sim" numa lista fechada, nas mensagens da pessoa depois da
+    // pergunta (o texto original, que nao sai daqui).
+    const resposta = interpretarRespostaAoCancelamento(
+      (entrada.mensagens?.pendentes ?? []).map((m) => m.original),
+    );
+    if (resposta === "nao") {
+      resultados.push("paciente_nao_confirmou");
+      desarmarPedido();
+      return saida(
+        "paciente_nao_confirmou",
+        {},
+        `A pessoa não confirmou o cancelamento da consulta ${descricao}: nada foi cancelado`,
+      );
+    }
+    if (resposta === "nao_reconhecida") {
+      if (foco === null) {
+        return {
+          tipo: "falha",
+          passo: "Não foi possível ler a consulta do pedido de cancelamento.",
+        };
+      }
+      // Nao e um sim claro: a pergunta fixa volta e conta uma falha.
+      perguntaArmada = "cancelar";
+      resultados.push("sem_confirmacao_clara");
+      const quando = diaEHora(new Date(foco.inicio), fuso, agoraMs);
+      return frase(
+        perguntaDoCancelamento(quando),
+        { consulta: quando },
+        `A resposta não foi um sim claro: perguntou de novo se a pessoa confirma o cancelamento da consulta ${descricao}`,
+        "sem_confirmacao_clara",
+        {
+          consultaLida: true,
+          consultasComHorario: [consultaComoFato(foco, { marcada: false })],
+        },
+      );
+    }
+    let r: RespostaDoCancelamento;
+    try {
+      if (porta === null || porta.cancelarConsulta === undefined) {
+        throw new Error("sem porta");
+      }
+      r = await porta.cancelarConsulta(focoInicialId);
+    } catch {
+      return {
+        tipo: "falha",
+        passo: "Não foi possível cancelar a consulta agora.",
+      };
+    }
+    if (!r.ok) {
+      if (r.motivo === "ia_desligada") {
+        resultados.push(r.motivo);
+        return {
+          tipo: "liberacao_suspensa",
+          passo: `Tentou cancelar a consulta: ${ROTULO_DO_MOTIVO_DA_AGENDA.ia_desligada}`,
+        };
+      }
+      const recusa = recusaDoPedido(
+        r.motivo,
+        "cancelar",
+        `Não cancelou a consulta ${descricao}`,
+      );
+      if (recusa !== null) {
+        return recusa;
+      }
+      resultados.push(r.motivo);
+      return {
+        tipo: "falha",
+        passo: `Não cancelou a consulta ${descricao}: ${ROTULO_DO_MOTIVO_DA_AGENDA[r.motivo]}.`,
+      };
+    }
+    const inicio = r.inicio ?? foco?.inicio ?? null;
+    if (inicio === null) {
+      return {
+        tipo: "falha",
+        passo: "A consulta foi cancelada, mas não foi possível ler o dia e a hora dela.",
+      };
+    }
+    canceladaNoTurno = focoInicialId;
+    resultados.push("cancelada");
+    estado.pedido_pendente = null;
+    estado.pedido_pendente_em = null;
+    estado.appointment_id = null;
+    estado.etapa = "informacao";
+    estado.desfecho = "cancelou";
+    const quando = diaEHora(new Date(inicio), fuso, agoraMs);
+    const unidade = nomeDaUnidade(foco?.unidadeId);
+    return frase(
+      respostaDoCancelamento(quando),
+      { ...quando },
+      porta.simulada
+        ? `Cancelaria a consulta ${descricao}, a pedido da pessoa. ${SIMULADO}`
+        : `Cancelou a consulta ${descricao}, a pedido da pessoa`,
+      "cancelada",
+      {
+        acao: "cancelou",
+        horarioDaAcao: {
+          ...quando,
+          unidade,
+          profissional: nomeDoProfissional(foco?.profissionalId),
+        },
+      },
+    );
+  }
+
+  /** O que a busca da remarcacao devolve ao modelo (so dia, hora e unidade). */
+  function saidaDaRemarcacao(
+    saidaDaBusca: string,
+    consulta: { dia: string; hora: string },
+  ): string {
+    let lido: Record<string, unknown>;
+    try {
+      lido = JSON.parse(saidaDaBusca) as Record<string, unknown>;
+    } catch {
+      lido = { resultado: "entrada_invalida" };
+    }
+    const variasUnidades = (catalogo.unidades ?? []).length > 1;
+    const horariosLidos = Array.isArray(lido.horarios) ? lido.horarios : null;
+    const corpo: Record<string, unknown> = {
+      resultado: lido.resultado,
+      mesmo_profissional: true,
+      consulta,
+      ...(typeof lido.hora_pedida === "string"
+        ? { hora_pedida: lido.hora_pedida }
+        : {}),
+      ...(typeof lido.dia_pedido === "string"
+        ? { dia_pedido: lido.dia_pedido }
+        : {}),
+      ...(typeof lido.ate === "string" ? { ate: lido.ate } : {}),
+      ...(variasUnidades && typeof lido.unidade === "string"
+        ? { unidade: lido.unidade }
+        : {}),
+    };
+    if (horariosLidos !== null) {
+      corpo.horarios = horariosLidos.map((h) => {
+        const item = (h ?? {}) as Record<string, unknown>;
+        return {
+          codigo: item.codigo,
+          dia: item.dia,
+          hora: item.hora,
+          ...(variasUnidades && typeof item.unidade === "string"
+            ? {
+                unidade: item.unidade,
+                ...(typeof item.unidade_codigo === "string"
+                  ? { unidade_codigo: item.unidade_codigo }
+                  : {}),
+              }
+            : {}),
+        };
+      });
+    }
+    return JSON.stringify(corpo);
+  }
+
+  async function buscarParaRemarcar(
+    argumentos: unknown,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    estado.intencao = "remarcar";
+    const lido = entradaDaBuscaParaRemarcarSchema.safeParse(argumentos);
+    if (!lido.success) {
+      resultados.push("entrada_invalida");
+      return saida(
+        "entrada_invalida",
+        {},
+        "Tentou buscar horário para remarcar com um pedido incompleto",
+      );
+    }
+    const pedido = lido.data;
+    // A consulta: pelo codigo (o primeiro uso; confere) ou o foco do estado.
+    let consulta: ConsultaEmFoco;
+    if (pedido.consulta !== null && pedido.consulta.trim() !== "") {
+      const achada = await consultaDoCodigo(
+        pedido.consulta,
+        "Tentou remarcar uma consulta que a lista desta resposta não trouxe",
+      );
+      if (!("id" in achada)) {
+        return achada;
+      }
+      pedidoDaNota = { acao: "remarcar", consulta: focoDaConsulta(achada) };
+      const motivo = conferirConsultaDaIa({
+        consulta: achada,
+        acao: "remarcar",
+        prazoHoras: prazoDe("remarcar"),
+        agoraMs: relogio(),
+        catalogo,
+      });
+      if (motivo !== null) {
+        return recusaDaConferencia(
+          motivo,
+          "remarcar",
+          descricaoDaConsulta(achada),
+        );
+      }
+      consulta = focoDaConsulta(achada);
+    } else if (
+      estado.pedido_pendente === "remarcar" &&
+      estado.appointment_id !== null &&
+      foco !== null &&
+      foco.id === estado.appointment_id
+    ) {
+      consulta = foco;
+    } else {
+      resultados.push("sem_consulta_para_remarcar");
+      return saida(
+        "sem_consulta_para_remarcar",
+        {},
+        "Tentou buscar horário para remarcar sem dizer qual consulta",
+      );
+    }
+    pedidoDaNota = { acao: "remarcar", consulta };
+    // O foco do estado: a consulta que esta sendo remarcada.
+    if (
+      estado.pedido_pendente !== "remarcar" ||
+      estado.appointment_id !== consulta.id
+    ) {
+      estado.pedido_pendente = "remarcar";
+      estado.pedido_pendente_em = agoraEmUtc();
+      estado.appointment_id = consulta.id;
+      // Os horarios de outro pedido saem (o codigo da remarcacao e novo).
+      estado.horarios_oferecidos = [];
+      horarios.clear();
+      situacoes.clear();
+      if (estado.etapa !== "aguardando_confirmacao") {
+        estado.etapa = "remarcar";
+      }
+    }
+    if (estado.etapa === "informacao" || estado.etapa === "escolha" || estado.etapa === "cancelar" || estado.etapa === "pos_marcacao") {
+      estado.etapa = "remarcar";
+    }
+    foco = consulta;
+    const quando = diaEHora(new Date(consulta.inicio), fuso, agoraMs);
+    const descricao = descricaoDaConsulta(consulta);
+    // O procedimento, o profissional e o pagamento da consulta (D-26),
+    // fixados no servidor.
+    const vinculo = vinculoDe(consulta.serviceLinkId);
+    const procedimento =
+      vinculo === undefined
+        ? undefined
+        : catalogo.procedimentos.find((p) => p.id === vinculo.procedimentoId);
+    const profissional =
+      vinculo === undefined
+        ? undefined
+        : indiceDosProfissionais(catalogo).find(
+            (p) => p.id === vinculo.profissionalId,
+          );
+    const convenio =
+      vinculo === undefined || vinculo.convenioId === null
+        ? null
+        : (convenioDe(vinculo.convenioId) ?? undefined);
+    if (
+      vinculo === undefined ||
+      procedimento === undefined ||
+      profissional === undefined ||
+      convenio === undefined
+    ) {
+      return (
+        recusaDoPedido(
+          "so_com_a_equipe",
+          "remarcar",
+          `Não buscou horário para remarcar a consulta de ${descricao}`,
+        ) ?? { tipo: "falha", passo: "Não foi possível buscar horário agora." }
+      );
+    }
+    const plano = planejarBuscaDeHorario({
+      catalogo,
+      agenda: entrada.config.agenda,
+      argumentos: {
+        procedimento: procedimento.codigo,
+        profissional: profissional.codigo,
+        convenio: null,
+        a_partir_de: pedido.a_partir_de,
+        periodo: pedido.periodo,
+        unidade: pedido.unidade,
+        hora: pedido.hora,
+      },
+      agoraMs,
+      fuso,
+      // Sem valor na remarcacao: o pagamento e o da consulta.
+      informarValor: false,
+      nascimentos: entrada.nascimentos ?? [],
+      convenioFixo: convenio,
+    });
+    const fatoDaConsulta = consultaComoFato(consulta, { marcada: false });
+    const comAConsulta = (r: {
+      resultado: string;
+      saida: string;
+      passo: string;
+      fatos?: FatosDaFerramenta;
+    }): ResultadoDaFerramentaDeAgenda => {
+      const fatos: FatosDaFerramenta = {
+        // Sem convenio (o modelo nao le o pagamento da consulta) e com a
+        // consulta lida.
+        ...(r.fatos?.horarios === undefined ? {} : { horarios: r.fatos.horarios }),
+        ...(r.fatos?.ecos === undefined ? {} : { ecos: r.fatos.ecos }),
+        ...(r.fatos?.saidaSemEco === undefined
+          ? {}
+          : { saidaSemEco: saidaDaRemarcacao(r.fatos.saidaSemEco, quando) }),
+        consultaLida: true,
+        consultasComHorario: [fatoDaConsulta],
+      };
+      return {
+        tipo: "saida",
+        saida: saidaDaRemarcacao(r.saida, quando),
+        passo: `Remarcação da consulta de ${descricao}: ${r.passo}`,
+        precos: [],
+        resultado: r.resultado,
+        fatos,
+      };
+    };
+    if (plano.tipo === "resultado") {
+      resultados.push(plano.resultado.resultado);
+      return comAConsulta(plano.resultado);
+    }
+    ultimaPreferencia = {
+      periodo: plano.plano.periodo,
+      hora: plano.plano.hora ?? null,
+    };
+    let agenda: AgendaCarregada;
+    try {
+      if (porta === null) {
+        throw new Error("sem porta");
+      }
+      agenda = await porta.carregar(plano.pedido);
+    } catch {
+      return { tipo: "falha", passo: "Não foi possível ler a agenda agora." };
+    }
+    const r = escolherHorarios(plano.plano, agenda, proximoCodigo);
+    resultados.push(r.resultado);
+    for (const horario of r.horarios) {
+      horarios.set(horario.codigo, horario);
+      situacoes.set(horario.codigo, "livre");
+    }
+    if (r.horarios.length > 0) {
+      const reservado = reserva?.horario?.codigo ?? null;
+      estado.horarios_oferecidos = comHorariosOferecidos(
+        estado.horarios_oferecidos,
+        r.horarios.map(paraOEstado),
+        reservado,
+      );
+      if (estado.etapa !== "aguardando_confirmacao") {
+        estado.etapa = "oferta";
+      }
+    }
+    return comAConsulta(r);
+  }
+
+  /**
+   * O agendar da remarcacao deu certo: a consulta nova nasce pendente,
+   * ligada a antiga, que continua marcada ate a aprovacao (D-10). O SISTEMA
+   * responde (T4).
+   */
+  function remarcou(
+    resposta: Extract<RespostaDoAgendar, { ok: true }>,
+    antigaId: string,
+  ): ResultadoDaFerramentaDeAgenda {
+    resultados.push("remarcado");
+    const reservaAntes = reserva;
+    reserva = null;
+    estado.appointment_id = resposta.appointmentId;
+    estado.slot_hold_id = null;
+    estado.horarios_oferecidos = [];
+    estado.etapa = "pos_marcacao";
+    estado.intencao = "remarcar";
+    estado.pedido_pendente = null;
+    estado.pedido_pendente_em = null;
+    estado.desfecho = "remarcou";
+    const inicioNovo = resposta.inicio ?? reservaAntes?.leitura?.inicio ?? null;
+    const inicioAntigo =
+      resposta.inicioDaAntiga ??
+      (foco !== null && foco.id === antigaId ? foco.inicio : null);
+    if (inicioNovo === null || inicioAntigo === null) {
+      return {
+        tipo: "falha",
+        passo: "A remarcação foi pedida, mas não foi possível ler o dia e a hora das consultas.",
+      };
+    }
+    const serviceLinkId =
+      resposta.serviceLinkId ?? reservaAntes?.leitura?.serviceLinkId ?? null;
+    const nomes = nomesDoVinculo(serviceLinkId);
+    const unidadeId = reservaAntes?.leitura?.unidadeId ?? null;
+    const nova = diaEHora(new Date(inicioNovo), fuso, agoraMs);
+    const antiga = diaEHora(new Date(inicioAntigo), fuso, agoraMs);
+    const fatoDaNova: HorarioDoFato = {
+      ...nova,
+      unidade: nomeDaUnidade(unidadeId),
+      profissional: nomes?.profissional ?? null,
+    };
+    const fatoDaAntiga: ConsultaDoFato = consultaComoFato(
+      {
+        inicio: inicioAntigo,
+        unidadeId: foco?.id === antigaId ? foco.unidadeId : null,
+        profissionalId: foco?.id === antigaId ? foco.profissionalId : null,
+      },
+      { marcada: false },
+    );
+    remarcacaoNoTurno = { antiga: fatoDaAntiga, nova: fatoDaNova };
+    const texto = `de ${antiga.dia} às ${antiga.hora} para ${nova.dia} às ${nova.hora}${entreParenteses(nomes)}`;
+    return frase(
+      respostaDaRemarcacao({ antiga, nova }),
+      { pendente: true, ...nova, consulta: antiga },
+      porta?.simulada
+        ? `Pediria a remarcação ${texto}, pendente de aprovação da equipe; a consulta antiga continuaria marcada. ${SIMULADO}`
+        : `Pediu a remarcação ${texto}, pendente de aprovação da equipe; a consulta antiga continua marcada`,
+      "remarcado",
+      {
+        acao: "remarcou",
+        horarioDaAcao: fatoDaNova,
+        horarioAnterior: {
+          dia: fatoDaAntiga.dia,
+          hora: fatoDaAntiga.hora,
+          unidade: fatoDaAntiga.unidade,
+          profissional: fatoDaAntiga.profissional ?? null,
+        },
+        consultaLida: true,
+        consultasComHorario: [fatoDaAntiga],
+      },
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1806,9 +3064,17 @@ export function criarAgendaDoTurno(entrada: {
       !dados.cpf &&
       !dados.carteirinha &&
       dados.faltam.length === 0 &&
-      estado.falhas_seguidas === 0;
+      estado.falhas_seguidas === 0 &&
+      estado.pedido_pendente === null;
     if (nada) {
       return null;
+    }
+    // AG4 (D-13): na remarcacao, a consulta que a pessoa ja tem vai ao
+    // modelo so com o dia e a hora. O procedimento, o profissional e o
+    // pagamento dela (e dos horarios da remarcacao, que sao os mesmos) ficam
+    // no servidor.
+    if (modoInicial === "cancelar" || modoInicial === "remarcar" || modoInicial === "remarcou") {
+      return paraOModeloNaConsulta();
     }
     const procedimento = procedimentoDe(estado.procedure_id ?? undefined);
     const profissionalDoIndice = (catalogo.profissionais ?? []).find(
@@ -1900,15 +3166,142 @@ export function criarAgendaDoTurno(entrada: {
     };
   }
 
+  /**
+   * AG4: o bloco do estado no pedido de cancelar ou remarcar e depois da
+   * remarcacao: o pedido com o dia e a hora da consulta em foco, os horarios
+   * e a reserva da remarcacao so com o dia, a hora e a unidade (D-13).
+   */
+  function paraOModeloNaConsulta(): AtendimentoParaOModelo {
+    const r = reservaLegivel();
+    const variasUnidades = (catalogo.unidades ?? []).length > 1;
+    const daUnidade = (nome: string | null) => (variasUnidades ? nome : null);
+    const focoLegivel =
+      foco === null ? null : diaEHora(new Date(foco.inicio), fuso, agoraMs);
+    return {
+      etapa: estado.etapa,
+      procedimento: null,
+      profissional: null,
+      pagamento: null,
+      unidade: null,
+      horarios: [...horarios.values()]
+        .filter((h) =>
+          estado.horarios_oferecidos.some((e) => e.codigo === h.codigo),
+        )
+        .map((h) => ({
+          dia: h.dia,
+          hora: h.hora,
+          profissional: null,
+          unidade: daUnidade(h.unidade),
+          codigo: h.codigo,
+          procedimento: "",
+          unidadeCodigo: variasUnidades ? h.unidadeCodigo : null,
+          situacao: situacaoDe(h.codigo),
+        })),
+      reserva:
+        r === null
+          ? null
+          : {
+              dia: r.dia,
+              hora: r.hora,
+              profissional: null,
+              unidade: daUnidade(r.unidade),
+              codigo: r.codigo,
+              procedimento: "",
+              situacao: r.perdida
+                ? "perdida"
+                : r.viva === true
+                  ? "viva"
+                  : r.viva === false
+                    ? "vencida"
+                    : "nao_conferida",
+            },
+      informados: [],
+      faltam: [],
+      paraOTitular: null,
+      consulta: null,
+      falhasSeguidas: estado.falhas_seguidas,
+      pedidoDaConsulta:
+        modoInicial === "cancelar" || modoInicial === "remarcar"
+          ? {
+              acao: modoInicial,
+              dia: focoLegivel?.dia ?? null,
+              hora: focoLegivel?.hora ?? null,
+            }
+          : null,
+      remarcacao:
+        modoInicial === "remarcou" && remarcacaoLida !== null
+          ? {
+              de:
+                remarcacaoLida.antiga === null
+                  ? null
+                  : {
+                      dia: remarcacaoLida.antiga.dia,
+                      hora: remarcacaoLida.antiga.hora,
+                    },
+              para: {
+                dia: remarcacaoLida.nova.dia,
+                hora: remarcacaoLida.nova.hora,
+              },
+              pendente: remarcacaoLida.pendente,
+            }
+          : null,
+    };
+  }
+
+  /**
+   * AG4: as consultas do estado como fato do turno: a consulta em foco do
+   * pedido (nunca "marcada nesta conversa"; a cancelada neste turno sai) e,
+   * depois de remarcar, a nova (remarcada nesta conversa enquanto pendente) e
+   * a antiga.
+   */
+  function consultasDoEstadoComoFato(): {
+    fatos: ConsultaDoFato[];
+    saida: Record<string, unknown>;
+  } {
+    const fatos: ConsultaDoFato[] = [];
+    const saida: Record<string, unknown> = {};
+    if (
+      (modoInicial === "cancelar" || modoInicial === "remarcar") &&
+      foco !== null &&
+      foco.id === focoInicialId &&
+      canceladaNoTurno !== foco.id
+    ) {
+      const fato = consultaComoFato(foco, { marcada: false });
+      fatos.push(fato);
+      saida.consulta_em_foco = { dia: fato.dia, hora: fato.hora };
+    }
+    if (modoInicial === "remarcou" && remarcacaoLida !== null) {
+      fatos.push(remarcacaoLida.nova);
+      saida.remarcacao_pedida = {
+        dia: remarcacaoLida.nova.dia,
+        hora: remarcacaoLida.nova.hora,
+      };
+      if (remarcacaoLida.antiga !== null) {
+        fatos.push(remarcacaoLida.antiga);
+        saida.consulta_antiga = {
+          dia: remarcacaoLida.antiga.dia,
+          hora: remarcacaoLida.antiga.hora,
+        };
+      }
+    }
+    return { fatos, saida };
+  }
+
   function fatosDoEstado(): SaidaParaOsFatos | null {
     if (!comEstado) {
       return null;
     }
+    const doPedido = consultasDoEstadoComoFato();
     const oferecidos = [...horarios.values()].filter((h) =>
       estado.horarios_oferecidos.some((e) => e.codigo === h.codigo),
     );
     const r = reservaLegivel();
-    if (oferecidos.length === 0 && r === null && consultaLida === null) {
+    if (
+      oferecidos.length === 0 &&
+      r === null &&
+      consultaLida === null &&
+      doPedido.fatos.length === 0
+    ) {
       return null;
     }
     // Fonte de dia e hora (citar o que ja foi oferecido, negar); so o
@@ -1939,7 +3332,8 @@ export function criarAgendaDoTurno(entrada: {
             horarioDaAcao: { dia: r.dia, hora: r.hora, unidade: r.unidade },
           }
         : {}),
-      // A consulta que a IA marcou nesta conversa, relida agora.
+      // A consulta que a IA marcou nesta conversa, relida agora (AG4: com o
+      // profissional, so nos fatos).
       ...(consultaLida === null
         ? {}
         : {
@@ -1948,9 +3342,14 @@ export function criarAgendaDoTurno(entrada: {
               dia: consultaLida.dia,
               hora: consultaLida.hora,
               unidade: consultaLida.unidade,
+              ...comOProfissional(consultaLida.profissional),
               marcadaNestaConversa: true,
             },
           }),
+      // AG4: a consulta em foco do pedido e a remarcacao pedida, relidas.
+      ...(doPedido.fatos.length === 0
+        ? {}
+        : { consultaLida: true, consultasComHorario: doPedido.fatos }),
     };
     return {
       saida: JSON.stringify({
@@ -1982,6 +3381,7 @@ export function criarAgendaDoTurno(entrada: {
                 hora: consultaLida.hora,
               },
             }),
+        ...doPedido.saida,
       }),
       fatos,
     };
@@ -2037,7 +3437,18 @@ export function criarAgendaDoTurno(entrada: {
               : hojeNoFuso(Date.parse(inicioDaReserva), fusoDaAgenda(fuso)),
           hojeNaClinica: hojeNoFuso(relogio(), fusoDaAgenda(fuso)),
         });
-      if (
+      // AG4: na remarcacao, a pergunta e a frase fixa (T3) e arma pelo
+      // RESULTADO de reservar_horario, nunca pela expressao.
+      const remarcando = final.pedido_pendente === "remarcar";
+      if (remarcando) {
+        if (!fim.passou && reservaViva && perguntaArmada === "remarcar") {
+          final.etapa = "aguardando_confirmacao";
+        } else if (final.horarios_oferecidos.length > 0 || reservaViva) {
+          final.etapa = "oferta";
+        } else {
+          final.etapa = "remarcar";
+        }
+      } else if (
         !fim.passou &&
         reservaViva &&
         dados.faltam.length === 0 &&
@@ -2051,6 +3462,35 @@ export function criarAgendaDoTurno(entrada: {
           final.etapa = "escolha";
         }
       }
+    }
+    // AG4: a pergunta do cancelamento (T1) arma o pedido pelo resultado de
+    // pedir_cancelamento (ou de cancelar_consulta, que pergunta de novo) e
+    // vale so para a resposta seguinte: em qualquer outro turno, desarma.
+    if (perguntaArmada === "cancelar" && !fim.passou && foco !== null) {
+      final.etapa = "cancelar";
+      final.intencao = "cancelar";
+      final.pedido_pendente = "cancelar";
+      final.appointment_id = foco.id;
+    } else if (final.pedido_pendente === "cancelar") {
+      final.pedido_pendente = null;
+      final.appointment_id = null;
+      if (final.etapa === "cancelar") {
+        final.etapa = "informacao";
+      }
+    }
+    // O instante do pedido: o banco carimba quando o pedido ou a consulta em
+    // foco mudam (e ignora o que vai daqui); com os dois iguais, fica o de
+    // antes. O estado so precisa de um instante valido junto do pedido.
+    if (final.pedido_pendente === null) {
+      final.pedido_pendente_em = null;
+    } else if (
+      final.pedido_pendente === pedidoInicial &&
+      final.appointment_id === focoInicialId &&
+      pedidoInicialEm !== null
+    ) {
+      final.pedido_pendente_em = pedidoInicialEm;
+    } else if (final.pedido_pendente_em === null || final.pedido_pendente_em === pedidoInicialEm) {
+      final.pedido_pendente_em = agoraEmUtc();
     }
     return {
       estado: final,
@@ -2091,6 +3531,57 @@ export function criarAgendaDoTurno(entrada: {
           : null;
     const r = reservaLegivel();
     const ultimo = [...resultados].reverse().find((c) => PAROU_EM[c] !== undefined);
+    // AG4: o pedido de cancelar ou remarcar (a consulta, com os nomes do
+    // Cadastro) e a remarcacao pedida; "fora do prazo" com o numero do prazo.
+    const doPedido =
+      pedidoDaNota ??
+      ((modoInicial === "cancelar" || modoInicial === "remarcar") &&
+      foco !== null
+        ? { acao: modoInicial, consulta: foco }
+        : null);
+    const pedidoDaConsulta =
+      doPedido === null
+        ? null
+        : (() => {
+            const quando = diaEHora(
+              new Date(doPedido.consulta.inicio),
+              fuso,
+              agoraMs,
+            );
+            const nomes = nomesDoVinculo(doPedido.consulta.serviceLinkId);
+            return {
+              acao: doPedido.acao,
+              dia: quando.dia,
+              hora: quando.hora,
+              procedimento: nomes?.procedimento ?? null,
+              profissional:
+                nomeDoProfissional(doPedido.consulta.profissionalId) ??
+                nomes?.profissional ??
+                null,
+            };
+          })();
+    const remarcacao =
+      remarcacaoNoTurno !== null
+        ? {
+            de: { dia: remarcacaoNoTurno.antiga.dia, hora: remarcacaoNoTurno.antiga.hora },
+            para: { dia: remarcacaoNoTurno.nova.dia, hora: remarcacaoNoTurno.nova.hora },
+          }
+        : modoInicial === "remarcou" && remarcacaoLida !== null
+          ? {
+              de:
+                remarcacaoLida.antiga === null
+                  ? null
+                  : { dia: remarcacaoLida.antiga.dia, hora: remarcacaoLida.antiga.hora },
+              para: { dia: remarcacaoLida.nova.dia, hora: remarcacaoLida.nova.hora },
+            }
+          : null;
+    const prazoDoPedido = doPedido === null ? null : prazoDe(doPedido.acao);
+    const parouEm =
+      resultados.at(-1) === "fora_do_prazo" && doPedido !== null
+        ? `o pedido ficou dentro do prazo da clínica para o assistente ${verboDaAcao(doPedido.acao)}${prazoDoPedido === null ? "" : ` (${prazoDoPedido === 1 ? "1 hora" : `${prazoDoPedido} horas`})`}`
+        : ultimo === undefined
+          ? motivo
+          : (PAROU_EM[ultimo] ?? motivo);
     return notaDaPassagem({
       estado,
       dados,
@@ -2103,7 +3594,9 @@ export function criarAgendaDoTurno(entrada: {
       oferecidos: [...horarios.values()]
         .filter((h) => estado.horarios_oferecidos.some((e) => e.codigo === h.codigo))
         .map(legivel),
-      parouEm: ultimo === undefined ? motivo : (PAROU_EM[ultimo] ?? motivo),
+      parouEm,
+      pedidoDaConsulta,
+      remarcacao,
     });
   }
 
@@ -2122,6 +3615,14 @@ export function criarAgendaDoTurno(entrada: {
           return registrar(argumentos);
         case "consultar_cadastro_do_contato":
           return consultarCadastro(argumentos);
+        case "consultar_minhas_consultas":
+          return consultarMinhasConsultas(argumentos);
+        case "pedir_cancelamento":
+          return pedirCancelamento(argumentos);
+        case "cancelar_consulta":
+          return cancelarConsulta(argumentos);
+        case "buscar_horario_para_remarcar":
+          return buscarParaRemarcar(argumentos);
       }
     },
     preparar,

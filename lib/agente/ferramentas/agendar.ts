@@ -23,7 +23,13 @@ import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
 import { DADOS_DA_MARCACAO, type DadoDaMarcacao } from "../atendimento";
+import { MOTIVOS_DA_REMARCACAO } from "./remarcar";
 import { MOTIVOS_DA_CONFERENCIA } from "./reservar-horario";
+
+// AG4 (27/10/2026): no modo de remarcacao (p_remarcar = a consulta em foco),
+// agendar_pela_ia cria a consulta NOVA pendente, ligada a antiga
+// (remarcacao_de), recusa tambem com os motivos da remarcacao e devolve o id
+// da antiga e o inicio dela.
 
 export const NOME_DO_AGENDAR = "agendar";
 
@@ -60,6 +66,8 @@ export const MOTIVOS_DO_AGENDAR = [
   "menor_de_idade",
   "ja_tem_consulta",
   "faltam_dados",
+  // AG4: so no modo de remarcacao.
+  ...MOTIVOS_DA_REMARCACAO,
 ] as const;
 export type MotivoDoAgendar = (typeof MOTIVOS_DO_AGENDAR)[number];
 
@@ -74,6 +82,10 @@ export type RespostaDoAgendar =
       serviceLinkId: string | null;
       /** AG3: appointment.id (o estado do atendimento guarda). */
       appointmentId: string | null;
+      /** AG4: na remarcacao, a consulta antiga (appointment.remarcacao_de). */
+      remarcacaoDe?: string | null;
+      /** AG4: na remarcacao, o inicio da antiga (ISO, UTC), quando veio. */
+      inicioDaAntiga?: string | null;
     }
   | {
       ok: false;
@@ -109,6 +121,12 @@ export function lerRespostaDoAgendar(dado: unknown): RespostaDoAgendar | null {
       serviceLinkId:
         typeof r.service_link_id === "string" ? r.service_link_id : null,
       appointmentId: r.appointment_id,
+      // AG4: a remarcacao (ausentes fora dela).
+      remarcacaoDe:
+        typeof r.remarcacao_de === "string" && r.remarcacao_de !== ""
+          ? r.remarcacao_de
+          : null,
+      inicioDaAntiga: inicioDaAntiga(r),
     };
   }
   if (
@@ -149,6 +167,15 @@ export function lerRespostaDoAgendar(dado: unknown): RespostaDoAgendar | null {
     return { ok: false, motivo };
   }
   return null;
+}
+
+/**
+ * AG4: o inicio da consulta antiga que a RPC devolve na remarcacao. Nulo
+ * quando nao veio (quem chama usa o inicio da consulta em foco, que leu).
+ */
+function inicioDaAntiga(r: Record<string, unknown>): string | null {
+  const valor = r.remarcacao_de_starts_at;
+  return ehInstante(valor) ? valor : null;
 }
 
 /** O id da consulta, quando a resposta trouxe (para achar o vinculo). */

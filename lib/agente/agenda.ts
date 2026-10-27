@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  prazoDaAcao,
   tipoDoContatoDoBanco,
   type ConfigDoAgente,
   type TipoDoContato,
@@ -31,6 +32,19 @@ import type {
   ReservaLida,
   ReservaVivaDaConversa,
 } from "./ferramentas/agenda-do-turno";
+import {
+  lerRespostaDoCancelamento,
+  type RespostaDoCancelamento,
+} from "./ferramentas/cancelar-consulta";
+import {
+  conferirConsultaDaIa,
+  consultaListavel,
+  emOrdem,
+  MAXIMO_DE_CONSULTAS_NA_LISTA,
+  STATUS_ANTES_DO_ATENDIMENTO,
+  type ConsultaDoContato,
+  type ConsultasDoContato,
+} from "./ferramentas/minhas-consultas";
 import {
   horarioContinuaLivre,
   pedidoDaReconferencia,
@@ -428,7 +442,13 @@ async function vinculoDaConsulta(
 export async function reservarHorarioDaIa(
   admin: Cliente,
   ids: IdsDoTurno,
-  pedido: { serviceLinkId: string; inicio: string; unidadeId?: string | null },
+  pedido: {
+    serviceLinkId: string;
+    inicio: string;
+    unidadeId?: string | null;
+    /** AG4: a consulta que esta sendo remarcada (so manda quando vem). */
+    remarcarId?: string | null;
+  },
 ): Promise<RespostaDaReserva> {
   const corrida = await rpcComPrazo(admin, "reservar_horario_da_ia", {
     p_clinic_id: ids.clinicId,
@@ -438,6 +458,8 @@ export async function reservarHorarioDaIa(
     p_job_id: ids.jobId,
     // AG3: a unidade do horario (null = como antes, todas as unidades).
     p_unit_id: pedido.unidadeId ?? null,
+    // AG4: o modo de remarcacao (o codigo de antes chama sem ele).
+    ...(pedido.remarcarId ? { p_remarcar: pedido.remarcarId } : {}),
   });
   if (corrida.tipo !== "resultado") {
     return falhou(ids, "reservar", corrida.tipo);
@@ -488,12 +510,15 @@ export async function agendarPelaIa(
   admin: Cliente,
   ids: IdsDoTurno,
   slotHoldId?: string | null,
+  /** AG4: a consulta que esta sendo remarcada (so manda quando vem). */
+  remarcarId?: string | null,
 ): Promise<RespostaDoAgendar> {
   const corrida = await rpcComPrazo(admin, "agendar_pela_ia", {
     p_clinic_id: ids.clinicId,
     p_conversation_id: ids.conversationId,
     p_job_id: ids.jobId,
     ...(slotHoldId === undefined ? {} : { p_slot_hold_id: slotHoldId }),
+    ...(remarcarId ? { p_remarcar: remarcarId } : {}),
   });
   if (corrida.tipo !== "resultado") {
     return falhou(ids, "agendar", corrida.tipo);
@@ -509,7 +534,7 @@ export async function agendarPelaIa(
       (appointmentId === null
         ? null
         : await vinculoDaConsulta(admin, ids.clinicId, appointmentId));
-    log.info("ia_agenda_marcou", {
+    log.info(remarcarId ? "ia_agenda_remarcou" : "ia_agenda_marcou", {
       clinic_id: ids.clinicId,
       conversation_id: ids.conversationId,
       job_id: ids.jobId,
@@ -532,6 +557,8 @@ type LinhaDaConsultaDoContato = {
   starts_at: string;
   approval_status: string | null;
   service_link_id: string | null;
+  /** AG4 (o limite da 21.15): o profissional, so para os fatos. */
+  professional_id?: string | null;
 };
 
 /**
@@ -577,7 +604,9 @@ export async function confirmarPresencaPelaIa(
   const leitura = await correrComPrazo(async () => {
     const { data, error } = await admin
       .from("appointment")
-      .select("id, status, starts_at, approval_status, service_link_id")
+      .select(
+        "id, status, starts_at, approval_status, service_link_id, professional_id",
+      )
       .eq("clinic_id", ids.clinicId)
       .eq("contact_id", ids.contactId)
       .in("status", [...STATUS_QUE_AGUARDAM_CONFIRMACAO])
@@ -632,6 +661,10 @@ export async function confirmarPresencaPelaIa(
         ? resposta.starts_at
         : consulta.starts_at,
     serviceLinkId: consulta.service_link_id,
+    profissionalId:
+      typeof consulta.professional_id === "string"
+        ? consulta.professional_id
+        : null,
   };
 }
 
@@ -923,7 +956,9 @@ export async function lerConsultaDaIa(
   const corrida = await correrComPrazo(async () => {
     const { data, error } = await admin
       .from("appointment")
-      .select("starts_at, status, approval_status, unit_id")
+      .select(
+        "starts_at, status, approval_status, unit_id, professional_id, service_link_id, remarcacao_de",
+      )
       .eq("clinic_id", ids.clinicId)
       .eq("contact_id", ids.contactId)
       .eq("id", appointmentId)
@@ -936,6 +971,9 @@ export async function lerConsultaDaIa(
       status?: unknown;
       approval_status?: unknown;
       unit_id?: unknown;
+      professional_id?: unknown;
+      service_link_id?: unknown;
+      remarcacao_de?: unknown;
     } | null;
   }, PRAZO_DA_AGENDA_MS);
   if (corrida.tipo !== "resultado") {
@@ -957,7 +995,185 @@ export async function lerConsultaDaIa(
       ) &&
       linha.approval_status !== "recusado",
     unidadeId: typeof linha.unit_id === "string" ? linha.unit_id : null,
+    // AG4: o profissional (os fatos), o vinculo (a remarcacao e a nota), se
+    // ainda espera a aprovacao e a consulta antiga da remarcacao.
+    profissionalId:
+      typeof linha.professional_id === "string" ? linha.professional_id : null,
+    serviceLinkId:
+      typeof linha.service_link_id === "string" ? linha.service_link_id : null,
+    pendente: linha.approval_status === "pendente",
+    remarcacaoDe:
+      typeof linha.remarcacao_de === "string" ? linha.remarcacao_de : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// AG4: as consultas do contato e o cancelamento pela IA
+// ---------------------------------------------------------------------------
+
+type LinhaDaConsultaListada = {
+  id?: unknown;
+  starts_at?: unknown;
+  ends_at?: unknown;
+  status?: unknown;
+  approval_status?: unknown;
+  is_overbooking?: unknown;
+  service_link_id?: unknown;
+  professional_id?: unknown;
+  unit_id?: unknown;
+  remarcacao_de?: unknown;
+};
+
+/**
+ * AG4: as consultas futuras do contato da conversa, nas quatro situacoes
+ * antes do atendimento e sem as recusadas, ate MAXIMO_DE_CONSULTAS_NA_LISTA
+ * (com ha_mais), e quais delas tem uma remarcacao pendente ligada. So o que
+ * a ferramenta e a conferencia precisam: nada de observacao, nome ou
+ * telefone. Lanca na leitura que falha ou passa do prazo.
+ */
+export async function lerConsultasDoContatoDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  agoraMs: number,
+): Promise<ConsultasDoContato> {
+  const corrida = await correrComPrazo(async () => {
+    const { data, error } = await admin
+      .from("appointment")
+      .select(
+        "id, starts_at, ends_at, status, approval_status, is_overbooking, service_link_id, professional_id, unit_id, remarcacao_de",
+      )
+      .eq("clinic_id", ids.clinicId)
+      .eq("contact_id", ids.contactId)
+      .in("status", [...STATUS_ANTES_DO_ATENDIMENTO])
+      .gt("starts_at", new Date(agoraMs).toISOString())
+      .or("approval_status.is.null,approval_status.neq.recusado")
+      .order("starts_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(MAXIMO_DE_CONSULTAS_NA_LISTA + 1);
+    if (error) {
+      throw new Error("leitura");
+    }
+    return (data ?? []) as LinhaDaConsultaListada[];
+  }, PRAZO_DA_AGENDA_MS);
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "consultas_do_contato", corrida.tipo);
+  }
+  const texto = (v: unknown): string | null =>
+    typeof v === "string" && v !== "" ? v : null;
+  const lidas: ConsultaDoContato[] = [];
+  for (const linha of corrida.valor) {
+    const id = texto(linha.id);
+    const inicio = texto(linha.starts_at);
+    const fim = texto(linha.ends_at);
+    const status = texto(linha.status);
+    const serviceLinkId = texto(linha.service_link_id);
+    const profissionalId = texto(linha.professional_id);
+    if (
+      id === null ||
+      inicio === null ||
+      fim === null ||
+      status === null ||
+      serviceLinkId === null ||
+      profissionalId === null
+    ) {
+      continue;
+    }
+    const consulta: ConsultaDoContato = {
+      id,
+      inicio,
+      fim,
+      status,
+      aprovacao: texto(linha.approval_status),
+      encaixe: linha.is_overbooking === true,
+      serviceLinkId,
+      profissionalId,
+      unidadeId: texto(linha.unit_id),
+      remarcacaoDe: texto(linha.remarcacao_de),
+      temRemarcacaoPendente: false,
+    };
+    if (consultaListavel(consulta, agoraMs)) {
+      lidas.push(consulta);
+    }
+  }
+  const ordenadas = emOrdem(lidas);
+  const primeiras = ordenadas.slice(0, MAXIMO_DE_CONSULTAS_NA_LISTA);
+  if (primeiras.length > 0) {
+    // As remarcacoes pendentes ligadas a estas (a consulta nova pendente com
+    // remarcacao_de = uma delas), do mesmo contato.
+    const ligadas = await correrComPrazo(async () => {
+      const { data, error } = await admin
+        .from("appointment")
+        .select("remarcacao_de")
+        .eq("clinic_id", ids.clinicId)
+        .eq("contact_id", ids.contactId)
+        .in(
+          "remarcacao_de",
+          primeiras.map((c) => c.id),
+        )
+        .eq("approval_status", "pendente")
+        .not("status", "in", "(cancelado_paciente,cancelado_clinica)");
+      if (error) {
+        throw new Error("leitura");
+      }
+      return (data ?? []) as { remarcacao_de?: unknown }[];
+    }, PRAZO_DA_AGENDA_MS);
+    if (ligadas.tipo !== "resultado") {
+      return falhou(ids, "consultas_do_contato", ligadas.tipo);
+    }
+    const comRemarcacao = new Set(
+      ligadas.valor.flatMap((l) =>
+        typeof l.remarcacao_de === "string" ? [l.remarcacao_de] : [],
+      ),
+    );
+    for (const c of primeiras) {
+      c.temRemarcacaoPendente = comRemarcacao.has(c.id);
+    }
+  }
+  return {
+    consultas: primeiras,
+    haMais: ordenadas.length > primeiras.length,
+  };
+}
+
+/**
+ * AG4: cancelar_consulta_pela_ia com o job_id do turno (desenho da AG4, 3.3
+ * b): repetir o job devolve o cancelamento que ele ja fez. Lanca no erro, no
+ * prazo e na resposta fora do formato.
+ */
+export async function cancelarConsultaPelaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  appointmentId: string,
+): Promise<RespostaDoCancelamento> {
+  const corrida = await rpcComPrazo(admin, "cancelar_consulta_pela_ia", {
+    p_clinic_id: ids.clinicId,
+    p_conversation_id: ids.conversationId,
+    p_job_id: ids.jobId,
+    p_appointment_id: appointmentId,
+  });
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "cancelar", corrida.tipo);
+  }
+  const lida = lerRespostaDoCancelamento(corrida.valor);
+  if (lida === null) {
+    return falhou(ids, "cancelar", "resposta_fora_do_formato");
+  }
+  if (lida.ok) {
+    log.info("ia_agenda_cancelou", {
+      clinic_id: ids.clinicId,
+      conversation_id: ids.conversationId,
+      job_id: ids.jobId,
+      status: lida.reutilizado ? "reutilizado" : "nova",
+    });
+  } else {
+    log.info("ia_agenda_cancelamento_recusado", {
+      clinic_id: ids.clinicId,
+      conversation_id: ids.conversationId,
+      job_id: ids.jobId,
+      error_code: lida.motivo,
+    });
+  }
+  return lida;
 }
 
 /**
@@ -981,7 +1197,7 @@ export function portaDaAgendaDoWhatsapp(
     agendar: (pedido) =>
       pedido === undefined
         ? agendarPelaIa(admin, ids)
-        : agendarPelaIa(admin, ids, pedido.slotHoldId),
+        : agendarPelaIa(admin, ids, pedido.slotHoldId, pedido.remarcarId),
     confirmarPresenca: () => confirmarPresencaPelaIa(admin, ids, ids.agora()),
     registrarDados: (dados) => registrarDadosDaIa(admin, ids, dados),
     lerCadastroDoContato: () => lerCadastroDoContatoDaIa(admin, ids, ids.agora()),
@@ -989,14 +1205,39 @@ export function portaDaAgendaDoWhatsapp(
     lerConsulta: (appointmentId) =>
       lerConsultaDaIa(admin, ids, appointmentId, ids.agora()),
     lerReservaViva: () => lerReservaVivaDaIa(admin, ids, ids.agora()),
+    // AG4: remarcar e cancelar.
+    lerConsultasDoContato: () =>
+      lerConsultasDoContatoDaIa(admin, ids, ids.agora()),
+    cancelarConsulta: (appointmentId) =>
+      cancelarConsultaPelaIa(admin, ids, appointmentId),
   };
 }
+
+/** Uma consulta SIMULADA (id inventado, nada gravado). */
+export type ConsultaSimulada = {
+  appointmentId: string;
+  inicio: string;
+  serviceLinkId?: string;
+  /**
+   * Revisao curta das correcoes (achado 10): a unidade da consulta
+   * simulada (a da reserva), como a consulta que a RPC grava. Ausente no
+   * pacote de antes: sem unidade.
+   */
+  unidadeId?: string | null;
+};
 
 /**
  * AG3: o que o simulador guarda do atendimento entre as rodadas (no
  * historico assinado, lib/agente/assinatura.ts), alem do estado: a reserva
  * e a consulta SIMULADAS (ids inventados, nada gravado). Os dados que a
  * pessoa informa nunca ficam: so SE foram informados (no estado).
+ *
+ * AG4: a consulta simulada pode ser a remarcacao pedida de outra
+ * (`remarcacaoDe`: a antiga, que continua marcada; o vinculo da remarcacao
+ * fica na memoria assinada). No simulador nao ha aprovacao: a consulta
+ * marcada na conversa de teste conta como aprovada pela equipe, para que
+ * cancelar e remarcar possam ser testados (no WhatsApp, a consulta da IA
+ * ainda pendente nao remarca, D-26); a remarcacao simulada fica pendente.
  */
 export type MemoriaDoSimulador = {
   reserva: {
@@ -1012,17 +1253,7 @@ export type MemoriaDoSimulador = {
    * para a reserva seguinte do mesmo procedimento recusar ja_tem_consulta,
    * como a RPC. Ausente no pacote de antes: nao recusa.
    */
-  consulta: {
-    appointmentId: string;
-    inicio: string;
-    serviceLinkId?: string;
-    /**
-     * Revisao curta das correcoes (achado 10): a unidade da consulta
-     * simulada (a da reserva), como a consulta que a RPC grava. Ausente no
-     * pacote de antes: sem unidade.
-     */
-    unidadeId?: string | null;
-  } | null;
+  consulta: (ConsultaSimulada & { remarcacaoDe?: ConsultaSimulada }) | null;
 };
 
 /**
@@ -1045,7 +1276,8 @@ export function portaDaAgendaDoSimulador(
     /** AG3: o estado do atendimento simulado (os dados informados). */
     atendimento?: { dados: DadosInformados };
     catalogo?: CatalogoDoAgente;
-    config?: Pick<ConfigDoAgente, "agenda" | "dadosExigidos">;
+    config?: Pick<ConfigDoAgente, "agenda" | "dadosExigidos"> &
+      Partial<Pick<ConfigDoAgente, "prazos">>;
     fuso?: string;
     /** AG3: o "Testar como" (o tipo do contato simulado). */
     contato?: TipoDoContato | null;
@@ -1066,17 +1298,107 @@ export function portaDaAgendaDoSimulador(
     });
   const vinculoDe = (id: string | null) =>
     e.catalogo?.vinculos.find((v) => v.id === id);
+  /**
+   * AG4: as consultas simuladas como o contato as tem (a de cima e, numa
+   * remarcacao pedida, a antiga), na forma da lista. A de cima conta como
+   * aprovada; a remarcacao pedida, como pendente.
+   */
+  const simuladas = (): ConsultaDoContato[] => {
+    const consulta = memoria?.consulta ?? null;
+    if (consulta === null) {
+      return [];
+    }
+    const comoDoContato = (
+      c: ConsultaSimulada,
+      extra: Pick<ConsultaDoContato, "aprovacao" | "remarcacaoDe" | "temRemarcacaoPendente">,
+    ): ConsultaDoContato | null => {
+      const vinculo =
+        c.serviceLinkId === undefined ? undefined : vinculoDe(c.serviceLinkId);
+      if (vinculo === undefined || vinculo.id === null) {
+        return null;
+      }
+      return {
+        id: c.appointmentId,
+        inicio: c.inicio,
+        fim: new Date(
+          Date.parse(c.inicio) + (vinculo.duracaoMin ?? 30) * 60_000,
+        ).toISOString(),
+        status: "agendado",
+        encaixe: false,
+        serviceLinkId: vinculo.id,
+        profissionalId: vinculo.profissionalId,
+        unidadeId: c.unidadeId ?? null,
+        ...extra,
+      };
+    };
+    const antiga = consulta.remarcacaoDe;
+    return [
+      comoDoContato(consulta, {
+        aprovacao: antiga === undefined ? null : "pendente",
+        remarcacaoDe: antiga?.appointmentId ?? null,
+        temRemarcacaoPendente: false,
+      }),
+      ...(antiga === undefined
+        ? []
+        : [
+            comoDoContato(antiga, {
+              aprovacao: null,
+              remarcacaoDe: null,
+              temRemarcacaoPendente: true,
+            }),
+          ]),
+    ].filter(
+      (c): c is ConsultaDoContato =>
+        c !== null && consultaListavel(c, e.agora()),
+    );
+  };
+  /** AG4: a conferencia do banco, sobre a consulta simulada. */
+  const conferirSimulada = (
+    id: string,
+    acao: "cancelar" | "remarcar",
+  ) =>
+    conferirConsultaDaIa({
+      consulta: simuladas().find((c) => c.id === id) ?? null,
+      acao,
+      prazoHoras: prazoDaAcao(e.config?.prazos ?? null, acao),
+      agoraMs: e.agora(),
+      catalogo: e.catalogo ?? { vinculos: [] },
+    });
   return {
     simulada: true,
     carregar,
     reservar: async (pedido) => {
       if (memoria !== undefined && e.catalogo && e.config) {
+        // AG4: a reserva da remarcacao, como a RPC: a consulta em foco e a
+        // simulada, conferida, e o horario novo e do mesmo procedimento,
+        // profissional e pagamento.
+        const remarcarId = pedido.remarcarId ?? null;
+        if (remarcarId !== null) {
+          const motivo = conferirSimulada(remarcarId, "remarcar");
+          if (motivo !== null) {
+            return { ok: false, motivo };
+          }
+          const antiga = simuladas().find((c) => c.id === remarcarId);
+          const daAntiga = vinculoDe(antiga?.serviceLinkId ?? null);
+          const doNovo = vinculoDe(pedido.serviceLinkId);
+          if (
+            daAntiga === undefined ||
+            doNovo === undefined ||
+            daAntiga.procedimentoId !== doNovo.procedimentoId ||
+            daAntiga.profissionalId !== doNovo.profissionalId ||
+            daAntiga.convenioId !== doNovo.convenioId
+          ) {
+            return { ok: false, motivo: "remarcacao_invalida" };
+          }
+        }
         // Revisao final da AG3: como a RPC, a consulta simulada (futura) do
-        // mesmo procedimento recusa ja_tem_consulta.
+        // mesmo procedimento recusa ja_tem_consulta (AG4: menos a que esta
+        // sendo remarcada, 33.14 ponto 3).
         const consulta = memoria.consulta;
         const procedimentoDe = (id: string | undefined) =>
           id === undefined ? undefined : vinculoDe(id)?.procedimentoId;
         if (
+          remarcarId === null &&
           consulta !== null &&
           consulta.serviceLinkId !== undefined &&
           Date.parse(consulta.inicio) > e.agora() &&
@@ -1155,6 +1477,54 @@ export function portaDaAgendaDoSimulador(
         const reserva = memoria.reserva;
         if (reserva === null) {
           return { ok: false, motivo: "reserva_inexistente" };
+        }
+        // AG4: a remarcacao simulada: a consulta nova pendente, ligada a
+        // antiga, que continua marcada (D-10). Nada gravado.
+        const remarcarId = pedido?.remarcarId ?? null;
+        if (remarcarId !== null) {
+          if (
+            pedido?.slotHoldId !== undefined &&
+            pedido.slotHoldId !== null &&
+            pedido.slotHoldId !== reserva.holdId
+          ) {
+            return { ok: false, motivo: "reserva_diferente" };
+          }
+          if (Date.parse(reserva.expiraEm) <= e.agora()) {
+            return { ok: false, motivo: "reserva_vencida" };
+          }
+          const motivo = conferirSimulada(remarcarId, "remarcar");
+          if (motivo !== null) {
+            return { ok: false, motivo };
+          }
+          const antiga = memoria.consulta;
+          if (antiga === null || antiga.appointmentId !== remarcarId) {
+            return { ok: false, motivo: "consulta_nao_encontrada" };
+          }
+          memoria.consulta = {
+            appointmentId: randomUUID(),
+            inicio: reserva.inicio,
+            serviceLinkId: reserva.serviceLinkId,
+            unidadeId: reserva.unidadeId,
+            remarcacaoDe: {
+              appointmentId: antiga.appointmentId,
+              inicio: antiga.inicio,
+              ...(antiga.serviceLinkId === undefined
+                ? {}
+                : { serviceLinkId: antiga.serviceLinkId }),
+              unidadeId: antiga.unidadeId ?? null,
+            },
+          };
+          memoria.reserva = null;
+          return {
+            ok: true,
+            inicio: reserva.inicio,
+            fim: reserva.fim,
+            reutilizado: false,
+            serviceLinkId: reserva.serviceLinkId,
+            appointmentId: memoria.consulta.appointmentId,
+            remarcacaoDe: antiga.appointmentId,
+            inicioDaAntiga: antiga.inicio,
+          };
         }
         // Revisao final da AG3: como a RPC, a reserva perguntada tem de ser
         // a da conversa.
@@ -1331,16 +1701,60 @@ export function portaDaAgendaDoSimulador(
     },
     lerConsulta: async (appointmentId) => {
       const consulta = memoria?.consulta ?? null;
-      if (consulta === null || consulta.appointmentId !== appointmentId) {
+      // AG4: a antiga da remarcacao pedida tambem se le.
+      const lida =
+        consulta === null
+          ? null
+          : consulta.appointmentId === appointmentId
+            ? consulta
+            : consulta.remarcacaoDe?.appointmentId === appointmentId
+              ? consulta.remarcacaoDe
+              : null;
+      if (consulta === null || lida === null) {
         return null;
       }
+      const vinculo =
+        lida.serviceLinkId === undefined ? undefined : vinculoDe(lida.serviceLinkId);
+      const ehANova = lida === consulta && consulta.remarcacaoDe !== undefined;
       return {
-        inicio: consulta.inicio,
-        ativa: Date.parse(consulta.inicio) > e.agora(),
+        inicio: lida.inicio,
+        ativa: Date.parse(lida.inicio) > e.agora(),
         // Revisao curta das correcoes (achado 10): a unidade, como
         // lerConsultaDaIa (o pacote de antes, sem ela: sem unidade).
-        unidadeId: consulta.unidadeId ?? null,
+        unidadeId: lida.unidadeId ?? null,
+        // AG4: o profissional e o vinculo, a remarcacao pendente e a antiga.
+        profissionalId: vinculo?.profissionalId ?? null,
+        serviceLinkId: lida.serviceLinkId ?? null,
+        pendente: ehANova,
+        remarcacaoDe: ehANova ? (consulta.remarcacaoDe?.appointmentId ?? null) : null,
       };
+    },
+    // AG4: so a consulta marcada na propria conversa de teste aparece.
+    lerConsultasDoContato: async () => {
+      const lista = emOrdem(simuladas());
+      return {
+        consultas: lista.slice(0, MAXIMO_DE_CONSULTAS_NA_LISTA),
+        haMais: lista.length > MAXIMO_DE_CONSULTAS_NA_LISTA,
+      };
+    },
+    // AG4: o cancelamento simulado, com a conferencia do banco. Nada
+    // gravado: so a memoria do simulador perde a consulta.
+    cancelarConsulta: async (appointmentId) => {
+      const motivo = conferirSimulada(appointmentId, "cancelar");
+      // (pendente_da_equipe so vale na remarcacao.)
+      if (motivo !== null && motivo !== "pendente_da_equipe") {
+        return { ok: false, motivo };
+      }
+      const consulta = memoria?.consulta ?? null;
+      if (memoria === undefined || consulta === null) {
+        return { ok: false, motivo: "consulta_nao_encontrada" };
+      }
+      if (consulta.appointmentId === appointmentId) {
+        // Cancelar a remarcacao pedida deixa a antiga, que continua marcada.
+        memoria.consulta = consulta.remarcacaoDe ?? null;
+        return { ok: true, inicio: consulta.inicio, reutilizado: false };
+      }
+      return { ok: false, motivo: "consulta_nao_encontrada" };
     },
   };
 }

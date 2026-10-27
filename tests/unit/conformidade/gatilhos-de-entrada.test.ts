@@ -341,3 +341,62 @@ describe("a consulta para outra pessoa: só com a pessoa como paciente", () => {
     ).toBe(true);
   });
 });
+
+// AG4 (27/10/2026): cancelar e remarcar a consulta de outra pessoa adulta
+// passa para a equipe antes do modelo (D-8). "Da minha mae" so conta colado
+// na consulta (ou no verbo, com o artigo): o motivo que cita a pessoa
+// ("por causa da minha mae") e da propria consulta.
+describe("cancelar ou remarcar a consulta de outra pessoa adulta", () => {
+  it.each([
+    "Quero cancelar a consulta da minha mãe.",
+    "Preciso remarcar o horário do meu pai.",
+    "Cancela a da minha mãe, por favor.",
+    "Dá pra desmarcar a consulta de amanhã do meu marido?",
+    "Quero remarcar o retorno do dia 29 da minha esposa.",
+    "A consulta marcada da minha sogra, dá pra cancelar?",
+    "Minha mãe precisa cancelar a consulta.",
+    "Meu pai quer remarcar.",
+    "Minha mãe tem consulta amanhã e não vai poder ir. Quero cancelar.",
+    "Meu marido tem uma consulta na quinta, dá pra remarcar?",
+  ])("escala: %s", (texto) => {
+    expect(pedidoDeConsultaParaOutraPessoa([texto])).toBe(true);
+  });
+
+  it.each([
+    "Quero cancelar minha consulta.",
+    "Preciso cancelar por causa da minha mãe.",
+    "Quero remarcar, tenho que cuidar da minha mãe nesse dia.",
+    "Vou ter que desmarcar, vou levar meu pai no aeroporto.",
+    "Minha mãe está internada, preciso cancelar a minha consulta.",
+    "Minha mãe tem consulta amanhã, ela já confirmou.",
+    "Não é a consulta da minha mãe, é a minha.",
+    "Não cancela a do meu pai, só a minha.",
+    "Quero remarcar para sexta.",
+  ])("não escala: %s", (texto) => {
+    expect(pedidoDeConsultaParaOutraPessoa([texto])).toBe(false);
+  });
+
+  it("a pessoa que tem consulta e o pedido em mensagens do mesmo turno", () => {
+    expect(
+      pedidoDeConsultaParaOutraPessoa([
+        "Minha mãe tem consulta amanhã com vocês",
+        null,
+        "quero cancelar",
+      ]),
+    ).toBe(true);
+    expect(
+      pedidoDeConsultaParaOutraPessoa([
+        "Minha mãe tem consulta amanhã com vocês",
+        "ela já confirmou",
+      ]),
+    ).toBe(false);
+  });
+
+  it("as regras novas entram na versão do portão", () => {
+    expect(
+      FONTES_DO_PORTAO_EM_CODIGO.some((fonte) =>
+        fonte.includes("colada: a consulta da minha mae"),
+      ),
+    ).toBe(true);
+  });
+});

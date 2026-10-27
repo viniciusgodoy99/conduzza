@@ -86,6 +86,15 @@
 //  - na passagem, a nota interna para a equipe (notaParaAEquipe), montada so
 //    do estado e do Cadastro.
 //
+// AG4 (27/10/2026), remarcar e cancelar: as ferramentas novas rodam pela
+// porta da agenda; nos momentos que decidem (a pergunta e o resultado do
+// cancelamento e da remarcacao) a ferramenta devolve uma FRASE FIXA (tipo
+// "frase"), que encerra o turno como as frases da onda 2: o laco a compoe
+// com a saudacao e o aviso e a manda pelo filtro INTEIRO, com os fatos dela
+// (bloqueio vira a frase de escalonamento). As recusas que sao da equipe
+// passam com pedido_de_agenda e a do prazo com fora_do_prazo (origem
+// "ferramenta").
+//
 // A trilha ("Por que a IA respondeu isso") diz o que foi consultado, com
 // nomes do Cadastro e da base da clinica, NUNCA texto do paciente. Log so com
 // ids, codigos, modelo e duracao.
@@ -195,6 +204,7 @@ import {
   NOME_DO_FORA_DO_ASSUNTO,
   semArgumentos,
 } from "./ferramentas/fora-do-assunto";
+import { limiteDaSaidaDasMinhasConsultas } from "./ferramentas/minhas-consultas";
 import {
   esconderCodigosCurtos,
   falaDaCarteirinha,
@@ -999,6 +1009,7 @@ export function custoMaximoDoTurno(entrada: {
   const ferramentas = ferramentasDoAgente(
     entrada.config.habilidades,
     entrada.config.agenda,
+    entrada.config.prazos,
   );
   const comAgenda = ferramentas.some(ehFerramentaDeAgenda);
   const crescimento =
@@ -1008,6 +1019,11 @@ export function custoMaximoDoTurno(entrada: {
       comAgenda ? limiteDaSaidaDaBuscaDeHorario(entrada.catalogo) : 0,
       // AG2: as consultas do Cadastro vem sempre (habilidade travada).
       limiteDasConsultasDoCadastro(entrada.catalogo),
+      // AG4: as consultas do contato (a busca da remarcacao cabe no teto de
+      // buscar_horario).
+      ferramentas.includes("consultar_minhas_consultas")
+        ? limiteDaSaidaDasMinhasConsultas()
+        : 0,
     ) +
     FOLGA_DA_CHAMADA;
   const rodadas = comAgenda ? MAXIMO_DE_RODADAS_COM_AGENDA : MAXIMO_DE_RODADAS;
@@ -1403,7 +1419,11 @@ async function turnoDoAgente(
     // 4. O agente.
     const ferramentas: FunctionTool[] = ferramentasDaChamada(entrada.config);
     const permitidas: ReadonlySet<string> = new Set(
-      ferramentasDoAgente(entrada.config.habilidades, entrada.config.agenda),
+      ferramentasDoAgente(
+        entrada.config.habilidades,
+        entrada.config.agenda,
+        entrada.config.prazos,
+      ),
     );
     // AG3: a reconferencia leve do estado (os horarios ja oferecidos, a
     // reserva e a consulta marcada nesta conversa), antes da primeira
@@ -1452,8 +1472,11 @@ async function turnoDoAgente(
     // Onda 2 (item 5 e P5c): a ferramenta de frase fixa que encerrou o turno.
     let fraseEscolhida: "fora_do_assunto" | "sou_assistente_virtual" | null =
       null;
+    // AG4: a frase fixa da agenda (a pergunta ou o resultado do cancelamento
+    // e da remarcacao) que encerrou o turno.
+    let fraseDaAgenda: string | null = null;
 
-    for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
+    rodadas: for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
       if (entrada.conferirTrava) {
         const liberada = await entrada.conferirTrava().catch(() => false);
         if (!liberada) {
@@ -1714,6 +1737,14 @@ async function turnoDoAgente(
           });
           return falhar("desconhecida");
         }
+        if (efeito.tipo === "frase") {
+          // AG4: a frase fixa encerra o turno (o resto da rodada nao roda).
+          // Os fatos dela entram nos do turno, como uma saida de ferramenta.
+          ferramentasDoTurno.push({ saida: efeito.saida, fatos: efeito.fatos });
+          trilha.push({ tipo: "agenda", texto: efeito.passo });
+          fraseDaAgenda = efeito.texto;
+          break rodadas;
+        }
         precosDoTurno.push(...efeito.precos);
         ferramentasDoTurno.push({ saida: efeito.saida, fatos: efeito.fatos });
         trilha.push({ tipo: "agenda", texto: efeito.passo });
@@ -1756,7 +1787,18 @@ async function turnoDoAgente(
     // para o resumo dos fatos que vai ao verificador.
     const respostasDaBase: string[] = [];
 
-    if (fraseEscolhida !== null) {
+    if (fraseDaAgenda !== null) {
+      // AG4: a frase fixa da agenda, com a saudacao e o aviso colados como
+      // numa resposta comum, pelo filtro inteiro (com os fatos dela).
+      rascunho = comporResposta({
+        mensagem: fraseDaAgenda,
+        saudacao: entrada.config.saudacao,
+        encerramento: null,
+        primeiraResposta,
+        encerra: false,
+        aviso,
+      });
+    } else if (fraseEscolhida !== null) {
       ferramentasUsadas.push(fraseEscolhida);
       // P5b: a segunda pergunta fora do assunto na janela passa para a
       // equipe (motivo de sistema), com a frase de escalonamento.

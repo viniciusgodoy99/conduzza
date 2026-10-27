@@ -116,6 +116,37 @@ export const RESPOSTA_CANCELADA =
 export const RESPOSTA_REMARCAR =
   "Certo! Nossa recepção vai falar com você para encontrar um novo horário no lugar da consulta de {{data}} às {{hora}}.";
 
+// AG4 (27/10/2026): remarcar e cancelar pela IA. Os textos dos momentos que
+// decidem saem FIXOS, escritos pelo sistema (nunca pelo modelo), e passam pelo
+// filtro de saida inteiro como qualquer resposta da IA (D-31, recomendacao).
+// {{dia}} e o dia como a agenda escreve ("quinta, 29/10"), {{hora}} e
+// "14:00", no fuso da clinica.
+//
+// PROPOSTA, espera aprovacao do dono (D-31): T1, T3 e T4 valem ate a
+// aprovacao. Regras para trocar: sem travessao, sem promessa, sem dizer que a
+// consulta antiga foi cancelada nem que a nova esta confirmada (T4 tem de
+// dizer que a remarcacao depende da aprovacao da equipe: a regra
+// remarcacao_sem_pendencia do filtro barra o texto que nao diz). Um teste
+// roda o filtro em cada um, preenchido. T2 e RESPOSTA_CANCELADA (o texto do
+// botao, ja aprovado), com {{data}} no formato DD/MM.
+
+/** T1: a pergunta do cancelamento, depois de pedir_cancelamento. */
+export const PERGUNTA_DO_CANCELAMENTO_PELA_IA =
+  "Confirma o cancelamento da sua consulta de {{dia}} às {{hora}}?";
+
+/**
+ * T3: a reserva da remarcacao e a pergunta, depois de reservar_horario no
+ * modo de remarcacao. {{unidade}} e ", na unidade X," (o aposto fecha com
+ * virgula) quando a clinica tem mais de uma unidade e o horario novo tem
+ * unidade; vazio no resto.
+ */
+export const PERGUNTA_DA_REMARCACAO_PELA_IA =
+  "Reservei {{dia_novo}} às {{hora_nova}}{{unidade}} por 10 minutos. Confirma a remarcação da sua consulta de {{dia}} às {{hora}} para {{dia_novo}} às {{hora_nova}}?";
+
+/** T4: depois de agendar no modo de remarcacao (a nova nasce pendente). */
+export const RESPOSTA_DA_REMARCACAO_PELA_IA =
+  "Pronto, pedi a remarcação para {{dia_novo}} às {{hora_nova}}. Até a equipe aprovar, sua consulta de {{dia}} às {{hora}} continua marcada. A confirmação chega por aqui.";
+
 /**
  * Aviso automatico quando a recepcao remarca a consulta com a chave "Avisar
  * o paciente pelo WhatsApp" ligada (texto do dono em 24/09/2026). Data e hora
