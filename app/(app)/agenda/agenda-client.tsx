@@ -27,6 +27,7 @@ import {
   agendaKeys,
   fetchAgendaDia,
   fetchPendencias,
+  remarcacoesPendentesPorAntiga,
   type AgendaDia,
   type ConsultaDaAgenda,
 } from "@/lib/queries/agenda";
@@ -187,6 +188,14 @@ export function AgendaClient({
       }
     : undefined;
 
+  // AG4 (D-32): a remarcacao da IA pendente de cada consulta antiga, pela
+  // mesma lista do "Pendente de voce" (o tempo real a renova a cada mudanca
+  // de consulta).
+  const remarcacoesPendentes = useMemo(
+    () => remarcacoesPendentesPorAntiga(pendenciasQuery.data ?? []),
+    [pendenciasQuery.data],
+  );
+
   const contexto: ContextoAgenda = {
     clinicId,
     timezone,
@@ -199,6 +208,8 @@ export function AgendaClient({
     podeRegistrarAutorizacao,
     dicaAutorizacao,
     abrirAgendamento: abrirModal,
+    remarcacaoPendenteDe: (consultaId) =>
+      remarcacoesPendentes.get(consultaId) ?? null,
   };
 
   const weekdayDoDia = weekdayLocal(

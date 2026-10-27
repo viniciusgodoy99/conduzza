@@ -47,6 +47,14 @@ import {
   fraseDeNumerosDesconectados,
   nomesParaATela,
 } from "@/lib/jobs/numero-de-envio";
+import {
+  erroDaAntigaEncerrada,
+  situacaoDaAntiga,
+  sucessoDoAprovar,
+  sucessoDoRecusar,
+  TEXTOS_DA_REMARCACAO,
+  type AntigaLida,
+} from "@/components/agenda/remarcacao-da-ia";
 import { log } from "@/lib/log";
 import { ehConsultaDaIa } from "@/lib/queries/agenda";
 import {
@@ -55,6 +63,7 @@ import {
 } from "@/lib/domain/dados-informados";
 import {
   lerDadosInformadosNaMarcacao,
+  revelarDadoInformadoNaMarcacao,
   type DadosInformadosNaMarcacao,
 } from "@/lib/queries/dados-da-marcacao";
 import { fetchProfileNames } from "@/lib/queries/profiles";
@@ -91,7 +100,14 @@ export type AgendaActionResult = {
     | "comparecimento_antes_do_dia"
     // Mudar situacao de consulta que ainda espera aprovacao (onda 2, item
     // 10): so aprovar, recusar ou cancelar.
-    | "consulta_pendente";
+    | "consulta_pendente"
+    // AG4 (D-32): mover a consulta antiga com a remarcacao da IA pendente
+    // (o gatilho remarcacao_pendente_trava_a_antiga recusa com 23514).
+    | "remarcacao_pendente"
+    // AG4: aprovar a remarcacao da IA com a antiga ja na recepcao, em
+    // atendimento, compareceu ou faltou (o gatilho remarcacao_na_aprovacao
+    // recusa com 23514, e a aprovacao nao acontece).
+    | "remarcacao_antiga_encerrada";
   id?: string;
   /**
    * A acao deu certo, mas algo que a recepcao pediu junto nao aconteceu (ex.:
@@ -100,13 +116,20 @@ export type AgendaActionResult = {
    */
   aviso?: string;
   /**
+   * O texto de sucesso quando ele depende do que o banco tinha (AG4: aprovar
+   * ou recusar a remarcacao da IA diz o horario da antiga lido no servidor, e
+   * se ela ja estava cancelada). Sem ele, a tela usa o texto de sempre.
+   */
+  mensagem?: string;
+  /**
    * Cancelar pela Agenda uma pendencia da IA (criada pela IA e ainda
    * pendente: a consulta que ela marcou ou o encaixe) conta como recusar
    * (decisao do dono de 20/10/2026). A acao diz qual foi recusada, para a
    * tela dizer o mesmo que o Recusar ("Consulta recusada. Avise o paciente
-   * pelo Atendimento."), e nao a situacao escolhida no menu.
+   * pelo Atendimento."), e nao a situacao escolhida no menu. AG4: a
+   * remarcacao da IA pendente tambem (a antiga continua marcada).
    */
-  recusada?: "consulta_da_ia" | "encaixe";
+  recusada?: "consulta_da_ia" | "encaixe" | "remarcacao";
   /**
    * Cadastro rapido: o telefone ja era de um contato (casado pela chave, com
    * ou sem o nono digito) e o id devolvido e o DELE. `nome` e `telefone` sao
@@ -445,7 +468,28 @@ const remarcarSchema = z.object({
 
 // Violacao de check do Postgres: aqui so chega pelo gatilho
 // preparar_remarcacao (consulta encerrada) ou impedir_falta_antes_do_horario.
+// AG4: tambem pelos gatilhos da remarcacao da IA, cada um com a sua chave
+// (remarcacao_pendente ao mover a antiga; remarcacao_consulta_antiga_encerrada
+// ao aprovar com a antiga ja atendida).
 const CHECK_VIOLATION = "23514";
+
+/**
+ * O erro do banco traz a chave de um gatilho? Os gatilhos levantam a chave na
+ * mensagem (e a dica no hint, como consulta_pendente); a busca olha os tres
+ * campos, para a tela nunca cair no erro generico por causa de onde a chave
+ * veio.
+ */
+function temChaveDoBanco(
+  error: { message?: string; details?: string; hint?: string } | null,
+  chave: string,
+): boolean {
+  if (!error) {
+    return false;
+  }
+  return [error.message, error.details, error.hint].some(
+    (campo) => typeof campo === "string" && campo.includes(chave),
+  );
+}
 
 const AVISO_SEM_AUTORIZACAO =
   "O paciente não autorizou receber mensagens. Avise por telefone.";
@@ -814,6 +858,19 @@ export async function remarcarAgendamentoAction(
             error: "O horário de destino está ocupado.",
           };
     }
+    // AG4 (D-32): a antiga com a remarcacao da IA pendente nao se move; o
+    // gatilho remarcacao_pendente_trava_a_antiga recusa com a chave. Vem
+    // antes do "consulta encerrada", que e o outro 23514 daqui.
+    if (
+      error.code === CHECK_VIOLATION &&
+      temChaveDoBanco(error, "remarcacao_pendente")
+    ) {
+      return {
+        ok: false,
+        code: "remarcacao_pendente",
+        error: TEXTOS_DA_REMARCACAO.dicaDaAntiga,
+      };
+    }
     if (error.code === CHECK_VIOLATION) {
       return {
         ok: false,
@@ -924,6 +981,19 @@ export async function mudarStatusAction(
     }
     if (lida.pendencia !== null && lida.pendencia.created_by === "ia") {
       const daIa = ehConsultaDaIa(lida.pendencia);
+      // AG4: cancelar a remarcacao da IA pendente e recusar a remarcacao (a
+      // antiga continua marcada), com os textos dela.
+      if (daIa && lida.pendencia.remarcacaoDe !== null) {
+        const resultado = await recusarRemarcacao(
+          supabase,
+          guard,
+          id,
+          status_atual,
+        );
+        return resultado.ok
+          ? { ...resultado, recusada: "remarcacao" }
+          : resultado;
+      }
       const resultado = await gravarRecusa(
         supabase,
         guard,
@@ -1113,6 +1183,12 @@ type PendenciaLida = {
    * respondem que ela ja foi cancelada (revisao da onda 2).
    */
   cancelada: boolean;
+  /**
+   * AG4: a consulta antiga, quando esta pendencia e a remarcacao que a IA
+   * pediu (appointment.remarcacao_de); nulo nas outras. Aprovar e recusar
+   * por qualquer caminho passam pelos textos e pelas regras da remarcacao.
+   */
+  remarcacaoDe: string | null;
 };
 
 const TEXTOS_DA_PENDENCIA = {
@@ -1136,7 +1212,7 @@ async function lerPendencia(
 ): Promise<{ pendencia: PendenciaLida | null } | { erro: true }> {
   const { data, error } = await supabase
     .from("appointment")
-    .select("created_by, is_overbooking, status")
+    .select("created_by, is_overbooking, status, remarcacao_de")
     .eq("clinic_id", clinicId)
     .eq("id", id)
     .eq("approval_status", "pendente")
@@ -1148,6 +1224,7 @@ async function lerPendencia(
     created_by?: unknown;
     is_overbooking?: unknown;
     status?: unknown;
+    remarcacao_de?: unknown;
   } | null;
   return {
     pendencia: linha
@@ -1157,6 +1234,11 @@ async function lerPendencia(
           cancelada: STATUS_DE_CANCELAMENTO.some(
             (status) => status === linha.status,
           ),
+          remarcacaoDe:
+            typeof linha.remarcacao_de === "string" &&
+            linha.remarcacao_de !== ""
+              ? linha.remarcacao_de
+              : null,
         }
       : null,
   };
@@ -1192,6 +1274,12 @@ export async function aprovarEncaixeAction(
     return { ok: false, code: "ja_tratado", error: PENDENCIA_CANCELADA };
   }
   const daIa = ehConsultaDaIa(lida.pendencia);
+  // AG4: a remarcacao da IA aprova pelo caminho dela (os textos e o erro da
+  // antiga ja atendida). Daqui, sem o aviso ao paciente: so o dialogo
+  // "Aprovar a remarcação?" mostra a escolha (D-28).
+  if (daIa && lida.pendencia.remarcacaoDe !== null) {
+    return aprovarRemarcacao(supabase, guard, parsed.data, false);
+  }
 
   let aprovar = supabase
     .from("appointment")
@@ -1246,6 +1334,7 @@ async function devolverConversaDaRecusada(
   clinicId: string,
   userId: string,
   appointmentId: string,
+  textos: AvisosDaDevolucao = TEXTOS_DA_PENDENCIA,
 ): Promise<string | null> {
   try {
     const { data, error } = await supabase.rpc(
@@ -1258,14 +1347,14 @@ async function devolverConversaDaRecusada(
         user_id: userId,
         error_code: error.code ?? null,
       });
-      return TEXTOS_DA_PENDENCIA.conversaNaoDevolvida;
+      return textos.conversaNaoDevolvida;
     }
     if (data !== true) {
       log.warn("agenda_recusa_sem_conversa", {
         clinic_id: clinicId,
         user_id: userId,
       });
-      return TEXTOS_DA_PENDENCIA.conversaNaoEncontrada;
+      return textos.conversaNaoEncontrada;
     }
     return null;
   } catch {
@@ -1274,9 +1363,15 @@ async function devolverConversaDaRecusada(
       user_id: userId,
       error_code: "excecao",
     });
-    return TEXTOS_DA_PENDENCIA.conversaNaoDevolvida;
+    return textos.conversaNaoDevolvida;
   }
 }
+
+/** Os avisos da conversa que nao voltou, pelo tipo da recusa. */
+type AvisosDaDevolucao = {
+  conversaNaoDevolvida: string;
+  conversaNaoEncontrada: string;
+};
 
 export async function recusarEncaixeAction(
   id: unknown,
@@ -1306,6 +1401,10 @@ export async function recusarEncaixeAction(
   if (lida.pendencia.cancelada) {
     return { ok: false, code: "ja_tratado", error: PENDENCIA_CANCELADA };
   }
+  // AG4: a remarcacao da IA recusa pelo caminho dela (a antiga continua).
+  if (ehConsultaDaIa(lida.pendencia) && lida.pendencia.remarcacaoDe !== null) {
+    return recusarRemarcacao(supabase, guard, parsed.data);
+  }
   return gravarRecusa(
     supabase,
     guard,
@@ -1327,6 +1426,7 @@ async function gravarRecusa(
   id: string,
   daIa: boolean,
   statusAtual?: AppointmentStatus,
+  remarcacao?: { antigaId: string },
 ): Promise<AgendaActionResult> {
   // A consulta da IA ja nasce sem oferecer o horario a lista de espera; vai
   // de novo no MESMO update (o gatilho da reoferta le a linha nova).
@@ -1348,6 +1448,10 @@ async function gravarRecusa(
   if (daIa) {
     recusar = recusar.eq("created_by", "ia").eq("is_overbooking", false);
   }
+  // AG4: a remarcacao lida e a que se recusa (a ligacao vai no filtro).
+  if (remarcacao) {
+    recusar = recusar.eq("remarcacao_de", remarcacao.antigaId);
+  }
   if (statusAtual !== undefined) {
     recusar = recusar.eq("status", statusAtual);
   }
@@ -1359,9 +1463,11 @@ async function gravarRecusa(
     return {
       ok: false,
       code: "ja_tratado",
-      error: daIa
-        ? TEXTOS_DA_PENDENCIA.consultaTratada
-        : TEXTOS_DA_PENDENCIA.encaixeTratado,
+      error: remarcacao
+        ? TEXTOS_DA_REMARCACAO.jaTratada
+        : daIa
+          ? TEXTOS_DA_PENDENCIA.consultaTratada
+          : TEXTOS_DA_PENDENCIA.encaixeTratado,
     };
   }
   await registrarHistorico(
@@ -1374,7 +1480,11 @@ async function gravarRecusa(
   await supabase.from("audit_log").insert({
     clinic_id: guard.clinicId,
     user_id: guard.context.userId,
-    action: daIa ? "recusou_consulta_da_ia" : "recusou_encaixe",
+    action: remarcacao
+      ? "recusou_remarcacao_da_ia"
+      : daIa
+        ? "recusou_consulta_da_ia"
+        : "recusou_encaixe",
     entity: "appointment",
     entity_id: id,
   });
@@ -1384,10 +1494,293 @@ async function gravarRecusa(
         guard.clinicId,
         guard.context.userId,
         id,
+        remarcacao ? TEXTOS_DA_REMARCACAO : TEXTOS_DA_PENDENCIA,
       )
     : null;
   revalidatePath("/agenda");
   return aviso ? { ok: true, aviso } : { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Remarcacao pedida pela IA (AG4): aprovar e recusar
+// ---------------------------------------------------------------------------
+//
+// Decisao D-10 do dono: remarcar pela IA cria uma consulta NOVA, pendente e
+// ligada a antiga (remarcacao_de); a antiga vale ate a aprovacao. Desenho da
+// AG4 (secao 5), com as recomendacoes das decisoes pendentes D-27, D-28,
+// D-29 e D-32:
+// - aprovar e a aprovacao da consulta da IA de sempre (no mesmo update, a
+//   confirmacao automatica ligada e a vaga oferecida ao cancelar) e o gatilho
+//   remarcacao_na_aprovacao cancela a antiga ("Cancelado pelo paciente", com
+//   a trilha de quem aprovou; a reoferta so se ela ainda for futura). Com a
+//   antiga ja na recepcao, em atendimento, compareceu ou faltou, o gatilho
+//   recusa (23514 remarcacao_consulta_antiga_encerrada) e nada muda. Depois,
+//   com a caixa marcada (D-28), sai o aviso de remarcacao de sempre
+//   (enfileirarAvisoDeRemarcacao), com a consulta NOVA;
+// - recusar e a recusa da consulta da IA de sempre (gravarRecusa: so a nova
+//   e cancelada, sem reoferta, e a conversa volta para a equipe), com os
+//   textos da remarcacao. A antiga fica como esta (D-29);
+// - a pendencia e a antiga sao lidas do BANCO, nunca da tela, e a ligacao vai
+//   no filtro do update (corrida perde educadamente: "Esta remarcação já foi
+//   tratada."). O texto de sucesso leva o horario da antiga lido aqui.
+
+const aprovarRemarcacaoSchema = z
+  .object({ id: idSchema, avisar_paciente: z.boolean() })
+  .strict();
+
+/** A remarcacao pendente como esta no banco, com a antiga. */
+type RemarcacaoLida = {
+  contactId: string;
+  professionalId: string;
+  startsAt: string;
+  antigaId: string;
+  antiga: AntigaLida;
+};
+
+async function lerRemarcacao(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  id: string,
+): Promise<{ remarcacao: RemarcacaoLida | null } | { erro: true }> {
+  const { data, error } = await supabase
+    .from("appointment")
+    .select(
+      "created_by, is_overbooking, status, remarcacao_de, contact_id, professional_id, starts_at",
+    )
+    .eq("clinic_id", clinicId)
+    .eq("id", id)
+    .eq("approval_status", "pendente")
+    .maybeSingle();
+  if (error) {
+    return { erro: true };
+  }
+  const nova = data as {
+    created_by?: unknown;
+    is_overbooking?: unknown;
+    status?: unknown;
+    remarcacao_de?: unknown;
+    contact_id?: unknown;
+    professional_id?: unknown;
+    starts_at?: unknown;
+  } | null;
+  // Ja tratada (aprovada, recusada ou cancelada, inclusive a pendente que o
+  // paciente cancelou), de outra clinica, ou nao e remarcacao da IA.
+  if (
+    !nova ||
+    nova.created_by !== "ia" ||
+    nova.is_overbooking === true ||
+    STATUS_DE_CANCELAMENTO.some((status) => status === nova.status) ||
+    typeof nova.remarcacao_de !== "string" ||
+    nova.remarcacao_de === "" ||
+    typeof nova.contact_id !== "string" ||
+    typeof nova.professional_id !== "string" ||
+    typeof nova.starts_at !== "string"
+  ) {
+    return { remarcacao: null };
+  }
+  const { data: antiga, error: erroDaAntiga } = await supabase
+    .from("appointment")
+    .select("starts_at, status")
+    .eq("clinic_id", clinicId)
+    .eq("id", nova.remarcacao_de)
+    .maybeSingle();
+  if (erroDaAntiga) {
+    return { erro: true };
+  }
+  const linhaDaAntiga = antiga as {
+    starts_at?: unknown;
+    status?: unknown;
+  } | null;
+  return {
+    remarcacao: {
+      contactId: nova.contact_id,
+      professionalId: nova.professional_id,
+      startsAt: nova.starts_at,
+      antigaId: nova.remarcacao_de,
+      antiga:
+        linhaDaAntiga &&
+        typeof linhaDaAntiga.starts_at === "string" &&
+        typeof linhaDaAntiga.status === "string"
+          ? {
+              starts_at: linhaDaAntiga.starts_at,
+              situacao: situacaoDaAntiga(
+                linhaDaAntiga.status as AppointmentStatus,
+              ),
+            }
+          : null,
+    },
+  };
+}
+
+type GuardaDaAgenda = {
+  clinicId: string;
+  clinicName: string;
+  timezone: string;
+  context: { userId: string };
+};
+
+async function aprovarRemarcacao(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: GuardaDaAgenda,
+  id: string,
+  avisarPaciente: boolean,
+): Promise<AgendaActionResult> {
+  const lida = await lerRemarcacao(supabase, guard.clinicId, id);
+  if ("erro" in lida) {
+    return { ok: false, error: TEXTOS_DA_REMARCACAO.semConferir };
+  }
+  const remarcacao = lida.remarcacao;
+  if (remarcacao === null) {
+    return {
+      ok: false,
+      code: "ja_tratado",
+      error: TEXTOS_DA_REMARCACAO.jaTratada,
+    };
+  }
+  // A aprovacao da consulta da IA de sempre (aprovarEncaixeAction), com a
+  // ligacao no filtro. O cancelamento da antiga e do gatilho, no mesmo
+  // UPDATE: se ele recusar, nada muda.
+  const { data, error } = await supabase
+    .from("appointment")
+    .update({
+      approval_status: "aprovado",
+      send_confirmation: true,
+      oferecer_vaga_ao_cancelar: true,
+    })
+    .eq("clinic_id", guard.clinicId)
+    .eq("id", id)
+    .eq("approval_status", "pendente")
+    .not("status", "in", FILTRO_DE_CANCELAMENTO)
+    .eq("created_by", "ia")
+    .eq("is_overbooking", false)
+    .eq("remarcacao_de", remarcacao.antigaId)
+    .select("id");
+  if (error) {
+    if (
+      error.code === CHECK_VIOLATION &&
+      temChaveDoBanco(error, "remarcacao_consulta_antiga_encerrada")
+    ) {
+      return {
+        ok: false,
+        code: "remarcacao_antiga_encerrada",
+        error: erroDaAntigaEncerrada(
+          remarcacao.antiga?.starts_at ?? null,
+          guard.timezone,
+        ),
+      };
+    }
+    return { ok: false, error: TEXTOS_DA_REMARCACAO.naoAprovou };
+  }
+  if (!data || data.length === 0) {
+    return {
+      ok: false,
+      code: "ja_tratado",
+      error: TEXTOS_DA_REMARCACAO.jaTratada,
+    };
+  }
+  await supabase.from("audit_log").insert({
+    clinic_id: guard.clinicId,
+    user_id: guard.context.userId,
+    action: "aprovou_remarcacao_da_ia",
+    entity: "appointment",
+    entity_id: id,
+  });
+  // D-28: o aviso de remarcacao que a Agenda ja manda, com a consulta nova
+  // (o envio confere a autorizacao, o numero e o custo; o executor mata o
+  // aviso que ficou velho). O que nao saiu volta como aviso para a tela.
+  const aviso = avisarPaciente
+    ? await enfileirarAvisoDeRemarcacao(supabase, {
+        clinicId: guard.clinicId,
+        clinicName: guard.clinicName,
+        timezone: guard.timezone,
+        userId: guard.context.userId,
+        appointmentId: id,
+        contactId: remarcacao.contactId,
+        professionalId: remarcacao.professionalId,
+        inicio: new Date(remarcacao.startsAt),
+      })
+    : undefined;
+  revalidatePath("/agenda");
+  return {
+    ok: true,
+    mensagem: sucessoDoAprovar(remarcacao.antiga, guard.timezone),
+    ...(aviso ? { aviso } : {}),
+  };
+}
+
+async function recusarRemarcacao(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: GuardaDaAgenda,
+  id: string,
+  statusAtual?: AppointmentStatus,
+): Promise<AgendaActionResult> {
+  const lida = await lerRemarcacao(supabase, guard.clinicId, id);
+  if ("erro" in lida) {
+    return { ok: false, error: TEXTOS_DA_REMARCACAO.semConferir };
+  }
+  const remarcacao = lida.remarcacao;
+  if (remarcacao === null) {
+    return {
+      ok: false,
+      code: "ja_tratado",
+      error: TEXTOS_DA_REMARCACAO.jaTratada,
+    };
+  }
+  const resultado = await gravarRecusa(supabase, guard, id, true, statusAtual, {
+    antigaId: remarcacao.antigaId,
+  });
+  return resultado.ok
+    ? {
+        ...resultado,
+        mensagem: sucessoDoRecusar(remarcacao.antiga, guard.timezone),
+      }
+    : resultado;
+}
+
+/**
+ * "Aprovar a remarcação?" (o painel "Pendente de você" e o menu da
+ * consulta): aprova a remarcacao pedida pela IA e, com a caixa marcada
+ * (D-28), avisa o paciente pelo WhatsApp. Guarda de sempre da Agenda (o
+ * papel leitura nem chega ao banco) e o Zod estrito na entrada.
+ */
+export async function aprovarRemarcacaoAction(
+  input: unknown,
+): Promise<AgendaActionResult> {
+  const guard = await requireAgendaEditor();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = aprovarRemarcacaoSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: TEXTOS_DA_PENDENCIA.invalida };
+  }
+  const supabase = await createClient();
+  return aprovarRemarcacao(
+    supabase,
+    guard,
+    parsed.data.id,
+    parsed.data.avisar_paciente,
+  );
+}
+
+/**
+ * "Recusar a remarcação?": cancela so a consulta nova (sem reoferta); a
+ * antiga continua marcada e a conversa volta para a equipe avisar o
+ * paciente. Mesma guarda.
+ */
+export async function recusarRemarcacaoAction(
+  id: unknown,
+): Promise<AgendaActionResult> {
+  const guard = await requireAgendaEditor();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = idSchema.safeParse(id);
+  if (!parsed.success) {
+    return { ok: false, error: TEXTOS_DA_PENDENCIA.invalida };
+  }
+  const supabase = await createClient();
+  return recusarRemarcacao(supabase, guard, parsed.data);
 }
 
 // ---------------------------------------------------------------------------
@@ -1461,17 +1854,28 @@ const TEXTOS_DOS_DADOS_INFORMADOS = {
 
 const dadoProtegidoSchema = z.enum(["cpf", "carteirinha"]);
 
+type SupabaseDaSessao = Awaited<ReturnType<typeof createClient>>;
+
+type ErroDosDadosInformados = {
+  ok: false;
+  error: string;
+  transitorio: boolean;
+};
+
 /**
- * A leitura comum das duas acoes: a guarda de sempre da Agenda (o papel
- * leitura nem chega ao banco), o id pelo Zod e a RPC pela sessao (que
- * confere o papel de novo e grava a trilha quando ha dado).
+ * A guarda comum das duas acoes: a de sempre da Agenda (o papel leitura nem
+ * chega ao banco) e o id pelo Zod. A RPC, pela sessao, confere o papel de
+ * novo e grava a trilha quando ha dado.
  */
-async function lerOsDadosDaConsulta(
-  id: unknown,
-  naoLeu: string,
-): Promise<
-  | { ok: true; dados: DadosInformadosNaMarcacao | null; supabase: Awaited<ReturnType<typeof createClient>> }
-  | { ok: false; error: string; transitorio: boolean }
+async function guardaDosDadosInformados(id: unknown): Promise<
+  | {
+      ok: true;
+      clinicId: string;
+      userId: string;
+      appointmentId: string;
+      supabase: SupabaseDaSessao;
+    }
+  | ErroDosDadosInformados
 > {
   const context = await getSessionContext();
   if (!context?.active) {
@@ -1498,42 +1902,81 @@ async function lerOsDadosDaConsulta(
       transitorio: false,
     };
   }
-  const clinicId = context.active.clinicId;
-  const supabase = await createClient();
+  return {
+    ok: true,
+    clinicId: context.active.clinicId,
+    userId: context.userId,
+    appointmentId: parsed.data,
+    supabase: await createClient(),
+  };
+}
+
+/**
+ * O erro da RPC em texto de recepcionista, com o log so de ids e do codigo
+ * (nunca o que o paciente informou). transitorio: so o que passa tentando
+ * de novo (o banco nao respondeu); permissao e consulta que saiu nao passam.
+ */
+function erroDosDadosInformados(
+  guarda: { clinicId: string; userId: string },
+  codigo: string | null,
+  naoLeu: string,
+): ErroDosDadosInformados {
+  log.warn("agenda_dados_informados_nao_lidos", {
+    clinic_id: guarda.clinicId,
+    user_id: guarda.userId,
+    error_code: codigo,
+  });
+  if (codigo === "42501") {
+    return {
+      ok: false,
+      error: TEXTOS_DOS_DADOS_INFORMADOS.semPermissao,
+      transitorio: false,
+    };
+  }
+  if (codigo === "P0002") {
+    return {
+      ok: false,
+      error: TEXTOS_DOS_DADOS_INFORMADOS.naoEncontrada,
+      transitorio: false,
+    };
+  }
+  return { ok: false, error: naoLeu, transitorio: true };
+}
+
+/** A leitura inteira (o dialogo), com a guarda. */
+async function lerOsDadosDaConsulta(
+  id: unknown,
+  naoLeu: string,
+): Promise<
+  | {
+      ok: true;
+      dados: DadosInformadosNaMarcacao | null;
+      supabase: SupabaseDaSessao;
+    }
+  | ErroDosDadosInformados
+> {
+  const guarda = await guardaDosDadosInformados(id);
+  if (!guarda.ok) {
+    return guarda;
+  }
   const lido = await lerDadosInformadosNaMarcacao(
-    supabase,
-    clinicId,
-    parsed.data,
+    guarda.supabase,
+    guarda.clinicId,
+    guarda.appointmentId,
   );
   if (!lido.ok) {
-    log.warn("agenda_dados_informados_nao_lidos", {
-      clinic_id: clinicId,
-      user_id: context.userId,
-      error_code: lido.codigo,
-    });
-    if (lido.codigo === "42501") {
-      return {
-        ok: false,
-        error: TEXTOS_DOS_DADOS_INFORMADOS.semPermissao,
-        transitorio: false,
-      };
-    }
-    if (lido.codigo === "P0002") {
-      return {
-        ok: false,
-        error: TEXTOS_DOS_DADOS_INFORMADOS.naoEncontrada,
-        transitorio: false,
-      };
-    }
-    return { ok: false, error: naoLeu, transitorio: true };
+    return erroDosDadosInformados(guarda, lido.codigo, naoLeu);
   }
-  return { ok: true, dados: lido.dados, supabase };
+  return { ok: true, dados: lido.dados, supabase: guarda.supabase };
 }
 
 export async function lerDadosInformadosAction(
   id: unknown,
 ): Promise<ResultadoDosDadosInformados> {
-  const lido = await lerOsDadosDaConsulta(id, TEXTOS_DOS_DADOS_INFORMADOS.naoLeu);
+  const lido = await lerOsDadosDaConsulta(
+    id,
+    TEXTOS_DOS_DADOS_INFORMADOS.naoLeu,
+  );
   if (!lido.ok) {
     return lido;
   }
@@ -1546,8 +1989,9 @@ export async function lerDadosInformadosAction(
     let nome: string | null = null;
     try {
       nome =
-        (await fetchProfileNames(lido.supabase, [aplicadoPorId]))[aplicadoPorId] ??
-        null;
+        (await fetchProfileNames(lido.supabase, [aplicadoPorId]))[
+          aplicadoPorId
+        ] ?? null;
     } catch {
       // Sem o nome os dados continuam na tela: "por alguém da equipe".
       nome = null;
@@ -1571,9 +2015,9 @@ export async function lerDadosInformadosAction(
 /**
  * Revisao final da AG3 (achado 12): o CPF ou a carteirinha inteiros, so no
  * pedido de quem esta com o dialogo aberto. Rele pela RPC (a guarda e o
- * papel conferidos de novo) e a RPC grava a trilha leu_dados_da_marcacao
- * outra vez: cada vez que alguem ve o dado inteiro fica registrada. Devolve
- * so o campo pedido.
+ * papel conferidos de novo): cada vez que alguem ve o dado inteiro fica
+ * registrada. AG4 (33.14, ponto 2): a RPC recebe o campo (p_campo), devolve
+ * so ele e a trilha (revelou_dado_da_marcacao) diz qual dado foi visto.
  */
 export async function revelarDadoInformadoAction(
   id: unknown,
@@ -1587,17 +2031,24 @@ export async function revelarDadoInformadoAction(
       transitorio: false,
     };
   }
-  const lido = await lerOsDadosDaConsulta(id, TEXTOS_DOS_DADOS_INFORMADOS.naoMostrou);
+  const guarda = await guardaDosDadosInformados(id);
+  if (!guarda.ok) {
+    return guarda;
+  }
+  const lido = await revelarDadoInformadoNaMarcacao(
+    guarda.supabase,
+    guarda.clinicId,
+    guarda.appointmentId,
+    qual.data,
+  );
   if (!lido.ok) {
-    return lido;
+    return erroDosDadosInformados(
+      guarda,
+      lido.codigo,
+      TEXTOS_DOS_DADOS_INFORMADOS.naoMostrou,
+    );
   }
-  if (lido.dados === null) {
-    return { ok: true, valor: null };
-  }
-  return {
-    ok: true,
-    valor: qual.data === "cpf" ? lido.dados.cpf : lido.dados.carteirinha,
-  };
+  return { ok: true, valor: lido.valor };
 }
 
 // ---------------------------------------------------------------------------

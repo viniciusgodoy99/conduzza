@@ -305,7 +305,10 @@ describe("aprovar", () => {
     const leitura = estado.operacoes.find(
       (op) => op.tabela === "appointment" && op.tipo === "select",
     );
-    expect(leitura?.colunas).toBe("created_by, is_overbooking, status");
+    // AG4: a ligacao com a antiga (a remarcacao da IA) vem junto.
+    expect(leitura?.colunas).toBe(
+      "created_by, is_overbooking, status, remarcacao_de",
+    );
     expect(leitura?.filtros).toEqual([
       ["clinic_id", CLINICA],
       ["id", DA_IA],
@@ -375,7 +378,10 @@ describe("a pendente já cancelada", () => {
     const leitura = estado.operacoes.find(
       (op) => op.tabela === "appointment" && op.tipo === "select",
     );
-    expect(leitura?.colunas).toBe("created_by, is_overbooking, status");
+    // AG4: a ligacao com a antiga (a remarcacao da IA) vem junto.
+    expect(leitura?.colunas).toBe(
+      "created_by, is_overbooking, status, remarcacao_de",
+    );
     const [update] = updates();
     expect(update?.excluidos).toEqual([
       ["status", ["cancelado_paciente", "cancelado_clinica"]],

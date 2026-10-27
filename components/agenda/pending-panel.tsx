@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarCog, Loader2, Sparkles } from "lucide-react";
+import { CalendarCog, CalendarFold, Loader2, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -16,6 +16,12 @@ import {
   DialogoDosDadosInformados,
   useDadosInformados,
 } from "@/components/agenda/dados-informados";
+import { DialogoDaRemarcacao } from "@/components/agenda/dialogo-da-remarcacao";
+import {
+  linhasDoCartaoDaRemarcacao,
+  TEXTOS_DA_REMARCACAO,
+  type AcaoDaRemarcacao,
+} from "@/components/agenda/remarcacao-da-ia";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -27,7 +33,11 @@ import {
   type StatusDefinition,
 } from "@/lib/design/status";
 import { situacaoDaConsulta } from "@/lib/domain/dados-informados";
-import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
+import {
+  ehConsultaDaIa,
+  ehRemarcacaoDaIa,
+  type ConsultaDaAgenda,
+} from "@/lib/queries/agenda";
 
 // Painel lateral "Pendente de voce" (264px, cartao do design system, docs/06
 // secao 5.6): o que a IA deixou para a equipe aprovar. Abaixo, a legenda
@@ -59,6 +69,17 @@ import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 // leitura grava trilha e por isso so acontece no clique
 // (components/agenda/dados-informados.tsx). O encaixe nao tem: a IA nao
 // pede dado para sugerir encaixe.
+//
+// AG4 (D-10; desenho da secao 5): a terceira pendencia, "Remarcação pela
+// IA" (CalendarFold, tom da IA): a consulta NOVA que a IA pediu para
+// remarcar outra, pendente e ligada a antiga. CalendarFold nao tinha dono em
+// nenhuma tela nem mapa (conferido em 27/10/2026; nunca CalendarSync, do
+// "Remarcada" da agenda, nem CalendarCog, da "Marcada pela IA"): o
+// calendario com a folha dobrada, a data que vira. O cartao diz "De ..." (a
+// antiga, com "(já cancelada)" quando ela foi cancelada nesse meio) e
+// "Para ..." (a nova), sem "Ver dados informados" (a remarcacao nao pede
+// dado, D-26). Aprovar e Recusar abrem os dialogos da remarcacao
+// (dialogo-da-remarcacao.tsx), com o aviso ao paciente na aprovacao (D-28).
 
 export const CHIP_ENCAIXE_IA: StatusDefinition = {
   label: "Encaixe da IA",
@@ -72,10 +93,24 @@ export const CHIP_MARCADA_PELA_IA: StatusDefinition = {
   icon: CalendarCog,
 };
 
-/** O chip de cada pendencia: a consulta que a IA marcou ou o encaixe. */
+export const CHIP_REMARCACAO_PELA_IA: StatusDefinition = {
+  label: TEXTOS_DA_REMARCACAO.chip,
+  tone: "ai",
+  icon: CalendarFold,
+};
+
+/**
+ * O chip de cada pendencia: a remarcacao que a IA pediu, a consulta que a
+ * IA marcou ou o encaixe.
+ */
 export function chipDaPendencia(
-  consulta: Pick<ConsultaDaAgenda, "created_by" | "is_overbooking">,
+  consulta: Pick<ConsultaDaAgenda, "created_by" | "is_overbooking"> & {
+    remarcacao_de?: string | null;
+  },
 ): StatusDefinition {
+  if (ehRemarcacaoDaIa(consulta)) {
+    return CHIP_REMARCACAO_PELA_IA;
+  }
   return ehConsultaDaIa(consulta) ? CHIP_MARCADA_PELA_IA : CHIP_ENCAIXE_IA;
 }
 
@@ -83,7 +118,7 @@ export const TEXTOS_DO_PAINEL = {
   titulo: "Pendente de você",
   vazioTitulo: "Nada pendente de você",
   vazioTexto:
-    "Quando a IA marcar uma consulta ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
+    "Quando a IA marcar ou remarcar uma consulta, ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
   semProcedimento: "Procedimento não informado",
   particular: "Particular",
   paciente: "Paciente",
@@ -114,6 +149,11 @@ export function retornoDaPendencia(
   if (resultado.ok) {
     if (resultado.aviso) {
       return { tipo: "warning", texto: resultado.aviso };
+    }
+    // AG4: o texto do servidor (a remarcacao da IA, com o horario da antiga
+    // lido do banco) vale mais que o generico.
+    if (resultado.mensagem) {
+      return { tipo: "success", texto: resultado.mensagem };
     }
     if (daIa) {
       return {
@@ -201,6 +241,21 @@ export function PendingPanel({
     setConsultaDosDados(consulta);
     dadosInformados.abrir(consulta.id);
   };
+  // AG4: a remarcacao da IA aprova e recusa pelo dialogo dela. A consulta
+  // fica guardada aqui, como a dos dados, para o dialogo nao perder o texto
+  // se ela sair da lista enquanto aberto.
+  const [remarcacaoAberta, setRemarcacaoAberta] = useState<{
+    consulta: ConsultaDaAgenda;
+    acao: AcaoDaRemarcacao;
+  } | null>(null);
+
+  const escolher = (consulta: ConsultaDaAgenda, acao: AcaoDaPendencia) => {
+    if (ehRemarcacaoDaIa(consulta)) {
+      setRemarcacaoAberta({ consulta, acao });
+      return;
+    }
+    void tratar(consulta, acao);
+  };
 
   async function tratar(consulta: ConsultaDaAgenda, acao: AcaoDaPendencia) {
     const daIa = ehConsultaDaIa(consulta);
@@ -255,6 +310,10 @@ export function PendingPanel({
             {pendencias.map((consulta) => {
               const ocupado = emAndamento?.id === consulta.id;
               const profissional = nomeDoProfissional(consulta.professional_id);
+              const remarcacao = ehRemarcacaoDaIa(consulta);
+              const horarios = remarcacao
+                ? linhasDoCartaoDaRemarcacao(consulta, contexto.timezone)
+                : null;
               return (
                 <li
                   key={consulta.id}
@@ -284,11 +343,24 @@ export function PendingPanel({
                         {profissional}
                       </p>
                     ) : null}
-                    <p className="cz-num text-xs text-text-secondary">
-                      {diaEHora(consulta.starts_at, contexto.timezone)}
-                    </p>
+                    {horarios ? (
+                      <>
+                        {horarios.de ? (
+                          <p className="cz-num text-xs text-text-secondary">
+                            {horarios.de}
+                          </p>
+                        ) : null}
+                        <p className="cz-num text-xs text-text-secondary">
+                          {horarios.para}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="cz-num text-xs text-text-secondary">
+                        {diaEHora(consulta.starts_at, contexto.timezone)}
+                      </p>
+                    )}
                   </div>
-                  {ehConsultaDaIa(consulta) ? (
+                  {ehConsultaDaIa(consulta) && !remarcacao ? (
                     <BotaoDosDadosInformados
                       podeLer={contexto.podeEditar}
                       aoAbrir={() => verDadosInformados(consulta)}
@@ -305,7 +377,7 @@ export function PendingPanel({
                             (ocupado && emAndamento?.acao === "aprovar") ||
                             undefined
                           }
-                          onClick={() => tratar(consulta, "aprovar")}
+                          onClick={() => escolher(consulta, "aprovar")}
                         >
                           {ocupado && emAndamento?.acao === "aprovar" ? (
                             <Loader2 className="animate-spin" aria-hidden />
@@ -320,7 +392,7 @@ export function PendingPanel({
                             (ocupado && emAndamento?.acao === "recusar") ||
                             undefined
                           }
-                          onClick={() => tratar(consulta, "recusar")}
+                          onClick={() => escolher(consulta, "recusar")}
                         >
                           {ocupado && emAndamento?.acao === "recusar" ? (
                             <Loader2 className="animate-spin" aria-hidden />
@@ -378,6 +450,21 @@ export function PendingPanel({
           aoTentarDeNovo={dadosInformados.tentarDeNovo}
           aoRevelar={dadosInformados.revelar}
         />
+
+        {remarcacaoAberta ? (
+          <DialogoDaRemarcacao
+            key={`${remarcacaoAberta.consulta.id}-${remarcacaoAberta.acao}`}
+            contexto={contexto}
+            consulta={remarcacaoAberta.consulta}
+            acao={remarcacaoAberta.acao}
+            aoFechar={() => setRemarcacaoAberta(null)}
+            aoTerminar={() =>
+              queryClient.invalidateQueries({
+                queryKey: ["agenda", contexto.clinicId],
+              })
+            }
+          />
+        ) : null}
 
         <div className="grid gap-2 border-t border-border pt-4">
           <h3 className="cz-eyebrow text-text-secondary">

@@ -10,6 +10,7 @@ import {
   salvarInstrucoesAction,
   salvarItemDaBaseAction,
   salvarPersonaAction,
+  salvarPrazosAction,
   salvarPublicoAction,
   simularAction,
 } from "@/app/(app)/agente/actions";
@@ -27,6 +28,7 @@ import type {
   InstrucoesEntrada,
   ItemDaBaseEntrada,
   PersonaDoAgente,
+  PrazosDoAgente,
   ProblemaDaPublicacao,
   PublicoDoAgente,
 } from "@/lib/domain/agente/config";
@@ -51,6 +53,8 @@ export type AcoesDoAgente = {
   salvarPublico: (publico: PublicoDoAgente) => Promise<ResultadoDaAcao>;
   /** Os dados que a IA pede antes de marcar consulta (AG3, D-6). */
   salvarDadosExigidos: (dados: DadosExigidos) => Promise<ResultadoDaAcao>;
+  /** Os prazos para cancelar e remarcar pelo assistente (AG4, D-24). */
+  salvarPrazos: (prazos: PrazosDoAgente) => Promise<ResultadoDaAcao>;
   salvarItemDaBase: (item: ItemDaBaseEntrada) => Promise<ResultadoDaAcao>;
   ativarItemDaBase: (id: string, ativo: boolean) => Promise<ResultadoDaAcao>;
   excluirItemDaBase: (id: string) => Promise<ResultadoDaAcao>;
@@ -79,6 +83,7 @@ export const acoesDoAgente: AcoesDoAgente = {
     resultado(await salvarPublicoAction({ publico })),
   salvarDadosExigidos: async (dados) =>
     resultado(await salvarDadosExigidosAction(dados)),
+  salvarPrazos: async (prazos) => resultado(await salvarPrazosAction(prazos)),
   salvarItemDaBase: async (item) =>
     resultado(await salvarItemDaBaseAction(item)),
   ativarItemDaBase: async (id, ativo) =>

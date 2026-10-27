@@ -18,6 +18,7 @@ import {
 import { CartaoDaAgenda } from "@/components/agente/cartao-da-agenda";
 import { CartaoDoPublico } from "@/components/agente/cartao-do-publico";
 import { CartaoDosDadosExigidos } from "@/components/agente/cartao-dos-dados-exigidos";
+import { CartaoDosPrazos } from "@/components/agente/cartao-dos-prazos";
 import {
   abasNaoSalvas,
   comOsDadosParaMarcar,
@@ -100,6 +101,12 @@ import {
 //   a IA pede antes de marcar), logo depois dos limites, formulario proprio
 //   com a propria chave. O que foi marcado e nao salvo nele conta como o dos
 //   limites (comOsDadosParaMarcar), e descartar remonta os dois.
+// - AG4: Regras e limites ganha o cartao "Prazos para cancelar e remarcar"
+//   (D-24), logo depois dos dados para marcar, formulario proprio com a
+//   propria chave. O nao salvo dele conta como o dos limites, como o dos
+//   dados, e descartar remonta os tres. A aba Habilidades recebe os prazos
+//   do rascunho para travar "Cancelar consulta" e "Remarcar consulta"
+//   enquanto o prazo de cada uma estiver vazio.
 //
 // Toda gravacao vai para o RASCUNHO (o paciente so ve depois de publicar).
 // Uma acao por vez: enquanto uma roda, os outros controles esperam. O
@@ -120,6 +127,7 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
   horario: string;
   agenda: string;
   dados: string;
+  prazos: string;
   instrucoes: string;
 } {
   return {
@@ -140,6 +148,10 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
       config.dadosExigidos.nomeCompleto,
       config.dadosExigidos.nascimento,
       config.dadosExigidos.cpf,
+    ]),
+    prazos: JSON.stringify([
+      config.prazos.cancelarHoras,
+      config.prazos.remarcarHoras,
     ]),
     instrucoes: JSON.stringify(config.instrucoes),
   };
@@ -178,6 +190,8 @@ export function PainelDoAgente({
   const [naoSalvos, setNaoSalvos] = useState(NADA_NAO_SALVO);
   // O cartao "Dados para marcar consulta" (AG3): conta como o dos limites.
   const [dadosNaoSalvos, setDadosNaoSalvos] = useState(false);
+  // O cartao "Prazos para cancelar e remarcar" (AG4): tambem.
+  const [prazosNaoSalvos, setPrazosNaoSalvos] = useState(false);
   // Descartar remonta o formulario (a chave muda) com o que esta salvo.
   const [geracao, setGeracao] = useState(GERACAO_INICIAL);
   const avisos = useMemo(() => {
@@ -216,7 +230,7 @@ export function PainelDoAgente({
   const ultimaPublicada = dados.versoes?.find((versao) => versao.emUso) ?? null;
   const chaves = chavesDosFormularios(config);
   const pendentes = formulariosNaoSalvos(
-    comOsDadosParaMarcar(naoSalvos, dadosNaoSalvos),
+    comOsDadosParaMarcar(naoSalvos, dadosNaoSalvos || prazosNaoSalvos),
     superAdmin,
   );
 
@@ -224,6 +238,7 @@ export function PainelDoAgente({
     setGeracao((atuais) => geracaoDepoisDeDescartar(atuais, pendentes));
     setNaoSalvos(NADA_NAO_SALVO);
     setDadosNaoSalvos(false);
+    setPrazosNaoSalvos(false);
   };
 
   const trocarAba = (valor: string) => {
@@ -397,6 +412,7 @@ export function PainelDoAgente({
               <AbaHabilidades
                 habilidades={config.habilidades}
                 agenda={config.agenda}
+                prazos={config.prazos}
                 podeEditar={podeEditar}
                 dica={dica}
                 pendente={pendente}
@@ -514,6 +530,25 @@ export function PainelDoAgente({
                       )
                     }
                     aoMudarNaoSalvo={setDadosNaoSalvos}
+                  />
+                }
+                prazos={
+                  <CartaoDosPrazos
+                    key={`${chaves.prazos}:${geracao.agenda}`}
+                    prazos={config.prazos}
+                    podeEditar={podeEditar}
+                    dica={dica}
+                    pendente={pendente}
+                    salvando={ocupado("prazos")}
+                    aoSalvar={(prazos, retorno) =>
+                      executar(
+                        "prazos",
+                        () => acoes.salvarPrazos(prazos),
+                        T.prazosSalvos,
+                        retorno,
+                      )
+                    }
+                    aoMudarNaoSalvo={setPrazosNaoSalvos}
                   />
                 }
                 podeEditar={podeEditar}

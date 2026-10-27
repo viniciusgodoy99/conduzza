@@ -28,6 +28,9 @@ import {
   LIMITES_DO_AGENTE,
   personaParaOBanco,
   personaSchema,
+  prazosDoAgenteSchema,
+  prazosDoBanco,
+  prazosParaOBanco,
   problemaNoTextoDoAgente,
   problemasDaPublicacao,
   problemasParaQuemPublica,
@@ -84,7 +87,14 @@ import { createClient } from "@/lib/supabase/server";
 //    (exige_nome_completo, exige_nascimento e exige_cpf) gravam no rascunho
 //    pelo mesmo caminho, com a trilha editou_dados_exigidos_do_agente sem o
 //    valor. As colunas e o grant so existem depois da migration
-//    20261027120000.
+//    20261027120000;
+//  - AG4 (D-24, pela recomendacao): os prazos para cancelar e remarcar pelo
+//    assistente (cancelar_antecedencia_horas e remarcar_antecedencia_horas)
+//    gravam no rascunho pelo mesmo caminho, com a trilha
+//    editou_prazos_do_agente sem o valor; ligar "Cancelar consulta" ou
+//    "Remarcar consulta" sem o prazo e recusado aqui, contra os prazos lidos
+//    do proprio rascunho (habilidadesComAgendaSchema). As colunas e o grant
+//    so existem depois da migration 20261028100000.
 // Trilha: audit_log sem texto nenhum (so a acao, a entidade e o id); as
 // RPCs gravam a propria. Log so com clinica, tipo da acao e codigo do erro.
 
@@ -151,7 +161,14 @@ const TEXTOS = {
 const PAGINA_DO_AGENTE = "/agente";
 
 /** Os cenarios do simulador (components/agente/textos.ts; teste confere). */
-const CENARIOS = ["preco", "agendar", "sintoma", "irritado"] as const;
+const CENARIOS = [
+  "preco",
+  "agendar",
+  "sintoma",
+  "irritado",
+  "cancelar",
+  "remarcar",
+] as const;
 
 /** Teto de uma fala no simulador (o portao escala acima de 1.000). */
 const CARACTERES_POR_FALA = 4000;
@@ -431,7 +448,8 @@ export async function salvarPersonaAction(
  * RASCUNHO preenchidos. A agenda e lida junto com o `skills`, do proprio
  * rascunho, e a entrada passa de novo por habilidadesComAgendaSchema: a tela
  * ja deixa a chave desabilitada, mas o cliente nao e confiavel. A recusa usa
- * a mesma dica da tela.
+ * a mesma dica da tela. AG4: os prazos tambem (cancelar e remarcar so ligam
+ * com o prazo de cada uma preenchido no rascunho).
  */
 export async function salvarHabilidadesAction(
   entrada: unknown,
@@ -457,7 +475,9 @@ export async function salvarHabilidadesAction(
   }
   const { data: atual, error: erroDaLeitura } = await supabase
     .from("ai_agent_config")
-    .select("skills, agenda_antecedencia_horas, agenda_horizonte_dias")
+    .select(
+      "skills, agenda_antecedencia_horas, agenda_horizonte_dias, cancelar_antecedencia_horas, remarcar_antecedencia_horas",
+    )
     .eq("id", rascunho.id)
     .eq("clinic_id", quem.clinicId)
     .maybeSingle();
@@ -468,10 +488,13 @@ export async function salvarHabilidadesAction(
     skills?: unknown;
     agenda_antecedencia_horas?: unknown;
     agenda_horizonte_dias?: unknown;
+    cancelar_antecedencia_horas?: unknown;
+    remarcar_antecedencia_horas?: unknown;
   };
-  const parsed = habilidadesComAgendaSchema(agendaDoBanco(linha)).safeParse(
-    entrada,
-  );
+  const parsed = habilidadesComAgendaSchema(
+    agendaDoBanco(linha),
+    prazosDoBanco(linha),
+  ).safeParse(entrada);
   if (!parsed.success) {
     return { ok: false, error: erroDaEntrada(parsed.error) };
   }
@@ -568,6 +591,37 @@ export async function salvarDadosExigidosAction(
     quem,
     "dados_exigidos",
     dadosExigidosParaOBanco(parsed.data),
+  );
+}
+
+/**
+ * Os prazos para cancelar e remarcar pelo assistente, no rascunho (AG4,
+ * D-24 pela recomendacao): ate quantas horas antes da consulta a IA cancela
+ * e remarca (com menos tempo, passa o pedido para a equipe). Inteiros de 0 a
+ * 720, ou nulo (campo vazio: a habilidade fica desligada; ninguem inventa
+ * valor), os dois de uma vez (o cartao tem um Salvar so). Vale ao publicar.
+ * Mesmo caminho de permissao das outras partes: a guarda daqui
+ * (administrador, gestor ou super admin), o grant por coluna, a policy de
+ * UPDATE so no rascunho e o CHECK do banco. A trilha
+ * (editou_prazos_do_agente) nao leva o valor.
+ */
+export async function salvarPrazosAction(
+  entrada: unknown,
+): Promise<ResultadoDoAgente> {
+  const quem = await exigirQuemConfigura();
+  if ("error" in quem) {
+    return { ok: false, error: quem.error };
+  }
+  const parsed = prazosDoAgenteSchema.strict().safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: erroDaEntrada(parsed.error) };
+  }
+  const supabase = await createClient();
+  return gravarNoRascunho(
+    supabase,
+    quem,
+    "prazos",
+    prazosParaOBanco(parsed.data),
   );
 }
 

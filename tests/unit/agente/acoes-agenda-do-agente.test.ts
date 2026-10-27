@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DICA_DA_AGENDA_INCOMPLETA,
+  DICA_DA_REMARCACAO_INCOMPLETA,
+  DICA_DO_PRAZO_DE_CANCELAR,
   habilidadesEfetivas,
 } from "@/lib/domain/agente/config";
 
@@ -13,7 +15,10 @@ import {
 //     faixa do CHECK e recusado antes de qualquer escrita;
 //   - salvarHabilidadesAction le a agenda do PROPRIO rascunho e recusa ligar
 //     "Agendar consulta" sem os dois valores, com a dica da tela (o cliente
-//     nao e confiavel).
+//     nao e confiavel). AG4: le tambem os prazos do rascunho e recusa ligar
+//     "Cancelar consulta" ou "Remarcar consulta" sem o prazo de cada uma
+//     (remarcar ligada com "Agendar consulta" desligada nao e erro: a escolha
+//     fica gravada e vale desligada).
 // Os outros casos das acoes da Tela 6 moram em acoes-agente.test.ts.
 
 vi.mock("server-only", () => ({}));
@@ -327,8 +332,9 @@ describe("Agendar consulta só liga com a agenda do rascunho (salvarHabilidadesA
     const leitura = banco.operacoes.find(
       (op) => op.tabela === "ai_agent_config" && op.tipo === "select",
     );
+    // AG4: os prazos vem na mesma leitura.
     expect(leitura?.colunas).toBe(
-      "skills, agenda_antecedencia_horas, agenda_horizonte_dias",
+      "skills, agenda_antecedencia_horas, agenda_horizonte_dias, cancelar_antecedencia_horas, remarcar_antecedencia_horas",
     );
     expect(leitura?.filtros).toEqual([
       ["id", RASCUNHO],
@@ -337,8 +343,10 @@ describe("Agendar consulta só liga com a agenda do rascunho (salvarHabilidadesA
   });
 
   it("com os dois preenchidos, liga e grava junto do que já estava", async () => {
+    // A chave que esta tela nao conhece fica gravada (AG4: "remarcar" virou
+    // habilidade conhecida; a desconhecida agora e "lista_de_espera").
     banco.rascunho = {
-      skills: { remarcar: true },
+      skills: { lista_de_espera: true },
       agenda_antecedencia_horas: 2,
       agenda_horizonte_dias: 30,
     };
@@ -353,7 +361,7 @@ describe("Agendar consulta só liga com a agenda do rascunho (salvarHabilidadesA
       banco.escritas()[0]?.dados as { skills: Record<string, boolean> }
     ).skills;
     expect(skills).toMatchObject({
-      remarcar: true,
+      lista_de_espera: true,
       agendar: true,
       confirmar_presenca: true,
       informar_preco_e_convenio: true,
@@ -380,5 +388,106 @@ describe("Agendar consulta só liga com a agenda do rascunho (salvarHabilidadesA
     );
     expect(banco.operacoes).toEqual([]);
     expect(banco.rpcs).toEqual([]);
+  });
+});
+
+// AG4 (decisoes D-9, D-10 e D-24, a ultima pela recomendacao): "Cancelar
+// consulta" e "Remarcar consulta" so ligam com o prazo de cada uma
+// preenchido no PROPRIO rascunho (Regras e limites). Os prazos sao lidos
+// junto com o skills e a agenda; o cliente nao e confiavel.
+describe("AG4: Cancelar e Remarcar só ligam com o prazo do rascunho (salvarHabilidadesAction)", () => {
+  const AGENDA = { agenda_antecedencia_horas: 2, agenda_horizonte_dias: 30 };
+
+  it("sem o prazo de cada uma, ligar é recusado com a dica da tela, sem escrever", async () => {
+    for (const [chave, dica] of [
+      ["cancelar", DICA_DO_PRAZO_DE_CANCELAR],
+      ["remarcar", DICA_DA_REMARCACAO_INCOMPLETA],
+    ] as const) {
+      banco = new Banco();
+      banco.rascunho = {
+        skills: {},
+        ...AGENDA,
+        cancelar_antecedencia_horas: null,
+        remarcar_antecedencia_horas: null,
+      };
+      expect(
+        await acoes.salvarHabilidadesAction({
+          ...habilidadesEfetivas({}),
+          agendar: true,
+          [chave]: true,
+        }),
+        chave,
+      ).toEqual({ ok: false, error: dica });
+      expect(banco.escritas(), chave).toEqual([]);
+    }
+  });
+
+  it("o prazo de uma não liga a outra", async () => {
+    banco.rascunho = {
+      skills: {},
+      ...AGENDA,
+      cancelar_antecedencia_horas: 24,
+      remarcar_antecedencia_horas: null,
+    };
+    expect(
+      await acoes.salvarHabilidadesAction({
+        ...habilidadesEfetivas({}),
+        agendar: true,
+        remarcar: true,
+      }),
+    ).toEqual({ ok: false, error: DICA_DA_REMARCACAO_INCOMPLETA });
+    expect(banco.escritas()).toEqual([]);
+  });
+
+  it("com os prazos (inclusive 0 hora), liga e grava as duas", async () => {
+    banco.rascunho = {
+      skills: {},
+      ...AGENDA,
+      cancelar_antecedencia_horas: 0,
+      remarcar_antecedencia_horas: 48,
+    };
+    expect(
+      await acoes.salvarHabilidadesAction({
+        ...habilidadesEfetivas({}),
+        agendar: true,
+        cancelar: true,
+        remarcar: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      (banco.escritas()[0]?.dados as { skills: Record<string, boolean> })
+        .skills,
+    ).toMatchObject({ agendar: true, cancelar: true, remarcar: true });
+  });
+
+  it("Remarcar ligada com Agendar desligada não é erro: a escolha fica gravada (e vale desligada)", async () => {
+    banco.rascunho = {
+      skills: { agendar: true, remarcar: true },
+      ...AGENDA,
+      cancelar_antecedencia_horas: null,
+      remarcar_antecedencia_horas: 24,
+    };
+    expect(
+      await acoes.salvarHabilidadesAction({
+        ...habilidadesEfetivas({}),
+        agendar: false,
+        remarcar: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      (banco.escritas()[0]?.dados as { skills: Record<string, boolean> })
+        .skills,
+    ).toMatchObject({ agendar: false, remarcar: true });
+  });
+
+  it("antes da migration (colunas ausentes na leitura): os prazos valem vazios e ligar é recusado", async () => {
+    banco.rascunho = { skills: {}, ...AGENDA };
+    expect(
+      await acoes.salvarHabilidadesAction({
+        ...habilidadesEfetivas({}),
+        cancelar: true,
+      }),
+    ).toEqual({ ok: false, error: DICA_DO_PRAZO_DE_CANCELAR });
+    expect(banco.escritas()).toEqual([]);
   });
 });

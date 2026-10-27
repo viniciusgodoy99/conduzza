@@ -71,6 +71,16 @@ export type ContextoAgenda = {
   dicaAutorizacao: string;
   /** Abre o modal de agendamento pre-preenchido (menu do bloco). */
   abrirAgendamento?: (pre: PrePreenchido) => void;
+  /**
+   * AG4 (D-32, pela recomendacao): a remarcacao pedida pela IA que ainda
+   * espera a equipe, pela consulta ANTIGA (nulo quando nao ha). Com ela, a
+   * antiga nao se move: "Remarcar" e o arrastar ficam desabilitados com a
+   * dica, e o menu diz para quando a IA pediu. A Agenda monta pela lista do
+   * "Pendente de você" (remarcacoesPendentesPorAntiga); quem nao passa
+   * (Confirmacoes) nao trava nada na tela, e o banco recusa de novo
+   * (23514 remarcacao_pendente).
+   */
+  remarcacaoPendenteDe?: (consultaId: string) => ConsultaDaAgenda | null;
 };
 
 export type SelecaoDeConsulta = {

@@ -38,10 +38,12 @@ import { fetchProfileNames } from "@/lib/queries/profiles";
  * dados que a IA pede para marcar (AG3: exige_nome_completo,
  * exige_nascimento e exige_cpf) tem o mesmo grant desde a migration
  * 20261027120000: este codigo so vai ao ar com ela aplicada (antes, 42703 e
- * a aba nao carrega).
+ * a aba nao carrega). Os dois prazos da IA (AG4: cancelar_antecedencia_horas
+ * e remarcar_antecedencia_horas) tem o mesmo grant desde a migration
+ * 20261028100000, com a mesma regra: a migration vai primeiro.
  */
 export const COLUNAS_DA_CONFIG_DO_AGENTE =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, conhecimento, published_at, published_by";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, cancelar_antecedencia_horas, remarcar_antecedencia_horas, conhecimento, published_at, published_by";
 
 type LinhaDaSessao = LinhaDaConfigDoAgente & {
   id: string;

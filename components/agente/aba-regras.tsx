@@ -64,6 +64,9 @@ import {
 // - Dados para marcar consulta (AG3, D-6 e D-7): o cartao do que o
 //   assistente pede antes de marcar (cartao-dos-dados-exigidos.tsx), com o
 //   proprio Salvar, logo depois dos limites. Tambem montado pelo painel.
+// - Prazos para cancelar e remarcar (AG4, D-24): o cartao dos prazos
+//   (cartao-dos-prazos.tsx), com o proprio Salvar, logo depois dos dados
+//   para marcar. Tambem montado pelo painel.
 // - Os 6 gatilhos obrigatorios de passar para a equipe, travados (so
 //   exibicao: quem decide e o codigo do agente, nao esta lista).
 // - A caixa de Conformidade do brief: Aviso ambar com cadeado, o texto
@@ -192,6 +195,7 @@ export function AbaRegras({
   quemAtende,
   limitesDaAgenda,
   dadosParaMarcar,
+  prazos,
   podeEditar,
   dica,
   pendente,
@@ -212,6 +216,8 @@ export function AbaRegras({
   limitesDaAgenda?: React.ReactNode;
   /** O cartao "Dados para marcar consulta" (AG3), montado pelo painel. */
   dadosParaMarcar?: React.ReactNode;
+  /** O cartao "Prazos para cancelar e remarcar" (AG4), montado pelo painel. */
+  prazos?: React.ReactNode;
   podeEditar: boolean;
   dica: string | null;
   pendente: boolean;
@@ -238,6 +244,8 @@ export function AbaRegras({
       {limitesDaAgenda}
 
       {dadosParaMarcar}
+
+      {prazos}
 
       <Card role="region" aria-labelledby="agente-gatilhos-titulo">
         <CardHeader>

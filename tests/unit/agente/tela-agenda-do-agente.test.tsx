@@ -36,6 +36,7 @@ import {
   habilidadesEfetivas,
   horarioPadrao,
   HORIZONTE_DA_AGENDA,
+  prazosPadrao,
   type AgendaDoAgente,
 } from "@/lib/domain/agente/config";
 
@@ -121,6 +122,7 @@ function renderHabilidades(
       <AbaHabilidades
         habilidades={habilidadesEfetivas({})}
         agenda={SEM_AGENDA}
+        prazos={prazosPadrao()}
         podeEditar
         dica={null}
         pendente={false}
@@ -170,10 +172,12 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
     expect(chaveDa(html, "confirmar_presenca")).toContain(
       'aria-checked="false"',
     );
-    // A descricao da aba nao diz mais que so a equipe agenda.
+    // A descricao da aba nao diz mais que so a equipe agenda. AG4: nem que
+    // so a equipe remarca e cancela.
     expect(visivel).not.toContain("quem agenda, remarca e cancela");
+    expect(visivel).not.toContain("Remarcar, cancelar");
     expect(visivel).toContain(
-      "Remarcar, cancelar, lista de espera e encaixe continuam com a equipe.",
+      "Lista de espera e encaixe continuam com a equipe.",
     );
   });
 
@@ -240,19 +244,26 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
   });
 
   it("o motivo da chave travada: a permissão vence, depois a agenda", () => {
-    const agendar = { precisaDaAgenda: true };
-    const outra = { precisaDaAgenda: false };
-    expect(motivoDaChaveTravada(agendar, SEM_AGENDA, null)).toBe(
+    const com = (agenda: AgendaDoAgente) => ({
+      habilidades: habilidadesEfetivas({}),
+      agenda,
+      prazos: prazosPadrao(),
+    });
+    expect(motivoDaChaveTravada("agendar", com(SEM_AGENDA), null)).toBe(
       DICA_DA_AGENDA_INCOMPLETA,
     );
-    expect(motivoDaChaveTravada(agendar, SO_ANTECEDENCIA, null)).toBe(
+    expect(motivoDaChaveTravada("agendar", com(SO_ANTECEDENCIA), null)).toBe(
       DICA_DA_AGENDA_INCOMPLETA,
     );
-    expect(motivoDaChaveTravada(agendar, AGENDA_COMPLETA, null)).toBeNull();
-    expect(motivoDaChaveTravada(outra, SEM_AGENDA, null)).toBeNull();
-    expect(motivoDaChaveTravada(agendar, SEM_AGENDA, DICA_RECEPCAO)).toBe(
-      DICA_RECEPCAO,
-    );
+    expect(
+      motivoDaChaveTravada("agendar", com(AGENDA_COMPLETA), null),
+    ).toBeNull();
+    expect(
+      motivoDaChaveTravada("confirmar_presenca", com(SEM_AGENDA), null),
+    ).toBeNull();
+    expect(
+      motivoDaChaveTravada("agendar", com(SEM_AGENDA), DICA_RECEPCAO),
+    ).toBe(DICA_RECEPCAO);
   });
 
   it("só Agendar consulta depende da agenda", () => {
@@ -266,9 +277,10 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
   // Decisao do dono de 20/10/2026, revista na onda 2 (item 10): a consulta
   // da IA so transforma o contato em paciente quando a equipe aprova.
   // "Agendar consulta" funciona com telefone comum; a nota do telefone
-  // cadastrado pela equipe Conduzza (o forcado) fica so em "Confirmar
-  // presença".
-  it("a nota da fase de teste fica só embaixo de Confirmar presença, para todos os papéis", () => {
+  // cadastrado pela equipe Conduzza (o forcado) fica em "Confirmar
+  // presença" e, desde a AG4, em "Cancelar consulta" e "Remarcar consulta"
+  // (quem tem consulta ja e paciente).
+  it("a nota da fase de teste fica embaixo de Cancelar, Remarcar e Confirmar presença, para todos os papéis", () => {
     const nota = TEXTOS_DO_AGENTE.habilidadeNaFaseDeTeste;
     for (const props of [
       {},
@@ -276,15 +288,17 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
       { podeEditar: false, dica: DICA_RECEPCAO, agenda: AGENDA_COMPLETA },
     ]) {
       const html = renderHabilidades(props);
-      expect(html).toContain(
-        `<span id="agente-habilidade-confirmar_presenca-fase-de-teste" class="text-xs text-text-secondary">${nota}</span>`,
-      );
+      for (const chave of ["cancelar", "remarcar", "confirmar_presenca"]) {
+        expect(html, chave).toContain(
+          `<span id="agente-habilidade-${chave}-fase-de-teste" class="text-xs text-text-secondary">${nota}</span>`,
+        );
+      }
       expect(html).not.toContain(
         'id="agente-habilidade-agendar-fase-de-teste"',
       );
-      // So nela: nem em Agendar consulta, nem em Informar preço, nem nas
+      // So nelas: nem em Agendar consulta, nem em Informar preço, nem nas
       // travadas.
-      expect(html.split(nota)).toHaveLength(2);
+      expect(html.split(nota)).toHaveLength(4);
     }
   });
 
@@ -326,6 +340,8 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
       (h) => h.chave as string,
     );
     expect([...HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA]).toEqual([
+      "cancelar",
+      "remarcar",
       "confirmar_presenca",
     ]);
     for (const chave of HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA) {
@@ -603,8 +619,9 @@ describe("simulador: o cenário de agendar", () => {
   });
 
   it("a descrição diz que reservar e marcar no simulador não gravam nada", () => {
+    // AG4: cancelar e remarcar tambem so simulam.
     expect(TEXTOS_DO_AGENTE.simuladorDescricao).toContain(
-      "os horários vêm da Agenda, mas reservar e marcar aqui não gravam nada",
+      "os horários vêm da Agenda, mas reservar, marcar, cancelar e remarcar aqui não gravam nada",
     );
   });
 
