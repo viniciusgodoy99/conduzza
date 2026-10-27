@@ -7,7 +7,11 @@
 //     hora, endereco, convenio e acao de agenda tambem so passam com fato
 //     (fatos-do-turno.ts); fatos fora do formato bloqueiam (falha fechada).
 //  2. Regras limpas NAO aprovam: o verificador por modelo (injetado) tem de
-//     aprovar tambem.
+//     aprovar tambem. Com os fatos do turno, ele recebe o resumo deles, sem
+//     dado de paciente (resumo-dos-fatos.ts, revisao 2 da AG2), e julga
+//     fato tambem: acao feita, horario livre, cobertura, endereco e
+//     requisito que o resumo nao sustenta bloqueiam na camada "modelo".
+//     Resumo que nao monta bloqueia (falha fechada).
 //  3. Falha fechada: excecao, prazo estourado, recusa, max_tokens, saida
 //     invalida, aprovacao com violacao (incoerente) e confianca baixa
 //     bloqueiam. Mais de cinco mensagens do paciente sem resposta tambem:
@@ -49,6 +53,10 @@ import {
   PADROES_DE_SAIDA,
 } from "@/lib/domain/conformidade/padroes";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
+import {
+  FONTES_DO_RESUMO,
+  resumirFatosDoTurno,
+} from "@/lib/domain/conformidade/resumo-dos-fatos";
 import type { TextoAprovado } from "@/lib/domain/conformidade/texto-aprovado";
 import {
   EsquemaDoVeredicto,
@@ -124,6 +132,8 @@ export function versaoDasRegras(): string {
       compacto: LEXICO_COMPACTO,
       aproximado: LEXICO_APROXIMADO,
       codigo: FONTES_DAS_REGRAS_EM_CODIGO,
+      // Revisao 2 da AG2: o resumo dos fatos que vai ao verificador.
+      resumo: FONTES_DO_RESUMO,
     });
     versaoCalculada = `regras-${sha256DoTexto(fonte).slice(0, 12)}`;
   }
@@ -191,6 +201,24 @@ function contextoValido(contexto: unknown): contexto is ContextoDoFiltro {
     // ou um objeto pela metade nunca vira "sem regra dos fatos").
     (!("fatos" in c) || c.fatos === undefined || fatosValidos(c.fatos))
   );
+}
+
+/**
+ * Revisao 2 da AG2: o resumo dos fatos que vai ao verificador junto do
+ * rascunho. Sem fatos (texto estatico, retomada), nulo: o verificador julga
+ * so as vedacoes e o formato. Com fatos, o resumo, ou { ok: false } quando
+ * ele nao monta (quem chama bloqueia). A rodada paga
+ * (scripts/ia/avaliar-conformidade.ts) monta o mesmo resumo por aqui.
+ */
+export function resumoDosFatosDoContexto(
+  rascunho: string,
+  contexto: ContextoDoFiltro,
+): { ok: true; resumo: string | null } | { ok: false } {
+  if (contexto.fatos === undefined) {
+    return { ok: true, resumo: null };
+  }
+  const resumo = resumirFatosDoTurno(contexto.fatos, rascunho);
+  return resumo.ok ? { ok: true, resumo: resumo.texto } : { ok: false };
 }
 
 function lerUso(valor: unknown): UsoDoLlm | null {
@@ -265,6 +293,14 @@ export async function filtrarSaida(
     return bloquear("falha_verificador", "falha", "contexto_truncado", null);
   }
 
+  // O resumo dos fatos do turno (revisao 2 da AG2): o que nao monta bloqueia
+  // antes de chamar o verificador.
+  const resumo = resumoDosFatosDoContexto(entrada.rascunho, entrada.contexto);
+  if (!resumo.ok) {
+    return bloquear("falha_verificador", "falha", "desconhecida", null);
+  }
+  const resumoDosFatos = resumo.resumo;
+
   // 2. Verificador, com prazo duro.
   const restante =
     entrada.prazoEm === undefined
@@ -285,7 +321,8 @@ export async function filtrarSaida(
   const { rascunho } = entrada;
   const { mensagensDoPaciente } = entrada.contexto;
   const corrida = await correrComPrazo<unknown>(
-    (sinal) => verificador({ rascunho, mensagensDoPaciente, sinal }),
+    (sinal) =>
+      verificador({ rascunho, mensagensDoPaciente, resumoDosFatos, sinal }),
     prazoMs,
   );
   if (corrida.tipo === "prazo") {

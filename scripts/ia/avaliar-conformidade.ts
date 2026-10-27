@@ -35,6 +35,7 @@ import { join } from "node:path";
 import { avaliarRegras } from "../../lib/domain/conformidade/filtro-deterministico";
 import {
   filtrarSaida,
+  resumoDosFatosDoContexto,
   versaoDasRegras,
 } from "../../lib/domain/conformidade/filtro";
 import { detectarGatilhosDeEntrada } from "../../lib/domain/conformidade/gatilhos-de-entrada";
@@ -359,20 +360,33 @@ async function main(): Promise<number> {
           continue;
         }
         const contexto = contextoDo(caso);
+        // Revisao 2 da AG2: o verificador recebe o resumo dos fatos do caso
+        // (o mesmo que o filtro monta); resumo que nao monta e falha.
+        const resumo = resumoDosFatosDoContexto(caso.rascunho, contexto);
         // Confere o orcamento AQUI, fora do verificador: dentro dele a parada
         // viraria uma "falha" comum e a rodada seguiria anotando lixo.
         gasto.reservar(
           POLITICA_DO_VERIFICADOR.length +
             caso.rascunho.length +
             contexto.mensagensDoPaciente.join(" ").length +
+            (resumo.ok ? (resumo.resumo?.length ?? 0) : 0) +
             ENVELOPE_EM_CARACTERES,
           MAX_TOKENS_DO_VERIFICADOR,
         );
-        const resultado = await verificador({
-          rascunho: caso.rascunho,
-          mensagensDoPaciente: contexto.mensagensDoPaciente,
-          sinal: new AbortController().signal,
-        });
+        const resultado: ResultadoDoVerificador = resumo.ok
+          ? await verificador({
+              rascunho: caso.rascunho,
+              mensagensDoPaciente: contexto.mensagensDoPaciente,
+              resumoDosFatos: resumo.resumo,
+              sinal: new AbortController().signal,
+            })
+          : {
+              tipo: "falha",
+              motivo: "desconhecida",
+              modelo: null,
+              uso: null,
+              httpStatus: null,
+            };
         linha.modelo.push(resumoDoModelo(resultado));
         // O pipeline reusa o MESMO veredicto (sem segunda chamada paga).
         const repetir: Verificador = async () => resultado;

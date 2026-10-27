@@ -304,6 +304,9 @@ describe("consultar_unidades", () => {
           codigo: "u1",
           nome: "Aldeota",
           endereco: ENDERECO_DA_ALDEOTA,
+          // Revisao 2 da AG2: o bairro e a cidade em campos proprios.
+          bairro: "Aldeota",
+          cidade: "Fortaleza",
           ponto_de_referencia: "Em frente à praça Portugal.",
           estacionamento: "Estacionamento no subsolo do prédio.",
           acessibilidade: "Acesso por rampa e elevador.",
@@ -320,6 +323,8 @@ describe("consultar_unidades", () => {
           codigo: "u2",
           nome: "Centro",
           endereco: ENDERECO_DO_CENTRO,
+          bairro: "Centro",
+          cidade: "Fortaleza",
           horario_de_funcionamento: null,
           profissionais: ["Dr. Bruno Costa", "Dra. Carla Dias"],
         },
@@ -383,6 +388,8 @@ describe("consultar_unidades", () => {
           codigo: "u1",
           nome: "Meireles",
           endereco: "Rua Tibúrcio Cavalcante, 500, Meireles, Fortaleza, CE",
+          bairro: "Meireles",
+          cidade: "Fortaleza",
           horario_de_funcionamento: [
             "segunda: 08:00 às 17:00",
             "terça a domingo: fechado",
@@ -417,6 +424,8 @@ describe("consultar_unidades", () => {
         codigo: "u1",
         nome: "Centro",
         endereco: null,
+        // O endereco cai pelo logradouro; a cidade, sozinha, passa.
+        cidade: "Recife",
         horario_de_funcionamento: null,
         profissionais: ["Dr. Bruno Costa", "Dra. Carla Dias"],
       },

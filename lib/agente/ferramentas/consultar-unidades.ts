@@ -1,5 +1,6 @@
 // Ferramenta consultar_unidades do agente de IA (AG2, 27/10/2026): as
-// unidades ativas da clinica, com o endereco montado num campo so, o ponto
+// unidades ativas da clinica, com o endereco montado num campo so (e,
+// desde a revisao 2, o bairro e a cidade tambem em campos proprios), o ponto
 // de referencia, o estacionamento, a acessibilidade, a observacao ao
 // paciente, o horario de funcionamento em texto curto e quem atende em cada
 // uma (pela jornada). PURO: le o catalogo carregado no servidor
@@ -84,6 +85,10 @@ function unidadeParaOModelo(
     nome: unidade.nome,
     // Nulo diz ao modelo que nao ha o que informar (nunca estimar).
     endereco: unidade.endereco,
+    // Revisao 2 da AG2: o bairro e a cidade em campos proprios (o filtro
+    // de saida reconhece o nome de lugar citado sozinho).
+    ...(unidade.bairro === null ? {} : { bairro: unidade.bairro }),
+    ...(unidade.cidade === null ? {} : { cidade: unidade.cidade }),
     ...(unidade.referencia === null
       ? {}
       : { ponto_de_referencia: unidade.referencia }),

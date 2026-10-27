@@ -317,23 +317,31 @@ describe("consultar_unidades no turno", () => {
 
 describe("consultar_requisitos no turno", () => {
   it("os requisitos administrativos que a ferramenta trouxe passam", async () => {
+    const mensagens: MensagemDaConversa[] = [
+      paciente("Oi"),
+      { autor: "assistente", texto: "Olá! Como posso ajudar?" },
+      paciente("O que preciso levar para a consulta pela Unimed Nacional?"),
+    ];
+    const requisitos = () =>
+      ferramenta("consultar_requisitos", {
+        procedimento: "p1",
+        convenio: "Unimed Nacional",
+      });
+    const resposta =
+      "Para a Consulta pela Unimed Nacional, leve um documento com foto e a carteirinha do convênio, chegue 15 minutos antes e tenha a autorização prévia do convênio.";
+    // Revisao 2 da AG2: citar o convenio afirmando (regra invertida) exige o
+    // fato dele; consultar_requisitos nao diz que a clinica atende o
+    // convenio, buscar_procedimento diz.
     const { r } = await turno(
       [
-        ferramenta("consultar_requisitos", {
+        ferramenta("buscar_procedimento", {
           procedimento: "p1",
           convenio: "Unimed Nacional",
         }),
-        final(
-          "Para a Consulta pela Unimed Nacional, leve um documento com foto e a carteirinha do convênio, chegue 15 minutos antes e tenha a autorização prévia do convênio.",
-        ),
+        requisitos(),
+        final(resposta),
       ],
-      {
-        mensagens: [
-          paciente("Oi"),
-          { autor: "assistente", texto: "Olá! Como posso ajudar?" },
-          paciente("O que preciso levar para a consulta pela Unimed Nacional?"),
-        ],
-      },
+      { mensagens },
     );
     expect(r.tipo).toBe("resposta");
     expect(r.trilha).toContainEqual({
@@ -341,6 +349,22 @@ describe("consultar_requisitos no turno", () => {
       texto:
         "Consultou o que o paciente precisa para Consulta pelo convênio Unimed (Nacional): 4 itens",
     });
+    // So com os requisitos, o nome do convenio afirmado e barrado; sem o
+    // nome ("a carteirinha do convenio"), os itens passam.
+    barrouPor(
+      (await turno([requisitos(), final(resposta)], { mensagens })).r,
+      "cobertura_nao_verificada",
+    );
+    const semONome = await turno(
+      [
+        requisitos(),
+        final(
+          "Para a Consulta, leve um documento com foto e a carteirinha do convênio, chegue 15 minutos antes e tenha a autorização prévia do convênio.",
+        ),
+      ],
+      { mensagens },
+    );
+    expect(semONome.r.tipo).toBe("resposta");
   });
 
   it("preparo clínico (jejum) nunca passa, venha de onde vier", async () => {

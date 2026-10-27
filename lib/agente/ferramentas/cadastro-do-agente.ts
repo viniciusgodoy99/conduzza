@@ -64,6 +64,15 @@ export type UnidadeDoAgente = {
    * texto montado nao passa nas regras do filtro.
    */
   endereco: string | null;
+  /**
+   * Revisao 2 da AG2: o bairro e a cidade em campos proprios, para o filtro
+   * de saida reconhecer o nome de lugar quando o modelo cita so um deles
+   * ("a outra unidade fica em Nossa Senhora dos Remedios"). Nulos sem
+   * valor, ou quando o nome nao passa como nome de lugar
+   * (nomeDeLugarParaOAgente).
+   */
+  bairro: string | null;
+  cidade: string | null;
   referencia: string | null;
   estacionamento: string | null;
   acessibilidade: string | null;
@@ -256,6 +265,27 @@ export function enderecoParaOAgente(unidade: LinhaDaUnidade): {
     : lido;
 }
 
+/**
+ * Revisao 2 da AG2: uma parte do endereco (o bairro, a cidade) como nome de
+ * lugar que pode ir ao paciente, com a mesma conferencia do endereco
+ * montado: passa nas regras do filtro ou, so com a ULTIMA palavra em
+ * PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR trocada por uma neutra, passa ("Nossa
+ * Senhora dos Remedios"). Qualquer outra regra continua derrubando ("Tome
+ * Dipirona" fica nulo). Sem contagem de descarte: a parte que nao passa ja
+ * derruba o endereco montado, que conta.
+ */
+export function nomeDeLugarParaOAgente(valor: unknown): string | null {
+  const lido = textoAoPacienteParaOAgente(valor);
+  if (!lido.descartado || typeof valor !== "string") {
+    return lido.texto;
+  }
+  const limpo = numaLinhaSoh(valor);
+  return textoAoPacienteParaOAgente(semPalavrasClinicasDeLugar(limpo)).texto ===
+    null
+    ? null
+    : limpo;
+}
+
 // ---------------------------------------------------------------------------
 // Horario de funcionamento em texto curto
 // ---------------------------------------------------------------------------
@@ -394,6 +424,8 @@ export function unidadesParaOAgente(linhas: readonly LinhaDaUnidade[]): {
       id: linha.id,
       nome,
       endereco: endereco.texto,
+      bairro: nomeDeLugarParaOAgente(linha.bairro),
+      cidade: nomeDeLugarParaOAgente(linha.cidade),
       referencia: texto(linha.referencia),
       estacionamento: texto(linha.estacionamento),
       acessibilidade: texto(linha.acessibilidade),

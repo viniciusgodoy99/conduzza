@@ -178,6 +178,21 @@ export function buscarProfissionais(
         resultado: "procedimento_nao_encontrado",
       };
     }
+    // Revisao 2 da AG2: o procedimento fora do indice que nao deixa informar
+    // (ia_pode_informar desligado) nao aceita o filtro de convenio nem gera
+    // fato de convenio, como buscar_procedimento e consultar_requisitos: so
+    // a equipe fala dele por convenio.
+    const dito = (pedido.convenio ?? "").trim();
+    if (!achado.noIndice && !achado.procedimento.informaValor && dito !== "") {
+      return {
+        saida: JSON.stringify({
+          resultado: "so_com_a_equipe",
+          procedimento: achado.procedimento.nome,
+        }),
+        passo: `Consultou os profissionais de ${achado.procedimento.nome} por convênio: só a equipe informa este procedimento`,
+        resultado: "so_com_a_equipe",
+      };
+    }
     procedimento = achado.procedimento;
     filtros.push(procedimento.nome);
   }

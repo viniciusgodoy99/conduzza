@@ -98,6 +98,12 @@ export type ResultadoDoVerificador =
 export type EntradaDoVerificador = {
   rascunho: string;
   mensagensDoPaciente: readonly string[];
+  /**
+   * Revisao 2 da AG2: o resumo dos fatos do turno, sem dado de paciente
+   * (resumo-dos-fatos.ts), para o verificador julgar fato tambem. Nulo: o
+   * texto nao tem fatos do turno (so as vedacoes e o formato sao julgados).
+   */
+  resumoDosFatos: string | null;
   /** Abortado quando o prazo do filtro estoura. */
   sinal: AbortSignal;
 };

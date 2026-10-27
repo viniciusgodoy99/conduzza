@@ -298,8 +298,15 @@ describe("horário livre no turno", () => {
       await turno([final("Pode ser às 11h15, sim.")], { mensagens }),
       "horario_nao_verificado",
     );
+    // Revisao 2: "anotado" com a hora e marca de fechamento sem acao no
+    // turno; a regra da acao vem antes na prioridade.
     barrouPor(
       await turno([final("Anotado: às 11h15, então.")], { mensagens }),
+      "acao_nao_executada",
+    );
+    // A etiqueta de confirmacao nao faz da frase uma pergunta.
+    barrouPor(
+      await turno([final("Às 11h15 mesmo, tudo bem?")], { mensagens }),
       "horario_nao_verificado",
     );
     passou(

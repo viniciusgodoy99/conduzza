@@ -19,7 +19,10 @@
 //    ao lado do convenio precisa do fato dele);
 //  - os horarios livres que as ferramentas de agenda trouxeram (a unica
 //    prova da frase que afirma horario livre);
-//  - o ano e o dia de hoje no fuso da clinica.
+//  - o ano e o dia de hoje no fuso da clinica;
+//  - revisao 2 da AG2: as respostas da base publicada que o modelo disse ter
+//    usado (perguntas_da_base), que o resumo dos fatos leva ao verificador
+//    como fonte de endereco e de requisito.
 // As mensagens novas do paciente (fonte de data e hora) o filtro ja recebe
 // em mensagensDoPaciente. Quem chama (lib/agente/laco.ts) falha fechado se
 // montar os fatos lancar.
@@ -115,6 +118,11 @@ export function montarFatosDoTurno(entrada: {
   fuso: string;
   /** As ferramentas que rodaram no turno, na ordem. */
   ferramentas: readonly SaidaParaOsFatos[];
+  /**
+   * As respostas da base que o modelo disse ter usado (perguntas_da_base,
+   * so os codigos conhecidos). Ausente: nenhuma.
+   */
+  respostasDaBase?: readonly string[];
 }): FatosDoTurno {
   const { config, catalogo } = entrada;
   const coberturas: CoberturaDoTurno[] = [];
@@ -157,5 +165,6 @@ export function montarFatosDoTurno(entrada: {
     ].map((p) => p.nome),
     semConvenioAtivo: convenios.length === 0,
     hoje: hojeNaClinica(entrada.agoraMs, entrada.fuso),
+    respostasDaBase: [...(entrada.respostasDaBase ?? [])],
   };
 }

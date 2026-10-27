@@ -33,8 +33,9 @@ import {
 } from "@/tests/fixtures/ia/conformidade/casos";
 
 // Os fatos do turno (AG2, 27/10/2026): data e hora, endereco, convenio e
-// acao de agenda so passam com fato do turno. So a regra deterministica
-// olha fato (o verificador nunca julga, como o preco). Aqui: a leitura dos
+// acao de agenda so passam com fato do turno. Aqui a regra deterministica
+// (desde a revisao 2 da AG2, o verificador tambem julga fato, com o resumo
+// dos fatos: resumo-dos-fatos.test.ts). Aqui: a leitura dos
 // formatos, a calibragem contra frases reais de recepcao, cada categoria
 // com o que bloqueia e o que passa, a validacao (falha fechada) e o que
 // fica de fora (texto estatico e retomada).
@@ -247,6 +248,8 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
       "Nosso horário de atendimento é de segunda a sexta, das 8h às 18h.",
       ["hora_fora_dos_fatos"],
     ],
+    // Revisao 2: dia da semana e marca de fechamento, sem acao no turno.
+    ["Tudo certo! Te esperamos na quinta.", ["fechamento_sem_acao"]],
     [
       "Confirma sua presença amanhã às 9h? Responda 1 para confirmar ou 2 para remarcar.",
       ["hora_fora_dos_fatos"],
@@ -261,7 +264,18 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
     ],
     [
       "Seu retorno ficou para o dia 20/10 às 11h.",
-      ["data_fora_dos_fatos", "hora_fora_dos_fatos"],
+      [
+        "data_fora_dos_fatos",
+        "hora_fora_dos_fatos",
+        // Revisao 2: "seu retorno ficou para" e o estado da consulta.
+        "consulta_existente_sem_ferramenta",
+      ],
+    ],
+    // Revisao 2: "tem horarios" sem dia nem hora tambem afirma horario
+    // livre e precisa da ferramenta de agenda.
+    [
+      "A Dra. Beatriz está de férias até dia 30, mas a Dra. Ana tem horários.",
+      ["horario_livre_sem_ferramenta"],
     ],
     [
       "Esse horário acabou de ser preenchido, mas tenho outro às 15h.",
@@ -340,8 +354,10 @@ describe("calibragem: frases reais de recepção com o turno SEM nenhum fato", (
       return achados.length > 0 ? [[frase, achados] as [string, string[]]] : [];
     });
     expect(vistas).toEqual(barradas);
-    // As outras 55 passam, mesmo sem fato nenhum.
-    expect(FRASES_DE_RECEPCAO.length - barradas.length).toBe(55);
+    // As outras 53 passam, mesmo sem fato nenhum (eram 55 antes da revisao
+    // 2 da AG2: "Tudo certo! Te esperamos na quinta." e "a Dra. Ana tem
+    // horarios" afirmam sem a ferramenta).
+    expect(FRASES_DE_RECEPCAO.length - barradas.length).toBe(53);
   });
 
   it("a mesma frase como texto publicado (ou saída de ferramenta) é o próprio fato: data, hora e endereço passam", () => {
@@ -434,7 +450,11 @@ describe("horario_nao_verificado", () => {
               "horario_nao_verificado:data_fora_dos_fatos",
               "horario_nao_verificado:hora_fora_dos_fatos",
             ]
-          : ["horario_nao_verificado:hora_fora_dos_fatos"],
+          : [
+              "horario_nao_verificado:hora_fora_dos_fatos",
+              // Revisao 2: "anotado" com hora e marca de fechamento.
+              "acao_nao_executada:fechamento_sem_acao",
+            ],
       );
     }
     // Negar uma hora e afirmar a outra: a afirmacao precisa da ferramenta.
