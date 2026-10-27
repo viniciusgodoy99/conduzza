@@ -203,8 +203,11 @@ async function novaClinica(nome: string): Promise<string> {
  * conversa de teste que espera resposta ha mais de 3 minutos.
  */
 async function novaConversa(): Promise<{ contato: string; conversa: string }> {
+  // O numero desta chamada fica guardado antes do primeiro await: duas
+  // chamadas ao mesmo tempo (o teste de concorrencia) nao dividem o contador.
   telefones += 1;
-  const telefone = `+55849${digitos}${String(telefones).padStart(2, "0")}`;
+  const n = telefones;
+  const telefone = `+55849${digitos}${String(n).padStart(2, "0")}`;
   await rpcOk("definir_contato_liberado_da_ia", {
     p_clinic_id: clinica,
     p_telefone_e164: telefone,
@@ -220,7 +223,7 @@ async function novaConversa(): Promise<{ contato: string; conversa: string }> {
     p_clinic_id: clinica,
     p_phone_e164: telefone,
     p_name: "Contato sintético",
-    p_wa_message_id: `agendamento-ia-int:${sufixo}:${telefones}`,
+    p_wa_message_id: `agendamento-ia-int:${sufixo}:${n}`,
     p_content_type: "texto",
     p_body: "Mensagem sintética",
     p_whatsapp_account_id: numero,
