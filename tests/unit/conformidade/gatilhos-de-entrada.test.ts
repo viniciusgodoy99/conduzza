@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import { GATILHOS_DO_CLASSIFICADOR } from "@/lib/domain/conformidade/categorias";
 import {
   detectarGatilhosDeEntrada,
+  FONTES_DO_PORTAO_EM_CODIGO,
   idadeEmAnos,
   LIMITE_DE_MENSAGEM,
   MAXIMO_DE_MENSAGENS_NO_CONTEXTO,
+  pedidoDeConsultaParaOutraPessoa,
 } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import {
   CASOS_DE_ENTRADA,
@@ -155,7 +157,12 @@ describe("regras do portao", () => {
   it("pontuacao repetida sozinha nao escala; caixa alta so com 5 palavras e sem pergunta", () => {
     const de = (texto: string) =>
       detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
-    for (const texto of ["Oi!!!", "Obrigada!!!", "Oi????", "Quanto custa????"]) {
+    for (const texto of [
+      "Oi!!!",
+      "Obrigada!!!",
+      "Oi????",
+      "Quanto custa????",
+    ]) {
       expect(de(texto), texto).toEqual([]);
     }
     // Quatro palavras, ou cinco com pergunta (inclusive a de largura cheia).
@@ -234,5 +241,103 @@ describe("regras do portao", () => {
         ],
       }),
     ).toContain("sintoma");
+  });
+});
+
+// Revisao final da AG3 (achado 15, D-8): o pedido de consulta para outra
+// pessoa adulta passa para a equipe pelo portao (o laco escala com o motivo
+// consulta_para_outra_pessoa, sem gatilho). Filho e filha seguem pela regra
+// do menor.
+describe("a consulta para outra pessoa adulta", () => {
+  it.each([
+    "Quero marcar uma consulta para minha mãe",
+    "Tem horário pro meu pai amanhã?",
+    "Gostaria de agendar para o meu marido, por favor",
+    "Quero marcar pra minha esposa",
+    "Vocês têm vaga para a minha sogra na sexta?",
+    "Queria uma avaliação pra minha avó",
+    "Minha mãe quer marcar uma consulta",
+    "Meu marido precisa de uma consulta com a dermatologista",
+    "É para minha esposa",
+    "Seria pro meu pai",
+    "Na verdade, é para o meu irmão",
+  ])("%s", (texto) => {
+    expect(pedidoDeConsultaParaOutraPessoa([texto])).toBe(true);
+  });
+
+  it.each([
+    "Quero marcar uma consulta para meu filho",
+    "É pra minha filha",
+    "Posso levar minha mãe na consulta?",
+    "Minha mãe que me indicou vocês, quero marcar uma consulta",
+    "Quero marcar uma consulta para mim",
+    "Tem estacionamento? Meu pai vai me levar",
+    "Minha mãe vai me acompanhar na consulta",
+    "Comprei um presente para minha mãe",
+  ])("não é: %s", (texto) => {
+    expect(pedidoDeConsultaParaOutraPessoa([texto])).toBe(false);
+  });
+
+  it("nenhum controle de entrada da bateria vira consulta para outra pessoa", () => {
+    for (const caso of CONTROLES_DE_ENTRADA) {
+      expect(
+        pedidoDeConsultaParaOutraPessoa(caso.mensagens.map((m) => m.texto)),
+        caso.id,
+      ).toBe(false);
+    }
+  });
+
+  it("mídia não conta, e as regras entram na versão do portão", () => {
+    expect(pedidoDeConsultaParaOutraPessoa([null])).toBe(false);
+    expect(
+      FONTES_DO_PORTAO_EM_CODIGO.some((fonte) =>
+        fonte.includes("outra pessoa adulta"),
+      ),
+    ).toBe(true);
+  });
+});
+
+// Revisao curta das correcoes da AG3 (achado 9): o portao exige a intencao
+// de marcar para a outra pessoa (ela como paciente) e trata a negacao.
+describe("a consulta para outra pessoa: só com a pessoa como paciente", () => {
+  it.each([
+    "A consulta é para mim, não para minha mãe.",
+    "Não é para minha mãe, é para mim.",
+    "Meu marido vai passar aí para pagar a consulta.",
+    "Preciso de um horário que dê para minha mãe me levar.",
+    "Quero marcar consulta, mas só posso no horário que der pro meu chefe me liberar.",
+    "Quero marcar um horário para minha mãe poder me acompanhar.",
+    "Quero marcar consulta pra minha mãe me levar depois.",
+    "Quero um horário bom para minha mãe também, ela vai comigo.",
+    "Quero marcar uma consulta pra mim. Minha mãe já é paciente de vocês.",
+    "Tem horário depois das 18h? Antes disso eu cuido da minha mãe e não dá pra mim.",
+    "Quero agendar, meu marido vai me acompanhar na consulta.",
+    "Minha esposa quer saber o preço da consulta.",
+  ])("não escala: %s", (texto) => {
+    expect(pedidoDeConsultaParaOutraPessoa([texto])).toBe(false);
+  });
+
+  it.each([
+    "Quero marcar uma consulta para minha mãe e outra para mim.",
+    "Quero agendar uma consulta para mim e para minha mãe.",
+    "Quero marcar para minha mãe consultar com a Dra. Ana.",
+    "Quero marcar para minha mãe ser atendida pela Dra. Ana.",
+    "A consulta é pro meu marido.",
+    "Não, é para minha mãe.",
+    "É minha mãe que quer marcar uma consulta.",
+    "Meu marido vai passar por uma consulta, vocês têm horário?",
+    "Minha mãe vai passar com a dermatologista.",
+    "Quero marcar consulta pra mamãe",
+    "Tem horário pro papai amanhã?",
+  ])("escala: %s", (texto) => {
+    expect(pedidoDeConsultaParaOutraPessoa([texto])).toBe(true);
+  });
+
+  it("as regras novas entram na versão do portão", () => {
+    expect(
+      FONTES_DO_PORTAO_EM_CODIGO.some((fonte) =>
+        fonte.includes("so com a intencao de marcar para ela"),
+      ),
+    ).toBe(true);
   });
 });

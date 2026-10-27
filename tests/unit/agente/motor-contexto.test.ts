@@ -327,7 +327,10 @@ describe("contexto do motor (service role)", () => {
     const deConvenios = consultas.filter((c) => c.tabela === "insurance");
     expect(deConvenios.length).toBeGreaterThan(0);
     for (const consulta of deConvenios) {
-      expect(consulta.colunas).toBe("id, name, plan_name, active");
+      // AG3: "Carteirinha obrigatoria" (a carteirinha que falta para marcar).
+      expect(consulta.colunas).toBe(
+        "id, name, plan_name, active, requires_card",
+      );
       expect(consulta.filtros).toContainEqual(["clinic_id", CLINICA]);
       expect(consulta.filtros).toContainEqual(["active", true]);
     }
@@ -1014,7 +1017,10 @@ describe("onda 2: público e especialidades", () => {
     const catalogo = await carregarCatalogoDoAgente(cliente, CLINICA);
     espiao.mockRestore();
     const doProfissional = consultas.find((c) => c.tabela === "professional");
-    expect(doProfissional?.colunas).toBe("id, name, active, specialties");
+    // AG2: e a idade atendida (so as duas colunas a mais).
+    expect(doProfissional?.colunas).toBe(
+      "id, name, active, specialties, idade_minima, idade_maxima, grade_minutos",
+    );
     expect(catalogo.profissionais).toEqual([
       { id: SEM_VINCULO, nome: "Dr. Caio", especialidades: ["Cardiologia"] },
       { id: PROF, nome: "Dra. Helena", especialidades: ["Dermatologia"] },

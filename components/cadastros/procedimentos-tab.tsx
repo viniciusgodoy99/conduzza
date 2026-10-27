@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import {
   salvarProcedimentoAction,
+  salvarRequisitosDoProcedimentoAction,
   sincronizarVinculosDoProcedimentoAction,
   type CadastroActionResult,
   type ResultadoDosVinculosDoProcedimento,
@@ -27,6 +28,15 @@ import {
   VazioDaAba,
 } from "@/components/cadastros/comum";
 import { ListaDeConvenios } from "@/components/cadastros/lista-de-convenios";
+import {
+  nomeDoConvenioDoRequisito,
+  requisitosParaEdicao,
+  requisitosParaSalvar,
+  RequisitosDoProcedimento,
+  RequisitosSomenteLeitura,
+  TEXTOS_DOS_REQUISITOS,
+  type RequisitoEmEdicao,
+} from "@/components/cadastros/requisitos-do-procedimento";
 import { DataTable } from "@/components/shared/data-table";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -43,6 +53,11 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { IA_AGENDA_STATUS } from "@/lib/design/status";
+import {
+  problemaNosRequisitos,
+  requisitosMudaram,
+  type RequisitoDoProcedimento,
+} from "@/lib/domain/cadastro-para-o-agente";
 import {
   listaFalada,
   ROTULO_SALVAR_MESMO_ASSIM,
@@ -81,6 +96,10 @@ import {
   type PadraoDoProcedimento,
   type VinculoDesejado,
 } from "@/lib/domain/vinculos-do-procedimento";
+import {
+  cadastroDoProcedimento,
+  requisitosDoProcedimento,
+} from "@/lib/queries/cadastro-para-o-agente";
 import type {
   Convenio,
   Procedimento,
@@ -117,6 +136,8 @@ type FormProcedimento = {
   requires_evaluation: boolean;
   prep_instructions: string;
   bookable_by_ai: boolean;
+  /** "A IA pode informar o preco e o que o procedimento exige" (AG1) */
+  ia_pode_informar: boolean;
   active: boolean;
 };
 
@@ -128,8 +149,40 @@ const FORM_VAZIO: FormProcedimento = {
   requires_evaluation: false,
   prep_instructions: "",
   bookable_by_ai: true,
+  ia_pode_informar: true,
   active: true,
 };
+
+/**
+ * A chave nova (AG1), lida pela buscar_procedimento (AG2) so para o
+ * procedimento que a IA nao marca (D-3 do dono pendente).
+ */
+export const ROTULO_IA_PODE_INFORMAR =
+  "A IA pode informar o preço e o que o procedimento exige";
+export const AJUDA_IA_PODE_INFORMAR =
+  "Mesmo quando a IA não agenda este procedimento, ela pode dizer o preço e o que o paciente precisa.";
+
+/**
+ * A frase quando o procedimento gravou e "O que o paciente precisa" nao (a
+ * RPC e uma transacao so: nada da lista entrou). No "cadastro mudou"
+ * (CZ409), salvar de novo daria o mesmo: a frase da action ja pede para
+ * fechar e abrir, sem o "Clique em Salvar de novo".
+ */
+export function erroDosRequisitosNoSalvar(resultado: {
+  error: string;
+  code?: "cadastro_mudou";
+}): string {
+  const frase = `O procedimento foi salvo, mas o que o paciente precisa não. ${resultado.error}`;
+  return resultado.code === "cadastro_mudou"
+    ? frase
+    : `${frase} Clique em Salvar de novo.`;
+}
+
+let contadorDoRequisito = 0;
+function novaChaveDoRequisito(): string {
+  contadorDoRequisito += 1;
+  return `requisito-${contadorDoRequisito}`;
+}
 
 const PARTICULAR = "Particular";
 
@@ -272,6 +325,8 @@ export type CamposDoProcedimento = {
   requires_evaluation: boolean;
   prep_instructions: string | null;
   bookable_by_ai: boolean;
+  /** AG1. Ausente: a action nao mexe na coluna. */
+  ia_pode_informar?: boolean;
   active: boolean;
 };
 
@@ -1236,6 +1291,7 @@ function CobremSomenteLeitura({
 export function ProcedimentosTab({
   catalogo,
   matriz,
+  cadastroDoAgente,
   podeEditar,
   dica,
   aoMudar,
@@ -1276,6 +1332,12 @@ export function ProcedimentosTab({
   // modal em modo leitura para consultar descricao, preparo e quem faz
   // (achado 41).
   const [somenteLeitura, setSomenteLeitura] = useState(false);
+  // "O que o paciente precisa" (AG1): a lista em edicao e o que estava
+  // gravado na abertura (so o que estava la pode ser apagado pelo Salvar).
+  const [requisitos, setRequisitos] = useState<RequisitoEmEdicao[]>([]);
+  const [requisitosNaAbertura, setRequisitosNaAbertura] = useState<
+    RequisitoDoProcedimento[]
+  >([]);
 
   const nomes = useMemo<NomesDoCatalogo>(() => {
     const profissionais = new Map(catalogo.profissionais.map((p) => [p.id, p]));
@@ -1363,6 +1425,11 @@ export function ProcedimentosTab({
     setAviso(null);
     focoDeVolta.esquecer();
     setSomenteLeitura(leitura);
+    const gravados = procedimento
+      ? requisitosDoProcedimento(cadastroDoAgente, procedimento.id)
+      : [];
+    setRequisitosNaAbertura(gravados);
+    setRequisitos(requisitosParaEdicao(gravados, novaChaveDoRequisito));
     setForm(
       procedimento
         ? {
@@ -1374,6 +1441,9 @@ export function ProcedimentosTab({
             requires_evaluation: procedimento.requires_evaluation,
             prep_instructions: procedimento.prep_instructions ?? "",
             bookable_by_ai: procedimento.bookable_by_ai,
+            ia_pode_informar:
+              cadastroDoProcedimento(cadastroDoAgente, procedimento.id)
+                ?.ia_pode_informar ?? true,
             active: procedimento.active,
           }
         : FORM_VAZIO,
@@ -1472,6 +1542,17 @@ export function ProcedimentosTab({
       recusar(vinculos.erro);
       return;
     }
+    // "O que o paciente precisa" tambem e conferido antes de gravar.
+    const requisitosDoSalvar = requisitosParaSalvar(requisitos);
+    const problemaDosRequisitos = problemaNosRequisitos(
+      requisitosDoSalvar,
+      (insuranceId) =>
+        nomeDoConvenioDoRequisito(catalogo.convenios, insuranceId),
+    );
+    if (problemaDosRequisitos) {
+      recusar(problemaDosRequisitos);
+      return;
+    }
     setSalvando(true);
     setErro(null);
     const desfecho = await gravarProcedimento(
@@ -1487,6 +1568,7 @@ export function ProcedimentosTab({
           requires_evaluation: form.requires_evaluation,
           prep_instructions: form.prep_instructions.trim() || null,
           bookable_by_ai: form.bookable_by_ai,
+          ia_pode_informar: form.ia_pode_informar,
           active: form.active,
         },
         vinculos: vinculos.vinculos,
@@ -1527,6 +1609,42 @@ export function ProcedimentosTab({
         aoMudar();
       }
       return;
+    }
+
+    // "O que o paciente precisa" vai depois da linha (o procedimento novo
+    // precisa do id) e so quando mudou, numa transacao so (a RPC
+    // salvar_requisitos_do_procedimento): se falhar, nada da lista foi
+    // gravado, e o procedimento ja esta salvo. O modal fica aberto com o id,
+    // e o proximo Salvar reenvia a lista inteira (sem duplicar: nada dela
+    // entrou). Se o cadastro mudou enquanto a pessoa editava (CZ409), salvar
+    // de novo daria o mesmo: a frase pede para fechar e abrir.
+    const mandarRequisitos = desfecho.criado
+      ? requisitosDoSalvar.length > 0
+      : requisitosMudaram(requisitosDoSalvar, requisitosNaAbertura);
+    if (mandarRequisitos) {
+      setSalvando(true);
+      const gravouRequisitos = await salvarRequisitosDoProcedimentoAction({
+        procedure_id: desfecho.id,
+        requisitos: requisitosDoSalvar,
+        ids_na_abertura: requisitosNaAbertura.map((r) => r.id),
+      });
+      setSalvando(false);
+      if (!gravouRequisitos.ok) {
+        const idGravado = desfecho.id;
+        setForm((atual) => ({ ...atual, id: idGravado }));
+        setErro(erroDosRequisitosNoSalvar(gravouRequisitos));
+        aoMudar();
+        return;
+      }
+      if (gravouRequisitos.requisitos) {
+        setRequisitosNaAbertura(gravouRequisitos.requisitos);
+        setRequisitos(
+          requisitosParaEdicao(
+            gravouRequisitos.requisitos,
+            novaChaveDoRequisito,
+          ),
+        );
+      }
     }
 
     // Vinculo que saiu nao aparece mais para marcar: a recepcao precisa
@@ -1810,6 +1928,19 @@ export function ProcedimentosTab({
                 ),
               },
               {
+                rotulo: ROTULO_IA_PODE_INFORMAR,
+                valor: form.ia_pode_informar ? "Sim" : "Não",
+              },
+              {
+                rotulo: TEXTOS_DOS_REQUISITOS.titulo,
+                valor: (
+                  <RequisitosSomenteLeitura
+                    requisitos={requisitosNaAbertura}
+                    convenios={catalogo.convenios}
+                  />
+                ),
+              },
+              {
                 rotulo: "Situação",
                 valor: <ChipSituacao active={form.active} />,
               },
@@ -1901,6 +2032,15 @@ export function ProcedimentosTab({
             aoMudar={(marcado) => setForm({ ...form, bookable_by_ai: marcado })}
           />
           <CampoDeMarcar
+            id="proc-ia-informa"
+            rotulo={ROTULO_IA_PODE_INFORMAR}
+            descricao={AJUDA_IA_PODE_INFORMAR}
+            marcado={form.ia_pode_informar}
+            aoMudar={(marcado) =>
+              setForm({ ...form, ia_pode_informar: marcado })
+            }
+          />
+          <CampoDeMarcar
             id="proc-ativo"
             rotulo="Procedimento ativo"
             marcado={form.active}
@@ -1929,6 +2069,12 @@ export function ProcedimentosTab({
                 convenios={catalogo.convenios}
                 contexto={contexto}
                 nomes={nomes}
+              />
+              <RequisitosDoProcedimento
+                requisitos={requisitos}
+                aoMudar={setRequisitos}
+                convenios={catalogo.convenios}
+                novaChave={novaChaveDoRequisito}
               />
             </>
           )}

@@ -63,12 +63,16 @@ function corpoMaisNovo(nome: string): { arquivo: string; corpo: string } {
 
 /**
  * Os literais do CHECK ai_decision_log_escalation_reason_valida na migration
- * MAIS NOVA que o (re)define: o E3 (M1) e, na onda 2 (item 5), a
- * 20261022110000, que acrescenta fora_do_assunto.
+ * MAIS NOVA que o (re)define: o E3 (M1); na onda 2 (item 5), a
+ * 20261022110000, que acrescenta fora_do_assunto; e, na AG3, a
+ * 20261027120000, que acrescenta consulta_para_outra_pessoa, ja_tem_consulta
+ * e faltam_dados com o CHECK NOT VALID (validado logo depois). O "not valid"
+ * entre o fim do CHECK e o ponto e virgula e opcional: sem ele, a busca
+ * preguicosa passaria do fim do CHECK e juntaria literais de outro trecho.
  */
 function checkDoMotivoMaisNovo(): { arquivo: string; motivos: string[] } {
   const definicao =
-    /add constraint ai_decision_log_escalation_reason_valida\s+check\s*\(([\s\S]*?)\)\s*\)\s*[,;]/gi;
+    /add constraint ai_decision_log_escalation_reason_valida\s+check\s*\(([\s\S]*?)\)\s*\)\s*(?:not valid\s*)?[,;]/gi;
   for (const arquivo of [...MIGRATIONS].reverse()) {
     const sql = readFileSync(`${PASTA_DAS_MIGRATIONS}/${arquivo}`, "utf-8");
     const bloco = [...sql.matchAll(definicao)].at(-1)?.[1];
@@ -140,23 +144,54 @@ describe("espelhos do E3 com as migrations", () => {
     }
   });
 
-  it("MOTIVOS_DE_ESCALONAMENTO é o CHECK de escalation_reason mais novo (18, com fora_do_assunto)", () => {
+  it("MOTIVOS_DE_ESCALONAMENTO é o CHECK de escalation_reason mais novo (21, com os três da AG3)", () => {
     const { arquivo, motivos } = checkDoMotivoMaisNovo();
     // Onda 2 (item 5): a 20261022110000 redefine o CHECK com
-    // fora_do_assunto. O E3 (M1) tinha 17.
-    expect(arquivo >= "20261022110000").toBe(true);
+    // fora_do_assunto (18). AG3: a 20261027120000 o redefine de novo com
+    // consulta_para_outra_pessoa, ja_tem_consulta e faltam_dados (21). O E3
+    // (M1) tinha 17.
+    expect(arquivo >= "20261027120000").toBe(true);
     expect(motivos.sort()).toEqual([...MOTIVOS_DE_ESCALONAMENTO].sort());
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(18);
-    expect(MOTIVOS_DE_ESCALONAMENTO).toContain("fora_do_assunto");
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(21);
+    for (const motivo of [
+      "fora_do_assunto",
+      "consulta_para_outra_pessoa",
+      "ja_tem_consulta",
+      "faltam_dados",
+    ]) {
+      expect(MOTIVOS_DE_ESCALONAMENTO).toContain(motivo);
+    }
   });
 
-  it("o CHECK do E3 (M1) tinha os 17 de antes da onda 2", () => {
+  it("o CHECK do E3 (M1) tinha os 17 de antes da onda 2 e da AG3", () => {
     const bloco = M1.match(
       /escalation_reason is null or escalation_reason in \(([\s\S]*?)\)\)/,
     )?.[1];
+    const depoisDoE3: readonly string[] = [
+      "fora_do_assunto",
+      "consulta_para_outra_pessoa",
+      "ja_tem_consulta",
+      "faltam_dados",
+    ];
     expect(literais(bloco ?? "").sort()).toEqual(
-      MOTIVOS_DE_ESCALONAMENTO.filter((m) => m !== "fora_do_assunto").sort(),
+      MOTIVOS_DE_ESCALONAMENTO.filter((m) => !depoisDoE3.includes(m)).sort(),
     );
+  });
+
+  it("AG3: os eventos dos três motivos novos são os do banco", () => {
+    expect(TEXTO_DO_EVENTO_DA_IA.consulta_para_outra_pessoa).toBe(
+      "A IA passou a conversa para a equipe: a consulta é para outra pessoa.",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.ja_tem_consulta).toBe(
+      "A IA passou a conversa para a equipe: o paciente já tem consulta marcada deste procedimento.",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.faltam_dados).toBe(
+      "A IA passou a conversa para a equipe: faltaram dados do paciente para marcar.",
+    );
+    // O corpo que vale e o da AG3 (ou de uma migration posterior).
+    expect(
+      corpoMaisNovo("rotulo_do_motivo_da_ia").arquivo >= "20261027120000",
+    ).toBe(true);
   });
 
   it("onda 2: os motivos e os textos novos do contrato (seção 9)", () => {

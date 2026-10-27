@@ -9,6 +9,7 @@ import {
   fetchMatrizDeConvenios,
   fetchUsoDosPacotes,
 } from "@/lib/queries/catalogo";
+import { fetchCadastroParaOAgente } from "@/lib/queries/cadastro-para-o-agente";
 import { createClient } from "@/lib/supabase/server";
 
 import { redirecionamentoDeAbaQueSaiu } from "./abas";
@@ -44,12 +45,18 @@ export default async function CadastrosPage({
   // A matriz de convenios (quem atende e o que cobre) NAO tem .catch, de
   // proposito: vazia por erro, os modais do Profissional e do Procedimento
   // abririam sem os convenios gravados e o proximo Salvar os apagaria. Se
-  // falhar, a tela cai no erro de (app), como o catalogo.
-  const [catalogo, matriz, usoDosPacotes] = await Promise.all([
-    fetchCatalogo(supabase, active.clinicId),
-    fetchMatrizDeConvenios(supabase, active.clinicId),
-    fetchUsoDosPacotes(supabase, active.clinicId).catch(() => null),
-  ]);
+  // falhar, a tela cai no erro de (app), como o catalogo. O cadastro para o
+  // agente (AG1: endereco e horario da unidade, idade e grade do
+  // profissional, "O que o paciente precisa") tambem nao tem .catch, pelo
+  // mesmo motivo.
+  const [catalogo, matriz, cadastroDoAgente, usoDosPacotes] = await Promise.all(
+    [
+      fetchCatalogo(supabase, active.clinicId),
+      fetchMatrizDeConvenios(supabase, active.clinicId),
+      fetchCadastroParaOAgente(supabase, active.clinicId),
+      fetchUsoDosPacotes(supabase, active.clinicId).catch(() => null),
+    ],
+  );
 
   const podeEditar = canEdit(active.role, "cadastros");
   const dica = permissionHint(active.role, "cadastros");
@@ -67,6 +74,7 @@ export default async function CadastrosPage({
         clinicId={active.clinicId}
         catalogoInicial={catalogo}
         matrizInicial={matriz}
+        cadastroDoAgenteInicial={cadastroDoAgente}
         usoDosPacotesInicial={usoDosPacotes}
         abaInicial={typeof aba === "string" ? aba : undefined}
         podeEditar={podeEditar}

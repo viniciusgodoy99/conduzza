@@ -25,6 +25,11 @@ import {
   type MatrizDeConvenios,
   type UsoDoPacote,
 } from "@/lib/queries/catalogo";
+import {
+  cadastroParaOAgenteKey,
+  fetchCadastroParaOAgente,
+  type CadastroParaOAgente,
+} from "@/lib/queries/cadastro-para-o-agente";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import { createClient } from "@/lib/supabase/client";
 
@@ -46,6 +51,12 @@ export type TabProps = {
    * outras abas ignoram.
    */
   matriz: MatrizDeConvenios;
+  /**
+   * O cadastro para o agente (AG1): as colunas novas de unidade,
+   * profissional e procedimento e "O que o paciente precisa". Lido so por
+   * Cadastros (fora do Catalogo da Agenda), completo.
+   */
+  cadastroDoAgente: CadastroParaOAgente;
   podeEditar: boolean;
   dica: string;
   aoMudar: () => void;
@@ -56,6 +67,7 @@ export function CadastrosClient({
   clinicId,
   catalogoInicial,
   matrizInicial,
+  cadastroDoAgenteInicial,
   usoDosPacotesInicial,
   abaInicial,
   podeEditar,
@@ -65,6 +77,7 @@ export function CadastrosClient({
   clinicId: string;
   catalogoInicial: Catalogo;
   matrizInicial: MatrizDeConvenios;
+  cadastroDoAgenteInicial: CadastroParaOAgente;
   // null quando a leitura no servidor falhou: a aba tenta de novo aqui.
   usoDosPacotesInicial: Record<string, UsoDoPacote> | null;
   abaInicial?: string;
@@ -105,6 +118,18 @@ export function CadastrosClient({
   });
   const matriz = matrizQuery.data;
 
+  // O cadastro para o agente (AG1), sob o mesmo prefixo: o aoMudar recarrega
+  // junto. Como a matriz, sem .catch no servidor: vazio por erro, os modais
+  // abririam sem o que esta gravado e o proximo Salvar apagaria.
+  useDadosDoServidor(cadastroParaOAgenteKey(clinicId), cadastroDoAgenteInicial);
+  const cadastroDoAgenteQuery = useQuery({
+    queryKey: cadastroParaOAgenteKey(clinicId),
+    queryFn: () => fetchCadastroParaOAgente(supabase, clinicId),
+    initialData: cadastroDoAgenteInicial,
+    staleTime: 30_000,
+  });
+  const cadastroDoAgente = cadastroDoAgenteQuery.data;
+
   // Vendas e pacientes com saldo por pacote (aba Pacotes). A chave comeca
   // com o prefixo do catalogo: o invalidate de aoMudar recarrega os dois.
   useDadosDoServidor(
@@ -136,6 +161,7 @@ export function CadastrosClient({
   const tabProps: TabProps = {
     catalogo,
     matriz,
+    cadastroDoAgente,
     podeEditar,
     dica,
     aoMudar,

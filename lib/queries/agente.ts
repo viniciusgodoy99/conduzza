@@ -34,10 +34,14 @@ import { fetchProfileNames } from "@/lib/queries/profiles";
  * grant por coluna de skills (migration 20261020130000): sem elas a tela
  * leria a agenda nula e mostraria "Agendar consulta" desligada sem motivo.
  * publico_atendido (onda 2, item 4) tem o mesmo grant desde a migration
- * 20261022110000 e so entra aqui com ela aplicada (antes, 42703).
+ * 20261022110000 e so entra aqui com ela aplicada (antes, 42703). Os tres
+ * dados que a IA pede para marcar (AG3: exige_nome_completo,
+ * exige_nascimento e exige_cpf) tem o mesmo grant desde a migration
+ * 20261027120000: este codigo so vai ao ar com ela aplicada (antes, 42703 e
+ * a aba nao carrega).
  */
 export const COLUNAS_DA_CONFIG_DO_AGENTE =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, conhecimento, published_at, published_by";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, conhecimento, published_at, published_by";
 
 type LinhaDaSessao = LinhaDaConfigDoAgente & {
   id: string;

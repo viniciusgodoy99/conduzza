@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { portaDaAgendaDoWhatsapp } from "@/lib/agente/agenda";
+import {
+  gravarAtendimentoDaIa,
+  lerAtendimentoDaIa,
+  lerNascimentoInformado,
+} from "@/lib/agente/atendimento-no-banco";
 import { nomesDoCatalogo } from "@/lib/agente/ferramentas/buscar-procedimento";
 import {
   carregarCatalogoDoAgente,
@@ -9,16 +14,20 @@ import {
 import { acertarGasto, reservarGasto } from "@/lib/agente/gasto";
 import { carregarHistoricoDaConversa } from "@/lib/agente/historico";
 import {
+  atendimentoParaEstimativa,
   custoMaximoDoTurno,
   executarTurnoDoAgente,
   PRAZO_DO_TURNO_MS,
+  TEXTO_DA_FALHA,
   type ClienteDoAgente,
   type DesfechoDoTurno,
+  type FalhaDoAgente,
   type ResultadoDoTurno,
 } from "@/lib/agente/laco";
 import { VERSAO_DO_PROMPT } from "@/lib/agente/prompt";
 import { lerPrecos } from "@/lib/agente/uso";
 import {
+  anotarPassagemParaAEquipe,
   conferirTravaDoWhatsapp,
   consentimentoVigente,
   fecharTurno,
@@ -56,6 +65,7 @@ import {
   retomarTextoAprovado,
   sha256DoTexto,
 } from "@/lib/domain/conformidade/filtro";
+import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import type { TextoAprovado } from "@/lib/domain/conformidade/texto-aprovado";
 import type { Verificador } from "@/lib/domain/conformidade/veredicto";
 import {
@@ -117,12 +127,22 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     P11a); o tipo do contato (lead ou paciente, item 4) vai ao prompt.
 //  8. Teto de respostas da conversa na ultima hora.
 //  9. Reserva do custo maximo do turno (origem whatsapp).
+//  8b. (AG3) O estado do atendimento (ler_atendimento_da_ia, pelo job):
+//     fora_da_ia encerra sem envio, job_antigo so conclui, e erro ou
+//     resposta fora do formato e falha fechada (a frase fixa e a equipe,
+//     sem chamar o modelo). E o nascimento informado na conversa (so para a
+//     idade atendida do profissional, nunca para o modelo).
 // 10. O turno (portao, classificador, agente, filtro), com a trava do
 //     WhatsApp entre as rodadas e o prazo da invocacao menos o envio. As
 //     ferramentas de agenda (E4) gravam pelas RPCs com o id DESTE job
 //     (portaDaAgendaDoWhatsapp): repetir o job devolve a mesma reserva e a
 //     mesma consulta, nunca uma segunda.
 // 11. Acerto do gasto, com a conversa e o job.
+// 11b. (AG3) O estado novo, ANTES de decidir e enviar
+//     (gravar_atendimento_da_ia, com a versao lida: otimista). Recusa ou
+//     erro: a resposta construida sobre o estado velho nunca sai (falha
+//     fechada: a frase fixa e a equipe; fora_da_ia, sem frase; sem_posse, o
+//     job volta; job_antigo, so conclui).
 // 12. ANTES de enviar: ai_decision_log (nunca blocked_draft), o rascunho
 //     bloqueado no lugar restrito e ai_turno 'decidido'.
 // 13. Saida: a resposta (enviarRespostaDaIa, so TextoAprovado), ou a
@@ -543,6 +563,33 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     lerOuFalhar(() => carregarCatalogoDoAgente(admin, clinicId)),
   ]);
 
+  // 8b. (AG3) O estado do atendimento desta janela, pelo job.
+  const leitura = await lerAtendimentoDaIa(admin, {
+    clinicId,
+    conversationId: c.conversationId,
+    jobId: c.job.id,
+  });
+  if (leitura.tipo === "recusado") {
+    if (leitura.motivo === "job_antigo") {
+      return concluirJobAntigo(c, turnoAtual);
+    }
+    // fora_da_ia: alguem assumiu (ou a janela trocou) agora mesmo.
+    await encerrarSemEnvio(c, turnoAtual);
+    return CONCLUIR;
+  }
+  if (leitura.tipo === "erro") {
+    return falharSemModelo(c, base, destino, config, PASSO_DO_ESTADO_NAO_LIDO);
+  }
+  const lido = leitura.resposta;
+  const atendimento = { estado: lido.estado, dados: lido.dados };
+  const nascimentoInformado = await lerNascimentoInformado(admin, {
+    clinicId,
+    conversationId: c.conversationId,
+    contactId: conversa.contact_id,
+    // Revisao final da AG3: so a linha da janela atual.
+    janelaDesde: lido.janelaDesde,
+  });
+
   const cliente = c.deps.clienteDoAgente();
   const modelo = c.deps.modeloDoAgente();
   const identificador = identificadorDeSeguranca({
@@ -566,6 +613,13 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       modeloDosClassificadores,
       precos,
       contato: tipoDoContato,
+      atendimento: atendimentoParaEstimativa({
+        atendimento,
+        config,
+        catalogo,
+        agoraMs,
+        fuso,
+      }),
     });
     if (custoMaximo === null) {
       log.warn("ia_preco_ausente", idsDoLog(c));
@@ -627,6 +681,8 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
         jobId: c.job.id,
         agora: c.deps.agora,
       }),
+      atendimento,
+      nascimentoInformado,
       modeloDosClassificadores,
       prazoMs: prazoDoTurno,
       agora: c.deps.agora,
@@ -655,6 +711,35 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   if (resultado === null) {
     return falharSemModelo(c, { ...base, reservaId }, destino, config);
   }
+
+  // 11b. (AG3) O estado novo, antes de decidir e enviar: o turno que nao
+  // devolveu estado (nunca deveria) grava o lido, como esta.
+  const gravacao = await gravarAtendimentoDaIa(admin, {
+    clinicId,
+    conversationId: c.conversationId,
+    jobId: c.job.id,
+    versao: lido.versao,
+    estado: resultado.atendimento?.estado ?? lido.estado,
+  });
+  if (gravacao.tipo === "recusado" && gravacao.motivo === "sem_posse") {
+    // Outro executor tem o job: ele faz o turno. Nada decidido, nada sai.
+    return { ok: false, erro: "sem_posse" };
+  }
+  if (gravacao.tipo === "recusado" && gravacao.motivo === "job_antigo") {
+    return concluirJobAntigo(c, { ...base, reservaId });
+  }
+  if (gravacao.tipo !== "gravado") {
+    // fora_da_ia: a conversa saiu da IA no meio (sem frase). estado_mudou ou
+    // erro: a resposta foi construida sobre um estado que ja nao e o do
+    // banco; nao sai (a frase fixa e a equipe).
+    resultado = comoFalha(
+      resultado,
+      gravacao.tipo === "recusado" && gravacao.motivo === "fora_da_ia"
+        ? "liberacao_suspensa"
+        : "desconhecida",
+      PASSO_DO_ESTADO_NAO_GRAVADO,
+    );
+  }
   return decidirEEnviar(
     c,
     { ...base, reservaId },
@@ -663,6 +748,47 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     resultado,
     latenciaMs,
   );
+}
+
+/** AG3: o passo da trilha quando o estado do atendimento nao foi lido. */
+export const PASSO_DO_ESTADO_NAO_LIDO =
+  "Não foi possível ler o andamento do atendimento desta conversa.";
+
+/** AG3: o passo da trilha quando o estado novo nao foi gravado. */
+export const PASSO_DO_ESTADO_NAO_GRAVADO =
+  "O andamento do atendimento mudou ou não foi gravado: a resposta não foi enviada.";
+
+/**
+ * AG3: o turno vira falha (a resposta, se havia, nunca sai). Uma passagem
+ * que ja ia acontecer (frase fixa) fica como esta: a conversa vai para a
+ * equipe do mesmo jeito, com o motivo dela.
+ */
+function comoFalha(
+  resultado: ResultadoDoTurno,
+  motivo: FalhaDoAgente,
+  passo: string,
+): ResultadoDoTurno {
+  const trilha = [
+    ...resultado.trilha,
+    { tipo: "outro" as const, texto: passo },
+  ];
+  if (resultado.tipo === "frase_fixa" && motivo !== "liberacao_suspensa") {
+    return { ...resultado, trilha };
+  }
+  return {
+    ...resultado,
+    tipo: "frase_fixa",
+    resposta: FRASE_DE_ESCALONAMENTO,
+    rascunhoBloqueado: null,
+    desfecho: { tipo: "falhou", motivo },
+    trilha: [
+      ...trilha,
+      {
+        tipo: "equipe",
+        texto: `Passou para a equipe: ${TEXTO_DA_FALHA[motivo]}`,
+      },
+    ],
+  };
 }
 
 /**
@@ -833,7 +959,13 @@ async function decidirEEnviar(
     saida: "frase",
     decisionId,
   });
-  return passarEAvisar(c, destino, motivoDaPassagem(desfecho));
+  return passarEAvisar(
+    c,
+    destino,
+    motivoDaPassagem(desfecho),
+    false,
+    resultado.notaParaAEquipe ?? null,
+  );
 }
 
 /**
@@ -885,6 +1017,8 @@ async function falharSemModelo(
   turno: TurnoDaIa,
   destino: Destino,
   config: ConfigDoAgente,
+  /** AG3: o que deu errado, em texto de recepcao (o estado, por exemplo). */
+  passo: string | null = null,
 ): Promise<ResultadoDeJob> {
   const decisionId = await gravarDecisao(c.admin, {
     clinicId: c.clinicId,
@@ -894,6 +1028,7 @@ async function falharSemModelo(
     textoSha256: null,
     filtro: null,
     trilha: [
+      ...(passo === null ? [] : [{ tipo: "outro" as const, texto: passo }]),
       {
         tipo: "equipe",
         texto: `Passou para a equipe: ${ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.falha_tecnica}`,
@@ -949,6 +1084,11 @@ async function passarEAvisar(
   destino: Destino,
   motivo: MotivoDoEventoDaIa,
   retomada = false,
+  /**
+   * AG3 (item 8): a nota interna para a equipe, so quando a passagem
+   * acontece AGORA (a retomada nao tem a nota: fica so o evento).
+   */
+  nota: string | null = null,
 ): Promise<ResultadoDeJob> {
   const passagem = await passarDoJob(c, motivo);
   if (passagem === "sem_posse") {
@@ -980,6 +1120,15 @@ async function passarEAvisar(
       return retomarAvisoDaFrase(c);
     }
     return CONCLUIR;
+  }
+  if (nota !== null) {
+    // Nunca lanca: a passagem ja aconteceu, a nota e ajuda para a equipe.
+    await anotarPassagemParaAEquipe(c.admin, {
+      clinicId: c.clinicId,
+      conversationId: c.conversationId,
+      jobId: c.job.id,
+      texto: nota,
+    });
   }
   return enviarAFrase(c, destino);
 }

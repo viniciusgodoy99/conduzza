@@ -15,6 +15,12 @@ import { ABAS_DO_AGENTE, type AbaDoAgente } from "@/components/agente/textos";
 // aba uma vez so (abasNaoSalvas). Onda 2 (item 4): o terceiro, "Quem o
 // assistente atende" ("publico"), na mesma aba. A aba WhatsApp grava na
 // hora, fora do rascunho: nao tem formulario aqui.
+//
+// AG3: o quarto da aba, "Dados para marcar consulta", nao ganha nome proprio:
+// conta como o dos limites ("agenda"; comOsDadosParaMarcar), porque os dois
+// sao sobre marcar consulta e moram juntos. A aba fica pendente enquanto um
+// dos dois tiver o que nao foi salvo, e descartar remonta os dois (a mesma
+// geracao).
 
 /** Os formularios com Salvar (Habilidades grava no toque, sem Salvar). */
 export const FORMULARIOS_DO_AGENTE = [
@@ -66,6 +72,19 @@ const ABA_DO_FORMULARIO: Readonly<Record<FormularioDoAgente, AbaDoAgente>> = {
   agenda: "regras",
   instrucoes: "instrucoes",
 };
+
+/**
+ * O estado com o cartao "Dados para marcar consulta" (AG3) junto dos limites:
+ * o que foi marcado e nao salvo nele deixa "agenda" pendente.
+ */
+export function comOsDadosParaMarcar(
+  estado: EstadoNaoSalvo,
+  dadosNaoSalvos: boolean,
+): EstadoNaoSalvo {
+  return dadosNaoSalvos && !estado.agenda
+    ? { ...estado, agenda: true }
+    : estado;
+}
 
 /**
  * Os formularios com edicao nao salva, na ordem das abas. O das instrucoes

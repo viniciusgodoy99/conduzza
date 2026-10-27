@@ -54,6 +54,10 @@ import { FotoDaConversa } from "@/components/atendimento/media/foto-da-conversa"
 import { PlayerDeAudio } from "@/components/atendimento/media/player-de-audio";
 import { MarcaPeloCelular } from "@/components/atendimento/pelo-celular";
 import {
+  AUTOR_DA_NOTA_DA_PASSAGEM,
+  ehNotaDaPassagemDaIa,
+} from "@/lib/agente/nota-da-passagem";
+import {
   estadoDaMidia,
   exibicaoDaMidiaDeTexto,
   nomeOriginalDoArquivo,
@@ -69,7 +73,9 @@ import { cn } from "@/lib/utils";
 // Paciente a esquerda em branco; atendente a direita em lime suave
 // (--bubble-out); IA a direita em tinta (--bubble-ai), sempre com o selo
 // textual "IA"; nota interna a direita em ambar, com cadeado e o aviso de que
-// o paciente nao ve; a enviada direto pelo WhatsApp da clinica (pelo_celular)
+// o paciente nao ve (a nota que a IA deixa ao passar a conversa, D-20, com a
+// linha de autoria da IA: brilho, "Assistente" e o selo "IA"); a enviada
+// direto pelo WhatsApp da clinica (pelo_celular)
 // a direita na pele da atendente, assinada "Pelo WhatsApp" com o icone do
 // aparelho no lugar do nome; a frase fixa que o contato recebe quando a IA
 // passa a conversa para a equipe (revisao de producao de 19/10/2026) a
@@ -714,6 +720,11 @@ export function MessageBubble({
   const fromIa = message.author === "ia";
   const note = message.is_internal_note;
   const apagada = message.deleted_at !== null;
+  // D-20 (decisao do dono, 27/10/2026): a nota interna que a IA deixa ao
+  // passar a conversa para a equipe. Pele da nota (o paciente nao ve) e a
+  // linha de autoria da IA (o brilho, "Assistente" e o selo "IA"), com o
+  // cadeado e o aviso da nota.
+  const notaDaIa = note && ehNotaDaPassagemDaIa(message);
   // Enviada direto pelo WhatsApp da clínica, fora do sistema. Cai na pele
   // "atendente" (é fala da clínica ao paciente) e troca o nome, que o sistema
   // não sabe, por "Pelo WhatsApp" com o ícone do aparelho.
@@ -817,6 +828,23 @@ export function MessageBubble({
             </span>
           </span>
         ) : null}
+        {notaDaIa && !apagada ? (
+          <span
+            data-nota-da-ia
+            className="flex flex-wrap items-center gap-x-1 px-1 text-[11px] font-semibold text-text-secondary"
+          >
+            <Sparkles aria-hidden className="size-3 text-ai-text" />
+            {authorName ?? AUTOR_DA_NOTA_DA_PASSAGEM}
+            <span className="inline-flex h-4 items-center rounded-full bg-ai-bg px-1.5 text-[10px] font-bold text-ai-text">
+              IA
+            </span>
+            <span className="flex items-center gap-1 text-warning-text">
+              <span aria-hidden>·</span>
+              <Lock aria-hidden className="size-3" />
+              Nota interna, o paciente não vê
+            </span>
+          </span>
+        ) : null}
         {peloCelular && !apagada ? (
           <MarcaPeloCelular className="px-1 text-[11px] font-semibold text-text-secondary" />
         ) : null}
@@ -849,6 +877,7 @@ export function MessageBubble({
         ) : null}
         {!fromPatient &&
         !fromIa &&
+        !notaDaIa &&
         !peloCelular &&
         !avisoAutomatico &&
         !autoriaAgendada &&

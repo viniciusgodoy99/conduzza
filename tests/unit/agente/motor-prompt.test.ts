@@ -231,15 +231,24 @@ describe("montarInstrucoes", () => {
     const desligada = config({
       habilidades: { ...ligada.habilidades, informar_preco_e_convenio: false },
     });
+    // AG2: as consultas do Cadastro vem com "Responder dúvidas" (travada),
+    // com ou sem a habilidade de preço.
+    const cadastro = [
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
+    ];
     expect(ferramentasDaChamada(ligada).map((f) => f.name)).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
+      ...cadastro,
       "buscar_procedimento",
       "escalar_humano",
     ]);
     expect(ferramentasDaChamada(desligada).map((f) => f.name)).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
+      ...cadastro,
       "escalar_humano",
     ]);
     expect(
@@ -487,8 +496,10 @@ describe("revisão de produção: valor e convênio no texto fixo (Q6 e Q14)", (
   });
 
   it("procedimento fora do bloco não vira 'a clínica não faz'", () => {
+    // AG2: o bloco traz todos os procedimentos ativos; o que nao esta nele
+    // continua nunca sendo "a clinica nao faz".
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "Se o paciente perguntar de um que não está lá, não diga que a clínica não faz",
+      "Se o paciente perguntar de um procedimento que não está no bloco, não diga que a clínica não faz",
     );
   });
 

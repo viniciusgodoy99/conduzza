@@ -12,7 +12,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type Linha = Record<string, unknown>;
 type Filtro = (linha: Linha) => boolean;
-type Resposta = { data: unknown; error: { code?: string } | null };
+type Resposta = {
+  data: unknown;
+  error: { code?: string } | null;
+  count?: number | null;
+};
 
 export type Leitura = {
   tabela: string;
@@ -87,7 +91,9 @@ function filtroDoOr(expressao: string): Filtro {
         ? (linha[coluna] ?? null) === null
         : operador === "eq"
           ? linha[coluna] === valor
-          : false;
+          : operador === "neq"
+            ? linha[coluna] !== valor
+            : false;
   });
   return (linha) => partes.some((parte) => parte(linha));
 }
@@ -105,8 +111,35 @@ class Consulta implements PromiseLike<Resposta> {
     private readonly tabela: string,
   ) {}
 
-  select(colunas = "*"): this {
+  private contar = false;
+  private soCabeca = false;
+
+  select(colunas = "*", opcoes?: { count?: string; head?: boolean }): this {
     this.colunas = colunas;
+    this.contar = opcoes?.count === "exact";
+    this.soCabeca = opcoes?.head === true;
+    return this;
+  }
+  neq(coluna: string, valor: unknown): this {
+    this.descricao.push(`neq:${coluna}=${String(valor)}`);
+    this.filtros.push((linha) => linha[coluna] !== valor);
+    return this;
+  }
+  /** jsonb @> (so objetos com listas de textos, o que o codigo usa). */
+  contains(coluna: string, valor: Record<string, unknown>): this {
+    this.descricao.push(`contains:${coluna}`);
+    this.filtros.push((linha) => {
+      const doc = linha[coluna] as Record<string, unknown> | null | undefined;
+      if (!doc || typeof doc !== "object") {
+        return false;
+      }
+      return Object.entries(valor).every(([chave, esperado]) => {
+        const atual = doc[chave];
+        return Array.isArray(esperado)
+          ? Array.isArray(atual) && esperado.every((e) => atual.includes(e))
+          : atual === esperado;
+      });
+    });
     return this;
   }
   insert(): this {
@@ -135,10 +168,18 @@ class Consulta implements PromiseLike<Resposta> {
     this.filtros.push((linha) => valores.includes(linha[coluna]));
     return this;
   }
-  not(coluna: string, operador: string, valor: string): this {
+  not(coluna: string, operador: string, valor: string | null): this {
     this.descricao.push(`not:${coluna}`);
+    if (operador === "is") {
+      // not(col, "is", null): a coluna preenchida (como o PostgREST).
+      const alvo = valor === null || valor === "null" ? null : valor;
+      this.filtros.push((linha) => (linha[coluna] ?? null) !== alvo);
+      return this;
+    }
     const lista =
-      operador === "in" ? valor.replace(/^\(|\)$/g, "").split(",") : [valor];
+      operador === "in"
+        ? String(valor).replace(/^\(|\)$/g, "").split(",")
+        : [String(valor)];
     this.filtros.push((linha) => !lista.includes(String(linha[coluna])));
     return this;
   }
@@ -209,14 +250,19 @@ class Consulta implements PromiseLike<Resposta> {
         ? null
         : this.colunas.split(",").map((c) => c.trim());
     return {
-      data: resultado
-        .slice(this.de, this.ate + 1)
-        .map((linha) =>
-          colunas === null
-            ? { ...linha }
-            : Object.fromEntries(colunas.map((c) => [c, linha[c] ?? null])),
-        ),
+      data: this.soCabeca
+        ? null
+        : resultado
+            .slice(this.de, this.ate + 1)
+            .map((linha) =>
+              colunas === null
+                ? { ...linha }
+                : Object.fromEntries(
+                    colunas.map((c) => [c, linha[c] ?? null]),
+                  ),
+            ),
       error: null,
+      count: this.contar ? resultado.length : null,
     };
   }
 }

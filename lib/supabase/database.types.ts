@@ -44,6 +44,9 @@ export type Database = {
           conhecimento: Json
           created_at: string
           escalation_rules: Json
+          exige_cpf: boolean
+          exige_nascimento: boolean
+          exige_nome_completo: boolean
           fallback_minutes: number | null
           greeting: string | null
           id: string
@@ -69,6 +72,9 @@ export type Database = {
           conhecimento?: Json
           created_at?: string
           escalation_rules?: Json
+          exige_cpf?: boolean
+          exige_nascimento?: boolean
+          exige_nome_completo?: boolean
           fallback_minutes?: number | null
           greeting?: string | null
           id?: string
@@ -94,6 +100,9 @@ export type Database = {
           conhecimento?: Json
           created_at?: string
           escalation_rules?: Json
+          exige_cpf?: boolean
+          exige_nascimento?: boolean
+          exige_nome_completo?: boolean
           fallback_minutes?: number | null
           greeting?: string | null
           id?: string
@@ -2064,6 +2073,88 @@ export type Database = {
           },
         ]
       }
+      dados_informados_na_marcacao: {
+        Row: {
+          aplicado_em: string | null
+          aplicado_por: string | null
+          appointment_id: string | null
+          carteirinha: string | null
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          cpf: string | null
+          created_at: string
+          data_nascimento: string | null
+          id: string
+          janela_desde: string
+          job_id: string
+          nome_completo: string | null
+          para_o_titular: boolean
+          slot_hold_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          aplicado_em?: string | null
+          aplicado_por?: string | null
+          appointment_id?: string | null
+          carteirinha?: string | null
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          cpf?: string | null
+          created_at?: string
+          data_nascimento?: string | null
+          id?: string
+          janela_desde: string
+          job_id: string
+          nome_completo?: string | null
+          para_o_titular: boolean
+          slot_hold_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          aplicado_em?: string | null
+          aplicado_por?: string | null
+          appointment_id?: string | null
+          carteirinha?: string | null
+          clinic_id?: string
+          contact_id?: string
+          conversation_id?: string
+          cpf?: string | null
+          created_at?: string
+          data_nascimento?: string | null
+          id?: string
+          janela_desde?: string
+          job_id?: string
+          nome_completo?: string | null
+          para_o_titular?: boolean
+          slot_hold_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dados_informados_na_marcacao_appointment_id_fkey"
+            columns: ["appointment_id"]
+            isOneToOne: false
+            referencedRelation: "appointment"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dados_informados_na_marcacao_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dados_informados_na_marcacao_slot_hold_id_fkey"
+            columns: ["slot_hold_id"]
+            isOneToOne: false
+            referencedRelation: "slot_hold"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       etapa_pendente_da_passagem: {
         Row: {
           clinic_id: string
@@ -2187,6 +2278,92 @@ export type Database = {
           label?: string
         }
         Relationships: []
+      }
+      ia_atendimento: {
+        Row: {
+          anterior: Json | null
+          appointment_id: string | null
+          clinic_id: string
+          conversation_id: string
+          created_at: string
+          desfecho: string | null
+          etapa: string
+          falhas_seguidas: number
+          horarios_oferecidos: Json
+          id: string
+          insurance_id: string | null
+          intencao: string | null
+          janela_desde: string
+          job_id: string
+          particular: boolean | null
+          pedido_pendente: string | null
+          pedido_pendente_em: string | null
+          procedure_id: string | null
+          professional_id: string | null
+          slot_hold_id: string | null
+          unit_id: string | null
+          updated_at: string
+          versao: number
+        }
+        Insert: {
+          anterior?: Json | null
+          appointment_id?: string | null
+          clinic_id: string
+          conversation_id: string
+          created_at?: string
+          desfecho?: string | null
+          etapa?: string
+          falhas_seguidas?: number
+          horarios_oferecidos?: Json
+          id?: string
+          insurance_id?: string | null
+          intencao?: string | null
+          janela_desde: string
+          job_id: string
+          particular?: boolean | null
+          pedido_pendente?: string | null
+          pedido_pendente_em?: string | null
+          procedure_id?: string | null
+          professional_id?: string | null
+          slot_hold_id?: string | null
+          unit_id?: string | null
+          updated_at?: string
+          versao?: number
+        }
+        Update: {
+          anterior?: Json | null
+          appointment_id?: string | null
+          clinic_id?: string
+          conversation_id?: string
+          created_at?: string
+          desfecho?: string | null
+          etapa?: string
+          falhas_seguidas?: number
+          horarios_oferecidos?: Json
+          id?: string
+          insurance_id?: string | null
+          intencao?: string | null
+          janela_desde?: string
+          job_id?: string
+          particular?: boolean | null
+          pedido_pendente?: string | null
+          pedido_pendente_em?: string | null
+          procedure_id?: string | null
+          professional_id?: string | null
+          slot_hold_id?: string | null
+          unit_id?: string | null
+          updated_at?: string
+          versao?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_atendimento_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       ia_clinica_habilitada: {
         Row: {
@@ -3965,6 +4142,7 @@ export type Database = {
           created_at: string
           default_duration_min: number
           description: string | null
+          ia_pode_informar: boolean
           id: string
           name: string
           prep_instructions: string | null
@@ -3980,6 +4158,7 @@ export type Database = {
           created_at?: string
           default_duration_min?: number
           description?: string | null
+          ia_pode_informar?: boolean
           id?: string
           name: string
           prep_instructions?: string | null
@@ -3995,6 +4174,7 @@ export type Database = {
           created_at?: string
           default_duration_min?: number
           description?: string | null
+          ia_pode_informar?: boolean
           id?: string
           name?: string
           prep_instructions?: string | null
@@ -4065,6 +4245,67 @@ export type Database = {
           },
         ]
       }
+      procedure_requirement: {
+        Row: {
+          ativo: boolean
+          clinic_id: string
+          created_at: string
+          id: string
+          insurance_id: string | null
+          procedure_id: string
+          texto_ao_paciente: string | null
+          tipo: string
+          updated_at: string
+          valor_inteiro: number | null
+        }
+        Insert: {
+          ativo?: boolean
+          clinic_id: string
+          created_at?: string
+          id?: string
+          insurance_id?: string | null
+          procedure_id: string
+          texto_ao_paciente?: string | null
+          tipo: string
+          updated_at?: string
+          valor_inteiro?: number | null
+        }
+        Update: {
+          ativo?: boolean
+          clinic_id?: string
+          created_at?: string
+          id?: string
+          insurance_id?: string | null
+          procedure_id?: string
+          texto_ao_paciente?: string | null
+          tipo?: string
+          updated_at?: string
+          valor_inteiro?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "procedure_requirement_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "procedure_requirement_insurance_id_fkey"
+            columns: ["insurance_id"]
+            isOneToOne: false
+            referencedRelation: "insurance"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "procedure_requirement_procedure_id_fkey"
+            columns: ["procedure_id"]
+            isOneToOne: false
+            referencedRelation: "procedure"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_admin: {
         Row: {
           created_at: string
@@ -4088,7 +4329,10 @@ export type Database = {
           council_number: string | null
           council_type: string | null
           created_at: string
+          grade_minutos: number | null
           id: string
+          idade_maxima: number | null
+          idade_minima: number | null
           name: string
           photo_url: string | null
           specialties: string[]
@@ -4101,7 +4345,10 @@ export type Database = {
           council_number?: string | null
           council_type?: string | null
           created_at?: string
+          grade_minutos?: number | null
           id?: string
+          idade_maxima?: number | null
+          idade_minima?: number | null
           name: string
           photo_url?: string | null
           specialties?: string[]
@@ -4114,7 +4361,10 @@ export type Database = {
           council_number?: string | null
           council_type?: string | null
           created_at?: string
+          grade_minutos?: number | null
           id?: string
+          idade_maxima?: number | null
+          idade_minima?: number | null
           name?: string
           photo_url?: string | null
           specialties?: string[]
@@ -4527,6 +4777,7 @@ export type Database = {
           professional_id: string
           service_link_id: string | null
           starts_at: string
+          unit_id: string | null
           updated_at: string
         }
         Insert: {
@@ -4545,6 +4796,7 @@ export type Database = {
           professional_id: string
           service_link_id?: string | null
           starts_at: string
+          unit_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -4563,6 +4815,7 @@ export type Database = {
           professional_id?: string
           service_link_id?: string | null
           starts_at?: string
+          unit_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -4608,6 +4861,13 @@ export type Database = {
             referencedRelation: "service_link"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "slot_hold_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "unit"
+            referencedColumns: ["id"]
+          },
         ]
       }
       termo_eco_visto: {
@@ -4638,33 +4898,72 @@ export type Database = {
       }
       unit: {
         Row: {
+          acessibilidade: string | null
           active: boolean
           address: string | null
+          bairro: string | null
+          cep: string | null
+          cidade: string | null
           clinic_id: string
+          complemento: string | null
           created_at: string
+          estacionamento: string | null
+          horario_de_funcionamento: Json | null
           id: string
+          link_do_mapa: string | null
+          logradouro: string | null
           name: string
+          numero: string | null
+          observacao_ao_paciente: string | null
           phone: string | null
+          referencia: string | null
+          uf: string | null
           updated_at: string
         }
         Insert: {
+          acessibilidade?: string | null
           active?: boolean
           address?: string | null
+          bairro?: string | null
+          cep?: string | null
+          cidade?: string | null
           clinic_id: string
+          complemento?: string | null
           created_at?: string
+          estacionamento?: string | null
+          horario_de_funcionamento?: Json | null
           id?: string
+          link_do_mapa?: string | null
+          logradouro?: string | null
           name: string
+          numero?: string | null
+          observacao_ao_paciente?: string | null
           phone?: string | null
+          referencia?: string | null
+          uf?: string | null
           updated_at?: string
         }
         Update: {
+          acessibilidade?: string | null
           active?: boolean
           address?: string | null
+          bairro?: string | null
+          cep?: string | null
+          cidade?: string | null
           clinic_id?: string
+          complemento?: string | null
           created_at?: string
+          estacionamento?: string | null
+          horario_de_funcionamento?: Json | null
           id?: string
+          link_do_mapa?: string | null
+          logradouro?: string | null
           name?: string
+          numero?: string | null
+          observacao_ao_paciente?: string | null
           phone?: string | null
+          referencia?: string | null
+          uf?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -5119,6 +5418,7 @@ export type Database = {
           p_clinic_id: string
           p_conversation_id: string
           p_job_id: string
+          p_slot_hold_id?: string
         }
         Returns: Json
       }
@@ -5174,6 +5474,10 @@ export type Database = {
       bater_ponto_do_worker: {
         Args: { p_ultimo_lote?: number; p_worker_id: string }
         Returns: undefined
+      }
+      cadastro_texto_valido: {
+        Args: { p_maximo: number; p_texto: string }
+        Returns: boolean
       }
       cancelar_pelo_paciente: {
         Args: {
@@ -5344,6 +5648,7 @@ export type Database = {
           p_reserva_propria: string
           p_service_link_id: string
           p_starts_at: string
+          p_unit_id: string
         }
         Returns: Record<string, unknown>
       }
@@ -5396,6 +5701,7 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: Json
       }
+      cpf_valido: { Args: { p_cpf: string }; Returns: boolean }
       criar_oferta_de_espera: {
         Args: {
           p_clinic_id: string
@@ -5407,6 +5713,17 @@ export type Database = {
           p_source_appointment_id: string
         }
         Returns: string
+      }
+      dados_que_faltam_para_marcar: {
+        Args: {
+          p_carteirinha: string
+          p_clinic_id: string
+          p_cpf: string
+          p_data_nascimento: string
+          p_nome_completo: string
+          p_service_link_id: string
+        }
+        Returns: string[]
       }
       definir_contato_liberado_da_ia: {
         Args: {
@@ -5666,6 +5983,16 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: string
       }
+      gravar_atendimento_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_estado: Json
+          p_job_id: string
+          p_versao: number
+        }
+        Returns: Json
+      }
       gravar_evento_da_ia: {
         Args: { p_job_id: string; p_motivo: string; p_worker: string }
         Returns: boolean
@@ -5686,6 +6013,10 @@ export type Database = {
         Args: { p_clinic_id: string; p_limite?: number }
         Returns: Json
       }
+      horario_de_funcionamento_valido: {
+        Args: { p_horario: Json }
+        Returns: boolean
+      }
       ia_atende_no_whatsapp: {
         Args: {
           p_clinic_id: string
@@ -5703,6 +6034,14 @@ export type Database = {
       }
       ia_estado_do_motor: { Args: never; Returns: Json }
       ia_exigir_equipe_conduzza: { Args: never; Returns: undefined }
+      ia_estado_do_atendimento: {
+        Args: { p_linha: Database["public"]["Tables"]["ia_atendimento"]["Row"] }
+        Returns: Json
+      }
+      ia_estado_do_atendimento_valido: {
+        Args: { p_estado: Json }
+        Returns: boolean
+      }
       ia_exigir_quem_libera: {
         Args: { p_clinic_id: string }
         Returns: undefined
@@ -5712,6 +6051,10 @@ export type Database = {
         Returns: string
       }
       ia_interruptor_ligado: { Args: never; Returns: boolean }
+      ia_horarios_oferecidos_validos: {
+        Args: { p_horarios: Json }
+        Returns: boolean
+      }
       ia_jobs_devidos: {
         Args: {
           p_clinic_ids: string[]
@@ -5794,6 +6137,18 @@ export type Database = {
       }
       instrucoes_do_agente: { Args: { p_clinic_id: string }; Returns: string }
       is_product_admin: { Args: never; Returns: boolean }
+      ler_atendimento_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_job_id: string
+        }
+        Returns: Json
+      }
+      ler_dados_informados_na_marcacao: {
+        Args: { p_appointment_id: string; p_clinic_id: string }
+        Returns: Json
+      }
       ler_rascunho_bloqueado: {
         Args: { p_decision_id: string }
         Returns: Json
@@ -5944,6 +6299,7 @@ export type Database = {
         Returns: Json
       }
       planejar_reguas: { Args: never; Returns: Json }
+      podar_agendamento_da_ia: { Args: never; Returns: Json }
       podar_cliques_do_site: {
         Args: { p_agora?: string; p_clinic_ids?: string[] }
         Returns: Json
@@ -5963,6 +6319,10 @@ export type Database = {
           p_incluir_teste?: boolean
           p_limite?: number
         }
+        Returns: Json
+      }
+      prontidao_do_cadastro_da_ia: {
+        Args: { p_clinic_id: string }
         Returns: Json
       }
       publicar_agente: {
@@ -6083,6 +6443,19 @@ export type Database = {
         }
         Returns: Json
       }
+      registrar_dados_da_marcacao: {
+        Args: {
+          p_carteirinha?: string
+          p_clinic_id: string
+          p_conversation_id: string
+          p_cpf?: string
+          p_data_nascimento?: string
+          p_job_id: string
+          p_nome_completo?: string
+          p_para_o_titular: boolean
+        }
+        Returns: Json
+      }
       registrar_falha_do_gasto_meta: {
         Args: {
           p_ad_account_id: string
@@ -6142,6 +6515,7 @@ export type Database = {
           p_job_id: string
           p_service_link_id: string
           p_starts_at: string
+          p_unit_id?: string
         }
         Returns: Json
       }
@@ -6194,6 +6568,14 @@ export type Database = {
           p_validity_days: number
         }
         Returns: string
+      }
+      salvar_requisitos_do_procedimento: {
+        Args: {
+          p_ids_na_abertura: string[]
+          p_itens: Json
+          p_procedure_id: string
+        }
+        Returns: Json
       }
       saude_do_motor: { Args: never; Returns: Json }
       seed_reguas_padrao: { Args: { p_clinic_id: string }; Returns: undefined }

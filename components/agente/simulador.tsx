@@ -4,6 +4,7 @@ import {
   BookOpenText,
   CalendarDays,
   CircleDollarSign,
+  FolderCog,
   RotateCcw,
   Send,
   ShieldBan,
@@ -111,15 +112,23 @@ export type EntradaDaSimulacao = {
   cenario: CenarioDoSimulador | null;
   /** O "Testar como": lead, paciente ou nulo (sem a linha do contato). */
   contato: "lead" | "paciente" | null;
+  /**
+   * AG3: o estado do atendimento simulado que o servidor mandou na ultima
+   * resposta (assinado), de volta como veio; nulo no comeco.
+   */
+  estado?: string | null;
 };
 
 // O passo de agenda (E4: buscou horario, reservou, marcou, confirmou
 // presenca) usa o CalendarDays, o mesmo icone do menu da Agenda, neutro como
-// os outros icones da trilha (so ilustram o tipo do passo, C47).
+// os outros icones da trilha (so ilustram o tipo do passo, C47). O de
+// cadastro (AG2: unidades, o que o paciente precisa, quem atende) usa o
+// FolderCog, o do menu de Cadastros.
 const ICONE_DO_PASSO: Record<PassoDaTrilha["tipo"], LucideIcon> = {
   preco: CircleDollarSign,
   base: BookOpenText,
   agenda: CalendarDays,
+  cadastro: FolderCog,
   equipe: UsersRound,
   bloqueio: ShieldBan,
   outro: Sparkles,
@@ -130,6 +139,7 @@ const COR_DO_PASSO: Record<PassoDaTrilha["tipo"], string> = {
   preco: "text-text-secondary",
   base: "text-text-secondary",
   agenda: "text-text-secondary",
+  cadastro: "text-text-secondary",
   equipe: "text-text-secondary",
   bloqueio: "text-alert-text",
   outro: "text-text-secondary",
@@ -320,6 +330,11 @@ export function Simulador({
   const [texto, setTexto] = useState("");
   const [cenario, setCenario] = useState<CenarioDoSimulador | null>(null);
   const [testarComo, setTestarComo] = useState<TestarComo>("nenhum");
+  // AG3: o estado do atendimento simulado (assinado pelo servidor), que vai
+  // de volta no proximo pedido e some ao reiniciar. Nada e gravado.
+  const [estadoDoAtendimento, setEstadoDoAtendimento] = useState<
+    string | null
+  >(null);
   const [erro, setErro] = useState<string | null>(null);
   const [pendente, startTransition] = useTransition();
   const contador = useRef(0);
@@ -351,6 +366,7 @@ export function Simulador({
     setTexto("");
     setCenario(null);
     setTestarComo("nenhum");
+    setEstadoDoAtendimento(null);
     setErro(null);
   };
 
@@ -388,6 +404,7 @@ export function Simulador({
           mensagens: mensagensParaOServidor(historico),
           cenario,
           contato: contatoDoTestarComo(testarComo),
+          estado: estadoDoAtendimento,
         });
       } catch {
         resultado = { ok: false, erro: T.semResposta };
@@ -403,6 +420,7 @@ export function Simulador({
           assinatura: resultado.assinatura,
         };
         setFalas((atuais) => [...atuais, resposta]);
+        setEstadoDoAtendimento(resultado.estado ?? null);
         return;
       }
       // Nao respondeu: a mensagem volta para o campo, para tentar de novo.

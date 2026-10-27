@@ -19,6 +19,7 @@ import {
 import {
   frasesDasVisoes,
   neutralizador,
+  normalizarBase,
   sinaisDeOfuscacao,
   temLetraForaDoAlfabeto,
   visoesDoTexto,
@@ -126,9 +127,7 @@ function caixaAlta(bruto: string): boolean {
   if (INTERROGACAO.test(bruto)) {
     return false;
   }
-  const palavras = bruto
-    .split(/\s+/u)
-    .filter((parte) => /\p{L}/u.test(parte));
+  const palavras = bruto.split(/\s+/u).filter((parte) => /\p{L}/u.test(parte));
   if (palavras.length < MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA) {
     return false;
   }
@@ -226,11 +225,131 @@ export function detectarGatilhosDeEntrada(
   return ordenarPorPrioridade(GATILHOS_DE_ENTRADA, achados);
 }
 
+// ---------------------------------------------------------------------------
+// Revisao final da AG3 (achado 15, D-8): a consulta para outra pessoa adulta
+// ---------------------------------------------------------------------------
+//
+// A consulta para outra pessoa passa para a equipe (D-8). O modelo ja passa
+// quando percebe (registrar_dados_do_paciente com para_o_titular false), mas
+// o pedido obvio ("quero marcar para minha mae", "tem horario pro meu
+// pai?", "e para o meu marido") nao precisa chegar a ele: o portao passa
+// antes, com o motivo consulta_para_outra_pessoa. Filho, filha, neto,
+// sobrinho e enteado ficam de fora: seguem pela regra do menor de idade
+// (a idade, quando dita, ou o nascimento informado). Sem gatilho novo no
+// banco (o CHECK de gatilho_entrada nao muda): o laco escala com o motivo e
+// sem gatilho.
+
+/** Os parentes e as pessoas adultas da consulta para outra pessoa. */
+const PESSOA_ADULTA =
+  "(?:mae|mamae|pai|papai|marido|esposo|esposa|mulher|companheir[oa]|namorad[oa]|noiv[oa]|avo|avos|vovo|vovos|sogr[oa]|irma|irmao|irmas|irmaos|tia|tio|tias|tios|prima|primo|cunhad[oa]|genro|nora|madrasta|padrasto|amig[oa]|vizinh[oa]|chefe|patrao|patroa|colega|funcionari[oa]|empregad[oa]|cuidador|cuidadora)";
+/**
+ * Revisao curta das correcoes da AG3 (achado 9): o parente dito sem o
+ * possessivo ("pra mamae", "pro papai", "para a vovo").
+ */
+const PESSOA_SEM_POSSESSIVO = "(?:mamae|papai|vovo|vovos)";
+/** "minha", "o meu", "nossa". */
+const DE_QUEM = "(?:(?:a|o|as|os)\\s+)?(?:minha|meu|minhas|meus|nossa|nosso)";
+/** "para", "pra", "pro", "p/". */
+const PARA_QUEM = "(?:para|pra|pro|pros|pras|p\\/)";
+/** O que diz que e marcacao ("marcar", "consulta", "horario"). */
+const PEDIDO_DE_AGENDA =
+  /\b(?:marcar|marca|marque|agendar|agenda|agende|agendamento|marcacao|consulta|consultas|horario|horarios|vaga|vagas|encaixe|encaixar|atendimento|avaliacao|retorno|sessao|procedimento)\b/;
+/** "para minha mae", "pro meu pai", "pra minha esposa", "pra mamae". */
+const PARA_A_PESSOA = new RegExp(
+  `\\b${PARA_QUEM}\\s+(?:${DE_QUEM}\\s+${PESSOA_ADULTA}|(?:(?:a|o)\\s+)?${PESSOA_SEM_POSSESSIVO})\\b`,
+  "g",
+);
+/**
+ * Revisao curta das correcoes da AG3 (achado 9): o "para a pessoa" que nao
+ * pede a consulta para ela.
+ *  - negado: "e para mim, nao para minha mae", "nao e pro meu marido";
+ */
+const NEGACAO_ANTES_DA_PESSOA =
+  /\b(?:nao|nem|nunca)\s+(?:(?:e|eh|sera|seria|vai ser|era|foi|so|e so)\s+)?$/;
+/**
+ *  - a pessoa como quem faz outra coisa ("um horario que de para minha mae
+ *    me levar", "pro meu chefe me liberar", "pro meu marido poder vir"): o
+ *    pronome ou o verbo logo depois dela. "Para minha mae consultar" e
+ *    "para minha mae fazer a limpeza" continuam sendo para ela;
+ */
+const OUTRA_COISA_DEPOIS_DA_PESSOA =
+  /^\s+(?:(?:me|te|nos|lhe|comigo|conosco)\b|(?:levar|trazer|acompanhar|buscar|ir|vir|poder|conseguir|dirigir|ficar|cuidar|pagar|liberar|deixar|ajudar|esperar|aguardar|chegar|sair|saber|ver|olhar|entrar|estacionar|lembrar|avisar|resolver|decidir|escolher|trabalhar|almocar|dormir|viajar|voltar|participar|assistir|estar)\b)/;
+/**
+ *  - o horario que serve para a pessoa ("um horario bom para minha mae",
+ *    "que de pra minha esposa", "melhor pro meu marido"): fica para o
+ *    modelo, que passa para a equipe quando a consulta e dela.
+ */
+const CONVENIENCIA_ANTES_DA_PESSOA =
+  /\b(?:bom|boa|bons|boas|melhor|melhores|conveniente|facil|tranquilo|tranquila|ruim|dificil|possivel|viavel|complicado|complicada|de|der|da|daria|desse|dar|serve|servir)\s+(?:(?:certo|tambem|mais)\s+)?$/;
+/** "minha mae quer marcar", "e minha mae que precisa de uma consulta". */
+const A_PESSOA_QUER = new RegExp(
+  `\\b${DE_QUEM}\\s+${PESSOA_ADULTA}\\s+(?:que\\s+)?(?:quer|queria|gostaria|precisa|precisaria|vai|iria|deseja|desejaria)\\s+(?:de\\s+)?(?:marcar|agendar|consultar|uma consulta|um horario|um atendimento|uma avaliacao|ser atendid[oa]|passar\\s+(?:por|em)\\s+(?:uma\\s+)?(?:consulta|avaliacao|atendimento)|passar\\s+com\\s+(?:a|o)\\s+(?:dra?|doutora?|medic[oa]|\\S+ista)\\b)`,
+);
+/** A resposta curta: "e para minha mae", "seria pro meu pai". */
+const RESPOSTA_PARA_A_PESSOA = new RegExp(
+  `^(?:(?:sim|nao|e|eh|seria|sera|vai ser|na verdade|ah)\\s*,?\\s+)+${PARA_QUEM}\\s+(?:${DE_QUEM}\\s+${PESSOA_ADULTA}|(?:(?:a|o)\\s+)?${PESSOA_SEM_POSSESSIVO})\\b`,
+);
+/** "Nao e para minha mae": a resposta curta negada (sem a virgula). */
+const RESPOSTA_NEGADA =
+  /^\s*(?:nao|nem)\s+(?:e|eh|seria|sera|vai ser|era|foi)\b/;
+
+/**
+ * Revisao curta das correcoes da AG3 (achado 9): a frase pede a consulta para
+ * a pessoa (o "para minha mae" que nao e negado, nao e a pessoa fazendo
+ * outra coisa e nao e o horario que serve para ela).
+ */
+function pedeParaAPessoa(frase: string): boolean {
+  for (const m of frase.matchAll(PARA_A_PESSOA)) {
+    const inicio = m.index ?? 0;
+    const fim = inicio + m[0].length;
+    const antes = frase.slice(Math.max(0, inicio - 40), inicio);
+    if (
+      NEGACAO_ANTES_DA_PESSOA.test(antes) ||
+      CONVENIENCIA_ANTES_DA_PESSOA.test(antes) ||
+      OUTRA_COISA_DEPOIS_DA_PESSOA.test(frase.slice(fim, fim + 40))
+    ) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * O pedido de consulta para outra pessoa adulta numa das mensagens: a frase
+ * com o pedido de agenda e "para minha mae" (ou "pro meu pai", "para o meu
+ * marido", "pra minha esposa", "pra mamae"...), "minha mae quer marcar" e a
+ * resposta curta ("e para minha mae"). Filho e filha nao (a regra do
+ * menor). Revisao curta das correcoes da AG3 (achado 9): a pessoa tem de ser
+ * a paciente; "a consulta e para mim, nao para minha mae", "meu marido vai
+ * passar ai para pagar", "um horario que de para minha mae me levar" e "pro
+ * meu chefe me liberar" nao sao.
+ */
+export function pedidoDeConsultaParaOutraPessoa(
+  textos: readonly (string | null)[],
+): boolean {
+  return textos.some((texto) => {
+    if (texto === null) {
+      return false;
+    }
+    return normalizarBase(texto)
+      .split(/[.!?\n]+/)
+      .map((frase) => frase.trim())
+      .some(
+        (frase) =>
+          (PEDIDO_DE_AGENDA.test(frase) && pedeParaAPessoa(frase)) ||
+          A_PESSOA_QUER.test(frase) ||
+          (RESPOSTA_PARA_A_PESSOA.test(frase) && !RESPOSTA_NEGADA.test(frase)),
+      );
+  });
+}
+
 /**
  * As regras do portao que vivem em codigo (idade declarada, caixa alta,
- * limites), para a versao do portao (versaoDoPortao, filtro.ts) mudar quando
- * elas mudarem. Os padroes, as trocas e o lexico vem de padroes.ts. Sem
- * hash aqui: este modulo tambem roda no navegador.
+ * limites e, revisao final da AG3, a consulta para outra pessoa adulta),
+ * para a versao do portao (versaoDoPortao, filtro.ts) mudar quando elas
+ * mudarem. Os padroes, as trocas e o lexico vem de padroes.ts. Sem hash
+ * aqui: este modulo tambem roda no navegador.
  */
 export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   IDADE_DECLARADA,
@@ -239,6 +358,21 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   `caixa alta: ${MINIMO_DE_LETRAS_DA_CAIXA_ALTA} letras, ${PROPORCAO_DA_CAIXA_ALTA}, ${MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA} palavras, sem ${INTERROGACAO.source}`,
   `limites: ${LIMITE_DE_MENSAGEM}, ${LIMITE_DA_RAJADA}, ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO}`,
   "midia escala",
+  // Revisao final da AG3 (D-8): a consulta para outra pessoa adulta.
+  PEDIDO_DE_AGENDA.source,
+  PARA_A_PESSOA.source,
+  A_PESSOA_QUER.source,
+  RESPOSTA_PARA_A_PESSOA.source,
+  "outra pessoa adulta: consulta_para_outra_pessoa, sem gatilho; filho e filha pela regra do menor",
+  // Revisao curta das correcoes da AG3 (achado 9): a pessoa tem de ser a
+  // paciente (a negacao, a pessoa fazendo outra coisa e o horario que serve
+  // para ela nao contam).
+  PESSOA_SEM_POSSESSIVO,
+  NEGACAO_ANTES_DA_PESSOA.source,
+  OUTRA_COISA_DEPOIS_DA_PESSOA.source,
+  CONVENIENCIA_ANTES_DA_PESSOA.source,
+  RESPOSTA_NEGADA.source,
+  "outra pessoa adulta: so com a intencao de marcar para ela",
 ];
 
 /** Atalho para o filtro de saida: gatilhos de um conjunto de textos. */

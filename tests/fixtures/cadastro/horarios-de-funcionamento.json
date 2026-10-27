@@ -1,0 +1,254 @@
+[
+  {
+    "caso": "um dia com uma faixa",
+    "valor": { "1": [{ "inicio": "08:00", "fim": "12:00" }] },
+    "valido": true
+  },
+  {
+    "caso": "manha e tarde em dois dias",
+    "valor": {
+      "1": [
+        { "inicio": "08:00", "fim": "12:00" },
+        { "inicio": "13:00", "fim": "18:00" }
+      ],
+      "2": [
+        { "inicio": "08:00", "fim": "12:00" },
+        { "inicio": "13:00", "fim": "18:00" }
+      ]
+    },
+    "valido": true
+  },
+  {
+    "caso": "faixas que encostam (12:00 e 12:00)",
+    "valor": {
+      "3": [
+        { "inicio": "08:00", "fim": "12:00" },
+        { "inicio": "12:00", "fim": "18:00" }
+      ]
+    },
+    "valido": true
+  },
+  {
+    "caso": "faixas fora de ordem, sem sobreposicao",
+    "valor": {
+      "4": [
+        { "inicio": "14:00", "fim": "18:00" },
+        { "inicio": "08:00", "fim": "12:00" }
+      ]
+    },
+    "valido": true
+  },
+  {
+    "caso": "os sete dias",
+    "valor": {
+      "0": [{ "inicio": "09:00", "fim": "13:00" }],
+      "1": [{ "inicio": "07:00", "fim": "19:00" }],
+      "2": [{ "inicio": "07:00", "fim": "19:00" }],
+      "3": [{ "inicio": "07:00", "fim": "19:00" }],
+      "4": [{ "inicio": "07:00", "fim": "19:00" }],
+      "5": [{ "inicio": "07:00", "fim": "19:00" }],
+      "6": [{ "inicio": "08:00", "fim": "12:00" }]
+    },
+    "valido": true
+  },
+  {
+    "caso": "quatro faixas no dia",
+    "valor": {
+      "5": [
+        { "inicio": "06:00", "fim": "08:00" },
+        { "inicio": "09:00", "fim": "11:00" },
+        { "inicio": "13:00", "fim": "15:00" },
+        { "inicio": "16:00", "fim": "18:00" }
+      ]
+    },
+    "valido": true
+  },
+  {
+    "caso": "o dia inteiro, 00:00 a 23:59",
+    "valor": { "0": [{ "inicio": "00:00", "fim": "23:59" }] },
+    "valido": true
+  },
+  {
+    "caso": "faixa de um minuto",
+    "valor": { "6": [{ "inicio": "10:00", "fim": "10:01" }] },
+    "valido": true
+  },
+  { "caso": "objeto vazio", "valor": {}, "valido": false },
+  { "caso": "lista na raiz", "valor": [], "valido": false },
+  { "caso": "texto na raiz", "valor": "08:00 as 18:00", "valido": false },
+  { "caso": "numero na raiz", "valor": 1, "valido": false },
+  {
+    "caso": "dia 7",
+    "valor": { "7": [{ "inicio": "08:00", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "dia -1",
+    "valor": { "-1": [{ "inicio": "08:00", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "dia 01",
+    "valor": { "01": [{ "inicio": "08:00", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "dia pelo nome",
+    "valor": { "seg": [{ "inicio": "08:00", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "dia com espaco",
+    "valor": { "1 ": [{ "inicio": "08:00", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "dia que nao e lista",
+    "valor": { "1": { "inicio": "08:00", "fim": "12:00" } },
+    "valido": false
+  },
+  { "caso": "dia sem faixa", "valor": { "1": [] }, "valido": false },
+  {
+    "caso": "cinco faixas no dia",
+    "valor": {
+      "1": [
+        { "inicio": "06:00", "fim": "07:00" },
+        { "inicio": "08:00", "fim": "09:00" },
+        { "inicio": "10:00", "fim": "11:00" },
+        { "inicio": "12:00", "fim": "13:00" },
+        { "inicio": "14:00", "fim": "15:00" }
+      ]
+    },
+    "valido": false
+  },
+  {
+    "caso": "faixa em texto",
+    "valor": { "1": ["08:00 as 12:00"] },
+    "valido": false
+  },
+  {
+    "caso": "faixa em lista",
+    "valor": { "1": [["08:00", "12:00"]] },
+    "valido": false
+  },
+  {
+    "caso": "faixa com chave a mais",
+    "valor": {
+      "1": [{ "inicio": "08:00", "fim": "12:00", "unidade": "Sede" }]
+    },
+    "valido": false
+  },
+  {
+    "caso": "faixa sem o fim",
+    "valor": { "1": [{ "inicio": "08:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "faixa com chave trocada",
+    "valor": { "1": [{ "inicio": "08:00", "final": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "inicio em numero",
+    "valor": { "1": [{ "inicio": 800, "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "inicio nulo",
+    "valor": { "1": [{ "inicio": null, "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "hora sem o zero (8:00)",
+    "valor": { "1": [{ "inicio": "8:00", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "fim 24:00",
+    "valor": { "1": [{ "inicio": "18:00", "fim": "24:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "minuto 60",
+    "valor": { "1": [{ "inicio": "08:00", "fim": "12:60" }] },
+    "valido": false
+  },
+  {
+    "caso": "hora com segundos",
+    "valor": { "1": [{ "inicio": "08:00:00", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "espaco antes da hora",
+    "valor": { "1": [{ "inicio": " 08:00", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "espaco depois da hora",
+    "valor": { "1": [{ "inicio": "08:00", "fim": "12:00 " }] },
+    "valido": false
+  },
+  {
+    "caso": "digitos de largura cheia",
+    "valor": { "1": [{ "inicio": "０８:００", "fim": "12:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "fim igual ao inicio",
+    "valor": { "2": [{ "inicio": "08:00", "fim": "08:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "fim antes do inicio (vira o dia)",
+    "valor": { "2": [{ "inicio": "22:00", "fim": "02:00" }] },
+    "valido": false
+  },
+  {
+    "caso": "faixas sobrepostas",
+    "valor": {
+      "3": [
+        { "inicio": "08:00", "fim": "12:00" },
+        { "inicio": "11:00", "fim": "13:00" }
+      ]
+    },
+    "valido": false
+  },
+  {
+    "caso": "faixa dentro de outra",
+    "valor": {
+      "3": [
+        { "inicio": "08:00", "fim": "18:00" },
+        { "inicio": "09:00", "fim": "10:00" }
+      ]
+    },
+    "valido": false
+  },
+  {
+    "caso": "sobreposicao fora de ordem",
+    "valor": {
+      "4": [
+        { "inicio": "13:00", "fim": "18:00" },
+        { "inicio": "08:00", "fim": "14:00" }
+      ]
+    },
+    "valido": false
+  },
+  {
+    "caso": "faixa repetida",
+    "valor": {
+      "4": [
+        { "inicio": "08:00", "fim": "12:00" },
+        { "inicio": "08:00", "fim": "12:00" }
+      ]
+    },
+    "valido": false
+  },
+  {
+    "caso": "um dia bom e outro com erro",
+    "valor": {
+      "1": [{ "inicio": "08:00", "fim": "12:00" }],
+      "2": [{ "inicio": "12:00", "fim": "08:00" }]
+    },
+    "valido": false
+  }
+]

@@ -61,6 +61,9 @@ import {
 //   painel monta o cartao (com a chave dele) e passa pronto: salvar o
 //   horario nunca remonta o formulario da agenda, e vice-versa (por isso a
 //   chave do horario fica no cartao do horario, e nao na aba).
+// - Dados para marcar consulta (AG3, D-6 e D-7): o cartao do que o
+//   assistente pede antes de marcar (cartao-dos-dados-exigidos.tsx), com o
+//   proprio Salvar, logo depois dos limites. Tambem montado pelo painel.
 // - Os 6 gatilhos obrigatorios de passar para a equipe, travados (so
 //   exibicao: quem decide e o codigo do agente, nao esta lista).
 // - A caixa de Conformidade do brief: Aviso ambar com cadeado, o texto
@@ -188,6 +191,7 @@ export function AbaRegras({
   chaveDoHorario,
   quemAtende,
   limitesDaAgenda,
+  dadosParaMarcar,
   podeEditar,
   dica,
   pendente,
@@ -206,6 +210,8 @@ export function AbaRegras({
   quemAtende?: React.ReactNode;
   /** O cartao dos limites para marcar consulta (E4), montado pelo painel. */
   limitesDaAgenda?: React.ReactNode;
+  /** O cartao "Dados para marcar consulta" (AG3), montado pelo painel. */
+  dadosParaMarcar?: React.ReactNode;
   podeEditar: boolean;
   dica: string | null;
   pendente: boolean;
@@ -230,6 +236,8 @@ export function AbaRegras({
       />
 
       {limitesDaAgenda}
+
+      {dadosParaMarcar}
 
       <Card role="region" aria-labelledby="agente-gatilhos-titulo">
         <CardHeader>

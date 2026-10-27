@@ -166,3 +166,105 @@ export function conferirHistorico(entrada: {
   }
   return { ok: true, falas: falas.slice(inicio) };
 }
+
+// ---------------------------------------------------------------------------
+// O estado do atendimento no simulador (AG3, 27/10/2026)
+// ---------------------------------------------------------------------------
+//
+// O simulador nao grava nada: o estado do atendimento (a etapa, os horarios
+// oferecidos com o codigo, a reserva e a consulta SIMULADAS e SE os dados
+// foram informados, nunca o valor) volta para o navegador junto da resposta,
+// num pacote assinado, e vem de volta na rodada seguinte. A assinatura do
+// pacote cobre a clinica, quem testa, a ASSINATURA DA RESPOSTA a que ele
+// pertence e o conteudo: o pacote de outra conversa, ou de outra resposta,
+// ou alterado, e recusado. Formato: e1.<base64url do JSON>.<HMAC-SHA256>.
+
+const VERSAO_DO_ESTADO = "e1";
+const FORMATO_DO_ESTADO = /^e1\.([A-Za-z0-9_-]{1,12000})\.([0-9a-f]{64})$/;
+
+/** O tamanho maximo do pacote (o JSON do estado e pequeno). */
+export const TAMANHO_MAXIMO_DO_ESTADO = 12_000;
+
+function hmacDoEstado(
+  chave: Buffer,
+  clinicId: string,
+  userId: string,
+  assinaturaDaResposta: string,
+  conteudo: string,
+): string {
+  return createHmac("sha256", chave)
+    .update(
+      [
+        VERSAO_DO_ESTADO,
+        clinicId.toLowerCase(),
+        userId.toLowerCase(),
+        assinaturaDaResposta,
+        conteudo,
+      ].join("|"),
+      "utf8",
+    )
+    .digest("hex");
+}
+
+/**
+ * O pacote assinado do estado do simulador, ligado a resposta que acabou de
+ * ser assinada (assinarResposta).
+ */
+export function assinarEstadoDoSimulador(entrada: {
+  chave: Buffer;
+  clinicId: string;
+  userId: string;
+  assinaturaDaResposta: string;
+  estado: unknown;
+}): string {
+  const conteudo = Buffer.from(JSON.stringify(entrada.estado), "utf8").toString(
+    "base64url",
+  );
+  return `${VERSAO_DO_ESTADO}.${conteudo}.${hmacDoEstado(
+    entrada.chave,
+    entrada.clinicId,
+    entrada.userId,
+    entrada.assinaturaDaResposta,
+    conteudo,
+  )}`;
+}
+
+/**
+ * Confere o pacote do estado contra a assinatura da ULTIMA resposta do
+ * historico. Devolve o conteudo (ainda sem conferir a forma: quem chama
+ * confere) ou null quando a assinatura nao confere.
+ */
+export function conferirEstadoDoSimulador(entrada: {
+  chave: Buffer;
+  clinicId: string;
+  userId: string;
+  assinaturaDaResposta: string;
+  pacote: string;
+}): unknown {
+  if (entrada.pacote.length > TAMANHO_MAXIMO_DO_ESTADO) {
+    return null;
+  }
+  const lido = FORMATO_DO_ESTADO.exec(entrada.pacote);
+  const conteudo = lido?.[1];
+  const recebida = lido?.[2];
+  if (conteudo === undefined || recebida === undefined) {
+    return null;
+  }
+  const esperada = hmacDoEstado(
+    entrada.chave,
+    entrada.clinicId,
+    entrada.userId,
+    entrada.assinaturaDaResposta,
+    conteudo,
+  );
+  const a = Buffer.from(esperada, "hex");
+  const b = Buffer.from(recebida, "hex");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return null;
+  }
+  try {
+    return JSON.parse(Buffer.from(conteudo, "base64url").toString("utf8")) as unknown;
+  } catch {
+    return null;
+  }
+}

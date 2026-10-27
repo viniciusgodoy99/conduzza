@@ -20,12 +20,28 @@
 //    antes e depois rodam tambem no texto sem mascara: "Botox sem dor" ou
 //    "Peeling resultado garantido" cadastrado pela clinica continua sendo
 //    promessa (o cadastro do nome e validado no E5).
+//  - fatos do turno (AG2, fatos-do-turno.ts): data e hora, endereco,
+//    convenio e acao de agenda so com fato do turno. Entrada OPCIONAL, como
+//    o molde do preco: o turno da IA passa os fatos e a regra vale; os
+//    textos estaticos conferidos na publicacao da Tela 6
+//    (problemaNoTextoDoAgente), o nome da clinica e a retomada do envio nao
+//    passam, e para eles nada muda. Revisao da AG2: o endereco que uma
+//    ferramenta do turno trouxe ("Rua das Dores, 100") e nome de lugar e sai
+//    so das vedacoes clinicas que a mascara do catalogo cobre, como o nome
+//    do catalogo (trechosDeEnderecoDasFerramentas); o resto do rascunho
+//    continua lido.
 
 import {
   CATEGORIAS_DE_CONFORMIDADE,
   ordenarPorPrioridade,
   type CategoriaDeConformidade,
 } from "@/lib/domain/conformidade/categorias";
+import {
+  FONTES_DOS_FATOS,
+  regrasDosFatos,
+  trechosDeEnderecoDasFerramentas,
+  type FatosDoTurno,
+} from "@/lib/domain/conformidade/fatos-do-turno";
 import { gatilhosDosTextos } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import { temDadoPessoal } from "@/lib/domain/conformidade/minimizar";
 import {
@@ -64,6 +80,11 @@ export type ContextoDasRegras = {
   nomesDoCatalogo: readonly string[];
   /** So as mensagens do paciente ainda nao respondidas. */
   mensagensDoPaciente: readonly string[];
+  /**
+   * Os fatos do turno (AG2). Ausente: as regras dos fatos nao rodam (texto
+   * estatico, retomada do envio). O turno da IA sempre passa.
+   */
+  fatos?: FatosDoTurno;
 };
 
 export type AchadoDaRegra = {
@@ -320,6 +341,22 @@ function limiteDeAproximacao(termo: string): number {
 export const CATEGORIAS_SEM_MASCARA: ReadonlySet<AchadoDaRegra["categoria"]> =
   new Set(["promessa_resultado", "oferta_casada", "antes_depois"]);
 
+/**
+ * Revisao da AG2: as vedacoes clinicas que deixam de ler o endereco que a
+ * ferramenta do turno trouxe ("Rua das Dores, 100", "Nossa Senhora dos
+ * Remedios"), as mesmas que a mascara do catalogo cobre. Promessa, oferta
+ * casada, antes e depois, formato e preco continuam lendo o trecho.
+ */
+export const CATEGORIAS_SEM_O_ENDERECO: ReadonlySet<
+  AchadoDaRegra["categoria"]
+> = new Set([
+  "triagem",
+  "diagnostico",
+  "orientacao_clinica",
+  "medicamento",
+  "dosagem",
+]);
+
 // Emoji que diz remedio, injecao, gelo, bebida, cigarro ou urgencia. O sol
 // fica de fora (cumprimento "bom dia" usa); ele so conta como habito, em
 // "evita sol" (padroes.ts).
@@ -368,11 +405,13 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   EMOJI_CLINICO.source,
   SEQUENCIA_DE_DIGITOS.source,
   [...CATEGORIAS_SEM_MASCARA].join(","),
+  `sem o endereco da ferramenta: ${[...CATEGORIAS_SEM_O_ENDERECO].join(",")}`,
   CNPJ_COM_MASCARA.source,
   ...NEUTRALIZACOES_DE_SAIDA.map(({ nome, fonte, troca }) =>
     [nome, fonte, troca].join(" "),
   ),
   ...FONTES_DA_NORMALIZACAO,
+  ...FONTES_DOS_FATOS,
 ];
 
 export function temContatoPorExtenso(base: string): boolean {
@@ -390,24 +429,67 @@ export function temContatoPorExtenso(base: string): boolean {
   return false;
 }
 
+/**
+ * As visoes do rascunho: com a mascara do catalogo, sem ela (promessa,
+ * oferta casada e antes e depois leem as duas) e, so para as vedacoes
+ * clinicas, com o endereco da ferramenta tambem mascarado.
+ */
+type VisoesDasRegras = {
+  comMascara: VisoesDoTexto;
+  semMascara: VisoesDoTexto;
+  semOEndereco: VisoesDoTexto;
+  frases: {
+    comMascara: readonly string[];
+    comESemMascara: readonly string[];
+    semOEndereco: readonly string[];
+  };
+};
+
+function visoesDasRegras(
+  comMascara: VisoesDoTexto,
+  semMascara: VisoesDoTexto,
+  semOEndereco: VisoesDoTexto,
+): VisoesDasRegras {
+  const frasesComMascara = frasesDasVisoes(comMascara);
+  return {
+    comMascara,
+    semMascara,
+    semOEndereco,
+    frases: {
+      comMascara: frasesComMascara,
+      comESemMascara: [...frasesComMascara, ...frasesDasVisoes(semMascara)],
+      semOEndereco:
+        semOEndereco === comMascara
+          ? frasesComMascara
+          : frasesDasVisoes(semOEndereco),
+    },
+  };
+}
+
 function frasesPara(
   categoria: AchadoDaRegra["categoria"],
-  comMascara: readonly string[],
-  semMascara: readonly string[],
+  visoes: VisoesDasRegras,
 ): readonly string[] {
-  return CATEGORIAS_SEM_MASCARA.has(categoria)
-    ? [...comMascara, ...semMascara]
-    : comMascara;
+  if (CATEGORIAS_SEM_MASCARA.has(categoria)) {
+    return visoes.frases.comESemMascara;
+  }
+  return CATEGORIAS_SEM_O_ENDERECO.has(categoria)
+    ? visoes.frases.semOEndereco
+    : visoes.frases.comMascara;
 }
 
 function compactosPara(
   categoria: AchadoDaRegra["categoria"],
-  comMascara: VisoesDoTexto,
-  semMascara: VisoesDoTexto,
+  visoes: VisoesDasRegras,
 ): readonly VisoesDoTexto[] {
-  return CATEGORIAS_SEM_MASCARA.has(categoria)
-    ? [comMascara, semMascara]
-    : [comMascara];
+  if (CATEGORIAS_SEM_MASCARA.has(categoria)) {
+    return [visoes.comMascara, visoes.semMascara];
+  }
+  return [
+    CATEGORIAS_SEM_O_ENDERECO.has(categoria)
+      ? visoes.semOEndereco
+      : visoes.comMascara,
+  ];
 }
 
 /**
@@ -428,8 +510,23 @@ export function avaliarRegras(
     contexto.nomesDoCatalogo.length > 0
       ? visoesDoTexto(rascunho, [], neutralizarSaida)
       : visoes;
-  const frases = frasesDasVisoes(visoes);
-  const frasesSemMascara = frasesDasVisoes(semMascara);
+  // Revisao da AG2: o endereco que a ferramenta do turno trouxe e nome de
+  // lugar para as vedacoes clinicas ("Rua das Dores, 100").
+  const enderecos =
+    contexto.fatos === undefined
+      ? []
+      : trechosDeEnderecoDasFerramentas(rascunho, contexto.fatos);
+  const todas = visoesDasRegras(
+    visoes,
+    semMascara,
+    enderecos.length > 0
+      ? visoesDoTexto(
+          rascunho,
+          [...contexto.nomesDoCatalogo, ...enderecos],
+          neutralizarSaida,
+        )
+      : visoes,
+  );
 
   // Formato bruto: vazio, longo e sinais de ofuscacao.
   if (rascunho.trim() === "") {
@@ -491,8 +588,8 @@ export function avaliarRegras(
   for (const padrao of PADROES_DE_SAIDA) {
     const alvos =
       padrao.categoria === "medicamento"
-        ? [...frases, visoes.leetComL]
-        : frasesPara(padrao.categoria, frases, frasesSemMascara);
+        ? [...frasesPara(padrao.categoria, todas), todas.semOEndereco.leetComL]
+        : frasesPara(padrao.categoria, todas);
     if (alvos.some((frase) => padrao.regex.test(frase))) {
       achados.push({ categoria: padrao.categoria, regra: padrao.nome });
     }
@@ -517,7 +614,7 @@ export function avaliarRegras(
     if (jaAchados.has(regra)) {
       continue;
     }
-    const alvos = compactosPara(entrada.categoria, visoes, semMascara);
+    const alvos = compactosPara(entrada.categoria, todas);
     const achou = alvos.some((alvo) =>
       [
         [alvo.leet, alvo.compacto],
@@ -535,9 +632,10 @@ export function avaliarRegras(
   }
 
   // Nome de remedio escrito de tras para frente ("anoripid").
-  const invertidos = [visoes.compacto, visoes.compactoComL].map((compacto) =>
-    [...compacto].reverse().join(""),
-  );
+  const invertidos = [
+    todas.semOEndereco.compacto,
+    todas.semOEndereco.compactoComL,
+  ].map((compacto) => [...compacto].reverse().join(""));
   if (
     LEXICO_COMPACTO.some(
       (entrada) =>
@@ -553,7 +651,7 @@ export function avaliarRegras(
   for (const { categoria, termo } of LEXICO_APROXIMADO) {
     const limite = limiteDeAproximacao(termo);
     const palavras = new Set(
-      compactosPara(categoria, visoes, semMascara).flatMap((alvo) => [
+      compactosPara(categoria, todas).flatMap((alvo) => [
         ...(alvo.leet.match(/[a-z]{6,}/g) ?? []),
         ...(alvo.leetComL.match(/[a-z]{6,}/g) ?? []),
       ]),
@@ -571,6 +669,17 @@ export function avaliarRegras(
 
   // Preco: so na visao base (numero tem de continuar numero).
   achados.push(...regraDePreco(visoes.base, contexto.precosDoTurno));
+
+  // Fatos do turno (AG2): so quando quem chama passa os fatos.
+  if (contexto.fatos !== undefined) {
+    achados.push(
+      ...regrasDosFatos(rascunho, {
+        fatos: contexto.fatos,
+        nomesDoCatalogo: contexto.nomesDoCatalogo,
+        mensagensDoPaciente: contexto.mensagensDoPaciente,
+      }),
+    );
+  }
 
   // Contexto: o paciente falou de saude.
   for (const gatilho of gatilhosDosTextos(contexto.mensagensDoPaciente)) {

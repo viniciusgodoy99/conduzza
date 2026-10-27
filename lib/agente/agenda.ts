@@ -1,26 +1,63 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  tipoDoContatoDoBanco,
+  type ConfigDoAgente,
+  type TipoDoContato,
+} from "@/lib/domain/agente/config";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
-import type { IntervaloOcupado, JanelaSemanal } from "@/lib/domain/scheduling";
+import { diaCivil } from "@/lib/domain/horarios";
+import type { IntervaloOcupado } from "@/lib/domain/scheduling";
 import { log } from "@/lib/log";
 
+import {
+  dadosQueFaltam,
+  dadosVazios,
+  type DadoDaMarcacao,
+  type DadosInformados,
+} from "./atendimento";
 import {
   idDaConsulta,
   lerRespostaDoAgendar,
   type RespostaDoAgendar,
 } from "./ferramentas/agendar";
-import type { PortaDaAgenda } from "./ferramentas/agenda-do-turno";
 import type {
-  AgendaCarregada,
-  PedidoDaAgenda,
+  ConsultaLida,
+  PortaDaAgenda,
+  ReservaLida,
+  ReservaVivaDaConversa,
+} from "./ferramentas/agenda-do-turno";
+import {
+  horarioContinuaLivre,
+  pedidoDaReconferencia,
+  type AgendaCarregada,
+  type JanelaDaAgenda,
+  type PedidoDaAgenda,
 } from "./ferramentas/buscar-horario";
+import type { CatalogoDoAgente } from "./ferramentas/buscar-procedimento";
+import {
+  nomeDoCadastro,
+  type CadastroDoContato,
+} from "./ferramentas/cadastro-do-contato";
 import {
   consultaQueAguardaConfirmacao,
   STATUS_QUE_AGUARDAM_CONFIRMACAO,
   type RespostaDaConfirmacao,
 } from "./ferramentas/confirmar-presenca";
+import {
+  carteirinhaValida,
+  cpfValido,
+  idadeNoDia,
+  lerRespostaDoRegistro,
+  nascimentoValido,
+  nomeCompletoValido,
+  type DadosParaRegistrar,
+  type RespostaDoRegistro,
+} from "./ferramentas/registrar-dados";
 import {
   idDaReserva,
   lerRespostaDaReserva,
@@ -80,6 +117,8 @@ type LinhaDaJornada = {
   weekday: number;
   starts_at: string;
   ends_at: string;
+  /** AG3: a unidade da faixa (nula = qualquer unidade). */
+  unit_id?: string | null;
 };
 
 type LinhaDeIntervalo = {
@@ -119,8 +158,8 @@ function agrupar(
 
 /**
  * Le a Agenda do pedido de buscar_horario: a jornada semanal dos
- * profissionais (todas as unidades: clinica com mais de uma unidade fica
- * para depois, risco aceito no plano), os bloqueios, as consultas nao
+ * profissionais (AG3: com a unidade de cada faixa; a busca filtra pela
+ * unidade pedida, e a faixa sem unidade vale para todas), os bloqueios, as consultas nao
  * canceladas (encaixe conta) e as reservas vivas (vencimento no futuro e nao
  * consumidas) que se sobrepoem ao periodo, menos as desta conversa (a RPC
  * troca a reserva da conversa), e a ocupacao de cada recurso por qualquer
@@ -173,7 +212,7 @@ export async function carregarAgendaDaIa(
       todasAsPaginas<LinhaDaJornada>((de, ate) =>
         admin
           .from("professional_schedule")
-          .select("professional_id, weekday, starts_at, ends_at")
+          .select("professional_id, weekday, starts_at, ends_at, unit_id")
           .eq("clinic_id", clinicId)
           .in("professional_id", profissionais)
           .order("id", { ascending: true })
@@ -249,7 +288,7 @@ export async function carregarAgendaDaIa(
           ),
     ]);
 
-    const porProfissional = new Map<string, JanelaSemanal[]>();
+    const porProfissional = new Map<string, JanelaDaAgenda[]>();
     for (const linha of jornadas) {
       if (
         typeof linha.professional_id !== "string" ||
@@ -264,6 +303,7 @@ export async function carregarAgendaDaIa(
         weekday: linha.weekday,
         startsAt: linha.starts_at,
         endsAt: linha.ends_at,
+        unidadeId: typeof linha.unit_id === "string" ? linha.unit_id : null,
       });
       porProfissional.set(linha.professional_id, lista);
     }
@@ -388,7 +428,7 @@ async function vinculoDaConsulta(
 export async function reservarHorarioDaIa(
   admin: Cliente,
   ids: IdsDoTurno,
-  pedido: { serviceLinkId: string; inicio: string },
+  pedido: { serviceLinkId: string; inicio: string; unidadeId?: string | null },
 ): Promise<RespostaDaReserva> {
   const corrida = await rpcComPrazo(admin, "reservar_horario_da_ia", {
     p_clinic_id: ids.clinicId,
@@ -396,6 +436,8 @@ export async function reservarHorarioDaIa(
     p_service_link_id: pedido.serviceLinkId,
     p_starts_at: pedido.inicio,
     p_job_id: ids.jobId,
+    // AG3: a unidade do horario (null = como antes, todas as unidades).
+    p_unit_id: pedido.unidadeId ?? null,
   });
   if (corrida.tipo !== "resultado") {
     return falhou(ids, "reservar", corrida.tipo);
@@ -436,17 +478,22 @@ export async function reservarHorarioDaIa(
 
 /**
  * agendar_pela_ia com o job_id do turno (contrato 1.4): usa a reserva viva
- * da conversa; repetir o job devolve a mesma consulta. Lanca no erro, no
- * prazo e na resposta fora do formato.
+ * da conversa; repetir o job devolve a mesma consulta. Revisao final da
+ * AG3: com a reserva que a pergunta "Confirma ...?" mostrou (p_slot_hold_id;
+ * a RPC recusa reserva_diferente quando a viva e outra). Sem ela (o turno
+ * sem estado), como antes. Lanca no erro, no prazo e na resposta fora do
+ * formato.
  */
 export async function agendarPelaIa(
   admin: Cliente,
   ids: IdsDoTurno,
+  slotHoldId?: string | null,
 ): Promise<RespostaDoAgendar> {
   const corrida = await rpcComPrazo(admin, "agendar_pela_ia", {
     p_clinic_id: ids.clinicId,
     p_conversation_id: ids.conversationId,
     p_job_id: ids.jobId,
+    ...(slotHoldId === undefined ? {} : { p_slot_hold_id: slotHoldId }),
   });
   if (corrida.tipo !== "resultado") {
     return falhou(ids, "agendar", corrida.tipo);
@@ -468,7 +515,7 @@ export async function agendarPelaIa(
       job_id: ids.jobId,
       status: lida.reutilizado ? "reutilizado" : "nova",
     });
-    return { ...lida, serviceLinkId };
+    return { ...lida, serviceLinkId, appointmentId };
   }
   log.info("ia_agenda_marcacao_recusada", {
     clinic_id: ids.clinicId,
@@ -588,6 +635,331 @@ export async function confirmarPresencaPelaIa(
   };
 }
 
+// ---------------------------------------------------------------------------
+// AG3: os dados da marcacao, o cadastro do contato, a reserva e a consulta
+// ---------------------------------------------------------------------------
+
+/**
+ * registrar_dados_da_marcacao com o job_id do turno (contrato da AG3). Os
+ * valores vao so para a RPC (nunca para log). Lanca no erro, no prazo e na
+ * resposta fora do formato.
+ */
+export async function registrarDadosDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  dados: DadosParaRegistrar,
+): Promise<RespostaDoRegistro> {
+  const corrida = await rpcComPrazo(admin, "registrar_dados_da_marcacao", {
+    p_clinic_id: ids.clinicId,
+    p_conversation_id: ids.conversationId,
+    p_job_id: ids.jobId,
+    p_para_o_titular: dados.paraOTitular,
+    p_nome_completo: dados.nomeCompleto,
+    p_data_nascimento: dados.dataNascimento,
+    p_cpf: dados.cpf,
+    p_carteirinha: dados.carteirinha,
+  });
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "registrar_dados", corrida.tipo);
+  }
+  const lida = lerRespostaDoRegistro(corrida.valor);
+  if (lida === null) {
+    return falhou(ids, "registrar_dados", "resposta_fora_do_formato");
+  }
+  log.info(lida.ok ? "ia_agenda_registrou_dados" : "ia_agenda_dados_recusados", {
+    clinic_id: ids.clinicId,
+    conversation_id: ids.conversationId,
+    job_id: ids.jobId,
+    ...(lida.ok ? {} : { error_code: lida.motivo }),
+  });
+  return lida;
+}
+
+/**
+ * Os sinais do cadastro do contato da conversa (consultar_cadastro_do_contato):
+ * o tipo, o convenio, se o nome e confirmado (o criterio da aprovacao, a
+ * trilha da equipe) e SE ha nascimento e CPF (contados pelo banco: o valor
+ * nem e lido), e quantas consultas futuras ativas. Lanca na leitura que
+ * falha ou passa do prazo.
+ */
+export async function lerCadastroDoContatoDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  agoraMs: number,
+): Promise<CadastroDoContato> {
+  const corrida = await correrComPrazo(async () => {
+    const contato = admin
+      .from("contact")
+      .select("kind, insurance_id, criado_por_importacao")
+      .eq("clinic_id", ids.clinicId)
+      .eq("id", ids.contactId)
+      .maybeSingle();
+    // SE ha nome, nascimento e CPF: conta o contato com o campo preenchido
+    // (o valor nunca sai do banco).
+    const comNome = admin
+      .from("contact")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ids.clinicId)
+      .eq("id", ids.contactId)
+      .not("name", "is", null)
+      .neq("name", "");
+    const comNascimento = admin
+      .from("contact")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ids.clinicId)
+      .eq("id", ids.contactId)
+      .not("birth_date", "is", null);
+    const comCpf = admin
+      .from("contact")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ids.clinicId)
+      .eq("id", ids.contactId)
+      .not("cpf", "is", null)
+      .neq("cpf", "");
+    const escritoPorAlguem = admin
+      .from("audit_log")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ids.clinicId)
+      .eq("entity", "contact")
+      .eq("entity_id", ids.contactId)
+      .in("action", ["criou", "editou"])
+      .not("user_id", "is", null);
+    const nomeAplicado = admin
+      .from("audit_log")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ids.clinicId)
+      .eq("entity", "contact")
+      .eq("entity_id", ids.contactId)
+      .eq("action", "aplicou_dados_da_marcacao")
+      .contains("detalhes", { campos: ["name"] });
+    const futuras = admin
+      .from("appointment")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ids.clinicId)
+      .eq("contact_id", ids.contactId)
+      .gt("starts_at", new Date(agoraMs).toISOString())
+      .not(
+        "status",
+        "in",
+        "(cancelado_paciente,cancelado_clinica,faltou,compareceu)",
+      )
+      .or("approval_status.is.null,approval_status.neq.recusado");
+    const [c, nome, n, cpf, escrito, aplicado, f] = await Promise.all([
+      contato,
+      comNome,
+      comNascimento,
+      comCpf,
+      escritoPorAlguem,
+      nomeAplicado,
+      futuras,
+    ]);
+    if (
+      c.error ||
+      nome.error ||
+      n.error ||
+      cpf.error ||
+      escrito.error ||
+      aplicado.error ||
+      f.error
+    ) {
+      throw new Error("leitura");
+    }
+    const linha = c.data as {
+      kind?: unknown;
+      insurance_id?: unknown;
+      criado_por_importacao?: unknown;
+    } | null;
+    if (linha === null) {
+      throw new Error("sem contato");
+    }
+    return {
+      tipo: tipoDoContatoDoBanco(linha.kind),
+      nome: nomeDoCadastro({
+        temNome: (nome.count ?? 0) > 0,
+        criadoPorImportacao: linha.criado_por_importacao === true,
+        escritoPorAlguem: (escrito.count ?? 0) > 0 || (aplicado.count ?? 0) > 0,
+      }),
+      temNascimento: (n.count ?? 0) > 0,
+      temCpf: (cpf.count ?? 0) > 0,
+      convenioId:
+        typeof linha.insurance_id === "string" ? linha.insurance_id : null,
+      consultasFuturas: f.count ?? 0,
+    } satisfies CadastroDoContato;
+  }, PRAZO_DA_AGENDA_MS);
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "cadastro_do_contato", corrida.tipo);
+  }
+  return corrida.valor;
+}
+
+/** A reserva do estado (desta conversa): viva ou nao, e o horario dela. */
+export async function lerReservaDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  holdId: string,
+  agoraMs: number,
+): Promise<ReservaLida | null> {
+  const corrida = await correrComPrazo(async () => {
+    const { data, error } = await admin
+      .from("slot_hold")
+      .select("service_link_id, starts_at, ends_at, unit_id, expires_at, consumido_em")
+      .eq("clinic_id", ids.clinicId)
+      .eq("conversation_id", ids.conversationId)
+      .eq("id", holdId)
+      .maybeSingle();
+    if (error) {
+      throw new Error("leitura");
+    }
+    return data as {
+      service_link_id?: unknown;
+      starts_at?: unknown;
+      ends_at?: unknown;
+      unit_id?: unknown;
+      expires_at?: unknown;
+      consumido_em?: unknown;
+    } | null;
+  }, PRAZO_DA_AGENDA_MS);
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "reserva_do_estado", corrida.tipo);
+  }
+  const linha = corrida.valor;
+  if (
+    linha === null ||
+    typeof linha.service_link_id !== "string" ||
+    typeof linha.starts_at !== "string" ||
+    typeof linha.ends_at !== "string"
+  ) {
+    return null;
+  }
+  const expira =
+    typeof linha.expires_at === "string" ? Date.parse(linha.expires_at) : NaN;
+  return {
+    viva:
+      (linha.consumido_em === null || linha.consumido_em === undefined) &&
+      Number.isFinite(expira) &&
+      expira > agoraMs,
+    serviceLinkId: linha.service_link_id,
+    inicio: linha.starts_at,
+    fim: linha.ends_at,
+    unidadeId: typeof linha.unit_id === "string" ? linha.unit_id : null,
+    // Revisao final da AG3: o vencimento (a reserva que vence no meio do
+    // turno conta como vencida).
+    expiraEm:
+      typeof linha.expires_at === "string" && Number.isFinite(expira)
+        ? linha.expires_at
+        : null,
+  };
+}
+
+/**
+ * Revisao final da AG3: a reserva viva desta conversa, qualquer que seja (o
+ * agendar recusou reserva_diferente: a viva nao e a perguntada). So horario,
+ * vinculo, unidade e vencimento. Lanca na leitura que falha ou passa do
+ * prazo.
+ */
+export async function lerReservaVivaDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  agoraMs: number,
+): Promise<ReservaVivaDaConversa | null> {
+  const corrida = await correrComPrazo(async () => {
+    const { data, error } = await admin
+      .from("slot_hold")
+      .select("id, service_link_id, starts_at, ends_at, unit_id, expires_at")
+      .eq("clinic_id", ids.clinicId)
+      .eq("conversation_id", ids.conversationId)
+      .is("consumido_em", null)
+      .gt("expires_at", new Date(agoraMs).toISOString())
+      .order("expires_at", { ascending: false })
+      .limit(1);
+    if (error) {
+      throw new Error("leitura");
+    }
+    return (data ?? []) as {
+      id?: unknown;
+      service_link_id?: unknown;
+      starts_at?: unknown;
+      ends_at?: unknown;
+      unit_id?: unknown;
+      expires_at?: unknown;
+    }[];
+  }, PRAZO_DA_AGENDA_MS);
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "reserva_viva", corrida.tipo);
+  }
+  const [linha] = corrida.valor;
+  if (
+    linha === undefined ||
+    typeof linha.id !== "string" ||
+    typeof linha.service_link_id !== "string" ||
+    typeof linha.starts_at !== "string" ||
+    typeof linha.ends_at !== "string" ||
+    typeof linha.expires_at !== "string"
+  ) {
+    return null;
+  }
+  return {
+    holdId: linha.id,
+    viva: Date.parse(linha.expires_at) > agoraMs,
+    serviceLinkId: linha.service_link_id,
+    inicio: linha.starts_at,
+    fim: linha.ends_at,
+    unidadeId: typeof linha.unit_id === "string" ? linha.unit_id : null,
+    expiraEm: linha.expires_at,
+  };
+}
+
+/**
+ * Uma consulta do contato da conversa: SO o inicio, a unidade (revisao final
+ * da AG3) e se continua de pe (nao cancelada, nao recusada, sem falta nem
+ * comparecimento, no futuro).
+ */
+export async function lerConsultaDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  appointmentId: string,
+  agoraMs: number,
+): Promise<ConsultaLida | null> {
+  const corrida = await correrComPrazo(async () => {
+    const { data, error } = await admin
+      .from("appointment")
+      .select("starts_at, status, approval_status, unit_id")
+      .eq("clinic_id", ids.clinicId)
+      .eq("contact_id", ids.contactId)
+      .eq("id", appointmentId)
+      .maybeSingle();
+    if (error) {
+      throw new Error("leitura");
+    }
+    return data as {
+      starts_at?: unknown;
+      status?: unknown;
+      approval_status?: unknown;
+      unit_id?: unknown;
+    } | null;
+  }, PRAZO_DA_AGENDA_MS);
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "consulta_do_estado", corrida.tipo);
+  }
+  const linha = corrida.valor;
+  if (linha === null || typeof linha.starts_at !== "string") {
+    return null;
+  }
+  const inicio = Date.parse(linha.starts_at);
+  return {
+    inicio: linha.starts_at,
+    ativa:
+      Number.isFinite(inicio) &&
+      inicio > agoraMs &&
+      typeof linha.status === "string" &&
+      !["cancelado_paciente", "cancelado_clinica", "faltou", "compareceu"].includes(
+        linha.status,
+      ) &&
+      linha.approval_status !== "recusado",
+    unidadeId: typeof linha.unit_id === "string" ? linha.unit_id : null,
+  };
+}
+
 /**
  * A porta do turno do WhatsApp (lib/jobs/responder-com-ia.ts): a Agenda de
  * verdade e as RPCs com o job_id do turno.
@@ -606,50 +978,369 @@ export function portaDaAgendaDoWhatsapp(
         agoraMs: ids.agora(),
       }),
     reservar: (pedido) => reservarHorarioDaIa(admin, ids, pedido),
-    agendar: () => agendarPelaIa(admin, ids),
+    agendar: (pedido) =>
+      pedido === undefined
+        ? agendarPelaIa(admin, ids)
+        : agendarPelaIa(admin, ids, pedido.slotHoldId),
     confirmarPresenca: () => confirmarPresencaPelaIa(admin, ids, ids.agora()),
+    registrarDados: (dados) => registrarDadosDaIa(admin, ids, dados),
+    lerCadastroDoContato: () => lerCadastroDoContatoDaIa(admin, ids, ids.agora()),
+    lerReserva: (holdId) => lerReservaDaIa(admin, ids, holdId, ids.agora()),
+    lerConsulta: (appointmentId) =>
+      lerConsultaDaIa(admin, ids, appointmentId, ids.agora()),
+    lerReservaViva: () => lerReservaVivaDaIa(admin, ids, ids.agora()),
   };
 }
 
 /**
+ * AG3: o que o simulador guarda do atendimento entre as rodadas (no
+ * historico assinado, lib/agente/assinatura.ts), alem do estado: a reserva
+ * e a consulta SIMULADAS (ids inventados, nada gravado). Os dados que a
+ * pessoa informa nunca ficam: so SE foram informados (no estado).
+ */
+export type MemoriaDoSimulador = {
+  reserva: {
+    holdId: string;
+    serviceLinkId: string;
+    inicio: string;
+    fim: string;
+    unidadeId: string | null;
+    expiraEm: string;
+  } | null;
+  /**
+   * serviceLinkId (revisao final da AG3): o vinculo da consulta simulada,
+   * para a reserva seguinte do mesmo procedimento recusar ja_tem_consulta,
+   * como a RPC. Ausente no pacote de antes: nao recusa.
+   */
+  consulta: {
+    appointmentId: string;
+    inicio: string;
+    serviceLinkId?: string;
+    /**
+     * Revisao curta das correcoes (achado 10): a unidade da consulta
+     * simulada (a da reserva), como a consulta que a RPC grava. Ausente no
+     * pacote de antes: sem unidade.
+     */
+    unidadeId?: string | null;
+  } | null;
+};
+
+/**
  * A porta do simulador (lib/agente/simulador.ts): buscar le a Agenda de
- * verdade (sem conversa, toda reserva viva conta); reservar, agendar e
- * confirmar devolvem a resposta simulada e NAO GRAVAM nada (nenhuma RPC,
- * nenhuma escrita). O simulador nao guarda a reserva entre as rodadas: a
- * marcacao simulada nao sabe o dia e a hora.
+ * verdade (sem conversa, toda reserva viva conta); reservar, agendar,
+ * confirmar e registrar os dados devolvem a resposta simulada e NAO GRAVAM
+ * nada (nenhuma RPC, nenhuma escrita). AG3: com a memoria do simulador, a
+ * reserva reconfere o horario na Agenda de verdade (como a RPC), a reserva
+ * e a consulta simuladas valem entre as rodadas (o agendar sabe o dia e a
+ * hora), e os dados sao conferidos pelas mesmas regras do banco sem que o
+ * valor fique em lugar nenhum.
  */
 export function portaDaAgendaDoSimulador(
   admin: Cliente,
-  e: { clinicId: string; agora: () => number },
+  e: {
+    clinicId: string;
+    agora: () => number;
+    /** AG3: a memoria do atendimento simulado (muda aqui dentro). */
+    memoria?: MemoriaDoSimulador;
+    /** AG3: o estado do atendimento simulado (os dados informados). */
+    atendimento?: { dados: DadosInformados };
+    catalogo?: CatalogoDoAgente;
+    config?: Pick<ConfigDoAgente, "agenda" | "dadosExigidos">;
+    fuso?: string;
+    /** AG3: o "Testar como" (o tipo do contato simulado). */
+    contato?: TipoDoContato | null;
+  },
 ): PortaDaAgenda {
+  const memoria = e.memoria;
+  // Os dados informados no simulador (so SE vieram): a copia desta rodada,
+  // que o registrar atualiza (duas chamadas no mesmo turno somam).
+  const dadosAtuais: DadosInformados = {
+    ...(e.atendimento?.dados ?? dadosVazios()),
+  };
+  const carregar = (pedido: PedidoDaAgenda) =>
+    carregarAgendaDaIa(admin, {
+      clinicId: e.clinicId,
+      conversationId: null,
+      pedido,
+      agoraMs: e.agora(),
+    });
+  const vinculoDe = (id: string | null) =>
+    e.catalogo?.vinculos.find((v) => v.id === id);
   return {
     simulada: true,
-    carregar: (pedido) =>
-      carregarAgendaDaIa(admin, {
-        clinicId: e.clinicId,
-        conversationId: null,
-        pedido,
-        agoraMs: e.agora(),
-      }),
-    reservar: async (pedido) => ({
-      ok: true,
-      inicio: pedido.inicio,
-      fim: pedido.fim,
-      expiraEm: new Date(e.agora() + MINUTOS_DA_RESERVA * 60_000).toISOString(),
-      reutilizado: false,
-      serviceLinkId: pedido.serviceLinkId,
-    }),
-    agendar: async () => ({
-      ok: true,
-      inicio: null,
-      fim: null,
-      reutilizado: false,
-      serviceLinkId: null,
-    }),
+    carregar,
+    reservar: async (pedido) => {
+      if (memoria !== undefined && e.catalogo && e.config) {
+        // Revisao final da AG3: como a RPC, a consulta simulada (futura) do
+        // mesmo procedimento recusa ja_tem_consulta.
+        const consulta = memoria.consulta;
+        const procedimentoDe = (id: string | undefined) =>
+          id === undefined ? undefined : vinculoDe(id)?.procedimentoId;
+        if (
+          consulta !== null &&
+          consulta.serviceLinkId !== undefined &&
+          Date.parse(consulta.inicio) > e.agora() &&
+          procedimentoDe(consulta.serviceLinkId) !== undefined &&
+          procedimentoDe(consulta.serviceLinkId) ===
+            procedimentoDe(pedido.serviceLinkId)
+        ) {
+          return {
+            ok: false,
+            motivo: "ja_tem_consulta",
+            appointmentId: consulta.appointmentId,
+            inicio: consulta.inicio,
+          };
+        }
+        // Como a RPC: o horario tem de continuar livre agora.
+        const horario = {
+          codigo: "h1",
+          serviceLinkId: pedido.serviceLinkId,
+          unidadeId: pedido.unidadeId ?? null,
+          inicio: pedido.inicio,
+          fim: pedido.fim,
+        };
+        const plano = pedidoDaReconferencia(e.catalogo, [horario]);
+        if (plano === null) {
+          return { ok: false, motivo: "vinculo_invalido" };
+        }
+        const agenda = await carregar(plano);
+        if (
+          !horarioContinuaLivre({
+            catalogo: e.catalogo,
+            agenda,
+            config: e.config.agenda,
+            horario,
+            agoraMs: e.agora(),
+            fuso: e.fuso ?? "America/Fortaleza",
+          })
+        ) {
+          return { ok: false, motivo: "ocupado" };
+        }
+        memoria.reserva = {
+          holdId: randomUUID(),
+          serviceLinkId: pedido.serviceLinkId,
+          inicio: pedido.inicio,
+          fim: pedido.fim,
+          unidadeId: pedido.unidadeId ?? null,
+          expiraEm: new Date(e.agora() + MINUTOS_DA_RESERVA * 60_000).toISOString(),
+        };
+        return {
+          ok: true,
+          inicio: pedido.inicio,
+          fim: pedido.fim,
+          expiraEm: memoria.reserva.expiraEm,
+          reutilizado: false,
+          serviceLinkId: pedido.serviceLinkId,
+          holdId: memoria.reserva.holdId,
+          unitId: memoria.reserva.unidadeId,
+        };
+      }
+      return {
+        ok: true,
+        inicio: pedido.inicio,
+        fim: pedido.fim,
+        expiraEm: new Date(e.agora() + MINUTOS_DA_RESERVA * 60_000).toISOString(),
+        reutilizado: false,
+        serviceLinkId: pedido.serviceLinkId,
+        holdId: null,
+        unitId: pedido.unidadeId ?? null,
+      };
+    },
+    agendar: async (pedido) => {
+      if (memoria !== undefined && e.catalogo && e.config) {
+        // Revisao curta das correcoes (achado 10): na ORDEM da RPC
+        // (agendar_pela_ia): reserva_inexistente, reserva_diferente e so
+        // depois reserva_vencida. A reserva da conversa que nao foi
+        // consumida conta, vencida ou nao, como no banco.
+        const reserva = memoria.reserva;
+        if (reserva === null) {
+          return { ok: false, motivo: "reserva_inexistente" };
+        }
+        // Revisao final da AG3: como a RPC, a reserva perguntada tem de ser
+        // a da conversa.
+        if (
+          pedido?.slotHoldId !== undefined &&
+          pedido.slotHoldId !== null &&
+          pedido.slotHoldId !== reserva.holdId
+        ) {
+          return { ok: false, motivo: "reserva_diferente" };
+        }
+        if (Date.parse(reserva.expiraEm) <= e.agora()) {
+          return { ok: false, motivo: "reserva_vencida" };
+        }
+        const dados = dadosAtuais;
+        if (dados.para_o_titular === false) {
+          return { ok: false, motivo: "consulta_para_outra_pessoa" };
+        }
+        const vinculo = vinculoDe(reserva.serviceLinkId);
+        const faltam = dadosQueFaltam({
+          exigidos: e.config.dadosExigidos,
+          informados: dados,
+          vinculo:
+            vinculo === undefined
+              ? null
+              : {
+                  procedimentoId: vinculo.procedimentoId,
+                  convenioId: vinculo.convenioId,
+                },
+          catalogo: e.catalogo,
+        });
+        if (faltam.length > 0) {
+          return { ok: false, motivo: "faltam_dados", faltam };
+        }
+        memoria.consulta = {
+          appointmentId: randomUUID(),
+          inicio: reserva.inicio,
+          serviceLinkId: reserva.serviceLinkId,
+          // Revisao curta das correcoes (achado 10): a unidade da reserva,
+          // como a consulta que a RPC grava.
+          unidadeId: reserva.unidadeId,
+        };
+        memoria.reserva = null;
+        return {
+          ok: true,
+          inicio: reserva.inicio,
+          fim: reserva.fim,
+          reutilizado: false,
+          serviceLinkId: reserva.serviceLinkId,
+          appointmentId: memoria.consulta.appointmentId,
+        };
+      }
+      return {
+        ok: true,
+        inicio: null,
+        fim: null,
+        reutilizado: false,
+        serviceLinkId: null,
+        appointmentId: null,
+      };
+    },
     confirmarPresenca: async () => ({
       ok: true,
       inicio: null,
       serviceLinkId: null,
     }),
+    registrarDados: async (dados) => {
+      // As regras do banco, sem guardar valor nenhum.
+      if (!dados.paraOTitular) {
+        dadosAtuais.para_o_titular = false;
+        return { ok: false, motivo: "consulta_para_outra_pessoa" };
+      }
+      const hoje = diaCivil(e.fuso ?? "America/Fortaleza", new Date(e.agora()));
+      const invalidos: DadoDaMarcacao[] = [];
+      if (dados.nomeCompleto !== null && nomeCompletoValido(dados.nomeCompleto) === null) {
+        invalidos.push("nome_completo");
+      }
+      if (
+        dados.dataNascimento !== null &&
+        !nascimentoValido(dados.dataNascimento, hoje)
+      ) {
+        invalidos.push("data_nascimento");
+      }
+      if (dados.cpf !== null && !cpfValido(dados.cpf.replace(/[^0-9]/g, ""))) {
+        invalidos.push("cpf");
+      }
+      if (dados.carteirinha !== null && carteirinhaValida(dados.carteirinha) === null) {
+        invalidos.push("carteirinha");
+      }
+      if (invalidos.length > 0) {
+        return { ok: false, motivo: "dados_invalidos", invalidos };
+      }
+      const informados = {
+        nome_completo: dadosAtuais.nome_completo || dados.nomeCompleto !== null,
+        data_nascimento:
+          dadosAtuais.data_nascimento || dados.dataNascimento !== null,
+        cpf: dadosAtuais.cpf || dados.cpf !== null,
+        carteirinha: dadosAtuais.carteirinha || dados.carteirinha !== null,
+      };
+      // Menor de 18 anos no dia da reserva viva (ou hoje): a equipe marca.
+      if (dados.dataNascimento !== null) {
+        const reserva = memoria?.reserva ?? null;
+        const dia =
+          reserva !== null && Date.parse(reserva.expiraEm) > e.agora()
+            ? diaCivil(e.fuso ?? "America/Fortaleza", new Date(reserva.inicio))
+            : hoje;
+        const idade = idadeNoDia(dados.dataNascimento, dia);
+        if (idade !== null && idade < 18) {
+          dadosAtuais.data_nascimento = true;
+          return { ok: false, motivo: "menor_de_idade" };
+        }
+      }
+      Object.assign(dadosAtuais, informados, { para_o_titular: true });
+      const reserva = memoria?.reserva ?? null;
+      const vinculo =
+        reserva !== null && Date.parse(reserva.expiraEm) > e.agora()
+          ? vinculoDe(reserva.serviceLinkId)
+          : undefined;
+      return {
+        ok: true,
+        faltam:
+          e.config && e.catalogo
+            ? dadosQueFaltam({
+                exigidos: e.config.dadosExigidos,
+                informados,
+                vinculo:
+                  vinculo === undefined
+                    ? null
+                    : {
+                        procedimentoId: vinculo.procedimentoId,
+                        convenioId: vinculo.convenioId,
+                      },
+                catalogo: e.catalogo,
+              })
+            : [],
+      };
+    },
+    lerCadastroDoContato: async () => ({
+      tipo: e.contato ?? null,
+      nome: "sem_nome",
+      temNascimento: false,
+      temCpf: false,
+      convenioId: null,
+      consultasFuturas: 0,
+      simulado: true,
+    }),
+    lerReserva: async (holdId) => {
+      const reserva = memoria?.reserva ?? null;
+      if (reserva === null || reserva.holdId !== holdId) {
+        return null;
+      }
+      return {
+        viva: Date.parse(reserva.expiraEm) > e.agora(),
+        serviceLinkId: reserva.serviceLinkId,
+        inicio: reserva.inicio,
+        fim: reserva.fim,
+        unidadeId: reserva.unidadeId,
+        expiraEm: reserva.expiraEm,
+      };
+    },
+    lerReservaViva: async () => {
+      const reserva = memoria?.reserva ?? null;
+      if (reserva === null || Date.parse(reserva.expiraEm) <= e.agora()) {
+        return null;
+      }
+      return {
+        holdId: reserva.holdId,
+        viva: true,
+        serviceLinkId: reserva.serviceLinkId,
+        inicio: reserva.inicio,
+        fim: reserva.fim,
+        unidadeId: reserva.unidadeId,
+        expiraEm: reserva.expiraEm,
+      };
+    },
+    lerConsulta: async (appointmentId) => {
+      const consulta = memoria?.consulta ?? null;
+      if (consulta === null || consulta.appointmentId !== appointmentId) {
+        return null;
+      }
+      return {
+        inicio: consulta.inicio,
+        ativa: Date.parse(consulta.inicio) > e.agora(),
+        // Revisao curta das correcoes (achado 10): a unidade, como
+        // lerConsultaDaIa (o pacote de antes, sem ela: sem unidade).
+        unidadeId: consulta.unidadeId ?? null,
+      };
+    },
   };
 }

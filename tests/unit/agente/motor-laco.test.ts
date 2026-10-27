@@ -70,8 +70,17 @@ import { MAX_TOKENS_DO_VERIFICADOR } from "@/lib/integrations/llm/verificador";
 const CLINICA = "acd9c539-585e-4f2a-a195-712c70099564";
 /** Onda 2 (P11a): o aviso que vai antes da primeira resposta da IA. */
 const AVISO = FRASE_DO_ASSISTENTE_VIRTUAL;
-/** As ferramentas de frase fixa (onda 2) vem sempre, antes das outras. */
-const FRASES_FIXAS = ["fora_do_assunto", "sou_assistente_virtual"];
+/**
+ * As ferramentas de frase fixa (onda 2) e as consultas do Cadastro (AG2) vem
+ * sempre, antes das outras (habilidade travada "Responder dúvidas").
+ */
+const FRASES_FIXAS = [
+  "fora_do_assunto",
+  "sou_assistente_virtual",
+  "consultar_unidades",
+  "consultar_requisitos",
+  "buscar_profissionais",
+];
 const IDENTIFICADOR = "a".repeat(64);
 const USO_DA_API = {
   input_tokens: 1_200,

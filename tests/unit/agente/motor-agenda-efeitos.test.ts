@@ -31,6 +31,7 @@ import {
   entradaDaReservaSchema,
   FERRAMENTA_RESERVAR_HORARIO,
   lerRespostaDaReserva,
+  MOTIVOS_DA_CONFERENCIA,
   MOTIVOS_DA_RESERVA,
 } from "@/lib/agente/ferramentas/reservar-horario";
 import { ferramentaDoTurno } from "@/lib/agente/whatsapp";
@@ -278,12 +279,48 @@ describe("definições das ferramentas de efeito", () => {
         reutilizado: false,
       }),
     ).toMatchObject({ ok: true, reutilizado: false, serviceLinkId: null });
-    for (const motivo of MOTIVOS_DA_RESERVA) {
+    // AG3: o id da reserva e a unidade voltam (o estado guarda).
+    expect(
+      lerRespostaDaReserva({
+        ok: true,
+        hold_id: "h",
+        starts_at: "2026-10-20T14:15:00Z",
+        ends_at: "2026-10-20T14:45:00Z",
+        expires_at: "2026-10-20T12:10:00Z",
+        reutilizado: false,
+        unit_id: "u",
+      }),
+    ).toMatchObject({ ok: true, holdId: "h", unitId: "u" });
+    for (const motivo of MOTIVOS_DA_CONFERENCIA) {
       expect(lerRespostaDaReserva({ ok: false, motivo })).toEqual({
         ok: false,
         motivo,
       });
     }
+    // Revisao final da AG3: ja_tem_consulta traz a consulta que ja existe
+    // (o id e o inicio, nulos quando a RPC nao trouxe).
+    expect(MOTIVOS_DA_RESERVA).toContain("ja_tem_consulta");
+    expect(
+      lerRespostaDaReserva({
+        ok: false,
+        motivo: "ja_tem_consulta",
+        appointment_id: "a1",
+        starts_at: "2026-10-27T13:00:00Z",
+      }),
+    ).toEqual({
+      ok: false,
+      motivo: "ja_tem_consulta",
+      appointmentId: "a1",
+      inicio: "2026-10-27T13:00:00Z",
+    });
+    expect(
+      lerRespostaDaReserva({ ok: false, motivo: "ja_tem_consulta" }),
+    ).toEqual({
+      ok: false,
+      motivo: "ja_tem_consulta",
+      appointmentId: null,
+      inicio: null,
+    });
     for (const ruim of [
       null,
       [],
@@ -298,12 +335,46 @@ describe("definições das ferramentas de efeito", () => {
     expect(
       lerRespostaDoAgendar({ ok: true, appointment_id: "a", starts_at: "x" }),
     ).toMatchObject({ ok: true, inicio: null });
-    for (const motivo of MOTIVOS_DO_AGENDAR) {
+    for (const motivo of MOTIVOS_DO_AGENDAR.filter(
+      (m) => m !== "ja_tem_consulta" && m !== "faltam_dados",
+    )) {
       expect(lerRespostaDoAgendar({ ok: false, motivo })).toEqual({
         ok: false,
         motivo,
       });
     }
+    // AG3: ja_tem_consulta traz a consulta que existe; faltam_dados, a
+    // lista (sem ela, ninguem sabe o que pedir: fora do formato).
+    expect(
+      lerRespostaDoAgendar({
+        ok: false,
+        motivo: "ja_tem_consulta",
+        appointment_id: "a1",
+      }),
+    ).toEqual({ ok: false, motivo: "ja_tem_consulta", appointmentId: "a1" });
+    expect(
+      lerRespostaDoAgendar({ ok: false, motivo: "ja_tem_consulta" }),
+    ).toEqual({ ok: false, motivo: "ja_tem_consulta", appointmentId: null });
+    expect(
+      lerRespostaDoAgendar({
+        ok: false,
+        motivo: "faltam_dados",
+        faltam: ["nome_completo", "cpf"],
+      }),
+    ).toEqual({
+      ok: false,
+      motivo: "faltam_dados",
+      faltam: ["nome_completo", "cpf"],
+    });
+    for (const faltam of [undefined, [], ["rg"], "cpf"]) {
+      expect(
+        lerRespostaDoAgendar({ ok: false, motivo: "faltam_dados", faltam }),
+        JSON.stringify(faltam),
+      ).toBeNull();
+    }
+    expect(
+      lerRespostaDoAgendar({ ok: true, appointment_id: "a2" }),
+    ).toMatchObject({ ok: true, appointmentId: "a2" });
     expect(lerRespostaDoAgendar({ ok: true })).toBeNull();
     expect(lerRespostaDoAgendar({ ok: false, motivo: "outro" })).toBeNull();
   });
@@ -350,25 +421,30 @@ describe("reservar_horario", () => {
     const busca = json(await turno.executar("buscar_horario", BUSCA_DA_ANA));
     expect((busca.horarios as { codigo: string }[])[1]?.codigo).toBe("h2");
     const r = await turno.executar("reservar_horario", { horario: "H2" });
+    // AG3: a unidade do horario (sem unidade cadastrada, nula) e se e
+    // particular ou pelo convenio, para a pergunta "Confirma ...?".
     expect(json(r)).toEqual({
       resultado: "reservado",
       minutos: 10,
-      dia: "terça, 20/10",
-      hora: "11:30",
+      dia: "quarta, 21/10",
+      hora: "08:00",
       profissional: "Dra. Ana Lima",
       procedimento: "Consulta",
+      unidade: null,
+      pagamento: "particular",
     });
     expect(banco.chamadasDe("reservar_horario_da_ia")).toEqual([
       {
         p_clinic_id: CLINICA,
         p_conversation_id: CONVERSA,
         p_service_link_id: VINC.consultaAna,
-        p_starts_at: iso("2026-10-20", "11:30"),
+        p_starts_at: iso("2026-10-21", "08:00"),
         p_job_id: JOB,
+        p_unit_id: null,
       },
     ]);
     expect(r.tipo === "saida" && r.passo).toBe(
-      "Reservou terça, 20/10 às 11:30 (Consulta, Dra. Ana Lima) por 10 minutos",
+      "Reservou quarta, 21/10 às 08:00 (Consulta, Dra. Ana Lima) por 10 minutos",
     );
   });
 
@@ -395,7 +471,7 @@ describe("reservar_horario", () => {
     expect(banco.linhas("slot_hold")).toHaveLength(1);
   });
 
-  it.each(MOTIVOS_DA_RESERVA.filter((m) => m !== "ia_desligada"))(
+  it.each(MOTIVOS_DA_CONFERENCIA.filter((m) => m !== "ia_desligada"))(
     "motivo %s vira a saída do modelo, com o dia e a hora pedidos",
     async (motivo) => {
       rpcsDoContrato({ recusarReserva: motivo });
@@ -405,10 +481,10 @@ describe("reservar_horario", () => {
       expect(json(r)).toEqual({
         resultado: motivo,
         dia: "terça, 20/10",
-        hora: "11:15",
+        hora: "11:30",
       });
       expect(r.tipo === "saida" && r.passo).toBe(
-        `Tentou reservar terça, 20/10 às 11:15: ${ROTULO_DO_MOTIVO_DA_AGENDA[motivo]}`,
+        `Tentou reservar terça, 20/10 às 11:30: ${ROTULO_DO_MOTIVO_DA_AGENDA[motivo]}`,
       );
     },
   );
@@ -453,9 +529,11 @@ describe("reservar_horario", () => {
       resultado: "reservado",
       minutos: 10,
       dia: "terça, 20/10",
-      hora: "11:15",
+      hora: "11:30",
       profissional: "Dra. Ana Lima",
       procedimento: "Consulta",
+      unidade: null,
+      pagamento: "particular",
     });
     expect(banco.linhas("slot_hold")).toHaveLength(1);
     // O vinculo da reserva reaproveitada foi lido do banco.
@@ -483,7 +561,7 @@ describe("agendar", () => {
       resultado: "marcado",
       pendente: true,
       dia: "terça, 20/10",
-      hora: "11:15",
+      hora: "11:30",
       profissional: "Dra. Ana Lima",
       procedimento: "Consulta",
     });
@@ -491,7 +569,7 @@ describe("agendar", () => {
       { p_clinic_id: CLINICA, p_conversation_id: CONVERSA, p_job_id: JOB },
     ]);
     expect(r.tipo === "saida" && r.passo).toBe(
-      "Marcou a consulta de terça, 20/10 às 11:15 (Consulta, Dra. Ana Lima), pendente de aprovação da equipe",
+      "Marcou a consulta de terça, 20/10 às 11:30 (Consulta, Dra. Ana Lima), pendente de aprovação da equipe",
     );
   });
 
@@ -566,24 +644,115 @@ describe("agendar", () => {
     expect(json(await repetido.executar("agendar", {}))).toMatchObject({
       resultado: "marcado",
       pendente: true,
-      hora: "11:15",
+      hora: "11:30",
     });
     expect(banco.chamadasDe("agendar_pela_ia")).toHaveLength(2);
     expect(banco.linhas("appointment")).toHaveLength(1);
   });
 
-  it.each(MOTIVOS_DO_AGENDAR.filter((m) => m !== "ia_desligada"))(
-    "motivo %s vira a saída do modelo",
+  // AG3: as quatro recusas novas tem saida propria (abaixo); revisao final
+  // da AG3, reserva_diferente tambem (le a reserva viva).
+  const RECUSAS_DA_AG3: readonly string[] = [
+    "consulta_para_outra_pessoa",
+    "menor_de_idade",
+    "ja_tem_consulta",
+    "faltam_dados",
+    "reserva_diferente",
+  ];
+  it.each(
+    MOTIVOS_DO_AGENDAR.filter(
+      (m) => m !== "ia_desligada" && !RECUSAS_DA_AG3.includes(m),
+    ),
+  )("motivo %s vira a saída do modelo", async (motivo) => {
+    rpcsDoContrato({ recusarAgendar: motivo });
+    const turno = turnoCom(portaDoWhatsapp());
+    const r = await turno.executar("agendar", {});
+    expect(json(r)).toEqual({ resultado: motivo });
+    expect(r.tipo === "saida" && r.passo).toBe(
+      `Tentou marcar a consulta: ${ROTULO_DO_MOTIVO_DA_AGENDA[motivo]}`,
+    );
+  });
+
+  it.each(["consulta_para_outra_pessoa", "menor_de_idade"] as const)(
+    "AG3: %s passa a conversa para a equipe (D-8), com o motivo do banco",
     async (motivo) => {
       rpcsDoContrato({ recusarAgendar: motivo });
-      const turno = turnoCom(portaDoWhatsapp());
-      const r = await turno.executar("agendar", {});
-      expect(json(r)).toEqual({ resultado: motivo });
-      expect(r.tipo === "saida" && r.passo).toBe(
-        `Tentou marcar a consulta: ${ROTULO_DO_MOTIVO_DA_AGENDA[motivo]}`,
-      );
+      const r = await turnoCom(portaDoWhatsapp()).executar("agendar", {});
+      expect(r).toEqual({
+        tipo: "passar",
+        motivo,
+        resultado: motivo,
+        passo: `Não marcou a consulta: ${ROTULO_DO_MOTIVO_DA_AGENDA[motivo]}`,
+      });
     },
   );
+
+  it("AG3: ja_tem_consulta diz só o dia e a hora da consulta que já existe", async () => {
+    const existente = {
+      id: "ab000000-0000-4000-8000-000000000001",
+      clinic_id: CLINICA,
+      contact_id: CONTATO,
+      professional_id: "x",
+      service_link_id: VINC.consultaBruno,
+      status: "agendado",
+      approval_status: "aprovado",
+      starts_at: iso("2026-10-27", "10:00"),
+      ends_at: iso("2026-10-27", "10:30"),
+    };
+    banco.inserir("appointment", existente);
+    banco.rpc("agendar_pela_ia", () => ({
+      data: {
+        ok: false,
+        motivo: "ja_tem_consulta",
+        appointment_id: existente.id,
+      },
+      error: null,
+    }));
+    const r = await turnoCom(portaDoWhatsapp()).executar("agendar", {});
+    expect(json(r)).toEqual({
+      resultado: "ja_tem_consulta",
+      dia: "terça, 27/10",
+      hora: "10:00",
+    });
+    // Nada de profissional, procedimento nem id ao modelo.
+    expect(r.tipo === "saida" && r.saida).not.toMatch(/Bruno|Consulta|ab000000/);
+    // Revisao final da AG3: a consulta lida com o dia e a hora dela (e a
+    // unidade, nula aqui).
+    expect(r.tipo === "saida" && r.fatos).toEqual({
+      consultaLida: true,
+      consultaComHorario: {
+        dia: "terça, 27/10",
+        hora: "10:00",
+        unidade: null,
+        marcadaNestaConversa: false,
+      },
+    });
+    // A leitura da consulta: do contato da conversa, so o inicio, o estado
+    // e a unidade.
+    const leitura = banco.leituras.find((l) => l.tabela === "appointment");
+    expect(leitura?.colunas).toBe("starts_at, status, approval_status, unit_id");
+    expect(leitura?.filtros).toEqual(
+      expect.arrayContaining([
+        `eq:clinic_id=${CLINICA}`,
+        `eq:contact_id=${CONTATO}`,
+      ]),
+    );
+  });
+
+  it("AG3: faltam_dados diz o que falta (a lista do banco)", async () => {
+    banco.rpc("agendar_pela_ia", () => ({
+      data: { ok: false, motivo: "faltam_dados", faltam: ["data_nascimento"] },
+      error: null,
+    }));
+    const r = await turnoCom(portaDoWhatsapp()).executar("agendar", {});
+    expect(json(r)).toEqual({
+      resultado: "faltam_dados",
+      faltam: ["data_nascimento"],
+    });
+    expect(r.tipo === "saida" && r.passo).toBe(
+      "Não marcou: falta a data de nascimento",
+    );
+  });
 
   it("ia_desligada para o turno; erro falha fechado", async () => {
     rpcsDoContrato({ recusarAgendar: "ia_desligada" });
@@ -807,11 +976,11 @@ describe("simulador: a Agenda de verdade para buscar, nada gravado", () => {
     const reserva = await turno.executar("reservar_horario", { horario: "h1" });
     expect(json(reserva)).toMatchObject({
       resultado: "reservado",
-      hora: "11:15",
+      hora: "11:30",
       profissional: "Dra. Ana Lima",
     });
     expect(reserva.tipo === "saida" && reserva.passo).toBe(
-      "Reservaria terça, 20/10 às 11:15 (Consulta, Dra. Ana Lima) por 10 minutos. No simulador, nada foi gravado.",
+      "Reservaria terça, 20/10 às 11:30 (Consulta, Dra. Ana Lima) por 10 minutos. No simulador, nada foi gravado.",
     );
     const outroTurno = turnoCom(porta);
     const marcado = await outroTurno.executar("agendar", {});

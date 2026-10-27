@@ -27,7 +27,22 @@
 //     se a soma passar do limite do filtro, sai o encerramento e depois a
 //     saudacao, nunca a resposta.
 //  6. filtrarSaida (regras + verificador, falha fechada). So ele produz
-//     TextoAprovado; bloqueio vira a frase fixa.
+//     TextoAprovado; bloqueio vira a frase fixa. Desde a AG2 (27/10/2026)
+//     o filtro recebe os fatos do turno (lib/agente/fatos.ts): as saidas
+//     das ferramentas, a configuracao publicada que vai ao modelo e o que
+//     cada ferramenta afirmou de convenio e de acao. Data e hora, endereco,
+//     convenio e acao de agenda so passam com fato; erro ao montar os fatos
+//     e falha fechada. Revisao 2 da AG2: o filtro monta com os fatos um
+//     resumo sem dado de paciente (resumo-dos-fatos.ts, com as respostas da
+//     base que o modelo disse ter usado) e o verificador por modelo tambem
+//     julga fato; resumo que nao monta e falha fechada.
+//
+// AG2 (27/10/2026): as consultas do Cadastro (consultar_unidades,
+// consultar_requisitos e buscar_profissionais) leem so o catalogo carregado
+// antes do turno, como buscar_procedimento: nao gravam, nao leem a Agenda e
+// nao mudam o numero de rodadas. O que elas trazem (endereco, horario de
+// funcionamento, o convenio que o profissional atende) entra nos fatos do
+// turno; o passo da trilha e do tipo "cadastro".
 //
 // E4 (agenda, contrato da E4 secao 2): as ferramentas de agenda
 // (buscar_horario, reservar_horario, agendar e confirmar_presenca) rodam pela
@@ -52,6 +67,25 @@
 //  - o tipo do contato (lead ou paciente) vai na ultima linha das
 //    instrucoes (item 4), fora do prefixo do cache.
 //
+// AG3 (27/10/2026), o agendamento completo, com o ESTADO DO ATENDIMENTO
+// entre as mensagens (lib/agente/atendimento.ts; no WhatsApp, lido e
+// gravado pelo executor, lib/jobs/responder-com-ia.ts; no simulador, no
+// historico assinado):
+//  - o turno parte do estado lido (entrada.atendimento) e devolve o novo
+//    (resultado.atendimento); sem estado, roda como antes da AG3;
+//  - antes da primeira rodada, a reconferencia leve (agenda-do-turno.ts,
+//    preparar): os horarios ja oferecidos continuam livres? a reserva esta
+//    viva? Vai ao modelo no bloco <atendimento_em_andamento>, e so o
+//    reconferido agora e fato de horario livre (fatosDoEstado);
+//  - as ferramentas novas (registrar_dados_do_paciente e
+//    consultar_cadastro_do_contato) rodam pela porta da agenda; a recusa que
+//    passa para a equipe (consulta para outra pessoa, menor de idade) para o
+//    turno com o motivo do banco (origem "ferramenta");
+//  - a segunda falha seguida do atendimento (RESULTADOS_QUE_SAO_FALHA) passa
+//    para a equipe com falhas_seguidas (origem "sistema"), sem a resposta;
+//  - na passagem, a nota interna para a equipe (notaParaAEquipe), montada so
+//    do estado e do Cadastro.
+//
 // A trilha ("Por que a IA respondeu isso") diz o que foi consultado, com
 // nomes do Cadastro e da base da clinica, NUNCA texto do paciente. Log so com
 // ids, codigos, modelo e duracao.
@@ -66,6 +100,7 @@ import { z } from "zod";
 
 import {
   ehFerramentaDeAgenda,
+  ehFerramentaDoCadastro,
   ferramentasDoAgente,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
   type ConfigDoAgente,
@@ -78,6 +113,7 @@ import type {
   CategoriaDeConformidade,
   GatilhoDeEntrada,
 } from "@/lib/domain/conformidade/categorias";
+import type { FatosDoTurno } from "@/lib/domain/conformidade/fatos-do-turno";
 import {
   filtrarSaida,
   type DecisaoDoFiltro,
@@ -91,9 +127,13 @@ import {
 import {
   detectarGatilhosDeEntrada,
   LIMITE_DE_MENSAGEM,
+  pedidoDeConsultaParaOutraPessoa,
   type MensagemDeEntrada,
 } from "@/lib/domain/conformidade/gatilhos-de-entrada";
-import { minimizarParaLlm } from "@/lib/domain/conformidade/minimizar";
+import {
+  mascararParaOVerificador,
+  minimizarParaLlm,
+} from "@/lib/domain/conformidade/minimizar";
 import {
   classificarComPrazo,
   correrComPrazo,
@@ -125,8 +165,13 @@ import {
 } from "@/lib/integrations/llm/verificador";
 import { log } from "@/lib/log";
 
+import { FALHAS_PARA_PASSAR } from "./atendimento";
 import {
   criarAgendaDoTurno,
+  type AgendaDoTurno,
+  type AtendimentoDoTurno,
+  type AtendimentoParaOModelo,
+  type FechamentoDoTurno,
   type PortaDaAgenda,
 } from "./ferramentas/agenda-do-turno";
 import { limiteDaSaidaDaBuscaDeHorario } from "./ferramentas/buscar-horario";
@@ -138,6 +183,10 @@ import {
   type CatalogoDoAgente,
 } from "./ferramentas/buscar-procedimento";
 import {
+  executarConsultaDoCadastro,
+  limiteDasConsultasDoCadastro,
+} from "./ferramentas/consultas-do-cadastro";
+import {
   motivoDoEscalonamento,
   NOME_DO_ESCALONAMENTO,
 } from "./ferramentas/escalar-humano";
@@ -147,6 +196,10 @@ import {
   semArgumentos,
 } from "./ferramentas/fora-do-assunto";
 import {
+  esconderCodigosCurtos,
+  falaDaCarteirinha,
+} from "./ferramentas/registrar-dados";
+import {
   chamadaPodeTerSidoCobrada,
   custoMaximoDaChamada,
   FOLGA_DA_CHAMADA,
@@ -154,6 +207,7 @@ import {
   usoEstimadoDoClassificador,
   usoEstimadoDoVerificador,
 } from "./gasto";
+import { anoNaClinica, montarFatosDoTurno, type SaidaParaOsFatos } from "./fatos";
 import { semAMarcaDoNome } from "./marca-do-nome";
 import { prometePassagemParaAEquipe } from "./passagem-prometida";
 import {
@@ -252,11 +306,12 @@ export type MensagemDaConversa = {
 /**
  * O tipo de cada passo, que escolhe o icone na tela (components/agente/
  * simulador.tsx): consulta de preco, pergunta da base, agenda (buscar,
- * reservar, marcar e confirmar presenca, E4), passagem para a equipe,
- * bloqueio da conformidade e o resto.
+ * reservar, marcar e confirmar presenca, E4), consulta do Cadastro
+ * (unidades, o que o paciente precisa e quem atende, AG2), passagem para a
+ * equipe, bloqueio da conformidade e o resto.
  */
 export type TipoDoPasso =
-  "preco" | "base" | "agenda" | "equipe" | "bloqueio" | "outro";
+  "preco" | "base" | "agenda" | "cadastro" | "equipe" | "bloqueio" | "outro";
 
 /** Um passo do "Por que a IA respondeu isso". Nunca texto do paciente. */
 export type PassoDoTurno = { tipo: TipoDoPasso; texto: string };
@@ -267,7 +322,16 @@ export type PassoDoTurno = { tipo: TipoDoPasso; texto: string };
  * passou pela contagem (P5b), sem escalar_humano.
  */
 export type OrigemDoEscalonamento =
-  "portao" | "classificador" | "agente" | "texto_do_agente" | "insistencia";
+  | "portao"
+  | "classificador"
+  | "agente"
+  | "texto_do_agente"
+  | "insistencia"
+  // AG3: a ferramenta recusou com um motivo que passa para a equipe
+  // (consulta para outra pessoa, menor de idade, D-8).
+  | "ferramenta"
+  // AG3 (item 9): a segunda falha seguida do atendimento.
+  | "sistema";
 
 /** Falhas do turno alem das do verificador e do classificador. */
 export type FalhaDoAgente =
@@ -323,6 +387,18 @@ type Comum = {
    * Ausente = nenhuma.
    */
   ferramentasUsadas?: FerramentaDoAgente[];
+  /**
+   * AG3: o estado do atendimento e os dados depois do turno (o executor do
+   * WhatsApp grava com gravar_atendimento_da_ia; o simulador guarda no
+   * historico assinado). Ausente: o turno rodou sem estado.
+   */
+  atendimento?: FechamentoDoTurno;
+  /**
+   * AG3 (item 8): a nota interna para a equipe quando o turno passa a
+   * conversa, montada SO do estado e do Cadastro (nunca texto do modelo nem
+   * do paciente). Nula: nada a contar.
+   */
+  notaParaAEquipe?: string | null;
 };
 
 export type ResultadoDoTurno =
@@ -390,6 +466,18 @@ export type EntradaDoTurno = {
    */
   agenda?: PortaDaAgenda | null;
   /**
+   * AG3: o estado do atendimento lido no comeco do turno (no WhatsApp,
+   * ler_atendimento_da_ia; no simulador, o do historico assinado). Ausente
+   * ou nulo: o turno roda como antes da AG3, sem estado.
+   */
+  atendimento?: AtendimentoDoTurno | null;
+  /**
+   * AG3: o nascimento que o paciente informou nesta conversa (aaaa-mm-dd),
+   * so para a idade atendida do profissional. Nunca vai ao modelo nem a
+   * log. Ausente: nenhum.
+   */
+  nascimentoInformado?: string | null;
+  /**
    * O modelo do classificador e do verificador, para estimar o gasto da
    * chamada que falhou sem dizer o modelo (o corte por prazo).
    */
@@ -414,6 +502,11 @@ const ROTULO_DO_BLOQUEIO: Readonly<Record<CategoriaDeConformidade, string>> = {
   oferta_casada: "oferta casada",
   antes_depois: "imagem de antes e depois",
   preco_nao_verificado: "preço fora do cadastro",
+  // AG2: os fatos do turno (lib/domain/conformidade/fatos-do-turno.ts).
+  acao_nao_executada: "ação de agenda que não foi feita",
+  cobertura_nao_verificada: "convênio sem confirmação no cadastro",
+  horario_nao_verificado: "data ou horário sem confirmação na agenda",
+  endereco_nao_verificado: "endereço fora do cadastro",
   formato_invalido: "formato de resposta não permitido",
   falha_verificador: "verificação de conformidade indisponível",
 };
@@ -524,6 +617,10 @@ export const PASSO_DA_INSISTENCIA_FORA_DO_ASSUNTO =
 /** Onda 2 (P5c): a resposta a "você é um robô?". */
 export const PASSO_DO_ASSISTENTE_VIRTUAL =
   "Respondeu que é a assistente virtual da clínica e ofereceu uma pessoa da equipe.";
+
+/** AG3 (item 9): a segunda falha seguida do atendimento. */
+export const PASSO_DAS_FALHAS_SEGUIDAS =
+  "O atendimento não avançou em duas tentativas seguidas: a resposta não foi enviada.";
 
 const LIMITE_DO_TRECHO = 60;
 
@@ -708,22 +805,80 @@ export const MARCADOR_DE_MIDIA = {
   assistente: "(a clínica mandou um conteúdo que não é texto)",
 } as const;
 
+/** AG3 (LGPD): o que muda no texto que vai aos modelos neste turno. */
+export type OpcoesDoTextoParaOsModelos = {
+  /**
+   * Esconde tambem o codigo curto (4 a 7 digitos) que a minimizacao deixa
+   * passar: a carteirinha em jogo (esconderCodigosNoTurno).
+   */
+  esconderCodigos?: boolean;
+};
+
+/**
+ * AG3 (LGPD): a carteirinha esta em jogo neste turno quando o atendimento a
+ * pede ou ja a tem, ou quando alguma mensagem do historico fala dela (a
+ * pessoa que manda o numero antes de alguem pedir). Entao nenhum codigo
+ * curto do historico vai a modelo nenhum (esconderCodigosCurtos): a
+ * minimizacao so esconde 8 digitos ou mais, e a carteirinha nunca vai.
+ */
+export function esconderCodigosNoTurno(entrada: {
+  mensagens: readonly MensagemDaConversa[];
+  atendimento?: AtendimentoDoTurno | null;
+}): boolean {
+  const dados = entrada.atendimento?.dados ?? null;
+  if (
+    dados !== null &&
+    (dados.carteirinha || dados.faltam.includes("carteirinha"))
+  ) {
+    return true;
+  }
+  return entrada.mensagens
+    .slice(-MENSAGENS_NO_HISTORICO)
+    .some(
+      (m) =>
+        (m.tipo ?? "texto") === "texto" &&
+        m.texto !== null &&
+        falaDaCarteirinha(m.texto),
+    );
+}
+
+/**
+ * O texto de uma mensagem para o classificador e o verificador (que
+ * minimizam de novo, sem efeito): como esta, ou, com a carteirinha em jogo,
+ * minimizado e com os codigos curtos escondidos.
+ */
+export function textoParaOsModelos(
+  mensagem: MensagemDaConversa,
+  opcoes: OpcoesDoTextoParaOsModelos = {},
+): string {
+  const texto = mensagem.texto ?? "";
+  return opcoes.esconderCodigos === true
+    ? esconderCodigosCurtos(minimizarParaLlm(texto))
+    : texto;
+}
+
 /** Mensagem pronta para o modelo: minimizada (LGPD), sem marcador, cortada. */
-export function mensagemParaOModelo(mensagem: MensagemDaConversa): string {
+export function mensagemParaOModelo(
+  mensagem: MensagemDaConversa,
+  opcoes: OpcoesDoTextoParaOsModelos = {},
+): string {
   if ((mensagem.tipo ?? "texto") !== "texto" || mensagem.texto === null) {
     return MARCADOR_DE_MIDIA[mensagem.autor];
   }
-  return Array.from(semMarcadores(minimizarParaLlm(mensagem.texto)))
+  return Array.from(
+    semMarcadores(minimizarParaLlm(textoParaOsModelos(mensagem, opcoes))),
+  )
     .slice(0, CARACTERES_POR_MENSAGEM)
     .join("");
 }
 
 export function historicoParaOModelo(
   mensagens: readonly MensagemDaConversa[],
+  opcoes: OpcoesDoTextoParaOsModelos = {},
 ): ResponseInputItem[] {
   return mensagens.slice(-MENSAGENS_NO_HISTORICO).map((mensagem) => ({
     role: mensagem.autor === "paciente" ? "user" : "assistant",
-    content: mensagemParaOModelo(mensagem),
+    content: mensagemParaOModelo(mensagem, opcoes),
   }));
 }
 
@@ -809,9 +964,21 @@ export function custoMaximoDoTurno(entrada: {
   precos: readonly PrecoDoModelo[];
   /** Onda 2 (item 4): a linha do contato entra na conta da entrada. */
   contato?: TipoDoContato | null;
+  /**
+   * AG3: o estado do atendimento (o bloco <atendimento_em_andamento> entra
+   * na conta). Use atendimentoParaEstimativa: sem a reconferencia, toda
+   * situacao fica com o texto mais longo.
+   */
+  atendimento?: AtendimentoParaOModelo | null;
 }): number | null {
-  const pendentes = mensagensPendentes(entrada.mensagens).map(
-    (m) => m.texto ?? "",
+  // AG3: com a carteirinha em jogo o texto vai com os codigos curtos
+  // escondidos, que pode ficar uns caracteres mais longo ("1234" vira
+  // "[numero]"): a conta usa o mais longo dos dois.
+  const maisLongo = <T,>(a: T, b: T): T =>
+    JSON.stringify(a).length >= JSON.stringify(b).length ? a : b;
+  const escondido: OpcoesDoTextoParaOsModelos = { esconderCodigos: true };
+  const pendentes = mensagensPendentes(entrada.mensagens).map((m) =>
+    maisLongo(m.texto ?? "", textoParaOsModelos(m, escondido)),
   );
   const corpo = {
     instructions: montarInstrucoes({
@@ -819,8 +986,12 @@ export function custoMaximoDoTurno(entrada: {
       catalogo: entrada.catalogo,
       agoraTexto: agoraNaClinica(entrada.agoraMs, entrada.fuso),
       contato: entrada.contato ?? null,
+      atendimento: entrada.atendimento ?? null,
     }),
-    input: historicoParaOModelo(entrada.mensagens),
+    input: maisLongo(
+      historicoParaOModelo(entrada.mensagens),
+      historicoParaOModelo(entrada.mensagens, escondido),
+    ),
     tools: ferramentasDaChamada(entrada.config),
     text: { format: FORMATO_DA_RESPOSTA },
   };
@@ -835,6 +1006,8 @@ export function custoMaximoDoTurno(entrada: {
     Math.max(
       limiteDaSaidaDaBusca(entrada.catalogo),
       comAgenda ? limiteDaSaidaDaBuscaDeHorario(entrada.catalogo) : 0,
+      // AG2: as consultas do Cadastro vem sempre (habilidade travada).
+      limiteDasConsultasDoCadastro(entrada.catalogo),
     ) +
     FOLGA_DA_CHAMADA;
   const rodadas = comAgenda ? MAXIMO_DE_RODADAS_COM_AGENDA : MAXIMO_DE_RODADAS;
@@ -864,9 +1037,93 @@ export function custoMaximoDoTurno(entrada: {
   return total;
 }
 
+/**
+ * AG3: o bloco do estado para a estimativa do gasto (custoMaximoDoTurno),
+ * antes do turno: sem porta, nada e reconferido, e cada horario fica com a
+ * situacao "nao conferido" (a mais longa). Nunca lanca.
+ */
+export function atendimentoParaEstimativa(entrada: {
+  atendimento: AtendimentoDoTurno | null;
+  config: ConfigDoAgente;
+  catalogo: CatalogoDoAgente;
+  agoraMs: number;
+  fuso: string;
+}): AtendimentoParaOModelo | null {
+  if (entrada.atendimento === null) {
+    return null;
+  }
+  try {
+    return criarAgendaDoTurno({
+      porta: null,
+      catalogo: entrada.catalogo,
+      config: entrada.config,
+      agoraMs: entrada.agoraMs,
+      fuso: entrada.fuso,
+      atendimento: entrada.atendimento,
+    }).paraOModelo();
+  } catch {
+    return null;
+  }
+}
+
+/** As mensagens do paciente no formato de registrar_dados_do_paciente. */
+function mensagensDoPacienteParaOsDados(
+  mensagens: readonly MensagemDaConversa[],
+): { mascarado: string; original: string }[] {
+  return mensagens.flatMap((m) =>
+    m.autor === "paciente" && (m.tipo ?? "texto") === "texto" && m.texto !== null
+      ? [{ mascarado: m.texto, original: m.textoOriginal ?? m.texto }]
+      : [],
+  );
+}
+
+/** O que a nota para a equipe diz do motivo da passagem. */
+function motivoParaANota(desfecho: DesfechoDoTurno): string {
+  switch (desfecho.tipo) {
+    case "escalou":
+      return ROTULO_DO_MOTIVO_DE_ESCALONAMENTO[desfecho.motivo];
+    case "bloqueou":
+      return ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.conformidade;
+    case "falhou":
+      return textoDaFalha(desfecho.motivo);
+    case "respondeu":
+      return "";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // O turno
 // ---------------------------------------------------------------------------
+
+/** O relogio que parte de `agoraMs` e anda com o tempo de verdade. */
+function relogioDesde(agoraMs: number): () => number {
+  const inicio = Date.now();
+  return () => agoraMs + (Date.now() - inicio);
+}
+
+/**
+ * Revisao final da AG3 (achado 14): o turno da coleta de dados, em que a
+ * pessoa pode mandar o nome completo e o nascimento: com o estado do
+ * atendimento, uma reserva no estado (ou a pergunta "Confirma" feita) ou o
+ * nome ou o nascimento ainda faltando para marcar. Revisao curta das
+ * correcoes (achado 1): decide so se o NASCIMENTO some da copia do
+ * verificador; o classificador le o texto inteiro sempre, e o nome so some
+ * quando o servidor validou no turno (nomesValidados).
+ */
+export function turnoDaColetaDeDados(
+  atendimento: AtendimentoDoTurno | null,
+): boolean {
+  if (atendimento === null) {
+    return false;
+  }
+  const { estado, dados } = atendimento;
+  return (
+    estado.slot_hold_id !== null ||
+    estado.etapa === "aguardando_confirmacao" ||
+    dados.faltam.includes("nome_completo") ||
+    dados.faltam.includes("data_nascimento")
+  );
+}
 
 /** Hoje (AAAA-MM-DD) no fuso da clinica, para a idade do portao. */
 function hojeNoFuso(agoraMs: number, fuso: string): string | null {
@@ -883,9 +1140,76 @@ function hojeNoFuso(agoraMs: number, fuso: string): string | null {
   }
 }
 
+/**
+ * Um turno do agente. AG3: com o estado do atendimento (entrada.atendimento),
+ * o resultado traz o estado novo (atendimento) e, na passagem para a
+ * equipe, a nota interna (notaParaAEquipe); quem grava e o executor do
+ * WhatsApp (o simulador guarda no historico assinado).
+ */
 export async function executarTurnoDoAgente(
   entrada: EntradaDoTurno,
 ): Promise<ResultadoDoTurno> {
+  const comEstado =
+    entrada.atendimento !== null && entrada.atendimento !== undefined;
+  const pendentes = mensagensPendentes(entrada.mensagens);
+  const agendaDoTurno = criarAgendaDoTurno({
+    porta: entrada.agenda ?? null,
+    catalogo: entrada.catalogo,
+    config: entrada.config,
+    agoraMs: entrada.agoraMs,
+    fuso: entrada.fuso,
+    atendimento: entrada.atendimento ?? null,
+    mensagens: {
+      doPaciente: mensagensDoPacienteParaOsDados(entrada.mensagens),
+      pendentes: mensagensDoPacienteParaOsDados(pendentes),
+    },
+    nascimentos: [entrada.dataDeNascimento, entrada.nascimentoInformado].filter(
+      (n): n is string => typeof n === "string" && n !== "",
+    ),
+    // Revisao final da AG3: o relogio do turno (a reserva que vence no meio
+    // do turno conta como vencida). Sem relogio injetado, o instante do
+    // comeco do turno mais o tempo que ja passou.
+    agora: entrada.agora ?? relogioDesde(entrada.agoraMs),
+  });
+  const resultado = await turnoDoAgente(entrada, agendaDoTurno);
+  if (!comEstado) {
+    return resultado;
+  }
+  try {
+    const passou = resultado.tipo === "frase_fixa";
+    const atendimento = agendaDoTurno.fechar({
+      mensagemFinal: resultado.tipo === "resposta" ? resultado.resposta : null,
+      passou,
+    });
+    return {
+      ...resultado,
+      atendimento,
+      notaParaAEquipe: passou
+        ? agendaDoTurno.nota(motivoParaANota(resultado.desfecho))
+        : null,
+    };
+  } catch {
+    // O fechamento nunca deveria lancar. Se lancar, o resultado volta SEM o
+    // estado novo: o executor do WhatsApp (lib/jobs/responder-com-ia.ts,
+    // passo 11b) grava o estado LIDO no comeco do turno, como estava (a
+    // versao sobe), e segue com a resposta ja aprovada pelo filtro; o
+    // simulador fica com o estado de antes. Nada do que o turno fez vira
+    // etapa nova: sem a etapa aguardando_confirmacao, o agendar seguinte e
+    // recusado (sem_confirmacao_do_paciente).
+    log.warn("ia_agente_estado_falhou", {
+      kind: "agente",
+      clinic_id: entrada.clinicId,
+    });
+    return resultado;
+  }
+}
+
+async function turnoDoAgente(
+  entrada: EntradaDoTurno,
+  agendaDoTurno: AgendaDoTurno,
+): Promise<ResultadoDoTurno> {
+  const comEstado =
+    entrada.atendimento !== null && entrada.atendimento !== undefined;
   const agora = entrada.agora ?? Date.now;
   const inicio = agora();
   const prazoEm = inicio + (entrada.prazoMs ?? PRAZO_DO_TURNO_MS);
@@ -960,6 +1284,28 @@ export async function executarTurnoDoAgente(
         textoDoGatilho(gatilho),
       );
     }
+    // Revisao final da AG3 (achado 15, D-8): o pedido de consulta para outra
+    // pessoa adulta ("para minha mae", "pro meu marido") passa para a equipe
+    // antes do modelo, com o motivo do banco e sem gatilho (o CHECK de
+    // gatilho_entrada nao muda). Filho e filha seguem pela regra do menor.
+    if (
+      pedidoDeConsultaParaOutraPessoa(
+        pendentes
+          .filter((m) => (m.tipo ?? "texto") === "texto")
+          .map((m) => m.textoOriginal ?? m.texto),
+      )
+    ) {
+      trilha.push({
+        tipo: "outro",
+        texto: "A mensagem foi conferida antes de chegar ao assistente.",
+      });
+      return escalar(
+        "consulta_para_outra_pessoa",
+        "portao",
+        null,
+        ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.consulta_para_outra_pessoa,
+      );
+    }
 
     // 2. Configuracao.
     const { cliente, modelo } = entrada;
@@ -974,8 +1320,25 @@ export async function executarTurnoDoAgente(
       return falhar("sem_identificador");
     }
 
-    // 3. Classificador de entrada.
-    const textosPendentes = pendentes.map((m) => m.texto ?? "");
+    // 3. Classificador de entrada. AG3 (LGPD): com a carteirinha em jogo,
+    // o codigo curto que a minimizacao deixa passar nao vai ao
+    // classificador, ao agente nem ao verificador (o servidor acha a
+    // carteirinha no texto original: registrar_dados_do_paciente).
+    const opcoesDoTexto: OpcoesDoTextoParaOsModelos = {
+      esconderCodigos: esconderCodigosNoTurno(entrada),
+    };
+    const textosPendentes = pendentes.map((m) =>
+      textoParaOsModelos(m, opcoesDoTexto),
+    );
+    // Revisao curta das correcoes da AG3 (achado 1, ALTO, CFM): o
+    // classificador le o texto SEM mascara de nome e de nascimento. A
+    // mascara pela deixa ("me chamo", "meu nome e") escondia o sintoma dito
+    // depois do nome ("me chamo ana e to com o dente mole" chegava como "me
+    // chamo [nome]"); o agente ja le o texto inteiro do mesmo provedor, e
+    // esconder sintoma do portao e o risco maior. A minimizacao de sempre
+    // (CPF, telefone, e-mail, os codigos da carteirinha) continua.
+    const naColeta = turnoDaColetaDeDados(entrada.atendimento ?? null);
+    const anoCorrente = anoNaClinica(entrada.agoraMs, entrada.fuso);
     const restanteDoPortao = prazoEm - agora();
     const classificacao = await classificarComPrazo(
       entrada.classificador,
@@ -1042,21 +1405,23 @@ export async function executarTurnoDoAgente(
     const permitidas: ReadonlySet<string> = new Set(
       ferramentasDoAgente(entrada.config.habilidades, entrada.config.agenda),
     );
-    const agendaDoTurno = criarAgendaDoTurno({
-      porta: entrada.agenda ?? null,
-      catalogo: entrada.catalogo,
-      config: entrada.config,
-      agoraMs: entrada.agoraMs,
-      fuso: entrada.fuso,
-    });
+    // AG3: a reconferencia leve do estado (os horarios ja oferecidos, a
+    // reserva e a consulta marcada nesta conversa), antes da primeira
+    // rodada. Nunca lanca: o que nao deu para conferir fica "nao conferido".
+    if (comEstado) {
+      await agendaDoTurno.preparar();
+    }
     // Sobe para MAXIMO_DE_RODADAS_COM_AGENDA quando o turno usa a agenda.
     let maximoDeRodadas = MAXIMO_DE_RODADAS;
     const fixos = parametrosFixosDoAgente(modelo);
+    // A mesma linha da hora vai ao modelo e aos fatos do turno.
+    const agoraTexto = agoraNaClinica(entrada.agoraMs, entrada.fuso);
     const instrucoes = montarInstrucoes({
       config: entrada.config,
       catalogo: entrada.catalogo,
-      agoraTexto: agoraNaClinica(entrada.agoraMs, entrada.fuso),
+      agoraTexto,
       contato: entrada.contato ?? null,
+      atendimento: agendaDoTurno.paraOModelo(),
     });
     const perguntas = perguntasParaOModelo(entrada.config.base);
     // Texto que deixou de passar nas regras fica de fora (segunda trava);
@@ -1078,8 +1443,11 @@ export async function executarTurnoDoAgente(
     }
     const historico: ResponseInputItem[] = historicoParaOModelo(
       entrada.mensagens,
+      opcoesDoTexto,
     );
     const precosDoTurno: number[] = [];
+    // AG2: o que cada ferramenta do turno devolveu, para os fatos do turno.
+    const ferramentasDoTurno: SaidaParaOsFatos[] = [];
     let final: RespostaFinal | null = null;
     // Onda 2 (item 5 e P5c): a ferramenta de frase fixa que encerrou o turno.
     let fraseEscolhida: "fora_do_assunto" | "sou_assistente_virtual" | null =
@@ -1277,12 +1645,38 @@ export async function executarTurnoDoAgente(
             argumentosDe(chamada),
           );
           precosDoTurno.push(...busca.precos);
+          ferramentasDoTurno.push({ saida: busca.saida, fatos: busca.fatos });
           trilha.push({ tipo: "preco", texto: busca.passo });
           ferramentasUsadas.push("buscar_procedimento");
           historico.push({
             type: "function_call_output",
             call_id: chamada.call_id,
             output: busca.saida,
+          });
+          continue;
+        }
+        if (ehFerramentaDoCadastro(nome)) {
+          // AG2: so le o catalogo do turno (nunca lanca; uma excecao cai na
+          // rede de seguranca do turno, falha fechada).
+          const consulta = executarConsultaDoCadastro(
+            nome,
+            entrada.catalogo,
+            argumentosDe(chamada),
+            {
+              informarConvenio: permitidas.has(NOME_DA_BUSCA),
+              agendaLigada: permitidas.has("buscar_horario"),
+            },
+          );
+          ferramentasDoTurno.push({
+            saida: consulta.saida,
+            fatos: consulta.fatos,
+          });
+          trilha.push({ tipo: "cadastro", texto: consulta.passo });
+          ferramentasUsadas.push(nome);
+          historico.push({
+            type: "function_call_output",
+            call_id: chamada.call_id,
+            output: consulta.saida,
           });
           continue;
         }
@@ -1300,6 +1694,18 @@ export async function executarTurnoDoAgente(
           trilha.push({ tipo: "agenda", texto: efeito.passo });
           return falhar("liberacao_suspensa");
         }
+        if (efeito.tipo === "passar") {
+          // AG3 (D-8): a consulta e para outra pessoa, ou o paciente e menor
+          // de idade. O servidor passa a conversa, com o motivo do banco; o
+          // modelo nao escreve mais nada.
+          trilha.push({ tipo: "agenda", texto: efeito.passo });
+          return escalar(
+            efeito.motivo,
+            "ferramenta",
+            null,
+            ROTULO_DO_MOTIVO_DE_ESCALONAMENTO[efeito.motivo],
+          );
+        }
         if (efeito.tipo === "falha") {
           trilha.push({ tipo: "agenda", texto: efeito.passo });
           log.warn("ia_agente_agenda_falhou", {
@@ -1309,6 +1715,7 @@ export async function executarTurnoDoAgente(
           return falhar("desconhecida");
         }
         precosDoTurno.push(...efeito.precos);
+        ferramentasDoTurno.push({ saida: efeito.saida, fatos: efeito.fatos });
         trilha.push({ tipo: "agenda", texto: efeito.passo });
         historico.push({
           type: "function_call_output",
@@ -1316,6 +1723,22 @@ export async function executarTurnoDoAgente(
           output: efeito.saida,
         });
       }
+    }
+
+    // AG3 (item 9): a segunda falha seguida do atendimento passa para a
+    // equipe (a resposta deste turno nao sai). Falha e o que
+    // RESULTADOS_QUE_SAO_FALHA diz (lib/agente/atendimento.ts).
+    if (comEstado && agendaDoTurno.falhasDepois() >= FALHAS_PARA_PASSAR) {
+      trilha.push({
+        tipo: "outro",
+        texto: PASSO_DAS_FALHAS_SEGUIDAS,
+      });
+      return escalar(
+        "falhas_seguidas",
+        "sistema",
+        null,
+        ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.falhas_seguidas,
+      );
     }
 
     const primeiraResposta = !entrada.mensagens.some(
@@ -1329,6 +1752,9 @@ export async function executarTurnoDoAgente(
         ? FRASE_DO_ASSISTENTE_VIRTUAL
         : null;
     let rascunho: string;
+    // Revisao 2 da AG2: as respostas da base que o modelo disse ter usado,
+    // para o resumo dos fatos que vai ao verificador.
+    const respostasDaBase: string[] = [];
 
     if (fraseEscolhida !== null) {
       ferramentasUsadas.push(fraseEscolhida);
@@ -1377,8 +1803,17 @@ export async function executarTurnoDoAgente(
       // passar para a equipe sem ter chamado escalar_humano e uma passagem.
       // O texto do modelo nunca sai (a conversa ficaria na IA sem ninguem
       // avisado); sai a frase fixa, e a conversa vai para a equipe como em
-      // toda passagem.
-      if (prometePassagemParaAEquipe(final.mensagem)) {
+      // toda passagem. Revisao da AG2: com o que o turno fez (o aviso da
+      // aprovacao depois de marcar e informacao; "vou conferir a agenda"
+      // sem ferramenta e promessa).
+      if (
+        prometePassagemParaAEquipe(final.mensagem, {
+          usouFerramenta: ferramentasDoTurno.length > 0,
+          acoes: ferramentasDoTurno.flatMap(({ fatos }) =>
+            fatos?.acao === undefined ? [] : [fatos.acao],
+          ),
+        })
+      ) {
         trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
         return escalar(
           "agente_pediu",
@@ -1397,6 +1832,7 @@ export async function executarTurnoDoAgente(
         );
         if (pergunta !== undefined && !usadas.has(pergunta.codigo)) {
           usadas.add(pergunta.codigo);
+          respostasDaBase.push(pergunta.item.resposta);
           trilha.push({
             tipo: "base",
             texto: `Usou a pergunta da base: ${trecho(pergunta.item.pergunta)}`,
@@ -1409,7 +1845,8 @@ export async function executarTurnoDoAgente(
           (passo) =>
             passo.tipo === "preco" ||
             passo.tipo === "base" ||
-            passo.tipo === "agenda",
+            passo.tipo === "agenda" ||
+            passo.tipo === "cadastro",
         )
       ) {
         trilha.push({ tipo: "outro", texto: PASSO_SEM_CONSULTA });
@@ -1433,15 +1870,60 @@ export async function executarTurnoDoAgente(
       });
     }
 
-    // 6. Filtro de saida.
+    // 6. Filtro de saida, com os fatos do turno (AG2). Montar os fatos que
+    // lanca e falha fechada: a resposta nao sai e a conversa passa.
+    let fatos: FatosDoTurno;
+    try {
+      // AG3: o estado entra como fonte de dia e hora (o que ja foi
+      // oferecido), e so o reconferido agora e horario livre.
+      const doEstado = agendaDoTurno.fatosDoEstado();
+      fatos = montarFatosDoTurno({
+        config: entrada.config,
+        catalogo: entrada.catalogo,
+        agoraTexto,
+        agoraMs: entrada.agoraMs,
+        fuso: entrada.fuso,
+        ferramentas:
+          doEstado === null
+            ? ferramentasDoTurno
+            : [...ferramentasDoTurno, doEstado],
+        respostasDaBase,
+      });
+    } catch {
+      log.warn("ia_agente_fatos_falharam", {
+        kind: "agente",
+        clinic_id: entrada.clinicId,
+      });
+      return falhar("desconhecida");
+    }
+    // Achado 14 e revisao curta das correcoes (achado 1): a copia do
+    // verificador vai sem o nascimento (no turno da coleta) e sem os nomes
+    // que o servidor VALIDOU neste turno e que parecem nome
+    // (nomesValidados; nunca a heuristica da deixa, que engolia o sintoma).
+    // O resto, sintoma inclusive, chega como esta. O texto aprovado continua
+    // o rascunho, byte a byte.
+    const nomesValidados = agendaDoTurno.nomesValidados();
+    const verificador: Verificador =
+      naColeta || nomesValidados.length > 0
+        ? (pedido) => {
+            const copia = (texto: string) =>
+              mascararParaOVerificador(texto, { anoCorrente, nomesValidados });
+            return entrada.verificador({
+              ...pedido,
+              rascunho: copia(pedido.rascunho),
+              mensagensDoPaciente: pedido.mensagensDoPaciente.map(copia),
+            });
+          }
+        : entrada.verificador;
     filtro = await filtrarSaida({
       rascunho,
       contexto: {
         precosDoTurno,
         nomesDoCatalogo: nomesDoCatalogo(entrada.catalogo),
         mensagensDoPaciente: textosPendentes,
+        fatos,
       },
-      verificador: entrada.verificador,
+      verificador,
       prazoEm,
       agora,
     });

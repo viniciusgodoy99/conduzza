@@ -10,6 +10,12 @@ import {
   recusarEncaixeAction,
   type AgendaActionResult,
 } from "@/app/(app)/agenda/actions";
+import {
+  BotaoDosDadosInformados,
+  contatoDaConsulta,
+  DialogoDosDadosInformados,
+  useDadosInformados,
+} from "@/components/agenda/dados-informados";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -20,6 +26,7 @@ import {
   type AppointmentStatus,
   type StatusDefinition,
 } from "@/lib/design/status";
+import { situacaoDaConsulta } from "@/lib/domain/dados-informados";
 import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 // Painel lateral "Pendente de voce" (264px, cartao do design system, docs/06
@@ -43,6 +50,15 @@ import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 // O cartao traz paciente, procedimento com o convenio (ou "Particular"),
 // profissional e o dia com a hora no fuso da clinica: e o que a equipe
 // confere antes de aprovar o que a IA escolheu.
+//
+// AG3 (D-7): o cartao da consulta da IA ganha "Ver dados informados" (40px,
+// acima de Aprovar e Recusar), o que o paciente informou ao assistente para
+// marcar, que a aprovacao aplica ao cadastro (o nome se estiver vazio ou
+// for o do WhatsApp; nascimento e CPF so vazios; a carteirinha so vazia e na
+// consulta pelo convenio, o mesmo do cadastro ou com ele vazio). A
+// leitura grava trilha e por isso so acontece no clique
+// (components/agenda/dados-informados.tsx). O encaixe nao tem: a IA nao
+// pede dado para sugerir encaixe.
 
 export const CHIP_ENCAIXE_IA: StatusDefinition = {
   label: "Encaixe da IA",
@@ -176,6 +192,15 @@ export function PendingPanel({
     id: string;
     acao: AcaoDaPendencia;
   } | null>(null);
+  // "Ver dados informados" (AG3): a consulta do dialogo fica guardada aqui,
+  // para o dialogo nao perder o nome se ela sair da lista enquanto aberto.
+  const dadosInformados = useDadosInformados();
+  const [consultaDosDados, setConsultaDosDados] =
+    useState<ConsultaDaAgenda | null>(null);
+  const verDadosInformados = (consulta: ConsultaDaAgenda) => {
+    setConsultaDosDados(consulta);
+    dadosInformados.abrir(consulta.id);
+  };
 
   async function tratar(consulta: ConsultaDaAgenda, acao: AcaoDaPendencia) {
     const daIa = ehConsultaDaIa(consulta);
@@ -263,6 +288,12 @@ export function PendingPanel({
                       {diaEHora(consulta.starts_at, contexto.timezone)}
                     </p>
                   </div>
+                  {ehConsultaDaIa(consulta) ? (
+                    <BotaoDosDadosInformados
+                      podeLer={contexto.podeEditar}
+                      aoAbrir={() => verDadosInformados(consulta)}
+                    />
+                  ) : null}
                   <div className="flex gap-2">
                     {contexto.podeEditar ? (
                       <>
@@ -331,6 +362,22 @@ export function PendingPanel({
             })}
           </ul>
         )}
+
+        <DialogoDosDadosInformados
+          aberto={dadosInformados.aberta !== null && consultaDosDados !== null}
+          nome={consultaDosDados ? contatoDaConsulta(consultaDosDados) : null}
+          fuso={contexto.timezone}
+          situacao={
+            consultaDosDados ? situacaoDaConsulta(consultaDosDados) : "pendente"
+          }
+          estado={dadosInformados.estado}
+          aoFechar={() => {
+            dadosInformados.fechar();
+            setConsultaDosDados(null);
+          }}
+          aoTentarDeNovo={dadosInformados.tentarDeNovo}
+          aoRevelar={dadosInformados.revelar}
+        />
 
         <div className="grid gap-2 border-t border-border pt-4">
           <h3 className="cz-eyebrow text-text-secondary">

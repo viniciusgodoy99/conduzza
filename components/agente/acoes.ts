@@ -4,6 +4,7 @@ import {
   publicarAgenteAction,
   restaurarVersaoAction,
   salvarAgendaAction,
+  salvarDadosExigidosAction,
   salvarHabilidadesAction,
   salvarHorarioAction,
   salvarInstrucoesAction,
@@ -20,6 +21,7 @@ import type {
 } from "@/components/agente/tipos";
 import type {
   AgendaDoAgente,
+  DadosExigidos,
   HabilidadesDoAgente,
   HorarioDeOperacao,
   InstrucoesEntrada,
@@ -47,6 +49,8 @@ export type AcoesDoAgente = {
   salvarAgenda: (agenda: AgendaDoAgente) => Promise<ResultadoDaAcao>;
   /** Quem o assistente atende (onda 2, item 4). */
   salvarPublico: (publico: PublicoDoAgente) => Promise<ResultadoDaAcao>;
+  /** Os dados que a IA pede antes de marcar consulta (AG3, D-6). */
+  salvarDadosExigidos: (dados: DadosExigidos) => Promise<ResultadoDaAcao>;
   salvarItemDaBase: (item: ItemDaBaseEntrada) => Promise<ResultadoDaAcao>;
   ativarItemDaBase: (id: string, ativo: boolean) => Promise<ResultadoDaAcao>;
   excluirItemDaBase: (id: string) => Promise<ResultadoDaAcao>;
@@ -73,6 +77,8 @@ export const acoesDoAgente: AcoesDoAgente = {
   salvarAgenda: async (agenda) => resultado(await salvarAgendaAction(agenda)),
   salvarPublico: async (publico) =>
     resultado(await salvarPublicoAction({ publico })),
+  salvarDadosExigidos: async (dados) =>
+    resultado(await salvarDadosExigidosAction(dados)),
   salvarItemDaBase: async (item) =>
     resultado(await salvarItemDaBaseAction(item)),
   ativarItemDaBase: async (id, ativo) =>
@@ -102,6 +108,7 @@ export const acoesDoAgente: AcoesDoAgente = {
       trilha,
       rascunhoBloqueado: r.rascunhoBloqueado,
       assinatura: r.assinatura,
+      estado: r.estado,
     };
   },
 };

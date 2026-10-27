@@ -262,7 +262,7 @@ export const TEXTOS_DO_AGENTE = {
   resposta: "Resposta",
   perguntaPlaceholder: "Ex.: Tem estacionamento?",
   respostaPlaceholder:
-    "Ex.: Sim, temos estacionamento gratuito para pacientes na entrada da clínica.",
+    "Ex.: Sim, temos estacionamento de cortesia para pacientes na entrada da clínica.",
   ativa: "Ativa: o assistente usa esta resposta",
   ativaDescricao:
     "Desmarcada, fica guardada aqui e o assistente deixa de usar.",
@@ -317,6 +317,22 @@ export const TEXTOS_DO_AGENTE = {
   publicoSemMudanca: "Escolha outra opção para salvar.",
   salvarPublico: "Salvar público",
   publicoSalvo: "Público salvo no rascunho.",
+  // Dados para marcar consulta (AG3, D-6 e D-7; textos propostos). O titulo
+  // e os rotulos das caixas vem de lib/domain/agente/config.ts
+  // (ROTULO_DOS_DADOS_EXIGIDOS e DADOS_EXIGIDOS).
+  dadosDescricao:
+    "Salvo no rascunho, vale ao publicar. Antes de marcar a consulta, o assistente pede ao paciente os dados escolhidos aqui.",
+  dadosLegenda: "Dados que o assistente pede antes de marcar",
+  // Revisao final da AG3 (achado 8): a regra real do gatilho
+  // (aplicar_dados_na_aprovacao), a mesma do "Ver dados informados".
+  dadosNoCadastro:
+    "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente assim: o nome, se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estiverem vazios; a carteirinha, se estiver vazia e a consulta for pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
+  dadosCarteirinha:
+    "A carteirinha não entra aqui: o assistente pede quando o convênio ou o procedimento exige, conforme o Cadastro.",
+  dadosNenhum:
+    "Com nenhuma caixa marcada, o assistente marca a consulta sem pedir esses dados.",
+  salvarDados: "Salvar dados",
+  dadosSalvos: "Dados para marcar consulta salvos no rascunho.",
   gatilhosTitulo: "Quando o assistente passa para a equipe",
   gatilhosDescricao:
     "Nestes casos a conversa sempre vai para a equipe, e o paciente recebe uma frase fixa, nunca escrita pelo assistente. Não podem ser desligados.",
@@ -344,7 +360,7 @@ export const TEXTOS_DO_AGENTE = {
   // tambem as instrucoes da equipe Conduzza daquela versao (achados 3, 16,
   // 25 e 28): o dialogo diz as duas coisas, sem mostrar o texto.
   restaurarDescricao:
-    "O rascunho passa a ter a persona, as habilidades, o horário, quem o assistente atende, os limites para marcar consulta, as instruções da equipe Conduzza e as perguntas desta versão. As perguntas que não estão nesta versão ficam desativadas, não são apagadas: dá para reativar no Conhecimento. As outras alterações que ainda não foram publicadas se perdem. Para o paciente, nada muda até você publicar.",
+    "O rascunho passa a ter a persona, as habilidades, o horário, quem o assistente atende, os limites e os dados para marcar consulta, as instruções da equipe Conduzza e as perguntas desta versão. As perguntas que não estão nesta versão ficam desativadas, não são apagadas: dá para reativar no Conhecimento. As outras alterações que ainda não foram publicadas se perdem. Para o paciente, nada muda até você publicar.",
   restaurada: (versao: number) =>
     `Versão ${versao} restaurada no rascunho. Confira e publique.`,
   autorDesconhecido: "Pessoa fora da equipe",

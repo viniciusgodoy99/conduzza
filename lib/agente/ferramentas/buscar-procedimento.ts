@@ -27,15 +27,36 @@
 //    informacao", nunca "nao cobre": o catalogo so traz os vinculos com "IA
 //    pode agendar", entao a ferramenta nao sabe. "particular" e "sem
 //    convenio" sao o valor particular.
+//
+// AG2 (27/10/2026):
+//  - O procedimento ATIVO que a IA nao marca (fora do indice) tambem e
+//    reconhecido, com o codigo depois dos do indice e "marcação só com a
+//    equipe" no bloco <procedimentos>. Com procedure.ia_pode_informar (D-3,
+//    padrao sim), a busca informa o valor dele pelas MESMAS regras (os tres
+//    estados de preco, o convenio identificado exatamente), lido dos
+//    vinculos ativos dele (vinculosDaEquipe), com "marcacao":
+//    "so_com_a_equipe"; sem, so "so_com_a_equipe", sem valor nem o que o
+//    procedimento exige.
+//  - A saida traz tambem, quando cadastrados, a duracao (a dos vinculos), se
+//    exige avaliacao, o resumo do que o paciente precisa (os requisitos
+//    gerais e, com o convenio identificado, os dele) e as unidades onde o
+//    procedimento e feito (lib/agente/ferramentas/cadastro-do-agente.ts).
+//    Nunca o preparo clinico (prep_instructions nem e lido, D-4 opcao A).
 
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
 import { problemaNoTextoDoAgente } from "@/lib/domain/agente/config";
+import { ehGrade } from "@/lib/domain/cadastro-para-o-agente";
 import {
   CATEGORIAS_CLINICAS,
   type CategoriaDeConformidade,
 } from "@/lib/domain/conformidade/categorias";
+import type {
+  CoberturaDoTurno,
+  EstadoDaCobertura,
+  FatosDaFerramenta,
+} from "@/lib/domain/conformidade/fatos-do-turno";
 import {
   avaliarRegras,
   CATEGORIAS_SEM_MASCARA,
@@ -43,12 +64,49 @@ import {
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 import { formatarCentavos } from "@/lib/utils/moeda";
 
+import {
+  conveniosDosProfissionaisParaOAgente,
+  duracaoDosVinculos,
+  idadeValida,
+  itemDoRequisito,
+  jornadasParaOAgente,
+  requisitosDoProcedimento,
+  requisitosParaOAgente,
+  unidadesDoProcedimento,
+  unidadesParaOAgente,
+  type ConvenioDoProfissional,
+  type JornadaDaUnidade,
+  type LinhaDaJornada,
+  type LinhaDaUnidade,
+  type LinhaDoConvenioDoProfissional,
+  type LinhaDoRequisito,
+  type RequisitoDoAgente,
+  type UnidadeDoAgente,
+  type VinculoDaMatriz,
+} from "./cadastro-do-agente";
+
 // ---------------------------------------------------------------------------
 // Catalogo que o agente enxerga
 // ---------------------------------------------------------------------------
 
 /** Um procedimento do indice: o codigo curto (p1, p2...) vai ao modelo. */
-export type ProcedimentoDoIndice = { codigo: string; id: string; nome: string };
+export type ProcedimentoDoIndice = {
+  codigo: string;
+  id: string;
+  nome: string;
+  /** procedure.requires_evaluation (AG2); ausente nas linhas montadas a mao. */
+  exigeAvaliacao?: boolean;
+};
+
+/**
+ * AG2: um procedimento ATIVO que a IA nao marca (fora do indice), com o
+ * codigo depois dos do indice. `informaValor` e procedure.ia_pode_informar
+ * (D-3, padrao sim): a busca informa o valor e o que ele exige, mas nunca
+ * marca.
+ */
+export type ProcedimentoSoComAEquipe = ProcedimentoDoIndice & {
+  informaValor: boolean;
+};
 
 export type VinculoDoAgente = {
   procedimentoId: string;
@@ -81,12 +139,28 @@ export type ProfissionalDoCatalogo = {
   id: string;
   nome: string;
   especialidades: string[];
+  /** AG2: a idade atendida (professional.idade_minima e idade_maxima). */
+  idadeMinima?: number | null;
+  idadeMaxima?: number | null;
+  /**
+   * AG3: professional.grade_minutos (5, 10, 15, 20, 30, 45 ou 60), o
+   * intervalo entre os inicios de consulta. Ausente: sem grade (a busca de
+   * horario usa a duracao do vinculo).
+   */
+  gradeMinutos?: number;
 };
 
 export type ConvenioDoAgente = {
   id: string;
   nome: string;
   plano: string | null;
+  /**
+   * AG3: insurance.requires_card ("Carteirinha obrigatoria" no Cadastro de
+   * convenios). So presente quando verdadeiro: a consulta da IA por este
+   * convenio pede a carteirinha (dados_que_faltam_para_marcar). Nunca vai ao
+   * modelo como campo do convenio.
+   */
+  exigeCarteirinha?: true;
 };
 
 /**
@@ -142,6 +216,32 @@ export type CatalogoDoAgente = {
    * para log.warn (contexto.ts), nunca o texto.
    */
   especialidadesDescartadas?: number;
+  // AG2 (27/10/2026): o Cadastro das consultas do agente
+  // (cadastro-do-agente.ts). Tudo opcional: ausente (catalogo montado a mao)
+  // e o mesmo que nada cadastrado.
+  /** Os procedimentos ativos fora do indice, com o codigo depois dele. */
+  procedimentosSoComAEquipe?: ProcedimentoSoComAEquipe[];
+  /**
+   * Os vinculos ativos (com preco) dos procedimentos so com a equipe que
+   * deixam informar (ia_pode_informar). Nunca agendam: a agenda so le
+   * `vinculos`.
+   */
+  vinculosDaEquipe?: VinculoDoAgente[];
+  /** As unidades ativas, com o codigo u1, u2... */
+  unidades?: UnidadeDoAgente[];
+  /** Os requisitos ativos dos procedimentos ativos. */
+  requisitos?: RequisitoDoAgente[];
+  /** Todos os vinculos ativos, so ids (quem faz o que, por qual convenio). */
+  matriz?: VinculoDaMatriz[];
+  /** Onde cada profissional atende, pela jornada (unidade nula = todas). */
+  jornadas?: JornadaDaUnidade[];
+  /** Os convenios que cada profissional atende. */
+  conveniosDosProfissionais?: ConvenioDoProfissional[];
+  /**
+   * Quantos textos do Cadastro (endereco, textos da unidade, requisito)
+   * ficaram de fora por nao passar nas regras do filtro. So a contagem.
+   */
+  textosDoCadastroDescartados?: number;
 };
 
 export const CATALOGO_VAZIO: CatalogoDoAgente = {
@@ -228,6 +328,13 @@ export type LinhasDoCatalogo = {
     active: boolean;
     bookable_by_ai: boolean;
     resource_id?: string | null;
+    /**
+     * AG2: a IA informa o valor e o que o procedimento exige mesmo sem
+     * marcar (D-3). Ausente: sim (o padrao do banco).
+     */
+    ia_pode_informar?: boolean;
+    /** AG2: procedure.requires_evaluation. Ausente: nada a dizer. */
+    requires_evaluation?: boolean;
   }[];
   vinculos: readonly {
     id?: string;
@@ -249,12 +356,19 @@ export type LinhasDoCatalogo = {
      * a mao: sem ela, o profissional vai ao bloco sem especialidade.
      */
     specialties?: unknown;
+    /** AG2: a idade atendida (0 a 120; nulo = sem limite). */
+    idade_minima?: number | null;
+    idade_maxima?: number | null;
+    /** AG3: a grade de horarios (5 a 60 minutos; nulo = sem grade). */
+    grade_minutos?: number | null;
   }[];
   convenios: readonly {
     id: string;
     name: string;
     plan_name: string | null;
     active: boolean;
+    /** AG3: "Carteirinha obrigatoria" (insurance.requires_card). */
+    requires_card?: boolean | null;
   }[];
   /** A linha da clinica (so o nome). Ausente: o agente atende sem o nome. */
   clinica?: { name: string | null } | null;
@@ -267,6 +381,25 @@ export type LinhasDoCatalogo = {
     professional_id: string;
     insurance_id: string | null;
   }[];
+  // AG2 (27/10/2026). Todos opcionais: ausente e o mesmo que nenhum.
+  /**
+   * Os vinculos ATIVOS, com preco e duracao, dos procedimentos ativos fora
+   * do indice que deixam informar (ia_pode_informar): lidos so para eles.
+   */
+  vinculosDaEquipe?: readonly {
+    id?: string;
+    procedure_id: string;
+    professional_id: string;
+    insurance_id: string | null;
+    price_cents: number | null;
+    covered_by_insurance: boolean;
+    active?: boolean;
+    duration_min?: number | null;
+  }[];
+  unidades?: readonly LinhaDaUnidade[];
+  jornadas?: readonly LinhaDaJornada[];
+  requisitos?: readonly LinhaDoRequisito[];
+  conveniosDosProfissionais?: readonly LinhaDoConvenioDoProfissional[];
 };
 
 function porNome<T extends { nome: string; id: string }>(a: T, b: T): number {
@@ -332,14 +465,64 @@ export function especialidadesParaOAgente(valor: unknown): {
   return { especialidades, descartadas };
 }
 
+/** O vinculo do Cadastro como o agente usa (preco, duracao e recurso). */
+function vinculoDaLinha(
+  v: {
+    id?: string;
+    procedure_id: string;
+    professional_id: string;
+    insurance_id: string | null;
+    price_cents: number | null;
+    covered_by_insurance: boolean;
+    duration_min?: number | null;
+  },
+  profissional: string,
+  recurso: string | null,
+): VinculoDoAgente {
+  return {
+    procedimentoId: v.procedure_id,
+    profissional,
+    convenioId: v.insurance_id,
+    precoCentavos:
+      typeof v.price_cents === "number" &&
+      Number.isInteger(v.price_cents) &&
+      v.price_cents >= 0
+        ? v.price_cents
+        : null,
+    cobertoPeloConvenio: v.insurance_id !== null && v.covered_by_insurance,
+    id: typeof v.id === "string" && v.id !== "" ? v.id : null,
+    profissionalId: v.professional_id,
+    duracaoMin:
+      typeof v.duration_min === "number" &&
+      Number.isInteger(v.duration_min) &&
+      v.duration_min > 0
+        ? v.duration_min
+        : null,
+    recursoId: recurso,
+  };
+}
+
+function porVinculo(a: VinculoDoAgente, b: VinculoDoAgente): number {
+  return (
+    a.procedimentoId.localeCompare(b.procedimentoId) ||
+    a.profissional.localeCompare(b.profissional, "pt-BR") ||
+    (a.id ?? "").localeCompare(b.id ?? "")
+  );
+}
+
 /**
- * O catalogo do agente a partir das linhas do banco. Procedimento sem
- * vinculo valido nao entra no indice (a IA nao fala do que nao pode
- * informar). Nunca lanca.
+ * Os profissionais e os convenios ATIVOS das linhas, e os vinculos do agente
+ * (ativos, com "IA pode agendar" no vinculo e no procedimento ativo,
+ * profissional ativo e convenio nulo ou ativo): a regra do indice, num lugar
+ * so (montarCatalogoDoAgente e o carregador dos vinculos da equipe,
+ * lib/agente/contexto.ts).
  */
-export function montarCatalogoDoAgente(
-  linhas: LinhasDoCatalogo,
-): CatalogoDoAgente {
+function cadastroAtivo(
+  linhas: Pick<
+    LinhasDoCatalogo,
+    "procedimentos" | "vinculos" | "profissionais" | "convenios"
+  >,
+) {
   const profissionais = new Map(
     linhas.profissionais
       .filter((p) => p.active && p.name.trim() !== "")
@@ -348,20 +531,71 @@ export function montarCatalogoDoAgente(
   const convenios = new Map(
     linhas.convenios
       .filter((c) => c.active && c.name.trim() !== "")
-      .map((c) => [
+      .map((c): [string, ConvenioDoAgente] => [
         c.id,
         {
           id: c.id,
           nome: c.name.trim(),
           plano: c.plan_name?.trim() ? c.plan_name.trim() : null,
+          // AG3: so quando verdadeiro (o catalogo montado a mao nao muda).
+          ...(c.requires_card === true ? { exigeCarteirinha: true as const } : {}),
         },
       ]),
   );
-  const procedimentosValidos = new Map(
+  const procedimentosValidos = new Set(
     linhas.procedimentos
       .filter((p) => p.active && p.bookable_by_ai && p.name.trim() !== "")
-      .map((p) => [p.id, p.name.trim()]),
+      .map((p) => p.id),
   );
+  const vinculosDoAgente = linhas.vinculos.filter(
+    (v) =>
+      v.active &&
+      v.bookable_by_ai &&
+      profissionais.has(v.professional_id) &&
+      procedimentosValidos.has(v.procedure_id) &&
+      (v.insurance_id === null || convenios.has(v.insurance_id)),
+  );
+  return { profissionais, convenios, vinculosDoAgente };
+}
+
+/**
+ * Os ids dos procedimentos do indice (com vinculo do agente valido). O
+ * carregador usa para ler, depois, so os vinculos dos que ficam de fora.
+ */
+export function idsDoIndice(
+  linhas: Pick<
+    LinhasDoCatalogo,
+    "procedimentos" | "vinculos" | "profissionais" | "convenios"
+  >,
+): Set<string> {
+  return new Set(
+    cadastroAtivo(linhas).vinculosDoAgente.map((v) => v.procedure_id),
+  );
+}
+
+/** AG3: a grade do profissional (o CHECK do banco) ou nulo. */
+function gradeValida(valor: unknown): number | null {
+  return ehGrade(valor) ? valor : null;
+}
+
+/**
+ * O catalogo do agente a partir das linhas do banco. Procedimento sem
+ * vinculo valido nao entra no indice (a IA nao marca nem informa por ele); o
+ * ATIVO fora do indice entra em procedimentosSoComAEquipe (AG2), com o codigo
+ * depois dos do indice. Nunca lanca.
+ */
+export function montarCatalogoDoAgente(
+  linhas: LinhasDoCatalogo,
+): CatalogoDoAgente {
+  const { profissionais, convenios, vinculosDoAgente } = cadastroAtivo(linhas);
+  // AG2: todos os procedimentos ATIVOS (com e sem "IA pode agendar").
+  const ativos = linhas.procedimentos.filter(
+    (p) => p.active && p.name.trim() !== "",
+  );
+  const exigeAvaliacao = (p: (typeof ativos)[number]) =>
+    typeof p.requires_evaluation === "boolean"
+      ? { exigeAvaliacao: p.requires_evaluation }
+      : {};
   const recursos = new Map(
     linhas.procedimentos.map((p) => [
       p.id,
@@ -371,47 +605,54 @@ export function montarCatalogoDoAgente(
     ]),
   );
 
-  const vinculos: VinculoDoAgente[] = [];
-  for (const v of linhas.vinculos) {
+  const vinculos: VinculoDoAgente[] = vinculosDoAgente.map((v) =>
+    vinculoDaLinha(
+      v,
+      profissionais.get(v.professional_id) ?? "",
+      recursos.get(v.procedure_id) ?? null,
+    ),
+  );
+
+  const comVinculo = new Set(vinculos.map((v) => v.procedimentoId));
+  const procedimentos: ProcedimentoDoIndice[] = ativos
+    .filter((p) => comVinculo.has(p.id))
+    .map((p) => ({ id: p.id, nome: p.name.trim(), ...exigeAvaliacao(p) }))
+    .sort(porNome)
+    .map((p, indice) => ({ codigo: `p${indice + 1}`, ...p }));
+
+  // AG2: o ativo fora do indice, com o codigo depois dos do indice (os do
+  // indice nao mudam). ia_pode_informar ausente e "sim" (D-3).
+  const procedimentosSoComAEquipe: ProcedimentoSoComAEquipe[] = ativos
+    .filter((p) => !comVinculo.has(p.id))
+    .map((p) => ({
+      id: p.id,
+      nome: p.name.trim(),
+      informaValor: p.ia_pode_informar !== false,
+      ...exigeAvaliacao(p),
+    }))
+    .sort(porNome)
+    .map((p, indice) => ({
+      codigo: `p${procedimentos.length + indice + 1}`,
+      ...p,
+    }));
+  const informaveis = new Set(
+    procedimentosSoComAEquipe.filter((p) => p.informaValor).map((p) => p.id),
+  );
+  const vinculosDaEquipe: VinculoDoAgente[] = [];
+  for (const v of linhas.vinculosDaEquipe ?? []) {
     const profissional = profissionais.get(v.professional_id);
     if (
-      !v.active ||
-      !v.bookable_by_ai ||
+      v.active === false ||
       profissional === undefined ||
-      !procedimentosValidos.has(v.procedure_id) ||
+      !informaveis.has(v.procedure_id) ||
       (v.insurance_id !== null && !convenios.has(v.insurance_id))
     ) {
       continue;
     }
-    vinculos.push({
-      procedimentoId: v.procedure_id,
-      profissional,
-      convenioId: v.insurance_id,
-      precoCentavos:
-        typeof v.price_cents === "number" &&
-        Number.isInteger(v.price_cents) &&
-        v.price_cents >= 0
-          ? v.price_cents
-          : null,
-      cobertoPeloConvenio: v.insurance_id !== null && v.covered_by_insurance,
-      id: typeof v.id === "string" && v.id !== "" ? v.id : null,
-      profissionalId: v.professional_id,
-      duracaoMin:
-        typeof v.duration_min === "number" &&
-        Number.isInteger(v.duration_min) &&
-        v.duration_min > 0
-          ? v.duration_min
-          : null,
-      recursoId: recursos.get(v.procedure_id) ?? null,
-    });
+    vinculosDaEquipe.push(
+      vinculoDaLinha(v, profissional, recursos.get(v.procedure_id) ?? null),
+    );
   }
-
-  const comVinculo = new Set(vinculos.map((v) => v.procedimentoId));
-  const procedimentos = [...procedimentosValidos.entries()]
-    .filter(([id]) => comVinculo.has(id))
-    .map(([id, nome]) => ({ id, nome }))
-    .sort(porNome)
-    .map((p, indice) => ({ codigo: `p${indice + 1}`, id: p.id, nome: p.nome }));
 
   const usados = new Set(
     vinculos.flatMap((v) => (v.convenioId === null ? [] : [v.convenioId])),
@@ -435,8 +676,48 @@ export function montarCatalogoDoAgente(
         ]
       : [],
   );
+
+  // AG2: a matriz de vinculos ATIVOS (so ids), de qualquer procedimento
+  // ativo, com profissional ativo e convenio nulo ou ativo.
+  const idsAtivos = new Set(ativos.map((p) => p.id));
+  const vistos = new Set<string>();
+  const matriz: VinculoDaMatriz[] = [];
+  const naMatriz = (v: {
+    procedure_id: string;
+    professional_id: string;
+    insurance_id: string | null;
+    active?: boolean;
+  }) => {
+    if (
+      v.active === false ||
+      !idsAtivos.has(v.procedure_id) ||
+      !profissionais.has(v.professional_id) ||
+      (v.insurance_id !== null && !convenios.has(v.insurance_id))
+    ) {
+      return;
+    }
+    const chave = `${v.procedure_id}|${v.professional_id}|${v.insurance_id ?? ""}`;
+    if (vistos.has(chave)) {
+      return;
+    }
+    vistos.add(chave);
+    matriz.push({
+      procedimentoId: v.procedure_id,
+      profissionalId: v.professional_id,
+      convenioId: v.insurance_id,
+    });
+  };
+  for (const v of [
+    ...linhas.vinculos,
+    ...(linhas.vinculosSoDaEquipe ?? []),
+    ...(linhas.vinculosDaEquipe ?? []),
+  ]) {
+    naMatriz(v);
+  }
+
   // Onda 2 (item 6, P6a): todos os profissionais ativos, com e sem vinculo
-  // do agente, e as especialidades saneadas (as descartadas so contam).
+  // do agente, e as especialidades saneadas (as descartadas so contam). AG2:
+  // com a idade atendida, quando cadastrada.
   let especialidadesDescartadas = 0;
   const profissionaisDoCatalogo: ProfissionalDoCatalogo[] = linhas.profissionais
     .filter((p) => p.active && p.name.trim() !== "")
@@ -445,17 +726,45 @@ export function montarCatalogoDoAgente(
         p.specialties,
       );
       especialidadesDescartadas += descartadas;
-      return { id: p.id, nome: p.name.trim(), especialidades };
+      const idadeMinima = idadeValida(p.idade_minima);
+      const idadeMaxima = idadeValida(p.idade_maxima);
+      const gradeMinutos = gradeValida(p.grade_minutos);
+      return {
+        id: p.id,
+        nome: p.name.trim(),
+        especialidades,
+        ...(idadeMinima === null ? {} : { idadeMinima }),
+        ...(idadeMaxima === null ? {} : { idadeMaxima }),
+        ...(gradeMinutos === null ? {} : { gradeMinutos }),
+      };
     })
     .sort(porNome);
+
+  // AG2: unidades, jornada por unidade, requisitos e convenios do
+  // profissional (cadastro-do-agente.ts).
+  const { unidades, descartados: unidadesDescartadas } = unidadesParaOAgente(
+    linhas.unidades ?? [],
+  );
+  const { requisitos, descartados: requisitosDescartados } =
+    requisitosParaOAgente(linhas.requisitos ?? [], {
+      procedimentos: idsAtivos,
+      convenios: new Set(convenios.keys()),
+    });
+  const jornadas = jornadasParaOAgente(linhas.jornadas ?? [], {
+    profissionais: new Set(profissionais.keys()),
+    unidades: new Set(unidades.map((u) => u.id)),
+  });
+  const conveniosDosProfissionais = conveniosDosProfissionaisParaOAgente(
+    linhas.conveniosDosProfissionais ?? [],
+    {
+      profissionais: new Set(profissionais.keys()),
+      convenios: new Set(convenios.keys()),
+    },
+  );
+
   return {
     procedimentos,
-    vinculos: vinculos.sort(
-      (a, b) =>
-        a.procedimentoId.localeCompare(b.procedimentoId) ||
-        a.profissional.localeCompare(b.profissional, "pt-BR") ||
-        (a.id ?? "").localeCompare(b.id ?? ""),
-    ),
+    vinculos: vinculos.sort(porVinculo),
     conveniosSoComAEquipe,
     convenios: [...convenios.values()]
       .filter((c) => usados.has(c.id))
@@ -464,6 +773,14 @@ export function montarCatalogoDoAgente(
     nomeDaClinica: nomeDaClinicaParaOAgente(linhas.clinica?.name),
     profissionais: profissionaisDoCatalogo,
     especialidadesDescartadas,
+    procedimentosSoComAEquipe,
+    vinculosDaEquipe: vinculosDaEquipe.sort(porVinculo),
+    unidades,
+    requisitos,
+    matriz,
+    jornadas,
+    conveniosDosProfissionais,
+    textosDoCadastroDescartados: unidadesDescartadas + requisitosDescartados,
   };
 }
 
@@ -492,7 +809,9 @@ export function indiceDosProfissionais(
  * Os convenios do Cadastro e os do agente juntos, sem repetir (os do agente
  * ja estao no Cadastro; a uniao so protege de um catalogo montado a mao).
  */
-function conveniosConhecidos(catalogo: CatalogoDoAgente): ConvenioDoAgente[] {
+export function conveniosConhecidos(
+  catalogo: CatalogoDoAgente,
+): ConvenioDoAgente[] {
   const ids = new Set(catalogo.conveniosDoCadastro.map((c) => c.id));
   return [
     ...catalogo.conveniosDoCadastro,
@@ -557,7 +876,13 @@ export function nomesDoCatalogo(catalogo: CatalogoDoAgente): string[] {
   if (catalogo.nomeDaClinica) {
     nomes.add(catalogo.nomeDaClinica);
   }
-  for (const p of catalogo.procedimentos) {
+  // AG2: os procedimentos fora do indice tambem vao ao bloco
+  // <procedimentos> ("marcação só com a equipe"), entao entram na mascara
+  // como os do indice.
+  for (const p of [
+    ...catalogo.procedimentos,
+    ...(catalogo.procedimentosSoComAEquipe ?? []),
+  ]) {
     nomes.add(p.nome);
   }
   for (const nome of nomesDosProfissionais(catalogo)) {
@@ -609,7 +934,7 @@ export const FERRAMENTA_BUSCAR_PROCEDIMENTO: FunctionTool = {
   name: NOME_DA_BUSCA,
   strict: true,
   description:
-    "Consulta no Cadastro da clínica o valor de um procedimento, no particular ou num convênio. Use o código do bloco <procedimentos>.",
+    "Consulta no Cadastro da clínica o valor de um procedimento, no particular ou num convênio, e, quando cadastrados, a duração, se exige avaliação antes, o resumo do que o paciente precisa e as unidades onde é feito. Use o código do bloco <procedimentos>.",
   parameters: {
     type: "object",
     properties: {
@@ -646,8 +971,31 @@ export type ResultadoDaBusca = {
     | "plano_nao_informado"
     | "convenio_nao_confirmado"
     | "convenio_nao_encontrado"
-    | "convenio_nao_informado";
+    | "convenio_nao_informado"
+    // AG2: o procedimento que so a equipe marca e que nao deixa informar
+    // (ia_pode_informar desligado), ou sem vinculo ativo para informar.
+    | "so_com_a_equipe";
+  /**
+   * O que a saida afirma de cada convenio, para os fatos do turno (AG2,
+   * lib/domain/conformidade/fatos-do-turno.ts): "coberto" so quando a saida
+   * diz coberto; "atende" quando o convenio tem vinculo no procedimento.
+   * Sem informacao, nao encontrado e opcoes para escolher: nada.
+   */
+  fatos?: FatosDaFerramenta;
 };
+
+/**
+ * O convenio do Cadastro com o estado e o procedimento (o nome do Cadastro;
+ * nulo quando a ferramenta afirmou o convenio sem procedimento), para os
+ * fatos do turno.
+ */
+export function coberturaDoConvenio(
+  convenio: ConvenioDoAgente,
+  estado: EstadoDaCobertura,
+  procedimento: string | null,
+): CoberturaDoTurno {
+  return { nome: convenio.nome, plano: convenio.plano, estado, procedimento };
+}
 
 function valorEmReais(centavos: number): string {
   // O Intl poe espaco nao separavel depois do "R$": o modelo copiaria o
@@ -655,7 +1003,7 @@ function valorEmReais(centavos: number): string {
   return formatarCentavos(centavos).replace(/\s/g, " ");
 }
 
-function nomeDoConvenio(convenio: ConvenioDoAgente): string {
+export function nomeDoConvenio(convenio: ConvenioDoAgente): string {
   return convenio.plano === null
     ? convenio.nome
     : `${convenio.nome} (${convenio.plano})`;
@@ -1423,19 +1771,91 @@ function situacaoDoPlano(
 export function limiteDaSaidaDaBusca(catalogo: CatalogoDoAgente): number {
   const noJson = (texto: string) =>
     Buffer.byteLength(JSON.stringify(texto), "utf8");
-  const maiorProcedimento = catalogo.procedimentos.reduce(
-    (maior, p) => Math.max(maior, noJson(p.nome)),
-    0,
-  );
-  const vinculos = catalogo.vinculos.reduce(
-    (soma, v) => soma + noJson(v.profissional) + 96,
-    0,
-  );
+  const maiorProcedimento = [
+    ...catalogo.procedimentos,
+    ...(catalogo.procedimentosSoComAEquipe ?? []),
+  ].reduce((maior, p) => Math.max(maior, noJson(p.nome)), 0);
+  // Cada vinculo numa linha (valor) e, com a duracao por profissional, mais
+  // uma (AG2); os do indice e os da equipe (os de um procedimento so).
+  const vinculos = [
+    ...catalogo.vinculos,
+    ...(catalogo.vinculosDaEquipe ?? []),
+  ].reduce((soma, v) => soma + 2 * noJson(v.profissional) + 160, 0);
   const convenios = conveniosConhecidos(catalogo).reduce(
     (soma, c) => soma + noJson(nomeDoConvenio(c)) + noJson(rotuloDe(c)) + 128,
     0,
   );
-  return 512 + maiorProcedimento + vinculos + convenios;
+  // AG2: o que o Cadastro diz do procedimento (sobreOProcedimento), no
+  // maximo todos os requisitos e todas as unidades, e a marcacao.
+  const requisitos = (catalogo.requisitos ?? []).reduce(
+    (soma, r) => soma + noJson(itemDoRequisito(r)) + 8,
+    0,
+  );
+  const unidades = (catalogo.unidades ?? []).reduce(
+    (soma, u) => soma + noJson(u.nome) + 8,
+    0,
+  );
+  return (
+    512 + maiorProcedimento + vinculos + convenios + requisitos + unidades + 256
+  );
+}
+
+/**
+ * AG2: o que o Cadastro diz do procedimento, alem do valor, so com o que
+ * existe: a duracao dos vinculos (uma so, ou por profissional quando muda),
+ * se exige avaliacao antes, o resumo do que o paciente precisa (os
+ * requisitos gerais e, com o convenio identificado, os dele) e as unidades
+ * onde e feito. Nunca o preparo clinico.
+ */
+function sobreOProcedimento(
+  catalogo: CatalogoDoAgente,
+  procedimento: ProcedimentoDoIndice,
+  vinculos: readonly VinculoDoAgente[],
+  convenioId: string | null,
+): Record<string, unknown> {
+  const { gerais, doConvenio } = requisitosDoProcedimento(
+    catalogo,
+    procedimento.id,
+    convenioId,
+  );
+  const requisitos = [
+    ...new Set([...gerais, ...doConvenio].map(itemDoRequisito)),
+  ];
+  const unidades = unidadesDoProcedimento(catalogo, procedimento.id).map(
+    (u) => u.nome,
+  );
+  return {
+    ...duracaoDosVinculos(vinculos),
+    ...(procedimento.exigeAvaliacao === undefined
+      ? {}
+      : { exige_avaliacao: procedimento.exigeAvaliacao }),
+    ...(requisitos.length === 0 ? {} : { requisitos }),
+    ...(unidades.length === 0 ? {} : { unidades }),
+  };
+}
+
+/** AG2: o procedimento do codigo, no indice ou fora dele (so com a equipe). */
+export function procedimentoDoCodigo(
+  catalogo: Pick<
+    CatalogoDoAgente,
+    "procedimentos" | "procedimentosSoComAEquipe"
+  >,
+  codigo: string,
+):
+  | { noIndice: true; procedimento: ProcedimentoDoIndice }
+  | { noIndice: false; procedimento: ProcedimentoSoComAEquipe }
+  | null {
+  const alvo = codigo.trim().toLowerCase();
+  const doIndice = catalogo.procedimentos.find((p) => p.codigo === alvo);
+  if (doIndice !== undefined) {
+    return { noIndice: true, procedimento: doIndice };
+  }
+  const daEquipe = (catalogo.procedimentosSoComAEquipe ?? []).find(
+    (p) => p.codigo === alvo,
+  );
+  return daEquipe === undefined
+    ? null
+    : { noIndice: false, procedimento: daEquipe };
 }
 
 /**
@@ -1455,9 +1875,8 @@ export function buscarProcedimento(
       resultado: "entrada_invalida",
     };
   }
-  const codigo = lido.data.procedimento.toLowerCase();
-  const procedimento = catalogo.procedimentos.find((p) => p.codigo === codigo);
-  if (procedimento === undefined) {
+  const achado = procedimentoDoCodigo(catalogo, lido.data.procedimento);
+  if (achado === null) {
     return {
       saida: JSON.stringify({ resultado: "procedimento_nao_encontrado" }),
       precos: [],
@@ -1466,10 +1885,39 @@ export function buscarProcedimento(
       resultado: "procedimento_nao_encontrado",
     };
   }
+  const { procedimento } = achado;
 
-  const doProcedimento = catalogo.vinculos.filter(
-    (v) => v.procedimentoId === procedimento.id,
-  );
+  // AG2: no indice, os vinculos do agente; fora dele (so com a equipe) e
+  // deixando informar, os vinculos ativos dele. Sem nenhum, ou sem deixar
+  // informar: so que a equipe cuida, sem valor nem o que ele exige.
+  const doProcedimento = achado.noIndice
+    ? catalogo.vinculos.filter((v) => v.procedimentoId === procedimento.id)
+    : achado.procedimento.informaValor
+      ? (catalogo.vinculosDaEquipe ?? []).filter(
+          (v) => v.procedimentoId === procedimento.id,
+        )
+      : [];
+  if (!achado.noIndice && doProcedimento.length === 0) {
+    return {
+      saida: JSON.stringify({
+        resultado: "so_com_a_equipe",
+        procedimento: procedimento.nome,
+      }),
+      precos: [],
+      passo: `Consultou ${procedimento.nome}: só a equipe informa e marca este procedimento`,
+      resultado: "so_com_a_equipe",
+    };
+  }
+  const marcacao = achado.noIndice ? {} : { marcacao: "so_com_a_equipe" };
+  const daEquipe = achado.noIndice ? "" : " (marcação só com a equipe)";
+  const sobre = (convenioId: string | null) =>
+    sobreOProcedimento(catalogo, procedimento, doProcedimento, convenioId);
+  // Os convenios que podem aparecer como aceitos: no indice, os do agente;
+  // fora dele, os do Cadastro (os vinculos da equipe nao entram em
+  // `convenios`).
+  const aceitaveis = achado.noIndice
+    ? catalogo.convenios
+    : conveniosConhecidos(catalogo);
   const precos: number[] = [];
   const anotar = (s: Situacao) => {
     if (s.situacao === "valor") {
@@ -1490,27 +1938,36 @@ export function buscarProcedimento(
     (seletorExato(entradas, dito) === undefined && ehParticular(dito))
   ) {
     const particulares = doProcedimento.filter((v) => v.convenioId === null);
-    const aceitos = catalogo.convenios
-      .filter((c) => doProcedimento.some((v) => v.convenioId === c.id))
-      .map(nomeDoConvenio);
+    const conveniosAceitos = aceitaveis.filter((c) =>
+      doProcedimento.some((v) => v.convenioId === c.id),
+    );
     return {
       saida: JSON.stringify({
         resultado: "particular",
         procedimento: procedimento.nome,
+        ...marcacao,
+        ...sobre(null),
         atende_particular: particulares.length > 0,
         particular: particulares.map((v) =>
           linhaParaOModelo(v, anotar(situacaoDoVinculo(v))),
         ),
-        convenios_aceitos: aceitos,
+        convenios_aceitos: conveniosAceitos.map(nomeDoConvenio),
       }),
       precos,
-      passo: `Consultou o preço de ${procedimento.nome}`,
+      passo: `Consultou o preço de ${procedimento.nome}${daEquipe}`,
       resultado: "particular",
+      // A lista dos aceitos afirma que eles atendem; quem nao esta nela e
+      // "sem informacao", nunca "nao atende".
+      fatos: {
+        coberturas: conveniosAceitos.map((c) =>
+          coberturaDoConvenio(c, "atende", procedimento.nome),
+        ),
+      },
     };
   }
 
   const identificacao = identificar(entradas, dito);
-  const doPaciente = `Consultou o convênio do paciente para ${procedimento.nome}`;
+  const doPaciente = `Consultou o convênio do paciente para ${procedimento.nome}${daEquipe}`;
   const opcao = (c: ConvenioDoAgente) => ({
     convenio: nomeDoConvenio(c),
     chamar_com: textoParaChamar(entradas, c),
@@ -1522,6 +1979,8 @@ export function buscarProcedimento(
         saida: JSON.stringify({
           resultado: "convenio_nao_informado",
           procedimento: procedimento.nome,
+          ...marcacao,
+          ...sobre(null),
         }),
         precos: [],
         passo: `${doPaciente}: a consulta não trouxe um nome de convênio que dê para identificar`,
@@ -1532,6 +1991,8 @@ export function buscarProcedimento(
         saida: JSON.stringify({
           resultado: "convenio_nao_encontrado",
           procedimento: procedimento.nome,
+          ...marcacao,
+          ...sobre(null),
         }),
         precos: [],
         passo: `${doPaciente}: nenhum convênio parecido no Cadastro`,
@@ -1548,6 +2009,8 @@ export function buscarProcedimento(
         saida: JSON.stringify({
           resultado: "convenio_nao_confirmado",
           procedimento: procedimento.nome,
+          ...marcacao,
+          ...sobre(null),
           opcoes: identificacao.convenios.map(opcao),
           mais_opcoes: identificacao.maisOpcoes,
         }),
@@ -1566,6 +2029,8 @@ export function buscarProcedimento(
         saida: JSON.stringify({
           resultado: "plano_nao_informado",
           procedimento: procedimento.nome,
+          ...marcacao,
+          ...sobre(null),
           planos_da_operadora: identificacao.convenios.map((c) => ({
             ...opcao(c),
             situacao: situacaoDoPlano(c, doProcedimento),
@@ -1574,6 +2039,24 @@ export function buscarProcedimento(
         precos: [],
         passo: `${doPaciente}: falta saber qual plano de ${identificacao.operadora}`,
         resultado: "plano_nao_informado",
+        // A situacao de cada plano, como a saida diz: "coberto" so no plano
+        // em que todo vinculo e coberto; com valor, sem valor ou dependendo
+        // do profissional, o plano atende; sem informacao, nada.
+        fatos: {
+          coberturas: identificacao.convenios.flatMap((c) => {
+            const situacao = situacaoDoPlano(c, doProcedimento);
+            if (situacao === "sem_informacao") {
+              return [];
+            }
+            return [
+              coberturaDoConvenio(
+                c,
+                situacao === "coberto" ? "coberto" : "atende",
+                procedimento.nome,
+              ),
+            ];
+          }),
+        },
       };
     case "casou":
       break;
@@ -1589,25 +2072,43 @@ export function buscarProcedimento(
       saida: JSON.stringify({
         resultado: "convenio_sem_informacao",
         procedimento: procedimento.nome,
+        ...marcacao,
+        ...sobre(casado.id),
         convenio: nomeDoConvenio(casado),
       }),
       precos: [],
-      passo: `Consultou o convênio ${nomeDoConvenio(casado)} para ${procedimento.nome}: sem informação sobre este procedimento`,
+      passo: `Consultou o convênio ${nomeDoConvenio(casado)} para ${procedimento.nome}${daEquipe}: sem informação sobre este procedimento`,
       resultado: "convenio_sem_informacao",
     };
   }
+  const situacoes = doConvenio.map((v) => anotar(situacaoDoVinculo(v)));
   return {
     saida: JSON.stringify({
       resultado: "convenio",
       procedimento: procedimento.nome,
+      ...marcacao,
+      ...sobre(casado.id),
       convenio: nomeDoConvenio(casado),
-      atendimentos: doConvenio.map((v) =>
-        linhaParaOModelo(v, anotar(situacaoDoVinculo(v))),
+      atendimentos: doConvenio.map((v, i) =>
+        linhaParaOModelo(v, situacoes[i] ?? situacaoDoVinculo(v)),
       ),
     }),
     precos,
-    passo: `Consultou o preço de ${procedimento.nome} pelo convênio ${nomeDoConvenio(casado)}`,
+    passo: `Consultou o preço de ${procedimento.nome} pelo convênio ${nomeDoConvenio(casado)}${daEquipe}`,
     resultado: "convenio",
+    // O convenio tem vinculo: atende. "Coberto" quando a saida diz coberto
+    // em algum atendimento (o modelo ve de qual profissional).
+    fatos: {
+      coberturas: [
+        coberturaDoConvenio(
+          casado,
+          situacoes.some((s) => s.situacao === "coberto")
+            ? "coberto"
+            : "atende",
+          procedimento.nome,
+        ),
+      ],
+    },
   };
 }
 

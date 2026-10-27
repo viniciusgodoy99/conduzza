@@ -311,7 +311,8 @@ describe("texto fixo da onda 2", () => {
     for (const trecho of [
       "chame fora_do_assunto",
       "chame sou_assistente_virtual",
-      'Dúvida sobre a clínica que o bloco <base_da_clinica> não responde não é fora do assunto: passe para a equipe com o motivo "agente_pediu".',
+      // AG2: a base e as consultas do Cadastro.
+      'Dúvida sobre a clínica que o bloco <base_da_clinica> e as ferramentas de consulta não respondem não é fora do assunto: passe para a equipe com o motivo "agente_pediu".',
       'Se ela pedir para falar com uma pessoa, passe para a equipe com o motivo "pedido_humano".',
       "nem quem criou ou treinou você",
     ]) {
@@ -328,7 +329,8 @@ describe("texto fixo da onda 2", () => {
 
   it("profissionais, contato e aviso: as regras de uso estão no texto", () => {
     for (const trecho of [
-      "nunca diga que um profissional faz ou atende algo que não está ao lado do nome dele",
+      // AG2: o bloco ou o que buscar_profissionais trouxe.
+      "nunca diga que um profissional faz ou atende algo que não está no bloco nem no que a ferramenta trouxe",
       'Profissional com "marcação só com a equipe" não é marcado por você',
       "Nunca diga à pessoa o que o cadastro mostra sobre ela",
       "o sistema também coloca um aviso de que quem responde é a assistente virtual da clínica: não repita esse aviso.",

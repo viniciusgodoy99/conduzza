@@ -3,16 +3,18 @@
 // cartao de bloqueio), entao nada de node:* aqui.
 //
 // ESPELHO NO BANCO: ai_decision_log.compliance_rule tem CHECK com exatamente
-// estas categorias e ai_decision_log.gatilho_entrada com estes gatilhos
-// (migration 20261006100000). Mudou aqui, muda la (migration nova) e o teste
-// tests/unit/conformidade/categorias.test.ts.
+// estas categorias (migration 20261006100000; as quatro dos fatos do turno
+// entraram na 20261027110000) e ai_decision_log.gatilho_entrada com estes
+// gatilhos (migration 20261006100000). Mudou aqui, muda la (migration nova)
+// e o teste tests/unit/conformidade/categorias.test.ts.
 
 /**
  * As categorias que o filtro de saida pode registrar. As oito primeiras sao
- * as vedacoes do CFM (Resolucoes 2.314/2022 e 2.336/2023); as tres ultimas
- * sao tecnicas (preco fora do turno, formato e falha do verificador).
- * A ORDEM e a prioridade: quando mais de uma dispara, a primeira e a que vai
- * para o log.
+ * as vedacoes do CFM (Resolucoes 2.314/2022 e 2.336/2023); as outras sao
+ * tecnicas: o preco fora do turno, as quatro dos fatos do turno (AG2,
+ * fatos-do-turno.ts: acao, convenio, data e hora, endereco), o formato e a
+ * falha do verificador. A ORDEM e a prioridade: quando mais de uma dispara,
+ * a primeira e a que vai para o log.
  */
 export const CATEGORIAS_DE_CONFORMIDADE = [
   "triagem",
@@ -24,12 +26,32 @@ export const CATEGORIAS_DE_CONFORMIDADE = [
   "oferta_casada",
   "antes_depois",
   "preco_nao_verificado",
+  "acao_nao_executada",
+  "cobertura_nao_verificada",
+  "horario_nao_verificado",
+  "endereco_nao_verificado",
   "formato_invalido",
   "falha_verificador",
 ] as const;
 
 export type CategoriaDeConformidade =
   (typeof CATEGORIAS_DE_CONFORMIDADE)[number];
+
+/**
+ * As categorias dos fatos do turno (AG2): a regra deterministica aponta, e
+ * so quando quem chama passa os fatos (o turno da IA). Desde a revisao 2 da
+ * AG2 (27/10/2026) o verificador por modelo tambem julga fato, com o resumo
+ * dos fatos do turno (resumo-dos-fatos.ts): a segunda camada que faltava.
+ * Preco continua so na regra.
+ */
+export const CATEGORIAS_DOS_FATOS = [
+  "acao_nao_executada",
+  "cobertura_nao_verificada",
+  "horario_nao_verificado",
+  "endereco_nao_verificado",
+] as const satisfies readonly CategoriaDeConformidade[];
+
+export type CategoriaDosFatos = (typeof CATEGORIAS_DOS_FATOS)[number];
 
 /** As vedacoes do CFM: o que o verificador por modelo sabe julgar. */
 export const CATEGORIAS_CLINICAS = [
@@ -46,13 +68,17 @@ export const CATEGORIAS_CLINICAS = [
 export type CategoriaClinica = (typeof CATEGORIAS_CLINICAS)[number];
 
 /**
- * O que o verificador por modelo pode apontar: as vedacoes do CFM e o
- * formato (texto que vaza instrucao, ferramenta ou marcacao). Preco e falha
- * nunca vem do modelo: preco e conferido contra o turno, falha e nossa.
+ * O que o verificador por modelo pode apontar: as vedacoes do CFM, o
+ * formato (texto que vaza instrucao, ferramenta ou marcacao) e, desde a
+ * revisao 2 da AG2, as quatro dos fatos do turno (afirmacao que o resumo dos
+ * fatos nao sustenta; camada "modelo", sem mudar o CHECK do banco). Preco e
+ * falha nunca vem do modelo: preco e conferido contra o turno, falha e
+ * nossa.
  */
 export const CATEGORIAS_DO_VERIFICADOR = [
   ...CATEGORIAS_CLINICAS,
   "formato_invalido",
+  ...CATEGORIAS_DOS_FATOS,
 ] as const satisfies readonly CategoriaDeConformidade[];
 
 export type CategoriaDoVerificador = (typeof CATEGORIAS_DO_VERIFICADOR)[number];

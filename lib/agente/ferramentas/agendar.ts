@@ -6,10 +6,24 @@
 // os motivos de agendar_pela_ia (contrato 1.4) e a leitura defensiva da
 // resposta. Quem chama a RPC e lib/agente/agenda.ts.
 
+// AG3 (27/10/2026): agendar_pela_ia recusa tambem, depois da conferencia do
+// horario e nesta ordem, consulta_para_outra_pessoa e menor_de_idade (a IA
+// passa para a equipe, D-8), ja_tem_consulta (com appointment_id: o contato
+// ja tem consulta futura ativa do mesmo procedimento) e faltam_dados (com
+// faltam: a lista do que a clinica exige e nao veio). A leitura guarda o id
+// da consulta e a lista; o modelo so recebe o dia e a hora da consulta que
+// ja existe (lib/agente/ferramentas/agenda-do-turno.ts).
+//
+// Revisao final da AG3: o agendar leva a reserva que a pergunta "Confirma
+// ...?" mostrou (p_slot_hold_id) e a RPC recusa reserva_diferente quando a
+// reserva viva da conversa e outra: o turno pergunta de novo, com o horario
+// certo, e nada e marcado.
+
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
-import { MOTIVOS_DA_RESERVA } from "./reservar-horario";
+import { DADOS_DA_MARCACAO, type DadoDaMarcacao } from "../atendimento";
+import { MOTIVOS_DA_CONFERENCIA } from "./reservar-horario";
 
 export const NOME_DO_AGENDAR = "agendar";
 
@@ -20,7 +34,7 @@ export const FERRAMENTA_AGENDAR: FunctionTool = {
   name: NOME_DO_AGENDAR,
   strict: true,
   description:
-    "Marca a consulta do horário reservado nesta conversa. Use só quando a pessoa confirmar numa mensagem nova, depois da reserva. A consulta fica pendente até a equipe aprovar.",
+    "Marca a consulta do horário reservado nesta conversa. Use só quando a pessoa confirmar numa mensagem nova, depois da pergunta \"Confirma ...?\". A consulta fica pendente até a equipe aprovar.",
   parameters: {
     type: "object",
     properties: {},
@@ -36,9 +50,16 @@ export const FERRAMENTA_AGENDAR: FunctionTool = {
 export const MOTIVOS_DO_AGENDAR = [
   "reserva_inexistente",
   "reserva_vencida",
+  // Revisao final da AG3: a reserva viva e outra, nao a perguntada.
+  "reserva_diferente",
   "sem_confirmacao_do_paciente",
   "conflito",
-  ...MOTIVOS_DA_RESERVA,
+  ...MOTIVOS_DA_CONFERENCIA,
+  // AG3, na ordem da RPC.
+  "consulta_para_outra_pessoa",
+  "menor_de_idade",
+  "ja_tem_consulta",
+  "faltam_dados",
 ] as const;
 export type MotivoDoAgendar = (typeof MOTIVOS_DO_AGENDAR)[number];
 
@@ -51,8 +72,17 @@ export type RespostaDoAgendar =
       reutilizado: boolean;
       /** O vinculo da consulta, quando quem chama sabe. */
       serviceLinkId: string | null;
+      /** AG3: appointment.id (o estado do atendimento guarda). */
+      appointmentId: string | null;
     }
-  | { ok: false; motivo: MotivoDoAgendar };
+  | {
+      ok: false;
+      motivo: MotivoDoAgendar;
+      /** AG3, so em ja_tem_consulta: a consulta que o contato ja tem. */
+      appointmentId?: string | null;
+      /** AG3, so em faltam_dados: o que falta, na ordem do banco. */
+      faltam?: DadoDaMarcacao[];
+    };
 
 function ehInstante(valor: unknown): valor is string {
   return typeof valor === "string" && Number.isFinite(Date.parse(valor));
@@ -78,6 +108,7 @@ export function lerRespostaDoAgendar(dado: unknown): RespostaDoAgendar | null {
       reutilizado: r.reutilizado === true,
       serviceLinkId:
         typeof r.service_link_id === "string" ? r.service_link_id : null,
+      appointmentId: r.appointment_id,
     };
   }
   if (
@@ -85,7 +116,37 @@ export function lerRespostaDoAgendar(dado: unknown): RespostaDoAgendar | null {
     typeof r.motivo === "string" &&
     (MOTIVOS_DO_AGENDAR as readonly string[]).includes(r.motivo)
   ) {
-    return { ok: false, motivo: r.motivo as MotivoDoAgendar };
+    const motivo = r.motivo as MotivoDoAgendar;
+    if (motivo === "ja_tem_consulta") {
+      // A consulta que ja existe: sem o id, quem chama nao diz dia nem hora
+      // (o modelo so ouve que ja ha consulta).
+      return {
+        ok: false,
+        motivo,
+        appointmentId:
+          typeof r.appointment_id === "string" && r.appointment_id !== ""
+            ? r.appointment_id
+            : null,
+      };
+    }
+    if (motivo === "faltam_dados") {
+      // A lista e do banco: fora do formato, ninguem sabe o que pedir.
+      if (
+        !Array.isArray(r.faltam) ||
+        r.faltam.length === 0 ||
+        !r.faltam.every((f) =>
+          (DADOS_DA_MARCACAO as readonly unknown[]).includes(f),
+        )
+      ) {
+        return null;
+      }
+      return {
+        ok: false,
+        motivo,
+        faltam: [...new Set(r.faltam as DadoDaMarcacao[])],
+      };
+    }
+    return { ok: false, motivo };
   }
   return null;
 }
