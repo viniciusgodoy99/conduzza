@@ -625,7 +625,8 @@ export function tipoDoContatoDoBanco(valor: unknown): TipoDoContato | null {
  * Os dados que o paciente informa ficam a parte (dados_informados_na_
  * marcacao) e entram no cadastro do contato so quando a equipe APROVA a
  * consulta: o nome se o cadastro estiver sem nome ou com o do WhatsApp;
- * nascimento, CPF e carteirinha so nos campos vazios (D-7).
+ * nascimento e CPF so nos campos vazios; a carteirinha so vazia e na consulta
+ * pelo convenio, o mesmo do cadastro ou com ele vazio (D-7).
  */
 export type DadosExigidos = {
   nomeCompleto: boolean;

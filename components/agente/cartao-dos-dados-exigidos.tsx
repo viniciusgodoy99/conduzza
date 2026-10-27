@@ -51,7 +51,8 @@ import {
 //
 // A frase do cadastro (os dados entram no cadastro do paciente quando a
 // equipe aprova a consulta: o nome se o cadastro estiver sem nome ou com o do
-// WhatsApp; nascimento, CPF e carteirinha so vazios) fica sempre visivel: e
+// WhatsApp; nascimento e CPF so vazios; a carteirinha so vazia e na consulta
+// pelo convenio, o mesmo do cadastro ou com ele vazio) fica sempre visivel: e
 // o que o gatilho do banco faz na aprovacao (aplicar_dados_na_aprovacao).
 
 /** Nenhuma caixa marcada: o aviso de que a IA marca sem pedir dado. */

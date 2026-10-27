@@ -54,7 +54,8 @@ import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 // AG3 (D-7): o cartao da consulta da IA ganha "Ver dados informados" (40px,
 // acima de Aprovar e Recusar), o que o paciente informou ao assistente para
 // marcar, que a aprovacao aplica ao cadastro (o nome se estiver vazio ou
-// for o do WhatsApp; nascimento, CPF e carteirinha so vazios). A
+// for o do WhatsApp; nascimento e CPF so vazios; a carteirinha so vazia e na
+// consulta pelo convenio, o mesmo do cadastro ou com ele vazio). A
 // leitura grava trilha e por isso so acontece no clique
 // (components/agenda/dados-informados.tsx). O encaixe nao tem: a IA nao
 // pede dado para sugerir encaixe.

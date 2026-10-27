@@ -115,7 +115,7 @@ describe("Dados para marcar consulta: o cartão", () => {
     // Revisao final da AG3 (achado 8): a regra real, o nome do WhatsApp
     // tambem troca; nada de "so onde ele esta vazio".
     expect(visivel).toContain(
-      "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente. O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
+      "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente assim: o nome, se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estiverem vazios; a carteirinha, se estiver vazia e a consulta for pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
     );
     expect(visivel).not.toContain("só onde ele está vazio");
     expect(visivel).toContain(
