@@ -573,8 +573,9 @@ const procedimentoSchema = z.object({
   // procedimento que ja exigia uma sala continua exigindo.
   resource_id: idSchema.nullable().optional(),
   bookable_by_ai: z.boolean(),
-  // "A IA pode informar o preco e o que o procedimento exige" (AG1). INERTE
-  // ate a proxima etapa (decisao D-3 do dono pendente). AUSENTE = nao mexe.
+  // "A IA pode informar o preco e o que o procedimento exige" (AG1), lida
+  // pela buscar_procedimento (AG2) so para o procedimento que a IA nao marca
+  // (decisao D-3 do dono pendente). AUSENTE = nao mexe.
   ia_pode_informar: z.boolean().optional(),
   active: z.boolean(),
 });

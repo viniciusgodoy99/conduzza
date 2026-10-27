@@ -10,8 +10,10 @@
 -- `address` em texto livre (e nenhuma clinica real tem unidade cadastrada:
 -- unit vazia na producao), nao existe requisito estruturado do
 -- procedimento, e o profissional nao tem idade atendida nem grade. Esta
--- migration cria o CADASTRO desses dados. A IA NAO le nada disto ainda: as
--- ferramentas que leem sao a proxima etapa (AG2). A tela de Cadastros grava;
+-- migration cria o CADASTRO desses dados. A IA le estes dados pelas
+-- ferramentas da AG2 (consultar_unidades, consultar_requisitos,
+-- buscar_profissionais e buscar_procedimento ampliada), que vao ao ar no
+-- mesmo pacote de codigo, DEPOIS desta migration. A tela de Cadastros grava;
 -- a Tela 6 mostra a prontidao.
 --
 -- O QUE MUDA (SO ACRESCIMO: nenhuma funcao, policy, gatilho ou constraint
@@ -70,8 +72,9 @@
 --      60: o intervalo entre os inicios de consulta).
 --   5. procedure.ia_pode_informar boolean not null default true: a IA pode
 --      informar o preco e o que o procedimento exige mesmo quando nao marca
---      pela IA. INERTE ate a proxima etapa (decisao D-3 do dono pendente):
---      so a tela grava; nada le.
+--      pela IA. Lida pela buscar_procedimento da AG2, so para o
+--      procedimento que a IA nao marca (decisao D-3 do dono pendente;
+--      padrao: sim).
 --   6. prontidao_do_cadastro_da_ia(p_clinic_id) returns jsonb: plpgsql,
 --      STABLE, SECURITY DEFINER, search_path vazio. Guarda: com sessao, o
 --      super admin ou o administrador ou gestor ATIVO da clinica com escrita
@@ -441,7 +444,7 @@ create unique index procedure_requirement_um_ativo_por_tipo
   where ativo and tipo <> 'outro';
 
 comment on table public.procedure_requirement is
-  'O que o procedimento exige do paciente (migration 20261027100000_cadastro_para_o_agente.sql): para todos (insurance_id nulo) ou so para um convenio. Um ativo do mesmo tipo por procedimento e convenio, menos outro. Le o membro ativo da clinica; escrevem o administrador e o gestor com escrita. A IA ainda nao le (proxima etapa).';
+  'O que o procedimento exige do paciente (migration 20261027100000_cadastro_para_o_agente.sql): para todos (insurance_id nulo) ou so para um convenio. Um ativo do mesmo tipo por procedimento e convenio, menos outro. Le o membro ativo da clinica; escrevem o administrador e o gestor com escrita. A IA le pela consultar_requisitos (AG2).';
 comment on column public.procedure_requirement.insurance_id is
   'Nulo: vale para todos (particular e qualquer convenio). Preenchido: so para esse convenio (ex.: autorizacao previa so na Unimed).';
 comment on column public.procedure_requirement.tipo is
@@ -541,7 +544,7 @@ alter table public.procedure
   add column ia_pode_informar boolean not null default true;
 
 comment on column public.procedure.ia_pode_informar is
-  'A IA pode informar o preco e o que o procedimento exige mesmo quando nao marca pela IA (bookable_by_ai). INERTE ate a proxima etapa (decisao D-3 do dono pendente): so a tela grava.';
+  'A IA pode informar o preco e o que o procedimento exige mesmo quando nao marca pela IA (bookable_by_ai). Lida pela buscar_procedimento (AG2), so para o procedimento que a IA nao marca (decisao D-3 do dono pendente; padrao: sim).';
 
 -- ---------------------------------------------------------------------------
 -- 6) A prontidao do cadastro para o agente

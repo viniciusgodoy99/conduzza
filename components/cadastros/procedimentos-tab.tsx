@@ -153,7 +153,10 @@ const FORM_VAZIO: FormProcedimento = {
   active: true,
 };
 
-/** A chave nova (AG1): inerte ate a proxima etapa (D-3 do dono pendente). */
+/**
+ * A chave nova (AG1), lida pela buscar_procedimento (AG2) so para o
+ * procedimento que a IA nao marca (D-3 do dono pendente).
+ */
 export const ROTULO_IA_PODE_INFORMAR =
   "A IA pode informar o preço e o que o procedimento exige";
 export const AJUDA_IA_PODE_INFORMAR =

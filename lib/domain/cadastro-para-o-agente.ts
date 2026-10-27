@@ -12,7 +12,7 @@ import { problemaNoTextoDoAgente } from "@/lib/domain/agente/config";
 //   - o que o procedimento exige do paciente (procedure_requirement);
 //   - a idade atendida e a grade do profissional;
 //   - a leitura e as frases da prontidao_do_cadastro_da_ia.
-// A IA ainda nao le nada disto (a proxima etapa cria as ferramentas).
+// A IA le estes dados pelas ferramentas da AG2 (lib/agente/ferramentas).
 //
 // Cada regra aqui espelha um CHECK do banco: o banco recusa o que passar
 // errado por outro caminho, e o que passa aqui sempre passa la (o Zod conta
