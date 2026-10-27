@@ -17,6 +17,16 @@
 // te responde"). Nao conta a informacao: "fale com a recepcao", "a equipe
 // atende de segunda a sexta", "passe na recepcao", "vou te passar o valor",
 // "a medica avalia na consulta".
+//
+// AG2 (27/10/2026): tambem conta a IA prometendo VOLTAR depois de conferir
+// alguma coisa, sem chamar a ferramenta de passar ("vou verificar e ja te
+// retorno", "deixa eu confirmar e te aviso", "vou checar e te falo", "te
+// aviso assim que souber", "ja volto com a resposta", "aguarde um momento",
+// "so um instante"). A IA so fala quando o paciente manda mensagem: quem
+// promete voltar deixa o paciente esperando uma mensagem que nunca vem, e
+// a conversa nao chega a ninguem da equipe. "A confirmacao chega por
+// aqui" (a mensagem do sistema depois da aprovacao) e "entramos em contato
+// um dia antes" (a rotina da clinica) continuam informacao.
 
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 
@@ -53,6 +63,16 @@ const EU_VOU =
   "(?:vou|irei|vamos|iremos|posso|podemos|ja vou|eu vou|deixa eu|deixe-me)";
 const DEPOIS = "(?:ja\\s+|logo\\s+|em breve\\s+|depois\\s+|rapidinho\\s+)?";
 const EQUIPE_E_APOSTO = `${EQUIPE}(?:\\s+d[aoe]s?\\s+\\w+){0,2}`;
+
+/** Conferir alguma coisa ("vou verificar", "deixa eu confirmar"). */
+const CONFERIR =
+  "(?:verificar|confirmar|consultar|checar|conferir|ver|olhar|averiguar|pesquisar|procurar|levantar|analisar|validar|perguntar|buscar|dar uma (?:olhada|olhadinha|conferida|checada|verificada|pesquisada))";
+/** Voltar a falar com o paciente, na primeira pessoa ("te aviso"). */
+const VOLTAR =
+  "(?:(?:te|lhe)\\s+)?(?:aviso|retorno|falo|digo|respondo|confirmo|informo|passo|mando|envio|chamo|escrevo|conto|volto|entro em contato)";
+/** O depois da promessa ("assim que souber", "em seguida"). */
+const QUANDO_VOLTA =
+  "(?:assim que|quando|logo que|em seguida|em breve|daqui a pouco|ja ja|mais tarde|depois|em instantes|em alguns minutos|o quanto antes|se)";
 
 const PROMESSAS: readonly RegExp[] = [
   // "Vou passar sua conversa para alguem da nossa equipe", "posso te
@@ -102,6 +122,28 @@ const PROMESSAS: readonly RegExp[] = [
   // "entraremos em contato". Ela nao volta: so a equipe.
   /\b(?:te|lhe)\s+(?:retorno|retornamos|retornaremos|dou\s+(?:um\s+)?retorno|damos\s+(?:um\s+)?retorno|darei\s+(?:um\s+)?retorno|daremos\s+(?:um\s+)?retorno)\b/,
   /\b(?:entraremos|entrarei)\s+em\s+contato\b/,
+  // AG2: conferir e voltar depois. "Vou verificar e ja te retorno", "deixa
+  // eu confirmar e te aviso", "vou checar aqui e te falo", "vou ver a agenda
+  // e retorno", "vou consultar e entro em contato". A pergunta ("posso
+  // verificar e te aviso?") nao conta: a resposta do paciente traz a IA de
+  // volta.
+  new RegExp(
+    `\\b${EU_VOU}\\s+(?:\\w+\\s+){0,2}?${CONFERIR}\\b[^.!?\\n]{0,60}?\\be\\s+(?:ja\\s+|logo\\s+|depois\\s+|em seguida\\s+)?${VOLTAR}\\b(?![^.!?\\n]*\\?)`,
+  ),
+  // "Te aviso assim que souber", "te falo em seguida", "e aviso se surgir
+  // uma vaga".
+  new RegExp(
+    `\\b(?:te|lhe)\\s+(?:aviso|falo|digo|respondo|confirmo|informo|passo|mando|envio|escrevo|conto)\\s+${QUANDO_VOLTA}\\b|\\be\\s+aviso\\s+${QUANDO_VOLTA}\\b`,
+  ),
+  // "Ja volto", "volto em seguida", "volto com a resposta", "retorno ja ja".
+  /\b(?:ja|logo)\s+(?:te\s+)?(?:volto|retorno)\b|\b(?:volto|retorno)\s+(?:ja\b|logo\b|em seguida|em breve|em instantes|ja ja|daqui a pouco|assim que|com (?:a|as|uma|o|os) (?:resposta|informac|confirmac|retorno|novidade|valor|horario))/,
+  // "Assim que eu souber", "assim que tiver a resposta".
+  /\bassim que eu\s+(?:souber|tiver|conseguir|verificar|confirmar|checar|receber|falar)\b|\bassim que (?:souber|tiver (?:a|uma|o) (?:resposta|informac|confirmac|retorno))/,
+  // "Aguarde um momento", "me da um minutinho" (fora da recepcao: "aguarde
+  // um momento na recepcao, que a Dra. chama" e informacao).
+  /\b(?:aguarde|aguarda|espere|espera|me (?:da|de)(?:\s+so)?)\s+(?:so\s+)?(?:um|uns)\s+(?:momento|minuto|minutinho|minutos|instante|instantinho|pouquinho|segundo|segundinho)s?\b(?!\s+(?:na|no|ao|quando|ate)\s+(?:recepcao|sala|consultorio|chegar|chegada|ser chamad))/,
+  // "So um instante.", "Um momento, por favor."
+  /(?:^|[.!?,]\s*)(?:so\s+)?um\s+(?:momento|minutinho|instante|instantinho|segundinho|minuto)\b(?=\s*(?:[,.!]|por favor|que\b|enquanto|$))/,
 ];
 
 /**

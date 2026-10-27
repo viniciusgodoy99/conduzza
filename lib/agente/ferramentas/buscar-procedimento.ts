@@ -36,6 +36,11 @@ import {
   CATEGORIAS_CLINICAS,
   type CategoriaDeConformidade,
 } from "@/lib/domain/conformidade/categorias";
+import type {
+  CoberturaDoTurno,
+  EstadoDaCobertura,
+  FatosDaFerramenta,
+} from "@/lib/domain/conformidade/fatos-do-turno";
 import {
   avaliarRegras,
   CATEGORIAS_SEM_MASCARA,
@@ -492,7 +497,9 @@ export function indiceDosProfissionais(
  * Os convenios do Cadastro e os do agente juntos, sem repetir (os do agente
  * ja estao no Cadastro; a uniao so protege de um catalogo montado a mao).
  */
-function conveniosConhecidos(catalogo: CatalogoDoAgente): ConvenioDoAgente[] {
+export function conveniosConhecidos(
+  catalogo: CatalogoDoAgente,
+): ConvenioDoAgente[] {
   const ids = new Set(catalogo.conveniosDoCadastro.map((c) => c.id));
   return [
     ...catalogo.conveniosDoCadastro,
@@ -647,7 +654,22 @@ export type ResultadoDaBusca = {
     | "convenio_nao_confirmado"
     | "convenio_nao_encontrado"
     | "convenio_nao_informado";
+  /**
+   * O que a saida afirma de cada convenio, para os fatos do turno (AG2,
+   * lib/domain/conformidade/fatos-do-turno.ts): "coberto" so quando a saida
+   * diz coberto; "atende" quando o convenio tem vinculo no procedimento.
+   * Sem informacao, nao encontrado e opcoes para escolher: nada.
+   */
+  fatos?: FatosDaFerramenta;
 };
+
+/** O convenio do Cadastro com o estado, para os fatos do turno. */
+export function coberturaDoConvenio(
+  convenio: ConvenioDoAgente,
+  estado: EstadoDaCobertura,
+): CoberturaDoTurno {
+  return { nome: convenio.nome, plano: convenio.plano, estado };
+}
 
 function valorEmReais(centavos: number): string {
   // O Intl poe espaco nao separavel depois do "R$": o modelo copiaria o
@@ -1490,9 +1512,9 @@ export function buscarProcedimento(
     (seletorExato(entradas, dito) === undefined && ehParticular(dito))
   ) {
     const particulares = doProcedimento.filter((v) => v.convenioId === null);
-    const aceitos = catalogo.convenios
-      .filter((c) => doProcedimento.some((v) => v.convenioId === c.id))
-      .map(nomeDoConvenio);
+    const conveniosAceitos = catalogo.convenios.filter((c) =>
+      doProcedimento.some((v) => v.convenioId === c.id),
+    );
     return {
       saida: JSON.stringify({
         resultado: "particular",
@@ -1501,11 +1523,18 @@ export function buscarProcedimento(
         particular: particulares.map((v) =>
           linhaParaOModelo(v, anotar(situacaoDoVinculo(v))),
         ),
-        convenios_aceitos: aceitos,
+        convenios_aceitos: conveniosAceitos.map(nomeDoConvenio),
       }),
       precos,
       passo: `Consultou o preço de ${procedimento.nome}`,
       resultado: "particular",
+      // A lista dos aceitos afirma que eles atendem; quem nao esta nela e
+      // "sem informacao", nunca "nao atende".
+      fatos: {
+        coberturas: conveniosAceitos.map((c) =>
+          coberturaDoConvenio(c, "atende"),
+        ),
+      },
     };
   }
 
@@ -1574,6 +1603,23 @@ export function buscarProcedimento(
         precos: [],
         passo: `${doPaciente}: falta saber qual plano de ${identificacao.operadora}`,
         resultado: "plano_nao_informado",
+        // A situacao de cada plano, como a saida diz: "coberto" so no plano
+        // em que todo vinculo e coberto; com valor, sem valor ou dependendo
+        // do profissional, o plano atende; sem informacao, nada.
+        fatos: {
+          coberturas: identificacao.convenios.flatMap((c) => {
+            const situacao = situacaoDoPlano(c, doProcedimento);
+            if (situacao === "sem_informacao") {
+              return [];
+            }
+            return [
+              coberturaDoConvenio(
+                c,
+                situacao === "coberto" ? "coberto" : "atende",
+              ),
+            ];
+          }),
+        },
       };
     case "casou":
       break;
@@ -1596,18 +1642,31 @@ export function buscarProcedimento(
       resultado: "convenio_sem_informacao",
     };
   }
+  const situacoes = doConvenio.map((v) => anotar(situacaoDoVinculo(v)));
   return {
     saida: JSON.stringify({
       resultado: "convenio",
       procedimento: procedimento.nome,
       convenio: nomeDoConvenio(casado),
-      atendimentos: doConvenio.map((v) =>
-        linhaParaOModelo(v, anotar(situacaoDoVinculo(v))),
+      atendimentos: doConvenio.map((v, i) =>
+        linhaParaOModelo(v, situacoes[i] ?? situacaoDoVinculo(v)),
       ),
     }),
     precos,
     passo: `Consultou o preço de ${procedimento.nome} pelo convênio ${nomeDoConvenio(casado)}`,
     resultado: "convenio",
+    // O convenio tem vinculo: atende. "Coberto" quando a saida diz coberto
+    // em algum atendimento (o modelo ve de qual profissional).
+    fatos: {
+      coberturas: [
+        coberturaDoConvenio(
+          casado,
+          situacoes.some((s) => s.situacao === "coberto")
+            ? "coberto"
+            : "atende",
+        ),
+      ],
+    },
   };
 }
 

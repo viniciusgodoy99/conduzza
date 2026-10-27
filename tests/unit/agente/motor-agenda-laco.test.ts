@@ -44,8 +44,10 @@ import {
   CONTATO,
   CONVERSA,
   FUSO,
+  iso,
   JOB,
   PROC,
+  VINC,
 } from "./agenda-fixtures";
 
 // O laco do agente (lib/agente/laco.ts) com as ferramentas de agenda (E4) e
@@ -611,10 +613,43 @@ describe("o texto de marcar e a passagem prometida (Q5)", () => {
       "Pronto! Sua Consulta de terça, 20/10 às 11:15 com a Dra. Ana Lima ficou marcada. Ela fica pendente até a equipe aprovar, e a confirmação chega por aqui.";
     const pergunta =
       "Reservei terça, 20/10 às 11:15 por 10 minutos. Confirma a Consulta com a Dra. Ana Lima nesse horário?";
+    // AG2: o texto de marcar so sai no turno em que a ferramenta marcou ou
+    // reservou (os fatos do turno); aqui, cada um com a sua ferramenta.
+    banco.rpc("agendar_pela_ia", () => ({
+      data: {
+        ok: true,
+        appointment_id: randomUUID(),
+        starts_at: iso("2026-10-20", "11:15"),
+        ends_at: iso("2026-10-20", "11:45"),
+        reutilizado: false,
+        service_link_id: VINC.consultaAna,
+      },
+      error: null,
+    }));
+    for (const [texto, ferramentas] of [
+      [marcado, [ferramenta("agendar", {})]],
+      [
+        pergunta,
+        [
+          ferramenta("buscar_horario", BUSCA),
+          ferramenta("reservar_horario", { horario: "h1" }),
+        ],
+      ],
+    ] as const) {
+      const { cliente } = clienteComRoteiro([...ferramentas, final(texto)]);
+      const r = await executarTurnoDoAgente(entrada({ cliente }));
+      expect(r.tipo, texto).toBe("resposta");
+    }
+    // Sem a ferramenta, o mesmo texto nao e passagem: e afirmacao sem fato,
+    // e a conformidade barra (frase fixa e a equipe).
     for (const texto of [marcado, pergunta]) {
       const { cliente } = clienteComRoteiro([final(texto)]);
       const r = await executarTurnoDoAgente(entrada({ cliente }));
-      expect(r.tipo, texto).toBe("resposta");
+      expect(r.desfecho, texto).toMatchObject({
+        tipo: "bloqueou",
+        categoria: "acao_nao_executada",
+        camada: "regra",
+      });
     }
     for (const texto of [
       "Pronto, ficou marcada. A equipe vai confirmar por aqui.",

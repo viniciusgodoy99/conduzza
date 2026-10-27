@@ -27,7 +27,12 @@
 //     se a soma passar do limite do filtro, sai o encerramento e depois a
 //     saudacao, nunca a resposta.
 //  6. filtrarSaida (regras + verificador, falha fechada). So ele produz
-//     TextoAprovado; bloqueio vira a frase fixa.
+//     TextoAprovado; bloqueio vira a frase fixa. Desde a AG2 (27/10/2026)
+//     o filtro recebe os fatos do turno (lib/agente/fatos.ts): as saidas
+//     das ferramentas, a configuracao publicada que vai ao modelo e o que
+//     cada ferramenta afirmou de convenio e de acao. Data e hora, endereco,
+//     convenio e acao de agenda so passam com fato; erro ao montar os fatos
+//     e falha fechada.
 //
 // E4 (agenda, contrato da E4 secao 2): as ferramentas de agenda
 // (buscar_horario, reservar_horario, agendar e confirmar_presenca) rodam pela
@@ -78,6 +83,7 @@ import type {
   CategoriaDeConformidade,
   GatilhoDeEntrada,
 } from "@/lib/domain/conformidade/categorias";
+import type { FatosDoTurno } from "@/lib/domain/conformidade/fatos-do-turno";
 import {
   filtrarSaida,
   type DecisaoDoFiltro,
@@ -154,6 +160,7 @@ import {
   usoEstimadoDoClassificador,
   usoEstimadoDoVerificador,
 } from "./gasto";
+import { montarFatosDoTurno, type SaidaParaOsFatos } from "./fatos";
 import { semAMarcaDoNome } from "./marca-do-nome";
 import { prometePassagemParaAEquipe } from "./passagem-prometida";
 import {
@@ -414,6 +421,11 @@ const ROTULO_DO_BLOQUEIO: Readonly<Record<CategoriaDeConformidade, string>> = {
   oferta_casada: "oferta casada",
   antes_depois: "imagem de antes e depois",
   preco_nao_verificado: "preço fora do cadastro",
+  // AG2: os fatos do turno (lib/domain/conformidade/fatos-do-turno.ts).
+  acao_nao_executada: "ação de agenda que não foi feita",
+  cobertura_nao_verificada: "convênio sem confirmação no cadastro",
+  horario_nao_verificado: "data ou horário sem confirmação na agenda",
+  endereco_nao_verificado: "endereço fora do cadastro",
   formato_invalido: "formato de resposta não permitido",
   falha_verificador: "verificação de conformidade indisponível",
 };
@@ -1052,10 +1064,12 @@ export async function executarTurnoDoAgente(
     // Sobe para MAXIMO_DE_RODADAS_COM_AGENDA quando o turno usa a agenda.
     let maximoDeRodadas = MAXIMO_DE_RODADAS;
     const fixos = parametrosFixosDoAgente(modelo);
+    // A mesma linha da hora vai ao modelo e aos fatos do turno.
+    const agoraTexto = agoraNaClinica(entrada.agoraMs, entrada.fuso);
     const instrucoes = montarInstrucoes({
       config: entrada.config,
       catalogo: entrada.catalogo,
-      agoraTexto: agoraNaClinica(entrada.agoraMs, entrada.fuso),
+      agoraTexto,
       contato: entrada.contato ?? null,
     });
     const perguntas = perguntasParaOModelo(entrada.config.base);
@@ -1080,6 +1094,8 @@ export async function executarTurnoDoAgente(
       entrada.mensagens,
     );
     const precosDoTurno: number[] = [];
+    // AG2: o que cada ferramenta do turno devolveu, para os fatos do turno.
+    const ferramentasDoTurno: SaidaParaOsFatos[] = [];
     let final: RespostaFinal | null = null;
     // Onda 2 (item 5 e P5c): a ferramenta de frase fixa que encerrou o turno.
     let fraseEscolhida: "fora_do_assunto" | "sou_assistente_virtual" | null =
@@ -1277,6 +1293,7 @@ export async function executarTurnoDoAgente(
             argumentosDe(chamada),
           );
           precosDoTurno.push(...busca.precos);
+          ferramentasDoTurno.push({ saida: busca.saida, fatos: busca.fatos });
           trilha.push({ tipo: "preco", texto: busca.passo });
           ferramentasUsadas.push("buscar_procedimento");
           historico.push({
@@ -1309,6 +1326,7 @@ export async function executarTurnoDoAgente(
           return falhar("desconhecida");
         }
         precosDoTurno.push(...efeito.precos);
+        ferramentasDoTurno.push({ saida: efeito.saida, fatos: efeito.fatos });
         trilha.push({ tipo: "agenda", texto: efeito.passo });
         historico.push({
           type: "function_call_output",
@@ -1433,13 +1451,32 @@ export async function executarTurnoDoAgente(
       });
     }
 
-    // 6. Filtro de saida.
+    // 6. Filtro de saida, com os fatos do turno (AG2). Montar os fatos que
+    // lanca e falha fechada: a resposta nao sai e a conversa passa.
+    let fatos: FatosDoTurno;
+    try {
+      fatos = montarFatosDoTurno({
+        config: entrada.config,
+        catalogo: entrada.catalogo,
+        agoraTexto,
+        agoraMs: entrada.agoraMs,
+        fuso: entrada.fuso,
+        ferramentas: ferramentasDoTurno,
+      });
+    } catch {
+      log.warn("ia_agente_fatos_falharam", {
+        kind: "agente",
+        clinic_id: entrada.clinicId,
+      });
+      return falhar("desconhecida");
+    }
     filtro = await filtrarSaida({
       rascunho,
       contexto: {
         precosDoTurno,
         nomesDoCatalogo: nomesDoCatalogo(entrada.catalogo),
         mensagensDoPaciente: textosPendentes,
+        fatos,
       },
       verificador: entrada.verificador,
       prazoEm,

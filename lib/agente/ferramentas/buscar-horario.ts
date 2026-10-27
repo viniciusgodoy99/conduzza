@@ -39,6 +39,7 @@ import {
   agendaCompleta,
   type AgendaDoAgente,
 } from "@/lib/domain/agente/config";
+import type { FatosDaFerramenta } from "@/lib/domain/conformidade/fatos-do-turno";
 import { instanteLocal, minutosLocais } from "@/lib/domain/horarios";
 import {
   availableSlots,
@@ -47,10 +48,12 @@ import {
 } from "@/lib/domain/scheduling";
 
 import {
+  coberturaDoConvenio,
   convenioParaAgenda,
   indiceDosProfissionais,
   valoresDosVinculos,
   type CatalogoDoAgente,
+  type ConvenioDoAgente,
   type ProcedimentoDoIndice,
   type VinculoDoAgente,
 } from "./buscar-procedimento";
@@ -328,6 +331,12 @@ export type ResultadoDaBuscaDeHorario = {
     | "entrada_invalida";
   /** Os horarios com codigo (vazio fora de "horarios"). */
   horarios: HorarioOferecido[];
+  /**
+   * O que a saida afirma do convenio identificado, para os fatos do turno
+   * (AG2): "atende" quando ele tem vinculo no procedimento (horarios, sem
+   * horario, so com a equipe), "nao_atende" no convenio_nao_atendido.
+   */
+  fatos?: FatosDaFerramenta;
 };
 
 /** O que a escolha precisa depois que a Agenda foi lida. */
@@ -335,6 +344,8 @@ export type PlanoDaBusca = {
   procedimento: ProcedimentoDoIndice;
   /** "particular" ou o nome do convenio identificado, como vai ao modelo. */
   convenio: string;
+  /** O convenio identificado no Cadastro (null no particular). */
+  convenioDoCadastro?: ConvenioDoAgente | null;
   /** O nome do profissional pedido, ou null (qualquer um). */
   profissional: string | null;
   vinculos: VinculoAgendavel[];
@@ -355,6 +366,7 @@ function pronto(
   saida: Record<string, unknown>,
   passo: string,
   precos: number[] = [],
+  fatos?: FatosDaFerramenta,
 ): PlanoOuResultado {
   return {
     tipo: "resultado",
@@ -364,8 +376,18 @@ function pronto(
       passo,
       resultado,
       horarios: [],
+      ...(fatos === undefined ? {} : { fatos }),
     },
   };
+}
+
+/** O convenio do plano atende (tem vinculo no procedimento). */
+function fatosDoConvenio(
+  convenio: ConvenioDoAgente | null | undefined,
+): FatosDaFerramenta | undefined {
+  return convenio === null || convenio === undefined
+    ? undefined
+    : { coberturas: [coberturaDoConvenio(convenio, "atende")] };
 }
 
 function rotuloDaModalidade(convenio: string): string {
@@ -513,6 +535,8 @@ export function planejarBuscaDeHorario(entrada: {
 
   const nomeDoConvenio =
     convenio.tipo === "casou" ? convenio.nome : "particular";
+  const convenioDoCadastro =
+    convenio.tipo === "casou" ? convenio.convenio : null;
   const vinculos = doProcedimento.filter((v) =>
     convenio.tipo === "casou"
       ? v.convenioId === convenio.convenio.id
@@ -543,6 +567,8 @@ export function planejarBuscaDeHorario(entrada: {
           ...(profissional === null ? {} : { profissional: profissional.nome }),
         },
         `${doPaciente}: o convênio ${convenio.nome} é atendido, mas só a equipe marca por ele`,
+        [],
+        fatosDoConvenio(convenio.convenio),
       );
     }
     // D14: o convenio foi identificado, mas nenhum vinculo deste
@@ -565,6 +591,9 @@ export function planejarBuscaDeHorario(entrada: {
       },
       `${doPaciente}: o convênio ${convenio.nome} não tem vínculo para marcar este procedimento${particulares.length > 0 ? "; o particular tem" : "; o particular também não"}`,
       valores.precos,
+      {
+        coberturas: [coberturaDoConvenio(convenio.convenio, "nao_atende")],
+      },
     );
   }
   if (vinculos.length === 0) {
@@ -608,6 +637,8 @@ export function planejarBuscaDeHorario(entrada: {
         ate: ultimoDia,
       },
       `${textoDaModalidade}: o dia pedido passa do horizonte (até ${ultimoDia})`,
+      [],
+      fatosDoConvenio(convenioDoCadastro),
     );
   }
   const maiorDuracao = Math.max(...vinculos.map((v) => v.duracaoMin));
@@ -621,6 +652,7 @@ export function planejarBuscaDeHorario(entrada: {
     plano: {
       procedimento,
       convenio: nomeDoConvenio,
+      convenioDoCadastro,
       profissional: profissional?.nome ?? null,
       vinculos,
       inicio: new Date(inicio),
@@ -714,6 +746,7 @@ export function escolherHorarios(
     plano.profissional,
     plano.convenio,
   );
+  const fatos = fatosDoConvenio(plano.convenioDoCadastro);
   if (livres.length === 0) {
     const ate = diaEHora(plano.limite, plano.fuso, plano.agoraMs).dia;
     return {
@@ -722,6 +755,7 @@ export function escolherHorarios(
       passo: `${texto}: nenhum horário livre${plano.periodo === null ? "" : " no período pedido"} até ${ate}`,
       resultado: "sem_horario",
       horarios: [],
+      ...(fatos === undefined ? {} : { fatos }),
     };
   }
 
@@ -761,6 +795,7 @@ export function escolherHorarios(
       .join(", ")}`,
     resultado: "horarios",
     horarios,
+    ...(fatos === undefined ? {} : { fatos }),
   };
 }
 

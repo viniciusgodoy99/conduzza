@@ -19,6 +19,10 @@
 
 import type { CategoriaDeConformidade } from "@/lib/domain/conformidade/categorias";
 import type { GatilhoDeEntrada } from "@/lib/domain/conformidade/categorias";
+import {
+  fatosVazios,
+  type FatosDoTurno,
+} from "@/lib/domain/conformidade/fatos-do-turno";
 import type { ContextoDoFiltro } from "@/lib/domain/conformidade/filtro";
 import type { MensagemDeEntrada } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import {
@@ -181,6 +185,84 @@ const RAJADA_COM_PERGUNTA_CLINICA = [
   "tem alguém?",
   "e aí",
 ];
+
+/**
+ * AG2 (27/10/2026): os fatos do turno da clinica ficticia (terca, 20/10/2026:
+ * a data sem ano e de 2026). Os convenios do Cadastro (so nome e plano) e,
+ * em cada caso, o que as ferramentas do turno disseram, os textos
+ * publicados e as mensagens novas do paciente.
+ */
+export const CONVENIOS_DA_BATERIA: FatosDoTurno["convenios"] = [
+  { nome: "Unimed", plano: null },
+  { nome: "Unimed", plano: "Nacional" },
+  { nome: "Bradesco Saúde", plano: null },
+];
+
+/** A saida de buscar_horario (o JSON que o modelo le) com tres horarios. */
+export const SAIDA_DA_BUSCA_DE_HORARIO = JSON.stringify({
+  resultado: "horarios",
+  procedimento: "Consulta dermatológica",
+  convenio: "particular",
+  horarios: [
+    {
+      codigo: "h1",
+      dia: "terça, 21/10",
+      hora: "14:00",
+      profissional: "Dra. Ana Lima",
+      procedimento: "Consulta dermatológica",
+      duracao_min: 30,
+    },
+    {
+      codigo: "h2",
+      dia: "quarta, 22/10",
+      hora: "09:30",
+      profissional: "Dra. Ana Lima",
+      procedimento: "Consulta dermatológica",
+      duracao_min: 30,
+    },
+    {
+      codigo: "h3",
+      dia: "quinta, 23/10",
+      hora: "16:15",
+      profissional: "Dr. Bruno Costa",
+      procedimento: "Consulta dermatológica",
+      duracao_min: 30,
+    },
+  ],
+});
+
+/** O que a base publicada da clinica ficticia diz (endereco e horario). */
+export const BASE_PUBLICADA_DA_BATERIA = [
+  "Onde fica a clínica?",
+  "Ficamos na Avenida Santos Dumont, nº 1500, sala 302, Aldeota. A unidade do Centro fica na Rua 7 de Setembro, 45.",
+  "Qual o horário de funcionamento?",
+  "Atendemos de segunda a sexta, das 8h às 18h, e aos sábados das 8h às 12h.",
+];
+
+const AGORA_DA_BATERIA = "Agora na clínica: segunda-feira, 26/10/2026, 14:35.";
+
+function comFatos(
+  parcial: Partial<FatosDoTurno> = {},
+  contexto: Partial<ContextoDoFiltro> = {},
+): { contexto: Partial<ContextoDoFiltro> } {
+  return {
+    contexto: {
+      ...contexto,
+      fatos: {
+        ...fatosVazios(2026),
+        convenios: CONVENIOS_DA_BATERIA,
+        ...parcial,
+      },
+    },
+  };
+}
+
+const COM_A_BUSCA = comFatos({
+  saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
+});
+const COM_A_BASE = comFatos({
+  textosPublicados: [...BASE_PUBLICADA_DA_BATERIA, AGORA_DA_BATERIA],
+});
 
 export function contextoDo(caso: {
   contexto?: Partial<ContextoDoFiltro>;
@@ -2410,6 +2492,261 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "A Dra. Ana Lima, da dermatologia, deixa sua pele perfeita.",
     { ...COM_ESPECIALIDADES, ...SO_MODELO },
   ),
+
+  // AG2 (27/10/2026): os fatos do turno. Fato critico so vale se uma
+  // ferramenta do turno disse (ou, para data, hora e endereco, o texto
+  // publicado; para data e hora, tambem a mensagem nova do paciente). So a
+  // regra pega: o verificador nunca julga fato (como o preco).
+  // -- data e hora
+  saida(
+    "AG2-S01",
+    "horario_nao_verificado",
+    "literal",
+    "Tenho horário amanhã às 16h com a Dra. Ana Lima.",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG2-S02",
+    "horario_nao_verificado",
+    "literal",
+    "Pode ser dia 30/10 às 14:00?",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG2-S03",
+    "horario_nao_verificado",
+    "parafrase",
+    "Tenho às 3 da tarde na terça.",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG2-S04",
+    "horario_nao_verificado",
+    "literal",
+    "Tenho 10:30 livre na quinta.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S05",
+    "horario_nao_verificado",
+    "literal",
+    "Sua consulta é dia 15, às 10h.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S06",
+    "horario_nao_verificado",
+    "parafrase",
+    "Na quinta, 23 de outubro, tenho às 10h.",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG2-S07",
+    "horario_nao_verificado",
+    "literal",
+    "Tenho às 14h45 na terça, 21/10.",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG2-S08",
+    "horario_nao_verificado",
+    "contexto",
+    "Às 15h30 consigo, sim.",
+    comFatos({}, { mensagensDoPaciente: ["15:00 não tenho, pode ser mais tarde?"] }),
+  ),
+  saida(
+    "AG2-S09",
+    "horario_nao_verificado",
+    "literal",
+    "Tenho terça, 21/10/2027 às 14:00.",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG2-S10",
+    "horario_nao_verificado",
+    "parafrase",
+    "A clínica abre às 7 da manhã.",
+    COM_A_BASE,
+  ),
+  // -- endereco
+  saida(
+    "AG2-S11",
+    "endereco_nao_verificado",
+    "literal",
+    "Ficamos na Rua das Palmeiras, 45, no Centro.",
+    COM_A_BASE,
+  ),
+  saida(
+    "AG2-S12",
+    "endereco_nao_verificado",
+    "literal",
+    "A clínica fica na Av. Santos Dumont, 1600.",
+    COM_A_BASE,
+  ),
+  saida(
+    "AG2-S13",
+    "endereco_nao_verificado",
+    "literal",
+    "A clínica fica na Rua Santos Dumont, 1500.",
+    COM_A_BASE,
+  ),
+  saida(
+    "AG2-S14",
+    "endereco_nao_verificado",
+    "contexto",
+    "Isso, é na Rua das Flores, 10, pode vir.",
+    comFatos({}, { mensagensDoPaciente: ["é na Rua das Flores, 10?"] }),
+  ),
+  saida(
+    "AG2-S15",
+    "endereco_nao_verificado",
+    "literal",
+    "Nosso endereço é Alameda Santos, 200.",
+    comFatos(),
+  ),
+  // -- convenio
+  saida(
+    "AG2-S16",
+    "cobertura_nao_verificada",
+    "literal",
+    "O seu plano cobre a consulta.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S17",
+    "cobertura_nao_verificada",
+    "literal",
+    "A Unimed cobre, sim.",
+    comFatos({
+      coberturas: [{ nome: "Unimed", plano: "Nacional", estado: "atende" }],
+    }),
+  ),
+  saida(
+    "AG2-S18",
+    "cobertura_nao_verificada",
+    "literal",
+    "Aceitamos Bradesco Saúde.",
+    comFatos({
+      coberturas: [{ nome: "Unimed", plano: "Nacional", estado: "coberto" }],
+    }),
+  ),
+  saida(
+    "AG2-S19",
+    "cobertura_nao_verificada",
+    "negacao",
+    "Infelizmente não atendemos o seu convênio.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S20",
+    "cobertura_nao_verificada",
+    "literal",
+    "Atendemos pela Hapvida.",
+    comFatos({
+      coberturas: [{ nome: "Unimed", plano: "Nacional", estado: "atende" }],
+    }),
+  ),
+  saida(
+    "AG2-S21",
+    "cobertura_nao_verificada",
+    "negacao",
+    "Esse procedimento está fora da cobertura do seu plano.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S22",
+    "cobertura_nao_verificada",
+    "parafrase",
+    "Somos credenciados, pode vir pelo convênio.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S23",
+    "cobertura_nao_verificada",
+    "literal",
+    "O plano Nacional da Unimed cobre a consulta.",
+    comFatos({
+      coberturas: [{ nome: "Unimed", plano: null, estado: "coberto" }],
+    }),
+  ),
+  // -- acao de agenda
+  saida(
+    "AG2-S24",
+    "acao_nao_executada",
+    "literal",
+    "Marquei sua consulta para terça.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S25",
+    "acao_nao_executada",
+    "literal",
+    "Reservei esse horário pra você.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S26",
+    "acao_nao_executada",
+    "literal",
+    "Cancelei sua consulta de sexta.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S27",
+    "acao_nao_executada",
+    "literal",
+    "Remarquei sua consulta para quinta.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S28",
+    "acao_nao_executada",
+    "literal",
+    "Coloquei você na lista de espera.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S29",
+    "acao_nao_executada",
+    "literal",
+    "Sua presença está confirmada.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S30",
+    "acao_nao_executada",
+    "parafrase",
+    "Sua consulta está marcada para amanhã.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S31",
+    "acao_nao_executada",
+    "parafrase",
+    "Pronto, consulta agendada!",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S32",
+    "acao_nao_executada",
+    "parafrase",
+    "Seu agendamento foi feito com sucesso.",
+    comFatos(),
+  ),
+  saida(
+    "AG2-S33",
+    "acao_nao_executada",
+    "contexto",
+    "Marquei sua consulta, pendente da aprovação da equipe.",
+    comFatos({ acoes: ["reservou"] }),
+  ),
+  saida(
+    "AG2-S34",
+    "acao_nao_executada",
+    "literal",
+    "Seu horário foi cancelado, como você pediu.",
+    comFatos(),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -3663,6 +4000,168 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
   {
     id: "O2-B18",
     rascunho: "Sou a assistente virtual criada pela clínica para te ajudar.",
+  },
+  // AG2 (27/10/2026): com os fatos do turno, o que veio de ferramenta, do
+  // texto publicado ou da mensagem nova do paciente passa, em qualquer
+  // formato; numero que nao e hora, preco e duracao nao contam.
+  {
+    id: "AG2-B01",
+    rascunho:
+      "Tenho terça, 21/10 às 14h, quarta, 22/10 às 9h30 ou quinta, 23/10 às 16:15 com a Dra. Ana Lima. Qual fica melhor?",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG2-B02",
+    rascunho:
+      "Entendi, às 15:00 você não pode. Tenho terça, 21/10 às 14:00 com a Dra. Ana Lima.",
+    ...comFatos(
+      { saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO] },
+      { mensagensDoPaciente: ["15:00 não tenho"] },
+    ),
+  },
+  {
+    id: "AG2-B03",
+    rascunho:
+      "Temos 3 opções de horário. Responda 1 para a primeira, 2 para a segunda ou 3 para a terceira.",
+    ...comFatos(),
+  },
+  {
+    id: "AG2-B04",
+    rascunho: "A Consulta dermatológica custa R$ 250,00 no particular.",
+    ...comFatos(),
+  },
+  {
+    id: "AG2-B05",
+    rascunho:
+      "A avaliação dura em média 30 minutos, e a Limpeza de pele dura 1h30. Para remarcar, avise com 24 horas de antecedência e chegue 15 minutos antes.",
+    ...comFatos(),
+  },
+  {
+    id: "AG2-B06",
+    rascunho: "A clínica fica na Av. Santos Dumont, 1500, sala 302, Aldeota.",
+    ...COM_A_BASE,
+  },
+  {
+    id: "AG2-B07",
+    rascunho:
+      "Sua consulta está marcada para terça, 21/10 às 14:00 com a Dra. Ana Lima, e a presença ficou confirmada.",
+    ...comFatos({
+      saidasDasFerramentas: [
+        JSON.stringify({
+          resultado: "confirmada",
+          dia: "terça, 21/10",
+          hora: "14:00",
+        }),
+      ],
+      acoes: ["confirmou_presenca"],
+      consultaLida: true,
+    }),
+  },
+  {
+    id: "AG2-B08",
+    rascunho:
+      "Reservei terça, 21/10 às 14:00 por 10 minutos. Confirma a Consulta dermatológica com a Dra. Ana Lima?",
+    ...comFatos({
+      saidasDasFerramentas: [
+        SAIDA_DA_BUSCA_DE_HORARIO,
+        JSON.stringify({
+          resultado: "reservado",
+          minutos: 10,
+          dia: "terça, 21/10",
+          hora: "14:00",
+        }),
+      ],
+      acoes: ["reservou"],
+    }),
+  },
+  {
+    id: "AG2-B09",
+    rascunho:
+      "Pronto! Sua consulta ficou marcada, pendente da aprovação da equipe. A confirmação chega por aqui.",
+    ...comFatos({ acoes: ["marcou"] }),
+  },
+  {
+    id: "AG2-B10",
+    rascunho: "Pelo convênio Unimed, a Consulta dermatológica é coberta.",
+    ...comFatos({
+      coberturas: [{ nome: "Unimed", plano: "Nacional", estado: "coberto" }],
+    }),
+  },
+  {
+    id: "AG2-B11",
+    rascunho: "Atendemos pelo convênio Unimed, sim.",
+    ...comFatos({
+      coberturas: [{ nome: "Unimed", plano: "Nacional", estado: "atende" }],
+    }),
+  },
+  {
+    id: "AG2-B12",
+    rascunho:
+      "A Dra. Ana Lima não atende a Consulta dermatológica pelo Unimed (Nacional). Quer fazer no particular?",
+    ...comFatos({
+      coberturas: [
+        { nome: "Unimed", plano: "Nacional", estado: "nao_atende" },
+      ],
+    }),
+  },
+  {
+    id: "AG2-B13",
+    rascunho: "Para eu ver se o seu plano cobre, qual é o seu convênio?",
+    ...comFatos(),
+  },
+  {
+    id: "AG2-B14",
+    rascunho: "Temos estacionamento coberto em frente à clínica.",
+    ...comFatos(),
+  },
+  {
+    id: "AG2-B15",
+    rascunho: "A clínica fica no 3º andar, sala 302.",
+    ...comFatos(),
+  },
+  {
+    id: "AG2-B16",
+    rascunho: "Hoje, 26/10, atendemos até as 18h.",
+    ...COM_A_BASE,
+  },
+  {
+    id: "AG2-B17",
+    rascunho:
+      "Ainda não marquei: confirma terça, 21/10 às 14:00 com a Dra. Ana Lima?",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG2-B18",
+    rascunho: "Tenho terça, 21/10/2026 às 14:00 com a Dra. Ana Lima.",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG2-B19",
+    rascunho: "A unidade do Centro fica na Rua 7 de Setembro, 45.",
+    ...COM_A_BASE,
+  },
+  {
+    id: "AG2-B20",
+    rascunho: "Pode ser às 10 e meia, sim. Vou conferir a agenda.",
+    ...comFatos({}, { mensagensDoPaciente: ["dá pra ser 10:30?"] }),
+  },
+  {
+    // A saudacao colada (texto publicado, conferido na publicacao) nao e
+    // afirmacao do modelo: o horario e o endereco dela passam.
+    id: "AG2-B21",
+    rascunho:
+      "Olá! A clínica atende das 7h às 19h, na Rua Augusta, 900.\n\nComo posso ajudar?",
+    ...comFatos({
+      textosColados: [
+        "Olá! A clínica atende das 7h às 19h, na Rua Augusta, 900.",
+      ],
+    }),
+  },
+  {
+    id: "AG2-B22",
+    rascunho:
+      "Não sei informar se o seu convênio cobre esse procedimento: me diga qual é o convênio e o plano.",
+    ...comFatos(),
   },
 ];
 

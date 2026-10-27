@@ -1264,6 +1264,16 @@ const MENSAGEM_DA_CATEGORIA: Readonly<Record<CategoriaDeConformidade, string>> =
       "Tire a menção a antes e depois, casos reais ou depoimentos: a publicidade médica não permite (Resolução CFM 2.336/2023).",
     preco_nao_verificado:
       "Tire o valor: o preço vem do Cadastro, e o assistente consulta na hora.",
+    // AG2: os fatos do turno so rodam na resposta da IA (com as ferramentas
+    // do turno); o texto da configuracao nunca dispara estas quatro.
+    acao_nao_executada:
+      "Tire a parte que diz que a consulta foi marcada, remarcada ou cancelada: só a agenda diz isso, na hora.",
+    cobertura_nao_verificada:
+      "Tire a parte que diz se o convênio cobre: o assistente consulta o convênio no Cadastro, na hora.",
+    horario_nao_verificado:
+      "Tire a data ou o horário: o assistente consulta a agenda na hora.",
+    endereco_nao_verificado:
+      "Confira o endereço: o assistente só repete o endereço cadastrado.",
     formato_invalido:
       "Reescreva o texto de um jeito simples: do jeito que está, o assistente não pode mandar.",
     falha_verificador: "Não deu para conferir o texto agora. Tente de novo.",

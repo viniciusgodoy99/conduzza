@@ -20,12 +20,23 @@
 //    antes e depois rodam tambem no texto sem mascara: "Botox sem dor" ou
 //    "Peeling resultado garantido" cadastrado pela clinica continua sendo
 //    promessa (o cadastro do nome e validado no E5).
+//  - fatos do turno (AG2, fatos-do-turno.ts): data e hora, endereco,
+//    convenio e acao de agenda so com fato do turno. Entrada OPCIONAL, como
+//    o molde do preco: o turno da IA passa os fatos e a regra vale; os
+//    textos estaticos conferidos na publicacao da Tela 6
+//    (problemaNoTextoDoAgente), o nome da clinica e a retomada do envio nao
+//    passam, e para eles nada muda.
 
 import {
   CATEGORIAS_DE_CONFORMIDADE,
   ordenarPorPrioridade,
   type CategoriaDeConformidade,
 } from "@/lib/domain/conformidade/categorias";
+import {
+  FONTES_DOS_FATOS,
+  regrasDosFatos,
+  type FatosDoTurno,
+} from "@/lib/domain/conformidade/fatos-do-turno";
 import { gatilhosDosTextos } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import { temDadoPessoal } from "@/lib/domain/conformidade/minimizar";
 import {
@@ -64,6 +75,11 @@ export type ContextoDasRegras = {
   nomesDoCatalogo: readonly string[];
   /** So as mensagens do paciente ainda nao respondidas. */
   mensagensDoPaciente: readonly string[];
+  /**
+   * Os fatos do turno (AG2). Ausente: as regras dos fatos nao rodam (texto
+   * estatico, retomada do envio). O turno da IA sempre passa.
+   */
+  fatos?: FatosDoTurno;
 };
 
 export type AchadoDaRegra = {
@@ -373,6 +389,7 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
     [nome, fonte, troca].join(" "),
   ),
   ...FONTES_DA_NORMALIZACAO,
+  ...FONTES_DOS_FATOS,
 ];
 
 export function temContatoPorExtenso(base: string): boolean {
@@ -571,6 +588,17 @@ export function avaliarRegras(
 
   // Preco: so na visao base (numero tem de continuar numero).
   achados.push(...regraDePreco(visoes.base, contexto.precosDoTurno));
+
+  // Fatos do turno (AG2): so quando quem chama passa os fatos.
+  if (contexto.fatos !== undefined) {
+    achados.push(
+      ...regrasDosFatos(rascunho, {
+        fatos: contexto.fatos,
+        nomesDoCatalogo: contexto.nomesDoCatalogo,
+        mensagensDoPaciente: contexto.mensagensDoPaciente,
+      }),
+    );
+  }
 
   // Contexto: o paciente falou de saude.
   for (const gatilho of gatilhosDosTextos(contexto.mensagensDoPaciente)) {

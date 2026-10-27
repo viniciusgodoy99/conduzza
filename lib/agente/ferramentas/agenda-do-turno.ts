@@ -40,6 +40,7 @@ import {
   type ConfigDoAgente,
   type FerramentaDeAgenda,
 } from "@/lib/domain/agente/config";
+import type { FatosDaFerramenta } from "@/lib/domain/conformidade/fatos-do-turno";
 
 import {
   entradaDoAgendarSchema,
@@ -100,6 +101,12 @@ export type ResultadoDaFerramentaDeAgenda =
       precos: number[];
       /** Codigo do resultado, para log e teste. */
       resultado: string;
+      /**
+       * Os fatos do turno (AG2): a acao que deu certo (reservado, marcado,
+       * confirmada, inclusive no simulador, que mostra o que a IA diria),
+       * a consulta lida e o que a busca afirma do convenio.
+       */
+      fatos?: FatosDaFerramenta;
     }
   /** A RPC disse ia_desligada: o turno para sem frase (liberacao_suspensa). */
   | { tipo: "liberacao_suspensa"; passo: string }
@@ -154,6 +161,7 @@ function saida(
   corpo: Record<string, unknown>,
   passo: string,
   precos: number[] = [],
+  fatos?: FatosDaFerramenta,
 ): ResultadoDaFerramentaDeAgenda {
   return {
     tipo: "saida",
@@ -161,6 +169,7 @@ function saida(
     passo,
     precos,
     resultado,
+    ...(fatos === undefined ? {} : { fatos }),
   };
 }
 
@@ -228,6 +237,7 @@ export function criarAgendaDoTurno(entrada: {
         passo: r.passo,
         precos: r.precos,
         resultado: r.resultado,
+        ...(r.fatos === undefined ? {} : { fatos: r.fatos }),
       };
     }
     let agenda: AgendaCarregada;
@@ -250,6 +260,7 @@ export function criarAgendaDoTurno(entrada: {
       passo: r.passo,
       precos: r.precos,
       resultado: r.resultado,
+      ...(r.fatos === undefined ? {} : { fatos: r.fatos }),
     };
   }
 
@@ -339,6 +350,8 @@ export function criarAgendaDoTurno(entrada: {
       porta?.simulada
         ? `Reservaria ${quando} por ${MINUTOS_DA_RESERVA} minutos. ${SIMULADO}`
         : `Reservou ${quando} por ${MINUTOS_DA_RESERVA} minutos`,
+      [],
+      { acao: "reservou" },
     );
   }
 
@@ -394,11 +407,15 @@ export function criarAgendaDoTurno(entrada: {
       return saida(resposta.motivo, {}, `Tentou marcar a consulta: ${motivo}`);
     }
     if (porta?.simulada) {
-      // O simulador nao guarda a reserva entre as rodadas: sem dia e hora.
+      // O simulador nao guarda a reserva entre as rodadas: sem dia e hora
+      // (e, nos fatos do turno, a resposta que repete o dia e a hora da
+      // reserva de antes e barrada: so o "ficou marcada" passa).
       return saida(
         "marcado",
         { pendente: true },
         `Marcaria a consulta reservada, pendente de aprovação da equipe. ${SIMULADO}`,
+        [],
+        { acao: "marcou" },
       );
     }
     const nomes = nomesDoVinculo(resposta.serviceLinkId);
@@ -416,6 +433,8 @@ export function criarAgendaDoTurno(entrada: {
       quando === null
         ? "Marcou a consulta reservada, pendente de aprovação da equipe"
         : `Marcou a consulta de ${quando.dia} às ${quando.hora}${entreParenteses(nomes)}, pendente de aprovação da equipe`,
+      [],
+      { acao: "marcou" },
     );
   }
 
@@ -461,17 +480,27 @@ export function criarAgendaDoTurno(entrada: {
         "confirmada",
         {},
         `Confirmaria a presença na consulta do paciente. ${SIMULADO}`,
+        [],
+        { acao: "confirmou_presenca", consultaLida: true },
       );
     }
     // LGPD (minimizacao): a consulta pode ter sido marcada pela recepcao,
     // fora desta conversa. Ao modelo vao so o dia e a hora; procedimento e
     // profissional ficam na trilha da tela, que nao vai a OpenAI.
     const nomes = nomesDoVinculo(resposta.serviceLinkId);
+    // A consulta confirmada ja existia: a ferramenta a leu (o estado "sua
+    // consulta esta marcada" vale) e confirmou (a acao vale).
+    const fatosDaConfirmacao: FatosDaFerramenta = {
+      acao: "confirmou_presenca",
+      consultaLida: true,
+    };
     if (resposta.inicio === null) {
       return saida(
         "confirmada",
         {},
         `Confirmou a presença na consulta do paciente${entreParenteses(nomes)}`,
+        [],
+        fatosDaConfirmacao,
       );
     }
     const quando = diaEHora(new Date(resposta.inicio), fuso, agoraMs);
@@ -479,6 +508,8 @@ export function criarAgendaDoTurno(entrada: {
       "confirmada",
       { ...quando },
       `Confirmou a presença na consulta de ${diaAsHora(new Date(resposta.inicio), fuso, agoraMs)}${entreParenteses(nomes)}`,
+      [],
+      fatosDaConfirmacao,
     );
   }
 

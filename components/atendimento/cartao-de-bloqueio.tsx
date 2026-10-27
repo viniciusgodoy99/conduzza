@@ -57,6 +57,10 @@ const RULE_LABEL: Record<CategoriaDeConformidade, string> = {
   oferta_casada: "oferta casada",
   antes_depois: "imagem de antes e depois",
   preco_nao_verificado: "preço fora do cadastro",
+  acao_nao_executada: "ação de agenda que não foi feita",
+  cobertura_nao_verificada: "convênio sem confirmação no cadastro",
+  horario_nao_verificado: "data ou horário sem confirmação na agenda",
+  endereco_nao_verificado: "endereço fora do cadastro",
   formato_invalido: "formato de resposta não permitido",
   falha_verificador: "verificação de conformidade indisponível",
 };

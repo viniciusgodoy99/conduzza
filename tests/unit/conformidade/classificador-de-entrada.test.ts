@@ -1,6 +1,7 @@
 import { APIConnectionTimeoutError, RateLimitError } from "openai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { gatilhosDosTextos } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import { classificarComPrazo } from "@/lib/domain/conformidade/prazo";
 import {
   criarClassificadorDeEntrada,
@@ -587,6 +588,65 @@ describe("politica do classificador alinhada as decisoes de 05/10 e 19/10", () =
   it("a versao do texto do classificador e marcada (Q12)", () => {
     expect(VERSAO_DA_POLITICA_DO_CLASSIFICADOR).toMatch(
       /^classificador-[0-9a-f]{12}$/,
+    );
+  });
+});
+
+// AG2 (27/10/2026): as perguntas administrativas da consulta ou do
+// procedimento sao recepcao; jejum, preparo e cuidados antes ou depois
+// continuam clinicos (D-4 do dono pendente; padrao, opcao A). O portao
+// deterministico ja nao escalava as administrativas (conferido abaixo), e
+// "precisa de jejum?" continua dependendo do classificador na entrada (e o
+// filtro de saida barra qualquer resposta com jejum).
+describe("politica do classificador na AG2", () => {
+  it("as perguntas administrativas sao recepcao (nenhum)", () => {
+    for (const trecho of [
+      "as perguntas administrativas da consulta ou do procedimento",
+      "se precisa de pedido médico, encaminhamento ou guia",
+      "se precisa de autorização do convênio",
+      "o que levar no dia (documento com foto, carteirinha do convênio, pedido médico)",
+      "com quanto tempo de antecedência chegar",
+      "se precisa ou se pode ir com acompanhante",
+      "onde fica a clínica, como chegar e se tem estacionamento",
+    ]) {
+      expect(POLITICA_DO_CLASSIFICADOR).toContain(trecho);
+    }
+  });
+
+  it("jejum, preparo do corpo e cuidados antes ou depois continuam assunto_clinico", () => {
+    const linha = POLITICA_DO_CLASSIFICADOR.split("\n").find((l) =>
+      l.startsWith("- assunto_clinico:"),
+    );
+    expect(linha).toContain("se precisa de jejum");
+    expect(linha).toContain("como preparar o corpo para o procedimento");
+    expect(linha).toContain("que cuidados ter antes ou depois dele");
+    // O comeco da linha (o que ja era clinico) nao mudou.
+    expect(linha).toContain(
+      "- assunto_clinico: pergunta sobre remédio, cuidados, riscos, efeitos, resultados, gravidez, amamentação, doenças, o resultado de um exame ou se precisa fazer um exame, contraindicações, ou qualquer dúvida que só um profissional de saúde pode responder.",
+    );
+    expect(POLITICA_DO_CLASSIFICADOR).not.toMatch(/[–—]/);
+  });
+
+  it.each([
+    "precisa de pedido médico?",
+    "o que eu levo?",
+    "precisa de autorização do convênio?",
+    "precisa de acompanhante?",
+    "onde fica?",
+    "tem estacionamento?",
+    "preciso levar a carteirinha?",
+    "tem que chegar quanto tempo antes?",
+  ])(
+    "o portão determinístico não escala a pergunta administrativa: %s",
+    (texto) => {
+      expect(gatilhosDosTextos([texto])).toEqual([]);
+    },
+  );
+
+  it("a versao mudou com o texto (a rodada D34 roda de novo)", () => {
+    // A versao de antes da AG2 (docs/03, secao 16.9).
+    expect(VERSAO_DA_POLITICA_DO_CLASSIFICADOR).not.toBe(
+      "classificador-b66b80be0266",
     );
   });
 });

@@ -3,7 +3,9 @@
 //
 // Ordem e invariantes (plano de seguranca 2.1 e 2.3):
 //  1. As regras deterministicas rodam primeiro. Qualquer regra disparada
-//     bloqueia e o modelo nem e chamado.
+//     bloqueia e o modelo nem e chamado. Com os fatos do turno (AG2), data e
+//     hora, endereco, convenio e acao de agenda tambem so passam com fato
+//     (fatos-do-turno.ts); fatos fora do formato bloqueiam (falha fechada).
 //  2. Regras limpas NAO aprovam: o verificador por modelo (injetado) tem de
 //     aprovar tambem.
 //  3. Falha fechada: excecao, prazo estourado, recusa, max_tokens, saida
@@ -26,6 +28,7 @@ import {
   type CamadaDoFiltro,
   type CategoriaDeConformidade,
 } from "@/lib/domain/conformidade/categorias";
+import { fatosValidos } from "@/lib/domain/conformidade/fatos-do-turno";
 import {
   avaliarRegras,
   FONTES_DAS_REGRAS_EM_CODIGO,
@@ -183,7 +186,10 @@ function contextoValido(contexto: unknown): contexto is ContextoDoFiltro {
     Array.isArray(c.nomesDoCatalogo) &&
     c.nomesDoCatalogo.every((v) => typeof v === "string") &&
     Array.isArray(c.mensagensDoPaciente) &&
-    c.mensagensDoPaciente.every((v) => typeof v === "string")
+    c.mensagensDoPaciente.every((v) => typeof v === "string") &&
+    // Os fatos sao opcionais; quando vem, tem de estar no formato (um nulo
+    // ou um objeto pela metade nunca vira "sem regra dos fatos").
+    (!("fatos" in c) || c.fatos === undefined || fatosValidos(c.fatos))
   );
 }
 
@@ -394,10 +400,12 @@ export type EntradaDaRetomada = {
  *    achado 3 do executor);
  *  - o sha256 do texto, o de ai_turno e o da decisao sao o MESMO (o gatilho
  *    de message confere de novo);
- *  - as regras deterministicas continuam limpas. A unica que fica de fora e
- *    a do preco do turno (valor_fora_do_turno): os precos que a busca
- *    devolveu naquele turno ja foram conferidos na aprovacao e o hash prende
- *    o texto a ela. Moeda estrangeira e valor ilegivel continuam valendo.
+ *  - as regras deterministicas continuam limpas. Ficam de fora as que
+ *    dependem do turno: a do preco (valor_fora_do_turno: os precos que a
+ *    busca devolveu naquele turno ja foram conferidos na aprovacao e o hash
+ *    prende o texto a ela) e as dos fatos do turno (AG2: a retomada nao
+ *    passa fatos, entao elas nem rodam; o texto foi aprovado com os fatos
+ *    daquele turno). Moeda estrangeira e valor ilegivel continuam valendo.
  * Quem chama: SO lib/jobs/responder-com-ia.ts (o teste de varredura de
  * tests/unit/ia-whatsapp/retomar-texto-aprovado.test.ts confere; os testes
  * geram TextoAprovado pelo proprio filtrarSaida). null: nao retoma (quem

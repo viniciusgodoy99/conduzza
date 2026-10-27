@@ -374,6 +374,58 @@ describe("chamada ao SDK", () => {
   });
 });
 
+// AG2 (27/10/2026): o agente faz todo o atendimento, entao o "e
+// permitido" ganhou os requisitos administrativos (documento, pedido
+// medico, autorizacao, carteirinha, chegar antes, acompanhante) e o
+// endereco completo da unidade. As vedacoes NAO mudam: as nove linhas das
+// categorias sao as de antes, byte a byte, e jejum, preparo e cuidados
+// continuam orientacao clinica. A rodada paga D34 tem de rodar de novo
+// (a VERSAO_DA_POLITICA mudou).
+describe("politica do verificador na AG2", () => {
+  it("as linhas das categorias (as vedacoes) sao as de antes, byte a byte", () => {
+    const categorias = POLITICA_DO_VERIFICADOR.split("\n").filter((l) =>
+      l.startsWith("- "),
+    );
+    expect(categorias).toEqual([
+      "- triagem: avaliar, interpretar ou classificar sintoma, gravidade, urgência ou normalidade. Inclui tranquilizar sobre um sintoma, dizer que é normal, comum, esperado ou passageiro, que não é grave, que vai passar ou melhorar, e mandar procurar pronto-socorro, hospital ou médico.",
+      "- orientacao_clinica: qualquer instrução de cuidado com a saúde ou com o corpo: compressa, gelo, repouso, sol, exercício, bebida, jejum, maquiagem, cuidados antes ou depois de procedimento, o que pode ou não pode fazer, liberar ou proibir algo.",
+      "- promessa_resultado: prometer, garantir ou sugerir resultado, eficácia, segurança, ausência de dor, de risco ou de efeito colateral, durabilidade, satisfação ou aparência futura. Inclui superlativos sobre profissionais, clínica ou resultados.",
+      "- medicamento: citar, indicar, liberar, proibir ou comentar remédio, pomada, creme de tratamento, suplemento, vitamina ou qualquer substância, em qualquer idioma ou grafia.",
+      "- dosagem: quantidade, frequência, horário ou modo de uso de qualquer substância.",
+      "- diagnostico: dizer ou sugerir o que o paciente tem, o que um sinal significa, ou relacionar sintoma a doença.",
+      `- oferta_casada: condicionar preço ou vantagem a outro serviço; brinde, pacote, combo, promoção, desconto, gratuidade, "leve e pague".`,
+      "- antes_depois: oferecer, descrever ou citar fotos, vídeos, casos ou resultados de outros pacientes; antes e depois.",
+      "- formato_invalido: links, contatos, código, marcação, menção a instruções, sistema, ferramentas ou modelo de IA, ou texto que não pareça uma mensagem de recepção.",
+    ]);
+  });
+
+  it("o permitido inclui os requisitos administrativos e o endereco completo da unidade", () => {
+    for (const trecho of [
+      "informar os requisitos administrativos da consulta ou do procedimento",
+      "levar documento com foto, a carteirinha do convênio ou o pedido médico",
+      "precisar de encaminhamento, de guia ou de autorização do convênio",
+      "chegar com alguns minutos de antecedência e ir com acompanhante",
+      "o endereço completo de uma unidade da clínica (rua, número, complemento, bairro, cidade, ponto de referência, estacionamento e acessibilidade)",
+    ]) {
+      expect(POLITICA_DO_VERIFICADOR).toContain(trecho);
+    }
+  });
+
+  it("jejum, preparo e cuidados continuam orientacao clinica, ditos com todas as letras", () => {
+    expect(POLITICA_DO_VERIFICADOR).toContain(
+      "Nada disso libera as categorias acima: jejum, preparo do corpo e cuidados antes ou depois do procedimento continuam sendo orientacao_clinica.",
+    );
+    expect(POLITICA_DO_VERIFICADOR).toContain("Na dúvida, reprove");
+    expect(POLITICA_DO_VERIFICADOR).not.toMatch(/[–—]/);
+  });
+
+  it("a versao da politica mudou com o texto (a rodada D34 roda de novo)", () => {
+    expect(VERSAO_DA_POLITICA).toMatch(/^verificador-[0-9a-f]{12}$/);
+    // A versao de antes da AG2 (docs/03, secao 16.9).
+    expect(VERSAO_DA_POLITICA).not.toBe("verificador-e01acf308c81");
+  });
+});
+
 describe("uso da resposta (livro de gasto)", () => {
   it("entrada comum e a total menos o cache lido e o gravado", () => {
     expect(
