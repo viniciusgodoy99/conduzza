@@ -2086,6 +2086,7 @@ export type Database = {
           created_at: string
           data_nascimento: string | null
           id: string
+          janela_desde: string
           job_id: string
           nome_completo: string | null
           para_o_titular: boolean
@@ -2104,6 +2105,7 @@ export type Database = {
           created_at?: string
           data_nascimento?: string | null
           id?: string
+          janela_desde: string
           job_id: string
           nome_completo?: string | null
           para_o_titular: boolean
@@ -2122,6 +2124,7 @@ export type Database = {
           created_at?: string
           data_nascimento?: string | null
           id?: string
+          janela_desde?: string
           job_id?: string
           nome_completo?: string | null
           para_o_titular?: boolean
@@ -5415,6 +5418,7 @@ export type Database = {
           p_clinic_id: string
           p_conversation_id: string
           p_job_id: string
+          p_slot_hold_id?: string
         }
         Returns: Json
       }

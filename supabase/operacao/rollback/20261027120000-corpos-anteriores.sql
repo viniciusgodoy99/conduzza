@@ -23,30 +23,33 @@
 -- registrar_dados_da_marcacao, ler_dados_informados_na_marcacao,
 -- ler_atendimento_da_ia, gravar_atendimento_da_ia, aplicar_dados_na_
 -- aprovacao e podar_agendamento_da_ia; as tabelas ia_atendimento e
--- dados_informados_na_marcacao; slot_hold.unit_id (FK, indice e gatilho);
+-- dados_informados_na_marcacao (com janela_desde, a janela da IA de cada
+-- linha); slot_hold.unit_id (FK, indice e gatilho);
 -- ai_agent_config.exige_nome_completo, exige_nascimento e exige_cpf (com os
 -- grants por coluna); o gatilho dados_informados_na_aprovacao em
 -- appointment; o CHECK ai_decision_log_escalation_reason_valida com tres
--- motivos novos; trocou conferir_horario_da_ia (6 para 7 parametros) e
--- reservar_horario_da_ia (5 para 6, o ultimo com default), e os corpos de
--- agendar_pela_ia, agente_garantir_rascunho, restaurar_versao_do_agente,
+-- motivos novos; trocou conferir_horario_da_ia (6 para 7 parametros),
+-- reservar_horario_da_ia (5 para 6, o ultimo com default) e agendar_pela_ia
+-- (3 para 4, o ultimo com default: p_slot_hold_id, da revisao final), e os
+-- corpos de agente_garantir_rascunho, restaurar_versao_do_agente,
 -- rotulo_do_motivo_da_ia e motor_manutencao.
 --
 -- O QUE ESTE ARQUIVO FAZ: pega as travas (abaixo); tira o gatilho da
 -- aprovacao; devolve os sete corpos de antes, com os comentarios e os
--- grants de antes, ANTES de apagar o que eles chamariam; apaga as funcoes,
--- as tabelas e as colunas novas; devolve o CHECK de antes (validado sem
--- decisao de motivo novo; NOT VALID com ela, com um NOTICE: a trilha de
--- auditoria nunca e apagada nem reescrita); confere no fim os sete md5,
--- os comentarios e que nada novo ficou (com qualquer diferenca, falha e
--- desfaz tudo). Sem IF EXISTS: com qualquer objeto faltando ou diferente,
--- falha e desfaz tudo.
+-- grants de antes (o agendar, o reservar e a conferencia com a assinatura
+-- de antes: as de agora saem), ANTES de apagar o que eles chamariam; apaga
+-- as funcoes, as tabelas e as colunas novas; devolve o CHECK de antes
+-- (validado sem decisao de motivo novo; NOT VALID com ela, com um NOTICE: a
+-- trilha de auditoria nunca e apagada nem reescrita); confere no fim os
+-- sete md5, os comentarios e que nada novo ficou (com qualquer diferenca,
+-- falha e desfaz tudo). Sem IF EXISTS: com qualquer objeto faltando ou
+-- diferente, falha e desfaz tudo.
 --
 -- ORDEM: PRIMEIRO voltar o codigo (o da AG3 chama as RPCs novas, le as
--- colunas novas e passa p_unit_id), DEPOIS este arquivo. O codigo de antes
--- da AG3 (agente-completo antes da AG3, ou main) chama reservar_horario_
--- da_ia com 5 parametros por nome e agendar_pela_ia com 3: funciona antes
--- e depois deste arquivo.
+-- colunas novas e passa p_unit_id e p_slot_hold_id), DEPOIS este arquivo.
+-- O codigo de antes da AG3 (agente-completo antes da AG3, ou main) chama
+-- reservar_horario_da_ia com 5 parametros por nome e agendar_pela_ia com 3:
+-- funciona antes e depois deste arquivo.
 --
 -- O QUE SE PERDE: o estado dos atendimentos (ia_atendimento: so ids e
 -- listas fechadas) e os dados que os pacientes informaram e ainda nao foram
@@ -413,9 +416,10 @@ drop function public.ler_atendimento_da_ia(uuid, uuid, uuid);
 drop function public.ler_dados_informados_na_marcacao(uuid, uuid);
 drop function public.registrar_dados_da_marcacao(uuid, uuid, uuid, boolean, text, date, text, text);
 
--- 4. O reservar de 5 parametros, a conferencia de 6 e o agendar de antes,
---    com os grants e os comentarios de antes; as duas funcoes internas
---    novas saem.
+-- 4. O reservar de 5 parametros, a conferencia de 6 e o agendar de 3, com
+--    os grants e os comentarios de antes (os de 6, 7 e 4 parametros saem);
+--    as duas funcoes internas novas saem.
+drop function public.agendar_pela_ia(uuid, uuid, uuid, uuid);
 drop function public.reservar_horario_da_ia(uuid, uuid, uuid, timestamptz, uuid, uuid);
 drop function public.conferir_horario_da_ia(uuid, uuid, uuid, timestamptz, timestamptz, uuid, uuid);
 CREATE OR REPLACE FUNCTION public.conferir_horario_da_ia(p_clinic_id uuid, p_conversation_id uuid, p_service_link_id uuid, p_starts_at timestamp with time zone, p_ends_at timestamp with time zone, p_reserva_propria uuid, OUT o_motivo text, OUT o_contato uuid, OUT o_profissional uuid, OUT o_fim timestamp with time zone, OUT o_recurso uuid, OUT o_fuso text, OUT o_procedimento text, OUT o_nome_do_profissional text)
@@ -920,6 +924,10 @@ begin
   );
 end;
 $function$;
+revoke execute on function public.agendar_pela_ia(uuid, uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function public.agendar_pela_ia(uuid, uuid, uuid)
+  to service_role;
 comment on function public.agendar_pela_ia(uuid, uuid, uuid) is
   'So o servidor (service_role). Marca a consulta da reserva viva da conversa, depois de uma mensagem do paciente posterior a pergunta da IA (a primeira resposta da IA gravada depois da reserva, que nao falhou): agendado, created_by ia, approval_status pendente, send_confirmation false (a regua so comeca com a aprovacao), oferecer_vaga_ao_cancelar false, source interna; consome a reserva e grava o evento na conversa. Devolve {ok:true, appointment_id, starts_at, ends_at, reutilizado} ou {ok:false, motivo}: reserva_inexistente, reserva_vencida, ia_desligada, agenda_nao_configurada, vinculo_invalido, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, conflito (consulta no horario, inclusive o 23P01, sem gravar nada), reservado_por_outra_conversa, sem_confirmacao_do_paciente. Idempotente pelo job_id (a consulta do job volta com reutilizado true; job de outra conversa: 22023). Parametro nulo: 22004.';
 drop function public.dados_que_faltam_para_marcar(uuid, uuid, text, date, text, text);
@@ -1242,7 +1250,7 @@ begin
                             'gravar_atendimento_da_ia', 'aplicar_dados_na_aprovacao', 'podar_agendamento_da_ia'))
      or (select count(*) from pg_proc p
           where p.pronamespace = 'public'::regnamespace
-            and p.proname in ('reservar_horario_da_ia', 'conferir_horario_da_ia')) <> 2
+            and p.proname in ('reservar_horario_da_ia', 'conferir_horario_da_ia', 'agendar_pela_ia')) <> 3
      or exists (
        select 1 from information_schema.columns c
         where c.table_schema = 'public'

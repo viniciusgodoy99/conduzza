@@ -22,8 +22,9 @@ import { adminClient, anonClient } from "./stack";
 //   para authenticated e anon: nenhuma sessao le nem grava, nem a da propria
 //   clinica (42501); a service role le (contraprova);
 // - registrar_dados_da_marcacao, ler_atendimento_da_ia,
-//   gravar_atendimento_da_ia e o reservar com a unidade (DROP e CREATE: os
-//   grants de antes voltaram): 42501 para toda sessao e para anon; o
+//   gravar_atendimento_da_ia, o reservar com a unidade e o agendar com a
+//   reserva (p_slot_hold_id, da revisao final; os dois com DROP e CREATE:
+//   os grants de antes voltaram): 42501 para toda sessao e para anon; o
 //   servidor chama (resposta de negocio, nunca erro de permissao);
 // - ler_dados_informados_na_marcacao, a unica leitura humana dos dados:
 //   administrador, gestor e recepcao da A leem, e cada leitura grava a
@@ -854,6 +855,15 @@ describe("as RPCs do servidor: só a service role", () => {
           p_unit_id: unidadeA,
         }),
       ],
+      [
+        "agendar_pela_ia",
+        () => ({
+          p_clinic_id: clinicaA,
+          p_conversation_id: crypto.randomUUID(),
+          p_job_id: crypto.randomUUID(),
+          p_slot_hold_id: crypto.randomUUID(),
+        }),
+      ],
     ];
     for (const [quem, cliente] of sessoes) {
       for (const [rpc, args] of chamadas) {
@@ -914,6 +924,15 @@ describe("as RPCs do servidor: só a service role", () => {
       p_unit_id: unidadeA,
     });
     expect(reserva).toMatchObject({ ok: true, unit_id: unidadeA });
+    // O agendar com a reserva (revisao final): a reserva pedida nao e a viva,
+    // reserva_diferente (resposta de negocio, nada marcado).
+    const agendada = await rpcOk<Resposta>("agendar_pela_ia", {
+      p_clinic_id: clinicaA,
+      p_conversation_id: conversa,
+      p_job_id: crypto.randomUUID(),
+      p_slot_hold_id: crypto.randomUUID(),
+    });
+    expect(agendada).toEqual({ ok: false, motivo: "reserva_diferente" });
     // Anti falso positivo: o estado e a linha de dados existem (a service
     // role le), do contato da conversa.
     const { data: estado } = await admin

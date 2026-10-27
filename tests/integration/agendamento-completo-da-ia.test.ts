@@ -31,7 +31,14 @@ import { adminClient, anonClient } from "../rls/stack";
 //   job_antigo e o estado recomeca);
 // - a leitura dos dados pelo servidor grava a trilha sem usuario e sem
 //   conteudo; o primeiro rascunho de uma clinica nasce com o padrao do dono
-//   (nome completo e nascimento, sem CPF).
+//   (nome completo e nascimento, sem CPF);
+// - a revisao final (27/10/2026): o "sim" para a reserva que outro turno
+//   trocou (agendar com p_slot_hold_id) recusa reserva_diferente sem gravar
+//   nada, e com a reserva viva marca; o reservar ja recusa ja_tem_consulta
+//   (com o appointment_id e o starts_at), e o agendar confere de novo; a
+//   marca de consulta para outra pessoa nao sobrevive ao Assumir e
+//   Devolver (a janela nova); a reserva do estado que sumiu no meio do
+//   turno e gravada nula, sem 22023.
 // LIMITE (como na E4): os casos "ao mesmo tempo" disparam as RPCs por HTTP
 // (Promise.all) e NAO forcam a sobreposicao dentro do Postgres: provam o
 // resultado final no banco real, nao a trava. A prova das travas, com
@@ -148,6 +155,9 @@ let consultaComDados = "";
 const dia = somarDias(diaCivil(FUSO, new Date()), 3);
 const as = (hora: string): string =>
   instanteLocal(FUSO, dia, hora).toISOString();
+/** O instante de outro dia (dia + n), no fuso da clinica. */
+const noDia = (n: number, hora: string): string =>
+  instanteLocal(FUSO, somarDias(dia, n), hora).toISOString();
 const meiaHoraDepois = (inicio: string): string =>
   new Date(Date.parse(inicio) + 30 * 60_000).toISOString();
 // Um nascimento de menor (10 anos no dia da consulta) e um de adulto.
@@ -281,12 +291,17 @@ async function reservar(
   return rpcOk<Resposta>("reservar_horario_da_ia", args);
 }
 
-async function agendar(conversa: string): Promise<Resposta> {
-  return rpcOk<Resposta>("agendar_pela_ia", {
+/** O agendar; reserva undefined = os 3 parametros do codigo de hoje. */
+async function agendar(conversa: string, reserva?: string): Promise<Resposta> {
+  const args: Record<string, unknown> = {
     p_clinic_id: clinica,
     p_conversation_id: conversa,
     p_job_id: crypto.randomUUID(),
-  });
+  };
+  if (reserva !== undefined) {
+    args.p_slot_hold_id = reserva;
+  }
+  return rpcOk<Resposta>("agendar_pela_ia", args);
 }
 
 async function registrar(
@@ -766,17 +781,29 @@ describe("o agendar novo", () => {
     expect(data).toEqual([]);
   });
 
-  it("ja_tem_consulta: o mesmo procedimento com outro profissional; outro procedimento não conta", async () => {
+  it("ja_tem_consulta: o reservar já recusa o mesmo procedimento com outro profissional; outro procedimento não conta; o agendar confere de novo", async () => {
     expect(conversaComConsulta).not.toBe("");
-    expect(
-      await reservar(conversaComConsulta, lBruno, "10:00", filial),
-    ).toMatchObject({ ok: true });
-    await perguntaEConfirmacao(conversaComConsulta);
-    expect(await agendar(conversaComConsulta)).toEqual({
+    // O reservar recusa antes de o paciente informar os dados (revisao
+    // final), com a consulta que ja existe e o inicio dela, e nao reserva.
+    const recusada = await reservar(
+      conversaComConsulta,
+      lBruno,
+      "10:00",
+      filial,
+    );
+    expect(recusada).toMatchObject({
       ok: false,
       motivo: "ja_tem_consulta",
       appointment_id: consultaComDados,
     });
+    expect(Date.parse(recusada.starts_at!)).toBe(Date.parse(as("10:00")));
+    const { data: vivas } = await admin
+      .from("slot_hold")
+      .select("id")
+      .eq("conversation_id", conversaComConsulta)
+      .is("consumido_em", null)
+      .throwOnError();
+    expect(vivas).toEqual([]);
     // O Retorno (outro procedimento): nao conta. Aqui faltam os dados (a
     // linha de antes foi para a consulta).
     expect(
@@ -787,7 +814,57 @@ describe("o agendar novo", () => {
       ok: false,
       motivo: "faltam_dados",
     });
-    expect(await consultasDoContato(contatoComConsulta)).toBe(1);
+    // O agendar confere de novo: um Retorno marcado pela recepcao depois da
+    // reserva tambem conta.
+    const retornoDaRecepcao = await inserir("appointment", {
+      clinic_id: clinica,
+      contact_id: contatoComConsulta,
+      professional_id: ana,
+      service_link_id: lRetorno,
+      starts_at: noDia(1, "09:00"),
+      ends_at: meiaHoraDepois(noDia(1, "09:00")),
+      status: "agendado",
+      created_by: "usuario",
+    });
+    expect(await agendar(conversaComConsulta)).toEqual({
+      ok: false,
+      motivo: "ja_tem_consulta",
+      appointment_id: retornoDaRecepcao,
+    });
+    expect(await consultasDoContato(contatoComConsulta)).toBe(2);
+  });
+
+  it("reserva_diferente: o sim para a reserva que outro turno trocou não grava nada; com a reserva viva, marca", async () => {
+    const { contato, conversa } = await novaConversa();
+    expect(
+      await registrar(conversa, {
+        nome: "Paciente Integração Sete",
+        nascimento: NASCIMENTO_DE_ADULTO,
+      }),
+    ).toMatchObject({ ok: true, faltam: [] });
+    // O "Confirma ...?" perguntou a primeira; outro turno reservou a segunda
+    // (uma reserva por conversa: a primeira saiu).
+    const perguntada = await reservar(conversa, lBruno, "13:00");
+    expect(perguntada).toMatchObject({ ok: true });
+    await perguntaEConfirmacao(conversa);
+    const viva = await reservar(conversa, lBruno, "13:30");
+    expect(viva).toMatchObject({ ok: true });
+    expect(await agendar(conversa, perguntada.hold_id)).toEqual({
+      ok: false,
+      motivo: "reserva_diferente",
+    });
+    expect(await consultasDoContato(contato)).toBe(0);
+    const { data: reservas } = await admin
+      .from("slot_hold")
+      .select("id, consumido_em")
+      .eq("conversation_id", conversa)
+      .throwOnError();
+    expect(reservas).toEqual([{ id: viva.hold_id, consumido_em: null }]);
+    // A IA pergunta de novo, o paciente confirma, e a reserva viva marca.
+    await perguntaEConfirmacao(conversa);
+    const marcada = await agendar(conversa, viva.hold_id);
+    expect(marcada).toMatchObject({ ok: true, reutilizado: false });
+    expect(Date.parse(marcada.starts_at!)).toBe(Date.parse(as("13:30")));
   });
 
   it("D-8: para outra pessoa e menor de idade passam para a equipe, e nada é marcado", async () => {
@@ -874,6 +951,66 @@ describe("o agendar novo", () => {
         data_nascimento: "1991-01-01",
       },
     ]);
+  });
+});
+
+describe("a janela da IA nos dados informados", () => {
+  it("a marca de consulta para outra pessoa não sobrevive ao Assumir e Devolver", async () => {
+    const { conversa } = await novaConversa();
+    expect(await reservar(conversa, lBruno, "14:00")).toMatchObject({
+      ok: true,
+    });
+    await perguntaEConfirmacao(conversa);
+    expect(await registrar(conversa, { titular: false })).toEqual({
+      ok: false,
+      motivo: "consulta_para_outra_pessoa",
+    });
+    expect(await agendar(conversa)).toEqual({
+      ok: false,
+      motivo: "consulta_para_outra_pessoa",
+    });
+    await assumir(conversa);
+    const { data: devolvida, error } = await sessao.rpc("devolver_para_ia", {
+      p_conversation_id: conversa,
+    });
+    expect(error).toBeNull();
+    expect(devolvida).toEqual({ ok: true });
+    // Na janela nova a marca nao vale: o agendar pede os dados e o estado
+    // le que nada foi informado.
+    expect(await agendar(conversa)).toEqual({
+      ok: false,
+      motivo: "faltam_dados",
+      faltam: ["nome_completo", "data_nascimento"],
+    });
+    const lido = await rpcOk<{ dados?: Record<string, unknown> }>(
+      "ler_atendimento_da_ia",
+      {
+        p_clinic_id: clinica,
+        p_conversation_id: conversa,
+        p_job_id: await job(conversa),
+      },
+    );
+    expect(lido.dados).toMatchObject({
+      nome_completo: false,
+      data_nascimento: false,
+      para_o_titular: null,
+    });
+    // O registrar na janela nova: a linha de antes sai e a IA marca.
+    expect(
+      await registrar(conversa, {
+        nome: "Paciente Integração Oito",
+        nascimento: NASCIMENTO_DE_ADULTO,
+      }),
+    ).toMatchObject({ ok: true, faltam: [] });
+    const { data: linhas } = await admin
+      .from("dados_informados_na_marcacao")
+      .select("para_o_titular, nome_completo")
+      .eq("conversation_id", conversa)
+      .throwOnError();
+    expect(linhas).toEqual([
+      { para_o_titular: true, nome_completo: "Paciente Integração Oito" },
+    ]);
+    expect(await agendar(conversa)).toMatchObject({ ok: true });
   });
 });
 
@@ -1005,6 +1142,37 @@ describe("o estado do atendimento entre os turnos", () => {
       .eq("conversation_id", conversa)
       .throwOnError();
     expect(data).toEqual([]);
+  });
+
+  it("a reserva do estado que sumiu no meio do turno é gravada nula, sem 22023", async () => {
+    const { conversa } = await novaConversa();
+    const reserva = await reservar(conversa, lBruno, "15:00");
+    expect(reserva).toMatchObject({ ok: true });
+    const j = await job(conversa);
+    expect((await ler(conversa, j)).versao).toBe(0);
+    // A manutencao apagou a reserva vencida (limpar_holds_vencidos): aqui,
+    // so a deste caso.
+    await admin
+      .from("slot_hold")
+      .delete()
+      .eq("id", reserva.hold_id!)
+      .throwOnError();
+    expect(
+      await gravarOk(conversa, j, 0, {
+        ...ESTADO_VAZIO,
+        etapa: "aguardando_confirmacao",
+        intencao: "agendar",
+        slot_hold_id: reserva.hold_id,
+      }),
+    ).toEqual({ ok: true, versao: 1, reutilizado: false });
+    const { data } = await admin
+      .from("ia_atendimento")
+      .select("etapa, slot_hold_id")
+      .eq("conversation_id", conversa)
+      .throwOnError();
+    expect(data).toEqual([
+      { etapa: "aguardando_confirmacao", slot_hold_id: null },
+    ]);
   });
 
   it("o job que não está em execução não grava (sem_posse)", async () => {

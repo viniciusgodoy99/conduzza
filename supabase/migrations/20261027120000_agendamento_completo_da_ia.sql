@@ -66,18 +66,22 @@
 --      contam (como a Agenda). reservar_horario_da_ia ganha p_unit_id
 --      DEFAULT NULL (DROP e CREATE com os grants de antes: o codigo de hoje
 --      chama por nome com 5 parametros e continua igual), grava a unidade e
---      a devolve (unit_id).
---   5. agendar_pela_ia (CREATE OR REPLACE do corpo de producao, mesma
---      assinatura e grants): confere a unidade da reserva; depois da
---      conferencia do horario e antes da confirmacao do paciente, recusa,
---      nesta ordem, com consulta_para_outra_pessoa, menor_de_idade (pelo
---      nascimento informado ou pelo do cadastro do contato), ja_tem_consulta
---      (o contato ja tem consulta futura ativa do mesmo procedimento, com
---      qualquer profissional; devolve o appointment_id dela) e faltam_dados
---      (devolve faltam: a lista); grava a unidade na consulta e liga os
---      dados informados a consulta e a reserva consumida. Tudo o mais igual
---      (pendente, travas, exclusion, idempotencia, a mensagem do paciente
---      depois da pergunta, o evento).
+--      a devolve (unit_id); e, depois da conferencia do horario e antes de
+--      gravar, recusa ja_tem_consulta (revisao final, abaixo).
+--   5. agendar_pela_ia (DROP e CREATE do corpo de producao com
+--      p_slot_hold_id DEFAULT NULL, os grants de antes; o codigo de hoje
+--      chama por nome com 3 parametros e continua igual): com
+--      p_slot_hold_id, recusa reserva_diferente (revisao final, abaixo);
+--      confere a unidade da reserva; depois da conferencia do horario e
+--      antes da confirmacao do paciente, recusa, nesta ordem, com
+--      consulta_para_outra_pessoa, menor_de_idade (pelo nascimento
+--      informado ou pelo do cadastro do contato), ja_tem_consulta (o contato
+--      ja tem consulta futura ativa do mesmo procedimento, com qualquer
+--      profissional; devolve o appointment_id dela) e faltam_dados (devolve
+--      faltam: a lista); grava a unidade na consulta e liga os dados
+--      informados (a linha aberta da janela atual) a consulta e a reserva
+--      consumida. Tudo o mais igual (pendente, travas, exclusion,
+--      idempotencia, a mensagem do paciente depois da pergunta, o evento).
 --   6. Duas tabelas novas, RLS ligada e SEM policy, nada para anon e
 --      authenticated, so SELECT para a service role (a escrita e so pelas
 --      RPCs e pelo gatilho):
@@ -92,10 +96,11 @@
 --        recomeca, e o da janela anterior sai na gravacao seguinte e na poda.
 --      - dados_informados_na_marcacao: nome completo, nascimento, CPF (so
 --        digitos, verificador valido) e carteirinha que o paciente informou,
---        se a consulta e para ele, o contato e a conversa, a reserva e/ou a
---        consulta, aplicado_em e aplicado_por. Uma linha aberta por conversa
---        ate o agendar, uma por consulta. Dado de outra pessoa nunca fica
---        (CHECK). A aprovacao da consulta da IA (gatilho
+--        se a consulta e para ele, o contato e a conversa, a janela da IA em
+--        que a linha foi aberta (janela_desde), a reserva e/ou a consulta,
+--        aplicado_em e aplicado_por. Uma linha aberta por conversa ate o
+--        agendar (so vale a da janela atual), uma por consulta. Dado de outra
+--        pessoa nunca fica (CHECK). A aprovacao da consulta da IA (gatilho
 --        dados_informados_na_aprovacao, AFTER UPDATE OF approval_status, o
 --        ultimo na ordem alfabetica dos que disparam ali) aplica ao contato
 --        so nos campos vazios: nascimento e CPF vazios; a carteirinha vazia,
@@ -111,7 +116,8 @@
 --   7. RPCs novas, SECURITY DEFINER, search_path vazio, nunca 40001 nem
 --      40P01, resultado de negocio em JSON:
 --      - registrar_dados_da_marcacao (so service role), sob a trava da
---        conversa do reservar e do agendar;
+--        conversa do reservar e do agendar, na linha da janela atual (sem
+--        janela: ia_desligada);
 --      - ler_dados_informados_na_marcacao (authenticated e service role):
 --        a leitura humana, para quem aprova a consulta (a policy de UPDATE
 --        de appointment: escrita na clinica e, o profissional, so na propria
@@ -132,13 +138,48 @@
 --      dados da linha aberta 7 dias depois de mexida e os da consulta 30
 --      dias depois de deixar de estar pendente ou do dia da consulta. Ate
 --      1000 de cada por passagem, SKIP LOCKED.
+--   9. REVISAO FINAL (27/10/2026: os achados de banco da revisao final do
+--      agendamento completo, com o contrato acertado com a frente de
+--      codigo; marca [revisao final] nos corpos):
+--      a) agendar_pela_ia ganha p_slot_hold_id DEFAULT NULL (achado 1,
+--         alta: o "Confirma ...?" perguntava um horario e o "sim" marcava a
+--         reserva viva, que podia ser outra). Com ele, se a reserva viva da
+--         conversa (ou, no mesmo job de novo, a que ele consumiu) nao for
+--         essa, reserva_diferente, antes de qualquer gravacao (logo depois
+--         de reserva_inexistente, antes de reserva_vencida). Nulo: como
+--         antes.
+--      b) reservar_horario_da_ia recusa ja_tem_consulta ANTES de reservar
+--         (achado 6: o paciente informava todos os dados e so no fim ouvia
+--         que ja tinha consulta), depois da conferencia do horario, com
+--         appointment_id e starts_at (a IA diz so o dia e a hora), pela
+--         mesma regra do agendar (qualquer profissional; a pendente da IA
+--         conta; cancelada, recusada, faltou e compareceu nao). Nada grava
+--         (a reserva que a conversa ja tinha fica). O agendar continua
+--         conferindo (a consulta pode nascer entre o reservar e o agendar).
+--      c) dados_informados_na_marcacao.janela_desde (achado 7: a marca de
+--         consulta para outra pessoa travava a IA na conversa por ate 7
+--         dias): a linha guarda a janela da IA em que foi aberta
+--         (ia_janela_da_conversa.desde). O registrar, o agendar e o
+--         ler_atendimento_da_ia so leem a linha aberta da janela atual; a de
+--         outra janela (o Devolver abre outra; o Assumir ja tira da IA) nao
+--         vale, o registrar a apaga na gravacao seguinte (com dado invalido,
+--         nada grava e ela fica, ignorada) e a poda continua (7 dias depois
+--         de mexida). Conversa sem janela: o registrar diz ia_desligada, sem
+--         gravar.
+--      d) gravar_atendimento_da_ia grava como nulo o slot_hold_id que ja
+--         nao existe (achado 10: o limpar_holds_vencidos apagava a reserva
+--         vencida no meio do turno, o 22023 subia e a resposta caia em
+--         falha tecnica). A reserva que existe e e de outra clinica ou de
+--         outra conversa continua 22023.
 --
 -- CONTRATO para a frente de codigo: os COMMENT ON de cada funcao, tabela e
 -- coluna abaixo (assinatura, retorno, motivos, erros e criterios). Nos
 -- espelhos do TypeScript: MOTIVOS_DE_ESCALONAMENTO e TEXTO_DO_EVENTO_DA_IA
 -- ganham os tres motivos do item 3; os motivos do reservar ganham
--- unidade_invalida; os do agendar, unidade_invalida, ja_tem_consulta,
--- consulta_para_outra_pessoa, faltam_dados e menor_de_idade.
+-- unidade_invalida e ja_tem_consulta (com appointment_id e starts_at); os do
+-- agendar, reserva_diferente, unidade_invalida, ja_tem_consulta (com
+-- appointment_id), consulta_para_outra_pessoa, faltam_dados e
+-- menor_de_idade; o agendar ganha p_slot_hold_id (a reserva do "Confirma").
 --
 -- Producao em 27/10/2026 (q.js, so leitura): a ultima migration aplicada e
 -- a 20261026130000 (a 20261027100000 e a 20261027110000, da branch, vao
@@ -162,8 +203,15 @@
 -- outra na mao e nao fecha ciclo (40P01) com sessao nenhuma (o teste de
 -- concorrencia do harness prova: ~/.claude/plans/agente-completo/ag3/banco/
 -- travas). Depois do bloco, so pede travas que ja tem (ou mais fracas, nas
--- mesmas tabelas) e nunca espera; o lock_timeout de 3 s fica de rede.
--- Quanto tempo: do bloco ao commit, de 19 a 26 ms no Postgres local (5
+-- mesmas tabelas) e nunca espera; o lock_timeout de 3 s fica de rede. Os
+-- DROP e CREATE de funcao (a conferencia, o reservar e, na revisao final, o
+-- agendar) so pegam a trava do objeto da funcao, que ninguem segura (chamar
+-- a funcao nao trava nada). A revisao final nao trouxe trava nova, nem na
+-- migration (medido de novo: as mesmas tabelas, nos mesmos modos) nem nas
+-- RPCs (o ja_tem_consulta do reservar e a janela no registrar, no agendar e
+-- no ler sao leituras sem trava; o registrar apaga a linha de outra janela
+-- sob a mesma trava da conversa).
+-- Quanto tempo: do bloco ao commit, de 18 a 22 ms no Postgres local (5
 -- rodadas, com o commit): os ADD COLUMN sao so de catalogo (o default
 -- constante nao reescreve), o VALIDATE varre 3 linhas e o resto e catalogo.
 -- Nesse tempo ai_agent_config, ai_decision_log e slot_hold nem leem nem
@@ -176,16 +224,26 @@
 -- esta migration, os tipos (lib/supabase/database.types.ts foi escrito a mao
 -- no formato do gerador; regenerar depois de aplicar) e SO DEPOIS o codigo da
 -- AG3. Esta migration com o codigo de hoje: o reservar e o agendar seguem
--- iguais (5 e 3 parametros, unidade nula, nenhuma versao que existe exige
--- dado); as unicas diferencas possiveis sao ja_tem_consulta e menor_de_idade
--- (o contato com nascimento de menor no cadastro), motivos do agendar que o
--- codigo de hoje nao conhece (lerRespostaDoAgendar devolve nulo e o turno
--- falha fechado: a conversa vai para a equipe), e so numa clinica com
--- Agendar ligada (nenhuma, em 27/10/2026). O codigo da AG3 antes
--- desta migration: as RPCs novas nao existem (PGRST202) e a aba do agente
--- nao carrega (42703 nas colunas exige_*). Tres casos dos testes de
--- unidade quebram assim que este arquivo entra no repositorio (os espelhos
--- do CHECK e do rotulo: tests/unit/agente/config.test.ts, 1, e
+-- chamando igual (5 e 3 parametros por nome; p_unit_id e p_slot_hold_id
+-- nulos: a unidade nula e a reserva viva, como hoje), e nenhuma versao que
+-- existe exige nome, nascimento nem CPF. O que muda sao recusas que o codigo
+-- de hoje nao conhece (lerRespostaDaReserva e lerRespostaDoAgendar devolvem
+-- nulo, o turno falha fechado e a conversa vai para a equipe), e so numa
+-- clinica com Agendar ligada (nenhuma, em 27/10/2026): no reservar,
+-- ja_tem_consulta (o contato ja tem consulta futura ativa do mesmo
+-- procedimento); no agendar, ja_tem_consulta, menor_de_idade (o contato com
+-- nascimento de menor no cadastro) e faltam_dados com a carteirinha, que nao
+-- depende de exige_*: na consulta pelo convenio com "Carteirinha obrigatoria"
+-- (insurance.requires_card; os 2 convenios das clinicas reais tem) ou com o
+-- requisito carteirinha do procedimento, o codigo de hoje nao registra a
+-- carteirinha e a IA nao marca. consulta_para_outra_pessoa e
+-- reserva_diferente nao acontecem com o codigo de hoje (ele nao registra
+-- dados nem passa a reserva). O codigo da AG3 antes desta migration: as RPCs
+-- novas nao existem (PGRST202), a aba do agente nao carrega (42703 nas
+-- colunas exige_*) e o agendar com p_slot_hold_id nao existe (PGRST202). Tres
+-- casos dos testes de unidade quebram assim que este arquivo entra no
+-- repositorio (os espelhos do CHECK e do rotulo:
+-- tests/unit/agente/config.test.ts, 1, e
 -- tests/unit/ia-whatsapp/espelhos.test.ts, 2), ate o codigo trazer os tres
 -- motivos novos (MOTIVOS_DE_ESCALONAMENTO, o rotulo e TEXTO_DO_EVENTO_DA_IA)
 -- e o espelhos.test.ts aceitar o NOT VALID depois do CHECK (como
@@ -195,13 +253,14 @@
 --
 -- ROLLBACK (manual), ORDEM: PRIMEIRO voltar o codigo da AG3, DEPOIS, numa
 -- transacao, no SQL editor, supabase/operacao/rollback/20261027120000-corpos-
--- anteriores.sql (os sete corpos de antes, com os comentarios e os grants;
--- as funcoes, as tabelas, as colunas e os gatilhos novos saem; o CHECK de
--- antes, NOT VALID se ja houver decisao com motivo novo; confere no fim; as
--- travas dele estao no cabecalho dele). SE PERDE: o estado dos atendimentos,
--- os dados informados ainda nao aplicados (o que a aprovacao aplicou fica no
--- contato), a unidade das reservas (a consulta guarda a dela) e as escolhas
--- de exige_*.
+-- anteriores.sql (os sete corpos de antes, com os comentarios e os grants; o
+-- agendar de 4 parametros, o reservar de 6 e a conferencia de 7 saem e os
+-- de antes voltam; as funcoes, as tabelas, as colunas e os gatilhos novos
+-- saem; o CHECK de antes, NOT VALID se ja houver decisao com motivo novo;
+-- confere no fim; as travas dele estao no cabecalho dele). SE PERDE: o
+-- estado dos atendimentos, os dados informados ainda nao aplicados (o que a
+-- aprovacao aplicou fica no contato), a unidade das reservas (a consulta
+-- guarda a dela) e as escolhas de exige_*.
 -- ---------------------------------------------------------------------------
 
 set local lock_timeout = '3s';
@@ -847,6 +906,11 @@ create table public.dados_informados_na_marcacao (
   -- poda tira a orfa.
   conversation_id uuid not null,
   contact_id uuid not null,
+  -- [revisao final] A janela da IA (ia_janela_da_conversa.desde) em que a
+  -- linha foi aberta. So vale a da janela atual: o Devolver abre janela
+  -- nova, e a linha de antes (inclusive a marca de outra pessoa) deixa de
+  -- valer.
+  janela_desde timestamptz not null,
   slot_hold_id uuid,
   appointment_id uuid,
   nome_completo text,
@@ -910,9 +974,11 @@ revoke all on table public.dados_informados_na_marcacao from anon, authenticated
 grant select on table public.dados_informados_na_marcacao to service_role;
 
 comment on table public.dados_informados_na_marcacao is
-  'O que o paciente informou a IA para marcar (AG3, D-7; migration 20261027120000_agendamento_completo_da_ia.sql): nome completo, nascimento, CPF (so digitos, com digito verificador) e carteirinha, e se a consulta e para ele mesmo. Uma linha aberta por conversa ate o agendar, que a liga a reserva consumida e a consulta; aplicada ao cadastro do contato na APROVACAO da consulta, so nos campos vazios (gatilho dados_informados_na_aprovacao). Dado de saude e pessoal: nenhuma sessao le a tabela; a leitura humana e por ler_dados_informados_na_marcacao, com trilha. Podada pela manutencao (podar_agendamento_da_ia).';
+  'O que o paciente informou a IA para marcar (AG3, D-7; migration 20261027120000_agendamento_completo_da_ia.sql): nome completo, nascimento, CPF (so digitos, com digito verificador) e carteirinha, e se a consulta e para ele mesmo. Uma linha aberta por conversa ate o agendar, que a liga a reserva consumida e a consulta; so vale a da janela atual da IA (janela_desde); aplicada ao cadastro do contato na APROVACAO da consulta, so nos campos vazios (gatilho dados_informados_na_aprovacao). Dado de saude e pessoal: nenhuma sessao le a tabela; a leitura humana e por ler_dados_informados_na_marcacao, com trilha. Podada pela manutencao (podar_agendamento_da_ia).';
 comment on column public.dados_informados_na_marcacao.contact_id is
   'O contato da conversa quando o dado foi informado. Contato trocado na conversa: a linha nao vale para o contato novo.';
+comment on column public.dados_informados_na_marcacao.janela_desde is
+  'A janela da IA na conversa (ia_janela_da_conversa.desde) em que a linha foi aberta. So vale a linha aberta da janela atual: registrar_dados_da_marcacao, agendar_pela_ia e ler_atendimento_da_ia ignoram a de outra janela (a marca de consulta para outra pessoa nao sobrevive ao Devolver); o registrar a apaga na gravacao seguinte, e a poda, 7 dias depois de mexida.';
 comment on column public.dados_informados_na_marcacao.para_o_titular is
   'A consulta e para o proprio contato da conversa. Falso: nenhum dado pessoal fica (CHECK) e o agendar recusa (consulta_para_outra_pessoa, D-8).';
 comment on column public.dados_informados_na_marcacao.aplicado_em is
@@ -1309,6 +1375,10 @@ declare
   v_recurso uuid;
   v_reserva public.slot_hold%rowtype;
   v_conf record;
+  -- [revisao final] inicio
+  v_ja_marcada uuid;
+  v_ja_marcada_em timestamptz;
+  -- [revisao final] fim
 begin
   if p_clinic_id is null or p_conversation_id is null or p_service_link_id is null
      or p_starts_at is null or p_job_id is null then
@@ -1380,6 +1450,33 @@ begin
     return jsonb_build_object('ok', false, 'motivo', 'vinculo_invalido');
   end if;
 
+  -- [revisao final] inicio
+  -- ja_tem_consulta ANTES de reservar (a mesma regra do agendar, que
+  -- confere de novo): o contato da conversa ja tem consulta futura ativa do
+  -- mesmo procedimento, com qualquer profissional (a pendente da IA conta;
+  -- cancelada, recusada, faltou e compareceu nao). Devolve a mais proxima e
+  -- o inicio dela (a IA diz so o dia e a hora); nada grava, e a reserva que
+  -- a conversa ja tinha fica. Antes, o paciente informava todos os dados e
+  -- so no agendar ouvia que ja tinha consulta.
+  select a.id, a.starts_at into v_ja_marcada, v_ja_marcada_em
+    from public.appointment a
+    join public.service_link sl on sl.id = a.service_link_id and sl.clinic_id = a.clinic_id
+   where a.clinic_id = p_clinic_id
+     and a.contact_id = v_conf.o_contato
+     and sl.procedure_id = (
+       select x.procedure_id from public.service_link x
+        where x.id = p_service_link_id and x.clinic_id = p_clinic_id)
+     and a.starts_at > now()
+     and a.status not in ('cancelado_paciente', 'cancelado_clinica', 'faltou', 'compareceu')
+     and a.approval_status is distinct from 'recusado'
+   order by a.starts_at, a.id
+   limit 1;
+  if v_ja_marcada is not null then
+    return jsonb_build_object('ok', false, 'motivo', 'ja_tem_consulta',
+                              'appointment_id', v_ja_marcada, 'starts_at', v_ja_marcada_em);
+  end if;
+  -- [revisao final] fim
+
   -- As vencidas nao consumidas do profissional e as nao consumidas desta
   -- conversa saem (a consumida fica: e a consulta e a idempotencia). SKIP
   -- LOCKED: a linha travada por outro e a que outro ja esta apagando ou
@@ -1427,13 +1524,20 @@ grant execute on function public.reservar_horario_da_ia(uuid, uuid, uuid, timest
   to service_role;
 
 comment on function public.reservar_horario_da_ia(uuid, uuid, uuid, timestamptz, uuid, uuid) is
-  'So o servidor (service_role). A IA reserva por 10 minutos o horario p_starts_at do vinculo p_service_link_id para a conversa (uma reserva por conversa), na unidade p_unit_id (AG3; nula = como antes, a jornada de todas as unidades). Confere tudo de novo no banco (conferir_horario_da_ia) sob trava da conversa, do profissional e, quando o procedimento tem, do recurso. Devolve {ok:true, hold_id, starts_at, ends_at, expires_at, reutilizado, unit_id} ou {ok:false, motivo}: ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, ocupado, reservado_por_outra_conversa. Idempotente pelo job_id (a reserva do job volta com reutilizado true, como esta; job de outra conversa: 22023). Parametro nulo: 22004.';
+  'So o servidor (service_role). A IA reserva por 10 minutos o horario p_starts_at do vinculo p_service_link_id para a conversa (uma reserva por conversa), na unidade p_unit_id (AG3; nula = como antes, a jornada de todas as unidades). Confere tudo de novo no banco (conferir_horario_da_ia) sob trava da conversa, do profissional e, quando o procedimento tem, do recurso. Devolve {ok:true, hold_id, starts_at, ends_at, expires_at, reutilizado, unit_id} ou {ok:false, motivo}: ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, ocupado, reservado_por_outra_conversa; depois, ja_tem_consulta (revisao final; com appointment_id e starts_at da consulta futura ativa do mesmo procedimento que o contato ja tem, com qualquer profissional, a mais proxima, pela mesma regra do agendar; nada grava). Idempotente pelo job_id (a reserva do job volta com reutilizado true, como esta; job de outra conversa: 22023). Parametro nulo: 22004.';
 
 -- 8b. A IA marca a consulta reservada, pendente da aprovacao da equipe.
-create or replace function public.agendar_pela_ia(
+-- [revisao final] Um parametro a mais com default: p_slot_hold_id, a
+-- reserva que o "Confirma ...?" perguntou. DROP e CREATE com os grants de
+-- antes, como o reservar: o codigo de hoje (3 parametros por nome) continua
+-- chamando, e o PostgREST nao ve duas funcoes.
+drop function public.agendar_pela_ia(uuid, uuid, uuid);
+
+create function public.agendar_pela_ia(
   p_clinic_id uuid,
   p_conversation_id uuid,
-  p_job_id uuid
+  p_job_id uuid,
+  p_slot_hold_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -1470,6 +1574,10 @@ begin
        or v_reserva.conversation_id is distinct from p_conversation_id then
       raise exception using errcode = '22023', message = 'job_de_outra_conversa';
     end if;
+    -- [revisao final] A reserva que este job consumiu nao e a pedida.
+    if p_slot_hold_id is not null and v_reserva.id is distinct from p_slot_hold_id then
+      return jsonb_build_object('ok', false, 'motivo', 'reserva_diferente');
+    end if;
     if v_reserva.appointment_id is null then
       -- A consulta deste job foi apagada depois: nada a repetir.
       return jsonb_build_object('ok', false, 'motivo', 'reserva_inexistente');
@@ -1497,6 +1605,12 @@ begin
    limit 1;
   if not found then
     return jsonb_build_object('ok', false, 'motivo', 'reserva_inexistente');
+  end if;
+  -- [revisao final] A reserva viva nao e a que o "Confirma ...?" perguntou
+  -- (outro turno reservou outra depois): o "sim" do paciente nao vale para
+  -- ela. Nada grava.
+  if p_slot_hold_id is not null and v_reserva.id is distinct from p_slot_hold_id then
+    return jsonb_build_object('ok', false, 'motivo', 'reserva_diferente');
   end if;
   if v_reserva.expires_at <= now() then
     return jsonb_build_object('ok', false, 'motivo', 'reserva_vencida');
@@ -1557,14 +1671,21 @@ begin
   -- que ja existe e por fim os dados que faltam (a IA nao pede dado para
   -- uma consulta que nao vai marcar).
   -- (a) Os dados informados: a linha aberta da conversa, do contato de
-  -- agora (registrar_dados_da_marcacao, sob a mesma trava da conversa).
+  -- agora (registrar_dados_da_marcacao, sob a mesma trava da conversa) e
+  -- [revisao final] da janela atual da IA (a de outra janela, inclusive a
+  -- marca de outra pessoa, nao vale depois do Devolver), lidas na mesma
+  -- foto.
   select d.* into v_dados
     from public.dados_informados_na_marcacao d
+    join public.ia_janela_da_conversa w
+      on w.conversation_id = d.conversation_id
+     and w.clinic_id = d.clinic_id
+     and w.desde = d.janela_desde
    where d.clinic_id = p_clinic_id
      and d.conversation_id = p_conversation_id
      and d.appointment_id is null
      and d.contact_id = v_conf.o_contato
-     for update;
+     for update of d;
   -- (b) D-8: consulta para outra pessoa passa para a equipe.
   if v_dados.id is not null and not v_dados.para_o_titular then
     return jsonb_build_object('ok', false, 'motivo', 'consulta_para_outra_pessoa');
@@ -1704,8 +1825,13 @@ begin
 end;
 $$;
 
-comment on function public.agendar_pela_ia(uuid, uuid, uuid) is
-  'So o servidor (service_role). Marca a consulta da reserva viva da conversa, depois de uma mensagem do paciente posterior a pergunta da IA (a primeira resposta da IA gravada depois da reserva, que nao falhou): agendado, created_by ia, approval_status pendente, send_confirmation false (a regua so comeca com a aprovacao), oferecer_vaga_ao_cancelar false, source interna, a unidade da reserva; consome a reserva, liga os dados informados (dados_informados_na_marcacao) a consulta e grava o evento na conversa. Devolve {ok:true, appointment_id, starts_at, ends_at, reutilizado} ou {ok:false, motivo}: reserva_inexistente, reserva_vencida, ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, conflito (consulta no horario, inclusive o 23P01, sem gravar nada), reservado_por_outra_conversa; depois, nesta ordem, consulta_para_outra_pessoa, menor_de_idade (menos de 18 anos no dia da consulta, pelo nascimento informado ou pelo do cadastro do contato), ja_tem_consulta (com appointment_id: o contato ja tem consulta futura ativa do mesmo procedimento) e faltam_dados (com faltam: a lista do que falta); e sem_confirmacao_do_paciente. Idempotente pelo job_id (a consulta do job volta com reutilizado true; job de outra conversa: 22023). Parametro nulo: 22004.';
+revoke execute on function public.agendar_pela_ia(uuid, uuid, uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function public.agendar_pela_ia(uuid, uuid, uuid, uuid)
+  to service_role;
+
+comment on function public.agendar_pela_ia(uuid, uuid, uuid, uuid) is
+  'So o servidor (service_role). Marca a consulta da reserva viva da conversa, depois de uma mensagem do paciente posterior a pergunta da IA (a primeira resposta da IA gravada depois da reserva, que nao falhou): agendado, created_by ia, approval_status pendente, send_confirmation false (a regua so comeca com a aprovacao), oferecer_vaga_ao_cancelar false, source interna, a unidade da reserva; consome a reserva, liga os dados informados (dados_informados_na_marcacao, a linha aberta da janela atual da IA) a consulta e grava o evento na conversa. p_slot_hold_id (revisao final; nulo = como antes): a reserva que o "Confirma ...?" perguntou; se a reserva viva da conversa (ou, no mesmo job de novo, a que ele consumiu) for outra, reserva_diferente, sem gravar nada. Devolve {ok:true, appointment_id, starts_at, ends_at, reutilizado} ou {ok:false, motivo}: reserva_inexistente, reserva_diferente, reserva_vencida, ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, conflito (consulta no horario, inclusive o 23P01, sem gravar nada), reservado_por_outra_conversa; depois, nesta ordem, consulta_para_outra_pessoa (a marca da janela atual), menor_de_idade (menos de 18 anos no dia da consulta, pelo nascimento informado ou pelo do cadastro do contato), ja_tem_consulta (com appointment_id: o contato ja tem consulta futura ativa do mesmo procedimento; o reservar ja recusa antes, e o agendar confere de novo) e faltam_dados (com faltam: a lista do que falta); e sem_confirmacao_do_paciente. Idempotente pelo job_id (a consulta do job volta com reutilizado true; job de outra conversa: 22023). Parametro nulo: 22004.';
 
 -- ---------------------------------------------------------------------------
 -- 9) Os dados que o paciente informa (o servidor grava; a equipe le)
@@ -1739,6 +1865,10 @@ declare
   v_aberta public.dados_informados_na_marcacao%rowtype;
   v_id uuid;
   v_faltam text[];
+  -- [revisao final] inicio
+  v_desde timestamptz;
+  v_de_outra_janela uuid;
+  -- [revisao final] fim
 begin
   if p_clinic_id is null or p_conversation_id is null or p_job_id is null
      or p_para_o_titular is null then
@@ -1775,6 +1905,17 @@ begin
   then
     return jsonb_build_object('ok', false, 'motivo', 'ia_desligada');
   end if;
+  -- [revisao final] inicio
+  -- A janela atual da IA na conversa (o Devolver abre outra). Sem janela, a
+  -- IA nao esta atendendo: ia_desligada, nada grava.
+  select w.desde into v_desde
+    from public.ia_janela_da_conversa w
+   where w.conversation_id = p_conversation_id
+     and w.clinic_id = p_clinic_id;
+  if v_desde is null then
+    return jsonb_build_object('ok', false, 'motivo', 'ia_desligada');
+  end if;
+  -- [revisao final] fim
 
   select coalesce(nullif(c.timezone, ''), 'America/Fortaleza') into v_fuso
     from public.clinic c where c.id = p_clinic_id;
@@ -1797,15 +1938,31 @@ begin
      and d.conversation_id = p_conversation_id
      and d.appointment_id is null
      for update;
+  -- [revisao final] inicio
+  -- A linha aberta de outra janela nao vale (nem a marca de outra pessoa):
+  -- daqui em diante e como se nao houvesse linha, e ela sai na gravacao
+  -- (abaixo). Com dado invalido nada grava, e ela fica, ignorada.
+  if v_aberta.id is not null and v_aberta.janela_desde is distinct from v_desde then
+    v_de_outra_janela := v_aberta.id;
+    v_aberta := null;
+  end if;
+  -- [revisao final] fim
 
   -- D-8: a consulta e para outra pessoa. Nenhum dado pessoal fica (o de
   -- antes desta conversa sai), so a marca, e a IA passa para a equipe.
   if not p_para_o_titular then
+    -- [revisao final] a linha de outra janela sai
+    delete from public.dados_informados_na_marcacao d
+     where d.id = v_de_outra_janela;
     if v_aberta.id is null then
       insert into public.dados_informados_na_marcacao (
         clinic_id, conversation_id, contact_id, slot_hold_id, para_o_titular, job_id
+        -- [revisao final] a janela
+        , janela_desde
       ) values (
         p_clinic_id, p_conversation_id, v_conversa.contact_id, v_reserva.id, false, p_job_id
+        -- [revisao final] a janela
+        , v_desde
       );
     else
       update public.dados_informados_na_marcacao d
@@ -1877,13 +2034,20 @@ begin
   v_aberta.data_nascimento := coalesce(p_data_nascimento, v_aberta.data_nascimento);
   v_aberta.cpf := coalesce(v_cpf, v_aberta.cpf);
   v_aberta.carteirinha := coalesce(v_carteirinha, v_aberta.carteirinha);
+  -- [revisao final] a linha de outra janela sai
+  delete from public.dados_informados_na_marcacao d
+   where d.id = v_de_outra_janela;
   if v_aberta.id is null then
     insert into public.dados_informados_na_marcacao (
       clinic_id, conversation_id, contact_id, slot_hold_id, nome_completo, data_nascimento,
       cpf, carteirinha, para_o_titular, job_id
+      -- [revisao final] a janela
+      , janela_desde
     ) values (
       p_clinic_id, p_conversation_id, v_conversa.contact_id, v_reserva.id, v_aberta.nome_completo,
       v_aberta.data_nascimento, v_aberta.cpf, v_aberta.carteirinha, true, p_job_id
+      -- [revisao final] a janela
+      , v_desde
     )
     returning id into v_id;
   else
@@ -1922,7 +2086,7 @@ grant execute on function public.registrar_dados_da_marcacao(uuid, uuid, uuid, b
   to service_role;
 
 comment on function public.registrar_dados_da_marcacao(uuid, uuid, uuid, boolean, text, date, text, text) is
-  'So o servidor (service_role). Grava o que o paciente informou para marcar (AG3, D-6 a D-8) na linha aberta da conversa (dados_informados_na_marcacao), sob a trava da conversa do reservar e do agendar: o que veio nulo nao muda o que ja estava; linha de outro contato ou de outra pessoa comeca de novo. Devolve {ok:true, dados_id, faltam} (faltam: o que a configuracao publicada e o vinculo da reserva viva ainda pedem) ou {ok:false, motivo}: ia_desligada, dados_invalidos (com invalidos: os campos, nunca o valor; nada grava), consulta_para_outra_pessoa (p_para_o_titular falso: nenhum dado pessoal fica, so a marca; a IA passa para a equipe), menor_de_idade (menos de 18 anos no dia da reserva viva, ou hoje; o dado fica e o agendar recusa; com dados_id). Job de outra conversa: 22023. Parametro obrigatorio nulo: 22004. Nunca devolve nem registra o valor informado.';
+  'So o servidor (service_role). Grava o que o paciente informou para marcar (AG3, D-6 a D-8) na linha aberta da conversa na janela atual da IA (dados_informados_na_marcacao, janela_desde = ia_janela_da_conversa.desde), sob a trava da conversa do reservar e do agendar: o que veio nulo nao muda o que ja estava; linha de outro contato ou de outra pessoa comeca de novo; a linha de outra janela (o Devolver abriu outra) nao vale e sai na gravacao (com dado invalido, fica, ignorada). Devolve {ok:true, dados_id, faltam} (faltam: o que a configuracao publicada e o vinculo da reserva viva ainda pedem) ou {ok:false, motivo}: ia_desligada (conversa de outra clinica, fora da IA, contato que a IA nao atende ou conversa sem janela), dados_invalidos (com invalidos: os campos, nunca o valor; nada grava), consulta_para_outra_pessoa (p_para_o_titular falso: nenhum dado pessoal fica, so a marca; a IA passa para a equipe), menor_de_idade (menos de 18 anos no dia da reserva viva, ou hoje; o dado fica e o agendar recusa; com dados_id). Job de outra conversa: 22023. Parametro obrigatorio nulo: 22004. Nunca devolve nem registra o valor informado.';
 
 create function public.ler_dados_informados_na_marcacao(p_clinic_id uuid, p_appointment_id uuid)
 returns jsonb
@@ -2075,13 +2239,15 @@ begin
   end if;
 
   -- O que o paciente ja informou (so se informou; nunca o valor) e o que
-  -- falta, pela reserva viva da conversa.
+  -- falta, pela reserva viva da conversa. [revisao final] So a linha da
+  -- janela atual: a de antes do Devolver nao vale.
   select d.* into v_dados
     from public.dados_informados_na_marcacao d
    where d.clinic_id = p_clinic_id
      and d.conversation_id = p_conversation_id
      and d.appointment_id is null
-     and d.contact_id = v_conversa.contact_id;
+     and d.contact_id = v_conversa.contact_id
+     and d.janela_desde = v_desde;
   select h.service_link_id into v_reserva
     from public.slot_hold h
    where h.clinic_id = p_clinic_id
@@ -2112,7 +2278,7 @@ revoke execute on function public.ler_atendimento_da_ia(uuid, uuid, uuid) from p
 grant execute on function public.ler_atendimento_da_ia(uuid, uuid, uuid) to service_role;
 
 comment on function public.ler_atendimento_da_ia(uuid, uuid, uuid) is
-  'So o servidor (service_role). O estado do atendimento da IA na janela atual da conversa, para o job p_job_id: {ok:true, versao, janela_desde, estado (a forma de ia_estado_do_atendimento_valido; sem linha, o vazio, versao 0; o mesmo job que ja gravou recebe o estado de ANTES dele, versao - 1: idempotencia por job), dados: {nome_completo, data_nascimento, cpf, carteirinha (se foram informados, nunca o valor), para_o_titular, faltam}} ou {ok:false, motivo}: fora_da_ia (conversa de outra clinica, fora da IA, com responsavel, sem janela ou com a janela de outro contato), job_antigo (job de antes da janela atual). Job que nao e desta conversa: 22023 job_invalido. Parametro nulo: 22004.';
+  'So o servidor (service_role). O estado do atendimento da IA na janela atual da conversa, para o job p_job_id: {ok:true, versao, janela_desde, estado (a forma de ia_estado_do_atendimento_valido; sem linha, o vazio, versao 0; o mesmo job que ja gravou recebe o estado de ANTES dele, versao - 1: idempotencia por job), dados: {nome_completo, data_nascimento, cpf, carteirinha (se foram informados, nunca o valor), para_o_titular, faltam} (so a linha aberta da janela atual)} ou {ok:false, motivo}: fora_da_ia (conversa de outra clinica, fora da IA, com responsavel, sem janela ou com a janela de outro contato), job_antigo (job de antes da janela atual). Job que nao e desta conversa: 22023 job_invalido. Parametro nulo: 22004.';
 
 create function public.gravar_atendimento_da_ia(
   p_clinic_id uuid,
@@ -2228,6 +2394,17 @@ begin
     return jsonb_build_object('ok', false, 'motivo', 'job_antigo');
   end if;
 
+  -- [revisao final] A reserva do estado que ja nao existe (o
+  -- limpar_holds_vencidos apagou a vencida no meio do turno) e gravada
+  -- nula: nao e erro de quem chama. A que existe e de outra clinica ou de
+  -- outra conversa continua 22023 (abaixo).
+  if v_estado ->> 'slot_hold_id' is not null and not exists (
+       select 1 from public.slot_hold x
+        where x.id = (v_estado ->> 'slot_hold_id')::uuid)
+  then
+    v_estado := v_estado || jsonb_build_object('slot_hold_id', null);
+  end if;
+
   -- Os ids sao desta clinica: o procedimento, o profissional, o convenio e a
   -- unidade; a reserva e desta conversa; a consulta e do contato da
   -- conversa; e os vinculos, profissionais e unidades dos horarios.
@@ -2341,7 +2518,7 @@ grant execute on function public.gravar_atendimento_da_ia(uuid, uuid, uuid, inte
   to service_role;
 
 comment on function public.gravar_atendimento_da_ia(uuid, uuid, uuid, integer, jsonb) is
-  'So o servidor (service_role). Grava o estado do atendimento da IA (p_estado, a forma de ia_estado_do_atendimento_valido; os instantes viram UTC com Z) na janela atual da conversa, pelo job p_job_id, que leu a versao p_versao (ler_atendimento_da_ia). Trava a conversa antes de ler a janela (D-A do E3). Idempotente por job: o mesmo job grava de novo sobre o estado de antes dele (versao - 1), a versao e o anterior ficam; job novo sobe a versao e guarda o estado de antes em anterior. Apaga o estado de outra janela da conversa. Devolve {ok:true, versao, reutilizado} ou {ok:false, motivo}: fora_da_ia (conversa de outra clinica, fora da IA, com responsavel, sem janela ou com a janela de outro contato), sem_posse (job fora de execucao), job_antigo, estado_mudou (outro job gravou depois da leitura: ler de novo). Forma errada, id de outra clinica ou conversa, ou job que nao e desta conversa: 22023 (estado_invalido, job_invalido). Parametro nulo: 22004.';
+  'So o servidor (service_role). Grava o estado do atendimento da IA (p_estado, a forma de ia_estado_do_atendimento_valido; os instantes viram UTC com Z) na janela atual da conversa, pelo job p_job_id, que leu a versao p_versao (ler_atendimento_da_ia). Trava a conversa antes de ler a janela (D-A do E3). Idempotente por job: o mesmo job grava de novo sobre o estado de antes dele (versao - 1), a versao e o anterior ficam; job novo sobe a versao e guarda o estado de antes em anterior. Apaga o estado de outra janela da conversa. A reserva do estado que ja nao existe (apagada no meio do turno) e gravada nula (revisao final), sem erro. Devolve {ok:true, versao, reutilizado} ou {ok:false, motivo}: fora_da_ia (conversa de outra clinica, fora da IA, com responsavel, sem janela ou com a janela de outro contato), sem_posse (job fora de execucao), job_antigo, estado_mudou (outro job gravou depois da leitura: ler de novo). Forma errada, id de outra clinica ou conversa (a reserva que existe e e de outra conversa inclusive), ou job que nao e desta conversa: 22023 (estado_invalido, job_invalido). Parametro nulo: 22004.';
 
 -- ---------------------------------------------------------------------------
 -- 11) A aplicacao dos dados ao cadastro do contato, na aprovacao
