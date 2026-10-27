@@ -252,21 +252,19 @@ describe("achado 1 (R1): o \"sim\" que responde a outra pergunta", () => {
     }
   });
 
-  it("a saida que o historico nao mostra (a resposta automatica do WhatsApp Business): o banco barra pela ancora, e o sistema pergunta de novo", async () => {
+  it("a saida que o historico nao mostra (a resposta automatica do WhatsApp Business): o motor le a mesma saida que o banco e pergunta de novo, sem a RPC", async () => {
     const cenario = new CenarioDaAg4();
     const { c1 } = consultasDoContato(cenario.banco);
     await pedirOCancelamento(cenario);
-    // So no banco (o historico filtra a resposta automatica do app).
-    cenario.noBanco.push({
-      direcao: "saida",
-      autor: "sistema",
-      em: cenario.agora + 30_000,
-    });
+    // So no banco (o historico filtra a resposta automatica do app). Revisao
+    // curta das correcoes (achado 8): o motor confere pela mesma saida que o
+    // banco conta, entao nem chama a RPC.
+    cenario.soNoBanco("sistema", { em: cenario.agora + 30_000 });
     const r = await cenario.fala({
       texto: "Sim",
       roteiro: [ferramenta("cancelar_consulta", {})],
     });
-    expect(cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toHaveLength(1);
+    expect(cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
     expect(c1.status).toBe("agendado");
     expect(r.resposta).toBe(T1_DE_QUINTA);
   });
@@ -350,16 +348,32 @@ describe("achado 1 (R1): o \"sim\" que responde a outra pergunta", () => {
     expect(r2.resposta).toBe(T4_SEGUNDA);
   });
 
-  it("o banco barra o \"Confirmo\" da remarcacao com outra saida no meio (a ancora depois da reserva)", async () => {
+  it("o \"Confirmo\" da remarcacao com outra saida no meio que so o banco guarda: o motor ve a mesma saida (a ancora depois da reserva) e nada e pedido", async () => {
     const cenario = new CenarioDaAg4();
     consultasDoContato(cenario.banco);
     await ateAPerguntaDaRemarcacao(cenario);
-    // So no banco: o historico nao mostra.
-    cenario.noBanco.push({
-      direcao: "saida",
-      autor: "sistema",
-      em: cenario.agora + 30_000,
+    // So no banco: o historico nao mostra. Revisao curta das correcoes
+    // (achado 8): o motor le a mesma saida que o banco conta.
+    cenario.soNoBanco("sistema", { em: cenario.agora + 30_000 });
+    const r = await cenario.fala({
+      texto: "Confirmo",
+      roteiro: [
+        ferramenta("agendar", {}),
+        ferramenta("reservar_horario", { horario: "h1" }),
+      ],
     });
+    expect(cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
+    expect(
+      cenario.banco.linhas("appointment").some((a) => a.remarcacao_de === C1),
+    ).toBe(false);
+    expect(r.resposta).toBe(T3_SEGUNDA);
+  });
+
+  it("o banco barra o \"Confirmo\" da remarcacao (sem_confirmacao_do_paciente): o modelo reserva de novo e o sistema pergunta outra vez, com uma falha que o reservar nao apaga", async () => {
+    const cenario = new CenarioDaAg4();
+    consultasDoContato(cenario.banco);
+    await ateAPerguntaDaRemarcacao(cenario);
+    cenario.opcoes.forcar = { agendar: "sem_confirmacao_do_paciente" };
     const r = await cenario.fala({
       texto: "Confirmo",
       roteiro: [
@@ -372,6 +386,7 @@ describe("achado 1 (R1): o \"sim\" que responde a outra pergunta", () => {
       cenario.banco.linhas("appointment").some((a) => a.remarcacao_de === C1),
     ).toBe(false);
     expect(r.resposta).toBe(T3_SEGUNDA);
+    expect(cenario.estado.falhas_seguidas).toBe(1);
   });
 });
 

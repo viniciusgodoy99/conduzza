@@ -11,9 +11,16 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { useId, useMemo, useState, useSyncExternalStore } from "react";
-import { toast } from "sonner";
 
-import { remarcarAgendamentoAction } from "@/app/(app)/agenda/actions";
+import {
+  remarcarAgendamentoAction,
+  type AgendaActionResult,
+} from "@/app/(app)/agenda/actions";
+import {
+  mostrarRetornoDaPendencia,
+  type RetornoNaTela,
+} from "@/components/agenda/pending-panel";
+import { TEXTOS_DA_REMARCACAO } from "@/components/agenda/remarcacao-da-ia";
 import { Aviso } from "@/components/shared/aviso";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
@@ -187,11 +194,7 @@ export function DayGrid({
   const sensores = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
-  const [remarcacao, setRemarcacao] = useState<{
-    consulta: ConsultaDaAgenda;
-    novoInicio: Date;
-    novoProfissionalId: string;
-  } | null>(null);
+  const [remarcacao, setRemarcacao] = useState<SolturaDoArrasto | null>(null);
 
   const aoSoltar = (event: DragEndEvent) => {
     const consulta = event.active.data.current?.consulta as
@@ -314,9 +317,9 @@ export function DayGrid({
         ))}
       </div>
 
-      {/* A chave remonta o dialogo a cada soltura: erro e chave de aviso da
-          remarcacao anterior nao vazam para a proxima. */}
-      <RemarcarDialog
+      {/* A chave remonta o dialogo a cada soltura: erro, trava e chave de
+          aviso da remarcacao anterior nao vazam para a proxima. */}
+      <DialogoDoArrasto
         key={
           remarcacao
             ? `${remarcacao.consulta.id}-${remarcacao.novoInicio.getTime()}-${remarcacao.novoProfissionalId}`
@@ -330,23 +333,81 @@ export function DayGrid({
   );
 }
 
-function RemarcarDialog({
+/**
+ * O que o "Remarcar consulta" do arrastar faz com cada resposta da acao
+ * (revisao curta da AG4):
+ * - deu certo: fecha com "Consulta remarcada." e, se o aviso ao paciente nao
+ *   saiu, a atencao logo depois (a recepcao precisa saber para ligar);
+ * - remarcacao_pendente (D-32: a IA pediu a remarcacao desta consulta depois
+ *   de a tela carregar): fica aberto com o erro, o "Remarcar" travado (cada
+ *   clique voltava ao servidor com a mesma recusa) e a agenda refeita, para o
+ *   bloco deixar de se arrastar e o menu mostrar a dica (revisao da AG4,
+ *   achado 6);
+ * - outro erro (inclusive a acao que lanca): fica aberto com o erro, para
+ *   tentar de novo.
+ */
+export type DesfechoDoArrasto =
+  | { fechar: true; avisos: RetornoNaTela[] }
+  | { fechar: false; erro: string; travar: boolean; atualizarAgenda: boolean };
+
+export function desfechoDoArrasto(
+  resultado: AgendaActionResult,
+): DesfechoDoArrasto {
+  if (resultado.ok) {
+    return {
+      fechar: true,
+      avisos: [
+        { tipo: "success", texto: "Consulta remarcada." },
+        ...(resultado.aviso
+          ? [{ tipo: "warning" as const, texto: resultado.aviso }]
+          : []),
+      ],
+    };
+  }
+  const remarcacaoPendente = resultado.code === "remarcacao_pendente";
+  return {
+    fechar: false,
+    erro:
+      resultado.error ??
+      (remarcacaoPendente
+        ? TEXTOS_DA_REMARCACAO.dicaDaAntiga
+        : "Não foi possível remarcar."),
+    travar: remarcacaoPendente,
+    atualizarAgenda: remarcacaoPendente,
+  };
+}
+
+/** A soltura que o dialogo do arrastar confirma. */
+export type SolturaDoArrasto = {
+  consulta: ConsultaDaAgenda;
+  novoInicio: Date;
+  novoProfissionalId: string;
+};
+
+/**
+ * "Remarcar consulta" do arrastar e soltar: confirma o novo horario (e o
+ * profissional da coluna), com a chave do aviso ao paciente. O "Remarcar"
+ * fica travado com a remarcacao da IA pendente desta consulta: a que o banco
+ * acabou de recusar (remarcacao_pendente) e a que a lista do "Pendente de
+ * você" ja mostra (contexto.remarcacaoPendenteDe, a mesma regra do menu e do
+ * arrastar, D-32).
+ */
+export function DialogoDoArrasto({
   contexto,
   remarcacao,
   onFechar,
 }: {
   contexto: ContextoAgenda;
-  remarcacao: {
-    consulta: ConsultaDaAgenda;
-    novoInicio: Date;
-    novoProfissionalId: string;
-  } | null;
+  remarcacao: SolturaDoArrasto | null;
   onFechar: () => void;
 }) {
   const queryClient = useQueryClient();
   const [avisar, setAvisar] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // O banco recusou por remarcacao da IA pendente: tentar de novo nao muda
+  // nada ate a equipe aprovar ou recusar (revisao curta da AG4).
+  const [travadoPeloBanco, setTravadoPeloBanco] = useState(false);
   const idChaveAviso = useId();
 
   if (!remarcacao) {
@@ -373,34 +434,49 @@ function RemarcarDialog({
   const mesmoDia =
     diaCivil(contexto.timezone, new Date(consulta.starts_at)) ===
     diaCivil(contexto.timezone, novoInicio);
+  // A remarcacao da IA desta consulta que a lista ja mostra (a lista refeita
+  // depois da recusa do banco, ou o tempo real com o dialogo aberto). Com
+  // ela, a dica dela vale mais que um erro de antes: e o porque do Remarcar
+  // travado.
+  const remarcacaoDaIa = contexto.remarcacaoPendenteDe?.(consulta.id) ?? null;
+  const travado = travadoPeloBanco || remarcacaoDaIa !== null;
+  const mensagem = remarcacaoDaIa ? TEXTOS_DA_REMARCACAO.dicaDaAntiga : erro;
 
   const confirmar = async () => {
     setSalvando(true);
     setErro(null);
-    const resultado = await remarcarAgendamentoAction({
-      id: consulta.id,
-      starts_at_esperado: consulta.starts_at,
-      novo_starts_at: novoInicio.toISOString(),
-      novo_professional_id: novoProfissionalId,
-      avisar_paciente: avisar,
-    });
-    setSalvando(false);
-    if (!resultado.ok) {
-      setErro(resultado.error ?? "Não foi possível remarcar.");
-      // AG4 (D-32; revisao, achado 6): a IA pediu a remarcacao desta
-      // consulta depois de a tela carregar. A agenda refaz, para o bloco
-      // deixar de se arrastar e o menu mostrar a dica.
-      if (resultado.code === "remarcacao_pendente") {
+    let desfecho: DesfechoDoArrasto;
+    try {
+      desfecho = desfechoDoArrasto(
+        await remarcarAgendamentoAction({
+          id: consulta.id,
+          starts_at_esperado: consulta.starts_at,
+          novo_starts_at: novoInicio.toISOString(),
+          novo_professional_id: novoProfissionalId,
+          avisar_paciente: avisar,
+        }),
+      );
+    } catch {
+      // A acao que lanca (a rede caiu, deploy novo no meio) vira o erro de
+      // sempre, com o dialogo aberto; o "Remarcando..." nao fica preso.
+      desfecho = desfechoDoArrasto({ ok: false });
+    } finally {
+      setSalvando(false);
+    }
+    if (!desfecho.fechar) {
+      setErro(desfecho.erro);
+      if (desfecho.travar) {
+        setTravadoPeloBanco(true);
+      }
+      if (desfecho.atualizarAgenda) {
         void queryClient.invalidateQueries({
           queryKey: ["agenda", contexto.clinicId],
         });
       }
       return;
     }
-    toast.success("Consulta remarcada.");
-    if (resultado.aviso) {
-      // O aviso NAO saiu: a recepcao precisa saber para ligar.
-      toast.warning(resultado.aviso, { duration: 10_000 });
+    for (const aviso of desfecho.avisos) {
+      mostrarRetornoDaPendencia(aviso);
     }
     void queryClient.invalidateQueries({
       queryKey: ["agenda", contexto.clinicId],
@@ -445,9 +521,9 @@ function RemarcarDialog({
             <NotaDaConfirmacao consulta={consulta} mesmoDia={mesmoDia} />
           </>
         )}
-        {erro ? (
+        {mensagem ? (
           <Aviso tom="alert" role="alert">
-            {erro}
+            {mensagem}
           </Aviso>
         ) : null}
         <DialogFooter>
@@ -457,7 +533,7 @@ function RemarcarDialog({
           <Button
             className="h-10"
             onClick={confirmar}
-            disabled={salvando || semVinculo}
+            disabled={salvando || semVinculo || travado}
           >
             {salvando ? "Remarcando..." : "Remarcar"}
           </Button>

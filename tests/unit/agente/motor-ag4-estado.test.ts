@@ -307,11 +307,13 @@ describe("a reconferência e os fatos do estado", () => {
     });
     cenario.atendimento = { estado: armado, dados: dadosVazios() };
     // A conversa como o banco guarda: a pergunta da IA depois do pedido e o
-    // "sim" logo depois dela (a ancora forte).
-    cenario.noBanco.push(
-      { direcao: "saida", autor: "ia", em: Date.parse(EM) + 1_000 },
-      { direcao: "entrada", autor: "paciente", em: AGORA - 1_000 },
-    );
+    // "sim" logo depois dela (a ancora forte; revisao curta das correcoes, o
+    // motor tambem le a pergunta do banco).
+    cenario.soNoBanco("ia", {
+      em: Date.parse(EM) + 1_000,
+      texto: T1_DE_QUINTA?.texto ?? "",
+    });
+    cenario.escreve("Sim", AGORA - 1_000);
     const t = turno(cenario, armado, ["Sim"], T1_DE_QUINTA);
     await t.preparar();
     expect(t.fatosDoEstado()?.fatos).toEqual({

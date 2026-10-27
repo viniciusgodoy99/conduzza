@@ -381,6 +381,10 @@ export const FRASES_DO_ATENDIMENTO_EM_ANDAMENTO = {
   // mais e a consulta cancelada nesta conversa.
   pedidoDeCancelarDesfeito:
     "Pedido de cancelar a consulta de {}: a pergunta do cancelamento não vale mais (passou do tempo, ou outra mensagem saiu depois dela). Nada foi cancelado: se a pessoa quiser cancelar, chame cancelar_consulta, e o sistema pergunta de novo.",
+  // Revisao curta das correcoes da AG4 (achado 6): a consulta mudou de
+  // horario depois da pergunta (o dia e a hora sao os de agora).
+  pedidoDeCancelarMudou:
+    "Pedido de cancelar: a consulta mudou de horário depois da pergunta do cancelamento e agora é {}. Nada foi cancelado: se a pessoa responder que quer cancelar, chame cancelar_consulta, e o sistema pergunta de novo com o horário novo.",
   cancelada: "Consulta cancelada nesta conversa: {}.",
   horariosDaRemarcacao:
     "Horários já oferecidos para a remarcação (o código vale enquanto estiver nesta lista):",
@@ -760,9 +764,11 @@ export function linhasDoAtendimentoEmAndamento(
       linhas.push(
         preencher(
           pedidoDaConsulta.acao === "cancelar"
-            ? pedidoDaConsulta.desfeito === true
-              ? f.pedidoDeCancelarDesfeito
-              : f.pedidoDeCancelar
+            ? pedidoDaConsulta.mudou === true
+              ? f.pedidoDeCancelarMudou
+              : pedidoDaConsulta.desfeito === true
+                ? f.pedidoDeCancelarDesfeito
+                : f.pedidoDeCancelar
             : f.pedidoDeRemarcar,
           `${pedidoDaConsulta.dia} às ${pedidoDaConsulta.hora}`,
         ),

@@ -3067,7 +3067,11 @@ function semFlexaoDoParticipio(texto: string): string {
  * Revisao da AG4 (achado 5): so a pendencia DITA, com a aprovacao ou a
  * equipe junto ("qualquer pendencia, me chame" e "a aprovacao" sozinha nao
  * contam), lida na frase da afirmacao e na frase logo depois dela (nunca na
- * mensagem inteira).
+ * mensagem inteira). Revisao curta das correcoes da AG4 (achado 5): cada
+ * expressao daqui e so o COMECO da conferencia (pendenciaDaRemarcacao): a
+ * frase tem de falar da APROVACAO ("aprov...") e nao pode ser a pendencia
+ * de outra coisa ("ficou pendente so o pagamento", "seu cadastro esta
+ * pendente", "falta a equipe aprovar o seu cadastro").
  */
 const PENDENCIA_DA_REMARCACAO = new RegExp(
   [
@@ -3090,22 +3094,76 @@ const PENDENCIA_DA_REMARCACAO = new RegExp(
 );
 
 /**
+ * Revisao curta das correcoes da AG4 (achado 5): a pendencia que sustenta a
+ * remarcacao fala da APROVACAO ("aprovacao", "aprovar", "aprovada"): "esta
+ * pendente" e "ate a recepcao confirmar" sozinhos nao dizem do que.
+ */
+const APROVACAO_NA_PENDENCIA = /\baprov(?:acao|acoes|ar|a|am|e|em|ad[oa]s?)\b/;
+
+/**
+ * Revisao curta das correcoes da AG4 (achado 5): a frase da pendencia que
+ * fala de OUTRA coisa (o pagamento, o cadastro, um documento, o convenio):
+ * a pendencia dela nao e a da remarcacao, nem na frase da afirmacao nem na
+ * seguinte. Lado seguro: na frase inteira (a remarcacao com a pendencia dita
+ * e o pagamento na mesma frase barra; o verificador continua lendo).
+ */
+const OUTRA_PENDENCIA =
+  /\b(?:cadastros?|pagamentos?|pago|documentos?|documentacao|exames?|guias?|laudos?|receitas?|fichas?|formularios?|cpf|carteirinhas?|convenios?|autorizacao|reembolsos?|orcamentos?|contratos?|boletos?|pix|sinal|depositos?|matriculas?|inscricao|taxas?|multas?)\b/;
+
+/**
+ * Revisao curta das correcoes da AG4 (achado 5): a frase diz a pendencia DA
+ * REMARCACAO? Uma expressao de pendencia, a aprovacao dita na frase, nenhuma
+ * outra coisa pendente nela e nenhuma aprovacao afirmada (nem pendencia
+ * negada).
+ */
+function pendenciaDaRemarcacao(frase: string): boolean {
+  return (
+    PENDENCIA_DA_REMARCACAO.test(frase) &&
+    APROVACAO_NA_PENDENCIA.test(frase) &&
+    !OUTRA_PENDENCIA.test(frase) &&
+    !APROVACAO_AFIRMADA.test(frase)
+  );
+}
+
+/** As palavras que negam o que vem logo depois (APROVACAO_AFIRMADA). */
+const NEGA = "(?:nao|nem|nunca|jamais)";
+
+/**
  * Revisao da AG4 (achado 5): a frase que AFIRMA a aprovacao ou nega a
  * pendencia ("a aprovacao ja saiu", "ja aprovada", "a equipe aprovou",
  * "nao precisa de aprovacao", "sem pendencia"). Com a remarcacao pendente,
  * qualquer uma delas na mensagem barra (a remarcacao ainda nao foi
  * aprovada), e a frase com ela nunca conta como pendencia.
+ *
+ * Revisao curta das correcoes da AG4 (achado 3): a negacao vale. "A
+ * aprovacao ainda nao saiu", "nao veio ainda", "ainda nao tem a aprovacao
+ * da equipe" e "nao ha aprovacao" dizem que a remarcacao CONTINUA pendente
+ * (a resposta certa a "ja aprovaram?") e passam. So barra o que nega a
+ * pendencia ("nao esta pendente", "nao tem nada pendente", "nao ha
+ * pendencia") ou a necessidade da aprovacao ("nao precisa de aprovacao",
+ * "nao depende da equipe").
  */
 const APROVACAO_AFIRMADA = new RegExp(
   [
-    "\\bja\\s+(?:foi\\s+|foram\\s+|esta\\s+|estao\\s+|ficou\\s+)?aprovad[oa]s?\\b",
-    "\\baprovacao\\s+(?:\\w+\\s+){0,3}?(?:ja\\s+)?(?:saiu|veio|chegou|foi dada|foi feita|aconteceu)\\b",
+    "\\bja\\s+(?:foi\\s+|foram\\s+|esta\\s+|estao\\s+|ficou\\s+|ficaram\\s+)?aprovad[oa]s?\\b",
+    // "a aprovacao (da equipe) ja saiu": sem negacao entre a aprovacao e o
+    // verbo ("a aprovacao ainda nao saiu" nao afirma).
+    `\\baprovacao\\s+(?:(?!${NEGA}\\b)\\w+\\s+){0,3}?(?:ja\\s+)?(?:saiu|veio|chegou|foi dada|foi feita|aconteceu)\\b`,
+    // "ja saiu a aprovacao" (sem negacao antes do verbo).
+    `(?<!\\b${NEGA}\\s)\\b(?:ja\\s+)?(?:saiu|veio|chegou)\\s+a\\s+aprovacao\\b`,
     "\\b(?:equipe|clinica|recepcao)\\s+(?:ja\\s+)?(?:aprovou|aprovaram)\\b",
     "\\bja\\s+(?:aprovou|aprovaram)\\b",
-    "(?<!\\bnao\\s)\\b(?:foi|foram|esta|estao|ficou|ficaram|sido)\\s+aprovad[oa]s?\\b",
-    "\\bnao\\s+(?:esta|fica|ficou|precisa|depende|tem|ha|existe)\\s+(?:mais\\s+)?(?:nenhuma\\s+|de\\s+|da\\s+|a\\s+)?(?:pendentes?|pendencia|aprovacao)\\b",
-    "\\bnao\\s+(?:precisa|e preciso|tem que)\\s+(?:\\w+\\s+){0,2}?aprov",
-    "\\b(?:sem|nenhuma)\\s+pendencia\\b",
+    `(?<!\\b${NEGA}\\s)\\b(?:foi|foram|esta|estao|ficou|ficaram|sido)\\s+aprovad[oa]s?\\b`,
+    // Nega a pendencia: "nao esta (mais) pendente", "nao tem nada pendente",
+    // "nao ha nenhuma aprovacao pendente", "nao tem pendencia". "Nao tem a
+    // aprovacao" e "nao ha aprovacao" (sem "pendente") NAO: e a pendencia.
+    "\\bnao\\s+(?:esta|estao|fica|ficam|ficou|ficaram|tem|ha|existe|existem)\\s+(?:mais\\s+)?(?:(?:nada|nenhuma|nenhum)\\s+)?(?:\\w+\\s+){0,2}?(?:pendentes?|pendencias?)\\b",
+    // Nega a necessidade: "nao precisa de aprovacao", "nao precisa ser
+    // aprovada", "nao e preciso aprovar", "nao depende da equipe".
+    "\\bnao\\s+(?:precisa|precisam|e preciso|e necessari[oa]|tem que|tem de)\\s+(?:mais\\s+)?(?:\\w+\\s+){0,3}?aprov",
+    "\\bnao\\s+(?:depende|dependem)\\s+(?:mais\\s+)?(?:de\\s+|da\\s+|do\\s+)?(?:nenhuma\\s+)?(?:\\w+\\s+)?(?:aprov|equipe\\b)",
+    "\\b(?:sem|nenhuma)\\s+pendencias?\\b",
+    "\\bsem\\s+(?:necessidade|precisar)\\s+de\\s+(?:\\w+\\s+)?aprov",
   ].join("|"),
 );
 
@@ -5329,6 +5387,8 @@ export function regrasDosFatos(
   // qualquer lugar da mensagem; a frase que afirma a aprovacao ou nega a
   // pendencia (APROVACAO_AFIRMADA) nunca conta, e com a remarcacao pendente
   // ela barra em qualquer lugar da mensagem ("a aprovacao ja saiu").
+  // Revisao curta das correcoes da AG4 (achado 5): a pendencia tem de falar
+  // da aprovacao, e nunca da de outra coisa (pendenciaDaRemarcacao).
   const paresDaRemarcacao = [
     ...daAcao("remarcou"),
     ...lidos(
@@ -5337,11 +5397,7 @@ export function regrasDosFatos(
   ];
   const pendenciaNaFrase = (indice: number): boolean => {
     const frase = frasesSemDiminutivo[indice];
-    return (
-      frase !== undefined &&
-      PENDENCIA_DA_REMARCACAO.test(frase.texto) &&
-      !APROVACAO_AFIRMADA.test(frase.texto)
-    );
+    return frase !== undefined && pendenciaDaRemarcacao(frase.texto);
   };
   if (acoes.has("remarcou") || remarcadaNestaConversa) {
     const indices = new Set([...alegadas.keys(), ...fatosDaFrase.keys()]);
@@ -5546,6 +5602,13 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   // conversa.
   APROVACAO_AFIRMADA.source,
   "remarcacao_sem_pendencia: a frase que diz que remarcou (acao, ou estado ou fechamento com o par da consulta nova) so com a pendencia nela ou na frase logo depois, sem a aprovacao afirmada; com a remarcacao pendente, a aprovacao afirmada em qualquer frase barra",
+  // Revisao curta das correcoes da AG4 (achados 3 e 5): a negacao da
+  // aprovacao e a pendencia (passam), e a pendencia so com a aprovacao dita
+  // e sem outra coisa pendente na frase.
+  APROVACAO_NA_PENDENCIA.source,
+  OUTRA_PENDENCIA.source,
+  "pendencia da remarcacao: expressao de pendencia, a aprovacao dita na frase, nenhuma outra coisa pendente e nenhuma aprovacao afirmada",
+  "aprovacao afirmada: a negacao entre a aprovacao e o verbo nao afirma; nao ter a aprovacao e a pendencia; nao estar pendente e nao precisar da aprovacao barram",
   "remarcou: tambem a remarcacao pedida nesta conversa e ja aprovada, relida, com o par dela e sem a pendencia",
   "cancelou: tambem a consulta cancelada nesta conversa num turno anterior, relida e ainda cancelada, com o par dela; nunca consulta lida",
   "acao com horario: o anterior so na remarcacao",

@@ -130,7 +130,7 @@ const {
 } = await import("@/components/agenda/appointment-menu");
 const { blocoArrastavel } =
   await import("@/components/agenda/appointment-block");
-const { DialogoDaRemarcacao } =
+const { DialogoDaRemarcacao, remarcacaoNoDialogo } =
   await import("@/components/agenda/dialogo-da-remarcacao");
 const R = await import("@/components/agenda/remarcacao-da-ia");
 const {
@@ -442,9 +442,10 @@ describe("o cartão do Pendente de você", () => {
     const daRemarcacao = cartao(html, "Paciente de Teste");
     expect(texto(daRemarcacao)).toContain("Para 03/11 · 10:00");
     expect(texto(daRemarcacao)).not.toContain("De ");
-    // Atencao em 3 camadas (CircleAlert, o texto e o tom), sem interromper.
+    // Atencao em 3 camadas (CircleAlert, o texto e o tom), sem interromper,
+    // dizendo o que fazer (revisao curta da AG4).
     expect(daRemarcacao).toMatch(
-      /<div role="status" data-tom="warning"[^>]*>(?:(?!<\/div><\/div>).)*lucide-circle-alert(?:(?!<\/div><\/div>).)*Não foi possível carregar a consulta antiga\./,
+      /<div role="status" data-tom="warning"[^>]*>(?:(?!<\/div><\/div>).)*lucide-circle-alert(?:(?!<\/div><\/div>).)*Não foi possível carregar a consulta antiga\. Atualize a página ou abra a consulta para conferir\./,
     );
     // Aprovar e Recusar continuam (o servidor le a antiga de novo).
     const botoes = daRemarcacao.match(/<button[^>]*>/g) ?? [];
@@ -700,7 +701,7 @@ describe("os diálogos da remarcação", () => {
 
   it("a antiga que não carregou (a da Agenda do dia, ou a leitura falhou): o diálogo avisa e o servidor confere", () => {
     const AVISO_NAO_CARREGADA =
-      "Não foi possível carregar a consulta antiga. Ela é conferida de novo quando você confirmar.";
+      "Não foi possível carregar a consulta antiga. Ela é conferida de novo quando você aprovar ou recusar.";
     // A consulta do dia nao traz a antiga (ausente).
     const doDia: ConsultaDaAgenda = { ...remarcacao() };
     delete doDia.antiga;
@@ -732,25 +733,76 @@ describe("os diálogos da remarcação", () => {
     );
   });
 
-  it("o diálogo do menu usa a nova da lista (com a antiga renovada), a guardada só fora dela (revisão, achado 3)", () => {
+  it("o diálogo usa a nova da lista mesmo recebendo a do dia (revisão, achado 3; revisão curta, achado 4)", () => {
+    // A do dia (sem a antiga) e exatamente o que o menu da consulta tem na
+    // mao: o dialogo recebe ela e troca pela da lista pelo contexto. Se o
+    // dialogo usasse a recebida, o texto seria o "sem a antiga", com o aviso
+    // de que ela nao carregou.
+    const doDia: ConsultaDaAgenda = { ...remarcacao() };
+    delete doDia.antiga;
+    function pelaLista(
+      acao: "aprovar" | "recusar",
+      daLista: ConsultaDaAgenda | null,
+    ): string {
+      return comProvedores(
+        <DialogoDaRemarcacao
+          contexto={contexto(true, {
+            remarcacaoNaLista: (id) => (id === NOVA ? daLista : null),
+          })}
+          consulta={doDia}
+          acao={acao}
+          aoFechar={() => undefined}
+        />,
+      );
+    }
+
+    // A antiga cancelada nesse meio chega ao texto pela da lista.
+    const cancelada = pelaLista(
+      "aprovar",
+      remarcacao({ status: "cancelado_paciente" }),
+    );
+    expect(texto(cancelada)).toContain(
+      "A consulta de 29/10 às 14:00 já foi cancelada. Ao aprovar, fica marcada a de 03/11 às 10:00.",
+    );
+    expect(texto(cancelada)).not.toContain("Não foi possível carregar");
+    expect(
+      texto(pelaLista("recusar", remarcacao({ status: "cancelado_paciente" }))),
+    ).toContain(
+      "A consulta de 03/11 às 10:00 é cancelada. A de 29/10 às 14:00 já foi cancelada, e a conversa volta para a equipe avisar o paciente.",
+    );
+    // A antiga atendida nesse meio trava o Aprovar na hora.
+    const atendida = pelaLista("aprovar", remarcacao({ status: "compareceu" }));
+    expect(
+      atendida.match(/<button[^>]*>Aprovar remarcação<\/button>/)?.[0],
+    ).toMatch(/ disabled=""/);
+    expect(atendida).toContain(
+      "A consulta de 29/10 às 14:00 já foi atendida ou teve a falta marcada.",
+    );
+    // Fora da lista (ja tratada), a recebida: sem a antiga, com o aviso.
+    const fora = pelaLista("aprovar", null);
+    expect(texto(fora)).toContain(
+      "A consulta passa para 03/11 às 10:00, e a consulta antiga é cancelada.",
+    );
+    expect(texto(fora)).toContain(
+      "Não foi possível carregar a consulta antiga. Ela é conferida de novo quando você aprovar ou recusar.",
+    );
+  });
+
+  it("quem decide é o diálogo: remarcacaoNoDialogo e a guardada do menu", () => {
     const doDia: ConsultaDaAgenda = { ...remarcacao() };
     delete doDia.antiga;
     const daLista = remarcacao({ status: "cancelado_paciente" });
+    expect(
+      remarcacaoNoDialogo({ remarcacaoNaLista: () => daLista }, doDia),
+    ).toBe(daLista);
+    expect(remarcacaoNoDialogo({ remarcacaoNaLista: () => null }, doDia)).toBe(
+      doDia,
+    );
+    // Fora da Agenda (sem a lista no contexto), a recebida.
+    expect(remarcacaoNoDialogo({}, doDia)).toBe(doDia);
+    // O menu guarda a da lista ao abrir; sem ela, a do dia.
     expect(consultaDaRemarcacaoNoMenu(daLista, doDia)).toBe(daLista);
     expect(consultaDaRemarcacaoNoMenu(null, doDia)).toBe(doDia);
-    // A antiga cancelada nesse meio chega ao texto pelo da lista.
-    expect(
-      texto(dialogo("aprovar", consultaDaRemarcacaoNoMenu(daLista, doDia))),
-    ).toContain(
-      "A consulta de 29/10 às 14:00 já foi cancelada. Ao aprovar, fica marcada a de 03/11 às 10:00.",
-    );
-    // E a antiga atendida nesse meio trava o Aprovar na hora.
-    const atendida = remarcacao({ status: "compareceu" });
-    expect(
-      dialogo("aprovar", consultaDaRemarcacaoNoMenu(atendida, doDia)).match(
-        /<button[^>]*>Aprovar remarcação<\/button>/,
-      )?.[0],
-    ).toMatch(/ disabled=""/);
   });
 });
 
@@ -835,7 +887,7 @@ describe("os textos e os retornos da remarcação", () => {
       "Remarcação aprovada. A consulta de 29/10 às 14:00 foi cancelada.",
     );
     expect(R.sucessoDoRecusar(viva, FUSO)).toBe(
-      "Remarcação recusada. A consulta de 29/10 às 14:00 continua marcada, com o pedido de remarcação: a confirmação automática fica parada até Manter o horário, em Confirmações. Avise o paciente pelo Atendimento.",
+      'Remarcação recusada. A consulta de 29/10 às 14:00 continua marcada, com o pedido de remarcação: a confirmação automática fica parada até alguém usar "Manter o horário", em Confirmações. Avise o paciente pelo Atendimento.',
     );
     expect(R.sucessoDoAprovar(null, FUSO, true)).toBe("Remarcação aprovada.");
     expect(R.sucessoDoRecusar(null, FUSO)).toBe(
@@ -881,7 +933,7 @@ describe("os textos e os retornos da remarcação", () => {
 
   it("recusar diz que a antiga fica com o pedido e sem a confirmação automática, só quando ela continua (revisão, achado 9)", () => {
     const PARADA =
-      "com o pedido de remarcação: a confirmação automática fica parada até Manter o horário, em Confirmações.";
+      'com o pedido de remarcação: a confirmação automática fica parada até alguém usar "Manter o horário", em Confirmações.';
     expect(
       R.sucessoDoRecusar(
         { starts_at: INICIO_DA_ANTIGA, situacao: "viva" },
@@ -927,11 +979,12 @@ describe("os textos e os retornos da remarcação", () => {
       ).toEqual({ tipo: "warning", texto: aviso });
       expect(aviso).toMatch(/^A remarcação foi recusada, mas /);
     }
-    // Sem aviso, o sucesso do servidor, com a antiga.
+    // Sem aviso, o sucesso do servidor, com a antiga, por 10 s (revisao
+    // curta: o texto pede uma acao e sumia nos 4 s do padrao).
     expect(retornoDaPendencia({ ok: true, mensagem }, "recusar", true)).toEqual(
-      { tipo: "success", texto: mensagem },
+      { tipo: "success", texto: mensagem, duracao: 10_000 },
     );
-    // No dialogo, os dois juntos: o sucesso e a atencao.
+    // No dialogo, os dois juntos: o sucesso (10 s) e a atencao.
     expect(
       R.desfechoDaRemarcacao(
         {
@@ -944,7 +997,7 @@ describe("os textos e os retornos da remarcação", () => {
     ).toEqual({
       fechar: true,
       avisos: [
-        { tipo: "success", texto: mensagem },
+        { tipo: "success", texto: mensagem, duracao: 10_000 },
         {
           tipo: "warning",
           texto: R.TEXTOS_DA_REMARCACAO.conversaNaoDevolvida,
@@ -994,7 +1047,7 @@ describe("os textos e os retornos da remarcação", () => {
     ).toEqual({
       fechar: true,
       avisos: [
-        { tipo: "success", texto: "M." },
+        { tipo: "success", texto: "M.", duracao: 10_000 },
         { tipo: "warning", texto: "Avise por telefone." },
       ],
     });
@@ -1004,6 +1057,7 @@ describe("os textos e os retornos da remarcação", () => {
         {
           tipo: "success",
           texto: "Remarcação recusada. Avise o paciente pelo Atendimento.",
+          duracao: 10_000,
         },
       ],
     });

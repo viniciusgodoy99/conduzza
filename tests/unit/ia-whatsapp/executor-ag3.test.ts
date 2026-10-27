@@ -469,6 +469,82 @@ describe("o estado lido no começo e gravado antes de decidir", () => {
   });
 });
 
+describe("revisao curta das correcoes da AG4: a mensagem nova da pessoa no meio do turno", () => {
+  it("o turno que para sem enviar (mensagem_nova_do_paciente): grava o estado do comeco, nada sai, nada passa, e as lidas dele nao contam como respondidas", async () => {
+    const { idsRespondidos } = await import("@/lib/agente/historico");
+    const armado = {
+      ...estadoVazio(),
+      etapa: "cancelar" as const,
+      intencao: "cancelar" as const,
+      pedido_pendente: "cancelar" as const,
+      pedido_pendente_em: "2026-10-13T14:57:00.000Z",
+      appointment_id: "a1a1a1a1-0000-4000-8000-000000000001",
+    };
+    let gravado: unknown = null;
+    banco.rpc("gravar_atendimento_da_ia", (args) => {
+      gravado = args.p_estado;
+      return { data: { ok: true, versao: 1, reutilizado: false }, error: null };
+    });
+    turno.mockImplementation(async () => ({
+      ...COMUM,
+      trilha: [
+        {
+          tipo: "agenda" as const,
+          texto:
+            "Não cancelou a consulta: a pessoa mandou outra mensagem enquanto o assistente respondia. Nada foi enviado; a próxima resposta lê a mensagem nova.",
+        },
+      ],
+      tipo: "frase_fixa",
+      resposta: FRASE_DE_ESCALONAMENTO,
+      desfecho: { tipo: "falhou", motivo: "sem_mensagem" },
+      filtro: null,
+      rascunhoBloqueado: null,
+      atendimento: {
+        estado: armado,
+        dados: {
+          nome_completo: false,
+          data_nascimento: false,
+          cpf: false,
+          carteirinha: false,
+          para_o_titular: null,
+          faltam: [],
+        },
+      },
+      notaParaAEquipe: null,
+    }));
+    expect(await rodar()).toEqual({ ok: true });
+    expect(gravado).toEqual(armado);
+    expect(enviarResposta).not.toHaveBeenCalled();
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(passagens).toEqual([]);
+    expect(conversa().status).toBe("ia_atendendo");
+    expect(
+      banco.linhas("message").filter((m) => m.is_internal_note === true),
+    ).toEqual([]);
+    const turnoDoJob = banco.linhas("ai_turno").find((t) => t.job_id === JOB);
+    expect(turnoDoJob).toMatchObject({ estado: "sem_envio", saida: "nenhuma" });
+    expect(banco.linhas("ai_decision_log")[0]).toMatchObject({
+      desfecho: "falhou",
+      escalation_reason: null,
+      motivo_da_falha: "sem_mensagem",
+    });
+    // O proximo job le de novo as mensagens que este leu (o turno sem envio
+    // nao as respondeu) junto da mensagem nova.
+    expect(
+      idsRespondidos(
+        [
+          {
+            job_id: JOB,
+            estado: String(turnoDoJob?.estado),
+            mensagens_lidas: ["m1"],
+          },
+        ],
+        "20000000-0000-4000-8000-000000000002",
+      ).has("m1"),
+    ).toBe(false);
+  });
+});
+
 describe("a nota para a equipe na passagem (item 8)", () => {
   it("vai como nota interna, pelo caminho da automação: sistema, sem job e sem custo", async () => {
     turno.mockImplementation(async () => escalou());

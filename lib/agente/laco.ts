@@ -1223,7 +1223,13 @@ export async function executarTurnoDoAgente(
     return resultado;
   }
   try {
-    const passou = resultado.tipo === "frase_fixa";
+    // Revisao curta das correcoes da AG4 (achado 1): o turno sem mensagem a
+    // responder (inclusive a mensagem nova da pessoa no meio do turno) nao
+    // sai e nao passa para a equipe (o executor fecha sem envio).
+    const semEnvio =
+      resultado.desfecho.tipo === "falhou" &&
+      resultado.desfecho.motivo === "sem_mensagem";
+    const passou = resultado.tipo === "frase_fixa" && !semEnvio;
     const atendimento = agendaDoTurno.fechar({
       mensagemFinal: resultado.tipo === "resposta" ? resultado.resposta : null,
       passou,
@@ -1747,6 +1753,16 @@ async function turnoDoAgente(
         if (efeito.tipo === "liberacao_suspensa") {
           trilha.push({ tipo: "agenda", texto: efeito.passo });
           return falhar("liberacao_suspensa");
+        }
+        if (efeito.tipo === "mensagem_nova") {
+          // Revisao curta das correcoes da AG4 (achado 1): a pessoa escreveu
+          // de novo enquanto o turno rodava (mensagem_nova_do_paciente do
+          // banco). Nada sai e a conversa NAO passa para a equipe: o desfecho
+          // e o de "sem mensagem" (o executor fecha o turno sem envio e
+          // conclui o job), e o proximo job responde lendo a mensagem nova.
+          // O estado fica como no comeco (AgendaDoTurno.fechar).
+          trilha.push({ tipo: "agenda", texto: efeito.passo });
+          return fraseFixa({ tipo: "falhou", motivo: "sem_mensagem" });
         }
         if (efeito.tipo === "passar") {
           // AG3 (D-8): a consulta e para outra pessoa, ou o paciente e menor

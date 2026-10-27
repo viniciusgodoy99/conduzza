@@ -9,7 +9,10 @@ import { BloquearHorarioDialog } from "@/components/agenda/bloquear-horario-dial
 import { horarioDoVao } from "@/components/agenda/bloqueio-comum";
 import { DayGrid } from "@/components/agenda/day-grid";
 import { FilterBar } from "@/components/agenda/filter-bar";
-import { PendingPanel } from "@/components/agenda/pending-panel";
+import {
+  estadoDasPendencias,
+  PendingPanel,
+} from "@/components/agenda/pending-panel";
 import { WeekGrid } from "@/components/agenda/week-grid";
 import {
   FILTROS_VAZIOS,
@@ -88,7 +91,12 @@ export function AgendaClient({
   diaInicial: string;
   catalogoInicial: Catalogo;
   diaInicialDados: AgendaDia;
-  pendenciasIniciais: ConsultaDaAgenda[];
+  /**
+   * A lista do "Pendente de você" lida no servidor; null quando a leitura
+   * falhou (revisao curta da AG4): o cliente le de novo, e so o painel
+   * mostra carregando ou erro.
+   */
+  pendenciasIniciais: ConsultaDaAgenda[] | null;
   podeEditar: boolean;
   dica: string;
   podeEditarCadastros?: boolean;
@@ -129,7 +137,12 @@ export function AgendaClient({
   // da visita anterior (initialData so vale na criacao da entrada).
   useDadosDoServidor(catalogoKeys.tudo(clinicId), catalogoInicial);
   useDadosDoServidor(agendaKeys.dia(clinicId, diaInicial), diaInicialDados);
-  useDadosDoServidor(agendaKeys.pendencias(clinicId), pendenciasIniciais);
+  // Sem a lista do servidor (null), nada e gravado no cache: a consulta
+  // abaixo le de novo na montagem.
+  useDadosDoServidor(
+    agendaKeys.pendencias(clinicId),
+    pendenciasIniciais ?? undefined,
+  );
 
   const catalogoQuery = useQuery({
     queryKey: catalogoKeys.tudo(clinicId),
@@ -155,7 +168,7 @@ export function AgendaClient({
   const pendenciasQuery = useQuery({
     queryKey: agendaKeys.pendencias(clinicId),
     queryFn: () => fetchPendencias(supabase, clinicId),
-    initialData: pendenciasIniciais,
+    initialData: pendenciasIniciais ?? undefined,
     staleTime: 30_000,
   });
 
@@ -466,6 +479,8 @@ export function AgendaClient({
         <PendingPanel
           contexto={contexto}
           pendencias={pendenciasQuery.data ?? []}
+          estado={estadoDasPendencias(pendenciasQuery)}
+          aoTentarDeNovo={() => void pendenciasQuery.refetch()}
         />
       </div>
 

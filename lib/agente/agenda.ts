@@ -31,6 +31,7 @@ import type {
   PortaDaAgenda,
   ReservaLida,
   ReservaVivaDaConversa,
+  SaidaAntesDaResposta,
 } from "./ferramentas/agenda-do-turno";
 import {
   lerRespostaDoCancelamento,
@@ -1187,6 +1188,112 @@ export async function cancelarConsultaPelaIa(
   return lida;
 }
 
+type LinhaDaSaida = {
+  author?: unknown;
+  content_type?: unknown;
+  body?: unknown;
+  delivery_status?: unknown;
+  created_at?: unknown;
+};
+
+/**
+ * Revisao curta das correcoes da AG4 (achados 2 e 8): a ultima mensagem de
+ * SAIDA antes da ultima mensagem do paciente na conversa, como o banco
+ * confere a ancora do "sim" (cancelar_consulta_pela_ia e agendar_pela_ia):
+ * a ultima mensagem do paciente (direction entrada, author paciente) e a
+ * saida mais nova antes dela, pela ordem REAL (created_at), contando toda
+ * saida que nao e evento nem nota interna, de qualquer autor e em qualquer
+ * situacao de entrega (a apagada e a resposta automatica do WhatsApp
+ * Business inclusive: o historico do modelo tira as duas, o banco conta).
+ * O corpo vem ORIGINAL, sem a mascara do nome: so o turno le, para conferir
+ * a frase fixa (T1 ou T3); nunca vai ao modelo nem a log. `empate`: outra
+ * saida no MESMO instante que nao e da IA ou que falhou (o banco conta como
+ * outra no meio). null: sem mensagem do paciente, ou sem saida antes dela.
+ * Lanca na leitura que falha ou passa do prazo.
+ */
+export async function lerSaidaAntesDaRespostaDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+): Promise<SaidaAntesDaResposta | null> {
+  const corrida = await correrComPrazo(async () => {
+    const ultima = await admin
+      .from("message")
+      .select("created_at")
+      .eq("clinic_id", ids.clinicId)
+      .eq("conversation_id", ids.conversationId)
+      .eq("direction", "entrada")
+      .eq("author", "paciente")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (ultima.error) {
+      throw new Error("leitura");
+    }
+    const sim = ((ultima.data ?? []) as { created_at?: unknown }[])[0]
+      ?.created_at;
+    if (typeof sim !== "string") {
+      return null;
+    }
+    const saidas = await admin
+      .from("message")
+      .select("author, content_type, body, delivery_status, created_at")
+      .eq("clinic_id", ids.clinicId)
+      .eq("conversation_id", ids.conversationId)
+      .eq("direction", "saida")
+      .eq("is_internal_note", false)
+      .neq("content_type", "evento")
+      .lt("created_at", sim)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(2);
+    if (saidas.error) {
+      throw new Error("leitura");
+    }
+    return (saidas.data ?? []) as LinhaDaSaida[];
+  }, PRAZO_DA_AGENDA_MS);
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "saida_antes_da_resposta", corrida.tipo);
+  }
+  const linhas = corrida.valor;
+  const primeira = linhas?.[0];
+  if (linhas === null || primeira === undefined) {
+    return null;
+  }
+  const autoria =
+    primeira.author === "ia" ||
+    primeira.author === "usuario" ||
+    primeira.author === "sistema"
+      ? primeira.author
+      : null;
+  const daIaEntregue = (l: LinhaDaSaida) =>
+    l.author === "ia" && l.delivery_status !== "falhou";
+  const segunda = linhas[1];
+  const instante = (l: LinhaDaSaida) =>
+    typeof l.created_at === "string" ? Date.parse(l.created_at) : Number.NaN;
+  const mesmoInstante =
+    segunda !== undefined &&
+    Number.isFinite(instante(primeira)) &&
+    instante(segunda) === instante(primeira);
+  return {
+    autoria,
+    texto:
+      primeira.content_type === "texto" &&
+      typeof primeira.body === "string" &&
+      primeira.body.trim() !== ""
+        ? primeira.body
+        : null,
+    falhou: primeira.delivery_status === "falhou",
+    empate:
+      mesmoInstante &&
+      !(daIaEntregue(primeira) && daIaEntregue(segunda)),
+    // Contrato da frente de banco (R8): a validade conta da pergunta.
+    criadaEm:
+      typeof primeira.created_at === "string" &&
+      Number.isFinite(Date.parse(primeira.created_at))
+        ? primeira.created_at
+        : null,
+  };
+}
+
 /**
  * A porta do turno do WhatsApp (lib/jobs/responder-com-ia.ts): a Agenda de
  * verdade e as RPCs com o job_id do turno.
@@ -1221,6 +1328,8 @@ export function portaDaAgendaDoWhatsapp(
       lerConsultasDoContatoDaIa(admin, ids, ids.agora(), apenas),
     cancelarConsulta: (appointmentId) =>
       cancelarConsultaPelaIa(admin, ids, appointmentId),
+    // Revisao curta das correcoes da AG4 (achados 2 e 8).
+    lerSaidaAntesDaResposta: () => lerSaidaAntesDaRespostaDaIa(admin, ids),
   };
 }
 

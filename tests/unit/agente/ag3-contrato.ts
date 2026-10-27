@@ -27,6 +27,32 @@ import { UNID } from "./cadastro-fixtures";
 // inicio da consulta futura ativa do mesmo procedimento) e o agendar recebe
 // p_slot_hold_id (a reserva da pergunta "Confirma"): com a viva diferente,
 // reserva_diferente.
+//
+// Revisao curta das correcoes da AG4 (contrato-mudancas R7, R9 e R10, a
+// frente de banco): com a conversa (`conversa`) e as lidas do job
+// (`lidas`), o agendar confere tambem, depois de faltam_dados e antes de
+// marcar, mensagem_nova_do_paciente (R7) e a ancora forte (R9: a ultima
+// saida antes da ultima mensagem do paciente e a resposta da IA, nao
+// falhada, depois da reserva). Sem elas, como antes.
+
+/**
+ * Revisao da AG4: uma mensagem da conversa como o banco guarda, na ordem
+ * (direction, author, created_at e se a entrega falhou). Evento e nota
+ * interna nao entram (o banco nao os conta como saida). Revisao curta das
+ * correcoes: o id (as lidas do job), se foi apagada (R7) e o job que a
+ * escreveu (a resposta da IA; R8).
+ */
+export type MensagemNoBanco = {
+  id?: string;
+  direcao: "entrada" | "saida";
+  autor: "paciente" | "ia" | "usuario" | "sistema";
+  /** created_at (ms). */
+  em: number;
+  falhou?: boolean;
+  apagada?: boolean;
+  /** message.job_id (a resposta da IA sai com o job do turno). */
+  job?: string;
+};
 
 export type OpcoesDoContrato = {
   catalogo: CatalogoDoAgente;
@@ -35,7 +61,120 @@ export type OpcoesDoContrato = {
   agora: () => number;
   /** Uma recusa forcada do agendar (o primeiro motivo da ordem do banco). */
   recusarAgendar?: string | null;
+  /**
+   * Revisao da AG4: a conversa como o banco guarda (a ancora forte do "sim").
+   * Ausente: a ancora nao e conferida.
+   */
+  conversa?: () => readonly MensagemNoBanco[];
+  /**
+   * Revisao curta das correcoes da AG4: os ids das mensagens do paciente
+   * que o job leu (ai_turno.mensagens_lidas). Ausente (ou sem as do job):
+   * mensagem_nova_do_paciente nao e conferida.
+   */
+  lidas?: (jobId: string) => readonly string[] | undefined;
 };
+
+/**
+ * Revisao da AG4 (R2 e R3; revisao curta, R9 na marcacao): a ancora forte.
+ * A ULTIMA mensagem do paciente na conversa; a ultima SAIDA antes dela (de
+ * qualquer autor, em qualquer situacao de entrega) tem de ser da IA, nao
+ * falhada e gravada depois de `desde` (o instante do pedido, ou a reserva).
+ * Sem mensagem do paciente: nao. Sem a conversa: sem conferir (como antes
+ * da revisao).
+ */
+export function ancoraForte(
+  conversa: readonly MensagemNoBanco[] | undefined,
+  desde: number | null,
+): boolean {
+  if (conversa === undefined) {
+    return true;
+  }
+  let ultimaDoPaciente = -1;
+  conversa.forEach((m, i) => {
+    if (m.direcao === "entrada" && m.autor === "paciente") {
+      ultimaDoPaciente = i;
+    }
+  });
+  if (ultimaDoPaciente < 0 || desde === null) {
+    return false;
+  }
+  const saida = conversa
+    .slice(0, ultimaDoPaciente)
+    .filter((m) => m.direcao === "saida")
+    .at(-1);
+  return (
+    saida !== undefined &&
+    saida.autor === "ia" &&
+    saida.falhou !== true &&
+    saida.em > desde
+  );
+}
+
+/**
+ * Revisao curta das correcoes da AG4 (R8): a pergunta respondida
+ * (v_pergunta): a ULTIMA resposta da IA (saida, nao falhada) gravada depois
+ * de `desde` (o instante do pedido, ou a reserva) e antes da ultima mensagem
+ * do paciente. null: nao ha (sem conversa, sem mensagem do paciente, sem
+ * resposta da IA no intervalo).
+ */
+export function perguntaRespondida(
+  conversa: readonly MensagemNoBanco[] | undefined,
+  desde: number | null,
+): MensagemNoBanco | null {
+  if (conversa === undefined || desde === null) {
+    return null;
+  }
+  const sim = conversa
+    .filter((m) => m.direcao === "entrada" && m.autor === "paciente")
+    .at(-1)?.em;
+  if (sim === undefined) {
+    return null;
+  }
+  return (
+    conversa
+      .filter(
+        (m) =>
+          m.direcao === "saida" &&
+          m.autor === "ia" &&
+          m.falhou !== true &&
+          m.em > desde &&
+          m.em < sim,
+      )
+      .at(-1) ?? null
+  );
+}
+
+/**
+ * Revisao curta das correcoes da AG4 (R7): a pessoa escreveu (ou apagou)
+ * depois que o job leu as pendentes. As conferidas: as mensagens do paciente
+ * do instante da ultima em diante (empate, todas) ou depois da pergunta
+ * respondida; recusa se alguma NAO apagada esta fora das lidas (chegou
+ * depois da leitura) ou alguma APAGADA esta dentro delas (o paciente apagou
+ * o que o modelo leu). A apagada que o job nao leu nao conta. Sem a conversa
+ * ou sem as lidas: nao confere.
+ */
+export function mensagemNovaDoPaciente(
+  conversa: readonly MensagemNoBanco[] | undefined,
+  lidas: readonly string[] | undefined,
+  pergunta: MensagemNoBanco | null = null,
+): boolean {
+  if (conversa === undefined || lidas === undefined) {
+    return false;
+  }
+  const doPaciente = conversa.filter(
+    (m) => m.direcao === "entrada" && m.autor === "paciente",
+  );
+  const sim = doPaciente.at(-1)?.em;
+  if (sim === undefined) {
+    return false;
+  }
+  return doPaciente
+    .filter((m) => m.em >= sim || (pergunta !== null && m.em > pergunta.em))
+    .some((m) => {
+      const lida = lidas.includes(m.id ?? "");
+      return m.apagada === true ? lida : !lida;
+    });
+}
 
 /** A jornada com unidades: a Dra. Ana de manha na Aldeota e a tarde no Centro. */
 export function bancoDaAg3(): AgendaEmMemoria {
@@ -207,6 +346,8 @@ export function rpcsDaAg3(banco: AgendaEmMemoria, opcoes: OpcoesDoContrato) {
       starts_at: inicio,
       ends_at: fim,
       expires_at: new Date(agora + 10 * 60_000).toISOString(),
+      // Revisao curta das correcoes da AG4: a ancora forte do agendar.
+      created_at: new Date(agora).toISOString(),
       consumido_em: null,
     };
     banco.inserir("slot_hold", hold);
@@ -371,6 +512,30 @@ export function rpcsDaAg3(banco: AgendaEmMemoria, opcoes: OpcoesDoContrato) {
     const faltam = faltamPara(dados, viva.service_link_id);
     if (faltam.length > 0) {
       return { data: { ok: false, motivo: "faltam_dados", faltam }, error: null };
+    }
+    // Revisao curta das correcoes da AG4 (R7 e R9, R10 na ordem): com a
+    // conversa e as lidas, a mensagem nova do paciente e a ancora forte
+    // (depois da reserva), as ultimas conferencias antes de marcar.
+    const desde =
+      typeof viva.created_at === "string" ? Date.parse(viva.created_at) : null;
+    const conversa = opcoes.conversa?.();
+    if (
+      mensagemNovaDoPaciente(
+        conversa,
+        opcoes.lidas?.(String(args.p_job_id)),
+        perguntaRespondida(conversa, desde),
+      )
+    ) {
+      return {
+        data: { ok: false, motivo: "mensagem_nova_do_paciente" },
+        error: null,
+      };
+    }
+    if (!ancoraForte(conversa, desde)) {
+      return {
+        data: { ok: false, motivo: "sem_confirmacao_do_paciente" },
+        error: null,
+      };
     }
     const consulta: Linha = {
       id: randomUUID(),

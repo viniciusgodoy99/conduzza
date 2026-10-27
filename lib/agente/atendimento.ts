@@ -961,9 +961,24 @@ export const RESULTADOS_QUE_AVANCAM: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Revisao curta das correcoes da AG4 (achado 2): as falhas que o avanco do
+ * MESMO turno nao apaga. A pergunta do turno anterior (T1 ou T3) que nao
+ * conferiu, ou que o banco nao viu respondida logo depois dela: o sistema
+ * pergunta de novo, e na remarcacao o modelo reserva de novo ("reservado"
+ * avanca). Sem isto, a pergunta que nunca confere virava um laco sem fim
+ * (cada turno zerava o contador); com isto, a segunda seguida passa para a
+ * equipe.
+ */
+export const FALHAS_QUE_O_AVANCO_NAO_APAGA: ReadonlySet<string> = new Set([
+  "resposta_fora_da_pergunta",
+]);
+
+/**
  * O contador depois do turno: avanco zera; falha sem avanco soma um; o
  * turno que usou ferramenta sem nenhuma falha tambem zera (a conversa
  * andou); o turno sem ferramenta (so conversa) nao muda o contador.
+ * Revisao curta das correcoes da AG4 (achado 2): a falha de
+ * FALHAS_QUE_O_AVANCO_NAO_APAGA soma um mesmo com avanco no turno.
  */
 export function falhasDepoisDoTurno(
   anterior: number,
@@ -971,6 +986,9 @@ export function falhasDepoisDoTurno(
 ): number {
   const avancou = resultados.some((r) => RESULTADOS_QUE_AVANCAM.has(r));
   const falhou = resultados.some((r) => RESULTADOS_QUE_SAO_FALHA.has(r));
+  if (resultados.some((r) => FALHAS_QUE_O_AVANCO_NAO_APAGA.has(r))) {
+    return Math.min(MAXIMO_DE_FALHAS_NO_ESTADO, anterior + 1);
+  }
   if (avancou) {
     return 0;
   }

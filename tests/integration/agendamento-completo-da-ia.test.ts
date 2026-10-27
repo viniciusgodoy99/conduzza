@@ -32,6 +32,12 @@ import { adminClient, anonClient } from "../rls/stack";
 // - a leitura dos dados pelo servidor grava a trilha sem usuario e sem
 //   conteudo; o primeiro rascunho de uma clinica nasce com o padrao do dono
 //   (nome completo e nascimento, sem CPF);
+// - [revisao curta da AG4, B3: DECISAO DO DONO A CONFIRMAR] a marcacao (o
+//   agendar sem p_remarcar) com a ancora forte da AG4: outra saida (uma
+//   automatica, a equipe) entre a pergunta e o "sim" barra
+//   (sem_confirmacao_do_paciente) e a mensagem do paciente que o job nao leu
+//   tambem (mensagem_nova_do_paciente); o agendar grava antes a linha do
+//   turno do job (ai_turno.mensagens_lidas), como o motor;
 // - a revisao final (27/10/2026): o "sim" para a reserva que outro turno
 //   trocou (agendar com p_slot_hold_id) recusa reserva_diferente sem gravar
 //   nada, e com a reserva viva marca; o reservar ja recusa ja_tem_consulta
@@ -294,12 +300,44 @@ async function reservar(
   return rpcOk<Resposta>("reservar_horario_da_ia", args);
 }
 
+/**
+ * [revisao curta da AG4] O job leu a conversa, como o motor antes de chamar
+ * o modelo: as mensagens do paciente (nao apagadas) vao para
+ * ai_turno.mensagens_lidas da linha do turno do job (o agendar confere).
+ */
+async function leu(jobId: string, conversa: string): Promise<void> {
+  const { data } = await admin
+    .from("message")
+    .select("id")
+    .eq("conversation_id", conversa)
+    .eq("direction", "entrada")
+    .eq("author", "paciente")
+    .is("deleted_at", null)
+    .order("created_at")
+    .throwOnError();
+  await admin
+    .from("ai_turno")
+    .upsert(
+      {
+        job_id: jobId,
+        clinic_id: clinica,
+        conversation_id: conversa,
+        estado: "reservado",
+        mensagens_lidas: (data as { id: string }[]).map((m) => m.id),
+      },
+      { onConflict: "job_id" },
+    )
+    .throwOnError();
+}
+
 /** O agendar; reserva undefined = os 3 parametros do codigo de hoje. */
 async function agendar(conversa: string, reserva?: string): Promise<Resposta> {
+  const jobId = crypto.randomUUID();
+  await leu(jobId, conversa);
   const args: Record<string, unknown> = {
     p_clinic_id: clinica,
     p_conversation_id: conversa,
-    p_job_id: crypto.randomUUID(),
+    p_job_id: jobId,
   };
   if (reserva !== undefined) {
     args.p_slot_hold_id = reserva;
@@ -1339,6 +1377,7 @@ describe("os casos que faltavam (revisão curta da AG3, 33.14)", () => {
     jobId: string,
     reserva?: string,
   ): Promise<Resposta> {
+    await leu(jobId, conversa);
     const args: Record<string, unknown> = {
       p_clinic_id: clinica,
       p_conversation_id: conversa,
@@ -1547,5 +1586,132 @@ describe("os casos que faltavam (revisão curta da AG3, 33.14)", () => {
       },
     );
     expect(lido.dados).toMatchObject({ para_o_titular: null });
+  });
+});
+
+// [revisao curta da AG4] B3 (DECISAO DO DONO A CONFIRMAR): a ancora forte e
+// a mensagem nova tambem na marcacao (o agendar sem p_remarcar). Dia + 5,
+// horarios que nenhum outro caso usa.
+describe("[revisão curta da AG4, B3] a marcação com a âncora forte e a mensagem que o job leu", () => {
+  const em = (hora: string): string => noDia(5, hora);
+
+  async function prontoParaMarcar(
+    conversa: string,
+    hora: string,
+  ): Promise<string> {
+    expect(
+      await registrar(conversa, {
+        nome: "Paciente Integração Dez",
+        nascimento: NASCIMENTO_DE_ADULTO,
+      }),
+    ).toMatchObject({ ok: true, faltam: [] });
+    const reserva = await rpcOk<Resposta>("reservar_horario_da_ia", {
+      p_clinic_id: clinica,
+      p_conversation_id: conversa,
+      p_service_link_id: lAna,
+      p_starts_at: em(hora),
+      p_job_id: crypto.randomUUID(),
+    });
+    expect(reserva).toMatchObject({ ok: true });
+    return reserva.hold_id!;
+  }
+
+  async function saida(
+    conversa: string,
+    author: "ia" | "sistema",
+  ): Promise<void> {
+    await admin
+      .from("message")
+      .insert({
+        clinic_id: clinica,
+        conversation_id: conversa,
+        direction: "saida",
+        author,
+        content_type: "texto",
+        body:
+          author === "ia"
+            ? "Pergunta sintética da IA"
+            : "Mensagem sintética automática",
+      })
+      .throwOnError();
+  }
+
+  async function doPaciente(conversa: string): Promise<void> {
+    await admin
+      .from("message")
+      .insert({
+        clinic_id: clinica,
+        conversation_id: conversa,
+        direction: "entrada",
+        author: "paciente",
+        content_type: "texto",
+        body: "Mensagem sintética de confirmação",
+      })
+      .throwOnError();
+  }
+
+  async function marcadasPelaIa(conversa: string): Promise<number> {
+    const { count } = await admin
+      .from("appointment")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", clinica)
+      .eq("created_by", "ia")
+      .eq(
+        "contact_id",
+        (
+          (
+            await admin
+              .from("conversation")
+              .select("contact_id")
+              .eq("id", conversa)
+              .single()
+              .throwOnError()
+          ).data as { contact_id: string }
+        ).contact_id,
+      )
+      .throwOnError();
+    return count ?? 0;
+  }
+
+  it("uma automática entre a pergunta e o sim barra (sem_confirmacao_do_paciente), nada é marcado; a IA pergunta de novo e o sim marca", async () => {
+    const { conversa } = await novaConversa();
+    const reserva = await prontoParaMarcar(conversa, "09:00");
+    await saida(conversa, "ia");
+    await saida(conversa, "sistema");
+    await doPaciente(conversa);
+    expect(await agendar(conversa, reserva)).toEqual({
+      ok: false,
+      motivo: "sem_confirmacao_do_paciente",
+    });
+    expect(await marcadasPelaIa(conversa)).toBe(0);
+    await saida(conversa, "ia");
+    await doPaciente(conversa);
+    expect(await agendar(conversa, reserva)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+    });
+  });
+
+  it("a mensagem do paciente que o job não leu: mensagem_nova_do_paciente, nada é marcado; o turno seguinte lê e marca", async () => {
+    const { conversa } = await novaConversa();
+    const reserva = await prontoParaMarcar(conversa, "10:00");
+    await saida(conversa, "ia");
+    await doPaciente(conversa);
+    const jobId = crypto.randomUUID();
+    await leu(jobId, conversa);
+    await doPaciente(conversa);
+    expect(
+      await rpcOk<Resposta>("agendar_pela_ia", {
+        p_clinic_id: clinica,
+        p_conversation_id: conversa,
+        p_job_id: jobId,
+        p_slot_hold_id: reserva,
+      }),
+    ).toEqual({ ok: false, motivo: "mensagem_nova_do_paciente" });
+    expect(await marcadasPelaIa(conversa)).toBe(0);
+    expect(await agendar(conversa, reserva)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+    });
   });
 });

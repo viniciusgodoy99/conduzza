@@ -72,7 +72,10 @@ export const FERRAMENTA_CANCELAR_CONSULTA: FunctionTool = {
  * pedido vencido (revisao da AG4: a pergunta vale 60 minutos; o motor
  * pergunta de novo) e a mensagem do paciente logo depois da pergunta
  * (revisao da AG4: a ultima saida antes da ultima mensagem do paciente tem
- * de ser a pergunta da IA, a ancora forte).
+ * de ser a pergunta da IA, a ancora forte). Revisao curta das correcoes da
+ * AG4: mensagem_nova_do_paciente (a ultima mensagem do paciente nao esta
+ * entre as que o job leu, ai_turno.mensagens_lidas): o turno para sem
+ * enviar nada e o proximo le a mensagem nova.
  */
 export const MOTIVOS_DO_CANCELAMENTO = [
   "ia_desligada",
@@ -86,6 +89,7 @@ export const MOTIVOS_DO_CANCELAMENTO = [
   "fora_do_prazo",
   "consulta_mudou",
   "pedido_vencido",
+  "mensagem_nova_do_paciente",
   "sem_confirmacao_do_paciente",
 ] as const;
 

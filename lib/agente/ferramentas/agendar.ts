@@ -59,6 +59,10 @@ export const MOTIVOS_DO_AGENDAR = [
   // Revisao final da AG3: a reserva viva e outra, nao a perguntada.
   "reserva_diferente",
   "sem_confirmacao_do_paciente",
+  // Revisao curta das correcoes da AG4 (com e sem p_remarcar): a ultima
+  // mensagem do paciente nao esta entre as que o job leu; o turno para sem
+  // enviar nada e o proximo le a mensagem nova.
+  "mensagem_nova_do_paciente",
   "conflito",
   ...MOTIVOS_DA_CONFERENCIA,
   // AG3, na ordem da RPC.

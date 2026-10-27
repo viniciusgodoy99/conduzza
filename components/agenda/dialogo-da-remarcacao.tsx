@@ -12,6 +12,7 @@ import {
   antigaNaoCarregada,
   avisoDaAntigaQueJaPassou,
   desfechoDaRemarcacao,
+  duracaoDoToast,
   erroDaAntigaEncerrada,
   situacaoDaAntiga,
   textoDoAprovar,
@@ -38,11 +39,13 @@ import type { ConsultaDaAgenda } from "@/lib/queries/agenda";
 // "Aprovar a remarcação?" e "Recusar a remarcação?" (AG4, desenho da secao
 // 5), o mesmo dialogo no painel "Pendente de você" e no menu da consulta. A
 // remarcacao e a consulta NOVA que a IA pediu, pendente e ligada a antiga.
-// A antiga vem da lista do "Pendente de você" (lida a parte; o painel e o
-// menu passam a consulta da lista, que o tempo real renova), e o dialogo a
-// le a cada render: a antiga cancelada ou atendida nesse meio muda o texto e
-// o Aprovar na hora (revisao da AG4, achado 3). Se a antiga nao carregou, o
-// dialogo diz isso e o servidor confere de novo ao confirmar.
+// A antiga vem da lista do "Pendente de você" (lida a parte, que o tempo
+// real renova), e o dialogo a le a cada render: a antiga cancelada ou
+// atendida nesse meio muda o texto e o Aprovar na hora (revisao da AG4,
+// achado 3). Quem pega a da lista e o proprio dialogo (remarcacaoNoDialogo,
+// pelo contexto da Agenda; revisao curta da AG4, achado 4): o painel e o
+// menu so passam a que guardaram ao abrir. Se a antiga nao carregou, o
+// dialogo diz isso e o servidor confere de novo ao aprovar ou recusar.
 //
 // - Aprovar: a frase do que acontece com as duas consultas (a antiga e
 //   cancelada; o horario dela volta a lista de espera so se ainda for futuro)
@@ -69,31 +72,54 @@ import type { ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 function mostrar(avisos: readonly AvisoDaRemarcacao[]): void {
   for (const aviso of avisos) {
-    if (aviso.tipo === "success") {
-      toast.success(aviso.texto);
-    } else if (aviso.tipo === "info") {
-      toast.info(aviso.texto);
-    } else if (aviso.tipo === "warning") {
-      // O que a recepcao precisa fazer (avisar por telefone, abrir a
-      // conversa): mais tempo na tela.
-      toast.warning(aviso.texto, { duration: 10_000 });
+    // O que a recepcao precisa fazer (avisar o paciente, abrir a conversa, o
+    // "Manter o horário" da recusa): mais tempo na tela (duracaoDoToast).
+    const duracao = duracaoDoToast(aviso);
+    const opcoes = duracao === undefined ? null : { duration: duracao };
+    const exibir =
+      aviso.tipo === "success"
+        ? toast.success
+        : aviso.tipo === "info"
+          ? toast.info
+          : aviso.tipo === "warning"
+            ? toast.warning
+            : toast.error;
+    if (opcoes) {
+      exibir(aviso.texto, opcoes);
     } else {
-      toast.error(aviso.texto);
+      exibir(aviso.texto);
     }
   }
 }
 
+/**
+ * A remarcacao que o dialogo mostra: a nova como esta AGORA na lista do
+ * "Pendente de você" (contexto.remarcacaoNaLista, com a antiga lida a parte,
+ * que o tempo real renova); a recebida so quando ela ja saiu da lista (ja
+ * tratada, ou a lista ainda nao chegou) ou fora da Agenda. A decisao mora
+ * aqui, e nao em quem abre (revisao curta da AG4, achado 4): o menu e o
+ * painel passam qualquer versao da mesma consulta, e a do dia, que nunca
+ * traz a antiga, nao chega ao texto quando a da lista existe.
+ */
+export function remarcacaoNoDialogo(
+  contexto: Pick<ContextoAgenda, "remarcacaoNaLista">,
+  recebida: ConsultaDaAgenda,
+): ConsultaDaAgenda {
+  return contexto.remarcacaoNaLista?.(recebida.id) ?? recebida;
+}
+
 export function DialogoDaRemarcacao({
   contexto,
-  consulta,
+  consulta: recebida,
   acao,
   aoFechar,
   aoTerminar,
 }: {
   contexto: ContextoAgenda;
   /**
-   * A consulta NOVA (a remarcacao pendente), como a lista do "Pendente de
-   * você" tem agora, com a antiga lida a parte.
+   * A consulta NOVA (a remarcacao pendente), como quem abriu guardou. O
+   * dialogo usa a da lista do "Pendente de você" quando ela existe
+   * (remarcacaoNoDialogo).
    */
   consulta: ConsultaDaAgenda;
   acao: AcaoDaRemarcacao;
@@ -101,6 +127,7 @@ export function DialogoDaRemarcacao({
   /** Depois de qualquer resposta do servidor: refaz a agenda. */
   aoTerminar?: () => Promise<unknown> | void;
 }) {
+  const consulta = remarcacaoNoDialogo(contexto, recebida);
   const aprovar = acao === "aprovar";
   const [enviando, setEnviando] = useState(false);
   // O erro que o servidor devolveu, e se ele trava o Aprovar.

@@ -110,6 +110,29 @@
 //  - o estado guarda a consulta cancelada nesta conversa: o turno seguinte
 //    rele e "foi cancelada" vale so com o par dela (como "foi remarcada"
 //    com a remarcacao ja aprovada).
+//
+// Revisao curta das correcoes da AG4 (27/10/2026), os achados 1 a 9:
+//  - mensagem_nova_do_paciente (cancelar e agendar, com e sem p_remarcar): a
+//    pessoa escreveu de novo depois das mensagens que o job leu. O turno
+//    para SEM enviar nada e sem mexer no estado (nenhuma falha, nenhuma
+//    pergunta de novo): o proximo turno le a mensagem nova;
+//  - a pergunta do turno anterior e conferida contra a SAIDA que o banco
+//    conta (porta.lerSaidaAntesDaResposta: a ordem real, toda saida que nao
+//    e evento nem nota, a apagada e a automatica inclusive) e contra o corpo
+//    ORIGINAL dela (sem a mascara do nome: "Vila Mariana" com a contato
+//    Mariana, a consulta de domingo com o contato Domingo). Sem a porta (o
+//    simulador), a mensagem logo antes das pendentes, como antes;
+//  - a T1 da mesma consulta com outro horario (a recepcao mudou no meio) e
+//    consulta_mudou: sem falha e sem a trilha de "outra mensagem"; a T3 com
+//    a consulta antiga em outro horario, tambem (o modelo reserva de novo);
+//  - a recusa da T3 (a pergunta que nao confere, ou o banco que nao viu o
+//    "sim" logo depois dela) conta falha mesmo com o reservar no mesmo
+//    turno: a segunda seguida passa para a equipe, nunca um laco;
+//  - a consulta do pedido de cancelar que ja nao esta de pe (o mesmo job que
+//    cancelou e caiu antes de gravar, ou outro cancelamento): a RPC decide
+//    (idempotente pelo job: reutilizado e a T2; senao, consulta_encerrada);
+//  - o id da consulta cancelada sai do estado quando o estado deixa de ser
+//    o do cancelamento (a nota nunca a chama de "marcada").
 // Nada daqui tem texto do paciente: a trilha cita nomes do Cadastro, dias,
 // horas e os nomes dos campos. O "sim" do cancelamento e lido do texto
 // original da mensagem (sem sair do turno, nunca para log).
@@ -338,6 +361,40 @@ export type PortaDaAgenda = {
   lerConsultasDoContato?: (apenas?: string) => Promise<ConsultasDoContato>;
   /** AG4: cancelar_consulta_pela_ia com o job_id do turno. */
   cancelarConsulta?: (appointmentId: string) => Promise<RespostaDoCancelamento>;
+  /**
+   * Revisao curta das correcoes da AG4 (achados 2 e 8): a ultima SAIDA antes
+   * da ultima mensagem do paciente, como o banco conta na ancora do "sim"
+   * (a ordem real; toda saida que nao e evento nem nota interna, de qualquer
+   * autor e em qualquer situacao de entrega), com o corpo original (so o
+   * servidor le). null: sem mensagem do paciente ou sem saida antes dela.
+   * Lanca na leitura que falha. Ausente (o simulador): vale a mensagem logo
+   * antes das pendentes do historico.
+   */
+  lerSaidaAntesDaResposta?: () => Promise<SaidaAntesDaResposta | null>;
+};
+
+/**
+ * Revisao curta das correcoes da AG4 (achados 2 e 8): a saida que o banco
+ * ve logo antes da resposta da pessoa.
+ */
+export type SaidaAntesDaResposta = {
+  /** message.author (null: valor que o codigo nao conhece). */
+  autoria: "ia" | "usuario" | "sistema" | null;
+  /** O corpo ORIGINAL, so de texto (null: midia ou vazio). Nunca vai a log. */
+  texto: string | null;
+  /** A entrega falhou (delivery_status = 'falhou'). */
+  falhou: boolean;
+  /**
+   * Outra saida no MESMO instante que nao e da IA (ou que falhou): o banco
+   * conta como outra mensagem no meio.
+   */
+  empate: boolean;
+  /**
+   * created_at (ISO) da saida. Contrato da frente de banco, R8: a validade
+   * do pedido de cancelar conta da PERGUNTA respondida (60 minutos depois
+   * dela), nao do instante do pedido. null: nao veio.
+   */
+  criadaEm: string | null;
 };
 
 export type ResultadoDaFerramentaDeAgenda =
@@ -394,6 +451,14 @@ export type ResultadoDaFerramentaDeAgenda =
     }
   /** A RPC disse ia_desligada: o turno para sem frase (liberacao_suspensa). */
   | { tipo: "liberacao_suspensa"; passo: string }
+  /**
+   * Revisao curta das correcoes da AG4 (achado 1): a RPC disse
+   * mensagem_nova_do_paciente (a pessoa escreveu de novo depois das
+   * mensagens que o job leu). O turno para SEM enviar nada e sem passar para
+   * a equipe; o estado fica como estava no comeco (fechar) e o proximo turno
+   * le a mensagem nova. Nenhuma falha.
+   */
+  | { tipo: "mensagem_nova"; passo: string }
   /** Leitura ou RPC que falhou, ou resposta fora do formato: falha fechada. */
   | { tipo: "falha"; passo: string };
 
@@ -451,6 +516,9 @@ export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
   // Revisao da AG4 (achado 1): a pergunta vale 60 minutos.
   pedido_vencido:
     "a pergunta do cancelamento venceu (mais de 1 hora sem a resposta)",
+  // Revisao curta das correcoes da AG4 (achado 1).
+  mensagem_nova_do_paciente:
+    "a pessoa mandou outra mensagem enquanto o assistente respondia",
 };
 
 /** O passo da trilha de cada motivo de confirmar_presenca. */
@@ -562,6 +630,12 @@ export type AtendimentoParaOModelo = {
      * pedido foi desfeito no comeco do turno.
      */
     desfeito?: boolean;
+    /**
+     * Revisao curta das correcoes da AG4 (achado 6): desfeito porque a
+     * consulta mudou de horario depois da pergunta (o dia e a hora sao os
+     * de agora).
+     */
+    mudou?: boolean;
   } | null;
   /**
    * Revisao da AG4 (achado 7): a consulta cancelada pela IA nesta conversa,
@@ -756,17 +830,90 @@ const RECUSAS_PELO_HORARIO: ReadonlySet<string> = new Set([
 
 /**
  * Revisao da AG4 (achado 1): por que o pedido de cancelar com que o turno
- * comecou foi desfeito no preparo, e o que a trilha diz.
+ * comecou foi desfeito no preparo, e o que a trilha diz. Revisao curta das
+ * correcoes da AG4: "nao_conferida" (a pergunta nao foi entregue, saiu no
+ * mesmo instante de outra mensagem, ou a conversa nao foi lida; conta
+ * falha, como "outra_mensagem") e "consulta_mudou" (a pergunta da IA logo
+ * antes e a do cancelamento da MESMA consulta com outro horario: a recepcao
+ * mudou a consulta no meio; nao conta falha).
  */
-type MotivoDoPedidoDesfeito = "vencido" | "outra_mensagem" | "consulta_nao_lida";
+type MotivoDoPedidoDesfeito =
+  | "vencido"
+  | "outra_mensagem"
+  | "nao_conferida"
+  | "consulta_nao_lida"
+  | "consulta_mudou";
 
 const PASSO_DO_PEDIDO_DESFEITO: Readonly<Record<MotivoDoPedidoDesfeito, string>> =
   {
     vencido: "A pergunta do cancelamento venceu (mais de 1 hora sem a resposta)",
     outra_mensagem:
       "A resposta da pessoa não veio logo depois da pergunta do cancelamento (outra mensagem da clínica saiu no meio)",
+    nao_conferida:
+      "Não deu para conferir que a resposta da pessoa veio logo depois da pergunta do cancelamento (a pergunta não foi entregue, saiu junto de outra mensagem, ou a conversa não foi lida)",
     consulta_nao_lida: "A consulta do pedido de cancelamento não foi relida",
+    consulta_mudou:
+      "A consulta do pedido de cancelamento mudou de horário depois da pergunta (nada foi cancelado)",
   };
+
+/** Os motivos do pedido desfeito que contam uma falha (a pergunta de novo). */
+const DESFEITO_QUE_E_FALHA: ReadonlySet<MotivoDoPedidoDesfeito> = new Set([
+  "outra_mensagem",
+  "nao_conferida",
+]);
+
+/**
+ * Revisao curta das correcoes da AG4 (achados 1, 2 e 6): o resultado da
+ * conferencia da pergunta do turno anterior contra a saida logo antes da
+ * resposta da pessoa.
+ */
+type PerguntaConferida =
+  | "conferida"
+  | "outra_mensagem"
+  | "nao_conferida"
+  | "consulta_mudou";
+
+/** Escapa o texto para virar parte de uma expressao regular. */
+function literal(texto: string): string {
+  return texto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Revisao curta das correcoes da AG4 (achado 6): a T1 de QUALQUER dia e
+ * hora (a frase fixa com o dia e a hora no lugar de cada um), no fim da
+ * mensagem (a saudacao e o aviso vem antes). Montada da propria frase: o
+ * texto do dono que mudar muda aqui junto.
+ */
+const T1_DE_QUALQUER_HORARIO = (() => {
+  const dia = "\u0000DIA\u0000";
+  const hora = "\u0000HORA\u0000";
+  const fonte = literal(perguntaDoCancelamento({ dia, hora }))
+    .replace(literal(dia), "[^?]+?")
+    .replace(literal(hora), "\\d{1,2}:\\d{2}");
+  return new RegExp(`${fonte}\\s*$`);
+})();
+
+/**
+ * Revisao curta das correcoes da AG4: a T3 de QUALQUER par de horarios (com
+ * ou sem a unidade), no fim da mensagem.
+ */
+const T3_DE_QUALQUER_HORARIO = (() => {
+  const dia = "\u0000DIA\u0000";
+  const hora = "\u0000HORA\u0000";
+  const unidade = "\u0000UNIDADE\u0000";
+  const fonte = literal(
+    perguntaDaRemarcacao({
+      antiga: { dia, hora },
+      nova: { dia, hora },
+      unidade,
+    }),
+  )
+    .replaceAll(literal(dia), "[^?]+?")
+    .replaceAll(literal(hora), "\\d{1,2}:\\d{2}")
+    // O aposto da unidade (", na unidade X,") e opcional.
+    .replace(`, na unidade ${literal(unidade)},`, "(?:, na unidade [^?]+?,)?");
+  return new RegExp(`${fonte}\\s*$`);
+})();
 
 /** O codigo interno do horario da reserva sem codigo, na reconferencia. */
 const CODIGO_DA_RESERVA = "reserva";
@@ -849,7 +996,11 @@ export function criarAgendaDoTurno(entrada: {
      * sistema todos como "assistente"). A pergunta do cancelamento (T1) e a
      * da remarcacao (T3) so valem quando e ela, da IA; outra saida no meio
      * (campanha, lembrete, a equipe) desfaz o pedido. Ausente ou nula: nao
-     * se sabe (falha fechada: desfaz).
+     * se sabe (falha fechada: desfaz). Revisao curta das correcoes da AG4
+     * (achados 2 e 8): so vale SEM a leitura da porta
+     * (lerSaidaAntesDaResposta, o simulador): no WhatsApp, o texto daqui e o
+     * mascarado e a ordem e a do historico (as pendentes no fim), e a
+     * conferencia usa a saida que o banco conta, com o corpo original.
      */
     antesDasPendentes?: {
       autoria: "ia" | "usuario" | "sistema" | null;
@@ -926,6 +1077,38 @@ export function criarAgendaDoTurno(entrada: {
    */
   let perguntaDoCancelamentoConferida = false;
   let perguntaDaRemarcacaoConferida = false;
+  /**
+   * Revisao curta das correcoes da AG4 (achado 2): a T3 do turno anterior
+   * nao conferiu (outra saida no meio, ou nada lido), ou conferiu com a
+   * consulta antiga em outro horario (a recepcao a mudou no meio: so
+   * consulta_mudou, sem falha). Nulo: conferiu, ou nao era o caso.
+   */
+  let recusaDaPerguntaDaRemarcacao: "nao_conferida" | "consulta_mudou" | null =
+    null;
+  /**
+   * Revisao curta das correcoes da AG4 (achados 2 e 8): a saida que o banco
+   * ve logo antes da resposta da pessoa, lida pela porta no preparo (so com
+   * uma pergunta do turno anterior a conferir). Nulo: nao lida (sem a porta,
+   * o simulador: vale a mensagem logo antes das pendentes do historico).
+   */
+  let saidaAntes:
+    | { tipo: "lida"; saida: SaidaAntesDaResposta | null }
+    | { tipo: "falhou" }
+    | null = null;
+  /**
+   * Revisao curta das correcoes da AG4 (achado 7): a consulta do pedido de
+   * cancelar, relida no preparo, que NAO esta mais de pe (cancelada, passada
+   * ou recusada): a retomada do mesmo job que a cancelou e caiu antes de
+   * gravar o turno, ou outro cancelamento. Nunca e fato de consulta marcada;
+   * cancelar_consulta deixa a RPC decidir (idempotente pelo job).
+   */
+  let focoInativo: ConsultaEmFoco | null = null;
+  /**
+   * Revisao curta das correcoes da AG4 (achado 1): a RPC disse
+   * mensagem_nova_do_paciente. O fechamento devolve o estado do comeco, sem
+   * falha nem pergunta armada.
+   */
+  let mensagemNova = false;
 
   const horarios = new Map<string, HorarioOferecido>();
   const situacoes = new Map<string, "livre" | "ocupado">();
@@ -1215,18 +1398,53 @@ export function criarAgendaDoTurno(entrada: {
   // -------------------------------------------------------------------------
 
   /**
-   * A mensagem logo antes das pendentes e a frase fixa da IA? O historico
-   * mostra a IA, a equipe e o sistema todos como "assistente": vale a
-   * autoria real (lib/agente/historico.ts). Sem a mensagem, sem a autoria
-   * ou com outro texto: nao (falha fechada).
+   * Contrato da frente de banco (R8): o instante da pergunta conferida (a
+   * saida logo antes da resposta, lida do banco). Nulo: sem a leitura do
+   * banco, ou sem o instante.
    */
-  function perguntaLogoAntes(frase: string): boolean {
-    const antes = entrada.mensagens?.antesDasPendentes ?? null;
-    return (
-      antes !== null &&
-      antes.autoria === "ia" &&
-      terminaComAFrase(antes.texto, frase)
-    );
+  function instanteDaPergunta(): string | null {
+    return saidaAntes?.tipo === "lida" && saidaAntes.saida !== null
+      ? saidaAntes.saida.criadaEm
+      : null;
+  }
+
+  /**
+   * A saida logo antes da resposta da pessoa e a frase fixa da IA? O
+   * historico mostra a IA, a equipe e o sistema todos como "assistente":
+   * vale a autoria real. Sem a mensagem, sem a autoria ou com outro texto:
+   * nao (falha fechada).
+   *
+   * Revisao curta das correcoes da AG4 (achados 2, 6 e 8): com a porta, a
+   * saida e a que o banco conta (a ordem real, a apagada e a automatica
+   * inclusive), conferida contra o corpo ORIGINAL (a mascara do nome do
+   * historico trocava "Vila Mariana" por "Vila Fulano" e "domingo" por
+   * "Fulano", e a pergunta nunca conferia); a entregue com falha e a do
+   * mesmo instante de outra saida nao valem. A frase fixa da IA com outro
+   * horario (`molde`, a mesma frase com qualquer dia e hora) e
+   * consulta_mudou: a consulta mudou depois da pergunta. Sem a porta (o
+   * simulador, que nao mascara), a mensagem logo antes das pendentes.
+   */
+  function conferirAPergunta(frase: string, molde: RegExp): PerguntaConferida {
+    let antes: { autoria: string | null; texto: string | null } | null;
+    if (saidaAntes !== null) {
+      if (saidaAntes.tipo === "falhou") {
+        return "nao_conferida";
+      }
+      const lida = saidaAntes.saida;
+      if (lida !== null && lida.autoria === "ia" && (lida.falhou || lida.empate)) {
+        return "nao_conferida";
+      }
+      antes = lida;
+    } else {
+      antes = entrada.mensagens?.antesDasPendentes ?? null;
+    }
+    if (antes === null || antes.autoria !== "ia" || antes.texto === null) {
+      return "outra_mensagem";
+    }
+    if (terminaComAFrase(antes.texto, frase)) {
+      return "conferida";
+    }
+    return molde.test(antes.texto.trim()) ? "consulta_mudou" : "outra_mensagem";
   }
 
   /**
@@ -1261,20 +1479,43 @@ export function criarAgendaDoTurno(entrada: {
    */
   function conferirAPerguntaDoTurnoAnterior(): void {
     if (modoInicial === "cancelar") {
-      if (!pedidoAindaVale(pedidoInicialEm, relogio())) {
-        desfazerOPedidoDoComeco("vencido");
+      if (foco === null && focoInativo !== null) {
+        // Revisao curta das correcoes da AG4 (achado 7): a consulta do
+        // pedido ja nao esta de pe. Nada a perguntar de novo (nao ha o que
+        // cancelar): cancelar_consulta deixa a RPC decidir (o mesmo job que
+        // cancelou recebe reutilizado; senao, consulta_encerrada).
         return;
       }
       if (foco === null) {
-        desfazerOPedidoDoComeco("consulta_nao_lida");
+        desfazerOPedidoDoComeco(
+          pedidoAindaVale(pedidoInicialEm, relogio())
+            ? "consulta_nao_lida"
+            : "vencido",
+        );
         return;
       }
-      if (
-        !perguntaLogoAntes(
-          perguntaDoCancelamento(diaEHora(new Date(foco.inicio), fuso, agoraMs)),
-        )
-      ) {
-        desfazerOPedidoDoComeco("outra_mensagem");
+      const conferida = conferirAPergunta(
+        perguntaDoCancelamento(diaEHora(new Date(foco.inicio), fuso, agoraMs)),
+        T1_DE_QUALQUER_HORARIO,
+      );
+      if (conferida !== "conferida") {
+        // Sem a pergunta logo antes e com o proprio pedido ja vencido (mais
+        // de 60 minutos), vale o vencido (pergunta de novo sem falha), como
+        // antes; a consulta que mudou de horario fica consulta_mudou.
+        desfazerOPedidoDoComeco(
+          conferida !== "consulta_mudou" &&
+            !pedidoAindaVale(pedidoInicialEm, relogio())
+            ? "vencido"
+            : conferida,
+        );
+        return;
+      }
+      // Contrato da frente de banco (R8): a validade (60 minutos) conta da
+      // PERGUNTA respondida, o instante dela no banco (a pergunta feita de
+      // novo aos 50 minutos vale ate os 110). Sem a leitura do banco (o
+      // simulador), do instante do pedido, como antes.
+      if (!pedidoAindaVale(instanteDaPergunta() ?? pedidoInicialEm, relogio())) {
+        desfazerOPedidoDoComeco("vencido");
         return;
       }
       perguntaDoCancelamentoConferida = true;
@@ -1282,19 +1523,27 @@ export function criarAgendaDoTurno(entrada: {
     }
     if (modoInicial === "remarcar" && etapaInicial === "aguardando_confirmacao") {
       const leitura = reserva?.leitura ?? null;
-      perguntaDaRemarcacaoConferida =
-        foco !== null &&
-        leitura !== null &&
-        perguntaLogoAntes(
-          perguntaDaRemarcacao({
-            antiga: diaEHora(new Date(foco.inicio), fuso, agoraMs),
-            nova: diaEHora(new Date(leitura.inicio), fuso, agoraMs),
-            unidade:
-              (catalogo.unidades ?? []).length > 1
-                ? nomeDaUnidade(leitura.unidadeId)
-                : null,
-          }),
-        );
+      const conferida: PerguntaConferida =
+        foco === null || leitura === null
+          ? "nao_conferida"
+          : conferirAPergunta(
+              perguntaDaRemarcacao({
+                antiga: diaEHora(new Date(foco.inicio), fuso, agoraMs),
+                nova: diaEHora(new Date(leitura.inicio), fuso, agoraMs),
+                unidade:
+                  (catalogo.unidades ?? []).length > 1
+                    ? nomeDaUnidade(leitura.unidadeId)
+                    : null,
+              }),
+              T3_DE_QUALQUER_HORARIO,
+            );
+      perguntaDaRemarcacaoConferida = conferida === "conferida";
+      recusaDaPerguntaDaRemarcacao =
+        conferida === "conferida"
+          ? null
+          : conferida === "consulta_mudou"
+            ? "consulta_mudou"
+            : "nao_conferida";
       if (
         !perguntaDaRemarcacaoConferida &&
         estado.etapa === "aguardando_confirmacao"
@@ -1366,14 +1615,22 @@ export function criarAgendaDoTurno(entrada: {
       if (modoInicial === "cancelar" || modoInicial === "remarcar") {
         try {
           const lida = await porta.lerConsulta(id);
-          if (lida !== null && lida.ativa) {
-            foco = {
-              id,
-              inicio: lida.inicio,
-              serviceLinkId: lida.serviceLinkId ?? null,
-              profissionalId: lida.profissionalId ?? null,
-              unidadeId: lida.unidadeId ?? null,
-            };
+          const lidaComoFoco =
+            lida === null
+              ? null
+              : {
+                  id,
+                  inicio: lida.inicio,
+                  serviceLinkId: lida.serviceLinkId ?? null,
+                  profissionalId: lida.profissionalId ?? null,
+                  unidadeId: lida.unidadeId ?? null,
+                };
+          if (lidaComoFoco !== null && lida !== null && lida.ativa) {
+            foco = lidaComoFoco;
+          } else if (lidaComoFoco !== null && modoInicial === "cancelar") {
+            // Revisao curta das correcoes da AG4 (achado 7): a consulta do
+            // pedido de cancelar existe e nao esta mais de pe (nunca fato).
+            focoInativo = lidaComoFoco;
           }
         } catch {
           foco = null;
@@ -1430,6 +1687,22 @@ export function criarAgendaDoTurno(entrada: {
         } catch {
           consultaLida = null;
         }
+      }
+    }
+    // Revisao curta das correcoes da AG4 (achados 2 e 8): a saida logo antes
+    // da resposta da pessoa, como o banco conta, so quando ha uma pergunta
+    // do turno anterior a conferir (a leitura que falha nao confere).
+    const temPerguntaAConferir =
+      modoInicial === "cancelar" ||
+      (modoInicial === "remarcar" && etapaInicial === "aguardando_confirmacao");
+    if (temPerguntaAConferir && porta.lerSaidaAntesDaResposta !== undefined) {
+      try {
+        saidaAntes = {
+          tipo: "lida",
+          saida: await porta.lerSaidaAntesDaResposta(),
+        };
+      } catch {
+        saidaAntes = { tipo: "falhou" };
       }
     }
     // Revisao da AG4 (achado 1): a pergunta do turno anterior (T1 ou T3) so
@@ -2242,17 +2515,40 @@ export function criarAgendaDoTurno(entrada: {
     if (
       tentouReservar ||
       (comEstado &&
-        (etapaInicial !== "aguardando_confirmacao" || reservaPerguntada === null)) ||
-      // Revisao da AG4 (achado 1): na remarcacao, a pergunta (T3) tem de ser
-      // a mensagem da IA logo antes da resposta da pessoa (o preparo
-      // confere; sem ele, falha fechada), como o banco.
-      (remarcarId !== null && !perguntaDaRemarcacaoConferida)
+        (etapaInicial !== "aguardando_confirmacao" || reservaPerguntada === null))
     ) {
       // A confirmacao tem de vir numa mensagem nova, depois da pergunta
       // "Confirma ...?" (AG3: feita num turno anterior, com a reserva viva e
       // sem dado faltando). O turno que tentou reservar e o da escolha do
       // horario, nunca o da confirmacao.
       resultados.push("sem_confirmacao_do_paciente");
+      return saida(
+        "sem_confirmacao_do_paciente",
+        {},
+        `Tentou marcar a consulta: ${ROTULO_DO_MOTIVO_DA_AGENDA.sem_confirmacao_do_paciente}`,
+      );
+    }
+    // Revisao da AG4 (achado 1): na remarcacao, a pergunta (T3) tem de ser
+    // a mensagem da IA logo antes da resposta da pessoa (o preparo confere;
+    // sem ele, falha fechada), como o banco.
+    if (remarcarId !== null && !perguntaDaRemarcacaoConferida) {
+      if (recusaDaPerguntaDaRemarcacao === "consulta_mudou") {
+        // Revisao curta das correcoes da AG4 (achado 6): a T3 logo antes e a
+        // da mesma remarcacao com a consulta antiga em outro horario (a
+        // recepcao a mudou depois da pergunta): consulta_mudou, sem falha. O
+        // pedido fica (o modelo reserva de novo e o sistema pergunta outra
+        // vez, com o horario novo), como na recusa do banco.
+        resultados.push("consulta_mudou");
+        return saida(
+          "consulta_mudou",
+          {},
+          `Não pediu a remarcação: ${ROTULO_DO_MOTIVO_DA_AGENDA.consulta_mudou} (a consulta antiga mudou de horário depois da pergunta)`,
+        );
+      }
+      // Revisao curta das correcoes da AG4 (achado 2): a recusa da T3 conta
+      // falha MESMO com o reservar de novo no mesmo turno (a pergunta que
+      // nunca confere passa para a equipe na segunda vez, nunca um laco).
+      resultados.push("sem_confirmacao_do_paciente", "resposta_fora_da_pergunta");
       return saida(
         "sem_confirmacao_do_paciente",
         {},
@@ -2285,6 +2581,25 @@ export function criarAgendaDoTurno(entrada: {
           tipo: "liberacao_suspensa",
           passo: `Tentou marcar a consulta: ${motivo}`,
         };
+      }
+      if (resposta.motivo === "mensagem_nova_do_paciente") {
+        // Revisao curta das correcoes da AG4 (achado 1): a pessoa escreveu de
+        // novo depois das mensagens que o job leu (o "Confirmo" pode ter
+        // virado outra coisa). Nada foi marcado: o turno para sem enviar nada
+        // e o proximo le a mensagem nova (fechar devolve o estado do comeco).
+        mensagemNova = true;
+        return {
+          tipo: "mensagem_nova",
+          passo: `Não ${remarcarId === null ? "marcou a consulta" : "pediu a remarcação"}: ${motivo}. Nada foi enviado; a próxima resposta lê a mensagem nova.`,
+        };
+      }
+      if (resposta.motivo === "sem_confirmacao_do_paciente") {
+        // Revisao curta das correcoes da AG4 (achado 2 e a ancora forte do
+        // agendar da AG3): o banco nao viu o "sim" logo depois da pergunta
+        // (outra saida no meio). "Pergunte de novo", como no cancelar: conta
+        // falha mesmo com o reservar de novo no mesmo turno (a segunda
+        // seguida passa para a equipe, nunca um laco).
+        resultados.push("resposta_fora_da_pergunta");
       }
       // AG4: as recusas da remarcacao (a habilidade, o pedido, a consulta,
       // o prazo e "a consulta mudou"), so no modo de remarcacao.
@@ -2746,13 +3061,17 @@ export function criarAgendaDoTurno(entrada: {
     return consulta;
   }
 
-  /** A recusa da conferencia em TS (antes de qualquer RPC). */
+  /**
+   * A recusa da conferencia em TS (antes de qualquer RPC). Revisao curta das
+   * correcoes da AG4 (achado 7): sem a descricao (a consulta nao foi lida),
+   * "a consulta do pedido" (nunca "a consulta de do pedido").
+   */
   function recusaDaConferencia(
     motivo: MotivoDaConferenciaDaConsulta,
     acao: AcaoComPrazo,
-    descricao: string,
+    descricao: string | null,
   ): ResultadoDaFerramentaDeAgenda {
-    const passoBase = `Não pediu para ${verboDaAcao(acao)} a consulta de ${descricao}`;
+    const passoBase = `Não pediu para ${verboDaAcao(acao)} a consulta ${descricao === null ? "do pedido" : `de ${descricao}`}`;
     if (motivo === "consulta_nao_encontrada" || motivo === "consulta_encerrada") {
       resultados.push("consulta_encerrada");
       return saida(
@@ -2803,12 +3122,13 @@ export function criarAgendaDoTurno(entrada: {
         passo: "Não foi possível ler a consulta do pedido de cancelamento.",
       };
     }
+    const lidaAntes = foco ?? focoInativo;
     const descricao =
       consulta !== null
         ? descricaoDaConsulta(consulta)
-        : foco !== null
-          ? descricaoDaConsulta(foco)
-          : "do pedido";
+        : lidaAntes !== null
+          ? descricaoDaConsulta(lidaAntes)
+          : null;
     const motivo = conferirConsultaDaIa({
       consulta,
       acao: "cancelar",
@@ -2826,9 +3146,11 @@ export function criarAgendaDoTurno(entrada: {
     foco = focoDaConsulta(consulta);
     pedidoDaNota = { acao: "cancelar", consulta: foco };
     perguntaArmada = "cancelar";
-    if (porque === "outra_mensagem") {
+    if (DESFEITO_QUE_E_FALHA.has(porque)) {
       // Conta uma falha: a pergunta que nunca confere (o texto gravado nao
       // bate) passa para a equipe na segunda vez, em vez de repetir sem fim.
+      // Revisao curta das correcoes da AG4 (achado 2): mesmo com outra
+      // ferramenta que avanca no mesmo turno (a lista de novo).
       resultados.push("resposta_fora_da_pergunta");
     }
     resultados.push("pergunta_do_cancelamento");
@@ -2836,7 +3158,7 @@ export function criarAgendaDoTurno(entrada: {
     return frase(
       perguntaDoCancelamento(quando),
       { consulta: quando },
-      `${PASSO_DO_PEDIDO_DESFEITO[porque]}: perguntou de novo se a pessoa confirma o cancelamento da consulta de ${descricao}`,
+      `${PASSO_DO_PEDIDO_DESFEITO[porque]}: perguntou de novo se a pessoa confirma o cancelamento da consulta de ${descricaoDaConsulta(consulta)}`,
       "pergunta_do_cancelamento",
       {
         consultaLida: true,
@@ -2924,11 +3246,49 @@ export function criarAgendaDoTurno(entrada: {
         "Pediu um segundo cancelamento na mesma resposta: recusado",
       );
     }
+    // Revisao curta das correcoes da AG4 (achado 7): a consulta do pedido ja
+    // nao esta de pe (o preparo a leu cancelada, passada ou recusada). Pode
+    // ser a retomada do MESMO job que a cancelou e caiu antes de gravar o
+    // turno: com o "sim" claro (o mesmo da primeira vez), a RPC decide
+    // (idempotente pelo job, devolve reutilizado e o sistema responde com a
+    // T2). Outro cancelamento: consulta_encerrada, e nada muda (a RPC nunca
+    // cancela consulta que nao esta de pe). Sem o "sim" claro, nem a RPC:
+    // consulta_encerrada ao modelo.
+    if (
+      modoInicial === "cancelar" &&
+      foco === null &&
+      focoInativo !== null &&
+      focoInicialId !== null &&
+      estado.pedido_pendente === "cancelar" &&
+      estado.appointment_id === focoInicialId
+    ) {
+      chamouCancelamento = true;
+      pedidoDaNota = { acao: "cancelar", consulta: focoInativo };
+      const respostaDaPessoa = interpretarRespostaAoCancelamento(
+        (entrada.mensagens?.pendentes ?? []).map((m) => m.original),
+      );
+      if (respostaDaPessoa !== "sim") {
+        return (
+          recusaDoPedido(
+            "consulta_encerrada",
+            "cancelar",
+            `Não cancelou a consulta de ${descricaoDaConsulta(focoInativo)}`,
+          ) ?? { tipo: "falha", passo: "A consulta do pedido não está mais marcada." }
+        );
+      }
+      return cancelarPelaRpc(focoInativo, true);
+    }
     // Revisao da AG4 (achado 1): o pedido com que o turno comecou foi
     // desfeito no preparo (a pergunta venceu, ou outra mensagem da clinica
     // saiu entre ela e a resposta da pessoa: o "sim" pode ser de outra
     // pergunta). Nada e cancelado: o SISTEMA pergunta de novo (T1), com a
-    // consulta relida e conferida agora.
+    // consulta relida e conferida agora. Revisao curta das correcoes da AG4
+    // (achado 6): a pergunta logo antes e a do cancelamento da MESMA
+    // consulta com outro horario (a recepcao a mudou depois da pergunta):
+    // consulta_mudou, sem falha e sem a trilha de outra mensagem; a pergunta
+    // de novo, com o horario de agora, re-arma a ancora (contrato da frente
+    // de banco, R8: o consulta_mudou do banco conta do job da pergunta, e o
+    // deste turno e de depois da mudanca).
     if (
       modoInicial === "cancelar" &&
       pedidoDesfeito !== null &&
@@ -2998,6 +3358,24 @@ export function criarAgendaDoTurno(entrada: {
         },
       );
     }
+    return cancelarPelaRpc(foco, false);
+  }
+
+  /**
+   * cancelar_consulta_pela_ia para a consulta do pedido (focoInicialId) e a
+   * resposta ao modelo ou a frase fixa. `alvo`: a consulta como o preparo a
+   * leu (a de pe, ou, com `inativa`, a que nao esta mais de pe, revisao
+   * curta das correcoes da AG4, achado 7).
+   */
+  async function cancelarPelaRpc(
+    alvo: ConsultaEmFoco | null,
+    inativa: boolean,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    const descricao =
+      alvo === null ? "do pedido" : `de ${descricaoDaConsulta(alvo)}`;
+    if (focoInicialId === null) {
+      return { tipo: "falha", passo: "Não havia consulta no pedido de cancelamento." };
+    }
     let r: RespostaDoCancelamento;
     try {
       if (porta === null || porta.cancelarConsulta === undefined) {
@@ -3018,21 +3396,41 @@ export function criarAgendaDoTurno(entrada: {
           passo: `Tentou cancelar a consulta: ${ROTULO_DO_MOTIVO_DA_AGENDA.ia_desligada}`,
         };
       }
+      if (r.motivo === "mensagem_nova_do_paciente") {
+        // Revisao curta das correcoes da AG4 (achado 1): a pessoa escreveu
+        // de novo depois das mensagens que o job leu (o "sim" pode ter virado
+        // "espera, nao"). Nada foi cancelado: o turno para sem enviar nada,
+        // sem falha e sem perguntar de novo; o estado fica como no comeco
+        // (o pedido armado) e o proximo turno le a mensagem nova.
+        resultados.push(r.motivo);
+        mensagemNova = true;
+        return {
+          tipo: "mensagem_nova",
+          passo: `Não cancelou a consulta ${descricao}: ${ROTULO_DO_MOTIVO_DA_AGENDA.mensagem_nova_do_paciente}. Nada foi enviado; a próxima resposta lê a mensagem nova.`,
+        };
+      }
       // Revisao da AG4 (achado 1; contrato-mudancas R1, R2 e R4): o banco
       // nao cancelou porque a pergunta venceu (pedido_vencido, 60 minutos)
       // ou porque outra mensagem saiu entre ela e a resposta da pessoa
       // (sem_confirmacao_do_paciente, a ancora forte). "Pergunte de novo": o
       // SISTEMA repete a pergunta (T1), que re-arma o pedido (o gravar
       // carimba o instante novo). sem_confirmacao_do_paciente conta como
-      // falha (na segunda seguida, a equipe); pedido_vencido nao.
+      // falha (na segunda seguida, a equipe; revisao curta das correcoes,
+      // achado 2: mesmo com outra ferramenta que avanca no turno);
+      // pedido_vencido nao. A consulta que nao esta mais de pe nunca e
+      // perguntada de novo (falha fechada: nem chega a esses motivos).
       if (
         (r.motivo === "pedido_vencido" ||
           r.motivo === "sem_confirmacao_do_paciente") &&
-        foco !== null
+        alvo !== null &&
+        !inativa
       ) {
         resultados.push(r.motivo);
+        if (r.motivo === "sem_confirmacao_do_paciente") {
+          resultados.push("resposta_fora_da_pergunta");
+        }
         perguntaArmada = "cancelar";
-        const quando = diaEHora(new Date(foco.inicio), fuso, agoraMs);
+        const quando = diaEHora(new Date(alvo.inicio), fuso, agoraMs);
         return frase(
           perguntaDoCancelamento(quando),
           { consulta: quando },
@@ -3040,7 +3438,7 @@ export function criarAgendaDoTurno(entrada: {
           r.motivo,
           {
             consultaLida: true,
-            consultasComHorario: [consultaComoFato(foco, { marcada: false })],
+            consultasComHorario: [consultaComoFato(alvo, { marcada: false })],
           },
         );
       }
@@ -3058,7 +3456,7 @@ export function criarAgendaDoTurno(entrada: {
         passo: `Não cancelou a consulta ${descricao}: ${ROTULO_DO_MOTIVO_DA_AGENDA[r.motivo]}.`,
       };
     }
-    const inicio = r.inicio ?? foco?.inicio ?? null;
+    const inicio = r.inicio ?? alvo?.inicio ?? null;
     if (inicio === null) {
       return {
         tipo: "falha",
@@ -3076,20 +3474,22 @@ export function criarAgendaDoTurno(entrada: {
     estado.etapa = "informacao";
     estado.desfecho = "cancelou";
     const quando = diaEHora(new Date(inicio), fuso, agoraMs);
-    const unidade = nomeDaUnidade(foco?.unidadeId);
+    const unidade = nomeDaUnidade(alvo?.unidadeId);
     return frase(
       respostaDoCancelamento(quando),
       { ...quando },
       porta.simulada
         ? `Cancelaria a consulta ${descricao}, a pedido da pessoa. ${SIMULADO}`
-        : `Cancelou a consulta ${descricao}, a pedido da pessoa`,
+        : r.reutilizado
+          ? `Cancelou a consulta ${descricao}, a pedido da pessoa (a mesma resposta retomada: o cancelamento já estava feito)`
+          : `Cancelou a consulta ${descricao}, a pedido da pessoa`,
       "cancelada",
       {
         acao: "cancelou",
         horarioDaAcao: {
           ...quando,
           unidade,
-          profissional: nomeDoProfissional(foco?.profissionalId),
+          profissional: nomeDoProfissional(alvo?.profissionalId),
         },
       },
     );
@@ -3643,8 +4043,16 @@ export function criarAgendaDoTurno(entrada: {
     const r = reservaLegivel();
     const variasUnidades = (catalogo.unidades ?? []).length > 1;
     const daUnidade = (nome: string | null) => (variasUnidades ? nome : null);
+    // Revisao curta das correcoes da AG4 (achado 7): a consulta do pedido
+    // de cancelar que nao esta mais de pe vai ao bloco com o dia e a hora da
+    // pergunta (a retomada do job chama cancelar_consulta de novo e a RPC
+    // decide); nunca vira fato de consulta marcada.
+    const doPedido =
+      foco ?? (modoInicial === "cancelar" ? focoInativo : null);
     const focoLegivel =
-      foco === null ? null : diaEHora(new Date(foco.inicio), fuso, agoraMs);
+      doPedido === null
+        ? null
+        : diaEHora(new Date(doPedido.inicio), fuso, agoraMs);
     return {
       etapa: estado.etapa,
       procedimento: null,
@@ -3697,6 +4105,9 @@ export function criarAgendaDoTurno(entrada: {
               // Revisao da AG4 (achado 1): a pergunta do cancelamento nao
               // vale mais (venceu, ou outra mensagem saiu depois dela).
               ...(pedidoDesfeito === null ? {} : { desfeito: true }),
+              // Revisao curta das correcoes da AG4 (achado 6): a consulta
+              // mudou de horario depois da pergunta.
+              ...(pedidoDesfeito === "consulta_mudou" ? { mudou: true } : {}),
             }
           : null,
       remarcacao:
@@ -3877,6 +4288,11 @@ export function criarAgendaDoTurno(entrada: {
   }
 
   function falhasDepois(): number {
+    // Revisao curta das correcoes da AG4 (achado 1): a mensagem nova da
+    // pessoa nao e falha de ninguem (o turno nem respondeu).
+    if (mensagemNova) {
+      return estado.falhas_seguidas;
+    }
     return falhasDepoisDoTurno(estado.falhas_seguidas, resultados);
   }
 
@@ -3884,6 +4300,18 @@ export function criarAgendaDoTurno(entrada: {
     mensagemFinal: string | null;
     passou: boolean;
   }): FechamentoDoTurno {
+    // Revisao curta das correcoes da AG4 (achado 1): a RPC disse
+    // mensagem_nova_do_paciente e o turno parou sem enviar nada. O estado
+    // fica como estava no COMECO (o pedido armado, a etapa, a reserva, o
+    // contador): o proximo turno le a mensagem nova com a mesma pergunta de
+    // pe (ela continua a ultima saida antes da resposta da pessoa).
+    if (mensagemNova && comEstado) {
+      const doComeco = entrada.atendimento!;
+      return {
+        estado: copiarEstado(doComeco.estado),
+        dados: { ...doComeco.dados, faltam: [...doComeco.dados.faltam] },
+      };
+    }
     const final = copiarEstado(estado);
     final.falhas_seguidas = falhasDepois();
     if (fim.passou) {
@@ -3966,6 +4394,21 @@ export function criarAgendaDoTurno(entrada: {
       if (final.etapa === "cancelar") {
         final.etapa = "informacao";
       }
+    }
+    // Revisao curta das correcoes da AG4 (achado 4): o id da consulta que a
+    // IA cancelou nesta conversa so fica no estado enquanto o estado e o do
+    // cancelamento (ehEstadoDoCancelamento). Saiu dele (a pessoa quis marcar
+    // outra, confirmou presenca, passou para a equipe): o id sai, e nenhum
+    // turno seguinte le a cancelada como "a consulta marcada nesta conversa"
+    // (a nota dizia "Consulta marcada pelo assistente nesta conversa").
+    const idDaCanceladaNoEstado =
+      canceladaNoTurno ?? (modoInicial === "cancelou" ? focoInicialId : null);
+    if (
+      idDaCanceladaNoEstado !== null &&
+      final.appointment_id === idDaCanceladaNoEstado &&
+      !ehEstadoDoCancelamento(final)
+    ) {
+      final.appointment_id = null;
     }
     // O instante do pedido: o banco carimba quando o pedido ou a consulta em
     // foco mudam (e ignora o que vai daqui); com os dois iguais, fica o de

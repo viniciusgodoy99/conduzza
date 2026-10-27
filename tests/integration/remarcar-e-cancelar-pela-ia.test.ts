@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { diaCivil, instanteLocal, somarDias } from "@/lib/domain/horarios";
@@ -38,21 +40,29 @@ import { adminClient } from "../rls/stack";
 //   remarcacoes da mesma consulta por duas conversas do mesmo contato;
 // - a antiga com remarcacao pendente, pelo servidor: so o fim ou so a
 //   unidade tambem sao 23514 remarcacao_pendente, com a dica; o mesmo valor
-//   passa; sem remarcacao pendente, mudam.
+//   passa; sem remarcacao pendente, mudam;
+// - [revisao curta] o "sim" e uma mensagem que o job LEU: o cancelar e o
+//   agendar gravam antes a linha do turno do job (ai_turno.mensagens_lidas,
+//   como o motor antes de chamar o modelo); o paciente que escreve de novo
+//   depois da leitura recebe mensagem_nova_do_paciente (nada cancelado nem
+//   pedido) e o turno seguinte le e segue; a pergunta feita de novo por um
+//   job criado depois da mudanca da consulta vale logo depois dela (o
+//   consulta_mudou conta da criacao do job da pergunta respondida).
 // LIMITE (como na E4 e na AG3): os casos "ao mesmo tempo" disparam as RPCs
 // por HTTP e NAO forcam a sobreposicao dentro do Postgres: provam o
 // resultado final no banco real, nao a trava. A prova das travas, com
 // sessoes de verdade esperando umas as outras, e o teste de concorrencia do
 // harness local (~/.claude/plans/agente-completo/ag4/banco/travas), nunca na
 // producao.
-// LIMITE (o pedido vencido, pedido_vencido): o pedido vale 60 minutos a
-// partir do instante que o BANCO carimba, e nenhum papel da API grava em
-// ia_atendimento (o servidor so le), entao este arquivo nao consegue
-// envelhecer o pedido sem esperar uma hora. O vencimento (o pedido de 3
-// dias, o limite exato de 60 minutos, a ordem da recusa e a pergunta de novo
-// que re-arma o pedido) e provado no ensaio do harness local (passos 5 e 7b)
-// e na simulacao dos testes (o instante envelhecido direto no banco local),
-// nunca na producao.
+// LIMITE (a pergunta vencida, pedido_vencido): a pergunta respondida vale 60
+// minutos e tem de ser depois do instante do pedido, que o BANCO carimba; e
+// nenhum papel da API grava em ia_atendimento (o servidor so le), entao este
+// arquivo nao consegue envelhecer o pedido e a pergunta sem esperar uma
+// hora. O vencimento (a pergunta de 3 dias, o limite exato de 60 minutos, a
+// ordem da recusa, a pergunta feita de novo que vale por si e o carimbo
+// vencido renovado pelo gravar) e provado no ensaio do harness local
+// (passos 5, 7b e 7c) e na simulacao dos testes (os instantes envelhecidos
+// direto no banco local), nunca na producao.
 //
 // CUIDADO, o banco e o da producao: a clinica e_de_teste com o slug
 // remarcar-ia-int-*, apagada no afterAll (consultas, reservas, estado,
@@ -310,6 +320,85 @@ async function perguntaEConfirmacao(conversa: string): Promise<void> {
   await mensagem(conversa, "paciente");
 }
 
+/**
+ * [revisao curta] O job leu a conversa, como o motor antes de chamar o
+ * modelo: as mensagens do paciente (nao apagadas) vao para
+ * ai_turno.mensagens_lidas da linha do turno do job.
+ */
+async function leu(jobId: string, conversa: string): Promise<void> {
+  const { data } = await admin
+    .from("message")
+    .select("id")
+    .eq("conversation_id", conversa)
+    .eq("direction", "entrada")
+    .eq("author", "paciente")
+    .is("deleted_at", null)
+    .order("created_at")
+    .throwOnError();
+  await admin
+    .from("ai_turno")
+    .upsert(
+      {
+        job_id: jobId,
+        clinic_id: clinica,
+        conversation_id: conversa,
+        estado: "reservado",
+        mensagens_lidas: (data as { id: string }[]).map((m) => m.id),
+      },
+      { onConflict: "job_id" },
+    )
+    .throwOnError();
+}
+
+const PERGUNTA_DO_JOB = "Pergunta sintética da IA, do job";
+
+/**
+ * [revisao curta] A pergunta da IA escrita por um job (message.job_id), com
+ * a decisao aprovada do mesmo job e do mesmo texto (o gatilho de message
+ * exige). O contato com consulta tem sinal de paciente: o telefone volta
+ * para a lista com o forcar (o caminho de definir_contato_liberado_da_ia).
+ */
+async function perguntaDoJob(
+  conversa: string,
+  telefone: string,
+  jobId: string,
+): Promise<void> {
+  await rpcOk("definir_contato_liberado_da_ia", {
+    p_clinic_id: clinica,
+    p_telefone_e164: telefone,
+    p_rotulo: "Equipe sintética",
+    p_ativo: true,
+    p_forcar_contato_existente: true,
+    p_confirmou_aviso_da_openai: true,
+    p_confirmou_teste_com_paciente: true,
+  });
+  await admin
+    .from("ai_decision_log")
+    .insert({
+      clinic_id: clinica,
+      conversation_id: conversa,
+      job_id: jobId,
+      aprovado: true,
+      texto_sha256: createHash("sha256")
+        .update(PERGUNTA_DO_JOB, "utf8")
+        .digest("hex"),
+      desfecho: "respondeu",
+    })
+    .throwOnError();
+  await admin
+    .from("message")
+    .insert({
+      clinic_id: clinica,
+      conversation_id: conversa,
+      direction: "saida",
+      author: "ia",
+      content_type: "texto",
+      body: PERGUNTA_DO_JOB,
+      job_id: jobId,
+    })
+    .throwOnError();
+}
+
 /** O instante do pedido gravado pelo banco (o estado da conversa). */
 async function instanteDoPedido(conversa: string): Promise<string | null> {
   const { data } = await admin
@@ -347,15 +436,25 @@ async function consulta(
   });
 }
 
+/**
+ * O cancelar pelo servidor. ler (padrao): antes, o job le a conversa (como
+ * o motor); false: as lidas do job ficam como estao (a mensagem que chega
+ * depois da leitura).
+ */
 async function cancelar(
   conversa: string,
   consultaId: string,
   jobId?: string,
+  ler = true,
 ): Promise<Resposta> {
+  const j = jobId ?? (await job(conversa));
+  if (ler) {
+    await leu(j, conversa);
+  }
   return rpcOk<Resposta>("cancelar_consulta_pela_ia", {
     p_clinic_id: clinica,
     p_conversation_id: conversa,
-    p_job_id: jobId ?? (await job(conversa)),
+    p_job_id: j,
     p_appointment_id: consultaId,
   });
 }
@@ -379,16 +478,22 @@ async function reservar(
   return rpcOk<Resposta>("reservar_horario_da_ia", args);
 }
 
+/** O agendar pelo servidor; ler como no cancelar. */
 async function agendar(
   conversa: string,
   reserva: string | undefined,
   remarcar?: string,
   jobId?: string,
+  ler = true,
 ): Promise<Resposta> {
+  const j = jobId ?? (await job(conversa));
+  if (ler) {
+    await leu(j, conversa);
+  }
   const args: Record<string, unknown> = {
     p_clinic_id: clinica,
     p_conversation_id: conversa,
-    p_job_id: jobId ?? (await job(conversa)),
+    p_job_id: j,
   };
   if (reserva !== undefined) {
     args.p_slot_hold_id = reserva;
@@ -782,6 +887,64 @@ describe("cancelar_consulta_pela_ia: cada recusa, na ordem do contrato", () => {
     });
     expect((await linha(alvo)).status).toBe("cancelado_paciente");
   });
+
+  it("[revisão curta, B1] o paciente escreve de novo depois de o job ler o sim: mensagem_nova_do_paciente, nada cancelado; o turno seguinte lê e cancela", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const alvo = await consulta(contato, lAna, as("08:00", 5));
+    await prontoParaCancelar(conversa, alvo);
+    // O job le o "sim" (antes de chamar o modelo) e o paciente escreve de
+    // novo ("nao, espera") antes da RPC.
+    const jobId = await job(conversa);
+    await leu(jobId, conversa);
+    await mensagem(conversa, "paciente");
+    expect(await cancelar(conversa, alvo, jobId, false)).toEqual({
+      ok: false,
+      motivo: "mensagem_nova_do_paciente",
+    });
+    expect((await linha(alvo)).status).toBe("agendado");
+    expect(await trilhaDeCancelamento(alvo)).toEqual([]);
+    expect(await reofertas(alvo)).toBe(0);
+    // Sem a linha do turno do job: nada lido.
+    expect(await cancelar(conversa, alvo, await job(conversa), false)).toEqual(
+      { ok: false, motivo: "mensagem_nova_do_paciente" },
+    );
+    // O turno seguinte le as duas (o texto e do modelo; o banco deixa).
+    expect(await cancelar(conversa, alvo)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+    });
+  });
+
+  it("[revisão curta, B2] a recepção muda a consulta depois da pergunta: consulta_mudou; a pergunta feita de novo, por um job criado depois da mudança, vale logo depois", async () => {
+    const { contato, conversa, telefone } = await conversaNaIa();
+    const alvo = await consulta(contato, lAna, as("08:30", 5));
+    await armar(conversa, "cancelar", alvo);
+    await perguntaDoJob(conversa, telefone, await job(conversa));
+    await admin
+      .from("appointment")
+      .update({
+        starts_at: as("09:30", 5),
+        ends_at: meiaHoraDepois(as("09:30", 5)),
+      })
+      .eq("id", alvo)
+      .throwOnError();
+    await mensagem(conversa, "paciente");
+    // O job do "sim" nasce depois da mudanca: e ele que pergunta de novo.
+    const doSim = await job(conversa);
+    expect(await cancelar(conversa, alvo, doSim)).toEqual({
+      ok: false,
+      motivo: "consulta_mudou",
+    });
+    await perguntaDoJob(conversa, telefone, doSim);
+    await mensagem(conversa, "paciente");
+    // Antes da revisao curta, a folga de 2 minutos contava do pedido e este
+    // "sim" recebia consulta_mudou de novo (a terceira rodada).
+    expect(await cancelar(conversa, alvo)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+    });
+    expect((await linha(alvo)).status).toBe("cancelado_paciente");
+  });
 });
 
 describe("cancelar_consulta_pela_ia: o caminho feliz, a idempotência e a paridade com o botão", () => {
@@ -1131,6 +1294,33 @@ describe("remarcar: o reservar e o agendar com p_remarcar", () => {
     // A IA pergunta de novo e o paciente responde: a remarcacao e pedida.
     await perguntaEConfirmacao(conversa);
     expect(await agendar(conversa, reserva.hold_id, antiga)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+      remarcacao_de: antiga,
+    });
+  });
+
+  it("[revisão curta, B1] na remarcação, a mensagem que o job não leu: mensagem_nova_do_paciente, nada pedido; o turno seguinte lê e a remarcação é pedida", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const antiga = await consulta(contato, lAna, as("10:00", 5));
+    const reserva = await prontoParaRemarcar(
+      conversa,
+      antiga,
+      lAna,
+      as("10:00", 6),
+    );
+    const jobId = await job(conversa);
+    await leu(jobId, conversa);
+    await mensagem(conversa, "paciente");
+    expect(await agendar(conversa, reserva, antiga, jobId, false)).toEqual({
+      ok: false,
+      motivo: "mensagem_nova_do_paciente",
+    });
+    expect(await linha(antiga)).toMatchObject({
+      status: "agendado",
+      remarcacao_pedida_em: null,
+    });
+    expect(await agendar(conversa, reserva, antiga)).toMatchObject({
       ok: true,
       reutilizado: false,
       remarcacao_de: antiga,

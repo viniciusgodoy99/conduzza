@@ -61,6 +61,14 @@ import type { AberturaDaJanela } from "./whatsapp";
 // conjunto, mesmo quando a resposta de um turno anterior saiu depois de uma
 // mensagem nova.
 //
+// Revisao curta das correcoes da AG4 (achados 2 e 8): por isso (as
+// pendentes no fim, sem as apagadas nem a resposta automatica, e o texto com
+// a mascara do nome), a conferencia da pergunta do cancelamento e da
+// remarcacao NAO usa a mensagem logo antes das pendentes daqui: ela le a
+// saida logo antes da resposta da pessoa pela porta da agenda
+// (lerSaidaAntesDaRespostaDaIa, lib/agente/agenda.ts), pela ordem real, com
+// as mesmas saidas que o banco conta e o corpo original.
+//
 // Nada daqui vai para log.
 
 export type EntradaDoHistorico = {

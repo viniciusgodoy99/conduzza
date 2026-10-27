@@ -86,11 +86,13 @@ export const TEXTOS_DA_REMARCACAO = {
     "A remarcação foi recusada, mas a conversa do paciente não foi encontrada. Avise o paciente pelo Atendimento.",
   /**
    * A antiga nao carregou (a leitura dela falhou): o cartao do "Pendente
-   * de você" e os dialogos dizem isso; o resto da Agenda abre normalmente.
+   * de você" e os dialogos dizem isso, e o que fazer (revisao curta da AG4);
+   * o resto da Agenda abre normalmente.
    */
-  antigaNaoCarregada: "Não foi possível carregar a consulta antiga.",
+  antigaNaoCarregada:
+    "Não foi possível carregar a consulta antiga. Atualize a página ou abra a consulta para conferir.",
   antigaNaoCarregadaNoDialogo:
-    "Não foi possível carregar a consulta antiga. Ela é conferida de novo quando você confirmar.",
+    "Não foi possível carregar a consulta antiga. Ela é conferida de novo quando você aprovar ou recusar.",
   /** Confirmações: "Manter o horário" com a remarcação da IA pendente. */
   manterHorarioComRemarcacao:
     "Há uma remarcação pedida pela IA esperando aprovação na Agenda.",
@@ -251,7 +253,8 @@ export function sucessoDoAprovar(
  * "continua marcada" quando ela continua (o mesmo cuidado do evento que o
  * banco grava no fio). Revisao da AG4 (achado 9, D-29): a antiga que
  * continua fica com o pedido de remarcação, e a confirmação automática dela
- * para até alguém usar "Manter o horário" em Confirmações; o sucesso diz.
+ * para até alguém usar "Manter o horário" em Confirmações; o sucesso diz,
+ * com o nome do botão entre aspas (revisao curta da AG4).
  */
 export function sucessoDoRecusar(antiga: AntigaLida, fuso: string): string {
   const fim = AVISE_PELO_ATENDIMENTO;
@@ -261,7 +264,7 @@ export function sucessoDoRecusar(antiga: AntigaLida, fuso: string): string {
   const quando = quandoNaClinica(antiga.starts_at, fuso);
   return antiga.situacao === "cancelada"
     ? `Remarcação recusada. A consulta de ${quando} já estava cancelada. ${fim}`
-    : `Remarcação recusada. A consulta de ${quando} continua marcada, com o pedido de remarcação: a confirmação automática fica parada até Manter o horário, em Confirmações. ${fim}`;
+    : `Remarcação recusada. A consulta de ${quando} continua marcada, com o pedido de remarcação: a confirmação automática fica parada até alguém usar "Manter o horário", em Confirmações. ${fim}`;
 }
 
 /**
@@ -286,18 +289,40 @@ export function linhaDaAntigaNoMenu(novaInicio: string, fuso: string): string {
 
 export type AcaoDaRemarcacao = "aprovar" | "recusar";
 
+/**
+ * Quanto fica na tela o toast que pede uma acao da recepcao: a atencao de
+ * sempre e, desde a revisao curta da AG4, o sucesso da remarcacao da IA (o
+ * da recusa tem uns 200 caracteres, com o "Manter o horário" e o "Avise o
+ * paciente pelo Atendimento", e sumia nos 4 s do padrao do sonner).
+ */
+export const DURACAO_DO_TOAST_LONGO = 10_000;
+
 /** Um toast, como o painel mostra (o mesmo formato de RetornoNaTela). */
 export type AvisoDaRemarcacao = {
   tipo: "success" | "info" | "warning" | "error";
   texto: string;
+  /** Em ms. Sem ela: a atencao fica 10 s, o resto o padrao do sonner. */
+  duracao?: number;
 };
+
+/**
+ * A duracao de cada toast (undefined: o padrao do sonner, 4 s). A mesma
+ * regra no dialogo da remarcacao e no retorno das pendencias.
+ */
+export function duracaoDoToast(aviso: AvisoDaRemarcacao): number | undefined {
+  return (
+    aviso.duracao ??
+    (aviso.tipo === "warning" ? DURACAO_DO_TOAST_LONGO : undefined)
+  );
+}
 
 /**
  * O que o dialogo faz depois da acao:
  * - deu certo: fecha e mostra o sucesso (o texto do servidor, com o horario
- *   da antiga lido do banco) e, se algo pedido junto nao aconteceu (o aviso
- *   ao paciente que nao saiu, a conversa que nao voltou), a atencao logo
- *   depois, nunca no lugar do sucesso;
+ *   da antiga lido do banco e o que a recepcao faz depois, por 10 s) e, se
+ *   algo pedido junto nao aconteceu (o aviso ao paciente que nao saiu, a
+ *   conversa que nao voltou), a atencao logo depois, nunca no lugar do
+ *   sucesso;
  * - ja tratada por outra pessoa: fecha e informa;
  * - a antiga ja atendida (23514 do gatilho): fica aberto com o erro e
  *   trava o "Aprovar remarcação" (tentar de novo nao muda nada; o caminho e
@@ -327,7 +352,7 @@ export function desfechoDaRemarcacao(
     return {
       fechar: true,
       avisos: [
-        { tipo: "success", texto: sucesso },
+        { tipo: "success", texto: sucesso, duracao: DURACAO_DO_TOAST_LONGO },
         ...(resultado.aviso
           ? [{ tipo: "warning" as const, texto: resultado.aviso }]
           : []),

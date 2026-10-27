@@ -18,6 +18,8 @@ import {
 } from "@/components/agenda/dados-informados";
 import { DialogoDaRemarcacao } from "@/components/agenda/dialogo-da-remarcacao";
 import {
+  DURACAO_DO_TOAST_LONGO,
+  duracaoDoToast,
   linhasDoCartaoDaRemarcacao,
   TEXTOS_DA_REMARCACAO,
   type AcaoDaRemarcacao,
@@ -27,6 +29,7 @@ import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   APPOINTMENT_STATUS,
   STATUS_TONE_VARS,
@@ -84,6 +87,11 @@ import {
 // A antiga vem numa leitura a parte (fetchPendencias): se ela falhar, so o
 // cartao da remarcacao diz que a antiga nao carregou (Aviso de atencao no
 // lugar do "De"), e o resto do painel e da Agenda abre normalmente.
+//
+// Revisao curta da AG4: a lista inteira que nao veio do servidor tambem nao
+// derruba a Agenda. O cliente le de novo; enquanto isso o painel mostra o
+// esqueleto, e se a leitura falhar, o erro com "Tentar de novo" (40px), nunca
+// o "Nada pendente de você" sem saber.
 
 export const CHIP_ENCAIXE_IA: StatusDefinition = {
   label: "Encaixe da IA",
@@ -123,6 +131,9 @@ export const TEXTOS_DO_PAINEL = {
   vazioTitulo: "Nada pendente de você",
   vazioTexto:
     "Quando a IA marcar ou remarcar uma consulta, ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
+  carregando: "Carregando o que está pendente de você",
+  erro: "Não foi possível carregar o que está pendente de você. Confira a conexão e tente de novo.",
+  tentarDeNovo: "Tentar de novo",
   semProcedimento: "Procedimento não informado",
   particular: "Particular",
   paciente: "Paciente",
@@ -131,12 +142,37 @@ export const TEXTOS_DO_PAINEL = {
   legenda: "Legenda de situações",
 } as const;
 
+/**
+ * A lista do painel (revisao curta da AG4): a leitura que falha no servidor
+ * nao derruba a Agenda; o cliente le de novo, e so o painel diz que esta
+ * carregando ou que nao carregou, nunca "Nada pendente de você" sem saber.
+ */
+export type EstadoDasPendencias = "pronto" | "carregando" | "erro";
+
+/**
+ * O estado pela leitura da lista (TanStack Query), como a grade do dia: com
+ * a lista, ela (mesmo que uma releitura falhe depois); sem a lista, erro
+ * quando a leitura falhou e nao ha outra em curso, e carregando no resto.
+ */
+export function estadoDasPendencias(leitura: {
+  data: readonly unknown[] | undefined;
+  isError: boolean;
+  isFetching: boolean;
+}): EstadoDasPendencias {
+  if (leitura.data !== undefined) {
+    return "pronto";
+  }
+  return leitura.isError && !leitura.isFetching ? "erro" : "carregando";
+}
+
 export type AcaoDaPendencia = "aprovar" | "recusar";
 
 /** O toast de cada resultado, pelo tipo da pendencia. */
 export type RetornoNaTela = {
   tipo: "success" | "info" | "warning" | "error";
   texto: string;
+  /** Em ms (duracaoDoToast). Sem ela: a atencao fica 10 s, o resto 4 s. */
+  duracao?: number;
 };
 
 /**
@@ -157,9 +193,15 @@ export function retornoDaPendencia(
       return { tipo: "warning", texto: resultado.aviso };
     }
     // AG4: o texto do servidor (a remarcacao da IA, com o horario da antiga
-    // lido do banco) vale mais que o generico.
+    // lido do banco) vale mais que o generico. Ele diz o que a recepcao faz
+    // depois (avisar pelo Atendimento; na recusa, o "Manter o horário"):
+    // 10 s na tela, como no dialogo (revisao curta da AG4).
     if (resultado.mensagem) {
-      return { tipo: "success", texto: resultado.mensagem };
+      return {
+        tipo: "success",
+        texto: resultado.mensagem,
+        duracao: DURACAO_DO_TOAST_LONGO,
+      };
     }
     if (daIa) {
       return {
@@ -211,27 +253,40 @@ function diaEHora(instante: string, timezone: string): string {
 
 /**
  * O toast de cada retorno, o mesmo no painel e no menu da consulta (revisao
- * da E4: o menu mostrava sucesso calado quando a conversa nao voltava).
+ * da E4: o menu mostrava sucesso calado quando a conversa nao voltava). A
+ * atencao (a recusa valeu, mas a conversa nao voltou) e o sucesso que pede
+ * uma acao ficam 10 s: a recepcao precisa ler (duracaoDoToast).
  */
 export function mostrarRetornoDaPendencia(retorno: RetornoNaTela): void {
-  if (retorno.tipo === "success") {
-    toast.success(retorno.texto);
-  } else if (retorno.tipo === "info") {
-    toast.info(retorno.texto);
-  } else if (retorno.tipo === "warning") {
-    // A recusa valeu, mas a conversa nao voltou: a recepcao precisa ler.
-    toast.warning(retorno.texto, { duration: 10_000 });
+  const duracao = duracaoDoToast(retorno);
+  const opcoes = duracao === undefined ? null : { duration: duracao };
+  const exibir =
+    retorno.tipo === "success"
+      ? toast.success
+      : retorno.tipo === "info"
+        ? toast.info
+        : retorno.tipo === "warning"
+          ? toast.warning
+          : toast.error;
+  if (opcoes) {
+    exibir(retorno.texto, opcoes);
   } else {
-    toast.error(retorno.texto);
+    exibir(retorno.texto);
   }
 }
 
 export function PendingPanel({
   contexto,
   pendencias,
+  estado = "pronto",
+  aoTentarDeNovo,
 }: {
   contexto: ContextoAgenda;
   pendencias: ConsultaDaAgenda[];
+  /** Carregando e erro so aqui: a grade da Agenda abre do mesmo jeito. */
+  estado?: EstadoDasPendencias;
+  /** O "Tentar de novo" do erro: le a lista de novo. */
+  aoTentarDeNovo?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [emAndamento, setEmAndamento] = useState<{
@@ -297,7 +352,37 @@ export function PendingPanel({
       </div>
 
       <div className="relative flex cz-scroll min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-4">
-        {pendencias.length === 0 ? (
+        {estado === "erro" ? (
+          // A lista nao veio: o painel diz isso e oferece ler de novo; a
+          // grade e o resto da Agenda continuam abertos.
+          <div className="grid gap-2">
+            <Aviso tom="alert" role="alert">
+              {TEXTOS_DO_PAINEL.erro}
+            </Aviso>
+            {aoTentarDeNovo ? (
+              <Button
+                variant="outline"
+                className="h-10 w-full"
+                onClick={aoTentarDeNovo}
+              >
+                {TEXTOS_DO_PAINEL.tentarDeNovo}
+              </Button>
+            ) : null}
+          </div>
+        ) : estado === "carregando" ? (
+          // role="status" e o texto em sr-only: o leitor de tela anuncia o
+          // carregando (aria-label sozinho num div nao e lido).
+          <div
+            role="status"
+            aria-busy="true"
+            className="grid gap-3"
+            aria-label={TEXTOS_DO_PAINEL.carregando}
+          >
+            <span className="sr-only">{TEXTOS_DO_PAINEL.carregando}</span>
+            <Skeleton className="h-36 w-full rounded-xl" />
+            <Skeleton className="h-36 w-full rounded-xl" />
+          </div>
+        ) : pendencias.length === 0 ? (
           // Vazio compacto no tom da IA (ladrilho lime suave com o Sparkles):
           // quem deixa pendencia aqui e a IA.
           <div className="flex flex-col items-center justify-center gap-2 px-2 py-7 text-center">

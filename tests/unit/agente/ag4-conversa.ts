@@ -9,9 +9,11 @@ import {
   type EstadoDoAtendimento,
 } from "@/lib/agente/atendimento";
 import type { AtendimentoDoTurno } from "@/lib/agente/ferramentas/agenda-do-turno";
+import type { CatalogoDoAgente } from "@/lib/agente/ferramentas/buscar-procedimento";
 import { mascararNome } from "@/lib/agente/historico";
 import {
   executarTurnoDoAgente,
+  mensagensPendentes,
   type ClienteDoAgente,
   type EntradaDoTurno,
   type MensagemDaConversa,
@@ -61,6 +63,19 @@ import { catalogoDoCadastro, UNID } from "./cadastro-fixtures";
 // a frase fixa e do sistema), para a ancora forte do "sim" no contrato; e
 // cada fala da clinica no historico leva a autoria real (`daClinica` poe a
 // mensagem de uma campanha, de um lembrete ou da equipe no meio).
+//
+// Revisao curta das correcoes da AG4: a conversa mora na tabela `message`
+// do banco em memoria (o motor le a saida logo antes da resposta pela porta
+// do WhatsApp, como o banco; `noBanco` e a mesma tabela, para o contrato);
+// o historico do modelo leva o texto com a mascara do nome, como
+// lib/agente/historico.ts (o nome do contato e configuravel, para a mascara
+// que colide com a unidade ou com o dia da semana); `soNoBanco` poe uma
+// saida que o historico nao mostra (a apagada, a resposta automatica do
+// WhatsApp Business); cada job guarda as mensagens que leu (as lidas, para
+// mensagem_nova_do_paciente), `durante` escreve uma mensagem nova da pessoa
+// no MEIO do turno (a corrida do "sim") e `continua` roda o job seguinte sem
+// mensagem nova (o que le as pendentes que o anterior nao respondeu). O
+// turno que para sem enviar (a mensagem nova) nao grava resposta.
 //
 // A clinica ficticia (agenda-fixtures e cadastro-fixtures): agora e terca,
 // 20/10/2026, 09:00 em Fortaleza. A Dra. Ana Lima atende de segunda a sexta,
@@ -228,6 +243,12 @@ export type Fala = {
   /** O que o paciente escreveu (o original). */
   texto: string;
   roteiro: unknown[];
+  /**
+   * Revisao curta das correcoes da AG4: o que acontece no MEIO do turno (na
+   * primeira chamada ao modelo, depois do preparo e antes de qualquer
+   * ferramenta): por exemplo, a pessoa mandando outra mensagem.
+   */
+  durante?: (cenario: CenarioDaAg4) => void;
 };
 
 /**
@@ -243,30 +264,47 @@ export class CenarioDaAg4 {
   corpos: Record<string, unknown>[] = [];
   jobs: string[] = [];
   config: ConfigDoAgente;
+  readonly catalogo: CatalogoDoAgente;
+  /** Revisao curta das correcoes da AG4: o nome do contato (a mascara). */
+  readonly nomeDoContato: string;
   readonly verificacao = verificadorQueAprova();
   readonly opcoes: OpcoesDaAg4;
-  /** Revisao da AG4: a conversa como o banco guarda (a ancora do "sim"). */
-  readonly noBanco: MensagemNoBanco[] = [];
+  /**
+   * Revisao curta das correcoes da AG4 (mensagem_nova_do_paciente): os ids
+   * das mensagens do paciente que cada job leu (ai_turno.mensagens_lidas).
+   */
+  readonly lidasPorJob = new Map<string, string[]>();
+  /**
+   * Revisao curta das correcoes da AG4 (R8): quando cada job foi criado
+   * (job_queue.created_at): o comeco do turno.
+   */
+  readonly jobCriadoEm = new Map<string, number>();
 
   constructor(
     e: {
       config?: ConfigDoAgente;
       atendimento?: AtendimentoDoTurno;
       opcoes?: Partial<OpcoesDaAg4>;
+      catalogo?: CatalogoDoAgente;
+      nomeDoContato?: string;
     } = {},
   ) {
     this.config = e.config ?? configDaAg4();
+    this.catalogo = e.catalogo ?? CATALOGO_DA_AG4;
+    this.nomeDoContato = e.nomeDoContato ?? NOME_DO_CONTATO;
     this.atendimento = e.atendimento ?? {
       estado: estadoVazio(),
       dados: dadosVazios(),
     };
     this.banco = bancoDaAg3();
     this.opcoes = {
-      catalogo: CATALOGO_DA_AG4,
+      catalogo: this.catalogo,
       exigidos: { nomeCompleto: true, nascimento: true, cpf: false },
       agora: () => this.agora,
       estado: () => this.atendimento.estado,
       conversa: () => this.noBanco,
+      lidas: (job) => this.lidasPorJob.get(job),
+      jobCriadoEm: (job) => this.jobCriadoEm.get(job),
       cancelar: {
         ligada: this.config.habilidades.cancelar === true,
         prazoHoras: this.config.prazos.cancelarHoras,
@@ -284,10 +322,80 @@ export class CenarioDaAg4 {
     return this.atendimento.estado;
   }
 
+  /**
+   * Revisao da AG4: a conversa como o banco guarda (a ancora do "sim"), na
+   * ordem do instante. Revisao curta das correcoes: lida da tabela message
+   * (evento e nota interna nao contam, como no banco).
+   */
+  get noBanco(): MensagemNoBanco[] {
+    return this.banco
+      .linhas("message")
+      .filter(
+        (m) =>
+          m.conversation_id === CONVERSA &&
+          (m.direction === "entrada" || m.direction === "saida") &&
+          m.content_type !== "evento" &&
+          m.is_internal_note !== true,
+      )
+      .map(
+        (m): MensagemNoBanco => ({
+          id: String(m.id),
+          direcao: m.direction as MensagemNoBanco["direcao"],
+          autor: m.author as MensagemNoBanco["autor"],
+          em: Date.parse(String(m.created_at)),
+          ...(m.delivery_status === "falhou" ? { falhou: true } : {}),
+          ...(m.deleted_at != null ? { apagada: true } : {}),
+          ...(typeof m.job_id === "string" ? { job: m.job_id } : {}),
+        }),
+      )
+      .sort((a, b) => a.em - b.em);
+  }
+
   /** O instante de uma mensagem nova (sempre depois da anterior). */
   private instante(minimo: number): number {
     const ultima = this.noBanco.at(-1)?.em ?? Number.NEGATIVE_INFINITY;
     return Math.max(minimo, ultima + 1);
+  }
+
+  /** Revisao curta das correcoes da AG4: uma linha da tabela message. */
+  private registrar(m: {
+    direcao: "entrada" | "saida";
+    autor: "paciente" | "ia" | "usuario" | "sistema";
+    texto: string | null;
+    em: number;
+    falhou?: boolean;
+    apagada?: boolean;
+    /** O job que escreveu a resposta (R8: message.job_id). */
+    job?: string;
+  }): string {
+    const id = randomUUID();
+    this.banco.inserir("message", {
+      id,
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      direction: m.direcao,
+      author: m.autor,
+      content_type: "texto",
+      body: m.texto,
+      media_url: null,
+      delivery_status: m.falhou === true ? "falhou" : null,
+      is_internal_note: false,
+      deleted_at: m.apagada === true ? new Date(m.em).toISOString() : null,
+      created_at: new Date(m.em).toISOString(),
+      job_id: m.job ?? null,
+    });
+    return id;
+  }
+
+  /**
+   * Revisao curta das correcoes da AG4 (R7): a pessoa apagou a mensagem
+   * (deleted_at; o historico do modelo deixa de mostrar).
+   */
+  apaga(id: string): void {
+    const linha = this.banco.linhas("message").find((m) => m.id === id);
+    if (linha !== undefined) {
+      linha.deleted_at = new Date(this.agora).toISOString();
+    }
   }
 
   /**
@@ -300,37 +408,109 @@ export class CenarioDaAg4 {
     autoria: "sistema" | "usuario" | "ia" = "sistema",
     falhou = false,
   ): void {
-    this.mensagens.push({ autor: "assistente", autoria, texto });
-    this.noBanco.push({
+    this.mensagens.push({
+      autor: "assistente",
+      autoria,
+      texto: mascararNome(texto, this.nomeDoContato),
+    });
+    this.registrar({
       direcao: "saida",
       autor: autoria,
+      texto,
       em: this.instante(this.agora),
-      ...(falhou ? { falhou: true } : {}),
+      falhou,
+    });
+  }
+
+  /**
+   * Revisao curta das correcoes da AG4 (achado 8): uma saida que o banco
+   * conta e o historico do modelo NAO mostra (a apagada, a resposta
+   * automatica do WhatsApp Business). `em`: o instante (padrao: logo depois
+   * da ultima mensagem).
+   */
+  soNoBanco(
+    autoria: "sistema" | "usuario" | "ia" = "sistema",
+    e: { em?: number; falhou?: boolean; texto?: string; apagada?: boolean } = {},
+  ): void {
+    this.registrar({
+      direcao: "saida",
+      autor: autoria,
+      texto: e.texto ?? "Olá! No momento estamos fora do horário.",
+      em: e.em ?? this.instante(this.agora),
+      falhou: e.falhou,
+      apagada: e.apagada,
+    });
+  }
+
+  /**
+   * Revisao curta das correcoes da AG4: a pessoa escreve de novo (sem rodar
+   * turno): no historico e no banco. `em`: o instante (padrao: logo depois
+   * da ultima mensagem). Devolve o id da mensagem.
+   */
+  escreve(texto: string, em?: number): string {
+    this.mensagens.push({
+      autor: "paciente",
+      texto: mascararNome(texto, this.nomeDoContato),
+      textoOriginal: texto,
+    });
+    return this.registrar({
+      direcao: "entrada",
+      autor: "paciente",
+      texto,
+      em: em ?? this.instante(this.agora),
     });
   }
 
   /** Uma fala do paciente: um turno inteiro, dois minutos depois do outro. */
   async fala(
-    { texto, roteiro }: Fala,
+    { texto, roteiro, durante }: Fala,
     extra: Partial<EntradaDoTurno> = {},
   ): Promise<ResultadoDoTurno> {
     if (this.jobs.length > 0) {
       this.agora += 2 * 60_000;
     }
+    this.escreve(texto);
+    return this.turno(roteiro, durante, extra);
+  }
+
+  /**
+   * Revisao curta das correcoes da AG4: o job seguinte SEM mensagem nova (o
+   * que le as pendentes que o anterior nao respondeu, como depois de
+   * mensagem_nova_do_paciente), dois minutos depois.
+   */
+  async continua(
+    { roteiro, durante }: Omit<Fala, "texto">,
+    extra: Partial<EntradaDoTurno> = {},
+  ): Promise<ResultadoDoTurno> {
+    this.agora += 2 * 60_000;
+    return this.turno(roteiro, durante, extra);
+  }
+
+  private async turno(
+    roteiro: unknown[],
+    durante: Fala["durante"],
+    extra: Partial<EntradaDoTurno>,
+  ): Promise<ResultadoDoTurno> {
     const job = randomUUID();
     this.jobs.push(job);
-    this.mensagens.push({
-      autor: "paciente",
-      texto: mascararNome(texto, NOME_DO_CONTATO),
-      textoOriginal: texto,
-    });
-    this.noBanco.push({
-      direcao: "entrada",
-      autor: "paciente",
-      em: this.instante(this.agora),
-    });
+    this.jobCriadoEm.set(job, this.agora);
+    // As lidas do job: as mensagens do paciente depois da ultima resposta
+    // (as pendentes do historico).
+    const pendentes = mensagensPendentes(this.mensagens).length;
+    this.lidasPorJob.set(
+      job,
+      this.noBanco
+        .filter((m) => m.direcao === "entrada" && m.autor === "paciente")
+        .slice(-pendentes)
+        .map((m) => m.id ?? ""),
+    );
+    let primeira = true;
     const create = vi.fn(async (corpo: unknown) => {
       this.corpos.push(structuredClone(corpo) as Record<string, unknown>);
+      if (primeira) {
+        primeira = false;
+        durante?.(this);
+      }
       return roteiro.shift();
     });
     const momento = this.agora;
@@ -340,7 +520,7 @@ export class CenarioDaAg4 {
       clinicId: CLINICA,
       identificadorDeSeguranca: IDENTIFICADOR,
       config: this.config,
-      catalogo: CATALOGO_DA_AG4,
+      catalogo: this.catalogo,
       mensagens: [...this.mensagens],
       agoraMs: momento,
       fuso: FUSO,
@@ -359,14 +539,26 @@ export class CenarioDaAg4 {
     });
     // A resposta sai como mensagem da IA; a frase fixa da passagem, como do
     // sistema (lib/jobs/responder-com-ia.ts). As duas DEPOIS do gravar (o
-    // instante do pedido e o do turno).
-    const autoria = r.tipo === "resposta" ? "ia" : "sistema";
-    this.mensagens.push({ autor: "assistente", autoria, texto: r.resposta });
-    this.noBanco.push({
-      direcao: "saida",
-      autor: autoria,
-      em: this.instante(momento + 1),
-    });
+    // instante do pedido e o do turno). Revisao curta das correcoes: o
+    // turno sem envio (a mensagem nova da pessoa) nao manda nada.
+    const semEnvio =
+      r.desfecho.tipo === "falhou" && r.desfecho.motivo === "sem_mensagem";
+    if (!semEnvio) {
+      const autoria = r.tipo === "resposta" ? "ia" : "sistema";
+      this.mensagens.push({
+        autor: "assistente",
+        autoria,
+        texto: mascararNome(r.resposta, this.nomeDoContato),
+      });
+      this.registrar({
+        direcao: "saida",
+        autor: autoria,
+        texto: r.resposta,
+        em: this.instante(momento + 1),
+        // A resposta da IA sai com o job do turno (R8).
+        ...(autoria === "ia" ? { job } : {}),
+      });
+    }
     if (r.atendimento) {
       // O executor grava o estado (gravar_atendimento_da_ia): o banco
       // carimba o instante do pedido.

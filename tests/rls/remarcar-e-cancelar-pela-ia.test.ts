@@ -37,6 +37,9 @@ import { adminClient, anonClient } from "./stack";
 // - a aprovacao e a recusa pela sessao (como a Agenda faz): leitura e a B nao
 //   aprovam (nada muda); a recepcao aprova e a antiga e cancelada pelo
 //   paciente, com a trilha de quem aprovou; a recusa deixa a antiga intacta.
+// [revisao curta] O agendar grava antes a linha do turno do job
+// (ai_turno.mensagens_lidas), como o motor: o "sim" tem de ser uma mensagem
+// que o job leu (senao, mensagem_nova_do_paciente).
 // Toda negacao tem o caso positivo ao lado (anti falso positivo).
 //
 // CUIDADO, o banco e o da producao: clinicas e_de_teste com o slug
@@ -252,6 +255,37 @@ async function jobEmExecucao(conversa: string): Promise<string> {
   });
 }
 
+/**
+ * [revisao curta] O job leu a conversa, como o motor antes de chamar o
+ * modelo: as mensagens do paciente (nao apagadas) vao para
+ * ai_turno.mensagens_lidas da linha do turno do job. Devolve o job.
+ */
+async function leu(jobId: string, conversa: string): Promise<string> {
+  const { data } = await admin
+    .from("message")
+    .select("id")
+    .eq("conversation_id", conversa)
+    .eq("direction", "entrada")
+    .eq("author", "paciente")
+    .is("deleted_at", null)
+    .order("created_at")
+    .throwOnError();
+  await admin
+    .from("ai_turno")
+    .upsert(
+      {
+        job_id: jobId,
+        clinic_id: clinicaA,
+        conversation_id: conversa,
+        estado: "reservado",
+        mensagens_lidas: (data as { id: string }[]).map((m) => m.id),
+      },
+      { onConflict: "job_id" },
+    )
+    .throwOnError();
+  return jobId;
+}
+
 /** A pergunta da IA e a resposta do paciente depois dela. */
 async function perguntaEConfirmacao(conversa: string): Promise<void> {
   for (const [direction, author, body] of [
@@ -465,7 +499,7 @@ beforeAll(async () => {
   const remarcada = await rpcOk<Resposta>("agendar_pela_ia", {
     p_clinic_id: clinicaA,
     p_conversation_id: conversa1,
-    p_job_id: await jobEmExecucao(conversa1),
+    p_job_id: await leu(await jobEmExecucao(conversa1), conversa1),
     p_slot_hold_id: reserva.hold_id,
     p_remarcar: antiga1,
   });
@@ -513,7 +547,7 @@ beforeAll(async () => {
   const marcada = await rpcOk<Resposta>("agendar_pela_ia", {
     p_clinic_id: clinicaA,
     p_conversation_id: c2.conversa,
-    p_job_id: crypto.randomUUID(),
+    p_job_id: await leu(crypto.randomUUID(), c2.conversa),
   });
   expect(marcada, "agendar").toMatchObject({ ok: true });
   consultaComDados = marcada.appointment_id!;
@@ -1215,7 +1249,7 @@ describe("a aprovação e a recusa da remarcação pela sessão (como a Agenda)"
     const remarcada = await rpcOk<Resposta>("agendar_pela_ia", {
       p_clinic_id: clinicaA,
       p_conversation_id: c3.conversa,
-      p_job_id: await jobEmExecucao(c3.conversa),
+      p_job_id: await leu(await jobEmExecucao(c3.conversa), c3.conversa),
       p_slot_hold_id: reserva.hold_id,
       p_remarcar: antiga3,
     });

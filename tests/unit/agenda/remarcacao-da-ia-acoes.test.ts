@@ -50,9 +50,9 @@ const TEXTOS = {
   aprovadaJaCancelada:
     "Remarcação aprovada. A consulta de 29/10 às 14:00 já estava cancelada. Avise o paciente pelo Atendimento.",
   // A antiga continua com o pedido e sem a confirmacao automatica
-  // (revisao, achado 9).
+  // (revisao, achado 9), com o nome do botao entre aspas (revisao curta).
   recusada:
-    "Remarcação recusada. A consulta de 29/10 às 14:00 continua marcada, com o pedido de remarcação: a confirmação automática fica parada até Manter o horário, em Confirmações. Avise o paciente pelo Atendimento.",
+    'Remarcação recusada. A consulta de 29/10 às 14:00 continua marcada, com o pedido de remarcação: a confirmação automática fica parada até alguém usar "Manter o horário", em Confirmações. Avise o paciente pelo Atendimento.',
   antigaEncerrada:
     "A consulta de 29/10 às 14:00 já foi atendida ou teve a falta marcada. Recuse esta remarcação e fale com o paciente.",
   dicaDaAntiga:

@@ -4302,6 +4302,96 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Sua consulta foi remarcada para quarta, 04/11 às 10:00.",
     comFatos(REMARCACAO_APROVADA_NESTA_CONVERSA),
   ),
+  // Revisao curta das correcoes da AG4 (achado 5): a pendencia que sustenta
+  // a remarcacao fala da APROVACAO dela; a pendencia de outra coisa (o
+  // pagamento, o cadastro), na frase ou na seguinte, nao sustenta.
+  saida(
+    "AG4-S23",
+    "acao_nao_executada",
+    "contexto",
+    "Remarcado para terça, 03/11 às 10:00. Ficou pendente só o pagamento.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S24",
+    "acao_nao_executada",
+    "contexto",
+    "Remarcado para terça, 03/11 às 10:00, e o pagamento está pendente.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S25",
+    "acao_nao_executada",
+    "contexto",
+    "Remarcado para terça, 03/11 às 10:00. Seu cadastro está pendente.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S26",
+    "acao_nao_executada",
+    "contexto",
+    "Remarcado para terça, 03/11 às 10:00. Só falta a equipe aprovar o seu cadastro.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S27",
+    "acao_nao_executada",
+    "contexto",
+    "Remarcado para terça, 03/11 às 10:00. Até a recepção confirmar seu cadastro, fique tranquila.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  // A pendencia que nao diz de que (sem a aprovacao): nao sustenta.
+  saida(
+    "AG4-S33",
+    "acao_nao_executada",
+    "contexto",
+    "Remarcado para terça, 03/11 às 10:00. Até a recepção confirmar, fique tranquila.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S34",
+    "acao_nao_executada",
+    "contexto",
+    "Remarquei para terça, 03/11 às 10:00, e ela está pendente.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  // Revisao curta das correcoes da AG4 (achado 3): o que nega a pendencia
+  // ou afirma a aprovacao continua barrando com a remarcacao pendente.
+  saida(
+    "AG4-S28",
+    "acao_nao_executada",
+    "parafrase",
+    "Sua consulta foi remarcada para terça, 03/11 às 10:00. Já saiu a aprovação.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S29",
+    "acao_nao_executada",
+    "negacao",
+    "Sua remarcação para terça, 03/11 às 10:00 não está mais pendente.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S30",
+    "acao_nao_executada",
+    "negacao",
+    "Não tem nada pendente, pode ficar tranquila.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S31",
+    "acao_nao_executada",
+    "negacao",
+    "Remarquei para terça, 03/11 às 10:00. Não depende da equipe, pode ficar tranquila.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S32",
+    "acao_nao_executada",
+    "negacao",
+    "Não, a remarcação não precisa ser aprovada pela equipe.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -6301,6 +6391,58 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     rascunho:
       "Sim! Sua consulta foi remarcada para terça, 03/11 às 10:00, e a equipe já aprovou.",
     ...comFatos(REMARCACAO_APROVADA_NESTA_CONVERSA),
+  },
+  // Revisao curta das correcoes da AG4 (achado 3): a resposta certa a "Já
+  // aprovaram?" com a remarcacao pendente (a negacao da aprovacao e a
+  // pendencia, nunca a aprovacao afirmada).
+  {
+    id: "AG4-B17",
+    rascunho: "Ainda não. A aprovação ainda não saiu.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B18",
+    rascunho: "Ainda não tem a aprovação da equipe.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B19",
+    rascunho: "Ainda não tem aprovação da equipe para a remarcação.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B20",
+    rascunho: "Não, a aprovação não veio ainda.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B21",
+    rascunho: "A aprovação não chegou ainda; aviso assim que sair.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B22",
+    rascunho: "Ainda não há aprovação da equipe.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B23",
+    rascunho: "Por enquanto não tem aprovação ainda.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // Revisao curta das correcoes da AG4 (achado 5): a pendencia da APROVACAO
+  // da remarcacao, na frase ou na seguinte, continua sustentando.
+  {
+    id: "AG4-B24",
+    rascunho:
+      "Remarcado para terça, 03/11 às 10:00. Só falta a equipe aprovar a remarcação.",
+    ...comFatos(REMARCOU_PARA_TERCA),
+  },
+  {
+    id: "AG4-B25",
+    rascunho:
+      "Sua remarcação para terça, 03/11 às 10:00 ainda não foi aprovada pela equipe.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
   },
 ];
 
