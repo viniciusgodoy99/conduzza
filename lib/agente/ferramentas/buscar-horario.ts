@@ -1279,21 +1279,32 @@ export function escolherHorarios(
     hora: h.hora,
     unidade: h.unidade,
   }));
+  const horariosDaSaida = horarios.map((h) => ({
+    codigo: h.codigo,
+    dia: h.dia,
+    hora: h.hora,
+    profissional: h.profissional,
+    procedimento: h.procedimento,
+    duracao_min: h.duracaoMin,
+    unidade: h.unidade,
+    ...(h.unidadeCodigo === null ? {} : { unidade_codigo: h.unidadeCodigo }),
+  }));
+  // Revisao final da AG3 (item 5): a hora e o dia que a pessoa pediu vao ao
+  // modelo, mas nos fatos sao eco do pedido (so valem na frase que nega ou
+  // pergunta): "sua consulta sera quarta as 15h" com a hora pedida ocupada
+  // nao passa por ter vindo da busca.
+  const eco =
+    hora === null
+      ? null
+      : "dia_pedido" in pedidoNoDia
+        ? `${String(pedidoNoDia.dia_pedido)} às ${hora}`
+        : hora;
   return {
     saida: JSON.stringify({
       resultado,
       ...base,
       ...pedidoNoDia,
-      horarios: horarios.map((h) => ({
-        codigo: h.codigo,
-        dia: h.dia,
-        hora: h.hora,
-        profissional: h.profissional,
-        procedimento: h.procedimento,
-        duracao_min: h.duracaoMin,
-        unidade: h.unidade,
-        ...(h.unidadeCodigo === null ? {} : { unidade_codigo: h.unidadeCodigo }),
-      })),
+      horarios: horariosDaSaida,
     }),
     precos: [],
     passo,
@@ -1304,6 +1315,16 @@ export function escolherHorarios(
     fatos: {
       ...fatos,
       horarios: livresDoTurno,
+      ...(eco === null
+        ? {}
+        : {
+            ecos: [eco],
+            saidaSemEco: JSON.stringify({
+              resultado,
+              ...base,
+              horarios: horariosDaSaida,
+            }),
+          }),
     },
   };
 }

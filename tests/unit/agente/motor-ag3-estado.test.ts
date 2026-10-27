@@ -290,11 +290,21 @@ describe("a pergunta Confirma", () => {
     }
     for (const nao of [
       "Posso marcar terça às 14:00?",
-      "Você confirma presença?",
       "Confirma. Vou marcar.",
       "Quer que eu confirme terça às 14:00?",
     ]) {
       expect(perguntaSeConfirma(nao), nao).toBe(false);
+    }
+    // Revisao final da AG3 (achado 11): depois de uma interjeicao ou com
+    // quem confirma, tambem e a pergunta (a etapa ainda depende da reserva:
+    // perguntaConfirmaAReserva).
+    for (const sim of [
+      "Ótimo, confirma a consulta de terça, 21/10 às 14:00?",
+      "Você confirma a consulta de terça, 21/10 às 14:00?",
+      "Obrigada! Então, a senhora confirma terça, 21/10 às 14:00?",
+      "Você confirma presença?",
+    ]) {
+      expect(perguntaSeConfirma(sim), sim).toBe(true);
     }
   });
 });

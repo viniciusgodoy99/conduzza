@@ -31,6 +31,7 @@ import {
   entradaDaReservaSchema,
   FERRAMENTA_RESERVAR_HORARIO,
   lerRespostaDaReserva,
+  MOTIVOS_DA_CONFERENCIA,
   MOTIVOS_DA_RESERVA,
 } from "@/lib/agente/ferramentas/reservar-horario";
 import { ferramentaDoTurno } from "@/lib/agente/whatsapp";
@@ -290,12 +291,36 @@ describe("definições das ferramentas de efeito", () => {
         unit_id: "u",
       }),
     ).toMatchObject({ ok: true, holdId: "h", unitId: "u" });
-    for (const motivo of MOTIVOS_DA_RESERVA) {
+    for (const motivo of MOTIVOS_DA_CONFERENCIA) {
       expect(lerRespostaDaReserva({ ok: false, motivo })).toEqual({
         ok: false,
         motivo,
       });
     }
+    // Revisao final da AG3: ja_tem_consulta traz a consulta que ja existe
+    // (o id e o inicio, nulos quando a RPC nao trouxe).
+    expect(MOTIVOS_DA_RESERVA).toContain("ja_tem_consulta");
+    expect(
+      lerRespostaDaReserva({
+        ok: false,
+        motivo: "ja_tem_consulta",
+        appointment_id: "a1",
+        starts_at: "2026-10-27T13:00:00Z",
+      }),
+    ).toEqual({
+      ok: false,
+      motivo: "ja_tem_consulta",
+      appointmentId: "a1",
+      inicio: "2026-10-27T13:00:00Z",
+    });
+    expect(
+      lerRespostaDaReserva({ ok: false, motivo: "ja_tem_consulta" }),
+    ).toEqual({
+      ok: false,
+      motivo: "ja_tem_consulta",
+      appointmentId: null,
+      inicio: null,
+    });
     for (const ruim of [
       null,
       [],
@@ -446,7 +471,7 @@ describe("reservar_horario", () => {
     expect(banco.linhas("slot_hold")).toHaveLength(1);
   });
 
-  it.each(MOTIVOS_DA_RESERVA.filter((m) => m !== "ia_desligada"))(
+  it.each(MOTIVOS_DA_CONFERENCIA.filter((m) => m !== "ia_desligada"))(
     "motivo %s vira a saída do modelo, com o dia e a hora pedidos",
     async (motivo) => {
       rpcsDoContrato({ recusarReserva: motivo });
@@ -625,12 +650,14 @@ describe("agendar", () => {
     expect(banco.linhas("appointment")).toHaveLength(1);
   });
 
-  // AG3: as quatro recusas novas tem saida propria (abaixo).
+  // AG3: as quatro recusas novas tem saida propria (abaixo); revisao final
+  // da AG3, reserva_diferente tambem (le a reserva viva).
   const RECUSAS_DA_AG3: readonly string[] = [
     "consulta_para_outra_pessoa",
     "menor_de_idade",
     "ja_tem_consulta",
     "faltam_dados",
+    "reserva_diferente",
   ];
   it.each(
     MOTIVOS_DO_AGENDAR.filter(
@@ -689,10 +716,21 @@ describe("agendar", () => {
     });
     // Nada de profissional, procedimento nem id ao modelo.
     expect(r.tipo === "saida" && r.saida).not.toMatch(/Bruno|Consulta|ab000000/);
-    expect(r.tipo === "saida" && r.fatos).toEqual({ consultaLida: true });
-    // A leitura da consulta: do contato da conversa, so o inicio e o estado.
+    // Revisao final da AG3: a consulta lida com o dia e a hora dela (e a
+    // unidade, nula aqui).
+    expect(r.tipo === "saida" && r.fatos).toEqual({
+      consultaLida: true,
+      consultaComHorario: {
+        dia: "terça, 27/10",
+        hora: "10:00",
+        unidade: null,
+        marcadaNestaConversa: false,
+      },
+    });
+    // A leitura da consulta: do contato da conversa, so o inicio, o estado
+    // e a unidade.
     const leitura = banco.leituras.find((l) => l.tabela === "appointment");
-    expect(leitura?.colunas).toBe("starts_at, status, approval_status");
+    expect(leitura?.colunas).toBe("starts_at, status, approval_status, unit_id");
     expect(leitura?.filtros).toEqual(
       expect.arrayContaining([
         `eq:clinic_id=${CLINICA}`,

@@ -13,12 +13,17 @@
 // faltam: a lista do que a clinica exige e nao veio). A leitura guarda o id
 // da consulta e a lista; o modelo so recebe o dia e a hora da consulta que
 // ja existe (lib/agente/ferramentas/agenda-do-turno.ts).
+//
+// Revisao final da AG3: o agendar leva a reserva que a pergunta "Confirma
+// ...?" mostrou (p_slot_hold_id) e a RPC recusa reserva_diferente quando a
+// reserva viva da conversa e outra: o turno pergunta de novo, com o horario
+// certo, e nada e marcado.
 
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
 import { DADOS_DA_MARCACAO, type DadoDaMarcacao } from "../atendimento";
-import { MOTIVOS_DA_RESERVA } from "./reservar-horario";
+import { MOTIVOS_DA_CONFERENCIA } from "./reservar-horario";
 
 export const NOME_DO_AGENDAR = "agendar";
 
@@ -45,9 +50,11 @@ export const FERRAMENTA_AGENDAR: FunctionTool = {
 export const MOTIVOS_DO_AGENDAR = [
   "reserva_inexistente",
   "reserva_vencida",
+  // Revisao final da AG3: a reserva viva e outra, nao a perguntada.
+  "reserva_diferente",
   "sem_confirmacao_do_paciente",
   "conflito",
-  ...MOTIVOS_DA_RESERVA,
+  ...MOTIVOS_DA_CONFERENCIA,
   // AG3, na ordem da RPC.
   "consulta_para_outra_pessoa",
   "menor_de_idade",

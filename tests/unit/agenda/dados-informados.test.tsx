@@ -13,7 +13,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 // erro, vazio e os dados, com o CPF mascarado ate pedir), a frase do que a
 // aprovacao faz, o botao de 40px, desabilitado com a dica para quem nao le,
 // e a copia sem travessao. O menu do Radix e o dialogo viram marcacao
-// simples (como em menu-da-consulta-pendencia.test.tsx).
+// simples (como em menu-da-consulta-pendencia.test.tsx). Revisao final da
+// AG3 (achados 8, 12 e 13): a regra real do cadastro (o nome do WhatsApp),
+// o CPF e a carteirinha so mascarados (o inteiro pela acao de revelar), a
+// consulta ja tratada (recusada, cancelada, dados apagados) e o "Tentar de
+// novo" so no erro que passa.
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -66,6 +70,7 @@ vi.mock("@/components/ui/dialog", () => ({
 
 const acoes = vi.hoisted(() => ({
   lerDadosInformadosAction: vi.fn(),
+  revelarDadoInformadoAction: vi.fn(),
 }));
 vi.mock("@/app/(app)/agenda/actions", () => ({
   aprovarEncaixeAction: vi.fn(),
@@ -73,6 +78,7 @@ vi.mock("@/app/(app)/agenda/actions", () => ({
   recusarEncaixeAction: vi.fn(),
   remarcarAgendamentoAction: vi.fn(),
   lerDadosInformadosAction: acoes.lerDadosInformadosAction,
+  revelarDadoInformadoAction: acoes.revelarDadoInformadoAction,
 }));
 vi.mock("@/app/(app)/cadastros/actions", () => ({
   excluirBloqueioAction: vi.fn(),
@@ -86,8 +92,9 @@ vi.mock("sonner", () => ({
 }));
 
 const {
+  alternarOCampo,
   BotaoDosDadosInformados,
-  CampoDoCpf,
+  CampoProtegido,
   contatoDaConsulta,
   CorpoDosDadosInformados,
   dataCivilEmTexto,
@@ -96,10 +103,14 @@ const {
   formatarCpf,
   instanteNaClinica,
   lerOsDadosInformados,
+  mascararCarteirinha,
   mascararCpf,
+  revelarODado,
   TEXTOS_DOS_DADOS_INFORMADOS,
   textoDoCadastro,
+  textoSemDados,
 } = await import("@/components/agenda/dados-informados");
+const { situacaoDaConsulta } = await import("@/lib/domain/dados-informados");
 const { PendingPanel } = await import("@/components/agenda/pending-panel");
 const { AppointmentMenu } =
   await import("@/components/agenda/appointment-menu");
@@ -194,8 +205,9 @@ const ENCAIXE: Consulta = {
 const DADOS: NonNullable<Dados> = {
   nomeCompleto: "Paciente de Teste da Silva",
   dataNascimento: "1990-05-09",
-  cpf: "12345678909",
-  carteirinha: "0001 2345 6789",
+  // Revisao final da AG3: o servidor manda so mascarados.
+  cpfMascarado: "•••.456.789-••",
+  carteirinhaMascarada: "••••••••6789",
   paraOTitular: true,
   informadoEm: "2026-10-21T17:05:00.000Z",
   atualizadoEm: "2026-10-21T17:06:00.000Z",
@@ -212,13 +224,20 @@ function texto(html: string): string {
     .replace(/\s+/g, " ");
 }
 
-function corpo(estado: Estado, pendente = true): string {
+const NAO_REVELA = async () =>
+  ({ ok: false, error: "não", transitorio: false }) as const;
+
+function corpo(
+  estado: Estado,
+  situacao: "pendente" | "aprovada" | "recusada" | "cancelada" = "pendente",
+): string {
   return renderToStaticMarkup(
     <CorpoDosDadosInformados
       estado={estado}
       fuso={FUSO}
-      pendente={pendente}
+      situacao={situacao}
       aoTentarDeNovo={() => undefined}
+      aoRevelar={NAO_REVELA}
     />,
   );
 }
@@ -291,22 +310,80 @@ describe("regras puras", () => {
   });
 
   it("a linha do cadastro: ainda não, quando e por quem (ou alguém da equipe)", () => {
-    expect(textoDoCadastro(DADOS, FUSO)).toBe("Ainda não aplicado.");
+    expect(textoDoCadastro(DADOS, FUSO, "pendente")).toBe("Ainda não aplicado.");
     const aplicado = {
       aplicadoEm: "2026-10-22T12:00:00.000Z",
       aplicadoPor: { nome: "Vinicius" },
+      paraOTitular: true,
     };
-    expect(textoDoCadastro(aplicado, FUSO)).toBe(
-      "Aplicado em 22/10/2026 às 09:00, na aprovação por Vinicius. Só entrou o que estava vazio.",
+    expect(textoDoCadastro(aplicado, FUSO, "aprovada")).toBe(
+      "Aplicado em 22/10/2026 às 09:00, na aprovação por Vinicius.",
     );
     expect(
-      textoDoCadastro({ ...aplicado, aplicadoPor: { nome: null } }, FUSO),
-    ).toBe(
-      "Aplicado em 22/10/2026 às 09:00, na aprovação por alguém da equipe. Só entrou o que estava vazio.",
+      textoDoCadastro({ ...aplicado, aplicadoPor: { nome: null } }, FUSO, "aprovada"),
+    ).toBe("Aplicado em 22/10/2026 às 09:00, na aprovação por alguém da equipe.");
+    expect(textoDoCadastro({ ...aplicado, aplicadoPor: null }, FUSO, "aprovada")).toBe(
+      "Aplicado em 22/10/2026 às 09:00, na aprovação da consulta.",
     );
-    expect(textoDoCadastro({ ...aplicado, aplicadoPor: null }, FUSO)).toBe(
-      "Aplicado em 22/10/2026 às 09:00, na aprovação da consulta. Só entrou o que estava vazio.",
+  });
+
+  it("revisão final da AG3: a consulta tratada diz por que os dados não entram", () => {
+    expect(textoDoCadastro(DADOS, FUSO, "recusada")).toBe(
+      "Não entra no cadastro: a consulta foi recusada.",
     );
+    expect(textoDoCadastro(DADOS, FUSO, "cancelada")).toBe(
+      "Não entra no cadastro: a consulta foi cancelada.",
+    );
+    expect(textoDoCadastro(DADOS, FUSO, "aprovada")).toBe(
+      "Não entrou no cadastro.",
+    );
+    expect(
+      textoDoCadastro({ ...DADOS, paraOTitular: false }, FUSO, "pendente"),
+    ).toBe("Não entra no cadastro: a consulta é para outra pessoa.");
+    // Nunca "Ainda não aplicado." fora da pendente.
+    for (const situacao of ["aprovada", "recusada", "cancelada"] as const) {
+      expect(textoDoCadastro(DADOS, FUSO, situacao)).not.toBe(T.aindaNaoAplicado);
+    }
+    // Sem dados: na pendente, nao informou; na tratada, nao estao mais
+    // guardados (a manutencao apaga depois de 30 dias).
+    expect(textoSemDados("pendente")).toBe(
+      "O paciente não informou dados nesta conversa.",
+    );
+    for (const situacao of ["aprovada", "recusada", "cancelada"] as const) {
+      expect(textoSemDados(situacao)).toBe(
+        "Os dados informados não estão mais guardados para esta consulta.",
+      );
+    }
+  });
+
+  it("a situação da consulta: cancelada, recusada, pendente ou aprovada", () => {
+    expect(situacaoDaConsulta(DA_IA)).toBe("pendente");
+    expect(situacaoDaConsulta({ ...DA_IA, approval_status: "aprovado" })).toBe(
+      "aprovada",
+    );
+    expect(situacaoDaConsulta({ ...DA_IA, approval_status: "recusado" })).toBe(
+      "recusada",
+    );
+    expect(situacaoDaConsulta({ ...DA_IA, status: "cancelado_paciente" })).toBe(
+      "cancelada",
+    );
+    expect(
+      situacaoDaConsulta({
+        ...DA_IA,
+        status: "cancelado_clinica",
+        approval_status: "aprovado",
+      }),
+    ).toBe("cancelada");
+  });
+
+  it("revisão final da AG3: a carteirinha mascarada, como o CPF", () => {
+    expect(mascararCarteirinha("0001 2345 6789")).toBe("••••••••6789");
+    // Letras contam; os separadores saem (12 caracteres: 8 pontos e o fim).
+    expect(mascararCarteirinha("ABC-123.456.789")).toBe("••••••••6789");
+    expect(mascararCarteirinha("ABC-123.456.789")).not.toContain("ABC");
+    // Curta: oculta inteira (os ultimos dariam quase tudo).
+    expect(mascararCarteirinha("12345")).toBe("••••••");
+    expect(mascararCarteirinha("0001 2345 6789")).not.toContain("0001");
   });
 
   it("o resultado da ação vira o estado do diálogo", () => {
@@ -319,8 +396,12 @@ describe("regras puras", () => {
       dados: DADOS,
     });
     expect(
-      estadoDoResultado({ ok: false, error: "Consulta inválida." }),
-    ).toEqual({ tipo: "erro", texto: "Consulta inválida." });
+      estadoDoResultado({
+        ok: false,
+        error: "Consulta inválida.",
+        transitorio: false,
+      }),
+    ).toEqual({ tipo: "erro", texto: "Consulta inválida.", transitorio: false });
   });
 
   it("o contato do diálogo: o nome, o telefone formatado ou nada", () => {
@@ -356,6 +437,7 @@ describe("a leitura só no clique (grava trilha)", () => {
     expect(await lerOsDadosInformados(DA_IA.id)).toEqual({
       tipo: "erro",
       texto: "Não foi possível carregar os dados. Tente de novo.",
+      transitorio: true,
     });
   });
 
@@ -365,6 +447,7 @@ describe("a leitura só no clique (grava trilha)", () => {
     menu(DA_IA);
     menu({ ...DA_IA, approval_status: "aprovado" });
     expect(acoes.lerDadosInformadosAction).not.toHaveBeenCalled();
+    expect(acoes.revelarDadoInformadoAction).not.toHaveBeenCalled();
   });
 });
 
@@ -380,6 +463,7 @@ describe("o miolo do diálogo", () => {
     const html = corpo({
       tipo: "erro",
       texto: "Não foi possível carregar os dados. Tente de novo.",
+      transitorio: true,
     });
     expect(html).toContain('role="alert"');
     expect(texto(html)).toContain(
@@ -392,6 +476,18 @@ describe("o miolo do diálogo", () => {
     expect(html).toContain("lucide-octagon-alert");
   });
 
+  it("revisão final da AG3: o erro que não passa tentando não oferece Tentar de novo", () => {
+    for (const erro of [
+      "Seu perfil não vê os dados que o paciente informou.",
+      "Esta consulta não está mais na agenda. Atualize a página.",
+      "Sessão expirada. Entre de novo.",
+    ]) {
+      const html = corpo({ tipo: "erro", texto: erro, transitorio: false });
+      expect(texto(html), erro).toContain(erro);
+      expect(html, erro).not.toContain("Tentar de novo");
+    }
+  });
+
   it("vazio: o paciente não informou dados nesta conversa", () => {
     const html = corpo({ tipo: "pronto", dados: null });
     expect(texto(html)).toContain(
@@ -400,30 +496,57 @@ describe("o miolo do diálogo", () => {
     expect(texto(html)).not.toContain(T.aoAprovar);
   });
 
-  it("os dados: nome, nascimento, CPF mascarado, carteirinha, para quem e quando", () => {
+  it("revisão final da AG3: vazio na consulta já tratada diz que os dados não estão mais guardados", () => {
+    for (const situacao of ["aprovada", "recusada", "cancelada"] as const) {
+      const visivel = texto(corpo({ tipo: "pronto", dados: null }, situacao));
+      expect(visivel, situacao).toContain(
+        "Os dados informados não estão mais guardados para esta consulta.",
+      );
+      expect(visivel, situacao).not.toContain("O paciente não informou dados");
+    }
+  });
+
+  it("os dados: nome, nascimento, CPF e carteirinha mascarados, para quem e quando", () => {
     const html = corpo({ tipo: "pronto", dados: DADOS });
     const visivel = texto(html);
     expect(visivel).toContain("Nome completo Paciente de Teste da Silva");
     expect(visivel).toContain("Data de nascimento 09/05/1990");
-    expect(visivel).toContain("Carteirinha 0001 2345 6789");
     expect(visivel).toContain("Para quem é a consulta Para o próprio paciente");
     expect(visivel).toContain("Informado em 21/10/2026 às 14:05");
     expect(visivel).toContain("No cadastro Ainda não aplicado.");
-    // O CPF chega mascarado: nem formatado nem os 11 digitos na marcacao.
+    // O CPF e a carteirinha chegam mascarados, cada um com o olho.
     expect(html).toContain("•••.456.789-••");
+    expect(html).toContain("••••••••6789");
     expect(html).not.toContain("123.456.789-09");
-    expect(html).not.toContain("12345678909");
+    expect(html).not.toContain("0001 2345 6789");
+    expect(html).toContain('aria-label="Mostrar CPF"');
+    expect(html).toContain('aria-label="Mostrar carteirinha"');
     expect(html).toContain('<dl class="divide-y divide-border">');
   });
 
-  it("pendente: a frase do que a aprovação faz com os dados", () => {
+  it("revisão final da AG3: recusada e cancelada não dizem 'Ainda não aplicado.'", () => {
+    expect(texto(corpo({ tipo: "pronto", dados: DADOS }, "recusada"))).toContain(
+      "No cadastro Não entra no cadastro: a consulta foi recusada.",
+    );
+    expect(texto(corpo({ tipo: "pronto", dados: DADOS }, "cancelada"))).toContain(
+      "No cadastro Não entra no cadastro: a consulta foi cancelada.",
+    );
+    for (const situacao of ["recusada", "cancelada"] as const) {
+      expect(
+        texto(corpo({ tipo: "pronto", dados: DADOS }, situacao)),
+        situacao,
+      ).not.toContain("Ainda não aplicado.");
+    }
+  });
+
+  it("pendente: a frase do que a aprovação faz com os dados, pela regra real", () => {
     expect(texto(corpo({ tipo: "pronto", dados: DADOS }))).toContain(
-      "Ao aprovar a consulta, estes dados entram no cadastro do paciente, só onde ele está vazio.",
+      "Ao aprovar a consulta, estes dados entram no cadastro do paciente. O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
     );
     // Ja tratada, ja aplicada ou para outra pessoa: a frase nao vale.
-    expect(texto(corpo({ tipo: "pronto", dados: DADOS }, false))).not.toContain(
-      T.aoAprovar,
-    );
+    expect(
+      texto(corpo({ tipo: "pronto", dados: DADOS }, "aprovada")),
+    ).not.toContain(T.aoAprovar);
     expect(
       texto(
         corpo({
@@ -445,8 +568,8 @@ describe("o miolo do diálogo", () => {
             paraOTitular: false,
             nomeCompleto: null,
             dataNascimento: null,
-            cpf: null,
-            carteirinha: null,
+            cpfMascarado: null,
+            carteirinhaMascarada: null,
           },
         }),
       ),
@@ -462,8 +585,8 @@ describe("o miolo do diálogo", () => {
           paraOTitular: false,
           nomeCompleto: null,
           dataNascimento: null,
-          cpf: null,
-          carteirinha: null,
+          cpfMascarado: null,
+          carteirinhaMascarada: null,
         },
       }),
     );
@@ -474,35 +597,120 @@ describe("o miolo do diálogo", () => {
     expect(visivel).toContain("Para quem é a consulta Para outra pessoa");
   });
 
-  it("aplicado: quando e por quem", () => {
-    expect(
-      texto(
-        corpo({
+  it("aplicado: quando, por quem e a regra real do cadastro", () => {
+    const visivel = texto(
+      corpo(
+        {
           tipo: "pronto",
           dados: {
             ...DADOS,
             aplicadoEm: "2026-10-22T12:00:00.000Z",
             aplicadoPor: { nome: "Vinicius" },
           },
-        }),
+        },
+        "aprovada",
       ),
-    ).toContain(
-      "No cadastro Aplicado em 22/10/2026 às 09:00, na aprovação por Vinicius. Só entrou o que estava vazio.",
     );
+    expect(visivel).toContain(
+      "No cadastro Aplicado em 22/10/2026 às 09:00, na aprovação por Vinicius.",
+    );
+    expect(visivel).toContain(
+      "O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
+    );
+    expect(visivel).not.toContain("só onde ele está vazio");
+    expect(visivel).not.toContain("Só entrou o que estava vazio");
   });
 
-  it("o CPF: mascarado, com o olho de 40px que diz o que faz", () => {
-    const html = renderToStaticMarkup(<CampoDoCpf cpf="12345678909" />);
-    expect(html).toContain("•••.456.789-••");
-    expect(html).not.toContain("123.456.789-09");
-    expect(texto(html)).toContain("oculto");
-    const olho = html.match(/<button[^>]*>/)?.[0];
-    expect(olho).toContain('aria-label="Mostrar CPF"');
-    expect(olho).toContain('type="button"');
-    // size="icon": 40px; sem aria-pressed (o rotulo muda com o estado).
-    expect(olho).toContain("size-10");
-    expect(olho).not.toContain("aria-pressed");
-    expect(html).toContain("lucide-eye");
+  it("o CPF e a carteirinha: mascarados, com o olho de 40px que diz o que faz", () => {
+    for (const [campo, mascarado, rotulo] of [
+      ["cpf", "•••.456.789-••", "Mostrar CPF"],
+      ["carteirinha", "••••••••6789", "Mostrar carteirinha"],
+    ] as const) {
+      const html = renderToStaticMarkup(
+        <CampoProtegido campo={campo} mascarado={mascarado} aoRevelar={NAO_REVELA} />,
+      );
+      expect(html).toContain(mascarado);
+      expect(texto(html)).toContain("oculto");
+      const olho = html.match(/<button[^>]*>/)?.[0];
+      expect(olho).toContain(`aria-label="${rotulo}"`);
+      expect(olho).toContain('type="button"');
+      // size="icon": 40px; sem aria-pressed (o rotulo muda com o estado).
+      expect(olho).toContain("size-10");
+      expect(olho).not.toContain("aria-pressed");
+      expect(html).toContain("lucide-eye");
+    }
+  });
+
+  it("revisão final da AG3: mostrar pede o dado à ação (uma vez, só o campo), e ocultar descarta", async () => {
+    const revelar = vi
+      .fn()
+      .mockResolvedValue({ ok: true, valor: "12345678909" });
+    const visivel = await alternarOCampo({ tipo: "oculto" }, "cpf", revelar);
+    expect(visivel).toEqual({ tipo: "visivel", valor: "123.456.789-09" });
+    expect(revelar).toHaveBeenCalledTimes(1);
+    expect(revelar).toHaveBeenCalledWith("cpf");
+    // Ocultar nao chama a acao e descarta o valor.
+    expect(await alternarOCampo(visivel, "cpf", revelar)).toEqual({
+      tipo: "oculto",
+    });
+    expect(revelar).toHaveBeenCalledTimes(1);
+    // A carteirinha vem como esta; o erro da acao vira o texto do campo.
+    expect(
+      await alternarOCampo({ tipo: "oculto" }, "carteirinha", async () => ({
+        ok: true,
+        valor: "0001 2345 6789",
+      })),
+    ).toEqual({ tipo: "visivel", valor: "0001 2345 6789" });
+    expect(
+      await alternarOCampo({ tipo: "oculto" }, "cpf", async () => ({
+        ok: false,
+        error: "Não foi possível mostrar o dado. Tente de novo.",
+        transitorio: true,
+      })),
+    ).toEqual({
+      tipo: "erro",
+      texto: "Não foi possível mostrar o dado. Tente de novo.",
+    });
+    expect(
+      await alternarOCampo({ tipo: "oculto" }, "cpf", async () => ({
+        ok: true,
+        valor: null,
+      })),
+    ).toEqual({ tipo: "erro", texto: T.naoMostrou });
+    // Visivel e com erro, renderizados.
+    const aberto = renderToStaticMarkup(
+      <CampoProtegido
+        campo="cpf"
+        mascarado="•••.456.789-••"
+        aoRevelar={revelar}
+        estadoInicial={{ tipo: "visivel", valor: "123.456.789-09" }}
+      />,
+    );
+    expect(aberto).toContain("123.456.789-09");
+    expect(aberto).toContain('aria-label="Ocultar CPF"');
+    expect(aberto).toContain("lucide-eye-off");
+    const comErro = renderToStaticMarkup(
+      <CampoProtegido
+        campo="cpf"
+        mascarado="•••.456.789-••"
+        aoRevelar={revelar}
+        estadoInicial={{ tipo: "erro", texto: T.naoMostrou }}
+      />,
+    );
+    expect(comErro).toContain('role="alert"');
+    expect(texto(comErro)).toContain(T.naoMostrou);
+  });
+
+  it("revisão final da AG3: revelar pela ação do servidor; a que lança vira o erro que passa", async () => {
+    acoes.revelarDadoInformadoAction.mockResolvedValue({ ok: true, valor: "x" });
+    expect(await revelarODado(DA_IA.id, "cpf")).toEqual({ ok: true, valor: "x" });
+    expect(acoes.revelarDadoInformadoAction).toHaveBeenCalledWith(DA_IA.id, "cpf");
+    acoes.revelarDadoInformadoAction.mockRejectedValue(new Error("rede"));
+    expect(await revelarODado(DA_IA.id, "carteirinha")).toEqual({
+      ok: false,
+      error: "Não foi possível mostrar o dado. Tente de novo.",
+      transitorio: true,
+    });
   });
 
   it("o diálogo: título, de quem é a consulta e o Fechar", () => {
@@ -511,10 +719,11 @@ describe("o miolo do diálogo", () => {
         aberto
         nome="Paciente de Teste"
         fuso={FUSO}
-        pendente
+        situacao="pendente"
         estado={{ tipo: "pronto", dados: DADOS }}
         aoFechar={() => undefined}
         aoTentarDeNovo={() => undefined}
+        aoRevelar={NAO_REVELA}
       />,
     );
     const visivel = texto(html);
@@ -529,10 +738,11 @@ describe("o miolo do diálogo", () => {
           aberto={false}
           nome={null}
           fuso={FUSO}
-          pendente
+          situacao="pendente"
           estado={{ tipo: "carregando" }}
           aoFechar={() => undefined}
           aoTentarDeNovo={() => undefined}
+          aoRevelar={NAO_REVELA}
         />,
       ),
     ).toBe("");
@@ -646,8 +856,12 @@ describe("cópia", () => {
       T.descricao(null),
       T.aplicado("22/10/2026 às 09:00", "Vinicius"),
       T.aplicado("22/10/2026 às 09:00", null),
+      T.mostrar("CPF"),
+      T.ocultar("carteirinha"),
       texto(corpo({ tipo: "pronto", dados: DADOS })),
       texto(corpo({ tipo: "pronto", dados: null })),
+      texto(corpo({ tipo: "pronto", dados: null }, "cancelada")),
+      texto(corpo({ tipo: "pronto", dados: DADOS }, "recusada")),
     ];
     for (const amostra of amostras) {
       expect(amostra).not.toMatch(/[—–]/);

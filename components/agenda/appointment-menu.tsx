@@ -77,6 +77,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { APPOINTMENT_STATUS, STATUS_TONE_VARS } from "@/lib/design/status";
+import { situacaoDaConsulta } from "@/lib/domain/dados-informados";
 import type { AppointmentStatus } from "@/lib/design/status";
 import {
   aguardaAprovacao,
@@ -142,11 +143,12 @@ import { createClient } from "@/lib/supabase/client";
 //
 // AG3 (D-7): a consulta que a IA marcou tem "Ver dados informados" (o que o
 // paciente informou ao assistente para marcar; a aprovacao aplica ao
-// cadastro so onde ele esta vazio). Pendente, e o primeiro item do grupo da
-// pendencia, antes de Aprovar; depois de tratada, fica junto de "Ver
-// histórico" (mostra se os dados ja entraram no cadastro, quando e por
-// quem). A leitura so acontece no clique (grava trilha). Sem permissao,
-// visivel e desabilitado com o porque logo abaixo.
+// cadastro o nome vazio ou o do WhatsApp, e o resto so vazio). Pendente, e o
+// primeiro item do grupo da pendencia, antes de Aprovar; depois de tratada,
+// fica junto de "Ver histórico" (mostra se os dados ja entraram no cadastro,
+// quando e por quem, ou por que nao entram). A leitura so acontece no clique
+// (grava trilha). Sem permissao, visivel e desabilitado com o porque logo
+// abaixo.
 
 /** Os textos do grupo de pendencia do menu, pelo tipo da pendencia. */
 export function rotulosDaPendenciaNoMenu(daIa: boolean): {
@@ -842,10 +844,11 @@ export function AppointmentMenu({
           aberto={dadosInformados.aberta !== null}
           nome={contatoDaConsulta(consulta)}
           fuso={contexto.timezone}
-          pendente={pendenteDeAprovacao}
+          situacao={situacaoDaConsulta(consulta)}
           estado={dadosInformados.estado}
           aoFechar={dadosInformados.fechar}
           aoTentarDeNovo={dadosInformados.tentarDeNovo}
+          aoRevelar={dadosInformados.revelar}
         />
       ) : null}
     </>

@@ -19,6 +19,7 @@ import {
 import {
   frasesDasVisoes,
   neutralizador,
+  normalizarBase,
   sinaisDeOfuscacao,
   temLetraForaDoAlfabeto,
   visoesDoTexto,
@@ -226,11 +227,74 @@ export function detectarGatilhosDeEntrada(
   return ordenarPorPrioridade(GATILHOS_DE_ENTRADA, achados);
 }
 
+// ---------------------------------------------------------------------------
+// Revisao final da AG3 (achado 15, D-8): a consulta para outra pessoa adulta
+// ---------------------------------------------------------------------------
+//
+// A consulta para outra pessoa passa para a equipe (D-8). O modelo ja passa
+// quando percebe (registrar_dados_do_paciente com para_o_titular false), mas
+// o pedido obvio ("quero marcar para minha mae", "tem horario pro meu
+// pai?", "e para o meu marido") nao precisa chegar a ele: o portao passa
+// antes, com o motivo consulta_para_outra_pessoa. Filho, filha, neto,
+// sobrinho e enteado ficam de fora: seguem pela regra do menor de idade
+// (a idade, quando dita, ou o nascimento informado). Sem gatilho novo no
+// banco (o CHECK de gatilho_entrada nao muda): o laco escala com o motivo e
+// sem gatilho.
+
+/** Os parentes e as pessoas adultas da consulta para outra pessoa. */
+const PESSOA_ADULTA =
+  "(?:mae|mamae|pai|papai|marido|esposo|esposa|mulher|companheir[oa]|namorad[oa]|noiv[oa]|avo|avos|vovo|vovos|sogr[oa]|irma|irmao|irmas|irmaos|tia|tio|tias|tios|prima|primo|cunhad[oa]|genro|nora|madrasta|padrasto|amig[oa]|vizinh[oa]|chefe|patrao|patroa|colega|funcionari[oa]|empregad[oa]|cuidador|cuidadora)";
+/** "minha", "o meu", "nossa". */
+const DE_QUEM = "(?:(?:a|o|as|os)\\s+)?(?:minha|meu|minhas|meus|nossa|nosso)";
+/** "para", "pra", "pro", "p/". */
+const PARA_QUEM = "(?:para|pra|pro|pros|pras|p\\/)";
+/** O que diz que e marcacao ("marcar", "consulta", "horario"). */
+const PEDIDO_DE_AGENDA =
+  /\b(?:marcar|marca|marque|agendar|agenda|agende|agendamento|marcacao|consulta|consultas|horario|horarios|vaga|vagas|encaixe|encaixar|atendimento|avaliacao|retorno|sessao|procedimento)\b/;
+/** "para minha mae", "pro meu pai", "pra minha esposa". */
+const PARA_A_PESSOA = new RegExp(
+  `\\b${PARA_QUEM}\\s+${DE_QUEM}\\s+${PESSOA_ADULTA}\\b`,
+);
+/** "minha mae quer marcar", "meu marido precisa de uma consulta". */
+const A_PESSOA_QUER = new RegExp(
+  `\\b${DE_QUEM}\\s+${PESSOA_ADULTA}\\s+(?:quer|queria|gostaria|precisa|precisaria|vai|iria|deseja|desejaria)\\s+(?:de\\s+)?(?:marcar|agendar|consultar|uma consulta|um horario|um atendimento|uma avaliacao|passar|ser atendid[oa])\\b`,
+);
+/** A resposta curta: "e para minha mae", "seria pro meu pai". */
+const RESPOSTA_PARA_A_PESSOA = new RegExp(
+  `^(?:(?:sim|nao|e|eh|seria|sera|vai ser|na verdade|ah)\\s*,?\\s+)+${PARA_QUEM}\\s+${DE_QUEM}\\s+${PESSOA_ADULTA}\\b`,
+);
+
+/**
+ * O pedido de consulta para outra pessoa adulta numa das mensagens: a frase
+ * com o pedido de agenda e "para minha mae" (ou "pro meu pai", "para o meu
+ * marido", "pra minha esposa"...), "minha mae quer marcar" e a resposta
+ * curta ("e para minha mae"). Filho e filha nao (a regra do menor).
+ */
+export function pedidoDeConsultaParaOutraPessoa(
+  textos: readonly (string | null)[],
+): boolean {
+  return textos.some((texto) => {
+    if (texto === null) {
+      return false;
+    }
+    return normalizarBase(texto)
+      .split(/[.!?\n]+/)
+      .map((frase) => frase.trim())
+      .some(
+        (frase) =>
+          (PEDIDO_DE_AGENDA.test(frase) && PARA_A_PESSOA.test(frase)) ||
+          A_PESSOA_QUER.test(frase) ||
+          RESPOSTA_PARA_A_PESSOA.test(frase),
+      );
+  });
+}
+
 /**
  * As regras do portao que vivem em codigo (idade declarada, caixa alta,
- * limites), para a versao do portao (versaoDoPortao, filtro.ts) mudar quando
- * elas mudarem. Os padroes, as trocas e o lexico vem de padroes.ts. Sem
- * hash aqui: este modulo tambem roda no navegador.
+ * limites e, revisao final da AG3, a consulta para outra pessoa adulta),
+ * para a versao do portao (versaoDoPortao, filtro.ts) mudar quando elas
+ * mudarem. Os padroes, as trocas e o lexico vem de padroes.ts. Sem hash
+ * aqui: este modulo tambem roda no navegador.
  */
 export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   IDADE_DECLARADA,
@@ -239,6 +303,12 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   `caixa alta: ${MINIMO_DE_LETRAS_DA_CAIXA_ALTA} letras, ${PROPORCAO_DA_CAIXA_ALTA}, ${MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA} palavras, sem ${INTERROGACAO.source}`,
   `limites: ${LIMITE_DE_MENSAGEM}, ${LIMITE_DA_RAJADA}, ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO}`,
   "midia escala",
+  // Revisao final da AG3 (D-8): a consulta para outra pessoa adulta.
+  PEDIDO_DE_AGENDA.source,
+  PARA_A_PESSOA.source,
+  A_PESSOA_QUER.source,
+  RESPOSTA_PARA_A_PESSOA.source,
+  "outra pessoa adulta: consulta_para_outra_pessoa, sem gatilho; filho e filha pela regra do menor",
 ];
 
 /** Atalho para o filtro de saida: gatilhos de um conjunto de textos. */

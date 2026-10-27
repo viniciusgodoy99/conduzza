@@ -80,6 +80,27 @@ const BUSCA = {
 /** Hoje e 21/10/2026: amanha e 22/10, o dia da busca com 9h30 livre. */
 const COM_HOJE = { hoje: { dia: 21, mes: 10, ano: 2026 } };
 
+/**
+ * Revisao final da AG3: a acao e a consulta lida levam o dia e a hora (a
+ * frase com dia ou hora so passa com o par dela).
+ */
+const QUINTA_16_15 = { dia: "quinta, 23/10", hora: "16:15", unidade: null };
+const QUARTA_9_30 = { dia: "quarta, 22/10", hora: "09:30", unidade: null };
+function feita(
+  acao: FatosDoTurno["acoes"][number],
+  horario: { dia: string; hora: string; unidade: string | null } = QUINTA_16_15,
+): Partial<FatosDoTurno> {
+  return { acoes: [acao], horariosDasAcoes: [{ ...horario, acao }] };
+}
+function lida(
+  horario: { dia: string; hora: string; unidade: string | null } = QUINTA_16_15,
+): Partial<FatosDoTurno> {
+  return {
+    consultaLida: true,
+    consultasLidas: [{ ...horario, marcadaNestaConversa: false }],
+  };
+}
+
 describe("item 1: a etiqueta de confirmação não faz pergunta", () => {
   it.each([
     ["Você tem consulta amanhã?", true],
@@ -152,16 +173,11 @@ describe("item 1: as formas de ação que passavam", () => {
   });
 
   it("com a ação certa no turno, as mesmas formas passam", () => {
+    // Revisao final da AG3: a acao e a consulta lida com o dia e a hora.
     for (const [texto, parcial] of [
-      [
-        "Sua consulta ficou para quinta, 23/10 às 16:15.",
-        { acoes: ["remarcou"] },
-      ],
+      ["Sua consulta ficou para quinta, 23/10 às 16:15.", feita("remarcou")],
       ["Já coloquei você na agenda da Dra. Ana Lima.", { acoes: ["marcou"] }],
-      [
-        "Combinado! Te esperamos quinta, 23/10 às 16:15.",
-        { acoes: ["marcou"] },
-      ],
+      ["Combinado! Te esperamos quinta, 23/10 às 16:15.", feita("marcou")],
       ["Consegui encaixar você.", { acoes: ["marcou"] }],
       [
         "Sua consulta foi para a lista de espera.",
@@ -171,7 +187,7 @@ describe("item 1: as formas de ação que passavam", () => {
       ["Seu horário foi registrado.", { acoes: ["marcou"] }],
       [
         "Prontinho, sua consulta ficou para amanhã às 9h30.",
-        { consultaLida: true },
+        lida(QUARTA_9_30),
       ],
     ] as const) {
       expect(
@@ -221,15 +237,62 @@ describe("item 1: regra estrutural do fechamento", () => {
     }
   });
 
-  it("a confirmação de presença (consulta lida) e qualquer ação de sucesso liberam", () => {
+  // Revisao final da AG3 (item 3): a marca e licenciada pela acao, nao por
+  // qualquer acao de sucesso (este teste travava o comportamento antigo, em
+  // que a reserva de 10 minutos liberava "te esperamos").
+  it("só a consulta marcada, remarcada ou lida (com o par dela) libera o fechamento", () => {
     const texto = "Combinado! Te esperamos quinta, 23/10 às 16:15.";
     for (const parcial of [
-      { consultaLida: true },
-      { acoes: ["reservou" as const] },
-      { acoes: ["confirmou_presenca" as const] },
+      lida(),
+      { ...feita("confirmou_presenca"), ...lida() },
+      feita("marcou"),
+      feita("remarcou"),
     ]) {
       expect(regras(texto, { ...BUSCA, ...parcial })).toEqual([]);
     }
+    // A reserva de 10 minutos, a lista de espera e o cancelamento nao dao a
+    // consulta por feita.
+    for (const parcial of [
+      feita("reservou"),
+      feita("lista_de_espera"),
+      feita("cancelou"),
+      { acoes: ["reservou" as const] },
+    ]) {
+      expect(regras(texto, { ...BUSCA, ...parcial }), JSON.stringify(parcial)).toEqual([
+        "acao_nao_executada:fechamento_sem_acao",
+      ]);
+    }
+    // Com o par de outro dia, nem a consulta marcada libera.
+    expect(regras(texto, { ...BUSCA, ...feita("marcou", QUARTA_9_30) })).toEqual([
+      "acao_nao_executada:fechamento_fora_do_horario",
+    ]);
+  });
+
+  it("a reserva libera só as marcas da reserva, com o par dela", () => {
+    expect(
+      regras("Reservei quinta, 23/10 às 16:15 por 10 minutos.", {
+        ...BUSCA,
+        ...feita("reservou"),
+      }),
+    ).toEqual([]);
+    expect(
+      regras("Pronto! Reservado: quinta, 23/10 às 16:15.", {
+        ...BUSCA,
+        ...feita("reservou"),
+      }),
+    ).toEqual([]);
+    expect(
+      regras("Reservei quarta, 22/10 às 9h30 por 10 minutos.", {
+        ...BUSCA,
+        ...feita("reservou"),
+      }),
+    ).toEqual(["acao_nao_executada:horario_da_acao"]);
+    expect(
+      regras("Pronto! Quinta, 23/10 às 16:15 com a Dra. Ana Lima.", {
+        ...BUSCA,
+        ...feita("reservou"),
+      }),
+    ).toEqual(["acao_nao_executada:fechamento_sem_acao"]);
   });
 
   it("a marca negada não fecha", () => {
@@ -305,7 +368,7 @@ describe("item 3: o par em toda frase com dia e hora", () => {
             }),
           ],
           acoes: ["confirmou_presenca" as const],
-          consultaLida: true,
+          ...lida(),
         },
       ],
       [

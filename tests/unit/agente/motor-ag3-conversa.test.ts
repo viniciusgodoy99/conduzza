@@ -720,8 +720,10 @@ describe("as recusas novas", () => {
 
   it("registrar com para_o_titular false: só a marca, e passa para a equipe", async () => {
     const conversa = new Conversa(aguardando());
+    // Revisao final da AG3: "para o meu marido" o portao ja passa (achado
+    // 15); aqui a pessoa so diz que nao e para ela, e o modelo registra.
     const r = await conversa.fala({
-      texto: "Na verdade a consulta é para o meu marido",
+      texto: "Na verdade a consulta não é para mim",
       roteiro: [
         ferramenta("registrar_dados_do_paciente", {
           nome_completo: null,

@@ -29,6 +29,7 @@ import type {
   ConsultaLida,
   PortaDaAgenda,
   ReservaLida,
+  ReservaVivaDaConversa,
 } from "./ferramentas/agenda-do-turno";
 import {
   horarioContinuaLivre,
@@ -477,17 +478,22 @@ export async function reservarHorarioDaIa(
 
 /**
  * agendar_pela_ia com o job_id do turno (contrato 1.4): usa a reserva viva
- * da conversa; repetir o job devolve a mesma consulta. Lanca no erro, no
- * prazo e na resposta fora do formato.
+ * da conversa; repetir o job devolve a mesma consulta. Revisao final da
+ * AG3: com a reserva que a pergunta "Confirma ...?" mostrou (p_slot_hold_id;
+ * a RPC recusa reserva_diferente quando a viva e outra). Sem ela (o turno
+ * sem estado), como antes. Lanca no erro, no prazo e na resposta fora do
+ * formato.
  */
 export async function agendarPelaIa(
   admin: Cliente,
   ids: IdsDoTurno,
+  slotHoldId?: string | null,
 ): Promise<RespostaDoAgendar> {
   const corrida = await rpcComPrazo(admin, "agendar_pela_ia", {
     p_clinic_id: ids.clinicId,
     p_conversation_id: ids.conversationId,
     p_job_id: ids.jobId,
+    ...(slotHoldId === undefined ? {} : { p_slot_hold_id: slotHoldId }),
   });
   if (corrida.tipo !== "resultado") {
     return falhou(ids, "agendar", corrida.tipo);
@@ -836,12 +842,77 @@ export async function lerReservaDaIa(
     inicio: linha.starts_at,
     fim: linha.ends_at,
     unidadeId: typeof linha.unit_id === "string" ? linha.unit_id : null,
+    // Revisao final da AG3: o vencimento (a reserva que vence no meio do
+    // turno conta como vencida).
+    expiraEm:
+      typeof linha.expires_at === "string" && Number.isFinite(expira)
+        ? linha.expires_at
+        : null,
   };
 }
 
 /**
- * Uma consulta do contato da conversa: SO o inicio e se continua de pe (nao
- * cancelada, nao recusada, sem falta nem comparecimento, no futuro).
+ * Revisao final da AG3: a reserva viva desta conversa, qualquer que seja (o
+ * agendar recusou reserva_diferente: a viva nao e a perguntada). So horario,
+ * vinculo, unidade e vencimento. Lanca na leitura que falha ou passa do
+ * prazo.
+ */
+export async function lerReservaVivaDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  agoraMs: number,
+): Promise<ReservaVivaDaConversa | null> {
+  const corrida = await correrComPrazo(async () => {
+    const { data, error } = await admin
+      .from("slot_hold")
+      .select("id, service_link_id, starts_at, ends_at, unit_id, expires_at")
+      .eq("clinic_id", ids.clinicId)
+      .eq("conversation_id", ids.conversationId)
+      .is("consumido_em", null)
+      .gt("expires_at", new Date(agoraMs).toISOString())
+      .order("expires_at", { ascending: false })
+      .limit(1);
+    if (error) {
+      throw new Error("leitura");
+    }
+    return (data ?? []) as {
+      id?: unknown;
+      service_link_id?: unknown;
+      starts_at?: unknown;
+      ends_at?: unknown;
+      unit_id?: unknown;
+      expires_at?: unknown;
+    }[];
+  }, PRAZO_DA_AGENDA_MS);
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "reserva_viva", corrida.tipo);
+  }
+  const [linha] = corrida.valor;
+  if (
+    linha === undefined ||
+    typeof linha.id !== "string" ||
+    typeof linha.service_link_id !== "string" ||
+    typeof linha.starts_at !== "string" ||
+    typeof linha.ends_at !== "string" ||
+    typeof linha.expires_at !== "string"
+  ) {
+    return null;
+  }
+  return {
+    holdId: linha.id,
+    viva: Date.parse(linha.expires_at) > agoraMs,
+    serviceLinkId: linha.service_link_id,
+    inicio: linha.starts_at,
+    fim: linha.ends_at,
+    unidadeId: typeof linha.unit_id === "string" ? linha.unit_id : null,
+    expiraEm: linha.expires_at,
+  };
+}
+
+/**
+ * Uma consulta do contato da conversa: SO o inicio, a unidade (revisao final
+ * da AG3) e se continua de pe (nao cancelada, nao recusada, sem falta nem
+ * comparecimento, no futuro).
  */
 export async function lerConsultaDaIa(
   admin: Cliente,
@@ -852,7 +923,7 @@ export async function lerConsultaDaIa(
   const corrida = await correrComPrazo(async () => {
     const { data, error } = await admin
       .from("appointment")
-      .select("starts_at, status, approval_status")
+      .select("starts_at, status, approval_status, unit_id")
       .eq("clinic_id", ids.clinicId)
       .eq("contact_id", ids.contactId)
       .eq("id", appointmentId)
@@ -864,6 +935,7 @@ export async function lerConsultaDaIa(
       starts_at?: unknown;
       status?: unknown;
       approval_status?: unknown;
+      unit_id?: unknown;
     } | null;
   }, PRAZO_DA_AGENDA_MS);
   if (corrida.tipo !== "resultado") {
@@ -884,6 +956,7 @@ export async function lerConsultaDaIa(
         linha.status,
       ) &&
       linha.approval_status !== "recusado",
+    unidadeId: typeof linha.unit_id === "string" ? linha.unit_id : null,
   };
 }
 
@@ -905,13 +978,17 @@ export function portaDaAgendaDoWhatsapp(
         agoraMs: ids.agora(),
       }),
     reservar: (pedido) => reservarHorarioDaIa(admin, ids, pedido),
-    agendar: () => agendarPelaIa(admin, ids),
+    agendar: (pedido) =>
+      pedido === undefined
+        ? agendarPelaIa(admin, ids)
+        : agendarPelaIa(admin, ids, pedido.slotHoldId),
     confirmarPresenca: () => confirmarPresencaPelaIa(admin, ids, ids.agora()),
     registrarDados: (dados) => registrarDadosDaIa(admin, ids, dados),
     lerCadastroDoContato: () => lerCadastroDoContatoDaIa(admin, ids, ids.agora()),
     lerReserva: (holdId) => lerReservaDaIa(admin, ids, holdId, ids.agora()),
     lerConsulta: (appointmentId) =>
       lerConsultaDaIa(admin, ids, appointmentId, ids.agora()),
+    lerReservaViva: () => lerReservaVivaDaIa(admin, ids, ids.agora()),
   };
 }
 
@@ -930,7 +1007,16 @@ export type MemoriaDoSimulador = {
     unidadeId: string | null;
     expiraEm: string;
   } | null;
-  consulta: { appointmentId: string; inicio: string } | null;
+  /**
+   * serviceLinkId (revisao final da AG3): o vinculo da consulta simulada,
+   * para a reserva seguinte do mesmo procedimento recusar ja_tem_consulta,
+   * como a RPC. Ausente no pacote de antes: nao recusa.
+   */
+  consulta: {
+    appointmentId: string;
+    inicio: string;
+    serviceLinkId?: string;
+  } | null;
 };
 
 /**
@@ -979,6 +1065,26 @@ export function portaDaAgendaDoSimulador(
     carregar,
     reservar: async (pedido) => {
       if (memoria !== undefined && e.catalogo && e.config) {
+        // Revisao final da AG3: como a RPC, a consulta simulada (futura) do
+        // mesmo procedimento recusa ja_tem_consulta.
+        const consulta = memoria.consulta;
+        const procedimentoDe = (id: string | undefined) =>
+          id === undefined ? undefined : vinculoDe(id)?.procedimentoId;
+        if (
+          consulta !== null &&
+          consulta.serviceLinkId !== undefined &&
+          Date.parse(consulta.inicio) > e.agora() &&
+          procedimentoDe(consulta.serviceLinkId) !== undefined &&
+          procedimentoDe(consulta.serviceLinkId) ===
+            procedimentoDe(pedido.serviceLinkId)
+        ) {
+          return {
+            ok: false,
+            motivo: "ja_tem_consulta",
+            appointmentId: consulta.appointmentId,
+            inicio: consulta.inicio,
+          };
+        }
         // Como a RPC: o horario tem de continuar livre agora.
         const horario = {
           codigo: "h1",
@@ -1034,7 +1140,7 @@ export function portaDaAgendaDoSimulador(
         unitId: pedido.unidadeId ?? null,
       };
     },
-    agendar: async () => {
+    agendar: async (pedido) => {
       if (memoria !== undefined && e.catalogo && e.config) {
         const reserva = memoria.reserva;
         if (reserva === null) {
@@ -1042,6 +1148,15 @@ export function portaDaAgendaDoSimulador(
         }
         if (Date.parse(reserva.expiraEm) <= e.agora()) {
           return { ok: false, motivo: "reserva_vencida" };
+        }
+        // Revisao final da AG3: como a RPC, a reserva perguntada tem de ser
+        // a viva.
+        if (
+          pedido?.slotHoldId !== undefined &&
+          pedido.slotHoldId !== null &&
+          pedido.slotHoldId !== reserva.holdId
+        ) {
+          return { ok: false, motivo: "reserva_diferente" };
         }
         const dados = dadosAtuais;
         if (dados.para_o_titular === false) {
@@ -1063,7 +1178,11 @@ export function portaDaAgendaDoSimulador(
         if (faltam.length > 0) {
           return { ok: false, motivo: "faltam_dados", faltam };
         }
-        memoria.consulta = { appointmentId: randomUUID(), inicio: reserva.inicio };
+        memoria.consulta = {
+          appointmentId: randomUUID(),
+          inicio: reserva.inicio,
+          serviceLinkId: reserva.serviceLinkId,
+        };
         memoria.reserva = null;
         return {
           ok: true,
@@ -1179,6 +1298,22 @@ export function portaDaAgendaDoSimulador(
         inicio: reserva.inicio,
         fim: reserva.fim,
         unidadeId: reserva.unidadeId,
+        expiraEm: reserva.expiraEm,
+      };
+    },
+    lerReservaViva: async () => {
+      const reserva = memoria?.reserva ?? null;
+      if (reserva === null || Date.parse(reserva.expiraEm) <= e.agora()) {
+        return null;
+      }
+      return {
+        holdId: reserva.holdId,
+        viva: true,
+        serviceLinkId: reserva.serviceLinkId,
+        inicio: reserva.inicio,
+        fim: reserva.fim,
+        unidadeId: reserva.unidadeId,
+        expiraEm: reserva.expiraEm,
       };
     },
     lerConsulta: async (appointmentId) => {

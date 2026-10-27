@@ -586,6 +586,8 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     clinicId,
     conversationId: c.conversationId,
     contactId: conversa.contact_id,
+    // Revisao final da AG3: so a linha da janela atual.
+    janelaDesde: lido.janelaDesde,
   });
 
   const cliente = c.deps.clienteDoAgente();

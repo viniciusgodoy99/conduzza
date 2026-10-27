@@ -26,7 +26,7 @@ import {
   type AppointmentStatus,
   type StatusDefinition,
 } from "@/lib/design/status";
-import { aguardaAprovacao } from "@/lib/domain/appointment-status";
+import { situacaoDaConsulta } from "@/lib/domain/dados-informados";
 import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 // Painel lateral "Pendente de voce" (264px, cartao do design system, docs/06
@@ -53,7 +53,8 @@ import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 //
 // AG3 (D-7): o cartao da consulta da IA ganha "Ver dados informados" (40px,
 // acima de Aprovar e Recusar), o que o paciente informou ao assistente para
-// marcar, que a aprovacao aplica ao cadastro so onde ele esta vazio. A
+// marcar, que a aprovacao aplica ao cadastro (o nome se estiver vazio ou
+// for o do WhatsApp; nascimento, CPF e carteirinha so vazios). A
 // leitura grava trilha e por isso so acontece no clique
 // (components/agenda/dados-informados.tsx). O encaixe nao tem: a IA nao
 // pede dado para sugerir encaixe.
@@ -365,8 +366,8 @@ export function PendingPanel({
           aberto={dadosInformados.aberta !== null && consultaDosDados !== null}
           nome={consultaDosDados ? contatoDaConsulta(consultaDosDados) : null}
           fuso={contexto.timezone}
-          pendente={
-            consultaDosDados ? aguardaAprovacao(consultaDosDados) : false
+          situacao={
+            consultaDosDados ? situacaoDaConsulta(consultaDosDados) : "pendente"
           }
           estado={dadosInformados.estado}
           aoFechar={() => {
@@ -374,6 +375,7 @@ export function PendingPanel({
             setConsultaDosDados(null);
           }}
           aoTentarDeNovo={dadosInformados.tentarDeNovo}
+          aoRevelar={dadosInformados.revelar}
         />
 
         <div className="grid gap-2 border-t border-border pt-4">

@@ -304,6 +304,102 @@ export const BASE_PUBLICADA_DA_BATERIA = [
 
 const AGORA_DA_BATERIA = "Agora na clínica: segunda-feira, 26/10/2026, 14:35.";
 
+/**
+ * Revisao final da AG3: o dia e a hora de uma acao ou de uma consulta lida,
+ * como as ferramentas devolvem (a frase da acao com dia ou hora so passa
+ * com o par dela).
+ */
+export const TERCA_AS_14 = {
+  dia: "terça, 21/10",
+  hora: "14:00",
+  unidade: null,
+} as const;
+export const QUINTA_AS_16_15 = {
+  dia: "quinta, 23/10",
+  hora: "16:15",
+  unidade: null,
+} as const;
+const CONSULTA_DE_TERCA = { ...TERCA_AS_14, marcadaNestaConversa: false };
+
+// Revisao final da AG3 (27/10/2026): os fatos com o horario da acao.
+/** A reserva de terca, 21/10 as 14:00, como reservar_horario devolve. */
+const SAIDA_DA_RESERVA_DE_TERCA = JSON.stringify({
+  resultado: "reservado",
+  minutos: 10,
+  dia: "terça, 21/10",
+  hora: "14:00",
+  profissional: "Dra. Ana Lima",
+  procedimento: "Consulta dermatológica",
+  unidade: "Centro",
+});
+/** A busca e a reserva de terca 14:00 no turno (reservou, com o par). */
+const RESERVOU_TERCA = {
+  saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO, SAIDA_DA_RESERVA_DE_TERCA],
+  horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
+  acoes: ["reservou" as const],
+  horariosDasAcoes: [{ ...TERCA_AS_14, acao: "reservou" as const }],
+};
+/** O estado com a reserva de terca 14:00 (viva ou vencida) como fonte. */
+const SAIDA_DO_ESTADO_COM_A_RESERVA = JSON.stringify({
+  resultado: "atendimento_em_andamento",
+  horarios_oferecidos: [],
+  horario_reservado: {
+    dia: "terça, 21/10",
+    hora: "14:00",
+    profissional: "Dra. Ana Lima",
+    procedimento: "Consulta dermatológica",
+    unidade: "Centro",
+  },
+});
+/** A consulta de terca 14:00 lida (confirmar_presenca) e a busca. */
+const LEU_A_CONSULTA_DE_TERCA = {
+  saidasDasFerramentas: [
+    JSON.stringify({ resultado: "confirmada", dia: "terça, 21/10", hora: "14:00" }),
+    SAIDA_DA_BUSCA_DE_HORARIO,
+  ],
+  horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
+  acoes: ["confirmou_presenca" as const],
+  consultaLida: true,
+  consultasLidas: [CONSULTA_DE_TERCA],
+};
+/** A consulta que o contato ja tem (05/11 10:00) e a reserva de terca. */
+const JA_TEM_A_DE_NOVEMBRO = {
+  saidasDasFerramentas: [
+    JSON.stringify({ resultado: "ja_tem_consulta", dia: "quarta, 05/11", hora: "10:00" }),
+    SAIDA_DO_ESTADO_COM_A_RESERVA,
+  ],
+  horariosLivres: [{ dia: "terça, 21/10", hora: "14:00", unidade: "Centro" }],
+  acoes: ["reservou" as const],
+  horariosDasAcoes: [{ ...TERCA_AS_14, acao: "reservou" as const }],
+  consultaLida: true,
+  consultasLidas: [
+    {
+      dia: "quarta, 05/11",
+      hora: "10:00",
+      unidade: null,
+      marcadaNestaConversa: false,
+    },
+  ],
+};
+/** A consulta que a IA marcou nesta conversa, relida no turno seguinte. */
+const MARCADA_NESTA_CONVERSA = {
+  saidasDasFerramentas: [
+    JSON.stringify({
+      resultado: "atendimento_em_andamento",
+      horarios_oferecidos: [],
+      consulta_marcada: { dia: "terça, 21/10", hora: "14:00" },
+    }),
+  ],
+  consultaLida: true,
+  consultasLidas: [{ ...TERCA_AS_14, marcadaNestaConversa: true }],
+};
+/** A busca com a hora pedida (quarta 22/10 15:00) ocupada: o eco. */
+const ECO_DE_QUARTA_AS_15 = {
+  saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
+  horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
+  ecosDoPedido: ["quarta, 22/10 às 15:00"],
+};
+
 function comFatos(
   parcial: Partial<FatosDoTurno> = {},
   contexto: Partial<ContextoDoFiltro> = {},
@@ -3396,6 +3492,187 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Para a consulta, traga o pedido médico e os exames anteriores.",
     { ...comFatos(), ...SO_MODELO },
   ),
+
+  // Revisao final da AG3 (27/10/2026). Item 3: a marca de fechamento e
+  // licenciada pela acao (a reserva de 10 minutos, o cancelamento e a lista
+  // de espera nao dao a consulta por feita).
+  saida(
+    "AG3-S01",
+    "acao_nao_executada",
+    "contexto",
+    "Combinado! Te esperamos terça, 21/10 às 14:00.",
+    comFatos(RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3-S02",
+    "acao_nao_executada",
+    "contexto",
+    "Ficou para terça às 14h então, com a Dra. Ana Lima.",
+    comFatos(RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3-S03",
+    "acao_nao_executada",
+    "contexto",
+    "Está tudo certo para terça, 21/10 às 14:00.",
+    comFatos(RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3-S04",
+    "acao_nao_executada",
+    "contexto",
+    "Pronto! Terça às 14h com a Dra. Ana Lima. Até lá!",
+    comFatos(RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3-S05",
+    "acao_nao_executada",
+    "contexto",
+    "Te aguardo na terça às 14h.",
+    comFatos(RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3-S06",
+    "acao_nao_executada",
+    "contexto",
+    "Pronto, ficou para quinta às 16:15 com o Dr. Bruno Costa.",
+    comFatos({
+      saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
+      horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
+      acoes: ["cancelou"],
+    }),
+  ),
+  saida(
+    "AG3-S07",
+    "acao_nao_executada",
+    "contexto",
+    "Combinado! Te esperamos quinta às 16:15.",
+    comFatos({
+      saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
+      horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
+      acoes: ["lista_de_espera"],
+    }),
+  ),
+  // Item 2: a acao e a consulta lida com o horario delas (o horario livre de
+  // outra busca nao sustenta a acao).
+  saida(
+    "AG3-S08",
+    "acao_nao_executada",
+    "contexto",
+    "Reservei quinta, 23/10 às 16:15 por 10 minutos.",
+    comFatos(RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3-S09",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta está marcada para quinta, 23/10 às 16:15.",
+    comFatos(LEU_A_CONSULTA_DE_TERCA),
+  ),
+  saida(
+    "AG3-S10",
+    "acao_nao_executada",
+    "contexto",
+    "Presença confirmada para quarta às 9h30!",
+    comFatos(LEU_A_CONSULTA_DE_TERCA),
+  ),
+  saida(
+    "AG3-S11",
+    "acao_nao_executada",
+    "contexto",
+    "Você já tem uma consulta desse procedimento marcada para terça, 21/10 às 14:00.",
+    comFatos(JA_TEM_A_DE_NOVEMBRO),
+  ),
+  // Item 9: o fechamento sem as marcas de antes, sem acao no turno.
+  saida(
+    "AG3-S12",
+    "acao_nao_executada",
+    "parafrase",
+    "Sua consulta será terça, 21/10 às 14:00 com a Dra. Ana Lima.",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG3-S13",
+    "acao_nao_executada",
+    "parafrase",
+    "Nos vemos terça, 21/10 às 14:00!",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG3-S14",
+    "acao_nao_executada",
+    "parafrase",
+    "Até terça, 21/10 às 14:00!",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG3-S15",
+    "acao_nao_executada",
+    "parafrase",
+    "Seu horário é terça, 21/10 às 14:00.",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG3-S16",
+    "acao_nao_executada",
+    "parafrase",
+    "Então fica terça, 21/10 às 14:00 com a Dra. Ana Lima.",
+    COM_A_BUSCA,
+  ),
+  saida(
+    "AG3-S17",
+    "acao_nao_executada",
+    "parafrase",
+    "Agendamento: terça, 21/10 às 14:00, Dra. Ana Lima.",
+    COM_A_BUSCA,
+  ),
+  // Item 9: o convenio que o paciente citou e que o Cadastro nao reconhece
+  // nao e sustentado pelo fato de outro convenio.
+  saida(
+    "AG3-S18",
+    "cobertura_nao_verificada",
+    "contexto",
+    "Aceitamos o seu plano, sim!",
+    comFatos(
+      { coberturas: [cobertura("Unimed", null, "atende")] },
+      { mensagensDoPaciente: ["Vocês aceitam Humana Saúde?"] },
+    ),
+  ),
+  saida(
+    "AG3-S19",
+    "cobertura_nao_verificada",
+    "contexto",
+    "Aceitamos, sim!",
+    comFatos(
+      { coberturas: [cobertura("Unimed", null, "atende")] },
+      { mensagensDoPaciente: ["Vocês aceitam Humana Saúde?"] },
+    ),
+  ),
+  saida(
+    "AG3-S20",
+    "cobertura_nao_verificada",
+    "contexto",
+    "Pode usar o seu convênio, sim.",
+    comFatos(
+      { coberturas: [cobertura("Unimed", null, "atende")] },
+      { mensagensDoPaciente: ["Tenho Humana Saúde, posso usar?"] },
+    ),
+  ),
+  // Item 5: o eco da hora pedida so vale na frase que nega ou pergunta.
+  saida(
+    "AG3-S21",
+    "horario_nao_verificado",
+    "contexto",
+    "A Dra. Ana Lima atende quarta, 22/10 às 15:00.",
+    comFatos(ECO_DE_QUARTA_AS_15),
+  ),
+  saida(
+    "AG3-S22",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta será quarta, 22/10 às 15:00.",
+    comFatos(ECO_DE_QUARTA_AS_15),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -4704,6 +4981,8 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       ],
       acoes: ["confirmou_presenca"],
       consultaLida: true,
+      // Revisao final da AG3: a consulta lida com o dia e a hora dela.
+      consultasLidas: [CONSULTA_DE_TERCA],
     }),
   },
   {
@@ -4721,6 +5000,8 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
         }),
       ],
       acoes: ["reservou"],
+      // Revisao final da AG3: a acao com o horario dela.
+      horariosDasAcoes: [{ ...TERCA_AS_14, acao: "reservou" }],
     }),
   },
   {
@@ -4825,6 +5106,7 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       ],
       acoes: ["confirmou_presenca"],
       consultaLida: true,
+      consultasLidas: [{ ...QUINTA_AS_16_15, marcadaNestaConversa: false }],
     }),
   },
   {
@@ -5011,6 +5293,7 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
       horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
       acoes: ["marcou"],
+      horariosDasAcoes: [{ ...QUINTA_AS_16_15, acao: "marcou" }],
     }),
   },
   {
@@ -5020,6 +5303,7 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
       horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
       acoes: ["remarcou"],
+      horariosDasAcoes: [{ ...QUINTA_AS_16_15, acao: "remarcou" }],
     }),
   },
   { id: "AG2-B57", rascunho: "Você tem consulta amanhã?", ...comFatos() },
@@ -5062,6 +5346,71 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     id: "AG2-B64",
     rascunho: "Prefere às 15h? Posso consultar a agenda.",
     ...comFatos({}, { mensagensDoPaciente: ["pode ser 15h?"] }),
+  },
+  // Revisao final da AG3 (27/10/2026): o que a revisao final nao pode
+  // barrar.
+  {
+    id: "AG3-B01",
+    rascunho:
+      "Reservei terça, 21/10 às 14:00 por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.",
+    ...comFatos(RESERVOU_TERCA),
+  },
+  {
+    id: "AG3-B02",
+    rascunho:
+      "Sim, seu horário de terça, 21/10 às 14:00 continua reservado. Para marcar, me envie seu nome completo e sua data de nascimento.",
+    ...comFatos(RESERVOU_TERCA),
+  },
+  {
+    id: "AG3-B03",
+    rascunho:
+      "Sim! Sua consulta ficou marcada para terça, 21/10 às 14:00, pendente da aprovação da equipe.",
+    ...comFatos(MARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG3-B04",
+    rascunho:
+      "Foi marcada sim, terça, 21/10 às 14:00, e está pendente da aprovação da equipe.",
+    ...comFatos(MARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG3-B05",
+    rascunho: "Anotei seus dados. A reserva de terça, 21/10 às 14:00 venceu.",
+    ...comFatos({ saidasDasFerramentas: [SAIDA_DO_ESTADO_COM_A_RESERVA] }),
+  },
+  {
+    id: "AG3-B06",
+    rascunho:
+      "Pronto, anotei seus dados. O horário de terça, 21/10 às 14:00 não está mais reservado.",
+    ...comFatos({ saidasDasFerramentas: [SAIDA_DO_ESTADO_COM_A_RESERVA] }),
+  },
+  {
+    id: "AG3-B07",
+    rascunho:
+      "Quarta, 22/10 às 15:00 não está livre. Quer que eu veja outros horários?",
+    ...comFatos(ECO_DE_QUARTA_AS_15),
+  },
+  {
+    id: "AG3-B08",
+    rascunho:
+      "Você já tem uma consulta desse procedimento marcada para quarta, 05/11 às 10:00. Quer falar com a equipe sobre essa consulta?",
+    ...comFatos(JA_TEM_A_DE_NOVEMBRO),
+  },
+  {
+    id: "AG3-B09",
+    rascunho:
+      "Ótimo, confirma a Consulta dermatológica com a Dra. Ana Lima na terça, 21/10 às 14:00?",
+    ...comFatos(RESERVOU_TERCA),
+  },
+  {
+    id: "AG3-B10",
+    rascunho: "Combinado! Te esperamos terça, 21/10 às 14:00.",
+    ...comFatos({
+      saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
+      horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
+      acoes: ["marcou"],
+      horariosDasAcoes: [{ ...TERCA_AS_14, acao: "marcou" }],
+    }),
   },
 ];
 

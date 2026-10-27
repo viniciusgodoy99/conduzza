@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import { GATILHOS_DO_CLASSIFICADOR } from "@/lib/domain/conformidade/categorias";
 import {
   detectarGatilhosDeEntrada,
+  FONTES_DO_PORTAO_EM_CODIGO,
   idadeEmAnos,
   LIMITE_DE_MENSAGEM,
   MAXIMO_DE_MENSAGENS_NO_CONTEXTO,
+  pedidoDeConsultaParaOutraPessoa,
 } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import {
   CASOS_DE_ENTRADA,
@@ -234,5 +236,56 @@ describe("regras do portao", () => {
         ],
       }),
     ).toContain("sintoma");
+  });
+});
+
+// Revisao final da AG3 (achado 15, D-8): o pedido de consulta para outra
+// pessoa adulta passa para a equipe pelo portao (o laco escala com o motivo
+// consulta_para_outra_pessoa, sem gatilho). Filho e filha seguem pela regra
+// do menor.
+describe("a consulta para outra pessoa adulta", () => {
+  it.each([
+    "Quero marcar uma consulta para minha mãe",
+    "Tem horário pro meu pai amanhã?",
+    "Gostaria de agendar para o meu marido, por favor",
+    "Quero marcar pra minha esposa",
+    "Vocês têm vaga para a minha sogra na sexta?",
+    "Queria uma avaliação pra minha avó",
+    "Minha mãe quer marcar uma consulta",
+    "Meu marido precisa de uma consulta com a dermatologista",
+    "É para minha esposa",
+    "Seria pro meu pai",
+    "Na verdade, é para o meu irmão",
+  ])("%s", (texto) => {
+    expect(pedidoDeConsultaParaOutraPessoa([texto])).toBe(true);
+  });
+
+  it.each([
+    "Quero marcar uma consulta para meu filho",
+    "É pra minha filha",
+    "Posso levar minha mãe na consulta?",
+    "Minha mãe que me indicou vocês, quero marcar uma consulta",
+    "Quero marcar uma consulta para mim",
+    "Tem estacionamento? Meu pai vai me levar",
+    "Minha mãe vai me acompanhar na consulta",
+    "Comprei um presente para minha mãe",
+  ])("não é: %s", (texto) => {
+    expect(pedidoDeConsultaParaOutraPessoa([texto])).toBe(false);
+  });
+
+  it("nenhum controle de entrada da bateria vira consulta para outra pessoa", () => {
+    for (const caso of CONTROLES_DE_ENTRADA) {
+      expect(
+        pedidoDeConsultaParaOutraPessoa(caso.mensagens.map((m) => m.texto)),
+        caso.id,
+      ).toBe(false);
+    }
+  });
+
+  it("mídia não conta, e as regras entram na versão do portão", () => {
+    expect(pedidoDeConsultaParaOutraPessoa([null])).toBe(false);
+    expect(
+      FONTES_DO_PORTAO_EM_CODIGO.some((fonte) => fonte.includes("outra pessoa adulta")),
+    ).toBe(true);
   });
 });

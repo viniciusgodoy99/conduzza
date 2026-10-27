@@ -16,6 +16,9 @@
 // informou ficam em dados_informados_na_marcacao; aqui so chega SE foram
 // informados (nunca o valor) e o que falta.
 
+import { datasEHorasDoTexto } from "@/lib/domain/conformidade/fatos-do-turno";
+import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
+
 import type { CatalogoDoAgente } from "./ferramentas/buscar-procedimento";
 
 // ---------------------------------------------------------------------------
@@ -581,19 +584,195 @@ function semAcento(texto: string): string {
 }
 
 /**
- * A resposta pergunta "Confirma ...?": uma frase que COMECA com "Confirma"
- * (no comeco do texto ou depois de um ponto, de uma exclamacao, de uma
- * interrogacao ou de uma quebra de linha) e termina numa interrogacao. E o
- * que deixa o proximo turno marcar (etapa aguardando_confirmacao): o
- * agendar so vale numa mensagem nova do paciente depois dessa pergunta.
+ * O comeco da pergunta de confirmacao: "Confirma", e (revisao final da AG3,
+ * achado 11) tambem depois de uma interjeicao ("Otimo, confirma ...?",
+ * "Obrigada! Confirma") ou de quem confirma ("Voce confirma ...?", "Entao,
+ * a senhora confirma ...?"). Ja sem acento e minusculo.
  */
-export function perguntaSeConfirma(texto: string): boolean {
-  // O ponto das abreviacoes ("Dra. Ana", "Av. Santos Dumont") e dos numeros
-  // ("1.500") nao fecha a frase.
+const COMECO_DA_CONFIRMACAO =
+  /^\s*(?:(?:otimo|otima|perfeito|perfeita|certo|certinho|ok|okay|entao|obrigad[oa]|combinado|beleza|show|maravilha|tudo certo|anotado|anotei|pronto|prontinho|bom|boa|sim|claro|legal|excelente|agora|por fim|para finalizar|so para confirmar)\s*[,:;]?\s+)*(?:(?:voce|vc|a senhora|o senhor)\s+)?confirma\b/;
+
+/**
+ * As frases da resposta que perguntam "Confirma ...?": a frase (do comeco
+ * do texto ou depois de um ponto, de uma exclamacao, de uma interrogacao ou
+ * de uma quebra de linha) que comeca com COMECO_DA_CONFIRMACAO e termina
+ * numa interrogacao. Sem acento e minusculas.
+ */
+export function frasesQueConfirmam(texto: string): string[] {
+  return perguntasDoTexto(texto).filter((frase) =>
+    COMECO_DA_CONFIRMACAO.test(frase),
+  );
+}
+
+/**
+ * As perguntas do texto (as frases que terminam em interrogacao), sem
+ * acento e minusculas. O ponto das abreviacoes ("Dra. Ana", "Av. Santos
+ * Dumont") e dos numeros ("1.500") nao fecha a frase.
+ */
+function perguntasDoTexto(texto: string): string[] {
   const base = semAcento(texto.trim())
     .replace(/\b(dra|dr|sra|sr|srta|av|prof|profa|dona|sto|sta|n)\./g, "$1")
     .replace(/(\d)\.(\d)/g, "$1$2");
-  return /(?:^|[.!?\n]\s*)confirma\b[^.!?\n]*\?/.test(base);
+  return [...base.matchAll(/[^.!?\n]+\?+/g)].map((m) => m[0].trim());
+}
+
+/**
+ * A resposta pergunta "Confirma ...?" (frasesQueConfirmam). E o que deixa o
+ * proximo turno marcar (etapa aguardando_confirmacao), junto da conferencia
+ * da reserva (perguntaConfirmaAReserva): o agendar so vale numa mensagem
+ * nova do paciente depois dessa pergunta.
+ */
+export function perguntaSeConfirma(texto: string): boolean {
+  return frasesQueConfirmam(texto).length > 0;
+}
+
+/** A reserva viva que a pergunta "Confirma ...?" tem de mostrar. */
+export type ReservaPerguntada = {
+  /** Como a agenda escreve ("quarta, 21/10"). */
+  dia: string;
+  /** "14:00". */
+  hora: string;
+  /** O nome do Cadastro (null: nao se sabe). */
+  profissional: string | null;
+  /** O nome da unidade (null: sem unidade). */
+  unidade: string | null;
+  /** Os nomes de todos os profissionais do catalogo. */
+  profissionais: readonly string[];
+  /** Os nomes de todas as unidades do catalogo. */
+  unidades: readonly string[];
+};
+
+const DIAS_DA_SEMANA_SEM_ACENTO = [
+  "domingo",
+  "segunda",
+  "terca",
+  "quarta",
+  "quinta",
+  "sexta",
+  "sabado",
+] as const;
+const DIA_DA_SEMANA_NA_FRASE =
+  /\b(domingo|segunda|terca|quarta|quinta|sexta|sabado)(?:-feira)?\b/g;
+/** Os titulos que nao fazem parte do nome ("Dra. Ana Lima" e "ana lima"). */
+const TITULOS = new Set(["dr", "dra", "doutor", "doutora", "prof", "profa"]);
+const TITULO_E_NOME = /\b(?:dr|dra|doutor|doutora)\b\.?\s+([a-z]+)/g;
+
+/** As palavras do nome, sem titulo e sem pontuacao ("dra. ana lima": ana lima). */
+function palavrasDoNome(nome: string): string[] {
+  return normalizarBase(nome)
+    .split(/[^a-z0-9]+/)
+    .filter((p) => p !== "" && !TITULOS.has(p));
+}
+
+/** A frase cita o nome inteiro (as palavras em sequencia). */
+function citaONome(frase: string, palavras: readonly string[]): boolean {
+  if (palavras.length === 0) {
+    return false;
+  }
+  const escapadas = palavras.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`(?<![a-z0-9])${escapadas.join("[^a-z0-9]+")}(?![a-z0-9])`).test(
+    frase,
+  );
+}
+
+/**
+ * Revisao final da AG3 (achado 1, ALTO): a pergunta "Confirma ...?" mostra
+ * A RESERVA VIVA. Toda frase de confirmacao da resposta tem de trazer o dia
+ * com o mes (dd/mm) e a hora (HH:mm) da reserva e nenhum outro dia ou hora
+ * (nem dia da semana diferente); quando cita profissional (o titulo ou o
+ * nome de outro do catalogo) ou unidade, os da reserva. Sem isso, a etapa
+ * aguardando_confirmacao nao e armada e o "sim" seguinte nao marca: marcar
+ * um horario diferente do que a pessoa confirmou e o pior erro do
+ * agendamento.
+ */
+export function perguntaConfirmaAReserva(
+  texto: string,
+  reserva: ReservaPerguntada,
+): boolean {
+  if (frasesQueConfirmam(texto).length === 0) {
+    return false;
+  }
+  // Toda pergunta com "confirma" (tambem "Ou confirma quinta...?") tem de
+  // mostrar a reserva: duas opcoes deixam o "sim" sem horario certo.
+  const frases = perguntasDoTexto(texto).filter((frase) =>
+    /\bconfirma\b/.test(frase),
+  );
+  const doDia = datasEHorasDoTexto(normalizarBase(reserva.dia), "fonte");
+  const dataDaReserva = doDia.datas[0];
+  const horaDaReserva = datasEHorasDoTexto(
+    normalizarBase(reserva.hora),
+    "fonte",
+  ).horas[0];
+  const semanaDaReserva = DIAS_DA_SEMANA_SEM_ACENTO.find((d) =>
+    normalizarBase(reserva.dia).startsWith(d),
+  );
+  if (
+    dataDaReserva === undefined ||
+    dataDaReserva.mes === null ||
+    horaDaReserva === undefined
+  ) {
+    return false;
+  }
+  const nomeDaReserva =
+    reserva.profissional === null ? [] : palavrasDoNome(reserva.profissional);
+  const outrosProfissionais = reserva.profissionais
+    .map(palavrasDoNome)
+    .filter(
+      (palavras) =>
+        palavras.length > 0 && palavras.join(" ") !== nomeDaReserva.join(" "),
+    );
+  const unidadeDaReserva =
+    reserva.unidade === null ? [] : palavrasDoNome(reserva.unidade);
+  const outrasUnidades = reserva.unidades
+    .map(palavrasDoNome)
+    .filter(
+      (palavras) =>
+        palavras.length > 0 && palavras.join(" ") !== unidadeDaReserva.join(" "),
+    );
+  return frases.every((original) => {
+    const frase = normalizarBase(original);
+    const { datas, horas } = datasEHorasDoTexto(frase, "rascunho");
+    // O dd/mm e o HH:mm da reserva, e nenhum outro.
+    if (
+      !datas.some(
+        (d) => d.dia === dataDaReserva.dia && d.mes === dataDaReserva.mes,
+      ) ||
+      datas.some(
+        (d) =>
+          d.dia !== dataDaReserva.dia ||
+          (d.mes !== null && d.mes !== dataDaReserva.mes),
+      ) ||
+      !horas.includes(horaDaReserva) ||
+      horas.some((h) => h !== horaDaReserva)
+    ) {
+      return false;
+    }
+    for (const m of frase.matchAll(DIA_DA_SEMANA_NA_FRASE)) {
+      if (m[1] !== semanaDaReserva) {
+        return false;
+      }
+    }
+    // O profissional: o titulo e o primeiro nome da reserva, e nenhum outro.
+    for (const m of frase.matchAll(TITULO_E_NOME)) {
+      if (nomeDaReserva.length === 0 || m[1] !== nomeDaReserva[0]) {
+        return false;
+      }
+    }
+    if (outrosProfissionais.some((nome) => citaONome(frase, nome))) {
+      return false;
+    }
+    // A unidade: a da reserva, quando cita.
+    if (outrasUnidades.some((nome) => citaONome(frase, nome))) {
+      return false;
+    }
+    if (
+      /\bunidade\b/.test(frase) &&
+      (unidadeDaReserva.length === 0 || !citaONome(frase, unidadeDaReserva))
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -683,7 +862,13 @@ export type EntradaDaNota = {
   unidade: string | null;
   /** O que a pessoa pediu na ultima busca deste turno (lista fechada). */
   preferencia: { periodo: string | null; hora: string | null } | null;
-  reserva: (HorarioLegivel & { viva: boolean | null }) | null;
+  /**
+   * perdida (revisao final da AG3): o horario da reserva deixou de estar
+   * livre.
+   */
+  reserva:
+    | (HorarioLegivel & { viva: boolean | null; perdida?: boolean })
+    | null;
   oferecidos: readonly HorarioLegivel[];
   /** Onde o atendimento parou, em texto de recepcao (rotulo fixo). */
   parouEm: string;
@@ -770,11 +955,13 @@ export function notaDaPassagem(entrada: EntradaDaNota): string | null {
   }
   if (entrada.reserva !== null) {
     const situacao =
-      entrada.reserva.viva === true
-        ? "reserva de 10 minutos ainda valendo"
-        : entrada.reserva.viva === false
-          ? "a reserva de 10 minutos venceu"
-          : "reserva de 10 minutos";
+      entrada.reserva.perdida === true
+        ? "o horário deixou de estar livre"
+        : entrada.reserva.viva === true
+          ? "reserva de 10 minutos ainda valendo"
+          : entrada.reserva.viva === false
+            ? "a reserva de 10 minutos venceu"
+            : "reserva de 10 minutos";
     linhas.push(
       `Horário reservado: ${horarioEmTexto(entrada.reserva)} (${situacao}).`,
     );

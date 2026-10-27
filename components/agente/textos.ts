@@ -323,8 +323,10 @@ export const TEXTOS_DO_AGENTE = {
   dadosDescricao:
     "Salvo no rascunho, vale ao publicar. Antes de marcar a consulta, o assistente pede ao paciente os dados escolhidos aqui.",
   dadosLegenda: "Dados que o assistente pede antes de marcar",
+  // Revisao final da AG3 (achado 8): a regra real do gatilho
+  // (aplicar_dados_na_aprovacao), a mesma do "Ver dados informados".
   dadosNoCadastro:
-    "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente, só onde ele está vazio.",
+    "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente. O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
   dadosCarteirinha:
     "A carteirinha não entra aqui: o assistente pede quando o convênio ou o procedimento exige, conforme o Cadastro.",
   dadosNenhum:

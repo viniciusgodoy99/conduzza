@@ -50,8 +50,9 @@ import {
 // travadas e o Salvar, visivel e desabilitado com a dica.
 //
 // A frase do cadastro (os dados entram no cadastro do paciente quando a
-// equipe aprova a consulta, so onde ele esta vazio) fica sempre visivel: e o
-// que o gatilho do banco faz na aprovacao (aplicar_dados_na_aprovacao).
+// equipe aprova a consulta: o nome se o cadastro estiver sem nome ou com o do
+// WhatsApp; nascimento, CPF e carteirinha so vazios) fica sempre visivel: e
+// o que o gatilho do banco faz na aprovacao (aplicar_dados_na_aprovacao).
 
 /** Nenhuma caixa marcada: o aviso de que a IA marca sem pedir dado. */
 export function nenhumDadoExigido(dados: DadosExigidos): boolean {

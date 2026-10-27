@@ -27,7 +27,12 @@
 //    agendaDoTurno.fatosDoEstado()): os horarios ja oferecidos e a reserva
 //    sao fonte de dia e hora (citar, negar), mas so o RECONFERIDO no turno
 //    e horario livre; a reserva viva, lida no turno, e "reservou"; a
-//    consulta marcada nesta conversa, lida no turno, e consulta lida.
+//    consulta marcada nesta conversa, lida no turno, e consulta lida;
+//  - revisao final da AG3: cada acao (reservou, marcou, remarcou) e cada
+//    consulta lida com o dia, a hora e a unidade dela (a frase da acao com
+//    dia ou hora so passa com o par daquela acao), e o eco do pedido (a
+//    hora e o dia que a pessoa pediu, o horario que a reserva recusou) fora
+//    das saidas, em ecosDoPedido: so vale na frase que nega ou pergunta.
 // As mensagens novas do paciente (fonte de data e hora) o filtro ja recebe
 // em mensagensDoPaciente. Quem chama (lib/agente/laco.ts) falha fechado se
 // montar os fatos lancar.
@@ -36,8 +41,10 @@ import { TZDate } from "@date-fns/tz";
 
 import type { ConfigDoAgente } from "@/lib/domain/agente/config";
 import type {
+  AcaoComHorario,
   AcaoDoTurno,
   CoberturaDoTurno,
+  ConsultaDoFato,
   DiaDaClinica,
   FatosDaFerramenta,
   FatosDoTurno,
@@ -133,15 +140,26 @@ export function montarFatosDoTurno(entrada: {
   const coberturas: CoberturaDoTurno[] = [];
   const horariosLivres: HorarioLivreDoTurno[] = [];
   const acoes = new Set<AcaoDoTurno>();
+  const horariosDasAcoes: AcaoComHorario[] = [];
+  const consultasLidas: ConsultaDoFato[] = [];
+  const ecosDoPedido: string[] = [];
   let consultaLida = false;
   for (const { fatos } of entrada.ferramentas) {
     coberturas.push(...(fatos?.coberturas ?? []));
     horariosLivres.push(...(fatos?.horarios ?? []));
+    ecosDoPedido.push(...(fatos?.ecos ?? []));
     if (fatos?.acao !== undefined) {
       acoes.add(fatos.acao);
+      // Revisao final da AG3: o horario da acao vai junto dela.
+      if (fatos.horarioDaAcao !== undefined) {
+        horariosDasAcoes.push({ ...fatos.horarioDaAcao, acao: fatos.acao });
+      }
     }
     if (fatos?.consultaLida === true) {
       consultaLida = true;
+      if (fatos.consultaComHorario !== undefined) {
+        consultasLidas.push({ ...fatos.consultaComHorario });
+      }
     }
   }
   const convenios = conveniosConhecidos(catalogo).map((c) => ({
@@ -155,13 +173,20 @@ export function montarFatosDoTurno(entrada: {
     FRASE_FORA_DO_ASSUNTO,
   ].filter((texto): texto is string => (texto?.trim() ?? "") !== "");
   return {
-    saidasDasFerramentas: entrada.ferramentas.map(({ saida }) => saida),
+    // Revisao final da AG3: sem o eco do pedido (que so vale na frase que
+    // nega ou pergunta, em ecosDoPedido).
+    saidasDasFerramentas: entrada.ferramentas.map(
+      ({ saida, fatos }) => fatos?.saidaSemEco ?? saida,
+    ),
     textosPublicados: textosPublicadosDoTurno(entrada),
     textosColados: colados,
     convenios,
     coberturas,
     acoes: [...acoes],
+    horariosDasAcoes,
     consultaLida,
+    consultasLidas,
+    ecosDoPedido,
     anoCorrente: anoNaClinica(entrada.agoraMs, entrada.fuso),
     horariosLivres,
     procedimentos: [

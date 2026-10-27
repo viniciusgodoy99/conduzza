@@ -436,7 +436,9 @@ describe("ação de agenda no turno", () => {
       ],
       { mensagens },
     );
-    barrouPor(comDia, "horario_nao_verificado");
+    // Revisao final da AG3: a marcacao sem o horario dela (o simulador sem
+    // a reserva guardada) nao sustenta o dia e a hora da frase.
+    barrouPor(comDia, "acao_nao_executada");
   });
 
   it("com a reserva do turno, 'reservei' e o dia e a hora passam", async () => {
@@ -479,7 +481,9 @@ describe("ação de agenda no turno", () => {
       ],
       { agenda: porta },
     );
-    barrouPor(outraHora, "horario_nao_verificado");
+    // Revisao final da AG3: a confirmacao com a hora de outra consulta e a
+    // acao fora do horario dela.
+    barrouPor(outraHora, "acao_nao_executada");
   });
 });
 

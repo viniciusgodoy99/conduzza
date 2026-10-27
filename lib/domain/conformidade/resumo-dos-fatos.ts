@@ -14,7 +14,13 @@
 //
 // SEM DADO DE PACIENTE (LGPD, minimizacao). O resumo e montado SO com:
 //  - hoje no fuso da clinica (numeros);
-//  - as acoes e a consulta lida (listas fechadas, viram rotulos fixos);
+//  - as acoes e a consulta lida (listas fechadas, viram rotulos fixos).
+//    Revisao final da AG3: com o dia, a hora e a unidade de cada acao
+//    (reservou, marcou, remarcou) e de cada consulta lida, no mesmo formato
+//    conferido dos horarios livres ("reservou quarta, 21/10 as 14:00,
+//    unidade Centro, ainda nao marcada"; "consulta que a pessoa ja tem:
+//    terca, 27/10 as 10:00"). Da consulta, so o dia, a hora e a unidade:
+//    nunca o profissional nem o procedimento;
 //  - os horarios livres da agenda, conferidos no formato exato que
 //    buscar_horario e reservar_horario escrevem ("terca, 21/10" e "14:00").
 //    Outro formato: o resumo nao monta. AG3 (27/10/2026): com a unidade do
@@ -27,8 +33,9 @@
 //    funcionamento) e os requisitos de consultar_requisitos e de
 //    buscar_procedimento (o item e o texto ao paciente). Nada da agenda:
 //    buscar_horario, reservar_horario, agendar e confirmar_presenca so
-//    entram pelos horarios livres conferidos e pelas marcas de acao; a
-//    consulta da pessoa (dia, hora, profissional) nunca entra;
+//    entram pelos horarios livres conferidos e pelas marcas de acao (com o
+//    dia, a hora e a unidade); o profissional e o procedimento da consulta
+//    da pessoa nunca entram;
 //  - os textos publicados pela clinica: as frases com endereco, as
 //    respostas da base que o modelo disse ter usado e os textos fixos
 //    colados na resposta (saudacao, aviso, encerramento).
@@ -42,6 +49,7 @@ import type {
   AcaoDoTurno,
   EstadoDaCobertura,
   FatosDoTurno,
+  HorarioDoFato,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import { frasesComEndereco } from "@/lib/domain/conformidade/fatos-do-turno";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
@@ -74,6 +82,22 @@ const ROTULO_DA_ACAO: Readonly<Record<AcaoDoTurno, string>> = {
   remarcou: "remarcou a consulta",
   lista_de_espera: "colocou a pessoa na lista de espera",
 };
+
+/**
+ * Revisao final da AG3: a acao com o horario dela ("{}" e o dia, a hora e
+ * a unidade). A reserva diz que a consulta ainda nao esta marcada.
+ */
+const ROTULO_DA_ACAO_COM_HORARIO: Readonly<Record<AcaoDoTurno, string>> = {
+  reservou: "reservou {} (por 10 minutos, ainda não marcada)",
+  marcou: "marcou a consulta de {}, pendente da aprovação da equipe",
+  confirmou_presenca: "confirmou a presença na consulta de {}",
+  cancelou: "cancelou a consulta de {}",
+  remarcou: "remarcou a consulta para {}",
+  lista_de_espera: "colocou a pessoa na lista de espera para {}",
+};
+
+/** O que segue a acao que nao tem o horario dela no turno. */
+const SEM_HORARIO_DA_ACAO = "(sem dia e hora informados)";
 
 const ROTULO_DO_ESTADO: Readonly<Record<EstadoDaCobertura, string>> = {
   coberto: "cobre",
@@ -225,19 +249,72 @@ export function resumirFatosDoTurno(
   fatos: FatosDoTurno,
   rascunho: string,
 ): ResultadoDoResumo {
-  // Os horarios livres, no formato exato da agenda.
-  const horarios: string[] = [];
-  for (const livre of fatos.horariosLivres) {
-    if (!DIA_DO_HORARIO.test(livre.dia) || !HORA_DO_HORARIO.test(livre.hora)) {
-      return { ok: false, motivo: "horario_fora_do_formato" };
+  // Os horarios (livres, das acoes e das consultas lidas), no formato
+  // exato da agenda. Outro formato: o resumo nao monta.
+  const horarioEmTexto = (
+    h: Pick<HorarioDoFato, "dia" | "hora"> & { unidade?: string | null },
+  ): string | null => {
+    if (!DIA_DO_HORARIO.test(h.dia) || !HORA_DO_HORARIO.test(h.hora)) {
+      return null;
     }
     // AG3: a unidade do horario (nome do Cadastro), quando ele tem uma.
     const unidade =
-      typeof livre.unidade === "string" && numaLinha(livre.unidade) !== ""
-        ? `, unidade ${numaLinha(livre.unidade)}`
+      typeof h.unidade === "string" && numaLinha(h.unidade) !== ""
+        ? `, unidade ${numaLinha(h.unidade)}`
         : "";
-    horarios.push(`${livre.dia} às ${livre.hora}${unidade}`);
+    return `${h.dia} às ${h.hora}${unidade}`;
+  };
+  const horarios: string[] = [];
+  for (const livre of fatos.horariosLivres) {
+    const lido = horarioEmTexto(livre);
+    if (lido === null) {
+      return { ok: false, motivo: "horario_fora_do_formato" };
+    }
+    horarios.push(lido);
   }
+
+  // Revisao final da AG3: cada acao com o horario dela; a acao sem horario,
+  // com o rotulo de antes e o aviso de que o dia e a hora nao vieram. A
+  // confirmacao de presenca diz o horario pela consulta lida (abaixo).
+  const acoes: string[] = [];
+  for (const acao of new Set(fatos.acoes)) {
+    const comHorario = fatos.horariosDasAcoes.filter((h) => h.acao === acao);
+    if (comHorario.length === 0) {
+      acoes.push(
+        acao === "confirmou_presenca"
+          ? ROTULO_DA_ACAO[acao]
+          : `${ROTULO_DA_ACAO[acao]} ${SEM_HORARIO_DA_ACAO}`,
+      );
+      continue;
+    }
+    for (const h of comHorario) {
+      const lido = horarioEmTexto(h);
+      if (lido === null) {
+        return { ok: false, motivo: "horario_fora_do_formato" };
+      }
+      acoes.push(ROTULO_DA_ACAO_COM_HORARIO[acao].replace("{}", () => lido));
+    }
+  }
+  const consultas: string[] = [];
+  for (const c of fatos.consultasLidas) {
+    const lido = horarioEmTexto(c);
+    if (lido === null) {
+      return { ok: false, motivo: "horario_fora_do_formato" };
+    }
+    consultas.push(
+      c.marcadaNestaConversa
+        ? `${lido} (marcada pela assistente nesta conversa, pendente da aprovação da equipe)`
+        : lido,
+    );
+  }
+  const consultaLida =
+    consultas.length > 0
+      ? secao(
+          "Consultas que a pessoa já tem, lidas pelo sistema nesta resposta (dia e hora juntos)",
+          consultas,
+          "nenhuma",
+        )
+      : `Consulta que a pessoa já tem, lida pelo sistema nesta resposta: ${fatos.consultaLida ? `sim ${SEM_HORARIO_DA_ACAO}` : "não"}.`;
 
   // As coberturas, com o convenio e o procedimento do Cadastro.
   const chaveDoConvenio = (nome: string, plano: string | null) =>
@@ -288,10 +365,10 @@ export function resumirFatosDoTurno(
     `Hoje na clínica: ${hoje}.`,
     secao(
       "Ações que as ferramentas fizeram com sucesso nesta resposta",
-      [...new Set(fatos.acoes)].map((acao) => ROTULO_DA_ACAO[acao]),
+      acoes,
       "nenhuma",
     ),
-    `Consulta que a pessoa já tem, lida pelo sistema nesta resposta: ${fatos.consultaLida ? "sim" : "não"}.`,
+    consultaLida,
     secao(
       "Horários livres que a agenda trouxe nesta resposta (dia e hora juntos)",
       horarios,
@@ -346,4 +423,9 @@ export const FONTES_DO_RESUMO: readonly string[] = [
   "resumo: unidades e requisitos so do Cadastro; agenda so pelos horarios livres e acoes",
   // AG3: a unidade de cada horario livre.
   "resumo: horario livre com a unidade quando tem",
+  // Revisao final da AG3: a acao e a consulta lida com o dia, a hora e a
+  // unidade.
+  JSON.stringify(ROTULO_DA_ACAO_COM_HORARIO),
+  SEM_HORARIO_DA_ACAO,
+  "resumo: consultas lidas com o dia, a hora e a unidade; a marcada nesta conversa avisada",
 ];

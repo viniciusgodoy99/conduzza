@@ -12,8 +12,8 @@ import { DICA_RECEPCAO } from "./tela-fixtures";
 // "Dados para marcar consulta" (AG3; decisoes D-6 e D-7 do dono, padrao
 // recomendado), na aba Regras e limites da Tela 6: as tres caixas (Nome
 // completo, Data de nascimento e CPF) com o proprio Salvar, o texto de que a
-// IA pede antes de marcar e de que a aprovacao aplica ao cadastro so onde ele
-// esta vazio, o aviso de quando nenhuma esta marcada, a recepcao travada com
+// IA pede antes de marcar e de que a aprovacao aplica ao cadastro (o nome so
+// vazio ou o do WhatsApp; o resto so vazio), o aviso de quando nenhuma esta marcada, a recepcao travada com
 // a dica, o lugar do cartao na aba (depois dos limites) e o "nao salvo"
 // contando como o dos limites. Tudo renderizado no servidor; nada aqui chama
 // acao nem rede.
@@ -112,9 +112,12 @@ describe("Dados para marcar consulta: o cartão", () => {
     }
     expect(caixas(html)).toHaveLength(3);
     // A frase do cadastro (D-7) e a da carteirinha ficam sempre visiveis.
+    // Revisao final da AG3 (achado 8): a regra real, o nome do WhatsApp
+    // tambem troca; nada de "so onde ele esta vazio".
     expect(visivel).toContain(
-      "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente, só onde ele está vazio.",
+      "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente. O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
     );
+    expect(visivel).not.toContain("só onde ele está vazio");
     expect(visivel).toContain(
       "Antes de marcar a consulta, o assistente pede ao paciente os dados escolhidos aqui.",
     );

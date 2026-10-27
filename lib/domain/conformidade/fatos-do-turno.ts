@@ -65,7 +65,7 @@
 //    espera", "tirei da agenda") e a regra ESTRUTURAL do fechamento: sem
 //    acao de sucesso e sem consulta lida, a frase com dia ou hora e marca de
 //    fechamento ("pronto", "combinado", "ficou para", "te esperamos",
-//    "anotado", "confirmado"...) afirma acao (fechaSemAcao);
+//    "anotado", "confirmado"...) afirma acao (fechamentosDasFrases);
 //  - convenio: a regra INVERTIDA (a frase afirmativa que cita convenio exige
 //    o fato daquele convenio, com qualquer verbo), o procedimento citado em
 //    "coberto", "cobertura" e "aceita" e o "seu plano" com o convenio que o
@@ -165,17 +165,62 @@ export type HorarioLivreDoTurno = {
 /** Um dia do calendario (hoje no fuso da clinica). */
 export type DiaDaClinica = { dia: number; mes: number; ano: number };
 
+/**
+ * Revisao final da AG3 (27/10/2026): o dia, a hora e a unidade de uma acao
+ * de sucesso (reservou, marcou, remarcou) ou de uma consulta lida, no
+ * formato exato que a ferramenta devolveu ao modelo ("quarta, 21/10" e
+ * "14:00"; a unidade e o nome do Cadastro, nula sem unidade).
+ */
+export type HorarioDoFato = {
+  dia: string;
+  hora: string;
+  unidade: string | null;
+};
+
+/** Uma acao de sucesso com o horario dela. */
+export type AcaoComHorario = HorarioDoFato & { acao: AcaoDoTurno };
+
+/**
+ * Uma consulta que a ferramenta leu (confirmar_presenca, ja_tem_consulta ou
+ * a consulta do estado). marcadaNestaConversa: a consulta que a IA marcou
+ * nesta conversa num turno anterior, relida agora (o estado do
+ * atendimento): "ficou marcada" e "foi marcada" valem com ela.
+ */
+export type ConsultaDoFato = HorarioDoFato & { marcadaNestaConversa: boolean };
+
 /** O que uma ferramenta acrescenta aos fatos, alem da propria saida. */
 export type FatosDaFerramenta = {
   coberturas?: readonly CoberturaDoTurno[];
   acao?: AcaoDoTurno;
+  /**
+   * Revisao final da AG3: o horario da acao (reservou, marcou, remarcou).
+   * Sem ele, a frase da acao com dia ou hora nao passa.
+   */
+  horarioDaAcao?: HorarioDoFato;
   /** A ferramenta leu uma consulta que ja existia (confirmar_presenca). */
   consultaLida?: boolean;
+  /**
+   * Revisao final da AG3: o horario da consulta lida. Sem ele, a frase do
+   * estado da consulta com dia ou hora nao passa.
+   */
+  consultaComHorario?: ConsultaDoFato;
   /**
    * Os horarios livres que a ferramenta trouxe (buscar_horario) ou reservou
    * (reservar_horario): a unica prova de "tenho as 14h".
    */
   horarios?: readonly HorarioLivreDoTurno[];
+  /**
+   * Revisao final da AG3: o eco do pedido (a hora e o dia que a pessoa
+   * pediu, de buscar_horario, e o dia e a hora que reservar_horario recusou).
+   * Fonte de data e hora SO na frase que nega ou pergunta, como a mensagem
+   * do paciente; nunca prova horario livre nem acao.
+   */
+  ecos?: readonly string[];
+  /**
+   * A saida como os fatos a leem, sem o eco (ausente: a propria saida). O
+   * modelo continua lendo a saida inteira.
+   */
+  saidaSemEco?: string;
 };
 
 export type FatosDoTurno = {
@@ -200,8 +245,25 @@ export type FatosDoTurno = {
   coberturas: readonly CoberturaDoTurno[];
   /** As acoes que as ferramentas do turno executaram com sucesso. */
   acoes: readonly AcaoDoTurno[];
+  /**
+   * Revisao final da AG3: as acoes de sucesso com o horario delas (o dia, a
+   * hora e a unidade). A frase da acao com dia ou hora so passa com o par
+   * daquela acao (reservou quarta 14h e a resposta diz quinta 13h: barra).
+   */
+  horariosDasAcoes: readonly AcaoComHorario[];
   /** Uma ferramenta do turno leu uma consulta que ja existia. */
   consultaLida: boolean;
+  /**
+   * Revisao final da AG3: as consultas lidas com o horario delas. A frase do
+   * estado da consulta com dia ou hora so passa com o par de uma delas (ou
+   * da consulta marcada ou remarcada no turno).
+   */
+  consultasLidas: readonly ConsultaDoFato[];
+  /**
+   * Revisao final da AG3: o eco do pedido (FatosDaFerramenta.ecos), fonte
+   * de data e hora so na frase que nega ou pergunta.
+   */
+  ecosDoPedido: readonly string[];
   /** O ano de hoje no fuso da clinica (data sem ano no fato e deste ano). */
   anoCorrente: number;
   /**
@@ -245,7 +307,10 @@ export function fatosVazios(anoCorrente: number): FatosDoTurno {
     convenios: [],
     coberturas: [],
     acoes: [],
+    horariosDasAcoes: [],
     consultaLida: false,
+    consultasLidas: [],
+    ecosDoPedido: [],
     anoCorrente,
     horariosLivres: [],
     procedimentos: [],
@@ -297,6 +362,35 @@ function horarioLivreValido(valor: unknown): boolean {
   );
 }
 
+function horarioDoFatoValido(valor: unknown): boolean {
+  if (typeof valor !== "object" || valor === null) {
+    return false;
+  }
+  const h = valor as Record<string, unknown>;
+  return (
+    typeof h.dia === "string" &&
+    typeof h.hora === "string" &&
+    (h.unidade === null || typeof h.unidade === "string")
+  );
+}
+
+function acaoComHorarioValida(valor: unknown): boolean {
+  return (
+    horarioDoFatoValido(valor) &&
+    (ACOES_DO_TURNO as readonly unknown[]).includes(
+      (valor as Record<string, unknown>).acao,
+    )
+  );
+}
+
+function consultaDoFatoValida(valor: unknown): boolean {
+  return (
+    horarioDoFatoValido(valor) &&
+    typeof (valor as Record<string, unknown>).marcadaNestaConversa ===
+      "boolean"
+  );
+}
+
 function inteiroEntre(valor: unknown, minimo: number, maximo: number) {
   return (
     typeof valor === "number" &&
@@ -337,7 +431,21 @@ export function fatosValidos(valor: unknown): valor is FatosDoTurno {
     f.coberturas.every(coberturaValida) &&
     Array.isArray(f.acoes) &&
     f.acoes.every((a) => (ACOES_DO_TURNO as readonly unknown[]).includes(a)) &&
+    // Revisao final da AG3: o horario de cada acao e de cada consulta lida;
+    // a acao com horario tem de estar entre as acoes, e a consulta lida com
+    // horario, com a consulta lida (fato incoerente bloqueia).
+    Array.isArray(f.horariosDasAcoes) &&
+    f.horariosDasAcoes.every(acaoComHorarioValida) &&
+    f.horariosDasAcoes.every((h) =>
+      (f.acoes as readonly unknown[]).includes(
+        (h as Record<string, unknown>).acao,
+      ),
+    ) &&
     typeof f.consultaLida === "boolean" &&
+    Array.isArray(f.consultasLidas) &&
+    f.consultasLidas.every(consultaDoFatoValida) &&
+    (f.consultasLidas.length === 0 || f.consultaLida === true) &&
+    listaDeTextos(f.ecosDoPedido) &&
     inteiroEntre(f.anoCorrente, 2000, 2200) &&
     Array.isArray(f.horariosLivres) &&
     f.horariosLivres.every(horarioLivreValido) &&
@@ -2379,6 +2487,12 @@ const OBJETO_ANTES_DO_PARTICIPIO = `(?:${OBJETO_NO_SINGULAR}(?:\\s+(?:de|do|da|c
 const PARTICIPIO_DA_REGRA =
   "(?!\\s+(?:com\\s+(?:menos|mais|antecedencia|no minimo|pelo menos|ate|\\d)|em cima da hora|fora do prazo|sem aviso|sem antecedencia|no mesmo dia|ate\\s+\\d|so\\s+(?:depois|quando|apos|com)|apos\\b|depois\\b|quando\\b|assim que|antes\\s+d|(?:pelo|pela|por)\\s+(?:whatsapp|site|app|aplicativo|telefone|internet|aqui)\\s+(?:precisa|precisam|fica|ficam|passa|passam|depende|dependem|tem|e|sao|sera|serao)\\b))";
 
+/**
+ * Revisao final da AG3: o que a frase afirma da agenda, com a ferramenta
+ * que sustenta: a acao do padrao ou o estado da consulta.
+ */
+type AlegacaoDaFrase = AcaoDoTurno | "estado";
+
 type PadraoDeAcao = {
   nome: string;
   /** null: o estado da consulta (vale com consultaLida ou marcou). */
@@ -2612,10 +2726,12 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
     null,
     `\\b${POSSESSIVO}\\s+${CONSULTA_OU_HORARIO}\\s+(?:marcad|agendad)[oa]s?\\s+(?:para|pra|no|na|em|dia|as|amanha|hoje)\\b`,
   ),
+  // Revisao final da AG3: tambem com o complemento no meio ("voce ja tem
+  // uma consulta desse procedimento marcada para terca").
   padraoDeAcao(
     "consulta_existente",
     null,
-    `\\b(?:voce|vc|a senhora|o senhor)\\s+(?:ja\\s+)?tem\\s+(?:uma\\s+)?${CONSULTA}\\s+(?:marcad[oa]|agendad[oa]|amanha|hoje|depois de amanha|na\\b|no\\b|dia\\b|as\\b|para\\b|pra\\b)`,
+    `\\b(?:voce|vc|a senhora|o senhor)\\s+(?:ja\\s+)?tem\\s+(?:uma\\s+)?${CONSULTA}\\s+(?:(?:desse|deste|do|da|de|com|nesse|neste|nessa|nesta)\\s+(?:\\S+\\s+){0,2}?)?(?:marcad[oa]|agendad[oa]|amanha|hoje|depois de amanha|na\\b|no\\b|dia\\b|as\\b|para\\b|pra\\b)`,
   ),
   // Revisao da AG2: "Esta agendado para quinta", "Ta marcado", "Ja esta
   // tudo marcado" (sem o possessivo), "voce tem horario marcado" e "A
@@ -2664,22 +2780,25 @@ function negada(texto: string, indice: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Regra estrutural do fechamento (revisao 2 da AG2)
+// Regra estrutural do fechamento (revisao 2 da AG2; revisao final da AG3)
 // ---------------------------------------------------------------------------
 
 /**
- * As acoes de sucesso que dao a consulta por feita (marcar, reservar,
- * cancelar, remarcar, lista de espera) e a confirmacao de presenca, que le
- * a consulta (consultaLida).
+ * O tipo da marca de fechamento (revisao final da AG3: a marca e licenciada
+ * pela acao, nao por qualquer acao de sucesso):
+ *  - "fraca": "pronto" e "prontinho" no comeco da frase (a oferta "Pronto!
+ *    Tenho terca as 14h" nao fecha nada);
+ *  - "forte": a consulta dada por feita ("combinado", "te esperamos",
+ *    "ficou para", "tudo certo", "confirmado", "nos vemos", "ate terca",
+ *    "sua consulta sera", "fica terca", "Agendamento: ..."). So com a
+ *    consulta marcada ou remarcada no turno, ou com uma consulta lida;
+ *  - "horario": "seu horario e", "seu horario sera" (o horario da pessoa).
+ *    Como a forte, a nao ser na frase que diz a acao que o turno fez ("Seu
+ *    horario e quarta as 14h, reservado por 10 minutos");
+ *  - "reserva": "reservado", "reservei", "segurei" (so a reserva de 10
+ *    minutos): com a reserva no turno (ou a consulta marcada ou lida).
  */
-const ACOES_QUE_FECHAM: ReadonlySet<AcaoDoTurno> = new Set([
-  "marcou",
-  "reservou",
-  "cancelou",
-  "remarcou",
-  "lista_de_espera",
-  "confirmou_presenca",
-]);
+type TipoDaMarca = "fraca" | "forte" | "horario" | "reserva";
 
 /** As interjeicoes que podem vir antes da marca no comeco da frase. */
 const INTERJEICAO_ANTES_DA_MARCA =
@@ -2693,100 +2812,151 @@ const FECHAMENTO_FRACO_NO_COMECO = new RegExp(
   `^[\\s"'(]*(?:${INTERJEICAO_ANTES_DA_MARCA}\\s*[,!.]*\\s+)*(?:pronto|prontinho|prontissimo)\\b`,
 );
 /**
- * "Feito!", "Fechado," no comeco da frase, com a pontuacao logo depois
- * ("Fechado aos domingos" e o horario da clinica, nao fechamento).
+ * No comeco da frase: "Feito!", "Fechado," com a pontuacao logo depois
+ * ("Fechado aos domingos" e o horario da clinica, nao fechamento) e,
+ * revisao final da AG3, "Ate terca", "Ate amanha" e "Agendamento: ...".
  */
 const FECHAMENTO_FORTE_NO_COMECO = new RegExp(
-  `^[\\s"'(]*(?:${INTERJEICAO_ANTES_DA_MARCA}\\s*[,!.]*\\s+)*(?:feito|fechado|fechadissimo)\\s*[,!.:;]`,
+  `^[\\s"'(]*(?:${INTERJEICAO_ANTES_DA_MARCA}\\s*[,!.]*\\s+)*(?:(?:feito|fechado|fechadissimo)\\s*[,!.:;]|ate\\s+(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje|depois de amanha|o dia\\b|dia\\b|\\d)|(?:(?:o|a|seu|sua)\\s+)?(?:agendamento|marcacao)\\s*:)`,
 );
+/**
+ * Revisao final da AG3: o dado da pessoa ("anotei seus dados", "nome
+ * registrado") nao e marca de fechamento: e o registro dos dados, nao da
+ * consulta.
+ */
+const DADO_DA_PESSOA =
+  "(?:dados|dado|nome|nomes|data|nascimento|cpf|carteirinha|informacoes|informacao|documentos?)";
+const NAO_E_DADO_DEPOIS = `(?!\\s+(?:(?:os|as|o|a|seus|suas|seu|sua|todos|todas|esses|essas)\\s+){0,2}${DADO_DA_PESSOA}\\b)`;
+const NAO_E_DADO_ANTES = `(?<!\\b${DADO_DA_PESSOA}\\s+(?:\\S+\\s+)?)`;
 /** As marcas FORTES, em qualquer lugar da frase. */
 const FECHAMENTO_FORTE = new RegExp(
   [
     "\\btudo certo\\b",
     "\\bcombinad[oa]s?\\b",
     "\\bficou\\s+(?:tudo\\s+|entao\\s+)?(?:para|pra)\\b",
-    "\\b(?:coloquei|colocamos)\\b(?!\\s+(?:(?:aqui|abaixo|acima|embaixo)\\b|(?:os|as)\\s+(?:horarios|opcoes|datas|dias)\\b))",
+    "\\b(?:coloquei|colocamos)\\b(?!\\s+(?:(?:aqui|abaixo|acima|embaixo)\\b|(?:os|as)\\s+(?:horarios|opcoes|datas|dias)\\b|(?:\\S+\\s+){0,3}?(?:na|em)\\s+(?:nossa\\s+|a\\s+)?lista de espera\\b))",
     "\\b(?:encaixei|encaixamos)\\b",
-    "\\b(?:registrei|registramos|registrad[oa]s?)\\b",
-    "\\b(?:anotei|anotamos|anotad[oa]s?)\\b",
+    `${NAO_E_DADO_ANTES}\\b(?:registrei|registramos|registrad[oa]s?)\\b${NAO_E_DADO_DEPOIS}`,
+    `${NAO_E_DADO_ANTES}\\b(?:anotei|anotamos|anotad[oa]s?)\\b${NAO_E_DADO_DEPOIS}`,
     "\\bgarantid[oa]s?\\b",
     "\\bte\\s+(?:esperamos|espero|aguardamos|aguardo)\\b",
     "\\b(?:esperamos|aguardamos|espero|aguardo)\\s+(?:voce|vc|a senhora|o senhor|por voce)\\b",
-    `\\breservad[oa]s?\\b${RESERVA_QUE_E_REGRA}`,
     "\\bconfirmad[oa]s?\\b",
     "\\b(?:esta|ta|ficou|fica|ja esta)\\s+(?:tudo\\s+)?(?:feito|fechado)\\b",
+    // Revisao final da AG3: o fechamento sem as marcas de antes ("Sua
+    // consulta sera terca", "Nos vemos terca", "Entao fica terca").
+    `\\b${POSSESSIVO}\\s+${CONSULTA}\\s+(?:(?!reservad)\\S+\\s+){0,4}?(?:sera|vai ser|e|eh|fica|ficara|vai ficar)\\b`,
+    "\\bnos\\s+vemos\\b",
+    "\\b(?:fica|ficara|vai ficar)\\s+(?:entao\\s+|tudo\\s+)?(?:para|pra|dia\\b|segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje|\\d)",
   ].join("|"),
   "g",
 );
-/** A negacao da marca ("ainda nao esta confirmado", "nao ficou combinado"). */
+/** Revisao final da AG3: "seu horario e quarta", "seu horario sera as 14h". */
+const FECHAMENTO_DO_HORARIO = new RegExp(
+  `\\b${POSSESSIVO}\\s+horarios?\\s+(?:(?!reservad)\\S+\\s+){0,4}?(?:sera|vai ser|e|eh|fica|ficara|vai ficar)\\b`,
+  "g",
+);
+/** As marcas da reserva de 10 minutos ("reservado", "reservei"). */
+const FECHAMENTO_DA_RESERVA = new RegExp(
+  `\\breservad[oa]s?\\b${RESERVA_QUE_E_REGRA}|\\b(?:reservei|reservamos|segurei|seguramos)\\b`,
+  "g",
+);
+/**
+ * A negacao da marca ("ainda nao esta confirmado", "nao ficou combinado").
+ * Revisao final da AG3: tambem com "mais" e "ja" ("nao esta mais
+ * reservado", "ja nao esta confirmada").
+ */
 const NEGACAO_DA_MARCA =
-  /\b(?:nao|nem|nunca)\s+(?:(?:te|lhe|me|se|a|o|ainda|tinha|esta|estao|ta|foi|foram|ficou|ficaram|fica|e)\s+){0,2}$/;
+  /\b(?:nao|nem|nunca)\s+(?:(?:te|lhe|me|se|a|o|ainda|tinha|esta|estao|ta|foi|foram|ficou|ficaram|fica|e|mais|ja)\s+){0,3}$/;
+/**
+ * Revisao final da AG3: a frase que diz que a reserva ou o horario nao vale
+ * mais ("a reserva de quarta as 14h venceu", "o horario de quarta nao esta
+ * mais reservado") nao fecha nada, nem com a marca da frase curta de antes
+ * ("Anotei seus dados. A reserva ... venceu.").
+ */
+const NAO_VALE_MAIS =
+  /\b(?:venceu|venceram|vencid[oa]s?|expirou|expiraram|expirad[oa]s?)\b|\b(?:nao|ja nao)\s+(?:esta|estao|ta|ficou|ficaram|fica|e)\s+(?:mais\s+)?(?:reservad|livre|disponive|valend|garantid)/;
 
-type MarcaDeFechamento = "fraca" | "forte" | null;
-
-/** A marca de fechamento da frase (a forte vale mais que a fraca). */
-function marcaDeFechamento(frase: string): MarcaDeFechamento {
-  if (FECHAMENTO_FORTE_NO_COMECO.test(frase)) {
-    return "forte";
+/** As marcas de fechamento da frase, pelo tipo (vazio: nenhuma). */
+function marcasDeFechamento(frase: string): Set<TipoDaMarca> {
+  const tipos = new Set<TipoDaMarca>();
+  const semNegacao = (regex: RegExp) =>
+    [...frase.matchAll(regex)].some((m) => {
+      const indice = m.index ?? 0;
+      return !NEGACAO_DA_MARCA.test(
+        frase.slice(Math.max(0, indice - 40), indice),
+      );
+    });
+  if (FECHAMENTO_FORTE_NO_COMECO.test(frase) || semNegacao(FECHAMENTO_FORTE)) {
+    tipos.add("forte");
   }
-  for (const m of frase.matchAll(FECHAMENTO_FORTE)) {
-    const indice = m.index ?? 0;
-    if (!NEGACAO_DA_MARCA.test(frase.slice(Math.max(0, indice - 40), indice))) {
-      return "forte";
-    }
+  if (semNegacao(FECHAMENTO_DO_HORARIO)) {
+    tipos.add("horario");
   }
-  return FECHAMENTO_FRACO_NO_COMECO.test(frase) ? "fraca" : null;
-}
-
-function maisForte(a: MarcaDeFechamento, b: MarcaDeFechamento) {
-  if (a === "forte" || b === "forte") {
-    return "forte";
+  if (semNegacao(FECHAMENTO_DA_RESERVA)) {
+    tipos.add("reserva");
   }
-  return a ?? b;
+  if (FECHAMENTO_FRACO_NO_COMECO.test(frase)) {
+    tipos.add("fraca");
+  }
+  return tipos;
 }
 
 /** Quantas palavras, no maximo, tem a frase que so fecha ("Pronto, Maria!"). */
 const MAXIMO_DE_PALAVRAS_DA_INTERJEICAO = 4;
 
+/** Uma frase com dia ou hora e marca de fechamento. */
+type FechamentoDaFrase = {
+  /** O indice da frase. */
+  indice: number;
+  /** As marcas da frase e as da frase curta logo antes. */
+  tipos: ReadonlySet<TipoDaMarca>;
+  /** Os pares (dia e hora) da frase. */
+  pares: ParDaOferta[];
+};
+
 /**
- * Alguma frase (fora da pergunta de verdade) tem dia, dia da semana, "hoje",
+ * As frases (fora da pergunta de verdade) com dia, dia da semana, "hoje",
  * "amanha" ou hora E uma marca de fechamento, na propria frase ou na frase
  * curta logo antes ("Combinado! Te esperamos quinta", "Pronto. Quinta as
  * 14h"). A marca fraca ("pronto") com a oferta de horario livre na frase
- * nao conta: a oferta ja e conferida com os horarios livres.
+ * nao conta: a oferta ja e conferida com os horarios livres. A frase que
+ * diz que a reserva ou o horario nao vale mais tambem nao (NAO_VALE_MAIS).
  */
-function fechaSemAcao(
+function fechamentosDasFrases(
   texto: string,
   frases: readonly Frase[],
   hoje: DiaDaClinica | null,
-): boolean {
-  let herdada: MarcaDeFechamento = null;
-  for (const frase of frases) {
-    const marca = marcaDeFechamento(frase.texto);
+): FechamentoDaFrase[] {
+  const fechamentos: FechamentoDaFrase[] = [];
+  let herdadas: ReadonlySet<TipoDaMarca> = new Set();
+  frases.forEach((frase, indice) => {
+    const marcas = marcasDeFechamento(frase.texto);
     const pergunta = ehPerguntaDeVerdade(frase.texto);
-    const daAnterior = herdada;
-    herdada =
+    const daAnterior = herdadas;
+    herdadas =
       !pergunta &&
-      marca !== null &&
+      marcas.size > 0 &&
       palavrasDe(frase.texto).length <= MAXIMO_DE_PALAVRAS_DA_INTERJEICAO
-        ? marca
-        : null;
-    const efetiva = maisForte(marca, daAnterior);
-    if (pergunta || efetiva === null) {
-      continue;
+        ? marcas
+        : new Set();
+    const tipos = new Set([...marcas, ...daAnterior]);
+    if (pergunta || tipos.size === 0 || NAO_VALE_MAIS.test(frase.texto)) {
+      return;
     }
-    const temDiaOuHora = partesDaOferta(texto, frase, hoje).some(
-      (parte) => parte.tipo === "data" || parte.tipo === "hora",
-    );
-    if (!temDiaOuHora) {
-      continue;
+    const partes = partesDaOferta(texto, frase, hoje);
+    if (!partes.some((parte) => parte.tipo === "data" || parte.tipo === "hora")) {
+      return;
     }
-    if (efetiva === "fraca" && afirmaHorarioLivre(frase.texto)) {
-      continue;
+    if (
+      [...tipos].every((tipo) => tipo === "fraca") &&
+      afirmaHorarioLivre(frase.texto)
+    ) {
+      return;
     }
-    return true;
-  }
-  return false;
+    fechamentos.push({ indice, tipos, pares: paresDaOferta(partes) });
+  });
+  return fechamentos;
 }
 
 // ---------------------------------------------------------------------------
@@ -3116,6 +3286,64 @@ function procedimentoNoObjeto(objeto: string): string[] {
   );
 }
 
+/**
+ * Revisao final da AG3 (item 9): o nome depois da palavra generica de
+ * convenio ("meu plano e o X", "convenio X", "a operadora Y").
+ */
+const NOME_DEPOIS_DO_CONVENIO =
+  /\b(?:convenios?|planos?(?!\s+de\s+(?:tratamento|pagamento|acao|saude bucal))|operadoras?|seguro saude)\b(?:\s+(?:e|eh|sera|seria|chamad[oa]|chama)\b|\s*:)?/g;
+/**
+ * "Tenho Humana Saude", "uso o plano X", "sou cliente da Y": o objeto, que
+ * so conta quando cita convenio (a palavra generica, como "saude" ou
+ * "plano").
+ */
+const TER_O_CONVENIO =
+  /\b(?:tenho|temos|uso|usamos|possuo|possuimos|sou\s+(?:cliente\s+)?d[oa]|somos\s+(?:clientes\s+)?d[oa])\b/g;
+
+/**
+ * Revisao final da AG3 (item 9): a mensagem do paciente cita um convenio
+ * que nao e nome do Cadastro, operadora conhecida nem palavra conhecida: o
+ * objeto de "aceita", "atende pelo" e "trabalha com" (e de "atende", quando
+ * cita convenio) ou o nome depois de "convenio", "plano" e "operadora" com
+ * palavra desconhecida ("Voces aceitam Humana Saude?", "meu plano e o X").
+ */
+function convenioNaoReconhecidoNaMensagem(
+  mensagem: string,
+  nomesDeConvenio: readonly string[],
+  naoConvenios: readonly string[],
+): boolean {
+  const desconhecido = (objeto: string, soComConvenio: boolean) => {
+    const analise = analisarObjeto(
+      mascararNomes(objeto, naoConvenios),
+      nomesDeConvenio,
+    );
+    return (
+      analise.desconhecidas.length > 0 && (!soComConvenio || analise.citaConvenio)
+    );
+  };
+  for (const padrao of PADROES_PELO_OBJETO) {
+    for (const m of mensagem.matchAll(padrao.regex)) {
+      const fim = (m.index ?? 0) + m[0].length;
+      if (desconhecido(objetoDepois(mensagem, fim), padrao.objeto === "convenio")) {
+        return true;
+      }
+    }
+  }
+  for (const m of mensagem.matchAll(NOME_DEPOIS_DO_CONVENIO)) {
+    const fim = (m.index ?? 0) + m[0].length;
+    if (desconhecido(objetoDepois(mensagem, fim), false)) {
+      return true;
+    }
+  }
+  for (const m of mensagem.matchAll(TER_O_CONVENIO)) {
+    const fim = (m.index ?? 0) + m[0].length;
+    if (desconhecido(objetoDepois(mensagem, fim), true)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function regraDaCobertura(
   base: string,
   fatos: FatosDoTurno,
@@ -3157,12 +3385,29 @@ function regraDaCobertura(
   ]
     .filter((p) => p.length >= 3)
     .sort((a, b) => b.length - a.length);
-  const pacienteFalouDeConvenio = contexto.mensagensDoPaciente.some(
-    (mensagem) => {
+  /**
+   * Revisao final da AG3 (item 9): o paciente citou um convenio que nao e
+   * do Cadastro nem uma operadora conhecida ("Voces aceitam Humana Saude?",
+   * "meu plano e o X", "tenho Humana Saude"). A afirmacao generica
+   * ("Aceitamos o seu plano, sim!", "Pode usar o seu convenio") passa a
+   * precisar do fato dele, que nunca existe: o grupo vazio entra entre os do
+   * paciente (antes, sem grupo, valia qualquer fato do turno, de outro
+   * convenio). E a pergunta dele e de convenio ("Aceitamos, sim!" responde).
+   */
+  const pacienteCitouConvenioNaoReconhecido = contexto.mensagensDoPaciente.some(
+    (mensagem) =>
+      convenioNaoReconhecidoNaMensagem(
+        normalizarBase(mensagem),
+        nomesDeConvenio,
+        naoConvenios,
+      ),
+  );
+  const pacienteFalouDeConvenio =
+    pacienteCitouConvenioNaoReconhecido ||
+    contexto.mensagensDoPaciente.some((mensagem) => {
       const lida = normalizarBase(mensagem);
       return CONVENIO_NA_MENSAGEM.test(lida) || citaConvenio.test(lida);
-    },
-  );
+    });
 
   /**
    * Os convenios que a frase cita, em grupos: cada grupo e um nome citado
@@ -3354,6 +3599,10 @@ function regraDaCobertura(
       );
     });
   };
+  const gruposDaAfirmacaoGenerica: readonly GrupoCitado[] =
+    pacienteCitouConvenioNaoReconhecido
+      ? [...gruposDoGenerico, { convenios: [], planos: [] }]
+      : gruposDoGenerico;
   /**
    * Os grupos que a frase cita pelo nome; sem nenhum, os do paciente e os
    * do resto do rascunho (revisao 2: "o seu plano cobre" so com o fato de
@@ -3366,7 +3615,7 @@ function regraDaCobertura(
   ): boolean => {
     const grupos = gruposCitados(frase);
     return sustentadaPorGrupos(
-      grupos.length > 0 ? grupos : gruposDoGenerico,
+      grupos.length > 0 ? grupos : gruposDaAfirmacaoGenerica,
       estados,
       mencoes,
     );
@@ -3569,7 +3818,7 @@ function regraDaCobertura(
     if (!barrouNaFrase) {
       const regra = convenioCitadoSemFato(frase, doCatalogo, {
         mencoesPeloNome,
-        gruposDoGenerico,
+        gruposDoGenerico: gruposDaAfirmacaoGenerica,
         procedimentosParciais,
         sustentadaPorGrupos,
         nomesDeConvenio,
@@ -3858,7 +4107,13 @@ export function regrasDosFatos(
       ...fatos.horariosLivres.map((h) => `${h.dia} ${h.hora}`),
       ...fatos.textosPublicados,
     ]);
-    const doPaciente = ler(contexto.mensagensDoPaciente);
+    // Revisao final da AG3 (item 5): o eco do pedido (a hora e o dia que a
+    // pessoa pediu, e o que reservar_horario recusou) vale como a mensagem
+    // do paciente: so na frase que nega ou pergunta.
+    const doPaciente = ler([
+      ...contexto.mensagensDoPaciente,
+      ...fatos.ecosDoPedido,
+    ]);
     const naFonte = (
       lido: TemporalLido,
       fonte: { datas: DataLida[]; horas: Set<string> },
@@ -3957,8 +4212,8 @@ export function regrasDosFatos(
     const trechosDoPaciente = () => {
       doPaciente =
         doPaciente ??
-        contexto.mensagensDoPaciente.flatMap((mensagem) =>
-          trechosDasFrases(normalizarBase(mensagem), fatos.hoje),
+        [...contexto.mensagensDoPaciente, ...fatos.ecosDoPedido].flatMap(
+          (mensagem) => trechosDasFrases(normalizarBase(mensagem), fatos.hoje),
         );
       return doPaciente;
     };
@@ -4013,9 +4268,17 @@ export function regrasDosFatos(
   // Acao e estado da consulta. O diminutivo e o participio ("ficou
   // agendadinho").
   const acoes = new Set(fatos.acoes);
+  // Revisao final da AG3: a consulta que a IA marcou nesta conversa, relida
+  // no turno (o estado do atendimento), sustenta "ficou marcada" e "foi
+  // marcada" no turno seguinte ao da marcacao.
+  const marcadaNestaConversa = fatos.consultasLidas.some(
+    (c) => c.marcadaNestaConversa,
+  );
   const acoesSemFerramenta = new Set<string>();
   const semDiminutivo = mascarada.replace(PARTICIPIO_NO_DIMINUTIVO, "$1$2");
   const frasesSemDiminutivo = frasesComPosicao(semDiminutivo);
+  /** As alegacoes sustentadas de cada frase (pelo indice): a acao ou o estado. */
+  const alegadas = new Map<number, Set<AlegacaoDaFrase>>();
   for (const padrao of PADROES_DE_ACAO) {
     for (const m of semDiminutivo.matchAll(padrao.regex)) {
       const inicio = (m.index ?? 0) + (m[0].length - m[0].trimStart().length);
@@ -4025,7 +4288,10 @@ export function regrasDosFatos(
       // Revisao 2: so a pergunta de verdade isenta o estado da consulta
       // ("Voce tem consulta amanha?"); "esta marcada para amanha, ok?"
       // afirma.
-      const frase = fraseNoIndice(frasesSemDiminutivo, inicio);
+      const indiceDaFrase = frasesSemDiminutivo.findIndex(
+        (f) => inicio >= f.inicio && inicio < f.fim,
+      );
+      const frase = frasesSemDiminutivo[indiceDaFrase];
       if (
         padrao.acao === null &&
         frase !== undefined &&
@@ -4038,9 +4304,16 @@ export function regrasDosFatos(
       const sustentada =
         padrao.acao === null
           ? fatos.consultaLida || acoes.has("marcou") || acoes.has("remarcou")
-          : acoes.has(padrao.acao);
+          : acoes.has(padrao.acao) ||
+            (padrao.acao === "marcou" && marcadaNestaConversa);
       if (!sustentada) {
         acoesSemFerramenta.add(padrao.nome);
+        continue;
+      }
+      if (indiceDaFrase >= 0) {
+        const daFrase = alegadas.get(indiceDaFrase) ?? new Set();
+        daFrase.add(padrao.acao ?? "estado");
+        alegadas.set(indiceDaFrase, daFrase);
       }
     }
   }
@@ -4051,22 +4324,115 @@ export function regrasDosFatos(
     });
   }
 
-  // Revisao 2 (regra estrutural): num turno sem acao de sucesso e sem
-  // consulta lida, a frase com dia ou hora e marca de fechamento ("pronto",
+  // Revisao final da AG3 (item 2): a frase da acao ou do estado da consulta
+  // com dia ou hora so passa com o par DAQUELA acao ou da consulta lida
+  // (reservou quarta 14h e a resposta diz "reservei quinta as 13h": barra,
+  // mesmo com quinta 13h livre na busca).
+  const lidos = (lista: readonly HorarioDoFato[]) =>
+    lista
+      .map((h) => horarioLivreLido(h, fatos.anoCorrente))
+      .filter((h): h is HorarioLivreLido => h !== null);
+  const daAcao = (...quais: AcaoDoTurno[]) =>
+    lidos(fatos.horariosDasAcoes.filter((h) => quais.includes(h.acao)));
+  const permitidosDaAlegacao = (
+    alegacao: AlegacaoDaFrase,
+  ): HorarioLivreLido[] => {
+    switch (alegacao) {
+      case "estado":
+        return [...lidos(fatos.consultasLidas), ...daAcao("marcou", "remarcou")];
+      case "marcou":
+        return [
+          ...daAcao("marcou"),
+          ...lidos(fatos.consultasLidas.filter((c) => c.marcadaNestaConversa)),
+        ];
+      case "confirmou_presenca":
+        return [...lidos(fatos.consultasLidas), ...daAcao("confirmou_presenca")];
+      default:
+        return daAcao(alegacao);
+    }
+  };
+  const foraDoParDaAcao = new Set<string>();
+  for (const [indice, daFrase] of alegadas) {
+    const frase = frasesSemDiminutivo[indice];
+    if (frase === undefined) {
+      continue;
+    }
+    const pares = paresDaOferta(partesDaOferta(semDiminutivo, frase, fatos.hoje));
+    if (pares.length === 0) {
+      continue;
+    }
+    const permitidos = [...daFrase].flatMap(permitidosDaAlegacao);
+    if (
+      pares.some((par) => !permitidos.some((h) => parNoHorarioLivre(par, h)))
+    ) {
+      foraDoParDaAcao.add(
+        daFrase.has("estado") && daFrase.size === 1
+          ? "horario_da_consulta"
+          : "horario_da_acao",
+      );
+    }
+  }
+  for (const regra of foraDoParDaAcao) {
+    achados.push({ categoria: "acao_nao_executada", regra });
+  }
+
+  // Revisao 2 (regra estrutural), com a licenca pela acao (revisao final da
+  // AG3, item 3): a frase com dia ou hora e marca de fechamento ("pronto",
   // "combinado", "ficou para", "te esperamos"...) afirma que algo foi feito
-  // na agenda, seja qual for o verbo.
-  const fezAlgo =
-    fatos.consultaLida ||
-    fatos.acoes.some((acao) => ACOES_QUE_FECHAM.has(acao));
-  if (
-    !fezAlgo &&
-    acoesSemFerramenta.size === 0 &&
-    fechaSemAcao(semDiminutivo, frasesSemDiminutivo, fatos.hoje)
-  ) {
-    achados.push({
-      categoria: "acao_nao_executada",
-      regra: "fechamento_sem_acao",
-    });
+  // na agenda, seja qual for o verbo. A marca forte so vale com a consulta
+  // marcada ou remarcada no turno ou com uma consulta lida; a da reserva
+  // ("reservado", "reservei"), tambem com a reserva; a fraca ("pronto") e a
+  // do horario ("seu horario e"), tambem na frase que diz a acao que o turno
+  // fez. A reserva viva do estado NAO libera "te esperamos". E a frase
+  // licenciada so passa com o par da acao ou da consulta lida.
+  if (acoesSemFerramenta.size === 0) {
+    const licencaGeral =
+      fatos.consultaLida || acoes.has("marcou") || acoes.has("remarcou");
+    const permitidosDoFechamento = [
+      ...lidos(fatos.horariosDasAcoes),
+      ...lidos(fatos.consultasLidas),
+    ];
+    let semLicenca = false;
+    let foraDoPar = false;
+    for (const fechamento of fechamentosDasFrases(
+      semDiminutivo,
+      frasesSemDiminutivo,
+      fatos.hoje,
+    )) {
+      const daFrase = alegadas.get(fechamento.indice) ?? new Set();
+      const reservaLicenciada =
+        fechamento.tipos.has("reserva") && acoes.has("reservou");
+      const acaoNaFrase = daFrase.size > 0 || reservaLicenciada;
+      const licenciada = [...fechamento.tipos].every(
+        (tipo) =>
+          licencaGeral ||
+          (tipo === "reserva" && acoes.has("reservou")) ||
+          ((tipo === "fraca" || tipo === "horario") && acaoNaFrase),
+      );
+      if (!licenciada) {
+        semLicenca = true;
+        continue;
+      }
+      if (
+        fechamento.pares.some(
+          (par) => !permitidosDoFechamento.some((h) => parNoHorarioLivre(par, h)),
+        )
+      ) {
+        foraDoPar = true;
+      }
+    }
+    if (semLicenca) {
+      achados.push({
+        categoria: "acao_nao_executada",
+        regra: "fechamento_sem_acao",
+      });
+    }
+    if (foraDoPar && !foraDoParDaAcao.has("horario_da_acao")) {
+      achados.push({
+        categoria: "acao_nao_executada",
+        regra: "fechamento_fora_do_horario",
+      });
+    }
   }
 
   // Convenio.
@@ -4150,14 +4516,28 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   NEGACAO_ANTES.source,
   PARTICIPIO_NO_DIMINUTIVO.source,
   RESERVA_QUE_E_REGRA,
-  // Revisao 2 da AG2: a regra estrutural do fechamento.
-  [...ACOES_QUE_FECHAM].join(","),
+  // Revisao 2 da AG2: a regra estrutural do fechamento. Revisao final da
+  // AG3: a marca licenciada pela acao (forte so com marcou, remarcou ou
+  // consulta lida; reserva com reservou; fraca e horario com a acao na
+  // frase), as marcas novas, o dado da pessoa, a negacao com "mais" e a
+  // frase que diz que a reserva nao vale mais.
+  "fechamento: forte com marcou, remarcou ou consulta lida; reserva com reservou; fraca e horario com a acao na frase",
   FECHAMENTO_FRACO_NO_COMECO.source,
   FECHAMENTO_FORTE_NO_COMECO.source,
+  DADO_DA_PESSOA,
   FECHAMENTO_FORTE.source,
+  FECHAMENTO_DO_HORARIO.source,
+  FECHAMENTO_DA_RESERVA.source,
   NEGACAO_DA_MARCA.source,
+  NAO_VALE_MAIS.source,
   `interjeicao ate ${MAXIMO_DE_PALAVRAS_DA_INTERJEICAO} palavras vale para a frase seguinte`,
   "estado da consulta: consulta lida, marcou ou remarcou",
+  // Revisao final da AG3: o par da acao e da consulta lida, a consulta
+  // marcada nesta conversa e o eco do pedido.
+  "acao e estado com dia ou hora: o par da acao (reservou, marcou, remarcou) ou da consulta lida",
+  "marcou: tambem a consulta marcada nesta conversa, relida no turno",
+  "fechamento licenciado: o par de uma acao ou de uma consulta lida",
+  "eco do pedido: fonte so na frase que nega ou pergunta",
   CONVENIO_GENERICO,
   DETERMINANTES,
   ...PADROES_DE_COBERTURA.map(
@@ -4199,4 +4579,9 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   DEPOIS_DA_LIGACAO_DE_CONVENIO.source,
   "convenio: sem nome, o do paciente e o do resto do rascunho",
   "convenio: procedimento em parte pelas palavras do Cadastro",
+  // Revisao final da AG3: o convenio que o paciente citou e que nao foi
+  // reconhecido.
+  NOME_DEPOIS_DO_CONVENIO.source,
+  TER_O_CONVENIO.source,
+  "convenio: o citado pelo paciente e nao reconhecido barra a afirmacao generica e a regra invertida",
 ];

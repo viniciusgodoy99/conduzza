@@ -403,7 +403,11 @@ function estadoDoSimuladorLido(valor: unknown): EstadoDoSimulador | null {
     (ehObjeto(consulta) &&
       typeof consulta.appointmentId === "string" &&
       UUID.test(consulta.appointmentId) &&
-      instante(consulta.inicio));
+      instante(consulta.inicio) &&
+      // Revisao final da AG3: o vinculo da consulta simulada (opcional).
+      (consulta.serviceLinkId === undefined ||
+        (typeof consulta.serviceLinkId === "string" &&
+          UUID.test(consulta.serviceLinkId))));
   if (!reservaValida || !consultaValida) {
     return null;
   }

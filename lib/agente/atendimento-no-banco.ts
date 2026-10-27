@@ -162,11 +162,19 @@ export async function gravarAtendimentoDaIa(
  * dados_informados_na_marcacao do contato de agora), so para a idade
  * atendida do profissional na busca de horario. A service role le a tabela
  * (SELECT); o valor nunca vai ao modelo nem a log. Erro ou prazo: null (a
- * busca segue so com o nascimento do cadastro).
+ * busca segue so com o nascimento do cadastro). Revisao final da AG3: so a
+ * linha da janela atual da IA (janela_desde, o desde que
+ * ler_atendimento_da_ia devolveu), como as RPCs: a linha de outra janela
+ * (antes do Devolver) nao vale.
  */
 export async function lerNascimentoInformado(
   admin: SupabaseClient,
-  e: { clinicId: string; conversationId: string; contactId: string },
+  e: {
+    clinicId: string;
+    conversationId: string;
+    contactId: string;
+    janelaDesde: string;
+  },
 ): Promise<string | null> {
   try {
     const corrida = await correrComPrazo(async () => {
@@ -176,6 +184,7 @@ export async function lerNascimentoInformado(
         .eq("clinic_id", e.clinicId)
         .eq("conversation_id", e.conversationId)
         .eq("contact_id", e.contactId)
+        .eq("janela_desde", e.janelaDesde)
         .is("appointment_id", null)
         .eq("para_o_titular", true)
         .maybeSingle();

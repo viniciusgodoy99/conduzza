@@ -11,6 +11,10 @@
 // reserva leva a unidade do horario (p_unit_id) e a RPC devolve a unidade e
 // o motivo novo unidade_invalida (unidade de outra clinica, inativa ou que
 // nao existe). A RPC confere tudo de novo, sempre.
+//
+// Revisao final da AG3: a RPC recusa tambem ja_tem_consulta, com o id e o
+// inicio da consulta que o contato ja tem (futura e ativa, do mesmo
+// procedimento), antes de qualquer dado ser pedido.
 
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
@@ -44,10 +48,11 @@ export const FERRAMENTA_RESERVAR_HORARIO: FunctionTool = {
 };
 
 /**
- * Os motivos de reservar_horario_da_ia (contrato 1.3), lista fechada. AG3:
- * unidade_invalida, logo depois de vinculo_invalido (a ordem da RPC).
+ * Os motivos da conferencia do horario de reservar_horario_da_ia (contrato
+ * 1.3), lista fechada, que agendar_pela_ia repete. AG3: unidade_invalida,
+ * logo depois de vinculo_invalido (a ordem da RPC).
  */
-export const MOTIVOS_DA_RESERVA = [
+export const MOTIVOS_DA_CONFERENCIA = [
   "ia_desligada",
   "agenda_nao_configurada",
   "vinculo_invalido",
@@ -58,6 +63,16 @@ export const MOTIVOS_DA_RESERVA = [
   "bloqueado",
   "ocupado",
   "reservado_por_outra_conversa",
+] as const;
+export type MotivoDaConferencia = (typeof MOTIVOS_DA_CONFERENCIA)[number];
+
+/**
+ * Os motivos de reservar_horario_da_ia: os da conferencia e, revisao final
+ * da AG3, ja_tem_consulta (com a consulta que o contato ja tem).
+ */
+export const MOTIVOS_DA_RESERVA = [
+  ...MOTIVOS_DA_CONFERENCIA,
+  "ja_tem_consulta",
 ] as const;
 export type MotivoDaReserva = (typeof MOTIVOS_DA_RESERVA)[number];
 
@@ -81,7 +96,18 @@ export type RespostaDaReserva =
       /** AG3: a unidade da reserva (nula = sem unidade, como antes). */
       unitId: string | null;
     }
-  | { ok: false; motivo: MotivoDaReserva };
+  | { ok: false; motivo: MotivoDaConferencia }
+  /**
+   * Revisao final da AG3: o contato ja tem consulta futura ativa do mesmo
+   * procedimento (o id e o inicio dela; nulos quando a RPC nao trouxe).
+   */
+  | {
+      ok: false;
+      motivo: "ja_tem_consulta";
+      appointmentId: string | null;
+      /** ISO (UTC). */
+      inicio: string | null;
+    };
 
 function ehInstante(valor: unknown): valor is string {
   return typeof valor === "string" && Number.isFinite(Date.parse(valor));
@@ -122,7 +148,18 @@ export function lerRespostaDaReserva(dado: unknown): RespostaDaReserva | null {
       unitId: typeof r.unit_id === "string" && r.unit_id !== "" ? r.unit_id : null,
     };
   }
-  if (r.ok === false && ehMotivo(MOTIVOS_DA_RESERVA, r.motivo)) {
+  if (r.ok === false && r.motivo === "ja_tem_consulta") {
+    return {
+      ok: false,
+      motivo: "ja_tem_consulta",
+      appointmentId:
+        typeof r.appointment_id === "string" && r.appointment_id !== ""
+          ? r.appointment_id
+          : null,
+      inicio: ehInstante(r.starts_at) ? r.starts_at : null,
+    };
+  }
+  if (r.ok === false && ehMotivo(MOTIVOS_DA_CONFERENCIA, r.motivo)) {
     return { ok: false, motivo: r.motivo };
   }
   return null;

@@ -146,9 +146,11 @@ describe("o resumo dos fatos", () => {
     const texto = resumo.texto;
     for (const trecho of [
       "Hoje na clínica: segunda-feira, 26/10/2026.",
-      "- marcou a consulta, pendente da aprovação da equipe",
+      // Revisao final da AG3: a acao sem o horario dela diz que ele nao
+      // veio.
+      "- marcou a consulta, pendente da aprovação da equipe (sem dia e hora informados)",
       "- confirmou a presença numa consulta que a pessoa já tinha",
-      "Consulta que a pessoa já tem, lida pelo sistema nesta resposta: sim.",
+      "Consulta que a pessoa já tem, lida pelo sistema nesta resposta: sim (sem dia e hora informados).",
       "- terça, 21/10 às 14:00",
       "- quarta, 22/10 às 09:30",
       "- quinta, 23/10 às 16:15",
@@ -169,7 +171,63 @@ describe("o resumo dos fatos", () => {
     );
   });
 
-  it("sem dado de paciente: a consulta da pessoa (confirmada ou marcada) nunca entra, nem o que não é Cadastro", () => {
+  it("revisão final da AG3: cada ação e cada consulta lida com o dia, a hora e a unidade", () => {
+    const resumo = resumirFatosDoTurno(
+      fatos({
+        acoes: ["reservou", "marcou"],
+        horariosDasAcoes: [
+          { acao: "reservou", dia: "quarta, 21/10", hora: "14:00", unidade: "Centro" },
+          { acao: "marcou", dia: "quarta, 21/10", hora: "14:00", unidade: "Centro" },
+        ],
+        consultaLida: true,
+        consultasLidas: [
+          { dia: "terça, 27/10", hora: "10:00", unidade: null, marcadaNestaConversa: false },
+          { dia: "quarta, 21/10", hora: "14:00", unidade: "Centro", marcadaNestaConversa: true },
+        ],
+      }),
+      "Oi!",
+    );
+    expect(resumo.ok).toBe(true);
+    const texto = resumo.ok ? resumo.texto : "";
+    for (const trecho of [
+      "- reservou quarta, 21/10 às 14:00, unidade Centro (por 10 minutos, ainda não marcada)",
+      "- marcou a consulta de quarta, 21/10 às 14:00, unidade Centro, pendente da aprovação da equipe",
+      "Consultas que a pessoa já tem, lidas pelo sistema nesta resposta (dia e hora juntos):",
+      "- terça, 27/10 às 10:00",
+      "- quarta, 21/10 às 14:00, unidade Centro (marcada pela assistente nesta conversa, pendente da aprovação da equipe)",
+    ]) {
+      expect(texto, trecho).toContain(trecho);
+    }
+    // O horario fora do formato da agenda: o resumo nao monta (falha
+    // fechada).
+    expect(
+      resumirFatosDoTurno(
+        fatos({
+          acoes: ["reservou"],
+          horariosDasAcoes: [
+            { acao: "reservou", dia: "amanhã", hora: "14h", unidade: null },
+          ],
+        }),
+        "Oi!",
+      ),
+    ).toEqual({ ok: false, motivo: "horario_fora_do_formato" });
+    expect(
+      resumirFatosDoTurno(
+        fatos({
+          consultaLida: true,
+          consultasLidas: [
+            { dia: "terça, 27/10", hora: "10h", unidade: null, marcadaNestaConversa: false },
+          ],
+        }),
+        "Oi!",
+      ),
+    ).toEqual({ ok: false, motivo: "horario_fora_do_formato" });
+  });
+
+  // Revisao final da AG3: o dia, a hora e a unidade da consulta entram pelo
+  // fato da acao e da consulta lida (acima); o profissional, o procedimento
+  // e o resto das saidas da agenda continuam de fora.
+  it("sem dado de paciente: a consulta da pessoa (confirmada ou marcada) não entra pelas saídas, nem o que não é Cadastro", () => {
     const resumo = resumirFatosDoTurno(COMPLETO, "Combinado!");
     expect(resumo.ok).toBe(true);
     const texto = resumo.ok ? resumo.texto : "";

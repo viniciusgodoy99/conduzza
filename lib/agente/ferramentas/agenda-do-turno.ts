@@ -49,6 +49,28 @@
 //    registrados, quais faltam e qual teve problema, nunca o valor;
 //  - `fechar` devolve o estado novo (etapa, horarios, reserva, consulta,
 //    falhas seguidas e desfecho) e `nota` monta a nota para a equipe.
+//
+// Revisao final da AG3 (27/10/2026):
+//  - a etapa aguardando_confirmacao so e armada quando a pergunta
+//    "Confirma ...?" traz o dd/mm e o HH:mm da reserva viva (e o
+//    profissional e a unidade dela, quando cita) e nenhum outro dia e hora
+//    (perguntaConfirmaAReserva); o slot_hold_id do estado e a reserva
+//    perguntada, e o agendar manda esse id (p_slot_hold_id): reserva viva
+//    diferente e "reserva_diferente", e o modelo pergunta de novo com o
+//    horario certo;
+//  - a acao (reservou, marcou) e a consulta lida levam o dia, a hora e a
+//    unidade aos fatos do turno; a recusa da reserva diz o dia e a hora ao
+//    modelo, mas nos fatos isso e eco do pedido (so na frase que nega ou
+//    pergunta);
+//  - a recusa do agendar pelo horario (conflito, ocupado, bloqueado, fora
+//    da jornada...) e a reconferencia que acha o horario da reserva ocupado
+//    deixam a reserva PERDIDA (nao viva, codigo ocupado, slot_hold_id
+//    nulo); so a reserva cujo horario a reconferencia disse livre e horario
+//    livre nos fatos;
+//  - reservar recusa ja_tem_consulta (o dia e a hora da consulta que ja
+//    existe, antes de qualquer dado);
+//  - a reserva que vence no meio do turno (o relogio do turno passa do
+//    vencimento) conta como vencida na gravacao, nos fatos e na pergunta.
 // Nada daqui tem texto do paciente: a trilha cita nomes do Cadastro, dias,
 // horas e os nomes dos campos.
 
@@ -73,7 +95,7 @@ import {
   falhasDepoisDoTurno,
   listaEmTexto,
   notaDaPassagem,
-  perguntaSeConfirma,
+  perguntaConfirmaAReserva,
   proximoNumeroDoCodigo,
   ROTULO_DO_DADO,
   type DadoDaMarcacao,
@@ -98,6 +120,7 @@ import {
   planejarBuscaDeHorario,
   type AgendaCarregada,
   type HorarioOferecido,
+  type HorarioParaReconferir,
   type PedidoDaAgenda,
 } from "./buscar-horario";
 import {
@@ -118,6 +141,7 @@ import {
   type RespostaDaConfirmacao,
 } from "./confirmar-presenca";
 import {
+  entradaDoRegistroDeDadosSchema,
   prepararRegistro,
   resultadoDoProblema,
   type DadosParaRegistrar,
@@ -140,7 +164,19 @@ export type ReservaLida = {
   inicio: string;
   fim: string;
   unidadeId: string | null;
+  /**
+   * Revisao final da AG3: quando a reserva vence (ISO, UTC). A reserva que
+   * vence no meio do turno conta como vencida na gravacao e na resposta.
+   * Ausente: so vale o "viva" da leitura.
+   */
+  expiraEm?: string | null;
 };
+
+/**
+ * Revisao final da AG3: a reserva viva da conversa, qualquer que seja (a
+ * recusa reserva_diferente do agendar), com o id dela.
+ */
+export type ReservaVivaDaConversa = ReservaLida & { holdId: string };
 
 /** A consulta como a porta le (AG3): so o inicio e se continua de pe. */
 export type ConsultaLida = {
@@ -148,6 +184,8 @@ export type ConsultaLida = {
   inicio: string;
   /** Nao cancelada, nem recusada, nem que ja passou. */
   ativa: boolean;
+  /** Revisao final da AG3: a unidade da consulta (null: sem unidade). */
+  unidadeId?: string | null;
 };
 
 /**
@@ -169,8 +207,13 @@ export type PortaDaAgenda = {
     /** AG3: a unidade do horario (null = sem unidade). */
     unidadeId?: string | null;
   }) => Promise<RespostaDaReserva>;
-  /** agendar_pela_ia com o job_id do turno. */
-  agendar: () => Promise<RespostaDoAgendar>;
+  /**
+   * agendar_pela_ia com o job_id do turno. Revisao final da AG3: com a
+   * reserva que a pergunta "Confirma ...?" mostrou (p_slot_hold_id); a RPC
+   * recusa reserva_diferente quando a reserva viva e outra. Sem o pedido
+   * (ou com o id nulo), a reserva viva da conversa, como antes.
+   */
+  agendar: (pedido?: { slotHoldId: string | null }) => Promise<RespostaDoAgendar>;
   /** A consulta do contato que aguarda confirmacao e confirmar_pelo_paciente. */
   confirmarPresenca: () => Promise<RespostaDaConfirmacao>;
   /** AG3: registrar_dados_da_marcacao com o job_id do turno. */
@@ -181,6 +224,11 @@ export type PortaDaAgenda = {
   lerReserva?: (holdId: string) => Promise<ReservaLida | null>;
   /** AG3: uma consulta do contato da conversa, ou null. */
   lerConsulta?: (appointmentId: string) => Promise<ConsultaLida | null>;
+  /**
+   * Revisao final da AG3: a reserva viva da conversa (a do agendar que
+   * recusou reserva_diferente), ou null. Lanca na leitura que falha.
+   */
+  lerReservaViva?: () => Promise<ReservaVivaDaConversa | null>;
 };
 
 export type ResultadoDaFerramentaDeAgenda =
@@ -237,6 +285,8 @@ export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
   reservado_por_outra_conversa: "o horário está reservado em outra conversa",
   reserva_inexistente: "não havia horário reservado nesta conversa",
   reserva_vencida: "a reserva de 10 minutos venceu",
+  reserva_diferente:
+    "o horário reservado nesta conversa não é o que a pessoa confirmou",
   sem_confirmacao_do_paciente:
     "o paciente ainda não confirmou numa mensagem nova",
   conflito: "a agenda recebeu outra consulta nesse horário",
@@ -273,6 +323,7 @@ const PAROU_EM: Readonly<Record<string, string>> = {
   convenio_so_com_a_equipe: "o convênio só é marcado pela equipe",
   procedimento_nao_agendavel: "o procedimento só é marcado pela equipe",
   reserva_vencida: "a reserva de 10 minutos venceu",
+  reserva_diferente: "o horário reservado mudou antes da confirmação",
   ocupado: "o horário escolhido deixou de estar livre",
   conflito: "o horário escolhido deixou de estar livre",
   reservado_por_outra_conversa: "o horário escolhido estava reservado em outra conversa",
@@ -315,7 +366,12 @@ export type AtendimentoParaOModelo = {
     | (HorarioLegivel & {
         codigo: string | null;
         procedimento: string;
-        situacao: "viva" | "vencida" | "nao_conferida";
+        /**
+         * Revisao final da AG3: "perdida" e a reserva cujo horario deixou
+         * de estar livre (a reconferencia achou ocupado, ou o agendar
+         * recusou pelo horario).
+         */
+        situacao: "viva" | "vencida" | "nao_conferida" | "perdida";
       })
     | null;
   informados: DadoDaMarcacao[];
@@ -357,6 +413,13 @@ export type AgendaDoTurno = {
   }) => FechamentoDoTurno;
   /** AG3: a nota para a equipe na passagem (null: nada a contar). */
   nota: (motivo: string) => string | null;
+  /**
+   * Revisao final da AG3 (LGPD): os nomes completos que o modelo mandou
+   * registrar neste turno (como ele copiou e como o paciente escreveu), so
+   * para mascarar a copia do verificador. Nunca vai para log nem para fora
+   * do turno.
+   */
+  nomesCitados: () => string[];
 };
 
 function saida(
@@ -375,6 +438,44 @@ function saida(
     ...(fatos === undefined ? {} : { fatos }),
   };
 }
+
+/** A reserva que o turno conhece (a do estado ou a feita no turno). */
+type ReservaDoTurno = {
+  /** O horario do codigo (null: o horario da reserva nao tem codigo no mapa). */
+  horario: HorarioOferecido | null;
+  leitura: ReservaLida | null;
+  /** true: viva na leitura; false: vencida ou sumiu; null: nao conferida. */
+  viva: boolean | null;
+  /**
+   * Revisao final da AG3: o horario deixou de estar livre (a reconferencia
+   * achou ocupado, ou o agendar recusou pelo horario). A reserva perdida nao
+   * e viva, o codigo dela fica ocupado e o estado nao guarda o id.
+   */
+  perdida: boolean;
+  /** Revisao final da AG3: o que a reconferencia disse do horario dela. */
+  situacao: SituacaoDoHorario;
+  /** slot_hold.id (null: a RPC nao devolveu). */
+  holdId: string | null;
+};
+
+/**
+ * Revisao final da AG3: as recusas do agendar pelo horario (a reserva fica
+ * perdida: o horario nao vira consulta).
+ */
+const RECUSAS_PELO_HORARIO: ReadonlySet<string> = new Set([
+  "conflito",
+  "ocupado",
+  "bloqueado",
+  "fora_da_jornada",
+  "antes_da_antecedencia",
+  "depois_do_horizonte",
+  "reservado_por_outra_conversa",
+  "vinculo_invalido",
+  "unidade_invalida",
+]);
+
+/** O codigo interno do horario da reserva sem codigo, na reconferencia. */
+const CODIGO_DA_RESERVA = "reserva";
 
 /** Hoje (aaaa-mm-dd) no fuso dado. */
 function hojeNoFuso(agoraMs: number, fuso: string): string {
@@ -421,8 +522,14 @@ export function criarAgendaDoTurno(entrada: {
   };
   /** AG3: os nascimentos conhecidos (cadastro e informado), para a idade. */
   nascimentos?: readonly string[];
+  /**
+   * Revisao final da AG3: o relogio do turno (a reserva que vence no meio
+   * do turno conta como vencida). Ausente: o instante do comeco do turno.
+   */
+  agora?: () => number;
 }): AgendaDoTurno {
   const { porta, catalogo, agoraMs, fuso } = entrada;
+  const relogio = entrada.agora ?? (() => agoraMs);
   const comEstado =
     entrada.atendimento !== null && entrada.atendimento !== undefined;
   const estado: EstadoDoAtendimento = comEstado
@@ -456,14 +563,37 @@ export function criarAgendaDoTurno(entrada: {
   let chamouAgendar = false;
   let chamouConfirmar = false;
   const resultados: string[] = [];
+  /** Os nomes que o modelo mandou registrar (so para mascarar o verificador). */
+  const nomesCitados: string[] = [];
   let ultimaPreferencia: { periodo: string | null; hora: string | null } | null =
     null;
-  /** A reserva viva conhecida: a deste turno ou a do estado, conferida. */
-  let reserva:
-    | { horario: HorarioOferecido | null; leitura: ReservaLida | null; viva: boolean | null }
-    | null = null;
-  let consultaLida: { dia: string; hora: string } | null = null;
+  /** A reserva conhecida: a deste turno ou a do estado, conferida. */
+  let reserva: ReservaDoTurno | null = null;
+  /** A consulta marcada nesta conversa (o estado), relida no turno. */
+  let consultaLida: { dia: string; hora: string; unidade: string | null } | null =
+    null;
   let consultaDoTurno: { dia: string; hora: string } | null = null;
+
+  /**
+   * Revisao final da AG3: a reserva vale agora? Viva na leitura (ou feita
+   * neste turno), nao perdida e, pelo relogio do turno, ainda nao vencida.
+   */
+  const reservaVivaAgora = (r: ReservaDoTurno | null = reserva): boolean => {
+    if (r === null || r.viva !== true || r.perdida) {
+      return false;
+    }
+    const expira = r.leitura?.expiraEm ?? null;
+    return expira === null || !(Date.parse(expira) <= relogio());
+  };
+  /** A reserva que se sabe morta (vencida, sumida ou perdida). */
+  const reservaMorta = (r: ReservaDoTurno | null = reserva): boolean =>
+    r !== null && (r.viva === false || r.perdida || (r.viva === true && !reservaVivaAgora(r)));
+
+  /** O nome da unidade pelo id (null: sem unidade ou fora do catalogo). */
+  const nomeDaUnidade = (id: string | null | undefined): string | null =>
+    id === null || id === undefined
+      ? null
+      : ((catalogo.unidades ?? []).find((u) => u.id === id)?.nome ?? null);
 
   /** O vinculo do catalogo pelo id. */
   const vinculoDe = (id: string | null): VinculoDoAgente | undefined =>
@@ -613,8 +743,9 @@ export function criarAgendaDoTurno(entrada: {
     }
     // A reserva do estado: viva ou vencida (e o horario dela).
     if (estado.slot_hold_id !== null && porta.lerReserva !== undefined) {
+      const holdId = estado.slot_hold_id;
       try {
-        const lida = await porta.lerReserva(estado.slot_hold_id);
+        const lida = await porta.lerReserva(holdId);
         if (lida !== null) {
           const codigo =
             [...horarios.values()].find(
@@ -622,59 +753,118 @@ export function criarAgendaDoTurno(entrada: {
                 h.serviceLinkId === lida.serviceLinkId &&
                 Date.parse(h.inicio) === Date.parse(lida.inicio),
             ) ?? null;
-          reserva = { horario: codigo, leitura: lida, viva: lida.viva };
+          reserva = {
+            horario: codigo,
+            leitura: lida,
+            viva: lida.viva,
+            perdida: false,
+            situacao: "nao_conferido",
+            holdId,
+          };
         } else {
-          reserva = { horario: null, leitura: null, viva: false };
+          // Revisao final da AG3: a reserva que sumiu (a manutencao apaga a
+          // vencida) e nula na gravacao e na resposta.
+          reserva = {
+            horario: null,
+            leitura: null,
+            viva: false,
+            perdida: false,
+            situacao: "nao_conferido",
+            holdId,
+          };
         }
       } catch {
-        reserva = { horario: null, leitura: null, viva: null };
+        reserva = {
+          horario: null,
+          leitura: null,
+          viva: null,
+          perdida: false,
+          situacao: "nao_conferido",
+          holdId,
+        };
       }
     }
-    // A consulta marcada nesta conversa (so o dia e a hora).
+    // A consulta marcada nesta conversa (so o dia, a hora e a unidade).
     if (estado.appointment_id !== null && porta.lerConsulta !== undefined) {
       try {
         const lida = await porta.lerConsulta(estado.appointment_id);
         if (lida !== null && lida.ativa) {
-          consultaLida = diaEHora(new Date(lida.inicio), fuso, agoraMs);
+          consultaLida = {
+            ...diaEHora(new Date(lida.inicio), fuso, agoraMs),
+            unidade: nomeDaUnidade(lida.unidadeId),
+          };
         }
       } catch {
         consultaLida = null;
       }
     }
-    // Os horarios oferecidos: continuam livres?
-    if (!agendaLigada || horarios.size === 0) {
+    // Os horarios oferecidos e, revisao final da AG3, o horario da reserva
+    // viva: continuam livres? (A reserva desta conversa nao ocupa o horario
+    // dela.)
+    if (!agendaLigada) {
       return;
     }
-    const lista = [...horarios.values()].map((h) => ({
+    const lista: HorarioParaReconferir[] = [...horarios.values()].map((h) => ({
       codigo: h.codigo,
       serviceLinkId: h.serviceLinkId,
       unidadeId: h.unidadeId,
       inicio: h.inicio,
       fim: h.fim,
     }));
-    const pedido = pedidoDaReconferencia(catalogo, lista);
+    const daReserva: HorarioParaReconferir | null =
+      reserva !== null &&
+      reserva.viva === true &&
+      reserva.horario === null &&
+      reserva.leitura !== null
+        ? {
+            codigo: CODIGO_DA_RESERVA,
+            serviceLinkId: reserva.leitura.serviceLinkId,
+            unidadeId: reserva.leitura.unidadeId,
+            inicio: reserva.leitura.inicio,
+            fim: reserva.leitura.fim,
+          }
+        : null;
+    const todos = daReserva === null ? lista : [...lista, daReserva];
+    if (todos.length === 0) {
+      return;
+    }
+    const pedido = pedidoDaReconferencia(catalogo, todos);
     if (pedido === null) {
       return;
     }
     try {
       const agenda = await porta.carregar(pedido);
-      for (const h of lista) {
-        situacoes.set(
-          h.codigo,
-          horarioContinuaLivre({
-            catalogo,
-            agenda,
-            config: entrada.config.agenda,
-            horario: h,
-            agoraMs,
-            fuso,
-          })
-            ? "livre"
-            : "ocupado",
-        );
+      for (const h of todos) {
+        const situacao = horarioContinuaLivre({
+          catalogo,
+          agenda,
+          config: entrada.config.agenda,
+          horario: h,
+          agoraMs,
+          fuso,
+        })
+          ? "livre"
+          : "ocupado";
+        if (h === daReserva) {
+          if (reserva !== null) {
+            reserva.situacao = situacao;
+          }
+        } else {
+          situacoes.set(h.codigo, situacao);
+        }
       }
     } catch {
       situacoes.clear();
+    }
+    // A reserva com codigo fica com a situacao do codigo; a viva cujo
+    // horario a reconferencia achou ocupado esta perdida.
+    if (reserva !== null) {
+      if (reserva.horario !== null) {
+        reserva.situacao = situacoes.get(reserva.horario.codigo) ?? "nao_conferido";
+      }
+      if (reserva.viva === true && reserva.situacao === "ocupado") {
+        reserva.perdida = true;
+      }
     }
   }
 
@@ -827,11 +1017,30 @@ export function criarAgendaDoTurno(entrada: {
           passo: `Tentou reservar ${pedido}: ${motivo}`,
         };
       }
+      if (resposta.motivo === "ja_tem_consulta") {
+        // Revisao final da AG3 (item 6): o contato ja tem consulta futura
+        // ativa deste procedimento. Ao modelo, so o dia e a hora dela (pode
+        // ter sido marcada pela recepcao, fora desta conversa), antes de
+        // qualquer dado; nada foi reservado.
+        return jaTemConsulta(
+          resposta.inicio,
+          resposta.appointmentId,
+          `Não reservou ${pedido}: ${motivo}`,
+        );
+      }
       situacoes.set(horario.codigo, "ocupado");
+      // Revisao final da AG3 (item 5): o dia e a hora recusados vao ao
+      // modelo (para dizer que esse horario nao esta mais livre), mas nos
+      // fatos sao eco do pedido: so na frase que nega ou pergunta.
       return saida(
         resposta.motivo,
         { dia: horario.dia, hora: horario.hora },
         `Tentou reservar ${pedido}: ${motivo}`,
+        [],
+        {
+          ecos: [pedido],
+          saidaSemEco: JSON.stringify({ resultado: resposta.motivo }),
+        },
       );
     }
     resultados.push("reservado");
@@ -881,8 +1090,13 @@ export function criarAgendaDoTurno(entrada: {
         inicio: resposta.inicio,
         fim: resposta.fim,
         unidadeId,
+        expiraEm: resposta.expiraEm,
       },
       viva: true,
+      perdida: false,
+      // A RPC acabou de conferir o horario.
+      situacao: "livre",
+      holdId: resposta.holdId,
     };
     recalcularFaltam(serviceLinkId);
     const quando = `${dia} às ${hora}${entreParenteses(nomes)}${unidade === null ? "" : `, unidade ${unidade.nome}`}`;
@@ -903,9 +1117,11 @@ export function criarAgendaDoTurno(entrada: {
         : `Reservou ${quando} por ${MINUTOS_DA_RESERVA} minutos`,
       [],
       // Revisao da AG2: o horario reservado tambem e horario livre do turno
-      // (o dia e a hora como foram ao modelo; AG3, com a unidade).
+      // (o dia e a hora como foram ao modelo; AG3, com a unidade). Revisao
+      // final da AG3: e o horario da acao (a frase "reservei" so com ele).
       {
         acao: "reservou",
+        horarioDaAcao: { dia, hora, unidade: unidade?.nome ?? null },
         horarios: [livre],
         ...(coberturaDoVinculo(serviceLinkId).length > 0
           ? { coberturas: coberturaDoVinculo(serviceLinkId) }
@@ -924,6 +1140,22 @@ export function criarAgendaDoTurno(entrada: {
       pendentes: entrada.mensagens?.pendentes ?? [],
       hoje: hojeNoFuso(agoraMs, fuso),
     });
+    // Revisao final da AG3 (LGPD): o nome como o modelo copiou e como o
+    // paciente escreveu, para a copia do verificador ir sem ele.
+    const pedidoDoNome = entradaDoRegistroDeDadosSchema.safeParse(argumentos);
+    if (pedidoDoNome.success && pedidoDoNome.data.nome_completo !== null) {
+      const copiado = pedidoDoNome.data.nome_completo;
+      nomesCitados.push(copiado);
+      // Sem a marca do nome do contato ("Fulano da Silva" vira "da Silva"
+      // quando a resposta tira a marca).
+      const semAMarca = copiado.replace(/(?<!\p{L})fulan[oa](?!\p{L})/giu, " ").trim();
+      if (semAMarca !== copiado && semAMarca.split(/\s+/).length >= 2) {
+        nomesCitados.push(semAMarca);
+      }
+    }
+    if (preparo.tipo === "pronto" && preparo.dados.nomeCompleto !== null) {
+      nomesCitados.push(preparo.dados.nomeCompleto);
+    }
     if (preparo.tipo === "entrada_invalida") {
       resultados.push("entrada_invalida");
       return saida(
@@ -1064,6 +1296,132 @@ export function criarAgendaDoTurno(entrada: {
     );
   }
 
+  /**
+   * O contato ja tem consulta futura ativa deste procedimento (ja_tem_consulta
+   * do reservar e do agendar): ao modelo vao SO o dia e a hora dela (pode ter
+   * sido marcada pela recepcao, fora desta conversa). O inicio vem da RPC ou,
+   * sem ele, da leitura da consulta pelo id (do contato da conversa). Revisao
+   * final da AG3: a consulta lida leva o dia, a hora e a unidade aos fatos.
+   */
+  async function jaTemConsulta(
+    inicioDaRpc: string | null,
+    appointmentId: string | null | undefined,
+    passoSemDia: string,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    let inicio = inicioDaRpc;
+    let unidadeId: string | null = null;
+    if (appointmentId && porta?.lerConsulta !== undefined) {
+      try {
+        const lida = await porta.lerConsulta(appointmentId);
+        if (lida !== null) {
+          inicio = lida.inicio;
+          unidadeId = lida.unidadeId ?? null;
+        }
+      } catch {
+        // Sem a leitura, vale o inicio que a RPC trouxe (ou nenhum).
+      }
+    }
+    const quando =
+      inicio === null ? null : diaEHora(new Date(inicio), fuso, agoraMs);
+    if (quando === null) {
+      // O modelo so ouve que ja ha consulta; a consulta existe (a RPC disse),
+      // sem dia nem hora: a frase com dia ou hora nao passa.
+      return saida("ja_tem_consulta", {}, passoSemDia, [], {
+        consultaLida: true,
+      });
+    }
+    return saida(
+      "ja_tem_consulta",
+      { ...quando },
+      `${passoSemDia} (${quando.dia} às ${quando.hora})`,
+      [],
+      {
+        consultaLida: true,
+        consultaComHorario: {
+          ...quando,
+          unidade: nomeDaUnidade(unidadeId),
+          marcadaNestaConversa: false,
+        },
+      },
+    );
+  }
+
+  /**
+   * Revisao final da AG3: a reserva viva da conversa e outra (reserva_
+   * diferente). Le a viva para o modelo perguntar "Confirma ...?" de novo,
+   * com o horario certo; o estado passa a guardar ela (e a etapa volta para
+   * a oferta no fechamento, ate a pergunta nova). Leitura que falha: falha
+   * fechada.
+   */
+  async function reservaDiferente(
+    passo: string,
+  ): Promise<ResultadoDaFerramentaDeAgenda> {
+    let viva: ReservaVivaDaConversa | null;
+    try {
+      if (porta === null || porta.lerReservaViva === undefined) {
+        throw new Error("sem porta");
+      }
+      viva = await porta.lerReservaViva();
+    } catch {
+      return {
+        tipo: "falha",
+        passo: "Não foi possível ler o horário reservado nesta conversa.",
+      };
+    }
+    if (viva === null || !viva.viva) {
+      // Ninguem mais tem reserva: como a reserva que venceu.
+      reserva = reserva === null ? null : { ...reserva, viva: false };
+      estado.slot_hold_id = null;
+      return saida("reserva_inexistente", {}, passo);
+    }
+    const codigo =
+      [...horarios.values()].find(
+        (h) =>
+          h.serviceLinkId === viva.serviceLinkId &&
+          Date.parse(h.inicio) === Date.parse(viva.inicio),
+      ) ?? null;
+    reserva = {
+      horario: codigo,
+      leitura: viva,
+      viva: true,
+      perdida: false,
+      situacao: codigo === null ? "nao_conferido" : situacaoDe(codigo.codigo),
+      holdId: viva.holdId,
+    };
+    estado.slot_hold_id = viva.holdId;
+    // O pedido passa a ser o da reserva viva (o vinculo e a unidade dela).
+    const vinculo = vinculoDe(viva.serviceLinkId);
+    if (vinculo !== undefined) {
+      estado.procedure_id = vinculo.procedimentoId;
+      estado.professional_id = vinculo.profissionalId;
+      estado.insurance_id = vinculo.convenioId;
+      estado.particular = vinculo.convenioId === null;
+    }
+    estado.unit_id = viva.unidadeId;
+    recalcularFaltam(viva.serviceLinkId);
+    const nomes = nomesDoVinculo(viva.serviceLinkId);
+    const unidade = nomeDaUnidade(viva.unidadeId);
+    const { dia, hora } = diaEHora(new Date(viva.inicio), fuso, agoraMs);
+    return saida(
+      "reserva_diferente",
+      {
+        horario_reservado: {
+          dia,
+          hora,
+          ...(nomes === null ? {} : nomes),
+          unidade,
+        },
+      },
+      `${passo} (o reservado é ${dia} às ${hora}${entreParenteses(nomes)}${unidade === null ? "" : `, unidade ${unidade}`})`,
+      [],
+      // A reserva viva desta conversa: e reserva feita, com o horario dela.
+      {
+        acao: "reservou",
+        horarioDaAcao: { dia, hora, unidade },
+      },
+    );
+  }
+
   async function agendar(
     argumentos: unknown,
   ): Promise<ResultadoDaFerramentaDeAgenda> {
@@ -1084,7 +1442,16 @@ export function criarAgendaDoTurno(entrada: {
         "Pediu para marcar de novo na mesma resposta: recusado",
       );
     }
-    if (tentouReservar || (comEstado && etapaInicial !== "aguardando_confirmacao")) {
+    // Revisao final da AG3: a reserva que a pergunta "Confirma ...?" mostrou
+    // e a do estado lido no comeco do turno (a etapa so e armada com ela).
+    const reservaPerguntada = comEstado
+      ? entrada.atendimento!.estado.slot_hold_id
+      : null;
+    if (
+      tentouReservar ||
+      (comEstado &&
+        (etapaInicial !== "aguardando_confirmacao" || reservaPerguntada === null))
+    ) {
       // A confirmacao tem de vir numa mensagem nova, depois da pergunta
       // "Confirma ...?" (AG3: feita num turno anterior, com a reserva viva e
       // sem dado faltando). O turno que tentou reservar e o da escolha do
@@ -1102,7 +1469,9 @@ export function criarAgendaDoTurno(entrada: {
       if (porta === null) {
         throw new Error("sem porta");
       }
-      resposta = await porta.agendar();
+      resposta = comEstado
+        ? await porta.agendar({ slotHoldId: reservaPerguntada })
+        : await porta.agendar();
     } catch {
       return {
         tipo: "falha",
@@ -1130,27 +1499,10 @@ export function criarAgendaDoTurno(entrada: {
         };
       }
       if (resposta.motivo === "ja_tem_consulta") {
-        // So o dia e a hora da consulta que ja existe (pode ter sido marcada
-        // pela recepcao, fora desta conversa).
-        let quando: { dia: string; hora: string } | null = null;
-        if (resposta.appointmentId && porta.lerConsulta !== undefined) {
-          try {
-            const lida = await porta.lerConsulta(resposta.appointmentId);
-            if (lida !== null) {
-              quando = diaEHora(new Date(lida.inicio), fuso, agoraMs);
-            }
-          } catch {
-            quando = null;
-          }
-        }
-        return saida(
-          "ja_tem_consulta",
-          quando === null ? {} : { ...quando },
-          quando === null
-            ? `Não marcou: ${motivo}`
-            : `Não marcou: ${motivo} (${quando.dia} às ${quando.hora})`,
-          [],
-          quando === null ? undefined : { consultaLida: true },
+        return jaTemConsulta(
+          null,
+          resposta.appointmentId,
+          `Não marcou: ${motivo}`,
         );
       }
       if (resposta.motivo === "faltam_dados") {
@@ -1161,8 +1513,23 @@ export function criarAgendaDoTurno(entrada: {
           `Não marcou: falta ${listaEmTexto(dados.faltam.map((c) => ROTULO_DO_DADO[c]))}`,
         );
       }
+      if (resposta.motivo === "reserva_diferente") {
+        return reservaDiferente(`Não marcou: ${motivo}`);
+      }
       if (resposta.motivo === "reserva_vencida" || resposta.motivo === "reserva_inexistente") {
         reserva = reserva === null ? null : { ...reserva, viva: false };
+      }
+      if (RECUSAS_PELO_HORARIO.has(resposta.motivo)) {
+        // Revisao final da AG3 (item 4): o horario da reserva nao vira
+        // consulta. A reserva fica perdida (nao viva, o codigo dela ocupado,
+        // o estado sem o id) e sai dos horarios livres do turno.
+        if (reserva !== null) {
+          reserva = { ...reserva, perdida: true, situacao: "ocupado" };
+          if (reserva.horario !== null) {
+            situacoes.set(reserva.horario.codigo, "ocupado");
+          }
+        }
+        estado.slot_hold_id = null;
       }
       return saida(resposta.motivo, {}, `Tentou marcar a consulta: ${motivo}`);
     }
@@ -1213,7 +1580,14 @@ export function criarAgendaDoTurno(entrada: {
         ? `Marcaria ${texto}, pendente de aprovação da equipe. ${SIMULADO}`
         : `Marcou ${texto}, pendente de aprovação da equipe`,
       [],
-      { acao: "marcou" },
+      // Revisao final da AG3: o horario da acao (a frase "ficou marcada"
+      // com dia ou hora so com ele).
+      quando === null
+        ? { acao: "marcou" }
+        : {
+            acao: "marcou",
+            horarioDaAcao: { ...quando, unidade: unidade?.nome ?? null },
+          },
     );
   }
 
@@ -1296,7 +1670,15 @@ export function criarAgendaDoTurno(entrada: {
       { ...quando },
       `Confirmou a presença na consulta de ${diaAsHora(new Date(resposta.inicio), fuso, agoraMs)}${entreParenteses(nomes)}`,
       [],
-      fatosDaConfirmacao,
+      // Revisao final da AG3: a consulta lida com o dia e a hora dela.
+      {
+        ...fatosDaConfirmacao,
+        consultaComHorario: {
+          ...quando,
+          unidade: null,
+          marcadaNestaConversa: false,
+        },
+      },
     );
   }
 
@@ -1339,19 +1721,31 @@ export function criarAgendaDoTurno(entrada: {
     unidade: h.unidade,
   });
 
-  /** O horario da reserva conhecida, legivel (null: nao ha reserva). */
+  /**
+   * O horario da reserva conhecida, legivel (null: nao ha reserva). viva:
+   * revisao final da AG3, pelo relogio do turno (a que venceu no meio do
+   * turno e false) e falsa na perdida.
+   */
   const reservaLegivel = ():
-    | (HorarioLegivel & { codigo: string | null; procedimento: string; viva: boolean | null })
+    | (HorarioLegivel & {
+        codigo: string | null;
+        procedimento: string;
+        viva: boolean | null;
+        perdida: boolean;
+      })
     | null => {
     if (reserva === null) {
       return null;
     }
+    const viva =
+      reserva.viva === null ? null : reservaVivaAgora(reserva);
     if (reserva.horario !== null) {
       return {
         ...legivel(reserva.horario),
         codigo: reserva.horario.codigo,
         procedimento: reserva.horario.procedimento,
-        viva: reserva.viva,
+        viva,
+        perdida: reserva.perdida,
       };
     }
     const leitura = reserva.leitura;
@@ -1371,7 +1765,8 @@ export function criarAgendaDoTurno(entrada: {
       unidade: unidade?.nome ?? null,
       codigo: null,
       procedimento: nomes?.procedimento ?? "",
-      viva: reserva.viva,
+      viva,
+      perdida: reserva.perdida,
     };
   };
 
@@ -1467,15 +1862,23 @@ export function criarAgendaDoTurno(entrada: {
               unidade: r.unidade,
               codigo: r.codigo,
               procedimento: r.procedimento,
-              situacao:
-                r.viva === true ? "viva" : r.viva === false ? "vencida" : "nao_conferida",
+              situacao: r.perdida
+                ? "perdida"
+                : r.viva === true
+                  ? "viva"
+                  : r.viva === false
+                    ? "vencida"
+                    : "nao_conferida",
             },
       informados: (["nome_completo", "data_nascimento", "cpf", "carteirinha"] as const).filter(
         (d) => dados[d],
       ),
       faltam: [...dados.faltam],
       paraOTitular: dados.para_o_titular,
-      consulta: consultaLida,
+      consulta:
+        consultaLida === null
+          ? null
+          : { dia: consultaLida.dia, hora: consultaLida.hora },
       falhasSeguidas: estado.falhas_seguidas,
     };
   }
@@ -1500,8 +1903,12 @@ export function criarAgendaDoTurno(entrada: {
     for (const h of oferecidos.filter((o) => situacaoDe(o.codigo) === "livre")) {
       coberturas.push(...coberturaDoVinculo(h.serviceLinkId));
     }
-    const reservaViva = r !== null && r.viva === true;
-    if (reservaViva && r !== null) {
+    // Revisao final da AG3: a reserva viva AGORA (pelo relogio do turno, nao
+    // perdida) e reserva feita nesta conversa, com o horario dela; so entra
+    // nos horarios livres a reserva cujo horario a reconferencia (ou a
+    // reserva deste turno) disse livre.
+    const reservaViva = r !== null && r.viva === true && !r.perdida;
+    if (reservaViva && r !== null && reserva?.situacao === "livre") {
       livres.push({ dia: r.dia, hora: r.hora, unidade: r.unidade });
       coberturas.push(...coberturaDoVinculo(reserva?.leitura?.serviceLinkId ?? null));
     }
@@ -1509,8 +1916,24 @@ export function criarAgendaDoTurno(entrada: {
       ...(livres.length > 0 ? { horarios: livres } : {}),
       ...(coberturas.length > 0 ? { coberturas } : {}),
       // A reserva viva, lida agora, e reserva feita (nesta conversa).
-      ...(reservaViva ? { acao: "reservou" as const } : {}),
-      ...(consultaLida === null ? {} : { consultaLida: true }),
+      ...(reservaViva && r !== null
+        ? {
+            acao: "reservou" as const,
+            horarioDaAcao: { dia: r.dia, hora: r.hora, unidade: r.unidade },
+          }
+        : {}),
+      // A consulta que a IA marcou nesta conversa, relida agora.
+      ...(consultaLida === null
+        ? {}
+        : {
+            consultaLida: true,
+            consultaComHorario: {
+              dia: consultaLida.dia,
+              hora: consultaLida.hora,
+              unidade: consultaLida.unidade,
+              marcadaNestaConversa: true,
+            },
+          }),
     };
     return {
       saida: JSON.stringify({
@@ -1534,7 +1957,14 @@ export function criarAgendaDoTurno(entrada: {
                 unidade: r.unidade,
               },
             }),
-        ...(consultaLida === null ? {} : { consulta_marcada: consultaLida }),
+        ...(consultaLida === null
+          ? {}
+          : {
+              consulta_marcada: {
+                dia: consultaLida.dia,
+                hora: consultaLida.hora,
+              },
+            }),
       }),
       fatos,
     };
@@ -1554,17 +1984,37 @@ export function criarAgendaDoTurno(entrada: {
       final.desfecho = "passou_para_equipe";
     }
     if (final.etapa !== "pos_marcacao" || consultaDoTurno === null) {
-      const reservaViva = reserva !== null && reserva.viva === true;
-      if (final.slot_hold_id !== null && reserva !== null && reserva.viva === false) {
-        // A reserva venceu: o estado nao guarda reserva morta.
+      // Revisao final da AG3: a reserva que venceu (inclusive no meio do
+      // turno, pelo relogio), sumiu ou ficou perdida e nula no estado.
+      const morta = reservaMorta();
+      if (final.slot_hold_id !== null && morta) {
         final.slot_hold_id = null;
       }
+      const reservaViva = !morta && reservaVivaAgora();
+      const r = reservaLegivel();
+      // Revisao final da AG3 (item 1): a etapa so e armada com a pergunta
+      // "Confirma ...?" que traz o dd/mm e o HH:mm DA reserva viva (e o
+      // profissional e a unidade dela, quando cita) e nenhum outro dia e
+      // hora; o estado guarda o id da reserva perguntada (o agendar manda).
+      const perguntouAReserva =
+        r !== null &&
+        reserva !== null &&
+        reserva.holdId !== null &&
+        final.slot_hold_id === reserva.holdId &&
+        fim.mensagemFinal !== null &&
+        perguntaConfirmaAReserva(fim.mensagemFinal, {
+          dia: r.dia,
+          hora: r.hora,
+          profissional: r.profissional,
+          unidade: r.unidade,
+          profissionais: nomesDosProfissionais(),
+          unidades: (catalogo.unidades ?? []).map((u) => u.nome),
+        });
       if (
         !fim.passou &&
         reservaViva &&
         dados.faltam.length === 0 &&
-        fim.mensagemFinal !== null &&
-        perguntaSeConfirma(fim.mensagemFinal)
+        perguntouAReserva
       ) {
         final.etapa = "aguardando_confirmacao";
       } else if (final.etapa !== "pos_marcacao") {
@@ -1579,6 +2029,16 @@ export function criarAgendaDoTurno(entrada: {
       estado: final,
       dados: { ...dados, faltam: [...dados.faltam] },
     };
+  }
+
+  /** Os nomes dos profissionais do catalogo (para a pergunta "Confirma"). */
+  function nomesDosProfissionais(): string[] {
+    return [
+      ...new Set([
+        ...catalogo.vinculos.map((v) => v.profissional),
+        ...(catalogo.profissionais ?? []).map((p) => p.nome),
+      ]),
+    ];
   }
 
   function nota(motivo: string): string | null {
@@ -1612,7 +2072,7 @@ export function criarAgendaDoTurno(entrada: {
       pagamento,
       unidade: unidade?.nome ?? null,
       preferencia: ultimaPreferencia,
-      reserva: r === null ? null : { ...r, viva: r.viva },
+      reserva: r === null ? null : { ...r, viva: r.viva, perdida: r.perdida },
       oferecidos: [...horarios.values()]
         .filter((h) => estado.horarios_oferecidos.some((e) => e.codigo === h.codigo))
         .map(legivel),
@@ -1644,5 +2104,6 @@ export function criarAgendaDoTurno(entrada: {
     falhasDepois,
     fechar,
     nota,
+    nomesCitados: () => [...nomesCitados],
   };
 }

@@ -1,11 +1,14 @@
 "use client";
 
-import { Eye, EyeOff, FileUser } from "lucide-react";
+import { Eye, EyeOff, FileUser, Loader2 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import {
   lerDadosInformadosAction,
+  revelarDadoInformadoAction,
+  type DadoProtegido,
   type DadosInformadosDaConsulta,
+  type ResultadoDoDadoRevelado,
   type ResultadoDosDadosInformados,
 } from "@/app/(app)/agenda/actions";
 import {
@@ -25,6 +28,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  formatarCpf,
+  mascararCarteirinha,
+  mascararCpf,
+  type SituacaoDaConsulta,
+} from "@/lib/domain/dados-informados";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import { cn } from "@/lib/utils";
 
@@ -33,8 +42,9 @@ import { cn } from "@/lib/utils";
 // o menu da consulta), o que o paciente informou ao assistente para marcar:
 // nome completo, nascimento, CPF, carteirinha, se a consulta e para ele
 // mesmo, quando informou e, se ja entrou no cadastro, quando e por quem. Ao
-// aprovar, o banco aplica esses dados ao cadastro do contato so onde ele
-// esta vazio (o gatilho da aprovacao).
+// aprovar, o banco aplica esses dados ao cadastro do contato: o nome, se o
+// cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento,
+// CPF e carteirinha, so se estiverem vazios (o gatilho da aprovacao).
 //
 // A leitura grava trilha (leu_dados_da_marcacao, sem o conteudo), entao e SO
 // sob demanda: o clique no botao chama a acao (lerDadosInformadosAction),
@@ -43,11 +53,20 @@ import { cn } from "@/lib/utils";
 // a agenda) ve o botao desabilitado com a dica; o banco confere de novo (o
 // profissional so na propria agenda).
 //
-// O CPF chega inteiro e aparece mascarado ate a pessoa pedir, com o olho do
-// campo de senha (Eye para mostrar, EyeOff para ocultar, 40px, o rotulo
-// muda junto com o estado e por isso sem aria-pressed; docs/06 5.13). Nada
-// aqui vai para log nem para cache: o que foi lido mora so no estado do
+// Revisao final da AG3 (achados 12 e 13):
+//  - o CPF e a carteirinha chegam ao navegador SO mascarados. O olho do
+//    campo (Eye para mostrar, EyeOff para ocultar, 40px, o rotulo muda junto
+//    com o estado e por isso sem aria-pressed; docs/06 5.13) pede o dado
+//    inteiro a acao propria (revelarDadoInformadoAction), que rele pela RPC
+//    e grava a trilha de novo; ocultar descarta o valor;
+//  - a consulta ja tratada diz o que aconteceu com os dados: recusada ou
+//    cancelada, que nao entram no cadastro; tratada e sem dados, que eles
+//    nao estao mais guardados (a manutencao apaga 30 dias depois). "Tentar
+//    de novo" so no erro que passa tentando (o banco nao respondeu).
+// Nada aqui vai para log nem para cache: o que foi lido mora so no estado do
 // dialogo aberto.
+
+export { formatarCpf, mascararCarteirinha, mascararCpf };
 
 export const TEXTOS_DOS_DADOS_INFORMADOS = {
   ver: "Ver dados informados",
@@ -58,6 +77,7 @@ export const TEXTOS_DOS_DADOS_INFORMADOS = {
       : "O que o paciente informou ao assistente para marcar esta consulta.",
   carregando: "Carregando os dados informados...",
   vazio: "O paciente não informou dados nesta conversa.",
+  naoGuardados: "Os dados informados não estão mais guardados para esta consulta.",
   erro: "Não foi possível carregar os dados. Tente de novo.",
   tentarDeNovo: "Tentar de novo",
   semPermissao: "Seu perfil não vê os dados que o paciente informou.",
@@ -72,44 +92,39 @@ export const TEXTOS_DOS_DADOS_INFORMADOS = {
   noCadastro: "No cadastro",
   naoInformado: "Não informado",
   naoInformada: "Não informada",
-  cpfOculto: "oculto",
-  mostrarCpf: "Mostrar CPF",
-  ocultarCpf: "Ocultar CPF",
+  oculto: "oculto",
+  mostrar: (campo: string) => `Mostrar ${campo}`,
+  ocultar: (campo: string) => `Ocultar ${campo}`,
+  mostrando: "Carregando o dado...",
+  naoMostrou: "Não foi possível mostrar o dado. Tente de novo.",
   aindaNaoAplicado: "Ainda não aplicado.",
+  naoEntraRecusada: "Não entra no cadastro: a consulta foi recusada.",
+  naoEntraCancelada: "Não entra no cadastro: a consulta foi cancelada.",
+  naoEntraOutraPessoa: "Não entra no cadastro: a consulta é para outra pessoa.",
+  naoEntrou: "Não entrou no cadastro.",
+  regraDoCadastro:
+    "O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
   aplicado: (quando: string, quem: string | null) =>
     quem === null
-      ? `Aplicado em ${quando}, na aprovação da consulta. Só entrou o que estava vazio.`
-      : `Aplicado em ${quando}, na aprovação por ${quem}. Só entrou o que estava vazio.`,
+      ? `Aplicado em ${quando}, na aprovação da consulta.`
+      : `Aplicado em ${quando}, na aprovação por ${quem}.`,
   alguemDaEquipe: "alguém da equipe",
   aoAprovar:
-    "Ao aprovar a consulta, estes dados entram no cadastro do paciente, só onde ele está vazio.",
+    "Ao aprovar a consulta, estes dados entram no cadastro do paciente. O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
   fechar: "Fechar",
 } as const;
 
 const T = TEXTOS_DOS_DADOS_INFORMADOS;
 
+/** O nome do campo protegido no rotulo do olho ("Mostrar CPF"). */
+const NOME_DO_CAMPO: Readonly<Record<DadoProtegido, string>> = {
+  cpf: "CPF",
+  carteirinha: "carteirinha",
+};
+
 // ---------------------------------------------------------------------------
 // Regras puras
 // ---------------------------------------------------------------------------
-
-/** "12345678909" vira "123.456.789-09"; fora de 11 digitos, como veio. */
-export function formatarCpf(cpf: string): string {
-  const digitos = cpf.replace(/\D/g, "");
-  return digitos.length === 11
-    ? `${digitos.slice(0, 3)}.${digitos.slice(3, 6)}.${digitos.slice(6, 9)}-${digitos.slice(9)}`
-    : cpf;
-}
-
-/**
- * O CPF mascarado como o governo publica (so os digitos do meio):
- * "12345678909" vira "•••.456.789-••". Fora de 11 digitos, tudo oculto.
- */
-export function mascararCpf(cpf: string): string {
-  const digitos = cpf.replace(/\D/g, "");
-  return digitos.length === 11
-    ? `•••.${digitos.slice(3, 6)}.${digitos.slice(6, 9)}-••`
-    : "•••.•••.•••-••";
-}
 
 /** "2001-05-09" (dia civil, sem fuso) vira "09/05/2001". */
 export function dataCivilEmTexto(dia: string): string {
@@ -134,25 +149,49 @@ export function instanteNaClinica(instante: string, fuso: string): string {
   return `${dataNaClinica(instante, fuso)} às ${horaNaClinica(instante, fuso)}`;
 }
 
-/** A linha "No cadastro": entrou (quando e por quem) ou ainda nao. */
+/**
+ * A linha "No cadastro": entrou (quando e por quem) ou, revisao final da
+ * AG3, por que nao entra (recusada, cancelada, outra pessoa) ou ainda nao.
+ */
 export function textoDoCadastro(
-  dados: Pick<DadosInformadosDaConsulta, "aplicadoEm" | "aplicadoPor">,
+  dados: Pick<
+    DadosInformadosDaConsulta,
+    "aplicadoEm" | "aplicadoPor" | "paraOTitular"
+  >,
   fuso: string,
+  situacao: SituacaoDaConsulta,
 ): string {
-  if (dados.aplicadoEm === null) {
-    return T.aindaNaoAplicado;
+  if (dados.aplicadoEm !== null) {
+    const quando = instanteNaClinica(dados.aplicadoEm, fuso);
+    if (dados.aplicadoPor === null) {
+      return T.aplicado(quando, null);
+    }
+    return T.aplicado(quando, dados.aplicadoPor.nome ?? T.alguemDaEquipe);
   }
-  const quando = instanteNaClinica(dados.aplicadoEm, fuso);
-  if (dados.aplicadoPor === null) {
-    return T.aplicado(quando, null);
+  if (!dados.paraOTitular) {
+    return T.naoEntraOutraPessoa;
   }
-  return T.aplicado(quando, dados.aplicadoPor.nome ?? T.alguemDaEquipe);
+  switch (situacao) {
+    case "recusada":
+      return T.naoEntraRecusada;
+    case "cancelada":
+      return T.naoEntraCancelada;
+    case "aprovada":
+      return T.naoEntrou;
+    case "pendente":
+      return T.aindaNaoAplicado;
+  }
+}
+
+/** O que o dialogo diz quando nao ha dados: nunca informados ou ja apagados. */
+export function textoSemDados(situacao: SituacaoDaConsulta): string {
+  return situacao === "pendente" ? T.vazio : T.naoGuardados;
 }
 
 /** O que o dialogo mostra enquanto esta aberto. */
 export type EstadoDosDadosInformados =
   | { tipo: "carregando" }
-  | { tipo: "erro"; texto: string }
+  | { tipo: "erro"; texto: string; transitorio: boolean }
   | { tipo: "pronto"; dados: DadosInformadosDaConsulta | null };
 
 /** O resultado da acao no estado do dialogo. */
@@ -161,17 +200,26 @@ export function estadoDoResultado(
 ): EstadoDosDadosInformados {
   return resultado.ok
     ? { tipo: "pronto", dados: resultado.dados }
-    : { tipo: "erro", texto: resultado.error || T.erro };
+    : {
+        tipo: "erro",
+        texto: resultado.error || T.erro,
+        transitorio: resultado.transitorio,
+      };
 }
 
 export type LerDadosInformados = (
   consultaId: string,
 ) => Promise<ResultadoDosDadosInformados>;
 
+export type RevelarDadoInformado = (
+  consultaId: string,
+  campo: DadoProtegido,
+) => Promise<ResultadoDoDadoRevelado>;
+
 /**
  * Uma leitura (uma chamada da acao) e o estado que o dialogo mostra. A acao
  * so e resolvida aqui, no clique: nada a toca ao renderizar. A que lanca
- * (rede, servidor fora) vira o erro de sempre.
+ * (rede, servidor fora) vira o erro de sempre, que passa tentando de novo.
  */
 export async function lerOsDadosInformados(
   consultaId: string,
@@ -182,7 +230,23 @@ export async function lerOsDadosInformados(
       await (ler ?? lerDadosInformadosAction)(consultaId),
     );
   } catch {
-    return { tipo: "erro", texto: T.erro };
+    return { tipo: "erro", texto: T.erro, transitorio: true };
+  }
+}
+
+/**
+ * Revisao final da AG3: o dado protegido inteiro, sob pedido (a acao rele
+ * pela RPC e grava a trilha). A que lanca vira o erro que passa tentando.
+ */
+export async function revelarODado(
+  consultaId: string,
+  campo: DadoProtegido,
+  revelar?: RevelarDadoInformado,
+): Promise<ResultadoDoDadoRevelado> {
+  try {
+    return await (revelar ?? revelarDadoInformadoAction)(consultaId, campo);
+  } catch {
+    return { ok: false, error: T.naoMostrou, transitorio: true };
   }
 }
 
@@ -193,9 +257,13 @@ export async function lerOsDadosInformados(
 /**
  * Abre o dialogo de uma consulta e le na hora (uma leitura por abertura, e
  * por "Tentar de novo"). Resposta que chega depois de fechar, ou de abrir
- * outra consulta, e descartada. `ler` troca a acao nos testes.
+ * outra consulta, e descartada. `ler` e `revelar` trocam as acoes nos
+ * testes.
  */
-export function useDadosInformados(ler?: LerDadosInformados) {
+export function useDadosInformados(
+  ler?: LerDadosInformados,
+  revelar?: RevelarDadoInformado,
+) {
   const [aberta, setAberta] = useState<string | null>(null);
   const [estado, setEstado] = useState<EstadoDosDadosInformados>({
     tipo: "carregando",
@@ -234,7 +302,15 @@ export function useDadosInformados(ler?: LerDadosInformados) {
     }
   }, [aberta, carregar]);
 
-  return { aberta, estado, abrir, fechar, tentarDeNovo };
+  const revelarCampo = useCallback(
+    async (campo: DadoProtegido): Promise<ResultadoDoDadoRevelado> =>
+      aberta === null
+        ? { ok: false, error: T.naoMostrou, transitorio: false }
+        : revelarODado(aberta, campo, revelar),
+    [aberta, revelar],
+  );
+
+  return { aberta, estado, abrir, fechar, tentarDeNovo, revelar: revelarCampo };
 }
 
 // ---------------------------------------------------------------------------
@@ -297,50 +373,123 @@ function Vazio({ texto }: { texto: string }) {
   return <span className="text-text-secondary">{texto}</span>;
 }
 
-/** O CPF mascarado, com o olho para mostrar (o estado e so desta tela). */
-export function CampoDoCpf({ cpf }: { cpf: string }) {
-  const [visivel, setVisivel] = useState(false);
-  const Icone = visivel ? EyeOff : Eye;
+/** O que o campo protegido mostra: oculto, buscando, o valor ou o erro. */
+export type EstadoDoCampo =
+  | { tipo: "oculto" }
+  | { tipo: "buscando" }
+  | { tipo: "visivel"; valor: string }
+  | { tipo: "erro"; texto: string };
+
+/**
+ * O clique no olho: o visivel volta a ficar oculto (o valor e descartado);
+ * o resto pede o dado inteiro a acao. O CPF chega formatado; sem o dado (ou
+ * com a acao recusando), o erro dela.
+ */
+export async function alternarOCampo(
+  estado: EstadoDoCampo,
+  campo: DadoProtegido,
+  aoRevelar: (campo: DadoProtegido) => Promise<ResultadoDoDadoRevelado>,
+): Promise<EstadoDoCampo> {
+  if (estado.tipo === "visivel") {
+    return { tipo: "oculto" };
+  }
+  const r = await aoRevelar(campo);
+  if (r.ok && r.valor !== null) {
+    return {
+      tipo: "visivel",
+      valor: campo === "cpf" ? formatarCpf(r.valor) : r.valor,
+    };
+  }
+  return { tipo: "erro", texto: r.ok ? T.naoMostrou : r.error };
+}
+
+/**
+ * Revisao final da AG3 (achado 12): o CPF ou a carteirinha, mascarado, com
+ * o olho para mostrar. Mostrar pede o dado inteiro a acao (que rele e grava
+ * a trilha); ocultar descarta o valor. O estado e so desta tela.
+ * `estadoInicial` e para renderizar cada estado nos testes.
+ */
+export function CampoProtegido({
+  campo,
+  mascarado,
+  aoRevelar,
+  estadoInicial = { tipo: "oculto" },
+}: {
+  campo: DadoProtegido;
+  mascarado: string;
+  aoRevelar: (campo: DadoProtegido) => Promise<ResultadoDoDadoRevelado>;
+  estadoInicial?: EstadoDoCampo;
+}) {
+  const [estado, setEstado] = useState<EstadoDoCampo>(estadoInicial);
+  const nome = NOME_DO_CAMPO[campo];
+  const visivel = estado.tipo === "visivel";
+  const buscando = estado.tipo === "buscando";
+  const Icone = buscando ? Loader2 : visivel ? EyeOff : Eye;
+
+  const alternar = async () => {
+    if (!visivel) {
+      setEstado({ tipo: "buscando" });
+    }
+    setEstado(await alternarOCampo(estado, campo, aoRevelar));
+  };
+
   return (
-    <span className="flex min-h-10 items-center gap-1">
-      {visivel ? (
-        <span className="cz-num">{formatarCpf(cpf)}</span>
-      ) : (
-        <span className="cz-num">
-          <span aria-hidden>{mascararCpf(cpf)}</span>
-          <span className="sr-only">{T.cpfOculto}</span>
+    <span className="grid gap-1">
+      <span className="flex min-h-10 items-center gap-1">
+        {visivel ? (
+          <span className="cz-num">{estado.valor}</span>
+        ) : (
+          <span className="cz-num">
+            <span aria-hidden>{mascarado}</span>
+            <span className="sr-only">{T.oculto}</span>
+          </span>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="text-text-secondary"
+          disabled={buscando}
+          aria-busy={buscando || undefined}
+          aria-label={visivel ? T.ocultar(nome) : T.mostrar(nome)}
+          onClick={() => void alternar()}
+        >
+          <Icone aria-hidden className={buscando ? "animate-spin" : undefined} />
+        </Button>
+        {buscando ? (
+          <span role="status" className="sr-only">
+            {T.mostrando}
+          </span>
+        ) : null}
+      </span>
+      {estado.tipo === "erro" ? (
+        <span role="alert" className="text-xs text-alert-text">
+          {estado.texto}
         </span>
-      )}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="text-text-secondary"
-        aria-label={visivel ? T.ocultarCpf : T.mostrarCpf}
-        onClick={() => setVisivel((atual) => !atual)}
-      >
-        <Icone aria-hidden />
-      </Button>
+      ) : null}
     </span>
   );
 }
 
 /**
  * O miolo do dialogo, por estado: carregando (esqueleto com o texto para o
- * leitor de tela), erro (com "Tentar de novo"), vazio e os dados. `pendente`:
- * a consulta ainda espera aprovacao (so entao a frase do que acontece ao
- * aprovar).
+ * leitor de tela), erro (com "Tentar de novo" so quando passa tentando),
+ * vazio (nunca informado ou ja apagado, pela situacao da consulta) e os
+ * dados. `situacao`: o que aconteceu com a consulta (so a pendente diz o que
+ * acontece ao aprovar).
  */
 export function CorpoDosDadosInformados({
   estado,
   fuso,
-  pendente,
+  situacao,
   aoTentarDeNovo,
+  aoRevelar,
 }: {
   estado: EstadoDosDadosInformados;
   fuso: string;
-  pendente: boolean;
+  situacao: SituacaoDaConsulta;
   aoTentarDeNovo: () => void;
+  aoRevelar: (campo: DadoProtegido) => Promise<ResultadoDoDadoRevelado>;
 }) {
   if (estado.tipo === "carregando") {
     return (
@@ -364,18 +513,22 @@ export function CorpoDosDadosInformados({
           tom="erro"
           compact
           title={estado.texto}
-          action={{
-            label: T.tentarDeNovo,
-            onClick: aoTentarDeNovo,
-            variant: "outline",
-          }}
+          action={
+            estado.transitorio
+              ? {
+                  label: T.tentarDeNovo,
+                  onClick: aoTentarDeNovo,
+                  variant: "outline",
+                }
+              : undefined
+          }
         />
       </div>
     );
   }
   const { dados } = estado;
   if (dados === null) {
-    return <EmptyState compact icon={FileUser} title={T.vazio} />;
+    return <EmptyState compact icon={FileUser} title={textoSemDados(situacao)} />;
   }
   return (
     <div className="grid gap-3">
@@ -393,14 +546,26 @@ export function CorpoDosDadosInformados({
           )}
         </Linha>
         <Linha rotulo={T.cpf}>
-          {dados.cpf ? (
-            <CampoDoCpf cpf={dados.cpf} />
+          {dados.cpfMascarado ? (
+            <CampoProtegido
+              campo="cpf"
+              mascarado={dados.cpfMascarado}
+              aoRevelar={aoRevelar}
+            />
           ) : (
             <Vazio texto={T.naoInformado} />
           )}
         </Linha>
         <Linha rotulo={T.carteirinha}>
-          {dados.carteirinha ?? <Vazio texto={T.naoInformada} />}
+          {dados.carteirinhaMascarada ? (
+            <CampoProtegido
+              campo="carteirinha"
+              mascarado={dados.carteirinhaMascarada}
+              aoRevelar={aoRevelar}
+            />
+          ) : (
+            <Vazio texto={T.naoInformada} />
+          )}
         </Linha>
         <Linha rotulo={T.paraQuem}>
           {dados.paraOTitular ? T.paraOProprio : T.paraOutraPessoa}
@@ -410,12 +575,16 @@ export function CorpoDosDadosInformados({
             {instanteNaClinica(dados.informadoEm, fuso)}
           </span>
         </Linha>
-        <Linha rotulo={T.noCadastro}>{textoDoCadastro(dados, fuso)}</Linha>
+        <Linha rotulo={T.noCadastro}>
+          {textoDoCadastro(dados, fuso, situacao)}
+        </Linha>
       </dl>
-      {pendente && dados.paraOTitular && dados.aplicadoEm === null ? (
+      {situacao === "pendente" && dados.paraOTitular && dados.aplicadoEm === null ? (
         <Aviso tom="info" role="note">
           {T.aoAprovar}
         </Aviso>
+      ) : dados.aplicadoEm !== null ? (
+        <p className="text-xs text-text-secondary">{T.regraDoCadastro}</p>
       ) : null}
     </div>
   );
@@ -429,19 +598,21 @@ export function DialogoDosDadosInformados({
   aberto,
   nome,
   fuso,
-  pendente,
+  situacao,
   estado,
   aoFechar,
   aoTentarDeNovo,
+  aoRevelar,
 }: {
   aberto: boolean;
   /** O nome (ou o telefone) do contato da consulta; nulo sem nenhum. */
   nome: string | null;
   fuso: string;
-  pendente: boolean;
+  situacao: SituacaoDaConsulta;
   estado: EstadoDosDadosInformados;
   aoFechar: () => void;
   aoTentarDeNovo: () => void;
+  aoRevelar: (campo: DadoProtegido) => Promise<ResultadoDoDadoRevelado>;
 }) {
   return (
     <Dialog
@@ -460,8 +631,9 @@ export function DialogoDosDadosInformados({
         <CorpoDosDadosInformados
           estado={estado}
           fuso={fuso}
-          pendente={pendente}
+          situacao={situacao}
           aoTentarDeNovo={aoTentarDeNovo}
+          aoRevelar={aoRevelar}
         />
         <DialogFooter>
           <Button variant="outline" onClick={aoFechar}>

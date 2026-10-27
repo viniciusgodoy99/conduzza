@@ -12,7 +12,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //     erro, nunca dado pela metade; chave nova do banco e descartada) e chega
 //     a tela com o NOME de quem aprovou, sem o id;
 //   - os erros do banco viram texto de recepcionista, e o log leva so ids e o
-//     codigo, nunca o que o paciente informou.
+//     codigo, nunca o que o paciente informou;
+//   - revisao final da AG3 (achados 12 e 13): o CPF e a carteirinha vao a
+//     tela so mascarados; o inteiro, so pela acao de revelar, que rele pela
+//     RPC (a trilha de novo) e devolve so o campo pedido; o erro diz se passa
+//     tentando de novo (transitorio).
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
@@ -89,7 +93,9 @@ vi.mock("@/lib/auth/active-clinic", () => ({
   getSessionContext: async () => (semSessao ? null : sessao),
 }));
 
-const { lerDadosInformadosAction } = await import("@/app/(app)/agenda/actions");
+const { lerDadosInformadosAction, revelarDadoInformadoAction } = await import(
+  "@/app/(app)/agenda/actions"
+);
 const { lerDadosInformadosNaMarcacao } =
   await import("@/lib/queries/dados-da-marcacao");
 
@@ -132,6 +138,7 @@ describe("a guarda, antes do banco", () => {
     expect(await lerDadosInformadosAction(CONSULTA)).toEqual({
       ok: false,
       error: "Sessão expirada. Entre de novo.",
+      transitorio: false,
     });
     expect(estado.rpcs).toEqual([]);
   });
@@ -141,6 +148,7 @@ describe("a guarda, antes do banco", () => {
     expect(await lerDadosInformadosAction(CONSULTA)).toEqual({
       ok: false,
       error: "Seu perfil não vê os dados que o paciente informou.",
+      transitorio: false,
     });
     expect(estado.rpcs).toEqual([]);
   });
@@ -150,6 +158,7 @@ describe("a guarda, antes do banco", () => {
       expect(await lerDadosInformadosAction(id), String(id)).toEqual({
         ok: false,
         error: "Consulta inválida.",
+        transitorio: false,
       });
     }
     expect(estado.rpcs).toEqual([]);
@@ -182,15 +191,20 @@ describe("a leitura pela RPC (sob demanda)", () => {
     expect(estado.leiturasDePerfil).toEqual([]);
   });
 
-  it("com dado ainda não aplicado: a linha para a tela, sem id de ninguém", async () => {
+  it("com dado ainda não aplicado: a linha para a tela, sem id de ninguém, com o CPF e a carteirinha mascarados", async () => {
     estado.rpc = { data: { dados: linhaDoBanco() }, error: null };
-    expect(await lerDadosInformadosAction(CONSULTA)).toEqual({
+    const lido = await lerDadosInformadosAction(CONSULTA);
+    // Revisao final da AG3 (achado 12): nem o CPF nem a carteirinha inteiros
+    // chegam ao navegador na leitura.
+    expect(JSON.stringify(lido)).not.toContain("12345678909");
+    expect(JSON.stringify(lido)).not.toContain("0001 2345 6789");
+    expect(lido).toEqual({
       ok: true,
       dados: {
         nomeCompleto: "Paciente de Teste da Silva",
         dataNascimento: "1990-05-09",
-        cpf: "12345678909",
-        carteirinha: "0001 2345 6789",
+        cpfMascarado: "•••.456.789-••",
+        carteirinhaMascarada: "••••••••6789",
         paraOTitular: true,
         informadoEm: "2026-10-21T17:05:00.123456+00:00",
         atualizadoEm: "2026-10-21T17:06:00+00:00",
@@ -239,7 +253,7 @@ describe("a leitura pela RPC (sob demanda)", () => {
     estado.perfis = [];
     expect(await lerDadosInformadosAction(CONSULTA)).toMatchObject({
       ok: true,
-      dados: { aplicadoPor: { nome: null }, cpf: "12345678909" },
+      dados: { aplicadoPor: { nome: null }, cpfMascarado: "•••.456.789-••" },
     });
     estado.erroDoPerfil = { message: "falhou" };
     expect(await lerDadosInformadosAction(CONSULTA)).toMatchObject({
@@ -256,6 +270,7 @@ describe("os erros do banco, em texto de recepcionista", () => {
     expect(await lerDadosInformadosAction(CONSULTA)).toEqual({
       ok: false,
       error: "Seu perfil não vê os dados que o paciente informou.",
+      transitorio: false,
     });
   });
 
@@ -264,6 +279,7 @@ describe("os erros do banco, em texto de recepcionista", () => {
     expect(await lerDadosInformadosAction(CONSULTA)).toEqual({
       ok: false,
       error: "Esta consulta não está mais na agenda. Atualize a página.",
+      transitorio: false,
     });
   });
 
@@ -280,6 +296,7 @@ describe("os erros do banco, em texto de recepcionista", () => {
       ).toEqual({
         ok: false,
         error: "Não foi possível carregar os dados. Tente de novo.",
+        transitorio: true,
       });
     }
   });
@@ -305,6 +322,7 @@ describe("os erros do banco, em texto de recepcionista", () => {
       ).toEqual({
         ok: false,
         error: "Não foi possível carregar os dados. Tente de novo.",
+        transitorio: true,
       });
     }
   });
@@ -339,6 +357,65 @@ describe("os erros do banco, em texto de recepcionista", () => {
     ]) {
       expect(escrito).not.toContain(proibido);
     }
+  });
+});
+
+describe("revisão final da AG3: revelar o CPF ou a carteirinha", () => {
+  it("relê pela RPC (a trilha de novo) e devolve só o campo pedido", async () => {
+    estado.rpc = { data: { dados: linhaDoBanco() }, error: null };
+    expect(await revelarDadoInformadoAction(CONSULTA, "cpf")).toEqual({
+      ok: true,
+      valor: "12345678909",
+    });
+    expect(await revelarDadoInformadoAction(CONSULTA, "carteirinha")).toEqual({
+      ok: true,
+      valor: "0001 2345 6789",
+    });
+    expect(estado.rpcs).toEqual([
+      {
+        nome: "ler_dados_informados_na_marcacao",
+        args: { p_clinic_id: CLINICA, p_appointment_id: CONSULTA },
+      },
+      {
+        nome: "ler_dados_informados_na_marcacao",
+        args: { p_clinic_id: CLINICA, p_appointment_id: CONSULTA },
+      },
+    ]);
+  });
+
+  it("a mesma guarda: sessão, papel, id e campo antes do banco", async () => {
+    sessao.active.role = "leitura";
+    expect(await revelarDadoInformadoAction(CONSULTA, "cpf")).toEqual({
+      ok: false,
+      error: "Seu perfil não vê os dados que o paciente informou.",
+      transitorio: false,
+    });
+    sessao.active.role = "recepcao";
+    for (const campo of ["nome_completo", "data_nascimento", null, 1]) {
+      expect(
+        await revelarDadoInformadoAction(CONSULTA, campo),
+        String(campo),
+      ).toEqual({ ok: false, error: "Consulta inválida.", transitorio: false });
+    }
+    expect(await revelarDadoInformadoAction("x", "cpf")).toEqual({
+      ok: false,
+      error: "Consulta inválida.",
+      transitorio: false,
+    });
+    expect(estado.rpcs).toEqual([]);
+  });
+
+  it("sem dado, nulo; banco fora, o erro que passa tentando", async () => {
+    expect(await revelarDadoInformadoAction(CONSULTA, "cpf")).toEqual({
+      ok: true,
+      valor: null,
+    });
+    estado.rpc = "lanca";
+    expect(await revelarDadoInformadoAction(CONSULTA, "cpf")).toEqual({
+      ok: false,
+      error: "Não foi possível mostrar o dado. Tente de novo.",
+      transitorio: true,
+    });
   });
 });
 

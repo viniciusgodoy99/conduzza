@@ -22,6 +22,11 @@ import { UNID } from "./cadastro-fixtures";
 // (a conferencia do horario e a da agenda em memoria; a mensagem do paciente
 // depois da pergunta nao e conferida: o turno ja confere a etapa). As RPCs
 // de verdade sao provadas nas suites de integracao e de RLS (com o banco).
+//
+// Revisao final da AG3: o reservar recusa ja_tem_consulta (com o id e o
+// inicio da consulta futura ativa do mesmo procedimento) e o agendar recebe
+// p_slot_hold_id (a reserva da pergunta "Confirma"): com a viva diferente,
+// reserva_diferente.
 
 export type OpcoesDoContrato = {
   catalogo: CatalogoDoAgente;
@@ -108,6 +113,18 @@ export function rpcsDaAg3(banco: AgendaEmMemoria, opcoes: OpcoesDoContrato) {
       catalogo,
     });
   };
+  /** A consulta futura ativa do contato, do mesmo procedimento. */
+  const consultaDoProcedimento = (procedimentoId: unknown, agora: number) =>
+    banco
+      .linhas("appointment")
+      .find(
+        (a) =>
+          a.contact_id === CONTATO &&
+          vinculoDe(a.service_link_id)?.procedimentoId === procedimentoId &&
+          Date.parse(String(a.starts_at)) > agora &&
+          !String(a.status).startsWith("cancelado") &&
+          a.approval_status !== "recusado",
+      );
   const abertaDa = (conversa: unknown) =>
     banco
       .linhas("dados_informados_na_marcacao")
@@ -139,6 +156,20 @@ export function rpcsDaAg3(banco: AgendaEmMemoria, opcoes: OpcoesDoContrato) {
       !(catalogo.unidades ?? []).some((u) => u.id === args.p_unit_id)
     ) {
       return { data: { ok: false, motivo: "unidade_invalida" }, error: null };
+    }
+    // Revisao final da AG3: o contato ja tem consulta futura ativa do mesmo
+    // procedimento.
+    const jaMarcada = consultaDoProcedimento(vinculo.procedimentoId, agora);
+    if (jaMarcada) {
+      return {
+        data: {
+          ok: false,
+          motivo: "ja_tem_consulta",
+          appointment_id: jaMarcada.id,
+          starts_at: jaMarcada.starts_at,
+        },
+        error: null,
+      };
     }
     const inicio = String(args.p_starts_at);
     const fim = new Date(
@@ -304,6 +335,14 @@ export function rpcsDaAg3(banco: AgendaEmMemoria, opcoes: OpcoesDoContrato) {
     if (!viva) {
       return { data: { ok: false, motivo: "reserva_inexistente" }, error: null };
     }
+    // Revisao final da AG3: a reserva perguntada tem de ser a viva.
+    if (
+      args.p_slot_hold_id !== undefined &&
+      args.p_slot_hold_id !== null &&
+      args.p_slot_hold_id !== viva.id
+    ) {
+      return { data: { ok: false, motivo: "reserva_diferente" }, error: null };
+    }
     if (Date.parse(String(viva.expires_at)) <= agora) {
       return { data: { ok: false, motivo: "reserva_vencida" }, error: null };
     }
@@ -322,15 +361,7 @@ export function rpcsDaAg3(banco: AgendaEmMemoria, opcoes: OpcoesDoContrato) {
       return { data: { ok: false, motivo: "consulta_para_outra_pessoa" }, error: null };
     }
     const vinculo = vinculoDe(viva.service_link_id);
-    const ja = banco
-      .linhas("appointment")
-      .find(
-        (a) =>
-          a.contact_id === CONTATO &&
-          vinculoDe(a.service_link_id)?.procedimentoId === vinculo?.procedimentoId &&
-          Date.parse(String(a.starts_at)) > agora &&
-          !String(a.status).startsWith("cancelado"),
-      );
+    const ja = consultaDoProcedimento(vinculo?.procedimentoId, agora);
     if (ja) {
       return {
         data: { ok: false, motivo: "ja_tem_consulta", appointment_id: ja.id },

@@ -72,6 +72,49 @@ function cobertura(
   return { nome, plano, estado, procedimento };
 }
 
+/**
+ * Revisao final da AG3: a acao e a consulta lida levam o dia e a hora. Hoje
+ * e quarta, 22/10/2026 (amanha e quinta, 23/10): QUINTA e o horario certo,
+ * TERCA o de outra consulta.
+ */
+const HOJE = { dia: 22, mes: 10, ano: 2026 };
+const QUINTA = { dia: "quinta, 23/10", hora: "14:00", unidade: null };
+const TERCA = { dia: "terça, 21/10", hora: "10:00", unidade: null };
+
+/** A acao com o horario dela (a confirmacao le a consulta). */
+function feita(
+  acao: FatosDoTurno["acoes"][number],
+  horario: { dia: string; hora: string; unidade: string | null } = QUINTA,
+): Partial<FatosDoTurno> {
+  return {
+    hoje: HOJE,
+    acoes: [acao],
+    horariosDasAcoes: [{ ...horario, acao }],
+    ...(acao === "confirmou_presenca"
+      ? {
+          consultaLida: true,
+          consultasLidas: [{ ...horario, marcadaNestaConversa: false }],
+        }
+      : {}),
+  };
+}
+
+/** O horario certo da frase: o da terca quando ela fala de terca. */
+function doTexto(texto: string) {
+  return /ter[cç]a/i.test(texto) ? TERCA : QUINTA;
+}
+
+/** A consulta lida com o horario dela. */
+function lida(
+  horario: { dia: string; hora: string; unidade: string | null } = QUINTA,
+): Partial<FatosDoTurno> {
+  return {
+    hoje: HOJE,
+    consultaLida: true,
+    consultasLidas: [{ ...horario, marcadaNestaConversa: false }],
+  };
+}
+
 /** A busca de horario do turno: a saida e os horarios livres dela. */
 const BUSCA = {
   saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
@@ -1016,7 +1059,25 @@ describe("acao_nao_executada", () => {
     ],
   ] as const)("%s", (texto, acao, regra) => {
     expect(regras(texto)).toEqual([`acao_nao_executada:${regra}`]);
-    expect(regras(texto, { acoes: [acao] })).toEqual([]);
+    // Revisao final da AG3: com a acao e o horario dela.
+    expect(regras(texto, feita(acao))).toEqual([]);
+  });
+
+  it("revisão final da AG3: a frase da ação com dia só passa com o dia daquela ação", () => {
+    // "Confirmado!" e a acao; "Ate quinta." e o fechamento licenciado pela
+    // consulta lida, com o dia de outra consulta.
+    expect(regras("Confirmado! Até quinta.", feita("confirmou_presenca", TERCA))).toEqual([
+      "acao_nao_executada:fechamento_fora_do_horario",
+    ]);
+    expect(regras("Remarquei para quinta.", feita("remarcou", TERCA))).toEqual([
+      "acao_nao_executada:horario_da_acao",
+    ]);
+    // Sem o horario da acao, o dia nao tem par: barra (falha fechada).
+    expect(regras("Remarquei para quinta.", { hoje: HOJE, acoes: ["remarcou"] })).toEqual([
+      "acao_nao_executada:horario_da_acao",
+    ]);
+    // A frase sem dia nem hora continua so com a acao.
+    expect(regras("Remarquei sua consulta.", { acoes: ["remarcou"] })).toEqual([]);
   });
 
   // Revisao da AG2 (achado 1): as formas naturais.
@@ -1040,11 +1101,35 @@ describe("acao_nao_executada", () => {
     ],
   ] as const)("estado sem a consulta lida: %s", (texto, regra) => {
     expect(regras(texto)).toEqual([`acao_nao_executada:${regra}`]);
-    expect(regras(texto, { consultaLida: true })).toEqual([]);
-    expect(regras(texto, { acoes: ["marcou"] })).toEqual([]);
-    expect(regras(texto, { acoes: ["reservou"] })).toEqual([
+    // Revisao final da AG3: a consulta lida (ou a marcada no turno) com o
+    // dia e a hora dela.
+    expect(regras(texto, lida(doTexto(texto)))).toEqual([]);
+    expect(regras(texto, feita("marcou", doTexto(texto)))).toEqual([]);
+    expect(regras(texto, feita("reservou", doTexto(texto)))).toEqual([
       `acao_nao_executada:${regra}`,
     ]);
+  });
+
+  it("revisão final da AG3: o estado com dia só passa com o dia da consulta lida", () => {
+    for (const texto of [
+      "Prontinho! Seu horário está marcado para quinta.",
+      "Está agendado para quinta.",
+      "Você tem horário marcado amanhã.",
+    ]) {
+      expect(
+        regras(texto, lida(TERCA)).filter((r) =>
+          r.startsWith("acao_nao_executada"),
+        ),
+        texto,
+      ).not.toEqual([]);
+      // Sem o horario da consulta lida, o dia nao tem par.
+      expect(
+        regras(texto, { hoje: HOJE, consultaLida: true }).filter((r) =>
+          r.startsWith("acao_nao_executada"),
+        ),
+        texto,
+      ).not.toEqual([]);
+    }
   });
 
   it.each([
@@ -1064,7 +1149,7 @@ describe("acao_nao_executada", () => {
     ],
   ] as const)("ação sem a ferramenta: %s", (texto, acao, regra) => {
     expect(regras(texto)).toEqual([`acao_nao_executada:${regra}`]);
-    expect(regras(texto, { acoes: [acao] })).toEqual([]);
+    expect(regras(texto, feita(acao))).toEqual([]);
   });
 
   it("a regra da agenda, o horário com hora marcada e o processo não são ação", () => {
@@ -1112,9 +1197,12 @@ describe("acao_nao_executada", () => {
     expect(regras(texto)).toEqual([
       "acao_nao_executada:consulta_existente_sem_ferramenta",
     ]);
-    expect(regras(texto, { consultaLida: true })).toEqual([]);
-    expect(regras(texto, { acoes: ["marcou"] })).toEqual([]);
+    expect(regras(texto, lida())).toEqual([]);
+    expect(regras(texto, feita("marcou"))).toEqual([]);
     expect(regras("Você tem consulta amanhã?")).toEqual([]);
+    // Revisao final da AG3: o estado sem dia nem hora vale so com a
+    // consulta lida (sem o horario dela).
+    expect(regras("Sua consulta está marcada.", { consultaLida: true })).toEqual([]);
   });
 
   it("negar a ação, perguntar, oferecer e falar da regra não é afirmar", () => {

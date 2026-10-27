@@ -127,9 +127,16 @@ import {
 import {
   detectarGatilhosDeEntrada,
   LIMITE_DE_MENSAGEM,
+  pedidoDeConsultaParaOutraPessoa,
   type MensagemDeEntrada,
 } from "@/lib/domain/conformidade/gatilhos-de-entrada";
-import { minimizarParaLlm } from "@/lib/domain/conformidade/minimizar";
+import {
+  MARCADOR_DO_NOME_COMPLETO,
+  mascararDadosDaColeta,
+  mascararNascimentos,
+  mascararTrechosCitados,
+  minimizarParaLlm,
+} from "@/lib/domain/conformidade/minimizar";
 import {
   classificarComPrazo,
   correrComPrazo,
@@ -203,7 +210,7 @@ import {
   usoEstimadoDoClassificador,
   usoEstimadoDoVerificador,
 } from "./gasto";
-import { montarFatosDoTurno, type SaidaParaOsFatos } from "./fatos";
+import { anoNaClinica, montarFatosDoTurno, type SaidaParaOsFatos } from "./fatos";
 import { semAMarcaDoNome } from "./marca-do-nome";
 import { prometePassagemParaAEquipe } from "./passagem-prometida";
 import {
@@ -1091,6 +1098,33 @@ function motivoParaANota(desfecho: DesfechoDoTurno): string {
 // O turno
 // ---------------------------------------------------------------------------
 
+/** O relogio que parte de `agoraMs` e anda com o tempo de verdade. */
+function relogioDesde(agoraMs: number): () => number {
+  const inicio = Date.now();
+  return () => agoraMs + (Date.now() - inicio);
+}
+
+/**
+ * Revisao final da AG3 (achado 14): o turno da coleta de dados, em que a
+ * pessoa pode mandar o nome completo e o nascimento: com o estado do
+ * atendimento, uma reserva no estado (ou a pergunta "Confirma" feita) ou o
+ * nome ou o nascimento ainda faltando para marcar.
+ */
+export function turnoDaColetaDeDados(
+  atendimento: AtendimentoDoTurno | null,
+): boolean {
+  if (atendimento === null) {
+    return false;
+  }
+  const { estado, dados } = atendimento;
+  return (
+    estado.slot_hold_id !== null ||
+    estado.etapa === "aguardando_confirmacao" ||
+    dados.faltam.includes("nome_completo") ||
+    dados.faltam.includes("data_nascimento")
+  );
+}
+
 /** Hoje (AAAA-MM-DD) no fuso da clinica, para a idade do portao. */
 function hojeNoFuso(agoraMs: number, fuso: string): string | null {
   try {
@@ -1132,6 +1166,10 @@ export async function executarTurnoDoAgente(
     nascimentos: [entrada.dataDeNascimento, entrada.nascimentoInformado].filter(
       (n): n is string => typeof n === "string" && n !== "",
     ),
+    // Revisao final da AG3: o relogio do turno (a reserva que vence no meio
+    // do turno conta como vencida). Sem relogio injetado, o instante do
+    // comeco do turno mais o tempo que ja passou.
+    agora: entrada.agora ?? relogioDesde(entrada.agoraMs),
   });
   const resultado = await turnoDoAgente(entrada, agendaDoTurno);
   if (!comEstado) {
@@ -1151,8 +1189,13 @@ export async function executarTurnoDoAgente(
         : null,
     };
   } catch {
-    // O fechamento nunca deveria lancar; se lancar, o estado nao e gravado
-    // e o executor falha fechado (sem estado novo, nada sai).
+    // O fechamento nunca deveria lancar. Se lancar, o resultado volta SEM o
+    // estado novo: o executor do WhatsApp (lib/jobs/responder-com-ia.ts,
+    // passo 11b) grava o estado LIDO no comeco do turno, como estava (a
+    // versao sobe), e segue com a resposta ja aprovada pelo filtro; o
+    // simulador fica com o estado de antes. Nada do que o turno fez vira
+    // etapa nova: sem a etapa aguardando_confirmacao, o agendar seguinte e
+    // recusado (sem_confirmacao_do_paciente).
     log.warn("ia_agente_estado_falhou", {
       kind: "agente",
       clinic_id: entrada.clinicId,
@@ -1241,6 +1284,28 @@ async function turnoDoAgente(
         textoDoGatilho(gatilho),
       );
     }
+    // Revisao final da AG3 (achado 15, D-8): o pedido de consulta para outra
+    // pessoa adulta ("para minha mae", "pro meu marido") passa para a equipe
+    // antes do modelo, com o motivo do banco e sem gatilho (o CHECK de
+    // gatilho_entrada nao muda). Filho e filha seguem pela regra do menor.
+    if (
+      pedidoDeConsultaParaOutraPessoa(
+        pendentes
+          .filter((m) => (m.tipo ?? "texto") === "texto")
+          .map((m) => m.textoOriginal ?? m.texto),
+      )
+    ) {
+      trilha.push({
+        tipo: "outro",
+        texto: "A mensagem foi conferida antes de chegar ao assistente.",
+      });
+      return escalar(
+        "consulta_para_outra_pessoa",
+        "portao",
+        null,
+        ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.consulta_para_outra_pessoa,
+      );
+    }
 
     // 2. Configuracao.
     const { cliente, modelo } = entrada;
@@ -1265,10 +1330,21 @@ async function turnoDoAgente(
     const textosPendentes = pendentes.map((m) =>
       textoParaOsModelos(m, opcoesDoTexto),
     );
+    // Revisao final da AG3 (achado 14, LGPD, minimizacao): no turno da
+    // coleta de dados, o nome completo e o nascimento vao mascarados na
+    // copia do classificador e do verificador (o agente precisa deles; os
+    // outros dois nao). O filtro deterministico (local) le o texto inteiro.
+    const naColeta = turnoDaColetaDeDados(entrada.atendimento ?? null);
+    const anoCorrente = anoNaClinica(entrada.agoraMs, entrada.fuso);
+    const paraOsClassificadores = (
+      texto: string,
+      nomes: readonly string[] = [],
+    ): string =>
+      naColeta ? mascararDadosDaColeta(texto, { anoCorrente, nomes }) : texto;
     const restanteDoPortao = prazoEm - agora();
     const classificacao = await classificarComPrazo(
       entrada.classificador,
-      textosPendentes,
+      textosPendentes.map((texto) => paraOsClassificadores(texto)),
       Math.min(PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS, restanteDoPortao),
     );
     const usoDoClassificador = (classificacao as { uso?: unknown }).uso;
@@ -1822,6 +1898,28 @@ async function turnoDoAgente(
       });
       return falhar("desconhecida");
     }
+    // Achado 14: a copia do verificador no turno da coleta vai sem o nome
+    // completo (o que o modelo registrou e o que a heuristica acha) e sem o
+    // nascimento; o texto aprovado continua o rascunho, byte a byte.
+    const verificador: Verificador = naColeta
+      ? (pedido) => {
+          const nomes = agendaDoTurno.nomesCitados();
+          return entrada.verificador({
+            ...pedido,
+            rascunho: mascararNascimentos(
+              mascararTrechosCitados(
+                pedido.rascunho,
+                nomes,
+                MARCADOR_DO_NOME_COMPLETO,
+              ),
+              anoCorrente,
+            ),
+            mensagensDoPaciente: pedido.mensagensDoPaciente.map((m) =>
+              paraOsClassificadores(m, nomes),
+            ),
+          });
+        }
+      : entrada.verificador;
     filtro = await filtrarSaida({
       rascunho,
       contexto: {
@@ -1830,7 +1928,7 @@ async function turnoDoAgente(
         mensagensDoPaciente: textosPendentes,
         fatos,
       },
-      verificador: entrada.verificador,
+      verificador,
       prazoEm,
       agora,
     });
